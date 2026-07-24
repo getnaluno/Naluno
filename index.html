@@ -2426,11 +2426,25 @@ function authStatus(msg, isError){
 $('googleSignInBtn').onclick = ()=>{
   if(!fbAuth){ authStatus('Firebase isn\u2019t configured yet — see firebase-config.js', true); return; }
   const provider = new firebase.auth.GoogleAuthProvider();
-  authStatus('Leaving for Google sign-in…');
-  // Mobile browsers routinely close signInWithPopup before it finishes — this looks
-  // like a flash and then silently fails. signInWithRedirect leaves the page entirely
-  // and comes back, which is what Firebase itself recommends for mobile.
-  fbAuth.signInWithRedirect(provider).catch(e=>{ authStatus(e.code + ': ' + e.message, true); });
+  authStatus('Trying popup sign-in…');
+  // Popup communicates directly window-to-window and never needs auth state to survive
+  // a full page navigation — it sidesteps the cross-domain storage handoff between this
+  // site and naluno-28a00.firebaseapp.com entirely, which is what redirect was tripping
+  // over (both Firefox's storage partitioning and, evidently, something similar in
+  // Chrome). Only fall back to redirect if a popup genuinely can't open at all.
+  fbAuth.signInWithPopup(provider).then(result=>{
+    authStatus('Popup sign-in completed — signed in as ' + (result.user.displayName || result.user.email));
+  }).catch(e=>{
+    const popupCantOpen = e.code === 'auth/popup-blocked' || e.code === 'auth/operation-not-supported-in-this-environment';
+    if(popupCantOpen){
+      authStatus('Popup blocked — falling back to redirect…');
+      fbAuth.signInWithRedirect(provider).catch(e2=>{ authStatus(e2.code + ': ' + e2.message, true); });
+    } else if(e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request'){
+      authStatus('Sign-in window was closed before finishing — tap the button to try again.', true);
+    } else {
+      authStatus(e.code + ': ' + e.message, true);
+    }
+  });
 };
 
 if(fbAuth){
