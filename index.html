@@ -2416,31 +2416,51 @@ if(firebaseReady()){
   }catch(e){ console.error('Firebase init failed:', e); }
 }
 
+function authStatus(msg, isError){
+  const el = $('authGateStatus');
+  el.textContent = msg;
+  el.style.color = isError ? 'var(--red)' : 'var(--text-dim)';
+  console.log('[Naluno auth]', msg);
+}
+
 $('googleSignInBtn').onclick = ()=>{
-  if(!fbAuth){ $('authGateStatus').textContent = 'Firebase isn\u2019t configured yet — see firebase-config.js'; return; }
+  if(!fbAuth){ authStatus('Firebase isn\u2019t configured yet — see firebase-config.js', true); return; }
   const provider = new firebase.auth.GoogleAuthProvider();
-  $('authGateStatus').textContent = 'Opening sign-in…';
+  authStatus('Leaving for Google sign-in…');
   // Mobile browsers routinely close signInWithPopup before it finishes — this looks
   // like a flash and then silently fails. signInWithRedirect leaves the page entirely
   // and comes back, which is what Firebase itself recommends for mobile.
-  fbAuth.signInWithRedirect(provider).catch(e=>{ $('authGateStatus').textContent = e.message; });
+  fbAuth.signInWithRedirect(provider).catch(e=>{ authStatus(e.code + ': ' + e.message, true); });
 };
 
 if(fbAuth){
+  authStatus('Checking sign-in state…');
   // Catches errors specific to the redirect round-trip (e.g. "this domain isn't
   // authorized") that onAuthStateChanged alone would never surface — it would just
   // never fire, leaving someone stuck looking at the sign-in screen with no explanation.
-  fbAuth.getRedirectResult().catch(e=>{
-    $('authGateStatus').textContent = e.code === 'auth/unauthorized-domain'
-      ? 'This domain isn\u2019t authorized in Firebase yet — add it under Authentication → Settings → Authorized domains.'
-      : (e.message || 'Sign-in failed — try again.');
+  // Also explicitly reports "no redirect pending" — previously this case was silent,
+  // which made it impossible to tell "nothing happened yet" apart from "it's stuck."
+  fbAuth.getRedirectResult().then(result=>{
+    if(result && result.user){
+      authStatus('Redirect completed — signed in as ' + (result.user.displayName || result.user.email));
+    } else {
+      authStatus('No pending redirect found (normal on first load).');
+    }
+  }).catch(e=>{
+    authStatus(
+      e.code === 'auth/unauthorized-domain' ? 'auth/unauthorized-domain — this domain isn\u2019t in Firebase\u2019s Authorized domains list yet.' :
+      e.code + ': ' + (e.message || 'Sign-in failed after redirect.'),
+      true
+    );
   });
   fbAuth.onAuthStateChanged(user=>{
     currentUser = user;
     if(user){
+      authStatus('Signed in as ' + (user.displayName || user.email));
       $('authGate').classList.remove('active');
       loadRealProfile(user);
     } else {
+      authStatus('Not signed in.');
       $('authGate').classList.add('active');
     }
   });
