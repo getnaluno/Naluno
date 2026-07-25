@@ -6,4 +6,3 @@ const firebaseConfig = {
   messagingSenderId: "183354363901",
   appId: "1:183354363901:web:e1a4c4eb30ad5937d39394"
 };
-const VAPID_KEY = "YOUR_VAPID_KEY";
