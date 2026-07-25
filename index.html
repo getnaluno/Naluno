@@ -3376,6 +3376,72 @@ function closeCallOverlay(){
 let currentCallContactId = null;
 let ringTimeoutHandle = null;
 
+/* ---------------- CALL AUDIO (ringback + ringtone) ----------------
+   Synthesized procedurally with the Web Audio API — no audio files, same principle as
+   every other "live" element in this app being generated rather than pre-recorded.
+   Browsers block audio from starting without a real prior user gesture, so the shared
+   AudioContext piggybacks on the exact same click/keydown/touchstart listeners that
+   already track your own activity — by the time a real call happens, it's unlocked. */
+let sharedAudioCtx = null;
+function ensureAudioContext(){
+  if(!sharedAudioCtx){
+    try{ sharedAudioCtx = new (window.AudioContext || window.webkitAudioContext)(); }catch(e){ return null; }
+  }
+  if(sharedAudioCtx.state === 'suspended') sharedAudioCtx.resume().catch(()=>{});
+  return sharedAudioCtx;
+}
+['click','keydown','touchstart'].forEach(evt => document.addEventListener(evt, ensureAudioContext, { passive:true }));
+
+let callerToneTimer = null;
+/* Caller-side ringback — a soft two-tone pulse, echoing the classic telecom ringback
+   pattern (paired tones, ring then pause) without literally imitating a phone ring. */
+function startCallerTone(){
+  stopCallerTone();
+  const ctx = ensureAudioContext(); if(!ctx) return;
+  function pulse(){
+    const osc1 = ctx.createOscillator(), osc2 = ctx.createOscillator(), gain = ctx.createGain();
+    osc1.type = 'sine'; osc1.frequency.value = 440;
+    osc2.type = 'sine'; osc2.frequency.value = 480;
+    const now = ctx.currentTime;
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.06, now + 0.05);
+    gain.gain.setValueAtTime(0.06, now + 1.9);
+    gain.gain.linearRampToValueAtTime(0, now + 2.0);
+    osc1.connect(gain); osc2.connect(gain); gain.connect(ctx.destination);
+    osc1.start(now); osc2.start(now);
+    osc1.stop(now + 2.0); osc2.stop(now + 2.0);
+  }
+  pulse();
+  callerToneTimer = setInterval(pulse, 4000); // ~2s tone, ~2s pause, repeating
+}
+function stopCallerTone(){ clearInterval(callerToneTimer); callerToneTimer = null; }
+
+let ringtoneTimer = null;
+/* Receiver-side ringtone — a short rising chime, repeating. Deliberately more melodic
+   and attention-grabbing than the caller's tone, since this is the one that actually
+   needs to pull someone's attention away from whatever they're doing. */
+function startRingtone(){
+  stopRingtone();
+  const ctx = ensureAudioContext(); if(!ctx) return;
+  function chime(){
+    const notes = [660, 880, 1046.5]; // short rising arpeggio
+    const now = ctx.currentTime;
+    notes.forEach((freq, i)=>{
+      const osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.type = 'sine'; osc.frequency.value = freq;
+      const t0 = now + i*0.13;
+      gain.gain.setValueAtTime(0, t0);
+      gain.gain.linearRampToValueAtTime(0.09, t0+0.02);
+      gain.gain.linearRampToValueAtTime(0, t0+0.22);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(t0); osc.stop(t0+0.24);
+    });
+  }
+  chime();
+  ringtoneTimer = setInterval(chime, 1800);
+}
+function stopRingtone(){ clearInterval(ringtoneTimer); ringtoneTimer = null; }
+
 /* ---------------- REAL CALLS (WebRTC, Firestore signaling) ----------------
    Each call is one Firestore document: the caller writes an offer, the callee writes
    an answer, and both sides exchange ICE candidates as documents in subcollections.
@@ -3461,6 +3527,7 @@ function handleIncomingCall(callId, data){
   $('incomingSceneNote').style.display = 'none';
   $('incomingSelfTag').textContent = 'prepping…';
   showCallScreen('incoming');
+  startRingtone();
   const showReady = ()=>{ $('incomingSceneNote').style.display = 'inline-flex'; $('incomingSelfTag').textContent = 'scene ready'; };
   if(!stream) enableCamera().then(()=> setTimeout(showReady, 900));
   else showReady();
@@ -3471,6 +3538,7 @@ function handleIncomingCall(callId, data){
     if(!d) return;
     if((d.status==='ended' || d.status==='missed') && !$('incall').classList.contains('active')){
       toast('Missed call from ' + name);
+      stopRingtone();
       teardownCallConnection();
       closeCallOverlay();
     }
@@ -3535,6 +3603,7 @@ async function startRealCall(c){
         pendingRemoteCandidates = [];
       });
       clearTimeout(ringTimeoutHandle);
+      stopCallerTone();
       startInCall();
     }
     if(d.status === 'declined'){
@@ -3595,6 +3664,7 @@ function showAsyncFallback(contactId, reason){
   if(activeCallId && fbDb){
     fbDb.collection('calls').doc(activeCallId).update({ status:'missed' }).catch(()=>{});
   }
+  stopCallerTone();
   teardownCallConnection();
   if(stream) stopCameraStream(); // no need to hold a camera open for a call that isn't connecting
   showCallScreen('asyncFallback');
@@ -3614,13 +3684,15 @@ $('asyncKeepRingingBtn').onclick = async ()=>{
   const c = contacts.find(x=>x.id===currentCallContactId); if(!c) return;
   showCallScreen('ringing');
   if(!stream) await enableCamera();
-  try{ await startRealCall(c); }
+  try{ await startRealCall(c); startCallerTone(); }
   catch(e){ toast(e.message || 'Couldn\u2019t retry the call'); closeCallOverlayAndStopCamera(); }
 };
 $('asyncCancelBtn').onclick = closeCallOverlayAndStopCamera;
 
 function closeCallOverlayAndStopCamera(){
   clearTimeout(ringTimeoutHandle);
+  stopCallerTone();
+  stopRingtone();
   teardownCallConnection();
   closeCallOverlay();
   stopCameraStream();
@@ -3633,7 +3705,7 @@ $('joinBtn').onclick = async ()=>{
     return;
   }
   showCallScreen('ringing');
-  try{ await startRealCall(c); }
+  try{ await startRealCall(c); startCallerTone(); }
   catch(e){ toast(e.message || 'Couldn\u2019t start the call'); closeCallOverlayAndStopCamera(); }
 };
 $('cancelCall').onclick = ()=>{
@@ -3644,11 +3716,13 @@ $('cancelCall').onclick = ()=>{
 $('ringFallbackHint').onclick = ()=>{ if(currentCallContactId) showAsyncFallback(currentCallContactId, 'timeout'); };
 
 $('declineIncoming').onclick = ()=>{
+  stopRingtone();
   if(activeCallId && fbDb) fbDb.collection('calls').doc(activeCallId).update({ status:'declined' }).catch(()=>{});
   teardownCallConnection();
   closeCallOverlayAndStopCamera();
 };
 $('acceptIncoming').onclick = async ()=>{
+  stopRingtone();
   if(!activeCallId || !fbDb){ toast('That call is no longer available'); closeCallOverlayAndStopCamera(); return; }
   try{
     const callRef = fbDb.collection('calls').doc(activeCallId);
@@ -3696,6 +3770,8 @@ $('acceptIncoming').onclick = async ()=>{
 
 let callSeconds = 0, callInterval = null;
 function startInCall(){
+  stopCallerTone();
+  stopRingtone();
   showCallScreen('incall');
   callSeconds = 0; $('callTimer').textContent = '00:00';
   clearInterval(callInterval);
