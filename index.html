@@ -1762,6 +1762,18 @@ function formatClockTime(ts){
 
 function renderWirelineList(){
   const rows = contacts.map(c=>{
+    if(c.isReal){
+      const preview = realThreadPreviews[c.firebaseUid];
+      if(!preview){
+        return { c, last:null, preview:'No messages yet — say hello', unread:false };
+      }
+      return {
+        c,
+        last: { ts: preview.ts },
+        preview: (preview.fromMe ? 'You: ' : '') + preview.text,
+        unread: preview.unread,
+      };
+    }
     const msgs = wirelineThreads[c.id] || [];
     const last = msgs[msgs.length-1];
     const lastText = last ? (
@@ -1792,6 +1804,38 @@ function renderWirelineList(){
   $('wirelineNavDot').style.display = hasUnread ? 'block' : 'none';
 }
 
+/* ---------------- REAL WIRELINE (Firestore-backed threads) ----------------
+   threadId is the two participants' real uids, sorted and joined with "_" — deterministic,
+   so both people land on the same thread doc without a lookup step. A single live listener
+   covers the currently open thread; a second listener covers every real thread's preview
+   (last message + unread state) for the Wireline list, using denormalized fields on the
+   thread doc itself so the list never needs to open every thread just to show previews. */
+function realThreadId(otherUid){ return [currentUser.uid, otherUid].sort().join('_'); }
+let activeThreadUnsubscribe = null;
+let threadsListUnsubscribe = null;
+let realThreadPreviews = {}; // { [otherUid]: { text, ts, fromMe, unread } }
+
+function startThreadsListListener(){
+  if(!fbDb || !currentUser) return;
+  if(threadsListUnsubscribe) threadsListUnsubscribe();
+  threadsListUnsubscribe = fbDb.collection('threads')
+    .where('participants', 'array-contains', currentUser.uid)
+    .onSnapshot(snap=>{
+      snap.forEach(doc=>{
+        const d = doc.data();
+        const otherUid = (d.participants||[]).find(u=>u!==currentUser.uid);
+        if(!otherUid) return;
+        realThreadPreviews[otherUid] = {
+          text: d.lastMessageText || '',
+          ts: d.lastMessageAt && d.lastMessageAt.toMillis ? d.lastMessageAt.toMillis() : Date.now(),
+          fromMe: d.lastMessageFrom === currentUser.uid,
+          unread: d.lastMessageFrom !== currentUser.uid && !(d.readBy||[]).includes(currentUser.uid),
+        };
+      });
+      renderWirelineList();
+    }, ()=>{ /* preview list just won't populate this session */ });
+}
+
 function openWirelineFromFrequencies(id){
   document.querySelectorAll('.navbtn').forEach(b=>b.classList.toggle('active', b.dataset.tab==='wireline'));
   document.querySelectorAll('.tabscreen').forEach(s=>s.classList.toggle('active', s.id==='tab-wireline'));
@@ -1809,16 +1853,48 @@ function openThread(contactId){
   $('threadAvatar').style.background = c.color; $('threadAvatar').textContent = c.initials;
   $('threadName').textContent = c.name;
   updateThreadStatusLabel();
-  (wirelineThreads[contactId] || []).forEach(m=>{ if(m.from==='them') m.read = true; });
   $('threadInput').value = '';
   updateComposerButtons();
-  renderThreadMessages();
   $('wirelineThread').classList.add('active');
-  saveWireline();
-  renderWirelineList();
+
+  if(activeThreadUnsubscribe){ activeThreadUnsubscribe(); activeThreadUnsubscribe = null; }
+
+  if(c.isReal && c.firebaseUid && fbDb && currentUser){
+    wirelineThreads[contactId] = wirelineThreads[contactId] || [];
+    renderThreadMessages();
+    const tid = realThreadId(c.firebaseUid);
+    const threadRef = fbDb.collection('threads').doc(tid);
+    activeThreadUnsubscribe = threadRef.collection('messages').orderBy('ts','asc').onSnapshot(snap=>{
+      wirelineThreads[contactId] = snap.docs.map(d=>{
+        const m = d.data();
+        return {
+          id: d.id,
+          from: m.from===currentUser.uid ? 'me' : 'them',
+          type: m.type || 'text',
+          text: m.text, mood: m.mood, waveform: m.waveform, duration: m.duration, dataUrl: m.dataUrl,
+          ts: m.ts && m.ts.toMillis ? m.ts.toMillis() : Date.now(),
+          status: m.status || 'sent',
+          reaction: m.reaction,
+        };
+      });
+      renderThreadMessages();
+      // This thread is actively open, so any of their messages just received count as read.
+      threadRef.update({ readBy: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) }).catch(()=>{});
+      snap.docs.forEach(d=>{
+        const m = d.data();
+        if(m.from !== currentUser.uid && m.status !== 'read') d.ref.update({ status:'read' }).catch(()=>{});
+      });
+    }, err=>{ toast('Couldn\u2019t load messages: ' + err.message); });
+  } else {
+    (wirelineThreads[contactId] || []).forEach(m=>{ if(m.from==='them') m.read = true; });
+    renderThreadMessages();
+    saveWireline();
+    renderWirelineList();
+  }
 }
 function closeThread(){
   if(voiceRecorder && voiceRecorder.state !== 'inactive') cancelVoiceRecording();
+  if(activeThreadUnsubscribe){ activeThreadUnsubscribe(); activeThreadUnsubscribe = null; }
   $('wirelineThread').classList.remove('active');
   activeThreadContactId = null;
 }
@@ -1937,12 +2013,22 @@ function closeEmotionWheel(){
 }
 function chooseEmotion(key){
   const emo = EMOTIONS.find(e=>e.key===key);
-  const msgs = wirelineThreads[activeThreadContactId] || [];
-  const msg = msgs.find(m=>String(m.id)===String(emotionWheelTargetMsgId));
-  if(msg && emo){
-    msg.reaction = { key: emo.key, label: emo.label, color: emo.color };
-    saveWireline();
-    renderThreadMessages();
+  const c = contacts.find(x=>x.id===activeThreadContactId);
+  const msgId = emotionWheelTargetMsgId;
+  if(emo && c && c.isReal && c.firebaseUid && fbDb){
+    const tid = realThreadId(c.firebaseUid);
+    fbDb.collection('threads').doc(tid).collection('messages').doc(String(msgId))
+      .update({ reaction: { key: emo.key, label: emo.label, color: emo.color } })
+      .catch(e=> toast(e.message || 'Couldn\u2019t react'));
+    // the open thread's onSnapshot listener will re-render once Firestore confirms the write
+  } else {
+    const msgs = wirelineThreads[activeThreadContactId] || [];
+    const msg = msgs.find(m=>String(m.id)===String(msgId));
+    if(msg && emo){
+      msg.reaction = { key: emo.key, label: emo.label, color: emo.color };
+      saveWireline();
+      renderThreadMessages();
+    }
   }
   closeEmotionWheel();
 }
@@ -1975,6 +2061,12 @@ $('threadSendBtn').onclick = sendThreadMessage;
 function sendThreadMessage(){
   const text = $('threadInput').value.trim();
   if(!text || !activeThreadContactId) return;
+  const c = contacts.find(x=>x.id===activeThreadContactId);
+  if(!c) return;
+  if(c.isReal && c.firebaseUid){
+    sendRealMessage(c, { type:'text', text }, text);
+    return;
+  }
   const id = activeThreadContactId;
   if(!wirelineThreads[id]) wirelineThreads[id] = [];
   const msg = { id: Date.now()+Math.random(), from:'me', type:'text', text, ts: Date.now(), status:'sent' };
@@ -1989,12 +2081,43 @@ function sendThreadMessage(){
   maybeSimulateReply(id);
 }
 
+/* Writes a message to the real Firestore thread and updates the thread's denormalized
+   preview fields (lastMessageText/At/From, readBy) in the same call — this is what
+   renderWirelineList's real-contact branch and startThreadsListListener actually read. */
+async function sendRealMessage(c, payload, previewText){
+  if(!fbDb || !currentUser) return;
+  const tid = realThreadId(c.firebaseUid);
+  const threadRef = fbDb.collection('threads').doc(tid);
+  try{
+    await threadRef.set({
+      participants: [currentUser.uid, c.firebaseUid].sort(),
+      lastMessageAt: firebase.firestore.FieldValue.serverTimestamp(),
+      lastMessageText: previewText,
+      lastMessageFrom: currentUser.uid,
+      readBy: [currentUser.uid],
+    }, { merge:true });
+    await threadRef.collection('messages').add({
+      from: currentUser.uid,
+      ts: firebase.firestore.FieldValue.serverTimestamp(),
+      status: 'sent',
+      ...payload,
+    });
+    $('threadInput').value = '';
+    autoSizeThreadInput();
+    updateComposerButtons();
+    markMyActivity();
+  }catch(e){
+    toast(e.message || 'Couldn\u2019t send — try again');
+  }
+}
+
 /* Read receipts follow the same reachability model as everything else: an off-the-grid
    contact never confirms delivery; a fading one confirms delivery but not reading;
-   only a strong signal reliably reaches all the way to 'read'. */
+   only a strong signal reliably reaches all the way to 'read'. Real contacts don't use
+   this at all — their receipts come from the actual other person's client, in openThread. */
 function advanceReceipt(contactId, msg){
   const c = contacts.find(x=>x.id===contactId);
-  if(!c || computeSignal(c).tier==='off') return;
+  if(!c || c.isReal || computeSignal(c).tier==='off') return;
   const deliveredDelay = 400 + Math.random()*500;
   setTimeout(()=>{
     msg.status = 'delivered';
@@ -2016,7 +2139,7 @@ function advanceReceipt(contactId, msg){
    A reply is real evidence of reachability, so it's the one thing that bumps their signal. */
 function maybeSimulateReply(contactId){
   const c = contacts.find(x=>x.id===contactId);
-  if(!c || computeSignal(c).tier==='off') return;
+  if(!c || c.isReal || computeSignal(c).tier==='off') return;
   const delay = computeSignal(c).tier==='strong' ? 1200 + Math.random()*1400 : 3200 + Math.random()*2600;
   const replies = ['Got it 👍','On it.','Haha true','Let me check and get back to you','Sounds good','Can we talk about this on a call?','Yeah, saw that too'];
   setTimeout(()=>{
@@ -2068,6 +2191,11 @@ async function saveVoiceAudio(msgId, dataUrl){
 }
 async function getVoiceAudio(msgId){
   if(voiceAudioCache[msgId]) return voiceAudioCache[msgId];
+  // Real messages already carry dataUrl straight from Firestore (no separate storage
+  // hop needed) — check the currently loaded thread before falling back to local cache.
+  const liveMsgs = wirelineThreads[activeThreadContactId] || [];
+  const liveMsg = liveMsgs.find(m=>String(m.id)===String(msgId));
+  if(liveMsg && liveMsg.dataUrl){ voiceAudioCache[msgId] = liveMsg.dataUrl; return liveMsg.dataUrl; }
   if(!storageAvailable) return null;
   try{
     const res = await window.storage.get('wireline:voice:'+msgId);
@@ -2196,6 +2324,18 @@ $('voiceConfirmBtn').onclick = confirmVoiceRecording;
 
 function pushVoiceMessage(contactId, dataUrl, durationSecs, waveform){
   if(!contactId) return;
+  const c = contacts.find(x=>x.id===contactId);
+  if(c && c.isReal && c.firebaseUid){
+    // Firestore documents cap out at 1MB; without a Storage bucket wired up yet, the
+    // audio has to live directly in the message doc, so there's a real, honest ceiling
+    // here — this isn't a bug, it's the actual limit of the current architecture.
+    if(dataUrl.length > 700000){
+      toast('That voice note is too long to send for real right now (~30s max until Storage is wired up)');
+      return;
+    }
+    sendRealMessage(c, { type:'voice', dataUrl, duration: durationSecs, waveform }, '🎙 Voice note');
+    return;
+  }
   if(!wirelineThreads[contactId]) wirelineThreads[contactId] = [];
   const msg = { id: Date.now()+Math.random(), from:'me', type:'voice', duration: durationSecs, waveform, ts: Date.now(), status:'sent' };
   wirelineThreads[contactId].push(msg);
@@ -2248,11 +2388,17 @@ $('threadMoodBtn').onclick = ()=>{
 function sendMoodMessage(moodKey){
   if(!activeThreadContactId) return;
   const id = activeThreadContactId;
+  const c = contacts.find(x=>x.id===id);
+  $('threadComposerMood').style.display = 'none';
+  $('threadComposerNormal').style.display = 'flex';
+  if(c && c.isReal && c.firebaseUid){
+    const label = (MOODS.find(m=>m.key===moodKey)||{}).label || 'A feeling';
+    sendRealMessage(c, { type:'mood', mood: moodKey }, '◐ ' + label);
+    return;
+  }
   if(!wirelineThreads[id]) wirelineThreads[id] = [];
   const msg = { id: Date.now()+Math.random(), from:'me', type:'mood', mood:moodKey, ts: Date.now(), status:'sent' };
   wirelineThreads[id].push(msg);
-  $('threadComposerMood').style.display = 'none';
-  $('threadComposerNormal').style.display = 'flex';
   renderThreadMessages();
   renderWirelineList();
   saveWireline();
@@ -2525,6 +2671,9 @@ if(fbAuth){
     } else {
       authStatus('Not signed in.');
       $('authGate').classList.add('active');
+      if(threadsListUnsubscribe){ threadsListUnsubscribe(); threadsListUnsubscribe = null; }
+      if(activeThreadUnsubscribe){ activeThreadUnsubscribe(); activeThreadUnsubscribe = null; }
+      realThreadPreviews = {};
     }
   });
 } else if(!firebaseReady()){
@@ -2568,6 +2717,7 @@ async function loadRealProfile(user){
     showCallsignEdit();
   }
   loadRealConnections(user.uid);
+  startThreadsListListener();
 }
 
 async function loadProfile(){

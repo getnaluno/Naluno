@@ -11,12 +11,20 @@ the backend.
 - Callsign profile (name, tagline, handle, color, photo) — synced to Firestore
 - Presence heartbeat — your own `lastActivityTs` is written to Firestore while the
   app is open and focused, which is the exact field `computeSignal()` already reads
+- Real contacts — search anyone by handle, connect, and they show up in your real
+  Frequencies list (merged alongside demo contacts, distinguished by `isReal: true`)
+- Real Wireline — text, voice notes (size-limited without Storage, see below), moods,
+  and emotion reactions all sync live over Firestore between two real signed-in people.
+  Read receipts are driven by the actual other person opening the thread, not simulated.
 
 **Still simulated (next phases):**
-- Contacts / Frequencies — still the hardcoded array
-- Wireline messaging — still local, not backed by the `threads` collection yet
-- Band — still local, not backed by real presence documents yet
-- Calls / Band Live video — still your own camera only, no real second participant
+- Frequencies still shows demo contacts (ids 1–6) alongside real ones — not removed yet,
+  on purpose, so nothing else breaks while real contacts prove themselves out
+- Band — still local, ephemeral chat only; no real presence or real multi-person messages
+- Calls / Band Live video — still your own camera only, no real second participant, no
+  real multi-party video (that needs WebRTC + likely a media server, its own project)
+- Voice notes to real contacts are capped around 30 seconds — there's no Firebase Storage
+  bucket wired up yet, so audio has to fit inside a single Firestore document (1MB limit)
 
 Nothing above is an oversight — it's staged on purpose. Identity has to be real
 before anything built on top of it (messaging, presence between real people, calls)
@@ -84,13 +92,15 @@ so both people always resolve to the same thread document without a lookup step.
 
 ## Next phases (in order)
 
-1. **Real contacts** — replace the hardcoded `contacts` array with handle search
-   (`handles/{handle}` lookup) and a real `users` read.
-2. **Real Wireline** — swap `wirelineThreads` local state for `onSnapshot` listeners
-   on `threads/{threadId}/messages`, and route sends through `addDoc`.
-3. **Real Band** — same pattern for `bands/{bandId}/messages`, plus writing/reading
-   `bands/{bandId}/presence/{uid}` so "who's tuned in" reflects real people instead
-   of `computeSignal()` running against fake timestamps.
-4. **Real calls** — WebRTC with Firestore as the signaling channel (offer/answer/ICE
+1. **Remove demo contacts** — now that real search/connect and real Wireline both work,
+   retire the hardcoded `contacts` array entries (ids 1–6) once you've tested enough
+   with real accounts to trust it.
+2. **Real Band** — same live pattern as Wireline now uses, applied to
+   `bands/{bandId}/messages` and `bands/{bandId}/presence/{uid}`, so "who's tuned in"
+   reflects real people instead of `computeSignal()` running against fake timestamps.
+3. **Real calls** — WebRTC with Firestore as the signaling channel (offer/answer/ICE
    candidates as documents), plus a TURN server for people behind restrictive NATs.
-   This is the hardest phase — deliberately last.
+   Multi-party Band Live (closer to a real video-call room) needs this same foundation
+   plus likely a media server once more than 2–3 people are live at once — its own project.
+4. **Voice note storage** — add a Firebase Storage bucket so real voice notes aren't
+   capped by Firestore's 1MB document limit.
