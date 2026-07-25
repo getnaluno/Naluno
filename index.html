@@ -1022,6 +1022,9 @@ const bands = [
   { id:1, name:'Late Frequency', vibe:'aurora', memberIds:[1,2,3] },
   { id:2, name:'Old Static', vibe:'stars', memberIds:[3,4,5,6] },
 ];
+// Real bands (Firestore-backed, shared between real accounts) use ids starting far
+// above the demo bands' 1/2, same collision-avoidance pattern as real contacts.
+let nextRealBandLocalId = 2000000;
 const bandVibePreviewGradient = {
   aurora: 'linear-gradient(160deg,#7C4DFF,#00E5FF)',
   studio: 'linear-gradient(160deg,#FFB86B,#FF7676)',
@@ -1035,10 +1038,23 @@ function liveBandMembers(band){
 }
 function renderBandList(){
   $('bandList').innerHTML = bands.map(b=>{
+    const grad = bandVibePreviewGradient[b.vibe] || bandVibePreviewGradient.aurora;
+    if(b.isReal){
+      const avatars = (b.memberInfo||[]).slice(0,4).map(m=>`<div class="avatar" style="width:28px;height:28px;font-size:10px;background:${m.color};">${m.initials}</div>`).join('');
+      return `<div class="band-card" data-band="${b.id}">
+        <div class="band-card-bg" style="background:${grad};"></div>
+        <div class="band-card-inner">
+          <div class="band-name">${escapeHtml(b.name)}</div>
+          <div class="band-live-row">
+            <div class="band-avatar-stack">${avatars}</div>
+            <span class="band-live-text">Tap to see who's tuned in</span>
+          </div>
+        </div>
+      </div>`;
+    }
     const live = liveBandMembers(b);
     const avatars = live.slice(0,4).map(c=>`<div class="avatar" style="width:28px;height:28px;font-size:10px;background:${c.color};">${c.initials}</div>`).join('');
     const text = live.length ? live.length + (live.length===1 ? ' person tuned in' : ' people tuned in') : 'Quiet right now';
-    const grad = bandVibePreviewGradient[b.vibe] || bandVibePreviewGradient.aurora;
     return `<div class="band-card" data-band="${b.id}">
       <div class="band-card-bg" style="background:${grad};"></div>
       <div class="band-card-inner">
@@ -1055,6 +1071,31 @@ function renderBandList(){
   });
 }
 renderBandList();
+
+/* ---------------- REAL BAND (Firestore-backed rooms) ----------------
+   A Band becomes real the moment everyone picked for it is a real connection — it's
+   created as an actual bands/{id} document with real memberUids, not a local array
+   entry. Presence is a real subcollection (who's actually tuned in right now, not a
+   signal-strength guess), and messages are real too — no simulated banter here, ever. */
+function addRealBandToLocalList(firestoreId, name, vibe, memberInfo, createdBy){
+  if(bands.some(b=>b.firestoreId===firestoreId)) return;
+  bands.push({ id: nextRealBandLocalId++, firestoreId, name, vibe, createdBy, isReal:true, memberInfo });
+}
+async function loadRealBands(uid){
+  if(!fbDb) return;
+  try{
+    const snap = await fbDb.collection('bands').where('memberUids','array-contains',uid).get();
+    snap.forEach(doc=>{
+      const d = doc.data();
+      const memberInfo = (d.memberUids||[]).filter(u=>u!==uid).map(u=>{
+        const c = contacts.find(cc=>cc.firebaseUid===u);
+        return c ? { uid:u, name:c.name, color:c.color, initials:c.initials } : { uid:u, name:'Someone', color:'#8B90A8', initials:'?' };
+      });
+      addRealBandToLocalList(doc.id, d.name, d.vibe, memberInfo, d.createdBy);
+    });
+    renderBandList();
+  }catch(e){ /* real bands just won't preload this session */ }
+}
 
 async function saveBands(){
   if(!storageAvailable) return;
@@ -1129,6 +1170,12 @@ $('bandNameInput').addEventListener('input', updateCreateBandButton);
 $('createBandBtn').onclick = ()=>{
   if($('createBandBtn').disabled) return;
   const name = $('bandNameInput').value.trim();
+  const selected = Array.from(bandComposerMembers).map(id=>contacts.find(c=>c.id===id)).filter(Boolean);
+  const allReal = currentUser && fbDb && selected.length>0 && selected.every(c=>c.isReal && c.firebaseUid);
+  if(allReal){
+    createRealBand(name, bandComposerVibe, selected);
+    return;
+  }
   const id = Date.now();
   bands.push({ id, name, vibe: bandComposerVibe, memberIds: Array.from(bandComposerMembers) });
   saveBands();
@@ -1136,6 +1183,24 @@ $('createBandBtn').onclick = ()=>{
   closeBandComposer();
   toast('Started ' + name);
 };
+async function createRealBand(name, vibe, memberContacts){
+  try{
+    const memberUids = memberContacts.map(c=>c.firebaseUid);
+    const docRef = await fbDb.collection('bands').add({
+      name, vibe,
+      memberUids: [...memberUids, currentUser.uid],
+      createdBy: currentUser.uid,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    const memberInfo = memberContacts.map(c=>({ uid:c.firebaseUid, name:c.name, color:c.color, initials:c.initials }));
+    addRealBandToLocalList(docRef.id, name, vibe, memberInfo, currentUser.uid);
+    renderBandList();
+    closeBandComposer();
+    toast('Started ' + name);
+  }catch(e){
+    toast(e.message || 'Couldn\u2019t start this frequency');
+  }
+}
 
 function escapeHtml(str){
   return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
@@ -2241,18 +2306,64 @@ function downsampleWaveform(samples, targetCount){
 function showRecordingUI(){ $('threadComposerNormal').style.display='none'; $('threadComposerMood').style.display='none'; $('threadComposerRecording').style.display='flex'; }
 function hideRecordingUI(){ $('threadComposerNormal').style.display='flex'; $('threadComposerRecording').style.display='none'; }
 
+/* Voice notes are a solo recording, not a live call — requestHighQualityStream's
+   echoCancellation/noiseSuppression are tuned for two-way conversations. Applied to
+   one person talking alone, echo cancellation has nothing real to cancel (that's the
+   "big hall" artifact), and noise suppression's gating on a quiet signal is what
+   clicking sounds like. Voice notes get their own, deliberately different constraints. */
+async function requestVoiceRecordingStream(){
+  return navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:true, channelCount:1 }
+  });
+}
+
 async function startVoiceRecording(){
   if(!activeThreadContactId) return;
   if(!window.MediaRecorder || !navigator.mediaDevices){ toast('Voice notes aren\u2019t supported in this browser'); return; }
   try{
-    voiceStream = await requestHighQualityStream({ video:false });
+    voiceStream = await requestVoiceRecordingStream();
   }catch(e){
     toast('Microphone unavailable — check your browser permissions');
     return;
   }
   voiceChunks = []; voiceSamples = [];
+
+  // Boost and soft-limit the signal ourselves — this is the real fix for "quiet even
+  // at max device volume," which the browser's built-in gain control wasn't handling.
+  // A compressor right after the boost stops that gain from clipping on loud syllables.
+  let recordingStream = voiceStream;
   try{
-    voiceRecorder = new MediaRecorder(voiceStream);
+    voiceAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const source = voiceAudioCtx.createMediaStreamSource(voiceStream);
+    const gainNode = voiceAudioCtx.createGain();
+    gainNode.gain.value = 1.8;
+    const compressor = voiceAudioCtx.createDynamicsCompressor();
+    compressor.threshold.value = -18; compressor.knee.value = 24;
+    compressor.ratio.value = 8; compressor.attack.value = 0.003; compressor.release.value = 0.25;
+    const dest = voiceAudioCtx.createMediaStreamDestination();
+    source.connect(gainNode); gainNode.connect(compressor); compressor.connect(dest);
+    recordingStream = dest.stream;
+
+    // Waveform sampling now taps the same boosted/limited signal that's actually being
+    // recorded, so what you see matches what you'll hear.
+    const analyser = voiceAudioCtx.createAnalyser();
+    analyser.fftSize = 256;
+    compressor.connect(analyser);
+    const data = new Uint8Array(analyser.fftSize);
+    voiceSampleInterval = setInterval(()=>{
+      analyser.getByteTimeDomainData(data);
+      let sum = 0;
+      for(let i=0;i<data.length;i++){ const v = (data[i]-128)/128; sum += v*v; }
+      voiceSamples.push(Math.min(1, Math.sqrt(sum/data.length)*4));
+    }, 120);
+  }catch(e){
+    // Web Audio graph failed for some reason — better to record the raw mic stream
+    // than lose voice notes entirely.
+    recordingStream = voiceStream;
+  }
+
+  try{
+    voiceRecorder = new MediaRecorder(recordingStream);
   }catch(e){
     toast('Voice notes aren\u2019t supported in this browser');
     voiceStream.getTracks().forEach(t=>t.stop()); voiceStream = null;
@@ -2268,21 +2379,6 @@ async function startVoiceRecording(){
     $('recordingTimer').textContent = formatDuration(secs);
     if(secs >= VOICE_MAX_SECONDS){ toast('Reached the 2-minute limit'); confirmVoiceRecording(); }
   }, 250);
-  // Real amplitude sampling — this drives the waveform drawn on the sent bubble.
-  try{
-    voiceAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const source = voiceAudioCtx.createMediaStreamSource(voiceStream);
-    const analyser = voiceAudioCtx.createAnalyser();
-    analyser.fftSize = 256;
-    source.connect(analyser);
-    const data = new Uint8Array(analyser.fftSize);
-    voiceSampleInterval = setInterval(()=>{
-      analyser.getByteTimeDomainData(data);
-      let sum = 0;
-      for(let i=0;i<data.length;i++){ const v = (data[i]-128)/128; sum += v*v; }
-      voiceSamples.push(Math.min(1, Math.sqrt(sum/data.length)*4));
-    }, 120);
-  }catch(e){ /* amplitude sampling is a nice-to-have, not required */ }
 }
 function cleanupVoiceRecording(){
   clearInterval(voiceTimerInterval); voiceTimerInterval = null;
@@ -2673,6 +2769,8 @@ if(fbAuth){
       $('authGate').classList.add('active');
       if(threadsListUnsubscribe){ threadsListUnsubscribe(); threadsListUnsubscribe = null; }
       if(activeThreadUnsubscribe){ activeThreadUnsubscribe(); activeThreadUnsubscribe = null; }
+      if(bandPresenceUnsub){ bandPresenceUnsub(); bandPresenceUnsub = null; }
+      if(bandMessagesUnsub){ bandMessagesUnsub(); bandMessagesUnsub = null; }
       realThreadPreviews = {};
     }
   });
@@ -2718,6 +2816,7 @@ async function loadRealProfile(user){
   }
   loadRealConnections(user.uid);
   startThreadsListListener();
+  loadRealBands(user.uid);
 }
 
 async function loadProfile(){
@@ -3442,11 +3541,15 @@ pip.addEventListener('pointercancel', endPipDrag); // otherwise a hijacked gestu
 /* ---------------- BAND ROOM ---------------- */
 let activeBandId = null;
 let amTunedIn = false;
-let bandMessages = {}; // { [bandId]: [{ fromMe, contactId, text, ts }] } — ephemeral, in-memory only.
-                        // A Band is a moment, not a record — unlike Wireline, nothing here persists.
+let bandMessages = {}; // { [bandId]: [{ fromMe, contactId?, fromUid?, text, ts }] } — ephemeral, in-memory only.
+                        // A Band is a moment, not a record — unlike Wireline, nothing here persists,
+                        // real or demo alike, on purpose.
 let bandAmbientTimer = null;
 let bandAnimFrame = null;
 let bandAnimStart = performance.now();
+let bandPresenceUnsub = null;
+let bandMessagesUnsub = null;
+let realBandLiveMembers = []; // resolved {uid,name,color,initials} for who's actually tuned in, real bands only
 
 function activeBand(){ return bands.find(b=>b.id===activeBandId); }
 
@@ -3454,8 +3557,15 @@ function bandMessageHtml(m){
   if(m.fromMe){
     return `<div class="msg-row me"><div class="msg-bubble">${escapeHtml(m.text)}</div><div class="msg-time">${formatClockTime(m.ts)}</div></div>`;
   }
-  const c = contacts.find(x=>x.id===m.contactId);
-  const name = c ? c.name.split(' ')[0] : 'Someone';
+  let name = 'Someone';
+  if(m.fromUid){
+    const b = activeBand();
+    const info = b && (b.memberInfo||[]).find(mm=>mm.uid===m.fromUid);
+    name = info ? info.name.split(' ')[0] : 'Someone';
+  } else {
+    const c = contacts.find(x=>x.id===m.contactId);
+    name = c ? c.name.split(' ')[0] : 'Someone';
+  }
   return `<div class="msg-row them"><div style="font-size:10.5px; color:var(--text-dim); margin-bottom:3px; padding:0 3px;">${escapeHtml(name)}</div><div class="msg-bubble">${escapeHtml(m.text)}</div><div class="msg-time">${formatClockTime(m.ts)}</div></div>`;
 }
 function renderBandMessages(){
@@ -3469,11 +3579,11 @@ function renderBandMessages(){
 }
 function renderBandRoster(){
   const b = activeBand(); if(!b) return;
-  const live = liveBandMembers(b);
+  const live = b.isReal ? realBandLiveMembers : liveBandMembers(b);
   let html = live.map(c=>`
     <div style="display:flex; flex-direction:column; align-items:center; gap:5px; flex-shrink:0;">
-      <div class="avatar" style="width:44px;height:44px;font-size:14px;background:${c.color};position:relative;">${c.initials}${signalBarsHtml(c)}</div>
-      <span style="font-size:10.5px; color:rgba(255,255,255,.75); font-family:var(--font-mono);">${escapeHtml(c.name.split(' ')[0])}</span>
+      <div class="avatar" style="width:44px;height:44px;font-size:14px;background:${c.color};position:relative;">${c.initials}${b.isReal ? '' : signalBarsHtml(c)}</div>
+      <span style="font-size:10.5px; color:rgba(255,255,255,.75); font-family:var(--font-mono);">${escapeHtml((c.name||'').split(' ')[0])}</span>
     </div>`).join('');
   if(amTunedIn){
     html += `<div style="display:flex; flex-direction:column; align-items:center; gap:5px; flex-shrink:0;">
@@ -3487,6 +3597,8 @@ function renderBandRoster(){
 }
 function refreshBandRoom(){
   if(!activeBandId) return;
+  const b = activeBand();
+  if(b && b.isReal) return; // real presence updates itself via the live Firestore listener
   renderBandRoster();
   if(amTunedIn) armBandAmbientReply(); // roster may have changed who's actually here to talk
 }
@@ -3509,11 +3621,14 @@ function stopBandAmbientAnim(){ if(bandAnimFrame){ cancelAnimationFrame(bandAnim
 
 function clearBandAmbientTimer(){ clearTimeout(bandAmbientTimer); bandAmbientTimer = null; }
 /* While you're tuned in, whoever's actually here might say something — never scripted to
-   you specifically, since a Band isn't a conversation aimed at you the way Wireline is. */
+   you specifically, since a Band isn't a conversation aimed at you the way Wireline is.
+   Demo bands only — a real band never gets simulated banter, since real people might
+   actually be there and faking a voice among them would be exactly the kind of lie
+   this app has avoided everywhere else. */
 function armBandAmbientReply(){
   clearBandAmbientTimer();
   const b = activeBand();
-  if(!b || !amTunedIn) return;
+  if(!b || b.isReal || !amTunedIn) return;
   const live = liveBandMembers(b);
   if(live.length===0) return; // nothing to simulate in an empty room
   bandAmbientTimer = setTimeout(()=>{
@@ -3538,8 +3653,40 @@ function openBandRoom(id){
   $('bandTuneBtn').textContent = 'Tune in';
   $('bandTuneBtn').style.background = 'var(--mint)'; $('bandTuneBtn').style.color = '#0D0F17';
   $('bandLiveBtn').classList.remove('active');
-  renderBandRoster();
-  renderBandMessages();
+
+  if(bandPresenceUnsub){ bandPresenceUnsub(); bandPresenceUnsub = null; }
+  if(bandMessagesUnsub){ bandMessagesUnsub(); bandMessagesUnsub = null; }
+
+  if(b.isReal && b.firestoreId && fbDb && currentUser){
+    realBandLiveMembers = [];
+    renderBandRoster();
+    renderBandMessages();
+    const bandRef = fbDb.collection('bands').doc(b.firestoreId);
+    bandPresenceUnsub = bandRef.collection('presence').onSnapshot(snap=>{
+      realBandLiveMembers = snap.docs
+        .filter(d=>d.id !== currentUser.uid)
+        .map(d=>{
+          const info = (b.memberInfo||[]).find(m=>m.uid===d.id);
+          return info || { uid:d.id, name:'Someone', color:'#8B90A8', initials:'?' };
+        });
+      renderBandRoster();
+    }, ()=>{ /* presence just won't update this session */ });
+    bandMessagesUnsub = bandRef.collection('messages').orderBy('ts','asc').onSnapshot(snap=>{
+      bandMessages[id] = snap.docs.map(d=>{
+        const m = d.data();
+        return {
+          fromMe: m.from === currentUser.uid,
+          fromUid: m.from,
+          text: m.text,
+          ts: m.ts && m.ts.toMillis ? m.ts.toMillis() : Date.now(),
+        };
+      });
+      renderBandMessages();
+    }, ()=>{ /* messages just won't sync this session */ });
+  } else {
+    renderBandRoster();
+    renderBandMessages();
+  }
   $('bandRoom').classList.add('active');
   startBandAmbientAnim(b.vibe);
 }
@@ -3547,6 +3694,12 @@ function closeBandRoom(){
   stopBandAmbientAnim();
   clearBandAmbientTimer();
   stopBandLive();
+  const b = activeBand();
+  if(amTunedIn && b && b.isReal && b.firestoreId && fbDb && currentUser){
+    fbDb.collection('bands').doc(b.firestoreId).collection('presence').doc(currentUser.uid).delete().catch(()=>{});
+  }
+  if(bandPresenceUnsub){ bandPresenceUnsub(); bandPresenceUnsub = null; }
+  if(bandMessagesUnsub){ bandMessagesUnsub(); bandMessagesUnsub = null; }
   $('bandRoom').classList.remove('active');
   amTunedIn = false;
   activeBandId = null;
@@ -3554,14 +3707,20 @@ function closeBandRoom(){
 $('bandRoomBack').onclick = closeBandRoom;
 /* Leaving is the only removal action there is, for whoever tuned in and whoever started it
    alike. It only ever ends your own access to this frequency, never anyone else's — there's
-   no concept of a creator with special standing to end it for other people. */
+   no concept of a creator with special standing to end it for other people. For a real
+   band this means removing yourself from memberUids, not deleting anyone else's access. */
 $('leaveBandForGoodLink').onclick = ()=>{
   const b = activeBand(); if(!b) return;
   const name = b.name;
+  if(b.isReal && b.firestoreId && fbDb && currentUser){
+    fbDb.collection('bands').doc(b.firestoreId).update({
+      memberUids: firebase.firestore.FieldValue.arrayRemove(currentUser.uid)
+    }).catch(()=>{});
+  }
   const idx = bands.findIndex(x=>x.id===b.id);
   if(idx>=0) bands.splice(idx,1);
   delete bandMessages[b.id];
-  saveBands();
+  if(!b.isReal) saveBands();
   closeBandRoom();
   renderBandList();
   toast('Left ' + name);
@@ -3572,9 +3731,19 @@ $('bandTuneBtn').onclick = ()=>{
   $('bandTuneBtn').textContent = amTunedIn ? 'Leave' : 'Tune in';
   $('bandTuneBtn').style.background = amTunedIn ? 'var(--surface-2)' : 'var(--mint)';
   $('bandTuneBtn').style.color = amTunedIn ? 'var(--text)' : '#0D0F17';
+  const b = activeBand();
+  if(b && b.isReal && b.firestoreId && fbDb && currentUser){
+    const presenceRef = fbDb.collection('bands').doc(b.firestoreId).collection('presence').doc(currentUser.uid);
+    if(amTunedIn) presenceRef.set({ tunedInAt: firebase.firestore.FieldValue.serverTimestamp() }).catch(()=>{});
+    else presenceRef.delete().catch(()=>{});
+  } else if(amTunedIn){
+    armBandAmbientReply();
+  } else {
+    clearBandAmbientTimer();
+  }
+  if(!amTunedIn) stopBandLive();
   renderBandRoster();
   renderBandList();
-  if(amTunedIn) armBandAmbientReply(); else { clearBandAmbientTimer(); stopBandLive(); }
 };
 
 /* ---------------- BAND LIVE (optional camera) ----------------
@@ -3623,6 +3792,17 @@ function sendBandMessage(){
   const text = $('bandInput').value.trim();
   if(!text || !activeBandId) return;
   if(!amTunedIn){ toast('Tune in first to say something'); return; }
+  const b = activeBand();
+  if(b && b.isReal && b.firestoreId && fbDb && currentUser){
+    fbDb.collection('bands').doc(b.firestoreId).collection('messages').add({
+      from: currentUser.uid,
+      text,
+      ts: firebase.firestore.FieldValue.serverTimestamp(),
+    }).catch(e=> toast(e.message || 'Couldn\u2019t send'));
+    $('bandInput').value = '';
+    markMyActivity();
+    return;
+  }
   if(!bandMessages[activeBandId]) bandMessages[activeBandId] = [];
   bandMessages[activeBandId].push({ fromMe:true, text, ts: Date.now() });
   $('bandInput').value = '';
