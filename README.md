@@ -16,15 +16,45 @@ the backend.
 - Real Wireline — text, voice notes (size-limited without Storage, see below), moods,
   and emotion reactions all sync live over Firestore between two real signed-in people.
   Read receipts are driven by the actual other person opening the thread, not simulated.
+- Real Band — presence and messages are both live Firestore data for any Band made of
+  real connections. No simulated banter in a real Band, ever.
+- Real 1:1 calls — WebRTC with Firestore as the signaling channel (offer/answer/ICE
+  candidates as documents). Actually connects two real people's audio/video.
+  **No TURN server is configured** — only public STUN — so most direct connections
+  work, but two people both behind strict/symmetric NATs (common on some corporate
+  networks) may fail to connect to each other specifically. See "Adding a TURN server"
+  below when that becomes a real problem for real users.
 
-**Still simulated (next phases):**
-- Frequencies still shows demo contacts (ids 1–6) alongside real ones — not removed yet,
-  on purpose, so nothing else breaks while real contacts prove themselves out
-- Band — still local, ephemeral chat only; no real presence or real multi-person messages
-- Calls / Band Live video — still your own camera only, no real second participant, no
-  real multi-party video (that needs WebRTC + likely a media server, its own project)
+**Still simulated / not built (next phases):**
+- Real Broadcast (posts visible to real connections) isn't built — Broadcast is
+  currently just your own posts, nothing shared between real accounts yet
+- Multi-party Band Live (closer to an actual video-call room for lessons, screen share)
+  needs a different foundation than 1:1 calls — likely a media server (SFU) once more
+  than 2–3 people are live at once, since mesh peer-to-peer degrades badly past that
 - Voice notes to real contacts are capped around 30 seconds — there's no Firebase Storage
   bucket wired up yet, so audio has to fit inside a single Firestore document (1MB limit)
+
+## Adding a TURN server (when direct connections start failing for real users)
+
+STUN alone (what's configured now) only helps two peers discover each other's public
+address — it doesn't relay traffic. If someone's on a network that blocks direct
+peer-to-peer connections outright (many offices, some mobile carriers), the call will
+just never connect, with no clear error beyond "no answer."
+
+To fix that, add a TURN server entry to `RTC_CONFIG` in `index.html`:
+```js
+const RTC_CONFIG = {
+  iceServers: [
+    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+    { urls: 'turn:your.turn.server:3478', username: 'user', credential: 'pass' },
+  ],
+};
+```
+Options to actually get one: [Twilio Network Traversal Service](https://www.twilio.com/docs/stun-turn),
+[Xirsys](https://xirsys.com), or [metered.ca](https://www.metered.ca/tools/openrelay/)
+(has a small free tier, good for testing). These credentials are usually short-lived
+tokens fetched from your own backend in a production setup, rather than a static value
+committed to the repo — a reasonable hardening step once this matters for real.
 
 Nothing above is an oversight — it's staged on purpose. Identity has to be real
 before anything built on top of it (messaging, presence between real people, calls)
@@ -80,27 +110,29 @@ can be. See "Next phases" below.
 ```
 users/{uid}          → handle, name, tagline, color, photoURL, lastActivityTs
 handles/{handle}     → uid          (enforces unique @handles)
-threads/{threadId}   → participants: [uidA, uidB]
+users/{uid}/connections/{otherUid} → name, handle, color, connectedAt
+threads/{threadId}   → participants: [uidA, uidB], lastMessageText/At/From, readBy
   /messages/{id}      → from, type, text/mood, ts, status, reaction
 bands/{bandId}       → name, vibe, memberUids, createdBy
   /presence/{uid}     → tunedInAt   (who's actually live right now)
   /messages/{id}       → ephemeral room chat
+calls/{callId}       → callerUid, calleeUid, status, offer, answer, createdAt
+  /callerCandidates/{id}, /calleeCandidates/{id} → ICE candidates
 ```
 
 `threadId` is the two participants' uids, sorted and joined with `_` — deterministic,
 so both people always resolve to the same thread document without a lookup step.
+`callId` is a fresh random doc ID per attempt — unlike a thread, a call isn't a
+persistent channel; every attempt gets its own document.
 
 ## Next phases (in order)
 
-1. **Remove demo contacts** — now that real search/connect and real Wireline both work,
-   retire the hardcoded `contacts` array entries (ids 1–6) once you've tested enough
-   with real accounts to trust it.
-2. **Real Band** — same live pattern as Wireline now uses, applied to
-   `bands/{bandId}/messages` and `bands/{bandId}/presence/{uid}`, so "who's tuned in"
-   reflects real people instead of `computeSignal()` running against fake timestamps.
-3. **Real calls** — WebRTC with Firestore as the signaling channel (offer/answer/ICE
-   candidates as documents), plus a TURN server for people behind restrictive NATs.
-   Multi-party Band Live (closer to a real video-call room) needs this same foundation
-   plus likely a media server once more than 2–3 people are live at once — its own project.
-4. **Voice note storage** — add a Firebase Storage bucket so real voice notes aren't
+1. **Real Broadcast** — posts visible to real connections, not just your own signal.
+2. **A TURN server** — see "Adding a TURN server" above. Worth doing as soon as a real
+   call fails to connect between two real users on restrictive networks.
+3. **Voice note storage** — add a Firebase Storage bucket so real voice notes aren't
    capped by Firestore's 1MB document limit.
+4. **Multi-party Band Live** — closer to an actual video-call room (for lessons, screen
+   share). Needs a different foundation than 1:1 calls: likely a media server (SFU)
+   once more than 2–3 people are live at once, since mesh peer-to-peer degrades badly
+   past that. Its own project, deliberately not folded into the 1:1 call work above.

@@ -53,6 +53,25 @@ service cloud.firestore {
       }
     }
 
+    // ---- Real calls (WebRTC signaling via Firestore) ----
+    // Each call is its own document — unlike threads, calls aren't a persistent channel;
+    // every attempt is a fresh doc. Candidate subcollections stay permissive (any signed-in
+    // user) rather than doing an extra get() lookup per ICE candidate write; the callId
+    // itself is an unguessable random doc ID, the same trust level the rest of this app
+    // currently runs on.
+    match /calls/{callId} {
+      allow read: if isSignedIn() && (request.auth.uid == resource.data.callerUid || request.auth.uid == resource.data.calleeUid);
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.callerUid;
+      allow update: if isSignedIn() && (request.auth.uid == resource.data.callerUid || request.auth.uid == resource.data.calleeUid);
+
+      match /callerCandidates/{candId} {
+        allow read, create: if isSignedIn();
+      }
+      match /calleeCandidates/{candId} {
+        allow read, create: if isSignedIn();
+      }
+    }
+
     // ---- Band (live shared frequency) ----
     match /bands/{bandId} {
       allow read: if isSignedIn();
