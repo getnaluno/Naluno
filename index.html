@@ -197,8 +197,8 @@
   .cam-blur{ filter: blur(26px) saturate(1.15) brightness(.9); transform: scaleX(-1) scale(1.2); }
   .cam-bg-canvas{ position:absolute; inset:0; width:100%; height:100%; display:block; }
   .cam-sharp{
-    -webkit-mask-image: radial-gradient(ellipse 62% 78% at 50% 44%, black 52%, transparent 82%);
-    mask-image: radial-gradient(ellipse 62% 78% at 50% 44%, black 52%, transparent 82%);
+    -webkit-mask-image: radial-gradient(ellipse 84% 94% at 50% 44%, black 76%, transparent 90%);
+    mask-image: radial-gradient(ellipse 84% 94% at 50% 44%, black 76%, transparent 90%);
   }
   .preset-tint{ position:absolute; inset:0; mix-blend-mode:overlay; opacity:.6; transition: background 1s ease; }
   .cam-empty-fallback{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:8px; color:var(--text-dim); font-family:var(--font-mono); font-size:11.5px; text-align:center; padding:0 26px; }
@@ -400,6 +400,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
 <script src="firebase-config.js"></script>
 <body>
 
@@ -547,6 +548,12 @@
           <div class="switch on" id="autoTintToggle"></div>
         </div>
       </div>
+
+      <div class="greenroom-setting">
+        <div class="greenroom-setting-head"><span class="dot"></span><span class="greenroom-setting-title">Call notifications</span></div>
+        <div class="greenroom-setting-sub" id="callNotifStatus">Get notified of an incoming call even when Naluno isn't open. Needs your permission once.</div>
+        <button class="save-btn" id="enableCallNotifsBtn" style="margin:14px 0 0; background:var(--surface-2); color:var(--text); border:1px solid var(--line);">Enable call notifications</button>
+      </div>
     </div>
   </section>
 
@@ -688,7 +695,7 @@
         <video class="cam-blur" id="pipBlur" autoplay playsinline muted style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1) scale(1.2);filter:blur(18px) saturate(1.15) brightness(.9);"></video>
         <div class="preset-tint" id="pipTint" style="display:none;"></div>
         <div class="signature-glow" id="pipSignatureGlow"></div>
-        <video class="cam-sharp" id="pipSharp" autoplay playsinline muted style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);-webkit-mask-image:radial-gradient(ellipse 62% 78% at 50% 44%, black 52%, transparent 82%);mask-image:radial-gradient(ellipse 62% 78% at 50% 44%, black 52%, transparent 82%);"></video>
+        <video class="cam-sharp" id="pipSharp" autoplay playsinline muted style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);-webkit-mask-image:radial-gradient(ellipse 84% 94% at 50% 44%, black 76%, transparent 90%);mask-image:radial-gradient(ellipse 84% 94% at 50% 44%, black 76%, transparent 90%);"></video>
         <div class="mute-badge"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M12 15a3 3 0 003-3V6a3 3 0 10-6 0v6a3 3 0 003 3z" stroke="#fff" stroke-width="2.4"/><path d="M3 3l18 18" stroke="#fff" stroke-width="2.4"/></svg></div>
       </div>
       <div class="controls-bar">
@@ -2617,7 +2624,7 @@ function hexToRgba(hex, alpha){
 function updateSignatureGlow(){
   const color = (typeof currentProfile !== 'undefined' && currentProfile && currentProfile.color) ? currentProfile.color : '#7CFFB2';
   const { tier } = computeSignal({ lastActivityTs: myLastActivityTs });
-  const gradient = `radial-gradient(ellipse 66% 84% at 50% 44%, transparent 58%, ${hexToRgba(color,0.6)} 74%, transparent 92%)`;
+  const gradient = `radial-gradient(ellipse 88% 98% at 50% 44%, transparent 74%, ${hexToRgba(color,0.6)} 84%, transparent 96%)`;
   ['camSignatureGlow','pipSignatureGlow','bandSignatureGlow'].forEach(id=>{
     const el = $(id); if(!el) return;
     el.style.background = gradient;
@@ -2877,6 +2884,40 @@ $('saveProfileBtn').onclick = async ()=>{
   }
 };
 $('greenroomToggle').onclick = function(){ this.classList.toggle('on'); greenroomEnabled = this.classList.contains('on'); toast(greenroomEnabled?'Greenroom enabled':'Greenroom disabled'); };
+
+/* ---------------- CALL NOTIFICATIONS (push, works even when the app is closed) ----------------
+   A Firestore listener only runs while this tab's JavaScript is actually executing —
+   there's no way around that from the client alone. Real background ringing needs a
+   server to push a notification, which is what this wires up: register this device's
+   token, and a Cloud Function (see functions/index.js) sends the actual push when a
+   real call document is created. Requires the Firebase Blaze plan for that function —
+   Cloud Functions aren't available on the free Spark plan at all. */
+$('enableCallNotifsBtn').onclick = async ()=>{
+  if(!('Notification' in window) || !navigator.serviceWorker || !fbDb || !currentUser){
+    toast('Notifications aren\u2019t supported in this browser');
+    return;
+  }
+  if(typeof VAPID_KEY === 'undefined' || !VAPID_KEY || VAPID_KEY === 'YOUR_VAPID_KEY'){
+    toast('Add your VAPID key to firebase-config.js first — see README');
+    return;
+  }
+  try{
+    const permission = await Notification.requestPermission();
+    if(permission !== 'granted'){
+      $('callNotifStatus').textContent = 'Notifications blocked — enable them in your browser\u2019s site settings to use this.';
+      return;
+    }
+    const registration = await navigator.serviceWorker.ready;
+    const messaging = firebase.messaging();
+    const token = await messaging.getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
+    if(!token){ toast('Couldn\u2019t get a notification token — try again'); return; }
+    await fbDb.collection('users').doc(currentUser.uid).set({ fcmToken: token }, { merge:true });
+    $('callNotifStatus').textContent = 'Call notifications are on — you\u2019ll be notified even with the app closed.';
+    toast('Call notifications enabled');
+  }catch(e){
+    toast(e.message || 'Couldn\u2019t enable notifications');
+  }
+};
 $('autoTintToggle').onclick = function(){ this.classList.toggle('on'); };
 
 /* ---------------- CAMERA + GREENROOM ---------------- */
@@ -3467,15 +3508,23 @@ let incomingCallUnsub = null;
 function createPeerConnection(){
   const pc = new RTCPeerConnection(RTC_CONFIG);
   pc.ontrack = e=>{
-    if(e.track.kind !== 'video') return; // audio-only tracks shouldn't blank out the avatar
     const remoteStream = e.streams[0];
-    $('remoteVideo').srcObject = remoteStream;
-    $('remoteVideo').style.display = 'block';
-    $('remotePlaceholder').style.display = 'none';
-    e.track.onended = ()=>{
-      $('remoteVideo').style.display = 'none';
-      $('remotePlaceholder').style.display = 'flex';
-    };
+    const videoEl = $('remoteVideo');
+    // Always attach the stream so audio plays even on an audio-only call (camera off) —
+    // previously this only happened inside the video-track branch below, which meant
+    // an audio track arriving alone (or before its matching video track) played nothing.
+    if(videoEl.srcObject !== remoteStream){
+      videoEl.srcObject = remoteStream;
+      videoEl.play().catch(()=>{ /* most browsers allow this post-gesture; ignore if blocked */ });
+    }
+    if(e.track.kind === 'video'){
+      videoEl.style.display = 'block';
+      $('remotePlaceholder').style.display = 'none';
+      e.track.onended = ()=>{
+        videoEl.style.display = 'none';
+        $('remotePlaceholder').style.display = 'flex';
+      };
+    }
   };
   if(stream){ stream.getTracks().forEach(t => pc.addTrack(t, stream)); }
   return pc;
@@ -3572,6 +3621,7 @@ function startOutgoingCall(contactId){
    The answer arriving (caught in the call-doc listener below) is what actually
    connects the call — nothing here simulates that part anymore. */
 async function startRealCall(c){
+  if(!stream) await enableCamera(); // must exist before createPeerConnection adds tracks
   iAmCaller = true;
   remoteDescriptionSet = false;
   pendingRemoteCandidates = [];
@@ -3725,6 +3775,7 @@ $('acceptIncoming').onclick = async ()=>{
   stopRingtone();
   if(!activeCallId || !fbDb){ toast('That call is no longer available'); closeCallOverlayAndStopCamera(); return; }
   try{
+    if(!stream) await enableCamera(); // the actual bug: accepting before this resolved meant no local tracks ever got added
     const callRef = fbDb.collection('calls').doc(activeCallId);
     const doc = await callRef.get();
     const data = doc.data();

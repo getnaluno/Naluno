@@ -105,10 +105,48 @@ can be. See "Next phases" below.
 2. Repo **Settings → Pages → Deploy from branch → main → / (root)**.
 3. Your app is live at `https://yourname.github.io/naluno` within a minute or two.
 
+## Enabling call notifications (rings even with the app closed)
+
+This is a bigger step than everything else in this README — it needs a real server-side
+piece (a Cloud Function), which means **upgrading your Firebase project to the Blaze
+(pay-as-you-go) plan**. Cloud Functions don't run at all on the free Spark plan,
+regardless of whether you ever use enough to actually be billed for it (this workload
+is normally well within the free monthly allowance). It also needs Node.js and the
+Firebase CLI installed on a computer — this one specific piece can't be done through
+GitHub's website the way everything else so far has been.
+
+**1. Upgrade to Blaze.** Firebase console → your project → the plan name near the
+bottom of the left sidebar → Modify plan → Blaze. Requires a billing account, but
+functions this small (one trigger, low volume) typically cost nothing.
+
+**2. Generate a Web Push certificate (VAPID key).** Firebase console → ⚙️ Project
+settings → Cloud Messaging tab → Web configuration → Web Push certificates →
+Generate key pair. Copy the key.
+
+**3. Paste that key into `firebase-config.js`** as the `VAPID_KEY` value, replacing
+the placeholder. Commit to GitHub like any other change here.
+
+**4. Install the Firebase CLI and deploy the function** (needs Node.js installed):
+```bash
+npm install -g firebase-tools
+firebase login
+firebase init functions   # choose "Use an existing project" → your Naluno project
+                          # when it asks to overwrite functions/index.js and package.json,
+                          # say NO — this repo's functions/ folder already has the real code
+firebase deploy --only functions
+```
+
+**5. In the app, go to Callsign → Call notifications → Enable call notifications.**
+Accept the browser's permission prompt. That registers your device's token in Firestore.
+
+Once both people testing have done step 5, a real call between them will trigger a real
+push notification through the Cloud Function — reaching a closed tab or a phone with
+the browser backgrounded, the same way a real phone call would.
+
 ## Data model
 
 ```
-users/{uid}          → handle, name, tagline, color, photoURL, lastActivityTs
+users/{uid}          → handle, name, tagline, color, photoURL, lastActivityTs, fcmToken
 handles/{handle}     → uid          (enforces unique @handles)
 users/{uid}/connections/{otherUid} → name, handle, color, connectedAt
 threads/{threadId}   → participants: [uidA, uidB], lastMessageText/At/From, readBy

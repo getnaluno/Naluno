@@ -1,8 +1,39 @@
-// Minimal service worker. Its only job right now is to exist and register —
+// Minimal service worker. Its core job is still just existing and registering —
 // that's what makes Chrome/Edge/Android consider Naluno installable at all.
-// A real offline-caching strategy (cache the shell, fall back when offline) is a
-// natural next step once the app itself has stabilized, not before.
+// It also now handles background push notifications for incoming calls, which is
+// the one thing that can reach you while the app itself isn't open.
 
 self.addEventListener('install', ()=> self.skipWaiting());
 self.addEventListener('activate', ()=> self.clients.claim());
-self.addEventListener('fetch', ()=>{ /* pass-through — no caching yet, by design */ });
+self.addEventListener('fetch', ()=>{ /* pass-through — no offline caching yet, by design */ });
+
+importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js');
+importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js');
+importScripts('firebase-config.js');
+
+try{
+  firebase.initializeApp(firebaseConfig);
+  const messaging = firebase.messaging();
+  messaging.onBackgroundMessage(payload=>{
+    const title = (payload.notification && payload.notification.title) || 'Incoming call — Naluno';
+    const body = (payload.notification && payload.notification.body) || 'Tap to answer';
+    self.registration.showNotification(title, {
+      body,
+      icon: 'icon-192.png',
+      tag: 'naluno-call', // replaces any earlier call notification rather than stacking them
+    });
+  });
+}catch(e){
+  // firebase-config.js still has placeholder values, or messaging isn't supported here —
+  // the service worker still registers fine, background push just won't fire.
+}
+
+self.addEventListener('notificationclick', event=>{
+  event.notification.close();
+  event.waitUntil(
+    clients.matchAll({ type:'window' }).then(list=>{
+      for(const client of list){ if('focus' in client) return client.focus(); }
+      if(clients.openWindow) return clients.openWindow('./');
+    })
+  );
+});
