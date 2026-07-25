@@ -434,13 +434,8 @@
         <svg class="brand-mark" viewBox="0 0 24 24" fill="none"><path d="M12 2v6" stroke="#7CFFB2" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="16" r="6" stroke="#7CFFB2" stroke-width="2"/><path d="M7 5a12 12 0 0110 0" stroke="#8B90A8" stroke-width="1.6" stroke-linecap="round"/><path d="M4 2a17 17 0 0116 0" stroke="#8B90A8" stroke-width="1.4" stroke-linecap="round" opacity=".6"/></svg>
         <span class="brand-word">NALUNO</span>
       </div>
-      <div style="display:flex; gap:8px;">
-        <div class="ghost-btn" id="findPeopleBtn" title="Find people by handle" aria-label="Find people by handle">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="6" stroke="currentColor" stroke-width="1.8"/><path d="M20 20l-4.5-4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M11 8v6M8 11h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-        </div>
-        <div class="ghost-btn" id="simIncomingBtn" title="Simulate incoming call" aria-label="Simulate incoming call">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.3 1.8.6 2.7a2 2 0 01-.4 2.1L8 9.9a16 16 0 006 6l1.4-1.3a2 2 0 012.1-.4c.9.3 1.8.5 2.7.6a2 2 0 011.8 2.1z" stroke="currentColor" stroke-width="1.8"/></svg>
-        </div>
+      <div class="ghost-btn" id="findPeopleBtn" title="Find people by handle" aria-label="Find people by handle">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="6" stroke="currentColor" stroke-width="1.8"/><path d="M20 20l-4.5-4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M11 8v6M8 11h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       </div>
     </div>
     <div class="tab-title" style="padding:0 22px 12px;">Frequencies</div>
@@ -626,8 +621,8 @@
     <section class="callscreen" id="ringing">
       <div class="topbar" style="position:absolute; top:0; left:0; right:0;"><span class="eyebrow">Outgoing call</span><span></span></div>
       <div class="ring-center">
-        <div class="ring-wrap"><div class="ripple r1"></div><div class="ripple r2"></div><div class="ripple r3"></div><div class="avatar ring-avatar" id="ringAvatar" style="background:#7CFFB2;">AO</div></div>
-        <div class="ring-name" id="ringName">Amara Osei</div>
+        <div class="ring-wrap"><div class="ripple r1"></div><div class="ripple r2"></div><div class="ripple r3"></div><div class="avatar ring-avatar" id="ringAvatar" style="background:#7CFFB2;">··</div></div>
+        <div class="ring-name" id="ringName">—</div>
         <div class="ring-status">ringing…</div>
         <div class="scene-ready-note" id="sceneReadyNote" style="display:none;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Greenroom ready</div>
         <div class="scene-ready-note" id="ringFallbackHint" style="display:none; cursor:pointer; background:none; border-color:var(--line); color:var(--text-dim);">Not picking up? Leave a voice signal instead</div>
@@ -643,8 +638,8 @@
     <section class="callscreen" id="asyncFallback">
       <div class="topbar" style="position:absolute; top:0; left:0; right:0;"><span class="eyebrow" id="asyncEyebrow">No answer yet</span><span></span></div>
       <div class="ring-center">
-        <div class="ring-wrap"><div class="avatar ring-avatar" id="asyncAvatar" style="background:#7CFFB2;">AO</div></div>
-        <div class="ring-name" id="asyncName">Amara Osei</div>
+        <div class="ring-wrap"><div class="avatar ring-avatar" id="asyncAvatar" style="background:#7CFFB2;">··</div></div>
+        <div class="ring-name" id="asyncName">—</div>
         <div class="ring-status" id="asyncMessage">hasn't picked up</div>
       </div>
       <div style="padding:0 26px 30px; display:flex; flex-direction:column; gap:10px;">
@@ -664,7 +659,7 @@
       </div>
       <div class="ring-center">
         <div class="ring-wrap"><div class="ripple r1"></div><div class="ripple r2"></div><div class="ripple r3"></div><div class="avatar ring-avatar" id="incomingAvatar" style="background:#FFB86B;">MK</div></div>
-        <div class="ring-name" id="incomingName">Marcus Kim</div>
+        <div class="ring-name" id="incomingName">—</div>
         <div class="ring-status">incoming call…</div>
         <div class="scene-ready-note" id="incomingSceneNote" style="display:none;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Your scene is set — answer whenever</div>
       </div>
@@ -676,7 +671,7 @@
 
     <!-- IN CALL -->
     <section class="callscreen" id="incall">
-      <div class="remote-stage"><div class="remote-placeholder"><div class="avatar remote-avatar" id="remoteAvatar" style="background:#7CFFB2;">AO</div><span style="font-family:var(--font-futuristic); font-size:12px; letter-spacing:.06em;" id="remoteName">Amara Osei</span></div></div>
+      <div class="remote-stage"><div class="remote-placeholder"><div class="avatar remote-avatar" id="remoteAvatar" style="background:#7CFFB2;">··</div><span style="font-family:var(--font-futuristic); font-size:12px; letter-spacing:.06em;" id="remoteName">—</span></div></div>
       <div class="incall-top">
         <div class="call-info-pill"><span class="eyebrow live">Connected</span><span class="timer" id="callTimer">00:00</span></div>
         <div style="display:flex; gap:8px;">
@@ -707,8 +702,8 @@
   <div class="call-overlay" id="bviewer">
     <div class="bviewer-bars" id="bviewerBars"></div>
     <div class="bviewer-head">
-      <div class="avatar" id="bviewerAvatar" style="width:34px;height:34px;font-size:12px;background:#7CFFB2;">AO</div>
-      <div><div style="font-size:13px;font-weight:600;" id="bviewerName">Amara Osei</div><div style="font-size:11px;color:var(--text-dim);font-family:var(--font-mono);" id="bviewerTime">2h ago</div></div>
+      <div class="avatar" id="bviewerAvatar" style="width:34px;height:34px;font-size:12px;background:#7CFFB2;">··</div>
+      <div><div style="font-size:13px;font-weight:600;" id="bviewerName">—</div><div style="font-size:11px;color:var(--text-dim);font-family:var(--font-mono);" id="bviewerTime"></div></div>
       <div id="bviewerStatus" style="display:none; margin-left:10px; font-size:10.5px; font-family:var(--font-mono); color:var(--mint); border:1px solid rgba(124,255,178,.3); background:rgba(124,255,178,.08); padding:4px 9px; border-radius:999px;">Strong signal</div>
       <div style="margin-left:auto; display:flex; gap:8px; align-items:center;">
         <div class="bviewer-close" id="bviewerMessage" style="display:none;" title="Message" aria-label="Message this person"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M4 12h4l2-6 4 12 2-6h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
@@ -716,7 +711,7 @@
         <div class="bviewer-close" id="bviewerClose" role="button" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
       </div>
     </div>
-    <div class="bviewer-body" id="bviewerBody"><div class="avatar" id="bviewerBig" style="width:140px;height:140px;font-size:44px;background:#7CFFB2;">AO</div></div>
+    <div class="bviewer-body" id="bviewerBody"><div class="avatar" id="bviewerBig" style="width:140px;height:140px;font-size:44px;background:#7CFFB2;">··</div></div>
     <div class="bviewer-tap-zone left" id="bviewerPrevZone"></div>
     <div class="bviewer-tap-zone right" id="bviewerNextZone"></div>
   </div>
@@ -843,7 +838,7 @@
       <div class="topbar" style="padding-top:20px; align-items:center; gap:10px;">
         <div class="back-btn" id="bandRoomBack" role="button" aria-label="Leave frequency view"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
         <div style="flex:1; min-width:0;">
-          <div style="font-weight:700; font-family:var(--font-futuristic); font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" id="bandRoomName">Late Frequency</div>
+          <div style="font-weight:700; font-family:var(--font-futuristic); font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" id="bandRoomName">—</div>
           <div style="font-size:11px; font-family:var(--font-mono); color:var(--mint);" id="bandRoomLiveCount">Quiet right now</div>
         </div>
         <button id="bandLiveBtn" title="Go live" aria-label="Turn on camera" style="width:36px; height:36px; border-radius:50%; border:1px solid rgba(255,255,255,.25); background:rgba(13,15,23,.55); color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; flex-shrink:0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 8L21 5V19L15 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><rect x="3" y="6" width="12" height="12" rx="2" stroke="currentColor" stroke-width="2"/></svg></button>
@@ -922,15 +917,10 @@ function toast(msg){
 /* Signal strength is DERIVED, not assigned: it decays with time since lastActivityTs, which
    only moves when this contact does something that actually proves reachability — they reply
    in Wireline, or a call with them connects. Sending them a message doesn't move it; only
-   hearing back does. This is also what "Keep ringing" is really testing on a retried call. */
-const contacts = [
-  { id:1, name:'Amara Osei', initials:'AO', color:'#7CFFB2', lastActivityTs: Date.now() - 90*1000 },
-  { id:2, name:'Marcus Kim', initials:'MK', color:'#FFB86B', lastActivityTs: Date.now() - 14*60*1000 },
-  { id:3, name:'Priya Nair', initials:'PN', color:'#8B90A8', lastActivityTs: Date.now() - 70*60*1000 },
-  { id:4, name:'Theo Alba', initials:'TA', color:'#7C4DFF', lastActivityTs: Date.now() - 5*60*60*1000 },
-  { id:5, name:'Sofia Reyes', initials:'SR', color:'#FF7676', lastActivityTs: Date.now() - 3*24*60*60*1000 },
-  { id:6, name:'Jonah Pierce', initials:'JP', color:'#4FBF87', lastActivityTs: Date.now() - 4*24*60*60*1000 },
-];
+   hearing back does. This is also what "Keep ringing" is really testing on a retried call.
+   Starts empty — real connections (via Find People) populate this at sign-in, each one
+   marked isReal:true with a real firebaseUid. Nothing fake seeds it anymore. */
+const contacts = [];
 const signalMeta = {
   strong: { label:'Strong signal', color:'#7CFFB2' },
   fading: { label:'Fading',        color:'#FFB86B' },
@@ -998,13 +988,11 @@ setInterval(()=>{
 }, 30000);
 
 /* Broadcasts reference the same contacts array by id — no duplicated name/color/initials.
-   postedAt is a real timestamp so it ages the same way everything else in the app does. */
-const broadcasts = [
-  { contactId:1, seen:false, postedAt: Date.now() - 2*60*60*1000 },
-  { contactId:2, seen:false, postedAt: Date.now() - 4*60*60*1000 },
-  { contactId:3, seen:true,  postedAt: Date.now() - 11*60*60*1000 },
-  { contactId:4, seen:true,  postedAt: Date.now() - 24*60*60*1000 },
-];
+   postedAt is a real timestamp so it ages the same way everything else in the app does.
+   Starts empty now that the demo contacts it used to reference are gone — real Broadcast
+   (posts from real connections) isn't built yet, so this list is honestly just "yours"
+   until that's a real feature, not a room full of names who'll never actually post. */
+const broadcasts = [];
 function broadcastContact(b){ return contacts.find(c=>c.id===b.contactId); }
 function signalBarsHtml(c){
   const { tier, bars } = computeSignal(c);
@@ -1017,13 +1005,13 @@ function signalBarsHtml(c){
    Not a call — no ringing, no start button. Not a group chat — no permanent membership
    list either. A Band is a room with a fixed set of possible people and a roster that's
    never static, because it's the same computeSignal() used everywhere else: only a
-   contact whose signal is currently strong is someone the room can honestly say is here. */
-const bands = [
-  { id:1, name:'Late Frequency', vibe:'aurora', memberIds:[1,2,3] },
-  { id:2, name:'Old Static', vibe:'stars', memberIds:[3,4,5,6] },
-];
-// Real bands (Firestore-backed, shared between real accounts) use ids starting far
-// above the demo bands' 1/2, same collision-avoidance pattern as real contacts.
+   contact whose signal is currently strong is someone the room can honestly say is here.
+   Starts empty — create one via the + button, or loadRealBands() fills in ones you're
+   already a real member of at sign-in. */
+const bands = [];
+// Real bands (Firestore-backed, shared between real accounts) start numbering here —
+// kept distinct from any future locally-created ids for the same collision-avoidance
+// reason as real contacts, even though there's no fixed demo range to avoid anymore.
 let nextRealBandLocalId = 2000000;
 const bandVibePreviewGradient = {
   aurora: 'linear-gradient(160deg,#7C4DFF,#00E5FF)',
@@ -1812,11 +1800,9 @@ $('frequencySearchInput').addEventListener('input', renderContacts);
    signal strength, same way replies are: off-the-grid contacts never advance past 'sent'. */
 let wirelineThreads = {}; // { [contactId]: [{ id, from, type:'text'|'voice', text?, dataUrl?, duration?, waveform?, ts, read?, status? }] }
 let activeThreadContactId = null;
-const wirelineSeed = {
-  1: [ { id:1, from:'them', type:'text', text:'You still on for the call later?', ts: Date.now()-1000*60*70, read:true } ],
-  3: [ { id:1, from:'them', type:'text', text:'Sent you the notes from earlier 👋', ts: Date.now()-1000*60*60, read:false } ],
-  4: [ { id:1, from:'me', type:'text', text:'Catch you tomorrow', ts: Date.now()-1000*60*60*20, status:'read' } ],
-};
+// Empty now — real threads load live from Firestore per-contact when opened (see
+// openThread), and demo contacts that used to seed this no longer exist.
+const wirelineSeed = {};
 
 function formatClockTime(ts){
   const d = new Date(ts);
@@ -3463,40 +3449,10 @@ $('skipToConnect').onclick = ()=>{ clearTimeout(ringTimeoutHandle); startInCall(
 $('ringFallbackHint').onclick = ()=>{ if(currentCallContactId) showAsyncFallback(currentCallContactId, 'timeout'); };
 
 /* incoming call simulation */
-$('simIncomingBtn').onclick = ()=>{
-  const c = contacts[1]; // Marcus Kim, for variety
-  currentCallContactId = c.id;
-  $('incomingName').textContent = c.name;
-  $('incomingAvatar').style.background = c.color; $('incomingAvatar').textContent = c.initials;
-  $('remoteName').textContent = c.name; $('remoteAvatar').style.background = c.color; $('remoteAvatar').textContent = c.initials;
-  $('incomingSceneNote').style.display = 'none';
-  $('incomingSelfTag').textContent = 'prepping…';
-  showCallScreen('incoming');
-  if(!stream && !cameraRequestPending){
-    cameraRequestPending = requestHighQualityStream();
-    cameraRequestPending.then(s=>{
-      stream = s;
-      [$('camBlur'),$('camSharp'),$('pipBlur'),$('pipSharp'),$('incomingSelfVideo')].forEach(v=>v.srcObject=s);
-      updateCameraQualityBadge();
-    updateSignatureGlow();
-      prepIncomingScene();
-    }).catch(()=> prepIncomingScene())
-      .finally(()=>{ cameraRequestPending = null; });
-  } else if(cameraRequestPending){
-    cameraRequestPending.finally(prepIncomingScene);
-  } else {
-    prepIncomingScene();
-  }
-};
-function prepIncomingScene(){
-  setTimeout(()=>{
-    const id = userPickedBackground ? selectedBackgroundId : suggestBackgroundId();
-    chooseBackground(id, false);
-    $('incomingSceneNote').style.display = 'inline-flex';
-    $('incomingSelfTag').textContent = 'scene ready';
-    toast('Greenroom prepped your background before you answered');
-  }, 1300);
-}
+/* Real incoming calls (and the Greenroom prep that should run before answering one)
+   aren't built yet — that's part of the real-calls/WebRTC phase, still ahead. The demo
+   trigger that used to fake an incoming call from a hardcoded contact is gone along
+   with the fake contacts themselves. */
 $('declineIncoming').onclick = closeCallOverlayAndStopCamera;
 $('acceptIncoming').onclick = startInCall;
 
