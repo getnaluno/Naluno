@@ -4,6 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0D0F17">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="description" content="A statement from the future — not another WhatsApp.">
+<meta property="og:title" content="Naluno">
+<meta property="og:description" content="A statement from the future — not another WhatsApp.">
+<meta property="og:image" content="icon-512.png">
+<meta name="twitter:card" content="summary">
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Orbitron:wght@500;700;800;900&display=swap');
 
@@ -397,6 +406,14 @@
 <div class="app" id="app">
 
   <!-- ===================== SIGN IN ===================== -->
+  <!-- ===================== INSTALL PROMPT ===================== -->
+  <div id="installBanner" style="display:none; position:absolute; top:0; left:0; right:0; z-index:95; background:var(--surface-2); border-bottom:1px solid var(--line); padding:10px 14px; align-items:center; gap:10px;">
+    <div class="avatar" style="width:30px;height:30px;font-size:11px;background:#7CFFB2;flex-shrink:0;">N</div>
+    <div style="flex:1; font-size:12.5px; color:var(--text);">Install Naluno for the full-screen experience</div>
+    <button id="installBannerBtn" style="padding:7px 14px; border-radius:999px; border:none; background:var(--mint); color:#0D0F17; font-family:var(--font-futuristic); font-weight:700; font-size:10.5px; letter-spacing:.04em; text-transform:uppercase; cursor:pointer; flex-shrink:0;">Install</button>
+    <div id="installBannerClose" role="button" aria-label="Dismiss" style="width:24px; height:24px; flex-shrink:0; display:flex; align-items:center; justify-content:center; color:var(--text-dim); cursor:pointer;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
+  </div>
+
   <div class="call-overlay active" id="authGate" style="z-index:100; background:radial-gradient(120% 100% at 50% 0%, #141728 0%, #0D0F17 60%); display:flex; align-items:center; justify-content:center;">
     <div style="text-align:center; padding:0 32px; display:flex; flex-direction:column; align-items:center; gap:22px;">
       <div class="brand-row" style="justify-content:center;">
@@ -417,14 +434,19 @@
         <svg class="brand-mark" viewBox="0 0 24 24" fill="none"><path d="M12 2v6" stroke="#7CFFB2" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="16" r="6" stroke="#7CFFB2" stroke-width="2"/><path d="M7 5a12 12 0 0110 0" stroke="#8B90A8" stroke-width="1.6" stroke-linecap="round"/><path d="M4 2a17 17 0 0116 0" stroke="#8B90A8" stroke-width="1.4" stroke-linecap="round" opacity=".6"/></svg>
         <span class="brand-word">NALUNO</span>
       </div>
-      <div class="ghost-btn" id="simIncomingBtn" title="Simulate incoming call" aria-label="Simulate incoming call">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.3 1.8.6 2.7a2 2 0 01-.4 2.1L8 9.9a16 16 0 006 6l1.4-1.3a2 2 0 012.1-.4c.9.3 1.8.5 2.7.6a2 2 0 011.8 2.1z" stroke="currentColor" stroke-width="1.8"/></svg>
+      <div style="display:flex; gap:8px;">
+        <div class="ghost-btn" id="findPeopleBtn" title="Find people by handle" aria-label="Find people by handle">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="6" stroke="currentColor" stroke-width="1.8"/><path d="M20 20l-4.5-4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M11 8v6M8 11h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </div>
+        <div class="ghost-btn" id="simIncomingBtn" title="Simulate incoming call" aria-label="Simulate incoming call">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.3 1.8.6 2.7a2 2 0 01-.4 2.1L8 9.9a16 16 0 006 6l1.4-1.3a2 2 0 012.1-.4c.9.3 1.8.5 2.7.6a2 2 0 011.8 2.1z" stroke="currentColor" stroke-width="1.8"/></svg>
+        </div>
       </div>
     </div>
     <div class="tab-title" style="padding:0 22px 12px;">Frequencies</div>
     <div class="search-pill">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M21 21l-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-      <input placeholder="Search frequencies" />
+      <input id="frequencySearchInput" placeholder="Search frequencies" />
     </div>
     <div class="tab-scroll">
       <div class="section-label" id="strongLabel">Strong signal</div>
@@ -594,6 +616,7 @@
         <div class="precheck-row">
           <div class="precheck" id="toggleCam" role="button" aria-label="Toggle camera"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 8L21 5V19L15 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><rect x="3" y="6" width="12" height="12" rx="2" stroke="currentColor" stroke-width="2"/></svg>Camera</div>
           <div class="precheck" id="toggleMic" role="button" aria-label="Toggle microphone"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 15a3 3 0 003-3V6a3 3 0 10-6 0v6a3 3 0 003 3z" stroke="currentColor" stroke-width="2"/><path d="M19 11a7 7 0 01-14 0M12 19v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Mic</div>
+          <div class="precheck" id="lobbySwitchCam" role="button" aria-label="Switch camera"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M4 4v5h5M20 20v-5h-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M4.5 9A8 8 0 0119 8M19.5 15A8 8 0 015 16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Flip</div>
         </div>
       </div>
       <div class="lobby-footer"><button class="join-btn" id="joinBtn">Start call</button></div>
@@ -865,6 +888,23 @@
   <div class="emotion-wheel-backdrop" id="emotionWheelBackdrop">
     <div class="emotion-wheel" id="emotionWheel">
       <div class="emotion-wheel-center">How did<br>that land?</div>
+    </div>
+  </div>
+
+  <!-- ===================== FIND PEOPLE ===================== -->
+  <div class="call-overlay" id="findPeopleOverlay">
+    <div class="topbar" style="padding-top:20px;">
+      <div class="back-btn" id="findPeopleClose" role="button" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
+      <span class="eyebrow">Find people</span>
+      <span style="width:36px;"></span>
+    </div>
+    <div class="tab-scroll" style="padding:16px 20px 24px;">
+      <div class="field" style="padding:0 0 8px;">
+        <label>Handle</label>
+        <input id="findHandleInput" placeholder="@theirhandle" />
+      </div>
+      <button class="join-btn" id="findHandleBtn" style="margin-top:8px;">Search</button>
+      <div id="findPeopleResult" style="margin-top:22px;"></div>
     </div>
   </div>
 
@@ -1663,8 +1703,12 @@ $('bviewerRemove').onclick = ()=>{
 
 
 function renderContacts(){
+  const query = ($('frequencySearchInput').value || '').trim().toLowerCase();
+  const visible = query
+    ? contacts.filter(c => c.name.toLowerCase().includes(query) || (c.handle||'').toLowerCase().includes(query))
+    : contacts;
   const groups = { strong: [], fading: [], off: [] };
-  contacts.forEach(c => groups[computeSignal(c).tier].push(c));
+  visible.forEach(c => groups[computeSignal(c).tier].push(c));
 
   Object.entries(groups).forEach(([tier, list])=>{
     const label = $(tier+'Label');
@@ -1673,6 +1717,10 @@ function renderContacts(){
       ? list.map(rowHtml).join('')
       : '';
   });
+  if(query && visible.length===0){
+    $('strongLabel').style.display = 'block';
+    $('strongList').innerHTML = `<div style="padding:20px 10px; color:var(--text-dim); font-size:13px; text-align:center;">No one matches "${escapeHtml(query)}" in your frequencies yet.</div>`;
+  }
 
   function rowHtml(c){
     return `<div class="contact-row" data-id="${c.id}">
@@ -1689,6 +1737,7 @@ function renderContacts(){
   });
 }
 renderContacts();
+$('frequencySearchInput').addEventListener('input', renderContacts);
 
 /* ---------------- WIRELINE (direct messages) ----------------
    A Wireline is a private channel between two frequencies — separate from Broadcast
@@ -2518,6 +2567,7 @@ async function loadRealProfile(user){
     applyProfileToUI(currentProfile);
     showCallsignEdit();
   }
+  loadRealConnections(user.uid);
 }
 
 async function loadProfile(){
@@ -2558,8 +2608,8 @@ $('saveProfileBtn').onclick = async ()=>{
 
   if(currentUser && fbDb){
     try{
-      const confirmedHandle = await claimHandle(requestedHandle, currentUser.uid);
-      nextProfile.number = confirmedHandle;
+      const handleChanged = requestedHandle !== currentProfile.number;
+      nextProfile.number = handleChanged ? await claimHandle(requestedHandle, currentUser.uid) : currentProfile.number;
       await fbDb.collection('users').doc(currentUser.uid).set(nextProfile, { merge:true });
       currentProfile = nextProfile;
       applyProfileToUI(currentProfile);
@@ -3059,6 +3109,7 @@ function setMic(on){
 }
 $('toggleCam').onclick = ()=> setCam(!camOn);
 $('toggleMic').onclick = ()=> setMic(!micOn);
+$('lobbySwitchCam').onclick = flipCamera;
 $('camBtn').onclick = ()=>{ setCam(!camOn); toast(camOn?'Camera on':'Camera off'); };
 $('micBtn').onclick = ()=>{ setMic(!micOn); toast(micOn?'Mic on':'Mic muted'); };
 $('chatBtn').onclick = ()=>{
@@ -3430,6 +3481,122 @@ function sendBandMessage(){
 }
 $('bandSendBtn').onclick = sendBandMessage;
 $('bandInput').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); sendBandMessage(); } });
+
+/* ---------------- PWA INSTALL ---------------- */
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('sw.js').catch(()=>{ /* installability just won't be offered — not fatal */ });
+}
+let deferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', e=>{
+  e.preventDefault(); // stop the browser's default mini-infobar — we show our own banner instead
+  deferredInstallPrompt = e;
+  $('installBanner').style.display = 'flex';
+});
+$('installBannerBtn').onclick = async ()=>{
+  if(!deferredInstallPrompt) return;
+  $('installBanner').style.display = 'none';
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice; // resolves once the person accepts or dismisses the OS-level dialog
+  deferredInstallPrompt = null;
+};
+$('installBannerClose').onclick = ()=>{ $('installBanner').style.display = 'none'; };
+window.addEventListener('appinstalled', ()=>{ $('installBanner').style.display = 'none'; deferredInstallPrompt = null; });
+/* ---------------- FIND PEOPLE (real search + connect) ----------------
+   Real connections merge into the same `contacts` array everything else already reads —
+   Wireline, Band, calls, signal strength all keep working unmodified. Demo contacts use
+   ids 1-6; real ones start far above that, so there's no collision risk. Each real entry
+   also carries firebaseUid, which is what future real-Wireline/real-calls work will use. */
+let nextRealContactId = 1000000;
+function addRealContactToLocalList(firebaseUid, name, color, handle){
+  if(contacts.some(c=>c.firebaseUid===firebaseUid)) return;
+  contacts.push({
+    id: nextRealContactId++,
+    firebaseUid,
+    name,
+    initials: initialsFor(name),
+    color: color || '#7CFFB2',
+    handle: handle || '',
+    lastActivityTs: Date.now(), // freshly connected — reachable right now, decays normally after
+    isReal: true,
+  });
+}
+async function loadRealConnections(uid){
+  if(!fbDb) return;
+  try{
+    const snap = await fbDb.collection('users').doc(uid).collection('connections').get();
+    snap.forEach(doc=>{
+      const d = doc.data();
+      addRealContactToLocalList(doc.id, d.name || 'Unknown', d.color, d.handle);
+    });
+    renderContacts();
+    renderBandList();
+  }catch(e){ /* connections just won't be preloaded this session */ }
+}
+
+function openFindPeople(){
+  if(!currentUser){ toast('Sign in first to find people'); return; }
+  $('findHandleInput').value = '';
+  $('findPeopleResult').innerHTML = '';
+  $('findPeopleOverlay').classList.add('active');
+}
+function closeFindPeople(){ $('findPeopleOverlay').classList.remove('active'); }
+$('findPeopleBtn').onclick = openFindPeople;
+$('findPeopleClose').onclick = closeFindPeople;
+
+async function searchHandle(){
+  const handle = $('findHandleInput').value.trim().replace(/^@/,'').toLowerCase();
+  if(!handle) return;
+  $('findPeopleResult').innerHTML = '<div style="color:var(--text-dim); font-size:13px;">Searching…</div>';
+  try{
+    const handleDoc = await fbDb.collection('handles').doc(handle).get();
+    if(!handleDoc.exists){
+      $('findPeopleResult').innerHTML = `<div style="color:var(--text-dim); font-size:13px;">No one found at @${escapeHtml(handle)}.</div>`;
+      return;
+    }
+    const theirUid = handleDoc.data().uid;
+    if(theirUid === currentUser.uid){
+      $('findPeopleResult').innerHTML = `<div style="color:var(--text-dim); font-size:13px;">That\u2019s you.</div>`;
+      return;
+    }
+    const userDoc = await fbDb.collection('users').doc(theirUid).get();
+    if(!userDoc.exists){
+      $('findPeopleResult').innerHTML = `<div style="color:var(--text-dim); font-size:13px;">That handle exists but hasn\u2019t set up a Callsign yet.</div>`;
+      return;
+    }
+    const data = userDoc.data();
+    const already = contacts.some(c => c.firebaseUid === theirUid);
+    $('findPeopleResult').innerHTML = `
+      <div class="contact-row" style="cursor:default;">
+        <div class="avatar" style="width:46px;height:46px;font-size:15px;background:${data.color||'#7CFFB2'};">${initialsFor(data.name||'?')}</div>
+        <div class="contact-meta"><div class="contact-name">${escapeHtml(data.name||'Unknown')}</div><div class="contact-sub">${escapeHtml(data.number||('@'+handle))}</div></div>
+      </div>
+      <button class="join-btn" id="connectResultBtn" style="margin-top:14px;" ${already?'disabled':''}>${already?'Already connected':'Connect'}</button>`;
+    if(!already){
+      $('connectResultBtn').onclick = ()=> connectWithUser(theirUid, data, handle);
+    }
+  }catch(e){
+    $('findPeopleResult').innerHTML = `<div style="color:var(--red); font-size:13px;">${escapeHtml(e.message||'Search failed')}</div>`;
+  }
+}
+$('findHandleBtn').onclick = searchHandle;
+$('findHandleInput').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); searchHandle(); } });
+
+async function connectWithUser(theirUid, theirData, handle){
+  try{
+    const myConnRef = fbDb.collection('users').doc(currentUser.uid).collection('connections').doc(theirUid);
+    const theirConnRef = fbDb.collection('users').doc(theirUid).collection('connections').doc(currentUser.uid);
+    const batch = fbDb.batch();
+    batch.set(myConnRef, { name: theirData.name||'Unknown', handle: theirData.number || ('@'+handle), color: theirData.color||'#7CFFB2', connectedAt: firebase.firestore.FieldValue.serverTimestamp() });
+    batch.set(theirConnRef, { name: currentProfile.name, handle: currentProfile.number, color: currentProfile.color, connectedAt: firebase.firestore.FieldValue.serverTimestamp() });
+    await batch.commit();
+    addRealContactToLocalList(theirUid, theirData.name||'Unknown', theirData.color, theirData.number||('@'+handle));
+    toast('Connected with ' + (theirData.name||'them'));
+    closeFindPeople();
+    renderContacts();
+  }catch(e){
+    toast(e.message || 'Couldn\u2019t connect right now');
+  }
+}
 </script>
 </body>
 </html>

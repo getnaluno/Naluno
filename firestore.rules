@@ -17,7 +17,23 @@ service cloud.firestore {
     match /handles/{handle} {
       allow read: if true; // handle lookup needs to work before sign-in resolves
       allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
-      allow update, delete: if false; // not transferable in Phase 1 — revisit later
+      // Only the current owner can re-write their own handle doc (e.g. a redundant
+      // re-save) — this must NEVER let someone else's uid overwrite an existing claim.
+      allow update: if isSignedIn()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == request.auth.uid;
+      allow delete: if false; // not transferable in Phase 1 — revisit later
+    }
+
+    // ---- Real connections (replacing hardcoded demo contacts) ----
+    // A connection doc at users/{uid}/connections/{otherUid} means "otherUid appears in
+    // uid's Frequencies list." Connecting is mutual and instant in Phase 1 (no request/
+    // accept flow yet) — writing the *other* person's mirror entry is only allowed when
+    // that entry's id is literally you, so you can only ever add yourself to someone
+    // else's list, never edit anything else about their account.
+    match /users/{uid}/connections/{otherUid} {
+      allow read: if isOwner(uid);
+      allow write: if isSignedIn() && (isOwner(uid) || otherUid == request.auth.uid);
     }
 
     // ---- Wireline (1:1 threads) ----
