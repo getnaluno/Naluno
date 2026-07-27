@@ -25,6 +25,18 @@ service cloud.firestore {
       allow delete: if false; // not transferable in Phase 1 — revisit later
     }
 
+    // ---- Broadcast (your signal) ----
+    // A segment at users/{uid}/signal/{segId} is one posted photo/video/text. Only the
+    // owner can post or remove their own; a real connection of theirs can read it —
+    // this is what makes Frequencies and Broadcast the same set of real people instead
+    // of two disconnected screens. This whole subcollection was missing from the rules
+    // entirely, which is why every post silently failed permission checks.
+    match /users/{uid}/signal/{segId} {
+      allow read: if isOwner(uid)
+        || (isSignedIn() && exists(/databases/$(database)/documents/users/$(uid)/connections/$(request.auth.uid)));
+      allow create, delete: if isOwner(uid);
+    }
+
     // ---- Real connections (replacing hardcoded demo contacts) ----
     // A connection doc at users/{uid}/connections/{otherUid} means "otherUid appears in
     // uid's Frequencies list." Connecting is mutual and instant in Phase 1 (no request/
@@ -50,6 +62,9 @@ service cloud.firestore {
         // the *other* participant, not just the author, so this stays permissive for now.
         allow update: if isSignedIn()
           && request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants;
+        // Only the original sender can delete their own message — this was missing
+        // entirely, which is why the delete button did nothing but fail silently.
+        allow delete: if isSignedIn() && resource.data.from == request.auth.uid;
       }
     }
 

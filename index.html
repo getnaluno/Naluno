@@ -200,8 +200,8 @@
   .cam-blur{ filter: blur(26px) saturate(1.15) brightness(.9); transform: scaleX(-1) scale(1.2); }
   .cam-bg-canvas{ position:absolute; inset:0; width:100%; height:100%; display:block; }
   .cam-sharp{
-    -webkit-mask-image: radial-gradient(ellipse 62% 78% at 50% 44%, black 52%, transparent 82%);
-    mask-image: radial-gradient(ellipse 62% 78% at 50% 44%, black 52%, transparent 82%);
+    -webkit-mask-image: radial-gradient(ellipse 62% 78% at 50% 44%, black 80%, transparent 88%);
+    mask-image: radial-gradient(ellipse 62% 78% at 50% 44%, black 80%, transparent 88%);
   }
   .preset-tint{ position:absolute; inset:0; mix-blend-mode:overlay; opacity:.6; transition: background 1s ease; }
   .cam-empty-fallback{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:8px; color:var(--text-dim); font-family:var(--font-mono); font-size:11.5px; text-align:center; padding:0 26px; }
@@ -726,7 +726,7 @@
         <video class="cam-blur" id="pipBlur" autoplay playsinline muted style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1) scale(1.2);filter:blur(18px) saturate(1.15) brightness(.9);"></video>
         <div class="preset-tint" id="pipTint" style="display:none;"></div>
         <div class="signature-glow" id="pipSignatureGlow"></div>
-        <video class="cam-sharp" id="pipSharp" autoplay playsinline muted style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);-webkit-mask-image:radial-gradient(ellipse 62% 78% at 50% 44%, black 52%, transparent 82%);mask-image:radial-gradient(ellipse 62% 78% at 50% 44%, black 52%, transparent 82%);"></video>
+        <video class="cam-sharp" id="pipSharp" autoplay playsinline muted style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);-webkit-mask-image:radial-gradient(ellipse 62% 78% at 50% 44%, black 80%, transparent 88%);mask-image:radial-gradient(ellipse 62% 78% at 50% 44%, black 80%, transparent 88%);"></video>
         <div class="mute-badge"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M12 15a3 3 0 003-3V6a3 3 0 10-6 0v6a3 3 0 003 3z" stroke="#fff" stroke-width="2.4"/><path d="M3 3l18 18" stroke="#fff" stroke-width="2.4"/></svg></div>
       </div>
       <div class="controls-bar">
@@ -2731,7 +2731,7 @@ function hexToRgba(hex, alpha){
 function updateSignatureGlow(){
   const color = (typeof currentProfile !== 'undefined' && currentProfile && currentProfile.color) ? currentProfile.color : '#7CFFB2';
   const { tier } = computeSignal({ lastActivityTs: myLastActivityTs });
-  const gradient = `radial-gradient(ellipse 66% 84% at 50% 44%, transparent 58%, ${hexToRgba(color,0.6)} 74%, transparent 92%)`;
+  const gradient = `radial-gradient(ellipse 66% 84% at 50% 44%, transparent 76%, ${hexToRgba(color,0.6)} 86%, transparent 96%)`;
   ['camSignatureGlow','pipSignatureGlow','bandSignatureGlow'].forEach(id=>{
     const el = $(id); if(!el) return;
     el.style.background = gradient;
@@ -3404,7 +3404,10 @@ let cameraFacingMode = 'user';
 let preferredVideoDeviceId = null;
 
 function buildVideoConstraints(){
-  const base = { width:{ ideal:1920 }, height:{ ideal:1080 }, frameRate:{ ideal:30, max:60 } };
+  // "ideal" only pulls toward this value — it never exceeds what the hardware actually
+  // supports, so a modest front camera still settles at its own real max same as before.
+  // The previous 1080p ideal was quietly capping capable back cameras that can do more.
+  const base = { width:{ ideal:3840 }, height:{ ideal:2160 }, frameRate:{ ideal:30, max:60 } };
   if(preferredVideoDeviceId) base.deviceId = { exact: preferredVideoDeviceId };
   else base.facingMode = { ideal: cameraFacingMode };
   return base;
