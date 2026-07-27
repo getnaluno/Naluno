@@ -192,13 +192,16 @@
   /* --- lobby / camera stage with Greenroom --- */
   #lobby{ justify-content:flex-start; }
   .lobby-body{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:0 26px; gap:18px; }
-  .cam-stage{ position:relative; width:100%; aspect-ratio:3/4; max-height:44vh; border-radius:24px; overflow:hidden; background:var(--surface); border:1px solid var(--line); }
+  .cam-stage{ position:relative; width:100%; aspect-ratio:3/4; max-height:44vh; border-radius:24px; overflow:hidden; background:var(--surface); border:1px solid var(--line); transition:aspect-ratio .3s ease, max-height .3s ease; }
+  .cam-stage.expanded{ aspect-ratio:3/8; max-height:80vh; }
+  .cam-expand-btn{ position:absolute; right:12px; top:12px; width:30px; height:30px; border-radius:50%; background:rgba(13,15,23,.72); backdrop-filter:blur(8px); border:1px solid var(--line); display:flex; align-items:center; justify-content:center; color:var(--text); cursor:pointer; z-index:4; transition:transform .3s ease; }
+  .cam-expand-btn.expanded{ transform:rotate(180deg); }
   .cam-blur, .cam-sharp{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; transform:scaleX(-1); }
   .cam-blur{ filter: blur(26px) saturate(1.15) brightness(.9); transform: scaleX(-1) scale(1.2); }
   .cam-bg-canvas{ position:absolute; inset:0; width:100%; height:100%; display:block; }
   .cam-sharp{
-    -webkit-mask-image: radial-gradient(ellipse 84% 94% at 50% 44%, black 76%, transparent 90%);
-    mask-image: radial-gradient(ellipse 84% 94% at 50% 44%, black 76%, transparent 90%);
+    -webkit-mask-image: radial-gradient(ellipse 62% 78% at 50% 44%, black 52%, transparent 82%);
+    mask-image: radial-gradient(ellipse 62% 78% at 50% 44%, black 52%, transparent 82%);
   }
   .preset-tint{ position:absolute; inset:0; mix-blend-mode:overlay; opacity:.6; transition: background 1s ease; }
   .cam-empty-fallback{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:8px; color:var(--text-dim); font-family:var(--font-mono); font-size:11.5px; text-align:center; padding:0 26px; }
@@ -385,6 +388,8 @@
   .msg-row.them .voice-wave{ color:var(--text); opacity:.7; }
   .voice-duration{ font-family:var(--font-mono); font-size:10.5px; flex-shrink:0; opacity:.8; }
   .receipt-tick{ display:inline-flex; vertical-align:-2px; margin-left:3px; }
+  .msg-delete-btn{ display:inline-flex; vertical-align:-2px; margin-left:6px; color:var(--text-dim); cursor:pointer; opacity:.6; }
+  .msg-delete-btn:hover{ opacity:1; color:var(--red); }
   .recording-dot{ width:9px; height:9px; border-radius:50%; background:var(--red); flex-shrink:0; animation:pulse-dot 1.2s infinite; }
   .recording-timer{ font-family:var(--font-mono); font-size:13px; color:var(--text); flex-shrink:0; }
   .mood-bubble-wrap{ background:none !important; border:none !important; padding:0 !important; }
@@ -416,7 +421,7 @@
   </div>
 
   <div class="call-overlay active" id="authGate" style="z-index:100; background:radial-gradient(120% 100% at 50% 0%, #141728 0%, #0D0F17 60%); display:flex; align-items:center; justify-content:center;">
-    <div style="text-align:center; padding:0 32px; display:flex; flex-direction:column; align-items:center; gap:22px;">
+    <div style="text-align:center; padding:0 32px; display:flex; flex-direction:column; align-items:center; gap:18px; width:100%; max-width:340px;">
       <div class="brand-row" style="justify-content:center;">
         <svg class="brand-mark" viewBox="0 0 24 24" fill="none"><path d="M12 2v6" stroke="#7CFFB2" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="16" r="6" stroke="#7CFFB2" stroke-width="2"/><path d="M7 5a12 12 0 0110 0" stroke="#8B90A8" stroke-width="1.6" stroke-linecap="round"/><path d="M4 2a17 17 0 0116 0" stroke="#8B90A8" stroke-width="1.4" stroke-linecap="round" opacity=".6"/></svg>
         <span class="brand-word">NALUNO</span>
@@ -424,6 +429,21 @@
       <div style="color:var(--text-dim); font-size:13.5px; line-height:1.5; max-width:280px;">No phone number. No SIM card. Just a name that's yours wherever you go.</div>
       <button id="googleSignInBtn" class="join-btn" style="width:auto; padding:14px 26px;">Sign in with Google</button>
       <div id="authGateStatus" style="font-family:var(--font-mono); font-size:11px; color:var(--text-dim); min-height:14px;"></div>
+
+      <div style="display:flex; align-items:center; gap:10px; width:100%; margin-top:4px;">
+        <div style="flex:1; height:1px; background:var(--line);"></div>
+        <span style="font-family:var(--font-mono); font-size:10px; color:var(--text-dim);">OR</span>
+        <div style="flex:1; height:1px; background:var(--line);"></div>
+      </div>
+
+      <div style="width:100%; display:flex; flex-direction:column; gap:9px;">
+        <input id="authEmailInput" type="email" autocomplete="email" placeholder="Email" style="width:100%; background:var(--surface); border:1px solid var(--line); border-radius:13px; padding:12px 14px; color:var(--text); font-size:14px; outline:none;" />
+        <input id="authPasswordInput" type="password" autocomplete="current-password" placeholder="Password (6+ characters)" style="width:100%; background:var(--surface); border:1px solid var(--line); border-radius:13px; padding:12px 14px; color:var(--text); font-size:14px; outline:none;" />
+        <div style="display:flex; gap:9px;">
+          <button id="emailSignInBtn" class="join-btn" style="flex:1; background:var(--surface-2); color:var(--text); border:1px solid var(--line); padding:12px;">Sign in</button>
+          <button id="emailSignUpBtn" class="join-btn" style="flex:1; padding:12px;">Create account</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -554,6 +574,16 @@
         <div class="greenroom-setting-sub" id="callNotifStatus">Get notified of an incoming call even when Naluno isn't open. Needs your permission once.</div>
         <button class="save-btn" id="enableCallNotifsBtn" style="margin:14px 0 0; background:var(--surface-2); color:var(--text); border:1px solid var(--line);">Enable call notifications</button>
       </div>
+
+      <div class="greenroom-setting">
+        <div class="greenroom-setting-head"><span class="dot"></span><span class="greenroom-setting-title">Ringtone</span></div>
+        <div class="greenroom-setting-sub" id="ringtoneStatus">Using the built-in tone. You can use your own sound instead — this device only, for now.</div>
+        <div style="display:flex; gap:10px; margin-top:14px;">
+          <button class="save-btn" id="uploadRingtoneBtn" style="flex:1; margin:0; background:var(--surface-2); color:var(--text); border:1px solid var(--line);">Upload a sound</button>
+          <button class="save-btn" id="resetRingtoneBtn" style="flex:1; margin:0; background:none; color:var(--text-dim); border:1px solid var(--line); display:none;">Use built-in</button>
+        </div>
+        <input type="file" id="ringtoneFileInput" accept="audio/*" style="display:none;" />
+      </div>
     </div>
   </section>
 
@@ -606,6 +636,7 @@
           <div class="greenroom-pill" id="greenroomPill"><span class="swirl"></span><span id="greenroomLabel">Greenroom · scanning</span></div>
           <div class="self-chip">You</div>
           <div class="self-chip" id="camQualityBadge" style="display:none; left:auto; right:14px; color:var(--mint);"></div>
+          <div class="cam-expand-btn" id="camExpandBtn" role="button" aria-label="Expand camera view"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
         </div>
         <div style="width:100%;">
           <div class="section-label" style="padding:0 2px 6px;">Live background</div>
@@ -695,7 +726,7 @@
         <video class="cam-blur" id="pipBlur" autoplay playsinline muted style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1) scale(1.2);filter:blur(18px) saturate(1.15) brightness(.9);"></video>
         <div class="preset-tint" id="pipTint" style="display:none;"></div>
         <div class="signature-glow" id="pipSignatureGlow"></div>
-        <video class="cam-sharp" id="pipSharp" autoplay playsinline muted style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);-webkit-mask-image:radial-gradient(ellipse 84% 94% at 50% 44%, black 76%, transparent 90%);mask-image:radial-gradient(ellipse 84% 94% at 50% 44%, black 76%, transparent 90%);"></video>
+        <video class="cam-sharp" id="pipSharp" autoplay playsinline muted style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);-webkit-mask-image:radial-gradient(ellipse 62% 78% at 50% 44%, black 52%, transparent 82%);mask-image:radial-gradient(ellipse 62% 78% at 50% 44%, black 52%, transparent 82%);"></video>
         <div class="mute-badge"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M12 15a3 3 0 003-3V6a3 3 0 10-6 0v6a3 3 0 003 3z" stroke="#fff" stroke-width="2.4"/><path d="M3 3l18 18" stroke="#fff" stroke-width="2.4"/></svg></div>
       </div>
       <div class="controls-bar">
@@ -1001,8 +1032,6 @@ setInterval(()=>{
    Starts empty now that the demo contacts it used to reference are gone — real Broadcast
    (posts from real connections) isn't built yet, so this list is honestly just "yours"
    until that's a real feature, not a room full of names who'll never actually post. */
-const broadcasts = [];
-function broadcastContact(b){ return contacts.find(c=>c.id===b.contactId); }
 function signalBarsHtml(c){
   const { tier, bars } = computeSignal(c);
   const meta = signalMeta[tier];
@@ -1216,17 +1245,59 @@ function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
 /* ---------------- YOUR SIGNAL (own broadcasts) ----------------
    Each posted item is a "segment". Segments persist for 25h (SIGNAL_TTL_MS)
    unless removed manually, and posting never clears out earlier segments —
-   they all live in mySignal and play back in sequence in the viewer. */
+   they all live in mySignal and play back in sequence in the viewer.
+   Real accounts store this in Firestore now — it used to be window.storage, which
+   doesn't exist at all once this is hosted for real, so broadcasts silently never
+   survived a sign-in. That was the actual cause of "my broadcast disappeared." */
 const SIGNAL_TTL_MS = 25 * 60 * 60 * 1000;
 let mySignal = []; // { id, type:'photo'|'video'|'text', dataUrl, filterCss, crop, caption, text, bg, createdAt, expiresAt, transitionIn, duration }
 let mySignalSeen = true;
+let connectionsSignals = []; // [{ contactId, contact, latest }] — real connections' most recent segment
 
 function pruneExpiredSignal(){
   mySignal = mySignal.filter(s => Date.now() < s.expiresAt);
 }
 
-/* Persist mySignal (best-effort — falls back to in-memory-only if storage is unavailable
-   or a segment is too large for a single 5MB key, e.g. a long video data URL). */
+async function saveSignalSegment(segment){
+  if(!currentUser || !fbDb) return null;
+  try{
+    const ref = await fbDb.collection('users').doc(currentUser.uid).collection('signal').add(segment);
+    return ref.id;
+  }catch(e){ toast('Couldn\u2019t post — try again'); return null; }
+}
+async function deleteSignalSegment(segmentId){
+  if(!currentUser || !fbDb) return;
+  try{ await fbDb.collection('users').doc(currentUser.uid).collection('signal').doc(String(segmentId)).delete(); }
+  catch(e){ /* best-effort */ }
+}
+async function loadMySignal(){
+  if(!currentUser || !fbDb) return;
+  try{
+    const snap = await fbDb.collection('users').doc(currentUser.uid).collection('signal').get();
+    mySignal = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+    pruneExpiredSignal();
+  }catch(e){ /* nothing posted yet, or offline */ }
+  renderBroadcasts();
+}
+/* Loads the latest segment from every real connection, so Frequencies and Broadcast
+   are actually the same set of real people instead of two disconnected screens. */
+async function loadConnectionsSignals(){
+  if(!currentUser || !fbDb) return;
+  const realContacts = contacts.filter(c => c.isReal && c.firebaseUid);
+  const results = await Promise.all(realContacts.map(async c=>{
+    try{
+      const snap = await fbDb.collection('users').doc(c.firebaseUid).collection('signal').orderBy('createdAt','desc').limit(1).get();
+      if(snap.empty) return null;
+      const latest = snap.docs[0].data();
+      if(Date.now() >= latest.expiresAt) return null;
+      return { contactId: c.id, contact: c, latest };
+    }catch(e){ return null; }
+  }));
+  connectionsSignals = results.filter(Boolean);
+  renderBroadcasts();
+}
+
+/* Legacy local-only fallback (no Firebase configured) — same as before. */
 async function saveSignalToStorage(){
   if(!storageAvailable) return;
   try{
@@ -1237,6 +1308,7 @@ async function saveSignalToStorage(){
   }
 }
 async function loadSignalFromStorage(){
+  if(currentUser && fbDb) return; // real accounts use Firestore instead — see loadMySignal
   if(!storageAvailable) return;
   try{
     const res = await window.storage.get('broadcast:mySignal');
@@ -1490,27 +1562,36 @@ function updatePostButtonState(){
   $('postBroadcastBtn').style.opacity = valid ? '1' : '.5';
 }
 
-$('postBroadcastBtn').onclick = ()=>{
+$('postBroadcastBtn').onclick = async ()=>{
   if($('postBroadcastBtn').disabled) return;
   const now = Date.now();
   const expires = now + SIGNAL_TTL_MS;
   let postedCount = 1;
+  const newSegments = [];
   if(composerType==='text'){
-    mySignal.push({ id: now+Math.random(), type:'text', text: $('textBroadcastInput').value.trim(), bg: composerTextBg, createdAt: now, expiresAt: expires, transitionIn: 'fade' });
+    newSegments.push({ type:'text', text: $('textBroadcastInput').value.trim(), bg: composerTextBg, createdAt: now, expiresAt: expires, transitionIn: 'fade' });
   } else {
     postedCount = composerItems.length;
     composerItems.forEach((item, i)=>{
-      mySignal.push({
-        id: now + Math.random() + i, type: item.kind, dataUrl: item.dataUrl, filterCss: item.filterCss,
+      newSegments.push({
+        type: item.kind, dataUrl: item.dataUrl, filterCss: item.filterCss,
         crop: item.crop, caption: item.caption, createdAt: now + i, expiresAt: expires,
         transitionIn: composerItems.length>1 ? composerTransition : 'fade', duration: item.duration || null,
       });
     });
   }
-  mySignalSeen = false;
   closeComposer();
+  if(currentUser && fbDb){
+    for(const seg of newSegments){
+      const id = await saveSignalSegment(seg);
+      if(id) mySignal.push({ id, ...seg });
+    }
+  } else {
+    newSegments.forEach((seg,i)=> mySignal.push({ id: now+Math.random()+i, ...seg }));
+    saveSignalToStorage();
+  }
+  mySignalSeen = false;
   renderBroadcasts();
-  saveSignalToStorage();
   toast(postedCount>1 ? `Posted ${postedCount} items to your signal` : 'Posted to your signal');
 };
 
@@ -1611,18 +1692,16 @@ function renderBroadcasts(){
     mySignalInner = `<div class="ring seen"><div class="avatar" style="width:100%;height:100%;background:#1F2333;color:var(--text-dim);font-size:20px;">+</div></div><span>Your signal</span>`;
   }
   $('myBcastStrip').innerHTML = `<div class="bcast-item" id="mySignalItem">${mySignalInner}</div>` +
-    broadcasts.map(b=>{
-      const c = broadcastContact(b); if(!c) return '';
-      return `<div class="bcast-item" data-b="${c.id}"><div class="ring ${b.seen?'seen':''}"><div class="avatar" style="width:100%;height:100%;background:${c.color};position:relative;">${c.initials}</div></div><span>${c.name.split(' ')[0]}</span></div>`;
+    connectionsSignals.map(({ contact:c, latest })=>{
+      return `<div class="bcast-item" data-b="${c.id}"><div class="ring"><div class="avatar" style="width:100%;height:100%;background:${c.color};position:relative;">${c.initials}</div></div><span>${c.name.split(' ')[0]}</span></div>`;
     }).join('');
-  $('bcastList').innerHTML = broadcasts.map(b=>{
-    const c = broadcastContact(b); if(!c) return '';
+  $('bcastList').innerHTML = connectionsSignals.length ? connectionsSignals.map(({ contact:c, latest })=>{
     return `<div class="bcast-list-row" data-b="${c.id}">
     <div class="avatar" style="width:44px;height:44px;font-size:14px;background:${c.color};position:relative;">${c.initials}${signalBarsHtml(c)}</div>
     <div class="contact-meta"><div class="contact-name">${c.name}</div><div class="contact-sub">${signalMeta[computeSignal(c).tier].label} · tap to view</div></div>
-    <div class="bcast-time">${timeAgo(b.postedAt)}</div>
+    <div class="bcast-time">${timeAgo(latest.createdAt)}</div>
   </div>`;
-  }).join('');
+  }).join('') : `<div style="padding:20px 10px; color:var(--text-dim); font-size:13px; text-align:center;">No recent signals from your frequencies yet.</div>`;
   document.querySelectorAll('[data-b]').forEach(el=>{
     el.onclick = ()=> openBroadcast(parseInt(el.dataset.b));
   });
@@ -1715,22 +1794,27 @@ function goToSegment(idx){
 $('bviewerNextZone').onclick = ()=>{ if(viewingMine || currentSegments.length) goToSegment(currentSegmentIndex+1); };
 $('bviewerPrevZone').onclick = ()=>{ if(viewingMine || currentSegments.length) goToSegment(currentSegmentIndex-1); };
 
-function openBroadcast(contactId){
-  const b = broadcasts.find(x=>x.contactId===contactId); const c = b && broadcastContact(b);
-  if(!b || !c) return;
-  viewingMine = false;
-  currentSegments = [{ type:'avatar', id:'mock-'+c.id, initials:c.initials, color:c.color, time:timeAgo(b.postedAt) }];
-  $('bviewerAvatar').style.background = c.color; $('bviewerAvatar').textContent = c.initials;
-  $('bviewerName').textContent = c.name;
-  $('bviewerStatus').textContent = signalMeta[computeSignal(c).tier].label;
-  $('bviewerStatus').style.display = 'block';
-  $('bviewerMessage').style.display = 'flex';
-  $('bviewerMessage').onclick = ()=>{ closeBroadcast(); openWirelineFromFrequencies(c.id); };
-  $('bviewerRemove').style.display = 'none';
-  renderBars(1);
-  $('bviewer').classList.add('active');
-  playSegment(0);
-  b.seen = true; renderBroadcasts();
+async function openBroadcast(contactId){
+  const c = contacts.find(x=>x.id===contactId); if(!c || !c.isReal || !c.firebaseUid || !fbDb) return;
+  try{
+    const snap = await fbDb.collection('users').doc(c.firebaseUid).collection('signal').orderBy('createdAt','asc').get();
+    const segments = snap.docs.map(d=>({ id:d.id, ...d.data() })).filter(s => Date.now() < s.expiresAt);
+    if(segments.length===0){ toast(c.name.split(' ')[0] + '\u2019s signal has faded'); return; }
+    viewingMine = false;
+    currentSegments = segments;
+    $('bviewerAvatar').style.background = c.color; $('bviewerAvatar').textContent = c.initials;
+    $('bviewerName').textContent = c.name;
+    $('bviewerStatus').textContent = signalMeta[computeSignal(c).tier].label;
+    $('bviewerStatus').style.display = 'block';
+    $('bviewerMessage').style.display = 'flex';
+    $('bviewerMessage').onclick = ()=>{ closeBroadcast(); openWirelineFromFrequencies(c.id); };
+    $('bviewerRemove').style.display = 'none';
+    renderBars(segments.length);
+    $('bviewer').classList.add('active');
+    playSegment(0);
+  }catch(e){
+    toast('Couldn\u2019t load that signal right now');
+  }
 }
 function openMyBroadcast(){
   pruneExpiredSignal();
@@ -1755,7 +1839,8 @@ $('bviewerRemove').onclick = ()=>{
   mySignal = mySignal.filter(s=>s.id!==seg.id);
   currentSegments.splice(currentSegmentIndex,1);
   renderBroadcasts();
-  saveSignalToStorage();
+  if(currentUser && fbDb) deleteSignalSegment(seg.id);
+  else saveSignalToStorage();
   if(currentSegments.length===0){ closeBroadcast(); toast('Removed from your signal'); return; }
   const nextIdx = Math.min(currentSegmentIndex, currentSegments.length-1);
   renderBars(currentSegments.length);
@@ -2031,17 +2116,39 @@ function renderThreadMessages(){
     else if(m.type==='mood'){ bubbleInner = moodBubbleHtml(m); bubbleClass = 'msg-bubble mood-bubble-wrap'; }
     else { bubbleInner = escapeHtml(m.text); }
     const receipt = m.from==='me' ? receiptTickHtml(m.status || 'sent') : '';
+    const deleteBtn = m.from==='me' ? `<span class="msg-delete-btn" data-delmsg="${m.id}" title="Delete" aria-label="Delete message"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2m2 0v13a2 2 0 01-2 2H9a2 2 0 01-2-2V7h10z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>` : '';
     return `<div class="msg-row ${m.from}" data-msgid="${m.id}">
       <div class="${bubbleClass}">${bubbleInner}</div>
-      <div class="msg-time">${formatClockTime(m.ts)}${receipt}</div>
+      <div class="msg-time">${formatClockTime(m.ts)}${receipt}${deleteBtn}</div>
       ${reactionBadgeHtml(m)}
     </div>`;
   }).join('');
   document.querySelectorAll('[data-voice]').forEach(el=>{
     el.onclick = ()=> toggleVoicePlay(el.dataset.voice);
   });
+  document.querySelectorAll('[data-delmsg]').forEach(el=>{
+    el.onclick = e=>{ e.stopPropagation(); deleteThreadMessage(el.dataset.delmsg); };
+  });
   wireLongPressReactions('#threadMessages .msg-row[data-msgid]');
   $('threadMessages').scrollTop = $('threadMessages').scrollHeight;
+}
+/* Hard delete — the message is just gone, no "this message was deleted" stamp left
+   behind. That stamp is a design choice some apps make on purpose; this app doesn't
+   make it, the same way Band's ephemeral chat doesn't keep a record either. */
+function deleteThreadMessage(msgId){
+  if(!confirm('Delete this message? This can\u2019t be undone.')) return;
+  const c = contacts.find(x=>x.id===activeThreadContactId);
+  if(c && c.isReal && c.firebaseUid && fbDb){
+    const tid = realThreadId(c.firebaseUid);
+    fbDb.collection('threads').doc(tid).collection('messages').doc(String(msgId)).delete()
+      .catch(e=> toast(e.message || 'Couldn\u2019t delete'));
+    // the open thread's onSnapshot listener re-renders once Firestore confirms the delete
+  } else {
+    wirelineThreads[activeThreadContactId] = (wirelineThreads[activeThreadContactId] || []).filter(m=>String(m.id)!==String(msgId));
+    saveWireline();
+    renderThreadMessages();
+    renderWirelineList();
+  }
 }
 
 /* Long-press (hold ~450ms without moving) opens the emotion wheel for that message.
@@ -2624,7 +2731,7 @@ function hexToRgba(hex, alpha){
 function updateSignatureGlow(){
   const color = (typeof currentProfile !== 'undefined' && currentProfile && currentProfile.color) ? currentProfile.color : '#7CFFB2';
   const { tier } = computeSignal({ lastActivityTs: myLastActivityTs });
-  const gradient = `radial-gradient(ellipse 88% 98% at 50% 44%, transparent 74%, ${hexToRgba(color,0.6)} 84%, transparent 96%)`;
+  const gradient = `radial-gradient(ellipse 66% 84% at 50% 44%, transparent 58%, ${hexToRgba(color,0.6)} 74%, transparent 92%)`;
   ['camSignatureGlow','pipSignatureGlow','bandSignatureGlow'].forEach(id=>{
     const el = $(id); if(!el) return;
     el.style.background = gradient;
@@ -2733,6 +2840,39 @@ $('googleSignInBtn').onclick = ()=>{
   });
 };
 
+/* Email/password sidesteps the entire OAuth popup/redirect problem — no cross-window
+   handoff, no cross-domain storage, nothing for a browser's privacy features or a fast
+   auto-selecting account picker to race against. It's the reliable fallback when
+   Google sign-in keeps closing before it can finish. */
+function emailAuthInputs(){
+  return { email: $('authEmailInput').value.trim(), password: $('authPasswordInput').value };
+}
+$('emailSignInBtn').onclick = ()=>{
+  if(!fbAuth){ authStatus('Firebase isn\u2019t configured yet — see firebase-config.js', true); return; }
+  const { email, password } = emailAuthInputs();
+  if(!email || !password){ authStatus('Enter your email and password first.', true); return; }
+  authStatus('Signing in…');
+  fbAuth.signInWithEmailAndPassword(email, password).catch(e=>{
+    authStatus(e.code === 'auth/user-not-found' || e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential'
+      ? 'That email/password combination isn\u2019t right — or you haven\u2019t created an account yet (try "Create account" instead).'
+      : (e.code + ': ' + e.message), true);
+  });
+};
+$('emailSignUpBtn').onclick = ()=>{
+  if(!fbAuth){ authStatus('Firebase isn\u2019t configured yet — see firebase-config.js', true); return; }
+  const { email, password } = emailAuthInputs();
+  if(!email || !password){ authStatus('Enter an email and a password (6+ characters) first.', true); return; }
+  authStatus('Creating your account…');
+  fbAuth.createUserWithEmailAndPassword(email, password).catch(e=>{
+    authStatus(
+      e.code === 'auth/email-already-in-use' ? 'That email already has an account — try "Sign in" instead.' :
+      e.code === 'auth/weak-password' ? 'Password needs to be at least 6 characters.' :
+      (e.code + ': ' + e.message),
+      true
+    );
+  });
+};
+
 if(fbAuth){
   authStatus('Checking sign-in state…');
   // Catches errors specific to the redirect round-trip (e.g. "this domain isn't
@@ -2767,6 +2907,7 @@ if(fbAuth){
       if(bandPresenceUnsub){ bandPresenceUnsub(); bandPresenceUnsub = null; }
       if(bandMessagesUnsub){ bandMessagesUnsub(); bandMessagesUnsub = null; }
       if(incomingCallUnsub){ incomingCallUnsub(); incomingCallUnsub = null; }
+      if(connectionsUnsub){ connectionsUnsub(); connectionsUnsub = null; }
       teardownCallConnection();
       realThreadPreviews = {};
     }
@@ -2815,6 +2956,25 @@ async function loadRealProfile(user){
   startThreadsListListener();
   loadRealBands(user.uid);
   startIncomingCallListener();
+  loadMySignal();
+  maybeRefreshCallNotifToken();
+}
+/* If the person already granted notification permission in a previous session, re-fetch
+   and re-save their token silently — this is what was actually breaking: the token
+   registration never survived a sign-out/sign-in, so it looked like the setting itself
+   didn't stick, when really it just needed a way to renew itself automatically. */
+async function maybeRefreshCallNotifToken(){
+  if(!('Notification' in window) || Notification.permission !== 'granted') return;
+  if(typeof VAPID_KEY === 'undefined' || !VAPID_KEY || VAPID_KEY === 'YOUR_VAPID_KEY') return;
+  try{
+    const registration = await navigator.serviceWorker.ready;
+    const messaging = firebase.messaging();
+    const token = await messaging.getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
+    if(token && currentUser && fbDb){
+      await fbDb.collection('users').doc(currentUser.uid).set({ fcmToken: token }, { merge:true });
+      $('callNotifStatus').textContent = 'Call notifications are on — you\u2019ll be notified even with the app closed.';
+    }
+  }catch(e){ /* best-effort — worst case they tap the button again this once */ }
 }
 
 async function loadProfile(){
@@ -3330,6 +3490,15 @@ async function enableCamera(){
   }
 }
 $('enableCamBtn').onclick = enableCamera;
+/* Doubles the camera stage's height rather than changing its aspect ratio to something
+   wide/tall — stays true to the square framing, just gives more of it, so there's more
+   natural room to fit yourself without needing to physically back away from the camera.
+   Deliberately doesn't touch the person-cutout mask — that's what broke the backgrounds
+   last time this problem got solved the wrong way. */
+$('camExpandBtn').onclick = function(){
+  const expanded = $('camStage').classList.toggle('expanded');
+  this.classList.toggle('expanded', expanded);
+};
 $('bgPickerBtn').onclick = ()=>{
   const row = $('incallBgChipRow');
   row.style.display = row.style.display === 'none' ? 'flex' : 'none';
@@ -3458,11 +3627,21 @@ function startCallerTone(){
 function stopCallerTone(){ clearInterval(callerToneTimer); callerToneTimer = null; }
 
 let ringtoneTimer = null;
-/* Receiver-side ringtone — a short rising chime, repeating. Deliberately more melodic
-   and attention-grabbing than the caller's tone, since this is the one that actually
-   needs to pull someone's attention away from whatever they're doing. */
+let customRingtoneUrl = null;
+let ringtoneAudioEl = null;
+/* Receiver-side ringtone — a short rising chime, repeating, unless a custom sound has
+   been uploaded in Callsign, in which case that plays instead. Deliberately more
+   melodic/attention-grabbing than the caller's tone by default, since this is the one
+   that actually needs to pull someone's attention away from whatever they're doing. */
 function startRingtone(){
   stopRingtone();
+  if(customRingtoneUrl){
+    if(!ringtoneAudioEl){ ringtoneAudioEl = new Audio(); ringtoneAudioEl.loop = true; }
+    ringtoneAudioEl.src = customRingtoneUrl;
+    ringtoneAudioEl.currentTime = 0;
+    ringtoneAudioEl.play().catch(()=>{ /* if this fails, the built-in tone below still won't run — safe no-op */ });
+    return;
+  }
   const ctx = ensureAudioContext(); if(!ctx) return;
   function chime(){
     const notes = [660, 880, 1046.5]; // short rising arpeggio
@@ -3481,7 +3660,53 @@ function startRingtone(){
   chime();
   ringtoneTimer = setInterval(chime, 1800);
 }
-function stopRingtone(){ clearInterval(ringtoneTimer); ringtoneTimer = null; }
+function stopRingtone(){
+  clearInterval(ringtoneTimer); ringtoneTimer = null;
+  if(ringtoneAudioEl){ ringtoneAudioEl.pause(); }
+}
+
+/* Custom ringtone — stored in this browser's localStorage (not Firestore, so it's
+   this-device-only for now; syncing it across your own devices would need a Storage
+   bucket, the same real gap voice notes have). */
+$('uploadRingtoneBtn').onclick = ()=> $('ringtoneFileInput').click();
+$('ringtoneFileInput').onchange = async (e)=>{
+  const file = e.target.files[0];
+  e.target.value = '';
+  if(!file) return;
+  if(file.size > 4*1024*1024){ toast('Keep it under 4MB for now'); return; }
+  try{
+    const dataUrl = await new Promise((resolve, reject)=>{
+      const r = new FileReader();
+      r.onload = ()=> resolve(r.result);
+      r.onerror = reject;
+      r.readAsDataURL(file);
+    });
+    localStorage.setItem('naluno:customRingtone', dataUrl);
+    customRingtoneUrl = dataUrl;
+    $('ringtoneStatus').textContent = 'Using your uploaded sound: ' + file.name;
+    $('resetRingtoneBtn').style.display = 'block';
+    toast('Ringtone updated');
+  }catch(err){
+    toast('Couldn\u2019t use that file');
+  }
+};
+$('resetRingtoneBtn').onclick = ()=>{
+  try{ localStorage.removeItem('naluno:customRingtone'); }catch(e){}
+  customRingtoneUrl = null;
+  $('ringtoneStatus').textContent = 'Using the built-in tone. You can use your own sound instead — this device only, for now.';
+  $('resetRingtoneBtn').style.display = 'none';
+  toast('Back to the built-in tone');
+};
+(function loadCustomRingtone(){
+  try{
+    const saved = localStorage.getItem('naluno:customRingtone');
+    if(saved){
+      customRingtoneUrl = saved;
+      $('ringtoneStatus').textContent = 'Using your uploaded sound.';
+      $('resetRingtoneBtn').style.display = 'block';
+    }
+  }catch(e){ /* localStorage unavailable — built-in tone still works fine */ }
+})();
 
 /* ---------------- REAL CALLS (WebRTC, Firestore signaling) ----------------
    Each call is one Firestore document: the caller writes an offer, the callee writes
@@ -3625,12 +3850,22 @@ async function startRealCall(c){
   iAmCaller = true;
   remoteDescriptionSet = false;
   pendingRemoteCandidates = [];
+
+  // doc() generates an ID locally with no network round-trip — lets us attach the ICE
+  // handler before any SDP operation ever runs, so no candidate can be generated before
+  // something is listening for it. This ordering was the actual cause of calls
+  // "connecting" (signaling completed) while carrying no audio or video (ICE never did).
+  const callRef = fbDb.collection('calls').doc();
+  activeCallId = callRef.id;
+
   peerConnection = createPeerConnection();
+  peerConnection.onicecandidate = e=>{
+    if(e.candidate) callRef.collection('callerCandidates').add(e.candidate.toJSON()).catch(()=>{});
+  };
+
   const offer = await peerConnection.createOffer();
   await peerConnection.setLocalDescription(offer);
 
-  const callRef = fbDb.collection('calls').doc();
-  activeCallId = callRef.id;
   await callRef.set({
     callerUid: currentUser.uid,
     calleeUid: c.firebaseUid,
@@ -3638,10 +3873,6 @@ async function startRealCall(c){
     offer: { type: offer.type, sdp: offer.sdp },
     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
   });
-
-  peerConnection.onicecandidate = e=>{
-    if(e.candidate) callRef.collection('callerCandidates').add(e.candidate.toJSON()).catch(()=>{});
-  };
 
   activeCallDocUnsub = callRef.onSnapshot(snap=>{
     const d = snap.data();
@@ -3686,7 +3917,9 @@ async function startRealCall(c){
 function armRingTimeout(contactId){
   clearTimeout(ringTimeoutHandle);
   const c = contacts.find(x=>x.id===contactId); if(!c) return;
-  const waitMs = computeSignal(c).tier === 'strong' ? 15000 : 9000;
+  // A real phone genuinely rings for a while before giving up — matching that instead
+  // of the much shorter placeholder window this used to have.
+  const waitMs = computeSignal(c).tier === 'strong' ? 75000 : 60000;
   ringTimeoutHandle = setTimeout(()=>{
     if(!$('ringing').classList.contains('active')) return; // already connected, cancelled, etc.
     showAsyncFallback(contactId, 'timeout');
@@ -3782,6 +4015,10 @@ $('acceptIncoming').onclick = async ()=>{
     if(!data || !data.offer){ toast('That call is no longer available'); closeCallOverlayAndStopCamera(); return; }
 
     peerConnection = createPeerConnection();
+    peerConnection.onicecandidate = e=>{
+      if(e.candidate) callRef.collection('calleeCandidates').add(e.candidate.toJSON()).catch(()=>{});
+    };
+
     await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
     remoteDescriptionSet = true;
     pendingRemoteCandidates.forEach(cand => peerConnection.addIceCandidate(new RTCIceCandidate(cand)).catch(()=>{}));
@@ -3790,10 +4027,6 @@ $('acceptIncoming').onclick = async ()=>{
     const answer = await peerConnection.createAnswer();
     await peerConnection.setLocalDescription(answer);
     await callRef.update({ answer: { type: answer.type, sdp: answer.sdp }, status: 'accepted' });
-
-    peerConnection.onicecandidate = e=>{
-      if(e.candidate) callRef.collection('calleeCandidates').add(e.candidate.toJSON()).catch(()=>{});
-    };
 
     if(callerCandidatesUnsub) callerCandidatesUnsub();
     callerCandidatesUnsub = callRef.collection('callerCandidates').onSnapshot(snap=>{
@@ -4177,17 +4410,23 @@ function addRealContactToLocalList(firebaseUid, name, color, handle){
     isReal: true,
   });
 }
-async function loadRealConnections(uid){
+let connectionsUnsub = null;
+function loadRealConnections(uid){
   if(!fbDb) return;
-  try{
-    const snap = await fbDb.collection('users').doc(uid).collection('connections').get();
+  if(connectionsUnsub) connectionsUnsub();
+  // onSnapshot (not a one-time get()) paints instantly from Firestore's local cache the
+  // moment the app opens, then quietly updates from the server — this is what actually
+  // fixes contacts taking a few seconds to appear, and it also means a newly-added real
+  // connection shows up live without needing to reopen the app.
+  connectionsUnsub = fbDb.collection('users').doc(uid).collection('connections').onSnapshot(snap=>{
     snap.forEach(doc=>{
       const d = doc.data();
       addRealContactToLocalList(doc.id, d.name || 'Unknown', d.color, d.handle);
     });
     renderContacts();
     renderBandList();
-  }catch(e){ /* connections just won't be preloaded this session */ }
+    loadConnectionsSignals(); // Frequencies and Broadcast share the same real people
+  }, ()=>{ /* connections just won't be live this session */ });
 }
 
 function openFindPeople(){

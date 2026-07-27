@@ -7,32 +7,40 @@ the backend.
 ## What's real vs. what's still simulated
 
 **Real in this build:**
-- Sign-in (Google)
+- Sign-in — Google, or email/password as a more reliable alternative if Google's
+  popup/redirect flow proves flaky on a given device
 - Callsign profile (name, tagline, handle, color, photo) — synced to Firestore
 - Presence heartbeat — your own `lastActivityTs` is written to Firestore while the
   app is open and focused, which is the exact field `computeSignal()` already reads
 - Real contacts — search anyone by handle, connect, and they show up in your real
-  Frequencies list (merged alongside demo contacts, distinguished by `isReal: true`)
+  Frequencies list, loaded live (not a one-time fetch, so it doesn't lag on open)
 - Real Wireline — text, voice notes (size-limited without Storage, see below), moods,
   and emotion reactions all sync live over Firestore between two real signed-in people.
   Read receipts are driven by the actual other person opening the thread, not simulated.
+  Messages can be hard-deleted, no "deleted" stamp left behind.
 - Real Band — presence and messages are both live Firestore data for any Band made of
   real connections. No simulated banter in a real Band, ever.
-- Real 1:1 calls — WebRTC with Firestore as the signaling channel (offer/answer/ICE
-  candidates as documents). Actually connects two real people's audio/video.
-  **No TURN server is configured** — only public STUN — so most direct connections
-  work, but two people both behind strict/symmetric NATs (common on some corporate
-  networks) may fail to connect to each other specifically. See "Adding a TURN server"
-  below when that becomes a real problem for real users.
+- Real Broadcast — posts sync to Firestore per real account, and your real connections'
+  broadcasts show up for you and vice versa. Frequencies and Broadcast are now the same
+  set of real people, not two disconnected screens.
+- Real 1:1 calls — WebRTC with Firestore as the signaling channel. A real ICE-candidate
+  ordering bug (candidates generated before anything was listening for them) used to
+  make calls "connect" with no audio or video ever arriving — fixed. **No TURN server
+  is configured** — only public STUN — so most direct connections work, but two people
+  both behind strict/symmetric NATs may fail to connect to each other specifically.
+  See "Adding a TURN server" below when that becomes a real problem for real users.
+- Real ringback (caller) and ringtone (receiver) tones, synthesized — or upload your
+  own sound in Callsign → Ringtone (stored on-device only for now, see below).
 
 **Still simulated / not built (next phases):**
-- Real Broadcast (posts visible to real connections) isn't built — Broadcast is
-  currently just your own posts, nothing shared between real accounts yet
 - Multi-party Band Live (closer to an actual video-call room for lessons, screen share)
   needs a different foundation than 1:1 calls — likely a media server (SFU) once more
   than 2–3 people are live at once, since mesh peer-to-peer degrades badly past that
-- Voice notes to real contacts are capped around 30 seconds — there's no Firebase Storage
-  bucket wired up yet, so audio has to fit inside a single Firestore document (1MB limit)
+- Voice notes to real contacts are capped around 30 seconds, and a custom ringtone only
+  works on the device you uploaded it from — both need a Firebase Storage bucket, which
+  isn't wired up yet
+- A ring genuinely reaching a closed app needs the Cloud Function deployed (see below) —
+  without it, notifications only work while the app itself is open
 
 ## Adding a TURN server (when direct connections start failing for real users)
 
@@ -104,6 +112,18 @@ can be. See "Next phases" below.
 1. Push this repo to GitHub.
 2. Repo **Settings → Pages → Deploy from branch → main → / (root)**.
 3. Your app is live at `https://yourname.github.io/naluno` within a minute or two.
+
+## Enabling email/password sign-in (a reliable alternative to Google)
+
+Google sign-in's popup/redirect flow has proven fragile on some real devices — if it
+keeps closing before finishing, use this instead. It doesn't depend on any cross-window
+or cross-domain handoff at all, so there's nothing for a browser's privacy features to
+interfere with.
+
+1. Firebase console → your project → **Authentication** → **Sign-in method** tab.
+2. Enable **Email/Password**.
+3. That's it — the app already has the UI for it (the "OR" divider on the sign-in
+   screen). No other setup needed.
 
 ## Enabling call notifications (rings even with the app closed)
 
