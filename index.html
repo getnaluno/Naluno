@@ -220,24 +220,21 @@
      behind the masked cutout so it shows through the mask's own soft edge and spills a
      little beyond it. Pulse rhythm follows your live signal tier: brisk when strong,
      slow and dim when fading, nearly still when off the grid. Nothing about your face
-     changes — only the frame around it, and only using a color you already chose. */
-  .signature-glow{ position:absolute; inset:0; width:100%; height:100%; pointer-events:none; mix-blend-mode:screen; transform:scaleX(-1); }
+     changes — only the frame around it, and only using a color you already chose.
+     Uses box-shadow, not mix-blend-mode — blend modes wash out to nearly invisible
+     against a bright background (a white wall, for instance), which is exactly what
+     made this disappear before. box-shadow draws real color regardless of what's
+     behind it. */
+  .signature-glow{ position:absolute; inset:0; width:100%; height:100%; pointer-events:none; border-radius:inherit; transition:box-shadow .8s ease; }
   .signature-glow.tier-strong{ animation: sigGlowStrong 2.2s ease-in-out infinite; }
   .signature-glow.tier-fading{ animation: sigGlowFading 4.2s ease-in-out infinite; }
   .signature-glow.tier-off{ animation: sigGlowOff 6s ease-in-out infinite; }
-  /* The animated "Live Background" pattern now only ever lives in a border strip around
-     the real, unmodified camera feed — never behind or over the person. content-box vs
-     border-box masks, subtracted from each other, is what carves the hollow frame shape;
-     it's pure deterministic CSS compositing, nothing that can misfire per-frame the way
-     the earlier segmentation attempt could. */
-  .cam-border-canvas{
-    position:absolute; inset:0; width:100%; height:100%;
-    padding:16px; box-sizing:border-box; pointer-events:none;
-    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-    -webkit-mask-composite: xor;
-    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-    mask-composite: exclude;
-  }
+  /* The animated "Live Background" pattern and the real camera feed are now composited
+     together directly in Canvas2D (see drawStage in the script) — the pattern is drawn
+     first across the whole canvas, then the camera is drawn on top clipped to a smaller
+     inset rectangle, which is what leaves a border of the pattern visible around the
+     edge. Plain rect+clip, supported everywhere, nothing that depends on how well a
+     given browser implements newer CSS mask compositing. */
   @keyframes sigGlowStrong{ 0%,100%{ opacity:.6; } 50%{ opacity:1; } }
   @keyframes sigGlowFading{ 0%,100%{ opacity:.22; } 50%{ opacity:.5; } }
   @keyframes sigGlowOff{ 0%,100%{ opacity:.06; } 100%{ opacity:.06; } }
@@ -660,8 +657,8 @@
       </div>
       <div class="lobby-body">
         <div class="cam-stage" id="camStage">
-          <video id="camRawVideo" autoplay playsinline muted style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);"></video>
-          <canvas class="cam-border-canvas" id="camBorderCanvas"></canvas>
+          <video id="camRawVideo" autoplay playsinline muted style="display:none;"></video>
+          <canvas id="camStageCanvas" style="position:absolute;inset:0;width:100%;height:100%;"></canvas>
           <div class="signature-glow" id="camSignatureGlow"></div>
           <div class="cam-empty-fallback" id="camFallback">
             Camera not connected yet<br>
@@ -756,8 +753,8 @@
       <div class="filter-chip-row" id="incallBgChipRow" style="display:none; position:absolute; left:0; right:0; bottom:130px; z-index:6; padding:0 20px; margin:0;"></div>
       <div class="waveform" id="waveform"></div>
       <div class="local-pip" id="localPip">
-        <video id="pipRawVideo" autoplay playsinline muted style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);"></video>
-        <canvas class="cam-border-canvas" id="pipBorderCanvas" style="padding:8px;"></canvas>
+        <video id="pipRawVideo" autoplay playsinline muted style="display:none;"></video>
+        <canvas id="pipStageCanvas" style="position:absolute;inset:0;width:100%;height:100%;"></canvas>
         <div class="signature-glow" id="pipSignatureGlow"></div>
         <div class="mute-badge"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M12 15a3 3 0 003-3V6a3 3 0 10-6 0v6a3 3 0 003 3z" stroke="#fff" stroke-width="2.4"/><path d="M3 3l18 18" stroke="#fff" stroke-width="2.4"/></svg></div>
       </div>
@@ -2882,12 +2879,12 @@ function hexToRgba(hex, alpha){
 function updateSignatureGlow(){
   const color = (typeof currentProfile !== 'undefined' && currentProfile && currentProfile.color) ? currentProfile.color : '#7CFFB2';
   const { tier } = computeSignal({ lastActivityTs: myLastActivityTs });
-  // Hugs the actual edges of the frame now — not an inner shape competing with you,
-  // just a soft colored vignette bleeding in from the border, exactly where it was drawn.
-  const gradient = `radial-gradient(ellipse 100% 100% at 50% 50%, transparent 78%, ${hexToRgba(color,0.55)} 94%, transparent 100%)`;
+  // Real, guaranteed-visible color at the edge — not dependent on blend-mode math
+  // against whatever happens to be behind it, which is what made this vanish before.
+  const glow = `inset 0 0 26px 4px ${hexToRgba(color,0.55)}, inset 0 0 6px 1px ${hexToRgba(color,0.85)}`;
   ['camSignatureGlow','pipSignatureGlow','bandSignatureGlow'].forEach(id=>{
     const el = $(id); if(!el) return;
-    el.style.background = gradient;
+    el.style.boxShadow = glow;
     el.classList.remove('tier-strong','tier-fading','tier-off');
     el.classList.add('tier-'+tier);
   });
@@ -2959,6 +2956,18 @@ if(firebaseReady()){
     fbApp = firebase.initializeApp(firebaseConfig);
     fbAuth = firebase.auth();
     fbDb = firebase.firestore();
+    // This was never turned on before, and it's very likely the root cause behind two
+    // separate complaints at once: Frequencies taking 2-3 seconds to appear on every
+    // refresh (no local cache to paint from — every load had to wait on the network,
+    // full stop), and Callsign inconsistently falling back to default values (a
+    // one-shot read racing against network timing has no safety margin without a
+    // cache to fall back on). With this enabled, a repeat visit paints instantly from
+    // IndexedDB, then quietly reconciles with the server in the background.
+    fbDb.enablePersistence({ synchronizeTabs: true }).catch(()=>{
+      // Fails in a few known cases (multiple tabs without multi-tab support in an
+      // older browser, private/incognito browsing, no IndexedDB) — the app still
+      // works perfectly fine without it, just without the instant-repaint benefit.
+    });
   }catch(e){ console.error('Firebase init failed:', e); }
 }
 
@@ -3063,6 +3072,7 @@ if(fbAuth){
       if(bandMessagesUnsub){ bandMessagesUnsub(); bandMessagesUnsub = null; }
       if(incomingCallUnsub){ incomingCallUnsub(); incomingCallUnsub = null; }
       if(connectionsUnsub){ connectionsUnsub(); connectionsUnsub = null; }
+      if(profileUnsub){ profileUnsub(); profileUnsub = null; }
       teardownCallConnection();
       realThreadPreviews = {};
     }
@@ -3089,48 +3099,41 @@ async function claimHandle(handle, uid){
   return '@' + clean;
 }
 
-async function loadRealProfile(user){
-  await loadProfileWithRetry(user, 0);
+let profileUnsub = null;
+function loadRealProfile(user){
+  if(profileUnsub) profileUnsub();
+  // Frequencies never seemed to lose data because it was always a live listener, not
+  // a one-shot read racing against network timing with a fixed number of retries
+  // before giving up. This is that same pattern, applied here — permanently, not just
+  // patched. A live listener repaints instantly from local cache once persistence is
+  // warm, keeps retrying indefinitely on its own if the network is slow, and — this is
+  // the important part — once a real profile has successfully loaded, a later
+  // "document not found" can only mean it was actually deleted, which never happens in
+  // this app, so that case is deliberately ignored rather than allowed to blank the
+  // screen back to defaults.
+  let gotFirstSnapshot = false;
+  profileUnsub = fbDb.collection('users').doc(user.uid).onSnapshot(doc=>{
+    if(doc.exists){
+      currentProfile = { photo:null, ...DEFAULT_PROFILE, ...doc.data() };
+      applyProfileToUI(currentProfile);
+      showCallsignView();
+    } else if(!gotFirstSnapshot){
+      // Only a genuinely first-ever snapshot reporting "nothing here" counts as a real
+      // first-time sign-in — never a later one, which would just mean a transient gap.
+      currentProfile = { ...DEFAULT_PROFILE, name: user.displayName || 'You', number: '@' + user.uid.slice(0,8) };
+      applyProfileToUI(currentProfile);
+      showCallsignEdit(); // first-time setup opens straight into the form, same as before
+    }
+    gotFirstSnapshot = true;
+  }, ()=>{
+    toast('Couldn\u2019t load your callsign — check your connection');
+  });
   loadRealConnections(user.uid);
   startThreadsListListener();
   loadRealBands(user.uid);
   startIncomingCallListener();
   loadMySignal();
   maybeRefreshCallNotifToken();
-}
-/* Frequencies/contacts use a live onSnapshot listener, which quietly retries and reads
-   from cache on its own — that's why they never seem to lose data. Callsign used a
-   single one-shot get() with no retry at all, and on ANY failure (a network blip right
-   after a refresh, before the read is fully connected) it silently treated that as "this
-   is a brand-new user" and dropped into an EDITABLE form pre-filled with default values.
-   Glancing at that, or worse, tapping Save while in it, looks exactly like the callsign
-   reverting. This retries a couple of times before ever reaching that conclusion, and on
-   a genuine repeated failure it shows an error instead of a defaults-filled edit form. */
-async function loadProfileWithRetry(user, attempt){
-  try{
-    const doc = await fbDb.collection('users').doc(user.uid).get();
-    if(doc.exists){
-      currentProfile = { photo:null, ...DEFAULT_PROFILE, ...doc.data() };
-      applyProfileToUI(currentProfile);
-      showCallsignView();
-      return;
-    }
-    if(attempt < 2){
-      await new Promise(r=>setTimeout(r, 700));
-      return loadProfileWithRetry(user, attempt+1);
-    }
-    // Retried and it's genuinely not there — a real first-time sign-in.
-    currentProfile = { ...DEFAULT_PROFILE, name: user.displayName || 'You', number: '@' + user.uid.slice(0,8) };
-    applyProfileToUI(currentProfile);
-    showCallsignEdit(); // first-time setup opens straight into the form, same as before
-  }catch(e){
-    if(attempt < 2){
-      await new Promise(r=>setTimeout(r, 700));
-      return loadProfileWithRetry(user, attempt+1);
-    }
-    toast('Couldn\u2019t load your callsign — reopen Callsign to try again');
-    showCallsignView(); // show whatever's already in memory rather than a defaults-filled edit form
-  }
 }
 /* If the person already granted notification permission in a previous session, re-fetch
    and re-save their token silently — this is what was actually breaking: the token
@@ -3546,26 +3549,55 @@ function ensureCanvasSize(canvas){
    segmentation model's edges are inherently soft and shift frame to frame, which reads
    as ghosting no matter how it's tuned. So this drops the idea of replacing what's
    behind you entirely. The real camera feed shows completely as-is now — nothing
-   masked, nothing composited, nothing that can misfire. The chosen "Live Background"
-   pattern still exists, just honestly repositioned to where it can actually live
-   reliably: a thin animated border right at the frame's edge, carved out with a plain
-   CSS mask (content-box vs border-box, subtracted) — deterministic, not probabilistic. */
+   masked, nothing composited per-pixel, nothing that can misfire.
+
+   The chosen "Live Background" pattern is drawn first, filling the whole canvas; then
+   the real camera is drawn on top, clipped to a smaller inset rectangle. Whatever the
+   pattern drew in the margin between that rectangle and the canvas edge is never
+   painted over, which is what leaves it visible as a border. This is just drawImage
+   and clip() — the most basic Canvas2D operations there are, supported identically
+   everywhere, with no dependency on how well a given browser implements newer CSS
+   mask compositing (which is what the previous attempt quietly depended on). */
 let camAnimStart = performance.now();
 let pipAnimStart = performance.now();
-function drawBorder(canvasId, animStart){
-  const canvas = $(canvasId); if(!canvas || canvas.offsetParent === null) return;
+function drawStage(canvasId, videoId, animStart){
+  const canvas = $(canvasId), video = $(videoId);
+  if(!canvas || !video) return;
   ensureCanvasSize(canvas);
+  const w = canvas.width, h = canvas.height;
   const ctx = canvas.getContext('2d');
-  if(!greenroomEnabled){ ctx.clearRect(0,0,canvas.width,canvas.height); return; }
-  const preset = backgroundPresets[selectedBackgroundId];
-  preset.painter(ctx, canvas.width, canvas.height, (performance.now()-animStart)/1000);
+  ctx.save();
+  ctx.clearRect(0,0,w,h);
+
+  let borderPx = 0;
+  if(greenroomEnabled){
+    const preset = backgroundPresets[selectedBackgroundId];
+    preset.painter(ctx, w, h, (performance.now()-animStart)/1000);
+    borderPx = Math.max(6, Math.round(Math.min(w,h) * 0.045));
+  }
+
+  ctx.beginPath();
+  ctx.rect(borderPx, borderPx, Math.max(1,w-borderPx*2), Math.max(1,h-borderPx*2));
+  ctx.clip();
+
+  if(video.readyState >= 2 && video.videoWidth){
+    ctx.translate(w,0); ctx.scale(-1,1); // mirror — matches every other self-view in this app
+    const vw = video.videoWidth, vh = video.videoHeight;
+    const scale = Math.max(w/vw, h/vh); // cover-fit, same effect object-fit:cover had
+    const dw = vw*scale, dh = vh*scale;
+    ctx.drawImage(video, (w-dw)/2, (h-dh)/2, dw, dh);
+  } else {
+    ctx.fillStyle = '#171A26';
+    ctx.fillRect(0,0,w,h);
+  }
+  ctx.restore();
 }
-function borderLoopTick(){
-  requestAnimationFrame(borderLoopTick);
-  if($('lobby').classList.contains('active')) drawBorder('camBorderCanvas', camAnimStart);
-  if($('incall').classList.contains('active')) drawBorder('pipBorderCanvas', pipAnimStart);
+function stageLoopTick(){
+  requestAnimationFrame(stageLoopTick);
+  if($('lobby').classList.contains('active')) drawStage('camStageCanvas', 'camRawVideo', camAnimStart);
+  if($('incall').classList.contains('active')) drawStage('pipStageCanvas', 'pipRawVideo', pipAnimStart);
 }
-requestAnimationFrame(borderLoopTick);
+requestAnimationFrame(stageLoopTick);
 function startCamView(target){
   if(target==='lobby'){ camAnimStart = performance.now(); const v = $('camRawVideo'); if(v) v.srcObject = stream; }
   else { pipAnimStart = performance.now(); const v = $('pipRawVideo'); if(v) v.srcObject = stream; }
