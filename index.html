@@ -2614,6 +2614,28 @@ rebuildLocalQueuedMessagesIndex();
    synced version is about to arrive through the normal thread listener instead. */
 async function sendRealMessage(c, payload, previewText, queueId){
   if(!fbDb || !currentUser) return;
+  // Checked BEFORE ever touching Firestore, not after waiting for a failure that was
+  // never actually coming: with offline persistence enabled (needed to fix the
+  // Frequencies/Callsign lag), a write made while genuinely offline doesn't reject —
+  // it stays pending indefinitely until the server can confirm it. This is the real
+  // reason queued messages only ever appeared once back online: the catch block
+  // holding all the queueing logic was waiting on a rejection that would never come,
+  // the await just silently hung. Bailing out immediately here, before ever calling
+  // Firestore, also avoids a real duplicate-send risk: if the write had actually been
+  // issued, Firestore's own offline queue would retry it independently of this custom
+  // one, and both eventually succeeding would send the message twice.
+  if(!navigator.onLine && !queueId){
+    const c2 = contacts.find(x=>x.firebaseUid===c.firebaseUid);
+    if(c2){
+      queueMessageForLater(c2.id, c.firebaseUid, payload, previewText);
+      $('threadInput').value = '';
+      autoSizeThreadInput();
+      updateComposerButtons();
+      if(activeThreadContactId===c2.id) renderThreadMessages();
+      toast('No connection — queued, will send automatically');
+      return;
+    }
+  }
   const tid = realThreadId(c.firebaseUid);
   const threadRef = fbDb.collection('threads').doc(tid);
   try{
@@ -2652,9 +2674,10 @@ async function sendRealMessage(c, payload, previewText, queueId){
     bumpTodayActivity();
   }catch(e){
     if(!queueId){
-      // Not already queued — this is a fresh send that failed, most likely because
-      // the connection genuinely isn't there right now. Queue it instead of just
-      // showing an error and losing what was typed.
+      // Not already queued — this is a fresh send that failed for some OTHER reason
+      // (a real error, not just being offline, which is now caught above before this
+      // point is ever reached). Queue it instead of just showing an error and losing
+      // what was typed.
       const c2 = contacts.find(x=>x.firebaseUid===c.firebaseUid);
       if(c2){
         queueMessageForLater(c2.id, c.firebaseUid, payload, previewText);
@@ -3789,6 +3812,15 @@ loadBackgroundChoice();
 /* Keeps a canvas's actual pixel resolution matched to its on-screen size — used by
    the segmentation compositor above and Band's ambient background animation. */
 function ensureCanvasSize(canvas){
+  // getBoundingClientRect() forces the browser to recompute page layout — genuinely
+  // expensive, and this used to run unconditionally on every single animation frame
+  // for as long as a call lasted. A canvas's on-screen size essentially never changes
+  // frame to frame, so checking twice a second instead of 60 times a second loses
+  // nothing visually (the expand toggle still feels instant) while cutting a 30-minute
+  // call from roughly 108,000 forced layout passes down to about 3,600.
+  const now = performance.now();
+  if(canvas._lastSizeCheck && now - canvas._lastSizeCheck < 500) return;
+  canvas._lastSizeCheck = now;
   const r = canvas.getBoundingClientRect();
   const w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
   if(canvas.width!==w || canvas.height!==h){ canvas.width=w; canvas.height=h; }
