@@ -215,7 +215,6 @@
     -webkit-mask-image: radial-gradient(ellipse 36% 46% at 50% 44%, black 85%, transparent 97%);
     mask-image: radial-gradient(ellipse 36% 46% at 50% 44%, black 85%, transparent 97%);
   }
-  .preset-tint{ position:absolute; inset:0; mix-blend-mode:overlay; opacity:.6; transition: background 1s ease; }
   .cam-empty-fallback{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:8px; color:var(--text-dim); font-family:var(--font-mono); font-size:11.5px; text-align:center; padding:0 26px; }
   /* Signature Glow — a soft ring of your Callsign color around your video, sitting just
      behind the masked cutout so it shows through the mask's own soft edge and spills a
@@ -226,6 +225,19 @@
   .signature-glow.tier-strong{ animation: sigGlowStrong 2.2s ease-in-out infinite; }
   .signature-glow.tier-fading{ animation: sigGlowFading 4.2s ease-in-out infinite; }
   .signature-glow.tier-off{ animation: sigGlowOff 6s ease-in-out infinite; }
+  /* The animated "Live Background" pattern now only ever lives in a border strip around
+     the real, unmodified camera feed — never behind or over the person. content-box vs
+     border-box masks, subtracted from each other, is what carves the hollow frame shape;
+     it's pure deterministic CSS compositing, nothing that can misfire per-frame the way
+     the earlier segmentation attempt could. */
+  .cam-border-canvas{
+    position:absolute; inset:0; width:100%; height:100%;
+    padding:16px; box-sizing:border-box; pointer-events:none;
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+  }
   @keyframes sigGlowStrong{ 0%,100%{ opacity:.6; } 50%{ opacity:1; } }
   @keyframes sigGlowFading{ 0%,100%{ opacity:.22; } 50%{ opacity:.5; } }
   @keyframes sigGlowOff{ 0%,100%{ opacity:.06; } 100%{ opacity:.06; } }
@@ -418,7 +430,6 @@
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
 <script src="firebase-config.js"></script>
 <body>
 
@@ -649,9 +660,8 @@
       </div>
       <div class="lobby-body">
         <div class="cam-stage" id="camStage">
-          <video id="camRawVideo" autoplay playsinline muted style="display:none;"></video>
-          <canvas class="cam-output-canvas" id="camOutputCanvas" style="position:absolute;inset:0;width:100%;height:100%;"></canvas>
-          <div class="preset-tint" id="presetTint" style="display:none;"></div>
+          <video id="camRawVideo" autoplay playsinline muted style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);"></video>
+          <canvas class="cam-border-canvas" id="camBorderCanvas"></canvas>
           <div class="signature-glow" id="camSignatureGlow"></div>
           <div class="cam-empty-fallback" id="camFallback">
             Camera not connected yet<br>
@@ -746,9 +756,8 @@
       <div class="filter-chip-row" id="incallBgChipRow" style="display:none; position:absolute; left:0; right:0; bottom:130px; z-index:6; padding:0 20px; margin:0;"></div>
       <div class="waveform" id="waveform"></div>
       <div class="local-pip" id="localPip">
-        <video id="pipRawVideo" autoplay playsinline muted style="display:none;"></video>
-        <canvas class="cam-output-canvas" id="pipOutputCanvas" style="position:absolute;inset:0;width:100%;height:100%;"></canvas>
-        <div class="preset-tint" id="pipTint" style="display:none;"></div>
+        <video id="pipRawVideo" autoplay playsinline muted style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);"></video>
+        <canvas class="cam-border-canvas" id="pipBorderCanvas" style="padding:8px;"></canvas>
         <div class="signature-glow" id="pipSignatureGlow"></div>
         <div class="mute-badge"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M12 15a3 3 0 003-3V6a3 3 0 10-6 0v6a3 3 0 003 3z" stroke="#fff" stroke-width="2.4"/><path d="M3 3l18 18" stroke="#fff" stroke-width="2.4"/></svg></div>
       </div>
@@ -2873,7 +2882,9 @@ function hexToRgba(hex, alpha){
 function updateSignatureGlow(){
   const color = (typeof currentProfile !== 'undefined' && currentProfile && currentProfile.color) ? currentProfile.color : '#7CFFB2';
   const { tier } = computeSignal({ lastActivityTs: myLastActivityTs });
-  const gradient = `radial-gradient(ellipse 40% 50% at 50% 44%, transparent 78%, ${hexToRgba(color,0.6)} 90%, transparent 100%)`;
+  // Hugs the actual edges of the frame now — not an inner shape competing with you,
+  // just a soft colored vignette bleeding in from the border, exactly where it was drawn.
+  const gradient = `radial-gradient(ellipse 100% 100% at 50% 50%, transparent 78%, ${hexToRgba(color,0.55)} 94%, transparent 100%)`;
   ['camSignatureGlow','pipSignatureGlow','bandSignatureGlow'].forEach(id=>{
     const el = $(id); if(!el) return;
     el.style.background = gradient;
@@ -3250,14 +3261,12 @@ function stopCameraStream(){
     stream.getTracks().forEach(t=>t.stop());
     stream = null;
   }
-  stopSegmentedView();
   [$('camRawVideo'),$('pipRawVideo'),$('incomingSelfVideo')].forEach(v=>{ if(v) v.srcObject = null; });
   const badge = $('camQualityBadge'); if(badge) badge.style.display = 'none';
 }
-/* ---------------- LIVE BACKGROUNDS ----------------
-   Each non-'blur' preset is drawn every frame onto a canvas behind the person cutout,
-   so it's genuinely moving, not a static image. 'blur' instead shows your real
-   background, softly blurred — useful when a scenic background isn't what you want.
+/* ---------------- LIVE BORDER PATTERNS ----------------
+   Each preset is drawn every frame onto the border canvas — genuinely moving, not a
+   static image — confined to a thin frame around the real, unmodified camera feed.
 
    Depth: a slow virtual camera drifts on a Lissajous path, and every element is offset by
    camera × its own depth (0 = far, 1 = near). Near things move more than far things — that's
@@ -3483,7 +3492,6 @@ const backgroundPresets = {
   desert:    { name:'Desert Sky',    type:'canvas', painter:paintDesertSky },
   waterfall: { name:'Waterfall',     type:'canvas', painter:paintWaterfall },
   forest:    { name:'Forest Park',   type:'canvas', painter:paintForestPark },
-  blur:      { name:'Your room, blurred', type:'blur' },
 };
 let selectedBackgroundId = 'studio';
 let userPickedBackground = false; // false = Greenroom is free to auto-suggest
@@ -3533,121 +3541,35 @@ function ensureCanvasSize(canvas){
   const w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
   if(canvas.width!==w || canvas.height!==h){ canvas.width=w; canvas.height=h; }
 }
-/* ---------------- REAL PERSON SEGMENTATION (Greenroom) ----------------
-   The whole point of Greenroom is a background genuinely behind you, not just a shape
-   drawn around a guessed oval — a static CSS mask can never know your actual silhouette,
-   so real background always leaked through wherever your body didn't fill that oval
-   exactly. This is the real fix: a live ML model (MediaPipe Selfie Segmentation) looks
-   at every frame and calculates your actual outline, and the composite is built pixel
-   by pixel — your real self on top, the chosen background genuinely behind it. Same
-   technique virtual backgrounds in Zoom/Meet use under the hood.
-
-   Only one of the lobby preview or the in-call pip is ever showing at once, so a single
-   model instance is shared between them — segActiveTarget says which one is live. */
-let selfieSegmentation = null;
-let segmentationLoadFailed = false;
-let segActiveTarget = null; // 'lobby' | 'pip' | null
-let segLoopHandle = null;
+/* ---------------- LIVE BORDER (Greenroom) ----------------
+   Five attempts at real-time background replacement all ran into the same wall: a
+   segmentation model's edges are inherently soft and shift frame to frame, which reads
+   as ghosting no matter how it's tuned. So this drops the idea of replacing what's
+   behind you entirely. The real camera feed shows completely as-is now — nothing
+   masked, nothing composited, nothing that can misfire. The chosen "Live Background"
+   pattern still exists, just honestly repositioned to where it can actually live
+   reliably: a thin animated border right at the frame's edge, carved out with a plain
+   CSS mask (content-box vs border-box, subtracted) — deterministic, not probabilistic. */
 let camAnimStart = performance.now();
 let pipAnimStart = performance.now();
-const segTargets = {
-  lobby: { video: 'camRawVideo', canvas: 'camOutputCanvas' },
-  pip: { video: 'pipRawVideo', canvas: 'pipOutputCanvas' },
-};
-async function ensureSegmentation(){
-  if(selfieSegmentation) return selfieSegmentation;
-  if(segmentationLoadFailed) return null;
-  if(typeof SelfieSegmentation === 'undefined'){
-    segmentationLoadFailed = true;
-    toast('Background replacement needs an internet connection — showing your camera as-is');
-    return null;
-  }
-  try{
-    const seg = new SelfieSegmentation({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}` });
-    seg.setOptions({ modelSelection: 1 }); // "landscape" model — lighter and faster, good for a face-and-shoulders frame
-    await seg.initialize();
-    selfieSegmentation = seg;
-    return seg;
-  }catch(e){
-    segmentationLoadFailed = true;
-    toast('Background replacement couldn\u2019t load — showing your camera as-is');
-    return null;
-  }
-}
-function drawBackgroundBehind(target, ctx, w, h, rawImage){
+function drawBorder(canvasId, animStart){
+  const canvas = $(canvasId); if(!canvas || canvas.offsetParent === null) return;
+  ensureCanvasSize(canvas);
+  const ctx = canvas.getContext('2d');
+  if(!greenroomEnabled){ ctx.clearRect(0,0,canvas.width,canvas.height); return; }
   const preset = backgroundPresets[selectedBackgroundId];
-  if(preset.type === 'blur'){
-    ctx.filter = 'blur(22px) saturate(1.15) brightness(.9)';
-    ctx.drawImage(rawImage, 0, 0, w, h);
-    ctx.filter = 'none';
-  } else {
-    const start = target==='lobby' ? camAnimStart : pipAnimStart;
-    preset.painter(ctx, w, h, (performance.now()-start)/1000);
-  }
+  preset.painter(ctx, canvas.width, canvas.height, (performance.now()-animStart)/1000);
 }
-function drawComposite(target, results){
-  if(segActiveTarget !== target) return; // this target isn't the live one anymore — drop the frame
-  const canvas = $(segTargets[target].canvas); if(!canvas) return;
-  ensureCanvasSize(canvas);
-  const ctx = canvas.getContext('2d');
-  ctx.save();
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  ctx.translate(canvas.width,0); ctx.scale(-1,1); // mirror — matches every other self-view in this app
-  ctx.drawImage(results.segmentationMask, 0, 0, canvas.width, canvas.height);
-  ctx.globalCompositeOperation = 'source-in';
-  ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height); // keeps only the real you, where the mask says "person"
-  ctx.globalCompositeOperation = 'destination-over';
-  drawBackgroundBehind(target, ctx, canvas.width, canvas.height, results.image); // drawn behind everything above — genuinely behind you now
-  ctx.restore();
+function borderLoopTick(){
+  requestAnimationFrame(borderLoopTick);
+  if($('lobby').classList.contains('active')) drawBorder('camBorderCanvas', camAnimStart);
+  if($('incall').classList.contains('active')) drawBorder('pipBorderCanvas', pipAnimStart);
 }
-function drawRawFallback(target){
-  const t = segTargets[target]; if(!t) return;
-  const video = $(t.video), canvas = $(t.canvas);
-  if(!video || !canvas || video.readyState < 2) return;
-  ensureCanvasSize(canvas);
-  const ctx = canvas.getContext('2d');
-  ctx.save();
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  ctx.translate(canvas.width,0); ctx.scale(-1,1);
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-  ctx.restore();
+requestAnimationFrame(borderLoopTick);
+function startCamView(target){
+  if(target==='lobby'){ camAnimStart = performance.now(); const v = $('camRawVideo'); if(v) v.srcObject = stream; }
+  else { pipAnimStart = performance.now(); const v = $('pipRawVideo'); if(v) v.srcObject = stream; }
 }
-/* Which actual call screen a segmentation target belongs to — used to skip running
-   inference at all while that screen is hidden (e.g. mid-ring, before it connects).
-   offsetParent doesn't work for this here: call screens hide via opacity, not
-   display:none, so offsetParent never actually returns null for them. */
-function segTargetVisible(target){
-  if(target==='lobby') return $('lobby').classList.contains('active');
-  if(target==='pip') return $('incall').classList.contains('active');
-  return false;
-}
-function segLoopTick(){
-  segLoopHandle = requestAnimationFrame(segLoopTick);
-  if(!segActiveTarget) return;
-  if(!segTargetVisible(segActiveTarget)) return; // e.g. still ringing — no point spending inference on a hidden canvas
-  const t = segTargets[segActiveTarget];
-  const video = $(t.video);
-  if(!video) return;
-  if(!video.srcObject || video.readyState < 2) return;
-  if(selfieSegmentation && !segmentationLoadFailed){
-    selfieSegmentation.send({ image: video }).catch(()=>{});
-  } else {
-    drawRawFallback(segActiveTarget); // model unavailable — still show the real camera, just unreplaced
-  }
-}
-requestAnimationFrame(segLoopTick);
-/* Switches which view (lobby preview or in-call pip) the shared model is feeding right
-   now, and points that target's hidden raw video at the live camera stream. */
-async function startSegmentedView(target){
-  segActiveTarget = target;
-  if(target==='lobby') camAnimStart = performance.now(); else pipAnimStart = performance.now();
-  const t = segTargets[target];
-  const video = $(t.video);
-  if(video) video.srcObject = stream;
-  const seg = await ensureSegmentation();
-  if(seg) seg.onResults(results => drawComposite(target, results));
-}
-function stopSegmentedView(){ segActiveTarget = null; }
 
 /* ---------------- CAMERA QUALITY ----------------
    One constraint-and-fallback strategy used everywhere the app opens a camera (calls,
@@ -3716,7 +3638,7 @@ async function flipCamera(){
     stream.getTracks().forEach(t=>t.stop());
     stream = newStream;
     $('incomingSelfVideo').srcObject = stream;
-    if(segActiveTarget){ const t = segTargets[segActiveTarget]; if(t) $(t.video).srcObject = stream; }
+    startCamView($('incall').classList.contains('active') ? 'pip' : 'lobby');
     updateCameraQualityBadge();
     updateSignatureGlow();
     toast('Switched camera');
@@ -3734,8 +3656,8 @@ async function enableCamera(){
   cameraRequestPending = requestHighQualityStream();
   try{
     stream = await cameraRequestPending;
-    $('incomingSelfVideo').srcObject = stream; // small preview only — not background-replaced
-    startSegmentedView($('incall').classList.contains('active') ? 'pip' : 'lobby');
+    $('incomingSelfVideo').srcObject = stream; // small preview only
+    startCamView($('incall').classList.contains('active') ? 'pip' : 'lobby');
     $('camFallback').style.display='none';
     updateCameraQualityBadge();
     updateSignatureGlow();
@@ -3766,7 +3688,6 @@ $('greenroomPill').onclick = ()=>{ if(stream) runGreenroom(); };
 
 function runGreenroom(){
   if(!greenroomEnabled){
-    chooseBackground('blur', false);
     $('greenroomPill').classList.add('ready');
     $('greenroomLabel').textContent = 'Greenroom · off';
     return;
@@ -3777,7 +3698,7 @@ function runGreenroom(){
     const id = userPickedBackground ? selectedBackgroundId : suggestBackgroundId();
     chooseBackground(id, false);
     $('greenroomPill').classList.add('ready');
-    toast('Greenroom set your background to ' + backgroundPresets[id].name);
+    toast('Greenroom set your border to ' + backgroundPresets[id].name);
     $('sceneReadyNote').style.display = 'inline-flex';
   }, 1400);
 }
@@ -3798,7 +3719,7 @@ function suggestBackgroundId(){
     const avg = total / (data.length/4);
     if(avg < 70) return 'aurora';
     if(avg < 150) return 'studio';
-    return 'blur';
+    return 'stars';
   }catch(e){ return 'studio'; }
 }
 
@@ -4322,7 +4243,7 @@ function startInCall(){
   stopCallerTone();
   stopRingtone();
   showCallScreen('incall');
-  if(stream) startSegmentedView('pip');
+  if(stream) startCamView('pip');
   callSeconds = 0; $('callTimer').textContent = '00:00';
   clearInterval(callInterval);
   callInterval = setInterval(()=>{
