@@ -33,6 +33,11 @@ exports.notifyIncomingCall = functions.firestore
           body: callerName + ' is calling you on Naluno',
         },
         webpush: {
+          headers: { Urgency: 'high', TTL: '60' }, // deliver immediately, don't hold it
+                                                     // for battery-saving batching — a
+                                                     // call notification that arrives
+                                                     // late after the ring has already
+                                                     // ended isn't worth much
           fcmOptions: { link: '/' }, // opens/focuses the app when the notification is tapped
         },
       });
