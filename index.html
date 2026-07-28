@@ -3978,6 +3978,14 @@ const RTC_CONFIG = {
   ],
 };
 let peerConnection = null;
+/* Neither "Start call" nor "Accept" had any protection against firing twice — a real,
+   easy-to-trigger double-tap on a touchscreen (or just impatience while a screen
+   transition is mid-flight) would run the whole offer/answer flow twice, creating two
+   separate call documents and two separate peer connections for what should be one
+   attempt. If the other person's answer landed on the attempt the caller *wasn't*
+   still listening to, the caller would never see it — exactly "still ringing while the
+   other side already has video." This flag makes a second tap during setup a no-op. */
+let callActionInProgress = false;
 let activeCallId = null;
 let iAmCaller = false;
 let remoteDescriptionSet = false;
@@ -4239,12 +4247,14 @@ $('asyncSendTextBtn').onclick = ()=>{
   if(id) openWirelineFromFrequencies(id);
 };
 $('asyncKeepRingingBtn').onclick = async ()=>{
-  if(!currentCallContactId) return;
+  if(callActionInProgress || !currentCallContactId) return;
   const c = contacts.find(x=>x.id===currentCallContactId); if(!c) return;
+  callActionInProgress = true;
   showCallScreen('ringing');
   if(!stream) await enableCamera();
   try{ await startRealCall(c); startCallerTone(); }
   catch(e){ toast(e.message || 'Couldn\u2019t retry the call'); closeCallOverlayAndStopCamera(); }
+  finally{ callActionInProgress = false; }
 };
 $('asyncCancelBtn').onclick = closeCallOverlayAndStopCamera;
 
@@ -4256,17 +4266,21 @@ function closeCallOverlayAndStopCamera(){
   closeCallOverlay();
   stopCameraStream();
   currentCallContactId = null; // clean slate — nothing from this call should linger into the next one
+  callActionInProgress = false;
 }
 $('lobbyBack').onclick = closeCallOverlayAndStopCamera;
 $('joinBtn').onclick = async ()=>{
+  if(callActionInProgress) return;
   const c = contacts.find(x=>x.id===currentCallContactId);
   if(!c || !c.isReal || !c.firebaseUid || !fbDb || !currentUser){
     toast('Can\u2019t place a real call right now');
     return;
   }
+  callActionInProgress = true;
   showCallScreen('ringing');
   try{ await startRealCall(c); startCallerTone(); }
   catch(e){ toast(e.message || 'Couldn\u2019t start the call'); closeCallOverlayAndStopCamera(); }
+  finally{ callActionInProgress = false; }
 };
 $('cancelCall').onclick = ()=>{
   // Caller hanging up while still ringing — let the callee's side know it's over.
@@ -4282,8 +4296,10 @@ $('declineIncoming').onclick = ()=>{
   closeCallOverlayAndStopCamera();
 };
 $('acceptIncoming').onclick = async ()=>{
+  if(callActionInProgress) return;
   stopRingtone();
   if(!activeCallId || !fbDb){ toast('That call is no longer available'); closeCallOverlayAndStopCamera(); return; }
+  callActionInProgress = true;
   try{
     if(!stream) await enableCamera(); // the actual bug: accepting before this resolved meant no local tracks ever got added
     const callRef = fbDb.collection('calls').doc(activeCallId);
@@ -4326,6 +4342,8 @@ $('acceptIncoming').onclick = async ()=>{
   }catch(e){
     toast(e.message || 'Couldn\u2019t answer the call');
     closeCallOverlayAndStopCamera();
+  }finally{
+    callActionInProgress = false;
   }
 };
 
