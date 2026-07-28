@@ -670,6 +670,7 @@
           <div class="self-chip">You</div>
           <div class="self-chip" id="camQualityBadge" style="display:none; left:auto; right:14px; color:var(--mint);"></div>
           <div class="cam-expand-btn" id="camExpandBtn" role="button" aria-label="Expand camera view"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <div class="cam-expand-btn" id="camCaptureBtn" style="right:auto; left:12px; top:auto; bottom:52px;" role="button" aria-label="Take a photo"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M4 8h2l1.5-2h9L18 8h2a2 2 0 012 2v9a2 2 0 01-2 2H4a2 2 0 01-2-2v-9a2 2 0 012-2z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="14" r="3.5" stroke="currentColor" stroke-width="2"/></svg></div>
         </div>
         <div style="width:100%;">
           <div class="section-label" style="padding:0 2px 6px;">Live background</div>
@@ -3822,7 +3823,16 @@ function ensureCanvasSize(canvas){
   if(canvas._lastSizeCheck && now - canvas._lastSizeCheck < 500) return;
   canvas._lastSizeCheck = now;
   const r = canvas.getBoundingClientRect();
-  const w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
+  // The actual cause of the severe blur: this never accounted for the screen's real
+  // device pixel ratio, only CSS pixel size. On any modern phone (routinely 2.5-4x),
+  // that meant the canvas's internal buffer held far fewer pixels than the screen
+  // needed, and the browser stretched it to fill the display — real blur, regardless
+  // of how sharp the underlying captured video actually was. Capped at 2x rather than
+  // the full device value as a deliberate balance: still a dramatic sharpness fix,
+  // without fully reintroducing the per-frame compositing cost that caused the
+  // earlier lag by matching the highest device ratios exactly.
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
   if(canvas.width!==w || canvas.height!==h){ canvas.width=w; canvas.height=h; }
 }
 /* ---------------- LIVE BORDER (Greenroom) ----------------
@@ -3862,7 +3872,13 @@ function compositeFrame(canvas, video, animStart){
   ctx.clip();
 
   if(video.readyState >= 2 && video.videoWidth){
-    ctx.translate(w,0); ctx.scale(-1,1); // mirror — matches every other self-view in this app
+    // Mirroring only makes sense for the front camera — that's the "look in a mirror"
+    // convention every selfie camera uses. Applying it to the back camera as well was
+    // the actual cause of "looks inverted": any real-world text in frame (a screen, a
+    // document, a whiteboard) would read backwards, since there's no mirror convention
+    // for filming the world in front of you, only yourself.
+    const mirror = cameraFacingMode !== 'environment';
+    if(mirror){ ctx.translate(w,0); ctx.scale(-1,1); }
     const vw = video.videoWidth, vh = video.videoHeight;
     const scale = Math.max(w/vw, h/vh); // cover-fit, same effect object-fit:cover had
     const dw = vw*scale, dh = vh*scale;
@@ -3968,17 +3984,16 @@ function updateCameraQualityBadge(){
    phones even before device labels are available. */
 async function flipCamera(){
   if(!stream){ toast('Turn on the camera first'); return; }
-  let devices = [];
-  try{ devices = (await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='videoinput'); }catch(e){ /* enumeration can fail without permission history; fall through */ }
-  if(devices.length > 1){
-    const currentTrack = stream.getVideoTracks()[0];
-    const currentId = currentTrack && currentTrack.getSettings ? currentTrack.getSettings().deviceId : null;
-    const idx = devices.findIndex(d=>d.deviceId===currentId);
-    preferredVideoDeviceId = devices[(idx+1) % devices.length].deviceId;
-  } else {
-    preferredVideoDeviceId = null;
-    cameraFacingMode = cameraFacingMode === 'user' ? 'environment' : 'user';
-  }
+  // facingMode alone, always — this is the robust mechanism, specifically designed to
+  // reliably pick "the front one" or "the back one" regardless of exact hardware. The
+  // previous approach tried to enumerate devices and identify the current one by
+  // deviceId to cycle to "the next" — but a stream started via facingMode (not an
+  // exact device id) doesn't always report a deviceId that cleanly matches what gets
+  // enumerated, and when that lookup silently failed, the math landed back on the same
+  // camera that was already active. That's exactly what "needs a second or third tap"
+  // looks like: the first tap quietly re-selecting the current camera, not switching.
+  preferredVideoDeviceId = null;
+  cameraFacingMode = cameraFacingMode === 'user' ? 'environment' : 'user';
   try{
     const newStream = await requestHighQualityStream();
     stream.getTracks().forEach(t=>t.stop());
@@ -4027,6 +4042,25 @@ $('enableCamBtn').onclick = enableCamera;
 $('camExpandBtn').onclick = function(){
   const expanded = $('camStage').classList.toggle('expanded');
   this.classList.toggle('expanded', expanded);
+};
+/* Captures exactly what's on screen — the border pattern and your real camera feed
+   together, the same composited canvas you're actually looking at — not just a raw,
+   unstyled camera frame. */
+$('camCaptureBtn').onclick = ()=>{
+  const canvas = $('camStageCanvas');
+  if(!canvas || !canvas.width){ toast('Camera not ready yet'); return; }
+  canvas.toBlob(blob=>{
+    if(!blob){ toast('Couldn\u2019t capture a photo'); return; }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'naluno-' + Date.now() + '.png';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(()=> URL.revokeObjectURL(url), 2000);
+    toast('Photo saved');
+  }, 'image/png');
 };
 $('bgPickerBtn').onclick = ()=>{
   const row = $('incallBgChipRow');
