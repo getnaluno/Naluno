@@ -3919,9 +3919,17 @@ let preferredVideoDeviceId = null;
 
 function buildVideoConstraints(){
   // "ideal" only pulls toward this value — it never exceeds what the hardware actually
-  // supports, so a modest front camera still settles at its own real max same as before.
-  // The previous 1080p ideal was quietly capping capable back cameras that can do more.
-  const base = { width:{ ideal:3840 }, height:{ ideal:2160 }, frameRate:{ ideal:30, max:60 } };
+  // supports, so a modest front camera still settles at its own real max.
+  // 4K was a mistake once the canvas-compositing pipeline existed: the outgoing video
+  // is explicitly capped at 960px (see drawSendCanvas), and the local preview only
+  // ever renders at its actual on-screen size — nowhere near 4K on a phone. Capturing
+  // at 4K was providing zero visible benefit anywhere while costing real time twice
+  // over: slower camera hardware negotiation on every call start, and meaningfully
+  // heavier per-frame decode/scale work on every single composited frame after that —
+  // which is exactly what a fraction-of-a-second lag on lip movement looks like: the
+  // render pipeline quietly falling behind the true live feed under unnecessary load.
+  // 1080p still gives real headroom above what's actually used downstream.
+  const base = { width:{ ideal:1920 }, height:{ ideal:1080 }, frameRate:{ ideal:30, max:60 } };
   if(preferredVideoDeviceId) base.deviceId = { exact: preferredVideoDeviceId };
   else base.facingMode = { ideal: cameraFacingMode };
   return base;
