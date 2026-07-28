@@ -1044,6 +1044,137 @@ function computeSignal(c){
   for(const step of SIGNAL_DECAY){ if(elapsedMin < step.underMin) return { tier:step.tier, bars:step.bars }; }
   return { tier:'off', bars:0 };
 }
+/* ---------------- REAL END-TO-END ENCRYPTION (Wireline text) ----------------
+   Real ECDH (P-256) key pairs — your private key is generated on-device and never
+   transmitted anywhere, not even to our own servers. Two people's own private key
+   combined with the OTHER person's public key mathematically derives the exact same
+   shared secret on both ends (that's the actual ECDH property, not an assumption) —
+   that shared secret becomes an AES-GCM key, and that's what actually encrypts each
+   message. Firestore only ever stores ciphertext for real contacts' text messages;
+   even a database admin reading the raw documents sees unreadable bytes.
+
+   Honest limitations, stated plainly:
+   - The private key lives in this browser's IndexedDB, this device only — it doesn't
+     sync anywhere. Signing in on a new device starts a fresh key pair, and messages
+     encrypted under the old one become unreadable there. Real E2E platforms solve
+     multi-device key sharing with a much bigger protocol than this pass attempts.
+   - Only Wireline TEXT messages are encrypted in this pass. Voice notes, moods, and
+     reactions still send as before — a deliberate scoping choice, not an oversight,
+     given how large this feature already is on its own.
+   - If a contact hasn't generated a key yet (hasn't opened the app since this
+     shipped), messages to them fall back to the old plaintext behavior automatically
+     — this feature must not silently break existing conversations mid-rollout. */
+const E2E_DB_NAME = 'naluno-keys', E2E_STORE = 'keys';
+function openKeyDb(){
+  return new Promise((resolve, reject)=>{
+    if(!window.indexedDB){ reject(new Error('no indexeddb')); return; }
+    const req = indexedDB.open(E2E_DB_NAME, 1);
+    req.onupgradeneeded = ()=>{ req.result.createObjectStore(E2E_STORE); };
+    req.onsuccess = ()=> resolve(req.result);
+    req.onerror = ()=> reject(req.error);
+  });
+}
+function idbGet(key){
+  return openKeyDb().then(db => new Promise((resolve,reject)=>{
+    const req = db.transaction(E2E_STORE,'readonly').objectStore(E2E_STORE).get(key);
+    req.onsuccess = ()=> resolve(req.result);
+    req.onerror = ()=> reject(req.error);
+  }));
+}
+function idbSet(key, value){
+  return openKeyDb().then(db => new Promise((resolve,reject)=>{
+    const tx = db.transaction(E2E_STORE,'readwrite');
+    tx.objectStore(E2E_STORE).put(value, key);
+    tx.oncomplete = ()=> resolve();
+    tx.onerror = ()=> reject(tx.error);
+  }));
+}
+function arrayBufferToBase64(buf){
+  let binary = '';
+  const bytes = new Uint8Array(buf);
+  for(let i=0;i<bytes.byteLength;i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+function base64ToArrayBuffer(b64){
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for(let i=0;i<binary.length;i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
+let myKeyPairPromise = null;
+/* Loads the existing key pair from this device if one exists, otherwise generates a
+   real one and publishes only the public half. Cached as a promise so concurrent
+   callers share one generation/load rather than racing to create two key pairs. */
+function ensureMyKeyPair(){
+  if(myKeyPairPromise) return myKeyPairPromise;
+  myKeyPairPromise = (async ()=>{
+    if(!window.crypto || !window.crypto.subtle || !window.indexedDB) return null;
+    try{
+      const stored = await idbGet('myKeyPair');
+      if(stored && stored.privateKey && stored.publicKey) return stored;
+    }catch(e){ /* nothing stored yet on this device */ }
+    try{
+      const keyPair = await crypto.subtle.generateKey(
+        { name:'ECDH', namedCurve:'P-256' }, true, ['deriveKey','deriveBits']
+      );
+      await idbSet('myKeyPair', keyPair);
+      const publicJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+      if(currentUser && fbDb){
+        fbDb.collection('users').doc(currentUser.uid).set({ publicKey: publicJwk }, { merge:true }).catch(()=>{});
+      }
+      return keyPair;
+    }catch(e){ return null; } // crypto generation failed — messages fall back to plaintext
+  })();
+  return myKeyPairPromise;
+}
+
+let sharedKeyCache = {}; // { [theirUid]: Promise<CryptoKey|null> } — derived once per contact, reused
+function getSharedAesKey(theirUid, theirPublicKeyJwk){
+  if(sharedKeyCache[theirUid]) return sharedKeyCache[theirUid];
+  sharedKeyCache[theirUid] = (async ()=>{
+    if(!theirPublicKeyJwk) return null;
+    const myKeys = await ensureMyKeyPair();
+    if(!myKeys) return null;
+    try{
+      const theirPublicKey = await crypto.subtle.importKey(
+        'jwk', theirPublicKeyJwk, { name:'ECDH', namedCurve:'P-256' }, false, []
+      );
+      // ECDH's actual mathematical property: (my private + their public) and
+      // (their private + my public) derive the identical shared secret — this is
+      // what makes both directions of a conversation decryptable with one key.
+      return await crypto.subtle.deriveKey(
+        { name:'ECDH', public: theirPublicKey },
+        myKeys.privateKey,
+        { name:'AES-GCM', length:256 },
+        false,
+        ['encrypt','decrypt']
+      );
+    }catch(e){ return null; }
+  })();
+  return sharedKeyCache[theirUid];
+}
+async function encryptMessageText(theirUid, theirPublicKeyJwk, plaintext){
+  const aesKey = await getSharedAesKey(theirUid, theirPublicKeyJwk);
+  if(!aesKey) return null; // no key available — caller falls back to plaintext
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encoded = new TextEncoder().encode(plaintext);
+  const ciphertext = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, aesKey, encoded);
+  return { ciphertext: arrayBufferToBase64(ciphertext), iv: arrayBufferToBase64(iv.buffer) };
+}
+async function decryptMessageText(theirUid, theirPublicKeyJwk, ciphertextB64, ivB64){
+  const aesKey = await getSharedAesKey(theirUid, theirPublicKeyJwk);
+  if(!aesKey) return null;
+  try{
+    const plainBuf = await crypto.subtle.decrypt(
+      { name:'AES-GCM', iv: new Uint8Array(base64ToArrayBuffer(ivB64)) },
+      aesKey,
+      base64ToArrayBuffer(ciphertextB64)
+    );
+    return new TextDecoder().decode(plainBuf);
+  }catch(e){ return null; } // wrong/missing key, or corrupted ciphertext
+}
+
 function signalSubText(c){
   const { tier } = computeSignal(c);
   const label = signalMeta[tier].label;
@@ -2158,19 +2289,28 @@ function openThread(contactId){
     renderThreadMessages();
     const tid = realThreadId(c.firebaseUid);
     const threadRef = fbDb.collection('threads').doc(tid);
-    activeThreadUnsubscribe = threadRef.collection('messages').orderBy('ts','asc').onSnapshot(snap=>{
-      wirelineThreads[contactId] = snap.docs.map(d=>{
+    activeThreadUnsubscribe = threadRef.collection('messages').orderBy('ts','asc').onSnapshot(async snap=>{
+      const mapped = await Promise.all(snap.docs.map(async d=>{
         const m = d.data();
+        let text = m.text;
+        if(m.encrypted && m.ciphertext && m.iv){
+          const decrypted = await decryptMessageText(c.firebaseUid, c.publicKey, m.ciphertext, m.iv);
+          text = decrypted !== null ? decrypted : '🔒 Couldn\u2019t decrypt this message';
+        }
         return {
           id: d.id,
           from: m.from===currentUser.uid ? 'me' : 'them',
           type: m.type || 'text',
-          text: m.text, mood: m.mood, waveform: m.waveform, duration: m.duration, dataUrl: m.dataUrl,
+          text, mood: m.mood, waveform: m.waveform, duration: m.duration, dataUrl: m.dataUrl,
           ts: m.ts && m.ts.toMillis ? m.ts.toMillis() : Date.now(),
           status: m.status || 'sent',
           reaction: m.reaction,
         };
-      });
+      }));
+      // Decryption is async — by the time it resolves, the person may have already
+      // navigated to a different thread. Only apply this if it's still the one open.
+      if(activeThreadContactId !== contactId) return;
+      wirelineThreads[contactId] = mapped;
       renderThreadMessages();
       // This thread is actively open, so any of their messages just received count as read.
       threadRef.update({ readBy: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) }).catch(()=>{});
@@ -2196,6 +2336,9 @@ $('threadBack').onclick = closeThread;
 $('threadCallBtn').onclick = ()=>{ const id = activeThreadContactId; closeThread(); if(id) startOutgoingCall(id); };
 
 function receiptTickHtml(status){
+  if(status==='queued'){
+    return `<svg class="receipt-tick" width="12" height="12" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" opacity=".6"/><path d="M12 7v5l3.5 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity=".6"/></svg>`;
+  }
   if(status==='read'){
     return `<svg class="receipt-tick" width="15" height="10" viewBox="0 0 20 12" fill="none"><path d="M1 6l4 4 5-8" stroke="#00E5FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 6l4 4 7-9" stroke="#00E5FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
   }
@@ -2254,7 +2397,11 @@ function reactionBadgeHtml(m){
   return `<div style="display:inline-flex; align-items:center; gap:5px; margin-top:4px; padding:3px 9px; border-radius:999px; background:${m.reaction.color}22; border:1px solid ${m.reaction.color}55; font-family:var(--font-mono); font-size:9.5px; color:${m.reaction.color};"><span style="width:6px;height:6px;border-radius:50%;background:${m.reaction.color};flex-shrink:0;"></span>${escapeHtml(m.reaction.label)}</div>`;
 }
 function renderThreadMessages(){
-  const msgs = wirelineThreads[activeThreadContactId] || [];
+  const queued = (localQueuedMessages[activeThreadContactId] || []).map(q => ({
+    id: q.queueId, from:'me', ts: q.queuedAt, status:'queued',
+    ...q.payload,
+  }));
+  const msgs = [...(wirelineThreads[activeThreadContactId] || []), ...queued].sort((a,b)=>a.ts-b.ts);
   if(msgs.length===0){
     $('threadMessages').innerHTML = `<div class="msg-empty"><span style="font-family:var(--font-futuristic); font-size:14px;">Nothing on this channel yet</span><span style="font-size:12.5px;">Send the first signal — or hold any message to react.</span></div>`;
     return;
@@ -2286,6 +2433,13 @@ function renderThreadMessages(){
    make it, the same way Band's ephemeral chat doesn't keep a record either. */
 function deleteThreadMessage(msgId){
   if(!confirm('Delete this message? This can\u2019t be undone.')) return;
+  if(String(msgId).startsWith('queued-')){
+    // Still sitting in the local queue, never actually sent — remove it there instead
+    // of trying to delete a Firestore doc that was never created.
+    removeFromMessageQueue(msgId);
+    renderThreadMessages();
+    return;
+  }
   const c = contacts.find(x=>x.id===activeThreadContactId);
   if(c && c.isReal && c.firebaseUid && fbDb){
     const tid = realThreadId(c.firebaseUid);
@@ -2397,18 +2551,90 @@ function sendThreadMessage(){
   maybeSimulateReply(id);
 }
 
+/* ---------------- OFFLINE MESSAGE QUEUE ----------------
+   This is the honest, buildable slice of "works when the internet is unavailable" —
+   it makes YOUR OWN end of a flaky or absent connection fully resilient: compose a
+   message with no connection at all, it's saved locally and shown immediately as
+   Queued, and sent automatically the moment this device's connection genuinely
+   returns, no manual retry needed. What this can't do — reach someone who is ALSO
+   offline with no internet anywhere on the path between you — would need real
+   device-to-device radio access (Bluetooth, Wi-Fi Direct), which no browser exposes
+   to web pages at all. That's a hard platform wall, not a gap in this code. */
+let localQueuedMessages = {}; // { [contactId]: [{ queueId, contactId, firebaseUid, payload, previewText, queuedAt }] }
+function getMessageQueue(){
+  try{ return JSON.parse(localStorage.getItem('naluno:messageQueue') || '[]'); }
+  catch(e){ return []; }
+}
+function saveMessageQueueToStorage(queue){
+  try{ localStorage.setItem('naluno:messageQueue', JSON.stringify(queue)); }catch(e){}
+}
+function rebuildLocalQueuedMessagesIndex(){
+  localQueuedMessages = {};
+  getMessageQueue().forEach(item=>{
+    if(!localQueuedMessages[item.contactId]) localQueuedMessages[item.contactId] = [];
+    localQueuedMessages[item.contactId].push(item);
+  });
+}
+function queueMessageForLater(contactId, firebaseUid, payload, previewText){
+  const queue = getMessageQueue();
+  const queueId = 'queued-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+  queue.push({ queueId, contactId, firebaseUid, payload, previewText, queuedAt: Date.now() });
+  saveMessageQueueToStorage(queue);
+  rebuildLocalQueuedMessagesIndex();
+  return queueId;
+}
+function removeFromMessageQueue(queueId){
+  saveMessageQueueToStorage(getMessageQueue().filter(item => item.queueId !== queueId));
+  rebuildLocalQueuedMessagesIndex();
+}
+/* Runs the moment this device's connection genuinely comes back (the browser's own
+   'online' event), and once more right after sign-in in case connectivity was already
+   restored before the tab reopened. Every attempt that still fails just stays queued
+   for the next trigger — nothing is ever silently dropped. */
+async function flushMessageQueue(){
+  if(!navigator.onLine || !currentUser || !fbDb) return;
+  const queue = getMessageQueue();
+  if(queue.length === 0) return;
+  for(const item of queue){
+    try{
+      await sendRealMessage({ firebaseUid: item.firebaseUid }, item.payload, item.previewText, item.queueId);
+    }catch(e){ /* still couldn't send — stays in the queue for the next trigger */ }
+  }
+  if(activeThreadContactId) renderThreadMessages();
+  renderWirelineList();
+}
+window.addEventListener('online', flushMessageQueue);
+rebuildLocalQueuedMessagesIndex();
+
 /* Writes a message to the real Firestore thread and updates the thread's denormalized
    preview fields (lastMessageText/At/From, readBy) in the same call — this is what
-   renderWirelineList's real-contact branch and startThreadsListListener actually read. */
-async function sendRealMessage(c, payload, previewText){
+   renderWirelineList's real-contact branch and startThreadsListListener actually read.
+   queueId is only passed when this is a retry of an already-queued message — on
+   success, that local optimistic entry is what gets removed, since the real Firestore-
+   synced version is about to arrive through the normal thread listener instead. */
+async function sendRealMessage(c, payload, previewText, queueId){
   if(!fbDb || !currentUser) return;
   const tid = realThreadId(c.firebaseUid);
   const threadRef = fbDb.collection('threads').doc(tid);
   try{
+    let finalPayload = payload;
+    let finalPreview = previewText;
+    if(payload.type === 'text'){
+      const contact = contacts.find(x=>x.firebaseUid===c.firebaseUid);
+      const theirKey = contact && contact.publicKey;
+      const encrypted = theirKey ? await encryptMessageText(c.firebaseUid, theirKey, payload.text) : null;
+      if(encrypted){
+        finalPayload = { type:'text', ciphertext: encrypted.ciphertext, iv: encrypted.iv, encrypted:true };
+        finalPreview = '🔒 Encrypted message'; // the list preview must never leak real content either
+      }
+      // No key available yet (they haven't opened the app since this shipped) — falls
+      // through to sending payload/previewText as plaintext, exactly as before this
+      // feature existed, so an in-progress rollout never breaks a real conversation.
+    }
     await threadRef.set({
       participants: [currentUser.uid, c.firebaseUid].sort(),
       lastMessageAt: firebase.firestore.FieldValue.serverTimestamp(),
-      lastMessageText: previewText,
+      lastMessageText: finalPreview,
       lastMessageFrom: currentUser.uid,
       readBy: [currentUser.uid],
     }, { merge:true });
@@ -2416,15 +2642,32 @@ async function sendRealMessage(c, payload, previewText){
       from: currentUser.uid,
       ts: firebase.firestore.FieldValue.serverTimestamp(),
       status: 'sent',
-      ...payload,
+      ...finalPayload,
     });
+    if(queueId) removeFromMessageQueue(queueId);
     $('threadInput').value = '';
     autoSizeThreadInput();
     updateComposerButtons();
     markMyActivity();
     bumpTodayActivity();
   }catch(e){
+    if(!queueId){
+      // Not already queued — this is a fresh send that failed, most likely because
+      // the connection genuinely isn't there right now. Queue it instead of just
+      // showing an error and losing what was typed.
+      const c2 = contacts.find(x=>x.firebaseUid===c.firebaseUid);
+      if(c2){
+        queueMessageForLater(c2.id, c.firebaseUid, payload, previewText);
+        $('threadInput').value = '';
+        autoSizeThreadInput();
+        updateComposerButtons();
+        if(activeThreadContactId===c2.id) renderThreadMessages();
+        toast('No connection — queued, will send automatically');
+        return;
+      }
+    }
     toast(e.message || 'Couldn\u2019t send — try again');
+    throw e; // let flushMessageQueue know this retry attempt still failed
   }
 }
 
@@ -3075,6 +3318,8 @@ if(fbAuth){
       if(incomingCallUnsub){ incomingCallUnsub(); incomingCallUnsub = null; }
       if(connectionsUnsub){ connectionsUnsub(); connectionsUnsub = null; }
       if(profileUnsub){ profileUnsub(); profileUnsub = null; }
+      myKeyPairPromise = null;
+      sharedKeyCache = {};
       teardownCallConnection();
       realThreadPreviews = {};
     }
@@ -3136,6 +3381,8 @@ function loadRealProfile(user){
   startIncomingCallListener();
   loadMySignal();
   maybeRefreshCallNotifToken();
+  flushMessageQueue();
+  ensureMyKeyPair();
 }
 /* If the person already granted notification permission in a previous session, re-fetch
    and re-save their token silently — this is what was actually breaking: the token
@@ -4768,6 +5015,7 @@ async function refreshContactLiveProfile(firebaseUid){
     let changed = false;
     if(d.photo && JSON.stringify(d.photo) !== JSON.stringify(c.photo)){ c.photo = d.photo; changed = true; }
     if(!d.photo && c.photo){ c.photo = null; changed = true; }
+    if(d.publicKey && JSON.stringify(d.publicKey) !== JSON.stringify(c.publicKey)){ c.publicKey = d.publicKey; delete sharedKeyCache[firebaseUid]; changed = true; }
     if(d.name && d.name !== c.name){ c.name = d.name; c.initials = initialsFor(d.name); changed = true; }
     if(d.color && d.color !== c.color){ c.color = d.color; changed = true; }
     if(changed){ renderContacts(); renderWirelineList(); renderBandList(); }
