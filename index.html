@@ -3152,7 +3152,6 @@ async function loadProfile(){
   if(hasSavedProfile) showCallsignView(); else showCallsignEdit();
 }
 loadSignalFromStorage();
-loadBackgroundChoice();
 loadWireline();
 loadContactActivity();
 loadBands();
@@ -3525,7 +3524,7 @@ function loadBackgroundChoice(){
   }catch(e){ /* no saved choice yet */ }
   renderBackgroundChips();
 }
-renderBackgroundChips();
+loadBackgroundChoice();
 
 /* Keeps a canvas's actual pixel resolution matched to its on-screen size — used by
    the segmentation compositor above and Band's ambient background animation. */
