@@ -656,6 +656,8 @@
         <span style="width:36px;"></span>
       </div>
       <div class="lobby-body">
+        <video id="sendRawVideo" autoplay playsinline muted style="display:none;"></video>
+        <canvas id="sendCanvas" style="display:none;"></canvas>
         <div class="cam-stage" id="camStage">
           <video id="camRawVideo" autoplay playsinline muted style="display:none;"></video>
           <canvas id="camStageCanvas" style="position:absolute;inset:0;width:100%;height:100%;"></canvas>
@@ -3264,7 +3266,7 @@ function stopCameraStream(){
     stream.getTracks().forEach(t=>t.stop());
     stream = null;
   }
-  [$('camRawVideo'),$('pipRawVideo'),$('incomingSelfVideo')].forEach(v=>{ if(v) v.srcObject = null; });
+  [$('camRawVideo'),$('pipRawVideo'),$('incomingSelfVideo'),$('sendRawVideo')].forEach(v=>{ if(v) v.srcObject = null; });
   const badge = $('camQualityBadge'); if(badge) badge.style.display = 'none';
 }
 /* ---------------- LIVE BORDER PATTERNS ----------------
@@ -3560,10 +3562,10 @@ function ensureCanvasSize(canvas){
    mask compositing (which is what the previous attempt quietly depended on). */
 let camAnimStart = performance.now();
 let pipAnimStart = performance.now();
-function drawStage(canvasId, videoId, animStart){
-  const canvas = $(canvasId), video = $(videoId);
-  if(!canvas || !video) return;
-  ensureCanvasSize(canvas);
+/* Shared by every canvas that composites border+camera — local self-view previews
+   AND the canvas actually sent to the other person, which is the same drawing logic,
+   just fed into a different, always-on, hidden canvas instead of a visible one. */
+function compositeFrame(canvas, video, animStart){
   const w = canvas.width, h = canvas.height;
   const ctx = canvas.getContext('2d');
   ctx.save();
@@ -3592,10 +3594,35 @@ function drawStage(canvasId, videoId, animStart){
   }
   ctx.restore();
 }
+function drawStage(canvasId, videoId, animStart){
+  const canvas = $(canvasId), video = $(videoId);
+  if(!canvas || !video) return;
+  ensureCanvasSize(canvas);
+  compositeFrame(canvas, video, animStart);
+}
+let sendAnimStart = performance.now();
+/* This is what the other person actually sees now — previously the border and glow
+   were purely local rendering, visible only on your own screen, while the other
+   person received the plain unmodified camera track. Runs continuously the whole time
+   a stream exists, independent of which local screen happens to be showing, since the
+   other person's view shouldn't blink out just because you're looking at your own
+   lobby preview versus the in-call pip. Capped at 960px on the long edge — no point
+   encoding and transmitting at full 4K for something only ever watched at a small size. */
+function drawSendCanvas(){
+  const canvas = $('sendCanvas'), video = $('sendRawVideo');
+  if(!canvas || !video) return;
+  const vw = video.videoWidth || 720, vh = video.videoHeight || 960;
+  const maxDim = 960;
+  const scale = Math.min(1, maxDim / Math.max(vw, vh));
+  const tw = Math.max(2, Math.round(vw*scale)), th = Math.max(2, Math.round(vh*scale));
+  if(canvas.width !== tw || canvas.height !== th){ canvas.width = tw; canvas.height = th; }
+  compositeFrame(canvas, video, sendAnimStart);
+}
 function stageLoopTick(){
   requestAnimationFrame(stageLoopTick);
   if($('lobby').classList.contains('active')) drawStage('camStageCanvas', 'camRawVideo', camAnimStart);
   if($('incall').classList.contains('active')) drawStage('pipStageCanvas', 'pipRawVideo', pipAnimStart);
+  if(stream) drawSendCanvas();
 }
 requestAnimationFrame(stageLoopTick);
 function startCamView(target){
@@ -3670,6 +3697,7 @@ async function flipCamera(){
     stream.getTracks().forEach(t=>t.stop());
     stream = newStream;
     $('incomingSelfVideo').srcObject = stream;
+    $('sendRawVideo').srcObject = stream;
     startCamView($('incall').classList.contains('active') ? 'pip' : 'lobby');
     updateCameraQualityBadge();
     updateSignatureGlow();
@@ -3689,6 +3717,7 @@ async function enableCamera(){
   try{
     stream = await cameraRequestPending;
     $('incomingSelfVideo').srcObject = stream; // small preview only
+    $('sendRawVideo').srcObject = stream;
     startCamView($('incall').classList.contains('active') ? 'pip' : 'lobby');
     $('camFallback').style.display='none';
     updateCameraQualityBadge();
@@ -3815,6 +3844,7 @@ function ensureAudioContext(){
 ['click','keydown','touchstart'].forEach(evt => document.addEventListener(evt, ensureAudioContext, { passive:true }));
 
 let callerToneTimer = null;
+let callerToneActiveNodes = [];
 /* Caller-side ringback — a soft two-tone pulse, echoing the classic telecom ringback
    pattern (paired tones, ring then pause) without literally imitating a phone ring. */
 function startCallerTone(){
@@ -3832,11 +3862,20 @@ function startCallerTone(){
     osc1.connect(gain); osc2.connect(gain); gain.connect(ctx.destination);
     osc1.start(now); osc2.start(now);
     osc1.stop(now + 2.0); osc2.stop(now + 2.0);
+    callerToneActiveNodes.push(osc1, osc2);
   }
   pulse();
   callerToneTimer = setInterval(pulse, 4000); // ~2s tone, ~2s pause, repeating
 }
-function stopCallerTone(){ clearInterval(callerToneTimer); callerToneTimer = null; }
+/* clearInterval alone only stops FUTURE pulses from being scheduled — any oscillators
+   already playing from the last pulse were still scheduled to run out their full 2s
+   regardless, which is exactly what let the ringback linger into an already-connected
+   call. Explicitly stopping every active node makes this genuinely immediate. */
+function stopCallerTone(){
+  clearInterval(callerToneTimer); callerToneTimer = null;
+  callerToneActiveNodes.forEach(osc=>{ try{ osc.stop(); }catch(e){} });
+  callerToneActiveNodes = [];
+}
 
 let ringtoneTimer = null;
 let customRingtoneUrl = null;
@@ -3948,16 +3987,20 @@ let callerCandidatesUnsub = null;
 let calleeCandidatesUnsub = null;
 let incomingCallUnsub = null;
 
+let remoteCombinedStream = null;
 function createPeerConnection(){
   const pc = new RTCPeerConnection(RTC_CONFIG);
+  remoteCombinedStream = new MediaStream();
   pc.ontrack = e=>{
-    const remoteStream = e.streams[0];
+    // Built up manually rather than trusting e.streams[0] — audio now arrives grouped
+    // under the real camera stream's id while video arrives grouped under the send
+    // canvas's stream id, two different source streams. Replacing srcObject wholesale
+    // for whichever arrived most recently would silently drop whichever track came
+    // first. Accumulating both onto one persistent stream avoids that entirely.
+    remoteCombinedStream.addTrack(e.track);
     const videoEl = $('remoteVideo');
-    // Always attach the stream so audio plays even on an audio-only call (camera off) —
-    // previously this only happened inside the video-track branch below, which meant
-    // an audio track arriving alone (or before its matching video track) played nothing.
-    if(videoEl.srcObject !== remoteStream){
-      videoEl.srcObject = remoteStream;
+    if(videoEl.srcObject !== remoteCombinedStream){
+      videoEl.srcObject = remoteCombinedStream;
       videoEl.play().catch(()=>{ /* most browsers allow this post-gesture; ignore if blocked */ });
     }
     if(e.track.kind === 'video'){
@@ -3969,7 +4012,22 @@ function createPeerConnection(){
       };
     }
   };
-  if(stream){ stream.getTracks().forEach(t => pc.addTrack(t, stream)); }
+  if(stream){
+    // Real audio, unmodified. Video comes from the composited send canvas instead of
+    // the raw camera track — this is the actual fix for "the other person should see
+    // the border too": previously the border/glow were purely local rendering, so the
+    // other person only ever received the plain, unstyled camera feed.
+    stream.getAudioTracks().forEach(t => pc.addTrack(t, stream));
+    const sendCanvas = $('sendCanvas');
+    if(sendCanvas && sendCanvas.captureStream){
+      const canvasStream = sendCanvas.captureStream(30);
+      canvasStream.getVideoTracks().forEach(t => pc.addTrack(t, canvasStream));
+    } else {
+      // captureStream unsupported on this browser — fall back to the raw camera track
+      // rather than sending no video at all.
+      stream.getVideoTracks().forEach(t => pc.addTrack(t, stream));
+    }
+  }
   return pc;
 }
 /* Tears down whatever's active — peer connection, all signaling listeners, remote
@@ -3987,6 +4045,7 @@ function teardownCallConnection(){
   $('remoteVideo').srcObject = null;
   $('remoteVideo').style.display = 'none';
   $('remotePlaceholder').style.display = 'flex';
+  remoteCombinedStream = null;
 }
 /* App-wide listener for real incoming calls — starts at sign-in, runs regardless of
    which screen is open, same as the presence and Wireline-preview listeners. */
