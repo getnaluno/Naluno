@@ -1,0 +1,14 @@
+name = "naluno-signal-upload"
+main = "index.js"
+compatibility_date = "2026-01-01"
+
+# Binds this Worker directly to the R2 bucket by the name "SIGNAL_BUCKET" — that's what
+# lets the code call env.SIGNAL_BUCKET.put(...) with no AWS-style signing at all.
+[[r2_buckets]]
+binding = "SIGNAL_BUCKET"
+bucket_name = "naluno-signal"
+
+# Fill this in once the bucket's public access is enabled in the Cloudflare dashboard —
+# it generates a unique pub-xxxxxxxx.r2.dev URL for the bucket, which goes here.
+[vars]
+PUBLIC_BUCKET_URL = "https://pub-YOUR_BUCKET_ID.r2.dev"
