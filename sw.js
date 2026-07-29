@@ -83,7 +83,7 @@ try{
       tag: 'naluno-call', // replaces any earlier call notification rather than stacking them
       requireInteraction: true, // stays on screen until actually dismissed or tapped,
                                  // instead of politely disappearing after a few seconds
-      vibrate: [400, 200, 400, 200, 400, 200, 400], // a real, deliberate ring pattern —
+      vibrate: [500,200,500,200,500,200,500,200,500,200,500,200,500], // a real, deliberate ring pattern —
                                                      // not the default single soft buzz
       renotify: true, // re-vibrates/re-alerts even if a previous call notification
                        // with the same tag is still showing

@@ -870,6 +870,36 @@
     </div>
   </div>
 
+  <!-- ===================== TRIM (long/large video) ===================== -->
+  <div class="call-overlay" id="trimOverlay">
+    <div class="topbar" style="padding-top:20px;">
+      <span class="eyebrow">Trim video</span>
+    </div>
+    <div class="tab-scroll" style="padding:14px 20px 24px; display:flex; flex-direction:column;">
+      <div class="adjust-stage" id="trimStage">
+        <video id="trimPreviewVideo" muted playsinline style="width:100%; height:100%; object-fit:cover;"></video>
+        <div id="trimProgressOverlay" style="display:none; position:absolute; inset:0; background:rgba(13,15,23,.85); align-items:center; justify-content:center; flex-direction:column; gap:10px;">
+          <div class="greenroom-pill ready" style="position:static;"><span class="swirl"></span><span id="trimProgressLabel">Preparing clip… 0%</span></div>
+        </div>
+      </div>
+      <div class="adjust-controls">
+        <div class="lobby-sub" id="trimRangeLabel" style="margin-top:10px; text-align:center;">0:00 – 0:00</div>
+        <div style="padding:14px 4px 0;">
+          <label style="font-family:var(--font-mono); font-size:11px; color:var(--text-dim); letter-spacing:.06em; text-transform:uppercase;">Start</label>
+          <input type="range" id="trimStartSlider" min="0" max="1000" value="0" style="width:100%; accent-color:var(--mint); margin-top:4px;" />
+          <label style="font-family:var(--font-mono); font-size:11px; color:var(--text-dim); letter-spacing:.06em; text-transform:uppercase; margin-top:10px; display:block;">End</label>
+          <input type="range" id="trimEndSlider" min="0" max="1000" value="1000" style="width:100%; accent-color:var(--mint); margin-top:4px;" />
+        </div>
+        <div class="lobby-sub" id="trimAutoSplitNote" style="margin-top:12px;"></div>
+        <div class="adjust-actions" style="flex-wrap:wrap;">
+          <button id="trimCancel">Cancel</button>
+          <button id="trimAutoSplitBtn">Split into parts instead</button>
+          <button class="primary" id="trimSave" style="flex:1 1 100%;">Use this clip</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ===================== WIRELINE THREAD (conversation) ===================== -->
   <div class="call-overlay" id="wirelineThread">
     <div class="topbar" style="padding-top:20px; align-items:center; gap:10px;">
@@ -1723,15 +1753,21 @@ function readFileAsDataUrl(file){
   });
 }
 
+let trimFileQueue = [];
+let trimCurrentFile = null;
+let trimObjectUrl = null;
+
 async function handleFiles(fileList){
   const files = Array.from(fileList);
-  let skipped = 0, tooLarge = 0;
   const MAX_VIDEO_BYTES = 60 * 1024 * 1024; // matches the Worker's own real upload cap
+  const needsTrim = [];
   for(const file of files){
     if(composerType==='video'){
-      if(file.size > MAX_VIDEO_BYTES){ tooLarge++; continue; }
       const duration = await probeVideoDuration(file);
-      if(duration && duration > MAX_VIDEO_SECONDS){ skipped++; continue; }
+      if(file.size > MAX_VIDEO_BYTES || (duration && duration > MAX_VIDEO_SECONDS)){
+        needsTrim.push(file);
+        continue;
+      }
       const dataUrl = await readFileAsDataUrl(file);
       composerItems.push({ id:Date.now()+Math.random(), kind:'video', dataUrl, filterKey:'normal', filterCss:'', crop:{scale:1,xPct:0,yPct:0}, caption:'', duration });
     } else {
@@ -1739,13 +1775,208 @@ async function handleFiles(fileList){
       composerItems.push({ id:Date.now()+Math.random(), kind:'photo', dataUrl, filterKey:'normal', filterCss:'', crop:{scale:1,xPct:0,yPct:0}, caption:'' });
     }
   }
-  if(skipped>0) toast(skipped===1 ? 'A video was over 60s and was skipped' : `${skipped} videos were over 60s and were skipped`);
-  if(tooLarge>0) toast(tooLarge===1 ? 'A video was too large (over 60MB) and was skipped' : `${tooLarge} videos were too large (over 60MB) and were skipped`);
   if(composerItems.length>0) activeComposerItemIndex = composerItems.length-1;
   renderFilmstrip();
   showActiveItemInPreview();
   updatePostButtonState();
+  if(needsTrim.length>0){
+    trimFileQueue = needsTrim.slice(1);
+    openTrimOverlay(needsTrim[0]);
+  }
 }
+
+function advanceTrimQueue(){
+  if(trimFileQueue.length>0){
+    const next = trimFileQueue.shift();
+    openTrimOverlay(next);
+  }
+}
+function openTrimOverlay(file){
+  trimCurrentFile = file;
+  const video = $('trimPreviewVideo');
+  if(trimObjectUrl) URL.revokeObjectURL(trimObjectUrl);
+  trimObjectUrl = URL.createObjectURL(file);
+  video.src = trimObjectUrl;
+  video.onloadedmetadata = ()=>{
+    $('trimStartSlider').value = 0;
+    $('trimEndSlider').value = 1000;
+    updateTrimLabel();
+    video.currentTime = 0;
+  };
+  $('trimProgressOverlay').style.display = 'none';
+  $('trimAutoSplitNote').textContent = file.size > 60*1024*1024
+    ? 'This file is too large to post as one clip — splitting breaks it into consecutive parts that each fit, played back in sequence as one broadcast.'
+    : 'This clip is longer than 60 seconds — splitting breaks it into consecutive 60-second parts instead of trimming to just one.';
+  $('trimOverlay').classList.add('active');
+}
+function trimSliderTimes(){
+  const video = $('trimPreviewVideo');
+  const duration = video.duration || 0;
+  const startFrac = parseInt($('trimStartSlider').value)/1000;
+  const endFrac = parseInt($('trimEndSlider').value)/1000;
+  return { start: startFrac*duration, end: endFrac*duration, duration };
+}
+function formatTrimTime(s){
+  s = Math.max(0, Math.round(s));
+  return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');
+}
+function updateTrimLabel(){
+  const { start, end } = trimSliderTimes();
+  const clamped = Math.min(end, start + MAX_VIDEO_SECONDS);
+  $('trimRangeLabel').textContent = `${formatTrimTime(start)} \u2013 ${formatTrimTime(clamped)} (max ${MAX_VIDEO_SECONDS}s per clip)`;
+}
+$('trimStartSlider').oninput = ()=>{
+  let s = parseInt($('trimStartSlider').value), e = parseInt($('trimEndSlider').value);
+  if(s >= e){ s = Math.max(0, e-10); $('trimStartSlider').value = s; }
+  $('trimPreviewVideo').currentTime = trimSliderTimes().start;
+  updateTrimLabel();
+};
+$('trimEndSlider').oninput = ()=>{
+  let s = parseInt($('trimStartSlider').value), e = parseInt($('trimEndSlider').value);
+  if(e <= s){ e = Math.min(1000, s+10); $('trimEndSlider').value = e; }
+  $('trimPreviewVideo').currentTime = trimSliderTimes().end;
+  updateTrimLabel();
+};
+$('trimCancel').onclick = ()=>{
+  $('trimOverlay').classList.remove('active');
+  advanceTrimQueue();
+};
+
+/* Extracts a clip from startTime to endTime out of a video file, re-encoding via
+   canvas capture + MediaRecorder — the standard, dependency-free way to trim video
+   in-browser without a heavy library like ffmpeg.wasm. Preserves audio by separately
+   routing the source video's audio through a Web Audio graph and mixing it into the
+   same output stream, since canvas.captureStream() only ever captures visual frames
+   on its own — without this, a trimmed clip would come out silent.
+   This is genuinely real-time: extracting a 30-second range takes about 30 real
+   seconds, since it's driven by actual video playback, not an instant seek/cut —
+   that's why this shows a live progress percentage rather than a spinner. */
+async function extractVideoClip(file, startTime, endTime, onProgress){
+  return new Promise((resolve, reject)=>{
+    const video = document.createElement('video');
+    video.muted = true; // audio is captured via the Web Audio graph below, not played out loud during processing
+    video.playsInline = true;
+    const url = URL.createObjectURL(file);
+    video.src = url;
+
+    video.onloadedmetadata = ()=>{
+      const canvas = document.createElement('canvas');
+      const maxDim = 960; // matches the same real output cap used for live call video
+      const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
+      canvas.width = Math.round(video.videoWidth*scale);
+      canvas.height = Math.round(video.videoHeight*scale);
+      const ctx = canvas.getContext('2d');
+
+      let audioDestination = null, audioContext = null;
+      try{
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const source = audioContext.createMediaElementSource(video);
+        audioDestination = audioContext.createMediaStreamDestination();
+        source.connect(audioDestination);
+      }catch(e){ /* if this fails, the clip will just have no audio — still usable */ }
+
+      const canvasStream = canvas.captureStream(30);
+      const tracks = [...canvasStream.getVideoTracks()];
+      if(audioDestination) tracks.push(...audioDestination.stream.getAudioTracks());
+      const combinedStream = new MediaStream(tracks);
+
+      let recorder;
+      try{ recorder = new MediaRecorder(combinedStream, { mimeType: 'video/webm;codecs=vp8,opus' }); }
+      catch(e){ recorder = new MediaRecorder(combinedStream); } // fall back to the browser's default codec choice
+
+      const chunks = [];
+      recorder.ondataavailable = e=>{ if(e.data.size>0) chunks.push(e.data); };
+      recorder.onstop = ()=>{
+        URL.revokeObjectURL(url);
+        if(audioContext) audioContext.close().catch(()=>{});
+        resolve(new Blob(chunks, { type:'video/webm' }));
+      };
+      recorder.onerror = e=>{ URL.revokeObjectURL(url); reject(e.error || new Error('Recording failed')); };
+
+      video.currentTime = startTime;
+      video.onseeked = ()=>{
+        recorder.start();
+        video.play().catch(()=>{});
+        const drawFrame = ()=>{
+          if(video.currentTime >= endTime || video.paused || video.ended){
+            if(recorder.state !== 'inactive') recorder.stop();
+            video.pause();
+            return;
+          }
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          if(onProgress) onProgress(Math.min(1, (video.currentTime-startTime)/Math.max(0.1, endTime-startTime)));
+          requestAnimationFrame(drawFrame);
+        };
+        requestAnimationFrame(drawFrame);
+      };
+    };
+    video.onerror = ()=>{ URL.revokeObjectURL(url); reject(new Error('Could not load video')); };
+  });
+}
+
+$('trimSave').onclick = async ()=>{
+  const { start, end } = trimSliderTimes();
+  const clampedEnd = Math.min(end, start + MAX_VIDEO_SECONDS);
+  if(clampedEnd - start < 1){ toast('Selection is too short'); return; }
+  $('trimProgressOverlay').style.display = 'flex';
+  $('trimSave').disabled = true; $('trimAutoSplitBtn').disabled = true;
+  try{
+    const blob = await extractVideoClip(trimCurrentFile, start, clampedEnd, frac=>{
+      $('trimProgressLabel').textContent = `Preparing clip\u2026 ${Math.round(frac*100)}%`;
+    });
+    const dataUrl = await readFileAsDataUrl(blob);
+    composerItems.push({
+      id: Date.now()+Math.random(), kind:'video', dataUrl, filterKey:'normal', filterCss:'',
+      crop:{scale:1,xPct:0,yPct:0}, caption:'', duration: clampedEnd-start,
+    });
+    activeComposerItemIndex = composerItems.length-1;
+    renderFilmstrip();
+    showActiveItemInPreview();
+    updatePostButtonState();
+    toast('Clip added');
+  }catch(e){
+    toast('Couldn\u2019t trim that video \u2014 try a shorter selection');
+  }
+  $('trimProgressOverlay').style.display = 'none';
+  $('trimSave').disabled = false; $('trimAutoSplitBtn').disabled = false;
+  $('trimOverlay').classList.remove('active');
+  advanceTrimQueue();
+};
+
+$('trimAutoSplitBtn').onclick = async ()=>{
+  const video = $('trimPreviewVideo');
+  const duration = video.duration || 0;
+  const file = trimCurrentFile;
+  const MAX_BYTES = 55 * 1024 * 1024; // slight safety margin under the real 60MB cap
+  const numParts = Math.max(1, Math.min(10, Math.ceil(Math.max(file.size/MAX_BYTES, duration/MAX_VIDEO_SECONDS))));
+  const partDuration = duration / numParts;
+  $('trimProgressOverlay').style.display = 'flex';
+  $('trimSave').disabled = true; $('trimAutoSplitBtn').disabled = true;
+  let added = 0;
+  for(let i=0; i<numParts; i++){
+    const s = i*partDuration, e = Math.min(duration, s+partDuration);
+    try{
+      const blob = await extractVideoClip(file, s, e, frac=>{
+        $('trimProgressLabel').textContent = `Preparing part ${i+1} of ${numParts}\u2026 ${Math.round(frac*100)}%`;
+      });
+      const dataUrl = await readFileAsDataUrl(blob);
+      composerItems.push({
+        id: Date.now()+Math.random()+i, kind:'video', dataUrl, filterKey:'normal', filterCss:'',
+        crop:{scale:1,xPct:0,yPct:0}, caption: numParts>1 ? `Part ${i+1} of ${numParts}` : '', duration: e-s,
+      });
+      added++;
+    }catch(err){ /* one part failing doesn't stop the rest from still being added */ }
+  }
+  activeComposerItemIndex = composerItems.length-1;
+  renderFilmstrip();
+  showActiveItemInPreview();
+  updatePostButtonState();
+  $('trimProgressOverlay').style.display = 'none';
+  $('trimSave').disabled = false; $('trimAutoSplitBtn').disabled = false;
+  toast(added>0 ? `Added ${added} part${added>1?'s':''} \u2014 they\u2019ll post and play back as one broadcast` : 'Couldn\u2019t split that video');
+  $('trimOverlay').classList.remove('active');
+  advanceTrimQueue();
+};
 
 function renderFilmstrip(){
   if(composerItems.length===0){ $('filmstrip').style.display='none'; return; }
@@ -4518,17 +4749,36 @@ function startOutgoingCall(contactId){
    ring already works fine on its own, so a failed or slow notification must never
    block or delay the actual call from proceeding. */
 const CALL_NOTIFY_WORKER_URL = 'https://naluno-call-notify.naluno.workers.dev';
+let notifyRepeatInterval = null;
+/* Fires the moment a real call starts, then keeps re-firing every 5 seconds for up to
+   30 seconds total — a single push can only trigger one alert, so genuine "still
+   ringing" reach means sending several, each retriggering the vibration burst and
+   sound via renotify (already configured in sw.js). Stops the instant the call is
+   answered, cancelled, or times out — see the matching clearInterval calls alongside
+   every existing clearTimeout(ringTimeoutHandle), which already reliably marks every
+   place ringing itself ends. Deliberately fire-and-forget: the in-app ring already
+   works fine on its own, so this must never block or delay the actual call. */
 async function notifyCalleeOfIncomingCall(calleeUid, callerName){
   if(!currentUser) return;
-  try{
-    const idToken = await currentUser.getIdToken();
-    await fetch(CALL_NOTIFY_WORKER_URL, {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ calleeUid, callerName }),
-    });
-  }catch(e){ /* the in-app ring still works regardless — this only ever adds reach for
-                when the other person's app is fully closed */ }
+  const sendOnce = async ()=>{
+    try{
+      const idToken = await currentUser.getIdToken();
+      await fetch(CALL_NOTIFY_WORKER_URL, {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ calleeUid, callerName }),
+      });
+    }catch(e){ /* the in-app ring still works regardless — this only ever adds reach for
+                  when the other person's app is fully closed */ }
+  };
+  sendOnce();
+  if(notifyRepeatInterval) clearInterval(notifyRepeatInterval);
+  let repeats = 0;
+  notifyRepeatInterval = setInterval(()=>{
+    repeats++;
+    if(repeats >= 5){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; return; } // 5 repeats * 5s = 25s, plus the first immediate send = ~30s total
+    sendOnce();
+  }, 5000);
 }
 
 async function startRealCall(c){
@@ -4571,6 +4821,7 @@ async function startRealCall(c){
         pendingRemoteCandidates = [];
       });
       clearTimeout(ringTimeoutHandle);
+      if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
       stopCallerTone();
       startInCall();
     }
@@ -4616,6 +4867,7 @@ function armRingTimeout(contactId){
 function showAsyncFallback(contactId, reason){
   const c = contacts.find(x=>x.id===contactId); if(!c) return;
   clearTimeout(ringTimeoutHandle);
+  if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
   currentCallContactId = contactId;
   $('asyncAvatar').style.background = c.color; $('asyncAvatar').textContent = c.initials;
   $('asyncName').textContent = c.name;
@@ -4663,6 +4915,7 @@ $('asyncCancelBtn').onclick = closeCallOverlayAndStopCamera;
 
 function closeCallOverlayAndStopCamera(){
   clearTimeout(ringTimeoutHandle);
+  if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
   stopCallerTone();
   stopRingtone();
   teardownCallConnection();
