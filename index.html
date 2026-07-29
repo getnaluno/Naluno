@@ -1862,8 +1862,9 @@ function updatePostButtonState(){
   $('postBroadcastBtn').style.opacity = valid ? '1' : '.5';
 }
 
+let postInProgress = false;
 $('postBroadcastBtn').onclick = async ()=>{
-  if($('postBroadcastBtn').disabled) return;
+  if($('postBroadcastBtn').disabled || postInProgress) return;
   const now = Date.now();
   const expires = now + SIGNAL_TTL_MS;
   let postedCount = 1;
@@ -1880,14 +1881,27 @@ $('postBroadcastBtn').onclick = async ()=>{
       });
     });
   }
-  closeComposer();
+  const hasVideo = newSegments.some(s=>s.type==='video');
+  // The composer used to close immediately, before a video upload had even started —
+  // combined with a status toast that fades out in under 2 seconds while a real
+  // upload can take far longer, that left a real dead gap with zero visible feedback,
+  // easy to mistake for a silent failure and re-post. Keeping the composer open with
+  // a persistent button state for video specifically fixes both the false impression
+  // and the actual duplicate-post consequence of it.
+  if(hasVideo){
+    postInProgress = true;
+    $('postBroadcastBtn').disabled = true;
+    $('postBroadcastBtn').textContent = 'Uploading…';
+    $('postBroadcastBtn').style.opacity = '.7';
+  } else {
+    closeComposer();
+  }
   if(currentUser && fbDb){
     let failed = 0;
     for(const seg of newSegments){
       let segToSave = seg;
       if(seg.type==='video'){
         try{
-          toast('Uploading video…');
           const videoUrl = await uploadVideoToR2(seg.dataUrl);
           // The segment doc now stores a small URL instead of the whole video —
           // that's what actually fixes the 1MB limit, not just a bigger allowance.
@@ -1906,6 +1920,12 @@ $('postBroadcastBtn').onclick = async ()=>{
   } else {
     newSegments.forEach((seg,i)=> mySignal.push({ id: now+Math.random()+i, ...seg }));
     saveSignalToStorage();
+  }
+  if(hasVideo){
+    postInProgress = false;
+    $('postBroadcastBtn').textContent = 'Post to your signal';
+    $('postBroadcastBtn').style.opacity = '1';
+    closeComposer();
   }
   mySignalSeen = false;
   renderBroadcasts();
@@ -2000,7 +2020,7 @@ function renderBroadcasts(){
     if(latest.type==='text'){
       thumb = `<div class="avatar" style="width:100%;height:100%;background:${latest.bg};font-size:9px;padding:4px;text-align:center;line-height:1.15;">${escapeHtml(latest.text).slice(0,26)}</div>`;
     } else if(latest.type==='video'){
-      thumb = `<video src="${latest.dataUrl}" class="mysignal-thumb" style="filter:${latest.filterCss}" muted></video>`;
+      thumb = `<video src="${latest.videoUrl || latest.dataUrl}" class="mysignal-thumb" style="filter:${latest.filterCss}" muted></video>`;
     } else {
       thumb = `<img src="${latest.dataUrl}" class="mysignal-thumb" style="filter:${latest.filterCss}" />`;
     }

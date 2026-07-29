@@ -75,8 +75,8 @@ try{
   firebase.initializeApp(firebaseConfig);
   const messaging = firebase.messaging();
   messaging.onBackgroundMessage(payload=>{
-    const title = (payload.notification && payload.notification.title) || 'Incoming call — Naluno';
-    const body = (payload.notification && payload.notification.body) || 'Tap to answer';
+    const title = (payload.data && payload.data.title) || (payload.notification && payload.notification.title) || 'Incoming call — Naluno';
+    const body = (payload.data && payload.data.body) || (payload.notification && payload.notification.body) || 'Tap to answer';
     self.registration.showNotification(title, {
       body,
       icon: 'icon-192.png',
