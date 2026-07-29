@@ -1519,40 +1519,9 @@ function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
    doesn't exist at all once this is hosted for real, so broadcasts silently never
    survived a sign-in. That was the actual cause of "my broadcast disappeared." */
 const SIGNAL_TTL_MS = 25 * 60 * 60 * 1000;
-let mySignal = []; // { id, type:'photo'|'video'|'text', dataUrl, videoUrl, filterCss, crop, caption, text, bg, createdAt, expiresAt, transitionIn, duration }
+let mySignal = []; // { id, type:'photo'|'video'|'text', dataUrl, filterCss, crop, caption, text, bg, createdAt, expiresAt, transitionIn, duration }
 let mySignalSeen = true;
 let connectionsSignals = []; // [{ contactId, contact, latest }] — real connections' most recent segment
-
-/* ---------------- SIGNAL VIDEO UPLOAD (Cloudflare R2) ----------------
-   Firestore caps a single document at 1MB — a video blows straight past that, which is
-   why videos silently failed to post while photos and text (much smaller) slipped
-   under it. Firebase Storage would normally be the fix, but Google now requires the
-   paid Blaze plan for Storage at any usage at all, even the smallest file. This
-   uploads instead to Cloudflare R2 (genuinely free, 10GB, no card, no egress fees) via
-   a small Worker that verifies the person is really signed in to Naluno before
-   accepting anything — see signal-worker/index.js. The bucket itself is configured
-   with a real object lifecycle rule to delete files automatically after 25 hours,
-   matching how long a signal already lives — real, server-side cleanup, not dependent
-   on anyone's device being online when the expiry actually hits.
-   Fill in your own deployed Worker's URL here once it's live. */
-const SIGNAL_UPLOAD_WORKER_URL = 'https://naluno-signal-upload.YOUR_SUBDOMAIN.workers.dev';
-
-async function uploadVideoToR2(dataUrl){
-  if(!currentUser) throw new Error('Not signed in');
-  const blob = await (await fetch(dataUrl)).blob();
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(SIGNAL_UPLOAD_WORKER_URL, {
-    method: 'POST',
-    headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': blob.type || 'video/webm' },
-    body: blob,
-  });
-  if(!res.ok){
-    const err = await res.json().catch(()=>({}));
-    throw new Error(err.error || 'Upload failed');
-  }
-  const data = await res.json();
-  return data.url;
-}
 
 function pruneExpiredSignal(){
   mySignal = mySignal.filter(s => Date.now() < s.expiresAt);
@@ -1882,27 +1851,22 @@ $('postBroadcastBtn').onclick = async ()=>{
   }
   closeComposer();
   if(currentUser && fbDb){
-    let failed = 0;
+    let skipped = 0;
     for(const seg of newSegments){
-      let segToSave = seg;
-      if(seg.type==='video'){
-        try{
-          toast('Uploading video…');
-          const videoUrl = await uploadVideoToR2(seg.dataUrl);
-          // The segment doc now stores a small URL instead of the whole video —
-          // that's what actually fixes the 1MB limit, not just a bigger allowance.
-          const { dataUrl, ...rest } = seg;
-          segToSave = { ...rest, videoUrl };
-        }catch(e){
-          failed++;
-          continue;
-        }
+      // Firestore caps a single document at 1MB — a video's dataUrl blows past that
+      // almost immediately, which is exactly why videos were silently failing to post
+      // while photos (much smaller once compressed) and text slipped under the limit.
+      // There's no Storage bucket wired up yet to hold video properly (same real gap
+      // voice notes have), so this is an honest limit, not a bug to paper over.
+      if(seg.type==='video' && seg.dataUrl && seg.dataUrl.length > 900000){
+        skipped++;
+        continue;
       }
-      const id = await saveSignalSegment(segToSave);
-      if(id) mySignal.push({ id, ...segToSave });
+      const id = await saveSignalSegment(seg);
+      if(id) mySignal.push({ id, ...seg });
     }
-    if(newSegments.length>failed) bumpTodayActivity();
-    if(failed>0) toast(failed===1 ? 'A video couldn\u2019t upload — try again' : `${failed} videos couldn\u2019t upload — try again`);
+    if(newSegments.length>skipped) bumpTodayActivity();
+    if(skipped>0) toast(skipped===1 ? 'That video was too long to post for real right now' : `${skipped} videos were too long to post for real right now`);
   } else {
     newSegments.forEach((seg,i)=> mySignal.push({ id: now+Math.random()+i, ...seg }));
     saveSignalToStorage();
@@ -2079,8 +2043,7 @@ function playSegment(idx, direction=1){
     bodyHtml = `<div class="bviewer-text-card ${animClass}" style="background:${seg.bg}; border-radius:20px; width:100%; height:100%;">${escapeHtml(seg.text)}</div>`;
     durationMs = 4000;
   } else if(seg.type==='video'){
-    const videoSrc = seg.videoUrl || seg.dataUrl;
-    bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" src="${videoSrc}" autoplay muted playsinline style="filter:${seg.filterCss}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT}; border-radius:16px;"></video>${captionHtml}`;
+    bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" src="${seg.dataUrl}" autoplay muted playsinline style="filter:${seg.filterCss}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT}; border-radius:16px;"></video>${captionHtml}`;
     durationMs = Math.round((seg.duration || 6) * 1000);
   } else {
     bodyHtml = `<img class="${animClass}" src="${seg.dataUrl}" style="filter:${seg.filterCss}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT}; border-radius:16px;" />${captionHtml}`;
