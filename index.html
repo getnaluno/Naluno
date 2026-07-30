@@ -1108,6 +1108,77 @@ function openKeyDb(){
     req.onerror = ()=> reject(req.error);
   });
 }
+
+/* ---------------- PENDING VIDEO JOB PERSISTENCE ----------------
+   A refresh or accidental navigation used to wipe an in-progress trim/split entirely —
+   everything lived only in JS memory. The beforeunload warning stops that from
+   happening by accident, but doesn't help if the tab genuinely does close (a crash, a
+   real navigation away, low-memory tab eviction on mobile). This is the real fix:
+   the original file plus the exact trim selection gets saved to IndexedDB the moment
+   extraction starts, checked for on every app load, and offered back as a one-tap
+   resume — not literally continuing from 50% (that's not meaningful for a real-time
+   capture process), but never losing the file pick and trim choices, which is the
+   actually painful part of "starting over." Cleared the moment a job finishes, either
+   by succeeding or by a normal in-session failure the person already saw a toast for. */
+const PENDING_JOB_DB_NAME = 'naluno-pending-video', PENDING_JOB_STORE = 'job';
+function openPendingJobDb(){
+  return new Promise((resolve, reject)=>{
+    if(!window.indexedDB){ reject(new Error('no indexeddb')); return; }
+    const req = indexedDB.open(PENDING_JOB_DB_NAME, 1);
+    req.onupgradeneeded = ()=>{ req.result.createObjectStore(PENDING_JOB_STORE); };
+    req.onsuccess = ()=> resolve(req.result);
+    req.onerror = ()=> reject(req.error);
+  });
+}
+function savePendingVideoJob(job){
+  return openPendingJobDb().then(db => new Promise((resolve,reject)=>{
+    const tx = db.transaction(PENDING_JOB_STORE,'readwrite');
+    tx.objectStore(PENDING_JOB_STORE).put(job, 'current');
+    tx.oncomplete = ()=> resolve();
+    tx.onerror = ()=> reject(tx.error);
+  })).catch(()=>{}); // if IndexedDB is unavailable, the job just isn't recoverable after a reload — no worse than before this existed
+}
+function getPendingVideoJob(){
+  return openPendingJobDb().then(db => new Promise((resolve)=>{
+    const req = db.transaction(PENDING_JOB_STORE,'readonly').objectStore(PENDING_JOB_STORE).get('current');
+    req.onsuccess = ()=> resolve(req.result || null);
+    req.onerror = ()=> resolve(null);
+  })).catch(()=> null);
+}
+function clearPendingVideoJob(){
+  return openPendingJobDb().then(db => new Promise((resolve)=>{
+    const tx = db.transaction(PENDING_JOB_STORE,'readwrite');
+    tx.objectStore(PENDING_JOB_STORE).delete('current');
+    tx.oncomplete = ()=> resolve();
+    tx.onerror = ()=> resolve();
+  })).catch(()=>{});
+}
+/* Checked once at startup — if a job survived an unexpected reload, offer it back
+   rather than silently discarding it or silently auto-restarting a real, possibly
+   lengthy re-encoding job without asking first. */
+async function checkForPendingVideoJob(){
+  const job = await getPendingVideoJob();
+  if(!job) return;
+  const proceed = confirm('You have an unfinished video from before this page reloaded. Resume preparing it now?');
+  if(proceed){
+    openTrimOverlay(job.file);
+    if(job.start != null && job.end != null){
+      // Restore the exact selection once the video metadata loads, rather than
+      // resetting to the full range.
+      const v = $('trimPreviewVideo');
+      const applySelection = ()=>{
+        const duration = v.duration || 1;
+        $('trimStartSlider').value = Math.round((job.start/duration)*1000);
+        $('trimEndSlider').value = Math.round((job.end/duration)*1000);
+        updateTrimLabel();
+        v.currentTime = job.start;
+      };
+      if(v.duration) applySelection(); else v.addEventListener('loadedmetadata', applySelection, { once:true });
+    }
+  } else {
+    clearPendingVideoJob();
+  }
+}
 function idbGet(key){
   return openKeyDb().then(db => new Promise((resolve,reject)=>{
     const req = db.transaction(E2E_STORE,'readonly').objectStore(E2E_STORE).get(key);
@@ -1570,6 +1641,38 @@ let connectionsSignals = []; // [{ contactId, contact, latest }] — real connec
    Fill in your own deployed Worker's URL here once it's live. */
 const SIGNAL_UPLOAD_WORKER_URL = 'https://naluno-signal-upload.naluno.workers.dev';
 
+/* Generates a small, static thumbnail frame from a video and returns it as a JPEG
+   data URL — small enough to embed directly in the Firestore segment doc alongside
+   videoUrl. This is what the ring preview should actually show: previously it was a
+   live <video> tag pointing straight at the remote R2 URL, meaning the browser had to
+   start a real network fetch and decode enough of the video just to show a preview,
+   every single time the app loaded — that was the actual cause of the 2-3 second
+   delay, not anything about app startup itself. */
+function generateVideoThumbnail(videoSrc){
+  return new Promise(resolve=>{
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.src = videoSrc;
+    let resolved = false;
+    const finish = result=>{ if(!resolved){ resolved = true; resolve(result); } };
+    video.onloadeddata = ()=>{ video.currentTime = Math.min(0.5, (video.duration||1)/2); };
+    video.onseeked = ()=>{
+      try{
+        const canvas = document.createElement('canvas');
+        const maxDim = 240; // thumbnail-sized — no need for full resolution just to show a small ring preview
+        const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
+        canvas.width = Math.round(video.videoWidth*scale) || 120;
+        canvas.height = Math.round(video.videoHeight*scale) || 120;
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+        finish(canvas.toDataURL('image/jpeg', 0.7));
+      }catch(e){ finish(null); } // thumbnail generation failed — ring falls back to color/initials only, not a hard error
+    };
+    video.onerror = ()=> finish(null);
+    setTimeout(()=> finish(null), 5000); // safety timeout in case loadeddata/seeked never fire
+  });
+}
+
 async function uploadVideoToR2(dataUrl){
   if(!currentUser) throw new Error('Not signed in');
   const blob = await (await fetch(dataUrl)).blob();
@@ -1946,6 +2049,8 @@ $('trimSave').onclick = async ()=>{
   advanceTrimQueue();
   $('bgProcessBanner').style.display = 'flex';
   $('bgProcessLabel').textContent = 'Preparing clip\u2026 0%';
+  postInProgress = true;
+  savePendingVideoJob({ file, start, end: clampedEnd, action:'trim' });
   try{
     const blob = await extractVideoClip(file, start, clampedEnd, frac=>{
       $('bgProcessLabel').textContent = `Preparing clip\u2026 ${Math.round(frac*100)}%`;
@@ -1963,6 +2068,8 @@ $('trimSave').onclick = async ()=>{
   }catch(e){
     toast('Couldn\u2019t trim that video \u2014 try a shorter selection');
   }
+  postInProgress = false;
+  clearPendingVideoJob();
   $('bgProcessBanner').style.display = 'none';
 };
 
@@ -1978,6 +2085,8 @@ $('trimAutoSplitBtn').onclick = async ()=>{
   $('trimOverlay').classList.remove('active');
   advanceTrimQueue();
   $('bgProcessBanner').style.display = 'flex';
+  postInProgress = true;
+  savePendingVideoJob({ file, action:'split' });
   let added = 0;
   for(let i=0; i<numParts; i++){
     const s = i*partDuration, e = Math.min(duration, s+partDuration);
@@ -1998,6 +2107,8 @@ $('trimAutoSplitBtn').onclick = async ()=>{
   renderFilmstrip();
   showActiveItemInPreview();
   updatePostButtonState();
+  postInProgress = false;
+  clearPendingVideoJob();
   $('bgProcessBanner').style.display = 'none';
   toast(added>0 ? `Added ${added} part${added>1?'s':''} \u2014 back in your Broadcast composer` : 'Couldn\u2019t split that video');
 };
@@ -2121,6 +2232,14 @@ function updatePostButtonState(){
 }
 
 let postInProgress = false;
+// A refresh or accidental navigation during a real, in-progress extraction or upload
+// wipes it entirely — everything lives in JS memory, gone the instant the page
+// reloads. This can't make an interrupted upload resume (that would need real
+// persisted state and is a bigger project on its own), but it can stop the data loss
+// from happening by accident in the first place.
+window.addEventListener('beforeunload', e=>{
+  if(postInProgress){ e.preventDefault(); e.returnValue = ''; }
+});
 $('postBroadcastBtn').onclick = async ()=>{
   if($('postBroadcastBtn').disabled || postInProgress) return;
   const now = Date.now();
@@ -2169,10 +2288,11 @@ $('postBroadcastBtn').onclick = async ()=>{
       if(seg.type==='video'){
         try{
           const videoUrl = await uploadVideoToR2(seg.dataUrl);
+          const thumbDataUrl = await generateVideoThumbnail(seg.dataUrl);
           // The segment doc now stores a small URL instead of the whole video —
           // that's what actually fixes the 1MB limit, not just a bigger allowance.
           const { dataUrl, ...rest } = seg;
-          segToSave = { ...rest, videoUrl };
+          segToSave = { ...rest, videoUrl, thumbDataUrl };
         }catch(e){
           failed++;
           lastErrorMessage = e.message || 'Unknown error';
@@ -2288,7 +2408,9 @@ function renderBroadcasts(){
     if(latest.type==='text'){
       thumb = `<div class="avatar" style="width:100%;height:100%;background:${latest.bg};font-size:9px;padding:4px;text-align:center;line-height:1.15;">${escapeHtml(latest.text).slice(0,26)}</div>`;
     } else if(latest.type==='video'){
-      thumb = `<video src="${latest.videoUrl || latest.dataUrl}" class="mysignal-thumb" style="filter:${latest.filterCss}" muted></video>`;
+      thumb = latest.thumbDataUrl
+        ? `<img src="${latest.thumbDataUrl}" class="mysignal-thumb" style="filter:${latest.filterCss}" />`
+        : `<video src="${latest.videoUrl || latest.dataUrl}" class="mysignal-thumb" style="filter:${latest.filterCss}" muted></video>`;
     } else {
       thumb = `<img src="${latest.dataUrl}" class="mysignal-thumb" style="filter:${latest.filterCss}" />`;
     }
@@ -2368,7 +2490,7 @@ function playSegment(idx, direction=1){
     durationMs = 4000;
   } else if(seg.type==='video'){
     const videoSrc = seg.videoUrl || seg.dataUrl;
-    bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" src="${videoSrc}" autoplay playsinline style="filter:${seg.filterCss}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT}; border-radius:16px;"></video>${captionHtml}`;
+    bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" src="${videoSrc}" playsinline style="filter:${seg.filterCss}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT}; border-radius:16px;"></video>${captionHtml}<div class="cam-expand-btn" id="bviewerUnmuteBtn" style="display:none; right:auto; left:14px; top:14px;" role="button" aria-label="Unmute"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M3 10v4h4l5 5V5L7 10H3z" fill="currentColor"/><path d="M16 8a5 5 0 010 8M19 5a9 9 0 010 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>`;
     durationMs = Math.round((seg.duration || 6) * 1000);
   } else {
     bodyHtml = `<img class="${animClass}" src="${seg.dataUrl}" style="filter:${seg.filterCss}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT}; border-radius:16px;" />${captionHtml}`;
@@ -2381,6 +2503,22 @@ function playSegment(idx, direction=1){
     const v = $('bviewerActiveVideo');
     v.onended = ()=> goToSegment(idx+1);
     currentVideoEl = v;
+    // Explicit play(), not just the autoplay attribute — opening a broadcast involves
+    // an async Firestore fetch between the actual tap and this video ever existing,
+    // and that gap can be enough for the browser to no longer treat this as tied to
+    // the original gesture, silently blocking unmuted autoplay. Try for real sound
+    // first; if the browser blocks it, fall back to muted playback with a visible
+    // one-tap unmute button instead of just failing silently with no way to fix it.
+    v.play().catch(()=>{
+      v.muted = true;
+      v.play().catch(()=>{});
+      $('bviewerUnmuteBtn').style.display = 'flex';
+      $('bviewerUnmuteBtn').onclick = ()=>{
+        v.muted = false;
+        v.play().catch(()=>{});
+        $('bviewerUnmuteBtn').style.display = 'none';
+      };
+    });
   } else {
     segTimer = setTimeout(()=> goToSegment(idx+1), durationMs);
   }
@@ -3754,6 +3892,7 @@ function loadRealProfile(user){
   maybeRefreshCallNotifToken();
   flushMessageQueue();
   ensureMyKeyPair();
+  checkForPendingVideoJob();
 }
 /* If the person already granted notification permission in a previous session, re-fetch
    and re-save their token silently — this is what was actually breaking: the token
@@ -4841,12 +4980,18 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName){
   };
   sendOnce();
   if(notifyRepeatInterval) clearInterval(notifyRepeatInterval);
+  // Sending up to 6 rapid pushes in 30 seconds is exactly the burst pattern Chrome's
+  // own spam-notification detection is built to catch — it just cost this site its
+  // notification permission entirely, which is strictly worse than a single quiet
+  // alert ever was. Scaled back hard: one single follow-up, spaced well apart, not a
+  // rapid-fire sequence — a real, deliberate tradeoff of "rings a bit longer" against
+  // "doesn't get the whole site blocked by the browser."
   let repeats = 0;
   notifyRepeatInterval = setInterval(()=>{
     repeats++;
-    if(repeats >= 5){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; return; } // 5 repeats * 5s = 25s, plus the first immediate send = ~30s total
+    if(repeats >= 1){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; return; }
     sendOnce();
-  }, 5000);
+  }, 15000);
 }
 
 async function startRealCall(c){
