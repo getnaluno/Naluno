@@ -622,9 +622,10 @@
 
   <!-- ===================== NAV ===================== -->
   <div class="navbar">
-    <button class="navbtn active" data-tab="frequencies">
+    <button class="navbtn active" data-tab="frequencies" id="frequenciesNavBtn" style="position:relative;">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2"/><path d="M4 20c0-3.5 3.5-6 8-6s8 2.5 8 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       <span>Frequencies</span>
+      <span id="missedCallBadge" style="display:none; position:absolute; top:2px; right:22px; width:9px; height:9px; border-radius:50%; background:#FF5470; border:1.5px solid var(--bg);"></span>
     </button>
     <button class="navbtn" data-tab="wireline" id="wirelineNavBtn" style="position:relative;">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4 12h4l2-6 4 12 2-6h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -2490,7 +2491,7 @@ function playSegment(idx, direction=1){
     durationMs = 4000;
   } else if(seg.type==='video'){
     const videoSrc = seg.videoUrl || seg.dataUrl;
-    bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" src="${videoSrc}" playsinline style="filter:${seg.filterCss}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT}; border-radius:16px;"></video>${captionHtml}<div class="cam-expand-btn" id="bviewerUnmuteBtn" style="display:none; right:auto; left:14px; top:14px;" role="button" aria-label="Unmute"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M3 10v4h4l5 5V5L7 10H3z" fill="currentColor"/><path d="M16 8a5 5 0 010 8M19 5a9 9 0 010 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>`;
+    bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" src="${videoSrc}" playsinline style="filter:${seg.filterCss}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT}; border-radius:16px;"></video>${captionHtml}<div class="cam-expand-btn" id="bviewerMuteToggle" style="right:auto; left:14px; top:14px;" role="button" aria-label="Toggle sound"></div>`;
     durationMs = Math.round((seg.duration || 6) * 1000);
   } else {
     bodyHtml = `<img class="${animClass}" src="${seg.dataUrl}" style="filter:${seg.filterCss}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT}; border-radius:16px;" />${captionHtml}`;
@@ -2503,22 +2504,32 @@ function playSegment(idx, direction=1){
     const v = $('bviewerActiveVideo');
     v.onended = ()=> goToSegment(idx+1);
     currentVideoEl = v;
-    // Explicit play(), not just the autoplay attribute — opening a broadcast involves
-    // an async Firestore fetch between the actual tap and this video ever existing,
-    // and that gap can be enough for the browser to no longer treat this as tied to
-    // the original gesture, silently blocking unmuted autoplay. Try for real sound
-    // first; if the browser blocks it, fall back to muted playback with a visible
-    // one-tap unmute button instead of just failing silently with no way to fix it.
+    const muteBtn = $('bviewerMuteToggle');
+    const renderMuteIcon = muted=>{
+      muteBtn.innerHTML = muted
+        ? `<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M3 10v4h4l5 5V5L7 10H3z" fill="currentColor"/><path d="M16 9l6 6M22 9l-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`
+        : `<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M3 10v4h4l5 5V5L7 10H3z" fill="currentColor"/><path d="M16 8a5 5 0 010 8M19 5a9 9 0 010 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+    };
+    // Try for real sound first — opening a broadcast involves an async Firestore
+    // fetch between the actual tap and this video ever existing, and that gap can be
+    // enough for the browser to no longer treat playback as tied to the original
+    // gesture. But catching a rejection here isn't fully reliable either — some
+    // browsers resolve play() successfully without ever producing audible sound. So
+    // rather than depending on detecting the block correctly, this always shows a
+    // clear, persistent toggle the person can use directly regardless of what
+    // actually happened, defaulting to reflecting the muted attribute's real state.
+    v.muted = false;
+    renderMuteIcon(false);
     v.play().catch(()=>{
       v.muted = true;
+      renderMuteIcon(true);
       v.play().catch(()=>{});
-      $('bviewerUnmuteBtn').style.display = 'flex';
-      $('bviewerUnmuteBtn').onclick = ()=>{
-        v.muted = false;
-        v.play().catch(()=>{});
-        $('bviewerUnmuteBtn').style.display = 'none';
-      };
     });
+    muteBtn.onclick = ()=>{
+      v.muted = !v.muted;
+      renderMuteIcon(v.muted);
+      if(!v.muted) v.play().catch(()=>{});
+    };
   } else {
     segTimer = setTimeout(()=> goToSegment(idx+1), durationMs);
   }
@@ -3545,6 +3556,7 @@ document.querySelectorAll('.navbtn').forEach(btn=>{
     document.querySelectorAll('.tabscreen').forEach(s=>s.classList.remove('active'));
     btn.classList.add('active');
     $('tab-'+btn.dataset.tab).classList.add('active');
+    if(btn.dataset.tab === 'frequencies') clearMissedCallBadge();
   };
 });
 
@@ -3825,6 +3837,8 @@ if(fbAuth){
       if(bandPresenceUnsub){ bandPresenceUnsub(); bandPresenceUnsub = null; }
       if(bandMessagesUnsub){ bandMessagesUnsub(); bandMessagesUnsub = null; }
       if(incomingCallUnsub){ incomingCallUnsub(); incomingCallUnsub = null; }
+      if(missedCallUnsub){ missedCallUnsub(); missedCallUnsub = null; }
+      updateMissedCallBadge(0);
       if(connectionsUnsub){ connectionsUnsub(); connectionsUnsub = null; }
       if(profileUnsub){ profileUnsub(); profileUnsub = null; }
       myKeyPairPromise = null;
@@ -3888,6 +3902,7 @@ function loadRealProfile(user){
   startThreadsListListener();
   loadRealBands(user.uid);
   startIncomingCallListener();
+  startMissedCallListener();
   loadMySignal();
   maybeRefreshCallNotifToken();
   flushMessageQueue();
@@ -4864,6 +4879,57 @@ function teardownCallConnection(){
 }
 /* App-wide listener for real incoming calls — starts at sign-in, runs regardless of
    which screen is open, same as the presence and Wireline-preview listeners. */
+let missedCallUnsub = null;
+let missedCallListenerInitialized = false;
+/* The data side of this already existed — showAsyncFallback() already marks a call
+   'missed' in Firestore when it times out unanswered. What was actually missing is
+   this: nothing ever watched for it on the receiving end or showed it anywhere. */
+function startMissedCallListener(){
+  if(!fbDb || !currentUser) return;
+  if(missedCallUnsub) missedCallUnsub();
+  missedCallListenerInitialized = false;
+  missedCallUnsub = fbDb.collection('calls')
+    .where('calleeUid','==',currentUser.uid)
+    .where('status','==','missed')
+    .onSnapshot(snap=>{
+      const unseen = snap.docs.filter(d => !d.data().seenByCallee);
+      updateMissedCallBadge(unseen.length);
+      // Only toast for calls that arrive while this listener is already running —
+      // the initial snapshot fires for every existing unseen missed call too, and
+      // toasting for all of those on every single app open would be excessive. The
+      // badge alone (set above, unconditionally) already surfaces those correctly.
+      if(missedCallListenerInitialized){
+        snap.docChanges().forEach(change=>{
+          if(change.type==='added' && !change.doc.data().seenByCallee){
+            const data = change.doc.data();
+            const c = contacts.find(x=>x.firebaseUid===data.callerUid);
+            toast((c ? c.name.split(' ')[0] : 'Someone') + ' tried to call you');
+          }
+        });
+      }
+      missedCallListenerInitialized = true;
+    }, ()=>{ /* missed call badge just won't update this session */ });
+}
+function updateMissedCallBadge(count){
+  const badge = $('missedCallBadge');
+  if(badge) badge.style.display = count > 0 ? 'block' : 'none';
+}
+async function clearMissedCallBadge(){
+  if(!fbDb || !currentUser) return;
+  try{
+    const snap = await fbDb.collection('calls')
+      .where('calleeUid','==',currentUser.uid)
+      .where('status','==','missed')
+      .get();
+    const unseen = snap.docs.filter(d => !d.data().seenByCallee);
+    if(unseen.length === 0) return;
+    const batch = fbDb.batch();
+    unseen.forEach(d => batch.update(d.ref, { seenByCallee:true }));
+    await batch.commit();
+    updateMissedCallBadge(0);
+  }catch(e){ /* badge just stays until next successful attempt */ }
+}
+
 function startIncomingCallListener(){
   if(!fbDb || !currentUser) return;
   if(incomingCallUnsub) incomingCallUnsub();
