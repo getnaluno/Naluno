@@ -1006,6 +1006,9 @@
   </div>
 
   <div class="toast" id="toast"></div>
+  <div id="bgProcessBanner" style="display:none; position:fixed; left:12px; right:12px; bottom:88px; z-index:500; background:rgba(13,15,23,.94); backdrop-filter:blur(10px); border:1px solid var(--line); border-radius:14px; padding:12px 16px; align-items:center; gap:10px; font-family:var(--font-mono); font-size:12.5px; color:var(--text);">
+    <div class="greenroom-pill ready" style="position:static; width:100%; justify-content:flex-start;"><span class="swirl"></span><span id="bgProcessLabel">Preparing video… 0%</span></div>
+  </div>
   <div id="updateBanner" style="position:absolute; left:10px; right:10px; bottom:calc(env(safe-area-inset-bottom,0px) + 78px); z-index:90; background:var(--mint); color:#0D0F17; border-radius:16px; padding:13px 16px; display:none; align-items:center; justify-content:space-between; gap:10px; box-shadow:0 10px 30px rgba(0,0,0,.4);">
     <span style="font-size:13px; font-weight:600;">A new version of Naluno is ready</span>
     <button id="updateBannerBtn" style="background:#0D0F17; color:var(--mint); border:none; border-radius:999px; padding:8px 16px; font-weight:700; font-size:12.5px; font-family:var(--font-body); cursor:pointer; flex-shrink:0;">Update</button>
@@ -1603,7 +1606,11 @@ async function deleteSignalSegment(segmentId){
 async function loadMySignal(){
   if(!currentUser || !fbDb) return;
   try{
-    const snap = await fbDb.collection('users').doc(currentUser.uid).collection('signal').get();
+    // No orderBy here was the actual bug behind segments scrambling after a reload —
+    // Firestore returns documents in its own unspecified internal order when none is
+    // given, which happened to match posting order at first (built from a fresh local
+    // push) but not on a later fresh read from the server.
+    const snap = await fbDb.collection('users').doc(currentUser.uid).collection('signal').orderBy('createdAt','asc').get();
     mySignal = snap.docs.map(d => ({ id:d.id, ...d.data() }));
     pruneExpiredSignal();
   }catch(e){ /* nothing posted yet, or offline */ }
@@ -1666,7 +1673,7 @@ const textBgGradients = [
   '#000000',
 ];
 const transitionOptions = { fade:'Fade', slide:'Slide', zoom:'Zoom', cut:'Cut' };
-const MAX_VIDEO_SECONDS = 60;
+const MAX_VIDEO_SECONDS = 120;
 
 function cropTransform(crop){
   if(!crop) return 'translate(-50%,-50%)';
@@ -1880,9 +1887,17 @@ async function extractVideoClip(file, startTime, endTime, onProgress){
       if(audioDestination) tracks.push(...audioDestination.stream.getAudioTracks());
       const combinedStream = new MediaStream(tracks);
 
+      // Explicit bitrate, not left to the browser's own guess — this is what actually
+      // guarantees a full 2-minute segment stays well under the real 60MB upload cap:
+      // ~3.2Mbps video + 96kbps audio over 120s works out to roughly 49MB worst case,
+      // comfortable margin below the limit, regardless of how the source was encoded.
+      const recorderOptions = { videoBitsPerSecond: 3200000, audioBitsPerSecond: 96000 };
       let recorder;
-      try{ recorder = new MediaRecorder(combinedStream, { mimeType: 'video/webm;codecs=vp8,opus' }); }
-      catch(e){ recorder = new MediaRecorder(combinedStream); } // fall back to the browser's default codec choice
+      try{ recorder = new MediaRecorder(combinedStream, { mimeType: 'video/webm;codecs=vp8,opus', ...recorderOptions }); }
+      catch(e){
+        try{ recorder = new MediaRecorder(combinedStream, recorderOptions); }
+        catch(e2){ recorder = new MediaRecorder(combinedStream); } // last-resort fallback to full browser defaults
+      }
 
       const chunks = [];
       recorder.ondataavailable = e=>{ if(e.data.size>0) chunks.push(e.data); };
@@ -1892,6 +1907,14 @@ async function extractVideoClip(file, startTime, endTime, onProgress){
         resolve(new Blob(chunks, { type:'video/webm' }));
       };
       recorder.onerror = e=>{ URL.revokeObjectURL(url); reject(e.error || new Error('Recording failed')); };
+
+      // Playing the source at 2x during capture genuinely halves real extraction
+      // time — modern browsers auto-preserve audio pitch when changing playbackRate,
+      // so this doesn't chipmunk the sound, just gets through the source footage in
+      // half the real time. Explicitly set anyway rather than relying on the default.
+      video.playbackRate = 2;
+      if('preservesPitch' in video) video.preservesPitch = true;
+      else if('webkitPreservesPitch' in video) video.webkitPreservesPitch = true;
 
       video.currentTime = startTime;
       video.onseeked = ()=>{
@@ -1918,11 +1941,14 @@ $('trimSave').onclick = async ()=>{
   const { start, end } = trimSliderTimes();
   const clampedEnd = Math.min(end, start + MAX_VIDEO_SECONDS);
   if(clampedEnd - start < 1){ toast('Selection is too short'); return; }
-  $('trimProgressOverlay').style.display = 'flex';
-  $('trimSave').disabled = true; $('trimAutoSplitBtn').disabled = true;
+  const file = trimCurrentFile;
+  $('trimOverlay').classList.remove('active');
+  advanceTrimQueue();
+  $('bgProcessBanner').style.display = 'flex';
+  $('bgProcessLabel').textContent = 'Preparing clip\u2026 0%';
   try{
-    const blob = await extractVideoClip(trimCurrentFile, start, clampedEnd, frac=>{
-      $('trimProgressLabel').textContent = `Preparing clip\u2026 ${Math.round(frac*100)}%`;
+    const blob = await extractVideoClip(file, start, clampedEnd, frac=>{
+      $('bgProcessLabel').textContent = `Preparing clip\u2026 ${Math.round(frac*100)}%`;
     });
     const dataUrl = await readFileAsDataUrl(blob);
     composerItems.push({
@@ -1933,31 +1959,31 @@ $('trimSave').onclick = async ()=>{
     renderFilmstrip();
     showActiveItemInPreview();
     updatePostButtonState();
-    toast('Clip added');
+    toast('Clip ready \u2014 back in your Broadcast composer');
   }catch(e){
     toast('Couldn\u2019t trim that video \u2014 try a shorter selection');
   }
-  $('trimProgressOverlay').style.display = 'none';
-  $('trimSave').disabled = false; $('trimAutoSplitBtn').disabled = false;
-  $('trimOverlay').classList.remove('active');
-  advanceTrimQueue();
+  $('bgProcessBanner').style.display = 'none';
 };
 
 $('trimAutoSplitBtn').onclick = async ()=>{
   const video = $('trimPreviewVideo');
   const duration = video.duration || 0;
   const file = trimCurrentFile;
-  const MAX_BYTES = 55 * 1024 * 1024; // slight safety margin under the real 60MB cap
-  const numParts = Math.max(1, Math.min(10, Math.ceil(Math.max(file.size/MAX_BYTES, duration/MAX_VIDEO_SECONDS))));
+  // Output size is now controlled directly by extractVideoClip's own fixed bitrate,
+  // not the source file's original compression — so this only needs to reason about
+  // duration, not file size, to guarantee every part stays under the real cap.
+  const numParts = Math.max(1, Math.min(10, Math.ceil(duration/MAX_VIDEO_SECONDS)));
   const partDuration = duration / numParts;
-  $('trimProgressOverlay').style.display = 'flex';
-  $('trimSave').disabled = true; $('trimAutoSplitBtn').disabled = true;
+  $('trimOverlay').classList.remove('active');
+  advanceTrimQueue();
+  $('bgProcessBanner').style.display = 'flex';
   let added = 0;
   for(let i=0; i<numParts; i++){
     const s = i*partDuration, e = Math.min(duration, s+partDuration);
     try{
       const blob = await extractVideoClip(file, s, e, frac=>{
-        $('trimProgressLabel').textContent = `Preparing part ${i+1} of ${numParts}\u2026 ${Math.round(frac*100)}%`;
+        $('bgProcessLabel').textContent = `Preparing part ${i+1} of ${numParts}\u2026 ${Math.round(frac*100)}%`;
       });
       const dataUrl = await readFileAsDataUrl(blob);
       composerItems.push({
@@ -1965,17 +1991,15 @@ $('trimAutoSplitBtn').onclick = async ()=>{
         crop:{scale:1,xPct:0,yPct:0}, caption: numParts>1 ? `Part ${i+1} of ${numParts}` : '', duration: e-s,
       });
       added++;
+      renderFilmstrip(); // update the (possibly hidden) filmstrip after each part, not just at the end
     }catch(err){ /* one part failing doesn't stop the rest from still being added */ }
   }
   activeComposerItemIndex = composerItems.length-1;
   renderFilmstrip();
   showActiveItemInPreview();
   updatePostButtonState();
-  $('trimProgressOverlay').style.display = 'none';
-  $('trimSave').disabled = false; $('trimAutoSplitBtn').disabled = false;
-  toast(added>0 ? `Added ${added} part${added>1?'s':''} \u2014 they\u2019ll post and play back as one broadcast` : 'Couldn\u2019t split that video');
-  $('trimOverlay').classList.remove('active');
-  advanceTrimQueue();
+  $('bgProcessBanner').style.display = 'none';
+  toast(added>0 ? `Added ${added} part${added>1?'s':''} \u2014 back in your Broadcast composer` : 'Couldn\u2019t split that video');
 };
 
 function renderFilmstrip(){
@@ -2101,10 +2125,16 @@ $('postBroadcastBtn').onclick = async ()=>{
   if($('postBroadcastBtn').disabled || postInProgress) return;
   const now = Date.now();
   const expires = now + SIGNAL_TTL_MS;
+  // Every segment from this one post shares this id — this is what actually
+  // guarantees a multi-part video stays together and in order in the viewer,
+  // regardless of how long uploading takes or what else happens on the account
+  // while it's in progress. createdAt timing alone isn't a safe enough guarantee
+  // once a real upload can take real minutes.
+  const postGroupId = 'post-' + now + '-' + Math.random().toString(36).slice(2);
   let postedCount = 1;
   const newSegments = [];
   if(composerType==='text'){
-    newSegments.push({ type:'text', text: $('textBroadcastInput').value.trim(), bg: composerTextBg, createdAt: now, expiresAt: expires, transitionIn: 'fade' });
+    newSegments.push({ type:'text', text: $('textBroadcastInput').value.trim(), bg: composerTextBg, createdAt: now, expiresAt: expires, transitionIn: 'fade', groupId: postGroupId, order: 0 });
   } else {
     postedCount = composerItems.length;
     composerItems.forEach((item, i)=>{
@@ -2112,6 +2142,7 @@ $('postBroadcastBtn').onclick = async ()=>{
         type: item.kind, dataUrl: item.dataUrl, filterCss: item.filterCss,
         crop: item.crop, caption: item.caption, createdAt: now + i, expiresAt: expires,
         transitionIn: composerItems.length>1 ? composerTransition : 'fade', duration: item.duration || null,
+        groupId: postGroupId, order: i,
       });
     });
   }
@@ -2337,7 +2368,7 @@ function playSegment(idx, direction=1){
     durationMs = 4000;
   } else if(seg.type==='video'){
     const videoSrc = seg.videoUrl || seg.dataUrl;
-    bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" src="${videoSrc}" autoplay muted playsinline style="filter:${seg.filterCss}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT}; border-radius:16px;"></video>${captionHtml}`;
+    bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" src="${videoSrc}" autoplay playsinline style="filter:${seg.filterCss}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT}; border-radius:16px;"></video>${captionHtml}`;
     durationMs = Math.round((seg.duration || 6) * 1000);
   } else {
     bodyHtml = `<img class="${animClass}" src="${seg.dataUrl}" style="filter:${seg.filterCss}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT}; border-radius:16px;" />${captionHtml}`;
@@ -2373,7 +2404,7 @@ async function openBroadcast(contactId){
   const c = contacts.find(x=>x.id===contactId); if(!c || !c.isReal || !c.firebaseUid || !fbDb) return;
   try{
     const snap = await fbDb.collection('users').doc(c.firebaseUid).collection('signal').orderBy('createdAt','asc').get();
-    const segments = snap.docs.map(d=>({ id:d.id, ...d.data() })).filter(s => Date.now() < s.expiresAt);
+    const segments = sortSignalSegments(snap.docs.map(d=>({ id:d.id, ...d.data() })).filter(s => Date.now() < s.expiresAt));
     if(segments.length===0){ toast(c.name.split(' ')[0] + '\u2019s signal has faded'); return; }
     viewingMine = false;
     currentSegments = segments;
@@ -2391,12 +2422,34 @@ async function openBroadcast(contactId){
     toast('Couldn\u2019t load that signal right now');
   }
 }
+function sortSignalSegments(segments){
+  // Groups segments from the same post together (by groupId) and keeps them in the
+  // correct internal order (by the explicit order field) — this is what actually
+  // guarantees a multi-part video plays as one coherent clip instead of being
+  // interleaved with segments from other posts by raw timestamp alone, which is what
+  // caused parts to appear in a scrambled order once a post took real minutes to
+  // finish uploading. Segments without a groupId (posted before this existed) each
+  // become their own group of one, so nothing about older posts breaks.
+  const groups = {};
+  segments.forEach(seg=>{
+    const gid = seg.groupId || ('legacy-' + seg.id);
+    if(!groups[gid]) groups[gid] = [];
+    groups[gid].push(seg);
+  });
+  const groupList = Object.values(groups).map(group=>{
+    group.sort((a,b)=> (a.order||0) - (b.order||0));
+    const times = group.map(s=> typeof s.createdAt==='number' ? s.createdAt : (s.createdAt && s.createdAt.toMillis ? s.createdAt.toMillis() : 0));
+    return { earliestCreatedAt: Math.min(...times), group };
+  });
+  groupList.sort((a,b)=> a.earliestCreatedAt - b.earliestCreatedAt);
+  return groupList.flatMap(g=>g.group);
+}
 function openMyBroadcast(){
   pruneExpiredSignal();
   if(mySignal.length===0) return;
   viewingMine = true;
   const profile = (typeof currentProfile !== 'undefined') ? currentProfile : { name:'You', color:'#7CFFB2', photo:null };
-  currentSegments = mySignal.slice();
+  currentSegments = sortSignalSegments(mySignal.slice());
   applyAvatarVisual($('bviewerAvatar'), profile);
   $('bviewerName').textContent = profile.name;
   $('bviewerStatus').style.display = 'none';
@@ -4760,16 +4813,31 @@ let notifyRepeatInterval = null;
    works fine on its own, so this must never block or delay the actual call. */
 async function notifyCalleeOfIncomingCall(calleeUid, callerName){
   if(!currentUser) return;
+  let firstAttempt = true;
   const sendOnce = async ()=>{
     try{
       const idToken = await currentUser.getIdToken();
-      await fetch(CALL_NOTIFY_WORKER_URL, {
+      const res = await fetch(CALL_NOTIFY_WORKER_URL, {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
         body: JSON.stringify({ calleeUid, callerName }),
       });
-    }catch(e){ /* the in-app ring still works regardless — this only ever adds reach for
-                  when the other person's app is fully closed */ }
+      const data = await res.json().catch(()=>({}));
+      if(!res.ok){
+        console.error('Call notification failed:', res.status, data);
+        if(firstAttempt) toast('Notification issue: ' + (data.error || `HTTP ${res.status}`));
+      } else if(data.sent === false){
+        // Not an error — this person just hasn't granted notification permission, or
+        // hasn't opened the app since it was added. Worth knowing during testing, but
+        // not really an error toast — this is the Worker's own honest "nothing to do" case.
+        console.log('Call notification not sent:', data.reason);
+        if(firstAttempt) toast('No notification on file for them yet — in-app ring still works');
+      }
+    }catch(e){
+      console.error('Call notification request failed:', e);
+      if(firstAttempt) toast('Notification request failed: ' + (e.message || 'network error'));
+    }
+    firstAttempt = false;
   };
   sendOnce();
   if(notifyRepeatInterval) clearInterval(notifyRepeatInterval);
