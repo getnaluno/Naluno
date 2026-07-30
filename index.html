@@ -886,6 +886,7 @@
           <div class="greenroom-pill ready" style="position:static;"><span class="swirl"></span><span id="trimProgressLabel">Preparing clip… 0%</span></div>
         </div>
       </div>
+      <div id="trimFilterRow" class="filter-chip-row" style="padding-top:12px;"></div>
       <div class="adjust-controls">
         <div class="lobby-sub" id="trimRangeLabel" style="margin-top:10px; text-align:center;">0:00 – 0:00</div>
         <div style="padding:14px 4px 0;">
@@ -1914,9 +1915,25 @@ function advanceTrimQueue(){
     openTrimOverlay(next);
   }
 }
+let trimSelectedFilter = 'normal';
+function renderTrimFilterRow(){
+  $('trimFilterRow').innerHTML = Object.entries(filterPresets).map(([key,f])=>
+    `<div class="filter-chip ${trimSelectedFilter===key?'active':''}" data-filter="${key}">${f.name}</div>`
+  ).join('');
+  $('trimFilterRow').querySelectorAll('.filter-chip').forEach(el=>{
+    el.onclick = ()=>{
+      trimSelectedFilter = el.dataset.filter;
+      $('trimFilterRow').querySelectorAll('.filter-chip').forEach(c=>c.classList.toggle('active', c===el));
+      $('trimPreviewVideo').style.filter = filterPresets[trimSelectedFilter].css;
+    };
+  });
+}
 function openTrimOverlay(file){
   trimCurrentFile = file;
+  trimSelectedFilter = 'normal';
+  renderTrimFilterRow();
   const video = $('trimPreviewVideo');
+  video.style.filter = '';
   if(trimObjectUrl) URL.revokeObjectURL(trimObjectUrl);
   trimObjectUrl = URL.createObjectURL(file);
   video.src = trimObjectUrl;
@@ -2072,6 +2089,7 @@ $('trimSave').onclick = async ()=>{
   const clampedEnd = Math.min(end, start + MAX_VIDEO_SECONDS);
   if(clampedEnd - start < 1){ toast('Selection is too short'); return; }
   const file = trimCurrentFile;
+  const chosenFilterCss = filterPresets[trimSelectedFilter].css;
   $('trimOverlay').classList.remove('active');
   advanceTrimQueue();
   $('bgProcessBanner').style.display = 'flex';
@@ -2083,27 +2101,31 @@ $('trimSave').onclick = async ()=>{
       setBgProgress(frac, `Preparing clip\u2026 ${Math.round(frac*100)}%`);
     });
     const dataUrl = await readFileAsDataUrl(blob);
-    composerItems.push({
-      id: Date.now()+Math.random(), kind:'video', dataUrl, filterKey:'normal', filterCss:'',
-      crop:{scale:1,xPct:0,yPct:0}, caption:'', duration: clampedEnd-start,
-    });
-    activeComposerItemIndex = composerItems.length-1;
-    renderFilmstrip();
-    showActiveItemInPreview();
-    updatePostButtonState();
-    toast('Clip ready \u2014 back in your Broadcast composer');
+    clearPendingVideoJob();
+    // "Use this clip" is now the last real decision — everything from here (upload,
+    // Firestore save, showing up in the ring) happens automatically, same shared
+    // logic the composer's own Post button uses.
+    const now = Date.now();
+    const groupId = 'post-' + now + '-' + Math.random().toString(36).slice(2);
+    await postSegmentsNow([{
+      type:'video', dataUrl, filterCss: chosenFilterCss, crop:{scale:1,xPct:0,yPct:0},
+      caption:'', duration: clampedEnd-start, createdAt: now, expiresAt: now+SIGNAL_TTL_MS,
+      transitionIn:'fade', groupId, order:0,
+    }]);
+    toast('Posted to your signal');
   }catch(e){
     toast('Couldn\u2019t trim that video \u2014 try a shorter selection');
+    postInProgress = false;
+    $('bgProcessBanner').style.display = 'none';
+    clearPendingVideoJob();
   }
-  postInProgress = false;
-  clearPendingVideoJob();
-  $('bgProcessBanner').style.display = 'none';
 };
 
 $('trimAutoSplitBtn').onclick = async ()=>{
   const video = $('trimPreviewVideo');
   const duration = video.duration || 0;
   const file = trimCurrentFile;
+  const chosenFilterCss = filterPresets[trimSelectedFilter].css;
   // Output size is now controlled directly by extractVideoClip's own fixed bitrate,
   // not the source file's original compression — so this only needs to reason about
   // duration, not file size, to guarantee every part stays under the real cap.
@@ -2115,7 +2137,9 @@ $('trimAutoSplitBtn').onclick = async ()=>{
   setBgProgress(0, `Preparing part 1 of ${numParts}\u2026 0%`);
   postInProgress = true;
   savePendingVideoJob({ file, action:'split' });
-  let added = 0;
+  const now = Date.now();
+  const groupId = 'post-' + now + '-' + Math.random().toString(36).slice(2);
+  const segments = [];
   for(let i=0; i<numParts; i++){
     const s = i*partDuration, e = Math.min(duration, s+partDuration);
     try{
@@ -2123,22 +2147,25 @@ $('trimAutoSplitBtn').onclick = async ()=>{
         setBgProgress((i+frac)/numParts, `Preparing part ${i+1} of ${numParts}\u2026 ${Math.round(frac*100)}%`);
       });
       const dataUrl = await readFileAsDataUrl(blob);
-      composerItems.push({
-        id: Date.now()+Math.random()+i, kind:'video', dataUrl, filterKey:'normal', filterCss:'',
-        crop:{scale:1,xPct:0,yPct:0}, caption: numParts>1 ? `Part ${i+1} of ${numParts}` : '', duration: e-s,
+      segments.push({
+        type:'video', dataUrl, filterCss: chosenFilterCss, crop:{scale:1,xPct:0,yPct:0},
+        caption: numParts>1 ? `Part ${i+1} of ${numParts}` : '', duration: e-s,
+        createdAt: now+i, expiresAt: now+SIGNAL_TTL_MS,
+        transitionIn: numParts>1 ? composerTransition : 'fade', groupId, order:i,
       });
-      added++;
-      renderFilmstrip(); // update the (possibly hidden) filmstrip after each part, not just at the end
-    }catch(err){ /* one part failing doesn't stop the rest from still being added */ }
+    }catch(err){ /* one part failing doesn't stop the rest from still being posted */ }
   }
-  activeComposerItemIndex = composerItems.length-1;
-  renderFilmstrip();
-  showActiveItemInPreview();
-  updatePostButtonState();
-  postInProgress = false;
   clearPendingVideoJob();
-  $('bgProcessBanner').style.display = 'none';
-  toast(added>0 ? `Added ${added} part${added>1?'s':''} \u2014 back in your Broadcast composer` : 'Couldn\u2019t split that video');
+  if(segments.length>0){
+    // "Split into parts" is now the last decision — everything from here (uploading
+    // every part, saving to Firestore, showing up in the ring) happens automatically.
+    await postSegmentsNow(segments);
+    toast(segments.length>1 ? `Posted ${segments.length} parts to your signal` : 'Posted to your signal');
+  } else {
+    postInProgress = false;
+    $('bgProcessBanner').style.display = 'none';
+    toast('Couldn\u2019t split that video');
+  }
 };
 
 function renderFilmstrip(){
@@ -2268,44 +2295,15 @@ let postInProgress = false;
 window.addEventListener('beforeunload', e=>{
   if(postInProgress){ e.preventDefault(); e.returnValue = ''; }
 });
-$('postBroadcastBtn').onclick = async ()=>{
-  if($('postBroadcastBtn').disabled || postInProgress) return;
-  const now = Date.now();
-  const expires = now + SIGNAL_TTL_MS;
-  // Every segment from this one post shares this id — this is what actually
-  // guarantees a multi-part video stays together and in order in the viewer,
-  // regardless of how long uploading takes or what else happens on the account
-  // while it's in progress. createdAt timing alone isn't a safe enough guarantee
-  // once a real upload can take real minutes.
-  const postGroupId = 'post-' + now + '-' + Math.random().toString(36).slice(2);
-  let postedCount = 1;
-  const newSegments = [];
-  if(composerType==='text'){
-    newSegments.push({ type:'text', text: $('textBroadcastInput').value.trim(), bg: composerTextBg, createdAt: now, expiresAt: expires, transitionIn: 'fade', groupId: postGroupId, order: 0 });
-  } else {
-    postedCount = composerItems.length;
-    composerItems.forEach((item, i)=>{
-      newSegments.push({
-        type: item.kind, dataUrl: item.dataUrl, filterCss: item.filterCss,
-        crop: item.crop, caption: item.caption, createdAt: now + i, expiresAt: expires,
-        transitionIn: composerItems.length>1 ? composerTransition : 'fade', duration: item.duration || null,
-        groupId: postGroupId, order: i,
-      });
-    });
-  }
+/* The actual upload+save logic, shared by the normal composer flow and the new
+   straight-through trim flow — same proven code path either way, just two different
+   places that can trigger it. */
+async function postSegmentsNow(newSegments){
   const hasVideo = newSegments.some(s=>s.type==='video');
-  // The composer used to stay open and block navigation for the entire real upload —
-  // a multi-part post could genuinely take minutes, with nothing to do but wait and
-  // watch a disabled button. Closing immediately and showing progress in the same
-  // persistent banner used for extraction means the person can actually go do
-  // something else while it finishes, exactly like trimming already allows.
   if(hasVideo){
     postInProgress = true;
-    closeComposer();
     $('bgProcessBanner').style.display = 'flex';
     setBgProgress(0, 'Uploading to your signal\u2026');
-  } else {
-    closeComposer();
   }
   if(currentUser && fbDb){
     let failed = 0;
@@ -2339,6 +2337,7 @@ $('postBroadcastBtn').onclick = async ()=>{
     if(newSegments.length>failed) bumpTodayActivity();
     if(failed>0) toast(failed===1 ? `Video upload failed: ${lastErrorMessage}` : `${failed} videos failed to upload: ${lastErrorMessage}`);
   } else {
+    const now = Date.now();
     newSegments.forEach((seg,i)=> mySignal.push({ id: now+Math.random()+i, ...seg }));
     saveSignalToStorage();
   }
@@ -2348,6 +2347,35 @@ $('postBroadcastBtn').onclick = async ()=>{
   }
   mySignalSeen = false;
   renderBroadcasts();
+}
+
+$('postBroadcastBtn').onclick = async ()=>{
+  if($('postBroadcastBtn').disabled || postInProgress) return;
+  const now = Date.now();
+  const expires = now + SIGNAL_TTL_MS;
+  // Every segment from this one post shares this id — this is what actually
+  // guarantees a multi-part video stays together and in order in the viewer,
+  // regardless of how long uploading takes or what else happens on the account
+  // while it's in progress. createdAt timing alone isn't a safe enough guarantee
+  // once a real upload can take real minutes.
+  const postGroupId = 'post-' + now + '-' + Math.random().toString(36).slice(2);
+  let postedCount = 1;
+  const newSegments = [];
+  if(composerType==='text'){
+    newSegments.push({ type:'text', text: $('textBroadcastInput').value.trim(), bg: composerTextBg, createdAt: now, expiresAt: expires, transitionIn: 'fade', groupId: postGroupId, order: 0 });
+  } else {
+    postedCount = composerItems.length;
+    composerItems.forEach((item, i)=>{
+      newSegments.push({
+        type: item.kind, dataUrl: item.dataUrl, filterCss: item.filterCss,
+        crop: item.crop, caption: item.caption, createdAt: now + i, expiresAt: expires,
+        transitionIn: composerItems.length>1 ? composerTransition : 'fade', duration: item.duration || null,
+        groupId: postGroupId, order: i,
+      });
+    });
+  }
+  closeComposer();
+  await postSegmentsNow(newSegments);
   toast(postedCount>1 ? `Posted ${postedCount} items to your signal` : 'Posted to your signal');
 };
 
@@ -4852,6 +4880,7 @@ function createPeerConnection(){
   const pc = new RTCPeerConnection(RTC_CONFIG);
   remoteCombinedStream = new MediaStream();
   pc.ontrack = e=>{
+    console.log('[call] ontrack fired — kind:', e.track.kind, 'readyState:', e.track.readyState, 'enabled:', e.track.enabled);
     // Built up manually rather than trusting e.streams[0] — audio now arrives grouped
     // under the real camera stream's id while video arrives grouped under the send
     // canvas's stream id, two different source streams. Replacing srcObject wholesale
@@ -4861,32 +4890,43 @@ function createPeerConnection(){
     const videoEl = $('remoteVideo');
     if(videoEl.srcObject !== remoteCombinedStream){
       videoEl.srcObject = remoteCombinedStream;
-      videoEl.play().catch(()=>{ /* most browsers allow this post-gesture; ignore if blocked */ });
+      videoEl.play().catch(err=> console.log('[call] remoteVideo.play() failed:', err));
     }
     if(e.track.kind === 'video'){
       videoEl.style.display = 'block';
       $('remotePlaceholder').style.display = 'none';
       e.track.onended = ()=>{
+        console.log('[call] remote video track ended');
         videoEl.style.display = 'none';
         $('remotePlaceholder').style.display = 'flex';
       };
     }
   };
+  pc.oniceconnectionstatechange = ()=> console.log('[call] ICE connection state:', pc.iceConnectionState);
+  pc.onconnectionstatechange = ()=> console.log('[call] connection state:', pc.connectionState);
   if(stream){
     // Real audio, unmodified. Video comes from the composited send canvas instead of
     // the raw camera track — this is the actual fix for "the other person should see
     // the border too": previously the border/glow were purely local rendering, so the
     // other person only ever received the plain, unstyled camera feed.
-    stream.getAudioTracks().forEach(t => pc.addTrack(t, stream));
+    const audioTracks = stream.getAudioTracks();
+    audioTracks.forEach(t => pc.addTrack(t, stream));
+    console.log('[call] added audio tracks:', audioTracks.length);
     const sendCanvas = $('sendCanvas');
     if(sendCanvas && sendCanvas.captureStream){
       const canvasStream = sendCanvas.captureStream(30);
-      canvasStream.getVideoTracks().forEach(t => pc.addTrack(t, canvasStream));
+      const videoTracks = canvasStream.getVideoTracks();
+      videoTracks.forEach(t => pc.addTrack(t, canvasStream));
+      console.log('[call] added composited video tracks:', videoTracks.length, '— sendCanvas size at this moment:', sendCanvas.width, 'x', sendCanvas.height);
     } else {
       // captureStream unsupported on this browser — fall back to the raw camera track
       // rather than sending no video at all.
-      stream.getVideoTracks().forEach(t => pc.addTrack(t, stream));
+      const rawVideoTracks = stream.getVideoTracks();
+      rawVideoTracks.forEach(t => pc.addTrack(t, stream));
+      console.log('[call] captureStream unsupported — fell back to raw camera video tracks:', rawVideoTracks.length);
     }
+  } else {
+    console.log('[call] createPeerConnection called with no local stream at all — no tracks were added on this side');
   }
   return pc;
 }
