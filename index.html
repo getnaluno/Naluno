@@ -625,7 +625,7 @@
     <button class="navbtn active" data-tab="frequencies" id="frequenciesNavBtn" style="position:relative;">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2"/><path d="M4 20c0-3.5 3.5-6 8-6s8 2.5 8 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       <span>Frequencies</span>
-      <span id="missedCallBadge" style="display:none; position:absolute; top:2px; right:22px; width:9px; height:9px; border-radius:50%; background:#FF5470; border:1.5px solid var(--bg);"></span>
+      <span id="missedCallBadge" style="display:none; position:absolute; top:-2px; right:14px; min-width:16px; height:16px; padding:0 3px; border-radius:8px; background:#FF5470; border:1.5px solid var(--bg); color:#fff; font-family:var(--font-mono); font-size:10px; font-weight:700; line-height:13px; text-align:center;"></span>
     </button>
     <button class="navbtn" data-tab="wireline" id="wirelineNavBtn" style="position:relative;">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4 12h4l2-6 4 12 2-6h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -2267,26 +2267,31 @@ $('postBroadcastBtn').onclick = async ()=>{
     });
   }
   const hasVideo = newSegments.some(s=>s.type==='video');
-  // The composer used to close immediately, before a video upload had even started —
-  // combined with a status toast that fades out in under 2 seconds while a real
-  // upload can take far longer, that left a real dead gap with zero visible feedback,
-  // easy to mistake for a silent failure and re-post. Keeping the composer open with
-  // a persistent button state for video specifically fixes both the false impression
-  // and the actual duplicate-post consequence of it.
+  // The composer used to stay open and block navigation for the entire real upload —
+  // a multi-part post could genuinely take minutes, with nothing to do but wait and
+  // watch a disabled button. Closing immediately and showing progress in the same
+  // persistent banner used for extraction means the person can actually go do
+  // something else while it finishes, exactly like trimming already allows.
   if(hasVideo){
     postInProgress = true;
-    $('postBroadcastBtn').disabled = true;
-    $('postBroadcastBtn').textContent = 'Uploading…';
-    $('postBroadcastBtn').style.opacity = '.7';
+    closeComposer();
+    $('bgProcessBanner').style.display = 'flex';
+    $('bgProcessLabel').textContent = 'Uploading to your signal\u2026';
   } else {
     closeComposer();
   }
   if(currentUser && fbDb){
     let failed = 0;
     let lastErrorMessage = '';
+    let videoIndex = 0;
+    const totalVideos = newSegments.filter(s=>s.type==='video').length;
     for(const seg of newSegments){
       let segToSave = seg;
       if(seg.type==='video'){
+        videoIndex++;
+        if(hasVideo) $('bgProcessLabel').textContent = totalVideos>1
+          ? `Uploading to your signal\u2026 part ${videoIndex} of ${totalVideos}`
+          : 'Uploading to your signal\u2026';
         try{
           const videoUrl = await uploadVideoToR2(seg.dataUrl);
           const thumbDataUrl = await generateVideoThumbnail(seg.dataUrl);
@@ -2312,9 +2317,7 @@ $('postBroadcastBtn').onclick = async ()=>{
   }
   if(hasVideo){
     postInProgress = false;
-    $('postBroadcastBtn').textContent = 'Post to your signal';
-    $('postBroadcastBtn').style.opacity = '1';
-    closeComposer();
+    $('bgProcessBanner').style.display = 'none';
   }
   mySignalSeen = false;
   renderBroadcasts();
@@ -4912,7 +4915,9 @@ function startMissedCallListener(){
 }
 function updateMissedCallBadge(count){
   const badge = $('missedCallBadge');
-  if(badge) badge.style.display = count > 0 ? 'block' : 'none';
+  if(!badge) return;
+  badge.textContent = count > 0 ? String(count) : '';
+  badge.style.display = count > 0 ? 'block' : 'none';
 }
 async function clearMissedCallBadge(){
   if(!fbDb || !currentUser) return;
