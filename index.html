@@ -879,6 +879,9 @@
     <div class="tab-scroll" style="padding:14px 20px 24px; display:flex; flex-direction:column;">
       <div class="adjust-stage" id="trimStage">
         <video id="trimPreviewVideo" muted playsinline style="width:100%; height:100%; object-fit:cover;"></video>
+        <div id="trimPreviewPlayBtn" role="button" aria-label="Preview with sound" style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:56px; height:56px; border-radius:50%; background:rgba(13,15,23,.7); backdrop-filter:blur(6px); border:1px solid var(--line); display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:5;">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="var(--mint)"/></svg>
+        </div>
         <div id="trimProgressOverlay" style="display:none; position:absolute; inset:0; background:rgba(13,15,23,.85); align-items:center; justify-content:center; flex-direction:column; gap:10px;">
           <div class="greenroom-pill ready" style="position:static;"><span class="swirl"></span><span id="trimProgressLabel">Preparing clip… 0%</span></div>
         </div>
@@ -1917,6 +1920,9 @@ function openTrimOverlay(file){
   if(trimObjectUrl) URL.revokeObjectURL(trimObjectUrl);
   trimObjectUrl = URL.createObjectURL(file);
   video.src = trimObjectUrl;
+  video.muted = true;
+  video.pause();
+  setTrimPreviewPlayIcon(false);
   video.onloadedmetadata = ()=>{
     $('trimStartSlider').value = 0;
     $('trimEndSlider').value = 1000;
@@ -1929,6 +1935,31 @@ function openTrimOverlay(file){
     : 'This clip is longer than 60 seconds — splitting breaks it into consecutive 60-second parts instead of trimming to just one.';
   $('trimOverlay').classList.add('active');
 }
+/* Lets someone actually hear the source video before committing to the whole
+   trim/upload pipeline — a real way to confirm the source genuinely has audio, not
+   just trust that it does. Toggles between muted-for-scrubbing (default) and
+   unmuted-for-preview. */
+function setTrimPreviewPlayIcon(playing){
+  $('trimPreviewPlayBtn').innerHTML = playing
+    ? `<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="6" y="5" width="4" height="14" rx="1" fill="var(--mint)"/><rect x="14" y="5" width="4" height="14" rx="1" fill="var(--mint)"/></svg>`
+    : `<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="var(--mint)"/></svg>`;
+}
+$('trimPreviewPlayBtn').onclick = ()=>{
+  const v = $('trimPreviewVideo');
+  if(v.paused){
+    v.muted = false;
+    v.play().catch(()=>{});
+    setTrimPreviewPlayIcon(true);
+  } else {
+    v.pause();
+    v.muted = true;
+    setTrimPreviewPlayIcon(false);
+  }
+};
+$('trimPreviewVideo').onended = ()=>{
+  $('trimPreviewVideo').muted = true;
+  setTrimPreviewPlayIcon(false);
+};
 function trimSliderTimes(){
   const video = $('trimPreviewVideo');
   const duration = video.duration || 0;
@@ -1962,95 +1993,78 @@ $('trimCancel').onclick = ()=>{
   advanceTrimQueue();
 };
 
-/* Extracts a clip from startTime to endTime out of a video file, re-encoding via
-   canvas capture + MediaRecorder — the standard, dependency-free way to trim video
-   in-browser without a heavy library like ffmpeg.wasm. Preserves audio by separately
-   routing the source video's audio through a Web Audio graph and mixing it into the
-   same output stream, since canvas.captureStream() only ever captures visual frames
-   on its own — without this, a trimmed clip would come out silent.
-   This is genuinely real-time: extracting a 30-second range takes about 30 real
-   seconds, since it's driven by actual video playback, not an instant seek/cut —
-   that's why this shows a live progress percentage rather than a spinner. */
+/* Extracts a clip from startTime to endTime out of a video file.
+   REWRITTEN after two failed attempts to reliably preserve audio through a hand-rolled
+   canvas-capture + Web Audio mixing graph (the audio kept silently failing to survive,
+   even after fixing a real AudioContext-timing bug). Rather than patch that approach a
+   third time, this uses the browser's own native video.captureStream() instead —
+   captures BOTH audio and video directly from the playing element, by design, with no
+   separate mixing graph to get subtly wrong. Simpler and more reliable.
+   Honest tradeoff: this no longer resizes to 960px via canvas (there's no canvas
+   anymore) — output resolution now matches the source. File size is still controlled
+   by the explicit bitrate below, which is what actually guarantees the real 60MB cap
+   regardless of resolution; very high-resolution sources may look somewhat softer at
+   that fixed bitrate than a smaller source would, a reasonable tradeoff for audio
+   actually working.
+   Still genuinely real-time: extracting a 30-second range takes about 15 real seconds
+   at 2x playback speed — that's why this shows a live progress percentage. */
 async function extractVideoClip(file, startTime, endTime, onProgress){
   return new Promise((resolve, reject)=>{
     const video = document.createElement('video');
-    video.muted = true; // audio is captured via the Web Audio graph below, not played out loud during processing
     video.playsInline = true;
+    // Not attached to the page at all, so nothing is ever actually heard out loud
+    // during processing — muted only matters for direct speaker output, not for what
+    // captureStream() captures from the element's real decoded audio.
     const url = URL.createObjectURL(file);
     video.src = url;
 
     video.onloadedmetadata = ()=>{
-      const canvas = document.createElement('canvas');
-      const maxDim = 960; // matches the same real output cap used for live call video
-      const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
-      canvas.width = Math.round(video.videoWidth*scale);
-      canvas.height = Math.round(video.videoHeight*scale);
-      const ctx = canvas.getContext('2d');
-
-      let audioDestination = null, audioContext = null;
-      try{
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const source = audioContext.createMediaElementSource(video);
-        audioDestination = audioContext.createMediaStreamDestination();
-        source.connect(audioDestination);
-      }catch(e){ console.error('Audio setup failed for this clip — it will have no sound:', e); }
-
-      const canvasStream = canvas.captureStream(30);
-      const tracks = [...canvasStream.getVideoTracks()];
-      if(audioDestination) tracks.push(...audioDestination.stream.getAudioTracks());
-      const combinedStream = new MediaStream(tracks);
-
-      // Explicit bitrate, not left to the browser's own guess — this is what actually
-      // guarantees a full 2-minute segment stays well under the real 60MB upload cap:
-      // ~3.2Mbps video + 96kbps audio over 120s works out to roughly 49MB worst case,
-      // comfortable margin below the limit, regardless of how the source was encoded.
-      const recorderOptions = { videoBitsPerSecond: 3200000, audioBitsPerSecond: 96000 };
-      let recorder;
-      try{ recorder = new MediaRecorder(combinedStream, { mimeType: 'video/webm;codecs=vp8,opus', ...recorderOptions }); }
-      catch(e){
-        try{ recorder = new MediaRecorder(combinedStream, recorderOptions); }
-        catch(e2){ recorder = new MediaRecorder(combinedStream); } // last-resort fallback to full browser defaults
-      }
-
-      const chunks = [];
-      recorder.ondataavailable = e=>{ if(e.data.size>0) chunks.push(e.data); };
-      recorder.onstop = ()=>{
-        URL.revokeObjectURL(url);
-        const finish = ()=> resolve(new Blob(chunks, { type:'video/webm' }));
-        // Not awaited before, which meant a multi-part split could start creating the
-        // NEXT AudioContext while the previous one was still mid-close — real resource
-        // contention that silently dropped audio starting from part 2 onward, while a
-        // single/standalone extraction (only ever one AudioContext, no contention
-        // possible) worked fine. Waiting for the close to genuinely finish first is
-        // what actually fixes that.
-        if(audioContext) audioContext.close().then(finish).catch(finish);
-        else finish();
-      };
-      recorder.onerror = e=>{ URL.revokeObjectURL(url); reject(e.error || new Error('Recording failed')); };
-
-      // Playing the source at 2x during capture genuinely halves real extraction
-      // time — modern browsers auto-preserve audio pitch when changing playbackRate,
-      // so this doesn't chipmunk the sound, just gets through the source footage in
-      // half the real time. Explicitly set anyway rather than relying on the default.
       video.playbackRate = 2;
       if('preservesPitch' in video) video.preservesPitch = true;
       else if('webkitPreservesPitch' in video) video.webkitPreservesPitch = true;
 
       video.currentTime = startTime;
       video.onseeked = ()=>{
+        let stream;
+        try{
+          stream = video.captureStream ? video.captureStream() : video.mozCaptureStream();
+        }catch(e){
+          URL.revokeObjectURL(url);
+          reject(new Error('This browser cannot capture video and audio together'));
+          return;
+        }
+        if(stream.getAudioTracks().length === 0){
+          console.error('Source video has no audio track available to capture — the output will be silent because the source itself has none, not because of a capture bug.');
+        }
+
+        const recorderOptions = { videoBitsPerSecond: 3200000, audioBitsPerSecond: 96000 };
+        let recorder;
+        try{ recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8,opus', ...recorderOptions }); }
+        catch(e){
+          try{ recorder = new MediaRecorder(stream, recorderOptions); }
+          catch(e2){ recorder = new MediaRecorder(stream); } // last-resort fallback to full browser defaults
+        }
+
+        const chunks = [];
+        recorder.ondataavailable = e=>{ if(e.data.size>0) chunks.push(e.data); };
+        recorder.onstop = ()=>{
+          URL.revokeObjectURL(url);
+          resolve(new Blob(chunks, { type:'video/webm' }));
+        };
+        recorder.onerror = e=>{ URL.revokeObjectURL(url); reject(e.error || new Error('Recording failed')); };
+
         recorder.start();
         video.play().catch(()=>{});
-        const drawFrame = ()=>{
+        const checkDone = ()=>{
           if(video.currentTime >= endTime || video.paused || video.ended){
             if(recorder.state !== 'inactive') recorder.stop();
             video.pause();
             return;
           }
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           if(onProgress) onProgress(Math.min(1, (video.currentTime-startTime)/Math.max(0.1, endTime-startTime)));
-          requestAnimationFrame(drawFrame);
+          requestAnimationFrame(checkDone);
         };
-        requestAnimationFrame(drawFrame);
+        requestAnimationFrame(checkDone);
       };
     };
     video.onerror = ()=>{ URL.revokeObjectURL(url); reject(new Error('Could not load video')); };
