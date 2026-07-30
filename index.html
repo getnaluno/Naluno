@@ -878,7 +878,7 @@
     </div>
     <div class="tab-scroll" style="padding:14px 20px 24px; display:flex; flex-direction:column;">
       <div class="adjust-stage" id="trimStage">
-        <video id="trimPreviewVideo" muted playsinline style="width:100%; height:100%; object-fit:cover;"></video>
+        <video id="trimPreviewVideo" muted playsinline style="width:100%; height:100%; object-fit:cover; transform:translate(-50%,-50%);"></video>
         <div id="trimPreviewPlayBtn" role="button" aria-label="Preview with sound" style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:56px; height:56px; border-radius:50%; background:rgba(13,15,23,.7); backdrop-filter:blur(6px); border:1px solid var(--line); display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:5;">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="var(--mint)"/></svg>
         </div>
@@ -2019,10 +2019,6 @@ async function extractVideoClip(file, startTime, endTime, onProgress){
     video.src = url;
 
     video.onloadedmetadata = ()=>{
-      video.playbackRate = 2;
-      if('preservesPitch' in video) video.preservesPitch = true;
-      else if('webkitPreservesPitch' in video) video.webkitPreservesPitch = true;
-
       video.currentTime = startTime;
       video.onseeked = ()=>{
         let stream;
