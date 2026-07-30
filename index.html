@@ -4854,9 +4854,33 @@ $('signOutBtn').onclick = ()=>{
 const RTC_CONFIG = {
   iceServers: [
     { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
-    // { urls: 'turn:your.turn.server:3478', username: 'user', credential: 'pass' },
   ],
 };
+const TURN_CREDENTIALS_WORKER_URL = 'https://naluno-turn-credentials.naluno.workers.dev';
+/* Fetches fresh, short-lived TURN relay credentials from Cloudflare's Realtime
+   service — the actual fix for calls that connect but never show a feed between two
+   devices on different networks (confirmed by real console evidence: tracks send and
+   receive correctly, but ICE never finds a route without a relay to fall back on).
+   Falls back to the STUN-only config if this fails for any reason — a call can still
+   attempt a direct connection without TURN, it just won't have the relay fallback for
+   networks that genuinely need one. */
+async function getIceServers(){
+  if(!currentUser) return RTC_CONFIG;
+  try{
+    const idToken = await currentUser.getIdToken();
+    const res = await fetch(TURN_CREDENTIALS_WORKER_URL, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + idToken },
+    });
+    if(!res.ok) return RTC_CONFIG;
+    const data = await res.json();
+    if(!data.iceServers) return RTC_CONFIG;
+    return { iceServers: data.iceServers };
+  }catch(e){
+    console.log('[call] Could not fetch TURN credentials, falling back to STUN-only:', e);
+    return RTC_CONFIG;
+  }
+}
 let peerConnection = null;
 /* Neither "Start call" nor "Accept" had any protection against firing twice — a real,
    easy-to-trigger double-tap on a touchscreen (or just impatience while a screen
@@ -4876,8 +4900,8 @@ let calleeCandidatesUnsub = null;
 let incomingCallUnsub = null;
 
 let remoteCombinedStream = null;
-function createPeerConnection(){
-  const pc = new RTCPeerConnection(RTC_CONFIG);
+async function createPeerConnection(){
+  const pc = new RTCPeerConnection(await getIceServers());
   remoteCombinedStream = new MediaStream();
   pc.ontrack = e=>{
     console.log('[call] ontrack fired — kind:', e.track.kind, 'readyState:', e.track.readyState, 'enabled:', e.track.enabled);
@@ -5145,7 +5169,7 @@ async function startRealCall(c){
   const callRef = fbDb.collection('calls').doc();
   activeCallId = callRef.id;
 
-  peerConnection = createPeerConnection();
+  peerConnection = await createPeerConnection();
   peerConnection.onicecandidate = e=>{
     if(e.candidate) callRef.collection('callerCandidates').add(e.candidate.toJSON()).catch(()=>{});
   };
@@ -5314,7 +5338,7 @@ $('acceptIncoming').onclick = async ()=>{
     const data = doc.data();
     if(!data || !data.offer){ toast('That call is no longer available'); closeCallOverlayAndStopCamera(); return; }
 
-    peerConnection = createPeerConnection();
+    peerConnection = await createPeerConnection();
     peerConnection.onicecandidate = e=>{
       if(e.candidate) callRef.collection('calleeCandidates').add(e.candidate.toJSON()).catch(()=>{});
     };
