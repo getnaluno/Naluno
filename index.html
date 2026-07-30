@@ -4758,6 +4758,7 @@ function stopCallerTone(){
 }
 
 let ringtoneTimer = null;
+let ringtoneActiveNodes = [];
 let customRingtoneUrl = null;
 let ringtoneAudioEl = null;
 /* Receiver-side ringtone — a short rising chime, repeating, unless a custom sound has
@@ -4786,13 +4787,21 @@ function startRingtone(){
       gain.gain.linearRampToValueAtTime(0, t0+0.22);
       osc.connect(gain); gain.connect(ctx.destination);
       osc.start(t0); osc.stop(t0+0.24);
+      ringtoneActiveNodes.push(osc);
     });
   }
   chime();
   ringtoneTimer = setInterval(chime, 1800);
 }
+/* clearInterval alone only stops FUTURE chimes from being scheduled — any oscillators
+   already playing from the last chime were still scheduled to run out their full
+   duration regardless, which is exactly what let the ringtone keep sounding even
+   after answering. Same bug as the caller's ringback tone had, fixed the same way:
+   explicitly stopping every active node makes this genuinely immediate. */
 function stopRingtone(){
   clearInterval(ringtoneTimer); ringtoneTimer = null;
+  ringtoneActiveNodes.forEach(osc=>{ try{ osc.stop(); }catch(e){} });
+  ringtoneActiveNodes = [];
   if(ringtoneAudioEl){ ringtoneAudioEl.pause(); }
 }
 
