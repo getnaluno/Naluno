@@ -549,18 +549,32 @@
 
   <!-- ===================== COMPASS ===================== -->
   <section class="tabscreen" id="tab-compass" style="display:flex; flex-direction:column;">
-    <div class="tab-header"><div class="tab-title">Compass</div><span></span></div>
-    <div id="compassMessages" style="flex:1; overflow-y:auto; padding:14px 16px; display:flex; flex-direction:column; gap:10px;">
-      <div class="msg-empty">
-        <span style="font-family:var(--font-futuristic); font-size:14px;">Your companion, growing with you</span>
-        <span style="font-size:12.5px;">Ask for a plan, think through a decision, or just talk something through. Compass remembers this conversation as you go.</span>
+    <div class="tab-header">
+      <div class="tab-title">Compass</div>
+      <div class="cam-expand-btn" id="compassLockToggleBtn" style="position:static; width:34px; height:34px;" role="button" aria-label="Compass privacy">
+        <svg id="compassLockIcon" width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="5" y="11" width="14" height="9" rx="2" stroke="currentColor" stroke-width="2"/><path d="M8 11V8a4 4 0 018 0v3" stroke="currentColor" stroke-width="2"/></svg>
       </div>
     </div>
-    <div style="padding:10px 14px calc(env(safe-area-inset-bottom,0px) + 14px); border-top:1px solid var(--line); background:rgba(13,15,23,.92); backdrop-filter:blur(10px);">
-      <div style="display:flex; gap:9px; align-items:flex-end;">
-        <textarea id="compassInput" rows="1" placeholder="Ask Compass anything…" style="flex:1; resize:none; background:var(--surface); border:1px solid var(--line); border-radius:20px; padding:11px 16px; color:var(--text); font-size:14px; outline:none; max-height:120px; font-family:inherit;"></textarea>
-        <div class="ghost-btn" id="compassSendBtn" role="button" aria-label="Send" style="background:var(--mint); border-color:var(--mint); color:#0D0F17; flex-shrink:0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" stroke="#0D0F17" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+    <div id="compassContent" style="flex:1; display:flex; flex-direction:column; min-height:0;">
+      <div id="compassMessages" style="flex:1; overflow-y:auto; padding:14px 16px; display:flex; flex-direction:column; gap:10px;">
+        <div class="msg-empty">
+          <span style="font-family:var(--font-futuristic); font-size:14px;">Your companion, growing with you</span>
+          <span style="font-size:12.5px;">Ask for a plan, think through a decision, or just talk something through. Compass remembers this conversation as you go.</span>
+        </div>
       </div>
+      <div style="padding:10px 14px calc(env(safe-area-inset-bottom,0px) + 14px); border-top:1px solid var(--line); background:rgba(13,15,23,.92); backdrop-filter:blur(10px);">
+        <div style="display:flex; gap:9px; align-items:flex-end;">
+          <textarea id="compassInput" rows="1" placeholder="Ask Compass anything…" style="flex:1; resize:none; background:var(--surface); border:1px solid var(--line); border-radius:20px; padding:11px 16px; color:var(--text); font-size:14px; outline:none; max-height:120px; font-family:inherit;"></textarea>
+          <div class="ghost-btn" id="compassSendBtn" role="button" aria-label="Send" style="background:var(--mint); border-color:var(--mint); color:#0D0F17; flex-shrink:0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" stroke="#0D0F17" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        </div>
+      </div>
+    </div>
+    <div id="compassLockScreen" style="display:none; flex:1; flex-direction:column; align-items:center; justify-content:center; gap:16px; padding:24px;">
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" style="color:var(--mint);"><rect x="5" y="11" width="14" height="9" rx="2" stroke="currentColor" stroke-width="2"/><path d="M8 11V8a4 4 0 018 0v3" stroke="currentColor" stroke-width="2"/></svg>
+      <div style="font-family:var(--font-futuristic); font-size:15px; text-align:center;" id="compassLockTitle">Compass is locked</div>
+      <input type="password" id="compassLockInput" placeholder="Enter password" style="width:100%; max-width:280px; background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:12px 16px; color:var(--text); font-size:14px; outline:none; text-align:center;" />
+      <div class="lobby-sub" id="compassLockError" style="display:none; color:#FF5470;">Wrong password — try again</div>
+      <button id="compassLockSubmitBtn" style="background:var(--mint); color:#0D0F17; border:none; border-radius:14px; padding:12px 32px; font-weight:700; font-size:14px;">Unlock</button>
     </div>
   </section>
 
@@ -1817,6 +1831,77 @@ let activeComposerItemIndex = -1;
 let composerTextBg = textBgGradients[0];
 let composerTransition = 'fade';
 
+/* ---------------- COMPASS PRIVACY LOCK ----------------
+   Local/casual protection — the honest kind: this stops someone who picks up your
+   already-signed-in device from casually opening Compass, the same as any app-lock
+   PIN pattern. It is not, and cannot be, real security against someone with direct
+   access to the browser's own dev tools, since everything here still ultimately runs
+   client-side. The password itself is never stored — only its SHA-256 hash, synced
+   via the same profile document as everything else in Callsign, so it works
+   consistently across sessions and devices without needing a separate system. */
+let compassUnlockedThisSession = false;
+async function sha256Hex(text){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+function compassIsLocked(){
+  return !!(currentProfile && currentProfile.compassPasswordHash) && !compassUnlockedThisSession;
+}
+function showCompassLockScreenIfNeeded(){
+  if(compassIsLocked()){
+    $('compassContent').style.display = 'none';
+    $('compassLockScreen').style.display = 'flex';
+    $('compassLockInput').value = '';
+    $('compassLockError').style.display = 'none';
+  } else {
+    $('compassContent').style.display = 'flex';
+    $('compassLockScreen').style.display = 'none';
+    loadCompassMessages();
+  }
+}
+$('compassLockSubmitBtn').onclick = async ()=>{
+  const entered = $('compassLockInput').value;
+  const hash = await sha256Hex(entered);
+  if(hash === currentProfile.compassPasswordHash){
+    compassUnlockedThisSession = true;
+    showCompassLockScreenIfNeeded();
+  } else {
+    $('compassLockError').style.display = 'block';
+  }
+};
+$('compassLockInput').addEventListener('keydown', e=>{
+  if(e.key === 'Enter') $('compassLockSubmitBtn').click();
+});
+$('compassLockToggleBtn').onclick = async ()=>{
+  if(!currentUser || !fbDb) return;
+  const hasPassword = !!(currentProfile && currentProfile.compassPasswordHash);
+  if(!hasPassword){
+    const newPass = prompt('Set a password to lock Compass — leave blank to cancel:');
+    if(!newPass) return;
+    const hash = await sha256Hex(newPass);
+    await fbDb.collection('users').doc(currentUser.uid).set({ compassPasswordHash: hash }, { merge:true });
+    currentProfile.compassPasswordHash = hash;
+    toast('Compass is now locked with a password');
+  } else {
+    const action = prompt('Compass is currently password-protected. Type "remove" to remove the password, or type a new password to change it:');
+    if(!action) return;
+    const currentPass = prompt('Confirm your current Compass password:');
+    if(!currentPass) return;
+    const currentHash = await sha256Hex(currentPass);
+    if(currentHash !== currentProfile.compassPasswordHash){ toast('Incorrect current password'); return; }
+    if(action.trim().toLowerCase() === 'remove'){
+      await fbDb.collection('users').doc(currentUser.uid).set({ compassPasswordHash: firebase.firestore.FieldValue.delete() }, { merge:true });
+      delete currentProfile.compassPasswordHash;
+      toast('Compass password removed');
+    } else {
+      const newHash = await sha256Hex(action);
+      await fbDb.collection('users').doc(currentUser.uid).set({ compassPasswordHash: newHash }, { merge:true });
+      currentProfile.compassPasswordHash = newHash;
+      toast('Compass password updated');
+    }
+  }
+};
+
 /* ---------------- COMPASS ----------------
    v1: a real, remembered conversation with genuine AI reasoning via Cloudflare
    Workers AI's free tier. Deliberately does NOT yet read anything else in Naluno —
@@ -1829,6 +1914,18 @@ let compassMessages = [];
 let compassUnsub = null;
 let compassLoaded = false;
 
+/* Escapes first, then applies a small, safe set of formatting on top — never renders
+   raw AI output directly. This is what actually fixes numbered points and bold text
+   showing as one flat run-on paragraph with literal asterisks. */
+function formatCompassText(text){
+  let t = escapeHtml(text);
+  t = t.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  // Breaks onto a new line before "2. ", "3. " etc when a numbered point starts
+  // mid-paragraph — the model often runs list items together without real newlines.
+  t = t.replace(/(\S)\s(\d+)\.\s/g, '$1<br><br>$2. ');
+  t = t.replace(/\n/g, '<br>');
+  return t.trim();
+}
 function renderCompassMessages(){
   const container = $('compassMessages');
   if(compassMessages.length === 0){
@@ -1837,7 +1934,8 @@ function renderCompassMessages(){
   }
   container.innerHTML = compassMessages.map(m=>{
     const isMe = m.from === 'user';
-    return `<div class="msg-row ${isMe?'me':'them'}" style="display:flex; ${isMe?'justify-content:flex-end;':''}"><div class="msg-bubble">${escapeHtml(m.text)}</div></div>`;
+    const body = isMe ? escapeHtml(m.text) : formatCompassText(m.text);
+    return `<div class="msg-row ${isMe?'me':'them'}" style="display:flex; ${isMe?'justify-content:flex-end;':''}"><div class="msg-bubble">${body}</div></div>`;
   }).join('');
   container.scrollTop = container.scrollHeight;
 }
@@ -3732,7 +3830,7 @@ document.querySelectorAll('.navbtn').forEach(btn=>{
     btn.classList.add('active');
     $('tab-'+btn.dataset.tab).classList.add('active');
     if(btn.dataset.tab === 'frequencies') clearMissedCallBadge();
-    if(btn.dataset.tab === 'compass') loadCompassMessages();
+    if(btn.dataset.tab === 'compass') showCompassLockScreenIfNeeded();
   };
 });
 
@@ -4016,6 +4114,7 @@ if(fbAuth){
       if(missedCallUnsub){ missedCallUnsub(); missedCallUnsub = null; }
       if(compassUnsub){ compassUnsub(); compassUnsub = null; }
       compassMessages = []; compassLoaded = false;
+      compassUnlockedThisSession = false;
       updateMissedCallBadge(0);
       if(connectionsUnsub){ connectionsUnsub(); connectionsUnsub = null; }
       if(profileUnsub){ profileUnsub(); profileUnsub = null; }
