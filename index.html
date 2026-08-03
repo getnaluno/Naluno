@@ -1762,7 +1762,12 @@ async function loadMySignal(){
 }
 /* Loads the latest segment from every real connection, so Frequencies and Broadcast
    are actually the same set of real people instead of two disconnected screens. */
-async function loadConnectionsSignals(){
+/* This used to fire its full N-parallel-Firestore-query burst on every single change
+   to the connections collection, not just once at sign-in — the real reason this got
+   noticeably slower as more real connections accumulated. Now called from a single
+   debounced spot in loadRealConnections instead, so a burst of connection changes
+   collapses into one real reload. */
+async function loadConnectionsSignalsNow(){
   if(!currentUser || !fbDb) return;
   const realContacts = contacts.filter(c => c.isReal && c.firebaseUid);
   const results = await Promise.all(realContacts.map(async c=>{
@@ -5994,6 +5999,7 @@ function applyContactAvatarToEl(el, c){
   }
 }
 let connectionsUnsub = null;
+let connectionsRefreshDebounce = null;
 function loadRealConnections(uid){
   if(!fbDb) return;
   if(connectionsUnsub) connectionsUnsub();
@@ -6005,12 +6011,21 @@ function loadRealConnections(uid){
     snap.forEach(doc=>{
       const d = doc.data();
       addRealContactToLocalList(doc.id, d.name || 'Unknown', d.color, d.handle, d.photo);
-      refreshContactLiveProfile(doc.id); // catches photos/name changes the connection doc doesn't have
     });
     renderContacts();
     renderBandList();
-    loadConnectionsSignals(); // Frequencies and Broadcast share the same real people
     applyAtmosphere();
+    // Both of these fire N parallel Firestore reads (one per real connection) — used
+    // to run immediately on every single connections change, which is the real reason
+    // things got noticeably slower as more real connections accumulated: not just the
+    // per-connection query count, but that count re-firing on every update instead of
+    // just once. Debounced together so a burst of changes collapses into one real
+    // refresh instead of compounding.
+    clearTimeout(connectionsRefreshDebounce);
+    connectionsRefreshDebounce = setTimeout(()=>{
+      contacts.filter(c=>c.isReal && c.firebaseUid).forEach(c=> refreshContactLiveProfile(c.firebaseUid));
+      loadConnectionsSignalsNow();
+    }, 800);
   }, ()=>{ /* connections just won't be live this session */ });
 }
 /* The connection doc is a snapshot taken at connect time — someone who added a photo
