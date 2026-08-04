@@ -4809,7 +4809,18 @@ async function enableCamera(){
     updateSignatureGlow();
     runGreenroom();
   }catch(err){
-    $('camFallback').innerHTML = 'Camera unavailable in this preview<br><span style="opacity:.65">(sandboxed — works fully once hosted on Netlify over HTTPS)</span><br><button class="enable-cam-btn" id="enableCamBtn2">Try again</button>';
+    // This used to show a leftover placeholder from a much earlier sandboxed preview
+    // environment ("works once hosted on Netlify") — actively wrong on the real, live,
+    // properly-HTTPS-hosted site, and it discarded the actual error entirely. That's
+    // the real reason a call could silently proceed with zero camera/mic ever
+    // captured: the person saw a confusing, unrelated message instead of the real
+    // problem, and nothing stopped the call from continuing anyway.
+    console.error('[camera] getUserMedia failed:', err.name, err.message);
+    let reason = 'Camera/mic unavailable — check your browser permissions and try again.';
+    if(err.name === 'NotAllowedError') reason = 'Camera/mic access was denied. Check your browser\u2019s site permissions and try again.';
+    else if(err.name === 'NotFoundError') reason = 'No camera or microphone was found on this device.';
+    else if(err.name === 'NotReadableError') reason = 'Your camera or mic is already in use by another app. Close it and try again.';
+    $('camFallback').innerHTML = `Camera unavailable<br><span style="opacity:.65">(${escapeHtml(reason)})</span><br><button class="enable-cam-btn" id="enableCamBtn2">Try again</button>`;
     $('enableCamBtn2').onclick = enableCamera;
     runGreenroom(); // still runs with a sensible default
   }finally{
@@ -5391,6 +5402,12 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName){
 
 async function startRealCall(c){
   if(!stream) await enableCamera(); // must exist before createPeerConnection adds tracks
+  if(!stream){
+    // Never proceed with a call that has zero real media to send — this is the
+    // actual fix for "connected but the other person sees/hears nothing at all":
+    // previously a failed camera/mic didn't stop the call from continuing anyway.
+    throw new Error('Camera/mic unavailable \u2014 fix that first, then try calling again');
+  }
   iAmCaller = true;
   remoteDescriptionSet = false;
   pendingRemoteCandidates = [];
@@ -5566,6 +5583,7 @@ $('acceptIncoming').onclick = async ()=>{
   callActionInProgress = true;
   try{
     if(!stream) await enableCamera(); // the actual bug: accepting before this resolved meant no local tracks ever got added
+    if(!stream) throw new Error('Camera/mic unavailable \u2014 fix that first, then try answering again');
     const callRef = fbDb.collection('calls').doc(activeCallId);
     const doc = await callRef.get();
     const data = doc.data();
