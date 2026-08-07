@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.08.07.5">
+<meta name="app-version" content="2026.08.07.7">
 <meta name="description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="A statement from the future — not another WhatsApp.">
@@ -1251,25 +1251,62 @@ function base64ToArrayBuffer(b64){
 let myKeyPairPromise = null;
 /* Loads the existing key pair from this device if one exists, otherwise generates a
    real one and publishes only the public half. Cached as a promise so concurrent
-   callers share one generation/load rather than racing to create two key pairs. */
+   callers share one generation/load rather than racing to create two key pairs.
+
+   IMPORTANT: we store JWKs in IndexedDB, never the live CryptoKey objects.
+   Storing CryptoKey directly is unreliable across reloads in many browsers — the
+   private key often comes back unusable, which is exactly why messages were
+   failing to decrypt after a refresh or on the other device. */
+async function importMyKeyPairFromJwks(privateJwk, publicJwk){
+  const privateKey = await crypto.subtle.importKey(
+    'jwk', privateJwk, { name:'ECDH', namedCurve:'P-256' }, true, ['deriveKey','deriveBits']
+  );
+  const publicKey = await crypto.subtle.importKey(
+    'jwk', publicJwk, { name:'ECDH', namedCurve:'P-256' }, true, []
+  );
+  return { privateKey, publicKey, privateJwk, publicJwk };
+}
 function ensureMyKeyPair(){
   if(myKeyPairPromise) return myKeyPairPromise;
   myKeyPairPromise = (async ()=>{
     if(!window.crypto || !window.crypto.subtle || !window.indexedDB) return null;
+    // 1. Try to load previously stored JWKs and re-import them into live CryptoKeys.
     try{
       const stored = await idbGet('myKeyPair');
-      if(stored && stored.privateKey && stored.publicKey) return stored;
+      if(stored && stored.privateJwk && stored.publicJwk){
+        const keys = await importMyKeyPairFromJwks(stored.privateJwk, stored.publicJwk);
+        // Make sure our public key is still published (in case a previous write failed).
+        if(currentUser && fbDb){
+          fbDb.collection('users').doc(currentUser.uid).set({ publicKey: stored.publicJwk }, { merge:true }).catch(()=>{});
+        }
+        return keys;
+      }
+      // Legacy path: older builds stored the CryptoKey objects themselves. If we still
+      // have usable ones, migrate them to JWKs so future loads are reliable.
+      if(stored && stored.privateKey && stored.publicKey){
+        try{
+          const privateJwk = await crypto.subtle.exportKey('jwk', stored.privateKey);
+          const publicJwk = await crypto.subtle.exportKey('jwk', stored.publicKey);
+          await idbSet('myKeyPair', { privateJwk, publicJwk });
+          if(currentUser && fbDb){
+            fbDb.collection('users').doc(currentUser.uid).set({ publicKey: publicJwk }, { merge:true }).catch(()=>{});
+          }
+          return { privateKey: stored.privateKey, publicKey: stored.publicKey, privateJwk, publicJwk };
+        }catch(e){ /* fall through to generate a fresh pair */ }
+      }
     }catch(e){ /* nothing stored yet on this device */ }
+    // 2. Generate a brand-new extractable key pair, export both halves as JWK, store them.
     try{
       const keyPair = await crypto.subtle.generateKey(
         { name:'ECDH', namedCurve:'P-256' }, true, ['deriveKey','deriveBits']
       );
-      await idbSet('myKeyPair', keyPair);
+      const privateJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
       const publicJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+      await idbSet('myKeyPair', { privateJwk, publicJwk });
       if(currentUser && fbDb){
         fbDb.collection('users').doc(currentUser.uid).set({ publicKey: publicJwk }, { merge:true }).catch(()=>{});
       }
-      return keyPair;
+      return { privateKey: keyPair.privateKey, publicKey: keyPair.publicKey, privateJwk, publicJwk };
     }catch(e){ return null; } // crypto generation failed — messages fall back to plaintext
   })();
   return myKeyPairPromise;
@@ -1281,7 +1318,7 @@ function getSharedAesKey(theirUid, theirPublicKeyJwk){
   sharedKeyCache[theirUid] = (async ()=>{
     if(!theirPublicKeyJwk) return null;
     const myKeys = await ensureMyKeyPair();
-    if(!myKeys) return null;
+    if(!myKeys || !myKeys.privateKey) return null;
     try{
       const theirPublicKey = await crypto.subtle.importKey(
         'jwk', theirPublicKeyJwk, { name:'ECDH', namedCurve:'P-256' }, false, []
@@ -1296,7 +1333,10 @@ function getSharedAesKey(theirUid, theirPublicKeyJwk){
         false,
         ['encrypt','decrypt']
       );
-    }catch(e){ return null; }
+    }catch(e){
+      console.warn('[e2e] deriveKey failed for', theirUid, e);
+      return null;
+    }
   })();
   return sharedKeyCache[theirUid];
 }
@@ -1306,7 +1346,9 @@ async function encryptMessageText(theirUid, theirPublicKeyJwk, plaintext){
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const encoded = new TextEncoder().encode(plaintext);
   const ciphertext = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, aesKey, encoded);
-  return { ciphertext: arrayBufferToBase64(ciphertext), iv: arrayBufferToBase64(iv.buffer) };
+  // Pass the Uint8Array itself (not .buffer) so we never accidentally include
+  // extra bytes from a larger underlying ArrayBuffer.
+  return { ciphertext: arrayBufferToBase64(ciphertext), iv: arrayBufferToBase64(iv) };
 }
 async function decryptMessageText(theirUid, theirPublicKeyJwk, ciphertextB64, ivB64){
   const aesKey = await getSharedAesKey(theirUid, theirPublicKeyJwk);
@@ -1318,7 +1360,10 @@ async function decryptMessageText(theirUid, theirPublicKeyJwk, ciphertextB64, iv
       base64ToArrayBuffer(ciphertextB64)
     );
     return new TextDecoder().decode(plainBuf);
-  }catch(e){ return null; } // wrong/missing key, or corrupted ciphertext
+  }catch(e){
+    console.warn('[e2e] decrypt failed', e);
+    return null; // wrong/missing key, or corrupted ciphertext
+  }
 }
 
 function signalSubText(c){
@@ -1714,9 +1759,15 @@ function generateVideoThumbnail(videoSrc){
   });
 }
 
-async function uploadVideoToR2(dataUrl){
+/* Accepts a Blob (preferred) or a data URL. Passing a Blob avoids the slow
+   dataURL → Blob round-trip that was doubling prepare+upload time for large clips. */
+async function uploadVideoToR2(blobOrDataUrl){
   if(!currentUser) throw new Error('Not signed in');
-  const blob = await (await fetch(dataUrl)).blob();
+  let blob = blobOrDataUrl;
+  if(typeof blobOrDataUrl === 'string'){
+    blob = await (await fetch(blobOrDataUrl)).blob();
+  }
+  if(!(blob instanceof Blob)) throw new Error('Invalid video data');
   const idToken = await currentUser.getIdToken();
   const res = await fetch(SIGNAL_UPLOAD_WORKER_URL, {
     method: 'POST',
@@ -2231,76 +2282,142 @@ $('trimCancel').onclick = ()=>{
 };
 
 /* Extracts a clip from startTime to endTime out of a video file.
-   REWRITTEN after two failed attempts to reliably preserve audio through a hand-rolled
-   canvas-capture + Web Audio mixing graph (the audio kept silently failing to survive,
-   even after fixing a real AudioContext-timing bug). Rather than patch that approach a
-   third time, this uses the browser's own native video.captureStream() instead —
-   captures BOTH audio and video directly from the playing element, by design, with no
-   separate mixing graph to get subtly wrong. Simpler and more reliable.
-   Honest tradeoff: this no longer resizes to 960px via canvas (there's no canvas
-   anymore) — output resolution now matches the source. File size is still controlled
-   by the explicit bitrate below, which is what actually guarantees the real 60MB cap
-   regardless of resolution; very high-resolution sources may look somewhat softer at
-   that fixed bitrate than a smaller source would, a reasonable tradeoff for audio
-   actually working.
-   Still genuinely real-time: extracting a 30-second range takes about 15 real seconds
-   at 2x playback speed — that's why this shows a live progress percentage. */
+   Uses native video.captureStream() so audio+video stay in the same timeline
+   (no hand-rolled canvas/Web-Audio graph). Speed: playbackRate 2× so a 30s clip
+   finishes in ~15s wall time. Sync: wait for seeked + canplay, start MediaRecorder
+   only after play() has actually begun, stop on a precise currentTime threshold. */
 async function extractVideoClip(file, startTime, endTime, onProgress){
   return new Promise((resolve, reject)=>{
     const video = document.createElement('video');
     video.playsInline = true;
-    // Not attached to the page at all, so nothing is ever actually heard out loud
-    // during processing — muted only matters for direct speaker output, not for what
-    // captureStream() captures from the element's real decoded audio.
+    video.muted = true; // silence speakers; captureStream still gets the decoded audio
+    video.preload = 'auto';
     const url = URL.createObjectURL(file);
     video.src = url;
+    let settled = false;
+    const fail = (err)=>{
+      if(settled) return;
+      settled = true;
+      URL.revokeObjectURL(url);
+      reject(err instanceof Error ? err : new Error(String(err)));
+    };
+    const succeed = (blob)=>{
+      if(settled) return;
+      settled = true;
+      URL.revokeObjectURL(url);
+      resolve(blob);
+    };
+
+    video.onerror = ()=> fail(new Error('Could not load video'));
 
     video.onloadedmetadata = ()=>{
-      video.currentTime = startTime;
-      video.onseeked = ()=>{
-        let stream;
-        try{
-          stream = video.captureStream ? video.captureStream() : video.mozCaptureStream();
-        }catch(e){
-          URL.revokeObjectURL(url);
-          reject(new Error('This browser cannot capture video and audio together'));
-          return;
-        }
-        if(stream.getAudioTracks().length === 0){
-          console.error('Source video has no audio track available to capture — the output will be silent because the source itself has none, not because of a capture bug.');
-        }
+      const duration = video.duration || endTime;
+      const safeStart = Math.max(0, Math.min(startTime, Math.max(0, duration - 0.05)));
+      const safeEnd = Math.max(safeStart + 0.2, Math.min(endTime, duration));
 
-        const recorderOptions = { videoBitsPerSecond: 3200000, audioBitsPerSecond: 96000 };
-        let recorder;
-        try{ recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8,opus', ...recorderOptions }); }
-        catch(e){
-          try{ recorder = new MediaRecorder(stream, recorderOptions); }
-          catch(e2){ recorder = new MediaRecorder(stream); } // last-resort fallback to full browser defaults
-        }
+      const onSeeked = ()=>{
+        video.removeEventListener('seeked', onSeeked);
 
-        const chunks = [];
-        recorder.ondataavailable = e=>{ if(e.data.size>0) chunks.push(e.data); };
-        recorder.onstop = ()=>{
-          URL.revokeObjectURL(url);
-          resolve(new Blob(chunks, { type:'video/webm' }));
-        };
-        recorder.onerror = e=>{ URL.revokeObjectURL(url); reject(e.error || new Error('Recording failed')); };
-
-        recorder.start();
-        video.play().catch(()=>{});
-        const checkDone = ()=>{
-          if(video.currentTime >= endTime || video.paused || video.ended){
-            if(recorder.state !== 'inactive') recorder.stop();
-            video.pause();
+        // Wait until at least one frame is decoded so the first recorded frames
+        // aren't black and audio isn't ahead of video.
+        const beginCapture = ()=>{
+          let stream;
+          try{
+            stream = video.captureStream ? video.captureStream() : (video.mozCaptureStream && video.mozCaptureStream());
+          }catch(e){
+            fail(new Error('This browser cannot capture video and audio together'));
             return;
           }
-          if(onProgress) onProgress(Math.min(1, (video.currentTime-startTime)/Math.max(0.1, endTime-startTime)));
-          requestAnimationFrame(checkDone);
+          if(!stream){
+            fail(new Error('This browser cannot capture video and audio together'));
+            return;
+          }
+          if(stream.getAudioTracks().length === 0){
+            console.warn('[signal] Source has no audio track — output will be silent');
+          }
+
+          // Prefer codecs that keep A/V tightly muxed; fall back gracefully.
+          const recorderOptions = { videoBitsPerSecond: 2800000, audioBitsPerSecond: 96000 };
+          const mimeCandidates = [
+            'video/webm;codecs=vp9,opus',
+            'video/webm;codecs=vp8,opus',
+            'video/webm;codecs=vp8',
+            'video/webm',
+          ];
+          let recorder = null;
+          for(const mime of mimeCandidates){
+            if(typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported && !MediaRecorder.isTypeSupported(mime)) continue;
+            try{
+              recorder = new MediaRecorder(stream, { mimeType: mime, ...recorderOptions });
+              break;
+            }catch(e){ /* try next */ }
+          }
+          if(!recorder){
+            try{ recorder = new MediaRecorder(stream, recorderOptions); }
+            catch(e2){
+              try{ recorder = new MediaRecorder(stream); }
+              catch(e3){ fail(new Error('MediaRecorder unavailable')); return; }
+            }
+          }
+
+          const chunks = [];
+          recorder.ondataavailable = e=>{ if(e.data && e.data.size > 0) chunks.push(e.data); };
+          recorder.onerror = e=> fail(e.error || new Error('Recording failed'));
+          recorder.onstop = ()=>{
+            stream.getTracks().forEach(t=>{ try{ t.stop(); }catch(_){} });
+            const type = (recorder.mimeType && recorder.mimeType.split(';')[0]) || 'video/webm';
+            succeed(new Blob(chunks, { type }));
+          };
+
+          // 2× speeds prepare without breaking captureStream A/V lockstep on modern browsers.
+          // Higher rates (4×+) often desync or drop frames.
+          try{ video.playbackRate = 2; }catch(_){}
+
+          const startRecorderAndPlay = ()=>{
+            try{ recorder.start(250); }catch(e){ // timeslice keeps memory flat and stop more reliable
+              try{ recorder.start(); }catch(e2){ fail(e2); return; }
+            }
+            const playP = video.play();
+            if(playP && playP.catch) playP.catch(()=>{});
+
+            const range = Math.max(0.1, safeEnd - safeStart);
+            const checkDone = ()=>{
+              if(settled) return;
+              const t = video.currentTime;
+              if(onProgress) onProgress(Math.min(1, (t - safeStart) / range));
+              if(t >= safeEnd - 0.04 || video.ended || video.paused){
+                try{ video.pause(); }catch(_){}
+                if(recorder.state !== 'inactive'){
+                  try{ recorder.stop(); }catch(e){ fail(e); }
+                }
+                return;
+              }
+              requestAnimationFrame(checkDone);
+            };
+            // Kick the loop after the first frame is painted under playback.
+            requestAnimationFrame(()=> requestAnimationFrame(checkDone));
+          };
+
+          if(video.readyState >= 2) startRecorderAndPlay();
+          else {
+            const onCanPlay = ()=>{ video.removeEventListener('canplay', onCanPlay); startRecorderAndPlay(); };
+            video.addEventListener('canplay', onCanPlay);
+            setTimeout(()=>{ if(!settled && recorder.state === 'inactive') startRecorderAndPlay(); }, 1500);
+          }
         };
-        requestAnimationFrame(checkDone);
+
+        if(video.readyState >= 2) beginCapture();
+        else {
+          const onCanPlay0 = ()=>{ video.removeEventListener('canplay', onCanPlay0); beginCapture(); };
+          video.addEventListener('canplay', onCanPlay0);
+          setTimeout(()=>{ if(!settled) beginCapture(); }, 1500);
+        }
       };
+
+      video.addEventListener('seeked', onSeeked);
+      try{ video.currentTime = safeStart; }
+      catch(e){ fail(e); }
     };
-    video.onerror = ()=>{ URL.revokeObjectURL(url); reject(new Error('Could not load video')); };
   });
 }
 
@@ -2320,15 +2437,13 @@ $('trimSave').onclick = async ()=>{
     const blob = await extractVideoClip(file, start, clampedEnd, frac=>{
       setBgProgress(frac, `Preparing clip\u2026 ${Math.round(frac*100)}%`);
     });
-    const dataUrl = await readFileAsDataUrl(blob);
     clearPendingVideoJob();
-    // "Use this clip" is now the last real decision — everything from here (upload,
-    // Firestore save, showing up in the ring) happens automatically, same shared
-    // logic the composer's own Post button uses.
+    // Pass the Blob straight through — no dataURL conversion. Upload uses the Blob
+    // directly, which is the main reason prepare+upload felt so slow before.
     const now = Date.now();
     const groupId = 'post-' + now + '-' + Math.random().toString(36).slice(2);
     await postSegmentsNow([{
-      type:'video', dataUrl, filterCss: chosenFilterCss, crop:{scale:1,xPct:0,yPct:0},
+      type:'video', videoBlob: blob, filterCss: chosenFilterCss, crop:{scale:1,xPct:0,yPct:0},
       caption:'', duration: clampedEnd-start, createdAt: now, expiresAt: now+SIGNAL_TTL_MS,
       transitionIn:'fade', groupId, order:0,
     }]);
@@ -2366,9 +2481,8 @@ $('trimAutoSplitBtn').onclick = async ()=>{
       const blob = await extractVideoClip(file, s, e, frac=>{
         setBgProgress((i+frac)/numParts, `Preparing part ${i+1} of ${numParts}\u2026 ${Math.round(frac*100)}%`);
       });
-      const dataUrl = await readFileAsDataUrl(blob);
       segments.push({
-        type:'video', dataUrl, filterCss: chosenFilterCss, crop:{scale:1,xPct:0,yPct:0},
+        type:'video', videoBlob: blob, filterCss: chosenFilterCss, crop:{scale:1,xPct:0,yPct:0},
         caption: numParts>1 ? `Part ${i+1} of ${numParts}` : '', duration: e-s,
         createdAt: now+i, expiresAt: now+SIGNAL_TTL_MS,
         transitionIn: numParts>1 ? composerTransition : 'fade', groupId, order:i,
@@ -2538,11 +2652,16 @@ async function postSegmentsNow(newSegments){
           ? `Uploading to your signal\u2026 part ${videoIndex} of ${totalVideos}`
           : 'Uploading to your signal\u2026');
         try{
-          const videoUrl = await uploadVideoToR2(seg.dataUrl);
-          const thumbDataUrl = await generateVideoThumbnail(seg.dataUrl);
-          // The segment doc now stores a small URL instead of the whole video —
-          // that's what actually fixes the 1MB limit, not just a bigger allowance.
-          const { dataUrl, ...rest } = seg;
+          // Prefer the in-memory Blob from extraction; only fall back to dataUrl.
+          const source = seg.videoBlob || seg.dataUrl;
+          const videoUrl = await uploadVideoToR2(source);
+          const thumbSrc = seg.videoBlob
+            ? URL.createObjectURL(seg.videoBlob)
+            : seg.dataUrl;
+          const thumbDataUrl = await generateVideoThumbnail(thumbSrc);
+          if(seg.videoBlob) try{ URL.revokeObjectURL(thumbSrc); }catch(_){}
+          // Store a small URL in Firestore, never the whole video.
+          const { dataUrl, videoBlob, ...rest } = seg;
           segToSave = { ...rest, videoUrl, thumbDataUrl };
         }catch(e){
           failed++;
@@ -2792,13 +2911,23 @@ function playSegment(idx, direction=1){
         ? `<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M3 10v4h4l5 5V5L7 10H3z" fill="currentColor"/><path d="M16 9l6 6M22 9l-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`
         : `<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M3 10v4h4l5 5V5L7 10H3z" fill="currentColor"/><path d="M16 8a5 5 0 010 8M19 5a9 9 0 010 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
     };
-    // Wait until the browser has decoded at least one frame (canplay) before calling
-    // play(). Starting play() while still buffering is the main reason audio could
-    // begin ahead of the first visible frame. Poster already covers the visual gap.
+    // Wait for canplay so the first decoded frame exists, then play(). Poster covers
+    // the visual gap. Unmute only after the playing event so audio does not start
+    // ahead of the first painted frame (the classic out-of-sync glitch).
     const startPlayback = ()=>{
-      v.muted = false;
-      renderMuteIcon(false);
+      renderMuteIcon(true);
+      v.muted = true; // start muted to satisfy autoplay policies, then unmute on playing
+      const onPlaying = ()=>{
+        v.removeEventListener('playing', onPlaying);
+        // Small delay lets the first video frame actually paint before audio starts.
+        requestAnimationFrame(()=>{
+          v.muted = false;
+          renderMuteIcon(false);
+        });
+      };
+      v.addEventListener('playing', onPlaying);
       v.play().catch(()=>{
+        v.removeEventListener('playing', onPlaying);
         v.muted = true;
         renderMuteIcon(true);
         v.play().catch(()=>{});
@@ -2809,8 +2938,6 @@ function playSegment(idx, direction=1){
     } else {
       const onReady = ()=>{ v.removeEventListener('canplay', onReady); startPlayback(); };
       v.addEventListener('canplay', onReady);
-      // Safety: if canplay never fires (corrupt file / network), still attempt after 2s
-      // so the segment does not hang forever.
       setTimeout(()=>{ if(v.paused){ v.removeEventListener('canplay', onReady); startPlayback(); } }, 2000);
     }
     muteBtn.onclick = ()=>{
