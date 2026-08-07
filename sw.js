@@ -1,8 +1,5 @@
-// This used to do nothing — every load required the network, full stop, with no
-// fallback. That's the entire reason the app couldn't open offline at all, and why
-// offline showed the browser's own blank error page instead of anything from Naluno:
-// nothing was ever cached for the browser to fall back to.
-const CACHE_NAME = 'naluno-shell-v2';
+// Naluno service worker — offline shell + background call push.
+const CACHE_NAME = 'naluno-shell-v3';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -14,16 +11,12 @@ const CORE_ASSETS = [
 self.addEventListener('install', event=>{
   self.skipWaiting();
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(CORE_ASSETS).catch(()=>{
-      // A single failed asset (e.g. genuinely offline during install itself)
-      // shouldn't block the whole service worker from installing.
-    }))
+    caches.open(CACHE_NAME).then(cache => cache.addAll(CORE_ASSETS).catch(()=>{}))
   );
 });
 
 self.addEventListener('activate', event=>{
   self.clients.claim();
-  // Clean out any cache left over from a previous version of this service worker.
   event.waitUntil(
     caches.keys().then(names => Promise.all(
       names.filter(n => n !== CACHE_NAME).map(n => caches.delete(n))
@@ -32,34 +25,21 @@ self.addEventListener('activate', event=>{
 });
 
 self.addEventListener('fetch', event=>{
-  if(event.request.method !== 'GET') return; // never intercept writes
+  if(event.request.method !== 'GET') return;
 
   const url = new URL(event.request.url);
   const isSameOrigin = url.origin === self.location.origin;
   const isFirebaseSdkScript = url.hostname === 'www.gstatic.com' && url.pathname.includes('firebasejs');
-  // Anything else — Firestore's own real-time channel, FCM, auth endpoints — passes
-  // straight through untouched. Those already have their own offline handling
-  // (Firestore's persistence layer, enabled separately); caching or replaying that
-  // traffic here would risk serving stale data instead of letting Firestore manage
-  // its own sync correctly.
   if(!isSameOrigin && !isFirebaseSdkScript) return;
 
   event.respondWith(
     fetch(event.request).then(response=>{
-      // Network succeeded — this is the freshest copy, so update the cache with it.
-      // This is also what keeps a genuinely new deploy from being stuck behind an old
-      // cached version once you're back online (the update-check banner still works
-      // exactly as before; this only ever affects what's served when offline).
       const copy = response.clone();
       caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy)).catch(()=>{});
       return response;
     }).catch(()=>{
-      // Network failed — genuinely offline. Fall back to whatever's cached.
       return caches.match(event.request).then(cached=>{
         if(cached) return cached;
-        // Nothing cached for this exact request — for the page itself specifically,
-        // fall back to the cached app shell so it still opens looking like Naluno
-        // instead of the browser's own blank offline page.
         if(event.request.mode === 'navigate') return caches.match('./index.html');
         return new Response('', { status: 503, statusText: 'Offline' });
       });
@@ -75,31 +55,61 @@ try{
   firebase.initializeApp(firebaseConfig);
   const messaging = firebase.messaging();
   messaging.onBackgroundMessage(payload=>{
-    const title = (payload.data && payload.data.title) || (payload.notification && payload.notification.title) || 'Incoming call — Naluno';
-    const body = (payload.data && payload.data.body) || (payload.notification && payload.notification.body) || 'Tap to answer';
+    const data = (payload && payload.data) || {};
+    const title = data.title || (payload.notification && payload.notification.title) || 'Incoming call — Naluno';
+    const body = data.body || (payload.notification && payload.notification.body) || 'Tap to answer';
+    const callId = data.callId || data.call_id || '';
+
     self.registration.showNotification(title, {
       body,
       icon: 'icon-192.png',
-      tag: 'naluno-call', // replaces any earlier call notification rather than stacking them
-      requireInteraction: true, // stays on screen until actually dismissed or tapped,
-                                 // instead of politely disappearing after a few seconds
-      vibrate: [500,200,500,200,500,200,500,200,500,200,500,200,500], // a real, deliberate ring pattern —
-                                                     // not the default single soft buzz
-      renotify: true, // re-vibrates/re-alerts even if a previous call notification
-                       // with the same tag is still showing
+      badge: 'icon-192.png',
+      tag: callId ? ('naluno-call-' + callId) : 'naluno-call',
+      renotify: true,
+      requireInteraction: true,
+      vibrate: [500,200,500,200,500,200,500,200,500,200,500,200,500],
+      data: {
+        callId,
+        type: data.type || 'incoming_call',
+        url: callId ? ('./?call=' + encodeURIComponent(callId)) : './',
+      },
+      actions: [
+        { action: 'answer', title: 'Answer' },
+        { action: 'dismiss', title: 'Dismiss' },
+      ],
     });
   });
 }catch(e){
-  // firebase-config.js still has placeholder values, or messaging isn't supported here —
-  // the service worker still registers fine, background push just won't fire.
+  // Config missing or messaging unsupported — SW still serves the offline shell.
 }
 
 self.addEventListener('notificationclick', event=>{
+  const data = (event.notification && event.notification.data) || {};
+  const action = event.action || 'answer';
   event.notification.close();
-  event.waitUntil(
-    clients.matchAll({ type:'window' }).then(list=>{
-      for(const client of list){ if('focus' in client) return client.focus(); }
-      if(clients.openWindow) return clients.openWindow('./');
-    })
-  );
+
+  if(action === 'dismiss') return;
+
+  const targetUrl = data.url || (data.callId ? ('./?call=' + encodeURIComponent(data.callId)) : './');
+
+  event.waitUntil((async ()=>{
+    const list = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for(const client of list){
+      // Prefer an existing Naluno tab: focus it and tell it about the call.
+      if('focus' in client){
+        await client.focus();
+        try{
+          client.postMessage({
+            type: 'naluno-incoming-call',
+            callId: data.callId || null,
+            action: 'answer',
+          });
+        }catch(_){}
+        return;
+      }
+    }
+    if(clients.openWindow){
+      return clients.openWindow(targetUrl);
+    }
+  })());
 });

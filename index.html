@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.08.07.7">
+<meta name="app-version" content="2026.08.07.9">
 <meta name="description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="A statement from the future — not another WhatsApp.">
@@ -2282,29 +2282,41 @@ $('trimCancel').onclick = ()=>{
 };
 
 /* Extracts a clip from startTime to endTime out of a video file.
-   Uses native video.captureStream() so audio+video stay in the same timeline
-   (no hand-rolled canvas/Web-Audio graph). Speed: playbackRate 2× so a 30s clip
-   finishes in ~15s wall time. Sync: wait for seeked + canplay, start MediaRecorder
-   only after play() has actually begun, stop on a precise currentTime threshold. */
+   Uses native video.captureStream() so audio+video stay on the same timeline.
+   MUST record at playbackRate 1. Setting 2× speeds up prepare but bakes a
+   fast-motion clip into the file (everything plays at 2× later) — that was the bug.
+   Prepare is therefore real-time wall-clock; progress UI still reflects true progress. */
 async function extractVideoClip(file, startTime, endTime, onProgress){
   return new Promise((resolve, reject)=>{
     const video = document.createElement('video');
     video.playsInline = true;
     video.muted = true; // silence speakers; captureStream still gets the decoded audio
     video.preload = 'auto';
+    video.playbackRate = 1; // never >1 — rate is encoded into the recorded timeline
     const url = URL.createObjectURL(file);
     video.src = url;
     let settled = false;
+    let stream = null;
+    let recorder = null;
+    const cleanupMedia = ()=>{
+      try{ video.pause(); }catch(_){}
+      try{ video.removeAttribute('src'); video.load(); }catch(_){}
+      if(stream){
+        stream.getTracks().forEach(t=>{ try{ t.stop(); }catch(_){} });
+        stream = null;
+      }
+      URL.revokeObjectURL(url);
+    };
     const fail = (err)=>{
       if(settled) return;
       settled = true;
-      URL.revokeObjectURL(url);
+      cleanupMedia();
       reject(err instanceof Error ? err : new Error(String(err)));
     };
     const succeed = (blob)=>{
       if(settled) return;
       settled = true;
-      URL.revokeObjectURL(url);
+      cleanupMedia();
       resolve(blob);
     };
 
@@ -2313,15 +2325,13 @@ async function extractVideoClip(file, startTime, endTime, onProgress){
     video.onloadedmetadata = ()=>{
       const duration = video.duration || endTime;
       const safeStart = Math.max(0, Math.min(startTime, Math.max(0, duration - 0.05)));
-      const safeEnd = Math.max(safeStart + 0.2, Math.min(endTime, duration));
+      // Cut a few frames early so the next split part does not inherit trailing audio.
+      const safeEnd = Math.max(safeStart + 0.2, Math.min(endTime - 0.05, duration));
 
       const onSeeked = ()=>{
         video.removeEventListener('seeked', onSeeked);
 
-        // Wait until at least one frame is decoded so the first recorded frames
-        // aren't black and audio isn't ahead of video.
         const beginCapture = ()=>{
-          let stream;
           try{
             stream = video.captureStream ? video.captureStream() : (video.mozCaptureStream && video.mozCaptureStream());
           }catch(e){
@@ -2336,7 +2346,6 @@ async function extractVideoClip(file, startTime, endTime, onProgress){
             console.warn('[signal] Source has no audio track — output will be silent');
           }
 
-          // Prefer codecs that keep A/V tightly muxed; fall back gracefully.
           const recorderOptions = { videoBitsPerSecond: 2800000, audioBitsPerSecond: 96000 };
           const mimeCandidates = [
             'video/webm;codecs=vp9,opus',
@@ -2344,7 +2353,7 @@ async function extractVideoClip(file, startTime, endTime, onProgress){
             'video/webm;codecs=vp8',
             'video/webm',
           ];
-          let recorder = null;
+          recorder = null;
           for(const mime of mimeCandidates){
             if(typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported && !MediaRecorder.isTypeSupported(mime)) continue;
             try{
@@ -2364,17 +2373,26 @@ async function extractVideoClip(file, startTime, endTime, onProgress){
           recorder.ondataavailable = e=>{ if(e.data && e.data.size > 0) chunks.push(e.data); };
           recorder.onerror = e=> fail(e.error || new Error('Recording failed'));
           recorder.onstop = ()=>{
-            stream.getTracks().forEach(t=>{ try{ t.stop(); }catch(_){} });
             const type = (recorder.mimeType && recorder.mimeType.split(';')[0]) || 'video/webm';
             succeed(new Blob(chunks, { type }));
           };
 
-          // 2× speeds prepare without breaking captureStream A/V lockstep on modern browsers.
-          // Higher rates (4×+) often desync or drop frames.
-          try{ video.playbackRate = 2; }catch(_){}
+          const stopCapture = ()=>{
+            if(settled) return;
+            try{ video.pause(); }catch(_){}
+            // Disable tracks immediately so no more frames/audio enter the recorder
+            // after the cut point (prevents bleed into the next split part).
+            if(stream){
+              stream.getTracks().forEach(t=>{ try{ t.enabled = false; }catch(_){} });
+            }
+            if(recorder && recorder.state !== 'inactive'){
+              try{ recorder.stop(); }catch(e){ fail(e); }
+            }
+          };
 
           const startRecorderAndPlay = ()=>{
-            try{ recorder.start(250); }catch(e){ // timeslice keeps memory flat and stop more reliable
+            video.playbackRate = 1;
+            try{ recorder.start(100); }catch(e){
               try{ recorder.start(); }catch(e2){ fail(e2); return; }
             }
             const playP = video.play();
@@ -2385,16 +2403,12 @@ async function extractVideoClip(file, startTime, endTime, onProgress){
               if(settled) return;
               const t = video.currentTime;
               if(onProgress) onProgress(Math.min(1, (t - safeStart) / range));
-              if(t >= safeEnd - 0.04 || video.ended || video.paused){
-                try{ video.pause(); }catch(_){}
-                if(recorder.state !== 'inactive'){
-                  try{ recorder.stop(); }catch(e){ fail(e); }
-                }
+              if(t >= safeEnd || video.ended){
+                stopCapture();
                 return;
               }
               requestAnimationFrame(checkDone);
             };
-            // Kick the loop after the first frame is painted under playback.
             requestAnimationFrame(()=> requestAnimationFrame(checkDone));
           };
 
@@ -2402,7 +2416,7 @@ async function extractVideoClip(file, startTime, endTime, onProgress){
           else {
             const onCanPlay = ()=>{ video.removeEventListener('canplay', onCanPlay); startRecorderAndPlay(); };
             video.addEventListener('canplay', onCanPlay);
-            setTimeout(()=>{ if(!settled && recorder.state === 'inactive') startRecorderAndPlay(); }, 1500);
+            setTimeout(()=>{ if(!settled && recorder && recorder.state === 'inactive') startRecorderAndPlay(); }, 1500);
           }
         };
 
@@ -2867,7 +2881,13 @@ function transitionClassFor(t, direction){
 }
 function clearSegTimer(){
   if(segTimer){ clearTimeout(segTimer); segTimer = null; }
-  if(currentVideoEl){ currentVideoEl.onended = null; currentVideoEl.pause(); currentVideoEl = null; }
+  if(currentVideoEl){
+    currentVideoEl.onended = null;
+    try{ currentVideoEl.pause(); }catch(_){}
+    try{ currentVideoEl.muted = true; }catch(_){}
+    try{ currentVideoEl.removeAttribute('src'); currentVideoEl.load(); }catch(_){}
+    currentVideoEl = null;
+  }
 }
 
 function playSegment(idx, direction=1){
@@ -5560,7 +5580,7 @@ let notifyRepeatInterval = null;
    every existing clearTimeout(ringTimeoutHandle), which already reliably marks every
    place ringing itself ends. Deliberately fire-and-forget: the in-app ring already
    works fine on its own, so this must never block or delay the actual call. */
-async function notifyCalleeOfIncomingCall(calleeUid, callerName){
+async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
   if(!currentUser) return;
   let firstAttempt = true;
   const sendOnce = async ()=>{
@@ -5569,7 +5589,14 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName){
       const res = await fetch(CALL_NOTIFY_WORKER_URL, {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ calleeUid, callerName }),
+        body: JSON.stringify({
+          calleeUid,
+          callerName,
+          callId: callId || activeCallId || null,
+          type: 'incoming_call',
+          title: callerName ? (callerName + ' is calling') : 'Incoming call — Naluno',
+          body: 'Tap to answer',
+        }),
       });
       const data = await res.json().catch(()=>({}));
       if(!res.ok){
@@ -5638,7 +5665,7 @@ async function startRealCall(c){
     offer: { type: offer.type, sdp: offer.sdp },
     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
   });
-  notifyCalleeOfIncomingCall(c.firebaseUid, currentProfile ? currentProfile.name : null);
+  notifyCalleeOfIncomingCall(c.firebaseUid, currentProfile ? currentProfile.name : null, callRef.id);
 
   activeCallDocUnsub = callRef.onSnapshot(snap=>{
     const d = snap.data();
@@ -6158,9 +6185,75 @@ function sendBandMessage(){
 $('bandSendBtn').onclick = sendBandMessage;
 $('bandInput').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); sendBandMessage(); } });
 
-/* ---------------- PWA INSTALL ---------------- */
+/* ---------------- PWA INSTALL + CALL NOTIFICATION DEEP-LINK ---------------- */
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(()=>{ /* installability just won't be offered — not fatal */ });
+
+  // Notification click (or Capacitor bridge) posts here so we can open the incoming UI
+  // even when the app was backgrounded or just cold-started from the push.
+  navigator.serviceWorker.addEventListener('message', event=>{
+    const msg = event.data || {};
+    if(msg.type === 'naluno-incoming-call'){
+      handleIncomingCallFromPush(msg.callId || null);
+    }
+  });
+}
+
+// Cold start from notification: https://…/?call=<callId>
+(function consumeCallDeepLink(){
+  try{
+    const params = new URLSearchParams(location.search);
+    const callId = params.get('call');
+    if(!callId) return;
+    // Strip the query so a refresh does not re-open the same call forever.
+    if(history.replaceState){
+      const clean = location.pathname + (location.hash || '');
+      history.replaceState(null, '', clean);
+    }
+    // Wait until auth + Firestore are ready enough to attach.
+    const tryOpen = ()=>{
+      if(currentUser && fbDb){
+        handleIncomingCallFromPush(callId);
+        return;
+      }
+      setTimeout(tryOpen, 400);
+    };
+    setTimeout(tryOpen, 600);
+  }catch(e){}
+})();
+
+/* Opens / resumes an incoming call that arrived via push while the app was closed.
+   Loads the call doc so we still show the right caller even if the live
+   onSnapshot "ringing" listener has not fired yet. */
+async function handleIncomingCallFromPush(callId){
+  if(!callId || !fbDb || !currentUser) return;
+  if($('callOverlay').classList.contains('active') && activeCallId === callId) return;
+  try{
+    const snap = await fbDb.collection('calls').doc(callId).get();
+    if(!snap.exists) return;
+    const data = snap.data() || {};
+    if(data.calleeUid !== currentUser.uid) return;
+    if(data.status !== 'ringing'){
+      if(data.status === 'missed' || data.status === 'ended') toast('That call already ended');
+      return;
+    }
+    handleIncomingCall(callId, data);
+  }catch(e){
+    console.warn('[call] push deep-link failed', e);
+  }
+}
+
+// Foreground FCM (app open, tab focused) — still show a toast + open incoming UI.
+if(typeof firebase !== 'undefined' && firebase.messaging){
+  try{
+    const fgMessaging = firebase.messaging();
+    fgMessaging.onMessage(payload=>{
+      const data = (payload && payload.data) || {};
+      const callId = data.callId || data.call_id || null;
+      if(callId) handleIncomingCallFromPush(callId);
+      else if(data.title) toast(data.title);
+    });
+  }catch(e){ /* messaging not available in this context */ }
 }
 let deferredInstallPrompt = null;
 window.addEventListener('beforeinstallprompt', e=>{
