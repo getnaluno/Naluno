@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.07.28.1">
+<meta name="app-version" content="2026.08.07.1">
 <meta name="description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="A statement from the future — not another WhatsApp.">
@@ -2769,7 +2769,11 @@ function playSegment(idx, direction=1){
     durationMs = 4000;
   } else if(seg.type==='video'){
     const videoSrc = seg.videoUrl || seg.dataUrl;
-    bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" src="${videoSrc}" preload="auto" playsinline style="filter:${seg.filterCss}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT}; border-radius:16px;"></video>${captionHtml}<div class="cam-expand-btn" id="bviewerMuteToggle" style="right:auto; left:14px; top:14px;" role="button" aria-label="Toggle sound"></div>`;
+    // Use the pre-generated thumbnail as poster so the viewer never flashes a black
+    // or static first-frame while the real video buffers. This is the actual cause of
+    // the reported "brief static thumbnail then audio starts ahead of video".
+    const posterAttr = seg.thumbDataUrl ? ` poster="${seg.thumbDataUrl}"` : '';
+    bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" src="${videoSrc}" preload="auto" playsinline${posterAttr} style="filter:${seg.filterCss}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT}; border-radius:16px;"></video>${captionHtml}<div class="cam-expand-btn" id="bviewerMuteToggle" style="right:auto; left:14px; top:14px;" role="button" aria-label="Toggle sound"></div>`;
     durationMs = Math.round((seg.duration || 6) * 1000);
   } else {
     bodyHtml = `<img class="${animClass}" src="${seg.dataUrl}" style="filter:${seg.filterCss}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT}; border-radius:16px;" />${captionHtml}`;
@@ -2788,21 +2792,27 @@ function playSegment(idx, direction=1){
         ? `<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M3 10v4h4l5 5V5L7 10H3z" fill="currentColor"/><path d="M16 9l6 6M22 9l-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`
         : `<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M3 10v4h4l5 5V5L7 10H3z" fill="currentColor"/><path d="M16 8a5 5 0 010 8M19 5a9 9 0 010 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
     };
-    // Try for real sound first — opening a broadcast involves an async Firestore
-    // fetch between the actual tap and this video ever existing, and that gap can be
-    // enough for the browser to no longer treat playback as tied to the original
-    // gesture. But catching a rejection here isn't fully reliable either — some
-    // browsers resolve play() successfully without ever producing audible sound. So
-    // rather than depending on detecting the block correctly, this always shows a
-    // clear, persistent toggle the person can use directly regardless of what
-    // actually happened, defaulting to reflecting the muted attribute's real state.
-    v.muted = false;
-    renderMuteIcon(false);
-    v.play().catch(()=>{
-      v.muted = true;
-      renderMuteIcon(true);
-      v.play().catch(()=>{});
-    });
+    // Wait until the browser has decoded at least one frame (canplay) before calling
+    // play(). Starting play() while still buffering is the main reason audio could
+    // begin ahead of the first visible frame. Poster already covers the visual gap.
+    const startPlayback = ()=>{
+      v.muted = false;
+      renderMuteIcon(false);
+      v.play().catch(()=>{
+        v.muted = true;
+        renderMuteIcon(true);
+        v.play().catch(()=>{});
+      });
+    };
+    if(v.readyState >= 3){ // HAVE_FUTURE_DATA or better
+      startPlayback();
+    } else {
+      const onReady = ()=>{ v.removeEventListener('canplay', onReady); startPlayback(); };
+      v.addEventListener('canplay', onReady);
+      // Safety: if canplay never fires (corrupt file / network), still attempt after 2s
+      // so the segment does not hang forever.
+      setTimeout(()=>{ if(v.paused){ v.removeEventListener('canplay', onReady); startPlayback(); } }, 2000);
+    }
     muteBtn.onclick = ()=>{
       v.muted = !v.muted;
       renderMuteIcon(v.muted);
@@ -5116,9 +5126,16 @@ async function getIceServers(){
       method: 'POST',
       headers: { 'Authorization': 'Bearer ' + idToken },
     });
-    if(!res.ok) return RTC_CONFIG;
+    if(!res.ok){
+      console.log('[call] TURN credentials HTTP', res.status, '— falling back to STUN-only');
+      return RTC_CONFIG;
+    }
     const data = await res.json();
-    if(!data.iceServers) return RTC_CONFIG;
+    if(!data.iceServers || !data.iceServers.length){
+      console.log('[call] TURN response had no iceServers — falling back to STUN-only');
+      return RTC_CONFIG;
+    }
+    console.log('[call] TURN credentials received —', data.iceServers.length, 'server(s)');
     return { iceServers: data.iceServers };
   }catch(e){
     console.log('[call] Could not fetch TURN credentials, falling back to STUN-only:', e);
@@ -5148,18 +5165,23 @@ async function createPeerConnection(){
   const pc = new RTCPeerConnection(await getIceServers());
   remoteCombinedStream = new MediaStream();
   pc.ontrack = e=>{
-    console.log('[call] ontrack fired — kind:', e.track.kind, 'readyState:', e.track.readyState, 'enabled:', e.track.enabled);
+    console.log('[call] ontrack fired — kind:', e.track.kind, 'readyState:', e.track.readyState, 'enabled:', e.track.enabled, 'muted:', e.track.muted, 'id:', e.track.id);
     // Built up manually rather than trusting e.streams[0] — audio now arrives grouped
     // under the real camera stream's id while video arrives grouped under the send
     // canvas's stream id, two different source streams. Replacing srcObject wholesale
     // for whichever arrived most recently would silently drop whichever track came
     // first. Accumulating both onto one persistent stream avoids that entirely.
-    remoteCombinedStream.addTrack(e.track);
-    const videoEl = $('remoteVideo');
-    if(videoEl.srcObject !== remoteCombinedStream){
-      videoEl.srcObject = remoteCombinedStream;
-      videoEl.play().catch(err=> console.log('[call] remoteVideo.play() failed:', err));
+    // Re-assigning srcObject after every addTrack is the most compatible pattern across
+    // browsers that are picky about dynamically growing a MediaStream already in use.
+    if(!remoteCombinedStream.getTracks().includes(e.track)){
+      remoteCombinedStream.addTrack(e.track);
     }
+    const videoEl = $('remoteVideo');
+    videoEl.srcObject = remoteCombinedStream;
+    // Explicitly unmuted — autoplay policies can leave a stream silent if the element
+    // was ever muted, and we never want remote audio suppressed by accident.
+    videoEl.muted = false;
+    videoEl.play().catch(err=> console.log('[call] remoteVideo.play() failed:', err));
     if(e.track.kind === 'video'){
       videoEl.style.display = 'block';
       $('remotePlaceholder').style.display = 'none';
@@ -5172,20 +5194,46 @@ async function createPeerConnection(){
   };
   pc.oniceconnectionstatechange = ()=> console.log('[call] ICE connection state:', pc.iceConnectionState);
   pc.onconnectionstatechange = ()=> console.log('[call] connection state:', pc.connectionState);
+  pc.onicegatheringstatechange = ()=> console.log('[call] ICE gathering state:', pc.iceGatheringState);
   if(stream){
     // Real audio, unmodified. Video comes from the composited send canvas instead of
     // the raw camera track — this is the actual fix for "the other person should see
     // the border too": previously the border/glow were purely local rendering, so the
     // other person only ever received the plain, unstyled camera feed.
     const audioTracks = stream.getAudioTracks();
-    audioTracks.forEach(t => pc.addTrack(t, stream));
-    console.log('[call] added audio tracks:', audioTracks.length);
+    audioTracks.forEach(t => {
+      // Ensure tracks are live and enabled before adding — a muted/ended track produces
+      // the classic "I see myself but hear/see nothing from them" symptom on the far side.
+      if(t.readyState === 'live') t.enabled = true;
+      pc.addTrack(t, stream);
+    });
+    console.log('[call] added audio tracks:', audioTracks.length, audioTracks.map(t=>({id:t.id, enabled:t.enabled, muted:t.muted, readyState:t.readyState})));
+
+    // Force one composite draw so the canvas has real pixel content and non-zero size
+    // before captureStream samples it. Without this, a just-opened camera can still be
+    // at readyState < 2, producing a black or 0-size track that never recovers.
     const sendCanvas = $('sendCanvas');
     if(sendCanvas && sendCanvas.captureStream){
+      try{ drawSendCanvas(); }catch(e){ console.log('[call] drawSendCanvas before capture failed:', e); }
+      // If the raw video still has no dimensions, give it a brief moment — one frame is
+      // usually enough once getUserMedia has resolved, but two RAF ticks covers the
+      // common case where the first frame arrives slightly after enableCamera returns.
+      if((!sendCanvas.width || sendCanvas.width < 4) && $('sendRawVideo')){
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+        try{ drawSendCanvas(); }catch(e){}
+      }
       const canvasStream = sendCanvas.captureStream(30);
       const videoTracks = canvasStream.getVideoTracks();
-      videoTracks.forEach(t => pc.addTrack(t, canvasStream));
-      console.log('[call] added composited video tracks:', videoTracks.length, '— sendCanvas size at this moment:', sendCanvas.width, 'x', sendCanvas.height);
+      videoTracks.forEach(t => {
+        if(t.readyState === 'live') t.enabled = true;
+        pc.addTrack(t, canvasStream);
+      });
+      console.log('[call] added composited video tracks:', videoTracks.length, '— sendCanvas size:', sendCanvas.width, 'x', sendCanvas.height, videoTracks.map(t=>({id:t.id, enabled:t.enabled, readyState:t.readyState})));
+      if(videoTracks.length === 0 || sendCanvas.width < 4){
+        console.warn('[call] canvas capture produced no usable video — falling back to raw camera');
+        const rawVideoTracks = stream.getVideoTracks();
+        rawVideoTracks.forEach(t => pc.addTrack(t, stream));
+      }
     } else {
       // captureStream unsupported on this browser — fall back to the raw camera track
       // rather than sending no video at all.

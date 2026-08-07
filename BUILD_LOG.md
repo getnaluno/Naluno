@@ -97,22 +97,18 @@ not a todo for right now at ~20 users.
   calls for it.
 
 ## Known open items / current state
-- **Broadcast video: brief static thumbnail visible before real playback begins,
-  with audio starting ahead of the video.** Reported by user, not yet diagnosed —
-  the thumbnail feature (`thumbDataUrl`) is confirmed used only in the ring preview
-  (`renderBroadcasts`), NOT anywhere in the actual playback viewer (`playSegment`) —
-  no `poster` attribute exists anywhere in the codebase, so the mechanism isn't yet
-  understood. Needs a closer look at what actually renders in the moment between
-  tapping the ring and real video playback starting.
-- **Call regression under investigation:** user reports the caller sees/hears
-  themselves but never sees or hears the other person. Re-read the entire call
-  connection code (createPeerConnection, ontrack, ICE handling) end to end — it is
-  byte-for-byte unchanged since the version the user confirmed working with real
-  TURN relay. Nothing else built later in the session (Compass, the scaling fix)
-  touches call code at all. Waiting on fresh console logs from a real test — the
-  same `[call]` diagnostic logging from the TURN investigation is still in place and
-  should reveal what's actually happening this time, since this can't be diagnosed
-  by reading code that's already confirmed correct.
+- **Broadcast video start glitch — FIXED (2026-08-07):** Was caused by calling
+  `play()` before the browser had decoded a frame, plus no `poster`. Now uses
+  `thumbDataUrl` as the video's `poster` and waits for `canplay` (with a 2s safety
+  timeout) before starting playback. Audio and first frame should stay in sync.
+- **Call path hardened (2026-08-07):** `createPeerConnection` now forces a
+  `drawSendCanvas` before `captureStream`, ensures tracks are live/enabled, re-assigns
+  remote `srcObject` after every `ontrack` for browser compatibility, explicitly
+  unmutes the remote video element, and logs richer ICE/track diagnostics. The
+  original "caller sees self but not remote" report still needs a live two-device
+  test with the new `[call]` logs to confirm whether it was a black/zero-size
+  canvas track, an ICE/TURN issue, or something else. If it persists, the new logs
+  should make the cause obvious.
 - User's original, long-held ask: **real background replacement/blur** (Zoom/Meet
   style, not the current border+camera composite). Important context: this was
   already attempted **five times earlier in this project** and abandoned each time
@@ -124,6 +120,10 @@ not a todo for right now at ~20 users.
 - The Compass "Personalisation Permission" system (reading Wireline/Bands/Broadcast
   with consent), action-taking, and visual generation are all deliberately deferred —
   v1 Compass is conversational only, see its own section above.
+- Repo hygiene: duplicate numbered Worker/README snapshots removed (2026-08-07).
+  Canonical frontend is `index.html`; TURN Worker source remains `index.js` +
+  `wrangler.toml`. Other Workers (signal-upload, call-notify, compass) are already
+  live on Cloudflare and do not need source changes for this pass.
 
 
 ## Deferred by deliberate choice, not forgotten

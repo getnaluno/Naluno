@@ -2,7 +2,7 @@
 // fallback. That's the entire reason the app couldn't open offline at all, and why
 // offline showed the browser's own blank error page instead of anything from Naluno:
 // nothing was ever cached for the browser to fall back to.
-const CACHE_NAME = 'naluno-shell-v1';
+const CACHE_NAME = 'naluno-shell-v2';
 const CORE_ASSETS = [
   './',
   './index.html',
