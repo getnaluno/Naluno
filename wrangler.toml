@@ -1,14 +1,13 @@
-name = "naluno-signal-upload"
+name = "naluno-turn-credentials"
 main = "index.js"
 compatibility_date = "2026-01-01"
 
-# Binds this Worker directly to the R2 bucket by the name "SIGNAL_BUCKET" — that's what
-# lets the code call env.SIGNAL_BUCKET.put(...) with no AWS-style signing at all.
-[[r2_buckets]]
-binding = "SIGNAL_BUCKET"
-bucket_name = "naluno-signal"
+# TURN_KEY_API_TOKEN is NOT here on purpose — it's a genuine long-term secret and must
+# only ever be set via:
+#   npx wrangler secret put TURN_KEY_API_TOKEN
+# Putting it in this file would mean it sits in plain text on disk, defeating the
+# point of it being a secret at all.
 
-# Fill this in once the bucket's public access is enabled in the Cloudflare dashboard —
-# it generates a unique pub-xxxxxxxx.r2.dev URL for the bucket, which goes here.
 [vars]
-PUBLIC_BUCKET_URL = "https://pub-YOUR_BUCKET_ID.r2.dev"
+TURN_KEY_ID = "2248e28dd61fabf8235b3a47d1f6314a"
+FIREBASE_WEB_API_KEY = "AIzaSyD0j1W7-gFJqbMd6rz4kMhQd5AiB8B2ox0"

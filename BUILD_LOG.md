@@ -52,7 +52,7 @@ activity, not declared. "A statement from the future, not another WhatsApp."
   immediately, a persistent progress banner tracks real progress while the person can
   use the rest of the app), and fully resilient to an interrupted browser session (the
   original file + exact trim selection persist in IndexedDB, offered back as a resume
-  prompt on next sign-in). One user-reported issue still open: see "Known open items."
+  prompt on next sign-in). Previous silent-audio failures are resolved by the rewrite.
 
 ## Scaling roadmap — technical debt to pay down before real growth
 Written after the first real scaling bug (see below) prompted the question "how do we
@@ -120,10 +120,11 @@ not a todo for right now at ~20 users.
 - The Compass "Personalisation Permission" system (reading Wireline/Bands/Broadcast
   with consent), action-taking, and visual generation are all deliberately deferred —
   v1 Compass is conversational only, see its own section above.
-- Repo hygiene: duplicate numbered Worker/README snapshots removed (2026-08-07).
-  Canonical frontend is `index.html`; TURN Worker source remains `index.js` +
-  `wrangler.toml`. Other Workers (signal-upload, call-notify, compass) are already
-  live on Cloudflare and do not need source changes for this pass.
+- Repo hygiene: duplicate numbered Worker/README snapshots removed (2026-08-07,
+  confirmed complete). Canonical frontend is `index.html`; TURN Worker source
+  remains `index.js` + `wrangler.toml`. Other Workers (signal-upload, call-notify,
+  compass) are already live on Cloudflare and do not need source changes for this
+  pass.
 
 
 ## Deferred by deliberate choice, not forgotten

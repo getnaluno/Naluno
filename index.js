@@ -1,36 +1,31 @@
 /*
- * Naluno Signal Upload Worker
+ * Naluno TURN Credentials Worker
  *
- * Accepts a video from a real, signed-in Naluno user and writes it to R2. This exists
- * because Firestore caps a single document at 1MB — nowhere near enough for a video —
- * and because Firebase Storage now requires the paid Blaze plan for any usage at all,
- * even the smallest file. R2 has a genuinely free tier (10GB, no card, no egress fees)
- * and this is the small piece of server-side glue needed to use it safely, since raw
- * upload credentials can never sit in the browser.
+ * This is the actual fix for calls that connect but never show a video/audio feed
+ * between two devices on different networks — confirmed by real browser console
+ * evidence: tracks are added and received correctly on both sides, but ICE never
+ * finds a working route (checking -> disconnected -> failed). Naluno was only using
+ * STUN, which can't traverse every real-world network combination. This adds a real
+ * TURN relay as a fallback, using Cloudflare's own Realtime TURN service — the same
+ * platform already used for the other two Workers tonight.
  *
- * Identity is verified by asking Google's own Identity Toolkit REST endpoint to check
- * the person's real Firebase ID token — this delegates the actual JWT signature
- * verification to Google's servers rather than hand-rolling it here, which is simpler
- * and just as trustworthy, at the cost of one extra network hop per upload.
+ * Unlike the notification Worker, this one doesn't need to sign anything itself —
+ * Cloudflare's own API handles generating the actual short-lived credentials. This
+ * Worker's whole job is: confirm the caller is a real signed-in Naluno user, then
+ * safely proxy a request to Cloudflare using a long-term secret that must never reach
+ * the browser.
  *
- * The bucket itself should have a real Object Lifecycle Rule configured (in the
- * Cloudflare dashboard, not in this code) to delete objects after 25 hours — matching
- * how long a Naluno signal already lives — so cleanup happens reliably on Cloudflare's
- * own servers, whether or not anyone's device is even online when it expires.
+ * Required secrets/vars (see README in this folder for the exact setup steps):
+ *   TURN_KEY_API_TOKEN  (secret) — the "key" value from creating a Cloudflare Calls
+ *     TURN key. This is a genuine bearer secret — set only via `wrangler secret put`,
+ *     never written to any file.
+ *   TURN_KEY_ID  (var) — the "uid" value from that same TURN key.
+ *   FIREBASE_WEB_API_KEY  (var) — same public key already used in the other Workers.
  */
 
-// The Firebase Web API key — the same public value already sitting in
-// firebase-config.js. This is not a secret; it identifies the project, it doesn't
-// grant access to anything by itself.
-const FIREBASE_WEB_API_KEY = 'YOUR_FIREBASE_WEB_API_KEY';
-
-// Generous headroom above what a real 60-second video (the app's own composer limit)
-// should need, while still bounding worst-case abuse.
-const MAX_UPLOAD_BYTES = 60 * 1024 * 1024;
-
-async function verifyFirebaseIdToken(idToken) {
+async function verifyFirebaseIdToken(idToken, env) {
   const res = await fetch(
-    `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${FIREBASE_WEB_API_KEY}`,
+    `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${env.FIREBASE_WEB_API_KEY}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -40,7 +35,7 @@ async function verifyFirebaseIdToken(idToken) {
   if (!res.ok) return null;
   const data = await res.json();
   const user = data.users && data.users[0];
-  return user ? user.localId : null; // the real Firebase uid, confirmed by Google itself
+  return user ? user.localId : null;
 }
 
 function corsHeaders(origin) {
@@ -50,56 +45,49 @@ function corsHeaders(origin) {
     'Access-Control-Allow-Headers': 'Authorization, Content-Type',
   };
 }
-
-export default {
-  async fetch(request, env) {
-    const origin = request.headers.get('Origin');
-
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: corsHeaders(origin) });
-    }
-    if (request.method !== 'POST') {
-      return new Response('Method not allowed', { status: 405, headers: corsHeaders(origin) });
-    }
-
-    const authHeader = request.headers.get('Authorization') || '';
-    const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-    if (!idToken) {
-      return json({ error: 'Missing auth token' }, 401, origin);
-    }
-
-    const uid = await verifyFirebaseIdToken(idToken);
-    if (!uid) {
-      return json({ error: 'Invalid or expired sign-in — reopen Naluno and try again' }, 401, origin);
-    }
-
-    const contentLength = parseInt(request.headers.get('Content-Length') || '0', 10);
-    if (contentLength > MAX_UPLOAD_BYTES) {
-      return json({ error: 'Video too large' }, 413, origin);
-    }
-
-    const contentType = request.headers.get('Content-Type') || 'video/webm';
-    const ext = contentType.includes('mp4') ? 'mp4' : 'webm';
-    const key = `signal/${uid}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-
-    try {
-      await env.SIGNAL_BUCKET.put(key, request.body, {
-        httpMetadata: { contentType },
-      });
-    } catch (e) {
-      return json({ error: 'Upload failed' }, 500, origin);
-    }
-
-    // PUBLIC_BUCKET_URL is the bucket's public r2.dev URL (or a custom domain, once
-    // set up) — kept as an environment variable so it can change without touching code.
-    const url = `${env.PUBLIC_BUCKET_URL}/${key}`;
-    return json({ url }, 200, origin);
-  },
-};
-
 function json(body, status, origin) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...corsHeaders(origin), 'Content-Type': 'application/json' },
   });
 }
+
+export default {
+  async fetch(request, env) {
+    const origin = request.headers.get('Origin');
+    if (request.method === 'OPTIONS') return new Response(null, { headers: corsHeaders(origin) });
+    if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405, origin);
+
+    const authHeader = request.headers.get('Authorization') || '';
+    const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    if (!idToken) return json({ error: 'Missing auth token' }, 401, origin);
+
+    const uid = await verifyFirebaseIdToken(idToken, env);
+    if (!uid) return json({ error: 'Invalid or expired sign-in' }, 401, origin);
+
+    try {
+      const cfRes = await fetch(
+        `https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate-ice-servers`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${env.TURN_KEY_API_TOKEN}`,
+            'Content-Type': 'application/json',
+          },
+          // A real call is short — a few minutes at most — so these only need to stay
+          // valid for a couple of hours, not the full day Cloudflare's own example
+          // uses. Shorter-lived credentials are a real, small security improvement:
+          // less time a leaked credential could ever be reused.
+          body: JSON.stringify({ ttl: 7200 }),
+        }
+      );
+      if (!cfRes.ok) {
+        return json({ error: 'Could not get TURN credentials', detail: await cfRes.text() }, 502, origin);
+      }
+      const data = await cfRes.json();
+      return json({ iceServers: data.iceServers }, 200, origin);
+    } catch (e) {
+      return json({ error: 'TURN credential request failed', detail: String(e) }, 500, origin);
+    }
+  },
+};

@@ -37,6 +37,12 @@ service cloud.firestore {
       allow create, delete: if isOwner(uid);
     }
 
+    // Compass conversations are entirely private — no connection-visibility rule
+    // like signal has, since this isn't something meant to ever be shared.
+    match /users/{uid}/compassMessages/{msgId} {
+      allow read, create, delete: if isOwner(uid);
+    }
+
     // ---- Real connections (replacing hardcoded demo contacts) ----
     // A connection doc at users/{uid}/connections/{otherUid} means "otherUid appears in
     // uid's Frequencies list." Connecting is mutual and instant in Phase 1 (no request/

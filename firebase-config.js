@@ -1,9 +1,19 @@
+// Replace these with the values from your own Firebase project:
+// console.firebase.google.com → your project → Project settings → your web app
+//
+// This object is NOT a secret — it's meant to be public in client-side code.
+// Firestore access is controlled by firestore.rules, not by hiding this file.
+
 const firebaseConfig = {
-  apiKey: "AIzaSyD0j1W7-gFJqbMd6rz4kMhQd5AiB8B2ox0",
-  authDomain: "naluno-28a00.firebaseapp.com",
-  projectId: "naluno-28a00",
-  storageBucket: "naluno-28a00.firebasestorage.app",
-  messagingSenderId: "183354363901",
-  appId: "1:183354363901:web:e1a4c4eb30ad5937d39394"
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  projectId: "YOUR_PROJECT",
+  storageBucket: "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID"
 };
-const VAPID_KEY = "BAU9gGiDeFF9GcX42d0D7mjatsjJlCqs5jq8p02p-ObC9z2G5ELg49bTnObj7B1DOhGaKoaj7Iha3MUVsBIF7Ts";
+
+// Needed only for "Enable call notifications" in Callsign (push, even when the app
+// is closed). Get this from: Firebase console → Project settings → Cloud Messaging →
+// Web configuration → Web Push certificates → Generate key pair.
+const VAPID_KEY = "YOUR_VAPID_KEY";
