@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.08.07.2">
+<meta name="app-version" content="2026.08.07.5">
 <meta name="description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="A statement from the future — not another WhatsApp.">
@@ -4164,11 +4164,15 @@ if(fbAuth){
     }
   });
 } else if(!firebaseReady()){
-  // firebase-config.js missing/placeholder — fall back to local-only so the app is
-  // still explorable without a real backend configured. Keep the gate visible a
-  // moment longer so testers see the status message instead of an abrupt skip.
-  $('authGateStatus').textContent = 'No Firebase config found — continuing in local preview mode.';
-  setTimeout(()=>{ $('authGate').classList.remove('active'); loadProfile(); }, 1800);
+  // firebase-config.js is still the placeholder. Do NOT auto-skip the gate —
+  // the previous behaviour of removing the gate after a short delay is exactly
+  // what made the sign-in page "never come" during testing. Keep the form visible
+  // and show a clear status so the first-time experience is never skipped.
+  // (When real config is present this branch is never taken.)
+  $('authGateLoading').style.display = 'none';
+  $('authGateForm').style.display = 'flex';
+  $('authGate').classList.add('active');
+  authStatus('Firebase config still has placeholders — edit firebase-config.js with the real project values, then reload. Sign-in will work once the real keys are present.', true);
 }
 
 /* Claims handles/{handle} -> uid via a transaction, so two people racing for the
