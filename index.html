@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.08.07.1">
+<meta name="app-version" content="2026.08.07.2">
 <meta name="description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="A statement from the future — not another WhatsApp.">
@@ -4010,6 +4010,14 @@ if(firebaseReady()){
   try{
     fbApp = firebase.initializeApp(firebaseConfig);
     fbAuth = firebase.auth();
+    // Explicitly request durable local persistence so a successful sign-in survives
+    // page reloads, browser restarts, and the service-worker shell. Without this some
+    // environments (storage partitioning, certain mobile browsers, or when IndexedDB
+    // is flaky) silently fall back to session-only, which makes every open look like
+    // a fresh start and skips the remembered-user path.
+    fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(e=>{
+      console.warn('[Naluno auth] could not set LOCAL persistence:', e);
+    });
     fbDb = firebase.firestore();
     // This was never turned on before, and it's very likely the root cause behind two
     // separate complaints at once: Frequencies taking 2-3 seconds to appear on every
@@ -4092,6 +4100,20 @@ $('emailSignUpBtn').onclick = ()=>{
 
 if(fbAuth){
   authStatus('Checking sign-in state…');
+  let authResolved = false;
+  // Safety net: if onAuthStateChanged has not fired within a few seconds (slow
+  // IndexedDB, blocked storage, or a hung redirect), show the sign-in form so a
+  // first-time user is never left staring at "Checking sign-in…" forever and so
+  // the gate is never silently skipped.
+  const authTimeout = setTimeout(()=>{
+    if(authResolved) return;
+    authResolved = true;
+    authStatus('Sign-in check timed out — please sign in.');
+    $('authGateLoading').style.display = 'none';
+    $('authGateForm').style.display = 'flex';
+    $('authGate').classList.add('active');
+  }, 4500);
+
   // Catches errors specific to the redirect round-trip (e.g. "this domain isn't
   // authorized") that onAuthStateChanged alone would never surface — it would just
   // never fire, leaving someone stuck looking at the sign-in screen with no explanation.
@@ -4111,6 +4133,8 @@ if(fbAuth){
     );
   });
   fbAuth.onAuthStateChanged(user=>{
+    clearTimeout(authTimeout);
+    authResolved = true;
     currentUser = user;
     if(user){
       authStatus('Signed in as ' + (user.displayName || user.email));
@@ -4141,9 +4165,10 @@ if(fbAuth){
   });
 } else if(!firebaseReady()){
   // firebase-config.js missing/placeholder — fall back to local-only so the app is
-  // still explorable without a real backend configured.
+  // still explorable without a real backend configured. Keep the gate visible a
+  // moment longer so testers see the status message instead of an abrupt skip.
   $('authGateStatus').textContent = 'No Firebase config found — continuing in local preview mode.';
-  setTimeout(()=>{ $('authGate').classList.remove('active'); loadProfile(); }, 1200);
+  setTimeout(()=>{ $('authGate').classList.remove('active'); loadProfile(); }, 1800);
 }
 
 /* Claims handles/{handle} -> uid via a transaction, so two people racing for the
