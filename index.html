@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.08.07.9">
+<meta name="app-version" content="2026.08.08.2">
 <meta name="description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="A statement from the future — not another WhatsApp.">
@@ -4188,15 +4188,39 @@ function authStatus(msg, isError){
   console.log('[Naluno auth]', msg);
 }
 
+function isNativeShell(){
+  try{
+    return !!(window.Capacitor && (
+      (typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform()) ||
+      window.Capacitor.platform === 'android' ||
+      window.Capacitor.platform === 'ios'
+    ));
+  }catch(e){ return false; }
+}
+
 $('googleSignInBtn').onclick = ()=>{
   if(!fbAuth){ authStatus('Firebase isn\u2019t configured yet — see firebase-config.js', true); return; }
   const provider = new firebase.auth.GoogleAuthProvider();
+
+  // Capacitor Android/iOS: signInWithPopup opens external Chrome. After Google finishes,
+  // the browser lands on *.firebaseapp.com/__/auth/handler and cannot hand the session
+  // back into the WebView — so it looks "stuck". Until native Google Sign-In is wired,
+  // guide the person to email/password inside the app (works with no redirect).
+  if(isNativeShell()){
+    authStatus(
+      'Google sign-in from the Android app needs a native bridge (coming next). ' +
+      'For now use email + password below — same account works in the browser with Google.',
+      true
+    );
+    try{
+      const emailInput = $('authEmailInput');
+      if(emailInput) emailInput.focus();
+    }catch(e){}
+    return;
+  }
+
   authStatus('Trying popup sign-in…');
-  // Popup communicates directly window-to-window and never needs auth state to survive
-  // a full page navigation — it sidesteps the cross-domain storage handoff between this
-  // site and naluno-28a00.firebaseapp.com entirely, which is what redirect was tripping
-  // over (both Firefox's storage partitioning and, evidently, something similar in
-  // Chrome). Only fall back to redirect if a popup genuinely can't open at all.
+  // Browser/PWA: popup is the reliable path (no cross-domain redirect handoff).
   fbAuth.signInWithPopup(provider).then(result=>{
     authStatus('Popup sign-in completed — signed in as ' + (result.user.displayName || result.user.email));
   }).catch(e=>{
@@ -4382,6 +4406,11 @@ function loadRealProfile(user){
    registration never survived a sign-out/sign-in, so it looked like the setting itself
    didn't stick, when really it just needed a way to renew itself automatically. */
 async function maybeRefreshCallNotifToken(){
+  // Android shell: prefer native FCM token (wakes device). Web VAPID is secondary.
+  if(isNativeShell()){
+    await setupCapacitorPush();
+    return;
+  }
   if(!('Notification' in window) || Notification.permission !== 'granted') return;
   if(typeof VAPID_KEY === 'undefined' || !VAPID_KEY || VAPID_KEY === 'YOUR_VAPID_KEY') return;
   try{
@@ -4389,7 +4418,7 @@ async function maybeRefreshCallNotifToken(){
     const messaging = firebase.messaging();
     const token = await messaging.getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
     if(token && currentUser && fbDb){
-      await fbDb.collection('users').doc(currentUser.uid).set({ fcmToken: token }, { merge:true });
+      await fbDb.collection('users').doc(currentUser.uid).set({ fcmToken: token, fcmTokenPlatform: 'web' }, { merge:true });
       $('callNotifStatus').textContent = 'Call notifications are on — you\u2019ll be notified even with the app closed.';
     }
   }catch(e){ /* best-effort — worst case they tap the button again this once */ }
@@ -4470,7 +4499,18 @@ $('greenroomToggle').onclick = function(){ this.classList.toggle('on'); greenroo
    real call document is created. Requires the Firebase Blaze plan for that function —
    Cloud Functions aren't available on the free Spark plan at all. */
 $('enableCallNotifsBtn').onclick = async ()=>{
-  if(!('Notification' in window) || !navigator.serviceWorker || !fbDb || !currentUser){
+  if(!fbDb || !currentUser){
+    toast('Sign in first');
+    return;
+  }
+  // Native Android shell path
+  if(isNativeShell()){
+    const ok = await setupCapacitorPush();
+    if(ok) toast('Call notifications enabled on this phone');
+    else toast('Couldn\u2019t enable notifications — check Android Settings');
+    return;
+  }
+  if(!('Notification' in window) || !navigator.serviceWorker){
     toast('Notifications aren\u2019t supported in this browser');
     return;
   }
@@ -4488,7 +4528,7 @@ $('enableCallNotifsBtn').onclick = async ()=>{
     const messaging = firebase.messaging();
     const token = await messaging.getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
     if(!token){ toast('Couldn\u2019t get a notification token — try again'); return; }
-    await fbDb.collection('users').doc(currentUser.uid).set({ fcmToken: token }, { merge:true });
+    await fbDb.collection('users').doc(currentUser.uid).set({ fcmToken: token, fcmTokenPlatform: 'web' }, { merge:true });
     $('callNotifStatus').textContent = 'Call notifications are on — you\u2019ll be notified even with the app closed.';
     toast('Call notifications enabled');
   }catch(e){
@@ -6240,6 +6280,65 @@ async function handleIncomingCallFromPush(callId){
     handleIncomingCall(callId, data);
   }catch(e){
     console.warn('[call] push deep-link failed', e);
+  }
+}
+// Native IncomingCallActivity / MainActivity call this via evaluateJavascript.
+window.handleIncomingCallFromPush = handleIncomingCallFromPush;
+
+/* Capacitor native shell detection + FCM token registration.
+   On Android the web VAPID path is weak; the native plugin token is what actually
+   wakes the device. Same Firestore field (fcmToken) the call-notify Worker already reads. */
+function isNativeShell(){
+  try{
+    return !!(window.Capacitor && (window.Capacitor.isNativePlatform ? window.Capacitor.isNativePlatform() : window.Capacitor.platform !== 'web'));
+  }catch(e){ return false; }
+}
+function getCapacitorPush(){
+  try{
+    if(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.PushNotifications){
+      return window.Capacitor.Plugins.PushNotifications;
+    }
+  }catch(e){}
+  return null;
+}
+let nativePushWired = false;
+async function setupCapacitorPush(){
+  const Push = getCapacitorPush();
+  if(!Push || !currentUser || !fbDb) return false;
+  try{
+    const perm = await Push.requestPermissions();
+    if(perm && perm.receive !== 'granted'){
+      $('callNotifStatus').textContent = 'Notifications blocked — enable them in Android Settings → Apps → Naluno.';
+      return false;
+    }
+    if(!nativePushWired){
+      nativePushWired = true;
+      await Push.addListener('registration', async (token)=>{
+        try{
+          if(!token || !token.value || !currentUser || !fbDb) return;
+          await fbDb.collection('users').doc(currentUser.uid).set({
+            fcmToken: token.value,
+            fcmTokenPlatform: 'android',
+          }, { merge:true });
+          $('callNotifStatus').textContent = 'Call notifications are on (Android) — calls can wake this phone.';
+        }catch(e){ console.warn('[push] save token failed', e); }
+      });
+      await Push.addListener('registrationError', err=>{
+        console.warn('[push] registrationError', err);
+      });
+      await Push.addListener('pushNotificationActionPerformed', (action)=>{
+        try{
+          const data = (action && action.notification && action.notification.data) || {};
+          const callId = data.callId || data.call_id || null;
+          if(callId) handleIncomingCallFromPush(callId);
+        }catch(e){}
+      });
+    }
+    await Push.register();
+    return true;
+  }catch(e){
+    console.warn('[push] Capacitor setup failed', e);
+    return false;
   }
 }
 
