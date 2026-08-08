@@ -15,3 +15,9 @@ const firebaseConfig = {
 // Web configuration → Web Push certificates). Required for call notifications
 // when the app is closed.
 const VAPID_KEY = "BAU9gGiDeFF9GcX42d0D7mjatsjJlCqs5jq8p02p-ObC9z2G5ELg49bTnObj7B1DOhGaKoaj7Iha3MUVsBIF7Ts";
+
+// Google Sign-In for the Android shell (native plugin).
+// Use the WEB OAuth client ID from Google Cloud Console / Firebase
+// (type "Web client", ends in .apps.googleusercontent.com) — NOT the Android client ID.
+// See GOOGLE-AUTH-SETUP.md
+const GOOGLE_WEB_CLIENT_ID = "YOUR_WEB_CLIENT_ID.apps.googleusercontent.com";

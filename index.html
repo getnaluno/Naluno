@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.08.08.2">
+<meta name="app-version" content="2026.08.09.1">
 <meta name="description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="A statement from the future — not another WhatsApp.">
@@ -4198,27 +4198,69 @@ function isNativeShell(){
   }catch(e){ return false; }
 }
 
-$('googleSignInBtn').onclick = ()=>{
-  if(!fbAuth){ authStatus('Firebase isn\u2019t configured yet — see firebase-config.js', true); return; }
-  const provider = new firebase.auth.GoogleAuthProvider();
+function getNativeGoogleAuth(){
+  try{
+    if(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.GoogleAuth){
+      return window.Capacitor.Plugins.GoogleAuth;
+    }
+  }catch(e){}
+  return null;
+}
 
-  // Capacitor Android/iOS: signInWithPopup opens external Chrome. After Google finishes,
-  // the browser lands on *.firebaseapp.com/__/auth/handler and cannot hand the session
-  // back into the WebView — so it looks "stuck". Until native Google Sign-In is wired,
-  // guide the person to email/password inside the app (works with no redirect).
+async function nativeGoogleSignIn(){
+  const GoogleAuth = getNativeGoogleAuth();
+  if(!GoogleAuth){
+    throw new Error('GoogleAuth plugin not installed in the Android shell');
+  }
+  // serverClientId must be the Web client ID (not Android client ID).
+  const webClientId = (typeof GOOGLE_WEB_CLIENT_ID !== 'undefined' && GOOGLE_WEB_CLIENT_ID && !String(GOOGLE_WEB_CLIENT_ID).includes('YOUR_'))
+    ? GOOGLE_WEB_CLIENT_ID
+    : null;
+  try{
+    if(typeof GoogleAuth.initialize === 'function'){
+      await GoogleAuth.initialize({
+        clientId: webClientId || undefined,
+        scopes: ['profile', 'email'],
+        grantOfflineAccess: true,
+      });
+    }
+  }catch(e){ /* already initialized is fine */ }
+
+  const googleUser = await GoogleAuth.signIn();
+  const idToken = googleUser && googleUser.authentication && googleUser.authentication.idToken;
+  if(!idToken){
+    throw new Error('Native Google sign-in returned no idToken');
+  }
+  const credential = firebase.auth.GoogleAuthProvider.credential(idToken);
+  const result = await fbAuth.signInWithCredential(credential);
+  return result;
+}
+
+$('googleSignInBtn').onclick = async ()=>{
+  if(!fbAuth){ authStatus('Firebase isn\u2019t configured yet — see firebase-config.js', true); return; }
+
+  // Capacitor: use native Google Sign-In → Firebase credential (no Chrome redirect).
   if(isNativeShell()){
-    authStatus(
-      'Google sign-in from the Android app needs a native bridge (coming next). ' +
-      'For now use email + password below — same account works in the browser with Google.',
-      true
-    );
+    authStatus('Opening Google sign-in…');
     try{
-      const emailInput = $('authEmailInput');
-      if(emailInput) emailInput.focus();
-    }catch(e){}
+      const result = await nativeGoogleSignIn();
+      authStatus('Signed in as ' + (result.user.displayName || result.user.email));
+    }catch(e){
+      const msg = (e && (e.message || e.errorMessage || e.code)) || String(e);
+      if(/cancel|12501|popup_closed/i.test(msg)){
+        authStatus('Google sign-in was cancelled — try again, or use email + password.', true);
+      } else if(/plugin not installed|GoogleAuth/i.test(msg)){
+        authStatus('Native Google plugin not ready — rebuild the Android shell (see GOOGLE-AUTH-SETUP.md), or use email + password.', true);
+      } else if(/10\b|DEVELOPER_ERROR|ApiException: 10/i.test(msg)){
+        authStatus('Google config error (code 10) — add your SHA-1 in Firebase and set the Web client ID. See GOOGLE-AUTH-SETUP.md', true);
+      } else {
+        authStatus('Google sign-in failed: ' + msg, true);
+      }
+    }
     return;
   }
 
+  const provider = new firebase.auth.GoogleAuthProvider();
   authStatus('Trying popup sign-in…');
   // Browser/PWA: popup is the reliable path (no cross-domain redirect handoff).
   fbAuth.signInWithPopup(provider).then(result=>{
