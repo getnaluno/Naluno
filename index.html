@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.08.09.1">
+<meta name="app-version" content="2026.08.09.4">
 <meta name="description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="A statement from the future — not another WhatsApp.">
@@ -296,15 +296,15 @@
   .call-info-pill{ background:rgba(13,15,23,.55); backdrop-filter:blur(10px); border:1px solid var(--line); border-radius:999px; padding:8px 14px; display:flex; align-items:center; gap:8px; }
   .timer{ font-family:var(--font-futuristic); font-size:13px; letter-spacing:.08em; color:var(--mint); text-shadow:0 0 6px rgba(124,255,178,.55); }
   .icon-btn{ width:40px; height:40px; border-radius:50%; background:rgba(13,15,23,.55); backdrop-filter:blur(10px); border:1px solid var(--line); display:flex; align-items:center; justify-content:center; cursor:pointer; color:var(--text); }
-  .local-pip{ position:absolute; right:18px; bottom:150px; width:104px; height:142px; border-radius:18px; overflow:hidden; background:var(--surface); border:1.5px solid rgba(237,239,247,.15); z-index:6; box-shadow:0 10px 30px rgba(0,0,0,.4); cursor:grab; touch-action:none; -webkit-user-select:none; user-select:none; will-change:left,top; transition:width .25s ease, height .25s ease; }
-  .local-pip.large{ width:min(48vw, 200px); height:min(66vw, 274px); }
+  .local-pip{ position:absolute; right:18px; bottom:150px; width:104px; height:142px; border-radius:18px; overflow:hidden; background:var(--surface); border:1.5px solid rgba(237,239,247,.15); z-index:6; box-shadow:0 10px 30px rgba(0,0,0,.4); cursor:grab; touch-action:none; -webkit-user-select:none; user-select:none; will-change:left,top; transition:width .25s ease, height .25s ease, border-radius .25s ease; }
+  .local-pip.large{ width:min(48vw, 200px); height:min(66vw, 274px); right:18px; bottom:150px; left:auto; top:auto; }
   .local-pip .mute-badge{ position:absolute; left:6px; bottom:6px; width:20px; height:20px; border-radius:50%; background:var(--red); display:none; align-items:center; justify-content:center; z-index:4; }
   .local-pip.muted .mute-badge{ display:flex; }
   /* Swap layout: local becomes the main stage, remote becomes the small PiP */
-  #incall.swap-focus .remote-stage{ z-index:5; inset:auto; right:18px; bottom:150px; width:104px; height:142px; border-radius:18px; overflow:hidden; border:1.5px solid rgba(237,239,247,.15); box-shadow:0 10px 30px rgba(0,0,0,.4); }
+  #incall.swap-focus .remote-stage{ z-index:5; inset:auto; right:18px; bottom:150px; left:auto; top:auto; width:104px; height:142px; border-radius:18px; overflow:hidden; border:1.5px solid rgba(237,239,247,.15); box-shadow:0 10px 30px rgba(0,0,0,.4); }
   #incall.swap-focus .remote-stage video{ border-radius:18px; }
   #incall.swap-focus .remote-placeholder{ transform:scale(.55); }
-  #incall.swap-focus .local-pip{ inset:0; right:0; bottom:0; width:100%; height:100%; border-radius:0; border:none; box-shadow:none; z-index:1; }
+  #incall.swap-focus .local-pip{ left:0 !important; top:0 !important; right:0 !important; bottom:0 !important; width:100% !important; height:100% !important; border-radius:0; border:none; box-shadow:none; z-index:1; }
   .controls-bar{ position:relative; z-index:6; padding:0 22px 32px; margin-top:auto; display:flex; align-items:center; justify-content:center; gap:16px; }
   .ctrl{ width:56px; height:56px; border-radius:50%; border:1px solid var(--line); background:rgba(31,35,51,.85); backdrop-filter:blur(10px); display:flex; align-items:center; justify-content:center; cursor:pointer; color:var(--text); position:relative; }
   .ctrl.active{ background:var(--text); color:#0D0F17; }
@@ -4836,6 +4836,7 @@ function paintForestPark(ctx,w,h,t){
   ctx.lineTo(w+nx,h); ctx.closePath(); ctx.fill();
 }
 const backgroundPresets = {
+  none:      { name:'Real background', type:'none', painter:null },
   aurora:    { name:'Aurora Drift',  type:'canvas', painter:paintAurora },
   studio:    { name:'Studio Glow',   type:'canvas', painter:paintStudioGlow },
   rain:      { name:'Ion Rain',      type:'canvas', painter:paintIonRain },
@@ -4844,7 +4845,7 @@ const backgroundPresets = {
   waterfall: { name:'Waterfall',     type:'canvas', painter:paintWaterfall },
   forest:    { name:'Forest Park',   type:'canvas', painter:paintForestPark },
 };
-let selectedBackgroundId = 'studio';
+let selectedBackgroundId = 'none';
 let userPickedBackground = false; // false = Greenroom is free to auto-suggest
 
 function renderBackgroundChips(){
@@ -4863,14 +4864,23 @@ function chooseBackground(id, manual){
   if(!backgroundPresets[id]) return;
   selectedBackgroundId = id;
   if(manual) userPickedBackground = true;
+  // Picking any virtual scene implies greenroom is on; "Real background" leaves it optional.
+  if(id !== 'none' && !greenroomEnabled){
+    greenroomEnabled = true;
+    const gt = $('greenroomToggle');
+    if(gt) gt.classList.add('on');
+  }
   renderBackgroundChips();
-  $('greenroomLabel').textContent = 'Greenroom · ' + backgroundPresets[id].name;
-  if(manual){ toast('Background set to ' + backgroundPresets[id].name); saveBackgroundChoice(); }
+  const label = backgroundPresets[id].name;
+  if($('greenroomLabel')) $('greenroomLabel').textContent = id === 'none' ? 'Greenroom · real background' : ('Greenroom · ' + label);
+  if(manual){
+    toast(id === 'none' ? 'Using your real background' : ('Background set to ' + label));
+    saveBackgroundChoice();
+  }
+  // Kick segmentation when a virtual bg is chosen so replacement starts quickly.
+  if(id !== 'none') ensureSelfieSegmentation();
 }
 function saveBackgroundChoice(){
-  // This used to call window.storage — that API only exists in Claude's own preview
-  // sandbox, not on a real hosted site, so this silently never persisted for anyone
-  // actually using Naluno. Real localStorage is what this was always meant to be.
   try{ localStorage.setItem('naluno:background', JSON.stringify({ id: selectedBackgroundId })); }catch(e){}
 }
 function loadBackgroundChoice(){
@@ -4884,6 +4894,138 @@ function loadBackgroundChoice(){
   renderBackgroundChips();
 }
 loadBackgroundChoice();
+
+/* ---------------- PERSON SEGMENTATION (true virtual backgrounds) ----------------
+   MediaPipe Selfie Segmentation cuts you out of the real room so a live background
+   can replace it. Falls back to plain camera if the model fails to load. */
+let selfieSeg = null;
+let selfieSegLoading = null;
+let segMaskCanvas = null;
+let segPersonCanvas = null;
+let segAlphaCanvas = null;
+let segProcessing = false;
+let segLastTs = 0;
+const SEG_MIN_INTERVAL_MS = 66; // ~15fps segmentation is enough; composite still runs at display rate
+
+function loadScriptOnce(src){
+  return new Promise((resolve, reject)=>{
+    if(document.querySelector('script[src="'+src+'"]')){ resolve(); return; }
+    const s = document.createElement('script');
+    s.src = src;
+    s.crossOrigin = 'anonymous';
+    s.onload = ()=> resolve();
+    s.onerror = ()=> reject(new Error('Failed to load '+src));
+    document.head.appendChild(s);
+  });
+}
+async function ensureSelfieSegmentation(){
+  if(selfieSeg) return true;
+  if(selfieSegLoading) return selfieSegLoading;
+  selfieSegLoading = (async ()=>{
+    try{
+      await loadScriptOnce('https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js');
+      if(typeof SelfieSegmentation === 'undefined') throw new Error('SelfieSegmentation missing');
+      const seg = new SelfieSegmentation({
+        locateFile: (file)=> 'https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/'+file,
+      });
+      seg.setOptions({ modelSelection: 1 }); // 1 = landscape-ish higher quality
+      seg.onResults((results)=>{
+        if(!results || !results.segmentationMask) return;
+        if(!segMaskCanvas) segMaskCanvas = document.createElement('canvas');
+        const mc = segMaskCanvas;
+        const mw = results.segmentationMask.width || results.image.width;
+        const mh = results.segmentationMask.height || results.image.height;
+        if(mc.width !== mw || mc.height !== mh){ mc.width = mw; mc.height = mh; }
+        const mctx = mc.getContext('2d');
+        mctx.clearRect(0,0,mw,mh);
+        mctx.drawImage(results.segmentationMask, 0, 0, mw, mh);
+        // Soften edges slightly so the cutout does not look jagged.
+        mctx.filter = 'blur(2px)';
+        mctx.drawImage(mc, 0, 0);
+        mctx.filter = 'none';
+        segMaskCanvas._ready = true;
+      });
+      await seg.initialize();
+      selfieSeg = seg;
+      console.log('[bg] Selfie segmentation ready');
+      return true;
+    }catch(e){
+      console.warn('[bg] Segmentation unavailable — virtual bg falls back to border mode', e);
+      selfieSeg = null;
+      return false;
+    }finally{
+      selfieSegLoading = null;
+    }
+  })();
+  return selfieSegLoading;
+}
+async function tickSegmentation(video){
+  if(!video || video.readyState < 2 || !video.videoWidth) return;
+  if(selectedBackgroundId === 'none' || !greenroomEnabled) return;
+  if(!selfieSeg){
+    ensureSelfieSegmentation();
+    return;
+  }
+  const now = performance.now();
+  if(segProcessing || (now - segLastTs) < SEG_MIN_INTERVAL_MS) return;
+  segProcessing = true;
+  segLastTs = now;
+  try{
+    await selfieSeg.send({ image: video });
+  }catch(e){
+    // One bad frame should not kill the loop.
+  }finally{
+    segProcessing = false;
+  }
+}
+function drawVideoCover(ctx, video, w, h, mirror){
+  if(!video || video.readyState < 2 || !video.videoWidth){
+    ctx.fillStyle = '#171A26';
+    ctx.fillRect(0,0,w,h);
+    return;
+  }
+  ctx.save();
+  if(mirror){ ctx.translate(w,0); ctx.scale(-1,1); }
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const scale = Math.max(w/vw, h/vh);
+  const dw = vw*scale, dh = vh*scale;
+  ctx.drawImage(video, (w-dw)/2, (h-dh)/2, dw, dh);
+  ctx.restore();
+}
+function drawPersonWithMask(ctx, video, maskCanvas, w, h, mirror){
+  if(!segPersonCanvas) segPersonCanvas = document.createElement('canvas');
+  if(!segAlphaCanvas) segAlphaCanvas = document.createElement('canvas');
+  const pc = segPersonCanvas;
+  const ac = segAlphaCanvas;
+  if(pc.width !== w || pc.height !== h){ pc.width = w; pc.height = h; }
+  if(ac.width !== w || ac.height !== h){ ac.width = w; ac.height = h; }
+  const pctx = pc.getContext('2d');
+  const actx = ac.getContext('2d');
+  pctx.clearRect(0,0,w,h);
+  drawVideoCover(pctx, video, w, h, mirror);
+
+  // Build an alpha mask from the segmentation luminance.
+  actx.clearRect(0,0,w,h);
+  actx.drawImage(maskCanvas, 0, 0, w, h);
+  try{
+    const img = actx.getImageData(0,0,w,h);
+    const d = img.data;
+    for(let i=0;i<d.length;i+=4){
+      // Person is bright in the mask; use it as alpha.
+      const a = d[i]; // R channel
+      d[i] = 255; d[i+1] = 255; d[i+2] = 255; d[i+3] = a;
+    }
+    actx.putImageData(img, 0, 0);
+  }catch(e){
+    // getImageData can throw on tainted canvas — skip mask this frame
+    ctx.drawImage(pc, 0, 0);
+    return;
+  }
+  pctx.globalCompositeOperation = 'destination-in';
+  pctx.drawImage(ac, 0, 0);
+  pctx.globalCompositeOperation = 'source-over';
+  ctx.drawImage(pc, 0, 0);
+}
 
 /* Keeps a canvas's actual pixel resolution matched to its on-screen size — used by
    the segmentation compositor above and Band's ambient background animation. */
@@ -4910,57 +5052,45 @@ function ensureCanvasSize(canvas){
   const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
   if(canvas.width!==w || canvas.height!==h){ canvas.width=w; canvas.height=h; }
 }
-/* ---------------- LIVE BORDER (Greenroom) ----------------
-   Five attempts at real-time background replacement all ran into the same wall: a
-   segmentation model's edges are inherently soft and shift frame to frame, which reads
-   as ghosting no matter how it's tuned. So this drops the idea of replacing what's
-   behind you entirely. The real camera feed shows completely as-is now — nothing
-   masked, nothing composited per-pixel, nothing that can misfire.
-
-   The chosen "Live Background" pattern is drawn first, filling the whole canvas; then
-   the real camera is drawn on top, clipped to a smaller inset rectangle. Whatever the
-   pattern drew in the margin between that rectangle and the canvas edge is never
-   painted over, which is what leaves it visible as a border. This is just drawImage
-   and clip() — the most basic Canvas2D operations there are, supported identically
-   everywhere, with no dependency on how well a given browser implements newer CSS
-   mask compositing (which is what the previous attempt quietly depended on). */
+/* ---------------- LIVE BACKGROUNDS (Greenroom) ----------------
+   True virtual backgrounds: MediaPipe cuts the person out; the chosen live scene
+   replaces the real room. Choose "Real background" to leave the room as-is.
+   If segmentation is not ready yet, a soft border fallback is used for one moment
+   so the call is never blank. */
 let camAnimStart = performance.now();
 let pipAnimStart = performance.now();
-/* Shared by every canvas that composites border+camera — local self-view previews
-   AND the canvas actually sent to the other person, which is the same drawing logic,
-   just fed into a different, always-on, hidden canvas instead of a visible one. */
 function compositeFrame(canvas, video, animStart){
   const w = canvas.width, h = canvas.height;
   const ctx = canvas.getContext('2d');
   ctx.save();
   ctx.clearRect(0,0,w,h);
 
-  let borderPx = 0;
-  if(greenroomEnabled){
-    const preset = backgroundPresets[selectedBackgroundId];
-    preset.painter(ctx, w, h, (performance.now()-animStart)/1000);
-    borderPx = Math.max(6, Math.round(Math.min(w,h) * 0.045));
+  const mirror = cameraFacingMode !== 'environment';
+  const wantVirtual = greenroomEnabled && selectedBackgroundId && selectedBackgroundId !== 'none';
+  const preset = wantVirtual ? backgroundPresets[selectedBackgroundId] : null;
+  const hasMask = !!(segMaskCanvas && segMaskCanvas._ready && segMaskCanvas.width);
+
+  if(!wantVirtual || !preset || !preset.painter){
+    // Real background — unmodified camera.
+    drawVideoCover(ctx, video, w, h, mirror);
+    ctx.restore();
+    return;
   }
 
-  ctx.beginPath();
-  ctx.rect(borderPx, borderPx, Math.max(1,w-borderPx*2), Math.max(1,h-borderPx*2));
-  ctx.clip();
+  // 1) Paint the live scene across the whole frame.
+  preset.painter(ctx, w, h, (performance.now()-animStart)/1000);
 
-  if(video.readyState >= 2 && video.videoWidth){
-    // Mirroring only makes sense for the front camera — that's the "look in a mirror"
-    // convention every selfie camera uses. Applying it to the back camera as well was
-    // the actual cause of "looks inverted": any real-world text in frame (a screen, a
-    // document, a whiteboard) would read backwards, since there's no mirror convention
-    // for filming the world in front of you, only yourself.
-    const mirror = cameraFacingMode !== 'environment';
-    if(mirror){ ctx.translate(w,0); ctx.scale(-1,1); }
-    const vw = video.videoWidth, vh = video.videoHeight;
-    const scale = Math.max(w/vw, h/vh); // cover-fit, same effect object-fit:cover had
-    const dw = vw*scale, dh = vh*scale;
-    ctx.drawImage(video, (w-dw)/2, (h-dh)/2, dw, dh);
+  // 2) Draw the person on top using the segmentation mask when available.
+  if(hasMask){
+    drawPersonWithMask(ctx, video, segMaskCanvas, w, h, mirror);
   } else {
-    ctx.fillStyle = '#171A26';
-    ctx.fillRect(0,0,w,h);
+    // Brief fallback until the model produces its first mask: inset camera so the
+    // scene is still visible as a frame rather than a blank composite.
+    const borderPx = Math.max(6, Math.round(Math.min(w,h) * 0.045));
+    ctx.beginPath();
+    ctx.rect(borderPx, borderPx, Math.max(1,w-borderPx*2), Math.max(1,h-borderPx*2));
+    ctx.clip();
+    drawVideoCover(ctx, video, w, h, mirror);
   }
   ctx.restore();
 }
@@ -4992,7 +5122,12 @@ function stageLoopTick(){
   requestAnimationFrame(stageLoopTick);
   if($('lobby').classList.contains('active')) drawStage('camStageCanvas', 'camRawVideo', camAnimStart);
   if($('incall').classList.contains('active')) drawStage('pipStageCanvas', 'pipRawVideo', pipAnimStart);
-  if(stream) drawSendCanvas();
+  if(stream){
+    drawSendCanvas();
+    // Drive person segmentation from the same raw camera that feeds the send canvas.
+    const v = $('sendRawVideo') || $('camRawVideo') || $('pipRawVideo');
+    if(v) tickSegmentation(v);
+  }
 }
 requestAnimationFrame(stageLoopTick);
 function startCamView(target){
@@ -5162,13 +5297,15 @@ function runGreenroom(){
   }
   $('greenroomPill').classList.remove('ready');
   $('greenroomLabel').textContent = 'Greenroom · scanning';
+  ensureSelfieSegmentation();
   setTimeout(()=>{
     const id = userPickedBackground ? selectedBackgroundId : suggestBackgroundId();
     chooseBackground(id, false);
     $('greenroomPill').classList.add('ready');
-    toast('Greenroom set your border to ' + backgroundPresets[id].name);
+    const name = backgroundPresets[id] ? backgroundPresets[id].name : id;
+    toast(id === 'none' ? 'Keeping your real background' : ('Background set to ' + name));
     $('sceneReadyNote').style.display = 'inline-flex';
-  }, 1400);
+  }, 900);
 }
 
 /* Samples the live feed's average brightness to suggest a background — only used
@@ -6139,6 +6276,7 @@ function startInCall(){
   // Reset view mode at the start of every call.
   $('incall').classList.remove('swap-focus');
   if($('localPip')) $('localPip').classList.remove('large');
+  if(typeof resetPipLayoutStyles === 'function') resetPipLayoutStyles();
   if(stream) startCamView('pip');
   callSeconds = 0; $('callTimer').textContent = '00:00';
   clearInterval(callInterval);
@@ -6153,6 +6291,27 @@ function startInCall(){
 }
 /* Cycles: normal (remote full + small local PiP) → large local PiP → swap (you full, them small) → normal */
 let incallViewMode = 0;
+function resetPipLayoutStyles(){
+  // Dragging writes inline left/top; those fight CSS when we toggle size/swap.
+  // Clearing them forces the stylesheet positions to take effect again.
+  const pip = $('localPip');
+  if(!pip) return;
+  pip.style.left = '';
+  pip.style.top = '';
+  pip.style.right = '';
+  pip.style.bottom = '';
+  pip.style.width = '';
+  pip.style.height = '';
+  const remote = document.querySelector('#incall .remote-stage');
+  if(remote){
+    remote.style.left = '';
+    remote.style.top = '';
+    remote.style.right = '';
+    remote.style.bottom = '';
+    remote.style.width = '';
+    remote.style.height = '';
+  }
+}
 if($('viewToggleBtn')){
   $('viewToggleBtn').onclick = ()=>{
     incallViewMode = (incallViewMode + 1) % 3;
@@ -6161,6 +6320,7 @@ if($('viewToggleBtn')){
     if(!incall) return;
     incall.classList.remove('swap-focus');
     if(pip) pip.classList.remove('large');
+    resetPipLayoutStyles();
     if(incallViewMode === 1 && pip) pip.classList.add('large');
     if(incallViewMode === 2) incall.classList.add('swap-focus');
   };
