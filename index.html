@@ -4460,7 +4460,16 @@ async function maybeRefreshCallNotifToken(){
     const messaging = firebase.messaging();
     const token = await messaging.getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
     if(token && currentUser && fbDb){
-      await fbDb.collection('users').doc(currentUser.uid).set({ fcmToken: token, fcmTokenPlatform: 'web' }, { merge:true });
+      // Store web token separately. Only overwrite primary fcmToken if no Android token exists
+      // (so opening the PWA does not silently break phone wake for the same account).
+      const userRef = fbDb.collection('users').doc(currentUser.uid);
+      const snap = await userRef.get();
+      const existing = snap.exists ? snap.data() : {};
+      const payload = { fcmTokenWeb: token, fcmTokenPlatform: 'web' };
+      if(!existing.fcmTokenAndroid){
+        payload.fcmToken = token;
+      }
+      await userRef.set(payload, { merge:true });
       $('callNotifStatus').textContent = 'Call notifications are on — you\u2019ll be notified even with the app closed.';
     }
   }catch(e){ /* best-effort — worst case they tap the button again this once */ }
@@ -4570,7 +4579,15 @@ $('enableCallNotifsBtn').onclick = async ()=>{
     const messaging = firebase.messaging();
     const token = await messaging.getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
     if(!token){ toast('Couldn\u2019t get a notification token — try again'); return; }
-    await fbDb.collection('users').doc(currentUser.uid).set({ fcmToken: token, fcmTokenPlatform: 'web' }, { merge:true });
+    // Store web token separately. Do not overwrite primary fcmToken if an Android token already exists.
+    const userRef = fbDb.collection('users').doc(currentUser.uid);
+    const snap = await userRef.get();
+    const existing = snap.exists ? snap.data() : {};
+    const payload = { fcmTokenWeb: token, fcmTokenPlatform: 'web' };
+    if(!existing.fcmTokenAndroid){
+      payload.fcmToken = token;
+    }
+    await userRef.set(payload, { merge:true });
     $('callNotifStatus').textContent = 'Call notifications are on — you\u2019ll be notified even with the app closed.';
     toast('Call notifications enabled');
   }catch(e){
@@ -5699,18 +5716,15 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
   };
   sendOnce();
   if(notifyRepeatInterval) clearInterval(notifyRepeatInterval);
-  // Sending up to 6 rapid pushes in 30 seconds is exactly the burst pattern Chrome's
-  // own spam-notification detection is built to catch — it just cost this site its
-  // notification permission entirely, which is strictly worse than a single quiet
-  // alert ever was. Scaled back hard: one single follow-up, spaced well apart, not a
-  // rapid-fire sequence — a real, deliberate tradeoff of "rings a bit longer" against
-  // "doesn't get the whole site blocked by the browser."
+  // Two spaced follow-ups give the other device a better chance when the first FCM
+  // delivery is delayed by Doze / Samsung, without the rapid-fire pattern that
+  // previously got the whole site's notification permission revoked by Chrome.
   let repeats = 0;
   notifyRepeatInterval = setInterval(()=>{
     repeats++;
-    if(repeats >= 1){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; return; }
+    if(repeats >= 2){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; return; }
     sendOnce();
-  }, 15000);
+  }, 12000);
 }
 
 async function startRealCall(c){
@@ -6358,8 +6372,11 @@ async function setupCapacitorPush(){
       await Push.addListener('registration', async (token)=>{
         try{
           if(!token || !token.value || !currentUser || !fbDb) return;
+          // Keep both fields so web and Android never overwrite each other.
+          // Primary fcmToken is what the existing call-notify Worker reads.
           await fbDb.collection('users').doc(currentUser.uid).set({
             fcmToken: token.value,
+            fcmTokenAndroid: token.value,
             fcmTokenPlatform: 'android',
           }, { merge:true });
           $('callNotifStatus').textContent = 'Call notifications are on (Android) — calls can wake this phone.';
