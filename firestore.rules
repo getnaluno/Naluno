@@ -7,55 +7,35 @@ service cloud.firestore {
 
     // ---- Identity ----
     match /users/{uid} {
-      allow read: if isSignedIn();          // anyone signed in can look someone up
-      allow write: if isOwner(uid);         // only you can edit your own Callsign
+      allow read: if isSignedIn();
+      allow write: if isOwner(uid);
     }
 
-    // handles/{handle} maps a claimed handle -> uid. Enforces uniqueness: Firestore
-    // rejects a second create() at the same document path, so two people racing to
-    // claim "@nova" can't both succeed.
     match /handles/{handle} {
-      allow read: if true; // handle lookup needs to work before sign-in resolves
+      allow read: if true;
       allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
-      // Only the current owner can re-write their own handle doc (e.g. a redundant
-      // re-save) — this must NEVER let someone else's uid overwrite an existing claim.
       allow update: if isSignedIn()
         && resource.data.uid == request.auth.uid
         && request.resource.data.uid == request.auth.uid;
-      allow delete: if false; // not transferable in Phase 1 — revisit later
+      allow delete: if false;
     }
 
-    // ---- Broadcast (your signal) ----
-    // A segment at users/{uid}/signal/{segId} is one posted photo/video/text. Only the
-    // owner can post or remove their own; a real connection of theirs can read it —
-    // this is what makes Frequencies and Broadcast the same set of real people instead
-    // of two disconnected screens. This whole subcollection was missing from the rules
-    // entirely, which is why every post silently failed permission checks.
     match /users/{uid}/signal/{segId} {
       allow read: if isOwner(uid)
         || (isSignedIn() && exists(/databases/$(database)/documents/users/$(uid)/connections/$(request.auth.uid)));
       allow create, delete: if isOwner(uid);
     }
 
-    // Compass conversations are entirely private — no connection-visibility rule
-    // like signal has, since this isn't something meant to ever be shared.
     match /users/{uid}/compassMessages/{msgId} {
       allow read, create, delete: if isOwner(uid);
     }
 
-    // ---- Real connections (replacing hardcoded demo contacts) ----
-    // A connection doc at users/{uid}/connections/{otherUid} means "otherUid appears in
-    // uid's Frequencies list." Connecting is mutual and instant in Phase 1 (no request/
-    // accept flow yet) — writing the *other* person's mirror entry is only allowed when
-    // that entry's id is literally you, so you can only ever add yourself to someone
-    // else's list, never edit anything else about their account.
     match /users/{uid}/connections/{otherUid} {
       allow read: if isOwner(uid);
       allow write: if isSignedIn() && (isOwner(uid) || otherUid == request.auth.uid);
     }
 
     // ---- Wireline (1:1 threads) ----
-    // threadId convention: the two participant uids sorted and joined with "_".
     match /threads/{threadId} {
       allow read, update: if isSignedIn() && request.auth.uid in resource.data.participants;
       allow create: if isSignedIn() && request.auth.uid in request.resource.data.participants;
@@ -64,22 +44,13 @@ service cloud.firestore {
         allow read: if isSignedIn()
           && request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants;
         allow create: if isSignedIn() && request.resource.data.from == request.auth.uid;
-        // updates cover receipts (status) and reactions — both legitimately come from
-        // the *other* participant, not just the author, so this stays permissive for now.
         allow update: if isSignedIn()
           && request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants;
-        // Only the original sender can delete their own message — this was missing
-        // entirely, which is why the delete button did nothing but fail silently.
         allow delete: if isSignedIn() && resource.data.from == request.auth.uid;
       }
     }
 
-    // ---- Real calls (WebRTC signaling via Firestore) ----
-    // Each call is its own document — unlike threads, calls aren't a persistent channel;
-    // every attempt is a fresh doc. Candidate subcollections stay permissive (any signed-in
-    // user) rather than doing an extra get() lookup per ICE candidate write; the callId
-    // itself is an unguessable random doc ID, the same trust level the rest of this app
-    // currently runs on.
+    // ---- Real calls ----
     match /calls/{callId} {
       allow read: if isSignedIn() && (request.auth.uid == resource.data.callerUid || request.auth.uid == resource.data.calleeUid);
       allow create: if isSignedIn() && request.auth.uid == request.resource.data.callerUid;
@@ -93,20 +64,58 @@ service cloud.firestore {
       }
     }
 
-    // ---- Band (live shared frequency) ----
+    // ---- Band (market square — no owner, no delete) ----
+    // A Band is a place, not a group chat. Anyone who is a member can read and
+    // update membership (join/leave). Nobody — including the person who opened
+    // it — can delete the square itself.
+    function isBandMember(bandId) {
+      return isSignedIn()
+        && request.auth.uid in get(/databases/$(database)/documents/bands/$(bandId)).data.memberUids;
+    }
     match /bands/{bandId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid;
-      allow update: if isSignedIn(); // membership edits — tighten once "leave" ships server-side
+      allow create: if isSignedIn()
+        && request.resource.data.createdBy == request.auth.uid
+        && request.auth.uid in request.resource.data.memberUids;
+      // Membership edits, lastEmptiedAt, bell — never delete the square.
+      allow update: if isSignedIn()
+        && (request.auth.uid in resource.data.memberUids
+            || request.auth.uid in request.resource.data.memberUids);
+      allow delete: if false;
 
       match /presence/{uid} {
         allow read: if isSignedIn();
-        allow write: if isOwner(uid); // you can only mark *yourself* as tuned in
+        allow write: if isOwner(uid);
       }
       match /messages/{messageId} {
         allow read: if isSignedIn();
         allow create: if isSignedIn() && request.resource.data.from == request.auth.uid;
+        // Cleanup of expired square chatter (client may prune after settle window)
+        allow delete: if isSignedIn();
       }
+      match /invites/{inviteId} {
+        allow read: if isSignedIn()
+          && (request.auth.uid == resource.data.toUid
+              || request.auth.uid == resource.data.fromUid
+              || isBandMember(bandId));
+        allow create: if isSignedIn()
+          && request.resource.data.fromUid == request.auth.uid
+          && isBandMember(bandId);
+        allow update: if isSignedIn()
+          && (request.auth.uid == resource.data.toUid
+              || request.auth.uid == resource.data.fromUid);
+      }
+      // Mesh WebRTC signaling for in-square audio/video live
+      match /rtc/{signalId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.from == request.auth.uid;
+      }
+    }
+
+    // Personal inbox (square invites, etc.)
+    match /users/{uid}/notifications/{notifId} {
+      allow read, update: if isOwner(uid);
+      allow create: if isSignedIn();
     }
   }
 }

@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.08.09.7">
+<meta name="app-version" content="2026.08.09.10">
 <meta name="description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="A statement from the future — not another WhatsApp.">
@@ -990,23 +990,32 @@
           <div style="font-weight:700; font-family:var(--font-futuristic); font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" id="bandRoomName">—</div>
           <div style="font-size:11px; font-family:var(--font-mono); color:var(--mint);" id="bandRoomLiveCount">Quiet right now</div>
         </div>
-        <button id="bandLiveBtn" title="Go live" aria-label="Turn on camera" style="width:36px; height:36px; border-radius:50%; border:1px solid rgba(255,255,255,.25); background:rgba(13,15,23,.55); color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; flex-shrink:0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 8L21 5V19L15 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><rect x="3" y="6" width="12" height="12" rx="2" stroke="currentColor" stroke-width="2"/></svg></button>
         <button id="bandTuneBtn" style="padding:9px 16px; border-radius:999px; border:none; background:var(--mint); color:#0D0F17; font-family:var(--font-futuristic); font-weight:700; font-size:11.5px; letter-spacing:.05em; text-transform:uppercase; cursor:pointer; flex-shrink:0;">Tune in</button>
       </div>
-      <div id="bandRoster" style="display:flex; gap:14px; padding:14px 16px 4px; overflow-x:auto;"></div>
-      <div style="padding:2px 16px 6px; text-align:right;">
-        <span id="leaveBandForGoodLink" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(255,255,255,.4); cursor:pointer; text-decoration:underline; text-underline-offset:2px;">Leave this frequency for good</span>
+      <div id="bandRoster" style="display:flex; gap:14px; padding:10px 16px 4px; overflow-x:auto;"></div>
+      <div id="bandLiveStage" style="display:none; gap:8px; padding:6px 12px 8px; overflow-x:auto; min-height:0;"></div>
+      <div style="padding:4px 16px 6px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <span id="bandSettleNote" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(124,255,178,.75); flex:1; min-width:140px;">Market square · chatter clears 2h after the last person leaves</span>
+        <span id="bandInviteBtn" role="button" style="font-family:var(--font-mono); font-size:10.5px; color:var(--mint); cursor:pointer; text-decoration:underline; text-underline-offset:2px; white-space:nowrap;">Invite</span>
+        <span id="bandBellBtn" role="button" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(255,255,255,.55); cursor:pointer; text-decoration:underline; text-underline-offset:2px; white-space:nowrap;">Ring square</span>
+        <span id="leaveBandForGoodLink" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(255,255,255,.35); cursor:pointer; text-decoration:underline; text-underline-offset:2px; white-space:nowrap;">Leave for good</span>
       </div>
-      <div id="bandMessages" style="flex:1; overflow-y:auto; padding:10px 16px; display:flex; flex-direction:column; gap:10px;"></div>
-      <div style="padding:10px 14px calc(env(safe-area-inset-bottom,0px) + 14px); display:flex; gap:9px; border-top:1px solid rgba(255,255,255,.08); background:rgba(13,15,23,.55); backdrop-filter:blur(10px);">
-        <input id="bandInput" placeholder="Say something to the room…" style="flex:1; background:rgba(23,26,38,.8); border:1px solid var(--line); border-radius:20px; padding:11px 16px; color:var(--text); font-size:14px; outline:none; font-family:inherit;" />
-        <div class="ghost-btn" id="bandSendBtn" role="button" aria-label="Send to the room" style="background:var(--mint); border-color:var(--mint); color:#0D0F17; flex-shrink:0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" stroke="#0D0F17" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div id="bandMessages" style="flex:1; overflow-y:auto; padding:10px 16px; display:flex; flex-direction:column; gap:10px; min-height:80px;"></div>
+      <div style="padding:10px 12px calc(env(safe-area-inset-bottom,0px) + 12px); display:flex; flex-direction:column; gap:8px; border-top:1px solid rgba(255,255,255,.08); background:rgba(13,15,23,.6); backdrop-filter:blur(12px);">
+        <div style="display:flex; gap:8px; align-items:center;">
+          <input id="bandInput" placeholder="Say something in the moment…" style="flex:1; background:rgba(23,26,38,.8); border:1px solid var(--line); border-radius:20px; padding:11px 16px; color:var(--text); font-size:14px; outline:none; font-family:inherit;" />
+          <div class="ghost-btn" id="bandSendBtn" role="button" aria-label="Send" style="background:var(--mint); border-color:var(--mint); color:#0D0F17; flex-shrink:0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" stroke="#0D0F17" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        </div>
+        <div style="display:flex; gap:8px; justify-content:center;">
+          <button type="button" id="bandAudioBtn" title="Go live with audio" style="flex:1; max-width:140px; padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.2); background:rgba(13,15,23,.55); color:#fff; font-family:var(--font-mono); font-size:11px; cursor:pointer;">Audio live</button>
+          <button type="button" id="bandLiveBtn" title="Go live with video" style="flex:1; max-width:140px; padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.2); background:rgba(13,15,23,.55); color:#fff; font-family:var(--font-mono); font-size:11px; cursor:pointer;">Video live</button>
+        </div>
       </div>
       <div class="local-pip" id="bandSelfPip" style="display:none; position:absolute; right:16px; bottom:150px; z-index:6;">
         <video class="cam-blur" id="bandSelfBlur" autoplay playsinline muted></video>
         <div class="signature-glow" id="bandSignatureGlow"></div>
         <video class="cam-sharp" id="bandSelfSharp" autoplay playsinline muted></video>
-        <div style="position:absolute; left:6px; bottom:6px; font-family:var(--font-mono); font-size:9px; background:rgba(13,15,23,.75); padding:2px 6px; border-radius:999px; color:var(--mint);">LIVE</div>
+        <div style="position:absolute; left:6px; bottom:6px; font-family:var(--font-mono); font-size:9px; background:rgba(13,15,23,.75); padding:2px 6px; border-radius:999px; color:var(--mint);" id="bandSelfLiveTag">LIVE</div>
       </div>
     </div>
   </div>
@@ -1015,16 +1024,30 @@
   <div class="call-overlay" id="bandComposer">
     <div class="topbar" style="padding-top:20px;">
       <div class="back-btn" id="bandComposerClose" role="button" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
-      <span class="eyebrow">New frequency</span>
+      <span class="eyebrow">Open a square</span>
       <span style="width:36px;"></span>
     </div>
     <div class="tab-scroll" style="padding:16px 20px 24px;">
-      <div class="field" style="padding:0 0 16px;"><label>Name</label><input id="bandNameInput" placeholder="Name this frequency" /></div>
+      <div style="font-size:12.5px; color:var(--text-dim); margin:0 0 14px; line-height:1.45;">A Band is a market square — no owner, even you can’t delete it. Chatter clears 2 hours after the last person leaves.</div>
+      <div class="field" style="padding:0 0 16px;"><label>Name</label><input id="bandNameInput" placeholder="Name this square" /></div>
       <div class="section-label" style="padding:0 0 8px;">Vibe</div>
       <div class="filter-chip-row" id="bandVibeChipRow" style="padding:0 0 16px;"></div>
       <div class="section-label" style="padding:0 0 8px;">Who can tune in</div>
       <div id="bandMemberPicker"></div>
-      <button class="join-btn" id="createBandBtn" style="margin-top:20px;" disabled>Start this frequency</button>
+      <button class="join-btn" id="createBandBtn" style="margin-top:20px;" disabled>Open this square</button>
+    </div>
+  </div>
+
+  <!-- ===================== BAND INVITE (text or video) ===================== -->
+  <div class="call-overlay" id="bandInviteSheet">
+    <div class="topbar" style="padding-top:20px;">
+      <div class="back-btn" id="bandInviteClose" role="button" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
+      <span class="eyebrow">Invite to square</span>
+      <span style="width:36px;"></span>
+    </div>
+    <div class="tab-scroll" style="padding:16px 20px 24px;">
+      <div style="font-size:12.5px; color:var(--text-dim); margin:0 0 12px; line-height:1.45;">Invite a connection into <strong id="bandInviteBandName">this square</strong> — by text, or open a video call that brings them here.</div>
+      <div id="bandInvitePicker"></div>
     </div>
   </div>
 
@@ -1529,6 +1552,13 @@ function liveBandMembers(band){
     .filter(c => c && computeSignal(c).tier === 'strong');
 }
 function renderBandList(){
+  if(!bands.length){
+    $('bandList').innerHTML = `<div style="padding:28px 12px; text-align:center; color:var(--text-dim);">
+      <div style="font-family:var(--font-futuristic); font-size:15px; color:var(--text); margin-bottom:8px;">No squares yet</div>
+      <div style="font-size:13px; line-height:1.45;">Open a market square with your connections. No one owns it — chatter clears 2 hours after the last person leaves.</div>
+    </div>`;
+    return;
+  }
   $('bandList').innerHTML = bands.map(b=>{
     const grad = bandVibePreviewGradient[b.vibe] || bandVibePreviewGradient.aurora;
     if(b.isReal){
@@ -1539,7 +1569,7 @@ function renderBandList(){
           <div class="band-name">${escapeHtml(b.name)}</div>
           <div class="band-live-row">
             <div class="band-avatar-stack">${avatars}</div>
-            <span class="band-live-text">Tap to see who's tuned in</span>
+            <span class="band-live-text">Market square · tap to enter</span>
           </div>
         </div>
       </div>`;
@@ -1569,24 +1599,60 @@ renderBandList();
    created as an actual bands/{id} document with real memberUids, not a local array
    entry. Presence is a real subcollection (who's actually tuned in right now, not a
    signal-strength guess), and messages are real too — no simulated banter here, ever. */
-function addRealBandToLocalList(firestoreId, name, vibe, memberInfo, createdBy){
-  if(bands.some(b=>b.firestoreId===firestoreId)) return;
-  bands.push({ id: nextRealBandLocalId++, firestoreId, name, vibe, createdBy, isReal:true, memberInfo });
+const BAND_SETTLE_MS = 2 * 60 * 60 * 1000; // chatter clears 2h after the square empties
+
+function addRealBandToLocalList(firestoreId, name, vibe, memberInfo, createdBy, extra){
+  const existing = bands.find(b=>b.firestoreId===firestoreId);
+  if(existing){
+    existing.name = name;
+    existing.vibe = vibe;
+    existing.memberInfo = memberInfo;
+    if(extra) Object.assign(existing, extra);
+    return existing;
+  }
+  const row = { id: nextRealBandLocalId++, firestoreId, name, vibe, createdBy, isReal:true, memberInfo, ...(extra||{}) };
+  bands.push(row);
+  return row;
 }
+async function publishMyPublicBands(){
+  if(!fbDb || !currentUser) return;
+  try{
+    const mine = bands.filter(b => b.isReal && b.firestoreId).map(b => ({
+      id: b.firestoreId,
+      name: b.name,
+      vibe: b.vibe || 'aurora',
+    }));
+    await fbDb.collection('users').doc(currentUser.uid).set({ publicBands: mine }, { merge:true });
+  }catch(e){ /* visibility is best-effort */ }
+}
+let bandsMembershipUnsub = null;
 async function loadRealBands(uid){
   if(!fbDb) return;
-  try{
-    const snap = await fbDb.collection('bands').where('memberUids','array-contains',uid).get();
-    snap.forEach(doc=>{
+  if(bandsMembershipUnsub){ bandsMembershipUnsub(); bandsMembershipUnsub = null; }
+  // Live membership: invites that arrayUnion you show up without restarting the app.
+  bandsMembershipUnsub = fbDb.collection('bands').where('memberUids','array-contains',uid).onSnapshot(snap=>{
+    snap.docChanges().forEach(change=>{
+      const doc = change.doc;
       const d = doc.data();
       const memberInfo = (d.memberUids||[]).filter(u=>u!==uid).map(u=>{
         const c = contacts.find(cc=>cc.firebaseUid===u);
         return c ? { uid:u, name:c.name, color:c.color, initials:c.initials, photo:c.photo } : { uid:u, name:'Someone', color:'#8B90A8', initials:'?', photo:null };
       });
-      addRealBandToLocalList(doc.id, d.name, d.vibe, memberInfo, d.createdBy);
+      const lastEmptiedAt = d.lastEmptiedAt && d.lastEmptiedAt.toMillis ? d.lastEmptiedAt.toMillis() : (d.lastEmptiedAt || null);
+      if(change.type === 'removed'){
+        const idx = bands.findIndex(b=>b.firestoreId===doc.id);
+        if(idx>=0) bands.splice(idx,1);
+      } else {
+        addRealBandToLocalList(doc.id, d.name, d.vibe, memberInfo, d.createdBy, { lastEmptiedAt, memberUids: d.memberUids || [] });
+        if(change.type === 'added' && d.createdBy !== uid){
+          // Invited into a square that already existed
+          toast('You were invited to · ' + (d.name || 'a square'));
+        }
+      }
     });
     renderBandList();
-  }catch(e){ /* real bands just won't preload this session */ }
+    publishMyPublicBands();
+  }, ()=>{ /* real bands just won't live-update this session */ });
 }
 
 async function saveBands(){
@@ -1678,19 +1744,23 @@ $('createBandBtn').onclick = ()=>{
 async function createRealBand(name, vibe, memberContacts){
   try{
     const memberUids = memberContacts.map(c=>c.firebaseUid);
+    const allUids = [...memberUids, currentUser.uid];
     const docRef = await fbDb.collection('bands').add({
       name, vibe,
-      memberUids: [...memberUids, currentUser.uid],
+      memberUids: allUids,
       createdBy: currentUser.uid,
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      lastEmptiedAt: null,
+      // Market square: no owner privileges — createdBy is history only.
     });
     const memberInfo = memberContacts.map(c=>({ uid:c.firebaseUid, name:c.name, color:c.color, initials:c.initials, photo:c.photo }));
-    addRealBandToLocalList(docRef.id, name, vibe, memberInfo, currentUser.uid);
+    addRealBandToLocalList(docRef.id, name, vibe, memberInfo, currentUser.uid, { memberUids: allUids, lastEmptiedAt: null });
     renderBandList();
     closeBandComposer();
-    toast('Started ' + name);
+    await publishMyPublicBands();
+    toast('Opened square · ' + name);
   }catch(e){
-    toast(e.message || 'Couldn\u2019t start this frequency');
+    toast(e.message || 'Couldn\u2019t open this square');
   }
 }
 
@@ -3089,9 +3159,12 @@ function renderContacts(){
   }
 
   function rowHtml(c){
+    const bandBits = (c.publicBands && c.publicBands.length)
+      ? `<div style="font-family:var(--font-mono); font-size:10.5px; color:var(--mint); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(c.publicBands.slice(0,3).map(b=>b.name).join(' · '))}${c.publicBands.length>3?'…':''}</div>`
+      : '';
     return `<div class="contact-row" data-id="${c.id}">
       <div class="avatar" style="width:46px;height:46px;font-size:15px;${contactAvatarStyleAttr(c)}position:relative;">${c.photo&&c.photo.dataUrl?'':c.initials}${signalBarsHtml(c)}</div>
-      <div class="contact-meta"><div class="contact-name">${c.name}</div><div class="contact-sub">${signalSubText(c)}</div></div>
+      <div class="contact-meta"><div class="contact-name">${escapeHtml(c.name)}</div><div class="contact-sub">${signalSubText(c)}</div>${bandBits}</div>
       <div class="call-icon-btn" data-call="${c.id}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.3 1.8.6 2.7a2 2 0 01-.4 2.1L8 9.9a16 16 0 006 6l1.4-1.3a2 2 0 012.1-.4c.9.3 1.8.5 2.7.6a2 2 0 011.8 2.1z" stroke="currentColor" stroke-width="1.8"/></svg></div>
     </div>`;
   }
@@ -4411,29 +4484,36 @@ async function claimHandle(handle, uid){
 }
 
 let profileUnsub = null;
+function isCallsignEditing(){
+  const ed = $('callsignEdit');
+  return !!(ed && ed.style.display !== 'none');
+}
 function loadRealProfile(user){
   if(profileUnsub) profileUnsub();
-  // Frequencies never seemed to lose data because it was always a live listener, not
-  // a one-shot read racing against network timing with a fixed number of retries
-  // before giving up. This is that same pattern, applied here — permanently, not just
-  // patched. A live listener repaints instantly from local cache once persistence is
-  // warm, keeps retrying indefinitely on its own if the network is slow, and — this is
-  // the important part — once a real profile has successfully loaded, a later
-  // "document not found" can only mean it was actually deleted, which never happens in
-  // this app, so that case is deliberately ignored rather than allowed to blank the
-  // screen back to defaults.
+  // Live listener for profile. CRITICAL: while the edit form is open, never call
+  // applyProfileToUI / showCallsignView — presence heartbeats and other merges would
+  // overwrite mid-typing and kick the user out of the form ("text jumps away").
   let gotFirstSnapshot = false;
   profileUnsub = fbDb.collection('users').doc(user.uid).onSnapshot(doc=>{
     if(doc.exists){
-      currentProfile = { photo:null, ...DEFAULT_PROFILE, ...doc.data() };
-      applyProfileToUI(currentProfile);
-      showCallsignView();
+      const incoming = { photo:null, ...DEFAULT_PROFILE, ...doc.data() };
+      currentProfile = incoming;
+      if(isCallsignEditing()){
+        // Keep view-mode labels in sync for when they exit, but leave the form alone.
+        try{
+          $('viewName').textContent = incoming.name;
+          $('viewTagline').textContent = incoming.tagline;
+          $('viewNumber').textContent = incoming.number;
+          applyAvatarVisual($('viewAvatar'), incoming);
+        }catch(e){}
+      } else {
+        applyProfileToUI(currentProfile);
+        if(!gotFirstSnapshot) showCallsignView();
+      }
     } else if(!gotFirstSnapshot){
-      // Only a genuinely first-ever snapshot reporting "nothing here" counts as a real
-      // first-time sign-in — never a later one, which would just mean a transient gap.
       currentProfile = { ...DEFAULT_PROFILE, name: user.displayName || 'You', number: '@' + user.uid.slice(0,8) };
       applyProfileToUI(currentProfile);
-      showCallsignEdit(); // first-time setup opens straight into the form, same as before
+      showCallsignEdit();
     }
     gotFirstSnapshot = true;
   }, ()=>{
@@ -4444,6 +4524,7 @@ function loadRealProfile(user){
   loadRealBands(user.uid);
   startIncomingCallListener();
   startMissedCallListener();
+  startBandInviteListener();
   loadMySignal();
   maybeRefreshCallNotifToken();
   flushMessageQueue();
@@ -4506,6 +4587,8 @@ $('cancelCallsignBtn').onclick = ()=>{
 };
 
 $('saveProfileBtn').onclick = async ()=>{
+  const btn = $('saveProfileBtn');
+  if(btn && btn.dataset.saving === '1') return;
   const selectedSwatch = document.querySelector('#swatchRow .swatch.selected');
   const finalName = $('nameInput').value.trim() || 'You';
   const requestedHandle = normalizeHandle($('numberInput').value, finalName);
@@ -4517,17 +4600,39 @@ $('saveProfileBtn').onclick = async ()=>{
     photo: draftPhoto,
   };
 
+  // Instant UI feedback — never leave the user staring at a frozen button.
+  if(btn){
+    btn.dataset.saving = '1';
+    btn.dataset.prevLabel = btn.textContent;
+    btn.textContent = 'Saving…';
+    btn.style.opacity = '0.7';
+  }
+
   if(currentUser && fbDb){
     try{
-      const handleChanged = requestedHandle !== currentProfile.number;
-      nextProfile.number = handleChanged ? await claimHandle(requestedHandle, currentUser.uid) : currentProfile.number;
-      await fbDb.collection('users').doc(currentUser.uid).set(nextProfile, { merge:true });
+      const handleChanged = requestedHandle !== (currentProfile.number || '');
+      if(handleChanged){
+        nextProfile.number = await claimHandle(requestedHandle, currentUser.uid);
+      } else {
+        nextProfile.number = currentProfile.number || requestedHandle;
+      }
+      // Optimistic local apply so the form closes immediately.
       currentProfile = nextProfile;
       applyProfileToUI(currentProfile);
       showCallsignView();
       toast('Callsign saved');
+      // Persist in background — snapshot will confirm; we ignore mid-edit overwrites.
+      fbDb.collection('users').doc(currentUser.uid).set(nextProfile, { merge:true }).catch(e=>{
+        toast(e.message || 'Saved on device, but cloud sync failed');
+      });
     }catch(e){
       toast(e.message || 'Couldn\u2019t save — try a different handle');
+    }finally{
+      if(btn){
+        btn.dataset.saving = '0';
+        btn.textContent = btn.dataset.prevLabel || 'Save callsign';
+        btn.style.opacity = '';
+      }
     }
     return;
   }
@@ -4536,6 +4641,11 @@ $('saveProfileBtn').onclick = async ()=>{
   currentProfile = nextProfile;
   applyProfileToUI(currentProfile);
   showCallsignView();
+  if(btn){
+    btn.dataset.saving = '0';
+    btn.textContent = btn.dataset.prevLabel || 'Save callsign';
+    btn.style.opacity = '';
+  }
   if(storageAvailable){
     try{
       await window.storage.set('callsign:profile', JSON.stringify(currentProfile));
@@ -5539,29 +5649,102 @@ function mediaStreamIsLive(s){
   if(vids.length) return vids.some(t => t.readyState === 'live');
   return tracks.some(t => t.readyState === 'live');
 }
+async function listVideoInputDevices(){
+  try{
+    // Labels are empty until permission has been granted at least once.
+    const all = await navigator.mediaDevices.enumerateDevices();
+    return all.filter(d => d.kind === 'videoinput');
+  }catch(e){
+    return [];
+  }
+}
+function classifyCameraDevice(device){
+  const label = (device.label || '').toLowerCase();
+  if(/back|rear|environment|world|posterior|traseira|arrière|背面|後/.test(label)) return 'environment';
+  if(/front|user|face|selfie|anterior|frente|avant|前面|前/.test(label)) return 'user';
+  // Some Android builds expose facing via groupId patterns; leave unknown.
+  return null;
+}
+async function resolveCameraDeviceId(wantFacing){
+  const devices = await listVideoInputDevices();
+  if(!devices.length) return null;
+  // Prefer explicit label match.
+  const labeled = devices.find(d => classifyCameraDevice(d) === wantFacing);
+  if(labeled && labeled.deviceId) return labeled.deviceId;
+  // If only two cameras and one is clearly front, pick the other for rear.
+  if(devices.length >= 2 && wantFacing === 'environment'){
+    const front = devices.find(d => classifyCameraDevice(d) === 'user');
+    const other = devices.find(d => front && d.deviceId !== front.deviceId);
+    if(other) return other.deviceId;
+    // Common mobile layout: index 0 = front, index 1 = rear
+    return devices[1].deviceId || null;
+  }
+  if(devices.length >= 2 && wantFacing === 'user'){
+    const rear = devices.find(d => classifyCameraDevice(d) === 'environment');
+    const other = devices.find(d => rear && d.deviceId !== rear.deviceId);
+    if(other) return other.deviceId;
+    return devices[0].deviceId || null;
+  }
+  return devices[0].deviceId || null;
+}
 async function flipCamera(){
   if(!stream){ toast('Turn on the camera first'); return; }
-  preferredVideoDeviceId = null;
   const next = cameraFacingMode === 'user' ? 'environment' : 'user';
-  cameraFacingMode = next;
+  preferredVideoDeviceId = null;
   try{
-    let newStream;
-    try{
-      newStream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { exact: next },
-          width: { ideal: 2560 },
-          height: { ideal: 1440 },
-          frameRate: { ideal: 30, max: 60 },
-        },
-        audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true },
-      });
-    }catch(e){
+    let newStream = null;
+    // 1) Prefer concrete deviceId from enumeration (most reliable on Android).
+    const deviceId = await resolveCameraDeviceId(next);
+    if(deviceId){
+      try{
+        newStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            deviceId: { exact: deviceId },
+            width: { ideal: 2560 },
+            height: { ideal: 1440 },
+            frameRate: { ideal: 30, max: 60 },
+          },
+          audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true },
+        });
+        preferredVideoDeviceId = deviceId;
+      }catch(e){
+        console.warn('[camera] deviceId open failed, trying facingMode', e);
+      }
+    }
+    // 2) facingMode exact
+    if(!newStream){
+      try{
+        newStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { exact: next },
+            width: { ideal: 2560 },
+            height: { ideal: 1440 },
+            frameRate: { ideal: 30, max: 60 },
+          },
+          audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true },
+        });
+      }catch(e){
+        console.warn('[camera] facingMode exact failed', e);
+      }
+    }
+    // 3) facingMode ideal
+    if(!newStream){
+      cameraFacingMode = next;
       newStream = await requestHighQualityStream();
     }
+
     stream.getTracks().forEach(t=>{ try{ t.stop(); }catch(_){} });
     stream = newStream;
+    cameraFacingMode = next;
     syncFacingModeFromTrack();
+    // If the track still reports the opposite facing, force our intent for mirroring.
+    try{
+      const fm = stream.getVideoTracks()[0] && stream.getVideoTracks()[0].getSettings
+        ? stream.getVideoTracks()[0].getSettings().facingMode
+        : null;
+      if(!fm) cameraFacingMode = next; // keep intended mode when device omits facingMode
+    }catch(e){}
+
     const inv = $('incomingSelfVideo');
     if(inv){
       inv.srcObject = stream;
@@ -5574,7 +5757,7 @@ async function flipCamera(){
     toast(cameraFacingMode === 'environment' ? 'Rear camera' : 'Front camera');
     runGreenroom();
   }catch(e){
-    cameraFacingMode = next === 'user' ? 'environment' : 'user';
+    console.error('[camera] flip failed', e);
     toast('Couldn\u2019t switch camera on this device');
   }
 }
@@ -6776,6 +6959,12 @@ let realBandLiveMembers = []; // resolved {uid,name,color,initials} for who's ac
 function activeBand(){ return bands.find(b=>b.id===activeBandId); }
 
 function bandMessageHtml(m){
+  if(m.type === 'system'){
+    return `<div style="text-align:center; font-family:var(--font-mono); font-size:11px; color:rgba(255,255,255,.45); padding:4px 8px;">${escapeHtml(m.text)}</div>`;
+  }
+  if(m.type === 'invite'){
+    return `<div class="msg-row them"><div style="font-size:10.5px; color:var(--mint); margin-bottom:3px; padding:0 3px;">Invite</div><div class="msg-bubble" style="border:1px solid rgba(124,255,178,.35);">${escapeHtml(m.text)}</div><div class="msg-time">${formatClockTime(m.ts)}</div></div>`;
+  }
   if(m.fromMe){
     return `<div class="msg-row me"><div class="msg-bubble">${escapeHtml(m.text)}</div><div class="msg-time">${formatClockTime(m.ts)}</div></div>`;
   }
@@ -6790,29 +6979,73 @@ function bandMessageHtml(m){
   }
   return `<div class="msg-row them"><div style="font-size:10.5px; color:var(--text-dim); margin-bottom:3px; padding:0 3px;">${escapeHtml(name)}</div><div class="msg-bubble">${escapeHtml(m.text)}</div><div class="msg-time">${formatClockTime(m.ts)}</div></div>`;
 }
+function bandIsSettled(b){
+  if(!b || !b.lastEmptiedAt) return false;
+  const liveCount = (b.isReal ? realBandLiveMembers.length : 0) + (amTunedIn ? 1 : 0);
+  if(liveCount > 0) return false;
+  return (Date.now() - b.lastEmptiedAt) >= BAND_SETTLE_MS;
+}
+function updateBandSettleNote(){
+  const el = $('bandSettleNote'); if(!el) return;
+  const b = activeBand();
+  if(!b){ el.textContent = 'Market square'; return; }
+  const liveCount = (b.isReal ? realBandLiveMembers.length : 0) + (amTunedIn ? 1 : 0);
+  if(liveCount > 0){
+    el.textContent = 'Square is open · chatter stays while people are here';
+    return;
+  }
+  if(b.lastEmptiedAt){
+    const left = BAND_SETTLE_MS - (Date.now() - b.lastEmptiedAt);
+    if(left <= 0){
+      el.textContent = 'Square settled · next voices start a fresh page';
+      return;
+    }
+    const mins = Math.ceil(left / 60000);
+    if(mins >= 60){
+      const h = Math.floor(mins/60), m = mins % 60;
+      el.textContent = 'Settles in ' + h + 'h' + (m ? (' ' + m + 'm') : '') + ' · then chatter clears';
+    } else {
+      el.textContent = 'Settles in ' + mins + 'm · then chatter clears';
+    }
+    return;
+  }
+  el.textContent = 'Market square · chatter clears 2h after the last person leaves';
+}
 function renderBandMessages(){
-  const msgs = bandMessages[activeBandId] || [];
+  const b = activeBand();
+  let msgs = bandMessages[activeBandId] || [];
+  // After the settle window, the square is a blank page again.
+  if(b && bandIsSettled(b)) msgs = [];
+  else if(b && b.lastEmptiedAt){
+    // Only keep chatter from after the last full settle (previous session already cleared).
+    // While still inside the 2h window, keep everything currently on the square.
+  }
   if(msgs.length===0){
-    $('bandMessages').innerHTML = `<div class="msg-empty"><span style="font-family:var(--font-futuristic); font-size:14px; color:#fff;">Quiet on this frequency</span><span style="font-size:12.5px; color:rgba(255,255,255,.6);">Tune in and say something.</span></div>`;
+    $('bandMessages').innerHTML = `<div class="msg-empty"><span style="font-family:var(--font-futuristic); font-size:14px; color:#fff;">Quiet on this square</span><span style="font-size:12.5px; color:rgba(255,255,255,.6);">Tune in and say something — it clears 2h after the last person leaves.</span></div>`;
+    updateBandSettleNote();
     return;
   }
   $('bandMessages').innerHTML = msgs.map(bandMessageHtml).join('');
   $('bandMessages').scrollTop = $('bandMessages').scrollHeight;
+  updateBandSettleNote();
 }
 function renderBandRoster(){
   const b = activeBand(); if(!b) return;
   const live = b.isReal ? realBandLiveMembers : liveBandMembers(b);
-  let html = live.map(c=>`
-    <div style="display:flex; flex-direction:column; align-items:center; gap:5px; flex-shrink:0;">
-      <div class="avatar" style="width:44px;height:44px;font-size:14px;${contactAvatarStyleAttr(c)}position:relative;">${c.photo&&c.photo.dataUrl?'':c.initials}${b.isReal ? '' : signalBarsHtml(c)}</div>
-      <span style="font-size:10.5px; color:rgba(255,255,255,.75); font-family:var(--font-mono);">${escapeHtml((c.name||'').split(' ')[0])}</span>
-    </div>`).join('');
+  let html = live.map(c=>{
+    const badge = c.live ? (c.liveMode === 'video' ? ' · video' : (c.liveMode === 'audio' ? ' · audio' : ' · live')) : '';
+    return `<div style="display:flex; flex-direction:column; align-items:center; gap:5px; flex-shrink:0;">
+      <div class="avatar" style="width:44px;height:44px;font-size:14px;${contactAvatarStyleAttr(c)}position:relative; ${c.live?'box-shadow:0 0 0 2px var(--mint);':''}">${c.photo&&c.photo.dataUrl?'':c.initials}${b.isReal ? '' : signalBarsHtml(c)}</div>
+      <span style="font-size:10.5px; color:${c.live?'var(--mint)':'rgba(255,255,255,.75)'}; font-family:var(--font-mono);">${escapeHtml((c.name||'').split(' ')[0])}${badge}</span>
+    </div>`;
+  }).join('');
   if(amTunedIn){
     const myStyle = contactAvatarStyleAttr(currentProfile.photo && currentProfile.photo.dataUrl ? currentProfile : { color:'var(--mint)' });
     const myText = (currentProfile.photo && currentProfile.photo.dataUrl) ? '' : 'You';
+    const meBadge = bandLiveMode ? (bandLiveMode === 'video' ? ' · video' : ' · audio') : '';
     html += `<div style="display:flex; flex-direction:column; align-items:center; gap:5px; flex-shrink:0;">
-      <div class="avatar" style="width:44px;height:44px;font-size:13px;${myStyle}color:#0D0F17;">${myText}</div>
-      <span style="font-size:10.5px; color:var(--mint); font-family:var(--font-mono);">You</span>
+      <div class="avatar" style="width:44px;height:44px;font-size:13px;${myStyle}color:#0D0F17; ${bandLiveMode?'box-shadow:0 0 0 2px var(--mint);':''}">${myText}</div>
+      <span style="font-size:10.5px; color:var(--mint); font-family:var(--font-mono);">You${meBadge}</span>
     </div>`;
   }
   $('bandRoster').innerHTML = html || `<span style="color:rgba(255,255,255,.6); font-size:12.5px; padding:6px 2px;">No one's tuned in right now.</span>`;
@@ -6869,6 +7102,21 @@ function armBandAmbientReply(){
   }, 6000 + Math.random()*9000);
 }
 
+let bandMetaUnsub = null;
+let bandSettleTimer = null;
+let bandInviteUnsub = null;
+
+async function pruneSettledBandMessages(bandRef, b){
+  if(!bandRef || !b || !bandIsSettled(b)) return;
+  try{
+    const snap = await bandRef.collection('messages').limit(80).get();
+    if(snap.empty) return;
+    const batch = fbDb.batch();
+    snap.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }catch(e){ /* prune is best-effort */ }
+}
+
 function openBandRoom(id){
   const b = bands.find(x=>x.id===id); if(!b) return;
   activeBandId = id;
@@ -6876,70 +7124,138 @@ function openBandRoom(id){
   $('bandRoomName').textContent = b.name;
   $('bandTuneBtn').textContent = 'Tune in';
   $('bandTuneBtn').style.background = 'var(--mint)'; $('bandTuneBtn').style.color = '#0D0F17';
-  $('bandLiveBtn').classList.remove('active');
+  bandLiveMode = null;
+  if(typeof setBandLiveButtons === 'function') setBandLiveButtons();
 
   if(bandPresenceUnsub){ bandPresenceUnsub(); bandPresenceUnsub = null; }
   if(bandMessagesUnsub){ bandMessagesUnsub(); bandMessagesUnsub = null; }
+  if(bandMetaUnsub){ bandMetaUnsub(); bandMetaUnsub = null; }
+  if(bandSettleTimer){ clearInterval(bandSettleTimer); bandSettleTimer = null; }
 
   if(b.isReal && b.firestoreId && fbDb && currentUser){
     realBandLiveMembers = [];
     renderBandRoster();
     renderBandMessages();
     const bandRef = fbDb.collection('bands').doc(b.firestoreId);
+
+    bandMetaUnsub = bandRef.onSnapshot(doc=>{
+      if(!doc.exists) return;
+      const d = doc.data();
+      b.name = d.name || b.name;
+      b.vibe = d.vibe || b.vibe;
+      b.memberUids = d.memberUids || [];
+      b.lastEmptiedAt = d.lastEmptiedAt && d.lastEmptiedAt.toMillis ? d.lastEmptiedAt.toMillis() : (d.lastEmptiedAt || null);
+      $('bandRoomName').textContent = b.name;
+      // Square Bell — someone rang while you're looking at the room
+      if(d.bellAt && d.bellBy && d.bellBy !== currentUser.uid){
+        const bellMs = d.bellAt.toMillis ? d.bellAt.toMillis() : d.bellAt;
+        if(bellMs && Date.now() - bellMs < 60000 && b._lastBellSeen !== bellMs){
+          b._lastBellSeen = bellMs;
+          const who = (b.memberInfo||[]).find(m=>m.uid===d.bellBy);
+          toast((who ? who.name.split(' ')[0] : 'Someone') + ' rang the square');
+        }
+      }
+      updateBandSettleNote();
+      if(bandIsSettled(b)) pruneSettledBandMessages(bandRef, b);
+      renderBandMessages();
+    }, ()=>{});
+
     bandPresenceUnsub = bandRef.collection('presence').onSnapshot(snap=>{
-      realBandLiveMembers = snap.docs
-        .filter(d=>d.id !== currentUser.uid)
-        .map(d=>{
-          const info = (b.memberInfo||[]).find(m=>m.uid===d.id);
-          return info || { uid:d.id, name:'Someone', color:'#8B90A8', initials:'?' };
+      const others = snap.docs.filter(d=>d.id !== currentUser.uid);
+      realBandLiveMembers = others.map(d=>{
+        const info = (b.memberInfo||[]).find(m=>m.uid===d.id);
+        const data = d.data() || {};
+        return Object.assign(info || { uid:d.id, name:'Someone', color:'#8B90A8', initials:'?' }, {
+          live: !!data.live,
+          liveMode: data.mode || null,
         });
+      });
+      const totalPresent = others.length + (amTunedIn ? 1 : 0);
+      // Market-square settle clock: when the last person leaves, start the 2h window.
+      if(totalPresent === 0){
+        if(!b.lastEmptiedAt){
+          b.lastEmptiedAt = Date.now();
+          bandRef.set({ lastEmptiedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge:true }).catch(()=>{});
+        }
+      } else if(b.lastEmptiedAt){
+        // Square reoccupied before settle — keep chatter, clear the empty stamp.
+        b.lastEmptiedAt = null;
+        bandRef.set({ lastEmptiedAt: null }, { merge:true }).catch(()=>{});
+      }
       renderBandRoster();
+      updateBandSettleNote();
+      // Mesh: connect to anyone else who is audio/video live right now
+      if(bandLiveMode){
+        others.forEach(d=>{
+          const data = d.data() || {};
+          if(data.live) bandMaybeOffer(d.id);
+          else if(bandRtcPeers[d.id]) closeBandRtcPeer(d.id);
+        });
+      }
     }, ()=>{ /* presence just won't update this session */ });
-    bandMessagesUnsub = bandRef.collection('messages').orderBy('ts','asc').onSnapshot(snap=>{
-      bandMessages[id] = snap.docs.map(d=>{
+
+    bandMessagesUnsub = bandRef.collection('messages').orderBy('ts','asc').onSnapshot(async snap=>{
+      const rows = snap.docs.map(d=>{
         const m = d.data();
         return {
           fromMe: m.from === currentUser.uid,
           fromUid: m.from,
-          text: m.text,
+          text: m.text || '',
+          type: m.type || 'text',
+          encrypted: !!m.encrypted,
+          envelopes: m.envelopes || null,
           ts: m.ts && m.ts.toMillis ? m.ts.toMillis() : Date.now(),
         };
       });
+      // Decrypt E2E envelopes in parallel for this square
+      await Promise.all(rows.map(async row=>{
+        if(row.type === 'system' || row.type === 'invite') return;
+        if(row.encrypted && row.envelopes){
+          row.text = await decryptBandMessage(row);
+        }
+      }));
+      bandMessages[id] = rows;
       renderBandMessages();
     }, ()=>{ /* messages just won't sync this session */ });
+
+    bandSettleTimer = setInterval(updateBandSettleNote, 30000);
   } else {
     renderBandRoster();
     renderBandMessages();
   }
   $('bandRoom').classList.add('active');
   startBandAmbientAnim(b.vibe);
+  updateBandSettleNote();
 }
 function closeBandRoom(){
   stopBandAmbientAnim();
   clearBandAmbientTimer();
-  stopBandLive();
+  stopBandLive(true);
   const b = activeBand();
   if(amTunedIn && b && b.isReal && b.firestoreId && fbDb && currentUser){
     fbDb.collection('bands').doc(b.firestoreId).collection('presence').doc(currentUser.uid).delete().catch(()=>{});
   }
   if(bandPresenceUnsub){ bandPresenceUnsub(); bandPresenceUnsub = null; }
   if(bandMessagesUnsub){ bandMessagesUnsub(); bandMessagesUnsub = null; }
+  if(bandMetaUnsub){ bandMetaUnsub(); bandMetaUnsub = null; }
+  if(bandSettleTimer){ clearInterval(bandSettleTimer); bandSettleTimer = null; }
+  if(bandRtcUnsub){ bandRtcUnsub(); bandRtcUnsub = null; }
   $('bandRoom').classList.remove('active');
   amTunedIn = false;
   activeBandId = null;
 }
 $('bandRoomBack').onclick = closeBandRoom;
-/* Leaving is the only removal action there is, for whoever tuned in and whoever started it
-   alike. It only ever ends your own access to this frequency, never anyone else's — there's
-   no concept of a creator with special standing to end it for other people. For a real
-   band this means removing yourself from memberUids, not deleting anyone else's access. */
-$('leaveBandForGoodLink').onclick = ()=>{
+/* Leave for good = only you exit membership. The square itself cannot be deleted —
+   not even by whoever opened it. That is the market-square rule. */
+$('leaveBandForGoodLink').onclick = async ()=>{
   const b = activeBand(); if(!b) return;
   const name = b.name;
   if(b.isReal && b.firestoreId && fbDb && currentUser){
-    fbDb.collection('bands').doc(b.firestoreId).update({
-      memberUids: firebase.firestore.FieldValue.arrayRemove(currentUser.uid)
-    }).catch(()=>{});
+    try{
+      await fbDb.collection('bands').doc(b.firestoreId).update({
+        memberUids: firebase.firestore.FieldValue.arrayRemove(currentUser.uid)
+      });
+    }catch(e){}
   }
   const idx = bands.findIndex(x=>x.id===b.id);
   if(idx>=0) bands.splice(idx,1);
@@ -6947,19 +7263,29 @@ $('leaveBandForGoodLink').onclick = ()=>{
   if(!b.isReal) saveBands();
   closeBandRoom();
   renderBandList();
-  toast('Left ' + name);
+  publishMyPublicBands();
+  toast('Left ' + name + ' · square remains for the others');
 };
 $('bandTuneBtn').onclick = ()=>{
   amTunedIn = !amTunedIn;
-  markMyActivity(); // tuning in is real evidence of your own reachability, same as anywhere else
-  $('bandTuneBtn').textContent = amTunedIn ? 'Leave' : 'Tune in';
+  markMyActivity();
+  $('bandTuneBtn').textContent = amTunedIn ? 'Step out' : 'Tune in';
   $('bandTuneBtn').style.background = amTunedIn ? 'var(--surface-2)' : 'var(--mint)';
   $('bandTuneBtn').style.color = amTunedIn ? 'var(--text)' : '#0D0F17';
   const b = activeBand();
   if(b && b.isReal && b.firestoreId && fbDb && currentUser){
     const presenceRef = fbDb.collection('bands').doc(b.firestoreId).collection('presence').doc(currentUser.uid);
-    if(amTunedIn){ presenceRef.set({ tunedInAt: firebase.firestore.FieldValue.serverTimestamp() }).catch(()=>{}); bumpTodayActivity(); }
-    else presenceRef.delete().catch(()=>{});
+    if(amTunedIn){
+      presenceRef.set({ tunedInAt: firebase.firestore.FieldValue.serverTimestamp() }).catch(()=>{});
+      bumpTodayActivity();
+      // Re-occupy clears settle stamp so chatter stays.
+      if(b.lastEmptiedAt){
+        b.lastEmptiedAt = null;
+        fbDb.collection('bands').doc(b.firestoreId).set({ lastEmptiedAt: null }, { merge:true }).catch(()=>{});
+      }
+    } else {
+      presenceRef.delete().catch(()=>{});
+    }
   } else if(amTunedIn){
     armBandAmbientReply();
     bumpTodayActivity();
@@ -6969,61 +7295,512 @@ $('bandTuneBtn').onclick = ()=>{
   if(!amTunedIn) stopBandLive();
   renderBandRoster();
   renderBandList();
+  updateBandSettleNote();
 };
 
-/* ---------------- BAND LIVE (optional camera) ----------------
-   Text is the baseline — always on, zero friction, which is what makes "no start button"
-   work. Video is opt-in per person on top of that: your camera, masked the same way
-   Greenroom does it, floating over the ambient scene. Other members stay avatars — there's
-   no second real device in this prototype, and faking their video would be dishonest. */
+/* -------- Square Bell: nudge members that the square has a pulse -------- */
+$('bandBellBtn').onclick = ()=>{
+  const b = activeBand();
+  if(!b || !b.isReal || !b.firestoreId || !fbDb || !currentUser){
+    toast('Ring works on live squares');
+    return;
+  }
+  if(!amTunedIn){ toast('Tune in first'); return; }
+  fbDb.collection('bands').doc(b.firestoreId).set({
+    bellAt: firebase.firestore.FieldValue.serverTimestamp(),
+    bellBy: currentUser.uid,
+  }, { merge:true }).then(()=> toast('Square rang')).catch(()=> toast('Couldn\u2019t ring'));
+};
+
+/* -------- Invite to square (text via Wireline, or video call) -------- */
+function openBandInviteSheet(){
+  const b = activeBand();
+  if(!b || !b.isReal){ toast('Invites work on live squares'); return; }
+  $('bandInviteBandName').textContent = b.name;
+  const already = new Set(b.memberUids || (b.memberInfo||[]).map(m=>m.uid) || []);
+  already.add(currentUser ? currentUser.uid : '');
+  const candidates = contacts.filter(c => c.isReal && c.firebaseUid && !already.has(c.firebaseUid));
+  if(!candidates.length){
+    $('bandInvitePicker').innerHTML = `<div style="color:var(--text-dim); font-size:13px; padding:12px 0;">Everyone in your frequencies is already on this square — or you need a real connection first.</div>`;
+  } else {
+    $('bandInvitePicker').innerHTML = candidates.map(c=>`
+      <div class="contact-row" style="cursor:default;">
+        <div class="avatar" style="width:40px;height:40px;font-size:13px;${contactAvatarStyleAttr(c)}">${c.photo&&c.photo.dataUrl?'':c.initials}</div>
+        <div class="contact-meta"><div class="contact-name">${escapeHtml(c.name)}</div><div class="contact-sub">${escapeHtml(c.handle||'')}</div></div>
+        <button data-inv-text="${c.id}" style="padding:8px 10px; border-radius:999px; border:1px solid var(--line); background:var(--surface-2); color:var(--text); font-size:11px; font-family:var(--font-mono); cursor:pointer;">Text</button>
+        <button data-inv-video="${c.id}" style="padding:8px 10px; border-radius:999px; border:none; background:var(--mint); color:#0D0F17; font-size:11px; font-family:var(--font-mono); font-weight:700; cursor:pointer;">Video</button>
+      </div>`).join('');
+    $('bandInvitePicker').querySelectorAll('[data-inv-text]').forEach(el=>{
+      el.onclick = ()=> inviteToBand(parseInt(el.dataset.invText), 'text');
+    });
+    $('bandInvitePicker').querySelectorAll('[data-inv-video]').forEach(el=>{
+      el.onclick = ()=> inviteToBand(parseInt(el.dataset.invVideo), 'video');
+    });
+  }
+  $('bandInviteSheet').classList.add('active');
+}
+$('bandInviteBtn').onclick = openBandInviteSheet;
+$('bandInviteClose').onclick = ()=> $('bandInviteSheet').classList.remove('active');
+
+async function inviteToBand(contactId, mode){
+  const b = activeBand();
+  const c = contacts.find(x=>x.id===contactId);
+  if(!b || !c || !c.firebaseUid || !fbDb || !currentUser) return;
+  try{
+    // Membership: add them to the square so they can open it.
+    await fbDb.collection('bands').doc(b.firestoreId).update({
+      memberUids: firebase.firestore.FieldValue.arrayUnion(c.firebaseUid)
+    });
+    b.memberUids = Array.from(new Set([...(b.memberUids||[]), c.firebaseUid]));
+    if(!(b.memberInfo||[]).some(m=>m.uid===c.firebaseUid)){
+      b.memberInfo = b.memberInfo || [];
+      b.memberInfo.push({ uid:c.firebaseUid, name:c.name, color:c.color, initials:c.initials, photo:c.photo });
+    }
+    // Invite record on the band
+    await fbDb.collection('bands').doc(b.firestoreId).collection('invites').add({
+      fromUid: currentUser.uid,
+      toUid: c.firebaseUid,
+      mode: mode || 'text',
+      status: 'sent',
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    // Inbox notification — surfaces even if they're not in Band right now
+    await fbDb.collection('users').doc(c.firebaseUid).collection('notifications').add({
+      type: 'band_invite',
+      bandId: b.firestoreId,
+      bandName: b.name,
+      fromUid: currentUser.uid,
+      fromName: (currentProfile && currentProfile.name) || 'Someone',
+      mode: mode || 'text',
+      read: false,
+      ts: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    // System note in the square
+    await fbDb.collection('bands').doc(b.firestoreId).collection('messages').add({
+      from: currentUser.uid,
+      type: 'system',
+      text: (currentProfile.name || 'Someone') + ' invited ' + c.name.split(' ')[0],
+      ts: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    // Wireline text invite
+    const inviteText = 'Join me on the square “' + b.name + '” in Band — open Band and tune in. Chatter is in the moment and clears 2h after the last person leaves.';
+    await sendRealMessage(c, { type:'text', text: inviteText }, 'Square invite · ' + b.name);
+    // Push wake (reuses call-notify worker title/body path)
+    try{
+      const idToken = await currentUser.getIdToken();
+      fetch(CALL_NOTIFY_WORKER_URL, {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          calleeUid: c.firebaseUid,
+          callerName: (currentProfile && currentProfile.name) || 'Someone',
+          type: 'band_invite',
+          title: ((currentProfile && currentProfile.name) || 'Someone') + ' invited you to a square',
+          body: b.name + ' · open Band to tune in',
+          bandId: b.firestoreId,
+        }),
+      }).catch(()=>{});
+    }catch(e){}
+    $('bandInviteSheet').classList.remove('active');
+    toast(mode === 'video' ? ('Invited ' + c.name.split(' ')[0] + ' · opening video') : ('Invited ' + c.name.split(' ')[0] + ' · notified'));
+    if(mode === 'video'){
+      setTimeout(()=> startOutgoingCall(c.id), 400);
+    }
+  }catch(e){
+    toast(e.message || 'Couldn\u2019t invite');
+  }
+}
+
+/* Listen for square invites in the personal inbox */
+let bandNotifUnsub = null;
+function startBandInviteListener(){
+  if(!fbDb || !currentUser) return;
+  if(bandNotifUnsub){ bandNotifUnsub(); bandNotifUnsub = null; }
+  bandNotifUnsub = fbDb.collection('users').doc(currentUser.uid).collection('notifications')
+    .where('type','==','band_invite')
+    .orderBy('ts','desc')
+    .limit(10)
+    .onSnapshot(snap=>{
+      snap.docChanges().forEach(ch=>{
+        if(ch.type !== 'added') return;
+        const n = ch.doc.data();
+        if(n.read) return;
+        const ts = n.ts && n.ts.toMillis ? n.ts.toMillis() : 0;
+        if(ts && Date.now() - ts > 3600000) return; // ignore older than 1h on first paint
+        toast((n.fromName || 'Someone') + ' invited you to · ' + (n.bandName || 'a square'));
+        ch.doc.ref.update({ read: true }).catch(()=>{});
+        // Ensure the band appears in the local list
+        if(n.bandId && !bands.some(b=>b.firestoreId===n.bandId)){
+          addRealBandToLocalList(n.bandId, n.bandName || 'Square', 'aurora', [], n.fromUid, { memberUids: [currentUser.uid] });
+          renderBandList();
+        }
+      });
+    }, ()=>{ /* notifications optional */ });
+}
+
+/* ---------------- BAND LIVE — text · audio · video in the moment ----------------
+   TikTok-Live energy, market-square rules: conversation is ephemeral, multi-person,
+   and opt-in per mode. Mesh WebRTC between whoever is live right now (small groups). */
 let bandStream = null;
+let bandLiveMode = null; // null | 'audio' | 'video'
 let bandCameraRequestPending = null;
-async function toggleBandLive(){
-  if($('bandLiveBtn').classList.contains('active')){ stopBandLive(); return; }
+let bandRtcPeers = {}; // { [remoteUid]: RTCPeerConnection }
+let bandRtcUnsub = null;
+let bandRemoteStreams = {}; // { [remoteUid]: MediaStream }
+let bandMakingOffer = {};
+
+function setBandLiveButtons(){
+  const audioOn = bandLiveMode === 'audio';
+  const videoOn = bandLiveMode === 'video';
+  const ab = $('bandAudioBtn'), vb = $('bandLiveBtn');
+  if(ab){
+    ab.classList.toggle('active', audioOn);
+    ab.style.background = audioOn ? 'var(--mint)' : 'rgba(13,15,23,.55)';
+    ab.style.color = audioOn ? '#0D0F17' : '#fff';
+    ab.style.borderColor = audioOn ? 'var(--mint)' : 'rgba(255,255,255,.2)';
+    ab.textContent = audioOn ? 'Audio on' : 'Audio live';
+  }
+  if(vb){
+    vb.classList.toggle('active', videoOn);
+    vb.style.background = videoOn ? 'var(--mint)' : 'rgba(13,15,23,.55)';
+    vb.style.color = videoOn ? '#0D0F17' : '#fff';
+    vb.style.borderColor = videoOn ? 'var(--mint)' : 'rgba(255,255,255,.2)';
+    vb.textContent = videoOn ? 'Video on' : 'Video live';
+  }
+  const tag = $('bandSelfLiveTag');
+  if(tag) tag.textContent = videoOn ? 'VIDEO' : (audioOn ? 'AUDIO' : 'LIVE');
+}
+
+function renderBandLiveStage(){
+  const stage = $('bandLiveStage'); if(!stage) return;
+  const uids = Object.keys(bandRemoteStreams);
+  if(!uids.length && bandLiveMode !== 'video'){
+    stage.style.display = 'none';
+    stage.innerHTML = '';
+    return;
+  }
+  stage.style.display = 'flex';
+  stage.innerHTML = uids.map(uid=>{
+    const info = (activeBand() && (activeBand().memberInfo||[]).find(m=>m.uid===uid)) || { name:'Someone', initials:'?' };
+    const name = (info.name||'Someone').split(' ')[0];
+    return `<div data-live-uid="${uid}" style="position:relative; width:112px; height:150px; border-radius:16px; overflow:hidden; background:#0a0c14; border:1px solid rgba(124,255,178,.25); flex-shrink:0;">
+      <video autoplay playsinline style="width:100%;height:100%;object-fit:cover;"></video>
+      <div style="position:absolute;left:6px;bottom:6px;font-family:var(--font-mono);font-size:9px;background:rgba(13,15,23,.75);padding:2px 6px;border-radius:999px;color:var(--mint);">${escapeHtml(name)}</div>
+    </div>`;
+  }).join('');
+  uids.forEach(uid=>{
+    const wrap = stage.querySelector('[data-live-uid="'+uid+'"] video');
+    if(wrap && bandRemoteStreams[uid]) wrap.srcObject = bandRemoteStreams[uid];
+  });
+}
+
+async function bandPublishPresenceLive(mode){
+  const b = activeBand();
+  if(!b || !b.isReal || !b.firestoreId || !fbDb || !currentUser) return;
+  await fbDb.collection('bands').doc(b.firestoreId).collection('presence').doc(currentUser.uid).set({
+    tunedInAt: firebase.firestore.FieldValue.serverTimestamp(),
+    live: !!mode,
+    mode: mode || null,
+    liveAt: mode ? firebase.firestore.FieldValue.serverTimestamp() : null,
+  }, { merge:true });
+}
+
+function closeBandRtcPeer(uid){
+  const pc = bandRtcPeers[uid];
+  if(pc){
+    try{ pc.ontrack = null; pc.onicecandidate = null; pc.close(); }catch(e){}
+    delete bandRtcPeers[uid];
+  }
+  delete bandRemoteStreams[uid];
+  delete bandMakingOffer[uid];
+  renderBandLiveStage();
+}
+function closeAllBandRtc(){
+  Object.keys(bandRtcPeers).forEach(closeBandRtcPeer);
+  bandRtcPeers = {};
+  bandRemoteStreams = {};
+  bandMakingOffer = {};
+  renderBandLiveStage();
+}
+
+async function bandCreatePeer(remoteUid){
+  if(bandRtcPeers[remoteUid] || !bandStream || !currentUser) return bandRtcPeers[remoteUid];
+  const pc = new RTCPeerConnection(await getIceServers());
+  bandRtcPeers[remoteUid] = pc;
+  bandStream.getTracks().forEach(t => {
+    try{ pc.addTrack(t, bandStream); }catch(e){}
+  });
+  pc.ontrack = (e)=>{
+    if(!bandRemoteStreams[remoteUid]) bandRemoteStreams[remoteUid] = new MediaStream();
+    if(!bandRemoteStreams[remoteUid].getTracks().includes(e.track)){
+      bandRemoteStreams[remoteUid].addTrack(e.track);
+    }
+    renderBandLiveStage();
+  };
+  pc.onicecandidate = (e)=>{
+    if(!e.candidate) return;
+    const b = activeBand();
+    if(!b || !b.firestoreId) return;
+    fbDb.collection('bands').doc(b.firestoreId).collection('rtc').add({
+      from: currentUser.uid,
+      to: remoteUid,
+      type: 'ice',
+      candidate: e.candidate.toJSON(),
+      ts: firebase.firestore.FieldValue.serverTimestamp(),
+    }).catch(()=>{});
+  };
+  pc.onconnectionstatechange = ()=>{
+    if(pc.connectionState === 'failed' || pc.connectionState === 'closed'){
+      closeBandRtcPeer(remoteUid);
+    }
+  };
+  return pc;
+}
+
+async function bandMaybeOffer(remoteUid){
+  // Deterministic offerer avoids glare: lower uid always offers.
+  if(!currentUser || currentUser.uid >= remoteUid) return;
+  if(bandMakingOffer[remoteUid]) return;
+  bandMakingOffer[remoteUid] = true;
+  try{
+    const pc = await bandCreatePeer(remoteUid);
+    if(!pc) return;
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    const b = activeBand();
+    if(!b || !b.firestoreId) return;
+    await fbDb.collection('bands').doc(b.firestoreId).collection('rtc').add({
+      from: currentUser.uid,
+      to: remoteUid,
+      type: 'offer',
+      sdp: { type: offer.type, sdp: offer.sdp },
+      ts: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+  }catch(e){
+    console.warn('[band-rtc] offer failed', e);
+  }finally{
+    bandMakingOffer[remoteUid] = false;
+  }
+}
+
+async function bandHandleRtcSignal(msg){
+  if(!currentUser || !bandStream || !bandLiveMode) return;
+  if(msg.to !== currentUser.uid) return;
+  const from = msg.from;
+  if(msg.type === 'offer'){
+    const pc = await bandCreatePeer(from);
+    if(!pc) return;
+    await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    const b = activeBand();
+    if(!b || !b.firestoreId) return;
+    await fbDb.collection('bands').doc(b.firestoreId).collection('rtc').add({
+      from: currentUser.uid,
+      to: from,
+      type: 'answer',
+      sdp: { type: answer.type, sdp: answer.sdp },
+      ts: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+  } else if(msg.type === 'answer'){
+    const pc = bandRtcPeers[from];
+    if(pc && !pc.currentRemoteDescription){
+      await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp)).catch(()=>{});
+    }
+  } else if(msg.type === 'ice'){
+    const pc = bandRtcPeers[from] || await bandCreatePeer(from);
+    if(pc && msg.candidate){
+      try{ await pc.addIceCandidate(new RTCIceCandidate(msg.candidate)); }catch(e){}
+    }
+  }
+}
+
+function startBandRtcListener(){
+  if(bandRtcUnsub){ bandRtcUnsub(); bandRtcUnsub = null; }
+  const b = activeBand();
+  if(!b || !b.isReal || !b.firestoreId || !fbDb || !currentUser) return;
+  bandRtcUnsub = fbDb.collection('bands').doc(b.firestoreId).collection('rtc')
+    .orderBy('ts','desc').limit(40)
+    .onSnapshot(snap=>{
+      snap.docChanges().forEach(ch=>{
+        if(ch.type !== 'added') return;
+        const m = ch.doc.data();
+        if(!m || m.to !== currentUser.uid) return;
+        // Ignore very old signals (stale from prior live sessions)
+        const ts = m.ts && m.ts.toMillis ? m.ts.toMillis() : 0;
+        if(ts && Date.now() - ts > 120000) return;
+        bandHandleRtcSignal(m).catch(()=>{});
+      });
+    }, ()=>{});
+}
+
+function syncBandMeshFromPresence(){
+  if(!bandLiveMode || !currentUser) return;
+  // realBandLiveMembers is others only; also check presence flags via roster rebuild
+  // Offer to anyone else currently live — presence docs carry live:true
+  const b = activeBand();
+  if(!b || !b.firestoreId) return;
+  fbDb.collection('bands').doc(b.firestoreId).collection('presence').get().then(snap=>{
+    snap.docs.forEach(d=>{
+      if(d.id === currentUser.uid) return;
+      const data = d.data() || {};
+      if(data.live){
+        bandMaybeOffer(d.id);
+      } else if(bandRtcPeers[d.id]){
+        closeBandRtcPeer(d.id);
+      }
+    });
+  }).catch(()=>{});
+}
+
+async function startBandLive(mode){
+  if(bandLiveMode === mode){ stopBandLive(); return; }
+  if(bandLiveMode && bandLiveMode !== mode){
+    // Switch mode — tear down and re-open
+    stopBandLive(true);
+  }
   if(!amTunedIn){
     amTunedIn = true;
     markMyActivity();
-    $('bandTuneBtn').textContent = 'Leave';
-    $('bandTuneBtn').style.background = 'var(--surface-2)'; $('bandTuneBtn').style.color = 'var(--text)';
-    renderBandRoster(); renderBandList(); armBandAmbientReply();
+    $('bandTuneBtn').textContent = 'Step out';
+    $('bandTuneBtn').style.background = 'var(--surface-2)';
+    $('bandTuneBtn').style.color = 'var(--text)';
+    const b0 = activeBand();
+    if(b0 && b0.isReal && b0.firestoreId && fbDb && currentUser){
+      fbDb.collection('bands').doc(b0.firestoreId).collection('presence').doc(currentUser.uid)
+        .set({ tunedInAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge:true }).catch(()=>{});
+    }
+    renderBandRoster();
   }
   if(bandCameraRequestPending){ await bandCameraRequestPending; return; }
-  bandCameraRequestPending = requestHighQualityStream();
+  const wantVideo = mode === 'video';
+  bandCameraRequestPending = (async ()=>{
+    if(wantVideo) return requestHighQualityStream({ video:true, audio:true });
+    return navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true },
+      video: false,
+    });
+  })();
   try{
     bandStream = await bandCameraRequestPending;
-    $('bandSelfBlur').srcObject = bandStream;
-    $('bandSelfSharp').srcObject = bandStream;
-    $('bandSelfPip').style.display = 'block';
-    $('bandLiveBtn').classList.add('active');
-    $('bandLiveBtn').style.background = 'var(--mint)'; $('bandLiveBtn').style.color = '#0D0F17'; $('bandLiveBtn').style.borderColor = 'var(--mint)';
+    bandLiveMode = mode;
+    if(wantVideo){
+      $('bandSelfBlur').srcObject = bandStream;
+      $('bandSelfSharp').srcObject = bandStream;
+      $('bandSelfPip').style.display = 'block';
+    } else {
+      $('bandSelfPip').style.display = 'none';
+    }
+    setBandLiveButtons();
+    startBandRtcListener();
+    await bandPublishPresenceLive(mode);
+    syncBandMeshFromPresence();
     markMyActivity();
     updateSignatureGlow();
+    toast(mode === 'video' ? 'You are live on video' : 'You are live on audio');
   }catch(e){
-    toast('Camera unavailable — check your browser permissions');
+    toast(mode === 'video' ? 'Camera/mic unavailable' : 'Microphone unavailable');
+    bandLiveMode = null;
+    setBandLiveButtons();
   }finally{
     bandCameraRequestPending = null;
   }
 }
-function stopBandLive(){
-  if(bandStream){ bandStream.getTracks().forEach(t=>t.stop()); bandStream = null; }
+function stopBandLive(silent){
+  closeAllBandRtc();
+  if(bandRtcUnsub){ bandRtcUnsub(); bandRtcUnsub = null; }
+  if(bandStream){ bandStream.getTracks().forEach(t=>{ try{ t.stop(); }catch(_){} }); bandStream = null; }
+  bandLiveMode = null;
   $('bandSelfBlur').srcObject = null; $('bandSelfSharp').srcObject = null;
   $('bandSelfPip').style.display = 'none';
-  $('bandLiveBtn').classList.remove('active');
-  $('bandLiveBtn').style.background = 'rgba(13,15,23,.55)'; $('bandLiveBtn').style.color = '#fff'; $('bandLiveBtn').style.borderColor = 'rgba(255,255,255,.25)';
+  setBandLiveButtons();
+  bandPublishPresenceLive(null);
+  if(!silent) toast('Live ended');
 }
-$('bandLiveBtn').onclick = toggleBandLive;
+$('bandLiveBtn').onclick = ()=> startBandLive('video');
+$('bandAudioBtn').onclick = ()=> startBandLive('audio');
 
-function sendBandMessage(){
+/* ---- Band message E2E (envelope per member) ---- */
+async function encryptBandMessageForMembers(memberUids, plaintext){
+  const envelopes = {};
+  let any = false;
+  for(const uid of memberUids){
+    if(uid === currentUser.uid){
+      // Encrypt to self so we can re-read our own history this session
+      try{
+        const myKeys = await ensureMyKeyPair();
+        if(myKeys && myKeys.publicJwk){
+          const enc = await encryptMessageText(uid, myKeys.publicJwk, plaintext);
+          if(enc){ envelopes[uid] = enc; any = true; }
+        }
+      }catch(e){}
+      continue;
+    }
+    const c = contacts.find(cc => cc.firebaseUid === uid);
+    const jwk = c && c.publicKey;
+    if(!jwk) continue;
+    try{
+      const enc = await encryptMessageText(uid, jwk, plaintext);
+      if(enc){ envelopes[uid] = enc; any = true; }
+    }catch(e){}
+  }
+  return any ? envelopes : null;
+}
+async function decryptBandMessage(m){
+  if(!m.encrypted || !m.envelopes) return m.text || '';
+  const mine = m.envelopes[currentUser.uid];
+  if(!mine) return m.text || '🔒 Encrypted';
+  // Key agreement is with the sender's public key
+  let theirJwk = null;
+  if(m.fromUid === currentUser.uid){
+    const myKeys = await ensureMyKeyPair();
+    theirJwk = myKeys && myKeys.publicJwk;
+  } else {
+    const c = contacts.find(cc => cc.firebaseUid === m.fromUid);
+    theirJwk = c && c.publicKey;
+    if(!theirJwk && fbDb){
+      try{
+        const doc = await fbDb.collection('users').doc(m.fromUid).get();
+        if(doc.exists) theirJwk = doc.data().publicKey || null;
+      }catch(e){}
+    }
+  }
+  if(!theirJwk) return '🔒 Encrypted';
+  const plain = await decryptMessageText(m.fromUid === currentUser.uid ? currentUser.uid : m.fromUid, theirJwk, mine.ciphertext, mine.iv);
+  // When decrypting own message, shared key is with self — use currentUser.uid as theirUid in getSharedAesKey
+  if(plain != null) return plain;
+  // Retry with sender uid for outbound-from-me edge cases
+  if(m.fromUid === currentUser.uid){
+    const plain2 = await decryptMessageText(currentUser.uid, theirJwk, mine.ciphertext, mine.iv);
+    if(plain2 != null) return plain2;
+  }
+  return '🔒 Encrypted';
+}
+
+async function sendBandMessage(){
   const text = $('bandInput').value.trim();
   if(!text || !activeBandId) return;
   if(!amTunedIn){ toast('Tune in first to say something'); return; }
   const b = activeBand();
   if(b && b.isReal && b.firestoreId && fbDb && currentUser){
-    fbDb.collection('bands').doc(b.firestoreId).collection('messages').add({
+    const members = b.memberUids || (b.memberInfo||[]).map(m=>m.uid).concat([currentUser.uid]);
+    const unique = Array.from(new Set(members));
+    const envelopes = await encryptBandMessageForMembers(unique, text);
+    const payload = {
       from: currentUser.uid,
-      text,
       ts: firebase.firestore.FieldValue.serverTimestamp(),
-    }).catch(e=> toast(e.message || 'Couldn\u2019t send'));
+      type: 'text',
+    };
+    if(envelopes){
+      payload.encrypted = true;
+      payload.envelopes = envelopes;
+      payload.text = ''; // never store plaintext when E2E succeeded
+    } else {
+      payload.encrypted = false;
+      payload.text = text; // fallback if no keys yet
+    }
+    fbDb.collection('bands').doc(b.firestoreId).collection('messages').add(payload)
+      .catch(e=> toast(e.message || 'Couldn\u2019t send'));
     $('bandInput').value = '';
     markMyActivity();
     return;
@@ -7274,6 +8051,12 @@ async function refreshContactLiveProfile(firebaseUid){
     if(d.publicKey && JSON.stringify(d.publicKey) !== JSON.stringify(c.publicKey)){ c.publicKey = d.publicKey; delete sharedKeyCache[firebaseUid]; changed = true; }
     if(d.name && d.name !== c.name){ c.name = d.name; c.initials = initialsFor(d.name); changed = true; }
     if(d.color && d.color !== c.color){ c.color = d.color; changed = true; }
+    // Public Band memberships — every connection can see which squares you belong to.
+    const pb = Array.isArray(d.publicBands) ? d.publicBands : [];
+    if(JSON.stringify(pb) !== JSON.stringify(c.publicBands || [])){
+      c.publicBands = pb;
+      changed = true;
+    }
     if(changed){ renderContacts(); renderWirelineList(); renderBandList(); }
   }catch(e){ /* best-effort refresh — the connection doc's snapshot still works as a fallback */ }
 }
