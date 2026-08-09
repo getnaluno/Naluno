@@ -105,10 +105,19 @@ service cloud.firestore {
           && (request.auth.uid == resource.data.toUid
               || request.auth.uid == resource.data.fromUid);
       }
-      // Mesh WebRTC signaling for in-square audio/video live
+      // Legacy signal collection
       match /rtc/{signalId} {
         allow read: if isSignedIn();
         allow create: if isSignedIn() && request.resource.data.from == request.auth.uid;
+      }
+      // Pair-doc mesh signaling (offer/answer + ice)
+      match /mesh/{pairId} {
+        allow read: if isSignedIn();
+        allow create, update: if isSignedIn();
+        match /ice/{iceId} {
+          allow read: if isSignedIn();
+          allow create: if isSignedIn() && request.resource.data.from == request.auth.uid;
+        }
       }
     }
 

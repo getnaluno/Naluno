@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.08.09.11">
+<meta name="app-version" content="2026.08.09.12">
 <meta name="description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="A statement from the future — not another WhatsApp.">
@@ -7236,7 +7236,7 @@ function closeBandRoom(){
   if(bandMessagesUnsub){ bandMessagesUnsub(); bandMessagesUnsub = null; }
   if(bandMetaUnsub){ bandMetaUnsub(); bandMetaUnsub = null; }
   if(bandSettleTimer){ clearInterval(bandSettleTimer); bandSettleTimer = null; }
-  if(bandRtcUnsub){ bandRtcUnsub(); bandRtcUnsub = null; }
+  closeAllBandRtc();
   $('bandRoom').classList.remove('active');
   amTunedIn = false;
   activeBandId = null;
@@ -7266,6 +7266,7 @@ $('leaveBandForGoodLink').onclick = async ()=>{
 $('bandTuneBtn').onclick = ()=>{
   amTunedIn = !amTunedIn;
   markMyActivity();
+  unlockBandAudio();
   $('bandTuneBtn').textContent = amTunedIn ? 'Step out' : 'Tune in';
   $('bandTuneBtn').style.background = amTunedIn ? 'var(--surface-2)' : 'var(--mint)';
   $('bandTuneBtn').style.color = amTunedIn ? 'var(--text)' : '#0D0F17';
@@ -7279,20 +7280,18 @@ $('bandTuneBtn').onclick = ()=>{
         rtcSession: bandRtcSession,
         live: false,
         mode: null,
-      }).catch(()=>{});
+      }).catch(e => console.warn('[band] presence failed', e));
       bumpTodayActivity();
       if(b.lastEmptiedAt){
         b.lastEmptiedAt = null;
         fbDb.collection('bands').doc(b.firestoreId).set({ lastEmptiedAt: null }, { merge:true }).catch(()=>{});
       }
-      // Start receiving live A/V from anyone already broadcasting
-      startBandRtcListener();
+      // Connect mesh to everyone already here (receive live A/V)
       syncBandMeshFromPresence();
     } else {
       presenceRef.delete().catch(()=>{});
       stopBandLive(true);
       closeAllBandRtc();
-      if(bandRtcUnsub){ bandRtcUnsub(); bandRtcUnsub = null; }
       bandRtcSession = null;
     }
   } else if(amTunedIn){
@@ -7310,9 +7309,10 @@ $('bandTuneBtn').onclick = ()=>{
 /* -------- Band bell: real sound + nudge for others in the room -------- */
 function playBandBellSound(){
   try{
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    unlockBandAudio();
+    const ctx = bandAudioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    bandAudioCtx = ctx;
     const now = ctx.currentTime;
-    // Two clear chimes
     [0, 0.18].forEach((delay, i)=>{
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -7326,8 +7326,7 @@ function playBandBellSound(){
       osc.start(now + delay);
       osc.stop(now + delay + 0.6);
     });
-    setTimeout(()=>{ try{ ctx.close(); }catch(e){} }, 1200);
-  }catch(e){}
+  }catch(e){ console.warn('[band] bell sound failed', e); }
 }
 $('bandBellBtn').onclick = ()=>{
   const b = activeBand();
@@ -7336,11 +7335,15 @@ $('bandBellBtn').onclick = ()=>{
     return;
   }
   if(!amTunedIn){ toast('Tune in first'); return; }
+  unlockBandAudio();
   playBandBellSound();
   fbDb.collection('bands').doc(b.firestoreId).set({
     bellAt: firebase.firestore.FieldValue.serverTimestamp(),
     bellBy: currentUser.uid,
-  }, { merge:true }).then(()=> toast('Rang the Band')).catch(()=> toast('Couldn\u2019t ring'));
+  }, { merge:true }).then(()=> toast('Rang the Band')).catch(e=>{
+    console.warn('[band] bell write failed', e);
+    toast('Couldn\u2019t ring');
+  });
 };
 
 /* -------- Invite to square (text via Wireline, or video call) -------- */
@@ -7470,46 +7473,46 @@ function startBandInviteListener(){
 }
 
 /* ---------------- BAND LIVE — text · audio · video ----------------
-   Anyone tuned in can RECEIVE. Audio/Video live means you also SEND.
-   Mesh WebRTC with pending ICE, session tags, and a stable video grid. */
+   Pair-doc signaling (same reliability pattern as 1:1 calls):
+   bands/{id}/mesh/{sortedUidPair} holds offer/answer; ice subcollection for candidates.
+   Anyone tuned in receives; live audio/video adds send tracks. */
 let bandStream = null;
 let bandLiveMode = null; // null | 'audio' | 'video'
 let bandCameraRequestPending = null;
-let bandRtcPeers = {}; // { [remoteUid]: { pc, pendingIce, polite } }
-let bandRtcUnsub = null;
-let bandRemoteStreams = {}; // { [remoteUid]: MediaStream }
-let bandMakingOffer = {};
-let bandRtcSession = null; // unique per tune-in so old signals are ignored
+let bandRtcPeers = {}; // { [remoteUid]: { pc, pendingIce, remoteSet, unsubMesh, unsubIce } }
+let bandRemoteStreams = {};
+let bandMeshPresenceTimer = null;
+let bandRtcSession = null;
+let bandAudioCtx = null;
+
+function unlockBandAudio(){
+  try{
+    if(!bandAudioCtx) bandAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if(bandAudioCtx.state === 'suspended') bandAudioCtx.resume().catch(()=>{});
+  }catch(e){}
+}
 
 function setBandLiveButtons(){
   const audioOn = bandLiveMode === 'audio';
   const videoOn = bandLiveMode === 'video';
   const ab = $('bandAudioBtn'), vb = $('bandLiveBtn');
   if(ab){
-    ab.classList.toggle('active', audioOn);
     ab.style.background = audioOn ? 'var(--mint)' : 'rgba(13,15,23,.55)';
     ab.style.color = audioOn ? '#0D0F17' : '#fff';
     ab.style.borderColor = audioOn ? 'var(--mint)' : 'rgba(255,255,255,.2)';
     ab.textContent = audioOn ? 'Audio on' : 'Audio live';
   }
   if(vb){
-    vb.classList.toggle('active', videoOn);
     vb.style.background = videoOn ? 'var(--mint)' : 'rgba(13,15,23,.55)';
     vb.style.color = videoOn ? '#0D0F17' : '#fff';
     vb.style.borderColor = videoOn ? 'var(--mint)' : 'rgba(255,255,255,.2)';
     vb.textContent = videoOn ? 'Video on' : 'Video live';
   }
-  const tag = $('bandSelfLiveTag');
-  if(tag) tag.textContent = videoOn ? 'VIDEO' : (audioOn ? 'AUDIO' : 'LIVE');
 }
 
 function renderBandLiveStage(){
   const stage = $('bandLiveStage'); if(!stage) return;
-  const uids = Object.keys(bandRemoteStreams).filter(uid => {
-    const s = bandRemoteStreams[uid];
-    return s && s.getTracks().some(t => t.readyState === 'live' || t.readyState === 'ended' || true);
-  });
-  // Always show self tile when video live, plus remotes
+  const uids = Object.keys(bandRemoteStreams);
   const showSelf = bandLiveMode === 'video' && bandStream;
   if(!uids.length && !showSelf){
     stage.style.display = 'none';
@@ -7527,7 +7530,8 @@ function renderBandLiveStage(){
   html += uids.map(uid=>{
     const info = (activeBand() && (activeBand().memberInfo||[]).find(m=>m.uid===uid)) || { name:'Someone', initials:'?' };
     const name = (info.name||'Someone').split(' ')[0];
-    const hasVideo = bandRemoteStreams[uid].getVideoTracks().some(t=>t.readyState!=='ended');
+    const stream = bandRemoteStreams[uid];
+    const hasVideo = stream && stream.getVideoTracks().some(t=>t.readyState==='live');
     return `<div data-live-uid="${uid}" style="position:relative; aspect-ratio:3/4; border-radius:14px; overflow:hidden; background:#0a0c14; border:1px solid rgba(124,255,178,.25);">
       <video autoplay playsinline style="width:100%;height:100%;object-fit:cover;${hasVideo?'':'opacity:0'}"></video>
       ${hasVideo?'':`<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;"><div class="avatar" style="width:56px;height:56px;font-size:18px;${contactAvatarStyleAttr(info)}">${info.photo&&info.photo.dataUrl?'':(info.initials||'?')}</div></div>`}
@@ -7543,202 +7547,216 @@ function renderBandLiveStage(){
     const el = stage.querySelector('[data-live-uid="'+uid+'"] video');
     if(el && bandRemoteStreams[uid]){
       el.srcObject = bandRemoteStreams[uid];
-      el.muted = false; // hear live audio
+      el.muted = false;
+      el.volume = 1;
       el.play().catch(()=>{});
     }
   });
 }
 
+function bandPairId(a, b){
+  return [a, b].sort().join('_');
+}
+
 async function bandPublishPresenceLive(mode){
   const b = activeBand();
   if(!b || !b.isReal || !b.firestoreId || !fbDb || !currentUser) return;
-  await fbDb.collection('bands').doc(b.firestoreId).collection('presence').doc(currentUser.uid).set({
-    tunedInAt: firebase.firestore.FieldValue.serverTimestamp(),
-    live: !!mode,
-    mode: mode || null,
-    liveAt: mode ? firebase.firestore.FieldValue.serverTimestamp() : null,
-    rtcSession: bandRtcSession || null,
-  }, { merge:true });
+  try{
+    await fbDb.collection('bands').doc(b.firestoreId).collection('presence').doc(currentUser.uid).set({
+      tunedInAt: firebase.firestore.FieldValue.serverTimestamp(),
+      live: !!mode,
+      mode: mode || null,
+      liveAt: mode ? firebase.firestore.FieldValue.serverTimestamp() : null,
+      rtcSession: bandRtcSession || null,
+    }, { merge:true });
+  }catch(e){ console.warn('[band] presence write failed', e); }
 }
 
 function closeBandRtcPeer(uid){
   const entry = bandRtcPeers[uid];
-  if(entry && entry.pc){
-    try{ entry.pc.ontrack = null; entry.pc.onicecandidate = null; entry.pc.close(); }catch(e){}
+  if(entry){
+    try{ if(entry.unsubMesh) entry.unsubMesh(); }catch(e){}
+    try{ if(entry.unsubIce) entry.unsubIce(); }catch(e){}
+    try{
+      if(entry.pc){
+        entry.pc.ontrack = null;
+        entry.pc.onicecandidate = null;
+        entry.pc.close();
+      }
+    }catch(e){}
   }
   delete bandRtcPeers[uid];
   delete bandRemoteStreams[uid];
-  delete bandMakingOffer[uid];
   renderBandLiveStage();
 }
 function closeAllBandRtc(){
   Object.keys(bandRtcPeers).forEach(closeBandRtcPeer);
   bandRtcPeers = {};
   bandRemoteStreams = {};
-  bandMakingOffer = {};
   renderBandLiveStage();
 }
 
-function bandSendSignal(to, type, extra){
-  const b = activeBand();
-  if(!b || !b.firestoreId || !currentUser || !fbDb) return Promise.resolve();
-  return fbDb.collection('bands').doc(b.firestoreId).collection('rtc').add(Object.assign({
-    from: currentUser.uid,
-    to,
-    type,
-    session: bandRtcSession,
-    ts: firebase.firestore.FieldValue.serverTimestamp(),
-  }, extra || {})).catch(()=>{});
-}
-
-async function bandCreatePeer(remoteUid){
+async function bandEnsurePeer(remoteUid){
   if(bandRtcPeers[remoteUid]) return bandRtcPeers[remoteUid];
-  if(!currentUser) return null;
-  const pc = new RTCPeerConnection(await getIceServers());
-  const entry = { pc, pendingIce: [], remoteSet: false };
+  if(!currentUser || !fbDb) return null;
+  const b = activeBand();
+  if(!b || !b.firestoreId) return null;
+
+  const iceServers = await getIceServers();
+  const pc = new RTCPeerConnection(iceServers);
+  const entry = { pc, pendingIce: [], remoteSet: false, makingOffer: false, ignoreOffer: false, unsubMesh: null, unsubIce: null };
   bandRtcPeers[remoteUid] = entry;
 
-  // Send tracks if we are live; viewers still get a peer for receiving
+  // Send if live; otherwise recv-only so we still pull remote audio/video
   if(bandStream){
-    bandStream.getTracks().forEach(t => {
-      try{ pc.addTrack(t, bandStream); }catch(e){}
+    bandStream.getTracks().forEach(track=>{
+      try{ pc.addTrack(track, bandStream); }catch(e){}
     });
+  } else {
+    try{
+      pc.addTransceiver('audio', { direction: 'recvonly' });
+      pc.addTransceiver('video', { direction: 'recvonly' });
+    }catch(e){}
   }
 
   pc.ontrack = (e)=>{
+    console.log('[band-rtc] ontrack from', remoteUid, e.track.kind);
     if(!bandRemoteStreams[remoteUid]) bandRemoteStreams[remoteUid] = new MediaStream();
-    const stream = bandRemoteStreams[remoteUid];
-    if(!stream.getTracks().includes(e.track)) stream.addTrack(e.track);
-    e.track.onended = ()=> renderBandLiveStage();
+    if(!bandRemoteStreams[remoteUid].getTracks().includes(e.track)){
+      bandRemoteStreams[remoteUid].addTrack(e.track);
+    }
     renderBandLiveStage();
   };
+
+  const pairId = bandPairId(currentUser.uid, remoteUid);
+  const meshRef = fbDb.collection('bands').doc(b.firestoreId).collection('mesh').doc(pairId);
+  const iceCol = meshRef.collection('ice');
+
   pc.onicecandidate = (e)=>{
     if(!e.candidate) return;
-    bandSendSignal(remoteUid, 'ice', { candidate: e.candidate.toJSON() });
+    iceCol.add({
+      from: currentUser.uid,
+      candidate: e.candidate.toJSON(),
+      ts: firebase.firestore.FieldValue.serverTimestamp(),
+    }).catch(err => console.warn('[band-rtc] ice write failed', err));
   };
+
   pc.onconnectionstatechange = ()=>{
-    if(pc.connectionState === 'failed' || pc.connectionState === 'closed'){
+    console.log('[band-rtc] connectionState', remoteUid, pc.connectionState);
+    if(pc.connectionState === 'connected'){
+      const info = (activeBand() && (activeBand().memberInfo||[]).find(m=>m.uid===remoteUid)) || {};
+      toast('Live with ' + (info.name ? info.name.split(' ')[0] : 'member'));
+    }
+    if(pc.connectionState === 'failed'){
+      // One retry
       closeBandRtcPeer(remoteUid);
+      setTimeout(()=> bandConnectTo(remoteUid), 800);
     }
   };
+
+  // ICE from the other side
+  entry.unsubIce = iceCol.onSnapshot(snap=>{
+    snap.docChanges().forEach(async ch=>{
+      if(ch.type !== 'added') return;
+      const d = ch.doc.data();
+      if(!d || d.from === currentUser.uid || !d.candidate) return;
+      if(!entry.remoteSet){
+        entry.pendingIce.push(d.candidate);
+        return;
+      }
+      try{ await pc.addIceCandidate(new RTCIceCandidate(d.candidate)); }catch(e){}
+    });
+  }, err => console.warn('[band-rtc] ice listen failed', err));
+
+  // Offer/answer on the pair doc — works like 1:1 call signaling
+  const polite = currentUser.uid > remoteUid;
+  entry.unsubMesh = meshRef.onSnapshot(async snap=>{
+    const data = snap.data() || {};
+    try{
+      // Remote offer
+      if(data.offer && data.offerFrom && data.offerFrom !== currentUser.uid){
+        const offerCollision = entry.makingOffer || pc.signalingState !== 'stable';
+        entry.ignoreOffer = !polite && offerCollision;
+        if(entry.ignoreOffer) return;
+        await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+        entry.remoteSet = true;
+        while(entry.pendingIce.length){
+          try{ await pc.addIceCandidate(new RTCIceCandidate(entry.pendingIce.shift())); }catch(e){}
+        }
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        await meshRef.set({
+          answer: { type: answer.type, sdp: answer.sdp },
+          answerFrom: currentUser.uid,
+          answerTs: firebase.firestore.FieldValue.serverTimestamp(),
+        }, { merge:true });
+      }
+      // Remote answer to our offer
+      if(data.answer && data.answerFrom && data.answerFrom !== currentUser.uid && pc.signalingState === 'have-local-offer'){
+        await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+        entry.remoteSet = true;
+        while(entry.pendingIce.length){
+          try{ await pc.addIceCandidate(new RTCIceCandidate(entry.pendingIce.shift())); }catch(e){}
+        }
+      }
+    }catch(e){
+      console.warn('[band-rtc] mesh signal error', e);
+    }
+  }, err => console.warn('[band-rtc] mesh listen failed', err));
+
   return entry;
 }
 
-async function bandFlushIce(remoteUid){
-  const entry = bandRtcPeers[remoteUid];
-  if(!entry || !entry.remoteSet) return;
-  while(entry.pendingIce.length){
-    const c = entry.pendingIce.shift();
-    try{ await entry.pc.addIceCandidate(new RTCIceCandidate(c)); }catch(e){}
-  }
-}
-
-async function bandMaybeOffer(remoteUid){
-  if(!currentUser || !amTunedIn) return;
-  // Lower uid offers (avoids glare). Higher uid waits for offer.
-  if(currentUser.uid >= remoteUid) return;
-  if(bandMakingOffer[remoteUid]) return;
-  // Need at least one side sending, or both tuned in — always offer when tuned in so receivers work
-  bandMakingOffer[remoteUid] = true;
+async function bandConnectTo(remoteUid){
+  if(!currentUser || !amTunedIn || remoteUid === currentUser.uid) return;
+  const entry = await bandEnsurePeer(remoteUid);
+  if(!entry) return;
+  const pc = entry.pc;
+  const b = activeBand();
+  if(!b || !b.firestoreId) return;
+  // Impolite side (lower uid) always creates the offer; polite waits
+  const shouldOffer = currentUser.uid < remoteUid;
+  if(!shouldOffer) return;
+  if(entry.makingOffer) return;
+  if(pc.signalingState !== 'stable') return;
+  entry.makingOffer = true;
   try{
-    const entry = await bandCreatePeer(remoteUid);
-    if(!entry) return;
-    const pc = entry.pc;
-    // If we already have a stable connection, skip
-    if(pc.signalingState !== 'stable' && pc.signalingState !== 'have-local-offer') return;
-    if(pc.signalingState === 'have-local-offer') return;
-    const offer = await pc.createOffer({ offerToReceiveAudio:true, offerToReceiveVideo:true });
+    const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    await bandSendSignal(remoteUid, 'offer', { sdp: { type: offer.type, sdp: offer.sdp } });
+    const pairId = bandPairId(currentUser.uid, remoteUid);
+    await fbDb.collection('bands').doc(b.firestoreId).collection('mesh').doc(pairId).set({
+      offer: { type: offer.type, sdp: offer.sdp },
+      offerFrom: currentUser.uid,
+      offerTs: firebase.firestore.FieldValue.serverTimestamp(),
+      answer: null,
+      answerFrom: null,
+    }, { merge:true });
+    console.log('[band-rtc] offer sent to', remoteUid);
   }catch(e){
     console.warn('[band-rtc] offer failed', e);
   }finally{
-    bandMakingOffer[remoteUid] = false;
+    entry.makingOffer = false;
   }
 }
 
-async function bandHandleRtcSignal(msg){
-  if(!currentUser || !amTunedIn) return;
-  if(msg.to !== currentUser.uid) return;
-  if(msg.session && bandRtcSession && msg.session !== bandRtcSession){
-    // Different session from peer is OK — they may have just re-tuned
-  }
-  const from = msg.from;
-  if(msg.type === 'offer'){
-    let entry = bandRtcPeers[from];
-    // If we already offered (glare), and we are higher uid, roll back and answer
-    if(entry && entry.pc.signalingState === 'have-local-offer'){
-      if(currentUser.uid > from){
-        try{ await entry.pc.setLocalDescription({ type:'rollback' }); }catch(e){}
-      } else {
-        return; // we are the offerer; ignore their offer
-      }
-    }
-    if(!entry) entry = await bandCreatePeer(from);
-    if(!entry) return;
-    try{
-      await entry.pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-      entry.remoteSet = true;
-      await bandFlushIce(from);
-      const answer = await entry.pc.createAnswer();
-      await entry.pc.setLocalDescription(answer);
-      await bandSendSignal(from, 'answer', { sdp: { type: answer.type, sdp: answer.sdp } });
-    }catch(e){ console.warn('[band-rtc] handle offer failed', e); }
-  } else if(msg.type === 'answer'){
-    const entry = bandRtcPeers[from];
-    if(entry && entry.pc.signalingState === 'have-local-offer'){
-      try{
-        await entry.pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-        entry.remoteSet = true;
-        await bandFlushIce(from);
-      }catch(e){ console.warn('[band-rtc] handle answer failed', e); }
-    }
-  } else if(msg.type === 'ice'){
-    let entry = bandRtcPeers[from];
-    if(!entry) entry = await bandCreatePeer(from);
-    if(!entry || !msg.candidate) return;
-    if(!entry.remoteSet){
-      entry.pendingIce.push(msg.candidate);
-    } else {
-      try{ await entry.pc.addIceCandidate(new RTCIceCandidate(msg.candidate)); }catch(e){}
-    }
-  }
-}
-
-function startBandRtcListener(){
-  if(bandRtcUnsub){ bandRtcUnsub(); bandRtcUnsub = null; }
-  const b = activeBand();
-  if(!b || !b.isReal || !b.firestoreId || !fbDb || !currentUser) return;
-  if(!bandRtcSession) bandRtcSession = currentUser.uid + '_' + Date.now();
-  bandRtcUnsub = fbDb.collection('bands').doc(b.firestoreId).collection('rtc')
-    .orderBy('ts','desc').limit(60)
-    .onSnapshot(snap=>{
-      snap.docChanges().forEach(ch=>{
-        if(ch.type !== 'added') return;
-        const m = ch.doc.data();
-        if(!m || m.to !== currentUser.uid) return;
-        const ts = m.ts && m.ts.toMillis ? m.ts.toMillis() : 0;
-        if(ts && Date.now() - ts > 90000) return;
-        bandHandleRtcSignal(m).catch(()=>{});
-      });
-    }, ()=>{});
-}
-
+// Back-compat names used by presence / tune-in handlers
+function bandMaybeOffer(remoteUid){ return bandConnectTo(remoteUid); }
+function startBandRtcListener(){ /* pair listeners attach per peer in bandEnsurePeer */ }
 function syncBandMeshFromPresence(){
-  if(!amTunedIn || !currentUser) return;
+  if(!amTunedIn || !currentUser || !fbDb) return;
   const b = activeBand();
   if(!b || !b.firestoreId) return;
   fbDb.collection('bands').doc(b.firestoreId).collection('presence').get().then(snap=>{
     snap.docs.forEach(d=>{
       if(d.id === currentUser.uid) return;
-      // Connect to anyone present (tuned in) so viewers receive live A/V
-      bandMaybeOffer(d.id);
+      bandConnectTo(d.id);
     });
-  }).catch(()=>{});
+  }).catch(e => console.warn('[band] presence get failed', e));
 }
 
 async function ensureTunedInForLive(){
   if(amTunedIn) return;
+  unlockBandAudio();
   amTunedIn = true;
   markMyActivity();
   $('bandTuneBtn').textContent = 'Step out';
@@ -7748,18 +7766,17 @@ async function ensureTunedInForLive(){
   if(b0 && b0.isReal && b0.firestoreId && fbDb && currentUser){
     if(!bandRtcSession) bandRtcSession = currentUser.uid + '_' + Date.now();
     fbDb.collection('bands').doc(b0.firestoreId).collection('presence').doc(currentUser.uid)
-      .set({ tunedInAt: firebase.firestore.FieldValue.serverTimestamp(), rtcSession: bandRtcSession }, { merge:true }).catch(()=>{});
+      .set({ tunedInAt: firebase.firestore.FieldValue.serverTimestamp(), rtcSession: bandRtcSession, live:false, mode:null }, { merge:true })
+      .catch(e => console.warn('[band] tune presence failed', e));
   }
-  startBandRtcListener();
   syncBandMeshFromPresence();
   renderBandRoster();
 }
 
 async function startBandLive(mode){
+  unlockBandAudio();
   if(bandLiveMode === mode){ stopBandLive(); return; }
-  if(bandLiveMode && bandLiveMode !== mode){
-    stopBandLive(true);
-  }
+  if(bandLiveMode && bandLiveMode !== mode) stopBandLive(true);
   await ensureTunedInForLive();
   if(bandCameraRequestPending){ await bandCameraRequestPending; return; }
   const wantVideo = mode === 'video';
@@ -7773,24 +7790,17 @@ async function startBandLive(mode){
   try{
     bandStream = await bandCameraRequestPending;
     bandLiveMode = mode;
-    if(wantVideo){
-      $('bandSelfBlur').srcObject = bandStream;
-      $('bandSelfSharp').srcObject = bandStream;
-      $('bandSelfPip').style.display = 'none'; // self is in the grid now
-    } else {
-      $('bandSelfPip').style.display = 'none';
-    }
+    $('bandSelfPip').style.display = 'none';
     setBandLiveButtons();
-    // Rebuild peers so local tracks are included
+    // Tear down peers and reconnect WITH send tracks
     closeAllBandRtc();
-    startBandRtcListener();
     await bandPublishPresenceLive(mode);
     syncBandMeshFromPresence();
     renderBandLiveStage();
     markMyActivity();
-    updateSignatureGlow();
     toast(mode === 'video' ? 'You are live on video' : 'You are live on audio');
   }catch(e){
+    console.warn('[band] live failed', e);
     toast(mode === 'video' ? 'Camera/mic unavailable' : 'Microphone unavailable');
     bandLiveMode = null;
     setBandLiveButtons();
@@ -7799,21 +7809,14 @@ async function startBandLive(mode){
   }
 }
 function stopBandLive(silent){
-  // Keep mesh for receiving if still tuned in; only drop send tracks
   if(bandStream){ bandStream.getTracks().forEach(t=>{ try{ t.stop(); }catch(_){} }); bandStream = null; }
   bandLiveMode = null;
   $('bandSelfBlur').srcObject = null; $('bandSelfSharp').srcObject = null;
   $('bandSelfPip').style.display = 'none';
   setBandLiveButtons();
   bandPublishPresenceLive(null);
-  // Renegotiate without send tracks: recreate peers while still tuned in
-  if(amTunedIn){
-    closeAllBandRtc();
-    syncBandMeshFromPresence();
-  } else {
-    closeAllBandRtc();
-    if(bandRtcUnsub){ bandRtcUnsub(); bandRtcUnsub = null; }
-  }
+  closeAllBandRtc();
+  if(amTunedIn) syncBandMeshFromPresence();
   renderBandLiveStage();
   if(!silent) toast('Live ended');
 }
