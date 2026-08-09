@@ -5487,9 +5487,8 @@ async function createPeerConnection(){
       };
     }
   };
-  pc.oniceconnectionstatechange = ()=> console.log('[call] ICE connection state:', pc.iceConnectionState);
-  pc.onconnectionstatechange = ()=> console.log('[call] connection state:', pc.connectionState);
   pc.onicegatheringstatechange = ()=> console.log('[call] ICE gathering state:', pc.iceGatheringState);
+  attachConnectionWatchdogs(pc);
   if(stream){
     // Real audio, unmodified. Video comes from the composited send canvas instead of
     // the raw camera track — this is the actual fix for "the other person should see
@@ -5549,14 +5548,91 @@ function teardownCallConnection(){
   if(activeCallDocUnsub){ activeCallDocUnsub(); activeCallDocUnsub = null; }
   if(callerCandidatesUnsub){ callerCandidatesUnsub(); callerCandidatesUnsub = null; }
   if(calleeCandidatesUnsub){ calleeCandidatesUnsub(); calleeCandidatesUnsub = null; }
-  if(peerConnection){ try{ peerConnection.close(); }catch(e){} peerConnection = null; }
+  if(peerConnection){
+    try{
+      peerConnection.ontrack = null;
+      peerConnection.onicecandidate = null;
+      peerConnection.onconnectionstatechange = null;
+      peerConnection.oniceconnectionstatechange = null;
+      peerConnection.close();
+    }catch(e){}
+    peerConnection = null;
+  }
   activeCallId = null;
   remoteDescriptionSet = false;
   pendingRemoteCandidates = [];
-  $('remoteVideo').srcObject = null;
-  $('remoteVideo').style.display = 'none';
-  $('remotePlaceholder').style.display = 'flex';
+  iAmCaller = false;
+  try{
+    const rv = $('remoteVideo');
+    if(rv){ rv.srcObject = null; rv.style.display = 'none'; }
+    const rp = $('remotePlaceholder');
+    if(rp) rp.style.display = 'flex';
+  }catch(e){}
   remoteCombinedStream = null;
+  clearInterval(callInterval); callInterval = null;
+  callActionInProgress = false;
+}
+
+/* Single path for ending a live call from either side.
+   Captures callId BEFORE teardown nulls it, writes status, then fully closes UI. */
+function endActiveCall(reason){
+  const callId = activeCallId;
+  const wasInCall = !!$('incall') && $('incall').classList.contains('active');
+  const wasRinging = !!$('ringing') && $('ringing').classList.contains('active');
+  const wasIncoming = !!$('incoming') && $('incoming').classList.contains('active');
+  if(!callId && !wasInCall && !wasRinging && !wasIncoming && !$('callOverlay').classList.contains('active')){
+    return; // nothing to end
+  }
+  clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
+  if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
+  stopCallerTone();
+  stopRingtone();
+  if(callId && fbDb){
+    fbDb.collection('calls').doc(callId).update({
+      status: 'ended',
+      endedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      endedBy: currentUser ? currentUser.uid : null,
+      endReason: reason || 'hangup',
+    }).catch(()=>{});
+  }
+  teardownCallConnection();
+  closeCallOverlay();
+  stopCameraStream();
+  currentCallContactId = null;
+  callActionInProgress = false;
+  incallViewMode = 0;
+  try{
+    $('incall').classList.remove('swap-focus');
+    if($('localPip')) $('localPip').classList.remove('large');
+  }catch(e){}
+  if(wasInCall || wasRinging || wasIncoming){
+    toast(reason === 'remote' ? 'Call ended' : 'Call ended');
+  }
+}
+
+/* When the other side hangs up (or the network drops), close our UI even if the
+   Firestore snapshot is slow or missed. */
+function attachConnectionWatchdogs(pc){
+  if(!pc) return;
+  pc.onconnectionstatechange = ()=>{
+    const s = pc.connectionState;
+    console.log('[call] connection state:', s);
+    if(s === 'failed' || s === 'closed'){
+      // Remote gone or unrecoverable — end local UI.
+      if($('callOverlay').classList.contains('active')){
+        endActiveCall('remote');
+      }
+    }
+  };
+  pc.oniceconnectionstatechange = ()=>{
+    const s = pc.iceConnectionState;
+    console.log('[call] ICE connection state:', s);
+    if(s === 'failed' || s === 'closed'){
+      if($('callOverlay').classList.contains('active')){
+        endActiveCall('remote');
+      }
+    }
+  };
 }
 /* App-wide listener for real incoming calls — starts at sign-in, runs regardless of
    which screen is open, same as the presence and Wireline-preview listeners. */
@@ -5653,10 +5729,14 @@ function handleIncomingCall(callId, data){
   activeCallDocUnsub = fbDb.collection('calls').doc(callId).onSnapshot(snap=>{
     const d = snap.data();
     if(!d) return;
-    if((d.status==='ended' || d.status==='missed') && !$('incall').classList.contains('active')){
-      toast('Missed call from ' + name);
+    if((d.status === 'ended' || d.status === 'missed' || d.status === 'declined') && $('callOverlay').classList.contains('active') && !$('incall').classList.contains('active')){
+      toast(d.status === 'missed' ? ('Missed call from ' + name) : 'Call ended');
       stopRingtone();
-      closeCallOverlayAndStopCamera();
+      teardownCallConnection();
+      closeCallOverlay();
+      stopCameraStream();
+      currentCallContactId = null;
+      callActionInProgress = false;
     }
   });
 }
@@ -5722,17 +5802,15 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
       const data = await res.json().catch(()=>({}));
       if(!res.ok){
         console.error('Call notification failed:', res.status, data);
-        if(firstAttempt) toast('Notification issue: ' + (data.error || `HTTP ${res.status}`));
+        // Soft message — the real call still proceeds via Firestore; push is only a wake helper.
+        if(firstAttempt) toast('Push wake failed — in-app ring still works if they have Naluno open');
       } else if(data.sent === false){
-        // Not an error — this person just hasn't granted notification permission, or
-        // hasn't opened the app since it was added. Worth knowing during testing, but
-        // not really an error toast — this is the Worker's own honest "nothing to do" case.
         console.log('Call notification not sent:', data.reason);
-        if(firstAttempt) toast('No notification on file for them yet — in-app ring still works');
+        // Quiet: no toast. In-app ring is the primary path when both are online.
       }
     }catch(e){
       console.error('Call notification request failed:', e);
-      if(firstAttempt) toast('Notification request failed: ' + (e.message || 'network error'));
+      if(firstAttempt) toast('Push wake failed — in-app ring still works if they have Naluno open');
     }
     firstAttempt = false;
   };
@@ -5750,6 +5828,14 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
 }
 
 async function startRealCall(c){
+  // Force-clear any leftover state from a previous call so retries always work.
+  if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
+  clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
+  if(peerConnection || activeCallDocUnsub || callerCandidatesUnsub || calleeCandidatesUnsub){
+    teardownCallConnection();
+  }
+  callActionInProgress = false;
+
   // Kick TURN fetch in parallel with camera so createPeerConnection is fast.
   prewarmIceServers();
   if(!stream) await enableCamera(); // must exist before createPeerConnection adds tracks
@@ -5811,13 +5897,29 @@ async function startRealCall(c){
 
     if(d.status === 'declined'){
       toast(c.name.split(' ')[0] + ' declined');
+      // Don't write status again — remote already did. Just close local UI.
+      clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
+      if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
+      stopCallerTone();
+      stopRingtone();
       teardownCallConnection();
-      closeCallOverlayAndStopCamera();
+      closeCallOverlay();
+      stopCameraStream();
+      currentCallContactId = null;
+      callActionInProgress = false;
     }
-    if(d.status === 'ended' && $('incall').classList.contains('active')){
-      toast('Call ended');
+    // React to remote hangup even if we're mid-transition (not only when incall is active).
+    if(d.status === 'ended' && $('callOverlay').classList.contains('active')){
+      clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
+      if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
+      stopCallerTone();
+      stopRingtone();
       teardownCallConnection();
-      setTimeout(closeCallOverlayAndStopCamera, 400);
+      closeCallOverlay();
+      stopCameraStream();
+      currentCallContactId = null;
+      callActionInProgress = false;
+      toast('Call ended');
     }
   });
 
@@ -5898,7 +6000,7 @@ $('asyncKeepRingingBtn').onclick = async ()=>{
 $('asyncCancelBtn').onclick = closeCallOverlayAndStopCamera;
 
 function closeCallOverlayAndStopCamera(){
-  clearTimeout(ringTimeoutHandle);
+  clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
   if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
   stopCallerTone();
   stopRingtone();
@@ -5907,6 +6009,11 @@ function closeCallOverlayAndStopCamera(){
   stopCameraStream();
   currentCallContactId = null; // clean slate — nothing from this call should linger into the next one
   callActionInProgress = false;
+  incallViewMode = 0;
+  try{
+    $('incall').classList.remove('swap-focus');
+    if($('localPip')) $('localPip').classList.remove('large');
+  }catch(e){}
 }
 $('lobbyBack').onclick = closeCallOverlayAndStopCamera;
 $('joinBtn').onclick = async ()=>{
@@ -5924,16 +6031,21 @@ $('joinBtn').onclick = async ()=>{
 };
 $('cancelCall').onclick = ()=>{
   // Caller hanging up while still ringing — let the callee's side know it's over.
-  if(activeCallId && fbDb) fbDb.collection('calls').doc(activeCallId).update({ status:'ended' }).catch(()=>{});
-  closeCallOverlayAndStopCamera();
+  endActiveCall('cancel');
 };
 $('ringFallbackHint').onclick = ()=>{ if(currentCallContactId) showAsyncFallback(currentCallContactId, 'timeout'); };
 
 $('declineIncoming').onclick = ()=>{
   stopRingtone();
-  if(activeCallId && fbDb) fbDb.collection('calls').doc(activeCallId).update({ status:'declined' }).catch(()=>{});
+  const callId = activeCallId;
+  if(callId && fbDb){
+    fbDb.collection('calls').doc(callId).update({ status:'declined' }).catch(()=>{});
+  }
   teardownCallConnection();
-  closeCallOverlayAndStopCamera();
+  closeCallOverlay();
+  stopCameraStream();
+  currentCallContactId = null;
+  callActionInProgress = false;
 };
 $('acceptIncoming').onclick = async ()=>{
   if(callActionInProgress) return;
@@ -5992,17 +6104,28 @@ $('acceptIncoming').onclick = async ()=>{
     if(activeCallDocUnsub) activeCallDocUnsub();
     activeCallDocUnsub = callRef.onSnapshot(snap=>{
       const d = snap.data();
-      if(d && d.status==='ended' && $('incall').classList.contains('active')){
-        toast('Call ended');
+      if(d && d.status === 'ended' && $('callOverlay').classList.contains('active')){
+        clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
+        if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
+        stopCallerTone();
+        stopRingtone();
         teardownCallConnection();
-        setTimeout(closeCallOverlayAndStopCamera, 400);
+        closeCallOverlay();
+        stopCameraStream();
+        currentCallContactId = null;
+        callActionInProgress = false;
+        toast('Call ended');
       }
     });
   }catch(e){
     toast(e.message || 'Couldn\u2019t answer the call');
     // Mark ended so the caller does not hang in a half-connected state.
     try{ await callRef.update({ status: 'ended' }); }catch(_){}
-    closeCallOverlayAndStopCamera();
+    teardownCallConnection();
+    closeCallOverlay();
+    stopCameraStream();
+    currentCallContactId = null;
+    callActionInProgress = false;
   }finally{
     callActionInProgress = false;
   }
@@ -6043,11 +6166,7 @@ if($('viewToggleBtn')){
   };
 }
 $('endBtn').onclick = ()=>{
-  clearInterval(callInterval);
-  if(activeCallId && fbDb) fbDb.collection('calls').doc(activeCallId).update({ status:'ended' }).catch(()=>{});
-  toast('Call ended');
-  teardownCallConnection();
-  setTimeout(closeCallOverlayAndStopCamera, 500);
+  endActiveCall('hangup');
 };
 
 /* draggable local pip */
