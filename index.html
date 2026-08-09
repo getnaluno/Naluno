@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.08.09.5">
+<meta name="app-version" content="2026.08.09.6">
 <meta name="description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="A statement from the future — not another WhatsApp.">
@@ -4835,8 +4835,9 @@ function paintForestPark(ctx,w,h,t){
   ctx.quadraticCurveTo(w*0.88+nx,h*0.65+ny, w+nx,h*0.74+ny);
   ctx.lineTo(w+nx,h); ctx.closePath(); ctx.fill();
 }
+/* Scene painters kept for Compass / vibe accents that still reference them. */
 const backgroundPresets = {
-  none:      { name:'Real background', type:'none', painter:null },
+  none:      { name:'Original', type:'none', painter:null },
   aurora:    { name:'Aurora Drift',  type:'canvas', painter:paintAurora },
   studio:    { name:'Studio Glow',   type:'canvas', painter:paintStudioGlow },
   rain:      { name:'Ion Rain',      type:'canvas', painter:paintIonRain },
@@ -4845,48 +4846,209 @@ const backgroundPresets = {
   waterfall: { name:'Waterfall',     type:'canvas', painter:paintWaterfall },
   forest:    { name:'Forest Park',   type:'canvas', painter:paintForestPark },
 };
-let selectedBackgroundId = 'none';
-let userPickedBackground = false; // false = Greenroom is free to auto-suggest
+
+/* ---------------- NALUNO FILTERS ----------------
+   Original-to-Naluno looks applied on the composited camera (you + what the other
+   person sees). Built from color science + light overlays — no ML cutouts. */
+const nalunoFilters = {
+  original: {
+    name: 'Original',
+    css: 'none',
+    grade: null,
+  },
+  signal: {
+    name: 'Signal',
+    // Brand mint lift in the mids, clean contrast — the Naluno "on-air" look
+    css: 'contrast(1.08) saturate(1.12) brightness(1.03)',
+    grade: 'signal',
+  },
+  wireline: {
+    name: 'Wireline',
+    css: 'contrast(1.14) saturate(0.92) brightness(1.02)',
+    grade: 'wireline',
+  },
+  frequency: {
+    name: 'Frequency',
+    css: 'contrast(1.1) saturate(1.25) hue-rotate(-8deg)',
+    grade: 'frequency',
+  },
+  nightcall: {
+    name: 'Night Call',
+    css: 'contrast(1.18) saturate(0.85) brightness(0.92)',
+    grade: 'nightcall',
+  },
+  ambergrid: {
+    name: 'Amber Grid',
+    css: 'contrast(1.12) saturate(1.15) sepia(0.22) brightness(1.04)',
+    grade: 'ambergrid',
+  },
+  monomint: {
+    name: 'Mono Mint',
+    css: 'grayscale(1) contrast(1.2) brightness(1.05)',
+    grade: 'monomint',
+  },
+  ionbloom: {
+    name: 'Ion Bloom',
+    css: 'contrast(1.06) saturate(1.45) brightness(1.08)',
+    grade: 'ionbloom',
+  },
+  ghost: {
+    name: 'Ghost Protocol',
+    css: 'contrast(0.92) saturate(0.55) brightness(1.12)',
+    grade: 'ghost',
+  },
+  broadcast: {
+    name: 'Broadcast',
+    css: 'contrast(1.16) saturate(1.05) brightness(1.0)',
+    grade: 'broadcast',
+  },
+  orbit: {
+    name: 'Orbit',
+    css: 'contrast(1.1) saturate(1.2) hue-rotate(18deg)',
+    grade: 'orbit',
+  },
+  pulse: {
+    name: 'Pulse',
+    css: 'contrast(1.22) saturate(1.35) brightness(1.05)',
+    grade: 'pulse',
+  },
+  deepfield: {
+    name: 'Deep Field',
+    css: 'contrast(1.25) saturate(0.7) brightness(0.88)',
+    grade: 'deepfield',
+  },
+  silverline: {
+    name: 'Silverline',
+    css: 'contrast(1.15) saturate(0.4) brightness(1.06)',
+    grade: 'silverline',
+  },
+};
+
+let selectedFilterId = 'original';
+let selectedBackgroundId = 'none'; // legacy id used by a few non-camera paths
+let userPickedBackground = false;
+let userPickedFilter = false;
+
+function applyFilterOverlays(ctx, w, h, grade, t){
+  if(!grade) return;
+  ctx.save();
+  // Soft vignette — almost every cinematic grade uses one; keeps faces centered.
+  if(grade !== 'original'){
+    const vig = ctx.createRadialGradient(w*0.5, h*0.45, Math.min(w,h)*0.25, w*0.5, h*0.5, Math.max(w,h)*0.72);
+    vig.addColorStop(0, 'rgba(0,0,0,0)');
+    vig.addColorStop(1, grade === 'nightcall' || grade === 'deepfield' ? 'rgba(0,0,0,0.55)' : 'rgba(0,0,0,0.32)');
+    ctx.fillStyle = vig;
+    ctx.fillRect(0,0,w,h);
+  }
+  // Per-filter color washes / accents unique to Naluno
+  if(grade === 'signal'){
+    const g = ctx.createRadialGradient(w*0.5, h*0.35, 0, w*0.5, h*0.35, Math.max(w,h)*0.55);
+    g.addColorStop(0, 'rgba(124,255,178,0.10)');
+    g.addColorStop(1, 'rgba(124,255,178,0)');
+    ctx.fillStyle = g; ctx.fillRect(0,0,w,h);
+  } else if(grade === 'wireline'){
+    ctx.fillStyle = 'rgba(0, 40, 55, 0.12)';
+    ctx.fillRect(0,0,w,h);
+  } else if(grade === 'frequency'){
+    // Subtle dual-tone wash (mint + violet) — reads as "signal interference" without noise
+    const a = ctx.createLinearGradient(0,0,w,h);
+    a.addColorStop(0, 'rgba(124,255,178,0.07)');
+    a.addColorStop(1, 'rgba(124,77,255,0.08)');
+    ctx.fillStyle = a; ctx.fillRect(0,0,w,h);
+  } else if(grade === 'nightcall'){
+    ctx.fillStyle = 'rgba(10, 18, 40, 0.22)';
+    ctx.fillRect(0,0,w,h);
+    const g = ctx.createRadialGradient(w*0.5, h*0.3, 0, w*0.5, h*0.3, Math.max(w,h)*0.5);
+    g.addColorStop(0, 'rgba(0,229,255,0.06)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.fillRect(0,0,w,h);
+  } else if(grade === 'ambergrid'){
+    ctx.fillStyle = 'rgba(255, 160, 60, 0.08)';
+    ctx.fillRect(0,0,w,h);
+  } else if(grade === 'monomint'){
+    // Mint ghosting in the highlights only
+    ctx.globalCompositeOperation = 'screen';
+    ctx.fillStyle = 'rgba(124,255,178,0.08)';
+    ctx.fillRect(0,0,w,h);
+    ctx.globalCompositeOperation = 'source-over';
+  } else if(grade === 'ionbloom'){
+    const g = ctx.createRadialGradient(w*0.5, h*0.4, 0, w*0.5, h*0.4, Math.max(w,h)*0.6);
+    g.addColorStop(0, 'rgba(180,240,255,0.12)');
+    g.addColorStop(1, 'rgba(80,120,255,0)');
+    ctx.fillStyle = g; ctx.fillRect(0,0,w,h);
+  } else if(grade === 'ghost'){
+    ctx.fillStyle = 'rgba(200, 210, 255, 0.10)';
+    ctx.fillRect(0,0,w,h);
+  } else if(grade === 'broadcast'){
+    // Thin letterbox bars — "on air" framing
+    const bar = Math.max(4, Math.round(h * 0.03));
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillRect(0,0,w,bar);
+    ctx.fillRect(0,h-bar,w,bar);
+  } else if(grade === 'orbit'){
+    const a = ctx.createLinearGradient(0,0,w,0);
+    a.addColorStop(0, 'rgba(124,77,255,0.10)');
+    a.addColorStop(0.5, 'rgba(0,0,0,0)');
+    a.addColorStop(1, 'rgba(0,229,255,0.10)');
+    ctx.fillStyle = a; ctx.fillRect(0,0,w,h);
+  } else if(grade === 'pulse'){
+    const pulse = 0.06 + 0.04 * Math.sin((t||0) * 2.2);
+    ctx.fillStyle = `rgba(124,255,178,${pulse})`;
+    ctx.fillRect(0,0,w,h);
+  } else if(grade === 'deepfield'){
+    ctx.fillStyle = 'rgba(5, 8, 24, 0.28)';
+    ctx.fillRect(0,0,w,h);
+  } else if(grade === 'silverline'){
+    ctx.fillStyle = 'rgba(180, 190, 210, 0.06)';
+    ctx.fillRect(0,0,w,h);
+  }
+  ctx.restore();
+}
 
 function renderBackgroundChips(){
-  const html = Object.entries(backgroundPresets).map(([key,p])=>
-    `<div class="filter-chip ${selectedBackgroundId===key?'active':''}" data-bg="${key}">${p.name}</div>`
+  // Chips now select Naluno filters (camera looks), not scene borders.
+  const html = Object.entries(nalunoFilters).map(([key,p])=>
+    `<div class="filter-chip ${selectedFilterId===key?'active':''}" data-filter="${key}">${p.name}</div>`
   ).join('');
   ['lobbyBgChipRow','incallBgChipRow'].forEach(rowId=>{
     const row = $(rowId); if(!row) return;
     row.innerHTML = html;
-    row.querySelectorAll('[data-bg]').forEach(el=>{
-      el.onclick = ()=> chooseBackground(el.dataset.bg, true);
+    row.querySelectorAll('[data-filter]').forEach(el=>{
+      el.onclick = ()=> chooseFilter(el.dataset.filter, true);
     });
   });
 }
-function chooseBackground(id, manual){
-  if(!backgroundPresets[id]) return;
-  selectedBackgroundId = id;
-  if(manual) userPickedBackground = true;
-  // Picking any virtual scene implies greenroom is on; "Real background" leaves it optional.
-  if(id !== 'none' && !greenroomEnabled){
-    greenroomEnabled = true;
-    const gt = $('greenroomToggle');
-    if(gt) gt.classList.add('on');
-  }
+function chooseFilter(id, manual){
+  if(!nalunoFilters[id]) return;
+  selectedFilterId = id;
+  selectedBackgroundId = id === 'original' ? 'none' : id; // keep legacy field roughly in sync
+  if(manual){ userPickedFilter = true; userPickedBackground = true; }
   renderBackgroundChips();
-  const label = backgroundPresets[id].name;
-  if($('greenroomLabel')) $('greenroomLabel').textContent = id === 'none' ? 'Greenroom · real background' : ('Greenroom · ' + label);
+  const label = nalunoFilters[id].name;
+  if($('greenroomLabel')) $('greenroomLabel').textContent = 'Filter · ' + label;
   if(manual){
-    toast(id === 'none' ? 'Using your real background' : ('Background set to ' + label));
+    toast(id === 'original' ? 'Original look' : ('Filter · ' + label));
     saveBackgroundChoice();
   }
 }
+// Back-compat name used by a few call sites
+function chooseBackground(id, manual){
+  if(id === 'none') return chooseFilter('original', manual);
+  if(nalunoFilters[id]) return chooseFilter(id, manual);
+  // Old scene ids → map to a sensible filter
+  const map = { aurora:'orbit', studio:'signal', rain:'frequency', stars:'deepfield', desert:'ambergrid', waterfall:'ionbloom', forest:'wireline' };
+  chooseFilter(map[id] || 'original', manual);
+}
 function saveBackgroundChoice(){
-  try{ localStorage.setItem('naluno:background', JSON.stringify({ id: selectedBackgroundId })); }catch(e){}
+  try{ localStorage.setItem('naluno:filter', JSON.stringify({ id: selectedFilterId })); }catch(e){}
 }
 function loadBackgroundChoice(){
   try{
-    const saved = localStorage.getItem('naluno:background');
+    const saved = localStorage.getItem('naluno:filter') || localStorage.getItem('naluno:background');
     if(saved){
       const data = JSON.parse(saved);
-      if(backgroundPresets[data.id]){ selectedBackgroundId = data.id; userPickedBackground = true; }
+      if(nalunoFilters[data.id]){ selectedFilterId = data.id; userPickedFilter = true; }
+      else if(data.id === 'none'){ selectedFilterId = 'original'; }
     }
   }catch(e){ /* no saved choice yet */ }
   renderBackgroundChips();
@@ -5094,13 +5256,9 @@ function ensureCanvasSize(canvas){
   const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
   if(canvas.width!==w || canvas.height!==h){ canvas.width=w; canvas.height=h; }
 }
-/* ---------------- LIVE BACKGROUNDS (Greenroom) ----------------
-   Reverted from ML person-cutout. Browser segmentation cannot match a real green
-   screen on phone cameras (soft edges, temporal flicker, hair bleed).
-
-   - "Real background" → unmodified camera, full frame
-   - Any live scene      → scene painted full-canvas; camera drawn on top clipped to a
-                           small inset so the scene forms a clean, stable border only */
+/* ---------------- CAMERA COMPOSITE + NALUNO FILTERS ----------------
+   Full-frame camera, then an original Naluno color grade + light overlays.
+   What you see is what the other person receives (send canvas uses the same path). */
 let camAnimStart = performance.now();
 let pipAnimStart = performance.now();
 function compositeFrame(canvas, video, animStart){
@@ -5110,25 +5268,20 @@ function compositeFrame(canvas, video, animStart){
   ctx.clearRect(0,0,w,h);
 
   const mirror = cameraFacingMode !== 'environment';
-  const wantScene = greenroomEnabled && selectedBackgroundId && selectedBackgroundId !== 'none';
-  const preset = wantScene ? backgroundPresets[selectedBackgroundId] : null;
+  const filterId = (greenroomEnabled && selectedFilterId) ? selectedFilterId : 'original';
+  const filt = nalunoFilters[filterId] || nalunoFilters.original;
 
-  if(!wantScene || !preset || !preset.painter){
-    // Real background — unmodified camera, no border.
-    drawVideoCover(ctx, video, w, h, mirror);
-    ctx.restore();
-    return;
+  // Draw camera with the grade baked into the draw via ctx.filter (GPU-friendly).
+  if(filt.css && filt.css !== 'none'){
+    ctx.filter = filt.css;
   }
-
-  // Scene fills the frame first.
-  preset.painter(ctx, w, h, (performance.now()-animStart)/1000);
-
-  // Camera on top, clipped to an inset — scene remains as a clean border.
-  const borderPx = Math.max(8, Math.round(Math.min(w,h) * 0.05));
-  ctx.beginPath();
-  ctx.rect(borderPx, borderPx, Math.max(1, w - borderPx*2), Math.max(1, h - borderPx*2));
-  ctx.clip();
   drawVideoCover(ctx, video, w, h, mirror);
+  ctx.filter = 'none';
+
+  // Naluno-only overlays (vignette, brand washes, letterbox, pulse…)
+  if(filt.grade){
+    applyFilterOverlays(ctx, w, h, filt.grade, (performance.now() - animStart) / 1000);
+  }
   ctx.restore();
 }
 function drawStage(canvasId, videoId, animStart){
@@ -5324,27 +5477,27 @@ $('greenroomPill').onclick = ()=>{ if(stream) runGreenroom(); };
 function runGreenroom(){
   if(!greenroomEnabled){
     $('greenroomPill').classList.add('ready');
-    $('greenroomLabel').textContent = 'Greenroom · off';
+    $('greenroomLabel').textContent = 'Filter · off';
     return;
   }
   $('greenroomPill').classList.remove('ready');
-  $('greenroomLabel').textContent = 'Greenroom · scanning';
+  $('greenroomLabel').textContent = 'Filter · matching…';
   setTimeout(()=>{
-    const id = userPickedBackground ? selectedBackgroundId : suggestBackgroundId();
-    chooseBackground(id, false);
+    const id = userPickedFilter ? selectedFilterId : suggestFilterId();
+    chooseFilter(id, false);
     $('greenroomPill').classList.add('ready');
-    const name = backgroundPresets[id] ? backgroundPresets[id].name : id;
-    toast(id === 'none' ? 'Keeping your real background' : ('Border set to ' + name));
+    const name = (nalunoFilters[id] && nalunoFilters[id].name) || id;
+    toast('Filter · ' + name);
     $('sceneReadyNote').style.display = 'inline-flex';
-  }, 600);
+  }, 500);
 }
 
-/* Samples the live feed's average brightness to suggest a background — only used
-   when you haven't picked one yourself; your own choice always wins. */
-function suggestBackgroundId(){
-  if(!stream) return 'studio';
+/* Suggest a filter from scene brightness — only when the user hasn't chosen one. */
+function suggestFilterId(){
+  if(!stream) return 'signal';
   try{
-    const v = $('camRawVideo');
+    const v = $('camRawVideo') || $('sendRawVideo');
+    if(!v || v.readyState < 2) return 'signal';
     const c = document.createElement('canvas');
     c.width = 16; c.height = 16;
     const ctx = c.getContext('2d');
@@ -5353,11 +5506,14 @@ function suggestBackgroundId(){
     let total = 0;
     for(let i=0;i<data.length;i+=4){ total += (data[i]*0.299 + data[i+1]*0.587 + data[i+2]*0.114); }
     const avg = total / (data.length/4);
-    if(avg < 70) return 'aurora';
-    if(avg < 150) return 'studio';
-    return 'stars';
-  }catch(e){ return 'studio'; }
+    if(avg < 55) return 'nightcall';
+    if(avg < 100) return 'wireline';
+    if(avg < 160) return 'signal';
+    if(avg < 200) return 'broadcast';
+    return 'ghost';
+  }catch(e){ return 'signal'; }
 }
+function suggestBackgroundId(){ return suggestFilterId(); }
 
 
 function setCam(on){
