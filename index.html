@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.08.09.6">
+<meta name="app-version" content="2026.08.09.7">
 <meta name="description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="A statement from the future — not another WhatsApp.">
@@ -4922,6 +4922,67 @@ const nalunoFilters = {
     css: 'contrast(1.15) saturate(0.4) brightness(1.06)',
     grade: 'silverline',
   },
+  // —— Digital / HD set ——
+  retina: {
+    name: 'Retina HD',
+    css: 'contrast(1.14) saturate(1.08) brightness(1.04)',
+    grade: 'retina',
+  },
+  crisp: {
+    name: 'Crisp',
+    css: 'contrast(1.28) saturate(1.05) brightness(1.02)',
+    grade: 'crisp',
+  },
+  neon: {
+    name: 'Neon Digital',
+    css: 'contrast(1.2) saturate(1.55) brightness(1.06) hue-rotate(-12deg)',
+    grade: 'neon',
+  },
+  cyber: {
+    name: 'Cyber',
+    css: 'contrast(1.22) saturate(1.3) brightness(0.96) hue-rotate(200deg)',
+    grade: 'cyber',
+  },
+  pixel: {
+    name: 'Pixel',
+    css: 'contrast(1.15) saturate(1.2)',
+    grade: 'pixel',
+  },
+  glitch: {
+    name: 'Glitch',
+    css: 'contrast(1.18) saturate(1.35)',
+    grade: 'glitch',
+  },
+  holo: {
+    name: 'Holo',
+    css: 'contrast(1.1) saturate(1.4) brightness(1.05)',
+    grade: 'holo',
+  },
+  matrix: {
+    name: 'Matrix',
+    css: 'contrast(1.25) saturate(0.3) brightness(0.95) hue-rotate(80deg)',
+    grade: 'matrix',
+  },
+  film: {
+    name: 'Film HD',
+    css: 'contrast(1.12) saturate(0.88) brightness(1.02) sepia(0.12)',
+    grade: 'film',
+  },
+  cleanhd: {
+    name: 'Clean HD',
+    css: 'contrast(1.06) saturate(1.02) brightness(1.03)',
+    grade: 'cleanhd',
+  },
+  infrared: {
+    name: 'Infrared',
+    css: 'contrast(1.3) saturate(0.2) brightness(1.08) hue-rotate(-20deg)',
+    grade: 'infrared',
+  },
+  vapor: {
+    name: 'Vapor',
+    css: 'contrast(1.08) saturate(1.5) brightness(1.1) hue-rotate(-25deg)',
+    grade: 'vapor',
+  },
 };
 
 let selectedFilterId = 'original';
@@ -5001,6 +5062,63 @@ function applyFilterOverlays(ctx, w, h, grade, t){
   } else if(grade === 'silverline'){
     ctx.fillStyle = 'rgba(180, 190, 210, 0.06)';
     ctx.fillRect(0,0,w,h);
+  } else if(grade === 'retina'){
+    // Subtle clarity ring — reads as “HD” without crunching skin
+    const g = ctx.createRadialGradient(w*0.5, h*0.4, Math.min(w,h)*0.15, w*0.5, h*0.45, Math.max(w,h)*0.7);
+    g.addColorStop(0, 'rgba(255,255,255,0.04)');
+    g.addColorStop(1, 'rgba(0,0,0,0.18)');
+    ctx.fillStyle = g; ctx.fillRect(0,0,w,h);
+  } else if(grade === 'crisp'){
+    ctx.fillStyle = 'rgba(0,0,0,0.06)';
+    ctx.fillRect(0,0,w,h);
+  } else if(grade === 'neon'){
+    const a = ctx.createLinearGradient(0,0,w,h);
+    a.addColorStop(0, 'rgba(255,0,180,0.08)');
+    a.addColorStop(0.5, 'rgba(0,0,0,0)');
+    a.addColorStop(1, 'rgba(0,255,220,0.08)');
+    ctx.fillStyle = a; ctx.fillRect(0,0,w,h);
+  } else if(grade === 'cyber'){
+    // Scanline mesh
+    ctx.fillStyle = 'rgba(0, 255, 200, 0.03)';
+    for(let y=0; y<h; y+=3) ctx.fillRect(0, y, w, 1);
+    const g = ctx.createRadialGradient(w*0.5, h*0.35, 0, w*0.5, h*0.35, Math.max(w,h)*0.55);
+    g.addColorStop(0, 'rgba(0,255,180,0.07)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.fillRect(0,0,w,h);
+  } else if(grade === 'pixel'){
+    // No extra wash — pixel look is applied in compositeFrame via scale trick
+  } else if(grade === 'glitch'){
+    // RGB-ish edge flash
+    ctx.globalCompositeOperation = 'screen';
+    ctx.fillStyle = 'rgba(255,40,80,0.05)';
+    ctx.fillRect(0,0,w*0.5,h);
+    ctx.fillStyle = 'rgba(40,200,255,0.05)';
+    ctx.fillRect(w*0.5,0,w*0.5,h);
+    ctx.globalCompositeOperation = 'source-over';
+  } else if(grade === 'holo'){
+    const a = ctx.createLinearGradient(0,0,w,h);
+    a.addColorStop(0, 'rgba(255,100,200,0.07)');
+    a.addColorStop(0.5, 'rgba(100,200,255,0.07)');
+    a.addColorStop(1, 'rgba(180,255,120,0.07)');
+    ctx.fillStyle = a; ctx.fillRect(0,0,w,h);
+  } else if(grade === 'matrix'){
+    ctx.fillStyle = 'rgba(0, 40, 0, 0.15)';
+    ctx.fillRect(0,0,w,h);
+    ctx.fillStyle = 'rgba(0, 255, 70, 0.04)';
+    for(let y=0; y<h; y+=4) ctx.fillRect(0, y, w, 1);
+  } else if(grade === 'film'){
+    ctx.fillStyle = 'rgba(40, 30, 15, 0.08)';
+    ctx.fillRect(0,0,w,h);
+  } else if(grade === 'cleanhd'){
+    // intentionally minimal
+  } else if(grade === 'infrared'){
+    ctx.fillStyle = 'rgba(80, 0, 20, 0.12)';
+    ctx.fillRect(0,0,w,h);
+  } else if(grade === 'vapor'){
+    const a = ctx.createLinearGradient(0,h,w,0);
+    a.addColorStop(0, 'rgba(255,100,180,0.10)');
+    a.addColorStop(1, 'rgba(100,180,255,0.10)');
+    ctx.fillStyle = a; ctx.fillRect(0,0,w,h);
   }
   ctx.restore();
 }
@@ -5261,24 +5379,50 @@ function ensureCanvasSize(canvas){
    What you see is what the other person receives (send canvas uses the same path). */
 let camAnimStart = performance.now();
 let pipAnimStart = performance.now();
+/* Mirror ONLY the true front camera. Prefer the live track's facingMode over our
+   toggle variable — after a flip, the variable can briefly disagree with hardware. */
+function shouldMirrorCamera(){
+  try{
+    const track = stream && stream.getVideoTracks && stream.getVideoTracks()[0];
+    if(track && track.getSettings){
+      const fm = track.getSettings().facingMode;
+      if(fm === 'environment' || fm === 'left' || fm === 'right') return false;
+      if(fm === 'user' || fm === 'face') return true;
+    }
+  }catch(e){}
+  return cameraFacingMode !== 'environment';
+}
 function compositeFrame(canvas, video, animStart){
   const w = canvas.width, h = canvas.height;
   const ctx = canvas.getContext('2d');
   ctx.save();
   ctx.clearRect(0,0,w,h);
 
-  const mirror = cameraFacingMode !== 'environment';
+  const mirror = shouldMirrorCamera();
   const filterId = (greenroomEnabled && selectedFilterId) ? selectedFilterId : 'original';
   const filt = nalunoFilters[filterId] || nalunoFilters.original;
 
-  // Draw camera with the grade baked into the draw via ctx.filter (GPU-friendly).
-  if(filt.css && filt.css !== 'none'){
-    ctx.filter = filt.css;
+  if(filt.grade === 'pixel'){
+    // Pixel look: draw small, scale up with nearest-neighbor
+    const pw = Math.max(32, Math.round(w / 8));
+    const ph = Math.max(32, Math.round(h / 8));
+    if(!compositeFrame._pixel) compositeFrame._pixel = document.createElement('canvas');
+    const pc = compositeFrame._pixel;
+    if(pc.width !== pw || pc.height !== ph){ pc.width = pw; pc.height = ph; }
+    const pctx = pc.getContext('2d');
+    pctx.clearRect(0,0,pw,ph);
+    if(filt.css && filt.css !== 'none') pctx.filter = filt.css;
+    drawVideoCover(pctx, video, pw, ph, mirror);
+    pctx.filter = 'none';
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(pc, 0, 0, w, h);
+    ctx.imageSmoothingEnabled = true;
+  } else {
+    if(filt.css && filt.css !== 'none') ctx.filter = filt.css;
+    drawVideoCover(ctx, video, w, h, mirror);
+    ctx.filter = 'none';
   }
-  drawVideoCover(ctx, video, w, h, mirror);
-  ctx.filter = 'none';
 
-  // Naluno-only overlays (vignette, brand washes, letterbox, pulse…)
   if(filt.grade){
     applyFilterOverlays(ctx, w, h, filt.grade, (performance.now() - animStart) / 1000);
   }
@@ -5377,43 +5521,83 @@ function updateCameraQualityBadge(){
 /* Real front/back (or multi-camera) switching, not a placeholder. Falls back to toggling
    facingMode when the device only exposes one enumerable camera, which still works on
    phones even before device labels are available. */
+function syncFacingModeFromTrack(){
+  try{
+    const track = stream && stream.getVideoTracks && stream.getVideoTracks()[0];
+    if(track && track.getSettings){
+      const fm = track.getSettings().facingMode;
+      if(fm === 'environment' || fm === 'left' || fm === 'right') cameraFacingMode = 'environment';
+      else if(fm === 'user' || fm === 'face') cameraFacingMode = 'user';
+    }
+  }catch(e){}
+}
+function mediaStreamIsLive(s){
+  if(!s) return false;
+  const tracks = s.getTracks();
+  if(!tracks.length) return false;
+  const vids = tracks.filter(t => t.kind === 'video');
+  if(vids.length) return vids.some(t => t.readyState === 'live');
+  return tracks.some(t => t.readyState === 'live');
+}
 async function flipCamera(){
   if(!stream){ toast('Turn on the camera first'); return; }
-  // facingMode alone, always — this is the robust mechanism, specifically designed to
-  // reliably pick "the front one" or "the back one" regardless of exact hardware. The
-  // previous approach tried to enumerate devices and identify the current one by
-  // deviceId to cycle to "the next" — but a stream started via facingMode (not an
-  // exact device id) doesn't always report a deviceId that cleanly matches what gets
-  // enumerated, and when that lookup silently failed, the math landed back on the same
-  // camera that was already active. That's exactly what "needs a second or third tap"
-  // looks like: the first tap quietly re-selecting the current camera, not switching.
   preferredVideoDeviceId = null;
-  cameraFacingMode = cameraFacingMode === 'user' ? 'environment' : 'user';
+  const next = cameraFacingMode === 'user' ? 'environment' : 'user';
+  cameraFacingMode = next;
   try{
-    const newStream = await requestHighQualityStream();
-    stream.getTracks().forEach(t=>t.stop());
+    let newStream;
+    try{
+      newStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { exact: next },
+          width: { ideal: 2560 },
+          height: { ideal: 1440 },
+          frameRate: { ideal: 30, max: 60 },
+        },
+        audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true },
+      });
+    }catch(e){
+      newStream = await requestHighQualityStream();
+    }
+    stream.getTracks().forEach(t=>{ try{ t.stop(); }catch(_){} });
     stream = newStream;
-    $('incomingSelfVideo').srcObject = stream;
+    syncFacingModeFromTrack();
+    const inv = $('incomingSelfVideo');
+    if(inv){
+      inv.srcObject = stream;
+      inv.style.transform = shouldMirrorCamera() ? 'scaleX(-1)' : 'none';
+    }
     $('sendRawVideo').srcObject = stream;
     startCamView($('incall').classList.contains('active') ? 'pip' : 'lobby');
     updateCameraQualityBadge();
     updateSignatureGlow();
-    toast('Switched camera');
+    toast(cameraFacingMode === 'environment' ? 'Rear camera' : 'Front camera');
     runGreenroom();
   }catch(e){
+    cameraFacingMode = next === 'user' ? 'environment' : 'user';
     toast('Couldn\u2019t switch camera on this device');
   }
 }
 
 async function enableCamera(){
-  // If a request is already in flight (e.g. an outgoing call and the incoming-call
-  // simulator both fired), reuse it instead of opening a second getUserMedia prompt.
+  // If a request is already in flight, reuse it instead of a second getUserMedia prompt.
   if(cameraRequestPending){ await cameraRequestPending; return; }
-  if(stream){ runGreenroom(); return; }
+  // After a long call, stream may still be non-null while every track is ended.
+  // Treating that as "camera on" is what made the next call fail silently.
+  if(mediaStreamIsLive(stream)){ runGreenroom(); return; }
+  if(stream){
+    try{ stream.getTracks().forEach(t=>t.stop()); }catch(_){}
+    stream = null;
+  }
   cameraRequestPending = requestHighQualityStream();
   try{
     stream = await cameraRequestPending;
-    $('incomingSelfVideo').srcObject = stream; // small preview only
+    syncFacingModeFromTrack();
+    const inv = $('incomingSelfVideo');
+    if(inv){
+      inv.srcObject = stream;
+      inv.style.transform = shouldMirrorCamera() ? 'scaleX(-1)' : 'none';
+    }
     $('sendRawVideo').srcObject = stream;
     startCamView($('incall').classList.contains('active') ? 'pip' : 'lobby');
     $('camFallback').style.display='none';
@@ -6026,11 +6210,29 @@ function startIncomingCallListener(){
     }, ()=>{ /* incoming calls just won't be detected this session */ });
 }
 function handleIncomingCall(callId, data){
-  if($('callOverlay').classList.contains('active')) return; // already on a call/attempt
+  // If a previous call left the overlay stuck, force-clear so we can receive again.
+  if($('callOverlay').classList.contains('active')){
+    if(activeCallId && activeCallId !== callId){
+      // Different call while UI claims busy — ignore.
+      return;
+    }
+    if(activeCallId === callId) return; // same call re-delivered
+    // Overlay active but no activeCallId → stale UI after a bad hangup.
+    try{ closeCallOverlayAndStopCamera(); }catch(e){}
+  }
+  // Drop any leftover peer from the last session before presenting incoming UI.
+  if(peerConnection){
+    try{ peerConnection.close(); }catch(e){}
+    peerConnection = null;
+  }
+  if(callerCandidatesUnsub){ callerCandidatesUnsub(); callerCandidatesUnsub = null; }
+  if(calleeCandidatesUnsub){ calleeCandidatesUnsub(); calleeCandidatesUnsub = null; }
+
   activeCallId = callId;
   iAmCaller = false;
   remoteDescriptionSet = false;
   pendingRemoteCandidates = [];
+  callActionInProgress = false;
   const c = contacts.find(x=>x.firebaseUid===data.callerUid);
   const name = c ? c.name : 'Someone';
   const color = c ? c.color : '#8B90A8';
@@ -6046,8 +6248,7 @@ function handleIncomingCall(callId, data){
   // Pre-warm camera + TURN so Answer is nearly instant.
   prewarmIceServers();
   const showReady = ()=>{ $('incomingSceneNote').style.display = 'inline-flex'; $('incomingSelfTag').textContent = 'scene ready'; };
-  if(!stream) enableCamera().then(()=> setTimeout(showReady, 400));
-  else showReady();
+  enableCamera().then(()=> setTimeout(showReady, 300)).catch(()=> showReady());
 
   // Watches for the caller hanging up before this side answers.
   activeCallDocUnsub = fbDb.collection('calls').doc(callId).onSnapshot(snap=>{
@@ -6152,24 +6353,32 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
 }
 
 async function startRealCall(c){
-  // Force-clear any leftover state from a previous call so retries always work.
+  // Definitive reset before every outbound call — long calls leave dead tracks,
+  // half-closed PCs, and stuck flags that break the next dial to the same person.
   if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
   clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
-  if(peerConnection || activeCallDocUnsub || callerCandidatesUnsub || calleeCandidatesUnsub){
+  stopCallerTone();
+  stopRingtone();
+  if(peerConnection || activeCallDocUnsub || callerCandidatesUnsub || calleeCandidatesUnsub || activeCallId){
     teardownCallConnection();
   }
   callActionInProgress = false;
+  remoteDescriptionSet = false;
+  pendingRemoteCandidates = [];
+  iAmCaller = true;
 
   // Kick TURN fetch in parallel with camera so createPeerConnection is fast.
   prewarmIceServers();
-  if(!stream) await enableCamera(); // must exist before createPeerConnection adds tracks
-  if(!stream){
-    // Never proceed with a call that has zero real media to send — this is the
-    // actual fix for "connected but the other person sees/hears nothing at all":
-    // previously a failed camera/mic didn't stop the call from continuing anyway.
+  // Always ensure LIVE tracks (not just a non-null stream object).
+  await enableCamera();
+  if(!mediaStreamIsLive(stream)){
     throw new Error('Camera/mic unavailable \u2014 fix that first, then try calling again');
   }
-  iAmCaller = true;
+  // Re-enable tracks in case a previous call muted them.
+  try{
+    stream.getAudioTracks().forEach(t => { t.enabled = true; });
+    stream.getVideoTracks().forEach(t => { t.enabled = camOn; });
+  }catch(e){}
   remoteDescriptionSet = false;
   pendingRemoteCandidates = [];
 
@@ -6395,9 +6604,21 @@ $('acceptIncoming').onclick = async ()=>{
   if($('incomingSelfTag')) $('incomingSelfTag').textContent = 'connecting…';
 
   try{
-    // Camera may already be warming from handleIncomingCall — reuse that promise.
-    if(!stream) await enableCamera();
-    if(!stream) throw new Error('Camera/mic unavailable — fix that first, then try answering again');
+    // Ensure LIVE media — dead tracks after a long prior call must be reopened.
+    await enableCamera();
+    if(!mediaStreamIsLive(stream)) throw new Error('Camera/mic unavailable — fix that first, then try answering again');
+    try{
+      stream.getAudioTracks().forEach(t => { t.enabled = true; });
+      stream.getVideoTracks().forEach(t => { t.enabled = camOn; });
+    }catch(e){}
+
+    // Clear any leftover PC from a previous session before answering.
+    if(peerConnection){
+      try{ peerConnection.close(); }catch(e){}
+      peerConnection = null;
+    }
+    remoteDescriptionSet = false;
+    pendingRemoteCandidates = [];
 
     const doc = await callRef.get();
     const data = doc.data();
