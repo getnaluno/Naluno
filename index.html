@@ -4900,12 +4900,14 @@ loadBackgroundChoice();
    can replace it. Falls back to plain camera if the model fails to load. */
 let selfieSeg = null;
 let selfieSegLoading = null;
-let segMaskCanvas = null;
-let segPersonCanvas = null;
-let segAlphaCanvas = null;
+let segMaskCanvas = null;   // refined alpha mask (person = opaque), same orientation as raw video
+let segPersonCanvas = null; // layer 2: person cutout
+let segAlphaCanvas = null;  // working buffer for mask refinement
+let segWorkCanvas = null;   // downscaled frame sent to the model (faster + stabler)
 let segProcessing = false;
 let segLastTs = 0;
-const SEG_MIN_INTERVAL_MS = 66; // ~15fps segmentation is enough; composite still runs at display rate
+const SEG_MIN_INTERVAL_MS = 50; // ~20fps mask updates
+const SEG_PROCESS_MAX = 256;    // model input long edge — sharp enough, much cleaner than full res thrash
 
 function loadScriptOnce(src){
   return new Promise((resolve, reject)=>{
@@ -4918,6 +4920,41 @@ function loadScriptOnce(src){
     document.head.appendChild(s);
   });
 }
+
+/* Refine a grayscale person-mask into a clean alpha matte:
+   - threshold mid values so partial pixels become solid person or solid hole
+   - slight expand keeps hair/shoulders
+   - light edge feather only (not a whole-mask blur that melts the silhouette) */
+function refineMaskToAlpha(srcMask, outCanvas){
+  const mw = srcMask.width, mh = srcMask.height;
+  if(outCanvas.width !== mw || outCanvas.height !== mh){ outCanvas.width = mw; outCanvas.height = mh; }
+  const octx = outCanvas.getContext('2d');
+  octx.clearRect(0,0,mw,mh);
+  octx.drawImage(srcMask, 0, 0, mw, mh);
+  try{
+    const img = octx.getImageData(0,0,mw,mh);
+    const d = img.data;
+    // Pass 1: hard-ish threshold. MediaPipe outputs person≈255, bg≈0 with soft edges.
+    for(let i=0;i<d.length;i+=4){
+      const v = d[i]; // luminance
+      // Bias toward keeping person (helps hair). Soft ramp only near the edge.
+      let a;
+      if(v >= 160) a = 255;
+      else if(v <= 40) a = 0;
+      else a = Math.round(((v - 40) / 120) * 255);
+      d[i] = 255; d[i+1] = 255; d[i+2] = 255; d[i+3] = a;
+    }
+    octx.putImageData(img, 0, 0);
+    // Pass 2: tiny blur only to feather the cut edge (background-eraser style).
+    octx.filter = 'blur(1.2px)';
+    octx.drawImage(outCanvas, 0, 0);
+    octx.filter = 'none';
+  }catch(e){
+    // If getImageData is blocked, leave the raw mask drawn.
+  }
+  return outCanvas;
+}
+
 async function ensureSelfieSegmentation(){
   if(selfieSeg) return true;
   if(selfieSegLoading) return selfieSegLoading;
@@ -4928,21 +4965,21 @@ async function ensureSelfieSegmentation(){
       const seg = new SelfieSegmentation({
         locateFile: (file)=> 'https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/'+file,
       });
-      seg.setOptions({ modelSelection: 1 }); // 1 = landscape-ish higher quality
+      // 0 = general (better for close-up selfie / portrait on phones)
+      seg.setOptions({ modelSelection: 0, selfie: true });
       seg.onResults((results)=>{
         if(!results || !results.segmentationMask) return;
         if(!segMaskCanvas) segMaskCanvas = document.createElement('canvas');
-        const mc = segMaskCanvas;
-        const mw = results.segmentationMask.width || results.image.width;
-        const mh = results.segmentationMask.height || results.image.height;
-        if(mc.width !== mw || mc.height !== mh){ mc.width = mw; mc.height = mh; }
-        const mctx = mc.getContext('2d');
-        mctx.clearRect(0,0,mw,mh);
-        mctx.drawImage(results.segmentationMask, 0, 0, mw, mh);
-        // Soften edges slightly so the cutout does not look jagged.
-        mctx.filter = 'blur(2px)';
-        mctx.drawImage(mc, 0, 0);
-        mctx.filter = 'none';
+        if(!segAlphaCanvas) segAlphaCanvas = document.createElement('canvas');
+        // Keep a raw copy then refine into alpha matte.
+        const raw = segAlphaCanvas;
+        const mw = results.segmentationMask.width || (results.image && results.image.width) || 256;
+        const mh = results.segmentationMask.height || (results.image && results.image.height) || 256;
+        if(raw.width !== mw || raw.height !== mh){ raw.width = mw; raw.height = mh; }
+        const rctx = raw.getContext('2d');
+        rctx.clearRect(0,0,mw,mh);
+        rctx.drawImage(results.segmentationMask, 0, 0, mw, mh);
+        refineMaskToAlpha(raw, segMaskCanvas);
         segMaskCanvas._ready = true;
       });
       await seg.initialize();
@@ -4950,7 +4987,7 @@ async function ensureSelfieSegmentation(){
       console.log('[bg] Selfie segmentation ready');
       return true;
     }catch(e){
-      console.warn('[bg] Segmentation unavailable — virtual bg falls back to border mode', e);
+      console.warn('[bg] Segmentation unavailable — showing real camera', e);
       selfieSeg = null;
       return false;
     }finally{
@@ -4971,7 +5008,19 @@ async function tickSegmentation(video){
   segProcessing = true;
   segLastTs = now;
   try{
-    await selfieSeg.send({ image: video });
+    // Always feed the model an unmirrored, modestly sized frame so the mask
+    // lines up 1:1 with the raw video we later draw (mirroring happens only at composite time).
+    if(!segWorkCanvas) segWorkCanvas = document.createElement('canvas');
+    const vw = video.videoWidth, vh = video.videoHeight;
+    const scale = Math.min(1, SEG_PROCESS_MAX / Math.max(vw, vh));
+    const tw = Math.max(2, Math.round(vw * scale));
+    const th = Math.max(2, Math.round(vh * scale));
+    if(segWorkCanvas.width !== tw || segWorkCanvas.height !== th){
+      segWorkCanvas.width = tw; segWorkCanvas.height = th;
+    }
+    const wctx = segWorkCanvas.getContext('2d');
+    wctx.drawImage(video, 0, 0, tw, th);
+    await selfieSeg.send({ image: segWorkCanvas });
   }catch(e){
     // One bad frame should not kill the loop.
   }finally{
@@ -4992,38 +5041,33 @@ function drawVideoCover(ctx, video, w, h, mirror){
   ctx.drawImage(video, (w-dw)/2, (h-dh)/2, dw, dh);
   ctx.restore();
 }
+/* Two-layer composite:
+   Layer 1 (already on ctx): live background scene, full frame
+   Layer 2: camera frame with background erased via the alpha matte
+   Mask and camera share the same orientation; mirror is applied to BOTH so the cut stays aligned. */
 function drawPersonWithMask(ctx, video, maskCanvas, w, h, mirror){
   if(!segPersonCanvas) segPersonCanvas = document.createElement('canvas');
-  if(!segAlphaCanvas) segAlphaCanvas = document.createElement('canvas');
   const pc = segPersonCanvas;
-  const ac = segAlphaCanvas;
   if(pc.width !== w || pc.height !== h){ pc.width = w; pc.height = h; }
-  if(ac.width !== w || ac.height !== h){ ac.width = w; ac.height = h; }
   const pctx = pc.getContext('2d');
-  const actx = ac.getContext('2d');
   pctx.clearRect(0,0,w,h);
+
+  // Layer 2a — full camera (same cover-fit + mirror as the real-bg path)
   drawVideoCover(pctx, video, w, h, mirror);
 
-  // Build an alpha mask from the segmentation luminance.
-  actx.clearRect(0,0,w,h);
-  actx.drawImage(maskCanvas, 0, 0, w, h);
-  try{
-    const img = actx.getImageData(0,0,w,h);
-    const d = img.data;
-    for(let i=0;i<d.length;i+=4){
-      // Person is bright in the mask; use it as alpha.
-      const a = d[i]; // R channel
-      d[i] = 255; d[i+1] = 255; d[i+2] = 255; d[i+3] = a;
-    }
-    actx.putImageData(img, 0, 0);
-  }catch(e){
-    // getImageData can throw on tainted canvas — skip mask this frame
-    ctx.drawImage(pc, 0, 0);
-    return;
-  }
+  // Layer 2b — background eraser: keep only pixels where the matte is opaque.
+  // CRITICAL: apply the same mirror to the mask so it lines up with the mirrored camera.
+  pctx.save();
   pctx.globalCompositeOperation = 'destination-in';
-  pctx.drawImage(ac, 0, 0);
+  if(mirror){
+    pctx.translate(w, 0);
+    pctx.scale(-1, 1);
+  }
+  pctx.drawImage(maskCanvas, 0, 0, w, h);
+  pctx.restore();
   pctx.globalCompositeOperation = 'source-over';
+
+  // Stack person on top of the background scene already in ctx.
   ctx.drawImage(pc, 0, 0);
 }
 
@@ -5053,10 +5097,10 @@ function ensureCanvasSize(canvas){
   if(canvas.width!==w || canvas.height!==h){ canvas.width=w; canvas.height=h; }
 }
 /* ---------------- LIVE BACKGROUNDS (Greenroom) ----------------
-   True virtual backgrounds: MediaPipe cuts the person out; the chosen live scene
-   replaces the real room. Choose "Real background" to leave the room as-is.
-   If segmentation is not ready yet, a soft border fallback is used for one moment
-   so the call is never blank. */
+   Two layers, every frame:
+     Layer 1 — live scene (full canvas), genuinely behind you
+     Layer 2 — camera with real-room pixels erased (background-eraser matte)
+   "Real background" skips both and shows the unmodified camera. */
 let camAnimStart = performance.now();
 let pipAnimStart = performance.now();
 function compositeFrame(canvas, video, animStart){
@@ -5077,16 +5121,15 @@ function compositeFrame(canvas, video, animStart){
     return;
   }
 
-  // 1) Paint the live scene across the whole frame.
+  // Layer 1: scene fills the frame (sits behind the person).
   preset.painter(ctx, w, h, (performance.now()-animStart)/1000);
 
-  // 2) Draw the person on top using the segmentation mask when available.
+  // Layer 2: person only (room erased). Same mirror on camera + mask keeps the cut tight.
   if(hasMask){
     drawPersonWithMask(ctx, video, segMaskCanvas, w, h, mirror);
   } else {
-    // Brief fallback until the model produces its first mask: inset camera so the
-    // scene is still visible as a frame rather than a blank composite.
-    const borderPx = Math.max(6, Math.round(Math.min(w,h) * 0.045));
+    // First frames before the model returns a matte — show camera inset so nothing blanks out.
+    const borderPx = Math.max(6, Math.round(Math.min(w,h) * 0.04));
     ctx.beginPath();
     ctx.rect(borderPx, borderPx, Math.max(1,w-borderPx*2), Math.max(1,h-borderPx*2));
     ctx.clip();
