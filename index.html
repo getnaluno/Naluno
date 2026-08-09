@@ -296,9 +296,15 @@
   .call-info-pill{ background:rgba(13,15,23,.55); backdrop-filter:blur(10px); border:1px solid var(--line); border-radius:999px; padding:8px 14px; display:flex; align-items:center; gap:8px; }
   .timer{ font-family:var(--font-futuristic); font-size:13px; letter-spacing:.08em; color:var(--mint); text-shadow:0 0 6px rgba(124,255,178,.55); }
   .icon-btn{ width:40px; height:40px; border-radius:50%; background:rgba(13,15,23,.55); backdrop-filter:blur(10px); border:1px solid var(--line); display:flex; align-items:center; justify-content:center; cursor:pointer; color:var(--text); }
-  .local-pip{ position:absolute; right:18px; bottom:150px; width:104px; height:142px; border-radius:18px; overflow:hidden; background:var(--surface); border:1.5px solid rgba(237,239,247,.15); z-index:6; box-shadow:0 10px 30px rgba(0,0,0,.4); cursor:grab; touch-action:none; -webkit-user-select:none; user-select:none; will-change:left,top; }
+  .local-pip{ position:absolute; right:18px; bottom:150px; width:104px; height:142px; border-radius:18px; overflow:hidden; background:var(--surface); border:1.5px solid rgba(237,239,247,.15); z-index:6; box-shadow:0 10px 30px rgba(0,0,0,.4); cursor:grab; touch-action:none; -webkit-user-select:none; user-select:none; will-change:left,top; transition:width .25s ease, height .25s ease; }
+  .local-pip.large{ width:min(48vw, 200px); height:min(66vw, 274px); }
   .local-pip .mute-badge{ position:absolute; left:6px; bottom:6px; width:20px; height:20px; border-radius:50%; background:var(--red); display:none; align-items:center; justify-content:center; z-index:4; }
   .local-pip.muted .mute-badge{ display:flex; }
+  /* Swap layout: local becomes the main stage, remote becomes the small PiP */
+  #incall.swap-focus .remote-stage{ z-index:5; inset:auto; right:18px; bottom:150px; width:104px; height:142px; border-radius:18px; overflow:hidden; border:1.5px solid rgba(237,239,247,.15); box-shadow:0 10px 30px rgba(0,0,0,.4); }
+  #incall.swap-focus .remote-stage video{ border-radius:18px; }
+  #incall.swap-focus .remote-placeholder{ transform:scale(.55); }
+  #incall.swap-focus .local-pip{ inset:0; right:0; bottom:0; width:100%; height:100%; border-radius:0; border:none; box-shadow:none; z-index:1; }
   .controls-bar{ position:relative; z-index:6; padding:0 22px 32px; margin-top:auto; display:flex; align-items:center; justify-content:center; gap:16px; }
   .ctrl{ width:56px; height:56px; border-radius:50%; border:1px solid var(--line); background:rgba(31,35,51,.85); backdrop-filter:blur(10px); display:flex; align-items:center; justify-content:center; cursor:pointer; color:var(--text); position:relative; }
   .ctrl.active{ background:var(--text); color:#0D0F17; }
@@ -785,6 +791,7 @@
       <div class="incall-top">
         <div class="call-info-pill"><span class="eyebrow live">Connected</span><span class="timer" id="callTimer">00:00</span></div>
         <div style="display:flex; gap:8px;">
+          <div class="icon-btn" id="viewToggleBtn" role="button" aria-label="Toggle view size" title="Switch big / small view"><svg width="17" height="17" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" stroke-width="1.8"/><rect x="12" y="12" width="7" height="7" rx="1" fill="currentColor" opacity=".85"/></svg></div>
           <div class="icon-btn" id="bgPickerBtn" role="button" aria-label="Choose live background"><svg width="17" height="17" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/><circle cx="9" cy="10" r="1.3" fill="currentColor"/><circle cx="14.5" cy="9" r="1.1" fill="currentColor"/><circle cx="15.5" cy="14" r="1.2" fill="currentColor"/><path d="M12 3a9 9 0 000 18c1.2 0 1.4-.9.9-1.6-.5-.7-.2-1.7.8-1.7H15a4 4 0 004-4c0-5.8-3.6-10.7-7-10.7z" stroke="currentColor" stroke-width="1.6"/></svg></div>
           <div class="icon-btn" id="switchCam" role="button" aria-label="Switch camera"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 4v5h5M20 20v-5h-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M4.5 9A8 8 0 0119 8M19.5 15A8 8 0 015 16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
         </div>
@@ -5393,8 +5400,16 @@ const TURN_CREDENTIALS_WORKER_URL = 'https://naluno-turn-credentials.naluno.work
    Falls back to the STUN-only config if this fails for any reason — a call can still
    attempt a direct connection without TURN, it just won't have the relay fallback for
    networks that genuinely need one. */
+/* Cache TURN credentials so answering a call does not wait on a network round-trip.
+   Credentials are short-lived (~2h from the Worker); we refresh after 25 minutes. */
+let cachedIceServers = null;
+let cachedIceServersAt = 0;
+const ICE_CACHE_TTL_MS = 25 * 60 * 1000;
 async function getIceServers(){
   if(!currentUser) return RTC_CONFIG;
+  if(cachedIceServers && (Date.now() - cachedIceServersAt) < ICE_CACHE_TTL_MS){
+    return cachedIceServers;
+  }
   try{
     const idToken = await currentUser.getIdToken();
     const res = await fetch(TURN_CREDENTIALS_WORKER_URL, {
@@ -5411,11 +5426,16 @@ async function getIceServers(){
       return RTC_CONFIG;
     }
     console.log('[call] TURN credentials received —', data.iceServers.length, 'server(s)');
-    return { iceServers: data.iceServers };
+    cachedIceServers = { iceServers: data.iceServers };
+    cachedIceServersAt = Date.now();
+    return cachedIceServers;
   }catch(e){
     console.log('[call] Could not fetch TURN credentials, falling back to STUN-only:', e);
     return RTC_CONFIG;
   }
+}
+function prewarmIceServers(){
+  getIceServers().catch(()=>{});
 }
 let peerConnection = null;
 /* Neither "Start call" nor "Accept" had any protection against firing twice — a real,
@@ -5623,8 +5643,10 @@ function handleIncomingCall(callId, data){
   $('incomingSelfTag').textContent = 'prepping…';
   showCallScreen('incoming');
   startRingtone();
+  // Pre-warm camera + TURN so Answer is nearly instant.
+  prewarmIceServers();
   const showReady = ()=>{ $('incomingSceneNote').style.display = 'inline-flex'; $('incomingSelfTag').textContent = 'scene ready'; };
-  if(!stream) enableCamera().then(()=> setTimeout(showReady, 900));
+  if(!stream) enableCamera().then(()=> setTimeout(showReady, 400));
   else showReady();
 
   // Watches for the caller hanging up before this side answers.
@@ -5728,6 +5750,8 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
 }
 
 async function startRealCall(c){
+  // Kick TURN fetch in parallel with camera so createPeerConnection is fast.
+  prewarmIceServers();
   if(!stream) await enableCamera(); // must exist before createPeerConnection adds tracks
   if(!stream){
     // Never proceed with a call that has zero real media to send — this is the
@@ -5766,17 +5790,25 @@ async function startRealCall(c){
   activeCallDocUnsub = callRef.onSnapshot(snap=>{
     const d = snap.data();
     if(!d) return;
-    if(d.answer && !remoteDescriptionSet){
-      remoteDescriptionSet = true;
-      peerConnection.setRemoteDescription(new RTCSessionDescription(d.answer)).then(()=>{
-        pendingRemoteCandidates.forEach(cand => peerConnection.addIceCandidate(new RTCIceCandidate(cand)).catch(()=>{}));
-        pendingRemoteCandidates = [];
-      });
+
+    // Stop ringing the instant the other side taps Answer (status becomes
+    // 'accepted'), even if their SDP answer is still being prepared.
+    // Previously we only reacted to d.answer, which arrived 10–20s later.
+    if((d.status === 'accepted' || d.answer) && $('ringing').classList.contains('active')){
       clearTimeout(ringTimeoutHandle);
       if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
       stopCallerTone();
       startInCall();
     }
+
+    if(d.answer && !remoteDescriptionSet && peerConnection){
+      remoteDescriptionSet = true;
+      peerConnection.setRemoteDescription(new RTCSessionDescription(d.answer)).then(()=>{
+        pendingRemoteCandidates.forEach(cand => peerConnection.addIceCandidate(new RTCIceCandidate(cand)).catch(()=>{}));
+        pendingRemoteCandidates = [];
+      }).catch(err => console.log('[call] setRemoteDescription(answer) failed:', err));
+    }
+
     if(d.status === 'declined'){
       toast(c.name.split(' ')[0] + ' declined');
       teardownCallConnection();
@@ -5908,10 +5940,29 @@ $('acceptIncoming').onclick = async ()=>{
   stopRingtone();
   if(!activeCallId || !fbDb){ toast('That call is no longer available'); closeCallOverlayAndStopCamera(); return; }
   callActionInProgress = true;
+  const callRef = fbDb.collection('calls').doc(activeCallId);
+
+  // CRITICAL: signal "accepted" to the caller IMMEDIATELY so their ring stops
+  // before any camera / WebRTC / TURN work. Previously the caller kept ringing
+  // for 10–20s while the receiver was still preparing media.
   try{
-    if(!stream) await enableCamera(); // the actual bug: accepting before this resolved meant no local tracks ever got added
-    if(!stream) throw new Error('Camera/mic unavailable \u2014 fix that first, then try answering again');
-    const callRef = fbDb.collection('calls').doc(activeCallId);
+    await callRef.update({ status: 'accepted', acceptedAt: firebase.firestore.FieldValue.serverTimestamp() });
+  }catch(e){
+    toast('That call is no longer available');
+    closeCallOverlayAndStopCamera();
+    callActionInProgress = false;
+    return;
+  }
+
+  // Show in-call UI right away (remote video will appear when tracks arrive).
+  startInCall();
+  if($('incomingSelfTag')) $('incomingSelfTag').textContent = 'connecting…';
+
+  try{
+    // Camera may already be warming from handleIncomingCall — reuse that promise.
+    if(!stream) await enableCamera();
+    if(!stream) throw new Error('Camera/mic unavailable — fix that first, then try answering again');
+
     const doc = await callRef.get();
     const data = doc.data();
     if(!data || !data.offer){ toast('That call is no longer available'); closeCallOverlayAndStopCamera(); return; }
@@ -5928,7 +5979,8 @@ $('acceptIncoming').onclick = async ()=>{
 
     const answer = await peerConnection.createAnswer();
     await peerConnection.setLocalDescription(answer);
-    await callRef.update({ answer: { type: answer.type, sdp: answer.sdp }, status: 'accepted' });
+    // Write the SDP answer. Status is already 'accepted' so the caller has stopped ringing.
+    await callRef.update({ answer: { type: answer.type, sdp: answer.sdp } });
 
     if(callerCandidatesUnsub) callerCandidatesUnsub();
     callerCandidatesUnsub = callRef.collection('callerCandidates').onSnapshot(snap=>{
@@ -5937,7 +5989,7 @@ $('acceptIncoming').onclick = async ()=>{
       });
     });
 
-    if(activeCallDocUnsub) activeCallDocUnsub(); // replaces the "watch for hangup while ringing" listener
+    if(activeCallDocUnsub) activeCallDocUnsub();
     activeCallDocUnsub = callRef.onSnapshot(snap=>{
       const d = snap.data();
       if(d && d.status==='ended' && $('incall').classList.contains('active')){
@@ -5946,10 +5998,10 @@ $('acceptIncoming').onclick = async ()=>{
         setTimeout(closeCallOverlayAndStopCamera, 400);
       }
     });
-
-    startInCall();
   }catch(e){
     toast(e.message || 'Couldn\u2019t answer the call');
+    // Mark ended so the caller does not hang in a half-connected state.
+    try{ await callRef.update({ status: 'ended' }); }catch(_){}
     closeCallOverlayAndStopCamera();
   }finally{
     callActionInProgress = false;
@@ -5961,6 +6013,9 @@ function startInCall(){
   stopCallerTone();
   stopRingtone();
   showCallScreen('incall');
+  // Reset view mode at the start of every call.
+  $('incall').classList.remove('swap-focus');
+  if($('localPip')) $('localPip').classList.remove('large');
   if(stream) startCamView('pip');
   callSeconds = 0; $('callTimer').textContent = '00:00';
   clearInterval(callInterval);
@@ -5972,6 +6027,20 @@ function startInCall(){
   }, 1000);
   if(currentCallContactId) bumpContactActivity(currentCallContactId);
   bumpTodayActivity();
+}
+/* Cycles: normal (remote full + small local PiP) → large local PiP → swap (you full, them small) → normal */
+let incallViewMode = 0;
+if($('viewToggleBtn')){
+  $('viewToggleBtn').onclick = ()=>{
+    incallViewMode = (incallViewMode + 1) % 3;
+    const incall = $('incall');
+    const pip = $('localPip');
+    if(!incall) return;
+    incall.classList.remove('swap-focus');
+    if(pip) pip.classList.remove('large');
+    if(incallViewMode === 1 && pip) pip.classList.add('large');
+    if(incallViewMode === 2) incall.classList.add('swap-focus');
+  };
 }
 $('endBtn').onclick = ()=>{
   clearInterval(callInterval);
