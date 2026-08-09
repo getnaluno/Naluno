@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.08.09.10">
+<meta name="app-version" content="2026.08.09.11">
 <meta name="description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="A statement from the future — not another WhatsApp.">
@@ -992,15 +992,15 @@
         </div>
         <button id="bandTuneBtn" style="padding:9px 16px; border-radius:999px; border:none; background:var(--mint); color:#0D0F17; font-family:var(--font-futuristic); font-weight:700; font-size:11.5px; letter-spacing:.05em; text-transform:uppercase; cursor:pointer; flex-shrink:0;">Tune in</button>
       </div>
-      <div id="bandRoster" style="display:flex; gap:14px; padding:10px 16px 4px; overflow-x:auto;"></div>
-      <div id="bandLiveStage" style="display:none; gap:8px; padding:6px 12px 8px; overflow-x:auto; min-height:0;"></div>
-      <div style="padding:4px 16px 6px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-        <span id="bandSettleNote" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(124,255,178,.75); flex:1; min-width:140px;">Market square · chatter clears 2h after the last person leaves</span>
+      <div id="bandRoster" style="display:flex; gap:14px; padding:10px 16px 4px; overflow-x:auto; flex-shrink:0;"></div>
+      <div id="bandLiveStage" style="display:none; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; padding:6px 12px 8px; max-height:42vh; overflow-y:auto; flex-shrink:0;"></div>
+      <div style="padding:4px 16px 6px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; flex-shrink:0;">
+        <span id="bandSettleNote" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(124,255,178,.75); flex:1; min-width:140px;">Band · messages clear 2h after the last person leaves</span>
         <span id="bandInviteBtn" role="button" style="font-family:var(--font-mono); font-size:10.5px; color:var(--mint); cursor:pointer; text-decoration:underline; text-underline-offset:2px; white-space:nowrap;">Invite</span>
-        <span id="bandBellBtn" role="button" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(255,255,255,.55); cursor:pointer; text-decoration:underline; text-underline-offset:2px; white-space:nowrap;">Ring square</span>
-        <span id="leaveBandForGoodLink" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(255,255,255,.35); cursor:pointer; text-decoration:underline; text-underline-offset:2px; white-space:nowrap;">Leave for good</span>
+        <span id="bandBellBtn" role="button" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(255,255,255,.55); cursor:pointer; text-decoration:underline; text-underline-offset:2px; white-space:nowrap;">Ring</span>
+        <span id="leaveBandForGoodLink" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(255,255,255,.35); cursor:pointer; text-decoration:underline; text-underline-offset:2px; white-space:nowrap;">Leave band</span>
       </div>
-      <div id="bandMessages" style="flex:1; overflow-y:auto; padding:10px 16px; display:flex; flex-direction:column; gap:10px; min-height:80px;"></div>
+      <div id="bandMessages" style="flex:1; overflow-y:auto; padding:10px 16px; display:flex; flex-direction:column; gap:10px; min-height:100px;"></div>
       <div style="padding:10px 12px calc(env(safe-area-inset-bottom,0px) + 12px); display:flex; flex-direction:column; gap:8px; border-top:1px solid rgba(255,255,255,.08); background:rgba(13,15,23,.6); backdrop-filter:blur(12px);">
         <div style="display:flex; gap:8px; align-items:center;">
           <input id="bandInput" placeholder="Say something in the moment…" style="flex:1; background:rgba(23,26,38,.8); border:1px solid var(--line); border-radius:20px; padding:11px 16px; color:var(--text); font-size:14px; outline:none; font-family:inherit;" />
@@ -1024,17 +1024,17 @@
   <div class="call-overlay" id="bandComposer">
     <div class="topbar" style="padding-top:20px;">
       <div class="back-btn" id="bandComposerClose" role="button" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
-      <span class="eyebrow">Open a square</span>
+      <span class="eyebrow">New Band</span>
       <span style="width:36px;"></span>
     </div>
     <div class="tab-scroll" style="padding:16px 20px 24px;">
-      <div style="font-size:12.5px; color:var(--text-dim); margin:0 0 14px; line-height:1.45;">A Band is a market square — no owner, even you can’t delete it. Chatter clears 2 hours after the last person leaves.</div>
-      <div class="field" style="padding:0 0 16px;"><label>Name</label><input id="bandNameInput" placeholder="Name this square" /></div>
+      <div style="font-size:12.5px; color:var(--text-dim); margin:0 0 14px; line-height:1.45;">A Band has no owner — even you can’t delete it. Messages clear 2 hours after the last person leaves.</div>
+      <div class="field" style="padding:0 0 16px;"><label>Name</label><input id="bandNameInput" placeholder="Name this Band" /></div>
       <div class="section-label" style="padding:0 0 8px;">Vibe</div>
       <div class="filter-chip-row" id="bandVibeChipRow" style="padding:0 0 16px;"></div>
       <div class="section-label" style="padding:0 0 8px;">Who can tune in</div>
       <div id="bandMemberPicker"></div>
-      <button class="join-btn" id="createBandBtn" style="margin-top:20px;" disabled>Open this square</button>
+      <button class="join-btn" id="createBandBtn" style="margin-top:20px;" disabled>Start Band</button>
     </div>
   </div>
 
@@ -1042,11 +1042,11 @@
   <div class="call-overlay" id="bandInviteSheet">
     <div class="topbar" style="padding-top:20px;">
       <div class="back-btn" id="bandInviteClose" role="button" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
-      <span class="eyebrow">Invite to square</span>
+      <span class="eyebrow">Invite to Band</span>
       <span style="width:36px;"></span>
     </div>
     <div class="tab-scroll" style="padding:16px 20px 24px;">
-      <div style="font-size:12.5px; color:var(--text-dim); margin:0 0 12px; line-height:1.45;">Invite a connection into <strong id="bandInviteBandName">this square</strong> — by text, or open a video call that brings them here.</div>
+      <div style="font-size:12.5px; color:var(--text-dim); margin:0 0 12px; line-height:1.45;">Invite a connection into <strong id="bandInviteBandName">this Band</strong> — by text, or start a video call.</div>
       <div id="bandInvitePicker"></div>
     </div>
   </div>
@@ -1555,7 +1555,7 @@ function renderBandList(){
   if(!bands.length){
     $('bandList').innerHTML = `<div style="padding:28px 12px; text-align:center; color:var(--text-dim);">
       <div style="font-family:var(--font-futuristic); font-size:15px; color:var(--text); margin-bottom:8px;">No squares yet</div>
-      <div style="font-size:13px; line-height:1.45;">Open a market square with your connections. No one owns it — chatter clears 2 hours after the last person leaves.</div>
+      <div style="font-size:13px; line-height:1.45;">Start a Band with your connections. No one owns it — messages clear 2 hours after the last person leaves.</div>
     </div>`;
     return;
   }
@@ -1569,7 +1569,7 @@ function renderBandList(){
           <div class="band-name">${escapeHtml(b.name)}</div>
           <div class="band-live-row">
             <div class="band-avatar-stack">${avatars}</div>
-            <span class="band-live-text">Market square · tap to enter</span>
+            <span class="band-live-text">Tap to enter</span>
           </div>
         </div>
       </div>`;
@@ -1646,7 +1646,7 @@ async function loadRealBands(uid){
         addRealBandToLocalList(doc.id, d.name, d.vibe, memberInfo, d.createdBy, { lastEmptiedAt, memberUids: d.memberUids || [] });
         if(change.type === 'added' && d.createdBy !== uid){
           // Invited into a square that already existed
-          toast('You were invited to · ' + (d.name || 'a square'));
+          toast('You were invited to · ' + (d.name || 'a Band'));
         }
       }
     });
@@ -1758,9 +1758,9 @@ async function createRealBand(name, vibe, memberContacts){
     renderBandList();
     closeBandComposer();
     await publishMyPublicBands();
-    toast('Opened square · ' + name);
+    toast('Started · ' + name);
   }catch(e){
-    toast(e.message || 'Couldn\u2019t open this square');
+    toast(e.message || 'Couldn\u2019t start this Band');
   }
 }
 
@@ -6988,28 +6988,28 @@ function bandIsSettled(b){
 function updateBandSettleNote(){
   const el = $('bandSettleNote'); if(!el) return;
   const b = activeBand();
-  if(!b){ el.textContent = 'Market square'; return; }
+  if(!b){ el.textContent = 'Band'; return; }
   const liveCount = (b.isReal ? realBandLiveMembers.length : 0) + (amTunedIn ? 1 : 0);
   if(liveCount > 0){
-    el.textContent = 'Square is open · chatter stays while people are here';
+    el.textContent = 'People here · messages stay until everyone leaves';
     return;
   }
   if(b.lastEmptiedAt){
     const left = BAND_SETTLE_MS - (Date.now() - b.lastEmptiedAt);
     if(left <= 0){
-      el.textContent = 'Square settled · next voices start a fresh page';
+      el.textContent = 'Cleared · next messages start fresh';
       return;
     }
     const mins = Math.ceil(left / 60000);
     if(mins >= 60){
       const h = Math.floor(mins/60), m = mins % 60;
-      el.textContent = 'Settles in ' + h + 'h' + (m ? (' ' + m + 'm') : '') + ' · then chatter clears';
+      el.textContent = 'Clears in ' + h + 'h' + (m ? (' ' + m + 'm') : '');
     } else {
-      el.textContent = 'Settles in ' + mins + 'm · then chatter clears';
+      el.textContent = 'Clears in ' + mins + 'm';
     }
     return;
   }
-  el.textContent = 'Market square · chatter clears 2h after the last person leaves';
+  el.textContent = 'Band · messages clear 2h after the last person leaves';
 }
 function renderBandMessages(){
   const b = activeBand();
@@ -7021,7 +7021,7 @@ function renderBandMessages(){
     // While still inside the 2h window, keep everything currently on the square.
   }
   if(msgs.length===0){
-    $('bandMessages').innerHTML = `<div class="msg-empty"><span style="font-family:var(--font-futuristic); font-size:14px; color:#fff;">Quiet on this square</span><span style="font-size:12.5px; color:rgba(255,255,255,.6);">Tune in and say something — it clears 2h after the last person leaves.</span></div>`;
+    $('bandMessages').innerHTML = `<div class="msg-empty"><span style="font-family:var(--font-futuristic); font-size:14px; color:#fff;">Quiet on this Band</span><span style="font-size:12.5px; color:rgba(255,255,255,.6);">Tune in and say something — it clears 2h after the last person leaves.</span></div>`;
     updateBandSettleNote();
     return;
   }
@@ -7152,7 +7152,8 @@ function openBandRoom(id){
         if(bellMs && Date.now() - bellMs < 60000 && b._lastBellSeen !== bellMs){
           b._lastBellSeen = bellMs;
           const who = (b.memberInfo||[]).find(m=>m.uid===d.bellBy);
-          toast((who ? who.name.split(' ')[0] : 'Someone') + ' rang the square');
+          playBandBellSound();
+          toast((who ? who.name.split(' ')[0] : 'Someone') + ' rang the Band');
         }
       }
       updateBandSettleNote();
@@ -7184,13 +7185,9 @@ function openBandRoom(id){
       }
       renderBandRoster();
       updateBandSettleNote();
-      // Mesh: connect to anyone else who is audio/video live right now
-      if(bandLiveMode){
-        others.forEach(d=>{
-          const data = d.data() || {};
-          if(data.live) bandMaybeOffer(d.id);
-          else if(bandRtcPeers[d.id]) closeBandRtcPeer(d.id);
-        });
+      // Anyone tuned in meshes with everyone present so live A/V is received
+      if(amTunedIn){
+        others.forEach(d=> bandMaybeOffer(d.id));
       }
     }, ()=>{ /* presence just won't update this session */ });
 
@@ -7246,7 +7243,7 @@ function closeBandRoom(){
 }
 $('bandRoomBack').onclick = closeBandRoom;
 /* Leave for good = only you exit membership. The square itself cannot be deleted —
-   not even by whoever opened it. That is the market-square rule. */
+   not even by whoever opened it. Nobody can delete a Band. */
 $('leaveBandForGoodLink').onclick = async ()=>{
   const b = activeBand(); if(!b) return;
   const name = b.name;
@@ -7264,7 +7261,7 @@ $('leaveBandForGoodLink').onclick = async ()=>{
   closeBandRoom();
   renderBandList();
   publishMyPublicBands();
-  toast('Left ' + name + ' · square remains for the others');
+  toast('Left ' + name + ' · Band remains for the others');
 };
 $('bandTuneBtn').onclick = ()=>{
   amTunedIn = !amTunedIn;
@@ -7276,52 +7273,86 @@ $('bandTuneBtn').onclick = ()=>{
   if(b && b.isReal && b.firestoreId && fbDb && currentUser){
     const presenceRef = fbDb.collection('bands').doc(b.firestoreId).collection('presence').doc(currentUser.uid);
     if(amTunedIn){
-      presenceRef.set({ tunedInAt: firebase.firestore.FieldValue.serverTimestamp() }).catch(()=>{});
+      if(!bandRtcSession) bandRtcSession = currentUser.uid + '_' + Date.now();
+      presenceRef.set({
+        tunedInAt: firebase.firestore.FieldValue.serverTimestamp(),
+        rtcSession: bandRtcSession,
+        live: false,
+        mode: null,
+      }).catch(()=>{});
       bumpTodayActivity();
-      // Re-occupy clears settle stamp so chatter stays.
       if(b.lastEmptiedAt){
         b.lastEmptiedAt = null;
         fbDb.collection('bands').doc(b.firestoreId).set({ lastEmptiedAt: null }, { merge:true }).catch(()=>{});
       }
+      // Start receiving live A/V from anyone already broadcasting
+      startBandRtcListener();
+      syncBandMeshFromPresence();
     } else {
       presenceRef.delete().catch(()=>{});
+      stopBandLive(true);
+      closeAllBandRtc();
+      if(bandRtcUnsub){ bandRtcUnsub(); bandRtcUnsub = null; }
+      bandRtcSession = null;
     }
   } else if(amTunedIn){
     armBandAmbientReply();
     bumpTodayActivity();
   } else {
     clearBandAmbientTimer();
+    stopBandLive(true);
   }
-  if(!amTunedIn) stopBandLive();
   renderBandRoster();
   renderBandList();
   updateBandSettleNote();
 };
 
-/* -------- Square Bell: nudge members that the square has a pulse -------- */
+/* -------- Band bell: real sound + nudge for others in the room -------- */
+function playBandBellSound(){
+  try{
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const now = ctx.currentTime;
+    // Two clear chimes
+    [0, 0.18].forEach((delay, i)=>{
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = i === 0 ? 880 : 1174;
+      gain.gain.setValueAtTime(0.0001, now + delay);
+      gain.gain.exponentialRampToValueAtTime(0.35, now + delay + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + delay + 0.55);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + delay);
+      osc.stop(now + delay + 0.6);
+    });
+    setTimeout(()=>{ try{ ctx.close(); }catch(e){} }, 1200);
+  }catch(e){}
+}
 $('bandBellBtn').onclick = ()=>{
   const b = activeBand();
   if(!b || !b.isReal || !b.firestoreId || !fbDb || !currentUser){
-    toast('Ring works on live squares');
+    toast('Ring works on live Bands');
     return;
   }
   if(!amTunedIn){ toast('Tune in first'); return; }
+  playBandBellSound();
   fbDb.collection('bands').doc(b.firestoreId).set({
     bellAt: firebase.firestore.FieldValue.serverTimestamp(),
     bellBy: currentUser.uid,
-  }, { merge:true }).then(()=> toast('Square rang')).catch(()=> toast('Couldn\u2019t ring'));
+  }, { merge:true }).then(()=> toast('Rang the Band')).catch(()=> toast('Couldn\u2019t ring'));
 };
 
 /* -------- Invite to square (text via Wireline, or video call) -------- */
 function openBandInviteSheet(){
   const b = activeBand();
-  if(!b || !b.isReal){ toast('Invites work on live squares'); return; }
+  if(!b || !b.isReal){ toast('Invites work on live Bands'); return; }
   $('bandInviteBandName').textContent = b.name;
   const already = new Set(b.memberUids || (b.memberInfo||[]).map(m=>m.uid) || []);
   already.add(currentUser ? currentUser.uid : '');
   const candidates = contacts.filter(c => c.isReal && c.firebaseUid && !already.has(c.firebaseUid));
   if(!candidates.length){
-    $('bandInvitePicker').innerHTML = `<div style="color:var(--text-dim); font-size:13px; padding:12px 0;">Everyone in your frequencies is already on this square — or you need a real connection first.</div>`;
+    $('bandInvitePicker').innerHTML = `<div style="color:var(--text-dim); font-size:13px; padding:12px 0;">Everyone in your frequencies is already on this Band — or you need a real connection first.</div>`;
   } else {
     $('bandInvitePicker').innerHTML = candidates.map(c=>`
       <div class="contact-row" style="cursor:default;">
@@ -7383,8 +7414,8 @@ async function inviteToBand(contactId, mode){
       ts: firebase.firestore.FieldValue.serverTimestamp(),
     });
     // Wireline text invite
-    const inviteText = 'Join me on the square “' + b.name + '” in Band — open Band and tune in. Chatter is in the moment and clears 2h after the last person leaves.';
-    await sendRealMessage(c, { type:'text', text: inviteText }, 'Square invite · ' + b.name);
+    const inviteText = 'Join me on the Band “' + b.name + '” in Band — open Band and tune in. Chatter is in the moment and clears 2h after the last person leaves.';
+    await sendRealMessage(c, { type:'text', text: inviteText }, 'Band invite · ' + b.name);
     // Push wake (reuses call-notify worker title/body path)
     try{
       const idToken = await currentUser.getIdToken();
@@ -7395,7 +7426,7 @@ async function inviteToBand(contactId, mode){
           calleeUid: c.firebaseUid,
           callerName: (currentProfile && currentProfile.name) || 'Someone',
           type: 'band_invite',
-          title: ((currentProfile && currentProfile.name) || 'Someone') + ' invited you to a square',
+          title: ((currentProfile && currentProfile.name) || 'Someone') + ' invited you to a Band',
           body: b.name + ' · open Band to tune in',
           bandId: b.firestoreId,
         }),
@@ -7427,27 +7458,28 @@ function startBandInviteListener(){
         if(n.read) return;
         const ts = n.ts && n.ts.toMillis ? n.ts.toMillis() : 0;
         if(ts && Date.now() - ts > 3600000) return; // ignore older than 1h on first paint
-        toast((n.fromName || 'Someone') + ' invited you to · ' + (n.bandName || 'a square'));
+        toast((n.fromName || 'Someone') + ' invited you to · ' + (n.bandName || 'a Band'));
         ch.doc.ref.update({ read: true }).catch(()=>{});
         // Ensure the band appears in the local list
         if(n.bandId && !bands.some(b=>b.firestoreId===n.bandId)){
-          addRealBandToLocalList(n.bandId, n.bandName || 'Square', 'aurora', [], n.fromUid, { memberUids: [currentUser.uid] });
+          addRealBandToLocalList(n.bandId, n.bandName || 'Band', 'aurora', [], n.fromUid, { memberUids: [currentUser.uid] });
           renderBandList();
         }
       });
     }, ()=>{ /* notifications optional */ });
 }
 
-/* ---------------- BAND LIVE — text · audio · video in the moment ----------------
-   TikTok-Live energy, market-square rules: conversation is ephemeral, multi-person,
-   and opt-in per mode. Mesh WebRTC between whoever is live right now (small groups). */
+/* ---------------- BAND LIVE — text · audio · video ----------------
+   Anyone tuned in can RECEIVE. Audio/Video live means you also SEND.
+   Mesh WebRTC with pending ICE, session tags, and a stable video grid. */
 let bandStream = null;
 let bandLiveMode = null; // null | 'audio' | 'video'
 let bandCameraRequestPending = null;
-let bandRtcPeers = {}; // { [remoteUid]: RTCPeerConnection }
+let bandRtcPeers = {}; // { [remoteUid]: { pc, pendingIce, polite } }
 let bandRtcUnsub = null;
 let bandRemoteStreams = {}; // { [remoteUid]: MediaStream }
 let bandMakingOffer = {};
+let bandRtcSession = null; // unique per tune-in so old signals are ignored
 
 function setBandLiveButtons(){
   const audioOn = bandLiveMode === 'audio';
@@ -7473,24 +7505,47 @@ function setBandLiveButtons(){
 
 function renderBandLiveStage(){
   const stage = $('bandLiveStage'); if(!stage) return;
-  const uids = Object.keys(bandRemoteStreams);
-  if(!uids.length && bandLiveMode !== 'video'){
+  const uids = Object.keys(bandRemoteStreams).filter(uid => {
+    const s = bandRemoteStreams[uid];
+    return s && s.getTracks().some(t => t.readyState === 'live' || t.readyState === 'ended' || true);
+  });
+  // Always show self tile when video live, plus remotes
+  const showSelf = bandLiveMode === 'video' && bandStream;
+  if(!uids.length && !showSelf){
     stage.style.display = 'none';
     stage.innerHTML = '';
     return;
   }
-  stage.style.display = 'flex';
-  stage.innerHTML = uids.map(uid=>{
+  stage.style.display = 'grid';
+  let html = '';
+  if(showSelf){
+    html += `<div data-live-uid="__self" style="position:relative; aspect-ratio:3/4; border-radius:14px; overflow:hidden; background:#0a0c14; border:1px solid rgba(124,255,178,.35);">
+      <video autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;"></video>
+      <div style="position:absolute;left:6px;bottom:6px;font-family:var(--font-mono);font-size:9px;background:rgba(13,15,23,.75);padding:2px 6px;border-radius:999px;color:var(--mint);">You</div>
+    </div>`;
+  }
+  html += uids.map(uid=>{
     const info = (activeBand() && (activeBand().memberInfo||[]).find(m=>m.uid===uid)) || { name:'Someone', initials:'?' };
     const name = (info.name||'Someone').split(' ')[0];
-    return `<div data-live-uid="${uid}" style="position:relative; width:112px; height:150px; border-radius:16px; overflow:hidden; background:#0a0c14; border:1px solid rgba(124,255,178,.25); flex-shrink:0;">
-      <video autoplay playsinline style="width:100%;height:100%;object-fit:cover;"></video>
+    const hasVideo = bandRemoteStreams[uid].getVideoTracks().some(t=>t.readyState!=='ended');
+    return `<div data-live-uid="${uid}" style="position:relative; aspect-ratio:3/4; border-radius:14px; overflow:hidden; background:#0a0c14; border:1px solid rgba(124,255,178,.25);">
+      <video autoplay playsinline style="width:100%;height:100%;object-fit:cover;${hasVideo?'':'opacity:0'}"></video>
+      ${hasVideo?'':`<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;"><div class="avatar" style="width:56px;height:56px;font-size:18px;${contactAvatarStyleAttr(info)}">${info.photo&&info.photo.dataUrl?'':(info.initials||'?')}</div></div>`}
       <div style="position:absolute;left:6px;bottom:6px;font-family:var(--font-mono);font-size:9px;background:rgba(13,15,23,.75);padding:2px 6px;border-radius:999px;color:var(--mint);">${escapeHtml(name)}</div>
     </div>`;
   }).join('');
+  stage.innerHTML = html;
+  if(showSelf){
+    const v = stage.querySelector('[data-live-uid="__self"] video');
+    if(v){ v.srcObject = bandStream; v.muted = true; v.play().catch(()=>{}); }
+  }
   uids.forEach(uid=>{
-    const wrap = stage.querySelector('[data-live-uid="'+uid+'"] video');
-    if(wrap && bandRemoteStreams[uid]) wrap.srcObject = bandRemoteStreams[uid];
+    const el = stage.querySelector('[data-live-uid="'+uid+'"] video');
+    if(el && bandRemoteStreams[uid]){
+      el.srcObject = bandRemoteStreams[uid];
+      el.muted = false; // hear live audio
+      el.play().catch(()=>{});
+    }
   });
 }
 
@@ -7502,15 +7557,16 @@ async function bandPublishPresenceLive(mode){
     live: !!mode,
     mode: mode || null,
     liveAt: mode ? firebase.firestore.FieldValue.serverTimestamp() : null,
+    rtcSession: bandRtcSession || null,
   }, { merge:true });
 }
 
 function closeBandRtcPeer(uid){
-  const pc = bandRtcPeers[uid];
-  if(pc){
-    try{ pc.ontrack = null; pc.onicecandidate = null; pc.close(); }catch(e){}
-    delete bandRtcPeers[uid];
+  const entry = bandRtcPeers[uid];
+  if(entry && entry.pc){
+    try{ entry.pc.ontrack = null; entry.pc.onicecandidate = null; entry.pc.close(); }catch(e){}
   }
+  delete bandRtcPeers[uid];
   delete bandRemoteStreams[uid];
   delete bandMakingOffer[uid];
   renderBandLiveStage();
@@ -7523,59 +7579,77 @@ function closeAllBandRtc(){
   renderBandLiveStage();
 }
 
+function bandSendSignal(to, type, extra){
+  const b = activeBand();
+  if(!b || !b.firestoreId || !currentUser || !fbDb) return Promise.resolve();
+  return fbDb.collection('bands').doc(b.firestoreId).collection('rtc').add(Object.assign({
+    from: currentUser.uid,
+    to,
+    type,
+    session: bandRtcSession,
+    ts: firebase.firestore.FieldValue.serverTimestamp(),
+  }, extra || {})).catch(()=>{});
+}
+
 async function bandCreatePeer(remoteUid){
-  if(bandRtcPeers[remoteUid] || !bandStream || !currentUser) return bandRtcPeers[remoteUid];
+  if(bandRtcPeers[remoteUid]) return bandRtcPeers[remoteUid];
+  if(!currentUser) return null;
   const pc = new RTCPeerConnection(await getIceServers());
-  bandRtcPeers[remoteUid] = pc;
-  bandStream.getTracks().forEach(t => {
-    try{ pc.addTrack(t, bandStream); }catch(e){}
-  });
+  const entry = { pc, pendingIce: [], remoteSet: false };
+  bandRtcPeers[remoteUid] = entry;
+
+  // Send tracks if we are live; viewers still get a peer for receiving
+  if(bandStream){
+    bandStream.getTracks().forEach(t => {
+      try{ pc.addTrack(t, bandStream); }catch(e){}
+    });
+  }
+
   pc.ontrack = (e)=>{
     if(!bandRemoteStreams[remoteUid]) bandRemoteStreams[remoteUid] = new MediaStream();
-    if(!bandRemoteStreams[remoteUid].getTracks().includes(e.track)){
-      bandRemoteStreams[remoteUid].addTrack(e.track);
-    }
+    const stream = bandRemoteStreams[remoteUid];
+    if(!stream.getTracks().includes(e.track)) stream.addTrack(e.track);
+    e.track.onended = ()=> renderBandLiveStage();
     renderBandLiveStage();
   };
   pc.onicecandidate = (e)=>{
     if(!e.candidate) return;
-    const b = activeBand();
-    if(!b || !b.firestoreId) return;
-    fbDb.collection('bands').doc(b.firestoreId).collection('rtc').add({
-      from: currentUser.uid,
-      to: remoteUid,
-      type: 'ice',
-      candidate: e.candidate.toJSON(),
-      ts: firebase.firestore.FieldValue.serverTimestamp(),
-    }).catch(()=>{});
+    bandSendSignal(remoteUid, 'ice', { candidate: e.candidate.toJSON() });
   };
   pc.onconnectionstatechange = ()=>{
     if(pc.connectionState === 'failed' || pc.connectionState === 'closed'){
       closeBandRtcPeer(remoteUid);
     }
   };
-  return pc;
+  return entry;
+}
+
+async function bandFlushIce(remoteUid){
+  const entry = bandRtcPeers[remoteUid];
+  if(!entry || !entry.remoteSet) return;
+  while(entry.pendingIce.length){
+    const c = entry.pendingIce.shift();
+    try{ await entry.pc.addIceCandidate(new RTCIceCandidate(c)); }catch(e){}
+  }
 }
 
 async function bandMaybeOffer(remoteUid){
-  // Deterministic offerer avoids glare: lower uid always offers.
-  if(!currentUser || currentUser.uid >= remoteUid) return;
+  if(!currentUser || !amTunedIn) return;
+  // Lower uid offers (avoids glare). Higher uid waits for offer.
+  if(currentUser.uid >= remoteUid) return;
   if(bandMakingOffer[remoteUid]) return;
+  // Need at least one side sending, or both tuned in — always offer when tuned in so receivers work
   bandMakingOffer[remoteUid] = true;
   try{
-    const pc = await bandCreatePeer(remoteUid);
-    if(!pc) return;
-    const offer = await pc.createOffer();
+    const entry = await bandCreatePeer(remoteUid);
+    if(!entry) return;
+    const pc = entry.pc;
+    // If we already have a stable connection, skip
+    if(pc.signalingState !== 'stable' && pc.signalingState !== 'have-local-offer') return;
+    if(pc.signalingState === 'have-local-offer') return;
+    const offer = await pc.createOffer({ offerToReceiveAudio:true, offerToReceiveVideo:true });
     await pc.setLocalDescription(offer);
-    const b = activeBand();
-    if(!b || !b.firestoreId) return;
-    await fbDb.collection('bands').doc(b.firestoreId).collection('rtc').add({
-      from: currentUser.uid,
-      to: remoteUid,
-      type: 'offer',
-      sdp: { type: offer.type, sdp: offer.sdp },
-      ts: firebase.firestore.FieldValue.serverTimestamp(),
-    });
+    await bandSendSignal(remoteUid, 'offer', { sdp: { type: offer.type, sdp: offer.sdp } });
   }catch(e){
     console.warn('[band-rtc] offer failed', e);
   }finally{
@@ -7584,33 +7658,49 @@ async function bandMaybeOffer(remoteUid){
 }
 
 async function bandHandleRtcSignal(msg){
-  if(!currentUser || !bandStream || !bandLiveMode) return;
+  if(!currentUser || !amTunedIn) return;
   if(msg.to !== currentUser.uid) return;
+  if(msg.session && bandRtcSession && msg.session !== bandRtcSession){
+    // Different session from peer is OK — they may have just re-tuned
+  }
   const from = msg.from;
   if(msg.type === 'offer'){
-    const pc = await bandCreatePeer(from);
-    if(!pc) return;
-    await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    const b = activeBand();
-    if(!b || !b.firestoreId) return;
-    await fbDb.collection('bands').doc(b.firestoreId).collection('rtc').add({
-      from: currentUser.uid,
-      to: from,
-      type: 'answer',
-      sdp: { type: answer.type, sdp: answer.sdp },
-      ts: firebase.firestore.FieldValue.serverTimestamp(),
-    });
+    let entry = bandRtcPeers[from];
+    // If we already offered (glare), and we are higher uid, roll back and answer
+    if(entry && entry.pc.signalingState === 'have-local-offer'){
+      if(currentUser.uid > from){
+        try{ await entry.pc.setLocalDescription({ type:'rollback' }); }catch(e){}
+      } else {
+        return; // we are the offerer; ignore their offer
+      }
+    }
+    if(!entry) entry = await bandCreatePeer(from);
+    if(!entry) return;
+    try{
+      await entry.pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+      entry.remoteSet = true;
+      await bandFlushIce(from);
+      const answer = await entry.pc.createAnswer();
+      await entry.pc.setLocalDescription(answer);
+      await bandSendSignal(from, 'answer', { sdp: { type: answer.type, sdp: answer.sdp } });
+    }catch(e){ console.warn('[band-rtc] handle offer failed', e); }
   } else if(msg.type === 'answer'){
-    const pc = bandRtcPeers[from];
-    if(pc && !pc.currentRemoteDescription){
-      await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp)).catch(()=>{});
+    const entry = bandRtcPeers[from];
+    if(entry && entry.pc.signalingState === 'have-local-offer'){
+      try{
+        await entry.pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+        entry.remoteSet = true;
+        await bandFlushIce(from);
+      }catch(e){ console.warn('[band-rtc] handle answer failed', e); }
     }
   } else if(msg.type === 'ice'){
-    const pc = bandRtcPeers[from] || await bandCreatePeer(from);
-    if(pc && msg.candidate){
-      try{ await pc.addIceCandidate(new RTCIceCandidate(msg.candidate)); }catch(e){}
+    let entry = bandRtcPeers[from];
+    if(!entry) entry = await bandCreatePeer(from);
+    if(!entry || !msg.candidate) return;
+    if(!entry.remoteSet){
+      entry.pendingIce.push(msg.candidate);
+    } else {
+      try{ await entry.pc.addIceCandidate(new RTCIceCandidate(msg.candidate)); }catch(e){}
     }
   }
 }
@@ -7619,59 +7709,58 @@ function startBandRtcListener(){
   if(bandRtcUnsub){ bandRtcUnsub(); bandRtcUnsub = null; }
   const b = activeBand();
   if(!b || !b.isReal || !b.firestoreId || !fbDb || !currentUser) return;
+  if(!bandRtcSession) bandRtcSession = currentUser.uid + '_' + Date.now();
   bandRtcUnsub = fbDb.collection('bands').doc(b.firestoreId).collection('rtc')
-    .orderBy('ts','desc').limit(40)
+    .orderBy('ts','desc').limit(60)
     .onSnapshot(snap=>{
       snap.docChanges().forEach(ch=>{
         if(ch.type !== 'added') return;
         const m = ch.doc.data();
         if(!m || m.to !== currentUser.uid) return;
-        // Ignore very old signals (stale from prior live sessions)
         const ts = m.ts && m.ts.toMillis ? m.ts.toMillis() : 0;
-        if(ts && Date.now() - ts > 120000) return;
+        if(ts && Date.now() - ts > 90000) return;
         bandHandleRtcSignal(m).catch(()=>{});
       });
     }, ()=>{});
 }
 
 function syncBandMeshFromPresence(){
-  if(!bandLiveMode || !currentUser) return;
-  // realBandLiveMembers is others only; also check presence flags via roster rebuild
-  // Offer to anyone else currently live — presence docs carry live:true
+  if(!amTunedIn || !currentUser) return;
   const b = activeBand();
   if(!b || !b.firestoreId) return;
   fbDb.collection('bands').doc(b.firestoreId).collection('presence').get().then(snap=>{
     snap.docs.forEach(d=>{
       if(d.id === currentUser.uid) return;
-      const data = d.data() || {};
-      if(data.live){
-        bandMaybeOffer(d.id);
-      } else if(bandRtcPeers[d.id]){
-        closeBandRtcPeer(d.id);
-      }
+      // Connect to anyone present (tuned in) so viewers receive live A/V
+      bandMaybeOffer(d.id);
     });
   }).catch(()=>{});
+}
+
+async function ensureTunedInForLive(){
+  if(amTunedIn) return;
+  amTunedIn = true;
+  markMyActivity();
+  $('bandTuneBtn').textContent = 'Step out';
+  $('bandTuneBtn').style.background = 'var(--surface-2)';
+  $('bandTuneBtn').style.color = 'var(--text)';
+  const b0 = activeBand();
+  if(b0 && b0.isReal && b0.firestoreId && fbDb && currentUser){
+    if(!bandRtcSession) bandRtcSession = currentUser.uid + '_' + Date.now();
+    fbDb.collection('bands').doc(b0.firestoreId).collection('presence').doc(currentUser.uid)
+      .set({ tunedInAt: firebase.firestore.FieldValue.serverTimestamp(), rtcSession: bandRtcSession }, { merge:true }).catch(()=>{});
+  }
+  startBandRtcListener();
+  syncBandMeshFromPresence();
+  renderBandRoster();
 }
 
 async function startBandLive(mode){
   if(bandLiveMode === mode){ stopBandLive(); return; }
   if(bandLiveMode && bandLiveMode !== mode){
-    // Switch mode — tear down and re-open
     stopBandLive(true);
   }
-  if(!amTunedIn){
-    amTunedIn = true;
-    markMyActivity();
-    $('bandTuneBtn').textContent = 'Step out';
-    $('bandTuneBtn').style.background = 'var(--surface-2)';
-    $('bandTuneBtn').style.color = 'var(--text)';
-    const b0 = activeBand();
-    if(b0 && b0.isReal && b0.firestoreId && fbDb && currentUser){
-      fbDb.collection('bands').doc(b0.firestoreId).collection('presence').doc(currentUser.uid)
-        .set({ tunedInAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge:true }).catch(()=>{});
-    }
-    renderBandRoster();
-  }
+  await ensureTunedInForLive();
   if(bandCameraRequestPending){ await bandCameraRequestPending; return; }
   const wantVideo = mode === 'video';
   bandCameraRequestPending = (async ()=>{
@@ -7687,14 +7776,17 @@ async function startBandLive(mode){
     if(wantVideo){
       $('bandSelfBlur').srcObject = bandStream;
       $('bandSelfSharp').srcObject = bandStream;
-      $('bandSelfPip').style.display = 'block';
+      $('bandSelfPip').style.display = 'none'; // self is in the grid now
     } else {
       $('bandSelfPip').style.display = 'none';
     }
     setBandLiveButtons();
+    // Rebuild peers so local tracks are included
+    closeAllBandRtc();
     startBandRtcListener();
     await bandPublishPresenceLive(mode);
     syncBandMeshFromPresence();
+    renderBandLiveStage();
     markMyActivity();
     updateSignatureGlow();
     toast(mode === 'video' ? 'You are live on video' : 'You are live on audio');
@@ -7707,39 +7799,53 @@ async function startBandLive(mode){
   }
 }
 function stopBandLive(silent){
-  closeAllBandRtc();
-  if(bandRtcUnsub){ bandRtcUnsub(); bandRtcUnsub = null; }
+  // Keep mesh for receiving if still tuned in; only drop send tracks
   if(bandStream){ bandStream.getTracks().forEach(t=>{ try{ t.stop(); }catch(_){} }); bandStream = null; }
   bandLiveMode = null;
   $('bandSelfBlur').srcObject = null; $('bandSelfSharp').srcObject = null;
   $('bandSelfPip').style.display = 'none';
   setBandLiveButtons();
   bandPublishPresenceLive(null);
+  // Renegotiate without send tracks: recreate peers while still tuned in
+  if(amTunedIn){
+    closeAllBandRtc();
+    syncBandMeshFromPresence();
+  } else {
+    closeAllBandRtc();
+    if(bandRtcUnsub){ bandRtcUnsub(); bandRtcUnsub = null; }
+  }
+  renderBandLiveStage();
   if(!silent) toast('Live ended');
 }
 $('bandLiveBtn').onclick = ()=> startBandLive('video');
 $('bandAudioBtn').onclick = ()=> startBandLive('audio');
 
 /* ---- Band message E2E (envelope per member) ---- */
+async function resolvePublicKeyForUid(uid){
+  if(!uid) return null;
+  if(uid === currentUser.uid){
+    const myKeys = await ensureMyKeyPair();
+    return myKeys && myKeys.publicJwk;
+  }
+  const c = contacts.find(cc => cc.firebaseUid === uid);
+  if(c && c.publicKey) return c.publicKey;
+  if(!fbDb) return null;
+  try{
+    const doc = await fbDb.collection('users').doc(uid).get();
+    if(doc.exists && doc.data().publicKey){
+      if(c) c.publicKey = doc.data().publicKey;
+      return doc.data().publicKey;
+    }
+  }catch(e){}
+  return null;
+}
 async function encryptBandMessageForMembers(memberUids, plaintext){
   const envelopes = {};
   let any = false;
   for(const uid of memberUids){
-    if(uid === currentUser.uid){
-      // Encrypt to self so we can re-read our own history this session
-      try{
-        const myKeys = await ensureMyKeyPair();
-        if(myKeys && myKeys.publicJwk){
-          const enc = await encryptMessageText(uid, myKeys.publicJwk, plaintext);
-          if(enc){ envelopes[uid] = enc; any = true; }
-        }
-      }catch(e){}
-      continue;
-    }
-    const c = contacts.find(cc => cc.firebaseUid === uid);
-    const jwk = c && c.publicKey;
-    if(!jwk) continue;
     try{
+      const jwk = await resolvePublicKeyForUid(uid);
+      if(!jwk) continue;
       const enc = await encryptMessageText(uid, jwk, plaintext);
       if(enc){ envelopes[uid] = enc; any = true; }
     }catch(e){}
@@ -7749,32 +7855,26 @@ async function encryptBandMessageForMembers(memberUids, plaintext){
 async function decryptBandMessage(m){
   if(!m.encrypted || !m.envelopes) return m.text || '';
   const mine = m.envelopes[currentUser.uid];
-  if(!mine) return m.text || '🔒 Encrypted';
-  // Key agreement is with the sender's public key
-  let theirJwk = null;
-  if(m.fromUid === currentUser.uid){
-    const myKeys = await ensureMyKeyPair();
-    theirJwk = myKeys && myKeys.publicJwk;
-  } else {
-    const c = contacts.find(cc => cc.firebaseUid === m.fromUid);
-    theirJwk = c && c.publicKey;
-    if(!theirJwk && fbDb){
-      try{
-        const doc = await fbDb.collection('users').doc(m.fromUid).get();
-        if(doc.exists) theirJwk = doc.data().publicKey || null;
-      }catch(e){}
-    }
+  if(!mine){
+    // Not sealed for us — show plaintext fallback if sender included it
+    return m.text || '';
   }
-  if(!theirJwk) return '🔒 Encrypted';
-  const plain = await decryptMessageText(m.fromUid === currentUser.uid ? currentUser.uid : m.fromUid, theirJwk, mine.ciphertext, mine.iv);
-  // When decrypting own message, shared key is with self — use currentUser.uid as theirUid in getSharedAesKey
-  if(plain != null) return plain;
-  // Retry with sender uid for outbound-from-me edge cases
-  if(m.fromUid === currentUser.uid){
-    const plain2 = await decryptMessageText(currentUser.uid, theirJwk, mine.ciphertext, mine.iv);
-    if(plain2 != null) return plain2;
+  // Shared secret is ECDH(myPrivate, senderPublic) — always use sender's key
+  const senderUid = m.fromUid || m.from;
+  const theirJwk = await resolvePublicKeyForUid(senderUid);
+  if(!theirJwk) return m.text || '';
+  try{
+    const plain = await decryptMessageText(senderUid, theirJwk, mine.ciphertext, mine.iv);
+    if(plain != null) return plain;
+  }catch(e){}
+  // Own message: key was derived with self uid
+  if(senderUid === currentUser.uid){
+    try{
+      const plain2 = await decryptMessageText(currentUser.uid, theirJwk, mine.ciphertext, mine.iv);
+      if(plain2 != null) return plain2;
+    }catch(e){}
   }
-  return '🔒 Encrypted';
+  return m.text || '';
 }
 
 async function sendBandMessage(){
@@ -7794,10 +7894,12 @@ async function sendBandMessage(){
     if(envelopes){
       payload.encrypted = true;
       payload.envelopes = envelopes;
-      payload.text = ''; // never store plaintext when E2E succeeded
+      // Keep plaintext only when we could not seal for every member (decrypt fallback)
+      const sealedForAll = unique.every(u => !!envelopes[u]);
+      payload.text = sealedForAll ? '' : text;
     } else {
       payload.encrypted = false;
-      payload.text = text; // fallback if no keys yet
+      payload.text = text;
     }
     fbDb.collection('bands').doc(b.firestoreId).collection('messages').add(payload)
       .catch(e=> toast(e.message || 'Couldn\u2019t send'));
