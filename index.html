@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.08.13g" />
+  <meta name="naluno-build" content="2026.08.13h" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
@@ -14,13 +14,13 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.08.13g">
+<meta name="app-version" content="2026.08.13h">
 <meta name="description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:image" content="icon-512.png">
 <meta name="twitter:card" content="summary">
-<link rel="stylesheet" href="css/app.css?v=20260813g">
+<link rel="stylesheet" href="css/app.css?v=20260813h">
 </head>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
@@ -440,6 +440,30 @@
   </div>
 
   <!-- ===================== BROADCAST COMPOSER ===================== -->
+
+  <!-- ===================== BROADCAST COMPOSER (dedicated — not Signal) ===================== -->
+  <div class="call-overlay" id="bcomposer">
+    <div class="topbar" style="padding-top:calc(env(safe-area-inset-top,0px) + 12px);">
+      <div class="back-btn" id="bcompClose" role="button" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:700;font-family:var(--font-futuristic);font-size:14px;">New Broadcast</div>
+        <div style="font-size:11px;color:var(--text-dim);font-family:var(--font-mono);">Permanent · up to 10 minutes · compressed for quality</div>
+      </div>
+    </div>
+    <div class="tab-scroll" style="padding:14px 18px 32px;">
+      <input type="file" id="bcompFileInput" accept="video/*,image/*" style="display:none;" />
+      <button type="button" id="bcompPickBtn" class="join-btn" style="margin:0 0 12px; background:rgba(124,255,178,.12); color:var(--mint); border:1px solid rgba(124,255,178,.35);">Choose video or photo</button>
+      <div class="lobby-sub" style="margin:0 0 12px;">Video up to <strong style="color:var(--text);">10 minutes</strong>. We compress gently before upload so it stays sharp.</div>
+      <div id="bcompPreview" style="margin-bottom:12px;"></div>
+      <div id="bcompProgress" style="display:none;font-family:var(--font-mono);font-size:11px;color:var(--mint);margin:0 0 8px;"></div>
+      <div id="bcompStatus" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);margin:0 0 14px;"></div>
+      <input id="bcompTitle" maxlength="120" placeholder="Broadcast title (required)" style="width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:14px;font-family:inherit;" />
+      <input id="bcompTags" maxlength="120" placeholder="Topics (comma separated)" style="width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:13px;font-family:inherit;" />
+      <textarea id="bcompDesc" maxlength="2000" rows="3" placeholder="What is this Broadcast about? (optional)" style="width:100%;margin-bottom:14px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:13px;font-family:inherit;resize:vertical;"></textarea>
+      <button type="button" class="join-btn" id="bcompPublishBtn" style="margin:0;" disabled>Publish Broadcast</button>
+    </div>
+  </div>
+
   <div class="call-overlay" id="composer">
     <div class="topbar" style="padding-top:20px;">
       <div class="back-btn" id="composerClose" role="button" aria-label="Close composer"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
@@ -841,26 +865,27 @@
 
 
 <!-- NALUNO_MODULES -->
-<script src="js/core.js?v=20260813g"></script>
-<script src="js/data.js?v=20260813g"></script>
-<script src="js/crypto.js?v=20260813g"></script>
-<script src="js/atmosphere.js?v=20260813g"></script>
-<script src="js/band-list.js?v=20260813g"></script>
-<script src="js/signal-core.js?v=20260813g"></script>
-<script src="js/broadcast-core.js?v=20260813g"></script>
-<script src="js/compass.js?v=20260813g"></script>
-<script src="js/signal-ui.js?v=20260813g"></script>
-<script src="js/broadcast-space.js?v=20260813g"></script>
-<script src="js/wireline.js?v=20260813g"></script>
-<script src="js/profile.js?v=20260813g"></script>
-<script src="js/auth.js?v=20260813g"></script>
-<script src="js/notifications.js?v=20260813g"></script>
-<script src="js/camera.js?v=20260813g"></script>
-<script src="js/calls.js?v=20260813g"></script>
-<script src="js/broadcast-live.js?v=20260813g"></script>
-<script src="js/band-room.js?v=20260813g"></script>
-<script src="js/pwa.js?v=20260813g"></script>
-<script src="js/find.js?v=20260813g"></script>
+<script src="js/core.js?v=20260813h"></script>
+<script src="js/data.js?v=20260813h"></script>
+<script src="js/crypto.js?v=20260813h"></script>
+<script src="js/atmosphere.js?v=20260813h"></script>
+<script src="js/band-list.js?v=20260813h"></script>
+<script src="js/signal-core.js?v=20260813h"></script>
+<script src="js/broadcast-core.js?v=20260813h"></script>
+<script src="js/broadcast-composer.js?v=20260813h"></script>
+<script src="js/compass.js?v=20260813h"></script>
+<script src="js/signal-ui.js?v=20260813h"></script>
+<script src="js/broadcast-space.js?v=20260813h"></script>
+<script src="js/wireline.js?v=20260813h"></script>
+<script src="js/profile.js?v=20260813h"></script>
+<script src="js/auth.js?v=20260813h"></script>
+<script src="js/notifications.js?v=20260813h"></script>
+<script src="js/camera.js?v=20260813h"></script>
+<script src="js/calls.js?v=20260813h"></script>
+<script src="js/broadcast-live.js?v=20260813h"></script>
+<script src="js/band-room.js?v=20260813h"></script>
+<script src="js/pwa.js?v=20260813h"></script>
+<script src="js/find.js?v=20260813h"></script>
 <!-- /NALUNO_MODULES -->
 </body>
 </html>

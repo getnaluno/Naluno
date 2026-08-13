@@ -227,7 +227,7 @@ function openComposer(mode){
 function closeComposer(){ $('composer').classList.remove('active'); }
 $('composerClose').onclick = closeComposer;
 if($('newSignalBtn')) $('newSignalBtn').onclick = ()=> openComposer('signal');
-if($('newBroadcastBtn')) $('newBroadcastBtn').onclick = ()=> openComposer('broadcast');
+// Broadcast uses dedicated bcomposer (js/broadcast-composer.js) — do not open Signal composer
 // Signal ring (empty) also opens signal composer via renderBroadcastTab
 
 function resetComposer(){
