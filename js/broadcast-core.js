@@ -1,0 +1,221 @@
+/* ============================================================
+   MODULE: js/broadcast-core.js
+   Permanent Broadcasts — not Signals.
+   A Broadcast is a lasting community around media (YouTube-like permanence).
+   A Signal is a short ephemeral clip (separate module: signal-*).
+   OWNERSHIP: CRUD, search, share links, delete, list cache.
+   ============================================================ */
+
+let myBroadcasts = [];          // permanent docs I created
+let feedBroadcasts = [];        // from connections + mine for tab
+let broadcastSearchResults = [];
+let composerMode = 'signal';    // 'signal' | 'broadcast'
+let signalTtlChoice = 24;       // hours: 24 | 72 | 168
+
+const SIGNAL_TTL_OPTIONS = {
+  24:  24 * 60 * 60 * 1000,
+  72:  72 * 60 * 60 * 1000,
+  168: 168 * 60 * 60 * 1000,
+};
+
+function signalTtlMs(){
+  return SIGNAL_TTL_OPTIONS[signalTtlChoice] || SIGNAL_TTL_OPTIONS[24];
+}
+
+function broadcastShareUrl(id){
+  const base = (location.origin && location.origin !== 'null') ? location.origin : 'https://getnaluno.com';
+  return base.replace(/\/$/, '') + '/?broadcast=' + encodeURIComponent(id);
+}
+
+/** Unique Naluno thumbnail: diagonal “frequency plate” with mint edge + title band */
+function broadcastThumbHtml(b){
+  const title = escapeHtml((b.title || 'Broadcast').slice(0, 48));
+  const creator = escapeHtml((b.creatorName || 'Someone').split(' ')[0]);
+  const media = b.thumbUrl || b.mediaUrl || '';
+  const isVideo = b.mediaType === 'video';
+  const inner = media
+    ? (isVideo
+        ? `<img src="${escapeHtml(b.thumbUrl || '')}" alt="" class="bcast-plate-media" onerror="this.style.display='none'" />`
+        : `<img src="${escapeHtml(media)}" alt="" class="bcast-plate-media" />`)
+    : `<div class="bcast-plate-fallback">${escapeHtml((b.creatorName || '?').slice(0,1).toUpperCase())}</div>`;
+  const live = b.live ? `<span class="bcast-plate-live">LIVE</span>` : '';
+  return `<article class="bcast-plate" data-broadcast-id="${escapeHtml(b.id)}" role="button" tabindex="0">
+    <div class="bcast-plate-frame">
+      ${inner}
+      ${live}
+      <div class="bcast-plate-scan"></div>
+    </div>
+    <div class="bcast-plate-meta">
+      <div class="bcast-plate-title">${title}</div>
+      <div class="bcast-plate-sub">${creator}${b.tags && b.tags[0] ? ' · ' + escapeHtml(b.tags[0]) : ''}</div>
+    </div>
+  </article>`;
+}
+
+async function createPermanentBroadcast({ title, description, tags, mediaType, mediaUrl, thumbUrl, filterCss }){
+  if(!currentUser || !fbDb) throw new Error('Sign in required');
+  const now = Date.now();
+  const ref = fbDb.collection('broadcasts').doc();
+  const doc = {
+    creatorUid: currentUser.uid,
+    creatorName: (currentProfile && currentProfile.name) || currentUser.displayName || 'Someone',
+    title: (title || 'Broadcast').slice(0, 120),
+    description: (description || '').slice(0, 2000),
+    tags: (tags || []).slice(0, 12).map(t => String(t).toLowerCase().slice(0, 32)),
+    mediaType: mediaType || 'photo',
+    mediaUrl: mediaUrl || null,
+    thumbUrl: thumbUrl || null,
+    filterCss: filterCss || '',
+    createdAt: now,
+    updatedAt: now,
+    memberUids: [currentUser.uid],
+    live: false,
+    liveAt: null,
+    liveBy: null,
+    searchText: [
+      title || '',
+      description || '',
+      (currentProfile && currentProfile.name) || '',
+      ...(tags || []),
+    ].join(' ').toLowerCase(),
+  };
+  await ref.set(doc);
+  await ref.collection('journey').add({
+    type: 'created',
+    text: 'Broadcast published',
+    ts: now,
+    by: currentUser.uid,
+  });
+  const full = { id: ref.id, ...doc };
+  myBroadcasts = [full, ...myBroadcasts.filter(x => x.id !== ref.id)];
+  return full;
+}
+
+async function deletePermanentBroadcast(id){
+  if(!currentUser || !fbDb || !id) return;
+  const ref = fbDb.collection('broadcasts').doc(id);
+  const snap = await ref.get();
+  if(!snap.exists) return;
+  if(snap.data().creatorUid !== currentUser.uid) throw new Error('Only the creator can delete');
+  // Soft-delete community content is heavy; mark deleted and hide from feeds
+  await ref.set({ deleted: true, deletedAt: Date.now(), live: false }, { merge: true });
+  myBroadcasts = myBroadcasts.filter(b => b.id !== id);
+  feedBroadcasts = feedBroadcasts.filter(b => b.id !== id);
+}
+
+async function loadMyBroadcasts(){
+  if(!currentUser || !fbDb) return;
+  try{
+    const snap = await fbDb.collection('broadcasts')
+      .where('creatorUid', '==', currentUser.uid)
+      .orderBy('createdAt', 'desc')
+      .limit(40)
+      .get();
+    myBroadcasts = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(b => !b.deleted);
+  }catch(e){
+    // Fallback without composite index
+    try{
+      const snap = await fbDb.collection('broadcasts').where('creatorUid', '==', currentUser.uid).limit(40).get();
+      myBroadcasts = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        .filter(b => !b.deleted)
+        .sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
+    }catch(_){ myBroadcasts = []; }
+  }
+}
+
+async function loadFeedBroadcasts(){
+  if(!currentUser || !fbDb) return;
+  const uids = new Set([currentUser.uid]);
+  (contacts || []).forEach(c => { if(c.isReal && c.firebaseUid) uids.add(c.firebaseUid); });
+  const list = [];
+  // Firestore 'in' limit 10 — batch
+  const arr = Array.from(uids);
+  for(let i = 0; i < arr.length; i += 10){
+    const chunk = arr.slice(i, i + 10);
+    try{
+      const snap = await fbDb.collection('broadcasts').where('creatorUid', 'in', chunk).limit(30).get();
+      snap.docs.forEach(d => {
+        const data = d.data();
+        if(!data.deleted) list.push({ id: d.id, ...data });
+      });
+    }catch(_){}
+  }
+  list.sort((a,b) => (b.live ? 1 : 0) - (a.live ? 1 : 0) || (b.updatedAt||b.createdAt||0) - (a.updatedAt||a.createdAt||0));
+  feedBroadcasts = list.slice(0, 60);
+  if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
+}
+
+async function searchBroadcasts(query){
+  const q = (query || '').trim().toLowerCase();
+  if(!q || !fbDb){ broadcastSearchResults = []; return []; }
+  // Client-side search over a recent public slice + feed (no full-text index required)
+  let pool = feedBroadcasts.slice();
+  try{
+    const snap = await fbDb.collection('broadcasts').orderBy('createdAt', 'desc').limit(80).get();
+    snap.docs.forEach(d => {
+      const data = d.data();
+      if(data.deleted) return;
+      if(!pool.find(x => x.id === d.id)) pool.push({ id: d.id, ...data });
+    });
+  }catch(_){}
+  const scored = pool.map(b => {
+    const hay = (b.searchText || [b.title, b.description, b.creatorName, ...(b.tags||[])].join(' ')).toLowerCase();
+    let score = 0;
+    if(hay.includes(q)) score += 5;
+    q.split(/\s+/).forEach(w => { if(w.length > 1 && hay.includes(w)) score += 2; });
+    if((b.title||'').toLowerCase().startsWith(q)) score += 3;
+    if(b.live) score += 4;
+    return { b, score };
+  }).filter(x => x.score > 0).sort((a,c) => c.score - a.score || (c.b.createdAt||0)-(a.b.createdAt||0));
+  broadcastSearchResults = scored.map(x => x.b);
+  return broadcastSearchResults;
+}
+
+async function notifyFrequenciesLive(broadcastId, title){
+  if(!currentUser || !fbDb) return;
+  const real = (contacts || []).filter(c => c.isReal && c.firebaseUid);
+  const payload = {
+    type: 'broadcast_live',
+    fromUid: currentUser.uid,
+    fromName: (currentProfile && currentProfile.name) || 'Someone',
+    broadcastId,
+    title: title || 'Live',
+    createdAt: Date.now(),
+    read: false,
+  };
+  await Promise.all(real.slice(0, 40).map(c =>
+    fbDb.collection('users').doc(c.firebaseUid).collection('notifications').add(payload).catch(()=>{})
+  ));
+  // Also try push via existing notify worker if present
+  if(typeof sendPushToContact === 'function'){
+    real.forEach(c => {
+      try{ sendPushToContact(c, { title: 'Live on Naluno', body: (payload.fromName) + ' went live: ' + (title||'') }); }catch(_){}
+    });
+  }
+}
+
+function openBroadcastById(id){
+  if(!id) return;
+  if(typeof openBroadcastSpaceById === 'function') openBroadcastSpaceById(id);
+  else toast('Opening Broadcast…');
+}
+
+/** Deep link ?broadcast= */
+(function broadcastDeepLink(){
+  try{
+    const params = new URLSearchParams(location.search || '');
+    const id = params.get('broadcast');
+    if(!id) return;
+    let n = 0;
+    const iv = setInterval(()=>{
+      n++;
+      if(currentUser && fbDb){
+        clearInterval(iv);
+        openBroadcastById(id);
+      }
+      if(n > 50) clearInterval(iv);
+    }, 200);
+  }catch(_){}
+})();

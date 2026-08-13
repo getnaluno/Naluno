@@ -184,10 +184,44 @@ $('compassInput').addEventListener('input', function(){
   this.style.height = Math.min(120, this.scrollHeight) + 'px';
 });
 
-function openComposer(){ resetComposer(); $('composer').classList.add('active'); }
+function openComposer(mode){
+  composerMode = mode === 'broadcast' ? 'broadcast' : 'signal';
+  resetComposer();
+  const label = $('composerModeLabel');
+  const hint = $('composerModeHint');
+  const ttlRow = $('signalTtlRow');
+  const fields = $('broadcastFields');
+  const linkRow = $('signalLinkBroadcastRow');
+  const postBtn = $('postBroadcastBtn');
+  if(composerMode === 'broadcast'){
+    if(label) label.textContent = 'Broadcast';
+    if(hint) hint.textContent = 'Permanent · community · searchable';
+    if(ttlRow) ttlRow.style.display = 'none';
+    if(fields) fields.style.display = 'block';
+    if(linkRow) linkRow.style.display = 'none';
+    if(postBtn) postBtn.textContent = 'Publish Broadcast';
+  } else {
+    if(label) label.textContent = 'Signal';
+    if(hint) hint.textContent = 'Short clip · disappears on a timer';
+    if(ttlRow) ttlRow.style.display = 'block';
+    if(fields) fields.style.display = 'none';
+    if(linkRow) linkRow.style.display = 'block';
+    if(postBtn) postBtn.textContent = 'Post Signal';
+    // fill optional attach-to-broadcast
+    const sel = $('signalLinkBroadcast');
+    if(sel){
+      const mine = (typeof myBroadcasts !== 'undefined' ? myBroadcasts : []);
+      sel.innerHTML = '<option value="">None — standalone Signal</option>' +
+        mine.map(b => `<option value="${b.id}">${escapeHtml(b.title||'Broadcast')}</option>`).join('');
+    }
+  }
+  $('composer').classList.add('active');
+}
+
 function closeComposer(){ $('composer').classList.remove('active'); }
 $('composerClose').onclick = closeComposer;
-$('newBroadcastBtn').onclick = openComposer;
+$('newBroadcastBtn').onclick = ()=> openComposer('broadcast');
+// Signal ring uses openComposer('signal') from strip
 
 function resetComposer(){
   composerType = 'photo'; composerItems = []; activeComposerItemIndex = -1; composerTransition = 'fade';
@@ -822,17 +856,73 @@ async function postSegmentsNow(newSegments){
 $('postBroadcastBtn').onclick = async ()=>{
   if($('postBroadcastBtn').disabled || postInProgress) return;
   const now = Date.now();
-  const expires = now + SIGNAL_TTL_MS;
-  // Every segment from this one post shares this id — this is what actually
-  // guarantees a multi-part video stays together and in order in the viewer,
-  // regardless of how long uploading takes or what else happens on the account
-  // while it's in progress. createdAt timing alone isn't a safe enough guarantee
-  // once a real upload can take real minutes.
+
+  if(composerMode === 'broadcast'){
+    const title = ($('bcastTitleInput') && $('bcastTitleInput').value.trim()) || '';
+    const tagsRaw = ($('bcastTagsInput') && $('bcastTagsInput').value) || '';
+    const tags = tagsRaw.split(',').map(s=>s.trim()).filter(Boolean).slice(0, 12);
+    const caption = ($('captionInput') && $('captionInput').value.trim()) || '';
+    if(!title && composerType !== 'text'){
+      toast('Add a title for your Broadcast');
+      return;
+    }
+    postInProgress = true;
+    try{
+      let mediaType = 'text', mediaUrl = null, thumbUrl = null, filterCss = '';
+      if(composerType === 'text'){
+        mediaType = 'text';
+        mediaUrl = null;
+      } else if(composerItems.length){
+        const item = composerItems[0];
+        mediaType = item.kind;
+        filterCss = item.filterCss || '';
+        if(item.kind === 'video'){
+          const blob = item.videoBlob || (item.dataUrl ? await (await fetch(item.dataUrl)).blob() : null);
+          if(!blob) throw new Error('Missing video');
+          mediaUrl = await uploadVideoToR2(blob);
+          try{ thumbUrl = await generateVideoThumbnail(mediaUrl); }catch(_){}
+        } else {
+          // photo: upload dataUrl
+          const blob = await (await fetch(item.dataUrl)).blob();
+          mediaUrl = await uploadVideoToR2(blob);
+          thumbUrl = mediaUrl;
+        }
+      } else {
+        toast('Add media or switch to text');
+        postInProgress = false;
+        return;
+      }
+      const finalTitle = title || (composerType==='text' ? ($('textBroadcastInput').value.trim().slice(0,80) || 'Broadcast') : 'Broadcast');
+      const desc = caption || (composerType==='text' ? $('textBroadcastInput').value.trim() : '');
+      closeComposer();
+      const b = await createPermanentBroadcast({
+        title: finalTitle,
+        description: desc,
+        tags,
+        mediaType,
+        mediaUrl,
+        thumbUrl,
+        filterCss,
+      });
+      await loadFeedBroadcasts();
+      toast('Broadcast published');
+      openBroadcastById(b.id);
+    }catch(e){
+      console.error(e);
+      toast(e.message || 'Couldn’t publish Broadcast');
+    }
+    postInProgress = false;
+    return;
+  }
+
+  // ---- Signal path ----
+  const expires = now + (typeof signalTtlMs === 'function' ? signalTtlMs() : SIGNAL_TTL_MS);
+  const linkedBroadcastId = ($('signalLinkBroadcast') && $('signalLinkBroadcast').value) || '';
   const postGroupId = 'post-' + now + '-' + Math.random().toString(36).slice(2);
   let postedCount = 1;
   const newSegments = [];
   if(composerType==='text'){
-    newSegments.push({ type:'text', text: $('textBroadcastInput').value.trim(), bg: composerTextBg, createdAt: now, expiresAt: expires, transitionIn: 'fade', groupId: postGroupId, order: 0 });
+    newSegments.push({ type:'text', text: $('textBroadcastInput').value.trim(), bg: composerTextBg, createdAt: now, expiresAt: expires, transitionIn: 'fade', groupId: postGroupId, order: 0, linkedBroadcastId: linkedBroadcastId || null });
   } else {
     postedCount = composerItems.length;
     composerItems.forEach((item, i)=>{
@@ -840,12 +930,21 @@ $('postBroadcastBtn').onclick = async ()=>{
         type: item.kind, dataUrl: item.dataUrl, filterCss: item.filterCss,
         crop: item.crop, caption: item.caption, createdAt: now + i, expiresAt: expires,
         transitionIn: composerItems.length>1 ? composerTransition : 'fade', duration: item.duration || null,
-        groupId: postGroupId, order: i,
+        groupId: postGroupId, order: i, linkedBroadcastId: linkedBroadcastId || null,
       });
     });
   }
   closeComposer();
   await postSegmentsNow(newSegments);
-  toast(postedCount>1 ? `Posted ${postedCount} items to your signal` : 'Posted to your signal');
+  toast(postedCount>1 ? `Posted ${postedCount} Signals` : 'Posted Signal');
 };
 
+
+
+document.querySelectorAll('.ttl-chip').forEach(chip=>{
+  chip.onclick = ()=>{
+    document.querySelectorAll('.ttl-chip').forEach(c=>c.classList.remove('on'));
+    chip.classList.add('on');
+    signalTtlChoice = parseInt(chip.dataset.ttl, 10) || 24;
+  };
+});

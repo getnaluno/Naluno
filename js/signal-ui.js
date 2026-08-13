@@ -99,7 +99,65 @@ function rankBroadcastEntries(entries){
   });
 }
 
+
+function renderBroadcastTab(){
+  pruneExpiredSignal();
+  // ---- Signal rings ----
+  const latest = mySignal[mySignal.length-1];
+  let mySignalInner;
+  if(latest){
+    let thumb;
+    if(latest.type==='text'){
+      thumb = `<div class="avatar" style="width:100%;height:100%;background:${latest.bg};font-size:9px;padding:4px;text-align:center;line-height:1.15;">${escapeHtml(latest.text).slice(0,26)}</div>`;
+    } else if(latest.type==='video'){
+      thumb = latest.thumbDataUrl
+        ? `<img src="${latest.thumbDataUrl}" class="mysignal-thumb" style="filter:${latest.filterCss||''}" />`
+        : `<video src="${latest.videoUrl || latest.dataUrl}" class="mysignal-thumb" style="filter:${latest.filterCss||''}" muted></video>`;
+    } else {
+      thumb = `<img src="${latest.dataUrl}" class="mysignal-thumb" style="filter:${latest.filterCss||''}" />`;
+    }
+    mySignalInner = `<div class="ring ${mySignalSeen?'seen':''}"><div class="avatar" style="width:100%;height:100%;overflow:hidden;background:#1F2333;">${thumb}</div></div><span>Your signal${mySignal.length>1?' · '+mySignal.length:''}</span>`;
+  } else {
+    mySignalInner = `<div class="ring seen"><div class="avatar" style="width:100%;height:100%;background:#1F2333;color:var(--text-dim);font-size:20px;">+</div></div><span>Post signal</span>`;
+  }
+  const stripEl = $('myBcastStrip');
+  if(stripEl){
+    stripEl.innerHTML = `<div class="bcast-item" id="mySignalItem">${mySignalInner}</div>` +
+      (connectionsSignals||[]).map(({ contact:c })=>{
+        return `<div class="bcast-item" data-signal="${c.id}"><div class="ring"><div class="avatar" style="width:100%;height:100%;background:${c.color};">${c.initials}</div></div><span>${escapeHtml((c.name||'').split(' ')[0])}</span></div>`;
+      }).join('');
+    const mine = $('mySignalItem');
+    if(mine) mine.onclick = ()=>{
+      if(mySignal.length) openMySignalStory();
+      else if(typeof openComposer === 'function') openComposer('signal');
+    };
+    stripEl.querySelectorAll('[data-signal]').forEach(el=>{
+      el.onclick = ()=> openContactSignalStory(parseInt(el.dataset.signal, 10));
+    });
+  }
+
+  // ---- Permanent Broadcast plates ----
+  const grid = $('bcastPlateGrid');
+  const empty = $('bcastPlateEmpty');
+  const list = (typeof feedBroadcasts !== 'undefined' ? feedBroadcasts : []).slice();
+  if(grid){
+    if(!list.length){
+      grid.innerHTML = '';
+      if(empty) empty.style.display = 'block';
+    } else {
+      if(empty) empty.style.display = 'none';
+      grid.innerHTML = list.map(b => broadcastThumbHtml(b)).join('');
+      grid.querySelectorAll('[data-broadcast-id]').forEach(el=>{
+        el.onclick = ()=> openBroadcastById(el.dataset.broadcastId);
+      });
+    }
+  }
+}
+
 function renderBroadcasts(){
+  if(typeof renderBroadcastTab === 'function'){
+    try { renderBroadcastTab(); } catch(e){ console.warn(e); }
+  }
   pruneExpiredSignal();
   const latest = mySignal[mySignal.length-1];
   let mySignalInner;
@@ -136,6 +194,7 @@ function renderBroadcasts(){
   $('mySignalItem').onclick = ()=>{ mySignal.length ? openMyBroadcast() : openComposer(); };
 }
 renderBroadcasts();
+if(typeof renderBroadcastTab==='function') renderBroadcastTab();
 
 /* ---------------- STORY VIEWER (multi-segment playback) ---------------- */
 let currentSegments = [];
@@ -180,6 +239,9 @@ function clearSegTimer(){
 }
 
 function playSegment(idx, direction=1){
+  const body = $('bviewerBody');
+  if(body){ body.classList.add('square-preview'); body.classList.remove('native-preview'); }
+
   clearSegTimer();
   currentSegmentIndex = idx;
   const seg = currentSegments[idx];
@@ -390,3 +452,81 @@ function renderContacts(){
 renderContacts();
 $('frequencySearchInput').addEventListener('input', renderContacts);
 
+
+
+/* ---- Signal story viewer (ephemeral) — separate from permanent Broadcast space ---- */
+function openMySignalStory(){
+  pruneExpiredSignal();
+  if(!mySignal.length){ toast('No active Signal'); return; }
+  viewingMine = true;
+  currentSegments = sortSignalSegments(mySignal.slice());
+  currentSegmentIndex = 0;
+  $('bviewer').classList.add('active');
+  playSegment(0);
+  mySignalSeen = true;
+  if(typeof renderBroadcastTab==='function') renderBroadcastTab();
+}
+
+async function openContactSignalStory(contactId){
+  viewingMine = false;
+  const entry = (connectionsSignals||[]).find(x => x.contact && x.contact.id === contactId);
+  if(!entry){ toast('No Signal'); return; }
+  // Load full signal list for contact
+  let segments = [entry.latest];
+  if(fbDb && entry.contact.firebaseUid){
+    try{
+      const snap = await fbDb.collection('users').doc(entry.contact.firebaseUid).collection('signal').orderBy('createdAt','asc').get();
+      segments = sortSignalSegments(snap.docs.map(d=>({ id:d.id, ...d.data() })).filter(s => Date.now() < s.expiresAt));
+    }catch(_){}
+  }
+  if(!segments.length){ toast('Signal expired'); return; }
+  currentSegments = segments;
+  currentSegmentIndex = 0;
+  $('bviewerName').textContent = entry.contact.name || 'Signal';
+  $('bviewerAvatar').textContent = entry.contact.initials || '?';
+  $('bviewerAvatar').style.background = entry.contact.color || '#7CFFB2';
+  $('bviewer').classList.add('active');
+  playSegment(0);
+}
+
+// Keep legacy names pointing at Signal story for any old callers
+function openMyBroadcast(){ openMySignalStory(); }
+
+
+/* Search Broadcasts */
+(function wireBcastSearch(){
+  const input = $('bcastSearchInput');
+  const host = $('bcastSearchResults');
+  if(!input || !host) return;
+  let timer = null;
+  input.addEventListener('input', ()=>{
+    clearTimeout(timer);
+    timer = setTimeout(async ()=>{
+      const q = input.value.trim();
+      if(!q){ host.style.display = 'none'; host.innerHTML = ''; return; }
+      host.style.display = 'block';
+      host.innerHTML = `<div style="padding:8px;color:var(--text-dim);font-size:12px;">Searching…</div>`;
+      const results = await searchBroadcasts(q);
+      if(!results.length){
+        host.innerHTML = `<div style="padding:12px;color:var(--text-dim);font-size:13px;">No Broadcasts match “${escapeHtml(q)}”</div>`;
+        return;
+      }
+      host.innerHTML = `<div class="bcast-plate-grid">${results.slice(0,12).map(b => broadcastThumbHtml(b)).join('')}</div>`;
+      host.querySelectorAll('[data-broadcast-id]').forEach(el=>{
+        el.onclick = ()=> openBroadcastById(el.dataset.broadcastId);
+      });
+    }, 280);
+  });
+})();
+
+
+function toggleSignalAspect(){
+  const body = $('bviewerBody');
+  if(!body) return;
+  const native = body.classList.toggle('native-preview');
+  body.classList.toggle('square-preview', !native);
+  toast(native ? 'Full frame' : '1:1 preview');
+}
+if($('bviewerBody')){
+  $('bviewerBody').addEventListener('dblclick', toggleSignalAspect);
+}

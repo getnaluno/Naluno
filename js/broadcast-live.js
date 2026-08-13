@@ -1,0 +1,409 @@
+/* ============================================================
+   MODULE: js/broadcast-live.js
+   Wow layer: multi-viewer WebRTC live on a Broadcast.
+   Host fans out their camera/mic to each viewer (viewer-offer model).
+   Uses same TURN path as 1:1 calls (getIceServers).
+   OWNERSHIP: live host + viewer peer graphs only.
+   ============================================================ */
+
+const BCAST_LIVE_MAX_VIEWERS = 12;
+
+let bLiveHost = false;
+let bLiveHostPcs = {};       // viewerUid -> RTCPeerConnection
+let bLiveHostUnsubs = [];
+let bLiveViewerPc = null;
+let bLiveViewerUnsubs = [];
+let bLiveViewerCountUnsub = null;
+let bLiveReactionUnsub = null;
+
+function bLiveSessionRef(bcastId, viewerUid){
+  return fbDb.collection('broadcasts').doc(bcastId).collection('liveSessions').doc(viewerUid);
+}
+
+function bLiveCleanupHost(){
+  Object.keys(bLiveHostPcs).forEach(uid => {
+    try{ bLiveHostPcs[uid].close(); }catch(_){}
+  });
+  bLiveHostPcs = {};
+  bLiveHostUnsubs.forEach(u=>{ try{ u(); }catch(_){} });
+  bLiveHostUnsubs = [];
+  bLiveHost = false;
+  bLiveUpdateViewerChrome(0);
+}
+
+function bLiveCleanupViewer(){
+  bLiveViewerUnsubs.forEach(u=>{ try{ u(); }catch(_){} });
+  bLiveViewerUnsubs = [];
+  if(bLiveViewerPc){ try{ bLiveViewerPc.close(); }catch(_){} bLiveViewerPc = null; }
+  const v = $('bspaceViewerLiveVideo');
+  if(v){ v.srcObject = null; }
+}
+
+function bLiveUpdateViewerChrome(n){
+  let el = $('bspaceLiveViewers');
+  if(!el){
+    const badge = $('bspaceLiveBadge');
+    if(badge && badge.parentNode){
+      el = document.createElement('div');
+      el.id = 'bspaceLiveViewers';
+      el.style.cssText = 'position:absolute;right:12px;bottom:12px;z-index:3;font-family:var(--font-mono);font-size:10px;background:rgba(13,15,23,.85);color:#fff;padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.15);';
+      badge.parentNode.appendChild(el);
+    }
+  }
+  if(el){
+    el.style.display = (n > 0 || bLiveHost) ? 'block' : 'none';
+    el.textContent = n === 1 ? '1 watching' : (n + ' watching');
+  }
+  const joinBtn = $('bspaceJoinLiveBtn');
+  if(joinBtn && !bLiveHost){
+    // visibility controlled elsewhere
+  }
+}
+
+async function bLiveEnsureIce(){
+  if(typeof getIceServers === 'function') return getIceServers();
+  return { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+}
+
+/* ---------------- HOST: accept viewer offers ---------------- */
+async function bLiveStartHost(stream){
+  if(!fbDb || !currentUser || !activeBroadcastId || !stream) return;
+  bLiveCleanupHost();
+  bLiveHost = true;
+  if(typeof prewarmIceServers === 'function') prewarmIceServers();
+
+  // Clear stale sessions from previous lives
+  try{
+    const old = await fbDb.collection('broadcasts').doc(activeBroadcastId).collection('liveSessions').get();
+    const batch = fbDb.batch();
+    let n = 0;
+    old.docs.forEach(d => { batch.delete(d.ref); n++; });
+    if(n) await batch.commit().catch(()=>{});
+  }catch(_){}
+
+  const col = fbDb.collection('broadcasts').doc(activeBroadcastId).collection('liveSessions');
+  const unsub = col.onSnapshot(async snap => {
+    for(const change of snap.docChanges()){
+      if(change.type === 'removed'){
+        const uid = change.doc.id;
+        if(bLiveHostPcs[uid]){
+          try{ bLiveHostPcs[uid].close(); }catch(_){}
+          delete bLiveHostPcs[uid];
+        }
+        bLiveUpdateViewerChrome(Object.keys(bLiveHostPcs).length);
+        continue;
+      }
+      if(change.type !== 'added' && change.type !== 'modified') continue;
+      const uid = change.doc.id;
+      if(uid === currentUser.uid) continue;
+      const data = change.doc.data() || {};
+      if(!data.offer || data.answer) continue; // wait for offer; skip if already answered
+      if(bLiveHostPcs[uid]) continue;
+      if(Object.keys(bLiveHostPcs).length >= BCAST_LIVE_MAX_VIEWERS){
+        change.doc.ref.set({ rejected: true, reason: 'full' }, { merge: true }).catch(()=>{});
+        continue;
+      }
+      try{
+        await bLiveHostAcceptViewer(uid, data, stream);
+      }catch(e){
+        console.warn('[bcast-live] host accept failed', e);
+      }
+    }
+    bLiveUpdateViewerChrome(Object.keys(bLiveHostPcs).length);
+  }, err => console.warn('[bcast-live] host listen', err));
+  bLiveHostUnsubs.push(unsub);
+
+  // Live reactions feed
+  bLiveWatchReactions(activeBroadcastId);
+  bLiveUpdateViewerChrome(0);
+}
+
+async function bLiveHostAcceptViewer(viewerUid, data, stream){
+  const pc = new RTCPeerConnection(await bLiveEnsureIce());
+  bLiveHostPcs[viewerUid] = pc;
+
+  stream.getTracks().forEach(track => {
+    try{ pc.addTrack(track, stream); }catch(e){ console.warn(e); }
+  });
+
+  const ref = bLiveSessionRef(activeBroadcastId, viewerUid);
+
+  pc.onicecandidate = e => {
+    if(!e.candidate) return;
+    ref.collection('hostIce').add(e.candidate.toJSON()).catch(()=>{});
+  };
+  pc.onconnectionstatechange = () => {
+    if(pc.connectionState === 'failed' || pc.connectionState === 'closed'){
+      try{ pc.close(); }catch(_){}
+      delete bLiveHostPcs[viewerUid];
+      bLiveUpdateViewerChrome(Object.keys(bLiveHostPcs).length);
+    }
+  };
+
+  await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+  await ref.set({
+    answer: { type: answer.type, sdp: answer.sdp },
+    hostUid: currentUser.uid,
+    answeredAt: Date.now(),
+  }, { merge: true });
+
+  // Pull viewer ICE
+  const iceUnsub = ref.collection('viewerIce').onSnapshot(snap => {
+    snap.docChanges().forEach(ch => {
+      if(ch.type !== 'added') return;
+      pc.addIceCandidate(new RTCIceCandidate(ch.doc.data())).catch(()=>{});
+    });
+  });
+  bLiveHostUnsubs.push(iceUnsub);
+}
+
+async function bLiveStopHost(){
+  if(fbDb && activeBroadcastId){
+    try{
+      const snap = await fbDb.collection('broadcasts').doc(activeBroadcastId).collection('liveSessions').get();
+      const batch = fbDb.batch();
+      snap.docs.forEach(d => batch.delete(d.ref));
+      if(snap.size) await batch.commit().catch(()=>{});
+    }catch(_){}
+  }
+  bLiveCleanupHost();
+  if(bLiveReactionUnsub){ try{ bLiveReactionUnsub(); }catch(_){} bLiveReactionUnsub = null; }
+}
+
+/* ---------------- VIEWER: offer and receive tracks ---------------- */
+async function bLiveJoinAsViewer(){
+  if(!fbDb || !currentUser || !activeBroadcastId){ toast('Open a live Broadcast first'); return; }
+  if(bLiveHost){ toast('You’re already the host'); return; }
+  if(bLiveViewerPc){ toast('Already joined'); return; }
+
+  if(typeof prewarmIceServers === 'function') prewarmIceServers();
+  toast('Joining live…');
+
+  const pc = new RTCPeerConnection(await bLiveEnsureIce());
+  bLiveViewerPc = pc;
+  const remote = new MediaStream();
+  pc.ontrack = e => {
+    remote.addTrack(e.track);
+    const host = $('bspaceMedia');
+    if(host){
+      let v = $('bspaceViewerLiveVideo');
+      if(!v){
+        host.innerHTML = `<video id="bspaceViewerLiveVideo" autoplay playsinline style="width:100%;height:100%;object-fit:cover;background:#000;"></video>`;
+        v = $('bspaceViewerLiveVideo');
+      }
+      if(v){ v.srcObject = remote; v.play().catch(()=>{}); }
+    }
+    const badge = $('bspaceLiveBadge');
+    if(badge){ badge.style.display = 'block'; badge.textContent = 'LIVE'; }
+  };
+
+  // Prefer recvonly
+  try{
+    pc.addTransceiver('video', { direction: 'recvonly' });
+    pc.addTransceiver('audio', { direction: 'recvonly' });
+  }catch(_){}
+
+  const ref = bLiveSessionRef(activeBroadcastId, currentUser.uid);
+  pc.onicecandidate = e => {
+    if(!e.candidate) return;
+    ref.collection('viewerIce').add(e.candidate.toJSON()).catch(()=>{});
+  };
+
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  await ref.set({
+    offer: { type: offer.type, sdp: offer.sdp },
+    from: currentUser.uid,
+    name: (currentProfile && currentProfile.name) || 'Viewer',
+    ts: Date.now(),
+  });
+
+  // Wait for answer
+  const unsub = ref.onSnapshot(async snap => {
+    if(!snap.exists) return;
+    const d = snap.data() || {};
+    if(d.rejected){
+      toast('Live room is full — try again soon');
+      bLiveLeaveViewer();
+      return;
+    }
+    if(d.answer && pc.signalingState !== 'stable'){
+      try{
+        await pc.setRemoteDescription(new RTCSessionDescription(d.answer));
+      }catch(e){ console.warn(e); }
+    }
+  });
+  bLiveViewerUnsubs.push(unsub);
+
+  const hostIceUnsub = ref.collection('hostIce').onSnapshot(snap => {
+    snap.docChanges().forEach(ch => {
+      if(ch.type !== 'added') return;
+      pc.addIceCandidate(new RTCIceCandidate(ch.doc.data())).catch(()=>{});
+    });
+  });
+  bLiveViewerUnsubs.push(hostIceUnsub);
+
+  bLiveWatchReactions(activeBroadcastId);
+  bLiveWatchViewerCount(activeBroadcastId);
+
+  const leaveBtn = $('bspaceJoinLiveBtn');
+  if(leaveBtn){
+    leaveBtn.textContent = 'Leave live';
+    leaveBtn.onclick = ()=> bLiveLeaveViewer();
+  }
+  toast('You’re in the live room');
+}
+
+async function bLiveLeaveViewer(){
+  if(fbDb && activeBroadcastId && currentUser){
+    try{
+      await bLiveSessionRef(activeBroadcastId, currentUser.uid).delete();
+    }catch(_){}
+  }
+  bLiveCleanupViewer();
+  const leaveBtn = $('bspaceJoinLiveBtn');
+  if(leaveBtn){
+    leaveBtn.textContent = 'Join live';
+    leaveBtn.onclick = ()=> bLiveJoinAsViewer();
+  }
+  // Restore static media if host ended
+  if(activeBroadcastMeta && activeBroadcastMeta.segment && typeof renderBspaceMedia === 'function'){
+    // keep live badge if still live
+  }
+}
+
+function bLiveWatchViewerCount(bcastId){
+  if(bLiveViewerCountUnsub){ try{ bLiveViewerCountUnsub(); }catch(_){} }
+  bLiveViewerCountUnsub = fbDb.collection('broadcasts').doc(bcastId).collection('liveSessions')
+    .onSnapshot(snap => {
+      bLiveUpdateViewerChrome(snap.size);
+    }, ()=>{});
+}
+
+/* ---------------- Reactions (wow) ---------------- */
+function bLiveWatchReactions(bcastId){
+  if(bLiveReactionUnsub){ try{ bLiveReactionUnsub(); }catch(_){} }
+  const layer = $('bspaceReactionLayer') || (function(){
+    const hero = $('bspaceHero');
+    if(!hero) return null;
+    const d = document.createElement('div');
+    d.id = 'bspaceReactionLayer';
+    d.style.cssText = 'pointer-events:none;position:absolute;inset:0;z-index:4;overflow:hidden;';
+    hero.appendChild(d);
+    return d;
+  })();
+
+  bLiveReactionUnsub = fbDb.collection('broadcasts').doc(bcastId).collection('liveReactions')
+    .orderBy('ts', 'desc').limit(15)
+    .onSnapshot(snap => {
+      snap.docChanges().forEach(ch => {
+        if(ch.type !== 'added') return;
+        const emoji = (ch.doc.data() || {}).emoji || '✨';
+        bLiveSpawnReaction(emoji);
+      });
+    }, ()=>{});
+}
+
+function bLiveSpawnReaction(emoji){
+  const layer = $('bspaceReactionLayer');
+  if(!layer) return;
+  const span = document.createElement('span');
+  span.textContent = emoji;
+  span.style.cssText = `position:absolute;bottom:10%;left:${20+Math.random()*60}%;font-size:${22+Math.random()*16}px;animation:bLiveFloat 2.4s ease-out forwards;opacity:0.95;`;
+  layer.appendChild(span);
+  setTimeout(()=> span.remove(), 2500);
+}
+
+async function bLiveSendReaction(emoji){
+  if(!fbDb || !currentUser || !activeBroadcastId) return;
+  try{
+    await fbDb.collection('broadcasts').doc(activeBroadcastId).collection('liveReactions').add({
+      emoji: emoji || '✨',
+      from: currentUser.uid,
+      ts: Date.now(),
+    });
+  }catch(_){}
+}
+
+function bLiveEnsureReactionBar(){
+  if($('bspaceReactionBar')) return;
+  const body = document.querySelector('.bspace-body');
+  if(!body) return;
+  const bar = document.createElement('div');
+  bar.id = 'bspaceReactionBar';
+  bar.style.cssText = 'display:none;gap:8px;flex-wrap:wrap;margin:0 0 14px;';
+  ;['🔥','❤️','👏','✨','🤯','🙌'].forEach(em => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = em;
+    b.className = 'bspace-mini';
+    b.style.fontSize = '16px';
+    b.onclick = ()=> bLiveSendReaction(em);
+    bar.appendChild(b);
+  });
+  const join = document.createElement('button');
+  join.type = 'button';
+  join.id = 'bspaceJoinLiveBtn';
+  join.className = 'bspace-mini primary';
+  join.textContent = 'Join live';
+  join.onclick = ()=> bLiveJoinAsViewer();
+  bar.appendChild(join);
+  body.insertBefore(bar, body.firstChild.nextSibling);
+}
+
+function bLiveShowJoinUi(show){
+  bLiveEnsureReactionBar();
+  const bar = $('bspaceReactionBar');
+  if(bar) bar.style.display = show ? 'flex' : 'none';
+}
+
+/* Hooks used by broadcast-space.js */
+async function bLiveOnHostStarted(stream){
+  await bLiveStartHost(stream);
+  bLiveShowJoinUi(false); // host doesn't join as viewer
+  bLiveEnsureReactionBar();
+  const bar = $('bspaceReactionBar');
+  if(bar){
+    bar.style.display = 'flex';
+    const j = $('bspaceJoinLiveBtn');
+    if(j) j.style.display = 'none';
+  }
+}
+
+async function bLiveOnHostStopped(){
+  await bLiveStopHost();
+  bLiveShowJoinUi(false);
+}
+
+function bLiveOnSpaceOpened(isLive, isCreator){
+  bLiveEnsureReactionBar();
+  if(isLive && !isCreator){
+    bLiveShowJoinUi(true);
+    bLiveWatchViewerCount(activeBroadcastId);
+  } else if(isLive && isCreator){
+    // host already live from another tab — rare
+    bLiveShowJoinUi(false);
+  } else {
+    bLiveShowJoinUi(false);
+  }
+}
+
+function bLiveOnSpaceClosed(){
+  if(bLiveHost) bLiveStopHost();
+  bLiveLeaveViewer();
+  if(bLiveViewerCountUnsub){ try{ bLiveViewerCountUnsub(); }catch(_){} bLiveViewerCountUnsub = null; }
+  if(bLiveReactionUnsub){ try{ bLiveReactionUnsub(); }catch(_){} bLiveReactionUnsub = null; }
+  const bar = $('bspaceReactionBar');
+  if(bar) bar.style.display = 'none';
+}
+
+// CSS animation once
+(function injectBLiveCss(){
+  if(document.getElementById('bLiveStyle')) return;
+  const s = document.createElement('style');
+  s.id = 'bLiveStyle';
+  s.textContent = `@keyframes bLiveFloat{0%{transform:translateY(0) scale(1);opacity:0}15%{opacity:1}100%{transform:translateY(-120px) scale(1.3);opacity:0}}`;
+  document.head.appendChild(s);
+})();

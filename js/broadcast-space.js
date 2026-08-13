@@ -31,8 +31,8 @@ function bspaceWhoLabel(uid){
 }
 
 function ensureBroadcastDocId(meta){
-  // Stable id: mine uses signal segment id; others use contact+createdAt
   if(meta.broadcastId) return meta.broadcastId;
+  // Legacy fallback for old signal-linked spaces
   if(meta.isMine && meta.segment && meta.segment.id) return 'sig_' + meta.segment.id;
   if(meta.contactId != null && meta.segment && meta.segment.createdAt){
     return 'c' + meta.contactId + '_' + meta.segment.createdAt;
@@ -45,6 +45,7 @@ async function ensureBroadcastFirestore(meta){
   const id = ensureBroadcastDocId(meta);
   const ref = fbDb.collection('broadcasts').doc(id);
   const snap = await ref.get();
+  if(meta.broadcastId && snap.exists) return id;
   if(!snap.exists){
     const seg = meta.segment || {};
     await ref.set({
@@ -255,6 +256,7 @@ async function openBroadcastSpace(meta){
   const isCreator = !!(meta.isMine || (currentUser && meta.creatorUid === currentUser.uid));
   $('bspaceResourceComposer').style.display = isCreator ? 'flex' : 'none';
   $('bspaceGoLive').style.display = isCreator ? 'inline-block' : 'none';
+  if($('bspaceDeleteBtn')) $('bspaceDeleteBtn').style.display = isCreator ? 'inline-block' : 'none';
 
   $('bspace').classList.add('active');
   $('bspaceScroll').scrollTop = 0;
@@ -306,6 +308,7 @@ async function openBroadcastSpace(meta){
 }
 
 function closeBroadcastSpace(){
+  if(typeof bLiveOnSpaceClosed === 'function') bLiveOnSpaceClosed();
   bspaceStopLive();
   bspaceClearListeners();
   activeBroadcastId = null;
@@ -487,6 +490,9 @@ let bspaceLiveStream = null;
 let bspaceLiveUnsub = null;
 
 async function bspaceStopLive(){
+  if(typeof bLiveOnHostStopped === 'function'){
+    try{ await bLiveOnHostStopped(); }catch(_){}
+  }
   if(bspaceLiveStream){
     bspaceLiveStream.getTracks().forEach(t=>{ try{ t.stop(); }catch(_){} });
     bspaceLiveStream = null;
@@ -495,7 +501,7 @@ async function bspaceStopLive(){
   const badge = $('bspaceLiveBadge');
   if(badge) badge.style.display = 'none';
   const btn = $('bspaceGoLive');
-  if(btn){ btn.textContent = 'Go live'; btn.style.background = ''; }
+  if(btn){ btn.textContent = 'Go live'; btn.style.background = ''; btn.style.color = ''; }
   if(fbDb && activeBroadcastId && currentUser){
     fbDb.collection('broadcasts').doc(activeBroadcastId).set({
       live: false,
@@ -534,9 +540,15 @@ async function bspaceStartLive(){
     liveBy: currentUser.uid,
     updatedAt: Date.now(),
   }, { merge:true });
+  if(typeof bLiveOnHostStarted === 'function'){
+    try{ await bLiveOnHostStarted(bspaceLiveStream); }catch(e){ console.warn('[live]', e); }
+  }
   await bspacePost('conversation', { type:'system', text: ((currentProfile && currentProfile.name) || 'Creator') + ' went live — this is a new chapter of the same Broadcast.' });
   await bspacePost('journey', { type:'live', text: 'Live session started' });
-  toast('You’re live on this Broadcast');
+  if(typeof notifyFrequenciesLive === 'function'){
+    await notifyFrequenciesLive(activeBroadcastId, (activeBroadcastMeta && activeBroadcastMeta.title) || 'Broadcast');
+  }
+  toast('You’re live — your frequencies were notified');
 }
 
 $('bspaceGoLive').onclick = ()=> bspaceStartLive();
@@ -582,8 +594,8 @@ function bspaceWatchLiveState(){
     if(!doc.exists) return;
     const d = doc.data() || {};
     const badge = $('bspaceLiveBadge');
+    const isCreator = !!(activeBroadcastMeta && (activeBroadcastMeta.isMine || (currentUser && activeBroadcastMeta.creatorUid === currentUser.uid)));
     if(badge){
-      const show = !!d.live && !(bspaceLiveStream); // local live already shows
       if(d.live && !bspaceLiveStream){
         badge.style.display = 'block';
         badge.textContent = 'LIVE NOW';
@@ -591,55 +603,54 @@ function bspaceWatchLiveState(){
         badge.style.display = 'none';
       }
     }
+    if(typeof bLiveOnSpaceOpened === 'function'){
+      bLiveOnSpaceOpened(!!d.live, isCreator);
+    }
+    // Auto-prompt join once when going live
+    if(d.live && !isCreator && !bspaceLiveStream && typeof bLiveJoinAsViewer === 'function'){
+      const bar = $('bspaceReactionBar');
+      if(bar) bar.style.display = 'flex';
+    }
   }, ()=>{});
   bspaceUnsubs.push(unsub);
 }
 
-/* ---- Hook existing openers into Broadcast Space ---- */
-(function patchBroadcastOpeners(){
-  const prevOpenBroadcast = typeof openBroadcast === 'function' ? openBroadcast : null;
-  const prevOpenMy = typeof openMyBroadcast === 'function' ? openMyBroadcast : null;
 
-  window.openBroadcast = async function(contactId){
-    const entry = (connectionsSignals || []).find(x => x.contact && x.contact.id === contactId);
-    if(!entry){
-      if(prevOpenBroadcast) return prevOpenBroadcast(contactId);
-      toast('No Broadcast to open');
-      return;
-    }
-    const c = entry.contact;
-    const seg = entry.latest;
+/* ---- Open permanent Broadcast by Firestore id ---- */
+async function openBroadcastSpaceById(id){
+  if(!id){ toast('Missing Broadcast'); return; }
+  if(!fbDb){ toast('Offline'); return; }
+  try{
+    const snap = await fbDb.collection('broadcasts').doc(id).get();
+    if(!snap.exists || snap.data().deleted){ toast('Broadcast not found'); return; }
+    const d = snap.data();
+    const segment = {
+      type: d.mediaType || 'photo',
+      dataUrl: d.mediaType === 'photo' ? d.mediaUrl : null,
+      videoUrl: d.mediaType === 'video' ? d.mediaUrl : null,
+      thumbDataUrl: d.thumbUrl || null,
+      text: d.mediaType === 'text' ? (d.description || d.title) : null,
+      bg: 'linear-gradient(160deg,#1a1f2e,#0d1018)',
+      filterCss: d.filterCss || '',
+      caption: d.description || '',
+    };
     await openBroadcastSpace({
-      isMine: false,
-      contactId: c.id,
-      segment: seg,
-      creatorUid: c.firebaseUid,
-      creatorName: c.name,
-      title: seg.type === 'text' ? String(seg.text || '').slice(0, 60) : ((c.name || 'Broadcast') + ' · signal'),
-      description: seg.caption || 'Join the community around this idea.',
-      tags: [seg.type || 'signal', 'frequency'],
+      isMine: !!(currentUser && d.creatorUid === currentUser.uid),
+      broadcastId: id,
+      segment,
+      creatorUid: d.creatorUid,
+      creatorName: d.creatorName,
+      title: d.title,
+      description: d.description,
+      tags: d.tags || [],
     });
-  };
+  }catch(e){
+    console.warn(e);
+    toast('Couldn’t open Broadcast');
+  }
+}
 
-  window.openMyBroadcast = async function(){
-    pruneExpiredSignal();
-    if(!mySignal.length){
-      if(typeof openComposer === 'function') openComposer();
-      else toast('Post a Broadcast first');
-      return;
-    }
-    const seg = mySignal[mySignal.length - 1];
-    await openBroadcastSpace({
-      isMine: true,
-      segment: seg,
-      creatorUid: currentUser && currentUser.uid,
-      creatorName: (currentProfile && currentProfile.name) || 'You',
-      title: seg.type === 'text' ? String(seg.text || '').slice(0, 60) : (seg.caption || 'Your Broadcast'),
-      description: seg.caption || 'Your space — people gather here around this idea.',
-      tags: [seg.type || 'signal', 'yours'],
-    });
-  };
-})();
+
 
 
 async function bspaceMarkBest(qid, answerText){
@@ -656,4 +667,36 @@ async function bspaceMarkBest(qid, answerText){
     toast('Best answer saved to this Broadcast');
     renderBspaceImpact();
   }catch(e){ toast(e.message || 'Couldn’t mark'); }
+}
+
+
+if($('bspaceShareBtn')){
+  $('bspaceShareBtn').onclick = async ()=>{
+    if(!activeBroadcastId) return;
+    const link = typeof broadcastShareUrl === 'function' ? broadcastShareUrl(activeBroadcastId) : (location.origin + '/?broadcast=' + activeBroadcastId);
+    try{
+      if(navigator.share){
+        await navigator.share({ title: (activeBroadcastMeta && activeBroadcastMeta.title) || 'Naluno Broadcast', url: link });
+      } else if(navigator.clipboard && navigator.clipboard.writeText){
+        await navigator.clipboard.writeText(link);
+        toast('Link copied');
+      } else {
+        toast(link);
+      }
+    }catch(e){
+      if(e && e.name !== 'AbortError') toast(link);
+    }
+  };
+}
+if($('bspaceDeleteBtn')){
+  $('bspaceDeleteBtn').onclick = async ()=>{
+    if(!activeBroadcastId || !(activeBroadcastMeta && activeBroadcastMeta.isMine)) return;
+    if(!confirm('Delete this Broadcast? The community space will be closed.')) return;
+    try{
+      await deletePermanentBroadcast(activeBroadcastId);
+      closeBroadcastSpace();
+      if(typeof loadFeedBroadcasts === 'function') await loadFeedBroadcasts();
+      toast('Broadcast deleted');
+    }catch(e){ toast(e.message || 'Couldn’t delete'); }
+  };
 }

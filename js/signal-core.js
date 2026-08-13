@@ -11,7 +11,7 @@
    Real accounts store this in Firestore now — it used to be window.storage, which
    doesn't exist at all once this is hosted for real, so broadcasts silently never
    survived a sign-in. That was the actual cause of "my broadcast disappeared." */
-const SIGNAL_TTL_MS = 25 * 60 * 60 * 1000;
+const SIGNAL_TTL_MS = 24 * 60 * 60 * 1000; // default 24h; composer can choose 24h / 3d / 7d via signalTtlMs()
 let mySignal = []; // { id, type:'photo'|'video'|'text', dataUrl, videoUrl, filterCss, crop, caption, text, bg, createdAt, expiresAt, transitionIn, duration }
 let mySignalSeen = true;
 let connectionsSignals = []; // [{ contactId, contact, latest }] — real connections' most recent segment
@@ -113,6 +113,7 @@ async function loadMySignal(){
     pruneExpiredSignal();
   }catch(e){ /* nothing posted yet, or offline */ }
   renderBroadcasts();
+  if(typeof loadMyBroadcasts==='function') loadMyBroadcasts().then(()=>{ if(typeof loadFeedBroadcasts==='function') loadFeedBroadcasts(); });
 }
 /* Loads the latest segment from every real connection, so Frequencies and Broadcast
    are actually the same set of real people instead of two disconnected screens. */

@@ -58,3 +58,13 @@ $('enableCallNotifsBtn').onclick = async ()=>{
 };
 $('autoTintToggle').onclick = function(){ this.classList.toggle('on'); };
 
+
+
+/* Live Broadcast alerts from frequencies */
+function handleBroadcastLiveNotification(n){
+  if(!n || n.type !== 'broadcast_live') return;
+  toast((n.fromName || 'Someone') + ' is live');
+  if(n.broadcastId && typeof openBroadcastById === 'function'){
+    // soft prompt via toast only; user can search / open
+  }
+}
