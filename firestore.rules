@@ -165,6 +165,22 @@ service cloud.firestore {
         allow create: if isSignedIn() && request.resource.data.from == request.auth.uid;
         allow update, delete: if false;
       }
+      match /liveSessions/{viewerUid} {
+        allow read: if isSignedIn();
+        allow create, update: if isSignedIn();
+        allow delete: if isSignedIn();
+        match /viewerIce/{iceId} {
+          allow read, create: if isSignedIn();
+        }
+        match /hostIce/{iceId} {
+          allow read, create: if isSignedIn();
+        }
+      }
+      match /liveReactions/{id} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn();
+        allow delete: if false;
+      }
     }
   }
 }

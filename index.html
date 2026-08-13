@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.08.13.complete">
+<meta name="app-version" content="2026.08.13.live-wow">
 <meta name="description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="A statement from the future — not another WhatsApp.">
@@ -131,17 +131,26 @@
 
   <!-- ===================== BROADCAST ===================== -->
   <section class="tabscreen" id="tab-broadcast">
-    <div class="tab-header">
+    <div class="topbar">
       <div class="tab-title">Broadcast</div>
-      <div class="ghost-btn" id="newBroadcastBtn" title="New broadcast" aria-label="New broadcast">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <div class="ghost-btn" id="newBroadcastBtn" title="New permanent Broadcast" aria-label="New broadcast">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </div>
     </div>
-    <div class="tab-scroll">
-      <div class="section-label">Your Broadcast</div>
+    <div class="tab-scroll" id="broadcastTabScroll">
+      <div class="bcast-search-row">
+        <input type="search" id="bcastSearchInput" placeholder="Search Broadcasts — topic, person, idea…" autocomplete="off" />
+      </div>
+      <div id="bcastSearchResults" style="display:none; margin-bottom:14px;"></div>
+
+      <div class="section-label">Signal <span style="font-weight:400;color:var(--text-dim);text-transform:none;letter-spacing:0;">· short clips · fade on their own</span></div>
       <div class="bcast-strip" id="myBcastStrip"></div>
-      <div class="section-label">Join a Broadcast</div>
-      <div id="bcastList"></div>
+
+      <div class="section-label" style="margin-top:18px;">Broadcasts <span style="font-weight:400;color:var(--text-dim);text-transform:none;letter-spacing:0;">· permanent · communities</span></div>
+      <div id="bcastPlateGrid" class="bcast-plate-grid"></div>
+      <div id="bcastPlateEmpty" style="display:none;padding:24px 12px;text-align:center;color:var(--text-dim);font-size:13px;line-height:1.5;">
+        Permanent Broadcasts live here.<br/>Tap <strong style="color:var(--mint);">+</strong> to publish one — or search above.
+      </div>
     </div>
   </section>
 
@@ -427,6 +436,10 @@
   <div class="call-overlay" id="composer">
     <div class="topbar" style="padding-top:20px;">
       <div class="back-btn" id="composerClose" role="button" aria-label="Close composer"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:700;font-family:var(--font-futuristic);font-size:14px;" id="composerModeLabel">Signal</div>
+        <div style="font-size:11px;color:var(--text-dim);font-family:var(--font-mono);" id="composerModeHint">Short clip · disappears on a timer</div>
+      </div>
       <span class="eyebrow">New broadcast</span>
       <span style="width:36px;"></span>
     </div>
@@ -476,7 +489,26 @@
         </div>
       </div>
 
-      <button class="join-btn" id="postBroadcastBtn" style="margin-top:18px;" disabled>Post to your signal</button>
+      <div id="signalTtlRow" style="margin-top:14px;">
+        <div class="section-label" style="padding-left:2px;">Lives for</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button type="button" class="ttl-chip on" data-ttl="24">24 hours</button>
+          <button type="button" class="ttl-chip" data-ttl="72">3 days</button>
+          <button type="button" class="ttl-chip" data-ttl="168">7 days</button>
+        </div>
+      </div>
+      <div id="broadcastFields" style="display:none;margin-top:14px;">
+        <input id="bcastTitleInput" maxlength="120" placeholder="Broadcast title" style="width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:14px;font-family:inherit;" />
+        <input id="bcastTagsInput" maxlength="120" placeholder="Topics (comma separated)" style="width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:13px;font-family:inherit;" />
+        <div style="font-size:11px;color:var(--text-dim);font-family:var(--font-mono);margin-bottom:4px;">Permanent — searchable, shareable, community-backed</div>
+      </div>
+      <div id="signalLinkBroadcastRow" style="display:none;margin-top:10px;">
+        <div class="section-label" style="padding-left:2px;">Optional · attach to a Broadcast</div>
+        <select id="signalLinkBroadcast" style="width:100%;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:13px;">
+          <option value="">None — standalone Signal</option>
+        </select>
+      </div>
+      <button class="join-btn" id="postBroadcastBtn" style="margin-top:18px;" disabled>Post Signal</button>
     </div>
   </div>
 
@@ -695,6 +727,8 @@
             <div style="font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" id="bspaceCreatorName">—</div>
             <div style="font-size:11px; font-family:var(--font-mono); color:rgba(255,255,255,.65);" id="bspaceCreatorMeta">Broadcast</div>
           </div>
+          <button type="button" class="bspace-mini" id="bspaceShareBtn" title="Copy link">Share</button>
+          <button type="button" class="bspace-mini" id="bspaceDeleteBtn" style="display:none;color:#ff8a8a;">Delete</button>
           <button type="button" class="bspace-mini" id="bspaceGoLive" style="display:none;">Go live</button>
         </div>
         <div id="bspaceLiveBadge" style="display:none;position:absolute;left:12px;bottom:12px;z-index:3;font-family:var(--font-mono);font-size:10px;background:var(--red);color:#fff;padding:4px 10px;border-radius:999px;letter-spacing:.04em;">LIVE</div>
@@ -805,6 +839,7 @@
 <script src="js/atmosphere.js"></script>
 <script src="js/band-list.js"></script>
 <script src="js/signal-core.js"></script>
+<script src="js/broadcast-core.js"></script>
 <script src="js/compass.js"></script>
 <script src="js/signal-ui.js"></script>
 <script src="js/broadcast-space.js"></script>
@@ -814,6 +849,7 @@
 <script src="js/notifications.js"></script>
 <script src="js/camera.js"></script>
 <script src="js/calls.js"></script>
+<script src="js/broadcast-live.js"></script>
 <script src="js/band-room.js"></script>
 <script src="js/pwa.js"></script>
 <script src="js/find.js"></script>
