@@ -240,35 +240,56 @@ let calleeCandidatesUnsub = null;
 let incomingCallUnsub = null;
 
 let remoteCombinedStream = null;
+let remotePlayTimer = null;
+function ensureRemoteVideoPlaying(){
+  const videoEl = document.getElementById('remoteVideo');
+  if(!videoEl || !videoEl.srcObject) return;
+  videoEl.muted = false;
+  videoEl.playsInline = true;
+  const p = videoEl.play();
+  if(p && p.catch) p.catch(function(err){
+    if(err && err.name === 'AbortError') return;
+    // iOS / Chrome autoplay: try muted then unmute
+    videoEl.muted = true;
+    videoEl.play().then(function(){
+      setTimeout(function(){ videoEl.muted = false; }, 300);
+    }).catch(function(){});
+  });
+}
 async function createPeerConnection(){
   const pc = new RTCPeerConnection(await getIceServers());
   remoteCombinedStream = new MediaStream();
   pc.ontrack = e=>{
     console.log('[call] ontrack fired — kind:', e.track.kind, 'readyState:', e.track.readyState, 'enabled:', e.track.enabled, 'muted:', e.track.muted, 'id:', e.track.id);
-    // Built up manually rather than trusting e.streams[0] — audio now arrives grouped
-    // under the real camera stream's id while video arrives grouped under the send
-    // canvas's stream id, two different source streams. Replacing srcObject wholesale
-    // for whichever arrived most recently would silently drop whichever track came
-    // first. Accumulating both onto one persistent stream avoids that entirely.
-    // Re-assigning srcObject after every addTrack is the most compatible pattern across
-    // browsers that are picky about dynamically growing a MediaStream already in use.
+    try{ e.track.enabled = true; }catch(_){}
     if(!remoteCombinedStream.getTracks().includes(e.track)){
       remoteCombinedStream.addTrack(e.track);
     }
     const videoEl = $('remoteVideo');
-    videoEl.srcObject = remoteCombinedStream;
-    // Explicitly unmuted — autoplay policies can leave a stream silent if the element
-    // was ever muted, and we never want remote audio suppressed by accident.
+    if(!videoEl) return;
+    // Only assign srcObject when needed — reassigning every track aborts an in-flight play()
+    if(videoEl.srcObject !== remoteCombinedStream){
+      videoEl.srcObject = remoteCombinedStream;
+    }
     videoEl.muted = false;
-    videoEl.play().catch(err=> console.log('[call] remoteVideo.play() failed:', err));
+    videoEl.playsInline = true;
+    if(remotePlayTimer) clearTimeout(remotePlayTimer);
+    remotePlayTimer = setTimeout(function(){ ensureRemoteVideoPlaying(); }, 50);
+    e.track.onunmute = function(){ ensureRemoteVideoPlaying(); };
     if(e.track.kind === 'video'){
       videoEl.style.display = 'block';
-      $('remotePlaceholder').style.display = 'none';
+      const ph = $('remotePlaceholder');
+      if(ph) ph.style.display = 'none';
       e.track.onended = ()=>{
         console.log('[call] remote video track ended');
-        videoEl.style.display = 'none';
-        $('remotePlaceholder').style.display = 'flex';
+        // Only hide if no live video tracks remain
+        const still = remoteCombinedStream.getVideoTracks().some(t => t.readyState === 'live');
+        if(!still){
+          videoEl.style.display = 'none';
+          if(ph) ph.style.display = 'flex';
+        }
       };
+      e.track.onunmute = function(){ ensureRemoteVideoPlaying(); };
     }
   };
   pc.onicegatheringstatechange = ()=> console.log('[call] ICE gathering state:', pc.iceGatheringState);
@@ -583,31 +604,43 @@ let notifyRepeatInterval = null;
    place ringing itself ends. Deliberately fire-and-forget: the in-app ring already
    works fine on its own, so this must never block or delay the actual call. */
 async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
-  if(!currentUser) return;
+  if(!currentUser || !calleeUid) return;
   let firstAttempt = true;
   const sendOnce = async ()=>{
     try{
-      const idToken = await currentUser.getIdToken();
+      // Prefer a fresh token; force refresh if first attempt failed earlier
+      const idToken = await currentUser.getIdToken(firstAttempt ? false : true);
+      const payload = {
+        calleeUid,
+        callerName: callerName || (currentProfile && currentProfile.name) || 'Someone',
+        callId: callId || activeCallId || null,
+        type: 'incoming_call',
+        title: (callerName || (currentProfile && currentProfile.name) || 'Someone') + ' is calling',
+        body: 'Tap to answer on Naluno',
+        // Help worker pick Android vs web token
+        preferPlatform: 'android',
+      };
       const res = await fetch(CALL_NOTIFY_WORKER_URL, {
         method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          calleeUid,
-          callerName,
-          callId: callId || activeCallId || null,
-          type: 'incoming_call',
-          title: callerName ? (callerName + ' is calling') : 'Incoming call — Naluno',
-          body: 'Tap to answer',
-        }),
+        headers: {
+          'Authorization': 'Bearer ' + idToken,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
       });
       const data = await res.json().catch(()=>({}));
+      console.log('[call] notify response', res.status, data);
       if(!res.ok){
         console.error('Call notification failed:', res.status, data);
-        // Soft message — the real call still proceeds via Firestore; push is only a wake helper.
         if(firstAttempt) toast('Push wake failed — in-app ring still works if they have Naluno open');
       } else if(data.sent === false){
-        console.log('Call notification not sent:', data.reason);
-        // Quiet: no toast. In-app ring is the primary path when both are online.
+        console.log('Call notification not sent:', data.reason || data);
+        // If no token on callee, surface once
+        if(firstAttempt && (data.reason === 'no_token' || data.reason === 'missing_token')){
+          toast('Their device has no push token yet — they need to open Naluno once');
+        }
+      } else {
+        console.log('[call] push wake sent');
       }
     }catch(e){
       console.error('Call notification request failed:', e);
@@ -617,15 +650,12 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
   };
   sendOnce();
   if(notifyRepeatInterval) clearInterval(notifyRepeatInterval);
-  // Two spaced follow-ups give the other device a better chance when the first FCM
-  // delivery is delayed by Doze / Samsung, without the rapid-fire pattern that
-  // previously got the whole site's notification permission revoked by Chrome.
   let repeats = 0;
   notifyRepeatInterval = setInterval(()=>{
     repeats++;
-    if(repeats >= 2){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; return; }
+    if(repeats >= 3){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; return; }
     sendOnce();
-  }, 12000);
+  }, 8000);
 }
 
 async function startRealCall(c){

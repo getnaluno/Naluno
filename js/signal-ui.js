@@ -101,100 +101,92 @@ function rankBroadcastEntries(entries){
 
 
 function renderBroadcastTab(){
-  pruneExpiredSignal();
+  try{ if(typeof pruneExpiredSignal === 'function') pruneExpiredSignal(); }catch(_){}
+  const stripEl = document.getElementById('myBcastStrip');
+  const grid = document.getElementById('bcastPlateGrid');
+  const empty = document.getElementById('bcastPlateEmpty');
+
   // ---- Signal rings ----
-  const latest = mySignal[mySignal.length-1];
-  let mySignalInner;
-  if(latest){
-    let thumb;
-    if(latest.type==='text'){
-      thumb = `<div class="avatar" style="width:100%;height:100%;background:${latest.bg};font-size:9px;padding:4px;text-align:center;line-height:1.15;">${escapeHtml(latest.text).slice(0,26)}</div>`;
-    } else if(latest.type==='video'){
-      thumb = latest.thumbDataUrl
-        ? `<img src="${latest.thumbDataUrl}" class="mysignal-thumb" style="filter:${latest.filterCss||''}" />`
-        : `<video src="${latest.videoUrl || latest.dataUrl}" class="mysignal-thumb" style="filter:${latest.filterCss||''}" muted></video>`;
-    } else {
-      thumb = `<img src="${latest.dataUrl}" class="mysignal-thumb" style="filter:${latest.filterCss||''}" />`;
-    }
-    mySignalInner = `<div class="ring ${mySignalSeen?'seen':''}"><div class="avatar" style="width:100%;height:100%;overflow:hidden;background:#1F2333;">${thumb}</div></div><span>Your signal${mySignal.length>1?' · '+mySignal.length:''}</span>`;
-  } else {
-    mySignalInner = `<div class="ring seen"><div class="avatar" style="width:100%;height:100%;background:#1F2333;color:var(--text-dim);font-size:20px;">+</div></div><span>Post signal</span>`;
-  }
-  const stripEl = $('myBcastStrip');
   if(stripEl){
-    stripEl.innerHTML = `<div class="bcast-item" id="mySignalItem">${mySignalInner}</div>` +
-      (connectionsSignals||[]).map(({ contact:c })=>{
-        return `<div class="bcast-item" data-signal="${c.id}"><div class="ring"><div class="avatar" style="width:100%;height:100%;background:${c.color};">${c.initials}</div></div><span>${escapeHtml((c.name||'').split(' ')[0])}</span></div>`;
-      }).join('');
-    const mine = $('mySignalItem');
-    if(mine) mine.onclick = ()=>{
-      if(mySignal.length) openMySignalStory();
-      else if(typeof openComposer === 'function') openComposer('signal');
-    };
-    stripEl.querySelectorAll('[data-signal]').forEach(el=>{
-      el.onclick = ()=> openContactSignalStory(parseInt(el.dataset.signal, 10));
+    const latest = (typeof mySignal !== 'undefined' && mySignal.length) ? mySignal[mySignal.length-1] : null;
+    let myInner;
+    if(latest){
+      let thumb = '';
+      try{
+        if(latest.type==='text'){
+          thumb = '<div class="avatar" style="width:100%;height:100%;background:'+(latest.bg||'#333')+';font-size:9px;padding:4px;text-align:center;line-height:1.15;">'+escapeHtml(String(latest.text||'').slice(0,26))+'</div>';
+        } else if(latest.type==='video'){
+          const src = latest.thumbDataUrl || '';
+          thumb = src
+            ? '<img src="'+src+'" class="mysignal-thumb" style="filter:'+(latest.filterCss||'')+'" />'
+            : '<div class="avatar" style="width:100%;height:100%;background:#1F2333;font-size:11px;color:#7CFFB2;">▶</div>';
+        } else {
+          thumb = '<img src="'+(latest.dataUrl||'')+'" class="mysignal-thumb" style="filter:'+(latest.filterCss||'')+'" />';
+        }
+      }catch(_){ thumb = ''; }
+      const seen = (typeof mySignalSeen !== 'undefined' && mySignalSeen) ? 'seen' : '';
+      myInner = '<div class="ring '+seen+'"><div class="avatar" style="width:100%;height:100%;overflow:hidden;background:#1F2333;">'+thumb+'</div></div><span>Your signal'+(mySignal.length>1?(' · '+mySignal.length):'')+'</span>';
+    } else {
+      myInner = '<div class="ring seen"><div class="avatar" style="width:100%;height:100%;background:#1F2333;color:var(--text-dim);font-size:20px;">+</div></div><span>Post signal</span>';
+    }
+    const conn = (typeof connectionsSignals !== 'undefined' && connectionsSignals) ? connectionsSignals : [];
+    let others = '';
+    conn.forEach(function(entry){
+      const c = entry.contact;
+      if(!c) return;
+      const name = (c.name||'?').split(' ')[0];
+      others += '<div class="bcast-item" data-signal="'+c.id+'"><div class="ring"><div class="avatar" style="width:100%;height:100%;background:'+(c.color||'#7CFFB2')+';">'+(c.initials||'?')+'</div></div><span>'+escapeHtml(name)+'</span></div>';
+    });
+    stripEl.innerHTML = '<div class="bcast-item" id="mySignalItem">'+myInner+'</div>'+others;
+    const mine = document.getElementById('mySignalItem');
+    if(mine){
+      mine.onclick = function(){
+        if(typeof mySignal !== 'undefined' && mySignal.length){
+          if(typeof openMySignalStory === 'function') openMySignalStory();
+          else if(typeof openMyBroadcast === 'function') openMyBroadcast();
+        } else if(typeof openComposer === 'function'){
+          openComposer('signal');
+        }
+      };
+    }
+    stripEl.querySelectorAll('[data-signal]').forEach(function(el){
+      el.onclick = function(){
+        const id = parseInt(el.getAttribute('data-signal'), 10);
+        if(typeof openContactSignalStory === 'function') openContactSignalStory(id);
+      };
     });
   }
 
   // ---- Permanent Broadcast plates ----
-  const grid = $('bcastPlateGrid');
-  const empty = $('bcastPlateEmpty');
-  const list = (typeof feedBroadcasts !== 'undefined' ? feedBroadcasts : []).slice();
   if(grid){
+    const list = (typeof feedBroadcasts !== 'undefined' && feedBroadcasts) ? feedBroadcasts.slice() : [];
     if(!list.length){
       grid.innerHTML = '';
       if(empty) empty.style.display = 'block';
     } else {
       if(empty) empty.style.display = 'none';
-      grid.innerHTML = list.map(b => broadcastThumbHtml(b)).join('');
-      grid.querySelectorAll('[data-broadcast-id]').forEach(el=>{
-        el.onclick = ()=> openBroadcastById(el.dataset.broadcastId);
+      if(typeof broadcastThumbHtml === 'function'){
+        grid.innerHTML = list.map(function(b){ return broadcastThumbHtml(b); }).join('');
+      } else {
+        grid.innerHTML = list.map(function(b){
+          return '<article class="bcast-plate" data-broadcast-id="'+escapeHtml(b.id)+'"><div class="bcast-plate-meta"><div class="bcast-plate-title">'+escapeHtml(b.title||'Broadcast')+'</div></div></article>';
+        }).join('');
+      }
+      grid.querySelectorAll('[data-broadcast-id]').forEach(function(el){
+        el.onclick = function(){
+          if(typeof openBroadcastById === 'function') openBroadcastById(el.getAttribute('data-broadcast-id'));
+        };
       });
     }
   }
 }
 
 function renderBroadcasts(){
-  if(typeof renderBroadcastTab === 'function'){
-    try { renderBroadcastTab(); } catch(e){ console.warn(e); }
-  }
-  pruneExpiredSignal();
-  const latest = mySignal[mySignal.length-1];
-  let mySignalInner;
-  if(latest){
-    let thumb;
-    if(latest.type==='text'){
-      thumb = `<div class="avatar" style="width:100%;height:100%;background:${latest.bg};font-size:9px;padding:4px;text-align:center;line-height:1.15;">${escapeHtml(latest.text).slice(0,26)}</div>`;
-    } else if(latest.type==='video'){
-      thumb = latest.thumbDataUrl
-        ? `<img src="${latest.thumbDataUrl}" class="mysignal-thumb" style="filter:${latest.filterCss}" />`
-        : `<video src="${latest.videoUrl || latest.dataUrl}" class="mysignal-thumb" style="filter:${latest.filterCss}" muted></video>`;
-    } else {
-      thumb = `<img src="${latest.dataUrl}" class="mysignal-thumb" style="filter:${latest.filterCss}" />`;
-    }
-    mySignalInner = `<div class="ring ${mySignalSeen?'seen':''}"><div class="avatar" style="width:100%;height:100%;overflow:hidden;background:#1F2333;">${thumb}</div></div><span>Your signal${mySignal.length>1?' · '+mySignal.length:''}</span>`;
-  } else {
-    mySignalInner = `<div class="ring seen"><div class="avatar" style="width:100%;height:100%;background:#1F2333;color:var(--text-dim);font-size:20px;">+</div></div><span>Your signal</span>`;
-  }
-  $('myBcastStrip').innerHTML = `<div class="bcast-item" id="mySignalItem">${mySignalInner}</div>` +
-    connectionsSignals.map(({ contact:c, latest })=>{
-      return `<div class="bcast-item" data-b="${c.id}"><div class="ring"><div class="avatar" style="width:100%;height:100%;background:${c.color};position:relative;">${c.initials}</div></div><span>${c.name.split(' ')[0]}</span></div>`;
-    }).join('');
-  const ranked = rankBroadcastEntries(connectionsSignals);
-  $('bcastList').innerHTML = ranked.length ? ranked.map(({ contact:c, latest })=>{
-    return `<div class="bcast-list-row" data-b="${c.id}">
-    <div class="avatar" style="width:44px;height:44px;font-size:14px;background:${c.color};position:relative;">${c.initials}${signalBarsHtml(c)}</div>
-    <div class="contact-meta"><div class="contact-name">${c.name}</div><div class="contact-sub">${signalMeta[computeSignal(c).tier].label} · tap to join the space</div></div>
-    <div class="bcast-time">${timeAgo(latest.createdAt)}</div>
-  </div>`;
-  }).join('') : `<div style="padding:20px 10px; color:var(--text-dim); font-size:13px; text-align:center;">No recent signals from your frequencies yet.</div>`;
-  document.querySelectorAll('[data-b]').forEach(el=>{
-    el.onclick = ()=> openBroadcast(parseInt(el.dataset.b));
-  });
-  $('mySignalItem').onclick = ()=>{ mySignal.length ? openMyBroadcast() : openComposer(); };
+  try{ renderBroadcastTab(); }catch(e){ console.warn('[signal] render', e); }
 }
-renderBroadcasts();
-if(typeof renderBroadcastTab==='function') renderBroadcastTab();
+
+
+try{ renderBroadcasts(); }catch(e){ console.warn(e); }
 
 /* ---------------- STORY VIEWER (multi-segment playback) ---------------- */
 let currentSegments = [];
@@ -529,4 +521,10 @@ function toggleSignalAspect(){
 }
 if($('bviewerBody')){
   $('bviewerBody').addEventListener('dblclick', toggleSignalAspect);
+}
+
+
+// Legacy name: signal rings open the ephemeral story, not permanent Broadcast space
+if(typeof openContactSignalStory === 'function'){
+  window.openBroadcast = function(contactId){ return openContactSignalStory(contactId); };
 }

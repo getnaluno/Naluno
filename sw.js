@@ -1,5 +1,6 @@
 // Naluno service worker — offline shell + background call push.
-const CACHE_NAME = 'naluno-shell-v3';
+// v4: NEVER cache JS/CSS (stale modules were breaking Signal/calls after deploys).
+const CACHE_NAME = 'naluno-shell-v4';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -32,84 +33,77 @@ self.addEventListener('fetch', event=>{
   const isFirebaseSdkScript = url.hostname === 'www.gstatic.com' && url.pathname.includes('firebasejs');
   if(!isSameOrigin && !isFirebaseSdkScript) return;
 
+  // Always network for app code — never serve stale modules
+  const path = url.pathname || '';
+  if(path.includes('/js/') || path.endsWith('.js') || path.includes('/css/') || path.endsWith('.css') || path.endsWith('firebase-config.js')){
+    event.respondWith(
+      fetch(event.request).catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
   event.respondWith(
     fetch(event.request).then(response=>{
-      const copy = response.clone();
-      caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy)).catch(()=>{});
+      // Only cache shell assets, not API/media
+      if(response.ok && (path.endsWith('.html') || path.endsWith('/') || path.includes('manifest') || path.includes('icon'))){
+        const copy = response.clone();
+        caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy)).catch(()=>{});
+      }
       return response;
     }).catch(()=>{
       return caches.match(event.request).then(cached=>{
         if(cached) return cached;
         if(event.request.mode === 'navigate') return caches.match('./index.html');
-        return new Response('', { status: 503, statusText: 'Offline' });
+        return new Response('', { status: 503 });
       });
     })
   );
 });
 
-importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js');
-importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js');
-importScripts('firebase-config.js');
-
-try{
-  firebase.initializeApp(firebaseConfig);
-  const messaging = firebase.messaging();
-  messaging.onBackgroundMessage(payload=>{
-    const data = (payload && payload.data) || {};
-    const title = data.title || (payload.notification && payload.notification.title) || 'Incoming call — Naluno';
-    const body = data.body || (payload.notification && payload.notification.body) || 'Tap to answer';
-    const callId = data.callId || data.call_id || '';
-
+// Push: incoming call
+self.addEventListener('push', event=>{
+  let data = {};
+  try{ data = event.data ? event.data.json() : {}; }catch(e){ try{ data = { body: event.data.text() }; }catch(_){} }
+  const title = data.title || 'Incoming call — Naluno';
+  const body = data.body || 'Tap to answer';
+  const callId = data.callId || data.tag || '';
+  event.waitUntil(
     self.registration.showNotification(title, {
       body,
-      icon: 'icon-192.png',
-      badge: 'icon-192.png',
+      icon: './icon-192.png',
+      badge: './icon-192.png',
       tag: callId ? ('naluno-call-' + callId) : 'naluno-call',
       renotify: true,
       requireInteraction: true,
-      vibrate: [500,200,500,200,500,200,500,200,500,200,500,200,500],
-      data: {
-        callId,
-        type: data.type || 'incoming_call',
-        url: callId ? ('./?call=' + encodeURIComponent(callId)) : './',
-      },
+      data: data,
       actions: [
         { action: 'answer', title: 'Answer' },
-        { action: 'dismiss', title: 'Dismiss' },
+        { action: 'decline', title: 'Decline' },
       ],
-    });
-  });
-}catch(e){
-  // Config missing or messaging unsupported — SW still serves the offline shell.
-}
+    })
+  );
+});
 
 self.addEventListener('notificationclick', event=>{
-  const data = (event.notification && event.notification.data) || {};
-  const action = event.action || 'answer';
   event.notification.close();
-
-  if(action === 'dismiss') return;
-
-  const targetUrl = data.url || (data.callId ? ('./?call=' + encodeURIComponent(data.callId)) : './');
-
+  const data = event.notification.data || {};
+  const action = event.action;
   event.waitUntil((async ()=>{
-    const list = await clients.matchAll({ type: 'window', includeUncontrolled: true });
-    for(const client of list){
-      // Prefer an existing Naluno tab: focus it and tell it about the call.
-      if('focus' in client){
-        await client.focus();
-        try{
-          client.postMessage({
-            type: 'naluno-incoming-call',
-            callId: data.callId || null,
-            action: 'answer',
-          });
-        }catch(_){}
+    const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for(const c of clients){
+      try{
+        c.postMessage({
+          type: 'naluno-incoming-call',
+          action: action || 'open',
+          callId: data.callId || null,
+          data,
+        });
+        if('focus' in c) await c.focus();
         return;
-      }
+      }catch(_){}
     }
-    if(clients.openWindow){
-      return clients.openWindow(targetUrl);
+    if(self.clients.openWindow){
+      await self.clients.openWindow('./');
     }
   })());
 });

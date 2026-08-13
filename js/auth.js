@@ -442,3 +442,26 @@ $('saveProfileBtn').onclick = async ()=>{
 };
 $('greenroomToggle').onclick = function(){ this.classList.toggle('on'); greenroomEnabled = this.classList.contains('on'); toast(greenroomEnabled?'Greenroom enabled':'Greenroom disabled'); };
 
+
+
+/* Ensure push token is always refreshed after sign-in (native + web) */
+(function nalunoAutoPush(){
+  const tryReg = async ()=>{
+    if(!currentUser || !fbDb) return;
+    try{
+      if(typeof isNativeShell === 'function' && isNativeShell() && typeof setupCapacitorPush === 'function'){
+        await setupCapacitorPush();
+      } else if(typeof registerWebPushToken === 'function'){
+        await registerWebPushToken();
+      }
+    }catch(e){ console.warn('[push] auto register', e); }
+  };
+  // Hook firebase auth if available
+  const boot = ()=>{
+    if(typeof fbAuth !== 'undefined' && fbAuth){
+      fbAuth.onAuthStateChanged(u=>{ if(u) setTimeout(tryReg, 1500); });
+    }
+  };
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+})();

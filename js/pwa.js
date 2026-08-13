@@ -82,6 +82,7 @@ function getCapacitorPush(){
 }
 let nativePushWired = false;
 async function setupCapacitorPush(){
+  console.log('[push] setupCapacitorPush start');
   const Push = getCapacitorPush();
   if(!Push || !currentUser || !fbDb) return false;
   try{

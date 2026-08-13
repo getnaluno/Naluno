@@ -68,3 +68,31 @@ function handleBroadcastLiveNotification(n){
     // soft prompt via toast only; user can search / open
   }
 }
+
+
+async function registerWebPushToken(){
+  if(!fbDb || !currentUser) return null;
+  if(!('Notification' in window) || !navigator.serviceWorker) return null;
+  if(typeof VAPID_KEY === 'undefined' || !VAPID_KEY || VAPID_KEY === 'YOUR_VAPID_KEY') return null;
+  try{
+    if(Notification.permission !== 'granted'){
+      const p = await Notification.requestPermission();
+      if(p !== 'granted') return null;
+    }
+    const registration = await navigator.serviceWorker.ready;
+    const messaging = firebase.messaging();
+    const token = await messaging.getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
+    if(!token) return null;
+    const userRef = fbDb.collection('users').doc(currentUser.uid);
+    const snap = await userRef.get();
+    const existing = snap.exists ? snap.data() : {};
+    const payload = { fcmTokenWeb: token, fcmTokenPlatform: 'web', fcmTokenUpdatedAt: Date.now() };
+    if(!existing.fcmTokenAndroid) payload.fcmToken = token;
+    await userRef.set(payload, { merge:true });
+    console.log('[push] web token registered');
+    return token;
+  }catch(e){
+    console.warn('[push] registerWebPushToken', e);
+    return null;
+  }
+}

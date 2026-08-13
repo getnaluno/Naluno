@@ -38,3 +38,18 @@ setInterval(checkForUpdate, 3*60*1000);
 document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) checkForUpdate(); });
 setTimeout(checkForUpdate, 4000); // small delay so this isn't competing with the initial page load
 
+
+
+/* Surface fatal errors so deploys that break the app are visible */
+window.addEventListener('error', function(ev){
+  try{
+    console.error('[naluno]', ev.message, ev.filename, ev.lineno);
+    if(typeof toast === 'function' && ev.message && /\$|null|undefined|is not a function/i.test(ev.message)){
+      toast('App error: ' + String(ev.message).slice(0, 80));
+    }
+  }catch(_){}
+});
+window.addEventListener('unhandledrejection', function(ev){
+  try{ console.error('[naluno:promise]', ev.reason); }catch(_){}
+});
+console.log('[naluno] build 2026.08.13e');

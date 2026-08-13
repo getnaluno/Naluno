@@ -979,108 +979,133 @@ async function resolveCameraDeviceId(wantFacing){
   return devices[0].deviceId || null;
 }
 async function flipCamera(){
-  if(!mediaStreamIsLive(stream)){
-    // Lobby Flip with camera off: turn on facing the other way instead of no-op.
-    cameraFacingMode = cameraFacingMode === 'user' ? 'environment' : 'user';
-    preferredVideoDeviceId = null;
-    try{
-      await enableCamera();
-      toast(cameraFacingMode === 'environment' ? 'Rear camera' : 'Front camera');
-    }catch(e){
-      toast('Couldn\u2019t switch camera on this device');
-    }
-    return;
-  }
-  const next = cameraFacingMode === 'user' ? 'environment' : 'user';
+  /* Definitive flip:
+     1) Stop current VIDEO tracks (Android needs this)
+     2) Open the other camera
+     3) Rebind every preview + sendRawVideo (canvas pipeline picks it up)
+     4) Do NOT replaceTrack the canvas video sender — that would break the filter path.
+        Only replaceTrack audio if needed. Canvas captureStream keeps streaming new frames.
+  */
+  if(window.__flipBusy) return;
+  window.__flipBusy = true;
+  const next = (cameraFacingMode === 'user') ? 'environment' : 'user';
   preferredVideoDeviceId = null;
+
   try{
-    let newStream = null;
-    // 1) Prefer concrete deviceId from enumeration (most reliable on Android).
-    const deviceId = await resolveCameraDeviceId(next);
-    if(deviceId){
-      try{
-        newStream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            deviceId: { exact: deviceId },
-            width: { ideal: 2560 },
-            height: { ideal: 1440 },
-            frameRate: { ideal: 30, max: 60 },
-          },
-          audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true },
-        });
-        preferredVideoDeviceId = deviceId;
-      }catch(e){
-        console.warn('[camera] deviceId open failed, trying facingMode', e);
-      }
-    }
-    // 2) facingMode exact
-    if(!newStream){
-      try{
-        newStream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { exact: next },
-            width: { ideal: 2560 },
-            height: { ideal: 1440 },
-            frameRate: { ideal: 30, max: 60 },
-          },
-          audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true },
-        });
-      }catch(e){
-        console.warn('[camera] facingMode exact failed', e);
-      }
-    }
-    // 3) facingMode ideal via shared quality helper
-    if(!newStream){
-      cameraFacingMode = next;
-      newStream = await requestHighQualityStream();
-    }
-
     const oldStream = stream;
-    stream = newStream;
-    cameraFacingMode = next;
-    syncFacingModeFromTrack();
-    try{
-      const fm = stream.getVideoTracks()[0] && stream.getVideoTracks()[0].getSettings
-        ? stream.getVideoTracks()[0].getSettings().facingMode
-        : null;
-      if(!fm) cameraFacingMode = next;
-    }catch(e){}
-
-    // Refresh every local preview surface (lobby + in-call + incoming + send path)
-    const mirror = shouldMirrorCamera() ? 'scaleX(-1)' : 'none';
-    ['camRawVideo','pipRawVideo','sendRawVideo','incomingSelfVideo','localVideo'].forEach(id=>{
-      const el = $(id);
-      if(el){
-        el.srcObject = stream;
-        if(id === 'incomingSelfVideo' || id === 'localVideo') el.style.transform = mirror;
-      }
-    });
-    startCamView($('incall') && $('incall').classList.contains('active') ? 'pip' : 'lobby');
-
-    // In an active call, swap tracks on the peer connection so the other side sees the flip
-    if(typeof peerConnection !== 'undefined' && peerConnection){
-      try{
-        const senders = peerConnection.getSenders();
-        stream.getTracks().forEach(track=>{
-          const sender = senders.find(s => s.track && s.track.kind === track.kind);
-          if(sender) sender.replaceTrack(track).catch(()=>{});
-        });
-      }catch(e){ console.warn('[camera] replaceTrack failed', e); }
+    // Release video hardware before requesting the other lens
+    if(oldStream){
+      oldStream.getVideoTracks().forEach(t=>{ try{ t.stop(); }catch(_){} });
     }
 
+    let newStream = null;
+    const audioConstraint = { echoCancellation:true, noiseSuppression:true, autoGainControl:true };
+    const videoAttempts = [];
+
+    const deviceId = await resolveCameraDeviceId(next).catch(()=>null);
+    if(deviceId){
+      videoAttempts.push({ deviceId: { exact: deviceId }, width:{ideal:1920}, height:{ideal:1080}, frameRate:{ideal:30} });
+    }
+    videoAttempts.push({ facingMode: { exact: next }, width:{ideal:1920}, height:{ideal:1080} });
+    videoAttempts.push({ facingMode: { ideal: next }, width:{ideal:1280}, height:{ideal:720} });
+    videoAttempts.push({ facingMode: next });
+
+    for(const video of videoAttempts){
+      if(newStream) break;
+      try{
+        newStream = await navigator.mediaDevices.getUserMedia({ video, audio: audioConstraint });
+        if(video.deviceId && video.deviceId.exact) preferredVideoDeviceId = video.deviceId.exact;
+      }catch(e){
+        console.warn('[camera] flip attempt failed', video, e && e.name);
+      }
+    }
+
+    if(!newStream){
+      // Restore previous facing if we can
+      cameraFacingMode = next;
+      try{
+        await enableCamera();
+        toast(cameraFacingMode === 'environment' ? 'Rear camera' : 'Front camera');
+      }catch(e){
+        toast('Couldn\u2019t switch camera on this device');
+      }
+      return;
+    }
+
+    // Stop leftover audio from old stream after new one is live
     if(oldStream){
       oldStream.getTracks().forEach(t=>{ try{ t.stop(); }catch(_){} });
     }
 
-    updateCameraQualityBadge();
-    updateSignatureGlow();
-    toast(cameraFacingMode === 'environment' ? 'Rear camera' : 'Front camera');
+    stream = newStream;
+    cameraFacingMode = next;
+    try{
+      const fm = stream.getVideoTracks()[0] && stream.getVideoTracks()[0].getSettings
+        ? stream.getVideoTracks()[0].getSettings().facingMode
+        : null;
+      if(fm === 'user' || fm === 'environment') cameraFacingMode = fm;
+      else cameraFacingMode = next;
+    }catch(_){ cameraFacingMode = next; }
+
+    const mirror = shouldMirrorCamera() ? 'scaleX(-1)' : 'none';
+    ['camRawVideo','pipRawVideo','sendRawVideo','incomingSelfVideo','localVideo'].forEach(id=>{
+      const el = $(id);
+      if(!el) return;
+      el.srcObject = stream;
+      if(id === 'incomingSelfVideo' || id === 'localVideo') el.style.transform = mirror;
+      el.play && el.play().catch(()=>{});
+    });
+
+    // Keep canvas send pipeline on the new camera
+    try{
+      if(typeof startCamView === 'function'){
+        startCamView($('incall') && $('incall').classList.contains('active') ? 'pip' : 'lobby');
+      }
+      if(typeof resizeSendCanvas === 'function') resizeSendCanvas();
+      else if(typeof sizeSendCanvas === 'function') sizeSendCanvas();
+    }catch(_){}
+
+    // Peer connection: canvas video track continues; replace audio only.
+    // If a sender still holds a dead *camera* video track (fallback path), replace it.
+    if(typeof peerConnection !== 'undefined' && peerConnection){
+      try{
+        const senders = peerConnection.getSenders();
+        const newVid = stream.getVideoTracks()[0];
+        const newAud = stream.getAudioTracks()[0];
+        senders.forEach(sender=>{
+          if(!sender.track) return;
+          if(sender.track.kind === 'audio' && newAud){
+            sender.replaceTrack(newAud).catch(e=>console.warn('[camera] audio replace', e));
+          }
+          if(sender.track.kind === 'video' && newVid){
+            // Only replace if the sender is NOT a canvas track (canvas has no 'facingMode' usually)
+            const settings = sender.track.getSettings ? sender.track.getSettings() : {};
+            const isCanvas = !settings.facingMode && (settings.displaySurface || sender.track.label === 'canvas' || (sender.track.label||'').includes('Canvas'));
+            if(!isCanvas && sender.track.readyState !== 'live'){
+              sender.replaceTrack(newVid).catch(e=>console.warn('[camera] video replace', e));
+            } else if(!isCanvas && sender.track.readyState === 'live' && settings.deviceId){
+              // Raw camera sender — swap to new lens
+              sender.replaceTrack(newVid).catch(e=>console.warn('[camera] video replace', e));
+            }
+            // Canvas sender: leave it — frames update via sendRawVideo
+          }
+        });
+      }catch(e){ console.warn('[camera] PC replace', e); }
+    }
+
+    updateCameraQualityBadge && updateCameraQualityBadge();
+    updateSignatureGlow && updateSignatureGlow();
     if(typeof runGreenroom === 'function') runGreenroom();
+    toast(cameraFacingMode === 'environment' ? 'Rear camera' : 'Front camera');
   }catch(e){
     console.error('[camera] flip failed', e);
     toast('Couldn\u2019t switch camera on this device');
+    try{ await enableCamera(); }catch(_){}
+  }finally{
+    window.__flipBusy = false;
   }
 }
+
 
 async function enableCamera(){
   // If a request is already in flight, reuse it instead of a second getUserMedia prompt.
@@ -1235,3 +1260,15 @@ $('chatBtn').onclick = ()=>{
 const wf = $('waveform');
 for(let i=0;i<22;i++){ const s=document.createElement('span'); s.style.animationDelay=(Math.random()*1.1).toFixed(2)+'s'; wf.appendChild(s); }
 
+
+
+/* Hardened flip binding — survives DOM re-renders and overlay stacking */
+(function nalunoFlipDelegate(){
+  document.addEventListener('click', function(e){
+    const t = e.target && e.target.closest && e.target.closest('#lobbySwitchCam, #switchCam, [data-action="flip-camera"]');
+    if(!t) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if(typeof flipCamera === 'function') flipCamera();
+  }, true);
+})();
