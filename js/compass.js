@@ -312,17 +312,20 @@ let trimObjectUrl = null;
 
 async function handleFiles(fileList){
   const files = Array.from(fileList);
-  const MAX_VIDEO_BYTES = 60 * 1024 * 1024; // matches the Worker's own real upload cap
+  // Soft ceiling only — no hard 60MB reject. Long clips still open the trim UI.
+  // Size is handled by pass-through + smart compress on post.
+  const SOFT_FORCE_TRIM_BYTES = 200 * 1024 * 1024;
   const needsTrim = [];
   for(const file of files){
     if(composerType==='video'){
       const duration = await probeVideoDuration(file);
-      if(file.size > MAX_VIDEO_BYTES || (duration && duration > MAX_VIDEO_SECONDS)){
+      if((duration && duration > MAX_VIDEO_SECONDS) || file.size > SOFT_FORCE_TRIM_BYTES){
         needsTrim.push(file);
         continue;
       }
+      // Keep original File for pass-through upload (no re-encode inflation)
       const dataUrl = await readFileAsDataUrl(file);
-      composerItems.push({ id:Date.now()+Math.random(), kind:'video', dataUrl, filterKey:'normal', filterCss:'', crop:{scale:1,xPct:0,yPct:0}, caption:'', duration });
+      composerItems.push({ id:Date.now()+Math.random(), kind:'video', dataUrl, sourceFile: file, filterKey:'normal', filterCss:'', crop:{scale:1,xPct:0,yPct:0}, caption:'', duration });
     } else {
       const dataUrl = await readFileAsDataUrl(file);
       composerItems.push({ id:Date.now()+Math.random(), kind:'photo', dataUrl, filterKey:'normal', filterCss:'', crop:{scale:1,xPct:0,yPct:0}, caption:'' });
@@ -376,8 +379,8 @@ function openTrimOverlay(file){
     video.currentTime = 0;
   };
   $('trimProgressOverlay').style.display = 'none';
-  $('trimAutoSplitNote').textContent = file.size > 60*1024*1024
-    ? 'This file is too large to post as one clip — splitting breaks it into consecutive parts that each fit, played back in sequence as one broadcast.'
+  $('trimAutoSplitNote').textContent = file.size > 100*1024*1024
+    ? 'Long or large clip — trim a segment, or split into consecutive parts that play as one post.'
     : 'This clip is longer than 60 seconds — splitting breaks it into consecutive 60-second parts instead of trimming to just one.';
   $('trimOverlay').classList.add('active');
 }
@@ -445,18 +448,26 @@ $('trimCancel').onclick = ()=>{
    fast-motion clip into the file (everything plays at 2× later) — that was the bug.
    Prepare is therefore real-time wall-clock; progress UI still reflects true progress. */
 async function extractVideoClip(file, startTime, endTime, onProgress){
+  /* Smart encode (YouTube-like within browser limits):
+     - Cap resolution at 1080p (phones don't need 4K for Signal)
+     - Prefer VP9 when available (better quality per bit than VP8)
+     - Bitrate scales with pixel count, not a fixed 2.8 Mbps
+     - Never inflate a file that is already efficient: caller should pass-through those
+  */
   return new Promise((resolve, reject)=>{
     const video = document.createElement('video');
     video.playsInline = true;
-    video.muted = true; // silence speakers; captureStream still gets the decoded audio
+    video.muted = true;
     video.preload = 'auto';
-    video.playbackRate = 1; // never >1 — rate is encoded into the recorded timeline
+    video.playbackRate = 1;
     const url = URL.createObjectURL(file);
     video.src = url;
     let settled = false;
     let stream = null;
     let recorder = null;
+    let raf = 0;
     const cleanupMedia = ()=>{
+      if(raf) cancelAnimationFrame(raf);
       try{ video.pause(); }catch(_){}
       try{ video.removeAttribute('src'); video.load(); }catch(_){}
       if(stream){
@@ -483,99 +494,117 @@ async function extractVideoClip(file, startTime, endTime, onProgress){
     video.onloadedmetadata = ()=>{
       const duration = video.duration || endTime;
       const safeStart = Math.max(0, Math.min(startTime, Math.max(0, duration - 0.05)));
-      // Cut a few frames early so the next split part does not inherit trailing audio.
       const safeEnd = Math.max(safeStart + 0.2, Math.min(endTime - 0.05, duration));
+      const clipDur = Math.max(0.2, safeEnd - safeStart);
 
       const onSeeked = ()=>{
         video.removeEventListener('seeked', onSeeked);
 
         const beginCapture = ()=>{
+          const vw = video.videoWidth || 1280;
+          const vh = video.videoHeight || 720;
+          // Max 1080 on the long edge — YouTube mobile sweet spot
+          const maxEdge = 1080;
+          const scale = Math.min(1, maxEdge / Math.max(vw, vh));
+          const cw = Math.max(2, Math.round(vw * scale / 2) * 2);
+          const ch = Math.max(2, Math.round(vh * scale / 2) * 2);
+          const pixels = cw * ch;
+
+          // Bitrate ladder (bits/sec) — quality-first, size-aware
+          let vBitrate;
+          if(pixels >= 1920 * 1080 * 0.85) vBitrate = 4_500_000;      // ~1080p
+          else if(pixels >= 1280 * 720 * 0.85) vBitrate = 2_800_000; // ~720p
+          else if(pixels >= 854 * 480 * 0.85) vBitrate = 1_600_000;  // ~480p
+          else vBitrate = 1_000_000;
+          // Long clips: ease bitrate slightly so size stays reasonable
+          if(clipDur > 90) vBitrate = Math.round(vBitrate * 0.85);
+          if(clipDur > 180) vBitrate = Math.round(vBitrate * 0.9);
+
+          const canvas = document.createElement('canvas');
+          canvas.width = cw;
+          canvas.height = ch;
+          const ctx = canvas.getContext('2d', { alpha: false });
+
+          let canvasStream;
           try{
-            stream = video.captureStream ? video.captureStream() : (video.mozCaptureStream && video.mozCaptureStream());
+            canvasStream = canvas.captureStream(30);
           }catch(e){
-            fail(new Error('This browser cannot capture video and audio together'));
+            fail(new Error('This browser cannot capture canvas video'));
             return;
-          }
-          if(!stream){
-            fail(new Error('This browser cannot capture video and audio together'));
-            return;
-          }
-          if(stream.getAudioTracks().length === 0){
-            console.warn('[signal] Source has no audio track — output will be silent');
           }
 
-          const recorderOptions = { videoBitsPerSecond: 2800000, audioBitsPerSecond: 96000 };
+          // Mix in source audio when available
+          try{
+            const raw = video.captureStream ? video.captureStream() : (video.mozCaptureStream && video.mozCaptureStream());
+            if(raw){
+              raw.getAudioTracks().forEach(tr=>{
+                try{ canvasStream.addTrack(tr); }catch(_){}
+              });
+            }
+          }catch(_){}
+
+          stream = canvasStream;
+
+          const draw = ()=>{
+            if(settled) return;
+            try{ ctx.drawImage(video, 0, 0, cw, ch); }catch(_){}
+            if(!video.paused && !video.ended) raf = requestAnimationFrame(draw);
+          };
+
           const mimeCandidates = [
             'video/webm;codecs=vp9,opus',
             'video/webm;codecs=vp8,opus',
             'video/webm;codecs=vp8',
             'video/webm',
+            'video/mp4',
           ];
-          recorder = null;
-          for(const mime of mimeCandidates){
-            if(typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported && !MediaRecorder.isTypeSupported(mime)) continue;
-            try{
-              recorder = new MediaRecorder(stream, { mimeType: mime, ...recorderOptions });
-              break;
-            }catch(e){ /* try next */ }
-          }
-          if(!recorder){
-            try{ recorder = new MediaRecorder(stream, recorderOptions); }
-            catch(e2){
-              try{ recorder = new MediaRecorder(stream); }
-              catch(e3){ fail(new Error('MediaRecorder unavailable')); return; }
+          let mime = 'video/webm';
+          for(const m of mimeCandidates){
+            if(typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)){
+              mime = m; break;
             }
           }
 
+          const recorderOptions = { mimeType: mime, videoBitsPerSecond: vBitrate, audioBitsPerSecond: 128000 };
           const chunks = [];
-          recorder.ondataavailable = e=>{ if(e.data && e.data.size > 0) chunks.push(e.data); };
-          recorder.onerror = e=> fail(e.error || new Error('Recording failed'));
-          recorder.onstop = ()=>{
-            const type = (recorder.mimeType && recorder.mimeType.split(';')[0]) || 'video/webm';
-            succeed(new Blob(chunks, { type }));
-          };
-
-          const stopCapture = ()=>{
-            if(settled) return;
-            try{ video.pause(); }catch(_){}
-            // Disable tracks immediately so no more frames/audio enter the recorder
-            // after the cut point (prevents bleed into the next split part).
-            if(stream){
-              stream.getTracks().forEach(t=>{ try{ t.enabled = false; }catch(_){} });
-            }
-            if(recorder && recorder.state !== 'inactive'){
-              try{ recorder.stop(); }catch(e){ fail(e); }
-            }
-          };
-
-          const startRecorderAndPlay = ()=>{
-            video.playbackRate = 1;
-            try{ recorder.start(100); }catch(e){
-              try{ recorder.start(); }catch(e2){ fail(e2); return; }
-            }
-            const playP = video.play();
-            if(playP && playP.catch) playP.catch(()=>{});
-
-            const range = Math.max(0.1, safeEnd - safeStart);
-            const checkDone = ()=>{
-              if(settled) return;
-              const t = video.currentTime;
-              if(onProgress) onProgress(Math.min(1, (t - safeStart) / range));
-              if(t >= safeEnd || video.ended){
-                stopCapture();
-                return;
-              }
-              requestAnimationFrame(checkDone);
-            };
-            requestAnimationFrame(()=> requestAnimationFrame(checkDone));
-          };
-
-          if(video.readyState >= 2) startRecorderAndPlay();
-          else {
-            const onCanPlay = ()=>{ video.removeEventListener('canplay', onCanPlay); startRecorderAndPlay(); };
-            video.addEventListener('canplay', onCanPlay);
-            setTimeout(()=>{ if(!settled && recorder && recorder.state === 'inactive') startRecorderAndPlay(); }, 1500);
+          try{
+            recorder = new MediaRecorder(stream, recorderOptions);
+          }catch(e){
+            try{ recorder = new MediaRecorder(stream); }
+            catch(e2){ fail(new Error('MediaRecorder unavailable')); return; }
           }
+
+          recorder.ondataavailable = e=>{ if(e.data && e.data.size) chunks.push(e.data); };
+          recorder.onerror = ()=> fail(new Error('Recording failed'));
+          recorder.onstop = ()=>{
+            const blob = new Blob(chunks, { type: mime });
+            succeed(blob);
+          };
+
+          try{ recorder.start(250); }catch(e){
+            try{ recorder.start(); }catch(e2){ fail(e2); return; }
+          }
+
+          draw();
+          video.play().catch(()=>{});
+
+          const tick = ()=>{
+            if(settled) return;
+            const tnow = video.currentTime || 0;
+            if(onProgress){
+              const frac = Math.min(1, Math.max(0, (tnow - safeStart) / clipDur));
+              try{ onProgress(frac); }catch(_){}
+            }
+            if(tnow >= safeEnd - 0.02 || video.ended){
+              try{ video.pause(); }catch(_){}
+              if(recorder && recorder.state !== 'inactive'){
+                try{ recorder.stop(); }catch(e){ fail(e); }
+              }
+              return;
+            }
+            setTimeout(tick, 120);
+          };
+          setTimeout(tick, 120);
         };
 
         if(video.readyState >= 2) beginCapture();
@@ -824,16 +853,16 @@ async function postSegmentsNow(newSegments){
           ? `Uploading to your signal\u2026 part ${videoIndex} of ${totalVideos}`
           : 'Uploading to your signal\u2026');
         try{
-          // Prefer the in-memory Blob from extraction; only fall back to dataUrl.
-          const source = seg.videoBlob || seg.dataUrl;
+          // Prefer extracted Blob, then original File (pass-through), then dataUrl.
+          const source = seg.videoBlob || seg.sourceFile || seg.dataUrl;
           const videoUrl = await uploadVideoToR2(source);
           const thumbSrc = seg.videoBlob
             ? URL.createObjectURL(seg.videoBlob)
-            : seg.dataUrl;
+            : (seg.sourceFile ? URL.createObjectURL(seg.sourceFile) : seg.dataUrl);
           const thumbDataUrl = await generateVideoThumbnail(thumbSrc);
-          if(seg.videoBlob) try{ URL.revokeObjectURL(thumbSrc); }catch(_){}
+          if(seg.videoBlob || seg.sourceFile) try{ URL.revokeObjectURL(thumbSrc); }catch(_){}
           // Store a small URL in Firestore, never the whole video.
-          const { dataUrl, videoBlob, ...rest } = seg;
+          const { dataUrl, videoBlob, sourceFile, ...rest } = seg;
           segToSave = { ...rest, videoUrl, thumbDataUrl };
         }catch(e){
           failed++;
@@ -884,7 +913,7 @@ $('postBroadcastBtn').onclick = async ()=>{
         mediaType = item.kind;
         filterCss = item.filterCss || '';
         if(item.kind === 'video'){
-          const blob = item.videoBlob || (item.dataUrl ? await (await fetch(item.dataUrl)).blob() : null);
+          const blob = item.videoBlob || item.sourceFile || (item.dataUrl ? await (await fetch(item.dataUrl)).blob() : null);
           if(!blob) throw new Error('Missing video');
           mediaUrl = await uploadVideoToR2(blob);
           try{ thumbUrl = await generateVideoThumbnail(mediaUrl); }catch(_){}
@@ -934,7 +963,8 @@ $('postBroadcastBtn').onclick = async ()=>{
     postedCount = composerItems.length;
     composerItems.forEach((item, i)=>{
       newSegments.push({
-        type: item.kind, dataUrl: item.dataUrl, filterCss: item.filterCss,
+        type: item.kind, dataUrl: item.dataUrl, sourceFile: item.sourceFile || null,
+        videoBlob: item.videoBlob || null, filterCss: item.filterCss,
         crop: item.crop, caption: item.caption, createdAt: now + i, expiresAt: expires,
         transitionIn: composerItems.length>1 ? composerTransition : 'fade', duration: item.duration || null,
         groupId: postGroupId, order: i, linkedBroadcastId: linkedBroadcastId || null,

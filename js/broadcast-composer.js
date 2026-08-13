@@ -8,8 +8,8 @@
    ============================================================ */
 
 const BCAST_MAX_SECONDS = 10 * 60; // 10 minutes
-const BCAST_MAX_UPLOAD_BYTES = 55 * 1024 * 1024; // stay under typical worker caps after compress
-const BCAST_TARGET_HEIGHT = 720; // sharp on phones; keeps bitrate sane for long clips
+const BCAST_MAX_UPLOAD_BYTES = 150 * 1024 * 1024; // soft target after smart compress; no hard 60MB reject
+const BCAST_TARGET_HEIGHT = 1080; // phone-sharp; long clips still scale bitrate down
 
 let bcompFile = null;       // original File
 let bcompPreviewUrl = null;
@@ -71,11 +71,17 @@ function bcompProbeDuration(file){
   });
 }
 
-/** Pick a bitrate that keeps quality high on mobile without oversized uploads. */
-function bcompPickBitrate(durationSec){
-  if(durationSec <= 120) return 4_000_000;      // ≤2 min — crisp
-  if(durationSec <= 300) return 2_500_000;      // ≤5 min
-  return 1_800_000;                             // ≤10 min — still clean 720p
+/** YouTube-like bitrate ladder for mobile viewing quality. */
+function bcompPickBitrate(durationSec, width, height){
+  const pixels = (width || 1280) * (height || 720);
+  let base;
+  if(pixels >= 1920 * 1080 * 0.8) base = 4_500_000;      // ~1080p
+  else if(pixels >= 1280 * 720 * 0.8) base = 2_800_000;  // ~720p
+  else if(pixels >= 854 * 480 * 0.8) base = 1_600_000;   // ~480p
+  else base = 1_000_000;
+  if(durationSec > 180) base = Math.round(base * 0.85);
+  if(durationSec > 420) base = Math.round(base * 0.85);
+  return base;
 }
 
 function bcompPickMime(){
@@ -109,9 +115,16 @@ function compressBroadcastVideo(file, onProgress){
       return;
     }
 
-    // Small/short files can skip heavy re-encode if already under target size
-    if(file.size <= BCAST_MAX_UPLOAD_BYTES && duration <= 90){
-      if(onProgress) onProgress(1, 'Ready');
+    // Pass-through when already efficient — never inflate a good encode
+    const sourceBps = (file.size * 8) / Math.max(0.5, duration);
+    const likelyEfficient = sourceBps <= 5_500_000; // already ≤~5.5 Mbps
+    if(file.size <= 120 * 1024 * 1024 && duration <= 180 && likelyEfficient){
+      if(onProgress) onProgress(1, 'Ready · original kept');
+      resolve({ blob: file, duration, skipped: true });
+      return;
+    }
+    if(file.size <= 40 * 1024 * 1024 && duration <= 120){
+      if(onProgress) onProgress(1, 'Ready · original kept');
       resolve({ blob: file, duration, skipped: true });
       return;
     }
@@ -161,7 +174,7 @@ function compressBroadcastVideo(file, onProgress){
     }catch(_){}
 
     const mime = bcompPickMime();
-    const bitrate = bcompPickBitrate(duration);
+    const bitrate = bcompPickBitrate(duration, cw, ch);
     let recorder;
     try{
       recorder = new MediaRecorder(stream, {
