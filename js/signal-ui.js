@@ -231,6 +231,10 @@ function clearSegTimer(){
 }
 
 function playSegment(idx, direction=1){
+  if(viewingMine && $('bviewerRemove')){
+    $('bviewerRemove').style.display = 'inline-flex';
+  }
+
   const body = $('bviewerBody');
   if(body){ body.classList.add('square-preview'); body.classList.remove('native-preview'); }
 
@@ -388,21 +392,42 @@ function openMyBroadcast(){
 }
 function closeBroadcast(){ clearSegTimer(); $('bviewer').classList.remove('active'); }
 $('bviewerClose').onclick = closeBroadcast;
-$('bviewerRemove').onclick = ()=>{
-  if(!viewingMine) return;
-  if(!confirm('Delete this Signal clip now?')) return;
+function deleteCurrentSignalClip(){
+  if(!viewingMine){
+    toast('You can only delete your own Signal');
+    return;
+  }
   const seg = currentSegments[currentSegmentIndex];
-  mySignal = mySignal.filter(s=>s.id!==seg.id);
-  currentSegments.splice(currentSegmentIndex,1);
-  renderBroadcasts();
-  if(currentUser && fbDb) deleteSignalSegment(seg.id);
-  else saveSignalToStorage();
-  if(currentSegments.length===0){ closeBroadcast(); toast('Removed from your signal'); return; }
-  const nextIdx = Math.min(currentSegmentIndex, currentSegments.length-1);
-  renderBars(currentSegments.length);
-  playSegment(nextIdx);
-  toast('Removed from your signal');
-};
+  if(!seg){ toast('Nothing to delete'); return; }
+  if(!confirm('Delete this Signal now? It will disappear immediately.')) return;
+  const segId = seg.id;
+  mySignal = (mySignal || []).filter(s => s.id !== segId);
+  currentSegments = currentSegments.filter(s => s.id !== segId);
+  try{
+    if(currentUser && fbDb && typeof deleteSignalSegment === 'function'){
+      deleteSignalSegment(segId);
+    } else if(typeof saveSignalToStorage === 'function'){
+      saveSignalToStorage();
+    }
+  }catch(e){ console.warn('[signal] delete', e); }
+  if(typeof renderBroadcasts === 'function') renderBroadcasts();
+  if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
+  if(currentSegments.length === 0){
+    if(typeof closeBroadcast === 'function') closeBroadcast();
+    toast('Signal deleted');
+    return;
+  }
+  currentSegmentIndex = Math.min(currentSegmentIndex, currentSegments.length - 1);
+  if(typeof renderBars === 'function') renderBars(currentSegments.length);
+  if(typeof playSegment === 'function') playSegment(currentSegmentIndex);
+  toast('Signal deleted');
+}
+if($('bviewerRemove')){
+  $('bviewerRemove').onclick = function(e){
+    if(e){ e.preventDefault(); e.stopPropagation(); }
+    deleteCurrentSignalClip();
+  };
+}
 
 
 function renderContacts(){
@@ -449,15 +474,27 @@ $('frequencySearchInput').addEventListener('input', renderContacts);
 
 /* ---- Signal story viewer (ephemeral) — separate from permanent Broadcast space ---- */
 function openMySignalStory(){
-  pruneExpiredSignal();
-  if(!mySignal.length){ toast('No active Signal'); return; }
+  if(typeof pruneExpiredSignal === 'function') pruneExpiredSignal();
+  if(!mySignal || !mySignal.length){
+    toast('No active Signal — post one with + New Signal');
+    if(typeof openComposer === 'function') openComposer('signal');
+    return;
+  }
   viewingMine = true;
-  currentSegments = sortSignalSegments(mySignal.slice());
+  currentSegments = typeof sortSignalSegments === 'function' ? sortSignalSegments(mySignal.slice()) : mySignal.slice();
   currentSegmentIndex = 0;
+  if($('bviewerName')) $('bviewerName').textContent = (currentProfile && currentProfile.name) || 'You';
+  if($('bviewerRemove')){
+    $('bviewerRemove').style.display = 'inline-flex';
+    $('bviewerRemove').textContent = 'Delete';
+  }
+  if($('bviewerMessage')) $('bviewerMessage').style.display = 'none';
+  if($('bviewerStatus')) $('bviewerStatus').style.display = 'none';
   $('bviewer').classList.add('active');
-  playSegment(0);
+  if(typeof renderBars === 'function') renderBars(currentSegments.length);
+  if(typeof playSegment === 'function') playSegment(0);
   mySignalSeen = true;
-  if(typeof renderBroadcastTab==='function') renderBroadcastTab();
+  if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
 }
 
 async function openContactSignalStory(contactId){

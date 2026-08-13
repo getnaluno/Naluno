@@ -194,19 +194,25 @@ function openComposer(mode){
   const linkRow = $('signalLinkBroadcastRow');
   const postBtn = $('postBroadcastBtn');
   if(composerMode === 'broadcast'){
-    if(label) label.textContent = 'Broadcast';
-    if(hint) hint.textContent = 'Permanent · community · searchable';
+    if(label) label.textContent = 'New Broadcast';
+    if(hint) hint.textContent = 'Permanent · community · stays until you delete';
     if(ttlRow) ttlRow.style.display = 'none';
     if(fields) fields.style.display = 'block';
     if(linkRow) linkRow.style.display = 'none';
-    if(postBtn) postBtn.textContent = 'Publish Broadcast';
+    if(postBtn){
+      postBtn.textContent = 'Publish Broadcast';
+      postBtn.style.background = 'var(--mint)';
+    }
   } else {
-    if(label) label.textContent = 'Signal';
-    if(hint) hint.textContent = 'Short clip · disappears on a timer';
+    if(label) label.textContent = 'New Signal';
+    if(hint) hint.textContent = 'Ephemeral · choose 24h / 3 days / 7 days';
     if(ttlRow) ttlRow.style.display = 'block';
     if(fields) fields.style.display = 'none';
     if(linkRow) linkRow.style.display = 'block';
-    if(postBtn) postBtn.textContent = 'Post Signal';
+    if(postBtn){
+      postBtn.textContent = 'Post Signal';
+      postBtn.style.background = 'var(--mint)';
+    }
     // fill optional attach-to-broadcast
     const sel = $('signalLinkBroadcast');
     if(sel){
@@ -220,8 +226,9 @@ function openComposer(mode){
 
 function closeComposer(){ $('composer').classList.remove('active'); }
 $('composerClose').onclick = closeComposer;
-$('newBroadcastBtn').onclick = ()=> openComposer('broadcast');
-// Signal ring uses openComposer('signal') from strip
+if($('newSignalBtn')) $('newSignalBtn').onclick = ()=> openComposer('signal');
+if($('newBroadcastBtn')) $('newBroadcastBtn').onclick = ()=> openComposer('broadcast');
+// Signal ring (empty) also opens signal composer via renderBroadcastTab
 
 function resetComposer(){
   composerType = 'photo'; composerItems = []; activeComposerItemIndex = -1; composerTransition = 'fade';
