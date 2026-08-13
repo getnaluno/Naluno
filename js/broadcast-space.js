@@ -1,0 +1,659 @@
+/* ============================================================
+   MODULE: js/broadcast-space.js
+   Broadcast = living community, not a video player.
+   Video is the first message; conversation, questions, results,
+   resources, and journey make it valuable.
+   OWNERSHIP: Broadcast Space UI + Firestore community data.
+   ============================================================ */
+
+let activeBroadcastId = null;
+let activeBroadcastMeta = null; // { contactId?, isMine, creatorUid, title, ... }
+let bspaceUnsubs = [];
+
+function bspaceClearListeners(){
+  bspaceUnsubs.forEach(u=>{ try{ u(); }catch(e){} });
+  bspaceUnsubs = [];
+}
+
+function bspaceEscape(s){
+  return escapeHtml(String(s == null ? '' : s));
+}
+
+function bspaceWhoLabel(uid){
+  if(!uid) return 'Someone';
+  if(currentUser && uid === currentUser.uid) return 'You';
+  const c = contacts.find(x => x.firebaseUid === uid);
+  if(c) return (c.name || 'Someone').split(' ')[0];
+  if(activeBroadcastMeta && activeBroadcastMeta.creatorUid === uid){
+    return (activeBroadcastMeta.creatorName || 'Creator').split(' ')[0];
+  }
+  return 'Member';
+}
+
+function ensureBroadcastDocId(meta){
+  // Stable id: mine uses signal segment id; others use contact+createdAt
+  if(meta.broadcastId) return meta.broadcastId;
+  if(meta.isMine && meta.segment && meta.segment.id) return 'sig_' + meta.segment.id;
+  if(meta.contactId != null && meta.segment && meta.segment.createdAt){
+    return 'c' + meta.contactId + '_' + meta.segment.createdAt;
+  }
+  return 'local_' + Date.now();
+}
+
+async function ensureBroadcastFirestore(meta){
+  if(!fbDb || !currentUser) return null;
+  const id = ensureBroadcastDocId(meta);
+  const ref = fbDb.collection('broadcasts').doc(id);
+  const snap = await ref.get();
+  if(!snap.exists){
+    const seg = meta.segment || {};
+    await ref.set({
+      creatorUid: meta.creatorUid || currentUser.uid,
+      creatorName: meta.creatorName || (currentProfile && currentProfile.name) || 'Someone',
+      title: meta.title || (seg.text ? String(seg.text).slice(0, 80) : 'Broadcast'),
+      description: meta.description || (seg.caption || seg.text || ''),
+      tags: meta.tags || [],
+      mediaType: seg.type || 'photo',
+      mediaUrl: seg.videoUrl || seg.dataUrl || null,
+      thumb: seg.thumbDataUrl || null,
+      filterCss: seg.filterCss || '',
+      bg: seg.bg || null,
+      createdAt: seg.createdAt || Date.now(),
+      updatedAt: Date.now(),
+      memberUids: [meta.creatorUid || currentUser.uid],
+      source: meta.isMine ? 'signal_self' : 'signal_contact',
+    }, { merge:true });
+    // Journey seed
+    await ref.collection('journey').add({
+      type: 'created',
+      text: 'Broadcast opened',
+      ts: Date.now(),
+      by: meta.creatorUid || currentUser.uid,
+    });
+  }
+  return id;
+}
+
+function renderBspaceMedia(seg){
+  const host = $('bspaceMedia');
+  if(!host) return;
+  host.innerHTML = '';
+  if(!seg){
+    host.innerHTML = `<div class="bspace-hero-text" style="color:var(--text-dim);">No media</div>`;
+    return;
+  }
+  if(seg.type === 'text'){
+    host.innerHTML = `<div class="bspace-hero-text" style="background:${seg.bg || 'var(--surface)'};">${bspaceEscape(seg.text || '')}</div>`;
+    return;
+  }
+  if(seg.type === 'video'){
+    const src = seg.videoUrl || seg.dataUrl || '';
+    host.innerHTML = `<video id="bspaceVideoEl" controls playsinline preload="metadata" src="${bspaceEscape(src)}" poster="${seg.thumbDataUrl ? bspaceEscape(seg.thumbDataUrl) : ''}" style="filter:${seg.filterCss || ''}"></video>`;
+    return;
+  }
+  // photo
+  host.innerHTML = `<img src="${bspaceEscape(seg.dataUrl || '')}" alt="" style="filter:${seg.filterCss || ''}" />`;
+}
+
+function setBspaceTab(name){
+  document.querySelectorAll('#bspaceTabs .bspace-tab').forEach(t=>{
+    t.classList.toggle('on', t.dataset.bspan === name);
+  });
+  ['conversation','questions','results','resources','journey','updates'].forEach(n=>{
+    const p = $('bspan-' + n);
+    if(p) p.style.display = n === name ? 'block' : 'none';
+  });
+}
+
+function renderBspaceConversation(docs){
+  const el = $('bspaceConversation');
+  if(!el) return;
+  if(!docs.length){
+    el.innerHTML = `<div class="bspace-card"><div class="body" style="color:var(--text-dim);">Be the first to continue this conversation.</div></div>`;
+    return;
+  }
+  el.innerHTML = docs.map(d=>{
+    const m = d.data();
+    return `<div class="bspace-card">
+      <div class="who">${bspaceEscape(bspaceWhoLabel(m.from))} · ${timeAgo(m.ts || Date.now())}</div>
+      <div class="body">${m.type === 'voice' && m.mediaUrl
+        ? `<video class="band-audio-player" controls playsinline preload="metadata" src="${bspaceEscape(m.mediaUrl)}" style="width:100%;height:44px;border-radius:8px;background:#000;"></video>`
+        : m.type === 'photo' && m.mediaUrl
+        ? `<img src="${bspaceEscape(m.mediaUrl)}" alt="" style="max-width:100%;border-radius:10px;display:block;" />`
+        : m.type === 'system'
+        ? `<span style="color:var(--mint);font-family:var(--font-mono);font-size:12px;">${bspaceEscape(m.text || '')}</span>`
+        : bspaceEscape(m.text || '')}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderBspaceQuestions(docs){
+  const el = $('bspaceQuestions');
+  if(!el) return;
+  if(!docs.length){
+    el.innerHTML = `<div class="bspace-card"><div class="body" style="color:var(--text-dim);">No questions yet — ask anything.</div></div>`;
+    return;
+  }
+  el.innerHTML = docs.map(d=>{
+    const m = d.data();
+    const best = m.bestAnswer ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line);"><span style="font-family:var(--font-mono);font-size:10px;color:var(--mint);">Best answer</span><div class="body">${bspaceEscape(m.bestAnswer)}</div></div>` : '';
+    const mark = (activeBroadcastMeta && activeBroadcastMeta.isMine && !m.bestAnswer)
+      ? `<button type="button" class="bspace-mini" data-mark-best="${d.id}" style="margin-top:8px;">Mark best from replies…</button>` : '';
+    return `<div class="bspace-card" data-qid="${d.id}">
+      <div class="who">${bspaceEscape(bspaceWhoLabel(m.from))} asks · ${timeAgo(m.ts || Date.now())}</div>
+      <div class="body">${bspaceEscape(m.text || '')}</div>
+      ${best}
+      ${m.answers && m.answers.length ? m.answers.map((a,i)=>`<div style="margin-top:6px;font-size:13px;color:var(--text-dim);">↳ ${bspaceEscape(a.text)} <span style="font-family:var(--font-mono);font-size:10px;">— ${bspaceEscape(bspaceWhoLabel(a.from))}</span>${(activeBroadcastMeta && activeBroadcastMeta.isMine && !m.bestAnswer) ? ` <button type="button" class="bspace-mini bspace-mark-best" data-qid="${d.id}" data-atext="${bspaceEscape(a.text).replace(/"/g,'&quot;')}" style="margin-left:6px;">Best</button>` : ''}</div>`).join('') : ''}
+      <div class="bspace-composer" style="margin-top:8px;">
+        <input class="bspace-answer-input" data-qid="${d.id}" placeholder="Answer this…" maxlength="400" />
+        <button type="button" class="bspace-mini primary bspace-answer-btn" data-qid="${d.id}">Answer</button>
+      </div>
+    </div>`;
+  }).join('');
+  el.querySelectorAll('.bspace-answer-btn').forEach(btn=>{
+    btn.onclick = ()=> bspaceAnswerQuestion(btn.dataset.qid);
+  });
+  el.querySelectorAll('.bspace-mark-best').forEach(btn=>{
+    btn.onclick = ()=> bspaceMarkBest(btn.dataset.qid, btn.dataset.atext || btn.getAttribute('data-atext'));
+  });
+}
+
+function renderBspaceResults(docs){
+  const el = $('bspaceResults');
+  if(!el) return;
+  if(!docs.length){
+    el.innerHTML = `<div class="bspace-card"><div class="body" style="color:var(--text-dim);">When this Broadcast changes something in someone’s life, it shows up here.</div></div>`;
+    return;
+  }
+  el.innerHTML = docs.map(d=>{
+    const m = d.data();
+    return `<div class="bspace-card">
+      <div class="who">${bspaceEscape(bspaceWhoLabel(m.from))} · ${timeAgo(m.ts || Date.now())}</div>
+      <div class="body">${bspaceEscape(m.text || '')}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderBspaceResources(docs){
+  const el = $('bspaceResources');
+  if(!el) return;
+  if(!docs.length){
+    el.innerHTML = `<div class="bspace-card"><div class="body" style="color:var(--text-dim);">No resources attached yet.</div></div>`;
+    return;
+  }
+  el.innerHTML = docs.map(d=>{
+    const m = d.data();
+    const link = m.url ? `<a href="${bspaceEscape(m.url)}" target="_blank" rel="noopener" style="color:var(--mint);word-break:break-all;">${bspaceEscape(m.title || m.url)}</a>` : bspaceEscape(m.title || 'Resource');
+    return `<div class="bspace-card"><div class="who">${bspaceEscape(bspaceWhoLabel(m.from))}</div><div class="body">${link}</div></div>`;
+  }).join('');
+}
+
+function renderBspaceJourney(docs){
+  const el = $('bspaceJourney');
+  if(!el) return;
+  if(!docs.length){
+    el.innerHTML = `<div class="evt">This story is just beginning.</div>`;
+    return;
+  }
+  el.innerHTML = docs.map(d=>{
+    const m = d.data();
+    return `<div class="evt"><strong>${bspaceEscape(m.text || m.type || 'Update')}</strong><br><span style="font-family:var(--font-mono);font-size:10.5px;">${timeAgo(m.ts || Date.now())}</span></div>`;
+  }).join('');
+}
+
+function renderBspaceRelated(){
+  const el = $('bspaceRelated');
+  if(!el) return;
+  const others = (connectionsSignals || []).slice(0, 6).filter(x => {
+    if(!activeBroadcastMeta) return true;
+    return x.contact && x.contact.id !== activeBroadcastMeta.contactId;
+  });
+  if(!others.length){
+    el.innerHTML = `<div class="bspace-card"><div class="body" style="color:var(--text-dim);">Related Broadcasts from your frequencies will appear here.</div></div>`;
+    return;
+  }
+  el.innerHTML = others.map(({ contact:c, latest })=>{
+    return `<div class="bspace-card" role="button" data-rel-b="${c.id}" style="cursor:pointer;">
+      <div class="who">${bspaceEscape(c.name)} · ${signalMeta[computeSignal(c).tier].label}</div>
+      <div class="body" style="color:var(--text-dim);">Open their Broadcast space</div>
+    </div>`;
+  }).join('');
+  el.querySelectorAll('[data-rel-b]').forEach(node=>{
+    node.onclick = ()=>{
+      closeBroadcastSpace();
+      openBroadcast(parseInt(node.dataset.relB, 10));
+    };
+  });
+}
+
+function listenBspaceCollection(colName, renderFn, orderField){
+  if(!fbDb || !activeBroadcastId) return;
+  const q = fbDb.collection('broadcasts').doc(activeBroadcastId).collection(colName).orderBy(orderField || 'ts', 'asc').limit(80);
+  const unsub = q.onSnapshot(snap => renderFn(snap.docs), ()=> renderFn([]));
+  bspaceUnsubs.push(unsub);
+}
+
+async function openBroadcastSpace(meta){
+  // meta: { isMine, contactId?, segment, creatorUid, creatorName, title?, description?, tags? }
+  activeBroadcastMeta = meta;
+  bspaceClearListeners();
+
+  const seg = meta.segment || {};
+  const title = meta.title || (seg.type === 'text' ? (seg.text || 'Broadcast').slice(0, 60) : (seg.caption || 'Broadcast'));
+  const desc = meta.description || seg.caption || (seg.type === 'text' ? '' : 'Join the community around this idea.');
+
+  $('bspaceCreatorName').textContent = meta.creatorName || 'Someone';
+  $('bspaceCreatorMeta').textContent = meta.isMine ? 'Your Broadcast' : 'Broadcast space';
+  $('bspaceTitle').textContent = title;
+  $('bspaceDesc').textContent = desc;
+  const tags = meta.tags && meta.tags.length ? meta.tags : (seg.type ? [seg.type] : ['idea']);
+  $('bspaceTags').innerHTML = tags.map(t => `<span class="bspace-tag">${bspaceEscape(t)}</span>`).join('');
+  renderBspaceMedia(seg);
+  setBspaceTab('conversation');
+  renderBspaceRelated();
+
+  const isCreator = !!(meta.isMine || (currentUser && meta.creatorUid === currentUser.uid));
+  $('bspaceResourceComposer').style.display = isCreator ? 'flex' : 'none';
+  $('bspaceGoLive').style.display = isCreator ? 'inline-block' : 'none';
+
+  $('bspace').classList.add('active');
+  $('bspaceScroll').scrollTop = 0;
+
+  if(!fbDb || !currentUser){
+    $('bspaceJoinBtn').textContent = 'Sign in to join';
+    $('bspaceJoinBtn').classList.remove('joined');
+    $('bspaceConversation').innerHTML = `<div class="bspace-card"><div class="body" style="color:var(--text-dim);">Sign in to take part in this community.</div></div>`;
+    return;
+  }
+
+  try{
+    activeBroadcastId = await ensureBroadcastFirestore(meta);
+  }catch(e){
+    console.warn('[bspace] ensure failed', e);
+    toast('Couldn’t open community data');
+    activeBroadcastId = ensureBroadcastDocId(meta);
+  }
+
+  // Membership button
+  try{
+    const doc = await fbDb.collection('broadcasts').doc(activeBroadcastId).get();
+    const members = (doc.exists && doc.data().memberUids) || [];
+    const joined = members.includes(currentUser.uid);
+    $('bspaceJoinBtn').textContent = joined ? 'You’re in this community' : 'Join community';
+    $('bspaceJoinBtn').classList.toggle('joined', joined);
+  }catch(e){
+    $('bspaceJoinBtn').textContent = 'Join community';
+  }
+
+  listenBspaceCollection('conversation', renderBspaceConversation, 'ts');
+  listenBspaceCollection('questions', renderBspaceQuestions, 'ts');
+  listenBspaceCollection('results', renderBspaceResults, 'ts');
+  listenBspaceCollection('resources', renderBspaceResources, 'ts');
+  listenBspaceCollection('journey', renderBspaceJourney, 'ts');
+  listenBspaceCollection('updates', renderBspaceUpdates, 'ts');
+  bspaceWatchLiveState();
+
+  const dash = $('bspaceDashboard');
+  const upTab = $('bspaceUpdatesTab');
+  if(isCreator){
+    if(dash) dash.style.display = 'block';
+    if(upTab) upTab.style.display = 'inline-block';
+    renderBspaceImpact();
+  } else {
+    if(dash) dash.style.display = 'none';
+    if(upTab) upTab.style.display = 'inline-block'; // members can read updates
+  }
+}
+
+function closeBroadcastSpace(){
+  bspaceStopLive();
+  bspaceClearListeners();
+  activeBroadcastId = null;
+  activeBroadcastMeta = null;
+  const vid = $('bspaceVideoEl');
+  if(vid){ try{ vid.pause(); }catch(e){} }
+  $('bspace').classList.remove('active');
+}
+
+async function bspaceRequireMember(){
+  if(!currentUser || !fbDb || !activeBroadcastId){ toast('Sign in to take part'); return false; }
+  return true;
+}
+
+async function bspacePost(col, payload){
+  if(!(await bspaceRequireMember())) return;
+  try{
+    await fbDb.collection('broadcasts').doc(activeBroadcastId).collection(col).add(Object.assign({
+      from: currentUser.uid,
+      ts: Date.now(),
+    }, payload));
+    await fbDb.collection('broadcasts').doc(activeBroadcastId).set({ updatedAt: Date.now() }, { merge:true });
+  }catch(e){
+    console.warn('[bspace] post failed', e);
+    toast(e.message || 'Couldn’t post');
+  }
+}
+
+$('bspaceBack').onclick = closeBroadcastSpace;
+
+document.querySelectorAll('#bspaceTabs .bspace-tab').forEach(tab=>{
+  tab.onclick = ()=> setBspaceTab(tab.dataset.bspan);
+});
+
+$('bspaceJoinBtn').onclick = async ()=>{
+  if(!currentUser || !fbDb || !activeBroadcastId){ toast('Sign in to join'); return; }
+  try{
+    const ref = fbDb.collection('broadcasts').doc(activeBroadcastId);
+    await ref.set({
+      memberUids: firebase.firestore.FieldValue.arrayUnion(currentUser.uid),
+      updatedAt: Date.now(),
+    }, { merge:true });
+    await ref.collection('journey').add({
+      type: 'join',
+      text: ((currentProfile && currentProfile.name) || 'Someone') + ' joined the community',
+      ts: Date.now(),
+      by: currentUser.uid,
+    });
+    $('bspaceJoinBtn').textContent = 'You’re in this community';
+    $('bspaceJoinBtn').classList.add('joined');
+    toast('Welcome in');
+  }catch(e){ toast(e.message || 'Couldn’t join'); }
+};
+
+$('bspaceConvSend').onclick = async ()=>{
+  const text = ($('bspaceConvInput').value || '').trim();
+  if(!text) return;
+  $('bspaceConvInput').value = '';
+  await bspacePost('conversation', { type:'text', text });
+};
+$('bspaceConvInput').addEventListener('keydown', e=>{
+  if(e.key === 'Enter'){ e.preventDefault(); $('bspaceConvSend').onclick(); }
+});
+
+$('bspaceConvVoice').onclick = async ()=>{
+  if(!(await bspaceRequireMember())) return;
+  if(!navigator.mediaDevices || !window.MediaRecorder){ toast('Voice not supported here'); return; }
+  toast('Recording 8s voice…');
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+    const chunks = [];
+    const rec = new MediaRecorder(stream);
+    rec.ondataavailable = e=>{ if(e.data && e.data.size) chunks.push(e.data); };
+    rec.start();
+    await new Promise(r => setTimeout(r, 8000));
+    await new Promise(r => { rec.onstop = r; rec.stop(); });
+    stream.getTracks().forEach(t=>t.stop());
+    const blob = new Blob(chunks, { type: (chunks[0] && chunks[0].type) || 'audio/webm' });
+    if(!blob.size){ toast('Nothing recorded'); return; }
+    toast('Uploading…');
+    const url = await uploadVideoToR2(blob);
+    await bspacePost('conversation', { type:'voice', mediaUrl:url, text:'' });
+    toast('Voice added');
+  }catch(e){
+    toast(e.message || 'Voice failed');
+  }
+};
+
+$('bspaceQSend').onclick = async ()=>{
+  const text = ($('bspaceQInput').value || '').trim();
+  if(!text) return;
+  $('bspaceQInput').value = '';
+  await bspacePost('questions', { type:'question', text, answers:[], bestAnswer:null });
+  await bspacePost('journey', { type:'question', text: 'New question: ' + text.slice(0, 80) });
+};
+
+async function bspaceAnswerQuestion(qid){
+  if(!(await bspaceRequireMember())) return;
+  const input = document.querySelector(`.bspace-answer-input[data-qid="${qid}"]`);
+  const text = input && input.value.trim();
+  if(!text) return;
+  try{
+    const ref = fbDb.collection('broadcasts').doc(activeBroadcastId).collection('questions').doc(qid);
+    const snap = await ref.get();
+    if(!snap.exists) return;
+    const answers = snap.data().answers || [];
+    answers.push({ from: currentUser.uid, text, ts: Date.now() });
+    await ref.update({ answers });
+    if(input) input.value = '';
+  }catch(e){ toast(e.message || 'Couldn’t answer'); }
+}
+
+$('bspaceResultSend').onclick = async ()=>{
+  const text = ($('bspaceResultInput').value || '').trim();
+  if(!text) return;
+  $('bspaceResultInput').value = '';
+  await bspacePost('results', { type:'result', text });
+  await bspacePost('journey', { type:'result', text: 'Result shared: ' + text.slice(0, 80) });
+};
+
+$('bspaceResSend').onclick = async ()=>{
+  const title = ($('bspaceResTitle').value || '').trim();
+  const url = ($('bspaceResUrl').value || '').trim();
+  if(!title && !url) return;
+  $('bspaceResTitle').value = '';
+  $('bspaceResUrl').value = '';
+  await bspacePost('resources', { type:'link', title: title || url, url });
+  await bspacePost('journey', { type:'resource', text: 'Resource attached: ' + (title || url).slice(0, 80) });
+};
+
+/* ---- Creator impact dashboard ---- */
+function renderBspaceImpact(){
+  const grid = $('bspaceImpactGrid');
+  if(!grid || !activeBroadcastId || !fbDb) return;
+  Promise.all([
+    fbDb.collection('broadcasts').doc(activeBroadcastId).collection('conversation').get(),
+    fbDb.collection('broadcasts').doc(activeBroadcastId).collection('questions').get(),
+    fbDb.collection('broadcasts').doc(activeBroadcastId).collection('results').get(),
+    fbDb.collection('broadcasts').doc(activeBroadcastId).collection('resources').get(),
+    fbDb.collection('broadcasts').doc(activeBroadcastId).get(),
+  ]).then(([conv, qs, res, resources, doc])=>{
+    const members = (doc.exists && doc.data().memberUids) || [];
+    const answered = qs.docs.filter(d => (d.data().answers && d.data().answers.length) || d.data().bestAnswer).length;
+    const cells = [
+      ['Community', members.length],
+      ['Conversations', conv.size],
+      ['Questions', qs.size],
+      ['Answered', answered],
+      ['Results', res.size],
+      ['Resources', resources.size],
+    ];
+    grid.innerHTML = cells.map(([label, n]) =>
+      `<div class="bspace-card" style="margin:0;text-align:center;padding:14px 8px;">
+        <div style="font-family:var(--font-futuristic);font-size:22px;color:var(--mint);">${n}</div>
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);margin-top:4px;">${label}</div>
+      </div>`
+    ).join('');
+  }).catch(()=>{ grid.innerHTML = ''; });
+}
+
+function renderBspaceUpdates(docs){
+  const el = $('bspaceUpdates');
+  if(!el) return;
+  if(!docs.length){
+    el.innerHTML = `<div class="bspace-card"><div class="body" style="color:var(--text-dim);">No updates yet. The creator can correct, pin, or add follow-ups here.</div></div>`;
+    return;
+  }
+  el.innerHTML = docs.map(d=>{
+    const m = d.data();
+    return `<div class="bspace-card">
+      <div class="who">${m.pinned ? '📌 ' : ''}Update · ${timeAgo(m.ts || Date.now())}</div>
+      <div class="body">${bspaceEscape(m.text || '')}</div>
+    </div>`;
+  }).join('');
+}
+
+/* ---- Go Live: same Broadcast, new chapter ---- */
+let bspaceLiveStream = null;
+let bspaceLiveUnsub = null;
+
+async function bspaceStopLive(){
+  if(bspaceLiveStream){
+    bspaceLiveStream.getTracks().forEach(t=>{ try{ t.stop(); }catch(_){} });
+    bspaceLiveStream = null;
+  }
+  if(bspaceLiveUnsub){ try{ bspaceLiveUnsub(); }catch(_){} bspaceLiveUnsub = null; }
+  const badge = $('bspaceLiveBadge');
+  if(badge) badge.style.display = 'none';
+  const btn = $('bspaceGoLive');
+  if(btn){ btn.textContent = 'Go live'; btn.style.background = ''; }
+  if(fbDb && activeBroadcastId && currentUser){
+    fbDb.collection('broadcasts').doc(activeBroadcastId).set({
+      live: false,
+      liveAt: null,
+      liveBy: null,
+    }, { merge:true }).catch(()=>{});
+  }
+}
+
+async function bspaceStartLive(){
+  if(!(await bspaceRequireMember())) return;
+  if(bspaceLiveStream){ await bspaceStopLive(); toast('Live ended'); return; }
+  try{
+    bspaceLiveStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: true,
+    });
+  }catch(e){
+    toast('Camera/mic needed to go live');
+    return;
+  }
+  const host = $('bspaceMedia');
+  if(host){
+    host.innerHTML = `<video id="bspaceLiveVideo" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;"></video>`;
+    const v = $('bspaceLiveVideo');
+    if(v){ v.srcObject = bspaceLiveStream; v.play().catch(()=>{}); }
+  }
+  const badge = $('bspaceLiveBadge');
+  if(badge) badge.style.display = 'block';
+  const btn = $('bspaceGoLive');
+  if(btn){ btn.textContent = 'End live'; btn.style.background = 'var(--red)'; btn.style.color = '#fff'; }
+
+  await fbDb.collection('broadcasts').doc(activeBroadcastId).set({
+    live: true,
+    liveAt: Date.now(),
+    liveBy: currentUser.uid,
+    updatedAt: Date.now(),
+  }, { merge:true });
+  await bspacePost('conversation', { type:'system', text: ((currentProfile && currentProfile.name) || 'Creator') + ' went live — this is a new chapter of the same Broadcast.' });
+  await bspacePost('journey', { type:'live', text: 'Live session started' });
+  toast('You’re live on this Broadcast');
+}
+
+$('bspaceGoLive').onclick = ()=> bspaceStartLive();
+
+if($('bspaceUpdateSend')){
+  $('bspaceUpdateSend').onclick = async ()=>{
+    const text = ($('bspaceUpdateInput').value || '').trim();
+    if(!text) return;
+    if(!(activeBroadcastMeta && (activeBroadcastMeta.isMine || (currentUser && activeBroadcastMeta.creatorUid === currentUser.uid)))){
+      toast('Only the creator can post updates');
+      return;
+    }
+    $('bspaceUpdateInput').value = '';
+    await bspacePost('updates', { type:'update', text, pinned: false });
+    await bspacePost('journey', { type:'update', text: 'Update: ' + text.slice(0, 80) });
+    toast('Broadcast updated');
+    renderBspaceImpact();
+  };
+}
+
+if($('bspaceConvPhoto')){
+  $('bspaceConvPhoto').onclick = ()=> $('bspaceConvPhotoInput') && $('bspaceConvPhotoInput').click();
+}
+if($('bspaceConvPhotoInput')){
+  $('bspaceConvPhotoInput').onchange = async ()=>{
+    const file = $('bspaceConvPhotoInput').files && $('bspaceConvPhotoInput').files[0];
+    $('bspaceConvPhotoInput').value = '';
+    if(!file) return;
+    if(!(await bspaceRequireMember())) return;
+    try{
+      toast('Uploading photo…');
+      const url = await uploadVideoToR2(file);
+      await bspacePost('conversation', { type:'photo', mediaUrl: url, text: '' });
+      toast('Photo shared');
+    }catch(e){ toast(e.message || 'Upload failed'); }
+  };
+}
+
+// Watch live flag when viewing someone else's broadcast
+function bspaceWatchLiveState(){
+  if(!fbDb || !activeBroadcastId) return;
+  const unsub = fbDb.collection('broadcasts').doc(activeBroadcastId).onSnapshot(doc=>{
+    if(!doc.exists) return;
+    const d = doc.data() || {};
+    const badge = $('bspaceLiveBadge');
+    if(badge){
+      const show = !!d.live && !(bspaceLiveStream); // local live already shows
+      if(d.live && !bspaceLiveStream){
+        badge.style.display = 'block';
+        badge.textContent = 'LIVE NOW';
+      } else if(!bspaceLiveStream){
+        badge.style.display = 'none';
+      }
+    }
+  }, ()=>{});
+  bspaceUnsubs.push(unsub);
+}
+
+/* ---- Hook existing openers into Broadcast Space ---- */
+(function patchBroadcastOpeners(){
+  const prevOpenBroadcast = typeof openBroadcast === 'function' ? openBroadcast : null;
+  const prevOpenMy = typeof openMyBroadcast === 'function' ? openMyBroadcast : null;
+
+  window.openBroadcast = async function(contactId){
+    const entry = (connectionsSignals || []).find(x => x.contact && x.contact.id === contactId);
+    if(!entry){
+      if(prevOpenBroadcast) return prevOpenBroadcast(contactId);
+      toast('No Broadcast to open');
+      return;
+    }
+    const c = entry.contact;
+    const seg = entry.latest;
+    await openBroadcastSpace({
+      isMine: false,
+      contactId: c.id,
+      segment: seg,
+      creatorUid: c.firebaseUid,
+      creatorName: c.name,
+      title: seg.type === 'text' ? String(seg.text || '').slice(0, 60) : ((c.name || 'Broadcast') + ' · signal'),
+      description: seg.caption || 'Join the community around this idea.',
+      tags: [seg.type || 'signal', 'frequency'],
+    });
+  };
+
+  window.openMyBroadcast = async function(){
+    pruneExpiredSignal();
+    if(!mySignal.length){
+      if(typeof openComposer === 'function') openComposer();
+      else toast('Post a Broadcast first');
+      return;
+    }
+    const seg = mySignal[mySignal.length - 1];
+    await openBroadcastSpace({
+      isMine: true,
+      segment: seg,
+      creatorUid: currentUser && currentUser.uid,
+      creatorName: (currentProfile && currentProfile.name) || 'You',
+      title: seg.type === 'text' ? String(seg.text || '').slice(0, 60) : (seg.caption || 'Your Broadcast'),
+      description: seg.caption || 'Your space — people gather here around this idea.',
+      tags: [seg.type || 'signal', 'yours'],
+    });
+  };
+})();
+
+
+async function bspaceMarkBest(qid, answerText){
+  if(!fbDb || !activeBroadcastId || !currentUser) return;
+  if(!(activeBroadcastMeta && (activeBroadcastMeta.isMine || activeBroadcastMeta.creatorUid === currentUser.uid))){
+    toast('Only the creator can mark the best answer');
+    return;
+  }
+  try{
+    await fbDb.collection('broadcasts').doc(activeBroadcastId).collection('questions').doc(qid).update({
+      bestAnswer: answerText,
+    });
+    await bspacePost('journey', { type:'best', text: 'Best answer marked' });
+    toast('Best answer saved to this Broadcast');
+    renderBspaceImpact();
+  }catch(e){ toast(e.message || 'Couldn’t mark'); }
+}

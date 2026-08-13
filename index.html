@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.08.13.mod2">
+<meta name="app-version" content="2026.08.13.complete">
 <meta name="description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="A statement from the future — not another WhatsApp.">
@@ -138,9 +138,9 @@
       </div>
     </div>
     <div class="tab-scroll">
-      <div class="section-label">Your signal</div>
+      <div class="section-label">Your Broadcast</div>
       <div class="bcast-strip" id="myBcastStrip"></div>
-      <div class="section-label">Recent broadcasts</div>
+      <div class="section-label">Join a Broadcast</div>
       <div id="bcastList"></div>
     </div>
   </section>
@@ -585,9 +585,11 @@
         <button id="bandTuneBtn" style="padding:9px 16px; border-radius:999px; border:none; background:var(--mint); color:#0D0F17; font-family:var(--font-futuristic); font-weight:700; font-size:11.5px; letter-spacing:.05em; text-transform:uppercase; cursor:pointer; flex-shrink:0;">Tune in</button>
       </div>
       <div id="bandRoster" style="display:flex; gap:14px; padding:10px 16px 4px; overflow-x:auto; flex-shrink:0;"></div>
+      <div id="bandLiveFloat" class="band-live-float" style="display:none; right:16px; bottom:160px;"><div class="grip"></div><video id="bandLiveFloatVideo" autoplay playsinline muted></video><div class="live-tag">LIVE</div></div>
       <div id="bandLiveStage" style="display:none; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; padding:6px 12px 8px; max-height:42vh; overflow-y:auto; flex-shrink:0;"></div>
       <div style="padding:4px 16px 6px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; flex-shrink:0;">
         <span id="bandSettleNote" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(124,255,178,.75); flex:1; min-width:140px;">Band · messages clear 2h after the last person leaves</span>
+        <span id="bandCopyLinkBtn" role="button" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(255,255,255,.55); cursor:pointer; text-decoration:underline; text-underline-offset:2px; white-space:nowrap;">Copy link</span>
         <span id="bandInviteBtn" role="button" style="font-family:var(--font-mono); font-size:10.5px; color:var(--mint); cursor:pointer; text-decoration:underline; text-underline-offset:2px; white-space:nowrap;">Invite</span>
         <span id="bandBellBtn" role="button" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(255,255,255,.55); cursor:pointer; text-decoration:underline; text-underline-offset:2px; white-space:nowrap;">Ring</span>
         <span id="leaveBandForGoodLink" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(255,255,255,.35); cursor:pointer; text-decoration:underline; text-underline-offset:2px; white-space:nowrap;">Leave band</span>
@@ -599,6 +601,7 @@
           <div class="ghost-btn" id="bandSendBtn" role="button" aria-label="Send" style="background:var(--mint); border-color:var(--mint); color:#0D0F17; flex-shrink:0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" stroke="#0D0F17" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
         </div>
         <div style="display:flex; gap:8px; justify-content:center;">
+          <button type="button" id="bandVoiceBtn" title="Voice note" style="flex:1; max-width:120px; padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.2); background:rgba(13,15,23,.55); color:#fff; font-family:var(--font-mono); font-size:11px; cursor:pointer;">Voice</button>
           <button type="button" id="bandAudioBtn" title="Record audio for the Band" style="flex:1; max-width:140px; padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.2); background:rgba(13,15,23,.55); color:#fff; font-family:var(--font-mono); font-size:11px; cursor:pointer;">Record audio</button>
           <button type="button" id="bandLiveBtn" title="Record video for the Band" style="flex:1; max-width:140px; padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.2); background:rgba(13,15,23,.55); color:#fff; font-family:var(--font-mono); font-size:11px; cursor:pointer;">Record video</button>
         </div>
@@ -681,6 +684,120 @@
   </div>
 </div>
 
+
+  <!-- ===================== BROADCAST SPACE (living community) ===================== -->
+  <div class="bspace" id="bspace">
+    <div class="bspace-scroll" id="bspaceScroll">
+      <div class="bspace-hero" id="bspaceHero">
+        <div class="bspace-topbar">
+          <div class="back-btn" id="bspaceBack" role="button" aria-label="Back" style="background:rgba(13,15,23,.55);"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <div style="flex:1; min-width:0;">
+            <div style="font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" id="bspaceCreatorName">—</div>
+            <div style="font-size:11px; font-family:var(--font-mono); color:rgba(255,255,255,.65);" id="bspaceCreatorMeta">Broadcast</div>
+          </div>
+          <button type="button" class="bspace-mini" id="bspaceGoLive" style="display:none;">Go live</button>
+        </div>
+        <div id="bspaceLiveBadge" style="display:none;position:absolute;left:12px;bottom:12px;z-index:3;font-family:var(--font-mono);font-size:10px;background:var(--red);color:#fff;padding:4px 10px;border-radius:999px;letter-spacing:.04em;">LIVE</div>
+        <div id="bspaceMedia" style="width:100%;height:100%;"></div>
+      </div>
+      <div class="bspace-body">
+        <h1 class="bspace-title" id="bspaceTitle">—</h1>
+        <p class="bspace-desc" id="bspaceDesc"></p>
+        <div class="bspace-tags" id="bspaceTags"></div>
+        <button type="button" class="bspace-join" id="bspaceJoinBtn">Join community</button>
+
+        <div class="bspace-tabs" id="bspaceTabs">
+          <button type="button" class="bspace-tab on" data-bspan="conversation">Conversation</button>
+          <button type="button" class="bspace-tab" data-bspan="questions">Questions</button>
+          <button type="button" class="bspace-tab" data-bspan="results">Results</button>
+          <button type="button" class="bspace-tab" data-bspan="resources">Resources</button>
+          <button type="button" class="bspace-tab" data-bspan="journey">Journey</button>
+          <button type="button" class="bspace-tab" data-bspan="updates" id="bspaceUpdatesTab" style="display:none;">Updates</button>
+        </div>
+
+        <div class="bspace-panel" id="bspan-conversation">
+          <div class="bspace-section">
+            <h3>Continue the conversation</h3>
+            <p class="hint">Not a comment thread — replies become a discussion. Text, voice, photo, or a short clip.</p>
+            <div id="bspaceConversation"></div>
+            <div class="bspace-composer">
+              <input id="bspaceConvInput" placeholder="Add to the conversation…" maxlength="800" />
+              <button type="button" class="bspace-mini primary" id="bspaceConvSend">Send</button>
+              <button type="button" class="bspace-mini" id="bspaceConvVoice">Voice</button>
+              <button type="button" class="bspace-mini" id="bspaceConvPhoto">Photo</button>
+              <input type="file" id="bspaceConvPhotoInput" accept="image/*" style="display:none;" />
+            </div>
+          </div>
+        </div>
+        <div class="bspace-panel" id="bspan-questions" style="display:none;">
+          <div class="bspace-section">
+            <h3>Questions</h3>
+            <p class="hint">Ask anything. The community can answer before the creator. Best answers can be marked.</p>
+            <div id="bspaceQuestions"></div>
+            <div class="bspace-composer">
+              <input id="bspaceQInput" placeholder="Ask a question…" maxlength="400" />
+              <button type="button" class="bspace-mini primary" id="bspaceQSend">Ask</button>
+            </div>
+          </div>
+        </div>
+        <div class="bspace-panel" id="bspan-results" style="display:none;">
+          <div class="bspace-section">
+            <h3>Results</h3>
+            <p class="hint">What happened because of this Broadcast? Real impact, not “nice video.”</p>
+            <div id="bspaceResults"></div>
+            <div class="bspace-composer">
+              <input id="bspaceResultInput" placeholder="I tried this and…" maxlength="400" />
+              <button type="button" class="bspace-mini primary" id="bspaceResultSend">Share result</button>
+            </div>
+          </div>
+        </div>
+        <div class="bspace-panel" id="bspan-resources" style="display:none;">
+          <div class="bspace-section">
+            <h3>Resources</h3>
+            <p class="hint">Links, notes, and materials that belong with this idea.</p>
+            <div id="bspaceResources"></div>
+            <div class="bspace-composer" id="bspaceResourceComposer" style="display:none;">
+              <input id="bspaceResTitle" placeholder="Resource title" maxlength="120" />
+              <input id="bspaceResUrl" placeholder="https://…" maxlength="500" />
+              <button type="button" class="bspace-mini primary" id="bspaceResSend">Attach</button>
+            </div>
+          </div>
+        </div>
+        <div class="bspace-panel" id="bspan-updates" style="display:none;">
+          <div class="bspace-section">
+            <h3>Updates</h3>
+            <p class="hint">The Broadcast grows without being deleted — corrections, pins, follow-ups.</p>
+            <div id="bspaceUpdates"></div>
+          </div>
+        </div>
+        <div class="bspace-panel" id="bspan-journey" style="display:none;">
+          <div class="bspace-section">
+            <h3>Journey</h3>
+            <p class="hint">How this Broadcast has grown — one evolving story.</p>
+            <div class="bspace-journey" id="bspaceJourney"></div>
+          </div>
+        </div>
+
+        
+        <div class="bspace-section" id="bspaceDashboard" style="display:none;">
+          <h3>Impact</h3>
+          <p class="hint">What this Broadcast has actually done — not vanity metrics.</p>
+          <div id="bspaceImpactGrid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;"></div>
+          <div class="bspace-composer" style="margin-top:12px;">
+            <input id="bspaceUpdateInput" placeholder="Update this Broadcast (correction, news, pin)…" maxlength="500" />
+            <button type="button" class="bspace-mini primary" id="bspaceUpdateSend">Post update</button>
+          </div>
+        </div>
+
+        <div class="bspace-section" id="bspaceRelatedWrap">
+          <h3>Related Broadcasts</h3>
+          <div id="bspaceRelated"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
 <!-- NALUNO_MODULES -->
 <script src="js/core.js"></script>
 <script src="js/data.js"></script>
@@ -690,6 +807,7 @@
 <script src="js/signal-core.js"></script>
 <script src="js/compass.js"></script>
 <script src="js/signal-ui.js"></script>
+<script src="js/broadcast-space.js"></script>
 <script src="js/wireline.js"></script>
 <script src="js/profile.js"></script>
 <script src="js/auth.js"></script>

@@ -126,5 +126,45 @@ service cloud.firestore {
       allow read, update: if isOwner(uid);
       allow create: if isSignedIn();
     }
+  
+    // ---- Broadcast spaces (living communities) ----
+    match /broadcasts/{bcastId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
+      allow delete: if false;
+
+      match /conversation/{id} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.from == request.auth.uid;
+        allow update, delete: if false;
+      }
+      match /questions/{id} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.from == request.auth.uid;
+        allow update: if isSignedIn();
+        allow delete: if false;
+      }
+      match /results/{id} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.from == request.auth.uid;
+        allow update, delete: if false;
+      }
+      match /resources/{id} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.from == request.auth.uid;
+        allow update, delete: if false;
+      }
+      match /journey/{id} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn();
+        allow update, delete: if false;
+      }
+      match /updates/{id} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.from == request.auth.uid;
+        allow update, delete: if false;
+      }
+    }
   }
 }

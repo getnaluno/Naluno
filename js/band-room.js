@@ -276,6 +276,7 @@ function openBandRoom(id){
       }
       renderBandRoster();
       updateBandSettleNote();
+      renderBandLiveGrid();
     }, ()=>{ /* presence just won't update this session */ });
 
     bandMessagesUnsub = bandRef.collection('messages').orderBy('ts','asc').onSnapshot(async snap=>{
@@ -935,3 +936,226 @@ async function sendBandMessage(){
 $('bandSendBtn').onclick = sendBandMessage;
 $('bandInput').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); sendBandMessage(); } });
 
+
+
+/* ---- Band live local camera (draggable) + voice note + invite link ----
+   Live here means YOUR camera in the hall — movable. Multi-person mesh is separate.
+   Messages are permanent until the 2h settle wipe after the room empties. */
+
+let bandLiveLocalStream = null;
+
+
+
+/* ---- Multi-person live presence grid ---- */
+function renderBandLiveGrid(){
+  const stage = $('bandLiveStage');
+  if(!stage) return;
+  const liveOthers = (realBandLiveMembers || []).filter(m => m.live);
+  const selfLive = !!bandLiveLocalStream;
+  if(!liveOthers.length && !selfLive){
+    stage.style.display = 'none';
+    stage.innerHTML = '';
+    return;
+  }
+  stage.style.display = 'grid';
+  let html = '';
+  if(selfLive){
+    html += `<div data-live-tile="self" style="position:relative;aspect-ratio:3/4;border-radius:14px;overflow:hidden;background:#0a0c14;border:1px solid rgba(124,255,178,.4);">
+      <video autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;"></video>
+      <div style="position:absolute;left:6px;bottom:6px;font-family:var(--font-mono);font-size:9px;background:rgba(13,15,23,.8);color:var(--mint);padding:2px 6px;border-radius:999px;">You · live</div>
+    </div>`;
+  }
+  html += liveOthers.map(m => {
+    const name = (m.name||'Someone').split(' ')[0];
+    return `<div data-live-tile="${m.uid}" style="position:relative;aspect-ratio:3/4;border-radius:14px;overflow:hidden;background:#0a0c14;border:1px solid rgba(124,255,178,.25);display:flex;align-items:center;justify-content:center;">
+      <div class="avatar" style="width:56px;height:56px;font-size:18px;${typeof contactAvatarStyleAttr==='function'?contactAvatarStyleAttr(m):''}">${m.photo&&m.photo.dataUrl?'':(m.initials||'?')}</div>
+      <div style="position:absolute;left:6px;bottom:6px;font-family:var(--font-mono);font-size:9px;background:rgba(13,15,23,.8);color:var(--mint);padding:2px 6px;border-radius:999px;">${escapeHtml(name)} · live</div>
+    </div>`;
+  }).join('');
+  stage.innerHTML = html;
+  if(selfLive){
+    const v = stage.querySelector('[data-live-tile="self"] video');
+    if(v && bandLiveLocalStream){ v.srcObject = bandLiveLocalStream; v.play().catch(()=>{}); }
+  }
+}
+
+function enableBandLiveCamera(){
+  if(bandLiveLocalStream){ stopBandLiveCamera(); return; }
+  if(!amTunedIn){ toast('Tune in first'); return; }
+  navigator.mediaDevices.getUserMedia({
+    video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+    audio: false,
+  }).then(stream=>{
+    bandLiveLocalStream = stream;
+    const float = $('bandLiveFloat');
+    const vid = $('bandLiveFloatVideo');
+    if(vid){ vid.srcObject = stream; vid.play().catch(()=>{}); }
+    if(float){
+      float.style.display = 'block';
+      // default position
+      if(!float.style.left){ float.style.right = '16px'; float.style.bottom = '160px'; float.style.left = 'auto'; float.style.top = 'auto'; }
+    }
+    const btn = $('bandLiveBtn');
+    if(btn){ btn.textContent = 'Stop live'; btn.style.background = 'var(--mint)'; btn.style.color = '#0D0F17'; }
+    // Tell the hall you're live
+    const b = activeBand();
+    if(b && b.isReal && b.firestoreId && fbDb && currentUser){
+      fbDb.collection('bands').doc(b.firestoreId).collection('presence').doc(currentUser.uid).set({
+        tunedInAt: firebase.firestore.FieldValue.serverTimestamp(),
+        live: true,
+        mode: 'video',
+        liveAt: firebase.firestore.FieldValue.serverTimestamp(),
+      }, { merge:true }).catch(()=>{});
+    }
+    renderBandLiveGrid();
+    toast('Live camera on — drag to move');
+  }).catch(()=> toast('Camera unavailable'));
+}
+function stopBandLiveCamera(){
+  if(bandLiveLocalStream){
+    bandLiveLocalStream.getTracks().forEach(t=>{ try{ t.stop(); }catch(_){} });
+    bandLiveLocalStream = null;
+  }
+  const float = $('bandLiveFloat');
+  const vid = $('bandLiveFloatVideo');
+  if(vid) vid.srcObject = null;
+  if(float) float.style.display = 'none';
+  const btn = $('bandLiveBtn');
+  if(btn){
+    btn.textContent = 'Live video';
+    btn.style.background = 'rgba(13,15,23,.55)';
+    btn.style.color = '#fff';
+  }
+  const b = activeBand();
+  if(b && b.isReal && b.firestoreId && fbDb && currentUser){
+    fbDb.collection('bands').doc(b.firestoreId).collection('presence').doc(currentUser.uid).set({
+      live: false,
+      mode: null,
+      tunedInAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge:true }).catch(()=>{});
+  }
+  renderBandLiveGrid();
+}
+
+(function setupBandLiveDrag(){
+  const el = $('bandLiveFloat');
+  if(!el) return;
+  let dragging = false, ox = 0, oy = 0;
+  const onDown = (x, y)=>{
+    dragging = true;
+    const r = el.getBoundingClientRect();
+    ox = x - r.left; oy = y - r.top;
+    el.style.right = 'auto'; el.style.bottom = 'auto';
+    el.style.left = r.left + 'px'; el.style.top = r.top + 'px';
+  };
+  const onMove = (x, y)=>{
+    if(!dragging) return;
+    const maxX = window.innerWidth - el.offsetWidth - 8;
+    const maxY = window.innerHeight - el.offsetHeight - 8;
+    el.style.left = Math.max(8, Math.min(maxX, x - ox)) + 'px';
+    el.style.top = Math.max(8, Math.min(maxY, y - oy)) + 'px';
+  };
+  const onUp = ()=>{ dragging = false; };
+  el.addEventListener('pointerdown', e=>{ e.preventDefault(); el.setPointerCapture(e.pointerId); onDown(e.clientX, e.clientY); });
+  el.addEventListener('pointermove', e=>{ onMove(e.clientX, e.clientY); });
+  el.addEventListener('pointerup', onUp);
+  el.addEventListener('pointercancel', onUp);
+})();
+
+// Repurpose Record video button label toward Live; keep long-press/record via bandAudio still
+if($('bandLiveBtn')){
+  $('bandLiveBtn').textContent = 'Live video';
+  $('bandLiveBtn').title = 'Show your live camera (draggable)';
+  $('bandLiveBtn').onclick = ()=> enableBandLiveCamera();
+}
+
+// Voice note — short clip into the band as audio message
+if($('bandVoiceBtn')){
+  $('bandVoiceBtn').onclick = async ()=>{
+    if(!amTunedIn){ toast('Tune in first'); return; }
+    if(typeof startBandRecording === 'function'){
+      // Reuse recorder path in audio mode with shorter UX toast
+      toast('Hold the room — recording voice…');
+      startBandRecording('audio');
+    } else {
+      toast('Voice recording unavailable');
+    }
+  };
+}
+
+// Invite link
+function bandInviteLink(){
+  const b = activeBand();
+  if(!b || !b.firestoreId) return null;
+  const base = (location.origin && location.origin !== 'null') ? location.origin : 'https://getnaluno.com';
+  return base.replace(/\/$/, '') + '/?band=' + encodeURIComponent(b.firestoreId);
+}
+if($('bandCopyLinkBtn')){
+  $('bandCopyLinkBtn').onclick = async ()=>{
+    const link = bandInviteLink();
+    if(!link){ toast('Open a live Band first'); return; }
+    try{
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        await navigator.clipboard.writeText(link);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = link; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+      }
+      toast('Invite link copied');
+    }catch(e){
+      toast(link);
+    }
+  };
+}
+
+// Deep link: ?band=ID
+(function bandDeepLink(){
+  try{
+    const params = new URLSearchParams(location.search || '');
+    const bandId = params.get('band');
+    if(!bandId) return;
+    const tryOpen = ()=>{
+      if(!fbDb || !currentUser) return false;
+      const existing = (bands || []).find(b => b.firestoreId === bandId);
+      if(existing){ openBandRoom(existing.id); return true; }
+      // Fetch and join membership lightly
+      fbDb.collection('bands').doc(bandId).get().then(doc=>{
+        if(!doc.exists){ toast('Band not found'); return; }
+        const d = doc.data();
+        fbDb.collection('bands').doc(bandId).update({
+          memberUids: firebase.firestore.FieldValue.arrayUnion(currentUser.uid)
+        }).catch(()=>{});
+        if(typeof addRealBandToLocalList === 'function'){
+          addRealBandToLocalList(bandId, d.name || 'Band', d.vibe || 'aurora', [], d.createdBy, d);
+        } else {
+          // minimal local entry
+          const id = Date.now();
+          bands.push({
+            id, firestoreId: bandId, name: d.name || 'Band', vibe: d.vibe || 'aurora',
+            isReal: true, memberUids: d.memberUids || [], memberInfo: d.memberInfo || [],
+            lastEmptiedAt: d.lastEmptiedAt && d.lastEmptiedAt.toMillis ? d.lastEmptiedAt.toMillis() : null,
+          });
+          if(typeof renderBandList === 'function') renderBandList();
+          openBandRoom(id);
+        }
+        const b = bands.find(x => x.firestoreId === bandId);
+        if(b) openBandRoom(b.id);
+        toast('Joined Band');
+      }).catch(()=> toast('Couldn’t open Band link'));
+      return true;
+    };
+    // Wait for auth a bit
+    let n = 0;
+    const iv = setInterval(()=>{
+      n++;
+      if(tryOpen() || n > 40) clearInterval(iv);
+    }, 250);
+  }catch(e){}
+})();
+
+// Close live cam when leaving room
+const _closeBandRoom = closeBandRoom;
+closeBandRoom = function(){
+  stopBandLiveCamera();
+  return _closeBandRoom.apply(this, arguments);
+};

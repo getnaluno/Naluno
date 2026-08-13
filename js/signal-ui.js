@@ -83,6 +83,22 @@ $('adjustSave').onclick = ()=>{
 };
 
 /* ---------------- YOUR SIGNAL RING + LIST ---------------- */
+
+/* Discovery: prefer useful activity over pure popularity */
+function rankBroadcastEntries(entries){
+  // entries: [{ contact, latest }]
+  return entries.slice().sort((a, b)=>{
+    const ca = a.contact, cb = b.contact;
+    const sa = computeSignal(ca), sb = computeSignal(cb);
+    // Stronger relationship first
+    const tierScore = { strong:3, fading:1, off:0 };
+    const rel = (tierScore[sb.tier]||0) - (tierScore[sa.tier]||0);
+    if(rel) return rel;
+    // More recent meaningful signal
+    return (b.latest.createdAt||0) - (a.latest.createdAt||0);
+  });
+}
+
 function renderBroadcasts(){
   pruneExpiredSignal();
   const latest = mySignal[mySignal.length-1];
@@ -106,10 +122,11 @@ function renderBroadcasts(){
     connectionsSignals.map(({ contact:c, latest })=>{
       return `<div class="bcast-item" data-b="${c.id}"><div class="ring"><div class="avatar" style="width:100%;height:100%;background:${c.color};position:relative;">${c.initials}</div></div><span>${c.name.split(' ')[0]}</span></div>`;
     }).join('');
-  $('bcastList').innerHTML = connectionsSignals.length ? connectionsSignals.map(({ contact:c, latest })=>{
+  const ranked = rankBroadcastEntries(connectionsSignals);
+  $('bcastList').innerHTML = ranked.length ? ranked.map(({ contact:c, latest })=>{
     return `<div class="bcast-list-row" data-b="${c.id}">
     <div class="avatar" style="width:44px;height:44px;font-size:14px;background:${c.color};position:relative;">${c.initials}${signalBarsHtml(c)}</div>
-    <div class="contact-meta"><div class="contact-name">${c.name}</div><div class="contact-sub">${signalMeta[computeSignal(c).tier].label} · tap to view</div></div>
+    <div class="contact-meta"><div class="contact-name">${c.name}</div><div class="contact-sub">${signalMeta[computeSignal(c).tier].label} · tap to join the space</div></div>
     <div class="bcast-time">${timeAgo(latest.createdAt)}</div>
   </div>`;
   }).join('') : `<div style="padding:20px 10px; color:var(--text-dim); font-size:13px; text-align:center;">No recent signals from your frequencies yet.</div>`;
