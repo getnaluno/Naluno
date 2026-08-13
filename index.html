@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.08.13e" />
+  <meta name="naluno-build" content="2026.08.13f" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
@@ -14,13 +14,13 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.08.13e">
+<meta name="app-version" content="2026.08.13f">
 <meta name="description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:image" content="icon-512.png">
 <meta name="twitter:card" content="summary">
-<link rel="stylesheet" href="css/app.css?v=20260813e">
+<link rel="stylesheet" href="css/app.css?v=20260813f">
 </head>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
@@ -144,10 +144,10 @@
       </div>
       <div id="bcastSearchResults" style="display:none; margin-bottom:14px;"></div>
 
-      <div class="section-label">Signal <span style="font-weight:400;color:var(--text-dim);text-transform:none;letter-spacing:0;">· short clips · fade on their own</span></div>
+      <div class="section-label">Signal <span style="font-weight:400;color:var(--text-dim);text-transform:none;letter-spacing:0;">· 24h–7d clips · not permanent</span></div>
       <div class="bcast-strip" id="myBcastStrip"></div>
 
-      <div class="section-label" style="margin-top:18px;">Broadcasts <span style="font-weight:400;color:var(--text-dim);text-transform:none;letter-spacing:0;">· permanent · communities</span></div>
+      <div class="section-label" style="margin-top:18px;">Broadcasts <span style="font-weight:400;color:var(--text-dim);text-transform:none;letter-spacing:0;">· permanent video + community</span></div>
       <div id="bcastPlateGrid" class="bcast-plate-grid"></div>
       <div id="bcastPlateEmpty" style="display:none;padding:24px 12px;text-align:center;color:var(--text-dim);font-size:13px;line-height:1.5;">
         Permanent Broadcasts live here.<br/>Tap <strong style="color:var(--mint);">+</strong> to publish one — or search above.
@@ -636,7 +636,8 @@
         <div style="display:flex; gap:8px; justify-content:center;">
           <button type="button" id="bandVoiceBtn" title="Voice note" style="flex:1; max-width:120px; padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.2); background:rgba(13,15,23,.55); color:#fff; font-family:var(--font-mono); font-size:11px; cursor:pointer;">Voice</button>
           <button type="button" id="bandAudioBtn" title="Record audio for the Band" style="flex:1; max-width:140px; padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.2); background:rgba(13,15,23,.55); color:#fff; font-family:var(--font-mono); font-size:11px; cursor:pointer;">Record audio</button>
-          <button type="button" id="bandLiveBtn" title="Record video for the Band" style="flex:1; max-width:140px; padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.2); background:rgba(13,15,23,.55); color:#fff; font-family:var(--font-mono); font-size:11px; cursor:pointer;">Record video</button>
+          <button type="button" id="bandLiveBtn" title="Record video for the Band" style="flex:1; max-width:120px; padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.2); background:rgba(13,15,23,.55); color:#fff; font-family:var(--font-mono); font-size:11px; cursor:pointer;">Record video</button>
+          <button type="button" id="bandGoLiveBtn" title="Appear live in the grid" style="flex:1; max-width:100px; padding:10px 12px; border-radius:999px; border:1px solid rgba(124,255,178,.35); background:rgba(124,255,178,.12); color:var(--mint); font-family:var(--font-mono); font-size:11px; cursor:pointer;">Go live</button>
         </div>
       </div>
       <div id="bandRecordBar" style="display:none; position:absolute; left:12px; right:12px; bottom:120px; z-index:8; padding:12px 14px; border-radius:16px; background:rgba(13,15,23,.92); border:1px solid rgba(255,80,80,.4); backdrop-filter:blur(12px);">
@@ -834,26 +835,26 @@
 
 
 <!-- NALUNO_MODULES -->
-<script src="js/core.js?v=20260813e"></script>
-<script src="js/data.js?v=20260813e"></script>
-<script src="js/crypto.js?v=20260813e"></script>
-<script src="js/atmosphere.js?v=20260813e"></script>
-<script src="js/band-list.js?v=20260813e"></script>
-<script src="js/signal-core.js?v=20260813e"></script>
-<script src="js/broadcast-core.js?v=20260813e"></script>
-<script src="js/compass.js?v=20260813e"></script>
-<script src="js/signal-ui.js?v=20260813e"></script>
-<script src="js/broadcast-space.js?v=20260813e"></script>
-<script src="js/wireline.js?v=20260813e"></script>
-<script src="js/profile.js?v=20260813e"></script>
-<script src="js/auth.js?v=20260813e"></script>
-<script src="js/notifications.js?v=20260813e"></script>
-<script src="js/camera.js?v=20260813e"></script>
-<script src="js/calls.js?v=20260813e"></script>
-<script src="js/broadcast-live.js?v=20260813e"></script>
-<script src="js/band-room.js?v=20260813e"></script>
-<script src="js/pwa.js?v=20260813e"></script>
-<script src="js/find.js?v=20260813e"></script>
+<script src="js/core.js?v=20260813f"></script>
+<script src="js/data.js?v=20260813f"></script>
+<script src="js/crypto.js?v=20260813f"></script>
+<script src="js/atmosphere.js?v=20260813f"></script>
+<script src="js/band-list.js?v=20260813f"></script>
+<script src="js/signal-core.js?v=20260813f"></script>
+<script src="js/broadcast-core.js?v=20260813f"></script>
+<script src="js/compass.js?v=20260813f"></script>
+<script src="js/signal-ui.js?v=20260813f"></script>
+<script src="js/broadcast-space.js?v=20260813f"></script>
+<script src="js/wireline.js?v=20260813f"></script>
+<script src="js/profile.js?v=20260813f"></script>
+<script src="js/auth.js?v=20260813f"></script>
+<script src="js/notifications.js?v=20260813f"></script>
+<script src="js/camera.js?v=20260813f"></script>
+<script src="js/calls.js?v=20260813f"></script>
+<script src="js/broadcast-live.js?v=20260813f"></script>
+<script src="js/band-room.js?v=20260813f"></script>
+<script src="js/pwa.js?v=20260813f"></script>
+<script src="js/find.js?v=20260813f"></script>
 <!-- /NALUNO_MODULES -->
 </body>
 </html>

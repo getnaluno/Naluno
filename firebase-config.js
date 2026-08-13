@@ -20,4 +20,4 @@ const VAPID_KEY = "BAU9gGiDeFF9GcX42d0D7mjatsjJlCqs5jq8p02p-ObC9z2G5ELg49bTnObj7
 // Use the WEB OAuth client ID from Google Cloud Console / Firebase
 // (type "Web client", ends in .apps.googleusercontent.com) — NOT the Android client ID.
 // See GOOGLE-AUTH-SETUP.md
-const GOOGLE_WEB_CLIENT_ID = "YOUR_WEB_CLIENT_ID.apps.googleusercontent.com";
+const GOOGLE_WEB_CLIENT_ID = "183354363901-4j3icgqb3dchns2vlualkoqiclhif3km.apps.googleusercontent.com";

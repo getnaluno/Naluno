@@ -1004,10 +1004,10 @@ async function flipCamera(){
 
     const deviceId = await resolveCameraDeviceId(next).catch(()=>null);
     if(deviceId){
-      videoAttempts.push({ deviceId: { exact: deviceId }, width:{ideal:1920}, height:{ideal:1080}, frameRate:{ideal:30} });
+      videoAttempts.push({ deviceId: { exact: deviceId }, width:{ideal:2560}, height:{ideal:1440}, frameRate:{ideal:30, max:60} });
     }
-    videoAttempts.push({ facingMode: { exact: next }, width:{ideal:1920}, height:{ideal:1080} });
-    videoAttempts.push({ facingMode: { ideal: next }, width:{ideal:1280}, height:{ideal:720} });
+    videoAttempts.push({ facingMode: { exact: next }, width:{ideal:2560}, height:{ideal:1440}, frameRate:{ideal:30, max:60} });
+    videoAttempts.push({ facingMode: { ideal: next }, width:{ideal:2560}, height:{ideal:1440}, frameRate:{ideal:30, max:60} });
     videoAttempts.push({ facingMode: next });
 
     for(const video of videoAttempts){

@@ -19,7 +19,15 @@ let realBandLiveMembers = []; // resolved {uid,name,color,initials} for who's ac
 
 function activeBand(){ return bands.find(b=>b.id===activeBandId); }
 
+function bandMessageIsEmpty(m){
+  if(!m) return true;
+  if(m.type === 'audio' || m.type === 'video') return !m.mediaUrl;
+  if(m.type === 'invite' || m.type === 'system') return false;
+  return !(m.text && String(m.text).trim());
+}
 function bandMessageHtml(m){
+  if(bandMessageIsEmpty(m)) return '';
+
   if(m.type === 'system'){
     return `<div style="text-align:center; font-family:var(--font-mono); font-size:11px; color:rgba(255,255,255,.45); padding:4px 8px;">${escapeHtml(m.text)}</div>`;
   }
@@ -93,10 +101,15 @@ function renderBandMessages(){
   let msgs = bandMessages[activeBandId] || [];
   // After the settle window, the square is a blank page again.
   if(b && bandIsSettled(b)) msgs = [];
-  else if(b && b.lastEmptiedAt){
-    // Only keep chatter from after the last full settle (previous session already cleared).
-    // While still inside the 2h window, keep everything currently on the square.
+  else if(b){
+    // messageEpoch: only show messages from the current "session" after a full wipe
+    const epoch = b.messageEpoch || 0;
+    if(epoch){
+      msgs = msgs.filter(m => (m.ts || 0) >= epoch);
+    }
   }
+  // Drop empty text bubbles (failed decrypt / pruned payload shells)
+  msgs = msgs.filter(m => !bandMessageIsEmpty(m));
   if(msgs.length===0){
     $('bandMessages').innerHTML = `<div class="msg-empty"><span style="font-family:var(--font-futuristic); font-size:14px; color:#fff;">Quiet on this Band</span><span style="font-size:12.5px; color:rgba(255,255,255,.6);">Tune in and say something — it clears 2h after the last person leaves.</span></div>`;
     updateBandSettleNote();
@@ -183,13 +196,28 @@ let bandInviteUnsub = null;
 
 async function pruneSettledBandMessages(bandRef, b){
   if(!bandRef || !b || !bandIsSettled(b)) return;
+  if(b._pruning) return;
+  b._pruning = true;
   try{
-    const snap = await bandRef.collection('messages').limit(80).get();
-    if(snap.empty) return;
-    const batch = fbDb.batch();
-    snap.docs.forEach(d => batch.delete(d.ref));
-    await batch.commit();
-  }catch(e){ /* prune is best-effort */ }
+    // Paginate deletes so the square is actually empty, not 80-of-N leftovers
+    for(let i = 0; i < 10; i++){
+      const snap = await bandRef.collection('messages').limit(80).get();
+      if(snap.empty) break;
+      const batch = fbDb.batch();
+      snap.docs.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+      if(snap.size < 80) break;
+    }
+    // New session boundary — client ignores older shells even if a delete lags
+    const epoch = Date.now();
+    b.messageEpoch = epoch;
+    await bandRef.set({
+      messageEpoch: epoch,
+      lastEmptiedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge:true });
+    if(activeBandId && bandMessages[activeBandId]) bandMessages[activeBandId] = [];
+  }catch(e){ console.warn('[band] prune', e); }
+  finally{ b._pruning = false; }
 }
 
 function openBandRoom(id){
@@ -219,6 +247,7 @@ function openBandRoom(id){
       b.vibe = d.vibe || b.vibe;
       b.memberUids = d.memberUids || [];
       b.lastEmptiedAt = d.lastEmptiedAt && d.lastEmptiedAt.toMillis ? d.lastEmptiedAt.toMillis() : (d.lastEmptiedAt || null);
+      b.messageEpoch = d.messageEpoch || b.messageEpoch || 0;
       $('bandRoomName').textContent = b.name;
       // Square Bell — someone rang while you're looking at the room
       if(d.bellAt && d.bellBy && d.bellBy !== currentUser.uid){
@@ -265,18 +294,28 @@ function openBandRoom(id){
         });
       });
       const totalPresent = others.length + (amTunedIn ? 1 : 0);
+      // Debounce empty/occupied writes — stops flicker when presence docs churn
       if(totalPresent === 0){
-        if(!b.lastEmptiedAt){
+        if(!b._emptySince) b._emptySince = Date.now();
+        if(!b.lastEmptiedAt && (Date.now() - b._emptySince) > 2500){
           b.lastEmptiedAt = Date.now();
           bandRef.set({ lastEmptiedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge:true }).catch(()=>{});
         }
-      } else if(b.lastEmptiedAt){
-        b.lastEmptiedAt = null;
-        bandRef.set({ lastEmptiedAt: null }, { merge:true }).catch(()=>{});
+      } else {
+        b._emptySince = null;
+        if(b.lastEmptiedAt){
+          b.lastEmptiedAt = null;
+          bandRef.set({ lastEmptiedAt: null }, { merge:true }).catch(()=>{});
+        }
       }
       renderBandRoster();
       updateBandSettleNote();
-      renderBandLiveGrid();
+      // Only redraw live grid when membership of live set actually changes
+      const liveKey = others.filter(d=>(d.data()||{}).live).map(d=>d.id).sort().join(',') + (bandLiveLocalStream?'|self':'');
+      if(b._liveKey !== liveKey){
+        b._liveKey = liveKey;
+        renderBandLiveGrid();
+      }
     }, ()=>{ /* presence just won't update this session */ });
 
     bandMessagesUnsub = bandRef.collection('messages').orderBy('ts','asc').onSnapshot(async snap=>{
@@ -957,19 +996,28 @@ function renderBandLiveGrid(){
     stage.innerHTML = '';
     return;
   }
+  // TikTok-style multi-live grid: 1 → full, 2 → side-by-side, 3+ → dense rows
+  const count = liveOthers.length + (selfLive ? 1 : 0);
+  const cols = count === 1 ? 1 : (count === 2 ? 2 : (count <= 4 ? 2 : 3));
   stage.style.display = 'grid';
+  stage.style.gridTemplateColumns = 'repeat(' + cols + ', minmax(0, 1fr))';
+  stage.style.gap = '6px';
+  stage.style.padding = '6px 10px';
+  stage.style.maxHeight = count > 4 ? '48vh' : '42vh';
+  stage.style.overflowY = 'auto';
   let html = '';
   if(selfLive){
-    html += `<div data-live-tile="self" style="position:relative;aspect-ratio:3/4;border-radius:14px;overflow:hidden;background:#0a0c14;border:1px solid rgba(124,255,178,.4);">
+    html += `<div data-live-tile="self" class="band-live-tile self" style="position:relative;aspect-ratio:9/16;border-radius:14px;overflow:hidden;background:#0a0c14;border:1px solid rgba(124,255,178,.45);">
       <video autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;"></video>
-      <div style="position:absolute;left:6px;bottom:6px;font-family:var(--font-mono);font-size:9px;background:rgba(13,15,23,.8);color:var(--mint);padding:2px 6px;border-radius:999px;">You · live</div>
+      <div style="position:absolute;left:6px;bottom:6px;font-family:var(--font-mono);font-size:9px;background:rgba(13,15,23,.85);color:var(--mint);padding:2px 6px;border-radius:999px;">You · live</div>
     </div>`;
   }
   html += liveOthers.map(m => {
     const name = (m.name||'Someone').split(' ')[0];
-    return `<div data-live-tile="${m.uid}" style="position:relative;aspect-ratio:3/4;border-radius:14px;overflow:hidden;background:#0a0c14;border:1px solid rgba(124,255,178,.25);display:flex;align-items:center;justify-content:center;">
-      <div class="avatar" style="width:56px;height:56px;font-size:18px;${typeof contactAvatarStyleAttr==='function'?contactAvatarStyleAttr(m):''}">${m.photo&&m.photo.dataUrl?'':(m.initials||'?')}</div>
-      <div style="position:absolute;left:6px;bottom:6px;font-family:var(--font-mono);font-size:9px;background:rgba(13,15,23,.8);color:var(--mint);padding:2px 6px;border-radius:999px;">${escapeHtml(name)} · live</div>
+    return `<div data-live-tile="${m.uid}" class="band-live-tile" style="position:relative;aspect-ratio:9/16;border-radius:14px;overflow:hidden;background:#0a0c14;border:1px solid rgba(124,255,178,.25);display:flex;align-items:center;justify-content:center;">
+      <video data-remote-live="${m.uid}" autoplay playsinline style="display:none;width:100%;height:100%;object-fit:cover;"></video>
+      <div class="avatar live-avatar" style="width:56px;height:56px;font-size:18px;${typeof contactAvatarStyleAttr==='function'?contactAvatarStyleAttr(m):''}">${m.photo&&m.photo.dataUrl?'':(m.initials||'?')}</div>
+      <div style="position:absolute;left:6px;bottom:6px;font-family:var(--font-mono);font-size:9px;background:rgba(13,15,23,.85);color:var(--mint);padding:2px 6px;border-radius:999px;">${escapeHtml(name)} · live</div>
     </div>`;
   }).join('');
   stage.innerHTML = html;
@@ -977,13 +1025,15 @@ function renderBandLiveGrid(){
     const v = stage.querySelector('[data-live-tile="self"] video');
     if(v && bandLiveLocalStream){ v.srcObject = bandLiveLocalStream; v.play().catch(()=>{}); }
   }
+  // Kick mesh connect for remote live tiles
+  if(typeof bandLiveMeshSync === 'function') bandLiveMeshSync(liveOthers);
 }
 
 function enableBandLiveCamera(){
   if(bandLiveLocalStream){ stopBandLiveCamera(); return; }
   if(!amTunedIn){ toast('Tune in first'); return; }
   navigator.mediaDevices.getUserMedia({
-    video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+    video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
     audio: false,
   }).then(stream=>{
     bandLiveLocalStream = stream;
@@ -995,8 +1045,8 @@ function enableBandLiveCamera(){
       // default position
       if(!float.style.left){ float.style.right = '16px'; float.style.bottom = '160px'; float.style.left = 'auto'; float.style.top = 'auto'; }
     }
-    const btn = $('bandLiveBtn');
-    if(btn){ btn.textContent = 'Stop live'; btn.style.background = 'var(--mint)'; btn.style.color = '#0D0F17'; }
+    const btn = $('bandGoLiveBtn') || $('bandLiveBtn');
+    if(btn && btn.id === 'bandGoLiveBtn'){ btn.textContent = 'Stop live'; btn.style.background = 'var(--mint)'; btn.style.color = '#0D0F17'; }
     // Tell the hall you're live
     const b = activeBand();
     if(b && b.isReal && b.firestoreId && fbDb && currentUser){
@@ -1020,9 +1070,9 @@ function stopBandLiveCamera(){
   const vid = $('bandLiveFloatVideo');
   if(vid) vid.srcObject = null;
   if(float) float.style.display = 'none';
-  const btn = $('bandLiveBtn');
+  const btn = $('bandGoLiveBtn');
   if(btn){
-    btn.textContent = 'Live video';
+    btn.textContent = 'Go live';
     btn.style.background = 'rgba(13,15,23,.55)';
     btn.style.color = '#fff';
   }
@@ -1062,11 +1112,14 @@ function stopBandLiveCamera(){
   el.addEventListener('pointercancel', onUp);
 })();
 
-// Repurpose Record video button label toward Live; keep long-press/record via bandAudio still
+// Record video stays on bandLiveBtn; Go live is a separate control
 if($('bandLiveBtn')){
-  $('bandLiveBtn').textContent = 'Live video';
-  $('bandLiveBtn').title = 'Show your live camera (draggable)';
-  $('bandLiveBtn').onclick = ()=> enableBandLiveCamera();
+  $('bandLiveBtn').textContent = 'Record video';
+  $('bandLiveBtn').title = 'Record a short video for the Band';
+  $('bandLiveBtn').onclick = ()=> startBandRecording('video');
+}
+if($('bandGoLiveBtn')){
+  $('bandGoLiveBtn').onclick = ()=> enableBandLiveCamera();
 }
 
 // Voice note — short clip into the band as audio message
@@ -1158,4 +1211,148 @@ const _closeBandRoom = closeBandRoom;
 closeBandRoom = function(){
   stopBandLiveCamera();
   return _closeBandRoom.apply(this, arguments);
+};
+
+
+/* ---- Band live mesh (TikTok-style multi-person): pair WebRTC for live members ---- */
+let bandMeshPcs = {}; // peerUid -> RTCPeerConnection
+let bandMeshUnsubs = [];
+
+function bandMeshCleanup(){
+  Object.keys(bandMeshPcs).forEach(uid=>{
+    try{ bandMeshPcs[uid].close(); }catch(_){}
+  });
+  bandMeshPcs = {};
+  bandMeshUnsubs.forEach(u=>{ try{u();}catch(_){} });
+  bandMeshUnsubs = [];
+}
+
+function bandMeshPairId(a, b){
+  return [a, b].sort().join('_');
+}
+
+async function bandLiveMeshSync(liveOthers){
+  if(!fbDb || !currentUser || !activeBand() || !activeBand().firestoreId) return;
+  if(!bandLiveLocalStream){
+    // Not live ourselves — still try to receive from hosts who are live
+  }
+  const bandId = activeBand().firestoreId;
+  const myUid = currentUser.uid;
+  const others = (liveOthers || []).filter(m => m.uid && m.uid !== myUid);
+
+  // Drop PCs for people who left live
+  Object.keys(bandMeshPcs).forEach(uid=>{
+    if(!others.find(m=>m.uid===uid)){
+      try{ bandMeshPcs[uid].close(); }catch(_){}
+      delete bandMeshPcs[uid];
+    }
+  });
+
+  for(const m of others){
+    if(bandMeshPcs[m.uid]) continue;
+    try{
+      await bandMeshConnectPeer(bandId, m.uid, myUid < m.uid);
+    }catch(e){ console.warn('[band-mesh]', e); }
+  }
+}
+
+async function bandMeshConnectPeer(bandId, peerUid, iAmOfferer){
+  if(bandMeshPcs[peerUid]) return;
+  const ice = (typeof getIceServers === 'function') ? await getIceServers() : { iceServers:[{urls:'stun:stun.l.google.com:19302'}] };
+  const pc = new RTCPeerConnection(ice);
+  bandMeshPcs[peerUid] = pc;
+
+  if(bandLiveLocalStream){
+    bandLiveLocalStream.getTracks().forEach(tr=>{
+      try{ pc.addTrack(tr, bandLiveLocalStream); }catch(_){}
+    });
+  } else {
+    try{
+      pc.addTransceiver('video', { direction:'recvonly' });
+      pc.addTransceiver('audio', { direction:'recvonly' });
+    }catch(_){}
+  }
+
+  const remote = new MediaStream();
+  pc.ontrack = e=>{
+    remote.addTrack(e.track);
+    const tile = document.querySelector('[data-live-tile="'+peerUid+'"]');
+    if(tile){
+      const v = tile.querySelector('video[data-remote-live]');
+      const av = tile.querySelector('.live-avatar');
+      if(v){
+        v.style.display = 'block';
+        v.srcObject = remote;
+        v.play().catch(()=>{});
+      }
+      if(av) av.style.display = 'none';
+    }
+  };
+
+  const pairId = bandMeshPairId(currentUser.uid, peerUid);
+  const ref = fbDb.collection('bands').doc(bandId).collection('mesh').doc(pairId);
+
+  pc.onicecandidate = e=>{
+    if(!e.candidate) return;
+    const col = iAmOfferer ? 'offerIce' : 'answerIce';
+    ref.collection(col).add(e.candidate.toJSON()).catch(()=>{});
+  };
+
+  if(iAmOfferer){
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await ref.set({
+      offer: { type: offer.type, sdp: offer.sdp },
+      from: currentUser.uid,
+      to: peerUid,
+      ts: Date.now(),
+    }, { merge:true });
+    const unsub = ref.onSnapshot(async snap=>{
+      if(!snap.exists) return;
+      const d = snap.data() || {};
+      if(d.answer && pc.signalingState !== 'stable'){
+        try{ await pc.setRemoteDescription(new RTCSessionDescription(d.answer)); }catch(_){}
+      }
+    });
+    bandMeshUnsubs.push(unsub);
+    const iceUnsub = ref.collection('answerIce').onSnapshot(snap=>{
+      snap.docChanges().forEach(ch=>{
+        if(ch.type==='added') pc.addIceCandidate(new RTCIceCandidate(ch.doc.data())).catch(()=>{});
+      });
+    });
+    bandMeshUnsubs.push(iceUnsub);
+  } else {
+    // Answerer: wait for offer
+    let answered = false;
+    const unsub = ref.onSnapshot(async snap=>{
+      if(!snap.exists || answered) return;
+      const d = snap.data() || {};
+      if(d.offer && !d.answer){
+        try{
+          answered = true;
+          await pc.setRemoteDescription(new RTCSessionDescription(d.offer));
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          await ref.set({ answer: { type: answer.type, sdp: answer.sdp } }, { merge:true });
+        }catch(e){
+          answered = false;
+          console.warn('[band-mesh] answer', e);
+        }
+      }
+    });
+    bandMeshUnsubs.push(unsub);
+    const iceUnsub = ref.collection('offerIce').onSnapshot(snap=>{
+      snap.docChanges().forEach(ch=>{
+        if(ch.type==='added') pc.addIceCandidate(new RTCIceCandidate(ch.doc.data())).catch(()=>{});
+      });
+    });
+    bandMeshUnsubs.push(iceUnsub);
+  }
+}
+
+// Cleanup mesh when leaving band / stopping live
+const _stopBandLiveCamera = stopBandLiveCamera;
+stopBandLiveCamera = function(){
+  bandMeshCleanup();
+  return _stopBandLiveCamera.apply(this, arguments);
 };

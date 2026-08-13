@@ -390,6 +390,7 @@ function closeBroadcast(){ clearSegTimer(); $('bviewer').classList.remove('activ
 $('bviewerClose').onclick = closeBroadcast;
 $('bviewerRemove').onclick = ()=>{
   if(!viewingMine) return;
+  if(!confirm('Delete this Signal clip now?')) return;
   const seg = currentSegments[currentSegmentIndex];
   mySignal = mySignal.filter(s=>s.id!==seg.id);
   currentSegments.splice(currentSegmentIndex,1);
