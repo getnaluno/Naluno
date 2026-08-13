@@ -828,7 +828,11 @@ let postInProgress = false;
 // persisted state and is a bigger project on its own), but it can stop the data loss
 // from happening by accident in the first place.
 window.addEventListener('beforeunload', e=>{
-  if(postInProgress){ e.preventDefault(); e.returnValue = ''; }
+  // Only warn on full tab close while a background publish is mid-flight
+  if((typeof publishBusy !== 'undefined' && publishBusy) || postInProgress){
+    e.preventDefault();
+    e.returnValue = '';
+  }
 });
 /* The actual upload+save logic, shared by the normal composer flow and the new
    straight-through trim flow — same proven code path either way, just two different
@@ -902,52 +906,50 @@ $('postBroadcastBtn').onclick = async ()=>{
       toast('Add a title for your Broadcast');
       return;
     }
-    postInProgress = true;
-    try{
-      let mediaType = 'text', mediaUrl = null, thumbUrl = null, filterCss = '';
-      if(composerType === 'text'){
-        mediaType = 'text';
-        mediaUrl = null;
-      } else if(composerItems.length){
-        const item = composerItems[0];
-        mediaType = item.kind;
-        filterCss = item.filterCss || '';
-        if(item.kind === 'video'){
-          const blob = item.videoBlob || item.sourceFile || (item.dataUrl ? await (await fetch(item.dataUrl)).blob() : null);
-          if(!blob) throw new Error('Missing video');
-          mediaUrl = await uploadVideoToR2(blob);
-          try{ thumbUrl = await generateVideoThumbnail(mediaUrl); }catch(_){}
-        } else {
-          // photo: upload dataUrl
-          const blob = await (await fetch(item.dataUrl)).blob();
-          mediaUrl = await uploadVideoToR2(blob);
-          thumbUrl = mediaUrl;
-        }
-      } else {
-        toast('Add media or switch to text');
-        postInProgress = false;
-        return;
-      }
-      const finalTitle = title || (composerType==='text' ? ($('textBroadcastInput').value.trim().slice(0,80) || 'Broadcast') : 'Broadcast');
-      const desc = caption || (composerType==='text' ? $('textBroadcastInput').value.trim() : '');
-      closeComposer();
-      const b = await createPermanentBroadcast({
-        title: finalTitle,
-        description: desc,
-        tags,
-        mediaType,
-        mediaUrl,
-        thumbUrl,
-        filterCss,
-      });
-      await loadFeedBroadcasts();
-      toast('Broadcast published');
-      openBroadcastById(b.id);
-    }catch(e){
-      console.error(e);
-      toast(e.message || 'Couldn’t publish Broadcast');
+    if(composerType !== 'text' && !composerItems.length){
+      toast('Add media or switch to text');
+      return;
     }
-    postInProgress = false;
+    // Snapshot what we need, then close — processing is not the user's job
+    const snapType = composerType;
+    const snapItems = composerItems.slice();
+    const textVal = ($('textBroadcastInput') && $('textBroadcastInput').value.trim()) || '';
+    const finalTitle = title || (snapType==='text' ? (textVal.slice(0,80) || 'Broadcast') : 'Broadcast');
+    const desc = caption || (snapType==='text' ? textVal : '');
+    closeComposer();
+    const job = {
+      label: 'Publishing Broadcast…',
+      doneMsg: 'Broadcast published',
+      run: async (progress)=>{
+        let mediaType = 'text', mediaUrl = null, thumbUrl = null, filterCss = '';
+        if(snapType === 'text'){
+          mediaType = 'text';
+        } else if(snapItems.length){
+          const item = snapItems[0];
+          mediaType = item.kind;
+          filterCss = item.filterCss || '';
+          if(progress) progress('Uploading…');
+          if(item.kind === 'video'){
+            const blob = item.videoBlob || item.sourceFile || (item.dataUrl ? await (await fetch(item.dataUrl)).blob() : null);
+            if(!blob) throw new Error('Missing video');
+            mediaUrl = await uploadVideoToR2(blob);
+            try{ thumbUrl = await generateVideoThumbnail(mediaUrl); }catch(_){}
+          } else {
+            const blob = await (await fetch(item.dataUrl)).blob();
+            mediaUrl = await uploadVideoToR2(blob);
+            thumbUrl = mediaUrl;
+          }
+        }
+        if(progress) progress('Saving Broadcast…');
+        const b = await createPermanentBroadcast({
+          title: finalTitle, description: desc, tags, mediaType, mediaUrl, thumbUrl, filterCss,
+        });
+        if(typeof loadFeedBroadcasts === 'function') await loadFeedBroadcasts();
+        if(typeof openBroadcastById === 'function') openBroadcastById(b.id);
+      },
+    };
+    if(typeof enqueuePublishJob === 'function') enqueuePublishJob(job);
+    else job.run(()=>{}).catch(e=> toast(e.message || 'Publish failed'));
     return;
   }
 
@@ -972,8 +974,19 @@ $('postBroadcastBtn').onclick = async ()=>{
     });
   }
   closeComposer();
-  await postSegmentsNow(newSegments);
-  toast(postedCount>1 ? `Posted ${postedCount} Signals` : 'Posted Signal');
+  if(typeof enqueuePublishJob === 'function'){
+    enqueuePublishJob({
+      label: postedCount>1 ? ('Posting ' + postedCount + ' Signals…') : 'Posting Signal…',
+      doneMsg: postedCount>1 ? ('Posted ' + postedCount + ' Signals') : 'Posted Signal',
+      run: async (progress)=>{
+        if(progress) progress(postedCount>1 ? ('Uploading Signals…') : 'Uploading Signal…');
+        await postSegmentsNow(newSegments);
+      },
+    });
+  } else {
+    await postSegmentsNow(newSegments);
+    toast(postedCount>1 ? `Posted ${postedCount} Signals` : 'Posted Signal');
+  }
 };
 
 

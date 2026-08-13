@@ -65,24 +65,55 @@ function generateVideoThumbnail(videoSrc){
 /* Accepts a Blob (preferred) or a data URL. Passing a Blob avoids the slow
    dataURL → Blob round-trip that was doubling prepare+upload time for large clips. */
 async function uploadVideoToR2(blobOrDataUrl){
-  if(!currentUser) throw new Error('Not signed in');
+  if(!currentUser) throw new Error('Sign in again to upload');
   let blob = blobOrDataUrl;
   if(typeof blobOrDataUrl === 'string'){
     blob = await (await fetch(blobOrDataUrl)).blob();
   }
-  if(!(blob instanceof Blob)) throw new Error('Invalid video data');
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(SIGNAL_UPLOAD_WORKER_URL, {
-    method: 'POST',
-    headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': blob.type || 'video/webm' },
-    body: blob,
-  });
-  if(!res.ok){
-    const err = await res.json().catch(()=>({}));
-    throw new Error(err.error || 'Upload failed');
+  if(!(blob instanceof Blob) && !(blob instanceof File)) throw new Error('Invalid media data');
+  const contentType = (blob.type && blob.type !== 'application/octet-stream')
+    ? blob.type
+    : (blob.name && String(blob.name).match(/\.mp4$/i) ? 'video/mp4' : 'video/webm');
+
+  async function once(forceRefresh){
+    const idToken = await currentUser.getIdToken(!!forceRefresh);
+    const res = await fetch(SIGNAL_UPLOAD_WORKER_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + idToken,
+        'Content-Type': contentType,
+      },
+      body: blob,
+    });
+    const errBody = await res.json().catch(()=>({}));
+    if(res.ok){
+      if(!errBody.url) throw new Error('Upload succeeded but no URL returned');
+      return errBody.url;
+    }
+    const msg = (errBody.error || errBody.message || ('Upload failed (' + res.status + ')')).toString();
+    const e = new Error(msg);
+    e.status = res.status;
+    e.body = errBody;
+    throw e;
   }
-  const data = await res.json();
-  return data.url;
+
+  try{
+    return await once(false);
+  }catch(e){
+    // Stale Firebase token → refresh once
+    if(e && (e.status === 401 || e.status === 403 || /auth|token|permission|sign/i.test(e.message||''))){
+      try{ return await once(true); }catch(e2){ e = e2; }
+    }
+    let msg = (e && e.message) ? e.message : 'Upload failed';
+    if(/missing or insufficient permissions/i.test(msg)){
+      msg = 'Upload blocked (permissions). Sign out and back in, then try again. If it keeps failing, the storage Worker needs its R2 binding checked.';
+    } else if(/too large|payload|413|entity too large/i.test(msg)){
+      msg = 'File still too large for the upload server. Try a shorter clip.';
+    } else if(/Failed to fetch|NetworkError|network/i.test(msg)){
+      msg = 'Network error during upload — check connection and retry.';
+    }
+    throw new Error(msg);
+  }
 }
 
 function pruneExpiredSignal(){
@@ -191,3 +222,55 @@ let activeComposerItemIndex = -1;
 let composerTextBg = textBgGradients[0];
 let composerTransition = 'fade';
 
+
+
+/* ---- Background publish queue ----
+   User: pick media → filter → Publish, then leave.
+   Work continues in-app (SPA). A small chip shows progress. */
+let publishQueue = [];
+let publishBusy = false;
+
+function ensurePublishChip(){
+  let chip = document.getElementById('publishBgChip');
+  if(chip) return chip;
+  chip = document.createElement('div');
+  chip.id = 'publishBgChip';
+  chip.setAttribute('aria-live', 'polite');
+  chip.style.cssText = 'display:none;position:fixed;left:12px;right:12px;bottom:88px;z-index:9999;padding:12px 14px;border-radius:14px;background:rgba(13,15,23,.94);border:1px solid rgba(124,255,178,.35);color:#fff;font-family:var(--font-mono);font-size:12px;box-shadow:0 8px 32px rgba(0,0,0,.45);';
+  document.body.appendChild(chip);
+  return chip;
+}
+function showPublishChip(text){
+  const chip = ensurePublishChip();
+  chip.style.display = 'block';
+  chip.textContent = text;
+}
+function hidePublishChip(){
+  const chip = document.getElementById('publishBgChip');
+  if(chip) chip.style.display = 'none';
+}
+
+function enqueuePublishJob(job){
+  publishQueue.push(job);
+  showPublishChip(job.label || 'Publishing in background…');
+  if(typeof toast === 'function') toast('Publishing in background — you can leave this screen');
+  drainPublishQueue();
+}
+
+async function drainPublishQueue(){
+  if(publishBusy) return;
+  publishBusy = true;
+  while(publishQueue.length){
+    const job = publishQueue.shift();
+    try{
+      showPublishChip(job.label || 'Working…');
+      await job.run((msg)=>{ showPublishChip(msg || job.label || 'Working…'); });
+      if(typeof toast === 'function') toast(job.doneMsg || 'Published');
+    }catch(e){
+      console.error('[publish-queue]', e);
+      if(typeof toast === 'function') toast((e && e.message) || 'Publish failed');
+    }
+  }
+  publishBusy = false;
+  hidePublishChip();
+}

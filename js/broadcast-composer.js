@@ -338,54 +338,46 @@ async function bcompPublish(){
     return;
   }
 
-  bcompPublishing = true;
-  const pub = $('bcompPublishBtn');
-  const prog = $('bcompProgress');
-  if(pub){ pub.disabled = true; pub.textContent = 'Publishing…'; }
-  if(prog){ prog.style.display = 'block'; prog.textContent = 'Uploading…'; }
+  // Snapshot + close immediately — compress/upload continues in background
+  const snapKind = bcompKind;
+  const snapFile = bcompFile;
+  const snapBlob = bcompCompressedBlob || bcompFile;
+  const snapTitle = title;
+  const snapDesc = desc;
+  const snapTags = tags.slice();
+  bcompPublishing = false;
+  bcompClose();
 
-  try{
-    let mediaType = bcompKind;
-    let mediaUrl = null;
-    let thumbUrl = null;
-
-    if(bcompKind === 'photo'){
-      const blob = bcompFile;
-      mediaUrl = await uploadVideoToR2(blob);
-      thumbUrl = mediaUrl;
-    } else {
-      const blob = bcompCompressedBlob || bcompFile;
-      if(!blob) throw new Error('No video ready');
-      if(prog) prog.textContent = `Uploading ${Math.round(blob.size/1024/1024)} MB…`;
-      mediaUrl = await uploadVideoToR2(blob);
-      try{ thumbUrl = await generateVideoThumbnail(mediaUrl); }catch(_){}
-    }
-
-    if(typeof createPermanentBroadcast !== 'function'){
-      throw new Error('Broadcast core not loaded');
-    }
-
-    const b = await createPermanentBroadcast({
-      title,
-      description: desc,
-      tags,
-      mediaType,
-      mediaUrl,
-      thumbUrl,
-      filterCss: '',
-    });
-
-    if(typeof loadFeedBroadcasts === 'function') await loadFeedBroadcasts();
-    bcompPublishing = false;
-    bcompClose();
-    toast('Broadcast published');
-    if(typeof openBroadcastById === 'function') openBroadcastById(b.id);
-  }catch(e){
-    console.error('[bcomp] publish', e);
-    bcompPublishing = false;
-    if(pub){ pub.disabled = false; pub.textContent = 'Publish Broadcast'; }
-    if(prog) prog.textContent = '';
-    toast(e.message || 'Could not publish Broadcast');
+  const job = {
+    label: 'Publishing Broadcast…',
+    doneMsg: 'Broadcast published',
+    run: async (progress)=>{
+      let mediaType = snapKind;
+      let mediaUrl = null;
+      let thumbUrl = null;
+      if(snapKind === 'photo'){
+        if(progress) progress('Uploading photo…');
+        mediaUrl = await uploadVideoToR2(snapFile);
+        thumbUrl = mediaUrl;
+      } else {
+        if(!snapBlob) throw new Error('No video ready');
+        if(progress) progress('Uploading ' + Math.round(snapBlob.size/1024/1024) + ' MB…');
+        mediaUrl = await uploadVideoToR2(snapBlob);
+        try{ thumbUrl = await generateVideoThumbnail(mediaUrl); }catch(_){}
+      }
+      if(typeof createPermanentBroadcast !== 'function') throw new Error('Broadcast core not loaded');
+      if(progress) progress('Saving Broadcast…');
+      const b = await createPermanentBroadcast({
+        title: snapTitle, description: snapDesc, tags: snapTags,
+        mediaType, mediaUrl, thumbUrl, filterCss: '',
+      });
+      if(typeof loadFeedBroadcasts === 'function') await loadFeedBroadcasts();
+      if(typeof openBroadcastById === 'function') openBroadcastById(b.id);
+    },
+  };
+  if(typeof enqueuePublishJob === 'function') enqueuePublishJob(job);
+  else {
+    job.run(()=>{}).then(()=> toast('Broadcast published')).catch(e=> toast(e.message || 'Publish failed'));
   }
 }
 

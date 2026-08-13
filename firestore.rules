@@ -23,7 +23,7 @@ service cloud.firestore {
     match /users/{uid}/signal/{segId} {
       allow read: if isOwner(uid)
         || (isSignedIn() && exists(/databases/$(database)/documents/users/$(uid)/connections/$(request.auth.uid)));
-      allow create, delete: if isOwner(uid);
+      allow create, update, delete: if isOwner(uid);
     }
 
     match /users/{uid}/compassMessages/{msgId} {
@@ -130,9 +130,9 @@ service cloud.firestore {
     // ---- Broadcast spaces (living communities) ----
     match /broadcasts/{bcastId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn();
-      allow update: if isSignedIn();
-      allow delete: if false;
+      allow create: if isSignedIn() && request.resource.data.creatorUid == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.creatorUid == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.creatorUid == request.auth.uid;
 
       match /conversation/{id} {
         allow read: if isSignedIn();

@@ -50,10 +50,11 @@ function bandMessageHtml(m){
   const nameHtml = m.fromMe ? '' : `<div style="font-size:10.5px; color:var(--text-dim); margin-bottom:3px; padding:0 3px;">${escapeHtml(name)}</div>`;
   const dur = m.duration ? Math.round(m.duration) + 's' : '';
   if(m.type === 'audio' && m.mediaUrl){
-    // Use <video> for WebM/Opus — many Android WebViews refuse <audio src="…webm">.
-    return `<div class="${rowClass}">${nameHtml}<div class="msg-bubble" style="min-width:200px; padding:10px 12px;">
-      <div style="font-family:var(--font-mono); font-size:10px; color:var(--mint); margin-bottom:6px;">Audio · ${dur || 'clip'}</div>
-      <video class="band-audio-player" controls playsinline preload="metadata" src="${escapeHtml(m.mediaUrl)}" style="width:100%; max-width:260px; height:48px; border-radius:8px; background:#0a0c14;"></video>
+    // Compact voice note — green shell for me (msg-row.me .msg-bubble), tight player
+    const labelColor = m.fromMe ? 'rgba(13,15,23,.7)' : 'var(--mint)';
+    return `<div class="${rowClass}">${nameHtml}<div class="msg-bubble band-voice-bubble">
+      <div class="band-voice-label" style="color:${labelColor}">Voice · ${dur || 'clip'}</div>
+      <video class="band-audio-player" controls playsinline preload="metadata" src="${escapeHtml(m.mediaUrl)}"></video>
     </div><div class="msg-time">${formatClockTime(m.ts)}</div></div>`;
   }
   if(m.type === 'video' && m.mediaUrl){
@@ -828,7 +829,7 @@ async function startBandRecording(mode){
   const mime = bandRecMime(wantVideo);
   bandRecChunks = [];
   try{
-    bandRecorder = new MediaRecorder(bandRecStream, { mimeType: mime, videoBitsPerSecond: wantVideo ? 1800000 : undefined, audioBitsPerSecond: 96000 });
+    bandRecorder = new MediaRecorder(bandRecStream, { mimeType: mime, videoBitsPerSecond: wantVideo ? 1800000 : undefined, audioBitsPerSecond: wantVideo ? 96000 : 40000 });
   }catch(e){
     try{ bandRecorder = new MediaRecorder(bandRecStream); }
     catch(e2){
