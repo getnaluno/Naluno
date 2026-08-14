@@ -361,112 +361,183 @@ function ensureRemoteVideoPlaying(){
     }).catch(function(){});
   });
 }
+
+/** Ensure global `stream` has live audio + video for calls. Re-opens camera if needed. */
+async function ensureCallMediaReady(){
+  const hasA = stream && stream.getAudioTracks().some(t => t.readyState === 'live');
+  const hasV = stream && stream.getVideoTracks().some(t => t.readyState === 'live');
+  if(hasA && hasV){
+    try{
+      stream.getAudioTracks().forEach(t => { t.enabled = true; });
+      stream.getVideoTracks().forEach(t => { t.enabled = (typeof camOn === 'undefined') ? true : !!camOn; });
+    }catch(_){}
+    return true;
+  }
+  try{
+    if(typeof enableCameraForCall === 'function') await enableCameraForCall();
+    else if(typeof enableCamera === 'function') await enableCamera();
+  }catch(e){ console.warn('[call] enable camera', e); }
+  let okA = stream && stream.getAudioTracks().some(t => t.readyState === 'live');
+  let okV = stream && stream.getVideoTracks().some(t => t.readyState === 'live');
+  if(!okA){
+    try{
+      const a = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true },
+        video: false
+      });
+      if(!stream) stream = a;
+      else a.getAudioTracks().forEach(t => stream.addTrack(t));
+      okA = true;
+    }catch(e){ console.warn('[call] audio reopen failed', e); }
+  }
+  if(!okV){
+    try{
+      const v = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: (typeof cameraFacingMode!=='undefined'?cameraFacingMode:'user') }, width:{ideal:1280}, height:{ideal:720} },
+        audio: false
+      });
+      if(!stream) stream = v;
+      else v.getVideoTracks().forEach(t => stream.addTrack(t));
+      okV = true;
+      ['camRawVideo','pipRawVideo','sendRawVideo','incomingSelfVideo'].forEach(id=>{
+        const el = $(id);
+        if(el && stream){ el.srcObject = stream; el.play && el.play().catch(()=>{}); }
+      });
+    }catch(e){ console.warn('[call] video reopen failed', e); }
+  }
+  return !!(stream && stream.getAudioTracks().some(t=>t.readyState==='live') && stream.getVideoTracks().some(t=>t.readyState==='live'));
+}
+
 async function createPeerConnection(){
-  const pc = new RTCPeerConnection(await getIceServers());
+  const ice = await getIceServers();
+  const pc = new RTCPeerConnection(ice);
   remoteCombinedStream = new MediaStream();
   pc.ontrack = e=>{
-    console.log('[call] ontrack fired — kind:', e.track.kind, 'readyState:', e.track.readyState, 'enabled:', e.track.enabled, 'muted:', e.track.muted, 'id:', e.track.id);
+    console.log('[call] ontrack —', e.track.kind, e.track.readyState, 'streams:', (e.streams||[]).length);
     try{ e.track.enabled = true; }catch(_){}
     try{ e.track.contentHint = e.track.kind === 'video' ? 'motion' : 'speech'; }catch(_){}
-    if(!remoteCombinedStream.getTracks().includes(e.track)){
+    // Prefer stream from event when present (more reliable on some browsers)
+    if(e.streams && e.streams[0]){
+      e.streams[0].getTracks().forEach(t=>{
+        if(!remoteCombinedStream.getTracks().includes(t)) remoteCombinedStream.addTrack(t);
+      });
+    } else if(!remoteCombinedStream.getTracks().includes(e.track)){
       remoteCombinedStream.addTrack(e.track);
     }
     const videoEl = $('remoteVideo');
-    if(!videoEl) return;
-    if(videoEl.srcObject !== remoteCombinedStream){
-      videoEl.srcObject = remoteCombinedStream;
+    if(videoEl){
+      if(videoEl.srcObject !== remoteCombinedStream) videoEl.srcObject = remoteCombinedStream;
+      videoEl.playsInline = true;
+      videoEl.autoplay = true;
+      videoEl.muted = false;
+      videoEl.volume = 1;
+      if(e.track.kind === 'video'){
+        videoEl.style.display = 'block';
+        const ph = $('remotePlaceholder');
+        if(ph) ph.style.display = 'none';
+      }
+      if(remotePlayTimer) clearTimeout(remotePlayTimer);
+      remotePlayTimer = setTimeout(function(){ ensureRemoteVideoPlaying(); }, 20);
+      e.track.onunmute = function(){ ensureRemoteVideoPlaying(); };
     }
-    videoEl.playsInline = true;
-    videoEl.autoplay = true;
-    if(remotePlayTimer) clearTimeout(remotePlayTimer);
-    remotePlayTimer = setTimeout(function(){ ensureRemoteVideoPlaying(); }, 30);
-    e.track.onunmute = function(){ ensureRemoteVideoPlaying(); };
-    if(e.track.kind === 'video'){
-      videoEl.style.display = 'block';
-      const ph = $('remotePlaceholder');
-      if(ph) ph.style.display = 'none';
-      e.track.onended = ()=>{
-        const still = remoteCombinedStream.getVideoTracks().some(t => t.readyState === 'live');
-        if(!still){
-          videoEl.style.display = 'none';
-          if(ph) ph.style.display = 'flex';
-        }
-      };
-    }
-    // Audio tracks need the element playing too (combined stream)
     if(e.track.kind === 'audio'){
-      ensureRemoteVideoPlaying();
       try{ if(typeof ensureAudioContext === 'function') ensureAudioContext(); }catch(_){}
+      ensureRemoteVideoPlaying();
     }
   };
-  pc.onicegatheringstatechange = ()=> console.log('[call] ICE gathering state:', pc.iceGatheringState);
+  pc.onicegatheringstatechange = ()=> console.log('[call] ICE gathering:', pc.iceGatheringState);
+  pc.onconnectionstatechange = ()=>{
+    console.log('[call] connection:', pc.connectionState);
+    if(pc.connectionState === 'connected'){
+      try{
+        pc.getSenders().forEach(s=>{
+          if(s.track){ try{ s.track.enabled = true; }catch(_){} }
+        });
+      }catch(_){}
+      ensureRemoteVideoPlaying();
+      // Filter upgrade only after media is actually flowing
+      try{ scheduleFilteredUpgrade(pc); }catch(_){}
+    }
+  };
   attachConnectionWatchdogs(pc);
+
+  // addTrack alone creates sendrecv m-lines. Do NOT also addTransceiver of same kind
+  // (that doubles m-lines and often yields silent/black calls).
   if(stream){
-    // 1) Always add RAW tracks first → instant video, no lag on answer.
-    // 2) If a filter/background is on, swap to canvas track AFTER frames exist
-    //    (replaceTrack) so the other person sees the filter without a black start.
-    const audioTracks = stream.getAudioTracks().filter(t => t.readyState === 'live');
-    const videoTracks = stream.getVideoTracks().filter(t => t.readyState === 'live');
-    const aud = audioTracks.slice(0, 1);
-    aud.forEach(t => {
-      try{
-        t.enabled = true;
-        t.contentHint = 'speech';
-        if(t.applyConstraints){
-          t.applyConstraints({
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          }).catch(()=>{});
-        }
-      }catch(_){}
-      pc.addTrack(t, stream);
-    });
-    let videoSender = null;
-    videoTracks.forEach(t => {
-      try{
-        t.enabled = (typeof camOn === 'undefined') ? true : !!camOn;
-        t.contentHint = 'motion';
-      }catch(_){}
-      const sender = pc.addTrack(t, stream);
-      if(!videoSender) videoSender = sender;
-    });
-    console.log('[call] raw tracks — audio:', aud.length, 'video:', videoTracks.length);
-
-    // Deferred filter upgrade (non-blocking)
-    try{
-      const wantFx = (typeof greenroomEnabled !== 'undefined' && greenroomEnabled) &&
-        ((typeof selectedFilterId !== 'undefined' && selectedFilterId && selectedFilterId !== 'original') ||
-         (typeof selectedBackgroundId !== 'undefined' && selectedBackgroundId && selectedBackgroundId !== 'none'));
-      if(wantFx && videoSender && typeof upgradeCallVideoToFiltered === 'function'){
-        setTimeout(()=>{
-          upgradeCallVideoToFiltered(pc, videoSender).catch(e => console.warn('[call] filter upgrade', e));
-        }, 400);
-      }
-    }catch(e){ console.warn('[call] filter schedule', e); }
-
-    if(aud.length === 0) console.warn('[call] NO live audio tracks');
-    if(videoTracks.length === 0) console.warn('[call] NO live video tracks');
+    await attachLocalTracksToPc(pc);
   } else {
-    console.warn('[call] createPeerConnection called with no local stream');
+    console.warn('[call] createPeerConnection with no local stream');
+    // Last resort empty recv so we can still receive if remote sends
+    try{
+      pc.addTransceiver('audio', { direction: 'recvonly' });
+      pc.addTransceiver('video', { direction: 'recvonly' });
+    }catch(_){}
   }
   return pc;
 }
 
-/** Swap outbound video to filtered canvas once it has real frames. Safe no-op if not ready. */
+async function attachLocalTracksToPc(pc){
+  if(!stream || !pc) return;
+  const audioTracks = stream.getAudioTracks().filter(t => t.readyState === 'live');
+  const videoTracks = stream.getVideoTracks().filter(t => t.readyState === 'live');
+  console.log('[call] local live tracks a/v', audioTracks.length, videoTracks.length);
+
+  if(audioTracks[0]){
+    const t = audioTracks[0];
+    try{
+      t.enabled = true;
+      t.contentHint = 'speech';
+      if(t.applyConstraints){
+        t.applyConstraints({
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        }).catch(()=>{});
+      }
+    }catch(_){}
+    pc.addTrack(t, stream);
+  } else {
+    console.warn('[call] NO audio track to send');
+  }
+  if(videoTracks[0]){
+    const t = videoTracks[0];
+    try{
+      t.enabled = (typeof camOn === 'undefined') ? true : !!camOn;
+      t.contentHint = 'motion';
+    }catch(_){}
+    pc.addTrack(t, stream);
+  } else {
+    console.warn('[call] NO video track to send');
+  }
+  console.log('[call] senders', pc.getSenders().map(s=>({kind:s.track&&s.track.kind, state:s.track&&s.track.readyState})));
+}
+
+function scheduleFilteredUpgrade(pc){
+  if(!pc) return;
+  const wantFx = (typeof greenroomEnabled !== 'undefined' && greenroomEnabled) &&
+    ((typeof selectedFilterId !== 'undefined' && selectedFilterId && selectedFilterId !== 'original') ||
+     (typeof selectedBackgroundId !== 'undefined' && selectedBackgroundId && selectedBackgroundId !== 'none'));
+  if(!wantFx) return;
+  const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+  if(!sender) return;
+  setTimeout(()=>{
+    upgradeCallVideoToFiltered(pc, sender).catch(e => console.warn('[call] filter upgrade', e));
+  }, 600);
+}
+
+/** Swap outbound video to filtered canvas once frames exist. Never blocks answer. */
 async function upgradeCallVideoToFiltered(pc, videoSender){
   if(!pc || !videoSender || !stream) return;
+  if(pc.connectionState !== 'connected' && pc.connectionState !== 'completed') return;
   const canvas = $('camStageCanvas') || $('sendCanvas');
   if(!canvas || typeof canvas.captureStream !== 'function') return;
-  // Ensure a draw loop is running
   try{
     if(typeof startCamView === 'function'){
       const mode = ($('incall') && $('incall').classList.contains('active')) ? 'pip' : 'lobby';
       startCamView(mode);
     }
   }catch(_){}
-  // Wait briefly for non-empty canvas
-  await new Promise(r => setTimeout(r, 200));
+  await new Promise(r => setTimeout(r, 250));
   if(canvas.width < 16 || canvas.height < 16) return;
   let fxStream;
   try{ fxStream = canvas.captureStream(30); }catch(_){ return; }
@@ -475,15 +546,12 @@ async function upgradeCallVideoToFiltered(pc, videoSender){
   try{ vTrack.contentHint = 'motion'; }catch(_){}
   try{
     await videoSender.replaceTrack(vTrack);
-    console.log('[call] outbound video upgraded to FILTERED canvas');
+    console.log('[call] outbound video → filtered');
   }catch(e){
-    console.warn('[call] replaceTrack filtered failed', e);
+    console.warn('[call] replaceTrack filtered failed — keeping camera track', e);
   }
 }
-/* Tears down whatever's active — peer connection, all signaling listeners, remote
-   video — without touching Firestore. Call sites that need to also update the call
-   doc's status (ended/declined/missed) do that explicitly, since only one side should
-   usually write the final status, not both sides racing to write it on teardown. */
+
 function teardownCallConnection(){
   if(activeCallDocUnsub){ activeCallDocUnsub(); activeCallDocUnsub = null; }
   if(callerCandidatesUnsub){ callerCandidatesUnsub(); callerCandidatesUnsub = null; }
@@ -885,7 +953,7 @@ async function startRealCall(c){
     if(e.candidate) callRef.collection('callerCandidates').add(e.candidate.toJSON()).catch(()=>{});
   };
 
-  const offer = await peerConnection.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
+  const offer = await peerConnection.createOffer();
   await peerConnection.setLocalDescription(offer);
 
   await callRef.set({
@@ -1106,21 +1174,8 @@ $('acceptIncoming').onclick = async ()=>{
   try{
     // Parallel: media ready + TURN credentials (often already cached from prewarm)
     const iceP = getIceServers().catch(()=> RTC_CONFIG);
-    if(!mediaStreamIsLive(stream)){
-      if(typeof enableCameraForCall === 'function') await enableCameraForCall();
-      else await enableCamera();
-    }
-    if(!mediaStreamIsLive(stream)) throw new Error('Camera/mic unavailable — fix that first, then try answering again');
-    try{
-      stream.getAudioTracks().forEach(t => { t.enabled = true; });
-      stream.getVideoTracks().forEach(t => { t.enabled = camOn; });
-    }catch(e){}
-    if(!stream.getAudioTracks().some(t => t.readyState === 'live')){
-      try{
-        const a = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:true, noiseSuppression:true }, video: false });
-        a.getAudioTracks().forEach(t => stream.addTrack(t));
-      }catch(e){ console.warn('[call] answer: could not add audio', e); }
-    }
+    const mediaOk = await ensureCallMediaReady();
+    if(!mediaOk) throw new Error('Camera/mic unavailable — allow access, then try answering again');
 
     if(peerConnection){
       try{ peerConnection.close(); }catch(e){}
@@ -1138,7 +1193,7 @@ $('acceptIncoming').onclick = async ()=>{
     }
     if(!offer){ toast('That call is no longer available'); closeCallOverlayAndStopCamera(); return; }
 
-    await iceP; // ensure TURN applied on next createPeerConnection via cache
+    await iceP;
     peerConnection = await createPeerConnection();
     peerConnection.onicecandidate = e=>{
       if(e.candidate) callRef.collection('calleeCandidates').add(e.candidate.toJSON()).catch(()=>{});
@@ -1154,6 +1209,9 @@ $('acceptIncoming').onclick = async ()=>{
     await peerConnection.setLocalDescription(answer);
     await callRef.update({ answer: { type: answer.type, sdp: answer.sdp } });
     pendingIncomingOffer = null;
+    // Nudge remote media as soon as ICE may complete
+    setTimeout(()=> ensureRemoteVideoPlaying(), 300);
+    setTimeout(()=> ensureRemoteVideoPlaying(), 1200);
 
     if(callerCandidatesUnsub) callerCandidatesUnsub();
     callerCandidatesUnsub = callRef.collection('callerCandidates').onSnapshot(snap=>{
