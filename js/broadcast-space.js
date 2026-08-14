@@ -122,22 +122,32 @@ function renderBspaceConversation(docs){
   const el = $('bspaceConversation');
   if(!el) return;
   if(!docs.length){
-    el.innerHTML = `<div class="bspace-card"><div class="body" style="color:var(--text-dim);">Be the first to continue this conversation.</div></div>`;
+    el.innerHTML = `<div class="bspace-card"><div class="body" style="color:var(--text-dim);">No messages yet. Say hello, leave a voice note, or share a photo.</div></div>`;
     return;
   }
   el.innerHTML = docs.map(d=>{
     const m = d.data();
+    const media = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(m.mediaUrl) : (m.mediaUrl || '');
+    const isVoice = media && (m.type === 'voice' || m.type === 'audio');
+    const isPhoto = media && (m.type === 'photo' || m.type === 'image');
+    let body = '';
+    if(isVoice){
+      body = `<div style="font-family:var(--font-mono);font-size:10px;color:var(--mint);margin-bottom:6px;">Voice note</div>
+        <video class="band-audio-player" controls playsinline preload="metadata" src="${bspaceEscape(media)}" style="width:100%;max-width:280px;height:44px;border-radius:8px;background:#0a0c14;"></video>`;
+    } else if(isPhoto){
+      body = `<img src="${bspaceEscape(media)}" alt="Photo" loading="lazy" style="max-width:100%;max-height:320px;border-radius:12px;display:block;background:#0a0c14;" onerror="this.style.display='none';this.nextElementSibling&&(this.nextElementSibling.style.display='block');" />
+        <div style="display:none;color:var(--text-dim);font-size:12px;">Photo couldn’t load</div>`;
+    } else if(m.text){
+      body = bspaceEscape(m.text);
+    } else {
+      body = `<span style="color:var(--text-dim);font-size:12px;">Attachment unavailable</span>`;
+    }
     return `<div class="bspace-card">
       <div class="who">${bspaceEscape(bspaceWhoLabel(m.from))} · ${timeAgo(m.ts || Date.now())}</div>
-      <div class="body">${m.type === 'voice' && m.mediaUrl
-        ? `<video class="band-audio-player" controls playsinline preload="metadata" src="${bspaceEscape(m.mediaUrl)}" style="width:100%;height:44px;border-radius:8px;background:#000;"></video>`
-        : m.type === 'photo' && m.mediaUrl
-        ? `<img src="${bspaceEscape(m.mediaUrl)}" alt="" style="max-width:100%;border-radius:10px;display:block;" />`
-        : m.type === 'system'
-        ? `<span style="color:var(--mint);font-family:var(--font-mono);font-size:12px;">${bspaceEscape(m.text || '')}</span>`
-        : bspaceEscape(m.text || '')}</div>
+      <div class="body">${body}</div>
     </div>`;
   }).join('');
+
 }
 
 function renderBspaceQuestions(docs){
@@ -260,7 +270,7 @@ async function openBroadcastSpace(meta){
 
   const seg = meta.segment || {};
   const title = meta.title || (seg.type === 'text' ? (seg.text || 'Broadcast').slice(0, 60) : (seg.caption || 'Broadcast'));
-  const desc = meta.description || seg.caption || (seg.type === 'text' ? '' : 'Join the community around this idea.');
+  const desc = meta.description || seg.caption || (seg.type === 'text' ? '' : 'Watch, join the conversation, and explore questions and resources.');
 
   $('bspaceCreatorName').textContent = meta.creatorName || 'Someone';
   $('bspaceCreatorMeta').textContent = meta.isMine ? 'Your Broadcast' : 'Broadcast space';
@@ -283,7 +293,7 @@ async function openBroadcastSpace(meta){
   if(!fbDb || !currentUser){
     $('bspaceJoinBtn').textContent = 'Sign in to join';
     $('bspaceJoinBtn').classList.remove('joined');
-    $('bspaceConversation').innerHTML = `<div class="bspace-card"><div class="body" style="color:var(--text-dim);">Sign in to take part in this community.</div></div>`;
+    $('bspaceConversation').innerHTML = `<div class="bspace-card"><div class="body" style="color:var(--text-dim);">Sign in to chat, ask questions, and share with this community.</div></div>`;
     return;
   }
 
@@ -645,8 +655,9 @@ async function openBroadcastSpaceById(id){
     const d = snap.data();
     const segment = {
       type: d.mediaType || 'photo',
-      dataUrl: d.mediaType === 'photo' ? d.mediaUrl : null,
-      videoUrl: d.mediaType === 'video' ? d.mediaUrl : null,
+      dataUrl: d.mediaType === 'photo' ? (d.mediaUrl || null) : null,
+      mediaUrl: d.mediaUrl || null,
+      videoUrl: d.mediaType === 'video' ? (d.mediaUrl || null) : null,
       thumbDataUrl: d.thumbUrl || null,
       text: d.mediaType === 'text' ? (d.description || d.title) : null,
       bg: 'linear-gradient(160deg,#1a1f2e,#0d1018)',
@@ -781,7 +792,7 @@ function playBroadcastChapter(index, userInitiated){
   bspaceChapterIndex = index;
   const v = $('bspaceVideoEl');
   if(!v) return;
-  v.src = ch.mediaUrl;
+  v.src = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(ch.mediaUrl) : ch.mediaUrl;
   v.play().catch(()=>{});
   const bar = $('bspaceChapterBar');
   if(bar){

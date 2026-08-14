@@ -29,6 +29,23 @@ let connectionsSignals = []; // [{ contactId, contact, latest }] — real connec
    on anyone's device being online when the expiry actually hits.
    Fill in your own deployed Worker's URL here once it's live. */
 const SIGNAL_UPLOAD_WORKER_URL = 'https://naluno-signal-upload.naluno.workers.dev';
+/** Fix media URLs that pointed at a non-existent R2 public host. */
+function resolveMediaUrl(u){
+  if(!u || typeof u !== 'string') return u || '';
+  // Already served by worker
+  if(u.indexOf(SIGNAL_UPLOAD_WORKER_URL) === 0) return u;
+  // Legacy wrong public host → extract key after /u/ or full path
+  try{
+    const m = u.match(/\/u\/[^?\s]+/);
+    if(m) return SIGNAL_UPLOAD_WORKER_URL + '/o' + m[0];
+    if(/r2\.dev\//i.test(u)){
+      const path = u.split(/r2\.dev\//i)[1];
+      if(path) return SIGNAL_UPLOAD_WORKER_URL + '/o/' + path.replace(/^\/+/, '');
+    }
+  }catch(_){}
+  return u;
+}
+
 /** Must match signal-worker MAX_BYTES (150 MiB). */
 const UPLOAD_MAX_BYTES = 150 * 1024 * 1024;
 /** Soft chapter budget for pass-through slices (~4 min at ~2 Mbps or shorter at higher rates). */

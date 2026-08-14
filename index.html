@@ -20,7 +20,7 @@
 <meta property="og:description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:image" content="icon-512.png">
 <meta name="twitter:card" content="summary">
-<link rel="stylesheet" href="css/app.css?v=20260813m">
+<link rel="stylesheet" href="css/app.css?v=20260813n">
 </head>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
@@ -770,7 +770,7 @@
         <h1 class="bspace-title" id="bspaceTitle">—</h1>
         <p class="bspace-desc" id="bspaceDesc"></p>
         <div class="bspace-tags" id="bspaceTags"></div>
-        <button type="button" class="bspace-join" id="bspaceJoinBtn">Join community</button>
+        <button type="button" class="bspace-join" id="bspaceJoinBtn">Join this Broadcast</button>
 
         <div class="bspace-tabs" id="bspaceTabs">
           <button type="button" class="bspace-tab on" data-bspan="conversation">Conversation</button>
@@ -784,10 +784,10 @@
         <div class="bspace-panel" id="bspan-conversation">
           <div class="bspace-section">
             <h3>Continue the conversation</h3>
-            <p class="hint">Not a comment thread — replies become a discussion. Text, voice, photo, or a short clip.</p>
+            <p class="hint">Chat about this Broadcast. Type a message, leave a short voice note, or share a photo.</p>
             <div id="bspaceConversation"></div>
             <div class="bspace-composer">
-              <input id="bspaceConvInput" placeholder="Add to the conversation…" maxlength="800" />
+              <input id="bspaceConvInput" placeholder="Write a message…" maxlength="800" />
               <button type="button" class="bspace-mini primary" id="bspaceConvSend">Send</button>
               <button type="button" class="bspace-mini" id="bspaceConvVoice">Voice</button>
               <button type="button" class="bspace-mini" id="bspaceConvPhoto">Photo</button>
@@ -798,7 +798,7 @@
         <div class="bspace-panel" id="bspan-questions" style="display:none;">
           <div class="bspace-section">
             <h3>Questions</h3>
-            <p class="hint">Ask anything. The community can answer before the creator. Best answers can be marked.</p>
+            <p class="hint">Ask the creator or the community. Answers stay here so others can learn from them too.</p>
             <div id="bspaceQuestions"></div>
             <div class="bspace-composer">
               <input id="bspaceQInput" placeholder="Ask a question…" maxlength="400" />
@@ -809,7 +809,7 @@
         <div class="bspace-panel" id="bspan-results" style="display:none;">
           <div class="bspace-section">
             <h3>Results</h3>
-            <p class="hint">What happened because of this Broadcast? Real impact, not “nice video.”</p>
+            <p class="hint">Tried something from this Broadcast? Share what happened for you.</p>
             <div id="bspaceResults"></div>
             <div class="bspace-composer">
               <input id="bspaceResultInput" placeholder="I tried this and…" maxlength="400" />
@@ -820,7 +820,7 @@
         <div class="bspace-panel" id="bspan-resources" style="display:none;">
           <div class="bspace-section">
             <h3>Resources</h3>
-            <p class="hint">Links, notes, and materials that belong with this idea.</p>
+            <p class="hint">Helpful links and materials collected for this Broadcast.</p>
             <div id="bspaceResources"></div>
             <div class="bspace-composer" id="bspaceResourceComposer" style="display:none;">
               <input id="bspaceResTitle" placeholder="Resource title" maxlength="120" />
@@ -832,14 +832,14 @@
         <div class="bspace-panel" id="bspan-updates" style="display:none;">
           <div class="bspace-section">
             <h3>Updates</h3>
-            <p class="hint">The Broadcast grows without being deleted — corrections, pins, follow-ups.</p>
+            <p class="hint">Follow-ups and corrections from the creator as this Broadcast grows.</p>
             <div id="bspaceUpdates"></div>
           </div>
         </div>
         <div class="bspace-panel" id="bspan-journey" style="display:none;">
           <div class="bspace-section">
             <h3>Journey</h3>
-            <p class="hint">How this Broadcast has grown — one evolving story.</p>
+            <p class="hint">A simple timeline of joins, questions, and milestones.</p>
             <div class="bspace-journey" id="bspaceJourney"></div>
           </div>
         </div>
@@ -847,7 +847,7 @@
         
         <div class="bspace-section" id="bspaceDashboard" style="display:none;">
           <h3>Impact</h3>
-          <p class="hint">What this Broadcast has actually done — not vanity metrics.</p>
+          <p class="hint">A quick look at how people are engaging with this space.</p>
           <div id="bspaceImpactGrid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;"></div>
           <div class="bspace-composer" style="margin-top:12px;">
             <input id="bspaceUpdateInput" placeholder="Update this Broadcast (correction, news, pin)…" maxlength="500" />
@@ -865,27 +865,27 @@
 
 
 <!-- NALUNO_MODULES -->
-<script src="js/core.js?v=20260813m"></script>
-<script src="js/data.js?v=20260813m"></script>
-<script src="js/crypto.js?v=20260813m"></script>
-<script src="js/atmosphere.js?v=20260813m"></script>
-<script src="js/band-list.js?v=20260813m"></script>
-<script src="js/signal-core.js?v=20260813m"></script>
-<script src="js/broadcast-core.js?v=20260813m"></script>
-<script src="js/broadcast-composer.js?v=20260813m"></script>
-<script src="js/compass.js?v=20260813m"></script>
-<script src="js/signal-ui.js?v=20260813m"></script>
-<script src="js/broadcast-space.js?v=20260813m"></script>
-<script src="js/wireline.js?v=20260813m"></script>
-<script src="js/profile.js?v=20260813m"></script>
-<script src="js/auth.js?v=20260813m"></script>
-<script src="js/notifications.js?v=20260813m"></script>
-<script src="js/camera.js?v=20260813m"></script>
-<script src="js/calls.js?v=20260813m"></script>
-<script src="js/broadcast-live.js?v=20260813m"></script>
-<script src="js/band-room.js?v=20260813m"></script>
-<script src="js/pwa.js?v=20260813m"></script>
-<script src="js/find.js?v=20260813m"></script>
+<script src="js/core.js?v=20260813n"></script>
+<script src="js/data.js?v=20260813n"></script>
+<script src="js/crypto.js?v=20260813n"></script>
+<script src="js/atmosphere.js?v=20260813n"></script>
+<script src="js/band-list.js?v=20260813n"></script>
+<script src="js/signal-core.js?v=20260813n"></script>
+<script src="js/broadcast-core.js?v=20260813n"></script>
+<script src="js/broadcast-composer.js?v=20260813n"></script>
+<script src="js/compass.js?v=20260813n"></script>
+<script src="js/signal-ui.js?v=20260813n"></script>
+<script src="js/broadcast-space.js?v=20260813n"></script>
+<script src="js/wireline.js?v=20260813n"></script>
+<script src="js/profile.js?v=20260813n"></script>
+<script src="js/auth.js?v=20260813n"></script>
+<script src="js/notifications.js?v=20260813n"></script>
+<script src="js/camera.js?v=20260813n"></script>
+<script src="js/calls.js?v=20260813n"></script>
+<script src="js/broadcast-live.js?v=20260813n"></script>
+<script src="js/band-room.js?v=20260813n"></script>
+<script src="js/pwa.js?v=20260813n"></script>
+<script src="js/find.js?v=20260813n"></script>
 <!-- /NALUNO_MODULES -->
 </body>
 </html>
