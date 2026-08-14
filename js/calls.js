@@ -512,47 +512,132 @@ async function attachLocalTracksToPc(pc){
   console.log('[call] senders', pc.getSenders().map(s=>({kind:s.track&&s.track.kind, state:s.track&&s.track.readyState})));
 }
 
-function scheduleFilteredUpgrade(pc){
-  if(!pc) return;
-  const wantFx = (typeof greenroomEnabled !== 'undefined' && greenroomEnabled) &&
-    ((typeof selectedFilterId !== 'undefined' && selectedFilterId && selectedFilterId !== 'original') ||
-     (typeof selectedBackgroundId !== 'undefined' && selectedBackgroundId && selectedBackgroundId !== 'none'));
-  if(!wantFx) return;
-  const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-  if(!sender) return;
-  setTimeout(()=>{
-    upgradeCallVideoToFiltered(pc, sender).catch(e => console.warn('[call] filter upgrade', e));
-  }, 600);
+/* ---- Outbound filters (safe): raw A/V first, then sendCanvas replaceTrack ----
+   sendCanvas is painted every frame with compositeFrame (same filters you see).
+   We never touch audio. If anything fails, the original camera track stays. */
+let _callFilterPc = null;
+let _callFilterSender = null;
+let _callRawVideoTrack = null;
+let _callFilterTrack = null;
+let _callFilterUpgradeTimer = null;
+let _callFilterUpgraded = false;
+
+function callWantsOutboundFilter(){
+  try{
+    if(typeof greenroomEnabled !== 'undefined' && !greenroomEnabled) return false;
+    const fid = (typeof selectedFilterId !== 'undefined') ? selectedFilterId : 'original';
+    const bid = (typeof selectedBackgroundId !== 'undefined') ? selectedBackgroundId : 'none';
+    return (fid && fid !== 'original') || (bid && bid !== 'none');
+  }catch(_){ return false; }
 }
 
-/** Swap outbound video to filtered canvas once frames exist. Never blocks answer. */
-async function upgradeCallVideoToFiltered(pc, videoSender){
-  if(!pc || !videoSender || !stream) return;
-  if(pc.connectionState !== 'connected' && pc.connectionState !== 'completed') return;
-  const canvas = $('camStageCanvas') || $('sendCanvas');
-  if(!canvas || typeof canvas.captureStream !== 'function') return;
-  try{
-    if(typeof startCamView === 'function'){
-      const mode = ($('incall') && $('incall').classList.contains('active')) ? 'pip' : 'lobby';
-      startCamView(mode);
+function scheduleFilteredUpgrade(pc){
+  if(!pc) return;
+  _callFilterPc = pc;
+  const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+  if(!sender) return;
+  _callFilterSender = sender;
+  // Remember the real camera track for safe rollback
+  if(sender.track && sender.track.readyState === 'live' && !sender.track.label.includes('canvas')){
+    _callRawVideoTrack = sender.track;
+  } else if(stream){
+    const vt = stream.getVideoTracks().find(t => t.readyState === 'live');
+    if(vt) _callRawVideoTrack = vt;
+  }
+  if(_callFilterUpgradeTimer) clearTimeout(_callFilterUpgradeTimer);
+  // Short delay so ICE + first frames settle; answer path stays untouched
+  _callFilterUpgradeTimer = setTimeout(()=>{
+    upgradeCallVideoToFiltered().catch(e => console.warn('[call] filter upgrade', e));
+  }, 700);
+}
+
+async function upgradeCallVideoToFiltered(){
+  const pc = _callFilterPc;
+  const videoSender = _callFilterSender;
+  if(!pc || !videoSender) return;
+  if(pc.connectionState !== 'connected') return;
+
+  if(!callWantsOutboundFilter()){
+    // Back to raw camera if filter cleared
+    if(_callRawVideoTrack && _callRawVideoTrack.readyState === 'live' && videoSender.track !== _callRawVideoTrack){
+      try{ await videoSender.replaceTrack(_callRawVideoTrack); _callFilterUpgraded = false; }catch(_){}
     }
+    return;
+  }
+
+  // Ensure send path has the live camera feeding composite
+  try{
+    const srv = $('sendRawVideo');
+    if(srv && stream && srv.srcObject !== stream){
+      srv.srcObject = stream;
+      srv.play && srv.play().catch(()=>{});
+    }
+    if(typeof drawSendCanvas === 'function') drawSendCanvas();
   }catch(_){}
-  await new Promise(r => setTimeout(r, 250));
-  if(canvas.width < 16 || canvas.height < 16) return;
+
+  const canvas = $('sendCanvas');
+  if(!canvas || typeof canvas.captureStream !== 'function') return;
+
+  // Wait up to ~1.5s for real painted frames (non-blocking retries)
+  for(let i = 0; i < 6; i++){
+    if(typeof drawSendCanvas === 'function') drawSendCanvas();
+    if(canvas.width >= 16 && canvas.height >= 16) break;
+    await new Promise(r => setTimeout(r, 250));
+  }
+  if(canvas.width < 16 || canvas.height < 16){
+    console.warn('[call] sendCanvas not ready — keeping camera track');
+    return;
+  }
+
   let fxStream;
-  try{ fxStream = canvas.captureStream(30); }catch(_){ return; }
+  try{ fxStream = canvas.captureStream(30); }catch(e){
+    console.warn('[call] captureStream failed', e);
+    return;
+  }
   const vTrack = fxStream.getVideoTracks().find(t => t.readyState === 'live');
   if(!vTrack) return;
   try{ vTrack.contentHint = 'motion'; }catch(_){}
+
+  // If replace fails, we still have the camera track on the sender
   try{
     await videoSender.replaceTrack(vTrack);
-    console.log('[call] outbound video → filtered');
+    _callFilterTrack = vTrack;
+    _callFilterUpgraded = true;
+    console.log('[call] outbound video → filtered sendCanvas', canvas.width + 'x' + canvas.height);
+    vTrack.onended = ()=>{
+      // Canvas track died — roll back to camera so call does not go black
+      if(_callRawVideoTrack && _callRawVideoTrack.readyState === 'live' && _callFilterSender){
+        _callFilterSender.replaceTrack(_callRawVideoTrack).catch(()=>{});
+        _callFilterUpgraded = false;
+        console.warn('[call] filter track ended — restored camera');
+      }
+    };
   }catch(e){
-    console.warn('[call] replaceTrack filtered failed — keeping camera track', e);
+    console.warn('[call] replaceTrack filtered failed — keeping camera', e);
   }
 }
 
+/** Call when user picks a different filter during an active call. */
+function refreshOutboundFilterIfInCall(){
+  try{
+    if(!_callFilterPc || _callFilterPc.connectionState !== 'connected') return;
+    if(!_callFilterSender) return;
+    upgradeCallVideoToFiltered().catch(()=>{});
+  }catch(_){}
+}
+
+function resetCallFilterState(){
+  if(_callFilterUpgradeTimer){ clearTimeout(_callFilterUpgradeTimer); _callFilterUpgradeTimer = null; }
+  try{ if(_callFilterTrack) _callFilterTrack.stop(); }catch(_){}
+  _callFilterPc = null;
+  _callFilterSender = null;
+  _callRawVideoTrack = null;
+  _callFilterTrack = null;
+  _callFilterUpgraded = false;
+}
+
 function teardownCallConnection(){
+  try{ resetCallFilterState(); }catch(_){}
   if(activeCallDocUnsub){ activeCallDocUnsub(); activeCallDocUnsub = null; }
   if(callerCandidatesUnsub){ callerCandidatesUnsub(); callerCandidatesUnsub = null; }
   if(calleeCandidatesUnsub){ calleeCandidatesUnsub(); calleeCandidatesUnsub = null; }

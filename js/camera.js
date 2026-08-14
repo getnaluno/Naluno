@@ -540,6 +540,7 @@ function renderBackgroundChips(){
 function chooseFilter(id, manual){
   if(!nalunoFilters[id]) return;
   selectedFilterId = id;
+  try{ if(typeof refreshOutboundFilterIfInCall === 'function') refreshOutboundFilterIfInCall(); }catch(_){}
   selectedBackgroundId = id === 'original' ? 'none' : id; // keep legacy field roughly in sync
   if(manual){ userPickedFilter = true; userPickedBackground = true; }
   renderBackgroundChips();
@@ -863,6 +864,8 @@ requestAnimationFrame(stageLoopTick);
 function startCamView(target){
   if(target==='lobby'){ camAnimStart = performance.now(); const v = $('camRawVideo'); if(v) v.srcObject = stream; }
   else { pipAnimStart = performance.now(); const v = $('pipRawVideo'); if(v) v.srcObject = stream; }
+  const srv = $('sendRawVideo');
+  if(srv && stream){ srv.srcObject = stream; try{ srv.play(); }catch(_){}}
 }
 
 /* ---------------- CAMERA QUALITY ----------------
