@@ -94,6 +94,9 @@ function generateVideoThumbnail(videoSrc){
     const video = document.createElement('video');
     video.muted = true;
     video.playsInline = true;
+    video.setAttribute('playsinline','');
+    video.preload = 'auto';
+    videoSrc = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(videoSrc) : videoSrc;
     video.src = videoSrc;
     let resolved = false;
     const finish = result=>{ if(!resolved){ resolved = true; resolve(result); } };

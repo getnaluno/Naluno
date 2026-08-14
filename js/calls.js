@@ -7,12 +7,41 @@
 /* ---------------- CALL FLOW ---------------- */
 function showCallScreen(id){
   document.querySelectorAll('.callscreen').forEach(s=>s.classList.remove('active'));
-  $(id).classList.add('active');
-  $('callOverlay').classList.add('active');
+  const screen = $(id);
+  if(screen) screen.classList.add('active');
+  const ov = $('callOverlay');
+  if(ov){
+    ov.classList.add('active');
+    // Must sit above Broadcast space (z-index 80), Band, Wireline
+    ov.style.zIndex = '95';
+    ov.style.opacity = '1';
+    ov.style.pointerEvents = 'auto';
+  }
+  // Soft-hide competing full-screen surfaces so lobby is not covered
+  try{
+    if($('bspace') && $('bspace').classList.contains('active')){
+      $('bspace').style.zIndex = '70';
+    }
+    if($('bandRoom') && $('bandRoom').classList.contains('active')){
+      $('bandRoom').style.zIndex = '40';
+    }
+    if($('wirelineThread') && $('wirelineThread').classList.contains('active')){
+      $('wirelineThread').style.zIndex = '40';
+    }
+  }catch(_){}
 }
 function closeCallOverlay(){
-  $('callOverlay').classList.remove('active');
+  const ov = $('callOverlay');
+  if(ov){
+    ov.classList.remove('active');
+    ov.style.zIndex = '';
+  }
   document.querySelectorAll('.callscreen').forEach(s=>s.classList.remove('active'));
+  try{
+    if($('bspace')) $('bspace').style.zIndex = '';
+    if($('bandRoom')) $('bandRoom').style.zIndex = '';
+    if($('wirelineThread')) $('wirelineThread').style.zIndex = '';
+  }catch(_){}
 }
 
 let currentCallContactId = null;
@@ -585,7 +614,17 @@ function startOutgoingCall(contactId){
   $('ringFallbackHint').style.display = computeSignal(c).tier === 'fading' ? 'flex' : 'none';
   snapshotUiBeforeCall();
   showCallScreen('lobby');
-  if(!stream) enableCamera(); else runGreenroom();
+  // Camera async — lobby must appear immediately even if gUM is slow
+  const camPromise = (typeof enableCameraForCall === 'function')
+    ? enableCameraForCall()
+    : enableCamera();
+  Promise.resolve(camPromise).then(()=>{
+    try{ if(typeof runGreenroom === 'function') runGreenroom(); }catch(_){}
+    try{ if(typeof startCamView === 'function') startCamView('lobby'); }catch(_){}
+  }).catch(e=>{
+    console.warn('[call] lobby camera', e);
+    toast('Enable camera to continue the call');
+  });
 }
 
 /* Creates the real call doc + WebRTC offer, and starts exchanging ICE candidates.

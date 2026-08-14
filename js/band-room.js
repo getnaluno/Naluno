@@ -665,6 +665,8 @@ function setBandRecordButtonsIdle(){
     ab.style.color = '#fff';
     ab.style.borderColor = 'rgba(255,255,255,.2)';
     ab.textContent = 'Record audio';
+    const voice = $('bandVoiceBtn');
+    if(voice){ voice.textContent = 'Voice'; voice.style.background = 'rgba(13,15,23,.55)'; }
   }
   if(vb){
     vb.disabled = false;
@@ -687,6 +689,13 @@ function showBandRecordBar(mode){
   if(prev){
     if(mode === 'video' && bandRecStream){
       prev.style.display = 'block';
+      prev.style.objectFit = 'cover';
+      prev.style.objectPosition = 'center center';
+      prev.style.width = '100%';
+      prev.style.aspectRatio = '9 / 16';
+      prev.style.maxHeight = '40vh';
+      prev.style.borderRadius = '14px';
+      prev.style.transform = 'scaleX(-1)'; // mirror like selfie preview
       prev.srcObject = bandRecStream;
       prev.muted = true;
       prev.play().catch(()=>{});
@@ -829,7 +838,7 @@ async function startBandRecording(mode){
   try{
     bandRecStream = await navigator.mediaDevices.getUserMedia(
       wantVideo
-        ? { video: { facingMode: 'user', width: { ideal: 720 }, height: { ideal: 1280 } }, audio: { echoCancellation:true, noiseSuppression:true } }
+        ? { video: { facingMode: 'user', width: { ideal: 720 }, height: { ideal: 1280 }, aspectRatio: { ideal: 9/16 } }, audio: { echoCancellation:true, noiseSuppression:true } }
         : { audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true }, video: false }
     );
   }catch(e){
@@ -866,13 +875,17 @@ async function startBandRecording(mode){
   if(mode === 'audio' && ab){
     ab.style.background = 'var(--red)';
     ab.style.borderColor = 'var(--red)';
-    ab.textContent = 'Recording…';
+    ab.textContent = 'Stop';
+    ab.style.color = '#fff';
     if(vb) vb.disabled = true;
+    const voice = $('bandVoiceBtn');
+    if(voice){ voice.textContent = 'Stop'; voice.style.background = 'var(--red)'; }
   }
   if(mode === 'video' && vb){
     vb.style.background = 'var(--red)';
     vb.style.borderColor = 'var(--red)';
-    vb.textContent = 'Recording…';
+    vb.textContent = 'Stop';
+    vb.style.color = '#fff';
     if(ab) ab.disabled = true;
   }
 
@@ -887,9 +900,27 @@ async function startBandRecording(mode){
   }, 200);
 }
 
-if($('bandLiveBtn')) $('bandLiveBtn').onclick = ()=> startBandRecording('video');
-if($('bandAudioBtn')) $('bandAudioBtn').onclick = ()=> startBandRecording('audio');
+function toggleBandRecording(mode){
+  if(bandRecorder && bandRecorder.state === 'recording'){
+    // Second tap = stop & send (same as Stop button)
+    finishBandRecordingAndSend();
+    return;
+  }
+  startBandRecording(mode);
+}
+if($('bandLiveBtn')) $('bandLiveBtn').onclick = ()=> toggleBandRecording('video');
+if($('bandAudioBtn')) $('bandAudioBtn').onclick = ()=> toggleBandRecording('audio');
 if($('bandRecordStopBtn')) $('bandRecordStopBtn').onclick = ()=> finishBandRecordingAndSend();
+// Voice note short path — also toggle if mid-record
+if($('bandVoiceBtn')){
+  $('bandVoiceBtn').onclick = ()=>{
+    if(bandRecorder && bandRecorder.state === 'recording'){
+      finishBandRecordingAndSend();
+      return;
+    }
+    startBandRecording('audio');
+  };
+}
 
 /* ---- Band message E2E (envelope per member) ---- */
 async function resolvePublicKeyForUid(uid){
@@ -1036,8 +1067,10 @@ function renderBandLiveGrid(){
   if(selfLive){
     const v = stage.querySelector('[data-live-tile="self"] video');
     if(v && bandLiveLocalStream){ v.srcObject = bandLiveLocalStream; v.play().catch(()=>{}); }
+    // One self view only — hide floating PiP while grid shows you
+    const float = $('bandLiveFloat');
+    if(float) float.style.display = 'none';
   }
-  // Kick mesh connect for remote live tiles
   if(typeof bandLiveMeshSync === 'function') bandLiveMeshSync(liveOthers);
 }
 
@@ -1045,18 +1078,15 @@ function enableBandLiveCamera(){
   if(bandLiveLocalStream){ stopBandLiveCamera(); return; }
   if(!amTunedIn){ toast('Tune in first'); return; }
   navigator.mediaDevices.getUserMedia({
-    video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+    video: { facingMode: 'user', width: { ideal: 720 }, height: { ideal: 1280 }, aspectRatio: { ideal: 9/16 } },
     audio: false,
   }).then(stream=>{
     bandLiveLocalStream = stream;
+    // Single view: grid tile only (no second floating camera)
     const float = $('bandLiveFloat');
+    if(float) float.style.display = 'none';
     const vid = $('bandLiveFloatVideo');
-    if(vid){ vid.srcObject = stream; vid.play().catch(()=>{}); }
-    if(float){
-      float.style.display = 'block';
-      // default position
-      if(!float.style.left){ float.style.right = '16px'; float.style.bottom = '160px'; float.style.left = 'auto'; float.style.top = 'auto'; }
-    }
+    if(vid) vid.srcObject = null;
     const btn = $('bandGoLiveBtn') || $('bandLiveBtn');
     if(btn && btn.id === 'bandGoLiveBtn'){ btn.textContent = 'Stop live'; btn.style.background = 'var(--mint)'; btn.style.color = '#0D0F17'; }
     // Tell the hall you're live
