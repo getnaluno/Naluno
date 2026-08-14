@@ -367,6 +367,7 @@ async function ensureCallMediaReady(){
   const hasA = stream && stream.getAudioTracks().some(t => t.readyState === 'live');
   const hasV = stream && stream.getVideoTracks().some(t => t.readyState === 'live');
   if(hasA && hasV){
+    // Fast path — do not re-negotiate camera (keeps answer quick)
     try{
       stream.getAudioTracks().forEach(t => { t.enabled = true; });
       stream.getVideoTracks().forEach(t => { t.enabled = (typeof camOn === 'undefined') ? true : !!camOn; });
@@ -446,19 +447,7 @@ async function createPeerConnection(){
     }
   };
   pc.onicegatheringstatechange = ()=> console.log('[call] ICE gathering:', pc.iceGatheringState);
-  pc.onconnectionstatechange = ()=>{
-    console.log('[call] connection:', pc.connectionState);
-    if(pc.connectionState === 'connected'){
-      try{
-        pc.getSenders().forEach(s=>{
-          if(s.track){ try{ s.track.enabled = true; }catch(_){} }
-        });
-      }catch(_){}
-      ensureRemoteVideoPlaying();
-      // Filter upgrade only after media is actually flowing
-      try{ scheduleFilteredUpgrade(pc); }catch(_){}
-    }
-  };
+  // connectionstate + filter schedule live in attachConnectionWatchdogs (single handler)
   attachConnectionWatchdogs(pc);
 
   // addTrack alone creates sendrecv m-lines. Do NOT also addTransceiver of same kind
@@ -548,44 +537,40 @@ function scheduleFilteredUpgrade(pc){
   // Short delay so ICE + first frames settle; answer path stays untouched
   _callFilterUpgradeTimer = setTimeout(()=>{
     upgradeCallVideoToFiltered().catch(e => console.warn('[call] filter upgrade', e));
-  }, 700);
+  }, 350);
 }
 
 async function upgradeCallVideoToFiltered(){
   const pc = _callFilterPc;
   const videoSender = _callFilterSender;
   if(!pc || !videoSender) return;
-  if(pc.connectionState !== 'connected') return;
+  if(pc.connectionState !== 'connected' && pc.iceConnectionState !== 'connected' && pc.iceConnectionState !== 'completed') return;
+  if(_callFilterUpgraded && callWantsOutboundFilter()) return; // already on filter
 
   if(!callWantsOutboundFilter()){
-    // Back to raw camera if filter cleared
     if(_callRawVideoTrack && _callRawVideoTrack.readyState === 'live' && videoSender.track !== _callRawVideoTrack){
       try{ await videoSender.replaceTrack(_callRawVideoTrack); _callFilterUpgraded = false; }catch(_){}
     }
     return;
   }
 
-  // Ensure send path has the live camera feeding composite
   try{
     const srv = $('sendRawVideo');
-    if(srv && stream && srv.srcObject !== stream){
-      srv.srcObject = stream;
-      srv.play && srv.play().catch(()=>{});
+    if(srv && stream){
+      if(srv.srcObject !== stream) srv.srcObject = stream;
+      try{ await srv.play(); }catch(_){}
     }
-    if(typeof drawSendCanvas === 'function') drawSendCanvas();
   }catch(_){}
 
   const canvas = $('sendCanvas');
   if(!canvas || typeof canvas.captureStream !== 'function') return;
-
-  // Wait up to ~1.5s for real painted frames (non-blocking retries)
-  for(let i = 0; i < 6; i++){
-    if(typeof drawSendCanvas === 'function') drawSendCanvas();
-    if(canvas.width >= 16 && canvas.height >= 16) break;
-    await new Promise(r => setTimeout(r, 250));
-  }
+  try{ if(typeof drawSendCanvas === 'function') drawSendCanvas(); }catch(_){}
   if(canvas.width < 16 || canvas.height < 16){
-    console.warn('[call] sendCanvas not ready — keeping camera track');
+    // one soft retry next frame only — never a long loop on answer path
+    requestAnimationFrame(()=>{
+      try{ if(typeof drawSendCanvas === 'function') drawSendCanvas(); }catch(_){}
+      if(canvas.width >= 16) upgradeCallVideoToFiltered().catch(()=>{});
+    });
     return;
   }
 
@@ -598,26 +583,22 @@ async function upgradeCallVideoToFiltered(){
   if(!vTrack) return;
   try{ vTrack.contentHint = 'motion'; }catch(_){}
 
-  // If replace fails, we still have the camera track on the sender
   try{
     await videoSender.replaceTrack(vTrack);
     _callFilterTrack = vTrack;
     _callFilterUpgraded = true;
-    console.log('[call] outbound video → filtered sendCanvas', canvas.width + 'x' + canvas.height);
+    console.log('[call] outbound → filtered', canvas.width + 'x' + canvas.height);
     vTrack.onended = ()=>{
-      // Canvas track died — roll back to camera so call does not go black
       if(_callRawVideoTrack && _callRawVideoTrack.readyState === 'live' && _callFilterSender){
         _callFilterSender.replaceTrack(_callRawVideoTrack).catch(()=>{});
         _callFilterUpgraded = false;
-        console.warn('[call] filter track ended — restored camera');
       }
     };
   }catch(e){
-    console.warn('[call] replaceTrack filtered failed — keeping camera', e);
+    console.warn('[call] filter replaceTrack failed — camera kept', e);
   }
 }
 
-/** Call when user picks a different filter during an active call. */
 function refreshOutboundFilterIfInCall(){
   try{
     if(!_callFilterPc || _callFilterPc.connectionState !== 'connected') return;
@@ -718,8 +699,17 @@ function attachConnectionWatchdogs(pc){
   pc.onconnectionstatechange = ()=>{
     const s = pc.connectionState;
     console.log('[call] connection state:', s);
+    if(s === 'connected'){
+      try{
+        pc.getSenders().forEach(snd=>{
+          if(snd.track){ try{ snd.track.enabled = true; }catch(_){} }
+        });
+      }catch(_){}
+      try{ ensureRemoteVideoPlaying(); }catch(_){}
+      // Filters: only after media is flowing (does not block answer)
+      try{ scheduleFilteredUpgrade(pc); }catch(_){}
+    }
     if(s === 'failed' || s === 'closed'){
-      // Remote gone or unrecoverable — end local UI.
       if($('callOverlay').classList.contains('active')){
         endActiveCall('remote');
       }
@@ -728,6 +718,10 @@ function attachConnectionWatchdogs(pc){
   pc.oniceconnectionstatechange = ()=>{
     const s = pc.iceConnectionState;
     console.log('[call] ICE connection state:', s);
+    if(s === 'connected' || s === 'completed'){
+      try{ ensureRemoteVideoPlaying(); }catch(_){}
+      try{ scheduleFilteredUpgrade(pc); }catch(_){}
+    }
     if(s === 'failed' || s === 'closed'){
       if($('callOverlay').classList.contains('active')){
         endActiveCall('remote');
