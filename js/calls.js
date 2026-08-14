@@ -349,6 +349,7 @@ function teardownCallConnection(){
     peerConnection = null;
   }
   activeCallId = null;
+  pendingIncomingOffer = null;
   remoteDescriptionSet = false;
   pendingRemoteCandidates = [];
   iAmCaller = false;
@@ -515,6 +516,8 @@ function handleIncomingCall(callId, data){
   remoteDescriptionSet = false;
   pendingRemoteCandidates = [];
   callActionInProgress = false;
+  // Cache SDP offer now — Answer must not wait on another Firestore get()
+  pendingIncomingOffer = (data && data.offer) ? data.offer : null;
   const c = contacts.find(x=>x.firebaseUid===data.callerUid);
   const name = c ? c.name : 'Someone';
   const color = c ? c.color : '#8B90A8';
@@ -530,7 +533,8 @@ function handleIncomingCall(callId, data){
   // Pre-warm camera + TURN so Answer is nearly instant.
   prewarmIceServers();
   const showReady = ()=>{ $('incomingSceneNote').style.display = 'inline-flex'; $('incomingSelfTag').textContent = 'scene ready'; };
-  enableCamera().then(()=> setTimeout(showReady, 300)).catch(()=> showReady());
+  const camFn = (typeof enableCameraForCall === 'function') ? enableCameraForCall : enableCamera;
+  camFn().then(()=> setTimeout(showReady, 150)).catch(()=> showReady());
 
   // Watches for the caller hanging up before this side answers.
   activeCallDocUnsub = fbDb.collection('calls').doc(callId).onSnapshot(snap=>{
@@ -904,9 +908,12 @@ $('acceptIncoming').onclick = async ()=>{
   if($('incomingSelfTag')) $('incomingSelfTag').textContent = 'connecting…';
 
   try{
-    // Ensure LIVE media — prefer fast call constraints
-    if(typeof enableCameraForCall === 'function') await enableCameraForCall();
-    else await enableCamera();
+    // Parallel: media ready + TURN credentials (often already cached from prewarm)
+    const iceP = getIceServers().catch(()=> RTC_CONFIG);
+    if(!mediaStreamIsLive(stream)){
+      if(typeof enableCameraForCall === 'function') await enableCameraForCall();
+      else await enableCamera();
+    }
     if(!mediaStreamIsLive(stream)) throw new Error('Camera/mic unavailable — fix that first, then try answering again');
     try{
       stream.getAudioTracks().forEach(t => { t.enabled = true; });
@@ -919,7 +926,6 @@ $('acceptIncoming').onclick = async ()=>{
       }catch(e){ console.warn('[call] answer: could not add audio', e); }
     }
 
-    // Clear any leftover PC from a previous session before answering.
     if(peerConnection){
       try{ peerConnection.close(); }catch(e){}
       peerConnection = null;
@@ -927,24 +933,31 @@ $('acceptIncoming').onclick = async ()=>{
     remoteDescriptionSet = false;
     pendingRemoteCandidates = [];
 
-    const doc = await callRef.get();
-    const data = doc.data();
-    if(!data || !data.offer){ toast('That call is no longer available'); closeCallOverlayAndStopCamera(); return; }
+    // Prefer offer cached at ring time — skip network get when possible
+    let offer = pendingIncomingOffer;
+    if(!offer){
+      const doc = await callRef.get();
+      const data = doc.data();
+      offer = data && data.offer;
+    }
+    if(!offer){ toast('That call is no longer available'); closeCallOverlayAndStopCamera(); return; }
 
+    await iceP; // ensure TURN applied on next createPeerConnection via cache
     peerConnection = await createPeerConnection();
     peerConnection.onicecandidate = e=>{
       if(e.candidate) callRef.collection('calleeCandidates').add(e.candidate.toJSON()).catch(()=>{});
     };
 
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
     remoteDescriptionSet = true;
     pendingRemoteCandidates.forEach(cand => peerConnection.addIceCandidate(new RTCIceCandidate(cand)).catch(()=>{}));
     pendingRemoteCandidates = [];
 
     const answer = await peerConnection.createAnswer();
+    // setLocalDescription without waiting for full ICE gather — trickle candidates via onicecandidate
     await peerConnection.setLocalDescription(answer);
-    // Write the SDP answer. Status is already 'accepted' so the caller has stopped ringing.
     await callRef.update({ answer: { type: answer.type, sdp: answer.sdp } });
+    pendingIncomingOffer = null;
 
     if(callerCandidatesUnsub) callerCandidatesUnsub();
     callerCandidatesUnsub = callRef.collection('callerCandidates').onSnapshot(snap=>{

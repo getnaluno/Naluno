@@ -29,6 +29,12 @@ let connectionsSignals = []; // [{ contactId, contact, latest }] — real connec
    on anyone's device being online when the expiry actually hits.
    Fill in your own deployed Worker's URL here once it's live. */
 const SIGNAL_UPLOAD_WORKER_URL = 'https://naluno-signal-upload.naluno.workers.dev';
+/** Must match signal-worker MAX_BYTES (150 MiB). */
+const UPLOAD_MAX_BYTES = 150 * 1024 * 1024;
+/** Soft chapter budget for pass-through slices (~4 min at ~2 Mbps or shorter at higher rates). */
+const CHAPTER_TARGET_SECONDS = 4 * 60;
+const CHAPTER_TARGET_BYTES = 55 * 1024 * 1024; // keep each chapter safely under older + new workers
+
 
 /* Generates a small, static thumbnail frame from a video and returns it as a JPEG
    data URL — small enough to embed directly in the Firestore segment doc alongside

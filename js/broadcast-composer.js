@@ -8,7 +8,7 @@
    ============================================================ */
 
 const BCAST_MAX_SECONDS = 10 * 60; // 10 minutes
-const BCAST_MAX_UPLOAD_BYTES = 150 * 1024 * 1024; // soft target after smart compress; no hard 60MB reject
+const BCAST_MAX_UPLOAD_BYTES = (typeof UPLOAD_MAX_BYTES === "number" ? UPLOAD_MAX_BYTES : 150 * 1024 * 1024);
 const BCAST_TARGET_HEIGHT = 1080; // phone-sharp; long clips still scale bitrate down
 
 let bcompFile = null;       // original File
@@ -115,16 +115,10 @@ function compressBroadcastVideo(file, onProgress){
       return;
     }
 
-    // Pass-through when already efficient — never inflate a good encode
-    const sourceBps = (file.size * 8) / Math.max(0.5, duration);
-    const likelyEfficient = sourceBps <= 5_500_000; // already ≤~5.5 Mbps
-    if(file.size <= 120 * 1024 * 1024 && duration <= 180 && likelyEfficient){
-      if(onProgress) onProgress(1, 'Ready · original kept');
-      resolve({ blob: file, duration, skipped: true });
-      return;
-    }
-    if(file.size <= 40 * 1024 * 1024 && duration <= 120){
-      if(onProgress) onProgress(1, 'Ready · original kept');
+    // Prefer pass-through: chapters handle size; avoid re-encode inflation
+    const maxUp = (typeof UPLOAD_MAX_BYTES === 'number') ? UPLOAD_MAX_BYTES : (150*1024*1024);
+    if(file.size <= maxUp){
+      if(onProgress) onProgress(1, 'Ready · original (chapters if needed)');
       resolve({ blob: file, duration, skipped: true });
       return;
     }
@@ -342,6 +336,7 @@ async function bcompPublish(){
   const snapKind = bcompKind;
   const snapFile = bcompFile;
   const snapBlob = bcompCompressedBlob || bcompFile;
+  const snapDuration = bcompDuration || 0;
   const snapTitle = title;
   const snapDesc = desc;
   const snapTags = tags.slice();
@@ -355,21 +350,72 @@ async function bcompPublish(){
       let mediaType = snapKind;
       let mediaUrl = null;
       let thumbUrl = null;
+      let chapters = null;
+      let breathers = null;
       if(snapKind === 'photo'){
         if(progress) progress('Uploading photo…');
         mediaUrl = await uploadVideoToR2(snapFile);
         thumbUrl = mediaUrl;
       } else {
-        if(!snapBlob) throw new Error('No video ready');
-        if(progress) progress('Uploading ' + Math.round(snapBlob.size/1024/1024) + ' MB…');
-        mediaUrl = await uploadVideoToR2(snapBlob);
-        try{ thumbUrl = await generateVideoThumbnail(mediaUrl); }catch(_){}
+        const file = snapFile || snapBlob;
+        if(!file) throw new Error('No video ready');
+        const duration = snapDuration || (typeof bcompProbeDuration === 'function' ? await bcompProbeDuration(file) : 0);
+        const plan = (typeof planBroadcastChapters === 'function')
+          ? planBroadcastChapters(file.size || 0, duration)
+          : { mode: 'single', parts: [{ start:0, end: duration||0, index:0 }], midrolls: [] };
+
+        if(plan.mode === 'single' || plan.parts.length <= 1){
+          // Pass-through — no re-encode
+          if(progress) progress('Uploading chapter 1…');
+          mediaUrl = await uploadVideoToR2(file);
+          try{ thumbUrl = await generateVideoThumbnail(mediaUrl); }catch(_){}
+          chapters = [{ index: 0, mediaUrl, duration: duration || null, title: 'Chapter 1', bytes: file.size || null }];
+          // Virtual mid-rolls on single file (future ads at ~4 min marks)
+          if(plan.midrolls && plan.midrolls.length){
+            breathers = plan.midrolls.map((m, i) => ({
+              afterChapterIndex: 0,
+              atSec: m.atSec,
+              durationMs: 800,
+              label: 'Break',
+              adSlot: m.adSlot || { enabled: true, inventoryId: null, status: 'reserved', maxDurationMs: 15000 },
+            }));
+          }
+        } else {
+          // Multi-chapter: slice by time (extract only when over upload budget)
+          chapters = [];
+          for(const part of plan.parts){
+            if(progress) progress('Preparing chapter ' + (part.index + 1) + ' of ' + plan.parts.length + '…');
+            let blob = file;
+            if(typeof extractVideoClip === 'function' && (part.start > 0.2 || part.end < (duration - 0.5))){
+              blob = await extractVideoClip(file, part.start, part.end, frac => {
+                if(progress) progress('Chapter ' + (part.index + 1) + '… ' + Math.round((frac||0)*100) + '%');
+              });
+            }
+            if(progress) progress('Uploading chapter ' + (part.index + 1) + '…');
+            const url = await uploadVideoToR2(blob);
+            if(part.index === 0){
+              mediaUrl = url;
+              try{ thumbUrl = await generateVideoThumbnail(url); }catch(_){}
+            }
+            chapters.push({
+              index: part.index,
+              mediaUrl: url,
+              duration: Math.max(0.1, part.end - part.start),
+              title: 'Chapter ' + (part.index + 1),
+              bytes: blob.size || null,
+            });
+          }
+          breathers = typeof buildBreathersForChapters === 'function'
+            ? buildBreathersForChapters(chapters.length)
+            : [];
+        }
       }
       if(typeof createPermanentBroadcast !== 'function') throw new Error('Broadcast core not loaded');
       if(progress) progress('Saving Broadcast…');
       const b = await createPermanentBroadcast({
         title: snapTitle, description: snapDesc, tags: snapTags,
         mediaType, mediaUrl, thumbUrl, filterCss: '',
+        chapters, breathers,
       });
       if(typeof loadFeedBroadcasts === 'function') await loadFeedBroadcasts();
       if(typeof openBroadcastById === 'function') openBroadcastById(b.id);

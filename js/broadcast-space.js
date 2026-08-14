@@ -88,8 +88,20 @@ function renderBspaceMedia(seg){
     return;
   }
   if(seg.type === 'video'){
-    const src = seg.videoUrl || seg.dataUrl || '';
-    host.innerHTML = `<video id="bspaceVideoEl" controls playsinline preload="metadata" src="${bspaceEscape(src)}" poster="${seg.thumbDataUrl ? bspaceEscape(seg.thumbDataUrl) : ''}" style="filter:${seg.filterCss || ''}"></video>`;
+    const chapters = (activeBroadcastMeta && activeBroadcastMeta.chapters) || seg.chapters || null;
+    const breathers = (activeBroadcastMeta && activeBroadcastMeta.breathers) || [];
+    const src = (chapters && chapters[0] && chapters[0].mediaUrl) || seg.videoUrl || seg.dataUrl || '';
+    const multi = chapters && chapters.length > 1;
+    host.innerHTML = `
+      <video id="bspaceVideoEl" controls playsinline preload="metadata" src="${bspaceEscape(src)}" poster="${seg.thumbDataUrl ? bspaceEscape(seg.thumbDataUrl) : ''}" style="filter:${seg.filterCss || ''}"></video>
+      <div id="bspaceBreather" style="display:none;position:absolute;inset:0;background:rgba(13,15,23,.92);align-items:center;justify-content:center;flex-direction:column;gap:10px;z-index:3;">
+        <div style="font-family:var(--font-futuristic);font-size:15px;color:var(--mint);" id="bspaceBreatherLabel">Chapter break</div>
+        <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);" id="bspaceBreatherAd">Next chapter in a moment</div>
+      </div>
+      ${multi ? `<div id="bspaceChapterBar" style="display:flex;gap:6px;flex-wrap:wrap;padding:8px 4px 0;"></div>` : ''}`;
+    // relative host for breather overlay
+    try{ host.style.position = host.style.position || 'relative'; }catch(_){}
+    wireBroadcastChapterPlayer(chapters, breathers);
     return;
   }
   // photo
@@ -235,8 +247,15 @@ function listenBspaceCollection(colName, renderFn, orderField){
 }
 
 async function openBroadcastSpace(meta){
+  // Carry chapter architecture for player + future ads
+  if(meta.chapters) meta.chapters = meta.chapters;
+  if(meta.breathers) meta.breathers = meta.breathers;
+
   // meta: { isMine, contactId?, segment, creatorUid, creatorName, title?, description?, tags? }
   activeBroadcastMeta = meta;
+  if(!activeBroadcastMeta.chapters && meta.segment && meta.segment.chapters){
+    activeBroadcastMeta.chapters = meta.segment.chapters;
+  }
   bspaceClearListeners();
 
   const seg = meta.segment || {};
@@ -633,6 +652,7 @@ async function openBroadcastSpaceById(id){
       bg: 'linear-gradient(160deg,#1a1f2e,#0d1018)',
       filterCss: d.filterCss || '',
       caption: d.description || '',
+      chapters: d.chapters || null,
     };
     await openBroadcastSpace({
       isMine: !!(currentUser && d.creatorUid === currentUser.uid),
@@ -643,6 +663,8 @@ async function openBroadcastSpaceById(id){
       title: d.title,
       description: d.description,
       tags: d.tags || [],
+      chapters: d.chapters || null,
+      breathers: d.breathers || null,
     });
   }catch(e){
     console.warn(e);
@@ -699,4 +721,110 @@ if($('bspaceDeleteBtn')){
       toast('Broadcast deleted');
     }catch(e){ toast(e.message || 'Couldn’t delete'); }
   };
+}
+
+
+/* ---- Chapter player + breather / ad-slot architecture ---- */
+let bspaceChapterIndex = 0;
+let bspaceChapterList = [];
+let bspaceBreatherList = [];
+let bspaceBreatherTimer = null;
+
+function wireBroadcastChapterPlayer(chapters, breathers){
+  bspaceChapterList = Array.isArray(chapters) ? chapters.slice().sort((a,b)=>(a.index||0)-(b.index||0)) : [];
+  bspaceBreatherList = Array.isArray(breathers) ? breathers : [];
+  bspaceChapterIndex = 0;
+  const v = $('bspaceVideoEl');
+  if(!v) return;
+
+  const bar = $('bspaceChapterBar');
+  if(bar && bspaceChapterList.length > 1){
+    bar.innerHTML = bspaceChapterList.map((ch,i)=>
+      `<button type="button" data-ch="${i}" style="font-family:var(--font-mono);font-size:10px;padding:4px 8px;border-radius:999px;border:1px solid var(--line);background:${i===0?'rgba(124,255,178,.15)':'transparent'};color:${i===0?'var(--mint)':'var(--text-dim)'};cursor:pointer;">${bspaceEscape(ch.title || ('Ch '+(i+1)))}</button>`
+    ).join('');
+    bar.querySelectorAll('[data-ch]').forEach(btn=>{
+      btn.onclick = ()=> playBroadcastChapter(parseInt(btn.getAttribute('data-ch'),10), true);
+    });
+  }
+
+  // Single-file mid-rolls (atSec on breathers)
+  v.ontimeupdate = ()=>{
+    if(bspaceChapterList.length > 1) return;
+    const marks = bspaceBreatherList.filter(b => typeof b.atSec === 'number');
+    if(!marks.length) return;
+    const t = v.currentTime || 0;
+    marks.forEach(m=>{
+      if(m._fired) return;
+      if(t >= m.atSec && t < m.atSec + 1.5){
+        m._fired = true;
+        showBreatherAdSlot(m, ()=>{});
+      }
+    });
+  };
+
+  v.onended = ()=>{
+    if(bspaceChapterList.length <= 1) return;
+    const br = bspaceBreatherList.find(b => b.afterChapterIndex === bspaceChapterIndex);
+    const next = bspaceChapterIndex + 1;
+    if(next >= bspaceChapterList.length) return;
+    if(br){
+      showBreatherAdSlot(br, ()=> playBroadcastChapter(next, false));
+    } else {
+      playBroadcastChapter(next, false);
+    }
+  };
+}
+
+function playBroadcastChapter(index, userInitiated){
+  const ch = bspaceChapterList[index];
+  if(!ch || !ch.mediaUrl) return;
+  bspaceChapterIndex = index;
+  const v = $('bspaceVideoEl');
+  if(!v) return;
+  v.src = ch.mediaUrl;
+  v.play().catch(()=>{});
+  const bar = $('bspaceChapterBar');
+  if(bar){
+    bar.querySelectorAll('[data-ch]').forEach(btn=>{
+      const on = parseInt(btn.getAttribute('data-ch'),10) === index;
+      btn.style.background = on ? 'rgba(124,255,178,.15)' : 'transparent';
+      btn.style.color = on ? 'var(--mint)' : 'var(--text-dim)';
+    });
+  }
+  hideBreatherAdSlot();
+}
+
+function showBreatherAdSlot(breather, onDone){
+  const el = $('bspaceBreather');
+  if(!el){ if(onDone) onDone(); return; }
+  const ad = breather && breather.adSlot;
+  el.style.display = 'flex';
+  const label = $('bspaceBreatherLabel');
+  const adLine = $('bspaceBreatherAd');
+  if(label) label.textContent = (breather && breather.label) || 'Chapter break';
+  if(adLine){
+    // Architecture for ads: when inventory is ready, render creative here.
+    // Today: reserved slot only (no network ad call).
+    if(ad && ad.status === 'ready' && ad.creativeHtml){
+      adLine.innerHTML = ad.creativeHtml;
+    } else if(ad && ad.enabled){
+      adLine.textContent = 'Ad slot · reserved for future inventory';
+    } else {
+      adLine.textContent = 'Next chapter…';
+    }
+  }
+  if(bspaceBreatherTimer) clearTimeout(bspaceBreatherTimer);
+  const wait = (breather && breather.durationMs) || 1200;
+  // If ad is ready and longer, use ad max duration
+  const adWait = (ad && ad.status === 'ready' && ad.maxDurationMs) ? ad.maxDurationMs : wait;
+  bspaceBreatherTimer = setTimeout(()=>{
+    hideBreatherAdSlot();
+    if(onDone) onDone();
+  }, Math.min(adWait, 15000));
+}
+
+function hideBreatherAdSlot(){
+  const el = $('bspaceBreather');
+  if(el) el.style.display = 'none';
+  if(bspaceBreatherTimer){ clearTimeout(bspaceBreatherTimer); bspaceBreatherTimer = null; }
 }

@@ -52,10 +52,14 @@ function broadcastThumbHtml(b){
   </article>`;
 }
 
-async function createPermanentBroadcast({ title, description, tags, mediaType, mediaUrl, thumbUrl, filterCss }){
+async function createPermanentBroadcast({ title, description, tags, mediaType, mediaUrl, thumbUrl, filterCss, chapters, breathers }){
   if(!currentUser || !fbDb) throw new Error('Sign in required');
   const now = Date.now();
   const ref = fbDb.collection('broadcasts').doc();
+  // chapters: [{ index, mediaUrl, duration, title?, bytes? }]
+  // breathers: [{ afterChapterIndex, durationMs, adSlot: { enabled, inventoryId, status } }]
+  const chapterList = Array.isArray(chapters) ? chapters : null;
+  const primaryUrl = mediaUrl || (chapterList && chapterList[0] && chapterList[0].mediaUrl) || null;
   const doc = {
     creatorUid: currentUser.uid,
     creatorName: (currentProfile && currentProfile.name) || currentUser.displayName || 'Someone',
@@ -63,9 +67,11 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
     description: (description || '').slice(0, 2000),
     tags: (tags || []).slice(0, 12).map(t => String(t).toLowerCase().slice(0, 32)),
     mediaType: mediaType || 'photo',
-    mediaUrl: mediaUrl || null,
+    mediaUrl: primaryUrl,
     thumbUrl: thumbUrl || null,
     filterCss: filterCss || '',
+    chapters: chapterList,
+    breathers: Array.isArray(breathers) ? breathers : null,
     createdAt: now,
     updatedAt: now,
     memberUids: [currentUser.uid],
@@ -219,3 +225,56 @@ function openBroadcastById(id){
     }, 200);
   }catch(_){}
 })();
+
+
+/** Plan chapter breaks for a source file (pass-through when possible). */
+function planBroadcastChapters(fileSize, durationSec){
+  const maxBytes = (typeof UPLOAD_MAX_BYTES === 'number') ? UPLOAD_MAX_BYTES : (150 * 1024 * 1024);
+  const targetBytes = (typeof CHAPTER_TARGET_BYTES === 'number') ? CHAPTER_TARGET_BYTES : (55 * 1024 * 1024);
+  const targetSec = (typeof CHAPTER_TARGET_SECONDS === 'number') ? CHAPTER_TARGET_SECONDS : 240;
+  const dur = Math.max(0.5, durationSec || 0);
+  const size = Math.max(1, fileSize || 0);
+
+  // Single pass-through if under worker max
+  if(size <= maxBytes && dur <= targetSec * 3){
+    // Still place virtual mid-roll marks every ~4 min for future ads (single file)
+    const marks = [];
+    for(let t = targetSec; t < dur - 15; t += targetSec){
+      marks.push({ atSec: t, adSlot: { enabled: true, inventoryId: null, status: 'reserved' } });
+    }
+    return { mode: 'single', parts: [{ start: 0, end: dur, index: 0 }], midrolls: marks };
+  }
+
+  // Multi-part: duration slices aimed at ~4 min OR estimated byte budget
+  const bytesPerSec = size / dur;
+  const maxSecByBytes = Math.max(30, Math.floor(targetBytes / Math.max(1, bytesPerSec)));
+  const sliceSec = Math.min(targetSec, maxSecByBytes);
+  const parts = [];
+  let i = 0;
+  for(let start = 0; start < dur - 0.5; start += sliceSec){
+    const end = Math.min(dur, start + sliceSec);
+    parts.push({ start, end, index: i++ });
+    if(i >= 40) break; // safety
+  }
+  return { mode: 'multipart', parts, midrolls: [] };
+}
+
+/** Default breathers between real chapters — ad architecture lives here. */
+function buildBreathersForChapters(chapterCount){
+  const list = [];
+  for(let i = 0; i < chapterCount - 1; i++){
+    list.push({
+      afterChapterIndex: i,
+      durationMs: 1200,
+      label: 'Chapter break',
+      // Future ads: fill this slot without changing player structure
+      adSlot: {
+        enabled: true,
+        inventoryId: null,   // e.g. 'naluno-midroll-v1'
+        status: 'reserved',  // reserved | ready | playing | completed | skipped
+        maxDurationMs: 15000,
+      },
+    });
+  }
+  return list;
+}
