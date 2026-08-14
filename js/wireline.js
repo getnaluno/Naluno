@@ -171,17 +171,32 @@ function closeThread(){
   activeThreadContactId = null;
 }
 $('threadBack').onclick = closeThread;
-$('threadCallBtn').onclick = ()=>{
+function wirelineStartCallFromThread(){
   const id = activeThreadContactId;
   if(!id){ toast('No conversation selected'); return; }
-  const c = contacts.find(x => x.id === id);
+  const c = (typeof contacts !== 'undefined') ? contacts.find(x => x.id === id) : null;
   if(!c){ toast('Contact missing'); return; }
   if(!c.isReal || !c.firebaseUid){ toast('Calls need a real connection'); return; }
-  // Start call first — closing thread must not cancel setup
-  if(typeof startOutgoingCall === 'function') startOutgoingCall(id);
-  else toast('Calls unavailable');
+  if(typeof startOutgoingCall !== 'function'){ toast('Calls still loading — try again'); return; }
   try{ closeThread(); }catch(_){}
-};
+  requestAnimationFrame(function(){
+    try{ startOutgoingCall(id); }
+    catch(e){ console.error(e); toast(e.message || 'Could not start call'); }
+  });
+}
+if($('threadCallBtn')){
+  $('threadCallBtn').onclick = function(e){
+    if(e){ e.preventDefault(); e.stopPropagation(); }
+    wirelineStartCallFromThread();
+  };
+}
+document.addEventListener('click', function(e){
+  var t = e.target && e.target.closest && e.target.closest('#threadCallBtn');
+  if(!t) return;
+  e.preventDefault();
+  e.stopPropagation();
+  wirelineStartCallFromThread();
+}, true);
 
 function receiptTickHtml(status){
   if(status==='queued'){

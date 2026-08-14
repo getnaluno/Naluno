@@ -13,21 +13,18 @@ function showCallScreen(id){
   if(ov){
     ov.classList.add('active');
     // Must sit above Broadcast space (z-index 80), Band, Wireline
-    ov.style.zIndex = '95';
+    ov.style.zIndex = '120';
     ov.style.opacity = '1';
     ov.style.pointerEvents = 'auto';
   }
-  // Soft-hide competing full-screen surfaces so lobby is not covered
   try{
-    if($('bspace') && $('bspace').classList.contains('active')){
-      $('bspace').style.zIndex = '70';
+    if($('wirelineThread')){
+      $('wirelineThread').classList.remove('active');
+      $('wirelineThread').style.zIndex = '';
     }
-    if($('bandRoom') && $('bandRoom').classList.contains('active')){
-      $('bandRoom').style.zIndex = '40';
-    }
-    if($('wirelineThread') && $('wirelineThread').classList.contains('active')){
-      $('wirelineThread').style.zIndex = '40';
-    }
+    if($('bspace')) $('bspace').style.zIndex = '10';
+    if($('bandRoom')) $('bandRoom').style.zIndex = '10';
+    ov.style.display = 'flex';
   }catch(_){}
 }
 function closeCallOverlay(){
@@ -613,7 +610,9 @@ function startOutgoingCall(contactId){
   $('sceneReadyNote').style.display = 'none';
   $('ringFallbackHint').style.display = computeSignal(c).tier === 'fading' ? 'flex' : 'none';
   snapshotUiBeforeCall();
+  try{ if(typeof closeThread === 'function') closeThread(); }catch(_){}
   showCallScreen('lobby');
+  console.log('[call] lobby open');
   // Camera async — lobby must appear immediately even if gUM is slow
   const camPromise = (typeof enableCameraForCall === 'function')
     ? enableCameraForCall()

@@ -1072,6 +1072,23 @@ function renderBandLiveGrid(){
     if(float) float.style.display = 'none';
   }
   if(typeof bandLiveMeshSync === 'function') bandLiveMeshSync(liveOthers);
+  if(!$('bandLiveExpandBtn') && stage.parentNode){
+    var exp = document.createElement('button');
+    exp.type = 'button';
+    exp.id = 'bandLiveExpandBtn';
+    exp.setAttribute('aria-label','Expand live');
+    exp.style.cssText = 'position:absolute;right:14px;top:8px;z-index:6;width:34px;height:34px;border-radius:50%;background:rgba(13,15,23,.75);border:1px solid rgba(255,255,255,.2);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+    exp.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    stage.parentNode.style.position = stage.parentNode.style.position || 'relative';
+    stage.parentNode.insertBefore(exp, stage);
+    exp.onclick = function(e){
+      e.preventDefault();
+      stage.classList.toggle('expanded');
+      exp.style.transform = stage.classList.contains('expanded') ? 'rotate(180deg)' : '';
+      stage.style.maxHeight = stage.classList.contains('expanded') ? '78vh' : '';
+      renderBandLiveGrid();
+    };
+  }
 }
 
 function enableBandLiveCamera(){

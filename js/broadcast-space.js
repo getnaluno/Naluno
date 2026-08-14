@@ -102,10 +102,22 @@ function renderBspaceMedia(seg){
           <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);" id="bspaceBreatherAd">Next chapter in a moment</div>
         </div>
       </div>
-      ${showChapters ? `<div id="bspaceChapterBar" class="bspace-chapter-bar"></div>` : ''}`;
+      `;
     const vel = $('bspaceVideoEl');
     if(vel && typeof bindMediaElement === 'function') bindMediaElement(vel, rawSrc);
     else if(vel){ vel.src = rawSrc; }
+    let barHost = document.getElementById('bspaceChapterHost');
+    if(!barHost){
+      const title = $('bspaceTitle');
+      if(title && title.parentNode){
+        barHost = document.createElement('div');
+        barHost.id = 'bspaceChapterHost';
+        title.parentNode.insertBefore(barHost, title);
+      }
+    }
+    if(barHost){
+      barHost.innerHTML = showChapters ? '<div id="bspaceChapterBar" class="bspace-chapter-bar"></div>' : '';
+    }
     wireBroadcastChapterPlayer(showChapters ? chapters : (chapters && chapters.length ? chapters : null), breathers, { showChips: !!showChapters });
     return;
   }
@@ -419,27 +431,73 @@ $('bspaceConvInput').addEventListener('keydown', e=>{
   if(e.key === 'Enter'){ e.preventDefault(); $('bspaceConvSend').onclick(); }
 });
 
-$('bspaceConvVoice').onclick = async ()=>{
-  if(!(await bspaceRequireMember())) return;
-  if(!navigator.mediaDevices || !window.MediaRecorder){ toast('Voice not supported here'); return; }
-  toast('Recording 8s voice…');
+let bspaceVoiceRec = null;
+let bspaceVoiceStream = null;
+let bspaceVoiceChunks = [];
+let bspaceVoiceStart = 0;
+let bspaceVoiceTimer = null;
+
+function bspaceVoiceResetBtn(){
+  const btn = $('bspaceConvVoice');
+  if(!btn) return;
+  btn.textContent = 'Voice';
+  btn.style.background = '';
+  btn.style.color = '';
+}
+async function bspaceVoiceStopAndSend(){
+  const btn = $('bspaceConvVoice');
+  if(bspaceVoiceTimer){ clearInterval(bspaceVoiceTimer); bspaceVoiceTimer = null; }
+  const rec = bspaceVoiceRec;
+  const stream = bspaceVoiceStream;
+  bspaceVoiceRec = null;
+  bspaceVoiceStream = null;
+  if(!rec){ bspaceVoiceResetBtn(); return; }
+  const blob = await new Promise(resolve=>{
+    rec.onstop = ()=>{
+      const b = new Blob(bspaceVoiceChunks, { type: (bspaceVoiceChunks[0] && bspaceVoiceChunks[0].type) || 'audio/webm' });
+      resolve(b.size ? b : null);
+    };
+    try{ rec.stop(); }catch(_){ resolve(null); }
+  });
+  bspaceVoiceChunks = [];
+  if(stream) stream.getTracks().forEach(t=>{ try{ t.stop(); }catch(_){} });
+  bspaceVoiceResetBtn();
+  if(!blob){ toast('Nothing recorded'); return; }
   try{
-    const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
-    const chunks = [];
-    const rec = new MediaRecorder(stream);
-    rec.ondataavailable = e=>{ if(e.data && e.data.size) chunks.push(e.data); };
-    rec.start();
-    await new Promise(r => setTimeout(r, 8000));
-    await new Promise(r => { rec.onstop = r; rec.stop(); });
-    stream.getTracks().forEach(t=>t.stop());
-    const blob = new Blob(chunks, { type: (chunks[0] && chunks[0].type) || 'audio/webm' });
-    if(!blob.size){ toast('Nothing recorded'); return; }
-    toast('Uploading…');
+    if(btn) btn.textContent = 'Uploading…';
     const url = await uploadVideoToR2(blob);
-    await bspacePost('conversation', { type:'voice', mediaUrl:url, text:'' });
+    await bspacePost('conversation', { type:'voice', mediaUrl:url, text:'', duration: Math.round((Date.now()-bspaceVoiceStart)/1000) });
     toast('Voice added');
   }catch(e){
     toast(e.message || 'Voice failed');
+  }finally{
+    bspaceVoiceResetBtn();
+  }
+}
+
+$('bspaceConvVoice').onclick = async ()=>{
+  if(!(await bspaceRequireMember())) return;
+  if(bspaceVoiceRec && bspaceVoiceRec.state === 'recording'){
+    await bspaceVoiceStopAndSend();
+    return;
+  }
+  if(!navigator.mediaDevices || !window.MediaRecorder){ toast('Voice not supported here'); return; }
+  try{
+    bspaceVoiceChunks = [];
+    bspaceVoiceStream = await navigator.mediaDevices.getUserMedia({ audio:true });
+    const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : (MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '');
+    bspaceVoiceRec = new MediaRecorder(bspaceVoiceStream, mime ? { mimeType: mime, audioBitsPerSecond: 40000 } : { audioBitsPerSecond: 40000 });
+    bspaceVoiceRec.ondataavailable = e=>{ if(e.data && e.data.size) bspaceVoiceChunks.push(e.data); };
+    bspaceVoiceStart = Date.now();
+    bspaceVoiceRec.start(250);
+    const btn = $('bspaceConvVoice');
+    if(btn){ btn.textContent = 'Stop'; btn.style.background = 'var(--red)'; btn.style.color = '#fff'; }
+    bspaceVoiceTimer = setInterval(()=>{
+      if(Date.now() - bspaceVoiceStart >= 60000) bspaceVoiceStopAndSend();
+    }, 500);
+  }catch(e){
+    toast(e.message || 'Mic unavailable');
+    bspaceVoiceResetBtn();
   }
 };
 
@@ -950,3 +1008,22 @@ function hideBreatherAdSlot(){
   if(el) el.style.display = 'none';
   if(bspaceBreatherTimer){ clearTimeout(bspaceBreatherTimer); bspaceBreatherTimer = null; }
 }
+
+
+(function wireBspaceExpand(){
+  function bind(){
+    const btn = document.getElementById('bspaceExpandBtn');
+    if(!btn || btn.dataset.wired) return;
+    btn.dataset.wired = '1';
+    btn.onclick = function(e){
+      e.preventDefault();
+      e.stopPropagation();
+      const hero = document.getElementById('bspaceHero');
+      if(!hero) return;
+      hero.classList.toggle('expanded');
+      btn.style.transform = hero.classList.contains('expanded') ? 'rotate(180deg)' : '';
+    };
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
+  else bind();
+})();
