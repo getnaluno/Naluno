@@ -1,6 +1,6 @@
 // Naluno service worker — offline shell + background call push.
 // v4: NEVER cache JS/CSS (stale modules were breaking Signal/calls after deploys).
-const CACHE_NAME = 'naluno-shell-v16';
+const CACHE_NAME = 'naluno-shell-v18';
 const CORE_ASSETS = [
   './',
   './index.html',

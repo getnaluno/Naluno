@@ -96,7 +96,7 @@ function renderBspaceMedia(seg){
     const showChapters = chapters && chapters.length > 1 && !chapters.every(c => c.silent);
     host.innerHTML = `
       <div class="bspace-media-frame" style="position:relative;width:100%;background:#000;border-radius:14px;overflow:hidden;min-height:180px;">
-        <video id="bspaceVideoEl" controls playsinline preload="metadata" src="${bspaceEscape(rawSrc)}" poster="${seg.thumbDataUrl ? bspaceEscape(seg.thumbDataUrl) : ''}" style="width:100%;max-height:52vh;display:block;background:#000;filter:${seg.filterCss || ''}"></video>
+        <video id="bspaceVideoEl" controls playsinline preload="metadata" src="${bspaceEscape(rawSrc)}" poster="${seg.thumbDataUrl ? bspaceEscape(seg.thumbDataUrl) : ''}" style="width:100%;height:100%;object-fit:cover;display:block;background:#000;filter:${seg.filterCss || ''}"></video>
         <div id="bspaceBreather" style="display:none;position:absolute;inset:0;background:rgba(13,15,23,.92);align-items:center;justify-content:center;flex-direction:column;gap:10px;z-index:3;">
           <div style="font-family:var(--font-futuristic);font-size:15px;color:var(--mint);" id="bspaceBreatherLabel">Chapter break</div>
           <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);" id="bspaceBreatherAd">Next chapter in a moment</div>
@@ -119,6 +119,7 @@ function renderBspaceMedia(seg){
       barHost.innerHTML = showChapters ? '<div id="bspaceChapterBar" class="bspace-chapter-bar"></div>' : '';
     }
     wireBroadcastChapterPlayer(showChapters ? chapters : (chapters && chapters.length ? chapters : null), breathers, { showChips: !!showChapters });
+    try{ adaptBspaceHeroToVideo(); }catch(_){}
     return;
   }
   // photo
@@ -138,12 +139,54 @@ function setBspaceTab(name){
 function renderBspaceConversation(docs){
   const el = $('bspaceConversation');
   if(!el) return;
-  if(!docs.length){
+
+  // Ensure pin host sits above the feed (once)
+  let pin = $('bspaceLivePin');
+  if(!pin){
+    pin = document.createElement('div');
+    pin.id = 'bspaceLivePin';
+    pin.style.cssText = 'display:none;margin:0 0 12px;';
+    el.parentNode.insertBefore(pin, el);
+  }
+
+  const isLiveSystem = (m)=>{
+    if(!m) return false;
+    if(m.type === 'system' || m.type === 'live') return true;
+    const t = (m.text || '').toLowerCase();
+    return t.indexOf('went live') >= 0 || t.indexOf('new chapter of the same broadcast') >= 0;
+  };
+
+  const pinned = [];
+  const rest = [];
+  (docs || []).forEach(d=>{
+    const m = d.data ? d.data() : d;
+    if(isLiveSystem(m)) pinned.push({ d, m });
+    else rest.push({ d, m });
+  });
+
+  // Newest live notice only (top of conversation, not buried)
+  if(pinned.length){
+    pinned.sort((a,b)=> (b.m.ts||0) - (a.m.ts||0));
+    const latest = pinned[0].m;
+    pin.style.display = 'block';
+    pin.innerHTML = `<div class="bspace-card" style="border:1px solid rgba(124,255,178,.45);background:rgba(124,255,178,.08);">
+      <div class="who" style="color:var(--mint);">● LIVE · ${timeAgo(latest.ts || Date.now())}</div>
+      <div class="body" style="font-weight:600;">${bspaceEscape(latest.text || 'Creator went live')}</div>
+    </div>`;
+  } else {
+    pin.style.display = 'none';
+    pin.innerHTML = '';
+  }
+
+  if(!rest.length && !pinned.length){
     el.innerHTML = `<div class="bspace-card"><div class="body" style="color:var(--text-dim);">No messages yet. Say hello, leave a voice note, or share a photo.</div></div>`;
     return;
   }
-  el.innerHTML = docs.map(d=>{
-    const m = d.data();
+  if(!rest.length){
+    el.innerHTML = '';
+    return;
+  }
+  el.innerHTML = rest.map(({m})=>{
     const media = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(m.mediaUrl) : (m.mediaUrl || '');
     const isVoice = media && (m.type === 'voice' || m.type === 'audio');
     const isPhoto = media && (m.type === 'photo' || m.type === 'image');
@@ -164,7 +207,6 @@ function renderBspaceConversation(docs){
       <div class="body">${body}</div>
     </div>`;
   }).join('');
-
 }
 
 function renderBspaceQuestions(docs){
@@ -789,9 +831,9 @@ function bspaceWatchLiveState(){
     const badge = $('bspaceLiveBadge');
     const isCreator = !!(activeBroadcastMeta && (activeBroadcastMeta.isMine || (currentUser && activeBroadcastMeta.creatorUid === currentUser.uid)));
     if(badge){
-      if(d.live && !bspaceLiveStream){
+      if(d.live){
         badge.style.display = 'block';
-        badge.textContent = 'LIVE NOW';
+        badge.textContent = isCreator ? 'LIVE' : 'LIVE NOW — JOIN';
       } else if(!bspaceLiveStream){
         badge.style.display = 'none';
       }
@@ -799,12 +841,22 @@ function bspaceWatchLiveState(){
     if(typeof bLiveOnSpaceOpened === 'function'){
       bLiveOnSpaceOpened(!!d.live, isCreator);
     }
-    // Auto-prompt join once when going live
-    if(d.live && !isCreator && !bspaceLiveStream && typeof bLiveJoinAsViewer === 'function'){
-      const bar = $('bspaceReactionBar');
-      if(bar) bar.style.display = 'flex';
+    // Non-creator: always expose Join live while host is live
+    if(d.live && !isCreator){
+      if(typeof bLiveShowJoinUi === 'function') bLiveShowJoinUi(true);
+      if(typeof bLiveEnsureJoinBanner === 'function'){
+        const ban = bLiveEnsureJoinBanner();
+        if(ban) ban.style.display = 'flex';
+      }
     }
-  }, ()=>{});
+    // Host ended: clear viewer chrome
+    if(!d.live && !isCreator){
+      if(typeof bLiveLeaveViewer === 'function' && typeof bLiveViewerPc !== 'undefined' && bLiveViewerPc){
+        try{ bLiveLeaveViewer(); }catch(_){}
+      }
+      if(typeof bLiveShowJoinUi === 'function') bLiveShowJoinUi(false);
+    }
+  }, err => console.warn('[bspace] live watch', err));
   bspaceUnsubs.push(unsub);
 }
 
@@ -1027,3 +1079,29 @@ function hideBreatherAdSlot(){
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
   else bind();
 })();
+
+
+function adaptBspaceHeroToVideo(){
+  const hero = $('bspaceHero');
+  const v = $('bspaceVideoEl');
+  if(!hero || !v) return;
+  const apply = ()=>{
+    const w = v.videoWidth || 0, h = v.videoHeight || 0;
+    if(w < 2 || h < 2) return;
+    const ratio = w / h;
+    // Portrait (near 9:16): keep 9:16 stage
+    if(ratio <= 0.75){
+      hero.style.aspectRatio = '9 / 16';
+      hero.style.maxHeight = hero.classList.contains('expanded') ? 'min(92vh, 900px)' : 'min(72vh, 640px)';
+    } else if(ratio >= 1.2){
+      // Landscape: shorter stage — no giant black void under the player
+      hero.style.aspectRatio = '16 / 10';
+      hero.style.maxHeight = hero.classList.contains('expanded') ? 'min(70vh, 520px)' : 'min(42vh, 360px)';
+    } else {
+      hero.style.aspectRatio = '1 / 1';
+      hero.style.maxHeight = hero.classList.contains('expanded') ? 'min(80vh, 640px)' : 'min(52vh, 420px)';
+    }
+  };
+  if(v.videoWidth) apply();
+  else v.addEventListener('loadedmetadata', apply, { once:true });
+}

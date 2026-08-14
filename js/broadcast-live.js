@@ -253,6 +253,8 @@ async function bLiveJoinAsViewer(){
     leaveBtn.textContent = 'Leave live';
     leaveBtn.onclick = ()=> bLiveLeaveViewer();
   }
+  const ban = $('bspaceJoinLiveBanner');
+  if(ban) ban.style.display = 'flex';
   toast('You’re in the live room');
 }
 
@@ -268,10 +270,19 @@ async function bLiveLeaveViewer(){
     leaveBtn.textContent = 'Join live';
     leaveBtn.onclick = ()=> bLiveJoinAsViewer();
   }
-  // Restore static media if host ended
-  if(activeBroadcastMeta && activeBroadcastMeta.segment && typeof renderBspaceMedia === 'function'){
-    // keep live badge if still live
-  }
+  // Hide banner only if host is no longer live
+  try{
+    if(fbDb && activeBroadcastId){
+      fbDb.collection('broadcasts').doc(activeBroadcastId).get().then(snap=>{
+        const live = snap.exists && !!(snap.data() || {}).live;
+        const ban = $('bspaceJoinLiveBanner');
+        if(ban) ban.style.display = live ? 'flex' : 'none';
+        if(!live && typeof renderBspaceMedia === 'function' && activeBroadcastMeta && activeBroadcastMeta.segment){
+          renderBspaceMedia(activeBroadcastMeta.segment);
+        }
+      }).catch(()=>{});
+    }
+  }catch(_){}
 }
 
 function bLiveWatchViewerCount(bcastId){
@@ -353,10 +364,50 @@ function bLiveEnsureReactionBar(){
   body.insertBefore(bar, body.firstChild.nextSibling);
 }
 
+function bLiveEnsureJoinBanner(){
+  let ban = $('bspaceJoinLiveBanner');
+  if(ban) return ban;
+  ban = document.createElement('div');
+  ban.id = 'bspaceJoinLiveBanner';
+  ban.style.cssText = 'display:none;margin:0 0 12px;padding:12px 14px;border-radius:14px;border:1px solid rgba(255,84,112,.55);background:linear-gradient(135deg,rgba(255,84,112,.18),rgba(124,255,178,.08));align-items:center;gap:12px;flex-wrap:wrap;';
+  ban.innerHTML = `<div style="flex:1;min-width:140px;">
+      <div style="font-family:var(--font-mono);font-size:10px;color:var(--red);letter-spacing:.08em;margin-bottom:4px;">● LIVE NOW</div>
+      <div style="font-size:13.5px;font-weight:600;">The creator is live — watch and react in real time.</div>
+    </div>
+    <button type="button" id="bspaceJoinLiveBtn" class="bspace-mini primary" style="padding:10px 16px;font-size:12px;">Join live</button>`;
+  // Prefer pin host, else top of body
+  const pin = $('bspaceLivePin');
+  const body = document.querySelector('.bspace-body');
+  if(pin && pin.parentNode){
+    pin.parentNode.insertBefore(ban, pin.nextSibling);
+  } else if(body){
+    body.insertBefore(ban, body.firstChild);
+  }
+  const btn = ban.querySelector('#bspaceJoinLiveBtn');
+  if(btn) btn.onclick = ()=> bLiveJoinAsViewer();
+  return ban;
+}
+
 function bLiveShowJoinUi(show){
   bLiveEnsureReactionBar();
   const bar = $('bspaceReactionBar');
-  if(bar) bar.style.display = show ? 'flex' : 'none';
+  const ban = bLiveEnsureJoinBanner();
+  if(show){
+    if(ban){
+      ban.style.display = 'flex';
+      const btn = $('bspaceJoinLiveBtn');
+      // Don't reset if already in room
+      if(btn && !bLiveViewerPc){
+        btn.textContent = 'Join live';
+        btn.onclick = ()=> bLiveJoinAsViewer();
+        btn.style.display = '';
+      }
+    }
+    if(bar) bar.style.display = 'flex';
+  } else {
+    if(ban && !bLiveViewerPc) ban.style.display = 'none';
+    if(bar && !bLiveViewerPc) bar.style.display = 'none';
+  }
 }
 
 /* Hooks used by broadcast-space.js */
@@ -379,14 +430,21 @@ async function bLiveOnHostStopped(){
 
 function bLiveOnSpaceOpened(isLive, isCreator){
   bLiveEnsureReactionBar();
+  bLiveEnsureJoinBanner();
   if(isLive && !isCreator){
     bLiveShowJoinUi(true);
-    bLiveWatchViewerCount(activeBroadcastId);
+    if(activeBroadcastId) bLiveWatchViewerCount(activeBroadcastId);
+    // Make join impossible to miss
+    const badge = $('bspaceLiveBadge');
+    if(badge){ badge.style.display = 'block'; badge.textContent = 'LIVE NOW — JOIN'; }
   } else if(isLive && isCreator){
-    // host already live from another tab — rare
     bLiveShowJoinUi(false);
+    const ban = $('bspaceJoinLiveBanner');
+    if(ban) ban.style.display = 'none';
   } else {
-    bLiveShowJoinUi(false);
+    if(!bLiveViewerPc) bLiveShowJoinUi(false);
+    const ban = $('bspaceJoinLiveBanner');
+    if(ban && !bLiveViewerPc) ban.style.display = 'none';
   }
 }
 

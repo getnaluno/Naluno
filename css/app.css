@@ -613,3 +613,6 @@
   z-index: 1;
   background: transparent;
 }
+
+.bspace-hero #bspaceMedia{ position:absolute; inset:0; width:100%; height:100%; }
+.bspace-hero #bspaceMedia > .bspace-media-frame{ min-height:0 !important; }

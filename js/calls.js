@@ -41,6 +41,42 @@ function closeCallOverlay(){
   }catch(_){}
 }
 
+
+/* Remember which full-screen surface was open so hangup can restore it.
+   Missing definition was throwing and aborting startOutgoingCall mid-way. */
+let _callUiSnapshot = null;
+function snapshotUiBeforeCall(){
+  try{
+    _callUiSnapshot = {
+      bspace: !!( $('bspace') && $('bspace').classList.contains('active') ),
+      bandRoom: !!( $('bandRoom') && $('bandRoom').classList.contains('active') ),
+      wireline: !!( $('wirelineThread') && $('wirelineThread').classList.contains('active') ),
+      activeTab: (document.querySelector('.tabscreen.active') || {}).id || null,
+    };
+  }catch(_){
+    _callUiSnapshot = null;
+  }
+}
+function restoreUiAfterCall(){
+  try{
+    if(!_callUiSnapshot) return;
+    const s = _callUiSnapshot;
+    _callUiSnapshot = null;
+    // Prefer Band / Broadcast over wireline
+    if(s.bandRoom && $('bandRoom')){
+      $('bandRoom').classList.add('active');
+      $('bandRoom').style.zIndex = '';
+    } else if(s.bspace && $('bspace')){
+      $('bspace').classList.add('active');
+      $('bspace').style.zIndex = '';
+      $('bspace').style.display = 'flex';
+    } else if(s.wireline && $('wirelineThread') && typeof openThread === 'function' && typeof activeThreadContactId !== 'undefined' && activeThreadContactId){
+      // openThread needs contact id — only restore if still set
+      try{ openThread(activeThreadContactId); }catch(_){}
+    }
+  }catch(_){}
+}
+
 let currentCallContactId = null;
 let ringTimeoutHandle = null;
 

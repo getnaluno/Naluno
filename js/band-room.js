@@ -1050,7 +1050,8 @@ function renderBandLiveGrid(){
   stage.style.overflowY = 'auto';
   let html = '';
   if(selfLive){
-    html += `<div data-live-tile="self" class="band-live-tile self" style="position:relative;aspect-ratio:9/16;border-radius:14px;overflow:hidden;background:#0a0c14;border:1px solid rgba(124,255,178,.45);">
+    const expanded = stage.classList.contains('expanded');
+    html += `<div data-live-tile="self" class="band-live-tile self" style="position:relative;aspect-ratio:${expanded ? '9/16' : '16/10'};max-height:${expanded ? '72vh' : '26vh'};border-radius:14px;overflow:hidden;background:#0a0c14;border:1px solid rgba(124,255,178,.45);">
       <video autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;"></video>
       <div style="position:absolute;left:6px;bottom:6px;font-family:var(--font-mono);font-size:9px;background:rgba(13,15,23,.85);color:var(--mint);padding:2px 6px;border-radius:999px;">You · live</div>
     </div>`;
@@ -1072,22 +1073,34 @@ function renderBandLiveGrid(){
     if(float) float.style.display = 'none';
   }
   if(typeof bandLiveMeshSync === 'function') bandLiveMeshSync(liveOthers);
-  if(!$('bandLiveExpandBtn') && stage.parentNode){
-    var exp = document.createElement('button');
+  // Expand arrow ON the camera tile (not in the corner of the whole room)
+  const selfTile = stage.querySelector('[data-live-tile="self"]');
+  if(selfTile && !selfTile.querySelector('.band-live-expand')){
+    const exp = document.createElement('button');
     exp.type = 'button';
-    exp.id = 'bandLiveExpandBtn';
+    exp.className = 'band-live-expand';
     exp.setAttribute('aria-label','Expand live');
-    exp.style.cssText = 'position:absolute;right:14px;top:8px;z-index:6;width:34px;height:34px;border-radius:50%;background:rgba(13,15,23,.75);border:1px solid rgba(255,255,255,.2);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+    exp.style.cssText = 'position:absolute;right:8px;top:8px;z-index:6;width:32px;height:32px;border-radius:50%;background:rgba(13,15,23,.78);border:1px solid rgba(255,255,255,.25);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;';
     exp.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-    stage.parentNode.style.position = stage.parentNode.style.position || 'relative';
-    stage.parentNode.insertBefore(exp, stage);
+    selfTile.appendChild(exp);
     exp.onclick = function(e){
       e.preventDefault();
+      e.stopPropagation();
       stage.classList.toggle('expanded');
-      exp.style.transform = stage.classList.contains('expanded') ? 'rotate(180deg)' : '';
-      stage.style.maxHeight = stage.classList.contains('expanded') ? '78vh' : '';
-      renderBandLiveGrid();
+      const on = stage.classList.contains('expanded');
+      exp.style.transform = on ? 'rotate(180deg)' : '';
+      // Promotional (compact) until expanded
+      stage.style.maxHeight = on ? '78vh' : '28vh';
+      const tile = stage.querySelector('[data-live-tile="self"]');
+      if(tile){
+        tile.style.aspectRatio = on ? '9/16' : '16/10';
+        tile.style.maxHeight = on ? '72vh' : '26vh';
+      }
     };
+  }
+  // Default: compact promotional size when not expanded
+  if(stage && !stage.classList.contains('expanded')){
+    stage.style.maxHeight = stage.style.maxHeight || '28vh';
   }
 }
 
