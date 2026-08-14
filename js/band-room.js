@@ -50,17 +50,18 @@ function bandMessageHtml(m){
   const nameHtml = m.fromMe ? '' : `<div style="font-size:10.5px; color:var(--text-dim); margin-bottom:3px; padding:0 3px;">${escapeHtml(name)}</div>`;
   const dur = m.duration ? Math.round(m.duration) + 's' : '';
   if(m.type === 'audio' && m.mediaUrl){
-    // Compact voice note — green shell for me (msg-row.me .msg-bubble), tight player
     const labelColor = m.fromMe ? 'rgba(13,15,23,.7)' : 'var(--mint)';
+    const src = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(m.mediaUrl) : m.mediaUrl;
     return `<div class="${rowClass}">${nameHtml}<div class="msg-bubble band-voice-bubble">
       <div class="band-voice-label" style="color:${labelColor}">Voice · ${dur || 'clip'}</div>
-      <video class="band-audio-player" controls playsinline preload="metadata" src="${escapeHtml(m.mediaUrl)}"></video>
+      <video class="band-audio-player" controls playsinline preload="metadata" src="${escapeHtml(src)}"></video>
     </div><div class="msg-time">${formatClockTime(m.ts)}</div></div>`;
   }
   if(m.type === 'video' && m.mediaUrl){
+    const src = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(m.mediaUrl) : m.mediaUrl;
     return `<div class="${rowClass}">${nameHtml}<div class="msg-bubble" style="padding:8px; background:rgba(0,0,0,.35);">
       <div style="font-family:var(--font-mono); font-size:10px; color:var(--mint); margin:0 0 6px 4px;">Video · ${dur || 'clip'}</div>
-      <video controls playsinline preload="metadata" src="${escapeHtml(m.mediaUrl)}" poster="${m.thumb ? escapeHtml(m.thumb) : ''}" style="width:100%; max-width:260px; border-radius:12px; background:#000; display:block;"></video>
+      <video controls playsinline preload="metadata" src="${escapeHtml(src)}" poster="${m.thumb ? escapeHtml(m.thumb) : ''}" style="width:100%; max-width:260px; border-radius:12px; background:#000; display:block;"></video>
     </div><div class="msg-time">${formatClockTime(m.ts)}</div></div>`;
   }
   return `<div class="${rowClass}">${nameHtml}<div class="msg-bubble">${escapeHtml(m.text || '')}</div><div class="msg-time">${formatClockTime(m.ts)}</div></div>`;
@@ -679,7 +680,9 @@ function showBandRecordBar(mode){
   const prev = $('bandRecordPreview');
   if(!bar) return;
   bar.style.display = 'block';
-  $('bandRecordLabel').textContent = mode === 'video' ? 'Recording video…' : 'Recording audio…';
+  $('bandRecordLabel').textContent = mode === 'video' ? '● Recording video… tap Stop' : '● Recording audio… tap Stop';
+  bar.classList.add('recording-active');
+
   $('bandRecordTimer').textContent = '0:00';
   if(prev){
     if(mode === 'video' && bandRecStream){
@@ -694,6 +697,9 @@ function showBandRecordBar(mode){
   }
 }
 function hideBandRecordBar(){
+  const _bar = $('bandRecordBar');
+  if(_bar) _bar.classList.remove('recording-active');
+
   const bar = $('bandRecordBar');
   const prev = $('bandRecordPreview');
   if(bar) bar.style.display = 'none';
@@ -796,6 +802,11 @@ async function finishBandRecordingAndSend(){
 }
 
 async function startBandRecording(mode){
+  if(bandRecorder && bandRecorder.state === 'recording'){
+    toast('Already recording — tap Stop first');
+    return;
+  }
+
   if(!window.MediaRecorder || !navigator.mediaDevices){
     toast('Recording isn\u2019t supported on this device');
     return;

@@ -399,6 +399,13 @@ function endActiveCall(reason){
   if(wasInCall || wasRinging || wasIncoming){
     toast(reason === 'remote' ? 'Call ended' : 'Call ended');
   }
+  restoreUiAfterCall();
+  // Re-show publish chip if background job still running
+  try{
+    if(typeof publishBusy !== 'undefined' && publishBusy && typeof showPublishChip === 'function'){
+      showPublishChip('Still publishing…');
+    }
+  }catch(_){}
 }
 
 /* When the other side hangs up (or the network drops), close our UI even if the
@@ -528,6 +535,7 @@ function handleIncomingCall(callId, data){
   $('remoteName').textContent = name; $('remoteAvatar').style.background = color; $('remoteAvatar').textContent = initials;
   $('incomingSceneNote').style.display = 'none';
   $('incomingSelfTag').textContent = 'prepping…';
+  snapshotUiBeforeCall();
   showCallScreen('incoming');
   startRingtone();
   // Pre-warm camera + TURN so Answer is nearly instant.
@@ -571,6 +579,7 @@ function startOutgoingCall(contactId){
   $('remoteAvatar').style.background = c.color; $('remoteAvatar').textContent = c.initials;
   $('sceneReadyNote').style.display = 'none';
   $('ringFallbackHint').style.display = computeSignal(c).tier === 'fading' ? 'flex' : 'none';
+  snapshotUiBeforeCall();
   showCallScreen('lobby');
   if(!stream) enableCamera(); else runGreenroom();
 }

@@ -110,8 +110,11 @@ async function uploadVideoToR2(blobOrDataUrl){
     });
     const errBody = await res.json().catch(()=>({}));
     if(res.ok){
+      if(!errBody.url && errBody.key){
+        errBody.url = SIGNAL_UPLOAD_WORKER_URL + '/o/' + String(errBody.key).replace(/^\/+/, '');
+      }
       if(!errBody.url) throw new Error('Upload succeeded but no URL returned');
-      return errBody.url;
+      return (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(errBody.url) : errBody.url;
     }
     const msg = (errBody.error || errBody.message || ('Upload failed (' + res.status + ')')).toString();
     const e = new Error(msg);
@@ -291,9 +294,25 @@ async function drainPublishQueue(){
       if(typeof toast === 'function') toast(job.doneMsg || 'Published');
     }catch(e){
       console.error('[publish-queue]', e);
-      if(typeof toast === 'function') toast((e && e.message) || 'Publish failed');
+      if(typeof notifyPublishResult === 'function') notifyPublishResult(false, (job && job.label) || '');
+      else if(typeof toast === 'function') toast((e && e.message) || 'Publish failed');
     }
   }
   publishBusy = false;
   hidePublishChip();
+}
+
+
+function notifyPublishResult(ok, title){
+  const msg = ok ? ('Published: ' + (title || 'Broadcast')) : ('Publish failed: ' + (title || 'Broadcast'));
+  try{ if(typeof toast === 'function') toast(msg); }catch(_){}
+  try{
+    if(typeof Notification !== 'undefined' && Notification.permission === 'granted'){
+      new Notification(ok ? 'Naluno · Published' : 'Naluno · Publish failed', { body: msg, tag: 'naluno-publish' });
+    } else if(typeof Notification !== 'undefined' && Notification.permission === 'default'){
+      Notification.requestPermission().then(p=>{
+        if(p === 'granted') new Notification(ok ? 'Naluno · Published' : 'Naluno · Publish failed', { body: msg, tag: 'naluno-publish' });
+      }).catch(()=>{});
+    }
+  }catch(_){}
 }

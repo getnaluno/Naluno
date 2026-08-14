@@ -227,36 +227,47 @@ function openBroadcastById(id){
 })();
 
 
-/** Plan chapter breaks for a source file (pass-through when possible). */
+/** Plan chapter breaks.
+ * Visible chapters ONLY when duration > 4 minutes (product rule).
+ * Large-but-short files use silent upload slices (no chapter UI) or a single compress.
+ */
 function planBroadcastChapters(fileSize, durationSec){
   const maxBytes = (typeof UPLOAD_MAX_BYTES === 'number') ? UPLOAD_MAX_BYTES : (150 * 1024 * 1024);
   const targetBytes = (typeof CHAPTER_TARGET_BYTES === 'number') ? CHAPTER_TARGET_BYTES : (55 * 1024 * 1024);
   const targetSec = (typeof CHAPTER_TARGET_SECONDS === 'number') ? CHAPTER_TARGET_SECONDS : 240;
   const dur = Math.max(0.5, durationSec || 0);
   const size = Math.max(1, fileSize || 0);
+  const wantVisibleChapters = dur > targetSec; // strictly longer than 4 minutes
 
-  // Single pass-through if under worker max
-  if(size <= maxBytes && dur <= targetSec * 3){
-    // Still place virtual mid-roll marks every ~4 min for future ads (single file)
-    const marks = [];
-    for(let t = targetSec; t < dur - 15; t += targetSec){
-      marks.push({ atSec: t, adSlot: { enabled: true, inventoryId: null, status: 'reserved' } });
+  if(!wantVisibleChapters){
+    // Single logical video — may still need size-based upload splits (hidden)
+    if(size <= maxBytes){
+      return { mode: 'single', parts: [{ start: 0, end: dur, index: 0 }], midrolls: [], showChapterUI: false };
     }
-    return { mode: 'single', parts: [{ start: 0, end: dur, index: 0 }], midrolls: marks };
+    // Over worker max but short: silent byte-oriented time slices for upload only
+    const bytesPerSec = size / dur;
+    const sliceSec = Math.max(20, Math.min(dur, Math.floor(targetBytes / Math.max(1, bytesPerSec))));
+    const parts = [];
+    let i = 0;
+    for(let start = 0; start < dur - 0.25; start += sliceSec){
+      parts.push({ start, end: Math.min(dur, start + sliceSec), index: i++ });
+      if(i >= 40) break;
+    }
+    return { mode: 'silent_multipart', parts, midrolls: [], showChapterUI: false };
   }
 
-  // Multi-part: duration slices aimed at ~4 min OR estimated byte budget
+  // Long video → real chapters ~4 min
   const bytesPerSec = size / dur;
-  const maxSecByBytes = Math.max(30, Math.floor(targetBytes / Math.max(1, bytesPerSec)));
+  const maxSecByBytes = Math.max(45, Math.floor((size > maxBytes ? targetBytes : maxBytes) / Math.max(1, bytesPerSec)));
   const sliceSec = Math.min(targetSec, maxSecByBytes);
   const parts = [];
   let i = 0;
   for(let start = 0; start < dur - 0.5; start += sliceSec){
-    const end = Math.min(dur, start + sliceSec);
-    parts.push({ start, end, index: i++ });
-    if(i >= 40) break; // safety
+    parts.push({ start, end: Math.min(dur, start + sliceSec), index: i++ });
+    if(i >= 40) break;
   }
-  return { mode: 'multipart', parts, midrolls: [] };
+  const marks = [];
+  return { mode: parts.length > 1 ? 'multipart' : 'single', parts, midrolls: marks, showChapterUI: parts.length > 1 };
 }
 
 /** Default breathers between real chapters — ad architecture lives here. */

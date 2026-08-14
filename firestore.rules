@@ -131,7 +131,14 @@ service cloud.firestore {
     match /broadcasts/{bcastId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && request.resource.data.creatorUid == request.auth.uid;
-      allow update: if isSignedIn() && resource.data.creatorUid == request.auth.uid;
+      // Creator can full-update; any signed-in user may only arrayUnion themselves into memberUids (Join community)
+      allow update: if isSignedIn() && (
+        resource.data.creatorUid == request.auth.uid
+        || (
+          request.auth.uid in request.resource.data.memberUids
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberUids', 'updatedAt'])
+        )
+      );
       allow delete: if isSignedIn() && resource.data.creatorUid == request.auth.uid;
 
       match /conversation/{id} {

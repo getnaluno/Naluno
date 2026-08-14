@@ -90,18 +90,20 @@ function renderBspaceMedia(seg){
   if(seg.type === 'video'){
     const chapters = (activeBroadcastMeta && activeBroadcastMeta.chapters) || seg.chapters || null;
     const breathers = (activeBroadcastMeta && activeBroadcastMeta.breathers) || [];
-    const src = (chapters && chapters[0] && chapters[0].mediaUrl) || seg.videoUrl || seg.dataUrl || '';
-    const multi = chapters && chapters.length > 1;
+    let rawSrc = (chapters && chapters[0] && chapters[0].mediaUrl) || seg.videoUrl || seg.dataUrl || '';
+    if(typeof resolveMediaUrl === 'function') rawSrc = resolveMediaUrl(rawSrc) || rawSrc;
+    // Visible chapter chips only when real chapters (not silent upload parts)
+    const showChapters = chapters && chapters.length > 1 && !chapters.every(c => c.silent);
     host.innerHTML = `
-      <video id="bspaceVideoEl" controls playsinline preload="metadata" src="${bspaceEscape(src)}" poster="${seg.thumbDataUrl ? bspaceEscape(seg.thumbDataUrl) : ''}" style="filter:${seg.filterCss || ''}"></video>
-      <div id="bspaceBreather" style="display:none;position:absolute;inset:0;background:rgba(13,15,23,.92);align-items:center;justify-content:center;flex-direction:column;gap:10px;z-index:3;">
-        <div style="font-family:var(--font-futuristic);font-size:15px;color:var(--mint);" id="bspaceBreatherLabel">Chapter break</div>
-        <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);" id="bspaceBreatherAd">Next chapter in a moment</div>
+      <div class="bspace-media-frame" style="position:relative;width:100%;background:#000;border-radius:14px;overflow:hidden;min-height:180px;">
+        <video id="bspaceVideoEl" controls playsinline preload="metadata" src="${bspaceEscape(rawSrc)}" poster="${seg.thumbDataUrl ? bspaceEscape(seg.thumbDataUrl) : ''}" style="width:100%;max-height:52vh;display:block;background:#000;filter:${seg.filterCss || ''}"></video>
+        <div id="bspaceBreather" style="display:none;position:absolute;inset:0;background:rgba(13,15,23,.92);align-items:center;justify-content:center;flex-direction:column;gap:10px;z-index:3;">
+          <div style="font-family:var(--font-futuristic);font-size:15px;color:var(--mint);" id="bspaceBreatherLabel">Chapter break</div>
+          <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);" id="bspaceBreatherAd">Next chapter in a moment</div>
+        </div>
       </div>
-      ${multi ? `<div id="bspaceChapterBar" style="display:flex;gap:6px;flex-wrap:wrap;padding:8px 4px 0;"></div>` : ''}`;
-    // relative host for breather overlay
-    try{ host.style.position = host.style.position || 'relative'; }catch(_){}
-    wireBroadcastChapterPlayer(chapters, breathers);
+      ${showChapters ? `<div id="bspaceChapterBar" class="bspace-chapter-bar"></div>` : ''}`;
+    wireBroadcastChapterPlayer(showChapters ? chapters : (chapters && chapters.length ? chapters : null), breathers, { showChips: !!showChapters });
     return;
   }
   // photo
@@ -374,22 +376,34 @@ document.querySelectorAll('#bspaceTabs .bspace-tab').forEach(tab=>{
 
 $('bspaceJoinBtn').onclick = async ()=>{
   if(!currentUser || !fbDb || !activeBroadcastId){ toast('Sign in to join'); return; }
+  const btn = $('bspaceJoinBtn');
+  if(btn && btn.classList.contains('joined')) return;
+  if(btn){ btn.disabled = true; btn.textContent = 'Joining…'; }
   try{
     const ref = fbDb.collection('broadcasts').doc(activeBroadcastId);
     await ref.set({
       memberUids: firebase.firestore.FieldValue.arrayUnion(currentUser.uid),
       updatedAt: Date.now(),
     }, { merge:true });
-    await ref.collection('journey').add({
-      type: 'join',
-      text: ((currentProfile && currentProfile.name) || 'Someone') + ' joined the community',
-      ts: Date.now(),
-      by: currentUser.uid,
-    });
-    $('bspaceJoinBtn').textContent = 'You’re in this community';
-    $('bspaceJoinBtn').classList.add('joined');
+    try{
+      await ref.collection('journey').add({
+        type: 'join',
+        text: ((currentProfile && currentProfile.name) || 'Someone') + ' joined the community',
+        ts: Date.now(),
+        by: currentUser.uid,
+      });
+    }catch(_){}
+    if(btn){
+      btn.textContent = 'You’re in this community';
+      btn.classList.add('joined');
+      btn.disabled = false;
+    }
     toast('Welcome in');
-  }catch(e){ toast(e.message || 'Couldn’t join'); }
+  }catch(e){
+    console.warn('[bspace] join', e);
+    if(btn){ btn.disabled = false; btn.textContent = 'Join community'; }
+    toast(e.message || 'Couldn’t join — check connection / rules');
+  }
 };
 
 $('bspaceConvSend').onclick = async ()=>{
@@ -517,8 +531,30 @@ function renderBspaceUpdates(docs){
 /* ---- Go Live: same Broadcast, new chapter ---- */
 let bspaceLiveStream = null;
 let bspaceLiveUnsub = null;
+let bspaceLiveRecorder = null;
+let bspaceLiveChunks = [];
+let bspaceLiveRecStartedAt = 0;
 
 async function bspaceStopLive(){
+  const bcastId = activeBroadcastId;
+  // Stop recorder first and keep chunks for permanent "Live recording" chapter
+  let liveBlob = null;
+  let liveDur = 0;
+  try{
+    if(bspaceLiveRecorder && bspaceLiveRecorder.state !== 'inactive'){
+      liveDur = Math.max(1, (Date.now() - (bspaceLiveRecStartedAt || Date.now())) / 1000);
+      liveBlob = await new Promise(resolve=>{
+        bspaceLiveRecorder.onstop = ()=>{
+          const blob = new Blob(bspaceLiveChunks, { type: (bspaceLiveChunks[0] && bspaceLiveChunks[0].type) || 'video/webm' });
+          resolve(blob.size ? blob : null);
+        };
+        try{ bspaceLiveRecorder.stop(); }catch(_){ resolve(null); }
+      });
+    }
+  }catch(e){ console.warn('[live] record stop', e); }
+  bspaceLiveRecorder = null;
+  bspaceLiveChunks = [];
+
   if(typeof bLiveOnHostStopped === 'function'){
     try{ await bLiveOnHostStopped(); }catch(_){}
   }
@@ -531,12 +567,68 @@ async function bspaceStopLive(){
   if(badge) badge.style.display = 'none';
   const btn = $('bspaceGoLive');
   if(btn){ btn.textContent = 'Go live'; btn.style.background = ''; btn.style.color = ''; }
-  if(fbDb && activeBroadcastId && currentUser){
-    fbDb.collection('broadcasts').doc(activeBroadcastId).set({
+  if(fbDb && bcastId && currentUser){
+    fbDb.collection('broadcasts').doc(bcastId).set({
       live: false,
       liveAt: null,
       liveBy: null,
     }, { merge:true }).catch(()=>{});
+  }
+
+  // Append recorded live as a chapter on this Broadcast (background)
+  if(liveBlob && liveBlob.size > 1000 && bcastId && currentUser && typeof uploadVideoToR2 === 'function'){
+    toast('Saving live recording…');
+    const job = {
+      label: 'Saving live recording…',
+      doneMsg: 'Live saved as chapter',
+      run: async (progress)=>{
+        if(progress) progress('Uploading live recording…');
+        const url = await uploadVideoToR2(liveBlob);
+        const ref = fbDb.collection('broadcasts').doc(bcastId);
+        const snap = await ref.get();
+        if(!snap.exists) return;
+        const d = snap.data() || {};
+        const chapters = Array.isArray(d.chapters) ? d.chapters.slice() : [];
+        const idx = chapters.length;
+        chapters.push({
+          index: idx,
+          mediaUrl: url,
+          duration: liveDur,
+          title: 'Live · ' + new Date().toLocaleString(),
+          fromLive: true,
+          bytes: liveBlob.size,
+        });
+        const breathers = (typeof buildBreathersForChapters === 'function')
+          ? buildBreathersForChapters(chapters.length)
+          : (d.breathers || null);
+        await ref.set({
+          chapters,
+          breathers,
+          mediaUrl: d.mediaUrl || url,
+          mediaType: d.mediaType || 'video',
+          updatedAt: Date.now(),
+        }, { merge:true });
+        try{
+          await ref.collection('journey').add({
+            type: 'live_recording',
+            text: 'Live session saved as chapter',
+            ts: Date.now(),
+            by: currentUser.uid,
+          });
+        }catch(_){}
+        if(activeBroadcastId === bcastId && activeBroadcastMeta){
+          activeBroadcastMeta.chapters = chapters;
+          activeBroadcastMeta.breathers = breathers;
+          if(typeof renderBspaceMedia === 'function' && activeBroadcastMeta.segment){
+            activeBroadcastMeta.segment.chapters = chapters;
+            activeBroadcastMeta.segment.videoUrl = activeBroadcastMeta.segment.videoUrl || url;
+            renderBspaceMedia(activeBroadcastMeta.segment);
+          }
+        }
+      },
+    };
+    if(typeof enqueuePublishJob === 'function') enqueuePublishJob(job);
+    else job.run(()=>{}).catch(e=> toast(e.message || 'Could not save live'));
   }
 }
 
@@ -571,6 +663,17 @@ async function bspaceStartLive(){
   }, { merge:true });
   if(typeof bLiveOnHostStarted === 'function'){
     try{ await bLiveOnHostStarted(bspaceLiveStream); }catch(e){ console.warn('[live]', e); }
+    // Record live for permanent chapter when live ends
+    try{
+      bspaceLiveChunks = [];
+      bspaceLiveRecStartedAt = Date.now();
+      const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+        ? 'video/webm;codecs=vp9,opus'
+        : (MediaRecorder.isTypeSupported('video/webm') ? 'video/webm' : '');
+      bspaceLiveRecorder = new MediaRecorder(bspaceLiveStream, mime ? { mimeType: mime, videoBitsPerSecond: 1800000 } : { videoBitsPerSecond: 1800000 });
+      bspaceLiveRecorder.ondataavailable = e=>{ if(e.data && e.data.size) bspaceLiveChunks.push(e.data); };
+      bspaceLiveRecorder.start(1000);
+    }catch(e){ console.warn('[live] record start', e); bspaceLiveRecorder = null; }
   }
   await bspacePost('conversation', { type:'system', text: ((currentProfile && currentProfile.name) || 'Creator') + ' went live — this is a new chapter of the same Broadcast.' });
   await bspacePost('journey', { type:'live', text: 'Live session started' });
@@ -741,15 +844,20 @@ let bspaceChapterList = [];
 let bspaceBreatherList = [];
 let bspaceBreatherTimer = null;
 
-function wireBroadcastChapterPlayer(chapters, breathers){
+function wireBroadcastChapterPlayer(chapters, breathers, opts){
+  opts = opts || {};
   bspaceChapterList = Array.isArray(chapters) ? chapters.slice().sort((a,b)=>(a.index||0)-(b.index||0)) : [];
   bspaceBreatherList = Array.isArray(breathers) ? breathers : [];
   bspaceChapterIndex = 0;
   const v = $('bspaceVideoEl');
   if(!v) return;
+  // Resolve src for first chapter
+  if(bspaceChapterList[0] && bspaceChapterList[0].mediaUrl && typeof resolveMediaUrl === 'function'){
+    v.src = resolveMediaUrl(bspaceChapterList[0].mediaUrl);
+  }
 
   const bar = $('bspaceChapterBar');
-  if(bar && bspaceChapterList.length > 1){
+  if(bar && opts.showChips && bspaceChapterList.length > 1){
     bar.innerHTML = bspaceChapterList.map((ch,i)=>
       `<button type="button" data-ch="${i}" style="font-family:var(--font-mono);font-size:10px;padding:4px 8px;border-radius:999px;border:1px solid var(--line);background:${i===0?'rgba(124,255,178,.15)':'transparent'};color:${i===0?'var(--mint)':'var(--text-dim)'};cursor:pointer;">${bspaceEscape(ch.title || ('Ch '+(i+1)))}</button>`
     ).join('');

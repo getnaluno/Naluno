@@ -253,14 +253,14 @@ async function bcompOnFileChosen(file){
   const status = $('bcompStatus');
   const pub = $('bcompPublishBtn');
   const prog = $('bcompProgress');
+  if(prog){ prog.style.display = 'none'; prog.textContent = ''; }
 
   if(isImage){
     bcompKind = 'photo';
     bcompDuration = 0;
     if(prev) prev.innerHTML = `<img src="${bcompPreviewUrl}" alt="" style="width:100%;max-height:42vh;object-fit:contain;border-radius:14px;background:#000;" />`;
-    if(status) status.textContent = 'Photo ready';
-    if(prog) prog.style.display = 'none';
-    if(pub) pub.disabled = false;
+    if(status) status.textContent = 'Photo ready — add a title and publish';
+    if(pub){ pub.disabled = false; pub.textContent = 'Publish Broadcast'; }
     return;
   }
 
@@ -279,42 +279,17 @@ async function bcompOnFileChosen(file){
 
   const mins = Math.floor(duration / 60);
   const secs = Math.round(duration % 60);
-  if(status) status.textContent = `Original · ${mins}:${String(secs).padStart(2,'0')} · ${Math.round(file.size/1024/1024)} MB`;
-
-  // Compress in background
-  if(pub){ pub.disabled = true; pub.textContent = 'Preparing…'; }
-  if(prog){ prog.style.display = 'block'; prog.textContent = 'Compressing for upload…'; }
-
-  try{
-    const result = await compressBroadcastVideo(file, (frac, label)=>{
-      if(prog) prog.textContent = `${label || 'Compressing…'} ${Math.round(frac * 100)}%`;
-    });
-    bcompCompressedBlob = result.blob;
-    bcompDuration = result.duration || duration;
-    const outMb = (result.blob.size / 1024 / 1024).toFixed(1);
-    if(status){
-      status.textContent = result.skipped
-        ? `Ready · ${outMb} MB`
-        : `Compressed · ${outMb} MB · quality preserved for mobile`;
+  const mb = Math.round(file.size/1024/1024);
+  // Keep original — upload/chapters run in background after Publish
+  bcompCompressedBlob = file;
+  if(status){
+    if(duration > 4 * 60){
+      status.textContent = `Ready · ${mins}:${String(secs).padStart(2,'0')} · ${mb} MB · will publish as chapters (~4 min)`;
+    } else {
+      status.textContent = `Ready · ${mins}:${String(secs).padStart(2,'0')} · ${mb} MB · original kept`;
     }
-    if(prog){ prog.textContent = 'Ready to publish'; }
-    if(pub){ pub.disabled = false; pub.textContent = 'Publish Broadcast'; }
-
-    // If still too large, one more harder pass
-    if(result.blob.size > BCAST_MAX_UPLOAD_BYTES){
-      if(prog) prog.textContent = 'Optimizing size…';
-      // Accept for now; publish will try and may fail with clear toast
-      if(status) status.textContent = `Large file (${outMb} MB) — upload may take a while`;
-    }
-  }catch(e){
-    console.warn('[bcomp] compress', e);
-    // Fall back to original if under hard duration
-    bcompCompressedBlob = file;
-    if(status) status.textContent = 'Using original file';
-    if(prog) prog.textContent = '';
-    if(pub){ pub.disabled = false; pub.textContent = 'Publish Broadcast'; }
-    if(e && e.message) toast(e.message);
   }
+  if(pub){ pub.disabled = false; pub.textContent = 'Publish Broadcast'; }
 }
 
 async function bcompPublish(){
@@ -362,52 +337,75 @@ async function bcompPublish(){
         const duration = snapDuration || (typeof bcompProbeDuration === 'function' ? await bcompProbeDuration(file) : 0);
         const plan = (typeof planBroadcastChapters === 'function')
           ? planBroadcastChapters(file.size || 0, duration)
-          : { mode: 'single', parts: [{ start:0, end: duration||0, index:0 }], midrolls: [] };
+          : { mode: 'single', parts: [{ start:0, end: duration||0, index:0 }], midrolls: [], showChapterUI: false };
+        const maxUp = (typeof UPLOAD_MAX_BYTES === 'number') ? UPLOAD_MAX_BYTES : (150*1024*1024);
 
-        if(plan.mode === 'single' || plan.parts.length <= 1){
-          // Pass-through — no re-encode
-          if(progress) progress('Uploading chapter 1…');
-          mediaUrl = await uploadVideoToR2(file);
-          try{ thumbUrl = await generateVideoThumbnail(mediaUrl); }catch(_){}
-          chapters = [{ index: 0, mediaUrl, duration: duration || null, title: 'Chapter 1', bytes: file.size || null }];
-          // Virtual mid-rolls on single file (future ads at ~4 min marks)
-          if(plan.midrolls && plan.midrolls.length){
-            breathers = plan.midrolls.map((m, i) => ({
-              afterChapterIndex: 0,
-              atSec: m.atSec,
-              durationMs: 800,
-              label: 'Break',
-              adSlot: m.adSlot || { enabled: true, inventoryId: null, status: 'reserved', maxDurationMs: 15000 },
-            }));
+        async function uploadOne(blob, label){
+          if(progress) progress(label);
+          // If still over worker max after slice, gentle compress once
+          let out = blob;
+          if(blob.size > maxUp && typeof compressBroadcastVideo === 'function'){
+            if(progress) progress('Optimizing oversized part…');
+            try{
+              const r = await compressBroadcastVideo(blob, (f, msg)=>{ if(progress) progress(msg || ('Optimizing… ' + Math.round((f||0)*100) + '%')); });
+              out = r.blob || blob;
+            }catch(_){}
           }
-        } else {
-          // Multi-chapter: slice by time (extract only when over upload budget)
+          return await uploadVideoToR2(out);
+        }
+
+        if(plan.mode === 'single' || !plan.parts || plan.parts.length <= 1){
+          mediaUrl = await uploadOne(file, 'Uploading video…');
+          try{ thumbUrl = await generateVideoThumbnail(typeof resolveMediaUrl==='function' ? resolveMediaUrl(mediaUrl) : mediaUrl); }catch(_){}
+          chapters = [{ index: 0, mediaUrl, duration: duration || null, title: 'Video', bytes: file.size || null }];
+        } else if(plan.mode === 'silent_multipart'){
+          // Large but under 4 min: upload slices, continuous play, NO chapter chips
           chapters = [];
           for(const part of plan.parts){
-            if(progress) progress('Preparing chapter ' + (part.index + 1) + ' of ' + plan.parts.length + '…');
             let blob = file;
-            if(typeof extractVideoClip === 'function' && (part.start > 0.2 || part.end < (duration - 0.5))){
+            if(typeof extractVideoClip === 'function' && (part.start > 0.15 || part.end < duration - 0.4)){
+              if(progress) progress('Preparing part ' + (part.index+1) + '/' + plan.parts.length + '…');
               blob = await extractVideoClip(file, part.start, part.end, frac => {
-                if(progress) progress('Chapter ' + (part.index + 1) + '… ' + Math.round((frac||0)*100) + '%');
+                if(progress) progress('Part ' + (part.index+1) + '… ' + Math.round((frac||0)*100) + '%');
               });
             }
-            if(progress) progress('Uploading chapter ' + (part.index + 1) + '…');
-            const url = await uploadVideoToR2(blob);
+            const url = await uploadOne(blob, 'Uploading part ' + (part.index+1) + '/' + plan.parts.length + '…');
             if(part.index === 0){
               mediaUrl = url;
-              try{ thumbUrl = await generateVideoThumbnail(url); }catch(_){}
+              try{ thumbUrl = await generateVideoThumbnail(typeof resolveMediaUrl==='function' ? resolveMediaUrl(url) : url); }catch(_){}
             }
             chapters.push({
-              index: part.index,
-              mediaUrl: url,
+              index: part.index, mediaUrl: url,
+              duration: Math.max(0.1, part.end - part.start),
+              title: 'Part ' + (part.index + 1),
+              bytes: blob.size || null,
+              silent: true,
+            });
+          }
+        } else {
+          // Visible chapters (duration > 4 min)
+          chapters = [];
+          for(const part of plan.parts){
+            let blob = file;
+            if(typeof extractVideoClip === 'function' && (part.start > 0.15 || part.end < duration - 0.4)){
+              if(progress) progress('Chapter ' + (part.index+1) + '/' + plan.parts.length + '…');
+              blob = await extractVideoClip(file, part.start, part.end, frac => {
+                if(progress) progress('Chapter ' + (part.index+1) + '… ' + Math.round((frac||0)*100) + '%');
+              });
+            }
+            const url = await uploadOne(blob, 'Uploading chapter ' + (part.index+1) + '…');
+            if(part.index === 0){
+              mediaUrl = url;
+              try{ thumbUrl = await generateVideoThumbnail(typeof resolveMediaUrl==='function' ? resolveMediaUrl(url) : url); }catch(_){}
+            }
+            chapters.push({
+              index: part.index, mediaUrl: url,
               duration: Math.max(0.1, part.end - part.start),
               title: 'Chapter ' + (part.index + 1),
               bytes: blob.size || null,
             });
           }
-          breathers = typeof buildBreathersForChapters === 'function'
-            ? buildBreathersForChapters(chapters.length)
-            : [];
+          breathers = typeof buildBreathersForChapters === 'function' ? buildBreathersForChapters(chapters.length) : [];
         }
       }
       if(typeof createPermanentBroadcast !== 'function') throw new Error('Broadcast core not loaded');
@@ -418,6 +416,8 @@ async function bcompPublish(){
         chapters, breathers,
       });
       if(typeof loadFeedBroadcasts === 'function') await loadFeedBroadcasts();
+      if(typeof notifyPublishResult === 'function') notifyPublishResult(true, snapTitle);
+      else if(typeof toast === 'function') toast('Broadcast published');
       if(typeof openBroadcastById === 'function') openBroadcastById(b.id);
     },
   };
