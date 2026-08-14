@@ -172,17 +172,27 @@ function closeThread(){
 }
 $('threadBack').onclick = closeThread;
 function wirelineStartCallFromThread(){
+  // Capture contact BEFORE any UI close (closeThread clears activeThreadContactId)
   const id = activeThreadContactId;
   if(!id){ toast('No conversation selected'); return; }
-  const c = (typeof contacts !== 'undefined') ? contacts.find(x => x.id === id) : null;
+  const list = (typeof contacts !== 'undefined' && Array.isArray(contacts)) ? contacts : [];
+  let c = list.find(x => x.id === id);
+  if(!c) c = list.find(x => x.firebaseUid === id);
   if(!c){ toast('Contact missing'); return; }
   if(!c.isReal || !c.firebaseUid){ toast('Calls need a real connection'); return; }
   if(typeof startOutgoingCall !== 'function'){ toast('Calls still loading — try again'); return; }
-  try{ closeThread(); }catch(_){}
-  requestAnimationFrame(function(){
-    try{ startOutgoingCall(id); }
-    catch(e){ console.error(e); toast(e.message || 'Could not start call'); }
-  });
+  // Keep thread id available for hangup restore
+  try{
+    if(typeof window !== 'undefined') window.__wirelineCallContactId = c.id;
+  }catch(_){}
+  // Open lobby first so Wireline never covers it; close thread after lobby is visible
+  try{ startOutgoingCall(c.id); }
+  catch(e){ console.error('[wireline] call', e); toast(e.message || 'Could not start call'); return; }
+  setTimeout(function(){
+    try{
+      if($('wirelineThread')) $('wirelineThread').classList.remove('active');
+    }catch(_){}
+  }, 80);
 }
 if($('threadCallBtn')){
   $('threadCallBtn').onclick = function(e){
@@ -190,13 +200,6 @@ if($('threadCallBtn')){
     wirelineStartCallFromThread();
   };
 }
-document.addEventListener('click', function(e){
-  var t = e.target && e.target.closest && e.target.closest('#threadCallBtn');
-  if(!t) return;
-  e.preventDefault();
-  e.stopPropagation();
-  wirelineStartCallFromThread();
-}, true);
 
 function receiptTickHtml(status){
   if(status==='queued'){

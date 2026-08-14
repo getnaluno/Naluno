@@ -51,7 +51,9 @@ function snapshotUiBeforeCall(){
       bspace: !!( $('bspace') && $('bspace').classList.contains('active') ),
       bandRoom: !!( $('bandRoom') && $('bandRoom').classList.contains('active') ),
       wireline: !!( $('wirelineThread') && $('wirelineThread').classList.contains('active') ),
-      threadContactId: (typeof activeThreadContactId !== 'undefined' ? activeThreadContactId : null) || currentCallContactId || null,
+      threadContactId: (typeof activeThreadContactId !== 'undefined' ? activeThreadContactId : null)
+        || (typeof window !== 'undefined' && window.__wirelineCallContactId)
+        || currentCallContactId || null,
       activeTab: (document.querySelector('.tabscreen.active') || {}).id || null,
     };
   }catch(_){
@@ -690,9 +692,12 @@ function startOutgoingCall(contactId){
   $('sceneReadyNote').style.display = 'none';
   $('ringFallbackHint').style.display = computeSignal(c).tier === 'fading' ? 'flex' : 'none';
   snapshotUiBeforeCall();
-  try{ if(typeof closeThread === 'function') closeThread(); }catch(_){}
+  // Soft-hide wireline without clearing contact id (needed for hangup restore)
+  try{
+    if($('wirelineThread')) $('wirelineThread').classList.remove('active');
+  }catch(_){}
   showCallScreen('lobby');
-  console.log('[call] lobby open');
+  console.log('[call] lobby open for', contactId);
   // Camera async — lobby must appear immediately even if gUM is slow
   const camPromise = (typeof enableCameraForCall === 'function')
     ? enableCameraForCall()
@@ -749,29 +754,39 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(()=>({}));
-      console.log('[call] notify response', res.status, data);
-      if(!res.ok){
-        console.error('Call notification failed:', res.status, data);
+      const detail = String((data && (data.detail || data.error || data.message)) || '');
+      const unregistered = /UNREGISTERED|NotRegistered|NOT_FOUND|no_token|missing_token/i.test(detail + JSON.stringify(data));
+      // Don't spam the console — UNREGISTERED is a stale token, not a call failure
+      if(res.ok && data.sent !== false){
+        console.log('[call] push wake sent');
+      } else if(unregistered){
+        if(firstAttempt){
+          console.info('[call] push token stale or missing on their device — in-app ring still works if Naluno is open');
+        }
+        // Stop repeating: same dead token will never succeed mid-call
+        if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
+        stopRepeats = true;
+      } else if(!res.ok){
+        if(firstAttempt) console.warn('[call] push wake failed', res.status, data);
         if(firstAttempt) toast('Push wake failed — in-app ring still works if they have Naluno open');
       } else if(data.sent === false){
-        console.log('Call notification not sent:', data.reason || data);
-        // If no token on callee, surface once
         if(firstAttempt && (data.reason === 'no_token' || data.reason === 'missing_token')){
           toast('Their device has no push token yet — they need to open Naluno once');
+          stopRepeats = true;
         }
-      } else {
-        console.log('[call] push wake sent');
       }
     }catch(e){
-      console.error('Call notification request failed:', e);
+      if(firstAttempt) console.warn('[call] push wake request failed', e);
       if(firstAttempt) toast('Push wake failed — in-app ring still works if they have Naluno open');
     }
     firstAttempt = false;
   };
+  let stopRepeats = false;
   sendOnce();
   if(notifyRepeatInterval) clearInterval(notifyRepeatInterval);
   let repeats = 0;
   notifyRepeatInterval = setInterval(()=>{
+    if(stopRepeats){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; return; }
     repeats++;
     if(repeats >= 3){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; return; }
     sendOnce();

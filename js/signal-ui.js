@@ -566,3 +566,25 @@ if($('bviewerBody')){
 if(typeof openContactSignalStory === 'function'){
   window.openBroadcast = function(contactId){ return openContactSignalStory(contactId); };
 }
+
+
+/* Signal tab shortcut → same Broadcast gateway, live-first */
+function openGoLiveFromSignal(){
+  if(typeof bcompOpen === 'function'){
+    bcompOpen();
+    // Prefill title if empty
+    try{
+      if($('bcompTitle') && !$('bcompTitle').value){
+        $('bcompTitle').value = 'Live · ' + new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+      }
+      if($('bcompGoLiveBtn')){
+        $('bcompGoLiveBtn').scrollIntoView({ block: 'nearest' });
+      }
+    }catch(_){}
+    toast('Add a title, then tap Go live');
+  } else if(typeof bcompStartGoLive === 'function'){
+    bcompStartGoLive();
+  } else {
+    toast('Broadcast tools still loading');
+  }
+}

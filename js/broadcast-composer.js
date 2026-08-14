@@ -493,3 +493,51 @@ if(document.readyState === 'loading'){
 } else {
   bcompWire();
 }
+
+
+/* ---- Go live from Broadcast gateway (same community space) ---- */
+async function bcompStartGoLive(){
+  if(!currentUser || !fbDb){ toast('Sign in to go live'); return; }
+  const title = (($('bcompTitle') && $('bcompTitle').value) || '').trim() || ('Live · ' + new Date().toLocaleString());
+  const tagsRaw = (($('bcompTags') && $('bcompTags').value) || '');
+  const tags = tagsRaw.split(',').map(s=>s.trim()).filter(Boolean).slice(0, 12);
+  const desc = (($('bcompDesc') && $('bcompDesc').value) || '').trim() || 'Live Broadcast';
+  try{
+    toast('Opening live Broadcast…');
+    // Create empty permanent broadcast shell (community features identical)
+    const created = await createPermanentBroadcast({
+      title,
+      description: desc,
+      tags: tags.length ? tags : ['live'],
+      mediaType: 'video',
+      mediaUrl: null,
+      thumbUrl: null,
+      chapters: [],
+      breathers: [],
+    });
+    const id = created && created.id;
+    if(!id) throw new Error('Broadcast shell missing id');
+    bcompClose();
+    if(typeof openBroadcastSpaceById === 'function'){
+      await openBroadcastSpaceById(id);
+    }
+    // Start live camera into this space
+    if(typeof bspaceStartLive === 'function'){
+      await bspaceStartLive();
+    } else {
+      toast('Open Go live from the Broadcast space');
+    }
+  }catch(e){
+    console.warn('[bcomp] go live', e);
+    toast(e.message || 'Could not start live');
+  }
+}
+if($('bcompGoLiveBtn')){
+  $('bcompGoLiveBtn').onclick = function(e){
+    if(e){ e.preventDefault(); e.stopPropagation(); }
+    bcompStartGoLive();
+  };
+}
+
+if($('signalGoLiveBtn')) $('signalGoLiveBtn').onclick = ()=>{ if(typeof openGoLiveFromSignal==='function') openGoLiveFromSignal(); else if(typeof bcompStartGoLive==='function') bcompStartGoLive(); };
+if($('broadcastGoLiveBtn')) $('broadcastGoLiveBtn').onclick = ()=>{ if(typeof openGoLiveFromSignal==='function') openGoLiveFromSignal(); else if(typeof bcompStartGoLive==='function') bcompStartGoLive(); };
