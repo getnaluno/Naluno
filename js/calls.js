@@ -175,6 +175,9 @@ const RTC_CONFIG = {
   iceServers: [
     { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
   ],
+  iceCandidatePoolSize: 10,
+  bundlePolicy: 'max-bundle',
+  rtcpMuxPolicy: 'require',
 };
 const TURN_CREDENTIALS_WORKER_URL = 'https://naluno-turn-credentials.naluno.workers.dev';
 /* Fetches fresh, short-lived TURN relay credentials from Cloudflare's Realtime
@@ -210,7 +213,12 @@ async function getIceServers(){
       return RTC_CONFIG;
     }
     console.log('[call] TURN credentials received —', data.iceServers.length, 'server(s)');
-    cachedIceServers = { iceServers: data.iceServers };
+    cachedIceServers = {
+      iceServers: data.iceServers,
+      iceCandidatePoolSize: 10,
+      bundlePolicy: 'max-bundle',
+      rtcpMuxPolicy: 'require',
+    };
     cachedIceServersAt = Date.now();
     return cachedIceServers;
   }catch(e){
@@ -295,53 +303,30 @@ async function createPeerConnection(){
   pc.onicegatheringstatechange = ()=> console.log('[call] ICE gathering state:', pc.iceGatheringState);
   attachConnectionWatchdogs(pc);
   if(stream){
-    // Real audio, unmodified. Video comes from the composited send canvas instead of
-    // the raw camera track — this is the actual fix for "the other person should see
-    // the border too": previously the border/glow were purely local rendering, so the
-    // other person only ever received the plain, unstyled camera feed.
-    const audioTracks = stream.getAudioTracks();
+    // RELIABLE PATH: send the real camera + mic tracks.
+    // Canvas compositing is for local preview only — captureStream was producing
+    // "connected but no video/audio" when the canvas had no frames or zero size.
+    const audioTracks = stream.getAudioTracks().filter(t => t.readyState === 'live');
+    const videoTracks = stream.getVideoTracks().filter(t => t.readyState === 'live');
     audioTracks.forEach(t => {
-      // Ensure tracks are live and enabled before adding — a muted/ended track produces
-      // the classic "I see myself but hear/see nothing from them" symptom on the far side.
-      if(t.readyState === 'live') t.enabled = true;
+      try{ t.enabled = true; }catch(_){}
       pc.addTrack(t, stream);
     });
-    console.log('[call] added audio tracks:', audioTracks.length, audioTracks.map(t=>({id:t.id, enabled:t.enabled, muted:t.muted, readyState:t.readyState})));
-
-    // Force one composite draw so the canvas has real pixel content and non-zero size
-    // before captureStream samples it. Without this, a just-opened camera can still be
-    // at readyState < 2, producing a black or 0-size track that never recovers.
-    const sendCanvas = $('sendCanvas');
-    if(sendCanvas && sendCanvas.captureStream){
-      try{ drawSendCanvas(); }catch(e){ console.log('[call] drawSendCanvas before capture failed:', e); }
-      // If the raw video still has no dimensions, give it a brief moment — one frame is
-      // usually enough once getUserMedia has resolved, but two RAF ticks covers the
-      // common case where the first frame arrives slightly after enableCamera returns.
-      if((!sendCanvas.width || sendCanvas.width < 4) && $('sendRawVideo')){
-        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-        try{ drawSendCanvas(); }catch(e){}
-      }
-      const canvasStream = sendCanvas.captureStream(30);
-      const videoTracks = canvasStream.getVideoTracks();
-      videoTracks.forEach(t => {
-        if(t.readyState === 'live') t.enabled = true;
-        pc.addTrack(t, canvasStream);
-      });
-      console.log('[call] added composited video tracks:', videoTracks.length, '— sendCanvas size:', sendCanvas.width, 'x', sendCanvas.height, videoTracks.map(t=>({id:t.id, enabled:t.enabled, readyState:t.readyState})));
-      if(videoTracks.length === 0 || sendCanvas.width < 4){
-        console.warn('[call] canvas capture produced no usable video — falling back to raw camera');
-        const rawVideoTracks = stream.getVideoTracks();
-        rawVideoTracks.forEach(t => pc.addTrack(t, stream));
-      }
-    } else {
-      // captureStream unsupported on this browser — fall back to the raw camera track
-      // rather than sending no video at all.
-      const rawVideoTracks = stream.getVideoTracks();
-      rawVideoTracks.forEach(t => pc.addTrack(t, stream));
-      console.log('[call] captureStream unsupported — fell back to raw camera video tracks:', rawVideoTracks.length);
+    videoTracks.forEach(t => {
+      try{ t.enabled = (typeof camOn === 'undefined') ? true : !!camOn; }catch(_){}
+      pc.addTrack(t, stream);
+    });
+    console.log('[call] added tracks — audio:', audioTracks.length, 'video:', videoTracks.length,
+      audioTracks.map(t=>({id:t.id, enabled:t.enabled, muted:t.muted, readyState:t.readyState})),
+      videoTracks.map(t=>({id:t.id, enabled:t.enabled, readyState:t.readyState})));
+    if(audioTracks.length === 0){
+      console.warn('[call] NO live audio tracks on local stream — remote will hear silence');
+    }
+    if(videoTracks.length === 0){
+      console.warn('[call] NO live video tracks on local stream — remote will see black');
     }
   } else {
-    console.log('[call] createPeerConnection called with no local stream at all — no tracks were added on this side');
+    console.warn('[call] createPeerConnection called with no local stream — no tracks added');
   }
   return pc;
 }
@@ -673,13 +658,22 @@ async function startRealCall(c){
   pendingRemoteCandidates = [];
   iAmCaller = true;
 
-  // Kick TURN fetch in parallel with camera so createPeerConnection is fast.
+  // Kick TURN + camera in parallel (speed).
+  const icePromise = getIceServers().catch(()=> RTC_CONFIG);
   prewarmIceServers();
-  // Always ensure LIVE tracks (not just a non-null stream object).
-  await enableCamera();
+  if(typeof enableCameraForCall === 'function') await enableCameraForCall();
+  else await enableCamera();
   if(!mediaStreamIsLive(stream)){
     throw new Error('Camera/mic unavailable \u2014 fix that first, then try calling again');
   }
+  // If mic was denied or missing, try a quick audio-only reopen so remote isn't silent
+  if(!stream.getAudioTracks().some(t => t.readyState === 'live')){
+    try{
+      const a = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:true, noiseSuppression:true }, video: false });
+      a.getAudioTracks().forEach(t => stream.addTrack(t));
+    }catch(e){ console.warn('[call] could not add audio track', e); }
+  }
+  await icePromise;
   // Re-enable tracks in case a previous call muted them.
   try{
     stream.getAudioTracks().forEach(t => { t.enabled = true; });
@@ -700,7 +694,7 @@ async function startRealCall(c){
     if(e.candidate) callRef.collection('callerCandidates').add(e.candidate.toJSON()).catch(()=>{});
   };
 
-  const offer = await peerConnection.createOffer();
+  const offer = await peerConnection.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
   await peerConnection.setLocalDescription(offer);
 
   await callRef.set({
@@ -910,13 +904,20 @@ $('acceptIncoming').onclick = async ()=>{
   if($('incomingSelfTag')) $('incomingSelfTag').textContent = 'connecting…';
 
   try{
-    // Ensure LIVE media — dead tracks after a long prior call must be reopened.
-    await enableCamera();
+    // Ensure LIVE media — prefer fast call constraints
+    if(typeof enableCameraForCall === 'function') await enableCameraForCall();
+    else await enableCamera();
     if(!mediaStreamIsLive(stream)) throw new Error('Camera/mic unavailable — fix that first, then try answering again');
     try{
       stream.getAudioTracks().forEach(t => { t.enabled = true; });
       stream.getVideoTracks().forEach(t => { t.enabled = camOn; });
     }catch(e){}
+    if(!stream.getAudioTracks().some(t => t.readyState === 'live')){
+      try{
+        const a = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:true, noiseSuppression:true }, video: false });
+        a.getAudioTracks().forEach(t => stream.addTrack(t));
+      }catch(e){ console.warn('[call] answer: could not add audio', e); }
+    }
 
     // Clear any leftover PC from a previous session before answering.
     if(peerConnection){

@@ -1107,6 +1107,50 @@ async function flipCamera(){
 }
 
 
+async function enableCameraForCall(){
+  /* Faster path for WebRTC: 720p ideal negotiates much quicker than 1440p/2560,
+     and is plenty for mobile calls. Does not change Band live or lobby preview quality. */
+  if(mediaStreamIsLive(stream) && stream.getAudioTracks().some(t => t.readyState === 'live')){
+    try{
+      stream.getAudioTracks().forEach(t => { t.enabled = true; });
+      stream.getVideoTracks().forEach(t => { t.enabled = camOn; });
+    }catch(_){}
+    runGreenroom();
+    return;
+  }
+  if(stream){
+    try{ stream.getTracks().forEach(t => t.stop()); }catch(_){}
+    stream = null;
+  }
+  const audioConstraints = { echoCancellation:true, noiseSuppression:true, autoGainControl:true };
+  const attempts = [
+    { video: { facingMode: { ideal: cameraFacingMode }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }, audio: audioConstraints },
+    { video: { facingMode: { ideal: cameraFacingMode } }, audio: audioConstraints },
+    { video: true, audio: true },
+  ];
+  let lastErr;
+  for(const c of attempts){
+    try{
+      stream = await navigator.mediaDevices.getUserMedia(c);
+      lastErr = null;
+      break;
+    }catch(e){ lastErr = e; }
+  }
+  if(!stream) throw lastErr || new Error('Camera unavailable');
+  try{
+    stream.getAudioTracks().forEach(t => { t.enabled = true; });
+    stream.getVideoTracks().forEach(t => { t.enabled = camOn; });
+  }catch(_){}
+  ['camRawVideo','pipRawVideo','sendRawVideo','incomingSelfVideo'].forEach(id=>{
+    const el = $(id);
+    if(el){ el.srcObject = stream; el.play && el.play().catch(()=>{}); }
+  });
+  if(typeof startCamView === 'function'){
+    startCamView(($('incall') && $('incall').classList.contains('active')) ? 'pip' : 'lobby');
+  }
+  try{ runGreenroom(); }catch(_){}
+  try{ updateCameraQualityBadge && updateCameraQualityBadge(); }catch(_){}
+}
 async function enableCamera(){
   // If a request is already in flight, reuse it instead of a second getUserMedia prompt.
   if(cameraRequestPending){ await cameraRequestPending; return; }
