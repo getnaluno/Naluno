@@ -1135,7 +1135,7 @@ async function enableCameraForCall(){
     try{ stream.getTracks().forEach(t => t.stop()); }catch(_){}
     stream = null;
   }
-  const audioConstraints = { echoCancellation:true, noiseSuppression:true, autoGainControl:true };
+  const audioConstraints = { echoCancellation: { ideal: true }, noiseSuppression: { ideal: true }, autoGainControl: { ideal: true } };
   // Higher first — user asked to keep the higher resolution
   const attempts = [
     { video: { facingMode: { ideal: cameraFacingMode }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 60 } }, audio: audioConstraints },

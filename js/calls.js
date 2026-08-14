@@ -32,6 +32,9 @@ function closeCallOverlay(){
   if(ov){
     ov.classList.remove('active');
     ov.style.zIndex = '';
+    ov.style.display = '';
+    ov.style.opacity = '';
+    ov.style.pointerEvents = '';
   }
   document.querySelectorAll('.callscreen').forEach(s=>s.classList.remove('active'));
   try{
@@ -399,42 +402,37 @@ async function createPeerConnection(){
   pc.onicegatheringstatechange = ()=> console.log('[call] ICE gathering state:', pc.iceGatheringState);
   attachConnectionWatchdogs(pc);
   if(stream){
+    // ALWAYS send real camera + mic tracks.
+    // Canvas captureStream was producing black/no video on the other side when
+    // the filter canvas had no frames yet. Filters remain local preview only.
     const audioTracks = stream.getAudioTracks().filter(t => t.readyState === 'live');
-    audioTracks.forEach(t => {
-      try{ t.enabled = true; }catch(_){}
+    const videoTracks = stream.getVideoTracks().filter(t => t.readyState === 'live');
+    // Prefer a single audio track to reduce echo/double-path risk
+    const aud = audioTracks.slice(0, 1);
+    aud.forEach(t => {
+      try{
+        t.enabled = true;
+        t.contentHint = 'speech';
+        if(t.applyConstraints){
+          t.applyConstraints({
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          }).catch(()=>{});
+        }
+      }catch(_){}
       pc.addTrack(t, stream);
     });
-
-    // Filters/backgrounds: send the composited canvas so callee sees what you see
-    let videoAdded = false;
-    try{
-      const wantFx = (typeof greenroomEnabled !== 'undefined' && greenroomEnabled) &&
-        ((typeof selectedFilterId !== 'undefined' && selectedFilterId && selectedFilterId !== 'original') ||
-         (typeof selectedBackgroundId !== 'undefined' && selectedBackgroundId && selectedBackgroundId !== 'none'));
-      const canvas = $('camStageCanvas') || $('sendCanvas');
-      if(wantFx && canvas && canvas.width > 16 && canvas.height > 16 && typeof canvas.captureStream === 'function'){
-        const fxStream = canvas.captureStream(30);
-        const vTracks = fxStream.getVideoTracks().filter(t => t.readyState === 'live');
-        if(vTracks.length){
-          vTracks.forEach(t => {
-            try{ t.contentHint = 'motion'; }catch(_){}
-            pc.addTrack(t, fxStream);
-          });
-          videoAdded = true;
-          console.log('[call] sending FILTERED canvas tracks', vTracks.length);
-        }
-      }
-    }catch(e){ console.warn('[call] filter capture failed, falling back to raw', e); }
-
-    if(!videoAdded){
-      const videoTracks = stream.getVideoTracks().filter(t => t.readyState === 'live');
-      videoTracks.forEach(t => {
-        try{ t.enabled = (typeof camOn === 'undefined') ? true : !!camOn; }catch(_){}
-        pc.addTrack(t, stream);
-      });
-      console.log('[call] added raw tracks — audio:', audioTracks.length, 'video:', videoTracks.length);
-    }
-    if(audioTracks.length === 0) console.warn('[call] NO live audio tracks');
+    videoTracks.forEach(t => {
+      try{
+        t.enabled = (typeof camOn === 'undefined') ? true : !!camOn;
+        t.contentHint = 'motion';
+      }catch(_){}
+      pc.addTrack(t, stream);
+    });
+    console.log('[call] added raw tracks — audio:', aud.length, 'video:', videoTracks.length);
+    if(aud.length === 0) console.warn('[call] NO live audio tracks');
+    if(videoTracks.length === 0) console.warn('[call] NO live video tracks');
   } else {
     console.warn('[call] createPeerConnection called with no local stream');
   }
@@ -666,6 +664,7 @@ function handleIncomingCall(callId, data){
       stopCameraStream();
       currentCallContactId = null;
       callActionInProgress = false;
+      try{ restoreUiAfterCall(); }catch(_){}
     }
   });
 }
@@ -886,7 +885,6 @@ async function startRealCall(c){
 
     if(d.status === 'declined'){
       toast(c.name.split(' ')[0] + ' declined');
-      // Don't write status again — remote already did. Just close local UI.
       clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
       if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
       stopCallerTone();
@@ -896,6 +894,7 @@ async function startRealCall(c){
       stopCameraStream();
       currentCallContactId = null;
       callActionInProgress = false;
+      try{ restoreUiAfterCall(); }catch(_){}
     }
     // React to remote hangup even if we're mid-transition (not only when incall is active).
     if(d.status === 'ended' && $('callOverlay').classList.contains('active')){
@@ -909,6 +908,7 @@ async function startRealCall(c){
       currentCallContactId = null;
       callActionInProgress = false;
       toast('Call ended');
+      try{ restoreUiAfterCall(); }catch(_){}
     }
   });
 
@@ -989,6 +989,7 @@ $('asyncKeepRingingBtn').onclick = async ()=>{
 $('asyncCancelBtn').onclick = closeCallOverlayAndStopCamera;
 
 function closeCallOverlayAndStopCamera(){
+  /* used for cancel from lobby / failed start — restore previous screen */
   clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
   if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
   stopCallerTone();
@@ -996,13 +997,14 @@ function closeCallOverlayAndStopCamera(){
   teardownCallConnection();
   closeCallOverlay();
   stopCameraStream();
-  currentCallContactId = null; // clean slate — nothing from this call should linger into the next one
+  currentCallContactId = null;
   callActionInProgress = false;
   incallViewMode = 0;
   try{
     $('incall').classList.remove('swap-focus');
     if($('localPip')) $('localPip').classList.remove('large');
   }catch(e){}
+  try{ restoreUiAfterCall(); }catch(_){}
 }
 $('lobbyBack').onclick = closeCallOverlayAndStopCamera;
 $('joinBtn').onclick = async ()=>{
@@ -1132,6 +1134,7 @@ $('acceptIncoming').onclick = async ()=>{
         currentCallContactId = null;
         callActionInProgress = false;
         toast('Call ended');
+        try{ restoreUiAfterCall(); }catch(_){}
       }
     });
   }catch(e){

@@ -539,5 +539,4 @@ if($('bcompGoLiveBtn')){
   };
 }
 
-if($('signalGoLiveBtn')) $('signalGoLiveBtn').onclick = ()=>{ if(typeof openGoLiveFromSignal==='function') openGoLiveFromSignal(); else if(typeof bcompStartGoLive==='function') bcompStartGoLive(); };
 if($('broadcastGoLiveBtn')) $('broadcastGoLiveBtn').onclick = ()=>{ if(typeof openGoLiveFromSignal==='function') openGoLiveFromSignal(); else if(typeof bcompStartGoLive==='function') bcompStartGoLive(); };

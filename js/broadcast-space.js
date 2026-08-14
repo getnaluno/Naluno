@@ -153,7 +153,7 @@ function renderBspaceConversation(docs){
     if(!m) return false;
     if(m.type === 'system' || m.type === 'live') return true;
     const t = (m.text || '').toLowerCase();
-    return t.indexOf('went live') >= 0 || t.indexOf('new chapter of the same broadcast') >= 0;
+    return t.indexOf('went live') >= 0 || t.indexOf('is live now') >= 0 || t.indexOf('join live') >= 0;
   };
 
   const pinned = [];
@@ -778,7 +778,7 @@ async function bspaceStartLive(){
       bspaceLiveRecorder.start(1000);
     }catch(e){ console.warn('[live] record start', e); bspaceLiveRecorder = null; }
   }
-  await bspacePost('conversation', { type:'system', text: ((currentProfile && currentProfile.name) || 'Creator') + ' went live — this is a new chapter of the same Broadcast.' });
+  await bspacePost('conversation', { type:'system', text: ((currentProfile && currentProfile.name) || 'Creator') + ' is live now — tap Join live to watch.' });
   await bspacePost('journey', { type:'live', text: 'Live session started' });
   if(typeof notifyFrequenciesLive === 'function'){
     await notifyFrequenciesLive(activeBroadcastId, (activeBroadcastMeta && activeBroadcastMeta.title) || 'Broadcast');
