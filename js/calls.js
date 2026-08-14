@@ -402,12 +402,11 @@ async function createPeerConnection(){
   pc.onicegatheringstatechange = ()=> console.log('[call] ICE gathering state:', pc.iceGatheringState);
   attachConnectionWatchdogs(pc);
   if(stream){
-    // ALWAYS send real camera + mic tracks.
-    // Canvas captureStream was producing black/no video on the other side when
-    // the filter canvas had no frames yet. Filters remain local preview only.
+    // 1) Always add RAW tracks first → instant video, no lag on answer.
+    // 2) If a filter/background is on, swap to canvas track AFTER frames exist
+    //    (replaceTrack) so the other person sees the filter without a black start.
     const audioTracks = stream.getAudioTracks().filter(t => t.readyState === 'live');
     const videoTracks = stream.getVideoTracks().filter(t => t.readyState === 'live');
-    // Prefer a single audio track to reduce echo/double-path risk
     const aud = audioTracks.slice(0, 1);
     aud.forEach(t => {
       try{
@@ -423,20 +422,63 @@ async function createPeerConnection(){
       }catch(_){}
       pc.addTrack(t, stream);
     });
+    let videoSender = null;
     videoTracks.forEach(t => {
       try{
         t.enabled = (typeof camOn === 'undefined') ? true : !!camOn;
         t.contentHint = 'motion';
       }catch(_){}
-      pc.addTrack(t, stream);
+      const sender = pc.addTrack(t, stream);
+      if(!videoSender) videoSender = sender;
     });
-    console.log('[call] added raw tracks — audio:', aud.length, 'video:', videoTracks.length);
+    console.log('[call] raw tracks — audio:', aud.length, 'video:', videoTracks.length);
+
+    // Deferred filter upgrade (non-blocking)
+    try{
+      const wantFx = (typeof greenroomEnabled !== 'undefined' && greenroomEnabled) &&
+        ((typeof selectedFilterId !== 'undefined' && selectedFilterId && selectedFilterId !== 'original') ||
+         (typeof selectedBackgroundId !== 'undefined' && selectedBackgroundId && selectedBackgroundId !== 'none'));
+      if(wantFx && videoSender && typeof upgradeCallVideoToFiltered === 'function'){
+        setTimeout(()=>{
+          upgradeCallVideoToFiltered(pc, videoSender).catch(e => console.warn('[call] filter upgrade', e));
+        }, 400);
+      }
+    }catch(e){ console.warn('[call] filter schedule', e); }
+
     if(aud.length === 0) console.warn('[call] NO live audio tracks');
     if(videoTracks.length === 0) console.warn('[call] NO live video tracks');
   } else {
     console.warn('[call] createPeerConnection called with no local stream');
   }
   return pc;
+}
+
+/** Swap outbound video to filtered canvas once it has real frames. Safe no-op if not ready. */
+async function upgradeCallVideoToFiltered(pc, videoSender){
+  if(!pc || !videoSender || !stream) return;
+  const canvas = $('camStageCanvas') || $('sendCanvas');
+  if(!canvas || typeof canvas.captureStream !== 'function') return;
+  // Ensure a draw loop is running
+  try{
+    if(typeof startCamView === 'function'){
+      const mode = ($('incall') && $('incall').classList.contains('active')) ? 'pip' : 'lobby';
+      startCamView(mode);
+    }
+  }catch(_){}
+  // Wait briefly for non-empty canvas
+  await new Promise(r => setTimeout(r, 200));
+  if(canvas.width < 16 || canvas.height < 16) return;
+  let fxStream;
+  try{ fxStream = canvas.captureStream(30); }catch(_){ return; }
+  const vTrack = fxStream.getVideoTracks().find(t => t.readyState === 'live');
+  if(!vTrack) return;
+  try{ vTrack.contentHint = 'motion'; }catch(_){}
+  try{
+    await videoSender.replaceTrack(vTrack);
+    console.log('[call] outbound video upgraded to FILTERED canvas');
+  }catch(e){
+    console.warn('[call] replaceTrack filtered failed', e);
+  }
 }
 /* Tears down whatever's active — peer connection, all signaling listeners, remote
    video — without touching Firestore. Call sites that need to also update the call

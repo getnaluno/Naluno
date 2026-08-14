@@ -1165,6 +1165,13 @@ async function enableCameraForCall(){
     startCamView(($('incall') && $('incall').classList.contains('active')) ? 'pip' : 'lobby');
   }
   try{ runGreenroom(); }catch(_){}
+  try{
+    const vt = stream.getVideoTracks()[0];
+    if(vt && vt.applyConstraints){
+      // Prefer HD when the device can deliver it (non-blocking)
+      vt.applyConstraints({ width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } }).catch(()=>{});
+    }
+  }catch(_){}
   try{ updateCameraQualityBadge && updateCameraQualityBadge(); }catch(_){}
 }
 async function enableCamera(){

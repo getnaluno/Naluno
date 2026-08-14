@@ -138,17 +138,103 @@ if(typeof firebase !== 'undefined' && firebase.messaging){
   }catch(e){ /* messaging not available in this context */ }
 }
 let deferredInstallPrompt = null;
+
+function isIosDevice(){
+  try{
+    return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  }catch(_){ return false; }
+}
+function isStandalonePwa(){
+  try{
+    if(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return true;
+    if(window.navigator.standalone === true) return true; // iOS Safari
+    if(document.referrer && document.referrer.indexOf('android-app://') === 0) return true;
+  }catch(_){}
+  return false;
+}
+function installBannerDismissed(){
+  try{ return localStorage.getItem('naluno:installDismiss') === '1'; }catch(_){ return false; }
+}
+function showInstallBanner(mode){
+  // mode: 'android' | 'ios'
+  if(isStandalonePwa() || installBannerDismissed()) return;
+  const ban = $('installBanner');
+  if(!ban) return;
+  const btn = $('installBannerBtn');
+  const label = ban.querySelector('[data-install-label]') || ban.children[1];
+  if(mode === 'ios'){
+    if(label) label.textContent = 'Add Naluno to your Home Screen — Share → Add to Home Screen';
+    if(btn){ btn.textContent = 'How'; btn.style.display = ''; }
+    ban.dataset.mode = 'ios';
+  } else {
+    if(label) label.textContent = 'Install Naluno for full-screen calls & faster open';
+    if(btn){ btn.textContent = 'Install'; btn.style.display = ''; }
+    ban.dataset.mode = 'android';
+  }
+  ban.style.display = 'flex';
+}
+
 window.addEventListener('beforeinstallprompt', e=>{
-  e.preventDefault(); // stop the browser's default mini-infobar — we show our own banner instead
+  e.preventDefault();
   deferredInstallPrompt = e;
-  $('installBanner').style.display = 'flex';
+  showInstallBanner('android');
 });
-$('installBannerBtn').onclick = async ()=>{
-  if(!deferredInstallPrompt) return;
-  $('installBanner').style.display = 'none';
-  deferredInstallPrompt.prompt();
-  await deferredInstallPrompt.userChoice; // resolves once the person accepts or dismisses the OS-level dialog
+
+if($('installBannerBtn')){
+  $('installBannerBtn').onclick = async ()=>{
+    const ban = $('installBanner');
+    if(ban && ban.dataset.mode === 'ios'){
+      toast('iPhone: tap Share (□↑) → “Add to Home Screen”');
+      return;
+    }
+    if(!deferredInstallPrompt){
+      toast('Open Chrome menu → Install app (or Add to Home screen)');
+      return;
+    }
+    if(ban) ban.style.display = 'none';
+    try{
+      deferredInstallPrompt.prompt();
+      await deferredInstallPrompt.userChoice;
+    }catch(_){}
+    deferredInstallPrompt = null;
+  };
+}
+if($('installBannerClose')){
+  $('installBannerClose').onclick = ()=>{
+    if($('installBanner')) $('installBanner').style.display = 'none';
+    try{ localStorage.setItem('naluno:installDismiss', '1'); }catch(_){}
+  };
+}
+window.addEventListener('appinstalled', ()=>{
+  if($('installBanner')) $('installBanner').style.display = 'none';
   deferredInstallPrompt = null;
-};
-$('installBannerClose').onclick = ()=>{ $('installBanner').style.display = 'none'; };
-window.addEventListener('appinstalled', ()=>{ $('installBanner').style.display = 'none'; deferredInstallPrompt = null; });
+  try{ localStorage.setItem('naluno:installDismiss', '1'); }catch(_){}
+});
+
+// iOS never fires beforeinstallprompt — show Add to Home Screen tip after load
+(function scheduleIosInstallTip(){
+  if(!isIosDevice() || isStandalonePwa() || installBannerDismissed()) return;
+  // Wait until user is past the gate a bit
+  setTimeout(()=>{
+    if(isStandalonePwa() || installBannerDismissed()) return;
+    if(deferredInstallPrompt) return; // Android path owns the banner
+    showInstallBanner('ios');
+  }, 2500);
+})();
+
+// Android Chrome: if event already missed (late script), still offer manual tip later
+(function scheduleAndroidInstallTip(){
+  if(isIosDevice() || isStandalonePwa() || installBannerDismissed()) return;
+  setTimeout(()=>{
+    if(isStandalonePwa() || installBannerDismissed()) return;
+    if(deferredInstallPrompt){
+      showInstallBanner('android');
+      return;
+    }
+    // No deferred prompt yet — show soft tip so people know Install exists
+    const ban = $('installBanner');
+    if(!ban || ban.style.display === 'flex') return;
+    showInstallBanner('android');
+  }, 4000);
+})();
