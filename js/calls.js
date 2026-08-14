@@ -270,34 +270,36 @@ async function createPeerConnection(){
   pc.ontrack = e=>{
     console.log('[call] ontrack fired — kind:', e.track.kind, 'readyState:', e.track.readyState, 'enabled:', e.track.enabled, 'muted:', e.track.muted, 'id:', e.track.id);
     try{ e.track.enabled = true; }catch(_){}
+    try{ e.track.contentHint = e.track.kind === 'video' ? 'motion' : 'speech'; }catch(_){}
     if(!remoteCombinedStream.getTracks().includes(e.track)){
       remoteCombinedStream.addTrack(e.track);
     }
     const videoEl = $('remoteVideo');
     if(!videoEl) return;
-    // Only assign srcObject when needed — reassigning every track aborts an in-flight play()
     if(videoEl.srcObject !== remoteCombinedStream){
       videoEl.srcObject = remoteCombinedStream;
     }
-    videoEl.muted = false;
     videoEl.playsInline = true;
+    videoEl.autoplay = true;
     if(remotePlayTimer) clearTimeout(remotePlayTimer);
-    remotePlayTimer = setTimeout(function(){ ensureRemoteVideoPlaying(); }, 50);
+    remotePlayTimer = setTimeout(function(){ ensureRemoteVideoPlaying(); }, 30);
     e.track.onunmute = function(){ ensureRemoteVideoPlaying(); };
     if(e.track.kind === 'video'){
       videoEl.style.display = 'block';
       const ph = $('remotePlaceholder');
       if(ph) ph.style.display = 'none';
       e.track.onended = ()=>{
-        console.log('[call] remote video track ended');
-        // Only hide if no live video tracks remain
         const still = remoteCombinedStream.getVideoTracks().some(t => t.readyState === 'live');
         if(!still){
           videoEl.style.display = 'none';
           if(ph) ph.style.display = 'flex';
         }
       };
-      e.track.onunmute = function(){ ensureRemoteVideoPlaying(); };
+    }
+    // Audio tracks need the element playing too (combined stream)
+    if(e.track.kind === 'audio'){
+      ensureRemoteVideoPlaying();
+      try{ if(typeof ensureAudioContext === 'function') ensureAudioContext(); }catch(_){}
     }
   };
   pc.onicegatheringstatechange = ()=> console.log('[call] ICE gathering state:', pc.iceGatheringState);
@@ -561,12 +563,14 @@ function handleIncomingCall(callId, data){
 }
 
 function startOutgoingCall(contactId){
-  const c = contacts.find(x=>x.id===contactId); if(!c) return;
+  const c = contacts.find(x=>x.id===contactId);
+  if(!c){ toast('Contact not found'); return; }
   currentCallContactId = contactId;
   if(!c.isReal || !c.firebaseUid){
     toast('Real calls only work with real connections right now');
     return;
   }
+  if(!currentUser || !fbDb){ toast('Sign in required for calls'); return; }
   if(computeSignal(c).tier === 'off'){
     // Off the grid means off the grid — don't waste the person's time pretending to ring.
     showAsyncFallback(contactId, 'off');

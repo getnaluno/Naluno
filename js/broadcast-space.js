@@ -103,6 +103,9 @@ function renderBspaceMedia(seg){
         </div>
       </div>
       ${showChapters ? `<div id="bspaceChapterBar" class="bspace-chapter-bar"></div>` : ''}`;
+    const vel = $('bspaceVideoEl');
+    if(vel && typeof bindMediaElement === 'function') bindMediaElement(vel, rawSrc);
+    else if(vel){ vel.src = rawSrc; }
     wireBroadcastChapterPlayer(showChapters ? chapters : (chapters && chapters.length ? chapters : null), breathers, { showChips: !!showChapters });
     return;
   }

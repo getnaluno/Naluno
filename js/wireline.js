@@ -171,7 +171,17 @@ function closeThread(){
   activeThreadContactId = null;
 }
 $('threadBack').onclick = closeThread;
-$('threadCallBtn').onclick = ()=>{ const id = activeThreadContactId; closeThread(); if(id) startOutgoingCall(id); };
+$('threadCallBtn').onclick = ()=>{
+  const id = activeThreadContactId;
+  if(!id){ toast('No conversation selected'); return; }
+  const c = contacts.find(x => x.id === id);
+  if(!c){ toast('Contact missing'); return; }
+  if(!c.isReal || !c.firebaseUid){ toast('Calls need a real connection'); return; }
+  // Start call first — closing thread must not cancel setup
+  if(typeof startOutgoingCall === 'function') startOutgoingCall(id);
+  else toast('Calls unavailable');
+  try{ closeThread(); }catch(_){}
+};
 
 function receiptTickHtml(status){
   if(status==='queued'){

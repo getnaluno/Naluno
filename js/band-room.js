@@ -21,7 +21,7 @@ function activeBand(){ return bands.find(b=>b.id===activeBandId); }
 
 function bandMessageIsEmpty(m){
   if(!m) return true;
-  if(m.type === 'audio' || m.type === 'video') return !m.mediaUrl;
+  if(m.type === 'audio' || m.type === 'video') return !m.mediaUrl || String(m.mediaUrl).length < 8;
   if(m.type === 'invite' || m.type === 'system') return false;
   return !(m.text && String(m.text).trim());
 }

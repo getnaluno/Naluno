@@ -29,21 +29,50 @@ let connectionsSignals = []; // [{ contactId, contact, latest }] — real connec
    on anyone's device being online when the expiry actually hits.
    Fill in your own deployed Worker's URL here once it's live. */
 const SIGNAL_UPLOAD_WORKER_URL = 'https://naluno-signal-upload.naluno.workers.dev';
-/** Fix media URLs that pointed at a non-existent R2 public host. */
+/** Normalize any stored media URL to the Worker proxy (GET /o/<key>).
+ *  Broken playback was caused by R2 "public" hosts that never served bytes. */
 function resolveMediaUrl(u){
   if(!u || typeof u !== 'string') return u || '';
-  // Already served by worker
-  if(u.indexOf(SIGNAL_UPLOAD_WORKER_URL) === 0) return u;
-  // Legacy wrong public host → extract key after /u/ or full path
+  const base = SIGNAL_UPLOAD_WORKER_URL.replace(/\/+$/, '');
+  if(u.indexOf(base + '/o/') === 0) return u;
+  if(u.indexOf(base + '/') === 0 && u.indexOf('/o/') < 0){
+    // rare: worker origin without /o/
+    const rest = u.slice(base.length).replace(/^\/+/, '');
+    if(rest.indexOf('u/') === 0) return base + '/o/' + rest;
+  }
   try{
-    const m = u.match(/\/u\/[^?\s]+/);
-    if(m) return SIGNAL_UPLOAD_WORKER_URL + '/o' + m[0];
-    if(/r2\.dev\//i.test(u)){
-      const path = u.split(/r2\.dev\//i)[1];
-      if(path) return SIGNAL_UPLOAD_WORKER_URL + '/o/' + path.replace(/^\/+/, '');
+    // key path u/<uid>/<file>
+    const m = u.match(/\/?(u\/[A-Za-z0-9_-]+\/[A-Za-z0-9._-]+)/);
+    if(m) return base + '/o/' + m[1];
+    if(/r2\.dev\//i.test(u) || /cloudflarestorage\.com\//i.test(u)){
+      const path = u.split(/r2\.dev\//i)[1] || u.split(/cloudflarestorage\.com\//i)[1];
+      if(path){
+        const cleaned = path.replace(/^\/+/, '').split('?')[0];
+        return base + '/o/' + cleaned;
+      }
     }
   }catch(_){}
   return u;
+}
+
+/** Attach error + load recovery on a media element. */
+function bindMediaElement(el, rawUrl){
+  if(!el) return;
+  const url = resolveMediaUrl(rawUrl);
+  if(!url) return;
+  el.setAttribute('playsinline', '');
+  el.setAttribute('preload', 'metadata');
+  // Do NOT set crossOrigin — on Android WebView/Chrome it can block playback
+  // even when the Worker sends Access-Control-Allow-Origin.
+  el.src = url;
+  el.onerror = function(){
+    console.warn('[media] load failed', url, el.error && el.error.code);
+    // one retry with cache-bust
+    if(!el.dataset.retried){
+      el.dataset.retried = '1';
+      el.src = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'r=' + Date.now();
+    }
+  };
 }
 
 /** Must match signal-worker MAX_BYTES (150 MiB). */
