@@ -1108,14 +1108,27 @@ async function flipCamera(){
 
 
 async function enableCameraForCall(){
-  /* Faster path for WebRTC: 720p ideal negotiates much quicker than 1440p/2560,
-     and is plenty for mobile calls. Does not change Band live or lobby preview quality. */
+  /* Prefer high-res when the device can deliver it; fall back gracefully. */
+  function hideCamFallback(){
+    try{
+      if($('camFallback')) $('camFallback').style.display = 'none';
+    }catch(_){}
+  }
   if(mediaStreamIsLive(stream) && stream.getAudioTracks().some(t => t.readyState === 'live')){
     try{
       stream.getAudioTracks().forEach(t => { t.enabled = true; });
       stream.getVideoTracks().forEach(t => { t.enabled = camOn; });
     }catch(_){}
+    ['camRawVideo','pipRawVideo','sendRawVideo','incomingSelfVideo'].forEach(id=>{
+      const el = $(id);
+      if(el){ el.srcObject = stream; el.play && el.play().catch(()=>{}); }
+    });
+    hideCamFallback();
+    if(typeof startCamView === 'function'){
+      startCamView(($('incall') && $('incall').classList.contains('active')) ? 'pip' : 'lobby');
+    }
     runGreenroom();
+    try{ updateCameraQualityBadge && updateCameraQualityBadge(); }catch(_){}
     return;
   }
   if(stream){
@@ -1123,7 +1136,9 @@ async function enableCameraForCall(){
     stream = null;
   }
   const audioConstraints = { echoCancellation:true, noiseSuppression:true, autoGainControl:true };
+  // Higher first — user asked to keep the higher resolution
   const attempts = [
+    { video: { facingMode: { ideal: cameraFacingMode }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 60 } }, audio: audioConstraints },
     { video: { facingMode: { ideal: cameraFacingMode }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }, audio: audioConstraints },
     { video: { facingMode: { ideal: cameraFacingMode } }, audio: audioConstraints },
     { video: true, audio: true },
@@ -1145,6 +1160,7 @@ async function enableCameraForCall(){
     const el = $(id);
     if(el){ el.srcObject = stream; el.play && el.play().catch(()=>{}); }
   });
+  hideCamFallback();
   if(typeof startCamView === 'function'){
     startCamView(($('incall') && $('incall').classList.contains('active')) ? 'pip' : 'lobby');
   }
@@ -1156,7 +1172,18 @@ async function enableCamera(){
   if(cameraRequestPending){ await cameraRequestPending; return; }
   // After a long call, stream may still be non-null while every track is ended.
   // Treating that as "camera on" is what made the next call fail silently.
-  if(mediaStreamIsLive(stream)){ runGreenroom(); return; }
+  if(mediaStreamIsLive(stream)){
+    try{ if($('camFallback')) $('camFallback').style.display='none'; }catch(_){}
+    ['camRawVideo','pipRawVideo','sendRawVideo','incomingSelfVideo'].forEach(id=>{
+      const el = $(id);
+      if(el && el.srcObject !== stream){ el.srcObject = stream; el.play && el.play().catch(()=>{}); }
+    });
+    if(typeof startCamView === 'function'){
+      startCamView(($('incall') && $('incall').classList.contains('active')) ? 'pip' : 'lobby');
+    }
+    runGreenroom();
+    return;
+  }
   if(stream){
     try{ stream.getTracks().forEach(t=>t.stop()); }catch(_){}
     stream = null;

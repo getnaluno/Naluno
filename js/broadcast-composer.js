@@ -354,10 +354,27 @@ async function bcompPublish(){
           return await uploadVideoToR2(out);
         }
 
-        if(plan.mode === 'single' || !plan.parts || plan.parts.length <= 1){
+        if(plan.mode === 'single' || plan.mode === 'single_with_markers' || !plan.parts || plan.parts.length <= 1){
           mediaUrl = await uploadOne(file, 'Uploading video…');
           try{ thumbUrl = await generateVideoThumbnail(typeof resolveMediaUrl==='function' ? resolveMediaUrl(mediaUrl) : mediaUrl); }catch(_){}
-          chapters = [{ index: 0, mediaUrl, duration: duration || null, title: 'Video', bytes: file.size || null }];
+          if(plan.mode === 'single_with_markers' && plan.parts && plan.parts.length > 1){
+            // One file, multiple seek chapters + breathers between them
+            chapters = plan.parts.map(p => ({
+              index: p.index,
+              mediaUrl: mediaUrl, // same URL — player seeks
+              start: p.start,
+              end: p.end,
+              duration: Math.max(0.1, p.end - p.start),
+              title: 'Chapter ' + (p.index + 1),
+              bytes: null,
+              sharedSource: true,
+            }));
+            breathers = (typeof buildBreathersForChapters === 'function')
+              ? buildBreathersForChapters(chapters.length)
+              : [];
+          } else {
+            chapters = [{ index: 0, mediaUrl, duration: duration || null, title: 'Video', bytes: file.size || null }];
+          }
         } else if(plan.mode === 'silent_multipart'){
           // Large but under 4 min: upload slices, continuous play, NO chapter chips
           chapters = [];
@@ -365,10 +382,21 @@ async function bcompPublish(){
             let blob = file;
             if(typeof extractVideoClip === 'function' && (part.start > 0.15 || part.end < duration - 0.4)){
               if(progress) progress('Preparing part ' + (part.index+1) + '/' + plan.parts.length + '…');
-              blob = await extractVideoClip(file, part.start, part.end, frac => {
-                if(progress) progress('Part ' + (part.index+1) + '… ' + Math.round((frac||0)*100) + '%');
-              });
+              try{
+                blob = await extractVideoClip(file, part.start, part.end, frac => {
+                  if(progress) progress('Part ' + (part.index+1) + '… ' + Math.round((frac||0)*100) + '%');
+                });
+              }catch(ex){
+                console.warn('[bcomp] part extract failed', part.index, ex);
+                if(file.size <= maxUp && part.index === 0){
+                  mediaUrl = await uploadOne(file, 'Uploading full video…');
+                  chapters = [{ index:0, mediaUrl, duration: duration||null, title:'Video', bytes: file.size||null, silent:true }];
+                  break;
+                }
+                throw new Error('Could not prepare part ' + (part.index+1));
+              }
             }
+            if(chapters && chapters.length === 1 && mediaUrl && part.index > 0) break;
             const url = await uploadOne(blob, 'Uploading part ' + (part.index+1) + '/' + plan.parts.length + '…');
             if(part.index === 0){
               mediaUrl = url;
@@ -389,10 +417,22 @@ async function bcompPublish(){
             let blob = file;
             if(typeof extractVideoClip === 'function' && (part.start > 0.15 || part.end < duration - 0.4)){
               if(progress) progress('Chapter ' + (part.index+1) + '/' + plan.parts.length + '…');
-              blob = await extractVideoClip(file, part.start, part.end, frac => {
-                if(progress) progress('Chapter ' + (part.index+1) + '… ' + Math.round((frac||0)*100) + '%');
-              });
+              try{
+                blob = await extractVideoClip(file, part.start, part.end, frac => {
+                  if(progress) progress('Chapter ' + (part.index+1) + '… ' + Math.round((frac||0)*100) + '%');
+                });
+              }catch(ex){
+                console.warn('[bcomp] chapter extract failed', part.index, ex);
+                // Last resort: if whole file still under max, upload once and stop multiparts
+                if(file.size <= maxUp && part.index === 0){
+                  mediaUrl = await uploadOne(file, 'Uploading full video (chapter split failed)…');
+                  chapters = [{ index:0, mediaUrl, duration: duration||null, title:'Video', bytes: file.size||null }];
+                  break;
+                }
+                throw new Error('Could not split chapter ' + (part.index+1) + ' — try a shorter clip or re-export as MP4');
+              }
             }
+            if(chapters && chapters.length === 1 && mediaUrl && part.index > 0) break;
             const url = await uploadOne(blob, 'Uploading chapter ' + (part.index+1) + '…');
             if(part.index === 0){
               mediaUrl = url;

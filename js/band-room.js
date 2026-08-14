@@ -1075,7 +1075,7 @@ function renderBandLiveGrid(){
   if(typeof bandLiveMeshSync === 'function') bandLiveMeshSync(liveOthers);
   // Expand arrow ON the camera tile (not in the corner of the whole room)
   const selfTile = stage.querySelector('[data-live-tile="self"]');
-  if(selfTile && !selfTile.querySelector('.band-live-expand')){
+  if(false && selfTile && !selfTile.querySelector('.band-live-expand')){
     const exp = document.createElement('button');
     exp.type = 'button';
     exp.className = 'band-live-expand';

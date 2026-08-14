@@ -414,16 +414,16 @@
 .bspace-hero{
   position:relative;
   width:100%;
-  max-width:min(100%,420px);
+  max-width:100%;
   margin:0 auto;
-  background:#05060A;
+  background:#000;
   aspect-ratio:9/16;
-  max-height:min(72vh,640px);
+  max-height:min(78vh,720px);
   flex-shrink:0;
   overflow:hidden;
 }
 .bspace-hero.expanded{ max-height:min(92vh,900px); max-width:100%; }
-.bspace-expand-btn{
+.bspace-expand-btn{ display:none !important;
   position:absolute; right:12px; bottom:12px; z-index:5;
   width:34px; height:34px; border-radius:50%;
   background:rgba(13,15,23,.75); border:1px solid rgba(255,255,255,.2);

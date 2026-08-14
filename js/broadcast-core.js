@@ -239,8 +239,18 @@ function planBroadcastChapters(fileSize, durationSec){
   const size = Math.max(1, fileSize || 0);
   const wantVisibleChapters = dur > targetSec; // strictly longer than 4 minutes
 
+  // Build ~4 min chapter time marks (UI + breathers) regardless of upload strategy
+  function chapterMarks(){
+    const parts = [];
+    let i = 0;
+    for(let start = 0; start < dur - 0.5; start += targetSec){
+      parts.push({ start, end: Math.min(dur, start + targetSec), index: i++ });
+      if(i >= 40) break;
+    }
+    return parts;
+  }
+
   if(!wantVisibleChapters){
-    // Single logical video — may still need size-based upload splits (hidden)
     if(size <= maxBytes){
       return { mode: 'single', parts: [{ start: 0, end: dur, index: 0 }], midrolls: [], showChapterUI: false };
     }
@@ -256,9 +266,22 @@ function planBroadcastChapters(fileSize, durationSec){
     return { mode: 'silent_multipart', parts, midrolls: [], showChapterUI: false };
   }
 
-  // Long video → real chapters ~4 min
+  // Long video (>4 min)
+  // If the whole file fits under the worker max, upload ONCE and use seek-based chapters
+  // (no browser re-encode — that is what was failing on phones).
+  if(size <= maxBytes){
+    const marks = chapterMarks();
+    return {
+      mode: 'single_with_markers',
+      parts: marks,
+      midrolls: [],
+      showChapterUI: marks.length > 1,
+    };
+  }
+
+  // File too large for one upload → must split/re-encode slices
   const bytesPerSec = size / dur;
-  const maxSecByBytes = Math.max(45, Math.floor((size > maxBytes ? targetBytes : maxBytes) / Math.max(1, bytesPerSec)));
+  const maxSecByBytes = Math.max(45, Math.floor(targetBytes / Math.max(1, bytesPerSec)));
   const sliceSec = Math.min(targetSec, maxSecByBytes);
   const parts = [];
   let i = 0;
@@ -266,8 +289,7 @@ function planBroadcastChapters(fileSize, durationSec){
     parts.push({ start, end: Math.min(dur, start + sliceSec), index: i++ });
     if(i >= 40) break;
   }
-  const marks = [];
-  return { mode: parts.length > 1 ? 'multipart' : 'single', parts, midrolls: marks, showChapterUI: parts.length > 1 };
+  return { mode: 'multipart', parts, midrolls: [], showChapterUI: parts.length > 1 };
 }
 
 /** Default breathers between real chapters — ad architecture lives here. */

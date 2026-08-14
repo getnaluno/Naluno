@@ -448,6 +448,8 @@ $('trimCancel').onclick = ()=>{
    fast-motion clip into the file (everything plays at 2× later) — that was the bug.
    Prepare is therefore real-time wall-clock; progress UI still reflects true progress. */
 async function extractVideoClip(file, startTime, endTime, onProgress){
+  /* Slice a time range from a video file via MediaRecorder + HTMLVideoElement.
+     Used for Broadcast chapters (>4 min) and silent multipart under worker max. */
   /* Smart encode (YouTube-like within browser limits):
      - Cap resolution at 1080p (phones don't need 4K for Signal)
      - Prefer VP9 when available (better quality per bit than VP8)

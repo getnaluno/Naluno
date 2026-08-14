@@ -51,6 +51,7 @@ function snapshotUiBeforeCall(){
       bspace: !!( $('bspace') && $('bspace').classList.contains('active') ),
       bandRoom: !!( $('bandRoom') && $('bandRoom').classList.contains('active') ),
       wireline: !!( $('wirelineThread') && $('wirelineThread').classList.contains('active') ),
+      threadContactId: (typeof activeThreadContactId !== 'undefined' ? activeThreadContactId : null) || currentCallContactId || null,
       activeTab: (document.querySelector('.tabscreen.active') || {}).id || null,
     };
   }catch(_){
@@ -59,10 +60,26 @@ function snapshotUiBeforeCall(){
 }
 function restoreUiAfterCall(){
   try{
-    if(!_callUiSnapshot) return;
     const s = _callUiSnapshot;
     _callUiSnapshot = null;
-    // Prefer Band / Broadcast over wireline
+    // Always clear blank call shell
+    const ov = $('callOverlay');
+    if(ov){
+      ov.classList.remove('active');
+      ov.style.zIndex = '';
+      ov.style.display = '';
+      ov.style.opacity = '';
+      ov.style.pointerEvents = '';
+    }
+    document.querySelectorAll('.callscreen').forEach(sc=>sc.classList.remove('active'));
+    if(!s){
+      // Default home: frequencies tab
+      try{
+        document.querySelectorAll('.tabscreen').forEach(t=>t.classList.remove('active'));
+        if($('tab-freq')) $('tab-freq').classList.add('active');
+      }catch(_){}
+      return;
+    }
     if(s.bandRoom && $('bandRoom')){
       $('bandRoom').classList.add('active');
       $('bandRoom').style.zIndex = '';
@@ -70,11 +87,24 @@ function restoreUiAfterCall(){
       $('bspace').classList.add('active');
       $('bspace').style.zIndex = '';
       $('bspace').style.display = 'flex';
-    } else if(s.wireline && $('wirelineThread') && typeof openThread === 'function' && typeof activeThreadContactId !== 'undefined' && activeThreadContactId){
-      // openThread needs contact id — only restore if still set
-      try{ openThread(activeThreadContactId); }catch(_){}
+    } else if(s.wireline && typeof openThread === 'function'){
+      const id = (typeof activeThreadContactId !== 'undefined' && activeThreadContactId)
+        || s.threadContactId
+        || currentCallContactId;
+      if(id){
+        try{ openThread(id); }catch(_){}
+      } else {
+        document.querySelectorAll('.tabscreen').forEach(t=>t.classList.remove('active'));
+        if($('tab-wireline')) $('tab-wireline').classList.add('active');
+      }
+    } else if(s.activeTab && $(s.activeTab)){
+      document.querySelectorAll('.tabscreen').forEach(t=>t.classList.remove('active'));
+      $(s.activeTab).classList.add('active');
+    } else {
+      document.querySelectorAll('.tabscreen').forEach(t=>t.classList.remove('active'));
+      if($('tab-freq')) $('tab-freq').classList.add('active');
     }
-  }catch(_){}
+  }catch(e){ console.warn('[call] restore', e); }
 }
 
 let currentCallContactId = null;
@@ -367,30 +397,44 @@ async function createPeerConnection(){
   pc.onicegatheringstatechange = ()=> console.log('[call] ICE gathering state:', pc.iceGatheringState);
   attachConnectionWatchdogs(pc);
   if(stream){
-    // RELIABLE PATH: send the real camera + mic tracks.
-    // Canvas compositing is for local preview only — captureStream was producing
-    // "connected but no video/audio" when the canvas had no frames or zero size.
     const audioTracks = stream.getAudioTracks().filter(t => t.readyState === 'live');
-    const videoTracks = stream.getVideoTracks().filter(t => t.readyState === 'live');
     audioTracks.forEach(t => {
       try{ t.enabled = true; }catch(_){}
       pc.addTrack(t, stream);
     });
-    videoTracks.forEach(t => {
-      try{ t.enabled = (typeof camOn === 'undefined') ? true : !!camOn; }catch(_){}
-      pc.addTrack(t, stream);
-    });
-    console.log('[call] added tracks — audio:', audioTracks.length, 'video:', videoTracks.length,
-      audioTracks.map(t=>({id:t.id, enabled:t.enabled, muted:t.muted, readyState:t.readyState})),
-      videoTracks.map(t=>({id:t.id, enabled:t.enabled, readyState:t.readyState})));
-    if(audioTracks.length === 0){
-      console.warn('[call] NO live audio tracks on local stream — remote will hear silence');
+
+    // Filters/backgrounds: send the composited canvas so callee sees what you see
+    let videoAdded = false;
+    try{
+      const wantFx = (typeof greenroomEnabled !== 'undefined' && greenroomEnabled) &&
+        ((typeof selectedFilterId !== 'undefined' && selectedFilterId && selectedFilterId !== 'original') ||
+         (typeof selectedBackgroundId !== 'undefined' && selectedBackgroundId && selectedBackgroundId !== 'none'));
+      const canvas = $('camStageCanvas') || $('sendCanvas');
+      if(wantFx && canvas && canvas.width > 16 && canvas.height > 16 && typeof canvas.captureStream === 'function'){
+        const fxStream = canvas.captureStream(30);
+        const vTracks = fxStream.getVideoTracks().filter(t => t.readyState === 'live');
+        if(vTracks.length){
+          vTracks.forEach(t => {
+            try{ t.contentHint = 'motion'; }catch(_){}
+            pc.addTrack(t, fxStream);
+          });
+          videoAdded = true;
+          console.log('[call] sending FILTERED canvas tracks', vTracks.length);
+        }
+      }
+    }catch(e){ console.warn('[call] filter capture failed, falling back to raw', e); }
+
+    if(!videoAdded){
+      const videoTracks = stream.getVideoTracks().filter(t => t.readyState === 'live');
+      videoTracks.forEach(t => {
+        try{ t.enabled = (typeof camOn === 'undefined') ? true : !!camOn; }catch(_){}
+        pc.addTrack(t, stream);
+      });
+      console.log('[call] added raw tracks — audio:', audioTracks.length, 'video:', videoTracks.length);
     }
-    if(videoTracks.length === 0){
-      console.warn('[call] NO live video tracks on local stream — remote will see black');
-    }
+    if(audioTracks.length === 0) console.warn('[call] NO live audio tracks');
   } else {
-    console.warn('[call] createPeerConnection called with no local stream — no tracks added');
+    console.warn('[call] createPeerConnection called with no local stream');
   }
   return pc;
 }
@@ -804,11 +848,17 @@ async function startRealCall(c){
     // Stop ringing the instant the other side taps Answer (status becomes
     // 'accepted'), even if their SDP answer is still being prepared.
     // Previously we only reacted to d.answer, which arrived 10–20s later.
-    if((d.status === 'accepted' || d.answer) && $('ringing').classList.contains('active')){
-      clearTimeout(ringTimeoutHandle);
-      if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
-      stopCallerTone();
-      startInCall();
+    if(d.status === 'accepted' || d.answer){
+      const onRing = $('ringing') && $('ringing').classList.contains('active');
+      const onLobby = $('lobby') && $('lobby').classList.contains('active');
+      const notInCall = !$('incall') || !$('incall').classList.contains('active');
+      if(onRing || onLobby || notInCall){
+        clearTimeout(ringTimeoutHandle);
+        if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
+        try{ stopCallerTone(); }catch(_){}
+        try{ stopRingtone(); }catch(_){}
+        if(notInCall || onRing || onLobby) startInCall();
+      }
     }
 
     if(d.answer && !remoteDescriptionSet && peerConnection){

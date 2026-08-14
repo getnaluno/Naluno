@@ -1013,8 +1013,39 @@ function playBroadcastChapter(index, userInitiated){
   bspaceChapterIndex = index;
   const v = $('bspaceVideoEl');
   if(!v) return;
-  v.src = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(ch.mediaUrl) : ch.mediaUrl;
-  v.play().catch(()=>{});
+  const url = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(ch.mediaUrl) : ch.mediaUrl;
+  const shared = !!ch.sharedSource || (bspaceChapterList.length > 1 && bspaceChapterList.every(c => c.mediaUrl === ch.mediaUrl));
+
+  if(shared){
+    // One file — seek to chapter start instead of reloading
+    const startAt = typeof ch.start === 'number' ? ch.start : 0;
+    const endAt = typeof ch.end === 'number' ? ch.end : null;
+    if(!v.src || v.src.indexOf(url.split('?')[0].split('/').pop()) < 0){
+      v.src = url;
+      v.onloadedmetadata = ()=>{
+        try{ v.currentTime = startAt; }catch(_){}
+        v.play().catch(()=>{});
+      };
+    } else {
+      try{ v.currentTime = startAt; }catch(_){}
+      v.play().catch(()=>{});
+    }
+    // End chapter at end mark → next chapter / breather
+    v.ontimeupdate = ()=>{
+      if(endAt == null) return;
+      if((v.currentTime || 0) >= endAt - 0.15){
+        v.ontimeupdate = null;
+        const br = bspaceBreatherList.find(b => b.afterChapterIndex === bspaceChapterIndex);
+        const next = bspaceChapterIndex + 1;
+        if(next >= bspaceChapterList.length) return;
+        if(br) showBreatherAdSlot(br, ()=> playBroadcastChapter(next, false));
+        else playBroadcastChapter(next, false);
+      }
+    };
+  } else {
+    v.src = url;
+    v.play().catch(()=>{});
+  }
   const bar = $('bspaceChapterBar');
   if(bar){
     bar.querySelectorAll('[data-ch]').forEach(btn=>{
@@ -1062,46 +1093,22 @@ function hideBreatherAdSlot(){
 }
 
 
-(function wireBspaceExpand(){
-  function bind(){
-    const btn = document.getElementById('bspaceExpandBtn');
-    if(!btn || btn.dataset.wired) return;
-    btn.dataset.wired = '1';
-    btn.onclick = function(e){
-      e.preventDefault();
-      e.stopPropagation();
-      const hero = document.getElementById('bspaceHero');
-      if(!hero) return;
-      hero.classList.toggle('expanded');
-      btn.style.transform = hero.classList.contains('expanded') ? 'rotate(180deg)' : '';
-    };
-  }
-  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
-  else bind();
-})();
+/* expand control removed — stage is always filled 9:16 */
 
 
 function adaptBspaceHeroToVideo(){
   const hero = $('bspaceHero');
   const v = $('bspaceVideoEl');
   if(!hero || !v) return;
-  const apply = ()=>{
-    const w = v.videoWidth || 0, h = v.videoHeight || 0;
-    if(w < 2 || h < 2) return;
-    const ratio = w / h;
-    // Portrait (near 9:16): keep 9:16 stage
-    if(ratio <= 0.75){
-      hero.style.aspectRatio = '9 / 16';
-      hero.style.maxHeight = hero.classList.contains('expanded') ? 'min(92vh, 900px)' : 'min(72vh, 640px)';
-    } else if(ratio >= 1.2){
-      // Landscape: shorter stage — no giant black void under the player
-      hero.style.aspectRatio = '16 / 10';
-      hero.style.maxHeight = hero.classList.contains('expanded') ? 'min(70vh, 520px)' : 'min(42vh, 360px)';
-    } else {
-      hero.style.aspectRatio = '1 / 1';
-      hero.style.maxHeight = hero.classList.contains('expanded') ? 'min(80vh, 640px)' : 'min(52vh, 420px)';
-    }
-  };
-  if(v.videoWidth) apply();
-  else v.addEventListener('loadedmetadata', apply, { once:true });
+  // Always same stage as live: 9:16 filled with cover (no letterbox void)
+  hero.style.aspectRatio = '9 / 16';
+  hero.style.maxHeight = 'min(78vh, 720px)';
+  hero.style.width = '100%';
+  hero.style.background = '#000';
+  if(v){
+    v.style.width = '100%';
+    v.style.height = '100%';
+    v.style.objectFit = 'cover';
+    v.style.maxHeight = 'none';
+  }
 }
