@@ -168,11 +168,12 @@ if(m.encrypted && m.ciphertext && m.iv){
           }
         }
         const msgType = m.type || 'text';
-        const isSys = msgType === 'missed_call' || msgType === 'system';
+        const isSys = msgType === 'missed_call' || msgType === 'system' || m.system === true;
+        if(isSys && !text) text = m.text || (msgType === 'missed_call' ? 'Missed call' : 'System');
         return {
           id: d.id,
           from: isSys ? 'system' : (m.from===currentUser.uid ? 'me' : 'them'),
-          type: msgType,
+          type: isSys && msgType === 'text' ? 'system' : msgType,
           text, mood: m.mood, waveform: m.waveform, duration: m.duration, dataUrl: m.dataUrl,
           callId: m.callId || null,
           ts: m.ts && m.ts.toMillis ? m.ts.toMillis() : Date.now(),
@@ -183,7 +184,14 @@ if(m.encrypted && m.ciphertext && m.iv){
       // Decryption is async — by the time it resolves, the person may have already
       // navigated to a different thread. Only apply this if it's still the one open.
       if(activeThreadContactId !== contactId) return;
-      wirelineThreads[contactId] = mapped;
+      // Keep local missed_call rows that have not appeared in Firestore yet
+      const prev = wirelineThreads[contactId] || [];
+      const serverCallIds = new Set(mapped.filter(m => m.type === 'missed_call' && m.callId).map(m => m.callId));
+      const localMissed = prev.filter(m =>
+        m.type === 'missed_call' && m.callId && !serverCallIds.has(m.callId) &&
+        !mapped.some(s => s.id === m.id)
+      );
+      wirelineThreads[contactId] = mapped.concat(localMissed).sort((a,b)=>a.ts-b.ts);
       renderThreadMessages();
       // This thread is actively open, so any of their messages just received count as read.
       threadRef.update({ readBy: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) }).catch(()=>{});
@@ -1019,11 +1027,13 @@ async function recordMissedCallInWireline(contactId, opts){
         lastMessageFrom: 'system',
         readBy: [currentUser.uid],
       }, { merge: true });
+      // Rules require from == auth.uid; type marks it as system UI
       await threadRef.collection('messages').add({
-        from: 'system',
+        from: currentUser.uid,
         type: 'missed_call',
         text: who,
         callId: callId || null,
+        system: true,
         ts: firebase.firestore.FieldValue.serverTimestamp(),
         status: 'sent',
       });

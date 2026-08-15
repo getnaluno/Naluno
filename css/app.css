@@ -174,6 +174,11 @@
     to{ background-position: 0 60px, 0 0; }
   }
   .call-overlay.active{ opacity:1; pointer-events:auto; z-index:120 !important; }
+  /* Incoming/outgoing call must cover Wireline thread (also .call-overlay) */
+  #callOverlay.active{ z-index: 300 !important; }
+  #wirelineThread.active{ z-index: 110 !important; }
+  #bspace.active{ z-index: 100 !important; }
+  #bandRoom.active{ z-index: 100 !important; }
   .callscreen{ position:absolute; inset:0; display:flex; flex-direction:column; opacity:0; pointer-events:none; transition:opacity .3s ease; }
   .callscreen.active{ opacity:1; pointer-events:auto; }
 
@@ -657,4 +662,19 @@
 }
 .bspace-media-frame video{
   /* keep native controls available as fallback; seek bar is primary on mobile */
+}
+
+
+/* Seek controls live BELOW the 9:16 hero, never inside the cover frame */
+.bspace-seek-dock{
+  position: relative;
+  z-index: 5;
+  margin: 8px 12px 4px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(13,15,23,.92);
+  border: 1px solid rgba(255,255,255,.1);
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }

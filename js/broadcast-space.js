@@ -95,24 +95,45 @@ function renderBspaceMedia(seg){
     // Visible chapter chips only when real chapters (not silent upload parts)
     const showChapters = chapters && chapters.length > 1 && !chapters.every(c => c.silent);
     host.innerHTML = `
-      <div class="bspace-media-frame" style="position:relative;width:100%;background:#000;border-radius:14px;overflow:hidden;min-height:180px;">
-        <video id="bspaceVideoEl" controls playsinline webkit-playsinline preload="auto" src="${bspaceEscape(rawSrc)}" poster="${seg.thumbDataUrl ? bspaceEscape(seg.thumbDataUrl) : ''}" style="width:100%;height:100%;object-fit:cover;display:block;background:#000;filter:${seg.filterCss || ''}"></video>
+      <div class="bspace-media-frame" style="position:relative;width:100%;height:100%;background:#000;overflow:hidden;min-height:180px;">
+        <video id="bspaceVideoEl" playsinline webkit-playsinline preload="auto" src="${bspaceEscape(rawSrc)}" poster="${seg.thumbDataUrl ? bspaceEscape(seg.thumbDataUrl) : ''}" style="width:100%;height:100%;object-fit:cover;display:block;background:#000;filter:${seg.filterCss || ''}"></video>
         <div id="bspaceBreather" style="display:none;position:absolute;inset:0;background:rgba(13,15,23,.92);align-items:center;justify-content:center;flex-direction:column;gap:10px;z-index:3;">
           <div style="font-family:var(--font-futuristic);font-size:15px;color:var(--mint);" id="bspaceBreatherLabel">Chapter break</div>
           <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);" id="bspaceBreatherAd">Next chapter in a moment</div>
         </div>
       </div>
-      <div id="bspaceSeekBar" class="bspace-seek" style="display:flex;align-items:center;gap:10px;padding:10px 4px 4px;user-select:none;-webkit-user-select:none;">
-        <button type="button" id="bspacePlayBtn" aria-label="Play/Pause" style="flex-shrink:0;width:36px;height:36px;border-radius:50%;border:1px solid var(--line);background:rgba(124,255,178,.12);color:var(--mint);font-size:14px;cursor:pointer;">▶</button>
-        <span id="bspaceTimeCur" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);min-width:40px;">0:00</span>
-        <input type="range" id="bspaceSeekRange" min="0" max="1000" value="0" step="1" style="flex:1;height:28px;accent-color:var(--mint);cursor:pointer;" />
-        <span id="bspaceTimeDur" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);min-width:40px;text-align:right;">0:00</span>
-      </div>
       `;
     const vel = $('bspaceVideoEl');
     if(vel && typeof bindMediaElement === 'function') bindMediaElement(vel, rawSrc);
     else if(vel){ vel.src = rawSrc; }
+    // Dock seek bar BELOW the 9:16 hero (sibling), not inside cover frame
+    try{
+      const hero = $('bspaceHero');
+      let dock = $('bspaceSeekDock');
+      if(dock) dock.remove();
+      dock = document.createElement('div');
+      dock.id = 'bspaceSeekDock';
+      dock.className = 'bspace-seek-dock';
+      dock.innerHTML = `
+        <button type="button" id="bspacePlayBtn" aria-label="Play/Pause" style="flex-shrink:0;width:36px;height:36px;border-radius:50%;border:1px solid var(--line);background:rgba(124,255,178,.12);color:var(--mint);font-size:14px;cursor:pointer;">▶</button>
+        <span id="bspaceTimeCur" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);min-width:40px;">0:00</span>
+        <input type="range" id="bspaceSeekRange" min="0" max="1000" value="0" step="1" style="flex:1;height:28px;accent-color:var(--mint);cursor:pointer;" />
+        <span id="bspaceTimeDur" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);min-width:40px;text-align:right;">0:00</span>`;
+      if(hero && hero.parentNode){
+        if(hero.nextSibling) hero.parentNode.insertBefore(dock, hero.nextSibling);
+        else hero.parentNode.appendChild(dock);
+      }
+    }catch(e){ console.warn('[bspace] seek dock', e); }
     try{ wireBspaceSeekAndAutoplay(vel); }catch(e){ console.warn('[bspace] seek wire', e); }
+    try{
+      if(vel){
+        vel.disableRemotePlayback = true;
+        vel.removeAttribute('controls');
+        if(navigator.mediaSession){
+          try{ navigator.mediaSession.metadata = null; }catch(_){}
+        }
+      }
+    }catch(_){}
     let barHost = document.getElementById('bspaceChapterHost');
     if(!barHost){
       const title = $('bspaceTitle');
@@ -409,7 +430,22 @@ function closeBroadcastSpace(){
   activeBroadcastId = null;
   activeBroadcastMeta = null;
   const vid = $('bspaceVideoEl');
-  if(vid){ try{ vid.pause(); }catch(e){} }
+  if(vid){
+    try{ vid.pause(); }catch(e){}
+    try{ vid.removeAttribute('src'); vid.load(); }catch(e){}
+  }
+  try{
+    const dock = $('bspaceSeekDock');
+    if(dock) dock.remove();
+  }catch(_){}
+  try{
+    if(navigator.mediaSession){
+      navigator.mediaSession.metadata = null;
+      if(navigator.mediaSession.playbackState !== undefined){
+        navigator.mediaSession.playbackState = 'none';
+      }
+    }
+  }catch(_){}
   $('bspace').classList.remove('active');
 }
 

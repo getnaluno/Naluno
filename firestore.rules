@@ -51,10 +51,19 @@ service cloud.firestore {
       match /messages/{messageId} {
         allow read: if isSignedIn()
           && request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants;
-        allow create: if isSignedIn() && request.resource.data.from == request.auth.uid;
+        allow create: if isSignedIn()
+          && request.resource.data.from == request.auth.uid
+          && (
+            !('type' in request.resource.data)
+            || request.resource.data.type != 'missed_call'
+            || request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants
+          );
         allow update: if isSignedIn()
           && request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants;
-        allow delete: if isSignedIn() && resource.data.from == request.auth.uid;
+        allow delete: if isSignedIn() && (
+          resource.data.from == request.auth.uid
+          || resource.data.type == 'missed_call'
+        );
       }
     }
 

@@ -52,11 +52,16 @@ function showCallScreen(id){
   try{ pauseBackgroundMediaForCall(); }catch(_){}
   try{
     if($('wirelineThread')){
-      $('wirelineThread').style.zIndex = '5';
+      $('wirelineThread').style.zIndex = '110';
+      $('wirelineThread').style.pointerEvents = 'none';
     }
-    if($('bspace')) $('bspace').style.zIndex = '5';
-    if($('bandRoom')) $('bandRoom').style.zIndex = '5';
-    // Pause broadcast live UI chrome without tearing down permanently
+    if($('bspace')){ $('bspace').style.zIndex = '100'; }
+    if($('bandRoom')){ $('bandRoom').style.zIndex = '100'; }
+    const ov = $('callOverlay');
+    if(ov){
+      ov.style.zIndex = '300';
+      ov.style.pointerEvents = 'auto';
+    }
     if($('bspaceLiveBanner')) $('bspaceLiveBanner').style.pointerEvents = 'none';
   }catch(_){}
 }
@@ -73,7 +78,10 @@ function closeCallOverlay(){
   try{
     if($('bspace')) $('bspace').style.zIndex = '';
     if($('bandRoom')) $('bandRoom').style.zIndex = '';
-    if($('wirelineThread')) $('wirelineThread').style.zIndex = '';
+    if($('wirelineThread')){
+      $('wirelineThread').style.zIndex = '';
+      $('wirelineThread').style.pointerEvents = '';
+    }
   }catch(_){}
 }
 
