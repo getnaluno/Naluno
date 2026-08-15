@@ -81,29 +81,61 @@ function getCapacitorPush(){
   return null;
 }
 let nativePushWired = false;
-async function setupCapacitorPush(){
-  console.log('[push] setupCapacitorPush start');
-  const Push = getCapacitorPush();
-  if(!Push || !currentUser || !fbDb) return false;
+async function saveNativeFcmToken(token){
   try{
-    const perm = await Push.requestPermissions();
+    if(!token || !currentUser || !fbDb) {
+      window.__nalunoNativeFcmToken = token || window.__nalunoNativeFcmToken;
+      return false;
+    }
+    await fbDb.collection('users').doc(currentUser.uid).set({
+      fcmToken: token,
+      fcmTokenAndroid: token,
+      fcmTokenPlatform: 'android',
+      fcmTokenUpdatedAt: Date.now(),
+    }, { merge: true });
+    window.__nalunoNativeFcmToken = token;
+    try{
+      if($('callNotifStatus')){
+        $('callNotifStatus').textContent = 'Call notifications are on (Android) — calls can wake this phone.';
+      }
+    }catch(_){}
+    console.log('[push] native FCM token saved to Firestore');
+    return true;
+  }catch(e){
+    console.warn('[push] saveNativeFcmToken', e);
+    return false;
+  }
+}
+window.saveNativeFcmToken = saveNativeFcmToken;
+
+async function setupCapacitorPush(){
+  console.log('[push] setupCapacitorPush start', !!getCapacitorPush(), !!currentUser);
+  // Token may arrive from native MainActivity before Capacitor plugin fires
+  if(window.__nalunoNativeFcmToken && currentUser && fbDb){
+    await saveNativeFcmToken(window.__nalunoNativeFcmToken);
+  }
+  const Push = getCapacitorPush();
+  if(!Push){
+    console.warn('[push] PushNotifications plugin missing — rebuild Android shell with @capacitor/push-notifications');
+    return false;
+  }
+  if(!currentUser || !fbDb) return false;
+  try{
+    let perm = await Push.checkPermissions();
+    if(!perm || perm.receive !== 'granted'){
+      perm = await Push.requestPermissions();
+    }
     if(perm && perm.receive !== 'granted'){
-      $('callNotifStatus').textContent = 'Notifications blocked — enable them in Android Settings → Apps → Naluno.';
+      try{ $('callNotifStatus').textContent = 'Notifications blocked — enable them in Android Settings → Apps → Naluno.'; }catch(_){}
       return false;
     }
     if(!nativePushWired){
       nativePushWired = true;
       await Push.addListener('registration', async (token)=>{
         try{
-          if(!token || !token.value || !currentUser || !fbDb) return;
-          // Keep both fields so web and Android never overwrite each other.
-          // Primary fcmToken is what the existing call-notify Worker reads.
-          await fbDb.collection('users').doc(currentUser.uid).set({
-            fcmToken: token.value,
-            fcmTokenAndroid: token.value,
-            fcmTokenPlatform: 'android',
-          }, { merge:true });
-          $('callNotifStatus').textContent = 'Call notifications are on (Android) — calls can wake this phone.';
+          const value = token && (token.value || token);
+          if(!value) return;
+          await saveNativeFcmToken(value);
         }catch(e){ console.warn('[push] save token failed', e); }
       });
       await Push.addListener('registrationError', err=>{
@@ -127,6 +159,12 @@ async function setupCapacitorPush(){
       });
     }
     await Push.register();
+    // registration event is async — also flush any token MainActivity already injected
+    setTimeout(function(){
+      try{
+        if(window.__nalunoNativeFcmToken) saveNativeFcmToken(window.__nalunoNativeFcmToken);
+      }catch(_){}
+    }, 2000);
     return true;
   }catch(e){
     console.warn('[push] Capacitor setup failed', e);
@@ -357,3 +395,70 @@ window.addEventListener('offline', updateOfflineBadge);
     }
   }, { passive: true });
 })();
+
+
+/* ---- Full Android APK download (hosted file, not PWA) ---- */
+function getAndroidApkUrl(){
+  try{
+    if(typeof ANDROID_APK_URL === 'string' && ANDROID_APK_URL.trim()) return ANDROID_APK_URL.trim();
+  }catch(_){}
+  return '';
+}
+function isAndroidDevice(){
+  try{ return /Android/i.test(navigator.userAgent || ''); }catch(_){ return false; }
+}
+function apkBannerDismissed(){
+  try{ return localStorage.getItem('naluno:apkDismiss') === '1'; }catch(_){ return false; }
+}
+function showApkBanner(){
+  const url = getAndroidApkUrl();
+  const ban = $('apkBanner');
+  const btn = $('apkBannerBtn');
+  const callsignBtn = $('downloadAndroidAppBtn');
+  const hint = $('androidAppHint');
+  if(callsignBtn){
+    if(url){
+      callsignBtn.href = url;
+      callsignBtn.setAttribute('download', 'naluno.apk');
+      callsignBtn.style.display = 'block';
+      if(hint) hint.style.display = 'block';
+    } else {
+      callsignBtn.style.display = 'none';
+      if(hint) hint.style.display = 'none';
+    }
+  }
+  if(!ban || !url) return;
+  if(typeof isNativeShell === 'function' && isNativeShell()) return; // already in APK
+  if(apkBannerDismissed()) return;
+  // Prefer showing on Android browsers; still available from Callsign everywhere
+  if(!isAndroidDevice() && !isIosDevice()) {
+    // desktop: only Callsign button, no top banner noise
+  } else if(isAndroidDevice()){
+    if(btn){ btn.href = url; btn.setAttribute('download', 'naluno.apk'); }
+    // Sit below PWA banner if both visible
+    const install = $('installBanner');
+    if(install && install.style.display === 'flex'){
+      ban.style.top = '52px';
+    } else {
+      ban.style.top = '0';
+    }
+    ban.style.display = 'flex';
+  }
+}
+if($('apkBannerClose')){
+  $('apkBannerClose').onclick = ()=>{
+    if($('apkBanner')) $('apkBanner').style.display = 'none';
+    try{ localStorage.setItem('naluno:apkDismiss', '1'); }catch(_){}
+  };
+}
+if($('apkBannerBtn')){
+  $('apkBannerBtn').addEventListener('click', function(){
+    try{ if(typeof trackMetric === 'function') trackMetric('apk_download_click', {}); }catch(_){}
+  });
+}
+// After load + after auth gate typically
+setTimeout(showApkBanner, 1800);
+setTimeout(showApkBanner, 5000);
+document.addEventListener('visibilitychange', function(){
+  if(!document.hidden) setTimeout(showApkBanner, 400);
+});

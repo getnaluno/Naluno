@@ -21,3 +21,9 @@ const VAPID_KEY = "BAU9gGiDeFF9GcX42d0D7mjatsjJlCqs5jq8p02p-ObC9z2G5ELg49bTnObj7
 // (type "Web client", ends in .apps.googleusercontent.com) — NOT the Android client ID.
 // See GOOGLE-AUTH-SETUP.md
 const GOOGLE_WEB_CLIENT_ID = "183354363901-4j3icgqb3dchns2vlualkoqiclhif3km.apps.googleusercontent.com";
+
+
+// Full Android app (Capacitor shell) — upload release APK then set this URL.
+// Examples: "https://getnaluno.com/naluno.apk" or an R2 / GitHub Releases link.
+// Leave empty until the APK is hosted; the download prompt stays hidden.
+const ANDROID_APK_URL = "";
