@@ -166,6 +166,12 @@ function ensureAudioContext(){
 }
 ['click','keydown','touchstart'].forEach(evt => document.addEventListener(evt, ensureAudioContext, { passive:true }));
 
+/* In-app ring levels (Web Audio). Device volume still applies on top.
+   Previous peaks were ~0.06–0.09 — far too quiet. ~4× keeps headroom under 1.0. */
+const RING_GAIN_CALLER = 0.28;   // was 0.06
+const RING_GAIN_CALLEE = 0.36;   // was 0.09
+const RING_GAIN_CUSTOM = 1.0;    // HTMLAudioElement max; boosted via Web Audio when possible
+
 let callerToneTimer = null;
 let callerToneActiveNodes = [];
 /* Caller-side ringback — a soft two-tone pulse, echoing the classic telecom ringback
@@ -178,9 +184,10 @@ function startCallerTone(){
     osc1.type = 'sine'; osc1.frequency.value = 440;
     osc2.type = 'sine'; osc2.frequency.value = 480;
     const now = ctx.currentTime;
+    const peak = (typeof RING_GAIN_CALLER === 'number') ? RING_GAIN_CALLER : 0.28;
     gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(0.06, now + 0.05);
-    gain.gain.setValueAtTime(0.06, now + 1.9);
+    gain.gain.linearRampToValueAtTime(peak, now + 0.04);
+    gain.gain.setValueAtTime(peak, now + 1.9);
     gain.gain.linearRampToValueAtTime(0, now + 2.0);
     osc1.connect(gain); osc2.connect(gain); gain.connect(ctx.destination);
     osc1.start(now); osc2.start(now);
@@ -211,10 +218,27 @@ let ringtoneAudioEl = null;
 function startRingtone(){
   stopRingtone();
   if(customRingtoneUrl){
-    if(!ringtoneAudioEl){ ringtoneAudioEl = new Audio(); ringtoneAudioEl.loop = true; }
+    if(!ringtoneAudioEl){
+      ringtoneAudioEl = new Audio();
+      ringtoneAudioEl.loop = true;
+      ringtoneAudioEl.preload = 'auto';
+    }
     ringtoneAudioEl.src = customRingtoneUrl;
     ringtoneAudioEl.currentTime = 0;
-    ringtoneAudioEl.play().catch(()=>{ /* if this fails, the built-in tone below still won't run — safe no-op */ });
+    ringtoneAudioEl.volume = 1.0; // device volume still applies; this is max for the element
+    // Extra boost via Web Audio (HTML volume cannot exceed 1.0)
+    try{
+      const ctx = ensureAudioContext();
+      if(ctx && !ringtoneAudioEl._nalunoBoosted){
+        const src = ctx.createMediaElementSource(ringtoneAudioEl);
+        const g = ctx.createGain();
+        g.gain.value = 2.5; // additional boost on top of element volume
+        src.connect(g);
+        g.connect(ctx.destination);
+        ringtoneAudioEl._nalunoBoosted = true;
+      }
+    }catch(_){}
+    ringtoneAudioEl.play().catch(()=>{ /* fall through to synthesized if needed */ });
     return;
   }
   const ctx = ensureAudioContext(); if(!ctx) return;
@@ -225,9 +249,10 @@ function startRingtone(){
       const osc = ctx.createOscillator(), gain = ctx.createGain();
       osc.type = 'sine'; osc.frequency.value = freq;
       const t0 = now + i*0.13;
+      const peak = (typeof RING_GAIN_CALLEE === 'number') ? RING_GAIN_CALLEE : 0.36;
       gain.gain.setValueAtTime(0, t0);
-      gain.gain.linearRampToValueAtTime(0.09, t0+0.02);
-      gain.gain.linearRampToValueAtTime(0, t0+0.22);
+      gain.gain.linearRampToValueAtTime(peak, t0+0.02);
+      gain.gain.linearRampToValueAtTime(0, t0+0.25);
       osc.connect(gain); gain.connect(ctx.destination);
       osc.start(t0); osc.stop(t0+0.24);
       ringtoneActiveNodes.push(osc);
