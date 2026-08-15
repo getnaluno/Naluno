@@ -416,18 +416,70 @@ let remoteCombinedStream = null;
 let remotePlayTimer = null;
 function ensureRemoteVideoPlaying(){
   const videoEl = document.getElementById('remoteVideo');
-  if(!videoEl || !videoEl.srcObject) return;
+  if(!videoEl) return;
+  try{
+    videoEl.setAttribute('playsinline', '');
+    videoEl.setAttribute('webkit-playsinline', '');
+    videoEl.playsInline = true;
+    videoEl.autoplay = true;
+    videoEl.controls = false;
+    videoEl.disablePictureInPicture = true;
+  }catch(_){}
+  if(!videoEl.srcObject){
+    if(remoteCombinedStream && remoteCombinedStream.getTracks().length){
+      videoEl.srcObject = remoteCombinedStream;
+    } else return;
+  }
+  // Show element as soon as we have any track
+  try{
+    const hasV = (videoEl.srcObject.getVideoTracks && videoEl.srcObject.getVideoTracks().some(t => t.readyState === 'live' || t.muted === false || true));
+    if(hasV || (remoteCombinedStream && remoteCombinedStream.getVideoTracks().length)){
+      videoEl.style.display = 'block';
+      const ph = document.getElementById('remotePlaceholder');
+      if(ph) ph.style.display = 'none';
+    }
+  }catch(_){}
   videoEl.muted = false;
-  videoEl.playsInline = true;
-  const p = videoEl.play();
-  if(p && p.catch) p.catch(function(err){
-    if(err && err.name === 'AbortError') return;
-    // iOS / Chrome autoplay: try muted then unmute
-    videoEl.muted = true;
-    videoEl.play().then(function(){
-      setTimeout(function(){ videoEl.muted = false; }, 300);
-    }).catch(function(){});
-  });
+  videoEl.volume = 1;
+  const tryPlay = function(mutedFirst){
+    try{
+      if(mutedFirst) videoEl.muted = true;
+      const p = videoEl.play();
+      if(p && p.then){
+        p.then(function(){
+          if(mutedFirst) setTimeout(function(){ try{ videoEl.muted = false; }catch(_){} }, 250);
+        }).catch(function(err){
+          if(err && err.name === 'AbortError') return;
+          if(!mutedFirst) tryPlay(true);
+        });
+      }
+    }catch(_){}
+  };
+  tryPlay(false);
+}
+
+/** Keep hammering play while in an active call — fixes Chrome "big play button" when paused. */
+let remotePlayWatch = null;
+function startRemotePlayWatch(){
+  stopRemotePlayWatch();
+  remotePlayWatch = setInterval(function(){
+    try{
+      if(!activeCallId){ stopRemotePlayWatch(); return; }
+      const el = document.getElementById('remoteVideo');
+      if(!el || !el.srcObject) return;
+      if(el.paused || el.readyState < 2) ensureRemoteVideoPlaying();
+      // If video track exists but element is 0x0 frames, re-bind
+      const vt = el.srcObject.getVideoTracks ? el.srcObject.getVideoTracks()[0] : null;
+      if(vt && vt.readyState === 'live' && el.videoWidth === 0){
+        el.srcObject = null;
+        el.srcObject = remoteCombinedStream || el.srcObject;
+        ensureRemoteVideoPlaying();
+      }
+    }catch(_){}
+  }, 900);
+}
+function stopRemotePlayWatch(){
+  if(remotePlayWatch){ clearInterval(remotePlayWatch); remotePlayWatch = null; }
 }
 
 /** Ensure global `stream` has live audio + video for calls. Re-opens camera if needed. */
@@ -1030,12 +1082,22 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(()=>({}));
-      const detail = String((data && (data.detail || data.error || data.message)) || '');
+      if(firstAttempt) console.log('[call] push response', res.status, data);
+      const detail = String((data && (data.detail || data.error || data.message || JSON.stringify(data))) || '');
       const unregistered = /UNREGISTERED|NotRegistered|NOT_FOUND|no_token|missing_token/i.test(detail + JSON.stringify(data));
       // Don't spam the console — UNREGISTERED is a stale token, not a call failure
-      if(res.ok && data.sent !== false){
+      console.log('[call] push wake response', res.status, data);
+      console.log('[call] push wake response', res.status, data);
+      if(res.ok && data.sent === true){
         console.log('[call] push wake sent');
-      } else if(unregistered){
+      } else if(data.sent === false || !res.ok){
+        if(firstAttempt){
+          const why = data.error || data.reason || data.detail || ('HTTP ' + res.status);
+          console.warn('[call] push wake not sent', why);
+          toast('Push: ' + String(why).slice(0, 90));
+        }
+      }
+      if(unregistered){
         if(firstAttempt){
           console.info('[call] push token stale or missing on their device — in-app ring still works if Naluno is open');
         }
@@ -1047,13 +1109,17 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
         if(firstAttempt) toast('Push wake failed — in-app ring still works if they have Naluno open');
       } else if(data.sent === false){
         if(firstAttempt && (data.reason === 'no_token' || data.reason === 'missing_token')){
-          toast('Their device has no push token yet — they need to open Naluno once');
+          toast('Their device has no push token yet — open Naluno APK once');
           stopRepeats = true;
+        } else if(firstAttempt && data.error){
+          toast('Push error: ' + String(data.error).slice(0, 60));
+        } else if(firstAttempt && data.reason === 'all_failed'){
+          toast('Push rejected by FCM — check call-notify worker secrets');
         }
       }
     }catch(e){
       if(firstAttempt) console.warn('[call] push wake request failed', e);
-      if(firstAttempt) toast('Push wake failed — in-app ring still works if they have Naluno open');
+      if(firstAttempt) toast('Push wake failed — ' + String((e && e.message) || e).slice(0, 60));
     }
     firstAttempt = false;
   };

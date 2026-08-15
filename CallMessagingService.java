@@ -23,7 +23,7 @@ import java.util.Map;
  */
 public class CallMessagingService extends FirebaseMessagingService {
 
-  public static final String CHANNEL_ID = "naluno_calls";
+  public static final String CHANNEL_ID = "naluno_incoming_calls";
   public static final int NOTIFICATION_ID = 44001;
   private static final String WAKE_LOCK_TAG = "naluno:incoming_call";
 
@@ -74,6 +74,26 @@ public class CallMessagingService extends FirebaseMessagingService {
   @Override
   public void onNewToken(String token) {
     super.onNewToken(token);
+    if (token == null || token.isEmpty()) return;
+    try {
+      getSharedPreferences("naluno_fcm_prefs", MODE_PRIVATE)
+        .edit()
+        .putString("fcmToken", token)
+        .putLong("fcmTokenAt", System.currentTimeMillis())
+        .apply();
+    } catch (Exception e) {
+      // best-effort
+    }
+  }
+
+  /** JS / MainActivity can read the last native FCM token. */
+  public static String readStoredToken(Context ctx) {
+    if (ctx == null) return null;
+    try {
+      return ctx.getSharedPreferences("naluno_fcm_prefs", MODE_PRIVATE).getString("fcmToken", null);
+    } catch (Exception e) {
+      return null;
+    }
   }
 
   @SuppressWarnings("deprecation")

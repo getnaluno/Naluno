@@ -52,4 +52,4 @@ window.addEventListener('error', function(ev){
 window.addEventListener('unhandledrejection', function(ev){
   try{ console.error('[naluno:promise]', ev.reason); }catch(_){}
 });
-console.log('[naluno] build 2026.08.15l');
+console.log('[naluno] build 2026.08.16a');
