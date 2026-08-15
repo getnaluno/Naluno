@@ -124,7 +124,7 @@ function restoreUiAfterCall(){
       // Default home: frequencies tab
       try{
         document.querySelectorAll('.tabscreen').forEach(t=>t.classList.remove('active'));
-        if($('tab-freq')) $('tab-freq').classList.add('active');
+        if($('tab-frequencies')) $('tab-frequencies').classList.add('active');
       }catch(_){}
       return;
     }
@@ -150,7 +150,7 @@ function restoreUiAfterCall(){
       $(s.activeTab).classList.add('active');
     } else {
       document.querySelectorAll('.tabscreen').forEach(t=>t.classList.remove('active'));
-      if($('tab-freq')) $('tab-freq').classList.add('active');
+      if($('tab-frequencies')) $('tab-frequencies').classList.add('active');
     }
   }catch(e){ console.warn('[call] restore', e); }
 }
@@ -835,7 +835,13 @@ function startMissedCallListener(){
             toast((c ? c.name.split(' ')[0] : 'Someone') + ' tried to call you');
             try{
               if(c && typeof recordMissedCallInWireline === 'function'){
-                recordMissedCallInWireline(c.id, { callId: change.doc.id, incoming: true, ts: Date.now() });
+                recordMissedCallInWireline(c.id, {
+                  callId: change.doc.id,
+                  incoming: true,
+                  ts: Date.now(),
+                  callerUid: data.callerUid || c.firebaseUid,
+                  calleeUid: (typeof currentUser !== 'undefined' && currentUser) ? currentUser.uid : null,
+                });
               }
             }catch(_){}
           }
@@ -1234,7 +1240,14 @@ function showAsyncFallback(contactId, reason){
   }
   try{
     if(typeof recordMissedCallInWireline === 'function' && contactId){
-      recordMissedCallInWireline(contactId, { callId: activeCallId, incoming: false, ts: Date.now() });
+      const cMiss = contacts.find(x=>x.id===contactId);
+      recordMissedCallInWireline(contactId, {
+        callId: activeCallId,
+        incoming: false,
+        ts: Date.now(),
+        callerUid: (typeof currentUser !== 'undefined' && currentUser) ? currentUser.uid : null,
+        calleeUid: cMiss && cMiss.firebaseUid ? cMiss.firebaseUid : null,
+      });
     }
   }catch(_){}
   stopCallerTone();

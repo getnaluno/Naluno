@@ -31,12 +31,10 @@ function broadcastShareUrl(id){
 function broadcastThumbHtml(b){
   const title = escapeHtml((b.title || 'Broadcast').slice(0, 48));
   const creator = escapeHtml((b.creatorName || 'Someone').split(' ')[0]);
-  const media = b.thumbUrl || b.mediaUrl || '';
-  const isVideo = b.mediaType === 'video';
+  const thumb = b.thumbUrl || '';
+  const media = thumb || ((b.mediaType === 'photo') ? (b.mediaUrl || '') : '');
   const inner = media
-    ? (isVideo
-        ? `<img src="${escapeHtml(b.thumbUrl || '')}" alt="" class="bcast-plate-media" onerror="this.style.display='none'" />`
-        : `<img src="${escapeHtml(media)}" alt="" class="bcast-plate-media" />`)
+    ? `<img src="${escapeHtml(media)}" alt="" class="bcast-plate-media" loading="lazy" onerror="this.style.display='none';this.parentNode.classList.add('no-thumb')" />`
     : `<div class="bcast-plate-fallback">${escapeHtml((b.creatorName || '?').slice(0,1).toUpperCase())}</div>`;
   const live = b.live ? `<span class="bcast-plate-live">LIVE</span>` : '';
   return `<article class="bcast-plate" data-broadcast-id="${escapeHtml(b.id)}" role="button" tabindex="0">

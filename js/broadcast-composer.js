@@ -355,8 +355,17 @@ async function bcompPublish(){
         }
 
         if(plan.mode === 'single' || plan.mode === 'single_with_markers' || !plan.parts || plan.parts.length <= 1){
+          // Snapshot from local file first (reliable); remote URL often fails canvas CORS
+          try{
+            if(progress) progress('Capturing thumbnail…');
+            thumbUrl = await generateVideoThumbnail(file);
+            if(thumbUrl) thumbUrl = await persistThumbnailDataUrl(thumbUrl);
+          }catch(_){}
           mediaUrl = await uploadOne(file, 'Uploading video…');
-          try{ thumbUrl = await generateVideoThumbnail(typeof resolveMediaUrl==='function' ? resolveMediaUrl(mediaUrl) : mediaUrl); }catch(_){}
+          if(!thumbUrl){
+            try{ thumbUrl = await generateVideoThumbnail(typeof resolveMediaUrl==='function' ? resolveMediaUrl(mediaUrl) : mediaUrl); }catch(_){}
+            if(thumbUrl) thumbUrl = await persistThumbnailDataUrl(thumbUrl);
+          }
           if(plan.mode === 'single_with_markers' && plan.parts && plan.parts.length > 1){
             // One file, multiple seek chapters + breathers between them
             chapters = plan.parts.map(p => ({
@@ -400,7 +409,16 @@ async function bcompPublish(){
             const url = await uploadOne(blob, 'Uploading part ' + (part.index+1) + '/' + plan.parts.length + '…');
             if(part.index === 0){
               mediaUrl = url;
-              try{ thumbUrl = await generateVideoThumbnail(typeof resolveMediaUrl==='function' ? resolveMediaUrl(url) : url); }catch(_){}
+              try{
+                if(!thumbUrl){
+                  thumbUrl = await generateVideoThumbnail(file);
+                  if(thumbUrl) thumbUrl = await persistThumbnailDataUrl(thumbUrl);
+                }
+              }catch(_){}
+              if(!thumbUrl){
+                try{ thumbUrl = await generateVideoThumbnail(typeof resolveMediaUrl==='function' ? resolveMediaUrl(url) : url); }catch(_){}
+                if(thumbUrl) thumbUrl = await persistThumbnailDataUrl(thumbUrl);
+              }
             }
             chapters.push({
               index: part.index, mediaUrl: url,
@@ -436,7 +454,16 @@ async function bcompPublish(){
             const url = await uploadOne(blob, 'Uploading chapter ' + (part.index+1) + '…');
             if(part.index === 0){
               mediaUrl = url;
-              try{ thumbUrl = await generateVideoThumbnail(typeof resolveMediaUrl==='function' ? resolveMediaUrl(url) : url); }catch(_){}
+              try{
+                if(!thumbUrl){
+                  thumbUrl = await generateVideoThumbnail(file);
+                  if(thumbUrl) thumbUrl = await persistThumbnailDataUrl(thumbUrl);
+                }
+              }catch(_){}
+              if(!thumbUrl){
+                try{ thumbUrl = await generateVideoThumbnail(typeof resolveMediaUrl==='function' ? resolveMediaUrl(url) : url); }catch(_){}
+                if(thumbUrl) thumbUrl = await persistThumbnailDataUrl(thumbUrl);
+              }
             }
             chapters.push({
               index: part.index, mediaUrl: url,

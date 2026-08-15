@@ -89,32 +89,71 @@ const CHAPTER_TARGET_BYTES = 55 * 1024 * 1024; // keep each chapter safely under
    start a real network fetch and decode enough of the video just to show a preview,
    every single time the app loaded — that was the actual cause of the 2-3 second
    delay, not anything about app startup itself. */
-function generateVideoThumbnail(videoSrc){
+function generateVideoThumbnail(videoSrcOrBlob){
   return new Promise(resolve=>{
     const video = document.createElement('video');
     video.muted = true;
     video.playsInline = true;
     video.setAttribute('playsinline','');
     video.preload = 'auto';
-    videoSrc = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(videoSrc) : videoSrc;
-    video.src = videoSrc;
+    let objectUrl = null;
+    let src = videoSrcOrBlob;
+    try{
+      if(videoSrcOrBlob instanceof Blob || videoSrcOrBlob instanceof File){
+        objectUrl = URL.createObjectURL(videoSrcOrBlob);
+        src = objectUrl;
+      } else if(typeof videoSrcOrBlob === 'string'){
+        src = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(videoSrcOrBlob) : videoSrcOrBlob;
+        // Remote R2 via worker — try CORS so canvas is not tainted
+        if(/^https?:/i.test(src)) video.crossOrigin = 'anonymous';
+      }
+    }catch(_){}
+    video.src = src;
     let resolved = false;
-    const finish = result=>{ if(!resolved){ resolved = true; resolve(result); } };
-    video.onloadeddata = ()=>{ video.currentTime = Math.min(0.5, (video.duration||1)/2); };
-    video.onseeked = ()=>{
-      try{
-        const canvas = document.createElement('canvas');
-        const maxDim = 240; // thumbnail-sized — no need for full resolution just to show a small ring preview
-        const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
-        canvas.width = Math.round(video.videoWidth*scale) || 120;
-        canvas.height = Math.round(video.videoHeight*scale) || 120;
-        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-        finish(canvas.toDataURL('image/jpeg', 0.7));
-      }catch(e){ finish(null); } // thumbnail generation failed — ring falls back to color/initials only, not a hard error
+    const finish = result=>{
+      if(resolved) return;
+      resolved = true;
+      try{ if(objectUrl) URL.revokeObjectURL(objectUrl); }catch(_){}
+      resolve(result);
     };
+    const snap = ()=>{
+      try{
+        if(!video.videoWidth){ finish(null); return; }
+        const canvas = document.createElement('canvas');
+        const maxDim = 480;
+        const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
+        canvas.width = Math.round(video.videoWidth * scale) || 160;
+        canvas.height = Math.round(video.videoHeight * scale) || 160;
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+        finish(canvas.toDataURL('image/jpeg', 0.82));
+      }catch(e){ finish(null); }
+    };
+    video.onloadeddata = ()=>{
+      const d = video.duration;
+      const t = (isFinite(d) && d > 1) ? Math.min(1.2, d * 0.15) : 0.2;
+      try{ video.currentTime = t; }catch(_){ snap(); }
+    };
+    video.onseeked = snap;
     video.onerror = ()=> finish(null);
-    setTimeout(()=> finish(null), 5000); // safety timeout in case loadeddata/seeked never fire
+    setTimeout(()=> finish(null), 8000);
   });
+}
+
+/** Prefer uploading a small JPEG to R2 so list cards stay fast and CORS-safe. */
+async function persistThumbnailDataUrl(dataUrl){
+  if(!dataUrl || typeof dataUrl !== 'string') return null;
+  if(dataUrl.indexOf('data:image') !== 0) return dataUrl; // already a remote url
+  try{
+    if(typeof uploadVideoToR2 === 'function'){
+      const res = await fetch(dataUrl);
+      const blob = await res.blob();
+      if(blob && blob.size > 0 && blob.size < 2*1024*1024){
+        return await uploadVideoToR2(blob);
+      }
+    }
+  }catch(_){}
+  // Fallback: store compact data URL in Firestore (ok for ~50–150KB thumbs)
+  return dataUrl;
 }
 
 /* Accepts a Blob (preferred) or a data URL. Passing a Blob avoids the slow

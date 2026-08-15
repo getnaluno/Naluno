@@ -56,7 +56,7 @@ function renderWirelineList(){
     const lastText = last ? (
       last.type==='voice' ? '🎙 Voice note · '+formatDuration(last.duration||0) :
       last.type==='mood' ? '◐ '+((MOODS.find(x=>x.key===last.mood)||{}).label || 'A feeling') :
-      last.type==='missed_call' ? ('📞 ' + (last.text || 'Missed call')) :
+      last.type==='missed_call' ? ('📞 ' + missedCallLabelForViewer(last)) :
       last.text
     ) : '';
     const preview = last ? ((last.from==='me' ? 'You: ' : '') + lastText) : 'No messages yet — say hello';
@@ -176,6 +176,8 @@ if(m.encrypted && m.ciphertext && m.iv){
           type: isSys && msgType === 'text' ? 'system' : msgType,
           text, mood: m.mood, waveform: m.waveform, duration: m.duration, dataUrl: m.dataUrl,
           callId: m.callId || null,
+          callerUid: m.callerUid || null,
+          calleeUid: m.calleeUid || null,
           ts: m.ts && m.ts.toMillis ? m.ts.toMillis() : Date.now(),
           status: m.status || 'sent',
           reaction: m.reaction,
@@ -186,12 +188,16 @@ if(m.encrypted && m.ciphertext && m.iv){
       if(activeThreadContactId !== contactId) return;
       // Keep local missed_call rows that have not appeared in Firestore yet
       const prev = wirelineThreads[contactId] || [];
-      const serverCallIds = new Set(mapped.filter(m => m.type === 'missed_call' && m.callId).map(m => m.callId));
-      const localMissed = prev.filter(m =>
-        m.type === 'missed_call' && m.callId && !serverCallIds.has(m.callId) &&
-        !mapped.some(s => s.id === m.id)
-      );
-      wirelineThreads[contactId] = mapped.concat(localMissed).sort((a,b)=>a.ts-b.ts);
+      const byCall = new Map();
+      mapped.forEach(m => {
+        if(m.type === 'missed_call' && m.callId) byCall.set(m.callId, m);
+      });
+      prev.forEach(m => {
+        if(m.type === 'missed_call' && m.callId && !byCall.has(m.callId)) byCall.set(m.callId, m);
+      });
+      const rest = mapped.filter(m => !(m.type === 'missed_call' && m.callId));
+      const missed = Array.from(byCall.values());
+      wirelineThreads[contactId] = rest.concat(missed).sort((a,b)=>a.ts-b.ts);
       renderThreadMessages();
       // This thread is actively open, so any of their messages just received count as read.
       threadRef.update({ readBy: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) }).catch(()=>{});
@@ -326,7 +332,9 @@ function renderThreadMessages(){
       dayHtml = `<div class="msg-day-stamp" style="display:flex;justify-content:center;margin:14px 0 8px;"><span style="font-size:11px;font-family:var(--font-mono);color:var(--text-dim);background:rgba(255,255,255,.06);padding:4px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.08);">${escapeHtml(dayStampLabel(m.ts))}</span></div>`;
     }
     if(m.type === 'system' || m.type === 'missed_call'){
-      const label = m.text || (m.type === 'missed_call' ? 'Missed call' : 'System');
+      const label = m.type === 'missed_call'
+        ? missedCallLabelForViewer(m)
+        : (m.text || 'System');
       return dayHtml + `<div class="msg-row system" data-msgid="${m.id}" style="justify-content:center;margin:6px 0;">
         <div style="font-size:12px;color:var(--text-dim);font-family:var(--font-mono);padding:6px 12px;border-radius:999px;background:rgba(255,84,112,.12);border:1px solid rgba(255,84,112,.25);">📞 ${escapeHtml(label)} · ${formatClockTime(m.ts)}</div>
       </div>`;
@@ -978,24 +986,69 @@ $('emotionWheelBackdrop').onclick = e=>{ if(e.target===$('emotionWheelBackdrop')
 
 
 
-/** Missed-call marker that survives Firestore thread refreshes. */
+/** One missed-call row per callId. Label depends on who is viewing:
+ *  - caller sees "No answer"
+ *  - callee sees "Missed call"
+ */
+function missedCallLabelForViewer(m){
+  try{
+    if(!currentUser) return m.text || 'Missed call';
+    if(m.calleeUid && m.calleeUid === currentUser.uid) return 'Missed call';
+    if(m.callerUid && m.callerUid === currentUser.uid) return 'No answer';
+    // Fallback from stored text / incoming flag
+    if(m.incoming === true) return 'Missed call';
+    if(m.incoming === false) return 'No answer';
+    if(m.text === 'No answer' || m.text === 'Missed call') return m.text;
+  }catch(_){}
+  return m.text || 'Missed call';
+}
+
 async function recordMissedCallInWireline(contactId, opts){
   opts = opts || {};
   if(!contactId) return;
   const callId = opts.callId || '';
-  const who = opts.incoming ? 'Missed call' : 'No answer';
   const ts = opts.ts || Date.now();
+  const c = contacts.find(x => x.id === contactId || String(x.id) === String(contactId));
+  const otherUid = c && c.firebaseUid ? c.firebaseUid : null;
+  // Who am I in this call?
+  const incoming = !!opts.incoming;
+  const callerUid = opts.callerUid || (incoming ? otherUid : (currentUser && currentUser.uid)) || null;
+  const calleeUid = opts.calleeUid || (incoming ? (currentUser && currentUser.uid) : otherUid) || null;
 
   if(!wirelineThreads[contactId]) wirelineThreads[contactId] = [];
-  if(callId && wirelineThreads[contactId].some(m => m.callId === callId && m.type === 'missed_call')) {
-    /* already local */
+  // Dedupe local by callId — never two chips for one call
+  if(callId){
+    const existingIdx = wirelineThreads[contactId].findIndex(m => m.type === 'missed_call' && m.callId === callId);
+    if(existingIdx >= 0){
+      const row = wirelineThreads[contactId][existingIdx];
+      row.callerUid = row.callerUid || callerUid;
+      row.calleeUid = row.calleeUid || calleeUid;
+      try{ saveWireline(); }catch(_){}
+      try{ renderWirelineList(); }catch(_){}
+      if(activeThreadContactId === contactId) try{ renderThreadMessages(); }catch(_){}
+      // Still try Firestore if not persisted yet
+    } else {
+      wirelineThreads[contactId].push({
+        id: 'missed_' + (callId || Date.now()) + '_' + Math.random().toString(36).slice(2,6),
+        from: 'system',
+        type: 'missed_call',
+        text: 'Missed call', // neutral store; UI picks label
+        callId: callId,
+        callerUid: callerUid,
+        calleeUid: calleeUid,
+        ts: ts,
+        status: 'sent',
+      });
+      try{ saveWireline(); }catch(_){}
+    }
   } else {
     wirelineThreads[contactId].push({
-      id: 'missed_' + (callId || Date.now()) + '_' + Math.random().toString(36).slice(2,6),
+      id: 'missed_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
       from: 'system',
       type: 'missed_call',
-      text: who,
-      callId: callId,
+      text: 'Missed call',
+      callerUid: callerUid,
+      calleeUid: calleeUid,
       ts: ts,
       status: 'sent',
     });
@@ -1006,13 +1059,11 @@ async function recordMissedCallInWireline(contactId, opts){
     try{ renderThreadMessages(); }catch(_){}
   }
 
-  // Persist into real thread so onSnapshot does not wipe it
+  // Single Firestore row per callId (either side may race; first write wins)
   try{
-    const c = contacts.find(x => x.id === contactId || String(x.id) === String(contactId));
     if(c && c.isReal && c.firebaseUid && fbDb && currentUser){
       const tid = realThreadId(c.firebaseUid);
       const threadRef = fbDb.collection('threads').doc(tid);
-      // Dedupe by callId in recent messages if possible
       if(callId){
         try{
           const existing = await threadRef.collection('messages')
@@ -1020,19 +1071,21 @@ async function recordMissedCallInWireline(contactId, opts){
           if(!existing.empty) return;
         }catch(_){}
       }
+      const preview = missedCallLabelForViewer({ callerUid, calleeUid, incoming });
       await threadRef.set({
         participants: [currentUser.uid, c.firebaseUid].sort(),
         lastMessageAt: firebase.firestore.FieldValue.serverTimestamp(),
-        lastMessageText: who,
+        lastMessageText: preview,
         lastMessageFrom: 'system',
         readBy: [currentUser.uid],
       }, { merge: true });
-      // Rules require from == auth.uid; type marks it as system UI
       await threadRef.collection('messages').add({
         from: currentUser.uid,
         type: 'missed_call',
-        text: who,
+        text: 'Missed call',
         callId: callId || null,
+        callerUid: callerUid,
+        calleeUid: calleeUid,
         system: true,
         ts: firebase.firestore.FieldValue.serverTimestamp(),
         status: 'sent',
@@ -1040,3 +1093,5 @@ async function recordMissedCallInWireline(contactId, opts){
     }
   }catch(e){ console.warn('[wireline] missed call persist', e); }
 }
+
+

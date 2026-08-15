@@ -343,6 +343,7 @@ window.addEventListener('offline', updateOfflineBadge);
     const dt = Date.now() - startT;
     if(dy > THRESH && dt >= MIN_MS){
       try{ if(typeof trackMetric === 'function') trackMetric('pull_refresh', {}); }catch(_){}
+      try{ if(typeof captureNavState==='function') captureNavState(); }catch(_){}
       location.reload();
     }
   }, { passive: true });

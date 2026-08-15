@@ -728,7 +728,17 @@ async function bspaceStopLive(){
       label: 'Saving live recording…',
       doneMsg: 'Live saved as chapter',
       run: async (progress)=>{
-        if(progress) progress('Uploading live recording…');
+        
+      let liveThumb = null;
+      try{
+        if(liveBlob && typeof generateVideoThumbnail === 'function'){
+          liveThumb = await generateVideoThumbnail(liveBlob);
+          if(liveThumb && typeof persistThumbnailDataUrl === 'function'){
+            liveThumb = await persistThumbnailDataUrl(liveThumb);
+          }
+        }
+      }catch(_){}
+if(progress) progress('Uploading live recording…');
         const url = await uploadVideoToR2(liveBlob);
         const ref = fbDb.collection('broadcasts').doc(bcastId);
         const snap = await ref.get();
@@ -738,6 +748,7 @@ async function bspaceStopLive(){
         const idx = chapters.length;
         chapters.push({
           index: idx,
+          thumbUrl: liveThumb || null,
           mediaUrl: url,
           duration: liveDur,
           title: 'Live · ' + new Date().toLocaleString(),
@@ -752,6 +763,7 @@ async function bspaceStopLive(){
           breathers,
           mediaUrl: d.mediaUrl || url,
           mediaType: d.mediaType || 'video',
+          thumbUrl: d.thumbUrl || liveThumb || null,
           updatedAt: Date.now(),
         }, { merge:true });
         try{

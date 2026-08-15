@@ -4,17 +4,92 @@
    OWNERSHIP: change this domain here only.
    Scripts share globals (intentional) so load order matches the old monolith.
    ============================================================ */
-/* ---------------- TAB NAV ---------------- */
+/* ---------------- TAB NAV + surface restore after refresh ---------------- */
+const NALUNO_NAV_KEY = 'naluno:navState:v1';
+
+function captureNavState(){
+  try{
+    const tab = (document.querySelector('.tabscreen.active') || {}).id || 'tab-frequencies';
+    const nav = (document.querySelector('.navbtn.active') || {}).dataset
+      ? document.querySelector('.navbtn.active').dataset.tab
+      : (tab || '').replace(/^tab-/, '');
+    const state = {
+      tabId: tab,
+      navTab: nav,
+      wirelineOpen: !!( $('wirelineThread') && $('wirelineThread').classList.contains('active') ),
+      threadContactId: (typeof activeThreadContactId !== 'undefined') ? activeThreadContactId : null,
+      bandOpen: !!( $('bandRoom') && $('bandRoom').classList.contains('active') ),
+      bandId: (typeof activeBandId !== 'undefined') ? activeBandId : null,
+      bspaceOpen: !!( $('bspace') && $('bspace').classList.contains('active') ),
+      broadcastId: (typeof activeBroadcastId !== 'undefined') ? activeBroadcastId : null,
+      ts: Date.now(),
+    };
+    sessionStorage.setItem(NALUNO_NAV_KEY, JSON.stringify(state));
+  }catch(_){}
+}
+
+function applyNavState(state){
+  if(!state || !state.tabId) return;
+  try{
+    document.querySelectorAll('.navbtn').forEach(b=>{
+      b.classList.toggle('active', b.dataset.tab === state.navTab || ('tab-'+b.dataset.tab) === state.tabId);
+    });
+    document.querySelectorAll('.tabscreen').forEach(s=>{
+      s.classList.toggle('active', s.id === state.tabId);
+    });
+    if(state.navTab === 'frequencies' && typeof clearMissedCallBadge === 'function') clearMissedCallBadge();
+    if(state.navTab === 'compass' && typeof showCompassLockScreenIfNeeded === 'function') showCompassLockScreenIfNeeded();
+  }catch(_){}
+  // Defer overlays until modules/auth are ready
+  setTimeout(function(){
+    try{
+      if(state.wirelineOpen && state.threadContactId != null && typeof openThread === 'function'){
+        openThread(state.threadContactId);
+      } else if(state.bandOpen && state.bandId && typeof openBandRoom === 'function'){
+        openBandRoom(state.bandId);
+      } else if(state.bspaceOpen && state.broadcastId && typeof openBroadcastSpaceById === 'function'){
+        openBroadcastSpaceById(state.broadcastId);
+      } else if(state.bspaceOpen && state.broadcastId && typeof openBroadcastSpace === 'function'){
+        openBroadcastSpace(state.broadcastId);
+      }
+    }catch(e){ console.warn('[nav] restore overlay', e); }
+  }, 700);
+}
+
+function restoreNavStateOnBoot(){
+  try{
+    const raw = sessionStorage.getItem(NALUNO_NAV_KEY);
+    if(!raw) return;
+    const state = JSON.parse(raw);
+    if(!state || !state.ts || (Date.now() - state.ts) > 6*60*60*1000) return; // 6h max
+    applyNavState(state);
+  }catch(_){}
+}
+
 document.querySelectorAll('.navbtn').forEach(btn=>{
   btn.onclick = ()=>{
     document.querySelectorAll('.navbtn').forEach(b=>b.classList.remove('active'));
     document.querySelectorAll('.tabscreen').forEach(s=>s.classList.remove('active'));
     btn.classList.add('active');
-    $('tab-'+btn.dataset.tab).classList.add('active');
-    if(btn.dataset.tab === 'frequencies') clearMissedCallBadge();
-    if(btn.dataset.tab === 'compass') showCompassLockScreenIfNeeded();
+    const screen = $('tab-'+btn.dataset.tab);
+    if(screen) screen.classList.add('active');
+    if(btn.dataset.tab === 'frequencies' && typeof clearMissedCallBadge === 'function') clearMissedCallBadge();
+    if(btn.dataset.tab === 'compass' && typeof showCompassLockScreenIfNeeded === 'function') showCompassLockScreenIfNeeded();
+    captureNavState();
   };
 });
+
+// Persist while using overlays / before unload / pull-refresh
+['visibilitychange','pagehide','beforeunload'].forEach(ev=>{
+  window.addEventListener(ev, function(){ try{ captureNavState(); }catch(_){} });
+});
+// Hook common open/close after load
+document.addEventListener('DOMContentLoaded', function(){
+  setTimeout(restoreNavStateOnBoot, 200);
+  setTimeout(restoreNavStateOnBoot, 1200); // second chance after auth listeners
+});
+setInterval(function(){ try{ captureNavState(); }catch(_){} }, 8000);
+
 
 /* ---------------- CALLSIGN (profile) — persisted via window.storage ---------------- */
 const swatches = ['#7CFFB2','#FFB86B','#7C4DFF','#FF7676','#4FBF87','#8B90A8'];
