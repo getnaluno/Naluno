@@ -1,6 +1,6 @@
 // Naluno service worker — offline shell + background call push.
 // v28: Network-first for JS/CSS WITH cache fallback so offline open works.
-const CACHE_NAME = 'naluno-shell-v35';
+const CACHE_NAME = 'naluno-shell-v36';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',
@@ -83,14 +83,25 @@ self.addEventListener('fetch', event=>{
 self.addEventListener('push', event=>{
   let data = {};
   try{ data = event.data ? event.data.json() : {}; }catch(e){ try{ data = { body: event.data.text() }; }catch(_){} }
+  // FCM web often nests: { notification: {title,body}, data: { callId, ... } }
+  try{
+    if(data.data && typeof data.data === 'object'){
+      data = Object.assign({}, data, data.data);
+    }
+    if(data.notification && typeof data.notification === 'object'){
+      if(!data.title && data.notification.title) data.title = data.notification.title;
+      if(!data.body && data.notification.body) data.body = data.notification.body;
+    }
+  }catch(_){}
   const title = data.title || 'Incoming call — Naluno';
   const body = data.body || 'Tap to answer';
-  const callId = data.callId || data.tag || '';
+  const callId = data.callId || data.call_id || data.tag || '';
   event.waitUntil(
     self.registration.showNotification(title, {
       body, icon: './icon-192.png', badge: './icon-192.png',
       tag: callId || 'naluno-call', renotify: true, requireInteraction: true,
-      data: { callId, url: callId ? ('./?call=' + encodeURIComponent(callId)) : './' },
+      vibrate: [300, 100, 300, 100, 300],
+      data: { callId, type: 'incoming_call', url: callId ? ('./?call=' + encodeURIComponent(callId)) : './' },
       actions: [
         { action: 'answer', title: 'Answer' },
         { action: 'decline', title: 'Decline' },

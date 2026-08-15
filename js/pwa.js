@@ -116,6 +116,15 @@ async function setupCapacitorPush(){
           if(callId) handleIncomingCallFromPush(callId);
         }catch(e){}
       });
+      await Push.addListener('pushNotificationReceived', (notif)=>{
+        try{
+          const data = (notif && notif.data) || {};
+          const callId = data.callId || data.call_id || null;
+          if(callId && typeof handleIncomingCallFromPush === 'function'){
+            handleIncomingCallFromPush(callId);
+          }
+        }catch(e){}
+      });
     }
     await Push.register();
     return true;

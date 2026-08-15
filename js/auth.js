@@ -310,6 +310,7 @@ function loadRealProfile(user){
   startBandInviteListener();
   loadMySignal(); if(typeof loadFeedBroadcasts==='function') loadFeedBroadcasts();
   maybeRefreshCallNotifToken();
+  try{ if(typeof ensureCallPushReady === 'function') ensureCallPushReady(); }catch(_){}
   flushMessageQueue();
   ensureMyKeyPair();
   checkForPendingVideoJob();

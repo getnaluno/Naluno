@@ -96,3 +96,23 @@ async function registerWebPushToken(){
     return null;
   }
 }
+
+
+/** Call on every resume so killed-app wake keeps a fresh token. */
+async function ensureCallPushReady(){
+  try{
+    if(!currentUser || !fbDb) return;
+    if(typeof isNativeShell === 'function' && isNativeShell()){
+      if(typeof setupCapacitorPush === 'function') await setupCapacitorPush();
+      return;
+    }
+    if(typeof registerWebPushToken === 'function') await registerWebPushToken();
+  }catch(e){ console.warn('[push] ensureCallPushReady', e); }
+}
+
+document.addEventListener('visibilitychange', function(){
+  if(!document.hidden) setTimeout(function(){ try{ ensureCallPushReady(); }catch(_){} }, 400);
+});
+window.addEventListener('focus', function(){
+  setTimeout(function(){ try{ ensureCallPushReady(); }catch(_){} }, 600);
+});
