@@ -16,6 +16,20 @@ let activeThreadContactId = null;
 // openThread), and demo contacts that used to seed this no longer exist.
 const wirelineSeed = {};
 
+function dayStampKey(ts){
+  const d = new Date(ts || Date.now());
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+function dayStampLabel(ts){
+  const d = new Date(ts || Date.now());
+  const now = new Date();
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startMsg = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const dayMs = 86400000;
+  if(startMsg === startToday) return 'Today';
+  if(startMsg === startToday - dayMs) return 'Yesterday';
+  return d.toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
+}
 function formatClockTime(ts){
   const d = new Date(ts);
   let h = d.getHours(); const m = d.getMinutes();
@@ -131,16 +145,26 @@ function openThread(contactId){
       const mapped = await Promise.all(snap.docs.map(async d=>{
         const m = d.data();
         let text = m.text;
-        if(m.encrypted && m.ciphertext && m.iv){
-          let pk = c.publicKey;
-          if(!pk && fbDb && c.firebaseUid){
-            try{
-              const doc = await fbDb.collection('users').doc(c.firebaseUid).get();
-              if(doc.exists && doc.data().publicKey){ pk = doc.data().publicKey; c.publicKey = pk; }
-            }catch(_){}
+if(m.encrypted && m.ciphertext && m.iv){
+          const cacheKey = d.id + ':' + (m.ciphertext || '').slice(0, 24);
+          if(wirelineDecryptCache[cacheKey]){
+            text = wirelineDecryptCache[cacheKey];
+          } else {
+            let pk = c.publicKey;
+            if(!pk && fbDb && c.firebaseUid){
+              try{
+                const doc = await fbDb.collection('users').doc(c.firebaseUid).get();
+                if(doc.exists && doc.data().publicKey){ pk = doc.data().publicKey; c.publicKey = pk; }
+              }catch(_){}
+            }
+            const decrypted = await decryptMessageText(c.firebaseUid, pk, m.ciphertext, m.iv);
+            if(decrypted !== null){
+              text = decrypted;
+              wirelineDecryptCache[cacheKey] = decrypted;
+            } else {
+              text = '🔒 Couldn\u2019t decrypt this message';
+            }
           }
-          const decrypted = await decryptMessageText(c.firebaseUid, pk, m.ciphertext, m.iv);
-          text = decrypted !== null ? decrypted : '🔒 Couldn\u2019t decrypt this message';
         }
         return {
           id: d.id,
@@ -269,6 +293,8 @@ function reactionBadgeHtml(m){
   if(!m.reaction) return '';
   return `<div style="display:inline-flex; align-items:center; gap:5px; margin-top:4px; padding:3px 9px; border-radius:999px; background:${m.reaction.color}22; border:1px solid ${m.reaction.color}55; font-family:var(--font-mono); font-size:9.5px; color:${m.reaction.color};"><span style="width:6px;height:6px;border-radius:50%;background:${m.reaction.color};flex-shrink:0;"></span>${escapeHtml(m.reaction.label)}</div>`;
 }
+/* Session-only: once a ciphertext decrypts, keep plaintext so UI never flips to lock icon. */
+const wirelineDecryptCache = {};
 function renderThreadMessages(){
   const queued = (localQueuedMessages[activeThreadContactId] || []).map(q => ({
     id: q.queueId, from:'me', ts: q.queuedAt, status:'queued',
@@ -279,14 +305,27 @@ function renderThreadMessages(){
     $('threadMessages').innerHTML = `<div class="msg-empty"><span style="font-family:var(--font-futuristic); font-size:14px;">Nothing on this channel yet</span><span style="font-size:12.5px;">Send the first signal — or hold any message to react.</span></div>`;
     return;
   }
+  let lastDay = null;
   $('threadMessages').innerHTML = msgs.map(m=>{
+    const day = dayStampKey(m.ts);
+    let dayHtml = '';
+    if(day !== lastDay){
+      lastDay = day;
+      dayHtml = `<div class="msg-day-stamp" style="display:flex;justify-content:center;margin:14px 0 8px;"><span style="font-size:11px;font-family:var(--font-mono);color:var(--text-dim);background:rgba(255,255,255,.06);padding:4px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.08);">${escapeHtml(dayStampLabel(m.ts))}</span></div>`;
+    }
+    if(m.type === 'system' || m.type === 'missed_call'){
+      const label = m.text || (m.type === 'missed_call' ? 'Missed call' : 'System');
+      return dayHtml + `<div class="msg-row system" data-msgid="${m.id}" style="justify-content:center;margin:6px 0;">
+        <div style="font-size:12px;color:var(--text-dim);font-family:var(--font-mono);padding:6px 12px;border-radius:999px;background:rgba(255,84,112,.12);border:1px solid rgba(255,84,112,.25);">📞 ${escapeHtml(label)} · ${formatClockTime(m.ts)}</div>
+      </div>`;
+    }
     let bubbleInner, bubbleClass = 'msg-bubble';
     if(m.type==='voice'){ bubbleInner = voiceBubbleHtml(m); bubbleClass = 'msg-bubble voice-bubble-wrap'; }
     else if(m.type==='mood'){ bubbleInner = moodBubbleHtml(m); bubbleClass = 'msg-bubble mood-bubble-wrap'; }
     else { bubbleInner = escapeHtml(m.text); }
     const receipt = m.from==='me' ? receiptTickHtml(m.status || 'sent') : '';
     const deleteBtn = m.from==='me' ? `<span class="msg-delete-btn" data-delmsg="${m.id}" title="Delete" aria-label="Delete message"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2m2 0v13a2 2 0 01-2 2H9a2 2 0 01-2-2V7h10z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>` : '';
-    return `<div class="msg-row ${m.from}" data-msgid="${m.id}">
+    return dayHtml + `<div class="msg-row ${m.from}" data-msgid="${m.id}">
       <div class="${bubbleClass}">${bubbleInner}</div>
       <div class="msg-time">${formatClockTime(m.ts)}${receipt}${deleteBtn}</div>
       ${reactionBadgeHtml(m)}
@@ -925,3 +964,29 @@ requestAnimationFrame(moodAnimTick);
 })();
 $('emotionWheelBackdrop').onclick = e=>{ if(e.target===$('emotionWheelBackdrop')) closeEmotionWheel(); };
 
+
+
+/** Insert a missed-call marker into the Wireline thread for this contact (local + optional list bump). */
+function recordMissedCallInWireline(contactId, opts){
+  opts = opts || {};
+  if(!contactId) return;
+  if(!wirelineThreads[contactId]) wirelineThreads[contactId] = [];
+  const callId = opts.callId || '';
+  // Dedupe same callId
+  if(callId && wirelineThreads[contactId].some(m => m.callId === callId && m.type === 'missed_call')) return;
+  const who = opts.incoming ? 'Missed call' : 'No answer';
+  wirelineThreads[contactId].push({
+    id: 'missed_' + (callId || Date.now()) + '_' + Math.random().toString(36).slice(2,6),
+    from: 'system',
+    type: 'missed_call',
+    text: who,
+    callId: callId,
+    ts: opts.ts || Date.now(),
+    status: 'sent',
+  });
+  try{ saveWireline(); }catch(_){}
+  try{ renderWirelineList(); }catch(_){}
+  if(activeThreadContactId === contactId) {
+    try{ renderThreadMessages(); }catch(_){}
+  }
+}

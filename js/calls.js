@@ -5,6 +5,36 @@
    Scripts share globals (intentional) so load order matches the old monolith.
    ============================================================ */
 /* ---------------- CALL FLOW ---------------- */
+
+function pauseBackgroundMediaForCall(){
+  try{
+    document.querySelectorAll('video, audio').forEach(function(el){
+      try{
+        if(el.closest && el.closest('#callOverlay')) return;
+        const id = el.id || '';
+        if(id === 'remoteVideo' || id === 'incomingSelfVideo' || id === 'pipRawVideo' || id === 'camRawVideo' || id === 'sendRawVideo') return;
+        if(el.paused === false){
+          el.dataset.nalunoWasPlaying = '1';
+          el.pause();
+        }
+      }catch(_){}
+    });
+  }catch(_){}
+}
+function resumeBackgroundMediaAfterCall(){
+  try{
+    document.querySelectorAll('video, audio').forEach(function(el){
+      try{
+        if(el.dataset && el.dataset.nalunoWasPlaying === '1'){
+          el.dataset.nalunoWasPlaying = '';
+          const p = el.play();
+          if(p && p.catch) p.catch(function(){});
+        }
+      }catch(_){}
+    });
+  }catch(_){}
+}
+
 function showCallScreen(id){
   document.querySelectorAll('.callscreen').forEach(s=>s.classList.remove('active'));
   const screen = $(id);
@@ -19,6 +49,7 @@ function showCallScreen(id){
     ov.style.display = 'flex';
     ov.style.visibility = 'visible';
   }
+  try{ pauseBackgroundMediaForCall(); }catch(_){}
   try{
     if($('wirelineThread')){
       $('wirelineThread').style.zIndex = '5';
@@ -68,6 +99,7 @@ function snapshotUiBeforeCall(){
 }
 function restoreUiAfterCall(){
   try{
+    try{ resumeBackgroundMediaAfterCall(); }catch(_){}
     const s = _callUiSnapshot;
     _callUiSnapshot = null;
     // Always clear blank call shell
@@ -768,6 +800,11 @@ function startMissedCallListener(){
             const data = change.doc.data();
             const c = contacts.find(x=>x.firebaseUid===data.callerUid);
             toast((c ? c.name.split(' ')[0] : 'Someone') + ' tried to call you');
+            try{
+              if(c && typeof recordMissedCallInWireline === 'function'){
+                recordMissedCallInWireline(c.id, { callId: change.doc.id, incoming: true, ts: Date.now() });
+              }
+            }catch(_){}
           }
         });
       }
@@ -1162,6 +1199,11 @@ function showAsyncFallback(contactId, reason){
   if(activeCallId && fbDb){
     fbDb.collection('calls').doc(activeCallId).update({ status:'missed' }).catch(()=>{});
   }
+  try{
+    if(typeof recordMissedCallInWireline === 'function' && contactId){
+      recordMissedCallInWireline(contactId, { callId: activeCallId, incoming: false, ts: Date.now() });
+    }
+  }catch(_){}
   stopCallerTone();
   teardownCallConnection();
   if(stream) stopCameraStream(); // no need to hold a camera open for a call that isn't connecting
