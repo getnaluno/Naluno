@@ -1,18 +1,22 @@
 // Naluno service worker — offline shell + background call push.
-// v4: NEVER cache JS/CSS (stale modules were breaking Signal/calls after deploys).
-const CACHE_NAME = 'naluno-shell-v27';
+// v28: Network-first for JS/CSS WITH cache fallback so offline open works.
+const CACHE_NAME = 'naluno-shell-v28';
 const CORE_ASSETS = [
-  './',
-  './index.html',
-  './manifest.json',
-  './icon-192.png',
-  './icon-512.png',
+  './', './index.html', './manifest.json', './icon-192.png', './icon-512.png',
+  './firebase-config.js', './css/app.css',
+  './js/core.js', './js/metrics.js', './js/data.js', './js/crypto.js', './js/atmosphere.js',
+  './js/pwa.js', './js/auth.js', './js/camera.js', './js/calls.js', './js/wireline.js',
+  './js/band-room.js', './js/band-list.js', './js/broadcast-core.js', './js/broadcast-space.js',
+  './js/broadcast-live.js', './js/broadcast-composer.js', './js/signal-core.js', './js/signal-ui.js',
+  './js/sfu-live.js', './js/compass.js', './js/find.js', './js/profile.js', './js/notifications.js',
 ];
 
 self.addEventListener('install', event=>{
   self.skipWaiting();
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(CORE_ASSETS).catch(()=>{}))
+    caches.open(CACHE_NAME).then(cache =>
+      Promise.all(CORE_ASSETS.map(u => cache.add(u).catch(()=>{})))
+    )
   );
 });
 
@@ -27,24 +31,38 @@ self.addEventListener('activate', event=>{
 
 self.addEventListener('fetch', event=>{
   if(event.request.method !== 'GET') return;
-
   const url = new URL(event.request.url);
   const isSameOrigin = url.origin === self.location.origin;
   const isFirebaseSdkScript = url.hostname === 'www.gstatic.com' && url.pathname.includes('firebasejs');
   if(!isSameOrigin && !isFirebaseSdkScript) return;
 
-  // Always network for app code — never serve stale modules
   const path = url.pathname || '';
-  if(path.includes('/js/') || path.endsWith('.js') || path.includes('/css/') || path.endsWith('.css') || path.endsWith('firebase-config.js')){
+  const isAppCode = path.includes('/js/') || path.endsWith('.js') ||
+    path.includes('/css/') || path.endsWith('.css') || path.endsWith('firebase-config.js');
+
+  if(isAppCode || isFirebaseSdkScript){
     event.respondWith(
-      fetch(event.request).catch(() => caches.match(event.request))
+      fetch(event.request).then(response=>{
+        if(response && response.ok && isSameOrigin){
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy)).catch(()=>{});
+        }
+        return response;
+      }).catch(() =>
+        caches.match(event.request).then(cached => {
+          if(cached) return cached;
+          return caches.match(url.pathname).then(c2 => c2 || new Response('/* offline */', {
+            status: 200,
+            headers: { 'Content-Type': path.endsWith('.css') ? 'text/css' : 'application/javascript' }
+          }));
+        })
+      )
     );
     return;
   }
 
   event.respondWith(
     fetch(event.request).then(response=>{
-      // Only cache shell assets, not API/media
       if(response.ok && (path.endsWith('.html') || path.endsWith('/') || path.includes('manifest') || path.includes('icon'))){
         const copy = response.clone();
         caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy)).catch(()=>{});
@@ -53,14 +71,15 @@ self.addEventListener('fetch', event=>{
     }).catch(()=>{
       return caches.match(event.request).then(cached=>{
         if(cached) return cached;
-        if(event.request.mode === 'navigate') return caches.match('./index.html');
+        if(event.request.mode === 'navigate' || (event.request.headers.get('accept') || '').includes('text/html')){
+          return caches.match('./index.html').then(h => h || caches.match('/index.html'));
+        }
         return new Response('', { status: 503 });
       });
     })
   );
 });
 
-// Push: incoming call
 self.addEventListener('push', event=>{
   let data = {};
   try{ data = event.data ? event.data.json() : {}; }catch(e){ try{ data = { body: event.data.text() }; }catch(_){} }
@@ -69,13 +88,9 @@ self.addEventListener('push', event=>{
   const callId = data.callId || data.tag || '';
   event.waitUntil(
     self.registration.showNotification(title, {
-      body,
-      icon: './icon-192.png',
-      badge: './icon-192.png',
-      tag: callId ? ('naluno-call-' + callId) : 'naluno-call',
-      renotify: true,
-      requireInteraction: true,
-      data: data,
+      body, icon: './icon-192.png', badge: './icon-192.png',
+      tag: callId || 'naluno-call', renotify: true, requireInteraction: true,
+      data: { callId, url: callId ? ('./?call=' + encodeURIComponent(callId)) : './' },
       actions: [
         { action: 'answer', title: 'Answer' },
         { action: 'decline', title: 'Decline' },
@@ -87,23 +102,17 @@ self.addEventListener('push', event=>{
 self.addEventListener('notificationclick', event=>{
   event.notification.close();
   const data = event.notification.data || {};
-  const action = event.action;
-  event.waitUntil((async ()=>{
-    const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    for(const c of clients){
-      try{
-        c.postMessage({
-          type: 'naluno-incoming-call',
-          action: action || 'open',
-          callId: data.callId || null,
-          data,
-        });
-        if('focus' in c) await c.focus();
-        return;
-      }catch(_){}
-    }
-    if(self.clients.openWindow){
-      await self.clients.openWindow('./');
-    }
-  })());
+  const callId = data.callId || '';
+  const target = callId ? ('./?call=' + encodeURIComponent(callId)) : (data.url || './');
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList=>{
+      for(const client of clientList){
+        if('focus' in client){
+          client.postMessage({ type: 'naluno-incoming-call', callId });
+          return client.focus();
+        }
+      }
+      if(self.clients.openWindow) return self.clients.openWindow(target);
+    })
+  );
 });

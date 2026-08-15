@@ -132,7 +132,14 @@ function openThread(contactId){
         const m = d.data();
         let text = m.text;
         if(m.encrypted && m.ciphertext && m.iv){
-          const decrypted = await decryptMessageText(c.firebaseUid, c.publicKey, m.ciphertext, m.iv);
+          let pk = c.publicKey;
+          if(!pk && fbDb && c.firebaseUid){
+            try{
+              const doc = await fbDb.collection('users').doc(c.firebaseUid).get();
+              if(doc.exists && doc.data().publicKey){ pk = doc.data().publicKey; c.publicKey = pk; }
+            }catch(_){}
+          }
+          const decrypted = await decryptMessageText(c.firebaseUid, pk, m.ciphertext, m.iv);
           text = decrypted !== null ? decrypted : '🔒 Couldn\u2019t decrypt this message';
         }
         return {

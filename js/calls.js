@@ -12,19 +12,21 @@ function showCallScreen(id){
   const ov = $('callOverlay');
   if(ov){
     ov.classList.add('active');
-    // Must sit above Broadcast space (z-index 80), Band, Wireline
-    ov.style.zIndex = '120';
+    // Above Broadcast (80), Band, Wireline, live chrome
+    ov.style.zIndex = '200';
     ov.style.opacity = '1';
     ov.style.pointerEvents = 'auto';
+    ov.style.display = 'flex';
+    ov.style.visibility = 'visible';
   }
   try{
     if($('wirelineThread')){
-      $('wirelineThread').classList.remove('active');
-      $('wirelineThread').style.zIndex = '';
+      $('wirelineThread').style.zIndex = '5';
     }
-    if($('bspace')) $('bspace').style.zIndex = '10';
-    if($('bandRoom')) $('bandRoom').style.zIndex = '10';
-    ov.style.display = 'flex';
+    if($('bspace')) $('bspace').style.zIndex = '5';
+    if($('bandRoom')) $('bandRoom').style.zIndex = '5';
+    // Pause broadcast live UI chrome without tearing down permanently
+    if($('bspaceLiveBanner')) $('bspaceLiveBanner').style.pointerEvents = 'none';
   }catch(_){}
 }
 function closeCallOverlay(){
@@ -58,6 +60,7 @@ function snapshotUiBeforeCall(){
         || (typeof window !== 'undefined' && window.__wirelineCallContactId)
         || currentCallContactId || null,
       activeTab: (document.querySelector('.tabscreen.active') || {}).id || null,
+      bandLive: !!(typeof bandLiveLocalStream !== 'undefined' && bandLiveLocalStream),
     };
   }catch(_){
     _callUiSnapshot = null;
@@ -806,17 +809,17 @@ function startIncomingCallListener(){
     }, ()=>{ /* incoming calls just won't be detected this session */ });
 }
 function handleIncomingCall(callId, data){
-  // If a previous call left the overlay stuck, force-clear so we can receive again.
+  // Calls always win over live / band / lobby camera preview.
+  callActionInProgress = false;
   if($('callOverlay').classList.contains('active')){
-    if(activeCallId && activeCallId !== callId){
-      // Different call while UI claims busy — ignore.
+    if(activeCallId && activeCallId !== callId && peerConnection){
+      // Truly in another live call — ignore competing ring
       return;
     }
-    if(activeCallId === callId) return; // same call re-delivered
-    // Overlay active but no activeCallId → stale UI after a bad hangup.
-    try{ closeCallOverlayAndStopCamera(); }catch(e){}
+    if(activeCallId === callId) return;
+    try{ closeCallOverlay(); }catch(e){}
   }
-  // Drop any leftover peer from the last session before presenting incoming UI.
+  // Drop leftover peer from last session (do NOT stop user camera yet — reuse)
   if(peerConnection){
     try{ peerConnection.close(); }catch(e){}
     peerConnection = null;

@@ -197,20 +197,27 @@ function ensureMyKeyPair(){
   return myKeyPairPromise;
 }
 
-let sharedKeyCache = {}; // { [theirUid]: Promise<CryptoKey|null> } — derived once per contact, reused
+let sharedKeyCache = {}; // { [theirUid]: Promise<CryptoKey|null> }
+function clearSharedKeyCache(theirUid){
+  if(theirUid) delete sharedKeyCache[theirUid];
+  else sharedKeyCache = {};
+}
 function getSharedAesKey(theirUid, theirPublicKeyJwk){
   if(sharedKeyCache[theirUid]) return sharedKeyCache[theirUid];
   sharedKeyCache[theirUid] = (async ()=>{
-    if(!theirPublicKeyJwk) return null;
+    if(!theirPublicKeyJwk){
+      delete sharedKeyCache[theirUid]; // allow retry when key arrives
+      return null;
+    }
     const myKeys = await ensureMyKeyPair();
-    if(!myKeys || !myKeys.privateKey) return null;
+    if(!myKeys || !myKeys.privateKey){
+      delete sharedKeyCache[theirUid];
+      return null;
+    }
     try{
       const theirPublicKey = await crypto.subtle.importKey(
         'jwk', theirPublicKeyJwk, { name:'ECDH', namedCurve:'P-256' }, false, []
       );
-      // ECDH's actual mathematical property: (my private + their public) and
-      // (their private + my public) derive the identical shared secret — this is
-      // what makes both directions of a conversation decryptable with one key.
       return await crypto.subtle.deriveKey(
         { name:'ECDH', public: theirPublicKey },
         myKeys.privateKey,
@@ -220,6 +227,7 @@ function getSharedAesKey(theirUid, theirPublicKeyJwk){
       );
     }catch(e){
       console.warn('[e2e] deriveKey failed for', theirUid, e);
+      delete sharedKeyCache[theirUid];
       return null;
     }
   })();
@@ -236,18 +244,36 @@ async function encryptMessageText(theirUid, theirPublicKeyJwk, plaintext){
   return { ciphertext: arrayBufferToBase64(ciphertext), iv: arrayBufferToBase64(iv) };
 }
 async function decryptMessageText(theirUid, theirPublicKeyJwk, ciphertextB64, ivB64){
-  const aesKey = await getSharedAesKey(theirUid, theirPublicKeyJwk);
-  if(!aesKey) return null;
-  try{
+  async function attempt(jwk){
+    const aesKey = await getSharedAesKey(theirUid, jwk);
+    if(!aesKey) return null;
     const plainBuf = await crypto.subtle.decrypt(
       { name:'AES-GCM', iv: new Uint8Array(base64ToArrayBuffer(ivB64)) },
       aesKey,
       base64ToArrayBuffer(ciphertextB64)
     );
     return new TextDecoder().decode(plainBuf);
+  }
+  try{
+    const once = await attempt(theirPublicKeyJwk);
+    if(once != null) return once;
   }catch(e){
     console.warn('[e2e] decrypt failed', e);
-    return null; // wrong/missing key, or corrupted ciphertext
+  }
+  // Clear stuck key and retry once (stale publicKey / race on first open)
+  try{
+    clearSharedKeyCache(theirUid);
+    let jwk = theirPublicKeyJwk;
+    if(typeof fbDb !== 'undefined' && fbDb && theirUid){
+      try{
+        const doc = await fbDb.collection('users').doc(theirUid).get();
+        if(doc.exists && doc.data().publicKey) jwk = doc.data().publicKey;
+      }catch(_){}
+    }
+    return await attempt(jwk);
+  }catch(e){
+    console.warn('[e2e] decrypt retry failed', e);
+    return null;
   }
 }
 

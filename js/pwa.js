@@ -238,3 +238,72 @@ window.addEventListener('appinstalled', ()=>{
     showInstallBanner('android');
   }, 4000);
 })();
+
+
+/* ---- Offline badge (app stays usable; queue sends) ---- */
+function updateOfflineBadge(){
+  let el = document.getElementById('offlineBadge');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'offlineBadge';
+    el.setAttribute('role','status');
+    el.style.cssText = 'display:none;position:fixed;top:calc(8px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);z-index:250;padding:6px 14px;border-radius:999px;font-size:12px;font-weight:600;background:rgba(20,22,30,.92);color:#fff;border:1px solid rgba(255,255,255,.12);pointer-events:none;';
+    document.body.appendChild(el);
+  }
+  if(navigator.onLine === false){
+    el.style.display = 'block';
+    el.textContent = 'Offline — messages queue until you are back';
+  } else {
+    el.style.display = 'none';
+  }
+}
+document.addEventListener('DOMContentLoaded', updateOfflineBadge);
+window.addEventListener('online', updateOfflineBadge);
+window.addEventListener('offline', updateOfflineBadge);
+
+/* ---- Pull-to-refresh (soft reload without force-kill) ---- */
+(function setupPullToRefresh(){
+  let startY = 0;
+  let pulling = false;
+  const THRESH = 90;
+  document.addEventListener('touchstart', function(e){
+    if(!e.touches || !e.touches[0]) return;
+    const scrollTop = document.scrollingElement ? document.scrollingElement.scrollTop : window.scrollY;
+    // Only when at top of main shell
+    if(scrollTop > 2) { pulling = false; return; }
+    if($('callOverlay') && $('callOverlay').classList.contains('active')) return;
+    startY = e.touches[0].clientY;
+    pulling = true;
+  }, { passive: true });
+  document.addEventListener('touchmove', function(e){
+    if(!pulling || !e.touches || !e.touches[0]) return;
+    const dy = e.touches[0].clientY - startY;
+    let ind = document.getElementById('ptrIndicator');
+    if(dy > 24){
+      if(!ind){
+        ind = document.createElement('div');
+        ind.id = 'ptrIndicator';
+        ind.style.cssText = 'position:fixed;top:calc(12px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);z-index:260;padding:6px 12px;border-radius:999px;background:rgba(13,15,23,.9);color:#7CFFB2;font-size:12px;pointer-events:none;';
+        document.body.appendChild(ind);
+      }
+      ind.style.display = 'block';
+      ind.textContent = dy > THRESH ? 'Release to refresh' : 'Pull to refresh';
+    } else if(ind){
+      ind.style.display = 'none';
+    }
+  }, { passive: true });
+  document.addEventListener('touchend', function(e){
+    if(!pulling) return;
+    pulling = false;
+    const ind = document.getElementById('ptrIndicator');
+    if(ind) ind.style.display = 'none';
+    const touch = (e.changedTouches && e.changedTouches[0]) || null;
+    if(!touch) return;
+    const dy = touch.clientY - startY;
+    if(dy > THRESH){
+      try{ if(typeof trackMetric === 'function') trackMetric('pull_refresh', {}); }catch(_){}
+      // Soft refresh: reload so SW can update shell; preserves origin
+      location.reload();
+    }
+  }, { passive: true });
+})();

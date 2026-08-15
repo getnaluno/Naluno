@@ -1,4 +1,36 @@
 
+/* Band offline outbox — send when back online */
+const BAND_OUTBOX_KEY = 'naluno:bandOutbox:v1';
+function loadBandOutbox(){
+  try{ return JSON.parse(localStorage.getItem(BAND_OUTBOX_KEY) || '[]'); }catch(_){ return []; }
+}
+function saveBandOutbox(rows){
+  try{ localStorage.setItem(BAND_OUTBOX_KEY, JSON.stringify(rows || [])); }catch(_){}
+}
+function queueBandMessage(bandId, payload, preview){
+  const rows = loadBandOutbox();
+  rows.push({ id: 'b'+Date.now()+Math.random().toString(36).slice(2,6), bandId, payload, preview, ts: Date.now() });
+  saveBandOutbox(rows);
+}
+async function flushBandOutbox(){
+  if(!navigator.onLine || !fbDb || !currentUser) return;
+  const rows = loadBandOutbox();
+  if(!rows.length) return;
+  const left = [];
+  for(const row of rows){
+    try{
+      const ref = fbDb.collection('bands').doc(row.bandId).collection('messages');
+      await ref.add(Object.assign({}, row.payload, {
+        from: currentUser.uid,
+        ts: firebase.firestore.FieldValue.serverTimestamp(),
+      }));
+    }catch(e){ left.push(row); }
+  }
+  saveBandOutbox(left);
+}
+window.addEventListener('online', function(){ try{ flushBandOutbox(); }catch(_){} });
+
+
 /* Pagination: load older band messages (Phase 3 scale). */
 let bandOldestMsgDoc = null;
 async function loadOlderBandMessages(){
@@ -1005,6 +1037,12 @@ async function sendBandMessage(){
   if(!amTunedIn){ toast('Tune in first to say something'); return; }
   const b = activeBand();
   if(b && b.isReal && b.firestoreId && fbDb && currentUser){
+    if(navigator.onLine === false){
+      queueBandMessage(b.firestoreId, { type:'text', text, encrypted:false }, text);
+      $('bandInput').value = '';
+      toast('Offline — Band message queued');
+      return;
+    }
     const members = b.memberUids || (b.memberInfo||[]).map(m=>m.uid).concat([currentUser.uid]);
     const unique = Array.from(new Set(members));
     const envelopes = await encryptBandMessageForMembers(unique, text);
