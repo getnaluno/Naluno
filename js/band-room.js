@@ -1,3 +1,23 @@
+
+/* Pagination: load older band messages (Phase 3 scale). */
+let bandOldestMsgDoc = null;
+async function loadOlderBandMessages(){
+  if(!fbDb || !currentBandId) return;
+  const bandRef = fbDb.collection('bands').doc(currentBandId);
+  let q = bandRef.collection('messages').orderBy('ts','desc').limit(40);
+  if(bandOldestMsgDoc) q = q.startAfter(bandOldestMsgDoc);
+  try{
+    const snap = await q.get();
+    if(snap.empty){ if(typeof toast==='function') toast('No older messages'); return; }
+    bandOldestMsgDoc = snap.docs[snap.docs.length - 1];
+    if(typeof trackMetric === 'function') trackMetric('band_load_older', { n: snap.size });
+    // Prepend handled by full snapshot on new writes; for older, merge into DOM if renderBandMessages exists
+    if(typeof renderBandMessagesFromDocs === 'function'){
+      renderBandMessagesFromDocs(snap.docs.slice().reverse(), true);
+    }
+  }catch(e){ console.warn('[band] load older', e); }
+}
+
 /* ============================================================
    MODULE: js/band-room.js
    Band room UI, presence, settle clock, record audio/video, invites, band E2E
@@ -320,8 +340,8 @@ function openBandRoom(id){
       }
     }, ()=>{ /* presence just won't update this session */ });
 
-    bandMessagesUnsub = bandRef.collection('messages').orderBy('ts','asc').onSnapshot(async snap=>{
-      const rows = snap.docs.map(d=>{
+    bandMessagesUnsub = bandRef.collection('messages').orderBy('ts','desc').limit(60).onSnapshot(async snap=>{
+      const rows = snap.docs.slice().reverse().map(d=>{
         const m = d.data();
         return {
           fromMe: m.from === currentUser.uid,

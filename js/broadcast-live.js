@@ -7,6 +7,13 @@
    ============================================================ */
 
 const BCAST_LIVE_MAX_VIEWERS = 12;
+/** Effective cap: SFU path lifts this when configured; mesh stays at 12. */
+function bLiveEffectiveMaxViewers(){
+  try{
+    if(typeof sfuOrMeshViewerCap === 'function') return sfuOrMeshViewerCap();
+  }catch(_){}
+  return BCAST_LIVE_MAX_VIEWERS;
+}
 
 let bLiveHost = false;
 let bLiveHostPcs = {};       // viewerUid -> RTCPeerConnection
@@ -99,7 +106,7 @@ async function bLiveStartHost(stream){
       const data = change.doc.data() || {};
       if(!data.offer || data.answer) continue; // wait for offer; skip if already answered
       if(bLiveHostPcs[uid]) continue;
-      if(Object.keys(bLiveHostPcs).length >= BCAST_LIVE_MAX_VIEWERS){
+      if(Object.keys(bLiveHostPcs).length >= bLiveEffectiveMaxViewers()){
         change.doc.ref.set({ rejected: true, reason: 'full' }, { merge: true }).catch(()=>{});
         continue;
       }

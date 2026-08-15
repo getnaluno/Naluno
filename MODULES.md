@@ -68,3 +68,10 @@ Ship `index.html` + entire `js/` + `css/` together. For Capacitor: `copy-web.js`
 - `js/broadcast-live.js` — multi-viewer WebRTC fan-out (viewer-offer, host answers up to 12)
 - Floating reactions, watcher count, Join live button for frequencies
 - Signaling: `broadcasts/{id}/liveSessions/{viewerUid}` + hostIce/viewerIce
+
+
+## Scale (2026-08-15)
+- `js/metrics.js` — quality events (call/live/upload)
+- `js/sfu-live.js` — SFU contract; mesh fallback until NALUNO_SFU configured
+- Camera prefers 4K with cascade fallback
+- Band/Broadcast chat: recent window + load-older helper

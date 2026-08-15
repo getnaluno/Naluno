@@ -876,19 +876,17 @@ function startCamView(target){
 let cameraFacingMode = 'user';
 let preferredVideoDeviceId = null;
 
-function buildVideoConstraints(){
-  // "ideal" only pulls toward this value — it never exceeds what the hardware actually
-  // supports, so a modest front camera still settles at its own real max.
-  // 4K was genuinely wasted downstream (nothing renders or sends anywhere near that),
-  // but dropping all the way to 1080p traded away real sharpness — likely because many
-  // phone camera systems, especially a high-resolution back sensor, use a visibly
-  // softer "fast preview" processing path when asked for something well below their
-  // native resolution, not just a clean crop of the same quality at fewer pixels.
-  // 1440p is a genuine middle ground: still only about 44% of 4K's pixel count (real
-  // relief for camera negotiation time and per-frame decode cost, the actual cause of
-  // the lag), while sitting close enough to a typical back camera's native resolution
-  // to likely still land in its higher-quality processing mode rather than the soft one.
-  const base = { width:{ ideal:2560 }, height:{ ideal:1440 }, frameRate:{ ideal:30, max:60 } };
+function buildVideoConstraints(tier){
+  // Prefer 4K; browser/device will only grant what the sensor can do ("ideal", not "exact").
+  // tier: '4k' | '1440' | '1080' | '720' | 'basic'
+  const tiers = {
+    '4k':   { width:{ ideal:3840 }, height:{ ideal:2160 }, frameRate:{ ideal:30, max:60 } },
+    '1440': { width:{ ideal:2560 }, height:{ ideal:1440 }, frameRate:{ ideal:30, max:60 } },
+    '1080': { width:{ ideal:1920 }, height:{ ideal:1080 }, frameRate:{ ideal:30, max:60 } },
+    '720':  { width:{ ideal:1280 }, height:{ ideal:720 },  frameRate:{ ideal:30, max:60 } },
+    'basic':{ width:{ ideal:640 },  height:{ ideal:480 },  frameRate:{ ideal:24, max:30 } },
+  };
+  const base = Object.assign({}, tiers[tier] || tiers['4k']);
   if(preferredVideoDeviceId) base.deviceId = { exact: preferredVideoDeviceId };
   else base.facingMode = { ideal: cameraFacingMode };
   return base;
@@ -897,16 +895,32 @@ async function requestHighQualityStream(opts={}){
   const wantVideo = opts.video !== false;
   const wantAudio = opts.audio !== false;
   const audioConstraints = wantAudio ? { echoCancellation:true, noiseSuppression:true, autoGainControl:true } : false;
-  const attempts = [
-    { video: wantVideo ? buildVideoConstraints() : false, audio: audioConstraints },
-    { video: wantVideo ? { facingMode:{ ideal:cameraFacingMode } } : false, audio: wantAudio },
-    { video: wantVideo, audio: wantAudio },
-  ];
+  // Cascade: 4K → 1440 → 1080 → 720 → facing-only → boolean video
+  const attempts = [];
+  if(wantVideo){
+    ['4k','1440','1080','720','basic'].forEach(function(tier){
+      attempts.push({ video: buildVideoConstraints(tier), audio: audioConstraints });
+    });
+    attempts.push({ video: { facingMode:{ ideal:cameraFacingMode } }, audio: audioConstraints });
+    attempts.push({ video: true, audio: audioConstraints });
+  } else {
+    attempts.push({ video: false, audio: audioConstraints });
+  }
   let lastErr;
   for(const constraints of attempts){
-    try{ return await navigator.mediaDevices.getUserMedia(constraints); }
-    catch(e){ lastErr = e; }
+    try{
+      const s = await navigator.mediaDevices.getUserMedia(constraints);
+      try{
+        const t = s.getVideoTracks()[0];
+        const set = t && t.getSettings ? t.getSettings() : {};
+        if(typeof trackMetric === 'function'){
+          trackMetric('camera_open', { w: set.width||0, h: set.height||0, fps: set.frameRate||0 });
+        }
+      }catch(_){}
+      return s;
+    }catch(e){ lastErr = e; }
   }
+  if(typeof trackMetric === 'function') trackMetric('camera_open_fail', { err: String(lastErr && lastErr.name || lastErr) });
   throw lastErr;
 }
 function updateCameraQualityBadge(){

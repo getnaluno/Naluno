@@ -410,11 +410,19 @@ async function ensureCallMediaReady(){
 }
 
 async function createPeerConnection(){
+  try{ if(typeof metricStart === 'function') window._callMediaMetric = metricStart('call_time_to_media'); }catch(_){}
   const ice = await getIceServers();
   const pc = new RTCPeerConnection(ice);
   remoteCombinedStream = new MediaStream();
   pc.ontrack = e=>{
     console.log('[call] ontrack —', e.track.kind, e.track.readyState, 'streams:', (e.streams||[]).length);
+    try{
+      if(e.track.kind === 'video' && typeof metricEnd === 'function' && window._callMediaMetric){
+        metricEnd(window._callMediaMetric, true, { kind: 'video' });
+        window._callMediaMetric = null;
+      }
+      if(typeof trackMetric === 'function') trackMetric('call_ontrack', { kind: e.track.kind });
+    }catch(_){}
     try{ e.track.enabled = true; }catch(_){}
     try{ e.track.contentHint = e.track.kind === 'video' ? 'motion' : 'speech'; }catch(_){}
     // Prefer stream from event when present (more reliable on some browsers)
@@ -700,6 +708,7 @@ function attachConnectionWatchdogs(pc){
     const s = pc.connectionState;
     console.log('[call] connection state:', s);
     if(s === 'connected'){
+      try{ if(typeof trackMetric === 'function') trackMetric('call_connected', {}); }catch(_){}
       try{
         pc.getSenders().forEach(snd=>{
           if(snd.track){ try{ snd.track.enabled = true; }catch(_){} }

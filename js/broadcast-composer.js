@@ -458,6 +458,7 @@ async function bcompPublish(){
       if(typeof loadFeedBroadcasts === 'function') await loadFeedBroadcasts();
       if(typeof notifyPublishResult === 'function') notifyPublishResult(true, snapTitle);
       else if(typeof toast === 'function') toast('Broadcast published');
+      try{ if(typeof trackMetric === 'function') trackMetric('upload_publish_ok', { kind: 'broadcast' }); }catch(_){}
       if(typeof openBroadcastById === 'function') openBroadcastById(b.id);
     },
   };

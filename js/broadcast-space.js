@@ -310,8 +310,8 @@ function renderBspaceRelated(){
 
 function listenBspaceCollection(colName, renderFn, orderField){
   if(!fbDb || !activeBroadcastId) return;
-  const q = fbDb.collection('broadcasts').doc(activeBroadcastId).collection(colName).orderBy(orderField || 'ts', 'asc').limit(80);
-  const unsub = q.onSnapshot(snap => renderFn(snap.docs), ()=> renderFn([]));
+  const q = fbDb.collection('broadcasts').doc(activeBroadcastId).collection(colName).orderBy(orderField || 'ts', 'desc').limit(40);
+  const unsub = q.onSnapshot(snap => renderFn(snap.docs.slice().reverse()), ()=> renderFn([]));
   bspaceUnsubs.push(unsub);
 }
 

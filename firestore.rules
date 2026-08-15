@@ -5,6 +5,14 @@ service cloud.firestore {
     function isSignedIn() { return request.auth != null; }
     function isOwner(uid) { return isSignedIn() && request.auth.uid == uid; }
 
+    // ---- Quality metrics (sampled client writes) ----
+    match /metrics/{id} {
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.keys().hasAll(['name','uid']);
+      allow read, update, delete: if false;
+    }
+
     // ---- Identity ----
     match /users/{uid} {
       allow read: if isSignedIn();
