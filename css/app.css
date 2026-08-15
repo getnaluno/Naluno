@@ -273,7 +273,9 @@
   /* --- in call --- */
   #incall{ background:#000; }
   .remote-stage{ position:absolute; inset:0; background: radial-gradient(60% 50% at 30% 20%, #22263A 0%, transparent 60%), radial-gradient(50% 40% at 80% 70%, #1B2E2A 0%, transparent 60%), #0B0D14; display:flex; align-items:center; justify-content:center; }
-  .remote-placeholder{ display:flex; flex-direction:column; align-items:center; gap:14px; color:var(--text-dim); }
+  .remote-placeholder{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; color:var(--text-dim); position:absolute; inset:0; z-index:1; }
+  .remote-placeholder .remote-avatar, .remote-placeholder #remoteAvatar{ width:96px; height:96px; font-size:32px; border-radius:50%; }
+  /* remote-placeholder-avatar-size */
   .remote-avatar{ width:96px; height:96px; font-size:28px; border:1px solid var(--line); }
   .incall-top{ position:relative; z-index:4; padding:20px 20px 0; display:flex; justify-content:space-between; align-items:flex-start; }
   .call-info-pill{ background:rgba(13,15,23,.55); backdrop-filter:blur(10px); border:1px solid var(--line); border-radius:999px; padding:8px 14px; display:flex; align-items:center; gap:8px; }

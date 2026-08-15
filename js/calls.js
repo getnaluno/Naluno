@@ -414,9 +414,50 @@ let incomingCallUnsub = null;
 
 let remoteCombinedStream = null;
 let remotePlayTimer = null;
-function ensureRemoteVideoPlaying(){
+let remotePlayWatch = null;
+
+/** Inspect what we actually have from the remote peer. */
+function getRemoteMediaState(){
+  const stream = remoteCombinedStream;
+  if(!stream){
+    return { hasAudio: false, hasVideo: false, videoLive: false, trackCount: 0 };
+  }
+  const audioTracks = stream.getAudioTracks();
+  const videoTracks = stream.getVideoTracks();
+  const hasAudio = audioTracks.some(t => t.readyState === 'live');
+  // live + not ended; muted can mean "camera off temporarily" from peer
+  const liveVideo = videoTracks.filter(t => t.readyState === 'live');
+  const hasVideo = liveVideo.length > 0;
+  const videoLive = liveVideo.some(t => t.enabled !== false && t.muted !== true);
+  return {
+    hasAudio,
+    hasVideo,
+    videoLive,
+    trackCount: stream.getTracks().length,
+    videoTrackCount: videoTracks.length,
+  };
+}
+
+/**
+ * Single place that decides remote stage UI:
+ * - video track live → try play <video>, hide avatar
+ * - no video track / play failed / no frames → avatar placeholder (never a paused <video>)
+ * A paused visible <video> is what draws the oversized WebView play button.
+ */
+function renderRemoteMediaStage(){
   const videoEl = document.getElementById('remoteVideo');
-  if(!videoEl) return false;
+  const ph = document.getElementById('remotePlaceholder');
+  if(!videoEl) return;
+
+  const state = getRemoteMediaState();
+
+  // Always keep stream attached for audio even when video UI is hidden
+  if(remoteCombinedStream && remoteCombinedStream.getTracks().length){
+    if(videoEl.srcObject !== remoteCombinedStream){
+      try{ videoEl.srcObject = remoteCombinedStream; }catch(_){}
+    }
+  }
+
   try{
     videoEl.removeAttribute('controls');
     videoEl.controls = false;
@@ -426,72 +467,121 @@ function ensureRemoteVideoPlaying(){
     videoEl.autoplay = true;
   }catch(_){}
 
-  if(!videoEl.srcObject){
-    if(remoteCombinedStream && remoteCombinedStream.getTracks().length){
-      try{ videoEl.srcObject = remoteCombinedStream; }catch(_){}
-    } else {
-      return false;
-    }
+  // No video track at all → avatar only (audio may still play via hidden element)
+  if(!state.hasVideo){
+    try{
+      videoEl.style.display = 'none';
+      // Keep element playing for audio tracks if any
+      if(state.hasAudio){
+        videoEl.muted = false;
+        const p = videoEl.play();
+        if(p && p.catch) p.catch(function(){});
+      }
+    }catch(_){}
+    if(ph) ph.style.display = 'flex';
+    return;
   }
 
-  // Reveal stage — hide placeholder so only the stream (or black) shows, never a stuck UI chrome
-  try{
-    videoEl.style.display = 'block';
-    const ph = document.getElementById('remotePlaceholder');
-    if(ph) ph.style.display = 'none';
-  }catch(_){}
-
-  // Prefer muted autoplay first (always allowed), then unmute — avoids permanent pause + big play button
-  let ok = false;
+  // Has video track — attempt play; only show <video> after it is actually playing
   try{
     videoEl.muted = true;
     const p = videoEl.play();
+    const showVideo = function(){
+      try{
+        videoEl.muted = false;
+        videoEl.volume = 1;
+        videoEl.style.display = 'block';
+        if(ph) ph.style.display = 'none';
+      }catch(_){}
+    };
+    const showAvatar = function(){
+      try{
+        videoEl.style.display = 'none';
+        if(ph) ph.style.display = 'flex';
+      }catch(_){}
+    };
     if(p && p.then){
       p.then(function(){
-        ok = true;
-        try{ videoEl.muted = false; videoEl.volume = 1; }catch(_){}
+        // Prefer frames; if still 0x0 shortly after play, keep trying but show video only if playing
+        if(!videoEl.paused){
+          showVideo();
+          // Unmute after play succeeds
+          try{ videoEl.muted = false; }catch(_){}
+        } else {
+          showAvatar();
+        }
       }).catch(function(){
+        // Autoplay failed — do NOT leave a visible paused video (play button)
+        showAvatar();
+        // Still try muted play for audio
         try{
           videoEl.muted = true;
           videoEl.play().then(function(){
-            setTimeout(function(){ try{ videoEl.muted = false; }catch(_){} }, 200);
-          }).catch(function(){});
-        }catch(_){}
+            if(state.videoLive && !videoEl.paused){
+              showVideo();
+              setTimeout(function(){ try{ videoEl.muted = false; }catch(_){} }, 200);
+            }
+          }).catch(function(){ showAvatar(); });
+        }catch(_){ showAvatar(); }
       });
     } else {
-      try{ videoEl.muted = false; }catch(_){}
-      ok = true;
+      if(!videoEl.paused) showVideo();
+      else showAvatar();
     }
-  }catch(_){}
-  return ok;
+  }catch(_){
+    if(ph) ph.style.display = 'flex';
+    try{ videoEl.style.display = 'none'; }catch(_){}
+  }
 }
 
-let remotePlayWatch = null;
+/** @deprecated name kept for call sites — routes to state renderer */
+function ensureRemoteVideoPlaying(){
+  renderRemoteMediaStage();
+}
+
 function startRemotePlayWatch(){
   stopRemotePlayWatch();
   remotePlayWatch = setInterval(function(){
     try{
       if(!activeCallId){ stopRemotePlayWatch(); return; }
       const el = document.getElementById('remoteVideo');
+      const state = getRemoteMediaState();
       if(!el) return;
-      if(!el.srcObject && remoteCombinedStream && remoteCombinedStream.getTracks().length){
-        el.srcObject = remoteCombinedStream;
+
+      // Re-attach stream if lost
+      if(remoteCombinedStream && remoteCombinedStream.getTracks().length){
+        if(el.srcObject !== remoteCombinedStream){
+          try{ el.srcObject = remoteCombinedStream; }catch(_){}
+        }
       }
-      if(!el.srcObject) return;
-      // Stuck paused = big play button on Android WebView
-      if(el.paused){
-        ensureRemoteVideoPlaying();
-      }
-      // Track live but no dimensions: rebind stream
-      const vt = el.srcObject.getVideoTracks && el.srcObject.getVideoTracks()[0];
-      if(vt && vt.readyState === 'live' && el.videoWidth === 0 && !el.paused){
-        const s = el.srcObject;
-        el.srcObject = null;
-        el.srcObject = s;
-        ensureRemoteVideoPlaying();
+
+      if(state.hasVideo){
+        // If paused while we have a video track, retry play; if still paused, avatar
+        if(el.paused){
+          renderRemoteMediaStage();
+        } else if(el.style.display === 'none'){
+          // Playing but hidden — show it
+          el.style.display = 'block';
+          const ph = document.getElementById('remotePlaceholder');
+          if(ph) ph.style.display = 'none';
+        }
+        // Live track, playing, but no frames yet — stay patient; don't flash play button
+        if(!el.paused && el.videoWidth === 0){
+          // leave as-is; black is better than play icon
+        }
+      } else {
+        // No video → force avatar, never visible paused video
+        el.style.display = 'none';
+        const ph = document.getElementById('remotePlaceholder');
+        if(ph) ph.style.display = 'flex';
+        if(state.hasAudio && el.paused){
+          el.muted = false;
+          const p = el.play();
+          if(p && p.catch) p.catch(function(){});
+        }
       }
     }catch(_){}
-  }, 700);
+  }, 800);
 }
 function stopRemotePlayWatch(){
   if(remotePlayWatch){ clearInterval(remotePlayWatch); remotePlayWatch = null; }
@@ -572,21 +662,21 @@ async function createPeerConnection(){
       if(videoEl.srcObject !== remoteCombinedStream) videoEl.srcObject = remoteCombinedStream;
       videoEl.playsInline = true;
       videoEl.autoplay = true;
-      videoEl.muted = false;
-      videoEl.volume = 1;
-      if(e.track.kind === 'video'){
-        videoEl.style.display = 'block';
-        const ph = $('remotePlaceholder');
-        if(ph) ph.style.display = 'none';
-      }
-      if(remotePlayTimer) clearTimeout(remotePlayTimer);
-      remotePlayTimer = setTimeout(function(){ ensureRemoteVideoPlaying(); }, 20);
-      e.track.onunmute = function(){ ensureRemoteVideoPlaying(); };
+      videoEl.controls = false;
     }
+    // Track lifecycle → re-evaluate avatar vs video (never leave paused <video> visible)
+    try{
+      e.track.onmute = function(){ try{ renderRemoteMediaStage(); }catch(_){} };
+      e.track.onunmute = function(){ try{ renderRemoteMediaStage(); }catch(_){} };
+      e.track.onended = function(){ try{ renderRemoteMediaStage(); }catch(_){} };
+    }catch(_){}
+    if(remotePlayTimer) clearTimeout(remotePlayTimer);
+    remotePlayTimer = setTimeout(function(){ renderRemoteMediaStage(); }, 30);
+    try{ startRemotePlayWatch(); }catch(_){}
     if(e.track.kind === 'audio'){
       try{ if(typeof ensureAudioContext === 'function') ensureAudioContext(); }catch(_){}
-      ensureRemoteVideoPlaying();
     }
+    console.log('[call] remote media state', getRemoteMediaState());
   };
   pc.onicegatheringstatechange = ()=> console.log('[call] ICE gathering:', pc.iceGatheringState);
   // connectionstate + filter schedule live in attachConnectionWatchdogs (single handler)
@@ -1550,23 +1640,14 @@ function startInCall(){
   }, 1000);
   if(currentCallContactId) bumpContactActivity(currentCallContactId);
   bumpTodayActivity();
-  // Kill the Android WebView "big play button" — play while still in the answer/call gesture chain
+  // Media state machine: video only if track exists; else avatar (no play-button)
   try{
-    if(remoteCombinedStream && remoteCombinedStream.getTracks().length){
-      const rv = $('remoteVideo');
-      if(rv){
-        rv.style.display = 'block';
-        if(rv.srcObject !== remoteCombinedStream) rv.srcObject = remoteCombinedStream;
-      }
-      const ph = $('remotePlaceholder');
-      if(ph) ph.style.display = 'none';
-    }
-    ensureRemoteVideoPlaying();
+    renderRemoteMediaStage();
     startRemotePlayWatch();
   }catch(_){}
-  setTimeout(function(){ try{ ensureRemoteVideoPlaying(); }catch(_){} }, 100);
-  setTimeout(function(){ try{ ensureRemoteVideoPlaying(); }catch(_){} }, 500);
-  setTimeout(function(){ try{ ensureRemoteVideoPlaying(); }catch(_){} }, 1500);
+  setTimeout(function(){ try{ renderRemoteMediaStage(); }catch(_){} }, 100);
+  setTimeout(function(){ try{ renderRemoteMediaStage(); }catch(_){} }, 500);
+  setTimeout(function(){ try{ renderRemoteMediaStage(); }catch(_){} }, 1500);
 }
 /* Cycles: normal (remote full + small local PiP) → large local PiP → swap (you full, them small) → normal */
 let incallViewMode = 0;
