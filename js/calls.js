@@ -416,49 +416,56 @@ let remoteCombinedStream = null;
 let remotePlayTimer = null;
 function ensureRemoteVideoPlaying(){
   const videoEl = document.getElementById('remoteVideo');
-  if(!videoEl) return;
+  if(!videoEl) return false;
   try{
-    videoEl.setAttribute('playsinline', '');
-    videoEl.setAttribute('webkit-playsinline', '');
+    videoEl.removeAttribute('controls');
+    videoEl.controls = false;
+    videoEl.setAttribute('playsinline', 'true');
+    videoEl.setAttribute('webkit-playsinline', 'true');
     videoEl.playsInline = true;
     videoEl.autoplay = true;
-    videoEl.controls = false;
-    videoEl.disablePictureInPicture = true;
   }catch(_){}
+
   if(!videoEl.srcObject){
     if(remoteCombinedStream && remoteCombinedStream.getTracks().length){
-      videoEl.srcObject = remoteCombinedStream;
-    } else return;
+      try{ videoEl.srcObject = remoteCombinedStream; }catch(_){}
+    } else {
+      return false;
+    }
   }
-  // Show element as soon as we have any track
+
+  // Reveal stage — hide placeholder so only the stream (or black) shows, never a stuck UI chrome
   try{
-    const hasV = (videoEl.srcObject.getVideoTracks && videoEl.srcObject.getVideoTracks().some(t => t.readyState === 'live' || t.muted === false || true));
-    if(hasV || (remoteCombinedStream && remoteCombinedStream.getVideoTracks().length)){
-      videoEl.style.display = 'block';
-      const ph = document.getElementById('remotePlaceholder');
-      if(ph) ph.style.display = 'none';
+    videoEl.style.display = 'block';
+    const ph = document.getElementById('remotePlaceholder');
+    if(ph) ph.style.display = 'none';
+  }catch(_){}
+
+  // Prefer muted autoplay first (always allowed), then unmute — avoids permanent pause + big play button
+  let ok = false;
+  try{
+    videoEl.muted = true;
+    const p = videoEl.play();
+    if(p && p.then){
+      p.then(function(){
+        ok = true;
+        try{ videoEl.muted = false; videoEl.volume = 1; }catch(_){}
+      }).catch(function(){
+        try{
+          videoEl.muted = true;
+          videoEl.play().then(function(){
+            setTimeout(function(){ try{ videoEl.muted = false; }catch(_){} }, 200);
+          }).catch(function(){});
+        }catch(_){}
+      });
+    } else {
+      try{ videoEl.muted = false; }catch(_){}
+      ok = true;
     }
   }catch(_){}
-  videoEl.muted = false;
-  videoEl.volume = 1;
-  const tryPlay = function(mutedFirst){
-    try{
-      if(mutedFirst) videoEl.muted = true;
-      const p = videoEl.play();
-      if(p && p.then){
-        p.then(function(){
-          if(mutedFirst) setTimeout(function(){ try{ videoEl.muted = false; }catch(_){} }, 250);
-        }).catch(function(err){
-          if(err && err.name === 'AbortError') return;
-          if(!mutedFirst) tryPlay(true);
-        });
-      }
-    }catch(_){}
-  };
-  tryPlay(false);
+  return ok;
 }
 
-/** Keep hammering play while in an active call — fixes Chrome "big play button" when paused. */
 let remotePlayWatch = null;
 function startRemotePlayWatch(){
   stopRemotePlayWatch();
@@ -466,23 +473,30 @@ function startRemotePlayWatch(){
     try{
       if(!activeCallId){ stopRemotePlayWatch(); return; }
       const el = document.getElementById('remoteVideo');
-      if(!el || !el.srcObject) return;
-      if(el.paused || el.readyState < 2) ensureRemoteVideoPlaying();
-      // If video track exists but element is 0x0 frames, re-bind
-      const vt = el.srcObject.getVideoTracks ? el.srcObject.getVideoTracks()[0] : null;
-      if(vt && vt.readyState === 'live' && el.videoWidth === 0){
+      if(!el) return;
+      if(!el.srcObject && remoteCombinedStream && remoteCombinedStream.getTracks().length){
+        el.srcObject = remoteCombinedStream;
+      }
+      if(!el.srcObject) return;
+      // Stuck paused = big play button on Android WebView
+      if(el.paused){
+        ensureRemoteVideoPlaying();
+      }
+      // Track live but no dimensions: rebind stream
+      const vt = el.srcObject.getVideoTracks && el.srcObject.getVideoTracks()[0];
+      if(vt && vt.readyState === 'live' && el.videoWidth === 0 && !el.paused){
+        const s = el.srcObject;
         el.srcObject = null;
-        el.srcObject = remoteCombinedStream || el.srcObject;
+        el.srcObject = s;
         ensureRemoteVideoPlaying();
       }
     }catch(_){}
-  }, 900);
+  }, 700);
 }
 function stopRemotePlayWatch(){
   if(remotePlayWatch){ clearInterval(remotePlayWatch); remotePlayWatch = null; }
 }
 
-/** Ensure global `stream` has live audio + video for calls. Re-opens camera if needed. */
 async function ensureCallMediaReady(){
   const hasA = stream && stream.getAudioTracks().some(t => t.readyState === 'live');
   const hasV = stream && stream.getVideoTracks().some(t => t.readyState === 'live');
@@ -1536,6 +1550,23 @@ function startInCall(){
   }, 1000);
   if(currentCallContactId) bumpContactActivity(currentCallContactId);
   bumpTodayActivity();
+  // Kill the Android WebView "big play button" — play while still in the answer/call gesture chain
+  try{
+    if(remoteCombinedStream && remoteCombinedStream.getTracks().length){
+      const rv = $('remoteVideo');
+      if(rv){
+        rv.style.display = 'block';
+        if(rv.srcObject !== remoteCombinedStream) rv.srcObject = remoteCombinedStream;
+      }
+      const ph = $('remotePlaceholder');
+      if(ph) ph.style.display = 'none';
+    }
+    ensureRemoteVideoPlaying();
+    startRemotePlayWatch();
+  }catch(_){}
+  setTimeout(function(){ try{ ensureRemoteVideoPlaying(); }catch(_){} }, 100);
+  setTimeout(function(){ try{ ensureRemoteVideoPlaying(); }catch(_){} }, 500);
+  setTimeout(function(){ try{ ensureRemoteVideoPlaying(); }catch(_){} }, 1500);
 }
 /* Cycles: normal (remote full + small local PiP) → large local PiP → swap (you full, them small) → normal */
 let incallViewMode = 0;
@@ -1600,3 +1631,21 @@ pip.addEventListener('pointermove', e=>{
 pip.addEventListener('pointerup', endPipDrag);
 pip.addEventListener('pointercancel', endPipDrag); // otherwise a hijacked gesture can leave the pip stuck "dragging"
 
+
+
+/* Tap remote video area — forces play (removes WebView big-play overlay) */
+(function wireRemoteStageTap(){
+  function bind(){
+    const stage = document.querySelector('#incall .remote-stage');
+    if(!stage || stage.dataset.nalunoRemoteStageTap) return;
+    stage.dataset.nalunoRemoteStageTap = '1';
+    const kick = function(){
+      try{ ensureRemoteVideoPlaying(); }catch(_){}
+    };
+    stage.addEventListener('pointerdown', kick, { passive: true });
+    stage.addEventListener('click', kick, { passive: true });
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
+  else bind();
+  setTimeout(bind, 2000);
+})();

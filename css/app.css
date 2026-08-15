@@ -680,12 +680,24 @@
 }
 
 
-/* Call remote: never show native big play button */
-#remoteVideo::-webkit-media-controls-start-playback-button,
-#remoteVideo::-webkit-media-controls {
-  display: none !important;
-  -webkit-appearance: none;
-}
+
+
+/* Call remote: kill native big-play overlay (Chrome / Samsung WebView) */
 #remoteVideo {
-  pointer-events: none;
+  background: #0a0a0a;
+}
+#remoteVideo::-webkit-media-controls,
+#remoteVideo::-webkit-media-controls-enclosure,
+#remoteVideo::-webkit-media-controls-start-playback-button,
+#remoteVideo::-webkit-media-controls-overlay-play-button,
+#remoteVideo::-webkit-media-controls-panel {
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  -webkit-appearance: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+#incall .remote-stage video {
+  object-fit: cover;
 }
