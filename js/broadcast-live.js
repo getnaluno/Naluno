@@ -43,6 +43,7 @@ function bLiveCleanupViewer(){
   bLiveViewerUnsubs = [];
   if(bLiveViewerPc){ try{ bLiveViewerPc.close(); }catch(_){} bLiveViewerPc = null; }
   const v = $('bspaceViewerLiveVideo');
+  if(v){ try{ v.autoplay = true; v.playsInline = true; v.muted = false; }catch(_){} }
   if(v){ v.srcObject = null; }
 }
 

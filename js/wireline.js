@@ -56,6 +56,7 @@ function renderWirelineList(){
     const lastText = last ? (
       last.type==='voice' ? '🎙 Voice note · '+formatDuration(last.duration||0) :
       last.type==='mood' ? '◐ '+((MOODS.find(x=>x.key===last.mood)||{}).label || 'A feeling') :
+      last.type==='missed_call' ? ('📞 ' + (last.text || 'Missed call')) :
       last.text
     ) : '';
     const preview = last ? ((last.from==='me' ? 'You: ' : '') + lastText) : 'No messages yet — say hello';
@@ -166,11 +167,14 @@ if(m.encrypted && m.ciphertext && m.iv){
             }
           }
         }
+        const msgType = m.type || 'text';
+        const isSys = msgType === 'missed_call' || msgType === 'system';
         return {
           id: d.id,
-          from: m.from===currentUser.uid ? 'me' : 'them',
-          type: m.type || 'text',
+          from: isSys ? 'system' : (m.from===currentUser.uid ? 'me' : 'them'),
+          type: msgType,
           text, mood: m.mood, waveform: m.waveform, duration: m.duration, dataUrl: m.dataUrl,
+          callId: m.callId || null,
           ts: m.ts && m.ts.toMillis ? m.ts.toMillis() : Date.now(),
           status: m.status || 'sent',
           reaction: m.reaction,
@@ -966,27 +970,63 @@ $('emotionWheelBackdrop').onclick = e=>{ if(e.target===$('emotionWheelBackdrop')
 
 
 
-/** Insert a missed-call marker into the Wireline thread for this contact (local + optional list bump). */
-function recordMissedCallInWireline(contactId, opts){
+/** Missed-call marker that survives Firestore thread refreshes. */
+async function recordMissedCallInWireline(contactId, opts){
   opts = opts || {};
   if(!contactId) return;
-  if(!wirelineThreads[contactId]) wirelineThreads[contactId] = [];
   const callId = opts.callId || '';
-  // Dedupe same callId
-  if(callId && wirelineThreads[contactId].some(m => m.callId === callId && m.type === 'missed_call')) return;
   const who = opts.incoming ? 'Missed call' : 'No answer';
-  wirelineThreads[contactId].push({
-    id: 'missed_' + (callId || Date.now()) + '_' + Math.random().toString(36).slice(2,6),
-    from: 'system',
-    type: 'missed_call',
-    text: who,
-    callId: callId,
-    ts: opts.ts || Date.now(),
-    status: 'sent',
-  });
-  try{ saveWireline(); }catch(_){}
+  const ts = opts.ts || Date.now();
+
+  if(!wirelineThreads[contactId]) wirelineThreads[contactId] = [];
+  if(callId && wirelineThreads[contactId].some(m => m.callId === callId && m.type === 'missed_call')) {
+    /* already local */
+  } else {
+    wirelineThreads[contactId].push({
+      id: 'missed_' + (callId || Date.now()) + '_' + Math.random().toString(36).slice(2,6),
+      from: 'system',
+      type: 'missed_call',
+      text: who,
+      callId: callId,
+      ts: ts,
+      status: 'sent',
+    });
+    try{ saveWireline(); }catch(_){}
+  }
   try{ renderWirelineList(); }catch(_){}
   if(activeThreadContactId === contactId) {
     try{ renderThreadMessages(); }catch(_){}
   }
+
+  // Persist into real thread so onSnapshot does not wipe it
+  try{
+    const c = contacts.find(x => x.id === contactId || String(x.id) === String(contactId));
+    if(c && c.isReal && c.firebaseUid && fbDb && currentUser){
+      const tid = realThreadId(c.firebaseUid);
+      const threadRef = fbDb.collection('threads').doc(tid);
+      // Dedupe by callId in recent messages if possible
+      if(callId){
+        try{
+          const existing = await threadRef.collection('messages')
+            .where('callId', '==', callId).limit(1).get();
+          if(!existing.empty) return;
+        }catch(_){}
+      }
+      await threadRef.set({
+        participants: [currentUser.uid, c.firebaseUid].sort(),
+        lastMessageAt: firebase.firestore.FieldValue.serverTimestamp(),
+        lastMessageText: who,
+        lastMessageFrom: 'system',
+        readBy: [currentUser.uid],
+      }, { merge: true });
+      await threadRef.collection('messages').add({
+        from: 'system',
+        type: 'missed_call',
+        text: who,
+        callId: callId || null,
+        ts: firebase.firestore.FieldValue.serverTimestamp(),
+        status: 'sent',
+      });
+    }
+  }catch(e){ console.warn('[wireline] missed call persist', e); }
 }

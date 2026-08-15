@@ -96,16 +96,23 @@ function renderBspaceMedia(seg){
     const showChapters = chapters && chapters.length > 1 && !chapters.every(c => c.silent);
     host.innerHTML = `
       <div class="bspace-media-frame" style="position:relative;width:100%;background:#000;border-radius:14px;overflow:hidden;min-height:180px;">
-        <video id="bspaceVideoEl" controls playsinline preload="metadata" src="${bspaceEscape(rawSrc)}" poster="${seg.thumbDataUrl ? bspaceEscape(seg.thumbDataUrl) : ''}" style="width:100%;height:100%;object-fit:cover;display:block;background:#000;filter:${seg.filterCss || ''}"></video>
+        <video id="bspaceVideoEl" controls playsinline webkit-playsinline preload="auto" src="${bspaceEscape(rawSrc)}" poster="${seg.thumbDataUrl ? bspaceEscape(seg.thumbDataUrl) : ''}" style="width:100%;height:100%;object-fit:cover;display:block;background:#000;filter:${seg.filterCss || ''}"></video>
         <div id="bspaceBreather" style="display:none;position:absolute;inset:0;background:rgba(13,15,23,.92);align-items:center;justify-content:center;flex-direction:column;gap:10px;z-index:3;">
           <div style="font-family:var(--font-futuristic);font-size:15px;color:var(--mint);" id="bspaceBreatherLabel">Chapter break</div>
           <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);" id="bspaceBreatherAd">Next chapter in a moment</div>
         </div>
       </div>
+      <div id="bspaceSeekBar" class="bspace-seek" style="display:flex;align-items:center;gap:10px;padding:10px 4px 4px;user-select:none;-webkit-user-select:none;">
+        <button type="button" id="bspacePlayBtn" aria-label="Play/Pause" style="flex-shrink:0;width:36px;height:36px;border-radius:50%;border:1px solid var(--line);background:rgba(124,255,178,.12);color:var(--mint);font-size:14px;cursor:pointer;">▶</button>
+        <span id="bspaceTimeCur" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);min-width:40px;">0:00</span>
+        <input type="range" id="bspaceSeekRange" min="0" max="1000" value="0" step="1" style="flex:1;height:28px;accent-color:var(--mint);cursor:pointer;" />
+        <span id="bspaceTimeDur" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);min-width:40px;text-align:right;">0:00</span>
+      </div>
       `;
     const vel = $('bspaceVideoEl');
     if(vel && typeof bindMediaElement === 'function') bindMediaElement(vel, rawSrc);
     else if(vel){ vel.src = rawSrc; }
+    try{ wireBspaceSeekAndAutoplay(vel); }catch(e){ console.warn('[bspace] seek wire', e); }
     let barHost = document.getElementById('bspaceChapterHost');
     if(!barHost){
       const title = $('bspaceTitle');
@@ -956,6 +963,93 @@ let bspaceChapterIndex = 0;
 let bspaceChapterList = [];
 let bspaceBreatherList = [];
 let bspaceBreatherTimer = null;
+
+
+function formatBspaceTime(sec){
+  sec = Math.max(0, Math.floor(sec || 0));
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return m + ':' + String(s).padStart(2, '0');
+}
+
+/** Autoplay + always-visible seek scrubber (native controls often clipped by cover frame). */
+function wireBspaceSeekAndAutoplay(v){
+  if(!v) return;
+  const range = $('bspaceSeekRange');
+  const curEl = $('bspaceTimeCur');
+  const durEl = $('bspaceTimeDur');
+  const playBtn = $('bspacePlayBtn');
+  let scrubbing = false;
+
+  function syncPlayBtn(){
+    if(playBtn) playBtn.textContent = v.paused ? '▶' : '❚❚';
+  }
+  function syncTimes(){
+    const d = v.duration;
+    if(durEl) durEl.textContent = (isFinite(d) && d > 0) ? formatBspaceTime(d) : '0:00';
+    if(curEl) curEl.textContent = formatBspaceTime(v.currentTime);
+    if(range && isFinite(d) && d > 0 && !scrubbing){
+      range.value = String(Math.round((v.currentTime / d) * 1000));
+    }
+  }
+
+  if(range){
+    const seekTo = ()=>{
+      const d = v.duration;
+      if(!isFinite(d) || d <= 0) return;
+      const t = (parseInt(range.value, 10) / 1000) * d;
+      try{ v.currentTime = t; }catch(_){}
+      syncTimes();
+    };
+    range.addEventListener('input', ()=>{ scrubbing = true; seekTo(); });
+    range.addEventListener('change', ()=>{ scrubbing = false; seekTo(); });
+    range.addEventListener('touchstart', ()=>{ scrubbing = true; }, { passive: true });
+    range.addEventListener('touchend', ()=>{ scrubbing = false; seekTo(); }, { passive: true });
+  }
+  if(playBtn){
+    playBtn.onclick = ()=>{
+      if(v.paused){
+        const p = v.play();
+        if(p && p.catch) p.catch(()=>{});
+      } else {
+        v.pause();
+      }
+      syncPlayBtn();
+    };
+  }
+
+  v.addEventListener('timeupdate', syncTimes);
+  v.addEventListener('loadedmetadata', syncTimes);
+  v.addEventListener('durationchange', syncTimes);
+  v.addEventListener('play', syncPlayBtn);
+  v.addEventListener('pause', syncPlayBtn);
+  v.addEventListener('ended', syncPlayBtn);
+
+  // Autoplay: try unmuted first; if blocked, muted autoplay then unmute on first tap
+  v.playsInline = true;
+  v.setAttribute('playsinline', '');
+  v.setAttribute('webkit-playsinline', '');
+  const tryPlay = ()=>{
+    const p = v.play();
+    if(p && p.catch){
+      p.catch(()=>{
+        try{
+          v.muted = true;
+          v.play().then(()=>{
+            // Keep muted until user taps play — still starts content
+            syncPlayBtn();
+          }).catch(()=>{});
+        }catch(_){}
+      });
+    }
+  };
+  if(v.readyState >= 2) tryPlay();
+  else v.addEventListener('loadeddata', tryPlay, { once: true });
+  // Second chance after src bind settles
+  setTimeout(tryPlay, 400);
+  syncPlayBtn();
+  syncTimes();
+}
 
 function wireBroadcastChapterPlayer(chapters, breathers, opts){
   opts = opts || {};

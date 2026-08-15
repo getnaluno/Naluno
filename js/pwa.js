@@ -264,22 +264,61 @@ window.addEventListener('offline', updateOfflineBadge);
 /* ---- Pull-to-refresh (soft reload without force-kill) ---- */
 (function setupPullToRefresh(){
   let startY = 0;
+  let startX = 0;
+  let startT = 0;
   let pulling = false;
-  const THRESH = 90;
+  const THRESH = 160;       // must pull farther
+  const MIN_MS = 280;       // must hold the gesture briefly
+  const EDGE_Y = 56;        // finger must start near top of screen
+
+  function scrollableAncestorScrolled(el){
+    let n = el;
+    while(n && n !== document.body && n !== document.documentElement){
+      try{
+        if(n.scrollTop && n.scrollTop > 4) return true;
+        const id = n.id || '';
+        if(id === 'threadMessages' || id === 'bspaceScroll' || id === 'bandMessages' ||
+           id === 'wirelineList' || id === 'freqList' || id === 'compassFeed'){
+          if(n.scrollTop > 2) return true;
+        }
+        const oy = (window.getComputedStyle(n).overflowY || '');
+        if((oy === 'auto' || oy === 'scroll') && n.scrollTop > 4) return true;
+      }catch(_){}
+      n = n.parentElement;
+    }
+    const st = document.scrollingElement ? document.scrollingElement.scrollTop : window.scrollY;
+    return st > 4;
+  }
+
   document.addEventListener('touchstart', function(e){
+    pulling = false;
     if(!e.touches || !e.touches[0]) return;
-    const scrollTop = document.scrollingElement ? document.scrollingElement.scrollTop : window.scrollY;
-    // Only when at top of main shell
-    if(scrollTop > 2) { pulling = false; return; }
     if($('callOverlay') && $('callOverlay').classList.contains('active')) return;
-    startY = e.touches[0].clientY;
+    const t = e.touches[0];
+    // Only from top edge of the viewport — not mid-thread
+    if(t.clientY > EDGE_Y) return;
+    if(scrollableAncestorScrolled(e.target)) return;
+    startY = t.clientY;
+    startX = t.clientX;
+    startT = Date.now();
     pulling = true;
   }, { passive: true });
+
   document.addEventListener('touchmove', function(e){
     if(!pulling || !e.touches || !e.touches[0]) return;
-    const dy = e.touches[0].clientY - startY;
+    if(scrollableAncestorScrolled(e.target)){
+      pulling = false;
+      const ind = document.getElementById('ptrIndicator');
+      if(ind) ind.style.display = 'none';
+      return;
+    }
+    const t = e.touches[0];
+    const dy = t.clientY - startY;
+    const dx = Math.abs(t.clientX - startX);
+    // Horizontal-ish scroll cancel
+    if(dx > dy && dx > 24){ pulling = false; return; }
     let ind = document.getElementById('ptrIndicator');
-    if(dy > 24){
+    if(dy > 48){
       if(!ind){
         ind = document.createElement('div');
         ind.id = 'ptrIndicator';
@@ -292,6 +331,7 @@ window.addEventListener('offline', updateOfflineBadge);
       ind.style.display = 'none';
     }
   }, { passive: true });
+
   document.addEventListener('touchend', function(e){
     if(!pulling) return;
     pulling = false;
@@ -300,9 +340,9 @@ window.addEventListener('offline', updateOfflineBadge);
     const touch = (e.changedTouches && e.changedTouches[0]) || null;
     if(!touch) return;
     const dy = touch.clientY - startY;
-    if(dy > THRESH){
+    const dt = Date.now() - startT;
+    if(dy > THRESH && dt >= MIN_MS){
       try{ if(typeof trackMetric === 'function') trackMetric('pull_refresh', {}); }catch(_){}
-      // Soft refresh: reload so SW can update shell; preserves origin
       location.reload();
     }
   }, { passive: true });
