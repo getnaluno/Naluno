@@ -1059,10 +1059,28 @@ let notifyRepeatInterval = null;
 async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
   if(!currentUser || !calleeUid) return;
   let firstAttempt = true;
+
+  // Callers can read users/{uid} (rules: any signed-in). Pass tokens to the worker
+  // so wake does not depend on the service account reading Firestore.
+  async function loadCalleePushTokens(){
+    const out = { android: null, web: null, primary: null };
+    try{
+      if(!fbDb) return out;
+      const snap = await fbDb.collection('users').doc(calleeUid).get();
+      if(!snap.exists) return out;
+      const d = snap.data() || {};
+      out.android = d.fcmTokenAndroid || null;
+      out.web = d.fcmTokenWeb || null;
+      out.primary = d.fcmToken || null;
+      out.platform = d.fcmTokenPlatform || null;
+    }catch(e){ console.warn('[call] load callee tokens', e); }
+    return out;
+  }
+
   const sendOnce = async ()=>{
     try{
-      // Prefer a fresh token; force refresh if first attempt failed earlier
       const idToken = await currentUser.getIdToken(firstAttempt ? false : true);
+      const tokens = await loadCalleePushTokens();
       const payload = {
         calleeUid,
         callerName: callerName || (currentProfile && currentProfile.name) || 'Someone',
@@ -1070,9 +1088,21 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
         type: 'incoming_call',
         title: (callerName || (currentProfile && currentProfile.name) || 'Someone') + ' is calling',
         body: 'Tap to answer on Naluno',
-        // Help worker pick Android vs web token
         preferPlatform: 'android',
+        // Explicit tokens — worker uses these first
+        fcmTokenAndroid: tokens.android,
+        fcmTokenWeb: tokens.web,
+        fcmToken: tokens.primary,
+        fcmTokenPlatform: tokens.platform,
       };
+      if(firstAttempt){
+        console.log('[call] push tokens for callee', {
+          hasAndroid: !!tokens.android,
+          hasWeb: !!tokens.web,
+          hasPrimary: !!tokens.primary,
+          platform: tokens.platform,
+        });
+      }
       const res = await fetch(CALL_NOTIFY_WORKER_URL, {
         method: 'POST',
         headers: {
@@ -1085,36 +1115,25 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
       if(firstAttempt) console.log('[call] push response', res.status, data);
       const detail = String((data && (data.detail || data.error || data.message || JSON.stringify(data))) || '');
       const unregistered = /UNREGISTERED|NotRegistered|NOT_FOUND|no_token|missing_token/i.test(detail + JSON.stringify(data));
-      // Don't spam the console — UNREGISTERED is a stale token, not a call failure
-      console.log('[call] push wake response', res.status, data);
-      console.log('[call] push wake response', res.status, data);
-      if(res.ok && data.sent === true){
-        console.log('[call] push wake sent');
-      } else if(data.sent === false || !res.ok){
+      if(res.ok && data.sent !== false){
+        console.log('[call] push wake sent', data);
+      } else if(unregistered){
         if(firstAttempt){
-          const why = data.error || data.reason || data.detail || ('HTTP ' + res.status);
-          console.warn('[call] push wake not sent', why);
-          toast('Push: ' + String(why).slice(0, 90));
+          console.info('[call] push token stale or missing — in-app ring if Naluno is open');
         }
-      }
-      if(unregistered){
-        if(firstAttempt){
-          console.info('[call] push token stale or missing on their device — in-app ring still works if Naluno is open');
-        }
-        // Stop repeating: same dead token will never succeed mid-call
         if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
         stopRepeats = true;
       } else if(!res.ok){
         if(firstAttempt) console.warn('[call] push wake failed', res.status, data);
-        if(firstAttempt) toast('Push wake failed — in-app ring still works if they have Naluno open');
+        if(firstAttempt) toast('Push wake failed (' + res.status + ') — open app still rings');
       } else if(data.sent === false){
         if(firstAttempt && (data.reason === 'no_token' || data.reason === 'missing_token')){
-          toast('Their device has no push token yet — open Naluno APK once');
+          toast('No push token on their device — they must open Naluno APK once');
           stopRepeats = true;
         } else if(firstAttempt && data.error){
-          toast('Push error: ' + String(data.error).slice(0, 60));
+          toast('Push error: ' + String(data.error).slice(0, 70));
         } else if(firstAttempt && data.reason === 'all_failed'){
-          toast('Push rejected by FCM — check call-notify worker secrets');
+          toast('FCM rejected push — enable FCM API + check worker key');
         }
       }
     }catch(e){
@@ -1134,6 +1153,7 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
     sendOnce();
   }, 8000);
 }
+
 
 async function startRealCall(c){
   // Definitive reset before every outbound call — long calls leave dead tracks,
