@@ -92,6 +92,9 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
   });
   const full = { id: ref.id, ...doc };
   myBroadcasts = [full, ...myBroadcasts.filter(x => x.id !== ref.id)];
+  // Optimistic plate update — don't wait for onSnapshot (avoids "must refresh")
+  feedBroadcasts = [full, ...feedBroadcasts.filter(x => x.id !== ref.id)].slice(0, 80);
+  if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
   return full;
 }
 
@@ -147,22 +150,36 @@ function applyBroadcastDocsToFeed(docs){
 function startFeedBroadcastsListener(){
   if(!fbDb || !currentUser) return;
   if(feedBroadcastsUnsub) return;
+  function attach(query){
+    return query.onSnapshot(
+      snap => { applyBroadcastDocsToFeed(snap.docs); },
+      err => {
+        console.warn('[bcast] feed listener', err && err.message);
+        // Missing index or rules — fall back once
+        if(feedBroadcastsUnsub){
+          try{ feedBroadcastsUnsub(); }catch(_){}
+          feedBroadcastsUnsub = null;
+        }
+        if(!startFeedBroadcastsListener._fellBack){
+          startFeedBroadcastsListener._fellBack = true;
+          try{
+            feedBroadcastsUnsub = attach(fbDb.collection('broadcasts').limit(80));
+          }catch(e2){ console.warn('[bcast] feed fallback failed', e2); }
+        }
+      }
+    );
+  }
   try{
-    feedBroadcastsUnsub = fbDb.collection('broadcasts')
-      .orderBy('createdAt', 'desc')
-      .limit(80)
-      .onSnapshot(snap => {
-        applyBroadcastDocsToFeed(snap.docs);
-      }, err => {
-        console.warn('[bcast] feed listener', err);
-        // Fallback without orderBy index
-        try{
-          feedBroadcastsUnsub = fbDb.collection('broadcasts').limit(80).onSnapshot(snap => {
-            applyBroadcastDocsToFeed(snap.docs);
-          }, ()=>{});
-        }catch(_){}
-      });
-  }catch(e){ console.warn('[bcast] start feed listener', e); }
+    feedBroadcastsUnsub = attach(
+      fbDb.collection('broadcasts').orderBy('createdAt', 'desc').limit(80)
+    );
+  }catch(e){
+    console.warn('[bcast] start feed listener', e);
+    try{
+      startFeedBroadcastsListener._fellBack = true;
+      feedBroadcastsUnsub = attach(fbDb.collection('broadcasts').limit(80));
+    }catch(_){}
+  }
 }
 
 function startMyBroadcastsListener(){
@@ -201,8 +218,13 @@ async function loadFeedBroadcasts(){
     }catch(_){}
   }
   list.sort((a,b) => (b.live ? 1 : 0) - (a.live ? 1 : 0) || (b.updatedAt||b.createdAt||0) - (a.updatedAt||a.createdAt||0));
-  // Merge with listener data if listener already filled
-  if(!feedBroadcasts.length) feedBroadcasts = list.slice(0, 60);
+  // Union with anything the realtime listener already delivered
+  const byId = {};
+  (feedBroadcasts || []).forEach(b => { byId[b.id] = b; });
+  list.forEach(b => { byId[b.id] = b; });
+  feedBroadcasts = Object.keys(byId).map(k => byId[k])
+    .sort((a,b) => (b.live ? 1 : 0) - (a.live ? 1 : 0) || (b.updatedAt||b.createdAt||0) - (a.updatedAt||a.createdAt||0))
+    .slice(0, 80);
   if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
 }
 

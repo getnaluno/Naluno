@@ -1171,13 +1171,20 @@ function renderBandLiveGrid(){
 function enableBandLiveCamera(){
   if(bandLiveLocalStream){ stopBandLiveCamera(); return; }
   if(!amTunedIn){ toast('Tune in first'); return; }
-  navigator.mediaDevices.getUserMedia({
+  const liveConstraints = {
     video: { facingMode: 'user', width: { ideal: 720 }, height: { ideal: 1280 }, aspectRatio: { ideal: 9/16 } },
     audio: {
       echoCancellation: true,
       noiseSuppression: true,
       autoGainControl: true,
     },
+  };
+  navigator.mediaDevices.getUserMedia(liveConstraints).catch(function(){
+    // Mic denied/unavailable — still go live with video so others see you
+    return navigator.mediaDevices.getUserMedia({
+      video: liveConstraints.video,
+      audio: false,
+    });
   }).then(stream=>{
     bandLiveLocalStream = stream;
     // Single view: grid tile only (no second floating camera)
@@ -1410,6 +1417,7 @@ async function bandLiveMeshSync(liveOthers){
     if(!others.find(m=>m.uid===uid)){
       try{ bandMeshPcs[uid].close(); }catch(_){}
       delete bandMeshPcs[uid];
+      try{ delete bandMeshRemoteStreams[uid]; }catch(_){}
     }
   });
 

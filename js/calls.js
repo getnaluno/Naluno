@@ -506,27 +506,41 @@ function bindRemoteVideoElement(stream, forceRebind){
     videoEl.muted = true; // autoplay policy; unmute after play + frames
   }catch(_){}
 
-  // Re-assign when forced (new video track on existing stream) — required on some WebViews
-  if(forceRebind || videoEl.srcObject !== stream){
+  // Re-assign when stream object changes, or when a NEW video track appeared.
+  // Avoid nulling srcObject if the same stream is already playing (causes black gap).
+  if(videoEl.srcObject !== stream){
     try{
-      if(forceRebind && videoEl.srcObject){
-        try{ videoEl.srcObject = null; }catch(_){}
-      }
       videoEl.srcObject = stream;
     }catch(e){
       console.warn('[call] srcObject failed', e);
       return;
     }
+  } else if(forceRebind){
+    // Same MediaStream, new track — rebind without prolonged null if possible
+    try{
+      const wasPlaying = !videoEl.paused;
+      videoEl.srcObject = null;
+      videoEl.srcObject = stream;
+      if(wasPlaying){
+        const p = videoEl.play();
+        if(p && p.catch) p.catch(function(){});
+      }
+    }catch(e){
+      console.warn('[call] force rebind failed', e);
+    }
   }
 
-  // Always start hidden — promote only when frames exist
-  videoEl.style.display = 'none';
+  // Hide only on fresh bind; do not hide if already showing live video
+  if(videoEl.style.display !== 'block' || videoEl.paused){
+    videoEl.style.display = 'none';
+  }
 
   const promoteIfReady = function(){
     try{
-      if(videoEl.videoWidth > 0 && videoEl.videoHeight > 0 && !videoEl.paused){
+      // Match showRemoteVideo: playing is enough. videoWidth gate caused 12s delay.
+      if(!videoEl.paused && videoEl.srcObject){
         showRemoteVideo();
-      } else {
+      } else if(videoEl.paused){
         showRemoteAvatar();
       }
     }catch(_){}
@@ -998,7 +1012,7 @@ function endActiveCall(reason){
     return; // nothing to end
   }
   clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
-  if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
+  if(notifyRepeatInterval){ try{ clearInterval(notifyRepeatInterval); }catch(_){} try{ clearTimeout(notifyRepeatInterval); }catch(_){} notifyRepeatInterval = null; }
   stopCallerTone();
   stopRingtone();
   if(callId && fbDb){
@@ -1022,6 +1036,17 @@ function endActiveCall(reason){
   if(wasInCall || wasRinging || wasIncoming){
     toast(reason === 'remote' ? 'Call ended' : 'Call ended');
   }
+  // Full return-to-normal: media toggles + PC leftovers so the next call is clean
+  try{
+    if(typeof camOn !== 'undefined') camOn = true;
+    if(typeof micOn !== 'undefined') micOn = true;
+    if($('camBtn')) $('camBtn').classList.remove('active');
+    if($('micBtn')) $('micBtn').classList.remove('active');
+    if($('toggleCam')) $('toggleCam').classList.remove('off');
+    if($('toggleMic')) $('toggleMic').classList.remove('off');
+    if($('localPip')) $('localPip').classList.remove('muted');
+  }catch(_){}
+  try{ stopRemotePlayWatch(); }catch(_){}
   restoreUiAfterCall();
   // Re-show publish chip if background job still running
   try{
@@ -1332,7 +1357,7 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
         if(firstAttempt){
           console.info('[call] push token stale or missing — in-app ring if Naluno is open');
         }
-        if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
+        if(notifyRepeatInterval){ try{ clearInterval(notifyRepeatInterval); }catch(_){} try{ clearTimeout(notifyRepeatInterval); }catch(_){} notifyRepeatInterval = null; }
         stopRepeats = true;
       } else if(!res.ok){
         if(firstAttempt) console.warn('[call] push wake failed', res.status, data);
@@ -1356,20 +1381,29 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
   let stopRepeats = false;
   sendOnce();
   if(notifyRepeatInterval) clearInterval(notifyRepeatInterval);
-  let repeats = 0;
-  notifyRepeatInterval = setInterval(()=>{
-    if(stopRepeats){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; return; }
-    repeats++;
-    if(repeats >= 3){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; return; }
-    sendOnce();
-  }, 8000);
+  // Aggressive wake attempts: 0s (above), then 2s, 6s, 14s — covers slow FCM + retries
+  const delays = [2000, 6000, 14000];
+  let attempt = 0;
+  function scheduleNext(){
+    if(stopRepeats || attempt >= delays.length){
+      if(notifyRepeatInterval){ clearTimeout(notifyRepeatInterval); notifyRepeatInterval = null; }
+      return;
+    }
+    notifyRepeatInterval = setTimeout(function(){
+      attempt++;
+      if(stopRepeats) return;
+      sendOnce();
+      scheduleNext();
+    }, delays[attempt]);
+  }
+  scheduleNext();
 }
 
 
 async function startRealCall(c){
   // Definitive reset before every outbound call — long calls leave dead tracks,
   // half-closed PCs, and stuck flags that break the next dial to the same person.
-  if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
+  if(notifyRepeatInterval){ try{ clearInterval(notifyRepeatInterval); }catch(_){} try{ clearTimeout(notifyRepeatInterval); }catch(_){} notifyRepeatInterval = null; }
   clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
   stopCallerTone();
   stopRingtone();
@@ -1444,7 +1478,7 @@ async function startRealCall(c){
       const notInCall = !$('incall') || !$('incall').classList.contains('active');
       if(onRing || onLobby || notInCall){
         clearTimeout(ringTimeoutHandle);
-        if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
+        if(notifyRepeatInterval){ try{ clearInterval(notifyRepeatInterval); }catch(_){} try{ clearTimeout(notifyRepeatInterval); }catch(_){} notifyRepeatInterval = null; }
         try{ stopCallerTone(); }catch(_){}
         try{ stopRingtone(); }catch(_){}
         if(notInCall || onRing || onLobby) startInCall();
@@ -1462,7 +1496,7 @@ async function startRealCall(c){
     if(d.status === 'declined'){
       toast(c.name.split(' ')[0] + ' declined');
       clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
-      if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
+      if(notifyRepeatInterval){ try{ clearInterval(notifyRepeatInterval); }catch(_){} try{ clearTimeout(notifyRepeatInterval); }catch(_){} notifyRepeatInterval = null; }
       stopCallerTone();
       stopRingtone();
       teardownCallConnection();
@@ -1475,7 +1509,7 @@ async function startRealCall(c){
     // React to remote hangup even if we're mid-transition (not only when incall is active).
     if(d.status === 'ended' && $('callOverlay').classList.contains('active')){
       clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
-      if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
+      if(notifyRepeatInterval){ try{ clearInterval(notifyRepeatInterval); }catch(_){} try{ clearTimeout(notifyRepeatInterval); }catch(_){} notifyRepeatInterval = null; }
       stopCallerTone();
       stopRingtone();
       teardownCallConnection();
@@ -1518,7 +1552,7 @@ function armRingTimeout(contactId){
 function showAsyncFallback(contactId, reason){
   const c = contacts.find(x=>x.id===contactId); if(!c) return;
   clearTimeout(ringTimeoutHandle);
-  if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
+  if(notifyRepeatInterval){ try{ clearInterval(notifyRepeatInterval); }catch(_){} try{ clearTimeout(notifyRepeatInterval); }catch(_){} notifyRepeatInterval = null; }
   currentCallContactId = contactId;
   $('asyncAvatar').style.background = c.color; $('asyncAvatar').textContent = c.initials;
   $('asyncName').textContent = c.name;
@@ -1579,7 +1613,7 @@ $('asyncCancelBtn').onclick = closeCallOverlayAndStopCamera;
 function closeCallOverlayAndStopCamera(){
   /* used for cancel from lobby / failed start — restore previous screen */
   clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
-  if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
+  if(notifyRepeatInterval){ try{ clearInterval(notifyRepeatInterval); }catch(_){} try{ clearTimeout(notifyRepeatInterval); }catch(_){} notifyRepeatInterval = null; }
   stopCallerTone();
   stopRingtone();
   teardownCallConnection();
@@ -1703,7 +1737,7 @@ $('acceptIncoming').onclick = async ()=>{
       const d = snap.data();
       if(d && d.status === 'ended' && $('callOverlay').classList.contains('active')){
         clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
-        if(notifyRepeatInterval){ clearInterval(notifyRepeatInterval); notifyRepeatInterval = null; }
+        if(notifyRepeatInterval){ try{ clearInterval(notifyRepeatInterval); }catch(_){} try{ clearTimeout(notifyRepeatInterval); }catch(_){} notifyRepeatInterval = null; }
         stopCallerTone();
         stopRingtone();
         teardownCallConnection();
@@ -1750,6 +1784,10 @@ function startInCall(){
   bumpTodayActivity();
   // Avatar until frames; never flash play-button
   try{ showRemoteAvatar(); }catch(_){}
+  try{
+    if(typeof camOn !== 'undefined' && !camOn && typeof setCam === 'function') setCam(true);
+    if(typeof micOn !== 'undefined' && !micOn && typeof setMic === 'function') setMic(true);
+  }catch(_){}
   try{
     if(remoteCombinedStream && remoteCombinedStream.getTracks().length){
       bindRemoteVideoElement(remoteCombinedStream);
