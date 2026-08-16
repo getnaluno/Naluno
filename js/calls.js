@@ -477,11 +477,8 @@ function showRemoteVideo(){
   const videoEl = document.getElementById('remoteVideo');
   const ph = document.getElementById('remotePlaceholder');
   if(!videoEl) return;
-  // Hard gate: never show without decoded frames
-  if(!(videoEl.videoWidth > 0 && videoEl.videoHeight > 0)){
-    showRemoteAvatar();
-    return;
-  }
+  // Never show a paused video (Android play-logo). Frames optional for first paint —
+  // waiting on videoWidth caused 10–12s blank/avatar while CONNECTED.
   if(videoEl.paused){
     showRemoteAvatar();
     return;
@@ -490,7 +487,8 @@ function showRemoteVideo(){
     videoEl.muted = false;
     videoEl.volume = 1;
     videoEl.style.display = 'block';
-    videoEl.setAttribute('data-has-frames', '1');
+    if(videoEl.videoWidth > 0) videoEl.setAttribute('data-has-frames', '1');
+    else videoEl.removeAttribute('data-has-frames');
   }catch(_){}
   if(ph) ph.style.display = 'none';
 }
@@ -646,26 +644,22 @@ function renderRemoteMediaStage(){
     return;
   }
 
-  // Has video track
-  if(state.hasFrames && state.playing){
+  // Has video track — show as soon as element is playing (frames may lag 1–2 frames)
+  if(state.playing){
     showRemoteVideo();
     return;
   }
 
-  // Track present but no frames yet — avatar only, keep decoding
+  // Not playing yet — keep avatar, kick play immediately
   showRemoteAvatar();
   try{
-    if(videoEl.paused){
-      videoEl.muted = true;
-      const p = videoEl.play();
-      if(p && p.then){
-        p.then(function(){
-          try{ videoEl.muted = false; }catch(_){}
-          if(videoEl.videoWidth > 0) showRemoteVideo();
-        }).catch(function(){});
-      }
-    } else if(videoEl.videoWidth > 0){
-      showRemoteVideo();
+    videoEl.muted = true;
+    const p = videoEl.play();
+    if(p && p.then){
+      p.then(function(){
+        try{ videoEl.muted = false; }catch(_){}
+        showRemoteVideo();
+      }).catch(function(){});
     }
   }catch(_){}
 }
@@ -694,18 +688,17 @@ function startRemotePlayWatch(){
       }
 
       const state = getRemoteMediaState();
-      if(state.hasVideo && state.hasFrames && !el.paused){
+      if(state.hasVideo && !el.paused){
         showRemoteVideo();
-      } else if(state.hasVideo && !state.hasFrames){
+      } else if(state.hasVideo && el.paused){
         showRemoteAvatar();
-        if(el.paused){
-          try{
-            el.muted = true;
-            el.play().then(function(){
-              try{ el.muted = false; }catch(_){}
-            }).catch(function(){});
-          }catch(_){}
-        }
+        try{
+          el.muted = true;
+          el.play().then(function(){
+            try{ el.muted = false; }catch(_){}
+            showRemoteVideo();
+          }).catch(function(){});
+        }catch(_){}
       } else if(!state.hasVideo){
         showRemoteAvatar();
         if(state.hasAudio && el.paused){
@@ -889,7 +882,7 @@ function scheduleFilteredUpgrade(pc){
     upgradeCallVideoToFiltered().catch(function(e){
       console.warn('[call] filter upgrade', e);
     });
-  }, 1200);
+  }, 2500); // after first media is stable — avoid interrupting early frames
 }
 
 async function upgradeCallVideoToFiltered(){
@@ -1764,9 +1757,9 @@ function startInCall(){
     renderRemoteMediaStage();
     startRemotePlayWatch();
   }catch(_){}
-  setTimeout(function(){ try{ renderRemoteMediaStage(); }catch(_){} }, 200);
-  setTimeout(function(){ try{ renderRemoteMediaStage(); }catch(_){} }, 800);
-  setTimeout(function(){ try{ renderRemoteMediaStage(); }catch(_){} }, 2000);
+  setTimeout(function(){ try{ renderRemoteMediaStage(); }catch(_){} }, 50);
+  setTimeout(function(){ try{ renderRemoteMediaStage(); }catch(_){} }, 300);
+  setTimeout(function(){ try{ renderRemoteMediaStage(); }catch(_){} }, 900);
 }
 /* Cycles: normal (remote full + small local PiP) → large local PiP → swap (you full, them small) → normal */
 let incallViewMode = 0;

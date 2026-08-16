@@ -1131,6 +1131,12 @@ function renderBandLiveGrid(){
     if(float) float.style.display = 'none';
   }
   if(typeof bandLiveMeshSync === 'function') bandLiveMeshSync(liveOthers);
+  // Re-apply remote streams after DOM rebuild (ontrack often fires before tiles exist)
+  try{
+    Object.keys(bandMeshRemoteStreams || {}).forEach(function(uid){
+      if(typeof bandMeshAttachTile === 'function') bandMeshAttachTile(uid);
+    });
+  }catch(_){}
   // Expand arrow ON the camera tile (not in the corner of the whole room)
   const selfTile = stage.querySelector('[data-live-tile="self"]');
   if(false && selfTile && !selfTile.querySelector('.band-live-expand')){
@@ -1167,7 +1173,11 @@ function enableBandLiveCamera(){
   if(!amTunedIn){ toast('Tune in first'); return; }
   navigator.mediaDevices.getUserMedia({
     video: { facingMode: 'user', width: { ideal: 720 }, height: { ideal: 1280 }, aspectRatio: { ideal: 9/16 } },
-    audio: false,
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
   }).then(stream=>{
     bandLiveLocalStream = stream;
     // Single view: grid tile only (no second floating camera)
@@ -1346,6 +1356,7 @@ closeBandRoom = function(){
 
 /* ---- Band live mesh (TikTok-style multi-person): pair WebRTC for live members ---- */
 let bandMeshPcs = {}; // peerUid -> RTCPeerConnection
+let bandMeshRemoteStreams = {}; // peerUid -> MediaStream (survive grid re-renders)
 let bandMeshUnsubs = [];
 
 function bandMeshCleanup(){
@@ -1353,8 +1364,32 @@ function bandMeshCleanup(){
     try{ bandMeshPcs[uid].close(); }catch(_){}
   });
   bandMeshPcs = {};
+  bandMeshRemoteStreams = {};
   bandMeshUnsubs.forEach(u=>{ try{u();}catch(_){} });
   bandMeshUnsubs = [];
+}
+
+function bandMeshAttachTile(peerUid){
+  const stream = bandMeshRemoteStreams[peerUid];
+  if(!stream) return;
+  const tile = document.querySelector('[data-live-tile="'+peerUid+'"]');
+  if(!tile) return;
+  const v = tile.querySelector('video[data-remote-live]');
+  const av = tile.querySelector('.live-avatar');
+  if(v){
+    try{
+      if(v.srcObject !== stream) v.srcObject = stream;
+      v.style.display = 'block';
+      v.muted = false;
+      v.volume = 1;
+      v.playsInline = true;
+      const p = v.play();
+      if(p && p.catch) p.catch(function(){
+        try{ v.muted = true; v.play().then(function(){ setTimeout(function(){ v.muted = false; }, 200); }).catch(function(){}); }catch(_){}
+      });
+    }catch(_){}
+  }
+  if(av) av.style.display = 'none';
 }
 
 function bandMeshPairId(a, b){
@@ -1403,20 +1438,15 @@ async function bandMeshConnectPeer(bandId, peerUid, iAmOfferer){
     }catch(_){}
   }
 
-  const remote = new MediaStream();
+  const remote = bandMeshRemoteStreams[peerUid] || new MediaStream();
+  bandMeshRemoteStreams[peerUid] = remote;
   pc.ontrack = e=>{
-    remote.addTrack(e.track);
-    const tile = document.querySelector('[data-live-tile="'+peerUid+'"]');
-    if(tile){
-      const v = tile.querySelector('video[data-remote-live]');
-      const av = tile.querySelector('.live-avatar');
-      if(v){
-        v.style.display = 'block';
-        v.srcObject = remote;
-        v.play().catch(()=>{});
-      }
-      if(av) av.style.display = 'none';
-    }
+    try{ e.track.enabled = true; }catch(_){}
+    if(remote.getTracks().indexOf(e.track) === -1) remote.addTrack(e.track);
+    // Re-bind always — tile may not exist yet when first packet arrives
+    bandMeshAttachTile(peerUid);
+    setTimeout(function(){ bandMeshAttachTile(peerUid); }, 100);
+    setTimeout(function(){ bandMeshAttachTile(peerUid); }, 500);
   };
 
   const pairId = bandMeshPairId(currentUser.uid, peerUid);

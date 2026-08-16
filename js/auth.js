@@ -308,7 +308,7 @@ function loadRealProfile(user){
   startIncomingCallListener();
   startMissedCallListener();
   startBandInviteListener();
-  loadMySignal(); if(typeof loadFeedBroadcasts==='function') loadFeedBroadcasts();
+  loadMySignal(); if(typeof loadFeedBroadcasts==='function') loadFeedBroadcasts(); try{ if(typeof startFeedBroadcastsListener==='function') startFeedBroadcastsListener(); }catch(_){};
   maybeRefreshCallNotifToken();
   try{ if(typeof ensureCallPushReady === 'function') ensureCallPushReady(); }catch(_){}
   flushMessageQueue();

@@ -929,13 +929,17 @@ async function openBroadcastSpaceById(id){
       dataUrl: d.mediaType === 'photo' ? (d.mediaUrl || null) : null,
       mediaUrl: d.mediaUrl || null,
       videoUrl: d.mediaType === 'video' ? (d.mediaUrl || null) : null,
-      thumbDataUrl: d.thumbUrl || null,
+      thumbDataUrl: d.thumbUrl || d.thumb || null,
       text: d.mediaType === 'text' ? (d.description || d.title) : null,
       bg: 'linear-gradient(160deg,#1a1f2e,#0d1018)',
       filterCss: d.filterCss || '',
       caption: d.description || '',
       chapters: d.chapters || null,
     };
+    // Guarantee video type has a playable URL for hero
+    if(segment.type === 'video' && !segment.videoUrl && segment.mediaUrl){
+      segment.videoUrl = segment.mediaUrl;
+    }
     await openBroadcastSpace({
       isMine: !!(currentUser && d.creatorUid === currentUser.uid),
       broadcastId: id,
@@ -1185,8 +1189,18 @@ function playBroadcastChapter(index, userInitiated){
       }
     };
   } else {
+    try{ v.pause(); }catch(_){}
     v.src = url;
-    v.play().catch(()=>{});
+    v.load();
+    const kick = function(){
+      const p = v.play();
+      if(p && p.catch) p.catch(function(){
+        try{ v.muted = true; v.play().then(function(){ /* content visible */ }).catch(function(){}); }catch(_){}
+      });
+    };
+    if(v.readyState >= 2) kick();
+    else v.addEventListener('loadeddata', kick, { once: true });
+    setTimeout(kick, 300);
   }
   const bar = $('bspaceChapterBar');
   if(bar){

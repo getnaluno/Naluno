@@ -129,12 +129,66 @@ async function loadMyBroadcasts(){
   }
 }
 
+let feedBroadcastsUnsub = null;
+let myBroadcastsUnsub = null;
+
+function applyBroadcastDocsToFeed(docs){
+  const list = [];
+  docs.forEach(d => {
+    const data = d.data() || {};
+    if(!data.deleted) list.push({ id: d.id, ...data });
+  });
+  list.sort((a,b) => (b.live ? 1 : 0) - (a.live ? 1 : 0) || (b.updatedAt||b.createdAt||0) - (a.updatedAt||a.createdAt||0));
+  feedBroadcasts = list.slice(0, 80);
+  if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
+}
+
+/** Realtime plate list — no refresh required for new Broadcasts. */
+function startFeedBroadcastsListener(){
+  if(!fbDb || !currentUser) return;
+  if(feedBroadcastsUnsub) return;
+  try{
+    feedBroadcastsUnsub = fbDb.collection('broadcasts')
+      .orderBy('createdAt', 'desc')
+      .limit(80)
+      .onSnapshot(snap => {
+        applyBroadcastDocsToFeed(snap.docs);
+      }, err => {
+        console.warn('[bcast] feed listener', err);
+        // Fallback without orderBy index
+        try{
+          feedBroadcastsUnsub = fbDb.collection('broadcasts').limit(80).onSnapshot(snap => {
+            applyBroadcastDocsToFeed(snap.docs);
+          }, ()=>{});
+        }catch(_){}
+      });
+  }catch(e){ console.warn('[bcast] start feed listener', e); }
+}
+
+function startMyBroadcastsListener(){
+  if(!fbDb || !currentUser) return;
+  if(myBroadcastsUnsub) return;
+  try{
+    myBroadcastsUnsub = fbDb.collection('broadcasts')
+      .where('creatorUid', '==', currentUser.uid)
+      .onSnapshot(snap => {
+        myBroadcasts = snap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .filter(b => !b.deleted)
+          .sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
+        if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
+      }, err => console.warn('[bcast] my listener', err));
+  }catch(e){ console.warn('[bcast] my listener start', e); }
+}
+
 async function loadFeedBroadcasts(){
   if(!currentUser || !fbDb) return;
+  // Prefer live listener; still do one get for instant first paint
+  startFeedBroadcastsListener();
+  startMyBroadcastsListener();
   const uids = new Set([currentUser.uid]);
   (contacts || []).forEach(c => { if(c.isReal && c.firebaseUid) uids.add(c.firebaseUid); });
   const list = [];
-  // Firestore 'in' limit 10 — batch
   const arr = Array.from(uids);
   for(let i = 0; i < arr.length; i += 10){
     const chunk = arr.slice(i, i + 10);
@@ -147,7 +201,8 @@ async function loadFeedBroadcasts(){
     }catch(_){}
   }
   list.sort((a,b) => (b.live ? 1 : 0) - (a.live ? 1 : 0) || (b.updatedAt||b.createdAt||0) - (a.updatedAt||a.createdAt||0));
-  feedBroadcasts = list.slice(0, 60);
+  // Merge with listener data if listener already filled
+  if(!feedBroadcasts.length) feedBroadcasts = list.slice(0, 60);
   if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
 }
 
