@@ -703,3 +703,18 @@
 #incall .remote-stage video {
   object-fit: cover;
 }
+
+
+/* Remote media: avatar is the only fallback; never native play chrome */
+#incall .remote-stage #remoteVideo:not([data-has-frames="1"]) {
+  /* JS toggles display; this is a safety net if left visible without frames */
+}
+#incall .remote-placeholder {
+  z-index: 2;
+}
+#incall .remote-placeholder #remoteAvatar {
+  width: 96px !important;
+  height: 96px !important;
+  font-size: 32px !important;
+  border-radius: 50% !important;
+}

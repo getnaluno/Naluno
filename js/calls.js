@@ -415,49 +415,89 @@ let incomingCallUnsub = null;
 let remoteCombinedStream = null;
 let remotePlayTimer = null;
 let remotePlayWatch = null;
+let remoteFrameRaf = null;
 
-/** Inspect what we actually have from the remote peer. */
+/* ============================================================
+   REMOTE MEDIA — rewritten state machine (2026.08.16f)
+   Rules:
+   - Avatar is default while in-call until real video frames exist.
+   - A visible paused <video> draws Android WebView's big play logo — never allowed.
+   - Audio plays from the same MediaStream on the (possibly hidden) video element.
+   - Filters stay optional outbound replaceTrack after connect.
+   ============================================================ */
+
 function getRemoteMediaState(){
   const stream = remoteCombinedStream;
+  const videoEl = document.getElementById('remoteVideo');
   if(!stream){
-    return { hasAudio: false, hasVideo: false, videoLive: false, trackCount: 0 };
+    return {
+      hasAudio: false,
+      hasVideo: false,
+      videoLive: false,
+      trackCount: 0,
+      videoTrackCount: 0,
+      playing: false,
+      hasFrames: false,
+    };
   }
   const audioTracks = stream.getAudioTracks();
   const videoTracks = stream.getVideoTracks();
   const hasAudio = audioTracks.some(t => t.readyState === 'live');
-  // live + not ended; muted can mean "camera off temporarily" from peer
   const liveVideo = videoTracks.filter(t => t.readyState === 'live');
   const hasVideo = liveVideo.length > 0;
-  const videoLive = liveVideo.some(t => t.enabled !== false && t.muted !== true);
+  const videoLive = liveVideo.some(t => t.enabled !== false);
+  const playing = !!(videoEl && videoEl.srcObject && !videoEl.paused);
+  const hasFrames = !!(videoEl && videoEl.videoWidth > 0 && videoEl.videoHeight > 0);
   return {
     hasAudio,
     hasVideo,
     videoLive,
     trackCount: stream.getTracks().length,
     videoTrackCount: videoTracks.length,
+    playing,
+    hasFrames,
   };
 }
 
-/**
- * Single place that decides remote stage UI:
- * - video track live → try play <video>, hide avatar
- * - no video track / play failed / no frames → avatar placeholder (never a paused <video>)
- * A paused visible <video> is what draws the oversized WebView play button.
- */
-function renderRemoteMediaStage(){
+function showRemoteAvatar(){
+  const videoEl = document.getElementById('remoteVideo');
+  const ph = document.getElementById('remotePlaceholder');
+  if(videoEl){
+    videoEl.style.display = 'none';
+    try{ videoEl.removeAttribute('data-has-frames'); }catch(_){}
+  }
+  if(ph){
+    ph.style.display = 'flex';
+    ph.style.visibility = 'visible';
+    ph.style.opacity = '1';
+  }
+}
+
+function showRemoteVideo(){
   const videoEl = document.getElementById('remoteVideo');
   const ph = document.getElementById('remotePlaceholder');
   if(!videoEl) return;
-
-  const state = getRemoteMediaState();
-
-  // Always keep stream attached for audio even when video UI is hidden
-  if(remoteCombinedStream && remoteCombinedStream.getTracks().length){
-    if(videoEl.srcObject !== remoteCombinedStream){
-      try{ videoEl.srcObject = remoteCombinedStream; }catch(_){}
-    }
+  // Hard gate: never show without decoded frames
+  if(!(videoEl.videoWidth > 0 && videoEl.videoHeight > 0)){
+    showRemoteAvatar();
+    return;
   }
+  if(videoEl.paused){
+    showRemoteAvatar();
+    return;
+  }
+  try{
+    videoEl.muted = false;
+    videoEl.volume = 1;
+    videoEl.style.display = 'block';
+    videoEl.setAttribute('data-has-frames', '1');
+  }catch(_){}
+  if(ph) ph.style.display = 'none';
+}
 
+function bindRemoteVideoElement(stream, forceRebind){
+  const videoEl = document.getElementById('remoteVideo');
+  if(!videoEl || !stream) return;
   try{
     videoEl.removeAttribute('controls');
     videoEl.controls = false;
@@ -465,76 +505,171 @@ function renderRemoteMediaStage(){
     videoEl.setAttribute('webkit-playsinline', 'true');
     videoEl.playsInline = true;
     videoEl.autoplay = true;
+    videoEl.muted = true; // autoplay policy; unmute after play + frames
   }catch(_){}
 
-  // No video track at all → avatar only (audio may still play via hidden element)
-  if(!state.hasVideo){
+  // Re-assign when forced (new video track on existing stream) — required on some WebViews
+  if(forceRebind || videoEl.srcObject !== stream){
     try{
-      videoEl.style.display = 'none';
-      // Keep element playing for audio tracks if any
-      if(state.hasAudio){
-        videoEl.muted = false;
-        const p = videoEl.play();
-        if(p && p.catch) p.catch(function(){});
+      if(forceRebind && videoEl.srcObject){
+        try{ videoEl.srcObject = null; }catch(_){}
       }
-    }catch(_){}
-    if(ph) ph.style.display = 'flex';
-    return;
+      videoEl.srcObject = stream;
+    }catch(e){
+      console.warn('[call] srcObject failed', e);
+      return;
+    }
   }
 
-  // Has video track — attempt play; only show <video> after it is actually playing
+  // Always start hidden — promote only when frames exist
+  videoEl.style.display = 'none';
+
+  const promoteIfReady = function(){
+    try{
+      if(videoEl.videoWidth > 0 && videoEl.videoHeight > 0 && !videoEl.paused){
+        showRemoteVideo();
+      } else {
+        showRemoteAvatar();
+      }
+    }catch(_){}
+  };
+
   try{
-    videoEl.muted = true;
+    videoEl.onloadedmetadata = promoteIfReady;
+    videoEl.onloadeddata = promoteIfReady;
+    videoEl.onplaying = promoteIfReady;
+    videoEl.onresize = promoteIfReady;
+  }catch(_){}
+
+  // Decode path: play muted while hidden
+  try{
     const p = videoEl.play();
-    const showVideo = function(){
-      try{
-        videoEl.muted = false;
-        videoEl.volume = 1;
-        videoEl.style.display = 'block';
-        if(ph) ph.style.display = 'none';
-      }catch(_){}
-    };
-    const showAvatar = function(){
-      try{
-        videoEl.style.display = 'none';
-        if(ph) ph.style.display = 'flex';
-      }catch(_){}
-    };
     if(p && p.then){
       p.then(function(){
-        // Prefer frames; if still 0x0 shortly after play, keep trying but show video only if playing
-        if(!videoEl.paused){
-          showVideo();
-          // Unmute after play succeeds
-          try{ videoEl.muted = false; }catch(_){}
-        } else {
-          showAvatar();
-        }
-      }).catch(function(){
-        // Autoplay failed — do NOT leave a visible paused video (play button)
-        showAvatar();
-        // Still try muted play for audio
+        try{ videoEl.muted = false; }catch(_){}
+        promoteIfReady();
+        // requestVideoFrameCallback when available
+        try{
+          if(typeof videoEl.requestVideoFrameCallback === 'function'){
+            const onFrame = function(){
+              promoteIfReady();
+            };
+            videoEl.requestVideoFrameCallback(onFrame);
+          }
+        }catch(_){}
+      }).catch(function(err){
+        console.warn('[call] remote play failed', err && err.name);
+        showRemoteAvatar();
+        // Retry muted
         try{
           videoEl.muted = true;
           videoEl.play().then(function(){
-            if(state.videoLive && !videoEl.paused){
-              showVideo();
-              setTimeout(function(){ try{ videoEl.muted = false; }catch(_){} }, 200);
-            }
-          }).catch(function(){ showAvatar(); });
-        }catch(_){ showAvatar(); }
+            setTimeout(function(){
+              try{ videoEl.muted = false; }catch(_){}
+              promoteIfReady();
+            }, 200);
+          }).catch(function(){ showRemoteAvatar(); });
+        }catch(_){}
       });
-    } else {
-      if(!videoEl.paused) showVideo();
-      else showAvatar();
     }
   }catch(_){
-    if(ph) ph.style.display = 'flex';
-    try{ videoEl.style.display = 'none'; }catch(_){}
+    showRemoteAvatar();
   }
 }
 
-/** @deprecated name kept for call sites — routes to state renderer */
+function ingestRemoteTrack(track, streams){
+  if(!track) return;
+  if(!remoteCombinedStream) remoteCombinedStream = new MediaStream();
+
+  try{ track.enabled = true; }catch(_){}
+  try{ track.contentHint = track.kind === 'video' ? 'motion' : 'speech'; }catch(_){}
+
+  const liveVideoBefore = remoteCombinedStream.getVideoTracks().filter(function(t){
+    return t.readyState === 'live';
+  }).length;
+
+  // Prefer whole remote stream when browser supplies it
+  if(streams && streams[0]){
+    streams[0].getTracks().forEach(function(t){
+      if(remoteCombinedStream.getTracks().indexOf(t) === -1){
+        remoteCombinedStream.addTrack(t);
+      }
+    });
+  } else if(remoteCombinedStream.getTracks().indexOf(track) === -1){
+    remoteCombinedStream.addTrack(track);
+  }
+
+  const liveVideoAfter = remoteCombinedStream.getVideoTracks().filter(function(t){
+    return t.readyState === 'live';
+  }).length;
+  // New video track on an already-bound stream must rebind srcObject (Samsung/Chrome WebView)
+  const forceRebind = (track.kind === 'video') || (liveVideoAfter > liveVideoBefore);
+
+  try{
+    track.onmute = function(){ renderRemoteMediaStage(); };
+    track.onunmute = function(){ renderRemoteMediaStage(); };
+    track.onended = function(){ renderRemoteMediaStage(); };
+  }catch(_){}
+
+  bindRemoteVideoElement(remoteCombinedStream, forceRebind);
+  renderRemoteMediaStage();
+  startRemotePlayWatch();
+
+  if(track.kind === 'audio'){
+    try{ if(typeof ensureAudioContext === 'function') ensureAudioContext(); }catch(_){}
+  }
+  console.log('[call] remote media', getRemoteMediaState());
+}
+
+function renderRemoteMediaStage(){
+  const videoEl = document.getElementById('remoteVideo');
+  if(!videoEl) return;
+
+  const state = getRemoteMediaState();
+
+  if(remoteCombinedStream && remoteCombinedStream.getTracks().length){
+    if(videoEl.srcObject !== remoteCombinedStream){
+      bindRemoteVideoElement(remoteCombinedStream);
+    }
+  }
+
+  // No video track → avatar; keep audio playing if present
+  if(!state.hasVideo){
+    showRemoteAvatar();
+    if(state.hasAudio){
+      try{
+        videoEl.muted = false;
+        const p = videoEl.play();
+        if(p && p.catch) p.catch(function(){});
+      }catch(_){}
+    }
+    return;
+  }
+
+  // Has video track
+  if(state.hasFrames && state.playing){
+    showRemoteVideo();
+    return;
+  }
+
+  // Track present but no frames yet — avatar only, keep decoding
+  showRemoteAvatar();
+  try{
+    if(videoEl.paused){
+      videoEl.muted = true;
+      const p = videoEl.play();
+      if(p && p.then){
+        p.then(function(){
+          try{ videoEl.muted = false; }catch(_){}
+          if(videoEl.videoWidth > 0) showRemoteVideo();
+        }).catch(function(){});
+      }
+    } else if(videoEl.videoWidth > 0){
+      showRemoteVideo();
+    }
+  }catch(_){}
+}
+
 function ensureRemoteVideoPlaying(){
   renderRemoteMediaStage();
 }
@@ -545,56 +680,60 @@ function startRemotePlayWatch(){
     try{
       if(!activeCallId){ stopRemotePlayWatch(); return; }
       const el = document.getElementById('remoteVideo');
-      const state = getRemoteMediaState();
       if(!el) return;
 
-      // Re-attach stream if lost
       if(remoteCombinedStream && remoteCombinedStream.getTracks().length){
         if(el.srcObject !== remoteCombinedStream){
-          try{ el.srcObject = remoteCombinedStream; }catch(_){}
+          bindRemoteVideoElement(remoteCombinedStream);
         }
       }
 
-      if(state.hasVideo){
-        // If paused while we have a video track, retry play; if still paused, avatar
+      // Absolute rule: visible + paused = remove from screen (kills play logo)
+      if(el.style.display !== 'none' && el.paused){
+        showRemoteAvatar();
+      }
+
+      const state = getRemoteMediaState();
+      if(state.hasVideo && state.hasFrames && !el.paused){
+        showRemoteVideo();
+      } else if(state.hasVideo && !state.hasFrames){
+        showRemoteAvatar();
         if(el.paused){
-          renderRemoteMediaStage();
-        } else if(el.style.display === 'none'){
-          // Playing but hidden — show it
-          el.style.display = 'block';
-          const ph = document.getElementById('remotePlaceholder');
-          if(ph) ph.style.display = 'none';
+          try{
+            el.muted = true;
+            el.play().then(function(){
+              try{ el.muted = false; }catch(_){}
+            }).catch(function(){});
+          }catch(_){}
         }
-        // Live track, playing, but no frames yet — stay patient; don't flash play button
-        if(!el.paused && el.videoWidth === 0){
-          // leave as-is; black is better than play icon
-        }
-      } else {
-        // No video → force avatar, never visible paused video
-        el.style.display = 'none';
-        const ph = document.getElementById('remotePlaceholder');
-        if(ph) ph.style.display = 'flex';
+      } else if(!state.hasVideo){
+        showRemoteAvatar();
         if(state.hasAudio && el.paused){
-          el.muted = false;
-          const p = el.play();
-          if(p && p.catch) p.catch(function(){});
+          try{
+            el.muted = false;
+            el.play().catch(function(){});
+          }catch(_){}
         }
       }
     }catch(_){}
-  }, 800);
+  }, 500);
 }
+
 function stopRemotePlayWatch(){
   if(remotePlayWatch){ clearInterval(remotePlayWatch); remotePlayWatch = null; }
+  if(remotePlayTimer){ clearTimeout(remotePlayTimer); remotePlayTimer = null; }
+  if(remoteFrameRaf){ try{ cancelAnimationFrame(remoteFrameRaf); }catch(_){} remoteFrameRaf = null; }
 }
 
 async function ensureCallMediaReady(){
   const hasA = stream && stream.getAudioTracks().some(t => t.readyState === 'live');
   const hasV = stream && stream.getVideoTracks().some(t => t.readyState === 'live');
   if(hasA && hasV){
-    // Fast path — do not re-negotiate camera (keeps answer quick)
     try{
       stream.getAudioTracks().forEach(t => { t.enabled = true; });
-      stream.getVideoTracks().forEach(t => { t.enabled = (typeof camOn === 'undefined') ? true : !!camOn; });
+      stream.getVideoTracks().forEach(t => {
+        t.enabled = (typeof camOn === 'undefined') ? true : !!camOn;
+      });
     }catch(_){}
     return true;
   }
@@ -618,77 +757,60 @@ async function ensureCallMediaReady(){
   if(!okV){
     try{
       const v = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: (typeof cameraFacingMode!=='undefined'?cameraFacingMode:'user') }, width:{ideal:1280}, height:{ideal:720} },
+        video: {
+          facingMode: { ideal: (typeof cameraFacingMode !== 'undefined' ? cameraFacingMode : 'user') },
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
         audio: false
       });
       if(!stream) stream = v;
       else v.getVideoTracks().forEach(t => stream.addTrack(t));
       okV = true;
-      ['camRawVideo','pipRawVideo','sendRawVideo','incomingSelfVideo'].forEach(id=>{
+      ['camRawVideo','pipRawVideo','sendRawVideo','incomingSelfVideo'].forEach(function(id){
         const el = $(id);
-        if(el && stream){ el.srcObject = stream; el.play && el.play().catch(()=>{}); }
+        if(el && stream){ el.srcObject = stream; if(el.play) el.play().catch(function(){}); }
       });
     }catch(e){ console.warn('[call] video reopen failed', e); }
   }
-  return !!(stream && stream.getAudioTracks().some(t=>t.readyState==='live') && stream.getVideoTracks().some(t=>t.readyState==='live'));
+  return !!(stream && stream.getAudioTracks().some(t => t.readyState === 'live') &&
+            stream.getVideoTracks().some(t => t.readyState === 'live'));
 }
 
 async function createPeerConnection(){
-  try{ if(typeof metricStart === 'function') window._callMediaMetric = metricStart('call_time_to_media'); }catch(_){}
+  try{
+    if(typeof metricStart === 'function') window._callMediaMetric = metricStart('call_time_to_media');
+  }catch(_){}
+  try{ resetCallFilterState(); }catch(_){}
+  try{ stopRemotePlayWatch(); }catch(_){}
   const ice = await getIceServers();
   const pc = new RTCPeerConnection(ice);
   remoteCombinedStream = new MediaStream();
-  pc.ontrack = e=>{
-    console.log('[call] ontrack —', e.track.kind, e.track.readyState, 'streams:', (e.streams||[]).length);
+
+  pc.ontrack = function(e){
+    console.log('[call] ontrack', e.track && e.track.kind, e.track && e.track.readyState,
+      'streams', (e.streams && e.streams.length) || 0);
     try{
-      if(e.track.kind === 'video' && typeof metricEnd === 'function' && window._callMediaMetric){
+      if(e.track && e.track.kind === 'video' && typeof metricEnd === 'function' && window._callMediaMetric){
         metricEnd(window._callMediaMetric, true, { kind: 'video' });
         window._callMediaMetric = null;
       }
-      if(typeof trackMetric === 'function') trackMetric('call_ontrack', { kind: e.track.kind });
+      if(typeof trackMetric === 'function') trackMetric('call_ontrack', { kind: e.track && e.track.kind });
     }catch(_){}
-    try{ e.track.enabled = true; }catch(_){}
-    try{ e.track.contentHint = e.track.kind === 'video' ? 'motion' : 'speech'; }catch(_){}
-    // Prefer stream from event when present (more reliable on some browsers)
-    if(e.streams && e.streams[0]){
-      e.streams[0].getTracks().forEach(t=>{
-        if(!remoteCombinedStream.getTracks().includes(t)) remoteCombinedStream.addTrack(t);
-      });
-    } else if(!remoteCombinedStream.getTracks().includes(e.track)){
-      remoteCombinedStream.addTrack(e.track);
-    }
-    const videoEl = $('remoteVideo');
-    if(videoEl){
-      if(videoEl.srcObject !== remoteCombinedStream) videoEl.srcObject = remoteCombinedStream;
-      videoEl.playsInline = true;
-      videoEl.autoplay = true;
-      videoEl.controls = false;
-    }
-    // Track lifecycle → re-evaluate avatar vs video (never leave paused <video> visible)
-    try{
-      e.track.onmute = function(){ try{ renderRemoteMediaStage(); }catch(_){} };
-      e.track.onunmute = function(){ try{ renderRemoteMediaStage(); }catch(_){} };
-      e.track.onended = function(){ try{ renderRemoteMediaStage(); }catch(_){} };
-    }catch(_){}
-    if(remotePlayTimer) clearTimeout(remotePlayTimer);
-    remotePlayTimer = setTimeout(function(){ renderRemoteMediaStage(); }, 30);
-    try{ startRemotePlayWatch(); }catch(_){}
-    if(e.track.kind === 'audio'){
-      try{ if(typeof ensureAudioContext === 'function') ensureAudioContext(); }catch(_){}
-    }
-    console.log('[call] remote media state', getRemoteMediaState());
+    ingestRemoteTrack(e.track, e.streams);
   };
-  pc.onicegatheringstatechange = ()=> console.log('[call] ICE gathering:', pc.iceGatheringState);
-  // connectionstate + filter schedule live in attachConnectionWatchdogs (single handler)
+
+  pc.onicegatheringstatechange = function(){
+    console.log('[call] ICE gathering:', pc.iceGatheringState);
+  };
+
   attachConnectionWatchdogs(pc);
 
-  // addTrack alone creates sendrecv m-lines. Do NOT also addTransceiver of same kind
-  // (that doubles m-lines and often yields silent/black calls).
+  // Local tracks: addTrack only (sendrecv). No duplicate transceivers.
   if(stream){
     await attachLocalTracksToPc(pc);
   } else {
-    console.warn('[call] createPeerConnection with no local stream');
-    // Last resort empty recv so we can still receive if remote sends
+    console.warn('[call] createPeerConnection with no local stream — recvonly fallback');
     try{
       pc.addTransceiver('audio', { direction: 'recvonly' });
       pc.addTransceiver('video', { direction: 'recvonly' });
@@ -703,7 +825,13 @@ async function attachLocalTracksToPc(pc){
   const videoTracks = stream.getVideoTracks().filter(t => t.readyState === 'live');
   console.log('[call] local live tracks a/v', audioTracks.length, videoTracks.length);
 
-  if(audioTracks[0]){
+  // Avoid double-adding if called twice
+  const existing = pc.getSenders().map(s => s.track).filter(Boolean);
+  const hasKind = function(kind){
+    return existing.some(t => t.kind === kind && t.readyState === 'live');
+  };
+
+  if(audioTracks[0] && !hasKind('audio')){
     const t = audioTracks[0];
     try{
       t.enabled = true;
@@ -713,116 +841,101 @@ async function attachLocalTracksToPc(pc){
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
-        }).catch(()=>{});
+        }).catch(function(){});
       }
     }catch(_){}
     pc.addTrack(t, stream);
-  } else {
-    console.warn('[call] NO audio track to send');
   }
-  if(videoTracks[0]){
+
+  if(videoTracks[0] && !hasKind('video')){
     const t = videoTracks[0];
     try{
-      t.enabled = (typeof camOn === 'undefined') ? true : !!camOn;
+      t.enabled = true;
       t.contentHint = 'motion';
     }catch(_){}
+    _callRawVideoTrack = t;
     pc.addTrack(t, stream);
-  } else {
-    console.warn('[call] NO video track to send');
+  } else if(videoTracks[0]){
+    _callRawVideoTrack = videoTracks[0];
   }
-  console.log('[call] senders', pc.getSenders().map(s=>({kind:s.track&&s.track.kind, state:s.track&&s.track.readyState})));
+
+  if(!audioTracks[0]) console.warn('[call] no local audio track');
+  if(!videoTracks[0]) console.warn('[call] no local video track');
 }
 
-/* ---- Outbound filters (safe): raw A/V first, then sendCanvas replaceTrack ----
-   sendCanvas is painted every frame with compositeFrame (same filters you see).
-   We never touch audio. If anything fails, the original camera track stays. */
+/* ---- Outbound filters (safe): raw A/V first, then sendCanvas replaceTrack ---- */
 let _callFilterPc = null;
 let _callFilterSender = null;
 let _callRawVideoTrack = null;
 let _callFilterTrack = null;
-let _callFilterUpgradeTimer = null;
 let _callFilterUpgraded = false;
+let _callFilterUpgradeTimer = null;
 
 function callWantsOutboundFilter(){
   try{
-    if(typeof greenroomEnabled !== 'undefined' && !greenroomEnabled) return false;
-    const fid = (typeof selectedFilterId !== 'undefined') ? selectedFilterId : 'original';
-    const bid = (typeof selectedBackgroundId !== 'undefined') ? selectedBackgroundId : 'none';
-    return (fid && fid !== 'original') || (bid && bid !== 'none');
+    if(typeof currentFilter === 'undefined' || !currentFilter) return false;
+    if(currentFilter === 'none' || currentFilter === 'original') return false;
+    return true;
   }catch(_){ return false; }
 }
 
 function scheduleFilteredUpgrade(pc){
-  if(!pc) return;
+  if(!pc || _callFilterUpgraded) return;
+  if(!callWantsOutboundFilter()) return;
   _callFilterPc = pc;
-  const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-  if(!sender) return;
-  _callFilterSender = sender;
-  // Remember the real camera track for safe rollback
-  if(sender.track && sender.track.readyState === 'live' && !sender.track.label.includes('canvas')){
-    _callRawVideoTrack = sender.track;
-  } else if(stream){
-    const vt = stream.getVideoTracks().find(t => t.readyState === 'live');
-    if(vt) _callRawVideoTrack = vt;
-  }
   if(_callFilterUpgradeTimer) clearTimeout(_callFilterUpgradeTimer);
-  // Short delay so ICE + first frames settle; answer path stays untouched
-  _callFilterUpgradeTimer = setTimeout(()=>{
-    upgradeCallVideoToFiltered().catch(e => console.warn('[call] filter upgrade', e));
-  }, 350);
+  // Delay so first media is raw/fast; then upgrade if filter active
+  _callFilterUpgradeTimer = setTimeout(function(){
+    upgradeCallVideoToFiltered().catch(function(e){
+      console.warn('[call] filter upgrade', e);
+    });
+  }, 1200);
 }
 
 async function upgradeCallVideoToFiltered(){
-  const pc = _callFilterPc;
-  const videoSender = _callFilterSender;
-  if(!pc || !videoSender) return;
-  if(pc.connectionState !== 'connected' && pc.iceConnectionState !== 'connected' && pc.iceConnectionState !== 'completed') return;
-  if(_callFilterUpgraded && callWantsOutboundFilter()) return; // already on filter
+  if(_callFilterUpgraded) return;
+  const pc = _callFilterPc || peerConnection;
+  if(!pc) return;
+  if(!callWantsOutboundFilter()) return;
 
-  if(!callWantsOutboundFilter()){
-    if(_callRawVideoTrack && _callRawVideoTrack.readyState === 'live' && videoSender.track !== _callRawVideoTrack){
-      try{ await videoSender.replaceTrack(_callRawVideoTrack); _callFilterUpgraded = false; }catch(_){}
-    }
-    return;
-  }
-
+  // Find video sender
+  let videoSender = null;
   try{
-    const srv = $('sendRawVideo');
-    if(srv && stream){
-      if(srv.srcObject !== stream) srv.srcObject = stream;
-      try{ await srv.play(); }catch(_){}
+    videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+  }catch(_){}
+  if(!videoSender) return;
+  _callFilterSender = videoSender;
+
+  // Prefer existing call filter canvas path from camera module
+  const canvas = document.getElementById('sendCanvas');
+  if(!canvas || typeof canvas.captureStream !== 'function') return;
+
+  // Ensure filter pipeline is drawing
+  try{
+    if(typeof startCamView === 'function'){
+      // keep pip drawing; filter canvas used for outbound
     }
   }catch(_){}
 
-  const canvas = $('sendCanvas');
-  if(!canvas || typeof canvas.captureStream !== 'function') return;
-  try{ if(typeof drawSendCanvas === 'function') drawSendCanvas(); }catch(_){}
-  if(canvas.width < 16 || canvas.height < 16){
-    // one soft retry next frame only — never a long loop on answer path
-    requestAnimationFrame(()=>{
-      try{ if(typeof drawSendCanvas === 'function') drawSendCanvas(); }catch(_){}
-      if(canvas.width >= 16) upgradeCallVideoToFiltered().catch(()=>{});
-    });
-    return;
-  }
-
-  let fxStream;
+  let fxStream = null;
   try{ fxStream = canvas.captureStream(30); }catch(e){
-    console.warn('[call] captureStream failed', e);
+    console.warn('[call] captureStream', e);
     return;
   }
   const vTrack = fxStream.getVideoTracks().find(t => t.readyState === 'live');
   if(!vTrack) return;
-  try{ vTrack.contentHint = 'motion'; }catch(_){}
 
   try{
+    if(!_callRawVideoTrack && videoSender.track) _callRawVideoTrack = videoSender.track;
     await videoSender.replaceTrack(vTrack);
     _callFilterTrack = vTrack;
     _callFilterUpgraded = true;
     console.log('[call] outbound → filtered', canvas.width + 'x' + canvas.height);
-    vTrack.onended = ()=>{
+
+    // If filter canvas dies, fall back to raw camera
+    vTrack.onended = function(){
       if(_callRawVideoTrack && _callRawVideoTrack.readyState === 'live' && _callFilterSender){
-        _callFilterSender.replaceTrack(_callRawVideoTrack).catch(()=>{});
+        _callFilterSender.replaceTrack(_callRawVideoTrack).catch(function(){});
         _callFilterUpgraded = false;
       }
     };
@@ -835,7 +948,7 @@ function refreshOutboundFilterIfInCall(){
   try{
     if(!_callFilterPc || _callFilterPc.connectionState !== 'connected') return;
     if(!_callFilterSender) return;
-    upgradeCallVideoToFiltered().catch(()=>{});
+    upgradeCallVideoToFiltered().catch(function(){});
   }catch(_){}
 }
 
@@ -850,6 +963,7 @@ function resetCallFilterState(){
 }
 
 function teardownCallConnection(){
+  try{ stopRemotePlayWatch(); }catch(_){}
   try{ resetCallFilterState(); }catch(_){}
   if(activeCallDocUnsub){ activeCallDocUnsub(); activeCallDocUnsub = null; }
   if(callerCandidatesUnsub){ callerCandidatesUnsub(); callerCandidatesUnsub = null; }
@@ -1293,7 +1407,9 @@ async function startRealCall(c){
   // Re-enable tracks in case a previous call muted them.
   try{
     stream.getAudioTracks().forEach(t => { t.enabled = true; });
-    stream.getVideoTracks().forEach(t => { t.enabled = camOn; });
+    // Always send video on a fresh call; in-call cam button can disable later
+    stream.getVideoTracks().forEach(t => { t.enabled = true; });
+    if(typeof camOn !== 'undefined') camOn = true;
   }catch(e){}
   remoteDescriptionSet = false;
   pendingRemoteCandidates = [];
@@ -1625,14 +1741,13 @@ function startInCall(){
   stopCallerTone();
   stopRingtone();
   showCallScreen('incall');
-  // Reset view mode at the start of every call.
   $('incall').classList.remove('swap-focus');
   if($('localPip')) $('localPip').classList.remove('large');
   if(typeof resetPipLayoutStyles === 'function') resetPipLayoutStyles();
   if(stream) startCamView('pip');
   callSeconds = 0; $('callTimer').textContent = '00:00';
   clearInterval(callInterval);
-  callInterval = setInterval(()=>{
+  callInterval = setInterval(function(){
     callSeconds++;
     const m = String(Math.floor(callSeconds/60)).padStart(2,'0');
     const s = String(callSeconds%60).padStart(2,'0');
@@ -1640,14 +1755,18 @@ function startInCall(){
   }, 1000);
   if(currentCallContactId) bumpContactActivity(currentCallContactId);
   bumpTodayActivity();
-  // Media state machine: video only if track exists; else avatar (no play-button)
+  // Avatar until frames; never flash play-button
+  try{ showRemoteAvatar(); }catch(_){}
   try{
+    if(remoteCombinedStream && remoteCombinedStream.getTracks().length){
+      bindRemoteVideoElement(remoteCombinedStream);
+    }
     renderRemoteMediaStage();
     startRemotePlayWatch();
   }catch(_){}
-  setTimeout(function(){ try{ renderRemoteMediaStage(); }catch(_){} }, 100);
-  setTimeout(function(){ try{ renderRemoteMediaStage(); }catch(_){} }, 500);
-  setTimeout(function(){ try{ renderRemoteMediaStage(); }catch(_){} }, 1500);
+  setTimeout(function(){ try{ renderRemoteMediaStage(); }catch(_){} }, 200);
+  setTimeout(function(){ try{ renderRemoteMediaStage(); }catch(_){} }, 800);
+  setTimeout(function(){ try{ renderRemoteMediaStage(); }catch(_){} }, 2000);
 }
 /* Cycles: normal (remote full + small local PiP) → large local PiP → swap (you full, them small) → normal */
 let incallViewMode = 0;
