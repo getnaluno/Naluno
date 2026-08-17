@@ -117,9 +117,9 @@ public class CallMessagingService extends FirebaseMessagingService {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
     NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
     if (nm == null) return;
-    // Recreate so importance / sound / bypass-DND updates apply after upgrades.
-    nm.deleteNotificationChannel(CHANNEL_ID);
-
+    if (nm.getNotificationChannel(CHANNEL_ID) != null) {
+      return;
+    }
     NotificationChannel channel = new NotificationChannel(
       CHANNEL_ID,
       "Incoming calls",
@@ -153,8 +153,9 @@ public class CallMessagingService extends FirebaseMessagingService {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
       flags |= PendingIntent.FLAG_IMMUTABLE;
     }
-    PendingIntent fullScreenPi = PendingIntent.getActivity(this, 0, fullScreen, flags);
-    PendingIntent contentPi = PendingIntent.getActivity(this, 1, fullScreen, flags);
+    int req = (callId != null ? callId.hashCode() : 0) & 0x7fffffff;
+    PendingIntent fullScreenPi = PendingIntent.getActivity(this, req, fullScreen, flags);
+    PendingIntent contentPi = PendingIntent.getActivity(this, req + 1, fullScreen, flags);
 
     Notification.Builder builder;
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
