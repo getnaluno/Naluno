@@ -146,34 +146,120 @@ $('googleSignInBtn').onclick = async ()=>{
    auto-selecting account picker to race against. It's the reliable fallback when
    Google sign-in keeps closing before it can finish. */
 function emailAuthInputs(){
-  return { email: $('authEmailInput').value.trim(), password: $('authPasswordInput').value };
+  const password = ($('authPasswordInput') && $('authPasswordInput').value) || '';
+  const emailField = $('authEmailInput');
+  const emailVisible = emailField && emailField.style.display !== 'none' && emailField.value.trim();
+  const handleRaw = ($('authHandleInput') && $('authHandleInput').value) || '';
+  let email = '';
+  let handle = '';
+  if(emailVisible){
+    email = emailField.value.trim();
+  } else {
+    handle = normalizeAuthHandle(handleRaw);
+    email = handleToAuthEmail(handle) || '';
+  }
+  return { email, password, handle };
 }
+
+/* Toggle optional real-email field */
+if($('authUseEmailBtn')){
+  $('authUseEmailBtn').onclick = ()=>{
+    const em = $('authEmailInput');
+    const hi = $('authHandleInput');
+    if(!em) return;
+    const show = em.style.display === 'none' || !em.style.display;
+    if(show){
+      em.style.display = 'block';
+      if(hi) hi.placeholder = 'Handle (optional if using email)';
+      $('authUseEmailBtn').textContent = 'Use handle instead';
+    } else {
+      em.style.display = 'none';
+      em.value = '';
+      if(hi) hi.placeholder = 'Handle (e.g. namuli)';
+      $('authUseEmailBtn').textContent = 'Use email instead';
+    }
+  };
+}
+
 $('emailSignInBtn').onclick = ()=>{
   if(!fbAuth){ authStatus('Firebase isn\u2019t configured yet — see firebase-config.js', true); return; }
-  const { email, password } = emailAuthInputs();
-  if(!email || !password){ authStatus('Enter your email and password first.', true); return; }
+  const { email, password, handle } = emailAuthInputs();
+  if(!password || password.length < 6){ authStatus('Enter your password (6+ characters).', true); return; }
+  if(!email){
+    authStatus('Enter your handle (3+ letters) or turn on "Use email instead".', true);
+    return;
+  }
   authStatus('Signing in…');
   fbAuth.signInWithEmailAndPassword(email, password).catch(e=>{
-    authStatus(e.code === 'auth/user-not-found' || e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential'
-      ? 'That email/password combination isn\u2019t right — or you haven\u2019t created an account yet (try "Create account" instead).'
+    const bad = e.code === 'auth/user-not-found' || e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential';
+    authStatus(bad
+      ? 'Handle/password not recognized — check spelling, or Create account.'
       : (e.code + ': ' + e.message), true);
   });
 };
-$('emailSignUpBtn').onclick = ()=>{
+
+$('emailSignUpBtn').onclick = async ()=>{
   if(!fbAuth){ authStatus('Firebase isn\u2019t configured yet — see firebase-config.js', true); return; }
-  const { email, password } = emailAuthInputs();
-  if(!email || !password){ authStatus('Enter an email and a password (6+ characters) first.', true); return; }
+  const { email, password, handle } = emailAuthInputs();
+  if(!password || password.length < 6){ authStatus('Password needs to be at least 6 characters.', true); return; }
+  const em = $('authEmailInput');
+  const usingEmail = em && em.style.display !== 'none' && em.value.trim();
+  if(!usingEmail){
+    if(!handle || handle.length < 3){
+      authStatus('Choose a handle with at least 3 letters (a–z, 0–9, _).', true);
+      return;
+    }
+  } else if(!email){
+    authStatus('Enter an email address.', true);
+    return;
+  }
   authStatus('Creating your account…');
-  fbAuth.createUserWithEmailAndPassword(email, password).catch(e=>{
+  try{
+    // Pre-check handle availability when signing up with handle
+    if(!usingEmail && handle && fbDb){
+      const href = fbDb.collection('handles').doc(handle);
+      const snap = await href.get();
+      if(snap.exists){
+        authStatus('That handle is taken — try another.', true);
+        return;
+      }
+    }
+    const cred = await fbAuth.createUserWithEmailAndPassword(email, password);
+    const user = cred.user;
+    if(!usingEmail && handle && typeof claimHandle === 'function'){
+      try{
+        const claimed = await claimHandle(handle, user.uid);
+        await fbDb.collection('users').doc(user.uid).set({
+          name: handle,
+          number: claimed || ('@' + handle),
+          tagline: '',
+          createdAt: Date.now(),
+          authMethod: 'handle',
+        }, { merge: true });
+      }catch(he){
+        console.warn('[auth] claim handle', he);
+        authStatus(he.message || 'Handle could not be claimed — you can set it in profile.', true);
+      }
+    } else if(usingEmail){
+      try{
+        await fbDb.collection('users').doc(user.uid).set({
+          name: (user.email || 'You').split('@')[0],
+          number: '@' + user.uid.slice(0, 8),
+          createdAt: Date.now(),
+          authMethod: 'email',
+        }, { merge: true });
+      }catch(_){}
+    }
+    authStatus('Account created — welcome.');
+  }catch(e){
     authStatus(
-      e.code === 'auth/email-already-in-use' ? 'That email already has an account — try "Sign in" instead.' :
+      e.code === 'auth/email-already-in-use' ? 'That handle or email already has an account — try Sign in.' :
       e.code === 'auth/weak-password' ? 'Password needs to be at least 6 characters.' :
       (e.code + ': ' + e.message),
       true
     );
-  });
+  }
 };
-
 if(fbAuth){
   authStatus('Checking sign-in state…');
   let authResolved = false;

@@ -1283,8 +1283,10 @@ if($('bandLiveBtn')){
   $('bandLiveBtn').title = 'Record a short video for the Band';
   $('bandLiveBtn').onclick = ()=> startBandRecording('video');
 }
+// Go live removed from Band UI — keep Record audio / Record video only
 if($('bandGoLiveBtn')){
-  $('bandGoLiveBtn').onclick = ()=> enableBandLiveCamera();
+  $('bandGoLiveBtn').style.display = 'none';
+  if($('bandGoLiveBtn')){ $('bandGoLiveBtn').style.display='none'; $('bandGoLiveBtn').onclick=null; }
 }
 
 // Voice note — short clip into the band as audio message

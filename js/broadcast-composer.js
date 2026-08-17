@@ -72,7 +72,8 @@ function bcompProbeDuration(file){
 }
 
 /** YouTube-like bitrate ladder for mobile viewing quality. */
-function bcompPickBitrate(durationSec, width, height){
+function bcompPickBitrate(durationSec, width, height, fileSize){
+  // Aim under ~UPLOAD_MAX for 10 min phone playback in low-bandwidth regions
   const pixels = (width || 1280) * (height || 720);
   let base;
   if(pixels >= 1920 * 1080 * 0.8) base = 4_500_000;      // ~1080p
@@ -115,13 +116,21 @@ function compressBroadcastVideo(file, onProgress){
       return;
     }
 
-    // Prefer pass-through: chapters handle size; avoid re-encode inflation
-    const maxUp = (typeof UPLOAD_MAX_BYTES === 'number') ? UPLOAD_MAX_BYTES : (150*1024*1024);
-    if(file.size <= maxUp){
-      if(onProgress) onProgress(1, 'Ready · original (chapters if needed)');
+    const maxUp = (typeof UPLOAD_MAX_BYTES === 'number') ? UPLOAD_MAX_BYTES : (95*1024*1024);
+    const forceAt = (typeof UPLOAD_FORCE_COMPRESS_BYTES === 'number') ? UPLOAD_FORCE_COMPRESS_BYTES : (40*1024*1024);
+    // Small enough for one Worker request — keep original (chapters handle long duration)
+    if(file.size <= maxUp && file.size <= forceAt){
+      if(onProgress) onProgress(1, 'Ready · original');
       resolve({ blob: file, duration, skipped: true });
       return;
     }
+    // 40–95 MB: still prefer original if under max; above max must re-encode or split
+    if(file.size <= maxUp){
+      if(onProgress) onProgress(1, 'Ready · original (will chapter if long)');
+      resolve({ blob: file, duration, skipped: true });
+      return;
+    }
+    if(onProgress) onProgress(0.02, 'Large video (' + Math.round(file.size/1024/1024) + ' MB) — compressing for upload…');
 
     const url = URL.createObjectURL(file);
     const video = document.createElement('video');
@@ -280,6 +289,9 @@ async function bcompOnFileChosen(file){
   const mins = Math.floor(duration / 60);
   const secs = Math.round(duration % 60);
   const mb = Math.round(file.size/1024/1024);
+  if(file.size > 95 * 1024 * 1024){
+    toast('Large video (' + Math.round(file.size/1024/1024) + ' MB) — Naluno will compress/split on Publish');
+  }
   // Keep original — upload/chapters run in background after Publish
   bcompCompressedBlob = file;
   if(status){
@@ -332,13 +344,32 @@ async function bcompPublish(){
         mediaUrl = await uploadVideoToR2(snapFile);
         thumbUrl = mediaUrl;
       } else {
-        const file = snapFile || snapBlob;
+        let file = snapFile || snapBlob;
         if(!file) throw new Error('No video ready');
-        const duration = snapDuration || (typeof bcompProbeDuration === 'function' ? await bcompProbeDuration(file) : 0);
+        let duration = snapDuration || (typeof bcompProbeDuration === 'function' ? await bcompProbeDuration(file) : 0);
+        const maxUp = (typeof UPLOAD_MAX_BYTES === 'number') ? UPLOAD_MAX_BYTES : (95*1024*1024);
+        // Huge phone videos (hundreds of MB) cannot ride a single Worker POST — compress first
+        if(file.size > maxUp && typeof compressBroadcastVideo === 'function'){
+          if(progress) progress('Large file (' + Math.round(file.size/1024/1024) + ' MB) — compressing…');
+          try{
+            const r = await compressBroadcastVideo(file, (f, msg)=>{
+              if(progress) progress(msg || ('Compressing… ' + Math.round((f||0)*100) + '%'));
+            });
+            if(r && r.blob){
+              file = r.blob;
+              if(r.duration) duration = r.duration;
+            }
+          }catch(ex){
+            console.warn('[bcomp] compress large', ex);
+          }
+        }
+        if(file.size > maxUp * 1.05){
+          // Still too big — will rely on chapter/time slices below
+          if(progress) progress('Still large — uploading in parts…');
+        }
         const plan = (typeof planBroadcastChapters === 'function')
           ? planBroadcastChapters(file.size || 0, duration)
           : { mode: 'single', parts: [{ start:0, end: duration||0, index:0 }], midrolls: [], showChapterUI: false };
-        const maxUp = (typeof UPLOAD_MAX_BYTES === 'number') ? UPLOAD_MAX_BYTES : (150*1024*1024);
 
         async function uploadOne(blob, label){
           if(progress) progress(label);

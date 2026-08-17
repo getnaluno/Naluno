@@ -75,8 +75,10 @@ function bindMediaElement(el, rawUrl){
   };
 }
 
-/** Must match signal-worker MAX_BYTES (150 MiB). */
-const UPLOAD_MAX_BYTES = 150 * 1024 * 1024;
+/** Soft single-request ceiling. Large files must compress or split (Worker body limits).
+ *  Keep in sync with signal-worker MAX_BYTES. */
+const UPLOAD_MAX_BYTES = 95 * 1024 * 1024; // ~95 MiB — safer under CF Worker limits
+const UPLOAD_FORCE_COMPRESS_BYTES = 40 * 1024 * 1024; // compress when above 40 MiB
 /** Soft chapter budget for pass-through slices (~4 min at ~2 Mbps or shorter at higher rates). */
 const CHAPTER_TARGET_SECONDS = 4 * 60;
 const CHAPTER_TARGET_BYTES = 55 * 1024 * 1024; // keep each chapter safely under older + new workers

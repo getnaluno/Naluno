@@ -310,12 +310,13 @@ function openBroadcastById(id){
  * Large-but-short files use silent upload slices (no chapter UI) or a single compress.
  */
 function planBroadcastChapters(fileSize, durationSec){
-  const maxBytes = (typeof UPLOAD_MAX_BYTES === 'number') ? UPLOAD_MAX_BYTES : (150 * 1024 * 1024);
-  const targetBytes = (typeof CHAPTER_TARGET_BYTES === 'number') ? CHAPTER_TARGET_BYTES : (55 * 1024 * 1024);
+  const maxBytes = (typeof UPLOAD_MAX_BYTES === 'number') ? UPLOAD_MAX_BYTES : (95 * 1024 * 1024);
+  const targetBytes = (typeof CHAPTER_TARGET_BYTES === 'number') ? CHAPTER_TARGET_BYTES : (45 * 1024 * 1024);
   const targetSec = (typeof CHAPTER_TARGET_SECONDS === 'number') ? CHAPTER_TARGET_SECONDS : 240;
   const dur = Math.max(0.5, durationSec || 0);
   const size = Math.max(1, fileSize || 0);
   const wantVisibleChapters = dur > targetSec; // strictly longer than 4 minutes
+  // Files larger than one Worker request MUST split — even under 4 minutes
 
   // Build ~4 min chapter time marks (UI + breathers) regardless of upload strategy
   function chapterMarks(){
@@ -332,6 +333,7 @@ function planBroadcastChapters(fileSize, durationSec){
     if(size <= maxBytes){
       return { mode: 'single', parts: [{ start: 0, end: dur, index: 0 }], midrolls: [], showChapterUI: false };
     }
+    // oversized short video → silent multipart (upload slices)
     // Over worker max but short: silent byte-oriented time slices for upload only
     const bytesPerSec = size / dur;
     const sliceSec = Math.max(20, Math.min(dur, Math.floor(targetBytes / Math.max(1, bytesPerSec))));
