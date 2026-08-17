@@ -477,6 +477,14 @@ async function bcompPublish(){
       }
       if(typeof createPermanentBroadcast !== 'function') throw new Error('Broadcast core not loaded');
       if(progress) progress('Saving Broadcast…');
+      // Never save a video job as photo (still-snapshot symptom)
+      if(snapKind === 'video') mediaType = 'video';
+      if(snapKind === 'video' && !mediaUrl && chapters && chapters[0] && chapters[0].mediaUrl){
+        mediaUrl = chapters[0].mediaUrl;
+      }
+      if(snapKind === 'video' && (!chapters || !chapters.length) && mediaUrl){
+        chapters = [{ index: 0, mediaUrl, duration: snapDuration || null, title: 'Video', sharedSource: true, start: 0, end: snapDuration || null }];
+      }
       const b = await createPermanentBroadcast({
         title: snapTitle, description: snapDesc, tags: snapTags,
         mediaType, mediaUrl, thumbUrl, filterCss: '',

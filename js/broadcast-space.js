@@ -125,6 +125,28 @@ function renderBspaceMedia(seg){
       }
     }catch(e){ console.warn('[bspace] seek dock', e); }
     try{ wireBspaceSeekAndAutoplay(vel); }catch(e){ console.warn('[bspace] seek wire', e); }
+    if(vel){
+      vel.addEventListener('error', function(){
+        console.warn('[bspace] video error', vel.error && vel.error.code, vel.src);
+        // Retry once with resolved URL + cache bust
+        if(!vel.dataset.retried && rawSrc){
+          vel.dataset.retried = '1';
+          const u = rawSrc + (rawSrc.indexOf('?') >= 0 ? '&' : '?') + 'r=' + Date.now();
+          vel.src = u;
+          vel.load();
+          vel.play().catch(function(){});
+        }
+      });
+      // Force play attempt (poster alone looks like a still snapshot)
+      setTimeout(function(){
+        if(vel.paused){
+          vel.play().catch(function(){
+            vel.muted = true;
+            vel.play().catch(function(){});
+          });
+        }
+      }, 200);
+    }
     try{
       if(vel){
         vel.disableRemotePlayback = true;
@@ -924,19 +946,27 @@ async function openBroadcastSpaceById(id){
     const snap = await fbDb.collection('broadcasts').doc(id).get();
     if(!snap.exists || snap.data().deleted){ toast('Broadcast not found'); return; }
     const d = snap.data();
+    const chapters = Array.isArray(d.chapters) ? d.chapters : null;
+    const primary =
+      d.mediaUrl ||
+      (chapters && chapters[0] && chapters[0].mediaUrl) ||
+      null;
+    // Infer video when chapters or mediaType say so (never treat uploaded video as photo)
+    let mediaType = d.mediaType || 'photo';
+    if(chapters && chapters.length && primary) mediaType = 'video';
+    if(mediaType !== 'photo' && mediaType !== 'text' && primary) mediaType = 'video';
     const segment = {
-      type: d.mediaType || 'photo',
-      dataUrl: d.mediaType === 'photo' ? (d.mediaUrl || null) : null,
-      mediaUrl: d.mediaUrl || null,
-      videoUrl: d.mediaType === 'video' ? (d.mediaUrl || null) : null,
+      type: mediaType,
+      dataUrl: mediaType === 'photo' ? primary : null,
+      mediaUrl: primary,
+      videoUrl: mediaType === 'video' ? primary : null,
       thumbDataUrl: d.thumbUrl || d.thumb || null,
-      text: d.mediaType === 'text' ? (d.description || d.title) : null,
+      text: mediaType === 'text' ? (d.description || d.title) : null,
       bg: 'linear-gradient(160deg,#1a1f2e,#0d1018)',
       filterCss: d.filterCss || '',
       caption: d.description || '',
-      chapters: d.chapters || null,
+      chapters: chapters,
     };
-    // Guarantee video type has a playable URL for hero
     if(segment.type === 'video' && !segment.videoUrl && segment.mediaUrl){
       segment.videoUrl = segment.mediaUrl;
     }
@@ -1166,15 +1196,23 @@ function playBroadcastChapter(index, userInitiated){
     // One file — seek to chapter start instead of reloading
     const startAt = typeof ch.start === 'number' ? ch.start : 0;
     const endAt = typeof ch.end === 'number' ? ch.end : null;
-    if(!v.src || v.src.indexOf(url.split('?')[0].split('/').pop()) < 0){
+    const fileKey = (url.split('?')[0].split('/').pop() || '');
+    const needLoad = !v.src || !fileKey || String(v.currentSrc || v.src).indexOf(fileKey) < 0;
+    const kickPlay = function(){
+      try{ if(startAt > 0.2) v.currentTime = startAt; }catch(_){}
+      const p = v.play();
+      if(p && p.catch) p.catch(function(){
+        try{ v.muted = true; v.play().then(function(){}).catch(function(){}); }catch(_){}
+      });
+    };
+    if(needLoad){
       v.src = url;
-      v.onloadedmetadata = ()=>{
-        try{ v.currentTime = startAt; }catch(_){}
-        v.play().catch(()=>{});
-      };
+      v.load();
+      v.onloadedmetadata = kickPlay;
+      v.onloadeddata = kickPlay;
+      setTimeout(kickPlay, 500);
     } else {
-      try{ v.currentTime = startAt; }catch(_){}
-      v.play().catch(()=>{});
+      kickPlay();
     }
     // End chapter at end mark → next chapter / breather
     v.ontimeupdate = ()=>{

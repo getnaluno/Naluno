@@ -467,10 +467,17 @@ function clearMyBandPresence(){
 }
 // If the app is backgrounded or closed while tuned in, drop presence so others don't see a ghost.
 document.addEventListener('visibilitychange', ()=>{
-  if(document.hidden && amTunedIn) clearMyBandPresence();
-  else if(!document.hidden && amTunedIn) startBandPresenceHeartbeat();
+  if(document.hidden && amTunedIn){
+    try{ if(typeof stopBandLiveCamera === 'function' && bandLiveLocalStream) stopBandLiveCamera(); }catch(_){}
+    clearMyBandPresence();
+  } else if(!document.hidden && amTunedIn) startBandPresenceHeartbeat();
 });
-window.addEventListener('pagehide', ()=>{ if(amTunedIn) clearMyBandPresence(); });
+window.addEventListener('pagehide', ()=>{
+  if(amTunedIn){
+    try{ if(typeof stopBandLiveCamera === 'function' && bandLiveLocalStream) stopBandLiveCamera(); }catch(_){}
+    clearMyBandPresence();
+  }
+});
 
 $('bandTuneBtn').onclick = ()=>{
   amTunedIn = !amTunedIn;
@@ -490,6 +497,8 @@ $('bandTuneBtn').onclick = ()=>{
         fbDb.collection('bands').doc(b.firestoreId).set({ lastEmptiedAt: null }, { merge:true }).catch(()=>{});
       }
     } else {
+      // Step out: stop THIS user's live only (not the whole band)
+      try{ if(typeof stopBandLiveCamera === 'function') stopBandLiveCamera(); }catch(_){}
       clearMyBandPresence();
       if(typeof stopBandRecording === 'function') stopBandRecording(true);
     }
@@ -497,6 +506,7 @@ $('bandTuneBtn').onclick = ()=>{
     armBandAmbientReply();
     bumpTodayActivity();
   } else {
+    try{ if(typeof stopBandLiveCamera === 'function') stopBandLiveCamera(); }catch(_){}
     clearBandAmbientTimer();
     if(typeof stopBandRecording === 'function') stopBandRecording(true);
   }
@@ -1204,8 +1214,10 @@ function enableBandLiveCamera(){
         liveAt: firebase.firestore.FieldValue.serverTimestamp(),
       }, { merge:true }).catch(()=>{});
     }
+    // Rebuild mesh with outbound tracks so peers receive OUR video (not recvonly leftovers)
+    try{ bandMeshCleanup(); }catch(_){}
     renderBandLiveGrid();
-    toast('Live camera on — drag to move');
+    toast('Live camera on');
   }).catch(()=> toast('Camera unavailable'));
 }
 function stopBandLiveCamera(){
@@ -1405,9 +1417,6 @@ function bandMeshPairId(a, b){
 
 async function bandLiveMeshSync(liveOthers){
   if(!fbDb || !currentUser || !activeBand() || !activeBand().firestoreId) return;
-  if(!bandLiveLocalStream){
-    // Not live ourselves — still try to receive from hosts who are live
-  }
   const bandId = activeBand().firestoreId;
   const myUid = currentUser.uid;
   const others = (liveOthers || []).filter(m => m.uid && m.uid !== myUid);
@@ -1422,8 +1431,21 @@ async function bandLiveMeshSync(liveOthers){
   });
 
   for(const m of others){
-    if(bandMeshPcs[m.uid]) continue;
     try{
+      // If we just went live, existing recvonly PC must be rebuilt with send tracks
+      const existing = bandMeshPcs[m.uid];
+      if(existing && bandLiveLocalStream){
+        const senders = existing.getSenders ? existing.getSenders() : [];
+        const hasVideoOut = senders.some(s => s.track && s.track.kind === 'video' && s.track.readyState === 'live');
+        if(!hasVideoOut){
+          try{ existing.close(); }catch(_){}
+          delete bandMeshPcs[m.uid];
+        }
+      }
+      if(bandMeshPcs[m.uid]) {
+        bandMeshAttachTile(m.uid);
+        continue;
+      }
       await bandMeshConnectPeer(bandId, m.uid, myUid < m.uid);
     }catch(e){ console.warn('[band-mesh]', e); }
   }
@@ -1431,10 +1453,13 @@ async function bandLiveMeshSync(liveOthers){
 
 async function bandMeshConnectPeer(bandId, peerUid, iAmOfferer){
   if(bandMeshPcs[peerUid]) return;
-  const ice = (typeof getIceServers === 'function') ? await getIceServers() : { iceServers:[{urls:'stun:stun.l.google.com:19302'}] };
+  const ice = (typeof getIceServers === 'function')
+    ? await getIceServers()
+    : { iceServers:[{ urls:'stun:stun.l.google.com:19302' }] };
   const pc = new RTCPeerConnection(ice);
   bandMeshPcs[peerUid] = pc;
 
+  // Always send local A/V when we are live
   if(bandLiveLocalStream){
     bandLiveLocalStream.getTracks().forEach(tr=>{
       try{ pc.addTrack(tr, bandLiveLocalStream); }catch(_){}
@@ -1451,67 +1476,103 @@ async function bandMeshConnectPeer(bandId, peerUid, iAmOfferer){
   pc.ontrack = e=>{
     try{ e.track.enabled = true; }catch(_){}
     if(remote.getTracks().indexOf(e.track) === -1) remote.addTrack(e.track);
-    // Re-bind always — tile may not exist yet when first packet arrives
     bandMeshAttachTile(peerUid);
-    setTimeout(function(){ bandMeshAttachTile(peerUid); }, 100);
-    setTimeout(function(){ bandMeshAttachTile(peerUid); }, 500);
+    setTimeout(function(){ bandMeshAttachTile(peerUid); }, 80);
+    setTimeout(function(){ bandMeshAttachTile(peerUid); }, 400);
+    setTimeout(function(){ bandMeshAttachTile(peerUid); }, 1200);
   };
 
   const pairId = bandMeshPairId(currentUser.uid, peerUid);
   const ref = fbDb.collection('bands').doc(bandId).collection('mesh').doc(pairId);
+  const session = Date.now();
 
   pc.onicecandidate = e=>{
     if(!e.candidate) return;
     const col = iAmOfferer ? 'offerIce' : 'answerIce';
-    ref.collection(col).add(e.candidate.toJSON()).catch(()=>{});
+    ref.collection(col).add(Object.assign({ session }, e.candidate.toJSON())).catch(function(){});
   };
 
   if(iAmOfferer){
-    const offer = await pc.createOffer();
+    // Wipe stale answer/offer so answerer does not skip a new session
+    try{
+      await ref.set({
+        offer: null,
+        answer: null,
+        session,
+        from: currentUser.uid,
+        to: peerUid,
+        ts: session,
+      });
+    }catch(_){}
+    const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
     await pc.setLocalDescription(offer);
     await ref.set({
       offer: { type: offer.type, sdp: offer.sdp },
+      answer: null,
+      session,
       from: currentUser.uid,
       to: peerUid,
-      ts: Date.now(),
-    }, { merge:true });
+      ts: session,
+    });
     const unsub = ref.onSnapshot(async snap=>{
       if(!snap.exists) return;
       const d = snap.data() || {};
-      if(d.answer && pc.signalingState !== 'stable'){
-        try{ await pc.setRemoteDescription(new RTCSessionDescription(d.answer)); }catch(_){}
+      if(d.session && d.session < session - 1000) return; // ignore older sessions
+      if(d.answer && (pc.signalingState === 'have-local-offer' || pc.signalingState === 'have-local-pranswer')){
+        try{ await pc.setRemoteDescription(new RTCSessionDescription(d.answer)); }catch(err){
+          console.warn('[band-mesh] setRemote answer', err);
+        }
       }
     });
     bandMeshUnsubs.push(unsub);
     const iceUnsub = ref.collection('answerIce').onSnapshot(snap=>{
       snap.docChanges().forEach(ch=>{
-        if(ch.type==='added') pc.addIceCandidate(new RTCIceCandidate(ch.doc.data())).catch(()=>{});
+        if(ch.type !== 'added') return;
+        const c = ch.doc.data() || {};
+        if(c.session && c.session < session - 1000) return;
+        pc.addIceCandidate(new RTCIceCandidate(c)).catch(function(){});
       });
     });
     bandMeshUnsubs.push(iceUnsub);
   } else {
-    // Answerer: wait for offer
     let answered = false;
+    let mySession = session;
     const unsub = ref.onSnapshot(async snap=>{
-      if(!snap.exists || answered) return;
+      if(!snap.exists) return;
       const d = snap.data() || {};
-      if(d.offer && !d.answer){
-        try{
-          answered = true;
-          await pc.setRemoteDescription(new RTCSessionDescription(d.offer));
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          await ref.set({ answer: { type: answer.type, sdp: answer.sdp } }, { merge:true });
-        }catch(e){
-          answered = false;
-          console.warn('[band-mesh] answer', e);
+      if(!d.offer) return;
+      // New offer from peer (session bumped) → answer even if we answered an older one
+      if(d.session && d.session < mySession - 5000 && answered) return;
+      if(answered && d.answer && d.session === mySession) return;
+      try{
+        if(pc.signalingState !== 'stable' && pc.signalingState !== 'have-remote-offer'){
+          // restart if stuck
         }
+        answered = true;
+        mySession = d.session || Date.now();
+        if(pc.signalingState === 'have-local-offer'){
+          // glare — rare; ignore our half
+        }
+        await pc.setRemoteDescription(new RTCSessionDescription(d.offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        await ref.set({
+          answer: { type: answer.type, sdp: answer.sdp },
+          session: mySession,
+          answeredBy: currentUser.uid,
+          ts: Date.now(),
+        }, { merge:true });
+      }catch(e){
+        answered = false;
+        console.warn('[band-mesh] answer', e);
       }
     });
     bandMeshUnsubs.push(unsub);
     const iceUnsub = ref.collection('offerIce').onSnapshot(snap=>{
       snap.docChanges().forEach(ch=>{
-        if(ch.type==='added') pc.addIceCandidate(new RTCIceCandidate(ch.doc.data())).catch(()=>{});
+        if(ch.type !== 'added') return;
+        const c = ch.doc.data() || {};
+        pc.addIceCandidate(new RTCIceCandidate(c)).catch(function(){});
       });
     });
     bandMeshUnsubs.push(iceUnsub);
