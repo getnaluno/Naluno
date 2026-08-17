@@ -1,3 +1,6 @@
+/* OWNERSHIP (broadcast-space.js): Broadcast VOD/live community only.
+   MUST NOT touch: calls peerConnection, remoteCombinedStream, bandMeshPcs.
+   ICE for live: getIceServers() from ice-core. Playback: <video src> only. */
 /* ============================================================
    MODULE: js/broadcast-space.js
    Broadcast = living community, not a video player.
@@ -955,6 +958,12 @@ async function openBroadcastSpaceById(id){
     let mediaType = d.mediaType || 'photo';
     if(chapters && chapters.length && primary) mediaType = 'video';
     if(mediaType !== 'photo' && mediaType !== 'text' && primary) mediaType = 'video';
+    if(mediaType === 'photo' && primary && /\.(mp4|webm|mov|m4v)(\?|$)/i.test(primary)){
+      mediaType = 'video';
+    }
+    if(mediaType === 'photo' && primary && /\/o\/u\//.test(primary) && chapters && chapters.length){
+      mediaType = 'video';
+    }
     const segment = {
       type: mediaType,
       dataUrl: mediaType === 'photo' ? primary : null,

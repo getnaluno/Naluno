@@ -1,3 +1,6 @@
+/* OWNERSHIP (broadcast-live.js): Broadcast VOD/live community only.
+   MUST NOT touch: calls peerConnection, remoteCombinedStream, bandMeshPcs.
+   ICE for live: getIceServers() from ice-core. Playback: <video src> only. */
 /* ============================================================
    MODULE: js/broadcast-live.js
    Wow layer: multi-viewer WebRTC live on a Broadcast.

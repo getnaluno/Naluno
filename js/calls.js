@@ -1,5 +1,12 @@
 /* ============================================================
    MODULE: js/calls.js
+   OWNED PEER CONNECTION: `peerConnection` (1:1 calls ONLY).
+   MUST NOT touch: bandMeshPcs, bandLiveLocalStream, bLive* PCs, bspaceVideoEl.
+   Uses: getIceServers() from ice-core, stream via camera.js enableCameraForCall.
+   UI coupling (intentional): call overlay preempts band/broadcast/wireline via
+   snapshotUiBeforeCall / restoreUiAfterCall only — no media internals shared.
+   ============================================================
+   MODULE: js/calls.js
    Call lobby/ring/UI, ringtone, WebRTC peer connection
    OWNERSHIP: change this domain here only.
    Scripts share globals (intentional) so load order matches the old monolith.
@@ -336,64 +343,7 @@ $('signOutBtn').onclick = ()=>{
    No TURN server is configured here — only public STUN — so two people both behind
    strict/symmetric NATs may fail to connect to each other specifically. Add a TURN
    entry to RTC_CONFIG once you have one (Twilio, Xirsys, metered.ca all have options). */
-const RTC_CONFIG = {
-  iceServers: [
-    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
-  ],
-  iceCandidatePoolSize: 10,
-  bundlePolicy: 'max-bundle',
-  rtcpMuxPolicy: 'require',
-};
-const TURN_CREDENTIALS_WORKER_URL = 'https://naluno-turn-credentials.naluno.workers.dev';
-/* Fetches fresh, short-lived TURN relay credentials from Cloudflare's Realtime
-   service — the actual fix for calls that connect but never show a feed between two
-   devices on different networks (confirmed by real console evidence: tracks send and
-   receive correctly, but ICE never finds a route without a relay to fall back on).
-   Falls back to the STUN-only config if this fails for any reason — a call can still
-   attempt a direct connection without TURN, it just won't have the relay fallback for
-   networks that genuinely need one. */
-/* Cache TURN credentials so answering a call does not wait on a network round-trip.
-   Credentials are short-lived (~2h from the Worker); we refresh after 25 minutes. */
-let cachedIceServers = null;
-let cachedIceServersAt = 0;
-const ICE_CACHE_TTL_MS = 25 * 60 * 1000;
-async function getIceServers(){
-  if(!currentUser) return RTC_CONFIG;
-  if(cachedIceServers && (Date.now() - cachedIceServersAt) < ICE_CACHE_TTL_MS){
-    return cachedIceServers;
-  }
-  try{
-    const idToken = await currentUser.getIdToken();
-    const res = await fetch(TURN_CREDENTIALS_WORKER_URL, {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + idToken },
-    });
-    if(!res.ok){
-      console.log('[call] TURN credentials HTTP', res.status, '— falling back to STUN-only');
-      return RTC_CONFIG;
-    }
-    const data = await res.json();
-    if(!data.iceServers || !data.iceServers.length){
-      console.log('[call] TURN response had no iceServers — falling back to STUN-only');
-      return RTC_CONFIG;
-    }
-    console.log('[call] TURN credentials received —', data.iceServers.length, 'server(s)');
-    cachedIceServers = {
-      iceServers: data.iceServers,
-      iceCandidatePoolSize: 10,
-      bundlePolicy: 'max-bundle',
-      rtcpMuxPolicy: 'require',
-    };
-    cachedIceServersAt = Date.now();
-    return cachedIceServers;
-  }catch(e){
-    console.log('[call] Could not fetch TURN credentials, falling back to STUN-only:', e);
-    return RTC_CONFIG;
-  }
-}
-function prewarmIceServers(){
-  getIceServers().catch(()=>{});
-}
+/* ICE/TURN moved to js/ice-core.js — use getIceServers() / IceCore */
 let peerConnection = null;
 /* Neither "Start call" nor "Accept" had any protection against firing twice — a real,
    easy-to-trigger double-tap on a touchscreen (or just impatience while a screen
@@ -1026,6 +976,7 @@ function endActiveCall(reason){
   teardownCallConnection();
   closeCallOverlay();
   stopCameraStream();
+  try{ if(typeof cameraRelease === 'function') cameraRelease('call'); }catch(_){}
   currentCallContactId = null;
   callActionInProgress = false;
   incallViewMode = 0;
@@ -1416,7 +1367,7 @@ async function startRealCall(c){
   iAmCaller = true;
 
   // Kick TURN + camera in parallel (speed).
-  const icePromise = getIceServers().catch(()=> RTC_CONFIG);
+  const icePromise = getIceServers().catch(()=> (typeof RTC_CONFIG !== 'undefined' ? RTC_CONFIG : { iceServers:[{urls:'stun:stun.l.google.com:19302'}] }));
   prewarmIceServers();
   if(typeof enableCameraForCall === 'function') await enableCameraForCall();
   else await enableCamera();
@@ -1619,6 +1570,7 @@ function closeCallOverlayAndStopCamera(){
   teardownCallConnection();
   closeCallOverlay();
   stopCameraStream();
+  try{ if(typeof cameraRelease === 'function') cameraRelease('call'); }catch(_){}
   currentCallContactId = null;
   callActionInProgress = false;
   incallViewMode = 0;
@@ -1657,6 +1609,7 @@ $('declineIncoming').onclick = ()=>{
   teardownCallConnection();
   closeCallOverlay();
   stopCameraStream();
+  try{ if(typeof cameraRelease === 'function') cameraRelease('call'); }catch(_){}
   currentCallContactId = null;
   callActionInProgress = false;
 };
@@ -1685,7 +1638,7 @@ $('acceptIncoming').onclick = async ()=>{
 
   try{
     // Parallel: media ready + TURN credentials (often already cached from prewarm)
-    const iceP = getIceServers().catch(()=> RTC_CONFIG);
+    const iceP = getIceServers().catch(()=> (typeof RTC_CONFIG !== 'undefined' ? RTC_CONFIG : { iceServers:[{urls:'stun:stun.l.google.com:19302'}] }));
     const mediaOk = await ensureCallMediaReady();
     if(!mediaOk) throw new Error('Camera/mic unavailable — allow access, then try answering again');
 

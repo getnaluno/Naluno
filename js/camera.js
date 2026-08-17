@@ -1,20 +1,48 @@
 /* ============================================================
    MODULE: js/camera.js
    Camera stream, flip, filters, borders, segmentation, quality
-   OWNERSHIP: change this domain here only.
-   Scripts share globals (intentional) so load order matches the old monolith.
+   OWNERSHIP: ONLY place that owns the shared call/greenroom `stream`.
+   Band live uses its OWN `bandLiveLocalStream` in band-room.js — do not stop it here.
+   Broadcast live uses host stream from broadcast-space — do not stop it here.
+   Consumers: enableCamera / enableCameraForCall / setCam / setMic / flipCamera.
    ============================================================ */
 /* ---------------- CAMERA + GREENROOM ---------------- */
 let stream = null, camOn = true, micOn = true, greenroomEnabled = true;
 let cameraRequestPending = null; // in-flight getUserMedia promise, so overlapping calls share one request
 
+/** Soft hold so modules do not fight over the shared call camera.
+ *  'call' | 'greenroom' only — Band/Broadcast live must use private streams. */
+let cameraHoldOwner = null; // 'call' | 'greenroom' | null
+
+function cameraAcquire(owner){
+  if(!owner) return false;
+  // Call always wins over greenroom preview
+  if(cameraHoldOwner === 'call' && owner !== 'call') return false;
+  cameraHoldOwner = owner;
+  return true;
+}
+function cameraRelease(owner){
+  if(cameraHoldOwner === owner) cameraHoldOwner = null;
+}
+function cameraIsHeldBy(owner){
+  return cameraHoldOwner === owner;
+}
+
 function stopCameraStream(){
+  // Never touch Band / Broadcast private streams — only shared call/greenroom stream
   if(stream){
-    stream.getTracks().forEach(t=>t.stop());
+    try{ stream.getTracks().forEach(t=>t.stop()); }catch(_){}
     stream = null;
   }
-  [$('camRawVideo'),$('pipRawVideo'),$('incomingSelfVideo'),$('sendRawVideo')].forEach(v=>{ if(v) v.srcObject = null; });
-  const badge = $('camQualityBadge'); if(badge) badge.style.display = 'none';
+  try{
+    ['camRawVideo','pipRawVideo','incomingSelfVideo','sendRawVideo'].forEach(function(id){
+      const v = typeof $ === 'function' ? $(id) : document.getElementById(id);
+      if(v) v.srcObject = null;
+    });
+  }catch(_){}
+  const badge = typeof $ === 'function' ? $('camQualityBadge') : null;
+  if(badge) badge.style.display = 'none';
+  if(cameraHoldOwner === 'call' || cameraHoldOwner === 'greenroom') cameraHoldOwner = null;
 }
 /* ---------------- LIVE BORDER PATTERNS ----------------
    Each preset is drawn every frame onto the border canvas — genuinely moving, not a
@@ -1125,6 +1153,7 @@ async function flipCamera(){
 
 
 async function enableCameraForCall(){
+  try{ cameraAcquire('call'); }catch(_){}
   /* Prefer high-res when the device can deliver it; fall back gracefully. */
   function hideCamFallback(){
     try{

@@ -306,6 +306,7 @@ function loadRealProfile(user){
   startThreadsListListener();
   loadRealBands(user.uid);
   startIncomingCallListener();
+  try{ if(typeof prewarmIceServers === 'function') prewarmIceServers(); }catch(_){}
   startMissedCallListener();
   startBandInviteListener();
   loadMySignal(); if(typeof loadFeedBroadcasts==='function') loadFeedBroadcasts(); try{ if(typeof startFeedBroadcastsListener==='function') startFeedBroadcastsListener(); }catch(_){};

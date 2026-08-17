@@ -52,6 +52,12 @@ async function loadOlderBandMessages(){
 
 /* ============================================================
    MODULE: js/band-room.js
+   OWNED: band presence, messages, bandLiveLocalStream, bandMeshPcs.
+   MUST NOT touch: peerConnection (calls), remoteCombinedStream, bLive* PCs.
+   ICE: getIceServers() from ice-core only.
+   Camera: private getUserMedia into bandLiveLocalStream — never stopCameraStream().
+   ============================================================
+   MODULE: js/band-room.js
    Band room UI, presence, settle clock, record audio/video, invites, band E2E
    OWNERSHIP: change this domain here only.
    Scripts share globals (intentional) so load order matches the old monolith.
@@ -1462,7 +1468,10 @@ async function bandMeshConnectPeer(bandId, peerUid, iAmOfferer){
   // Always send local A/V when we are live
   if(bandLiveLocalStream){
     bandLiveLocalStream.getTracks().forEach(tr=>{
-      try{ pc.addTrack(tr, bandLiveLocalStream); }catch(_){}
+      try{
+        tr.enabled = true;
+        pc.addTrack(tr, bandLiveLocalStream);
+      }catch(_){}
     });
   } else {
     try{
