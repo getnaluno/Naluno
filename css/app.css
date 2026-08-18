@@ -176,7 +176,7 @@
   .call-overlay.active{ opacity:1; pointer-events:auto; z-index:120 !important; }
   /* Incoming/outgoing call must cover Wireline thread (also .call-overlay) */
   #callOverlay.active{ z-index: 300 !important; }
-  #wirelineThread.active{ z-index: 110 !important; }
+  #wirelineThread.active{ z-index: 220 !important; }
   #wirelineThread, #bandRoom, #bspace{
     bottom: calc(66px + env(safe-area-inset-bottom, 0px));
   }
@@ -733,13 +733,11 @@
 .slip-frame.playing .slip-play{ display:none; }
 
 
-#threadClearBtn, #threadSlipBtn{ pointer-events:auto !important; z-index:8; touch-action:manipulation; position:relative; }
+#threadSlipBtn{ position:relative; z-index:1; }
 #threadSlipInput{
-  position:absolute !important;
-  width:1px !important;
-  height:1px !important;
-  opacity:0 !important;
-  overflow:hidden !important;
-  clip:rect(0,0,0,0);
+  display:none !important;
+  position:static !important;
+  width:0 !important;
+  height:0 !important;
   pointer-events:none !important;
 }

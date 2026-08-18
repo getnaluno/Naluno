@@ -487,7 +487,7 @@ function renderThreadMessages(){
   });
   document.querySelectorAll('[data-slip-play]').forEach(el=>{
     el.onclick = function(e){
-      if(e.target && e.target.closest && e.target.closest('[data-slip-keep]')) return;
+      if(e.target && e.target.closest && e.target.closest('.slip-keep')) return;
       e.stopPropagation();
       const v = el.querySelector('video');
       if(!v) return;
@@ -495,11 +495,12 @@ function renderThreadMessages(){
       else { v.pause(); el.classList.remove('playing'); }
     };
   });
-  document.querySelectorAll('[data-slip-keep]').forEach(el=>{
+  document.querySelectorAll('[data-slip-id]').forEach(el=>{
     el.onclick = function(e){
       e.preventDefault();
       e.stopPropagation();
-      keepSlipFile(el.getAttribute('data-slip-keep'), el.getAttribute('data-slip-name'));
+      const rec = slipKeepIndex[el.getAttribute('data-slip-id')];
+      if(rec) keepSlipFile(rec.url, rec.name);
     };
   });
   document.querySelectorAll('[data-delmsg]').forEach(el=>{
@@ -608,19 +609,25 @@ $('threadInput').addEventListener('keydown', e=>{
 });
 $('threadSendBtn').onclick = sendThreadMessage;
 (function wireSlipPicker(){
-  function onPick(e){
-    const input = e.target;
+  const btn = $('threadSlipBtn');
+  const input = $('threadSlipInput');
+  if(!btn || !input) return;
+  btn.addEventListener('click', function(e){
+    e.preventDefault();
+    e.stopPropagation();
+    input.value = '';
+    input.click();
+  });
+  input.addEventListener('change', function(){
     const file = input.files && input.files[0];
     input.value = '';
     if(!file) return;
     if(!activeThreadContactId){ toast('Open a conversation first'); return; }
     sendSlipFile(file).catch(err=> toast((err && err.message) || 'Could not send slip'));
-  }
-  document.addEventListener('change', function(e){
-    if(e.target && e.target.id === 'threadSlipInput') onPick(e);
-  }, true);
+  });
 })();
 
+let slipKeepIndex = {};
 function slipSrc(m){
   const raw = m.mediaUrl || m.dataUrl || '';
   if(!raw) return '';
@@ -628,41 +635,46 @@ function slipSrc(m){
 }
 async function keepSlipFile(url, name){
   if(!url) return;
-  const fileName = name || 'slip';
+  const fileName = (name || 'slip').replace(/[^\w.\-]+/g, '_');
   toast('Keeping…');
   try{
     const res = await fetch(url, { mode:'cors', credentials:'omit' });
     if(!res.ok) throw new Error('keep failed');
     const blob = await res.blob();
-    if(navigator.canShare && navigator.share){
-      try{
-        const file = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
-        if(navigator.canShare({ files:[file] })){
-          await navigator.share({ files:[file], title: fileName });
-          return;
-        }
-      }catch(e){
-        if(e && e.name === 'AbortError') return;
-      }
-    }
     const href = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = href;
     a.download = fileName;
+    a.rel = 'noopener';
     a.style.display = 'none';
     document.body.appendChild(a);
     a.click();
-    setTimeout(function(){ try{ URL.revokeObjectURL(href); a.remove(); }catch(_){} }, 2500);
+    setTimeout(function(){ try{ URL.revokeObjectURL(href); a.remove(); }catch(_){} }, 4000);
+    toast('Saved');
+    return;
   }catch(e){
+    console.warn('[slip keep]', e);
+  }
+  try{
+    const u = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'dl=1&fn=' + encodeURIComponent(fileName);
+    const frame = document.createElement('iframe');
+    frame.style.display = 'none';
+    frame.src = u;
+    document.body.appendChild(frame);
+    setTimeout(function(){ try{ frame.remove(); }catch(_){} }, 8000);
+    toast('Saving…');
+  }catch(_){
     toast('Could not keep — try again');
   }
 }
 
 function slipBubbleHtml(m){
   const src = slipSrc(m);
-  const keep = (m.from === 'them' && src)
-    ? `<button type="button" class="slip-keep" data-slip-keep="${escapeHtml(src)}" data-slip-name="${escapeHtml(m.fileName || (m.type==='video'?'clip.mp4':'photo.jpg'))}">Keep</button>`
-    : '';
+  let keep = '';
+  if(m.from === 'them' && src){
+    slipKeepIndex[String(m.id)] = { url: src, name: m.fileName || (m.type==='video' ? 'clip.mp4' : 'photo.jpg') };
+    keep = `<button type="button" class="slip-keep" data-slip-id="${escapeHtml(String(m.id))}">Keep</button>`;
+  }
   if(m.type === 'video'){
     return `<div class="slip-frame" data-slip-play="${escapeHtml(String(m.id))}">
       <video src="${escapeHtml(src)}" playsinline webkit-playsinline preload="metadata" disablepictureinpicture></video>
