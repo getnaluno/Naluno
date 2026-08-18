@@ -68,6 +68,7 @@ function restoreNavStateOnBoot(){
 
 document.querySelectorAll('.navbtn').forEach(btn=>{
   btn.onclick = ()=>{
+    try{ if(typeof closeThread === 'function') closeThread(); }catch(_){}
     document.querySelectorAll('.navbtn').forEach(b=>b.classList.remove('active'));
     document.querySelectorAll('.tabscreen').forEach(s=>s.classList.remove('active'));
     btn.classList.add('active');

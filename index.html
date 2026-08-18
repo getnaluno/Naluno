@@ -644,10 +644,10 @@
     <audio id="threadAudioPlayer" style="display:none;"></audio>
     <div style="padding:10px 14px calc(env(safe-area-inset-bottom,0px) + 14px); border-top:1px solid var(--line); background:rgba(13,15,23,.92); backdrop-filter:blur(10px);">
       <div id="threadComposerNormal" style="display:flex; gap:9px; align-items:flex-end;">
-        <label class="ghost-btn" id="threadSlipBtn" aria-label="Send a slip — photo or video" title="Slip" style="flex-shrink:0;position:relative;overflow:hidden;z-index:8;">
+        <button type="button" class="ghost-btn" id="threadSlipBtn" aria-label="Send a slip — photo or video" title="Slip" style="flex-shrink:0;">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="4" y="5" width="16" height="14" rx="3" stroke="currentColor" stroke-width="1.8"/><circle cx="9" cy="10" r="1.6" fill="currentColor"/><path d="M7 16l3.2-3.4 2.3 2.2L16.5 11 20 16" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
-          <input type="file" id="threadSlipInput" accept="image/*,video/*" />
-        </label>
+        </button>
+        <input type="file" id="threadSlipInput" accept="image/*,video/*" tabindex="-1" aria-hidden="true" />
         <div class="ghost-btn" id="threadMoodBtn" role="button" aria-label="Send a feeling instead of words" style="flex-shrink:0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="12" cy="12" r="4.5" stroke="currentColor" stroke-width="1.6"/></svg></div>
         <textarea id="threadInput" rows="1" placeholder="Send a signal…" style="flex:1; resize:none; background:var(--surface); border:1px solid var(--line); border-radius:20px; padding:11px 16px; color:var(--text); font-size:14px; outline:none; max-height:120px; font-family:inherit;"></textarea>
         <div class="ghost-btn" id="threadMicBtn" role="button" aria-label="Record a voice note" style="flex-shrink:0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 15a3 3 0 003-3V6a3 3 0 10-6 0v6a3 3 0 003 3z" stroke="currentColor" stroke-width="2"/><path d="M19 11a7 7 0 01-14 0M12 19v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
@@ -909,35 +909,35 @@
   </div>
 
 <!-- NALUNO_MODULES -->
-<script src="js/core.js?v=20260819f"></script>
-<script src="js/media-contain.js?v=20260819f"></script>
-<script src="js/keep-alive.js?v=20260819f"></script>
-<script src="js/metrics.js?v=20260819f"></script>
-<script src="js/data.js?v=20260819f"></script>
-<script src="js/crypto.js?v=20260819f"></script>
-<script src="js/atmosphere.js?v=20260819f"></script>
-<script src="js/band-list.js?v=20260819f"></script>
-<script src="js/signal-core.js?v=20260819f"></script>
-<script src="js/broadcast-core.js?v=20260819f"></script>
-<script src="js/broadcast-upload.js?v=20260819f"></script>
-<script src="js/broadcast-composer.js?v=20260819f"></script>
-<script src="js/compass.js?v=20260819f"></script>
-<script src="js/signal-ui.js?v=20260819f"></script>
-<script src="js/compat-lock.js?v=20260819f"></script>
-<script src="js/broadcast-space.js?v=20260819f"></script>
-<script src="js/wireline.js?v=20260819f"></script>
-<script src="js/profile.js?v=20260819f"></script>
-<script src="js/auth.js?v=20260819f"></script>
-<script src="js/notifications.js?v=20260819f"></script>
-<script src="js/ice-core.js?v=20260819f"></script>
-<script src="js/camera.js?v=20260819f"></script>
-<script src="js/calls.js?v=20260819f"></script>
-<script src="js/sfu-live.js?v=20260819f"></script>
-<script src="js/broadcast-live.js?v=20260819f"></script>
-<script src="js/band-room.js?v=20260819f"></script>
-<script src="js/pwa.js?v=20260819f"></script>
-<script src="js/spark.js?v=20260819f"></script>
-<script src="js/find.js?v=20260819f"></script>
+<script src="js/core.js?v=20260819h"></script>
+<script src="js/media-contain.js?v=20260819h"></script>
+<script src="js/keep-alive.js?v=20260819h"></script>
+<script src="js/metrics.js?v=20260819h"></script>
+<script src="js/data.js?v=20260819h"></script>
+<script src="js/crypto.js?v=20260819h"></script>
+<script src="js/atmosphere.js?v=20260819h"></script>
+<script src="js/band-list.js?v=20260819h"></script>
+<script src="js/signal-core.js?v=20260819h"></script>
+<script src="js/broadcast-core.js?v=20260819h"></script>
+<script src="js/broadcast-upload.js?v=20260819h"></script>
+<script src="js/broadcast-composer.js?v=20260819h"></script>
+<script src="js/compass.js?v=20260819h"></script>
+<script src="js/signal-ui.js?v=20260819h"></script>
+<script src="js/compat-lock.js?v=20260819h"></script>
+<script src="js/broadcast-space.js?v=20260819h"></script>
+<script src="js/wireline.js?v=20260819h"></script>
+<script src="js/profile.js?v=20260819h"></script>
+<script src="js/auth.js?v=20260819h"></script>
+<script src="js/notifications.js?v=20260819h"></script>
+<script src="js/ice-core.js?v=20260819h"></script>
+<script src="js/camera.js?v=20260819h"></script>
+<script src="js/calls.js?v=20260819h"></script>
+<script src="js/sfu-live.js?v=20260819h"></script>
+<script src="js/broadcast-live.js?v=20260819h"></script>
+<script src="js/band-room.js?v=20260819h"></script>
+<script src="js/pwa.js?v=20260819h"></script>
+<script src="js/spark.js?v=20260819h"></script>
+<script src="js/find.js?v=20260819h"></script>
 <!-- /NALUNO_MODULES -->
 </body>
 </html>

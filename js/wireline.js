@@ -487,11 +487,19 @@ function renderThreadMessages(){
   });
   document.querySelectorAll('[data-slip-play]').forEach(el=>{
     el.onclick = function(e){
+      if(e.target && e.target.closest && e.target.closest('[data-slip-keep]')) return;
       e.stopPropagation();
       const v = el.querySelector('video');
       if(!v) return;
       if(v.paused){ v.play().catch(function(){}); el.classList.add('playing'); }
       else { v.pause(); el.classList.remove('playing'); }
+    };
+  });
+  document.querySelectorAll('[data-slip-keep]').forEach(el=>{
+    el.onclick = function(e){
+      e.preventDefault();
+      e.stopPropagation();
+      keepSlipFile(el.getAttribute('data-slip-keep'), el.getAttribute('data-slip-name'));
     };
   });
   document.querySelectorAll('[data-delmsg]').forEach(el=>{
@@ -618,10 +626,42 @@ function slipSrc(m){
   if(!raw) return '';
   return (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(raw) : raw;
 }
+async function keepSlipFile(url, name){
+  if(!url) return;
+  const fileName = name || 'slip';
+  toast('Keeping…');
+  try{
+    const res = await fetch(url, { mode:'cors', credentials:'omit' });
+    if(!res.ok) throw new Error('keep failed');
+    const blob = await res.blob();
+    if(navigator.canShare && navigator.share){
+      try{
+        const file = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
+        if(navigator.canShare({ files:[file] })){
+          await navigator.share({ files:[file], title: fileName });
+          return;
+        }
+      }catch(e){
+        if(e && e.name === 'AbortError') return;
+      }
+    }
+    const href = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = fileName;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function(){ try{ URL.revokeObjectURL(href); a.remove(); }catch(_){} }, 2500);
+  }catch(e){
+    toast('Could not keep — try again');
+  }
+}
+
 function slipBubbleHtml(m){
   const src = slipSrc(m);
-  const keep = src
-    ? `<a class="slip-keep" href="${escapeHtml(src)}" download="${escapeHtml(m.fileName || (m.type==='video'?'clip.mp4':'photo.jpg'))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Keep</a>`
+  const keep = (m.from === 'them' && src)
+    ? `<button type="button" class="slip-keep" data-slip-keep="${escapeHtml(src)}" data-slip-name="${escapeHtml(m.fileName || (m.type==='video'?'clip.mp4':'photo.jpg'))}">Keep</button>`
     : '';
   if(m.type === 'video'){
     return `<div class="slip-frame" data-slip-play="${escapeHtml(String(m.id))}">
