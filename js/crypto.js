@@ -151,19 +151,28 @@ async function importMyKeyPairFromJwks(privateJwk, publicJwk){
   );
   return { privateKey, publicKey, privateJwk, publicJwk };
 }
+function readKeyPairBackup(){
+  try{
+    const raw = localStorage.getItem('nalunoE2eKeyPair');
+    if(!raw) return null;
+    const o = JSON.parse(raw);
+    if(o && o.privateJwk && o.publicJwk) return o;
+  }catch(_){}
+  return null;
+}
+function writeKeyPairBackup(privateJwk, publicJwk){
+  try{ localStorage.setItem('nalunoE2eKeyPair', JSON.stringify({ privateJwk, publicJwk })); }catch(_){}
+}
 function ensureMyKeyPair(){
   if(myKeyPairPromise) return myKeyPairPromise;
   myKeyPairPromise = (async ()=>{
-    if(!window.crypto || !window.crypto.subtle || !window.indexedDB) return null;
+    if(!window.crypto || !window.crypto.subtle) return null;
     // 1. Try to load previously stored JWKs and re-import them into live CryptoKeys.
     try{
-      const stored = await idbGet('myKeyPair');
+      const stored = (window.indexedDB ? await idbGet('myKeyPair') : null) || readKeyPairBackup();
       if(stored && stored.privateJwk && stored.publicJwk){
         const keys = await importMyKeyPairFromJwks(stored.privateJwk, stored.publicJwk);
-        // Make sure our public key is still published (in case a previous write failed).
-        if(currentUser && fbDb){
-          fbDb.collection('users').doc(currentUser.uid).set({ publicKey: stored.publicJwk }, { merge:true }).catch(()=>{});
-        }
+        writeKeyPairBackup(stored.privateJwk, stored.publicJwk);
         return keys;
       }
       // Legacy path: older builds stored the CryptoKey objects themselves. If we still
@@ -173,6 +182,7 @@ function ensureMyKeyPair(){
           const privateJwk = await crypto.subtle.exportKey('jwk', stored.privateKey);
           const publicJwk = await crypto.subtle.exportKey('jwk', stored.publicKey);
           await idbSet('myKeyPair', { privateJwk, publicJwk });
+          writeKeyPairBackup(privateJwk, publicJwk);
           if(currentUser && fbDb){
             fbDb.collection('users').doc(currentUser.uid).set({ publicKey: publicJwk }, { merge:true }).catch(()=>{});
           }
@@ -180,19 +190,29 @@ function ensureMyKeyPair(){
         }catch(e){ /* fall through to generate a fresh pair */ }
       }
     }catch(e){ /* nothing stored yet on this device */ }
-    // 2. Generate a brand-new extractable key pair, export both halves as JWK, store them.
+    // 2. Never mint a new pair if this account already published a publicKey —
+    //    that is what made old messages unreadble after a few days.
+    try{
+      if(currentUser && fbDb){
+        const snap = await fbDb.collection('users').doc(currentUser.uid).get();
+        if(snap.exists && snap.data().publicKey){
+          return null;
+        }
+      }
+    }catch(_){}
     try{
       const keyPair = await crypto.subtle.generateKey(
         { name:'ECDH', namedCurve:'P-256' }, true, ['deriveKey','deriveBits']
       );
       const privateJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
       const publicJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
-      await idbSet('myKeyPair', { privateJwk, publicJwk });
+      try{ await idbSet('myKeyPair', { privateJwk, publicJwk }); }catch(_){}
+      writeKeyPairBackup(privateJwk, publicJwk);
       if(currentUser && fbDb){
         fbDb.collection('users').doc(currentUser.uid).set({ publicKey: publicJwk }, { merge:true }).catch(()=>{});
       }
       return { privateKey: keyPair.privateKey, publicKey: keyPair.publicKey, privateJwk, publicJwk };
-    }catch(e){ return null; } // crypto generation failed — messages fall back to plaintext
+    }catch(e){ return null; }
   })();
   return myKeyPairPromise;
 }

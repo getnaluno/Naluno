@@ -13,7 +13,12 @@ if('serviceWorker' in navigator){
   navigator.serviceWorker.addEventListener('message', event=>{
     const msg = event.data || {};
     if(msg.type === 'naluno-incoming-call'){
-      handleIncomingCallFromPush(msg.callId || null);
+      const id = msg.callId || null;
+      const kick = ()=>{
+        if(currentUser && fbDb) handleIncomingCallFromPush(id);
+        else setTimeout(kick, 400);
+      };
+      kick();
     }
   });
 }

@@ -175,8 +175,10 @@ if(m.encrypted && m.ciphertext && m.iv){
             if(decrypted !== null){
               text = decrypted;
               wirelineDecryptCache[cacheKey] = decrypted;
+            } else if(m.text){
+              text = m.text;
             } else {
-              text = '🔒 Couldn\u2019t decrypt this message';
+              text = 'Message from another device';
             }
           }
         }
@@ -587,16 +589,10 @@ async function sendRealMessage(c, payload, previewText, queueId){
     let finalPayload = payload;
     let finalPreview = previewText;
     if(payload.type === 'text'){
-      const contact = contacts.find(x=>x.firebaseUid===c.firebaseUid);
-      const theirKey = contact && contact.publicKey;
-      const encrypted = theirKey ? await encryptMessageText(c.firebaseUid, theirKey, payload.text) : null;
-      if(encrypted){
-        finalPayload = { type:'text', ciphertext: encrypted.ciphertext, iv: encrypted.iv, encrypted:true };
-        finalPreview = '🔒 Encrypted message'; // the list preview must never leak real content either
-      }
-      // No key available yet (they haven't opened the app since this shipped) — falls
-      // through to sending payload/previewText as plaintext, exactly as before this
-      // feature existed, so an in-progress rollout never breaks a real conversation.
+      // E2E ciphertext-only broke after a few days (key rotation / IDB eviction).
+      // Text is the source of truth so messages never vanish.
+      finalPayload = { type:'text', text: payload.text, encrypted:false };
+      finalPreview = previewText;
     }
     await threadRef.set({
       participants: [currentUser.uid, c.firebaseUid].sort(),

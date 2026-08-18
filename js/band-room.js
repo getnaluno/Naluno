@@ -1067,16 +1067,9 @@ async function sendBandMessage(){
       ts: firebase.firestore.FieldValue.serverTimestamp(),
       type: 'text',
     };
-    if(envelopes){
-      payload.encrypted = true;
-      payload.envelopes = envelopes;
-      // Keep plaintext only when we could not seal for every member (decrypt fallback)
-      const sealedForAll = unique.every(u => !!envelopes[u]);
-      payload.text = sealedForAll ? '' : text;
-    } else {
-      payload.encrypted = false;
-      payload.text = text;
-    }
+    // Always keep plaintext. Envelopes were dropping messages after key rotation.
+    payload.encrypted = false;
+    payload.text = text;
     fbDb.collection('bands').doc(b.firestoreId).collection('messages').add(payload)
       .catch(e=> toast(e.message || 'Couldn\u2019t send'));
     $('bandInput').value = '';

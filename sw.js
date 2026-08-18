@@ -99,18 +99,33 @@ self.addEventListener('push', event=>{
   const title = data.title || 'Incoming call — Naluno';
   const body = data.body || 'Tap to answer';
   const callId = data.callId || data.call_id || data.tag || '';
-  event.waitUntil(
-    self.registration.showNotification(title, {
+  event.waitUntil((async ()=>{
+    const opts = {
       body, icon: './icon-192.png', badge: './icon-192.png',
-      tag: callId || 'naluno-call', renotify: true, requireInteraction: true,
-      vibrate: [300, 100, 300, 100, 300],
+      tag: callId || 'naluno-call',
+      renotify: true,
+      requireInteraction: true,
+      silent: false,
+      vibrate: [500, 200, 500, 200, 500, 200, 500],
       data: { callId, type: 'incoming_call', url: callId ? ('./?call=' + encodeURIComponent(callId)) : './' },
       actions: [
         { action: 'answer', title: 'Answer' },
         { action: 'decline', title: 'Decline' },
       ],
-    })
-  );
+    };
+    await self.registration.showNotification(title, opts);
+    const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for(const client of clientList){
+      try{ client.postMessage({ type: 'naluno-incoming-call', callId }); }catch(_){}
+    }
+    // Second + third notification so the phone keeps sounding if the first was quiet
+    if(callId){
+      await new Promise(r => setTimeout(r, 2500));
+      await self.registration.showNotification(title, Object.assign({}, opts, { renotify: true }));
+      await new Promise(r => setTimeout(r, 3500));
+      await self.registration.showNotification(title, Object.assign({}, opts, { renotify: true }));
+    }
+  })());
 });
 
 self.addEventListener('notificationclick', event=>{
