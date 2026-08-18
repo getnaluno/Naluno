@@ -62,6 +62,7 @@ function bindMediaElement(el, rawUrl){
   if(!url) return;
   el.setAttribute('playsinline', '');
   el.setAttribute('preload', 'metadata');
+  if(typeof containMediaElement === 'function') containMediaElement(el);
   // Do NOT set crossOrigin — on Android WebView/Chrome it can block playback
   // even when the Worker sends Access-Control-Allow-Origin.
   el.src = url;

@@ -1,6 +1,6 @@
 // Naluno service worker — offline shell + background call push.
 // v28: Network-first for JS/CSS WITH cache fallback so offline open works.
-const CACHE_NAME = 'naluno-shell-v53';
+const CACHE_NAME = 'naluno-shell-v54';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',
@@ -10,7 +10,7 @@ const CORE_ASSETS = [
   './js/broadcast-live.js', './js/broadcast-composer.js', './js/broadcast-upload.js',
   './js/signal-core.js', './js/signal-ui.js',
   './js/sfu-live.js', './js/compass.js', './js/find.js', './js/profile.js', './js/notifications.js',
-  './js/ice-core.js', './js/compat-lock.js', './js/keep-alive.js',
+  './js/ice-core.js', './js/compat-lock.js', './js/keep-alive.js', './js/media-contain.js',
 ];
 
 self.addEventListener('install', event=>{
@@ -44,22 +44,22 @@ self.addEventListener('fetch', event=>{
 
   if(isAppCode || isFirebaseSdkScript){
     event.respondWith(
-      fetch(event.request).then(response=>{
-        if(response && response.ok && isSameOrigin){
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy)).catch(()=>{});
+      caches.match(event.request, { ignoreSearch: true }).then(cached => {
+        const net = fetch(event.request).then(response=>{
+          if(response && response.ok && isSameOrigin){
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy)).catch(()=>{});
+          }
+          return response;
+        });
+        if(cached){
+          net.catch(()=>{});
+          return cached;
         }
-        return response;
-      }).catch(() =>
-        caches.match(event.request, { ignoreSearch: true }).then(cached => {
-          if(cached) return cached;
-          return caches.match(url.pathname).then(c2 => {
-            if(c2) return c2;
-            // NEVER invent empty JS/CSS — that turns the app into "text only" on newer Android.
-            return fetch(event.request);
-          });
-        })
-      )
+        return net.catch(() =>
+          caches.match(url.pathname).then(c2 => c2 || fetch(event.request))
+        );
+      })
     );
     return;
   }

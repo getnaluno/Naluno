@@ -337,18 +337,20 @@ async function nalunoForgotPassword(){
 if(fbAuth){
   authStatus('Checking sign-in state…');
   let authResolved = false;
-  // Safety net: if onAuthStateChanged has not fired within a few seconds (slow
-  // IndexedDB, blocked storage, or a hung redirect), show the sign-in form so a
-  // first-time user is never left staring at "Checking sign-in…" forever and so
-  // the gate is never silently skipped.
+  let lastUid = '';
+  try{ lastUid = localStorage.getItem('nalunoLastUid') || ''; }catch(_){}
+  // If we have a remembered account, never flash the sign-in form on a slow restore.
   const authTimeout = setTimeout(()=>{
     if(authResolved) return;
-    authResolved = true;
+    if(lastUid){
+      authStatus('Restoring your session…');
+      return;
+    }
     authStatus('Sign-in check timed out — please sign in.');
     $('authGateLoading').style.display = 'none';
     $('authGateForm').style.display = 'flex';
     $('authGate').classList.add('active');
-  }, 4500);
+  }, 8000);
 
   // Catches errors specific to the redirect round-trip (e.g. "this domain isn't
   // authorized") that onAuthStateChanged alone would never surface — it would just
@@ -373,10 +375,12 @@ if(fbAuth){
     authResolved = true;
     currentUser = user;
     if(user){
+      try{ localStorage.setItem('nalunoLastUid', user.uid); }catch(_){}
       authStatus('Signed in as ' + (user.displayName || user.email));
       $('authGate').classList.remove('active');
       loadRealProfile(user);
     } else {
+      try{ localStorage.removeItem('nalunoLastUid'); }catch(_){}
       authStatus('Not signed in.');
       $('authGateLoading').style.display = 'none';
       $('authGateForm').style.display = 'flex';
