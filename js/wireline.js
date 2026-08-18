@@ -155,7 +155,13 @@ async function clearMySideOfThread(){
     toast('Open a conversation first');
     return;
   }
-  if(!window.confirm('Clear this chat on your side only? They will still have the messages.')) return;
+  if(clearMySideOfThread._arm !== activeThreadContactId){
+    clearMySideOfThread._arm = activeThreadContactId;
+    toast('Tap Clear again to empty your side only');
+    setTimeout(function(){ if(clearMySideOfThread._arm === activeThreadContactId) clearMySideOfThread._arm = null; }, 3500);
+    return;
+  }
+  clearMySideOfThread._arm = null;
   const at = Date.now();
   const key = wirelineClearKey(c);
   wirelineClearedAt[key] = at;
@@ -215,12 +221,26 @@ function updateThreadStatusLabel(){
   const c = contacts.find(x=>x.id===activeThreadContactId); if(!c) return;
   $('threadStatus').textContent = signalMeta[computeSignal(c).tier].label;
 }
+function fireThreadClear(e){
+  if(e){ e.preventDefault(); e.stopPropagation(); }
+  clearMySideOfThread();
+}
+function bindThreadChrome(){
+  const clear = $('threadClearBtn');
+  if(clear){
+    clear.onclick = fireThreadClear;
+    clear.ontouchend = function(e){
+      if(!e || !e.cancelable) { fireThreadClear(e); return; }
+      e.preventDefault();
+      fireThreadClear(e);
+    };
+  }
+}
+bindThreadChrome();
 document.addEventListener('click', function(e){
   const btn = e.target && e.target.closest && e.target.closest('#threadClearBtn');
   if(!btn) return;
-  e.preventDefault();
-  e.stopPropagation();
-  clearMySideOfThread();
+  fireThreadClear(e);
 }, true);
 
 function openThread(contactId){
@@ -232,6 +252,7 @@ function openThread(contactId){
   $('threadInput').value = '';
   updateComposerButtons();
   $('wirelineThread').classList.add('active');
+  try{ bindThreadChrome(); }catch(_){}
 
   if(activeThreadUnsubscribe){ activeThreadUnsubscribe(); activeThreadUnsubscribe = null; }
 

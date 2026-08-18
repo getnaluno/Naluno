@@ -729,20 +729,17 @@
 
 .slip-frame.playing .slip-play{ display:none; }
 
-#threadClearBtn{
-  flex-shrink:0;
-  height:36px;
-  padding:0 12px;
-  border-radius:18px;
-  border:1px solid var(--line);
-  background:var(--surface);
-  color:var(--text);
-  font-family:var(--font-mono);
-  font-size:11px;
-  letter-spacing:.04em;
+
+#threadClearBtn, #threadSlipBtn{ pointer-events:auto !important; z-index:8; touch-action:manipulation; position:relative; }
+#threadSlipInput{
+  position:absolute !important;
+  inset:0 !important;
+  width:100% !important;
+  height:100% !important;
+  opacity:0 !important;
+  margin:0 !important;
+  padding:0 !important;
   cursor:pointer;
-  pointer-events:auto;
-  z-index:6;
-  touch-action:manipulation;
+  z-index:9;
+  font-size:28px;
 }
-#threadSlipBtn{ pointer-events:auto; z-index:6; touch-action:manipulation; }

@@ -149,6 +149,17 @@ service cloud.firestore {
     }
   
     // ---- Broadcast spaces (living communities) ----
+    match /sparks/{code} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn()
+        && request.resource.data.hostUid == request.auth.uid
+        && request.resource.data.expiresAt is number;
+      allow update: if isSignedIn()
+        && resource.data.hostUid != request.auth.uid
+        && request.resource.data.hostUid == resource.data.hostUid;
+      allow delete: if isSignedIn() && resource.data.hostUid == request.auth.uid;
+    }
+
     match /broadcasts/{bcastId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && request.resource.data.creatorUid == request.auth.uid;
