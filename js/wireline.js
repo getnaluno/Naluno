@@ -62,7 +62,20 @@ function renderWirelineList(){
     const preview = last ? ((last.from==='me' ? 'You: ' : '') + lastText) : 'No messages yet — say hello';
     const unread = !!(last && last.from==='them' && !last.read);
     return { c, last, preview, unread };
+  }).filter(r=>{
+    // Wireline is WhatsApp-style: only people you have actually contacted
+    if(r.c && r.c.isReal){
+      const p = r.c.firebaseUid && realThreadPreviews[r.c.firebaseUid];
+      return !!(p && (p.ts || p.text));
+    }
+    return !!(r.last);
   }).sort((a,b)=> (b.last?b.last.ts:0) - (a.last?a.last.ts:0));
+
+  if(!rows.length){
+    $('wirelineList').innerHTML = `<div class="lobby-sub" style="padding:28px 20px;text-align:center;">No conversations yet. Start one from Frequencies — Wireline only lists people you have already written or called.</div>`;
+    if($('wirelineNavDot')) $('wirelineNavDot').style.display = 'none';
+    return;
+  }
 
   $('wirelineList').innerHTML = rows.map(r=>`
     <div class="contact-row" data-thread="${r.c.id}">

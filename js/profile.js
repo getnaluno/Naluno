@@ -127,6 +127,7 @@ function applyProfileToUI(profile){
   $('nameInput').value = profile.name;
   $('taglineInput').value = profile.tagline;
   $('numberInput').value = profile.number;
+  if($('recoveryEmailInput')) $('recoveryEmailInput').value = profile.recoveryEmail || '';
   applyAvatarVisual($('profileAvatarBig'), profile);
   document.querySelectorAll('#swatchRow .swatch').forEach(s=>{
     s.classList.toggle('selected', s.dataset.c === profile.color);

@@ -1182,15 +1182,12 @@ function wireBroadcastChapterPlayer(chapters, breathers, opts){
   };
 
   v.onended = ()=>{
+    const shared = bspaceChapterList.length > 1 && bspaceChapterList.every(c => c.mediaUrl === bspaceChapterList[0].mediaUrl);
+    if(shared) return; // one file already finished
     if(bspaceChapterList.length <= 1) return;
-    const br = bspaceBreatherList.find(b => b.afterChapterIndex === bspaceChapterIndex);
     const next = bspaceChapterIndex + 1;
     if(next >= bspaceChapterList.length) return;
-    if(br){
-      showBreatherAdSlot(br, ()=> playBroadcastChapter(next, false));
-    } else {
-      playBroadcastChapter(next, false);
-    }
+    playBroadcastChapter(next, false);
   };
 }
 
@@ -1204,37 +1201,49 @@ function playBroadcastChapter(index, userInitiated){
   const shared = !!ch.sharedSource || (bspaceChapterList.length > 1 && bspaceChapterList.every(c => c.mediaUrl === ch.mediaUrl));
 
   if(shared){
-    // One file — seek to chapter start instead of reloading
+    // One file: play continuously. Seek ONLY when the person taps a chapter chip.
+    // Auto-seeking at each 4-min mark is what made later chapters drag/stutter.
     const startAt = typeof ch.start === 'number' ? ch.start : 0;
-    const endAt = typeof ch.end === 'number' ? ch.end : null;
     const fileKey = (url.split('?')[0].split('/').pop() || '');
-    const needLoad = !v.src || !fileKey || String(v.currentSrc || v.src).indexOf(fileKey) < 0;
-    const kickPlay = function(){
-      try{ if(startAt > 0.2) v.currentTime = startAt; }catch(_){}
-      const p = v.play();
-      if(p && p.catch) p.catch(function(){
-        try{ v.muted = true; v.play().then(function(){}).catch(function(){}); }catch(_){}
-      });
+    const alreadyOnFile = !!(fileKey && String(v.currentSrc || v.src).indexOf(fileKey) >= 0);
+    const kickPlay = function(doSeek){
+      if(doSeek && startAt >= 0){
+        const onSeeked = function(){
+          v.removeEventListener('seeked', onSeeked);
+          const p = v.play();
+          if(p && p.catch) p.catch(function(){ try{ v.muted = true; v.play().catch(function(){}); }catch(_){} });
+        };
+        v.addEventListener('seeked', onSeeked);
+        try{ v.currentTime = startAt; }catch(_){ onSeeked(); }
+      } else {
+        const p = v.play();
+        if(p && p.catch) p.catch(function(){ try{ v.muted = true; v.play().catch(function(){}); }catch(_){} });
+      }
     };
-    if(needLoad){
+    if(!alreadyOnFile){
       v.src = url;
       v.load();
-      v.onloadedmetadata = kickPlay;
-      v.onloadeddata = kickPlay;
-      setTimeout(kickPlay, 500);
+      v.onloadedmetadata = function(){ kickPlay(!!userInitiated && startAt > 0.4); };
     } else {
-      kickPlay();
+      kickPlay(!!userInitiated);
     }
-    // End chapter at end mark → next chapter / breather
-    v.ontimeupdate = ()=>{
-      if(endAt == null) return;
-      if((v.currentTime || 0) >= endAt - 0.15){
-        v.ontimeupdate = null;
-        const br = bspaceBreatherList.find(b => b.afterChapterIndex === bspaceChapterIndex);
-        const next = bspaceChapterIndex + 1;
-        if(next >= bspaceChapterList.length) return;
-        if(br) showBreatherAdSlot(br, ()=> playBroadcastChapter(next, false));
-        else playBroadcastChapter(next, false);
+    v.ontimeupdate = function(){
+      const t = v.currentTime || 0;
+      let idx = 0;
+      for(let i = 0; i < bspaceChapterList.length; i++){
+        const c = bspaceChapterList[i];
+        if(typeof c.start === 'number' && t >= c.start - 0.05) idx = i;
+      }
+      if(idx !== bspaceChapterIndex){
+        bspaceChapterIndex = idx;
+        const bar = $('bspaceChapterBar');
+        if(bar){
+          bar.querySelectorAll('[data-ch]').forEach(btn=>{
+            const on = parseInt(btn.getAttribute('data-ch'),10) === idx;
+            btn.style.background = on ? 'rgba(124,255,178,.15)' : 'transparent';
+            btn.style.color = on ? 'var(--mint)' : 'var(--text-dim)';
+          });
+        }
       }
     };
   } else {

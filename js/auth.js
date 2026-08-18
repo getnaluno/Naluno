@@ -178,7 +178,8 @@ function emailAuthInputs(){
     handle = normalizeAuthHandle(handleRaw);
     email = handleToAuthEmail(handle) || '';
   }
-  return { email, password, handle };
+  const recovery = (($('authRecoveryInput') && $('authRecoveryInput').value) || '').trim();
+  return { email, password, handle, recovery };
 }
 
 /* Toggle optional real-email field */
@@ -203,14 +204,20 @@ if($('authUseEmailBtn')){
 
 function nalunoHandleSignIn(){
   if(!fbAuth){ authStatus('Firebase isn\u2019t configured yet — see firebase-config.js', true); return; }
-  const { email, password, handle } = emailAuthInputs();
+  const { email, password, handle, recovery } = emailAuthInputs();
   if(!password || password.length < 6){ authStatus('Enter your password (6+ characters).', true); return; }
   if(!email){
     authStatus('Enter your handle (3+ letters) or turn on "Use email instead".', true);
     return;
   }
   authStatus('Signing in…');
-  fbAuth.signInWithEmailAndPassword(email, password).catch(e=>{
+  const trySignIn = (addr)=> fbAuth.signInWithEmailAndPassword(addr, password);
+  trySignIn(email).catch(e=>{
+    if(recovery && recovery !== email){
+      return trySignIn(recovery);
+    }
+    throw e;
+  }).catch(e=>{
     const bad = e.code === 'auth/user-not-found' || e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential';
     authStatus(bad
       ? 'Handle/password not recognized — check spelling, or Create account.'
@@ -244,7 +251,12 @@ async function nalunoHandleSignUp(){
         return;
       }
     }
-    const cred = await fbAuth.createUserWithEmailAndPassword(email, password);
+    const { recovery } = emailAuthInputs();
+    let createEmail = email;
+    if(!usingEmail && recovery && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recovery)){
+      createEmail = recovery;
+    }
+    const cred = await fbAuth.createUserWithEmailAndPassword(createEmail, password);
     const user = cred.user;
     if(!usingEmail && handle && typeof claimHandle === 'function'){
       try{
@@ -255,6 +267,7 @@ async function nalunoHandleSignUp(){
           tagline: '',
           createdAt: Date.now(),
           authMethod: 'handle',
+          recoveryEmail: recovery || null,
         }, { merge: true });
       }catch(he){
         console.warn('[auth] claim handle', he);
@@ -280,6 +293,30 @@ async function nalunoHandleSignUp(){
     );
   }
 };
+async function nalunoForgotPassword(){
+  if(!fbAuth){ authStatus('Firebase isn\u2019t configured yet — see firebase-config.js', true); return; }
+  const { email, handle, recovery } = emailAuthInputs();
+  const visibleEmail = ($('authEmailInput') && $('authEmailInput').style.display !== 'none' && $('authEmailInput').value.trim()) || '';
+  const target = (recovery || visibleEmail || '').trim();
+  if(!target){
+    authStatus('Enter the recovery email you saved (or your sign-in email). Handle-only accounts need a recovery email.', true);
+    return;
+  }
+  authStatus('Sending reset email…');
+  try{
+    await fbAuth.sendPasswordResetEmail(target);
+    authStatus('If that email is on the account, a reset link is on its way. Check inbox and spam.');
+  }catch(e){
+    if(e.code === 'auth/user-not-found'){
+      authStatus('If that email is on the account, a reset link is on its way. Check inbox and spam.');
+    } else if(e.code === 'auth/invalid-email'){
+      authStatus('That email does not look valid.', true);
+    } else {
+      authStatus(e.message || 'Could not send reset email', true);
+    }
+  }
+}
+
 (function wireHandleAuthButtons(){
   const si = $('emailSignInBtn');
   const su = $('emailSignUpBtn');
@@ -290,6 +327,10 @@ async function nalunoHandleSignUp(){
   if(su){
     su.addEventListener('click', function(e){ if(e) e.preventDefault(); nalunoHandleSignUp(); });
     su.onclick = function(e){ if(e) e.preventDefault(); nalunoHandleSignUp(); };
+  }
+  const fg = $('authForgotBtn');
+  if(fg){
+    fg.addEventListener('click', function(e){ if(e) e.preventDefault(); nalunoForgotPassword(); });
   }
 })();
 
@@ -496,12 +537,14 @@ $('saveProfileBtn').onclick = async ()=>{
   const selectedSwatch = document.querySelector('#swatchRow .swatch.selected');
   const finalName = $('nameInput').value.trim() || 'You';
   const requestedHandle = normalizeHandle($('numberInput').value, finalName);
+  const recoverySaved = (($('recoveryEmailInput') && $('recoveryEmailInput').value) || '').trim();
   const nextProfile = {
     name: finalName,
     tagline: $('taglineInput').value.trim(),
     number: requestedHandle,
     color: selectedSwatch ? selectedSwatch.dataset.c : '#7CFFB2',
     photo: draftPhoto,
+    recoveryEmail: recoverySaved || (currentProfile && currentProfile.recoveryEmail) || null,
   };
 
   // Instant UI feedback — never leave the user staring at a frozen button.
