@@ -1,3 +1,12 @@
+# COMPAT LOCK (mandatory)
+
+**Every upgrade must leave existing data playable.**
+
+- Old Broadcasts / Signals / URLs / auth accounts keep working.
+- New fields are optional. Never require a field old docs omit.
+- Playback: `mediaUrl` / `videoUrl` first, then chapter URLs (`js/compat-lock.js`).
+- If a change would break the existing catalog, it does not ship.
+
 # Naluno module ownership (2026.08.17f)
 
 Hard boundaries — fix bugs **in the owner file only**. Do not copy functions across modules.

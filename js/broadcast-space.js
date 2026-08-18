@@ -93,7 +93,11 @@ function renderBspaceMedia(seg){
   if(seg.type === 'video'){
     const chapters = (activeBroadcastMeta && activeBroadcastMeta.chapters) || seg.chapters || null;
     const breathers = (activeBroadcastMeta && activeBroadcastMeta.breathers) || [];
-    let rawSrc = (chapters && chapters[0] && chapters[0].mediaUrl) || seg.videoUrl || seg.dataUrl || '';
+    let rawSrc = '';
+    if(typeof legacyBroadcastPlayUrl === 'function'){
+      rawSrc = legacyBroadcastPlayUrl(Object.assign({}, seg, { chapters: chapters, mediaUrl: seg.mediaUrl || seg.videoUrl }));
+    }
+    if(!rawSrc) rawSrc = seg.videoUrl || seg.mediaUrl || seg.dataUrl || (chapters && chapters[0] && chapters[0].mediaUrl) || '';
     if(typeof resolveMediaUrl === 'function') rawSrc = resolveMediaUrl(rawSrc) || rawSrc;
     // Visible chapter chips only when real chapters (not silent upload parts)
     const showChapters = chapters && chapters.length > 1 && !chapters.every(c => c.silent);
@@ -950,16 +954,17 @@ async function openBroadcastSpaceById(id){
     if(!snap.exists || snap.data().deleted){ toast('Broadcast not found'); return; }
     const d = snap.data();
     const chapters = Array.isArray(d.chapters) ? d.chapters : null;
-    const primary =
-      d.mediaUrl ||
-      (chapters && chapters[0] && chapters[0].mediaUrl) ||
-      null;
+    const primary = (typeof legacyBroadcastPlayUrl === 'function')
+      ? legacyBroadcastPlayUrl(d)
+      : (d.mediaUrl || d.videoUrl || (chapters && chapters[0] && chapters[0].mediaUrl) || null);
     // Infer video when chapters or mediaType say so (never treat uploaded video as photo)
     let mediaType = d.mediaType || 'photo';
-    if(chapters && chapters.length && primary) mediaType = 'video';
-    if(mediaType !== 'photo' && mediaType !== 'text' && primary) mediaType = 'video';
-    if(mediaType === 'photo' && primary && /\.(mp4|webm|mov|m4v)(\?|$)/i.test(primary)){
+    if(d.mediaType === 'video' || d.videoUrl) mediaType = 'video';
+    if(mediaType === 'photo' && primary && (typeof looksLikeVideoUrl === 'function' ? looksLikeVideoUrl(primary) : /\.(mp4|webm|mov|m4v)(\?|$)/i.test(primary))){
       mediaType = 'video';
+    }
+    if(chapters && chapters.length && chapters.some(c => c && c.mediaUrl && !c.silent && (c.start != null || c.duration))) {
+      if(primary) mediaType = 'video';
     }
     const segment = {
       type: mediaType,

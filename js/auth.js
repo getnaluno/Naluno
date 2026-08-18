@@ -46,9 +46,29 @@ if(firebaseReady()){
 
 function authStatus(msg, isError){
   const el = $('authGateStatus');
-  el.textContent = msg;
-  el.style.color = isError ? 'var(--red)' : 'var(--text-dim)';
+  if(el){
+    el.textContent = msg;
+    el.style.color = isError ? 'var(--red)' : 'var(--text-dim)';
+  }
   console.log('[Naluno auth]', msg);
+}
+
+/* Handle + password (no email required).
+   Firebase still needs an email-shaped identifier — we map handle → stable address.
+   Domain must be a valid public TLD (.local is rejected by Firebase Auth). */
+const NALUNO_HANDLE_EMAIL_DOMAIN = 'users.getnaluno.com';
+function normalizeAuthHandle(raw){
+  return String(raw || '')
+    .trim()
+    .replace(/^@+/, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, '')
+    .slice(0, 24);
+}
+function handleToAuthEmail(handle){
+  const h = normalizeAuthHandle(handle);
+  if(!h || h.length < 3) return null;
+  return h + '@' + NALUNO_HANDLE_EMAIL_DOMAIN;
 }
 
 function isNativeShell(){
@@ -181,7 +201,7 @@ if($('authUseEmailBtn')){
   };
 }
 
-$('emailSignInBtn').onclick = ()=>{
+function nalunoHandleSignIn(){
   if(!fbAuth){ authStatus('Firebase isn\u2019t configured yet — see firebase-config.js', true); return; }
   const { email, password, handle } = emailAuthInputs();
   if(!password || password.length < 6){ authStatus('Enter your password (6+ characters).', true); return; }
@@ -198,7 +218,7 @@ $('emailSignInBtn').onclick = ()=>{
   });
 };
 
-$('emailSignUpBtn').onclick = async ()=>{
+async function nalunoHandleSignUp(){
   if(!fbAuth){ authStatus('Firebase isn\u2019t configured yet — see firebase-config.js', true); return; }
   const { email, password, handle } = emailAuthInputs();
   if(!password || password.length < 6){ authStatus('Password needs to be at least 6 characters.', true); return; }
@@ -260,6 +280,19 @@ $('emailSignUpBtn').onclick = async ()=>{
     );
   }
 };
+(function wireHandleAuthButtons(){
+  const si = $('emailSignInBtn');
+  const su = $('emailSignUpBtn');
+  if(si){
+    si.addEventListener('click', function(e){ if(e) e.preventDefault(); nalunoHandleSignIn(); });
+    si.onclick = function(e){ if(e) e.preventDefault(); nalunoHandleSignIn(); };
+  }
+  if(su){
+    su.addEventListener('click', function(e){ if(e) e.preventDefault(); nalunoHandleSignUp(); });
+    su.onclick = function(e){ if(e) e.preventDefault(); nalunoHandleSignUp(); };
+  }
+})();
+
 if(fbAuth){
   authStatus('Checking sign-in state…');
   let authResolved = false;
