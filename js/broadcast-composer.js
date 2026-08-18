@@ -290,7 +290,7 @@ async function bcompOnFileChosen(file){
   const secs = Math.round(duration % 60);
   const mb = Math.round(file.size/1024/1024);
   if(file.size > 95 * 1024 * 1024){
-    toast('Large video (' + Math.round(file.size/1024/1024) + ' MB) — Naluno will compress/split on Publish');
+    toast('Large video (' + Math.round(file.size/1024/1024) + ' MB) — will upload in pieces (no compress)');
   }
   // Keep original — upload/chapters run in background after Publish
   bcompCompressedBlob = file;
@@ -344,166 +344,37 @@ async function bcompPublish(){
         mediaUrl = await uploadVideoToR2(snapFile);
         thumbUrl = mediaUrl;
       } else {
-        let file = snapFile || snapBlob;
+        const file = snapFile || snapBlob;
         if(!file) throw new Error('No video ready');
-        let duration = snapDuration || (typeof bcompProbeDuration === 'function' ? await bcompProbeDuration(file) : 0);
-        const maxUp = (typeof UPLOAD_MAX_BYTES === 'number') ? UPLOAD_MAX_BYTES : (95*1024*1024);
-        // Huge phone videos (hundreds of MB) cannot ride a single Worker POST — compress first
-        if(file.size > maxUp && typeof compressBroadcastVideo === 'function'){
-          if(progress) progress('Large file (' + Math.round(file.size/1024/1024) + ' MB) — compressing…');
-          try{
-            const r = await compressBroadcastVideo(file, (f, msg)=>{
-              if(progress) progress(msg || ('Compressing… ' + Math.round((f||0)*100) + '%'));
-            });
-            if(r && r.blob){
-              file = r.blob;
-              if(r.duration) duration = r.duration;
-            }
-          }catch(ex){
-            console.warn('[bcomp] compress large', ex);
-          }
-        }
-        if(file.size > maxUp * 1.05){
-          // Still too big — will rely on chapter/time slices below
-          if(progress) progress('Still large — uploading in parts…');
-        }
-        const plan = (typeof planBroadcastChapters === 'function')
-          ? planBroadcastChapters(file.size || 0, duration)
-          : { mode: 'single', parts: [{ start:0, end: duration||0, index:0 }], midrolls: [], showChapterUI: false };
-
-        async function uploadOne(blob, label){
-          if(progress) progress(label);
-          // If still over worker max after slice, gentle compress once
-          let out = blob;
-          if(blob.size > maxUp && typeof compressBroadcastVideo === 'function'){
-            if(progress) progress('Optimizing oversized part…');
-            try{
-              const r = await compressBroadcastVideo(blob, (f, msg)=>{ if(progress) progress(msg || ('Optimizing… ' + Math.round((f||0)*100) + '%')); });
-              out = r.blob || blob;
-            }catch(_){}
-          }
-          return await uploadVideoToR2(out);
-        }
-
-        if(plan.mode === 'single' || plan.mode === 'single_with_markers' || !plan.parts || plan.parts.length <= 1){
-          // Snapshot from local file first (reliable); remote URL often fails canvas CORS
-          try{
-            if(progress) progress('Capturing thumbnail…');
-            thumbUrl = await generateVideoThumbnail(file);
-            if(thumbUrl) thumbUrl = await persistThumbnailDataUrl(thumbUrl);
-          }catch(_){}
-          mediaUrl = await uploadOne(file, 'Uploading video…');
-          if(!thumbUrl){
-            try{ thumbUrl = await generateVideoThumbnail(typeof resolveMediaUrl==='function' ? resolveMediaUrl(mediaUrl) : mediaUrl); }catch(_){}
-            if(thumbUrl) thumbUrl = await persistThumbnailDataUrl(thumbUrl);
-          }
-          if(plan.mode === 'single_with_markers' && plan.parts && plan.parts.length > 1){
-            // One file, multiple seek chapters + breathers between them
-            chapters = plan.parts.map(p => ({
-              index: p.index,
-              mediaUrl: mediaUrl, // same URL — player seeks
-              start: p.start,
-              end: p.end,
-              duration: Math.max(0.1, p.end - p.start),
-              title: 'Chapter ' + (p.index + 1),
-              bytes: null,
-              sharedSource: true,
-            }));
-            breathers = (typeof buildBreathersForChapters === 'function')
-              ? buildBreathersForChapters(chapters.length)
-              : [];
-          } else {
-            chapters = [{ index: 0, mediaUrl, duration: duration || null, title: 'Video', bytes: file.size || null }];
-          }
-        } else if(plan.mode === 'silent_multipart'){
-          // Large but under 4 min: upload slices, continuous play, NO chapter chips
-          chapters = [];
-          for(const part of plan.parts){
-            let blob = file;
-            if(typeof extractVideoClip === 'function' && (part.start > 0.15 || part.end < duration - 0.4)){
-              if(progress) progress('Preparing part ' + (part.index+1) + '/' + plan.parts.length + '…');
-              try{
-                blob = await extractVideoClip(file, part.start, part.end, frac => {
-                  if(progress) progress('Part ' + (part.index+1) + '… ' + Math.round((frac||0)*100) + '%');
-                });
-              }catch(ex){
-                console.warn('[bcomp] part extract failed', part.index, ex);
-                if(file.size <= maxUp && part.index === 0){
-                  mediaUrl = await uploadOne(file, 'Uploading full video…');
-                  chapters = [{ index:0, mediaUrl, duration: duration||null, title:'Video', bytes: file.size||null, silent:true }];
-                  break;
-                }
-                throw new Error('Could not prepare part ' + (part.index+1));
-              }
-            }
-            if(chapters && chapters.length === 1 && mediaUrl && part.index > 0) break;
-            const url = await uploadOne(blob, 'Uploading part ' + (part.index+1) + '/' + plan.parts.length + '…');
-            if(part.index === 0){
-              mediaUrl = url;
-              try{
-                if(!thumbUrl){
-                  thumbUrl = await generateVideoThumbnail(file);
-                  if(thumbUrl) thumbUrl = await persistThumbnailDataUrl(thumbUrl);
-                }
-              }catch(_){}
-              if(!thumbUrl){
-                try{ thumbUrl = await generateVideoThumbnail(typeof resolveMediaUrl==='function' ? resolveMediaUrl(url) : url); }catch(_){}
-                if(thumbUrl) thumbUrl = await persistThumbnailDataUrl(thumbUrl);
-              }
-            }
-            chapters.push({
-              index: part.index, mediaUrl: url,
-              duration: Math.max(0.1, part.end - part.start),
-              title: 'Part ' + (part.index + 1),
-              bytes: blob.size || null,
-              silent: true,
-            });
-          }
+        const duration = snapDuration || (typeof bcompProbeDuration === 'function' ? await bcompProbeDuration(file) : 0);
+        // NEVER re-encode on the phone. Chunked upload of the original file.
+        try{
+          if(progress) progress('Capturing thumbnail…');
+          thumbUrl = await generateVideoThumbnail(file);
+          if(thumbUrl) thumbUrl = await persistThumbnailDataUrl(thumbUrl);
+        }catch(_){}
+        if(typeof uploadBroadcastFile !== 'function') throw new Error('Broadcast uploader not loaded');
+        mediaUrl = await uploadBroadcastFile(file, (frac, msg)=>{
+          if(progress) progress(msg || ('Uploading… ' + Math.round((frac||0)*100) + '%'));
+        });
+        const seek = (typeof planSeekChapters === 'function')
+          ? planSeekChapters(duration)
+          : { showChapterUI: duration > 240, parts: [{ index:0, start:0, end: duration }] };
+        if(seek.showChapterUI && seek.parts && seek.parts.length > 1){
+          chapters = seek.parts.map(p => ({
+            index: p.index,
+            mediaUrl,
+            start: p.start,
+            end: p.end,
+            duration: Math.max(0.1, p.end - p.start),
+            title: 'Chapter ' + (p.index + 1),
+            sharedSource: true,
+          }));
+          breathers = (typeof buildBreathersForChapters === 'function')
+            ? buildBreathersForChapters(chapters.length)
+            : [];
         } else {
-          // Visible chapters (duration > 4 min)
-          chapters = [];
-          for(const part of plan.parts){
-            let blob = file;
-            if(typeof extractVideoClip === 'function' && (part.start > 0.15 || part.end < duration - 0.4)){
-              if(progress) progress('Chapter ' + (part.index+1) + '/' + plan.parts.length + '…');
-              try{
-                blob = await extractVideoClip(file, part.start, part.end, frac => {
-                  if(progress) progress('Chapter ' + (part.index+1) + '… ' + Math.round((frac||0)*100) + '%');
-                });
-              }catch(ex){
-                console.warn('[bcomp] chapter extract failed', part.index, ex);
-                // Last resort: if whole file still under max, upload once and stop multiparts
-                if(file.size <= maxUp && part.index === 0){
-                  mediaUrl = await uploadOne(file, 'Uploading full video (chapter split failed)…');
-                  chapters = [{ index:0, mediaUrl, duration: duration||null, title:'Video', bytes: file.size||null }];
-                  break;
-                }
-                throw new Error('Could not split chapter ' + (part.index+1) + ' — try a shorter clip or re-export as MP4');
-              }
-            }
-            if(chapters && chapters.length === 1 && mediaUrl && part.index > 0) break;
-            const url = await uploadOne(blob, 'Uploading chapter ' + (part.index+1) + '…');
-            if(part.index === 0){
-              mediaUrl = url;
-              try{
-                if(!thumbUrl){
-                  thumbUrl = await generateVideoThumbnail(file);
-                  if(thumbUrl) thumbUrl = await persistThumbnailDataUrl(thumbUrl);
-                }
-              }catch(_){}
-              if(!thumbUrl){
-                try{ thumbUrl = await generateVideoThumbnail(typeof resolveMediaUrl==='function' ? resolveMediaUrl(url) : url); }catch(_){}
-                if(thumbUrl) thumbUrl = await persistThumbnailDataUrl(thumbUrl);
-              }
-            }
-            chapters.push({
-              index: part.index, mediaUrl: url,
-              duration: Math.max(0.1, part.end - part.start),
-              title: 'Chapter ' + (part.index + 1),
-              bytes: blob.size || null,
-            });
-          }
-          breathers = typeof buildBreathersForChapters === 'function' ? buildBreathersForChapters(chapters.length) : [];
+          chapters = [{ index: 0, mediaUrl, duration: duration || null, title: 'Video', start: 0, end: duration || null, sharedSource: true }];
         }
       }
       if(typeof createPermanentBroadcast !== 'function') throw new Error('Broadcast core not loaded');

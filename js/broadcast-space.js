@@ -961,9 +961,6 @@ async function openBroadcastSpaceById(id){
     if(mediaType === 'photo' && primary && /\.(mp4|webm|mov|m4v)(\?|$)/i.test(primary)){
       mediaType = 'video';
     }
-    if(mediaType === 'photo' && primary && /\/o\/u\//.test(primary) && chapters && chapters.length){
-      mediaType = 'video';
-    }
     const segment = {
       type: mediaType,
       dataUrl: mediaType === 'photo' ? primary : null,
