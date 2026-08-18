@@ -718,3 +718,13 @@
   font-size: 32px !important;
   border-radius: 50% !important;
 }
+
+/* Wireline slips — photo/video that play in the thread */
+.slip-frame{ width:min(220px,70vw); aspect-ratio:1/1; border-radius:16px; overflow:hidden; position:relative; background:#0a0c12; }
+.slip-frame img, .slip-frame video{ width:100%; height:100%; object-fit:cover; display:block; }
+.slip-keep{ position:absolute; right:8px; bottom:8px; font-family:var(--font-mono); font-size:10px; letter-spacing:.06em; color:#0D0F17; background:rgba(124,255,178,.92); border:none; border-radius:999px; padding:5px 9px; cursor:pointer; text-decoration:none; }
+.msg-row.me .slip-keep{ background:rgba(13,15,23,.82); color:var(--mint); }
+.slip-play{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; }
+.slip-play span{ width:42px; height:42px; border-radius:50%; background:rgba(13,15,23,.55); border:1px solid rgba(124,255,178,.45); color:var(--mint); display:flex; align-items:center; justify-content:center; font-size:14px; }
+
+.slip-frame.playing .slip-play{ display:none; }

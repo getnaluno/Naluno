@@ -38,6 +38,10 @@ service cloud.firestore {
       allow read, create, delete: if isOwner(uid);
     }
 
+    match /users/{uid}/wirelineClears/{otherUid} {
+      allow read, write: if isOwner(uid);
+    }
+
     match /users/{uid}/connections/{otherUid} {
       allow read: if isOwner(uid);
       allow write: if isSignedIn() && (isOwner(uid) || otherUid == request.auth.uid);

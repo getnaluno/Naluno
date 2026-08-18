@@ -56,6 +56,8 @@ function renderWirelineList(){
     const lastText = last ? (
       last.type==='voice' ? '🎙 Voice note · '+formatDuration(last.duration||0) :
       last.type==='mood' ? '◐ '+((MOODS.find(x=>x.key===last.mood)||{}).label || 'A feeling') :
+      last.type==='photo' ? 'Slip · photo' :
+      last.type==='video' ? 'Slip · video' :
       last.type==='missed_call' ? ('📞 ' + missedCallLabelForViewer(last)) :
       last.text
     ) : '';
@@ -105,9 +107,74 @@ function realThreadId(otherUid){ return [currentUser.uid, otherUid].sort().join(
 let activeThreadUnsubscribe = null;
 let threadsListUnsubscribe = null;
 let realThreadPreviews = {}; // { [otherUid]: { text, ts, fromMe, unread } }
+let wirelineClearedAt = {}; // { [otherUid|contactId]: millis } — this device / this uid only
+
+function wirelineClearKey(c){
+  if(!c) return '';
+  return (c.isReal && c.firebaseUid) ? c.firebaseUid : String(c.id);
+}
+function clearedAtForKey(key){
+  return Number(wirelineClearedAt[key] || 0);
+}
+function msgTs(m){
+  if(!m) return 0;
+  if(m.ts && typeof m.ts.toMillis === 'function') return m.ts.toMillis();
+  return Number(m.ts || 0);
+}
+function saveWirelineClears(){
+  try{ localStorage.setItem('nalunoWirelineClears', JSON.stringify(wirelineClearedAt)); }catch(_){}
+}
+function loadWirelineClearsLocal(){
+  try{
+    const raw = localStorage.getItem('nalunoWirelineClears');
+    if(raw){
+      const o = JSON.parse(raw);
+      if(o && typeof o === 'object') wirelineClearedAt = o;
+    }
+  }catch(_){}
+}
+function syncWirelineClearsFromCloud(){
+  if(!fbDb || !currentUser) return;
+  fbDb.collection('users').doc(currentUser.uid).collection('wirelineClears').get()
+    .then(snap=>{
+      snap.forEach(d=>{
+        const v = d.data() && d.data().clearedAt;
+        if(v) wirelineClearedAt[d.id] = Number(v);
+      });
+      saveWirelineClears();
+      try{ renderThreadMessages(); }catch(_){}
+      try{ renderWirelineList(); }catch(_){}
+    }).catch(()=>{});
+}
+loadWirelineClearsLocal();
+
+async function clearMySideOfThread(){
+  const c = contacts.find(x=>x.id===activeThreadContactId);
+  if(!c) return;
+  if(!confirm('Clear this chat on your side only? They will still have the messages.')) return;
+  const at = Date.now();
+  const key = wirelineClearKey(c);
+  wirelineClearedAt[key] = at;
+  saveWirelineClears();
+  if(c.isReal && c.firebaseUid && fbDb && currentUser){
+    try{
+      await fbDb.collection('users').doc(currentUser.uid).collection('wirelineClears').doc(c.firebaseUid).set({
+        clearedAt: at,
+        otherUid: c.firebaseUid,
+      });
+    }catch(e){ console.warn('[wireline] clear sync', e); }
+  } else {
+    wirelineThreads[c.id] = [];
+    try{ saveWireline(); }catch(_){}
+  }
+  renderThreadMessages();
+  renderWirelineList();
+  toast('Chat cleared on your side');
+}
 
 function startThreadsListListener(){
   if(!fbDb || !currentUser) return;
+  syncWirelineClearsFromCloud();
   if(threadsListUnsubscribe) threadsListUnsubscribe();
   threadsListUnsubscribe = fbDb.collection('threads')
     .where('participants', 'array-contains', currentUser.uid)
@@ -116,9 +183,15 @@ function startThreadsListListener(){
         const d = doc.data();
         const otherUid = (d.participants||[]).find(u=>u!==currentUser.uid);
         if(!otherUid) return;
+        const previewTs = d.lastMessageAt && d.lastMessageAt.toMillis ? d.lastMessageAt.toMillis() : Date.now();
+        const cut = clearedAtForKey(otherUid);
+        if(cut && previewTs <= cut){
+          delete realThreadPreviews[otherUid];
+          return;
+        }
         realThreadPreviews[otherUid] = {
           text: d.lastMessageText || '',
-          ts: d.lastMessageAt && d.lastMessageAt.toMillis ? d.lastMessageAt.toMillis() : Date.now(),
+          ts: previewTs,
           fromMe: d.lastMessageFrom === currentUser.uid,
           unread: d.lastMessageFrom !== currentUser.uid && !(d.readBy||[]).includes(currentUser.uid),
         };
@@ -138,6 +211,10 @@ function updateThreadStatusLabel(){
   const c = contacts.find(x=>x.id===activeThreadContactId); if(!c) return;
   $('threadStatus').textContent = signalMeta[computeSignal(c).tier].label;
 }
+if($('threadClearBtn')){
+  $('threadClearBtn').onclick = ()=> clearMySideOfThread();
+}
+
 function openThread(contactId){
   const c = contacts.find(x=>x.id===contactId); if(!c) return;
   activeThreadContactId = contactId;
@@ -190,6 +267,7 @@ if(m.encrypted && m.ciphertext && m.iv){
           from: isSys ? 'system' : (m.from===currentUser.uid ? 'me' : 'them'),
           type: isSys && msgType === 'text' ? 'system' : msgType,
           text, mood: m.mood, waveform: m.waveform, duration: m.duration, dataUrl: m.dataUrl,
+          mediaUrl: m.mediaUrl || null, mime: m.mime || null, fileName: m.fileName || null,
           callId: m.callId || null,
           callerUid: m.callerUid || null,
           calleeUid: m.calleeUid || null,
@@ -333,9 +411,17 @@ function renderThreadMessages(){
     id: q.queueId, from:'me', ts: q.queuedAt, status:'queued',
     ...q.payload,
   }));
-  const msgs = [...(wirelineThreads[activeThreadContactId] || []), ...queued].sort((a,b)=>a.ts-b.ts);
+  const cActive = contacts.find(x=>x.id===activeThreadContactId);
+  const cut = clearedAtForKey(wirelineClearKey(cActive));
+  const msgs = [...(wirelineThreads[activeThreadContactId] || []), ...queued]
+    .filter(m => msgTs(m) > cut)
+    .sort((a,b)=>a.ts-b.ts);
   if(msgs.length===0){
-    $('threadMessages').innerHTML = `<div class="msg-empty"><span style="font-family:var(--font-futuristic); font-size:14px;">Nothing on this channel yet</span><span style="font-size:12.5px;">Send the first signal — or hold any message to react.</span></div>`;
+    const clearedNote = cut
+      ? 'Chat cleared on your side. They still have the conversation.'
+      : 'Send the first signal — or hold any message to react.';
+    const title = cut ? 'Cleared' : 'Nothing on this channel yet';
+    $('threadMessages').innerHTML = `<div class="msg-empty"><span style="font-family:var(--font-futuristic); font-size:14px;">${title}</span><span style="font-size:12.5px;">${clearedNote}</span></div>`;
     return;
   }
   let lastDay = null;
@@ -357,7 +443,8 @@ function renderThreadMessages(){
     let bubbleInner, bubbleClass = 'msg-bubble';
     if(m.type==='voice'){ bubbleInner = voiceBubbleHtml(m); bubbleClass = 'msg-bubble voice-bubble-wrap'; }
     else if(m.type==='mood'){ bubbleInner = moodBubbleHtml(m); bubbleClass = 'msg-bubble mood-bubble-wrap'; }
-    else { bubbleInner = escapeHtml(m.text); }
+    else if(m.type==='photo' || m.type==='video'){ bubbleInner = slipBubbleHtml(m); bubbleClass = 'msg-bubble slip-bubble'; }
+    else { bubbleInner = escapeHtml(m.text || ''); }
     const receipt = m.from==='me' ? receiptTickHtml(m.status || 'sent') : '';
     const deleteBtn = m.from==='me' ? `<span class="msg-delete-btn" data-delmsg="${m.id}" title="Delete" aria-label="Delete message"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2m2 0v13a2 2 0 01-2 2H9a2 2 0 01-2-2V7h10z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>` : '';
     return dayHtml + `<div class="msg-row ${m.from}" data-msgid="${m.id}">
@@ -368,6 +455,15 @@ function renderThreadMessages(){
   }).join('');
   document.querySelectorAll('[data-voice]').forEach(el=>{
     el.onclick = ()=> toggleVoicePlay(el.dataset.voice);
+  });
+  document.querySelectorAll('[data-slip-play]').forEach(el=>{
+    el.onclick = function(e){
+      e.stopPropagation();
+      const v = el.querySelector('video');
+      if(!v) return;
+      if(v.paused){ v.play().catch(function(){}); el.classList.add('playing'); }
+      else { v.pause(); el.classList.remove('playing'); }
+    };
   });
   document.querySelectorAll('[data-delmsg]').forEach(el=>{
     el.onclick = e=>{ e.stopPropagation(); deleteThreadMessage(el.dataset.delmsg); };
@@ -474,6 +570,86 @@ $('threadInput').addEventListener('keydown', e=>{
   if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendThreadMessage(); }
 });
 $('threadSendBtn').onclick = sendThreadMessage;
+if($('threadSlipBtn') && $('threadSlipInput')){
+  $('threadSlipBtn').onclick = ()=> $('threadSlipInput').click();
+  $('threadSlipInput').onchange = async (e)=>{
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if(!file) return;
+    if(!activeThreadContactId){ toast('Open a conversation first'); return; }
+    try{ await sendSlipFile(file); }
+    catch(err){ toast((err && err.message) || 'Could not send slip'); }
+  };
+}
+
+function slipSrc(m){
+  const raw = m.mediaUrl || m.dataUrl || '';
+  if(!raw) return '';
+  return (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(raw) : raw;
+}
+function slipBubbleHtml(m){
+  const src = slipSrc(m);
+  const keep = src
+    ? `<a class="slip-keep" href="${escapeHtml(src)}" download="${escapeHtml(m.fileName || (m.type==='video'?'clip.mp4':'photo.jpg'))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Keep</a>`
+    : '';
+  if(m.type === 'video'){
+    return `<div class="slip-frame" data-slip-play="${escapeHtml(String(m.id))}">
+      <video src="${escapeHtml(src)}" playsinline webkit-playsinline preload="metadata" disablepictureinpicture></video>
+      <div class="slip-play"><span>▶</span></div>
+      ${keep}
+    </div>`;
+  }
+  return `<div class="slip-frame">
+    <img src="${escapeHtml(src)}" alt="" loading="lazy" />
+    ${keep}
+  </div>`;
+}
+
+async function sendSlipFile(file){
+  const c = contacts.find(x=>x.id===activeThreadContactId);
+  if(!c || !file) return;
+  const isVideo = (file.type || '').indexOf('video') === 0 || /\.(mp4|webm|mov|m4v)$/i.test(file.name || '');
+  const kind = isVideo ? 'video' : 'photo';
+  toast(isVideo ? 'Sending slip…' : 'Placing slip…');
+  try{ if(typeof nalunoKeepAliveStart === 'function') await nalunoKeepAliveStart('slip'); }catch(_){}
+  let url = '';
+  try{
+    if(isVideo && typeof uploadBroadcastFile === 'function'){
+      url = await uploadBroadcastFile(file, function(p, msg){
+        if(typeof showPublishChip === 'function') showPublishChip(msg || ('Slip ' + Math.round((p||0)*100) + '%'));
+      });
+    } else if(typeof uploadVideoToR2 === 'function'){
+      url = await uploadVideoToR2(file);
+    } else {
+      throw new Error('Upload is not available');
+    }
+  }finally{
+    try{ if(typeof nalunoKeepAliveStop === 'function') nalunoKeepAliveStop(); }catch(_){}
+    try{ if(typeof hidePublishChip === 'function') hidePublishChip(); }catch(_){}
+  }
+  if(!url) throw new Error('Slip did not land');
+  const payload = {
+    type: kind,
+    mediaUrl: url,
+    mime: file.type || '',
+    fileName: (file.name || '').slice(0, 80),
+    text: '',
+  };
+  const preview = kind === 'video' ? 'Slip · video' : 'Slip · photo';
+  if(c.isReal && c.firebaseUid){
+    await sendRealMessage(c, payload, preview);
+  } else {
+    if(!wirelineThreads[c.id]) wirelineThreads[c.id] = [];
+    wirelineThreads[c.id].push({
+      id: Date.now()+Math.random(), from:'me', ts: Date.now(), status:'sent',
+      ...payload,
+    });
+    saveWireline();
+    renderThreadMessages();
+    renderWirelineList();
+  }
+  toast('Slip sent');
+}
 
 function sendThreadMessage(){
   const text = $('threadInput').value.trim();
