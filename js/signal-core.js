@@ -359,6 +359,7 @@ function enqueuePublishJob(job){
 async function drainPublishQueue(){
   if(publishBusy) return;
   publishBusy = true;
+  try{ if(typeof nalunoKeepAliveStart === 'function') await nalunoKeepAliveStart('publish'); }catch(_){}
   while(publishQueue.length){
     const job = publishQueue.shift();
     try{
@@ -372,6 +373,7 @@ async function drainPublishQueue(){
     }
   }
   publishBusy = false;
+  try{ if(typeof nalunoKeepAliveStop === 'function') nalunoKeepAliveStop(); }catch(_){}
   hidePublishChip();
 }
 

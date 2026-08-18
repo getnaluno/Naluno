@@ -1,14 +1,16 @@
 // Naluno service worker — offline shell + background call push.
 // v28: Network-first for JS/CSS WITH cache fallback so offline open works.
-const CACHE_NAME = 'naluno-shell-v52';
+const CACHE_NAME = 'naluno-shell-v53';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',
   './js/core.js', './js/metrics.js', './js/data.js', './js/crypto.js', './js/atmosphere.js',
   './js/pwa.js', './js/auth.js', './js/camera.js', './js/calls.js', './js/wireline.js',
   './js/band-room.js', './js/band-list.js', './js/broadcast-core.js', './js/broadcast-space.js',
-  './js/broadcast-live.js', './js/broadcast-composer.js', './js/signal-core.js', './js/signal-ui.js',
+  './js/broadcast-live.js', './js/broadcast-composer.js', './js/broadcast-upload.js',
+  './js/signal-core.js', './js/signal-ui.js',
   './js/sfu-live.js', './js/compass.js', './js/find.js', './js/profile.js', './js/notifications.js',
+  './js/ice-core.js', './js/compat-lock.js', './js/keep-alive.js',
 ];
 
 self.addEventListener('install', event=>{
@@ -49,12 +51,13 @@ self.addEventListener('fetch', event=>{
         }
         return response;
       }).catch(() =>
-        caches.match(event.request).then(cached => {
+        caches.match(event.request, { ignoreSearch: true }).then(cached => {
           if(cached) return cached;
-          return caches.match(url.pathname).then(c2 => c2 || new Response('/* offline */', {
-            status: 200,
-            headers: { 'Content-Type': path.endsWith('.css') ? 'text/css' : 'application/javascript' }
-          }));
+          return caches.match(url.pathname).then(c2 => {
+            if(c2) return c2;
+            // NEVER invent empty JS/CSS — that turns the app into "text only" on newer Android.
+            return fetch(event.request);
+          });
         })
       )
     );

@@ -32,6 +32,14 @@ async function bcastAuthHeader(force){
 }
 
 async function uploadBroadcastFile(blob, onProgress){
+  try{ if(typeof nalunoKeepAliveStart === 'function') await nalunoKeepAliveStart('broadcast'); }catch(_){}
+  try{
+    return await uploadBroadcastFileInner(blob, onProgress);
+  }finally{
+    try{ if(typeof nalunoKeepAliveStop === 'function') nalunoKeepAliveStop(); }catch(_){}
+  }
+}
+async function uploadBroadcastFileInner(blob, onProgress){
   if(!(blob instanceof Blob) && !(blob instanceof File)) throw new Error('Invalid media');
   const size = blob.size || 0;
   if(size < 1) throw new Error('Empty video');
@@ -81,21 +89,40 @@ async function uploadBroadcastFileTo(base, blob, contentType, onProgress){
     const partUrl = base + '/b/part?key=' + encodeURIComponent(key)
       + '&uploadId=' + encodeURIComponent(uploadId)
       + '&part=' + partNum;
-    let partRes = await fetch(partUrl, {
-      method: 'PUT',
-      headers: Object.assign({ 'Content-Type': 'application/octet-stream' }, auth),
-      body: chunk,
-    });
-    if(partRes.status === 401 || partRes.status === 403){
-      const auth2 = await bcastAuthHeader(true);
-      partRes = await fetch(partUrl, {
-        method: 'PUT',
-        headers: Object.assign({ 'Content-Type': 'application/octet-stream' }, auth2),
-        body: chunk,
-      });
+    let partRes = null;
+    let partBody = {};
+    let attempt = 0;
+    while(attempt < 6){
+      attempt++;
+      try{
+        partRes = await fetch(partUrl, {
+          method: 'PUT',
+          headers: Object.assign({ 'Content-Type': 'application/octet-stream' }, auth),
+          body: chunk,
+        });
+        if(partRes.status === 401 || partRes.status === 403){
+          const auth2 = await bcastAuthHeader(true);
+          partRes = await fetch(partUrl, {
+            method: 'PUT',
+            headers: Object.assign({ 'Content-Type': 'application/octet-stream' }, auth2),
+            body: chunk,
+          });
+        }
+        partBody = await partRes.json().catch(()=>({}));
+        if(partRes.ok) break;
+        if(partRes.status >= 400 && partRes.status < 500 && partRes.status !== 408 && partRes.status !== 429){
+          throw new Error(partBody.error || ('Part ' + partNum + ' failed'));
+        }
+      }catch(e){
+        if(attempt >= 6) throw e;
+        if(onProgress) onProgress(sent / size, 'Retrying part ' + partNum + '…');
+        await new Promise(r => setTimeout(r, 800 * attempt));
+        continue;
+      }
+      if(onProgress) onProgress(sent / size, 'Retrying part ' + partNum + '…');
+      await new Promise(r => setTimeout(r, 800 * attempt));
     }
-    const partBody = await partRes.json().catch(()=>({}));
-    if(!partRes.ok) throw new Error(partBody.error || ('Part ' + partNum + ' failed'));
+    if(!partRes || !partRes.ok) throw new Error(partBody.error || ('Part ' + partNum + ' failed'));
     parts.push({ part: partNum, etag: partBody.etag });
     sent = end;
   }

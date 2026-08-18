@@ -524,7 +524,7 @@ function removeFromMessageQueue(queueId){
    restored before the tab reopened. Every attempt that still fails just stays queued
    for the next trigger — nothing is ever silently dropped. */
 async function flushMessageQueue(){
-  if(!navigator.onLine || !currentUser || !fbDb) return;
+  if((typeof nalunoIsOnline === 'function' ? !nalunoIsOnline() : !navigator.onLine) || !currentUser || !fbDb) return;
   const queue = getMessageQueue();
   if(queue.length === 0) return;
   for(const item of queue){
@@ -556,7 +556,7 @@ async function sendRealMessage(c, payload, previewText, queueId){
   // Firestore, also avoids a real duplicate-send risk: if the write had actually been
   // issued, Firestore's own offline queue would retry it independently of this custom
   // one, and both eventually succeeding would send the message twice.
-  if(!navigator.onLine && !queueId){
+  if((typeof nalunoIsOnline === 'function' ? !nalunoIsOnline() : !navigator.onLine) && !queueId){
     const c2 = contacts.find(x=>x.firebaseUid===c.firebaseUid);
     if(c2){
       queueMessageForLater(c2.id, c.firebaseUid, payload, previewText);

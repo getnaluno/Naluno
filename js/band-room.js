@@ -13,7 +13,7 @@ function queueBandMessage(bandId, payload, preview){
   saveBandOutbox(rows);
 }
 async function flushBandOutbox(){
-  if(!navigator.onLine || !fbDb || !currentUser) return;
+  if((typeof nalunoIsOnline === 'function' ? !nalunoIsOnline() : !navigator.onLine) || !fbDb || !currentUser) return;
   const rows = loadBandOutbox();
   if(!rows.length) return;
   const left = [];

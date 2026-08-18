@@ -297,7 +297,7 @@ function updateOfflineBadge(){
     el.style.cssText = 'display:none;position:fixed;top:calc(8px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);z-index:250;padding:6px 14px;border-radius:999px;font-size:12px;font-weight:600;background:rgba(20,22,30,.92);color:#fff;border:1px solid rgba(255,255,255,.12);pointer-events:none;';
     document.body.appendChild(el);
   }
-  if(navigator.onLine === false){
+  if((typeof nalunoIsOnline === 'function' ? !nalunoIsOnline() : navigator.onLine === false)){
     el.style.display = 'block';
     el.textContent = 'Offline — messages queue until you are back';
   } else {

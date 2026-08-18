@@ -1,13 +1,18 @@
 package com.naluno.app;
 
 import android.content.Intent;
+import android.os.Build;
 import android.os.Bundle;
+import android.webkit.JavascriptInterface;
+import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
 
 /**
  * Capacitor entry activity.
  * GoogleAuth is auto-registered by Capacitor 6 from npm plugins.
  * Call deep-links still forwarded into the web app.
+ * Upload keep-alive: JS calls NalunoNative.startUploadKeepAlive so WebView
+ * timers are not frozen when the screen is off or Naluno is in the background.
  */
 public class MainActivity extends BridgeActivity {
 
@@ -16,12 +21,75 @@ public class MainActivity extends BridgeActivity {
     super.onCreate(savedInstanceState);
     handleCallIntent(getIntent());
     injectNativeFcmToken();
+    injectKeepAliveBridge();
   }
 
   @Override
   public void onResume() {
     super.onResume();
     injectNativeFcmToken();
+    injectKeepAliveBridge();
+  }
+
+  @Override
+  public void onPause() {
+    super.onPause();
+    // Capacitor pauses WebView timers here — that stops chunked uploads
+    // and offline queues on Android 13+. Resume them while a keep-alive is on.
+    if (UploadKeepAliveService.running) {
+      try {
+        WebView wv = getBridge() != null ? getBridge().getWebView() : null;
+        if (wv != null) {
+          wv.onResume();
+          wv.resumeTimers();
+        }
+      } catch (Exception e) {
+        // best-effort
+      }
+    }
+  }
+
+  private void injectKeepAliveBridge() {
+    getWindow().getDecorView().postDelayed(new Runnable() {
+      @Override
+      public void run() {
+        try {
+          if (getBridge() == null || getBridge().getWebView() == null) return;
+          getBridge().getWebView().addJavascriptInterface(
+            new KeepAliveBridge(),
+            "NalunoNative"
+          );
+        } catch (Exception e) {
+          // already added
+        }
+      }
+    }, 400);
+  }
+
+  public class KeepAliveBridge {
+    @JavascriptInterface
+    public void startUploadKeepAlive(String title) {
+      try {
+        Intent i = new Intent(MainActivity.this, UploadKeepAliveService.class);
+        i.putExtra("title", title != null ? title : "Uploading…");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+          startForegroundService(i);
+        } else {
+          startService(i);
+        }
+      } catch (Exception e) {
+        // best-effort
+      }
+    }
+
+    @JavascriptInterface
+    public void stopUploadKeepAlive() {
+      try {
+        stopService(new Intent(MainActivity.this, UploadKeepAliveService.class));
+      } catch (Exception e) {
+        // best-effort
+      }
+    }
   }
 
   /** Push last FCM token into the WebView so JS can write fcmTokenAndroid to Firestore. */
