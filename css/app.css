@@ -728,3 +728,21 @@
 .slip-play span{ width:42px; height:42px; border-radius:50%; background:rgba(13,15,23,.55); border:1px solid rgba(124,255,178,.45); color:var(--mint); display:flex; align-items:center; justify-content:center; font-size:14px; }
 
 .slip-frame.playing .slip-play{ display:none; }
+
+#threadClearBtn{
+  flex-shrink:0;
+  height:36px;
+  padding:0 12px;
+  border-radius:18px;
+  border:1px solid var(--line);
+  background:var(--surface);
+  color:var(--text);
+  font-family:var(--font-mono);
+  font-size:11px;
+  letter-spacing:.04em;
+  cursor:pointer;
+  pointer-events:auto;
+  z-index:6;
+  touch-action:manipulation;
+}
+#threadSlipBtn{ pointer-events:auto; z-index:6; touch-action:manipulation; }

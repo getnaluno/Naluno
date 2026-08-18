@@ -149,9 +149,13 @@ function syncWirelineClearsFromCloud(){
 loadWirelineClearsLocal();
 
 async function clearMySideOfThread(){
-  const c = contacts.find(x=>x.id===activeThreadContactId);
-  if(!c) return;
-  if(!confirm('Clear this chat on your side only? They will still have the messages.')) return;
+  const c = contacts.find(x=>x.id===activeThreadContactId)
+    || contacts.find(x=>String(x.id)===String(activeThreadContactId));
+  if(!c){
+    toast('Open a conversation first');
+    return;
+  }
+  if(!window.confirm('Clear this chat on your side only? They will still have the messages.')) return;
   const at = Date.now();
   const key = wirelineClearKey(c);
   wirelineClearedAt[key] = at;
@@ -211,9 +215,13 @@ function updateThreadStatusLabel(){
   const c = contacts.find(x=>x.id===activeThreadContactId); if(!c) return;
   $('threadStatus').textContent = signalMeta[computeSignal(c).tier].label;
 }
-if($('threadClearBtn')){
-  $('threadClearBtn').onclick = ()=> clearMySideOfThread();
-}
+document.addEventListener('click', function(e){
+  const btn = e.target && e.target.closest && e.target.closest('#threadClearBtn');
+  if(!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  clearMySideOfThread();
+}, true);
 
 function openThread(contactId){
   const c = contacts.find(x=>x.id===contactId); if(!c) return;
@@ -570,17 +578,19 @@ $('threadInput').addEventListener('keydown', e=>{
   if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendThreadMessage(); }
 });
 $('threadSendBtn').onclick = sendThreadMessage;
-if($('threadSlipBtn') && $('threadSlipInput')){
-  $('threadSlipBtn').onclick = ()=> $('threadSlipInput').click();
-  $('threadSlipInput').onchange = async (e)=>{
-    const file = e.target.files && e.target.files[0];
-    e.target.value = '';
+(function wireSlipPicker(){
+  function onPick(e){
+    const input = e.target;
+    const file = input.files && input.files[0];
+    input.value = '';
     if(!file) return;
     if(!activeThreadContactId){ toast('Open a conversation first'); return; }
-    try{ await sendSlipFile(file); }
-    catch(err){ toast((err && err.message) || 'Could not send slip'); }
-  };
-}
+    sendSlipFile(file).catch(err=> toast((err && err.message) || 'Could not send slip'));
+  }
+  document.addEventListener('change', function(e){
+    if(e.target && e.target.id === 'threadSlipInput') onPick(e);
+  }, true);
+})();
 
 function slipSrc(m){
   const raw = m.mediaUrl || m.dataUrl || '';
