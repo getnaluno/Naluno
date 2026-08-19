@@ -741,3 +741,5 @@
   height:0 !important;
   pointer-events:none !important;
 }
+
+#findNalunoOverlay.active{ z-index: 230 !important; }
