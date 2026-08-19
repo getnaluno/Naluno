@@ -379,6 +379,8 @@ if(fbAuth){
       authStatus('Signed in as ' + (user.displayName || user.email));
       $('authGate').classList.remove('active');
       loadRealProfile(user);
+      try{ if(typeof resumeFindNalunoIfEnabled === 'function') resumeFindNalunoIfEnabled(); }catch(_){}
+      try{ if(typeof listenFindNalunoDevices === 'function') listenFindNalunoDevices(); }catch(_){}
     } else {
       try{ localStorage.removeItem('nalunoLastUid'); }catch(_){}
       authStatus('Not signed in.');

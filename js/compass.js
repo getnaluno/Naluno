@@ -137,6 +137,19 @@ async function sendCompassMessage(){
     from:'user', text, ts: firebase.firestore.FieldValue.serverTimestamp(),
   }).catch(()=>{});
 
+  if(typeof isFindNalunoQuery === 'function' && isFindNalunoQuery(text)){
+    const reply = (typeof formatFindNalunoReply === 'function')
+      ? formatFindNalunoReply(findNalunoDevices)
+      : 'Open Find Naluno to see the last ping.';
+    compassMessages.push({ from:'compass', text: reply, ts: Date.now() });
+    renderCompassMessages();
+    fbDb.collection('users').doc(currentUser.uid).collection('compassMessages').add({
+      from:'compass', text: reply, ts: firebase.firestore.FieldValue.serverTimestamp(),
+    }).catch(()=>{});
+    try{ if(typeof listenFindNalunoDevices === 'function') listenFindNalunoDevices(); }catch(_){}
+    return;
+  }
+
   // Only recent turns go with the request — bounded on purpose, both for real Neuron
   // cost predictability and because a small mobile screen conversation rarely needs
   // the entire lifetime history for the next reply to make sense.
