@@ -47,15 +47,31 @@ function setFindNalunoEnabledLocal(on){
 function isFindNalunoQuery(text){
   const t = String(text || '').toLowerCase();
   if(!t) return false;
-  return (
-    /where\s+(is|was)\s+my/.test(t) ||
-    /find\s+my\s+(phone|naluno|device|handset)/.test(t) ||
-    /locate\s+my/.test(t) ||
-    /stolen/.test(t) ||
-    /\bbeacon\b/.test(t) ||
-    /find\s+naluno/.test(t) ||
-    /where\s+is\s+naluno/.test(t)
-  );
+  const aboutDevice = /(naluno|\bphone\b|\bdevice\b|handset|android|iphone|my\s+mobile)/.test(t);
+  const aboutFind = /(where|find|locate|track|\bping\b|\bgps\b|coordinate|\bmap\b|stolen|last\s+seen|last\s+place|last\s+known)/.test(t);
+  return aboutDevice && aboutFind;
+}
+
+async function fetchFindNalunoDevices(){
+  if(!fbDb || !currentUser) return findNalunoDevices || [];
+  try{
+    const snap = await fbDb.collection('users').doc(currentUser.uid).collection('beacons').get();
+    findNalunoDevices = snap.docs.map(function(d){ return Object.assign({ id: d.id }, d.data()); });
+  }catch(_){}
+  return findNalunoDevices || [];
+}
+
+async function findNalunoContextText(){
+  const devices = await fetchFindNalunoDevices();
+  const live = (devices || []).filter(function(d){ return d.lat != null && d.lng != null; });
+  if(!live.length) return 'No Find Naluno ping stored yet.';
+  live.sort(function(a,b){ return (b.ts||0) - (a.ts||0); });
+  const d = live[0];
+  let place = d.placeName || '';
+  if(!place && typeof lookupPlaceName === 'function') place = await lookupPlaceName(d.lat, d.lng);
+  return (d.label || 'Device') + ' last seen ' + formatFindAge(d.ts) +
+    (place ? (' at ' + place) : '') +
+    ' (' + Number(d.lat).toFixed(5) + ', ' + Number(d.lng).toFixed(5) + ').';
 }
 
 function formatFindAge(ts){
@@ -128,23 +144,29 @@ async function lookupPlaceName(lat, lng){
 }
 
 async function formatFindNalunoReply(devices){
-  const live = (devices || []).filter(d => d.lat != null && d.lng != null);
-  if(!live.length){
-    return 'No ping yet. On the phone you want to protect, open Callsign and turn Find Naluno on. After the first ping I can name the place.';
+  let list = devices;
+  if(!list || !list.length){
+    if(typeof fetchFindNalunoDevices === 'function') list = await fetchFindNalunoDevices();
   }
-  live.sort((a,b)=> (b.ts||0) - (a.ts||0));
+  const live = (list || []).filter(function(d){ return d.lat != null && d.lng != null; });
+  if(!live.length){
+    return 'I do not have a ping yet. Turn Find Naluno on under Callsign on that phone and allow location. After it reports once, I will give you the place.';
+  }
+  live.sort(function(a,b){ return (b.ts||0) - (a.ts||0); });
   const parts = [];
   for(let i = 0; i < live.length; i++){
     const d = live[i];
     let place = d.placeName || '';
     if(!place) place = await lookupPlaceName(d.lat, d.lng);
-    const acc = d.accuracy ? (' (±' + Math.round(d.accuracy) + ' m)') : '';
-    const who = d.label || 'This phone';
+    const acc = d.accuracy ? (' ±' + Math.round(d.accuracy) + ' m') : '';
     const coords = Number(d.lat).toFixed(5) + ', ' + Number(d.lng).toFixed(5);
-    let block = who + ' — last seen ' + formatFindAge(d.ts) + '.';
-    if(place) block += '\n' + place;
-    block += '\n' + coords + acc;
-    block += '\n' + mapsLinks(d.lat, d.lng).osmEn;
+    const link = mapsLinks(d.lat, d.lng).osmEn;
+    let block = '';
+    if(place) block += place + '\n';
+    block += coords + acc + '\n';
+    block += 'Seen ' + formatFindAge(d.ts);
+    if(d.label) block += ' · ' + d.label;
+    block += '\n' + link;
     parts.push(block);
   }
   return parts.join('\n\n');

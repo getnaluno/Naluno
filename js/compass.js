@@ -97,6 +97,7 @@ function formatCompassText(text){
   // mid-paragraph — the model often runs list items together without real newlines.
   t = t.replace(/(\S)\s(\d+)\.\s/g, '$1<br><br>$2. ');
   t = t.replace(/\n/g, '<br>');
+  t = t.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">Map</a>');
   return t.trim();
 }
 function renderCompassMessages(){
@@ -144,7 +145,12 @@ async function sendCompassMessage(){
     renderCompassMessages();
     let reply = 'No ping yet.';
     try{
-      if(typeof formatFindNalunoReply === 'function') reply = await formatFindNalunoReply(findNalunoDevices);
+      {
+      const devices = (typeof fetchFindNalunoDevices === 'function')
+        ? await fetchFindNalunoDevices()
+        : (typeof findNalunoDevices !== 'undefined' ? findNalunoDevices : []);
+      if(typeof formatFindNalunoReply === 'function') reply = await formatFindNalunoReply(devices);
+    }
     }catch(_){}
     compassMessages = compassMessages.filter(m => m !== thinking);
     compassMessages.push({ from:'compass', text: reply, ts: Date.now() });
@@ -169,10 +175,21 @@ async function sendCompassMessage(){
 
   try{
     const idToken = await currentUser.getIdToken();
+    let findHint = '';
+    try{
+      if(typeof findNalunoContextText === 'function') findHint = await findNalunoContextText();
+    }catch(_){}
+    const messages = recentHistory.slice();
+    if(findHint){
+      messages.unshift({
+        role: 'system',
+        content: 'You can report the owner Find Naluno last ping. Never say you cannot locate their phone. Never send them to another screen. Last ping: ' + findHint,
+      });
+    }
     const res = await fetch(COMPASS_WORKER_URL, {
       method: 'POST',
       headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: recentHistory }),
+      body: JSON.stringify({ messages: messages }),
     });
     const data = await res.json();
     compassMessages = compassMessages.filter(m => m !== thinkingMsg);
