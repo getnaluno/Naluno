@@ -138,15 +138,20 @@ async function sendCompassMessage(){
   }).catch(()=>{});
 
   if(typeof isFindNalunoQuery === 'function' && isFindNalunoQuery(text)){
-    const reply = (typeof formatFindNalunoReply === 'function')
-      ? formatFindNalunoReply(findNalunoDevices)
-      : 'Open Find Naluno to see the last ping.';
+    try{ if(typeof listenFindNalunoDevices === 'function') listenFindNalunoDevices(); }catch(_){}
+    const thinking = { from:'compass', text: '...', ts: Date.now(), thinking:true };
+    compassMessages.push(thinking);
+    renderCompassMessages();
+    let reply = 'No ping yet.';
+    try{
+      if(typeof formatFindNalunoReply === 'function') reply = await formatFindNalunoReply(findNalunoDevices);
+    }catch(_){}
+    compassMessages = compassMessages.filter(m => m !== thinking);
     compassMessages.push({ from:'compass', text: reply, ts: Date.now() });
     renderCompassMessages();
     fbDb.collection('users').doc(currentUser.uid).collection('compassMessages').add({
       from:'compass', text: reply, ts: firebase.firestore.FieldValue.serverTimestamp(),
     }).catch(()=>{});
-    try{ if(typeof listenFindNalunoDevices === 'function') listenFindNalunoDevices(); }catch(_){}
     return;
   }
 

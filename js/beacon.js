@@ -72,6 +72,7 @@ function mapsLinks(lat, lng){
   const q = encodeURIComponent(lat + ',' + lng);
   return {
     osm: 'https://www.openstreetmap.org/?mlat=' + lat + '&mlon=' + lng + '#map=17/' + lat + '/' + lng,
+    osmEn: 'https://www.openstreetmap.org/?mlat=' + lat + '&mlon=' + lng + '#map=17/' + lat + '/' + lng,
     embed: 'https://www.openstreetmap.org/export/embed.html?bbox=' +
       (lng - 0.012) + ',' + (lat - 0.008) + ',' + (lng + 0.012) + ',' + (lat + 0.008) +
       '&layer=mapnik&marker=' + lat + ',' + lng,
@@ -79,20 +80,74 @@ function mapsLinks(lat, lng){
   };
 }
 
-function formatFindNalunoReply(devices){
+const findPlaceCache = {};
+
+function findPlaceCacheKey(lat, lng){
+  return Number(lat).toFixed(4) + ',' + Number(lng).toFixed(4);
+}
+
+function placeFromNominatim(data){
+  if(!data) return '';
+  const a = data.address || {};
+  const bits = [];
+  const locality = a.neighbourhood || a.suburb || a.quarter || a.village || a.town || a.city_district || a.hamlet;
+  const city = a.city || a.town || a.municipality || a.county;
+  const road = a.road || a.pedestrian;
+  if(road) bits.push(road);
+  if(locality && locality !== road) bits.push(locality);
+  if(city && city !== locality) bits.push(city);
+  if(a.state && a.state !== city && a.state !== locality) bits.push(a.state);
+  if(a.country) bits.push(a.country);
+  return bits.filter(Boolean).join(', ') || (data.display_name || '');
+}
+
+async function lookupPlaceName(lat, lng){
+  if(lat == null || lng == null) return '';
+  const key = findPlaceCacheKey(lat, lng);
+  if(findPlaceCache[key]) return findPlaceCache[key];
+  try{
+    const raw = localStorage.getItem('nalunoPlace:' + key);
+    if(raw){ findPlaceCache[key] = raw; return raw; }
+  }catch(_){}
+  try{
+    const url = 'https://nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1&zoom=16'
+      + '&lat=' + encodeURIComponent(lat)
+      + '&lon=' + encodeURIComponent(lng)
+      + '&accept-language=en';
+    const res = await fetch(url, { headers: { 'Accept-Language': 'en', 'Accept': 'application/json' } });
+    if(!res.ok) return '';
+    const name = placeFromNominatim(await res.json());
+    if(name){
+      findPlaceCache[key] = name;
+      try{ localStorage.setItem('nalunoPlace:' + key, name); }catch(_){}
+    }
+    return name || '';
+  }catch(_){
+    return '';
+  }
+}
+
+async function formatFindNalunoReply(devices){
   const live = (devices || []).filter(d => d.lat != null && d.lng != null);
   if(!live.length){
-    return 'Find Naluno has no ping yet. Turn it on under Callsign on the phone you want to protect and allow location. After that I keep the last place. If that phone is off, last place is all anyone can have.';
+    return 'No ping yet. On the phone you want to protect, open Callsign and turn Find Naluno on. After the first ping I can name the place.';
   }
   live.sort((a,b)=> (b.ts||0) - (a.ts||0));
-  const lines = live.map(d=>{
-    const acc = d.accuracy ? (' ±' + Math.round(d.accuracy) + 'm') : '';
-    const link = mapsLinks(d.lat, d.lng).osm;
-    return (d.label || 'Device') + ': ' + d.lat.toFixed(5) + ', ' + d.lng.toFixed(5) + acc +
-      ' · ' + formatFindAge(d.ts) + '\n' + link;
-  });
-  return 'Last known place of your Naluno:\n\n' + lines.join('\n\n') +
-    '\n\nOpen Find Naluno in Compass for the map. If the phone is off, this is the last ping. If it is on with the Android app, it keeps updating without opening Naluno.';
+  const parts = [];
+  for(let i = 0; i < live.length; i++){
+    const d = live[i];
+    let place = d.placeName || '';
+    if(!place) place = await lookupPlaceName(d.lat, d.lng);
+    const acc = d.accuracy ? (' (±' + Math.round(d.accuracy) + ' m)') : '';
+    const who = d.label || 'This phone';
+    const coords = Number(d.lat).toFixed(5) + ', ' + Number(d.lng).toFixed(5);
+    let block = who + ' — last seen ' + formatFindAge(d.ts) + '.';
+    if(place) block += '\n' + place;
+    block += '\n' + coords + acc;
+    block += '\n' + mapsLinks(d.lat, d.lng).osmEn;
+    parts.push(block);
+  }
+  return parts.join('\n\n');
 }
 
 function beaconRef(){
@@ -116,14 +171,17 @@ async function writeBeaconPing(pos){
   const ref = beaconRef();
   if(!ref) return;
   try{
-    await ref.set({
+    const placeName = await lookupPlaceName(lat, lng);
+    const payload = {
       deviceId: nalunoDeviceId(),
       label: nalunoDeviceLabel(),
       lat, lng, accuracy,
       ts: now,
       enabled: true,
       ua: String(navigator.userAgent || '').slice(0, 140),
-    }, { merge: true });
+    };
+    if(placeName) payload.placeName = placeName;
+    await ref.set(payload, { merge: true });
   }catch(e){
     console.warn('[find-naluno] ping', e);
   }
@@ -303,10 +361,19 @@ function showFindNalunoDevice(id){
     map.innerHTML = '<iframe title="Last known place" src="' + links.embed +
       '" style="width:100%;height:220px;border:0;border-radius:14px;background:var(--surface);" loading="lazy"></iframe>';
   }
-  if(meta){
-    meta.innerHTML = escapeHtml((d.label || 'Device') + ' · ' + d.lat.toFixed(5) + ', ' + d.lng.toFixed(5)) +
-      '<br><a href="' + links.osm + '" target="_blank" rel="noopener" style="color:var(--mint);">Open map</a>' +
+  const coords = Number(d.lat).toFixed(5) + ', ' + Number(d.lng).toFixed(5);
+  function paintMeta(place){
+    if(!meta) return;
+    const title = place || '';
+    meta.innerHTML = '<div style="font-weight:600;color:var(--text);margin-bottom:4px;">' +
+      escapeHtml(title || (d.label || 'Device')) + '</div>' +
+      escapeHtml(coords) + (d.accuracy ? ' · ±' + Math.round(d.accuracy) + ' m' : '') +
+      '<br><a href="' + links.osmEn + '" target="_blank" rel="noopener" style="color:var(--mint);">Open map</a>' +
       ' · <a href="' + links.geo + '" style="color:var(--mint);">Maps app</a>';
+  }
+  paintMeta(d.placeName);
+  if(!d.placeName){
+    lookupPlaceName(d.lat, d.lng).then(function(name){ if(name) paintMeta(name); });
   }
 }
 
