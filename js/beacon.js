@@ -177,21 +177,22 @@ function beaconRef(){
   return fbDb.collection('users').doc(currentUser.uid).collection('beacons').doc(nalunoDeviceId());
 }
 
-async function writeBeaconPing(pos){
+async function writeBeaconPing(pos, opts){
   const coords = pos && pos.coords;
-  if(!coords) return;
+  if(!coords) return false;
+  const force = !!(opts && opts.force);
   const lat = coords.latitude;
   const lng = coords.longitude;
   const accuracy = coords.accuracy || null;
   const now = Date.now();
   const moved = (findNalunoLastLat == null) ||
     (Math.abs(lat - findNalunoLastLat) + Math.abs(lng - findNalunoLastLng) > 0.0003);
-  if(!moved && (now - findNalunoLastWrite) < 80000) return;
+  if(!force && !moved && (now - findNalunoLastWrite) < 80000) return false;
   findNalunoLastLat = lat;
   findNalunoLastLng = lng;
   findNalunoLastWrite = now;
   const ref = beaconRef();
-  if(!ref) return;
+  if(!ref) return false;
   try{
     const placeName = await lookupPlaceName(lat, lng);
     const payload = {
@@ -204,9 +205,38 @@ async function writeBeaconPing(pos){
     };
     if(placeName) payload.placeName = placeName;
     await ref.set(payload, { merge: true });
+    try{ if(typeof renderFindNalunoPanel === 'function') renderFindNalunoPanel(); }catch(_){}
+    return true;
   }catch(e){
     console.warn('[find-naluno] ping', e);
+    return false;
   }
+}
+
+async function pingThisPhoneNow(){
+  if(!currentUser || !fbDb){ toast('Sign in first'); return; }
+  if(!navigator.geolocation){ toast('Location is not available here'); return; }
+  if(!findNalunoEnabledLocal()){
+    const on = await enableFindNaluno();
+    if(!on) return;
+  }
+  toast('Pinging…');
+  navigator.geolocation.getCurrentPosition(
+    async function(pos){
+      const ok = await writeBeaconPing(pos, { force:true });
+      try{ if(typeof startNativeFindNaluno === 'function') startNativeFindNaluno(); }catch(_){}
+      try{ if(typeof fetchFindNalunoDevices === 'function') await fetchFindNalunoDevices(); }catch(_){}
+      try{ renderFindNalunoPanel(); }catch(_){}
+      toast(ok ? 'Ping sent' : 'Could not save ping');
+    },
+    function(err){
+      const code = err && err.code;
+      if(code === 1) toast('Allow location, then ping again');
+      else if(code === 3) toast('Location timed out — try outside or turn GPS on');
+      else toast('Could not read location');
+    },
+    { enableHighAccuracy: true, timeout: 25000, maximumAge: 0 }
+  );
 }
 
 function stopFindNalunoWatch(){
@@ -422,14 +452,9 @@ function wireFindNalunoUi(){
     };
   }
   if($('findNalunoPingBtn')){
-    $('findNalunoPingBtn').onclick = function(){
-      if(!findNalunoEnabledLocal()){ enableFindNaluno(); return; }
-      if(!navigator.geolocation) return;
-      navigator.geolocation.getCurrentPosition(
-        function(pos){ writeBeaconPing(pos); toast('Ping sent'); },
-        function(){ toast('Could not read location'); },
-        { enableHighAccuracy: true, timeout: 20000 }
-      );
+    $('findNalunoPingBtn').onclick = function(e){
+      if(e){ e.preventDefault(); e.stopPropagation(); }
+      pingThisPhoneNow();
     };
   }
 }
