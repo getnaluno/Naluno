@@ -22,21 +22,6 @@ public class MainActivity extends BridgeActivity {
     handleCallIntent(getIntent());
     injectNativeFcmToken();
     injectKeepAliveBridge();
-    resumeFindNalunoService();
-  }
-
-  private void resumeFindNalunoService() {
-    try {
-      if (!BeaconFindService.isEnabled(this)) return;
-      Intent i = new Intent(this, BeaconFindService.class);
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        startForegroundService(i);
-      } else {
-        startService(i);
-      }
-    } catch (Exception e) {
-      // best-effort
-    }
   }
 
   @Override
@@ -44,7 +29,6 @@ public class MainActivity extends BridgeActivity {
     super.onResume();
     injectNativeFcmToken();
     injectKeepAliveBridge();
-    resumeFindNalunoService();
   }
 
   @Override
@@ -102,32 +86,6 @@ public class MainActivity extends BridgeActivity {
     public void stopUploadKeepAlive() {
       try {
         stopService(new Intent(MainActivity.this, UploadKeepAliveService.class));
-      } catch (Exception e) {
-        // best-effort
-      }
-    }
-
-    @JavascriptInterface
-    public void startFindNaluno(String uid, String refreshToken, String apiKey,
-                                String projectId, String deviceId, String label) {
-      try {
-        BeaconFindService.persistAuth(MainActivity.this, uid, refreshToken, apiKey, projectId, deviceId, label);
-        Intent i = new Intent(MainActivity.this, BeaconFindService.class);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-          startForegroundService(i);
-        } else {
-          startService(i);
-        }
-      } catch (Exception e) {
-        // best-effort
-      }
-    }
-
-    @JavascriptInterface
-    public void stopFindNaluno() {
-      try {
-        BeaconFindService.clearAuth(MainActivity.this);
-        stopService(new Intent(MainActivity.this, BeaconFindService.class));
       } catch (Exception e) {
         // best-effort
       }

@@ -743,3 +743,11 @@
 }
 
 #findNalunoOverlay.active{ z-index: 230 !important; }
+
+body.naluno-gated .navbar,
+body.naluno-gated .tabscreen{
+  visibility:hidden !important;
+  pointer-events:none !important;
+}
+#authGate, #authGate.active{ z-index:500 !important; }
+#findNalunoPanel{ flex-shrink:0; }

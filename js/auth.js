@@ -120,7 +120,7 @@ async function nativeGoogleSignIn(){
 }
 
 $('googleSignInBtn').onclick = async ()=>{
-  if(!fbAuth){ authStatus('Firebase isn\u2019t configured yet — see firebase-config.js', true); return; }
+  if(!fbAuth){ authStatus('Sign-in is not ready yet.', true); return; }
 
   // Capacitor: use native Google Sign-In → Firebase credential (no Chrome redirect).
   if(isNativeShell()){
@@ -203,7 +203,7 @@ if($('authUseEmailBtn')){
 }
 
 function nalunoHandleSignIn(){
-  if(!fbAuth){ authStatus('Firebase isn\u2019t configured yet — see firebase-config.js', true); return; }
+  if(!fbAuth){ authStatus('Sign-in is not ready yet.', true); return; }
   const { email, password, handle, recovery } = emailAuthInputs();
   if(!password || password.length < 6){ authStatus('Enter your password (6+ characters).', true); return; }
   if(!email){
@@ -226,7 +226,7 @@ function nalunoHandleSignIn(){
 };
 
 async function nalunoHandleSignUp(){
-  if(!fbAuth){ authStatus('Firebase isn\u2019t configured yet — see firebase-config.js', true); return; }
+  if(!fbAuth){ authStatus('Sign-in is not ready yet.', true); return; }
   const { email, password, handle } = emailAuthInputs();
   if(!password || password.length < 6){ authStatus('Password needs to be at least 6 characters.', true); return; }
   const em = $('authEmailInput');
@@ -294,7 +294,7 @@ async function nalunoHandleSignUp(){
   }
 };
 async function nalunoForgotPassword(){
-  if(!fbAuth){ authStatus('Firebase isn\u2019t configured yet — see firebase-config.js', true); return; }
+  if(!fbAuth){ authStatus('Sign-in is not ready yet.', true); return; }
   const { email, handle, recovery } = emailAuthInputs();
   const visibleEmail = ($('authEmailInput') && $('authEmailInput').style.display !== 'none' && $('authEmailInput').value.trim()) || '';
   const target = (recovery || visibleEmail || '').trim();
@@ -335,22 +335,27 @@ async function nalunoForgotPassword(){
 })();
 
 if(fbAuth){
-  authStatus('Checking sign-in state…');
+  authStatus('One moment…');
   let authResolved = false;
   let lastUid = '';
   try{ lastUid = localStorage.getItem('nalunoLastUid') || ''; }catch(_){}
   // If we have a remembered account, never flash the sign-in form on a slow restore.
+  if(lastUid){
+    document.body.classList.remove('naluno-gated');
+    $('authGate').classList.remove('active');
+  }
   const authTimeout = setTimeout(()=>{
     if(authResolved) return;
     if(lastUid){
-      authStatus('Restoring your session…');
+      authStatus('Welcome back…');
       return;
     }
-    authStatus('Sign-in check timed out — please sign in.');
+    authStatus('Please sign in.');
     $('authGateLoading').style.display = 'none';
     $('authGateForm').style.display = 'flex';
+    document.body.classList.add('naluno-gated');
     $('authGate').classList.add('active');
-  }, 8000);
+  }, 2500);
 
   // Catches errors specific to the redirect round-trip (e.g. "this domain isn't
   // authorized") that onAuthStateChanged alone would never surface — it would just
@@ -359,16 +364,12 @@ if(fbAuth){
   // which made it impossible to tell "nothing happened yet" apart from "it's stuck."
   fbAuth.getRedirectResult().then(result=>{
     if(result && result.user){
-      authStatus('Redirect completed — signed in as ' + (result.user.displayName || result.user.email));
+      authStatus('Signed in.');
     } else {
-      authStatus('No pending redirect found (normal on first load).');
+      authStatus('');
     }
   }).catch(e=>{
-    authStatus(
-      e.code === 'auth/unauthorized-domain' ? 'auth/unauthorized-domain — this domain isn\u2019t in Firebase\u2019s Authorized domains list yet.' :
-      e.code + ': ' + (e.message || 'Sign-in failed after redirect.'),
-      true
-    );
+    authStatus('Could not finish sign-in. Try again.', true);
   });
   fbAuth.onAuthStateChanged(user=>{
     clearTimeout(authTimeout);
@@ -376,16 +377,18 @@ if(fbAuth){
     currentUser = user;
     if(user){
       try{ localStorage.setItem('nalunoLastUid', user.uid); }catch(_){}
-      authStatus('Signed in as ' + (user.displayName || user.email));
+      authStatus('');
+      document.body.classList.remove('naluno-gated');
       $('authGate').classList.remove('active');
       loadRealProfile(user);
       try{ if(typeof resumeFindNalunoIfEnabled === 'function') resumeFindNalunoIfEnabled(); }catch(_){}
       try{ if(typeof listenFindNalunoDevices === 'function') listenFindNalunoDevices(); }catch(_){}
     } else {
       try{ localStorage.removeItem('nalunoLastUid'); }catch(_){}
-      authStatus('Not signed in.');
+      authStatus('');
       $('authGateLoading').style.display = 'none';
       $('authGateForm').style.display = 'flex';
+      document.body.classList.add('naluno-gated');
       $('authGate').classList.add('active');
       if(threadsListUnsubscribe){ threadsListUnsubscribe(); threadsListUnsubscribe = null; }
       if(activeThreadUnsubscribe){ activeThreadUnsubscribe(); activeThreadUnsubscribe = null; }
@@ -414,7 +417,7 @@ if(fbAuth){
   $('authGateLoading').style.display = 'none';
   $('authGateForm').style.display = 'flex';
   $('authGate').classList.add('active');
-  authStatus('Firebase config still has placeholders — edit firebase-config.js with the real project values, then reload. Sign-in will work once the real keys are present.', true);
+  authStatus('Sign-in is not ready yet.', true);
 }
 
 /* Claims handles/{handle} -> uid via a transaction, so two people racing for the
