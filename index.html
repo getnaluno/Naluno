@@ -27,7 +27,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
 <script src="firebase-config.js"></script>
-<body class="naluno-gated">
+<body>
 
 <div class="app" id="app">
 
@@ -48,13 +48,13 @@
     <div id="apkBannerClose" role="button" aria-label="Dismiss" style="width:24px; height:24px; flex-shrink:0; display:flex; align-items:center; justify-content:center; color:var(--text-dim); cursor:pointer;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
   </div>
 
-  <div class="call-overlay active" id="authGate" style="z-index:500; background:radial-gradient(120% 100% at 50% 0%, #141728 0%, #0D0F17 60%); display:flex; align-items:center; justify-content:center;">
+  <div class="call-overlay active" id="authGate" style="z-index:100; background:radial-gradient(120% 100% at 50% 0%, #141728 0%, #0D0F17 60%); display:flex; align-items:center; justify-content:center;">
     <div id="authGateLoading" style="display:flex; flex-direction:column; align-items:center; gap:14px;">
       <div class="brand-row" style="justify-content:center;">
         <svg class="brand-mark" viewBox="0 0 24 24" fill="none"><path d="M12 2v6" stroke="#7CFFB2" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="16" r="6" stroke="#7CFFB2" stroke-width="2"/><path d="M7 5a12 12 0 0110 0" stroke="#8B90A8" stroke-width="1.6" stroke-linecap="round"/><path d="M4 2a17 17 0 0116 0" stroke="#8B90A8" stroke-width="1.4" stroke-linecap="round" opacity=".6"/></svg>
         <span class="brand-word">NALUNO</span>
       </div>
-      <div class="greenroom-pill ready" style="position:static;"><span class="swirl"></span><span style="font-family:var(--font-mono); font-size:11px;">One moment…</span></div>
+      <div class="greenroom-pill ready" style="position:static;"><span class="swirl"></span><span style="font-family:var(--font-mono); font-size:11px;">Checking sign-in…</span></div>
     </div>
     <div id="authGateForm" style="display:none; text-align:center; padding:0 32px; flex-direction:column; align-items:center; gap:18px; width:100%; max-width:340px;">
       <div class="brand-row" style="justify-content:center;">
@@ -190,17 +190,6 @@
       </div>
     </div>
     <div id="compassContent" style="flex:1; display:flex; flex-direction:column; min-height:0;">
-      <div id="findNalunoPanel" style="display:none; margin:0 14px 8px; padding:12px; border:1px solid var(--line); border-radius:16px; background:var(--surface);">
-        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px;">
-          <div style="font-family:var(--font-futuristic); font-size:13px;">Find Naluno</div>
-          <button type="button" class="ghost-btn" id="findNalunoCloseBtn" aria-label="Hide" style="width:28px;height:28px;">×</button>
-        </div>
-        <div class="lobby-sub" style="margin-bottom:8px;">Last place this account reported. A phone that is off can only show that last ping.</div>
-        <div id="findNalunoMap"></div>
-        <div id="findNalunoMeta" class="lobby-sub" style="margin:8px 0;"></div>
-        <div id="findNalunoList"></div>
-        <button type="button" class="save-btn" id="findNalunoPingBtn" style="margin-top:10px;">Ping this phone now</button>
-      </div>
       <div id="compassMessages" style="flex:1; overflow-y:auto; padding:14px 16px; display:flex; flex-direction:column; gap:10px;">
         <div class="msg-empty">
           <span style="font-family:var(--font-futuristic); font-size:14px;">Your companion, growing with you</span>
@@ -285,7 +274,7 @@
           <span style="font-size:13px;">Report this phone</span>
           <div class="switch" id="findNalunoToggle"></div>
         </div>
-        <div class="greenroom-setting-sub" style="margin-top:10px;">To see the map, unlock Compass and tap the radar.</div>
+        <button type="button" class="save-btn" id="findNalunoOpenBtn" style="margin:14px 0 0; background:var(--surface-2); color:var(--text); border:1px solid var(--line);">Open map</button>
       </div>
 
       <div class="greenroom-setting">
@@ -309,6 +298,20 @@
       <button class="save-btn" id="signOutBtn" style="margin:22px 20px 0; background:none; color:var(--red); border:1px solid var(--line);">Sign out</button>
     </div>
   </section>
+
+  <div class="call-overlay" id="findNalunoOverlay">
+    <div class="topbar" style="padding-top:20px; align-items:center; gap:10px;">
+      <div class="back-btn" id="findNalunoCloseBtn" role="button" aria-label="Back"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
+      <div class="tab-title" style="font-size:18px;">Find Naluno</div>
+    </div>
+    <div style="flex:1; overflow-y:auto; padding:14px 16px 24px;">
+      <div class="lobby-sub" style="margin-bottom:12px;">Your devices only. A phone that is switched off cannot speak. You still see its last ping. While it is on and online, the Android app can keep sending a place without opening Naluno.</div>
+      <div id="findNalunoMap" style="margin-bottom:10px;"></div>
+      <div id="findNalunoMeta" class="lobby-sub" style="margin-bottom:14px;"></div>
+      <div id="findNalunoList"></div>
+      <button type="button" class="save-btn" id="findNalunoPingBtn" style="margin-top:12px;">Ping this phone now</button>
+    </div>
+  </div>
 
   <!-- ===================== NAV ===================== -->
   <input type="file" id="threadSlipInput" accept="image/*,video/*" tabindex="-1" aria-hidden="true" style="display:none" />
@@ -933,37 +936,36 @@
   </div>
 
 <!-- NALUNO_MODULES -->
-<script src="js/core.js?v=20260820c"></script>
-<script src="js/media-contain.js?v=20260820c"></script>
-<script src="js/keep-alive.js?v=20260820c"></script>
-<script src="js/metrics.js?v=20260820c"></script>
-<script src="js/data.js?v=20260820c"></script>
-<script src="js/crypto.js?v=20260820c"></script>
-<script src="js/atmosphere.js?v=20260820c"></script>
-<script src="js/band-list.js?v=20260820c"></script>
-<script src="js/signal-core.js?v=20260820c"></script>
-<script src="js/broadcast-core.js?v=20260820c"></script>
-<script src="js/broadcast-upload.js?v=20260820c"></script>
-<script src="js/broadcast-composer.js?v=20260820c"></script>
-<script src="js/beacon.js?v=20260820c"></script>
-<script src="js/compass.js?v=20260820c"></script>
-<script src="js/signal-ui.js?v=20260820c"></script>
-<script src="js/compat-lock.js?v=20260820c"></script>
-<script src="js/broadcast-space.js?v=20260820c"></script>
-<script src="js/media-vault.js?v=20260820c"></script>
-<script src="js/wireline.js?v=20260820c"></script>
-<script src="js/profile.js?v=20260820c"></script>
-<script src="js/auth.js?v=20260820c"></script>
-<script src="js/notifications.js?v=20260820c"></script>
-<script src="js/ice-core.js?v=20260820c"></script>
-<script src="js/camera.js?v=20260820c"></script>
-<script src="js/calls.js?v=20260820c"></script>
-<script src="js/sfu-live.js?v=20260820c"></script>
-<script src="js/broadcast-live.js?v=20260820c"></script>
-<script src="js/band-room.js?v=20260820c"></script>
-<script src="js/pwa.js?v=20260820c"></script>
-<script src="js/spark.js?v=20260820c"></script>
-<script src="js/find.js?v=20260820c"></script>
+<script src="js/core.js?v=20260819p"></script>
+<script src="js/media-contain.js?v=20260819p"></script>
+<script src="js/keep-alive.js?v=20260819p"></script>
+<script src="js/metrics.js?v=20260819p"></script>
+<script src="js/data.js?v=20260819p"></script>
+<script src="js/crypto.js?v=20260819p"></script>
+<script src="js/atmosphere.js?v=20260819p"></script>
+<script src="js/band-list.js?v=20260819p"></script>
+<script src="js/signal-core.js?v=20260819p"></script>
+<script src="js/broadcast-core.js?v=20260819p"></script>
+<script src="js/broadcast-upload.js?v=20260819p"></script>
+<script src="js/broadcast-composer.js?v=20260819p"></script>
+<script src="js/beacon.js?v=20260819p"></script>
+<script src="js/compass.js?v=20260819p"></script>
+<script src="js/signal-ui.js?v=20260819p"></script>
+<script src="js/compat-lock.js?v=20260819p"></script>
+<script src="js/broadcast-space.js?v=20260819p"></script>
+<script src="js/wireline.js?v=20260819p"></script>
+<script src="js/profile.js?v=20260819p"></script>
+<script src="js/auth.js?v=20260819p"></script>
+<script src="js/notifications.js?v=20260819p"></script>
+<script src="js/ice-core.js?v=20260819p"></script>
+<script src="js/camera.js?v=20260819p"></script>
+<script src="js/calls.js?v=20260819p"></script>
+<script src="js/sfu-live.js?v=20260819p"></script>
+<script src="js/broadcast-live.js?v=20260819p"></script>
+<script src="js/band-room.js?v=20260819p"></script>
+<script src="js/pwa.js?v=20260819p"></script>
+<script src="js/spark.js?v=20260819p"></script>
+<script src="js/find.js?v=20260819p"></script>
 <!-- /NALUNO_MODULES -->
 </body>
 </html>

@@ -1,15 +1,15 @@
 // Naluno service worker — offline shell + background call push.
 // v28: Network-first for JS/CSS WITH cache fallback so offline open works.
-const CACHE_NAME = 'naluno-shell-v56';
+const CACHE_NAME = 'naluno-shell-v54';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',
   './js/core.js', './js/metrics.js', './js/data.js', './js/crypto.js', './js/atmosphere.js',
-  './js/pwa.js', './js/auth.js', './js/camera.js', './js/calls.js', './js/media-vault.js', './js/wireline.js',
+  './js/pwa.js', './js/auth.js', './js/camera.js', './js/calls.js', './js/wireline.js',
   './js/band-room.js', './js/band-list.js', './js/broadcast-core.js', './js/broadcast-space.js',
   './js/broadcast-live.js', './js/broadcast-composer.js', './js/broadcast-upload.js',
   './js/signal-core.js', './js/signal-ui.js',
-  './js/sfu-live.js', './js/compass.js', './js/beacon.js', './js/find.js', './js/profile.js', './js/notifications.js',
+  './js/sfu-live.js', './js/compass.js', './js/find.js', './js/profile.js', './js/notifications.js',
   './js/ice-core.js', './js/compat-lock.js', './js/keep-alive.js', './js/media-contain.js',
 ];
 
@@ -64,35 +64,21 @@ self.addEventListener('fetch', event=>{
     return;
   }
 
-  const isNav = event.request.mode === 'navigate' || path.endsWith('.html') || path.endsWith('/');
-  if(isNav){
-    event.respondWith(
-      caches.match('./index.html').then(cached => {
-        const net = fetch(event.request).then(response=>{
-          if(response && response.ok){
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then(cache => {
-              cache.put(event.request, copy);
-              cache.put('./index.html', response.clone()).catch(()=>{});
-            }).catch(()=>{});
-          }
-          return response;
-        });
-        if(cached){ net.catch(()=>{}); return cached; }
-        return net.catch(()=> caches.match('/index.html'));
-      })
-    );
-    return;
-  }
   event.respondWith(
     fetch(event.request).then(response=>{
-      if(response.ok && (path.includes('manifest') || path.includes('icon'))){
+      if(response.ok && (path.endsWith('.html') || path.endsWith('/') || path.includes('manifest') || path.includes('icon'))){
         const copy = response.clone();
         caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy)).catch(()=>{});
       }
       return response;
     }).catch(()=>{
-      return caches.match(event.request).then(cached => cached || new Response('', { status: 503 }));
+      return caches.match(event.request).then(cached=>{
+        if(cached) return cached;
+        if(event.request.mode === 'navigate' || (event.request.headers.get('accept') || '').includes('text/html')){
+          return caches.match('./index.html').then(h => h || caches.match('/index.html'));
+        }
+        return new Response('', { status: 503 });
+      });
     })
   );
 });
