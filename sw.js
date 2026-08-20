@@ -1,11 +1,11 @@
 // Naluno service worker — offline shell + background call push.
 // v28: Network-first for JS/CSS WITH cache fallback so offline open works.
-const CACHE_NAME = 'naluno-shell-v55';
+const CACHE_NAME = 'naluno-shell-v56';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',
   './js/core.js', './js/metrics.js', './js/data.js', './js/crypto.js', './js/atmosphere.js',
-  './js/pwa.js', './js/auth.js', './js/camera.js', './js/calls.js', './js/wireline.js',
+  './js/pwa.js', './js/auth.js', './js/camera.js', './js/calls.js', './js/media-vault.js', './js/wireline.js',
   './js/band-room.js', './js/band-list.js', './js/broadcast-core.js', './js/broadcast-space.js',
   './js/broadcast-live.js', './js/broadcast-composer.js', './js/broadcast-upload.js',
   './js/signal-core.js', './js/signal-ui.js',
