@@ -120,7 +120,7 @@ async function nativeGoogleSignIn(){
 }
 
 $('googleSignInBtn').onclick = async ()=>{
-  if(!fbAuth){ authStatus('Firebase isn\u2019t configured yet — see firebase-config.js', true); return; }
+  if(!fbAuth){ authStatus('Sign-in is not ready yet.', true); return; }
 
   // Capacitor: use native Google Sign-In → Firebase credential (no Chrome redirect).
   if(isNativeShell()){
@@ -203,7 +203,7 @@ if($('authUseEmailBtn')){
 }
 
 function nalunoHandleSignIn(){
-  if(!fbAuth){ authStatus('Firebase isn\u2019t configured yet — see firebase-config.js', true); return; }
+  if(!fbAuth){ authStatus('Sign-in is not ready yet.', true); return; }
   const { email, password, handle, recovery } = emailAuthInputs();
   if(!password || password.length < 6){ authStatus('Enter your password (6+ characters).', true); return; }
   if(!email){
@@ -226,7 +226,7 @@ function nalunoHandleSignIn(){
 };
 
 async function nalunoHandleSignUp(){
-  if(!fbAuth){ authStatus('Firebase isn\u2019t configured yet — see firebase-config.js', true); return; }
+  if(!fbAuth){ authStatus('Sign-in is not ready yet.', true); return; }
   const { email, password, handle } = emailAuthInputs();
   if(!password || password.length < 6){ authStatus('Password needs to be at least 6 characters.', true); return; }
   const em = $('authEmailInput');
@@ -294,7 +294,7 @@ async function nalunoHandleSignUp(){
   }
 };
 async function nalunoForgotPassword(){
-  if(!fbAuth){ authStatus('Firebase isn\u2019t configured yet — see firebase-config.js', true); return; }
+  if(!fbAuth){ authStatus('Sign-in is not ready yet.', true); return; }
   const { email, handle, recovery } = emailAuthInputs();
   const visibleEmail = ($('authEmailInput') && $('authEmailInput').style.display !== 'none' && $('authEmailInput').value.trim()) || '';
   const target = (recovery || visibleEmail || '').trim();
@@ -335,22 +335,46 @@ async function nalunoForgotPassword(){
 })();
 
 if(fbAuth){
-  authStatus('Checking sign-in state…');
+  authStatus('One moment…');
   let authResolved = false;
   let lastUid = '';
   try{ lastUid = localStorage.getItem('nalunoLastUid') || ''; }catch(_){}
   // If we have a remembered account, never flash the sign-in form on a slow restore.
+  if(lastUid){
+    const cached = nalunoReadCachedProfile(lastUid);
+    if(cached){
+      currentProfile = { photo:null, ...DEFAULT_PROFILE, ...cached };
+      try{ applyProfileToUI(currentProfile); }catch(_){}
+    }
+    try{
+      const cachedContacts = nalunoCacheRead('contacts');
+      if(cachedContacts && cachedContacts.length && typeof addRealContactToLocalList === 'function'){
+        cachedContacts.forEach(function(row){
+          addRealContactToLocalList(row.firebaseUid, row.name, row.color, row.handle, row.photo);
+        });
+        try{ renderContacts(); }catch(_){}
+      }
+      const cachedPrev = nalunoCacheRead('threadPreviews');
+      if(cachedPrev && typeof realThreadPreviews !== 'undefined'){
+        Object.keys(cachedPrev).forEach(function(k){ realThreadPreviews[k] = cachedPrev[k]; });
+        try{ renderWirelineList(); }catch(_){}
+      }
+    }catch(_){}
+    document.body.classList.remove('naluno-gated');
+    $('authGate').classList.remove('active');
+  }
   const authTimeout = setTimeout(()=>{
     if(authResolved) return;
     if(lastUid){
-      authStatus('Restoring your session…');
+      authStatus('Welcome back…');
       return;
     }
-    authStatus('Sign-in check timed out — please sign in.');
+    authStatus('Please sign in.');
     $('authGateLoading').style.display = 'none';
     $('authGateForm').style.display = 'flex';
+    document.body.classList.add('naluno-gated');
     $('authGate').classList.add('active');
-  }, 8000);
+  }, 2500);
 
   // Catches errors specific to the redirect round-trip (e.g. "this domain isn't
   // authorized") that onAuthStateChanged alone would never surface — it would just
@@ -359,16 +383,12 @@ if(fbAuth){
   // which made it impossible to tell "nothing happened yet" apart from "it's stuck."
   fbAuth.getRedirectResult().then(result=>{
     if(result && result.user){
-      authStatus('Redirect completed — signed in as ' + (result.user.displayName || result.user.email));
+      authStatus('Signed in.');
     } else {
-      authStatus('No pending redirect found (normal on first load).');
+      authStatus('');
     }
   }).catch(e=>{
-    authStatus(
-      e.code === 'auth/unauthorized-domain' ? 'auth/unauthorized-domain — this domain isn\u2019t in Firebase\u2019s Authorized domains list yet.' :
-      e.code + ': ' + (e.message || 'Sign-in failed after redirect.'),
-      true
-    );
+    authStatus('Could not finish sign-in. Try again.', true);
   });
   fbAuth.onAuthStateChanged(user=>{
     clearTimeout(authTimeout);
@@ -376,16 +396,29 @@ if(fbAuth){
     currentUser = user;
     if(user){
       try{ localStorage.setItem('nalunoLastUid', user.uid); }catch(_){}
-      authStatus('Signed in as ' + (user.displayName || user.email));
+      authStatus('');
+      document.body.classList.remove('naluno-gated');
       $('authGate').classList.remove('active');
       loadRealProfile(user);
       try{ if(typeof resumeFindNalunoIfEnabled === 'function') resumeFindNalunoIfEnabled(); }catch(_){}
+      try{ if(typeof showInstallPromptSoon === 'function') setTimeout(showInstallPromptSoon, 1600); }catch(_){}
       try{ if(typeof listenFindNalunoDevices === 'function') listenFindNalunoDevices(); }catch(_){}
     } else {
+      if(lastUid && !window.__nalunoSigningOut){
+        const cached = nalunoReadCachedProfile(lastUid);
+        if(cached){
+          currentProfile = { photo:null, ...DEFAULT_PROFILE, ...cached };
+          try{ applyProfileToUI(currentProfile); }catch(_){}
+        }
+        document.body.classList.remove('naluno-gated');
+        $('authGate').classList.remove('active');
+        return;
+      }
       try{ localStorage.removeItem('nalunoLastUid'); }catch(_){}
-      authStatus('Not signed in.');
+      authStatus('');
       $('authGateLoading').style.display = 'none';
       $('authGateForm').style.display = 'flex';
+      document.body.classList.add('naluno-gated');
       $('authGate').classList.add('active');
       if(threadsListUnsubscribe){ threadsListUnsubscribe(); threadsListUnsubscribe = null; }
       if(activeThreadUnsubscribe){ activeThreadUnsubscribe(); activeThreadUnsubscribe = null; }
@@ -414,7 +447,7 @@ if(fbAuth){
   $('authGateLoading').style.display = 'none';
   $('authGateForm').style.display = 'flex';
   $('authGate').classList.add('active');
-  authStatus('Firebase config still has placeholders — edit firebase-config.js with the real project values, then reload. Sign-in will work once the real keys are present.', true);
+  authStatus('Sign-in is not ready yet.', true);
 }
 
 /* Claims handles/{handle} -> uid via a transaction, so two people racing for the
@@ -437,6 +470,22 @@ function isCallsignEditing(){
   const ed = $('callsignEdit');
   return !!(ed && ed.style.display !== 'none');
 }
+
+function nalunoReadCachedProfile(uid){
+  if(!uid) return null;
+  try{
+    const raw = localStorage.getItem('nalunoProfile:' + uid);
+    if(!raw) return null;
+    const p = JSON.parse(raw);
+    if(!p || typeof p !== 'object') return null;
+    return p;
+  }catch(_){ return null; }
+}
+function nalunoWriteCachedProfile(uid, profile){
+  if(!uid || !profile) return;
+  try{ localStorage.setItem('nalunoProfile:' + uid, JSON.stringify(profile)); }catch(_){}
+}
+
 function loadRealProfile(user){
   if(profileUnsub) profileUnsub();
   // Live listener for profile. CRITICAL: while the edit form is open, never call
@@ -457,13 +506,24 @@ function loadRealProfile(user){
         }catch(e){}
       } else {
         applyProfileToUI(currentProfile);
+        nalunoWriteCachedProfile(user.uid, currentProfile);
+        try{ nalunoCacheWrite('profile', currentProfile); }catch(_){}
         if(!gotFirstSnapshot) showCallsignView();
       }
     } else if(!gotFirstSnapshot){
-      currentProfile = { ...DEFAULT_PROFILE, name: user.displayName || 'You', number: '@' + user.uid.slice(0,8) };
-      applyProfileToUI(currentProfile);
-      showCallsignEdit();
+      const cached = nalunoReadCachedProfile(user.uid);
+      if(cached && (cached.name || cached.number)){
+        currentProfile = { photo:null, ...DEFAULT_PROFILE, ...cached };
+        applyProfileToUI(currentProfile);
+        if(!isCallsignEditing()) showCallsignView();
+      } else if(typeof nalunoIsOnline === 'function' ? nalunoIsOnline() : navigator.onLine){
+        currentProfile = { ...DEFAULT_PROFILE, name: user.displayName || 'You', number: '@' + user.uid.slice(0,8) };
+        applyProfileToUI(currentProfile);
+        showCallsignEdit();
+      }
     }
+    if(currentProfile) nalunoWriteCachedProfile(user.uid, currentProfile);
+        try{ nalunoCacheWrite('profile', currentProfile); }catch(_){}
     gotFirstSnapshot = true;
   }, ()=>{
     toast('Couldn\u2019t load your callsign — check your connection');
@@ -544,12 +604,19 @@ $('saveProfileBtn').onclick = async ()=>{
   const finalName = $('nameInput').value.trim() || 'You';
   const requestedHandle = normalizeHandle($('numberInput').value, finalName);
   const recoverySaved = (($('recoveryEmailInput') && $('recoveryEmailInput').value) || '').trim();
+  let photoOut = draftPhoto;
+  if(photoOut && photoOut.dataUrl && typeof nalunoShrinkImageDataUrl === 'function'){
+    try{
+      const slim = await nalunoShrinkImageDataUrl(photoOut.dataUrl, 480, 0.7);
+      photoOut = Object.assign({}, photoOut, { dataUrl: slim });
+    }catch(_){}
+  }
   const nextProfile = {
     name: finalName,
     tagline: $('taglineInput').value.trim(),
     number: requestedHandle,
     color: selectedSwatch ? selectedSwatch.dataset.c : '#7CFFB2',
-    photo: draftPhoto,
+    photo: photoOut,
     recoveryEmail: recoverySaved || (currentProfile && currentProfile.recoveryEmail) || null,
   };
 

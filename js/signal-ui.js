@@ -125,9 +125,9 @@ function renderBroadcastTab(){
         }
       }catch(_){ thumb = ''; }
       const seen = (typeof mySignalSeen !== 'undefined' && mySignalSeen) ? 'seen' : '';
-      myInner = '<div class="ring '+seen+'"><div class="avatar" style="width:100%;height:100%;overflow:hidden;background:#1F2333;">'+thumb+'</div></div><span>Your signal'+(mySignal.length>1?(' · '+mySignal.length):'')+'</span>';
+      myInner = '<div class="signal-window '+seen+'"><div class="signal-window-in">'+thumb+'<span class="signal-play">▶</span></div></div><span>Your signal'+(mySignal.length>1?(' · '+mySignal.length):'')+'</span>';
     } else {
-      myInner = '<div class="ring seen"><div class="avatar" style="width:100%;height:100%;background:#1F2333;color:var(--text-dim);font-size:20px;">+</div></div><span>Post signal</span>';
+      myInner = '<div class="signal-window seen"><div class="signal-window-in" style="color:var(--mint);font-size:22px;">+</div></div><span>Post signal</span>';
     }
     const conn = (typeof connectionsSignals !== 'undefined' && connectionsSignals) ? connectionsSignals : [];
     let others = '';
@@ -135,7 +135,7 @@ function renderBroadcastTab(){
       const c = entry.contact;
       if(!c) return;
       const name = (c.name||'?').split(' ')[0];
-      others += '<div class="bcast-item" data-signal="'+c.id+'"><div class="ring"><div class="avatar" style="width:100%;height:100%;background:'+(c.color||'#7CFFB2')+';">'+(c.initials||'?')+'</div></div><span>'+escapeHtml(name)+'</span></div>';
+      others += '<div class="bcast-item" data-signal="'+c.id+'"><div class="signal-window"><div class="signal-window-in" style="background:'+(c.color||'#7CFFB2')+';color:#0D0F17;font-weight:700;">'+(c.initials||'?')+'</div></div><span>'+escapeHtml(name)+'</span></div>';
     });
     stripEl.innerHTML = '<div class="bcast-item" id="mySignalItem">'+myInner+'</div>'+others;
     const mine = document.getElementById('mySignalItem');
@@ -381,6 +381,12 @@ function openMyBroadcast(){
   viewingMine = true;
   const profile = (typeof currentProfile !== 'undefined') ? currentProfile : { name:'You', color:'#7CFFB2', photo:null };
   currentSegments = sortSignalSegments(mySignal.slice());
+  currentSegments.forEach(function(seg){
+    const u = seg.videoUrl || seg.mediaUrl || '';
+    if(u && typeof vaultIngestUrl === 'function'){
+      vaultIngestUrl((typeof resolveMediaUrl==='function')?resolveMediaUrl(u):u).catch(function(){});
+    }
+  });
   applyAvatarVisual($('bviewerAvatar'), profile);
   $('bviewerName').textContent = profile.name;
   $('bviewerStatus').style.display = 'none';

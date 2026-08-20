@@ -64,6 +64,12 @@ function loadRealConnections(uid){
     renderContacts();
     renderBandList();
     applyAtmosphere();
+    try{
+      nalunoCacheWrite('contacts', contacts.filter(function(c){ return c.isReal; }).map(function(c){
+        const photo = (c.photo && c.photo.dataUrl && c.photo.dataUrl.length < 120000) ? c.photo : null;
+        return { firebaseUid:c.firebaseUid, name:c.name, color:c.color, handle:c.handle, photo:photo };
+      }));
+    }catch(_){}
     // Both of these fire N parallel Firestore reads (one per real connection) — used
     // to run immediately on every single connections change, which is the real reason
     // things got noticeably slower as more real connections accumulated: not just the

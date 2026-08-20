@@ -589,6 +589,7 @@ function chooseBackground(id, manual){
 }
 function saveBackgroundChoice(){
   try{ localStorage.setItem('naluno:filter', JSON.stringify({ id: selectedFilterId })); }catch(e){}
+  try{ if(typeof applyCallFilterNow === 'function') applyCallFilterNow(); }catch(_){}
 }
 function loadBackgroundChoice(){
   try{

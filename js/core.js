@@ -52,4 +52,47 @@ window.addEventListener('error', function(ev){
 window.addEventListener('unhandledrejection', function(ev){
   try{ console.error('[naluno:promise]', ev.reason); }catch(_){}
 });
-console.log('[naluno] build 2026.08.19p');
+console.log('[naluno] build 2026.08.21a');
+
+
+function nalunoShrinkImageDataUrl(dataUrl, maxEdge, quality){
+  return new Promise(function(resolve){
+    if(!dataUrl || String(dataUrl).indexOf('data:image') !== 0){ resolve(dataUrl); return; }
+    const img = new Image();
+    img.onload = function(){
+      try{
+        const edge = maxEdge || 512;
+        const q = quality || 0.72;
+        const s = Math.min(1, edge / Math.max(img.width || 1, img.height || 1));
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round((img.width || 1) * s));
+        c.height = Math.max(1, Math.round((img.height || 1) * s));
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        resolve(c.toDataURL('image/jpeg', q));
+      }catch(_){ resolve(dataUrl); }
+    };
+    img.onerror = function(){ resolve(dataUrl); };
+    img.src = dataUrl;
+  });
+}
+
+function nalunoCacheKey(kind){
+  try{
+    const uid = (typeof currentUser !== 'undefined' && currentUser && currentUser.uid)
+      || localStorage.getItem('nalunoLastUid') || '';
+    return uid ? ('nalunoCache:' + kind + ':' + uid) : '';
+  }catch(_){ return ''; }
+}
+function nalunoCacheWrite(kind, value){
+  const k = nalunoCacheKey(kind);
+  if(!k) return;
+  try{ localStorage.setItem(k, JSON.stringify(value)); }catch(_){}
+}
+function nalunoCacheRead(kind){
+  const k = nalunoCacheKey(kind);
+  if(!k) return null;
+  try{
+    const raw = localStorage.getItem(k);
+    return raw ? JSON.parse(raw) : null;
+  }catch(_){ return null; }
+}

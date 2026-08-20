@@ -467,3 +467,21 @@ setTimeout(showApkBanner, 5000);
 document.addEventListener('visibilitychange', function(){
   if(!document.hidden) setTimeout(showApkBanner, 400);
 });
+
+function showInstallPromptSoon(){
+  try{
+    if(isStandalonePwa() || installBannerDismissed()) return;
+    const ban = $('installBanner');
+    if(!ban) return;
+    const label = ban.querySelector('[data-install-label]');
+    if(isIosDevice()){
+      if(label) label.textContent = 'Add Naluno to your Home Screen — Share, then Add to Home Screen';
+      if($('installBannerBtn')) $('installBannerBtn').textContent = 'How';
+      $('installBannerBtn').onclick = function(){
+        toast('Tap Share, then Add to Home Screen');
+      };
+    }
+    ban.style.display = 'flex';
+  }catch(_){}
+}
+window.showInstallPromptSoon = showInstallPromptSoon;

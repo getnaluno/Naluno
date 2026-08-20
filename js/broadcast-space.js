@@ -1158,11 +1158,22 @@ function wireBroadcastChapterPlayer(chapters, breathers, opts){
 
   const bar = $('bspaceChapterBar');
   if(bar && opts.showChips && bspaceChapterList.length > 1){
+    const canCut = !!(activeBroadcastMeta && activeBroadcastMeta.isMine);
+    const shared = bspaceChapterList.length > 1 && bspaceChapterList.every(c => c.mediaUrl === bspaceChapterList[0].mediaUrl);
     bar.innerHTML = bspaceChapterList.map((ch,i)=>
-      `<button type="button" data-ch="${i}" style="font-family:var(--font-mono);font-size:10px;padding:4px 8px;border-radius:999px;border:1px solid var(--line);background:${i===0?'rgba(124,255,178,.15)':'transparent'};color:${i===0?'var(--mint)':'var(--text-dim)'};cursor:pointer;">${bspaceEscape(ch.title || ('Ch '+(i+1)))}</button>`
+      `<span style="display:inline-flex;align-items:center;gap:4px;">
+        <button type="button" data-ch="${i}" style="font-family:var(--font-mono);font-size:10px;padding:4px 8px;border-radius:999px;border:1px solid var(--line);background:${i===0?'rgba(124,255,178,.15)':'transparent'};color:${i===0?'var(--mint)':'var(--text-dim)'};cursor:pointer;">${bspaceEscape(ch.title || ('Ch '+(i+1)))}</button>
+        ${canCut && shared ? '<button type="button" data-delch="'+i+'" aria-label="Remove chapter" style="border:none;background:transparent;color:var(--text-dim);font-size:14px;cursor:pointer;line-height:1;">×</button>' : ''}
+      </span>`
     ).join('');
     bar.querySelectorAll('[data-ch]').forEach(btn=>{
       btn.onclick = ()=> playBroadcastChapter(parseInt(btn.getAttribute('data-ch'),10), true);
+    });
+    bar.querySelectorAll('[data-delch]').forEach(btn=>{
+      btn.onclick = function(e){
+        e.preventDefault(); e.stopPropagation();
+        deleteBroadcastChapter(parseInt(btn.getAttribute('data-delch'),10));
+      };
     });
   }
 
@@ -1325,4 +1336,31 @@ function adaptBspaceHeroToVideo(){
     v.style.objectFit = 'cover';
     v.style.maxHeight = 'none';
   }
+}
+
+
+async function deleteBroadcastChapter(index){
+  if(!activeBroadcastMeta || !activeBroadcastMeta.isMine) return;
+  if(!bspaceChapterList || index < 0 || index >= bspaceChapterList.length) return;
+  const shared = bspaceChapterList.length > 1 && bspaceChapterList.every(c => c.mediaUrl === bspaceChapterList[0].mediaUrl);
+  if(!shared){
+    toast('This chapter is its own file — removing it would break playback');
+    return;
+  }
+  if(bspaceChapterList.length <= 1){
+    toast('Need at least one chapter');
+    return;
+  }
+  bspaceChapterList.splice(index, 1);
+  bspaceChapterList.forEach(function(ch, i){ ch.index = i; });
+  try{
+    if(fbDb && activeBroadcastId){
+      await fbDb.collection('broadcasts').doc(activeBroadcastId).set({ chapters: bspaceChapterList }, { merge:true });
+    }
+  }catch(e){
+    toast('Could not update chapters');
+    return;
+  }
+  toast('Chapter removed');
+  playBroadcastChapter(Math.min(index, bspaceChapterList.length-1), false);
 }

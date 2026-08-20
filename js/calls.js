@@ -322,6 +322,8 @@ $('resetRingtoneBtn').onclick = ()=>{
 };
 $('signOutBtn').onclick = ()=>{
   if(!fbAuth){ toast('Not signed in'); return; }
+  window.__nalunoSigningOut = true;
+  try{ localStorage.removeItem('nalunoLastUid'); }catch(_){}
   fbAuth.signOut().catch(e=> toast(e.message || 'Couldn\u2019t sign out'));
   // onAuthStateChanged's signed-out branch handles showing the sign-in screen and
   // tearing down every live listener — nothing else needed here.
@@ -804,20 +806,24 @@ async function attachLocalTracksToPc(pc){
     pc.addTrack(t, stream);
   }
 
-  if(videoTracks[0] && !hasKind('video')){
-    const t = videoTracks[0];
+  _callRawVideoTrack = videoTracks[0] || _callRawVideoTrack;
+  if(!hasKind('video')){
+    let out = _callRawVideoTrack;
     try{
-      t.enabled = true;
-      t.contentHint = 'motion';
+      if(typeof getCallOutboundVideoTrack === 'function'){
+        const got = await getCallOutboundVideoTrack();
+        if(got) out = got;
+      }
     }catch(_){}
-    _callRawVideoTrack = t;
-    pc.addTrack(t, stream);
-  } else if(videoTracks[0]){
-    _callRawVideoTrack = videoTracks[0];
+    if(out){
+      try{ out.enabled = true; out.contentHint = 'motion'; }catch(_){}
+      pc.addTrack(out, stream);
+    }
   }
 
   if(!audioTracks[0]) console.warn('[call] no local audio track');
   if(!videoTracks[0]) console.warn('[call] no local video track');
+  try{ scheduleFilteredUpgrade(pc); }catch(_){}
 }
 
 /* ---- Outbound filters (safe): raw A/V first, then sendCanvas replaceTrack ---- */
@@ -830,23 +836,22 @@ let _callFilterUpgradeTimer = null;
 
 function callWantsOutboundFilter(){
   try{
-    if(typeof currentFilter === 'undefined' || !currentFilter) return false;
-    if(currentFilter === 'none' || currentFilter === 'original') return false;
+    if(typeof greenroomEnabled !== 'undefined' && !greenroomEnabled) return false;
+    const id = (typeof selectedFilterId !== 'undefined' && selectedFilterId)
+      || (typeof currentFilter !== 'undefined' && currentFilter)
+      || 'original';
+    if(!id || id === 'none' || id === 'original') return false;
     return true;
   }catch(_){ return false; }
 }
 
 function scheduleFilteredUpgrade(pc){
-  if(!pc || _callFilterUpgraded) return;
-  if(!callWantsOutboundFilter()) return;
-  _callFilterPc = pc;
-  if(_callFilterUpgradeTimer) clearTimeout(_callFilterUpgradeTimer);
-  // Delay so first media is raw/fast; then upgrade if filter active
-  _callFilterUpgradeTimer = setTimeout(function(){
-    upgradeCallVideoToFiltered().catch(function(e){
-      console.warn('[call] filter upgrade', e);
-    });
-  }, 2500); // after first media is stable — avoid interrupting early frames
+  // Kept for mid-call filter changes. First negotiation already
+  // sends the filtered track when a grade is on.
+  _callFilterPc = pc || _callFilterPc;
+  if(typeof applyCallFilterNow === 'function'){
+    applyCallFilterNow().catch(function(){});
+  }
 }
 
 async function upgradeCallVideoToFiltered(){
@@ -874,8 +879,19 @@ async function upgradeCallVideoToFiltered(){
     }
   }catch(_){}
 
+  try{
+    if(typeof startCamView === 'function') startCamView('pip');
+  }catch(_){}
+  try{
+    const ctx = canvas.getContext('2d');
+    const sample = ctx.getImageData(Math.floor(canvas.width/2)||1, Math.floor(canvas.height/2)||1, 1, 1).data;
+    if((sample[0]+sample[1]+sample[2]+sample[3]) < 8){
+      setTimeout(function(){ upgradeCallVideoToFiltered().catch(function(){}); }, 600);
+      return;
+    }
+  }catch(_){}
   let fxStream = null;
-  try{ fxStream = canvas.captureStream(30); }catch(e){
+  try{ fxStream = canvas.captureStream(24); }catch(e){
     console.warn('[call] captureStream', e);
     return;
   }
@@ -1315,12 +1331,12 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
         if(firstAttempt) toast('Push wake failed (' + res.status + ') — open app still rings');
       } else if(data.sent === false){
         if(firstAttempt && (data.reason === 'no_token' || data.reason === 'missing_token')){
-          toast('No push token on their device — they must open Naluno APK once');
+          toast('They need to open Naluno once so calls can reach them');
           stopRepeats = true;
         } else if(firstAttempt && data.error){
           toast('Push error: ' + String(data.error).slice(0, 70));
         } else if(firstAttempt && data.reason === 'all_failed'){
-          toast('FCM rejected push — enable FCM API + check worker key');
+          toast('Call alert did not go through. Ask them to open Naluno.');
         }
       }
     }catch(e){
@@ -1399,6 +1415,7 @@ async function startRealCall(c){
   const callRef = fbDb.collection('calls').doc();
   activeCallId = callRef.id;
 
+  try{ if(typeof primeSendPreview === 'function') await primeSendPreview(); }catch(_){}
   peerConnection = await createPeerConnection();
   peerConnection.onicecandidate = e=>{
     if(e.candidate) callRef.collection('callerCandidates').add(e.candidate.toJSON()).catch(()=>{});
@@ -1675,8 +1692,11 @@ $('acceptIncoming').onclick = async ()=>{
     await callRef.update({ answer: { type: answer.type, sdp: answer.sdp } });
     pendingIncomingOffer = null;
     // Nudge remote media as soon as ICE may complete
+    try{ if(typeof startCamView === 'function') startCamView('pip'); }catch(_){}
+    try{ scheduleFilteredUpgrade(peerConnection); }catch(_){}
     setTimeout(()=> ensureRemoteVideoPlaying(), 300);
     setTimeout(()=> ensureRemoteVideoPlaying(), 1200);
+    setTimeout(()=> ensureRemoteVideoPlaying(), 3000);
 
     if(callerCandidatesUnsub) callerCandidatesUnsub();
     callerCandidatesUnsub = callRef.collection('callerCandidates').onSnapshot(snap=>{

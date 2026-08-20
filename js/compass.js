@@ -26,9 +26,12 @@ function showCompassLockScreenIfNeeded(){
     $('compassLockScreen').style.display = 'flex';
     $('compassLockInput').value = '';
     $('compassLockError').style.display = 'none';
+    if($('compassFindBtn')) $('compassFindBtn').style.visibility = 'hidden';
+    if($('findNalunoPanel')) $('findNalunoPanel').style.display = 'none';
   } else {
     $('compassContent').style.display = 'flex';
     $('compassLockScreen').style.display = 'none';
+    if($('compassFindBtn')) $('compassFindBtn').style.visibility = 'visible';
     loadCompassMessages();
   }
 }
@@ -257,9 +260,10 @@ function openComposer(mode){
     }
   }
   $('composer').classList.add('active');
+  document.body.classList.add('naluno-overlay');
 }
 
-function closeComposer(){ $('composer').classList.remove('active'); }
+function closeComposer(){ $('composer').classList.remove('active'); document.body.classList.remove('naluno-overlay'); }
 $('composerClose').onclick = closeComposer;
 if($('newSignalBtn')) $('newSignalBtn').onclick = ()=> openComposer('signal');
 // Broadcast uses dedicated bcomposer (js/broadcast-composer.js) — do not open Signal composer
