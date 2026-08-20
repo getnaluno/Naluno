@@ -297,7 +297,6 @@ if(m.encrypted && m.ciphertext && m.iv){
           type: isSys && msgType === 'text' ? 'system' : msgType,
           text, mood: m.mood, waveform: m.waveform, duration: m.duration, dataUrl: m.dataUrl,
           mediaUrl: m.mediaUrl || null, mime: m.mime || null, fileName: m.fileName || null,
-          vaultKey: m.mediaUrl && typeof vaultKeyForUrl === 'function' ? vaultKeyForUrl(m.mediaUrl) : null,
           callId: m.callId || null,
           callerUid: m.callerUid || null,
           calleeUid: m.calleeUid || null,
@@ -322,12 +321,6 @@ if(m.encrypted && m.ciphertext && m.iv){
       const missed = Array.from(byCall.values());
       wirelineThreads[contactId] = rest.concat(missed).sort((a,b)=>a.ts-b.ts);
       renderThreadMessages();
-      mapped.forEach(function(m){
-        if((m.type==='photo' || m.type==='video') && m.mediaUrl && typeof vaultIngestUrl === 'function'){
-          const remote = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(m.mediaUrl) : m.mediaUrl;
-          vaultIngestUrl(remote, m.vaultKey).catch(function(){});
-        }
-      });
       // This thread is actively open, so any of their messages just received count as read.
       threadRef.update({ readBy: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) }).catch(()=>{});
       snap.docs.forEach(d=>{
@@ -507,10 +500,9 @@ function renderThreadMessages(){
       e.preventDefault();
       e.stopPropagation();
       const rec = slipKeepIndex[el.getAttribute('data-slip-id')];
-      if(rec) keepSlipFile(rec.url, rec.name, rec.vaultKey);
+      if(rec) keepSlipFile(rec.url, rec.name);
     };
   });
-  try{ if(typeof vaultHydrateThread === 'function') vaultHydrateThread(); }catch(_){}
   document.querySelectorAll('[data-delmsg]').forEach(el=>{
     el.onclick = e=>{ e.stopPropagation(); deleteThreadMessage(el.dataset.delmsg); };
   });
@@ -637,36 +629,18 @@ $('threadSendBtn').onclick = sendThreadMessage;
 
 let slipKeepIndex = {};
 function slipSrc(m){
-  const key = m.vaultKey || (m.mediaUrl ? (typeof vaultKeyForUrl === 'function' ? vaultKeyForUrl(m.mediaUrl) : '') : '');
-  if(key && typeof vaultSyncSrc === 'function'){
-    const local = vaultSyncSrc(key);
-    if(local) return local;
-  }
   const raw = m.mediaUrl || m.dataUrl || '';
   if(!raw) return '';
-  if(String(raw).indexOf('blob:') === 0) return raw;
   return (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(raw) : raw;
 }
-async function keepSlipFile(url, name, vaultKey){
-  if(!url && !vaultKey) return;
+async function keepSlipFile(url, name){
+  if(!url) return;
   const fileName = (name || 'slip').replace(/[^\w.\-]+/g, '_');
   toast('Keeping…');
   try{
-    let blob = null;
-    if(vaultKey && typeof vaultGet === 'function'){
-      const rec = await vaultGet(vaultKey);
-      if(rec && rec.blob) blob = rec.blob;
-    }
-    if(!blob && url && String(url).indexOf('blob:') === 0){
-      const res0 = await fetch(url);
-      blob = await res0.blob();
-    }
-    if(!blob && url){
-      const res = await fetch(url, { mode:'cors', credentials:'omit' });
-      if(!res.ok) throw new Error('keep failed');
-      blob = await res.blob();
-    }
-    if(!blob) throw new Error('keep failed');
+    const res = await fetch(url, { mode:'cors', credentials:'omit' });
+    if(!res.ok) throw new Error('keep failed');
+    const blob = await res.blob();
     const href = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = href;
@@ -696,26 +670,20 @@ async function keepSlipFile(url, name, vaultKey){
 
 function slipBubbleHtml(m){
   const src = slipSrc(m);
-  const vKey = m.vaultKey || (m.mediaUrl && typeof vaultKeyForUrl === 'function' ? vaultKeyForUrl(m.mediaUrl) : '');
-  const remote = (m.mediaUrl && String(m.mediaUrl).indexOf('blob:') !== 0)
-    ? ((typeof resolveMediaUrl === 'function') ? resolveMediaUrl(m.mediaUrl) : m.mediaUrl)
-    : '';
   let keep = '';
-  if(m.from === 'them' && (src || remote || vKey)){
-    slipKeepIndex[String(m.id)] = { url: src || remote, name: m.fileName || (m.type==='video' ? 'clip.mp4' : 'photo.jpg'), vaultKey: vKey };
+  if(m.from === 'them' && src){
+    slipKeepIndex[String(m.id)] = { url: src, name: m.fileName || (m.type==='video' ? 'clip.mp4' : 'photo.jpg') };
     keep = `<button type="button" class="slip-keep" data-slip-id="${escapeHtml(String(m.id))}">Keep</button>`;
   }
-  const attrs = (vKey ? (' data-vault-key="' + escapeHtml(vKey) + '"') : '') +
-    (remote ? (' data-vault-url="' + escapeHtml(remote) + '"') : '');
   if(m.type === 'video'){
-    return `<div class="slip-frame" data-slip-play="${escapeHtml(String(m.id))}"${attrs}>
-      <video ${src ? ('src="' + escapeHtml(src) + '"') : ''} playsinline webkit-playsinline preload="metadata" disablepictureinpicture></video>
+    return `<div class="slip-frame" data-slip-play="${escapeHtml(String(m.id))}">
+      <video src="${escapeHtml(src)}" playsinline webkit-playsinline preload="metadata" disablepictureinpicture></video>
       <div class="slip-play"><span>▶</span></div>
       ${keep}
     </div>`;
   }
-  return `<div class="slip-frame"${attrs}>
-    <img ${src ? ('src="' + escapeHtml(src) + '"') : ''} alt="" loading="lazy" />
+  return `<div class="slip-frame">
+    <img src="${escapeHtml(src)}" alt="" loading="lazy" />
     ${keep}
   </div>`;
 }
@@ -725,26 +693,6 @@ async function sendSlipFile(file){
   if(!c || !file) return;
   const isVideo = (file.type || '').indexOf('video') === 0 || /\.(mp4|webm|mov|m4v)$/i.test(file.name || '');
   const kind = isVideo ? 'video' : 'photo';
-  const vaultKey = 'slip-' + Date.now() + '-' + Math.random().toString(36).slice(2);
-  if(typeof vaultIngestFile === 'function'){
-    try{ await vaultIngestFile(file, vaultKey); }catch(_){}
-  }
-  const online = (typeof nalunoIsOnline === 'function') ? nalunoIsOnline() : navigator.onLine;
-  const preview = kind === 'video' ? 'Slip · video' : 'Slip · photo';
-  const basePayload = {
-    type: kind,
-    mime: file.type || '',
-    fileName: (file.name || '').slice(0, 80),
-    text: '',
-    vaultKey: vaultKey,
-  };
-  if(!online && c.isReal && c.firebaseUid){
-    queueMessageForLater(c.id, c.firebaseUid, Object.assign({ pendingUpload:true, mediaUrl:'' }, basePayload), preview);
-    renderThreadMessages();
-    renderWirelineList();
-    toast('No connection — slip saved here, will send when you are back');
-    return;
-  }
   toast(isVideo ? 'Sending slip…' : 'Placing slip…');
   try{ if(typeof nalunoKeepAliveStart === 'function') await nalunoKeepAliveStart('slip'); }catch(_){}
   let url = '';
@@ -763,10 +711,14 @@ async function sendSlipFile(file){
     try{ if(typeof hidePublishChip === 'function') hidePublishChip(); }catch(_){}
   }
   if(!url) throw new Error('Slip did not land');
-  if(typeof vaultPut === 'function'){
-    try{ await vaultPut(typeof vaultKeyForUrl === 'function' ? vaultKeyForUrl(url) : ('url:'+url), file, { name: file.name }); }catch(_){}
-  }
-  const payload = Object.assign({}, basePayload, { mediaUrl: url });
+  const payload = {
+    type: kind,
+    mediaUrl: url,
+    mime: file.type || '',
+    fileName: (file.name || '').slice(0, 80),
+    text: '',
+  };
+  const preview = kind === 'video' ? 'Slip · video' : 'Slip · photo';
   if(c.isReal && c.firebaseUid){
     await sendRealMessage(c, payload, preview);
   } else {
@@ -851,21 +803,7 @@ async function flushMessageQueue(){
   if(queue.length === 0) return;
   for(const item of queue){
     try{
-      let payload = Object.assign({}, item.payload);
-      if((payload.type === 'photo' || payload.type === 'video') && !payload.mediaUrl && payload.vaultKey){
-        const rec = (typeof vaultGet === 'function') ? await vaultGet(payload.vaultKey) : null;
-        if(!rec || !rec.blob) throw new Error('slip still on this phone only');
-        if(typeof uploadBroadcastFile === 'function'){
-          payload.mediaUrl = await uploadBroadcastFile(rec.blob, function(){});
-        } else if(typeof uploadVideoToR2 === 'function'){
-          payload.mediaUrl = await uploadVideoToR2(rec.blob);
-        }
-        if(!payload.mediaUrl) throw new Error('slip upload waiting');
-        delete payload.pendingUpload;
-      }
-      const clean = Object.assign({}, payload);
-      delete clean.pendingUpload;
-      await sendRealMessage({ firebaseUid: item.firebaseUid }, clean, item.previewText, item.queueId);
+      await sendRealMessage({ firebaseUid: item.firebaseUid }, item.payload, item.previewText, item.queueId);
     }catch(e){ /* still couldn't send — stays in the queue for the next trigger */ }
   }
   if(activeThreadContactId) renderThreadMessages();
@@ -922,14 +860,11 @@ async function sendRealMessage(c, payload, previewText, queueId){
       lastMessageFrom: currentUser.uid,
       readBy: [currentUser.uid],
     }, { merge:true });
-    const wire = Object.assign({}, finalPayload);
-    delete wire.pendingUpload;
-    delete wire.vaultKey;
     await threadRef.collection('messages').add({
       from: currentUser.uid,
       ts: firebase.firestore.FieldValue.serverTimestamp(),
       status: 'sent',
-      ...wire,
+      ...finalPayload,
     });
     if(queueId) removeFromMessageQueue(queueId);
     $('threadInput').value = '';

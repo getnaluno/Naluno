@@ -322,8 +322,6 @@ $('resetRingtoneBtn').onclick = ()=>{
 };
 $('signOutBtn').onclick = ()=>{
   if(!fbAuth){ toast('Not signed in'); return; }
-  window.__nalunoSigningOut = true;
-  try{ localStorage.removeItem('nalunoLastUid'); }catch(_){}
   fbAuth.signOut().catch(e=> toast(e.message || 'Couldn\u2019t sign out'));
   // onAuthStateChanged's signed-out branch handles showing the sign-in screen and
   // tearing down every live listener — nothing else needed here.
@@ -1317,12 +1315,12 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
         if(firstAttempt) toast('Push wake failed (' + res.status + ') — open app still rings');
       } else if(data.sent === false){
         if(firstAttempt && (data.reason === 'no_token' || data.reason === 'missing_token')){
-          toast('They need to open Naluno once so calls can reach them');
+          toast('No push token on their device — they must open Naluno APK once');
           stopRepeats = true;
         } else if(firstAttempt && data.error){
           toast('Push error: ' + String(data.error).slice(0, 70));
         } else if(firstAttempt && data.reason === 'all_failed'){
-          toast('Call alert did not go through. Ask them to open Naluno.');
+          toast('FCM rejected push — enable FCM API + check worker key');
         }
       }
     }catch(e){
