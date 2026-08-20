@@ -341,6 +341,11 @@ if(fbAuth){
   try{ lastUid = localStorage.getItem('nalunoLastUid') || ''; }catch(_){}
   // If we have a remembered account, never flash the sign-in form on a slow restore.
   if(lastUid){
+    const cached = nalunoReadCachedProfile(lastUid);
+    if(cached){
+      currentProfile = { photo:null, ...DEFAULT_PROFILE, ...cached };
+      try{ applyProfileToUI(currentProfile); }catch(_){}
+    }
     document.body.classList.remove('naluno-gated');
     $('authGate').classList.remove('active');
   }
@@ -384,6 +389,16 @@ if(fbAuth){
       try{ if(typeof resumeFindNalunoIfEnabled === 'function') resumeFindNalunoIfEnabled(); }catch(_){}
       try{ if(typeof listenFindNalunoDevices === 'function') listenFindNalunoDevices(); }catch(_){}
     } else {
+      if(lastUid && !window.__nalunoSigningOut){
+        const cached = nalunoReadCachedProfile(lastUid);
+        if(cached){
+          currentProfile = { photo:null, ...DEFAULT_PROFILE, ...cached };
+          try{ applyProfileToUI(currentProfile); }catch(_){}
+        }
+        document.body.classList.remove('naluno-gated');
+        $('authGate').classList.remove('active');
+        return;
+      }
       try{ localStorage.removeItem('nalunoLastUid'); }catch(_){}
       authStatus('');
       $('authGateLoading').style.display = 'none';
@@ -440,6 +455,22 @@ function isCallsignEditing(){
   const ed = $('callsignEdit');
   return !!(ed && ed.style.display !== 'none');
 }
+
+function nalunoReadCachedProfile(uid){
+  if(!uid) return null;
+  try{
+    const raw = localStorage.getItem('nalunoProfile:' + uid);
+    if(!raw) return null;
+    const p = JSON.parse(raw);
+    if(!p || typeof p !== 'object') return null;
+    return p;
+  }catch(_){ return null; }
+}
+function nalunoWriteCachedProfile(uid, profile){
+  if(!uid || !profile) return;
+  try{ localStorage.setItem('nalunoProfile:' + uid, JSON.stringify(profile)); }catch(_){}
+}
+
 function loadRealProfile(user){
   if(profileUnsub) profileUnsub();
   // Live listener for profile. CRITICAL: while the edit form is open, never call
@@ -460,13 +491,22 @@ function loadRealProfile(user){
         }catch(e){}
       } else {
         applyProfileToUI(currentProfile);
+        nalunoWriteCachedProfile(user.uid, currentProfile);
         if(!gotFirstSnapshot) showCallsignView();
       }
     } else if(!gotFirstSnapshot){
-      currentProfile = { ...DEFAULT_PROFILE, name: user.displayName || 'You', number: '@' + user.uid.slice(0,8) };
-      applyProfileToUI(currentProfile);
-      showCallsignEdit();
+      const cached = nalunoReadCachedProfile(user.uid);
+      if(cached && (cached.name || cached.number)){
+        currentProfile = { photo:null, ...DEFAULT_PROFILE, ...cached };
+        applyProfileToUI(currentProfile);
+        if(!isCallsignEditing()) showCallsignView();
+      } else if(typeof nalunoIsOnline === 'function' ? nalunoIsOnline() : navigator.onLine){
+        currentProfile = { ...DEFAULT_PROFILE, name: user.displayName || 'You', number: '@' + user.uid.slice(0,8) };
+        applyProfileToUI(currentProfile);
+        showCallsignEdit();
+      }
     }
+    if(currentProfile) nalunoWriteCachedProfile(user.uid, currentProfile);
     gotFirstSnapshot = true;
   }, ()=>{
     toast('Couldn\u2019t load your callsign — check your connection');
