@@ -14,7 +14,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.08.21b">
+<meta name="app-version" content="2026.08.21c">
 <meta name="description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="A statement from the future — not another WhatsApp.">
@@ -935,42 +935,63 @@
         <button type="button" id="sparkCloseBtn" class="join-btn" style="flex:1;padding:11px;background:var(--surface-2);color:var(--text);border:1px solid var(--line);">Done</button>
       </div>
       <div id="sparkStatus" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);min-height:16px;margin-top:10px;"></div>
+      <button type="button" id="sparkOpenLastBtn" class="join-btn" style="width:100%;margin-top:10px;padding:10px;background:transparent;color:var(--mint);border:1px solid var(--line);">Open last Spark page</button>
+    </div>
+  </div>
+
+  <div class="call-overlay" id="sparkPage">
+    <div class="topbar" style="padding-top:18px;">
+      <div class="back-btn" id="sparkPageBack" role="button" aria-label="Back"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
+      <div style="flex:1;">
+        <div style="font-family:var(--font-futuristic);font-weight:700;font-size:16px;" id="sparkPageName">Spark</div>
+        <div class="lobby-sub">They speak <span id="sparkTheirLangLabel">their language</span></div>
+      </div>
+      <select id="sparkMyLang" aria-label="Your language" style="background:var(--surface);border:1px solid var(--line);color:var(--text);border-radius:999px;padding:6px 10px;font-size:12px;"></select>
+    </div>
+    <div class="spark-bridge" aria-hidden="true"><span></span></div>
+    <div id="sparkIce" class="spark-ice-row"></div>
+    <div id="sparkPageMsgs" class="spark-msgs"></div>
+    <div class="spark-compose">
+      <button type="button" id="sparkTalkBtn" class="spark-talk" aria-label="Hold to speak">●</button>
+      <textarea id="sparkInput" rows="1" placeholder="Write as you speak…"></textarea>
+      <button type="button" id="sparkSendBtn" class="spark-send">Send</button>
     </div>
   </div>
 
 <!-- NALUNO_MODULES -->
-<script src="js/core.js?v=20260821b"></script>
-<script src="js/media-contain.js?v=20260821b"></script>
-<script src="js/keep-alive.js?v=20260821b"></script>
-<script src="js/metrics.js?v=20260821b"></script>
-<script src="js/data.js?v=20260821b"></script>
-<script src="js/crypto.js?v=20260821b"></script>
-<script src="js/atmosphere.js?v=20260821b"></script>
-<script src="js/band-list.js?v=20260821b"></script>
-<script src="js/signal-core.js?v=20260821b"></script>
-<script src="js/broadcast-core.js?v=20260821b"></script>
-<script src="js/broadcast-upload.js?v=20260821b"></script>
-<script src="js/broadcast-composer.js?v=20260821b"></script>
-<script src="js/beacon.js?v=20260821b"></script>
-<script src="js/compass.js?v=20260821b"></script>
-<script src="js/signal-ui.js?v=20260821b"></script>
-<script src="js/compat-lock.js?v=20260821b"></script>
-<script src="js/broadcast-space.js?v=20260821b"></script>
-<script src="js/media-vault.js?v=20260821b"></script>
-<script src="js/wireline.js?v=20260821b"></script>
-<script src="js/profile.js?v=20260821b"></script>
-<script src="js/auth.js?v=20260821b"></script>
-<script src="js/notifications.js?v=20260821b"></script>
-<script src="js/ice-core.js?v=20260821b"></script>
-<script src="js/camera.js?v=20260821b"></script>
-<script src="js/call-filters.js?v=20260821b"></script>
-<script src="js/calls.js?v=20260821b"></script>
-<script src="js/sfu-live.js?v=20260821b"></script>
-<script src="js/broadcast-live.js?v=20260821b"></script>
-<script src="js/band-room.js?v=20260821b"></script>
-<script src="js/pwa.js?v=20260821b"></script>
-<script src="js/spark.js?v=20260821b"></script>
-<script src="js/find.js?v=20260821b"></script>
+<script src="js/core.js?v=20260821c"></script>
+<script src="js/media-contain.js?v=20260821c"></script>
+<script src="js/keep-alive.js?v=20260821c"></script>
+<script src="js/metrics.js?v=20260821c"></script>
+<script src="js/data.js?v=20260821c"></script>
+<script src="js/crypto.js?v=20260821c"></script>
+<script src="js/atmosphere.js?v=20260821c"></script>
+<script src="js/band-list.js?v=20260821c"></script>
+<script src="js/signal-core.js?v=20260821c"></script>
+<script src="js/broadcast-core.js?v=20260821c"></script>
+<script src="js/broadcast-upload.js?v=20260821c"></script>
+<script src="js/broadcast-composer.js?v=20260821c"></script>
+<script src="js/beacon.js?v=20260821c"></script>
+<script src="js/compass.js?v=20260821c"></script>
+<script src="js/signal-ui.js?v=20260821c"></script>
+<script src="js/compat-lock.js?v=20260821c"></script>
+<script src="js/broadcast-space.js?v=20260821c"></script>
+<script src="js/media-vault.js?v=20260821c"></script>
+<script src="js/wireline.js?v=20260821c"></script>
+<script src="js/profile.js?v=20260821c"></script>
+<script src="js/auth.js?v=20260821c"></script>
+<script src="js/notifications.js?v=20260821c"></script>
+<script src="js/ice-core.js?v=20260821c"></script>
+<script src="js/camera.js?v=20260821c"></script>
+<script src="js/call-filters.js?v=20260821c"></script>
+<script src="js/calls.js?v=20260821c"></script>
+<script src="js/sfu-live.js?v=20260821c"></script>
+<script src="js/broadcast-live.js?v=20260821c"></script>
+<script src="js/band-room.js?v=20260821c"></script>
+<script src="js/pwa.js?v=20260821c"></script>
+<script src="js/spark-page.js?v=20260821c"></script>
+<script src="js/spark.js?v=20260821c"></script>
+<script src="js/find.js?v=20260821c"></script>
 <!-- /NALUNO_MODULES -->
 </body>
 </html>
