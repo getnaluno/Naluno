@@ -44,6 +44,22 @@ async function openSparkSheet(){
     $('sparkQr').src = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(url);
   }
   sparkStatus('Valid for 3 minutes');
+  watchSparkGuest(code);
+}
+
+let sparkHostUnsub = null;
+function watchSparkGuest(code){
+  if(sparkHostUnsub){ try{ sparkHostUnsub(); }catch(_){} sparkHostUnsub = null; }
+  if(!fbDb || !code) return;
+  sparkHostUnsub = fbDb.collection('sparks').doc(code).onSnapshot(function(snap){
+    const d = snap.data() || {};
+    if(!d.guestUid || d.guestUid === (currentUser && currentUser.uid)) return;
+    if(sparkHostUnsub){ try{ sparkHostUnsub(); }catch(_){} sparkHostUnsub = null; }
+    closeSparkSheet();
+    if(typeof openSparkPage === 'function'){
+      openSparkPage(d.guestUid, d.guestName || 'Them');
+    }
+  });
 }
 
 function closeSparkSheet(){
@@ -68,10 +84,21 @@ async function joinSparkCode(raw){
     if(typeof connectWithUser === 'function'){
       await connectWithUser(d.hostUid, data, d.hostHandle);
     }
-    try{ await ref.update({ guestUid: currentUser.uid, joinedAt: Date.now() }); }catch(_){}
-    sparkStatus('You are now on each other\'s Frequencies');
+    const guestName = (currentProfile && currentProfile.name) || 'Someone';
+    try{
+      await ref.update({
+        guestUid: currentUser.uid,
+        guestName: guestName,
+        joinedAt: Date.now(),
+        roomId: [d.hostUid, currentUser.uid].sort().join('_'),
+      });
+    }catch(_){}
+    sparkStatus('Opening your Spark page');
     toast('Spark complete');
-    setTimeout(closeSparkSheet, 900);
+    closeSparkSheet();
+    if(typeof openSparkPage === 'function'){
+      openSparkPage(d.hostUid, d.hostName || 'Them');
+    }
   }catch(e){
     sparkStatus(e.message || 'Could not join');
   }
@@ -84,6 +111,16 @@ if($('sparkJoinInput')){
   $('sparkJoinInput').addEventListener('keydown', function(e){
     if(e.key === 'Enter'){ e.preventDefault(); joinSparkCode(e.target.value); }
   });
+}
+if($('sparkOpenLastBtn')){
+  $('sparkOpenLastBtn').onclick = function(){
+    try{
+      const last = JSON.parse(localStorage.getItem('nalunoLastSpark') || 'null');
+      if(!last || !last.otherUid){ sparkStatus('No Spark page yet'); return; }
+      closeSparkSheet();
+      if(typeof openSparkPage === 'function') openSparkPage(last.otherUid, last.otherName);
+    }catch(_){ sparkStatus('No Spark page yet'); }
+  };
 }
 
 (function consumeSparkLink(){
