@@ -141,6 +141,24 @@ async function sendCompassMessage(){
     from:'user', text, ts: firebase.firestore.FieldValue.serverTimestamp(),
   }).catch(()=>{});
 
+  if(typeof isWeatherQuery === 'function' && isWeatherQuery(text)){
+    const thinkingW = { from:'compass', text: '...', ts: Date.now(), thinking:true };
+    compassMessages.push(thinkingW);
+    renderCompassMessages();
+    let wreply = 'Weather is updating…';
+    try{
+      if(typeof formatWeatherReply === 'function') wreply = await formatWeatherReply();
+    }catch(_){}
+    compassMessages = compassMessages.filter(m => m !== thinkingW);
+    compassMessages.push({ from:'compass', text: wreply, ts: Date.now() });
+    renderCompassMessages();
+    try{ if(typeof showWeatherStrip === 'function') showWeatherStrip(); }catch(_){}
+    fbDb.collection('users').doc(currentUser.uid).collection('compassMessages').add({
+      from:'compass', text: wreply, ts: firebase.firestore.FieldValue.serverTimestamp(),
+    }).catch(function(){});
+    return;
+  }
+
   if(typeof isFindNalunoQuery === 'function' && isFindNalunoQuery(text)){
     try{ if(typeof listenFindNalunoDevices === 'function') listenFindNalunoDevices(); }catch(_){}
     const thinking = { from:'compass', text: '...', ts: Date.now(), thinking:true };
@@ -183,10 +201,20 @@ async function sendCompassMessage(){
       if(typeof findNalunoContextText === 'function') findHint = await findNalunoContextText();
     }catch(_){}
     const messages = recentHistory.slice();
+    let weatherHint = '';
+    try{
+      if(typeof formatWeatherReply === 'function') weatherHint = await formatWeatherReply();
+    }catch(_){}
     if(findHint){
       messages.unshift({
         role: 'system',
         content: 'You can report the owner Find Naluno last ping. Never say you cannot locate their phone. Never send them to another screen. Last ping: ' + findHint,
+      });
+    }
+    if(weatherHint){
+      messages.unshift({
+        role: 'system',
+        content: 'You can report live weather. Never say you cannot tell the weather. Never send them to another app. Now: ' + weatherHint,
       });
     }
     const res = await fetch(COMPASS_WORKER_URL, {
