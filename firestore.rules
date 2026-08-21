@@ -153,6 +153,19 @@ service cloud.firestore {
     }
   
     // ---- Broadcast spaces (living communities) ----
+    match /lexicon/{lang} {
+      allow read: if isSignedIn();
+      match /entries/{id} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn()
+          && request.resource.data.src is string
+          && request.resource.data.dst is string
+          && request.resource.data.by == request.auth.uid
+          && request.resource.data.gate == '7ecf54fbcf7b7614d703d17b3466e267a69f591f9ca7a4beb6e53924eb94f320';
+        allow update, delete: if isSignedIn() && resource.data.by == request.auth.uid;
+      }
+    }
+
     match /sparkRooms/{roomId} {
       allow create: if isSignedIn()
         && request.auth.uid in request.resource.data.participants;

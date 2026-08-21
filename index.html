@@ -14,7 +14,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.08.21c">
+<meta name="app-version" content="2026.08.21d">
 <meta name="description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="A statement from the future — not another WhatsApp.">
@@ -946,6 +946,7 @@
         <div style="font-family:var(--font-futuristic);font-weight:700;font-size:16px;" id="sparkPageName">Spark</div>
         <div class="lobby-sub">They speak <span id="sparkTheirLangLabel">their language</span></div>
       </div>
+      <button type="button" class="ghost-btn" id="sparkLgOpenBtn" title="Luganda book" style="width:34px;height:34px;margin-right:6px;">Lg</button>
       <select id="sparkMyLang" aria-label="Your language" style="background:var(--surface);border:1px solid var(--line);color:var(--text);border-radius:999px;padding:6px 10px;font-size:12px;"></select>
     </div>
     <div class="spark-bridge" aria-hidden="true"><span></span></div>
@@ -956,42 +957,60 @@
       <textarea id="sparkInput" rows="1" placeholder="Write as you speak…"></textarea>
       <button type="button" id="sparkSendBtn" class="spark-send">Send</button>
     </div>
+    <div id="sparkLgBook">
+      <div class="spark-lg-head">
+        <div style="font-family:var(--font-futuristic);">Luganda book</div>
+        <button type="button" class="ghost-btn" id="sparkLgCloseBtn" style="width:28px;height:28px;">×</button>
+      </div>
+      <div class="lobby-sub" style="padding:0 14px 8px;">Anyone can read the book. Only people with the password can teach it.</div>
+      <div id="sparkLgGate" style="padding:0 14px 10px;">
+        <input id="sparkLgPass" type="password" autocomplete="off" placeholder="Book password" style="width:100%;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;color:var(--text);" />
+        <button type="button" id="sparkLgUnlockBtn" class="spark-send" style="margin-top:8px;width:100%;">Unlock teaching</button>
+      </div>
+      <div id="sparkLgEditForm" style="display:none;gap:8px;padding:0 14px 10px;">
+        <input id="sparkLgSrc" placeholder="English" style="flex:1;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px 10px;color:var(--text);" />
+        <input id="sparkLgDst" placeholder="Luganda" style="flex:1;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px 10px;color:var(--text);" />
+        <button type="button" id="sparkLgAddBtn" class="spark-send">Add</button>
+      </div>
+      <div id="sparkLgList"></div>
+    </div>
   </div>
 
 <!-- NALUNO_MODULES -->
-<script src="js/core.js?v=20260821c"></script>
-<script src="js/media-contain.js?v=20260821c"></script>
-<script src="js/keep-alive.js?v=20260821c"></script>
-<script src="js/metrics.js?v=20260821c"></script>
-<script src="js/data.js?v=20260821c"></script>
-<script src="js/crypto.js?v=20260821c"></script>
-<script src="js/atmosphere.js?v=20260821c"></script>
-<script src="js/band-list.js?v=20260821c"></script>
-<script src="js/signal-core.js?v=20260821c"></script>
-<script src="js/broadcast-core.js?v=20260821c"></script>
-<script src="js/broadcast-upload.js?v=20260821c"></script>
-<script src="js/broadcast-composer.js?v=20260821c"></script>
-<script src="js/beacon.js?v=20260821c"></script>
-<script src="js/compass.js?v=20260821c"></script>
-<script src="js/signal-ui.js?v=20260821c"></script>
-<script src="js/compat-lock.js?v=20260821c"></script>
-<script src="js/broadcast-space.js?v=20260821c"></script>
-<script src="js/media-vault.js?v=20260821c"></script>
-<script src="js/wireline.js?v=20260821c"></script>
-<script src="js/profile.js?v=20260821c"></script>
-<script src="js/auth.js?v=20260821c"></script>
-<script src="js/notifications.js?v=20260821c"></script>
-<script src="js/ice-core.js?v=20260821c"></script>
-<script src="js/camera.js?v=20260821c"></script>
-<script src="js/call-filters.js?v=20260821c"></script>
-<script src="js/calls.js?v=20260821c"></script>
-<script src="js/sfu-live.js?v=20260821c"></script>
-<script src="js/broadcast-live.js?v=20260821c"></script>
-<script src="js/band-room.js?v=20260821c"></script>
-<script src="js/pwa.js?v=20260821c"></script>
-<script src="js/spark-page.js?v=20260821c"></script>
-<script src="js/spark.js?v=20260821c"></script>
-<script src="js/find.js?v=20260821c"></script>
+<script src="js/core.js?v=20260821e"></script>
+<script src="js/media-contain.js?v=20260821e"></script>
+<script src="js/keep-alive.js?v=20260821e"></script>
+<script src="js/metrics.js?v=20260821e"></script>
+<script src="js/data.js?v=20260821e"></script>
+<script src="js/crypto.js?v=20260821e"></script>
+<script src="js/atmosphere.js?v=20260821e"></script>
+<script src="js/band-list.js?v=20260821e"></script>
+<script src="js/signal-core.js?v=20260821e"></script>
+<script src="js/broadcast-core.js?v=20260821e"></script>
+<script src="js/broadcast-upload.js?v=20260821e"></script>
+<script src="js/broadcast-composer.js?v=20260821e"></script>
+<script src="js/beacon.js?v=20260821e"></script>
+<script src="js/compass.js?v=20260821e"></script>
+<script src="js/signal-ui.js?v=20260821e"></script>
+<script src="js/compat-lock.js?v=20260821e"></script>
+<script src="js/broadcast-space.js?v=20260821e"></script>
+<script src="js/media-vault.js?v=20260821e"></script>
+<script src="js/wireline.js?v=20260821e"></script>
+<script src="js/profile.js?v=20260821e"></script>
+<script src="js/auth.js?v=20260821e"></script>
+<script src="js/notifications.js?v=20260821e"></script>
+<script src="js/ice-core.js?v=20260821e"></script>
+<script src="js/camera.js?v=20260821e"></script>
+<script src="js/call-filters.js?v=20260821e"></script>
+<script src="js/calls.js?v=20260821e"></script>
+<script src="js/sfu-live.js?v=20260821e"></script>
+<script src="js/broadcast-live.js?v=20260821e"></script>
+<script src="js/band-room.js?v=20260821e"></script>
+<script src="js/pwa.js?v=20260821e"></script>
+<script src="js/spark-lg.js?v=20260821e"></script>
+<script src="js/spark-page.js?v=20260821e"></script>
+<script src="js/spark.js?v=20260821e"></script>
+<script src="js/find.js?v=20260821e"></script>
 <!-- /NALUNO_MODULES -->
 </body>
 </html>
