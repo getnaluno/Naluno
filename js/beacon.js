@@ -221,16 +221,26 @@ async function writeBeaconPing(pos, opts){
 
 function geoOnce(){
   return new Promise(function(resolve, reject){
-    if(!navigator.geolocation){ reject({ code: 0 }); return; }
-    function attempt(opts, fallback){
-      navigator.geolocation.getCurrentPosition(resolve, function(err){
-        if(fallback) fallback();
-        else reject(err || { code: 2 });
-      }, opts);
+    function fail(err){ reject(err || { code: 2 }); }
+    if(window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.Geolocation){
+      Capacitor.Plugins.Geolocation.getCurrentPosition({ enableHighAccuracy:false, timeout:20000 })
+        .then(function(p){ resolve(p); })
+        .catch(function(){ webGeo(); });
+      return;
     }
-    attempt({ enableHighAccuracy:true, timeout:8000, maximumAge:0 }, function(){
-      attempt({ enableHighAccuracy:false, timeout:12000, maximumAge:120000 }, null);
-    });
+    webGeo();
+    function webGeo(){
+      if(!navigator.geolocation){ fail({ code: 0 }); return; }
+      function attempt(opts, fallback){
+        navigator.geolocation.getCurrentPosition(resolve, function(err){
+          if(fallback) fallback();
+          else fail(err);
+        }, opts);
+      }
+      attempt({ enableHighAccuracy:false, timeout:15000, maximumAge:180000 }, function(){
+        attempt({ enableHighAccuracy:true, timeout:20000, maximumAge:0 }, null);
+      });
+    }
   });
 }
 
@@ -242,6 +252,8 @@ async function pingThisPhoneNow(){
     if(!on) return;
   }
   toast('Finding this phone…');
+  try{ if(window.NalunoNative && typeof window.NalunoNative.requestFindPermission === 'function') window.NalunoNative.requestFindPermission(); }catch(_){}
+  try{ if(window.NalunoNative && typeof window.NalunoNative.pingFindNow === 'function') window.NalunoNative.pingFindNow(); }catch(_){}
   try{
     const pos = await geoOnce();
     const ok = await writeBeaconPing(pos, { force:true });

@@ -27,7 +27,7 @@ function showCompassLockScreenIfNeeded(){
     $('compassLockInput').value = '';
     $('compassLockError').style.display = 'none';
     if($('compassFindBtn')) $('compassFindBtn').style.visibility = 'hidden';
-    if($('findNalunoPanel')) $('findNalunoPanel').style.display = 'none';
+    if($('findNalunoPanel')){ $('findNalunoPanel').style.display = ''; $('findNalunoPanel').classList.remove('active'); }
   } else {
     $('compassContent').style.display = 'flex';
     $('compassLockScreen').style.display = 'none';
