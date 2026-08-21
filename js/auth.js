@@ -359,6 +359,25 @@ if(fbAuth){
         Object.keys(cachedPrev).forEach(function(k){ realThreadPreviews[k] = cachedPrev[k]; });
         try{ renderWirelineList(); }catch(_){}
       }
+      const cachedSig = nalunoCacheRead('mySignal');
+      if(cachedSig && cachedSig.length && typeof mySignal !== 'undefined' && !mySignal.length){
+        mySignal = cachedSig;
+      }
+      const cachedConnSig = nalunoCacheRead('connectionsSignals');
+      if(cachedConnSig && cachedConnSig.length && typeof connectionsSignals !== 'undefined' && !connectionsSignals.length){
+        connectionsSignals = cachedConnSig;
+      }
+      const cachedBcast = nalunoCacheRead('feedBroadcasts');
+      if(cachedBcast && cachedBcast.length && typeof feedBroadcasts !== 'undefined' && !feedBroadcasts.length){
+        feedBroadcasts = cachedBcast;
+      }
+      const cachedMineB = nalunoCacheRead('myBroadcasts');
+      if(cachedMineB && cachedMineB.length && typeof myBroadcasts !== 'undefined' && !myBroadcasts.length){
+        myBroadcasts = cachedMineB;
+      }
+      try{ if(typeof renderBroadcasts === 'function') renderBroadcasts(); }catch(_){}
+      try{ if(typeof renderBroadcastTab === 'function') renderBroadcastTab(); }catch(_){}
+      try{ if(typeof renderBandList === 'function') renderBandList(); }catch(_){}
     }catch(_){}
     document.body.classList.remove('naluno-gated');
     $('authGate').classList.remove('active');

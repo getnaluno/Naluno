@@ -96,3 +96,15 @@ function nalunoCacheRead(kind){
     return raw ? JSON.parse(raw) : null;
   }catch(_){ return null; }
 }
+function nalunoSlimMedia(row){
+  if(!row || typeof row !== 'object') return row;
+  const copy = Object.assign({}, row);
+  Object.keys(copy).forEach(function(k){
+    const v = copy[k];
+    if(typeof v === 'string' && v.length > 100000 && (v.indexOf('data:') === 0)) delete copy[k];
+  });
+  if(copy.photo && copy.photo.dataUrl && String(copy.photo.dataUrl).length > 100000){
+    copy.photo = { color: copy.photo.color || null };
+  }
+  return copy;
+}

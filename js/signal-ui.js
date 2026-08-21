@@ -230,6 +230,29 @@ function clearSegTimer(){
   }
 }
 
+function signalPlaySrc(seg){
+  if(!seg) return '';
+  const raw = seg.videoUrl || seg.mediaUrl || seg.dataUrl || '';
+  if(!raw) return '';
+  if(String(raw).indexOf('blob:') === 0 || String(raw).indexOf('data:') === 0) return raw;
+  const remote = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(raw) : raw;
+  const key = (typeof vaultKeyForUrl === 'function') ? vaultKeyForUrl(remote) : '';
+  if(key && typeof vaultSyncSrc === 'function'){
+    const local = vaultSyncSrc(key);
+    if(local) return local;
+  }
+  if(typeof vaultIngestUrl === 'function'){
+    vaultIngestUrl(remote, key).catch(function(){});
+  }
+  return remote;
+}
+
+function signalRememberView(contactUid, segments){
+  try{
+    nalunoCacheWrite('signalView:' + (contactUid || 'me'), (segments || []).map(nalunoSlimMedia));
+  }catch(_){}
+}
+
 function playSegment(idx, direction=1){
   if(viewingMine && $('bviewerRemove')){
     $('bviewerRemove').style.display = 'inline-flex';
@@ -254,7 +277,7 @@ function playSegment(idx, direction=1){
     bodyHtml = `<div class="bviewer-text-card ${animClass}" style="background:${seg.bg}; border-radius:20px; width:100%; height:100%;">${escapeHtml(seg.text)}</div>`;
     durationMs = 4000;
   } else if(seg.type==='video'){
-    const videoSrc = seg.videoUrl || seg.dataUrl;
+    const videoSrc = signalPlaySrc(seg);
     // Use the pre-generated thumbnail as poster so the viewer never flashes a black
     // or static first-frame while the real video buffers. This is the actual cause of
     // the reported "brief static thumbnail then audio starts ahead of video".
@@ -262,7 +285,7 @@ function playSegment(idx, direction=1){
     bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" src="${videoSrc}" preload="auto" playsinline${posterAttr} style="filter:${seg.filterCss}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT}; border-radius:16px;"></video>${captionHtml}<div class="cam-expand-btn" id="bviewerMuteToggle" style="right:auto; left:14px; top:14px;" role="button" aria-label="Toggle sound"></div>`;
     durationMs = Math.round((seg.duration || 6) * 1000);
   } else {
-    bodyHtml = `<img class="${animClass}" src="${seg.dataUrl}" style="filter:${seg.filterCss}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT}; border-radius:16px;" />${captionHtml}`;
+    bodyHtml = `<img class="${animClass}" src="${signalPlaySrc(seg)}" style="filter:${seg.filterCss}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT}; border-radius:16px;" />${captionHtml}`;
     durationMs = 4000;
   }
   $('bviewerBody').innerHTML = bodyHtml;
@@ -498,6 +521,8 @@ function openMySignalStory(){
   if($('bviewerStatus')) $('bviewerStatus').style.display = 'none';
   $('bviewer').classList.add('active');
   if(typeof renderBars === 'function') renderBars(currentSegments.length);
+  currentSegments.forEach(function(seg){ signalPlaySrc(seg); });
+  signalRememberView('me', currentSegments);
   if(typeof playSegment === 'function') playSegment(0);
   mySignalSeen = true;
   if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
@@ -515,8 +540,14 @@ async function openContactSignalStory(contactId){
       segments = sortSignalSegments(snap.docs.map(d=>({ id:d.id, ...d.data() })).filter(s => Date.now() < s.expiresAt));
     }catch(_){}
   }
+  if(!segments.length){
+    const cached = nalunoCacheRead('signalView:' + (entry.contact.firebaseUid || contactId));
+    if(cached && cached.length) segments = cached;
+  }
   if(!segments.length){ toast('Signal expired'); return; }
   currentSegments = segments;
+  currentSegments.forEach(function(seg){ signalPlaySrc(seg); });
+  signalRememberView(entry.contact.firebaseUid || contactId, currentSegments);
   currentSegmentIndex = 0;
   $('bviewerName').textContent = entry.contact.name || 'Signal';
   $('bviewerAvatar').textContent = entry.contact.initials || '?';

@@ -131,8 +131,12 @@ async function loadMyBroadcasts(){
       myBroadcasts = snap.docs.map(d => ({ id: d.id, ...d.data() }))
         .filter(b => !b.deleted)
         .sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
-    }catch(_){ myBroadcasts = []; }
+    }catch(_){
+      const cached = nalunoCacheRead('myBroadcasts');
+      if(cached && cached.length) myBroadcasts = cached;
+    }
   }
+  try{ nalunoCacheWrite('myBroadcasts', (myBroadcasts||[]).map(nalunoSlimMedia)); }catch(_){}
 }
 
 let feedBroadcastsUnsub = null;
@@ -146,6 +150,7 @@ function applyBroadcastDocsToFeed(docs){
   });
   list.sort((a,b) => (b.live ? 1 : 0) - (a.live ? 1 : 0) || (b.updatedAt||b.createdAt||0) - (a.updatedAt||a.createdAt||0));
   feedBroadcasts = list.slice(0, 80);
+  try{ nalunoCacheWrite('feedBroadcasts', feedBroadcasts.map(nalunoSlimMedia)); }catch(_){}
   if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
 }
 

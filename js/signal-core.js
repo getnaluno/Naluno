@@ -235,6 +235,14 @@ async function deleteSignalSegment(segmentId){
 async function loadMySignal(){
   if(!currentUser || !fbDb) return;
   try{
+    const cached = nalunoCacheRead('mySignal');
+    if(cached && cached.length && !mySignal.length){
+      mySignal = cached;
+      pruneExpiredSignal();
+      if(typeof renderBroadcasts === 'function') renderBroadcasts();
+    }
+  }catch(_){}
+  try{
     // No orderBy here was the actual bug behind segments scrambling after a reload —
     // Firestore returns documents in its own unspecified internal order when none is
     // given, which happened to match posting order at first (built from a fresh local
@@ -242,6 +250,7 @@ async function loadMySignal(){
     const snap = await fbDb.collection('users').doc(currentUser.uid).collection('signal').orderBy('createdAt','asc').get();
     mySignal = snap.docs.map(d => ({ id:d.id, ...d.data() }));
     pruneExpiredSignal();
+    try{ nalunoCacheWrite('mySignal', mySignal.map(nalunoSlimMedia)); }catch(_){}
   }catch(e){ /* nothing posted yet, or offline */ }
   renderBroadcasts();
   if(typeof loadMyBroadcasts==='function') loadMyBroadcasts().then(()=>{ if(typeof loadFeedBroadcasts==='function') loadFeedBroadcasts(); });
@@ -266,6 +275,21 @@ async function loadConnectionsSignalsNow(){
     }catch(e){ return null; }
   }));
   connectionsSignals = results.filter(Boolean);
+  try{
+    nalunoCacheWrite('connectionsSignals', connectionsSignals.map(function(row){
+      return {
+        contactId: row.contactId,
+        latest: nalunoSlimMedia(row.latest),
+        contact: row.contact && {
+          id: row.contact.id,
+          firebaseUid: row.contact.firebaseUid,
+          name: row.contact.name,
+          color: row.contact.color,
+          initials: row.contact.initials,
+        },
+      };
+    }));
+  }catch(_){}
   renderBroadcasts();
 }
 
@@ -280,7 +304,15 @@ async function saveSignalToStorage(){
   }
 }
 async function loadSignalFromStorage(){
-  if(currentUser && fbDb) return; // real accounts use Firestore instead — see loadMySignal
+  try{
+    const cached = nalunoCacheRead('mySignal');
+    if(cached && cached.length && !mySignal.length){
+      mySignal = cached;
+      pruneExpiredSignal();
+      if(typeof renderBroadcasts === 'function') renderBroadcasts();
+    }
+  }catch(_){}
+  if(currentUser && fbDb) return;
   if(!storageAvailable) return;
   try{
     const res = await window.storage.get('broadcast:mySignal');
