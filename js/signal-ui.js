@@ -283,7 +283,7 @@ function playSegment(idx, direction=1){
     // the reported "brief static thumbnail then audio starts ahead of video".
     const posterAttr = seg.thumbDataUrl ? ` poster="${seg.thumbDataUrl}"` : '';
     bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" src="${videoSrc}" preload="auto" playsinline${posterAttr} style="filter:${seg.filterCss}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT}; border-radius:16px;"></video>${captionHtml}<div class="cam-expand-btn" id="bviewerMuteToggle" style="right:auto; left:14px; top:14px;" role="button" aria-label="Toggle sound"></div>`;
-    durationMs = Math.round((seg.duration || 6) * 1000);
+    durationMs = Math.round((isFinite(seg.duration) && seg.duration > 0 ? seg.duration : 0) * 1000);
   } else {
     bodyHtml = `<img class="${animClass}" src="${signalPlaySrc(seg)}" style="filter:${seg.filterCss}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT}; border-radius:16px;" />${captionHtml}`;
     durationMs = 4000;
@@ -323,6 +323,16 @@ function playSegment(idx, direction=1){
         v.play().catch(()=>{});
       });
     };
+    const applyRealLength = function(){
+      const d = v.duration;
+      if(isFinite(d) && d > 0){
+        durationMs = Math.round(d * 1000);
+        updateBars(idx, durationMs);
+        try{ seg.duration = d; }catch(_){}
+      }
+    };
+    v.addEventListener('loadedmetadata', applyRealLength);
+    if(v.readyState >= 1) applyRealLength();
     if(v.readyState >= 3){ // HAVE_FUTURE_DATA or better
       startPlayback();
     } else {

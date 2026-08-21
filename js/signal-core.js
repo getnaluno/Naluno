@@ -340,7 +340,7 @@ const textBgGradients = [
   '#000000',
 ];
 const transitionOptions = { fade:'Fade', slide:'Slide', zoom:'Zoom', cut:'Cut' };
-const MAX_VIDEO_SECONDS = 120;
+const MAX_VIDEO_SECONDS = 15 * 60;
 
 function cropTransform(crop){
   if(!crop) return 'translate(-50%,-50%)';

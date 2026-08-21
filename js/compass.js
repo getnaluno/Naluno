@@ -323,7 +323,11 @@ function probeVideoDuration(file){
     const v = document.createElement('video');
     v.preload = 'metadata';
     const url = URL.createObjectURL(file);
-    v.onloadedmetadata = ()=>{ resolve(v.duration); URL.revokeObjectURL(url); };
+    v.onloadedmetadata = ()=>{
+      const d = v.duration;
+      resolve((isFinite(d) && d > 0) ? d : null);
+      URL.revokeObjectURL(url);
+    };
     v.onerror = ()=> resolve(null);
     v.src = url;
   });
@@ -358,13 +362,14 @@ async function handleFiles(fileList){
   for(const file of files){
     if(composerType==='video'){
       const duration = await probeVideoDuration(file);
-      if((duration && duration > MAX_VIDEO_SECONDS) || file.size > SOFT_FORCE_TRIM_BYTES){
+      const safeDur = (duration && isFinite(duration) && duration > 0) ? duration : null;
+      if(file.size > SOFT_FORCE_TRIM_BYTES){
         needsTrim.push(file);
         continue;
       }
       // Keep original File for pass-through upload (no re-encode inflation)
       const dataUrl = await readFileAsDataUrl(file);
-      composerItems.push({ id:Date.now()+Math.random(), kind:'video', dataUrl, sourceFile: file, filterKey:'normal', filterCss:'', crop:{scale:1,xPct:0,yPct:0}, caption:'', duration });
+      composerItems.push({ id:Date.now()+Math.random(), kind:'video', dataUrl, sourceFile: file, filterKey:'normal', filterCss:'', crop:{scale:1,xPct:0,yPct:0}, caption:'', duration: safeDur });
     } else {
       const dataUrl = await readFileAsDataUrl(file);
       composerItems.push({ id:Date.now()+Math.random(), kind:'photo', dataUrl, filterKey:'normal', filterCss:'', crop:{scale:1,xPct:0,yPct:0}, caption:'' });

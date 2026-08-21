@@ -7,7 +7,7 @@
    DO NOT route Signal through this file.
    ============================================================ */
 
-const BCAST_MAX_SECONDS = 10 * 60; // 10 minutes
+const BCAST_MAX_SECONDS = 3 * 60 * 60; // 3 hours — one file, chapters are seek marks only
 const BCAST_MAX_UPLOAD_BYTES = (typeof UPLOAD_MAX_BYTES === "number" ? UPLOAD_MAX_BYTES : 150 * 1024 * 1024);
 const BCAST_TARGET_HEIGHT = 1080; // phone-sharp; long clips still scale bitrate down
 
@@ -62,9 +62,9 @@ function bcompProbeDuration(file){
     v.preload = 'metadata';
     const url = URL.createObjectURL(file);
     v.onloadedmetadata = ()=>{
-      const d = v.duration || 0;
+      const d = v.duration;
       URL.revokeObjectURL(url);
-      resolve(d);
+      resolve((isFinite(d) && d > 0) ? d : 0);
     };
     v.onerror = ()=>{ URL.revokeObjectURL(url); resolve(0); };
     v.src = url;
@@ -112,7 +112,7 @@ function compressBroadcastVideo(file, onProgress){
       return;
     }
     if(duration > BCAST_MAX_SECONDS + 1){
-      reject(new Error('Broadcast video max is 10 minutes'));
+      reject(new Error('That video is longer than 3 hours'));
       return;
     }
 
@@ -281,7 +281,7 @@ async function bcompOnFileChosen(file){
   const duration = await bcompProbeDuration(file);
   bcompDuration = duration;
   if(duration > BCAST_MAX_SECONDS + 1){
-    toast('Broadcast videos can be up to 10 minutes');
+    toast('That video is longer than 3 hours');
     bcompReset();
     return;
   }
