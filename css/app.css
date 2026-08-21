@@ -177,7 +177,7 @@
   /* Incoming/outgoing call must cover Wireline thread (also .call-overlay) */
   #callOverlay.active{ z-index: 300 !important; }
   #wirelineThread.active{ z-index: 220 !important; }
-  #wirelineThread, #bandRoom, #bspace, #findNalunoPanel{
+  #wirelineThread, #bandRoom, #bspace, #findNalunoPanel, #sparkPage{
     bottom: calc(66px + env(safe-area-inset-bottom, 0px));
   }
   #bspace.active{ z-index: 100 !important; }
@@ -780,3 +780,26 @@ body.naluno-overlay .navbar{
   font-size:10px;
 }
 .bcast-item .signal-window + span{ max-width:72px; }
+
+#sparkPage{ z-index:230; }
+#sparkPage.active{ z-index:230 !important; }
+body:has(#sparkPage.active) .navbar{ display:none !important; }
+.spark-bridge{ height:3px; margin:4px 22px 8px; border-radius:99px; background:linear-gradient(90deg, transparent, #7CFFB2, #5B8CFF, #7CFFB2, transparent); opacity:.85; }
+.spark-bridge span{ display:block; height:3px; width:28%; border-radius:99px; background:#fff; animation:sparkPulse 1.8s ease-in-out infinite; }
+@keyframes sparkPulse{ 0%{ margin-left:0; opacity:.2 } 50%{ margin-left:72%; opacity:1 } 100%{ margin-left:0; opacity:.2 } }
+.spark-ice-row{ display:flex; gap:8px; overflow-x:auto; padding:0 16px 8px; }
+.spark-ice{ flex-shrink:0; border:1px solid var(--line); background:rgba(124,255,178,.08); color:var(--text); border-radius:999px; padding:6px 10px; font-size:11px; }
+.spark-msgs{ flex:1; overflow-y:auto; padding:8px 16px 12px; display:flex; flex-direction:column; gap:10px; }
+.spark-empty{ color:var(--text-dim); font-size:13px; line-height:1.45; padding:24px 8px; text-align:center; }
+.spark-row{ display:flex; }
+.spark-row.me{ justify-content:flex-end; }
+.spark-bubble{ max-width:82%; background:var(--surface); border:1px solid var(--line); border-radius:16px; padding:10px 12px; }
+.spark-row.me .spark-bubble{ background:rgba(124,255,178,.12); border-color:rgba(124,255,178,.28); }
+.spark-main{ font-size:15px; line-height:1.4; }
+.spark-orig{ margin-top:6px; font-size:11px; color:var(--text-dim); }
+.spark-hear{ margin-top:8px; border:none; background:transparent; color:var(--mint); font-size:11px; padding:0; }
+.spark-compose{ display:flex; gap:8px; align-items:flex-end; padding:10px 14px calc(12px + env(safe-area-inset-bottom,0px)); border-top:1px solid var(--line); }
+.spark-compose textarea{ flex:1; resize:none; min-height:40px; max-height:100px; background:var(--surface); border:1px solid var(--line); border-radius:16px; padding:10px 12px; color:var(--text); font:inherit; }
+.spark-talk{ width:42px; height:42px; border-radius:50%; border:1px solid var(--line); background:var(--surface-2); color:#FF5470; font-size:14px; }
+.spark-talk.hot{ background:#FF5470; color:#fff; }
+.spark-send{ border:none; background:var(--mint); color:#0D0F17; border-radius:14px; padding:10px 14px; font-weight:700; }
