@@ -70,6 +70,14 @@ async function sparkTranslate(text, from, to){
   const src = String(text || '').trim();
   if(!src) return '';
   if(!from || !to || from === to) return src;
+  if(typeof sparkLgApply === 'function' && (from === 'lg' || to === 'lg')){
+    const known = sparkLgApply(src, from, to);
+    if(known) return known;
+  }
+  if(to === 'lg' || from === 'lg'){
+    // Do not send Luganda through generic engines — they invent broken lg.
+    return src;
+  }
   try{
     if(typeof Translator !== 'undefined' && Translator.create){
       const tr = await Translator.create({ sourceLanguage: from, targetLanguage: to });
@@ -139,6 +147,7 @@ async function openSparkPage(otherUid, otherName){
   fillSparkLangSelects();
   page.classList.add('active');
   listenSparkRoom();
+  try{ if(typeof sparkLgLoad === 'function') sparkLgLoad(); }catch(_){}
 }
 
 function fillSparkLangSelects(){
@@ -204,15 +213,24 @@ function renderSparkMessages(rows){
     const hear = shown
       ? '<button type="button" class="spark-hear" data-say="' + encodeURIComponent(shown) + '">Listen</button>'
       : '';
+    const teach = (!mine && (sparkMyLang === 'lg' || sparkTheirLang === 'lg'))
+      ? '<button type="button" class="spark-hear" data-teach="' + encodeURIComponent(m.text || '') + '">Fix Luganda</button>'
+      : '';
     return '<div class="spark-row ' + (mine ? 'me' : 'them') + '">'
       + '<div class="spark-bubble">'
       + '<div class="spark-main">' + escapeHtml(shown) + '</div>'
       + (orig ? '<div class="spark-orig">' + escapeHtml(orig) + '</div>' : '')
-      + voice + hear
+      + voice + hear + teach
       + '</div></div>';
   }).join('');
   box.querySelectorAll('.spark-hear').forEach(function(btn){
     btn.onclick = function(){
+      if(btn.getAttribute('data-teach') != null){
+        const src = decodeURIComponent(btn.getAttribute('data-teach') || '');
+        const better = prompt('Correct Luganda for:\n' + src, shown);
+        if(better && typeof sparkLgTeach === 'function') sparkLgTeach(src, better);
+        return;
+      }
       sparkSpeak(decodeURIComponent(btn.getAttribute('data-say') || ''), sparkMyLang);
     };
   });
