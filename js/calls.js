@@ -718,8 +718,9 @@ async function ensureCallMediaReady(){
       const v = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: (typeof cameraFacingMode !== 'undefined' ? cameraFacingMode : 'user') },
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
+          width: { ideal: 720 },
+          height: { ideal: 1280 },
+          frameRate: { ideal: 24, max: 30 }
         },
         audio: false
       });
@@ -742,7 +743,16 @@ async function createPeerConnection(){
   }catch(_){}
   try{ resetCallFilterState(); }catch(_){}
   try{ stopRemotePlayWatch(); }catch(_){}
-  const ice = await getIceServers();
+  // Never stall the offer on TURN. Cached TURN if warm; STUN otherwise.
+  // Auth already prewarms, so the second call (and most first calls) have TURN.
+  let ice = null;
+  try{
+    if(typeof IceCore !== 'undefined' && IceCore.now) ice = IceCore.now();
+  }catch(_){}
+  if(!ice){
+    ice = { iceServers: [{ urls:'stun:stun.l.google.com:19302' }, { urls:'stun:stun1.l.google.com:19302' }], iceCandidatePoolSize: 4, bundlePolicy: 'max-bundle', rtcpMuxPolicy: 'require' };
+  }
+  try{ if(typeof prewarmIceServers === 'function') prewarmIceServers(); }catch(_){}
   const pc = new RTCPeerConnection(ice);
   remoteCombinedStream = new MediaStream();
 
@@ -809,21 +819,30 @@ async function attachLocalTracksToPc(pc){
   _callRawVideoTrack = videoTracks[0] || _callRawVideoTrack;
   if(!hasKind('video')){
     let out = _callRawVideoTrack;
+    // Use the filtered canvas ONLY if it is already drawing (≥160px).
+    // Never await a 900ms prime here — that is what made connect feel slow.
     try{
-      if(typeof getCallOutboundVideoTrack === 'function'){
-        const got = await getCallOutboundVideoTrack();
+      if(typeof getCallOutboundVideoTrackSync === 'function'){
+        const got = getCallOutboundVideoTrackSync();
         if(got) out = got;
       }
     }catch(_){}
     if(out){
       try{ out.enabled = true; out.contentHint = 'motion'; }catch(_){}
-      pc.addTrack(out, stream);
+      const sender = pc.addTrack(out, stream);
+      try{ tuneVideoSender(sender); }catch(_){}
     }
   }
 
   if(!audioTracks[0]) console.warn('[call] no local audio track');
   if(!videoTracks[0]) console.warn('[call] no local video track');
-  try{ scheduleFilteredUpgrade(pc); }catch(_){}
+  try{ preferFastVideoCodecs(pc); }catch(_){}
+  try{
+    if(typeof applyCallFilterNow === 'function'){
+      queueMicrotask(function(){ applyCallFilterNow().catch(function(){}); });
+      setTimeout(function(){ applyCallFilterNow().catch(function(){}); }, 400);
+    }
+  }catch(_){}
 }
 
 /* ---- Outbound filters (safe): raw A/V first, then sendCanvas replaceTrack ---- */
@@ -843,6 +862,32 @@ function callWantsOutboundFilter(){
     if(!id || id === 'none' || id === 'original') return false;
     return true;
   }catch(_){ return false; }
+}
+
+function preferFastVideoCodecs(pc){
+  if(!pc || typeof RTCRtpSender === 'undefined' || !RTCRtpSender.getCapabilities) return;
+  const caps = RTCRtpSender.getCapabilities('video');
+  if(!caps || !caps.codecs) return;
+  const prefer = caps.codecs.filter(function(c){ return /vp8|h264/i.test(c.mimeType); });
+  const rest = caps.codecs.filter(function(c){ return !/vp8|h264/i.test(c.mimeType); });
+  if(!prefer.length) return;
+  pc.getTransceivers().forEach(function(tr){
+    if(!tr || !tr.sender || !tr.sender.track || tr.sender.track.kind !== 'video') return;
+    if(typeof tr.setCodecPreferences === 'function'){
+      try{ tr.setCodecPreferences(prefer.concat(rest)); }catch(_){}
+    }
+  });
+}
+
+function tuneVideoSender(sender){
+  if(!sender || typeof sender.getParameters !== 'function') return;
+  try{
+    const params = sender.getParameters() || {};
+    if(!params.encodings || !params.encodings.length) params.encodings = [{}];
+    params.encodings[0].maxBitrate = 900000;
+    params.encodings[0].maxFramerate = 24;
+    sender.setParameters(params).catch(function(){});
+  }catch(_){}
 }
 
 function scheduleFilteredUpgrade(pc){
@@ -919,9 +964,8 @@ async function upgradeCallVideoToFiltered(){
 
 function refreshOutboundFilterIfInCall(){
   try{
-    if(!_callFilterPc || _callFilterPc.connectionState !== 'connected') return;
-    if(!_callFilterSender) return;
-    upgradeCallVideoToFiltered().catch(function(){});
+    if(!_callFilterPc && !peerConnection) return;
+    if(typeof applyCallFilterNow === 'function') applyCallFilterNow().catch(function(){});
   }catch(_){}
 }
 
@@ -1038,13 +1082,17 @@ function attachConnectionWatchdogs(pc){
         });
       }catch(_){}
       try{ ensureRemoteVideoPlaying(); }catch(_){}
-      // Filters: only after media is flowing (does not block answer)
       try{ scheduleFilteredUpgrade(pc); }catch(_){}
     }
-    if(s === 'failed' || s === 'closed'){
-      if($('callOverlay').classList.contains('active')){
-        endActiveCall('remote');
-      }
+    if(s === 'failed'){
+      try{ pc.restartIce(); }catch(_){}
+      setTimeout(function(){
+        if(!pc || pc.connectionState === 'failed'){
+          if($('callOverlay') && $('callOverlay').classList.contains('active')){
+            endActiveCall('remote');
+          }
+        }
+      }, 1400);
     }
   };
   pc.oniceconnectionstatechange = ()=>{
@@ -1054,10 +1102,15 @@ function attachConnectionWatchdogs(pc){
       try{ ensureRemoteVideoPlaying(); }catch(_){}
       try{ scheduleFilteredUpgrade(pc); }catch(_){}
     }
-    if(s === 'failed' || s === 'closed'){
-      if($('callOverlay').classList.contains('active')){
-        endActiveCall('remote');
-      }
+    if(s === 'failed'){
+      try{ pc.restartIce(); }catch(_){}
+      setTimeout(function(){
+        if(!pc || pc.iceConnectionState === 'failed'){
+          if($('callOverlay') && $('callOverlay').classList.contains('active')){
+            endActiveCall('remote');
+          }
+        }
+      }, 1400);
     }
   };
 }
@@ -1382,9 +1435,11 @@ async function startRealCall(c){
   pendingRemoteCandidates = [];
   iAmCaller = true;
 
-  // Kick TURN + camera in parallel (speed).
-  const icePromise = getIceServers().catch(()=> (typeof RTC_CONFIG !== 'undefined' ? RTC_CONFIG : { iceServers:[{urls:'stun:stun.l.google.com:19302'}] }));
-  prewarmIceServers();
+  // Kick TURN in the background. Camera is the only await before the offer.
+  if(typeof prewarmIceServers === 'function') prewarmIceServers();
+  const icePromise = (typeof getIceServers === 'function')
+    ? getIceServers().catch(()=> (typeof RTC_CONFIG !== 'undefined' ? RTC_CONFIG : { iceServers:[{urls:'stun:stun.l.google.com:19302'}] }))
+    : Promise.resolve(null);
   if(typeof enableCameraForCall === 'function') await enableCameraForCall();
   else await enableCamera();
   if(!mediaStreamIsLive(stream)){
@@ -1397,7 +1452,8 @@ async function startRealCall(c){
       a.getAudioTracks().forEach(t => stream.addTrack(t));
     }catch(e){ console.warn('[call] could not add audio track', e); }
   }
-  await icePromise;
+  // Do not await icePromise — createPeerConnection uses iceNow() (0ms).
+  icePromise.catch(function(){});
   // Re-enable tracks in case a previous call muted them.
   try{
     stream.getAudioTracks().forEach(t => { t.enabled = true; });
@@ -1415,7 +1471,8 @@ async function startRealCall(c){
   const callRef = fbDb.collection('calls').doc();
   activeCallId = callRef.id;
 
-  try{ if(typeof primeSendPreview === 'function') await primeSendPreview(); }catch(_){}
+  // Do NOT await a 900ms canvas prime. Draw one frame if the lobby already has video.
+  try{ if(typeof drawSendCanvas === 'function') drawSendCanvas(); }catch(_){}
   peerConnection = await createPeerConnection();
   peerConnection.onicecandidate = e=>{
     if(e.candidate) callRef.collection('callerCandidates').add(e.candidate.toJSON()).catch(()=>{});
@@ -1571,7 +1628,7 @@ $('asyncKeepRingingBtn').onclick = async ()=>{
   const c = contacts.find(x=>x.id===currentCallContactId); if(!c) return;
   callActionInProgress = true;
   showCallScreen('ringing');
-  if(!stream) await enableCamera();
+  if(!stream) await (typeof enableCameraForCall === 'function' ? enableCameraForCall() : enableCamera());
   try{ await startRealCall(c); startCallerTone(); }
   catch(e){ toast(e.message || 'Couldn\u2019t retry the call'); closeCallOverlayAndStopCamera(); }
   finally{ callActionInProgress = false; }
@@ -1654,8 +1711,8 @@ $('acceptIncoming').onclick = async ()=>{
   if($('incomingSelfTag')) $('incomingSelfTag').textContent = 'connecting…';
 
   try{
-    // Parallel: media ready + TURN credentials (often already cached from prewarm)
-    const iceP = getIceServers().catch(()=> (typeof RTC_CONFIG !== 'undefined' ? RTC_CONFIG : { iceServers:[{urls:'stun:stun.l.google.com:19302'}] }));
+    // Parallel: media ready. TURN is prewarmed; iceNow() is 0ms.
+    if(typeof prewarmIceServers === 'function') prewarmIceServers();
     const mediaOk = await ensureCallMediaReady();
     if(!mediaOk) throw new Error('Camera/mic unavailable — allow access, then try answering again');
 
@@ -1675,7 +1732,6 @@ $('acceptIncoming').onclick = async ()=>{
     }
     if(!offer){ toast('That call is no longer available'); closeCallOverlayAndStopCamera(); return; }
 
-    await iceP;
     peerConnection = await createPeerConnection();
     peerConnection.onicecandidate = e=>{
       if(e.candidate) callRef.collection('calleeCandidates').add(e.candidate.toJSON()).catch(()=>{});
@@ -1745,6 +1801,12 @@ function startInCall(){
   if($('localPip')) $('localPip').classList.remove('large');
   if(typeof resetPipLayoutStyles === 'function') resetPipLayoutStyles();
   if(stream) startCamView('pip');
+  try{
+    const row = $('incallBgChipRow');
+    if(row) row.style.display = 'flex';
+    if(typeof renderBackgroundChips === 'function') renderBackgroundChips();
+  }catch(_){}
+  try{ if(typeof applyCallFilterNow === 'function') applyCallFilterNow(); }catch(_){}
   callSeconds = 0; $('callTimer').textContent = '00:00';
   clearInterval(callInterval);
   callInterval = setInterval(function(){

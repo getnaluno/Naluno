@@ -361,7 +361,7 @@ function renderBspaceRelated(){
   el.querySelectorAll('[data-rel-b]').forEach(node=>{
     node.onclick = ()=>{
       closeBroadcastSpace();
-      openBroadcast(parseInt(node.dataset.relB, 10));
+      if(typeof openContactSignalStory === 'function') openContactSignalStory(parseInt(node.dataset.relB, 10));
     };
   });
 }
@@ -752,7 +752,7 @@ async function bspaceStopLive(){
   }
 
   // Append recorded live as a chapter on this Broadcast (background)
-  if(liveBlob && liveBlob.size > 1000 && bcastId && currentUser && typeof uploadVideoToR2 === 'function'){
+  if(liveBlob && liveBlob.size > 1000 && bcastId && currentUser && (typeof uploadBroadcastFile === 'function' || typeof uploadVideoToR2 === 'function')){
     toast('Saving live recording…');
     const job = {
       label: 'Saving live recording…',
@@ -769,7 +769,9 @@ async function bspaceStopLive(){
         }
       }catch(_){}
 if(progress) progress('Uploading live recording…');
-        const url = await uploadVideoToR2(liveBlob);
+        const url = (typeof uploadBroadcastFile === 'function')
+          ? await uploadBroadcastFile(liveBlob, progress)
+          : await uploadVideoToR2(liveBlob);
         const ref = fbDb.collection('broadcasts').doc(bcastId);
         const snap = await ref.get();
         if(!snap.exists) return;
@@ -822,10 +824,12 @@ if(progress) progress('Uploading live recording…');
 
 async function bspaceStartLive(){
   if(!(await bspaceRequireMember())) return;
+  const isCreator = !!(activeBroadcastMeta && (activeBroadcastMeta.isMine || (currentUser && activeBroadcastMeta.creatorUid === currentUser.uid)));
+  if(!isCreator){ toast('Only the creator can go live'); return; }
   if(bspaceLiveStream){ await bspaceStopLive(); toast('Live ended'); return; }
   try{
     bspaceLiveStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+      video: { facingMode: 'user', width: { ideal: 720 }, height: { ideal: 1280 }, frameRate: { ideal: 24, max: 30 } },
       audio: true,
     });
   }catch(e){
@@ -859,7 +863,14 @@ async function bspaceStartLive(){
         ? 'video/webm;codecs=vp9,opus'
         : (MediaRecorder.isTypeSupported('video/webm') ? 'video/webm' : '');
       bspaceLiveRecorder = new MediaRecorder(bspaceLiveStream, mime ? { mimeType: mime, videoBitsPerSecond: 1800000 } : { videoBitsPerSecond: 1800000 });
-      bspaceLiveRecorder.ondataavailable = e=>{ if(e.data && e.data.size) bspaceLiveChunks.push(e.data); };
+      bspaceLiveRecorder.ondataavailable = e=>{
+        if(e.data && e.data.size){
+          bspaceLiveChunks.push(e.data);
+          if(bspaceLiveChunks.length >= 240){
+            try{ bspaceLiveRecorder.stop(); }catch(_){}
+          }
+        }
+      };
       bspaceLiveRecorder.start(1000);
     }catch(e){ console.warn('[live] record start', e); bspaceLiveRecorder = null; }
   }

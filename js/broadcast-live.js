@@ -25,6 +25,8 @@ let bLiveViewerPc = null;
 let bLiveViewerUnsubs = [];
 let bLiveViewerCountUnsub = null;
 let bLiveReactionUnsub = null;
+let bLivePendingHostIce = [];
+let bLiveViewerRemoteSet = false;
 
 function bLiveSessionRef(bcastId, viewerUid){
   return fbDb.collection('broadcasts').doc(bcastId).collection('liveSessions').doc(viewerUid);
@@ -72,6 +74,9 @@ function bLiveUpdateViewerChrome(n){
 }
 
 async function bLiveEnsureIce(){
+  try{
+    if(typeof IceCore !== 'undefined' && IceCore.now) return IceCore.now();
+  }catch(_){}
   if(typeof getIceServers === 'function') return getIceServers();
   return { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 }
@@ -83,16 +88,17 @@ async function bLiveStartHost(stream){
   bLiveHost = true;
   if(typeof prewarmIceServers === 'function') prewarmIceServers();
 
-  // Clear stale sessions from previous lives
-  try{
-    const old = await fbDb.collection('broadcasts').doc(activeBroadcastId).collection('liveSessions').get();
-    const batch = fbDb.batch();
-    let n = 0;
-    old.docs.forEach(d => { batch.delete(d.ref); n++; });
-    if(n) await batch.commit().catch(()=>{});
-  }catch(_){}
-
   const col = fbDb.collection('broadcasts').doc(activeBroadcastId).collection('liveSessions');
+  // Do not block going live on deleting stale sessions.
+  (async function cleanupStale(){
+    try{
+      const old = await col.get();
+      const batch = fbDb.batch();
+      let n = 0;
+      old.docs.forEach(d => { batch.delete(d.ref); n++; });
+      if(n) await batch.commit().catch(function(){});
+    }catch(_){}
+  })();
   const unsub = col.onSnapshot(async snap => {
     for(const change of snap.docChanges()){
       if(change.type === 'removed'){
@@ -109,6 +115,7 @@ async function bLiveStartHost(stream){
       if(uid === currentUser.uid) continue;
       const data = change.doc.data() || {};
       if(!data.offer || data.answer) continue; // wait for offer; skip if already answered
+      if(data.ts && (Date.now() - data.ts) > 180000) continue;
       if(bLiveHostPcs[uid]) continue;
       if(Object.keys(bLiveHostPcs).length >= bLiveEffectiveMaxViewers()){
         change.doc.ref.set({ rejected: true, reason: 'full' }, { merge: true }).catch(()=>{});
@@ -118,6 +125,9 @@ async function bLiveStartHost(stream){
         await bLiveHostAcceptViewer(uid, data, stream);
       }catch(e){
         console.warn('[bcast-live] host accept failed', e);
+        try{
+          if(bLiveHostPcs[uid]){ bLiveHostPcs[uid].close(); delete bLiveHostPcs[uid]; }
+        }catch(_){}
       }
     }
     bLiveUpdateViewerChrome(Object.keys(bLiveHostPcs).length);
@@ -192,6 +202,8 @@ async function bLiveJoinAsViewer(){
   if(typeof prewarmIceServers === 'function') prewarmIceServers();
   toast('Joining live…');
 
+  bLivePendingHostIce = [];
+  bLiveViewerRemoteSet = false;
   const pc = new RTCPeerConnection(await bLiveEnsureIce());
   bLiveViewerPc = pc;
   const remote = new MediaStream();
@@ -201,16 +213,26 @@ async function bLiveJoinAsViewer(){
     if(host){
       let v = $('bspaceViewerLiveVideo');
       if(!v){
-        host.innerHTML = `<video id="bspaceViewerLiveVideo" autoplay playsinline style="width:100%;height:100%;object-fit:cover;background:#000;"></video>`;
+        host.innerHTML = `<video id="bspaceViewerLiveVideo" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;background:#000;"></video>`;
         v = $('bspaceViewerLiveVideo');
       }
-      if(v){ v.srcObject = remote; v.play().catch(()=>{}); }
+      if(v){
+        v.muted = true;
+        v.playsInline = true;
+        v.srcObject = remote;
+        const play = function(){
+          v.play().then(function(){
+            setTimeout(function(){ try{ v.muted = false; }catch(_){} }, 250);
+          }).catch(function(){});
+        };
+        play();
+        v.onclick = play;
+      }
     }
     const badge = $('bspaceLiveBadge');
     if(badge){ badge.style.display = 'block'; badge.textContent = 'LIVE'; }
   };
 
-  // Prefer recvonly
   try{
     pc.addTransceiver('video', { direction: 'recvonly' });
     pc.addTransceiver('audio', { direction: 'recvonly' });
@@ -231,7 +253,6 @@ async function bLiveJoinAsViewer(){
     ts: Date.now(),
   });
 
-  // Wait for answer
   const unsub = ref.onSnapshot(async snap => {
     if(!snap.exists) return;
     const d = snap.data() || {};
@@ -240,9 +261,14 @@ async function bLiveJoinAsViewer(){
       bLiveLeaveViewer();
       return;
     }
-    if(d.answer && pc.signalingState !== 'stable'){
+    if(d.answer && !bLiveViewerRemoteSet){
       try{
         await pc.setRemoteDescription(new RTCSessionDescription(d.answer));
+        bLiveViewerRemoteSet = true;
+        bLivePendingHostIce.forEach(function(cand){
+          pc.addIceCandidate(new RTCIceCandidate(cand)).catch(function(){});
+        });
+        bLivePendingHostIce = [];
       }catch(e){ console.warn(e); }
     }
   });
@@ -251,7 +277,9 @@ async function bLiveJoinAsViewer(){
   const hostIceUnsub = ref.collection('hostIce').onSnapshot(snap => {
     snap.docChanges().forEach(ch => {
       if(ch.type !== 'added') return;
-      pc.addIceCandidate(new RTCIceCandidate(ch.doc.data())).catch(()=>{});
+      const cand = ch.doc.data();
+      if(bLiveViewerRemoteSet) pc.addIceCandidate(new RTCIceCandidate(cand)).catch(function(){});
+      else bLivePendingHostIce.push(cand);
     });
   });
   bLiveViewerUnsubs.push(hostIceUnsub);
@@ -264,6 +292,8 @@ async function bLiveJoinAsViewer(){
     leaveBtn.textContent = 'Leave live';
     leaveBtn.onclick = ()=> bLiveLeaveViewer();
   }
+  const hint = $('bspaceReactionJoinHint');
+  if(hint){ hint.textContent = 'Leave live'; hint.onclick = ()=> bLiveLeaveViewer(); }
   const ban = $('bspaceJoinLiveBanner');
   if(ban) ban.style.display = 'flex';
   toast('You’re in the live room');
@@ -367,7 +397,7 @@ function bLiveEnsureReactionBar(){
   });
   const join = document.createElement('button');
   join.type = 'button';
-  join.id = 'bspaceJoinLiveBtn';
+  join.id = 'bspaceReactionJoinHint';
   join.className = 'bspace-mini primary';
   join.textContent = 'Join live';
   join.onclick = ()=> bLiveJoinAsViewer();

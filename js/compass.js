@@ -399,7 +399,7 @@ async function handleFiles(fileList){
     if(composerType==='video'){
       const duration = await probeVideoDuration(file);
       const safeDur = (duration && isFinite(duration) && duration > 0) ? duration : null;
-      if((safeDur && safeDur > MAX_VIDEO_SECONDS + 1) || file.size > SOFT_FORCE_TRIM_BYTES){
+      if(!safeDur || (safeDur && safeDur > MAX_VIDEO_SECONDS + 1) || file.size > SOFT_FORCE_TRIM_BYTES){
         needsTrim.push(file);
         continue;
       }
@@ -729,17 +729,29 @@ $('trimAutoSplitBtn').onclick = async ()=>{
   const duration = (video && isFinite(video.duration) && video.duration > 0) ? video.duration : 0;
   const file = trimCurrentFile;
   const chosenFilterCss = filterPresets[trimSelectedFilter].css;
+  if(!duration){
+    toast('Could not read length — trim a 4-minute window first');
+    return;
+  }
   $('trimOverlay').classList.remove('active');
   advanceTrimQueue();
   const now = Date.now();
   const groupId = 'post-' + now + '-' + Math.random().toString(36).slice(2);
-  await postSegmentsNow([{
-    type:'video', sourceFile: file, filterCss: chosenFilterCss, crop:{scale:1,xPct:0,yPct:0},
-    caption:'', duration: duration || null,
-    createdAt: now, expiresAt: now+SIGNAL_TTL_MS,
-    transitionIn:'fade', groupId, order:0,
-  }]);
-  toast('Posted the full video to your signal');
+  const cap = (typeof MAX_VIDEO_SECONDS !== 'undefined') ? MAX_VIDEO_SECONDS : 240;
+  const parts = [];
+  let t = 0, order = 0;
+  while(t < duration - 0.4){
+    const end = Math.min(duration, t + cap);
+    parts.push({
+      type:'video', sourceFile: file, filterCss: chosenFilterCss, crop:{scale:1,xPct:0,yPct:0},
+      caption:'', duration: end - t, trimStart: t, trimEnd: end,
+      createdAt: now + order, expiresAt: now+SIGNAL_TTL_MS,
+      transitionIn:'fade', groupId, order: order++,
+    });
+    t = end;
+  }
+  await postSegmentsNow(parts);
+  toast(parts.length > 1 ? ('Posted as ' + parts.length + ' Signals') : 'Posted to your signal');
 };
 
 function renderFilmstrip(){
@@ -934,6 +946,7 @@ async function postSegmentsNow(newSegments){
 
 $('postBroadcastBtn').onclick = async ()=>{
   if($('postBroadcastBtn').disabled || postInProgress) return;
+  postInProgress = true;
   const now = Date.now();
 
   if(composerMode === 'broadcast'){
@@ -943,19 +956,22 @@ $('postBroadcastBtn').onclick = async ()=>{
     const caption = ($('captionInput') && $('captionInput').value.trim()) || '';
     if(!title && composerType !== 'text'){
       toast('Add a title for your Broadcast');
+      postInProgress = false;
       return;
     }
     if(composerType !== 'text' && !composerItems.length){
       toast('Add media or switch to text');
+      postInProgress = false;
       return;
     }
-    // Snapshot what we need, then close — processing is not the user's job
     const snapType = composerType;
     const snapItems = composerItems.slice();
     const textVal = ($('textBroadcastInput') && $('textBroadcastInput').value.trim()) || '';
     const finalTitle = title || (snapType==='text' ? (textVal.slice(0,80) || 'Broadcast') : 'Broadcast');
     const desc = caption || (snapType==='text' ? textVal : '');
     closeComposer();
+    try{ resetComposer(); }catch(_){}
+    postInProgress = false;
     const job = {
       label: 'Publishing Broadcast…',
       doneMsg: 'Broadcast published',
@@ -971,7 +987,9 @@ $('postBroadcastBtn').onclick = async ()=>{
           if(item.kind === 'video'){
             const blob = item.videoBlob || item.sourceFile || (item.dataUrl ? await (await fetch(item.dataUrl)).blob() : null);
             if(!blob) throw new Error('Missing video');
-            mediaUrl = await uploadVideoToR2(blob);
+            mediaUrl = (typeof uploadBroadcastFile === 'function')
+              ? await uploadBroadcastFile(blob, progress)
+              : await uploadVideoToR2(blob);
             try{ thumbUrl = await generateVideoThumbnail(mediaUrl); }catch(_){}
           } else {
             const blob = await (await fetch(item.dataUrl)).blob();
@@ -1013,6 +1031,8 @@ $('postBroadcastBtn').onclick = async ()=>{
     });
   }
   closeComposer();
+  try{ resetComposer(); }catch(_){}
+  postInProgress = false;
   if(typeof enqueuePublishJob === 'function'){
     enqueuePublishJob({
       label: postedCount>1 ? ('Posting ' + postedCount + ' Signals…') : 'Posting Signal…',

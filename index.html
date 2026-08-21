@@ -14,7 +14,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.08.21d">
+<meta name="app-version" content="2026.08.21o">
 <meta name="description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="A statement from the future — not another WhatsApp.">
@@ -369,8 +369,8 @@
         <span style="width:36px;"></span>
       </div>
       <div class="lobby-body">
-        <video id="sendRawVideo" autoplay playsinline muted style="position:fixed;left:-2px;top:-2px;width:2px;height:2px;opacity:0;pointer-events:none;"></video>
-        <canvas id="sendCanvas" style="position:fixed;left:-2px;top:-2px;width:2px;height:2px;opacity:0;pointer-events:none;"></canvas>
+        <video id="sendRawVideo" autoplay playsinline muted style="position:fixed;left:-9999px;top:0;width:320px;height:180px;opacity:0;pointer-events:none;"></video>
+        <canvas id="sendCanvas" style="position:fixed;left:-9999px;top:0;width:320px;height:180px;opacity:0;pointer-events:none;"></canvas>
         <div class="cam-stage" id="camStage">
           <video id="camRawVideo" autoplay playsinline muted style="display:none;"></video>
           <canvas id="camStageCanvas" style="position:absolute;inset:0;width:100%;height:100%;"></canvas>
@@ -467,7 +467,7 @@
           <div class="icon-btn" id="switchCam" role="button" aria-label="Switch camera"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 4v5h5M20 20v-5h-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M4.5 9A8 8 0 0119 8M19.5 15A8 8 0 015 16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
         </div>
       </div>
-      <div class="filter-chip-row" id="incallBgChipRow" style="display:none; position:absolute; left:0; right:0; bottom:130px; z-index:6; padding:0 20px; margin:0;"></div>
+      <div class="filter-chip-row" id="incallBgChipRow" style="display:flex; position:absolute; left:0; right:0; bottom:130px; z-index:6; padding:0 20px; margin:0;"></div>
       <div class="waveform" id="waveform"></div>
       <div class="local-pip" id="localPip">
         <video id="pipRawVideo" autoplay playsinline muted style="display:none;"></video>
@@ -988,42 +988,42 @@
   </div>
 
 <!-- NALUNO_MODULES -->
-<script src="js/core.js?v=20260821k"></script>
-<script src="js/media-contain.js?v=20260821k"></script>
-<script src="js/keep-alive.js?v=20260821k"></script>
-<script src="js/metrics.js?v=20260821k"></script>
-<script src="js/data.js?v=20260821k"></script>
-<script src="js/crypto.js?v=20260821k"></script>
-<script src="js/atmosphere.js?v=20260821k"></script>
-<script src="js/band-list.js?v=20260821k"></script>
-<script src="js/signal-core.js?v=20260821k"></script>
-<script src="js/broadcast-core.js?v=20260821k"></script>
-<script src="js/broadcast-upload.js?v=20260821k"></script>
-<script src="js/broadcast-composer.js?v=20260821k"></script>
-<script src="js/weather.js?v=20260821k"></script>
-<script src="js/beacon.js?v=20260821k"></script>
-<script src="js/compass.js?v=20260821k"></script>
-<script src="js/signal-ui.js?v=20260821k"></script>
-<script src="js/compat-lock.js?v=20260821k"></script>
-<script src="js/broadcast-space.js?v=20260821k"></script>
-<script src="js/media-vault.js?v=20260821k"></script>
-<script src="js/wireline.js?v=20260821k"></script>
-<script src="js/profile.js?v=20260821k"></script>
-<script src="js/auth.js?v=20260821k"></script>
-<script src="js/notifications.js?v=20260821k"></script>
-<script src="js/ice-core.js?v=20260821k"></script>
-<script src="js/camera.js?v=20260821k"></script>
-<script src="js/call-filters.js?v=20260821k"></script>
-<script src="js/calls.js?v=20260821k"></script>
-<script src="js/sfu-live.js?v=20260821k"></script>
-<script src="js/broadcast-live.js?v=20260821k"></script>
-<script src="js/band-room.js?v=20260821k"></script>
-<script src="js/pwa.js?v=20260821k"></script>
-<script src="js/spark-engine.js?v=20260821k"></script>
-<script src="js/spark-lg.js?v=20260821k"></script>
-<script src="js/spark-page.js?v=20260821k"></script>
-<script src="js/spark.js?v=20260821k"></script>
-<script src="js/find.js?v=20260821k"></script>
+<script src="js/core.js?v=20260821o"></script>
+<script src="js/media-contain.js?v=20260821o"></script>
+<script src="js/keep-alive.js?v=20260821o"></script>
+<script src="js/metrics.js?v=20260821o"></script>
+<script src="js/data.js?v=20260821o"></script>
+<script src="js/crypto.js?v=20260821o"></script>
+<script src="js/atmosphere.js?v=20260821o"></script>
+<script src="js/band-list.js?v=20260821o"></script>
+<script src="js/signal-core.js?v=20260821o"></script>
+<script src="js/broadcast-core.js?v=20260821o"></script>
+<script src="js/broadcast-upload.js?v=20260821o"></script>
+<script src="js/broadcast-composer.js?v=20260821o"></script>
+<script src="js/weather.js?v=20260821o"></script>
+<script src="js/beacon.js?v=20260821o"></script>
+<script src="js/compass.js?v=20260821o"></script>
+<script src="js/signal-ui.js?v=20260821o"></script>
+<script src="js/compat-lock.js?v=20260821o"></script>
+<script src="js/broadcast-space.js?v=20260821o"></script>
+<script src="js/media-vault.js?v=20260821o"></script>
+<script src="js/wireline.js?v=20260821o"></script>
+<script src="js/profile.js?v=20260821o"></script>
+<script src="js/auth.js?v=20260821o"></script>
+<script src="js/notifications.js?v=20260821o"></script>
+<script src="js/ice-core.js?v=20260821o"></script>
+<script src="js/camera.js?v=20260821o"></script>
+<script src="js/call-filters.js?v=20260821o"></script>
+<script src="js/calls.js?v=20260821o"></script>
+<script src="js/sfu-live.js?v=20260821o"></script>
+<script src="js/broadcast-live.js?v=20260821o"></script>
+<script src="js/band-room.js?v=20260821o"></script>
+<script src="js/pwa.js?v=20260821o"></script>
+<script src="js/spark-engine.js?v=20260821o"></script>
+<script src="js/spark-lg.js?v=20260821o"></script>
+<script src="js/spark-page.js?v=20260821o"></script>
+<script src="js/spark.js?v=20260821o"></script>
+<script src="js/find.js?v=20260821o"></script>
 <!-- /NALUNO_MODULES -->
 </body>
 </html>

@@ -17,6 +17,7 @@ function nalunoCallUiOpen(){
 
 function containMediaElement(el){
   if(!el) return;
+  if(el.hasAttribute('controls') || el.getAttribute('data-naluno-native-controls') != null) return;
   try{ el.disableRemotePlayback = true; }catch(_){}
   try{ el.disablePictureInPicture = true; }catch(_){}
   try{ el.setAttribute('disablepictureinpicture', ''); }catch(_){}

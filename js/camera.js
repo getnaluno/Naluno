@@ -568,6 +568,7 @@ function renderBackgroundChips(){
 function chooseFilter(id, manual){
   if(!nalunoFilters[id]) return;
   selectedFilterId = id;
+  try{ if(typeof applyCallFilterNow === 'function') applyCallFilterNow(); }catch(_){}
   try{ if(typeof refreshOutboundFilterIfInCall === 'function') refreshOutboundFilterIfInCall(); }catch(_){}
   selectedBackgroundId = id === 'original' ? 'none' : id; // keep legacy field roughly in sync
   if(manual){ userPickedFilter = true; userPickedBackground = true; }
@@ -876,7 +877,8 @@ let sendAnimStart = performance.now();
 function drawSendCanvas(){
   const canvas = $('sendCanvas'), video = $('sendRawVideo');
   if(!canvas || !video) return;
-  const vw = video.videoWidth || 720, vh = video.videoHeight || 960;
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if(!vw || !vh) return;
   const maxDim = 960;
   const scale = Math.min(1, maxDim / Math.max(vw, vh));
   const tw = Math.max(2, Math.round(vw*scale)), th = Math.max(2, Math.round(vh*scale));
@@ -1155,7 +1157,6 @@ async function flipCamera(){
 
 async function enableCameraForCall(){
   try{ cameraAcquire('call'); }catch(_){}
-  /* Prefer high-res when the device can deliver it; fall back gracefully. */
   function hideCamFallback(){
     try{
       if($('camFallback')) $('camFallback').style.display = 'none';
@@ -1183,10 +1184,11 @@ async function enableCameraForCall(){
     stream = null;
   }
   const audioConstraints = { echoCancellation: { ideal: true }, noiseSuppression: { ideal: true }, autoGainControl: { ideal: true } };
-  // Higher first — user asked to keep the higher resolution
+  // FAST first: 720p (or 640) so the offer leaves in under 2s.
+  // 1080/4K is applied in the background after we are connected.
   const attempts = [
-    { video: { facingMode: { ideal: cameraFacingMode }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 60 } }, audio: audioConstraints },
-    { video: { facingMode: { ideal: cameraFacingMode }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }, audio: audioConstraints },
+    { video: { facingMode: { ideal: cameraFacingMode }, width: { ideal: 720 }, height: { ideal: 1280 }, frameRate: { ideal: 24, max: 30 } }, audio: audioConstraints },
+    { video: { facingMode: { ideal: cameraFacingMode }, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 } }, audio: audioConstraints },
     { video: { facingMode: { ideal: cameraFacingMode } }, audio: audioConstraints },
     { video: true, audio: true },
   ];
@@ -1215,8 +1217,9 @@ async function enableCameraForCall(){
   try{
     const vt = stream.getVideoTracks()[0];
     if(vt && vt.applyConstraints){
-      // Prefer HD when the device can deliver it (non-blocking)
-      vt.applyConstraints({ width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } }).catch(()=>{});
+      setTimeout(function(){
+        vt.applyConstraints({ width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }).catch(function(){});
+      }, 2500);
     }
   }catch(_){}
   try{ updateCameraQualityBadge && updateCameraQualityBadge(); }catch(_){}
@@ -1326,7 +1329,7 @@ function runGreenroom(){
     const name = (nalunoFilters[id] && nalunoFilters[id].name) || id;
     toast('Filter · ' + name);
     $('sceneReadyNote').style.display = 'inline-flex';
-  }, 500);
+  }, 80);
 }
 
 /* Suggest a filter from scene brightness — only when the user hasn't chosen one. */

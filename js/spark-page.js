@@ -195,7 +195,7 @@ function renderSparkMessages(rows){
     btn.onclick = function(){
       if(btn.getAttribute('data-teach') != null){
         const src = decodeURIComponent(btn.getAttribute('data-teach') || '');
-        const better = prompt('Correct Luganda for:\n' + src, shown);
+        const better = prompt('Correct Luganda for:\n' + src, decodeURIComponent(btn.getAttribute('data-say') || '') || src);
         if(better && typeof sparkLgTeach === 'function') sparkLgTeach(src, better);
         return;
       }

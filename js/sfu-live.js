@@ -88,7 +88,11 @@ async function sfuJoinLive(opts){
   return null;
 }
 
-/** Call from broadcast-live before enforcing mesh cap. */
+/** Call from broadcast-live before enforcing mesh cap.
+ *  Never raise the cap unless an SFU handle is actually live. */
 function sfuOrMeshViewerCap(){
-  return sfuLiveMaxViewers();
+  try{
+    if(window.__nalunoSfuLiveHandle) return sfuLiveMaxViewers();
+  }catch(_){}
+  return 12;
 }

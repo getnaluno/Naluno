@@ -252,10 +252,7 @@ async function nalunoHandleSignUp(){
       }
     }
     const { recovery } = emailAuthInputs();
-    let createEmail = email;
-    if(!usingEmail && recovery && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recovery)){
-      createEmail = recovery;
-    }
+    const createEmail = email;
     const cred = await fbAuth.createUserWithEmailAndPassword(createEmail, password);
     const user = cred.user;
     if(!usingEmail && handle && typeof claimHandle === 'function'){
@@ -423,22 +420,19 @@ if(fbAuth){
       try{ if(typeof showInstallPromptSoon === 'function') setTimeout(showInstallPromptSoon, 1600); }catch(_){}
       try{ if(typeof listenFindNalunoDevices === 'function') listenFindNalunoDevices(); }catch(_){}
     } else {
-      if(lastUid && !window.__nalunoSigningOut){
-        const cached = nalunoReadCachedProfile(lastUid);
-        if(cached){
-          currentProfile = { photo:null, ...DEFAULT_PROFILE, ...cached };
-          try{ applyProfileToUI(currentProfile); }catch(_){}
-        }
-        document.body.classList.remove('naluno-gated');
-        $('authGate').classList.remove('active');
-        return;
-      }
       try{ localStorage.removeItem('nalunoLastUid'); }catch(_){}
       authStatus('');
       $('authGateLoading').style.display = 'none';
       $('authGateForm').style.display = 'flex';
       document.body.classList.add('naluno-gated');
       $('authGate').classList.add('active');
+      if(lastUid && !window.__nalunoSigningOut){
+        const cached = nalunoReadCachedProfile(lastUid);
+        if(cached){
+          currentProfile = { photo:null, ...DEFAULT_PROFILE, ...cached };
+          try{ applyProfileToUI(currentProfile); }catch(_){}
+        }
+      }
       if(threadsListUnsubscribe){ threadsListUnsubscribe(); threadsListUnsubscribe = null; }
       if(activeThreadUnsubscribe){ activeThreadUnsubscribe(); activeThreadUnsubscribe = null; }
       if(bandPresenceUnsub){ bandPresenceUnsub(); bandPresenceUnsub = null; }

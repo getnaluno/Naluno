@@ -56,6 +56,9 @@ function watchSparkGuest(code){
     if(!d.guestUid || d.guestUid === (currentUser && currentUser.uid)) return;
     if(sparkHostUnsub){ try{ sparkHostUnsub(); }catch(_){} sparkHostUnsub = null; }
     closeSparkSheet();
+    if(typeof connectWithUser === 'function' && d.guestUid){
+      connectWithUser(d.guestUid, { name: d.guestName || 'Them', color: d.guestColor }, d.guestHandle).catch(function(){});
+    }
     if(typeof openSparkPage === 'function'){
       openSparkPage(d.guestUid, d.guestName || 'Them');
     }

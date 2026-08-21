@@ -76,8 +76,7 @@ async function registerWebPushToken(){
   if(typeof VAPID_KEY === 'undefined' || !VAPID_KEY || VAPID_KEY === 'YOUR_VAPID_KEY') return null;
   try{
     if(Notification.permission !== 'granted'){
-      const p = await Notification.requestPermission();
-      if(p !== 'granted') return null;
+      return null;
     }
     const registration = await navigator.serviceWorker.ready;
     const messaging = firebase.messaging();

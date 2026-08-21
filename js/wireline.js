@@ -230,19 +230,9 @@ function bindThreadChrome(){
   const clear = $('threadClearBtn');
   if(clear){
     clear.onclick = fireThreadClear;
-    clear.ontouchend = function(e){
-      if(!e || !e.cancelable) { fireThreadClear(e); return; }
-      e.preventDefault();
-      fireThreadClear(e);
-    };
   }
 }
 bindThreadChrome();
-document.addEventListener('click', function(e){
-  const btn = e.target && e.target.closest && e.target.closest('#threadClearBtn');
-  if(!btn) return;
-  fireThreadClear(e);
-}, true);
 
 function openThread(contactId){
   const c = contacts.find(x=>x.id===contactId); if(!c) return;
