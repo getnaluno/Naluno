@@ -9,6 +9,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.content.pm.ServiceInfo;
+import android.location.Criteria;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
@@ -35,6 +37,7 @@ public class BeaconFindService extends Service implements LocationListener {
 
   public static final String PREFS = "naluno_find";
   public static final String CHANNEL_ID = "naluno_find";
+  public static final String ACTION_PING_NOW = "com.naluno.app.PING_NOW";
   public static final int NOTIFICATION_ID = 44021;
   public static volatile boolean running = false;
 
@@ -63,8 +66,10 @@ public class BeaconFindService extends Service implements LocationListener {
   @Override
   public int onStartCommand(Intent intent, int flags, int startId) {
     running = true;
-    startForeground(NOTIFICATION_ID, buildNotification());
+    startAsLocationForeground();
     startUpdates();
+    boolean now = intent != null && ACTION_PING_NOW.equals(intent.getAction());
+    if (now) requestOneShot();
     handler.removeCallbacks(pingRunnable);
     handler.post(pingRunnable);
     return START_STICKY;
@@ -107,20 +112,102 @@ public class BeaconFindService extends Service implements LocationListener {
     return ctx.getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean("on", false);
   }
 
+  private void startAsLocationForeground() {
+    Notification n = buildNotification();
+    try {
+      if (Build.VERSION.SDK_INT >= 29) {
+        startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
+      } else {
+        startForeground(NOTIFICATION_ID, n);
+      }
+    } catch (Exception e) {
+      try { startForeground(NOTIFICATION_ID, n); } catch (Exception ignored) {}
+    }
+  }
+
   private void startUpdates() {
     if (!hasLocationPermission()) return;
     try {
       locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
       if (locationManager == null) return;
-      lastFix = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
-      if (lastFix == null) lastFix = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+      lastFix = bestLastKnown();
+      if (lastFix != null) postPingAsync(lastFix);
+      String[] providers = new String[] {
+        fusedName(),
+        LocationManager.NETWORK_PROVIDER,
+        LocationManager.GPS_PROVIDER,
+        LocationManager.PASSIVE_PROVIDER
+      };
+      for (int i = 0; i < providers.length; i++) {
+        String p = providers[i];
+        if (p == null) continue;
+        try {
+          if (locationManager.isProviderEnabled(p)) {
+            locationManager.requestLocationUpdates(p, 30000, 12, this, Looper.getMainLooper());
+          }
+        } catch (Exception ignored) {}
+      }
       try {
-        locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 45000, 25, this);
-      } catch (Exception ignored) {}
-      try {
-        locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 60000, 20, this);
+        Criteria c = new Criteria();
+        c.setAccuracy(Criteria.ACCURACY_COARSE);
+        c.setPowerRequirement(Criteria.POWER_LOW);
+        locationManager.requestLocationUpdates(30000, 12, c, this, Looper.getMainLooper());
       } catch (Exception ignored) {}
     } catch (SecurityException ignored) {}
+  }
+
+  private String fusedName() {
+    if (Build.VERSION.SDK_INT >= 31) return LocationManager.FUSED_PROVIDER;
+    return "fused";
+  }
+
+  private Location bestLastKnown() {
+    Location best = null;
+    String[] providers = new String[] { fusedName(), LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER, LocationManager.PASSIVE_PROVIDER };
+    for (int i = 0; i < providers.length; i++) {
+      try {
+        Location l = locationManager.getLastKnownLocation(providers[i]);
+        if (l == null) continue;
+        if (best == null || l.getTime() > best.getTime()) best = l;
+      } catch (Exception ignored) {}
+    }
+    return best;
+  }
+
+  private void requestOneShot() {
+    if (!hasLocationPermission() || locationManager == null) {
+      try {
+        locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
+      } catch (Exception ignored) {}
+    }
+    if (locationManager == null || !hasLocationPermission()) return;
+    Location known = bestLastKnown();
+    if (known != null) {
+      lastFix = known;
+      postPingAsync(known);
+    }
+    if (Build.VERSION.SDK_INT >= 30) {
+      String[] providers = new String[] { fusedName(), LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER };
+      for (int i = 0; i < providers.length; i++) {
+        final String p = providers[i];
+        try {
+          locationManager.getCurrentLocation(p, null, getMainExecutor(), new java.util.function.Consumer<Location>() {
+            @Override public void accept(Location loc) {
+              if (loc == null) return;
+              lastFix = loc;
+              postPingAsync(loc);
+            }
+          });
+        } catch (Exception ignored) {}
+      }
+    }
+  }
+
+  private void postPingAsync(final Location loc) {
+    if (loc == null) return;
+    new Thread(new Runnable() {
+      @Override public void run() { postPing(loc); }
+    }, "naluno-find-ping").start();
   }
 
   private void stopUpdates() {
@@ -140,6 +227,7 @@ public class BeaconFindService extends Service implements LocationListener {
   public void onLocationChanged(Location location) {
     if (location == null) return;
     lastFix = location;
+    postPingAsync(location);
   }
 
   @Override public void onStatusChanged(String provider, int status, Bundle extras) {}
