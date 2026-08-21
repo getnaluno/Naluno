@@ -67,43 +67,11 @@ function sparkRecLang(id){
 }
 
 async function sparkTranslate(text, from, to){
+  if(typeof sparkEngineTranslate === 'function'){
+    return sparkEngineTranslate(text, from, to);
+  }
   const src = String(text || '').trim();
-  if(!src) return '';
-  if(!from || !to || from === to) return src;
-  if(typeof sparkLgApply === 'function' && (from === 'lg' || to === 'lg')){
-    const known = sparkLgApply(src, from, to);
-    if(known) return known;
-  }
-  if(to === 'lg' || from === 'lg'){
-    // Do not send Luganda through generic engines — they invent broken lg.
-    return src;
-  }
-  try{
-    if(typeof Translator !== 'undefined' && Translator.create){
-      const tr = await Translator.create({ sourceLanguage: from, targetLanguage: to });
-      const out = await tr.translate(src);
-      if(out) return out;
-    }
-  }catch(_){}
-  try{
-    const res = await fetch(SPARK_TRANSLATE_WORKER, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: src.slice(0, 800), from: from, to: to }),
-    });
-    if(res.ok){
-      const data = await res.json();
-      if(data && data.text) return data.text;
-    }
-  }catch(_){}
-  try{
-    const url = 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(src.slice(0, 450))
-      + '&langpair=' + encodeURIComponent(from + '|' + to);
-    const res = await fetch(url);
-    const data = await res.json();
-    const out = data && data.responseData && data.responseData.translatedText;
-    if(out && String(out).indexOf('MYMEMORY') < 0) return out;
-  }catch(_){}
+  if(!src || !from || !to || from === to) return src;
   return src;
 }
 

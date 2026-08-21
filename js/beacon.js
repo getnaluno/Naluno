@@ -409,7 +409,7 @@ function renderFindNalunoPanel(){
   const list = $('findNalunoList');
   const map = $('findNalunoMap');
   if(!list) return;
-  const rows = findNalunoDevices.slice().sort((a,b)=> (b.ts||0) - (a.ts||0));
+  const rows = findNalunoDevices.slice().sort((a,b)=> (b.ts||0) - (a.ts||0)).slice(0, 2);
   if(!rows.length){
     list.innerHTML = '<div class="lobby-sub" style="padding:8px 0;">No pings yet. Turn it on below on the phone you want to find later.</div>';
     if(map) map.innerHTML = '';
@@ -441,8 +441,12 @@ function showFindNalunoDevice(id){
   }
   const links = mapsLinks(d.lat, d.lng);
   if(map){
-    map.innerHTML = '<iframe title="Last known place" src="' + links.embed +
-      '" style="width:100%;height:220px;border:0;border-radius:14px;background:var(--surface);" loading="lazy"></iframe>';
+    const img = 'https://staticmap.openstreetmap.de/staticmap.php?center=' + d.lat + ',' + d.lng
+      + '&zoom=16&size=640x280&maptype=mapnik&markers=' + d.lat + ',' + d.lng + ',red-pushpin';
+    map.innerHTML = '<img alt="Last known place" src="' + img +
+      '" style="width:100%;height:220px;object-fit:cover;border-radius:14px;background:var(--surface);display:block;" onerror="this.style.display=\'none\';this.nextSibling.style.display=\'flex\'">' +
+      '<div style="display:none;height:220px;border-radius:14px;background:var(--surface);align-items:center;justify-content:center;flex-direction:column;gap:6px;color:var(--text-dim);font-family:var(--font-mono);font-size:12px;">' +
+      Number(d.lat).toFixed(5) + ', ' + Number(d.lng).toFixed(5) + '<br>Use Open map below</div>';
   }
   const coords = Number(d.lat).toFixed(5) + ', ' + Number(d.lng).toFixed(5);
   function paintMeta(place){

@@ -327,7 +327,7 @@ document.querySelectorAll('.type-chip').forEach(chip=>{
     } else {
       $('mediaComposer').style.display = 'block';
       $('textComposer').style.display = 'none';
-      $('mediaFileInput').accept = composerType==='video' ? 'video/*' : 'image/*';
+      $('mediaFileInput').accept = composerType==='video' ? '.mp4,.mov,.webm,.m4v,video/mp4' : 'image/*';
       $('mediaFileInput').value = '';
       $('uploadDropLabel').textContent = composerType==='video' ? 'Choose videos from your library' : 'Choose photos from your library';
       $('uploadDrop').style.display = 'flex';
@@ -342,8 +342,16 @@ document.querySelectorAll('.type-chip').forEach(chip=>{
 
 $('uploadDrop').onclick = ()=> $('mediaFileInput').click();
 $('mediaFileInput').onchange = (e)=>{
-  handleFiles(e.target.files);
-  e.target.value = ''; // allow re-selecting the same file later
+  const files = e.target.files;
+  e.target.value = '';
+  if(!files || !files.length) return;
+  if($('bgProcessBanner')){
+    $('bgProcessBanner').style.display = 'flex';
+    if(typeof setBgProgress === 'function') setBgProgress(0.05, 'Opening in Naluno…');
+  }
+  Promise.resolve(handleFiles(files)).finally(function(){
+    if($('bgProcessBanner') && !postInProgress) $('bgProcessBanner').style.display = 'none';
+  });
 };
 
 function probeVideoDuration(file){
@@ -395,9 +403,9 @@ async function handleFiles(fileList){
         needsTrim.push(file);
         continue;
       }
-      // Keep original File for pass-through upload (no re-encode inflation)
-      const dataUrl = await readFileAsDataUrl(file);
-      composerItems.push({ id:Date.now()+Math.random(), kind:'video', dataUrl, sourceFile: file, filterKey:'normal', filterCss:'', crop:{scale:1,xPct:0,yPct:0}, caption:'', duration: safeDur });
+      // Never turn a video into a data URL — that is what truncated some clips.
+      const previewUrl = URL.createObjectURL(file);
+      composerItems.push({ id:Date.now()+Math.random(), kind:'video', dataUrl: previewUrl, sourceFile: file, filterKey:'normal', filterCss:'', crop:{scale:1,xPct:0,yPct:0}, caption:'', duration: safeDur });
     } else {
       const dataUrl = await readFileAsDataUrl(file);
       composerItems.push({ id:Date.now()+Math.random(), kind:'photo', dataUrl, filterKey:'normal', filterCss:'', crop:{scale:1,xPct:0,yPct:0}, caption:'' });
