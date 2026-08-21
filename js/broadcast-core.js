@@ -377,6 +377,29 @@ function planBroadcastChapters(fileSize, durationSec){
   return { mode: 'multipart', parts, midrolls: [], showChapterUI: parts.length > 1 };
 }
 
+function chapterIsActive(ch){
+  if(!ch) return false;
+  if(ch.silent) return false;
+  if(ch.status === 'removed' && !ch.replacementUrl) return false;
+  return true;
+}
+
+function nextActiveChapterIndex(list, fromIndex){
+  const rows = list || [];
+  for(let i = (fromIndex || 0) + 1; i < rows.length; i++){
+    if(chapterIsActive(rows[i])) return i;
+  }
+  return -1;
+}
+
+function firstActiveChapterIndex(list){
+  const rows = list || [];
+  for(let i = 0; i < rows.length; i++){
+    if(chapterIsActive(rows[i])) return i;
+  }
+  return 0;
+}
+
 /** Default breathers between real chapters — ad architecture lives here. */
 function buildBreathersForChapters(chapterCount){
   const list = [];

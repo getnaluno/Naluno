@@ -107,6 +107,7 @@ function renderBspaceMedia(seg){
         <div id="bspaceBreather" style="display:none;position:absolute;inset:0;background:rgba(13,15,23,.92);align-items:center;justify-content:center;flex-direction:column;gap:10px;z-index:3;">
           <div style="font-family:var(--font-futuristic);font-size:15px;color:var(--mint);" id="bspaceBreatherLabel">Chapter break</div>
           <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);" id="bspaceBreatherAd">Next chapter in a moment</div>
+          <button type="button" id="bspaceReplaceChBtn" style="display:none;margin-top:8px;padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:rgba(124,255,178,.12);color:var(--mint);font-family:var(--font-mono);font-size:12px;">Replace chapter</button>
         </div>
       </div>
       `;
@@ -1160,12 +1161,17 @@ function wireBroadcastChapterPlayer(chapters, breathers, opts){
   if(bar && opts.showChips && bspaceChapterList.length > 1){
     const canCut = !!(activeBroadcastMeta && activeBroadcastMeta.isMine);
     const shared = bspaceChapterList.length > 1 && bspaceChapterList.every(c => c.mediaUrl === bspaceChapterList[0].mediaUrl);
-    bar.innerHTML = bspaceChapterList.map((ch,i)=>
-      `<span style="display:inline-flex;align-items:center;gap:4px;">
-        <button type="button" data-ch="${i}" style="font-family:var(--font-mono);font-size:10px;padding:4px 8px;border-radius:999px;border:1px solid var(--line);background:${i===0?'rgba(124,255,178,.15)':'transparent'};color:${i===0?'var(--mint)':'var(--text-dim)'};cursor:pointer;">${bspaceEscape(ch.title || ('Ch '+(i+1)))}</button>
-        ${canCut && shared ? '<button type="button" data-delch="'+i+'" aria-label="Remove chapter" style="border:none;background:transparent;color:var(--text-dim);font-size:14px;cursor:pointer;line-height:1;">×</button>' : ''}
-      </span>`
-    ).join('');
+    bar.innerHTML = bspaceChapterList.map(function(ch,i){
+      const gone = ch.status === 'removed' && !ch.replacementUrl;
+      const replaced = !!(ch.replacementUrl || ch.status === 'replaced');
+      const label = gone ? (canCut ? 'Ad · Replace' : 'Ad')
+        : ((ch.title || ('Ch '+(i+1))) + (replaced ? ' · new' : ''));
+      return `<span style="display:inline-flex;align-items:center;gap:4px;">
+        <button type="button" data-ch="${i}" style="font-family:var(--font-mono);font-size:10px;padding:4px 8px;border-radius:999px;border:1px solid ${gone?'rgba(255,84,112,.5)':'var(--line)'};background:${gone?'rgba(255,84,112,.16)':(i===0?'rgba(124,255,178,.15)':'transparent')};color:${gone?'#ff8a9a':(i===0?'var(--mint)':'var(--text-dim)')};cursor:pointer;">${bspaceEscape(label)}</button>
+        ${canCut && gone ? '<button type="button" data-repch="'+i+'" style="font-family:var(--font-mono);font-size:10px;padding:3px 7px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--mint);cursor:pointer;">Replace</button>' : ''}
+        ${canCut && !gone ? '<button type="button" data-delch="'+i+'" aria-label="Remove chapter" style="border:none;background:transparent;color:var(--text-dim);font-size:14px;cursor:pointer;line-height:1;">×</button>' : ''}
+      </span>`;
+    }).join('');
     bar.querySelectorAll('[data-ch]').forEach(btn=>{
       btn.onclick = ()=> playBroadcastChapter(parseInt(btn.getAttribute('data-ch'),10), true);
     });
@@ -1173,6 +1179,12 @@ function wireBroadcastChapterPlayer(chapters, breathers, opts){
       btn.onclick = function(e){
         e.preventDefault(); e.stopPropagation();
         deleteBroadcastChapter(parseInt(btn.getAttribute('data-delch'),10));
+      };
+    });
+    bar.querySelectorAll('[data-repch]').forEach(btn=>{
+      btn.onclick = function(e){
+        e.preventDefault(); e.stopPropagation();
+        replaceBroadcastChapter(parseInt(btn.getAttribute('data-repch'),10));
       };
     });
   }
@@ -1204,7 +1216,37 @@ function wireBroadcastChapterPlayer(chapters, breathers, opts){
 
 function playBroadcastChapter(index, userInitiated){
   const ch = bspaceChapterList[index];
-  if(!ch || !ch.mediaUrl) return;
+  if(!ch) return;
+  if(typeof chapterIsActive === 'function' && !chapterIsActive(ch)){
+    const nxt = (typeof nextActiveChapterIndex === 'function') ? nextActiveChapterIndex(bspaceChapterList, index - 1) : -1;
+    if(nxt >= 0){
+      showChapterAdBucket(index, function(){ playBroadcastChapter(nxt, false); });
+    } else {
+      showChapterAdBucket(index, function(){});
+    }
+    return;
+  }
+  if(ch.replacementUrl){
+    bspaceChapterIndex = index;
+    const v = $('bspaceVideoEl');
+    if(!v) return;
+    const url = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(ch.replacementUrl) : ch.replacementUrl;
+    try{ v.pause(); }catch(_){}
+    v.src = url;
+    v.load();
+    const kick = function(){
+      const p = v.play();
+      if(p && p.catch) p.catch(function(){ try{ v.muted = true; v.play().catch(function(){}); }catch(_){} });
+    };
+    if(v.readyState >= 2) kick();
+    else v.addEventListener('loadeddata', kick, { once: true });
+    v.onended = function(){
+      const nxt = (typeof nextActiveChapterIndex === 'function') ? nextActiveChapterIndex(bspaceChapterList, index) : index + 1;
+      if(nxt >= 0) playBroadcastChapter(nxt, false);
+    };
+    return;
+  }
+  if(!ch.mediaUrl) return;
   bspaceChapterIndex = index;
   const v = $('bspaceVideoEl');
   if(!v) return;
@@ -1244,6 +1286,29 @@ function playBroadcastChapter(index, userInitiated){
       for(let i = 0; i < bspaceChapterList.length; i++){
         const c = bspaceChapterList[i];
         if(typeof c.start === 'number' && t >= c.start - 0.05) idx = i;
+      }
+      const here = bspaceChapterList[idx];
+      if(here && here.status === 'removed' && !here.replacementUrl && typeof here.end === 'number'){
+        if(t >= here.start && t < here.end - 0.05){
+          if(v._nalunoSkipHole) return;
+          v._nalunoSkipHole = true;
+          const nxt = (typeof nextActiveChapterIndex === 'function') ? nextActiveChapterIndex(bspaceChapterList, idx) : -1;
+          showChapterAdBucket(idx, function(){
+            v._nalunoSkipHole = false;
+            if(nxt >= 0 && typeof bspaceChapterList[nxt].start === 'number'){
+              try{ v.currentTime = bspaceChapterList[nxt].start; }catch(_){}
+              v.play().catch(function(){});
+            } else {
+              try{ v.pause(); }catch(_){}
+            }
+          });
+          return;
+        }
+      }
+      if(here && here.replacementUrl && t >= (here.start||0) && t < (here.end || t + 1) && !v._nalunoReplace){
+        v._nalunoReplace = true;
+        playBroadcastChapter(idx, false);
+        return;
       }
       if(idx !== bspaceChapterIndex){
         bspaceChapterIndex = idx;
@@ -1339,28 +1404,90 @@ function adaptBspaceHeroToVideo(){
 }
 
 
+function showChapterAdBucket(index, onDone){
+  const mine = !!(activeBroadcastMeta && activeBroadcastMeta.isMine);
+  const breather = {
+    durationMs: mine ? 2200 : 1400,
+    label: mine ? 'Ad bucket' : 'Next',
+    adSlot: { enabled: true, status: 'reserved' },
+  };
+  const el = $('bspaceBreather');
+  const btn = $('bspaceReplaceChBtn');
+  if(btn){
+    btn.style.display = mine ? 'inline-flex' : 'none';
+    btn.onclick = function(){ replaceBroadcastChapter(index); };
+  }
+  showBreatherAdSlot(breather, function(){
+    if(btn) btn.style.display = 'none';
+    if(onDone) onDone();
+  });
+}
+
+async function persistBroadcastChapters(){
+  if(!fbDb || !activeBroadcastId) return;
+  await fbDb.collection('broadcasts').doc(activeBroadcastId).set({
+    chapters: bspaceChapterList,
+    updatedAt: Date.now(),
+  }, { merge: true });
+  if(activeBroadcastMeta) activeBroadcastMeta.chapters = bspaceChapterList;
+}
+
 async function deleteBroadcastChapter(index){
   if(!activeBroadcastMeta || !activeBroadcastMeta.isMine) return;
   if(!bspaceChapterList || index < 0 || index >= bspaceChapterList.length) return;
-  const shared = bspaceChapterList.length > 1 && bspaceChapterList.every(c => c.mediaUrl === bspaceChapterList[0].mediaUrl);
-  if(!shared){
-    toast('This chapter is its own file — removing it would break playback');
+  const liveCount = bspaceChapterList.filter(function(ch){ return typeof chapterIsActive !== 'function' || chapterIsActive(ch); }).length;
+  if(liveCount <= 1 && chapterIsActive(bspaceChapterList[index])){
+    toast('Keep at least one chapter');
     return;
   }
-  if(bspaceChapterList.length <= 1){
-    toast('Need at least one chapter');
-    return;
-  }
-  bspaceChapterList.splice(index, 1);
-  bspaceChapterList.forEach(function(ch, i){ ch.index = i; });
+  const ch = bspaceChapterList[index];
+  ch.status = 'removed';
+  ch.removedAt = Date.now();
+  ch.replacementUrl = null;
+  ch.adSlot = { enabled: true, status: 'reserved', kind: 'bucket' };
   try{
-    if(fbDb && activeBroadcastId){
-      await fbDb.collection('broadcasts').doc(activeBroadcastId).set({ chapters: bspaceChapterList }, { merge:true });
-    }
+    await persistBroadcastChapters();
   }catch(e){
     toast('Could not update chapters');
     return;
   }
-  toast('Chapter removed');
-  playBroadcastChapter(Math.min(index, bspaceChapterList.length-1), false);
+  toast('Chapter is now an ad bucket');
+  const nxt = (typeof nextActiveChapterIndex === 'function') ? nextActiveChapterIndex(bspaceChapterList, index - 1) : -1;
+  if(nxt >= 0) playBroadcastChapter(nxt, false);
+  if(typeof wireBroadcastChapterPlayer === 'function'){
+    wireBroadcastChapterPlayer(bspaceChapterList, bspaceBreatherList, { showChips: true });
+  }
+}
+
+function replaceBroadcastChapter(index){
+  if(!activeBroadcastMeta || !activeBroadcastMeta.isMine) return;
+  if(!bspaceChapterList || !bspaceChapterList[index]) return;
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'video/*';
+  inp.style.display = 'none';
+  document.body.appendChild(inp);
+  inp.onchange = async function(){
+    const file = inp.files && inp.files[0];
+    try{ inp.remove(); }catch(_){}
+    if(!file) return;
+    toast('Uploading replacement…');
+    try{
+      let url = '';
+      if(typeof uploadBroadcastFile === 'function') url = await uploadBroadcastFile(file);
+      else if(typeof uploadVideoToR2 === 'function') url = await uploadVideoToR2(file);
+      if(!url) throw new Error('Upload failed');
+      const ch = bspaceChapterList[index];
+      ch.status = 'replaced';
+      ch.replacementUrl = url;
+      ch.replacedAt = Date.now();
+      await persistBroadcastChapters();
+      toast('Chapter replaced');
+      playBroadcastChapter(index, true);
+      wireBroadcastChapterPlayer(bspaceChapterList, bspaceBreatherList, { showChips: true });
+    }catch(e){
+      toast((e && e.message) || 'Replace failed');
+    }
+  };
+  inp.click();
 }

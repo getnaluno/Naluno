@@ -293,8 +293,16 @@ function playSegment(idx, direction=1){
 
   if(seg.type==='video'){
     const v = $('bviewerActiveVideo');
+    const trimStart = (isFinite(seg.trimStart) && seg.trimStart > 0) ? seg.trimStart : 0;
+    const trimEnd = (isFinite(seg.trimEnd) && seg.trimEnd > trimStart) ? seg.trimEnd : 0;
     v.onended = ()=> goToSegment(idx+1);
     currentVideoEl = v;
+    v.ontimeupdate = function(){
+      if(trimEnd && (v.currentTime || 0) >= trimEnd - 0.05){
+        v.ontimeupdate = null;
+        goToSegment(idx+1);
+      }
+    };
     const muteBtn = $('bviewerMuteToggle');
     const renderMuteIcon = muted=>{
       muteBtn.innerHTML = muted
@@ -324,7 +332,10 @@ function playSegment(idx, direction=1){
       });
     };
     const applyRealLength = function(){
-      const d = v.duration;
+      if(trimStart && Math.abs((v.currentTime||0) - trimStart) > 0.2){
+        try{ v.currentTime = trimStart; }catch(_){}
+      }
+      const d = trimEnd ? (trimEnd - trimStart) : v.duration;
       if(isFinite(d) && d > 0){
         durationMs = Math.round(d * 1000);
         updateBars(idx, durationMs);

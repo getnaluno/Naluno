@@ -363,7 +363,7 @@ async function handleFiles(fileList){
     if(composerType==='video'){
       const duration = await probeVideoDuration(file);
       const safeDur = (duration && isFinite(duration) && duration > 0) ? duration : null;
-      if(file.size > SOFT_FORCE_TRIM_BYTES){
+      if((safeDur && safeDur > MAX_VIDEO_SECONDS + 1) || file.size > SOFT_FORCE_TRIM_BYTES){
         needsTrim.push(file);
         continue;
       }
@@ -676,77 +676,34 @@ $('trimSave').onclick = async ()=>{
   const chosenFilterCss = filterPresets[trimSelectedFilter].css;
   $('trimOverlay').classList.remove('active');
   advanceTrimQueue();
-  $('bgProcessBanner').style.display = 'flex';
-  setBgProgress(0, 'Preparing clip\u2026 0%');
-  postInProgress = true;
-  savePendingVideoJob({ file, start, end: clampedEnd, action:'trim' });
-  try{
-    const blob = await extractVideoClip(file, start, clampedEnd, frac=>{
-      setBgProgress(frac, `Preparing clip\u2026 ${Math.round(frac*100)}%`);
-    });
-    clearPendingVideoJob();
-    // Pass the Blob straight through — no dataURL conversion. Upload uses the Blob
-    // directly, which is the main reason prepare+upload felt so slow before.
-    const now = Date.now();
-    const groupId = 'post-' + now + '-' + Math.random().toString(36).slice(2);
-    await postSegmentsNow([{
-      type:'video', videoBlob: blob, filterCss: chosenFilterCss, crop:{scale:1,xPct:0,yPct:0},
-      caption:'', duration: clampedEnd-start, createdAt: now, expiresAt: now+SIGNAL_TTL_MS,
-      transitionIn:'fade', groupId, order:0,
-    }]);
-    toast('Posted to your signal');
-  }catch(e){
-    toast('Couldn\u2019t trim that video \u2014 try a shorter selection');
-    postInProgress = false;
-    $('bgProcessBanner').style.display = 'none';
-    clearPendingVideoJob();
-  }
+  // Do not re-encode. MediaRecorder was stopping around 2:02 and shortening the clip.
+  const now = Date.now();
+  const groupId = 'post-' + now + '-' + Math.random().toString(36).slice(2);
+  await postSegmentsNow([{
+    type:'video', sourceFile: file, filterCss: chosenFilterCss, crop:{scale:1,xPct:0,yPct:0},
+    caption:'', duration: clampedEnd-start, trimStart: start, trimEnd: clampedEnd,
+    createdAt: now, expiresAt: now+SIGNAL_TTL_MS,
+    transitionIn:'fade', groupId, order:0,
+  }]);
+  toast('Posted to your signal');
 };
 
 $('trimAutoSplitBtn').onclick = async ()=>{
   const video = $('trimPreviewVideo');
-  const duration = video.duration || 0;
+  const duration = (video && isFinite(video.duration) && video.duration > 0) ? video.duration : 0;
   const file = trimCurrentFile;
   const chosenFilterCss = filterPresets[trimSelectedFilter].css;
-  // Output size is now controlled directly by extractVideoClip's own fixed bitrate,
-  // not the source file's original compression — so this only needs to reason about
-  // duration, not file size, to guarantee every part stays under the real cap.
-  const numParts = Math.max(1, Math.min(10, Math.ceil(duration/MAX_VIDEO_SECONDS)));
-  const partDuration = duration / numParts;
   $('trimOverlay').classList.remove('active');
   advanceTrimQueue();
-  $('bgProcessBanner').style.display = 'flex';
-  setBgProgress(0, `Preparing part 1 of ${numParts}\u2026 0%`);
-  postInProgress = true;
-  savePendingVideoJob({ file, action:'split' });
   const now = Date.now();
   const groupId = 'post-' + now + '-' + Math.random().toString(36).slice(2);
-  const segments = [];
-  for(let i=0; i<numParts; i++){
-    const s = i*partDuration, e = Math.min(duration, s+partDuration);
-    try{
-      const blob = await extractVideoClip(file, s, e, frac=>{
-        setBgProgress((i+frac)/numParts, `Preparing part ${i+1} of ${numParts}\u2026 ${Math.round(frac*100)}%`);
-      });
-      segments.push({
-        type:'video', videoBlob: blob, filterCss: chosenFilterCss, crop:{scale:1,xPct:0,yPct:0},
-        caption: numParts>1 ? `Part ${i+1} of ${numParts}` : '', duration: e-s,
-        createdAt: now+i, expiresAt: now+SIGNAL_TTL_MS,
-        transitionIn: numParts>1 ? composerTransition : 'fade', groupId, order:i,
-      });
-    }catch(err){ /* one part failing doesn't stop the rest from still being posted */ }
-  }
-  clearPendingVideoJob();
-  if(segments.length>0){
-    // "Split into parts" is now the last decision — everything from here (uploading
-    // every part, saving to Firestore, showing up in the ring) happens automatically.
-    await postSegmentsNow(segments);
-    toast(segments.length>1 ? `Posted ${segments.length} parts to your signal` : 'Posted to your signal');
-  } else {
-    postInProgress = false;
-    $('bgProcessBanner').style.display = 'none';
-    toast('Couldn\u2019t split that video');
-  }
+  await postSegmentsNow([{
+    type:'video', sourceFile: file, filterCss: chosenFilterCss, crop:{scale:1,xPct:0,yPct:0},
+    caption:'', duration: duration || null,
+    createdAt: now, expiresAt: now+SIGNAL_TTL_MS,
+    transitionIn:'fade', groupId, order:0,
+  }]);
+  toast('Posted the full video to your signal');
 };
 
 function renderFilmstrip(){

@@ -369,6 +369,7 @@ async function bcompPublish(){
             duration: Math.max(0.1, p.end - p.start),
             title: 'Chapter ' + (p.index + 1),
             sharedSource: true,
+            status: 'live',
           }));
           breathers = (typeof buildBreathersForChapters === 'function')
             ? buildBreathersForChapters(chapters.length)
