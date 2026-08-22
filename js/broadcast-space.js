@@ -103,7 +103,7 @@ function renderBspaceMedia(seg){
     const showChapters = chapters && chapters.length > 1 && !chapters.every(c => c.silent);
     host.innerHTML = `
       <div class="bspace-media-frame" style="position:relative;width:100%;height:100%;background:#000;overflow:hidden;min-height:180px;">
-        <video id="bspaceVideoEl" playsinline webkit-playsinline preload="auto" poster="${seg.thumbDataUrl ? bspaceEscape(seg.thumbDataUrl) : ''}" style="width:100%;height:100%;object-fit:contain;display:block;background:#000;filter:${seg.filterCss || ''}"></video>
+        <video id="bspaceVideoEl" playsinline webkit-playsinline preload="auto" poster="${seg.thumbDataUrl ? bspaceEscape(seg.thumbDataUrl) : ''}" style="width:100%;height:100%;object-fit:cover;display:block;background:#000;filter:${seg.filterCss || ''}"></video>
         <div id="bspaceBreather" style="display:none;position:absolute;inset:0;background:rgba(13,15,23,.92);align-items:center;justify-content:center;flex-direction:column;gap:10px;z-index:3;">
           <div style="font-family:var(--font-futuristic);font-size:15px;color:var(--mint);" id="bspaceBreatherLabel">Chapter break</div>
           <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);" id="bspaceBreatherAd">Next chapter in a moment</div>
@@ -114,10 +114,6 @@ function renderBspaceMedia(seg){
     const vel = $('bspaceVideoEl');
     if(vel && typeof bindMediaElement === 'function') bindMediaElement(vel, rawSrc);
     else if(vel){ vel.preload = 'auto'; vel.src = rawSrc; }
-    try{ adaptBspaceHeroToVideo(); }catch(_){}
-    if(vel){
-      vel.addEventListener('loadedmetadata', function(){ try{ adaptBspaceHeroToVideo(); }catch(_){} });
-    }
     // Dock seek bar BELOW the 9:16 hero (sibling), not inside cover frame
     try{
       const hero = $('bspaceHero');
@@ -255,7 +251,7 @@ function renderBspaceConversation(docs){
     let body = '';
     if(isVoice){
       body = `<div style="font-family:var(--font-mono);font-size:10px;color:var(--mint);margin-bottom:6px;">Voice note</div>
-        <video class="band-audio-player" playsinline preload="metadata" src="${bspaceEscape(media)}" style="width:100%;max-width:280px;height:44px;border-radius:8px;background:#0a0c14;"></video>`;
+        <video class="band-audio-player" controls playsinline preload="metadata" src="${bspaceEscape(media)}" style="width:100%;max-width:280px;height:44px;border-radius:8px;background:#0a0c14;"></video>`;
     } else if(isPhoto){
       body = `<img src="${bspaceEscape(media)}" alt="Photo" loading="lazy" style="max-width:100%;max-height:320px;border-radius:12px;display:block;background:#0a0c14;" onerror="this.style.display='none';this.nextElementSibling&&(this.nextElementSibling.style.display='block');" />
         <div style="display:none;color:var(--text-dim);font-size:12px;">Photo couldn’t load</div>`;
@@ -345,29 +341,81 @@ function renderBspaceJourney(docs){
   }).join('');
 }
 
+async function paintBspaceViews(meta){
+  const row = $('bspaceViewRow');
+  if(!row) return;
+  let views = (meta && typeof meta.views === 'number') ? meta.views : 0;
+  let total = views;
+  let share = true;
+  const creatorUid = meta && meta.creatorUid;
+  try{
+    if(fbDb && activeBroadcastId){
+      const doc = await fbDb.collection('broadcasts').doc(activeBroadcastId).get();
+      if(doc.exists){
+        const d = doc.data() || {};
+        views = d.views || views;
+        if(activeBroadcastMeta){
+          activeBroadcastMeta.strandId = d.strandId || activeBroadcastMeta.strandId;
+          activeBroadcastMeta.strandName = d.strandName || activeBroadcastMeta.strandName;
+          activeBroadcastMeta.views = views;
+        }
+      }
+    }
+    if(fbDb && creatorUid){
+      const t = await fbDb.collection('toga').doc(creatorUid).get();
+      if(t.exists){
+        const d = t.data() || {};
+        share = d.shareViews !== false;
+        total = d.viewsTotal || 0;
+      } else {
+        const mine = ((typeof feedBroadcasts !== 'undefined' && feedBroadcasts) || []).filter(function(x){ return x.creatorUid === creatorUid; });
+        total = mine.reduce(function(n, x){ return n + (x.views || 0); }, 0);
+      }
+    }
+  }catch(_){}
+  const show = (typeof canShowViews === 'function') ? canShowViews(creatorUid, share) : share;
+  const fmt = (typeof formatNalunoViews === 'function') ? formatNalunoViews : String;
+  const strand = (activeBroadcastMeta && activeBroadcastMeta.strandName) || '';
+  row.style.display = 'grid';
+  row.innerHTML =
+    '<div class="bspace-stat"><div class="k">This Broadcast</div><div class="v">' + (show ? fmt(views) : 'Hidden') + '</div><div class="h">' + (show ? 'views' : 'Creator keeps views private') + '</div></div>' +
+    '<div class="bspace-stat"><div class="k">All of theirs</div><div class="v">' + (show ? fmt(total) : 'Hidden') + '</div><div class="h">' + (strand ? ('Strand · ' + bspaceEscape(strand)) : 'Every Broadcast') + '</div></div>';
+}
+
 function renderBspaceRelated(){
   const el = $('bspaceRelated');
   if(!el) return;
-  const others = (connectionsSignals || []).slice(0, 6).filter(x => {
-    if(!activeBroadcastMeta) return true;
-    return x.contact && x.contact.id !== activeBroadcastMeta.contactId;
+  const b = Object.assign({}, activeBroadcastMeta || {}, {
+    id: activeBroadcastId,
+    strandId: (activeBroadcastMeta && activeBroadcastMeta.strandId) || null,
+    strandName: (activeBroadcastMeta && activeBroadcastMeta.strandName) || null,
+    creatorUid: activeBroadcastMeta && activeBroadcastMeta.creatorUid,
+    tags: (activeBroadcastMeta && activeBroadcastMeta.tags) || [],
   });
-  if(!others.length){
-    el.innerHTML = `<div class="bspace-card"><div class="body" style="color:var(--text-dim);">Related Broadcasts from your frequencies will appear here.</div></div>`;
-    return;
+  function paint(rel){
+    if(!rel || !rel.items || !rel.items.length){
+      el.innerHTML = `<div class="bspace-card"><div class="body" style="color:var(--text-dim);">${bspaceEscape(rel && rel.label ? rel.label : 'Related Broadcasts will appear from this Strand.')}</div></div>`;
+      return;
+    }
+    const head = `<div class="hint" style="margin-bottom:8px;">${bspaceEscape(rel.label || 'Related')}</div>`;
+    el.innerHTML = head + rel.items.map(function(item){
+      return `<div class="bspace-card" role="button" data-rel-id="${bspaceEscape(item.id)}" style="cursor:pointer;">
+        <div class="who">${bspaceEscape(item.creatorName || 'Someone')}${item.strandName ? ' · ' + bspaceEscape(item.strandName) : ''}</div>
+        <div class="body">${bspaceEscape(item.title || 'Broadcast')}</div>
+      </div>`;
+    }).join('');
+    el.querySelectorAll('[data-rel-id]').forEach(function(node){
+      node.onclick = function(){
+        const id = node.getAttribute('data-rel-id');
+        if(typeof openBroadcastById === 'function') openBroadcastById(id);
+      };
+    });
   }
-  el.innerHTML = others.map(({ contact:c, latest })=>{
-    return `<div class="bspace-card" role="button" data-rel-b="${c.id}" style="cursor:pointer;">
-      <div class="who">${bspaceEscape(c.name)} · ${signalMeta[computeSignal(c).tier].label}</div>
-      <div class="body" style="color:var(--text-dim);">Open their Broadcast space</div>
-    </div>`;
-  }).join('');
-  el.querySelectorAll('[data-rel-b]').forEach(node=>{
-    node.onclick = ()=>{
-      closeBroadcastSpace();
-      if(typeof openContactSignalStory === 'function') openContactSignalStory(parseInt(node.dataset.relB, 10));
-    };
-  });
+  if(typeof relatedBroadcasts === 'function'){
+    relatedBroadcasts(b).then(paint).catch(function(){ paint({ items: [], label: 'Related Broadcasts' }); });
+  } else {
+    paint({ items: [], label: 'Related Broadcasts' });
+  }
 }
 
 function listenBspaceCollection(colName, renderFn, orderField){
@@ -394,7 +442,7 @@ async function openBroadcastSpace(meta){
   const desc = meta.description || seg.caption || (seg.type === 'text' ? '' : 'Watch, join the conversation, and explore questions and resources.');
 
   $('bspaceCreatorName').textContent = meta.creatorName || 'Someone';
-  $('bspaceCreatorMeta').textContent = meta.isMine ? 'Your Broadcast' : 'Broadcast space';
+  $('bspaceCreatorMeta').textContent = meta.isMine ? 'Your Broadcast' : 'Creator Circle';
   $('bspaceTitle').textContent = title;
   $('bspaceDesc').textContent = desc;
   const tags = meta.tags && meta.tags.length ? meta.tags : (seg.type ? [seg.type] : ['idea']);
@@ -426,16 +474,41 @@ async function openBroadcastSpace(meta){
     activeBroadcastId = ensureBroadcastDocId(meta);
   }
 
-  // Membership button
+  // Membership button — join the creator, not a single Broadcast
   try{
-    const doc = await fbDb.collection('broadcasts').doc(activeBroadcastId).get();
-    const members = (doc.exists && doc.data().memberUids) || [];
-    const joined = members.includes(currentUser.uid);
-    $('bspaceJoinBtn').textContent = joined ? 'You’re in this community' : 'Join community';
-    $('bspaceJoinBtn').classList.toggle('joined', joined);
+    const creatorUid = meta.creatorUid;
+    const isMine = !!(meta.isMine || (currentUser && creatorUid === currentUser.uid));
+    const btn = $('bspaceJoinBtn');
+    if(isMine){
+      if(btn){
+        btn.textContent = 'Your Circle';
+        btn.classList.add('joined');
+        btn.disabled = true;
+      }
+    } else {
+      const joined = await (typeof creatorCircleJoined === 'function'
+        ? creatorCircleJoined(creatorUid)
+        : false);
+      if(btn){
+        btn.disabled = false;
+        const name = (meta.creatorName || 'this creator').split(' ')[0];
+        btn.textContent = joined ? ('With ' + name) : ('Join ' + name);
+        btn.classList.toggle('joined', joined);
+      }
+    }
   }catch(e){
-    $('bspaceJoinBtn').textContent = 'Join community';
+    $('bspaceJoinBtn').textContent = 'Join this creator';
   }
+
+  try{
+    if(typeof recordBroadcastView === 'function'){
+      recordBroadcastView(activeBroadcastId, meta.creatorUid);
+    }
+  }catch(_){}
+
+  try{
+    await paintBspaceViews(meta);
+  }catch(_){}
 
   listenBspaceCollection('conversation', renderBspaceConversation, 'ts');
   listenBspaceCollection('questions', renderBspaceQuestions, 'ts');
@@ -512,30 +585,30 @@ $('bspaceJoinBtn').onclick = async ()=>{
   if(!currentUser || !fbDb || !activeBroadcastId){ toast('Sign in to join'); return; }
   const btn = $('bspaceJoinBtn');
   if(btn && btn.classList.contains('joined')) return;
+  const creatorUid = activeBroadcastMeta && activeBroadcastMeta.creatorUid;
+  if(!creatorUid){ toast('Creator missing'); return; }
+  if(currentUser.uid === creatorUid) return;
   if(btn){ btn.disabled = true; btn.textContent = 'Joining…'; }
   try{
-    const ref = fbDb.collection('broadcasts').doc(activeBroadcastId);
-    await ref.set({
-      memberUids: firebase.firestore.FieldValue.arrayUnion(currentUser.uid),
-      updatedAt: Date.now(),
-    }, { merge:true });
-    try{
-      await ref.collection('journey').add({
-        type: 'join',
-        text: ((currentProfile && currentProfile.name) || 'Someone') + ' joined the community',
-        ts: Date.now(),
-        by: currentUser.uid,
-      });
-    }catch(_){}
+    if(typeof joinCreatorCircle === 'function'){
+      await joinCreatorCircle(creatorUid, activeBroadcastId);
+    } else {
+      const ref = fbDb.collection('broadcasts').doc(activeBroadcastId);
+      await ref.set({
+        memberUids: firebase.firestore.FieldValue.arrayUnion(currentUser.uid),
+        updatedAt: Date.now(),
+      }, { merge:true });
+    }
+    const name = ((activeBroadcastMeta && activeBroadcastMeta.creatorName) || 'this creator').split(' ')[0];
     if(btn){
-      btn.textContent = 'You’re in this community';
+      btn.textContent = 'With ' + name;
       btn.classList.add('joined');
       btn.disabled = false;
     }
-    toast('Welcome in');
+    toast('You’re with ' + name + ' — every Broadcast of theirs');
   }catch(e){
     console.warn('[bspace] join', e);
-    if(btn){ btn.disabled = false; btn.textContent = 'Join community'; }
+    if(btn){ btn.disabled = false; btn.textContent = 'Join this creator'; }
     toast(e.message || 'Couldn’t join — check connection / rules');
   }
 };
@@ -1423,125 +1496,24 @@ function hideBreatherAdSlot(){
 }
 
 
-/* Broadcast video stage: respect uploaded aspect (portrait OR landscape).
-   Live mesh stays 9:16 cover; recorded/uploaded video adapts to its real frame.
-   User can toggle Fit (letterbox, full picture) vs Fill (crop to stage). */
+/* expand control removed — stage is always filled 9:16 */
 
-let bspaceFitMode = 'fit'; // 'fit' | 'fill'
 
 function adaptBspaceHeroToVideo(){
   const hero = $('bspaceHero');
   const v = $('bspaceVideoEl');
   if(!hero || !v) return;
+  // Always same stage as live: 9:16 filled with cover (no letterbox void)
+  hero.style.aspectRatio = '9 / 16';
+  hero.style.maxHeight = 'min(78vh, 720px)';
   hero.style.width = '100%';
   hero.style.background = '#000';
-  hero.style.maxHeight = 'min(82vh, 780px)';
-
-  const apply = function(){
-    const w = v.videoWidth || 0;
-    const h = v.videoHeight || 0;
-    const landscape = w > 0 && h > 0 && w >= h;
-    const portrait = w > 0 && h > 0 && h > w;
-
-    // Phone rotated landscape → give the video more horizontal room.
-    let orientLandscape = false;
-    try{
-      if(screen.orientation && screen.orientation.type){
-        orientLandscape = String(screen.orientation.type).indexOf('landscape') >= 0;
-      } else if(typeof window.orientation === 'number'){
-        orientLandscape = Math.abs(window.orientation) === 90;
-      } else {
-        orientLandscape = window.innerWidth > window.innerHeight;
-      }
-    }catch(_){}
-
-    if(w > 0 && h > 0){
-      hero.style.aspectRatio = w + ' / ' + h;
-    } else {
-      // Unknown yet — soft portrait default, then re-adapt on metadata
-      hero.style.aspectRatio = '9 / 16';
-    }
-
-    if(orientLandscape && landscape){
-      // 16:9 (or any landscape) + phone tilted → claim full phone screen
-      hero.style.maxHeight = '100dvh';
-      hero.style.height = '100dvh';
-      hero.style.width = '100%';
-      hero.style.borderRadius = '0';
-      try{
-        document.body.classList.add('naluno-landscape-media');
-        const app = document.querySelector('.app');
-        if(app) app.classList.add('naluno-landscape-media');
-      }catch(_){}
-    } else if(portrait){
-      hero.style.maxHeight = 'min(82vh, 780px)';
-      hero.style.height = '';
-      hero.style.borderRadius = '';
-      try{
-        document.body.classList.remove('naluno-landscape-media');
-        const app = document.querySelector('.app');
-        if(app) app.classList.remove('naluno-landscape-media');
-      }catch(_){}
-    } else {
-      hero.style.maxHeight = 'min(82vh, 780px)';
-      hero.style.height = '';
-      try{
-        document.body.classList.remove('naluno-landscape-media');
-        const app = document.querySelector('.app');
-        if(app) app.classList.remove('naluno-landscape-media');
-      }catch(_){}
-    }
-
+  if(v){
     v.style.width = '100%';
     v.style.height = '100%';
+    v.style.objectFit = 'cover';
     v.style.maxHeight = 'none';
-    v.style.objectFit = bspaceFitMode === 'fill' ? 'cover' : 'contain';
-    v.style.background = '#000';
-  };
-
-  apply();
-  if(v.readyState < 1){
-    v.addEventListener('loadedmetadata', function onMeta(){
-      v.removeEventListener('loadedmetadata', onMeta);
-      apply();
-    });
   }
-
-  // Ensure a Fit/Fill chip exists once per open
-  try{
-    let chip = $('bspaceFitToggle');
-    if(!chip && hero){
-      chip = document.createElement('button');
-      chip.type = 'button';
-      chip.id = 'bspaceFitToggle';
-      chip.className = 'bspace-mini';
-      chip.style.cssText = 'position:absolute;right:12px;bottom:12px;z-index:4;font-size:11px;';
-      chip.textContent = bspaceFitMode === 'fill' ? 'Fit' : 'Fill';
-      chip.title = 'Toggle Fit (full picture) / Fill (crop)';
-      chip.onclick = function(e){
-        e.preventDefault();
-        e.stopPropagation();
-        bspaceFitMode = bspaceFitMode === 'fill' ? 'fit' : 'fill';
-        chip.textContent = bspaceFitMode === 'fill' ? 'Fit' : 'Fill';
-        apply();
-      };
-      hero.appendChild(chip);
-    } else if(chip){
-      chip.textContent = bspaceFitMode === 'fill' ? 'Fit' : 'Fill';
-    }
-  }catch(_){}
-
-  // Re-adapt on orientation change
-  try{
-    if(!window.__bspaceOrientBound){
-      window.__bspaceOrientBound = true;
-      const re = function(){ try{ adaptBspaceHeroToVideo(); }catch(_){} };
-      window.addEventListener('orientationchange', re);
-      if(screen.orientation && screen.orientation.addEventListener){
-        screen.orientation.addEventListener('change', re);
-      }
-    }
-  }catch(_){}
 }
 
 

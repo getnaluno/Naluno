@@ -147,8 +147,7 @@ async function sendCompassMessage(){
     renderCompassMessages();
     let wreply = 'Weather is updating…';
     try{
-      // Pass the user question so tonight/tomorrow precip is answered directly.
-      if(typeof formatWeatherReply === 'function') wreply = await formatWeatherReply(text);
+      if(typeof formatWeatherReply === 'function') wreply = await formatWeatherReply();
     }catch(_){}
     compassMessages = compassMessages.filter(m => m !== thinkingW);
     compassMessages.push({ from:'compass', text: wreply, ts: Date.now() });
@@ -204,14 +203,8 @@ async function sendCompassMessage(){
     const messages = recentHistory.slice();
     let weatherHint = '';
     try{
-      if(typeof weatherSystemHint === 'function') weatherHint = await weatherSystemHint();
-      else if(typeof formatWeatherReply === 'function') weatherHint = await formatWeatherReply(text);
+      if(typeof formatWeatherReply === 'function') weatherHint = await formatWeatherReply();
     }catch(_){}
-    // Ground the model: this thread is remembered; use weather/find hints; give reasoned guesses.
-    messages.unshift({
-      role: 'system',
-      content: 'You are Compass inside Naluno. You DO remember this conversation — the last turns are in the message list. Never claim you have no memory of this chat. When the user asks about weather or rain tonight, use the live weather data below and give a clear estimated answer (low/moderate/high chance with a percent when available). Prefer short, useful replies. Never send the user to another app.',
-    });
     if(findHint){
       messages.unshift({
         role: 'system',
@@ -221,7 +214,7 @@ async function sendCompassMessage(){
     if(weatherHint){
       messages.unshift({
         role: 'system',
-        content: 'Live weather + short forecast (Open-Meteo, free). Use this for any rain/tonight/tomorrow question. Never say you only have current conditions. Data: ' + weatherHint,
+        content: 'You can report live weather. Never say you cannot tell the weather. Never send them to another app. Now: ' + weatherHint,
       });
     }
     const res = await fetch(COMPASS_WORKER_URL, {
@@ -293,11 +286,6 @@ function openComposer(mode){
       sel.innerHTML = '<option value="">None — standalone Signal</option>' +
         mine.map(b => `<option value="${b.id}">${escapeHtml(b.title||'Broadcast')}</option>`).join('');
     }
-    // Default Signal composer to Video so Gallery opens with video/* (not photos).
-    try{
-      const vchip = document.querySelector('.type-chip[data-type="video"]');
-      if(vchip) vchip.click();
-    }catch(_){}
   }
   $('composer').classList.add('active');
   document.body.classList.add('naluno-overlay');
@@ -344,13 +332,9 @@ document.querySelectorAll('.type-chip').forEach(chip=>{
     } else {
       $('mediaComposer').style.display = 'block';
       $('textComposer').style.display = 'none';
-      if(composerType==='video'){
-        $('mediaFileInput').accept = 'video/*';
-        $('mediaFileInput').removeAttribute('multiple');
-      } else {
-        $('mediaFileInput').accept = (typeof IMAGE_PICK_ACCEPT === 'string') ? IMAGE_PICK_ACCEPT : 'image/*';
-        $('mediaFileInput').setAttribute('multiple', '');
-      }
+      $('mediaFileInput').accept = composerType==='video'
+        ? ((typeof VIDEO_PICK_ACCEPT === 'string') ? VIDEO_PICK_ACCEPT : 'video/*,video/mp4,.mp4,.mov,.webm,.m4v')
+        : ((typeof IMAGE_PICK_ACCEPT === 'string') ? IMAGE_PICK_ACCEPT : 'image/*');
       $('mediaFileInput').value = '';
       $('uploadDropLabel').textContent = composerType==='video' ? 'Choose videos from your library' : 'Choose photos from your library';
       $('uploadDrop').style.display = 'flex';
@@ -363,37 +347,7 @@ document.querySelectorAll('.type-chip').forEach(chip=>{
   };
 });
 
-function nalunoOpenMediaPicker(){
-  // Fresh <input> each time — reusing a hidden input after Google Photos "Prepare"
-  // often yields zero files on Samsung. video/* only (no extensions) avoids transcode.
-  if(composerType === 'video'){
-    const inp = document.createElement('input');
-    inp.type = 'file';
-    inp.accept = 'video/*';
-    inp.style.cssText = 'position:fixed;left:-9999px;width:1px;height:1px;opacity:0;';
-    document.body.appendChild(inp);
-    inp.addEventListener('change', function(){
-      const files = inp.files;
-      try{ document.body.removeChild(inp); }catch(_){}
-      if(!files || !files.length){
-        if(typeof toast === 'function') toast('No video came through — try Files app or a clip saved on this phone');
-        return;
-      }
-      if($('bgProcessBanner')){
-        $('bgProcessBanner').style.display = 'flex';
-        if(typeof setBgProgress === 'function') setBgProgress(0.05, 'Opening in Naluno…');
-      }
-      Promise.resolve(handleFiles(files)).finally(function(){
-        if($('bgProcessBanner') && !postInProgress) $('bgProcessBanner').style.display = 'none';
-      });
-    }, { once: true });
-    inp.click();
-    return;
-  }
-  const el = $('mediaFileInput');
-  if(el){ el.accept = (typeof IMAGE_PICK_ACCEPT === 'string') ? IMAGE_PICK_ACCEPT : 'image/*'; el.click(); }
-}
-$('uploadDrop').onclick = ()=> nalunoOpenMediaPicker();
+$('uploadDrop').onclick = ()=> $('mediaFileInput').click();
 $('mediaFileInput').onchange = (e)=>{
   const files = e.target.files;
   e.target.value = '';
@@ -448,22 +402,18 @@ let trimCurrentFile = null;
 let trimObjectUrl = null;
 
 async function handleFiles(fileList){
-  const files = Array.from(fileList || []).filter(function(f){ return f && (f.size || 0) > 0; });
-  if(!files.length){
-    if(typeof toast === 'function') toast('That file was empty — pick again from the Files app');
-    return;
-  }
-  // Soft ceiling only — no hard reject. Long clips still open the trim UI.
+  const files = Array.from(fileList);
+  // Soft ceiling only — no hard 60MB reject. Long clips still open the trim UI.
+  // Size is handled by pass-through + smart compress on post.
   const SOFT_FORCE_TRIM_BYTES = 200 * 1024 * 1024;
   const needsTrim = [];
   for(const file of files){
-    // Video chip = always video (Android often hands empty MIME / no extension).
     const looksVideo = (typeof nalunoFileLooksLikeVideo === 'function')
       ? nalunoFileLooksLikeVideo(file)
       : ((file.type || '').indexOf('video/') === 0 || /\.(mp4|mov|webm|m4v|3gp|mkv)$/i.test(file.name || ''));
-    const treatAsVideo = (composerType === 'video') || looksVideo;
+    const treatAsVideo = composerType==='video' || looksVideo;
     if(treatAsVideo){
-      if(composerType !== 'video') composerType = 'video';
+      if(composerType!=='video' && looksVideo) composerType = 'video';
       const duration = await probeVideoDuration(file);
       const safeDur = (duration && isFinite(duration) && duration > 0) ? duration : null;
       if((safeDur && safeDur > MAX_VIDEO_SECONDS + 1) || file.size > SOFT_FORCE_TRIM_BYTES){
@@ -839,7 +789,7 @@ function renderFilmstrip(){
   document.querySelectorAll('[data-remove]').forEach(el=>{
     el.onclick = (e)=>{ e.stopPropagation(); removeComposerItem(parseInt(el.dataset.remove)); };
   });
-  $('filmstripAdd').onclick = ()=> nalunoOpenMediaPicker();
+  $('filmstripAdd').onclick = ()=> $('mediaFileInput').click();
   $('transitionSection').style.display = composerItems.length>1 ? 'block' : 'none';
 }
 
@@ -975,29 +925,17 @@ async function postSegmentsNow(newSegments){
           ? `Uploading to your signal\u2026 part ${videoIndex} of ${totalVideos}`
           : 'Uploading to your signal\u2026');
         try{
-          // Prefer extracted Blob, then original File, then dataUrl.
-          let source = seg.videoBlob || seg.sourceFile || seg.dataUrl;
-          if(!source) throw new Error('No video data');
-          // Samsung HEVC loads as a still unless converted to VP8/VP9/H264 webm.
-          if(typeof nalunoPrepareSignalVideo === 'function'){
-            source = await nalunoPrepareSignalVideo(source, function(p, msg){
-              if(hasVideo) setBgProgress(
-                (videoIndex - 1) / totalVideos + (p || 0) / totalVideos * 0.85,
-                msg || 'Preparing video…'
-              );
-            });
-          }
-          if(hasVideo) setBgProgress((videoIndex - 0.15) / totalVideos, 'Uploading to your signal…');
+          // Prefer extracted Blob, then original File (pass-through), then dataUrl.
+          const source = seg.videoBlob || seg.sourceFile || seg.dataUrl;
           const videoUrl = await uploadVideoToR2(source);
-          const thumbSrc = (source instanceof Blob || source instanceof File)
-            ? URL.createObjectURL(source)
-            : (seg.videoBlob
-              ? URL.createObjectURL(seg.videoBlob)
-              : (seg.sourceFile ? URL.createObjectURL(seg.sourceFile) : seg.dataUrl));
+          const thumbSrc = seg.videoBlob
+            ? URL.createObjectURL(seg.videoBlob)
+            : (seg.sourceFile ? URL.createObjectURL(seg.sourceFile) : seg.dataUrl);
           const thumbDataUrl = await generateVideoThumbnail(thumbSrc);
-          try{ URL.revokeObjectURL(thumbSrc); }catch(_){}
+          if(seg.videoBlob || seg.sourceFile) try{ URL.revokeObjectURL(thumbSrc); }catch(_){}
+          // Store a small URL in Firestore, never the whole video.
           const { dataUrl, videoBlob, sourceFile, ...rest } = seg;
-          segToSave = { ...rest, videoUrl, thumbDataUrl, codecHint: (source && source.type) || null };
+          segToSave = { ...rest, videoUrl, thumbDataUrl };
         }catch(e){
           failed++;
           lastErrorMessage = e.message || 'Unknown error';

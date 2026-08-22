@@ -636,26 +636,15 @@ function ensureRemoteVideoPlaying(){
 
 function startRemotePlayWatch(){
   stopRemotePlayWatch();
-  let ticks = 0;
-  let lastRebind = 0;
   remotePlayWatch = setInterval(function(){
     try{
       if(!activeCallId){ stopRemotePlayWatch(); return; }
       const el = document.getElementById('remoteVideo');
       if(!el) return;
-      ticks++;
-
-      // Keep every remote track enabled — muted tracks look like "no video"
-      if(remoteCombinedStream){
-        remoteCombinedStream.getTracks().forEach(function(t){
-          try{ if(t.readyState === 'live' && t.enabled === false) t.enabled = true; }catch(_){}
-        });
-      }
 
       if(remoteCombinedStream && remoteCombinedStream.getTracks().length){
         if(el.srcObject !== remoteCombinedStream){
-          bindRemoteVideoElement(remoteCombinedStream, true);
-          lastRebind = ticks;
+          bindRemoteVideoElement(remoteCombinedStream);
         }
       }
 
@@ -667,11 +656,6 @@ function startRemotePlayWatch(){
       const state = getRemoteMediaState();
       if(state.hasVideo && !el.paused){
         showRemoteVideo();
-        // Playing but zero frames for a while → force rebind (Samsung WebView)
-        if(!state.hasFrames && ticks - lastRebind > 6){
-          lastRebind = ticks;
-          try{ bindRemoteVideoElement(remoteCombinedStream, true); }catch(_){}
-        }
       } else if(state.hasVideo && el.paused){
         showRemoteAvatar();
         try{
@@ -679,13 +663,7 @@ function startRemotePlayWatch(){
           el.play().then(function(){
             try{ el.muted = false; }catch(_){}
             showRemoteVideo();
-          }).catch(function(){
-            // Force srcObject rebind once then retry play
-            if(ticks - lastRebind > 4){
-              lastRebind = ticks;
-              try{ bindRemoteVideoElement(remoteCombinedStream, true); }catch(_){}
-            }
-          });
+          }).catch(function(){});
         }catch(_){}
       } else if(!state.hasVideo){
         showRemoteAvatar();
@@ -695,17 +673,6 @@ function startRemotePlayWatch(){
             el.play().catch(function(){});
           }catch(_){}
         }
-        // Pull receivers if ontrack never fired tracks into our combined stream
-        try{
-          if(peerConnection && ticks % 8 === 0){
-            const recvs = peerConnection.getReceivers ? peerConnection.getReceivers() : [];
-            recvs.forEach(function(r){
-              if(r && r.track && r.track.readyState === 'live'){
-                ingestRemoteTrack(r.track, null);
-              }
-            });
-          }
-        }catch(_){}
       }
     }catch(_){}
   }, 500);

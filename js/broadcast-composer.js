@@ -23,6 +23,11 @@ function bcompOpen(){
   bcompReset();
   const el = $('bcomposer');
   if(el) el.classList.add('active');
+  if(typeof loadMyStrands === 'function'){
+    loadMyStrands().then(function(){
+      if(typeof fillStrandSelect === 'function') fillStrandSelect($('bcompStrand'));
+    }).catch(function(){});
+  }
 }
 
 function bcompClose(){
@@ -48,6 +53,14 @@ function bcompReset(){
   if(tags) tags.value = '';
   const desc = $('bcompDesc');
   if(desc) desc.value = '';
+  const strand = $('bcompStrand');
+  if(strand) strand.value = '';
+  const strandName = $('bcompStrandName');
+  if(strandName) strandName.value = '';
+  const originBox = $('bcompOrigin');
+  if(originBox){ originBox.style.display = 'none'; originBox.innerHTML = ''; }
+  window._bcompOrigin = null;
+  window._bcompOriginAck = false;
   const pub = $('bcompPublishBtn');
   if(pub){ pub.disabled = true; pub.textContent = 'Publish Broadcast'; }
   const fileIn = $('bcompFileInput');
@@ -251,17 +264,12 @@ function compressBroadcastVideo(file, onProgress){
 
 async function bcompOnFileChosen(file){
   if(!file) return;
-  if(!(file.size > 0)){
-    toast('That file was empty — try the Files app or a clip saved on this phone');
-    return;
-  }
-  let isVideo = (typeof nalunoFileLooksLikeVideo === 'function')
+  const isVideo = (typeof nalunoFileLooksLikeVideo === 'function')
     ? nalunoFileLooksLikeVideo(file)
     : ((file.type || '').indexOf('video/') === 0 || /\.(mp4|mov|webm|m4v|3gp|mkv)$/i.test(file.name || ''));
-  let isImage = (typeof nalunoFileLooksLikeImage === 'function')
+  const isImage = (typeof nalunoFileLooksLikeImage === 'function')
     ? nalunoFileLooksLikeImage(file)
     : ((file.type || '').indexOf('image/') === 0 || /\.(jpe?g|png|gif|webp|heic)$/i.test(file.name || ''));
-  if(!isVideo && !isImage && (file.size || 0) > 50000) isVideo = true;
   if(!isVideo && !isImage){
     toast('Choose a photo or video');
     return;
@@ -289,7 +297,7 @@ async function bcompOnFileChosen(file){
 
   bcompKind = 'video';
   if(prev){
-    prev.innerHTML = `<video src="${bcompPreviewUrl}" playsinline webkit-playsinline style="width:100%;max-height:42vh;border-radius:14px;background:#000;"></video>`;
+    prev.innerHTML = `<video src="${bcompPreviewUrl}" controls playsinline style="width:100%;max-height:42vh;border-radius:14px;background:#000;"></video>`;
   }
 
   // Enable Publish immediately — duration probe must not trap the picker.
@@ -339,6 +347,41 @@ async function bcompPublish(){
     return;
   }
 
+  if(typeof runOriginScan === 'function' && bcompFile && !window._bcompOrigin){
+    const pub = $('bcompPublishBtn');
+    if(pub){ pub.disabled = true; pub.textContent = 'Origin reading…'; }
+    try{
+      window._bcompOrigin = await runOriginScan(bcompFile, title, desc, bcompDuration || 0);
+      bcompPaintOrigin(window._bcompOrigin);
+      if(window._bcompOrigin.status === 'match' && !window._bcompOriginAck){
+        if(pub){ pub.disabled = false; pub.textContent = 'Publish with Origin mark'; }
+        toast('Origin found a close match — confirm it is yours');
+        return;
+      }
+    }catch(e){
+      console.warn('[origin]', e);
+    } finally {
+      if(pub){ pub.disabled = false; pub.textContent = 'Publish Broadcast'; }
+    }
+  }
+  if(window._bcompOrigin && window._bcompOrigin.status === 'match' && !window._bcompOriginAck){
+    toast('Tick the Origin box if this is yours, a license, or a cover');
+    return;
+  }
+
+  let strandId = (($('bcompStrand') && $('bcompStrand').value) || '') || null;
+  let strandName = (($('bcompStrandName') && $('bcompStrandName').value) || '').trim();
+  if(!strandId && strandName && typeof ensureStrand === 'function'){
+    try{
+      const s = await ensureStrand(strandName, tags);
+      if(s){ strandId = s.id; strandName = s.name; }
+    }catch(_){}
+  }
+  if(strandId && !strandName){
+    const found = (typeof getMyStrands === 'function' ? getMyStrands() : []).find(function(s){ return s.id === strandId; });
+    if(found) strandName = found.name;
+  }
+
   // Snapshot + close immediately — compress/upload continues in background
   const snapKind = bcompKind;
   const snapFile = bcompFile;
@@ -347,6 +390,9 @@ async function bcompPublish(){
   const snapTitle = title;
   const snapDesc = desc;
   const snapTags = tags.slice();
+  const snapStrandId = strandId;
+  const snapStrandName = strandName;
+  const snapOrigin = window._bcompOrigin || null;
   bcompPublishing = false;
   bcompClose();
 
@@ -374,22 +420,7 @@ async function bcompPublish(){
           if(thumbUrl) thumbUrl = await persistThumbnailDataUrl(thumbUrl);
         }catch(_){}
         if(typeof uploadBroadcastFile !== 'function') throw new Error('Broadcast uploader not loaded');
-        let uploadFile = file;
-        // Short Samsung HEVC → convert so every browser can play. Long HEVC stays original
-        // (chunked); player uses blob fallback for those.
-        try{
-          const isHevc = (typeof nalunoSniffIsHevc === 'function') ? await nalunoSniffIsHevc(file) : false;
-          if(isHevc && (duration || 0) > 0 && duration <= 360 && typeof nalunoTranscodeToWeb === 'function'){
-            if(progress) progress('Converting Samsung video for playback…');
-            uploadFile = await nalunoTranscodeToWeb(file, function(p){
-              if(progress) progress('Converting… ' + Math.round((p||0)*100) + '%');
-            }, Math.min(360, duration + 1));
-          }
-        }catch(convErr){
-          console.warn('[bcast] HEVC convert skipped', convErr);
-          uploadFile = file;
-        }
-        mediaUrl = await uploadBroadcastFile(uploadFile, (frac, msg)=>{
+        mediaUrl = await uploadBroadcastFile(file, (frac, msg)=>{
           if(progress) progress(msg || ('Uploading… ' + Math.round((frac||0)*100) + '%'));
         });
         const seek = (typeof planSeekChapters === 'function')
@@ -427,6 +458,7 @@ async function bcompPublish(){
         title: snapTitle, description: snapDesc, tags: snapTags,
         mediaType, mediaUrl, thumbUrl, filterCss: '',
         chapters, breathers,
+        strandId: snapStrandId, strandName: snapStrandName, origin: snapOrigin,
       });
       if(typeof loadFeedBroadcasts === 'function') await loadFeedBroadcasts();
       if(typeof notifyPublishResult === 'function') notifyPublishResult(true, snapTitle);
@@ -450,22 +482,8 @@ function bcompWire(){
     };
   }
   if($('bcompClose')) $('bcompClose').onclick = bcompClose;
-  if($('bcompPickBtn')) $('bcompPickBtn').onclick = function(){
-    const inp = document.createElement('input');
-    inp.type = 'file';
-    inp.accept = 'video/*,image/*';
-    inp.style.cssText = 'position:fixed;left:-9999px;opacity:0;';
-    document.body.appendChild(inp);
-    inp.onchange = function(){
-      const f = inp.files && inp.files[0];
-      try{ document.body.removeChild(inp); }catch(_){}
-      if(f) bcompOnFileChosen(f);
-      else if(typeof toast === 'function') toast('No file came through — try Files app');
-    };
-    inp.click();
-  };
+  if($('bcompPickBtn')) $('bcompPickBtn').onclick = ()=> $('bcompFileInput') && $('bcompFileInput').click();
   if($('bcompFileInput')){
-    $('bcompFileInput').accept = 'video/*,image/*';
     $('bcompFileInput').onchange = (e)=>{
       const f = e.target.files && e.target.files[0];
       e.target.value = '';
@@ -473,6 +491,13 @@ function bcompWire(){
     };
   }
   if($('bcompPublishBtn')) $('bcompPublishBtn').onclick = bcompPublish;
+  if($('bcompStrand')){
+    $('bcompStrand').onchange = function(){
+      const name = $('bcompStrandName');
+      if(!name) return;
+      name.style.display = $('bcompStrand').value ? 'none' : 'block';
+    };
+  }
 }
 
 // Wire when DOM ready
@@ -525,6 +550,24 @@ if($('bcompGoLiveBtn')){
     if(e){ e.preventDefault(); e.stopPropagation(); }
     bcompStartGoLive();
   };
+}
+
+function bcompPaintOrigin(report){
+  const box = $('bcompOrigin');
+  if(!box || !report) return;
+  box.style.display = 'block';
+  const label = report.status === 'match' ? 'Origin match' : (report.status === 'review' ? 'Origin review' : 'Origin clear');
+  const hits = (report.matches || []).slice(0, 3).map(function(m){
+    return '<div style="font-family:var(--font-mono);font-size:11px;color:var(--mint);margin-top:4px;">' +
+      escapeHtml(m.source) + ' · ' + escapeHtml(m.title) + (m.detail ? ' — ' + escapeHtml(m.detail) : '') + '</div>';
+  }).join('');
+  const ack = report.status === 'match'
+    ? '<label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-size:13px;line-height:1.4;"><input type="checkbox" id="bcompOriginAck" /> This is my work, a licensed use, or a clearly marked cover.</label>'
+    : '';
+  box.innerHTML = '<div style="font-family:var(--font-futuristic);font-size:13px;margin-bottom:4px;">' + label +
+    ' · ' + (report.score || 0) + '</div><div style="font-size:12.5px;color:var(--text-dim);line-height:1.45;">Origin reads the file inside Naluno and the open web. It is a similarity engine, not a courtroom.</div>' + hits + ack;
+  const cb = $('bcompOriginAck');
+  if(cb) cb.onchange = function(){ window._bcompOriginAck = !!cb.checked; };
 }
 
 if($('broadcastGoLiveBtn')) $('broadcastGoLiveBtn').onclick = ()=>{ if(typeof openGoLiveFromSignal==='function') openGoLiveFromSignal(); else if(typeof bcompStartGoLive==='function') bcompStartGoLive(); };

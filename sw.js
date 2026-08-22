@@ -1,6 +1,6 @@
 // Naluno service worker — offline shell + background call push.
-// v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v76';
+// v70: 2.5s network then cache (Samsung onLine lies; hung fetch never .catch).
+const CACHE_NAME = 'naluno-shell-v77';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',
@@ -8,6 +8,7 @@ const CORE_ASSETS = [
   './js/pwa.js', './js/auth.js', './js/camera.js', './js/call-filters.js', './js/calls.js', './js/media-vault.js', './js/wireline.js',
   './js/band-room.js', './js/band-list.js', './js/broadcast-core.js', './js/broadcast-space.js',
   './js/broadcast-live.js', './js/broadcast-composer.js', './js/broadcast-upload.js',
+  './js/origin.js', './js/strand.js', './js/circle.js',
   './js/signal-core.js', './js/signal-ui.js',
   './js/sfu-live.js', './js/compass.js', './js/weather.js', './js/beacon.js', './js/find.js', './js/profile.js', './js/notifications.js',
   './js/ice-core.js', './js/compat-lock.js', './js/keep-alive.js', './js/media-contain.js',
@@ -38,10 +39,8 @@ self.addEventListener('fetch', event=>{
   if(event.request.cache === 'no-store' || event.request.cache === 'reload') return;
   const url = new URL(event.request.url);
   const isSameOrigin = url.origin === self.location.origin;
-  // NEVER intercept Firebase CDN (gstatic). A 2.5s timeout on large SDK scripts
-  // leaves firebase undefined on mobile → "Sign-in is not ready yet."
-  // Sign-in needs the network anyway; let the browser load CDN scripts normally.
-  if(!isSameOrigin) return;
+  const isFirebaseSdkScript = url.hostname === 'www.gstatic.com' && url.pathname.includes('firebasejs');
+  if(!isSameOrigin && !isFirebaseSdkScript) return;
 
   const path = url.pathname || '';
   const isAppCode = path.includes('/js/') || path.endsWith('.js') ||
@@ -81,7 +80,7 @@ self.addEventListener('fetch', event=>{
     try{
       const response = await netTimeout(event.request, 2500);
       if(response && response.ok){
-        if(isSameOrigin) putBare(response);
+        if(isSameOrigin || isFirebaseSdkScript) putBare(response);
         return response;
       }
     }catch(_){}

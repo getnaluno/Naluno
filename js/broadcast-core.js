@@ -40,20 +40,24 @@ function broadcastThumbHtml(b){
     ? `<img src="${escapeHtml(media)}" alt="" class="bcast-plate-media" loading="lazy" onerror="this.style.display='none';this.parentNode.classList.add('no-thumb')" />`
     : `<div class="bcast-plate-fallback">${escapeHtml((b.creatorName || '?').slice(0,1).toUpperCase())}</div>`;
   const live = b.live ? `<span class="bcast-plate-live">LIVE</span>` : '';
+  const viewsBit = (typeof formatNalunoViews === 'function' && (b.shareViews !== false))
+    ? `<span class="bcast-plate-views">${escapeHtml(formatNalunoViews(b.views || 0))}</span>`
+    : '';
   return `<article class="bcast-plate" data-broadcast-id="${escapeHtml(b.id)}" role="button" tabindex="0">
     <div class="bcast-plate-frame">
       ${inner}
       ${live}
+      ${viewsBit}
       <div class="bcast-plate-scan"></div>
     </div>
     <div class="bcast-plate-meta">
       <div class="bcast-plate-title">${title}</div>
-      <div class="bcast-plate-sub">${creator}${b.tags && b.tags[0] ? ' · ' + escapeHtml(b.tags[0]) : ''}</div>
+      <div class="bcast-plate-sub">${creator}${b.strandName ? ' · ' + escapeHtml(b.strandName) : (b.tags && b.tags[0] ? ' · ' + escapeHtml(b.tags[0]) : '')}</div>
     </div>
   </article>`;
 }
 
-async function createPermanentBroadcast({ title, description, tags, mediaType, mediaUrl, thumbUrl, filterCss, chapters, breathers }){
+async function createPermanentBroadcast({ title, description, tags, mediaType, mediaUrl, thumbUrl, filterCss, chapters, breathers, strandId, strandName, origin }){
   if(!currentUser || !fbDb) throw new Error('Sign in required');
   const now = Date.now();
   const ref = fbDb.collection('broadcasts').doc();
@@ -75,6 +79,12 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
     breathers: Array.isArray(breathers) ? breathers : null,
     createdAt: now,
     updatedAt: now,
+    views: 0,
+    uniqueViews: 0,
+    strandId: strandId || null,
+    strandName: strandName || null,
+    originStatus: (origin && origin.status) || 'clear',
+    originScore: (origin && origin.score) || 0,
     memberUids: [currentUser.uid],
     live: false,
     liveAt: null,
@@ -93,6 +103,9 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
     ts: now,
     by: currentUser.uid,
   });
+  try{
+    if(typeof saveOriginMark === 'function' && origin) await saveOriginMark(ref.id, origin, title);
+  }catch(_){}
   const full = { id: ref.id, ...doc };
   myBroadcasts = [full, ...myBroadcasts.filter(x => x.id !== ref.id)];
   // Optimistic plate update — don't wait for onSnapshot (avoids "must refresh")

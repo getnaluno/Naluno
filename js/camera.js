@@ -1184,10 +1184,11 @@ async function enableCameraForCall(){
     stream = null;
   }
   const audioConstraints = { echoCancellation: { ideal: true }, noiseSuppression: { ideal: true }, autoGainControl: { ideal: true } };
-  // Open fast with high ideal (device grants what it can). Then climb to sensor max.
+  // FAST first: 720p (or 640) so the offer leaves in under 2s.
+  // 1080/4K is applied in the background after we are connected.
   const attempts = [
-    { video: { facingMode: { ideal: cameraFacingMode }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 60 } }, audio: audioConstraints },
-    { video: { facingMode: { ideal: cameraFacingMode }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 60 } }, audio: audioConstraints },
+    { video: { facingMode: { ideal: cameraFacingMode }, width: { ideal: 720 }, height: { ideal: 1280 }, frameRate: { ideal: 24, max: 30 } }, audio: audioConstraints },
+    { video: { facingMode: { ideal: cameraFacingMode }, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 } }, audio: audioConstraints },
     { video: { facingMode: { ideal: cameraFacingMode } }, audio: audioConstraints },
     { video: true, audio: true },
   ];
@@ -1213,29 +1214,12 @@ async function enableCameraForCall(){
     startCamView(($('incall') && $('incall').classList.contains('active')) ? 'pip' : 'lobby');
   }
   try{ runGreenroom(); }catch(_){}
-  // Climb toward the sensor's best (4K → 1440 → 1080). ideal never fails the call —
-  // the device simply keeps the highest mode it can sustain.
   try{
     const vt = stream.getVideoTracks()[0];
     if(vt && vt.applyConstraints){
-      const steps = [
-        { width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: 30, max: 60 } },
-        { width: { ideal: 2560 }, height: { ideal: 1440 }, frameRate: { ideal: 30, max: 60 } },
-        { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 60 } },
-      ];
-      let si = 0;
-      const climb = function(){
-        if(si >= steps.length) {
-          try{ updateCameraQualityBadge && updateCameraQualityBadge(); }catch(_){}
-          return;
-        }
-        const step = steps[si++];
-        vt.applyConstraints(step).then(function(){
-          try{ updateCameraQualityBadge && updateCameraQualityBadge(); }catch(_){}
-        }).catch(function(){ climb(); });
-      };
-      setTimeout(climb, 400);
-      setTimeout(climb, 2200);
+      setTimeout(function(){
+        vt.applyConstraints({ width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }).catch(function(){});
+      }, 2500);
     }
   }catch(_){}
   try{ updateCameraQualityBadge && updateCameraQualityBadge(); }catch(_){}

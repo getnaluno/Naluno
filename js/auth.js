@@ -16,15 +16,9 @@ function firebaseReady(){
     && typeof firebaseConfig !== 'undefined'
     && firebaseConfig.apiKey && firebaseConfig.apiKey !== 'YOUR_API_KEY';
 }
-function initFirebaseApp(){
-  if(fbAuth) return true;
-  if(!firebaseReady()) return false;
+if(firebaseReady()){
   try{
-    if(firebase.apps && firebase.apps.length){
-      fbApp = firebase.app();
-    } else {
-      fbApp = firebase.initializeApp(firebaseConfig);
-    }
+    fbApp = firebase.initializeApp(firebaseConfig);
     fbAuth = firebase.auth();
     // Explicitly request durable local persistence so a successful sign-in survives
     // page reloads, browser restarts, and the service-worker shell. Without this some
@@ -47,14 +41,8 @@ function initFirebaseApp(){
       // older browser, private/incognito browsing, no IndexedDB) — the app still
       // works perfectly fine without it, just without the instant-repaint benefit.
     });
-    return true;
-  }catch(e){
-    console.error('Firebase init failed:', e);
-    fbAuth = null;
-    return false;
-  }
+  }catch(e){ console.error('Firebase init failed:', e); }
 }
-initFirebaseApp();
 
 function authStatus(msg, isError){
   const el = $('authGateStatus');
@@ -132,8 +120,7 @@ async function nativeGoogleSignIn(){
 }
 
 $('googleSignInBtn').onclick = async ()=>{
-  if(!fbAuth){ initFirebaseApp(); }
-  if(!fbAuth){ authStatus('Sign-in could not load. Pull to refresh once.', true); return; }
+  if(!fbAuth){ authStatus('Sign-in is not ready yet.', true); return; }
 
   // Capacitor: use native Google Sign-In → Firebase credential (no Chrome redirect).
   if(isNativeShell()){
@@ -216,8 +203,7 @@ if($('authUseEmailBtn')){
 }
 
 function nalunoHandleSignIn(){
-  if(!fbAuth){ initFirebaseApp(); }
-  if(!fbAuth){ authStatus('Sign-in could not load. Pull to refresh once.', true); return; }
+  if(!fbAuth){ authStatus('Sign-in is not ready yet.', true); return; }
   const { email, password, handle, recovery } = emailAuthInputs();
   if(!password || password.length < 6){ authStatus('Enter your password (6+ characters).', true); return; }
   if(!email){
@@ -240,8 +226,7 @@ function nalunoHandleSignIn(){
 };
 
 async function nalunoHandleSignUp(){
-  if(!fbAuth){ initFirebaseApp(); }
-  if(!fbAuth){ authStatus('Sign-in could not load. Pull to refresh once.', true); return; }
+  if(!fbAuth){ authStatus('Sign-in is not ready yet.', true); return; }
   const { email, password, handle } = emailAuthInputs();
   if(!password || password.length < 6){ authStatus('Password needs to be at least 6 characters.', true); return; }
   const em = $('authEmailInput');
@@ -306,8 +291,7 @@ async function nalunoHandleSignUp(){
   }
 };
 async function nalunoForgotPassword(){
-  if(!fbAuth){ initFirebaseApp(); }
-  if(!fbAuth){ authStatus('Sign-in could not load. Pull to refresh once.', true); return; }
+  if(!fbAuth){ authStatus('Sign-in is not ready yet.', true); return; }
   const { email, handle, recovery } = emailAuthInputs();
   const visibleEmail = ($('authEmailInput') && $('authEmailInput').style.display !== 'none' && $('authEmailInput').value.trim()) || '';
   const target = (recovery || visibleEmail || '').trim();
@@ -390,6 +374,9 @@ if(fbAuth){
       }
       try{ if(typeof renderBroadcasts === 'function') renderBroadcasts(); }catch(_){}
       try{ if(typeof renderBroadcastTab === 'function') renderBroadcastTab(); }catch(_){}
+      try{ if(typeof loadMyTogaSettings === 'function') loadMyTogaSettings(); }catch(_){}
+      try{ if(typeof renderTogaBoard === 'function') renderTogaBoard(); }catch(_){}
+      try{ if(typeof loadMyStrands === 'function') loadMyStrands(); }catch(_){}
       try{ if(typeof renderBandList === 'function') renderBandList(); }catch(_){}
     }catch(_){}
     document.body.classList.remove('naluno-gated');
@@ -422,109 +409,61 @@ if(fbAuth){
   }).catch(e=>{
     authStatus('Could not finish sign-in. Try again.', true);
   });
-  // Wire once. Firebase often emits null BEFORE restoring the local session —
-  // wiping lastUid / forcing the gate on that first null is why sign-in felt like
-  // "tap twice". Only treat null as signed-out after a short settle, or on explicit sign-out.
-  let nullAuthTimer = null;
-  function showSignedOutGate(){
-    authStatus('');
-    try{
-      $('authGateLoading').style.display = 'none';
-      $('authGateForm').style.display = 'flex';
-      document.body.classList.add('naluno-gated');
-      $('authGate').classList.add('active');
-    }catch(_){}
-  }
-  function clearSessionListeners(){
-    if(threadsListUnsubscribe){ threadsListUnsubscribe(); threadsListUnsubscribe = null; }
-    if(activeThreadUnsubscribe){ activeThreadUnsubscribe(); activeThreadUnsubscribe = null; }
-    if(bandPresenceUnsub){ bandPresenceUnsub(); bandPresenceUnsub = null; }
-    if(bandMessagesUnsub){ bandMessagesUnsub(); bandMessagesUnsub = null; }
-    if(incomingCallUnsub){ incomingCallUnsub(); incomingCallUnsub = null; }
-    if(missedCallUnsub){ missedCallUnsub(); missedCallUnsub = null; }
-    if(compassUnsub){ compassUnsub(); compassUnsub = null; }
-    compassMessages = []; compassLoaded = false;
-    compassUnlockedThisSession = false;
-    try{ updateMissedCallBadge(0); }catch(_){}
-    if(connectionsUnsub){ connectionsUnsub(); connectionsUnsub = null; }
-    if(profileUnsub){ profileUnsub(); profileUnsub = null; }
-    myKeyPairPromise = null;
-    sharedKeyCache = {};
-    try{ teardownCallConnection(); }catch(_){}
-    realThreadPreviews = {};
-  }
   fbAuth.onAuthStateChanged(user=>{
     clearTimeout(authTimeout);
-    if(nullAuthTimer){ clearTimeout(nullAuthTimer); nullAuthTimer = null; }
     authResolved = true;
     currentUser = user;
     if(user){
       try{ localStorage.setItem('nalunoLastUid', user.uid); }catch(_){}
       authStatus('');
       document.body.classList.remove('naluno-gated');
-      try{ $('authGate').classList.remove('active'); }catch(_){}
+      $('authGate').classList.remove('active');
       loadRealProfile(user);
       try{ if(typeof resumeFindNalunoIfEnabled === 'function') resumeFindNalunoIfEnabled(); }catch(_){}
       try{ if(typeof showInstallPromptSoon === 'function') setTimeout(showInstallPromptSoon, 1600); }catch(_){}
       try{ if(typeof listenFindNalunoDevices === 'function') listenFindNalunoDevices(); }catch(_){}
     } else {
-      // Explicit sign-out → gate immediately and clear remembered uid.
-      if(window.__nalunoSigningOut){
-        try{ localStorage.removeItem('nalunoLastUid'); }catch(_){}
-        window.__nalunoSigningOut = false;
-        clearSessionListeners();
-        showSignedOutGate();
-        return;
-      }
-      // First null is often "session still restoring". Keep any cached UI; only
-      // open the gate if still null after settle.
-      nullAuthTimer = setTimeout(function(){
-        if(currentUser) return;
-        // Confirmed signed out
-        try{ localStorage.removeItem('nalunoLastUid'); }catch(_){}
-        clearSessionListeners();
-        if(lastUid){
-          const cached = nalunoReadCachedProfile(lastUid);
-          if(cached){
-            currentProfile = { photo:null, ...DEFAULT_PROFILE, ...cached };
-            try{ applyProfileToUI(currentProfile); }catch(_){}
-          }
+      try{ localStorage.removeItem('nalunoLastUid'); }catch(_){}
+      authStatus('');
+      $('authGateLoading').style.display = 'none';
+      $('authGateForm').style.display = 'flex';
+      document.body.classList.add('naluno-gated');
+      $('authGate').classList.add('active');
+      if(lastUid && !window.__nalunoSigningOut){
+        const cached = nalunoReadCachedProfile(lastUid);
+        if(cached){
+          currentProfile = { photo:null, ...DEFAULT_PROFILE, ...cached };
+          try{ applyProfileToUI(currentProfile); }catch(_){}
         }
-        showSignedOutGate();
-      }, 1400);
+      }
+      if(threadsListUnsubscribe){ threadsListUnsubscribe(); threadsListUnsubscribe = null; }
+      if(activeThreadUnsubscribe){ activeThreadUnsubscribe(); activeThreadUnsubscribe = null; }
+      if(bandPresenceUnsub){ bandPresenceUnsub(); bandPresenceUnsub = null; }
+      if(bandMessagesUnsub){ bandMessagesUnsub(); bandMessagesUnsub = null; }
+      if(incomingCallUnsub){ incomingCallUnsub(); incomingCallUnsub = null; }
+      if(missedCallUnsub){ missedCallUnsub(); missedCallUnsub = null; }
+      if(compassUnsub){ compassUnsub(); compassUnsub = null; }
+      compassMessages = []; compassLoaded = false;
+      compassUnlockedThisSession = false;
+      updateMissedCallBadge(0);
+      if(connectionsUnsub){ connectionsUnsub(); connectionsUnsub = null; }
+      if(profileUnsub){ profileUnsub(); profileUnsub = null; }
+      myKeyPairPromise = null;
+      sharedKeyCache = {};
+      teardownCallConnection();
+      realThreadPreviews = {};
     }
   });
-} else {
-  // Firebase SDK missing or init failed (often SW timed out gstatic on mobile).
-  // Keep the form visible and retry — do NOT full-page reload (that felt like
-  // "sign in twice" when the first attempt raced the SDK).
-  try{
-    $('authGateLoading').style.display = 'none';
-    $('authGateForm').style.display = 'flex';
-    $('authGate').classList.add('active');
-  }catch(_){}
-  authStatus('Loading sign-in…', false);
-  let authTries = 0;
-  const authRetry = setInterval(function(){
-    authTries++;
-    if(initFirebaseApp() && fbAuth){
-      clearInterval(authRetry);
-      authStatus('Sign-in ready — try again.', false);
-      // Soft re-entry: reload only if listeners never attached (fbAuth was null at parse).
-      // Prefer a one-time soft reload so onAuthStateChanged binds cleanly.
-      try{
-        if(!window.__nalunoAuthSoftReload){
-          window.__nalunoAuthSoftReload = true;
-          setTimeout(function(){ try{ location.reload(); }catch(_){} }, 250);
-        }
-      }catch(_){}
-      return;
-    }
-    if(authTries >= 16){
-      clearInterval(authRetry);
-      authStatus('Sign-in could not load. Pull down to refresh once.', true);
-    }
-  }, 400);
+} else if(!firebaseReady()){
+  // firebase-config.js is still the placeholder. Do NOT auto-skip the gate —
+  // the previous behaviour of removing the gate after a short delay is exactly
+  // what made the sign-in page "never come" during testing. Keep the form visible
+  // and show a clear status so the first-time experience is never skipped.
+  // (When real config is present this branch is never taken.)
+  $('authGateLoading').style.display = 'none';
+  $('authGateForm').style.display = 'flex';
+  $('authGate').classList.add('active');
+  authStatus('Sign-in is not ready yet.', true);
 }
 
 /* Claims handles/{handle} -> uid via a transaction, so two people racing for the
