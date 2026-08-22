@@ -524,9 +524,17 @@ function playSegment(idx, direction=1){
 
     // Start NOW — opening the story is a user gesture; delayed play loses it on Samsung
     startPlayback();
-    setTimeout(function(){ if(v.paused) startPlayback(); }, 600);
-    setTimeout(function(){ if(v.paused){ startPlayback(); showKick(true); } }, 1600);
-    setTimeout(function(){ if(v.paused) showKick(true); }, 2400);
+    setTimeout(function(){ if(v.paused) startPlayback(); }, 500);
+    // Progressive HEVC/non-faststart often never advances — pull full blob once
+    setTimeout(function(){
+      if(playedOnce || !v.paused) return;
+      signalEnsurePlayableSrc(v, videoSrc).then(function(ok){
+        if(ok) startPlayback();
+        else showKick(true);
+      });
+    }, 900);
+    setTimeout(function(){ if(v.paused && !playedOnce){ startPlayback(); showKick(true); } }, 2000);
+    setTimeout(function(){ if(v.paused) showKick(true); }, 3200);
 
     armAdvance(durationMs > 0 ? durationMs + 2500 : 18000);
 

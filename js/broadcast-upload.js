@@ -17,11 +17,14 @@ function bcastUploadEndpoints(){
 }
 
 function bcastGuessType(blob){
-  if(blob && blob.type && blob.type !== 'application/octet-stream') return blob.type;
-  const name = (blob && blob.name) ? String(blob.name) : '';
-  if(/\.mp4$/i.test(name)) return 'video/mp4';
+  if(blob && blob.type && blob.type !== 'application/octet-stream' && blob.type !== 'application/download'){
+    if(String(blob.type).indexOf('webm') >= 0) return 'video/webm';
+    if(String(blob.type).indexOf('video/') === 0) return blob.type;
+  }
+  const name = (blob && (blob.name || blob._nalunoName)) ? String(blob.name || blob._nalunoName) : '';
   if(/\.webm$/i.test(name)) return 'video/webm';
   if(/\.mov$/i.test(name)) return 'video/quicktime';
+  if(/\.mp4$/i.test(name) || /\.m4v$/i.test(name) || /\.hevc$/i.test(name)) return 'video/mp4';
   return 'video/mp4';
 }
 

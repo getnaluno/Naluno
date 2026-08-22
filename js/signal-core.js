@@ -95,9 +95,222 @@ function nalunoGuessContentType(blob){
   if(/\.3gp$/i.test(name)) return 'video/3gpp';
   if(/\.mkv$/i.test(name)) return 'video/x-matroska';
   if(/\.mp4$/i.test(name)) return 'video/mp4';
+  if(/\.hevc$/i.test(name)) return 'video/mp4';
   if(nalunoFileLooksLikeImage(blob)) return 'image/jpeg';
+  // Samsung often hands empty MIME — still video for Signal/Broadcast
+  if(!t && (blob.size || 0) > 10000) return 'video/mp4';
   return 'video/mp4';
 }
+
+/** Read a slice of an MP4/MOV and detect HEVC (hvc1/hev1) — Samsung Camera default. */
+async function nalunoSniffIsHevc(blob){
+  try{
+    if(!blob || !blob.size) return false;
+    const n = Math.min(blob.size, 2 * 1024 * 1024);
+    const buf = await blob.slice(0, n).arrayBuffer();
+    const u8 = new Uint8Array(buf);
+    // ASCII scan for codec fourccs in sample description
+    let s = '';
+    for(let i = 0; i < u8.length; i++){
+      const c = u8[i];
+      s += (c >= 32 && c < 127) ? String.fromCharCode(c) : '.';
+    }
+    if(/hvc1|hev1|hvcC|dvh1|hvc /.test(s)) return true;
+    // Some Samsung exports only tag brand
+    if(/hevc|hev1/i.test(s)) return true;
+  }catch(_){}
+  return false;
+}
+
+function nalunoPickWebRecorderMime(){
+  if(typeof MediaRecorder === 'undefined') return '';
+  const list = [
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=vp8',
+    'video/webm',
+    'video/mp4',
+  ];
+  for(let i = 0; i < list.length; i++){
+    try{
+      if(MediaRecorder.isTypeSupported(list[i])) return list[i];
+    }catch(_){}
+  }
+  return '';
+}
+
+/**
+ * Transcode to a browser-safe progressive format (WebM VP8/VP9 or MP4).
+ * Used for Samsung HEVC so HTML5 <video> actually plays after upload.
+ * Caps at Signal length (4 min) and 720p — never used for multi-hour Broadcast.
+ */
+function nalunoTranscodeToWeb(file, onProgress, maxSeconds){
+  const capSec = (typeof maxSeconds === 'number' && maxSeconds > 0) ? maxSeconds : 240;
+  return new Promise(function(resolve, reject){
+    const mime = nalunoPickWebRecorderMime();
+    if(!mime){
+      reject(new Error('This phone cannot convert video — try a shorter clip from Files'));
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.setAttribute('playsinline', '');
+    video.preload = 'auto';
+    video.src = url;
+    let settled = false;
+    let recorder = null;
+    let stream = null;
+    let raf = 0;
+    const chunks = [];
+    const cleanup = function(){
+      if(raf) cancelAnimationFrame(raf);
+      try{ video.pause(); }catch(_){}
+      try{ video.removeAttribute('src'); video.load(); }catch(_){}
+      if(stream){
+        stream.getTracks().forEach(function(t){ try{ t.stop(); }catch(_){} });
+        stream = null;
+      }
+      try{ URL.revokeObjectURL(url); }catch(_){}
+    };
+    const fail = function(err){
+      if(settled) return;
+      settled = true;
+      cleanup();
+      reject(err instanceof Error ? err : new Error(String(err || 'Convert failed')));
+    };
+    const ok = function(blob){
+      if(settled) return;
+      settled = true;
+      cleanup();
+      resolve(blob);
+    };
+    video.onerror = function(){ fail(new Error('Could not open that video')); };
+    video.onloadedmetadata = function(){
+      try{
+        const duration = Math.min(video.duration || capSec, capSec);
+        if(!isFinite(duration) || duration < 0.2){
+          fail(new Error('Could not read video length'));
+          return;
+        }
+        const vw = video.videoWidth || 1280;
+        const vh = video.videoHeight || 720;
+        const maxEdge = 1280;
+        const scale = Math.min(1, maxEdge / Math.max(vw, vh));
+        const cw = Math.max(2, Math.round(vw * scale / 2) * 2);
+        const ch = Math.max(2, Math.round(vh * scale / 2) * 2);
+        const canvas = document.createElement('canvas');
+        canvas.width = cw;
+        canvas.height = ch;
+        const ctx = canvas.getContext('2d');
+        stream = canvas.captureStream(30);
+        // Prefer real audio track when available
+        try{
+          const mediaStream = (video.captureStream && video.captureStream())
+            || (video.mozCaptureStream && video.mozCaptureStream());
+          if(mediaStream){
+            mediaStream.getAudioTracks().forEach(function(t){
+              try{ stream.addTrack(t); }catch(_){}
+            });
+          }
+        }catch(_){}
+        const bits = Math.min(3500000, Math.max(1200000, Math.round(cw * ch * 2.2)));
+        try{
+          recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bits });
+        }catch(e){
+          try{ recorder = new MediaRecorder(stream); }
+          catch(e2){ fail(new Error('Recorder unavailable')); return; }
+        }
+        recorder.ondataavailable = function(ev){
+          if(ev.data && ev.data.size) chunks.push(ev.data);
+        };
+        recorder.onerror = function(){ fail(new Error('Convert failed')); };
+        recorder.onstop = function(){
+          const outType = (chunks[0] && chunks[0].type) || mime.split(';')[0] || 'video/webm';
+          const blob = new Blob(chunks, { type: outType });
+          if(!blob.size){ fail(new Error('Convert produced empty file')); return; }
+          try{ blob._nalunoName = 'signal-' + Date.now() + (outType.indexOf('mp4') >= 0 ? '.mp4' : '.webm'); }catch(_){}
+          ok(blob);
+        };
+        const draw = function(){
+          if(settled) return;
+          try{
+            if(video.videoWidth) ctx.drawImage(video, 0, 0, cw, ch);
+          }catch(_){}
+          if(onProgress && duration){
+            try{ onProgress(Math.min(0.99, (video.currentTime || 0) / duration)); }catch(_){}
+          }
+          if(video.currentTime >= duration - 0.05 || video.ended){
+            try{ if(recorder.state === 'recording') recorder.stop(); }catch(_){}
+            return;
+          }
+          raf = requestAnimationFrame(draw);
+        };
+        video.currentTime = 0;
+        const startRec = function(){
+          try{ recorder.start(1000); }catch(e){ fail(e); return; }
+          video.play().then(function(){
+            raf = requestAnimationFrame(draw);
+          }).catch(function(){
+            // play blocked — still draw from seeks
+            raf = requestAnimationFrame(draw);
+            const step = function(){
+              if(settled) return;
+              const next = Math.min(duration, (video.currentTime || 0) + 1/30);
+              video.currentTime = next;
+            };
+            video.addEventListener('seeked', function onSeek(){
+              if(settled){ video.removeEventListener('seeked', onSeek); return; }
+              try{ if(video.videoWidth) ctx.drawImage(video, 0, 0, cw, ch); }catch(_){}
+              if((video.currentTime || 0) >= duration - 0.05){
+                video.removeEventListener('seeked', onSeek);
+                try{ if(recorder.state === 'recording') recorder.stop(); }catch(_){}
+                return;
+              }
+              step();
+            });
+            step();
+          });
+        };
+        if(video.readyState >= 2) startRec();
+        else video.addEventListener('loadeddata', startRec, { once: true });
+        // Hard stop
+        setTimeout(function(){
+          if(settled) return;
+          try{ if(recorder && recorder.state === 'recording') recorder.stop(); }catch(_){}
+        }, Math.ceil(duration * 1000) + 15000);
+      }catch(e){ fail(e); }
+    };
+  });
+}
+
+/** Decide if Signal should convert before upload (HEVC / non-progressive). */
+async function nalunoPrepareSignalVideo(source, onProgress){
+  let blob = source;
+  if(typeof source === 'string'){
+    blob = await (await fetch(source)).blob();
+  }
+  if(!(blob instanceof Blob) && !(blob instanceof File)) throw new Error('Invalid media data');
+  if(!(blob.size > 0)) throw new Error('Empty file — pick again from Files (not Google Photos prepare)');
+  // Always set a real streaming Content-Type later; detect HEVC for convert
+  const hevc = await nalunoSniffIsHevc(blob);
+  if(hevc){
+    if(onProgress) onProgress(0.02, 'Converting Samsung video for playback…');
+    const out = await nalunoTranscodeToWeb(blob, function(p){
+      if(onProgress) onProgress(0.02 + p * 0.75, 'Converting… ' + Math.round(p * 100) + '%');
+    }, (typeof MAX_VIDEO_SECONDS === 'number' ? MAX_VIDEO_SECONDS : 240));
+    return out;
+  }
+  // Very large single POST will fail — chunk path handles it in uploadVideoToR2
+  return blob;
+}
+
+window.nalunoSniffIsHevc = nalunoSniffIsHevc;
+window.nalunoTranscodeToWeb = nalunoTranscodeToWeb;
+window.nalunoPrepareSignalVideo = nalunoPrepareSignalVideo;
+
 const VIDEO_PICK_ACCEPT = 'video/*';
 const IMAGE_PICK_ACCEPT = 'image/*';
 const BCAST_PICK_ACCEPT = VIDEO_PICK_ACCEPT + ',' + IMAGE_PICK_ACCEPT;
@@ -292,11 +505,19 @@ async function uploadVideoToR2(blobOrDataUrl){
     blob = await (await fetch(blobOrDataUrl)).blob();
   }
   if(!(blob instanceof Blob) && !(blob instanceof File)) throw new Error('Invalid media data');
-  const contentType = (typeof nalunoGuessContentType === 'function')
+  if(!(blob.size > 0)) throw new Error('Empty file — pick from Files app (Google Photos prepare can yield 0 bytes)');
+  let contentType = (typeof nalunoGuessContentType === 'function')
     ? nalunoGuessContentType(blob)
     : ((blob.type && blob.type !== 'application/octet-stream')
       ? blob.type
-      : (blob.name && String(blob.name).match(/\.mp4$/i) ? 'video/mp4' : 'video/mp4'));
+      : 'video/mp4');
+  // Never upload as octet-stream — browsers refuse to play it
+  if(!contentType || /octet-stream|application\/download|binary\//i.test(contentType)){
+    contentType = (blob.type && String(blob.type).indexOf('webm') >= 0) ? 'video/webm' : 'video/mp4';
+  }
+  if((blob.type && String(blob.type).indexOf('webm') >= 0) || (blob._nalunoName && /\.webm$/i.test(blob._nalunoName))){
+    contentType = 'video/webm';
+  }
 
   if((blob.size || 0) > UPLOAD_MAX_BYTES && typeof uploadSignalChunked === 'function'){
     return uploadSignalChunked(blob, contentType);
@@ -333,6 +554,12 @@ async function uploadVideoToR2(blobOrDataUrl){
     // Stale Firebase token → refresh once
     if(e && (e.status === 401 || e.status === 403 || /auth|token|permission|sign/i.test(e.message||''))){
       try{ return await once(true); }catch(e2){ e = e2; }
+    }
+    // Large or flaky single POST → chunked original upload
+    if(e && typeof uploadSignalChunked === 'function' && (blob.size || 0) > 8 * 1024 * 1024){
+      try{
+        return await uploadSignalChunked(blob, contentType);
+      }catch(e3){ e = e3; }
     }
     let msg = (e && e.message) ? e.message : 'Upload failed';
     if(/missing or insufficient permissions/i.test(msg)){

@@ -374,7 +374,22 @@ async function bcompPublish(){
           if(thumbUrl) thumbUrl = await persistThumbnailDataUrl(thumbUrl);
         }catch(_){}
         if(typeof uploadBroadcastFile !== 'function') throw new Error('Broadcast uploader not loaded');
-        mediaUrl = await uploadBroadcastFile(file, (frac, msg)=>{
+        let uploadFile = file;
+        // Short Samsung HEVC → convert so every browser can play. Long HEVC stays original
+        // (chunked); player uses blob fallback for those.
+        try{
+          const isHevc = (typeof nalunoSniffIsHevc === 'function') ? await nalunoSniffIsHevc(file) : false;
+          if(isHevc && (duration || 0) > 0 && duration <= 360 && typeof nalunoTranscodeToWeb === 'function'){
+            if(progress) progress('Converting Samsung video for playback…');
+            uploadFile = await nalunoTranscodeToWeb(file, function(p){
+              if(progress) progress('Converting… ' + Math.round((p||0)*100) + '%');
+            }, Math.min(360, duration + 1));
+          }
+        }catch(convErr){
+          console.warn('[bcast] HEVC convert skipped', convErr);
+          uploadFile = file;
+        }
+        mediaUrl = await uploadBroadcastFile(uploadFile, (frac, msg)=>{
           if(progress) progress(msg || ('Uploading… ' + Math.round((frac||0)*100) + '%'));
         });
         const seek = (typeof planSeekChapters === 'function')
