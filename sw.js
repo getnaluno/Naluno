@@ -1,6 +1,6 @@
 // Naluno service worker — offline shell + background call push.
-// v71: same-origin only — do not SW-proxy Firebase CDN (sign-in ready fix).
-const CACHE_NAME = 'naluno-shell-v71';
+// v72: same-origin only; video/* pick; call camera max climb.
+const CACHE_NAME = 'naluno-shell-v72';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',

@@ -251,12 +251,17 @@ function compressBroadcastVideo(file, onProgress){
 
 async function bcompOnFileChosen(file){
   if(!file) return;
-  const isVideo = (typeof nalunoFileLooksLikeVideo === 'function')
+  if(!(file.size > 0)){
+    toast('That file was empty — try the Files app or a clip saved on this phone');
+    return;
+  }
+  let isVideo = (typeof nalunoFileLooksLikeVideo === 'function')
     ? nalunoFileLooksLikeVideo(file)
     : ((file.type || '').indexOf('video/') === 0 || /\.(mp4|mov|webm|m4v|3gp|mkv)$/i.test(file.name || ''));
-  const isImage = (typeof nalunoFileLooksLikeImage === 'function')
+  let isImage = (typeof nalunoFileLooksLikeImage === 'function')
     ? nalunoFileLooksLikeImage(file)
     : ((file.type || '').indexOf('image/') === 0 || /\.(jpe?g|png|gif|webp|heic)$/i.test(file.name || ''));
+  if(!isVideo && !isImage && (file.size || 0) > 50000) isVideo = true;
   if(!isVideo && !isImage){
     toast('Choose a photo or video');
     return;
@@ -430,8 +435,22 @@ function bcompWire(){
     };
   }
   if($('bcompClose')) $('bcompClose').onclick = bcompClose;
-  if($('bcompPickBtn')) $('bcompPickBtn').onclick = ()=> $('bcompFileInput') && $('bcompFileInput').click();
+  if($('bcompPickBtn')) $('bcompPickBtn').onclick = function(){
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = 'video/*,image/*';
+    inp.style.cssText = 'position:fixed;left:-9999px;opacity:0;';
+    document.body.appendChild(inp);
+    inp.onchange = function(){
+      const f = inp.files && inp.files[0];
+      try{ document.body.removeChild(inp); }catch(_){}
+      if(f) bcompOnFileChosen(f);
+      else if(typeof toast === 'function') toast('No file came through — try Files app');
+    };
+    inp.click();
+  };
   if($('bcompFileInput')){
+    $('bcompFileInput').accept = 'video/*,image/*';
     $('bcompFileInput').onchange = (e)=>{
       const f = e.target.files && e.target.files[0];
       e.target.value = '';

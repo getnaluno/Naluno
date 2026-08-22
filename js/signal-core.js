@@ -61,14 +61,19 @@ function nalunoFileLooksLikeVideo(file){
   if(!file) return false;
   const t = String(file.type || '').toLowerCase();
   if(t.indexOf('video/') === 0) return true;
-  if(/\.(mp4|m4v|mov|webm|3gp|3g2|mkv|avi|hevc)$/i.test(file.name || '')) return true;
+  if(t && t.indexOf('image/') === 0) return false;
+  const name = String(file.name || '');
+  if(/\.(mp4|m4v|mov|webm|3gp|3g2|mkv|avi|hevc)$/i.test(name)) return true;
+  // Android/Google Photos after export: empty MIME, name without extension
+  if(!t && (file.size || 0) > 50000) return true;
   return false;
 }
 function nalunoFileLooksLikeImage(file){
   if(!file) return false;
   const t = String(file.type || '').toLowerCase();
   if(t.indexOf('image/') === 0) return true;
-  if(/\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i.test(file.name || '')) return true;
+  const name = String(file.name || '');
+  if(/\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i.test(name)) return true;
   return false;
 }
 function nalunoFiniteDuration(d){
@@ -93,8 +98,8 @@ function nalunoGuessContentType(blob){
   if(nalunoFileLooksLikeImage(blob)) return 'image/jpeg';
   return 'video/mp4';
 }
-const VIDEO_PICK_ACCEPT = 'video/*,video/mp4,video/quicktime,video/webm,video/3gpp,video/x-m4v,.mp4,.mov,.webm,.m4v,.3gp,.mkv';
-const IMAGE_PICK_ACCEPT = 'image/*,image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp,.heic';
+const VIDEO_PICK_ACCEPT = 'video/*';
+const IMAGE_PICK_ACCEPT = 'image/*';
 const BCAST_PICK_ACCEPT = VIDEO_PICK_ACCEPT + ',' + IMAGE_PICK_ACCEPT;
 
 function nalunoProbeDuration(file, timeoutMs){

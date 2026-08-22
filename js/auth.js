@@ -133,7 +133,7 @@ async function nativeGoogleSignIn(){
 
 $('googleSignInBtn').onclick = async ()=>{
   if(!fbAuth){ initFirebaseApp(); }
-  if(!fbAuth){ authStatus('Sign-in could not load. Refresh the page once.', true); return; }
+  if(!fbAuth){ authStatus('Sign-in could not load. Pull to refresh once.', true); return; }
 
   // Capacitor: use native Google Sign-In → Firebase credential (no Chrome redirect).
   if(isNativeShell()){
@@ -217,7 +217,7 @@ if($('authUseEmailBtn')){
 
 function nalunoHandleSignIn(){
   if(!fbAuth){ initFirebaseApp(); }
-  if(!fbAuth){ authStatus('Sign-in could not load. Refresh the page once.', true); return; }
+  if(!fbAuth){ authStatus('Sign-in could not load. Pull to refresh once.', true); return; }
   const { email, password, handle, recovery } = emailAuthInputs();
   if(!password || password.length < 6){ authStatus('Enter your password (6+ characters).', true); return; }
   if(!email){
@@ -241,7 +241,7 @@ function nalunoHandleSignIn(){
 
 async function nalunoHandleSignUp(){
   if(!fbAuth){ initFirebaseApp(); }
-  if(!fbAuth){ authStatus('Sign-in could not load. Refresh the page once.', true); return; }
+  if(!fbAuth){ authStatus('Sign-in could not load. Pull to refresh once.', true); return; }
   const { email, password, handle } = emailAuthInputs();
   if(!password || password.length < 6){ authStatus('Password needs to be at least 6 characters.', true); return; }
   const em = $('authEmailInput');
@@ -307,7 +307,7 @@ async function nalunoHandleSignUp(){
 };
 async function nalunoForgotPassword(){
   if(!fbAuth){ initFirebaseApp(); }
-  if(!fbAuth){ authStatus('Sign-in could not load. Refresh the page once.', true); return; }
+  if(!fbAuth){ authStatus('Sign-in could not load. Pull to refresh once.', true); return; }
   const { email, handle, recovery } = emailAuthInputs();
   const visibleEmail = ($('authEmailInput') && $('authEmailInput').style.display !== 'none' && $('authEmailInput').value.trim()) || '';
   const target = (recovery || visibleEmail || '').trim();
@@ -487,7 +487,7 @@ if(fbAuth){
     }
     if(authTries >= 12){
       clearInterval(authRetry);
-      authStatus('Sign-in could not load. Check connection, then refresh the page.', true);
+      authStatus('Sign-in could not load. Pull down to refresh, or clear site data for getnaluno.com once.', true);
     }
   }, 500);
 }

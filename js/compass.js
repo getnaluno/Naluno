@@ -286,6 +286,11 @@ function openComposer(mode){
       sel.innerHTML = '<option value="">None — standalone Signal</option>' +
         mine.map(b => `<option value="${b.id}">${escapeHtml(b.title||'Broadcast')}</option>`).join('');
     }
+    // Default Signal composer to Video so Gallery opens with video/* (not photos).
+    try{
+      const vchip = document.querySelector('.type-chip[data-type="video"]');
+      if(vchip) vchip.click();
+    }catch(_){}
   }
   $('composer').classList.add('active');
   document.body.classList.add('naluno-overlay');
@@ -332,9 +337,13 @@ document.querySelectorAll('.type-chip').forEach(chip=>{
     } else {
       $('mediaComposer').style.display = 'block';
       $('textComposer').style.display = 'none';
-      $('mediaFileInput').accept = composerType==='video'
-        ? ((typeof VIDEO_PICK_ACCEPT === 'string') ? VIDEO_PICK_ACCEPT : 'video/*,video/mp4,.mp4,.mov,.webm,.m4v')
-        : ((typeof IMAGE_PICK_ACCEPT === 'string') ? IMAGE_PICK_ACCEPT : 'image/*');
+      if(composerType==='video'){
+        $('mediaFileInput').accept = 'video/*';
+        $('mediaFileInput').removeAttribute('multiple');
+      } else {
+        $('mediaFileInput').accept = (typeof IMAGE_PICK_ACCEPT === 'string') ? IMAGE_PICK_ACCEPT : 'image/*';
+        $('mediaFileInput').setAttribute('multiple', '');
+      }
       $('mediaFileInput').value = '';
       $('uploadDropLabel').textContent = composerType==='video' ? 'Choose videos from your library' : 'Choose photos from your library';
       $('uploadDrop').style.display = 'flex';
@@ -347,7 +356,37 @@ document.querySelectorAll('.type-chip').forEach(chip=>{
   };
 });
 
-$('uploadDrop').onclick = ()=> $('mediaFileInput').click();
+function nalunoOpenMediaPicker(){
+  // Fresh <input> each time — reusing a hidden input after Google Photos "Prepare"
+  // often yields zero files on Samsung. video/* only (no extensions) avoids transcode.
+  if(composerType === 'video'){
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = 'video/*';
+    inp.style.cssText = 'position:fixed;left:-9999px;width:1px;height:1px;opacity:0;';
+    document.body.appendChild(inp);
+    inp.addEventListener('change', function(){
+      const files = inp.files;
+      try{ document.body.removeChild(inp); }catch(_){}
+      if(!files || !files.length){
+        if(typeof toast === 'function') toast('No video came through — try Files app or a clip saved on this phone');
+        return;
+      }
+      if($('bgProcessBanner')){
+        $('bgProcessBanner').style.display = 'flex';
+        if(typeof setBgProgress === 'function') setBgProgress(0.05, 'Opening in Naluno…');
+      }
+      Promise.resolve(handleFiles(files)).finally(function(){
+        if($('bgProcessBanner') && !postInProgress) $('bgProcessBanner').style.display = 'none';
+      });
+    }, { once: true });
+    inp.click();
+    return;
+  }
+  const el = $('mediaFileInput');
+  if(el){ el.accept = (typeof IMAGE_PICK_ACCEPT === 'string') ? IMAGE_PICK_ACCEPT : 'image/*'; el.click(); }
+}
+$('uploadDrop').onclick = ()=> nalunoOpenMediaPicker();
 $('mediaFileInput').onchange = (e)=>{
   const files = e.target.files;
   e.target.value = '';
@@ -402,18 +441,22 @@ let trimCurrentFile = null;
 let trimObjectUrl = null;
 
 async function handleFiles(fileList){
-  const files = Array.from(fileList);
-  // Soft ceiling only — no hard 60MB reject. Long clips still open the trim UI.
-  // Size is handled by pass-through + smart compress on post.
+  const files = Array.from(fileList || []).filter(function(f){ return f && (f.size || 0) > 0; });
+  if(!files.length){
+    if(typeof toast === 'function') toast('That file was empty — pick again from the Files app');
+    return;
+  }
+  // Soft ceiling only — no hard reject. Long clips still open the trim UI.
   const SOFT_FORCE_TRIM_BYTES = 200 * 1024 * 1024;
   const needsTrim = [];
   for(const file of files){
+    // Video chip = always video (Android often hands empty MIME / no extension).
     const looksVideo = (typeof nalunoFileLooksLikeVideo === 'function')
       ? nalunoFileLooksLikeVideo(file)
       : ((file.type || '').indexOf('video/') === 0 || /\.(mp4|mov|webm|m4v|3gp|mkv)$/i.test(file.name || ''));
-    const treatAsVideo = composerType==='video' || looksVideo;
+    const treatAsVideo = (composerType === 'video') || looksVideo;
     if(treatAsVideo){
-      if(composerType!=='video' && looksVideo) composerType = 'video';
+      if(composerType !== 'video') composerType = 'video';
       const duration = await probeVideoDuration(file);
       const safeDur = (duration && isFinite(duration) && duration > 0) ? duration : null;
       if((safeDur && safeDur > MAX_VIDEO_SECONDS + 1) || file.size > SOFT_FORCE_TRIM_BYTES){
@@ -789,7 +832,7 @@ function renderFilmstrip(){
   document.querySelectorAll('[data-remove]').forEach(el=>{
     el.onclick = (e)=>{ e.stopPropagation(); removeComposerItem(parseInt(el.dataset.remove)); };
   });
-  $('filmstripAdd').onclick = ()=> $('mediaFileInput').click();
+  $('filmstripAdd').onclick = ()=> nalunoOpenMediaPicker();
   $('transitionSection').style.display = composerItems.length>1 ? 'block' : 'none';
 }
 
