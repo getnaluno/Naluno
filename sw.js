@@ -1,6 +1,6 @@
 // Naluno service worker — offline shell + background call push.
-// v70: 2.5s network then cache (Samsung onLine lies; hung fetch never .catch).
-const CACHE_NAME = 'naluno-shell-v70';
+// v71: same-origin only — do not SW-proxy Firebase CDN (sign-in ready fix).
+const CACHE_NAME = 'naluno-shell-v71';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',
@@ -38,8 +38,10 @@ self.addEventListener('fetch', event=>{
   if(event.request.cache === 'no-store' || event.request.cache === 'reload') return;
   const url = new URL(event.request.url);
   const isSameOrigin = url.origin === self.location.origin;
-  const isFirebaseSdkScript = url.hostname === 'www.gstatic.com' && url.pathname.includes('firebasejs');
-  if(!isSameOrigin && !isFirebaseSdkScript) return;
+  // NEVER intercept Firebase CDN (gstatic). A 2.5s timeout on large SDK scripts
+  // leaves firebase undefined on mobile → "Sign-in is not ready yet."
+  // Sign-in needs the network anyway; let the browser load CDN scripts normally.
+  if(!isSameOrigin) return;
 
   const path = url.pathname || '';
   const isAppCode = path.includes('/js/') || path.endsWith('.js') ||
@@ -79,7 +81,7 @@ self.addEventListener('fetch', event=>{
     try{
       const response = await netTimeout(event.request, 2500);
       if(response && response.ok){
-        if(isSameOrigin || isFirebaseSdkScript) putBare(response);
+        if(isSameOrigin) putBare(response);
         return response;
       }
     }catch(_){}

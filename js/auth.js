@@ -16,9 +16,15 @@ function firebaseReady(){
     && typeof firebaseConfig !== 'undefined'
     && firebaseConfig.apiKey && firebaseConfig.apiKey !== 'YOUR_API_KEY';
 }
-if(firebaseReady()){
+function initFirebaseApp(){
+  if(fbAuth) return true;
+  if(!firebaseReady()) return false;
   try{
-    fbApp = firebase.initializeApp(firebaseConfig);
+    if(firebase.apps && firebase.apps.length){
+      fbApp = firebase.app();
+    } else {
+      fbApp = firebase.initializeApp(firebaseConfig);
+    }
     fbAuth = firebase.auth();
     // Explicitly request durable local persistence so a successful sign-in survives
     // page reloads, browser restarts, and the service-worker shell. Without this some
@@ -41,8 +47,14 @@ if(firebaseReady()){
       // older browser, private/incognito browsing, no IndexedDB) — the app still
       // works perfectly fine without it, just without the instant-repaint benefit.
     });
-  }catch(e){ console.error('Firebase init failed:', e); }
+    return true;
+  }catch(e){
+    console.error('Firebase init failed:', e);
+    fbAuth = null;
+    return false;
+  }
 }
+initFirebaseApp();
 
 function authStatus(msg, isError){
   const el = $('authGateStatus');
@@ -120,7 +132,8 @@ async function nativeGoogleSignIn(){
 }
 
 $('googleSignInBtn').onclick = async ()=>{
-  if(!fbAuth){ authStatus('Sign-in is not ready yet.', true); return; }
+  if(!fbAuth){ initFirebaseApp(); }
+  if(!fbAuth){ authStatus('Sign-in could not load. Refresh the page once.', true); return; }
 
   // Capacitor: use native Google Sign-In → Firebase credential (no Chrome redirect).
   if(isNativeShell()){
@@ -203,7 +216,8 @@ if($('authUseEmailBtn')){
 }
 
 function nalunoHandleSignIn(){
-  if(!fbAuth){ authStatus('Sign-in is not ready yet.', true); return; }
+  if(!fbAuth){ initFirebaseApp(); }
+  if(!fbAuth){ authStatus('Sign-in could not load. Refresh the page once.', true); return; }
   const { email, password, handle, recovery } = emailAuthInputs();
   if(!password || password.length < 6){ authStatus('Enter your password (6+ characters).', true); return; }
   if(!email){
@@ -226,7 +240,8 @@ function nalunoHandleSignIn(){
 };
 
 async function nalunoHandleSignUp(){
-  if(!fbAuth){ authStatus('Sign-in is not ready yet.', true); return; }
+  if(!fbAuth){ initFirebaseApp(); }
+  if(!fbAuth){ authStatus('Sign-in could not load. Refresh the page once.', true); return; }
   const { email, password, handle } = emailAuthInputs();
   if(!password || password.length < 6){ authStatus('Password needs to be at least 6 characters.', true); return; }
   const em = $('authEmailInput');
@@ -291,7 +306,8 @@ async function nalunoHandleSignUp(){
   }
 };
 async function nalunoForgotPassword(){
-  if(!fbAuth){ authStatus('Sign-in is not ready yet.', true); return; }
+  if(!fbAuth){ initFirebaseApp(); }
+  if(!fbAuth){ authStatus('Sign-in could not load. Refresh the page once.', true); return; }
   const { email, handle, recovery } = emailAuthInputs();
   const visibleEmail = ($('authEmailInput') && $('authEmailInput').style.display !== 'none' && $('authEmailInput').value.trim()) || '';
   const target = (recovery || visibleEmail || '').trim();
@@ -451,16 +467,29 @@ if(fbAuth){
       realThreadPreviews = {};
     }
   });
-} else if(!firebaseReady()){
-  // firebase-config.js is still the placeholder. Do NOT auto-skip the gate —
-  // the previous behaviour of removing the gate after a short delay is exactly
-  // what made the sign-in page "never come" during testing. Keep the form visible
-  // and show a clear status so the first-time experience is never skipped.
-  // (When real config is present this branch is never taken.)
-  $('authGateLoading').style.display = 'none';
-  $('authGateForm').style.display = 'flex';
-  $('authGate').classList.add('active');
-  authStatus('Sign-in is not ready yet.', true);
+} else {
+  // Firebase SDK missing or init failed (often SW timed out gstatic on mobile).
+  // Keep the form visible and retry briefly — do not leave a permanent dead gate.
+  try{
+    $('authGateLoading').style.display = 'none';
+    $('authGateForm').style.display = 'flex';
+    $('authGate').classList.add('active');
+  }catch(_){}
+  authStatus('Loading sign-in…', false);
+  let authTries = 0;
+  const authRetry = setInterval(function(){
+    authTries++;
+    if(initFirebaseApp()){
+      clearInterval(authRetry);
+      authStatus('', false);
+      try{ location.reload(); }catch(_){}
+      return;
+    }
+    if(authTries >= 12){
+      clearInterval(authRetry);
+      authStatus('Sign-in could not load. Check connection, then refresh the page.', true);
+    }
+  }, 500);
 }
 
 /* Claims handles/{handle} -> uid via a transaction, so two people racing for the
