@@ -524,7 +524,25 @@
 
 /* 1:1 signal preview — fullscreen reveals native aspect */
 .bviewer-body.square-preview{ aspect-ratio:1/1; max-height:70vh; margin:auto; width:min(100%,70vh); }
-.bviewer-body.native-preview{ aspect-ratio:auto; max-height:none; width:100%; height:auto; }
+.bviewer-body.native-preview{
+  aspect-ratio:9/16;
+  max-height:min(78vh, 720px);
+  width:100%;
+  margin:auto;
+  background:#000;
+  border-radius:14px;
+  overflow:hidden;
+}
+.bviewer-body.native-preview video{
+  object-fit:contain !important;
+  background:#000;
+}
+/* Soft liveliness — nav active glow, msg bubble polish */
+.navbar .navbtn.active svg{ filter:drop-shadow(0 0 6px rgba(124,255,178,.45)); }
+.msg-row.them .msg-bubble{ box-shadow:0 1px 0 rgba(255,255,255,.03); }
+.msg-row.me .msg-bubble{ box-shadow:0 4px 14px rgba(124,255,178,.12); }
+.bspace-hero{ transition:aspect-ratio .28s ease, max-height .28s ease; }
+#bspaceFitToggle{ backdrop-filter:blur(8px); }
 
 
 /* Compact Band voice notes — keep mint shell, smaller footprint */

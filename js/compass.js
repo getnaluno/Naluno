@@ -147,7 +147,8 @@ async function sendCompassMessage(){
     renderCompassMessages();
     let wreply = 'Weather is updating…';
     try{
-      if(typeof formatWeatherReply === 'function') wreply = await formatWeatherReply();
+      // Pass the user question so tonight/tomorrow precip is answered directly.
+      if(typeof formatWeatherReply === 'function') wreply = await formatWeatherReply(text);
     }catch(_){}
     compassMessages = compassMessages.filter(m => m !== thinkingW);
     compassMessages.push({ from:'compass', text: wreply, ts: Date.now() });
@@ -203,8 +204,14 @@ async function sendCompassMessage(){
     const messages = recentHistory.slice();
     let weatherHint = '';
     try{
-      if(typeof formatWeatherReply === 'function') weatherHint = await formatWeatherReply();
+      if(typeof weatherSystemHint === 'function') weatherHint = await weatherSystemHint();
+      else if(typeof formatWeatherReply === 'function') weatherHint = await formatWeatherReply(text);
     }catch(_){}
+    // Ground the model: this thread is remembered; use weather/find hints; give reasoned guesses.
+    messages.unshift({
+      role: 'system',
+      content: 'You are Compass inside Naluno. You DO remember this conversation — the last turns are in the message list. Never claim you have no memory of this chat. When the user asks about weather or rain tonight, use the live weather data below and give a clear estimated answer (low/moderate/high chance with a percent when available). Prefer short, useful replies. Never send the user to another app.',
+    });
     if(findHint){
       messages.unshift({
         role: 'system',
@@ -214,7 +221,7 @@ async function sendCompassMessage(){
     if(weatherHint){
       messages.unshift({
         role: 'system',
-        content: 'You can report live weather. Never say you cannot tell the weather. Never send them to another app. Now: ' + weatherHint,
+        content: 'Live weather + short forecast (Open-Meteo, free). Use this for any rain/tonight/tomorrow question. Never say you only have current conditions. Data: ' + weatherHint,
       });
     }
     const res = await fetch(COMPASS_WORKER_URL, {

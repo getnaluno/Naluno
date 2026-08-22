@@ -259,7 +259,18 @@ function playSegment(idx, direction=1){
   }
 
   const body = $('bviewerBody');
-  if(body){ body.classList.add('square-preview'); body.classList.remove('native-preview'); }
+  // Photos stay square; video uses native aspect so landscape/portrait aren't
+  // cropped into a frozen-looking still.
+  const isVideoSeg = currentSegments[idx] && currentSegments[idx].type === 'video';
+  if(body){
+    if(isVideoSeg){
+      body.classList.remove('square-preview');
+      body.classList.add('native-preview');
+    } else {
+      body.classList.add('square-preview');
+      body.classList.remove('native-preview');
+    }
+  }
 
   clearSegTimer();
   currentSegmentIndex = idx;
@@ -267,7 +278,7 @@ function playSegment(idx, direction=1){
   const animClass = idx===0 ? '' : transitionClassFor(seg.transitionIn, direction);
   $('bviewerTime').textContent = seg.type==='avatar' ? seg.time : timeAgo(seg.createdAt);
 
-  const captionHtml = seg.caption ? `<div style="position:absolute; bottom:56px; left:20px; right:20px; color:#fff; font-size:14px; text-align:center;">${escapeHtml(seg.caption)}</div>` : '';
+  const captionHtml = seg.caption ? `<div style="position:absolute; bottom:56px; left:20px; right:20px; color:#fff; font-size:14px; text-align:center; z-index:2;">${escapeHtml(seg.caption)}</div>` : '';
   const cropT = cropTransform(seg.crop);
   let bodyHtml, durationMs;
   if(seg.type==='avatar'){
@@ -278,14 +289,12 @@ function playSegment(idx, direction=1){
     durationMs = 4000;
   } else if(seg.type==='video'){
     const videoSrc = signalPlaySrc(seg);
-    // Use the pre-generated thumbnail as poster so the viewer never flashes a black
-    // or static first-frame while the real video buffers. This is the actual cause of
-    // the reported "brief static thumbnail then audio starts ahead of video".
     const posterAttr = seg.thumbDataUrl ? ` poster="${seg.thumbDataUrl}"` : '';
-    bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" src="${videoSrc}" preload="auto" playsinline${posterAttr} style="filter:${seg.filterCss}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT}; border-radius:16px;"></video>${captionHtml}<div class="cam-expand-btn" id="bviewerMuteToggle" style="right:auto; left:14px; top:14px;" role="button" aria-label="Toggle sound"></div>`;
-    durationMs = Math.round((isFinite(seg.duration) && seg.duration > 0 ? seg.duration : 0) * 1000);
+    // contain + centered: full frame visible; no forced square crop that looks like a still.
+    bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" src="${videoSrc}" preload="auto" playsinline webkit-playsinline${posterAttr} style="filter:${seg.filterCss || ''}; position:absolute; inset:0; width:100%; height:100%; object-fit:contain; background:#000; border-radius:12px;"></video>${captionHtml}<div class="cam-expand-btn" id="bviewerMuteToggle" style="right:auto; left:14px; top:14px; z-index:3;" role="button" aria-label="Toggle sound"></div>`;
+    durationMs = Math.round((isFinite(seg.duration) && seg.duration > 0 ? seg.duration : 15) * 1000);
   } else {
-    bodyHtml = `<img class="${animClass}" src="${signalPlaySrc(seg)}" style="filter:${seg.filterCss}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT}; border-radius:16px;" />${captionHtml}`;
+    bodyHtml = `<img class="${animClass}" src="${signalPlaySrc(seg)}" style="filter:${seg.filterCss || ''}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT || 'translate(-50%,-50%)'}; border-radius:16px;" />${captionHtml}`;
     durationMs = 4000;
   }
   $('bviewerBody').innerHTML = bodyHtml;
@@ -293,9 +302,20 @@ function playSegment(idx, direction=1){
 
   if(seg.type==='video'){
     const v = $('bviewerActiveVideo');
+    const videoSrc = signalPlaySrc(seg);
     const trimStart = (isFinite(seg.trimStart) && seg.trimStart > 0) ? seg.trimStart : 0;
     const trimEnd = (isFinite(seg.trimEnd) && seg.trimEnd > trimStart) ? seg.trimEnd : 0;
-    v.onended = ()=>{
+    let playedOnce = false;
+    let advanceArmed = false;
+
+    const armAdvance = function(ms){
+      if(advanceArmed) return;
+      advanceArmed = true;
+      const wait = Math.max(1200, ms || durationMs || 15000);
+      segTimer = setTimeout(function(){ goToSegment(idx + 1); }, wait);
+    };
+
+    v.onended = function(){
       const d = v.duration;
       const t = v.currentTime || 0;
       const falseEnd = (typeof nalunoFiniteDuration === 'function')
@@ -306,47 +326,75 @@ function playSegment(idx, direction=1){
         v.play().catch(function(){});
         return;
       }
-      goToSegment(idx+1);
+      clearSegTimer();
+      goToSegment(idx + 1);
     };
     currentVideoEl = v;
     v.ontimeupdate = function(){
+      if(!playedOnce && (v.currentTime || 0) > 0.05) playedOnce = true;
       if(trimEnd && (v.currentTime || 0) >= trimEnd - 0.05){
         v.ontimeupdate = null;
-        goToSegment(idx+1);
+        clearSegTimer();
+        goToSegment(idx + 1);
       }
     };
+    // Stalled / waiting recovery — Samsung often pauses after the first buffer.
+    const kickPlay = function(){
+      if(v.paused){
+        v.play().catch(function(){
+          try{ v.muted = true; }catch(_){}
+          v.play().catch(function(){});
+        });
+      }
+    };
+    v.addEventListener('waiting', kickPlay);
+    v.addEventListener('stalled', kickPlay);
+    v.addEventListener('suspend', function(){
+      if(!playedOnce) setTimeout(kickPlay, 400);
+    });
+
     if(typeof bindMediaElement === 'function' && videoSrc) bindMediaElement(v, videoSrc);
     else if(typeof attachPlaybackGuard === 'function') attachPlaybackGuard(v, videoSrc);
+
     const muteBtn = $('bviewerMuteToggle');
-    const renderMuteIcon = muted=>{
+    const renderMuteIcon = function(muted){
+      if(!muteBtn) return;
       muteBtn.innerHTML = muted
         ? `<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M3 10v4h4l5 5V5L7 10H3z" fill="currentColor"/><path d="M16 9l6 6M22 9l-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`
         : `<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M3 10v4h4l5 5V5L7 10H3z" fill="currentColor"/><path d="M16 8a5 5 0 010 8M19 5a9 9 0 010 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
     };
-    // Wait for canplay so the first decoded frame exists, then play(). Poster covers
-    // the visual gap. Unmute only after the playing event so audio does not start
-    // ahead of the first painted frame (the classic out-of-sync glitch).
-    const startPlayback = ()=>{
+
+    const startPlayback = function(){
       renderMuteIcon(true);
-      v.muted = true; // start muted to satisfy autoplay policies, then unmute on playing
-      const onPlaying = ()=>{
+      v.muted = true;
+      const onPlaying = function(){
         v.removeEventListener('playing', onPlaying);
-        // Small delay lets the first video frame actually paint before audio starts.
-        requestAnimationFrame(()=>{
+        playedOnce = true;
+        requestAnimationFrame(function(){
           v.muted = false;
           renderMuteIcon(false);
         });
+        // Re-arm bar with real duration once playback is alive.
+        const d = trimEnd ? (trimEnd - trimStart) : v.duration;
+        if(isFinite(d) && d > 0){
+          durationMs = Math.round(d * 1000);
+          updateBars(idx, durationMs);
+          clearSegTimer();
+          advanceArmed = false;
+          armAdvance(durationMs + 800);
+        }
       };
       v.addEventListener('playing', onPlaying);
-      v.play().catch(()=>{
+      v.play().catch(function(){
         v.removeEventListener('playing', onPlaying);
         v.muted = true;
         renderMuteIcon(true);
-        v.play().catch(()=>{});
+        v.play().catch(function(){});
       });
     };
+
     const applyRealLength = function(){
-      if(trimStart && Math.abs((v.currentTime||0) - trimStart) > 0.2){
+      if(trimStart && Math.abs((v.currentTime || 0) - trimStart) > 0.2){
         try{ v.currentTime = trimStart; }catch(_){}
       }
       const d = trimEnd ? (trimEnd - trimStart) : v.duration;
@@ -355,23 +403,40 @@ function playSegment(idx, direction=1){
         updateBars(idx, durationMs);
         try{ seg.duration = d; }catch(_){}
       }
+      // Adapt body aspect to the real video once metadata is known.
+      if(body && v.videoWidth > 0 && v.videoHeight > 0){
+        body.style.aspectRatio = v.videoWidth + ' / ' + v.videoHeight;
+        body.style.maxHeight = 'min(78vh, 720px)';
+        body.style.width = '100%';
+      }
     };
     v.addEventListener('loadedmetadata', applyRealLength);
     if(v.readyState >= 1) applyRealLength();
-    if(v.readyState >= 3){ // HAVE_FUTURE_DATA or better
+
+    if(v.readyState >= 3){
       startPlayback();
     } else {
-      const onReady = ()=>{ v.removeEventListener('canplay', onReady); startPlayback(); };
+      const onReady = function(){ v.removeEventListener('canplay', onReady); startPlayback(); };
       v.addEventListener('canplay', onReady);
-      setTimeout(()=>{ if(v.paused){ v.removeEventListener('canplay', onReady); startPlayback(); } }, 2000);
+      setTimeout(function(){
+        if(v.paused){ v.removeEventListener('canplay', onReady); startPlayback(); }
+      }, 1200);
+      // Second kick — some Samsung builds fire canplay then stay paused.
+      setTimeout(function(){ if(v.paused) startPlayback(); }, 2800);
     }
-    muteBtn.onclick = ()=>{
-      v.muted = !v.muted;
-      renderMuteIcon(v.muted);
-      if(!v.muted) v.play().catch(()=>{});
-    };
+
+    // Hard fallback: never leave a silent poster forever.
+    armAdvance(durationMs > 0 ? durationMs + 2500 : 18000);
+
+    if(muteBtn){
+      muteBtn.onclick = function(){
+        v.muted = !v.muted;
+        renderMuteIcon(v.muted);
+        if(!v.muted) v.play().catch(function(){});
+      };
+    }
   } else {
-    segTimer = setTimeout(()=> goToSegment(idx+1), durationMs);
+    segTimer = setTimeout(function(){ goToSegment(idx + 1); }, durationMs);
   }
 }
 function goToSegment(idx){
@@ -421,6 +486,13 @@ function sortSignalSegments(segments){
   // become their own group of one, so nothing about older posts breaks.
   const groups = {};
   segments.forEach(seg=>{
+    // Normalize: anything with a real videoUrl must play as video (not a still photo).
+    if(seg && !seg.type && (seg.videoUrl || seg.mediaUrl)){
+      seg.type = 'video';
+    }
+    if(seg && seg.type === 'photo' && seg.videoUrl){
+      seg.type = 'video';
+    }
     const gid = seg.groupId || ('legacy-' + seg.id);
     if(!groups[gid]) groups[gid] = [];
     groups[gid].push(seg);
