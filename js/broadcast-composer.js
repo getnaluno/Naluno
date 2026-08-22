@@ -289,7 +289,7 @@ async function bcompOnFileChosen(file){
 
   bcompKind = 'video';
   if(prev){
-    prev.innerHTML = `<video src="${bcompPreviewUrl}" controls playsinline style="width:100%;max-height:42vh;border-radius:14px;background:#000;"></video>`;
+    prev.innerHTML = `<video src="${bcompPreviewUrl}" playsinline webkit-playsinline style="width:100%;max-height:42vh;border-radius:14px;background:#000;"></video>`;
   }
 
   // Enable Publish immediately — duration probe must not trap the picker.

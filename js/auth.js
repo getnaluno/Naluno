@@ -422,54 +422,82 @@ if(fbAuth){
   }).catch(e=>{
     authStatus('Could not finish sign-in. Try again.', true);
   });
+  // Wire once. Firebase often emits null BEFORE restoring the local session —
+  // wiping lastUid / forcing the gate on that first null is why sign-in felt like
+  // "tap twice". Only treat null as signed-out after a short settle, or on explicit sign-out.
+  let nullAuthTimer = null;
+  function showSignedOutGate(){
+    authStatus('');
+    try{
+      $('authGateLoading').style.display = 'none';
+      $('authGateForm').style.display = 'flex';
+      document.body.classList.add('naluno-gated');
+      $('authGate').classList.add('active');
+    }catch(_){}
+  }
+  function clearSessionListeners(){
+    if(threadsListUnsubscribe){ threadsListUnsubscribe(); threadsListUnsubscribe = null; }
+    if(activeThreadUnsubscribe){ activeThreadUnsubscribe(); activeThreadUnsubscribe = null; }
+    if(bandPresenceUnsub){ bandPresenceUnsub(); bandPresenceUnsub = null; }
+    if(bandMessagesUnsub){ bandMessagesUnsub(); bandMessagesUnsub = null; }
+    if(incomingCallUnsub){ incomingCallUnsub(); incomingCallUnsub = null; }
+    if(missedCallUnsub){ missedCallUnsub(); missedCallUnsub = null; }
+    if(compassUnsub){ compassUnsub(); compassUnsub = null; }
+    compassMessages = []; compassLoaded = false;
+    compassUnlockedThisSession = false;
+    try{ updateMissedCallBadge(0); }catch(_){}
+    if(connectionsUnsub){ connectionsUnsub(); connectionsUnsub = null; }
+    if(profileUnsub){ profileUnsub(); profileUnsub = null; }
+    myKeyPairPromise = null;
+    sharedKeyCache = {};
+    try{ teardownCallConnection(); }catch(_){}
+    realThreadPreviews = {};
+  }
   fbAuth.onAuthStateChanged(user=>{
     clearTimeout(authTimeout);
+    if(nullAuthTimer){ clearTimeout(nullAuthTimer); nullAuthTimer = null; }
     authResolved = true;
     currentUser = user;
     if(user){
       try{ localStorage.setItem('nalunoLastUid', user.uid); }catch(_){}
       authStatus('');
       document.body.classList.remove('naluno-gated');
-      $('authGate').classList.remove('active');
+      try{ $('authGate').classList.remove('active'); }catch(_){}
       loadRealProfile(user);
       try{ if(typeof resumeFindNalunoIfEnabled === 'function') resumeFindNalunoIfEnabled(); }catch(_){}
       try{ if(typeof showInstallPromptSoon === 'function') setTimeout(showInstallPromptSoon, 1600); }catch(_){}
       try{ if(typeof listenFindNalunoDevices === 'function') listenFindNalunoDevices(); }catch(_){}
     } else {
-      try{ localStorage.removeItem('nalunoLastUid'); }catch(_){}
-      authStatus('');
-      $('authGateLoading').style.display = 'none';
-      $('authGateForm').style.display = 'flex';
-      document.body.classList.add('naluno-gated');
-      $('authGate').classList.add('active');
-      if(lastUid && !window.__nalunoSigningOut){
-        const cached = nalunoReadCachedProfile(lastUid);
-        if(cached){
-          currentProfile = { photo:null, ...DEFAULT_PROFILE, ...cached };
-          try{ applyProfileToUI(currentProfile); }catch(_){}
-        }
+      // Explicit sign-out → gate immediately and clear remembered uid.
+      if(window.__nalunoSigningOut){
+        try{ localStorage.removeItem('nalunoLastUid'); }catch(_){}
+        window.__nalunoSigningOut = false;
+        clearSessionListeners();
+        showSignedOutGate();
+        return;
       }
-      if(threadsListUnsubscribe){ threadsListUnsubscribe(); threadsListUnsubscribe = null; }
-      if(activeThreadUnsubscribe){ activeThreadUnsubscribe(); activeThreadUnsubscribe = null; }
-      if(bandPresenceUnsub){ bandPresenceUnsub(); bandPresenceUnsub = null; }
-      if(bandMessagesUnsub){ bandMessagesUnsub(); bandMessagesUnsub = null; }
-      if(incomingCallUnsub){ incomingCallUnsub(); incomingCallUnsub = null; }
-      if(missedCallUnsub){ missedCallUnsub(); missedCallUnsub = null; }
-      if(compassUnsub){ compassUnsub(); compassUnsub = null; }
-      compassMessages = []; compassLoaded = false;
-      compassUnlockedThisSession = false;
-      updateMissedCallBadge(0);
-      if(connectionsUnsub){ connectionsUnsub(); connectionsUnsub = null; }
-      if(profileUnsub){ profileUnsub(); profileUnsub = null; }
-      myKeyPairPromise = null;
-      sharedKeyCache = {};
-      teardownCallConnection();
-      realThreadPreviews = {};
+      // First null is often "session still restoring". Keep any cached UI; only
+      // open the gate if still null after settle.
+      nullAuthTimer = setTimeout(function(){
+        if(currentUser) return;
+        // Confirmed signed out
+        try{ localStorage.removeItem('nalunoLastUid'); }catch(_){}
+        clearSessionListeners();
+        if(lastUid){
+          const cached = nalunoReadCachedProfile(lastUid);
+          if(cached){
+            currentProfile = { photo:null, ...DEFAULT_PROFILE, ...cached };
+            try{ applyProfileToUI(currentProfile); }catch(_){}
+          }
+        }
+        showSignedOutGate();
+      }, 1400);
     }
   });
 } else {
   // Firebase SDK missing or init failed (often SW timed out gstatic on mobile).
-  // Keep the form visible and retry briefly — do not leave a permanent dead gate.
+  // Keep the form visible and retry — do NOT full-page reload (that felt like
+  // "sign in twice" when the first attempt raced the SDK).
   try{
     $('authGateLoading').style.display = 'none';
     $('authGateForm').style.display = 'flex';
@@ -479,17 +507,24 @@ if(fbAuth){
   let authTries = 0;
   const authRetry = setInterval(function(){
     authTries++;
-    if(initFirebaseApp()){
+    if(initFirebaseApp() && fbAuth){
       clearInterval(authRetry);
-      authStatus('', false);
-      try{ location.reload(); }catch(_){}
+      authStatus('Sign-in ready — try again.', false);
+      // Soft re-entry: reload only if listeners never attached (fbAuth was null at parse).
+      // Prefer a one-time soft reload so onAuthStateChanged binds cleanly.
+      try{
+        if(!window.__nalunoAuthSoftReload){
+          window.__nalunoAuthSoftReload = true;
+          setTimeout(function(){ try{ location.reload(); }catch(_){} }, 250);
+        }
+      }catch(_){}
       return;
     }
-    if(authTries >= 12){
+    if(authTries >= 16){
       clearInterval(authRetry);
-      authStatus('Sign-in could not load. Pull down to refresh, or clear site data for getnaluno.com once.', true);
+      authStatus('Sign-in could not load. Pull down to refresh once.', true);
     }
-  }, 500);
+  }, 400);
 }
 
 /* Claims handles/{handle} -> uid via a transaction, so two people racing for the

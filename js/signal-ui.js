@@ -253,32 +253,75 @@ function signalRememberView(contactUid, segments){
   }catch(_){}
 }
 
+
+/** If remote <video> stays paused, fetch bytes into a blob: URL (same-origin worker
+ *  already allows CORS). Fixes Samsung cases where progressive Range play hangs on poster. */
+function signalEnsurePlayableSrc(videoEl, remoteUrl){
+  return new Promise(function(resolve){
+    if(!videoEl || !remoteUrl){ resolve(false); return; }
+    if(String(remoteUrl).indexOf('blob:') === 0 || String(remoteUrl).indexOf('data:') === 0){
+      resolve(true); return;
+    }
+    if(videoEl.dataset && videoEl.dataset.blobTried === '1'){ resolve(false); return; }
+    try{ videoEl.dataset.blobTried = '1'; }catch(_){}
+    const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    const t = setTimeout(function(){ try{ if(ctrl) ctrl.abort(); }catch(_){} }, 12000);
+    fetch(remoteUrl, ctrl ? { signal: ctrl.signal, mode: 'cors', credentials: 'omit' } : { mode: 'cors', credentials: 'omit' })
+      .then(function(r){
+        if(!r.ok) throw new Error('fetch ' + r.status);
+        return r.blob();
+      })
+      .then(function(blob){
+        clearTimeout(t);
+        if(!blob || !blob.size){ resolve(false); return; }
+        const u = URL.createObjectURL(blob);
+        try{ videoEl.src = u; }catch(_){}
+        try{ videoEl.load(); }catch(_){}
+        resolve(true);
+      })
+      .catch(function(){
+        clearTimeout(t);
+        resolve(false);
+      });
+  });
+}
+
 function playSegment(idx, direction=1){
   if(viewingMine && $('bviewerRemove')){
     $('bviewerRemove').style.display = 'inline-flex';
   }
 
   const body = $('bviewerBody');
-  // Photos stay square; video uses native aspect so landscape/portrait aren't
-  // cropped into a frozen-looking still.
-  const isVideoSeg = currentSegments[idx] && currentSegments[idx].type === 'video';
+  const isVideoSeg = currentSegments[idx] && (
+    currentSegments[idx].type === 'video'
+    || !!(currentSegments[idx].videoUrl || currentSegments[idx].mediaUrl)
+  );
   if(body){
     if(isVideoSeg){
       body.classList.remove('square-preview');
       body.classList.add('native-preview');
+      body.style.minHeight = '42vh';
     } else {
       body.classList.add('square-preview');
       body.classList.remove('native-preview');
+      body.style.minHeight = '';
+      body.style.aspectRatio = '';
     }
   }
 
   clearSegTimer();
   currentSegmentIndex = idx;
   const seg = currentSegments[idx];
+  // Normalize type at play time — old docs sometimes stored video as photo
+  if(seg && (seg.videoUrl || seg.mediaUrl) && seg.type !== 'video' && seg.type !== 'text' && seg.type !== 'avatar'){
+    seg.type = 'video';
+  }
   const animClass = idx===0 ? '' : transitionClassFor(seg.transitionIn, direction);
   $('bviewerTime').textContent = seg.type==='avatar' ? seg.time : timeAgo(seg.createdAt);
 
-  const captionHtml = seg.caption ? `<div style="position:absolute; bottom:56px; left:20px; right:20px; color:#fff; font-size:14px; text-align:center; z-index:2;">${escapeHtml(seg.caption)}</div>` : '';
+  const captionHtml = seg.caption
+    ? `<div style="position:absolute; bottom:56px; left:20px; right:20px; color:#fff; font-size:14px; text-align:center; z-index:2;">${escapeHtml(seg.caption)}</div>`
+    : '';
   const cropT = cropTransform(seg.crop);
   let bodyHtml, durationMs;
   if(seg.type==='avatar'){
@@ -287,32 +330,42 @@ function playSegment(idx, direction=1){
   } else if(seg.type==='text'){
     bodyHtml = `<div class="bviewer-text-card ${animClass}" style="background:${seg.bg}; border-radius:20px; width:100%; height:100%;">${escapeHtml(seg.text)}</div>`;
     durationMs = 4000;
-  } else if(seg.type==='video'){
+  } else if(seg.type==='video' || isVideoSeg){
     const videoSrc = signalPlaySrc(seg);
-    const posterAttr = seg.thumbDataUrl ? ` poster="${seg.thumbDataUrl}"` : '';
-    // contain + centered: full frame visible; no forced square crop that looks like a still.
-    bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" src="${videoSrc}" preload="auto" playsinline webkit-playsinline${posterAttr} style="filter:${seg.filterCss || ''}; position:absolute; inset:0; width:100%; height:100%; object-fit:contain; background:#000; border-radius:12px;"></video>${captionHtml}<div class="cam-expand-btn" id="bviewerMuteToggle" style="right:auto; left:14px; top:14px; z-index:3;" role="button" aria-label="Toggle sound"></div>`;
+    const safeSrc = String(videoSrc || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+    const posterAttr = seg.thumbDataUrl
+      ? ` poster="${String(seg.thumbDataUrl).replace(/"/g,'&quot;')}"`
+      : '';
+    // relative (not absolute) so flex parent keeps real height; contain so landscape is full frame
+    bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" src="${safeSrc}" preload="auto" playsinline webkit-playsinline muted${posterAttr} style="filter:${seg.filterCss || ''}; display:block; width:100%; height:100%; max-height:78vh; object-fit:contain; background:#000; border-radius:12px;"></video>${captionHtml}<div class="cam-expand-btn" id="bviewerMuteToggle" style="right:auto; left:14px; top:14px; z-index:3;" role="button" aria-label="Toggle sound"></div><button type="button" id="bviewerPlayKick" style="display:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;width:64px;height:64px;border-radius:50%;border:none;background:rgba(124,255,178,.92);color:#0D0F17;font-size:22px;box-shadow:0 8px 28px rgba(0,0,0,.45);cursor:pointer;" aria-label="Play">▶</button>`;
     durationMs = Math.round((isFinite(seg.duration) && seg.duration > 0 ? seg.duration : 15) * 1000);
   } else {
-    bodyHtml = `<img class="${animClass}" src="${signalPlaySrc(seg)}" style="filter:${seg.filterCss || ''}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT || 'translate(-50%,-50%)'}; border-radius:16px;" />${captionHtml}`;
+    const imgSrc = signalPlaySrc(seg);
+    const safeImg = String(imgSrc || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+    bodyHtml = `<img class="${animClass}" src="${safeImg}" style="filter:${seg.filterCss || ''}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; transform:${cropT || 'translate(-50%,-50%)'}; border-radius:16px;" />${captionHtml}`;
     durationMs = 4000;
   }
   $('bviewerBody').innerHTML = bodyHtml;
   updateBars(idx, durationMs);
 
-  if(seg.type==='video'){
+  if(seg.type==='video' || isVideoSeg){
     const v = $('bviewerActiveVideo');
     const videoSrc = signalPlaySrc(seg);
     const trimStart = (isFinite(seg.trimStart) && seg.trimStart > 0) ? seg.trimStart : 0;
     const trimEnd = (isFinite(seg.trimEnd) && seg.trimEnd > trimStart) ? seg.trimEnd : 0;
     let playedOnce = false;
     let advanceArmed = false;
+    const kickBtn = $('bviewerPlayKick');
 
     const armAdvance = function(ms){
       if(advanceArmed) return;
       advanceArmed = true;
       const wait = Math.max(1200, ms || durationMs || 15000);
       segTimer = setTimeout(function(){ goToSegment(idx + 1); }, wait);
+    };
+
+    const showKick = function(on){
+      if(kickBtn) kickBtn.style.display = on ? 'block' : 'none';
     };
 
     v.onended = function(){
@@ -331,30 +384,47 @@ function playSegment(idx, direction=1){
     };
     currentVideoEl = v;
     v.ontimeupdate = function(){
-      if(!playedOnce && (v.currentTime || 0) > 0.05) playedOnce = true;
+      if(!playedOnce && (v.currentTime || 0) > 0.05){
+        playedOnce = true;
+        showKick(false);
+        try{ if(v.poster) v.removeAttribute('poster'); }catch(_){}
+      }
       if(trimEnd && (v.currentTime || 0) >= trimEnd - 0.05){
         v.ontimeupdate = null;
         clearSegTimer();
         goToSegment(idx + 1);
       }
     };
-    // Stalled / waiting recovery — Samsung often pauses after the first buffer.
+
     const kickPlay = function(){
-      if(v.paused){
-        v.play().catch(function(){
-          try{ v.muted = true; }catch(_){}
-          v.play().catch(function(){});
+      if(!v) return;
+      try{ v.muted = true; }catch(_){}
+      const p = v.play();
+      if(p && p.then){
+        p.then(function(){
+          playedOnce = true;
+          showKick(false);
+          requestAnimationFrame(function(){
+            try{ v.muted = false; }catch(_){}
+            renderMuteIcon(false);
+          });
+        }).catch(function(){
+          showKick(true);
         });
       }
     };
-    v.addEventListener('waiting', kickPlay);
+    v.addEventListener('waiting', function(){ setTimeout(kickPlay, 300); });
     v.addEventListener('stalled', kickPlay);
     v.addEventListener('suspend', function(){
       if(!playedOnce) setTimeout(kickPlay, 400);
     });
 
+    // Prefer bindMediaElement for recovery + vault; always keep preload=auto
     if(typeof bindMediaElement === 'function' && videoSrc) bindMediaElement(v, videoSrc);
     else if(typeof attachPlaybackGuard === 'function') attachPlaybackGuard(v, videoSrc);
+    try{ v.preload = 'auto'; }catch(_){}
+    try{ if(typeof containMediaElement === 'function') containMediaElement(v); }catch(_){}
+    try{ if(typeof lockOutChromeMediaSession === 'function') lockOutChromeMediaSession(); }catch(_){}
 
     const muteBtn = $('bviewerMuteToggle');
     const renderMuteIcon = function(muted){
@@ -370,11 +440,12 @@ function playSegment(idx, direction=1){
       const onPlaying = function(){
         v.removeEventListener('playing', onPlaying);
         playedOnce = true;
+        showKick(false);
+        try{ if(v.poster) v.removeAttribute('poster'); }catch(_){}
         requestAnimationFrame(function(){
-          v.muted = false;
+          try{ v.muted = false; }catch(_){}
           renderMuteIcon(false);
         });
-        // Re-arm bar with real duration once playback is alive.
         const d = trimEnd ? (trimEnd - trimStart) : v.duration;
         if(isFinite(d) && d > 0){
           durationMs = Math.round(d * 1000);
@@ -383,13 +454,29 @@ function playSegment(idx, direction=1){
           advanceArmed = false;
           armAdvance(durationMs + 800);
         }
+        try{ if(typeof lockOutChromeMediaSession === 'function') lockOutChromeMediaSession(); }catch(_){}
       };
       v.addEventListener('playing', onPlaying);
+      try{ v.load(); }catch(_){}
       v.play().catch(function(){
         v.removeEventListener('playing', onPlaying);
         v.muted = true;
         renderMuteIcon(true);
-        v.play().catch(function(){});
+        v.play().catch(function(){
+          // Last resort: download to blob URL then play (Samsung Range/HEVC hang)
+          signalEnsurePlayableSrc(v, videoSrc).then(function(ok){
+            if(ok){
+              v.muted = true;
+              v.play().then(function(){
+                playedOnce = true;
+                showKick(false);
+                requestAnimationFrame(function(){ try{ v.muted = false; }catch(_){} renderMuteIcon(false); });
+              }).catch(function(){ showKick(true); });
+            } else {
+              showKick(true);
+            }
+          });
+        });
       });
     };
 
@@ -403,31 +490,54 @@ function playSegment(idx, direction=1){
         updateBars(idx, durationMs);
         try{ seg.duration = d; }catch(_){}
       }
-      // Adapt body aspect to the real video once metadata is known.
       if(body && v.videoWidth > 0 && v.videoHeight > 0){
         body.style.aspectRatio = v.videoWidth + ' / ' + v.videoHeight;
-        body.style.maxHeight = 'min(78vh, 720px)';
-        body.style.width = '100%';
+        // Landscape + phone landscape → claim almost the full screen
+        let orientL = false;
+        try{
+          if(screen.orientation && screen.orientation.type)
+            orientL = String(screen.orientation.type).indexOf('landscape') >= 0;
+          else orientL = window.innerWidth > window.innerHeight;
+        }catch(_){}
+        const isLand = v.videoWidth >= v.videoHeight;
+        if(orientL && isLand){
+          body.style.maxHeight = 'min(96vh, 100dvh)';
+          body.style.width = '100%';
+          try{
+            const app = document.querySelector('.app');
+            if(app) app.classList.add('naluno-landscape-media');
+            document.body.classList.add('naluno-landscape-media');
+          }catch(_){}
+        } else {
+          body.style.maxHeight = 'min(78vh, 720px)';
+          body.style.width = '100%';
+          try{
+            document.body.classList.remove('naluno-landscape-media');
+            const app = document.querySelector('.app');
+            if(app) app.classList.remove('naluno-landscape-media');
+          }catch(_){}
+        }
       }
     };
     v.addEventListener('loadedmetadata', applyRealLength);
     if(v.readyState >= 1) applyRealLength();
 
-    if(v.readyState >= 3){
-      startPlayback();
-    } else {
-      const onReady = function(){ v.removeEventListener('canplay', onReady); startPlayback(); };
-      v.addEventListener('canplay', onReady);
-      setTimeout(function(){
-        if(v.paused){ v.removeEventListener('canplay', onReady); startPlayback(); }
-      }, 1200);
-      // Second kick — some Samsung builds fire canplay then stay paused.
-      setTimeout(function(){ if(v.paused) startPlayback(); }, 2800);
-    }
+    // Start NOW — opening the story is a user gesture; delayed play loses it on Samsung
+    startPlayback();
+    setTimeout(function(){ if(v.paused) startPlayback(); }, 600);
+    setTimeout(function(){ if(v.paused){ startPlayback(); showKick(true); } }, 1600);
+    setTimeout(function(){ if(v.paused) showKick(true); }, 2400);
 
-    // Hard fallback: never leave a silent poster forever.
     armAdvance(durationMs > 0 ? durationMs + 2500 : 18000);
 
+    if(kickBtn){
+      kickBtn.onclick = function(e){
+        e.preventDefault();
+        e.stopPropagation();
+        startPlayback();
+        setTimeout(function(){ if(!v.paused) showKick(false); }, 200);
+      };
+    }
     if(muteBtn){
       muteBtn.onclick = function(){
         v.muted = !v.muted;
@@ -505,7 +615,18 @@ function sortSignalSegments(segments){
   groupList.sort((a,b)=> a.earliestCreatedAt - b.earliestCreatedAt);
   return groupList.flatMap(g=>g.group);
 }
-function closeBroadcast(){ clearSegTimer(); $('bviewer').classList.remove('active'); }
+function closeBroadcast(){
+  clearSegTimer();
+  try{ currentVideoEl && currentVideoEl.pause(); }catch(_){}
+  currentVideoEl = null;
+  $('bviewer').classList.remove('active');
+  try{
+    document.body.classList.remove('naluno-landscape-media');
+    const app = document.querySelector('.app');
+    if(app) app.classList.remove('naluno-landscape-media');
+  }catch(_){}
+  try{ if(typeof lockOutChromeMediaSession === 'function') lockOutChromeMediaSession(); }catch(_){}
+}
 $('bviewerClose').onclick = closeBroadcast;
 function deleteCurrentSignalClip(){
   if(!viewingMine){

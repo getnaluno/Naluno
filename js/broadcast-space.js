@@ -255,7 +255,7 @@ function renderBspaceConversation(docs){
     let body = '';
     if(isVoice){
       body = `<div style="font-family:var(--font-mono);font-size:10px;color:var(--mint);margin-bottom:6px;">Voice note</div>
-        <video class="band-audio-player" controls playsinline preload="metadata" src="${bspaceEscape(media)}" style="width:100%;max-width:280px;height:44px;border-radius:8px;background:#0a0c14;"></video>`;
+        <video class="band-audio-player" playsinline preload="metadata" src="${bspaceEscape(media)}" style="width:100%;max-width:280px;height:44px;border-radius:8px;background:#0a0c14;"></video>`;
     } else if(isPhoto){
       body = `<img src="${bspaceEscape(media)}" alt="Photo" loading="lazy" style="max-width:100%;max-height:320px;border-radius:12px;display:block;background:#0a0c14;" onerror="this.style.display='none';this.nextElementSibling&&(this.nextElementSibling.style.display='block');" />
         <div style="display:none;color:var(--text-dim);font-size:12px;">Photo couldn’t load</div>`;
@@ -1463,9 +1463,33 @@ function adaptBspaceHeroToVideo(){
     }
 
     if(orientLandscape && landscape){
-      hero.style.maxHeight = 'min(92vh, 860px)';
+      // 16:9 (or any landscape) + phone tilted → claim full phone screen
+      hero.style.maxHeight = '100dvh';
+      hero.style.height = '100dvh';
+      hero.style.width = '100%';
+      hero.style.borderRadius = '0';
+      try{
+        document.body.classList.add('naluno-landscape-media');
+        const app = document.querySelector('.app');
+        if(app) app.classList.add('naluno-landscape-media');
+      }catch(_){}
     } else if(portrait){
       hero.style.maxHeight = 'min(82vh, 780px)';
+      hero.style.height = '';
+      hero.style.borderRadius = '';
+      try{
+        document.body.classList.remove('naluno-landscape-media');
+        const app = document.querySelector('.app');
+        if(app) app.classList.remove('naluno-landscape-media');
+      }catch(_){}
+    } else {
+      hero.style.maxHeight = 'min(82vh, 780px)';
+      hero.style.height = '';
+      try{
+        document.body.classList.remove('naluno-landscape-media');
+        const app = document.querySelector('.app');
+        if(app) app.classList.remove('naluno-landscape-media');
+      }catch(_){}
     }
 
     v.style.width = '100%';
