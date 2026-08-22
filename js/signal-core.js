@@ -55,25 +55,144 @@ function resolveMediaUrl(u){
   return u;
 }
 
-/** Attach error + load recovery on a media element. */
+/** Attach error + load recovery on a media element. Playback uses preload=auto.
+ *  metadata-only was starving Android after a few minutes (false `ended`). */
+function nalunoFileLooksLikeVideo(file){
+  if(!file) return false;
+  const t = String(file.type || '').toLowerCase();
+  if(t.indexOf('video/') === 0) return true;
+  if(/\.(mp4|m4v|mov|webm|3gp|3g2|mkv|avi|hevc)$/i.test(file.name || '')) return true;
+  return false;
+}
+function nalunoFileLooksLikeImage(file){
+  if(!file) return false;
+  const t = String(file.type || '').toLowerCase();
+  if(t.indexOf('image/') === 0) return true;
+  if(/\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i.test(file.name || '')) return true;
+  return false;
+}
+function nalunoFiniteDuration(d){
+  return typeof d === 'number' && isFinite(d) && d > 0 && d !== Infinity;
+}
+function nalunoGuessContentType(blob){
+  const t = (blob && blob.type) ? String(blob.type).toLowerCase() : '';
+  if(t && t !== 'application/octet-stream' && t !== 'application/download' && t !== 'binary/octet-stream'){
+    return blob.type;
+  }
+  const name = (blob && blob.name) ? String(blob.name) : '';
+  if(/\.(jpe?g)$/i.test(name)) return 'image/jpeg';
+  if(/\.png$/i.test(name)) return 'image/png';
+  if(/\.webp$/i.test(name)) return 'image/webp';
+  if(/\.gif$/i.test(name)) return 'image/gif';
+  if(/\.webm$/i.test(name)) return 'video/webm';
+  if(/\.mov$/i.test(name)) return 'video/quicktime';
+  if(/\.m4v$/i.test(name)) return 'video/x-m4v';
+  if(/\.3gp$/i.test(name)) return 'video/3gpp';
+  if(/\.mkv$/i.test(name)) return 'video/x-matroska';
+  if(/\.mp4$/i.test(name)) return 'video/mp4';
+  if(nalunoFileLooksLikeImage(blob)) return 'image/jpeg';
+  return 'video/mp4';
+}
+const VIDEO_PICK_ACCEPT = 'video/*,video/mp4,video/quicktime,video/webm,video/3gpp,video/x-m4v,.mp4,.mov,.webm,.m4v,.3gp,.mkv';
+const IMAGE_PICK_ACCEPT = 'image/*,image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp,.heic';
+const BCAST_PICK_ACCEPT = VIDEO_PICK_ACCEPT + ',' + IMAGE_PICK_ACCEPT;
+
+function nalunoProbeDuration(file, timeoutMs){
+  return new Promise(function(resolve){
+    if(!file){ resolve(null); return; }
+    const v = document.createElement('video');
+    v.preload = 'metadata';
+    v.muted = true;
+    v.playsInline = true;
+    const url = URL.createObjectURL(file);
+    let done = false;
+    const finish = function(d){
+      if(done) return;
+      done = true;
+      try{ URL.revokeObjectURL(url); }catch(_){}
+      try{ v.removeAttribute('src'); v.load(); }catch(_){}
+      resolve(nalunoFiniteDuration(d) ? d : null);
+    };
+    v.onloadedmetadata = function(){ finish(v.duration); };
+    v.onloadeddata = function(){ if(!done) finish(v.duration); };
+    v.onerror = function(){ finish(null); };
+    v.src = url;
+    setTimeout(function(){ finish(v.duration); }, timeoutMs || 2800);
+  });
+}
+
+function attachPlaybackGuard(el, url){
+  if(!el || el.dataset.nalunoGuard === '1') return;
+  el.dataset.nalunoGuard = '1';
+  let recovering = false;
+  const recover = function(){
+    if(recovering || !el) return;
+    const d = el.duration;
+    const t = el.currentTime || 0;
+    if(el.ended && nalunoFiniteDuration(d) && t >= d - 0.4) return;
+    recovering = true;
+    try{ el.preload = 'auto'; }catch(_){}
+    try{
+      if(el.ended || (el.paused && el.readyState < 3)){
+        try{ el.currentTime = Math.max(0, t + 0.001); }catch(_){}
+      }
+      const p = el.play();
+      if(p && p.catch) p.catch(function(){});
+    }catch(_){}
+    setTimeout(function(){ recovering = false; }, 1400);
+  };
+  el.addEventListener('waiting', function(){
+    setTimeout(function(){
+      if(el.ended) return;
+      if(!el.paused && el.readyState < 3) recover();
+      else if(el.paused){ el.play().catch(function(){}); }
+    }, 450);
+  });
+  el.addEventListener('stalled', recover);
+  el.addEventListener('ended', function(){
+    const d = el.duration;
+    const t = el.currentTime || 0;
+    if(!nalunoFiniteDuration(d) || t < d - 0.45) recover();
+  });
+  if(typeof vaultIngestUrl === 'function' && url && String(url).indexOf('blob:') !== 0){
+    vaultIngestUrl(url).catch(function(){});
+  }
+}
+
 function bindMediaElement(el, rawUrl){
   if(!el) return;
   const url = resolveMediaUrl(rawUrl);
   if(!url) return;
   el.setAttribute('playsinline', '');
-  el.setAttribute('preload', 'metadata');
+  el.setAttribute('webkit-playsinline', '');
+  el.setAttribute('preload', 'auto');
+  try{ el.preload = 'auto'; }catch(_){}
   if(typeof containMediaElement === 'function') containMediaElement(el);
-  // Do NOT set crossOrigin — on Android WebView/Chrome it can block playback
-  // even when the Worker sends Access-Control-Allow-Origin.
-  el.src = url;
+  const current = (el.currentSrc || el.getAttribute('src') || '').split('?')[0];
+  const nextBare = url.split('?')[0];
+  if(!(current && nextBare && current.indexOf(nextBare) >= 0)){
+    const key = (typeof vaultKeyForUrl === 'function') ? vaultKeyForUrl(url) : '';
+    const cached = (key && typeof vaultSyncSrc === 'function') ? vaultSyncSrc(key) : '';
+    el.src = cached || url;
+  }
   el.onerror = function(){
     console.warn('[media] load failed', url, el.error && el.error.code);
-    // one retry with cache-bust
     if(!el.dataset.retried){
       el.dataset.retried = '1';
-      el.src = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'r=' + Date.now();
+      const key = (typeof vaultKeyForUrl === 'function') ? vaultKeyForUrl(url) : '';
+      if(key && typeof vaultObjectUrl === 'function'){
+        vaultObjectUrl(key).then(function(u){
+          if(u){ el.src = u; el.play().catch(function(){}); }
+          else { el.src = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'r=' + Date.now(); }
+        }).catch(function(){
+          el.src = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'r=' + Date.now();
+        });
+      } else {
+        el.src = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'r=' + Date.now();
+      }
     }
   };
+  attachPlaybackGuard(el, url);
 }
 
 /** Soft single-request ceiling. Large files must compress or split (Worker body limits).
@@ -168,9 +287,15 @@ async function uploadVideoToR2(blobOrDataUrl){
     blob = await (await fetch(blobOrDataUrl)).blob();
   }
   if(!(blob instanceof Blob) && !(blob instanceof File)) throw new Error('Invalid media data');
-  const contentType = (blob.type && blob.type !== 'application/octet-stream')
-    ? blob.type
-    : (blob.name && String(blob.name).match(/\.mp4$/i) ? 'video/mp4' : 'video/webm');
+  const contentType = (typeof nalunoGuessContentType === 'function')
+    ? nalunoGuessContentType(blob)
+    : ((blob.type && blob.type !== 'application/octet-stream')
+      ? blob.type
+      : (blob.name && String(blob.name).match(/\.mp4$/i) ? 'video/mp4' : 'video/mp4'));
+
+  if((blob.size || 0) > UPLOAD_MAX_BYTES && typeof uploadSignalChunked === 'function'){
+    return uploadSignalChunked(blob, contentType);
+  }
 
   async function once(forceRefresh){
     const idToken = await currentUser.getIdToken(!!forceRefresh);
@@ -214,6 +339,96 @@ async function uploadVideoToR2(blobOrDataUrl){
     }
     throw new Error(msg);
   }
+}
+
+/** Chunked original-file upload via the Signal worker /b/* path.
+ *  Stays in this module — Broadcast's uploader is not used. */
+async function uploadSignalChunked(blob, contentType){
+  if(!currentUser) throw new Error('Sign in again to upload');
+  const base = SIGNAL_UPLOAD_WORKER_URL.replace(/\/+$/, '');
+  const size = blob.size || 0;
+  if(size < 1) throw new Error('Empty video');
+  const CHUNK = 8 * 1024 * 1024;
+  const authH = async function(force){
+    const token = await currentUser.getIdToken(!!force);
+    return { 'Authorization': 'Bearer ' + token };
+  };
+  let headers = await authH(false);
+  const initRes = await fetch(base + '/b/init', {
+    method: 'POST',
+    headers: Object.assign({ 'Content-Type': 'application/json' }, headers),
+    body: JSON.stringify({ contentType: contentType || 'video/mp4', bytes: size }),
+  });
+  const initBody = await initRes.json().catch(()=>({}));
+  if(initRes.status === 401 || initRes.status === 403){
+    headers = await authH(true);
+    const retry = await fetch(base + '/b/init', {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, headers),
+      body: JSON.stringify({ contentType: contentType || 'video/mp4', bytes: size }),
+    });
+    const retryBody = await retry.json().catch(()=>({}));
+    if(!retry.ok) throw new Error(retryBody.error || 'Upload init failed');
+    initBody.key = retryBody.key;
+    initBody.uploadId = retryBody.uploadId;
+  } else if(!initRes.ok){
+    throw new Error(initBody.error || 'Upload init failed');
+  }
+  const key = initBody.key;
+  const uploadId = initBody.uploadId;
+  if(!key || !uploadId) throw new Error('Upload session missing');
+  const parts = [];
+  const totalParts = Math.max(1, Math.ceil(size / CHUNK));
+  for(let i = 0; i < totalParts; i++){
+    const start = i * CHUNK;
+    const end = Math.min(size, start + CHUNK);
+    const chunk = blob.slice(start, end);
+    const partNum = i + 1;
+    const partUrl = base + '/b/part?key=' + encodeURIComponent(key)
+      + '&uploadId=' + encodeURIComponent(uploadId)
+      + '&part=' + partNum;
+    let attempt = 0;
+    let partRes = null;
+    let partBody = {};
+    while(attempt < 6){
+      attempt++;
+      try{
+        partRes = await fetch(partUrl, {
+          method: 'PUT',
+          headers: Object.assign({ 'Content-Type': 'application/octet-stream' }, headers),
+          body: chunk,
+        });
+        if(partRes.status === 401 || partRes.status === 403){
+          headers = await authH(true);
+          partRes = await fetch(partUrl, {
+            method: 'PUT',
+            headers: Object.assign({ 'Content-Type': 'application/octet-stream' }, headers),
+            body: chunk,
+          });
+        }
+        partBody = await partRes.json().catch(()=>({}));
+        if(partRes.ok) break;
+        if(partRes.status >= 400 && partRes.status < 500 && partRes.status !== 408 && partRes.status !== 429){
+          throw new Error(partBody.error || ('Part ' + partNum + ' failed'));
+        }
+      }catch(e){
+        if(attempt >= 6) throw e;
+        await new Promise(function(r){ setTimeout(r, 700 * attempt); });
+      }
+    }
+    if(!partRes || !partRes.ok) throw new Error(partBody.error || ('Part ' + partNum + ' failed'));
+    parts.push({ part: partNum, etag: partBody.etag });
+  }
+  const doneRes = await fetch(base + '/b/complete', {
+    method: 'POST',
+    headers: Object.assign({ 'Content-Type': 'application/json' }, headers),
+    body: JSON.stringify({ key, uploadId, parts, bytes: size }),
+  });
+  const doneBody = await doneRes.json().catch(()=>({}));
+  if(!doneRes.ok) throw new Error(doneBody.error || 'Upload complete failed');
+  let url = doneBody.url || (doneBody.key ? (base + '/o/' + String(doneBody.key).replace(/^\/+/, '')) : '');
+  if(!url) throw new Error('Upload succeeded but no URL returned');
+  return (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(url) : url;
 }
 
 function pruneExpiredSignal(){

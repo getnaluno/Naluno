@@ -171,10 +171,11 @@ function renderSparkMessages(rows){
   }
   box.innerHTML = rows.map(function(m){
     const mine = m.from === (currentUser && currentUser.uid);
+    const translated = (!mine && m.translations && m.translations[sparkMyLang]) || '';
     const shown = mine
       ? (m.text || '')
-      : ((m.translations && m.translations[sparkMyLang]) || m.text || '');
-    const orig = (!mine && m.text && m.text !== shown) ? m.text : '';
+      : (translated || m.text || '');
+    const orig = (!mine && m.text && translated && m.text !== translated) ? m.text : '';
     const voice = m.audioUrl
       ? '<audio controls preload="metadata" src="' + escapeHtml(m.audioUrl) + '" style="width:100%;margin-top:6px;"></audio>'
       : '';
@@ -210,7 +211,12 @@ async function sendSparkText(raw, extra){
   if(!text || !fbDb || !sparkRoomId || !currentUser) return;
   const translations = {};
   if(sparkTheirLang && sparkTheirLang !== sparkMyLang){
-    try{ translations[sparkTheirLang] = await sparkTranslate(text, sparkMyLang, sparkTheirLang); }catch(_){}
+    try{
+      const out = await sparkTranslate(text, sparkMyLang, sparkTheirLang);
+      if(out && (typeof sparkTxAccept !== 'function' || sparkTxAccept(text, out, sparkMyLang, sparkTheirLang))){
+        translations[sparkTheirLang] = out;
+      }
+    }catch(_){}
   }
   const payload = Object.assign({
     from: currentUser.uid,

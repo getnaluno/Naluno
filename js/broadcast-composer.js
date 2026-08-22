@@ -57,17 +57,22 @@ function bcompReset(){
 }
 
 function bcompProbeDuration(file){
+  if(typeof nalunoProbeDuration === 'function') return nalunoProbeDuration(file, 2800);
   return new Promise(resolve=>{
     const v = document.createElement('video');
     v.preload = 'metadata';
     const url = URL.createObjectURL(file);
-    v.onloadedmetadata = ()=>{
-      const d = v.duration;
-      URL.revokeObjectURL(url);
+    let done = false;
+    const finish = function(d){
+      if(done) return;
+      done = true;
+      try{ URL.revokeObjectURL(url); }catch(_){}
       resolve((isFinite(d) && d > 0) ? d : 0);
     };
-    v.onerror = ()=>{ URL.revokeObjectURL(url); resolve(0); };
+    v.onloadedmetadata = ()=>{ finish(v.duration); };
+    v.onerror = ()=>{ finish(0); };
     v.src = url;
+    setTimeout(()=> finish(0), 2800);
   });
 }
 
@@ -246,8 +251,12 @@ function compressBroadcastVideo(file, onProgress){
 
 async function bcompOnFileChosen(file){
   if(!file) return;
-  const isVideo = file.type.startsWith('video/');
-  const isImage = file.type.startsWith('image/');
+  const isVideo = (typeof nalunoFileLooksLikeVideo === 'function')
+    ? nalunoFileLooksLikeVideo(file)
+    : ((file.type || '').indexOf('video/') === 0 || /\.(mp4|mov|webm|m4v|3gp|mkv)$/i.test(file.name || ''));
+  const isImage = (typeof nalunoFileLooksLikeImage === 'function')
+    ? nalunoFileLooksLikeImage(file)
+    : ((file.type || '').indexOf('image/') === 0 || /\.(jpe?g|png|gif|webp|heic)$/i.test(file.name || ''));
   if(!isVideo && !isImage){
     toast('Choose a photo or video');
     return;
@@ -278,24 +287,30 @@ async function bcompOnFileChosen(file){
     prev.innerHTML = `<video src="${bcompPreviewUrl}" controls playsinline style="width:100%;max-height:42vh;border-radius:14px;background:#000;"></video>`;
   }
 
+  // Enable Publish immediately — duration probe must not trap the picker.
+  bcompCompressedBlob = file;
+  if(pub){ pub.disabled = false; pub.textContent = 'Publish Broadcast'; }
+  if(status) status.textContent = 'Opening the original…';
+
   const duration = await bcompProbeDuration(file);
-  bcompDuration = duration;
+  bcompDuration = duration || 0;
   if(duration > BCAST_MAX_SECONDS + 1){
     toast('That video is longer than 3 hours');
     bcompReset();
     return;
   }
 
-  const mins = Math.floor(duration / 60);
-  const secs = Math.round(duration % 60);
+  const mins = Math.floor((duration || 0) / 60);
+  const secs = Math.round((duration || 0) % 60);
   const mb = Math.round(file.size/1024/1024);
   if(file.size > 95 * 1024 * 1024){
     toast('Large video (' + Math.round(file.size/1024/1024) + ' MB) — will upload in pieces (no compress)');
   }
-  // Keep original — upload/chapters run in background after Publish
   bcompCompressedBlob = file;
   if(status){
-    if(duration > 4 * 60){
+    if(!duration){
+      status.textContent = `Ready · ${mb} MB · original kept (length read on play)`;
+    } else if(duration > 4 * 60){
       status.textContent = `Ready · ${mins}:${String(secs).padStart(2,'0')} · ${mb} MB · will publish as chapters (~4 min)`;
     } else {
       status.textContent = `Ready · ${mins}:${String(secs).padStart(2,'0')} · ${mb} MB · original kept`;

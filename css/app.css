@@ -837,3 +837,33 @@ body:has(#sparkPage.active) .navbar{ display:none !important; }
 body.weather-on .tabscreen{ top:28px; }
 body.naluno-gated #weatherStrip{ display:none !important; }
 body:has(.call-overlay.active) #weatherStrip{ display:none !important; }
+
+/* ---------- liveliness ---------- */
+.bcast-plate{ position:relative; transition: transform .2s ease, box-shadow .2s ease; }
+.bcast-plate:active{ transform:scale(.98); }
+.bcast-plate-live{
+  animation: livePulse 1.8s ease-in-out infinite;
+  box-shadow: 0 0 0 0 rgba(255,84,112,.45);
+}
+@keyframes livePulse{
+  0%{ box-shadow:0 0 0 0 rgba(255,84,112,.5); }
+  70%{ box-shadow:0 0 0 10px rgba(255,84,112,0); }
+  100%{ box-shadow:0 0 0 0 rgba(255,84,112,0); }
+}
+.nav-item.active svg, .navbar .active svg{ filter: drop-shadow(0 0 6px rgba(124,255,178,.55)); }
+.upload-drop{
+  animation: dropBreathe 4.2s ease-in-out infinite;
+}
+@keyframes dropBreathe{
+  0%,100%{ border-color: var(--line); }
+  50%{ border-color: rgba(124,255,178,.45); }
+}
+#offlineBadge{ animation: pulse-dot 2s infinite; }
+.spark-empty, .bspace-card .body{
+  text-wrap: pretty;
+}
+.presence-dot{
+  display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--mint);
+  box-shadow:0 0 0 0 rgba(124,255,178,.55); animation:pulse-dot 1.6s infinite; margin-right:6px;
+}
+

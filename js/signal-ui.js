@@ -295,7 +295,19 @@ function playSegment(idx, direction=1){
     const v = $('bviewerActiveVideo');
     const trimStart = (isFinite(seg.trimStart) && seg.trimStart > 0) ? seg.trimStart : 0;
     const trimEnd = (isFinite(seg.trimEnd) && seg.trimEnd > trimStart) ? seg.trimEnd : 0;
-    v.onended = ()=> goToSegment(idx+1);
+    v.onended = ()=>{
+      const d = v.duration;
+      const t = v.currentTime || 0;
+      const falseEnd = (typeof nalunoFiniteDuration === 'function')
+        ? (!nalunoFiniteDuration(d) || t < d - 0.45)
+        : (!isFinite(d) || t < (d || 0) - 0.45);
+      if(falseEnd){
+        try{ v.preload = 'auto'; v.currentTime = Math.max(0, t + 0.001); }catch(_){}
+        v.play().catch(function(){});
+        return;
+      }
+      goToSegment(idx+1);
+    };
     currentVideoEl = v;
     v.ontimeupdate = function(){
       if(trimEnd && (v.currentTime || 0) >= trimEnd - 0.05){
@@ -303,6 +315,8 @@ function playSegment(idx, direction=1){
         goToSegment(idx+1);
       }
     };
+    if(typeof bindMediaElement === 'function' && videoSrc) bindMediaElement(v, videoSrc);
+    else if(typeof attachPlaybackGuard === 'function') attachPlaybackGuard(v, videoSrc);
     const muteBtn = $('bviewerMuteToggle');
     const renderMuteIcon = muted=>{
       muteBtn.innerHTML = muted
@@ -418,27 +432,6 @@ function sortSignalSegments(segments){
   });
   groupList.sort((a,b)=> a.earliestCreatedAt - b.earliestCreatedAt);
   return groupList.flatMap(g=>g.group);
-}
-function openMyBroadcast(){
-  pruneExpiredSignal();
-  if(mySignal.length===0) return;
-  viewingMine = true;
-  const profile = (typeof currentProfile !== 'undefined') ? currentProfile : { name:'You', color:'#7CFFB2', photo:null };
-  currentSegments = sortSignalSegments(mySignal.slice());
-  currentSegments.forEach(function(seg){
-    const u = seg.videoUrl || seg.mediaUrl || '';
-    if(u && typeof vaultIngestUrl === 'function'){
-      vaultIngestUrl((typeof resolveMediaUrl==='function')?resolveMediaUrl(u):u).catch(function(){});
-    }
-  });
-  applyAvatarVisual($('bviewerAvatar'), profile);
-  $('bviewerName').textContent = profile.name;
-  $('bviewerStatus').style.display = 'none';
-  $('bviewerMessage').style.display = 'none';
-  $('bviewerRemove').style.display = 'inline-flex';
-  renderBars(currentSegments.length);
-  $('bviewer').classList.add('active');
-  playSegment(0);
 }
 function closeBroadcast(){ clearSegTimer(); $('bviewer').classList.remove('active'); }
 $('bviewerClose').onclick = closeBroadcast;

@@ -103,7 +103,7 @@ function renderBspaceMedia(seg){
     const showChapters = chapters && chapters.length > 1 && !chapters.every(c => c.silent);
     host.innerHTML = `
       <div class="bspace-media-frame" style="position:relative;width:100%;height:100%;background:#000;overflow:hidden;min-height:180px;">
-        <video id="bspaceVideoEl" playsinline webkit-playsinline preload="auto" src="${bspaceEscape(rawSrc)}" poster="${seg.thumbDataUrl ? bspaceEscape(seg.thumbDataUrl) : ''}" style="width:100%;height:100%;object-fit:cover;display:block;background:#000;filter:${seg.filterCss || ''}"></video>
+        <video id="bspaceVideoEl" playsinline webkit-playsinline preload="auto" poster="${seg.thumbDataUrl ? bspaceEscape(seg.thumbDataUrl) : ''}" style="width:100%;height:100%;object-fit:cover;display:block;background:#000;filter:${seg.filterCss || ''}"></video>
         <div id="bspaceBreather" style="display:none;position:absolute;inset:0;background:rgba(13,15,23,.92);align-items:center;justify-content:center;flex-direction:column;gap:10px;z-index:3;">
           <div style="font-family:var(--font-futuristic);font-size:15px;color:var(--mint);" id="bspaceBreatherLabel">Chapter break</div>
           <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);" id="bspaceBreatherAd">Next chapter in a moment</div>
@@ -113,7 +113,7 @@ function renderBspaceMedia(seg){
       `;
     const vel = $('bspaceVideoEl');
     if(vel && typeof bindMediaElement === 'function') bindMediaElement(vel, rawSrc);
-    else if(vel){ vel.src = rawSrc; }
+    else if(vel){ vel.preload = 'auto'; vel.src = rawSrc; }
     // Dock seek bar BELOW the 9:16 hero (sibling), not inside cover frame
     try{
       const hero = $('bspaceHero');
@@ -1152,6 +1152,17 @@ function wireBspaceSeekAndAutoplay(v){
   else v.addEventListener('loadeddata', tryPlay, { once: true });
   // Second chance after src bind settles
   setTimeout(tryPlay, 400);
+  v.addEventListener('ended', function(){
+    const d = v.duration;
+    const t = v.currentTime || 0;
+    const falseEnd = (typeof nalunoFiniteDuration === 'function')
+      ? (!nalunoFiniteDuration(d) || t < d - 0.45)
+      : (!isFinite(d) || t < (d || 0) - 0.45);
+    if(falseEnd){
+      try{ v.preload = 'auto'; v.currentTime = Math.max(0, t + 0.001); }catch(_){}
+      v.play().catch(function(){});
+    }
+  });
   syncPlayBtn();
   syncTimes();
 }
@@ -1163,9 +1174,13 @@ function wireBroadcastChapterPlayer(chapters, breathers, opts){
   bspaceChapterIndex = 0;
   const v = $('bspaceVideoEl');
   if(!v) return;
-  // Resolve src for first chapter
-  if(bspaceChapterList[0] && bspaceChapterList[0].mediaUrl && typeof resolveMediaUrl === 'function'){
-    v.src = resolveMediaUrl(bspaceChapterList[0].mediaUrl);
+  // Resolve src for first chapter only if the element is not already on that file
+  if(bspaceChapterList[0] && bspaceChapterList[0].mediaUrl){
+    const u = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(bspaceChapterList[0].mediaUrl) : bspaceChapterList[0].mediaUrl;
+    const have = (v.currentSrc || v.getAttribute('src') || '').split('?')[0];
+    if(!have || (u && have.indexOf(u.split('?')[0]) < 0)){
+      v.src = u;
+    }
   }
 
   const bar = $('bspaceChapterBar');
@@ -1216,6 +1231,16 @@ function wireBroadcastChapterPlayer(chapters, breathers, opts){
   };
 
   v.onended = ()=>{
+    const d = v.duration;
+    const t = v.currentTime || 0;
+    const falseEnd = (typeof nalunoFiniteDuration === 'function')
+      ? (!nalunoFiniteDuration(d) || t < d - 0.45)
+      : (!isFinite(d) || d === Infinity || t < (d || 0) - 0.45);
+    if(falseEnd){
+      try{ v.preload = 'auto'; v.currentTime = Math.max(0, t + 0.001); }catch(_){}
+      v.play().catch(function(){});
+      return;
+    }
     const shared = bspaceChapterList.length > 1 && bspaceChapterList.every(c => c.mediaUrl === bspaceChapterList[0].mediaUrl);
     if(shared) return; // one file already finished
     if(bspaceChapterList.length <= 1) return;

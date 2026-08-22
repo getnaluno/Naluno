@@ -1,6 +1,6 @@
 // Naluno service worker — offline shell + background call push.
-// v69: Network-first for JS/CSS/HTML so ?v= cache-bust actually ships.
-const CACHE_NAME = 'naluno-shell-v69';
+// v70: 2.5s network then cache (Samsung onLine lies; hung fetch never .catch).
+const CACHE_NAME = 'naluno-shell-v70';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',
@@ -44,49 +44,52 @@ self.addEventListener('fetch', event=>{
   const path = url.pathname || '';
   const isAppCode = path.includes('/js/') || path.endsWith('.js') ||
     path.includes('/css/') || path.endsWith('.css') || path.endsWith('firebase-config.js');
-
-  if(isAppCode || isFirebaseSdkScript){
-    event.respondWith(
-      fetch(event.request).then(response=>{
-        if(response && response.ok && isSameOrigin){
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy)).catch(()=>{});
-        }
-        return response;
-      }).catch(()=>
-        caches.match(event.request, { ignoreSearch: true }).then(c => c || caches.match(url.pathname))
-      )
-    );
-    return;
-  }
-
   const isNav = event.request.mode === 'navigate' || path.endsWith('.html') || path.endsWith('/');
-  if(isNav){
-    event.respondWith(
-      fetch(event.request).then(response=>{
-        if(response && response.ok){
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then(cache => {
-            cache.put(event.request, copy);
-            cache.put('./index.html', response.clone()).catch(()=>{});
-          }).catch(()=>{});
-        }
-        return response;
-      }).catch(()=> caches.match('./index.html'))
-    );
-    return;
+  const bare = url.origin + url.pathname;
+
+  function netTimeout(req, ms){
+    const ctl = new AbortController();
+    const t = setTimeout(function(){ ctl.abort(); }, ms);
+    return fetch(req, { signal: ctl.signal }).finally(function(){ clearTimeout(t); });
   }
-  event.respondWith(
-    fetch(event.request).then(response=>{
-      if(response.ok && (path.includes('manifest') || path.includes('icon'))){
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy)).catch(()=>{});
+  function isShellResponse(r, p){
+    if(!r || !r.ok) return false;
+    const ct = (r.headers.get('content-type') || '').toLowerCase();
+    if(p.endsWith('.js') || p.includes('/js/') || p.includes('firebasejs')){
+      return ct.indexOf('javascript') >= 0 || ct.indexOf('ecmascript') >= 0 || ct.indexOf('text/plain') >= 0 || !ct;
+    }
+    if(p.endsWith('.css')) return ct.indexOf('css') >= 0 || !ct;
+    if(p.endsWith('.html') || p.endsWith('/')) return ct.indexOf('html') >= 0 || !ct;
+    return true;
+  }
+  function putBare(r){
+    if(!r || !r.ok) return;
+    if(!isShellResponse(r, path) && isAppCode) return;
+    const copy = r.clone();
+    caches.open(CACHE_NAME).then(function(cache){
+      cache.put(event.request, copy.clone()).catch(function(){});
+      cache.put(new Request(bare), copy).catch(function(){});
+    }).catch(function(){});
+  }
+
+  event.respondWith((async ()=>{
+    const cached = await caches.match(event.request, { ignoreSearch: true })
+      || await caches.match(new Request(bare))
+      || (isNav ? await caches.match('./index.html') : null);
+    try{
+      const response = await netTimeout(event.request, 2500);
+      if(response && response.ok){
+        if(isSameOrigin || isFirebaseSdkScript) putBare(response);
+        return response;
       }
-      return response;
-    }).catch(()=>{
-      return caches.match(event.request).then(cached => cached || new Response('', { status: 503 }));
-    })
-  );
+    }catch(_){}
+    if(cached) return cached;
+    if(isNav){
+      const html = await caches.match('./index.html');
+      if(html) return html;
+    }
+    return new Response('', { status: 503 });
+  })());
 });
 
 self.addEventListener('push', event=>{

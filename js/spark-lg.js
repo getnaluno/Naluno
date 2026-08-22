@@ -96,6 +96,24 @@ const SPARK_LG_SEED = [
   ['what should we remember from this meeting?', 'Ki kye twalina okujjukira okuva mu nkisise eno?'],
   ['what should we remember from this meeting', 'Ki kye twalina okujjukira okuva mu nkisise eno'],
   ['two voices. one page.', 'Amaloboozi abiri. Olupapula lumu.'],
+  ['i am coming', 'Njija'],
+  ['i am going', 'Ngenda'],
+  ['i miss you', 'Nkwagala nnyo nkwetaaga'],
+  ['see you tomorrow', 'Tulabagane enkya'],
+  ['how much is this', 'Kino kiri ssente mmeka'],
+  ['i need help', 'Njagala obuyambi'],
+  ['are you okay', 'Oli bulungi'],
+  ['i am okay', 'Ndi bulungi'],
+  ['let us talk', 'Twogere'],
+  ['call me', 'Nkuwereze essimu'],
+  ['text me', 'Mpa obubaka'],
+  ['good', 'Kirungi'],
+  ['bad', 'Kibi'],
+  ['love', 'Okwagala'],
+  ['you', 'Ggwe'],
+  ['me', 'Nze'],
+  ['we', 'Ffe'],
+  ['they', 'Bo'],
 ];
 
 let sparkLgLive = [];
@@ -182,13 +200,32 @@ function sparkLgApply(text, from, to){
       }
     }
     rest = rest.replace(/\s+/g, ' ').trim();
-    if(used && rest && sparkLgNorm(rest) !== key) return rest;
+    if(used && rest && sparkLgNorm(rest) !== key){
+      // leftover 3+ letter latin tokens mean mixed English — do not claim success
+      if(/\b[a-z]{3,}\b/i.test(rest)) return null;
+      return rest;
+    }
     return null;
   }
   if(from === 'lg' && to !== 'lg'){
     const key = sparkLgNorm(src);
     for(let i = 0; i < pairs.length; i++){
       if(sparkLgNorm(pairs[i].dst) === key) return pairs[i].src;
+    }
+    let rest = ' ' + key + ' ';
+    let used = false;
+    const rev = pairs.slice().sort(function(a,b){ return sparkLgNorm(b.dst).length - sparkLgNorm(a.dst).length; });
+    for(let i = 0; i < rev.length; i++){
+      const needle = ' ' + sparkLgNorm(rev[i].dst) + ' ';
+      if(needle.length < 4) continue;
+      if(rest.indexOf(needle) >= 0){
+        rest = rest.split(needle).join(' ' + rev[i].src + ' ');
+        used = true;
+      }
+    }
+    rest = rest.replace(/\s+/g, ' ').trim();
+    if(used && rest && sparkLgNorm(rest) !== key){
+      return rest;
     }
   }
   return null;

@@ -5,7 +5,7 @@
    ============================================================ */
 const NALUNO_VAULT_DB = 'naluno-vault';
 const NALUNO_VAULT_STORE = 'blobs';
-const NALUNO_VAULT_MAX_BYTES = 280 * 1024 * 1024;
+const NALUNO_VAULT_MAX_BYTES = 80 * 1024 * 1024;
 
 const vaultUrlCache = {};
 let vaultDbPromise = null;
@@ -41,13 +41,28 @@ async function vaultPut(key, blob, meta){
   if(!key || !blob) return;
   const db = await vaultOpen();
   const rec = { blob: blob, meta: meta || {}, ts: Date.now(), bytes: blob.size || 0 };
-  const tx = db.transaction(NALUNO_VAULT_STORE, 'readwrite');
-  tx.objectStore(NALUNO_VAULT_STORE).put(rec, key);
-  await new Promise(function(resolve, reject){
-    tx.oncomplete = resolve;
-    tx.onerror = function(){ reject(tx.error); };
-  });
-  try{ await vaultMaybeEvict(); }catch(_){}
+  try{
+    const tx = db.transaction(NALUNO_VAULT_STORE, 'readwrite');
+    tx.objectStore(NALUNO_VAULT_STORE).put(rec, key);
+    await new Promise(function(resolve, reject){
+      tx.oncomplete = resolve;
+      tx.onerror = function(){ reject(tx.error); };
+    });
+  }catch(e){
+    const name = (e && (e.name || e.message)) || '';
+    if(/quota/i.test(name)){
+      try{ await vaultMaybeEvict(true); }catch(_){}
+      try{
+        const tx2 = db.transaction(NALUNO_VAULT_STORE, 'readwrite');
+        tx2.objectStore(NALUNO_VAULT_STORE).put(rec, key);
+        await new Promise(function(resolve, reject){
+          tx2.oncomplete = resolve;
+          tx2.onerror = function(){ reject(tx2.error); };
+        });
+      }catch(_){}
+    }
+  }
+  try{ await vaultMaybeEvict(false); }catch(_){}
 }
 
 async function vaultGet(key){
@@ -78,13 +93,14 @@ async function vaultIngestFile(file, key){
 
 async function vaultIngestUrl(url, key){
   if(!url || String(url).indexOf('blob:') === 0) return url || '';
-  const k = key || vaultKeyForUrl(url);
+  const resolved = (typeof resolveMediaUrl === 'function') ? (resolveMediaUrl(url) || url) : url;
+  const k = key || vaultKeyForUrl(resolved);
   const existing = await vaultGet(k);
   if(existing && existing.blob) return vaultObjectUrl(k);
-  const res = await fetch(url, { mode:'cors', credentials:'omit' });
+  const res = await fetch(resolved, { mode:'cors', credentials:'omit' });
   if(!res.ok) throw new Error('vault fetch failed');
   const blob = await res.blob();
-  await vaultPut(k, blob, { url: url, type: blob.type || '', size: blob.size || 0 });
+  await vaultPut(k, blob, { url: resolved, type: blob.type || '', size: blob.size || 0 });
   return vaultObjectUrl(k);
 }
 
@@ -92,21 +108,31 @@ function vaultSyncSrc(key){
   return vaultUrlCache[key] || '';
 }
 
-async function vaultMaybeEvict(){
+async function vaultMaybeEvict(force){
   const db = await vaultOpen();
-  const all = await vaultIdbReq(db.transaction(NALUNO_VAULT_STORE, 'readonly').objectStore(NALUNO_VAULT_STORE).getAll());
-  const keys = await vaultIdbReq(db.transaction(NALUNO_VAULT_STORE, 'readonly').objectStore(NALUNO_VAULT_STORE).getAllKeys());
-  if(!all || !keys || all.length !== keys.length) return;
+  const rows = [];
   let total = 0;
-  const rows = all.map(function(rec, i){
-    total += rec.bytes || (rec.blob && rec.blob.size) || 0;
-    return { key: keys[i], ts: rec.ts || 0, bytes: rec.bytes || 0 };
+  await new Promise(function(resolve, reject){
+    const tx = db.transaction(NALUNO_VAULT_STORE, 'readonly');
+    const req = tx.objectStore(NALUNO_VAULT_STORE).openCursor();
+    req.onsuccess = function(e){
+      const cursor = e.target.result;
+      if(!cursor){ resolve(); return; }
+      const rec = cursor.value || {};
+      const bytes = rec.bytes || (rec.blob && rec.blob.size) || 0;
+      total += bytes;
+      rows.push({ key: cursor.key, ts: rec.ts || 0, bytes: bytes });
+      cursor.continue();
+    };
+    req.onerror = function(){ reject(req.error); };
   });
-  if(total <= NALUNO_VAULT_MAX_BYTES) return;
+  const cap = force ? NALUNO_VAULT_MAX_BYTES * 0.5 : NALUNO_VAULT_MAX_BYTES;
+  if(total <= cap) return;
   rows.sort(function(a,b){ return a.ts - b.ts; });
   const tx = db.transaction(NALUNO_VAULT_STORE, 'readwrite');
   const store = tx.objectStore(NALUNO_VAULT_STORE);
-  for(let i = 0; i < rows.length && total > NALUNO_VAULT_MAX_BYTES * 0.75; i++){
+  const target = NALUNO_VAULT_MAX_BYTES * 0.6;
+  for(let i = 0; i < rows.length && total > target; i++){
     store.delete(rows[i].key);
     total -= rows[i].bytes;
     if(vaultUrlCache[rows[i].key]){

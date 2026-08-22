@@ -6,7 +6,9 @@
    ============================================================ */
 /* ---------------- PWA INSTALL + CALL NOTIFICATION DEEP-LINK ---------------- */
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('sw.js').catch(()=>{ /* installability just won't be offered — not fatal */ });
+  navigator.serviceWorker.register('sw.js', { scope: './', updateViaCache: 'none' })
+    .then(function(reg){ try{ reg.update(); }catch(_){} })
+    .catch(function(e){ console.warn('[sw]', e); });
 
   // Notification click (or Capacitor bridge) posts here so we can open the incoming UI
   // even when the app was backgrounded or just cold-started from the push.
@@ -68,6 +70,17 @@ async function handleIncomingCallFromPush(callId){
 }
 // Native IncomingCallActivity / MainActivity call this via evaluateJavascript.
 window.handleIncomingCallFromPush = handleIncomingCallFromPush;
+
+function nalunoRequestPersistentStorage(){
+  try{
+    if(navigator.storage && navigator.storage.persist){
+      navigator.storage.persist().catch(function(){});
+    }
+  }catch(_){}
+}
+nalunoRequestPersistentStorage();
+document.addEventListener('pointerdown', nalunoRequestPersistentStorage, { once: true });
+document.addEventListener('click', nalunoRequestPersistentStorage, { once: true });
 
 /* Capacitor native shell detection + FCM token registration.
    On Android the web VAPID path is weak; the native plugin token is what actually

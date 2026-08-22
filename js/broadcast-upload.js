@@ -158,7 +158,7 @@ function planSeekChapters(durationSec){
   let i = 0;
   for(let start = 0; start < dur - 0.5; start += target){
     parts.push({ index: i++, start, end: Math.min(dur, start + target) });
-    if(i >= 40) break;
+    if(i >= 45) break;
   }
   return { showChapterUI: parts.length > 1, parts };
 }

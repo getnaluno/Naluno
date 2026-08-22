@@ -298,9 +298,14 @@ if($('newSignalBtn')) $('newSignalBtn').onclick = ()=> openComposer('signal');
 // Signal ring (empty) also opens signal composer via renderBroadcastTab
 
 function resetComposer(){
+  (composerItems || []).forEach(function(it){
+    if(it && it.dataUrl && String(it.dataUrl).indexOf('blob:') === 0){
+      try{ URL.revokeObjectURL(it.dataUrl); }catch(_){}
+    }
+  });
   composerType = 'photo'; composerItems = []; activeComposerItemIndex = -1; composerTransition = 'fade';
   document.querySelectorAll('.type-chip').forEach(c=>c.classList.toggle('active', c.dataset.type==='photo'));
-  $('mediaFileInput').accept = 'image/*';
+  $('mediaFileInput').accept = (typeof IMAGE_PICK_ACCEPT === 'string') ? IMAGE_PICK_ACCEPT : 'image/*';
   $('mediaFileInput').value = '';
   $('uploadDropLabel').textContent = 'Choose photos from your library';
   $('uploadDrop').style.display = 'flex';
@@ -327,7 +332,9 @@ document.querySelectorAll('.type-chip').forEach(chip=>{
     } else {
       $('mediaComposer').style.display = 'block';
       $('textComposer').style.display = 'none';
-      $('mediaFileInput').accept = composerType==='video' ? '.mp4,.mov,.webm,.m4v,video/mp4' : 'image/*';
+      $('mediaFileInput').accept = composerType==='video'
+        ? ((typeof VIDEO_PICK_ACCEPT === 'string') ? VIDEO_PICK_ACCEPT : 'video/*,video/mp4,.mp4,.mov,.webm,.m4v')
+        : ((typeof IMAGE_PICK_ACCEPT === 'string') ? IMAGE_PICK_ACCEPT : 'image/*');
       $('mediaFileInput').value = '';
       $('uploadDropLabel').textContent = composerType==='video' ? 'Choose videos from your library' : 'Choose photos from your library';
       $('uploadDrop').style.display = 'flex';
@@ -355,17 +362,22 @@ $('mediaFileInput').onchange = (e)=>{
 };
 
 function probeVideoDuration(file){
+  if(typeof nalunoProbeDuration === 'function') return nalunoProbeDuration(file, 2800);
   return new Promise(resolve=>{
     const v = document.createElement('video');
     v.preload = 'metadata';
     const url = URL.createObjectURL(file);
-    v.onloadedmetadata = ()=>{
-      const d = v.duration;
+    let done = false;
+    const finish = function(d){
+      if(done) return;
+      done = true;
+      try{ URL.revokeObjectURL(url); }catch(_){}
       resolve((isFinite(d) && d > 0) ? d : null);
-      URL.revokeObjectURL(url);
     };
-    v.onerror = ()=> resolve(null);
+    v.onloadedmetadata = ()=> finish(v.duration);
+    v.onerror = ()=> finish(null);
     v.src = url;
+    setTimeout(()=> finish(null), 2800);
   });
 }
 function readFileAsDataUrl(file){
@@ -396,14 +408,19 @@ async function handleFiles(fileList){
   const SOFT_FORCE_TRIM_BYTES = 200 * 1024 * 1024;
   const needsTrim = [];
   for(const file of files){
-    if(composerType==='video'){
+    const looksVideo = (typeof nalunoFileLooksLikeVideo === 'function')
+      ? nalunoFileLooksLikeVideo(file)
+      : ((file.type || '').indexOf('video/') === 0 || /\.(mp4|mov|webm|m4v|3gp|mkv)$/i.test(file.name || ''));
+    const treatAsVideo = composerType==='video' || looksVideo;
+    if(treatAsVideo){
+      if(composerType!=='video' && looksVideo) composerType = 'video';
       const duration = await probeVideoDuration(file);
       const safeDur = (duration && isFinite(duration) && duration > 0) ? duration : null;
-      if(!safeDur || (safeDur && safeDur > MAX_VIDEO_SECONDS + 1) || file.size > SOFT_FORCE_TRIM_BYTES){
+      if((safeDur && safeDur > MAX_VIDEO_SECONDS + 1) || file.size > SOFT_FORCE_TRIM_BYTES){
         needsTrim.push(file);
         continue;
       }
-      // Never turn a video into a data URL — that is what truncated some clips.
+      // Unknown duration still accepted — original file, no re-encode.
       const previewUrl = URL.createObjectURL(file);
       composerItems.push({ id:Date.now()+Math.random(), kind:'video', dataUrl: previewUrl, sourceFile: file, filterKey:'normal', filterCss:'', crop:{scale:1,xPct:0,yPct:0}, caption:'', duration: safeDur });
     } else {

@@ -30,6 +30,10 @@ function containMediaElement(el){
 function lockOutChromeMediaSession(){
   if(!navigator.mediaSession) return;
   try{
+    const playing = document.querySelector('#bspaceVideoEl, #bviewerActiveVideo');
+    if(playing && !playing.paused && !playing.ended) return;
+  }catch(_){}
+  try{
     navigator.mediaSession.metadata = new MediaMetadata({
       title: 'Naluno',
       artist: '',
@@ -58,6 +62,16 @@ function pauseAppMediaForBackground(){
   lockOutChromeMediaSession();
 }
 
+function resumeAppMediaFromBackground(){
+  document.querySelectorAll('video[data-naluno-paused-hide], audio[data-naluno-paused-hide]').forEach(function(el){
+    try{
+      delete el.dataset.nalunoPausedHide;
+      const p = el.play();
+      if(p && p.catch) p.catch(function(){});
+    }catch(_){}
+  });
+}
+
 function hookMediaContainment(){
   lockOutChromeMediaSession();
   document.querySelectorAll('video, audio').forEach(containMediaElement);
@@ -72,9 +86,11 @@ document.addEventListener('play', function(e){
 
 document.addEventListener('visibilitychange', function(){
   if(document.hidden) pauseAppMediaForBackground();
+  else resumeAppMediaFromBackground();
 });
 window.addEventListener('pagehide', pauseAppMediaForBackground);
 window.addEventListener('freeze', pauseAppMediaForBackground);
+window.addEventListener('pageshow', resumeAppMediaFromBackground);
 
 if(document.readyState === 'loading'){
   document.addEventListener('DOMContentLoaded', hookMediaContainment);

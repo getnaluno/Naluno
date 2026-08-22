@@ -329,7 +329,7 @@ function planBroadcastChapters(fileSize, durationSec){
     let i = 0;
     for(let start = 0; start < dur - 0.5; start += targetSec){
       parts.push({ start, end: Math.min(dur, start + targetSec), index: i++ });
-      if(i >= 40) break;
+      if(i >= 45) break;
     }
     return parts;
   }
@@ -346,7 +346,7 @@ function planBroadcastChapters(fileSize, durationSec){
     let i = 0;
     for(let start = 0; start < dur - 0.25; start += sliceSec){
       parts.push({ start, end: Math.min(dur, start + sliceSec), index: i++ });
-      if(i >= 40) break;
+      if(i >= 45) break;
     }
     return { mode: 'silent_multipart', parts, midrolls: [], showChapterUI: false };
   }
@@ -372,7 +372,7 @@ function planBroadcastChapters(fileSize, durationSec){
   let i = 0;
   for(let start = 0; start < dur - 0.5; start += sliceSec){
     parts.push({ start, end: Math.min(dur, start + sliceSec), index: i++ });
-    if(i >= 40) break;
+    if(i >= 45) break;
   }
   return { mode: 'multipart', parts, midrolls: [], showChapterUI: parts.length > 1 };
 }
