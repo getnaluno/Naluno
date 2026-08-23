@@ -70,7 +70,7 @@ function bcompReset(){
 }
 
 function bcompProbeDuration(file){
-  if(typeof nalunoProbeDuration === 'function') return nalunoProbeDuration(file, 2800);
+  if(typeof nalunoProbeDuration === 'function') return nalunoProbeDuration(file, 6000);
   return new Promise(resolve=>{
     const v = document.createElement('video');
     v.preload = 'metadata';

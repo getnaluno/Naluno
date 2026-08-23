@@ -246,6 +246,18 @@
   function wireToga(){
     const share = $('togaShareBtn');
     if(share) share.onclick = function(){ setMyToga(!myShareViews, myShareViews); };
+    const exp = $('togaExpandBtn');
+    const body = $('togaBody');
+    if(exp && body){
+      exp.onclick = function(){
+        const open = body.style.display !== 'none';
+        body.style.display = open ? 'none' : 'block';
+        exp.setAttribute('aria-expanded', open ? 'false' : 'true');
+        const hint = $('togaExpandHint');
+        if(hint) hint.textContent = open ? 'Wall of Fame · tap' : 'close';
+        if(!open) renderTogaBoard();
+      };
+    }
   }
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wireToga);
   else wireToga();

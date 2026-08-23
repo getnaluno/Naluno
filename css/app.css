@@ -945,6 +945,20 @@ body.naluno-landscape-media #bspaceHero{
 
 /* Toga — public views standing for opted-in Circles */
 .toga-panel{ background:var(--surface); border:1px solid var(--line); border-radius:18px; padding:14px; margin:0 0 16px; }
+.toga-expand{
+  width:100%;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  background:transparent;
+  border:none;
+  color:inherit;
+  padding:0;
+  cursor:pointer;
+  text-align:left;
+}
+.toga-expand-hint{ font-family:var(--font-mono); font-size:10.5px; color:var(--text-dim); }
 .toga-head{ font-family:var(--font-futuristic); font-size:15px; margin-bottom:4px; }
 .toga-tog{ min-height:40px; padding:8px 12px; border-radius:999px; border:1px solid var(--line); background:transparent; color:var(--text-dim); font-family:var(--font-mono); font-size:11px; cursor:pointer; }
 .toga-tog.on{ background:var(--mint); color:#0D0F17; border-color:var(--mint); }

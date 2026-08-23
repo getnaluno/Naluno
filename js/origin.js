@@ -82,9 +82,53 @@
     }
     return bits;
   }
+  function hashStillImage(file){
+    return new Promise(function(resolve){
+      try{
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = function(){
+          try{
+            const c = document.createElement('canvas');
+            c.width = 64; c.height = 64;
+            const ctx = c.getContext('2d', { willReadFrequently: true });
+            ctx.drawImage(img, 0, 0, 64, 64);
+            const h = dHashFromCanvas(c);
+            try{ URL.revokeObjectURL(url); }catch(_){}
+            resolve(h || '');
+          }catch(_){
+            try{ URL.revokeObjectURL(url); }catch(_2){}
+            resolve('');
+          }
+        };
+        img.onerror = function(){ try{ URL.revokeObjectURL(url); }catch(_){} resolve(''); };
+        img.src = url;
+        setTimeout(function(){ resolve(''); }, 5000);
+      }catch(_){ resolve(''); }
+    });
+  }
+  function photoLikeness(a, b){
+    if(!a || !b) return 0;
+    const n = Math.max(a.length, b.length);
+    if(!n) return 0;
+    const d = hamming(a, b);
+    return 1 - (d / n);
+  }
+  function titleIsGeneric(s){
+    const t = titleKey(s);
+    if(!t || t.length < 8) return true;
+    return /^(sweet|delicious|photo|video|image|pic|clip|untitled|broadcast|test|new|untitled broadcast)$/i.test(t);
+  }
   function sampleFrameHashes(file, durationHint){
-    if(!(file.type || '').startsWith('video/') && !/\.(mp4|mov|webm|m4v|mkv|3gp)$/i.test(file.name || '')){
-      return Promise.resolve({ duration: 0, hashes: [] });
+    const isVideo = (file.type || '').startsWith('video/') || /\.(mp4|mov|webm|m4v|mkv|3gp)$/i.test(file.name || '');
+    const isImage = (file.type || '').startsWith('image/') || /\.(jpe?g|png|webp|gif|heic|heif)$/i.test(file.name || '');
+    if(isImage && !isVideo){
+      return hashStillImage(file).then(function(h){
+        return { duration: 0, hashes: h ? [h] : [], photoHash: h, audioHash: '' };
+      });
+    }
+    if(!isVideo){
+      return Promise.resolve({ duration: 0, hashes: [], photoHash: '', audioHash: '' });
     }
     return new Promise(function(resolve){
       const v = document.createElement('video');
@@ -96,7 +140,7 @@
         if(settled) return;
         settled = true;
         try{ URL.revokeObjectURL(url); }catch(_){}
-        resolve({ duration: duration || 0, hashes: hashes });
+        resolve({ duration: duration || 0, hashes: hashes, photoHash: hashes[0] || '', audioHash: '' });
       };
       const canvas = document.createElement('canvas');
       canvas.width = 64; canvas.height = 64;
@@ -229,7 +273,7 @@
     const out = [];
     if(!fbDb) return out;
     try{
-      const snap = await fbDb.collection('originMarks').orderBy('createdAt', 'desc').limit(80).get();
+      const snap = await fbDb.collection('originMarks').orderBy('createdAt', 'desc').limit(240).get();
       snap.docs.forEach(function(d){ out.push({ id: d.id, ...(d.data() || {}) }); });
     }catch(_){
       try{
@@ -249,18 +293,33 @@
         score = 100; reasons.push('same file identity');
       }
       const title = trigramScore(mark.title, other.title);
-      if(title >= 0.72){
+      if(title >= 0.72 && !titleIsGeneric(mark.title) && !titleIsGeneric(other.title)){
         score = Math.max(score, Math.round(title * 88));
         reasons.push('title close to “' + other.title + '”');
       }
+      const stillA = mark.photoHash || ((mark.frameHashes && mark.frameHashes[0]) || '');
+      const stillB = other.photoHash || ((other.frameHashes && other.frameHashes[0]) || '');
+      const still = photoLikeness(stillA, stillB);
+      if(still >= 0.82){
+        score = Math.max(score, Math.round(still * 98));
+        reasons.push('picture matches “' + (other.title || 'another Broadcast') + '”');
+      } else if(still >= 0.72){
+        score = Math.max(score, Math.round(still * 90));
+        reasons.push('picture is close to “' + (other.title || 'another Broadcast') + '”');
+      }
+      const frames = frameOverlap(mark.frameHashes, other.frameHashes);
+      if(frames >= 0.72){
+        score = Math.max(score, Math.round(frames * 94));
+        reasons.push('video frames match another Broadcast');
+      }
+      if(mark.audioHash && other.audioHash && mark.audioHash === other.audioHash){
+        score = Math.max(score, 91);
+        reasons.push('sound fingerprint matches');
+      }
       if(mark.duration && other.duration){
         const ratio = Math.min(mark.duration, other.duration) / Math.max(mark.duration, other.duration);
-        if(ratio > 0.96 && frameOverlap(mark.frameHashes, other.frameHashes) > 0.78){
-          score = Math.max(score, 92);
-          reasons.push('frames and length match another Broadcast');
-        } else if(frameOverlap(mark.frameHashes, other.frameHashes) > 0.86){
-          score = Math.max(score, 84);
-          reasons.push('picture looks like another Broadcast');
+        if(ratio > 0.96 && frames > 0.62){
+          score = Math.max(score, 90);
         }
       }
       if(score >= 55){
@@ -286,11 +345,11 @@
     matches.sort(function(a,b){ return b.score - a.score; });
     const top = matches[0] ? matches[0].score : 0;
     let status = 'clear';
-    if(top >= 88) status = 'match';
-    else if(top >= 62) status = 'review';
+    if(top >= 86) status = 'match';
+    else if(top >= 70) status = 'review';
     const reasons = [];
     if(opts.catalog[0]) reasons.push(opts.catalog[0].detail);
-    if(opts.web[0]) reasons.push('Open web: ' + opts.web[0].title);
+    if(opts.web[0] && (!opts.catalog[0] || opts.catalog[0].score < 80)) reasons.push('Open web: ' + opts.web[0].title);
     return {
       status: status,
       score: top,
@@ -299,6 +358,8 @@
       identity: opts.identity,
       duration: opts.duration,
       frameHashes: opts.frameHashes,
+      photoHash: opts.photoHash || '',
+      audioHash: opts.audioHash || '',
     };
   }
 
@@ -310,17 +371,28 @@
       identity: identity,
       duration: frames.duration,
       frameHashes: frames.hashes,
+      photoHash: frames.photoHash || (frames.hashes && frames.hashes[0]) || '',
+      audioHash: frames.audioHash || '',
       title: title,
       creatorUid: (typeof currentUser !== 'undefined' && currentUser) ? currentUser.uid : '',
     };
-    const web = await scanOpenWeb(title, description || '');
+    const catalogHits = scoreCatalog(mark, catalog);
+    const strongVisual = catalogHits[0] && catalogHits[0].score >= 80;
+    let web = [];
+    let known = [];
+    if(!strongVisual && !titleIsGeneric(title)){
+      web = await scanOpenWeb(title, description || '');
+      known = scoreKnown(title);
+    }
     return assemble({
       identity: identity,
       duration: frames.duration,
       frameHashes: frames.hashes,
-      catalog: scoreCatalog(mark, catalog),
+      photoHash: mark.photoHash,
+      audioHash: mark.audioHash,
+      catalog: catalogHits,
       web: web,
-      known: scoreKnown(title),
+      known: known,
     });
   }
 
@@ -334,6 +406,8 @@
         identity: report.identity,
         duration: report.duration || 0,
         frameHashes: (report.frameHashes || []).slice(0, 8),
+        photoHash: report.photoHash || '',
+        audioHash: report.audioHash || '',
         status: report.status,
         score: report.score || 0,
         createdAt: Date.now(),

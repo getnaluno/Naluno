@@ -1258,16 +1258,22 @@ function wireBspaceSeekAndAutoplay(v){
   }
   function syncTimes(){
     const d = v.duration;
-    if(durEl) durEl.textContent = (isFinite(d) && d > 0) ? formatBspaceTime(d) : '0:00';
+    if(durEl){
+      const trueD = (typeof nalunoTrueDuration === 'function') ? nalunoTrueDuration(v) : d;
+      durEl.textContent = (isFinite(trueD) && trueD > 0) ? formatBspaceTime(trueD) : '0:00';
+    }
     if(curEl) curEl.textContent = formatBspaceTime(v.currentTime);
-    if(range && isFinite(d) && d > 0 && !scrubbing){
-      range.value = String(Math.round((v.currentTime / d) * 1000));
+    if(range){
+      const trueD = (typeof nalunoTrueDuration === 'function') ? nalunoTrueDuration(v) : d;
+      if(isFinite(trueD) && trueD > 0 && !scrubbing){
+        range.value = String(Math.round((v.currentTime / trueD) * 1000));
+      }
     }
   }
 
   if(range){
     const seekTo = ()=>{
-      const d = v.duration;
+      const d = (typeof nalunoTrueDuration === 'function') ? nalunoTrueDuration(v) : v.duration;
       if(!isFinite(d) || d <= 0) return;
       const t = (parseInt(range.value, 10) / 1000) * d;
       try{ v.currentTime = t; }catch(_){}
@@ -1320,12 +1326,13 @@ function wireBspaceSeekAndAutoplay(v){
   // Second chance after src bind settles
   setTimeout(tryPlay, 400);
   v.addEventListener('ended', function(){
-    const d = v.duration;
+    if(typeof nalunoResumeIfTruncated === 'function'){
+      nalunoResumeIfTruncated(v, function(){ syncPlayBtn(); });
+      return;
+    }
+    const d = (typeof nalunoTrueDuration === 'function') ? nalunoTrueDuration(v) : v.duration;
     const t = v.currentTime || 0;
-    const falseEnd = (typeof nalunoFiniteDuration === 'function')
-      ? (!nalunoFiniteDuration(d) || t < d - 0.45)
-      : (!isFinite(d) || t < (d || 0) - 0.45);
-    if(falseEnd){
+    if(!isFinite(d) || t < (d || 0) - 0.45){
       try{ v.preload = 'auto'; v.currentTime = Math.max(0, t + 0.001); }catch(_){}
       v.play().catch(function(){});
     }

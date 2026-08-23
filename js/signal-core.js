@@ -105,6 +105,56 @@ function nalunoFileLooksLikeImage(file){
 function nalunoFiniteDuration(d){
   return typeof d === 'number' && isFinite(d) && d > 0 && d !== Infinity;
 }
+/** Google Photos / MP4 edit-lists often report half the real length. Prefer seekable. */
+function nalunoTrueDuration(el){
+  if(!el) return 0;
+  let d = 0;
+  try{
+    if(el.seekable && el.seekable.length){
+      d = Math.max(d, el.seekable.end(el.seekable.length - 1) || 0);
+    }
+  }catch(_){}
+  try{
+    if(nalunoFiniteDuration(el.duration)) d = Math.max(d, el.duration);
+  }catch(_){}
+  return d;
+}
+function nalunoResumeIfTruncated(el, onRealEnd){
+  if(!el) { if(onRealEnd) onRealEnd(); return; }
+  const t = el.currentTime || 0;
+  const d = nalunoTrueDuration(el);
+  const reported = el.duration;
+  if(d > t + 0.4){
+    try{ el.currentTime = Math.min(d - 0.05, t + 0.05); }catch(_){}
+    el.play().catch(function(){});
+    return;
+  }
+  // Probe past reported duration (half-length metadata)
+  if(nalunoFiniteDuration(reported) && t >= reported - 0.4){
+    const probeAt = reported + Math.max(0.8, reported * 0.2);
+    const before = t;
+    let settled = false;
+    const finish = function(){
+      if(settled) return;
+      settled = true;
+      const now = el.currentTime || 0;
+      if(now > before + 0.15 && now > reported - 0.05){
+        el.play().catch(function(){});
+      } else if(onRealEnd){
+        onRealEnd();
+      }
+    };
+    try{
+      el.addEventListener('seeked', finish, { once: true });
+      el.currentTime = probeAt;
+    }catch(_){ finish(); }
+    setTimeout(finish, 500);
+    return;
+  }
+  if(onRealEnd) onRealEnd();
+}
+window.nalunoTrueDuration = nalunoTrueDuration;
+window.nalunoResumeIfTruncated = nalunoResumeIfTruncated;
 /** Phone-first: treat as portrait unless the decoded frame is clearly landscape.
  *  Samsung/iPhone often store 9:16 camera clips as 1920×1080 + rotation; if a
  *  poster/thumb is taller than wide, we trust that over coded videoWidth. */
@@ -387,10 +437,14 @@ function nalunoProbeDuration(file, timeoutMs){
       resolve(nalunoFiniteDuration(d) ? d : null);
     };
     v.onloadedmetadata = function(){ finish(v.duration); };
-    v.onloadeddata = function(){ if(!done) finish(v.duration); };
+    v.onloadeddata = function(){ if(!done) finish(Math.max(v.duration || 0, (v.seekable && v.seekable.length) ? v.seekable.end(0) : 0)); };
     v.onerror = function(){ finish(null); };
     v.src = url;
-    setTimeout(function(){ finish(v.duration); }, timeoutMs || 2800);
+    setTimeout(function(){
+      let d = v.duration;
+      try{ if(v.seekable && v.seekable.length) d = Math.max(d || 0, v.seekable.end(v.seekable.length - 1)); }catch(_){}
+      finish(d);
+    }, timeoutMs || 6000);
   });
 }
 

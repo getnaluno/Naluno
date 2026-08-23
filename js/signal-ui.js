@@ -265,25 +265,31 @@ function signalEnsurePlayableSrc(videoEl, remoteUrl){
     }
     if(videoEl.dataset && videoEl.dataset.blobTried === '1'){ resolve(false); return; }
     try{ videoEl.dataset.blobTried = '1'; }catch(_){}
-    const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-    const t = setTimeout(function(){ try{ if(ctrl) ctrl.abort(); }catch(_){} }, 12000);
-    fetch(remoteUrl, ctrl ? { signal: ctrl.signal, mode: 'cors', credentials: 'omit' } : { mode: 'cors', credentials: 'omit' })
-      .then(function(r){
-        if(!r.ok) throw new Error('fetch ' + r.status);
-        return r.blob();
-      })
-      .then(function(blob){
-        clearTimeout(t);
-        if(!blob || !blob.size){ resolve(false); return; }
-        const u = URL.createObjectURL(blob);
-        try{ videoEl.src = u; }catch(_){}
-        try{ videoEl.load(); }catch(_){}
-        resolve(true);
-      })
-      .catch(function(){
-        clearTimeout(t);
-        resolve(false);
-      });
+    const urls = (typeof nalunoPlayCandidates === 'function') ? nalunoPlayCandidates(remoteUrl) : [remoteUrl];
+    let i = 0;
+    const tryNext = function(){
+      if(i >= urls.length){ resolve(false); return; }
+      const u = urls[i++];
+      const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+      const t = setTimeout(function(){ try{ if(ctrl) ctrl.abort(); }catch(_){} }, 14000);
+      fetch(u, ctrl ? { signal: ctrl.signal, mode: 'cors', credentials: 'omit' } : { mode: 'cors', credentials: 'omit' })
+        .then(function(r){
+          if(!r.ok) throw new Error('fetch ' + r.status);
+          return r.blob();
+        })
+        .then(function(blob){
+          clearTimeout(t);
+          if(!blob || !blob.size){ tryNext(); return; }
+          const obj = URL.createObjectURL(blob);
+          try{ videoEl.src = obj; }catch(_){}
+          resolve(true);
+        })
+        .catch(function(){
+          clearTimeout(t);
+          tryNext();
+        });
+    };
+    tryNext();
   });
 }
 
@@ -371,6 +377,13 @@ function playSegment(idx, direction=1){
     };
 
     v.onended = function(){
+      if(typeof nalunoResumeIfTruncated === 'function'){
+        nalunoResumeIfTruncated(v, function(){
+          clearSegTimer();
+          goToSegment(idx + 1);
+        });
+        return;
+      }
       const d = v.duration;
       const t = v.currentTime || 0;
       const falseEnd = (typeof nalunoFiniteDuration === 'function')
@@ -448,7 +461,7 @@ function playSegment(idx, direction=1){
           try{ v.muted = false; }catch(_){}
           renderMuteIcon(false);
         });
-        const d = trimEnd ? (trimEnd - trimStart) : v.duration;
+        const d = trimEnd ? (trimEnd - trimStart) : ((typeof nalunoTrueDuration === 'function') ? nalunoTrueDuration(v) : v.duration);
         if(isFinite(d) && d > 0){
           durationMs = Math.round(d * 1000);
           updateBars(idx, durationMs);
@@ -485,7 +498,7 @@ function playSegment(idx, direction=1){
       if(trimStart && Math.abs((v.currentTime || 0) - trimStart) > 0.2){
         try{ v.currentTime = trimStart; }catch(_){}
       }
-      const d = trimEnd ? (trimEnd - trimStart) : v.duration;
+      const d = trimEnd ? (trimEnd - trimStart) : ((typeof nalunoTrueDuration === 'function') ? nalunoTrueDuration(v) : v.duration);
       if(isFinite(d) && d > 0){
         durationMs = Math.round(d * 1000);
         updateBars(idx, durationMs);
