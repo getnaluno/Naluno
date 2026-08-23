@@ -91,10 +91,54 @@
     const avg = sum / 64;
     return lum.map(function(L){ return L > avg ? '1' : '0'; }).join('');
   }
-  function stillFromCanvas(canvas){
+  function pHashFromCanvas(canvas){
+    const n = 32, k = 8;
+    const c = document.createElement('canvas');
+    c.width = n; c.height = n;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    if(!ctx) return '';
+    ctx.drawImage(canvas, 0, 0, n, n);
+    const data = ctx.getImageData(0, 0, n, n).data;
+    const g = new Float64Array(n * n);
+    for(let i = 0; i < n * n; i++){
+      g[i] = data[i * 4] * 0.3 + data[i * 4 + 1] * 0.59 + data[i * 4 + 2] * 0.11;
+    }
+    const coeffs = [];
+    for(let u = 0; u < k; u++){
+      for(let v = 0; v < k; v++){
+        if(u === 0 && v === 0) continue;
+        let sum = 0;
+        for(let x = 0; x < n; x++){
+          const cx = Math.cos(Math.PI * (2 * x + 1) * u / (2 * n));
+          for(let y = 0; y < n; y++){
+            sum += g[y * n + x] * cx * Math.cos(Math.PI * (2 * y + 1) * v / (2 * n));
+          }
+        }
+        coeffs.push(sum);
+      }
+    }
+    const sorted = coeffs.slice().sort(function(a,b){ return a - b; });
+    const med = sorted[Math.floor(sorted.length / 2)] || 0;
+    return coeffs.map(function(x){ return x > med ? '1' : '0'; }).join('');
+  }
+  function stillFromCanvas(canvas, sourceEl){
     const d = dHashFromCanvas(canvas);
     const a = aHashFromCanvas(canvas);
-    return (d && a) ? (d + ':' + a) : (d || a || '');
+    const p = pHashFromCanvas(canvas);
+    let pc = '';
+    try{
+      const src = sourceEl || canvas;
+      const sw = src.naturalWidth || src.videoWidth || src.width || 0;
+      const sh = src.naturalHeight || src.videoHeight || src.height || 0;
+      if(sw > 16 && sh > 16){
+        const crop = document.createElement('canvas');
+        crop.width = 64; crop.height = 64;
+        const cctx = crop.getContext('2d', { willReadFrequently: true });
+        cctx.drawImage(src, sw * 0.15, sh * 0.15, sw * 0.7, sh * 0.7, 0, 0, 64, 64);
+        pc = pHashFromCanvas(crop);
+      }
+    }catch(_){}
+    return [d, a, p, pc].filter(Boolean).join(':');
   }
   function photoLikeness(a, b){
     if(!a || !b) return 0;
@@ -104,13 +148,25 @@
       if(!n) return 0;
       return 1 - (hamming(x, y) / n);
     }
-    if(String(a).indexOf(':') >= 0 && String(b).indexOf(':') >= 0){
-      const A = String(a).split(':'), B = String(b).split(':');
-      return (one(A[0], B[0]) + one(A[1], B[1])) / 2;
+    const A = String(a).split(':').filter(Boolean);
+    const B = String(b).split(':').filter(Boolean);
+    if(!A.length || !B.length) return 0;
+    const dAvg = (A[0] && B[0] && A[1] && B[1]) ? (one(A[0], B[0]) + one(A[1], B[1])) / 2 : one(A[0], B[0]);
+    let best = dAvg;
+    // pHash (index 2) and center-crop pHash (index 3) survive brightness, filters, light crops
+    for(let i = 2; i < A.length; i++){
+      for(let j = 2; j < B.length; j++){
+        best = Math.max(best, one(A[i], B[j]));
+      }
     }
-    const n = Math.max(a.length, b.length);
-    if(!n) return 0;
-    return 1 - (hamming(a, b) / n);
+    if(A.length < 3 || B.length < 3){
+      for(let i = 0; i < A.length; i++){
+        for(let j = 0; j < B.length; j++){
+          if(A[i].length === B[j].length) best = Math.max(best, one(A[i], B[j]));
+        }
+      }
+    }
+    return best;
   }
   function sequenceOverlap(a, b){
     if(!a || !b || !a.length || !b.length) return 0;
@@ -174,7 +230,7 @@
             c.width = 64; c.height = 64;
             const ctx = c.getContext('2d', { willReadFrequently: true });
             ctx.drawImage(img, 0, 0, 64, 64);
-            const h = stillFromCanvas(c);
+            const h = stillFromCanvas(c, img);
             try{ URL.revokeObjectURL(url); }catch(_){}
             resolve(h || '');
           }catch(_){
@@ -346,7 +402,7 @@
           const ctx = canvas.getContext('2d');
           if(ctx){
             ctx.drawImage(v, 0, 0, 64, 64);
-            const h = stillFromCanvas(canvas);
+            const h = stillFromCanvas(canvas, v);
             if(h) hashes.push(h);
           }
         }catch(_){}
@@ -504,18 +560,94 @@
     });
     return uniq.slice(0, 8);
   }
+  function hashStillFromUrl(url){
+    return new Promise(function(resolve){
+      if(!url || /^blob:|^data:/i.test(url) === false && !/^https?:/i.test(url)){ resolve(''); return; }
+      try{
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        const t = setTimeout(function(){ resolve(''); }, 3200);
+        img.onload = function(){
+          try{
+            const c = document.createElement('canvas');
+            c.width = 64; c.height = 64;
+            const ctx = c.getContext('2d', { willReadFrequently: true });
+            ctx.drawImage(img, 0, 0, 64, 64);
+            const h = stillFromCanvas(c, img);
+            clearTimeout(t);
+            resolve(h || '');
+          }catch(_){ clearTimeout(t); resolve(''); }
+        };
+        img.onerror = function(){ clearTimeout(t); resolve(''); };
+        img.src = url;
+      }catch(_){ resolve(''); }
+    });
+  }
   async function loadCatalogMarks(){
     const out = [];
-    if(!fbDb) return out;
-    try{
-      const snap = await fbDb.collection('originMarks').orderBy('createdAt', 'desc').limit(240).get();
-      snap.docs.forEach(function(d){ out.push({ id: d.id, ...(d.data() || {}) }); });
-    }catch(_){
+    const seen = {};
+    const push = function(row){
+      if(!row) return;
+      const k = (row.identity || '') + '|' + (row.photoHash || '').slice(0, 24) + '|' + (row.broadcastId || row.id || '');
+      if(seen[k]) return;
+      seen[k] = 1;
+      out.push(row);
+    };
+    if(typeof fbDb !== 'undefined' && fbDb){
       try{
-        const snap = await fbDb.collection('originMarks').limit(80).get();
-        snap.docs.forEach(function(d){ out.push({ id: d.id, ...(d.data() || {}) }); });
-      }catch(_2){}
+        const snap = await fbDb.collection('originMarks').orderBy('createdAt', 'desc').limit(240).get();
+        snap.docs.forEach(function(d){ push({ id: d.id, ...(d.data() || {}) }); });
+      }catch(_){
+        try{
+          const snap = await fbDb.collection('originMarks').limit(80).get();
+          snap.docs.forEach(function(d){ push({ id: d.id, ...(d.data() || {}) }); });
+        }catch(_2){}
+      }
+      try{
+        const snap = await fbDb.collection('broadcasts').orderBy('createdAt', 'desc').limit(120).get();
+        const needThumb = [];
+        snap.docs.forEach(function(d){
+          const data = d.data() || {};
+          const row = {
+            id: d.id,
+            broadcastId: d.id,
+            title: data.title || '',
+            creatorUid: data.creatorUid || '',
+            identity: data.originIdentity || '',
+            photoHash: data.originPhotoHash || '',
+            audioHash: data.originAudioHash || '',
+            frameHashes: data.originFrameHashes || [],
+            duration: data.duration || 0,
+            thumbUrl: data.thumbUrl || '',
+          };
+          if(row.photoHash) push(row);
+          else if(row.thumbUrl) needThumb.push(row);
+        });
+        const slice = needThumb.slice(0, 18);
+        await Promise.all(slice.map(function(row){
+          return hashStillFromUrl(row.thumbUrl).then(function(h){
+            if(h){ row.photoHash = h; push(row); }
+          });
+        }));
+      }catch(_){}
     }
+    try{
+      const local = (typeof feedBroadcasts !== 'undefined' ? feedBroadcasts : []).concat(typeof myBroadcasts !== 'undefined' ? myBroadcasts : []);
+      local.forEach(function(b){
+        if(!b) return;
+        push({
+          id: b.id,
+          broadcastId: b.id,
+          title: b.title || '',
+          creatorUid: b.creatorUid || '',
+          identity: b.originIdentity || '',
+          photoHash: b.originPhotoHash || '',
+          audioHash: b.originAudioHash || '',
+          frameHashes: b.originFrameHashes || [],
+          duration: b.duration || 0,
+        });
+      });
+    }catch(_){}
     return out;
   }
   function fuseChannels(ch){
@@ -547,12 +679,12 @@
       const stillA = mark.photoHash || ((mark.frameHashes && mark.frameHashes[0]) || '');
       const stillB = other.photoHash || ((other.frameHashes && other.frameHashes[0]) || '');
       const still = photoLikeness(stillA, stillB);
-      if(still >= 0.82){
-        ch.picture = Math.round(still * 98);
-        reasons.push('picture matches “' + (other.title || 'another Broadcast') + '”');
-      } else if(still >= 0.72){
-        ch.picture = Math.round(still * 90);
-        reasons.push('picture is close to “' + (other.title || 'another Broadcast') + '”');
+      if(still >= 0.78){
+        ch.picture = Math.round(still * 99);
+        reasons.push('picture matches “' + (other.title || 'another Broadcast') + '”' + (other.creatorUid && mark.creatorUid && other.creatorUid !== mark.creatorUid ? ' by another creator' : ''));
+      } else if(still >= 0.68){
+        ch.picture = Math.round(still * 96);
+        reasons.push('picture is a close edit of “' + (other.title || 'another Broadcast') + '”');
       }
       const motion = sequenceOverlap(mark.frameHashes, other.frameHashes);
       if(motion >= 0.72){
@@ -582,6 +714,7 @@
         reasons.push('same creator — treated as a version, not a theft');
         score = Math.min(score, 69);
       }
+      const hold = !sameCreator && score >= 70;
       if(score >= 55){
         out.push({
           title: other.title,
@@ -591,6 +724,9 @@
           score: score,
           channels: ch,
           sameCreator: sameCreator,
+          hold: hold,
+          creatorUid: other.creatorUid || '',
+          broadcastId: other.broadcastId || other.id || '',
         });
       }
     });
@@ -619,10 +755,12 @@
   function assemble(opts){
     const matches = (opts.catalog || []).concat(opts.web || []).concat(opts.known || []);
     matches.sort(function(a,b){ return b.score - a.score; });
-    const top = matches[0] ? matches[0].score : 0;
+    const topHit = matches[0] || null;
+    const top = topHit ? topHit.score : 0;
+    const hold = !!(topHit && topHit.hold) || (top >= 70 && topHit && topHit.source === 'naluno' && !topHit.sameCreator);
     let status = 'clear';
-    if(top >= 86) status = 'match';
-    else if(top >= 70) status = 'review';
+    if(top >= 86 || hold && top >= 78) status = 'match';
+    else if(top >= 70 || hold) status = 'review';
     const reasons = [];
     if(opts.catalog[0]) reasons.push(opts.catalog[0].detail);
     if(opts.web[0] && (!opts.catalog[0] || opts.catalog[0].score < 80)) reasons.push('Open web: ' + opts.web[0].title);
@@ -646,6 +784,9 @@
       photoHash: opts.photoHash || '',
       audioHash: opts.audioHash || '',
       dna: opts.dna || '',
+      hold: hold,
+      matchTitle: (topHit && topHit.source === 'naluno') ? (topHit.title || '') : '',
+      matchBroadcastId: (topHit && topHit.broadcastId) || '',
     };
   }
 
@@ -710,7 +851,16 @@
     }catch(e){ console.warn('[origin] mark', e); }
   }
 
+  function originNeedsAck(report){
+    if(!report) return false;
+    if(report.hold) return true;
+    const hit = (report.matches || []).find(function(m){
+      return m.source === 'naluno' && !m.sameCreator && (m.score || 0) >= 70;
+    });
+    return !!hit || report.status === 'match';
+  }
   window.runOriginScan = runOriginScan;
+  window.originNeedsAck = originNeedsAck;
   window.saveOriginMark = saveOriginMark;
   window.originTrigramScore = trigramScore;
   window.originScanOpenWeb = scanOpenWeb;
