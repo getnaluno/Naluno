@@ -54,7 +54,8 @@ function resolveMediaUrl(u){
   return u;
 }
 
-/** Every URL that might hold this file — original first (compat), then both workers. */
+/** Every URL that might hold this file — original first (compat).
+ *  Never hop Broadcast ↔ Signal buckets unless the URL is a raw R2 object. */
 function nalunoPlayCandidates(raw){
   const original = String(raw || '');
   const urls = [];
@@ -68,14 +69,22 @@ function nalunoPlayCandidates(raw){
   const signalBase = SIGNAL_UPLOAD_WORKER_URL.replace(/\/+$/, '');
   const bcastBase = (typeof BROADCAST_UPLOAD_WORKER_URL === 'string' && BROADCAST_UPLOAD_WORKER_URL)
     ? BROADCAST_UPLOAD_WORKER_URL.replace(/\/+$/, '') : '';
+  const onSignal = /naluno-signal-upload/i.test(original) || original.indexOf(signalBase) === 0;
+  const onBcast = !!(bcastBase && (/naluno-broadcast-upload/i.test(original) || original.indexOf(bcastBase) === 0));
   let key = '';
   try{
     const m = original.match(/u\/[A-Za-z0-9_-]+\/[A-Za-z0-9._-]+/);
     if(m) key = m[0];
   }catch(_){}
   if(key){
-    add(signalBase + '/o/' + key);
-    if(bcastBase) add(bcastBase + '/o/' + key);
+    if(onBcast){
+      add(bcastBase + '/o/' + key);
+    } else if(onSignal){
+      add(signalBase + '/o/' + key);
+    } else {
+      add(signalBase + '/o/' + key);
+      if(bcastBase) add(bcastBase + '/o/' + key);
+    }
   }
   return urls;
 }
@@ -525,7 +534,10 @@ function bindMediaElement(el, rawUrl){
   }
   let urlIndex = 0;
   el.onerror = function(){
-    console.warn('[media] load failed', urls[urlIndex], el.error && el.error.code);
+    const code = el.error && el.error.code;
+    // MEDIA_ERR_ABORTED (1) means src was reset (load()/new src). Do not hop buckets.
+    if(code === 1) return;
+    console.warn('[media] load failed', urls[urlIndex], code);
     urlIndex++;
     if(urlIndex < urls.length){
       el.src = urls[urlIndex];

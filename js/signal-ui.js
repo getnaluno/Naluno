@@ -263,6 +263,9 @@ function signalEnsurePlayableSrc(videoEl, remoteUrl){
     if(String(remoteUrl).indexOf('blob:') === 0 || String(remoteUrl).indexOf('data:') === 0){
       resolve(true); return;
     }
+    if(videoEl && !videoEl.paused && (videoEl.readyState >= 2 || (videoEl.currentTime || 0) > 0.05)){
+      resolve(true); return;
+    }
     if(videoEl.dataset && videoEl.dataset.blobTried === '1'){ resolve(false); return; }
     try{ videoEl.dataset.blobTried = '1'; }catch(_){}
     const urls = (typeof nalunoPlayCandidates === 'function') ? nalunoPlayCandidates(remoteUrl) : [remoteUrl];
@@ -280,6 +283,9 @@ function signalEnsurePlayableSrc(videoEl, remoteUrl){
         .then(function(blob){
           clearTimeout(t);
           if(!blob || !blob.size){ tryNext(); return; }
+          if(videoEl && !videoEl.paused && (videoEl.currentTime || 0) > 0.05){
+            resolve(true); return;
+          }
           const obj = URL.createObjectURL(blob);
           try{ videoEl.src = obj; }catch(_){}
           resolve(true);

@@ -1443,7 +1443,6 @@ function playBroadcastChapter(index, userInitiated){
     const url = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(ch.replacementUrl) : ch.replacementUrl;
     try{ v.pause(); }catch(_){}
     v.src = url;
-    v.load();
     const kick = function(){
       const p = v.play();
       if(p && p.catch) p.catch(function(){ try{ v.muted = true; v.play().catch(function(){}); }catch(_){} });
@@ -1485,7 +1484,6 @@ function playBroadcastChapter(index, userInitiated){
     };
     if(!alreadyOnFile){
       v.src = url;
-      v.load();
       v.onloadedmetadata = function(){ kickPlay(!!userInitiated && startAt > 0.4); };
     } else {
       kickPlay(!!userInitiated);
@@ -1535,7 +1533,6 @@ function playBroadcastChapter(index, userInitiated){
   } else {
     try{ v.pause(); }catch(_){}
     v.src = url;
-    v.load();
     const kick = function(){
       const p = v.play();
       if(p && p.catch) p.catch(function(){

@@ -21,7 +21,7 @@ function nalunoClipElement(el){
     if(!el) return false;
     if(el.classList && (el.classList.contains('native-controls') || el.classList.contains('naluno-clip'))) return true;
     if(el.dataset && (el.dataset.nativeControls === '1' || el.dataset.nalunoClip === '1')) return true;
-    if(el.closest && el.closest('.naluno-clip, .spark-row, .band-voice-bubble')) return true;
+    if(el.closest && el.closest('.naluno-clip, .spark-row, .band-voice-bubble, .band-audio-player')) return true;
   }catch(_){}
   return false;
 }
