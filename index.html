@@ -14,13 +14,13 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.08.23b">
+<meta name="app-version" content="2026.08.23c">
 <meta name="description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:image" content="icon-512.png">
 <meta name="twitter:card" content="summary">
-<link rel="stylesheet" href="css/app.css?v=20260823b">
+<link rel="stylesheet" href="css/app.css?v=20260823c">
 </head>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
@@ -523,7 +523,7 @@
       </div>
     </div>
     <div class="tab-scroll" style="padding:14px 18px 32px;">
-      <input type="file" id="bcompFileInput" accept="video/*,image/*,video/mp4,video/quicktime,video/webm,video/3gpp,image/jpeg,image/png,.mp4,.mov,.webm,.m4v,.3gp,.mkv,.jpg,.jpeg,.png,.heic" style="display:none;" />
+      <input type="file" id="bcompFileInput" accept="video/*,image/*" style="display:none;" />
       <div style="display:flex;gap:8px;margin:0 0 12px;flex-wrap:wrap;">
         <button type="button" id="bcompPickBtn" class="join-btn" style="flex:1;min-width:140px;margin:0; background:rgba(124,255,178,.12); color:var(--mint); border:1px solid rgba(124,255,178,.35);">Choose video or photo</button>
         <button type="button" id="bcompGoLiveBtn" class="join-btn" style="flex:1;min-width:120px;margin:0; background:rgba(255,84,112,.15); color:#ff8a9a; border:1px solid rgba(255,84,112,.45);">Go live</button>
@@ -532,9 +532,6 @@
       <div id="bcompPreview" style="margin-bottom:12px;"></div>
       <div id="bcompProgress" style="display:none;font-family:var(--font-mono);font-size:11px;color:var(--mint);margin:0 0 8px;"></div>
       <div id="bcompStatus" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);margin:0 0 14px;"></div>
-      <input id="bcompTitle" maxlength="120" placeholder="Broadcast title (required)" style="width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:14px;font-family:inherit;" />
-      <input id="bcompTags" maxlength="120" placeholder="Topics (comma separated)" style="width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:13px;font-family:inherit;" />
-      <textarea id="bcompDesc" maxlength="2000" rows="3" placeholder="What is this Broadcast about? (optional)" style="width:100%;margin-bottom:14px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:13px;font-family:inherit;resize:vertical;"></textarea>
       <div class="section-label" style="padding-left:2px;">Strand</div>
       <div class="lobby-sub" style="margin:0 0 8px;">Related Broadcasts live on a Strand. Pick one you already keep, or name a new one.</div>
       <select id="bcompStrand" style="width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:13px;">
@@ -542,6 +539,10 @@
       </select>
       <input id="bcompStrandName" maxlength="48" placeholder="Name this Strand — Café craft" style="width:100%;margin-bottom:12px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:13px;font-family:inherit;" />
       <div id="bcompOrigin" style="display:none;margin:0 0 14px;padding:12px 14px;border-radius:14px;border:1px solid var(--line);background:rgba(23,26,38,.9);"></div>
+
+      <input id="bcompTitle" maxlength="120" placeholder="Broadcast title (required)" style="width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:14px;font-family:inherit;" />
+      <input id="bcompTags" maxlength="120" placeholder="Topics (comma separated)" style="width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:13px;font-family:inherit;" />
+      <textarea id="bcompDesc" maxlength="2000" rows="3" placeholder="What is this Broadcast about? (optional)" style="width:100%;margin-bottom:14px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:13px;font-family:inherit;resize:vertical;"></textarea>
       <button type="button" class="join-btn" id="bcompPublishBtn" style="margin:0;" disabled>Publish Broadcast</button>
     </div>
   </div>
@@ -568,7 +569,7 @@
           <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M12 16V4M12 4l-4 4M12 4l4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
           <span id="uploadDropLabel">Choose photos from your library</span>
         </div>
-        <input type="file" id="mediaFileInput" accept="image/*,image/jpeg,image/png,.jpg,.jpeg,.png" multiple style="display:none;" />
+        <input type="file" id="mediaFileInput" accept="image/*" multiple style="display:none;" />
 
         <div class="filmstrip" id="filmstrip" style="display:none;"></div>
 
@@ -1006,45 +1007,45 @@
   </div>
 
 <!-- NALUNO_MODULES -->
-<script src="js/core.js?v=20260823b"></script>
-<script src="js/media-contain.js?v=20260823b"></script>
-<script src="js/keep-alive.js?v=20260823b"></script>
-<script src="js/metrics.js?v=20260823b"></script>
-<script src="js/data.js?v=20260823b"></script>
-<script src="js/crypto.js?v=20260823b"></script>
-<script src="js/atmosphere.js?v=20260823b"></script>
-<script src="js/band-list.js?v=20260823b"></script>
-<script src="js/signal-core.js?v=20260823b"></script>
-<script src="js/broadcast-core.js?v=20260823b"></script>
-<script src="js/broadcast-upload.js?v=20260823b"></script>
-<script src="js/broadcast-composer.js?v=20260823b"></script>
-<script src="js/origin.js?v=20260823b"></script>
-<script src="js/strand.js?v=20260823b"></script>
-<script src="js/circle.js?v=20260823b"></script>
-<script src="js/weather.js?v=20260823b"></script>
-<script src="js/beacon.js?v=20260823b"></script>
-<script src="js/compass.js?v=20260823b"></script>
-<script src="js/signal-ui.js?v=20260823b"></script>
-<script src="js/compat-lock.js?v=20260823b"></script>
-<script src="js/broadcast-space.js?v=20260823b"></script>
-<script src="js/media-vault.js?v=20260823b"></script>
-<script src="js/wireline.js?v=20260823b"></script>
-<script src="js/profile.js?v=20260823b"></script>
-<script src="js/auth.js?v=20260823b"></script>
-<script src="js/notifications.js?v=20260823b"></script>
-<script src="js/ice-core.js?v=20260823b"></script>
-<script src="js/camera.js?v=20260823b"></script>
-<script src="js/call-filters.js?v=20260823b"></script>
-<script src="js/calls.js?v=20260823b"></script>
-<script src="js/sfu-live.js?v=20260823b"></script>
-<script src="js/broadcast-live.js?v=20260823b"></script>
-<script src="js/band-room.js?v=20260823b"></script>
-<script src="js/pwa.js?v=20260823b"></script>
-<script src="js/spark-engine.js?v=20260823b"></script>
-<script src="js/spark-lg.js?v=20260823b"></script>
-<script src="js/spark-page.js?v=20260823b"></script>
-<script src="js/spark.js?v=20260823b"></script>
-<script src="js/find.js?v=20260823b"></script>
+<script src="js/core.js?v=20260823c"></script>
+<script src="js/media-contain.js?v=20260823c"></script>
+<script src="js/keep-alive.js?v=20260823c"></script>
+<script src="js/metrics.js?v=20260823c"></script>
+<script src="js/data.js?v=20260823c"></script>
+<script src="js/crypto.js?v=20260823c"></script>
+<script src="js/atmosphere.js?v=20260823c"></script>
+<script src="js/band-list.js?v=20260823c"></script>
+<script src="js/signal-core.js?v=20260823c"></script>
+<script src="js/broadcast-core.js?v=20260823c"></script>
+<script src="js/broadcast-upload.js?v=20260823c"></script>
+<script src="js/broadcast-composer.js?v=20260823c"></script>
+<script src="js/origin.js?v=20260823c"></script>
+<script src="js/strand.js?v=20260823c"></script>
+<script src="js/circle.js?v=20260823c"></script>
+<script src="js/weather.js?v=20260823c"></script>
+<script src="js/beacon.js?v=20260823c"></script>
+<script src="js/compass.js?v=20260823c"></script>
+<script src="js/signal-ui.js?v=20260823c"></script>
+<script src="js/compat-lock.js?v=20260823c"></script>
+<script src="js/broadcast-space.js?v=20260823c"></script>
+<script src="js/media-vault.js?v=20260823c"></script>
+<script src="js/wireline.js?v=20260823c"></script>
+<script src="js/profile.js?v=20260823c"></script>
+<script src="js/auth.js?v=20260823c"></script>
+<script src="js/notifications.js?v=20260823c"></script>
+<script src="js/ice-core.js?v=20260823c"></script>
+<script src="js/camera.js?v=20260823c"></script>
+<script src="js/call-filters.js?v=20260823c"></script>
+<script src="js/calls.js?v=20260823c"></script>
+<script src="js/sfu-live.js?v=20260823c"></script>
+<script src="js/broadcast-live.js?v=20260823c"></script>
+<script src="js/band-room.js?v=20260823c"></script>
+<script src="js/pwa.js?v=20260823c"></script>
+<script src="js/spark-engine.js?v=20260823c"></script>
+<script src="js/spark-lg.js?v=20260823c"></script>
+<script src="js/spark-page.js?v=20260823c"></script>
+<script src="js/spark.js?v=20260823c"></script>
+<script src="js/find.js?v=20260823c"></script>
 <!-- /NALUNO_MODULES -->
 </body>
 </html>
