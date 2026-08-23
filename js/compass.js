@@ -995,9 +995,12 @@ async function postSegmentsNow(newSegments){
               ? URL.createObjectURL(seg.videoBlob)
               : (seg.sourceFile ? URL.createObjectURL(seg.sourceFile) : seg.dataUrl));
           const thumbDataUrl = await generateVideoThumbnail(thumbSrc);
+          const localPlayUrl = (source instanceof Blob || source instanceof File)
+            ? URL.createObjectURL(source)
+            : '';
           try{ URL.revokeObjectURL(thumbSrc); }catch(_){}
           const { dataUrl, videoBlob, sourceFile, ...rest } = seg;
-          segToSave = { ...rest, videoUrl, thumbDataUrl, codecHint: (source && source.type) || null };
+          segToSave = { ...rest, videoUrl, thumbDataUrl, localPlayUrl, codecHint: (source && source.type) || null };
         }catch(e){
           failed++;
           lastErrorMessage = e.message || 'Unknown error';

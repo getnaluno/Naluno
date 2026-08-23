@@ -73,9 +73,41 @@
     };
   }
 
+  async function attachBroadcastToStrand(broadcastId, strandId, strandName){
+    if(!fbDb || !currentUser || !broadcastId) return null;
+    let strand = null;
+    if(strandId){
+      strand = (myStrands || []).find(function(s){ return s.id === strandId; }) || { id: strandId, name: strandName || 'Strand' };
+    } else if(strandName){
+      strand = await ensureStrand(strandName);
+    }
+    if(!strand || !strand.id) return null;
+    await fbDb.collection('broadcasts').doc(broadcastId).set({
+      strandId: strand.id,
+      strandName: strand.name,
+      updatedAt: Date.now(),
+    }, { merge: true });
+    try{
+      await fbDb.collection('strands').doc(strand.id).set({
+        broadcastIds: firebase.firestore.FieldValue.arrayUnion(broadcastId),
+        updatedAt: Date.now(),
+      }, { merge: true });
+    }catch(_){}
+    try{
+      const list = (typeof feedBroadcasts !== 'undefined' && feedBroadcasts) ? feedBroadcasts : [];
+      list.forEach(function(b){
+        if(b.id === broadcastId){ b.strandId = strand.id; b.strandName = strand.name; }
+      });
+      (typeof myBroadcasts !== 'undefined' && myBroadcasts || []).forEach(function(b){
+        if(b.id === broadcastId){ b.strandId = strand.id; b.strandName = strand.name; }
+      });
+    }catch(_){}
+    return strand;
+  }
   window.loadMyStrands = loadMyStrands;
   window.ensureStrand = ensureStrand;
   window.fillStrandSelect = fillStrandSelect;
   window.relatedBroadcasts = relatedBroadcasts;
+  window.attachBroadcastToStrand = attachBroadcastToStrand;
   window.getMyStrands = function(){ return myStrands; };
 })();

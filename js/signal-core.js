@@ -33,27 +33,53 @@ const SIGNAL_UPLOAD_WORKER_URL = 'https://naluno-signal-upload.naluno.workers.de
  *  Broken playback was caused by R2 "public" hosts that never served bytes. */
 function resolveMediaUrl(u){
   if(!u || typeof u !== 'string') return u || '';
-  const base = SIGNAL_UPLOAD_WORKER_URL.replace(/\/+$/, '');
-  if(u.indexOf(base + '/o/') === 0) return u;
-  if(u.indexOf(base + '/') === 0 && u.indexOf('/o/') < 0){
-    // rare: worker origin without /o/
-    const rest = u.slice(base.length).replace(/^\/+/, '');
-    if(rest.indexOf('u/') === 0) return base + '/o/' + rest;
-  }
+  if(/^blob:|^data:/i.test(u)) return u;
+  const signalBase = SIGNAL_UPLOAD_WORKER_URL.replace(/\/+$/, '');
+  const bcastBase = (typeof BROADCAST_UPLOAD_WORKER_URL === 'string' && BROADCAST_UPLOAD_WORKER_URL)
+    ? BROADCAST_UPLOAD_WORKER_URL.replace(/\/+$/, '') : '';
+  // Never steal the host of an already-proxied object URL (Broadcast vs Signal buckets).
+  if(/^https?:/i.test(u) && /\/o\/u\//i.test(u)) return u;
+  if(u.indexOf(signalBase + '/o/') === 0) return u;
+  if(bcastBase && u.indexOf(bcastBase) === 0) return u;
   try{
-    // key path u/<uid>/<file>
     const m = u.match(/\/?(u\/[A-Za-z0-9_-]+\/[A-Za-z0-9._-]+)/);
-    if(m) return base + '/o/' + m[1];
-    if(/r2\.dev\//i.test(u) || /cloudflarestorage\.com\//i.test(u)){
-      const path = u.split(/r2\.dev\//i)[1] || u.split(/cloudflarestorage\.com\//i)[1];
-      if(path){
-        const cleaned = path.replace(/^\/+/, '').split('?')[0];
-        return base + '/o/' + cleaned;
-      }
+    if(/^https?:/i.test(u) && (/r2\.dev\//i.test(u) || /cloudflarestorage\.com\//i.test(u))){
+      const path = (u.split(/r2\.dev\//i)[1] || u.split(/cloudflarestorage\.com\//i)[1] || '').replace(/^\/+/, '').split('?')[0];
+      if(path) return signalBase + '/o/' + path;
+    }
+    if(m && !/^https?:/i.test(u)){
+      return signalBase + '/o/' + m[1];
     }
   }catch(_){}
   return u;
 }
+
+/** Every URL that might hold this file — original first (compat), then both workers. */
+function nalunoPlayCandidates(raw){
+  const original = String(raw || '');
+  const urls = [];
+  const add = function(u){
+    if(!u || typeof u !== 'string') return;
+    if(urls.indexOf(u) >= 0) return;
+    urls.push(u);
+  };
+  add(original);
+  try{ add(resolveMediaUrl(original)); }catch(_){}
+  const signalBase = SIGNAL_UPLOAD_WORKER_URL.replace(/\/+$/, '');
+  const bcastBase = (typeof BROADCAST_UPLOAD_WORKER_URL === 'string' && BROADCAST_UPLOAD_WORKER_URL)
+    ? BROADCAST_UPLOAD_WORKER_URL.replace(/\/+$/, '') : '';
+  let key = '';
+  try{
+    const m = original.match(/u\/[A-Za-z0-9_-]+\/[A-Za-z0-9._-]+/);
+    if(m) key = m[0];
+  }catch(_){}
+  if(key){
+    add(signalBase + '/o/' + key);
+    if(bcastBase) add(bcastBase + '/o/' + key);
+  }
+  return urls;
+}
+window.nalunoPlayCandidates = nalunoPlayCandidates;
 
 /** Attach error + load recovery on a media element. Playback uses preload=auto.
  *  metadata-only was starving Android after a few minutes (false `ended`). */
@@ -211,6 +237,9 @@ function nalunoTranscodeToWeb(file, onProgress, maxSeconds){
       if(settled) return;
       settled = true;
       cleanup();
+      try{
+        if(blob && !blob._nalunoName) blob._nalunoName = 'signal.webm';
+      }catch(_){}
       resolve(blob);
     };
     video.onerror = function(){ fail(new Error('Could not open that video')); };
@@ -405,7 +434,8 @@ function attachPlaybackGuard(el, url){
 
 function bindMediaElement(el, rawUrl){
   if(!el) return;
-  const url = resolveMediaUrl(rawUrl);
+  const urls = (typeof nalunoPlayCandidates === 'function') ? nalunoPlayCandidates(rawUrl) : [resolveMediaUrl(rawUrl)];
+  const url = urls[0] || resolveMediaUrl(rawUrl);
   if(!url) return;
   el.setAttribute('playsinline', '');
   el.setAttribute('webkit-playsinline', '');
@@ -413,26 +443,28 @@ function bindMediaElement(el, rawUrl){
   try{ el.preload = 'auto'; }catch(_){}
   if(typeof containMediaElement === 'function') containMediaElement(el);
   const current = (el.currentSrc || el.getAttribute('src') || '').split('?')[0];
-  const nextBare = url.split('?')[0];
+  const nextBare = String(url).split('?')[0];
   if(!(current && nextBare && current.indexOf(nextBare) >= 0)){
     const key = (typeof vaultKeyForUrl === 'function') ? vaultKeyForUrl(url) : '';
     const cached = (key && typeof vaultSyncSrc === 'function') ? vaultSyncSrc(key) : '';
     el.src = cached || url;
   }
+  let urlIndex = 0;
   el.onerror = function(){
-    console.warn('[media] load failed', url, el.error && el.error.code);
+    console.warn('[media] load failed', urls[urlIndex], el.error && el.error.code);
+    urlIndex++;
+    if(urlIndex < urls.length){
+      el.src = urls[urlIndex];
+      el.play().catch(function(){});
+      return;
+    }
     if(!el.dataset.retried){
       el.dataset.retried = '1';
       const key = (typeof vaultKeyForUrl === 'function') ? vaultKeyForUrl(url) : '';
       if(key && typeof vaultObjectUrl === 'function'){
         vaultObjectUrl(key).then(function(u){
           if(u){ el.src = u; el.play().catch(function(){}); }
-          else { el.src = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'r=' + Date.now(); }
-        }).catch(function(){
-          el.src = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'r=' + Date.now();
-        });
-      } else {
-        el.src = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'r=' + Date.now();
+        }).catch(function(){});
       }
     }
   };
@@ -696,7 +728,20 @@ function pruneExpiredSignal(){
 async function saveSignalSegment(segment){
   if(!currentUser || !fbDb) return null;
   try{
-    const ref = await fbDb.collection('users').doc(currentUser.uid).collection('signal').add(segment);
+    const clean = {};
+    Object.keys(segment || {}).forEach(function(k){
+      const v = segment[k];
+      if(v === undefined || v === null) return;
+      if(typeof Blob !== 'undefined' && v instanceof Blob) return;
+      if(typeof File !== 'undefined' && v instanceof File) return;
+      if(typeof v === 'function') return;
+      if(k === 'localPlayUrl') return;
+      clean[k] = v;
+    });
+    if(clean.thumbDataUrl && String(clean.thumbDataUrl).length > 350000){
+      clean.thumbDataUrl = String(clean.thumbDataUrl).slice(0, 350000);
+    }
+    const ref = await fbDb.collection('users').doc(currentUser.uid).collection('signal').add(clean);
     return ref.id;
   }catch(e){ toast('Couldn\u2019t post — try again'); return null; }
 }

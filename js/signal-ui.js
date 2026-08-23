@@ -232,6 +232,7 @@ function clearSegTimer(){
 
 function signalPlaySrc(seg){
   if(!seg) return '';
+  if(seg.localPlayUrl && String(seg.localPlayUrl).indexOf('blob:') === 0) return seg.localPlayUrl;
   const raw = seg.videoUrl || seg.mediaUrl || seg.dataUrl || '';
   if(!raw) return '';
   if(String(raw).indexOf('blob:') === 0 || String(raw).indexOf('data:') === 0) return raw;

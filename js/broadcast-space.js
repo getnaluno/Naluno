@@ -98,7 +98,8 @@ function renderBspaceMedia(seg){
       rawSrc = legacyBroadcastPlayUrl(Object.assign({}, seg, { chapters: chapters, mediaUrl: seg.mediaUrl || seg.videoUrl }));
     }
     if(!rawSrc) rawSrc = seg.videoUrl || seg.mediaUrl || seg.dataUrl || (chapters && chapters[0] && chapters[0].mediaUrl) || '';
-    if(typeof resolveMediaUrl === 'function') rawSrc = resolveMediaUrl(rawSrc) || rawSrc;
+    const playUrls = (typeof nalunoPlayCandidates === 'function') ? nalunoPlayCandidates(rawSrc) : [rawSrc];
+    rawSrc = playUrls[0] || rawSrc;
     // Visible chapter chips only when real chapters (not silent upload parts)
     const showChapters = chapters && chapters.length > 1 && !chapters.every(c => c.silent);
     host.innerHTML = `
@@ -442,16 +443,19 @@ function renderBspaceRelated(){
   });
   function paint(rel){
     if(!rel || !rel.items || !rel.items.length){
-      el.innerHTML = `<div class="bspace-card"><div class="body" style="color:var(--text-dim);">${bspaceEscape(rel && rel.label ? rel.label : 'Related Broadcasts will appear from this Strand.')}</div></div>`;
+      el.innerHTML = `<div class="bspace-card"><div class="body" style="color:var(--text-dim);">${bspaceEscape(rel && rel.label ? rel.label : 'Nearby Broadcasts will fill this Strand.')}</div></div>`;
       return;
     }
-    const head = `<div class="hint" style="margin-bottom:8px;">${bspaceEscape(rel.label || 'Related')}</div>`;
-    el.innerHTML = head + rel.items.map(function(item){
-      return `<div class="bspace-card" role="button" data-rel-id="${bspaceEscape(item.id)}" style="cursor:pointer;">
-        <div class="who">${bspaceEscape(item.creatorName || 'Someone')}${item.strandName ? ' · ' + bspaceEscape(item.strandName) : ''}</div>
-        <div class="body">${bspaceEscape(item.title || 'Broadcast')}</div>
-      </div>`;
-    }).join('');
+    const head = `<div class="hint" style="margin-bottom:8px;">${bspaceEscape(rel.label || 'Nearby')}</div>`;
+    el.innerHTML = head + '<div class="nearby-strip">' + rel.items.map(function(item){
+      const thumb = item.thumbUrl || item.thumb || '';
+      const media = thumb
+        ? '<img src="'+bspaceEscape(thumb)+'" alt="" />'
+        : '<div class="nearby-fallback">'+bspaceEscape(String(item.creatorName||'?').slice(0,1).toUpperCase())+'</div>';
+      return `<button type="button" class="nearby-tile" data-rel-id="${bspaceEscape(item.id)}">
+        <div class="nearby-frame">${media}<span class="nearby-title">${bspaceEscape((item.title||'Broadcast').slice(0,42))}</span></div>
+      </button>`;
+    }).join('') + '</div>';
     el.querySelectorAll('[data-rel-id]').forEach(function(node){
       node.onclick = function(){
         const id = node.getAttribute('data-rel-id');
@@ -503,6 +507,17 @@ async function openBroadcastSpace(meta){
   $('bspaceResourceComposer').style.display = isCreator ? 'flex' : 'none';
   $('bspaceGoLive').style.display = isCreator ? 'inline-block' : 'none';
   if($('bspaceDeleteBtn')) $('bspaceDeleteBtn').style.display = isCreator ? 'inline-block' : 'none';
+  const strandRow = $('bspaceStrandRow');
+  if(strandRow){
+    strandRow.style.display = isCreator ? 'block' : 'none';
+    if(isCreator && typeof loadMyStrands === 'function'){
+      loadMyStrands().then(function(){
+        if(typeof fillStrandSelect === 'function') fillStrandSelect($('bspaceStrandPick'));
+        const pick = $('bspaceStrandPick');
+        if(pick && meta.strandId) pick.value = meta.strandId;
+      }).catch(function(){});
+    }
+  }
 
   $('bspace').classList.add('active');
   $('bspaceScroll').scrollTop = 0;
@@ -660,6 +675,33 @@ $('bspaceJoinBtn').onclick = async ()=>{
     toast(e.message || 'Couldn’t join — check connection / rules');
   }
 };
+
+if($('bspaceStrandSave')){
+  $('bspaceStrandSave').onclick = async function(){
+    if(!activeBroadcastId || !currentUser) return;
+    const pick = $('bspaceStrandPick');
+    const nameEl = $('bspaceStrandNew');
+    const strandId = (pick && pick.value) || '';
+    const strandName = (nameEl && nameEl.value.trim()) || '';
+    if(!strandId && !strandName){ toast('Pick a Strand or type a new name'); return; }
+    try{
+      const s = await attachBroadcastToStrand(activeBroadcastId, strandId, strandName);
+      if(s){
+        if(activeBroadcastMeta){
+          activeBroadcastMeta.strandId = s.id;
+          activeBroadcastMeta.strandName = s.name;
+        }
+        toast('On Strand · ' + s.name);
+        renderBspaceRelated();
+        if(nameEl) nameEl.value = '';
+        if(typeof fillStrandSelect === 'function') fillStrandSelect(pick);
+        if(pick) pick.value = s.id;
+      }
+    }catch(e){
+      toast((e && e.message) || 'Could not save Strand');
+    }
+  };
+}
 
 $('bspaceConvSend').onclick = async ()=>{
   const text = ($('bspaceConvInput').value || '').trim();

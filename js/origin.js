@@ -4,7 +4,10 @@
   const KNOWN = [
     'bohemian rhapsody','let it be','hey jude','thriller','billie jean','shape of you',
     'blinding lights','baby shark','despacito','star wars','frozen let it go',
-    'happy birthday to you','super mario','game of thrones','the beatles','taylor swift'
+    'happy birthday to you','super mario','game of thrones','the beatles','taylor swift',
+    'smells like teen spirit','hotel california','imagine','rolling in the deep',
+    'someone like you','old town road','as it was','anti-hero','espresso',
+    'the lion king','inception','avatar','titanic','harry potter','stranger things'
   ];
 
   function titleKey(s){
@@ -131,44 +134,96 @@
     const q = titleKey(title);
     if(q.length < 3) return [];
     const matches = [];
-    try{
-      const wiki = await fetch('https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=' + encodeURIComponent(q) + '&srlimit=5&format=json&origin=*');
-      if(wiki.ok){
-        const body = await wiki.json();
-        const hits = (body.query && body.query.search) || [];
-        hits.forEach(function(hit){
-          const s = Math.max(trigramScore(title, hit.title), trigramScore(description || '', hit.title) * 0.7);
-          if(s >= 0.42){
-            matches.push({
-              title: hit.title,
-              source: 'web',
-              detail: String(hit.snippet || 'Wikipedia').replace(/<[^>]+>/g, ' ').slice(0, 140),
-              score: Math.round(Math.min(0.94, s + 0.08) * 100),
-            });
-          }
-        });
+    function pushHit(name, source, detail, s, boost){
+      if(!name || s < 0.38) return;
+      matches.push({
+        title: name,
+        source: source,
+        detail: String(detail || source).replace(/<[^>]+>/g, ' ').slice(0, 160),
+        score: Math.round(Math.min(0.97, s + (boost || 0)) * 100),
+      });
+    }
+    async function getJson(url, ms){
+      const ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+      const t = setTimeout(function(){ try{ if(ctl) ctl.abort(); }catch(_){} }, ms || 4500);
+      try{
+        const res = await fetch(url, ctl ? { signal: ctl.signal } : {});
+        clearTimeout(t);
+        if(!res.ok) return null;
+        return await res.json();
+      }catch(_){
+        clearTimeout(t);
+        return null;
       }
+    }
+    try{
+      const body = await getJson('https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=' + encodeURIComponent(q) + '&srlimit=5&format=json&origin=*');
+      const hits = (body && body.query && body.query.search) || [];
+      hits.forEach(function(hit){
+        const s = Math.max(trigramScore(title, hit.title), trigramScore(description || '', hit.title) * 0.7);
+        pushHit(hit.title, 'wikipedia', hit.snippet || 'Wikipedia', s, 0.08);
+      });
     }catch(_){}
     try{
-      const itunes = await fetch('https://itunes.apple.com/search?term=' + encodeURIComponent(q) + '&entity=song,musicVideo,movie&limit=5');
-      if(itunes.ok){
-        const body = await itunes.json();
-        (body.results || []).forEach(function(r){
-          const name = r.trackName || r.collectionName || '';
-          const s = trigramScore(title, name);
-          if(s >= 0.48){
-            matches.push({
-              title: name + (r.artistName ? ' — ' + r.artistName : ''),
-              source: 'web',
-              detail: 'Listed on the public iTunes catalog',
-              score: Math.round(Math.min(0.96, s + 0.1) * 100),
-            });
-          }
-        });
-      }
+      const body = await getJson('https://itunes.apple.com/search?term=' + encodeURIComponent(q) + '&entity=song,musicVideo,movie,tvSeason&limit=6');
+      (body && body.results || []).forEach(function(r){
+        const name = r.trackName || r.collectionName || '';
+        const s = trigramScore(title, name);
+        pushHit(name + (r.artistName ? ' — ' + r.artistName : ''), 'itunes', 'Public iTunes / Apple catalog', s, 0.1);
+      });
+    }catch(_){}
+    try{
+      const body = await getJson('https://musicbrainz.org/ws/2/recording/?query=' + encodeURIComponent(q) + '&fmt=json&limit=5');
+      (body && body.recordings || []).forEach(function(r){
+        const artist = (r['artist-credit'] && r['artist-credit'][0] && r['artist-credit'][0].name) || '';
+        const s = trigramScore(title, r.title || '');
+        pushHit((r.title || '') + (artist ? ' — ' + artist : ''), 'musicbrainz', 'MusicBrainz recording', s, 0.08);
+      });
+    }catch(_){}
+    try{
+      const body = await getJson('https://api.deezer.com/search?q=' + encodeURIComponent(q) + '&limit=5');
+      (body && body.data || []).forEach(function(r){
+        const name = r.title || '';
+        const artist = (r.artist && r.artist.name) || '';
+        const s = trigramScore(title, name);
+        pushHit(name + (artist ? ' — ' + artist : ''), 'deezer', 'Deezer catalog', s, 0.08);
+      });
+    }catch(_){}
+    try{
+      const body = await getJson('https://api.tvmaze.com/search/shows?q=' + encodeURIComponent(q));
+      (body || []).slice(0, 5).forEach(function(row){
+        const show = row && row.show;
+        if(!show) return;
+        const s = trigramScore(title, show.name || '');
+        pushHit(show.name, 'tvmaze', (show.premiered ? 'First aired ' + show.premiered : 'TV catalog'), s, 0.08);
+      });
+    }catch(_){}
+    try{
+      const body = await getJson('https://openlibrary.org/search.json?q=' + encodeURIComponent(q) + '&limit=5');
+      (body && body.docs || []).slice(0, 5).forEach(function(d){
+        const name = d.title || '';
+        const s = trigramScore(title, name);
+        pushHit(name + (d.author_name && d.author_name[0] ? ' — ' + d.author_name[0] : ''), 'openlibrary', 'Open Library', s, 0.06);
+      });
+    }catch(_){}
+    try{
+      const body = await getJson('https://archive.org/advancedsearch.php?q=' + encodeURIComponent(q) + '&fl[]=title&fl[]=creator&fl[]=identifier&rows=5&page=1&output=json');
+      const docs = body && body.response && body.response.docs || [];
+      docs.forEach(function(d){
+        const s = trigramScore(title, d.title || '');
+        pushHit(d.title, 'archive', 'Internet Archive', s, 0.05);
+      });
     }catch(_){}
     matches.sort(function(a,b){ return b.score - a.score; });
-    return matches.slice(0, 5);
+    const seen = {};
+    const uniq = [];
+    matches.forEach(function(m){
+      const k = titleKey(m.title);
+      if(seen[k]) return;
+      seen[k] = 1;
+      uniq.push(m);
+    });
+    return uniq.slice(0, 8);
   }
   async function loadCatalogMarks(){
     const out = [];
@@ -289,4 +344,5 @@
   window.runOriginScan = runOriginScan;
   window.saveOriginMark = saveOriginMark;
   window.originTrigramScore = trigramScore;
+  window.originScanOpenWeb = scanOpenWeb;
 })();
