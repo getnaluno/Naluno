@@ -347,7 +347,7 @@ async function paintBspaceViews(meta){
   let views = (meta && typeof meta.views === 'number') ? meta.views : 0;
   let total = 0;
   const creatorUid = meta && meta.creatorUid;
-  const isOwner = !!(currentUser && creatorUid && currentUser.uid === creatorUid);
+  const isOwner = !!(typeof currentUser !== 'undefined' && currentUser && creatorUid && currentUser.uid === creatorUid);
   try{
     if(fbDb && activeBroadcastId){
       const doc = await fbDb.collection('broadcasts').doc(activeBroadcastId).get();
@@ -361,7 +361,6 @@ async function paintBspaceViews(meta){
         }
       }
     }
-    // Total across every Broadcast of this creator — creator-only.
     if(isOwner && fbDb && creatorUid){
       try{
         const t = await fbDb.collection('toga').doc(creatorUid).get();
@@ -372,9 +371,7 @@ async function paintBspaceViews(meta){
           total = mine.reduce(function(n, x){ return n + (Number(x.views) || 0); }, 0);
           if(!total) total = views;
         }
-      }catch(_){
-        total = views;
-      }
+      }catch(_){ total = views; }
     }
   }catch(_){}
   const fmt = (typeof formatNalunoViews === 'function') ? formatNalunoViews : String;
@@ -391,7 +388,7 @@ async function paintBspaceViews(meta){
       + '<div class="bspace-stat-card bspace-stat-card--mine">'
       +   '<div class="bspace-stat-k">All of yours</div>'
       +   '<div class="bspace-stat-v">' + fmt(total) + '</div>'
-      +   '<div class="bspace-stat-h">' + (strand ? ('Every Broadcast · ' + bspaceEscape(strand) + ' + rest') : 'Every Broadcast you have published') + '</div>'
+      +   '<div class="bspace-stat-h">' + (strand ? ('Private · every Broadcast') : 'Private · every Broadcast you published') + '</div>'
       + '</div>';
   }
   row.innerHTML = html;
@@ -1513,7 +1510,7 @@ function hideBreatherAdSlot(){
 
 /* Broadcast video stage: respect uploaded aspect (portrait OR landscape).
    Live mesh stays 9:16 cover; recorded/uploaded video adapts to its real frame.
-   User can toggle Fit (letterbox, full picture) vs Fill (crop to stage). */
+   Fit = full picture (contain). Fill = crop to stage (cover). */
 
 let bspaceFitMode = 'fit'; // 'fit' | 'fill'
 
@@ -1530,8 +1527,6 @@ function adaptBspaceHeroToVideo(){
     const h = v.videoHeight || 0;
     const landscape = w > 0 && h > 0 && w >= h;
     const portrait = w > 0 && h > 0 && h > w;
-
-    // Phone rotated landscape → give the video more horizontal room.
     let orientLandscape = false;
     try{
       if(screen.orientation && screen.orientation.type){
@@ -1546,12 +1541,10 @@ function adaptBspaceHeroToVideo(){
     if(w > 0 && h > 0){
       hero.style.aspectRatio = w + ' / ' + h;
     } else {
-      // Unknown yet — soft portrait default, then re-adapt on metadata
       hero.style.aspectRatio = '9 / 16';
     }
 
     if(orientLandscape && landscape){
-      // 16:9 (or any landscape) + phone tilted → claim full phone screen
       hero.style.maxHeight = '100dvh';
       hero.style.height = '100dvh';
       hero.style.width = '100%';
@@ -1561,18 +1554,10 @@ function adaptBspaceHeroToVideo(){
         const app = document.querySelector('.app');
         if(app) app.classList.add('naluno-landscape-media');
       }catch(_){}
-    } else if(portrait){
-      hero.style.maxHeight = 'min(82vh, 780px)';
-      hero.style.height = '';
-      hero.style.borderRadius = '';
-      try{
-        document.body.classList.remove('naluno-landscape-media');
-        const app = document.querySelector('.app');
-        if(app) app.classList.remove('naluno-landscape-media');
-      }catch(_){}
     } else {
       hero.style.maxHeight = 'min(82vh, 780px)';
       hero.style.height = '';
+      hero.style.borderRadius = '';
       try{
         document.body.classList.remove('naluno-landscape-media');
         const app = document.querySelector('.app');
@@ -1582,49 +1567,38 @@ function adaptBspaceHeroToVideo(){
 
     v.style.width = '100%';
     v.style.height = '100%';
-    v.style.maxHeight = 'none';
     v.style.objectFit = bspaceFitMode === 'fill' ? 'cover' : 'contain';
-    v.style.background = '#000';
   };
 
+  v.addEventListener('loadedmetadata', apply);
+  v.addEventListener('loadeddata', apply);
+  if(v.readyState >= 1) apply();
   apply();
-  if(v.readyState < 1){
-    v.addEventListener('loadedmetadata', function onMeta(){
-      v.removeEventListener('loadedmetadata', onMeta);
+
+  let chip = $('bspaceFitToggle');
+  if(!chip && hero){
+    chip = document.createElement('button');
+    chip.type = 'button';
+    chip.id = 'bspaceFitToggle';
+    chip.addEventListener('click', function(e){
+      if(e){ e.preventDefault(); e.stopPropagation(); }
+      bspaceFitMode = bspaceFitMode === 'fill' ? 'fit' : 'fill';
+      chip.textContent = bspaceFitMode === 'fill' ? 'Fit' : 'Fill';
       apply();
     });
+    hero.appendChild(chip);
+  }
+  if(chip){
+    chip.textContent = bspaceFitMode === 'fill' ? 'Fit' : 'Fill';
+    chip.title = 'Fit shows the whole picture. Fill crops to the stage.';
   }
 
-  // Ensure a Fit/Fill chip exists once per open
   try{
-    let chip = $('bspaceFitToggle');
-    if(!chip && hero){
-      chip = document.createElement('button');
-      chip.type = 'button';
-      chip.id = 'bspaceFitToggle';
-      chip.className = 'bspace-mini';
-      chip.style.cssText = 'position:absolute;right:12px;bottom:12px;z-index:4;font-size:11px;';
-      chip.textContent = bspaceFitMode === 'fill' ? 'Fit' : 'Fill';
-      chip.title = 'Toggle Fit (full picture) / Fill (crop)';
-      chip.onclick = function(e){
-        e.preventDefault();
-        e.stopPropagation();
-        bspaceFitMode = bspaceFitMode === 'fill' ? 'fit' : 'fill';
-        chip.textContent = bspaceFitMode === 'fill' ? 'Fit' : 'Fill';
-        apply();
-      };
-      hero.appendChild(chip);
-    } else if(chip){
-      chip.textContent = bspaceFitMode === 'fill' ? 'Fit' : 'Fill';
-    }
-  }catch(_){}
-
-  // Re-adapt on orientation change
-  try{
-    if(!window.__bspaceOrientBound){
-      window.__bspaceOrientBound = true;
+    if(!window.__nalunoBspaceOrientHook){
+      window.__nalunoBspaceOrientHook = true;
       const re = function(){ try{ adaptBspaceHeroToVideo(); }catch(_){} };
       window.addEventListener('orientationchange', re);
+      window.addEventListener('resize', re);
       if(screen.orientation && screen.orientation.addEventListener){
         screen.orientation.addEventListener('change', re);
       }

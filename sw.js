@@ -1,6 +1,5 @@
 // Naluno service worker — offline shell + background call push.
-// v79: same-origin only (never gstatic); full latest shell.
-// v73: same-origin only; video/* pick; call camera max climb.
+// v79: same-origin only; media session empty; HEVC blob + Fit/Fill.
 const CACHE_NAME = 'naluno-shell-v79';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './icon-192.png', './icon-512.png',
@@ -40,9 +39,8 @@ self.addEventListener('fetch', event=>{
   if(event.request.cache === 'no-store' || event.request.cache === 'reload') return;
   const url = new URL(event.request.url);
   const isSameOrigin = url.origin === self.location.origin;
-  // NEVER intercept Firebase CDN (gstatic). A 2.5s timeout on large SDK scripts
-  // leaves firebase undefined on mobile → "Sign-in is not ready yet."
-  // Sign-in needs the network anyway; let the browser load CDN scripts normally.
+  // NEVER intercept gstatic / Google / Firebase — a 2.5s abort here leaves
+  // `firebase` undefined and the gate stuck on "Sign-in is not ready yet."
   if(!isSameOrigin) return;
 
   const path = url.pathname || '';

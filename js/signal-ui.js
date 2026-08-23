@@ -253,75 +253,21 @@ function signalRememberView(contactUid, segments){
   }catch(_){}
 }
 
-
-/** If remote <video> stays paused, fetch bytes into a blob: URL (same-origin worker
- *  already allows CORS). Fixes Samsung cases where progressive Range play hangs on poster. */
-function signalEnsurePlayableSrc(videoEl, remoteUrl){
-  return new Promise(function(resolve){
-    if(!videoEl || !remoteUrl){ resolve(false); return; }
-    if(String(remoteUrl).indexOf('blob:') === 0 || String(remoteUrl).indexOf('data:') === 0){
-      resolve(true); return;
-    }
-    if(videoEl.dataset && videoEl.dataset.blobTried === '1'){ resolve(false); return; }
-    try{ videoEl.dataset.blobTried = '1'; }catch(_){}
-    const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-    const t = setTimeout(function(){ try{ if(ctrl) ctrl.abort(); }catch(_){} }, 12000);
-    fetch(remoteUrl, ctrl ? { signal: ctrl.signal, mode: 'cors', credentials: 'omit' } : { mode: 'cors', credentials: 'omit' })
-      .then(function(r){
-        if(!r.ok) throw new Error('fetch ' + r.status);
-        return r.blob();
-      })
-      .then(function(blob){
-        clearTimeout(t);
-        if(!blob || !blob.size){ resolve(false); return; }
-        const u = URL.createObjectURL(blob);
-        try{ videoEl.src = u; }catch(_){}
-        try{ videoEl.load(); }catch(_){}
-        resolve(true);
-      })
-      .catch(function(){
-        clearTimeout(t);
-        resolve(false);
-      });
-  });
-}
-
 function playSegment(idx, direction=1){
   if(viewingMine && $('bviewerRemove')){
     $('bviewerRemove').style.display = 'inline-flex';
   }
 
   const body = $('bviewerBody');
-  const isVideoSeg = currentSegments[idx] && (
-    currentSegments[idx].type === 'video'
-    || !!(currentSegments[idx].videoUrl || currentSegments[idx].mediaUrl)
-  );
-  if(body){
-    if(isVideoSeg){
-      body.classList.remove('square-preview');
-      body.classList.add('native-preview');
-      body.style.minHeight = '42vh';
-    } else {
-      body.classList.add('square-preview');
-      body.classList.remove('native-preview');
-      body.style.minHeight = '';
-      body.style.aspectRatio = '';
-    }
-  }
+  if(body){ body.classList.add('square-preview'); body.classList.remove('native-preview'); }
 
   clearSegTimer();
   currentSegmentIndex = idx;
   const seg = currentSegments[idx];
-  // Normalize type at play time — old docs sometimes stored video as photo
-  if(seg && (seg.videoUrl || seg.mediaUrl) && seg.type !== 'video' && seg.type !== 'text' && seg.type !== 'avatar'){
-    seg.type = 'video';
-  }
   const animClass = idx===0 ? '' : transitionClassFor(seg.transitionIn, direction);
   $('bviewerTime').textContent = seg.type==='avatar' ? seg.time : timeAgo(seg.createdAt);
 
-  const captionHtml = seg.caption
-    ? `<div style="position:absolute; bottom:56px; left:20px; right:20px; color:#fff; font-size:14px; text-align:center; z-index:2;">${escapeHtml(seg.caption)}</div>`
-    : '';
+  const captionHtml = seg.caption ? `<div style="position:absolute; bottom:56px; left:20px; right:20px; color:#fff; font-size:14px; text-align:center;">${escapeHtml(seg.caption)}</div>` : '';
   const cropT = cropTransform(seg.crop);
   let bodyHtml, durationMs;
   if(seg.type==='avatar'){
@@ -330,45 +276,26 @@ function playSegment(idx, direction=1){
   } else if(seg.type==='text'){
     bodyHtml = `<div class="bviewer-text-card ${animClass}" style="background:${seg.bg}; border-radius:20px; width:100%; height:100%;">${escapeHtml(seg.text)}</div>`;
     durationMs = 4000;
-  } else if(seg.type==='video' || isVideoSeg){
+  } else if(seg.type==='video'){
     const videoSrc = signalPlaySrc(seg);
-    const safeSrc = String(videoSrc || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
-    const posterAttr = seg.thumbDataUrl
-      ? ` poster="${String(seg.thumbDataUrl).replace(/"/g,'&quot;')}"`
-      : '';
-    // relative (not absolute) so flex parent keeps real height; contain so landscape is full frame
-    bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" src="${safeSrc}" preload="auto" playsinline webkit-playsinline muted${posterAttr} style="filter:${seg.filterCss || ''}; display:block; width:100%; height:100%; max-height:78vh; object-fit:contain; background:#000; border-radius:12px;"></video>${captionHtml}<div class="cam-expand-btn" id="bviewerMuteToggle" style="right:auto; left:14px; top:14px; z-index:3;" role="button" aria-label="Toggle sound"></div><button type="button" id="bviewerPlayKick" style="display:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;width:64px;height:64px;border-radius:50%;border:none;background:rgba(124,255,178,.92);color:#0D0F17;font-size:22px;box-shadow:0 8px 28px rgba(0,0,0,.45);cursor:pointer;" aria-label="Play">▶</button>`;
-    durationMs = Math.round((isFinite(seg.duration) && seg.duration > 0 ? seg.duration : 15) * 1000);
+    // Use the pre-generated thumbnail as poster so the viewer never flashes a black
+    // or static first-frame while the real video buffers. This is the actual cause of
+    // the reported "brief static thumbnail then audio starts ahead of video".
+    const posterAttr = seg.thumbDataUrl ? ` poster="${seg.thumbDataUrl}"` : '';
+    bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" src="${videoSrc}" preload="auto" playsinline webkit-playsinline muted${posterAttr} style="filter:${seg.filterCss}; display:block; width:100%; height:100%; max-height:78vh; object-fit:contain; background:#000; border-radius:16px;"></video>${captionHtml}<div class="cam-expand-btn" id="bviewerMuteToggle" style="right:auto; left:14px; top:14px; z-index:3;" role="button" aria-label="Toggle sound"></div><button type="button" id="bviewerPlayKick" style="display:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;width:64px;height:64px;border-radius:50%;border:none;background:rgba(124,255,178,.92);color:#0D0F17;font-size:22px;box-shadow:0 8px 28px rgba(0,0,0,.45);cursor:pointer;" aria-label="Play">▶</button>`;
+    durationMs = Math.round((isFinite(seg.duration) && seg.duration > 0 ? seg.duration : 0) * 1000);
   } else {
-    const imgSrc = signalPlaySrc(seg);
-    const safeImg = String(imgSrc || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
-    bodyHtml = `<img class="${animClass}" src="${safeImg}" style="filter:${seg.filterCss || ''}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; transform:${cropT || 'translate(-50%,-50%)'}; border-radius:16px;" />${captionHtml}`;
+    bodyHtml = `<img class="${animClass}" src="${signalPlaySrc(seg)}" style="filter:${seg.filterCss}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; --ct:${cropT}; transform:${cropT}; border-radius:16px;" />${captionHtml}`;
     durationMs = 4000;
   }
   $('bviewerBody').innerHTML = bodyHtml;
   updateBars(idx, durationMs);
 
-  if(seg.type==='video' || isVideoSeg){
+  if(seg.type==='video'){
     const v = $('bviewerActiveVideo');
-    const videoSrc = signalPlaySrc(seg);
     const trimStart = (isFinite(seg.trimStart) && seg.trimStart > 0) ? seg.trimStart : 0;
     const trimEnd = (isFinite(seg.trimEnd) && seg.trimEnd > trimStart) ? seg.trimEnd : 0;
-    let playedOnce = false;
-    let advanceArmed = false;
-    const kickBtn = $('bviewerPlayKick');
-
-    const armAdvance = function(ms){
-      if(advanceArmed) return;
-      advanceArmed = true;
-      const wait = Math.max(1200, ms || durationMs || 15000);
-      segTimer = setTimeout(function(){ goToSegment(idx + 1); }, wait);
-    };
-
-    const showKick = function(on){
-      if(kickBtn) kickBtn.style.display = on ? 'block' : 'none';
-    };
-
-    v.onended = function(){
+    v.onended = ()=>{
       const d = v.duration;
       const t = v.currentTime || 0;
       const falseEnd = (typeof nalunoFiniteDuration === 'function')
@@ -379,109 +306,49 @@ function playSegment(idx, direction=1){
         v.play().catch(function(){});
         return;
       }
-      clearSegTimer();
-      goToSegment(idx + 1);
+      goToSegment(idx+1);
     };
     currentVideoEl = v;
     v.ontimeupdate = function(){
-      if(!playedOnce && (v.currentTime || 0) > 0.05){
-        playedOnce = true;
-        showKick(false);
-        try{ if(v.poster) v.removeAttribute('poster'); }catch(_){}
-      }
       if(trimEnd && (v.currentTime || 0) >= trimEnd - 0.05){
         v.ontimeupdate = null;
-        clearSegTimer();
-        goToSegment(idx + 1);
+        goToSegment(idx+1);
       }
     };
-
-    const kickPlay = function(){
-      if(!v) return;
-      try{ v.muted = true; }catch(_){}
-      const p = v.play();
-      if(p && p.then){
-        p.then(function(){
-          playedOnce = true;
-          showKick(false);
-          requestAnimationFrame(function(){
-            try{ v.muted = false; }catch(_){}
-            renderMuteIcon(false);
-          });
-        }).catch(function(){
-          showKick(true);
-        });
-      }
-    };
-    v.addEventListener('waiting', function(){ setTimeout(kickPlay, 300); });
-    v.addEventListener('stalled', kickPlay);
-    v.addEventListener('suspend', function(){
-      if(!playedOnce) setTimeout(kickPlay, 400);
-    });
-
-    // Prefer bindMediaElement for recovery + vault; always keep preload=auto
     if(typeof bindMediaElement === 'function' && videoSrc) bindMediaElement(v, videoSrc);
     else if(typeof attachPlaybackGuard === 'function') attachPlaybackGuard(v, videoSrc);
-    try{ v.preload = 'auto'; }catch(_){}
-    try{ if(typeof containMediaElement === 'function') containMediaElement(v); }catch(_){}
-    try{ if(typeof lockOutChromeMediaSession === 'function') lockOutChromeMediaSession(); }catch(_){}
-
     const muteBtn = $('bviewerMuteToggle');
-    const renderMuteIcon = function(muted){
-      if(!muteBtn) return;
+    const kickBtn = $('bviewerPlayKick');
+    const renderMuteIcon = muted=>{
       muteBtn.innerHTML = muted
         ? `<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M3 10v4h4l5 5V5L7 10H3z" fill="currentColor"/><path d="M16 9l6 6M22 9l-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`
         : `<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M3 10v4h4l5 5V5L7 10H3z" fill="currentColor"/><path d="M16 8a5 5 0 010 8M19 5a9 9 0 010 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
     };
-
-    const startPlayback = function(){
+    // Wait for canplay so the first decoded frame exists, then play(). Poster covers
+    // the visual gap. Unmute only after the playing event so audio does not start
+    // ahead of the first painted frame (the classic out-of-sync glitch).
+    const startPlayback = ()=>{
       renderMuteIcon(true);
-      v.muted = true;
-      const onPlaying = function(){
+      v.muted = true; // start muted to satisfy autoplay policies, then unmute on playing
+      const onPlaying = ()=>{
         v.removeEventListener('playing', onPlaying);
-        playedOnce = true;
-        showKick(false);
-        try{ if(v.poster) v.removeAttribute('poster'); }catch(_){}
-        requestAnimationFrame(function(){
-          try{ v.muted = false; }catch(_){}
+        if(kickBtn) kickBtn.style.display = 'none';
+        // Small delay lets the first video frame actually paint before audio starts.
+        requestAnimationFrame(()=>{
+          v.muted = false;
           renderMuteIcon(false);
         });
-        const d = trimEnd ? (trimEnd - trimStart) : v.duration;
-        if(isFinite(d) && d > 0){
-          durationMs = Math.round(d * 1000);
-          updateBars(idx, durationMs);
-          clearSegTimer();
-          advanceArmed = false;
-          armAdvance(durationMs + 800);
-        }
-        try{ if(typeof lockOutChromeMediaSession === 'function') lockOutChromeMediaSession(); }catch(_){}
       };
       v.addEventListener('playing', onPlaying);
-      try{ v.load(); }catch(_){}
-      v.play().catch(function(){
+      v.play().catch(()=>{
         v.removeEventListener('playing', onPlaying);
         v.muted = true;
         renderMuteIcon(true);
-        v.play().catch(function(){
-          // Last resort: download to blob URL then play (Samsung Range/HEVC hang)
-          signalEnsurePlayableSrc(v, videoSrc).then(function(ok){
-            if(ok){
-              v.muted = true;
-              v.play().then(function(){
-                playedOnce = true;
-                showKick(false);
-                requestAnimationFrame(function(){ try{ v.muted = false; }catch(_){} renderMuteIcon(false); });
-              }).catch(function(){ showKick(true); });
-            } else {
-              showKick(true);
-            }
-          });
-        });
+        v.play().catch(()=>{});
       });
     };
-
     const applyRealLength = function(){
-      if(trimStart && Math.abs((v.currentTime || 0) - trimStart) > 0.2){
+      if(trimStart && Math.abs((v.currentTime||0) - trimStart) > 0.2){
         try{ v.currentTime = trimStart; }catch(_){}
       }
       const d = trimEnd ? (trimEnd - trimStart) : v.duration;
@@ -490,71 +357,37 @@ function playSegment(idx, direction=1){
         updateBars(idx, durationMs);
         try{ seg.duration = d; }catch(_){}
       }
-      if(body && v.videoWidth > 0 && v.videoHeight > 0){
-        body.style.aspectRatio = v.videoWidth + ' / ' + v.videoHeight;
-        // Landscape + phone landscape → claim almost the full screen
-        let orientL = false;
-        try{
-          if(screen.orientation && screen.orientation.type)
-            orientL = String(screen.orientation.type).indexOf('landscape') >= 0;
-          else orientL = window.innerWidth > window.innerHeight;
-        }catch(_){}
-        const isLand = v.videoWidth >= v.videoHeight;
-        if(orientL && isLand){
-          body.style.maxHeight = 'min(96vh, 100dvh)';
-          body.style.width = '100%';
-          try{
-            const app = document.querySelector('.app');
-            if(app) app.classList.add('naluno-landscape-media');
-            document.body.classList.add('naluno-landscape-media');
-          }catch(_){}
-        } else {
-          body.style.maxHeight = 'min(78vh, 720px)';
-          body.style.width = '100%';
-          try{
-            document.body.classList.remove('naluno-landscape-media');
-            const app = document.querySelector('.app');
-            if(app) app.classList.remove('naluno-landscape-media');
-          }catch(_){}
-        }
-      }
     };
     v.addEventListener('loadedmetadata', applyRealLength);
     if(v.readyState >= 1) applyRealLength();
-
-    // Start NOW — opening the story is a user gesture; delayed play loses it on Samsung
-    startPlayback();
-    setTimeout(function(){ if(v.paused) startPlayback(); }, 500);
-    // Progressive HEVC/non-faststart often never advances — pull full blob once
-    setTimeout(function(){
-      if(playedOnce || !v.paused) return;
-      signalEnsurePlayableSrc(v, videoSrc).then(function(ok){
-        if(ok) startPlayback();
-        else showKick(true);
-      });
-    }, 900);
-    setTimeout(function(){ if(v.paused && !playedOnce){ startPlayback(); showKick(true); } }, 2000);
-    setTimeout(function(){ if(v.paused) showKick(true); }, 3200);
-
-    armAdvance(durationMs > 0 ? durationMs + 2500 : 18000);
-
+    if(v.readyState >= 3){ // HAVE_FUTURE_DATA or better
+      startPlayback();
+    } else {
+      const onReady = ()=>{ v.removeEventListener('canplay', onReady); startPlayback(); };
+      v.addEventListener('canplay', onReady);
+      setTimeout(()=>{ if(v.paused){ v.removeEventListener('canplay', onReady); startPlayback(); } }, 900);
+      setTimeout(function(){
+        if(!v.paused) return;
+        if(typeof signalEnsurePlayableSrc === 'function'){
+          signalEnsurePlayableSrc(v, videoSrc).then(function(){ if(v.paused) startPlayback(); });
+        }
+        if(kickBtn) kickBtn.style.display = 'block';
+      }, 1800);
+    }
     if(kickBtn){
       kickBtn.onclick = function(e){
-        e.preventDefault();
-        e.stopPropagation();
+        if(e){ e.preventDefault(); e.stopPropagation(); }
+        kickBtn.style.display = 'none';
         startPlayback();
-        setTimeout(function(){ if(!v.paused) showKick(false); }, 200);
       };
     }
-    if(muteBtn){
-      muteBtn.onclick = function(){
-        v.muted = !v.muted;
-        renderMuteIcon(v.muted);
-        if(!v.muted) v.play().catch(function(){});
-      };
-    }
+    muteBtn.onclick = ()=>{
+      v.muted = !v.muted;
+      renderMuteIcon(v.muted);
+      if(!v.muted) v.play().catch(()=>{});
+    };
   } else {
-    segTimer = setTimeout(function(){ goToSegment(idx + 1); }, durationMs);
+    segTimer = setTimeout(()=> goToSegment(idx+1), durationMs);
   }
 }
 function goToSegment(idx){
@@ -604,13 +437,6 @@ function sortSignalSegments(segments){
   // become their own group of one, so nothing about older posts breaks.
   const groups = {};
   segments.forEach(seg=>{
-    // Normalize: anything with a real videoUrl must play as video (not a still photo).
-    if(seg && !seg.type && (seg.videoUrl || seg.mediaUrl)){
-      seg.type = 'video';
-    }
-    if(seg && seg.type === 'photo' && seg.videoUrl){
-      seg.type = 'video';
-    }
     const gid = seg.groupId || ('legacy-' + seg.id);
     if(!groups[gid]) groups[gid] = [];
     groups[gid].push(seg);
@@ -623,18 +449,7 @@ function sortSignalSegments(segments){
   groupList.sort((a,b)=> a.earliestCreatedAt - b.earliestCreatedAt);
   return groupList.flatMap(g=>g.group);
 }
-function closeBroadcast(){
-  clearSegTimer();
-  try{ currentVideoEl && currentVideoEl.pause(); }catch(_){}
-  currentVideoEl = null;
-  $('bviewer').classList.remove('active');
-  try{
-    document.body.classList.remove('naluno-landscape-media');
-    const app = document.querySelector('.app');
-    if(app) app.classList.remove('naluno-landscape-media');
-  }catch(_){}
-  try{ if(typeof lockOutChromeMediaSession === 'function') lockOutChromeMediaSession(); }catch(_){}
-}
+function closeBroadcast(){ clearSegTimer(); $('bviewer').classList.remove('active'); }
 $('bviewerClose').onclick = closeBroadcast;
 function deleteCurrentSignalClip(){
   if(!viewingMine){

@@ -137,9 +137,9 @@
         el.innerHTML = '<div class="lobby-sub">Creators who share views and enter Toga stand here.</div>';
         return;
       }
-      el.innerHTML = rows.map(function(r, i){
-        return '<div class="toga-row"><span>' + (i+1) + ' · ' + escapeHtml(r.name || 'Creator') + '</span><span class="toga-n">' + formatNalunoViews(r.viewsTotal || 0) + '</span></div>';
-      }).join('');
+      el.innerHTML = '<div class="toga-grid">' + rows.map(function(r, i){
+        return '<div class="toga-card"><div class="toga-card-k">#' + (i+1) + '</div><div class="toga-card-name">' + escapeHtml(r.name || 'Creator') + '</div><div class="toga-card-v">' + formatNalunoViews(r.viewsTotal || 0) + '</div><div class="toga-card-h">views in Toga</div></div>';
+      }).join('') + '</div>';
     }catch(e){
       el.innerHTML = '<div class="lobby-sub">Toga loads after sign-in.</div>';
     }
