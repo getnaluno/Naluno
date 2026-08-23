@@ -11,12 +11,49 @@
 let fbApp = null, fbAuth = null, fbDb = null, currentUser = null;
 let lastRemoteHeartbeat = 0;
 let authListenersBound = false;
-let pendingAuthAction = null;
 
 function firebaseReady(){
   return typeof firebase !== 'undefined'
     && typeof firebaseConfig !== 'undefined'
     && firebaseConfig.apiKey && firebaseConfig.apiKey !== 'YOUR_API_KEY';
+}
+function initFirebaseApp(){
+  if(fbAuth) return true;
+  if(!firebaseReady()) return false;
+  try{
+    if(firebase.apps && firebase.apps.length){
+      fbApp = firebase.app();
+    } else {
+      fbApp = firebase.initializeApp(firebaseConfig);
+    }
+    fbAuth = firebase.auth();
+    // Explicitly request durable local persistence so a successful sign-in survives
+    // page reloads, browser restarts, and the service-worker shell. Without this some
+    // environments (storage partitioning, certain mobile browsers, or when IndexedDB
+    // is flaky) silently fall back to session-only, which makes every open look like
+    // a fresh start and skips the remembered-user path.
+    fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(e=>{
+      console.warn('[Naluno auth] could not set LOCAL persistence:', e);
+    });
+    fbDb = firebase.firestore();
+    // This was never turned on before, and it's very likely the root cause behind two
+    // separate complaints at once: Frequencies taking 2-3 seconds to appear on every
+    // refresh (no local cache to paint from — every load had to wait on the network,
+    // full stop), and Callsign inconsistently falling back to default values (a
+    // one-shot read racing against network timing has no safety margin without a
+    // cache to fall back on). With this enabled, a repeat visit paints instantly from
+    // IndexedDB, then quietly reconciles with the server in the background.
+    fbDb.enablePersistence({ synchronizeTabs: true }).catch(()=>{
+      // Fails in a few known cases (multiple tabs without multi-tab support in an
+      // older browser, private/incognito browsing, no IndexedDB) — the app still
+      // works perfectly fine without it, just without the instant-repaint benefit.
+    });
+    return true;
+  }catch(e){
+    console.error('Firebase init failed:', e);
+    fbAuth = null;
+    return false;
+  }
 }
 
 function injectFirebaseScripts(){
@@ -57,60 +94,8 @@ function injectFirebaseScripts(){
   loadFrom(0);
 }
 
-function initFirebaseApp(){
-  if(fbAuth) return true;
-  if(!firebaseReady()) return false;
-  try{
-    fbApp = (firebase.apps && firebase.apps.length) ? firebase.app() : firebase.initializeApp(firebaseConfig);
-    fbAuth = firebase.auth();
-    fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){
-      console.warn('[Naluno auth] could not set LOCAL persistence:', e);
-    });
-    fbDb = firebase.firestore();
-    fbDb.enablePersistence({ synchronizeTabs: true }).catch(function(){});
-    return true;
-  }catch(e){
-    console.error('Firebase init failed:', e);
-    return false;
-  }
-}
-
-function whenFirebaseReady(cb, tries){
-  if(initFirebaseApp()){ cb(true); return; }
-  injectFirebaseScripts();
-  let n = 0;
-  const max = typeof tries === 'number' ? tries : 48;
-  const t = setInterval(function(){
-    n++;
-    if(initFirebaseApp()){
-      clearInterval(t);
-      cb(true);
-    } else if(n >= max){
-      clearInterval(t);
-      cb(false);
-    }
-  }, 250);
-}
-
-function requireFirebase(fn){
-  if(initFirebaseApp()){ fn(); return; }
-  authStatus('Connecting to sign-in…');
-  pendingAuthAction = fn;
-  whenFirebaseReady(function(ok){
-    if(!ok){
-      authStatus('Sign-in could not start — check the connection, then tap again.', true);
-      return;
-    }
-    bindAuthListeners();
-    const next = pendingAuthAction;
-    pendingAuthAction = null;
-    if(next) next();
-  });
-}
-
-if(!initFirebaseApp()){
-  injectFirebaseScripts();
-}
+initFirebaseApp();
+if(!fbAuth) injectFirebaseScripts();
 
 function authStatus(msg, isError){
   const el = $('authGateStatus');
@@ -188,11 +173,8 @@ async function nativeGoogleSignIn(){
 }
 
 $('googleSignInBtn').onclick = async ()=>{
-  requireFirebase(function(){ nalunoGoogleSignIn(); });
-};
-
-async function nalunoGoogleSignIn(){
-  if(!fbAuth){ authStatus('Sign-in could not start — tap again in a moment.', true); return; }
+  if(!fbAuth){ try{ injectFirebaseScripts(); }catch(_){} initFirebaseApp(); }
+  if(!fbAuth){ authStatus('Connecting to sign-in… tap again in a moment.', true); return; }
 
   // Capacitor: use native Google Sign-In → Firebase credential (no Chrome redirect).
   if(isNativeShell()){
@@ -275,10 +257,8 @@ if($('authUseEmailBtn')){
 }
 
 function nalunoHandleSignIn(){
-  requireFirebase(function(){ nalunoHandleSignInGo(); });
-}
-function nalunoHandleSignInGo(){
-  if(!fbAuth){ authStatus('Sign-in could not start — tap again in a moment.', true); return; }
+  if(!fbAuth){ try{ injectFirebaseScripts(); }catch(_){} initFirebaseApp(); }
+  if(!fbAuth){ authStatus('Connecting to sign-in… tap again in a moment.', true); return; }
   const { email, password, handle, recovery } = emailAuthInputs();
   if(!password || password.length < 6){ authStatus('Enter your password (6+ characters).', true); return; }
   if(!email){
@@ -301,10 +281,8 @@ function nalunoHandleSignInGo(){
 };
 
 async function nalunoHandleSignUp(){
-  requireFirebase(function(){ nalunoHandleSignUpGo(); });
-}
-async function nalunoHandleSignUpGo(){
-  if(!fbAuth){ authStatus('Sign-in could not start — tap again in a moment.', true); return; }
+  if(!fbAuth){ try{ injectFirebaseScripts(); }catch(_){} initFirebaseApp(); }
+  if(!fbAuth){ authStatus('Connecting to sign-in… tap again in a moment.', true); return; }
   const { email, password, handle } = emailAuthInputs();
   if(!password || password.length < 6){ authStatus('Password needs to be at least 6 characters.', true); return; }
   const em = $('authEmailInput');
@@ -369,10 +347,8 @@ async function nalunoHandleSignUpGo(){
   }
 };
 async function nalunoForgotPassword(){
-  requireFirebase(function(){ nalunoForgotPasswordGo(); });
-}
-async function nalunoForgotPasswordGo(){
-  if(!fbAuth){ authStatus('Sign-in could not start — tap again in a moment.', true); return; }
+  if(!fbAuth){ try{ injectFirebaseScripts(); }catch(_){} initFirebaseApp(); }
+  if(!fbAuth){ authStatus('Connecting to sign-in… tap again in a moment.', true); return; }
   const { email, handle, recovery } = emailAuthInputs();
   const visibleEmail = ($('authEmailInput') && $('authEmailInput').style.display !== 'none' && $('authEmailInput').value.trim()) || '';
   const target = (recovery || visibleEmail || '').trim();
@@ -411,24 +387,6 @@ async function nalunoForgotPasswordGo(){
     fg.addEventListener('click', function(e){ if(e) e.preventDefault(); nalunoForgotPassword(); });
   }
 })();
-
-if(fbAuth){
-  bindAuthListeners();
-} else {
-  authStatus('Connecting to sign-in…');
-  try{
-    $('authGateLoading').style.display = 'none';
-    $('authGateForm').style.display = 'flex';
-    $('authGate').classList.add('active');
-  }catch(_){}
-  whenFirebaseReady(function(ok){
-    if(!ok){
-      authStatus('Sign-in could not start — check the connection, then tap Sign in again.', true);
-      return;
-    }
-    bindAuthListeners();
-  });
-}
 
 function bindAuthListeners(){
   if(authListenersBound || !fbAuth) return;
@@ -510,51 +468,106 @@ function bindAuthListeners(){
   }).catch(e=>{
     authStatus('Could not finish sign-in. Try again.', true);
   });
+  // Wire once. Firebase often emits null BEFORE restoring the local session —
+  // wiping lastUid / forcing the gate on that first null is why sign-in felt like
+  // "tap twice". Only treat null as signed-out after a short settle, or on explicit sign-out.
+  let nullAuthTimer = null;
+  function showSignedOutGate(){
+    authStatus('');
+    try{
+      $('authGateLoading').style.display = 'none';
+      $('authGateForm').style.display = 'flex';
+      document.body.classList.add('naluno-gated');
+      $('authGate').classList.add('active');
+    }catch(_){}
+  }
+  function clearSessionListeners(){
+    if(threadsListUnsubscribe){ threadsListUnsubscribe(); threadsListUnsubscribe = null; }
+    if(activeThreadUnsubscribe){ activeThreadUnsubscribe(); activeThreadUnsubscribe = null; }
+    if(bandPresenceUnsub){ bandPresenceUnsub(); bandPresenceUnsub = null; }
+    if(bandMessagesUnsub){ bandMessagesUnsub(); bandMessagesUnsub = null; }
+    if(incomingCallUnsub){ incomingCallUnsub(); incomingCallUnsub = null; }
+    if(missedCallUnsub){ missedCallUnsub(); missedCallUnsub = null; }
+    if(compassUnsub){ compassUnsub(); compassUnsub = null; }
+    compassMessages = []; compassLoaded = false;
+    compassUnlockedThisSession = false;
+    try{ updateMissedCallBadge(0); }catch(_){}
+    if(connectionsUnsub){ connectionsUnsub(); connectionsUnsub = null; }
+    if(profileUnsub){ profileUnsub(); profileUnsub = null; }
+    myKeyPairPromise = null;
+    sharedKeyCache = {};
+    try{ teardownCallConnection(); }catch(_){}
+    realThreadPreviews = {};
+  }
   fbAuth.onAuthStateChanged(user=>{
     clearTimeout(authTimeout);
+    if(nullAuthTimer){ clearTimeout(nullAuthTimer); nullAuthTimer = null; }
     authResolved = true;
     currentUser = user;
     if(user){
       try{ localStorage.setItem('nalunoLastUid', user.uid); }catch(_){}
       authStatus('');
       document.body.classList.remove('naluno-gated');
-      $('authGate').classList.remove('active');
+      try{ $('authGate').classList.remove('active'); }catch(_){}
       loadRealProfile(user);
       try{ if(typeof resumeFindNalunoIfEnabled === 'function') resumeFindNalunoIfEnabled(); }catch(_){}
       try{ if(typeof showInstallPromptSoon === 'function') setTimeout(showInstallPromptSoon, 1600); }catch(_){}
       try{ if(typeof listenFindNalunoDevices === 'function') listenFindNalunoDevices(); }catch(_){}
     } else {
-      try{ localStorage.removeItem('nalunoLastUid'); }catch(_){}
-      authStatus('');
-      $('authGateLoading').style.display = 'none';
-      $('authGateForm').style.display = 'flex';
-      document.body.classList.add('naluno-gated');
-      $('authGate').classList.add('active');
-      if(lastUid && !window.__nalunoSigningOut){
-        const cached = nalunoReadCachedProfile(lastUid);
-        if(cached){
-          currentProfile = { photo:null, ...DEFAULT_PROFILE, ...cached };
-          try{ applyProfileToUI(currentProfile); }catch(_){}
-        }
+      // Explicit sign-out → gate immediately and clear remembered uid.
+      if(window.__nalunoSigningOut){
+        try{ localStorage.removeItem('nalunoLastUid'); }catch(_){}
+        window.__nalunoSigningOut = false;
+        clearSessionListeners();
+        showSignedOutGate();
+        return;
       }
-      if(threadsListUnsubscribe){ threadsListUnsubscribe(); threadsListUnsubscribe = null; }
-      if(activeThreadUnsubscribe){ activeThreadUnsubscribe(); activeThreadUnsubscribe = null; }
-      if(bandPresenceUnsub){ bandPresenceUnsub(); bandPresenceUnsub = null; }
-      if(bandMessagesUnsub){ bandMessagesUnsub(); bandMessagesUnsub = null; }
-      if(incomingCallUnsub){ incomingCallUnsub(); incomingCallUnsub = null; }
-      if(missedCallUnsub){ missedCallUnsub(); missedCallUnsub = null; }
-      if(compassUnsub){ compassUnsub(); compassUnsub = null; }
-      compassMessages = []; compassLoaded = false;
-      compassUnlockedThisSession = false;
-      updateMissedCallBadge(0);
-      if(connectionsUnsub){ connectionsUnsub(); connectionsUnsub = null; }
-      if(profileUnsub){ profileUnsub(); profileUnsub = null; }
-      myKeyPairPromise = null;
-      sharedKeyCache = {};
-      teardownCallConnection();
-      realThreadPreviews = {};
+      // First null is often "session still restoring". Keep any cached UI; only
+      // open the gate if still null after settle.
+      nullAuthTimer = setTimeout(function(){
+        if(currentUser) return;
+        // Confirmed signed out
+        try{ localStorage.removeItem('nalunoLastUid'); }catch(_){}
+        clearSessionListeners();
+        if(lastUid){
+          const cached = nalunoReadCachedProfile(lastUid);
+          if(cached){
+            currentProfile = { photo:null, ...DEFAULT_PROFILE, ...cached };
+            try{ applyProfileToUI(currentProfile); }catch(_){}
+          }
+        }
+        showSignedOutGate();
+      }, 1400);
     }
   });
+}
+if(fbAuth){
+  bindAuthListeners();
+} else {
+  // Firebase SDK missing or init failed (often SW timed out gstatic on mobile).
+  // Keep the form visible and retry — do NOT full-page reload (that felt like
+  // "sign in twice" when the first attempt raced the SDK).
+  try{
+    $('authGateLoading').style.display = 'none';
+    $('authGateForm').style.display = 'flex';
+    $('authGate').classList.add('active');
+  }catch(_){}
+  authStatus('Loading sign-in…', false);
+  let authTries = 0;
+  const authRetry = setInterval(function(){
+    authTries++;
+    try{ injectFirebaseScripts(); }catch(_){}
+    if(initFirebaseApp() && fbAuth){
+      clearInterval(authRetry);
+      authStatus('Sign-in ready — try again.', false);
+      try{ bindAuthListeners(); }catch(_){}
+      return;
+    }
+    if(authTries >= 40){
+      clearInterval(authRetry);
+      authStatus('Sign-in could not start — check the connection, then tap again.', true);
+    }
+  }, 400);
 }
 
 /* Claims handles/{handle} -> uid via a transaction, so two people racing for the
