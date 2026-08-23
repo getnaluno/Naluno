@@ -344,11 +344,31 @@ function nalunoTranscodeToWeb(file, onProgress, maxSeconds){
           try{
             if(video.videoWidth) ctx.drawImage(video, 0, 0, cw, ch);
           }catch(_){}
-          if(onProgress && duration){
-            try{ onProgress(Math.min(0.99, (video.currentTime || 0) / duration)); }catch(_){}
+          const tNow = video.currentTime || 0;
+          if(onProgress){
+            try{ onProgress(Math.min(0.99, tNow / Math.max(capSec, duration || 1))); }catch(_){}
           }
-          if(video.currentTime >= duration - 0.05 || video.ended){
-            try{ if(recorder.state === 'recording') recorder.stop(); }catch(_){}
+          if(tNow >= capSec - 0.05){
+            try{ if(recorder && recorder.state === 'recording') recorder.stop(); }catch(_){}
+            return;
+          }
+          if(video.ended){
+            const reported = video.duration;
+            if(nalunoFiniteDuration(reported) && tNow >= reported - 0.25){
+              const before = tNow;
+              try{ video.currentTime = reported + Math.max(0.6, reported * 0.1); }catch(_){}
+              setTimeout(function(){
+                if(settled) return;
+                if((video.currentTime || 0) > before + 0.12){
+                  video.play().catch(function(){});
+                  raf = requestAnimationFrame(draw);
+                } else {
+                  try{ if(recorder && recorder.state === 'recording') recorder.stop(); }catch(_){}
+                }
+              }, 280);
+              return;
+            }
+            try{ if(recorder && recorder.state === 'recording') recorder.stop(); }catch(_){}
             return;
           }
           raf = requestAnimationFrame(draw);

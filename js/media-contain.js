@@ -41,24 +41,38 @@ function containMediaElement(el){
   try{ el.controls = false; }catch(_){}
 }
 
+function nalunoAnyAppMediaPlaying(){
+  try{
+    const els = document.querySelectorAll('video, audio');
+    for(let i = 0; i < els.length; i++){
+      const el = els[i];
+      if(el.closest && el.closest('#callOverlay')) continue;
+      if(!el.paused && !el.ended) return true;
+    }
+  }catch(_){}
+  return false;
+}
+
 function lockOutChromeMediaSession(){
   if(!navigator.mediaSession) return;
   try{ navigator.mediaSession.metadata = null; }catch(_){}
-  try{ navigator.mediaSession.playbackState = 'none'; }catch(_){}
+  // Swallow shade controls. Do NOT set playbackState='none' while
+  // in-app media is playing — Samsung Chrome treats that as pause,
+  // which was the Signal "loads but never plays" bug.
+  if(!nalunoAnyAppMediaPlaying()){
+    try{ navigator.mediaSession.playbackState = 'none'; }catch(_){}
+  }
   try{
-    if(typeof navigator.mediaSession.setPositionState === 'function'){
-      // Empty position state prevents the scrubber shade on some Samsung builds
+    if(typeof navigator.mediaSession.setPositionState === 'function' && !nalunoAnyAppMediaPlaying()){
       navigator.mediaSession.setPositionState({ duration: 0, playbackRate: 1, position: 0 });
     }
   }catch(_){
-    try{ navigator.mediaSession.setPositionState(undefined); }catch(_2){}
+    try{ if(!nalunoAnyAppMediaPlaying()) navigator.mediaSession.setPositionState(undefined); }catch(_2){}
   }
   ['play','pause','seekbackward','seekforward','seekto','previoustrack','nexttrack','stop'].forEach(function(a){
     try{ navigator.mediaSession.setActionHandler(a, null); }catch(_){}
     try{
-      navigator.mediaSession.setActionHandler(a, function(){
-        // Swallow shade controls — media lives only inside the app
-      });
+      navigator.mediaSession.setActionHandler(a, function(){});
     }catch(_){}
   });
 }

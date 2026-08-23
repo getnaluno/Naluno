@@ -461,14 +461,8 @@ function playSegment(idx, direction=1){
           try{ v.muted = false; }catch(_){}
           renderMuteIcon(false);
         });
-        const d = trimEnd ? (trimEnd - trimStart) : ((typeof nalunoTrueDuration === 'function') ? nalunoTrueDuration(v) : v.duration);
-        if(isFinite(d) && d > 0){
-          durationMs = Math.round(d * 1000);
-          updateBars(idx, durationMs);
-          clearSegTimer();
-          advanceArmed = false;
-          armAdvance(durationMs + 800);
-        }
+        // Video stories advance on real ended only. A wall-clock timer
+        // cut Google Photos clips in half when metadata duration was wrong.
         try{ if(typeof lockOutChromeMediaSession === 'function') lockOutChromeMediaSession(); }catch(_){}
       };
       v.addEventListener('playing', onPlaying);
@@ -550,7 +544,8 @@ function playSegment(idx, direction=1){
     }, 800);
     setTimeout(function(){ if(v.paused && !playedOnce){ showKick(true); } }, 1600);
 
-    armAdvance(durationMs > 0 ? durationMs + 2500 : 18000);
+    // Do not arm a wall-clock skip. Google Photos / HEVC metadata duration
+    // is often half the real clip — a timer would cut playback. ended handles it.
 
     if(kickBtn){
       kickBtn.onclick = function(e){
