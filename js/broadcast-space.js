@@ -103,7 +103,7 @@ function renderBspaceMedia(seg){
     const showChapters = chapters && chapters.length > 1 && !chapters.every(c => c.silent);
     host.innerHTML = `
       <div class="bspace-media-frame" style="position:relative;width:100%;height:100%;background:#000;overflow:hidden;min-height:180px;">
-        <video id="bspaceVideoEl" playsinline webkit-playsinline preload="auto" poster="${seg.thumbDataUrl ? bspaceEscape(seg.thumbDataUrl) : ''}" style="width:100%;height:100%;object-fit:cover;display:block;background:#000;filter:${seg.filterCss || ''}"></video>
+        <video id="bspaceVideoEl" playsinline webkit-playsinline preload="auto" poster="${seg.thumbDataUrl ? bspaceEscape(seg.thumbDataUrl) : ''}" style="width:100%;height:100%;object-fit:contain;display:block;background:#000;filter:${seg.filterCss || ''}"></video>
         <div id="bspaceBreather" style="display:none;position:absolute;inset:0;background:rgba(13,15,23,.92);align-items:center;justify-content:center;flex-direction:column;gap:10px;z-index:3;">
           <div style="font-family:var(--font-futuristic);font-size:15px;color:var(--mint);" id="bspaceBreatherLabel">Chapter break</div>
           <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);" id="bspaceBreatherAd">Next chapter in a moment</div>
@@ -345,15 +345,15 @@ async function paintBspaceViews(meta){
   const row = $('bspaceViewRow');
   if(!row) return;
   let views = (meta && typeof meta.views === 'number') ? meta.views : 0;
-  let total = views;
-  let share = true;
+  let total = 0;
   const creatorUid = meta && meta.creatorUid;
+  const isOwner = !!(currentUser && creatorUid && currentUser.uid === creatorUid);
   try{
     if(fbDb && activeBroadcastId){
       const doc = await fbDb.collection('broadcasts').doc(activeBroadcastId).get();
       if(doc.exists){
         const d = doc.data() || {};
-        views = d.views || views;
+        views = (typeof d.views === 'number') ? d.views : views;
         if(activeBroadcastMeta){
           activeBroadcastMeta.strandId = d.strandId || activeBroadcastMeta.strandId;
           activeBroadcastMeta.strandName = d.strandName || activeBroadcastMeta.strandName;
@@ -361,25 +361,40 @@ async function paintBspaceViews(meta){
         }
       }
     }
-    if(fbDb && creatorUid){
-      const t = await fbDb.collection('toga').doc(creatorUid).get();
-      if(t.exists){
-        const d = t.data() || {};
-        share = d.shareViews !== false;
-        total = d.viewsTotal || 0;
-      } else {
-        const mine = ((typeof feedBroadcasts !== 'undefined' && feedBroadcasts) || []).filter(function(x){ return x.creatorUid === creatorUid; });
-        total = mine.reduce(function(n, x){ return n + (x.views || 0); }, 0);
+    // Total across every Broadcast of this creator — creator-only.
+    if(isOwner && fbDb && creatorUid){
+      try{
+        const t = await fbDb.collection('toga').doc(creatorUid).get();
+        if(t.exists && typeof (t.data() || {}).viewsTotal === 'number'){
+          total = (t.data() || {}).viewsTotal || 0;
+        } else {
+          const mine = ((typeof feedBroadcasts !== 'undefined' && feedBroadcasts) || []).filter(function(x){ return x.creatorUid === creatorUid; });
+          total = mine.reduce(function(n, x){ return n + (Number(x.views) || 0); }, 0);
+          if(!total) total = views;
+        }
+      }catch(_){
+        total = views;
       }
     }
   }catch(_){}
-  const show = (typeof canShowViews === 'function') ? canShowViews(creatorUid, share) : share;
   const fmt = (typeof formatNalunoViews === 'function') ? formatNalunoViews : String;
   const strand = (activeBroadcastMeta && activeBroadcastMeta.strandName) || '';
   row.style.display = 'grid';
-  row.innerHTML =
-    '<div class="bspace-stat"><div class="k">This Broadcast</div><div class="v">' + (show ? fmt(views) : 'Hidden') + '</div><div class="h">' + (show ? 'views' : 'Creator keeps views private') + '</div></div>' +
-    '<div class="bspace-stat"><div class="k">All of theirs</div><div class="v">' + (show ? fmt(total) : 'Hidden') + '</div><div class="h">' + (strand ? ('Strand · ' + bspaceEscape(strand)) : 'Every Broadcast') + '</div></div>';
+  let html = ''
+    + '<div class="bspace-stat-card">'
+    +   '<div class="bspace-stat-k">This Broadcast</div>'
+    +   '<div class="bspace-stat-v">' + fmt(views) + '</div>'
+    +   '<div class="bspace-stat-h">views on this room</div>'
+    + '</div>';
+  if(isOwner){
+    html += ''
+      + '<div class="bspace-stat-card bspace-stat-card--mine">'
+      +   '<div class="bspace-stat-k">All of yours</div>'
+      +   '<div class="bspace-stat-v">' + fmt(total) + '</div>'
+      +   '<div class="bspace-stat-h">' + (strand ? ('Every Broadcast · ' + bspaceEscape(strand) + ' + rest') : 'Every Broadcast you have published') + '</div>'
+      + '</div>';
+  }
+  row.innerHTML = html;
 }
 
 function renderBspaceRelated(){
@@ -1496,24 +1511,125 @@ function hideBreatherAdSlot(){
 }
 
 
-/* expand control removed — stage is always filled 9:16 */
+/* Broadcast video stage: respect uploaded aspect (portrait OR landscape).
+   Live mesh stays 9:16 cover; recorded/uploaded video adapts to its real frame.
+   User can toggle Fit (letterbox, full picture) vs Fill (crop to stage). */
 
+let bspaceFitMode = 'fit'; // 'fit' | 'fill'
 
 function adaptBspaceHeroToVideo(){
   const hero = $('bspaceHero');
   const v = $('bspaceVideoEl');
   if(!hero || !v) return;
-  // Always same stage as live: 9:16 filled with cover (no letterbox void)
-  hero.style.aspectRatio = '9 / 16';
-  hero.style.maxHeight = 'min(78vh, 720px)';
   hero.style.width = '100%';
   hero.style.background = '#000';
-  if(v){
+  hero.style.maxHeight = 'min(82vh, 780px)';
+
+  const apply = function(){
+    const w = v.videoWidth || 0;
+    const h = v.videoHeight || 0;
+    const landscape = w > 0 && h > 0 && w >= h;
+    const portrait = w > 0 && h > 0 && h > w;
+
+    // Phone rotated landscape → give the video more horizontal room.
+    let orientLandscape = false;
+    try{
+      if(screen.orientation && screen.orientation.type){
+        orientLandscape = String(screen.orientation.type).indexOf('landscape') >= 0;
+      } else if(typeof window.orientation === 'number'){
+        orientLandscape = Math.abs(window.orientation) === 90;
+      } else {
+        orientLandscape = window.innerWidth > window.innerHeight;
+      }
+    }catch(_){}
+
+    if(w > 0 && h > 0){
+      hero.style.aspectRatio = w + ' / ' + h;
+    } else {
+      // Unknown yet — soft portrait default, then re-adapt on metadata
+      hero.style.aspectRatio = '9 / 16';
+    }
+
+    if(orientLandscape && landscape){
+      // 16:9 (or any landscape) + phone tilted → claim full phone screen
+      hero.style.maxHeight = '100dvh';
+      hero.style.height = '100dvh';
+      hero.style.width = '100%';
+      hero.style.borderRadius = '0';
+      try{
+        document.body.classList.add('naluno-landscape-media');
+        const app = document.querySelector('.app');
+        if(app) app.classList.add('naluno-landscape-media');
+      }catch(_){}
+    } else if(portrait){
+      hero.style.maxHeight = 'min(82vh, 780px)';
+      hero.style.height = '';
+      hero.style.borderRadius = '';
+      try{
+        document.body.classList.remove('naluno-landscape-media');
+        const app = document.querySelector('.app');
+        if(app) app.classList.remove('naluno-landscape-media');
+      }catch(_){}
+    } else {
+      hero.style.maxHeight = 'min(82vh, 780px)';
+      hero.style.height = '';
+      try{
+        document.body.classList.remove('naluno-landscape-media');
+        const app = document.querySelector('.app');
+        if(app) app.classList.remove('naluno-landscape-media');
+      }catch(_){}
+    }
+
     v.style.width = '100%';
     v.style.height = '100%';
-    v.style.objectFit = 'cover';
     v.style.maxHeight = 'none';
+    v.style.objectFit = bspaceFitMode === 'fill' ? 'cover' : 'contain';
+    v.style.background = '#000';
+  };
+
+  apply();
+  if(v.readyState < 1){
+    v.addEventListener('loadedmetadata', function onMeta(){
+      v.removeEventListener('loadedmetadata', onMeta);
+      apply();
+    });
   }
+
+  // Ensure a Fit/Fill chip exists once per open
+  try{
+    let chip = $('bspaceFitToggle');
+    if(!chip && hero){
+      chip = document.createElement('button');
+      chip.type = 'button';
+      chip.id = 'bspaceFitToggle';
+      chip.className = 'bspace-mini';
+      chip.style.cssText = 'position:absolute;right:12px;bottom:12px;z-index:4;font-size:11px;';
+      chip.textContent = bspaceFitMode === 'fill' ? 'Fit' : 'Fill';
+      chip.title = 'Toggle Fit (full picture) / Fill (crop)';
+      chip.onclick = function(e){
+        e.preventDefault();
+        e.stopPropagation();
+        bspaceFitMode = bspaceFitMode === 'fill' ? 'fit' : 'fill';
+        chip.textContent = bspaceFitMode === 'fill' ? 'Fit' : 'Fill';
+        apply();
+      };
+      hero.appendChild(chip);
+    } else if(chip){
+      chip.textContent = bspaceFitMode === 'fill' ? 'Fit' : 'Fill';
+    }
+  }catch(_){}
+
+  // Re-adapt on orientation change
+  try{
+    if(!window.__bspaceOrientBound){
+      window.__bspaceOrientBound = true;
+      const re = function(){ try{ adaptBspaceHeroToVideo(); }catch(_){} };
+      window.addEventListener('orientationchange', re);
+      if(screen.orientation && screen.orientation.addEventListener){
+        screen.orientation.addEventListener('change', re);
+      }
+    }
+  }catch(_){}
 }
 
 
