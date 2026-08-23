@@ -1,6 +1,6 @@
 // Naluno service worker — offline shell + background call push.
-// v70: 2.5s network then cache (Samsung onLine lies; hung fetch never .catch).
-const CACHE_NAME = 'naluno-shell-v77';
+// v78: never intercept gstatic/Firebase (sign-in gate). Same-origin 2.5s then cache.
+const CACHE_NAME = 'naluno-shell-v78';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',
@@ -39,8 +39,9 @@ self.addEventListener('fetch', event=>{
   if(event.request.cache === 'no-store' || event.request.cache === 'reload') return;
   const url = new URL(event.request.url);
   const isSameOrigin = url.origin === self.location.origin;
-  const isFirebaseSdkScript = url.hostname === 'www.gstatic.com' && url.pathname.includes('firebasejs');
-  if(!isSameOrigin && !isFirebaseSdkScript) return;
+  // NEVER intercept gstatic / Google / Firebase — a 2.5s abort here leaves
+  // `firebase` undefined and the gate stuck on "Sign-in is not ready yet."
+  if(!isSameOrigin) return;
 
   const path = url.pathname || '';
   const isAppCode = path.includes('/js/') || path.endsWith('.js') ||
@@ -80,7 +81,7 @@ self.addEventListener('fetch', event=>{
     try{
       const response = await netTimeout(event.request, 2500);
       if(response && response.ok){
-        if(isSameOrigin || isFirebaseSdkScript) putBare(response);
+        if(isSameOrigin) putBare(response);
         return response;
       }
     }catch(_){}

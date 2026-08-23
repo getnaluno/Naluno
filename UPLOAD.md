@@ -26,7 +26,7 @@ Firebase project: **naluno-28a00**. Custom domain: **getnaluno.com**.
 Pages serves the **repo root** (not `/docs`).
 
 ```bash
-unzip naluno-circle-strand-origin-20260823a.zip
+unzip naluno-circle-strand-origin-20260823b.zip
 # copy this tree over the live clone, keeping .git
 rsync -a --exclude .git --exclude UPLOAD.md --exclude workers ./ live/
 cd live
@@ -37,7 +37,7 @@ git push origin main
 
 ## 2. Cache bust
 
-`index.html` pins scripts at `?v=20260823a`. Service worker is `naluno-shell-v77`. After push, open the site once; old phones pick up the new SW on the next visit.
+`index.html` pins scripts at `?v=20260823b`. Service worker is `naluno-shell-v78`. After push, open the site once; old phones pick up the new SW on the next visit.
 
 ## 3. Firestore rules
 
