@@ -1,7 +1,7 @@
 // Naluno service worker — offline shell + background call push.
-// v78: same-origin only (never gstatic); full latest shell.
+// v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v78';
+const CACHE_NAME = 'naluno-shell-v79';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',

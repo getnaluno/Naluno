@@ -1,23 +1,22 @@
-# Naluno — consolidated ship 20260823c
+# Naluno — 20260823d
 
-## What this is
-Full latest shell. Built by **merging**, not replacing:
+Built on **naluno-latest-full-20260823c** (full merge). This ship only changes Broadcast space UI:
 
-| Layer | Source | Kept |
-|-------|--------|------|
-| Signal / HEVC / media bleed / calls / camera | `naluno-hevc-upload-20260822g` | signal-ui blob recovery, media-contain, calls, camera |
-| Circle · Strand · Origin · Toga · views | `naluno-circle-strand-origin-20260823a` | circle.js, strand.js, origin.js, broadcast UI |
-| Sign-in gate | retry + inject Firebase, **no soft reload** | SW v78 never intercepts gstatic |
-| Wireline contact-only | identical across recent zips | WhatsApp-style contacted-only list |
+## Views
+- **Card layout** for view counts (not plain text).
+- **Everyone** on a Broadcast sees **this Broadcast’s** views only.
+- **Creator only** also sees **All of yours** (total across every Broadcast they published).
+
+## Video stage
+- Restored **Fit / Fill** chip on the hero.
+- Stage follows the **uploaded video’s aspect ratio**.
+- **Fit** = full picture (`object-fit: contain`).
+- **Fill** = crop to stage (`object-fit: cover`).
+- Landscape + phone tilt still expands toward full screen.
 
 ## Cache
-- Scripts: `?v=20260823c`
-- Service worker: `naluno-shell-v78` (same-origin only)
+- `?v=20260823d`
+- Service worker `naluno-shell-v79`
 
-## After upload
-1. Close every Naluno tab.
-2. Chrome → site info → **Delete cookies and site data** for getnaluno.com.
-3. Reopen once so SW v78 installs.
-
-## Ship rule (locked)
-Never base a “small fix” zip on an older tree. Always start from the **previous latest full zip**, then add the fix. Module sizes for Signal/Broadcast/Calls must not shrink without an explicit reason.
+## Ship rule
+Always start from the previous full latest zip. Never thin-base a fix.
