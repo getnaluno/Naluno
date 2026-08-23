@@ -10,38 +10,106 @@
    Contacts, Wireline, and Band still run on local/simulated data — see README. */
 let fbApp = null, fbAuth = null, fbDb = null, currentUser = null;
 let lastRemoteHeartbeat = 0;
+let authListenersBound = false;
+let pendingAuthAction = null;
 
 function firebaseReady(){
   return typeof firebase !== 'undefined'
     && typeof firebaseConfig !== 'undefined'
     && firebaseConfig.apiKey && firebaseConfig.apiKey !== 'YOUR_API_KEY';
 }
-if(firebaseReady()){
+
+function injectFirebaseScripts(){
+  if(typeof firebase !== 'undefined') return;
+  if(window.__nalunoFbInject) return;
+  window.__nalunoFbInject = true;
+  const files = [
+    'firebase-app-compat.js',
+    'firebase-auth-compat.js',
+    'firebase-firestore-compat.js',
+    'firebase-messaging-compat.js',
+  ];
+  const bases = [
+    'https://www.gstatic.com/firebasejs/10.7.1/',
+    'https://www.gstatic.com/firebasejs/10.12.5/',
+  ];
+  function loadFrom(baseIndex){
+    if(typeof firebase !== 'undefined') return;
+    if(baseIndex >= bases.length) return;
+    const base = bases[baseIndex];
+    let left = files.length;
+    let failed = false;
+    files.forEach(function(name){
+      const s = document.createElement('script');
+      s.src = base + name;
+      s.async = false;
+      s.onload = function(){
+        left--;
+        if(left <= 0 && !failed) initFirebaseApp();
+      };
+      s.onerror = function(){
+        failed = true;
+        loadFrom(baseIndex + 1);
+      };
+      document.head.appendChild(s);
+    });
+  }
+  loadFrom(0);
+}
+
+function initFirebaseApp(){
+  if(fbAuth) return true;
+  if(!firebaseReady()) return false;
   try{
-    fbApp = firebase.initializeApp(firebaseConfig);
+    fbApp = (firebase.apps && firebase.apps.length) ? firebase.app() : firebase.initializeApp(firebaseConfig);
     fbAuth = firebase.auth();
-    // Explicitly request durable local persistence so a successful sign-in survives
-    // page reloads, browser restarts, and the service-worker shell. Without this some
-    // environments (storage partitioning, certain mobile browsers, or when IndexedDB
-    // is flaky) silently fall back to session-only, which makes every open look like
-    // a fresh start and skips the remembered-user path.
-    fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(e=>{
+    fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(e){
       console.warn('[Naluno auth] could not set LOCAL persistence:', e);
     });
     fbDb = firebase.firestore();
-    // This was never turned on before, and it's very likely the root cause behind two
-    // separate complaints at once: Frequencies taking 2-3 seconds to appear on every
-    // refresh (no local cache to paint from — every load had to wait on the network,
-    // full stop), and Callsign inconsistently falling back to default values (a
-    // one-shot read racing against network timing has no safety margin without a
-    // cache to fall back on). With this enabled, a repeat visit paints instantly from
-    // IndexedDB, then quietly reconciles with the server in the background.
-    fbDb.enablePersistence({ synchronizeTabs: true }).catch(()=>{
-      // Fails in a few known cases (multiple tabs without multi-tab support in an
-      // older browser, private/incognito browsing, no IndexedDB) — the app still
-      // works perfectly fine without it, just without the instant-repaint benefit.
-    });
-  }catch(e){ console.error('Firebase init failed:', e); }
+    fbDb.enablePersistence({ synchronizeTabs: true }).catch(function(){});
+    return true;
+  }catch(e){
+    console.error('Firebase init failed:', e);
+    return false;
+  }
+}
+
+function whenFirebaseReady(cb, tries){
+  if(initFirebaseApp()){ cb(true); return; }
+  injectFirebaseScripts();
+  let n = 0;
+  const max = typeof tries === 'number' ? tries : 48;
+  const t = setInterval(function(){
+    n++;
+    if(initFirebaseApp()){
+      clearInterval(t);
+      cb(true);
+    } else if(n >= max){
+      clearInterval(t);
+      cb(false);
+    }
+  }, 250);
+}
+
+function requireFirebase(fn){
+  if(initFirebaseApp()){ fn(); return; }
+  authStatus('Connecting to sign-in…');
+  pendingAuthAction = fn;
+  whenFirebaseReady(function(ok){
+    if(!ok){
+      authStatus('Sign-in could not start — check the connection, then tap again.', true);
+      return;
+    }
+    bindAuthListeners();
+    const next = pendingAuthAction;
+    pendingAuthAction = null;
+    if(next) next();
+  });
+}
+
+if(!initFirebaseApp()){
+  injectFirebaseScripts();
 }
 
 function authStatus(msg, isError){
@@ -120,7 +188,11 @@ async function nativeGoogleSignIn(){
 }
 
 $('googleSignInBtn').onclick = async ()=>{
-  if(!fbAuth){ authStatus('Sign-in is not ready yet.', true); return; }
+  requireFirebase(function(){ nalunoGoogleSignIn(); });
+};
+
+async function nalunoGoogleSignIn(){
+  if(!fbAuth){ authStatus('Sign-in could not start — tap again in a moment.', true); return; }
 
   // Capacitor: use native Google Sign-In → Firebase credential (no Chrome redirect).
   if(isNativeShell()){
@@ -203,7 +275,10 @@ if($('authUseEmailBtn')){
 }
 
 function nalunoHandleSignIn(){
-  if(!fbAuth){ authStatus('Sign-in is not ready yet.', true); return; }
+  requireFirebase(function(){ nalunoHandleSignInGo(); });
+}
+function nalunoHandleSignInGo(){
+  if(!fbAuth){ authStatus('Sign-in could not start — tap again in a moment.', true); return; }
   const { email, password, handle, recovery } = emailAuthInputs();
   if(!password || password.length < 6){ authStatus('Enter your password (6+ characters).', true); return; }
   if(!email){
@@ -226,7 +301,10 @@ function nalunoHandleSignIn(){
 };
 
 async function nalunoHandleSignUp(){
-  if(!fbAuth){ authStatus('Sign-in is not ready yet.', true); return; }
+  requireFirebase(function(){ nalunoHandleSignUpGo(); });
+}
+async function nalunoHandleSignUpGo(){
+  if(!fbAuth){ authStatus('Sign-in could not start — tap again in a moment.', true); return; }
   const { email, password, handle } = emailAuthInputs();
   if(!password || password.length < 6){ authStatus('Password needs to be at least 6 characters.', true); return; }
   const em = $('authEmailInput');
@@ -291,7 +369,10 @@ async function nalunoHandleSignUp(){
   }
 };
 async function nalunoForgotPassword(){
-  if(!fbAuth){ authStatus('Sign-in is not ready yet.', true); return; }
+  requireFirebase(function(){ nalunoForgotPasswordGo(); });
+}
+async function nalunoForgotPasswordGo(){
+  if(!fbAuth){ authStatus('Sign-in could not start — tap again in a moment.', true); return; }
   const { email, handle, recovery } = emailAuthInputs();
   const visibleEmail = ($('authEmailInput') && $('authEmailInput').style.display !== 'none' && $('authEmailInput').value.trim()) || '';
   const target = (recovery || visibleEmail || '').trim();
@@ -332,6 +413,26 @@ async function nalunoForgotPassword(){
 })();
 
 if(fbAuth){
+  bindAuthListeners();
+} else {
+  authStatus('Connecting to sign-in…');
+  try{
+    $('authGateLoading').style.display = 'none';
+    $('authGateForm').style.display = 'flex';
+    $('authGate').classList.add('active');
+  }catch(_){}
+  whenFirebaseReady(function(ok){
+    if(!ok){
+      authStatus('Sign-in could not start — check the connection, then tap Sign in again.', true);
+      return;
+    }
+    bindAuthListeners();
+  });
+}
+
+function bindAuthListeners(){
+  if(authListenersBound || !fbAuth) return;
+  authListenersBound = true;
   authStatus('One moment…');
   let authResolved = false;
   let lastUid = '';
@@ -454,16 +555,6 @@ if(fbAuth){
       realThreadPreviews = {};
     }
   });
-} else if(!firebaseReady()){
-  // firebase-config.js is still the placeholder. Do NOT auto-skip the gate —
-  // the previous behaviour of removing the gate after a short delay is exactly
-  // what made the sign-in page "never come" during testing. Keep the form visible
-  // and show a clear status so the first-time experience is never skipped.
-  // (When real config is present this branch is never taken.)
-  $('authGateLoading').style.display = 'none';
-  $('authGateForm').style.display = 'flex';
-  $('authGate').classList.add('active');
-  authStatus('Sign-in is not ready yet.', true);
 }
 
 /* Claims handles/{handle} -> uid via a transaction, so two people racing for the
