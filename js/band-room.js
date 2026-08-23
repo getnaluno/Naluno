@@ -112,14 +112,14 @@ function bandMessageHtml(m){
     const src = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(m.mediaUrl) : m.mediaUrl;
     return `<div class="${rowClass}">${nameHtml}<div class="msg-bubble band-voice-bubble">
       <div class="band-voice-label" style="color:${labelColor}">Voice · ${dur || 'clip'}</div>
-      <video class="band-audio-player" controls playsinline preload="metadata" src="${escapeHtml(src)}"></video>
+      <video class="band-audio-player" playsinline webkit-playsinline preload="metadata" src="${escapeHtml(src)}"></video>
     </div><div class="msg-time">${formatClockTime(m.ts)}</div></div>`;
   }
   if(m.type === 'video' && m.mediaUrl){
     const src = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(m.mediaUrl) : m.mediaUrl;
     return `<div class="${rowClass}">${nameHtml}<div class="msg-bubble" style="padding:8px; background:rgba(0,0,0,.35);">
       <div style="font-family:var(--font-mono); font-size:10px; color:var(--mint); margin:0 0 6px 4px;">Video · ${dur || 'clip'}</div>
-      <video controls playsinline preload="metadata" src="${escapeHtml(src)}" poster="${m.thumb ? escapeHtml(m.thumb) : ''}" style="width:100%; max-width:260px; border-radius:12px; background:#000; display:block;"></video>
+      <video playsinline webkit-playsinline preload="metadata" src="${escapeHtml(src)}" poster="${m.thumb ? escapeHtml(m.thumb) : ''}" style="width:100%; max-width:260px; border-radius:12px; background:#000; display:block;"></video>
     </div><div class="msg-time">${formatClockTime(m.ts)}</div></div>`;
   }
   return `<div class="${rowClass}">${nameHtml}<div class="msg-bubble">${escapeHtml(m.text || '')}</div><div class="msg-time">${formatClockTime(m.ts)}</div></div>`;

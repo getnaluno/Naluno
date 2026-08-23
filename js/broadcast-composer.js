@@ -421,6 +421,8 @@ async function bcompPublish(){
         }catch(_){}
         if(typeof uploadBroadcastFile !== 'function') throw new Error('Broadcast uploader not loaded');
         let uploadFile = file;
+        // Short Samsung HEVC → convert so every browser can play. Long HEVC stays original
+        // (chunked); player uses blob fallback for those.
         try{
           const isHevc = (typeof nalunoSniffIsHevc === 'function') ? await nalunoSniffIsHevc(file) : false;
           if(isHevc && (duration || 0) > 0 && duration <= 360 && typeof nalunoTranscodeToWeb === 'function'){

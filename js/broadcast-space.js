@@ -103,7 +103,8 @@ function renderBspaceMedia(seg){
     const showChapters = chapters && chapters.length > 1 && !chapters.every(c => c.silent);
     host.innerHTML = `
       <div class="bspace-media-frame" style="position:relative;width:100%;height:100%;background:#000;overflow:hidden;min-height:180px;">
-        <video id="bspaceVideoEl" playsinline webkit-playsinline preload="auto" poster="${seg.thumbDataUrl ? bspaceEscape(seg.thumbDataUrl) : ''}" style="width:100%;height:100%;object-fit:contain;display:block;background:#000;filter:${seg.filterCss || ''}"></video>
+        <video id="bspaceVideoEl" playsinline webkit-playsinline preload="auto" poster="${seg.thumbDataUrl ? bspaceEscape(seg.thumbDataUrl) : ''}" style="width:100%;height:100%;object-fit:cover;display:block;background:#000;filter:${seg.filterCss || ''}"></video>
+        <button type="button" id="bspacePlayKick" aria-label="Play" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:6;width:64px;height:64px;border-radius:50%;border:none;background:rgba(124,255,178,.92);color:#0D0F17;font-size:22px;box-shadow:0 8px 28px rgba(0,0,0,.45);cursor:pointer;">▶</button>
         <div id="bspaceBreather" style="display:none;position:absolute;inset:0;background:rgba(13,15,23,.92);align-items:center;justify-content:center;flex-direction:column;gap:10px;z-index:3;">
           <div style="font-family:var(--font-futuristic);font-size:15px;color:var(--mint);" id="bspaceBreatherLabel">Chapter break</div>
           <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);" id="bspaceBreatherAd">Next chapter in a moment</div>
@@ -133,27 +134,59 @@ function renderBspaceMedia(seg){
       }
     }catch(e){ console.warn('[bspace] seek dock', e); }
     try{ wireBspaceSeekAndAutoplay(vel); }catch(e){ console.warn('[bspace] seek wire', e); }
+    if(seg.thumbDataUrl && typeof nalunoProbePosterAR === 'function') nalunoProbePosterAR(seg.thumbDataUrl);
     if(vel){
-      vel.addEventListener('error', function(){
-        console.warn('[bspace] video error', vel.error && vel.error.code, vel.src);
-        // Retry once with resolved URL + cache bust
-        if(!vel.dataset.retried && rawSrc){
-          vel.dataset.retried = '1';
-          const u = rawSrc + (rawSrc.indexOf('?') >= 0 ? '&' : '?') + 'r=' + Date.now();
-          vel.src = u;
-          vel.load();
-          vel.play().catch(function(){});
-        }
-      });
-      // Force play attempt (poster alone looks like a still snapshot)
-      setTimeout(function(){
-        if(vel.paused){
-          vel.play().catch(function(){
-            vel.muted = true;
-            vel.play().catch(function(){});
+      const kick = $('bspacePlayKick');
+      const hideKick = function(){ if(kick) kick.style.display = 'none'; };
+      const showKick = function(){ if(kick) kick.style.display = 'block'; };
+      const tryPlay = function(){
+        try{ vel.muted = true; }catch(_){}
+        const p = vel.play();
+        if(p && p.then){
+          p.then(function(){
+            hideKick();
+            requestAnimationFrame(function(){ try{ vel.muted = false; }catch(_){} });
+          }).catch(function(){
+            try{ vel.muted = true; }catch(_){}
+            vel.play().then(hideKick).catch(function(){ showKick(); });
           });
         }
-      }, 200);
+      };
+      if(kick) kick.onclick = function(e){ e.preventDefault(); e.stopPropagation(); tryPlay(); };
+      vel.addEventListener('click', function(e){
+        e.preventDefault();
+        e.stopPropagation();
+        if(vel.paused) tryPlay();
+        else vel.pause();
+      });
+      vel.addEventListener('playing', function(){
+        hideKick();
+        try{ if(vel.poster) vel.removeAttribute('poster'); }catch(_){}
+        try{ adaptBspaceHeroToVideo(); }catch(_){}
+      });
+      vel.addEventListener('pause', function(){ if(vel.ended) return; showKick(); });
+      vel.addEventListener('error', function(){
+        console.warn('[bspace] video error', vel.error && vel.error.code, vel.src);
+        if(!vel.dataset.retried && rawSrc){
+          vel.dataset.retried = '1';
+          if(typeof signalEnsurePlayableSrc === 'function'){
+            signalEnsurePlayableSrc(vel, rawSrc).then(function(){ tryPlay(); });
+          } else {
+            const u = rawSrc + (rawSrc.indexOf('?') >= 0 ? '&' : '?') + 'r=' + Date.now();
+            vel.src = u;
+            vel.play().catch(function(){});
+          }
+        } else {
+          showKick();
+        }
+      });
+      setTimeout(function(){ if(vel.paused) tryPlay(); }, 120);
+      setTimeout(function(){
+        if(vel.paused && typeof signalEnsurePlayableSrc === 'function'){
+          signalEnsurePlayableSrc(vel, rawSrc).then(function(){ tryPlay(); });
+        }
+      }, 900);
+      setTimeout(function(){ if(vel.paused) showKick(); }, 1600);
     }
     try{
       if(vel){
@@ -347,7 +380,7 @@ async function paintBspaceViews(meta){
   let views = (meta && typeof meta.views === 'number') ? meta.views : 0;
   let total = 0;
   const creatorUid = meta && meta.creatorUid;
-  const isOwner = !!(typeof currentUser !== 'undefined' && currentUser && creatorUid && currentUser.uid === creatorUid);
+  const isOwner = !!(currentUser && creatorUid && currentUser.uid === creatorUid);
   try{
     if(fbDb && activeBroadcastId){
       const doc = await fbDb.collection('broadcasts').doc(activeBroadcastId).get();
@@ -361,6 +394,7 @@ async function paintBspaceViews(meta){
         }
       }
     }
+    // Total across every Broadcast of this creator — creator-only.
     if(isOwner && fbDb && creatorUid){
       try{
         const t = await fbDb.collection('toga').doc(creatorUid).get();
@@ -371,7 +405,9 @@ async function paintBspaceViews(meta){
           total = mine.reduce(function(n, x){ return n + (Number(x.views) || 0); }, 0);
           if(!total) total = views;
         }
-      }catch(_){ total = views; }
+      }catch(_){
+        total = views;
+      }
     }
   }catch(_){}
   const fmt = (typeof formatNalunoViews === 'function') ? formatNalunoViews : String;
@@ -388,7 +424,7 @@ async function paintBspaceViews(meta){
       + '<div class="bspace-stat-card bspace-stat-card--mine">'
       +   '<div class="bspace-stat-k">All of yours</div>'
       +   '<div class="bspace-stat-v">' + fmt(total) + '</div>'
-      +   '<div class="bspace-stat-h">' + (strand ? ('Private · every Broadcast') : 'Private · every Broadcast you published') + '</div>'
+      +   '<div class="bspace-stat-h">' + (strand ? ('Every Broadcast · ' + bspaceEscape(strand) + ' + rest') : 'Every Broadcast you have published') + '</div>'
       + '</div>';
   }
   row.innerHTML = html;
@@ -1510,9 +1546,14 @@ function hideBreatherAdSlot(){
 
 /* Broadcast video stage: respect uploaded aspect (portrait OR landscape).
    Live mesh stays 9:16 cover; recorded/uploaded video adapts to its real frame.
-   Fit = full picture (contain). Fill = crop to stage (cover). */
+   User can toggle Fit (letterbox, full picture) vs Fill (crop to stage). */
 
-let bspaceFitMode = 'fit'; // 'fit' | 'fill'
+/* Broadcast video stage.
+   Naluno stage is 9:16 (phone). Fill uses the uploaded picture's aspect.
+   Fit shows the whole picture inside the 9:16 stage (letterbox if needed).
+   Rotated 9:16 camera files that report 1920×1080 stay portrait via poster. */
+
+let bspaceFitMode = 'fill'; // default Fill so 9:16 clips fill the phone
 
 function adaptBspaceHeroToVideo(){
   const hero = $('bspaceHero');
@@ -1520,13 +1561,15 @@ function adaptBspaceHeroToVideo(){
   if(!hero || !v) return;
   hero.style.width = '100%';
   hero.style.background = '#000';
-  hero.style.maxHeight = 'min(82vh, 780px)';
 
   const apply = function(){
+    const poster = v.poster || v.getAttribute('poster') || '';
+    const portrait = (typeof nalunoVideoLooksPortrait === 'function')
+      ? nalunoVideoLooksPortrait(v, poster)
+      : !(v.videoWidth > 0 && v.videoHeight > 0 && v.videoWidth > v.videoHeight);
     const w = v.videoWidth || 0;
     const h = v.videoHeight || 0;
-    const landscape = w > 0 && h > 0 && w >= h;
-    const portrait = w > 0 && h > 0 && h > w;
+
     let orientLandscape = false;
     try{
       if(screen.orientation && screen.orientation.type){
@@ -1538,16 +1581,21 @@ function adaptBspaceHeroToVideo(){
       }
     }catch(_){}
 
-    if(w > 0 && h > 0){
+    if(bspaceFitMode === 'fill' && !portrait && w > 0 && h > 0){
+      // Fill + landscape upload → stage becomes that aspect
       hero.style.aspectRatio = w + ' / ' + h;
+      hero.style.maxHeight = orientLandscape ? '100dvh' : 'min(56vh, 420px)';
+      v.style.objectFit = 'cover';
     } else {
+      // Portrait, or Fit: Naluno 9:16 stage. Fill covers; Fit contains.
       hero.style.aspectRatio = '9 / 16';
+      hero.style.maxHeight = 'min(82vh, 780px)';
+      v.style.objectFit = bspaceFitMode === 'fill' ? 'cover' : 'contain';
     }
 
-    if(orientLandscape && landscape){
+    if(orientLandscape && !portrait){
       hero.style.maxHeight = '100dvh';
       hero.style.height = '100dvh';
-      hero.style.width = '100%';
       hero.style.borderRadius = '0';
       try{
         document.body.classList.add('naluno-landscape-media');
@@ -1555,7 +1603,6 @@ function adaptBspaceHeroToVideo(){
         if(app) app.classList.add('naluno-landscape-media');
       }catch(_){}
     } else {
-      hero.style.maxHeight = 'min(82vh, 780px)';
       hero.style.height = '';
       hero.style.borderRadius = '';
       try{
@@ -1567,35 +1614,41 @@ function adaptBspaceHeroToVideo(){
 
     v.style.width = '100%';
     v.style.height = '100%';
-    v.style.objectFit = bspaceFitMode === 'fill' ? 'cover' : 'contain';
+    v.style.maxHeight = 'none';
+    v.style.background = '#000';
   };
 
+  apply();
   v.addEventListener('loadedmetadata', apply);
   v.addEventListener('loadeddata', apply);
-  if(v.readyState >= 1) apply();
-  apply();
-
-  let chip = $('bspaceFitToggle');
-  if(!chip && hero){
-    chip = document.createElement('button');
-    chip.type = 'button';
-    chip.id = 'bspaceFitToggle';
-    chip.addEventListener('click', function(e){
-      if(e){ e.preventDefault(); e.stopPropagation(); }
-      bspaceFitMode = bspaceFitMode === 'fill' ? 'fit' : 'fill';
-      chip.textContent = bspaceFitMode === 'fill' ? 'Fit' : 'Fill';
-      apply();
-    });
-    hero.appendChild(chip);
-  }
-  if(chip){
-    chip.textContent = bspaceFitMode === 'fill' ? 'Fit' : 'Fill';
-    chip.title = 'Fit shows the whole picture. Fill crops to the stage.';
-  }
+  v.addEventListener('playing', apply);
 
   try{
-    if(!window.__nalunoBspaceOrientHook){
-      window.__nalunoBspaceOrientHook = true;
+    let chip = $('bspaceFitToggle');
+    if(!chip && hero){
+      chip = document.createElement('button');
+      chip.type = 'button';
+      chip.id = 'bspaceFitToggle';
+      chip.className = 'bspace-mini';
+      chip.style.cssText = 'position:absolute;right:12px;bottom:12px;z-index:6;font-size:11px;';
+      chip.onclick = function(e){
+        e.preventDefault();
+        e.stopPropagation();
+        bspaceFitMode = bspaceFitMode === 'fill' ? 'fit' : 'fill';
+        chip.textContent = bspaceFitMode === 'fill' ? 'Fit' : 'Fill';
+        apply();
+      };
+      hero.appendChild(chip);
+    }
+    if(chip){
+      chip.textContent = bspaceFitMode === 'fill' ? 'Fit' : 'Fill';
+      chip.title = 'Fill uses the clip’s aspect. Fit shows the whole picture in Naluno 9:16.';
+    }
+  }catch(_){}
+
+  try{
+    if(!window.__bspaceOrientBound){
+      window.__bspaceOrientBound = true;
       const re = function(){ try{ adaptBspaceHeroToVideo(); }catch(_){} };
       window.addEventListener('orientationchange', re);
       window.addEventListener('resize', re);

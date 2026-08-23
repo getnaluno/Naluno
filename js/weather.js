@@ -1,7 +1,9 @@
 /* ============================================================
    MODULE: js/weather.js
    Live weather strip + Compass weather answers.
-   OWNERSHIP: Open-Meteo only. Does not touch calls or media.
+   OWNERSHIP: Open-Meteo only (free). Does not touch calls or media.
+   Includes hourly precip so Compass can answer "rain tonight" without
+   claiming it only has current conditions.
    ============================================================ */
 
 const WEATHER_HIDE_KEY = 'nalunoWeatherHide';
@@ -19,7 +21,7 @@ function setWeatherHidden(on){
 function isWeatherQuery(text){
   const t = String(text || '').toLowerCase();
   if(!t) return false;
-  return /(weather|temperature|forecast|rain|hot\b|cold\b|humid|windy|how.?s the sky|what.?s it like outside|climate)/.test(t)
+  return /(weather|temperature|forecast|rain|hot\b|cold\b|humid|windy|how.?s the sky|what.?s it like outside|climate|thunder|storm|drizzle|cloudy|sunny|tonight|tomorrow)/.test(t)
     || /(embeera|enkuba|omusana)/.test(t);
 }
 
@@ -60,6 +62,7 @@ function weatherCoords(){
   return new Promise(function(resolve){
     if(weatherLast && weatherLast.lat){
       resolve({ lat: weatherLast.lat, lon: weatherLast.lon, place: weatherLast.place || '' });
+      return;
     }
     const done = function(lat, lon, place){ resolve({ lat: lat, lon: lon, place: place || '' }); };
     if(navigator.geolocation){
@@ -81,11 +84,74 @@ function weatherCoords(){
   });
 }
 
+/** Summarise next N hours of precip probability into a short forecast line. */
+function summarizeHours(hourly, fromHour, toHour){
+  if(!hourly || !hourly.time || !hourly.time.length) return null;
+  const times = hourly.time;
+  const precip = hourly.precipitation_probability || [];
+  const codes = hourly.weather_code || [];
+  const temps = hourly.temperature_2m || [];
+  let maxP = 0;
+  let rainHours = 0;
+  let thunder = false;
+  let minT = Infinity, maxT = -Infinity;
+  let samples = 0;
+  const now = Date.now();
+  for(let i = 0; i < times.length; i++){
+    const t = Date.parse(times[i]);
+    if(!isFinite(t)) continue;
+    const hFromNow = (t - now) / 3600000;
+    if(hFromNow < fromHour || hFromNow > toHour) continue;
+    samples++;
+    const p = Number(precip[i]);
+    if(isFinite(p) && p > maxP) maxP = p;
+    if(isFinite(p) && p >= 40) rainHours++;
+    const code = Number(codes[i]);
+    if(code >= 95) thunder = true;
+    const temp = Number(temps[i]);
+    if(isFinite(temp)){
+      if(temp < minT) minT = temp;
+      if(temp > maxT) maxT = temp;
+    }
+  }
+  if(!samples) return null;
+  return {
+    maxPrecip: Math.round(maxP),
+    rainHours: rainHours,
+    thunder: thunder,
+    minT: isFinite(minT) ? Math.round(minT) : null,
+    maxT: isFinite(maxT) ? Math.round(maxT) : null,
+    samples: samples,
+  };
+}
+
+function forecastPhrase(summary, label){
+  if(!summary) return '';
+  const p = summary.maxPrecip;
+  let chance;
+  if(p < 15) chance = 'very low (under 15%)';
+  else if(p < 30) chance = 'low (around ' + p + '%)';
+  else if(p < 55) chance = 'moderate (around ' + p + '%)';
+  else if(p < 75) chance = 'fairly high (around ' + p + '%)';
+  else chance = 'high (around ' + p + '%)';
+  let line = 'For ' + label + ', chance of rain looks ' + chance;
+  if(summary.thunder) line += ', with a chance of thunder';
+  if(summary.minT != null && summary.maxT != null){
+    if(summary.minT === summary.maxT) line += '. Temps around ' + summary.minT + '°C';
+    else line += '. Temps roughly ' + summary.minT + '–' + summary.maxT + '°C';
+  }
+  line += '.';
+  return line;
+}
+
 async function fetchWeather(){
   const here = await weatherCoords();
+  // Free Open-Meteo: current + next 48h hourly precip/temp/code — no key, no paid tier.
   const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + here.lat
     + '&longitude=' + here.lon
     + '&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m'
+    + '&hourly=temperature_2m,precipitation_probability,weather_code'
+    + '&forecast_days=2'
     + '&timezone=auto';
   const res = await fetch(url);
   if(!res.ok) throw new Error('Weather unavailable');
@@ -93,6 +159,9 @@ async function fetchWeather(){
   const cur = j.current || {};
   let place = here.place;
   if(!place) place = await weatherPlaceName(here.lat, here.lon);
+  const hourly = j.hourly || null;
+  const tonight = summarizeHours(hourly, 0, 12);   // next ~12h
+  const tomorrow = summarizeHours(hourly, 12, 36); // ~12–36h window
   weatherLast = {
     lat: here.lat,
     lon: here.lon,
@@ -102,6 +171,9 @@ async function fetchWeather(){
     humidity: cur.relative_humidity_2m,
     wind: cur.wind_speed_10m,
     code: cur.weather_code,
+    hourly: hourly,
+    tonight: tonight,
+    tomorrow: tomorrow,
     ts: Date.now(),
   };
   try{ localStorage.setItem(WEATHER_CACHE_KEY, JSON.stringify(weatherLast)); }catch(_){}
@@ -147,15 +219,55 @@ async function refreshWeather(){
   }
 }
 
-async function formatWeatherReply(){
+/**
+ * Full Compass answer. Optional queryText steers tonight/tomorrow phrasing.
+ * Always includes current + short forecast so the model is never forced to say
+ * "I only have current conditions."
+ */
+async function formatWeatherReply(queryText){
   try{
     const data = weatherLast && (Date.now() - weatherLast.ts < 20 * 60 * 1000)
       ? weatherLast
       : await fetchWeather();
     const line = weatherLine(data);
-    return line + '\nUpdated just now from your location.';
+    const q = String(queryText || '').toLowerCase();
+    const wantsTonight = /(tonight|this evening|later today|rain|thunder|storm|forecast)/.test(q);
+    const wantsTomorrow = /(tomorrow|next day|morning)/.test(q);
+    const parts = [line];
+    if(data.tonight){
+      parts.push(forecastPhrase(data.tonight, 'the next ~12 hours (tonight / later today)'));
+    }
+    if(wantsTomorrow && data.tomorrow){
+      parts.push(forecastPhrase(data.tomorrow, 'tomorrow'));
+    } else if(!wantsTonight && data.tomorrow){
+      // Still attach a light tomorrow line when available so Compass has range.
+      parts.push(forecastPhrase(data.tomorrow, 'tomorrow'));
+    }
+    parts.push('Updated just now from your location.');
+    return parts.filter(Boolean).join('\n');
   }catch(_){
     return 'I could not read the weather from here. Ask again in a moment.';
+  }
+}
+
+/** Compact system-hint for the AI worker — current + tonight precip. */
+async function weatherSystemHint(){
+  try{
+    const data = weatherLast && (Date.now() - weatherLast.ts < 20 * 60 * 1000)
+      ? weatherLast
+      : await fetchWeather();
+    let hint = weatherLine(data);
+    if(data.tonight){
+      hint += ' | Tonight rain chance ~' + data.tonight.maxPrecip + '%';
+      if(data.tonight.thunder) hint += ' (thunder possible)';
+      if(data.tonight.minT != null) hint += ', ' + data.tonight.minT + '–' + (data.tonight.maxT != null ? data.tonight.maxT : data.tonight.minT) + '°C';
+    }
+    if(data.tomorrow){
+      hint += ' | Tomorrow rain chance ~' + data.tomorrow.maxPrecip + '%';
+    }
+    return hint;
+  }catch(_){
+    return '';
   }
 }
 
@@ -175,6 +287,7 @@ function bindWeatherStrip(){
 
 window.isWeatherQuery = isWeatherQuery;
 window.formatWeatherReply = formatWeatherReply;
+window.weatherSystemHint = weatherSystemHint;
 window.showWeatherStrip = showWeatherStrip;
 window.hideWeatherStrip = hideWeatherStrip;
 

@@ -1,9 +1,10 @@
 /* ============================================================
    MODULE: js/media-contain.js
-   Broadcast / Signal / Band recordings stay INSIDE Naluno.
-   Chrome Android otherwise publishes a system Media notification
-   ("NALUNO · getnaluno.com") and audio keeps playing in the shade.
-   Calls are not paused on hide — they keep their own path.
+   Keep Broadcast / Signal / Band media INSIDE Naluno.
+   Samsung + Chrome publish a shade Media card for any HTMLMediaElement
+   that looks like a "session". We never set MediaMetadata.title, strip
+   controls from in-app players, deny remote playback, and keep nulling
+   the session while media runs. Calls are NOT paused on hide.
    ============================================================ */
 
 function nalunoCallUiOpen(){
@@ -17,24 +18,42 @@ function nalunoCallUiOpen(){
 
 function containMediaElement(el){
   if(!el) return;
-  if(el.hasAttribute('controls') || el.getAttribute('data-naluno-native-controls') != null) return;
+  // Intentional native controls (rare) — leave alone
+  try{
+    if(el.classList && el.classList.contains('native-controls')) return;
+    if(el.dataset && el.dataset.nativeControls === '1') return;
+  }catch(_){}
   try{ el.disableRemotePlayback = true; }catch(_){}
   try{ el.disablePictureInPicture = true; }catch(_){}
   try{ el.setAttribute('disablepictureinpicture', ''); }catch(_){}
+  try{ el.setAttribute('x-webkit-airplay', 'deny'); }catch(_){}
   try{ el.setAttribute('playsinline', ''); }catch(_){}
   try{ el.setAttribute('webkit-playsinline', ''); }catch(_){}
+  // Band voice used to set controls=true which publishes the shade player.
+  // Custom UI is preferred; strip native controls for containment.
   try{ el.removeAttribute('controls'); }catch(_){}
   try{ el.controls = false; }catch(_){}
 }
 
 function lockOutChromeMediaSession(){
   if(!navigator.mediaSession) return;
-  // NEVER publish titled metadata — that is what opens Chrome's shade player
-  // and double-plays with Naluno. Keep the session empty even while video plays.
   try{ navigator.mediaSession.metadata = null; }catch(_){}
   try{ navigator.mediaSession.playbackState = 'none'; }catch(_){}
+  try{
+    if(typeof navigator.mediaSession.setPositionState === 'function'){
+      // Empty position state prevents the scrubber shade on some Samsung builds
+      navigator.mediaSession.setPositionState({ duration: 0, playbackRate: 1, position: 0 });
+    }
+  }catch(_){
+    try{ navigator.mediaSession.setPositionState(undefined); }catch(_2){}
+  }
   ['play','pause','seekbackward','seekforward','seekto','previoustrack','nexttrack','stop'].forEach(function(a){
-    try{ navigator.mediaSession.setActionHandler(a, function(){}); }catch(_){}
+    try{ navigator.mediaSession.setActionHandler(a, null); }catch(_){}
+    try{
+      navigator.mediaSession.setActionHandler(a, function(){
+        // Swallow shade controls — media lives only inside the app
+      });
+    }catch(_){}
   });
 }
 
@@ -43,6 +62,8 @@ function pauseAppMediaForBackground(){
   document.querySelectorAll('video, audio').forEach(function(el){
     try{
       if(el.closest && el.closest('#callOverlay')) return;
+      if(el.classList && el.classList.contains('native-controls')) return;
+      if(el.dataset && el.dataset.nativeControls === '1') return;
       if(el.paused) return;
       el.dataset.nalunoPausedHide = '1';
       el.pause();
@@ -51,19 +72,15 @@ function pauseAppMediaForBackground(){
   lockOutChromeMediaSession();
 }
 
-function resumeAppMediaFromBackground(){
-  lockOutChromeMediaSession();
-  document.querySelectorAll('video[data-naluno-paused-hide], audio[data-naluno-paused-hide]').forEach(function(el){
+function resumeAppMediaAfterForeground(){
+  document.querySelectorAll('video, audio').forEach(function(el){
     try{
-      delete el.dataset.nalunoPausedHide;
-      // Only resume if the overlay that owns it is still open.
-      const inViewer = el.id === 'bviewerActiveVideo' && document.getElementById('bviewer') && document.getElementById('bviewer').classList.contains('active');
-      const inSpace = el.id === 'bspaceVideoEl' && document.getElementById('bspace') && document.getElementById('bspace').classList.contains('active');
-      if(!inViewer && !inSpace) return;
-      const p = el.play();
-      if(p && p.catch) p.catch(function(){});
+      if(el.dataset && el.dataset.nalunoPausedHide === '1'){
+        delete el.dataset.nalunoPausedHide;
+      }
     }catch(_){}
   });
+  lockOutChromeMediaSession();
 }
 
 function hookMediaContainment(){
@@ -74,17 +91,35 @@ function hookMediaContainment(){
 document.addEventListener('play', function(e){
   const el = e.target;
   if(!el || (el.tagName !== 'VIDEO' && el.tagName !== 'AUDIO')) return;
+  if(el.closest && el.closest('#callOverlay')) return;
   containMediaElement(el);
+  lockOutChromeMediaSession();
+  setTimeout(lockOutChromeMediaSession, 30);
+  setTimeout(lockOutChromeMediaSession, 200);
+  setTimeout(lockOutChromeMediaSession, 800);
+  setTimeout(lockOutChromeMediaSession, 2000);
+}, true);
+
+document.addEventListener('playing', function(e){
+  const el = e.target;
+  if(!el || (el.tagName !== 'VIDEO' && el.tagName !== 'AUDIO')) return;
+  if(el.closest && el.closest('#callOverlay')) return;
+  containMediaElement(el);
+  lockOutChromeMediaSession();
+}, true);
+
+document.addEventListener('pause', function(e){
+  const el = e.target;
+  if(el && el.closest && el.closest('#callOverlay')) return;
   lockOutChromeMediaSession();
 }, true);
 
 document.addEventListener('visibilitychange', function(){
   if(document.hidden) pauseAppMediaForBackground();
-  else resumeAppMediaFromBackground();
+  else resumeAppMediaAfterForeground();
 });
 window.addEventListener('pagehide', pauseAppMediaForBackground);
 window.addEventListener('freeze', pauseAppMediaForBackground);
-window.addEventListener('pageshow', resumeAppMediaFromBackground);
 
 if(document.readyState === 'loading'){
   document.addEventListener('DOMContentLoaded', hookMediaContainment);
@@ -92,4 +127,16 @@ if(document.readyState === 'loading'){
   hookMediaContainment();
 }
 
-setInterval(lockOutChromeMediaSession, 2500);
+setInterval(function(){
+  lockOutChromeMediaSession();
+  // Re-contain any element that re-gained controls
+  document.querySelectorAll('video[controls], audio[controls]').forEach(function(el){
+    if(el.classList && el.classList.contains('native-controls')) return;
+    if(el.dataset && el.dataset.nativeControls === '1') return;
+    if(el.closest && el.closest('#callOverlay')) return;
+    containMediaElement(el);
+  });
+}, 2000);
+
+window.containMediaElement = containMediaElement;
+window.lockOutChromeMediaSession = lockOutChromeMediaSession;

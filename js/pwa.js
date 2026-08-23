@@ -9,6 +9,18 @@ if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js', { scope: './', updateViaCache: 'none' })
     .then(function(reg){ try{ reg.update(); }catch(_){} })
     .catch(function(e){ console.warn('[sw]', e); });
+  // One automatic reload when a new SW takes control (clears stuck "sign-in not ready"
+  // from an older worker that timed out Firebase CDN scripts).
+  try{
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', function(){
+      if(reloaded) return;
+      try{ if(sessionStorage.getItem('nalunoSwReload') === '1') return; }catch(_){}
+      reloaded = true;
+      try{ sessionStorage.setItem('nalunoSwReload', '1'); }catch(_){}
+      location.reload();
+    });
+  }catch(_){}
 
   // Notification click (or Capacitor bridge) posts here so we can open the incoming UI
   // even when the app was backgrounded or just cold-started from the push.
