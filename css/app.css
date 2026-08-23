@@ -951,7 +951,7 @@ body.naluno-landscape-media #bspaceHero{
 .toga-row{ display:flex; justify-content:space-between; font-family:var(--font-mono); font-size:11.5px; color:var(--text-dim); padding:4px 0; }
 .toga-n{ color:var(--mint); }
 .toga-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-.toga-card{ background:var(--surface-2); border:1px solid var(--line); border-radius:16px; padding:14px; min-height:88px; }
+.toga-card{ background:var(--surface-2); border:1px solid var(--line); border-radius:16px; padding:14px; min-height:88px; text-align:left; color:inherit; width:100%; cursor:pointer; }
 .toga-card-k{ font-family:var(--font-mono); font-size:10px; letter-spacing:.08em; color:var(--text-dim); }
 .toga-card-name{ font-family:var(--font-futuristic); font-size:14px; margin:6px 0 8px; }
 .toga-card-v{ font-family:var(--font-futuristic); font-size:22px; color:var(--mint); }
@@ -1016,4 +1016,57 @@ body.naluno-landscape-media #bspaceHero{
   backdrop-filter:blur(10px);
 }
 #bspaceFitToggle:active{ transform:scale(.97); }
+
+.nearby-strip{
+  display:flex;
+  gap:10px;
+  overflow-x:auto;
+  -webkit-overflow-scrolling:touch;
+  padding:2px 2px 10px;
+  scroll-snap-type:x mandatory;
+}
+.nearby-tile{
+  flex:0 0 108px;
+  border:none;
+  background:transparent;
+  padding:0;
+  cursor:pointer;
+  scroll-snap-align:start;
+}
+.nearby-frame{
+  position:relative;
+  width:108px;
+  height:154px;
+  border-radius:14px;
+  overflow:hidden;
+  background:#12141c;
+  border:1px solid rgba(124,255,178,.22);
+  box-shadow:0 10px 24px rgba(0,0,0,.28);
+}
+.nearby-frame img, .nearby-fallback{
+  width:100%;
+  height:100%;
+  object-fit:cover;
+  display:block;
+}
+.nearby-fallback{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-family:var(--font-futuristic);
+  font-size:28px;
+  color:var(--mint);
+  background:radial-gradient(circle at 30% 20%, rgba(124,255,178,.22), transparent 55%), #12141c;
+}
+.nearby-title{
+  position:absolute;
+  left:0; right:0; bottom:0;
+  padding:18px 8px 8px;
+  background:linear-gradient(to top, rgba(7,8,14,.92), transparent);
+  color:#fff;
+  font-size:11px;
+  font-weight:600;
+  line-height:1.25;
+  text-align:left;
+}
 
