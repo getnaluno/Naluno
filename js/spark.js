@@ -35,7 +35,12 @@ async function openSparkSheet(){
       expiresAt: Date.now() + 3 * 60 * 1000,
     });
   }catch(e){
-    sparkStatus(e.message || 'Could not light a pulse');
+    const msg = String((e && e.message) || '');
+    if(/permission|insufficient/i.test(msg)){
+      sparkStatus('Spark needs a rules update on the server — publish firestore.rules from this zip');
+    } else {
+      sparkStatus(msg || 'Could not light a pulse');
+    }
     return;
   }
   if($('sparkCode')) $('sparkCode').textContent = code;
@@ -66,6 +71,7 @@ function watchSparkGuest(code){
 }
 
 function closeSparkSheet(){
+  if(sparkHostUnsub){ try{ sparkHostUnsub(); }catch(_){} sparkHostUnsub = null; }
   const sheet = $('sparkSheet');
   if(sheet) sheet.style.display = 'none';
 }
@@ -103,7 +109,12 @@ async function joinSparkCode(raw){
       openSparkPage(d.hostUid, d.hostName || 'Them');
     }
   }catch(e){
-    sparkStatus(e.message || 'Could not join');
+    const msg = String((e && e.message) || '');
+    if(/permission|insufficient/i.test(msg)){
+      sparkStatus('Spark needs a rules update on the server — try again after the new zip is live');
+    } else {
+      sparkStatus(msg || 'Could not join');
+    }
   }
 }
 

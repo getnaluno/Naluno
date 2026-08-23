@@ -59,6 +59,7 @@
 
   async function recordBroadcastView(broadcastId, creatorUid){
     if(!fbDb || !broadcastId) return;
+    if(currentUser && creatorUid && currentUser.uid === creatorUid) return;
     const key = broadcastId + ':' + ((currentUser && currentUser.uid) || 'anon');
     if(viewedLocal[key]) return;
     viewedLocal[key] = true;
@@ -79,6 +80,31 @@
         }, { merge: true });
       }
     }catch(e){ console.warn('[circle] view', e); }
+  }
+
+  let viewWatchTimer = null;
+  function armBroadcastViewWatch(broadcastId, creatorUid, isMine){
+    if(viewWatchTimer){ clearInterval(viewWatchTimer); viewWatchTimer = null; }
+    if(isMine || !broadcastId) return;
+    let seconds = 0;
+    viewWatchTimer = setInterval(function(){
+      try{
+        const space = document.getElementById('bspace');
+        if(!space || !space.classList.contains('active')){
+          clearInterval(viewWatchTimer); viewWatchTimer = null; return;
+        }
+        const v = document.getElementById('bspaceVideoEl');
+        const watching = v
+          ? (!v.paused && (v.currentTime || 0) > 0.25)
+          : true; // text/photo rooms: overlay open counts as watching
+        if(watching) seconds += 1;
+        if(seconds >= 4){
+          clearInterval(viewWatchTimer); viewWatchTimer = null;
+          recordBroadcastView(broadcastId, creatorUid);
+          try{ if(typeof paintBspaceViews === 'function') paintBspaceViews(window.activeBroadcastMeta || { creatorUid: creatorUid, views: 0 }); }catch(_){}
+        }
+      }catch(_){}
+    }, 1000);
   }
 
   async function loadMyTogaSettings(){
@@ -171,6 +197,7 @@
   window.creatorCircleJoined = creatorCircleJoined;
   window.joinCreatorCircle = joinCreatorCircle;
   window.recordBroadcastView = recordBroadcastView;
+  window.armBroadcastViewWatch = armBroadcastViewWatch;
   window.loadMyTogaSettings = loadMyTogaSettings;
   window.setMyToga = setMyToga;
   window.renderTogaBoard = renderTogaBoard;

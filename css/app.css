@@ -572,6 +572,13 @@
 .msg-row.me .band-audio-player{
   background: rgba(13,15,23,.2) !important;
 }
+.naluno-clip-play{
+  position:absolute; left:50%; top:58%; transform:translate(-50%,-50%);
+  z-index:3; width:44px; height:44px; border-radius:50%; border:none;
+  background:rgba(124,255,178,.92); color:#0D0F17; font-size:16px;
+  box-shadow:0 6px 18px rgba(0,0,0,.4); cursor:pointer;
+}
+.band-voice-bubble, .spark-bubble{ position:relative; }
 
 
 /* Broadcast media + chapters — never overlap title */

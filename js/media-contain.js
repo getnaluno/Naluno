@@ -16,13 +16,19 @@ function nalunoCallUiOpen(){
   return false;
 }
 
+function nalunoClipElement(el){
+  try{
+    if(!el) return false;
+    if(el.classList && (el.classList.contains('native-controls') || el.classList.contains('naluno-clip'))) return true;
+    if(el.dataset && (el.dataset.nativeControls === '1' || el.dataset.nalunoClip === '1')) return true;
+    if(el.closest && el.closest('.naluno-clip, .spark-row, .band-voice-bubble')) return true;
+  }catch(_){}
+  return false;
+}
+
 function containMediaElement(el){
   if(!el) return;
-  // Intentional native controls (rare) — leave alone
-  try{
-    if(el.classList && el.classList.contains('native-controls')) return;
-    if(el.dataset && el.dataset.nativeControls === '1') return;
-  }catch(_){}
+  if(nalunoClipElement(el)) return;
   try{ el.disableRemotePlayback = true; }catch(_){}
   try{ el.disablePictureInPicture = true; }catch(_){}
   try{ el.setAttribute('disablepictureinpicture', ''); }catch(_){}
@@ -62,8 +68,7 @@ function pauseAppMediaForBackground(){
   document.querySelectorAll('video, audio').forEach(function(el){
     try{
       if(el.closest && el.closest('#callOverlay')) return;
-      if(el.classList && el.classList.contains('native-controls')) return;
-      if(el.dataset && el.dataset.nativeControls === '1') return;
+      if(nalunoClipElement(el)) return;
       if(el.paused) return;
       el.dataset.nalunoPausedHide = '1';
       el.pause();
@@ -131,8 +136,7 @@ setInterval(function(){
   lockOutChromeMediaSession();
   // Re-contain any element that re-gained controls
   document.querySelectorAll('video[controls], audio[controls]').forEach(function(el){
-    if(el.classList && el.classList.contains('native-controls')) return;
-    if(el.dataset && el.dataset.nativeControls === '1') return;
+    if(nalunoClipElement(el)) return;
     if(el.closest && el.closest('#callOverlay')) return;
     containMediaElement(el);
   });
@@ -140,3 +144,49 @@ setInterval(function(){
 
 window.containMediaElement = containMediaElement;
 window.lockOutChromeMediaSession = lockOutChromeMediaSession;
+window.nalunoClipElement = nalunoClipElement;
+
+function bindNalunoClips(root){
+  const host = root || document;
+  try{
+    host.querySelectorAll('video.naluno-clip, audio.naluno-clip').forEach(function(el){
+      if(el.dataset.clipBound === '1') return;
+      el.dataset.clipBound = '1';
+      try{ el.disableRemotePlayback = true; }catch(_){}
+      const wrap = el.parentElement;
+      const btn = wrap && wrap.querySelector && wrap.querySelector('.naluno-clip-play');
+      const playIt = function(){
+        document.querySelectorAll('video.naluno-clip, audio.naluno-clip').forEach(function(other){
+          if(other !== el && !other.paused) try{ other.pause(); }catch(_){}
+        });
+        const p = el.play();
+        if(p && p.catch){
+          p.catch(function(){
+            try{ el.muted = true; }catch(_){}
+            el.play().then(function(){
+              setTimeout(function(){ try{ el.muted = false; }catch(_){} }, 80);
+            }).catch(function(){});
+          });
+        }
+      };
+      if(btn){
+        btn.onclick = function(e){
+          e.preventDefault();
+          e.stopPropagation();
+          if(el.paused) playIt();
+          else el.pause();
+        };
+      }
+      el.addEventListener('click', function(e){
+        e.preventDefault();
+        e.stopPropagation();
+        if(el.paused) playIt();
+        else el.pause();
+      });
+      el.addEventListener('playing', function(){ if(btn) btn.style.display = 'none'; });
+      el.addEventListener('pause', function(){ if(btn && !el.ended) btn.style.display = ''; });
+      el.addEventListener('ended', function(){ if(btn) btn.style.display = ''; });
+    });
+  }catch(_){}
+}
+window.bindNalunoClips = bindNalunoClips;

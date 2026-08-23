@@ -107,6 +107,38 @@ service cloud.firestore {
         allow read: if isSignedIn();
         allow create: if isSignedIn() && request.resource.data.from == request.auth.uid;
       }
+      match /invites/{inviteId} {
+        allow read, write: if isSignedIn();
+      }
+      match /mesh/{pairId} {
+        allow read, write: if isSignedIn();
+        match /{iceCol}/{iceId} {
+          allow read, write: if isSignedIn();
+        }
+      }
+    }
+
+    match /sparks/{code} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.hostUid == request.auth.uid;
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn() && resource.data.hostUid == request.auth.uid;
+    }
+
+    match /sparkRooms/{roomId} {
+      allow read: if isSignedIn() && request.auth.uid in resource.data.participants;
+      allow create: if isSignedIn() && request.auth.uid in request.resource.data.participants;
+      allow update: if isSignedIn() && request.auth.uid in resource.data.participants;
+      match /messages/{messageId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.from == request.auth.uid;
+      }
+    }
+
+    match /users/{uid}/notifications/{nid} {
+      allow read: if isOwner(uid);
+      allow create: if isSignedIn();
+      allow update, delete: if isOwner(uid);
     }
 
     match /broadcasts/{id} {

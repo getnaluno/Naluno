@@ -549,8 +549,8 @@ async function openBroadcastSpace(meta){
   }
 
   try{
-    if(typeof recordBroadcastView === 'function'){
-      recordBroadcastView(activeBroadcastId, meta.creatorUid);
+    if(typeof armBroadcastViewWatch === 'function'){
+      armBroadcastViewWatch(activeBroadcastId, meta.creatorUid, isCreator);
     }
   }catch(_){}
 

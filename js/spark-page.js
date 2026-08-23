@@ -177,7 +177,7 @@ function renderSparkMessages(rows){
       : (translated || m.text || '');
     const orig = (!mine && m.text && translated && m.text !== translated) ? m.text : '';
     const voice = m.audioUrl
-      ? '<audio playsinline preload="metadata" src="' + escapeHtml(m.audioUrl) + '" style="width:100%;margin-top:6px;"></audio>'
+      ? '<button type="button" class="naluno-clip-play" aria-label="Play">▶</button><audio class="naluno-clip" playsinline preload="auto" src="' + escapeHtml(m.audioUrl) + '" style="width:100%;margin-top:6px;"></audio>'
       : '';
     const hear = shown
       ? '<button type="button" class="spark-hear" data-say="' + encodeURIComponent(shown) + '">Listen</button>'
@@ -204,6 +204,7 @@ function renderSparkMessages(rows){
     };
   });
   box.scrollTop = box.scrollHeight;
+  bindNalunoClips(box);
 }
 
 async function sendSparkText(raw, extra){
