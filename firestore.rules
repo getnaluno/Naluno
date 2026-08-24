@@ -106,6 +106,14 @@ service cloud.firestore {
       match /messages/{messageId} {
         allow read: if isSignedIn();
         allow create: if isSignedIn() && request.resource.data.from == request.auth.uid;
+        // Sender can hard-delete their own line. After the square empties,
+        // any signed-in member (or anyone, if lastEmptiedAt is set) can prune
+        // the settled chatter so the 2h wipe actually lands in Firestore.
+        allow delete: if isSignedIn() && (
+          resource.data.from == request.auth.uid
+          || request.auth.uid in get(/databases/$(database)/documents/bands/$(bandId)).data.memberUids
+          || get(/databases/$(database)/documents/bands/$(bandId)).data.lastEmptiedAt != null
+        );
       }
       match /invites/{inviteId} {
         allow read, write: if isSignedIn();
@@ -139,6 +147,18 @@ service cloud.firestore {
       allow read: if isOwner(uid);
       allow create: if isSignedIn();
       allow update, delete: if isOwner(uid);
+    }
+
+    match /users/{uid}/beacons/{id} {
+      allow read, write: if isOwner(uid);
+    }
+
+    match /users/{uid}/wirelineClears/{id} {
+      allow read, write: if isOwner(uid);
+    }
+
+    match /users/{uid}/wirelineHidden/{id} {
+      allow read, write: if isOwner(uid);
     }
 
     match /broadcasts/{id} {
