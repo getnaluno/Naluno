@@ -158,9 +158,12 @@ function renderBroadcastTab(){
   }
 
   // ---- Permanent Broadcast plates ----
+  // Stranded videos sit in a folder at entry. Only unattached ones stay free.
   if(grid){
     const list = (typeof feedBroadcasts !== 'undefined' && feedBroadcasts) ? feedBroadcasts.slice() : [];
-    if(!list.length){
+    if(typeof renderBroadcastEntryGrid === 'function'){
+      renderBroadcastEntryGrid(grid, empty, list);
+    } else if(!list.length){
       grid.innerHTML = '';
       if(empty) empty.style.display = 'block';
     } else {
