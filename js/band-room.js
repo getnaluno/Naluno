@@ -112,29 +112,22 @@ function bandMessageHtml(m){
     const src = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(m.mediaUrl) : m.mediaUrl;
     return `<div class="${rowClass}">${nameHtml}<div class="msg-bubble band-voice-bubble">
       <div class="band-voice-label" style="color:${labelColor}">Voice · ${dur || 'clip'}</div>
-      <button type="button" class="naluno-clip-play" aria-label="Play">▶</button>
-      <video class="band-audio-player naluno-clip" playsinline webkit-playsinline preload="auto" src="${escapeHtml(src)}"></video>
+      <video class="band-audio-player" playsinline webkit-playsinline preload="metadata" src="${escapeHtml(src)}"></video>
     </div><div class="msg-time">${formatClockTime(m.ts)}</div></div>`;
   }
   if(m.type === 'video' && m.mediaUrl){
     const src = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(m.mediaUrl) : m.mediaUrl;
-    return `<div class="${rowClass}">${nameHtml}<div class="msg-bubble" style="padding:8px; background:rgba(0,0,0,.35); position:relative;">
+    return `<div class="${rowClass}">${nameHtml}<div class="msg-bubble" style="padding:8px; background:rgba(0,0,0,.35);">
       <div style="font-family:var(--font-mono); font-size:10px; color:var(--mint); margin:0 0 6px 4px;">Video · ${dur || 'clip'}</div>
-      <button type="button" class="naluno-clip-play" aria-label="Play">▶</button>
-      <video class="naluno-clip band-video-player" playsinline webkit-playsinline preload="auto" src="${escapeHtml(src)}" poster="${m.thumb ? escapeHtml(m.thumb) : ''}" style="width:100%; max-width:260px; border-radius:12px; background:#000; display:block;"></video>
+      <video playsinline webkit-playsinline preload="metadata" src="${escapeHtml(src)}" poster="${m.thumb ? escapeHtml(m.thumb) : ''}" style="width:100%; max-width:260px; border-radius:12px; background:#000; display:block;"></video>
     </div><div class="msg-time">${formatClockTime(m.ts)}</div></div>`;
   }
   return `<div class="${rowClass}">${nameHtml}<div class="msg-bubble">${escapeHtml(m.text || '')}</div><div class="msg-time">${formatClockTime(m.ts)}</div></div>`;
 }
 function bandIsSettled(b){
   if(!b || !b.lastEmptiedAt) return false;
-  // Only count live bodies for the Band that is actually open. Leftover
-  // realBandLiveMembers from a previous room (or amTunedIn on another square)
-  // used to keep EVERY band "busy", so the 2h wipe never fired.
-  if(activeBandId && b.id === activeBandId){
-    const liveCount = (b.isReal ? realBandLiveMembers.length : 0) + (amTunedIn ? 1 : 0);
-    if(liveCount > 0) return false;
-  }
+  const liveCount = (b.isReal ? realBandLiveMembers.length : 0) + (amTunedIn ? 1 : 0);
+  if(liveCount > 0) return false;
   return (Date.now() - b.lastEmptiedAt) >= BAND_SETTLE_MS;
 }
 function updateBandSettleNote(){
@@ -184,7 +177,6 @@ function renderBandMessages(){
   }
   $('bandMessages').innerHTML = msgs.map(bandMessageHtml).join('');
   $('bandMessages').scrollTop = $('bandMessages').scrollHeight;
-  bindNalunoClips($('bandMessages'));
   updateBandSettleNote();
 }
 function renderBandRoster(){
@@ -267,19 +259,7 @@ async function pruneSettledBandMessages(bandRef, b){
   if(b._pruning) return;
   b._pruning = true;
   try{
-    // Stamp the session boundary FIRST so clients hide old lines even if a
-    // delete batch is denied or slow. Previously epoch was written after
-    // deletes, so a rules miss left the chatter forever.
-    const epoch = Date.now();
-    b.messageEpoch = epoch;
-    await bandRef.set({
-      messageEpoch: epoch,
-      lastEmptiedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    }, { merge:true });
-    if(activeBandId && b.id === activeBandId && bandMessages[activeBandId]){
-      bandMessages[activeBandId] = [];
-      try{ renderBandMessages(); }catch(_){}
-    }
+    // Paginate deletes so the square is actually empty, not 80-of-N leftovers
     for(let i = 0; i < 10; i++){
       const snap = await bandRef.collection('messages').limit(80).get();
       if(snap.empty) break;
@@ -288,6 +268,14 @@ async function pruneSettledBandMessages(bandRef, b){
       await batch.commit();
       if(snap.size < 80) break;
     }
+    // New session boundary — client ignores older shells even if a delete lags
+    const epoch = Date.now();
+    b.messageEpoch = epoch;
+    await bandRef.set({
+      messageEpoch: epoch,
+      lastEmptiedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge:true });
+    if(activeBandId && bandMessages[activeBandId]) bandMessages[activeBandId] = [];
   }catch(e){ console.warn('[band] prune', e); }
   finally{ b._pruning = false; }
 }
@@ -416,13 +404,7 @@ function openBandRoom(id){
       renderBandMessages();
     }, ()=>{ /* messages just won't sync this session */ });
 
-    bandSettleTimer = setInterval(function(){
-      updateBandSettleNote();
-      const cur = activeBand();
-      if(cur && cur.isReal && cur.firestoreId && bandIsSettled(cur)){
-        pruneSettledBandMessages(fbDb.collection('bands').doc(cur.firestoreId), cur);
-      }
-    }, 15000);
+    bandSettleTimer = setInterval(updateBandSettleNote, 30000);
   } else {
     renderBandRoster();
     renderBandMessages();
@@ -443,7 +425,6 @@ function closeBandRoom(){
   $('bandRoom').classList.remove('active');
   amTunedIn = false;
   activeBandId = null;
-  realBandLiveMembers = [];
 }
 $('bandRoomBack').onclick = closeBandRoom;
 /* Leave for good = only you exit membership. The square itself cannot be deleted —
@@ -487,29 +468,8 @@ function clearMyBandPresence(){
   stopBandPresenceHeartbeat();
   const b = activeBand();
   if(b && b.isReal && b.firestoreId && fbDb && currentUser){
-    const bandRef = fbDb.collection('bands').doc(b.firestoreId);
-    bandRef.collection('presence').doc(currentUser.uid).delete()
-      .then(function(){ markBandEmptyIfLast(bandRef, b); })
-      .catch(function(){ markBandEmptyIfLast(bandRef, b); });
+    fbDb.collection('bands').doc(b.firestoreId).collection('presence').doc(currentUser.uid).delete().catch(()=>{});
   }
-}
-async function markBandEmptyIfLast(bandRef, b){
-  if(!bandRef || !fbDb || !currentUser) return;
-  try{
-    const snap = await bandRef.collection('presence').get();
-    const now = Date.now();
-    const others = snap.docs.filter(function(d){
-      if(d.id === currentUser.uid) return false;
-      const data = d.data() || {};
-      const ts = data.tunedInAt && data.tunedInAt.toMillis ? data.tunedInAt.toMillis()
-        : (typeof data.tunedInAt === 'number' ? data.tunedInAt : 0);
-      return ts && (now - ts) < 90 * 1000;
-    });
-    if(others.length === 0){
-      if(b) b.lastEmptiedAt = Date.now();
-      await bandRef.set({ lastEmptiedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge:true });
-    }
-  }catch(e){ console.warn('[band] empty stamp', e); }
 }
 // If the app is backgrounded or closed while tuned in, drop presence so others don't see a ghost.
 document.addEventListener('visibilitychange', ()=>{

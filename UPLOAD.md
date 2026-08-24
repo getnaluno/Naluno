@@ -1,13 +1,22 @@
-# Naluno GitHub zip — 20260823e
+# Naluno — 20260823d
 
-This is the **full latest** (views-fit 23d tree: HEVC, weather, Circle, Strand, Origin, Fit/Fill, view cards) plus the remaining audit fixes. Not a thinner rebuild.
+Built on **naluno-latest-full-20260823c** (full merge). This ship only changes Broadcast space UI:
 
-## On top of views-fit
-- Calls: remote video is no longer hidden while paused
-- Toga standing is cards, not word rows
-- Cache `?v=20260823e` · SW `naluno-shell-v79`
+## Views
+- **Card layout** for view counts (not plain text).
+- **Everyone** on a Broadcast sees **this Broadcast’s** views only.
+- **Creator only** also sees **All of yours** (total across every Broadcast they published).
 
-Already in this tree (kept): Signal blob + HEVC convert, `video/*` picker, MediaSession empty, Fit/Fill, creator-only totals, view cards, Circle join, sign-in retry.
+## Video stage
+- Restored **Fit / Fill** chip on the hero.
+- Stage follows the **uploaded video’s aspect ratio**.
+- **Fit** = full picture (`object-fit: contain`).
+- **Fill** = crop to stage (`object-fit: cover`).
+- Landscape + phone tilt still expands toward full screen.
 
-## After upload
-Close every Naluno tab → site info → delete cookies/site data → open once.
+## Cache
+- `?v=20260823d`
+- Service worker `naluno-shell-v79`
+
+## Ship rule
+Always start from the previous full latest zip. Never thin-base a fix.

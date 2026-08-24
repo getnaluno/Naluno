@@ -29,15 +29,73 @@ let connectionsSignals = []; // [{ contactId, contact, latest }] — real connec
    on anyone's device being online when the expiry actually hits.
    Fill in your own deployed Worker's URL here once it's live. */
 const SIGNAL_UPLOAD_WORKER_URL = 'https://naluno-signal-upload.naluno.workers.dev';
+
+/* ---- Media identity (Broadcast stability) ----
+   Broadcast ID → Media ID → persistent asset must survive UI/layout churn.
+   Never derive identity from array index or plate position. */
+const nalunoMediaReg = {}; // mediaId → { broadcastId, url, state, lastError, ts }
+function nalunoMediaIdFromUrl(u){
+  if(!u || typeof u !== 'string') return '';
+  try{
+    const bare = String(u).split('?')[0];
+    const m = bare.match(/u\/[A-Za-z0-9_-]+\/[A-Za-z0-9._-]+/);
+    if(m) return m[0];
+    const parts = bare.split('/');
+    return parts[parts.length - 1] || bare.slice(-48);
+  }catch(_){ return String(u).slice(-48); }
+}
+function nalunoMediaSetState(mediaId, state, detail){
+  if(!mediaId) return;
+  const row = nalunoMediaReg[mediaId] || { mediaId: mediaId };
+  row.state = state;
+  row.ts = Date.now();
+  if(detail) row.lastError = detail;
+  nalunoMediaReg[mediaId] = row;
+}
+/** Classify a media failure for diagnostics (never refetch-everything). */
+function nalunoMediaClassifyError(el, err){
+  const code = (el && el.error && el.error.code) || (err && err.code) || 0;
+  const msg = String((err && (err.message || err.name)) || (el && el.error && el.error.message) || '');
+  if(code === 1 || /abort/i.test(msg)) return 'component_remount_or_abort';
+  if(code === 2 || /network|fetch|failed to load/i.test(msg)) return 'network_failure';
+  if(code === 3 || /decode|format|not supported/i.test(msg)) return 'video_decoding_failure';
+  if(code === 4 || /src not supported|empty src/i.test(msg)) return 'invalid_media_reference';
+  if(/403|401|permission|unauth/i.test(msg)) return 'permission_authentication_failure';
+  if(/404|not found/i.test(msg)) return 'storage_failure';
+  if(/expir|token|signed/i.test(msg)) return 'expired_url';
+  if(/cache/i.test(msg)) return 'cache_failure';
+  if(/firestore|permission-denied|unavailable/i.test(msg)) return 'api_database_failure';
+  return 'unknown_media_failure';
+}
+function nalunoMediaDiag(broadcastId, mediaId, cause, detail){
+  const line = {
+    t: Date.now(),
+    broadcastId: broadcastId || null,
+    mediaId: mediaId || null,
+    cause: cause || 'unknown',
+    detail: detail || null,
+  };
+  try{ console.warn('[naluno-media]', JSON.stringify(line)); }catch(_){
+    console.warn('[naluno-media]', broadcastId, mediaId, cause, detail);
+  }
+  if(mediaId) nalunoMediaSetState(mediaId, 'error', line);
+  return line;
+}
+window.nalunoMediaIdFromUrl = nalunoMediaIdFromUrl;
+window.nalunoMediaDiag = nalunoMediaDiag;
+window.nalunoMediaClassifyError = nalunoMediaClassifyError;
+window.nalunoMediaReg = nalunoMediaReg;
+
 /** Normalize any stored media URL to the Worker proxy (GET /o/<key>).
- *  Broken playback was caused by R2 "public" hosts that never served bytes. */
+ *  Broken playback was caused by R2 "public" hosts that never served bytes.
+ *  Never rewrite an already-proxied /o/u/ host (Broadcast vs Signal buckets). */
 function resolveMediaUrl(u){
   if(!u || typeof u !== 'string') return u || '';
   if(/^blob:|^data:/i.test(u)) return u;
   const signalBase = SIGNAL_UPLOAD_WORKER_URL.replace(/\/+$/, '');
   const bcastBase = (typeof BROADCAST_UPLOAD_WORKER_URL === 'string' && BROADCAST_UPLOAD_WORKER_URL)
     ? BROADCAST_UPLOAD_WORKER_URL.replace(/\/+$/, '') : '';
-  // Never steal the host of an already-proxied object URL (Broadcast vs Signal buckets).
+  // Keep already-proxied object URLs on their own worker host.
   if(/^https?:/i.test(u) && /\/o\/u\//i.test(u)) return u;
   if(u.indexOf(signalBase + '/o/') === 0) return u;
   if(bcastBase && u.indexOf(bcastBase) === 0) return u;
@@ -54,8 +112,8 @@ function resolveMediaUrl(u){
   return u;
 }
 
-/** Every URL that might hold this file — original first (compat).
- *  Never hop Broadcast ↔ Signal buckets unless the URL is a raw R2 object. */
+/** Candidate play URLs — original first (compat). Never hop Broadcast ↔ Signal
+ *  unless the URL is a raw R2 object without a known worker host. */
 function nalunoPlayCandidates(raw){
   const original = String(raw || '');
   const urls = [];
@@ -113,82 +171,6 @@ function nalunoFileLooksLikeImage(file){
 }
 function nalunoFiniteDuration(d){
   return typeof d === 'number' && isFinite(d) && d > 0 && d !== Infinity;
-}
-/** Google Photos / MP4 edit-lists often report half the real length. Prefer seekable. */
-function nalunoTrueDuration(el){
-  if(!el) return 0;
-  let d = 0;
-  try{
-    if(el.seekable && el.seekable.length){
-      d = Math.max(d, el.seekable.end(el.seekable.length - 1) || 0);
-    }
-  }catch(_){}
-  try{
-    if(nalunoFiniteDuration(el.duration)) d = Math.max(d, el.duration);
-  }catch(_){}
-  return d;
-}
-function nalunoResumeIfTruncated(el, onRealEnd){
-  if(!el) { if(onRealEnd) onRealEnd(); return; }
-  const t = el.currentTime || 0;
-  const d = nalunoTrueDuration(el);
-  const reported = el.duration;
-  if(d > t + 0.4){
-    try{ el.currentTime = Math.min(d - 0.05, t + 0.05); }catch(_){}
-    el.play().catch(function(){});
-    return;
-  }
-  // Probe past reported duration (half-length metadata)
-  if(nalunoFiniteDuration(reported) && t >= reported - 0.4){
-    const probeAt = reported + Math.max(0.8, reported * 0.2);
-    const before = t;
-    let settled = false;
-    const finish = function(){
-      if(settled) return;
-      settled = true;
-      const now = el.currentTime || 0;
-      if(now > before + 0.15 && now > reported - 0.05){
-        el.play().catch(function(){});
-      } else if(onRealEnd){
-        onRealEnd();
-      }
-    };
-    try{
-      el.addEventListener('seeked', finish, { once: true });
-      el.currentTime = probeAt;
-    }catch(_){ finish(); }
-    setTimeout(finish, 500);
-    return;
-  }
-  if(onRealEnd) onRealEnd();
-}
-window.nalunoTrueDuration = nalunoTrueDuration;
-window.nalunoResumeIfTruncated = nalunoResumeIfTruncated;
-/** Phone-first: treat as portrait unless the decoded frame is clearly landscape.
- *  Samsung/iPhone often store 9:16 camera clips as 1920×1080 + rotation; if a
- *  poster/thumb is taller than wide, we trust that over coded videoWidth. */
-function nalunoVideoLooksPortrait(v, posterUrl){
-  try{
-    if(v && v.videoHeight > 0 && v.videoWidth > 0 && v.videoHeight > v.videoWidth) return true;
-    const poster = posterUrl || (v && (v.poster || v.getAttribute && v.getAttribute('poster'))) || '';
-    const cached = poster && window.__nalunoPosterAR && window.__nalunoPosterAR[poster];
-    if(cached === 'portrait') return true;
-    if(cached === 'landscape') return false;
-    if(v && v.videoWidth > 0 && v.videoHeight > 0 && v.videoWidth / v.videoHeight >= 1.25) return false;
-  }catch(_){}
-  return true; // Naluno default stage is 9:16
-}
-function nalunoProbePosterAR(url){
-  if(!url || typeof Image === 'undefined') return;
-  try{
-    window.__nalunoPosterAR = window.__nalunoPosterAR || {};
-    if(window.__nalunoPosterAR[url]) return;
-    const img = new Image();
-    img.onload = function(){
-      window.__nalunoPosterAR[url] = (img.naturalHeight > img.naturalWidth) ? 'portrait' : 'landscape';
-    };
-    img.src = url;
-  }catch(_){}
 }
 function nalunoGuessContentType(blob){
   const t = (blob && blob.type) ? String(blob.type).toLowerCase() : '';
@@ -296,9 +278,6 @@ function nalunoTranscodeToWeb(file, onProgress, maxSeconds){
       if(settled) return;
       settled = true;
       cleanup();
-      try{
-        if(blob && !blob._nalunoName) blob._nalunoName = 'signal.webm';
-      }catch(_){}
       resolve(blob);
     };
     video.onerror = function(){ fail(new Error('Could not open that video')); };
@@ -353,31 +332,11 @@ function nalunoTranscodeToWeb(file, onProgress, maxSeconds){
           try{
             if(video.videoWidth) ctx.drawImage(video, 0, 0, cw, ch);
           }catch(_){}
-          const tNow = video.currentTime || 0;
-          if(onProgress){
-            try{ onProgress(Math.min(0.99, tNow / Math.max(capSec, duration || 1))); }catch(_){}
+          if(onProgress && duration){
+            try{ onProgress(Math.min(0.99, (video.currentTime || 0) / duration)); }catch(_){}
           }
-          if(tNow >= capSec - 0.05){
-            try{ if(recorder && recorder.state === 'recording') recorder.stop(); }catch(_){}
-            return;
-          }
-          if(video.ended){
-            const reported = video.duration;
-            if(nalunoFiniteDuration(reported) && tNow >= reported - 0.25){
-              const before = tNow;
-              try{ video.currentTime = reported + Math.max(0.6, reported * 0.1); }catch(_){}
-              setTimeout(function(){
-                if(settled) return;
-                if((video.currentTime || 0) > before + 0.12){
-                  video.play().catch(function(){});
-                  raf = requestAnimationFrame(draw);
-                } else {
-                  try{ if(recorder && recorder.state === 'recording') recorder.stop(); }catch(_){}
-                }
-              }, 280);
-              return;
-            }
-            try{ if(recorder && recorder.state === 'recording') recorder.stop(); }catch(_){}
+          if(video.currentTime >= duration - 0.05 || video.ended){
+            try{ if(recorder.state === 'recording') recorder.stop(); }catch(_){}
             return;
           }
           raf = requestAnimationFrame(draw);
@@ -466,14 +425,10 @@ function nalunoProbeDuration(file, timeoutMs){
       resolve(nalunoFiniteDuration(d) ? d : null);
     };
     v.onloadedmetadata = function(){ finish(v.duration); };
-    v.onloadeddata = function(){ if(!done) finish(Math.max(v.duration || 0, (v.seekable && v.seekable.length) ? v.seekable.end(0) : 0)); };
+    v.onloadeddata = function(){ if(!done) finish(v.duration); };
     v.onerror = function(){ finish(null); };
     v.src = url;
-    setTimeout(function(){
-      let d = v.duration;
-      try{ if(v.seekable && v.seekable.length) d = Math.max(d || 0, v.seekable.end(v.seekable.length - 1)); }catch(_){}
-      finish(d);
-    }, timeoutMs || 6000);
+    setTimeout(function(){ finish(v.duration); }, timeoutMs || 2800);
   });
 }
 
@@ -515,31 +470,56 @@ function attachPlaybackGuard(el, url){
   }
 }
 
-function bindMediaElement(el, rawUrl){
+function bindMediaElement(el, rawUrl, opts){
   if(!el) return;
+  opts = opts || {};
+  const broadcastId = opts.broadcastId || el.dataset.broadcastId || null;
   const urls = (typeof nalunoPlayCandidates === 'function') ? nalunoPlayCandidates(rawUrl) : [resolveMediaUrl(rawUrl)];
   const url = urls[0] || resolveMediaUrl(rawUrl);
-  if(!url) return;
+  if(!url){
+    nalunoMediaDiag(broadcastId, null, 'invalid_media_reference', 'empty url');
+    return;
+  }
+  const mediaId = nalunoMediaIdFromUrl(url) || nalunoMediaIdFromUrl(rawUrl);
+  if(broadcastId) el.dataset.broadcastId = broadcastId;
+  if(mediaId) el.dataset.mediaId = mediaId;
   el.setAttribute('playsinline', '');
   el.setAttribute('webkit-playsinline', '');
   el.setAttribute('preload', 'auto');
   try{ el.preload = 'auto'; }catch(_){}
   if(typeof containMediaElement === 'function') containMediaElement(el);
+
+  // Do not reset src if this element is already playing the same asset.
   const current = (el.currentSrc || el.getAttribute('src') || '').split('?')[0];
   const nextBare = String(url).split('?')[0];
-  if(!(current && nextBare && current.indexOf(nextBare) >= 0)){
+  const sameAsset = !!(current && nextBare && (current.indexOf(nextBare) >= 0 || nextBare.indexOf(current) >= 0 ||
+    (mediaId && current.indexOf(mediaId) >= 0)));
+  if(sameAsset && !el.paused && (el.readyState >= 2 || (el.currentTime || 0) > 0.05)){
+    nalunoMediaSetState(mediaId, 'playing');
+    attachPlaybackGuard(el, url);
+    return;
+  }
+  if(!sameAsset){
     const key = (typeof vaultKeyForUrl === 'function') ? vaultKeyForUrl(url) : '';
     const cached = (key && typeof vaultSyncSrc === 'function') ? vaultSyncSrc(key) : '';
+    // Assign src only — never call load() here; load() aborts in-flight play (MEDIA_ERR_ABORTED).
     el.src = cached || url;
+    nalunoMediaSetState(mediaId, 'loading');
   }
+
   let urlIndex = 0;
   el.onerror = function(){
     const code = el.error && el.error.code;
-    // MEDIA_ERR_ABORTED (1) means src was reset (load()/new src). Do not hop buckets.
-    if(code === 1) return;
-    console.warn('[media] load failed', urls[urlIndex], code);
+    // MEDIA_ERR_ABORTED (1) = src was reset (remount/load). Do not hop buckets.
+    if(code === 1){
+      nalunoMediaDiag(broadcastId, mediaId, 'component_remount_or_abort', { code: 1, src: el.src });
+      return;
+    }
+    const cause = nalunoMediaClassifyError(el, el.error);
+    nalunoMediaDiag(broadcastId, mediaId, cause, { code: code, src: urls[urlIndex] || url });
     urlIndex++;
     if(urlIndex < urls.length){
+      nalunoMediaSetState(mediaId, 'retrying');
       el.src = urls[urlIndex];
       el.play().catch(function(){});
       return;
@@ -554,6 +534,12 @@ function bindMediaElement(el, rawUrl){
       }
     }
   };
+  const mark = function(state){ return function(){ nalunoMediaSetState(mediaId, state); }; };
+  el.addEventListener('loadeddata', mark('loaded'));
+  el.addEventListener('playing', mark('playing'));
+  el.addEventListener('pause', mark('paused'));
+  el.addEventListener('waiting', mark('buffering'));
+  el.addEventListener('stalled', mark('buffering'));
   attachPlaybackGuard(el, url);
 }
 
@@ -814,20 +800,7 @@ function pruneExpiredSignal(){
 async function saveSignalSegment(segment){
   if(!currentUser || !fbDb) return null;
   try{
-    const clean = {};
-    Object.keys(segment || {}).forEach(function(k){
-      const v = segment[k];
-      if(v === undefined || v === null) return;
-      if(typeof Blob !== 'undefined' && v instanceof Blob) return;
-      if(typeof File !== 'undefined' && v instanceof File) return;
-      if(typeof v === 'function') return;
-      if(k === 'localPlayUrl') return;
-      clean[k] = v;
-    });
-    if(clean.thumbDataUrl && String(clean.thumbDataUrl).length > 350000){
-      clean.thumbDataUrl = String(clean.thumbDataUrl).slice(0, 350000);
-    }
-    const ref = await fbDb.collection('users').doc(currentUser.uid).collection('signal').add(clean);
+    const ref = await fbDb.collection('users').doc(currentUser.uid).collection('signal').add(segment);
     return ref.id;
   }catch(e){ toast('Couldn\u2019t post — try again'); return null; }
 }

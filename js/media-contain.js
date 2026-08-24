@@ -16,19 +16,13 @@ function nalunoCallUiOpen(){
   return false;
 }
 
-function nalunoClipElement(el){
-  try{
-    if(!el) return false;
-    if(el.classList && (el.classList.contains('native-controls') || el.classList.contains('naluno-clip'))) return true;
-    if(el.dataset && (el.dataset.nativeControls === '1' || el.dataset.nalunoClip === '1')) return true;
-    if(el.closest && el.closest('.naluno-clip, .spark-row, .band-voice-bubble, .band-audio-player')) return true;
-  }catch(_){}
-  return false;
-}
-
 function containMediaElement(el){
   if(!el) return;
-  if(nalunoClipElement(el)) return;
+  // Intentional native controls (rare) — leave alone
+  try{
+    if(el.classList && el.classList.contains('native-controls')) return;
+    if(el.dataset && el.dataset.nativeControls === '1') return;
+  }catch(_){}
   try{ el.disableRemotePlayback = true; }catch(_){}
   try{ el.disablePictureInPicture = true; }catch(_){}
   try{ el.setAttribute('disablepictureinpicture', ''); }catch(_){}
@@ -41,38 +35,24 @@ function containMediaElement(el){
   try{ el.controls = false; }catch(_){}
 }
 
-function nalunoAnyAppMediaPlaying(){
-  try{
-    const els = document.querySelectorAll('video, audio');
-    for(let i = 0; i < els.length; i++){
-      const el = els[i];
-      if(el.closest && el.closest('#callOverlay')) continue;
-      if(!el.paused && !el.ended) return true;
-    }
-  }catch(_){}
-  return false;
-}
-
 function lockOutChromeMediaSession(){
   if(!navigator.mediaSession) return;
   try{ navigator.mediaSession.metadata = null; }catch(_){}
-  // Swallow shade controls. Do NOT set playbackState='none' while
-  // in-app media is playing — Samsung Chrome treats that as pause,
-  // which was the Signal "loads but never plays" bug.
-  if(!nalunoAnyAppMediaPlaying()){
-    try{ navigator.mediaSession.playbackState = 'none'; }catch(_){}
-  }
+  try{ navigator.mediaSession.playbackState = 'none'; }catch(_){}
   try{
-    if(typeof navigator.mediaSession.setPositionState === 'function' && !nalunoAnyAppMediaPlaying()){
+    if(typeof navigator.mediaSession.setPositionState === 'function'){
+      // Empty position state prevents the scrubber shade on some Samsung builds
       navigator.mediaSession.setPositionState({ duration: 0, playbackRate: 1, position: 0 });
     }
   }catch(_){
-    try{ if(!nalunoAnyAppMediaPlaying()) navigator.mediaSession.setPositionState(undefined); }catch(_2){}
+    try{ navigator.mediaSession.setPositionState(undefined); }catch(_2){}
   }
   ['play','pause','seekbackward','seekforward','seekto','previoustrack','nexttrack','stop'].forEach(function(a){
     try{ navigator.mediaSession.setActionHandler(a, null); }catch(_){}
     try{
-      navigator.mediaSession.setActionHandler(a, function(){});
+      navigator.mediaSession.setActionHandler(a, function(){
+        // Swallow shade controls — media lives only inside the app
+      });
     }catch(_){}
   });
 }
@@ -82,7 +62,8 @@ function pauseAppMediaForBackground(){
   document.querySelectorAll('video, audio').forEach(function(el){
     try{
       if(el.closest && el.closest('#callOverlay')) return;
-      if(nalunoClipElement(el)) return;
+      if(el.classList && el.classList.contains('native-controls')) return;
+      if(el.dataset && el.dataset.nativeControls === '1') return;
       if(el.paused) return;
       el.dataset.nalunoPausedHide = '1';
       el.pause();
@@ -150,7 +131,8 @@ setInterval(function(){
   lockOutChromeMediaSession();
   // Re-contain any element that re-gained controls
   document.querySelectorAll('video[controls], audio[controls]').forEach(function(el){
-    if(nalunoClipElement(el)) return;
+    if(el.classList && el.classList.contains('native-controls')) return;
+    if(el.dataset && el.dataset.nativeControls === '1') return;
     if(el.closest && el.closest('#callOverlay')) return;
     containMediaElement(el);
   });
@@ -158,49 +140,3 @@ setInterval(function(){
 
 window.containMediaElement = containMediaElement;
 window.lockOutChromeMediaSession = lockOutChromeMediaSession;
-window.nalunoClipElement = nalunoClipElement;
-
-function bindNalunoClips(root){
-  const host = root || document;
-  try{
-    host.querySelectorAll('video.naluno-clip, audio.naluno-clip').forEach(function(el){
-      if(el.dataset.clipBound === '1') return;
-      el.dataset.clipBound = '1';
-      try{ el.disableRemotePlayback = true; }catch(_){}
-      const wrap = el.parentElement;
-      const btn = wrap && wrap.querySelector && wrap.querySelector('.naluno-clip-play');
-      const playIt = function(){
-        document.querySelectorAll('video.naluno-clip, audio.naluno-clip').forEach(function(other){
-          if(other !== el && !other.paused) try{ other.pause(); }catch(_){}
-        });
-        const p = el.play();
-        if(p && p.catch){
-          p.catch(function(){
-            try{ el.muted = true; }catch(_){}
-            el.play().then(function(){
-              setTimeout(function(){ try{ el.muted = false; }catch(_){} }, 80);
-            }).catch(function(){});
-          });
-        }
-      };
-      if(btn){
-        btn.onclick = function(e){
-          e.preventDefault();
-          e.stopPropagation();
-          if(el.paused) playIt();
-          else el.pause();
-        };
-      }
-      el.addEventListener('click', function(e){
-        e.preventDefault();
-        e.stopPropagation();
-        if(el.paused) playIt();
-        else el.pause();
-      });
-      el.addEventListener('playing', function(){ if(btn) btn.style.display = 'none'; });
-      el.addEventListener('pause', function(){ if(btn && !el.ended) btn.style.display = ''; });
-      el.addEventListener('ended', function(){ if(btn) btn.style.display = ''; });
-    });
-  }catch(_){}
-}
-window.bindNalunoClips = bindNalunoClips;

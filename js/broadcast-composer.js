@@ -70,7 +70,7 @@ function bcompReset(){
 }
 
 function bcompProbeDuration(file){
-  if(typeof nalunoProbeDuration === 'function') return nalunoProbeDuration(file, 6000);
+  if(typeof nalunoProbeDuration === 'function') return nalunoProbeDuration(file, 2800);
   return new Promise(resolve=>{
     const v = document.createElement('video');
     v.preload = 'metadata';
@@ -292,7 +292,6 @@ async function bcompOnFileChosen(file){
     if(prev) prev.innerHTML = `<img src="${bcompPreviewUrl}" alt="" style="width:100%;max-height:42vh;object-fit:contain;border-radius:14px;background:#000;" />`;
     if(status) status.textContent = 'Photo ready — add a title and publish';
     if(pub){ pub.disabled = false; pub.textContent = 'Publish Broadcast'; }
-    bcompKickOriginScan();
     return;
   }
 
@@ -331,26 +330,6 @@ async function bcompOnFileChosen(file){
     }
   }
   if(pub){ pub.disabled = false; pub.textContent = 'Publish Broadcast'; }
-  bcompKickOriginScan();
-}
-
-async function bcompKickOriginScan(){
-  if(!bcompFile || typeof runOriginScan !== 'function') return;
-  const box = $('bcompOrigin');
-  if(box){
-    box.style.display = 'block';
-    box.innerHTML = '<div style="font-family:var(--font-futuristic);font-size:13px;">OriginID reading…</div><div style="font-size:12.5px;color:var(--text-dim);margin-top:4px;">Picture, motion, and sound against Naluno, then the open web.</div>';
-  }
-  const title = (($('bcompTitle') && $('bcompTitle').value) || '').trim();
-  const desc = (($('bcompDesc') && $('bcompDesc').value) || '').trim();
-  try{
-    window._bcompOriginAck = false;
-    window._bcompOrigin = await runOriginScan(bcompFile, title, desc, bcompDuration || 0);
-    bcompPaintOrigin(window._bcompOrigin);
-  }catch(e){
-    console.warn('[origin]', e);
-    if(box) box.innerHTML = '<div style="font-size:12.5px;color:var(--text-dim);">OriginID could not finish. You can still publish.</div>';
-  }
 }
 
 async function bcompPublish(){
@@ -369,25 +348,24 @@ async function bcompPublish(){
   }
 
   if(typeof runOriginScan === 'function' && bcompFile && !window._bcompOrigin){
-    const pubBtn = $('bcompPublishBtn');
-    if(pubBtn){ pubBtn.disabled = true; pubBtn.textContent = 'OriginID reading…'; }
+    const pub = $('bcompPublishBtn');
+    if(pub){ pub.disabled = true; pub.textContent = 'Origin reading…'; }
     try{
       window._bcompOrigin = await runOriginScan(bcompFile, title, desc, bcompDuration || 0);
       bcompPaintOrigin(window._bcompOrigin);
+      if(window._bcompOrigin.status === 'match' && !window._bcompOriginAck){
+        if(pub){ pub.disabled = false; pub.textContent = 'Publish with Origin mark'; }
+        toast('Origin found a close match — confirm it is yours');
+        return;
+      }
     }catch(e){
       console.warn('[origin]', e);
     } finally {
-      if(pubBtn){ pubBtn.disabled = false; pubBtn.textContent = 'Publish Broadcast'; }
+      if(pub){ pub.disabled = false; pub.textContent = 'Publish Broadcast'; }
     }
   }
-  const needsAck = (typeof originNeedsAck === 'function')
-    ? originNeedsAck(window._bcompOrigin)
-    : (window._bcompOrigin && (window._bcompOrigin.hold || window._bcompOrigin.status === 'match'));
-  if(needsAck && !window._bcompOriginAck){
-    bcompPaintOrigin(window._bcompOrigin);
-    toast('OriginID held this post — another creator already published a close match. Tick the box if it is yours, licensed, or a cover.');
-    const pubBtn = $('bcompPublishBtn');
-    if(pubBtn) pubBtn.textContent = 'Publish with OriginID mark';
+  if(window._bcompOrigin && window._bcompOrigin.status === 'match' && !window._bcompOriginAck){
+    toast('Tick the Origin box if this is yours, a license, or a cover');
     return;
   }
 
@@ -593,32 +571,16 @@ function bcompPaintOrigin(report){
   const box = $('bcompOrigin');
   if(!box || !report) return;
   box.style.display = 'block';
-  const needsAck = (typeof originNeedsAck === 'function') ? originNeedsAck(report) : !!(report.hold || report.status === 'match');
-  const label = report.status === 'match' ? 'OriginID match' : (report.status === 'review' ? 'OriginID review' : 'OriginID clear');
-  const action = needsAck
-    ? 'Held. Another creator already published a close picture, clip, or sound. Tick the box only if this is yours, licensed, or a clearly marked cover. OriginID will stay on the Broadcast.'
-    : (report.status === 'clear'
-      ? 'No close match in Naluno. OriginID still stores a fingerprint so later copies can be held.'
-      : 'Close, but not enough to hold. OriginID will keep watching.');
-  const ch = report.channels || {};
-  const bar = function(name, n){
-    const v = Math.max(0, Math.min(100, Number(n) || 0));
-    return '<div style="display:flex;align-items:center;gap:8px;margin-top:4px;font-size:11px;"><span style="width:56px;color:var(--text-dim);">'+name+'</span><span style="flex:1;height:6px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;"><span style="display:block;height:100%;width:'+v+'%;background:var(--mint);"></span></span><span style="width:28px;text-align:right;font-family:var(--font-mono);">'+v+'</span></div>';
-  };
-  const meters = '<div style="margin:8px 0 6px;">'
-    + bar('Picture', ch.picture)
-    + bar('Motion', ch.motion)
-    + bar('Sound', ch.sound)
-    + '</div>';
+  const label = report.status === 'match' ? 'Origin match' : (report.status === 'review' ? 'Origin review' : 'Origin clear');
   const hits = (report.matches || []).slice(0, 3).map(function(m){
     return '<div style="font-family:var(--font-mono);font-size:11px;color:var(--mint);margin-top:4px;">' +
-      escapeHtml(m.source) + (m.channel ? ' · ' + escapeHtml(m.channel) : '') + ' · ' + escapeHtml(m.title) + (m.detail ? ' — ' + escapeHtml(m.detail) : '') + '</div>';
+      escapeHtml(m.source) + ' · ' + escapeHtml(m.title) + (m.detail ? ' — ' + escapeHtml(m.detail) : '') + '</div>';
   }).join('');
-  const ack = needsAck
+  const ack = report.status === 'match'
     ? '<label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-size:13px;line-height:1.4;"><input type="checkbox" id="bcompOriginAck" /> This is my work, a licensed use, or a clearly marked cover.</label>'
     : '';
   box.innerHTML = '<div style="font-family:var(--font-futuristic);font-size:13px;margin-bottom:4px;">' + label +
-    ' · ' + (report.score || 0) + '</div><div style="font-size:12.5px;color:var(--text-dim);line-height:1.45;">' + action + '</div>' + meters + hits + ack;
+    ' · ' + (report.score || 0) + '</div><div style="font-size:12.5px;color:var(--text-dim);line-height:1.45;">Origin reads the file inside Naluno and the open web. It is a similarity engine, not a courtroom.</div>' + hits + ack;
   const cb = $('bcompOriginAck');
   if(cb) cb.onchange = function(){ window._bcompOriginAck = !!cb.checked; };
 }

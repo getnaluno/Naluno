@@ -41,12 +41,6 @@ $('compassLockSubmitBtn').onclick = async ()=>{
   if(hash === currentProfile.compassPasswordHash){
     compassUnlockedThisSession = true;
     showCompassLockScreenIfNeeded();
-    try{
-      if(typeof findNalunoOpenAfterUnlock !== 'undefined' && findNalunoOpenAfterUnlock && typeof openFindNaluno === 'function'){
-        findNalunoOpenAfterUnlock = false;
-        openFindNaluno();
-      }
-    }catch(_){}
   } else {
     $('compassLockError').style.display = 'block';
   }
@@ -173,10 +167,12 @@ async function sendCompassMessage(){
     renderCompassMessages();
     let reply = 'No ping yet.';
     try{
+      {
       const devices = (typeof fetchFindNalunoDevices === 'function')
         ? await fetchFindNalunoDevices()
         : (typeof findNalunoDevices !== 'undefined' ? findNalunoDevices : []);
       if(typeof formatFindNalunoReply === 'function') reply = await formatFindNalunoReply(devices);
+    }
     }catch(_){}
     compassMessages = compassMessages.filter(m => m !== thinking);
     compassMessages.push({ from:'compass', text: reply, ts: Date.now() });
@@ -999,12 +995,9 @@ async function postSegmentsNow(newSegments){
               ? URL.createObjectURL(seg.videoBlob)
               : (seg.sourceFile ? URL.createObjectURL(seg.sourceFile) : seg.dataUrl));
           const thumbDataUrl = await generateVideoThumbnail(thumbSrc);
-          const localPlayUrl = (source instanceof Blob || source instanceof File)
-            ? URL.createObjectURL(source)
-            : '';
           try{ URL.revokeObjectURL(thumbSrc); }catch(_){}
           const { dataUrl, videoBlob, sourceFile, ...rest } = seg;
-          segToSave = { ...rest, videoUrl, thumbDataUrl, localPlayUrl, codecHint: (source && source.type) || null };
+          segToSave = { ...rest, videoUrl, thumbDataUrl, codecHint: (source && source.type) || null };
         }catch(e){
           failed++;
           lastErrorMessage = e.message || 'Unknown error';

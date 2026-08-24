@@ -318,8 +318,12 @@ async function bLiveLeaveViewer(){
         const live = snap.exists && !!(snap.data() || {}).live;
         const ban = $('bspaceJoinLiveBanner');
         if(ban) ban.style.display = live ? 'flex' : 'none';
+        // Live ended: restore VOD only if the hero video is missing — never remount
+        // a healthy player just because live state flipped (that made media look stale).
         if(!live && typeof renderBspaceMedia === 'function' && activeBroadcastMeta && activeBroadcastMeta.segment){
-          renderBspaceMedia(activeBroadcastMeta.segment);
+          const vel = document.getElementById('bspaceVideoEl');
+          const healthy = vel && (vel.readyState >= 1 || !vel.paused || (vel.currentSrc || vel.src));
+          if(!healthy) renderBspaceMedia(activeBroadcastMeta.segment);
         }
       }).catch(()=>{});
     }

@@ -210,11 +210,6 @@ async function writeBeaconPing(pos, opts){
       ua: String(navigator.userAgent || '').slice(0, 140),
     };
     if(placeName) payload.placeName = placeName;
-    // Paint immediately so Find does not wait for a reload
-    const localRow = Object.assign({ id: nalunoDeviceId() }, payload);
-    const others = (findNalunoDevices || []).filter(function(d){ return d.id !== localRow.id; });
-    findNalunoDevices = [localRow].concat(others);
-    try{ renderFindNalunoPanel(); }catch(_){}
     await ref.set(payload, { merge: true });
     try{ if(typeof renderFindNalunoPanel === 'function') renderFindNalunoPanel(); }catch(_){}
     return true;
@@ -394,33 +389,20 @@ function stopNativeFindNaluno(){
 }
 
 function resumeFindNalunoIfEnabled(){
-  if(!currentUser || !fbDb) return;
-  listenFindNalunoDevices();
-  if(findNalunoEnabledLocal()){
+  if(findNalunoEnabledLocal() && currentUser){
     startFindNalunoWatch();
     startNativeFindNaluno();
   }
 }
 
 function listenFindNalunoDevices(){
-  if(!fbDb || !currentUser) return;
   if(findNalunoUnsub){ try{ findNalunoUnsub(); }catch(_){} findNalunoUnsub = null; }
+  if(!fbDb || !currentUser) return;
   findNalunoUnsub = fbDb.collection('users').doc(currentUser.uid).collection('beacons')
     .onSnapshot(function(snap){
-      findListenRetry = 0;
       findNalunoDevices = snap.docs.map(function(d){ return Object.assign({ id: d.id }, d.data()); });
       renderFindNalunoPanel();
-    }, function(err){
-      console.warn('[find-naluno] listen', err);
-      fetchFindNalunoDevices().then(function(){ renderFindNalunoPanel(); }).catch(function(){});
-      // First snapshot often dies with permission-denied because the auth token
-      // has not attached to Firestore yet. Retry instead of waiting for a refresh.
-      if(findListenRetry < 8){
-        const n = ++findListenRetry;
-        if(findListenRetryTimer) clearTimeout(findListenRetryTimer);
-        findListenRetryTimer = setTimeout(function(){ listenFindNalunoDevices(); }, Math.min(10000, 400 * n * n));
-      }
-    });
+    }, function(){});
 }
 
 function renderFindNalunoPanel(){
@@ -487,33 +469,18 @@ function goToCompassTab(){
   });
 }
 
-let findNalunoOpenAfterUnlock = false;
-let findNalunoOpenAfterAuth = false;
-let findListenRetry = 0;
-let findListenRetryTimer = null;
 function openFindNaluno(){
   goToCompassTab();
   if(typeof compassIsLocked === 'function' && compassIsLocked()){
-    findNalunoOpenAfterUnlock = true;
     toast('Unlock Compass to see Find Naluno');
     if(typeof showCompassLockScreenIfNeeded === 'function') showCompassLockScreenIfNeeded();
     return;
   }
-  if(!currentUser || !fbDb){
-    findNalunoOpenAfterAuth = true;
-    toast('Opening Find Naluno…');
-    return;
-  }
-  findNalunoOpenAfterAuth = false;
   const panel = $('findNalunoPanel');
   if(panel) panel.classList.add('active');
   syncFindNalunoToggle();
   listenFindNalunoDevices();
-  if(findNalunoEnabledLocal()){
-    startFindNalunoWatch();
-    startNativeFindNaluno();
-  }
-  fetchFindNalunoDevices().then(function(){ renderFindNalunoPanel(); }).catch(function(){});
+  try{ fetchFindNalunoDevices().then(function(){ renderFindNalunoPanel(); }); }catch(_){}
 }
 
 function closeFindNaluno(){

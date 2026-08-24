@@ -1,17 +1,11 @@
-/* OWNERSHIP (origin.js): Naluno OriginID — picture, motion, sound.
+/* OWNERSHIP (origin.js): Origin similarity engine for Broadcast publish.
    MUST NOT touch calls / WebRTC. */
 (function(){
   const KNOWN = [
     'bohemian rhapsody','let it be','hey jude','thriller','billie jean','shape of you',
     'blinding lights','baby shark','despacito','star wars','frozen let it go',
-    'happy birthday to you','super mario','game of thrones','the beatles','taylor swift',
-    'smells like teen spirit','hotel california','imagine','rolling in the deep',
-    'someone like you','old town road','as it was','anti-hero','espresso',
-    'the lion king','inception','avatar','titanic','harry potter','stranger things',
-    'never gonna give you up','sweet child o mine','smells like teen spirit',
-    'bad guy','blinding lights','levitating','flowery','die with a smile'
+    'happy birthday to you','super mario','game of thrones','the beatles','taylor swift'
   ];
-  const CHROMA_HZ = [261.63,277.18,293.66,311.13,329.63,349.23,369.99,392.00,415.30,440.00,466.16,493.88];
 
   function titleKey(s){
     return String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -41,6 +35,16 @@
     const m = Math.min(a.length, b.length);
     for(let i = 0; i < m; i++) if(a[i] !== b[i]) d++;
     return d;
+  }
+  function frameOverlap(a, b){
+    if(!a || !a.length || !b || !b.length) return 0;
+    let sum = 0;
+    a.forEach(function(ha){
+      let best = 64;
+      b.forEach(function(hb){ best = Math.min(best, hamming(ha, hb)); });
+      sum += 1 - Math.min(1, best / 24);
+    });
+    return sum / a.length;
   }
   function hex(buf){
     return Array.from(new Uint8Array(buf)).map(function(b){ return b.toString(16).padStart(2,'0'); }).join('');
@@ -75,306 +79,9 @@
     }
     return bits;
   }
-  function aHashFromCanvas(canvas){
-    const c = document.createElement('canvas');
-    c.width = 8; c.height = 8;
-    const ctx = c.getContext('2d', { willReadFrequently: true });
-    if(!ctx) return '';
-    ctx.drawImage(canvas, 0, 0, 8, 8);
-    const data = ctx.getImageData(0, 0, 8, 8).data;
-    const lum = [];
-    let sum = 0;
-    for(let i = 0; i < 64; i++){
-      const L = data[i*4] * 0.3 + data[i*4+1] * 0.59 + data[i*4+2] * 0.11;
-      lum.push(L); sum += L;
-    }
-    const avg = sum / 64;
-    return lum.map(function(L){ return L > avg ? '1' : '0'; }).join('');
-  }
-  function pHashFromCanvas(canvas){
-    const n = 32, k = 8;
-    const c = document.createElement('canvas');
-    c.width = n; c.height = n;
-    const ctx = c.getContext('2d', { willReadFrequently: true });
-    if(!ctx) return '';
-    ctx.drawImage(canvas, 0, 0, n, n);
-    const data = ctx.getImageData(0, 0, n, n).data;
-    const g = new Float64Array(n * n);
-    for(let i = 0; i < n * n; i++){
-      g[i] = data[i * 4] * 0.3 + data[i * 4 + 1] * 0.59 + data[i * 4 + 2] * 0.11;
-    }
-    const coeffs = [];
-    for(let u = 0; u < k; u++){
-      for(let v = 0; v < k; v++){
-        if(u === 0 && v === 0) continue;
-        let sum = 0;
-        for(let x = 0; x < n; x++){
-          const cx = Math.cos(Math.PI * (2 * x + 1) * u / (2 * n));
-          for(let y = 0; y < n; y++){
-            sum += g[y * n + x] * cx * Math.cos(Math.PI * (2 * y + 1) * v / (2 * n));
-          }
-        }
-        coeffs.push(sum);
-      }
-    }
-    const sorted = coeffs.slice().sort(function(a,b){ return a - b; });
-    const med = sorted[Math.floor(sorted.length / 2)] || 0;
-    return coeffs.map(function(x){ return x > med ? '1' : '0'; }).join('');
-  }
-  function stillFromCanvas(canvas, sourceEl){
-    const d = dHashFromCanvas(canvas);
-    const a = aHashFromCanvas(canvas);
-    const p = pHashFromCanvas(canvas);
-    let pc = '';
-    try{
-      const src = sourceEl || canvas;
-      const sw = src.naturalWidth || src.videoWidth || src.width || 0;
-      const sh = src.naturalHeight || src.videoHeight || src.height || 0;
-      if(sw > 16 && sh > 16){
-        const crop = document.createElement('canvas');
-        crop.width = 64; crop.height = 64;
-        const cctx = crop.getContext('2d', { willReadFrequently: true });
-        cctx.drawImage(src, sw * 0.15, sh * 0.15, sw * 0.7, sh * 0.7, 0, 0, 64, 64);
-        pc = pHashFromCanvas(crop);
-      }
-    }catch(_){}
-    return [d, a, p, pc].filter(Boolean).join(':');
-  }
-  function photoLikeness(a, b){
-    if(!a || !b) return 0;
-    function one(x, y){
-      if(!x || !y) return 0;
-      const n = Math.max(x.length, y.length);
-      if(!n) return 0;
-      return 1 - (hamming(x, y) / n);
-    }
-    const A = String(a).split(':').filter(Boolean);
-    const B = String(b).split(':').filter(Boolean);
-    if(!A.length || !B.length) return 0;
-    const dAvg = (A[0] && B[0] && A[1] && B[1]) ? (one(A[0], B[0]) + one(A[1], B[1])) / 2 : one(A[0], B[0]);
-    let best = dAvg;
-    // pHash (index 2) and center-crop pHash (index 3) survive brightness, filters, light crops
-    for(let i = 2; i < A.length; i++){
-      for(let j = 2; j < B.length; j++){
-        best = Math.max(best, one(A[i], B[j]));
-      }
-    }
-    if(A.length < 3 || B.length < 3){
-      for(let i = 0; i < A.length; i++){
-        for(let j = 0; j < B.length; j++){
-          if(A[i].length === B[j].length) best = Math.max(best, one(A[i], B[j]));
-        }
-      }
-    }
-    return best;
-  }
-  function sequenceOverlap(a, b){
-    if(!a || !b || !a.length || !b.length) return 0;
-    let sum = 0;
-    a.forEach(function(ha, i){
-      let best = 0;
-      b.forEach(function(hb, j){
-        const L = photoLikeness(ha, hb);
-        const pos = 1 - Math.min(1, Math.abs((i + 1) / a.length - (j + 1) / b.length) * 1.5);
-        best = Math.max(best, L * (0.72 + 0.28 * pos));
-      });
-      sum += best;
-    });
-    return sum / a.length;
-  }
-  function audioLikeness(a, b){
-    if(!a || !b) return 0;
-    const A = String(a), B = String(b);
-    if(!A || !B) return 0;
-    if(A === B) return 1;
-    function one(x, y){
-      if(!x || !y) return 0;
-      const n = Math.max(x.length, y.length);
-      if(!n) return 0;
-      return 1 - (hamming(x, y) / n);
-    }
-    if(A.indexOf('#') >= 0 && B.indexOf('#') >= 0){
-      const aa = A.split('#'), bb = B.split('#');
-      return one(aa[0], bb[0]) * 0.72 + one(aa[1] || '', bb[1] || '') * 0.28;
-    }
-    return one(A, B);
-  }
-  function titleIsGeneric(s){
-    const t = titleKey(s);
-    if(!t || t.length < 8) return true;
-    return /^(sweet|delicious|photo|video|image|pic|clip|untitled|broadcast|test|new|untitled broadcast|my video|my photo)$/i.test(t);
-  }
-  function looksVideo(file){
-    const t = (file && file.type) || '';
-    const n = (file && file.name) || '';
-    return t.indexOf('video/') === 0 || /\.(mp4|mov|webm|m4v|mkv|3gp)$/i.test(n);
-  }
-  function looksAudio(file){
-    const t = (file && file.type) || '';
-    const n = (file && file.name) || '';
-    return t.indexOf('audio/') === 0 || /\.(mp3|m4a|aac|wav|ogg|opus|flac)$/i.test(n);
-  }
-  function looksImage(file){
-    const t = (file && file.type) || '';
-    const n = (file && file.name) || '';
-    return t.indexOf('image/') === 0 || /\.(jpe?g|png|webp|gif|heic|heif)$/i.test(n);
-  }
-  function hashStillImage(file){
-    return new Promise(function(resolve){
-      try{
-        const url = URL.createObjectURL(file);
-        const img = new Image();
-        img.onload = function(){
-          try{
-            const c = document.createElement('canvas');
-            c.width = 64; c.height = 64;
-            const ctx = c.getContext('2d', { willReadFrequently: true });
-            ctx.drawImage(img, 0, 0, 64, 64);
-            const h = stillFromCanvas(c, img);
-            try{ URL.revokeObjectURL(url); }catch(_){}
-            resolve(h || '');
-          }catch(_){
-            try{ URL.revokeObjectURL(url); }catch(_2){}
-            resolve('');
-          }
-        };
-        img.onerror = function(){ try{ URL.revokeObjectURL(url); }catch(_){} resolve(''); };
-        img.src = url;
-        setTimeout(function(){ resolve(''); }, 5000);
-      }catch(_){ resolve(''); }
-    });
-  }
-  function fingerprintSamples(samples, sampleRate){
-    const slices = 16;
-    const n = samples.length;
-    if(!n) return { chroma: '', energy: '' };
-    const chromaParts = [];
-    const energy = [];
-    const win = Math.max(256, Math.floor(n / slices));
-    for(let i = 0; i < slices; i++){
-      const start = Math.min(n - 1, i * win);
-      const len = Math.min(2048, n - start);
-      let rms = 0;
-      const bands = new Array(12).fill(0);
-      for(let k = 0; k < 12; k++){
-        const f = CHROMA_HZ[k];
-        let re = 0, im = 0;
-        const step = Math.max(1, Math.floor(len / 256));
-        for(let t = 0; t < len; t += step){
-          const s = samples[start + t] || 0;
-          const ang = 2 * Math.PI * f * t / sampleRate;
-          re += s * Math.cos(ang);
-          im += s * Math.sin(ang);
-          rms += s * s;
-        }
-        bands[k] = Math.sqrt(re * re + im * im);
-      }
-      energy.push(Math.sqrt(rms / Math.max(1, len)));
-      const mx = Math.max.apply(null, bands) || 1;
-      chromaParts.push(bands.map(function(b){ return b > mx * 0.55 ? '1' : '0'; }).join(''));
-    }
-    const eMax = Math.max.apply(null, energy) || 1;
-    const eBits = energy.map(function(e){ return e > eMax * 0.42 ? '1' : '0'; }).join('');
-    return { chroma: chromaParts.join(''), energy: eBits };
-  }
-  function audioHashFromParts(parts){
-    if(!parts || (!parts.chroma && !parts.energy)) return '';
-    return String(parts.chroma || '') + '#' + String(parts.energy || '');
-  }
-  async function fingerprintAudioBuffer(file){
-    try{
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      if(!Ctx) return '';
-      const ctx = new Ctx();
-      const slice = file.slice(0, Math.min(file.size, 6 * 1024 * 1024));
-      const raw = await slice.arrayBuffer();
-      const audio = await ctx.decodeAudioData(raw.slice(0));
-      const ch = audio.getChannelData(0);
-      const fp = fingerprintSamples(ch, audio.sampleRate || 44100);
-      try{ ctx.close(); }catch(_){}
-      return audioHashFromParts(fp);
-    }catch(_){ return ''; }
-  }
-  function fingerprintVideoAudio(file, durationHint){
-    return new Promise(function(resolve){
-      try{
-        const Ctx = window.AudioContext || window.webkitAudioContext;
-        if(!Ctx){ resolve(''); return; }
-        const v = document.createElement('video');
-        v.muted = true; v.playsInline = true; v.preload = 'auto';
-        const url = URL.createObjectURL(file);
-        v.src = url;
-        let settled = false;
-        const done = function(h){
-          if(settled) return;
-          settled = true;
-          try{ URL.revokeObjectURL(url); }catch(_){}
-          try{ v.pause(); v.removeAttribute('src'); v.load(); }catch(_){}
-          resolve(h || '');
-        };
-        v.onerror = function(){ done(''); };
-        v.onloadedmetadata = async function(){
-          try{
-            const ctx = new Ctx();
-            let stream = null;
-            try{ stream = v.captureStream ? v.captureStream() : (v.mozCaptureStream && v.mozCaptureStream()); }catch(_){}
-            if(!stream || !stream.getAudioTracks || !stream.getAudioTracks().length){
-              try{ ctx.close(); }catch(_){}
-              done(''); return;
-            }
-            const src = ctx.createMediaStreamSource(stream);
-            const analyser = ctx.createAnalyser();
-            analyser.fftSize = 2048;
-            src.connect(analyser);
-            const freq = new Uint8Array(analyser.frequencyBinCount);
-            const d = isFinite(v.duration) ? v.duration : (durationHint || 0);
-            const spots = d > 3 ? [0.1,0.22,0.34,0.46,0.58,0.7,0.82,0.94] : [0.25,0.6];
-            const chromaParts = [];
-            const energy = [];
-            v.muted = true;
-            await v.play().catch(function(){});
-            for(let i = 0; i < spots.length; i++){
-              try{
-                v.currentTime = Math.max(0.05, spots[i] * (d || 1));
-                await new Promise(function(ok){
-                  const t = setTimeout(ok, 500);
-                  v.onseeked = function(){ clearTimeout(t); ok(); };
-                });
-                analyser.getByteFrequencyData(freq);
-                const bands = new Array(12).fill(0);
-                let rms = 0;
-                for(let b = 0; b < freq.length; b++){
-                  rms += freq[b];
-                  bands[b % 12] += freq[b];
-                }
-                energy.push(rms);
-                const mx = Math.max.apply(null, bands) || 1;
-                chromaParts.push(bands.map(function(x){ return x > mx * 0.5 ? '1' : '0'; }).join(''));
-              }catch(_){}
-            }
-            try{ v.pause(); ctx.close(); }catch(_){}
-            const eMax = Math.max.apply(null, energy) || 1;
-            const eBits = energy.map(function(e){ return e > eMax * 0.42 ? '1' : '0'; }).join('');
-            done(audioHashFromParts({ chroma: chromaParts.join(''), energy: eBits }));
-          }catch(_){ done(''); }
-        };
-        setTimeout(function(){ done(''); }, 7000);
-      }catch(_){ resolve(''); }
-    });
-  }
   function sampleFrameHashes(file, durationHint){
-    if(looksImage(file) && !looksVideo(file)){
-      return hashStillImage(file).then(function(h){
-        return { duration: 0, hashes: h ? [h] : [], photoHash: h, audioHash: '', kind: 'photo' };
-      });
-    }
-    if(looksAudio(file) && !looksVideo(file)){
-      return fingerprintAudioBuffer(file).then(function(h){
-        return { duration: durationHint || 0, hashes: [], photoHash: '', audioHash: h, kind: 'audio' };
-      });
-    }
-    if(!looksVideo(file)){
-      return Promise.resolve({ duration: 0, hashes: [], photoHash: '', audioHash: '', kind: 'unknown' });
+    if(!(file.type || '').startsWith('video/') && !/\.(mp4|mov|webm|m4v|mkv|3gp)$/i.test(file.name || '')){
+      return Promise.resolve({ duration: 0, hashes: [] });
     }
     return new Promise(function(resolve){
       const v = document.createElement('video');
@@ -382,18 +89,11 @@
       const url = URL.createObjectURL(file);
       const hashes = [];
       let settled = false;
-      const finish = function(duration, audioHash){
+      const finish = function(duration){
         if(settled) return;
         settled = true;
         try{ URL.revokeObjectURL(url); }catch(_){}
-        try{ v.pause(); v.removeAttribute('src'); v.load(); }catch(_){}
-        resolve({
-          duration: duration || 0,
-          hashes: hashes,
-          photoHash: hashes[0] || '',
-          audioHash: audioHash || '',
-          kind: 'video',
-        });
+        resolve({ duration: duration || 0, hashes: hashes });
       };
       const canvas = document.createElement('canvas');
       canvas.width = 64; canvas.height = 64;
@@ -402,70 +102,28 @@
           const ctx = canvas.getContext('2d');
           if(ctx){
             ctx.drawImage(v, 0, 0, 64, 64);
-            const h = stillFromCanvas(canvas, v);
+            const h = dHashFromCanvas(canvas);
             if(h) hashes.push(h);
           }
         }catch(_){}
       };
       v.onloadedmetadata = async function(){
         const d = isFinite(v.duration) ? v.duration : (durationHint || 0);
-        const spots = d > 8 ? [0.08,0.18,0.3,0.42,0.54,0.66,0.78,0.9] : (d > 2 ? [0.12,0.32,0.5,0.68,0.88] : [0.2]);
-        let audioHash = '';
-        try{
-          const Ctx = window.AudioContext || window.webkitAudioContext;
-          let analyser = null, freq = null, ctx = null;
-          if(Ctx){
-            try{
-              ctx = new Ctx();
-              const stream = v.captureStream ? v.captureStream() : (v.mozCaptureStream && v.mozCaptureStream());
-              if(stream && stream.getAudioTracks && stream.getAudioTracks().length){
-                const src = ctx.createMediaStreamSource(stream);
-                analyser = ctx.createAnalyser();
-                analyser.fftSize = 2048;
-                src.connect(analyser);
-                freq = new Uint8Array(analyser.frequencyBinCount);
-                try{ v.muted = true; await v.play(); }catch(_){}
-              }
-            }catch(_){ analyser = null; }
-          }
-          const chromaParts = [];
-          const energy = [];
-          for(let i = 0; i < spots.length; i++){
-            try{
-              v.currentTime = Math.max(0.05, spots[i] * (d || 1));
-              await new Promise(function(ok){
-                const t = setTimeout(ok, 650);
-                v.onseeked = function(){ clearTimeout(t); ok(); };
-              });
-              grab();
-              if(analyser && freq){
-                analyser.getByteFrequencyData(freq);
-                const bands = new Array(12).fill(0);
-                let rms = 0;
-                for(let b = 0; b < freq.length; b++){
-                  rms += freq[b];
-                  bands[b % 12] += freq[b];
-                }
-                energy.push(rms);
-                const mx = Math.max.apply(null, bands) || 1;
-                chromaParts.push(bands.map(function(x){ return x > mx * 0.5 ? '1' : '0'; }).join(''));
-              }
-            }catch(_){}
-          }
-          try{ v.pause(); if(ctx) ctx.close(); }catch(_){}
-          if(chromaParts.length){
-            const eMax = Math.max.apply(null, energy) || 1;
-            const eBits = energy.map(function(e){ return e > eMax * 0.42 ? '1' : '0'; }).join('');
-            audioHash = audioHashFromParts({ chroma: chromaParts.join(''), energy: eBits });
-          }
-        }catch(_){}
-        if(!audioHash){
-          try{ audioHash = await fingerprintAudioBuffer(file); }catch(_){}
+        const spots = d > 2 ? [0.12, 0.32, 0.5, 0.68, 0.88] : [0.2];
+        for(let i = 0; i < spots.length; i++){
+          try{
+            v.currentTime = Math.max(0.05, spots[i] * (d || 1));
+            await new Promise(function(ok){
+              const t = setTimeout(ok, 700);
+              v.onseeked = function(){ clearTimeout(t); ok(); };
+            });
+            grab();
+          }catch(_){}
         }
-        finish(d, audioHash);
+        finish(d);
       };
-      v.onerror = function(){ finish(durationHint || 0, ''); };
-      setTimeout(function(){ finish(durationHint || 0, ''); }, 10000);
+      v.onerror = function(){ finish(durationHint || 0); };
+      setTimeout(function(){ finish(durationHint || 0); }, 8000);
       v.src = url;
     });
   }
@@ -473,360 +131,141 @@
     const q = titleKey(title);
     if(q.length < 3) return [];
     const matches = [];
-    function pushHit(name, source, detail, s, boost){
-      if(!name || s < 0.38) return;
-      matches.push({
-        title: name,
-        source: source,
-        channel: 'web',
-        detail: String(detail || source).replace(/<[^>]+>/g, ' ').slice(0, 160),
-        score: Math.round(Math.min(0.97, s + (boost || 0)) * 100),
-      });
-    }
-    async function getJson(url, ms){
-      const ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-      const t = setTimeout(function(){ try{ if(ctl) ctl.abort(); }catch(_){} }, ms || 4200);
-      try{
-        const res = await fetch(url, ctl ? { signal: ctl.signal } : {});
-        clearTimeout(t);
-        if(!res.ok) return null;
-        return await res.json();
-      }catch(_){
-        clearTimeout(t);
-        return null;
-      }
-    }
-    await Promise.all([
-      getJson('https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=' + encodeURIComponent(q) + '&srlimit=5&format=json&origin=*').then(function(body){
-        const hits = (body && body.query && body.query.search) || [];
+    try{
+      const wiki = await fetch('https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=' + encodeURIComponent(q) + '&srlimit=5&format=json&origin=*');
+      if(wiki.ok){
+        const body = await wiki.json();
+        const hits = (body.query && body.query.search) || [];
         hits.forEach(function(hit){
           const s = Math.max(trigramScore(title, hit.title), trigramScore(description || '', hit.title) * 0.7);
-          pushHit(hit.title, 'wikipedia', hit.snippet || 'Wikipedia', s, 0.08);
+          if(s >= 0.42){
+            matches.push({
+              title: hit.title,
+              source: 'web',
+              detail: String(hit.snippet || 'Wikipedia').replace(/<[^>]+>/g, ' ').slice(0, 140),
+              score: Math.round(Math.min(0.94, s + 0.08) * 100),
+            });
+          }
         });
-      }).catch(function(){}),
-      getJson('https://itunes.apple.com/search?term=' + encodeURIComponent(q) + '&entity=song,musicVideo,movie,tvSeason,audiobook&limit=6').then(function(body){
-        (body && body.results || []).forEach(function(r){
+      }
+    }catch(_){}
+    try{
+      const itunes = await fetch('https://itunes.apple.com/search?term=' + encodeURIComponent(q) + '&entity=song,musicVideo,movie&limit=5');
+      if(itunes.ok){
+        const body = await itunes.json();
+        (body.results || []).forEach(function(r){
           const name = r.trackName || r.collectionName || '';
           const s = trigramScore(title, name);
-          pushHit(name + (r.artistName ? ' — ' + r.artistName : ''), 'itunes', 'Public iTunes / Apple catalog', s, 0.1);
+          if(s >= 0.48){
+            matches.push({
+              title: name + (r.artistName ? ' — ' + r.artistName : ''),
+              source: 'web',
+              detail: 'Listed on the public iTunes catalog',
+              score: Math.round(Math.min(0.96, s + 0.1) * 100),
+            });
+          }
         });
-      }).catch(function(){}),
-      getJson('https://musicbrainz.org/ws/2/recording/?query=' + encodeURIComponent(q) + '&fmt=json&limit=5').then(function(body){
-        (body && body.recordings || []).forEach(function(r){
-          const artist = (r['artist-credit'] && r['artist-credit'][0] && r['artist-credit'][0].name) || '';
-          const s = trigramScore(title, r.title || '');
-          pushHit((r.title || '') + (artist ? ' — ' + artist : ''), 'musicbrainz', 'MusicBrainz recording', s, 0.08);
-        });
-      }).catch(function(){}),
-      getJson('https://api.deezer.com/search?q=' + encodeURIComponent(q) + '&limit=5').then(function(body){
-        (body && body.data || []).forEach(function(r){
-          const name = r.title || '';
-          const artist = (r.artist && r.artist.name) || '';
-          const s = trigramScore(title, name);
-          pushHit(name + (artist ? ' — ' + artist : ''), 'deezer', 'Deezer catalog', s, 0.08);
-        });
-      }).catch(function(){}),
-      getJson('https://api.tvmaze.com/search/shows?q=' + encodeURIComponent(q)).then(function(body){
-        (body || []).slice(0, 5).forEach(function(row){
-          const show = row && row.show;
-          if(!show) return;
-          const s = trigramScore(title, show.name || '');
-          pushHit(show.name, 'tvmaze', (show.premiered ? 'First aired ' + show.premiered : 'TV catalog'), s, 0.08);
-        });
-      }).catch(function(){}),
-      getJson('https://openlibrary.org/search.json?q=' + encodeURIComponent(q) + '&limit=4').then(function(body){
-        (body && body.docs || []).slice(0, 4).forEach(function(d){
-          const name = d.title || '';
-          const s = trigramScore(title, name);
-          pushHit(name + (d.author_name && d.author_name[0] ? ' — ' + d.author_name[0] : ''), 'openlibrary', 'Open Library', s, 0.06);
-        });
-      }).catch(function(){}),
-      getJson('https://archive.org/advancedsearch.php?q=' + encodeURIComponent(q) + '&fl[]=title&fl[]=creator&fl[]=identifier&rows=5&page=1&output=json').then(function(body){
-        const docs = body && body.response && body.response.docs || [];
-        docs.forEach(function(d){
-          const s = trigramScore(title, d.title || '');
-          pushHit(d.title, 'archive', 'Internet Archive', s, 0.05);
-        });
-      }).catch(function(){}),
-    ]);
+      }
+    }catch(_){}
     matches.sort(function(a,b){ return b.score - a.score; });
-    const seen = {};
-    const uniq = [];
-    matches.forEach(function(m){
-      const k = titleKey(m.title);
-      if(seen[k]) return;
-      seen[k] = 1;
-      uniq.push(m);
-    });
-    return uniq.slice(0, 8);
-  }
-  function hashStillFromUrl(url){
-    return new Promise(function(resolve){
-      if(!url || /^blob:|^data:/i.test(url) === false && !/^https?:/i.test(url)){ resolve(''); return; }
-      try{
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        const t = setTimeout(function(){ resolve(''); }, 3200);
-        img.onload = function(){
-          try{
-            const c = document.createElement('canvas');
-            c.width = 64; c.height = 64;
-            const ctx = c.getContext('2d', { willReadFrequently: true });
-            ctx.drawImage(img, 0, 0, 64, 64);
-            const h = stillFromCanvas(c, img);
-            clearTimeout(t);
-            resolve(h || '');
-          }catch(_){ clearTimeout(t); resolve(''); }
-        };
-        img.onerror = function(){ clearTimeout(t); resolve(''); };
-        img.src = url;
-      }catch(_){ resolve(''); }
-    });
+    return matches.slice(0, 5);
   }
   async function loadCatalogMarks(){
     const out = [];
-    const seen = {};
-    const push = function(row){
-      if(!row) return;
-      const k = (row.identity || '') + '|' + (row.photoHash || '').slice(0, 24) + '|' + (row.broadcastId || row.id || '');
-      if(seen[k]) return;
-      seen[k] = 1;
-      out.push(row);
-    };
-    if(typeof fbDb !== 'undefined' && fbDb){
-      try{
-        const snap = await fbDb.collection('originMarks').orderBy('createdAt', 'desc').limit(240).get();
-        snap.docs.forEach(function(d){ push({ id: d.id, ...(d.data() || {}) }); });
-      }catch(_){
-        try{
-          const snap = await fbDb.collection('originMarks').limit(80).get();
-          snap.docs.forEach(function(d){ push({ id: d.id, ...(d.data() || {}) }); });
-        }catch(_2){}
-      }
-      try{
-        const snap = await fbDb.collection('broadcasts').orderBy('createdAt', 'desc').limit(120).get();
-        const needThumb = [];
-        snap.docs.forEach(function(d){
-          const data = d.data() || {};
-          const row = {
-            id: d.id,
-            broadcastId: d.id,
-            title: data.title || '',
-            creatorUid: data.creatorUid || '',
-            identity: data.originIdentity || '',
-            photoHash: data.originPhotoHash || '',
-            audioHash: data.originAudioHash || '',
-            frameHashes: data.originFrameHashes || [],
-            duration: data.duration || 0,
-            thumbUrl: data.thumbUrl || '',
-          };
-          if(row.photoHash) push(row);
-          else if(row.thumbUrl) needThumb.push(row);
-        });
-        const slice = needThumb.slice(0, 18);
-        await Promise.all(slice.map(function(row){
-          return hashStillFromUrl(row.thumbUrl).then(function(h){
-            if(h){ row.photoHash = h; push(row); }
-          });
-        }));
-      }catch(_){}
-    }
+    if(!fbDb) return out;
     try{
-      const local = (typeof feedBroadcasts !== 'undefined' ? feedBroadcasts : []).concat(typeof myBroadcasts !== 'undefined' ? myBroadcasts : []);
-      local.forEach(function(b){
-        if(!b) return;
-        push({
-          id: b.id,
-          broadcastId: b.id,
-          title: b.title || '',
-          creatorUid: b.creatorUid || '',
-          identity: b.originIdentity || '',
-          photoHash: b.originPhotoHash || '',
-          audioHash: b.originAudioHash || '',
-          frameHashes: b.originFrameHashes || [],
-          duration: b.duration || 0,
-        });
-      });
-    }catch(_){}
+      const snap = await fbDb.collection('originMarks').orderBy('createdAt', 'desc').limit(80).get();
+      snap.docs.forEach(function(d){ out.push({ id: d.id, ...(d.data() || {}) }); });
+    }catch(_){
+      try{
+        const snap = await fbDb.collection('originMarks').limit(80).get();
+        snap.docs.forEach(function(d){ out.push({ id: d.id, ...(d.data() || {}) }); });
+      }catch(_2){}
+    }
     return out;
-  }
-  function fuseChannels(ch){
-    const keys = ['file','picture','motion','sound','title','web','known'];
-    const vals = keys.map(function(k){ return ch[k] || 0; });
-    const top = Math.max.apply(null, [0].concat(vals));
-    const fired = vals.filter(function(v){ return v >= 70; }).length;
-    let score = top;
-    if(ch.file >= 99) score = 100;
-    else if(fired >= 2) score = Math.min(99, Math.round(top + 8 + (fired - 2) * 4));
-    // Naluno remix: same sound, different picture (cover / lip-sync)
-    if((ch.sound || 0) >= 82 && (ch.picture || 0) < 55) score = Math.max(score, 88);
-    return score;
   }
   function scoreCatalog(mark, catalog){
     const out = [];
     (catalog || []).forEach(function(other){
       if(other.creatorUid && mark.creatorUid && other.creatorUid === mark.creatorUid && other.identity === mark.identity) return;
-      const ch = { file: 0, picture: 0, motion: 0, sound: 0, title: 0 };
+      let score = 0;
       const reasons = [];
       if(other.identity && mark.identity && other.identity === mark.identity){
-        ch.file = 100; reasons.push('same file identity');
+        score = 100; reasons.push('same file identity');
       }
       const title = trigramScore(mark.title, other.title);
-      if(title >= 0.72 && !titleIsGeneric(mark.title) && !titleIsGeneric(other.title)){
-        ch.title = Math.round(title * 88);
+      if(title >= 0.72){
+        score = Math.max(score, Math.round(title * 88));
         reasons.push('title close to “' + other.title + '”');
-      }
-      const stillA = mark.photoHash || ((mark.frameHashes && mark.frameHashes[0]) || '');
-      const stillB = other.photoHash || ((other.frameHashes && other.frameHashes[0]) || '');
-      const still = photoLikeness(stillA, stillB);
-      if(still >= 0.78){
-        ch.picture = Math.round(still * 99);
-        reasons.push('picture matches “' + (other.title || 'another Broadcast') + '”' + (other.creatorUid && mark.creatorUid && other.creatorUid !== mark.creatorUid ? ' by another creator' : ''));
-      } else if(still >= 0.68){
-        ch.picture = Math.round(still * 96);
-        reasons.push('picture is a close edit of “' + (other.title || 'another Broadcast') + '”');
-      }
-      const motion = sequenceOverlap(mark.frameHashes, other.frameHashes);
-      if(motion >= 0.72){
-        ch.motion = Math.round(motion * 96);
-        reasons.push('video motion matches another Broadcast');
-      } else if(motion >= 0.62){
-        ch.motion = Math.round(motion * 88);
-        reasons.push('video scenes resemble another Broadcast');
-      }
-      const sound = audioLikeness(mark.audioHash, other.audioHash);
-      if(sound >= 0.86){
-        ch.sound = Math.round(sound * 97);
-        reasons.push('sound fingerprint matches “' + (other.title || 'another Broadcast') + '”');
-      } else if(sound >= 0.74){
-        ch.sound = Math.round(sound * 90);
-        reasons.push('sound is close to another Broadcast');
       }
       if(mark.duration && other.duration){
         const ratio = Math.min(mark.duration, other.duration) / Math.max(mark.duration, other.duration);
-        if(ratio > 0.96 && motion > 0.62){
-          ch.motion = Math.max(ch.motion, 90);
+        if(ratio > 0.96 && frameOverlap(mark.frameHashes, other.frameHashes) > 0.78){
+          score = Math.max(score, 92);
+          reasons.push('frames and length match another Broadcast');
+        } else if(frameOverlap(mark.frameHashes, other.frameHashes) > 0.86){
+          score = Math.max(score, 84);
+          reasons.push('picture looks like another Broadcast');
         }
       }
-      const sameCreator = !!(other.creatorUid && mark.creatorUid && other.creatorUid === mark.creatorUid);
-      let score = fuseChannels(ch);
-      if(sameCreator && ch.file < 100 && score >= 80){
-        reasons.push('same creator — treated as a version, not a theft');
-        score = Math.min(score, 69);
-      }
-      const hold = !sameCreator && score >= 70;
       if(score >= 55){
-        out.push({
-          title: other.title,
-          source: 'naluno',
-          channel: ch.sound >= ch.picture && ch.sound >= ch.motion ? 'sound' : (ch.motion >= ch.picture ? 'motion' : (ch.file ? 'file' : 'picture')),
-          detail: reasons.join(' · '),
-          score: score,
-          channels: ch,
-          sameCreator: sameCreator,
-          hold: hold,
-          creatorUid: other.creatorUid || '',
-          broadcastId: other.broadcastId || other.id || '',
-        });
+        out.push({ title: other.title, source: 'catalog', detail: reasons.join(' · '), score: score });
       }
     });
     out.sort(function(a,b){ return b.score - a.score; });
-    return out.slice(0, 5);
+    return out.slice(0, 4);
   }
   function scoreKnown(title){
     const hits = [];
     KNOWN.forEach(function(work){
       const s = trigramScore(title, work);
       if(s >= 0.55){
-        hits.push({ title: work, source: 'known', channel: 'known', detail: 'Title is close to a well-known work', score: Math.round(s * 100) });
+        hits.push({ title: work, source: 'known', detail: 'Title is close to a well-known work', score: Math.round(s * 100) });
       }
     });
     hits.sort(function(a,b){ return b.score - a.score; });
     return hits.slice(0, 3);
   }
-  function makeDna(mark){
-    return [
-      String(mark.identity || '').slice(0, 18),
-      String(mark.photoHash || '').replace(/[^01]/g,'').slice(0, 16),
-      String(mark.audioHash || '').replace(/[^01]/g,'').slice(0, 16),
-      String(Math.round(mark.duration || 0)),
-    ].join('.');
-  }
   function assemble(opts){
     const matches = (opts.catalog || []).concat(opts.web || []).concat(opts.known || []);
     matches.sort(function(a,b){ return b.score - a.score; });
-    const topHit = matches[0] || null;
-    const top = topHit ? topHit.score : 0;
-    const hold = !!(topHit && topHit.hold) || (top >= 70 && topHit && topHit.source === 'naluno' && !topHit.sameCreator);
+    const top = matches[0] ? matches[0].score : 0;
     let status = 'clear';
-    if(top >= 86 || hold && top >= 78) status = 'match';
-    else if(top >= 70 || hold) status = 'review';
+    if(top >= 88) status = 'match';
+    else if(top >= 62) status = 'review';
     const reasons = [];
     if(opts.catalog[0]) reasons.push(opts.catalog[0].detail);
-    if(opts.web[0] && (!opts.catalog[0] || opts.catalog[0].score < 80)) reasons.push('Open web: ' + opts.web[0].title);
-    const ch = (opts.catalog[0] && opts.catalog[0].channels) || {};
+    if(opts.web[0]) reasons.push('Open web: ' + opts.web[0].title);
     return {
       status: status,
       score: top,
       reasons: reasons.slice(0, 3),
       matches: matches.slice(0, 6),
-      channels: {
-        picture: ch.picture || 0,
-        motion: ch.motion || 0,
-        sound: ch.sound || 0,
-        title: ch.title || 0,
-        file: ch.file || 0,
-      },
-      kind: opts.kind || '',
       identity: opts.identity,
       duration: opts.duration,
       frameHashes: opts.frameHashes,
-      photoHash: opts.photoHash || '',
-      audioHash: opts.audioHash || '',
-      dna: opts.dna || '',
-      hold: hold,
-      matchTitle: (topHit && topHit.source === 'naluno') ? (topHit.title || '') : '',
-      matchBroadcastId: (topHit && topHit.broadcastId) || '',
     };
   }
 
   async function runOriginScan(file, title, description, durationHint){
-    const identityP = fileIdentity(file);
-    const mediaP = sampleFrameHashes(file, durationHint || 0);
-    const catalogP = loadCatalogMarks();
-    const identity = await identityP;
-    const frames = await mediaP;
-    const catalog = await catalogP;
+    const identity = await fileIdentity(file);
+    const frames = await sampleFrameHashes(file, durationHint || 0);
+    const catalog = await loadCatalogMarks();
     const mark = {
       identity: identity,
       duration: frames.duration,
       frameHashes: frames.hashes,
-      photoHash: frames.photoHash || (frames.hashes && frames.hashes[0]) || '',
-      audioHash: frames.audioHash || '',
       title: title,
-      kind: frames.kind,
       creatorUid: (typeof currentUser !== 'undefined' && currentUser) ? currentUser.uid : '',
     };
-    mark.dna = makeDna(mark);
-    const catalogHits = scoreCatalog(mark, catalog);
-    const strongMedia = catalogHits[0] && catalogHits[0].score >= 80 && catalogHits[0].source === 'naluno';
-    let web = [];
-    let known = [];
-    if(!strongMedia && !titleIsGeneric(title)){
-      web = await scanOpenWeb(title, description || '');
-      known = scoreKnown(title);
-    }
+    const web = await scanOpenWeb(title, description || '');
     return assemble({
       identity: identity,
       duration: frames.duration,
       frameHashes: frames.hashes,
-      photoHash: mark.photoHash,
-      audioHash: mark.audioHash,
-      dna: mark.dna,
-      kind: frames.kind,
-      catalog: catalogHits,
+      catalog: scoreCatalog(mark, catalog),
       web: web,
-      known: known,
+      known: scoreKnown(title),
     });
   }
 
@@ -839,11 +278,7 @@
         title: (title || '').slice(0, 120),
         identity: report.identity,
         duration: report.duration || 0,
-        frameHashes: (report.frameHashes || []).slice(0, 10),
-        photoHash: report.photoHash || '',
-        audioHash: report.audioHash || '',
-        dna: report.dna || '',
-        kind: report.kind || '',
+        frameHashes: (report.frameHashes || []).slice(0, 8),
         status: report.status,
         score: report.score || 0,
         createdAt: Date.now(),
@@ -851,28 +286,7 @@
     }catch(e){ console.warn('[origin] mark', e); }
   }
 
-  function originNeedsAck(report){
-    if(!report) return false;
-    if(report.hold) return true;
-    const hit = (report.matches || []).find(function(m){
-      return m.source === 'naluno' && !m.sameCreator && (m.score || 0) >= 70;
-    });
-    return !!hit || report.status === 'match';
-  }
   window.runOriginScan = runOriginScan;
-  window.originNeedsAck = originNeedsAck;
   window.saveOriginMark = saveOriginMark;
   window.originTrigramScore = trigramScore;
-  window.originScanOpenWeb = scanOpenWeb;
-  window.originPhotoLikeness = photoLikeness;
-  window.originAudioLikeness = audioLikeness;
-  window.originSequenceOverlap = sequenceOverlap;
-  window.originTitleIsGeneric = titleIsGeneric;
-  window.originScoreKnown = scoreKnown;
-  window.originScoreCatalog = scoreCatalog;
-  window.originFuseChannels = fuseChannels;
-  window.originDhashFromCanvas = dHashFromCanvas;
-  window.originHashStillImage = hashStillImage;
-  window.originHamming = hamming;
-  window.originMakeDna = makeDna;
 })();

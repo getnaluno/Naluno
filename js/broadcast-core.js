@@ -73,6 +73,7 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
     tags: (tags || []).slice(0, 12).map(t => String(t).toLowerCase().slice(0, 32)),
     mediaType: mediaType || 'photo',
     mediaUrl: primaryUrl,
+    mediaId: (typeof nalunoMediaIdFromUrl === 'function' ? nalunoMediaIdFromUrl(primaryUrl) : null) || null,
     thumbUrl: thumbUrl || null,
     filterCss: filterCss || '',
     chapters: chapterList,
@@ -85,13 +86,6 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
     strandName: strandName || null,
     originStatus: (origin && origin.status) || 'clear',
     originScore: (origin && origin.score) || 0,
-    originPhotoHash: (origin && origin.photoHash) || '',
-    originAudioHash: (origin && origin.audioHash) || '',
-    originFrameHashes: (origin && origin.frameHashes) || [],
-    originIdentity: (origin && origin.identity) || '',
-    originDna: (origin && origin.dna) || '',
-    originMatchTitle: (origin && origin.matchTitle) || '',
-    originHold: !!(origin && origin.hold),
     memberUids: [currentUser.uid],
     live: false,
     liveAt: null,
@@ -162,16 +156,55 @@ async function loadMyBroadcasts(){
 let feedBroadcastsUnsub = null;
 let myBroadcastsUnsub = null;
 
+function broadcastStableMediaId(b){
+  if(!b) return '';
+  if(b.mediaId) return b.mediaId;
+  const raw = b.mediaUrl || b.videoUrl || '';
+  if(typeof nalunoMediaIdFromUrl === 'function') return nalunoMediaIdFromUrl(raw);
+  try{
+    const m = String(raw).match(/u\/[A-Za-z0-9_-]+\/[A-Za-z0-9._-]+/);
+    return m ? m[0] : '';
+  }catch(_){ return ''; }
+}
+
 function applyBroadcastDocsToFeed(docs){
+  // Merge by stable Firestore doc id — never replace identity from array order.
+  // Layout/render may change; Broadcast ID → Media ID must not.
+  const prevById = {};
+  (feedBroadcasts || []).forEach(function(b){ if(b && b.id) prevById[b.id] = b; });
   const list = [];
-  docs.forEach(d => {
+  let identityChanged = false;
+  docs.forEach(function(d){
     const data = d.data() || {};
-    if(!data.deleted) list.push({ id: d.id, ...data });
+    if(data.deleted){
+      if(prevById[d.id]) identityChanged = true;
+      return;
+    }
+    const row = Object.assign({}, prevById[d.id] || {}, data, { id: d.id });
+    row.mediaId = broadcastStableMediaId(row) || row.mediaId || null;
+    if(!prevById[d.id]) identityChanged = true;
+    list.push(row);
   });
-  list.sort((a,b) => (b.live ? 1 : 0) - (a.live ? 1 : 0) || (b.updatedAt||b.createdAt||0) - (a.updatedAt||a.createdAt||0));
+  // Detect removals / order-only updates: only full identity set change forces plate rebuild.
+  const nextIds = list.map(function(b){ return b.id; }).sort().join(',');
+  const prevIds = Object.keys(prevById).sort().join(',');
+  if(nextIds !== prevIds) identityChanged = true;
+  list.sort(function(a,b){
+    return (b.live ? 1 : 0) - (a.live ? 1 : 0) || (b.updatedAt||b.createdAt||0) - (a.updatedAt||a.createdAt||0);
+  });
   feedBroadcasts = list.slice(0, 80);
   try{ nalunoCacheWrite('feedBroadcasts', feedBroadcasts.map(nalunoSlimMedia)); }catch(_){}
-  if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
+  // Metadata-only snapshot (views, live flag on same set) → soft render if available.
+  if(typeof renderBroadcastTab === 'function'){
+    if(identityChanged || !applyBroadcastDocsToFeed._painted){
+      applyBroadcastDocsToFeed._painted = true;
+      renderBroadcastTab();
+    } else if(typeof softUpdateBroadcastPlates === 'function'){
+      softUpdateBroadcastPlates(feedBroadcasts);
+    } else {
+      renderBroadcastTab();
+    }
+  }
 }
 
 /** Realtime plate list — no refresh required for new Broadcasts. */
