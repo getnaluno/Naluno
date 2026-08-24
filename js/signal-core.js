@@ -30,10 +30,10 @@ let connectionsSignals = []; // [{ contactId, contact, latest }] — real connec
    Fill in your own deployed Worker's URL here once it's live. */
 const SIGNAL_UPLOAD_WORKER_URL = 'https://naluno-signal-upload.naluno.workers.dev';
 
-/* ---- Media identity (Broadcast stability) ----
-   Broadcast ID → Media ID → persistent asset must survive UI/layout churn.
-   Never derive identity from array index or plate position. */
-const nalunoMediaReg = {}; // mediaId → { broadcastId, url, state, lastError, ts }
+/* ---- Media identity (layout must never become the key) ----
+   Broadcast ID → mediaId (from storage path) → persistent asset.
+   Diagnostics classify remount / network / decode without refetch-everything. */
+const nalunoMediaReg = {};
 function nalunoMediaIdFromUrl(u){
   if(!u || typeof u !== 'string') return '';
   try{
@@ -52,7 +52,6 @@ function nalunoMediaSetState(mediaId, state, detail){
   if(detail) row.lastError = detail;
   nalunoMediaReg[mediaId] = row;
 }
-/** Classify a media failure for diagnostics (never refetch-everything). */
 function nalunoMediaClassifyError(el, err){
   const code = (el && el.error && el.error.code) || (err && err.code) || 0;
   const msg = String((err && (err.message || err.name)) || (el && el.error && el.error.message) || '');
@@ -87,15 +86,15 @@ window.nalunoMediaClassifyError = nalunoMediaClassifyError;
 window.nalunoMediaReg = nalunoMediaReg;
 
 /** Normalize any stored media URL to the Worker proxy (GET /o/<key>).
- *  Broken playback was caused by R2 "public" hosts that never served bytes.
- *  Never rewrite an already-proxied /o/u/ host (Broadcast vs Signal buckets). */
+ *  Broken playback was caused by R2 "public" hosts that never served bytes. */
 function resolveMediaUrl(u){
+
   if(!u || typeof u !== 'string') return u || '';
   if(/^blob:|^data:/i.test(u)) return u;
   const signalBase = SIGNAL_UPLOAD_WORKER_URL.replace(/\/+$/, '');
   const bcastBase = (typeof BROADCAST_UPLOAD_WORKER_URL === 'string' && BROADCAST_UPLOAD_WORKER_URL)
     ? BROADCAST_UPLOAD_WORKER_URL.replace(/\/+$/, '') : '';
-  // Keep already-proxied object URLs on their own worker host.
+  // Never steal the host of an already-proxied object URL (Broadcast vs Signal buckets).
   if(/^https?:/i.test(u) && /\/o\/u\//i.test(u)) return u;
   if(u.indexOf(signalBase + '/o/') === 0) return u;
   if(bcastBase && u.indexOf(bcastBase) === 0) return u;
@@ -112,9 +111,10 @@ function resolveMediaUrl(u){
   return u;
 }
 
-/** Candidate play URLs — original first (compat). Never hop Broadcast ↔ Signal
- *  unless the URL is a raw R2 object without a known worker host. */
-function nalunoPlayCandidates(raw){
+/** Every URL that might hold this file — original first (compat).
+ *  Never hop Broadcast ↔ Signal buckets. opts.bucket = 'signal' | 'broadcast'
+ *  pins retries to one worker so a new Signal cannot 404 on the Broadcast host. */
+function nalunoPlayCandidates(raw, opts){
   const original = String(raw || '');
   const urls = [];
   const add = function(u){
@@ -127,21 +127,27 @@ function nalunoPlayCandidates(raw){
   const signalBase = SIGNAL_UPLOAD_WORKER_URL.replace(/\/+$/, '');
   const bcastBase = (typeof BROADCAST_UPLOAD_WORKER_URL === 'string' && BROADCAST_UPLOAD_WORKER_URL)
     ? BROADCAST_UPLOAD_WORKER_URL.replace(/\/+$/, '') : '';
-  const onSignal = /naluno-signal-upload/i.test(original) || original.indexOf(signalBase) === 0;
-  const onBcast = !!(bcastBase && (/naluno-broadcast-upload/i.test(original) || original.indexOf(bcastBase) === 0));
+  const bucket = (opts && (opts.bucket || opts.kind)) ? String(opts.bucket || opts.kind) : '';
+  const onSignal = bucket === 'signal' || /naluno-signal-upload/i.test(original) || original.indexOf(signalBase) === 0;
+  const onBcast = bucket === 'broadcast' || !!(bcastBase && (/naluno-broadcast-upload/i.test(original) || original.indexOf(bcastBase) === 0));
   let key = '';
   try{
     const m = original.match(/u\/[A-Za-z0-9_-]+\/[A-Za-z0-9._-]+/);
     if(m) key = m[0];
   }catch(_){}
   if(key){
-    if(onBcast){
-      add(bcastBase + '/o/' + key);
-    } else if(onSignal){
-      add(signalBase + '/o/' + key);
-    } else {
-      add(signalBase + '/o/' + key);
+    if(onBcast && !onSignal){
       if(bcastBase) add(bcastBase + '/o/' + key);
+    } else if(onSignal && !onBcast){
+      add(signalBase + '/o/' + key);
+    } else if(onSignal && onBcast){
+      // Conflicting hint vs URL — keep the original host only (compat).
+      if(/naluno-broadcast-upload/i.test(original) && bcastBase) add(bcastBase + '/o/' + key);
+      else add(signalBase + '/o/' + key);
+    } else {
+      // Relative key with no known host: resolveMediaUrl already mapped to Signal.
+      // Do NOT also hop onto the Broadcast worker (that 404s new Signals).
+      add(signalBase + '/o/' + key);
     }
   }
   return urls;
@@ -171,6 +177,82 @@ function nalunoFileLooksLikeImage(file){
 }
 function nalunoFiniteDuration(d){
   return typeof d === 'number' && isFinite(d) && d > 0 && d !== Infinity;
+}
+/** Google Photos / MP4 edit-lists often report half the real length. Prefer seekable. */
+function nalunoTrueDuration(el){
+  if(!el) return 0;
+  let d = 0;
+  try{
+    if(el.seekable && el.seekable.length){
+      d = Math.max(d, el.seekable.end(el.seekable.length - 1) || 0);
+    }
+  }catch(_){}
+  try{
+    if(nalunoFiniteDuration(el.duration)) d = Math.max(d, el.duration);
+  }catch(_){}
+  return d;
+}
+function nalunoResumeIfTruncated(el, onRealEnd){
+  if(!el) { if(onRealEnd) onRealEnd(); return; }
+  const t = el.currentTime || 0;
+  const d = nalunoTrueDuration(el);
+  const reported = el.duration;
+  if(d > t + 0.4){
+    try{ el.currentTime = Math.min(d - 0.05, t + 0.05); }catch(_){}
+    el.play().catch(function(){});
+    return;
+  }
+  // Probe past reported duration (half-length metadata)
+  if(nalunoFiniteDuration(reported) && t >= reported - 0.4){
+    const probeAt = reported + Math.max(0.8, reported * 0.2);
+    const before = t;
+    let settled = false;
+    const finish = function(){
+      if(settled) return;
+      settled = true;
+      const now = el.currentTime || 0;
+      if(now > before + 0.15 && now > reported - 0.05){
+        el.play().catch(function(){});
+      } else if(onRealEnd){
+        onRealEnd();
+      }
+    };
+    try{
+      el.addEventListener('seeked', finish, { once: true });
+      el.currentTime = probeAt;
+    }catch(_){ finish(); }
+    setTimeout(finish, 500);
+    return;
+  }
+  if(onRealEnd) onRealEnd();
+}
+window.nalunoTrueDuration = nalunoTrueDuration;
+window.nalunoResumeIfTruncated = nalunoResumeIfTruncated;
+/** Phone-first: treat as portrait unless the decoded frame is clearly landscape.
+ *  Samsung/iPhone often store 9:16 camera clips as 1920×1080 + rotation; if a
+ *  poster/thumb is taller than wide, we trust that over coded videoWidth. */
+function nalunoVideoLooksPortrait(v, posterUrl){
+  try{
+    if(v && v.videoHeight > 0 && v.videoWidth > 0 && v.videoHeight > v.videoWidth) return true;
+    const poster = posterUrl || (v && (v.poster || v.getAttribute && v.getAttribute('poster'))) || '';
+    const cached = poster && window.__nalunoPosterAR && window.__nalunoPosterAR[poster];
+    if(cached === 'portrait') return true;
+    if(cached === 'landscape') return false;
+    if(v && v.videoWidth > 0 && v.videoHeight > 0 && v.videoWidth / v.videoHeight >= 1.25) return false;
+  }catch(_){}
+  return true; // Naluno default stage is 9:16
+}
+function nalunoProbePosterAR(url){
+  if(!url || typeof Image === 'undefined') return;
+  try{
+    window.__nalunoPosterAR = window.__nalunoPosterAR || {};
+    if(window.__nalunoPosterAR[url]) return;
+    const img = new Image();
+    img.onload = function(){
+      window.__nalunoPosterAR[url] = (img.naturalHeight > img.naturalWidth) ? 'portrait' : 'landscape';
+    };
+    img.src = url;
+  }catch(_){}
 }
 function nalunoGuessContentType(blob){
   const t = (blob && blob.type) ? String(blob.type).toLowerCase() : '';
@@ -278,6 +360,9 @@ function nalunoTranscodeToWeb(file, onProgress, maxSeconds){
       if(settled) return;
       settled = true;
       cleanup();
+      try{
+        if(blob && !blob._nalunoName) blob._nalunoName = 'signal.webm';
+      }catch(_){}
       resolve(blob);
     };
     video.onerror = function(){ fail(new Error('Could not open that video')); };
@@ -332,11 +417,31 @@ function nalunoTranscodeToWeb(file, onProgress, maxSeconds){
           try{
             if(video.videoWidth) ctx.drawImage(video, 0, 0, cw, ch);
           }catch(_){}
-          if(onProgress && duration){
-            try{ onProgress(Math.min(0.99, (video.currentTime || 0) / duration)); }catch(_){}
+          const tNow = video.currentTime || 0;
+          if(onProgress){
+            try{ onProgress(Math.min(0.99, tNow / Math.max(capSec, duration || 1))); }catch(_){}
           }
-          if(video.currentTime >= duration - 0.05 || video.ended){
-            try{ if(recorder.state === 'recording') recorder.stop(); }catch(_){}
+          if(tNow >= capSec - 0.05){
+            try{ if(recorder && recorder.state === 'recording') recorder.stop(); }catch(_){}
+            return;
+          }
+          if(video.ended){
+            const reported = video.duration;
+            if(nalunoFiniteDuration(reported) && tNow >= reported - 0.25){
+              const before = tNow;
+              try{ video.currentTime = reported + Math.max(0.6, reported * 0.1); }catch(_){}
+              setTimeout(function(){
+                if(settled) return;
+                if((video.currentTime || 0) > before + 0.12){
+                  video.play().catch(function(){});
+                  raf = requestAnimationFrame(draw);
+                } else {
+                  try{ if(recorder && recorder.state === 'recording') recorder.stop(); }catch(_){}
+                }
+              }, 280);
+              return;
+            }
+            try{ if(recorder && recorder.state === 'recording') recorder.stop(); }catch(_){}
             return;
           }
           raf = requestAnimationFrame(draw);
@@ -425,10 +530,14 @@ function nalunoProbeDuration(file, timeoutMs){
       resolve(nalunoFiniteDuration(d) ? d : null);
     };
     v.onloadedmetadata = function(){ finish(v.duration); };
-    v.onloadeddata = function(){ if(!done) finish(v.duration); };
+    v.onloadeddata = function(){ if(!done) finish(Math.max(v.duration || 0, (v.seekable && v.seekable.length) ? v.seekable.end(0) : 0)); };
     v.onerror = function(){ finish(null); };
     v.src = url;
-    setTimeout(function(){ finish(v.duration); }, timeoutMs || 2800);
+    setTimeout(function(){
+      let d = v.duration;
+      try{ if(v.seekable && v.seekable.length) d = Math.max(d || 0, v.seekable.end(v.seekable.length - 1)); }catch(_){}
+      finish(d);
+    }, timeoutMs || 6000);
   });
 }
 
@@ -474,13 +583,18 @@ function bindMediaElement(el, rawUrl, opts){
   if(!el) return;
   opts = opts || {};
   const broadcastId = opts.broadcastId || el.dataset.broadcastId || null;
-  const urls = (typeof nalunoPlayCandidates === 'function') ? nalunoPlayCandidates(rawUrl) : [resolveMediaUrl(rawUrl)];
+  const bucket = opts.bucket || opts.kind || '';
+  const urls = (typeof nalunoPlayCandidates === 'function')
+    ? nalunoPlayCandidates(rawUrl, bucket ? { bucket: bucket } : undefined)
+    : [resolveMediaUrl(rawUrl)];
   const url = urls[0] || resolveMediaUrl(rawUrl);
   if(!url){
-    nalunoMediaDiag(broadcastId, null, 'invalid_media_reference', 'empty url');
+    if(typeof nalunoMediaDiag === 'function') nalunoMediaDiag(broadcastId, null, 'invalid_media_reference', 'empty url');
     return;
   }
-  const mediaId = nalunoMediaIdFromUrl(url) || nalunoMediaIdFromUrl(rawUrl);
+  const mediaId = (typeof nalunoMediaIdFromUrl === 'function')
+    ? (nalunoMediaIdFromUrl(url) || nalunoMediaIdFromUrl(rawUrl))
+    : '';
   if(broadcastId) el.dataset.broadcastId = broadcastId;
   if(mediaId) el.dataset.mediaId = mediaId;
   el.setAttribute('playsinline', '');
@@ -492,10 +606,14 @@ function bindMediaElement(el, rawUrl, opts){
   // Do not reset src if this element is already playing the same asset.
   const current = (el.currentSrc || el.getAttribute('src') || '').split('?')[0];
   const nextBare = String(url).split('?')[0];
-  const sameAsset = !!(current && nextBare && (current.indexOf(nextBare) >= 0 || nextBare.indexOf(current) >= 0 ||
-    (mediaId && current.indexOf(mediaId) >= 0)));
+  const sameAsset = !!(current && nextBare && (
+    current === nextBare ||
+    current.indexOf(nextBare) >= 0 ||
+    nextBare.indexOf(current) >= 0 ||
+    (mediaId && current.indexOf(mediaId) >= 0)
+  ));
   if(sameAsset && !el.paused && (el.readyState >= 2 || (el.currentTime || 0) > 0.05)){
-    nalunoMediaSetState(mediaId, 'playing');
+    if(mediaId) nalunoMediaSetState(mediaId, 'playing');
     attachPlaybackGuard(el, url);
     return;
   }
@@ -504,22 +622,30 @@ function bindMediaElement(el, rawUrl, opts){
     const cached = (key && typeof vaultSyncSrc === 'function') ? vaultSyncSrc(key) : '';
     // Assign src only — never call load() here; load() aborts in-flight play (MEDIA_ERR_ABORTED).
     el.src = cached || url;
-    nalunoMediaSetState(mediaId, 'loading');
+    if(mediaId) nalunoMediaSetState(mediaId, 'loading');
   }
 
   let urlIndex = 0;
   el.onerror = function(){
     const code = el.error && el.error.code;
-    // MEDIA_ERR_ABORTED (1) = src was reset (remount/load). Do not hop buckets.
+    // MEDIA_ERR_ABORTED (1) means src was reset (load()/new src). Do not hop buckets.
     if(code === 1){
-      nalunoMediaDiag(broadcastId, mediaId, 'component_remount_or_abort', { code: 1, src: el.src });
+      if(typeof nalunoMediaDiag === 'function'){
+        nalunoMediaDiag(broadcastId, mediaId, 'component_remount_or_abort', { code: 1, src: el.src });
+      }
       return;
     }
-    const cause = nalunoMediaClassifyError(el, el.error);
-    nalunoMediaDiag(broadcastId, mediaId, cause, { code: code, src: urls[urlIndex] || url });
+    const cause = (typeof nalunoMediaClassifyError === 'function')
+      ? nalunoMediaClassifyError(el, el.error)
+      : 'unknown_media_failure';
+    if(typeof nalunoMediaDiag === 'function'){
+      nalunoMediaDiag(broadcastId, mediaId, cause, { code: code, src: urls[urlIndex] || url });
+    } else {
+      console.warn('[media] load failed', urls[urlIndex], code);
+    }
     urlIndex++;
     if(urlIndex < urls.length){
-      nalunoMediaSetState(mediaId, 'retrying');
+      if(mediaId) nalunoMediaSetState(mediaId, 'retrying');
       el.src = urls[urlIndex];
       el.play().catch(function(){});
       return;
@@ -534,14 +660,18 @@ function bindMediaElement(el, rawUrl, opts){
       }
     }
   };
-  const mark = function(state){ return function(){ nalunoMediaSetState(mediaId, state); }; };
-  el.addEventListener('loadeddata', mark('loaded'));
-  el.addEventListener('playing', mark('playing'));
-  el.addEventListener('pause', mark('paused'));
-  el.addEventListener('waiting', mark('buffering'));
-  el.addEventListener('stalled', mark('buffering'));
+  if(mediaId && !el._nalunoStateBound){
+    el._nalunoStateBound = '1';
+    const mark = function(state){ return function(){ nalunoMediaSetState(mediaId, state); }; };
+    el.addEventListener('loadeddata', mark('loaded'));
+    el.addEventListener('playing', mark('playing'));
+    el.addEventListener('pause', mark('paused'));
+    el.addEventListener('waiting', mark('buffering'));
+    el.addEventListener('stalled', mark('buffering'));
+  }
   attachPlaybackGuard(el, url);
 }
+
 
 /** Soft single-request ceiling. Large files must compress or split (Worker body limits).
  *  Keep in sync with signal-worker MAX_BYTES. */
@@ -800,7 +930,20 @@ function pruneExpiredSignal(){
 async function saveSignalSegment(segment){
   if(!currentUser || !fbDb) return null;
   try{
-    const ref = await fbDb.collection('users').doc(currentUser.uid).collection('signal').add(segment);
+    const clean = {};
+    Object.keys(segment || {}).forEach(function(k){
+      const v = segment[k];
+      if(v === undefined || v === null) return;
+      if(typeof Blob !== 'undefined' && v instanceof Blob) return;
+      if(typeof File !== 'undefined' && v instanceof File) return;
+      if(typeof v === 'function') return;
+      if(k === 'localPlayUrl') return;
+      clean[k] = v;
+    });
+    if(clean.thumbDataUrl && String(clean.thumbDataUrl).length > 350000){
+      clean.thumbDataUrl = String(clean.thumbDataUrl).slice(0, 350000);
+    }
+    const ref = await fbDb.collection('users').doc(currentUser.uid).collection('signal').add(clean);
     return ref.id;
   }catch(e){ toast('Couldn\u2019t post — try again'); return null; }
 }

@@ -115,14 +115,19 @@ async function loadRealBands(uid){
         return c ? { uid:u, name:c.name, color:c.color, initials:c.initials, photo:c.photo } : { uid:u, name:'Someone', color:'#8B90A8', initials:'?', photo:null };
       });
       const lastEmptiedAt = d.lastEmptiedAt && d.lastEmptiedAt.toMillis ? d.lastEmptiedAt.toMillis() : (d.lastEmptiedAt || null);
+      const messageEpoch = d.messageEpoch || 0;
       if(change.type === 'removed'){
         const idx = bands.findIndex(b=>b.firestoreId===doc.id);
         if(idx>=0) bands.splice(idx,1);
       } else {
-        addRealBandToLocalList(doc.id, d.name, d.vibe, memberInfo, d.createdBy, { lastEmptiedAt, memberUids: d.memberUids || [] });
+        const row = addRealBandToLocalList(doc.id, d.name, d.vibe, memberInfo, d.createdBy, { lastEmptiedAt, memberUids: d.memberUids || [], messageEpoch });
         if(change.type === 'added' && d.createdBy !== uid){
           // Invited into a square that already existed
           toast('You were invited to · ' + (d.name || 'a Band'));
+        }
+        // App open is enough — do not wait for someone to sit in the empty square.
+        if(row && lastEmptiedAt && (Date.now() - lastEmptiedAt) >= BAND_SETTLE_MS && typeof pruneSettledBandMessages === 'function'){
+          pruneSettledBandMessages(fbDb.collection('bands').doc(doc.id), row);
         }
       }
     });

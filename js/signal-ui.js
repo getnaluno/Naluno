@@ -158,79 +158,31 @@ function renderBroadcastTab(){
   }
 
   // ---- Permanent Broadcast plates ----
-  // Keys are always stable Broadcast IDs (data-broadcast-id), never array indexes.
+  // Stranded videos sit in a folder at entry. Only unattached ones stay free.
   if(grid){
     const list = (typeof feedBroadcasts !== 'undefined' && feedBroadcasts) ? feedBroadcasts.slice() : [];
-    if(!list.length){
+    if(typeof renderBroadcastEntryGrid === 'function'){
+      renderBroadcastEntryGrid(grid, empty, list);
+    } else if(!list.length){
       grid.innerHTML = '';
       if(empty) empty.style.display = 'block';
     } else {
       if(empty) empty.style.display = 'none';
-      paintBroadcastPlateGrid(grid, list);
+      if(typeof broadcastThumbHtml === 'function'){
+        grid.innerHTML = list.map(function(b){ return broadcastThumbHtml(b); }).join('');
+      } else {
+        grid.innerHTML = list.map(function(b){
+          return '<article class="bcast-plate" data-broadcast-id="'+escapeHtml(b.id)+'"><div class="bcast-plate-meta"><div class="bcast-plate-title">'+escapeHtml(b.title||'Broadcast')+'</div></div></article>';
+        }).join('');
+      }
+      grid.querySelectorAll('[data-broadcast-id]').forEach(function(el){
+        el.onclick = function(){
+          if(typeof openBroadcastById === 'function') openBroadcastById(el.getAttribute('data-broadcast-id'));
+        };
+      });
     }
   }
 }
-
-/** Incremental plate grid: reuse existing nodes keyed by Broadcast ID.
- *  Layout/order changes must not invent new identities or refetch media. */
-function paintBroadcastPlateGrid(grid, list){
-  if(!grid) return;
-  const existing = {};
-  Array.prototype.forEach.call(grid.querySelectorAll('[data-broadcast-id]'), function(el){
-    existing[el.getAttribute('data-broadcast-id')] = el;
-  });
-  const frag = document.createDocumentFragment();
-  const keep = {};
-  (list || []).forEach(function(b){
-    if(!b || !b.id) return;
-    keep[b.id] = true;
-    let el = existing[b.id];
-    if(!el){
-      const html = (typeof broadcastThumbHtml === 'function')
-        ? broadcastThumbHtml(b)
-        : ('<article class="bcast-plate" data-broadcast-id="'+escapeHtml(b.id)+'" role="button" tabindex="0"><div class="bcast-plate-meta"><div class="bcast-plate-title">'+escapeHtml(b.title||'Broadcast')+'</div></div></article>');
-      const wrap = document.createElement('div');
-      wrap.innerHTML = html;
-      el = wrap.firstElementChild;
-    } else {
-      // Soft metadata refresh only (title/live/views) — do not recreate media nodes.
-      try{
-        const titleEl = el.querySelector('.bcast-plate-title');
-        if(titleEl && b.title) titleEl.textContent = String(b.title).slice(0, 48);
-        let liveEl = el.querySelector('.bcast-plate-live');
-        if(b.live && !liveEl){
-          const frame = el.querySelector('.bcast-plate-frame');
-          if(frame){
-            liveEl = document.createElement('span');
-            liveEl.className = 'bcast-plate-live';
-            liveEl.textContent = 'LIVE';
-            frame.appendChild(liveEl);
-          }
-        } else if(!b.live && liveEl){
-          liveEl.remove();
-        }
-      }catch(_){}
-    }
-    if(el){
-      el.onclick = function(){
-        if(typeof openBroadcastById === 'function') openBroadcastById(b.id);
-      };
-      frag.appendChild(el);
-    }
-  });
-  Object.keys(existing).forEach(function(id){
-    if(!keep[id]) try{ existing[id].remove(); }catch(_){}
-  });
-  grid.innerHTML = '';
-  grid.appendChild(frag);
-}
-function softUpdateBroadcastPlates(list){
-  const grid = document.getElementById('bcastPlateGrid');
-  if(!grid) return;
-  paintBroadcastPlateGrid(grid, list || []);
-}
-window.softUpdateBroadcastPlates = softUpdateBroadcastPlates;
-window.paintBroadcastPlateGrid = paintBroadcastPlateGrid;
 
 function renderBroadcasts(){
   try{ renderBroadcastTab(); }catch(e){ console.warn('[signal] render', e); }
@@ -283,6 +235,7 @@ function clearSegTimer(){
 
 function signalPlaySrc(seg){
   if(!seg) return '';
+  if(seg.localPlayUrl && String(seg.localPlayUrl).indexOf('blob:') === 0) return seg.localPlayUrl;
   const raw = seg.videoUrl || seg.mediaUrl || seg.dataUrl || '';
   if(!raw) return '';
   if(String(raw).indexOf('blob:') === 0 || String(raw).indexOf('data:') === 0) return raw;
@@ -313,27 +266,39 @@ function signalEnsurePlayableSrc(videoEl, remoteUrl){
     if(String(remoteUrl).indexOf('blob:') === 0 || String(remoteUrl).indexOf('data:') === 0){
       resolve(true); return;
     }
+    if(videoEl && !videoEl.paused && (videoEl.readyState >= 2 || (videoEl.currentTime || 0) > 0.05)){
+      resolve(true); return;
+    }
     if(videoEl.dataset && videoEl.dataset.blobTried === '1'){ resolve(false); return; }
     try{ videoEl.dataset.blobTried = '1'; }catch(_){}
-    const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-    const t = setTimeout(function(){ try{ if(ctrl) ctrl.abort(); }catch(_){} }, 12000);
-    fetch(remoteUrl, ctrl ? { signal: ctrl.signal, mode: 'cors', credentials: 'omit' } : { mode: 'cors', credentials: 'omit' })
-      .then(function(r){
-        if(!r.ok) throw new Error('fetch ' + r.status);
-        return r.blob();
-      })
-      .then(function(blob){
-        clearTimeout(t);
-        if(!blob || !blob.size){ resolve(false); return; }
-        const u = URL.createObjectURL(blob);
-        try{ videoEl.src = u; }catch(_){}
-        try{ videoEl.load(); }catch(_){}
-        resolve(true);
-      })
-      .catch(function(){
-        clearTimeout(t);
-        resolve(false);
-      });
+    const urls = (typeof nalunoPlayCandidates === 'function') ? nalunoPlayCandidates(remoteUrl, { bucket: 'signal' }) : [remoteUrl];
+    let i = 0;
+    const tryNext = function(){
+      if(i >= urls.length){ resolve(false); return; }
+      const u = urls[i++];
+      const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+      const t = setTimeout(function(){ try{ if(ctrl) ctrl.abort(); }catch(_){} }, 14000);
+      fetch(u, ctrl ? { signal: ctrl.signal, mode: 'cors', credentials: 'omit' } : { mode: 'cors', credentials: 'omit' })
+        .then(function(r){
+          if(!r.ok) throw new Error('fetch ' + r.status);
+          return r.blob();
+        })
+        .then(function(blob){
+          clearTimeout(t);
+          if(!blob || !blob.size){ tryNext(); return; }
+          if(videoEl && !videoEl.paused && (videoEl.currentTime || 0) > 0.05){
+            resolve(true); return;
+          }
+          const obj = URL.createObjectURL(blob);
+          try{ videoEl.src = obj; }catch(_){}
+          resolve(true);
+        })
+        .catch(function(){
+          clearTimeout(t);
+          tryNext();
+        });
+    };
+    tryNext();
   });
 }
 
@@ -388,7 +353,7 @@ function playSegment(idx, direction=1){
       ? ` poster="${String(seg.thumbDataUrl).replace(/"/g,'&quot;')}"`
       : '';
     // relative (not absolute) so flex parent keeps real height; contain so landscape is full frame
-    bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" src="${safeSrc}" preload="auto" playsinline webkit-playsinline muted${posterAttr} style="filter:${seg.filterCss || ''}; display:block; width:100%; height:100%; max-height:78vh; object-fit:contain; background:#000; border-radius:12px;"></video>${captionHtml}<div class="cam-expand-btn" id="bviewerMuteToggle" style="right:auto; left:14px; top:14px; z-index:3;" role="button" aria-label="Toggle sound"></div><button type="button" id="bviewerPlayKick" style="display:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;width:64px;height:64px;border-radius:50%;border:none;background:rgba(124,255,178,.92);color:#0D0F17;font-size:22px;box-shadow:0 8px 28px rgba(0,0,0,.45);cursor:pointer;" aria-label="Play">▶</button>`;
+    bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" src="${safeSrc}" preload="auto" playsinline webkit-playsinline muted${posterAttr} style="filter:${seg.filterCss || ''}; display:block; width:100%; height:100%; object-fit:cover; background:#000; border-radius:12px;"></video>${captionHtml}<div class="cam-expand-btn" id="bviewerMuteToggle" style="right:auto; left:14px; top:14px; z-index:3;" role="button" aria-label="Toggle sound"></div><button type="button" id="bviewerPlayKick" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;width:64px;height:64px;border-radius:50%;border:none;background:rgba(124,255,178,.92);color:#0D0F17;font-size:22px;box-shadow:0 8px 28px rgba(0,0,0,.45);cursor:pointer;" aria-label="Play">▶</button>`;
     durationMs = Math.round((isFinite(seg.duration) && seg.duration > 0 ? seg.duration : 15) * 1000);
   } else {
     const imgSrc = signalPlaySrc(seg);
@@ -402,6 +367,7 @@ function playSegment(idx, direction=1){
   if(seg.type==='video' || isVideoSeg){
     const v = $('bviewerActiveVideo');
     const videoSrc = signalPlaySrc(seg);
+    if(seg.thumbDataUrl && typeof nalunoProbePosterAR === 'function') nalunoProbePosterAR(seg.thumbDataUrl);
     const trimStart = (isFinite(seg.trimStart) && seg.trimStart > 0) ? seg.trimStart : 0;
     const trimEnd = (isFinite(seg.trimEnd) && seg.trimEnd > trimStart) ? seg.trimEnd : 0;
     let playedOnce = false;
@@ -420,6 +386,13 @@ function playSegment(idx, direction=1){
     };
 
     v.onended = function(){
+      if(typeof nalunoResumeIfTruncated === 'function'){
+        nalunoResumeIfTruncated(v, function(){
+          clearSegTimer();
+          goToSegment(idx + 1);
+        });
+        return;
+      }
       const d = v.duration;
       const t = v.currentTime || 0;
       const falseEnd = (typeof nalunoFiniteDuration === 'function')
@@ -471,7 +444,7 @@ function playSegment(idx, direction=1){
     });
 
     // Prefer bindMediaElement for recovery + vault; always keep preload=auto
-    if(typeof bindMediaElement === 'function' && videoSrc) bindMediaElement(v, videoSrc);
+    if(typeof bindMediaElement === 'function' && videoSrc) bindMediaElement(v, videoSrc, { kind: 'signal' });
     else if(typeof attachPlaybackGuard === 'function') attachPlaybackGuard(v, videoSrc);
     try{ v.preload = 'auto'; }catch(_){}
     try{ if(typeof containMediaElement === 'function') containMediaElement(v); }catch(_){}
@@ -497,18 +470,11 @@ function playSegment(idx, direction=1){
           try{ v.muted = false; }catch(_){}
           renderMuteIcon(false);
         });
-        const d = trimEnd ? (trimEnd - trimStart) : v.duration;
-        if(isFinite(d) && d > 0){
-          durationMs = Math.round(d * 1000);
-          updateBars(idx, durationMs);
-          clearSegTimer();
-          advanceArmed = false;
-          armAdvance(durationMs + 800);
-        }
+        // Video stories advance on real ended only. A wall-clock timer
+        // cut Google Photos clips in half when metadata duration was wrong.
         try{ if(typeof lockOutChromeMediaSession === 'function') lockOutChromeMediaSession(); }catch(_){}
       };
       v.addEventListener('playing', onPlaying);
-      try{ v.load(); }catch(_){}
       v.play().catch(function(){
         v.removeEventListener('playing', onPlaying);
         v.muted = true;
@@ -535,33 +501,34 @@ function playSegment(idx, direction=1){
       if(trimStart && Math.abs((v.currentTime || 0) - trimStart) > 0.2){
         try{ v.currentTime = trimStart; }catch(_){}
       }
-      const d = trimEnd ? (trimEnd - trimStart) : v.duration;
+      const d = trimEnd ? (trimEnd - trimStart) : ((typeof nalunoTrueDuration === 'function') ? nalunoTrueDuration(v) : v.duration);
       if(isFinite(d) && d > 0){
         durationMs = Math.round(d * 1000);
         updateBars(idx, durationMs);
         try{ seg.duration = d; }catch(_){}
       }
       if(body && v.videoWidth > 0 && v.videoHeight > 0){
-        body.style.aspectRatio = v.videoWidth + ' / ' + v.videoHeight;
-        // Landscape + phone landscape → claim almost the full screen
+        const portrait = (typeof nalunoVideoLooksPortrait === 'function')
+          ? nalunoVideoLooksPortrait(v, seg.thumbDataUrl)
+          : (v.videoHeight >= v.videoWidth);
+        body.style.aspectRatio = portrait ? '9 / 16' : (v.videoWidth + ' / ' + v.videoHeight);
+        body.style.width = '100%';
         let orientL = false;
         try{
           if(screen.orientation && screen.orientation.type)
             orientL = String(screen.orientation.type).indexOf('landscape') >= 0;
           else orientL = window.innerWidth > window.innerHeight;
         }catch(_){}
-        const isLand = v.videoWidth >= v.videoHeight;
+        const isLand = !portrait;
         if(orientL && isLand){
           body.style.maxHeight = 'min(96vh, 100dvh)';
-          body.style.width = '100%';
           try{
             const app = document.querySelector('.app');
             if(app) app.classList.add('naluno-landscape-media');
             document.body.classList.add('naluno-landscape-media');
           }catch(_){}
         } else {
-          body.style.maxHeight = 'min(78vh, 720px)';
-          body.style.width = '100%';
+          body.style.maxHeight = portrait ? 'min(82vh, 780px)' : 'min(56vh, 560px)';
           try{
             document.body.classList.remove('naluno-landscape-media');
             const app = document.querySelector('.app');
@@ -573,21 +540,21 @@ function playSegment(idx, direction=1){
     v.addEventListener('loadedmetadata', applyRealLength);
     if(v.readyState >= 1) applyRealLength();
 
-    // Start NOW — opening the story is a user gesture; delayed play loses it on Samsung
+    // Start NOW — opening the story is a user gesture. Do NOT call load() here:
+    // load() resets the element and leaves a poster that never plays.
     startPlayback();
-    setTimeout(function(){ if(v.paused) startPlayback(); }, 500);
-    // Progressive HEVC/non-faststart often never advances — pull full blob once
+    setTimeout(function(){ if(v.paused) startPlayback(); }, 400);
     setTimeout(function(){
       if(playedOnce || !v.paused) return;
       signalEnsurePlayableSrc(v, videoSrc).then(function(ok){
         if(ok) startPlayback();
         else showKick(true);
       });
-    }, 900);
-    setTimeout(function(){ if(v.paused && !playedOnce){ startPlayback(); showKick(true); } }, 2000);
-    setTimeout(function(){ if(v.paused) showKick(true); }, 3200);
+    }, 800);
+    setTimeout(function(){ if(v.paused && !playedOnce){ showKick(true); } }, 1600);
 
-    armAdvance(durationMs > 0 ? durationMs + 2500 : 18000);
+    // Do not arm a wall-clock skip. Google Photos / HEVC metadata duration
+    // is often half the real clip — a timer would cut playback. ended handles it.
 
     if(kickBtn){
       kickBtn.onclick = function(e){
@@ -596,6 +563,14 @@ function playSegment(idx, direction=1){
         startPlayback();
         setTimeout(function(){ if(!v.paused) showKick(false); }, 200);
       };
+    }
+    if(v){
+      v.addEventListener('click', function(e){
+        e.preventDefault();
+        e.stopPropagation();
+        if(v.paused) startPlayback();
+        else v.pause();
+      });
     }
     if(muteBtn){
       muteBtn.onclick = function(){

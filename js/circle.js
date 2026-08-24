@@ -41,6 +41,7 @@
       name: name,
     }, { merge: true });
     joinedCreators[creatorUid] = true;
+    try{ await bumpTogaMonth(creatorUid, { circleMonthDelta: 1 }); }catch(_){}
     if(broadcastId){
       try{
         await fbDb.collection('broadcasts').doc(broadcastId).set({
@@ -57,8 +58,36 @@
     }
   }
 
+  function nalunoMonthKey(){
+    const d = new Date();
+    return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
+  }
+
+  function bumpTogaMonth(creatorUid, patch){
+    if(!fbDb || !creatorUid) return Promise.resolve();
+    const monthKey = nalunoMonthKey();
+    const ref = fbDb.collection('toga').doc(creatorUid);
+    return ref.get().then(function(snap){
+      const d = snap.exists ? (snap.data() || {}) : {};
+      const same = d.monthKey === monthKey;
+      const next = Object.assign({}, patch, {
+        monthKey: monthKey,
+        viewsMonth: (same ? (d.viewsMonth || 0) : 0) + (patch.viewsMonthDelta || 0),
+        circleMonth: (same ? (d.circleMonth || 0) : 0) + (patch.circleMonthDelta || 0),
+        engageMonth: (same ? (d.engageMonth || 0) : 0) + (patch.engageMonthDelta || 0),
+        updatedAt: Date.now(),
+      });
+      delete next.viewsMonthDelta;
+      delete next.circleMonthDelta;
+      delete next.engageMonthDelta;
+      next.scoreMonth = (next.viewsMonth || 0) + (next.circleMonth || 0) * 12 + (next.engageMonth || 0) * 3;
+      return ref.set(next, { merge: true });
+    }).catch(function(){});
+  }
+
   async function recordBroadcastView(broadcastId, creatorUid){
     if(!fbDb || !broadcastId) return;
+    if(currentUser && creatorUid && currentUser.uid === creatorUid) return;
     const key = broadcastId + ':' + ((currentUser && currentUser.uid) || 'anon');
     if(viewedLocal[key]) return;
     viewedLocal[key] = true;
@@ -73,12 +102,77 @@
         uniqueViews: firebase.firestore.FieldValue.increment(1),
       }, { merge: true });
       if(creatorUid){
+        await bumpTogaMonth(creatorUid, {
+          viewsMonthDelta: 1,
+          featuredBroadcastId: broadcastId,
+        });
         await fbDb.collection('toga').doc(creatorUid).set({
           viewsTotal: firebase.firestore.FieldValue.increment(1),
+          featuredBroadcastId: broadcastId,
           updatedAt: Date.now(),
         }, { merge: true });
       }
     }catch(e){ console.warn('[circle] view', e); }
+  }
+
+  let viewWatchTimer = null;
+  function armBroadcastViewWatch(broadcastId, creatorUid, isMine){
+    if(viewWatchTimer){ clearInterval(viewWatchTimer); viewWatchTimer = null; }
+    if(isMine || !broadcastId) return;
+    let seconds = 0;
+    viewWatchTimer = setInterval(function(){
+      try{
+        const space = document.getElementById('bspace');
+        if(!space || !space.classList.contains('active')){
+          clearInterval(viewWatchTimer); viewWatchTimer = null; return;
+        }
+        const v = document.getElementById('bspaceVideoEl');
+        const watching = v
+          ? (!v.paused && (v.currentTime || 0) > 0.25)
+          : true; // text/photo rooms: overlay open counts as watching
+        if(watching) seconds += 1;
+        if(seconds >= 4){
+          clearInterval(viewWatchTimer); viewWatchTimer = null;
+          recordBroadcastView(broadcastId, creatorUid);
+          try{ if(typeof paintBspaceViews === 'function') paintBspaceViews(window.activeBroadcastMeta || { creatorUid: creatorUid, views: 0 }); }catch(_){}
+        }
+      }catch(_){}
+    }, 1000);
+  }
+
+  function nalunoMonthLabel(){
+    try{
+      return new Date().toLocaleString('en', { month: 'long', year: 'numeric' });
+    }catch(_){
+      const d = new Date();
+      return d.toUTCString().split(' ')[2] + ' ' + d.getUTCFullYear();
+    }
+  }
+
+  function openCreatorTogaBroadcast(uid, bid){
+    function go(id){
+      if(id && typeof openBroadcastById === 'function'){
+        openBroadcastById(id);
+        return true;
+      }
+      return false;
+    }
+    if(bid && go(bid)) return;
+    const pool = (typeof feedBroadcasts !== 'undefined' && feedBroadcasts) ? feedBroadcasts : [];
+    const hit = pool.filter(function(b){ return b && b.creatorUid === uid && !b.deleted; })
+      .sort(function(a,b){ return (b.createdAt||0) - (a.createdAt||0); })[0];
+    if(hit && go(hit.id)) return;
+    if(!fbDb || !uid){
+      toast('Open a Broadcast from their plates below');
+      return;
+    }
+    fbDb.collection('broadcasts').where('creatorUid', '==', uid).limit(12).get().then(function(snap){
+      const docs = snap.docs.map(function(d){ return { id: d.id, ...(d.data() || {}) }; })
+        .filter(function(b){ return !b.deleted; })
+        .sort(function(a,b){ return (b.createdAt||0) - (a.createdAt||0); });
+      if(docs[0]) go(docs[0].id);
+      else toast('No Broadcast from them yet');
+    }).catch(function(){ toast('Open a Broadcast from their plates below'); });
   }
 
   async function loadMyTogaSettings(){
@@ -92,26 +186,24 @@
       }
     }catch(_){}
     const shareEl = $('togaShareBtn');
-    const inEl = $('togaEnterBtn');
     if(shareEl){
-      shareEl.textContent = myShareViews ? 'Views shared' : 'Views private';
+      shareEl.textContent = myShareViews ? 'Views public — you can stand in Toga' : 'Views private — hidden from Toga';
       shareEl.classList.toggle('on', myShareViews);
     }
-    if(inEl){
-      inEl.textContent = (myShareViews && myTogaIn) ? 'In Toga' : 'Stay out';
-      inEl.classList.toggle('on', !!(myShareViews && myTogaIn));
-    }
+    const monthEl = $('togaMonthLabel');
+    if(monthEl) monthEl.textContent = nalunoMonthLabel();
   }
 
   async function setMyToga(shareViews, togaIn){
     if(!currentUser || !fbDb){ toast('Sign in to change Toga'); return; }
     myShareViews = !!shareViews;
-    myTogaIn = !!shareViews && !!togaIn;
+    myTogaIn = myShareViews;
     const name = (currentProfile && currentProfile.name) || currentUser.displayName || 'Someone';
     await fbDb.collection('toga').doc(currentUser.uid).set({
       shareViews: myShareViews,
       togaIn: myTogaIn,
       name: name,
+      monthKey: nalunoMonthKey(),
       updatedAt: Date.now(),
     }, { merge: true });
     try{
@@ -127,19 +219,76 @@
   async function renderTogaBoard(){
     const el = $('togaBoard');
     if(!el || !fbDb) return;
+    const monthKey = nalunoMonthKey();
+    const monthEl = $('togaMonthLabel');
+    if(monthEl) monthEl.textContent = nalunoMonthLabel();
     try{
-      const snap = await fbDb.collection('toga').limit(40).get();
-      const rows = snap.docs.map(function(d){ return { id: d.id, ...(d.data() || {}) }; })
-        .filter(function(r){ return r.shareViews !== false && r.togaIn; })
-        .sort(function(a,b){ return (b.viewsTotal||0) - (a.viewsTotal||0); })
-        .slice(0, 8);
+      const snap = await fbDb.collection('toga').limit(80).get();
+      const byId = {};
+      snap.docs.forEach(function(d){
+        byId[d.id] = Object.assign({ id: d.id }, d.data() || {});
+      });
+      // Fill names / featured Broadcast from the live feed so a tap always has somewhere to go.
+      try{
+        const pool = (typeof feedBroadcasts !== 'undefined' && feedBroadcasts) ? feedBroadcasts : [];
+        pool.forEach(function(b){
+          if(!b || b.deleted || !b.creatorUid) return;
+          if(b.shareViews === false) return;
+          if(!byId[b.creatorUid]){
+            byId[b.creatorUid] = {
+              id: b.creatorUid,
+              name: b.creatorName || 'Creator',
+              shareViews: true,
+              viewsTotal: 0,
+              featuredBroadcastId: b.id,
+            };
+          }
+          const row = byId[b.creatorUid];
+          if(!row.name && b.creatorName) row.name = b.creatorName;
+          row.viewsTotal = (row.viewsTotal || 0);
+          if(!row.featuredBroadcastId || (b.createdAt || 0) > (row._featTs || 0)){
+            row.featuredBroadcastId = b.id;
+            row._featTs = b.createdAt || 0;
+          }
+        });
+      }catch(_){}
+      const rows = Object.keys(byId).map(function(k){ return byId[k]; })
+        .filter(function(r){ return r.shareViews !== false; })
+        .map(function(r){
+          const same = r.monthKey === monthKey;
+          const viewsM = same ? (r.viewsMonth || 0) : 0;
+          const circleM = same ? (r.circleMonth || 0) : 0;
+          const engageM = same ? (r.engageMonth || 0) : 0;
+          const score = same && r.scoreMonth
+            ? r.scoreMonth
+            : (viewsM + circleM * 12 + engageM * 3) || (r.viewsTotal || 0);
+          return Object.assign(r, { _score: score, _viewsM: viewsM, _circleM: circleM, _engageM: engageM });
+        })
+        .sort(function(a,b){ return (b._score||0) - (a._score||0); })
+        .slice(0, 10);
       if(!rows.length){
-        el.innerHTML = '<div class="lobby-sub">Creators who share views and enter Toga stand here.</div>';
+        el.innerHTML = '<div class="lobby-sub">This month’s Wall of Fame is empty. Share your views, then watch time, Circle joins, and conversation write the ten names. Views must be public to qualify. The list lives 30 days.</div>';
         return;
       }
-      el.innerHTML = rows.map(function(r, i){
-        return '<div class="toga-row"><span>' + (i+1) + ' · ' + escapeHtml(r.name || 'Creator') + '</span><span class="toga-n">' + formatNalunoViews(r.viewsTotal || 0) + '</span></div>';
-      }).join('');
+      el.innerHTML = '<ol class="toga-list">' + rows.map(function(r, i){
+        const openId = r.featuredBroadcastId || '';
+        return '<li><button type="button" class="toga-name-row" data-toga-uid="'+escapeHtml(r.id)+'" data-bcast="'+(openId ? escapeHtml(openId) : '')+'">'
+          + '<span class="toga-rank">#' + (i+1) + '</span>'
+          + '<span class="toga-name-block">'
+          +   '<span class="toga-card-name">' + escapeHtml(r.name || 'Creator') + '</span>'
+          +   '<span class="toga-card-h">' + formatNalunoViews(r._viewsM || r.viewsTotal || 0) + ' views · '
+          +     formatNalunoViews(r._circleM || 0) + ' Circle · '
+          +     formatNalunoViews(r._engageM || 0) + ' talk</span>'
+          + '</span>'
+          + '<span class="toga-card-v">' + formatNalunoViews(r._score || 0) + '</span>'
+          + '</button></li>';
+      }).join('') + '</ol>';
+      el.querySelectorAll('[data-toga-uid]').forEach(function(card){
+        card.onclick = function(e){
+          if(e){ e.preventDefault(); e.stopPropagation(); }
+          openCreatorTogaBroadcast(card.getAttribute('data-toga-uid'), card.getAttribute('data-bcast'));
+        };
+      });
     }catch(e){
       el.innerHTML = '<div class="lobby-sub">Toga loads after sign-in.</div>';
     }
@@ -159,9 +308,28 @@
 
   function wireToga(){
     const share = $('togaShareBtn');
-    const enter = $('togaEnterBtn');
-    if(share) share.onclick = function(){ setMyToga(!myShareViews, myTogaIn); };
-    if(enter) enter.onclick = function(){ setMyToga(myShareViews, !(myShareViews && myTogaIn)); };
+    if(share) share.onclick = function(){ setMyToga(!myShareViews, myShareViews); };
+    const exp = $('togaExpandBtn');
+    const body = $('togaBody');
+    const monthEl = $('togaMonthLabel');
+    if(monthEl) monthEl.textContent = nalunoMonthLabel();
+    function setTogaOpen(open){
+      if(!exp || !body) return;
+      body.style.display = open ? 'block' : 'none';
+      try{ body.hidden = !open; }catch(_){}
+      exp.setAttribute('aria-expanded', open ? 'true' : 'false');
+      exp.classList.toggle('open', !!open);
+      const hint = $('togaExpandHint');
+      if(hint) hint.textContent = open ? 'close' : 'Wall of Fame · tap';
+      if(open) renderTogaBoard();
+    }
+    if(exp && body){
+      exp.onclick = function(e){
+        if(e){ e.preventDefault(); e.stopPropagation(); }
+        const isOpen = body.style.display !== 'none' && !body.hidden;
+        setTogaOpen(!isOpen);
+      };
+    }
   }
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wireToga);
   else wireToga();
@@ -171,8 +339,10 @@
   window.creatorCircleJoined = creatorCircleJoined;
   window.joinCreatorCircle = joinCreatorCircle;
   window.recordBroadcastView = recordBroadcastView;
+  window.armBroadcastViewWatch = armBroadcastViewWatch;
   window.loadMyTogaSettings = loadMyTogaSettings;
   window.setMyToga = setMyToga;
   window.renderTogaBoard = renderTogaBoard;
   window.creatorShareViews = creatorShareViews;
+  window.bumpTogaMonth = bumpTogaMonth;
 })();

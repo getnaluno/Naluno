@@ -482,15 +482,15 @@ function bindRemoteVideoElement(stream, forceRebind){
     }
   }
 
-  // Hide only on fresh bind; do not hide if already showing live video
-  if(videoEl.style.display !== 'block' || videoEl.paused){
+  // Never hide after srcObject is set — hiding while paused left both
+  // people looking at avatars instead of each other.
+  if(!videoEl.srcObject){
     videoEl.style.display = 'none';
   }
 
   const promoteIfReady = function(){
     try{
-      // Match showRemoteVideo: playing is enough. videoWidth gate caused 12s delay.
-      if(!videoEl.paused && videoEl.srcObject){
+      if(videoEl.srcObject){
         showRemoteVideo();
       } else if(videoEl.paused){
         showRemoteAvatar();
@@ -539,6 +539,9 @@ function bindRemoteVideoElement(stream, forceRebind){
   }catch(_){
     showRemoteAvatar();
   }
+  setTimeout(function(){
+    try{ if(videoEl && videoEl.srcObject) showRemoteVideo(); }catch(_){}
+  }, 700);
 }
 
 function ingestRemoteTrack(track, streams){

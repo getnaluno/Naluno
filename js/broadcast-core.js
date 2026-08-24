@@ -86,6 +86,13 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
     strandName: strandName || null,
     originStatus: (origin && origin.status) || 'clear',
     originScore: (origin && origin.score) || 0,
+    originPhotoHash: (origin && origin.photoHash) || '',
+    originAudioHash: (origin && origin.audioHash) || '',
+    originFrameHashes: (origin && origin.frameHashes) || [],
+    originIdentity: (origin && origin.identity) || '',
+    originDna: (origin && origin.dna) || '',
+    originMatchTitle: (origin && origin.matchTitle) || '',
+    originHold: !!(origin && origin.hold),
     memberUids: [currentUser.uid],
     live: false,
     liveAt: null,
@@ -169,43 +176,27 @@ function broadcastStableMediaId(b){
 
 function applyBroadcastDocsToFeed(docs){
   // Merge by stable Firestore doc id — never replace identity from array order.
-  // Layout/render may change; Broadcast ID → Media ID must not.
+  // Strand folders still rebuild from the merged list (plates are thumbs, not players).
   const prevById = {};
   (feedBroadcasts || []).forEach(function(b){ if(b && b.id) prevById[b.id] = b; });
   const list = [];
-  let identityChanged = false;
   docs.forEach(function(d){
     const data = d.data() || {};
-    if(data.deleted){
-      if(prevById[d.id]) identityChanged = true;
-      return;
-    }
+    if(data.deleted) return;
     const row = Object.assign({}, prevById[d.id] || {}, data, { id: d.id });
     row.mediaId = broadcastStableMediaId(row) || row.mediaId || null;
-    if(!prevById[d.id]) identityChanged = true;
     list.push(row);
   });
-  // Detect removals / order-only updates: only full identity set change forces plate rebuild.
-  const nextIds = list.map(function(b){ return b.id; }).sort().join(',');
-  const prevIds = Object.keys(prevById).sort().join(',');
-  if(nextIds !== prevIds) identityChanged = true;
   list.sort(function(a,b){
     return (b.live ? 1 : 0) - (a.live ? 1 : 0) || (b.updatedAt||b.createdAt||0) - (a.updatedAt||a.createdAt||0);
   });
   feedBroadcasts = list.slice(0, 80);
   try{ nalunoCacheWrite('feedBroadcasts', feedBroadcasts.map(nalunoSlimMedia)); }catch(_){}
-  // Metadata-only snapshot (views, live flag on same set) → soft render if available.
-  if(typeof renderBroadcastTab === 'function'){
-    if(identityChanged || !applyBroadcastDocsToFeed._painted){
-      applyBroadcastDocsToFeed._painted = true;
-      renderBroadcastTab();
-    } else if(typeof softUpdateBroadcastPlates === 'function'){
-      softUpdateBroadcastPlates(feedBroadcasts);
-    } else {
-      renderBroadcastTab();
-    }
-  }
+  // Always go through renderBroadcastTab so Strand folders stay grouped.
+  if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
 }
+window.broadcastStableMediaId = broadcastStableMediaId;
+
 
 /** Realtime plate list — no refresh required for new Broadcasts. */
 function startFeedBroadcastsListener(){
