@@ -41,6 +41,12 @@ $('compassLockSubmitBtn').onclick = async ()=>{
   if(hash === currentProfile.compassPasswordHash){
     compassUnlockedThisSession = true;
     showCompassLockScreenIfNeeded();
+    try{
+      if(typeof findNalunoOpenAfterUnlock !== 'undefined' && findNalunoOpenAfterUnlock && typeof openFindNaluno === 'function'){
+        findNalunoOpenAfterUnlock = false;
+        openFindNaluno();
+      }
+    }catch(_){}
   } else {
     $('compassLockError').style.display = 'block';
   }
@@ -167,12 +173,10 @@ async function sendCompassMessage(){
     renderCompassMessages();
     let reply = 'No ping yet.';
     try{
-      {
       const devices = (typeof fetchFindNalunoDevices === 'function')
         ? await fetchFindNalunoDevices()
         : (typeof findNalunoDevices !== 'undefined' ? findNalunoDevices : []);
       if(typeof formatFindNalunoReply === 'function') reply = await formatFindNalunoReply(devices);
-    }
     }catch(_){}
     compassMessages = compassMessages.filter(m => m !== thinking);
     compassMessages.push({ from:'compass', text: reply, ts: Date.now() });

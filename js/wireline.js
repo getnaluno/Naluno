@@ -68,9 +68,15 @@ function renderWirelineList(){
     // Wireline is WhatsApp-style: only people you have actually contacted
     if(r.c && r.c.isReal){
       const p = r.c.firebaseUid && realThreadPreviews[r.c.firebaseUid];
-      return !!(p && (p.ts || p.text));
+      if(!(p && (p.ts || p.text))) return false;
+      const cut = clearedAtForContact(r.c);
+      if(cut && p.ts && p.ts <= cut) return false;
+      return true;
     }
-    return !!(r.last);
+    if(!r.last) return false;
+    const cutLocal = clearedAtForContact(r.c);
+    if(cutLocal && r.last.ts && r.last.ts <= cutLocal) return false;
+    return true;
   }).sort((a,b)=> (b.last?b.last.ts:0) - (a.last?a.last.ts:0));
 
   if(!rows.length){
@@ -113,9 +119,47 @@ function wirelineClearKey(c){
   if(!c) return '';
   return (c.isReal && c.firebaseUid) ? c.firebaseUid : String(c.id);
 }
-function clearedAtForKey(key){
-  return Number(wirelineClearedAt[key] || 0);
+function wirelineMillis(v){
+  if(!v) return 0;
+  if(typeof v === 'number' && isFinite(v)) return v;
+  if(v && typeof v.toMillis === 'function') return v.toMillis();
+  const n = Number(v);
+  return isFinite(n) ? n : 0;
 }
+function clearedAtForKey(key){
+  if(!key) return 0;
+  return wirelineMillis(wirelineClearedAt[key] || 0);
+}
+function clearedAtForContact(c){
+  if(!c) return 0;
+  return Math.max(
+    clearedAtForKey(wirelineClearKey(c)),
+    clearedAtForKey(c.firebaseUid),
+    clearedAtForKey(String(c.id)),
+    0
+  );
+}
+let wirelineHiddenIds = {}; // { [msgId]: 1 } hidden on this side only
+function loadWirelineHiddenLocal(){
+  try{
+    const raw = localStorage.getItem('nalunoWirelineHidden');
+    const o = raw ? JSON.parse(raw) : null;
+    if(o && typeof o === 'object') wirelineHiddenIds = o;
+  }catch(_){}
+}
+function saveWirelineHidden(){
+  try{ localStorage.setItem('nalunoWirelineHidden', JSON.stringify(wirelineHiddenIds)); }catch(_){}
+}
+function syncWirelineHiddenFromCloud(){
+  if(!fbDb || !currentUser) return;
+  fbDb.collection('users').doc(currentUser.uid).collection('wirelineHidden').get()
+    .then(function(snap){
+      snap.forEach(function(d){ wirelineHiddenIds[d.id] = 1; });
+      saveWirelineHidden();
+      try{ renderThreadMessages(); }catch(_){}
+    }).catch(function(){});
+}
+loadWirelineHiddenLocal();
 function msgTs(m){
   if(!m) return 0;
   if(m.ts && typeof m.ts.toMillis === 'function') return m.ts.toMillis();
@@ -139,9 +183,16 @@ function syncWirelineClearsFromCloud(){
     .then(snap=>{
       snap.forEach(d=>{
         const v = d.data() && d.data().clearedAt;
-        if(v) wirelineClearedAt[d.id] = Number(v);
+        if(v) wirelineClearedAt[d.id] = wirelineMillis(v);
       });
       saveWirelineClears();
+      try{
+        Object.keys(realThreadPreviews).forEach(function(uid){
+          const cut = clearedAtForKey(uid);
+          const p = realThreadPreviews[uid];
+          if(cut && p && p.ts && p.ts <= cut) delete realThreadPreviews[uid];
+        });
+      }catch(_){}
       try{ renderThreadMessages(); }catch(_){}
       try{ renderWirelineList(); }catch(_){}
     }).catch(()=>{});
@@ -165,7 +216,13 @@ async function clearMySideOfThread(){
   const at = Date.now();
   const key = wirelineClearKey(c);
   wirelineClearedAt[key] = at;
+  if(c.firebaseUid) wirelineClearedAt[c.firebaseUid] = at;
+  if(c.id != null) wirelineClearedAt[String(c.id)] = at;
   saveWirelineClears();
+  const list = wirelineThreads[c.id] || wirelineThreads[activeThreadContactId] || [];
+  list.forEach(function(m){ if(m && m.id) wirelineHiddenIds[String(m.id)] = 1; });
+  saveWirelineHidden();
+  if(c.firebaseUid) delete realThreadPreviews[c.firebaseUid];
   if(c.isReal && c.firebaseUid && fbDb && currentUser){
     try{
       await fbDb.collection('users').doc(currentUser.uid).collection('wirelineClears').doc(c.firebaseUid).set({
@@ -173,6 +230,11 @@ async function clearMySideOfThread(){
         otherUid: c.firebaseUid,
       });
     }catch(e){ console.warn('[wireline] clear sync', e); }
+    const hiddenCol = fbDb.collection('users').doc(currentUser.uid).collection('wirelineHidden');
+    list.forEach(function(m){
+      if(!m || !m.id) return;
+      hiddenCol.doc(String(m.id)).set({ hiddenAt: at, otherUid: c.firebaseUid }).catch(function(){});
+    });
   } else {
     wirelineThreads[c.id] = [];
     try{ saveWireline(); }catch(_){}
@@ -185,6 +247,7 @@ async function clearMySideOfThread(){
 function startThreadsListListener(){
   if(!fbDb || !currentUser) return;
   syncWirelineClearsFromCloud();
+  syncWirelineHiddenFromCloud();
   if(threadsListUnsubscribe) threadsListUnsubscribe();
   threadsListUnsubscribe = fbDb.collection('threads')
     .where('participants', 'array-contains', currentUser.uid)
@@ -439,9 +502,10 @@ function renderThreadMessages(){
     ...q.payload,
   }));
   const cActive = contacts.find(x=>x.id===activeThreadContactId);
-  const cut = clearedAtForKey(wirelineClearKey(cActive));
+  const cut = clearedAtForContact(cActive);
   const msgs = [...(wirelineThreads[activeThreadContactId] || []), ...queued]
     .filter(m => msgTs(m) > cut)
+    .filter(m => !wirelineHiddenIds[String(m.id)])
     .sort((a,b)=>a.ts-b.ts);
   if(msgs.length===0){
     const clearedNote = cut
@@ -514,24 +578,30 @@ function renderThreadMessages(){
 function deleteThreadMessage(msgId){
   if(!confirm('Delete this message? This can\u2019t be undone.')) return;
   if(String(msgId).startsWith('queued-')){
-    // Still sitting in the local queue, never actually sent — remove it there instead
-    // of trying to delete a Firestore doc that was never created.
     removeFromMessageQueue(msgId);
     renderThreadMessages();
     return;
   }
   const c = contacts.find(x=>x.id===activeThreadContactId);
-  if(c && c.isReal && c.firebaseUid && fbDb){
+  const list = wirelineThreads[activeThreadContactId] || [];
+  const row = list.find(function(m){ return String(m.id) === String(msgId); });
+  const mine = row && row.from === 'me';
+  wirelineHiddenIds[String(msgId)] = 1;
+  saveWirelineHidden();
+  if(c && c.isReal && c.firebaseUid && fbDb && currentUser){
     const tid = realThreadId(c.firebaseUid);
-    fbDb.collection('threads').doc(tid).collection('messages').doc(String(msgId)).delete()
-      .catch(e=> toast(e.message || 'Couldn\u2019t delete'));
-    // the open thread's onSnapshot listener re-renders once Firestore confirms the delete
+    const ref = fbDb.collection('threads').doc(tid).collection('messages').doc(String(msgId));
+    if(mine){
+      ref.delete().catch(function(e){ toast(e.message || 'Couldn\u2019t delete'); });
+    }
+    fbDb.collection('users').doc(currentUser.uid).collection('wirelineHidden').doc(String(msgId))
+      .set({ hiddenAt: Date.now(), otherUid: c.firebaseUid }).catch(function(){});
   } else {
-    wirelineThreads[activeThreadContactId] = (wirelineThreads[activeThreadContactId] || []).filter(m=>String(m.id)!==String(msgId));
+    wirelineThreads[activeThreadContactId] = list.filter(m=>String(m.id)!==String(msgId));
     saveWireline();
-    renderThreadMessages();
-    renderWirelineList();
   }
+  renderThreadMessages();
+  renderWirelineList();
 }
 
 /* Long-press (hold ~450ms without moving) opens the emotion wheel for that message.

@@ -128,8 +128,13 @@ function bandMessageHtml(m){
 }
 function bandIsSettled(b){
   if(!b || !b.lastEmptiedAt) return false;
-  const liveCount = (b.isReal ? realBandLiveMembers.length : 0) + (amTunedIn ? 1 : 0);
-  if(liveCount > 0) return false;
+  // Only count live bodies for the Band that is actually open. Leftover
+  // realBandLiveMembers from a previous room (or amTunedIn on another square)
+  // used to keep EVERY band "busy", so the 2h wipe never fired.
+  if(activeBandId && b.id === activeBandId){
+    const liveCount = (b.isReal ? realBandLiveMembers.length : 0) + (amTunedIn ? 1 : 0);
+    if(liveCount > 0) return false;
+  }
   return (Date.now() - b.lastEmptiedAt) >= BAND_SETTLE_MS;
 }
 function updateBandSettleNote(){
@@ -262,7 +267,19 @@ async function pruneSettledBandMessages(bandRef, b){
   if(b._pruning) return;
   b._pruning = true;
   try{
-    // Paginate deletes so the square is actually empty, not 80-of-N leftovers
+    // Stamp the session boundary FIRST so clients hide old lines even if a
+    // delete batch is denied or slow. Previously epoch was written after
+    // deletes, so a rules miss left the chatter forever.
+    const epoch = Date.now();
+    b.messageEpoch = epoch;
+    await bandRef.set({
+      messageEpoch: epoch,
+      lastEmptiedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge:true });
+    if(activeBandId && b.id === activeBandId && bandMessages[activeBandId]){
+      bandMessages[activeBandId] = [];
+      try{ renderBandMessages(); }catch(_){}
+    }
     for(let i = 0; i < 10; i++){
       const snap = await bandRef.collection('messages').limit(80).get();
       if(snap.empty) break;
@@ -271,14 +288,6 @@ async function pruneSettledBandMessages(bandRef, b){
       await batch.commit();
       if(snap.size < 80) break;
     }
-    // New session boundary — client ignores older shells even if a delete lags
-    const epoch = Date.now();
-    b.messageEpoch = epoch;
-    await bandRef.set({
-      messageEpoch: epoch,
-      lastEmptiedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    }, { merge:true });
-    if(activeBandId && bandMessages[activeBandId]) bandMessages[activeBandId] = [];
   }catch(e){ console.warn('[band] prune', e); }
   finally{ b._pruning = false; }
 }
@@ -407,7 +416,13 @@ function openBandRoom(id){
       renderBandMessages();
     }, ()=>{ /* messages just won't sync this session */ });
 
-    bandSettleTimer = setInterval(updateBandSettleNote, 30000);
+    bandSettleTimer = setInterval(function(){
+      updateBandSettleNote();
+      const cur = activeBand();
+      if(cur && cur.isReal && cur.firestoreId && bandIsSettled(cur)){
+        pruneSettledBandMessages(fbDb.collection('bands').doc(cur.firestoreId), cur);
+      }
+    }, 15000);
   } else {
     renderBandRoster();
     renderBandMessages();
@@ -428,6 +443,7 @@ function closeBandRoom(){
   $('bandRoom').classList.remove('active');
   amTunedIn = false;
   activeBandId = null;
+  realBandLiveMembers = [];
 }
 $('bandRoomBack').onclick = closeBandRoom;
 /* Leave for good = only you exit membership. The square itself cannot be deleted —
@@ -471,8 +487,29 @@ function clearMyBandPresence(){
   stopBandPresenceHeartbeat();
   const b = activeBand();
   if(b && b.isReal && b.firestoreId && fbDb && currentUser){
-    fbDb.collection('bands').doc(b.firestoreId).collection('presence').doc(currentUser.uid).delete().catch(()=>{});
+    const bandRef = fbDb.collection('bands').doc(b.firestoreId);
+    bandRef.collection('presence').doc(currentUser.uid).delete()
+      .then(function(){ markBandEmptyIfLast(bandRef, b); })
+      .catch(function(){ markBandEmptyIfLast(bandRef, b); });
   }
+}
+async function markBandEmptyIfLast(bandRef, b){
+  if(!bandRef || !fbDb || !currentUser) return;
+  try{
+    const snap = await bandRef.collection('presence').get();
+    const now = Date.now();
+    const others = snap.docs.filter(function(d){
+      if(d.id === currentUser.uid) return false;
+      const data = d.data() || {};
+      const ts = data.tunedInAt && data.tunedInAt.toMillis ? data.tunedInAt.toMillis()
+        : (typeof data.tunedInAt === 'number' ? data.tunedInAt : 0);
+      return ts && (now - ts) < 90 * 1000;
+    });
+    if(others.length === 0){
+      if(b) b.lastEmptiedAt = Date.now();
+      await bandRef.set({ lastEmptiedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge:true });
+    }
+  }catch(e){ console.warn('[band] empty stamp', e); }
 }
 // If the app is backgrounded or closed while tuned in, drop presence so others don't see a ghost.
 document.addEventListener('visibilitychange', ()=>{

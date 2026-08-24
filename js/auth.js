@@ -510,9 +510,23 @@ function bindAuthListeners(){
       document.body.classList.remove('naluno-gated');
       try{ $('authGate').classList.remove('active'); }catch(_){}
       loadRealProfile(user);
-      try{ if(typeof resumeFindNalunoIfEnabled === 'function') resumeFindNalunoIfEnabled(); }catch(_){}
       try{ if(typeof showInstallPromptSoon === 'function') setTimeout(showInstallPromptSoon, 1600); }catch(_){}
-      try{ if(typeof listenFindNalunoDevices === 'function') listenFindNalunoDevices(); }catch(_){}
+      const bootFind = function(){
+        try{ if(typeof resumeFindNalunoIfEnabled === 'function') resumeFindNalunoIfEnabled(); }catch(_){}
+        try{ if(typeof listenFindNalunoDevices === 'function') listenFindNalunoDevices(); }catch(_){}
+        try{
+          if(typeof findNalunoOpenAfterAuth !== 'undefined' && findNalunoOpenAfterAuth && typeof openFindNaluno === 'function'){
+            findNalunoOpenAfterAuth = false;
+            openFindNaluno();
+          }
+        }catch(_){}
+      };
+      // Wait for a real ID token so the first beacons listener is not denied.
+      if(user.getIdToken){
+        user.getIdToken().then(bootFind).catch(bootFind);
+      } else {
+        bootFind();
+      }
     } else {
       // Explicit sign-out → gate immediately and clear remembered uid.
       if(window.__nalunoSigningOut){
