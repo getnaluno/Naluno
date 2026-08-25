@@ -205,24 +205,20 @@ function renderBspaceMedia(seg){
         const code = vel.error && vel.error.code;
         if(code === 1) return;
         console.warn('[bspace] video error', code, vel.src);
-        // Already-uploaded assets that stopped: re-resolve same-bucket URL once, then blob fallback.
+        // Broadcast stays on Worker URL (no vault, no full-file blob pull for long media).
         if(!vel.dataset.retried && rawSrc){
           vel.dataset.retried = '1';
           try{
             const fixed = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(rawSrc) : rawSrc;
-            if(fixed && fixed !== vel.src){
-              vel.src = fixed;
-              tryPlay();
-              return;
-            }
+            const base = fixed || rawSrc;
+            vel.src = base + (base.indexOf('?') >= 0 ? '&' : '?') + 'r=' + Date.now();
+            tryPlay();
+            return;
           }catch(_){}
-          if(typeof signalEnsurePlayableSrc === 'function'){
-            signalEnsurePlayableSrc(vel, rawSrc).then(function(){ tryPlay(); });
-          } else {
-            const u = rawSrc + (rawSrc.indexOf('?') >= 0 ? '&' : '?') + 'r=' + Date.now();
-            vel.src = u;
+          try{
+            vel.src = rawSrc + (rawSrc.indexOf('?') >= 0 ? '&' : '?') + 'r=' + Date.now();
             vel.play().catch(function(){});
-          }
+          }catch(_){}
         } else {
           showKick();
         }
@@ -233,9 +229,16 @@ function renderBspaceMedia(seg){
         vel.dataset.nalunoKeepAlive = '1';
       }catch(_){}
       setTimeout(function(){ if(vel.paused && vel.dataset.nalunoUserPaused !== '1') tryPlay(); }, 120);
+      // Soft network nudge only — do not full-fetch Broadcast into a blob.
       setTimeout(function(){
-        if(vel.paused && vel.dataset.nalunoUserPaused !== '1' && typeof signalEnsurePlayableSrc === 'function'){
-          signalEnsurePlayableSrc(vel, rawSrc).then(function(){ tryPlay(); });
+        if(vel.paused && vel.dataset.nalunoUserPaused !== '1' && rawSrc && !/^blob:/i.test(String(vel.src||''))){
+          try{
+            const fixed = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(rawSrc) : rawSrc;
+            if(fixed && String(vel.src||'').split('?')[0] !== String(fixed).split('?')[0]){
+              vel.src = fixed;
+            }
+            tryPlay();
+          }catch(_){}
         }
       }, 900);
       setTimeout(function(){ if(vel.paused) showKick(); }, 1600);

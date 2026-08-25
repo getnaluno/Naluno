@@ -541,9 +541,13 @@ function nalunoProbeDuration(file, timeoutMs){
   });
 }
 
-function attachPlaybackGuard(el, url){
+function attachPlaybackGuard(el, url, guardOpts){
   if(!el || el.dataset.nalunoGuard === '1') return;
   el.dataset.nalunoGuard = '1';
+  guardOpts = guardOpts || {};
+  const kind = String(guardOpts.kind || guardOpts.bucket || el.dataset.mediaKind || '');
+  if(kind) el.dataset.mediaKind = kind;
+  const isBroadcast = kind === 'broadcast';
   let recovering = false;
   let waitHits = 0;
   const recover = function(reason){
@@ -576,12 +580,20 @@ function attachPlaybackGuard(el, url){
       if(el.dataset.nalunoUserPaused === '1') return;
       if(!el.paused && el.readyState < 3) recover('waiting');
       else if(el.paused){ el.play().catch(function(){}); }
-      // Repeated underruns on progressive R2: fetch bytes once into a blob URL.
-      if(waitHits >= 3 && !el.dataset.hardRecovered && url && typeof signalEnsurePlayableSrc === 'function'){
+      // Repeated underruns: Signals may hard-recover into a blob; Broadcast stays on Worker URL.
+      if(waitHits >= 3 && !el.dataset.hardRecovered && url){
         el.dataset.hardRecovered = '1';
-        signalEnsurePlayableSrc(el, url).then(function(ok){
-          if(ok) el.play().catch(function(){});
-        });
+        if(isBroadcast){
+          try{
+            const bust = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'r=' + Date.now();
+            el.src = bust;
+          }catch(_){}
+          el.play().catch(function(){});
+        } else if(typeof signalEnsurePlayableSrc === 'function'){
+          signalEnsurePlayableSrc(el, url).then(function(ok){
+            if(ok) el.play().catch(function(){});
+          });
+        }
       }
     }, 400);
   });
@@ -605,7 +617,8 @@ function attachPlaybackGuard(el, url){
       }
     }catch(_){}
   });
-  if(typeof vaultIngestUrl === 'function' && url && String(url).indexOf('blob:') !== 0){
+  // LOCK (20260825b brief): Broadcast never enters the vault. Signals only.
+  if(!isBroadcast && typeof vaultIngestUrl === 'function' && url && String(url).indexOf('blob:') !== 0){
     vaultIngestUrl(url).catch(function(){});
   }
 }
@@ -615,6 +628,7 @@ function bindMediaElement(el, rawUrl, opts){
   opts = opts || {};
   const broadcastId = opts.broadcastId || el.dataset.broadcastId || null;
   const bucket = opts.bucket || opts.kind || '';
+  const isBroadcast = bucket === 'broadcast' || opts.kind === 'broadcast';
   const urls = (typeof nalunoPlayCandidates === 'function')
     ? nalunoPlayCandidates(rawUrl, bucket ? { bucket: bucket } : undefined)
     : [resolveMediaUrl(rawUrl)];
@@ -628,6 +642,7 @@ function bindMediaElement(el, rawUrl, opts){
     : '';
   if(broadcastId) el.dataset.broadcastId = broadcastId;
   if(mediaId) el.dataset.mediaId = mediaId;
+  if(bucket) el.dataset.mediaKind = bucket;
   el.setAttribute('playsinline', '');
   el.setAttribute('webkit-playsinline', '');
   el.setAttribute('preload', 'auto');
@@ -645,31 +660,40 @@ function bindMediaElement(el, rawUrl, opts){
   ));
   if(sameAsset && !el.paused && (el.readyState >= 2 || (el.currentTime || 0) > 0.05)){
     if(mediaId) nalunoMediaSetState(mediaId, 'playing');
-    attachPlaybackGuard(el, url);
+    attachPlaybackGuard(el, url, { kind: bucket || (isBroadcast ? 'broadcast' : '') });
     return;
   }
   if(!sameAsset){
-    const key = (typeof vaultKeyForUrl === 'function') ? vaultKeyForUrl(url) : '';
-    const cached = (key && typeof vaultSyncSrc === 'function') ? vaultSyncSrc(key) : '';
     // Release previous vault hold if this element was on another blob.
     try{
       const prevKey = el.dataset.vaultKey;
       if(prevKey && typeof vaultMarkUnused === 'function') vaultMarkUnused(prevKey);
       delete el.dataset.vaultKey;
     }catch(_){}
-    // Assign src only — never call load() here; load() aborts in-flight play (MEDIA_ERR_ABORTED).
-    if(cached){
-      el.src = cached;
-      if(key){
-        el.dataset.vaultKey = key;
-        if(typeof vaultMarkInUse === 'function') vaultMarkInUse(key);
-      }
-    } else {
+    // LOCK (20260825b brief): Broadcast points straight at the Worker URL — never a vault blob.
+    // Vault remains for Signals only (short clips, offline-friendly).
+    if(isBroadcast){
       el.src = url;
+    } else {
+      const key = (typeof vaultKeyForUrl === 'function') ? vaultKeyForUrl(url) : '';
+      const cached = (key && typeof vaultSyncSrc === 'function') ? vaultSyncSrc(key) : '';
+      // Assign src only — never call load() here; load() aborts in-flight play (MEDIA_ERR_ABORTED).
+      if(cached){
+        el.src = cached;
+        if(key){
+          el.dataset.vaultKey = key;
+          if(typeof vaultMarkInUse === 'function') vaultMarkInUse(key);
+        }
+      } else {
+        el.src = url;
+      }
     }
     if(mediaId) nalunoMediaSetState(mediaId, 'loading');
   }
 
+  // LOCK (brief #3): start urlIndex at 0 = currently assigned primary.
+  // On error, advance to the *next* candidate only after the primary has failed;
+  // never skip urls[0] by incrementing before the first check.
   let urlIndex = 0;
   let recoveredFromBlob = false;
   el.onerror = function(){
@@ -682,8 +706,7 @@ function bindMediaElement(el, rawUrl, opts){
       return;
     }
     const cur = String(el.currentSrc || el.src || '');
-    // LOCK (bug 2.1): revoked vault blob → jump straight back to the network URL.
-    // Do NOT increment past urls[0]; that was the off-by-one that left recovery empty.
+    // Revoked vault blob (Signals only) → jump straight back to the network URL.
     if(!recoveredFromBlob && /^blob:/i.test(cur) && url && !/^blob:/i.test(url)){
       recoveredFromBlob = true;
       try{
@@ -706,14 +729,15 @@ function bindMediaElement(el, rawUrl, opts){
     } else {
       console.warn('[media] load failed', urls[urlIndex], code);
     }
-    urlIndex++;
-    if(urlIndex < urls.length){
+    // Advance only after the current candidate failed; try remaining candidates.
+    if(urlIndex + 1 < urls.length){
+      urlIndex++;
       if(mediaId) nalunoMediaSetState(mediaId, 'retrying');
       el.src = urls[urlIndex];
       el.play().catch(function(){});
       return;
     }
-    // Final fallback: network URL once more (never vault-only dead-end).
+    // Final fallback: primary network URL once more with cache-buster (never vault-only dead-end).
     if(!el.dataset.retried){
       el.dataset.retried = '1';
       if(url && !/^blob:/i.test(url)){
@@ -731,7 +755,7 @@ function bindMediaElement(el, rawUrl, opts){
     el.addEventListener('waiting', mark('buffering'));
     el.addEventListener('stalled', mark('buffering'));
   }
-  attachPlaybackGuard(el, url);
+  attachPlaybackGuard(el, url, { kind: bucket || (isBroadcast ? 'broadcast' : '') });
 }
 
 

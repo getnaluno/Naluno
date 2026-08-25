@@ -2,10 +2,11 @@
    MODULE: js/media-vault.js
    Local media store (IndexedDB). OWNERSHIP: blob cache only.
 
-   LOCK (20260825a / bug 2.1):
+   LOCK (20260825a / bug 2.1 + 20260825b brief):
    - Never revoke a blob URL still attached to a live media element.
    - Evict by least-recently-USED (ts touched on vaultGet), not insert-only.
    - bindMediaElement must vaultMarkInUse / vaultMarkUnused around blob: src.
+   - Broadcast media NEVER enters this vault (Worker URL only). Signals only.
    ============================================================ */
 const NALUNO_VAULT_DB = 'naluno-vault';
 const NALUNO_VAULT_STORE = 'blobs';

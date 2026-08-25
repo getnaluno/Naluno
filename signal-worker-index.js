@@ -22,21 +22,6 @@ async function verifyFirebaseIdToken(idToken, env) {
   return user ? user.localId : null;
 }
 
-
-function sniffVideoContentType(contentType, key) {
-  const ct = (contentType || '').toLowerCase();
-  if (ct.includes('video/') || ct.includes('image/') || ct.includes('audio/')) return contentType;
-  const k = (key || '').toLowerCase();
-  if (k.endsWith('.mp4') || k.endsWith('.m4v')) return 'video/mp4';
-  if (k.endsWith('.webm')) return 'video/webm';
-  if (k.endsWith('.mov')) return 'video/quicktime';
-  if (k.endsWith('.jpg') || k.endsWith('.jpeg')) return 'image/jpeg';
-  if (k.endsWith('.png')) return 'image/png';
-  // Default progressive video for unknown bin from phone uploads
-  if (k.endsWith('.bin') || !ct || ct.includes('octet-stream')) return 'video/mp4';
-  return contentType || 'application/octet-stream';
-}
-
 function corsHeaders(origin, extra) {
   return Object.assign({
     'Access-Control-Allow-Origin': origin || '*',
@@ -90,6 +75,23 @@ async function serveObject(request, env, origin) {
   // HEAD/GET without range first to know size when needed
   const rangeHeader = request.headers.get('Range');
 
+  // Edge cache for full (non-Range) GET /o/** — instant rewatch without re-hitting R2.
+  // Range requests stay on the R2 path (browser progressive playback).
+  // Pair with a Cloudflare Cache Rule on /o/** if dashboard caching is preferred.
+  if (!rangeHeader && request.method === 'GET') {
+    try {
+      const cache = caches.default;
+      const cacheKey = new Request(url.origin + url.pathname, { method: 'GET' });
+      const hit = await cache.match(cacheKey);
+      if (hit) {
+        const headers = new Headers(hit.headers);
+        const cors = corsHeaders(origin);
+        Object.keys(cors).forEach(function (k) { headers.set(k, cors[k]); });
+        return new Response(hit.body, { status: hit.status, statusText: hit.statusText, headers });
+      }
+    } catch (_) {}
+  }
+
   // Always try full metadata first when range is present so we can compute length
   let obj;
   if (rangeHeader) {
@@ -116,7 +118,7 @@ async function serveObject(request, env, origin) {
     const offset = obj.range ? obj.range.offset : (r2range.offset || 0);
     const length = obj.range ? obj.range.length : (r2range.length || (total - offset));
     const headers = corsHeaders(origin, {
-      'Content-Type': sniffVideoContentType((obj.httpMetadata && obj.httpMetadata.contentType) || (head.httpMetadata && head.httpMetadata.contentType) || 'application/octet-stream', key),
+      'Content-Type': (obj.httpMetadata && obj.httpMetadata.contentType) || head.httpMetadata?.contentType || 'application/octet-stream',
       'Accept-Ranges': 'bytes',
       'Content-Length': String(length),
       'Content-Range': `bytes ${offset}-${offset + length - 1}/${total}`,
@@ -133,7 +135,7 @@ async function serveObject(request, env, origin) {
     return new Response('Not found', { status: 404, headers: corsHeaders(origin) });
   }
   const headers = corsHeaders(origin, {
-    'Content-Type': sniffVideoContentType((obj.httpMetadata && obj.httpMetadata.contentType) || 'application/octet-stream', key),
+    'Content-Type': (obj.httpMetadata && obj.httpMetadata.contentType) || 'application/octet-stream',
     'Accept-Ranges': 'bytes',
     'Cache-Control': 'public, max-age=31536000, immutable',
   });
@@ -145,7 +147,15 @@ async function serveObject(request, env, origin) {
   if (request.method === 'HEAD') {
     return new Response(null, { status: 200, headers });
   }
-  return new Response(obj.body, { status: 200, headers });
+  const response = new Response(obj.body, { status: 200, headers });
+  // Populate edge cache for the next full GET (fire-and-forget).
+  try {
+    const cache = caches.default;
+    const cacheKey = new Request(url.origin + url.pathname, { method: 'GET' });
+    const toStore = response.clone();
+    cache.put(cacheKey, toStore).catch(function () {});
+  } catch (_) {}
+  return response;
 }
 
 export default {
