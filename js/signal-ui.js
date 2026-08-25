@@ -135,7 +135,26 @@ function renderBroadcastTab(){
       const c = entry.contact;
       if(!c) return;
       const name = (c.name||'?').split(' ')[0];
-      others += '<div class="bcast-item" data-signal="'+c.id+'"><div class="signal-window"><div class="signal-window-in" style="background:'+(c.color||'#7CFFB2')+';color:#0D0F17;font-weight:700;">'+(c.initials||'?')+'</div></div><span>'+escapeHtml(name)+'</span></div>';
+      const latest = entry.latest || null;
+      // LOCK (20260825c): others must see the paused Signal preview (thumb), not only avatar.
+      let thumbInner = '';
+      try{
+        if(latest && latest.type === 'text'){
+          thumbInner = '<div class="avatar" style="width:100%;height:100%;background:'+(latest.bg||c.color||'#333')+';font-size:9px;padding:4px;text-align:center;line-height:1.15;color:#fff;">'+escapeHtml(String(latest.text||'').slice(0,26))+'</div>';
+        } else if(latest && latest.type === 'video'){
+          const src = latest.thumbDataUrl || '';
+          thumbInner = src
+            ? '<img src="'+src+'" class="mysignal-thumb" style="filter:'+(latest.filterCss||'')+'" alt="" />'
+            : '<div class="avatar" style="width:100%;height:100%;background:#1F2333;font-size:11px;color:#7CFFB2;">▶</div>';
+        } else if(latest && (latest.type === 'photo' || latest.dataUrl)){
+          thumbInner = '<img src="'+(latest.thumbDataUrl || latest.dataUrl || '')+'" class="mysignal-thumb" style="filter:'+(latest.filterCss||'')+'" alt="" />';
+        } else {
+          thumbInner = '<div class="avatar" style="width:100%;height:100%;background:'+(c.color||'#7CFFB2')+';color:#0D0F17;font-weight:700;">'+(c.initials||'?')+'</div>';
+        }
+      }catch(_){
+        thumbInner = '<div class="avatar" style="width:100%;height:100%;background:'+(c.color||'#7CFFB2')+';color:#0D0F17;font-weight:700;">'+(c.initials||'?')+'</div>';
+      }
+      others += '<div class="bcast-item" data-signal="'+c.id+'"><div class="signal-window"><div class="signal-window-in">'+thumbInner+'<span class="signal-play">▶</span></div></div><span>'+escapeHtml(name)+'</span></div>';
     });
     stripEl.innerHTML = '<div class="bcast-item" id="mySignalItem">'+myInner+'</div>'+others;
     const mine = document.getElementById('mySignalItem');
@@ -663,7 +682,10 @@ function closeBroadcast(){
     const app = document.querySelector('.app');
     if(app) app.classList.remove('naluno-landscape-media');
   }catch(_){}
-  try{ if(typeof lockOutChromeMediaSession === 'function') lockOutChromeMediaSession(); }catch(_){}
+  try{
+    if(typeof stopAllAppMediaAndLockSession === 'function') stopAllAppMediaAndLockSession();
+    else if(typeof lockOutChromeMediaSession === 'function') lockOutChromeMediaSession();
+  }catch(_){}
 }
 $('bviewerClose').onclick = closeBroadcast;
 function deleteCurrentSignalClip(){

@@ -60,12 +60,14 @@ $('autoTintToggle').onclick = function(){ this.classList.toggle('on'); };
 
 
 
-/* Live Broadcast alerts from frequencies */
+/* Live Broadcast alerts from frequencies / community — present tense while live */
 function handleBroadcastLiveNotification(n){
   if(!n || n.type !== 'broadcast_live') return;
-  toast((n.fromName || 'Someone') + ' is live');
+  const who = n.fromName || 'Someone';
+  const title = n.title ? (': ' + n.title) : '';
+  toast(who + ' is live' + title);
   if(n.broadcastId && typeof openBroadcastById === 'function'){
-    // soft prompt via toast only; user can search / open
+    // soft prompt via toast; open path remains available via deep link / search
   }
 }
 

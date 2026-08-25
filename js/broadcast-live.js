@@ -139,13 +139,40 @@ async function bLiveStartHost(stream){
   bLiveUpdateViewerChrome(0);
 }
 
+function bLiveFlashJoinName(name){
+  try{
+    const label = String(name || 'Someone').slice(0, 40);
+    let el = document.getElementById('bspaceJoinFlash');
+    if(!el){
+      el = document.createElement('div');
+      el.id = 'bspaceJoinFlash';
+      el.style.cssText = 'position:absolute;left:50%;top:18%;transform:translateX(-50%);z-index:12;padding:10px 18px;border-radius:999px;background:rgba(13,15,23,.88);border:1px solid rgba(124,255,178,.5);color:#7CFFB2;font-family:var(--font-mono);font-size:13px;letter-spacing:.03em;pointer-events:none;opacity:0;transition:opacity .25s ease;';
+      const host = document.getElementById('bspaceMedia') || document.getElementById('bspace');
+      if(host){
+        try{ if(getComputedStyle(host).position === 'static') host.style.position = 'relative'; }catch(_){}
+        host.appendChild(el);
+      } else {
+        document.body.appendChild(el);
+      }
+    }
+    el.textContent = label + ' joined';
+    el.style.opacity = '1';
+    clearTimeout(el._hideT);
+    el._hideT = setTimeout(function(){ el.style.opacity = '0'; }, 3200);
+  }catch(_){}
+}
+
 async function bLiveHostAcceptViewer(viewerUid, data, stream){
   const pc = new RTCPeerConnection(await bLiveEnsureIce());
   bLiveHostPcs[viewerUid] = pc;
 
-  stream.getTracks().forEach(track => {
-    try{ pc.addTrack(track, stream); }catch(e){ console.warn(e); }
-  });
+  // Ensure live tracks are enabled before attaching
+  try{
+    stream.getTracks().forEach(function(track){
+      try{ track.enabled = true; }catch(_){}
+      try{ pc.addTrack(track, stream); }catch(e){ console.warn(e); }
+    });
+  }catch(e){ console.warn('[bcast-live] addTrack', e); }
 
   const ref = bLiveSessionRef(activeBroadcastId, viewerUid);
 
@@ -176,6 +203,13 @@ async function bLiveHostAcceptViewer(viewerUid, data, stream){
     hostUid: currentUser.uid,
     answeredAt: Date.now(),
   }, { merge: true });
+
+  // Name flash for a few seconds when someone joins
+  try{
+    const who = (data && data.name) || 'Someone';
+    bLiveFlashJoinName(who);
+    toast(who + ' joined live');
+  }catch(_){}
 
   // Pull viewer ICE
   iceUnsub = ref.collection('viewerIce').onSnapshot(snap => {
@@ -214,30 +248,52 @@ async function bLiveJoinAsViewer(){
   const pc = new RTCPeerConnection(await bLiveEnsureIce());
   bLiveViewerPc = pc;
   const remote = new MediaStream();
-  pc.ontrack = e => {
-    remote.addTrack(e.track);
+  const attachRemote = function(){
     const host = $('bspaceMedia');
-    if(host){
-      let v = $('bspaceViewerLiveVideo');
-      if(!v){
-        host.innerHTML = `<video id="bspaceViewerLiveVideo" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;background:#000;"></video>`;
-        v = $('bspaceViewerLiveVideo');
-      }
-      if(v){
-        v.muted = true;
-        v.playsInline = true;
-        v.srcObject = remote;
-        const play = function(){
-          v.play().then(function(){
-            setTimeout(function(){ try{ v.muted = false; }catch(_){} }, 250);
-          }).catch(function(){});
-        };
-        play();
-        v.onclick = play;
-      }
+    if(!host) return;
+    let v = $('bspaceViewerLiveVideo');
+    if(!v){
+      host.innerHTML = `<video id="bspaceViewerLiveVideo" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;background:#000;"></video>`;
+      v = $('bspaceViewerLiveVideo');
     }
+    if(!v) return;
+    try{ if(typeof containMediaElement === 'function') containMediaElement(v); }catch(_){}
+    v.muted = true;
+    v.playsInline = true;
+    try{ v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline',''); }catch(_){}
+    if(v.srcObject !== remote) v.srcObject = remote;
+    const play = function(){
+      v.play().then(function(){
+        setTimeout(function(){ try{ v.muted = false; }catch(_){} }, 300);
+      }).catch(function(){
+        try{ v.muted = true; v.play().catch(function(){}); }catch(_){}
+      });
+    };
+    play();
+    v.onclick = play;
+    setTimeout(play, 400);
+    setTimeout(play, 1200);
     const badge = $('bspaceLiveBadge');
     if(badge){ badge.style.display = 'block'; badge.textContent = 'LIVE'; }
+  };
+  pc.ontrack = e => {
+    try{
+      if(e.streams && e.streams[0]){
+        e.streams[0].getTracks().forEach(function(t){
+          if(!remote.getTracks().some(function(x){ return x.id === t.id; })) remote.addTrack(t);
+        });
+      } else if(e.track){
+        if(!remote.getTracks().some(function(x){ return x.id === e.track.id; })) remote.addTrack(e.track);
+      }
+    }catch(_){
+      try{ if(e.track) remote.addTrack(e.track); }catch(_2){}
+    }
+    attachRemote();
+  };
+  pc.onconnectionstatechange = function(){
+    if(pc.connectionState === 'connected' || pc.connectionState === 'completed'){
+      attachRemote();
+    }
   };
 
   try{

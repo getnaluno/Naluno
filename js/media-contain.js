@@ -53,29 +53,64 @@ function nalunoAnyAppMediaPlaying(){
   return false;
 }
 
+/** LOCK (20260825c): Chrome / One UI must NEVER own Naluno media.
+ *  - Always null metadata (no title/artist → no shade card content).
+ *  - Action handlers are no-ops so shade play/pause cannot drive a second stream.
+ *  - When nothing in-app is playing, force playbackState='none' so the OS card dies.
+ *  - While playing we still avoid playbackState='none' (Samsung treats that as pause
+ *    and was the Signal "loads but never plays" bug) — but we never publish metadata.
+ */
 function lockOutChromeMediaSession(){
   if(!navigator.mediaSession) return;
   try{ navigator.mediaSession.metadata = null; }catch(_){}
-  // Swallow shade controls. Do NOT set playbackState='none' while
-  // in-app media is playing — Samsung Chrome treats that as pause,
-  // which was the Signal "loads but never plays" bug.
-  if(!nalunoAnyAppMediaPlaying()){
-    try{ navigator.mediaSession.playbackState = 'none'; }catch(_){}
-  }
   try{
-    if(typeof navigator.mediaSession.setPositionState === 'function' && !nalunoAnyAppMediaPlaying()){
-      navigator.mediaSession.setPositionState({ duration: 0, playbackRate: 1, position: 0 });
+    // Empty metadata is still better than a branded NALUNO card if null is ignored.
+    if(typeof MediaMetadata !== 'undefined'){
+      navigator.mediaSession.metadata = new MediaMetadata({ title: '', artist: '', album: '', artwork: [] });
+      navigator.mediaSession.metadata = null;
     }
-  }catch(_){
-    try{ if(!nalunoAnyAppMediaPlaying()) navigator.mediaSession.setPositionState(undefined); }catch(_2){}
+  }catch(_){}
+  const playing = nalunoAnyAppMediaPlaying();
+  if(!playing){
+    try{ navigator.mediaSession.playbackState = 'none'; }catch(_){}
+    try{
+      if(typeof navigator.mediaSession.setPositionState === 'function'){
+        navigator.mediaSession.setPositionState({ duration: 0, playbackRate: 1, position: 0 });
+      }
+    }catch(_){
+      try{ navigator.mediaSession.setPositionState(undefined); }catch(_2){}
+    }
   }
+  // Shade controls must not start a parallel play path outside Naluno UI.
   ['play','pause','seekbackward','seekforward','seekto','previoustrack','nexttrack','stop'].forEach(function(a){
     try{ navigator.mediaSession.setActionHandler(a, null); }catch(_){}
     try{
-      navigator.mediaSession.setActionHandler(a, function(){});
+      navigator.mediaSession.setActionHandler(a, function(){
+        // Explicit no-op: media lives only in Naluno chrome.
+      });
     }catch(_){}
   });
 }
+
+/** Pause every non-call media element and kill the OS media session card. */
+function stopAllAppMediaAndLockSession(){
+  try{
+    document.querySelectorAll('video, audio').forEach(function(el){
+      try{
+        if(el.closest && el.closest('#callOverlay')) return;
+        if(nalunoClipElement(el)) return;
+        el.dataset.nalunoWantPlay = '0';
+        el.dataset.nalunoUserPaused = '1';
+        delete el.dataset.nalunoKeepAlive;
+        el.pause();
+      }catch(_){}
+    });
+  }catch(_){}
+  lockOutChromeMediaSession();
+  try{ if(navigator.mediaSession) navigator.mediaSession.playbackState = 'none'; }catch(_){}
+}
+window.stopAllAppMediaAndLockSession = stopAllAppMediaAndLockSession;
+window.lockOutChromeMediaSession = lockOutChromeMediaSession;
 
 /* LOCK: Broadcast/Signal must not die after a brief Android hide.
    Notification shade, task switch, and freeze used to pause every
@@ -173,7 +208,10 @@ document.addEventListener('playing', function(e){
 document.addEventListener('pause', function(e){
   const el = e.target;
   if(el && el.closest && el.closest('#callOverlay')) return;
+  // User paused inside Naluno → kill the OS media card so Chrome cannot keep playing.
   lockOutChromeMediaSession();
+  setTimeout(lockOutChromeMediaSession, 40);
+  setTimeout(lockOutChromeMediaSession, 300);
 }, true);
 
 document.addEventListener('visibilitychange', function(){

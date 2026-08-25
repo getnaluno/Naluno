@@ -306,28 +306,104 @@ async function searchBroadcasts(query){
   return broadcastSearchResults;
 }
 
+/** Push a live alert to one person's device via the call-notify Worker (FCM). */
+async function sendPushToContact(contactOrUid, msg){
+  try{
+    const uid = typeof contactOrUid === 'string'
+      ? contactOrUid
+      : (contactOrUid && (contactOrUid.firebaseUid || contactOrUid.uid));
+    if(!uid || !currentUser) return;
+    const workerUrl = (typeof CALL_NOTIFY_WORKER_URL === 'string' && CALL_NOTIFY_WORKER_URL)
+      ? CALL_NOTIFY_WORKER_URL
+      : 'https://naluno-call-notify.naluno.workers.dev';
+    let tokens = { android: null, web: null, primary: null, platform: null };
+    try{
+      const snap = await fbDb.collection('users').doc(uid).get();
+      if(snap.exists){
+        const d = snap.data() || {};
+        tokens.android = d.fcmTokenAndroid || null;
+        tokens.web = d.fcmTokenWeb || null;
+        tokens.primary = d.fcmToken || null;
+        tokens.platform = d.fcmTokenPlatform || null;
+      }
+    }catch(_){}
+    if(!tokens.android && !tokens.web && !tokens.primary) return;
+    const idToken = await currentUser.getIdToken(false);
+    const body = {
+      calleeUid: uid,
+      callerName: (msg && msg.fromName) || (currentProfile && currentProfile.name) || 'Someone',
+      callId: 'live-' + (msg && msg.broadcastId ? msg.broadcastId : Date.now()),
+      title: (msg && msg.title) || 'Live on Naluno',
+      body: (msg && msg.body) || 'Someone is live',
+      type: 'broadcast_live',
+      broadcastId: (msg && msg.broadcastId) || null,
+      fcmTokenAndroid: tokens.android,
+      fcmTokenWeb: tokens.web,
+      fcmToken: tokens.primary,
+      fcmTokenPlatform: tokens.platform,
+      preferPlatform: 'android',
+    };
+    await fetch(workerUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + idToken,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    }).catch(function(){});
+  }catch(e){ console.warn('[live] push', e); }
+}
+window.sendPushToContact = sendPushToContact;
+
 async function notifyFrequenciesLive(broadcastId, title){
   if(!currentUser || !fbDb) return;
-  const real = (contacts || []).filter(c => c.isReal && c.firebaseUid);
+  const fromName = (currentProfile && currentProfile.name) || 'Someone';
+  const liveTitle = title || 'Broadcast';
+  // Present tense while live is ongoing
+  const pushBody = fromName + ' is live: ' + liveTitle;
   const payload = {
     type: 'broadcast_live',
     fromUid: currentUser.uid,
-    fromName: (currentProfile && currentProfile.name) || 'Someone',
+    fromName: fromName,
     broadcastId,
-    title: title || 'Live',
+    title: liveTitle,
     createdAt: Date.now(),
     read: false,
   };
-  await Promise.all(real.slice(0, 40).map(c =>
-    fbDb.collection('users').doc(c.firebaseUid).collection('notifications').add(payload).catch(()=>{})
-  ));
-  // Also try push via existing notify worker if present
-  if(typeof sendPushToContact === 'function'){
-    real.forEach(c => {
-      try{ sendPushToContact(c, { title: 'Live on Naluno', body: (payload.fromName) + ' went live: ' + (title||'') }); }catch(_){}
+  // Frequencies (real contacts)
+  const real = (contacts || []).filter(c => c.isReal && c.firebaseUid);
+  const uids = new Set(real.map(c => c.firebaseUid));
+  // Community = Circle members of this creator
+  try{
+    const circleSnap = await fbDb.collection('users').doc(currentUser.uid).collection('circle').limit(80).get();
+    circleSnap.docs.forEach(function(d){ if(d.id) uids.add(d.id); });
+  }catch(_){}
+  // Broadcast members
+  try{
+    if(broadcastId){
+      const bsnap = await fbDb.collection('broadcasts').doc(broadcastId).get();
+      if(bsnap.exists){
+        const members = (bsnap.data() || {}).memberUids || [];
+        members.forEach(function(uid){ if(uid) uids.add(uid); });
+      }
+    }
+  }catch(_){}
+  uids.delete(currentUser.uid);
+  const list = Array.from(uids).slice(0, 60);
+  await Promise.all(list.map(function(uid){
+    return fbDb.collection('users').doc(uid).collection('notifications').add(payload).catch(function(){});
+  }));
+  // Device push even when Naluno is closed
+  list.forEach(function(uid){
+    sendPushToContact(uid, {
+      title: 'Live on Naluno',
+      body: pushBody,
+      fromName: fromName,
+      broadcastId: broadcastId,
     });
-  }
+  });
 }
+window.notifyFrequenciesLive = notifyFrequenciesLive;
 
 function openBroadcastById(id){
   if(!id) return;

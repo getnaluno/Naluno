@@ -314,10 +314,17 @@ function renderBspaceConversation(docs){
   if(pinned.length){
     pinned.sort((a,b)=> (b.m.ts||0) - (a.m.ts||0));
     const latest = pinned[0].m;
+    const stillLive = !!(activeBroadcastMeta && activeBroadcastMeta.live) ||
+      /is live now|join live/i.test(String(latest.text || ''));
+    const past = /was live|ended|recording saved/i.test(String(latest.text || ''));
+    const label = (stillLive && !past) ? '● LIVE' : '● WAS LIVE';
+    const fallbackText = (stillLive && !past)
+      ? 'Creator is live now — join to watch'
+      : 'Creator was live';
     pin.style.display = 'block';
     pin.innerHTML = `<div class="bspace-card" style="border:1px solid rgba(124,255,178,.45);background:rgba(124,255,178,.08);">
-      <div class="who" style="color:var(--mint);">● LIVE · ${timeAgo(latest.ts || Date.now())}</div>
-      <div class="body" style="font-weight:600;">${bspaceEscape(latest.text || 'Creator went live')}</div>
+      <div class="who" style="color:var(--mint);">${label} · ${timeAgo(latest.ts || Date.now())}</div>
+      <div class="body" style="font-weight:600;">${bspaceEscape(latest.text || fallbackText)}</div>
     </div>`;
   } else {
     pin.style.display = 'none';
@@ -649,6 +656,7 @@ async function openBroadcastSpace(meta){
 }
 
 function closeBroadcastSpace(){
+  try{ if(window.__bspaceNextTimer){ clearTimeout(window.__bspaceNextTimer); window.__bspaceNextTimer = null; } }catch(_){}
   if(typeof bLiveOnSpaceClosed === 'function') bLiveOnSpaceClosed();
   bspaceStopLive();
   bspaceClearListeners();
@@ -664,7 +672,8 @@ function closeBroadcastSpace(){
     if(dock) dock.remove();
   }catch(_){}
   try{
-    if(navigator.mediaSession){
+    if(typeof stopAllAppMediaAndLockSession === 'function') stopAllAppMediaAndLockSession();
+    else if(navigator.mediaSession){
       navigator.mediaSession.metadata = null;
       if(navigator.mediaSession.playbackState !== undefined){
         navigator.mediaSession.playbackState = 'none';
@@ -978,6 +987,22 @@ async function bspaceStopLive(){
       liveAt: null,
       liveBy: null,
     }, { merge:true }).catch(()=>{});
+    // Past tense after live ends (pin + journey)
+    try{
+      const who = (currentProfile && currentProfile.name) || 'Creator';
+      fbDb.collection('broadcasts').doc(bcastId).collection('conversation').add({
+        type: 'system',
+        text: who + ' was live — recording saved when available.',
+        from: currentUser.uid,
+        ts: Date.now(),
+      }).catch(function(){});
+      fbDb.collection('broadcasts').doc(bcastId).collection('journey').add({
+        type: 'live',
+        text: 'Live session ended',
+        ts: Date.now(),
+        by: currentUser.uid,
+      }).catch(function(){});
+    }catch(_){}
   }
 
   // Append recorded live as a chapter on this Broadcast (background)
@@ -1391,19 +1416,75 @@ function wireBspaceSeekAndAutoplay(v){
   setTimeout(tryPlay, 400);
   v.addEventListener('ended', function(){
     if(typeof nalunoResumeIfTruncated === 'function'){
-      nalunoResumeIfTruncated(v, function(){ syncPlayBtn(); });
-      return;
+      const recovered = nalunoResumeIfTruncated(v, function(){ syncPlayBtn(); });
+      if(recovered) return;
     }
     const d = (typeof nalunoTrueDuration === 'function') ? nalunoTrueDuration(v) : v.duration;
     const t = v.currentTime || 0;
-    if(!isFinite(d) || t < (d || 0) - 0.45){
+    if(isFinite(d) && t < (d || 0) - 0.45){
       try{ v.preload = 'auto'; v.currentTime = Math.max(0, t + 0.001); }catch(_){}
       v.play().catch(function(){});
+      return;
     }
+    // True end of content → strand next / nearby / restart
+    if(typeof bspaceOnPlaybackEnded === 'function') bspaceOnPlaybackEnded();
   });
   syncPlayBtn();
   syncTimes();
 }
+
+/** After a Broadcast finishes: auto-suggest next Strand item, else nearby, else restart. */
+function bspaceOnPlaybackEnded(){
+  try{ if(window.__bspaceNextTimer){ clearTimeout(window.__bspaceNextTimer); window.__bspaceNextTimer = null; } }catch(_){}
+  const meta = activeBroadcastMeta || {};
+  const curId = activeBroadcastId;
+  function restartFromStart(){
+    const v = $('bspaceVideoEl');
+    if(!v) return;
+    try{ v.currentTime = 0; }catch(_){}
+    try{
+      v.dataset.nalunoWantPlay = '1';
+      delete v.dataset.nalunoUserPaused;
+      const p = v.play();
+      if(p && p.catch) p.catch(function(){});
+    }catch(_){}
+    try{ toast('Playing from the start'); }catch(_){}
+  }
+  function scheduleOpen(id, label, delayMs){
+    if(!id || id === curId) return false;
+    try{
+      toast((label || 'Next') + ' in a moment…');
+    }catch(_){}
+    window.__bspaceNextTimer = setTimeout(function(){
+      window.__bspaceNextTimer = null;
+      if(activeBroadcastId !== curId) return; // user navigated away
+      if(typeof openBroadcastById === 'function') openBroadcastById(id);
+    }, delayMs || 4500);
+    return true;
+  }
+  // Prefer same Strand peers in order after current
+  const tryStrand = function(){
+    if(!meta.strandId || typeof relatedBroadcasts !== 'function') return Promise.resolve(false);
+    const b = Object.assign({}, meta, { id: curId });
+    return relatedBroadcasts(b).then(function(rel){
+      if(!rel || !rel.items || !rel.items.length) return false;
+      // Prefer next item after current in list, else first other
+      let idx = -1;
+      for(let i = 0; i < rel.items.length; i++){
+        if(rel.items[i].id === curId){ idx = i; break; }
+      }
+      const next = (idx >= 0 && idx + 1 < rel.items.length) ? rel.items[idx + 1] : rel.items.find(function(x){ return x.id !== curId; });
+      if(!next) return false;
+      return scheduleOpen(next.id, (rel.label || 'Next in Strand') + ' · ' + (next.title || 'Broadcast'), 4500);
+    }).catch(function(){ return false; });
+  };
+  tryStrand().then(function(did){
+    if(did) return;
+    // No strand next → restart this Broadcast (single / no nearby autoplay)
+    restartFromStart();
+  });
+}
+window.bspaceOnPlaybackEnded = bspaceOnPlaybackEnded;
 
 function wireBroadcastChapterPlayer(chapters, breathers, opts){
   opts = opts || {};
@@ -1480,10 +1561,20 @@ function wireBroadcastChapterPlayer(chapters, breathers, opts){
       return;
     }
     const shared = bspaceChapterList.length > 1 && bspaceChapterList.every(c => c.mediaUrl === bspaceChapterList[0].mediaUrl);
-    if(shared) return; // one file already finished
-    if(bspaceChapterList.length <= 1) return;
+    if(shared){
+      // Single shared file finished → strand next / restart
+      if(typeof bspaceOnPlaybackEnded === 'function') bspaceOnPlaybackEnded();
+      return;
+    }
+    if(bspaceChapterList.length <= 1){
+      if(typeof bspaceOnPlaybackEnded === 'function') bspaceOnPlaybackEnded();
+      return;
+    }
     const next = bspaceChapterIndex + 1;
-    if(next >= bspaceChapterList.length) return;
+    if(next >= bspaceChapterList.length){
+      if(typeof bspaceOnPlaybackEnded === 'function') bspaceOnPlaybackEnded();
+      return;
+    }
     playBroadcastChapter(next, false);
   };
 }
@@ -1516,6 +1607,7 @@ function playBroadcastChapter(index, userInitiated){
     v.onended = function(){
       const nxt = (typeof nextActiveChapterIndex === 'function') ? nextActiveChapterIndex(bspaceChapterList, index) : index + 1;
       if(nxt >= 0) playBroadcastChapter(nxt, false);
+      else if(typeof bspaceOnPlaybackEnded === 'function') bspaceOnPlaybackEnded();
     };
     return;
   }
