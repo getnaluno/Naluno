@@ -77,30 +77,73 @@ function lockOutChromeMediaSession(){
   });
 }
 
+/* LOCK: Broadcast/Signal must not die after a brief Android hide.
+   Notification shade, task switch, and freeze used to pause every
+   <video> and never call play() again — that was "stops after sometime".
+   Debounce the pause; on return, actually resume anything that still
+   wants to play (nalunoWantPlay / nalunoKeepAlive). */
+let nalunoPauseHideTimer = null;
+
 function pauseAppMediaForBackground(){
   if(nalunoCallUiOpen()) return;
+  if(nalunoPauseHideTimer){ try{ clearTimeout(nalunoPauseHideTimer); }catch(_){} }
+  nalunoPauseHideTimer = setTimeout(function(){
+    nalunoPauseHideTimer = null;
+    try{ if(!document.hidden) return; }catch(_){}
+    document.querySelectorAll('video, audio').forEach(function(el){
+      try{
+        if(el.closest && el.closest('#callOverlay')) return;
+        if(nalunoClipElement(el)) return;
+        if(el.paused) return;
+        el.dataset.nalunoPausedHide = '1';
+        el.pause();
+      }catch(_){}
+    });
+    lockOutChromeMediaSession();
+  }, 700);
+}
+
+function resumeAppMediaAfterForeground(){
+  if(nalunoPauseHideTimer){
+    try{ clearTimeout(nalunoPauseHideTimer); }catch(_){}
+    nalunoPauseHideTimer = null;
+  }
   document.querySelectorAll('video, audio').forEach(function(el){
     try{
-      if(el.closest && el.closest('#callOverlay')) return;
-      if(nalunoClipElement(el)) return;
-      if(el.paused) return;
-      el.dataset.nalunoPausedHide = '1';
-      el.pause();
+      if(!(el.dataset && el.dataset.nalunoPausedHide === '1')) return;
+      delete el.dataset.nalunoPausedHide;
+      // Resume only if this element still wants to play (user did not pause it).
+      const want = el.dataset.nalunoWantPlay === '1' || el.dataset.nalunoKeepAlive === '1';
+      if(!want) return;
+      if(el.ended) return;
+      const p = el.play();
+      if(p && p.catch) p.catch(function(){});
     }catch(_){}
   });
   lockOutChromeMediaSession();
 }
 
-function resumeAppMediaAfterForeground(){
-  document.querySelectorAll('video, audio').forEach(function(el){
-    try{
-      if(el.dataset && el.dataset.nalunoPausedHide === '1'){
-        delete el.dataset.nalunoPausedHide;
-      }
-    }catch(_){}
-  });
-  lockOutChromeMediaSession();
+/** Watchdog: if a keep-alive player is paused while the tab is visible,
+ *  kick it. Never touches user-paused media (nalunoWantPlay !== '1'). */
+function nalunoKeepAliveWatch(){
+  try{
+    if(document.hidden) return;
+    if(nalunoCallUiOpen()) return;
+    document.querySelectorAll('video[data-naluno-want-play="1"], video[data-naluno-keep-alive="1"]').forEach(function(el){
+      try{
+        if(el.dataset.nalunoWantPlay === '0') return;
+        if(el.ended) return;
+        if(el.closest && el.closest('#callOverlay')) return;
+        if(!el.paused) return;
+        // User explicitly paused → kick button is visible; leave it.
+        if(el.dataset.nalunoUserPaused === '1') return;
+        const p = el.play();
+        if(p && p.catch) p.catch(function(){});
+      }catch(_){}
+    });
+  }catch(_){}
 }
+window.nalunoKeepAliveWatch = nalunoKeepAliveWatch;
 
 function hookMediaContainment(){
   lockOutChromeMediaSession();
@@ -154,6 +197,7 @@ setInterval(function(){
     if(el.closest && el.closest('#callOverlay')) return;
     containMediaElement(el);
   });
+  try{ nalunoKeepAliveWatch(); }catch(_){}
 }, 2000);
 
 window.containMediaElement = containMediaElement;

@@ -160,6 +160,11 @@ function renderBspaceMedia(seg){
       const hideKick = function(){ if(kick) kick.style.display = 'none'; };
       const showKick = function(){ if(kick) kick.style.display = 'block'; };
       const tryPlay = function(){
+        try{
+          vel.dataset.nalunoWantPlay = '1';
+          vel.dataset.nalunoKeepAlive = '1';
+          vel.dataset.nalunoUserPaused = '0';
+        }catch(_){}
         try{ vel.muted = true; }catch(_){}
         const p = vel.play();
         if(p && p.then){
@@ -177,20 +182,40 @@ function renderBspaceMedia(seg){
         e.preventDefault();
         e.stopPropagation();
         if(vel.paused) tryPlay();
-        else vel.pause();
+        else {
+          try{ vel.dataset.nalunoUserPaused = '1'; vel.dataset.nalunoWantPlay = '0'; }catch(_){}
+          vel.pause();
+        }
       });
       vel.addEventListener('playing', function(){
         hideKick();
+        try{
+          vel.dataset.nalunoWantPlay = '1';
+          vel.dataset.nalunoKeepAlive = '1';
+          vel.dataset.nalunoUserPaused = '0';
+        }catch(_){}
         try{ if(vel.poster) vel.removeAttribute('poster'); }catch(_){}
         try{ adaptBspaceHeroToVideo(); }catch(_){}
       });
-      vel.addEventListener('pause', function(){ if(vel.ended) return; showKick(); });
+      vel.addEventListener('pause', function(){
+        if(vel.ended) return;
+        showKick();
+      });
       vel.addEventListener('error', function(){
         const code = vel.error && vel.error.code;
         if(code === 1) return;
         console.warn('[bspace] video error', code, vel.src);
+        // Already-uploaded assets that stopped: re-resolve same-bucket URL once, then blob fallback.
         if(!vel.dataset.retried && rawSrc){
           vel.dataset.retried = '1';
+          try{
+            const fixed = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(rawSrc) : rawSrc;
+            if(fixed && fixed !== vel.src){
+              vel.src = fixed;
+              tryPlay();
+              return;
+            }
+          }catch(_){}
           if(typeof signalEnsurePlayableSrc === 'function'){
             signalEnsurePlayableSrc(vel, rawSrc).then(function(){ tryPlay(); });
           } else {
@@ -202,9 +227,14 @@ function renderBspaceMedia(seg){
           showKick();
         }
       });
-      setTimeout(function(){ if(vel.paused) tryPlay(); }, 120);
+      // Want-play from the first gesture so foreground resume + watchdog can re-kick.
+      try{
+        vel.dataset.nalunoWantPlay = '1';
+        vel.dataset.nalunoKeepAlive = '1';
+      }catch(_){}
+      setTimeout(function(){ if(vel.paused && vel.dataset.nalunoUserPaused !== '1') tryPlay(); }, 120);
       setTimeout(function(){
-        if(vel.paused && typeof signalEnsurePlayableSrc === 'function'){
+        if(vel.paused && vel.dataset.nalunoUserPaused !== '1' && typeof signalEnsurePlayableSrc === 'function'){
           signalEnsurePlayableSrc(vel, rawSrc).then(function(){ tryPlay(); });
         }
       }, 900);
@@ -1316,9 +1346,11 @@ function wireBspaceSeekAndAutoplay(v){
   if(playBtn){
     playBtn.onclick = ()=>{
       if(v.paused){
+        try{ v.dataset.nalunoWantPlay = '1'; v.dataset.nalunoKeepAlive = '1'; v.dataset.nalunoUserPaused = '0'; }catch(_){}
         const p = v.play();
         if(p && p.catch) p.catch(()=>{});
       } else {
+        try{ v.dataset.nalunoUserPaused = '1'; v.dataset.nalunoWantPlay = '0'; }catch(_){}
         v.pause();
       }
       syncPlayBtn();

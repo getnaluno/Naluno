@@ -545,34 +545,65 @@ function attachPlaybackGuard(el, url){
   if(!el || el.dataset.nalunoGuard === '1') return;
   el.dataset.nalunoGuard = '1';
   let recovering = false;
-  const recover = function(){
+  let waitHits = 0;
+  const recover = function(reason){
     if(recovering || !el) return;
+    if(el.dataset.nalunoUserPaused === '1') return;
     const d = el.duration;
     const t = el.currentTime || 0;
     if(el.ended && nalunoFiniteDuration(d) && t >= d - 0.4) return;
     recovering = true;
     try{ el.preload = 'auto'; }catch(_){}
     try{
-      if(el.ended || (el.paused && el.readyState < 3)){
-        try{ el.currentTime = Math.max(0, t + 0.001); }catch(_){}
+      // Nudge past a stuck keyframe / false end — never call load() (aborts play).
+      if(el.ended || el.paused || el.readyState < 3){
+        try{ el.currentTime = Math.max(0, t + 0.05); }catch(_){}
       }
       const p = el.play();
       if(p && p.catch) p.catch(function(){});
     }catch(_){}
-    setTimeout(function(){ recovering = false; }, 1400);
+    setTimeout(function(){ recovering = false; }, 1600);
+    try{
+      if(typeof nalunoMediaDiag === 'function'){
+        nalunoMediaDiag(el.dataset.broadcastId || null, el.dataset.mediaId || null, 'playback_recover', reason || 'guard');
+      }
+    }catch(_){}
   };
   el.addEventListener('waiting', function(){
+    waitHits++;
     setTimeout(function(){
       if(el.ended) return;
-      if(!el.paused && el.readyState < 3) recover();
+      if(el.dataset.nalunoUserPaused === '1') return;
+      if(!el.paused && el.readyState < 3) recover('waiting');
       else if(el.paused){ el.play().catch(function(){}); }
-    }, 450);
+      // Repeated underruns on progressive R2: fetch bytes once into a blob URL.
+      if(waitHits >= 3 && !el.dataset.hardRecovered && url && typeof signalEnsurePlayableSrc === 'function'){
+        el.dataset.hardRecovered = '1';
+        signalEnsurePlayableSrc(el, url).then(function(ok){
+          if(ok) el.play().catch(function(){});
+        });
+      }
+    }, 400);
   });
-  el.addEventListener('stalled', recover);
+  el.addEventListener('stalled', function(){ recover('stalled'); });
+  el.addEventListener('suspend', function(){
+    if(el.dataset.nalunoUserPaused === '1') return;
+    if(el.paused && !el.ended && (el.currentTime || 0) > 0.05){
+      setTimeout(function(){ if(el.paused && !el.ended) recover('suspend'); }, 600);
+    }
+  });
   el.addEventListener('ended', function(){
     const d = el.duration;
     const t = el.currentTime || 0;
-    if(!nalunoFiniteDuration(d) || t < d - 0.45) recover();
+    if(!nalunoFiniteDuration(d) || t < d - 0.45) recover('false_ended');
+  });
+  el.addEventListener('playing', function(){
+    try{
+      if(el.dataset.nalunoUserPaused !== '1'){
+        el.dataset.nalunoWantPlay = '1';
+        el.dataset.nalunoKeepAlive = '1';
+      }
+    }catch(_){}
   });
   if(typeof vaultIngestUrl === 'function' && url && String(url).indexOf('blob:') !== 0){
     vaultIngestUrl(url).catch(function(){});

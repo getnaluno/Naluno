@@ -1155,6 +1155,28 @@ async function flipCamera(){
 }
 
 
+/** Background warm-up so the next dial does not wait on getUserMedia.
+ *  Safe to call from Frequencies / call lobby — never blocks the UI. */
+function prewarmCameraForCall(){
+  try{
+    if(typeof mediaStreamIsLive === 'function' && mediaStreamIsLive(stream)
+      && stream.getAudioTracks().some(function(t){ return t.readyState === 'live'; })){
+      return;
+    }
+  }catch(_){}
+  try{
+    if(window._nalunoCamPrewarm) return;
+    window._nalunoCamPrewarm = true;
+    // Fire and forget — enableCameraForCall itself is the shared path.
+    Promise.resolve().then(function(){
+      return (typeof enableCameraForCall === 'function') ? enableCameraForCall() : null;
+    }).catch(function(){}).then(function(){
+      setTimeout(function(){ window._nalunoCamPrewarm = false; }, 8000);
+    });
+  }catch(_){ window._nalunoCamPrewarm = false; }
+}
+window.prewarmCameraForCall = prewarmCameraForCall;
+
 async function enableCameraForCall(){
   try{ cameraAcquire('call'); }catch(_){}
   function hideCamFallback(){
@@ -1184,10 +1206,11 @@ async function enableCameraForCall(){
     stream = null;
   }
   const audioConstraints = { echoCancellation: { ideal: true }, noiseSuppression: { ideal: true }, autoGainControl: { ideal: true } };
-  // Open fast with high ideal (device grants what it can). Then climb to sensor max.
+  // LOCK (call connect): open 720p FIRST. 1080-first cost 3–7s on many Androids
+  // before the offer could even be written. Climb to sensor max after tracks are live.
   const attempts = [
-    { video: { facingMode: { ideal: cameraFacingMode }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 60 } }, audio: audioConstraints },
     { video: { facingMode: { ideal: cameraFacingMode }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 60 } }, audio: audioConstraints },
+    { video: { facingMode: { ideal: cameraFacingMode }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 60 } }, audio: audioConstraints },
     { video: { facingMode: { ideal: cameraFacingMode } }, audio: audioConstraints },
     { video: true, audio: true },
   ];

@@ -422,6 +422,7 @@ function playSegment(idx, direction=1){
 
     const kickPlay = function(){
       if(!v) return;
+      try{ v.dataset.nalunoWantPlay = '1'; v.dataset.nalunoKeepAlive = '1'; v.dataset.nalunoUserPaused = '0'; }catch(_){}
       try{ v.muted = true; }catch(_){}
       const p = v.play();
       if(p && p.then){
@@ -569,7 +570,10 @@ function playSegment(idx, direction=1){
         e.preventDefault();
         e.stopPropagation();
         if(v.paused) startPlayback();
-        else v.pause();
+        else {
+          try{ v.dataset.nalunoUserPaused = '1'; v.dataset.nalunoWantPlay = '0'; }catch(_){}
+          v.pause();
+        }
       });
     }
     if(muteBtn){

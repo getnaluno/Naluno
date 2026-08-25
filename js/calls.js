@@ -43,6 +43,8 @@ function resumeBackgroundMediaAfterCall(){
 }
 
 function showCallScreen(id){
+  try{ if(typeof prewarmCameraForCall === 'function' && arguments[0] !== 'incall') prewarmCameraForCall(); }catch(_){}
+
   document.querySelectorAll('.callscreen').forEach(s=>s.classList.remove('active'));
   const screen = $(id);
   if(screen) screen.classList.add('active');
@@ -1457,6 +1459,8 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
 
 
 async function startRealCall(c){
+  // Kick camera early if a prior prewarm already has a live stream (0ms path).
+  try{ if(typeof prewarmCameraForCall === 'function') prewarmCameraForCall(); }catch(_){}
   // Definitive reset before every outbound call — long calls leave dead tracks,
   // half-closed PCs, and stuck flags that break the next dial to the same person.
   if(notifyRepeatInterval){ try{ clearInterval(notifyRepeatInterval); }catch(_){} try{ clearTimeout(notifyRepeatInterval); }catch(_){} notifyRepeatInterval = null; }
