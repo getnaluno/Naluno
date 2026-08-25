@@ -971,6 +971,8 @@ async function postSegmentsNow(newSegments){
     let lastErrorMessage = '';
     let videoIndex = 0;
     const totalVideos = newSegments.filter(s=>s.type==='video').length;
+    // LOCK (bug 1.1): one R2 upload per groupId — not once per auto-split part.
+    const sharedByGroup = {};
     for(const seg of newSegments){
       let segToSave = seg;
       if(seg.type==='video'){
@@ -979,32 +981,46 @@ async function postSegmentsNow(newSegments){
           ? `Uploading to your signal\u2026 part ${videoIndex} of ${totalVideos}`
           : 'Uploading to your signal\u2026');
         try{
-          // Prefer extracted Blob, then original File, then dataUrl.
-          let source = seg.videoBlob || seg.sourceFile || seg.dataUrl;
-          if(!source) throw new Error('No video data');
-          // Samsung HEVC loads as a still unless converted to VP8/VP9/H264 webm.
-          if(typeof nalunoPrepareSignalVideo === 'function'){
-            source = await nalunoPrepareSignalVideo(source, function(p, msg){
-              if(hasVideo) setBgProgress(
-                (videoIndex - 1) / totalVideos + (p || 0) / totalVideos * 0.85,
-                msg || 'Preparing video…'
-              );
-            });
+          const gid = seg.groupId || ('solo-' + videoIndex);
+          if(sharedByGroup[gid] && sharedByGroup[gid].videoUrl){
+            const shared = sharedByGroup[gid];
+            const { dataUrl, videoBlob, sourceFile, ...rest } = seg;
+            segToSave = {
+              ...rest,
+              videoUrl: shared.videoUrl,
+              thumbDataUrl: shared.thumbDataUrl,
+              localPlayUrl: shared.localPlayUrl || '',
+              codecHint: shared.codecHint || null,
+              sharedSource: true,
+            };
+          } else {
+            let source = seg.videoBlob || seg.sourceFile || seg.dataUrl;
+            if(!source) throw new Error('No video data');
+            if(typeof nalunoPrepareSignalVideo === 'function'){
+              source = await nalunoPrepareSignalVideo(source, function(p, msg){
+                if(hasVideo) setBgProgress(
+                  (videoIndex - 1) / totalVideos + (p || 0) / totalVideos * 0.85,
+                  msg || 'Preparing video…'
+                );
+              });
+            }
+            if(hasVideo) setBgProgress((videoIndex - 0.15) / totalVideos, 'Uploading to your signal…');
+            const videoUrl = await uploadVideoToR2(source);
+            const thumbSrc = (source instanceof Blob || source instanceof File)
+              ? URL.createObjectURL(source)
+              : (seg.videoBlob
+                ? URL.createObjectURL(seg.videoBlob)
+                : (seg.sourceFile ? URL.createObjectURL(seg.sourceFile) : seg.dataUrl));
+            const thumbDataUrl = await generateVideoThumbnail(thumbSrc);
+            const localPlayUrl = (source instanceof Blob || source instanceof File)
+              ? URL.createObjectURL(source)
+              : '';
+            try{ URL.revokeObjectURL(thumbSrc); }catch(_){}
+            const codecHint = (source && source.type) || null;
+            sharedByGroup[gid] = { videoUrl, thumbDataUrl, localPlayUrl, codecHint };
+            const { dataUrl, videoBlob, sourceFile, ...rest } = seg;
+            segToSave = { ...rest, videoUrl, thumbDataUrl, localPlayUrl, codecHint, sharedSource: true };
           }
-          if(hasVideo) setBgProgress((videoIndex - 0.15) / totalVideos, 'Uploading to your signal…');
-          const videoUrl = await uploadVideoToR2(source);
-          const thumbSrc = (source instanceof Blob || source instanceof File)
-            ? URL.createObjectURL(source)
-            : (seg.videoBlob
-              ? URL.createObjectURL(seg.videoBlob)
-              : (seg.sourceFile ? URL.createObjectURL(seg.sourceFile) : seg.dataUrl));
-          const thumbDataUrl = await generateVideoThumbnail(thumbSrc);
-          const localPlayUrl = (source instanceof Blob || source instanceof File)
-            ? URL.createObjectURL(source)
-            : '';
-          try{ URL.revokeObjectURL(thumbSrc); }catch(_){}
-          const { dataUrl, videoBlob, sourceFile, ...rest } = seg;
-          segToSave = { ...rest, videoUrl, thumbDataUrl, localPlayUrl, codecHint: (source && source.type) || null };
         }catch(e){
           failed++;
           lastErrorMessage = e.message || 'Unknown error';

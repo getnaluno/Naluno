@@ -4,26 +4,17 @@
    OWNERSHIP: change this domain here only.
    Scripts share globals (intentional) so load order matches the old monolith.
    ============================================================ */
-/* ---------------- REAL END-TO-END ENCRYPTION (Wireline text) ----------------
-   Real ECDH (P-256) key pairs — your private key is generated on-device and never
-   transmitted anywhere, not even to our own servers. Two people's own private key
-   combined with the OTHER person's public key mathematically derives the exact same
-   shared secret on both ends (that's the actual ECDH property, not an assumption) —
-   that shared secret becomes an AES-GCM key, and that's what actually encrypts each
-   message. Firestore only ever stores ciphertext for real contacts' text messages;
-   even a database admin reading the raw documents sees unreadable bytes.
+/* ---------------- Wireline text crypto (honest status) ----------------
+   ECDH (P-256) + AES-GCM helpers remain for backward-compat decryption of older
+   messages that still carry envelopes. CURRENT SEND PATH (wireline.js): plaintext
+   is the source of truth. After key rotation / IDB eviction, ciphertext-only
+   messages vanished; the product decision is that text must never disappear, so
+   sendRealMessage writes { type:'text', text, encrypted:false } and never calls
+   encryptMessageText. Band text follows the same policy (band-room.js).
 
-   Honest limitations, stated plainly:
-   - The private key lives in this browser's IndexedDB, this device only — it doesn't
-     sync anywhere. Signing in on a new device starts a fresh key pair, and messages
-     encrypted under the old one become unreadable there. Real E2E platforms solve
-     multi-device key sharing with a much bigger protocol than this pass attempts.
-   - Only Wireline TEXT messages are encrypted in this pass. Voice notes, moods, and
-     reactions still send as before — a deliberate scoping choice, not an oversight,
-     given how large this feature already is on its own.
-   - If a contact hasn't generated a key yet (hasn't opened the app since this
-     shipped), messages to them fall back to the old plaintext behavior automatically
-     — this feature must not silently break existing conversations mid-rollout. */
+   The helpers below are still used on the read path when an old encrypted doc is
+   encountered. Do not re-enable encrypt-on-send without a multi-device key-sync
+   plan and a migration that keeps plaintext readable. */
 const E2E_DB_NAME = 'naluno-keys', E2E_STORE = 'keys';
 function openKeyDb(){
   return new Promise((resolve, reject)=>{

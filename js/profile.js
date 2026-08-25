@@ -56,13 +56,16 @@ function applyNavState(state){
   }, 700);
 }
 
+let _navRestoredOnce = false;
 function restoreNavStateOnBoot(){
   try{
+    if(_navRestoredOnce) return;
     const raw = sessionStorage.getItem(NALUNO_NAV_KEY);
     if(!raw) return;
     const state = JSON.parse(raw);
     if(!state || !state.ts || (Date.now() - state.ts) > 6*60*60*1000) return; // 6h max
     applyNavState(state);
+    _navRestoredOnce = true;
   }catch(_){}
 }
 

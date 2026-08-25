@@ -1,13 +1,18 @@
 /* ============================================================
    MODULE: js/media-vault.js
-   Local media store (IndexedDB). Slips play from this phone
-   even with no network. OWNERSHIP: blob cache only.
+   Local media store (IndexedDB). OWNERSHIP: blob cache only.
+
+   LOCK (20260825a / bug 2.1):
+   - Never revoke a blob URL still attached to a live media element.
+   - Evict by least-recently-USED (ts touched on vaultGet), not insert-only.
+   - bindMediaElement must vaultMarkInUse / vaultMarkUnused around blob: src.
    ============================================================ */
 const NALUNO_VAULT_DB = 'naluno-vault';
 const NALUNO_VAULT_STORE = 'blobs';
 const NALUNO_VAULT_MAX_BYTES = 80 * 1024 * 1024;
 
 const vaultUrlCache = {};
+const vaultInUse = {};
 let vaultDbPromise = null;
 
 function vaultOpen(){
@@ -35,6 +40,35 @@ function vaultIdbReq(req){
     req.onsuccess = function(){ resolve(req.result); };
     req.onerror = function(){ reject(req.error); };
   });
+}
+
+function vaultMarkInUse(key){
+  if(!key) return;
+  vaultInUse[key] = (vaultInUse[key] || 0) + 1;
+}
+function vaultMarkUnused(key){
+  if(!key) return;
+  const n = (vaultInUse[key] || 0) - 1;
+  if(n <= 0) delete vaultInUse[key];
+  else vaultInUse[key] = n;
+}
+function vaultIsInUse(key){
+  return (vaultInUse[key] || 0) > 0;
+}
+
+function vaultTouchTs(key){
+  if(!key) return;
+  vaultOpen().then(function(db){
+    const tx = db.transaction(NALUNO_VAULT_STORE, 'readwrite');
+    const store = tx.objectStore(NALUNO_VAULT_STORE);
+    const req = store.get(key);
+    req.onsuccess = function(){
+      const rec = req.result;
+      if(!rec) return;
+      rec.ts = Date.now();
+      try{ store.put(rec, key); }catch(_){}
+    };
+  }).catch(function(){});
 }
 
 async function vaultPut(key, blob, meta){
@@ -69,12 +103,16 @@ async function vaultGet(key){
   if(!key) return null;
   const db = await vaultOpen();
   const rec = await vaultIdbReq(db.transaction(NALUNO_VAULT_STORE, 'readonly').objectStore(NALUNO_VAULT_STORE).get(key));
+  if(rec) vaultTouchTs(key);
   return rec || null;
 }
 
 async function vaultObjectUrl(key){
   if(!key) return '';
-  if(vaultUrlCache[key]) return vaultUrlCache[key];
+  if(vaultUrlCache[key]){
+    vaultTouchTs(key);
+    return vaultUrlCache[key];
+  }
   const rec = await vaultGet(key);
   if(!rec || !rec.blob) return '';
   vaultUrlCache[key] = URL.createObjectURL(rec.blob);
@@ -108,6 +146,7 @@ function vaultSyncSrc(key){
   return vaultUrlCache[key] || '';
 }
 
+/** Evict idle cache only. Never revoke an in-use blob URL. */
 async function vaultMaybeEvict(force){
   const db = await vaultOpen();
   const rows = [];
@@ -133,11 +172,13 @@ async function vaultMaybeEvict(force){
   const store = tx.objectStore(NALUNO_VAULT_STORE);
   const target = NALUNO_VAULT_MAX_BYTES * 0.6;
   for(let i = 0; i < rows.length && total > target; i++){
-    store.delete(rows[i].key);
+    const k = rows[i].key;
+    if(vaultIsInUse(k)) continue;
+    store.delete(k);
     total -= rows[i].bytes;
-    if(vaultUrlCache[rows[i].key]){
-      try{ URL.revokeObjectURL(vaultUrlCache[rows[i].key]); }catch(_){}
-      delete vaultUrlCache[rows[i].key];
+    if(vaultUrlCache[k]){
+      try{ URL.revokeObjectURL(vaultUrlCache[k]); }catch(_){}
+      delete vaultUrlCache[k];
     }
   }
 }
@@ -160,3 +201,16 @@ async function vaultHydrateThread(){
     }catch(_){}
   }
 }
+
+window.vaultMarkInUse = vaultMarkInUse;
+window.vaultMarkUnused = vaultMarkUnused;
+window.vaultIsInUse = vaultIsInUse;
+window.vaultKeyForUrl = vaultKeyForUrl;
+window.vaultSyncSrc = vaultSyncSrc;
+window.vaultObjectUrl = vaultObjectUrl;
+window.vaultIngestUrl = vaultIngestUrl;
+window.vaultIngestFile = vaultIngestFile;
+window.vaultPut = vaultPut;
+window.vaultGet = vaultGet;
+window.vaultHydrateThread = vaultHydrateThread;
+window.vaultMaybeEvict = vaultMaybeEvict;

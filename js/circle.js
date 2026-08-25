@@ -67,21 +67,27 @@
     if(!fbDb || !creatorUid) return Promise.resolve();
     const monthKey = nalunoMonthKey();
     const ref = fbDb.collection('toga').doc(creatorUid);
-    return ref.get().then(function(snap){
-      const d = snap.exists ? (snap.data() || {}) : {};
-      const same = d.monthKey === monthKey;
-      const next = Object.assign({}, patch, {
-        monthKey: monthKey,
-        viewsMonth: (same ? (d.viewsMonth || 0) : 0) + (patch.viewsMonthDelta || 0),
-        circleMonth: (same ? (d.circleMonth || 0) : 0) + (patch.circleMonthDelta || 0),
-        engageMonth: (same ? (d.engageMonth || 0) : 0) + (patch.engageMonthDelta || 0),
-        updatedAt: Date.now(),
+    // LOCK (bug 3.2): transaction so concurrent views/joins cannot overwrite each other.
+    return fbDb.runTransaction(function(tx){
+      return tx.get(ref).then(function(snap){
+        const d = snap.exists ? (snap.data() || {}) : {};
+        const same = d.monthKey === monthKey;
+        const viewsMonth = (same ? (d.viewsMonth || 0) : 0) + (patch.viewsMonthDelta || 0);
+        const circleMonth = (same ? (d.circleMonth || 0) : 0) + (patch.circleMonthDelta || 0);
+        const engageMonth = (same ? (d.engageMonth || 0) : 0) + (patch.engageMonthDelta || 0);
+        const next = {
+          monthKey: monthKey,
+          viewsMonth: viewsMonth,
+          circleMonth: circleMonth,
+          engageMonth: engageMonth,
+          scoreMonth: viewsMonth + circleMonth * 12 + engageMonth * 3,
+          updatedAt: Date.now(),
+        };
+        if(patch.featuredBroadcastId) next.featuredBroadcastId = patch.featuredBroadcastId;
+        if(patch.name) next.name = patch.name;
+        if(patch.viewsTotal != null) next.viewsTotal = patch.viewsTotal;
+        tx.set(ref, next, { merge: true });
       });
-      delete next.viewsMonthDelta;
-      delete next.circleMonthDelta;
-      delete next.engageMonthDelta;
-      next.scoreMonth = (next.viewsMonth || 0) + (next.circleMonth || 0) * 12 + (next.engageMonth || 0) * 3;
-      return ref.set(next, { merge: true });
     }).catch(function(){});
   }
 

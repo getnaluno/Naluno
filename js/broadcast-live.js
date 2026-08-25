@@ -153,10 +153,17 @@ async function bLiveHostAcceptViewer(viewerUid, data, stream){
     if(!e.candidate) return;
     ref.collection('hostIce').add(e.candidate.toJSON()).catch(()=>{});
   };
+  let iceUnsub = null;
   pc.onconnectionstatechange = () => {
     if(pc.connectionState === 'failed' || pc.connectionState === 'closed'){
       try{ pc.close(); }catch(_){}
       delete bLiveHostPcs[viewerUid];
+      // LOCK (bug 3.3): drop this viewer's ICE listener on disconnect so multi-hour
+      // hosts do not accumulate one permanent onSnapshot per departed viewer.
+      if(iceUnsub){
+        try{ iceUnsub(); }catch(_){}
+        iceUnsub = null;
+      }
       bLiveUpdateViewerChrome(Object.keys(bLiveHostPcs).length);
     }
   };
@@ -171,13 +178,13 @@ async function bLiveHostAcceptViewer(viewerUid, data, stream){
   }, { merge: true });
 
   // Pull viewer ICE
-  const iceUnsub = ref.collection('viewerIce').onSnapshot(snap => {
+  iceUnsub = ref.collection('viewerIce').onSnapshot(snap => {
     snap.docChanges().forEach(ch => {
       if(ch.type !== 'added') return;
       pc.addIceCandidate(new RTCIceCandidate(ch.doc.data())).catch(()=>{});
     });
   });
-  bLiveHostUnsubs.push(iceUnsub);
+  bLiveHostUnsubs.push(function(){ if(iceUnsub){ try{ iceUnsub(); }catch(_){} iceUnsub = null; } });
 }
 
 async function bLiveStopHost(){

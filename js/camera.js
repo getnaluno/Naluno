@@ -1241,24 +1241,32 @@ async function enableCameraForCall(){
   try{
     const vt = stream.getVideoTracks()[0];
     if(vt && vt.applyConstraints){
+      // LOCK (bug 1.7): single sequential climb with generation token — dual timers
+      // previously shared si and could apply 1440p after 4K had already succeeded.
       const steps = [
         { width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: 30, max: 60 } },
         { width: { ideal: 2560 }, height: { ideal: 1440 }, frameRate: { ideal: 30, max: 60 } },
         { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 60 } },
       ];
+      const gen = (window._nalunoCamClimbGen = (window._nalunoCamClimbGen || 0) + 1);
       let si = 0;
       const climb = function(){
+        if(gen !== window._nalunoCamClimbGen) return;
         if(si >= steps.length) {
           try{ updateCameraQualityBadge && updateCameraQualityBadge(); }catch(_){}
           return;
         }
         const step = steps[si++];
         vt.applyConstraints(step).then(function(){
+          if(gen !== window._nalunoCamClimbGen) return;
           try{ updateCameraQualityBadge && updateCameraQualityBadge(); }catch(_){}
-        }).catch(function(){ climb(); });
+          // Success: stop climbing further (do not downgrade).
+        }).catch(function(){
+          if(gen !== window._nalunoCamClimbGen) return;
+          climb();
+        });
       };
       setTimeout(climb, 400);
-      setTimeout(climb, 2200);
     }
   }catch(_){}
   try{ updateCameraQualityBadge && updateCameraQualityBadge(); }catch(_){}

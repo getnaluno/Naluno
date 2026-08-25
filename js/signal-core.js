@@ -651,12 +651,27 @@ function bindMediaElement(el, rawUrl, opts){
   if(!sameAsset){
     const key = (typeof vaultKeyForUrl === 'function') ? vaultKeyForUrl(url) : '';
     const cached = (key && typeof vaultSyncSrc === 'function') ? vaultSyncSrc(key) : '';
+    // Release previous vault hold if this element was on another blob.
+    try{
+      const prevKey = el.dataset.vaultKey;
+      if(prevKey && typeof vaultMarkUnused === 'function') vaultMarkUnused(prevKey);
+      delete el.dataset.vaultKey;
+    }catch(_){}
     // Assign src only — never call load() here; load() aborts in-flight play (MEDIA_ERR_ABORTED).
-    el.src = cached || url;
+    if(cached){
+      el.src = cached;
+      if(key){
+        el.dataset.vaultKey = key;
+        if(typeof vaultMarkInUse === 'function') vaultMarkInUse(key);
+      }
+    } else {
+      el.src = url;
+    }
     if(mediaId) nalunoMediaSetState(mediaId, 'loading');
   }
 
   let urlIndex = 0;
+  let recoveredFromBlob = false;
   el.onerror = function(){
     const code = el.error && el.error.code;
     // MEDIA_ERR_ABORTED (1) means src was reset (load()/new src). Do not hop buckets.
@@ -664,6 +679,23 @@ function bindMediaElement(el, rawUrl, opts){
       if(typeof nalunoMediaDiag === 'function'){
         nalunoMediaDiag(broadcastId, mediaId, 'component_remount_or_abort', { code: 1, src: el.src });
       }
+      return;
+    }
+    const cur = String(el.currentSrc || el.src || '');
+    // LOCK (bug 2.1): revoked vault blob → jump straight back to the network URL.
+    // Do NOT increment past urls[0]; that was the off-by-one that left recovery empty.
+    if(!recoveredFromBlob && /^blob:/i.test(cur) && url && !/^blob:/i.test(url)){
+      recoveredFromBlob = true;
+      try{
+        const vk = el.dataset.vaultKey;
+        if(vk && typeof vaultMarkUnused === 'function') vaultMarkUnused(vk);
+        delete el.dataset.vaultKey;
+      }catch(_){}
+      if(typeof nalunoMediaDiag === 'function'){
+        nalunoMediaDiag(broadcastId, mediaId, 'vault_blob_revoked_recover', { src: cur });
+      }
+      el.src = url;
+      el.play().catch(function(){});
       return;
     }
     const cause = (typeof nalunoMediaClassifyError === 'function')
@@ -681,13 +713,12 @@ function bindMediaElement(el, rawUrl, opts){
       el.play().catch(function(){});
       return;
     }
+    // Final fallback: network URL once more (never vault-only dead-end).
     if(!el.dataset.retried){
       el.dataset.retried = '1';
-      const key = (typeof vaultKeyForUrl === 'function') ? vaultKeyForUrl(url) : '';
-      if(key && typeof vaultObjectUrl === 'function'){
-        vaultObjectUrl(key).then(function(u){
-          if(u){ el.src = u; el.play().catch(function(){}); }
-        }).catch(function(){});
+      if(url && !/^blob:/i.test(url)){
+        el.src = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'r=' + Date.now();
+        el.play().catch(function(){});
       }
     }
   };

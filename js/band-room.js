@@ -700,15 +700,15 @@ async function inviteToBand(contactId, mode){
   }
 }
 
-/* Listen for square invites in the personal inbox */
+/* Listen for square invites + live Broadcast alerts in the personal inbox */
 let bandNotifUnsub = null;
 function startBandInviteListener(){
   if(!fbDb || !currentUser) return;
   if(bandNotifUnsub){ bandNotifUnsub(); bandNotifUnsub = null; }
+  // No type filter: band_invite and broadcast_live both land here (bug 1.5).
   bandNotifUnsub = fbDb.collection('users').doc(currentUser.uid).collection('notifications')
-    .where('type','==','band_invite')
     .orderBy('ts','desc')
-    .limit(10)
+    .limit(20)
     .onSnapshot(snap=>{
       snap.docChanges().forEach(ch=>{
         if(ch.type !== 'added') return;
@@ -716,6 +716,13 @@ function startBandInviteListener(){
         if(n.read) return;
         const ts = n.ts && n.ts.toMillis ? n.ts.toMillis() : 0;
         if(ts && Date.now() - ts > 3600000) return; // ignore older than 1h on first paint
+        if(n.type === 'broadcast_live'){
+          if(typeof handleBroadcastLiveNotification === 'function') handleBroadcastLiveNotification(n);
+          else toast((n.fromName || 'Someone') + ' is live');
+          ch.doc.ref.update({ read: true }).catch(()=>{});
+          return;
+        }
+        if(n.type !== 'band_invite') return;
         toast((n.fromName || 'Someone') + ' invited you to · ' + (n.bandName || 'a Band'));
         ch.doc.ref.update({ read: true }).catch(()=>{});
         // Ensure the band appears in the local list
@@ -1099,17 +1106,16 @@ async function sendBandMessage(){
       toast('Offline — Band message queued');
       return;
     }
-    const members = b.memberUids || (b.memberInfo||[]).map(m=>m.uid).concat([currentUser.uid]);
-    const unique = Array.from(new Set(members));
-    const envelopes = await encryptBandMessageForMembers(unique, text);
+    // LOCK (bug 1.3): skip encryptBandMessageForMembers — it paid full ECDH/AES cost
+    // for every member, then discarded the envelopes. Plaintext is the source of truth
+    // after key-rotation drops (same policy as Wireline text).
     const payload = {
       from: currentUser.uid,
       ts: firebase.firestore.FieldValue.serverTimestamp(),
       type: 'text',
+      encrypted: false,
+      text: text,
     };
-    // Always keep plaintext. Envelopes were dropping messages after key rotation.
-    payload.encrypted = false;
-    payload.text = text;
     fbDb.collection('bands').doc(b.firestoreId).collection('messages').add(payload)
       .catch(e=> toast(e.message || 'Couldn\u2019t send'));
     $('bandInput').value = '';

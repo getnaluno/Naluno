@@ -98,8 +98,14 @@ document.addEventListener('click', nalunoRequestPersistentStorage, { once: true 
    On Android the web VAPID path is weak; the native plugin token is what actually
    wakes the device. Same Firestore field (fcmToken) the call-notify Worker already reads. */
 function isNativeShell(){
+  // LOCK (bug 1.6): same careful check as auth.js (android|ios only). pwa.js loads last
+  // so this definition must not silently widen to platform !== 'web'.
   try{
-    return !!(window.Capacitor && (window.Capacitor.isNativePlatform ? window.Capacitor.isNativePlatform() : window.Capacitor.platform !== 'web'));
+    return !!(window.Capacitor && (
+      (typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform()) ||
+      window.Capacitor.platform === 'android' ||
+      window.Capacitor.platform === 'ios'
+    ));
   }catch(e){ return false; }
 }
 function getCapacitorPush(){

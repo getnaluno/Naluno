@@ -10,6 +10,31 @@ function toast(msg){
   clearTimeout(toast._t); toast._t = setTimeout(()=>t.classList.remove('show'), 1900);
 }
 
+/* LOCK (bug 3.1): window.storage is not a browser API — it only existed in the
+   original Claude Artifacts sandbox. In production every call no-oped and demo
+   Bands / Wireline threads / voice notes / callsign fallback vanished on refresh.
+   Shim once, early, so all later modules see a real async get/set backed by localStorage. */
+(function(){
+  if(typeof window.storage !== 'undefined' && window.storage !== null) return;
+  window.storage = {
+    get: function(key){
+      return Promise.resolve().then(function(){
+        try{ return localStorage.getItem(String(key)); }catch(e){ return null; }
+      });
+    },
+    set: function(key, value){
+      return Promise.resolve().then(function(){
+        try{ localStorage.setItem(String(key), value == null ? '' : String(value)); }catch(e){}
+      });
+    },
+    delete: function(key){
+      return Promise.resolve().then(function(){
+        try{ localStorage.removeItem(String(key)); }catch(e){}
+      });
+    }
+  };
+})();
+
 /* ---------------- VERSION CHECK ----------------
    A running tab can't be force-reloaded silently without real risk — doing that mid-call
    or mid-message would be actively bad. Instead: bump APP_VERSION in the meta tag on
