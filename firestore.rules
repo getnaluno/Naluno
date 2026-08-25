@@ -86,10 +86,16 @@ service cloud.firestore {
       allow update: if isSignedIn() && (request.auth.uid == resource.data.callerUid || request.auth.uid == resource.data.calleeUid);
 
       match /callerCandidates/{candId} {
-        allow read, create: if isSignedIn();
+        allow read, create: if isSignedIn() && (
+          request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.callerUid
+          || request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.calleeUid
+        );
       }
       match /calleeCandidates/{candId} {
-        allow read, create: if isSignedIn();
+        allow read, create: if isSignedIn() && (
+          request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.callerUid
+          || request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.calleeUid
+        );
       }
     }
 
@@ -129,7 +135,7 @@ service cloud.firestore {
     match /sparks/{code} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && request.resource.data.hostUid == request.auth.uid;
-      allow update: if isSignedIn();
+      allow update: if isSignedIn() && resource.data.hostUid == request.auth.uid;
       allow delete: if isSignedIn() && resource.data.hostUid == request.auth.uid;
     }
 
@@ -164,11 +170,20 @@ service cloud.firestore {
     match /broadcasts/{id} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && request.resource.data.creatorUid == request.auth.uid;
-      allow update: if isSignedIn();
+      // Creator may rewrite; others may only touch engagement/live/membership fields.
+      allow update: if isSignedIn() && (
+        resource.data.creatorUid == request.auth.uid
+        || request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['views', 'uniqueViews', 'updatedAt', 'live', 'liveAt', 'liveBy', 'memberUids'])
+      );
       match /{col}/{docId} {
         allow read: if isSignedIn();
         allow create: if isSignedIn();
-        allow update, delete: if isSignedIn();
+        // Author or broadcast creator may edit/delete subdocs (journey, conversation, etc.).
+        allow update, delete: if isSignedIn() && (
+          resource.data.from == request.auth.uid
+          || get(/databases/$(database)/documents/broadcasts/$(id)).data.creatorUid == request.auth.uid
+        );
       }
     }
 
@@ -185,7 +200,13 @@ service cloud.firestore {
 
     match /toga/{uid} {
       allow read: if isSignedIn();
-      allow create, update: if isSignedIn();
+      // Own doc, or any signed-in user may bump scores (views/circle/engage) for ranking.
+      allow create, update: if isSignedIn() && (
+        request.auth.uid == uid
+        || request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['viewsMonth', 'circleMonth', 'engageMonth', 'scoreMonth', 'viewsTotal',
+                      'monthKey', 'featuredBroadcastId', 'updatedAt', 'name'])
+      );
     }
 
     match /users/{uid}/circle/{memberUid} {
