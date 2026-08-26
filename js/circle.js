@@ -265,9 +265,14 @@
           const viewsM = same ? (r.viewsMonth || 0) : 0;
           const circleM = same ? (r.circleMonth || 0) : 0;
           const engageM = same ? (r.engageMonth || 0) : 0;
-          const score = same && r.scoreMonth
-            ? r.scoreMonth
-            : (viewsM + circleM * 12 + engageM * 3) || (r.viewsTotal || 0);
+          // FIX: this board is explicitly monthly ("Wall of Fame · list lives 30
+          // days"). The score AND every number shown next to a name must be the
+          // same monthly figures — no falling back to lifetime totals for rows
+          // with 0 activity this month, since that silently swapped what "views"
+          // meant row-to-row (one person's monthly count next to another
+          // person's all-time count, both under the same "views" label) and let
+          // stale lifetime totals outrank real monthly activity.
+          const score = (same && r.scoreMonth) ? r.scoreMonth : (viewsM + circleM * 12 + engageM * 3);
           return Object.assign(r, { _score: score, _viewsM: viewsM, _circleM: circleM, _engageM: engageM });
         })
         .sort(function(a,b){ return (b._score||0) - (a._score||0); })
@@ -282,7 +287,7 @@
           + '<span class="toga-rank">#' + (i+1) + '</span>'
           + '<span class="toga-name-block">'
           +   '<span class="toga-card-name">' + escapeHtml(r.name || 'Creator') + '</span>'
-          +   '<span class="toga-card-h">' + formatNalunoViews(r._viewsM || r.viewsTotal || 0) + ' views · '
+          +   '<span class="toga-card-h">' + formatNalunoViews(r._viewsM) + ' views this month · '
           +     formatNalunoViews(r._circleM || 0) + ' Circle · '
           +     formatNalunoViews(r._engageM || 0) + ' talk</span>'
           + '</span>'

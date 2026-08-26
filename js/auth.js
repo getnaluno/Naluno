@@ -431,6 +431,20 @@ function bindAuthListeners(){
       if(cachedMineB && cachedMineB.length && typeof myBroadcasts !== 'undefined' && !myBroadcasts.length){
         myBroadcasts = cachedMineB;
       }
+      // Real Bands — same instant-paint treatment as contacts/broadcasts/signal,
+      // so Band doesn't sit blank waiting on the membership listener's first snapshot.
+      const cachedBands = nalunoCacheRead('realBands');
+      if(cachedBands && cachedBands.length && typeof bands !== 'undefined'){
+        cachedBands.forEach(function(row){
+          if(!bands.some(function(b){ return b.firestoreId === row.firestoreId; })) bands.push(row);
+        });
+      }
+      // Compass — last few messages, so reopening the tab doesn't start blank.
+      const cachedCompass = nalunoCacheRead('compassMessages');
+      if(cachedCompass && cachedCompass.length && typeof compassMessages !== 'undefined' && !compassMessages.length){
+        compassMessages = cachedCompass;
+        try{ if(typeof renderCompassMessages === 'function') renderCompassMessages(); }catch(_){}
+      }
       try{ if(typeof renderBroadcasts === 'function') renderBroadcasts(); }catch(_){}
       try{ if(typeof renderBroadcastTab === 'function') renderBroadcastTab(); }catch(_){}
       try{ if(typeof loadMyTogaSettings === 'function') loadMyTogaSettings(); }catch(_){}

@@ -274,7 +274,7 @@ async function bLiveJoinAsViewer(){
     setTimeout(play, 400);
     setTimeout(play, 1200);
     const badge = $('bspaceLiveBadge');
-    if(badge){ badge.style.display = 'block'; badge.textContent = 'LIVE'; }
+    if(badge){ badge.style.display = 'block'; badge.textContent = 'Live now'; }
   };
   pc.ontrack = e => {
     try{
@@ -542,7 +542,7 @@ function bLiveOnSpaceOpened(isLive, isCreator){
     if(activeBroadcastId) bLiveWatchViewerCount(activeBroadcastId);
     // Make join impossible to miss
     const badge = $('bspaceLiveBadge');
-    if(badge){ badge.style.display = 'block'; badge.textContent = 'LIVE NOW — JOIN'; }
+    if(badge){ badge.style.display = 'block'; badge.textContent = 'Live now — join'; }
   } else if(isLive && isCreator){
     bLiveShowJoinUi(false);
     const ban = $('bspaceJoinLiveBanner');

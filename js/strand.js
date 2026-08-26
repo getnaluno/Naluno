@@ -47,7 +47,11 @@
     const pool = (typeof feedBroadcasts !== 'undefined' && feedBroadcasts) ? feedBroadcasts : [];
     if(!b) return { items: [], label: 'Related Broadcasts', foreign: false };
     if(b.strandId){
-      const same = pool.filter(function(x){ return x.strandId === b.strandId && x.id !== b.id && !x.deleted; });
+      // FIX: sorted oldest→newest (upload order) so "the next one after this"
+      // really means "the next episode uploaded", not whatever order the feed
+      // pool happened to be in (which is newest-first).
+      const same = pool.filter(function(x){ return x.strandId === b.strandId && x.id !== b.id && !x.deleted; })
+        .sort(function(x,y){ return (Number(x.createdAt)||0) - (Number(y.createdAt)||0); });
       if(same.length){
         return { items: same.slice(0, 8), label: 'Strand · ' + (b.strandName || 'this Strand'), foreign: false };
       }
@@ -261,6 +265,26 @@
     if(back) back.onclick = function(e){
       if(e){ e.preventDefault(); e.stopPropagation(); }
       closeStrandFolder();
+    };
+    const shareBtn = (typeof $ === 'function') ? $('bcastStrandShareBtn') : document.getElementById('bcastStrandShareBtn');
+    if(shareBtn) shareBtn.onclick = async function(e){
+      if(e){ e.preventDefault(); e.stopPropagation(); }
+      if(!openStrandFolderId) return;
+      const link = (typeof strandShareUrl === 'function')
+        ? strandShareUrl(openStrandFolderId)
+        : (location.origin + '/?strand=' + openStrandFolderId);
+      const titleEl = (typeof $ === 'function') ? $('bcastStrandTitle') : document.getElementById('bcastStrandTitle');
+      const name = (titleEl && titleEl.textContent) || 'Strand';
+      try{
+        if(navigator.share){
+          await navigator.share({ title: name, url: link });
+        } else if(navigator.clipboard && navigator.clipboard.writeText){
+          await navigator.clipboard.writeText(link);
+          if(typeof toast === 'function') toast('Link copied');
+        } else if(typeof toast === 'function') toast(link);
+      }catch(err){
+        if(err && err.name !== 'AbortError' && typeof toast === 'function') toast(link);
+      }
     };
   }
   try{ wireStrandFolderUi(); }catch(_){}

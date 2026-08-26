@@ -982,23 +982,38 @@ async function bspaceStopLive(){
   const btn = $('bspaceGoLive');
   if(btn){ btn.textContent = 'Go live'; btn.style.background = ''; btn.style.color = ''; }
   if(fbDb && bcastId && currentUser){
+    // Duration for the past-tense message/badge — read the start time BEFORE
+    // clearing it, and keep it (as lastLiveStartedAt/lastLiveEndedAt) instead
+    // of discarding it, so "was live" can say when and for how long.
+    let startedAt = null;
+    try{
+      const snap = await fbDb.collection('broadcasts').doc(bcastId).get();
+      startedAt = (snap.exists && snap.data() && snap.data().liveAt) || bspaceLiveRecStartedAt || null;
+    }catch(_){ startedAt = bspaceLiveRecStartedAt || null; }
+    const endedAt = Date.now();
+    const durationMs = startedAt ? Math.max(0, endedAt - startedAt) : null;
     fbDb.collection('broadcasts').doc(bcastId).set({
       live: false,
       liveAt: null,
       liveBy: null,
+      lastLiveStartedAt: startedAt,
+      lastLiveEndedAt: endedAt,
+      lastLiveDurationMs: durationMs,
     }, { merge:true }).catch(()=>{});
-    // Past tense after live ends (pin + journey)
+    // Past tense after live ends (pin + journey) — present tense while live
+    // ("is live now"), past tense once it stops ("was live"), with how long.
     try{
       const who = (currentProfile && currentProfile.name) || 'Creator';
+      const durText = (typeof formatLiveDuration === 'function') ? formatLiveDuration(durationMs) : '';
       fbDb.collection('broadcasts').doc(bcastId).collection('conversation').add({
         type: 'system',
-        text: who + ' was live — recording saved when available.',
+        text: who + ' was live' + (durText ? ' for ' + durText : '') + ' — recording saved when available.',
         from: currentUser.uid,
         ts: Date.now(),
       }).catch(function(){});
       fbDb.collection('broadcasts').doc(bcastId).collection('journey').add({
         type: 'live',
-        text: 'Live session ended',
+        text: 'Live session ended' + (durText ? ' (' + durText + ')' : ''),
         ts: Date.now(),
         by: currentUser.uid,
       }).catch(function(){});
@@ -1172,6 +1187,17 @@ if($('bspaceConvPhotoInput')){
   };
 }
 
+/** "12m", "1h 05m" — used for the "was live" wording, never technical (no ms/raw numbers). */
+function formatLiveDuration(ms){
+  if(!ms || ms < 1000) return '';
+  const totalMin = Math.round(ms / 60000);
+  if(totalMin < 1) return 'under a minute';
+  if(totalMin < 60) return totalMin + 'm';
+  const h = Math.floor(totalMin / 60), m = totalMin % 60;
+  return h + 'h' + (m ? ' ' + m + 'm' : '');
+}
+window.formatLiveDuration = formatLiveDuration;
+
 // Watch live flag when viewing someone else's broadcast
 function bspaceWatchLiveState(){
   if(!fbDb || !activeBroadcastId) return;
@@ -1182,10 +1208,21 @@ function bspaceWatchLiveState(){
     const isCreator = !!(activeBroadcastMeta && (activeBroadcastMeta.isMine || (currentUser && activeBroadcastMeta.creatorUid === currentUser.uid)));
     if(badge){
       if(d.live){
+        // Present tense while actually live.
         badge.style.display = 'block';
-        badge.textContent = isCreator ? 'LIVE' : 'LIVE NOW — JOIN';
+        badge.textContent = isCreator ? 'Live now' : 'Live now — join';
       } else if(!bspaceLiveStream){
-        badge.style.display = 'none';
+        // Past tense for a while after ending, then fade away — never a bare
+        // "LIVE" left showing once it's over, and never silently blank either.
+        const endedAt = d.lastLiveEndedAt || 0;
+        const recentEnough = endedAt && (Date.now() - endedAt) < 24 * 60 * 60 * 1000;
+        if(recentEnough){
+          const dur = formatLiveDuration(d.lastLiveDurationMs);
+          badge.style.display = 'block';
+          badge.textContent = 'Was live · ' + timeAgo(endedAt) + (dur ? ' (' + dur + ')' : '');
+        } else {
+          badge.style.display = 'none';
+        }
       }
     }
     if(typeof bLiveOnSpaceOpened === 'function'){
@@ -1433,22 +1470,19 @@ function wireBspaceSeekAndAutoplay(v){
   syncTimes();
 }
 
-/** After a Broadcast finishes: auto-suggest next Strand item, else nearby, else restart. */
+/** After a Broadcast finishes: next episode in the same Strand (upload order),
+ *  else a nearby Broadcast from someone else, else back to the titles list —
+ *  never loop/restart the same clip, and never leave a "LIVE"-style badge or
+ *  a frozen last frame with nothing for the person to do. */
 function bspaceOnPlaybackEnded(){
   try{ if(window.__bspaceNextTimer){ clearTimeout(window.__bspaceNextTimer); window.__bspaceNextTimer = null; } }catch(_){}
   const meta = activeBroadcastMeta || {};
   const curId = activeBroadcastId;
-  function restartFromStart(){
-    const v = $('bspaceVideoEl');
-    if(!v) return;
-    try{ v.currentTime = 0; }catch(_){}
-    try{
-      v.dataset.nalunoWantPlay = '1';
-      delete v.dataset.nalunoUserPaused;
-      const p = v.play();
-      if(p && p.catch) p.catch(function(){});
-    }catch(_){}
-    try{ toast('Playing from the start'); }catch(_){}
+  function backToTitles(){
+    // FIX: idle end-of-content used to restart/loop the same clip. The person
+    // asked for this instead: return to the screen where every title lives.
+    try{ toast('That\u2019s everything here — back to Broadcasts'); }catch(_){}
+    if(typeof closeBroadcastSpace === 'function') closeBroadcastSpace();
   }
   function scheduleOpen(id, label, delayMs){
     if(!id || id === curId) return false;
@@ -1462,27 +1496,51 @@ function bspaceOnPlaybackEnded(){
     }, delayMs || 4500);
     return true;
   }
-  // Prefer same Strand peers in order after current
+  // 1) Next episode in this Strand, in upload order.
+  // 1) Next episode in this Strand, in upload order.
+  // FIX: relatedBroadcasts() deliberately EXCLUDES the current item from its
+  // results (correct for its original job — an "other items in this Strand"
+  // display list) — which means searching that list for curId's index could
+  // never find it, so this could never actually advance to the next episode
+  // at all. Sequencing needs curId present in the list to find its position,
+  // so this builds that list directly instead of reusing relatedBroadcasts().
   const tryStrand = function(){
-    if(!meta.strandId || typeof relatedBroadcasts !== 'function') return Promise.resolve(false);
-    const b = Object.assign({}, meta, { id: curId });
-    return relatedBroadcasts(b).then(function(rel){
-      if(!rel || !rel.items || !rel.items.length) return false;
-      // Prefer next item after current in list, else first other
-      let idx = -1;
-      for(let i = 0; i < rel.items.length; i++){
-        if(rel.items[i].id === curId){ idx = i; break; }
-      }
-      const next = (idx >= 0 && idx + 1 < rel.items.length) ? rel.items[idx + 1] : rel.items.find(function(x){ return x.id !== curId; });
-      if(!next) return false;
-      return scheduleOpen(next.id, (rel.label || 'Next in Strand') + ' · ' + (next.title || 'Broadcast'), 4500);
-    }).catch(function(){ return false; });
+    if(!meta.strandId) return false;
+    const pool = (typeof feedBroadcasts !== 'undefined' && feedBroadcasts) ? feedBroadcasts : [];
+    const siblings = pool.filter(function(x){ return x && !x.deleted && x.strandId === meta.strandId; })
+      .sort(function(a,b){ return (Number(a.createdAt)||0) - (Number(b.createdAt)||0); });
+    let idx = -1;
+    for(let i = 0; i < siblings.length; i++){
+      if(siblings[i].id === curId){ idx = i; break; }
+    }
+    // Only ever move FORWARD in upload order. If this was already the last
+    // episode (or curId isn't found), there is no "next" — fall to nearby.
+    if(idx < 0 || idx + 1 >= siblings.length) return false;
+    const next = siblings[idx + 1];
+    return scheduleOpen(next.id, 'Next in ' + (meta.strandName || 'Strand') + ' · ' + (next.title || 'Broadcast'), 4500);
   };
-  tryStrand().then(function(did){
-    if(did) return;
-    // No strand next → restart this Broadcast (single / no nearby autoplay)
-    restartFromStart();
-  });
+  // 2) Strand finished (or no Strand) → a nearby Broadcast from someone else.
+  const tryNearby = function(){
+    const pool = (typeof feedBroadcasts !== 'undefined' && feedBroadcasts) ? feedBroadcasts : [];
+    const candidates = pool.filter(function(x){
+      return x && !x.deleted && x.id !== curId && (!meta.strandId || x.strandId !== meta.strandId);
+    });
+    if(!candidates.length) return false;
+    // Prefer something live right now, then most recent.
+    candidates.sort(function(a,b){
+      if(!!b.live !== !!a.live) return (b.live?1:0) - (a.live?1:0);
+      return (Number(b.createdAt)||0) - (Number(a.createdAt)||0);
+    });
+    const next = candidates[0];
+    return scheduleOpen(next.id, 'Up next · ' + (next.title || 'Broadcast'), 4500);
+  };
+  const did = tryStrand();
+  if(!did){
+    if(!tryNearby()){
+      // 3) Nothing left to suggest → the titles list, not a restart/loop.
+      backToTitles();
+    }
+  }
 }
 window.bspaceOnPlaybackEnded = bspaceOnPlaybackEnded;
 
@@ -1787,13 +1845,20 @@ function adaptBspaceHeroToVideo(){
       }
     }catch(_){}
 
-    if(bspaceFitMode === 'fill' && !portrait && w > 0 && h > 0){
-      // Fill + landscape upload → stage becomes that aspect
+    // FIX ("fit/fill should work both ways"): Fill correctly reshaped the
+    // stage to match a landscape video's own aspect ratio, but Fit was
+    // hardcoded to the 9:16 portrait stage regardless of orientation — so a
+    // landscape video in "Fit" rendered tiny and letterboxed inside a tall
+    // portrait box instead of actually showing the whole picture large. Both
+    // modes now adapt the stage the same way for landscape content; the only
+    // real difference between them is object-fit (contain vs cover), which is
+    // what "Fit" and "Fill" are actually supposed to mean.
+    if(!portrait && w > 0 && h > 0){
       hero.style.aspectRatio = w + ' / ' + h;
       hero.style.maxHeight = orientLandscape ? '100dvh' : 'min(56vh, 420px)';
-      v.style.objectFit = 'cover';
+      v.style.objectFit = bspaceFitMode === 'fill' ? 'cover' : 'contain';
     } else {
-      // Portrait, or Fit: Naluno 9:16 stage. Fill covers; Fit contains.
+      // Portrait content: Naluno's native 9:16 stage either way.
       hero.style.aspectRatio = '9 / 16';
       hero.style.maxHeight = 'min(82vh, 780px)';
       v.style.objectFit = bspaceFitMode === 'fill' ? 'cover' : 'contain';

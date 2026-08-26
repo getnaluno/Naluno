@@ -131,6 +131,8 @@ function loadCompassMessages(){
     .onSnapshot(snap=>{
       compassMessages = snap.docs.map(d=>({ id:d.id, ...d.data() }));
       renderCompassMessages();
+      // Instant paint next time this tab opens, same pattern used elsewhere.
+      try{ if(typeof nalunoCacheWrite === 'function') nalunoCacheWrite('compassMessages', compassMessages); }catch(_){}
     }, ()=>{ /* Compass history just won't load this session */ });
 }
 async function sendCompassMessage(){

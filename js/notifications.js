@@ -40,7 +40,7 @@ $('enableCallNotifsBtn').onclick = async ()=>{
     const registration = await navigator.serviceWorker.ready;
     const messaging = firebase.messaging();
     const token = await messaging.getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
-    if(!token){ toast('Couldn\u2019t get a notification token — try again'); return; }
+    if(!token){ toast('Couldn\u2019t turn on notifications — try again'); return; }
     // Store web token separately. Do not overwrite primary fcmToken if an Android token already exists.
     const userRef = fbDb.collection('users').doc(currentUser.uid);
     const snap = await userRef.get();

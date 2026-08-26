@@ -928,11 +928,13 @@ async function uploadVideoToR2(blobOrDataUrl){
     }
     let msg = (e && e.message) ? e.message : 'Upload failed';
     if(/missing or insufficient permissions/i.test(msg)){
-      msg = 'Upload blocked (permissions). Sign out and back in, then try again. If it keeps failing, the storage Worker needs its R2 binding checked.';
+      // FIX (plain-language pass): this used to read "the storage Worker needs
+      // its R2 binding checked" — meaningless to anyone but the developer.
+      msg = 'Upload blocked. Sign out and back in, then try again. If it keeps happening, let support know.';
     } else if(/too large|payload|413|entity too large/i.test(msg)){
-      msg = 'File still too large for the upload server. Try a shorter clip.';
+      msg = 'That file is too large to upload. Try a shorter clip.';
     } else if(/Failed to fetch|NetworkError|network/i.test(msg)){
-      msg = 'Network error during upload — check connection and retry.';
+      msg = 'No connection right now — check your signal and try again.';
     }
     throw new Error(msg);
   }
@@ -1057,6 +1059,26 @@ async function deleteSignalSegment(segmentId){
   try{ await fbDb.collection('users').doc(currentUser.uid).collection('signal').doc(String(segmentId)).delete(); }
   catch(e){ /* best-effort */ }
 }
+/** Signal should still play with no connection, not just be fast on replay.
+ *  Quietly downloads video/photo segments into the local vault while online
+ *  and idle, so opening one later (including offline) plays from the device
+ *  instead of needing a live network request. Photos are tiny data URLs
+ *  already, so only video needs the vault; text has nothing to fetch. */
+function prefetchSignalsForOffline(segments){
+  if(!segments || !segments.length || typeof vaultIngestUrl !== 'function') return;
+  segments.forEach(function(seg){
+    if(!seg || seg.type !== 'video') return;
+    const raw = seg.videoUrl || seg.mediaUrl || '';
+    if(!raw || String(raw).indexOf('blob:') === 0 || String(raw).indexOf('data:') === 0) return;
+    const remote = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(raw) : raw;
+    const key = (typeof vaultKeyForUrl === 'function') ? vaultKeyForUrl(remote) : '';
+    // Fire-and-forget, one at a time isn't necessary — vaultIngestUrl already
+    // no-ops if a key is already cached, so a repeat call here costs nothing.
+    vaultIngestUrl(remote, key).catch(function(){});
+  });
+}
+window.prefetchSignalsForOffline = prefetchSignalsForOffline;
+
 async function loadMySignal(){
   if(!currentUser || !fbDb) return;
   try{
@@ -1078,6 +1100,7 @@ async function loadMySignal(){
     try{ nalunoCacheWrite('mySignal', mySignal.map(nalunoSlimMedia)); }catch(_){}
   }catch(e){ /* nothing posted yet, or offline */ }
   renderBroadcasts();
+  try{ prefetchSignalsForOffline(mySignal); }catch(_){}
   if(typeof loadMyBroadcasts==='function') loadMyBroadcasts().then(()=>{ if(typeof loadFeedBroadcasts==='function') loadFeedBroadcasts(); });
 }
 /* Loads the latest segment from every real connection, so Frequencies and Broadcast
@@ -1100,6 +1123,7 @@ async function loadConnectionsSignalsNow(){
     }catch(e){ return null; }
   }));
   connectionsSignals = results.filter(Boolean);
+  try{ prefetchSignalsForOffline(connectionsSignals.map(function(row){ return row.latest; })); }catch(_){}
   try{
     nalunoCacheWrite('connectionsSignals', connectionsSignals.map(function(row){
       return {

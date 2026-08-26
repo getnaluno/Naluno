@@ -386,6 +386,27 @@ function playSegment(idx, direction=1){
   if(seg.type==='video' || isVideoSeg){
     const v = $('bviewerActiveVideo');
     const videoSrc = signalPlaySrc(seg);
+    // Offline-from-cold-start fix: signalPlaySrc only checks the in-memory
+    // vault cache (fast, but empty right after a fresh app open). The actual
+    // downloaded bytes may still be sitting in IndexedDB from an earlier
+    // session. When there's no connection, check IndexedDB directly and swap
+    // the source in if the network URL we just set can't actually be reached.
+    if(!navigator.onLine && v && !/^blob:|^data:/i.test(videoSrc || '')){
+      (async function(){
+        try{
+          const raw = seg.videoUrl || seg.mediaUrl || '';
+          if(!raw) return;
+          const remote = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(raw) : raw;
+          const key = (typeof vaultKeyForUrl === 'function') ? vaultKeyForUrl(remote) : '';
+          if(!key || typeof vaultObjectUrl !== 'function') return;
+          const localUrl = await vaultObjectUrl(key);
+          if(localUrl && $('bviewerActiveVideo') === v){
+            v.src = localUrl;
+            v.play().catch(function(){});
+          }
+        }catch(_){}
+      })();
+    }
     if(seg.thumbDataUrl && typeof nalunoProbePosterAR === 'function') nalunoProbePosterAR(seg.thumbDataUrl);
     const trimStart = (isFinite(seg.trimStart) && seg.trimStart > 0) ? seg.trimStart : 0;
     const trimEnd = (isFinite(seg.trimEnd) && seg.trimEnd > trimStart) ? seg.trimEnd : 0;

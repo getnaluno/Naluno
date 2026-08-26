@@ -30,6 +30,12 @@ function broadcastShareUrl(id){
   return base.replace(/\/$/, '') + '/?broadcast=' + encodeURIComponent(id);
 }
 
+/** Share a whole Strand (a creator's ordered set of Broadcasts), not just one item in it. */
+function strandShareUrl(id){
+  const base = (location.origin && location.origin !== 'null') ? location.origin : 'https://getnaluno.com';
+  return base.replace(/\/$/, '') + '/?strand=' + encodeURIComponent(id);
+}
+
 /** Unique Naluno thumbnail: diagonal “frequency plate” with mint edge + title band */
 function broadcastThumbHtml(b){
   const title = escapeHtml((b.title || 'Broadcast').slice(0, 48));
@@ -355,6 +361,36 @@ async function sendPushToContact(contactOrUid, msg){
 }
 window.sendPushToContact = sendPushToContact;
 
+/** Drop a real Wireline message (not just a notification/push) into every
+ *  community member's thread with the creator when they go live — so people
+ *  who follow via Wireline see it as a normal message, not just a badge. */
+async function wirelineNotifyLive(uids, fromName, liveTitle, broadcastId){
+  if(!fbDb || !currentUser || !uids || !uids.length) return;
+  const text = fromName + ' is live now: ' + liveTitle + ' — open Broadcast to join.';
+  await Promise.all(uids.map(async function(uid){
+    try{
+      const tid = [currentUser.uid, uid].sort().join('_');
+      const threadRef = fbDb.collection('threads').doc(tid);
+      await threadRef.set({
+        participants: [currentUser.uid, uid].sort(),
+        lastMessageAt: firebase.firestore.FieldValue.serverTimestamp(),
+        lastMessageText: text,
+        lastMessageFrom: currentUser.uid,
+        readBy: [currentUser.uid],
+      }, { merge: true });
+      await threadRef.collection('messages').add({
+        from: currentUser.uid,
+        ts: firebase.firestore.FieldValue.serverTimestamp(),
+        status: 'sent',
+        type: 'text',
+        text: text,
+        encrypted: false,
+        liveBroadcastId: broadcastId || null,
+      });
+    }catch(_){ /* best-effort — a missed Wireline nudge isn't worth surfacing an error for */ }
+  }));
+}
+
 async function notifyFrequenciesLive(broadcastId, title){
   if(!currentUser || !fbDb) return;
   const fromName = (currentProfile && currentProfile.name) || 'Someone';
@@ -402,6 +438,9 @@ async function notifyFrequenciesLive(broadcastId, title){
       broadcastId: broadcastId,
     });
   });
+  // A real Wireline message too, not just a notification badge/push — this is
+  // what "for those in the community" actually see in their conversation.
+  try{ await wirelineNotifyLive(list, fromName, liveTitle, broadcastId); }catch(_){}
 }
 window.notifyFrequenciesLive = notifyFrequenciesLive;
 
@@ -423,6 +462,38 @@ function openBroadcastById(id){
       if(currentUser && fbDb){
         clearInterval(iv);
         openBroadcastById(id);
+      }
+      if(n > 50) clearInterval(iv);
+    }, 200);
+  }catch(_){}
+})();
+
+/** Deep link ?strand= — open the whole shared Strand (folder), not one item. */
+(function strandDeepLink(){
+  try{
+    const params = new URLSearchParams(location.search || '');
+    const id = params.get('strand');
+    if(!id) return;
+    let n = 0;
+    const iv = setInterval(()=>{
+      n++;
+      if(currentUser && fbDb){
+        clearInterval(iv);
+        const nav = document.querySelector('.navbtn[data-tab="broadcast"]');
+        if(nav) nav.click();
+        // The Strand's own items load into feedBroadcasts asynchronously —
+        // retry briefly instead of opening to an empty folder on a cold start.
+        let tries = 0;
+        const open = function(){
+          tries++;
+          const found = (feedBroadcasts || []).some(function(b){ return b && b.strandId === id; });
+          if(found || tries > 15){
+            if(typeof openStrandFolder === 'function') openStrandFolder(id);
+            return;
+          }
+          setTimeout(open, 300);
+        };
+        open();
       }
       if(n > 50) clearInterval(iv);
     }, 200);

@@ -133,6 +133,13 @@ async function loadRealBands(uid){
     });
     renderBandList();
     publishMyPublicBands();
+    // Instant paint on next open — same pattern as contacts/broadcasts/signal,
+    // so Band doesn't sit blank while this listener's first snapshot lands.
+    try{
+      if(typeof nalunoCacheWrite === 'function'){
+        nalunoCacheWrite('realBands', bands.filter(function(b){ return b.isReal && b.firestoreId; }));
+      }
+    }catch(_){}
   }, ()=>{ /* real bands just won't live-update this session */ });
 }
 

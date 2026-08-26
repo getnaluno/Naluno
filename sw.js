@@ -3,7 +3,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v89';
+const CACHE_NAME = 'naluno-shell-v90';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',
@@ -110,40 +110,76 @@ self.addEventListener('push', event=>{
       if(!data.body && data.notification.body) data.body = data.notification.body;
     }
   }catch(_){}
-  const title = data.title || 'Incoming call — Naluno';
-  const body = data.body || 'Tap to answer';
   const callId = data.callId || data.call_id || data.tag || '';
+  // FIX: every push used to get call-style "Answer/Decline" buttons, insistent
+  // vibration, and requireInteraction — including a plain "X is live" alert,
+  // which made no sense (there's nothing to answer or decline) and could read
+  // as a real incoming call. Only an actual call gets that treatment now.
+  const isCall = data.type === 'incoming_call' || (!data.type && !!callId);
+  if(isCall){
+    const title = data.title || 'Incoming call — Naluno';
+    const body = data.body || 'Tap to answer';
+    event.waitUntil((async ()=>{
+      const opts = {
+        body, icon: './icon-192.png', badge: './icon-192.png',
+        tag: callId || 'naluno-call',
+        renotify: true,
+        requireInteraction: true,
+        silent: false,
+        vibrate: [500, 200, 500, 200, 500, 200, 500],
+        data: { callId, type: 'incoming_call', url: callId ? ('./?call=' + encodeURIComponent(callId)) : './' },
+        actions: [
+          { action: 'answer', title: 'Answer' },
+          { action: 'decline', title: 'Decline' },
+        ],
+      };
+      await self.registration.showNotification(title, opts);
+      const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      for(const client of clientList){
+        try{ client.postMessage({ type: 'naluno-incoming-call', callId }); }catch(_){}
+      }
+      if(callId){
+        await new Promise(r => setTimeout(r, 2500));
+        await self.registration.showNotification(title, Object.assign({}, opts, { renotify: true }));
+        await new Promise(r => setTimeout(r, 3500));
+        await self.registration.showNotification(title, Object.assign({}, opts, { renotify: true }));
+      }
+    })());
+    return;
+  }
+  // Non-call push (e.g. "X is live") — a normal, single, tap-to-open alert.
+  const title = data.title || 'Naluno';
+  const body = data.body || '';
+  const broadcastId = data.broadcastId || '';
   event.waitUntil((async ()=>{
-    const opts = {
+    await self.registration.showNotification(title, {
       body, icon: './icon-192.png', badge: './icon-192.png',
-      tag: callId || 'naluno-call',
-      renotify: true,
-      requireInteraction: true,
+      tag: (data.type || 'naluno') + ':' + (broadcastId || Date.now()),
+      renotify: false,
+      requireInteraction: false,
       silent: false,
-      vibrate: [500, 200, 500, 200, 500, 200, 500],
-      data: { callId, type: 'incoming_call', url: callId ? ('./?call=' + encodeURIComponent(callId)) : './' },
-      actions: [
-        { action: 'answer', title: 'Answer' },
-        { action: 'decline', title: 'Decline' },
-      ],
-    };
-    await self.registration.showNotification(title, opts);
-    const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    for(const client of clientList){
-      try{ client.postMessage({ type: 'naluno-incoming-call', callId }); }catch(_){}
-    }
-    if(callId){
-      await new Promise(r => setTimeout(r, 2500));
-      await self.registration.showNotification(title, Object.assign({}, opts, { renotify: true }));
-      await new Promise(r => setTimeout(r, 3500));
-      await self.registration.showNotification(title, Object.assign({}, opts, { renotify: true }));
-    }
+      data: { type: data.type || 'general', broadcastId, url: broadcastId ? ('./?broadcast=' + encodeURIComponent(broadcastId)) : './' },
+    });
   })());
 });
 
 self.addEventListener('notificationclick', event=>{
   event.notification.close();
   const data = event.notification.data || {};
+  if(data.type && data.type !== 'incoming_call'){
+    // Non-call notification: just open/focus the app at the right place —
+    // never post a fake "incoming call" message for something that isn't one.
+    const target = data.url || './';
+    event.waitUntil(
+      self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList=>{
+        for(const client of clientList){
+          if('focus' in client) return client.focus();
+        }
+        if(self.clients.openWindow) return self.clients.openWindow(target);
+      })
+    );
+    return;
+  }
   const callId = data.callId || '';
   const target = callId ? ('./?call=' + encodeURIComponent(callId)) : (data.url || './');
   event.waitUntil(

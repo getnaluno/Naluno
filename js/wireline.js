@@ -926,7 +926,7 @@ async function flushMessageQueue(){
       }
       const clean = Object.assign({}, payload);
       delete clean.pendingUpload;
-      await sendRealMessage({ firebaseUid: item.firebaseUid }, clean, item.previewText, item.queueId);
+      await sendRealMessage({ firebaseUid: item.firebaseUid }, clean, item.previewText, item.queueId, item.clientMsgId);
     }catch(e){ /* still couldn't send — stays in the queue for the next trigger */ }
   }
   if(activeThreadContactId) renderThreadMessages();
@@ -941,7 +941,17 @@ rebuildLocalQueuedMessagesIndex();
    queueId is only passed when this is a retry of an already-queued message — on
    success, that local optimistic entry is what gets removed, since the real Firestore-
    synced version is about to arrive through the normal thread listener instead. */
-async function sendRealMessage(c, payload, previewText, queueId){
+/** Small helper: race a promise against a timeout without cancelling the
+ *  original (Firestore keeps trying in the background either way — we just
+ *  stop *waiting* on it so the UI never looks frozen). */
+function nalunoRaceTimeout(promise, ms){
+  return Promise.race([
+    promise.then(function(v){ return { ok:true, value:v }; }).catch(function(e){ return { ok:false, error:e }; }),
+    new Promise(function(resolve){ setTimeout(function(){ resolve({ timedOut:true }); }, ms); }),
+  ]);
+}
+
+async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
   if(!fbDb || !currentUser) return;
   // Checked BEFORE ever touching Firestore, not after waiting for a failure that was
   // never actually coming: with offline persistence enabled (needed to fix the
@@ -967,6 +977,18 @@ async function sendRealMessage(c, payload, previewText, queueId){
   }
   const tid = realThreadId(c.firebaseUid);
   const threadRef = fbDb.collection('threads').doc(tid);
+  // FIX (Samsung/Android "message stays where it's written, sent twice" bug):
+  // navigator.onLine is unreliable on some Android builds — it can report
+  // "online" when the connection is actually unusable, so the check above
+  // passes and this code reaches Firestore, where the write then hangs (per
+  // the comment above) with no timeout of its own. The input box only ever
+  // cleared once that hung await resolved, which on a bad connection could be
+  // "never" — so nothing told the person it had (or hadn't) gone anywhere,
+  // and resending looked like the only option. clientMsgId + a real timeout
+  // fix both halves: the UI always gets a definite answer within a few
+  // seconds, and if the original write does eventually land in the
+  // background, the id lets a retry recognize that and skip re-sending.
+  const cmid = clientMsgId || ('c' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
   try{
     let finalPayload = payload;
     let finalPreview = previewText;
@@ -976,22 +998,66 @@ async function sendRealMessage(c, payload, previewText, queueId){
       finalPayload = { type:'text', text: payload.text, encrypted:false };
       finalPreview = previewText;
     }
-    await threadRef.set({
+    const wire = Object.assign({}, finalPayload);
+    delete wire.pendingUpload;
+    delete wire.vaultKey;
+    if(!queueId){
+      // Only check for a duplicate on a RETRY of a message that may have
+      // already gone out during an earlier timeout — a brand-new send has
+      // nothing to dedupe against yet, so skip the extra read for speed.
+    } else {
+      try{
+        const dupe = await threadRef.collection('messages').where('clientMsgId','==',cmid).limit(1).get();
+        if(!dupe.empty){
+          // Already sent during the earlier attempt — do not send it again.
+          removeFromMessageQueue(queueId);
+          if(activeThreadContactId && c && contacts.find(x=>x.firebaseUid===c.firebaseUid && x.id===activeThreadContactId)) renderThreadMessages();
+          renderWirelineList();
+          return;
+        }
+      }catch(_){ /* dedupe check failed — fall through and send; worst case is a rare duplicate, not a lost message */ }
+    }
+    const writeOp = threadRef.set({
       participants: [currentUser.uid, c.firebaseUid].sort(),
       lastMessageAt: firebase.firestore.FieldValue.serverTimestamp(),
       lastMessageText: finalPreview,
       lastMessageFrom: currentUser.uid,
       readBy: [currentUser.uid],
-    }, { merge:true });
-    const wire = Object.assign({}, finalPayload);
-    delete wire.pendingUpload;
-    delete wire.vaultKey;
-    await threadRef.collection('messages').add({
-      from: currentUser.uid,
-      ts: firebase.firestore.FieldValue.serverTimestamp(),
-      status: 'sent',
-      ...wire,
+    }, { merge:true }).then(function(){
+      return threadRef.collection('messages').add({
+        from: currentUser.uid,
+        ts: firebase.firestore.FieldValue.serverTimestamp(),
+        status: 'sent',
+        clientMsgId: cmid,
+        ...wire,
+      });
     });
+    const raced = await nalunoRaceTimeout(writeOp, 7000);
+    if(raced.timedOut){
+      // Never leave the person guessing: give a real, honest state instead of
+      // a frozen input box — queued for confirmation, not silently stuck.
+      if(queueId) removeFromMessageQueue(queueId);
+      const c2 = contacts.find(x=>x.firebaseUid===c.firebaseUid);
+      if(c2){
+        const qid = queueMessageForLater(c2.id, c.firebaseUid, payload, previewText);
+        // Tag the queued copy with the same clientMsgId so the dedupe check
+        // above can recognize the original write if it lands late.
+        try{
+          const q = getMessageQueue();
+          const row = q.find(function(x){ return x.queueId === qid; });
+          if(row) row.clientMsgId = cmid;
+          saveMessageQueueToStorage(q);
+          rebuildLocalQueuedMessagesIndex();
+        }catch(_){}
+      }
+      $('threadInput').value = '';
+      autoSizeThreadInput();
+      updateComposerButtons();
+      if(activeThreadContactId===c.id || (c2 && activeThreadContactId===c2.id)) renderThreadMessages();
+      toast('Still sending — will confirm once delivered');
+      return;
+    }
+    if(!raced.ok) throw raced.error;
     if(queueId) removeFromMessageQueue(queueId);
     $('threadInput').value = '';
     autoSizeThreadInput();

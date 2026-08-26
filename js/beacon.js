@@ -395,6 +395,12 @@ function stopNativeFindNaluno(){
 
 function resumeFindNalunoIfEnabled(){
   if(!currentUser || !fbDb) return;
+  // FIX: the toggle switch itself was never repainted here — only the actual
+  // location watch/native reporting were restarted. The setting genuinely
+  // persisted (localStorage + Firestore), but the switch would visually show
+  // "off" again on every reopen even though tracking was still running,
+  // which is exactly what "doesn't stick" looks like from the outside.
+  try{ if(typeof syncFindNalunoToggle === 'function') syncFindNalunoToggle(); }catch(_){}
   listenFindNalunoDevices();
   if(findNalunoEnabledLocal()){
     startFindNalunoWatch();
