@@ -103,7 +103,16 @@ service cloud.firestore {
     match /bands/{bandId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid;
-      allow update: if isSignedIn(); // membership edits — tighten once "leave" ships server-side
+      // FIX (20260826): was allow update: if isSignedIn() — any signed-in user could
+      // rewrite name/vibe/createdBy on someone else's Band. Scoped to the creator, or
+      // to the specific fields real membership actions (join/leave/settle/bell) touch —
+      // verified against every bands/{id}.update()/.set() call site in band-room.js
+      // and band-list.js so no existing write path breaks.
+      allow update: if isSignedIn() && (
+        resource.data.createdBy == request.auth.uid
+        || request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['memberUids', 'lastEmptiedAt', 'messageEpoch', 'bellAt', 'bellBy'])
+      );
 
       match /presence/{uid} {
         allow read: if isSignedIn();
