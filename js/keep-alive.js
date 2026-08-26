@@ -55,6 +55,11 @@ function nalunoKeepAliveStop(){
 
 document.addEventListener('visibilitychange', function(){
   if(document.hidden) return;
+  // Wake locks are released by the OS whenever the tab is hidden, so an upload/call
+  // still in progress needs a fresh request on return. nalunoKeepAliveStart() already
+  // increments the depth counter itself; the decrement here is deliberate — it nets
+  // to zero net change while still forcing a real wakeLock.request() call. Keep the
+  // increment (inside Start) and this decrement paired if either function changes.
   if(nalunoKeepAliveDepth > 0){
     nalunoKeepAliveStart('resume').then(function(){ nalunoKeepAliveDepth--; }).catch(function(){});
   }

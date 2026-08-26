@@ -51,8 +51,10 @@ function showCallScreen(id){
   const ov = $('callOverlay');
   if(ov){
     ov.classList.add('active');
-    // Above Broadcast (80), Band, Wireline, live chrome
-    ov.style.zIndex = '200';
+    // Above Broadcast (80), Band, Wireline, live chrome.
+    // LOCK (cosmetic fix): was set to 200 here then unconditionally overwritten to
+    // 300 a few lines below in the same call — dead write, removed. Final value
+    // (300, set further down) is unchanged.
     ov.style.opacity = '1';
     ov.style.pointerEvents = 'auto';
     ov.style.display = 'flex';

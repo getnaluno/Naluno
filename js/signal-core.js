@@ -95,17 +95,27 @@ function resolveMediaUrl(u){
   const bcastBase = (typeof BROADCAST_UPLOAD_WORKER_URL === 'string' && BROADCAST_UPLOAD_WORKER_URL)
     ? BROADCAST_UPLOAD_WORKER_URL.replace(/\/+$/, '') : '';
   // Never steal the host of an already-proxied object URL (Broadcast vs Signal buckets).
-  if(/^https?:/i.test(u) && /\/o\/u\//i.test(u)) return u;
+  if(/^https?:/i.test(u) && (/\/o\/u\//i.test(u) || /\/o\/b\//i.test(u))) return u;
   if(u.indexOf(signalBase + '/o/') === 0) return u;
   if(bcastBase && u.indexOf(bcastBase) === 0) return u;
   try{
-    const m = u.match(/\/?(u\/[A-Za-z0-9_-]+\/[A-Za-z0-9._-]+)/);
+    // FIX (20260826): b/ keys belong to the permanent Broadcast bucket, u/
+    // keys to the ephemeral Signal bucket — route bare keys by prefix so a
+    // Broadcast reference is never resolved onto the wrong (Signal) worker.
+    const mB = u.match(/\/?(b\/[A-Za-z0-9_-]+\/[A-Za-z0-9._-]+)/);
+    const mU = u.match(/\/?(u\/[A-Za-z0-9_-]+\/[A-Za-z0-9._-]+)/);
     if(/^https?:/i.test(u) && (/r2\.dev\//i.test(u) || /cloudflarestorage\.com\//i.test(u))){
       const path = (u.split(/r2\.dev\//i)[1] || u.split(/cloudflarestorage\.com\//i)[1] || '').replace(/^\/+/, '').split('?')[0];
-      if(path) return signalBase + '/o/' + path;
+      if(path){
+        if(/^b\//.test(path) && bcastBase) return bcastBase + '/o/' + path;
+        return signalBase + '/o/' + path;
+      }
     }
-    if(m && !/^https?:/i.test(u)){
-      return signalBase + '/o/' + m[1];
+    if(mB && bcastBase && !/^https?:/i.test(u)){
+      return bcastBase + '/o/' + mB[1];
+    }
+    if(mU && !/^https?:/i.test(u)){
+      return signalBase + '/o/' + mU[1];
     }
   }catch(_){}
   return u;
@@ -130,13 +140,22 @@ function nalunoPlayCandidates(raw, opts){
   const bucket = (opts && (opts.bucket || opts.kind)) ? String(opts.bucket || opts.kind) : '';
   const onSignal = bucket === 'signal' || /naluno-signal-upload/i.test(original) || original.indexOf(signalBase) === 0;
   const onBcast = bucket === 'broadcast' || !!(bcastBase && (/naluno-broadcast-upload/i.test(original) || original.indexOf(bcastBase) === 0));
+  // FIX (20260826): Broadcast keys now use a b/ prefix (Signal keeps u/) so a
+  // bare key alone tells us which bucket it belongs to — never guess wrong
+  // and hop a Broadcast key onto the Signal worker (or vice versa).
   let key = '';
+  let keyIsBcast = false;
   try{
-    const m = original.match(/u\/[A-Za-z0-9_-]+\/[A-Za-z0-9._-]+/);
-    if(m) key = m[0];
+    const mB = original.match(/b\/[A-Za-z0-9_-]+\/[A-Za-z0-9._-]+/);
+    const mU = original.match(/u\/[A-Za-z0-9_-]+\/[A-Za-z0-9._-]+/);
+    if(mB){ key = mB[0]; keyIsBcast = true; }
+    else if(mU){ key = mU[0]; keyIsBcast = false; }
   }catch(_){}
   if(key){
-    if(onBcast && !onSignal){
+    if(keyIsBcast){
+      // A b/ key only ever belongs to the Broadcast bucket — always pin there.
+      if(bcastBase) add(bcastBase + '/o/' + key);
+    } else if(onBcast && !onSignal){
       if(bcastBase) add(bcastBase + '/o/' + key);
     } else if(onSignal && !onBcast){
       add(signalBase + '/o/' + key);

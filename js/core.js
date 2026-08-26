@@ -16,20 +16,49 @@ function toast(msg){
    Shim once, early, so all later modules see a real async get/set backed by localStorage. */
 (function(){
   if(typeof window.storage !== 'undefined' && window.storage !== null) return;
+  // FIX (20260826): every call site in the app (auth.js, band-list.js, wireline.js,
+  // atmosphere.js, signal-core.js) does `const res = await window.storage.get(key);
+  // if(res && res.value){ ... }` — i.e. expects {key, value}, not a bare string.
+  // An earlier version of this shim returned the raw string, so res.value was always
+  // undefined and every read silently came back empty even with storageAvailable
+  // now true. Shape matched to the real Artifacts window.storage API on purpose.
   window.storage = {
     get: function(key){
       return Promise.resolve().then(function(){
-        try{ return localStorage.getItem(String(key)); }catch(e){ return null; }
+        try{
+          const raw = localStorage.getItem('nalunoStorage:' + String(key));
+          return raw == null ? null : { key: String(key), value: raw };
+        }catch(e){ return null; }
       });
     },
     set: function(key, value){
       return Promise.resolve().then(function(){
-        try{ localStorage.setItem(String(key), value == null ? '' : String(value)); }catch(e){}
+        try{
+          const v = value == null ? '' : String(value);
+          localStorage.setItem('nalunoStorage:' + String(key), v);
+          return { key: String(key), value: v };
+        }catch(e){ return null; }
       });
     },
     delete: function(key){
       return Promise.resolve().then(function(){
-        try{ localStorage.removeItem(String(key)); }catch(e){}
+        try{
+          localStorage.removeItem('nalunoStorage:' + String(key));
+          return { key: String(key), deleted: true };
+        }catch(e){ return null; }
+      });
+    },
+    list: function(prefix){
+      return Promise.resolve().then(function(){
+        try{
+          const p = 'nalunoStorage:' + (prefix || '');
+          const keys = [];
+          for(let i = 0; i < localStorage.length; i++){
+            const k = localStorage.key(i);
+            if(k && k.indexOf(p) === 0) keys.push(k.slice('nalunoStorage:'.length));
+          }
+          return { keys: keys };
+        }catch(e){ return { keys: [] }; }
       });
     }
   };

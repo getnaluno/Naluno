@@ -31,23 +31,73 @@ async function flushBandOutbox(){
 window.addEventListener('online', function(){ try{ flushBandOutbox(); }catch(_){} });
 
 
-/* Pagination: load older band messages (Phase 3 scale). */
+/* Pagination: load older band messages (Phase 3 scale).
+   LOCK (bug 1.8, fixed 20260826):
+   - was `currentBandId` (never declared anywhere — always threw/no-op'd). Now activeBandId.
+   - renderBandMessagesFromDocs() didn't exist. The live listener always overwrites
+     bandMessages[id] wholesale on every snapshot (its own 60-message tail), so older
+     pages are kept in a SEPARATE bandOlderMessages[id] array and merged at render time
+     in renderBandMessages() — this cannot be clobbered by the live listener, and
+     changes nothing for anyone who never scrolls up to trigger it. */
 let bandOldestMsgDoc = null;
+let bandOlderMessages = {};
+let bandLoadingOlder = false;
 async function loadOlderBandMessages(){
-  if(!fbDb || !currentBandId) return;
-  const bandRef = fbDb.collection('bands').doc(currentBandId);
-  let q = bandRef.collection('messages').orderBy('ts','desc').limit(40);
-  if(bandOldestMsgDoc) q = q.startAfter(bandOldestMsgDoc);
+  if(!fbDb || !activeBandId || bandLoadingOlder) return;
+  const b = activeBand();
+  if(!b || !b.isReal || !b.firestoreId) return;
+  bandLoadingOlder = true;
   try{
+    const bandRef = fbDb.collection('bands').doc(b.firestoreId);
+    let q = bandRef.collection('messages').orderBy('ts','desc').limit(40);
+    if(bandOldestMsgDoc) q = q.startAfter(bandOldestMsgDoc);
     const snap = await q.get();
     if(snap.empty){ if(typeof toast==='function') toast('No older messages'); return; }
     bandOldestMsgDoc = snap.docs[snap.docs.length - 1];
     if(typeof trackMetric === 'function') trackMetric('band_load_older', { n: snap.size });
-    // Prepend handled by full snapshot on new writes; for older, merge into DOM if renderBandMessages exists
-    if(typeof renderBandMessagesFromDocs === 'function'){
-      renderBandMessagesFromDocs(snap.docs.slice().reverse(), true);
-    }
+    await renderBandMessagesFromDocs(snap.docs.slice().reverse());
   }catch(e){ console.warn('[band] load older', e); }
+  finally{ bandLoadingOlder = false; }
+}
+/** Maps older Firestore docs into the same row shape the live listener uses,
+ *  decrypts legacy-encrypted rows, dedupes by doc id, and prepends into the
+ *  persistent older-messages buffer for the current band. */
+async function renderBandMessagesFromDocs(docs){
+  if(!activeBandId || !docs || !docs.length) return;
+  const seen = new Set((bandOlderMessages[activeBandId] || []).map(m => m._id));
+  const rows = docs.map(d=>{
+    const m = d.data();
+    return {
+      _id: d.id,
+      fromMe: m.from === (currentUser && currentUser.uid),
+      fromUid: m.from,
+      text: m.text || '',
+      type: m.type || 'text',
+      mediaUrl: m.mediaUrl || null,
+      thumb: m.thumb || null,
+      duration: m.duration || null,
+      encrypted: !!m.encrypted,
+      envelopes: m.envelopes || null,
+      ts: m.ts && m.ts.toMillis ? m.ts.toMillis() : 0,
+    };
+  }).filter(row => !seen.has(row._id));
+  await Promise.all(rows.map(async row=>{
+    if(row.type === 'system' || row.type === 'invite' || row.type === 'audio' || row.type === 'video') return;
+    if(row.encrypted && row.envelopes && typeof decryptBandMessage === 'function'){
+      row.text = await decryptBandMessage(row);
+    }
+  }));
+  bandOlderMessages[activeBandId] = rows.concat(bandOlderMessages[activeBandId] || []);
+  renderBandMessages(true);
+}
+/** Wire once per band-room open: scrolling near the top loads the previous page. */
+function bindBandMessagesScroll(){
+  const el = $('bandMessages');
+  if(!el || el.dataset.pagingBound === '1') return;
+  el.dataset.pagingBound = '1';
+  el.addEventListener('scroll', function(){
+    if(el.scrollTop < 60) loadOlderBandMessages();
+  });
 }
 
 /* ============================================================
@@ -163,9 +213,13 @@ function updateBandSettleNote(){
   }
   el.textContent = 'Band · messages clear 2h after the last person leaves';
 }
-function renderBandMessages(){
+function renderBandMessages(preserveScroll){
   const b = activeBand();
-  let msgs = bandMessages[activeBandId] || [];
+  // LOCK (bug 1.8): older pages loaded via loadOlderBandMessages() live in their
+  // own buffer, never inside the live listener's overwrite-on-every-snapshot array,
+  // so they survive new messages arriving. Only shown when present (default: none).
+  const older = bandOlderMessages[activeBandId] || [];
+  let msgs = older.concat(bandMessages[activeBandId] || []);
   // After the settle window, the square is a blank page again.
   if(b && bandIsSettled(b)) msgs = [];
   else if(b){
@@ -177,14 +231,23 @@ function renderBandMessages(){
   }
   // Drop empty text bubbles (failed decrypt / pruned payload shells)
   msgs = msgs.filter(m => !bandMessageIsEmpty(m));
+  const el = $('bandMessages');
   if(msgs.length===0){
-    $('bandMessages').innerHTML = `<div class="msg-empty"><span style="font-family:var(--font-futuristic); font-size:14px; color:#fff;">Quiet on this Band</span><span style="font-size:12.5px; color:rgba(255,255,255,.6);">Tune in and say something — it clears 2h after the last person leaves.</span></div>`;
+    el.innerHTML = `<div class="msg-empty"><span style="font-family:var(--font-futuristic); font-size:14px; color:#fff;">Quiet on this Band</span><span style="font-size:12.5px; color:rgba(255,255,255,.6);">Tune in and say something — it clears 2h after the last person leaves.</span></div>`;
     updateBandSettleNote();
     return;
   }
-  $('bandMessages').innerHTML = msgs.map(bandMessageHtml).join('');
-  $('bandMessages').scrollTop = $('bandMessages').scrollHeight;
-  bindNalunoClips($('bandMessages'));
+  // Preserve reading position when older messages were just prepended (pagination),
+  // instead of the normal jump-to-bottom-on-new-message behavior.
+  const prevHeight = preserveScroll ? el.scrollHeight : 0;
+  const prevTop = preserveScroll ? el.scrollTop : 0;
+  el.innerHTML = msgs.map(bandMessageHtml).join('');
+  if(preserveScroll){
+    el.scrollTop = prevTop + (el.scrollHeight - prevHeight);
+  } else {
+    el.scrollTop = el.scrollHeight;
+  }
+  bindNalunoClips(el);
   updateBandSettleNote();
 }
 function renderBandRoster(){
@@ -430,6 +493,8 @@ function openBandRoom(id){
   $('bandRoom').classList.add('active');
   startBandAmbientAnim(b.vibe);
   updateBandSettleNote();
+  // Pagination trigger (bug 1.8 fix) — purely additive, no effect unless scrolled to top.
+  if(typeof bindBandMessagesScroll === 'function') bindBandMessagesScroll();
 }
 function closeBandRoom(){
   stopBandAmbientAnim();
@@ -440,6 +505,10 @@ function closeBandRoom(){
   if(bandMessagesUnsub){ bandMessagesUnsub(); bandMessagesUnsub = null; }
   if(bandMetaUnsub){ bandMetaUnsub(); bandMetaUnsub = null; }
   if(bandSettleTimer){ clearInterval(bandSettleTimer); bandSettleTimer = null; }
+  // Pagination state is per band-room visit — never carry an old band's loaded
+  // pages or cursor into the next band that gets opened.
+  if(activeBandId) delete bandOlderMessages[activeBandId];
+  bandOldestMsgDoc = null;
   $('bandRoom').classList.remove('active');
   amTunedIn = false;
   activeBandId = null;

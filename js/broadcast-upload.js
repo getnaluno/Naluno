@@ -6,14 +6,19 @@
 const BROADCAST_UPLOAD_WORKER_URL = 'https://naluno-broadcast-upload.naluno.workers.dev';
 const BCAST_CHUNK_BYTES = 8 * 1024 * 1024; // 8 MiB parts (R2 min 5 MiB except last)
 
+/* FIX (20260826 / bug: "Broadcast videos die after ~a day"):
+   Broadcast must NEVER fall back to the Signal upload worker. That worker
+   writes into the naluno-signal R2 bucket, which has a 25h auto-delete
+   lifecycle rule — Broadcast content is meant to be permanent. The old
+   fallback here silently rerouted failed Broadcast uploads into that
+   ephemeral bucket with no error shown, which is why some (or, once the
+   dedicated broadcast worker also turned out to share that same bucket,
+   effectively all) Broadcast videos were vanishing about a day after
+   posting. There is now exactly one upload target for Broadcast, and a
+   failed upload surfaces a real error instead of silently succeeding
+   somewhere unsafe. */
 function bcastUploadEndpoints(){
-  const list = [];
-  if(BROADCAST_UPLOAD_WORKER_URL) list.push(BROADCAST_UPLOAD_WORKER_URL.replace(/\/+$/, ''));
-  if(typeof SIGNAL_UPLOAD_WORKER_URL === 'string' && SIGNAL_UPLOAD_WORKER_URL){
-    const s = SIGNAL_UPLOAD_WORKER_URL.replace(/\/+$/, '');
-    if(list.indexOf(s) < 0) list.push(s);
-  }
-  return list;
+  return BROADCAST_UPLOAD_WORKER_URL ? [BROADCAST_UPLOAD_WORKER_URL.replace(/\/+$/, '')] : [];
 }
 
 function bcastGuessType(blob){
@@ -48,13 +53,18 @@ async function uploadBroadcastFileInner(blob, onProgress){
   if(size < 1) throw new Error('Empty video');
   const contentType = bcastGuessType(blob);
   const endpoints = bcastUploadEndpoints();
+  if(!endpoints.length) throw new Error('Broadcast upload is not configured');
+  const base = endpoints[0];
+  // Retry the SAME (correct-bucket) endpoint on transient failure — never a
+  // different endpoint, and never one that could land in the wrong bucket.
   let lastErr = null;
-  for(const base of endpoints){
+  for(let attempt = 1; attempt <= 2; attempt++){
     try{
       return await uploadBroadcastFileTo(base, blob, contentType, onProgress);
     }catch(e){
       lastErr = e;
-      console.warn('[bcast-upload] endpoint failed', base, e && e.message);
+      console.warn('[bcast-upload] attempt ' + attempt + ' failed', e && e.message);
+      if(attempt < 2) await new Promise(r => setTimeout(r, 1200));
     }
   }
   throw lastErr || new Error('Upload failed');
@@ -137,13 +147,10 @@ async function uploadBroadcastFileTo(base, blob, contentType, onProgress){
   });
   const doneBody = await doneRes.json().catch(()=>({}));
   if(!doneRes.ok) throw new Error(doneBody.error || 'Could not finish upload');
-  let url = doneBody.url;
-  if(!url && doneBody.key && typeof resolveMediaUrl === 'function'){
-    url = resolveMediaUrl('/o/' + doneBody.key);
-  }
-  if(!url && doneBody.key && typeof SIGNAL_UPLOAD_WORKER_URL === 'string'){
-    url = SIGNAL_UPLOAD_WORKER_URL.replace(/\/+$/, '') + '/o/' + doneBody.key;
-  }
+  // The worker always returns a full, correct-bucket playback URL. If it's
+  // ever missing, build it against THIS SAME broadcast endpoint (`base`) —
+  // never the Signal worker, which would point at the wrong bucket entirely.
+  let url = doneBody.url || (doneBody.key ? (base + '/o/' + doneBody.key) : '');
   if(!url) throw new Error('Upload succeeded but no URL returned');
   if(typeof resolveMediaUrl === 'function') url = resolveMediaUrl(url);
   if(onProgress) onProgress(1, 'Uploaded');

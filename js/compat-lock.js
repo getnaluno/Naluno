@@ -44,7 +44,8 @@ function legacyBroadcastPlayUrl(d){
 
 function looksLikeVideoUrl(u){
   if(!u || typeof u !== 'string') return false;
-  return /\.(mp4|webm|mov|m4v)(\?|$)/i.test(u) || /\/o\/u\//.test(u);
+  // /o/u/ = legacy Signal-style key, /o/b/ = Broadcast key (post 20260826 fix).
+  return /\.(mp4|webm|mov|m4v)(\?|$)/i.test(u) || /\/o\/u\//.test(u) || /\/o\/b\//.test(u);
 }
 
 /** Resolve for playback: try proxy, but never lose the original string. */
