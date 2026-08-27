@@ -542,9 +542,15 @@
   background:linear-gradient(145deg, rgba(30,34,52,.95), rgba(13,15,23,.98));
   border:1px solid rgba(124,255,178,.18);
   box-shadow:0 10px 28px rgba(0,0,0,.28);
-  transition: transform .15s ease, border-color .15s ease;
+  transition: transform .45s cubic-bezier(.2,.8,.2,1), border-color .2s ease, opacity .45s ease, box-shadow .45s ease;
+  opacity:.72; transform:translateY(10px);
 }
+.bcast-plate.in-view{ opacity:1; transform:none; }
 .bcast-plate:active{ transform:scale(.98); }
+.bcast-plate:has(.bcast-plate-live){
+  border-color:rgba(255,84,112,.42);
+  box-shadow:0 10px 28px rgba(0,0,0,.28), 0 0 0 1px rgba(255,84,112,.18);
+}
 .bcast-plate-frame{
   position:relative; aspect-ratio:1/1; background:#07080c; overflow:hidden;
 }
@@ -556,8 +562,26 @@
 }
 .bcast-plate-scan{
   pointer-events:none; position:absolute; inset:0;
-  background:linear-gradient(120deg, transparent 40%, rgba(124,255,178,.08) 50%, transparent 60%);
+  background:linear-gradient(105deg, transparent 32%, rgba(124,255,178,.11) 50%, transparent 68%);
+  background-size:220% 100%;
+  background-position:120% 0;
   mix-blend-mode:screen;
+  opacity:0;
+}
+.bcast-plate.in-view .bcast-plate-scan{
+  opacity:1;
+  animation: plateScan 7.2s ease-in-out infinite;
+}
+@keyframes plateScan{
+  0%{ background-position:130% 0; }
+  100%{ background-position:-30% 0; }
+}
+.bcast-plate.in-view .bcast-plate-media{
+  animation: plateDrift 16s ease-in-out infinite alternate;
+}
+@keyframes plateDrift{
+  from{ transform:scale(1); }
+  to{ transform:scale(1.045); }
 }
 .bcast-plate-live{
   position:absolute; top:8px; left:8px; z-index:2;
@@ -906,7 +930,7 @@ body.naluno-overlay .navbar{
   position:relative;
   overflow:hidden;
   background:#141728; /* fallback while the rotating ring layer loads/if animation is disabled */
-  box-shadow: 0 0 0 1px rgba(124,255,178,.14), 0 0 14px -6px rgba(124,255,178,.35);
+  box-shadow: 0 0 0 1px rgba(124,255,178,.18), 0 0 16px -4px rgba(124,255,178,.4);
   animation: signalBreathe 3.6s ease-in-out infinite;
 }
 /* "Signals feel alive": a slowly ROTATING gradient ring, not a static conic
@@ -921,8 +945,25 @@ body.naluno-overlay .navbar{
 .signal-window.signal-new::before{ animation-duration:4.2s; } /* a touch livelier the moment it's genuinely new */
 @keyframes signalRingSpin{ to{ transform:rotate(360deg); } }
 @keyframes signalBreathe{
-  0%,100%{ box-shadow: 0 0 0 1px rgba(124,255,178,.14), 0 0 14px -6px rgba(124,255,178,.35); }
-  50%{ box-shadow: 0 0 0 1px rgba(124,255,178,.22), 0 0 18px -4px rgba(124,255,178,.55); }
+  0%,100%{ box-shadow: 0 0 0 1px rgba(124,255,178,.16), 0 0 10px -2px rgba(124,255,178,.28); }
+  50%{ box-shadow: 0 0 0 2px rgba(0,229,255,.45), 0 0 18px 1px rgba(124,255,178,.38); }
+}
+/* Camera-style edge: a thin inset ring that expands outward. Lives on
+   ::after so overflow on the inner thumb cannot clip it. */
+.signal-window::after{
+  content:''; position:absolute; inset:0; border-radius:inherit; pointer-events:none; z-index:3;
+  box-shadow: inset 0 0 0 1.5px rgba(124,255,178,.28), 0 0 0 0 rgba(124,255,178,0);
+  animation: signalEdgePulse 3.2s ease-in-out infinite;
+}
+@keyframes signalEdgePulse{
+  0%,100%{ box-shadow: inset 0 0 0 1.5px rgba(124,255,178,.22), 0 0 0 0 rgba(124,255,178,0); }
+  50%{ box-shadow: inset 0 0 0 1.5px rgba(0,229,255,.6), 0 0 12px 1px rgba(124,255,178,.28); }
+}
+.signal-window.signal-create::after{
+  animation-duration:2.05s;
+}
+.signal-window.signal-create{
+  animation-duration:2.05s;
 }
 /* Presentation-layer only — see signal-ui.js renderBroadcastTab(): this just
    marks freshly-appeared items so they settle into place instead of
@@ -940,7 +981,10 @@ body.naluno-overlay .navbar{
   100%{ opacity:0; transform:scale(.85); }
 }
 @media (prefers-reduced-motion: reduce){
-  .signal-window, .signal-window::before, .bcast-item-enter, .bcast-item-leave{ animation:none !important; }
+  .signal-window, .signal-window::before, .signal-window::after,
+  .signal-create-mark span, .bcast-item-enter, .bcast-item-leave,
+  .bcast-plate-scan, .bcast-plate-media{ animation:none !important; }
+  .bcast-plate{ opacity:1; transform:none; }
 }
 .signal-window > .signal-window-in{
   width:100%; height:100%; border-radius:18px; overflow:hidden;
@@ -992,7 +1036,6 @@ body.naluno-overlay .navbar{
 .bcast-item.signal-tile{ gap:0; align-items:stretch; }
 .signal-tile .signal-window{
   width:108px; height:148px; border-radius:22px; padding:2px;
-  box-shadow: 0 0 0 1px rgba(124,255,178,.12), 0 8px 22px -12px rgba(0,229,255,.35);
 }
 .signal-tile .signal-window > .signal-window-in{
   border-radius:20px; align-items:stretch; justify-content:flex-end;
@@ -1037,6 +1080,11 @@ body.naluno-overlay .navbar{
   border:1.5px dashed rgba(124,255,178,.7);
   color:var(--mint); font-size:22px; line-height:40px; text-align:center;
   box-shadow:0 0 16px -6px rgba(124,255,178,.55);
+  animation: signalPlusBreathe 2.05s ease-in-out infinite;
+}
+@keyframes signalPlusBreathe{
+  0%,100%{ transform:scale(1); border-color:rgba(124,255,178,.55); box-shadow:0 0 10px -6px rgba(124,255,178,.35); }
+  50%{ transform:scale(1.08); border-color:rgba(0,229,255,.95); box-shadow:0 0 18px -2px rgba(124,255,178,.75); }
 }
 .signal-tile-create .signal-tile-cap{ background:linear-gradient(180deg, transparent, rgba(7,8,12,.7) 40%); }
 
