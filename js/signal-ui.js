@@ -282,6 +282,7 @@ function renderBroadcastTab(){
     const list = (bcastActiveView === 'mine' ? mineList : feedList).slice();
     if(typeof renderBroadcastEntryGrid === 'function'){
       renderBroadcastEntryGrid(grid, empty, list);
+      try{ nalunoRevealBroadcastPlates(grid); }catch(_){}
     } else if(!list.length){
       grid.innerHTML = '';
       if(empty) empty.style.display = 'block';
@@ -299,8 +300,31 @@ function renderBroadcastTab(){
           if(typeof openBroadcastById === 'function') openBroadcastById(el.getAttribute('data-broadcast-id'));
         };
       });
+      try{ nalunoRevealBroadcastPlates(grid); }catch(_){}
     }
   }
+}
+
+function nalunoRevealBroadcastPlates(grid){
+  const host = grid || document.getElementById('bcastPlateGrid');
+  if(!host) return;
+  const plates = host.querySelectorAll('.bcast-plate');
+  if(!plates.length) return;
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(reduce || typeof IntersectionObserver === 'undefined'){
+    plates.forEach(function(p){ p.classList.add('in-view'); });
+    return;
+  }
+  if(window.__nalunoPlateIO){
+    try{ window.__nalunoPlateIO.disconnect(); }catch(_){}
+  }
+  const root = document.getElementById('broadcastTabScroll') || null;
+  window.__nalunoPlateIO = new IntersectionObserver(function(entries){
+    entries.forEach(function(en){
+      if(en.isIntersecting) en.target.classList.add('in-view');
+    });
+  }, { root: root, threshold: 0.16, rootMargin: '24px 0px -6% 0px' });
+  plates.forEach(function(p){ window.__nalunoPlateIO.observe(p); });
 }
 
 function renderBroadcasts(){

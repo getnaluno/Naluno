@@ -226,6 +226,7 @@
         }
         grid.innerHTML = f.items.map(plateHtml).join('');
         bindBroadcastEntryClicks(grid);
+        try{ if(typeof nalunoRevealBroadcastPlates === 'function') nalunoRevealBroadcastPlates(grid); }catch(_){}
         return;
       }
       openStrandFolderId = null;
@@ -249,6 +250,7 @@
     cards.sort(function(a,b){ return (b.ts || 0) - (a.ts || 0); });
     grid.innerHTML = cards.map(function(c){ return c.html; }).join('');
     bindBroadcastEntryClicks(grid);
+    try{ if(typeof nalunoRevealBroadcastPlates === 'function') nalunoRevealBroadcastPlates(grid); }catch(_){}
   }
 
   function openStrandFolder(id){
