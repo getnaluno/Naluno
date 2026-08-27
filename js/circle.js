@@ -188,6 +188,44 @@
     }
   }
 
+  /** Days left in the current calendar-month Toga period (UTC, matching
+   *  nalunoMonthKey() above) — purely a display computation, no new data. */
+  function nalunoDaysRemainingInPeriod(){
+    const now = new Date();
+    const y = now.getUTCFullYear(), m = now.getUTCMonth();
+    const lastDay = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+    return Math.max(1, lastDay - now.getUTCDate());
+  }
+
+  /** Visual-refresh only: remembers each creator's rank position from the
+   *  last time this rendered, purely to show ↑ / ↓ / NEW / — next to their
+   *  name — the ranking itself is entirely unchanged, this only diffs
+   *  against what was already computed. Stored client-side (same pattern
+   *  used throughout the app for instant-paint caches), keyed by month so
+   *  it naturally resets when a new Toga period begins, exactly like the
+   *  real ranking does. Never read by anything that decides who's actually
+   *  in the list or in what order. */
+  function nalunoTogaRankDelta(monthKey, currentRanksByUid){
+    let prev = {};
+    try{
+      const raw = (typeof nalunoCacheRead === 'function') ? nalunoCacheRead('togaRanks:' + monthKey) : null;
+      if(raw && typeof raw === 'object') prev = raw;
+    }catch(_){}
+    const deltas = {};
+    Object.keys(currentRanksByUid).forEach(function(uid){
+      const now = currentRanksByUid[uid];
+      const before = prev[uid];
+      if(before == null) deltas[uid] = { kind: 'new' };
+      else if(before === now) deltas[uid] = { kind: 'same' };
+      else if(before > now) deltas[uid] = { kind: 'up', by: before - now };
+      else deltas[uid] = { kind: 'down', by: now - before };
+    });
+    try{
+      if(typeof nalunoCacheWrite === 'function') nalunoCacheWrite('togaRanks:' + monthKey, currentRanksByUid);
+    }catch(_){}
+    return deltas;
+  }
+
   function openCreatorTogaBroadcast(uid, bid){
     function go(id){
       if(id && typeof openBroadcastById === 'function'){
@@ -314,19 +352,33 @@
         el.innerHTML = '<div class="lobby-sub" style="text-align:left;max-width:none;">This month’s Wall of Fame is empty. Share your views, then watch time, Circle joins, and conversation write the ten names. Views must be public to qualify. The list lives 30 days.</div>';
         return;
       }
+      // Visual refresh only — see nalunoTogaRankDelta() above. Ranking order
+      // and who qualifies are entirely unchanged above this line; this just
+      // decides what badge (↑ / ↓ / NEW / —) shows next to each name.
+      const ranksByUid = {};
+      rows.forEach(function(r, i){ ranksByUid[r.id] = i + 1; });
+      const deltas = nalunoTogaRankDelta(monthKey, ranksByUid);
       el.innerHTML = '<ol class="toga-list">' + rows.map(function(r, i){
         const openId = r.featuredBroadcastId || '';
-        return '<li><button type="button" class="toga-name-row" data-toga-uid="'+escapeHtml(r.id)+'" data-bcast="'+(openId ? escapeHtml(openId) : '')+'">'
-          + '<span class="toga-rank">#' + (i+1) + '</span>'
+        const rank = i + 1;
+        const d = deltas[r.id] || { kind: 'same' };
+        let badge = '';
+        if(d.kind === 'new') badge = '<span class="toga-delta toga-delta-new">NEW</span>';
+        else if(d.kind === 'up') badge = '<span class="toga-delta toga-delta-up">▲' + d.by + '</span>';
+        else if(d.kind === 'down') badge = '<span class="toga-delta toga-delta-down">▼' + d.by + '</span>';
+        else badge = '<span class="toga-delta toga-delta-same">—</span>';
+        return '<li><button type="button" class="toga-name-row toga-rank-' + Math.min(rank,4) + '" data-toga-uid="'+escapeHtml(r.id)+'" data-bcast="'+(openId ? escapeHtml(openId) : '')+'">'
+          + '<span class="toga-rank">#' + rank + '</span>'
           + '<span class="toga-name-block">'
-          +   '<span class="toga-card-name">' + escapeHtml(r.name || 'Creator') + '</span>'
+          +   '<span class="toga-card-name">' + escapeHtml(r.name || 'Creator') + badge + '</span>'
           +   '<span class="toga-card-h">' + formatNalunoViews(r._viewsM) + ' views this month · '
           +     formatNalunoViews(r._circleM || 0) + ' Circle · '
           +     formatNalunoViews(r._engageM || 0) + ' talk</span>'
           + '</span>'
           + '<span class="toga-card-v">' + formatNalunoViews(r._score || 0) + '</span>'
           + '</button></li>';
-      }).join('') + '</ol>';
+      }).join('') + '</ol>'
+      + '<div class="toga-period-note">' + nalunoMonthLabel() + ' · ' + nalunoDaysRemainingInPeriod() + ' days remaining in this Wall of Fame</div>';
       el.querySelectorAll('[data-toga-uid]').forEach(function(card){
         card.onclick = function(e){
           if(e){ e.preventDefault(); e.stopPropagation(); }

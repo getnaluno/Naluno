@@ -84,6 +84,16 @@ $('adjustSave').onclick = ()=>{
 
 /* ---------------- YOUR SIGNAL RING + LIST ---------------- */
 
+/* Visual-refresh only (see broadcast-space.js/circle.js for the equivalent
+   Broadcast-side notes): tracks which Signal strip items were already on
+   screen last render, purely so a genuinely NEW one can settle into place
+   with a brief entrance instead of just snapping in. Never affects order,
+   never affects what's shown — rankBroadcastEntries()'s ordering below is
+   completely untouched; this only decides which already-ordered items get
+   an entrance animation class. */
+let __nalunoPrevSignalStripIds = new Set();
+let __nalunoSignalStripRenderGen = 0;
+
 /* Discovery: prefer useful activity over pure popularity */
 function rankBroadcastEntries(entries){
   // entries: [{ contact, latest }]
@@ -99,6 +109,12 @@ function rankBroadcastEntries(entries){
   });
 }
 
+
+/* Visual-refresh only: which of the two equivalent, already-existing arrays
+   (feedBroadcasts = discovery feed, myBroadcasts = what I've published)
+   currently feeds the grid below. Nothing about how either array is loaded,
+   filtered, or ordered changes — this only decides which one is shown. */
+let bcastActiveView = 'foryou';
 
 function renderBroadcastTab(){
   try{ if(typeof pruneExpiredSignal === 'function') pruneExpiredSignal(); }catch(_){}
@@ -131,9 +147,13 @@ function renderBroadcastTab(){
     }
     const conn = (typeof connectionsSignals !== 'undefined' && connectionsSignals) ? connectionsSignals : [];
     let others = '';
+    let staggerIndex = 0;
+    const nextStripIds = new Set();
     conn.forEach(function(entry){
       const c = entry.contact;
       if(!c) return;
+      nextStripIds.add(c.id);
+      const isNewThisRender = !__nalunoPrevSignalStripIds.has(c.id);
       const name = (c.name||'?').split(' ')[0];
       const latest = entry.latest || null;
       // LOCK (20260825c): others must see the paused Signal preview (thumb), not only avatar.
@@ -154,32 +174,66 @@ function renderBroadcastTab(){
       }catch(_){
         thumbInner = '<div class="avatar" style="width:100%;height:100%;background:'+(c.color||'#7CFFB2')+';color:#0D0F17;font-weight:700;">'+(c.initials||'?')+'</div>';
       }
-      others += '<div class="bcast-item" data-signal="'+c.id+'"><div class="signal-window"><div class="signal-window-in">'+thumbInner+'<span class="signal-play">▶</span></div></div><span>'+escapeHtml(name)+'</span></div>';
+      others += '<div class="bcast-item'+(isNewThisRender?' bcast-item-enter':'')+'" style="'+(isNewThisRender?('animation-delay:'+Math.min(staggerIndex*60,300)+'ms;'):'')+'" data-signal="'+c.id+'"><div class="signal-window'+(isNewThisRender?' signal-new':'')+'"><div class="signal-window-in">'+thumbInner+'<span class="signal-play">▶</span></div></div><span>'+escapeHtml(name)+'</span></div>';
+      staggerIndex++;
     });
-    stripEl.innerHTML = '<div class="bcast-item" id="mySignalItem">'+myInner+'</div>'+others;
-    const mine = document.getElementById('mySignalItem');
-    if(mine){
-      mine.onclick = function(){
-        if(typeof mySignal !== 'undefined' && mySignal.length){
-          if(typeof openMySignalStory === 'function') openMySignalStory();
-          else if(typeof openMyBroadcast === 'function') openMyBroadcast();
-        } else if(typeof openComposer === 'function'){
-          openComposer('signal');
-        }
-      };
+    // Presentation-only "leaving naturally" for a Signal that's no longer in
+    // this render (expired, or the connection's list changed) — found by
+    // diffing against what was on screen a moment ago, purely for this fade,
+    // never used to decide what's actually shown; the render below already
+    // reflects the real, current list regardless of this animation.
+    const removedIds = [];
+    __nalunoPrevSignalStripIds.forEach(function(id){ if(!nextStripIds.has(id)) removedIds.push(id); });
+    __nalunoPrevSignalStripIds = nextStripIds;
+    // FIX (adversarial pass): if renderBroadcastTab() runs again — a real
+    // possibility, this is called from several independent, event-driven
+    // triggers across the app, not a single serial loop — while an earlier
+    // call's 360ms exit-animation delay is still pending, that OLDER
+    // doRebuild() would fire later using ITS OWN stale captured myInner/
+    // others, overwriting whatever the newer render had already correctly
+    // shown. A simple generation token: a delayed rebuild only actually
+    // applies if nothing newer has started since it was scheduled.
+    const myRenderGen = ++__nalunoSignalStripRenderGen;
+    const doRebuild = function(){
+      if(myRenderGen !== __nalunoSignalStripRenderGen) return; // superseded by a newer render
+      stripEl.innerHTML = '<div class="bcast-item" id="mySignalItem">'+myInner+'</div>'+others;
+      const mine = document.getElementById('mySignalItem');
+      if(mine){
+        mine.onclick = function(){
+          if(typeof mySignal !== 'undefined' && mySignal.length){
+            if(typeof openMySignalStory === 'function') openMySignalStory();
+            else if(typeof openMyBroadcast === 'function') openMyBroadcast();
+          } else if(typeof openComposer === 'function'){
+            openComposer('signal');
+          }
+        };
+      }
+      stripEl.querySelectorAll('[data-signal]').forEach(function(el){
+        el.onclick = function(){
+          const id = parseInt(el.getAttribute('data-signal'), 10);
+          if(typeof openContactSignalStory === 'function') openContactSignalStory(id);
+        };
+      });
+    };
+    if(removedIds.length && !document.hidden){
+      let stillPlaying = 0;
+      removedIds.forEach(function(id){
+        const el = stripEl.querySelector('[data-signal="'+id+'"]');
+        if(el){ el.classList.add('bcast-item-leave'); stillPlaying++; }
+      });
+      if(stillPlaying) setTimeout(doRebuild, 360);
+      else doRebuild();
+    } else {
+      doRebuild();
     }
-    stripEl.querySelectorAll('[data-signal]').forEach(function(el){
-      el.onclick = function(){
-        const id = parseInt(el.getAttribute('data-signal'), 10);
-        if(typeof openContactSignalStory === 'function') openContactSignalStory(id);
-      };
-    });
   }
 
   // ---- Permanent Broadcast plates ----
   // Stranded videos sit in a folder at entry. Only unattached ones stay free.
   if(grid){
-    const list = (typeof feedBroadcasts !== 'undefined' && feedBroadcasts) ? feedBroadcasts.slice() : [];
+    const feedList = (typeof feedBroadcasts !== 'undefined' && feedBroadcasts) ? feedBroadcasts : [];
+    const mineList = (typeof myBroadcasts !== 'undefined' && myBroadcasts) ? myBroadcasts : [];
+    const list = (bcastActiveView === 'mine' ? mineList : feedList).slice();
     if(typeof renderBroadcastEntryGrid === 'function'){
       renderBroadcastEntryGrid(grid, empty, list);
     } else if(!list.length){
@@ -207,6 +261,24 @@ function renderBroadcasts(){
   try{ renderBroadcastTab(); }catch(e){ console.warn('[signal] render', e); }
 }
 
+/* One-time binding for the For You / My Broadcasts tabs — a presentation
+   switch only (see bcastActiveView above); re-renders through the exact
+   same renderBroadcastTab() path everything else already uses. */
+(function bindBcastViewTabs(){
+  const wrap = document.getElementById('bcastViewTabs');
+  if(!wrap) return;
+  wrap.querySelectorAll('.bcast-view-tab').forEach(function(btn){
+    btn.onclick = function(){
+      const view = btn.getAttribute('data-bcast-view') || 'foryou';
+      if(view === bcastActiveView) return;
+      bcastActiveView = view;
+      wrap.querySelectorAll('.bcast-view-tab').forEach(function(b){
+        b.classList.toggle('active', b === btn);
+      });
+      try{ renderBroadcastTab(); }catch(_){}
+    };
+  });
+})();
 
 try{ renderBroadcasts(); }catch(e){ console.warn(e); }
 
