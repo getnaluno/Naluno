@@ -146,43 +146,147 @@
     });
     const folderList = Object.keys(folders).map(function(k){
       const f = folders[k];
-      f.items.sort(function(a,b){ return (Number(b.createdAt)||0) - (Number(a.createdAt)||0); });
+      f.items.sort(function(a,b){ return (Number(a.createdAt)||0) - (Number(b.createdAt)||0); });
       return f;
     });
     return { folders: folderList, free: free };
   }
 
+  function broadcastPreviewSrc(b){
+    if(!b || b.live) return '';
+    if(b.mediaType === 'photo') return '';
+    return b.mediaUrl || b.videoUrl || (b.chapters && b.chapters[0] && b.chapters[0].mediaUrl) || '';
+  }
+  function broadcastPosterSrc(b){
+    if(!b) return '';
+    return b.thumbUrl || ((b.mediaType === 'photo') ? (b.mediaUrl || '') : '') || '';
+  }
+
   function strandFolderHtml(f){
-    const n = (f.items || []).length;
-    const tiles = (f.items || []).slice(0, 4).map(function(b){
-      const thumb = b.thumbUrl || ((b.mediaType === 'photo') ? (b.mediaUrl || '') : '');
+    const items = (f.items || []).slice();
+    const n = items.length;
+    const first = items[0] || null;
+    const poster = broadcastPosterSrc(first);
+    const preview = broadcastPreviewSrc(first);
+    const rest = items.slice(1, 5);
+    const rail = rest.map(function(b, i){
+      const thumb = broadcastPosterSrc(b);
+      const label = 'E' + (i + 2);
       if(thumb){
-        return '<img src="' + escapeHtml(thumb) + '" alt="" class="bcast-folder-tile" loading="lazy" />';
+        return '<div class="strand-rail-tile"><img src="' + escapeHtml(thumb) + '" alt="" /><span>' + label + '</span></div>';
       }
       const ch = escapeHtml(String((b.creatorName || '?')).slice(0,1).toUpperCase());
-      return '<div class="bcast-folder-tile bcast-folder-tile-fallback">' + ch + '</div>';
+      return '<div class="strand-rail-tile strand-rail-fallback">' + ch + '<span>' + label + '</span></div>';
     }).join('');
     const live = f.live ? '<span class="bcast-plate-live">LIVE</span>' : '';
-    const count = n === 1 ? '1 inside' : (n + ' inside');
+    const count = n === 1 ? '1 part' : (n + ' parts');
     const creator = escapeHtml(String(f.creatorName || 'Someone').split(' ')[0]);
     const name = escapeHtml(String(f.strandName || 'Strand').slice(0, 48));
-    return '<article class="bcast-plate bcast-folder" data-strand-id="' + escapeHtml(f.strandId) + '" role="button" tabindex="0">'
-      + '<div class="bcast-plate-frame">'
-      +   '<div class="bcast-folder-tab" aria-hidden="true">'
-      +     '<svg width="14" height="10" viewBox="0 0 14 10" fill="none"><path d="M1 8c2-4 4-6 6-6s4 2 6 6" stroke="#7CFFB2" stroke-width="1.5" stroke-linecap="round"/></svg>'
-      +   '</div>'
-      +   '<div class="bcast-folder-body">'
-      +     '<div class="bcast-folder-mosaic n' + Math.min(n, 4) + '">' + tiles + '</div>'
-      +     live
-      +     '<span class="bcast-folder-count">' + n + '</span>'
-      +     '<div class="bcast-plate-scan"></div>'
-      +   '</div>'
+    const hero = (preview
+      ? '<video class="strand-preview" muted playsinline webkit-playsinline loop preload="none" poster="' + escapeHtml(poster) + '" data-preview-src="' + escapeHtml(preview) + '" data-naluno-preview="1"></video>'
+      : (poster
+        ? '<img src="' + escapeHtml(poster) + '" alt="" class="bcast-plate-media strand-poster" />'
+        : '<div class="bcast-plate-fallback">' + escapeHtml(String((f.creatorName || '?')).slice(0,1).toUpperCase()) + '</div>'))
+      + (poster && preview ? '<img src="' + escapeHtml(poster) + '" alt="" class="strand-poster" />' : '');
+    return '<article class="bcast-plate bcast-folder bcast-strand-entry' + (rail ? ' has-rail' : '') + '" data-strand-id="' + escapeHtml(f.strandId) + '" role="button" tabindex="0">'
+      + '<div class="bcast-plate-frame bcast-strand-stage">'
+      +   '<div class="strand-hero">' + hero + '</div>'
+      +   (rail ? '<div class="strand-rail" aria-hidden="true">' + rail + '</div>' : '')
+      +   '<span class="strand-kicker">Strand · ' + count + '</span>'
+      +   live
+      +   '<span class="strand-playhint" aria-hidden="true">▶</span>'
+      +   '<div class="bcast-plate-scan"></div>'
       + '</div>'
       + '<div class="bcast-plate-meta">'
       +   '<div class="bcast-plate-title">' + name + '</div>'
-      +   '<div class="bcast-plate-sub">' + creator + ' · ' + count + '</div>'
+      +   '<div class="bcast-plate-sub">' + creator + ' · first episode preview</div>'
       + '</div>'
       + '</article>';
+  }
+
+  let __strandPreviewIO = null;
+  let __strandPreviewActive = null;
+
+  function pauseStrandPreview(video){
+    if(!video) return;
+    try{ video.pause(); }catch(_){}
+    try{
+      if(video.getAttribute('src')){
+        video.removeAttribute('src');
+        video.load();
+      }
+    }catch(_){}
+    if(__strandPreviewActive === video) __strandPreviewActive = null;
+  }
+  function pauseAllStrandPreviews(root){
+    const scope = root || document;
+    try{
+      scope.querySelectorAll('video[data-naluno-preview="1"]').forEach(pauseStrandPreview);
+    }catch(_){}
+    __strandPreviewActive = null;
+  }
+  function playStrandPreview(video){
+    if(!video) return;
+    const src = video.getAttribute('data-preview-src') || '';
+    if(!src) return;
+    if(__strandPreviewActive && __strandPreviewActive !== video){
+      pauseStrandPreview(__strandPreviewActive);
+    }
+    try{
+      video.muted = true;
+      video.defaultMuted = true;
+      video.volume = 0;
+      video.playsInline = true;
+      video.setAttribute('playsinline', '');
+      video.setAttribute('webkit-playsinline', '');
+      video.loop = true;
+      video.controls = false;
+      video.disableRemotePlayback = true;
+    }catch(_){}
+    if(typeof containMediaElement === 'function') try{ containMediaElement(video); }catch(_){}
+    if(video.getAttribute('src') !== src){
+      try{ video.src = src; }catch(_){}
+    }
+    const p = video.play();
+    if(p && p.catch) p.catch(function(){});
+    __strandPreviewActive = video;
+    if(typeof lockOutChromeMediaSession === 'function'){
+      try{ lockOutChromeMediaSession(); }catch(_){}
+    }
+  }
+  function armStrandPreviews(grid){
+    if(!grid) return;
+    if(__strandPreviewIO){
+      try{ __strandPreviewIO.disconnect(); }catch(_){}
+      __strandPreviewIO = null;
+    }
+    const videos = grid.querySelectorAll('video[data-naluno-preview="1"]');
+    if(!videos.length) return;
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if(reduce || typeof IntersectionObserver === 'undefined'){
+      return;
+    }
+    const root = document.getElementById('broadcastTabScroll') || null;
+    __strandPreviewIO = new IntersectionObserver(function(entries){
+      entries.forEach(function(en){
+        en.target.__nalunoRatio = en.intersectionRatio;
+        en.target.__nalunoOn = en.isIntersecting;
+      });
+      let best = null;
+      let bestRatio = 0.54;
+      videos.forEach(function(v){
+        const r = v.__nalunoRatio || 0;
+        if(v.__nalunoOn && r > bestRatio){
+          best = v;
+          bestRatio = r;
+        }
+      });
+      videos.forEach(function(v){
+        if(v === best) playStrandPreview(v);
+        else if(v === __strandPreviewActive) pauseStrandPreview(v);
+      });
+    }, { root: root, threshold: [0.25, 0.55, 0.75, 0.9] });
+    videos.forEach(function(v){ __strandPreviewIO.observe(v); });
   }
 
   function bindBroadcastEntryClicks(grid){
@@ -226,7 +330,9 @@
         }
         grid.innerHTML = f.items.map(plateHtml).join('');
         bindBroadcastEntryClicks(grid);
+        pauseAllStrandPreviews(grid);
         try{ if(typeof nalunoRevealBroadcastPlates === 'function') nalunoRevealBroadcastPlates(grid); }catch(_){}
+        try{ armStrandPreviews(grid); }catch(_){}
         return;
       }
       openStrandFolderId = null;
@@ -251,9 +357,11 @@
     grid.innerHTML = cards.map(function(c){ return c.html; }).join('');
     bindBroadcastEntryClicks(grid);
     try{ if(typeof nalunoRevealBroadcastPlates === 'function') nalunoRevealBroadcastPlates(grid); }catch(_){}
+    try{ armStrandPreviews(grid); }catch(_){}
   }
 
   function openStrandFolder(id){
+    pauseAllStrandPreviews();
     openStrandFolderId = id || null;
     if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
   }
@@ -301,5 +409,6 @@
   window.renderBroadcastEntryGrid = renderBroadcastEntryGrid;
   window.openStrandFolder = openStrandFolder;
   window.closeStrandFolder = closeStrandFolder;
+  window.pauseAllStrandPreviews = pauseAllStrandPreviews;
   window.getOpenStrandFolderId = function(){ return openStrandFolderId; };
 })();

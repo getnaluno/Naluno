@@ -41,10 +41,19 @@ function broadcastThumbHtml(b){
   const title = escapeHtml((b.title || 'Broadcast').slice(0, 48));
   const creator = escapeHtml((b.creatorName || 'Someone').split(' ')[0]);
   const thumb = b.thumbUrl || '';
-  const media = thumb || ((b.mediaType === 'photo') ? (b.mediaUrl || '') : '');
-  const inner = media
-    ? `<img src="${escapeHtml(media)}" alt="" class="bcast-plate-media" loading="lazy" onerror="this.style.display='none';this.parentNode.classList.add('no-thumb')" />`
-    : `<div class="bcast-plate-fallback">${escapeHtml((b.creatorName || '?').slice(0,1).toUpperCase())}</div>`;
+  const photo = thumb || ((b.mediaType === 'photo') ? (b.mediaUrl || '') : '');
+  const preview = (!b.live && b.mediaType !== 'photo')
+    ? (b.mediaUrl || b.videoUrl || '')
+    : '';
+  let inner;
+  if(preview){
+    inner = (photo ? `<img src="${escapeHtml(photo)}" alt="" class="strand-poster" />` : '')
+      + `<video class="strand-preview" muted playsinline webkit-playsinline loop preload="none" poster="${escapeHtml(photo)}" data-preview-src="${escapeHtml(preview)}" data-naluno-preview="1"></video>`;
+  } else if(photo){
+    inner = `<img src="${escapeHtml(photo)}" alt="" class="bcast-plate-media" loading="lazy" onerror="this.style.display='none';this.parentNode.classList.add('no-thumb')" />`;
+  } else {
+    inner = `<div class="bcast-plate-fallback">${escapeHtml((b.creatorName || '?').slice(0,1).toUpperCase())}</div>`;
+  }
   const live = b.live ? `<span class="bcast-plate-live">LIVE</span>` : '';
   const viewsBit = (typeof formatNalunoViews === 'function' && (b.shareViews !== false))
     ? `<span class="bcast-plate-views">${escapeHtml(formatNalunoViews(b.views || 0))}</span>`
@@ -446,6 +455,7 @@ window.notifyFrequenciesLive = notifyFrequenciesLive;
 
 function openBroadcastById(id){
   if(!id) return;
+  try{ if(typeof pauseAllStrandPreviews === 'function') pauseAllStrandPreviews(); }catch(_){}
   if(typeof openBroadcastSpaceById === 'function') openBroadcastSpaceById(id);
   else toast('Opening Broadcast…');
 }

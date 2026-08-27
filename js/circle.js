@@ -433,7 +433,7 @@
       exp.setAttribute('aria-expanded', open ? 'true' : 'false');
       exp.classList.toggle('open', !!open);
       const hint = $('togaExpandHint');
-      if(hint) hint.textContent = open ? 'close' : 'Wall of Fame · tap';
+      if(hint) hint.textContent = open ? 'close' : 'open';
       if(open) renderTogaBoard();
     }
     if(exp && body){

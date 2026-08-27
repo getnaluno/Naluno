@@ -106,9 +106,14 @@ function signalAgeChip(ts){
 function signalTileCaption(name, sub){
   return '<div class="signal-tile-cap"><strong>'+escapeHtml(name||'')+'</strong><em>'+escapeHtml(sub||'Short clip')+'</em></div>';
 }
+function signalEdgeHtml(){
+  return '<span class="signal-edge" aria-hidden="true"></span>';
+}
 function signalCreateTileHtml(){
   return '<div class="bcast-item signal-tile signal-tile-create" id="newSignalItem">'
-    + '<div class="signal-window signal-create"><div class="signal-window-in">'
+    + '<div class="signal-window signal-create">'
+    + signalEdgeHtml()
+    + '<div class="signal-window-in">'
     + '<div class="signal-create-mark" aria-hidden="true"><span>+</span></div>'
     + signalTileCaption('New Signal', 'Tap to create')
     + '</div></div></div>';
@@ -171,7 +176,9 @@ function renderBroadcastTab(){
       const seen = (typeof mySignalSeen !== 'undefined' && mySignalSeen) ? ' seen' : '';
       const age = signalAgeChip(latest.createdAt);
       const youLabel = mySignal.length>1 ? ('You · '+mySignal.length) : 'You';
-      myTile = '<div class="bcast-item signal-tile" id="mySignalItem"><div class="signal-window'+seen+'"><div class="signal-window-in">'
+      myTile = '<div class="bcast-item signal-tile" id="mySignalItem"><div class="signal-window'+seen+'">'
+        + signalEdgeHtml()
+        + '<div class="signal-window-in">'
         + thumb
         + (age ? '<span class="signal-age">'+age+'</span>' : '')
         + '<span class="signal-play">▶</span>'
@@ -208,7 +215,9 @@ function renderBroadcastTab(){
         thumbInner = '<div class="avatar" style="width:100%;height:100%;background:'+(c.color||'#7CFFB2')+';color:#0D0F17;font-weight:700;">'+(c.initials||'?')+'</div>';
       }
       const age = signalAgeChip(latest && latest.createdAt);
-      others += '<div class="bcast-item signal-tile'+(isNewThisRender?' bcast-item-enter':'')+'" style="'+(isNewThisRender?('animation-delay:'+Math.min(staggerIndex*60,300)+'ms;'):'')+'" data-signal="'+c.id+'"><div class="signal-window'+(isNewThisRender?' signal-new':'')+'"><div class="signal-window-in">'
+      others += '<div class="bcast-item signal-tile'+(isNewThisRender?' bcast-item-enter':'')+'" style="'+(isNewThisRender?('animation-delay:'+Math.min(staggerIndex*60,300)+'ms;'):'')+'" data-signal="'+c.id+'"><div class="signal-window'+(isNewThisRender?' signal-new':'')+'">'
+        + signalEdgeHtml()
+        + '<div class="signal-window-in">'
         + thumbInner
         + (age ? '<span class="signal-age">'+age+'</span>' : '')
         + '<span class="signal-play">▶</span>'

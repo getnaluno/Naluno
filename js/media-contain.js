@@ -80,6 +80,7 @@ function nalunoAnyAppMediaPlaying(){
     for(let i = 0; i < els.length; i++){
       const el = els[i];
       if(el.closest && el.closest('#callOverlay')) continue;
+      if(el.dataset && el.dataset.nalunoPreview === '1') continue;
       if(!el.paused && !el.ended) return true;
     }
   }catch(_){}
