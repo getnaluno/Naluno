@@ -94,6 +94,33 @@ $('adjustSave').onclick = ()=>{
 let __nalunoPrevSignalStripIds = new Set();
 let __nalunoSignalStripRenderGen = 0;
 
+function signalAgeChip(ts){
+  if(!ts) return '';
+  const t = typeof ts === 'number' ? ts : (ts && ts.toMillis ? ts.toMillis() : 0);
+  if(!t) return '';
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if(s < 3600) return Math.max(1, Math.round(s / 60)) + 'm';
+  if(s < 86400) return Math.max(1, Math.round(s / 3600)) + 'h';
+  return Math.max(1, Math.round(s / 86400)) + 'd';
+}
+function signalTileCaption(name, sub){
+  return '<div class="signal-tile-cap"><strong>'+escapeHtml(name||'')+'</strong><em>'+escapeHtml(sub||'Short clip')+'</em></div>';
+}
+function signalCreateTileHtml(){
+  return '<div class="bcast-item signal-tile signal-tile-create" id="newSignalItem">'
+    + '<div class="signal-window signal-create"><div class="signal-window-in">'
+    + '<div class="signal-create-mark" aria-hidden="true"><span>+</span></div>'
+    + signalTileCaption('New Signal', 'Tap to create')
+    + '</div></div></div>';
+}
+function openNewSignalComposer(){
+  const legacy = document.getElementById('newSignalBtn');
+  if(legacy){
+    try{ legacy.click(); return; }catch(_){}
+  }
+  if(typeof openComposer === 'function') openComposer('signal');
+}
+
 /* Discovery: prefer useful activity over pure popularity */
 function rankBroadcastEntries(entries){
   // entries: [{ contact, latest }]
@@ -122,10 +149,11 @@ function renderBroadcastTab(){
   const grid = document.getElementById('bcastPlateGrid');
   const empty = document.getElementById('bcastPlateEmpty');
 
-  // ---- Signal rings ----
+  // ---- Signal rings (rounded squares). First tile is always New Signal.
+  // Create path is still #newSignalBtn → openComposer('signal'). ----
   if(stripEl){
     const latest = (typeof mySignal !== 'undefined' && mySignal.length) ? mySignal[mySignal.length-1] : null;
-    let myInner;
+    let myTile = '';
     if(latest){
       let thumb = '';
       try{
@@ -140,10 +168,15 @@ function renderBroadcastTab(){
           thumb = '<img src="'+(latest.dataUrl||'')+'" class="mysignal-thumb" style="filter:'+(latest.filterCss||'')+'" />';
         }
       }catch(_){ thumb = ''; }
-      const seen = (typeof mySignalSeen !== 'undefined' && mySignalSeen) ? 'seen' : '';
-      myInner = '<div class="signal-window '+seen+'"><div class="signal-window-in">'+thumb+'<span class="signal-play">▶</span></div></div><span>Your signal'+(mySignal.length>1?(' · '+mySignal.length):'')+'</span>';
-    } else {
-      myInner = '<div class="signal-window seen"><div class="signal-window-in" style="color:var(--mint);font-size:22px;">+</div></div><span>Post signal</span>';
+      const seen = (typeof mySignalSeen !== 'undefined' && mySignalSeen) ? ' seen' : '';
+      const age = signalAgeChip(latest.createdAt);
+      const youLabel = mySignal.length>1 ? ('You · '+mySignal.length) : 'You';
+      myTile = '<div class="bcast-item signal-tile" id="mySignalItem"><div class="signal-window'+seen+'"><div class="signal-window-in">'
+        + thumb
+        + (age ? '<span class="signal-age">'+age+'</span>' : '')
+        + '<span class="signal-play">▶</span>'
+        + signalTileCaption(youLabel, 'Your signal')
+        + '</div></div></div>';
     }
     const conn = (typeof connectionsSignals !== 'undefined' && connectionsSignals) ? connectionsSignals : [];
     let others = '';
@@ -174,7 +207,13 @@ function renderBroadcastTab(){
       }catch(_){
         thumbInner = '<div class="avatar" style="width:100%;height:100%;background:'+(c.color||'#7CFFB2')+';color:#0D0F17;font-weight:700;">'+(c.initials||'?')+'</div>';
       }
-      others += '<div class="bcast-item'+(isNewThisRender?' bcast-item-enter':'')+'" style="'+(isNewThisRender?('animation-delay:'+Math.min(staggerIndex*60,300)+'ms;'):'')+'" data-signal="'+c.id+'"><div class="signal-window'+(isNewThisRender?' signal-new':'')+'"><div class="signal-window-in">'+thumbInner+'<span class="signal-play">▶</span></div></div><span>'+escapeHtml(name)+'</span></div>';
+      const age = signalAgeChip(latest && latest.createdAt);
+      others += '<div class="bcast-item signal-tile'+(isNewThisRender?' bcast-item-enter':'')+'" style="'+(isNewThisRender?('animation-delay:'+Math.min(staggerIndex*60,300)+'ms;'):'')+'" data-signal="'+c.id+'"><div class="signal-window'+(isNewThisRender?' signal-new':'')+'"><div class="signal-window-in">'
+        + thumbInner
+        + (age ? '<span class="signal-age">'+age+'</span>' : '')
+        + '<span class="signal-play">▶</span>'
+        + signalTileCaption(name, 'Short clip')
+        + '</div></div></div>';
       staggerIndex++;
     });
     // Presentation-only "leaving naturally" for a Signal that's no longer in
@@ -196,15 +235,22 @@ function renderBroadcastTab(){
     const myRenderGen = ++__nalunoSignalStripRenderGen;
     const doRebuild = function(){
       if(myRenderGen !== __nalunoSignalStripRenderGen) return; // superseded by a newer render
-      stripEl.innerHTML = '<div class="bcast-item" id="mySignalItem">'+myInner+'</div>'+others;
+      stripEl.innerHTML = signalCreateTileHtml() + myTile + others;
+      const createTile = document.getElementById('newSignalItem');
+      if(createTile){
+        createTile.onclick = function(e){
+          if(e){ e.preventDefault(); e.stopPropagation(); }
+          openNewSignalComposer();
+        };
+      }
       const mine = document.getElementById('mySignalItem');
       if(mine){
         mine.onclick = function(){
           if(typeof mySignal !== 'undefined' && mySignal.length){
             if(typeof openMySignalStory === 'function') openMySignalStory();
             else if(typeof openMyBroadcast === 'function') openMyBroadcast();
-          } else if(typeof openComposer === 'function'){
-            openComposer('signal');
+          } else {
+            openNewSignalComposer();
           }
         };
       }
@@ -266,18 +312,29 @@ function renderBroadcasts(){
    same renderBroadcastTab() path everything else already uses. */
 (function bindBcastViewTabs(){
   const wrap = document.getElementById('bcastViewTabs');
-  if(!wrap) return;
-  wrap.querySelectorAll('.bcast-view-tab').forEach(function(btn){
-    btn.onclick = function(){
-      const view = btn.getAttribute('data-bcast-view') || 'foryou';
-      if(view === bcastActiveView) return;
-      bcastActiveView = view;
-      wrap.querySelectorAll('.bcast-view-tab').forEach(function(b){
-        b.classList.toggle('active', b === btn);
-      });
-      try{ renderBroadcastTab(); }catch(_){}
+  if(wrap){
+    wrap.querySelectorAll('.bcast-view-tab').forEach(function(btn){
+      btn.onclick = function(){
+        const view = btn.getAttribute('data-bcast-view') || 'foryou';
+        if(view === bcastActiveView) return;
+        bcastActiveView = view;
+        wrap.querySelectorAll('.bcast-view-tab').forEach(function(b){
+          b.classList.toggle('active', b === btn);
+        });
+        try{ renderBroadcastTab(); }catch(_){}
+      };
+    });
+  }
+  const seeAll = document.getElementById('signalSeeAllBtn');
+  if(seeAll){
+    seeAll.onclick = function(){
+      const strip = document.getElementById('myBcastStrip');
+      if(strip){
+        try{ strip.scrollTo({ left: strip.scrollWidth, behavior: 'smooth' }); }
+        catch(_){ strip.scrollLeft = strip.scrollWidth; }
+      }
     };
-  });
+  }
 })();
 
 try{ renderBroadcasts(); }catch(e){ console.warn(e); }

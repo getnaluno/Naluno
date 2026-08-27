@@ -348,6 +348,7 @@
         })
         .sort(function(a,b){ return (b._score||0) - (a._score||0); })
         .slice(0, 10);
+      paintTogaFaceStack(rows);
       if(!rows.length){
         el.innerHTML = '<div class="lobby-sub" style="text-align:left;max-width:none;">This month’s Wall of Fame is empty. Share your views, then watch time, Circle joins, and conversation write the ten names. Views must be public to qualify. The list lives 30 days.</div>';
         return;
@@ -402,6 +403,21 @@
     return true;
   }
 
+  function paintTogaFaceStack(rows){
+    const stack = $('togaFaceStack');
+    if(!stack) return;
+    const list = (rows || []).slice(0, 3);
+    if(!list.length){
+      stack.innerHTML = '<span class="toga-face toga-face-empty">★</span>';
+      return;
+    }
+    const hues = ['#7CFFB2', '#00E5FF', '#7C4DFF'];
+    stack.innerHTML = list.map(function(r, i){
+      const ch = String((r && r.name) || 'C').trim().charAt(0).toUpperCase() || 'C';
+      return '<span class="toga-face" style="background:'+hues[i % hues.length]+';z-index:'+(3-i)+'">'+escapeHtml(ch)+'</span>';
+    }).join('');
+  }
+
   function wireToga(){
     const share = $('togaShareBtn');
     if(share) share.onclick = function(){ setMyToga(!myShareViews, myShareViews); };
@@ -409,6 +425,7 @@
     const body = $('togaBody');
     const monthEl = $('togaMonthLabel');
     if(monthEl) monthEl.textContent = nalunoMonthLabel();
+    try{ renderTogaBoard(); }catch(_){}
     function setTogaOpen(open){
       if(!exp || !body) return;
       body.style.display = open ? 'block' : 'none';
