@@ -257,9 +257,20 @@ function nalunoVideoLooksPortrait(v, posterUrl){
     const cached = poster && window.__nalunoPosterAR && window.__nalunoPosterAR[poster];
     if(cached === 'portrait') return true;
     if(cached === 'landscape') return false;
-    if(v && v.videoWidth > 0 && v.videoHeight > 0 && v.videoWidth / v.videoHeight >= 1.25) return false;
+    // FIX ("fit/fill still don't work both ways"): this used to only classify
+    // a video as landscape once its ratio was clearly wide (>= 1.25) — a
+    // video between square (1.0) and moderately wide (up to 1.25, e.g. a
+    // 1200x1000 clip) fell through to the "portrait" default below even
+    // though it is, unambiguously, wider than it is tall. That forced it
+    // into a fixed 9:16 container before Fit/Fill mode ever got a say, so no
+    // amount of toggling between them could fix it — the container shape
+    // itself was already wrong. By the time this line runs, height > width
+    // has already been ruled out above, so anything reaching here that is
+    // width >= height is landscape (or exactly square, which fits better as
+    // content-adaptive than forced into a tall 9:16 box either way).
+    if(v && v.videoWidth > 0 && v.videoHeight > 0 && v.videoWidth >= v.videoHeight) return false;
   }catch(_){}
-  return true; // Naluno default stage is 9:16
+  return true; // Naluno default stage is 9:16 — only reached when dimensions are genuinely unknown
 }
 function nalunoProbePosterAR(url){
   if(!url || typeof Image === 'undefined') return;

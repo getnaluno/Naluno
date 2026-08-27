@@ -74,8 +74,15 @@ function bLiveUpdateViewerChrome(n){
 }
 
 async function bLiveEnsureIce(){
+  // FIX: IceCore.now() never attempts a network fetch — it only returns real
+  // TURN servers if one was already cached from an earlier, separate call,
+  // which prewarmIceServers() (fired-and-forgotten immediately before this)
+  // has no realistic time to complete before this runs. That silently meant
+  // STUN-only almost every time, which fails outright on most real mobile
+  // networks. This actually waits (with a real but bounded budget) for TURN
+  // credentials before building the peer connection.
   try{
-    if(typeof IceCore !== 'undefined' && IceCore.now) return IceCore.now();
+    if(typeof IceCore !== 'undefined' && IceCore.getPatient) return await IceCore.getPatient();
   }catch(_){}
   if(typeof getIceServers === 'function') return getIceServers();
   return { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
@@ -89,13 +96,27 @@ async function bLiveStartHost(stream){
   if(typeof prewarmIceServers === 'function') prewarmIceServers();
 
   const col = fbDb.collection('broadcasts').doc(activeBroadcastId).collection('liveSessions');
-  // Do not block going live on deleting stale sessions.
+  const hostStartedAt = Date.now();
+  // FIX: this used to delete EVERY document in the collection unconditionally,
+  // racing (unawaited) against the snapshot listener attached right after it.
+  // A viewer whose join happened to land in that same window — offer written
+  // right as the host goes live — could have their brand-new session document
+  // wiped out mid-negotiation, before the host ever got to answer it. Only
+  // deleting documents that predate this host session starting removes the
+  // staleness this was actually meant to clean up, without being able to
+  // touch anything written after the host went live.
   (async function cleanupStale(){
     try{
       const old = await col.get();
       const batch = fbDb.batch();
       let n = 0;
-      old.docs.forEach(d => { batch.delete(d.ref); n++; });
+      old.docs.forEach(d => {
+        const data = d.data() || {};
+        // Only clear sessions that existed BEFORE this host session started —
+        // never a document whose write timestamp is at or after that moment,
+        // which could only be a viewer joining this session, not a stale one.
+        if(!data.ts || data.ts < hostStartedAt){ batch.delete(d.ref); n++; }
+      });
       if(n) await batch.commit().catch(function(){});
     }catch(_){}
   })();
@@ -514,22 +535,26 @@ function bLiveEnsureReactionBar(){
 function bLiveEnsureJoinBanner(){
   let ban = $('bspaceJoinLiveBanner');
   if(ban) return ban;
+  // FIX ("still seeing duplicate live controls"): this banner's button and
+  // the reaction bar's own "Join live" button (bLiveEnsureReactionBar(),
+  // #bspaceReactionJoinHint) are BOTH shown together every time a broadcast
+  // is live — bLiveShowJoinUi(true) explicitly displays both. Two visible
+  // join/leave controls for the same action, in different places, is
+  // exactly the "doesn't make sense" confusion reported. The reaction bar's
+  // version is the more prominent, established one (top of the body, next
+  // to reactions), so this one is kept alive — everything elsewhere in this
+  // file still safely reads/writes its state — but never actually shown.
   ban = document.createElement('div');
   ban.id = 'bspaceJoinLiveBanner';
-  ban.style.cssText = 'display:none;margin:0 0 12px;padding:12px 14px;border-radius:14px;border:1px solid rgba(255,84,112,.55);background:linear-gradient(135deg,rgba(255,84,112,.18),rgba(124,255,178,.08));align-items:center;gap:12px;flex-wrap:wrap;';
-  ban.innerHTML = `<div style="flex:1;min-width:140px;">
-      <div style="font-family:var(--font-mono);font-size:10px;color:var(--red);letter-spacing:.08em;margin-bottom:4px;">● LIVE NOW</div>
-      <div style="font-size:13.5px;font-weight:600;">The creator is live — watch and react in real time.</div>
-    </div>
-    <button type="button" id="bspaceJoinLiveBtn" class="bspace-mini primary" style="padding:10px 16px;font-size:12px;">Join live</button>`;
-  // Prefer pin host, else top of body
-  const pin = $('bspaceLivePin');
-  const body = document.querySelector('.bspace-body');
-  if(pin && pin.parentNode){
-    pin.parentNode.insertBefore(ban, pin.nextSibling);
-  } else if(body){
-    body.insertBefore(ban, body.firstChild);
-  }
+  // Visually hidden regardless of display toggling elsewhere in this file
+  // (bLiveShowJoinUi sets .style.display = 'flex'/'none' directly, which
+  // would silently clear a plain "display:none !important" the moment it
+  // runs — verified this the hard way before shipping it). Off-screen +
+  // zero-size survives display changes because it doesn't depend on display
+  // at all.
+  ban.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden;left:-9999px;top:-9999px;';
+  ban.innerHTML = `<button type="button" id="bspaceJoinLiveBtn">Join live</button>`;
+  document.body.appendChild(ban);
   const btn = ban.querySelector('#bspaceJoinLiveBtn');
   if(btn) btn.onclick = ()=> bLiveJoinAsViewer();
   return ban;

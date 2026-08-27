@@ -105,12 +105,52 @@ async function getIceServers(){
   return raced || RTC_CONFIG;
 }
 
+/** FIX ("live video feed doesn't go through"): iceNow() — the 0ms path — never
+ *  makes a network attempt at all; it only returns real TURN servers if an
+ *  EARLIER, separate fetch already completed and cached them. Broadcast-live's
+ *  join flow called prewarmIceServers() (fire-and-forget) and then, on the very
+ *  next line, built the RTCPeerConnection with iceNow() — no realistic amount
+ *  of time for that fetch to land, so it fell back to STUN-only almost every
+ *  single time. Without TURN, WebRTC can only connect two peers directly —
+ *  which fails outright on most real mobile/cellular networks (carrier-grade
+ *  NAT) and many restrictive WiFi networks, producing exactly this symptom:
+ *  signaling completes, "connected" may even fire, but no media ever flows.
+ *  This actually waits for a real attempt, with a budget generous enough to
+ *  usually land it (unlike the 250ms call-ring budget above, live-join
+ *  already shows a "Connecting…" state, so correctness matters more here
+ *  than shaving off a second). */
+const LIVE_ICE_BUDGET_MS = 3500;
+async function getIceServersPatient(budgetMs){
+  const hit = iceFromCache();
+  if(hit) return hit;
+  const turn = fetchTurnServers();
+  const raced = await Promise.race([
+    turn,
+    new Promise(function(resolve){
+      setTimeout(function(){ resolve(null); }, budgetMs || LIVE_ICE_BUDGET_MS);
+    }),
+  ]);
+  if(raced) return raced;
+  // Budget ran out — give the fetch a little more room in the background
+  // (it may still land and get cached for the NEXT connection this session,
+  // e.g. the host's per-viewer connections after this first one) rather than
+  // abandoning it outright, but don't make this call wait any longer.
+  turn.then(function(cfg){
+    if(cfg && cfg.iceServers && cfg.iceServers.length > 2){
+      cachedIceServers = cfg;
+      cachedIceServersAt = Date.now();
+    }
+  }).catch(function(){});
+  return RTC_CONFIG;
+}
+
 function prewarmIceServers(){
   fetchTurnServers().catch(function(){});
 }
 
 const IceCore = {
   get: getIceServers,
+  getPatient: getIceServersPatient,
   now: iceNow,
   prewarm: prewarmIceServers,
   stunOnly: function(){ return RTC_CONFIG; },

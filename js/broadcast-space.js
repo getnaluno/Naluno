@@ -599,7 +599,15 @@ async function openBroadcastSpace(meta){
     activeBroadcastId = ensureBroadcastDocId(meta);
   }
 
-  // Membership button — join the creator, not a single Broadcast
+  // Membership button — join the creator's Circle, not the live stream.
+  // FIX: this rendered as "Join [Name]" — visually indistinguishable from a
+  // live-stream join control, and it sits right next to the real one in this
+  // same header cluster. "Join MAGAMBO" next to "Leave live" next to live
+  // view stats reads as three contradictory controls for the same thing,
+  // when two completely unrelated features (following a creator vs.
+  // watching their live stream) just happen to share the word "Join."
+  // Renamed so Circle membership can never be mistaken for a live control,
+  // regardless of layout.
   try{
     const creatorUid = meta.creatorUid;
     const isMine = !!(meta.isMine || (currentUser && creatorUid === currentUser.uid));
@@ -616,13 +624,12 @@ async function openBroadcastSpace(meta){
         : false);
       if(btn){
         btn.disabled = false;
-        const name = (meta.creatorName || 'this creator').split(' ')[0];
-        btn.textContent = joined ? ('With ' + name) : ('Join ' + name);
+        btn.textContent = joined ? 'In Circle' : '+ Circle';
         btn.classList.toggle('joined', joined);
       }
     }
   }catch(e){
-    $('bspaceJoinBtn').textContent = 'Join this creator';
+    $('bspaceJoinBtn').textContent = '+ Circle';
   }
 
   try{
@@ -735,14 +742,17 @@ $('bspaceJoinBtn').onclick = async ()=>{
     }
     const name = ((activeBroadcastMeta && activeBroadcastMeta.creatorName) || 'this creator').split(' ')[0];
     if(btn){
-      btn.textContent = 'With ' + name;
+      // FIX: consistent with the rename elsewhere — "With [Name]" reads just
+      // as ambiguously close to a live-join confirmation as "Join [Name]"
+      // did. "In Circle" can't be mistaken for anything live-related.
+      btn.textContent = 'In Circle';
       btn.classList.add('joined');
       btn.disabled = false;
     }
     toast('You’re with ' + name + ' — every Broadcast of theirs');
   }catch(e){
     console.warn('[bspace] join', e);
-    if(btn){ btn.disabled = false; btn.textContent = 'Join this creator'; }
+    if(btn){ btn.disabled = false; btn.textContent = '+ Circle'; }
     toast(e.message || 'Couldn’t join — check connection / rules');
   }
 };

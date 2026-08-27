@@ -907,6 +907,30 @@ function startCamView(target){
 let cameraFacingMode = 'user';
 let preferredVideoDeviceId = null;
 
+/** FIX ("camera defaulted to 16:9, hard to stay on position on phone"): every
+ *  quality tier below requested width > height unconditionally — landscape
+ *  shape — regardless of how the phone is actually being held. Naluno's own
+ *  design is portrait-first everywhere else (the 9:16 stage used across
+ *  Broadcast/Signal), so a portrait-held phone getting a landscape-shaped
+ *  capture request is exactly backwards, and is why holding the phone
+ *  normally never lined up with what the camera actually framed. This reads
+ *  the device's real current orientation and swaps the tier's dimensions to
+ *  match it — landscape only if the device genuinely is in landscape. */
+function nalunoIsPortraitDevice(){
+  try{
+    if(screen && screen.orientation && typeof screen.orientation.type === 'string'){
+      return screen.orientation.type.indexOf('portrait') === 0;
+    }
+  }catch(_){}
+  try{
+    if(typeof window.matchMedia === 'function'){
+      return window.matchMedia('(orientation: portrait)').matches;
+    }
+  }catch(_){}
+  try{ return window.innerHeight >= window.innerWidth; }catch(_){}
+  return true; // phones default to portrait far more often than not
+}
+
 function buildVideoConstraints(tier){
   // Prefer 4K; browser/device will only grant what the sensor can do ("ideal", not "exact").
   // tier: '4k' | '1440' | '1080' | '720' | 'basic'
@@ -918,6 +942,20 @@ function buildVideoConstraints(tier){
     'basic':{ width:{ ideal:640 },  height:{ ideal:480 },  frameRate:{ ideal:24, max:30 } },
   };
   const base = Object.assign({}, tiers[tier] || tiers['4k']);
+  const portrait = nalunoIsPortraitDevice();
+  if(portrait){
+    // Swap so the SHORTER dimension is requested as height — matches how
+    // the device is actually being held instead of always assuming landscape.
+    const w = base.width, h = base.height;
+    base.width = h;
+    base.height = w;
+  }
+  // "Enforce" the shape (not just a size hint): aspectRatio is its own
+  // constraint independent of the exact pixel counts above, so even when the
+  // sensor's native modes don't land exactly on the ideal width/height, the
+  // requested SHAPE stays correct rather than silently drifting back to
+  // whatever the sensor's default (often landscape) happens to be.
+  base.aspectRatio = { ideal: portrait ? 9/16 : 16/9 };
   if(preferredVideoDeviceId) base.deviceId = { exact: preferredVideoDeviceId };
   else base.facingMode = { ideal: cameraFacingMode };
   return base;
@@ -1051,11 +1089,18 @@ async function flipCamera(){
     const videoAttempts = [];
 
     const deviceId = await resolveCameraDeviceId(next).catch(()=>null);
+    // Same portrait-aware fix as buildVideoConstraints() — flipping the
+    // camera used to always re-request landscape shape regardless of how
+    // the phone is actually held.
+    const portraitFlip = nalunoIsPortraitDevice();
+    const flipDims = portraitFlip
+      ? { width:{ideal:1440}, height:{ideal:2560}, aspectRatio:{ideal:9/16} }
+      : { width:{ideal:2560}, height:{ideal:1440}, aspectRatio:{ideal:16/9} };
     if(deviceId){
-      videoAttempts.push({ deviceId: { exact: deviceId }, width:{ideal:2560}, height:{ideal:1440}, frameRate:{ideal:30, max:60} });
+      videoAttempts.push(Object.assign({ deviceId: { exact: deviceId }, frameRate:{ideal:30, max:60} }, flipDims));
     }
-    videoAttempts.push({ facingMode: { exact: next }, width:{ideal:2560}, height:{ideal:1440}, frameRate:{ideal:30, max:60} });
-    videoAttempts.push({ facingMode: { ideal: next }, width:{ideal:2560}, height:{ideal:1440}, frameRate:{ideal:30, max:60} });
+    videoAttempts.push(Object.assign({ facingMode: { exact: next }, frameRate:{ideal:30, max:60} }, flipDims));
+    videoAttempts.push(Object.assign({ facingMode: { ideal: next }, frameRate:{ideal:30, max:60} }, flipDims));
     videoAttempts.push({ facingMode: next });
 
     for(const video of videoAttempts){
@@ -1208,6 +1253,9 @@ async function enableCameraForCall(){
   const audioConstraints = { echoCancellation: { ideal: true }, noiseSuppression: { ideal: true }, autoGainControl: { ideal: true } };
   // LOCK (call connect): open 720p FIRST. 1080-first cost 3–7s on many Androids
   // before the offer could even be written. Climb to sensor max after tracks are live.
+  // Deliberately NOT touched by the "camera defaults to 16:9" fix elsewhere in this
+  // file — this path is specifically tuned for call-connect timing, and every report
+  // of the orientation issue was about Broadcast, not calls. Left exactly as-is.
   const attempts = [
     { video: { facingMode: { ideal: cameraFacingMode }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 60 } }, audio: audioConstraints },
     { video: { facingMode: { ideal: cameraFacingMode }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 60 } }, audio: audioConstraints },
