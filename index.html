@@ -14,13 +14,13 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.08.28g">
+<meta name="app-version" content="2026.08.28h">
 <meta name="description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:image" content="icon-512.png">
 <meta name="twitter:card" content="summary">
-<link rel="stylesheet" href="css/app.css?v=20260828g">
+<link rel="stylesheet" href="css/app.css?v=20260828h">
 </head>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
@@ -184,16 +184,15 @@
       <div class="bcast-strip" id="myBcastStrip"></div>
 
       <div class="toga-panel toga-banner" id="togaPanel">
-        <button type="button" class="toga-expand" id="togaExpandBtn" aria-expanded="false">
+        <div class="toga-expand open" id="togaExpandBtn" aria-expanded="true">
           <span class="toga-faces" id="togaFaceStack" aria-hidden="true"></span>
           <span class="toga-head-wrap">
             <span class="toga-wof">wall of fame</span>
             <span class="toga-month" id="togaMonthLabel">this month</span>
           </span>
           <span class="toga-pill" aria-hidden="true">Toga</span>
-          <span class="toga-expand-hint" id="togaExpandHint">open</span>
-        </button>
-        <div id="togaBody" hidden style="display:none;">
+        </div>
+        <div id="togaBody">
           <div class="lobby-sub" style="margin:0 0 10px;line-height:1.45;text-align:left;max-width:none;">The ten creators who moved Naluno this month. Scored from people who actually watched, people who joined their Circle, and conversation around their Broadcasts. Views must be public to qualify. The list lives 30 days. Tap a name to open their Broadcast.</div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
             <button type="button" class="toga-tog" id="togaShareBtn">Views shared</button>
@@ -208,6 +207,11 @@
         <button type="button" id="newBroadcastBtn" class="join-btn" style="margin:0; flex:1; min-width:120px; padding:12px 14px; font-size:12px; letter-spacing:.04em; background:rgba(124,255,178,.15); color:var(--mint); border:1px solid rgba(124,255,178,.35);">+ New Broadcast</button>
         <button type="button" id="broadcastGoLiveBtn" class="join-btn" style="margin:0; flex:1; min-width:100px; padding:12px 14px; font-size:12px; letter-spacing:.04em; background:rgba(255,84,112,.12); color:#ff8a9a; border:1px solid rgba(255,84,112,.4);">Go live</button>
       </div>
+      <button type="button" class="bcast-scroll-cue" id="bcastScrollCue">
+        <span class="bcast-scroll-cue-kicker">Swipe up</span>
+        <span class="bcast-scroll-cue-copy">Broadcasts play full screen below</span>
+        <span class="bcast-scroll-cue-chevron" aria-hidden="true">▾</span>
+      </button>
       </div>
       <div id="bcastStrandBar" class="bcast-strand-bar" style="display:none;">
         <button type="button" class="bcast-strand-back" id="bcastStrandBack" aria-label="Back to Broadcasts">
@@ -1048,45 +1052,45 @@
   </div>
 
 <!-- NALUNO_MODULES -->
-<script src="js/core.js?v=20260828g"></script>
-<script src="js/media-contain.js?v=20260828g"></script>
-<script src="js/keep-alive.js?v=20260828g"></script>
-<script src="js/metrics.js?v=20260828g"></script>
-<script src="js/data.js?v=20260828g"></script>
-<script src="js/crypto.js?v=20260828g"></script>
-<script src="js/atmosphere.js?v=20260828g"></script>
-<script src="js/band-list.js?v=20260828g"></script>
-<script src="js/signal-core.js?v=20260828g"></script>
-<script src="js/broadcast-core.js?v=20260828g"></script>
-<script src="js/broadcast-upload.js?v=20260828g"></script>
-<script src="js/broadcast-composer.js?v=20260828g"></script>
-<script src="js/origin.js?v=20260828g"></script>
-<script src="js/strand.js?v=20260828g"></script>
-<script src="js/circle.js?v=20260828g"></script>
-<script src="js/weather.js?v=20260828g"></script>
-<script src="js/beacon.js?v=20260828g"></script>
-<script src="js/compass.js?v=20260828g"></script>
-<script src="js/signal-ui.js?v=20260828g"></script>
-<script src="js/compat-lock.js?v=20260828g"></script>
-<script src="js/broadcast-space.js?v=20260828g"></script>
-<script src="js/media-vault.js?v=20260828g"></script>
-<script src="js/wireline.js?v=20260828g"></script>
-<script src="js/profile.js?v=20260828g"></script>
-<script src="js/auth.js?v=20260828g"></script>
-<script src="js/notifications.js?v=20260828g"></script>
-<script src="js/ice-core.js?v=20260828g"></script>
-<script src="js/camera.js?v=20260828g"></script>
-<script src="js/call-filters.js?v=20260828g"></script>
-<script src="js/calls.js?v=20260828g"></script>
-<script src="js/sfu-live.js?v=20260828g"></script>
-<script src="js/broadcast-live.js?v=20260828g"></script>
-<script src="js/band-room.js?v=20260828g"></script>
-<script src="js/pwa.js?v=20260828g"></script>
-<script src="js/spark-engine.js?v=20260828g"></script>
-<script src="js/spark-lg.js?v=20260828g"></script>
-<script src="js/spark-page.js?v=20260828g"></script>
-<script src="js/spark.js?v=20260828g"></script>
-<script src="js/find.js?v=20260828g"></script>
+<script src="js/core.js?v=20260828h"></script>
+<script src="js/media-contain.js?v=20260828h"></script>
+<script src="js/keep-alive.js?v=20260828h"></script>
+<script src="js/metrics.js?v=20260828h"></script>
+<script src="js/data.js?v=20260828h"></script>
+<script src="js/crypto.js?v=20260828h"></script>
+<script src="js/atmosphere.js?v=20260828h"></script>
+<script src="js/band-list.js?v=20260828h"></script>
+<script src="js/signal-core.js?v=20260828h"></script>
+<script src="js/broadcast-core.js?v=20260828h"></script>
+<script src="js/broadcast-upload.js?v=20260828h"></script>
+<script src="js/broadcast-composer.js?v=20260828h"></script>
+<script src="js/origin.js?v=20260828h"></script>
+<script src="js/strand.js?v=20260828h"></script>
+<script src="js/circle.js?v=20260828h"></script>
+<script src="js/weather.js?v=20260828h"></script>
+<script src="js/beacon.js?v=20260828h"></script>
+<script src="js/compass.js?v=20260828h"></script>
+<script src="js/signal-ui.js?v=20260828h"></script>
+<script src="js/compat-lock.js?v=20260828h"></script>
+<script src="js/broadcast-space.js?v=20260828h"></script>
+<script src="js/media-vault.js?v=20260828h"></script>
+<script src="js/wireline.js?v=20260828h"></script>
+<script src="js/profile.js?v=20260828h"></script>
+<script src="js/auth.js?v=20260828h"></script>
+<script src="js/notifications.js?v=20260828h"></script>
+<script src="js/ice-core.js?v=20260828h"></script>
+<script src="js/camera.js?v=20260828h"></script>
+<script src="js/call-filters.js?v=20260828h"></script>
+<script src="js/calls.js?v=20260828h"></script>
+<script src="js/sfu-live.js?v=20260828h"></script>
+<script src="js/broadcast-live.js?v=20260828h"></script>
+<script src="js/band-room.js?v=20260828h"></script>
+<script src="js/pwa.js?v=20260828h"></script>
+<script src="js/spark-engine.js?v=20260828h"></script>
+<script src="js/spark-lg.js?v=20260828h"></script>
+<script src="js/spark-page.js?v=20260828h"></script>
+<script src="js/spark.js?v=20260828h"></script>
+<script src="js/find.js?v=20260828h"></script>
 <!-- /NALUNO_MODULES -->
 </body>
 </html>
