@@ -490,3 +490,126 @@ resolution correctly returns empty (not an error) for an unknown uid.
 `README-ORIGINID-SEARCH.md`. `js/calls.js` remains byte-identical to the
 original package throughout this entire project — confirmed again at the
 end of this addendum.
+
+---
+
+## Addendum 4 — a second, more skeptical round after real device screenshots
+
+Three screenshots showed the fixes above weren't the whole story. This round
+was spent specifically trying to break the earlier work rather than confirm
+it, and it found real gaps — including inside fixes from Addendum 3 itself.
+
+### The "JOIN MAGAMBO" next to "Leave live" confusion — root cause found
+
+**File:** `js/broadcast-space.js`, `index.html`
+
+"JOIN MAGAMBO" was never a live-stream control at all. It's the **Circle**
+button — an entirely unrelated feature, following a creator — which rendered
+as "Join [Name]" and sat directly next to the real live controls in the same
+header. Two unrelated features sharing the word "Join," stacked together,
+reads exactly as contradictory as it looked. Renamed to "+ Circle" / "In
+Circle" everywhere it appears, including a second spot the initial pass
+missed (the click handler's own success/failure text) — caught during the
+adversarial pass by searching for every remaining reference to the old
+wording, not just the one function already edited.
+
+### Duplicate live-status cards and a genuinely triplicated join control
+
+**File:** `js/broadcast-live.js`
+
+Tracing the screenshots further found not two but **three** separate
+"join/leave live" controls capable of being on screen at once: one in the
+conversation's pinned status card, one in a banner stacked directly under
+it with its own competing sentence, and one in the reaction bar near the
+top — and `bLiveShowJoinUi(true)` displayed more than one of them
+simultaneously by design. Consolidated to the reaction bar's version (the
+more prominent, established one) as the single visible control; the
+redundant banner element is kept alive — a lot of other code in this file
+reads and writes its state — but made genuinely inert.
+
+**This is where the adversarial pass earned its keep.** The first attempt at
+hiding the redundant banner used `display: none !important` in its inline
+style. Before shipping it, it was tested directly: `element.style.display =
+'flex'`, called elsewhere in this same file to show the banner, was found to
+silently **clear** the `!important` flag and make the element visible again
+— exactly the kind of subtle CSSOM behavior that looks correct on paper and
+fails silently in practice. Rebuilt using an off-screen, zero-size hiding
+pattern that doesn't depend on `display` at all, and confirmed with a DOM
+simulation that it survives the exact toggling code elsewhere in the file.
+A second simulation, walking the full resulting DOM tree the way a real
+renderer would, confirmed exactly one visible live control remains.
+
+### The live video feed — a deeper, more fundamental cause found
+
+**Files:** `js/ice-core.js`, `js/broadcast-live.js`
+
+The earlier UI-state fix (Addendum 3) was real but not the primary cause.
+Tracing the actual WebRTC path further found that `bLiveEnsureIce()` used
+`IceCore.now()` — a path that makes **no network attempt at all** and only
+returns real TURN servers if one happened to already be cached from an
+earlier, unrelated call. The join flow's own "prewarm" call was
+fire-and-forgotten on the line directly before building the connection —
+no realistic amount of time for that fetch to land. This meant the viewer's
+connection was built STUN-only almost every single time, which fails
+outright on most real mobile/cellular networks (carrier-grade NAT
+especially) and many restrictive WiFi networks — signaling can complete
+while zero media ever flows, which matches the reported symptom exactly.
+Fixed with a properly-awaited fetch with a real (3.5s) budget — generous
+enough to usually land it, appropriate here specifically because the join
+flow already shows a "Connecting…" state, unlike the instant-ring path used
+for 1:1 calls (deliberately left untouched — the shared `getIceServers()`
+call in `calls.js` and its 250ms budget were not modified). Verified with a
+timing simulation across a realistic range of network latencies: the old
+path failed to obtain TURN in every case tested; the new path succeeded in
+every case up to its budget.
+
+Also found and fixed a real race condition in the same area: going live
+deleted every document in the session collection unconditionally, racing
+unawaited against the listener that watches for new viewers — a viewer whose
+join happened to land in that exact window could have their connection
+request deleted before the host ever saw it. Now only clears sessions that
+predate the current host session starting.
+
+### Camera defaulting to landscape on a portrait-held phone
+
+**File:** `js/camera.js`
+
+Confirmed: every quality tier requested landscape dimensions (width >
+height) unconditionally, regardless of how the phone is actually held —
+backwards for an app whose entire design is portrait-first. Fixed to detect
+the device's real current orientation and match it, with `aspectRatio` set
+explicitly (not just width/height hints) so the requested shape doesn't
+silently drift back to a sensor's landscape default. Applied to the general
+camera-quality path (used across Band Live and Broadcast) and the camera
+flip function. Deliberately **not** applied to the calls-specific camera
+path (`enableCameraForCall`), which carries its own explicit tuning
+comments about call-connect timing — every piece of evidence for this
+report was about Broadcast, not calls, so that path was left untouched
+rather than risk it on a hunch.
+
+### Fit/Fill — the real remaining bug was upstream of the toggle itself
+
+**File:** `js/signal-core.js`
+
+The toggle and container-sizing logic from the previous round were correct.
+The bug was one level up: `nalunoVideoLooksPortrait()` only classified a
+video as landscape once its width/height ratio reached 1.25 — anything
+between square (1.0) and moderately wide (up to 1.25, e.g. a 1200×1000
+clip) fell through to a "portrait" default despite being unambiguously
+wider than tall. That forced such content into a fixed 9:16 container
+before Fit/Fill mode ever got a say, so no amount of toggling could fix it
+— the container shape itself was already wrong. Fixed the classification;
+verified with a simulation across eight aspect ratios including the exact
+boundary case, and separately verified the full container/object-fit
+decision produces correct, different results for both modes once the
+classification is right.
+
+## Full list of touched files (this addendum)
+
+`js/auth.js` *(unchanged this round — listed in Addendum 3)*, `js/camera.js`,
+`js/ice-core.js`, `js/broadcast-live.js`, `js/broadcast-space.js`,
+`js/signal-core.js`, `index.html`. `js/calls.js` remains byte-identical to
+the original package throughout the entire project — confirmed once more at
+the end of this addendum, including after the `ice-core.js` change (which
+adds a new function used only by Broadcast-live; the function calls.js
+itself uses were not modified).
