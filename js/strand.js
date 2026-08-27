@@ -262,18 +262,18 @@
     }
     const videos = grid.querySelectorAll('video[data-naluno-preview="1"]');
     if(!videos.length) return;
-    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if(reduce || typeof IntersectionObserver === 'undefined'){
+    if(typeof IntersectionObserver === 'undefined'){
+      if(videos[0]) playStrandPreview(videos[0]);
       return;
     }
-    const root = document.getElementById('broadcastTabScroll') || null;
+    const root = (grid.clientHeight > 40) ? grid : null;
     __strandPreviewIO = new IntersectionObserver(function(entries){
       entries.forEach(function(en){
         en.target.__nalunoRatio = en.intersectionRatio;
         en.target.__nalunoOn = en.isIntersecting;
       });
       let best = null;
-      let bestRatio = 0.54;
+      let bestRatio = 0.22;
       videos.forEach(function(v){
         const r = v.__nalunoRatio || 0;
         if(v.__nalunoOn && r > bestRatio){

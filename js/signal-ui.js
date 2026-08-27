@@ -314,26 +314,88 @@ function renderBroadcastTab(){
   }
 }
 
+function nalunoArmFlipFeed(grid){
+  const host = grid || document.getElementById('bcastPlateGrid');
+  if(!host) return;
+  if(!host.__nalunoFlipBound){
+    host.__nalunoFlipBound = true;
+    let ticking = false;
+    function onScroll(){
+      if(ticking) return;
+      ticking = true;
+      requestAnimationFrame(function(){
+        ticking = false;
+        if(typeof window.__nalunoFlipPaint === 'function') window.__nalunoFlipPaint();
+      });
+    }
+    host.addEventListener('scroll', onScroll, { passive: true });
+  }
+  window.__nalunoFlipPaint = function(){
+    const plates = host.querySelectorAll('.bcast-plate');
+    const h = host.clientHeight || 1;
+    const origin = host.getBoundingClientRect().top;
+    plates.forEach(function(p){
+      const delta = p.getBoundingClientRect().top - origin;
+      const t = Math.max(-1, Math.min(1, delta / h));
+      if(t < -0.01){
+        const a = Math.min(1, -t);
+        p.style.transform = 'translateY(' + Math.round(t * 18) + 'px) rotateX(' + Math.round(a * -78) + 'deg)';
+        p.style.opacity = String(Math.max(0.25, 1 - a * 0.55));
+        p.style.zIndex = '1';
+      } else if(t > 0.02){
+        const a = Math.min(1, t);
+        p.style.transform = 'translateY(' + Math.round(a * 28) + 'px) rotateX(' + Math.round(a * 22) + 'deg)';
+        p.style.opacity = String(Math.max(0.55, 1 - a * 0.2));
+        p.style.zIndex = '2';
+      } else {
+        p.style.transform = 'none';
+        p.style.opacity = '1';
+        p.style.zIndex = '3';
+        p.classList.add('in-view');
+      }
+    });
+  };
+  try{ window.__nalunoFlipPaint(); }catch(_){}
+}
+
 function nalunoRevealBroadcastPlates(grid){
   const host = grid || document.getElementById('bcastPlateGrid');
   if(!host) return;
   const plates = host.querySelectorAll('.bcast-plate');
   if(!plates.length) return;
-  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if(reduce || typeof IntersectionObserver === 'undefined'){
+  // First plates must read immediately — S23 Ultra's tall 4:5 cards can
+  // miss a high IO threshold and sit dim/static until a huge scroll.
+  plates.forEach(function(p, i){ if(i < 2) p.classList.add('in-view'); });
+  if(typeof IntersectionObserver === 'undefined'){
     plates.forEach(function(p){ p.classList.add('in-view'); });
     return;
   }
   if(window.__nalunoPlateIO){
     try{ window.__nalunoPlateIO.disconnect(); }catch(_){}
   }
-  const root = document.getElementById('broadcastTabScroll') || null;
+  const root = (host.clientHeight > 40) ? host : null;
+  let sawHit = false;
   window.__nalunoPlateIO = new IntersectionObserver(function(entries){
     entries.forEach(function(en){
-      if(en.isIntersecting) en.target.classList.add('in-view');
+      if(en.isIntersecting){
+        sawHit = true;
+        en.target.classList.add('in-view');
+      }
     });
-  }, { root: root, threshold: 0.16, rootMargin: '24px 0px -6% 0px' });
+  }, { root: root, threshold: 0.08, rootMargin: '40px 0px 0px 0px' });
   plates.forEach(function(p){ window.__nalunoPlateIO.observe(p); });
+  try{ nalunoArmFlipFeed(host); }catch(_){}
+  try{ if(window.__nalunoFlipPaint) window.__nalunoFlipPaint(); }catch(_){}
+  setTimeout(function(){
+    if(sawHit) return;
+    try{ window.__nalunoPlateIO.disconnect(); }catch(_){}
+    window.__nalunoPlateIO = new IntersectionObserver(function(entries){
+      entries.forEach(function(en){
+        if(en.isIntersecting) en.target.classList.add('in-view');
+      });
+    }, { root: null, threshold: 0.05 });
+    plates.forEach(function(p){ window.__nalunoPlateIO.observe(p); });
+  }, 400);
 }
 
 function renderBroadcasts(){
@@ -371,6 +433,44 @@ function renderBroadcasts(){
 })();
 
 try{ renderBroadcasts(); }catch(e){ console.warn(e); }
+
+/* S23 / One UI: "Remove animations" kills CSS keyframes. Step the Signal
+   edge in JS so the ring still reads. First pointer on Broadcast also
+   unlocks muted WebView autoplay for the in-view Strand preview. */
+(function nalunoS23MotionFallback(){
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(reduce){
+    document.documentElement.classList.add('naluno-reduce-motion');
+    setInterval(function(){
+      document.querySelectorAll('.signal-edge').forEach(function(el){
+        el.classList.toggle('on');
+      });
+    }, 1400);
+  }
+  const tab = document.getElementById('tab-broadcast');
+  if(!tab) return;
+  tab.addEventListener('pointerdown', function(){
+    const grid = document.getElementById('bcastPlateGrid');
+    if(!grid) return;
+    const vids = grid.querySelectorAll('video[data-naluno-preview="1"]');
+    let pick = null;
+    vids.forEach(function(v){
+      if(v.__nalunoOn && (!pick || (v.__nalunoRatio||0) > (pick.__nalunoRatio||0))) pick = v;
+    });
+    if(!pick && vids[0]) pick = vids[0];
+    if(pick && typeof pauseAllStrandPreviews === 'function'){
+      /* playStrandPreview is inside strand.js IIFE — poke src+play directly */
+    }
+    if(pick){
+      try{
+        pick.muted = true; pick.defaultMuted = true; pick.volume = 0;
+        const src = pick.getAttribute('data-preview-src');
+        if(src && pick.getAttribute('src') !== src) pick.src = src;
+        const p = pick.play(); if(p && p.catch) p.catch(function(){});
+      }catch(_){}
+    }
+  }, { passive: true });
+})();
 
 /* ---------------- STORY VIEWER (multi-segment playback) ---------------- */
 let currentSegments = [];
