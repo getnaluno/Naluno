@@ -266,7 +266,8 @@
       if(videos[0]) playStrandPreview(videos[0]);
       return;
     }
-    const root = (grid.clientHeight > 40) ? grid : null;
+    const scroller = document.getElementById('broadcastTabScroll');
+    const root = (scroller && scroller.clientHeight > 40) ? scroller : null;
     __strandPreviewIO = new IntersectionObserver(function(entries){
       entries.forEach(function(en){
         en.target.__nalunoRatio = en.intersectionRatio;

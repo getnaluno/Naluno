@@ -314,11 +314,19 @@ function renderBroadcastTab(){
   }
 }
 
+function nalunoSizeBroadcastStage(){
+  const h = window.innerHeight || 800;
+  document.documentElement.style.setProperty('--bcast-stage-h', h + 'px');
+  return h;
+}
+
 function nalunoArmFlipFeed(grid){
+  const scroller = document.getElementById('broadcastTabScroll');
   const host = grid || document.getElementById('bcastPlateGrid');
-  if(!host) return;
-  if(!host.__nalunoFlipBound){
-    host.__nalunoFlipBound = true;
+  if(!scroller || !host) return;
+  nalunoSizeBroadcastStage();
+  if(!scroller.__nalunoFlipBound){
+    scroller.__nalunoFlipBound = true;
     let ticking = false;
     function onScroll(){
       if(ticking) return;
@@ -328,12 +336,28 @@ function nalunoArmFlipFeed(grid){
         if(typeof window.__nalunoFlipPaint === 'function') window.__nalunoFlipPaint();
       });
     }
-    host.addEventListener('scroll', onScroll, { passive: true });
+    scroller.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', function(){
+      nalunoSizeBroadcastStage();
+      if(typeof window.__nalunoFlipPaint === 'function') window.__nalunoFlipPaint();
+    });
+    document.querySelectorAll('.navbtn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        setTimeout(function(){
+          const tab = document.getElementById('tab-broadcast');
+          if(!tab || !tab.classList.contains('active')){
+            document.body.classList.remove('naluno-bcast-watch');
+            try{ if(typeof pauseAllStrandPreviews === 'function') pauseAllStrandPreviews(); }catch(_){}
+          }
+        }, 0);
+      });
+    });
   }
   window.__nalunoFlipPaint = function(){
     const plates = host.querySelectorAll('.bcast-plate');
-    const h = host.clientHeight || 1;
-    const origin = host.getBoundingClientRect().top;
+    const h = nalunoSizeBroadcastStage() || 1;
+    const origin = scroller.getBoundingClientRect().top;
+    let plateOwnsScreen = false;
     plates.forEach(function(p){
       const delta = p.getBoundingClientRect().top - origin;
       const t = Math.max(-1, Math.min(1, delta / h));
@@ -352,8 +376,11 @@ function nalunoArmFlipFeed(grid){
         p.style.opacity = '1';
         p.style.zIndex = '3';
         p.classList.add('in-view');
+        plateOwnsScreen = true;
       }
     });
+    const onBroadcast = !!(document.getElementById('tab-broadcast') && document.getElementById('tab-broadcast').classList.contains('active'));
+    document.body.classList.toggle('naluno-bcast-watch', !!(onBroadcast && plateOwnsScreen));
   };
   try{ window.__nalunoFlipPaint(); }catch(_){}
 }
@@ -373,7 +400,8 @@ function nalunoRevealBroadcastPlates(grid){
   if(window.__nalunoPlateIO){
     try{ window.__nalunoPlateIO.disconnect(); }catch(_){}
   }
-  const root = (host.clientHeight > 40) ? host : null;
+  const scroller = document.getElementById('broadcastTabScroll');
+  const root = (scroller && scroller.clientHeight > 40) ? scroller : null;
   let sawHit = false;
   window.__nalunoPlateIO = new IntersectionObserver(function(entries){
     entries.forEach(function(en){
