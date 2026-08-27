@@ -1,4 +1,6 @@
 // Naluno service worker — offline shell + background call push.
+// v95: 28e full-screen snap flip feed, S23 enforced.
+// v94: 28d S23 motion fallback — pulse survives Remove animations, previews no longer gated.
 // v93: 28c one-column strand preview feed + visible signal edge pulse.
 // v92: 28b signal edge pulse + broadcast scroll reveal.
 // v91: 28a Broadcast living-room visual refresh (Signal create tile, Toga banner).
@@ -6,7 +8,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v93';
+const CACHE_NAME = 'naluno-shell-v95';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',
