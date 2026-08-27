@@ -613,3 +613,334 @@ the original package throughout the entire project — confirmed once more at
 the end of this addendum, including after the `ice-core.js` change (which
 adds a new function used only by Broadcast-live; the function calls.js
 itself uses were not modified).
+
+---
+
+## Addendum 5 — a third round, going deeper still
+
+Three more screenshots, including a photo of the live feed genuinely never
+arriving even after two prior rounds of fixes. This round went a layer
+deeper than client JS timing — into Firestore security rules themselves —
+and found the actual, complete explanation.
+
+### The live video feed — the real, complete root cause
+
+**File:** `firestore.rules`
+
+Not a client-side bug at all. **There were zero Firestore rules for
+`liveSessions/{viewerUid}/viewerIce/` and `.../hostIce/`** — the two
+subcollections that carry ICE candidates, which trickle-ICE WebRTC requires
+for any real-world NAT traversal. Firestore rules are not recursive: the
+existing wildcard (`match /{col}/{docId}`) only reaches one level of
+subcollection under a broadcast, covering the offer/answer document itself
+— but the ICE candidate subcollections sit one level deeper than that, and
+fell through to Firestore's default deny the entire time this feature has
+existed. This is why signaling looked like it was working (the SDP
+offer/answer exchange, one level deep, succeeded) while media never
+flowed — the candidates needed to actually traverse a real network could
+never reach either peer. No client-side fix, including the two from earlier
+rounds, could have solved this, because the problem was never in the
+client. Confirmed via `calls.js`, which already has the *correct* version of
+this exact pattern for its own ICE subcollections
+(`callerCandidates`/`calleeCandidates`) — the fix was known and applied
+there, just never extended to Broadcast-live. Mirrored the same pattern.
+
+**Verified two ways**, since the real Firestore emulator's JAR download is
+blocked by this environment's network restrictions (`storage.googleapis.com`
+isn't reachable here): manually traced all 10 real Firestore operations
+`broadcast-live.js` performs against the new rules by hand, and separately
+built a faithful logic simulation of the rules and ran it against those same
+10 operations plus 6 adversarial negative cases (a random third party must
+still be denied access to someone else's ICE exchange; an unauthenticated
+request must still be denied everywhere) — all 16 checks pass. **This fix
+requires publishing the updated Firestore rules — `firebase deploy --only
+firestore:rules` — not just deploying the app files.**
+
+### "MAGAMBO was live" addressed to MAGAMBO himself
+
+**File:** `js/broadcast-space.js`
+
+The "is live now" / "was live" system messages always used the creator's
+name in third person, baked into the stored text at write time — so when
+the creator later read their own broadcast's conversation, they saw their
+own name talking about them. Fixed by tagging these messages with a `kind`
+field and reconstructing the sentence at render time based on who's
+actually reading it — "You were live for 12m" when it's the creator's own
+device, the original name-based text for everyone else. Older messages
+(before this fix) fall back to their original stored text unchanged, since
+they were never tagged. Verified with five scenarios including the exact
+boundary case where a duration rounds up.
+
+### Camera landscape-in-a-portrait-box — a different, deeper cause than round two
+
+**File:** `js/media-contain.js`, wired into `js/broadcast-space.js` and
+`js/broadcast-live.js`
+
+The previous round's fix controlled what shape was *requested* from
+`getUserMedia`. This round found the actual remaining gap: on some Android
+camera stacks, the frames that come back can still be landscape-shaped
+regardless of what was requested, if the platform's orientation metadata
+isn't being applied before WebRTC gets the frames — a well-documented,
+device-dependent WebRTC quirk. Added a post-capture check using the track's
+*actual* delivered dimensions (not what was asked for), and applies a
+rotate-and-rescale correction only when a genuine mismatch is detected,
+leaving devices that already deliver correctly-oriented frames untouched.
+Applied to both the host's own preview and what a viewer receives (the same
+underlying stream). **Caught and fixed a real leak during adversarial
+review**: the first version bound a fresh `window`-level orientationchange
+listener per video element, meaning every leave/rejoin cycle on a live
+broadcast left the previous element's listener registered forever. Rebuilt
+around one shared listener tracking a set of currently-live elements
+instead; verified with a simulation of ten join/leave cycles that exactly
+one listener gets registered, not ten, and that detached elements get
+pruned correctly.
+
+### The fake "Conversations" count on the Impact dashboard
+
+**File:** `js/broadcast-space.js`
+
+Found and fixed: the dashboard counted the raw size of the `conversation`
+collection, which includes the automatic "is live now"/"was live" system
+messages — not something anyone actually said. A broadcast that had only
+ever been live once, with zero real chat, was showing a non-zero
+Conversations count purely from those automatic notices. Now counts only
+person-authored entries. Verified against three scenarios including the
+"only ever live, never chatted" case directly from the report.
+
+### Toga alignment — the real bug was one component up
+
+**File:** `index.html`, `js/circle.js`
+
+The leaderboard row fixed in round two was already correct. The actual
+remaining issue was the *description paragraph* above it, which was
+inheriting a shared CSS class (`.lobby-sub`) that's center-aligned by design
+for short status messages used elsewhere in the app — applied here to a
+long, multi-sentence paragraph. Center-aligning long wrapped text produces
+uneven line lengths on both edges, which is exactly what reads as "is this
+even aligned." Fixed using a pattern already established elsewhere in the
+same file (an inline `text-align:left` override, not a change to the shared
+class, so nothing else using `.lobby-sub` is affected). Confirmed the app
+shell's own 460px width cap bounds this safely on larger screens — this
+isn't an unbounded stretch.
+
+## Full list of touched files (this addendum)
+
+`firestore.rules`, `js/broadcast-space.js`, `js/media-contain.js`,
+`js/broadcast-live.js`, `js/circle.js`, `index.html`. `js/calls.js` remains
+byte-identical to the original package — confirmed again.
+
+---
+
+## Addendum 6 — orientation: removing the hard lock, and actually building the response
+
+A follow-up request: make the app genuinely responsive to phone orientation,
+not just unlocked.
+
+### The direct cause of "static and vertical"
+
+**File:** `manifest.json`
+
+`"orientation": "portrait"` was a hard PWA-level lock instructing the OS to
+force portrait regardless of how the phone is physically held — the app
+never rotated at all, by design, the entire time. Removed.
+
+### Why removing the lock alone would have made things worse, not better
+
+**File:** `css/app.css`, `js/core.js`
+
+Unlocking rotation without adapting the layout would have exposed a real
+problem rather than fixed one: the app shell (`.app`) had a mobile-portrait
+media query (`max-width:480px`) that stops matching the moment a phone
+rotates — a typical phone in landscape is 800–900px wide — falling back to
+"desktop phone-mockup" sizing (a fixed 460px-wide, up-to-940px-tall card).
+In real landscape, with far less actual height available than that cap
+assumes, this would render a squashed, badly-proportioned box centered in
+mostly empty space — allowed to rotate, but looking broken. Fixed the shell
+to scale itself off the smaller of the two real dimensions in landscape,
+staying phone-proportioned and fully on-screen instead of just falling
+through to an unrelated sizing rule.
+
+Added real infrastructure so the rest of the app can react to orientation
+as it actually changes, not just render whatever the CSS cascade happens to
+produce: a shared `body.naluno-landscape` / `naluno-portrait` class kept in
+sync with the same device-orientation detection already used by the camera
+fixes (one source of truth, not several checks that could disagree), a
+`naluno:orientationchange` event other code can listen for, and a first
+real example of a component adapting to it — the bottom nav trims its
+button labels in landscape, where vertical space is scarcer. Verified this
+composes correctly with the broadcast-video full-bleed landscape mode added
+in an earlier round (that mode's rules use `!important` and correctly take
+priority the moment a video actually goes fullscreen, confirmed by reading
+the CSS specificity directly rather than assuming) and that the class names
+don't collide (`naluno-landscape` vs. the unrelated, pre-existing
+`naluno-landscape-media` are distinct tokens `classList` treats
+independently).
+
+**Scope, stated plainly:** this fixes the actual lock and gives the whole
+app a real, working foundation to respond to orientation — screens no
+longer render a portrait layout no matter what. A full landscape-specific
+redesign of every individual screen's content (Wireline's message list,
+Frequencies' layout, Band, etc.) is a much larger undertaking than this
+pass covers, and isn't claimed here. One more thing outside this package's
+reach: if the native Android shell (a separate project, not included in
+what's been shared here) sets its own `android:screenOrientation="portrait"`
+in its manifest, that's a second, independent lock that would need fixing
+there too — this pass only covers the web app.
+
+## Full list of touched files (this addendum)
+
+`manifest.json`, `css/app.css`, `js/core.js`.
+
+---
+
+## Addendum 7 — going back with real skepticism, not trusting my own earlier work
+
+Told directly that a lot of it still wasn't fixed. Went back through
+`broadcast-live.js`, `firestore.rules`, `media-contain.js`, and the wording
+fixes line by line, treating every earlier claim as unverified until
+re-checked against the current code, not memory of writing it.
+
+### A real regression in the previous round's own fix
+
+**File:** `js/broadcast-live.js`
+
+The Addendum 4 fix for the `liveSessions` cleanup race compared a viewer's
+client-clock timestamp against `hostStartedAt` — a value captured on the
+**host's** device. Re-reading it fresh: this depends on the two devices'
+clocks agreeing closely. Real phones drift, sometimes by more than a
+trivial amount, and any viewer whose clock ran even a little behind the
+host's could have their perfectly fresh join request deleted the instant it
+was created — on a different device than whichever one was used to test the
+original fix. This is a strong, concrete candidate for "still doesn't work
+on another phone," and it was a bug **introduced by an earlier fix in this
+same project**, not something pre-existing. Replaced the cross-device
+comparison with a purely time-elapsed threshold (matching the same 180-
+second staleness window already used a few lines below, so both checks now
+agree on what "stale" means) — this can't misfire on ordinary clock drift
+between two independent devices, while still cleaning out genuinely stale
+sessions from a previous host run. Verified with a simulation covering
+perfectly synced clocks, 30 seconds of drift, 2 full minutes of drift, and a
+side-by-side comparison showing the old logic deleting a valid session that
+the new logic correctly keeps.
+
+### Re-verified, not just re-read: the Firestore rules fix, the TURN timing
+fix, the camera-orientation positioning, and the service worker's caching
+strategy
+
+Each of these was checked again from scratch rather than assumed correct:
+
+- Manually traced the exact collection paths the client actually uses
+  (`viewerIce`, `hostIce`, both confirmed as literal subcollection names in
+  `broadcast-live.js`) against the exact nested `match` blocks in the rules
+  file, confirming they still line up precisely, and re-ran the rules
+  simulation from Addendum 5 to confirm all 16 cases still pass unchanged.
+- Confirmed both `RTCPeerConnection` construction sites (host and viewer)
+  route through the fixed `bLiveEnsureIce()` — no third, unpatched call site
+  exists.
+- Chased a real concern about the camera-orientation fix's use of
+  `position: absolute` — verified `#bspaceMedia` (the parent for both the
+  host preview and the viewer's video) is unconditionally `position:
+  absolute` via its own base CSS rule, and confirmed there is exactly one
+  `#bspaceMedia` element in the document, always inside `.bspace-hero`,
+  where that rule is scoped. Not a bug, but worth the direct verification
+  rather than assuming.
+- Checked whether the service worker's caching could be masking these fixes
+  entirely (stale cached JS regardless of how correct the source is) —
+  read the actual fetch handler and confirmed it's network-first with a
+  2.5-second timeout and cache only as a fallback, so this isn't a likely
+  explanation on a normal connection. Not fixed because it didn't need
+  fixing, not skipped.
+
+### Two more instances of the Toga alignment bug, found by checking every
+use of the shared class, not just the ones already reported
+
+**File:** `index.html`
+
+Searched every remaining use of `.lobby-sub` across the app for the same
+"long paragraph inheriting a short-text center-aligned style" pattern
+identified in Addendum 5. Found one clear match: the Broadcast composer's
+own intro text ("Upload a video/photo, or **Go live** now…") — comparably
+long and multi-sentence to the Toga description already fixed. Applied the
+same established fix. Left the genuinely short captions elsewhere alone
+(e.g. "The book is empty.", "Wrong password — try again") — these don't
+share the bug, and changing them wasn't asked for or evidenced.
+
+## Full list of touched files (this addendum)
+
+`js/broadcast-live.js`, `index.html`.
+
+---
+
+## Addendum 8 — told to look for errors first, not whether things work
+
+Two specific, concrete symptoms: the camera box is correctly 9:16 but the
+video content is still landscape, and it feels mirrored backwards — moving
+your head left makes it appear to move right on screen. Went back into the
+exact function from Addendum 5/7 hunting for what's actually wrong in the
+code as written, not reasoning from the symptom alone.
+
+### A confirmed, serious bug: camera capture resolution used as CSS pixels
+
+**File:** `js/media-contain.js`
+
+Found it directly in the code, not inferred from the symptom: the
+rotation-correction box was sized using
+`track.getSettings().width`/`height` — the camera's **capture resolution**
+(1280×720 at the default live-broadcast quality, up to 3840×2160 at the "4k"
+tier used elsewhere in the app) — assigned directly as literal CSS pixel
+`width`/`height` on the video element. A phone's actual CSS viewport is
+typically only ~360–430px wide. Setting `width: 1280px` (or `2160px`) inside
+a ~390px-wide container doesn't just look wrong, it's wildly oversized —
+only a small, arbitrarily zoomed-in slice of the "corrected" video would
+ever actually be visible, which would look broken regardless of whether the
+rotation direction itself was even right. This alone is enough to fully
+explain "box is 9:16 but the camera is still landscape," independent of
+anything about rotation angle. Fixed to size the box from the **container's**
+actual on-screen CSS pixel dimensions (`clientWidth`/`clientHeight`) —
+capture resolution and CSS layout size are unrelated numbers, and conflating
+them was the core error. Also added a short retry (up to 10 attempts, 150ms
+apart) for the case where the container genuinely isn't laid out yet at the
+exact moment a fresh video element's metadata loads — without it, the
+correction could silently and permanently fail to apply for that element,
+with nothing ever triggering a second attempt.
+
+### The missing mirror — a real, separate gap, not something the earlier fix broke
+
+**File:** `js/media-contain.js`
+
+Checked directly: there was no self-view mirroring logic anywhere in
+Broadcast-live at all. An existing `shouldMirrorCamera()` / `scaleX(-1)`
+mechanism does exist in `camera.js`, but it's scoped specifically to the
+Calls feature's own video elements (`incomingSelfVideo`/`localVideo`) — it
+was never wired to Broadcast-live's preview, a pre-existing gap, not a
+regression from anything built in earlier rounds. A front camera's self-view
+is mirrored by universal convention (every camera app, every video call
+app) so that moving your head left appears to move left — without it, you
+see the "camera's-eye" view instead, exactly backwards from what looking at
+yourself normally feels like, which is precisely what was reported. Added
+real mirroring, scoped correctly: only for the broadcaster's own local
+preview when using the front camera — a viewer watching someone else's
+stream is explicitly NOT mirrored, since they should see the broadcaster
+the way everyone else does, the same as any ordinary video call. Verified
+with five scenarios: the exact 4K-capture-in-a-390px-container bug case,
+self-view mirroring, viewer non-mirroring, mirroring still applying even
+when no rotation-correction is needed (the more common case — most devices
+already deliver correctly-oriented frames, and almost every front-camera
+preview needs mirroring regardless), and rear camera correctly never being
+mirrored even in self-view.
+
+**Stated honestly, not glossed over:** the exact rotation *direction*
+(clockwise vs. counterclockwise, i.e. `90deg` vs `-90deg`) for the
+landscape-correction case genuinely varies by device/OS/browser combination
+for this specific class of bug, and this could not be verified against a
+real device from here. It's isolated to a single named constant
+(`NALUNO_ROTATE_DEG` in `media-contain.js`) specifically so that if
+rotation still looks backwards on a given device after this fix, it's a
+one-line, 30-second change — flip `90` to `-90` — rather than needing
+another full investigation. Everything else in this fix (the container-size
+bug, the mirroring, the retry logic) does not depend on that value being
+right, and was verified independent of it.
+
+## Full list of touched files (this addendum)
+
+`js/media-contain.js`, `js/broadcast-space.js`, `js/broadcast-live.js`.

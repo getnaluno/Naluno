@@ -194,6 +194,32 @@ service cloud.firestore {
           || get(/databases/$(database)/documents/broadcasts/$(id)).data.creatorUid == request.auth.uid
         );
       }
+      // FIX (found while investigating "live video never comes through"):
+      // liveSessions/{viewerUid} itself was covered by the /{col}/{docId}
+      // wildcard above, but that wildcard only reaches ONE level of
+      // subcollection — Firestore rules are not recursive. viewerIce and
+      // hostIce live ONE LEVEL DEEPER (liveSessions/{viewerUid}/viewerIce/...),
+      // so every read and write to them was silently denied by Firestore's
+      // default-deny, the entire time this feature existed. The SDP
+      // offer/answer exchange (one level deep) worked fine, making signaling
+      // look like it was progressing — but ICE candidates, required for any
+      // real-world NAT traversal, could never actually reach either peer.
+      // That is a far more fundamental explanation for "connects, but no
+      // video" than anything in the client code, and no client-side fix
+      // could ever have solved it. Mirrors the same pattern calls.js already
+      // uses correctly for callerCandidates/calleeCandidates above.
+      match /liveSessions/{viewerUid}/viewerIce/{candId} {
+        allow read, create: if isSignedIn() && (
+          request.auth.uid == viewerUid
+          || get(/databases/$(database)/documents/broadcasts/$(id)).data.creatorUid == request.auth.uid
+        );
+      }
+      match /liveSessions/{viewerUid}/hostIce/{candId} {
+        allow read, create: if isSignedIn() && (
+          request.auth.uid == viewerUid
+          || get(/databases/$(database)/documents/broadcasts/$(id)).data.creatorUid == request.auth.uid
+        );
+      }
     }
 
     match /strands/{id} {
