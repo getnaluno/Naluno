@@ -10,6 +10,47 @@ function toast(msg){
   clearTimeout(toast._t); toast._t = setTimeout(()=>t.classList.remove('show'), 1900);
 }
 
+/* FIX ("app is static and vertical — make it sensitive to orientation"):
+   manifest.json used to hard-lock orientation:"portrait", so the app never
+   actually rotated at all no matter how the phone was held — that's the
+   direct cause, fixed there. This is the other half: the app shell and any
+   component that needs to know actively track and react to orientation
+   changes, not just be allowed to render whatever the CSS cascade happens
+   to produce. Sets body.naluno-landscape / naluno-portrait (kept in sync
+   with the existing nalunoIsPortraitDevice() detection used by the camera
+   fixes, so there's one shared source of truth for "which way is the phone
+   held" across the whole app, not several different checks that could
+   disagree) and fires a real DOM event other modules can listen for. */
+function nalunoApplyOrientationClass(){
+  try{
+    const portrait = (typeof nalunoIsPortraitDevice === 'function')
+      ? nalunoIsPortraitDevice()
+      : (window.innerHeight >= window.innerWidth);
+    document.body.classList.toggle('naluno-landscape', !portrait);
+    document.body.classList.toggle('naluno-portrait', portrait);
+  }catch(_){}
+}
+(function nalunoWatchOrientation(){
+  nalunoApplyOrientationClass();
+  let t = null;
+  const onChange = function(){
+    clearTimeout(t);
+    // A short debounce: on real devices, innerWidth/innerHeight can report a
+    // stale value for a frame or two right as the rotation animation starts.
+    t = setTimeout(function(){
+      nalunoApplyOrientationClass();
+      try{ window.dispatchEvent(new CustomEvent('naluno:orientationchange')); }catch(_){}
+    }, 120);
+  };
+  window.addEventListener('resize', onChange);
+  window.addEventListener('orientationchange', onChange);
+  try{
+    if(screen.orientation && screen.orientation.addEventListener){
+      screen.orientation.addEventListener('change', onChange);
+    }
+  }catch(_){}
+})();
+
 /* LOCK (bug 3.1): window.storage is not a browser API — it only existed in the
    original Claude Artifacts sandbox. In production every call no-oped and demo
    Bands / Wireline threads / voice notes / callsign fallback vanished on refresh.

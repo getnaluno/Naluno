@@ -96,26 +96,31 @@ async function bLiveStartHost(stream){
   if(typeof prewarmIceServers === 'function') prewarmIceServers();
 
   const col = fbDb.collection('broadcasts').doc(activeBroadcastId).collection('liveSessions');
-  const hostStartedAt = Date.now();
-  // FIX: this used to delete EVERY document in the collection unconditionally,
-  // racing (unawaited) against the snapshot listener attached right after it.
-  // A viewer whose join happened to land in that same window — offer written
-  // right as the host goes live — could have their brand-new session document
-  // wiped out mid-negotiation, before the host ever got to answer it. Only
-  // deleting documents that predate this host session starting removes the
-  // staleness this was actually meant to clean up, without being able to
-  // touch anything written after the host went live.
+  // FIX (found on closer review — a real regression in the previous fix):
+  // comparing a viewer's client-clock timestamp against hostStartedAt
+  // (captured on the HOST's device) depends on the two devices' clocks
+  // agreeing closely. Real phones drift — sometimes by more than a trivial
+  // amount — and any viewer whose clock ran even a little behind the host's
+  // could have their perfectly fresh join request deleted the instant it
+  // was created, on a completely different device than the one testing this.
+  // That's a strong candidate for "still doesn't work on another phone."
+  // Using a generous, purely time-elapsed threshold instead — old enough
+  // that ordinary clock drift between two independent devices (typically
+  // seconds, rarely more) can't misfire it, while still cleaning out
+  // genuinely stale sessions from a previous host run. Matches the same
+  // 180000ms staleness window already used a few lines below when the host
+  // decides whether to answer an incoming offer at all, so both checks
+  // agree on what "stale" means.
+  const STALE_SESSION_MS = 180000;
   (async function cleanupStale(){
     try{
       const old = await col.get();
+      const cleanupNow = Date.now();
       const batch = fbDb.batch();
       let n = 0;
       old.docs.forEach(d => {
         const data = d.data() || {};
-        // Only clear sessions that existed BEFORE this host session started —
-        // never a document whose write timestamp is at or after that moment,
-        // which could only be a viewer joining this session, not a stale one.
-        if(!data.ts || data.ts < hostStartedAt){ batch.delete(d.ref); n++; }
+        if(!data.ts || (cleanupNow - data.ts) > STALE_SESSION_MS){ batch.delete(d.ref); n++; }
       });
       if(n) await batch.commit().catch(function(){});
     }catch(_){}
@@ -283,6 +288,7 @@ async function bLiveJoinAsViewer(){
     v.playsInline = true;
     try{ v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline',''); }catch(_){}
     if(v.srcObject !== remote) v.srcObject = remote;
+    try{ if(typeof nalunoCorrectVideoOrientation === 'function') nalunoCorrectVideoOrientation(v, remote, false); }catch(_){}
     const play = function(){
       v.play().then(function(){
         setTimeout(function(){ try{ v.muted = false; }catch(_){} }, 300);

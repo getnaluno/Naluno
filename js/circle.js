@@ -278,7 +278,7 @@
         .sort(function(a,b){ return (b._score||0) - (a._score||0); })
         .slice(0, 10);
       if(!rows.length){
-        el.innerHTML = '<div class="lobby-sub">This month’s Wall of Fame is empty. Share your views, then watch time, Circle joins, and conversation write the ten names. Views must be public to qualify. The list lives 30 days.</div>';
+        el.innerHTML = '<div class="lobby-sub" style="text-align:left;max-width:none;">This month’s Wall of Fame is empty. Share your views, then watch time, Circle joins, and conversation write the ten names. Views must be public to qualify. The list lives 30 days.</div>';
         return;
       }
       el.innerHTML = '<ol class="toga-list">' + rows.map(function(r, i){

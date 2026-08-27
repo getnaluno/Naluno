@@ -321,10 +321,26 @@ function renderBspaceConversation(docs){
     const fallbackText = (stillLive && !past)
       ? 'Creator is live now — join to watch'
       : 'Creator was live';
+    // FIX: "MAGAMBO is live now" / "MAGAMBO was live" read in third person
+    // even when MAGAMBO is the one looking at their own broadcast — the
+    // stored text is fixed at write time and can't know who'll read it
+    // later. When this device belongs to whoever the message is from,
+    // reconstruct it addressed to "You" instead of falling back to the
+    // stored, name-baked text. Only applies to messages tagged with the new
+    // kind field — older messages (before this fix) still show their
+    // original stored text, unchanged.
+    const isMine = !!(currentUser && latest.from === currentUser.uid);
+    let displayText = latest.text || fallbackText;
+    if(isMine && latest.kind === 'went_live'){
+      displayText = 'You\u2019re live now — you can watch reactions come in below.';
+    } else if(isMine && latest.kind === 'was_live'){
+      const dur = (typeof formatLiveDuration === 'function') ? formatLiveDuration(latest.durationMs) : '';
+      displayText = 'You were live' + (dur ? ' for ' + dur : '') + '.';
+    }
     pin.style.display = 'block';
     pin.innerHTML = `<div class="bspace-card" style="border:1px solid rgba(124,255,178,.45);background:rgba(124,255,178,.08);">
       <div class="who" style="color:var(--mint);">${label} · ${timeAgo(latest.ts || Date.now())}</div>
-      <div class="body" style="font-weight:600;">${bspaceEscape(latest.text || fallbackText)}</div>
+      <div class="body" style="font-weight:600;">${bspaceEscape(displayText)}</div>
     </div>`;
   } else {
     pin.style.display = 'none';
@@ -919,9 +935,20 @@ function renderBspaceImpact(){
   ]).then(([conv, qs, res, resources, doc])=>{
     const members = (doc.exists && doc.data().memberUids) || [];
     const answered = qs.docs.filter(d => (d.data().answers && d.data().answers.length) || d.data().bestAnswer).length;
+    // FIX ("dashboard shows Conversations when there are none"): conv.size
+    // counted every document in the collection, including the "is live
+    // now"/"was live" SYSTEM messages posted automatically when a creator
+    // goes live — not something anyone actually said. A broadcast that's
+    // only ever been live once, with zero real chat, was showing a non-zero
+    // Conversations count purely from those automatic notices. Counts only
+    // genuine person-authored entries now.
+    const realConvCount = conv.docs.filter(d => {
+      const t = d.data().type;
+      return t !== 'system' && t !== 'live';
+    }).length;
     const cells = [
       ['Community', members.length],
-      ['Conversations', conv.size],
+      ['Conversations', realConvCount],
       ['Questions', qs.size],
       ['Answered', answered],
       ['Results', res.size],
@@ -1034,6 +1061,8 @@ async function bspaceStopLive(){
       // once the upload finishes — this message just states what happened.
       fbDb.collection('broadcasts').doc(bcastId).collection('conversation').add({
         type: 'system',
+        kind: 'was_live',
+        durationMs: durationMs || null,
         text: who + ' was live' + (durText ? ' for ' + durText : '') + '.',
         from: currentUser.uid,
         ts: Date.now(),
@@ -1136,7 +1165,11 @@ async function bspaceStartLive(){
   if(host){
     host.innerHTML = `<video id="bspaceLiveVideo" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;"></video>`;
     const v = $('bspaceLiveVideo');
-    if(v){ v.srcObject = bspaceLiveStream; v.play().catch(()=>{}); }
+    if(v){
+      v.srcObject = bspaceLiveStream;
+      v.play().catch(()=>{});
+      try{ if(typeof nalunoCorrectVideoOrientation === 'function') nalunoCorrectVideoOrientation(v, bspaceLiveStream, true); }catch(_){}
+    }
   }
   const badge = $('bspaceLiveBadge');
   if(badge) badge.style.display = 'block';
@@ -1170,7 +1203,13 @@ async function bspaceStartLive(){
       bspaceLiveRecorder.start(1000);
     }catch(e){ console.warn('[live] record start', e); bspaceLiveRecorder = null; }
   }
-  await bspacePost('conversation', { type:'system', text: ((currentProfile && currentProfile.name) || 'Creator') + ' is live now — tap Join live to watch.' });
+  // FIX ("was live" / "is live now" always read in third person, even when
+  // the creator is the one looking at their own broadcast — "MAGAMBO is
+  // live now" makes no sense addressed to MAGAMBO). Adds kind:'went_live' so
+  // the renderer can say "You're live now" to the creator specifically,
+  // while text keeps the old, name-baked wording as a fallback for anything
+  // that just reads text directly (older clients, notifications, search).
+  await bspacePost('conversation', { type:'system', kind:'went_live', text: ((currentProfile && currentProfile.name) || 'Creator') + ' is live now — tap Join live to watch.' });
   await bspacePost('journey', { type:'live', text: 'Live session started' });
   if(typeof notifyFrequenciesLive === 'function'){
     await notifyFrequenciesLive(activeBroadcastId, (activeBroadcastMeta && activeBroadcastMeta.title) || 'Broadcast');
