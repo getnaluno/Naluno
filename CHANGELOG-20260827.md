@@ -1,0 +1,492 @@
+# Naluno — Feature & Fix Pass 20260827
+
+Builds on the previous fix pass (`CHANGELOG-20260826.md` from the last
+package, not included here — this is a separate, additive round of work).
+Nothing visual was changed except where a feature explicitly required new UI
+(the Strand share button). All 15 touched files are listed below with what
+changed and why; `calls.js` is untouched — confirmed byte-identical to the
+prior package throughout this entire pass.
+
+---
+
+## 1. Broadcast Live wording — present tense while live, past tense after
+
+**Files:** `js/broadcast-space.js`, `js/broadcast-live.js`
+
+- Standardized on "Live now" / "Live now — join" while a broadcast is live,
+  and "Was live · [time] ago (duration)" once it ends — consistent across
+  every place the badge gets set.
+- Fixed a real underlying bug: the code was clearing the live start timestamp
+  the instant a broadcast ended, which is exactly the data needed to say how
+  long it ran. Now preserved as `lastLiveStartedAt` / `lastLiveEndedAt` /
+  `lastLiveDurationMs`, and the "was live" message posted to the room's
+  conversation includes a plain-language duration (e.g. "for 12m").
+
+## 2. Live join delivery — video feed, push, and a real Wireline message
+
+**File:** `js/broadcast-core.js`
+
+The video feed (WebRTC) and device push (via the existing FCM worker, fires
+even with the app closed) were already working. Added the missing piece:
+`wirelineNotifyLive()` now drops an actual message into every community
+member's Wireline thread with the creator when they go live — not just a
+notification badge and a push.
+
+## 3. Autoplay sequencing — Strand order, nearby fallback, then the titles list
+
+**Files:** `js/broadcast-space.js`, `js/strand.js`
+
+- Fixed the sort order so Strand items are always upload order (oldest →
+  newest) rather than whatever order the feed pool happened to be in (newest
+  first), which meant autoplay could easily advance backward through
+  episodes.
+- **Caught and fixed a second, deeper bug during testing**: the function
+  originally reused for sequencing (`relatedBroadcasts()`) is designed to
+  *exclude* the current item from its results (correct for its real job — an
+  "other items in this Strand" display list) — which meant the sequencing
+  code could never find the current episode's position in the list at all,
+  so it could never actually advance. A simulation of the exact end-to-end
+  chain caught this before shipping; `bspaceOnPlaybackEnded` now builds its
+  own upload-ordered sibling list directly instead of relying on a function
+  whose contract doesn't fit this use.
+- Implemented the missing "nearby Broadcasts" fallback for when a Strand is
+  exhausted — previously documented in a code comment but never actually
+  built; it wrapped back within the same finished Strand instead.
+- Replaced the old idle-end behavior (restart/loop the same clip) with what
+  was asked for: after everything is exhausted, it returns to the titles
+  screen instead.
+
+## 4. Strand sharing
+
+**Files:** `index.html`, `js/broadcast-core.js`, `js/strand.js`
+
+Added `strandShareUrl()`, a `?strand=` deep link (with a short retry loop so
+opening a shared link on a cold start doesn't land on an empty folder while
+the feed catches up), and a share button in the Strand header next to the
+back button, matching its existing icon-button style.
+
+## 5. Signal offline playback
+
+**Files:** `js/signal-core.js`, `js/signal-ui.js`
+
+- Signal already had a local blob cache (the "vault"), but it only started
+  downloading a video the moment someone opened it — not proactively. Added
+  `prefetchSignalsForOffline()`, called after both your own Signal and your
+  connections' latest Signals load, so video quietly finishes downloading
+  while online instead of only starting on first open.
+- Fixed a cold-start gap: the vault's fast lookup only checks in-memory
+  state, which is empty right after a fresh app open even if the video is
+  still sitting in IndexedDB from an earlier session. When there's no
+  connection, the viewer now checks IndexedDB directly and swaps in the
+  locally-stored copy if the network URL can't be reached.
+
+## 6. Instant load — Band and Compass added to the existing cache-first pattern
+
+**Files:** `js/auth.js`, `js/band-list.js`, `js/compass.js`
+
+Frequencies, Wireline, Broadcast, Signal, and Callsign already painted
+instantly from a local cache before Firestore/auth resolved. Band and
+Compass did not — Band relied purely on a live Firestore listener with no
+synchronous local cache, and Compass had no caching at all. Both now follow
+the exact same pattern already used everywhere else: write to a synchronous
+local cache on every update, read and paint from it in the same boot block
+that already handles the other five.
+
+## 7. Find Naluno toggle — now actually stays visually in sync
+
+**File:** `js/beacon.js`
+
+The setting itself was always saving correctly (localStorage + Firestore).
+The bug: `syncFindNalunoToggle()` — the function that paints the switch —
+was never called from `resumeFindNalunoIfEnabled()`, which runs at boot, on
+tab focus, and on reconnect. Location reporting was silently still running
+correctly in the background; the switch just visually reset to "off" every
+time you reopened the app, which is exactly what "doesn't stick" looks like.
+One line fixes it.
+
+## 8. Call notification accuracy
+
+**File:** `sw.js` (service worker cache bumped to v90 so this actually ships)
+
+Every push notification — including a plain "X is live" alert — was getting
+call-style "Answer"/"Decline" buttons, insistent multi-buzz vibration, and
+`requireInteraction`. Now only a genuine incoming call gets that treatment;
+everything else gets a normal, single, tap-to-open notification. The actual
+incoming-call code path (retry/backoff timing, stale-token handling, cleanup
+on answer/decline/timeout) was reviewed and left completely alone — it was
+already solid.
+
+## 9. Toga views — no longer shows two different things under one label
+
+**File:** `js/circle.js`
+
+The board could silently swap between a person's *this-month* view count and
+their *all-time* total, depending on whether they had any activity this
+month — both shown under an identical unlabeled "views" tag, and the ranking
+score had the same fallback, letting a stale lifetime total outrank real
+current activity. Now everything on the board — the number shown and the
+score it's ranked by — is consistently the monthly figure, labeled "views
+this month."
+
+## 10. Wireline queued messages — the Samsung/Android "stuck, unsure if it sent" bug
+
+**File:** `js/wireline.js`
+
+Root cause, confirmed by reading the actual code and reproduced with a
+targeted simulation: `navigator.onLine` is unreliable on some Android
+builds — it can report "online" when the connection is actually unusable.
+The existing offline pre-check trusts that value, so on an affected device it
+proceeds straight to the Firestore write, which (with offline persistence
+enabled) never rejects when genuinely offline — it just hangs indefinitely.
+The input box only ever cleared once that hung write resolved, which could
+be "never," leaving no feedback and no way to tell if the message went
+anywhere — which is exactly the reported symptom.
+
+Fixed with two pieces working together: every send now races the Firestore
+write against a 7-second timeout — if it doesn't confirm in time, the UI
+always resolves definitely (input clears, message shows as queued, an honest
+"still sending" toast) instead of freezing. And every message carries a
+client-generated id; if the original write does eventually land in the
+background after the timeout, a retry checks for that id first and skips
+re-sending rather than posting a duplicate. **This exact scenario — a slow
+write that later lands in the background, followed by a retry — was
+simulated in isolation and confirmed to produce exactly one message, not
+two**, before this was considered done.
+
+## 11. Broadcast Fit/Fill — now actually symmetric
+
+**File:** `js/broadcast-space.js`
+
+"Fill" correctly reshaped the video stage to match a landscape video's own
+aspect ratio. "Fit" did not — it was hardcoded to always use the portrait
+9:16 stage regardless of the video's actual shape, so a landscape video in
+"Fit" rendered small and letterboxed inside a too-tall portrait box instead
+of genuinely showing the whole picture. Both modes now adapt the stage the
+same way for landscape content; the only remaining difference between them
+is exactly what it should be — contain vs. cover.
+
+## 12. Plain-language pass
+
+**Files:** `js/signal-core.js`, `js/notifications.js`
+
+Searched every user-facing string in the app (toasts, status text, static
+HTML copy, titles, placeholders, aria-labels) for technical terminology.
+Found and fixed two real instances where infrastructure jargon was reaching
+the person: an upload-failure message that literally said "the storage
+Worker needs its R2 binding checked," and a notification error that said
+"couldn't get a notification token." The rest of the app's copy was already
+in plain language — this wasn't a large rewrite, just closing two gaps in
+error-handling paths where internal terminology had leaked through.
+
+---
+
+## How this was tested
+
+- `node --check` on every `.js` file in the app after every change — clean
+  throughout, not just at the end.
+- HTML tag balance and JSON/TOML validity checks on every touched
+  non-JS file.
+- **Autoplay sequencing was simulated end-to-end against the real logic
+  twice** — the first run caught the `relatedBroadcasts()` exclusion bug
+  described in §3 before it shipped; the corrected logic was re-simulated
+  and confirmed correct for all four scenarios (next episode, next episode
+  again, Strand exhausted → nearby, standalone → nearby).
+- **The Wireline double-send fix was simulated in isolation** with a fake
+  slow Firestore write that lands in the background after the client gives
+  up waiting, followed by a retry — confirmed exactly one message results,
+  not two.
+- Diffed the final result against the previous package throughout: every
+  change is scoped to the 15 files listed above, and `calls.js` — explicitly
+  called out as something that must not break — is confirmed byte-identical
+  to the prior package the whole way through this pass.
+
+## Full list of touched files
+
+`index.html`, `sw.js`, `js/auth.js`, `js/band-list.js`, `js/beacon.js`,
+`js/broadcast-core.js`, `js/broadcast-live.js`, `js/broadcast-space.js`,
+`js/circle.js`, `js/compass.js`, `js/notifications.js`, `js/signal-core.js`,
+`js/signal-ui.js`, `js/strand.js`, `js/wireline.js`.
+
+---
+
+## Addendum — `call-notify-worker` (added after this package was first built)
+
+You provided the actual call-notify Worker source separately, so this could
+finally be checked instead of left as an open question. Three real issues
+found and fixed, all verified with a simulation using a real generated RSA
+test key (so the actual JWT-signing path was exercised, not stubbed around):
+
+1. **A dead network call on every single request.** `verifyFirebaseIdToken()`
+   called `identitytoolkit.googleapis.com/v1/accounts:lookup?key=unused` —
+   `key=unused` is literally the string "unused" as the API key, so this
+   always fails, and the response was never even read. Pure wasted latency
+   on the critical path of waking someone's phone, on every call, with zero
+   benefit — the real verification already happens right after via
+   `tokeninfo`. Removed.
+2. **A 401 mid-send didn't recover within the same request.** If the cached
+   Google OAuth token happened to expire right as a call came in, the code
+   only cleared the cache for *next* time — the current, most time-critical
+   wake attempt just failed outright and had to wait for the client's own
+   next retry cycle (2 seconds later) to get a fresh token. It now fetches a
+   fresh token and retries once, immediately, in the same request.
+3. **The web-token "pulse" follow-ups blocked the HTTP response.** Two
+   follow-up notifications for web tokens (2.2s and 3.5s apart) ran inline
+   before the worker replied at all — a call to someone with both an Android
+   and a Web token registered could sit waiting 6+ seconds for a response
+   even though the phone had already been notified almost instantly. They
+   now run in the background via `ctx.waitUntil()` instead of delaying the
+   reply (which required actually receiving `ctx` in the handler signature —
+   it was being dropped entirely before).
+
+The existing retry-once-on-429/500/503 logic, the multi-token send strategy
+(android + primary + web, not first-success-only), and the intentionally
+soft-fail verification design (documented as deliberate — prioritizing call
+reliability over strict blocking on any verification hiccup) were all left
+exactly as they were. Added to the package as `call-notify-worker/`.
+
+---
+
+## Addendum 2 — reported bugs from real usage (screenshots)
+
+### "Was live" badge appearing on plain uploads that were never live
+
+**Root cause, and it was serious**: `bspaceStopLive()` had no guard at all —
+it ran its full "stamp this as having just gone live and ended" logic every
+single time *any* Broadcast view closed, live or not, including a plain
+upload someone just opened and tapped back on. `closeBroadcastSpace()` calls
+it unconditionally on every close. This is exactly why a regular episode
+upload ("CITY LIGHTS", "Begin Phase Two (Ep.02)") showed "Was live · Just
+now" — simply viewing and closing it was enough to write a bogus
+`lastLiveEndedAt` timestamp onto it. Fixed with a guard: only a genuine live
+session (an active camera stream or an in-progress recording) can trigger
+any of this now. Verified with a simulation reproducing the exact scenario.
+
+Because this bug could have already stamped bogus data on broadcasts before
+this fix, the *display* side was also hardened so already-corrupted data
+self-heals without a migration: the badge now also requires
+`lastLiveStartedAt` + `lastLiveDurationMs` to be present, which a genuine
+live session always has and the bug's writes never did (there was no real
+start time to compute a duration from). Verified this self-heals correctly
+on simulated old corrupted data.
+
+### Confusing "was live... just now (2m)" wording
+
+Restructured to "Was live for 2m · Just now" — reads in the order a person
+actually parses it (how long it ran, then when it ended) instead of putting
+an unexplained duration in parentheses right after "just now," which read as
+self-contradictory.
+
+### "recording saved when available" — stale by the time anyone reads it
+
+This was posted the instant a live session ended, before the recording had
+even started uploading — honest in the moment, but confusing later once the
+recording is obviously already there and playable. Removed the hedge; the
+message now just states what happened ("X was live for 12m."). The app
+already has a separate, real completion signal — a "Live session saved as
+chapter" journey entry posted once the upload actually finishes — so nothing
+about actual availability needed to be claimed prematurely in the first
+message at all.
+
+### Toga board alignment
+
+The row is a `<button>` element, and its individual text pieces (rank, name,
+stats, score) had no `text-align` of their own — relying on inheritance that
+doesn't behave identically across every browser/device's default button
+styling. Made explicit end to end: rank + name + stats align left in the
+flexible middle space, the score aligns right in its own space — matching
+what the layout was always meant to do, just no longer left to chance.
+
+### "Went live" push notifications not arriving outside Naluno
+
+Found in the call-notify Worker itself (see Addendum 1's 2026.08.27b fix,
+folded in above): the worker hardcoded `type: 'incoming_call'` on every push
+it ever sent, regardless of what the client asked for. A "went live" push
+explicitly requests `type: 'broadcast_live'` — that was silently discarded,
+so every push arrived looking like a real call with nothing behind it to
+resolve, which is the most likely reason it wasn't arriving via native push
+at all. Fixed to forward the real type; verified a real call is unaffected
+and a live alert now arrives correctly tagged, on both Android's data-only
+path and web's visible-notification path. The one thing that couldn't be
+verified from here: Naluno's native Android handler for these pushes isn't
+part of this package, so whether it needs its own small update to handle a
+non-call type gracefully is flagged honestly in the Worker's own README
+rather than assumed fixed.
+
+### Deep dive: checked for the same bug class elsewhere
+
+Since the root cause above was "a cleanup function runs unconditionally on
+close and writes data that should only happen for a real session," the
+equivalent close/cleanup paths for Band and Calls were checked specifically
+for the same pattern. Calls' `endActiveCall()` already guards correctly
+(early-returns when there's nothing active to end, and only writes to
+Firestore when a real `callId` exists) — confirmed sound, not touched.
+`bLiveOnSpaceClosed()`'s unconditional call to `bLiveLeaveViewer()` was also
+checked — its side effect is deleting your own per-session document, which
+is a safe, idempotent no-op even if you were never viewing a live stream, so
+it doesn't share the bug. No further instances of this pattern were found.
+
+---
+
+## Addendum 3 — Callsign, connect discoverability, encryption, live video, OriginID
+
+### Handle auto-save + collision handling
+
+**File:** `js/auth.js`
+
+Found a real gap in account creation: if a handle claim failed due to a race
+(someone else claims the same handle in the moment between your availability
+pre-check and the actual transaction), the account was created with **no**
+Callsign profile at all — no name, nothing to show. Fixed by writing a safe
+fallback profile the instant the account exists, before the claim is even
+attempted, so the account is never blank. On a collision, now clearly states
+the handle was taken and drops straight into Callsign edit, already open, to
+pick another — reusing the retry logic that already worked well there rather
+than building a second path.
+
+### Callsign as the landing page after sign-in
+
+**File:** `js/auth.js`
+
+Added a flag (`nalunoJustSignedIn`) set at the moment of an explicit sign-in
+action (Google, native, email, or handle) and consumed once inside the
+global auth-state handler. This distinguishes a fresh sign-in — which now
+lands on Callsign — from Firebase silently restoring an already-signed-in
+session on a normal app reopen, which continues to use the existing
+nav-state-restore behavior and resumes wherever the person was. The two
+don't fight each other.
+
+### "Connect" — the hard-to-spot magnifying glass
+
+**Files:** `index.html`, `css/app.css`
+
+Added a visible "Connect" label next to the search icon in Frequencies. The
+CSS change is scoped to this one button by element id, not the shared
+`.ghost-btn` class — the roughly a dozen other icon-only buttons using that
+class elsewhere in the app are unaffected.
+
+### End-to-end encryption — re-implemented, with the actual durability gap fixed
+
+**Files:** `js/crypto.js`, `js/auth.js`, `js/wireline.js`, `js/band-room.js`
+
+This was disabled once already, after real incidents where messages became
+permanently undecryptable — not because ECDH P-256 + AES-GCM-256 was weak
+(it wasn't), but because there was no way to recover a private key after a
+device's local storage was wiped. That's the actual problem this fixes:
+
+- **Password-based key backup**, for email/handle accounts: the private key
+  is wrapped with a key derived via PBKDF2-SHA256 (250,000 iterations) from
+  the account password and stored in Firestore. The server only ever
+  custodies ciphertext it cannot open — it never sees the password or the
+  raw key. Wired into sign-up (generate + back up, while the password is
+  still in hand) and sign-in (recover automatically if this device has no
+  local key).
+- **Recovery-code backup**, for Google/native sign-in accounts, which have
+  no password to derive from: a random 16-character code is generated once,
+  shown to the person exactly once in an unmissable "save this now" modal
+  (the same treatment a wallet seed phrase or a Signal PIN gets), and used
+  the same way underneath. On a fresh device, the person is prompted for it;
+  declining just means this device starts as a new identity rather than
+  blocking anything else in the app.
+- **Encryption re-enabled on the actual send path** for both Wireline and
+  Band, using this now-durable key infrastructure. Both always fall back to
+  plaintext when a recipient's key genuinely isn't available yet — a message
+  is never silently lost over this, matching the original "text must never
+  disappear" principle, just now achieved without giving up on encryption
+  entirely.
+- Band's read path (`decryptBandMessage`) was also improved: a message that
+  fails to decrypt now shows "Message not available on this device" instead
+  of silently rendering empty and vanishing from the list.
+
+**Honestly stated limits, not hidden:** this protects message content from
+anyone reading the database directly, including Naluno's own operators —
+that's what end-to-end means. It does not protect a compromised, unlocked
+device. The password-backup's strength is bounded by the account password's
+strength. No real system, including this one, can honestly promise to be
+permanently unbreakable; what's delivered here is a correct, standard,
+unshortcut implementation.
+
+**Actually tested, not just reasoned about:** ran real WebCrypto simulations
+(Node's `crypto.subtle`, the same API surface browsers provide) covering a
+basic encrypt/decrypt round trip between two identities, full simulated
+device loss followed by password recovery restoring access to messages
+encrypted *before* the loss, a wrong-password negative test, the equivalent
+full cycle for the recovery-code path including a wrong-code negative test,
+and generation of 50 recovery codes confirming no collisions. One of these
+tests initially flagged what looked like a serious security bug (wrong
+password recovering the key); investigating it found the flaw was in the
+test harness's variable-reset approach, not the actual code — rebuilding the
+test with a correct methodology (a fresh module context per simulated
+device, rather than trying to reset `let` bindings from outside a vm
+context) confirmed the real logic correctly rejects a wrong password.
+
+### Live video — black screen with a play button, no feed
+
+**File:** `js/broadcast-live.js`
+
+Found a genuine, well-reasoned bug: the function that actually creates the
+live viewer's video element only ever ran once the first video frame
+arrived — never at the moment of tapping "Join live." From that tap until a
+full offer/answer/ICE negotiation completed (which takes real time, and
+could stall or fail), whatever was already on screen — the regular VOD
+player's poster image and its own play button — simply stayed there,
+unchanged. Nothing about that state ever differed whether the connection was
+about to succeed or had already silently failed, which is indistinguishable
+from "broken." Fixed by creating the live video element immediately, with an
+honest "Connecting…" state, plus a 12-second timeout that surfaces a real
+message if a connection genuinely stalls, and a clear failure message if the
+peer connection actually reports `failed`. This is the best-evidenced
+diagnosis from a thorough static read of the WebRTC signaling code (which
+checked out as structurally correct throughout) — it could not be visually
+re-confirmed against a live negotiation from here, stated plainly rather
+than implied as a certainty.
+
+### OriginID — creator name, "check before publishing," broader web coverage
+
+**Files:** `js/origin.js`, `js/broadcast-composer.js`, `firebase-config.js`,
+`README-ORIGINID-SEARCH.md`
+
+OriginID already did more than expected on inspection: perceptual image/audio
+fingerprinting, motion-sequence comparison, an internal Naluno-catalog check
+that already correctly excluded a creator's own re-uploads, and an open-web
+scan across seven free, keyless sources (Wikipedia, iTunes, MusicBrainz,
+Deezer, TVmaze, Open Library, Internet Archive). What was missing, matching
+the actual ask:
+
+- **The matched creator's real name.** A hold against Naluno content only
+  ever showed the matched broadcast's title — never who made it. Added
+  `resolveMatchCreatorName()`, which resolves the matched creator's Callsign
+  name and attaches it to the report.
+- **"Check it out before publishing."** The composer's OriginID panel now
+  says, plainly, "This looks very close to '[title]' by [creator name].
+  Please check it out before publishing," with a real "View the original
+  first" button that opens the matched Broadcast — not just a generic hold
+  message with nothing actionable attached.
+- **Openverse** (free, keyless, hundreds of millions of openly-licensed
+  images/audio) added as an eighth open-web source, genuinely broadening
+  coverage.
+- **A real Google Search integration point**, guarded and honest: it only
+  ever fires if `GOOGLE_CSE_API_KEY`/`GOOGLE_CSE_ID` are actually configured
+  in `firebase-config.js` (both left blank — this needs real credentials
+  that weren't available here). Without them it's a silent no-op, same as
+  any other source failing gracefully — nothing is faked or stubbed in its
+  place. `README-ORIGINID-SEARCH.md` has the five-minute setup to get both
+  keys, free, and turn it on.
+
+**Tested:** ran the actual scoring functions (`scoreCatalog`, `trigramScore`,
+`resolveMatchCreatorName`) in isolation — confirmed identical content by a
+different creator correctly holds and is attributed to the right creator
+uid, a creator's own re-upload of their own identical file correctly does
+not hold, completely unrelated content produces no match at all, and name
+resolution correctly returns empty (not an error) for an unknown uid.
+
+## Full list of touched files (this addendum)
+
+`index.html`, `css/app.css`, `firebase-config.js`, `js/auth.js`,
+`js/band-list.js`, `js/band-room.js`, `js/beacon.js`,
+`js/broadcast-composer.js`, `js/broadcast-core.js`, `js/broadcast-live.js`,
+`js/broadcast-space.js`, `js/circle.js`, `js/compass.js`, `js/crypto.js`,
+`js/notifications.js`, `js/origin.js`, `js/signal-core.js`,
+`js/signal-ui.js`, `js/strand.js`, `js/wireline.js`, `sw.js`, plus new file
+`README-ORIGINID-SEARCH.md`. `js/calls.js` remains byte-identical to the
+original package throughout this entire project — confirmed again at the
+end of this addendum.

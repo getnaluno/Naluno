@@ -27,3 +27,13 @@ const GOOGLE_WEB_CLIENT_ID = "183354363901-4j3icgqb3dchns2vlualkoqiclhif3km.apps
 // Examples: "https://getnaluno.com/naluno.apk" or an R2 / GitHub Releases link.
 // Leave empty until the APK is hosted; the download prompt stays hidden.
 const ANDROID_APK_URL = "";
+
+// OriginID: real Google web search for copyright-similarity checks. Optional —
+// OriginID already checks Naluno's own catalog plus Wikipedia, iTunes,
+// MusicBrainz, Deezer, TVmaze, Open Library, Internet Archive, and Openverse
+// with no key required. Adding these two turns on general Google Search
+// results too. Leave blank to skip it — nothing else breaks or is faked in
+// its place. See README-ORIGINID-SEARCH.md for how to get both, free, in
+// about five minutes.
+const GOOGLE_CSE_API_KEY = "";
+const GOOGLE_CSE_ID = "";
