@@ -359,7 +359,7 @@
       const ranksByUid = {};
       rows.forEach(function(r, i){ ranksByUid[r.id] = i + 1; });
       const deltas = nalunoTogaRankDelta(monthKey, ranksByUid);
-      el.innerHTML = '<ol class="toga-list">' + rows.map(function(r, i){
+      el.innerHTML = '<div class="toga-strip-hint">Slide names →</div><ol class="toga-list">' + rows.map(function(r, i){
         const openId = r.featuredBroadcastId || '';
         const rank = i + 1;
         const d = deltas[r.id] || { kind: 'same' };
@@ -427,22 +427,16 @@
     if(monthEl) monthEl.textContent = nalunoMonthLabel();
     try{ renderTogaBoard(); }catch(_){}
     function setTogaOpen(open){
-      if(!exp || !body) return;
-      body.style.display = open ? 'block' : 'none';
-      try{ body.hidden = !open; }catch(_){}
-      exp.setAttribute('aria-expanded', open ? 'true' : 'false');
-      exp.classList.toggle('open', !!open);
-      const hint = $('togaExpandHint');
-      if(hint) hint.textContent = open ? 'close' : 'open';
+      if(!body) return;
+      body.style.display = 'block';
+      try{ body.hidden = false; }catch(_){}
+      if(exp){
+        exp.setAttribute('aria-expanded', 'true');
+        exp.classList.add('open');
+      }
       if(open) renderTogaBoard();
     }
-    if(exp && body){
-      exp.onclick = function(e){
-        if(e){ e.preventDefault(); e.stopPropagation(); }
-        const isOpen = body.style.display !== 'none' && !body.hidden;
-        setTogaOpen(!isOpen);
-      };
-    }
+    setTogaOpen(true);
   }
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wireToga);
   else wireToga();

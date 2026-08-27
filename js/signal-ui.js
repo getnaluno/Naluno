@@ -570,6 +570,20 @@ function renderBroadcasts(){
       }
     };
   }
+  const cue = document.getElementById('bcastScrollCue');
+  if(cue){
+    cue.onclick = function(e){
+      if(e){ e.preventDefault(); e.stopPropagation(); }
+      const scroller = document.getElementById('broadcastTabScroll');
+      const first = document.querySelector('#bcastPlateGrid .bcast-plate');
+      if(scroller && first){
+        try{ first.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+        catch(_){ scroller.scrollTop = first.offsetTop; }
+      } else if(scroller){
+        scroller.scrollTo({ top: scroller.clientHeight, behavior: 'smooth' });
+      }
+    };
+  }
 })();
 
 try{ renderBroadcasts(); }catch(e){ console.warn(e); }
