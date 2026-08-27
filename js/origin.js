@@ -548,6 +548,34 @@
           pushHit(d.title, 'archive', 'Internet Archive', s, 0.05);
         });
       }).catch(function(){}),
+      // Openverse: free, keyless, indexes hundreds of millions of openly-licensed
+      // images/audio across the actual open web (Flickr, Wikimedia Commons, etc.)
+      // — genuinely broadens coverage beyond the curated catalogs above without
+      // needing any credentials.
+      getJson('https://api.openverse.org/v1/images/?q=' + encodeURIComponent(q) + '&page_size=5').then(function(body){
+        (body && body.results || []).forEach(function(r){
+          const name = r.title || '';
+          const s = trigramScore(title, name);
+          pushHit(name + (r.creator ? ' — ' + r.creator : ''), 'openverse', (r.license ? r.license.toUpperCase() + ' licensed — ' : '') + 'Openverse', s, 0.06);
+        });
+      }).catch(function(){}),
+      // Real general web search (Google Custom Search) — only fires if credentials
+      // are actually configured (see README-ORIGINID-SEARCH.md). Without them this
+      // is a silent no-op, same as every other source failing gracefully; it is NOT
+      // faked or stubbed with fabricated results. Wire in GOOGLE_CSE_API_KEY and
+      // GOOGLE_CSE_ID (both free to obtain, no cost for reasonable OriginID volumes)
+      // to turn this on — nothing else in the app needs to change.
+      (async function(){
+        const key = (typeof GOOGLE_CSE_API_KEY !== 'undefined' && GOOGLE_CSE_API_KEY) ? GOOGLE_CSE_API_KEY : '';
+        const cx = (typeof GOOGLE_CSE_ID !== 'undefined' && GOOGLE_CSE_ID) ? GOOGLE_CSE_ID : '';
+        if(!key || !cx) return; // not configured — no fabricated results, just skipped
+        const body = await getJson('https://www.googleapis.com/customsearch/v1?key=' + encodeURIComponent(key) + '&cx=' + encodeURIComponent(cx) + '&q=' + encodeURIComponent(q), 5000);
+        (body && body.items || []).slice(0, 6).forEach(function(r){
+          const name = r.title || '';
+          const s = trigramScore(title, name);
+          pushHit(name, 'google', (r.displayLink || 'Google Search') + (r.snippet ? ' — ' + r.snippet : ''), s, 0.1);
+        });
+      })().catch(function(){}),
     ]);
     matches.sort(function(a,b){ return b.score - a.score; });
     const seen = {};
@@ -787,7 +815,23 @@
       hold: hold,
       matchTitle: (topHit && topHit.source === 'naluno') ? (topHit.title || '') : '',
       matchBroadcastId: (topHit && topHit.broadcastId) || '',
+      matchCreatorUid: (topHit && topHit.source === 'naluno') ? (topHit.creatorUid || '') : '',
     };
+  }
+  /** Resolves the matched creator's actual Callsign name, not just their opaque
+   *  uid — this is what lets a hold say "close to X by [name]" instead of just
+   *  a title, and is what the "check the mentioned work before publishing"
+   *  advisory needs to be genuinely actionable rather than vague. */
+  async function resolveMatchCreatorName(uid){
+    if(!uid || typeof fbDb === 'undefined' || !fbDb) return '';
+    try{
+      const doc = await fbDb.collection('users').doc(uid).get();
+      if(doc.exists){
+        const d = doc.data() || {};
+        return d.name || d.number || '';
+      }
+    }catch(_){}
+    return '';
   }
 
   async function runOriginScan(file, title, description, durationHint){
@@ -816,7 +860,7 @@
       web = await scanOpenWeb(title, description || '');
       known = scoreKnown(title);
     }
-    return assemble({
+    const report = assemble({
       identity: identity,
       duration: frames.duration,
       frameHashes: frames.hashes,
@@ -828,6 +872,13 @@
       web: web,
       known: known,
     });
+    // Resolve the matched creator's real name for a genuine hold/match — this
+    // is what turns "close to a Naluno title" into "close to X by [name],
+    // check it out before publishing," which is the actual point of a hold.
+    if(report.matchCreatorUid){
+      try{ report.matchCreatorName = await resolveMatchCreatorName(report.matchCreatorUid); }catch(_){ report.matchCreatorName = ''; }
+    }
+    return report;
   }
 
   async function saveOriginMark(broadcastId, report, title){
@@ -862,6 +913,7 @@
   window.runOriginScan = runOriginScan;
   window.originNeedsAck = originNeedsAck;
   window.saveOriginMark = saveOriginMark;
+  window.resolveMatchCreatorName = resolveMatchCreatorName;
   window.originTrigramScore = trigramScore;
   window.originScanOpenWeb = scanOpenWeb;
   window.originPhotoLikeness = photoLikeness;

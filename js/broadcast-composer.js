@@ -595,11 +595,24 @@ function bcompPaintOrigin(report){
   box.style.display = 'block';
   const needsAck = (typeof originNeedsAck === 'function') ? originNeedsAck(report) : !!(report.hold || report.status === 'match');
   const label = report.status === 'match' ? 'OriginID match' : (report.status === 'review' ? 'OriginID review' : 'OriginID clear');
-  const action = needsAck
-    ? 'Held. Another creator already published a close picture, clip, or sound. Tick the box only if this is yours, licensed, or a clearly marked cover. OriginID will stay on the Broadcast.'
-    : (report.status === 'clear'
-      ? 'No close match in Naluno. OriginID still stores a fingerprint so later copies can be held.'
-      : 'Close, but not enough to hold. OriginID will keep watching.');
+  // FIX ("mention the original creator, advise checking before publishing"):
+  // this used to only ever say a generic "another creator already published a
+  // close match" — never who, never what, and never gave any way to actually
+  // go look at it. When the hold is against real Naluno content (not just an
+  // open-web catalog hit), name the creator and the work by name, and give a
+  // real, clickable way to check it before deciding whether to proceed.
+  const isNalunoHold = needsAck && report.matchBroadcastId && report.matchTitle;
+  const who = report.matchCreatorName ? (' by ' + escapeHtml(report.matchCreatorName)) : '';
+  const action = isNalunoHold
+    ? 'This looks very close to “' + escapeHtml(report.matchTitle) + '”' + who + '. Please check it out before publishing — if this is your own work, a licensed use, or a clearly marked cover, tick the box below and Naluno will still publish it, with the OriginID mark attached.'
+    : needsAck
+      ? 'Held. Another creator already published a close picture, clip, or sound. Tick the box only if this is yours, licensed, or a clearly marked cover. OriginID will stay on the Broadcast.'
+      : (report.status === 'clear'
+        ? 'No close match in Naluno or the open web. OriginID still stores a fingerprint so later copies can be held.'
+        : 'Close, but not enough to hold. OriginID will keep watching.');
+  const viewOriginalBtn = isNalunoHold
+    ? '<button type="button" id="bcompViewOriginalBtn" style="margin-top:8px;padding:8px 14px;border-radius:999px;border:1px solid rgba(124,255,178,.4);background:transparent;color:var(--mint);font-family:var(--font-mono);font-size:11.5px;cursor:pointer;">View the original first</button>'
+    : '';
   const ch = report.channels || {};
   const bar = function(name, n){
     const v = Math.max(0, Math.min(100, Number(n) || 0));
@@ -618,9 +631,15 @@ function bcompPaintOrigin(report){
     ? '<label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-size:13px;line-height:1.4;"><input type="checkbox" id="bcompOriginAck" /> This is my work, a licensed use, or a clearly marked cover.</label>'
     : '';
   box.innerHTML = '<div style="font-family:var(--font-futuristic);font-size:13px;margin-bottom:4px;">' + label +
-    ' · ' + (report.score || 0) + '</div><div style="font-size:12.5px;color:var(--text-dim);line-height:1.45;">' + action + '</div>' + meters + hits + ack;
+    ' · ' + (report.score || 0) + '</div><div style="font-size:12.5px;color:var(--text-dim);line-height:1.45;">' + action + '</div>' + viewOriginalBtn + meters + hits + ack;
   const cb = $('bcompOriginAck');
   if(cb) cb.onchange = function(){ window._bcompOriginAck = !!cb.checked; };
+  const viewBtn = $('bcompViewOriginalBtn');
+  if(viewBtn) viewBtn.onclick = function(e){
+    if(e){ e.preventDefault(); e.stopPropagation(); }
+    if(typeof openBroadcastById === 'function') openBroadcastById(report.matchBroadcastId);
+    else toast('Could not open — try Broadcasts search');
+  };
 }
 
 if($('broadcastGoLiveBtn')) $('broadcastGoLiveBtn').onclick = ()=>{ if(typeof openGoLiveFromSignal==='function') openGoLiveFromSignal(); else if(typeof bcompStartGoLive==='function') bcompStartGoLive(); };

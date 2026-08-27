@@ -1142,13 +1142,15 @@ async function decryptBandMessage(m){
   if(!m.encrypted || !m.envelopes) return m.text || '';
   const mine = m.envelopes[currentUser.uid];
   if(!mine){
-    // Not sealed for us — show plaintext fallback if sender included it
-    return m.text || '';
+    // Not sealed for us — show plaintext fallback if sender included it,
+    // otherwise say so plainly rather than let the bubble render empty and
+    // silently vanish from the list (bandMessageIsEmpty would otherwise hide it).
+    return m.text || 'Message not available on this device';
   }
   // Shared secret is ECDH(myPrivate, senderPublic) — always use sender's key
   const senderUid = m.fromUid || m.from;
   const theirJwk = await resolvePublicKeyForUid(senderUid);
-  if(!theirJwk) return m.text || '';
+  if(!theirJwk) return m.text || 'Message not available on this device';
   try{
     const plain = await decryptMessageText(senderUid, theirJwk, mine.ciphertext, mine.iv);
     if(plain != null) return plain;
@@ -1160,7 +1162,7 @@ async function decryptBandMessage(m){
       if(plain2 != null) return plain2;
     }catch(e){}
   }
-  return m.text || '';
+  return m.text || 'Message not available on this device';
 }
 
 async function sendBandMessage(){
@@ -1175,15 +1177,25 @@ async function sendBandMessage(){
       toast('Offline — Band message queued');
       return;
     }
-    // LOCK (bug 1.3): skip encryptBandMessageForMembers — it paid full ECDH/AES cost
-    // for every member, then discarded the envelopes. Plaintext is the source of truth
-    // after key-rotation drops (same policy as Wireline text).
+    // Re-enabled (see crypto.js — password/recovery-code backup fixed the
+    // durability gap that caused this to be turned off). Encrypts a separate
+    // envelope per member using their public key; falls back to plaintext
+    // whenever a member's key genuinely isn't available yet, so sending is
+    // never blocked or lost over this.
+    let envelopes = null;
+    try{
+      const members = Array.isArray(b.memberUids) ? b.memberUids : [];
+      if(members.length && typeof encryptBandMessageForMembers === 'function'){
+        envelopes = await encryptBandMessageForMembers(members, text);
+      }
+    }catch(_){ envelopes = null; }
     const payload = {
       from: currentUser.uid,
       ts: firebase.firestore.FieldValue.serverTimestamp(),
       type: 'text',
-      encrypted: false,
-      text: text,
+      encrypted: !!envelopes,
+      envelopes: envelopes || null,
+      text: envelopes ? null : text, // plaintext omitted once truly sealed for everyone
     };
     fbDb.collection('bands').doc(b.firestoreId).collection('messages').add(payload)
       .catch(e=> toast(e.message || 'Couldn\u2019t send'));

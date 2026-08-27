@@ -950,6 +950,17 @@ let bspaceLiveChunks = [];
 let bspaceLiveRecStartedAt = 0;
 
 async function bspaceStopLive(){
+  // FIX (major): this function used to run unconditionally every time a
+  // Broadcast view closed — which happens for EVERY broadcast, live or not,
+  // any time someone taps back. With no guard, it always wrote
+  // lastLiveEndedAt = now to whatever broadcast was open, permanently
+  // stamping plain uploads that were never live with a "Was live · just now"
+  // badge the instant anyone simply viewed and closed them. Only a genuine
+  // live session (an active camera stream or an in-progress recording) can
+  // trigger any of this now.
+  if(!bspaceLiveStream && (!bspaceLiveRecorder || bspaceLiveRecorder.state === 'inactive')){
+    return;
+  }
   const bcastId = activeBroadcastId;
   // Stop recorder first and keep chunks for permanent "Live recording" chapter
   let liveBlob = null;
@@ -1005,9 +1016,15 @@ async function bspaceStopLive(){
     try{
       const who = (currentProfile && currentProfile.name) || 'Creator';
       const durText = (typeof formatLiveDuration === 'function') ? formatLiveDuration(durationMs) : '';
+      // FIX: this used to always say "recording saved when available" —
+      // stale and confusing by the time anyone actually reads it, since the
+      // recording is very often already there and playable. Whether it's
+      // saved is announced for real, once it's actually true, by the
+      // separate "Live session saved as chapter" journey entry posted below
+      // once the upload finishes — this message just states what happened.
       fbDb.collection('broadcasts').doc(bcastId).collection('conversation').add({
         type: 'system',
-        text: who + ' was live' + (durText ? ' for ' + durText : '') + ' — recording saved when available.',
+        text: who + ' was live' + (durText ? ' for ' + durText : '') + '.',
         from: currentUser.uid,
         ts: Date.now(),
       }).catch(function(){});
@@ -1214,12 +1231,20 @@ function bspaceWatchLiveState(){
       } else if(!bspaceLiveStream){
         // Past tense for a while after ending, then fade away — never a bare
         // "LIVE" left showing once it's over, and never silently blank either.
+        // FIX: also require lastLiveStartedAt + lastLiveDurationMs to be
+        // present. A genuine live session always has both; the bug that used
+        // to stamp lastLiveEndedAt on every closed broadcast (fixed above,
+        // in bspaceStopLive) always left those two null for a broadcast that
+        // was never actually live, since there was no real start time to
+        // compute a duration from. This means any already-corrupted data
+        // from before that fix self-heals here without needing a migration.
         const endedAt = d.lastLiveEndedAt || 0;
-        const recentEnough = endedAt && (Date.now() - endedAt) < 24 * 60 * 60 * 1000;
+        const hadRealSession = !!(d.lastLiveStartedAt && d.lastLiveDurationMs);
+        const recentEnough = endedAt && hadRealSession && (Date.now() - endedAt) < 24 * 60 * 60 * 1000;
         if(recentEnough){
           const dur = formatLiveDuration(d.lastLiveDurationMs);
           badge.style.display = 'block';
-          badge.textContent = 'Was live · ' + timeAgo(endedAt) + (dur ? ' (' + dur + ')' : '');
+          badge.textContent = 'Was live' + (dur ? ' for ' + dur : '') + ' · ' + timeAgo(endedAt);
         } else {
           badge.style.display = 'none';
         }

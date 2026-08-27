@@ -993,9 +993,26 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
     let finalPayload = payload;
     let finalPreview = previewText;
     if(payload.type === 'text'){
-      // E2E ciphertext-only broke after a few days (key rotation / IDB eviction).
-      // Text is the source of truth so messages never vanish.
-      finalPayload = { type:'text', text: payload.text, encrypted:false };
+      // Re-enabled (see crypto.js for why this is safe now — password-backed
+      // key recovery fixes the durability gap that caused the earlier
+      // rollback). Encrypts whenever the recipient's public key is available;
+      // falls back to plaintext only when it genuinely isn't yet (e.g. they
+      // haven't opened the app since this shipped) — a message is never lost
+      // over this, it's just not encrypted for that one send.
+      let encrypted = null;
+      try{
+        let pk = c.publicKey;
+        if(!pk && fbDb){
+          const pdoc = await fbDb.collection('users').doc(c.firebaseUid).get();
+          if(pdoc.exists && pdoc.data().publicKey){ pk = pdoc.data().publicKey; c.publicKey = pk; }
+        }
+        if(pk && typeof encryptMessageText === 'function'){
+          encrypted = await encryptMessageText(c.firebaseUid, pk, payload.text);
+        }
+      }catch(_){ encrypted = null; }
+      finalPayload = encrypted
+        ? { type:'text', ciphertext: encrypted.ciphertext, iv: encrypted.iv, encrypted:true }
+        : { type:'text', text: payload.text, encrypted:false };
       finalPreview = previewText;
     }
     const wire = Object.assign({}, finalPayload);

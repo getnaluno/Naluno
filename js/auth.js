@@ -11,6 +11,12 @@
 let fbApp = null, fbAuth = null, fbDb = null, currentUser = null;
 let lastRemoteHeartbeat = 0;
 let authListenersBound = false;
+// FIX ("Callsign should be the landing page after signing in"): distinguishes
+// a fresh, explicit sign-in from Firebase silently restoring an existing
+// session on a normal app reopen — only the former should override wherever
+// the person was and land on Callsign; the latter should keep behaving like
+// the nav-state restore feature already does (resume where you left off).
+let nalunoJustSignedIn = false;
 
 function firebaseReady(){
   return typeof firebase !== 'undefined'
@@ -175,6 +181,7 @@ async function nativeGoogleSignIn(){
 $('googleSignInBtn').onclick = async ()=>{
   if(!fbAuth){ try{ injectFirebaseScripts(); }catch(_){} initFirebaseApp(); }
   if(!fbAuth){ authStatus('Connecting to sign-in… tap again in a moment.', true); return; }
+  nalunoJustSignedIn = true;
 
   // Capacitor: use native Google Sign-In → Firebase credential (no Chrome redirect).
   if(isNativeShell()){
@@ -266,12 +273,22 @@ function nalunoHandleSignIn(){
     return;
   }
   authStatus('Signing in…');
+  nalunoJustSignedIn = true;
   const trySignIn = (addr)=> fbAuth.signInWithEmailAndPassword(addr, password);
   trySignIn(email).catch(e=>{
     if(recovery && recovery !== email){
       return trySignIn(recovery);
     }
     throw e;
+  }).then(result=>{
+    if(result && result.user && typeof ensureMyKeyPairWithRecovery === 'function'){
+      // If this device lost its local key (reinstall, storage cleared, new
+      // device) but the account has a password-wrapped backup, this recovers
+      // it right now, using the password that's about to fall out of scope —
+      // it's never stored anywhere, used once, here, then gone.
+      currentUser = result.user;
+      ensureMyKeyPairWithRecovery(password).catch(()=>{});
+    }
   }).catch(e=>{
     const bad = e.code === 'auth/user-not-found' || e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential';
     authStatus(bad
@@ -297,6 +314,7 @@ async function nalunoHandleSignUp(){
     return;
   }
   authStatus('Creating your account…');
+  nalunoJustSignedIn = true;
   try{
     // Pre-check handle availability when signing up with handle
     if(!usingEmail && handle && fbDb){
@@ -312,19 +330,46 @@ async function nalunoHandleSignUp(){
     const cred = await fbAuth.createUserWithEmailAndPassword(createEmail, password);
     const user = cred.user;
     if(!usingEmail && handle && typeof claimHandle === 'function'){
+      // FIX: write a safe fallback profile IMMEDIATELY, before attempting the
+      // handle claim. This used to only write the profile doc *after* a
+      // successful claim — if the claim then failed (someone else grabbed the
+      // same handle in the moment between the availability pre-check and the
+      // actual transaction), the account existed with no Callsign profile at
+      // all: no name, nothing to show, nothing to log back into meaningfully.
+      // Now the account always has an identity from the instant it's created;
+      // the claim, if it succeeds, just upgrades it to the real handle.
       try{
-        const claimed = await claimHandle(handle, user.uid);
         await fbDb.collection('users').doc(user.uid).set({
           name: handle,
-          number: claimed || ('@' + handle),
+          number: '@' + user.uid.slice(0, 8),
           tagline: '',
           createdAt: Date.now(),
           authMethod: 'handle',
           recoveryEmail: recovery || null,
         }, { merge: true });
+      }catch(_){}
+      try{
+        const claimed = await claimHandle(handle, user.uid);
+        await fbDb.collection('users').doc(user.uid).set({
+          name: handle,
+          number: claimed,
+        }, { merge: true });
+        authStatus('Account created — welcome.');
       }catch(he){
         console.warn('[auth] claim handle', he);
-        authStatus(he.message || 'Handle could not be claimed — you can set it in profile.', true);
+        // The account is real and usable (fallback profile above already
+        // covers it) — the person just needs a different handle. Take them
+        // straight to Callsign, already open to editing, instead of leaving
+        // them to guess where to fix it.
+        authStatus('"' + handle + '" was taken right as you signed up — pick another Callsign below.', true);
+        try{
+          currentUser = user;
+          if(typeof loadRealProfile === 'function') loadRealProfile(user);
+          const nav = document.querySelector('.navbtn[data-tab="callsign"]');
+          if(nav) nav.click();
+          if(typeof showCallsignEdit === 'function') setTimeout(showCallsignEdit, 300);
+        }catch(_){}
+        return;
       }
     } else if(usingEmail){
       try{
@@ -337,6 +382,19 @@ async function nalunoHandleSignUp(){
       }catch(_){}
     }
     authStatus('Account created — welcome.');
+    // Generate this identity's E2E key pair now, while the password is still
+    // in hand, and back it up (password-wrapped) so it can be recovered if
+    // this device's storage is ever lost — see crypto.js for why that backup
+    // is what makes turning encryption back on safe this time.
+    try{
+      currentUser = user;
+      if(typeof ensureMyKeyPair === 'function'){
+        const keys = await ensureMyKeyPair();
+        if(keys && keys.privateJwk && typeof backupPrivateKeyWithPassword === 'function'){
+          await backupPrivateKeyWithPassword(keys.privateJwk, password);
+        }
+      }
+    }catch(_){}
   }catch(e){
     authStatus(
       e.code === 'auth/email-already-in-use' ? 'That handle or email already has an account — try Sign in.' :
@@ -524,6 +582,51 @@ function bindAuthListeners(){
       document.body.classList.remove('naluno-gated');
       try{ $('authGate').classList.remove('active'); }catch(_){}
       loadRealProfile(user);
+      // FIX: land on Callsign right after a fresh, explicit sign-in — but
+      // never on a normal app reopen where Firebase just silently restored
+      // an already-signed-in session (that keeps using the existing
+      // nav-state-restore behavior, resuming wherever the person was).
+      // Fires after nav-state restore's own timers (200ms/1200ms) so it
+      // reliably wins the race instead of being immediately overwritten.
+      if(nalunoJustSignedIn){
+        nalunoJustSignedIn = false;
+        setTimeout(function(){
+          try{
+            const nav = document.querySelector('.navbtn[data-tab="callsign"]');
+            if(nav) nav.click();
+          }catch(_){}
+        }, 1500);
+      }
+      // FIX (Google/native sign-in had no E2E key backup or recovery path at
+      // all): email/handle accounts get this via the password, right in the
+      // sign-in/sign-up flows. Google/native accounts have no password to
+      // derive from, so this uses a one-time recovery code instead — same
+      // underlying mechanism (see crypto.js), different secret. Only runs
+      // for non-password providers; only prompts when there's actually
+      // something to do (new key, or an existing backup this device hasn't
+      // recovered yet) — never on every single normal app reopen.
+      try{
+        const isPasswordAccount = (user.providerData || []).some(function(p){ return p && p.providerId === 'password'; });
+        if(!isPasswordAccount && typeof ensureMyKeyPair === 'function'){
+          (async function(){
+            const existing = await ensureMyKeyPair();
+            if(existing && existing.privateKey) return; // this device already has a working key
+            const status = (typeof checkE2eBackupStatus === 'function') ? await checkE2eBackupStatus(user.uid) : { hasBackup:false };
+            if(!status.hasBackup){
+              // Brand-new identity on this account — generate the key and a
+              // recovery code, and show it once, right now, while it matters.
+              const keys = await ensureMyKeyPair();
+              if(keys && keys.privateJwk && typeof backupPrivateKeyWithNewRecoveryCode === 'function'){
+                const code = await backupPrivateKeyWithNewRecoveryCode(keys.privateJwk);
+                if(code && typeof showRecoveryCodeModal === 'function') await showRecoveryCodeModal(code);
+              }
+            } else if(status.method === 'recovery_code' && typeof promptForRecoveryCode === 'function'){
+              const entered = promptForRecoveryCode();
+              if(entered) await ensureMyKeyPairWithRecovery(entered);
+            }
+          })().catch(function(e){ console.warn('[e2e] google account key setup', e); });
+        }
+      }catch(_){}
       try{ if(typeof showInstallPromptSoon === 'function') setTimeout(showInstallPromptSoon, 1600); }catch(_){}
       const bootFind = function(){
         try{ if(typeof resumeFindNalunoIfEnabled === 'function') resumeFindNalunoIfEnabled(); }catch(_){}

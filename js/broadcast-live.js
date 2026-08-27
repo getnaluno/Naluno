@@ -273,9 +273,34 @@ async function bLiveJoinAsViewer(){
     v.onclick = play;
     setTimeout(play, 400);
     setTimeout(play, 1200);
+    // The video element genuinely has a track now — the honest "connecting"
+    // state is no longer accurate, so it comes off instead of sitting on
+    // top of (or being confused for) the real feed underneath.
+    try{
+      const connecting = document.getElementById('bspaceLiveConnecting');
+      if(connecting) connecting.remove();
+    }catch(_){}
     const badge = $('bspaceLiveBadge');
     if(badge){ badge.style.display = 'block'; badge.textContent = 'Live now'; }
   };
+  // FIX ("black screen with a play button but no actual feed"): attachRemote()
+  // used to only ever run from inside pc.ontrack — meaning from the moment
+  // someone tapped Join live until the first video frame actually arrived
+  // (a full offer/answer/ICE round trip later), #bspaceMedia still showed
+  // whatever was on screen before: the regular VOD player's poster image and
+  // its own big play button. Nothing about that state ever changed, so it
+  // looked exactly like a broken black screen with a dead play button — the
+  // live element had simply never been created yet. Creating it immediately,
+  // with a clear "Connecting…" state, means what's on screen always honestly
+  // reflects what's actually happening, and the same attachRemote() call
+  // from ontrack just fills in the real video once frames arrive.
+  (function showConnectingState(){
+    const host = $('bspaceMedia');
+    if(!host) return;
+    host.innerHTML = `<video id="bspaceViewerLiveVideo" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;background:#000;"></video>
+      <div id="bspaceLiveConnecting" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.7);font-family:var(--font-mono,monospace);font-size:13px;letter-spacing:.03em;pointer-events:none;">Connecting to live…</div>`;
+    try{ if(getComputedStyle(host).position === 'static') host.style.position = 'relative'; }catch(_){}
+  })();
   pc.ontrack = e => {
     try{
       if(e.streams && e.streams[0]){
@@ -293,8 +318,24 @@ async function bLiveJoinAsViewer(){
   pc.onconnectionstatechange = function(){
     if(pc.connectionState === 'connected' || pc.connectionState === 'completed'){
       attachRemote();
+    } else if(pc.connectionState === 'failed'){
+      try{
+        const connecting = document.getElementById('bspaceLiveConnecting');
+        if(connecting) connecting.textContent = 'Couldn\u2019t connect — check your connection and try again';
+      }catch(_){}
     }
   };
+  // If a full negotiation genuinely never produces a track (bad network, TURN
+  // relay unreachable), say so plainly instead of leaving "Connecting…" up
+  // forever with nothing telling the person anything actually went wrong.
+  setTimeout(function(){
+    if(bLiveViewerPc !== pc) return; // already left/rejoined
+    if(remote.getTracks().length) return; // already working
+    try{
+      const connecting = document.getElementById('bspaceLiveConnecting');
+      if(connecting) connecting.textContent = 'Still connecting — this is taking longer than usual';
+    }catch(_){}
+  }, 12000);
 
   try{
     pc.addTransceiver('video', { direction: 'recvonly' });
