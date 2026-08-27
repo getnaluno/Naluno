@@ -537,41 +537,47 @@
 #tab-broadcast.tabscreen{
   display:flex; flex-direction:column;
 }
+body.naluno-bcast-watch .navbar{
+  transform:translateY(110%);
+  pointer-events:none;
+}
+body.naluno-bcast-watch #tab-broadcast.tabscreen{
+  bottom:0;
+}
 #broadcastTabScroll.bcast-feed{
   flex:1; min-height:0;
-  display:flex; flex-direction:column;
-  overflow:hidden;
-  padding:0;
-}
-.bcast-feed-head{
-  flex:0 0 auto;
-  padding:0 14px 8px;
-  max-height:42%;
-  overflow-x:hidden;
-  overflow-y:auto;
-}
-#broadcastTabScroll.bcast-feed .bcast-strand-bar{
-  margin:0 14px 8px;
-}
-.bcast-plate-grid{
-  flex:1 1 auto;
-  min-height:0;
   display:block;
   overflow-y:auto;
   overflow-x:hidden;
+  padding:0;
   scroll-snap-type: y mandatory;
   scroll-snap-stop: always;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
   perspective: 1400px;
-  padding:0;
   touch-action: pan-y;
+}
+.bcast-feed-head{
+  min-height: var(--bcast-stage-h, 100svh);
+  padding: 8px 14px calc(24px + 66px);
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  box-sizing: border-box;
+}
+#broadcastTabScroll.bcast-feed .bcast-strand-bar{
+  margin:0 14px 8px;
+  scroll-snap-align: start;
+}
+.bcast-plate-grid{
+  display:block;
+  overflow:visible;
+  padding:0;
 }
 .bcast-plate{
   cursor:pointer;
   position:relative;
-  height:100%;
-  min-height:100%;
+  height: var(--bcast-stage-h, 100svh);
+  min-height: var(--bcast-stage-h, 100svh);
   scroll-snap-align: start;
   scroll-snap-stop: always;
   border-radius:0;
