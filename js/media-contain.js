@@ -7,47 +7,21 @@
    the session while media runs. Calls are NOT paused on hide.
    ============================================================ */
 
-/** Shared by nalunoCorrectVideoOrientation() below — a Set of currently
- *  live-tracked video elements, so orientation changes are handled by one
- *  window-level listener instead of accumulating one per element. */
-const nalunoOrientWatchedEls = new Set();
-
-/** FIX ("box is 9:16 but the camera is still landscape", and "feels mirrored
- *  — head left goes right"): this function had two real, separate bugs,
- *  found on a second, skeptical read rather than assumed fixed.
- *
- *  Bug 1 (why it could still look landscape/wrong after the first fix):
- *  the pre-rotation box was sized using the camera's CAPTURE resolution
- *  (track.getSettings().width/height — e.g. 1280x720, or up to 3840x2160 at
- *  the "4k" quality tier) as literal CSS PIXEL dimensions on the video
- *  element. A phone's actual CSS viewport is typically only ~360-430px
- *  wide. Setting width:720px (or worse, width:2160px) inside a ~390px-wide
- *  container doesn't just look wrong, it's massively oversized — only a
- *  small, arbitrarily zoomed-in slice of the corrected video would ever be
- *  visible at all, which would look "still wrong" regardless of whether the
- *  rotation direction itself was right. Fixed to size the pre-rotation box
- *  from the CONTAINER's actual on-screen CSS pixel dimensions
- *  (clientWidth/clientHeight), which is what every standard reference for
- *  this exact CSS pattern (rotate a video 90° to fill a container) actually
- *  uses — capture resolution and CSS layout size are unrelated numbers.
- *
- *  Bug 2 (the mirroring): there was no mirroring logic here at all. A front
- *  camera's self-view is a universal UX convention — mirrored, like a real
- *  mirror, so moving your head left appears to move left on screen. Without
- *  it, a front camera shows the "camera's-eye" view instead, which is
- *  exactly backwards from what anyone expects looking at themselves. Only
- *  applies to isLocalSelfView (the broadcaster's own preview) — a VIEWER
- *  watching someone else's stream should NOT have it mirrored; they should
- *  see the broadcaster the way everyone else does, same as any video call.
- *
- *  Honest uncertainty, stated rather than hidden: the exact rotation
- *  direction (90deg vs -90deg) genuinely varies by device/OS/browser
- *  combination for this exact class of bug, and could not be confirmed
- *  against a real device from here. ROTATE_DEG below is the one thing to
- *  flip (90 to -90, or back) if the correction is now rotating the wrong
- *  way on a specific device — everything else in this function does not
- *  depend on getting that sign right. */
-const NALUNO_ROTATE_DEG = 90;
+/** REVERTED ("live camera reads sideways — make it like Calls"): the
+ *  previous two rounds of this function tried to manually detect and
+ *  correct a supposed landscape/portrait mismatch by rotating the video
+ *  element with CSS. Checked directly against Calls' own self-view video
+ *  (`#incomingSelfVideo` in index.html), which has never had this
+ *  complaint: its entire style is `width:100%;height:100%;object-fit:cover;
+ *  transform:scaleX(-1);` — nothing else. No rotation, no capture-resolution
+ *  math, no width/height swapping. That's proof the browser on this device
+ *  already applies the camera's orientation metadata correctly on its own
+ *  — the manual "correction" here was based on a false premise, and was
+ *  actively rotating video that would otherwise have displayed correctly
+ *  by itself, which is exactly the sideways face in the report. Rebuilt to
+ *  do exactly what Calls does and nothing more: fill the container,
+ *  `object-fit: cover`, and mirror only the broadcaster's own front-camera
+ *  self-view — never a viewer's received stream, same as before. */
 function nalunoCorrectVideoOrientation(videoEl, stream, isLocalSelfView){
   if(!videoEl || !stream) return;
   const track = stream.getVideoTracks && stream.getVideoTracks()[0];
@@ -59,92 +33,11 @@ function nalunoCorrectVideoOrientation(videoEl, stream, isLocalSelfView){
     }catch(_){}
     return true; // Broadcast-live only ever requests facingMode:'user' — safe default
   })();
-  const apply = function(){
-    try{
-      const settings = (track.getSettings && track.getSettings()) || {};
-      let w = settings.width || videoEl.videoWidth || 0;
-      let h = settings.height || videoEl.videoHeight || 0;
-      if(!w || !h) return;
-      const deviceIsPortrait = (typeof nalunoIsPortraitDevice === 'function') ? nalunoIsPortraitDevice() : (window.innerHeight >= window.innerWidth);
-      const streamIsLandscape = w > h;
-      const wantMirror = !!(isLocalSelfView && isFrontCamera);
-      const parent = videoEl.parentElement;
-      if(deviceIsPortrait && streamIsLandscape && parent){
-        const cw = parent.clientWidth, ch = parent.clientHeight;
-        if(!cw || !ch){
-          // Container not laid out yet (can genuinely happen right when a
-          // fresh video element's metadata fires, before layout catches up)
-          // — retry shortly instead of silently giving up on the correction
-          // for good, since nothing else would ever call apply() again
-          // until an actual device rotation.
-          if(!videoEl.__nalunoOrientRetries) videoEl.__nalunoOrientRetries = 0;
-          if(videoEl.__nalunoOrientRetries < 10){
-            videoEl.__nalunoOrientRetries++;
-            setTimeout(apply, 150);
-          }
-          return;
-        }
-        videoEl.style.position = 'absolute';
-        videoEl.style.top = '50%';
-        videoEl.style.left = '50%';
-        // Pre-rotation box uses the CONTAINER's real dimensions, swapped —
-        // NOT the camera's capture resolution — so after rotating 90° it
-        // exactly fills the actual portrait container on screen.
-        videoEl.style.width = ch + 'px';
-        videoEl.style.height = cw + 'px';
-        videoEl.style.maxWidth = 'none';
-        videoEl.style.maxHeight = 'none';
-        videoEl.style.objectFit = 'cover';
-        videoEl.style.transform = 'translate(-50%, -50%) rotate(' + NALUNO_ROTATE_DEG + 'deg)' + (wantMirror ? ' scaleX(-1)' : '');
-        videoEl.style.transformOrigin = 'center center';
-        videoEl.dataset.nalunoOrientCorrected = '1';
-      } else if(videoEl.dataset.nalunoOrientCorrected === '1'){
-        // Stream/orientation changed back to matching — undo the correction.
-        videoEl.style.position = '';
-        videoEl.style.top = '';
-        videoEl.style.left = '';
-        videoEl.style.width = '100%';
-        videoEl.style.height = '100%';
-        videoEl.style.maxWidth = '';
-        videoEl.style.maxHeight = '';
-        videoEl.style.transform = wantMirror ? 'scaleX(-1)' : '';
-        delete videoEl.dataset.nalunoOrientCorrected;
-      } else if(wantMirror && videoEl.style.transform !== 'scaleX(-1)'){
-        // Not landscape-mismatched, but still needs the plain self-view
-        // mirror (the far more common case — most devices already deliver
-        // correctly-oriented portrait frames; almost every front-camera
-        // preview needs mirroring regardless of whether rotation-correction
-        // was ever needed at all).
-        videoEl.style.transform = 'scaleX(-1)';
-        delete videoEl.dataset.nalunoOrientCorrected;
-      }
-    }catch(_){}
-  };
-  if(track.getSettings && track.getSettings().width){
-    apply();
-  } else {
-    videoEl.addEventListener('loadedmetadata', apply, { once: true });
-  }
-  // FIX (found in adversarial review): binding a fresh window-level
-  // orientationchange listener per video element meant every leave/rejoin
-  // cycle on a live broadcast left the PREVIOUS element's listener still
-  // registered on window forever — a slow leak over a session with many
-  // join/leave cycles, since window never releases it and the closure keeps
-  // the detached video element alive too. One shared listener, re-resolving
-  // whichever elements are actually live right now, instead of one per call.
-  nalunoOrientWatchedEls.add(videoEl);
-  if(!window.__nalunoOrientListenerBound){
-    window.__nalunoOrientListenerBound = true;
-    window.addEventListener('orientationchange', function(){
-      setTimeout(function(){
-        nalunoOrientWatchedEls.forEach(function(el){
-          if(!el.isConnected){ nalunoOrientWatchedEls.delete(el); return; }
-          try{ if(typeof el.__nalunoOrientReapply === 'function') el.__nalunoOrientReapply(); }catch(_){}
-        });
-      }, 200);
-    });
-  }
-  videoEl.__nalunoOrientReapply = apply;
+  const wantMirror = !!(isLocalSelfView && isFrontCamera);
+  videoEl.style.width = '100%';
+  videoEl.style.height = '100%';
+  videoEl.style.objectFit = 'cover';
+  videoEl.style.transform = wantMirror ? 'scaleX(-1)' : '';
 }
 
 function nalunoCallUiOpen(){

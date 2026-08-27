@@ -103,20 +103,40 @@
       const snap = await viewerRef.get();
       if(snap.exists) return;
       await viewerRef.set({ ts: Date.now() });
-      await fbDb.collection('broadcasts').doc(broadcastId).set({
+      // FIX (data-integrity risk found while investigating the view-count
+      // mismatch report): "This Broadcast" (broadcasts/{id}.views) and "All
+      // of yours" (toga/{creator}.viewsTotal) used to be written as two
+      // separate, non-atomic Firestore calls, with a whole extra async step
+      // (bumpTogaMonth's own transaction) in between them. Anything
+      // interrupting execution between those two writes — navigating away,
+      // losing connection, the tab closing — could leave one incremented
+      // and the other not, a real, permanent mismatch between the two
+      // numbers, not just a display timing issue. Batched so both the
+      // broadcast's own view count and the creator's aggregate total commit
+      // together or not at all.
+      const batch = fbDb.batch();
+      batch.set(fbDb.collection('broadcasts').doc(broadcastId), {
         views: firebase.firestore.FieldValue.increment(1),
         uniqueViews: firebase.firestore.FieldValue.increment(1),
       }, { merge: true });
       if(creatorUid){
-        await bumpTogaMonth(creatorUid, {
-          viewsMonthDelta: 1,
-          featuredBroadcastId: broadcastId,
-        });
-        await fbDb.collection('toga').doc(creatorUid).set({
+        batch.set(fbDb.collection('toga').doc(creatorUid), {
           viewsTotal: firebase.firestore.FieldValue.increment(1),
           featuredBroadcastId: broadcastId,
           updatedAt: Date.now(),
         }, { merge: true });
+      }
+      await batch.commit();
+      if(creatorUid){
+        // bumpTogaMonth is its own transaction (reads-then-writes monthly
+        // fields with rollover logic) — kept separate from the batch above
+        // since Firestore batches can't include a transaction's reads, but
+        // still awaited before this function returns so a caller who awaits
+        // recordBroadcastView() sees fully-settled numbers either way.
+        await bumpTogaMonth(creatorUid, {
+          viewsMonthDelta: 1,
+          featuredBroadcastId: broadcastId,
+        });
       }
     }catch(e){ console.warn('[circle] view', e); }
   }
@@ -139,8 +159,21 @@
         if(watching) seconds += 1;
         if(seconds >= 4){
           clearInterval(viewWatchTimer); viewWatchTimer = null;
-          recordBroadcastView(broadcastId, creatorUid);
-          try{ if(typeof paintBspaceViews === 'function') paintBspaceViews(window.activeBroadcastMeta || { creatorUid: creatorUid, views: 0 }); }catch(_){}
+          // FIX ("This Broadcast" not reflecting a view that "All of yours"
+          // seemed to): recordBroadcastView() was fired without awaiting it,
+          // with the repaint called on the very next line — a real race.
+          // recordBroadcastView does several chained Firestore writes
+          // (checking/creating a viewers doc, then incrementing views,
+          // then the toga totals) that take real network time; the repaint
+          // was reading the broadcast and toga docs back before any of that
+          // had actually landed, so it always showed the count from
+          // *before* this view, on both stats equally — not a difference
+          // between them, just neither one reflecting the view that had
+          // only just been kicked off. Awaiting it first means the repaint
+          // reads the real, post-increment numbers.
+          recordBroadcastView(broadcastId, creatorUid).then(function(){
+            try{ if(typeof paintBspaceViews === 'function') paintBspaceViews(window.activeBroadcastMeta || { creatorUid: creatorUid, views: 0 }); }catch(_){}
+          }).catch(function(){});
         }
       }catch(_){}
     }, 1000);
