@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v97: 28g landscape toggle on feed + bspace 16:9.
 // v96: 28f entry page then full-phone video; flip unchanged.
 // v95: 28e full-screen snap flip feed, S23 enforced.
 // v94: 28d S23 motion fallback — pulse survives Remove animations, previews no longer gated.
@@ -9,7 +10,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v96';
+const CACHE_NAME = 'naluno-shell-v97';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',
