@@ -1322,6 +1322,30 @@ body.naluno-landscape-media #bspaceHero{
   margin: 0 !important;
   border-radius: 0 !important;
 }
+.feed-orient-btn{
+  position:absolute; right:14px; top:14px; z-index:8;
+  width:40px; height:40px; border-radius:50%;
+  border:1px solid rgba(124,255,178,.45);
+  background:rgba(13,15,23,.62);
+  color:var(--mint); display:flex; align-items:center; justify-content:center;
+  cursor:pointer; backdrop-filter:blur(8px);
+}
+.feed-orient-btn[hidden]{ display:none !important; }
+.feed-orient-btn.on{ background:var(--mint); color:#0D0F17; }
+body.naluno-feed-landscape-css .bcast-plate.is-landscaped .strand-preview,
+body.naluno-feed-landscape-css .bcast-plate.is-landscaped .bcast-plate-media,
+body.naluno-feed-landscape-css .bcast-plate.is-landscaped .strand-poster{
+  position:absolute; top:50%; left:50%;
+  width:100vh; height:100vw;
+  transform:translate(-50%,-50%) rotate(90deg);
+  object-fit:contain; background:#000;
+}
+body.naluno-feed-landscape-native .bcast-plate.is-landscaped .strand-preview,
+body.naluno-feed-landscape-native .bcast-plate.is-landscaped .bcast-plate-media{
+  object-fit:contain;
+}
+body.naluno-feed-landscape .navbar{ display:none !important; }
+body.naluno-feed-landscape #tab-broadcast.tabscreen{ bottom:0; }
 
 /* Signal video stage — 9:16 phone default. Landscape clips re-adapt in JS. */
 .bviewer-body.native-preview{
