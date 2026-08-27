@@ -35,6 +35,28 @@
     display:flex; flex-direction:column;
   }
   @media (max-width:480px){ .app{ border-radius:0; max-width:100%; max-height:100%; } }
+  /* FIX ("the app is static and vertical, make it sensitive to orientation"):
+     manifest.json used to hard-lock orientation to portrait — the app never
+     actually rotated at all regardless of how the phone was held. With that
+     lock removed, this is the other half: without it, a real phone rotated
+     to landscape would hit neither media query above (its width in
+     landscape, e.g. ~900px on a large phone, is well past 480px) and fall
+     back to the DESKTOP "phone mockup" sizing — a fixed 460px-wide,
+     up-to-940px-tall card, which in landscape has far less real height
+     available than that cap assumes, leaving a squashed, badly-proportioned
+     box centered in a lot of unused space on either side. This scales the
+     shell to the SMALLER of the two real dimensions instead, keeping it
+     phone-proportioned and fully on-screen — actually responsive to
+     orientation, not just unlocked and left to render badly. */
+  @media (orientation:landscape) and (max-height:600px){
+    .app{
+      width:auto; height:100dvh; max-height:100dvh;
+      max-width:min(460px, calc(100dvh * 0.52));
+      border-radius:0;
+    }
+  }
+  body.naluno-landscape .navbar{ padding-top:6px; padding-bottom:6px; }
+  body.naluno-landscape .navbtn span:not([id]){ display:none; }
   button, input, textarea{ font-family:inherit; }
 
   /* ---------- shared ---------- */
