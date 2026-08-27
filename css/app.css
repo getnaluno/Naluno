@@ -564,6 +564,30 @@ body.naluno-bcast-watch #tab-broadcast.tabscreen{
   scroll-snap-stop: always;
   box-sizing: border-box;
 }
+.bcast-scroll-cue{
+  width:100%; margin:8px 0 0; padding:12px 10px 4px;
+  border:none; background:transparent; color:var(--text);
+  display:flex; flex-direction:column; align-items:center; gap:2px;
+  cursor:pointer;
+}
+.bcast-scroll-cue-kicker{
+  font-family:var(--font-mono); font-size:10px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--mint);
+}
+.bcast-scroll-cue-copy{
+  font-size:13px; color:var(--text-dim);
+}
+.bcast-scroll-cue-chevron{
+  font-size:22px; color:var(--mint); line-height:1;
+  animation: cueBounce 1.6s ease-in-out infinite;
+}
+@keyframes cueBounce{
+  0%,100%{ transform:translateY(0); opacity:.55; }
+  50%{ transform:translateY(6px); opacity:1; }
+}
+@media (prefers-reduced-motion: reduce){
+  .bcast-scroll-cue-chevron{ animation:none; }
+}
 #broadcastTabScroll.bcast-feed .bcast-strand-bar{
   margin:0 14px 8px;
   scroll-snap-align: start;
@@ -1407,17 +1431,29 @@ body.naluno-feed-landscape #tab-broadcast.tabscreen{ bottom:0; }
 .toga-row{ display:flex; justify-content:space-between; font-family:var(--font-mono); font-size:11.5px; color:var(--text-dim); padding:4px 0; }
 .toga-n{ color:var(--mint); }
 .toga-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-.toga-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+.toga-strip-hint{
+  font-family:var(--font-mono); font-size:10px; color:var(--text-dim);
+  letter-spacing:.06em; text-transform:uppercase; margin:0 0 8px;
+}
+.toga-list{
+  list-style:none; margin:0; padding:0 2px 8px;
+  display:flex; flex-direction:row; gap:10px;
+  overflow-x:auto; overflow-y:hidden;
+  scroll-snap-type:x mandatory;
+  -webkit-overflow-scrolling:touch;
+}
+.toga-list::-webkit-scrollbar{ display:none; }
+.toga-list li{ flex:0 0 auto; scroll-snap-align:start; }
 .toga-name-row{
-  width:100%;
+  width:228px;
+  min-height:92px;
   display:flex;
-  align-items:center;
+  align-items:flex-start;
   gap:12px;
   background:var(--surface-2);
   border:1px solid var(--line);
   border-radius:16px;
   padding:12px 14px;
-  min-height:64px;
   text-align:left;
   color:inherit;
   cursor:pointer;
