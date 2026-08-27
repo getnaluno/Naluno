@@ -1,10 +1,11 @@
 // Naluno service worker — offline shell + background call push.
+// v92: 28b signal edge pulse + broadcast scroll reveal.
 // v91: 28a Broadcast living-room visual refresh (Signal create tile, Toga banner).
 // v89: 25c media-session lock + signal thumbs + live video/push + strand next + end restart. v88: 25b Broadcast off vault + Worker edge cache + onerror off-by-one. v87: 24c + vault in-use LRU + shared Signal upload + rules + storage shim + live notif + toga txn + ice unsub + cam climb gen. 23q folders + Toga wall of fame + 23n play, plus media identity on 23q.
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v91';
+const CACHE_NAME = 'naluno-shell-v92';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',
