@@ -1989,6 +1989,37 @@ function adaptBspaceHeroToVideo(){
       chip.textContent = bspaceFitMode === 'fill' ? 'Fit' : 'Fill';
       chip.title = 'Fill uses the clip’s aspect. Fit shows the whole picture in Naluno 9:16.';
     }
+    let orient = $('bspaceOrientToggle');
+    if(!orient && hero){
+      orient = document.createElement('button');
+      orient.type = 'button';
+      orient.id = 'bspaceOrientToggle';
+      orient.className = 'bspace-mini';
+      orient.style.cssText = 'position:absolute;right:12px;bottom:52px;z-index:6;font-size:11px;';
+      orient.textContent = 'Landscape';
+      orient.onclick = function(e){
+        e.preventDefault();
+        e.stopPropagation();
+        const on = document.body.classList.contains('naluno-landscape-media');
+        if(on){
+          try{ if(typeof nalunoNativeUnlockOrientation === 'function') nalunoNativeUnlockOrientation(); }catch(_){}
+          document.body.classList.remove('naluno-landscape-media');
+          const app = document.querySelector('.app');
+          if(app) app.classList.remove('naluno-landscape-media');
+          orient.classList.remove('primary');
+        } else {
+          document.body.classList.add('naluno-landscape-media');
+          const app = document.querySelector('.app');
+          if(app) app.classList.add('naluno-landscape-media');
+          orient.classList.add('primary');
+          if(typeof nalunoNativeLockLandscape === 'function'){
+            nalunoNativeLockLandscape().then(function(){ try{ adaptBspaceHeroToVideo(); }catch(_){} });
+          }
+        }
+        try{ adaptBspaceHeroToVideo(); }catch(_){}
+      };
+      hero.appendChild(orient);
+    }
   }catch(_){}
 
   try{

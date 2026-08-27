@@ -347,6 +347,7 @@ function nalunoArmFlipFeed(grid){
           const tab = document.getElementById('tab-broadcast');
           if(!tab || !tab.classList.contains('active')){
             document.body.classList.remove('naluno-bcast-watch');
+            try{ if(typeof nalunoExitFeedLandscape === 'function') nalunoExitFeedLandscape(); }catch(_){}
             try{ if(typeof pauseAllStrandPreviews === 'function') pauseAllStrandPreviews(); }catch(_){}
           }
         }, 0);
@@ -359,6 +360,13 @@ function nalunoArmFlipFeed(grid){
     const origin = scroller.getBoundingClientRect().top;
     let plateOwnsScreen = false;
     plates.forEach(function(p){
+      if(p.classList.contains('is-landscaped')){
+        p.style.transform = 'none';
+        p.style.opacity = '1';
+        p.style.zIndex = '5';
+        plateOwnsScreen = true;
+        return;
+      }
       const delta = p.getBoundingClientRect().top - origin;
       const t = Math.max(-1, Math.min(1, delta / h));
       if(t < -0.01){
@@ -381,6 +389,13 @@ function nalunoArmFlipFeed(grid){
     });
     const onBroadcast = !!(document.getElementById('tab-broadcast') && document.getElementById('tab-broadcast').classList.contains('active'));
     document.body.classList.toggle('naluno-bcast-watch', !!(onBroadcast && plateOwnsScreen));
+    const land = host.querySelector('.bcast-plate.is-landscaped');
+    if(land){
+      const d = land.getBoundingClientRect().top - origin;
+      if(Math.abs(d) > h * 0.4){
+        try{ nalunoExitFeedLandscape(); }catch(_){}
+      }
+    }
   };
   try{ window.__nalunoFlipPaint(); }catch(_){}
 }
@@ -413,6 +428,7 @@ function nalunoRevealBroadcastPlates(grid){
   }, { root: root, threshold: 0.08, rootMargin: '40px 0px 0px 0px' });
   plates.forEach(function(p){ window.__nalunoPlateIO.observe(p); });
   try{ nalunoArmFlipFeed(host); }catch(_){}
+  try{ nalunoArmFeedOrientButtons(host); }catch(_){}
   try{ if(window.__nalunoFlipPaint) window.__nalunoFlipPaint(); }catch(_){}
   setTimeout(function(){
     if(sawHit) return;
@@ -425,6 +441,102 @@ function nalunoRevealBroadcastPlates(grid){
     plates.forEach(function(p){ window.__nalunoPlateIO.observe(p); });
   }, 400);
 }
+
+function nalunoNativeLockLandscape(){
+  return Promise.resolve().then(function(){
+    try{
+      const cap = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.ScreenOrientation;
+      if(cap && typeof cap.lock === 'function'){
+        return cap.lock({ orientation: 'landscape' }).then(function(){ return true; }).catch(function(){ return false; });
+      }
+    }catch(_){}
+    try{
+      if(screen.orientation && typeof screen.orientation.lock === 'function'){
+        return screen.orientation.lock('landscape').then(function(){ return true; }).catch(function(){ return false; });
+      }
+    }catch(_){}
+    return false;
+  }).then(function(ok){
+    try{
+      if(ok) return true;
+      const t = screen.orientation && screen.orientation.type;
+      return !!(t && String(t).indexOf('landscape') >= 0);
+    }catch(_){ return !!ok; }
+  });
+}
+function nalunoNativeUnlockOrientation(){
+  try{
+    const cap = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.ScreenOrientation;
+    if(cap && typeof cap.unlock === 'function') cap.unlock();
+  }catch(_){}
+  try{ if(screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); }catch(_){}
+}
+function nalunoExitFeedLandscape(){
+  document.querySelectorAll('.bcast-plate.is-landscaped').forEach(function(p){
+    p.classList.remove('is-landscaped');
+    const b = p.querySelector('.feed-orient-btn');
+    if(b) b.classList.remove('on');
+  });
+  document.body.classList.remove('naluno-feed-landscape', 'naluno-feed-landscape-css', 'naluno-feed-landscape-native', 'naluno-landscape-media');
+  const app = document.querySelector('.app');
+  if(app) app.classList.remove('naluno-landscape-media');
+  nalunoNativeUnlockOrientation();
+}
+function nalunoToggleFeedLandscape(plate, video){
+  if(!plate) return;
+  if(plate.classList.contains('is-landscaped')){
+    nalunoExitFeedLandscape();
+    return;
+  }
+  nalunoExitFeedLandscape();
+  plate.classList.add('is-landscaped');
+  const btn = plate.querySelector('.feed-orient-btn');
+  if(btn) btn.classList.add('on');
+  document.body.classList.add('naluno-feed-landscape', 'naluno-landscape-media');
+  const app = document.querySelector('.app');
+  if(app) app.classList.add('naluno-landscape-media');
+  if(video){
+    try{ video.style.objectFit = 'contain'; }catch(_){}
+  }
+  nalunoNativeLockLandscape().then(function(locked){
+    document.body.classList.toggle('naluno-feed-landscape-native', !!locked);
+    document.body.classList.toggle('naluno-feed-landscape-css', !locked);
+  });
+}
+function nalunoArmFeedOrientButtons(grid){
+  const host = grid || document.getElementById('bcastPlateGrid');
+  if(!host) return;
+  host.querySelectorAll('.bcast-plate').forEach(function(plate){
+    if(plate.querySelector('.feed-orient-btn')) return;
+    const vid = plate.querySelector('video.strand-preview, video');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'feed-orient-btn';
+    btn.setAttribute('aria-label', 'Watch in landscape');
+    btn.title = 'Landscape';
+    btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="12" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M8 20h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+    btn.onclick = function(e){
+      e.preventDefault();
+      e.stopPropagation();
+      nalunoToggleFeedLandscape(plate, vid);
+    };
+    plate.appendChild(btn);
+    function syncWide(){
+      if(!vid || plate.classList.contains('is-landscaped')) return;
+      if(vid.videoWidth > 0 && vid.videoHeight > 0){
+        btn.hidden = !(vid.videoWidth > vid.videoHeight * 1.15);
+      }
+    }
+    if(vid){
+      vid.addEventListener('loadedmetadata', syncWide);
+      if(vid.readyState >= 1) syncWide();
+    }
+  });
+}
+window.nalunoExitFeedLandscape = nalunoExitFeedLandscape;
+window.nalunoToggleFeedLandscape = nalunoToggleFeedLandscape;
+window.nalunoNativeLockLandscape = nalunoNativeLockLandscape;
+window.nalunoNativeUnlockOrientation = nalunoNativeUnlockOrientation;
 
 function renderBroadcasts(){
   try{ renderBroadcastTab(); }catch(e){ console.warn('[signal] render', e); }
