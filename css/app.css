@@ -534,25 +534,63 @@
 }
 .ttl-chip.on{ background:rgba(124,255,178,.12); color:var(--mint); border-color:rgba(124,255,178,.4); }
 
+#tab-broadcast.tabscreen{
+  display:flex; flex-direction:column;
+}
+#broadcastTabScroll.bcast-feed{
+  flex:1; min-height:0;
+  display:flex; flex-direction:column;
+  overflow:hidden;
+  padding:0;
+}
+.bcast-feed-head{
+  flex:0 0 auto;
+  padding:0 14px 8px;
+  max-height:42%;
+  overflow-x:hidden;
+  overflow-y:auto;
+}
+#broadcastTabScroll.bcast-feed .bcast-strand-bar{
+  margin:0 14px 8px;
+}
 .bcast-plate-grid{
-  display:grid; grid-template-columns:minmax(0,1fr); gap:16px; padding-bottom:28px;
+  flex:1 1 auto;
+  min-height:0;
+  display:block;
+  overflow-y:auto;
+  overflow-x:hidden;
+  scroll-snap-type: y mandatory;
+  scroll-snap-stop: always;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  perspective: 1400px;
+  padding:0;
+  touch-action: pan-y;
 }
 .bcast-plate{
-  cursor:pointer; border-radius:16px; overflow:hidden;
-  background:linear-gradient(145deg, rgba(30,34,52,.95), rgba(13,15,23,.98));
-  border:1px solid rgba(124,255,178,.18);
-  box-shadow:0 10px 28px rgba(0,0,0,.28);
-  transition: transform .45s cubic-bezier(.2,.8,.2,1), border-color .2s ease, opacity .45s ease, box-shadow .45s ease;
-  opacity:.72; transform:translateY(10px);
+  cursor:pointer;
+  position:relative;
+  height:100%;
+  min-height:100%;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  border-radius:0;
+  overflow:hidden;
+  background:#07080c;
+  border:none;
+  box-shadow:none;
+  opacity:1;
+  transform-origin: 50% 0%;
+  backface-visibility: hidden;
+  will-change: transform, opacity;
 }
-.bcast-plate.in-view{ opacity:1; transform:none; }
-.bcast-plate:active{ transform:scale(.98); }
+.bcast-plate.in-view{ opacity:1; }
 .bcast-plate:has(.bcast-plate-live){
   border-color:rgba(255,84,112,.42);
   box-shadow:0 10px 28px rgba(0,0,0,.28), 0 0 0 1px rgba(255,84,112,.18);
 }
 .bcast-plate-frame{
-  position:relative; aspect-ratio:4/5; background:#07080c; overflow:hidden;
+  position:absolute; inset:0; aspect-ratio:auto; background:#07080c; overflow:hidden;
 }
 .bcast-plate-media{ width:100%; height:100%; object-fit:cover; display:block; filter:saturate(1.05); }
 .bcast-plate-fallback{
@@ -588,7 +626,11 @@
   font-family:var(--font-mono); font-size:9px; letter-spacing:.06em;
   background:var(--red); color:#fff; padding:3px 8px; border-radius:999px;
 }
-.bcast-plate-meta{ padding:10px 11px 12px; }
+.bcast-plate-meta{
+  position:absolute; left:0; right:0; bottom:0; z-index:5;
+  padding:48px 16px 18px;
+  background:linear-gradient(180deg, transparent, rgba(7,8,12,.88) 55%);
+}
 .bcast-plate-title{
   font-size:13px; font-weight:600; line-height:1.25;
   display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
@@ -601,13 +643,13 @@
   background:linear-gradient(165deg, rgba(124,255,178,.07), rgba(13,15,23,.98) 42%);
 }
 .bcast-strand-stage{
-  display:flex; background:#07080c;
+  display:block; background:#07080c; height:100%;
 }
 .strand-hero{
-  position:relative; flex:1; min-width:0; height:100%;
+  position:absolute; inset:0;
   background:#07080c;
 }
-.bcast-strand-entry.has-rail .strand-hero{ flex: 0 0 78%; }
+.bcast-strand-entry.has-rail .strand-hero{ flex:none; }
 .strand-hero .strand-poster,
 .strand-hero .strand-preview,
 .strand-hero .bcast-plate-media,
@@ -619,9 +661,10 @@
 .strand-preview{ z-index:2; background:transparent; }
 .strand-poster{ z-index:1; }
 .strand-rail{
-  flex: 0 0 22%;
-  display:flex; flex-direction:column; gap:3px;
-  padding:3px 3px 3px 0; background:#05060a;
+  position:absolute; right:10px; top:78px; bottom:96px;
+  width:54px; z-index:4;
+  display:flex; flex-direction:column; gap:4px;
+  padding:0; background:transparent;
 }
 .strand-rail-tile{
   position:relative; flex:1; min-height:0; overflow:hidden; border-radius:4px;
@@ -993,10 +1036,20 @@ body.naluno-overlay .navbar{
   100%{ opacity:0; transform:scale(.85); }
 }
 @media (prefers-reduced-motion: reduce){
-  .signal-window, .signal-window::before, .signal-window::after, .signal-edge,
+  .signal-window, .signal-window::before, .signal-window::after,
   .signal-create-mark span, .bcast-item-enter, .bcast-item-leave,
   .bcast-plate-scan, .bcast-plate-media{ animation:none !important; }
   .bcast-plate{ opacity:1; transform:none; }
+  /* Keep the Signal edge visible on One UI "Remove animations" (S23).
+     CSS keyframes are what the OS kills — a standing mint ring must remain. */
+  .signal-edge{
+    animation:none !important;
+    border-color:rgba(124,255,178,.85);
+    box-shadow: inset 0 0 0 1px rgba(0,229,255,.28);
+  }
+  .signal-window.signal-create .signal-edge{
+    border-color:rgba(0,229,255,.95);
+  }
 }
 .signal-window > .signal-window-in{
   width:100%; height:100%; border-radius:18px; overflow:hidden;
@@ -1062,6 +1115,9 @@ body.naluno-overlay .navbar{
 @keyframes signalEdgeDraw{
   0%,100%{ border-color:rgba(124,255,178,.4); box-shadow: inset 0 0 0 1px rgba(0,229,255,.08), 0 0 0 0 rgba(124,255,178,0); }
   50%{ border-color:rgba(0,229,255,.95); box-shadow: inset 0 0 0 1px rgba(124,255,178,.35), 0 0 10px 0 rgba(124,255,178,.28); }
+}
+html.naluno-reduce-motion .signal-edge.on{
+  border-color:rgba(0,229,255,.95);
 }
 .signal-tile .signal-window > .signal-window-in{
   border-radius:20px; align-items:stretch; justify-content:flex-end;
