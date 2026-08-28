@@ -762,7 +762,7 @@ body.naluno-bcast-watch .bcast-sticky{ display:none; }
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
   perspective: 1400px;
-  touch-action: pan-y;
+  touch-action: pan-x pan-y;
 }
 .bcast-feed-head{
   min-height: var(--bcast-stage-h, 100svh);
@@ -770,6 +770,14 @@ body.naluno-bcast-watch .bcast-sticky{ display:none; }
   scroll-snap-align: start;
   scroll-snap-stop: always;
   box-sizing: border-box;
+}
+body.naluno-bcast-mine #bcastForYouHome{ display:none !important; }
+body.naluno-bcast-mine .bcast-feed-head{
+  min-height:0;
+  height:auto;
+  padding:8px 14px 0;
+  scroll-snap-align:none;
+  scroll-snap-stop:normal;
 }
 .bcast-scroll-cue{
   width:100%; margin:8px 0 0; padding:12px 10px 4px;
