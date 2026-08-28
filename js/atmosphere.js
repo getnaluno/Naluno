@@ -63,6 +63,7 @@ function applyAtmosphere(){
   document.documentElement.style.setProperty('--brand-gradient', tier.gradient);
   document.documentElement.style.setProperty('--brand-shimmer-duration', tier.shimmer);
   document.documentElement.style.setProperty('--atmosphere-tint', tier.tint);
+  try{ document.documentElement.setAttribute('data-atmosphere', tier.id); }catch(_){}
   const el = $('atmosphereLabel');
   if(el){
     el.textContent = tier.label;
