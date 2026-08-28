@@ -18,6 +18,52 @@ let authListenersBound = false;
 // the nav-state restore feature already does (resume where you left off).
 let nalunoJustSignedIn = false;
 
+/* 28n: the PNG splash is replaced by the drawing logo. Auth still
+   resolves in the background; the gate only yields after ~3 seconds. */
+const NALUNO_ENTRY_MS = 3000;
+function nalunoHideNativeSplash(){
+  try{
+    const C = window.Capacitor;
+    const p = C && ((C.Plugins && C.Plugins.SplashScreen) || C.SplashScreen);
+    if(p && p.hide) p.hide({ fadeOutDuration: 0 });
+  }catch(_){}
+}
+function nalunoRunAfterEntry(fn){
+  if(typeof fn !== 'function') return;
+  const t0 = window.__nalunoEntryT0 || Date.now();
+  const wait = Math.max(0, NALUNO_ENTRY_MS - (Date.now() - t0));
+  setTimeout(function(){ try{ fn(); }catch(e){} }, wait);
+}
+function nalunoEnterApp(){
+  nalunoHideNativeSplash();
+  nalunoRunAfterEntry(function(){
+    document.body.classList.remove('naluno-gated');
+    const gate = $('authGate');
+    if(!gate) return;
+    gate.classList.add('naluno-entry-out');
+    setTimeout(function(){
+      gate.classList.remove('active');
+      gate.classList.remove('naluno-entry-out');
+    }, 450);
+  });
+}
+function nalunoShowSignIn(){
+  nalunoHideNativeSplash();
+  nalunoRunAfterEntry(function(){
+    try{
+      const loading = $('authGateLoading');
+      const form = $('authGateForm');
+      if(loading) loading.style.display = 'none';
+      if(form) form.style.display = 'flex';
+      document.body.classList.add('naluno-gated');
+      const gate = $('authGate');
+      if(gate) gate.classList.add('active');
+    }catch(_){}
+  });
+}
+window.nalunoEnterApp = nalunoEnterApp;
+window.nalunoShowSignIn = nalunoShowSignIn;
+
 function firebaseReady(){
   return typeof firebase !== 'undefined'
     && typeof firebaseConfig !== 'undefined'
@@ -510,20 +556,17 @@ function bindAuthListeners(){
       try{ if(typeof loadMyStrands === 'function') loadMyStrands(); }catch(_){}
       try{ if(typeof renderBandList === 'function') renderBandList(); }catch(_){}
     }catch(_){}
-    document.body.classList.remove('naluno-gated');
-    $('authGate').classList.remove('active');
+    /* Keep the drawing logo on screen. Cached UI paints behind the gate. */
   }
   const authTimeout = setTimeout(()=>{
     if(authResolved) return;
     if(lastUid){
       authStatus('Welcome back…');
+      nalunoEnterApp();
       return;
     }
     authStatus('Please sign in.');
-    $('authGateLoading').style.display = 'none';
-    $('authGateForm').style.display = 'flex';
-    document.body.classList.add('naluno-gated');
-    $('authGate').classList.add('active');
+    nalunoShowSignIn();
   }, 2500);
 
   // Catches errors specific to the redirect round-trip (e.g. "this domain isn't
@@ -546,12 +589,7 @@ function bindAuthListeners(){
   let nullAuthTimer = null;
   function showSignedOutGate(){
     authStatus('');
-    try{
-      $('authGateLoading').style.display = 'none';
-      $('authGateForm').style.display = 'flex';
-      document.body.classList.add('naluno-gated');
-      $('authGate').classList.add('active');
-    }catch(_){}
+    nalunoShowSignIn();
   }
   function clearSessionListeners(){
     if(threadsListUnsubscribe){ threadsListUnsubscribe(); threadsListUnsubscribe = null; }
@@ -579,8 +617,7 @@ function bindAuthListeners(){
     if(user){
       try{ localStorage.setItem('nalunoLastUid', user.uid); }catch(_){}
       authStatus('');
-      document.body.classList.remove('naluno-gated');
-      try{ $('authGate').classList.remove('active'); }catch(_){}
+      nalunoEnterApp();
       loadRealProfile(user);
       // FIX: land on Callsign right after a fresh, explicit sign-in — but
       // never on a normal app reopen where Firebase just silently restored
@@ -679,9 +716,7 @@ if(fbAuth){
   // Keep the form visible and retry — do NOT full-page reload (that felt like
   // "sign in twice" when the first attempt raced the SDK).
   try{
-    $('authGateLoading').style.display = 'none';
-    $('authGateForm').style.display = 'flex';
-    $('authGate').classList.add('active');
+    nalunoShowSignIn();
   }catch(_){}
   authStatus('Loading sign-in…', false);
   let authTries = 0;
