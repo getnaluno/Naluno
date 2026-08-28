@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v113: 28w launcher icon restored, bspace tabs don't steal swipe, share copy off WhatsApp, live camera skipped by exclusive play.
 // v111: 28u web splash is a dark field — Chrome must not paint icon-192.png first.
 // v110: 28t For You-only home, sticky persist, fill-screen chrome idle, exclusive play, strand back stays.
 // v106: 28p swipe L/R switches For You and My Broadcasts.
@@ -21,9 +22,9 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v111';
+const CACHE_NAME = 'naluno-shell-v113';
 const CORE_ASSETS = [
-  './', './index.html', './manifest.json', './splash-empty.png', './icon-192.png', './icon-512.png',
+  './', './index.html', './manifest.json', './splash-empty.png', './icon-maskable-512.png', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',
   './js/core.js', './js/metrics.js', './js/data.js', './js/crypto.js', './js/atmosphere.js',
   './js/pwa.js', './js/auth.js', './js/camera.js', './js/call-filters.js', './js/calls.js', './js/media-vault.js', './js/wireline.js',
