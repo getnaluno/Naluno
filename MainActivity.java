@@ -25,11 +25,33 @@ public class MainActivity extends BridgeActivity {
   @Override
   protected void onCreate(Bundle savedInstanceState) {
     super.onCreate(savedInstanceState);
+    paintLaunchBackground();
     handleCallIntent(getIntent());
     injectNativeFcmToken();
     injectKeepAliveBridge();
     enableWebViewGeolocation();
     resumeFindNalunoService();
+  }
+
+  /** 28n: drop the PNG splash. First paint is a dark field; the HTML logo draws itself. */
+  private void paintLaunchBackground() {
+    final int bg = 0xFF0D0F17;
+    try {
+      getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(bg));
+      getWindow().getDecorView().setBackgroundColor(bg);
+    } catch (Exception e) {
+      // best-effort
+    }
+    getWindow().getDecorView().post(new Runnable() {
+      @Override public void run() {
+        try {
+          android.webkit.WebView wv = getBridge() != null ? getBridge().getWebView() : null;
+          if (wv != null) wv.setBackgroundColor(bg);
+        } catch (Exception e) {
+          // best-effort
+        }
+      }
+    });
   }
 
   private void resumeFindNalunoService() {
@@ -49,6 +71,7 @@ public class MainActivity extends BridgeActivity {
   @Override
   public void onResume() {
     super.onResume();
+    paintLaunchBackground();
     injectNativeFcmToken();
     injectKeepAliveBridge();
     enableWebViewGeolocation();
