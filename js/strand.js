@@ -395,7 +395,7 @@
       const name = (titleEl && titleEl.textContent) || 'Strand';
       try{
         if(navigator.share){
-          await navigator.share({ title: name, url: link });
+          await navigator.share({ title: name, text: 'Watch on Naluno', url: link });
         } else if(navigator.clipboard && navigator.clipboard.writeText){
           await navigator.clipboard.writeText(link);
           if(typeof toast === 'function') toast('Link copied');

@@ -1415,7 +1415,11 @@ if($('bspaceShareBtn')){
     const link = typeof broadcastShareUrl === 'function' ? broadcastShareUrl(activeBroadcastId) : (location.origin + '/?broadcast=' + activeBroadcastId);
     try{
       if(navigator.share){
-        await navigator.share({ title: (activeBroadcastMeta && activeBroadcastMeta.title) || 'Naluno Broadcast', url: link });
+        await navigator.share({
+          title: (activeBroadcastMeta && activeBroadcastMeta.title) || 'Naluno Broadcast',
+          text: 'Watch on Naluno',
+          url: link
+        });
       } else if(navigator.clipboard && navigator.clipboard.writeText){
         await navigator.clipboard.writeText(link);
         toast('Link copied');
@@ -2140,12 +2144,12 @@ window.nalunoBspaceStep = nalunoBspaceStep;
 })();
 
 (function bindBspaceSwipe(){
-  const root = document.getElementById('bspace');
+  const root = document.getElementById('bspaceHero') || document.getElementById('bspace');
   if(!root || root.__nalunoSwipeBound) return;
   root.__nalunoSwipeBound = true;
   let sx = 0, sy = 0, axis = '', on = false;
   function down(e){
-    if(e.target && e.target.closest && e.target.closest('#bspaceSeekDock, input, textarea, select, .nearby-strip, .bspace-mini')){
+    if(e.target && e.target.closest && e.target.closest('#bspaceSeekDock, #bspaceTabs, .bspace-tabs, .bspace-body, .bspace-panel, input, textarea, select, .nearby-strip, .bspace-mini, .back-btn')){
       on = false; return;
     }
     const t = (e.touches && e.touches[0]) || e;

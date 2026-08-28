@@ -143,11 +143,27 @@ function lockOutChromeMediaSession(){
   });
 }
 
+function nalunoLiveOrCameraEl(el){
+  try{
+    if(!el) return false;
+    if(el.srcObject) return true;
+    if(el.id === 'bspaceViewerLiveVideo') return true;
+    if(el.closest && (
+      el.closest('#callOverlay') ||
+      el.closest('#bcomposer') ||
+      el.closest('#camStage') ||
+      el.closest('#adjustStage')
+    )) return true;
+  }catch(_){}
+  return false;
+}
+
 /** Pause every non-call media element and kill the OS media session card. */
 function stopAllAppMediaAndLockSession(){
   try{
     document.querySelectorAll('video, audio').forEach(function(el){
       try{
+        if(nalunoLiveOrCameraEl(el)) return;
         if(el.closest && el.closest('#callOverlay')) return;
         if(nalunoClipElement(el)) return;
         el.dataset.nalunoWantPlay = '0';
@@ -169,6 +185,7 @@ function nalunoExclusiveMedia(keepEl){
     document.querySelectorAll('video, audio').forEach(function(el){
       try{
         if(keepEl && el === keepEl) return;
+        if(nalunoLiveOrCameraEl(el)) return;
         if(el.closest && el.closest('#callOverlay')) return;
         if(nalunoClipElement(el)) return;
         el.dataset.nalunoWantPlay = '0';
