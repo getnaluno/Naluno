@@ -651,7 +651,7 @@
 .bspace-journey{ border-left:2px solid rgba(124,255,178,.35); padding-left:12px; margin-left:4px; }
 .bspace-journey .evt{ font-size:12.5px; color:var(--text-dim); margin:0 0 10px; line-height:1.4; }
 .bspace-journey .evt strong{ color:var(--text); font-weight:600; }
-.bspace-tabs{ display:flex; gap:6px; overflow-x:auto; padding:0 0 12px; }
+.bspace-tabs{ display:flex; gap:6px; overflow-x:auto; padding:0 0 12px; touch-action:pan-x; -webkit-overflow-scrolling:touch; }
 .bspace-tab{ flex-shrink:0; padding:8px 12px; border-radius:999px; border:1px solid var(--line); background:transparent; color:var(--text-dim); font-family:var(--font-mono); font-size:11px; cursor:pointer; }
 .bspace-tab.on{ background:rgba(124,255,178,.12); color:var(--mint); border-color:rgba(124,255,178,.35); }
 
