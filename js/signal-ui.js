@@ -546,9 +546,45 @@ function renderBroadcasts(){
   try{ renderBroadcastTab(); }catch(e){ console.warn('[signal] render', e); }
 }
 
+function nalunoSetBcastView(view, viaSwipe){
+  const next = (view === 'mine') ? 'mine' : 'foryou';
+  if(next === bcastActiveView) return;
+  const dir = next === 'mine' ? 'left' : 'right';
+  bcastActiveView = next;
+  try{
+    const searchTab = document.getElementById('bcastSearchTab');
+    const searchRow = document.getElementById('bcastSearchRow');
+    const searchHost = document.getElementById('bcastSearchResults');
+    if(searchRow) searchRow.setAttribute('hidden', '');
+    if(searchTab){
+      searchTab.setAttribute('aria-expanded', 'false');
+      searchTab.classList.remove('open');
+    }
+    if(searchHost) searchHost.style.display = 'none';
+  }catch(_){}
+  const wrap = document.getElementById('bcastViewTabs');
+  if(wrap){
+    wrap.querySelectorAll('[data-bcast-view]').forEach(function(b){
+      b.classList.toggle('active', b.getAttribute('data-bcast-view') === next);
+    });
+  }
+  try{ renderBroadcastTab(); }catch(_){}
+  if(viaSwipe){
+    const grid = document.getElementById('bcastPlateGrid');
+    if(grid){
+      grid.classList.remove('bcast-view-in-left', 'bcast-view-in-right');
+      void grid.offsetWidth;
+      grid.classList.add(dir === 'left' ? 'bcast-view-in-left' : 'bcast-view-in-right');
+    }
+  }
+}
+window.nalunoSetBcastView = nalunoSetBcastView;
+
 /* One-time binding for the For You / My Broadcasts tabs — a presentation
    switch only (see bcastActiveView above); re-renders through the exact
-   same renderBroadcastTab() path everything else already uses. */
+   same renderBroadcastTab() path everything else already uses.
+   Horizontal swipe on the Broadcast tab is the same switch. Vertical
+   flip-scroll of plates is untouched. */
 (function bindBcastViewTabs(){
   const wrap = document.getElementById('bcastViewTabs');
   const searchTab = document.getElementById('bcastSearchTab');
@@ -576,12 +612,7 @@ function renderBroadcasts(){
       btn.onclick = function(){
         const view = btn.getAttribute('data-bcast-view') || 'foryou';
         setSearchOpen(false);
-        if(view === bcastActiveView) return;
-        bcastActiveView = view;
-        wrap.querySelectorAll('[data-bcast-view]').forEach(function(b){
-          b.classList.toggle('active', b === btn);
-        });
-        try{ renderBroadcastTab(); }catch(_){}
+        nalunoSetBcastView(view, false);
       };
     });
   }
@@ -616,6 +647,56 @@ function renderBroadcasts(){
       }
     };
   }
+
+  const tab = document.getElementById('tab-broadcast');
+  const scroller = document.getElementById('broadcastTabScroll');
+  const surface = scroller || tab;
+  if(!surface) return;
+  let startX = 0, startY = 0, axis = '', tracking = false;
+  function ignoreTarget(el){
+    if(!el || !el.closest) return false;
+    if(el.closest('#myBcastStrip, #togaPanel, #bcastSearchRow, input, textarea, select, .strand-rail, .feed-orient-btn')) return true;
+    return false;
+  }
+  function onDown(e){
+    if(ignoreTarget(e.target)){ tracking = false; return; }
+    if(document.body.classList.contains('naluno-feed-landscape')){ tracking = false; return; }
+    const t = (e.touches && e.touches[0]) || e;
+    startX = t.clientX; startY = t.clientY; axis = ''; tracking = true;
+  }
+  function onMove(e){
+    if(!tracking) return;
+    const t = (e.touches && e.touches[0]) || e;
+    const dx = t.clientX - startX;
+    const dy = t.clientY - startY;
+    if(!axis){
+      if(Math.abs(dx) < 12 && Math.abs(dy) < 12) return;
+      axis = (Math.abs(dx) > Math.abs(dy) * 1.25) ? 'x' : 'y';
+    }
+    if(axis === 'x' && e.cancelable){
+      try{ e.preventDefault(); }catch(_){}
+    }
+  }
+  function onUp(e){
+    if(!tracking) return;
+    tracking = false;
+    const t = (e.changedTouches && e.changedTouches[0]) || e;
+    const dx = t.clientX - startX;
+    const dy = t.clientY - startY;
+    const wasX = axis === 'x' || (axis === '' && Math.abs(dx) > Math.abs(dy) * 1.25);
+    axis = '';
+    if(!wasX) return;
+    if(Math.abs(dx) < 56) return;
+    if(Math.abs(dx) < Math.abs(dy)) return;
+    if(dx < 0) nalunoSetBcastView('mine', true);
+    else nalunoSetBcastView('foryou', true);
+  }
+  surface.addEventListener('touchstart', onDown, { passive: true });
+  surface.addEventListener('touchmove', onMove, { passive: false });
+  surface.addEventListener('touchend', onUp, { passive: true });
+  surface.addEventListener('pointerdown', onDown);
+  surface.addEventListener('pointerup', onUp);
+  surface.addEventListener('pointercancel', function(){ tracking = false; axis = ''; });
 })();
 
 try{ renderBroadcasts(); }catch(e){ console.warn(e); }
