@@ -551,6 +551,11 @@ function nalunoSetBcastView(view, viaSwipe){
   if(next === bcastActiveView) return;
   const dir = next === 'mine' ? 'left' : 'right';
   bcastActiveView = next;
+  try{ document.body.classList.toggle('naluno-bcast-mine', next === 'mine'); }catch(_){}
+  try{
+    const scroller = document.getElementById('broadcastTabScroll');
+    if(scroller) scroller.scrollTop = 0;
+  }catch(_){}
   try{
     const searchTab = document.getElementById('bcastSearchTab');
     const searchRow = document.getElementById('bcastSearchRow');
@@ -655,7 +660,7 @@ window.nalunoSetBcastView = nalunoSetBcastView;
   let startX = 0, startY = 0, axis = '', tracking = false;
   function ignoreTarget(el){
     if(!el || !el.closest) return false;
-    if(el.closest('#myBcastStrip, #togaPanel, #bcastSearchRow, input, textarea, select, .strand-rail, .feed-orient-btn')) return true;
+    if(el.closest('#bcastSearchRow, input, textarea, select, .strand-rail, .feed-orient-btn')) return true;
     return false;
   }
   function onDown(e){
