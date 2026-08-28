@@ -768,8 +768,26 @@ body.naluno-bcast-watch .bcast-sticky{ display:none; }
   padding:0; background:transparent;
 }
 .strand-rail-tile{
-  position:relative; flex:1; min-height:0; overflow:hidden; border-radius:4px;
+  position:relative; flex:1; min-height:0; overflow:hidden; border-radius:6px;
   background:#0a0c12;
+  border:1px solid rgba(124,255,178,.42);
+  box-shadow:0 0 10px rgba(124,255,178,.28), inset 0 0 0 1px rgba(0,229,255,.18);
+  animation: railGlow 2.2s ease-in-out infinite;
+}
+.strand-rail-tile::after{
+  content:''; position:absolute; inset:0; border-radius:6px; pointer-events:none;
+  box-shadow:inset 0 0 0 1.5px rgba(124,255,178,.55);
+}
+.strand-rail-tile.on,
+.strand-rail-tile:nth-child(2){
+  animation-delay:.4s;
+}
+@keyframes railGlow{
+  0%,100%{ box-shadow:0 0 6px rgba(124,255,178,.22), inset 0 0 0 1px rgba(124,255,178,.2); }
+  50%{ box-shadow:0 0 16px rgba(0,229,255,.55), inset 0 0 0 1px rgba(0,229,255,.45); }
+}
+@media (prefers-reduced-motion: reduce){
+  .strand-rail-tile{ animation:none; }
 }
 .strand-rail-tile img{
   width:100%; height:100%; object-fit:cover; display:block;
@@ -1416,6 +1434,17 @@ body.naluno-landscape-media #bspaceHero{
   width: 100% !important;
   margin: 0 !important;
   border-radius: 0 !important;
+  aspect-ratio: auto !important;
+}
+body.naluno-landscape-media #bspace .bspace-body{
+  display:none !important;
+}
+body.naluno-bspace-land-css #bspaceHero video,
+body.naluno-bspace-land-css #bspaceHero img{
+  position:absolute; top:50%; left:50%;
+  width:100vh; height:100vw;
+  transform:translate(-50%,-50%) rotate(90deg);
+  object-fit:contain; background:#000;
 }
 .feed-orient-btn{
   position:absolute; right:14px; top:14px; z-index:8;
