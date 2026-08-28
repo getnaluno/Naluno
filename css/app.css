@@ -604,15 +604,13 @@
 
 #tab-broadcast.tabscreen{
   display:flex; flex-direction:column;
+  bottom:0;
 }
 body.naluno-bcast-watch .navbar{
   transform:translateY(110%);
   pointer-events:none;
 }
 body.naluno-bcast-watch .bcast-sticky{ display:none; }
-body.naluno-bcast-watch #tab-broadcast.tabscreen{
-  bottom:0;
-}
 #broadcastTabScroll.bcast-feed{
   flex:1; min-height:0;
   display:block;
@@ -681,7 +679,7 @@ body.naluno-bcast-watch #tab-broadcast.tabscreen{
   opacity:1;
   transform-origin: 50% 0%;
   backface-visibility: hidden;
-  will-change: transform, opacity;
+  will-change: transform;
 }
 .bcast-plate.in-view{ opacity:1; }
 .bcast-plate:has(.bcast-plate-live){
@@ -713,12 +711,16 @@ body.naluno-bcast-watch #tab-broadcast.tabscreen{
   0%{ background-position:130% 0; }
   100%{ background-position:-30% 0; }
 }
-.bcast-plate.in-view .bcast-plate-media{
+.bcast-plate.in-view img.bcast-plate-media{
   animation: plateDrift 16s ease-in-out infinite alternate;
 }
 @keyframes plateDrift{
   from{ transform:scale(1); }
   to{ transform:scale(1.045); }
+}
+.bcast-plate video.bcast-plate-media,
+.bcast-plate video.strand-preview{
+  animation:none !important;
 }
 .bcast-plate-live{
   position:absolute; top:8px; left:8px; z-index:2;
