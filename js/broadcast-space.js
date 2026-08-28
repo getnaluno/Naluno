@@ -679,6 +679,13 @@ async function openBroadcastSpace(meta){
 }
 
 function closeBroadcastSpace(){
+  bspaceForceLandscape = false;
+  try{
+    document.body.classList.remove('naluno-landscape-media', 'naluno-bspace-land-css');
+    const app = document.querySelector('.app');
+    if(app) app.classList.remove('naluno-landscape-media');
+    if(typeof nalunoNativeUnlockOrientation === 'function') nalunoNativeUnlockOrientation();
+  }catch(_){}
   try{ if(window.__bspaceNextTimer){ clearTimeout(window.__bspaceNextTimer); window.__bspaceNextTimer = null; } }catch(_){}
   if(typeof bLiveOnSpaceClosed === 'function') bLiveOnSpaceClosed();
   bspaceStopLive();
@@ -1892,6 +1899,16 @@ function hideBreatherAdSlot(){
    Rotated 9:16 camera files that report 1920×1080 stay portrait via poster. */
 
 let bspaceFitMode = 'fill'; // default Fill so 9:16 clips fill the phone
+let bspaceForceLandscape = false;
+
+function nalunoDeviceWantsLandscape(){
+  try{
+    if(screen.orientation && screen.orientation.type && String(screen.orientation.type).indexOf('landscape') >= 0) return true;
+    if(typeof window.orientation === 'number' && Math.abs(window.orientation) === 90) return true;
+    if(window.innerWidth > window.innerHeight) return true;
+  }catch(_){}
+  return false;
+}
 
 function adaptBspaceHeroToVideo(){
   const hero = $('bspaceHero');
@@ -1908,16 +1925,18 @@ function adaptBspaceHeroToVideo(){
     const w = v.videoWidth || 0;
     const h = v.videoHeight || 0;
 
-    let orientLandscape = false;
-    try{
-      if(screen.orientation && screen.orientation.type){
-        orientLandscape = String(screen.orientation.type).indexOf('landscape') >= 0;
-      } else if(typeof window.orientation === 'number'){
-        orientLandscape = Math.abs(window.orientation) === 90;
-      } else {
-        orientLandscape = window.innerWidth > window.innerHeight;
-      }
-    }catch(_){}
+    let orientLandscape = !!(bspaceForceLandscape || (typeof nalunoDeviceWantsLandscape === 'function' && nalunoDeviceWantsLandscape()));
+    if(!orientLandscape){
+      try{
+        if(screen.orientation && screen.orientation.type){
+          orientLandscape = String(screen.orientation.type).indexOf('landscape') >= 0;
+        } else if(typeof window.orientation === 'number'){
+          orientLandscape = Math.abs(window.orientation) === 90;
+        } else {
+          orientLandscape = window.innerWidth > window.innerHeight;
+        }
+      }catch(_){}
+    }
 
     // FIX ("fit/fill should work both ways"): Fill correctly reshaped the
     // stage to match a landscape video's own aspect ratio, but Fit was
@@ -1938,6 +1957,7 @@ function adaptBspaceHeroToVideo(){
       v.style.objectFit = bspaceFitMode === 'fill' ? 'cover' : 'contain';
     }
 
+    const nativeLand = (typeof nalunoDeviceWantsLandscape === 'function') ? nalunoDeviceWantsLandscape() : false;
     if(orientLandscape && !portrait){
       hero.style.maxHeight = '100dvh';
       hero.style.height = '100dvh';
@@ -1946,12 +1966,13 @@ function adaptBspaceHeroToVideo(){
         document.body.classList.add('naluno-landscape-media');
         const app = document.querySelector('.app');
         if(app) app.classList.add('naluno-landscape-media');
+        document.body.classList.toggle('naluno-bspace-land-css', !nativeLand);
       }catch(_){}
-    } else {
+    } else if(!bspaceForceLandscape){
       hero.style.height = '';
       hero.style.borderRadius = '';
       try{
-        document.body.classList.remove('naluno-landscape-media');
+        document.body.classList.remove('naluno-landscape-media', 'naluno-bspace-land-css');
         const app = document.querySelector('.app');
         if(app) app.classList.remove('naluno-landscape-media');
       }catch(_){}
@@ -2000,10 +2021,10 @@ function adaptBspaceHeroToVideo(){
       orient.onclick = function(e){
         e.preventDefault();
         e.stopPropagation();
-        const on = document.body.classList.contains('naluno-landscape-media');
-        if(on){
+        bspaceForceLandscape = !bspaceForceLandscape;
+        if(!bspaceForceLandscape){
           try{ if(typeof nalunoNativeUnlockOrientation === 'function') nalunoNativeUnlockOrientation(); }catch(_){}
-          document.body.classList.remove('naluno-landscape-media');
+          document.body.classList.remove('naluno-landscape-media', 'naluno-bspace-land-css');
           const app = document.querySelector('.app');
           if(app) app.classList.remove('naluno-landscape-media');
           orient.classList.remove('primary');
@@ -2025,7 +2046,14 @@ function adaptBspaceHeroToVideo(){
   try{
     if(!window.__bspaceOrientBound){
       window.__bspaceOrientBound = true;
-      const re = function(){ try{ adaptBspaceHeroToVideo(); }catch(_){} };
+      const re = function(){
+        try{
+          if($('bspace') && $('bspace').classList.contains('active') && nalunoDeviceWantsLandscape()){
+            bspaceForceLandscape = true;
+          }
+        }catch(_){}
+        try{ adaptBspaceHeroToVideo(); }catch(_){}
+      };
       window.addEventListener('orientationchange', re);
       window.addEventListener('resize', re);
       if(screen.orientation && screen.orientation.addEventListener){

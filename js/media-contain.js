@@ -87,24 +87,44 @@ function nalunoAnyAppMediaPlaying(){
   return false;
 }
 
+function nalunoViewerWantsMedia(){
+  try{
+    const bv = document.getElementById('bviewer');
+    if(bv && bv.classList.contains('active')) return true;
+    const bs = document.getElementById('bspace');
+    if(bs && bs.classList.contains('active')) return true;
+  }catch(_){}
+  try{
+    const els = document.querySelectorAll('video[data-naluno-want-play="1"], video[data-naluno-keep-alive="1"]');
+    for(let i = 0; i < els.length; i++){
+      const el = els[i];
+      if(el.dataset && el.dataset.nalunoWantPlay === '0') continue;
+      if(el.dataset && el.dataset.nalunoUserPaused === '1') continue;
+      return true;
+    }
+  }catch(_){}
+  return false;
+}
+
 /** LOCK (20260825c): Chrome / One UI must NEVER own Naluno media.
  *  - Always null metadata (no title/artist → no shade card content).
  *  - Action handlers are no-ops so shade play/pause cannot drive a second stream.
  *  - When nothing in-app is playing, force playbackState='none' so the OS card dies.
  *  - While playing we still avoid playbackState='none' (Samsung treats that as pause
  *    and was the Signal "loads but never plays" bug) — but we never publish metadata.
+ *  28l: also treat an open Signal story / Broadcast space as "playing" so the
+ *  2s lock timer cannot pause a clip that is still buffering.
  */
 function lockOutChromeMediaSession(){
   if(!navigator.mediaSession) return;
   try{ navigator.mediaSession.metadata = null; }catch(_){}
   try{
-    // Empty metadata is still better than a branded NALUNO card if null is ignored.
     if(typeof MediaMetadata !== 'undefined'){
       navigator.mediaSession.metadata = new MediaMetadata({ title: '', artist: '', album: '', artwork: [] });
       navigator.mediaSession.metadata = null;
     }
   }catch(_){}
-  const playing = nalunoAnyAppMediaPlaying();
+  const playing = nalunoAnyAppMediaPlaying() || nalunoViewerWantsMedia();
   if(!playing){
     try{ navigator.mediaSession.playbackState = 'none'; }catch(_){}
     try{
@@ -115,13 +135,10 @@ function lockOutChromeMediaSession(){
       try{ navigator.mediaSession.setPositionState(undefined); }catch(_2){}
     }
   }
-  // Shade controls must not start a parallel play path outside Naluno UI.
   ['play','pause','seekbackward','seekforward','seekto','previoustrack','nexttrack','stop'].forEach(function(a){
     try{ navigator.mediaSession.setActionHandler(a, null); }catch(_){}
     try{
-      navigator.mediaSession.setActionHandler(a, function(){
-        // Explicit no-op: media lives only in Naluno chrome.
-      });
+      navigator.mediaSession.setActionHandler(a, function(){});
     }catch(_){}
   });
 }

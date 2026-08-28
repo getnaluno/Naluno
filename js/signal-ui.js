@@ -628,7 +628,7 @@ try{ renderBroadcasts(); }catch(e){ console.warn(e); }
   if(reduce){
     document.documentElement.classList.add('naluno-reduce-motion');
     setInterval(function(){
-      document.querySelectorAll('.signal-edge').forEach(function(el){
+      document.querySelectorAll('.signal-edge, .strand-rail-tile').forEach(function(el){
         el.classList.toggle('on');
       });
     }, 1400);
@@ -937,7 +937,6 @@ function playSegment(idx, direction=1){
     else if(typeof attachPlaybackGuard === 'function') attachPlaybackGuard(v, videoSrc);
     try{ v.preload = 'auto'; }catch(_){}
     try{ if(typeof containMediaElement === 'function') containMediaElement(v); }catch(_){}
-    try{ if(typeof lockOutChromeMediaSession === 'function') lockOutChromeMediaSession(); }catch(_){}
 
     const muteBtn = $('bviewerMuteToggle');
     const renderMuteIcon = function(muted){
@@ -950,6 +949,7 @@ function playSegment(idx, direction=1){
     const startPlayback = function(){
       renderMuteIcon(true);
       v.muted = true;
+      try{ v.dataset.nalunoWantPlay = '1'; v.dataset.nalunoKeepAlive = '1'; v.dataset.nalunoUserPaused = '0'; }catch(_){}
       const onPlaying = function(){
         v.removeEventListener('playing', onPlaying);
         playedOnce = true;
