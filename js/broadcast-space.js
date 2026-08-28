@@ -1938,39 +1938,36 @@ function adaptBspaceHeroToVideo(){
       }catch(_){}
     }
 
-    // FIX ("fit/fill should work both ways"): Fill correctly reshaped the
-    // stage to match a landscape video's own aspect ratio, but Fit was
-    // hardcoded to the 9:16 portrait stage regardless of orientation — so a
-    // landscape video in "Fit" rendered tiny and letterboxed inside a tall
-    // portrait box instead of actually showing the whole picture large. Both
-    // modes now adapt the stage the same way for landscape content; the only
-    // real difference between them is object-fit (contain vs cover), which is
-    // what "Fit" and "Fill" are actually supposed to mean.
-    if(!portrait && w > 0 && h > 0){
-      hero.style.aspectRatio = w + ' / ' + h;
-      hero.style.maxHeight = orientLandscape ? '100dvh' : 'min(56vh, 420px)';
-      v.style.objectFit = bspaceFitMode === 'fill' ? 'cover' : 'contain';
-    } else {
-      // Portrait content: Naluno's native 9:16 stage either way.
-      hero.style.aspectRatio = '9 / 16';
-      hero.style.maxHeight = 'min(82vh, 780px)';
-      v.style.objectFit = bspaceFitMode === 'fill' ? 'cover' : 'contain';
-    }
+    v.style.objectFit = bspaceFitMode === 'fill' ? 'cover' : 'contain';
+    try{
+      document.body.classList.toggle('naluno-fit-cover', bspaceFitMode === 'fill');
+      document.body.classList.toggle('naluno-fit-contain', bspaceFitMode !== 'fill');
+    }catch(_){}
 
-    const nativeLand = (typeof nalunoDeviceWantsLandscape === 'function') ? nalunoDeviceWantsLandscape() : false;
-    if(orientLandscape && !portrait){
-      hero.style.maxHeight = '100dvh';
+    if(bspaceForceLandscape || orientLandscape){
+      hero.style.aspectRatio = 'auto';
+      hero.style.width = '100%';
       hero.style.height = '100dvh';
+      hero.style.maxHeight = '100dvh';
       hero.style.borderRadius = '0';
       try{
         document.body.classList.add('naluno-landscape-media');
         const app = document.querySelector('.app');
         if(app) app.classList.add('naluno-landscape-media');
-        document.body.classList.toggle('naluno-bspace-land-css', !nativeLand);
       }catch(_){}
-    } else if(!bspaceForceLandscape){
+    } else if(!portrait && w > 0 && h > 0){
+      hero.style.aspectRatio = w + ' / ' + h;
+      hero.style.maxHeight = 'min(56vh, 420px)';
       hero.style.height = '';
       hero.style.borderRadius = '';
+    } else {
+      hero.style.aspectRatio = '9 / 16';
+      hero.style.maxHeight = 'min(82vh, 780px)';
+      hero.style.height = '';
+      hero.style.borderRadius = '';
+    }
+
+    if(!bspaceForceLandscape && !orientLandscape){
       try{
         document.body.classList.remove('naluno-landscape-media', 'naluno-bspace-land-css');
         const app = document.querySelector('.app');
@@ -2008,7 +2005,7 @@ function adaptBspaceHeroToVideo(){
     }
     if(chip){
       chip.textContent = bspaceFitMode === 'fill' ? 'Fit' : 'Fill';
-      chip.title = 'Fill uses the clip’s aspect. Fit shows the whole picture in Naluno 9:16.';
+      chip.title = 'Fill covers the stage. Fit shows the whole picture.';
     }
     let orient = $('bspaceOrientToggle');
     if(!orient && hero){
@@ -2016,8 +2013,8 @@ function adaptBspaceHeroToVideo(){
       orient.type = 'button';
       orient.id = 'bspaceOrientToggle';
       orient.className = 'bspace-mini';
-      orient.style.cssText = 'position:absolute;right:12px;bottom:52px;z-index:6;font-size:11px;';
-      orient.textContent = 'Landscape';
+      orient.style.cssText = 'position:absolute;right:12px;bottom:52px;z-index:8;font-size:11px;';
+      orient.textContent = 'Fill screen';
       orient.onclick = function(e){
         e.preventDefault();
         e.stopPropagation();
@@ -2041,6 +2038,11 @@ function adaptBspaceHeroToVideo(){
       };
       hero.appendChild(orient);
     }
+    if(orient){
+      orient.textContent = 'Fill screen';
+      orient.title = 'Use the whole phone screen';
+      orient.classList.toggle('primary', !!bspaceForceLandscape);
+    }
   }catch(_){}
 
   try{
@@ -2063,6 +2065,84 @@ function adaptBspaceHeroToVideo(){
   }catch(_){}
 }
 
+function nalunoStrandSiblingsFor(id){
+  const lists = [];
+  try{ if(typeof feedBroadcasts !== 'undefined' && feedBroadcasts) lists.push(feedBroadcasts); }catch(_){}
+  try{ if(typeof myBroadcasts !== 'undefined' && myBroadcasts) lists.push(myBroadcasts); }catch(_){}
+  const pool = [];
+  const seen = {};
+  lists.forEach(function(arr){
+    (arr || []).forEach(function(b){
+      if(!b || !b.id || b.deleted || seen[b.id]) return;
+      seen[b.id] = true;
+      pool.push(b);
+    });
+  });
+  const cur = pool.find(function(b){ return b.id === id; });
+  let sid = cur && cur.strandId;
+  if(!sid && typeof getOpenStrandFolderId === 'function') sid = getOpenStrandFolderId();
+  if(!sid) return { items: cur ? [cur] : [], index: 0 };
+  const items = pool.filter(function(b){ return b.strandId === sid; })
+    .sort(function(a,b){ return (Number(a.createdAt)||0) - (Number(b.createdAt)||0); });
+  const index = items.findIndex(function(b){ return b.id === id; });
+  return { items: items, index: index };
+}
+
+function nalunoBspaceStep(dir){
+  const id = activeBroadcastId;
+  if(!id){
+    try{ closeBroadcastSpace(); }catch(_){}
+    return;
+  }
+  const pack = nalunoStrandSiblingsFor(id);
+  if(dir < 0){
+    if(pack.index > 0 && pack.items[pack.index - 1] && typeof openBroadcastById === 'function'){
+      openBroadcastById(pack.items[pack.index - 1].id);
+    } else {
+      closeBroadcastSpace();
+    }
+    return;
+  }
+  if(pack.index >= 0 && pack.index < pack.items.length - 1 && typeof openBroadcastById === 'function'){
+    openBroadcastById(pack.items[pack.index + 1].id);
+  }
+}
+window.nalunoBspaceStep = nalunoBspaceStep;
+
+(function bindBspaceSwipe(){
+  const root = document.getElementById('bspace');
+  if(!root || root.__nalunoSwipeBound) return;
+  root.__nalunoSwipeBound = true;
+  let sx = 0, sy = 0, axis = '', on = false;
+  function down(e){
+    const t = (e.touches && e.touches[0]) || e;
+    sx = t.clientX; sy = t.clientY; axis = ''; on = true;
+  }
+  function move(e){
+    if(!on) return;
+    const t = (e.touches && e.touches[0]) || e;
+    const dx = t.clientX - sx, dy = t.clientY - sy;
+    if(!axis){
+      if(Math.abs(dx) < 14 && Math.abs(dy) < 14) return;
+      axis = Math.abs(dx) > Math.abs(dy) * 1.2 ? 'x' : 'y';
+    }
+    if(axis === 'x' && e.cancelable){ try{ e.preventDefault(); }catch(_){} }
+  }
+  function up(e){
+    if(!on) return;
+    on = false;
+    const t = (e.changedTouches && e.changedTouches[0]) || e;
+    const dx = t.clientX - sx, dy = t.clientY - sy;
+    const wasX = axis === 'x' || (axis === '' && Math.abs(dx) > Math.abs(dy) * 1.2);
+    axis = '';
+    if(!wasX || Math.abs(dx) < 56) return;
+    if(dx < 0) nalunoBspaceStep(1);
+    else nalunoBspaceStep(-1);
+  }
+  root.addEventListener('touchstart', down, { passive: true });
+  root.addEventListener('touchmove', move, { passive: false });
+  root.addEventListener('touchend', up, { passive: true });
+})();
 
 function showChapterAdBucket(index, onDone){
   const mine = !!(activeBroadcastMeta && activeBroadcastMeta.isMine);

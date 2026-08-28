@@ -318,6 +318,7 @@
       const f = grouped.folders.find(function(x){ return x.strandId === openStrandFolderId; });
       if(f && f.items && f.items.length){
         if(empty) empty.style.display = 'none';
+        try{ document.body.classList.add('naluno-strand-open'); }catch(_){}
         if(bar){
           bar.style.display = 'flex';
           const t = (typeof $ === 'function') ? $('bcastStrandTitle') : document.getElementById('bcastStrandTitle');
@@ -336,6 +337,7 @@
       openStrandFolderId = null;
     }
 
+    try{ document.body.classList.remove('naluno-strand-open'); }catch(_){}
     if(bar) bar.style.display = 'none';
     if(!raw.length){
       grid.innerHTML = '';
@@ -361,10 +363,12 @@
   function openStrandFolder(id){
     pauseAllStrandPreviews();
     openStrandFolderId = id || null;
+    try{ document.body.classList.toggle('naluno-strand-open', !!openStrandFolderId); }catch(_){}
     if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
   }
   function closeStrandFolder(){
     openStrandFolderId = null;
+    try{ document.body.classList.remove('naluno-strand-open'); }catch(_){}
     if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
   }
 
