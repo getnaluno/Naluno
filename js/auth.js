@@ -38,6 +38,8 @@ function nalunoEnterApp(){
   nalunoHideNativeSplash();
   nalunoRunAfterEntry(function(){
     document.body.classList.remove('naluno-gated');
+    const app = document.getElementById('app');
+    if(app) app.style.visibility = '';
     const gate = $('authGate');
     if(!gate) return;
     gate.classList.add('naluno-entry-out');
