@@ -547,18 +547,46 @@ function renderBroadcasts(){
    same renderBroadcastTab() path everything else already uses. */
 (function bindBcastViewTabs(){
   const wrap = document.getElementById('bcastViewTabs');
+  const searchTab = document.getElementById('bcastSearchTab');
+  const searchRow = document.getElementById('bcastSearchRow');
+  const searchInput = document.getElementById('bcastSearchInput');
+  const searchHost = document.getElementById('bcastSearchResults');
+  function setSearchOpen(open){
+    if(searchRow){
+      if(open) searchRow.removeAttribute('hidden');
+      else searchRow.setAttribute('hidden', '');
+    }
+    if(searchTab){
+      searchTab.setAttribute('aria-expanded', open ? 'true' : 'false');
+      searchTab.classList.toggle('open', !!open);
+    }
+    if(!open && searchHost){
+      searchHost.style.display = 'none';
+    }
+    if(open && searchInput){
+      try{ searchInput.focus(); }catch(_){}
+    }
+  }
   if(wrap){
-    wrap.querySelectorAll('.bcast-view-tab').forEach(function(btn){
+    wrap.querySelectorAll('[data-bcast-view]').forEach(function(btn){
       btn.onclick = function(){
         const view = btn.getAttribute('data-bcast-view') || 'foryou';
+        setSearchOpen(false);
         if(view === bcastActiveView) return;
         bcastActiveView = view;
-        wrap.querySelectorAll('.bcast-view-tab').forEach(function(b){
+        wrap.querySelectorAll('[data-bcast-view]').forEach(function(b){
           b.classList.toggle('active', b === btn);
         });
         try{ renderBroadcastTab(); }catch(_){}
       };
     });
+  }
+  if(searchTab){
+    searchTab.onclick = function(e){
+      if(e){ e.preventDefault(); e.stopPropagation(); }
+      const open = searchTab.getAttribute('aria-expanded') === 'true';
+      setSearchOpen(!open);
+    };
   }
   const seeAll = document.getElementById('signalSeeAllBtn');
   if(seeAll){
