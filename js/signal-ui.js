@@ -500,8 +500,10 @@ function nalunoToggleFeedLandscape(plate, video){
   const app = document.querySelector('.app');
   if(app) app.classList.add('naluno-landscape-media');
   if(video){
-    try{ video.style.objectFit = 'contain'; }catch(_){}
+    try{ video.style.objectFit = (document.body.classList.contains('naluno-fit-contain') ? 'contain' : 'cover'); }catch(_){}
   }
+  document.body.classList.add('naluno-fit-cover');
+  document.body.classList.remove('naluno-fit-contain');
   nalunoNativeLockLandscape().then(function(locked){
     document.body.classList.toggle('naluno-feed-landscape-native', !!locked);
     document.body.classList.toggle('naluno-feed-landscape-css', !locked);
@@ -516,8 +518,8 @@ function nalunoArmFeedOrientButtons(grid){
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'feed-orient-btn';
-    btn.setAttribute('aria-label', 'Watch in landscape');
-    btn.title = 'Landscape';
+    btn.setAttribute('aria-label', 'Fill screen');
+    btn.title = 'Fill screen';
     btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="12" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M8 20h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
     btn.onclick = function(e){
       e.preventDefault();
@@ -525,6 +527,26 @@ function nalunoArmFeedOrientButtons(grid){
       nalunoToggleFeedLandscape(plate, vid);
     };
     plate.appendChild(btn);
+    if(!plate.querySelector('.feed-fit-btn')){
+      const fit = document.createElement('button');
+      fit.type = 'button';
+      fit.className = 'feed-fit-btn feed-orient-btn';
+      fit.style.top = '58px';
+      fit.setAttribute('aria-label', 'Fit or Fill');
+      fit.title = 'Fill covers. Fit shows the whole picture.';
+      fit.textContent = 'Fit';
+      fit.onclick = function(e){
+        e.preventDefault();
+        e.stopPropagation();
+        const contain = document.body.classList.toggle('naluno-fit-contain');
+        document.body.classList.toggle('naluno-fit-cover', !contain);
+        if(vid){
+          try{ vid.style.objectFit = contain ? 'contain' : 'cover'; }catch(_){}
+        }
+        fit.textContent = contain ? 'Fill' : 'Fit';
+      };
+      plate.appendChild(fit);
+    }
     function syncWide(){
       if(!vid || plate.classList.contains('is-landscaped')) return;
       if(vid.videoWidth > 0 && vid.videoHeight > 0){
@@ -551,6 +573,11 @@ function nalunoSetBcastView(view, viaSwipe){
   if(next === bcastActiveView) return;
   const dir = next === 'mine' ? 'left' : 'right';
   bcastActiveView = next;
+  try{ document.body.classList.toggle('naluno-bcast-mine', next === 'mine'); }catch(_){}
+  try{
+    const scroller = document.getElementById('broadcastTabScroll');
+    if(scroller) scroller.scrollTop = 0;
+  }catch(_){}
   try{
     const searchTab = document.getElementById('bcastSearchTab');
     const searchRow = document.getElementById('bcastSearchRow');
@@ -655,7 +682,7 @@ window.nalunoSetBcastView = nalunoSetBcastView;
   let startX = 0, startY = 0, axis = '', tracking = false;
   function ignoreTarget(el){
     if(!el || !el.closest) return false;
-    if(el.closest('#myBcastStrip, #togaPanel, #bcastSearchRow, input, textarea, select, .strand-rail, .feed-orient-btn')) return true;
+    if(el.closest('#bcastSearchRow, input, textarea, select, .strand-rail, .feed-orient-btn')) return true;
     return false;
   }
   function onDown(e){
@@ -688,15 +715,19 @@ window.nalunoSetBcastView = nalunoSetBcastView;
     if(!wasX) return;
     if(Math.abs(dx) < 56) return;
     if(Math.abs(dx) < Math.abs(dy)) return;
+    const bspaceOn = !!(document.getElementById('bspace') && document.getElementById('bspace').classList.contains('active'));
+    if(bspaceOn) return;
+    if(document.body.classList.contains('naluno-strand-open')){
+      if(dx > 0 && typeof closeStrandFolder === 'function') closeStrandFolder();
+      return;
+    }
     if(dx < 0) nalunoSetBcastView('mine', true);
     else nalunoSetBcastView('foryou', true);
   }
   surface.addEventListener('touchstart', onDown, { passive: true });
   surface.addEventListener('touchmove', onMove, { passive: false });
   surface.addEventListener('touchend', onUp, { passive: true });
-  surface.addEventListener('pointerdown', onDown);
-  surface.addEventListener('pointerup', onUp);
-  surface.addEventListener('pointercancel', function(){ tracking = false; axis = ''; });
+  surface.addEventListener('touchcancel', function(){ tracking = false; axis = ''; });
 })();
 
 try{ renderBroadcasts(); }catch(e){ console.warn(e); }

@@ -163,6 +163,34 @@ function stopAllAppMediaAndLockSession(){
 window.stopAllAppMediaAndLockSession = stopAllAppMediaAndLockSession;
 window.lockOutChromeMediaSession = lockOutChromeMediaSession;
 
+/** Only one Naluno surface may play. Keep `keepEl` running; pause the rest. */
+function nalunoExclusiveMedia(keepEl){
+  try{
+    document.querySelectorAll('video, audio').forEach(function(el){
+      try{
+        if(keepEl && el === keepEl) return;
+        if(el.closest && el.closest('#callOverlay')) return;
+        if(nalunoClipElement(el)) return;
+        el.dataset.nalunoWantPlay = '0';
+        delete el.dataset.nalunoKeepAlive;
+        if(el.dataset && el.dataset.nalunoPreview === '1'){
+          try{ el.pause(); }catch(_){}
+          return;
+        }
+        el.dataset.nalunoUserPaused = '1';
+        el.pause();
+      }catch(_){}
+    });
+  }catch(_){}
+  try{
+    if(typeof pauseAllStrandPreviews === 'function' && !(keepEl && keepEl.dataset && keepEl.dataset.nalunoPreview === '1')){
+      pauseAllStrandPreviews();
+    }
+  }catch(_){}
+  lockOutChromeMediaSession();
+}
+window.nalunoExclusiveMedia = nalunoExclusiveMedia;
+
 /* LOCK: Broadcast/Signal must not die after a brief Android hide.
    Notification shade, task switch, and freeze used to pause every
    <video> and never call play() again — that was "stops after sometime".

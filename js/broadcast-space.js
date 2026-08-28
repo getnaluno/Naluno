@@ -160,6 +160,7 @@ function renderBspaceMedia(seg){
       const hideKick = function(){ if(kick) kick.style.display = 'none'; };
       const showKick = function(){ if(kick) kick.style.display = 'block'; };
       const tryPlay = function(){
+        try{ if(typeof nalunoExclusiveMedia === 'function') nalunoExclusiveMedia(vel); }catch(_){}
         try{
           vel.dataset.nalunoWantPlay = '1';
           vel.dataset.nalunoKeepAlive = '1';
@@ -599,6 +600,11 @@ async function openBroadcastSpace(meta){
 
   $('bspace').classList.add('active');
   $('bspaceScroll').scrollTop = 0;
+  try{ if(typeof pauseAllStrandPreviews === 'function') pauseAllStrandPreviews(); }catch(_){}
+  try{
+    const other = document.getElementById('bspaceVideoEl');
+    if(typeof nalunoExclusiveMedia === 'function') nalunoExclusiveMedia(other || null);
+  }catch(_){}
 
   if(!fbDb || !currentUser){
     $('bspaceJoinBtn').textContent = 'Sign in to join';
@@ -681,7 +687,7 @@ async function openBroadcastSpace(meta){
 function closeBroadcastSpace(){
   bspaceForceLandscape = false;
   try{
-    document.body.classList.remove('naluno-landscape-media', 'naluno-bspace-land-css');
+    document.body.classList.remove('naluno-landscape-media', 'naluno-bspace-land-css', 'naluno-bspace-idle');
     const app = document.querySelector('.app');
     if(app) app.classList.remove('naluno-landscape-media');
     if(typeof nalunoNativeUnlockOrientation === 'function') nalunoNativeUnlockOrientation();
@@ -1954,6 +1960,7 @@ function adaptBspaceHeroToVideo(){
         document.body.classList.add('naluno-landscape-media');
         const app = document.querySelector('.app');
         if(app) app.classList.add('naluno-landscape-media');
+        try{ if(typeof nalunoBspaceShowChrome === 'function') nalunoBspaceShowChrome(); }catch(_){}
       }catch(_){}
     } else if(!portrait && w > 0 && h > 0){
       hero.style.aspectRatio = w + ' / ' + h;
@@ -2109,12 +2116,38 @@ function nalunoBspaceStep(dir){
 }
 window.nalunoBspaceStep = nalunoBspaceStep;
 
+(function bindBspaceChromeIdle(){
+  const root = document.getElementById('bspace');
+  if(!root || root.__nalunoChromeBound) return;
+  root.__nalunoChromeBound = true;
+  let hideTimer = null;
+  function showChrome(){
+    try{ document.body.classList.remove('naluno-bspace-idle'); }catch(_){}
+    if(hideTimer) clearTimeout(hideTimer);
+    hideTimer = setTimeout(function(){
+      hideTimer = null;
+      try{
+        if(!document.body.classList.contains('naluno-landscape-media')) return;
+        const v = document.getElementById('bspaceVideoEl');
+        if(v && v.paused) return;
+        document.body.classList.add('naluno-bspace-idle');
+      }catch(_){}
+    }, 2800);
+  }
+  root.addEventListener('pointerdown', showChrome);
+  root.addEventListener('touchstart', showChrome, { passive: true });
+  window.nalunoBspaceShowChrome = showChrome;
+})();
+
 (function bindBspaceSwipe(){
   const root = document.getElementById('bspace');
   if(!root || root.__nalunoSwipeBound) return;
   root.__nalunoSwipeBound = true;
   let sx = 0, sy = 0, axis = '', on = false;
   function down(e){
+    if(e.target && e.target.closest && e.target.closest('#bspaceSeekDock, input, textarea, select, .nearby-strip, .bspace-mini')){
+      on = false; return;
+    }
     const t = (e.touches && e.touches[0]) || e;
     sx = t.clientX; sy = t.clientY; axis = ''; on = true;
   }

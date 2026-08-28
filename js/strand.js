@@ -221,6 +221,12 @@
   }
   function playStrandPreview(video){
     if(!video) return;
+    try{
+      const bs = document.getElementById('bspace');
+      if(bs && bs.classList.contains('active')) return;
+      const bv = document.getElementById('bviewer');
+      if(bv && bv.classList.contains('active')) return;
+    }catch(_){}
     const src = video.getAttribute('data-preview-src') || '';
     if(!src) return;
     if(__strandPreviewActive && __strandPreviewActive !== video){
