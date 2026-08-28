@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v105: 28o no PNG splash — drawing logo is first paint.
 // v104: 28n drawing logo replaces PNG splash, 3s then enter.
 // v103: 28m entry logo sonar animation.
 // v102: 28l landscape expand + rail glow + signal session lock.
@@ -17,7 +18,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v104';
+const CACHE_NAME = 'naluno-shell-v105';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',

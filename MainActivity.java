@@ -24,6 +24,7 @@ public class MainActivity extends BridgeActivity {
 
   @Override
   protected void onCreate(Bundle savedInstanceState) {
+    interceptSystemSplash();
     super.onCreate(savedInstanceState);
     paintLaunchBackground();
     handleCallIntent(getIntent());
@@ -31,6 +32,24 @@ public class MainActivity extends BridgeActivity {
     injectKeepAliveBridge();
     enableWebViewGeolocation();
     resumeFindNalunoService();
+  }
+
+  /** 28o: never show the launcher PNG. Android 12 splash is dismissed instantly;
+   *  the window behind it is a dark field so nothing branded can flash. */
+  private void interceptSystemSplash() {
+    if (Build.VERSION.SDK_INT >= 31) {
+      try {
+        getSplashScreen().setOnExitAnimationListener(new android.window.SplashScreen.OnExitAnimationListener() {
+          @Override
+          public void onSplashScreenExit(android.window.SplashScreenView view) {
+            try { view.setAlpha(0f); } catch (Exception e) {}
+            try { view.remove(); } catch (Exception e) {}
+          }
+        });
+      } catch (Exception e) {
+        // best-effort — older WebView shells
+      }
+    }
   }
 
   /** 28n: drop the PNG splash. First paint is a dark field; the HTML logo draws itself. */

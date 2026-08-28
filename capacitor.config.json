@@ -1,0 +1,19 @@
+{
+  "appId": "com.naluno.app",
+  "appName": "Naluno",
+  "webDir": ".",
+  "backgroundColor": "#0D0F17",
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 0,
+      "launchAutoHide": true,
+      "launchFadeOutDuration": 0,
+      "backgroundColor": "#0D0F17",
+      "androidSplashResourceName": "splash",
+      "androidScaleType": "CENTER_CROP",
+      "showSpinner": false,
+      "splashFullScreen": true,
+      "splashImmersive": true
+    }
+  }
+}
