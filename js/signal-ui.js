@@ -628,7 +628,7 @@ try{ renderBroadcasts(); }catch(e){ console.warn(e); }
   if(reduce){
     document.documentElement.classList.add('naluno-reduce-motion');
     setInterval(function(){
-      document.querySelectorAll('.signal-edge, .strand-rail-tile').forEach(function(el){
+      document.querySelectorAll('.signal-edge, .strand-rail-tile, .naluno-entry-ping').forEach(function(el){
         el.classList.toggle('on');
       });
     }, 1400);
