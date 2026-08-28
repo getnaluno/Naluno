@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v110: 28t For You-only home, sticky persist, fill-screen chrome idle, exclusive play, strand back stays.
 // v106: 28p swipe L/R switches For You and My Broadcasts.
 // v105: 28o no PNG splash — drawing logo is first paint.
 // v104: 28n drawing logo replaces PNG splash, 3s then enter.
@@ -19,7 +20,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v106';
+const CACHE_NAME = 'naluno-shell-v110';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',
