@@ -356,7 +356,7 @@ function nalunoArmFlipFeed(grid){
   }
   window.__nalunoFlipPaint = function(){
     const plates = host.querySelectorAll('.bcast-plate');
-    const h = nalunoSizeBroadcastStage() || 1;
+    const h = window.innerHeight || 800;
     const origin = scroller.getBoundingClientRect().top;
     let plateOwnsScreen = false;
     plates.forEach(function(p){
@@ -372,12 +372,11 @@ function nalunoArmFlipFeed(grid){
       if(t < -0.01){
         const a = Math.min(1, -t);
         p.style.transform = 'translateY(' + Math.round(t * 18) + 'px) rotateX(' + Math.round(a * -78) + 'deg)';
-        p.style.opacity = String(Math.max(0.25, 1 - a * 0.55));
         p.style.zIndex = '1';
       } else if(t > 0.02){
         const a = Math.min(1, t);
         p.style.transform = 'translateY(' + Math.round(a * 28) + 'px) rotateX(' + Math.round(a * 22) + 'deg)';
-        p.style.opacity = String(Math.max(0.55, 1 - a * 0.2));
+        p.style.opacity = '1';
         p.style.zIndex = '2';
       } else {
         p.style.transform = 'none';
@@ -388,7 +387,12 @@ function nalunoArmFlipFeed(grid){
       }
     });
     const onBroadcast = !!(document.getElementById('tab-broadcast') && document.getElementById('tab-broadcast').classList.contains('active'));
-    document.body.classList.toggle('naluno-bcast-watch', !!(onBroadcast && plateOwnsScreen));
+    const head = document.getElementById('bcastFeedHead');
+    let pastEntry = plateOwnsScreen;
+    if(head){
+      pastEntry = (head.getBoundingClientRect().bottom - origin) < (h * 0.55);
+    }
+    document.body.classList.toggle('naluno-bcast-watch', !!(onBroadcast && pastEntry));
     const land = host.querySelector('.bcast-plate.is-landscaped');
     if(land){
       const d = land.getBoundingClientRect().top - origin;

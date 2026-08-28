@@ -210,12 +210,6 @@
   function pauseStrandPreview(video){
     if(!video) return;
     try{ video.pause(); }catch(_){}
-    try{
-      if(video.getAttribute('src')){
-        video.removeAttribute('src');
-        video.load();
-      }
-    }catch(_){}
     if(__strandPreviewActive === video) __strandPreviewActive = null;
   }
   function pauseAllStrandPreviews(root){
@@ -243,12 +237,13 @@
       video.controls = false;
       video.disableRemotePlayback = true;
     }catch(_){}
-    if(typeof containMediaElement === 'function') try{ containMediaElement(video); }catch(_){}
     if(video.getAttribute('src') !== src){
       try{ video.src = src; }catch(_){}
     }
-    const p = video.play();
-    if(p && p.catch) p.catch(function(){});
+    if(video.paused){
+      const p = video.play();
+      if(p && p.catch) p.catch(function(){});
+    }
     __strandPreviewActive = video;
     if(typeof lockOutChromeMediaSession === 'function'){
       try{ lockOutChromeMediaSession(); }catch(_){}
@@ -273,8 +268,10 @@
         en.target.__nalunoRatio = en.intersectionRatio;
         en.target.__nalunoOn = en.isIntersecting;
       });
-      let best = null;
-      let bestRatio = 0.22;
+      let best = (__strandPreviewActive && __strandPreviewActive.__nalunoOn)
+        ? __strandPreviewActive
+        : null;
+      let bestRatio = best ? Math.max(0.28, (best.__nalunoRatio || 0) + 0.12) : 0.4;
       videos.forEach(function(v){
         const r = v.__nalunoRatio || 0;
         if(v.__nalunoOn && r > bestRatio){
