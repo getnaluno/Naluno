@@ -5,17 +5,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
-<link rel="manifest" href="manifest.json">
+<link rel="manifest" href="manifest.json?v=20260828u">
 <meta name="theme-color" content="#0D0F17">
 <!-- Icons delayed until after the drawing intro so no PNG can flash. -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.08.28t">
+<meta name="app-version" content="2026.08.28u">
 <meta name="description" content="A statement from the future — not another WhatsApp.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="A statement from the future — not another WhatsApp.">
-<meta name="twitter:card" content="summary">
 <style id="nalunoEntryBoot">
   html,body{ background:#0D0F17 !important; margin:0; }
   #authGate{
@@ -57,8 +56,12 @@
   @keyframes entryPing{ 0%{ transform:scale(.55); opacity:.7; } 100%{ transform:scale(1.55); opacity:0; } }
   @keyframes entryWordIn{ from{ opacity:0; transform:translateY(12px) scale(.94); letter-spacing:.42em; } to{ opacity:1; transform:none; } }
   @keyframes brandShimmer{ 0%{ background-position:0% 50%; } 100%{ background-position:300% 50%; } }
+  body.naluno-gated #app{ visibility:hidden !important; }
+  #authGate{ visibility:visible !important; }
 </style>
-<link rel="stylesheet" href="css/app.css?v=20260828t">
+<link rel="apple-touch-startup-image" href="splash-empty.png">
+<link rel="stylesheet" href="css/app.css?v=20260828u" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="css/app.css?v=20260828u"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -81,32 +84,12 @@ window.__nalunoEntryT0 = Date.now();
   }, 80);
   setTimeout(function(){
     if(document.querySelector('link[rel="icon"]')) return;
-    var a = document.createElement('link'); a.rel = 'icon'; a.href = 'icon-192.png';
-    var b = document.createElement('link'); b.rel = 'apple-touch-icon'; b.href = 'icon-192.png';
+    var a = document.createElement('link'); a.rel = 'icon'; a.href = 'splash-empty.png';
+    var b = document.createElement('link'); b.rel = 'apple-touch-icon'; b.href = 'splash-empty.png';
     document.head.appendChild(a); document.head.appendChild(b);
   }, 3200);
 })();
 </script>
-
-<div class="app" id="app">
-  <div class="naluno-aurora" aria-hidden="true"></div>
-
-  <!-- ===================== SIGN IN ===================== -->
-  <!-- ===================== INSTALL PROMPT ===================== -->
-  <div id="installBanner" style="display:none; position:absolute; top:0; left:0; right:0; z-index:95; background:var(--surface-2); border-bottom:1px solid var(--line); padding:10px 14px; align-items:center; gap:10px;">
-    <div class="avatar" style="width:30px;height:30px;font-size:11px;background:#7CFFB2;flex-shrink:0;">N</div>
-    <div data-install-label style="flex:1; font-size:12.5px; color:var(--text); line-height:1.35;">Install Naluno for the full-screen experience</div>
-    <button id="installBannerBtn" style="padding:7px 14px; border-radius:999px; border:none; background:var(--mint); color:#0D0F17; font-family:var(--font-futuristic); font-weight:700; font-size:10.5px; letter-spacing:.04em; text-transform:uppercase; cursor:pointer; flex-shrink:0;">Install</button>
-    <div id="installBannerClose" role="button" aria-label="Dismiss" style="width:24px; height:24px; flex-shrink:0; display:flex; align-items:center; justify-content:center; color:var(--text-dim); cursor:pointer;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
-  </div>
-
-  <!-- Full Android APK (shell) — shown when ANDROID_APK_URL is set in firebase-config.js -->
-  <div id="apkBanner" style="display:none; position:absolute; top:0; left:0; right:0; z-index:94; background:linear-gradient(90deg,rgba(124,255,178,.12),rgba(124,77,255,.1)); border-bottom:1px solid var(--line); padding:10px 14px; align-items:center; gap:10px;">
-    <div class="avatar" style="width:30px;height:30px;font-size:11px;background:#7C4DFF;flex-shrink:0;color:#fff;">A</div>
-    <div style="flex:1; font-size:12.5px; color:var(--text); line-height:1.35;">Get the full Android app — call wake when Naluno is closed</div>
-    <a id="apkBannerBtn" href="#" download style="padding:7px 14px; border-radius:999px; border:none; background:var(--mint); color:#0D0F17; font-family:var(--font-futuristic); font-weight:700; font-size:10.5px; letter-spacing:.04em; text-transform:uppercase; cursor:pointer; flex-shrink:0; text-decoration:none;">Download</a>
-    <div id="apkBannerClose" role="button" aria-label="Dismiss" style="width:24px; height:24px; flex-shrink:0; display:flex; align-items:center; justify-content:center; color:var(--text-dim); cursor:pointer;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
-  </div>
 
   <div class="call-overlay active naluno-entry-play" id="authGate" style="position:fixed;inset:0;z-index:500;background:#0D0F17;display:flex;align-items:center;justify-content:center;">
     <div id="authGateLoading" class="naluno-entry" style="display:flex; flex-direction:column; align-items:center; gap:18px;">
@@ -115,8 +98,12 @@ window.__nalunoEntryT0 = Date.now();
           <span class="naluno-entry-ping"></span>
           <span class="naluno-entry-ping delay"></span>
           <svg class="brand-mark naluno-entry-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <circle class="em-core" cx="12" cy="16" r="6" stroke="#7CFFB2" stroke-width="2"/>
-            <path class="em-stem" d="M12 2v6" stroke="#7CFFB2" stroke-width="2" stroke-linecap="round"/>
+            <circle class="em-core" cx="12" cy="16" r="6" stroke="#7CFFB2" stroke-width="2" stroke-dasharray="38" stroke-dashoffset="38">
+              <animate attributeName="stroke-dashoffset" from="38" to="0" dur="0.9s" begin="0.12s" fill="freeze"/>
+            </circle>
+            <path class="em-stem" d="M12 2v6" stroke="#7CFFB2" stroke-width="2" stroke-linecap="round" stroke-dasharray="8" stroke-dashoffset="8">
+              <animate attributeName="stroke-dashoffset" from="8" to="0" dur="0.45s" begin="0.42s" fill="freeze"/>
+            </path>
             <path class="em-arc em-arc-1" d="M7 5a12 12 0 0110 0" stroke="#00E5FF" stroke-width="1.6" stroke-linecap="round"/>
             <path class="em-arc em-arc-2" d="M4 2a17 17 0 0116 0" stroke="#7C4DFF" stroke-width="1.4" stroke-linecap="round"/>
           </svg>
@@ -168,6 +155,26 @@ window.__nalunoEntryT0 = Date.now();
     </div>
   </div>
 
+
+<div class="app" id="app">
+  <div class="naluno-aurora" aria-hidden="true"></div>
+
+  <!-- ===================== SIGN IN ===================== -->
+  <!-- ===================== INSTALL PROMPT ===================== -->
+  <div id="installBanner" style="display:none; position:absolute; top:0; left:0; right:0; z-index:95; background:var(--surface-2); border-bottom:1px solid var(--line); padding:10px 14px; align-items:center; gap:10px;">
+    <div class="avatar" style="width:30px;height:30px;font-size:11px;background:#7CFFB2;flex-shrink:0;">N</div>
+    <div data-install-label style="flex:1; font-size:12.5px; color:var(--text); line-height:1.35;">Install Naluno for the full-screen experience</div>
+    <button id="installBannerBtn" style="padding:7px 14px; border-radius:999px; border:none; background:var(--mint); color:#0D0F17; font-family:var(--font-futuristic); font-weight:700; font-size:10.5px; letter-spacing:.04em; text-transform:uppercase; cursor:pointer; flex-shrink:0;">Install</button>
+    <div id="installBannerClose" role="button" aria-label="Dismiss" style="width:24px; height:24px; flex-shrink:0; display:flex; align-items:center; justify-content:center; color:var(--text-dim); cursor:pointer;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
+  </div>
+
+  <!-- Full Android APK (shell) — shown when ANDROID_APK_URL is set in firebase-config.js -->
+  <div id="apkBanner" style="display:none; position:absolute; top:0; left:0; right:0; z-index:94; background:linear-gradient(90deg,rgba(124,255,178,.12),rgba(124,77,255,.1)); border-bottom:1px solid var(--line); padding:10px 14px; align-items:center; gap:10px;">
+    <div class="avatar" style="width:30px;height:30px;font-size:11px;background:#7C4DFF;flex-shrink:0;color:#fff;">A</div>
+    <div style="flex:1; font-size:12.5px; color:var(--text); line-height:1.35;">Get the full Android app — call wake when Naluno is closed</div>
+    <a id="apkBannerBtn" href="#" download style="padding:7px 14px; border-radius:999px; border:none; background:var(--mint); color:#0D0F17; font-family:var(--font-futuristic); font-weight:700; font-size:10.5px; letter-spacing:.04em; text-transform:uppercase; cursor:pointer; flex-shrink:0; text-decoration:none;">Download</a>
+    <div id="apkBannerClose" role="button" aria-label="Dismiss" style="width:24px; height:24px; flex-shrink:0; display:flex; align-items:center; justify-content:center; color:var(--text-dim); cursor:pointer;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
+  </div>
 
   <!-- ===================== FREQUENCIES ===================== -->
   <div id="weatherStrip" aria-live="polite">
@@ -1139,45 +1146,45 @@ window.__nalunoEntryT0 = Date.now();
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
 <script src="firebase-config.js"></script>
 <!-- NALUNO_MODULES -->
-<script src="js/core.js?v=20260828t"></script>
-<script src="js/media-contain.js?v=20260828t"></script>
-<script src="js/keep-alive.js?v=20260828t"></script>
-<script src="js/metrics.js?v=20260828t"></script>
-<script src="js/data.js?v=20260828t"></script>
-<script src="js/crypto.js?v=20260828t"></script>
-<script src="js/atmosphere.js?v=20260828t"></script>
-<script src="js/band-list.js?v=20260828t"></script>
-<script src="js/signal-core.js?v=20260828t"></script>
-<script src="js/broadcast-core.js?v=20260828t"></script>
-<script src="js/broadcast-upload.js?v=20260828t"></script>
-<script src="js/broadcast-composer.js?v=20260828t"></script>
-<script src="js/origin.js?v=20260828t"></script>
-<script src="js/strand.js?v=20260828t"></script>
-<script src="js/circle.js?v=20260828t"></script>
-<script src="js/weather.js?v=20260828t"></script>
-<script src="js/beacon.js?v=20260828t"></script>
-<script src="js/compass.js?v=20260828t"></script>
-<script src="js/signal-ui.js?v=20260828t"></script>
-<script src="js/compat-lock.js?v=20260828t"></script>
-<script src="js/broadcast-space.js?v=20260828t"></script>
-<script src="js/media-vault.js?v=20260828t"></script>
-<script src="js/wireline.js?v=20260828t"></script>
-<script src="js/profile.js?v=20260828t"></script>
-<script src="js/auth.js?v=20260828t"></script>
-<script src="js/notifications.js?v=20260828t"></script>
-<script src="js/ice-core.js?v=20260828t"></script>
-<script src="js/camera.js?v=20260828t"></script>
-<script src="js/call-filters.js?v=20260828t"></script>
-<script src="js/calls.js?v=20260828t"></script>
-<script src="js/sfu-live.js?v=20260828t"></script>
-<script src="js/broadcast-live.js?v=20260828t"></script>
-<script src="js/band-room.js?v=20260828t"></script>
-<script src="js/pwa.js?v=20260828t"></script>
-<script src="js/spark-engine.js?v=20260828t"></script>
-<script src="js/spark-lg.js?v=20260828t"></script>
-<script src="js/spark-page.js?v=20260828t"></script>
-<script src="js/spark.js?v=20260828t"></script>
-<script src="js/find.js?v=20260828t"></script>
+<script src="js/core.js?v=20260828u"></script>
+<script src="js/media-contain.js?v=20260828u"></script>
+<script src="js/keep-alive.js?v=20260828u"></script>
+<script src="js/metrics.js?v=20260828u"></script>
+<script src="js/data.js?v=20260828u"></script>
+<script src="js/crypto.js?v=20260828u"></script>
+<script src="js/atmosphere.js?v=20260828u"></script>
+<script src="js/band-list.js?v=20260828u"></script>
+<script src="js/signal-core.js?v=20260828u"></script>
+<script src="js/broadcast-core.js?v=20260828u"></script>
+<script src="js/broadcast-upload.js?v=20260828u"></script>
+<script src="js/broadcast-composer.js?v=20260828u"></script>
+<script src="js/origin.js?v=20260828u"></script>
+<script src="js/strand.js?v=20260828u"></script>
+<script src="js/circle.js?v=20260828u"></script>
+<script src="js/weather.js?v=20260828u"></script>
+<script src="js/beacon.js?v=20260828u"></script>
+<script src="js/compass.js?v=20260828u"></script>
+<script src="js/signal-ui.js?v=20260828u"></script>
+<script src="js/compat-lock.js?v=20260828u"></script>
+<script src="js/broadcast-space.js?v=20260828u"></script>
+<script src="js/media-vault.js?v=20260828u"></script>
+<script src="js/wireline.js?v=20260828u"></script>
+<script src="js/profile.js?v=20260828u"></script>
+<script src="js/auth.js?v=20260828u"></script>
+<script src="js/notifications.js?v=20260828u"></script>
+<script src="js/ice-core.js?v=20260828u"></script>
+<script src="js/camera.js?v=20260828u"></script>
+<script src="js/call-filters.js?v=20260828u"></script>
+<script src="js/calls.js?v=20260828u"></script>
+<script src="js/sfu-live.js?v=20260828u"></script>
+<script src="js/broadcast-live.js?v=20260828u"></script>
+<script src="js/band-room.js?v=20260828u"></script>
+<script src="js/pwa.js?v=20260828u"></script>
+<script src="js/spark-engine.js?v=20260828u"></script>
+<script src="js/spark-lg.js?v=20260828u"></script>
+<script src="js/spark-page.js?v=20260828u"></script>
+<script src="js/spark.js?v=20260828u"></script>
+<script src="js/find.js?v=20260828u"></script>
 <!-- /NALUNO_MODULES -->
 </body>
 </html>
