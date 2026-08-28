@@ -750,9 +750,7 @@ body.naluno-bcast-watch .navbar{
   transform:translateY(110%);
   pointer-events:none;
 }
-body.naluno-bcast-watch:not(.naluno-bcast-mine):not(.naluno-strand-open) .bcast-sticky{ display:none; }
-body.naluno-bcast-mine .bcast-sticky,
-body.naluno-strand-open .bcast-sticky{ display:block; }
+body.naluno-bcast-watch .bcast-sticky{ display:none; }
 #broadcastTabScroll.bcast-feed{
   flex:1; min-height:0;
   display:block;
@@ -764,7 +762,7 @@ body.naluno-strand-open .bcast-sticky{ display:block; }
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
   perspective: 1400px;
-  touch-action: pan-x pan-y;
+  touch-action: pan-y;
 }
 .bcast-feed-head{
   min-height: var(--bcast-stage-h, 100svh);
@@ -772,14 +770,6 @@ body.naluno-strand-open .bcast-sticky{ display:block; }
   scroll-snap-align: start;
   scroll-snap-stop: always;
   box-sizing: border-box;
-}
-body.naluno-bcast-mine #bcastForYouHome{ display:none !important; }
-body.naluno-bcast-mine .bcast-feed-head{
-  min-height:0;
-  height:auto;
-  padding:8px 14px 0;
-  scroll-snap-align:none;
-  scroll-snap-stop:normal;
 }
 .bcast-scroll-cue{
   width:100%; margin:8px 0 0; padding:12px 10px 4px;
@@ -967,12 +957,9 @@ body.naluno-bcast-mine .bcast-feed-head{
 .bcast-folder-tab, .bcast-folder-body, .bcast-folder-mosaic, .bcast-folder-count{ display:none; }
 .bcast-strand-bar{
   display:none; align-items:center; gap:10px;
-  margin:8px 0 10px; padding:10px 12px; border-radius:14px;
+  margin:0 0 12px; padding:10px 12px; border-radius:14px;
   border:1px solid rgba(124,255,178,.28);
   background:linear-gradient(180deg, rgba(124,255,178,.08), rgba(13,15,23,.92));
-}
-body.naluno-strand-open .bcast-strand-bar[style*="flex"]{
-  display:flex !important;
 }
 .bcast-strand-back{
   width:36px; height:36px; border-radius:50%; flex-shrink:0;
@@ -1592,29 +1579,12 @@ body.naluno-landscape-media #bspaceHero{
 body.naluno-landscape-media #bspace .bspace-body{
   display:none !important;
 }
-body.naluno-landscape-media #bspaceSeekDock{
-  position:fixed; left:12px; right:12px; bottom:18px; z-index:26;
-}
-body.naluno-landscape-media #bspaceHero video,
-body.naluno-landscape-media #bspaceHero img,
-body.naluno-feed-landscape .bcast-plate.is-landscaped .strand-preview,
-body.naluno-feed-landscape .bcast-plate.is-landscaped .bcast-plate-media{
-  width:100% !important; height:100% !important;
-  background:#000;
-}
-body.naluno-fit-contain #bspaceHero video,
-body.naluno-fit-contain #bspaceHero img,
-body.naluno-fit-contain .bcast-plate.is-landscaped video{
-  object-fit:contain !important;
-}
-body.naluno-fit-cover #bspaceHero video,
-body.naluno-fit-cover #bspaceHero img,
-body.naluno-fit-cover .bcast-plate.is-landscaped video{
-  object-fit:cover !important;
-}
-.bspace-topbar{ z-index:24 !important; pointer-events:auto; }
-body.naluno-landscape-media .bspace-topbar{
-  z-index:30 !important;
+body.naluno-bspace-land-css #bspaceHero video,
+body.naluno-bspace-land-css #bspaceHero img{
+  position:absolute; top:50%; left:50%;
+  width:100vh; height:100vw;
+  transform:translate(-50%,-50%) rotate(90deg);
+  object-fit:contain; background:#000;
 }
 .feed-orient-btn{
   position:absolute; right:14px; top:14px; z-index:8;
@@ -1626,8 +1596,17 @@ body.naluno-landscape-media .bspace-topbar{
 }
 .feed-orient-btn[hidden]{ display:none !important; }
 .feed-orient-btn.on{ background:var(--mint); color:#0D0F17; }
-body.naluno-feed-landscape .bcast-plate.is-landscaped{
-  position:relative;
+body.naluno-feed-landscape-css .bcast-plate.is-landscaped .strand-preview,
+body.naluno-feed-landscape-css .bcast-plate.is-landscaped .bcast-plate-media,
+body.naluno-feed-landscape-css .bcast-plate.is-landscaped .strand-poster{
+  position:absolute; top:50%; left:50%;
+  width:100vh; height:100vw;
+  transform:translate(-50%,-50%) rotate(90deg);
+  object-fit:contain; background:#000;
+}
+body.naluno-feed-landscape-native .bcast-plate.is-landscaped .strand-preview,
+body.naluno-feed-landscape-native .bcast-plate.is-landscaped .bcast-plate-media{
+  object-fit:contain;
 }
 body.naluno-feed-landscape .navbar{ display:none !important; }
 body.naluno-feed-landscape #tab-broadcast.tabscreen{ bottom:0; }
