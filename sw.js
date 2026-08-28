@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v102: 28l landscape expand + rail glow + signal session lock.
 // v101: 28k flip flicker — keep decoder, stable stage, no video Ken Burns.
 // v100: 28j living shell — aurora, nav glow, atmosphere-tied tint. Architecture untouched.
 // v99: 28i Search lives in sticky For You / My Broadcasts bar.
@@ -14,7 +15,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v101';
+const CACHE_NAME = 'naluno-shell-v102';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',
