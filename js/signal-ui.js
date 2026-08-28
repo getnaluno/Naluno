@@ -500,10 +500,8 @@ function nalunoToggleFeedLandscape(plate, video){
   const app = document.querySelector('.app');
   if(app) app.classList.add('naluno-landscape-media');
   if(video){
-    try{ video.style.objectFit = (document.body.classList.contains('naluno-fit-contain') ? 'contain' : 'cover'); }catch(_){}
+    try{ video.style.objectFit = 'contain'; }catch(_){}
   }
-  document.body.classList.add('naluno-fit-cover');
-  document.body.classList.remove('naluno-fit-contain');
   nalunoNativeLockLandscape().then(function(locked){
     document.body.classList.toggle('naluno-feed-landscape-native', !!locked);
     document.body.classList.toggle('naluno-feed-landscape-css', !locked);
@@ -518,8 +516,8 @@ function nalunoArmFeedOrientButtons(grid){
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'feed-orient-btn';
-    btn.setAttribute('aria-label', 'Fill screen');
-    btn.title = 'Fill screen';
+    btn.setAttribute('aria-label', 'Watch in landscape');
+    btn.title = 'Landscape';
     btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="12" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M8 20h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
     btn.onclick = function(e){
       e.preventDefault();
@@ -553,11 +551,6 @@ function nalunoSetBcastView(view, viaSwipe){
   if(next === bcastActiveView) return;
   const dir = next === 'mine' ? 'left' : 'right';
   bcastActiveView = next;
-  try{ document.body.classList.toggle('naluno-bcast-mine', next === 'mine'); }catch(_){}
-  try{
-    const scroller = document.getElementById('broadcastTabScroll');
-    if(scroller) scroller.scrollTop = 0;
-  }catch(_){}
   try{
     const searchTab = document.getElementById('bcastSearchTab');
     const searchRow = document.getElementById('bcastSearchRow');
@@ -662,7 +655,7 @@ window.nalunoSetBcastView = nalunoSetBcastView;
   let startX = 0, startY = 0, axis = '', tracking = false;
   function ignoreTarget(el){
     if(!el || !el.closest) return false;
-    if(el.closest('#bcastSearchRow, input, textarea, select, .strand-rail, .feed-orient-btn')) return true;
+    if(el.closest('#myBcastStrip, #togaPanel, #bcastSearchRow, input, textarea, select, .strand-rail, .feed-orient-btn')) return true;
     return false;
   }
   function onDown(e){
@@ -695,12 +688,6 @@ window.nalunoSetBcastView = nalunoSetBcastView;
     if(!wasX) return;
     if(Math.abs(dx) < 56) return;
     if(Math.abs(dx) < Math.abs(dy)) return;
-    const bspaceOn = !!(document.getElementById('bspace') && document.getElementById('bspace').classList.contains('active'));
-    if(bspaceOn) return;
-    if(document.body.classList.contains('naluno-strand-open')){
-      if(dx > 0 && typeof closeStrandFolder === 'function') closeStrandFolder();
-      return;
-    }
     if(dx < 0) nalunoSetBcastView('mine', true);
     else nalunoSetBcastView('foryou', true);
   }
