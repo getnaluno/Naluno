@@ -1454,7 +1454,10 @@ html.naluno-reduce-motion .signal-edge.on{
   display:inline-flex; align-items:center; justify-content:center;
   font-family:var(--font-futuristic); font-size:11px; font-weight:700; color:#0D0F17;
   border:2px solid #0D0F17; margin-left:-8px;
+  overflow:hidden; position:relative; flex-shrink:0;
 }
+.toga-face img{ width:100%; height:100%; object-fit:cover; display:block; }
+.toga-name-row .toga-face{ width:36px; height:36px; margin-left:0; border-width:1px; font-size:13px; }
 .toga-faces .toga-face:first-child{ margin-left:0; }
 .toga-face-empty{ background:var(--mint); }
 .toga-wof{
@@ -1709,6 +1712,7 @@ body.naluno-feed-landscape #tab-broadcast.tabscreen{ bottom:0; }
   overflow-x:auto; overflow-y:hidden;
   scroll-snap-type:x mandatory;
   -webkit-overflow-scrolling:touch;
+  touch-action:pan-x;
 }
 .toga-list::-webkit-scrollbar{ display:none; }
 .toga-list li{ flex:0 0 auto; scroll-snap-align:start; }
