@@ -374,11 +374,11 @@
           + '<span class="toga-rank">#' + rank + '</span>'
           + '<span class="toga-name-block">'
           +   '<span class="toga-card-name">' + escapeHtml(r.name || 'Creator') + badge + '</span>'
+          +   '<span class="toga-card-v">' + formatNalunoViews(r._score || 0) + '</span>'
           +   '<span class="toga-card-h">' + formatNalunoViews(r._viewsM) + ' views this month · '
           +     formatNalunoViews(r._circleM || 0) + ' Circle · '
           +     formatNalunoViews(r._engageM || 0) + ' talk</span>'
           + '</span>'
-          + '<span class="toga-card-v">' + formatNalunoViews(r._score || 0) + '</span>'
           + '</button></li>';
       }).join('') + '</ol>'
       + '<div class="toga-period-note">' + nalunoMonthLabel() + ' · ' + nalunoDaysRemainingInPeriod() + ' days remaining in this Wall of Fame</div>';

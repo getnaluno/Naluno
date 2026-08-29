@@ -755,6 +755,12 @@ try{ renderBroadcasts(); }catch(e){ console.warn(e); }
   const tab = document.getElementById('tab-broadcast');
   if(!tab) return;
   tab.addEventListener('pointerdown', function(){
+    try{
+      const bv = document.getElementById('bviewer');
+      if(bv && bv.classList.contains('active')) return;
+      const bs = document.getElementById('bspace');
+      if(bs && bs.classList.contains('active')) return;
+    }catch(_){}
     const grid = document.getElementById('bcastPlateGrid');
     if(!grid) return;
     const vids = grid.querySelectorAll('video[data-naluno-preview="1"]');
@@ -891,6 +897,8 @@ function signalEnsurePlayableSrc(videoEl, remoteUrl){
 function playSegment(idx, direction=1){
   if(viewingMine && $('bviewerRemove')){
     $('bviewerRemove').style.display = 'inline-flex';
+    $('bviewerRemove').style.alignItems = 'center';
+    $('bviewerRemove').style.justifyContent = 'center';
   }
 
   const body = $('bviewerBody');
@@ -939,7 +947,7 @@ function playSegment(idx, direction=1){
       ? ` poster="${String(seg.thumbDataUrl).replace(/"/g,'&quot;')}"`
       : '';
     // relative (not absolute) so flex parent keeps real height; contain so landscape is full frame
-    bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" src="${safeSrc}" preload="auto" playsinline webkit-playsinline muted${posterAttr} style="filter:${seg.filterCss || ''}; display:block; width:100%; height:100%; object-fit:cover; background:#000; border-radius:12px;"></video>${captionHtml}<div class="cam-expand-btn" id="bviewerMuteToggle" style="right:auto; left:14px; top:14px; z-index:3;" role="button" aria-label="Toggle sound"></div><button type="button" id="bviewerPlayKick" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;width:64px;height:64px;border-radius:50%;border:none;background:rgba(124,255,178,.92);color:#0D0F17;font-size:22px;box-shadow:0 8px 28px rgba(0,0,0,.45);cursor:pointer;" aria-label="Play">▶</button>`;
+    bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" src="${safeSrc}" preload="auto" playsinline webkit-playsinline muted${posterAttr} style="filter:${seg.filterCss || ''}; display:block; width:100%; height:100%; object-fit:cover; background:#000; border-radius:12px;"></video>${captionHtml}<div class="cam-expand-btn" id="bviewerMuteToggle" style="right:auto; left:14px; top:14px; z-index:3;" role="button" aria-label="Toggle sound"></div><button type="button" id="bviewerPlayKick" style="display:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;width:64px;height:64px;border-radius:50%;border:none;background:rgba(124,255,178,.92);color:#0D0F17;font-size:22px;box-shadow:0 8px 28px rgba(0,0,0,.45);cursor:pointer;" aria-label="Play">▶</button>`;
     durationMs = Math.round((isFinite(seg.duration) && seg.duration > 0 ? seg.duration : 15) * 1000);
   } else {
     const imgSrc = signalPlaySrc(seg);
@@ -952,6 +960,8 @@ function playSegment(idx, direction=1){
 
   if(seg.type==='video' || isVideoSeg){
     const v = $('bviewerActiveVideo');
+    try{ if(typeof pauseAllStrandPreviews === 'function') pauseAllStrandPreviews(); }catch(_){}
+    try{ if(typeof nalunoExclusiveMedia === 'function') nalunoExclusiveMedia(v); }catch(_){}
     const videoSrc = signalPlaySrc(seg);
     // Offline-from-cold-start fix: signalPlaySrc only checks the in-memory
     // vault cache (fast, but empty right after a fresh app open). The actual
@@ -1370,6 +1380,8 @@ function openMySignalStory(){
   if($('bviewerName')) $('bviewerName').textContent = (currentProfile && currentProfile.name) || 'You';
   if($('bviewerRemove')){
     $('bviewerRemove').style.display = 'inline-flex';
+    $('bviewerRemove').style.alignItems = 'center';
+    $('bviewerRemove').style.justifyContent = 'center';
     $('bviewerRemove').textContent = 'Delete';
   }
   if($('bviewerMessage')) $('bviewerMessage').style.display = 'none';

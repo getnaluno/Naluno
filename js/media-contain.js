@@ -148,6 +148,7 @@ function nalunoLiveOrCameraEl(el){
     if(!el) return false;
     if(el.srcObject) return true;
     if(el.id === 'bspaceViewerLiveVideo') return true;
+    if(el.id === 'bviewerActiveVideo') return false;
     if(el.closest && (
       el.closest('#callOverlay') ||
       el.closest('#bcomposer') ||
@@ -185,6 +186,7 @@ function nalunoExclusiveMedia(keepEl){
     document.querySelectorAll('video, audio').forEach(function(el){
       try{
         if(keepEl && el === keepEl) return;
+        if(el.id === 'bviewerActiveVideo' || (el.closest && el.closest('#bviewer.active'))) return;
         if(nalunoLiveOrCameraEl(el)) return;
         if(el.closest && el.closest('#callOverlay')) return;
         if(nalunoClipElement(el)) return;
