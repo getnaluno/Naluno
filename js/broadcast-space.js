@@ -298,10 +298,15 @@ function renderBspaceConversation(docs){
 
   const isLiveSystem = (m)=>{
     if(!m) return false;
-    if(m.type === 'system' || m.type === 'live') return true;
+    if(m.kind === 'went_live' || m.kind === 'was_live') return true;
+    if(m.type === 'live') return true;
     const t = (m.text || '').toLowerCase();
-    return t.indexOf('went live') >= 0 || t.indexOf('is live now') >= 0 || t.indexOf('join live') >= 0;
+    return /\b(is live now|was live|went live|join live)\b/.test(t);
   };
+  const reallyLived = !!(activeBroadcastMeta && (
+    activeBroadcastMeta.live ||
+    (activeBroadcastMeta.lastLiveStartedAt && activeBroadcastMeta.lastLiveDurationMs)
+  ));
 
   const pinned = [];
   const rest = [];
@@ -311,8 +316,9 @@ function renderBspaceConversation(docs){
     else rest.push({ d, m });
   });
 
-  // Newest live notice only (top of conversation, not buried)
-  if(pinned.length){
+  // Newest live notice only (top of conversation, not buried).
+  // Regular uploaded videos must not inherit a "Was live" pin.
+  if(pinned.length && reallyLived){
     pinned.sort((a,b)=> (b.m.ts||0) - (a.m.ts||0));
     const latest = pinned[0].m;
     const stillLive = !!(activeBroadcastMeta && activeBroadcastMeta.live) ||
@@ -598,6 +604,12 @@ async function openBroadcastSpace(meta){
     }
   }
 
+  try{
+    const badge = $('bspaceLiveBadge');
+    if(badge){ badge.style.display = 'none'; badge.textContent = ''; }
+    const pin = $('bspaceLivePin');
+    if(pin){ pin.style.display = 'none'; pin.innerHTML = ''; }
+  }catch(_){}
   $('bspace').classList.add('active');
   $('bspaceScroll').scrollTop = 0;
   try{ if(typeof pauseAllStrandPreviews === 'function') pauseAllStrandPreviews(); }catch(_){}
@@ -1283,6 +1295,14 @@ function bspaceWatchLiveState(){
   const unsub = fbDb.collection('broadcasts').doc(activeBroadcastId).onSnapshot(doc=>{
     if(!doc.exists) return;
     const d = doc.data() || {};
+    try{
+      if(activeBroadcastMeta){
+        activeBroadcastMeta.live = !!d.live;
+        activeBroadcastMeta.lastLiveStartedAt = d.lastLiveStartedAt || null;
+        activeBroadcastMeta.lastLiveEndedAt = d.lastLiveEndedAt || null;
+        activeBroadcastMeta.lastLiveDurationMs = d.lastLiveDurationMs || null;
+      }
+    }catch(_){}
     const badge = $('bspaceLiveBadge');
     const isCreator = !!(activeBroadcastMeta && (activeBroadcastMeta.isMine || (currentUser && activeBroadcastMeta.creatorUid === currentUser.uid)));
     if(badge){
@@ -1382,6 +1402,11 @@ async function openBroadcastSpaceById(id){
       tags: d.tags || [],
       chapters: d.chapters || null,
       breathers: d.breathers || null,
+      live: !!d.live,
+      lastLiveStartedAt: d.lastLiveStartedAt || null,
+      lastLiveEndedAt: d.lastLiveEndedAt || null,
+      lastLiveDurationMs: d.lastLiveDurationMs || null,
+      strandId: d.strandId || null,
     });
   }catch(e){
     console.warn(e);

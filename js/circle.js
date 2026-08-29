@@ -348,6 +348,7 @@
         })
         .sort(function(a,b){ return (b._score||0) - (a._score||0); })
         .slice(0, 10);
+      await attachTogaPhotos(rows);
       paintTogaFaceStack(rows);
       if(!rows.length){
         el.innerHTML = '<div class="lobby-sub" style="text-align:left;max-width:none;">This month’s Wall of Fame is empty. Share your views, then watch time, Circle joins, and conversation write the ten names. Views must be public to qualify. The list lives 30 days.</div>';
@@ -369,6 +370,7 @@
         else if(d.kind === 'down') badge = '<span class="toga-delta toga-delta-down">▼' + d.by + '</span>';
         else badge = '<span class="toga-delta toga-delta-same">—</span>';
         return '<li><button type="button" class="toga-name-row toga-rank-' + Math.min(rank,4) + '" data-toga-uid="'+escapeHtml(r.id)+'" data-bcast="'+(openId ? escapeHtml(openId) : '')+'">'
+          + togaFaceHtml(r, rank)
           + '<span class="toga-rank">#' + rank + '</span>'
           + '<span class="toga-name-block">'
           +   '<span class="toga-card-name">' + escapeHtml(r.name || 'Creator') + badge + '</span>'
@@ -403,6 +405,42 @@
     return true;
   }
 
+  function togaPhotoSrc(r){
+    if(!r) return '';
+    try{
+      if(r.photo && r.photo.dataUrl) return r.photo.dataUrl;
+      if(r.photoUrl) return r.photoUrl;
+      if(typeof currentUser !== 'undefined' && currentUser && r.id === currentUser.uid
+        && typeof currentProfile !== 'undefined' && currentProfile && currentProfile.photo && currentProfile.photo.dataUrl){
+        return currentProfile.photo.dataUrl;
+      }
+    }catch(_){}
+    return '';
+  }
+  function togaFaceHtml(r, rank){
+    const src = togaPhotoSrc(r);
+    const ch = String((r && r.name) || 'C').trim().charAt(0).toUpperCase() || 'C';
+    const hues = ['#7CFFB2', '#00E5FF', '#7C4DFF', '#FF7A8A'];
+    const bg = (r && r.color) || hues[(rank ? rank - 1 : 0) % hues.length];
+    if(src){
+      return '<span class="toga-face toga-face-pic" style="background:'+bg+'"><img src="'+escapeHtml(src)+'" alt=""></span>';
+    }
+    return '<span class="toga-face" style="background:'+bg+'">'+escapeHtml(ch)+'</span>';
+  }
+  async function attachTogaPhotos(rows){
+    if(!fbDb || !rows || !rows.length) return;
+    await Promise.all(rows.map(function(r){
+      if(!r || !r.id || togaPhotoSrc(r)) return Promise.resolve();
+      return fbDb.collection('users').doc(r.id).get().then(function(snap){
+        if(!snap.exists) return;
+        const d = snap.data() || {};
+        if(d.photo) r.photo = d.photo;
+        else if(d.photoUrl) r.photoUrl = d.photoUrl;
+        if(d.color) r.color = d.color;
+        if(!r.name && d.name) r.name = d.name;
+      }).catch(function(){});
+    }));
+  }
   function paintTogaFaceStack(rows){
     const stack = $('togaFaceStack');
     if(!stack) return;
@@ -411,10 +449,8 @@
       stack.innerHTML = '<span class="toga-face toga-face-empty">★</span>';
       return;
     }
-    const hues = ['#7CFFB2', '#00E5FF', '#7C4DFF'];
     stack.innerHTML = list.map(function(r, i){
-      const ch = String((r && r.name) || 'C').trim().charAt(0).toUpperCase() || 'C';
-      return '<span class="toga-face" style="background:'+hues[i % hues.length]+';z-index:'+(3-i)+'">'+escapeHtml(ch)+'</span>';
+      return '<span style="z-index:'+(3-i)+'">' + togaFaceHtml(r, i + 1) + '</span>';
     }).join('');
   }
 

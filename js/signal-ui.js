@@ -682,7 +682,7 @@ window.nalunoSetBcastView = nalunoSetBcastView;
   let startX = 0, startY = 0, axis = '', tracking = false;
   function ignoreTarget(el){
     if(!el || !el.closest) return false;
-    if(el.closest('#bcastSearchRow, input, textarea, select, .strand-rail, .feed-orient-btn')) return true;
+    if(el.closest('#bcastSearchRow, input, textarea, select, .strand-rail, .feed-orient-btn, .toga-list, #togaBoard')) return true;
     return false;
   }
   function onDown(e){
@@ -718,11 +718,18 @@ window.nalunoSetBcastView = nalunoSetBcastView;
     const bspaceOn = !!(document.getElementById('bspace') && document.getElementById('bspace').classList.contains('active'));
     if(bspaceOn) return;
     if(document.body.classList.contains('naluno-strand-open')){
-      if(dx > 0 && typeof closeStrandFolder === 'function') closeStrandFolder();
-      return;
+      if(dx > 0){
+        if(typeof closeStrandFolder === 'function') closeStrandFolder();
+        return;
+      }
+      if(typeof closeStrandFolder === 'function') closeStrandFolder();
     }
-    if(dx < 0) nalunoSetBcastView('mine', true);
-    else nalunoSetBcastView('foryou', true);
+    if(dx < 0){
+      if(bcastActiveView === 'mine') nalunoSetBcastView('foryou', true);
+      else nalunoSetBcastView('mine', true);
+    } else {
+      nalunoSetBcastView('foryou', true);
+    }
   }
   surface.addEventListener('touchstart', onDown, { passive: true });
   surface.addEventListener('touchmove', onMove, { passive: false });
