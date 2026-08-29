@@ -274,7 +274,17 @@ async function startSparkVoice(){
     sparkVoiceRec = new MediaRecorder(sparkVoiceStream);
     sparkVoiceRec.ondataavailable = function(e){ if(e.data && e.data.size) sparkVoiceChunks.push(e.data); };
     sparkVoiceRec.onstop = async function(){
-      const blob = new Blob(sparkVoiceChunks, { type: sparkVoiceRec.mimeType || 'audio/webm' });
+      // FIX (confirmed with a simulation — this threw a TypeError on every
+      // single voice note): stopSparkVoice() calls .stop() then immediately
+      // sets the module-level sparkVoiceRec to null, synchronously, well
+      // before this async onstop event actually fires. Reading
+      // sparkVoiceRec.mimeType here was reading a property off null every
+      // time, which meant this handler — the one that actually builds,
+      // uploads, and sends the voice message — never got past its first
+      // line. `this` inside a regular (non-arrow) function assigned to
+      // .onstop correctly refers to the MediaRecorder instance that fired
+      // the event, regardless of what the outer variable now points to.
+      const blob = new Blob(sparkVoiceChunks, { type: this.mimeType || 'audio/webm' });
       let url = '';
       try{
         if(typeof uploadVideoToR2 === 'function' && blob.size > 200){

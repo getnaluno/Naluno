@@ -231,7 +231,74 @@ function sparkLgApply(text, from, to){
   return null;
 }
 
+/* ---------------- LEARN FROM VERIFIED SOURCES ONLINE ----------------
+   PanLex (panlex.org) is a real, purpose-built, freely-accessible lexical
+   translation database covering thousands of language pairs, documented at
+   dev.panlex.org/api — used here exactly per its own documented query
+   pattern for "give me expressions in language X that are translations of
+   this text in language Y" (their own worked example: translating a known
+   Russian expression into English uses the same trtt/truid shape used
+   below for English into Luganda). Luganda's PanLex identifier is
+   "lug-000" — its ISO 639-3 code (lug, confirmed against the ISO 639-3
+   registry and Ethnologue) plus PanLex's "-000" suffix for a language's
+   primary/default variety, the same pattern eng-000 and rus-000 follow in
+   PanLex's own documented examples.
+
+   IMPORTANT, deliberate design choice: this is a REAL person's actual
+   in-person conversation, not a low-stakes UI string. A wrong translation
+   here isn't a cosmetic bug — it can genuinely embarrass someone or break
+   a real conversation. So this NEVER auto-adds anything to the book. It
+   only surfaces PanLex's own results, each carrying PanLex's own quality
+   score, for the same gated human teacher to review and explicitly accept
+   — exactly the same trust boundary the book already has for anything a
+   person types in by hand. Nothing from here is ever used as a live
+   translation until a human has looked at it and pressed Add. */
+const SPARK_LG_PANLEX_UID = 'lug-000';
+async function sparkLgSearchOnline(englishText){
+  const q = String(englishText || '').trim();
+  if(!q) return [];
+  const results = [];
+  try{
+    const res = await fetch('https://api.panlex.org/ex', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        uid: SPARK_LG_PANLEX_UID,
+        trtt: [q],
+        truid: ['eng-000'],
+        include: ['trq'],
+        limit: 8,
+      }),
+    });
+    if(res.ok){
+      const j = await res.json();
+      (j.result || []).forEach(function(row){
+        if(row && row.tt){
+          results.push({ text: row.tt, quality: (typeof row.trq === 'number') ? row.trq : null, source: 'PanLex' });
+        }
+      });
+    }
+  }catch(_){ /* offline, or PanLex unreachable — an empty result list is the honest outcome */ }
+  // Highest documented quality first — PanLex's own editorial confidence score,
+  // not anything invented here.
+  results.sort(function(a,b){ return (b.quality||0) - (a.quality||0); });
+  return results;
+}
+function sparkLgWiktionaryLink(englishText){
+  const q = String(englishText || '').trim();
+  if(!q) return '';
+  // A real cross-reference link for the human reviewer, not a parsed data
+  // source — Wiktionary's translation tables live in wikitext that's
+  // genuinely fragile to parse reliably by machine, and this is exactly the
+  // kind of thing that shouldn't be guessed at when a real conversation is
+  // riding on it. Offered so the teacher can independently double-check
+  // PanLex's suggestion against Wiktionary's own Luganda coverage before
+  // accepting it, same spirit as the "no auto-add" rule above.
+  return 'https://en.wiktionary.org/wiki/' + encodeURIComponent(q.toLowerCase().split(/\s+/)[0]) + '#Translations';
+}
+
 async function sparkLgLoad(){
+
   try{
     const raw = localStorage.getItem('nalunoLgBook');
     if(raw){
@@ -257,6 +324,38 @@ async function sparkLgLoad(){
   }catch(_){}
 }
 
+/* Self-teaching, but grounded — never guessed. If a newly taught sentence
+   contains an ALREADY-CONFIRMED shorter phrase on both sides (English and
+   Luganda), what's left over on each side, after removing that known
+   phrase, is a genuine new atomic unit the teacher just implicitly taught
+   without realizing it — e.g. teaching "I am going home" while "I am
+   going" -> "Ŋŋenda" is already known extracts "home" -> "eka" as a new
+   confirmed fact, not a guess, because it's directly derived from what a
+   human just typed and confirmed as correct. This never invents anything;
+   it only ever surfaces something the human already, in effect, wrote. */
+function sparkLgExtractNewFragment(newSrc, newDst){
+  const src = sparkLgNorm(newSrc);
+  const dst = String(newDst || '').trim();
+  if(!src || !dst) return null;
+  const known = sparkLgPairs();
+  for(let i = 0; i < known.length; i++){
+    const k = known[i];
+    if(k.src === src) continue; // that's the sentence itself, not a sub-phrase
+    const srcNeedle = ' ' + k.src + ' ';
+    const srcHaystack = ' ' + src + ' ';
+    if(srcHaystack.indexOf(srcNeedle) < 0) continue;
+    if(dst.toLowerCase().indexOf(k.dst.toLowerCase()) < 0) continue;
+    const remSrc = srcHaystack.split(srcNeedle).join(' ').replace(/\s+/g, ' ').trim();
+    const remDstRe = new RegExp(k.dst.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    const remDst = dst.replace(remDstRe, ' ').replace(/\s+/g, ' ').trim();
+    if(remSrc && remDst && remSrc.length <= 40 && remDst.length <= 40
+      && !known.some(function(p){ return p.src === sparkLgNorm(remSrc); })){
+      return { src: remSrc, dst: remDst };
+    }
+  }
+  return null;
+}
+
 async function sparkLgTeach(src, dst){
   if(!sparkLgCanEdit()){
     toggleSparkLgBook(true);
@@ -266,6 +365,7 @@ async function sparkLgTeach(src, dst){
   const a = String(src || '').trim();
   const b = String(dst || '').trim();
   if(!a || !b){ toast('Need both the original and the Luganda'); return false; }
+  const fragment = sparkLgExtractNewFragment(a, b);
   sparkLgLive = [{ src: a, dst: b }].concat(sparkLgLive.filter(function(p){
     return sparkLgNorm(p.src) !== sparkLgNorm(a);
   }));
@@ -282,6 +382,16 @@ async function sparkLgTeach(src, dst){
     }
   }
   toast('Added to the Luganda book');
+  if(fragment){
+    // Surfaced, not saved — tapping calls sparkLgTeach again for exactly
+    // this fragment, going through the identical add path (including its
+    // own extraction check), so the human is still the one confirming it.
+    setTimeout(function(){
+      toast('Also learned: "' + fragment.src + '" \u2192 "' + fragment.dst + '" \u2014 tap to save', function(){
+        sparkLgTeach(fragment.src, fragment.dst);
+      });
+    }, 2000);
+  }
   renderSparkLgBook();
   return true;
 }
@@ -320,6 +430,39 @@ function bindSparkLgBook(){
           if($('sparkLgDst')) $('sparkLgDst').value = '';
         }
       });
+  };
+  const search = $('sparkLgSearchBtn');
+  if(search) search.onclick = async function(){
+    const srcInput = $('sparkLgSrc');
+    const dstInput = $('sparkLgDst');
+    const resultsEl = $('sparkLgSearchResults');
+    const q = (srcInput && srcInput.value || '').trim();
+    if(!q){ toast('Type the English phrase first'); return; }
+    if(resultsEl){
+      resultsEl.style.display = 'block';
+      resultsEl.innerHTML = '<div class="lobby-sub">Searching PanLex\u2026</div>';
+    }
+    const candidates = await sparkLgSearchOnline(q);
+    if(!resultsEl) return;
+    if(!candidates.length){
+      resultsEl.innerHTML = '<div class="lobby-sub">No verified match found for "' + escapeHtml(q) + '". You can still teach it directly.</div>';
+      return;
+    }
+    const wikiUrl = sparkLgWiktionaryLink(q);
+    resultsEl.innerHTML = candidates.slice(0, 5).map(function(c){
+      return '<div class="spark-lg-suggestion">'
+        + '<span>' + escapeHtml(c.text) + '</span>'
+        + '<span class="spark-lg-suggestion-src">' + escapeHtml(c.source) + (c.quality != null ? ' \u00b7 quality ' + c.quality : '') + '</span>'
+        + '<button type="button" class="spark-lg-use-btn" data-txt="' + escapeHtml(c.text) + '">Use</button>'
+        + '</div>';
+    }).join('') + '<a href="' + escapeHtml(wikiUrl) + '" target="_blank" rel="noopener" class="spark-lg-wiki-link">Cross-check on Wiktionary \u2192</a>'
+      + '<div class="lobby-sub" style="margin-top:6px;">Review before adding \u2014 these are suggestions from PanLex, not yet confirmed for this book.</div>';
+    resultsEl.querySelectorAll('.spark-lg-use-btn').forEach(function(btn){
+      btn.onclick = function(){
+        if(dstInput) dstInput.value = btn.getAttribute('data-txt') || '';
+        if(dstInput) dstInput.focus();
+      };
+    });
   };
   const unlock = $('sparkLgUnlockBtn');
   if(unlock) unlock.onclick = function(){

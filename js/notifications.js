@@ -65,9 +65,20 @@ function handleBroadcastLiveNotification(n){
   if(!n || n.type !== 'broadcast_live') return;
   const who = n.fromName || 'Someone';
   const title = n.title ? (': ' + n.title) : '';
-  toast(who + ' is live' + title);
+  // FIX (found during a repo audit): this checked whether a broadcastId and
+  // openBroadcastById() were available specifically to decide whether
+  // navigation was possible — then never actually navigated anywhere. The
+  // base toast() had no way to be tapped at all, so this was structured to
+  // do something it could never actually do. toast() now optionally
+  // supports a tap handler; wired through here so "X is live" is actually
+  // tappable when there's somewhere real to go, and stays a plain,
+  // non-interactive toast when there isn't.
   if(n.broadcastId && typeof openBroadcastById === 'function'){
-    // soft prompt via toast; open path remains available via deep link / search
+    toast(who + ' is live' + title + ' — tap to watch', function(){
+      openBroadcastById(n.broadcastId);
+    });
+  } else {
+    toast(who + ' is live' + title);
   }
 }
 

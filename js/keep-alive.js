@@ -60,8 +60,22 @@ document.addEventListener('visibilitychange', function(){
   // increments the depth counter itself; the decrement here is deliberate — it nets
   // to zero net change while still forcing a real wakeLock.request() call. Keep the
   // increment (inside Start) and this decrement paired if either function changes.
+  // FIX (found during a fresh audit): the decrement used to be a bare
+  // `nalunoKeepAliveDepth--`, which only touches the counter. If a genuine
+  // nalunoKeepAliveStop() call (the real upload/call actually finishing)
+  // happened while this refresh was still awaiting wakeLock.request(), that
+  // real stop's own decrement could bring depth to 0 without ever running
+  // release logic — since only nalunoKeepAliveStop() releases the wake lock
+  // and tells the native side to stop, and this deferred callback bypassed
+  // it. The wake lock (and the native foreground keep-alive service) could
+  // then run indefinitely after every legitimate reason for it had ended.
+  // Calling the real nalunoKeepAliveStop() here instead does the identical
+  // decrement AND correctly releases if depth has genuinely reached 0 by
+  // the time this resolves — verified with a simulation of the exact race
+  // (a real stop() landing mid-flight) showing the old bare decrement
+  // leaves the lock held forever, and this fix releases it correctly.
   if(nalunoKeepAliveDepth > 0){
-    nalunoKeepAliveStart('resume').then(function(){ nalunoKeepAliveDepth--; }).catch(function(){});
+    nalunoKeepAliveStart('resume').then(function(){ nalunoKeepAliveStop(); }).catch(function(){});
   }
   try{ if(typeof flushMessageQueue === 'function') flushMessageQueue(); }catch(_){}
   try{ if(typeof flushBandOutbox === 'function') flushBandOutbox(); }catch(_){}

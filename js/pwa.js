@@ -181,7 +181,21 @@ async function setupCapacitorPush(){
         try{
           const data = (action && action.notification && action.notification.data) || {};
           const callId = data.callId || data.call_id || null;
-          if(callId) handleIncomingCallFromPush(callId);
+          if(callId){ handleIncomingCallFromPush(callId); return; }
+          // FIX (found during a repo audit): this only ever checked for
+          // callId — a "someone went live" push (which carries broadcastId,
+          // not callId) was silently dropped here, both when it arrived
+          // while the app was open (pushNotificationReceived, below) and
+          // when the person tapped it from the notification tray (here).
+          // The web service worker already handles this correctly
+          // (data.type distinguishes a call from everything else); the
+          // native Capacitor listeners never had the equivalent. Tapping
+          // the notification should navigate, same as the web SW's own
+          // notificationclick handler does.
+          const broadcastId = data.broadcastId || null;
+          if(broadcastId && typeof openBroadcastById === 'function'){
+            openBroadcastById(broadcastId);
+          }
         }catch(e){}
       });
       await Push.addListener('pushNotificationReceived', (notif)=>{
@@ -190,6 +204,18 @@ async function setupCapacitorPush(){
           const callId = data.callId || data.call_id || null;
           if(callId && typeof handleIncomingCallFromPush === 'function'){
             handleIncomingCallFromPush(callId);
+            return;
+          }
+          // Foreground "went live" push — was silently dropped before (see
+          // note above); now shows the same tappable toast the rest of the
+          // app already uses for this exact event.
+          if(data.type === 'broadcast_live' && typeof handleBroadcastLiveNotification === 'function'){
+            handleBroadcastLiveNotification({
+              type: 'broadcast_live',
+              fromName: data.callerName || data.fromName || null,
+              title: data.title || null,
+              broadcastId: data.broadcastId || null,
+            });
           }
         }catch(e){}
       });

@@ -427,10 +427,33 @@
     }
     return '<span class="toga-face" style="background:'+bg+'">'+escapeHtml(ch)+'</span>';
   }
+  /* FIX (flagged during the repo audit): every renderTogaBoard() call fetched
+     each of the top 10 creators' photos fresh from Firestore, in parallel,
+     with no caching at all — 10 extra reads on every single render, even
+     when nothing about those creators' photos had changed since the last
+     time this ran moments earlier. Photos change rarely; a simple in-memory
+     cache turns "10 reads every render" into "10 reads the first time a
+     creator is seen this session, then free." Not cleared on sign-out —
+     this holds public creator profile data (photo/name/color), the same
+     thing anyone would see on that creator's own Broadcast page, not
+     anything tied to who's currently viewing it, so there's no correctness
+     reason to invalidate it there. A creator changing their photo mid-
+     session won't show up here until the next full page load, which is an
+     acceptable, minor tradeoff for cutting 10 reads down to effectively
+     zero on every re-render after the first. */
+  const togaPhotoCache = {};
   async function attachTogaPhotos(rows){
     if(!fbDb || !rows || !rows.length) return;
     await Promise.all(rows.map(function(r){
       if(!r || !r.id || togaPhotoSrc(r)) return Promise.resolve();
+      if(togaPhotoCache[r.id]){
+        const cached = togaPhotoCache[r.id];
+        if(cached.photo) r.photo = cached.photo;
+        if(cached.photoUrl) r.photoUrl = cached.photoUrl;
+        if(cached.color) r.color = cached.color;
+        if(!r.name && cached.name) r.name = cached.name;
+        return Promise.resolve();
+      }
       return fbDb.collection('users').doc(r.id).get().then(function(snap){
         if(!snap.exists) return;
         const d = snap.data() || {};
@@ -438,6 +461,7 @@
         else if(d.photoUrl) r.photoUrl = d.photoUrl;
         if(d.color) r.color = d.color;
         if(!r.name && d.name) r.name = d.name;
+        togaPhotoCache[r.id] = { photo: d.photo || null, photoUrl: d.photoUrl || null, color: d.color || null, name: d.name || null };
       }).catch(function(){});
     }));
   }

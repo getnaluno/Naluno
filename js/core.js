@@ -5,9 +5,28 @@
    Scripts share globals (intentional) so load order matches the old monolith.
    ============================================================ */
 const $ = id => document.getElementById(id);
-function toast(msg){
+/** onTap is optional and backward-compatible — every existing call site
+ *  passes only msg and is completely unaffected. Added specifically so a
+ *  "someone went live" toast can actually be tapped through to the
+ *  Broadcast (see handleBroadcastLiveNotification in notifications.js,
+ *  found during a repo audit checking a broadcastId + openBroadcastById
+ *  existence check that was being made and then never used for anything —
+ *  the toast had no way to be tapped at all, so navigating was never
+ *  actually possible despite the code clearly intending it to be). */
+function toast(msg, onTap){
   const t = $('toast'); t.textContent = msg; t.classList.add('show');
   clearTimeout(toast._t); toast._t = setTimeout(()=>t.classList.remove('show'), 1900);
+  if(typeof onTap === 'function'){
+    t.style.cursor = 'pointer';
+    t.onclick = function(){
+      try{ onTap(); }catch(_){}
+      t.classList.remove('show');
+      clearTimeout(toast._t);
+    };
+  } else {
+    t.style.cursor = '';
+    t.onclick = null;
+  }
 }
 
 /* FIX ("app is static and vertical — make it sensitive to orientation"):

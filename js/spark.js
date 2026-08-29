@@ -94,6 +94,16 @@ async function joinSparkCode(raw){
       await connectWithUser(d.hostUid, data, d.hostHandle);
     }
     const guestName = (currentProfile && currentProfile.name) || 'Someone';
+    // FIX: this used to swallow a failed claim silently — with the rules gap
+    // above now fixed, this should normally succeed, but if it still fails
+    // for a genuine reason (the spark got claimed by someone else in the
+    // instant between the read above and this write, or expired mid-flight)
+    // the host's screen was left with no way to ever know someone joined,
+    // while the guest saw an unqualified "Spark complete" either way. The
+    // connection itself (just above) already genuinely happened regardless
+    // — that's not undone by this failing — so this only adjusts what's
+    // said next, honestly, rather than treating the whole thing as failed.
+    let claimed = true;
     try{
       await ref.update({
         guestUid: currentUser.uid,
@@ -101,9 +111,17 @@ async function joinSparkCode(raw){
         joinedAt: Date.now(),
         roomId: [d.hostUid, currentUser.uid].sort().join('_'),
       });
-    }catch(_){}
-    sparkStatus('Opening your Spark page');
-    toast('Spark complete');
+    }catch(e){
+      claimed = false;
+      console.warn('[spark] claim failed (connection still went through)', e);
+    }
+    if(claimed){
+      sparkStatus('Opening your Spark page');
+      toast('Spark complete');
+    } else {
+      sparkStatus('Connected — their screen may not update automatically');
+      toast('Connected with ' + (d.hostName || 'them'));
+    }
     closeSparkSheet();
     if(typeof openSparkPage === 'function'){
       openSparkPage(d.hostUid, d.hostName || 'Them');
