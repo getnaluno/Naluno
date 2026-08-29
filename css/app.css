@@ -560,6 +560,15 @@
   .bviewer-bars .bar{ flex:1; height:3px; background:rgba(255,255,255,.25); border-radius:2px; overflow:hidden; }
   .bviewer-bars .bar i{ display:block; height:100%; width:0%; background:#fff; }
   .bviewer-head{ display:flex; align-items:center; gap:10px; padding:12px 16px; }
+  #bviewerRemove{
+    display:none; align-items:center; justify-content:center;
+    height:32px; min-width:72px; padding:0 14px; margin:0;
+    border-radius:999px; border:1px solid rgba(255,84,112,.45);
+    background:rgba(255,84,112,.18); color:#ff8a9a;
+    font-family:var(--font-mono); font-size:11px; font-weight:600;
+    line-height:1; letter-spacing:.02em; white-space:nowrap;
+    cursor:pointer; z-index:20; box-sizing:border-box;
+  }
   .bviewer-body{ flex:1; display:flex; align-items:center; justify-content:center; position:relative; }
   .bviewer-close{ margin-left:auto; width:34px; height:34px; border-radius:50%; background:rgba(255,255,255,.1); display:flex; align-items:center; justify-content:center; cursor:pointer; color:#fff; }
 
@@ -1717,11 +1726,11 @@ body.naluno-feed-landscape #tab-broadcast.tabscreen{ bottom:0; }
 .toga-list::-webkit-scrollbar{ display:none; }
 .toga-list li{ flex:0 0 auto; scroll-snap-align:start; }
 .toga-name-row{
-  width:228px;
+  width:248px;
   min-height:92px;
   display:flex;
   align-items:flex-start;
-  gap:12px;
+  gap:8px;
   background:var(--surface-2);
   border:1px solid var(--line);
   border-radius:16px;
@@ -1766,11 +1775,17 @@ body.naluno-feed-landscape #tab-broadcast.tabscreen{ bottom:0; }
    in the flexible middle space, the score aligns right in its own fixed
    space — proportional to what each piece actually occupies, not left
    depending on inheritance to happen to work out the same way everywhere. */
-.toga-name-block{ flex:1; min-width:0; display:flex; flex-direction:column; gap:4px; text-align:left; }
+.toga-name-block{ flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; text-align:left; overflow:hidden; }
 .toga-card{ background:var(--surface-2); border:1px solid var(--line); border-radius:16px; padding:14px; min-height:88px; text-align:left; color:inherit; width:100%; cursor:pointer; }
 .toga-card-k{ font-family:var(--font-mono); font-size:10px; letter-spacing:.08em; color:var(--text-dim); text-align:left; }
-.toga-card-name{ font-family:var(--font-futuristic); font-size:15px; margin:0; text-align:left; }
-.toga-card-v{ font-family:var(--font-futuristic); font-size:20px; color:var(--mint); flex-shrink:0; text-align:right; min-width:44px; }
+.toga-card-name{
+  font-family:var(--font-futuristic); font-size:15px; margin:0; text-align:left;
+  display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%;
+}
+.toga-card-v{
+  font-family:var(--font-futuristic); font-size:12px; color:var(--mint);
+  text-align:left; min-width:0; line-height:1.2;
+}
 .toga-card-h{ font-family:var(--font-mono); font-size:10px; color:var(--text-dim); margin-top:0; text-align:left; }
 .bspace-view-row{
   display:grid;
