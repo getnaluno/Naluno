@@ -144,7 +144,38 @@ service cloud.firestore {
     match /sparks/{code} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && request.resource.data.hostUid == request.auth.uid;
-      allow update: if isSignedIn() && resource.data.hostUid == request.auth.uid;
+      // FIX (found reading spark.js against these rules — the core "two
+      // phones swap Callsigns in person" feature was silently broken): the
+      // update rule only ever allowed the HOST to write to this document.
+      // But claiming a Spark is a GUEST action — joinSparkCode() has the
+      // person who scanned/entered the code update the doc with their own
+      // guestUid, which this rule always rejected, since a guest's uid can
+      // never equal hostUid. That failure was caught by an empty
+      // try/catch in spark.js, so the guest saw "Spark complete" and moved
+      // on while the host's own listener (watching for guestUid to appear)
+      // never fired at all — the host was left stuck on their pulse screen
+      // indefinitely with no indication anything had gone wrong. Now also
+      // allows a guest to claim an unclaimed spark by setting guestUid to
+      // their own uid, while still blocking them from touching hostUid or
+      // re-claiming a spark someone else already joined.
+      // ADVERSARIAL-PASS FIX: the version above checked the VALUES of
+      // guestUid/hostUid correctly, but never restricted which FIELDS a
+      // guest-claim update could touch — a claiming guest could smuggle
+      // changes to hostName, hostColor, or expiresAt into the same write.
+      // Scoped to exactly the fields joinSparkCode() actually sends
+      // (guestUid, guestName, joinedAt, roomId), the same
+      // affectedKeys().hasOnly() pattern already used for /bands/{bandId}
+      // above, verified against the real call site in spark.js.
+      allow update: if isSignedIn() && (
+        resource.data.hostUid == request.auth.uid ||
+        (
+          !('guestUid' in resource.data) &&
+          request.resource.data.guestUid == request.auth.uid &&
+          request.resource.data.hostUid == resource.data.hostUid &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['guestUid', 'guestName', 'joinedAt', 'roomId'])
+        )
+      );
       allow delete: if isSignedIn() && resource.data.hostUid == request.auth.uid;
     }
 

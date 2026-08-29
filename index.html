@@ -1131,10 +1131,16 @@ window.__nalunoEntryT0 = Date.now();
         <input id="sparkLgPass" type="password" autocomplete="off" placeholder="Book password" style="width:100%;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;color:var(--text);" />
         <button type="button" id="sparkLgUnlockBtn" class="spark-send" style="margin-top:8px;width:100%;">Unlock teaching</button>
       </div>
-      <div id="sparkLgEditForm" style="display:none;gap:8px;padding:0 14px 10px;">
-        <input id="sparkLgSrc" placeholder="English" style="flex:1;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px 10px;color:var(--text);" />
-        <input id="sparkLgDst" placeholder="Luganda" style="flex:1;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px 10px;color:var(--text);" />
-        <button type="button" id="sparkLgAddBtn" class="spark-send">Add</button>
+      <div id="sparkLgEditForm" style="display:none;flex-direction:column;gap:8px;padding:0 14px 10px;">
+        <div style="display:flex;gap:8px;">
+          <input id="sparkLgSrc" placeholder="English" style="flex:1;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px 10px;color:var(--text);" />
+          <input id="sparkLgDst" placeholder="Luganda" style="flex:1;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px 10px;color:var(--text);" />
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button type="button" id="sparkLgSearchBtn" style="flex:1;background:var(--surface-2);color:var(--text-dim);border:1px solid var(--line);border-radius:12px;padding:8px 10px;font-size:12px;">Search verified sources</button>
+          <button type="button" id="sparkLgAddBtn" class="spark-send" style="flex:1;">Add</button>
+        </div>
+        <div id="sparkLgSearchResults" style="display:none;"></div>
       </div>
       <div id="sparkLgList"></div>
     </div>

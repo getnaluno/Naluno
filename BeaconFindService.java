@@ -43,6 +43,44 @@ public class BeaconFindService extends Service implements LocationListener {
 
   private static final long PING_MS = 3 * 60 * 1000L;
 
+  /** SECURITY FIX (found reading the live repo): persistAuth() below stores a
+   *  Firebase refresh token — a long-lived credential that can mint fresh ID
+   *  tokens indefinitely, i.e. ongoing re-authentication as that person,
+   *  until explicitly revoked server-side — in plain, unencrypted
+   *  SharedPreferences. Combined with android:allowBackup="true" (also fixed,
+   *  in AndroidManifest.xml), this meant the token could be pulled off the
+   *  device via `adb backup` with no root required, or read directly on a
+   *  rooted device. Routes every read/write through Android's own
+   *  Keystore-backed EncryptedSharedPreferences instead — the standard,
+   *  documented AndroidX Security approach for exactly this case — with a
+   *  narrow fallback to plain prefs only if the encrypted store genuinely
+   *  can't be created (a real possibility on some older/unusual devices),
+   *  so a Keystore hiccup degrades rather than crashes the service; that
+   *  fallback path is logged so it's visible, not silent.
+   *  Requires the `androidx.security:security-crypto` Gradle dependency —
+   *  this repository holds Android source files but not the Gradle project
+   *  itself, so this could not be added or compiled against here. Add:
+   *    implementation "androidx.security:security-crypto:1.1.0-alpha06"
+   *  to the app module's build.gradle before this can build. */
+  private static SharedPreferences securePrefs(Context ctx){
+    try{
+      androidx.security.crypto.MasterKey masterKey =
+        new androidx.security.crypto.MasterKey.Builder(ctx)
+          .setKeyScheme(androidx.security.crypto.MasterKey.KeyScheme.AES256_GCM)
+          .build();
+      return androidx.security.crypto.EncryptedSharedPreferences.create(
+        ctx,
+        PREFS,
+        masterKey,
+        androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+        androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+      );
+    }catch(Exception e){
+      android.util.Log.w("BeaconFindService", "Encrypted prefs unavailable, falling back to plain (device/Keystore issue): " + e);
+      return ctx.getSharedPreferences(PREFS, MODE_PRIVATE);
+    }
+  }
+
   private Handler handler;
   private LocationManager locationManager;
   private PowerManager.WakeLock wakeLock;
@@ -93,7 +131,7 @@ public class BeaconFindService extends Service implements LocationListener {
 
   public static void persistAuth(Context ctx, String uid, String refreshToken,
                                  String apiKey, String projectId, String deviceId, String label) {
-    SharedPreferences.Editor e = ctx.getSharedPreferences(PREFS, MODE_PRIVATE).edit();
+    SharedPreferences.Editor e = securePrefs(ctx).edit();
     e.putBoolean("on", true);
     if (uid != null) e.putString("uid", uid);
     if (refreshToken != null) e.putString("refresh", refreshToken);
@@ -105,11 +143,11 @@ public class BeaconFindService extends Service implements LocationListener {
   }
 
   public static void clearAuth(Context ctx) {
-    ctx.getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("on", false).apply();
+    securePrefs(ctx).edit().putBoolean("on", false).apply();
   }
 
   public static boolean isEnabled(Context ctx) {
-    return ctx.getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean("on", false);
+    return securePrefs(ctx).getBoolean("on", false);
   }
 
   private void startAsLocationForeground() {
@@ -249,7 +287,7 @@ public class BeaconFindService extends Service implements LocationListener {
   };
 
   private void postPing(Location loc) {
-    SharedPreferences p = getSharedPreferences(PREFS, MODE_PRIVATE);
+    SharedPreferences p = securePrefs(this);
     if (!p.getBoolean("on", false)) return;
     String uid = p.getString("uid", "");
     String refresh = p.getString("refresh", "");
