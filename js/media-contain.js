@@ -179,12 +179,47 @@ function stopAllAppMediaAndLockSession(){
         el.dataset.nalunoUserPaused = '1';
         delete el.dataset.nalunoKeepAlive;
         el.pause();
+        // CORRECTION (I previously claimed clearing the mediaSession action
+        // handlers would remove Chrome's media card — that was wrong, and
+        // this is the actual mechanism). Chrome's own docs: a media
+        // notification is created AUTOMATICALLY for any audible media of 5s
+        // or more, and when no MediaMetadata is set the browser falls back
+        // to "the document's title and the largest icon image it can find"
+        // — which is precisely why the card read "NALUNO / getnaluno.com".
+        // Nulling metadata never removed the card; it only chose what the
+        // card displayed. Chrome documents exactly one way to dismiss it:
+        // clear the element's src. Doing that here, on the genuine
+        // "we're finished with this media" path only (never mid-playback,
+        // never for calls or the live camera, both already excluded above),
+        // so the notification actually goes away instead of lingering.
+        // The src is stashed first so anything that re-shows this element
+        // can restore it rather than finding an empty player.
+        if(el.src && !el.dataset.nalunoPrevSrc){
+          el.dataset.nalunoPrevSrc = el.src;
+        }
+        try{
+          el.removeAttribute('src');
+          el.srcObject = null;
+          el.load();
+        }catch(_){}
       }catch(_){}
     });
   }catch(_){}
   lockOutChromeMediaSession();
   try{ if(navigator.mediaSession) navigator.mediaSession.playbackState = 'none'; }catch(_){}
 }
+/** Restore a src cleared by stopAllAppMediaAndLockSession() so re-opening a
+ *  player doesn't find an empty element. */
+function nalunoRestoreClearedSrc(el){
+  try{
+    if(el && el.dataset && el.dataset.nalunoPrevSrc && !el.src){
+      el.src = el.dataset.nalunoPrevSrc;
+      delete el.dataset.nalunoPrevSrc;
+      try{ el.load(); }catch(_){}
+    }
+  }catch(_){}
+}
+window.nalunoRestoreClearedSrc = nalunoRestoreClearedSrc;
 window.stopAllAppMediaAndLockSession = stopAllAppMediaAndLockSession;
 window.lockOutChromeMediaSession = lockOutChromeMediaSession;
 
