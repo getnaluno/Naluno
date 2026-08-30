@@ -345,3 +345,71 @@ only).
 `notifications.js`, `pwa.js`, `signal-ui.js`, `spark-lg.js`,
 `spark-page.js`, `spark.js`, `strand.js`. Plus `signal-worker/` (index.js, wrangler.toml, README.md) added to the repo. `js/calls.js` untouched —
 confirmed byte-identical to the original package.
+
+---
+
+## Round 4 — independent photo and document uploaders
+
+### The Wireline photo bug — root cause finally confirmed
+
+Photos and videos both went through `uploadVideoToR2()`, which is built
+around video: **every** content-type fallback in it lands on `video/mp4`.
+Simulated the old path against realistic inputs and confirmed the failure
+directly — a photo with an empty MIME type and no file extension (exactly
+what Android's gallery picker and camera intents commonly hand over)
+resolved to `video/mp4`, was uploaded and stored as video, and could then
+never render in an `<img>` for as long as it existed. Videos were entirely
+unaffected by the same fallbacks, which is precisely why video worked and
+photos didn't.
+
+### Independent uploaders (`js/signal-core.js`)
+
+- `uploadPhotoToR2()` / `nalunoPhotoContentType()` — only ever resolves to
+  an `image/*` type. An unknown photo becomes `image/jpeg`, never
+  `video/mp4`.
+- `uploadDocumentToR2()` / `nalunoDocumentContentType()` — never guesses a
+  media type. An unknown document becomes `application/octet-stream`, which
+  downloads correctly rather than pretending to be playable media.
+- Both share one `nalunoUploadFileToR2()` for auth, token refresh, size
+  limits, and chunking, so photo and document behave identically in every
+  way *except* content type — one code path to reason about, not three
+  diverging copies.
+
+### Documents are a genuinely separate feature (`js/wireline.js`, `index.html`, `css/app.css`)
+
+Own picker button and own hidden input (a combined accept list makes
+Android's picker default to the gallery, which is the wrong place to look
+for a PDF), own `document` message type, own bubble with icon/name/size/Open,
+own thread-list preview, and offline-queue support. The Open action reuses
+`keepSlipFile()`, which already pulls from the local vault first, so a
+document opens instantly and works offline.
+
+### A second real bug found while wiring this
+
+The offline-queue flush re-uploaded queued **photos** through the video path
+too (`uploadBroadcastFile` / `uploadVideoToR2`). So even with the direct-send
+path fixed, any photo that went out via the queue would still have been
+stored as video. Each type now uses its own uploader there as well, with the
+original filename reattached to the blob coming out of the vault (it's lost
+in storage, and the content-type guess needs it).
+
+### Worker (`signal-worker/index.js`)
+
+Image types `webp`/`gif`/`heic` used to map to a `.bin` extension, and
+`.bin` is served as `video/mp4` — so a good photo whose stored content-type
+was ever lost became permanently unrenderable. Added real extensions for
+every image type and for all common document types, and a passthrough so a
+correctly-stored `application/*` or `text/*` type is never overridden by
+the video default. A PDF served as `video/mp4` downloads as a broken file
+that nothing can open; that's now impossible through three independent
+paths (stored type, passthrough, extension).
+
+### Testing
+
+32 simulated assertions across three suites: content-type selection (12,
+including the exact empty-MIME/no-extension bug case), worker extension and
+serving behaviour (15 adversarial, including "content-type lost in storage"
+for every type, "a PDF must never be served as video", and explicit video
+regression checks), and send-path routing (5). Plus a direct before/after
+simulation proving the old path genuinely produced `video/mp4` for the
+reported inputs. Video handling is confirmed unchanged throughout.
