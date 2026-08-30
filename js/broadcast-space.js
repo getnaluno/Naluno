@@ -484,7 +484,11 @@ async function paintBspaceViews(meta){
       try{
         const t = await fbDb.collection('toga').doc(creatorUid).get();
         if(t.exists && typeof (t.data() || {}).viewsTotal === 'number'){
-          total = (t.data() || {}).viewsTotal || 0;
+          // Floored at zero: increment(-n) has no server-side clamp, so a
+          // total that went negative from historical deletions (before the
+          // delete-time adjustment existed) must never render as a negative
+          // view count.
+          total = Math.max(0, (t.data() || {}).viewsTotal || 0);
         } else {
           const mine = ((typeof feedBroadcasts !== 'undefined' && feedBroadcasts) || []).filter(function(x){ return x.creatorUid === creatorUid; });
           total = mine.reduce(function(n, x){ return n + (Number(x.views) || 0); }, 0);
@@ -980,11 +984,27 @@ function renderBspaceImpact(){
       ['Resources', resources.size],
     ];
     grid.innerHTML = cells.map(([label, n]) =>
-      `<div class="bspace-card" style="margin:0;text-align:center;padding:14px 8px;">
+      `<div class="bspace-card${label === 'Community' ? ' bspace-stat-tappable' : ''}" ${label === 'Community' ? 'id="bspaceCommunityCell" role="button" tabindex="0"' : ''} style="margin:0;text-align:center;padding:14px 8px;">
         <div style="font-family:var(--font-futuristic);font-size:22px;color:var(--mint);">${n}</div>
-        <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);margin-top:4px;">${label}</div>
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);margin-top:4px;">${label}${label === 'Community' ? ' \u00b7 tap' : ''}</div>
       </div>`
     ).join('');
+    // Community is the only tappable cell: it opens the list of people who
+    // actually joined this creator's Circle. Deliberately lazy — the member
+    // list is NOT fetched as part of this dashboard render (which runs on
+    // every Broadcast open); it's only loaded when someone actually taps,
+    // so the common case costs nothing extra.
+    const cell = $('bspaceCommunityCell');
+    if(cell){
+      const open = function(){
+        const creatorUid = (activeBroadcastMeta && activeBroadcastMeta.creatorUid) || '';
+        if(typeof openCircleMembers === 'function') openCircleMembers(creatorUid, members);
+      };
+      cell.onclick = open;
+      cell.onkeydown = function(e){
+        if(e && (e.key === 'Enter' || e.key === ' ')){ e.preventDefault(); open(); }
+      };
+    }
   }).catch(()=>{ grid.innerHTML = ''; });
 }
 

@@ -21,8 +21,22 @@ const SIGNAL_TTL_OPTIONS = {
   168: 168 * 60 * 60 * 1000,
 };
 
+/* The naluno-signal R2 bucket deletes every object after 25 hours (a bucket
+   lifecycle rule — confirmed against signal-worker/index.js, which sets no
+   expiry of its own, so the bucket is the only thing controlling this).
+   Promising a longer life than storage actually keeps is what caused the
+   "Signal stops working before the set days" bug: Firestore honoured 3/7
+   days correctly while the video file itself was already gone at ~25h.
+   Capping here (not just hiding the chips in index.html) so a stale cached
+   page, an old saved preference, or any other path that still carries 72
+   or 168 can't reintroduce it. Raise this to 168 the moment that bucket's
+   lifecycle rule is extended — that single change plus restoring the two
+   chips is the whole fix; SIGNAL_TTL_OPTIONS already supports both. */
+const SIGNAL_TTL_MAX_HOURS = 24;
+
 function signalTtlMs(){
-  return SIGNAL_TTL_OPTIONS[signalTtlChoice] || SIGNAL_TTL_OPTIONS[24];
+  const hours = Math.min(Number(signalTtlChoice) || 24, SIGNAL_TTL_MAX_HOURS);
+  return SIGNAL_TTL_OPTIONS[hours] || SIGNAL_TTL_OPTIONS[24];
 }
 
 function broadcastShareUrl(id){
@@ -142,9 +156,32 @@ async function deletePermanentBroadcast(id){
   const ref = fbDb.collection('broadcasts').doc(id);
   const snap = await ref.get();
   if(!snap.exists) return;
-  if(snap.data().creatorUid !== currentUser.uid) throw new Error('Only the creator can delete');
+  const data = snap.data() || {};
+  if(data.creatorUid !== currentUser.uid) throw new Error('Only the creator can delete');
   // Soft-delete community content is heavy; mark deleted and hide from feeds
   await ref.set({ deleted: true, deletedAt: Date.now(), live: false }, { merge: true });
+  // FIX ("This Broadcast views don't add up to All of yours"): confirmed real.
+  // "This Broadcast" reads each Broadcast's own views field; "All of yours"
+  // reads toga/{creator}.viewsTotal, a cumulative counter incremented once
+  // per view and never decremented. Deleting a Broadcast removed its own
+  // views from anything summing the surviving Broadcasts, but left those
+  // same views permanently baked into viewsTotal — so after any deletion,
+  // "All of yours" stayed permanently higher than the individual numbers
+  // could account for, with no way to ever reconcile. Subtracting the
+  // deleted Broadcast's views keeps the two numbers describing the same
+  // set of content. Clamped at zero server-side is not possible with
+  // increment(), so a floor is applied on read (see paintBspaceViews) —
+  // and this only ever runs for the creator deleting their own Broadcast,
+  // which the check above already guarantees.
+  try{
+    const lostViews = Number(data.views) || 0;
+    if(lostViews > 0){
+      await fbDb.collection('toga').doc(currentUser.uid).set({
+        viewsTotal: firebase.firestore.FieldValue.increment(-lostViews),
+        updatedAt: Date.now(),
+      }, { merge: true });
+    }
+  }catch(e){ console.warn('[broadcast] toga total adjust on delete', e); }
   myBroadcasts = myBroadcasts.filter(b => b.id !== id);
   feedBroadcasts = feedBroadcasts.filter(b => b.id !== id);
 }

@@ -573,6 +573,23 @@ function nalunoSetBcastView(view, viaSwipe){
   if(next === bcastActiveView) return;
   const dir = next === 'mine' ? 'left' : 'right';
   bcastActiveView = next;
+  // FIX ("the strand share bar leaks back into the Toga page when swiping
+  // back from Broadcasts"): this function resets the scroll position and
+  // tears down the search UI when switching views, but never cleared the
+  // open Strand folder. A Strand belongs to one specific creator's set of
+  // Broadcasts — it has no meaning in the other view — so swiping while
+  // inside one left openStrandFolderId set and #bcastStrandBar still
+  // display:flex, with its title/share button bleeding into a view it
+  // doesn't belong to (and sitting above the Toga panel, which is exactly
+  // what was reported). Clearing the id directly rather than calling
+  // closeStrandFolder(), because that helper also calls renderBroadcastTab()
+  // — this function already re-renders a few lines below, and a duplicate
+  // render mid-switch is exactly the kind of thing that causes a flicker.
+  try{
+    if(typeof getOpenStrandFolderId === 'function' && getOpenStrandFolderId()){
+      if(typeof clearStrandFolderState === 'function') clearStrandFolderState();
+    }
+  }catch(_){}
   try{ document.body.classList.toggle('naluno-bcast-mine', next === 'mine'); }catch(_){}
   try{
     const scroller = document.getElementById('broadcastTabScroll');

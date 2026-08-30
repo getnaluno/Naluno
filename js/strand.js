@@ -377,6 +377,21 @@
     try{ document.body.classList.remove('naluno-strand-open'); }catch(_){}
     if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
   }
+  /** State-only reset, deliberately WITHOUT the re-render closeStrandFolder()
+   *  does — for callers (like the For You / My Broadcasts view switch in
+   *  signal-ui.js) that are already about to re-render themselves. Calling
+   *  the full closeStrandFolder() there would render twice in a row mid-
+   *  switch, which is exactly the kind of thing that produces a visible
+   *  flicker. Also hides the bar directly so it can't linger for even one
+   *  frame if the caller's own render is asynchronous for any reason. */
+  function clearStrandFolderState(){
+    openStrandFolderId = null;
+    try{ document.body.classList.remove('naluno-strand-open'); }catch(_){}
+    try{
+      const bar = document.getElementById('bcastStrandBar');
+      if(bar) bar.style.display = 'none';
+    }catch(_){}
+  }
 
   function wireStrandFolderUi(){
     const back = (typeof $ === 'function') ? $('bcastStrandBack') : document.getElementById('bcastStrandBack');
@@ -417,6 +432,7 @@
   window.renderBroadcastEntryGrid = renderBroadcastEntryGrid;
   window.openStrandFolder = openStrandFolder;
   window.closeStrandFolder = closeStrandFolder;
+  window.clearStrandFolderState = clearStrandFolderState;
   window.pauseAllStrandPreviews = pauseAllStrandPreviews;
   window.getOpenStrandFolderId = function(){ return openStrandFolderId; };
 })();

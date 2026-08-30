@@ -176,11 +176,172 @@ translation fallback chain, `data.js`, `compat-lock.js`, `profile.js`,
 (all 29 hits were the safe `== null` idiom), and a duplicate-ID check across
 all of `index.html` (none found).
 
-## Full list of files touched this session
+## Round 2 — three reported issues scrutinised, plus the Community feature
 
-`firestore.rules`, `js/circle.js`, `js/keep-alive.js`, `js/core.js`,
-`js/notifications.js`, `js/pwa.js`, `js/spark.js`, `js/spark-page.js`,
-`js/spark-lg.js`, `index.html`, `css/app.css`, `sw.js` (cache version
-bump), plus native files `AndroidManifest.xml` and
-`BeaconFindService.java`. `js/calls.js` untouched — confirmed byte-identical
-to the original package.
+### 1. Signal stops working before the chosen number of days — ROOT CAUSE FOUND, NOT FIXABLE FROM THIS REPO
+
+**Not a code bug.** The composer offers 24 hours / 3 days / 7 days
+(`index.html` ttl-chips → `signalTtlChoice` → `signalTtlMs()`), and
+Firestore stores and honours that choice correctly. But the R2 bucket the
+video files live in has a hard, server-side object lifecycle rule that
+**deletes every file after 25 hours** — stated explicitly in this codebase's
+own comments in two separate places (`signal-core.js` line 27,
+`broadcast-upload.js` line 11). So a Signal set to 3 or 7 days keeps
+existing in Firestore, and keeps appearing in the strip, while its actual
+video file is deleted at ~25 hours. This is the same 25h lifecycle rule that
+caused the earlier "Broadcast videos die after about a day" bug, now
+surfacing in a different feature.
+
+**This could not be fixed from the repository** — the signal-worker isn't in
+it (deployed separately), and the fix is a Cloudflare R2 bucket
+configuration change, not code. Two viable options, both requiring action
+outside this package:
+
+- **Preferred:** extend the `naluno-signal` bucket's lifecycle rule to 7
+  days (168h), so storage outlives the longest option the UI offers.
+- **Alternative:** remove the 3-day and 7-day chips from the composer, so
+  the UI stops promising a duration the storage layer can't keep.
+
+Deliberately not "fixed" in code by silently capping the UI at 24h — that
+would hide a real infrastructure mismatch rather than resolve it, and the
+3-day/7-day options are presumably wanted.
+
+### 2. Strand share bar leaking into the Toga page — FIXED
+
+**Files:** `js/signal-ui.js`, `js/strand.js`
+
+`nalunoSetBcastView()` (the For You / My Broadcasts switch) resets the
+scroll position and tears down the search UI when switching, but never
+cleared the open Strand folder. A Strand belongs to one creator's specific
+set of Broadcasts and has no meaning in the other view — so swiping while
+inside one left `openStrandFolderId` set and `#bcastStrandBar` still
+`display:flex`, bleeding its title and share button into a view it doesn't
+belong to, sitting directly above the Toga panel. Exactly what was
+reported.
+
+Fixed with a new `clearStrandFolderState()` — a state-only reset that
+deliberately omits the re-render `closeStrandFolder()` does, because the
+caller already re-renders a few lines later and a duplicate render
+mid-switch is precisely what causes a visible flicker. Verified with three
+simulated cases: the reported bug (state cleared, bar hidden, exactly one
+render), a normal swipe with no strand open (completely unaffected), and a
+same-view call (early return preserved, an open strand not clobbered).
+
+### 3. "This Broadcast" views not adding up to "All of yours" — CONFIRMED REAL, FIXED
+
+**Files:** `js/broadcast-core.js`, `js/broadcast-space.js`
+
+The suspicion was correct. "This Broadcast" reads each Broadcast's own
+`views` field; "All of yours" reads `toga/{creator}.viewsTotal`, a
+cumulative counter incremented once per view. `deletePermanentBroadcast()`
+soft-deletes a Broadcast — removing its views from anything summing the
+surviving ones — but never decremented `viewsTotal`, leaving those views
+permanently baked into the total. After any deletion the two numbers
+diverged permanently, with no way to ever reconcile.
+
+Fixed by subtracting the deleted Broadcast's view count from `viewsTotal`
+at delete time (skipped entirely when the count is zero, avoiding a
+pointless write), plus a `Math.max(0, …)` floor on read so any total already
+driven negative by historical deletions can never render as a negative view
+count. Verified with a simulation showing the old behavior diverging
+(20 vs 32) and the fix reconciling exactly, plus both edge cases.
+
+### 4. NEW: Community — who joined this Circle
+
+**Files:** `js/broadcast-space.js`, `js/circle.js`, `index.html`,
+`css/app.css`
+
+The Community cell in the Impact dashboard is now tappable and opens a sheet
+listing everyone who has joined that creator's Circle, with their photo and
+name. Tapping a name opens that person's Broadcasts (reusing the existing
+`openCreatorTogaBroadcast()`, which already handles the case where their
+most recent Broadcast isn't in the local feed).
+
+Built to the "only comes to life when tapped" requirement literally: the
+member list is **never** fetched as part of the dashboard's own render
+(which runs on every Broadcast open) — it loads only on tap. It reuses the
+same photo cache the Toga board fills, so repeat opens usually cost zero
+reads. Falls back to the Broadcast's own `memberUids` when the circle
+subcollection is empty or unreadable, since those are real joins too.
+Confirmed `users/{uid}/circle/{memberUid}` already allows any signed-in user
+to read, so **no Firestore rules change is needed** for this feature.
+
+**The adversarial pass caught two real bugs in this new code before it
+shipped:** `togaPhotoSrc()` checked only `r.id`, but Circle member rows key
+the person by `r.uid` — meaning the signed-in person's own photo would
+silently never have rendered in the list (fixed to accept either shape);
+and the name-resolution loop would have thrown if `fbDb` were unavailable
+(fixed with an explicit guard). Also removed a redundant duplicate cache
+branch found in the same review. Verified with five simulated scenarios
+including three adversarial ones (offline, empty circle with fallback, both
+empty).
+
+## Round 3 — the Signal expiry stopgap, and the worker latency fix
+
+The signal-worker source turned out to still be available from earlier in
+this project, which allowed both remaining items to be closed properly.
+
+### Signal expiry — worker source confirmed the diagnosis, UI capped as a stopgap
+
+**Files:** `index.html`, `js/broadcast-core.js`, `signal-worker/` (added)
+
+Reading the actual worker source settled the diagnosis completely: it writes
+objects with `httpMetadata` and `customMetadata` only, sets **no expiry or
+TTL of its own**, and contains no delete logic or scheduled cleanup
+anywhere. So the 25-hour deletion is entirely the `naluno-signal` R2
+bucket's own lifecycle rule — exactly as the client-side code comments
+claimed. **There is no code fix**; the bucket configuration is the only
+lever.
+
+As a stopgap so the app stops promising what storage can't keep: the 3-day
+and 7-day chips are removed from the composer, and — importantly — the cap
+is *also* enforced in code via `SIGNAL_TTL_MAX_HOURS`, not just by hiding
+the chips. Hiding UI alone wouldn't stop a stale cached page or an old saved
+preference from still carrying 72 or 168. Verified with a simulation: 72 and
+168 both correctly clamp to 24, garbage and null fall back safely, and
+raising the one constant to 168 restores full behavior.
+
+Both the removed chips and the constant carry comments pointing at
+`signal-worker/README.md`, which documents the exact three-step restore
+(extend the bucket rule to 168h → raise the constant → uncomment the chips)
+along with the storage-cost tradeoff worth weighing first (R2's free tier is
+10 GB; 7-day retention means roughly 7× the concurrent stored volume).
+
+### Worker: per-request token verification latency
+
+**File:** `signal-worker/index.js`
+
+`verifyFirebaseIdToken()` made a blocking round-trip to Google's
+`identitytoolkit` endpoint on **every single request** before accepting a
+byte — real latency on the critical path of posting a Signal, repeated for
+every chunk of a chunked upload from the same person. Added a short-lived
+in-isolate cache of successful verifications.
+
+Deliberate safety properties, each one a decision rather than an oversight:
+a 5-minute window, far below a Firebase ID token's own ~1h lifetime, so a
+revoked token can't keep working long; **failures are never cached**, since
+caching a rejection could lock someone out after a legitimate re-auth and no
+latency win justifies that; keys are SHA-256 hashes rather than raw tokens,
+so credentials aren't sitting in memory as map keys; scoped per-isolate (a
+plain `Map`, not KV) since it's purely a latency optimization with no shared
+state to go stale; and bounded at 500 entries so a long-lived isolate can't
+grow it without limit.
+
+Verified with 15 simulated cases: the latency win (10 uploads → 1 Google
+call), different users never confused with each other, genuine TTL expiry
+forcing re-verification, rejected tokens never cached, a previously-failing
+token not getting stuck, the memory bound holding under 550 distinct
+tokens, and raw tokens never appearing as cache keys.
+
+Added `signal-worker/wrangler.toml` and `README.md` so the worker is
+actually deployable from the repo, with the R2 lifecycle caveat documented
+prominently (wrangler.toml can't express lifecycle rules — that's dashboard
+only).
+
+
+`AndroidManifest.xml`, `BeaconFindService.java`, `css/app.css`,
+`firestore.rules`, `index.html`, `sw.js`, and in `js/`: `broadcast-core.js`,
+`broadcast-space.js`, `circle.js`, `core.js`, `keep-alive.js`,
+`notifications.js`, `pwa.js`, `signal-ui.js`, `spark-lg.js`,
+`spark-page.js`, `spark.js`, `strand.js`. Plus `signal-worker/` (index.js, wrangler.toml, README.md) added to the repo. `js/calls.js` untouched —
+confirmed byte-identical to the original package.

@@ -1518,6 +1518,40 @@ body:has(#sparkPage.active) .navbar{ display:none !important; }
 #sparkLgList{ overflow-y:auto; max-height:36vh; padding:0 14px 16px; }
 .spark-lg-row{ display:flex; justify-content:space-between; gap:10px; padding:8px 0; border-bottom:1px solid var(--line); font-size:13px; }
 .spark-lg-row span{ color:var(--mint); text-align:right; }
+/* Community / Circle members sheet — opened only when the Community cell in
+   the Impact dashboard is tapped (see openCircleMembers in circle.js). */
+.circle-members-sheet{
+  display:none; position:fixed; inset:0; z-index:600;
+  background:rgba(5,6,10,.82); align-items:flex-end; justify-content:center;
+}
+.circle-members-sheet.active{ display:flex; }
+.circle-members-panel{
+  width:100%; max-width:460px; max-height:72vh; overflow-y:auto;
+  background:var(--surface); border:1px solid var(--line);
+  border-radius:20px 20px 0 0; padding-bottom:14px;
+}
+.circle-members-head{
+  display:flex; align-items:center; justify-content:space-between;
+  padding:14px 14px 8px;
+}
+.circle-members-list{ padding:0 14px; display:flex; flex-direction:column; gap:8px; }
+.circle-member-row{
+  width:100%; display:flex; align-items:center; gap:10px;
+  background:var(--surface-2); border:1px solid var(--line); border-radius:14px;
+  padding:10px 12px; color:inherit; text-align:left; cursor:pointer;
+}
+.circle-member-row:active{ border-color:var(--mint); }
+.circle-member-face{
+  width:34px; height:34px; border-radius:50%; object-fit:cover; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+}
+.circle-member-initial{
+  font-family:var(--font-futuristic); font-size:14px; color:#fff;
+}
+.circle-member-name{ flex:1; min-width:0; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.circle-member-go{ color:var(--text-dim); font-size:18px; flex-shrink:0; }
+.bspace-stat-tappable{ cursor:pointer; border-color:rgba(124,255,178,.35) !important; }
+.bspace-stat-tappable:active{ border-color:var(--mint) !important; }
 .spark-lg-suggestion{
   display:flex; align-items:center; gap:8px; padding:8px 10px; margin-bottom:6px;
   background:var(--surface-2); border:1px solid var(--line); border-radius:12px; font-size:12.5px;

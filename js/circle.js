@@ -410,7 +410,14 @@
     try{
       if(r.photo && r.photo.dataUrl) return r.photo.dataUrl;
       if(r.photoUrl) return r.photoUrl;
-      if(typeof currentUser !== 'undefined' && currentUser && r.id === currentUser.uid
+      // Accepts either shape: Toga rows key the creator by `id`, Circle
+      // member rows key the person by `uid`. Found in adversarial review —
+      // checking only `id` meant a Circle member row for the signed-in
+      // person would silently never pick up their own locally-set photo,
+      // falling back to an initial for the one person whose photo is
+      // guaranteed to be available.
+      const selfId = r.id || r.uid;
+      if(typeof currentUser !== 'undefined' && currentUser && selfId === currentUser.uid
         && typeof currentProfile !== 'undefined' && currentProfile && currentProfile.photo && currentProfile.photo.dataUrl){
         return currentProfile.photo.dataUrl;
       }
@@ -503,7 +510,101 @@
 
   window.formatNalunoViews = formatNalunoViews;
   window.canShowViews = canShowViews;
+  /* ---------------- CIRCLE MEMBERS SHEET ----------------
+     Who has actually joined this creator's Circle. Deliberately lazy: this
+     reads users/{creator}/circle only when someone taps the Community cell
+     in the Impact dashboard, never as part of the dashboard's own render
+     (which runs on every Broadcast open). Tapping a name opens that
+     person's most recent Broadcast, so the list is a real way into their
+     work rather than a dead roster. */
+  async function openCircleMembers(creatorUid, fallbackMemberUids){
+    const sheet = $('circleMembersSheet');
+    const list = $('circleMembersList');
+    if(!sheet || !list) return;
+    sheet.classList.add('active');
+    list.innerHTML = '<div class="lobby-sub">Loading\u2026</div>';
+    let rows = [];
+    try{
+      if(fbDb && creatorUid){
+        const snap = await fbDb.collection('users').doc(creatorUid).collection('circle').limit(200).get();
+        snap.forEach(function(d){
+          const x = d.data() || {};
+          rows.push({ uid: d.id, name: x.name || 'Someone', joinedAt: x.joinedAt || 0 });
+        });
+      }
+    }catch(e){ console.warn('[circle] members', e); }
+    // Fall back to the Broadcast's own memberUids if the circle subcollection
+    // is empty or unreadable — those are real joins too, just recorded on the
+    // Broadcast rather than in the creator's circle collection.
+    if(!rows.length && Array.isArray(fallbackMemberUids) && fallbackMemberUids.length){
+      rows = fallbackMemberUids.map(function(uid){ return { uid: uid, name: '', joinedAt: 0 }; });
+    }
+    if(!rows.length){
+      list.innerHTML = '<div class="lobby-sub" style="text-align:left;max-width:none;">No one has joined this Circle yet. When people do, they show up here.</div>';
+      return;
+    }
+    rows.sort(function(a,b){ return (b.joinedAt || 0) - (a.joinedAt || 0); });
+    // Resolve any missing names/photos from the users collection, reusing the
+    // same photo cache the Toga board already fills so this is usually free.
+    await Promise.all(rows.map(async function(r){
+      if(togaPhotoCache[r.uid]){
+        const c = togaPhotoCache[r.uid];
+        r.photo = c.photo; r.photoUrl = c.photoUrl; r.color = c.color;
+        if(!r.name) r.name = c.name || 'Someone';
+        return;
+      }
+      if(!fbDb){ if(!r.name) r.name = 'Someone'; return; }
+      try{
+        const doc = await fbDb.collection('users').doc(r.uid).get();
+        if(doc.exists){
+          const d = doc.data() || {};
+          if(!r.name) r.name = d.name || 'Someone';
+          r.photo = d.photo || null;
+          r.photoUrl = d.photoUrl || null;
+          r.color = d.color || null;
+          togaPhotoCache[r.uid] = { photo: r.photo, photoUrl: r.photoUrl, color: r.color, name: r.name };
+        }
+      }catch(_){ if(!r.name) r.name = 'Someone'; }
+    }));
+    list.innerHTML = rows.map(function(r){
+      const src = togaPhotoSrc(r);
+      const initial = escapeHtml(String(r.name || '?').trim().charAt(0).toUpperCase() || '?');
+      const avatar = src
+        ? '<img class="circle-member-face" src="' + escapeHtml(src) + '" alt="" />'
+        : '<span class="circle-member-face circle-member-initial" style="background:' + escapeHtml(r.color || '#2A2F45') + ';">' + initial + '</span>';
+      return '<button type="button" class="circle-member-row" data-member-uid="' + escapeHtml(r.uid) + '">'
+        + avatar
+        + '<span class="circle-member-name">' + escapeHtml(r.name || 'Someone') + '</span>'
+        + '<span class="circle-member-go">\u203a</span>'
+        + '</button>';
+    }).join('');
+    list.querySelectorAll('[data-member-uid]').forEach(function(btn){
+      btn.onclick = function(){
+        closeCircleMembers();
+        openCreatorTogaBroadcast(btn.getAttribute('data-member-uid'), '');
+      };
+    });
+  }
+  function closeCircleMembers(){
+    const sheet = $('circleMembersSheet');
+    if(sheet) sheet.classList.remove('active');
+  }
+
   window.creatorCircleJoined = creatorCircleJoined;
+  window.openCircleMembers = openCircleMembers;
+  window.closeCircleMembers = closeCircleMembers;
+  (function bindCircleMembersUi(){
+    function bind(){
+      const close = document.getElementById('circleMembersClose');
+      if(close) close.onclick = closeCircleMembers;
+      const sheet = document.getElementById('circleMembersSheet');
+      // Backdrop tap closes; a tap inside the panel must not (hence the
+      // explicit target check rather than a bare handler on the sheet).
+      if(sheet) sheet.onclick = function(e){ if(e && e.target === sheet) closeCircleMembers(); };
+    }
+    if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
+    else bind();
+  })();
   window.joinCreatorCircle = joinCreatorCircle;
   window.recordBroadcastView = recordBroadcastView;
   window.armBroadcastViewWatch = armBroadcastViewWatch;
