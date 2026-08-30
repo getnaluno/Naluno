@@ -58,6 +58,7 @@ function renderWirelineList(){
       last.type==='mood' ? '◐ '+((MOODS.find(x=>x.key===last.mood)||{}).label || 'A feeling') :
       last.type==='photo' ? 'Slip · photo' :
       last.type==='video' ? 'Slip · video' :
+      last.type==='document' ? ('📄 ' + (last.fileName || 'Document')) :
       last.type==='missed_call' ? ('📞 ' + missedCallLabelForViewer(last)) :
       last.text
     ) : '';
@@ -377,7 +378,7 @@ if(m.encrypted && m.ciphertext && m.iv){
       wirelineThreads[contactId] = rest.concat(missed).sort((a,b)=>a.ts-b.ts);
       renderThreadMessages();
       mapped.forEach(function(m){
-        if((m.type==='photo' || m.type==='video') && m.mediaUrl && typeof vaultIngestUrl === 'function'){
+        if((m.type==='photo' || m.type==='video' || m.type==='document') && m.mediaUrl && typeof vaultIngestUrl === 'function'){
           const remote = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(m.mediaUrl) : m.mediaUrl;
           vaultIngestUrl(remote, m.vaultKey).catch(function(){});
         }
@@ -535,6 +536,7 @@ function renderThreadMessages(){
     if(m.type==='voice'){ bubbleInner = voiceBubbleHtml(m); bubbleClass = 'msg-bubble voice-bubble-wrap'; }
     else if(m.type==='mood'){ bubbleInner = moodBubbleHtml(m); bubbleClass = 'msg-bubble mood-bubble-wrap'; }
     else if(m.type==='photo' || m.type==='video'){ bubbleInner = slipBubbleHtml(m); bubbleClass = 'msg-bubble slip-bubble'; }
+    else if(m.type==='document'){ bubbleInner = documentBubbleHtml(m); bubbleClass = 'msg-bubble doc-bubble'; }
     else { bubbleInner = escapeHtml(m.text || ''); }
     const receipt = m.from==='me' ? receiptTickHtml(m.status || 'sent') : '';
     const deleteBtn = m.from==='me' ? `<span class="msg-delete-btn" data-delmsg="${m.id}" title="Delete" aria-label="Delete message"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2m2 0v13a2 2 0 01-2 2H9a2 2 0 01-2-2V7h10z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>` : '';
@@ -563,6 +565,19 @@ function renderThreadMessages(){
       e.stopPropagation();
       const rec = slipKeepIndex[el.getAttribute('data-slip-id')];
       if(rec) keepSlipFile(rec.url, rec.name, rec.vaultKey);
+    };
+  });
+  // Documents reuse keepSlipFile() on purpose — it already handles pulling
+  // the bytes from the local vault first (so a document you sent yourself
+  // opens instantly and works offline), falling back to the remote URL,
+  // and downloading under the original filename.
+  document.querySelectorAll('[data-doc-id]').forEach(el=>{
+    el.onclick = function(e){
+      e.preventDefault();
+      e.stopPropagation();
+      const rec = slipKeepIndex[el.getAttribute('data-doc-id')];
+      if(!rec || (!rec.url && !rec.vaultKey)){ toast('Still sending — try again in a moment'); return; }
+      keepSlipFile(rec.url, rec.name, rec.vaultKey);
     };
   });
   try{ if(typeof vaultHydrateThread === 'function') vaultHydrateThread(); }catch(_){}
@@ -696,6 +711,29 @@ $('threadSendBtn').onclick = sendThreadMessage;
   });
 })();
 
+/* Document picker — deliberately its own button and its own hidden input,
+   not a mode on the photo picker. A combined accept list makes Android's
+   picker default to the gallery, which is exactly the wrong place to look
+   for a PDF. */
+(function wireDocPicker(){
+  const btn = $('threadDocBtn');
+  const input = $('threadDocInput');
+  if(!btn || !input) return;
+  btn.addEventListener('click', function(e){
+    e.preventDefault();
+    e.stopPropagation();
+    input.value = '';
+    input.click();
+  });
+  input.addEventListener('change', function(){
+    const file = input.files && input.files[0];
+    input.value = '';
+    if(!file) return;
+    if(!activeThreadContactId){ toast('Open a conversation first'); return; }
+    sendDocumentFile(file).catch(err=> toast((err && err.message) || 'Could not send document'));
+  });
+})();
+
 let slipKeepIndex = {};
 function slipSrc(m){
   const key = m.vaultKey || (m.mediaUrl ? (typeof vaultKeyForUrl === 'function' ? vaultKeyForUrl(m.mediaUrl) : '') : '');
@@ -814,6 +852,14 @@ async function sendSlipFile(file){
       url = await uploadBroadcastFile(file, function(p, msg){
         if(typeof showPublishChip === 'function') showPublishChip(msg || ('Slip ' + Math.round((p||0)*100) + '%'));
       });
+    } else if(!isVideo && typeof uploadPhotoToR2 === 'function'){
+      // Photos go through their own uploader now, not the video one. Every
+      // content-type fallback in the video path lands on video/mp4, so a
+      // photo with an empty or unrecognised MIME (common from Android
+      // pickers) was being stored as video and could never render in an
+      // <img> afterwards — while videos were unaffected, which is exactly
+      // why video worked and photos didn't.
+      url = await uploadPhotoToR2(file);
     } else if(typeof uploadVideoToR2 === 'function'){
       url = await uploadVideoToR2(file);
     } else {
@@ -841,6 +887,95 @@ async function sendSlipFile(file){
     renderWirelineList();
   }
   toast('Slip sent');
+}
+
+/* Documents are their own path end to end — own picker, own uploader, own
+   message type, own bubble. A document is not media: it should never be
+   put in an <img> or <video>, never be judged by whether it "plays", and
+   its original filename matters (it's how someone recognises it later),
+   so that's carried through rather than being regenerated at the worker. */
+async function sendDocumentFile(file){
+  const c = contacts.find(x=>x.id===activeThreadContactId);
+  if(!c || !file) return;
+  const name = (file.name || 'document').slice(0, 120);
+  const vaultKey = 'doc-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+  if(typeof vaultIngestFile === 'function'){
+    try{ await vaultIngestFile(file, vaultKey); }catch(_){}
+  }
+  const online = (typeof nalunoIsOnline === 'function') ? nalunoIsOnline() : navigator.onLine;
+  const preview = 'Document · ' + name;
+  const basePayload = {
+    type: 'document',
+    mime: file.type || '',
+    fileName: name,
+    fileSize: file.size || 0,
+    text: '',
+    vaultKey: vaultKey,
+  };
+  if(!online && c.isReal && c.firebaseUid){
+    queueMessageForLater(c.id, c.firebaseUid, Object.assign({ pendingUpload:true, mediaUrl:'' }, basePayload), preview);
+    renderThreadMessages();
+    renderWirelineList();
+    toast('No connection — document saved here, will send when you are back');
+    return;
+  }
+  toast('Sending document…');
+  try{ if(typeof nalunoKeepAliveStart === 'function') await nalunoKeepAliveStart('document'); }catch(_){}
+  let url = '';
+  try{
+    if(typeof uploadDocumentToR2 !== 'function') throw new Error('Document upload is not available');
+    url = await uploadDocumentToR2(file);
+  }finally{
+    try{ if(typeof nalunoKeepAliveStop === 'function') nalunoKeepAliveStop(); }catch(_){}
+    try{ if(typeof hidePublishChip === 'function') hidePublishChip(); }catch(_){}
+  }
+  if(!url) throw new Error('Document did not land');
+  if(typeof vaultPut === 'function'){
+    try{ await vaultPut(typeof vaultKeyForUrl === 'function' ? vaultKeyForUrl(url) : ('url:'+url), file, { name: name }); }catch(_){}
+  }
+  const payload = Object.assign({}, basePayload, { mediaUrl: url });
+  if(c.isReal && c.firebaseUid){
+    await sendRealMessage(c, payload, preview);
+  } else {
+    if(!wirelineThreads[c.id]) wirelineThreads[c.id] = [];
+    wirelineThreads[c.id].push({
+      id: Date.now()+Math.random(), from:'me', ts: Date.now(), status:'sent',
+      ...payload,
+    });
+    saveWireline();
+    renderThreadMessages();
+    renderWirelineList();
+  }
+  toast('Document sent');
+}
+
+function nalunoFormatBytes(n){
+  const b = Number(n) || 0;
+  if(b < 1024) return b + ' B';
+  if(b < 1024 * 1024) return Math.round(b / 1024) + ' KB';
+  return (b / (1024 * 1024)).toFixed(1).replace(/\.0$/, '') + ' MB';
+}
+
+function documentBubbleHtml(m){
+  const name = m.fileName || 'Document';
+  const size = m.fileSize ? nalunoFormatBytes(m.fileSize) : '';
+  const vKey = m.vaultKey || (m.mediaUrl && typeof vaultKeyForUrl === 'function' ? vaultKeyForUrl(m.mediaUrl) : '');
+  const remote = (m.mediaUrl && String(m.mediaUrl).indexOf('blob:') !== 0)
+    ? ((typeof resolveMediaUrl === 'function') ? resolveMediaUrl(m.mediaUrl) : m.mediaUrl)
+    : '';
+  slipKeepIndex[String(m.id)] = { url: remote, name: name, vaultKey: vKey };
+  const pending = m.pendingUpload ? '<span class="doc-pending">On this phone · will send</span>' : '';
+  return `<div class="doc-frame" data-doc-id="${escapeHtml(String(m.id))}">
+    <span class="doc-icon">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M14 2v6h6" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+    </span>
+    <span class="doc-meta">
+      <span class="doc-name">${escapeHtml(name)}</span>
+      <span class="doc-sub">${escapeHtml(size)}${pending ? '' : ''}</span>
+      ${pending}
+    </span>
+    <span class="doc-get">Open</span>
+  </div>`;
 }
 
 function sendThreadMessage(){
@@ -913,15 +1048,30 @@ async function flushMessageQueue(){
   for(const item of queue){
     try{
       let payload = Object.assign({}, item.payload);
-      if((payload.type === 'photo' || payload.type === 'video') && !payload.mediaUrl && payload.vaultKey){
+      const needsUpload = (payload.type === 'photo' || payload.type === 'video' || payload.type === 'document');
+      if(needsUpload && !payload.mediaUrl && payload.vaultKey){
         const rec = (typeof vaultGet === 'function') ? await vaultGet(payload.vaultKey) : null;
-        if(!rec || !rec.blob) throw new Error('slip still on this phone only');
-        if(typeof uploadBroadcastFile === 'function'){
-          payload.mediaUrl = await uploadBroadcastFile(rec.blob, function(){});
+        if(!rec || !rec.blob) throw new Error('file still on this phone only');
+        // FIX: a queued PHOTO used to be re-uploaded through the video path
+        // here too (uploadBroadcastFile / uploadVideoToR2), so even after the
+        // direct-send path was corrected, anything that went out via the
+        // offline queue would still be stored as video/mp4 and never render.
+        // Each type now uses its own uploader on this path as well — the
+        // blob loses its original File name once it comes back out of the
+        // vault, so the recorded fileName is reattached for the content-type
+        // guess to work from.
+        const named = rec.blob;
+        try{ if(payload.fileName && !named.name) Object.defineProperty(named, 'name', { value: payload.fileName, configurable: true }); }catch(_){}
+        if(payload.type === 'document' && typeof uploadDocumentToR2 === 'function'){
+          payload.mediaUrl = await uploadDocumentToR2(named);
+        } else if(payload.type === 'photo' && typeof uploadPhotoToR2 === 'function'){
+          payload.mediaUrl = await uploadPhotoToR2(named);
+        } else if(typeof uploadBroadcastFile === 'function'){
+          payload.mediaUrl = await uploadBroadcastFile(named, function(){});
         } else if(typeof uploadVideoToR2 === 'function'){
-          payload.mediaUrl = await uploadVideoToR2(rec.blob);
+          payload.mediaUrl = await uploadVideoToR2(named);
         }
-        if(!payload.mediaUrl) throw new Error('slip upload waiting');
+        if(!payload.mediaUrl) throw new Error('upload waiting');
         delete payload.pendingUpload;
       }
       const clean = Object.assign({}, payload);

@@ -190,20 +190,42 @@ function sparkLgApply(text, from, to){
     for(let i = 0; i < pairs.length; i++){
       if(pairs[i].src === key) return pairs[i].dst;
     }
+    // FIX (confirmed by simulation — compositional English→Luganda ALWAYS
+    // returned null): substituted phrases used to be written straight into
+    // `rest`, and the "is there leftover untranslated English?" check below
+    // then tested the whole string for any 3+ letter Latin word. Luganda is
+    // written in Latin script, so the Luganda words that had just been
+    // substituted IN were themselves matching that check — "hello my friend"
+    // → "Oli otya mukwano gwange" was rejected as if it were still English.
+    // Only exact whole-phrase matches ever worked. Substituted spans are now
+    // parked as placeholders that can't match the leftover-English test, so
+    // that test only sees text that genuinely wasn't translated, and the real
+    // Luganda is swapped back in afterwards.
+    const slots = [];
     let rest = ' ' + key + ' ';
     let used = false;
-    for(let i = 0; i < pairs.length; i++){
-      const needle = ' ' + pairs[i].src + ' ';
+    // Longest source phrase first, so "thank you" wins over a bare "you".
+    const byLen = pairs.slice().sort(function(a, b){ return b.src.length - a.src.length; });
+    for(let i = 0; i < byLen.length; i++){
+      const needle = ' ' + byLen[i].src + ' ';
       if(rest.indexOf(needle) >= 0){
-        rest = rest.split(needle).join(' ' + pairs[i].dst + ' ');
+        const token = ' \u0001' + slots.length + '\u0001 ';
+        slots.push(byLen[i].dst);
+        rest = rest.split(needle).join(token);
         used = true;
       }
     }
     rest = rest.replace(/\s+/g, ' ').trim();
-    if(used && rest && sparkLgNorm(rest) !== key){
-      // leftover 3+ letter latin tokens mean mixed English — do not claim success
+    if(used && rest){
+      // Anything still Latin here is genuinely untranslated English — the
+      // placeholders can't match it, which is the entire point.
       if(/\b[a-z]{3,}\b/i.test(rest)) return null;
-      return rest;
+      let out = rest;
+      for(let i = 0; i < slots.length; i++){
+        out = out.split('\u0001' + i + '\u0001').join(slots[i]);
+      }
+      out = out.replace(/\s+/g, ' ').trim();
+      if(out && sparkLgNorm(out) !== key) return out;
     }
     return null;
   }

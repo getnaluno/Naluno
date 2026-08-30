@@ -874,6 +874,117 @@ async function persistThumbnailDataUrl(dataUrl){
 
 /* Accepts a Blob (preferred) or a data URL. Passing a Blob avoids the slow
    dataURL → Blob round-trip that was doubling prepare+upload time for large clips. */
+/* ---------------- INDEPENDENT PHOTO / DOCUMENT UPLOADERS ----------------
+   Photos and documents used to go through uploadVideoToR2(), which is built
+   around video: every content-type fallback in it lands on video/mp4, it
+   sniffs for HEVC, and its retry path assumes a large media file. A photo
+   that hit any of those fallbacks (empty MIME from the picker, an
+   octet-stream MIME, an unrecognised extension) was uploaded and stored as
+   video/mp4 — after which no <img> tag can ever render it, and the failure
+   is invisible until someone opens the thread. Videos were unaffected,
+   which is exactly why video worked while photos didn't.
+
+   These are deliberately separate rather than flags on the video path:
+   each one only ever falls back WITHIN its own family (a photo of unknown
+   type becomes image/jpeg, never video/mp4; a document of unknown type
+   becomes application/octet-stream, which is correct for a download and
+   never pretends to be playable media). They share the same worker,
+   auth, and chunking as before — only the type handling is independent. */
+
+const PHOTO_MAX_BYTES = 25 * 1024 * 1024;     // generous for any phone camera still
+const DOCUMENT_MAX_BYTES = 95 * 1024 * 1024;  // matches the worker's own MAX_BYTES
+
+/** Content type for a photo. Only ever returns an image/* type — that's the
+ *  whole point of this being separate from the video path. */
+function nalunoPhotoContentType(file){
+  const t = String((file && file.type) || '').toLowerCase();
+  if(t.indexOf('image/') === 0) return file.type;
+  const name = String((file && file.name) || '');
+  if(/\.(jpe?g)$/i.test(name)) return 'image/jpeg';
+  if(/\.png$/i.test(name)) return 'image/png';
+  if(/\.webp$/i.test(name)) return 'image/webp';
+  if(/\.gif$/i.test(name)) return 'image/gif';
+  if(/\.(heic|heif)$/i.test(name)) return 'image/heic';
+  if(/\.bmp$/i.test(name)) return 'image/bmp';
+  // Unknown, but this function is only ever called for something the person
+  // picked as a photo — jpeg is the safe, renderable default. Critically NOT
+  // video/mp4, which is what the shared video path would have chosen.
+  return 'image/jpeg';
+}
+
+/** Content type for a document. Never guesses a media type — an unknown
+ *  document is octet-stream, which downloads correctly rather than being
+ *  mistaken for playable media. */
+function nalunoDocumentContentType(file){
+  const t = String((file && file.type) || '').toLowerCase();
+  if(t && t !== 'application/octet-stream' && t !== 'binary/octet-stream') return file.type;
+  const name = String((file && file.name) || '');
+  if(/\.pdf$/i.test(name)) return 'application/pdf';
+  if(/\.txt$/i.test(name)) return 'text/plain';
+  if(/\.csv$/i.test(name)) return 'text/csv';
+  if(/\.rtf$/i.test(name)) return 'application/rtf';
+  if(/\.docx$/i.test(name)) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if(/\.doc$/i.test(name)) return 'application/msword';
+  if(/\.xlsx$/i.test(name)) return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  if(/\.xls$/i.test(name)) return 'application/vnd.ms-excel';
+  if(/\.pptx$/i.test(name)) return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+  if(/\.ppt$/i.test(name)) return 'application/vnd.ms-powerpoint';
+  if(/\.zip$/i.test(name)) return 'application/zip';
+  return 'application/octet-stream';
+}
+
+/** Shared POST for both, so photo and document upload behave identically
+ *  in every way EXCEPT content type — one code path to reason about, one
+ *  place a token refresh or a chunking decision is handled. */
+async function nalunoUploadFileToR2(file, contentType, maxBytes, label){
+  if(!currentUser) throw new Error('Sign in again to upload');
+  if(!(file instanceof Blob) && !(file instanceof File)) throw new Error('Invalid file');
+  if(!(file.size > 0)) throw new Error('That file is empty — try picking it from the Files app');
+  if(file.size > maxBytes){
+    throw new Error(label + ' is too large (max ' + Math.round(maxBytes / (1024 * 1024)) + ' MB)');
+  }
+  if(file.size > UPLOAD_MAX_BYTES && typeof uploadSignalChunked === 'function'){
+    return uploadSignalChunked(file, contentType);
+  }
+  async function once(forceRefresh){
+    const idToken = await currentUser.getIdToken(!!forceRefresh);
+    const res = await fetch(SIGNAL_UPLOAD_WORKER_URL, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': contentType },
+      body: file,
+    });
+    const body = await res.json().catch(()=>({}));
+    if(res.ok){
+      let url = body.url;
+      if(!url && body.key){
+        url = SIGNAL_UPLOAD_WORKER_URL + '/o/' + String(body.key).replace(/^\/+/, '');
+      }
+      if(!url) throw new Error('Upload finished but no link came back');
+      return (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(url) : url;
+    }
+    const e = new Error((body.error || body.message || (label + ' upload failed (' + res.status + ')')).toString());
+    e.status = res.status;
+    throw e;
+  }
+  try{
+    return await once(false);
+  }catch(e){
+    // A stale sign-in token is the one failure worth retrying automatically.
+    if(e && (e.status === 401 || e.status === 403 || /auth|token|sign/i.test(e.message || ''))){
+      return await once(true);
+    }
+    throw e;
+  }
+}
+
+async function uploadPhotoToR2(file){
+  return nalunoUploadFileToR2(file, nalunoPhotoContentType(file), PHOTO_MAX_BYTES, 'Photo');
+}
+
+async function uploadDocumentToR2(file){
+  return nalunoUploadFileToR2(file, nalunoDocumentContentType(file), DOCUMENT_MAX_BYTES, 'Document');
+}
+
 async function uploadVideoToR2(blobOrDataUrl){
   if(!currentUser) throw new Error('Sign in again to upload');
   let blob = blobOrDataUrl;
