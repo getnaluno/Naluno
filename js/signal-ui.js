@@ -91,6 +91,20 @@ $('adjustSave').onclick = ()=>{
    never affects what's shown — rankBroadcastEntries()'s ordering below is
    completely untouched; this only decides which already-ordered items get
    an entrance animation class. */
+/** "See all" scrolls the Signal strip to its end — a visible no-op when the
+ *  strip doesn't actually overflow. A control that promises something and
+ *  then appears to do nothing is worse than no control, so it only shows
+ *  when there is genuinely more to scroll to. */
+function nalunoSyncSeeAllVisibility(){
+  try{
+    const btn = document.getElementById('signalSeeAllBtn');
+    const strip = document.getElementById('myBcastStrip');
+    if(!btn || !strip) return;
+    const overflows = strip.scrollWidth > strip.clientWidth + 8;
+    btn.style.display = overflows ? '' : 'none';
+  }catch(_){}
+}
+
 let __nalunoPrevSignalStripIds = new Set();
 let __nalunoSignalStripRenderGen = 0;
 
@@ -269,6 +283,8 @@ function renderBroadcastTab(){
           if(typeof openContactSignalStory === 'function') openContactSignalStory(id);
         };
       });
+      // After layout settles, decide whether "See all" has anything to do.
+      try{ requestAnimationFrame(nalunoSyncSeeAllVisibility); }catch(_){ nalunoSyncSeeAllVisibility(); }
     };
     if(removedIds.length && !document.hidden){
       let stillPlaying = 0;
@@ -676,8 +692,7 @@ window.nalunoSetBcastView = nalunoSetBcastView;
         catch(_){ strip.scrollLeft = strip.scrollWidth; }
       }
     };
-  }
-  const cue = document.getElementById('bcastScrollCue');
+  }  const cue = document.getElementById('bcastScrollCue');
   if(cue){
     cue.onclick = function(e){
       if(e){ e.preventDefault(); e.stopPropagation(); }
@@ -699,7 +714,13 @@ window.nalunoSetBcastView = nalunoSetBcastView;
   let startX = 0, startY = 0, axis = '', tracking = false;
   function ignoreTarget(el){
     if(!el || !el.closest) return false;
-    if(el.closest('#bcastSearchRow, input, textarea, select, .strand-rail, .feed-orient-btn, .toga-list, #togaBoard')) return true;
+    // FIX (reported: the Signal strip doesn't resist a swipe like the Toga
+    // names strip does). This list is exactly why Toga resists — .toga-list
+    // is exempted, so a horizontal drag there scrolls the strip instead of
+    // being consumed by the For You / My Broadcasts view switch. The Signal
+    // strip (.bcast-strip / #myBcastStrip) was never added, so every
+    // horizontal drag across the Signals was stolen by the view switch.
+    if(el.closest('#bcastSearchRow, input, textarea, select, .strand-rail, .feed-orient-btn, .toga-list, #togaBoard, .bcast-strip, #myBcastStrip')) return true;
     return false;
   }
   function onDown(e){

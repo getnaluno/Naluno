@@ -240,7 +240,8 @@
     return deltas;
   }
 
-  function openCreatorTogaBroadcast(uid, bid){
+  function openCreatorTogaBroadcast(uid, bid, who){
+    const name = who || 'them';
     function go(id){
       if(id && typeof openBroadcastById === 'function'){
         openBroadcastById(id);
@@ -253,17 +254,24 @@
     const hit = pool.filter(function(b){ return b && b.creatorUid === uid && !b.deleted; })
       .sort(function(a,b){ return (b.createdAt||0) - (a.createdAt||0); })[0];
     if(hit && go(hit.id)) return;
+    // Every remaining path now says something. Previously a missing fbDb/uid
+    // returned with only a vague hint, and any thrown error was swallowed —
+    // so tapping a name could genuinely do nothing at all.
     if(!fbDb || !uid){
-      toast('Open a Broadcast from their plates below');
+      toast('Could not look up ' + name + '\u2019s Broadcasts right now');
       return;
     }
+    toast('Opening ' + name + '\u2019s Broadcasts\u2026');
     fbDb.collection('broadcasts').where('creatorUid', '==', uid).limit(12).get().then(function(snap){
       const docs = snap.docs.map(function(d){ return { id: d.id, ...(d.data() || {}) }; })
         .filter(function(b){ return !b.deleted; })
         .sort(function(a,b){ return (b.createdAt||0) - (a.createdAt||0); });
-      if(docs[0]) go(docs[0].id);
-      else toast('No Broadcast from them yet');
-    }).catch(function(){ toast('Open a Broadcast from their plates below'); });
+      if(docs[0]){ go(docs[0].id); return; }
+      toast(name + ' hasn\u2019t published a Broadcast yet');
+    }).catch(function(e){
+      console.warn('[circle] open creator broadcasts', e);
+      toast('Could not open ' + name + '\u2019s Broadcasts');
+    });
   }
 
   async function loadMyTogaSettings(){
@@ -596,7 +604,7 @@
       const avatar = src
         ? '<img class="circle-member-face" src="' + escapeHtml(src) + '" alt="" />'
         : '<span class="circle-member-face circle-member-initial" style="background:' + escapeHtml(r.color || '#2A2F45') + ';">' + initial + '</span>';
-      return '<button type="button" class="circle-member-row" data-member-uid="' + escapeHtml(r.uid) + '">'
+      return '<button type="button" class="circle-member-row" data-member-uid="' + escapeHtml(r.uid) + '" data-member-name="' + escapeHtml(r.name || 'them') + '">'
         + avatar
         + '<span class="circle-member-name">' + escapeHtml(r.name || 'Someone') + '</span>'
         + '<span class="circle-member-go">\u203a</span>'
@@ -604,8 +612,29 @@
     }).join('');
     list.querySelectorAll('[data-member-uid]').forEach(function(btn){
       btn.onclick = function(){
+        const uid = btn.getAttribute('data-member-uid');
+        const who = btn.getAttribute('data-member-name') || 'them';
         closeCircleMembers();
-        openCreatorTogaBroadcast(btn.getAttribute('data-member-uid'), '');
+        // FIX (reported: tapping a Community name did nothing — no navigation
+        // and no message either way). Two real problems:
+        //  1. This fired openBroadcastById() while the Broadcast space was
+        //     ALREADY open, re-entering the same overlay. Closing the current
+        //     space first makes it a clean open rather than a re-entry.
+        //  2. openCreatorTogaBroadcast()'s "none found" path only toasts from
+        //     inside its own Firestore lookup, so any earlier bail-out (no
+        //     fbDb, no uid) returned silently. This now always says something.
+        try{ if(typeof closeBroadcastSpace === 'function') closeBroadcastSpace(); }catch(_){}
+        setTimeout(function(){
+          try{
+            if(typeof openCreatorTogaBroadcast === 'function'){
+              openCreatorTogaBroadcast(uid, '', who);
+            } else {
+              toast('Could not open ' + who + '\u2019s Broadcasts');
+            }
+          }catch(e){
+            toast('Could not open ' + who + '\u2019s Broadcasts');
+          }
+        }, 220);
       };
     });
   }

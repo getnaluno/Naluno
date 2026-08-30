@@ -501,3 +501,141 @@ phone. Modelled against real link speeds: fine on 5G/WiFi, fails on 3G at
 even one viewer and on weak 4G above two. The 12 cap and the SFU hook
 (`sfuOrMeshViewerCap`) show this is understood; noting it explicitly because
 it's the ceiling on live audience size until an SFU is actually wired in.
+
+---
+
+## Round 6 — Chrome media card, views audit, strip gestures, Toga type, Community tap
+
+### The Chrome media notification — FIXED from inside the app
+
+`lockOutChromeMediaSession()` was doing this per action:
+
+```js
+setActionHandler(a, null);          // removes it  — correct
+setActionHandler(a, function(){});  // RE-ADDS it  — the bug
+```
+
+Registering *any* handler, including an empty one, is precisely how a page
+tells Chrome "I support this control" — so Chrome rendered the media card
+**with** previous/pause/next buttons and kept it alive. The intent was
+"make the shade buttons do nothing"; the actual effect was "advertise that
+these buttons exist". Now clears to null and stops there. Also clears
+`setPositionState(null)` unconditionally rather than only while paused —
+that's what draws the scrubber on the card. No handlers + no position state
+means Chrome has nothing to render. Modelled Chrome's rule and confirmed:
+old code advertised 5 controls plus a scrubber, new code advertises none.
+
+### Views logic — audited, found correct (no change needed)
+
+Traced end to end and modelled every path:
+- **Owner is excluded twice over** — `armBroadcastViewWatch` never even arms
+  its timer when `isMine`, and `recordBroadcastView` independently returns
+  early when `currentUser.uid === creatorUid`.
+- **When it counts:** 4 seconds of *actual playback* (`!paused &&
+  currentTime > 0.25`); for text/photo rooms, 4s with the space open. The
+  timer cancels if the space closes first, so a bounce doesn't count.
+- **Deduped twice:** in-memory per session, and persistently via
+  `broadcasts/{id}/viewers/{uid}`.
+- **Signed-out visitors don't count.**
+- **When it reflects:** `paintBspaceViews()` runs after the write resolves,
+  so both numbers show post-increment values.
+6 assertions, all pass.
+
+### Impact dashboard cells — audited (no change needed)
+
+10 assertions across Community / Conversations / Questions / Answered /
+Results / Resources, including a brand-new broadcast (all zero), a
+went-live-with-no-chat broadcast (Conversations correctly 0, system notices
+excluded), and the adversarial case of a question with an *empty* answers
+array (correctly not counted as answered). Also confirmed conversation docs
+are hard-deleted rather than soft-deleted, so removed messages can't inflate
+the count.
+
+### Signal strip now resists swipes like the Toga strip — FIXED
+
+Found the exact reason Toga resisted and Signals didn't: `ignoreTarget()` in
+the For You / My Broadcasts swipe handler already exempted `.toga-list`, but
+the Signal strip was never added — so every horizontal drag across the
+Signals was consumed by the view switch instead of scrolling the strip.
+Added `.bcast-strip` / `#myBcastStrip` to that exemption, and matched the
+Toga strip's CSS (`touch-action:pan-x`, `overscroll-behavior-x:contain`,
+scroll snap) so a fling past the end can't chain out into the view switch
+either.
+
+### "WALL OF FAME" now uses the Naluno face — FIXED
+
+It was set to `--font-display` while the adjacent "Toga" pill uses
+`--font-futuristic` (Naluno's own face), so the two read as different
+brands sitting next to each other. Matched to `--font-futuristic`.
+
+### Community: tapping a name does nothing — FIXED
+
+Two real problems. First, the handler called `openBroadcastById()` while the
+Broadcast space was **already open**, re-entering the same overlay; it now
+closes the current space first so it's a clean open. Second,
+`openCreatorTogaBroadcast()`'s bail-out paths could return **silently** — a
+missing `fbDb`/`uid` gave only a vague hint and a thrown error was swallowed
+entirely, which is exactly "nothing happens". Every path now says something,
+and the messages name the person: "Opening X's Broadcasts…", "X hasn't
+published a Broadcast yet", or a clear failure.
+
+### Other "promises but doesn't deliver" found in the sweep
+
+- **"See all" on the Signal strip** — it scrolls the strip to its end, which
+  is a *visible no-op* when the strip doesn't overflow (the common case with
+  a handful of Signals). Now hidden unless there is genuinely more to scroll
+  to, re-evaluated after each strip rebuild.
+- **Swept for orphaned controls:** every `type="button"` with an id in
+  `index.html` was checked for a handler somewhere in JS — none orphaned.
+- **Swept for called-but-undefined functions** behind `typeof` guards (which
+  fail silently): found `resizeSendCanvas` / `sizeSendCanvas` in
+  `camera.js`, both undefined, making that defensive branch dead code.
+  **Deliberately not touched** — it's in the calls path, `startCamView()`
+  immediately before it already does the real work, and the standing rule is
+  not to touch calls code without a concrete reason. Flagged rather than
+  changed.
+
+---
+
+## Round 7 — you can take back anything you posted
+
+Mistakes get made, and until now nothing posted into a Broadcast could be
+removed by the person who posted it.
+
+The Firestore rule already allowed exactly this —
+`resource.data.from == request.auth.uid || <broadcast creator>` on
+`broadcasts/{id}/{col}/{docId}`. So the permission existed and simply had no
+UI. **No rules change was needed**; this surfaces a capability that was
+already there rather than widening one.
+
+Added a Delete control to everything a person can post into a Broadcast:
+**conversation** (comments, voice notes, photos), **questions**,
+**results**, and **resources**. Visible to the author of the item, and to
+the Broadcast's creator for moderating their own room.
+
+Built as one shared helper pair (`bspaceDeleteBtnHtml` /
+`bspaceWireDeleteButtons` / `bspaceDeletePostedDoc`) used by all four
+renderers, rather than four separate copies that would drift apart. It
+confirms first (deletion isn't recoverable), reports honestly if the delete
+is refused instead of leaving the item on screen looking like nothing
+happened, and refreshes the Impact dashboard so the counts stay truthful
+after a removal.
+
+Styled quietly — it sits in the byline rather than competing with the
+content, and reads red rather than mint because it's destructive.
+
+**Adversarially tested (7 assertions).** Beyond the obvious cases (author
+sees it, creator sees it, an unrelated viewer doesn't, signed-out sees
+nothing), the important one: every combination of viewer and author was
+checked to confirm **the UI is never more permissive than the Firestore
+rule** — there is no case where the button is offered for a delete the
+server would refuse. Also confirmed the rule still blocks a forged direct
+call from someone who isn't the author or creator.
+
+### Not covered by this, stated plainly
+
+Wireline messages already had their own delete (`data-delmsg`). Band
+messages and Signal segments were **not** changed in this round — they're
+separate subsystems with their own rules and deletion semantics, and
+bundling them in without the same line-by-line rule check would be guessing.
+Worth doing as its own pass if you want it.

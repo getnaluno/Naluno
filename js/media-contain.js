@@ -127,20 +127,28 @@ function lockOutChromeMediaSession(){
   const playing = nalunoAnyAppMediaPlaying() || nalunoViewerWantsMedia();
   if(!playing){
     try{ navigator.mediaSession.playbackState = 'none'; }catch(_){}
-    try{
-      if(typeof navigator.mediaSession.setPositionState === 'function'){
-        navigator.mediaSession.setPositionState({ duration: 0, playbackRate: 1, position: 0 });
-      }
-    }catch(_){
-      try{ navigator.mediaSession.setPositionState(undefined); }catch(_2){}
-    }
   }
+  // FIX (the shade card that kept appearing): this used to clear each action
+  // handler to null and then immediately RE-REGISTER a no-op function on the
+  // same action. Registering ANY handler — even an empty one — is precisely
+  // how a page tells Chrome "I support this control", so Chrome responded by
+  // rendering the media card WITH previous/pause/next buttons and keeping it
+  // alive. The intent was "make the shade buttons do nothing"; the actual
+  // effect was "advertise that these buttons exist". Clearing to null and
+  // stopping there is what actually removes them.
   ['play','pause','seekbackward','seekforward','seekto','previoustrack','nexttrack','stop'].forEach(function(a){
     try{ navigator.mediaSession.setActionHandler(a, null); }catch(_){}
-    try{
-      navigator.mediaSession.setActionHandler(a, function(){});
-    }catch(_){}
   });
+  // Position state is what draws the scrubber on that card. Clearing it
+  // unconditionally (not only when paused, as before) means there's no
+  // progress bar to render even while media is genuinely playing in-app.
+  try{
+    if(typeof navigator.mediaSession.setPositionState === 'function'){
+      navigator.mediaSession.setPositionState(null);
+    }
+  }catch(_){
+    try{ navigator.mediaSession.setPositionState({ duration: 0, playbackRate: 1, position: 0 }); }catch(_2){}
+  }
 }
 
 function nalunoLiveOrCameraEl(el){

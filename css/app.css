@@ -1377,7 +1377,20 @@ body.naluno-overlay .navbar{
 .signal-see-all:active{ border-color:var(--mint); color:var(--mint); }
 .signal-create-legacy{ display:none !important; }
 
-.bcast-strip{ gap:10px; padding:12px 8px 20px; }
+.bcast-strip{
+  gap:10px; padding:12px 8px 20px;
+  /* Swipe resistance, matching the Toga names strip: pan-x tells the browser
+     this strip owns horizontal gestures (so a slightly-diagonal swipe scrolls
+     the strip instead of being stolen by the page or the For You / My
+     Broadcasts view swipe), overscroll-behavior-x stops a fling past the end
+     from chaining out to that view switch, and snap gives it the same
+     settled feel. */
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+}
+.bcast-strip > .bcast-item{ scroll-snap-align:start; }
 .bcast-item.signal-tile{ gap:0; align-items:stretch; }
 .signal-tile .signal-window{
   width:108px; height:148px; border-radius:22px; padding:3px;
@@ -1470,10 +1483,13 @@ html.naluno-reduce-motion .signal-edge.on{
 .toga-faces .toga-face:first-child{ margin-left:0; }
 .toga-face-empty{ background:var(--mint); }
 .toga-wof{
-  font-family:var(--font-display); font-size:13px; font-weight:700;
-  letter-spacing:.02em; color:#fff;
+  /* Matches the "Toga" pill's typeface — this read as a different brand
+     next to it because it was using --font-display while the pill uses
+     --font-futuristic (Naluno's own face). */
+  font-family:var(--font-futuristic); font-size:12px; font-weight:700;
+  letter-spacing:.06em; color:#fff; text-transform:uppercase;
   background:linear-gradient(90deg, #ff4d6d, #ff7a8a);
-  padding:2px 8px; border-radius:4px; line-height:1.3;
+  padding:3px 9px; border-radius:4px; line-height:1.3;
 }
 .toga-pill{
   margin-left:auto; flex-shrink:0;
@@ -1523,6 +1539,17 @@ body:has(#sparkPage.active) .navbar{ display:none !important; }
 /* Wireline document bubble — a document is not media, so it gets a real
    file row (icon, name, size, Open) rather than being forced into an
    image/video frame. */
+/* Delete control on anything you posted into a Broadcast (comment, voice
+   note, photo, question, result, resource). Deliberately quiet — it sits in
+   the byline, not competing with the content, and only becomes prominent on
+   press. Destructive, so it reads red rather than mint. */
+.bspace-del{
+  float:right; margin-left:8px;
+  background:transparent; border:1px solid rgba(255,84,112,.35); border-radius:999px;
+  color:#ff8a9a; font-family:var(--font-mono); font-size:9.5px;
+  padding:2px 9px; cursor:pointer; line-height:1.5;
+}
+.bspace-del:active{ background:rgba(255,84,112,.16); border-color:rgba(255,84,112,.7); }
 .doc-bubble{ padding:0 !important; background:transparent !important; border:none !important; }
 .doc-frame{
   display:flex; align-items:center; gap:10px; cursor:pointer;

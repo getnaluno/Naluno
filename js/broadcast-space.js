@@ -362,7 +362,7 @@ function renderBspaceConversation(docs){
     el.innerHTML = '';
     return;
   }
-  el.innerHTML = rest.map(({m})=>{
+  el.innerHTML = rest.map(({ d, m })=>{
     const media = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(m.mediaUrl) : (m.mediaUrl || '');
     const isVoice = media && (m.type === 'voice' || m.type === 'audio');
     const isPhoto = media && (m.type === 'photo' || m.type === 'image');
@@ -378,11 +378,72 @@ function renderBspaceConversation(docs){
     } else {
       body = `<span style="color:var(--text-dim);font-size:12px;">Attachment unavailable</span>`;
     }
+    // People make mistakes — anything you posted, you can take back. Shown to
+    // the author of the message, and to the Broadcast's creator (moderation of
+    // their own room). Matches the Firestore rule exactly, which already
+    // allowed `resource.data.from == uid || broadcast creator` — so this is
+    // surfacing a permission that already existed rather than widening one.
+    const delBtn = bspaceDeleteBtnHtml('conversation', (d && d.id) ? d.id : '', m.from);
     return `<div class="bspace-card">
-      <div class="who">${bspaceEscape(bspaceWhoLabel(m.from))} · ${timeAgo(m.ts || Date.now())}</div>
+      <div class="who">${bspaceEscape(bspaceWhoLabel(m.from))} · ${timeAgo(m.ts || Date.now())}${delBtn}</div>
       <div class="body">${body}</div>
     </div>`;
   }).join('');
+  bspaceWireDeleteButtons(el);
+}
+
+
+/** Delete control for anything a person posted into a Broadcast. Shown to the
+ *  author, and to the Broadcast's creator for their own room. Mirrors the
+ *  Firestore rule exactly (`resource.data.from == uid || broadcast creator`),
+ *  so it surfaces a permission that already existed rather than widening one.
+ *  Shared by conversation / questions / results / resources so all four
+ *  behave identically instead of drifting apart. */
+function bspaceDeleteBtnHtml(col, docId, fromUid){
+  if(!docId) return '';
+  const mine = !!(currentUser && fromUid === currentUser.uid);
+  const amCreator = !!(activeBroadcastMeta && (activeBroadcastMeta.isMine ||
+    (currentUser && activeBroadcastMeta.creatorUid === currentUser.uid)));
+  if(!mine && !amCreator) return '';
+  return `<button type="button" class="bspace-del" data-del-col="${bspaceEscape(col)}" data-del-id="${bspaceEscape(docId)}" data-del-mine="${mine ? '1' : '0'}" aria-label="Delete this">Delete</button>`;
+}
+
+function bspaceWireDeleteButtons(root){
+  if(!root) return;
+  root.querySelectorAll('[data-del-id]').forEach(function(btn){
+    btn.onclick = function(e){
+      if(e){ e.preventDefault(); e.stopPropagation(); }
+      bspaceDeletePostedDoc(
+        btn.getAttribute('data-del-col'),
+        btn.getAttribute('data-del-id'),
+        btn.getAttribute('data-del-mine') === '1'
+      );
+    };
+  });
+}
+
+/** Delete something posted into a Broadcast — a comment, question, voice
+ *  note, photo, result or resource. Confirms first (it isn't recoverable),
+ *  and reports honestly if refused rather than leaving the item on screen
+ *  looking like nothing happened. */
+async function bspaceDeletePostedDoc(col, docId, mine){
+  if(!col || !docId || !fbDb || !activeBroadcastId) return;
+  const msg = mine
+    ? 'Delete this? It can\u2019t be undone.'
+    : 'Remove this from your Broadcast? It can\u2019t be undone.';
+  let ok = true;
+  try{ ok = window.confirm(msg); }catch(_){ ok = true; }
+  if(!ok) return;
+  try{
+    await fbDb.collection('broadcasts').doc(activeBroadcastId)
+      .collection(col).doc(docId).delete();
+    toast(mine ? 'Deleted' : 'Removed');
+    // The collection's own listener re-renders; no manual refresh needed.
+    try{ if(typeof renderBspaceImpact === 'function') renderBspaceImpact(); }catch(_){}
+  }catch(e){
+    console.warn('[bspace] delete ' + col, e);
+    toast('Couldn\u2019t delete that \u2014 check your connection');
+  }
 }
 
 function renderBspaceQuestions(docs){
@@ -398,7 +459,7 @@ function renderBspaceQuestions(docs){
     const mark = (activeBroadcastMeta && activeBroadcastMeta.isMine && !m.bestAnswer)
       ? `<button type="button" class="bspace-mini" data-mark-best="${d.id}" style="margin-top:8px;">Mark best from replies…</button>` : '';
     return `<div class="bspace-card" data-qid="${d.id}">
-      <div class="who">${bspaceEscape(bspaceWhoLabel(m.from))} asks · ${timeAgo(m.ts || Date.now())}</div>
+      <div class="who">${bspaceEscape(bspaceWhoLabel(m.from))} asks · ${timeAgo(m.ts || Date.now())}${bspaceDeleteBtnHtml('questions', d.id, m.from)}</div>
       <div class="body">${bspaceEscape(m.text || '')}</div>
       ${best}
       ${m.answers && m.answers.length ? m.answers.map((a,i)=>`<div style="margin-top:6px;font-size:13px;color:var(--text-dim);">↳ ${bspaceEscape(a.text)} <span style="font-family:var(--font-mono);font-size:10px;">— ${bspaceEscape(bspaceWhoLabel(a.from))}</span>${(activeBroadcastMeta && activeBroadcastMeta.isMine && !m.bestAnswer) ? ` <button type="button" class="bspace-mini bspace-mark-best" data-qid="${d.id}" data-atext="${bspaceEscape(a.text).replace(/"/g,'&quot;')}" style="margin-left:6px;">Best</button>` : ''}</div>`).join('') : ''}
@@ -414,6 +475,7 @@ function renderBspaceQuestions(docs){
   el.querySelectorAll('.bspace-mark-best').forEach(btn=>{
     btn.onclick = ()=> bspaceMarkBest(btn.dataset.qid, btn.dataset.atext || btn.getAttribute('data-atext'));
   });
+  bspaceWireDeleteButtons(el);
 }
 
 function renderBspaceResults(docs){
@@ -426,10 +488,11 @@ function renderBspaceResults(docs){
   el.innerHTML = docs.map(d=>{
     const m = d.data();
     return `<div class="bspace-card">
-      <div class="who">${bspaceEscape(bspaceWhoLabel(m.from))} · ${timeAgo(m.ts || Date.now())}</div>
+      <div class="who">${bspaceEscape(bspaceWhoLabel(m.from))} · ${timeAgo(m.ts || Date.now())}${bspaceDeleteBtnHtml('results', d.id, m.from)}</div>
       <div class="body">${bspaceEscape(m.text || '')}</div>
     </div>`;
   }).join('');
+  bspaceWireDeleteButtons(el);
 }
 
 function renderBspaceResources(docs){
@@ -442,8 +505,9 @@ function renderBspaceResources(docs){
   el.innerHTML = docs.map(d=>{
     const m = d.data();
     const link = m.url ? `<a href="${bspaceEscape(m.url)}" target="_blank" rel="noopener" style="color:var(--mint);word-break:break-all;">${bspaceEscape(m.title || m.url)}</a>` : bspaceEscape(m.title || 'Resource');
-    return `<div class="bspace-card"><div class="who">${bspaceEscape(bspaceWhoLabel(m.from))}</div><div class="body">${link}</div></div>`;
+    return `<div class="bspace-card"><div class="who">${bspaceEscape(bspaceWhoLabel(m.from))}${bspaceDeleteBtnHtml('resources', d.id, m.from)}</div><div class="body">${link}</div></div>`;
   }).join('');
+  bspaceWireDeleteButtons(el);
 }
 
 function renderBspaceJourney(docs){
