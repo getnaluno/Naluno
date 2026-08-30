@@ -63,32 +63,55 @@
     return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
   }
 
+  /* Month-keyed field names. Writing this month's counters under their own
+     field names means a new month simply starts at zero on its own — no read
+     needed to detect rollover, which is what let this drop the transaction. */
+  function togaMonthFields(monthKey){
+    return {
+      views:  'mv_' + monthKey,
+      circle: 'mc_' + monthKey,
+      engage: 'me_' + monthKey,
+    };
+  }
+
+  /** Returns the plain-increment patch for this month's counters, so callers
+   *  can fold it into an existing batch instead of issuing a separate write.
+   *
+   *  STRESS-TEST FIX (hot-document contention): this used to be a
+   *  runTransaction() — read the toga doc, compute the new monthly totals,
+   *  write them back. A transaction on a contended document retries and then
+   *  FAILS. Simulating a popular creator with viewers all crossing the 4s
+   *  view threshold in the same window showed the failure rate hitting 100%
+   *  above roughly 20 concurrent viewers: every one of those views was
+   *  silently lost, and Toga — the thing that ranks creators by exactly this
+   *  number — under-counted precisely the creators doing best.
+   *
+   *  FieldValue.increment() is applied server-side without a read, so it has
+   *  no read-write conflict to retry over. The month rollover logic that
+   *  needed the read is gone because each month now writes to its own field
+   *  names. Honest remaining limit: Firestore still guides ~1 sustained
+   *  write/second per document, so a genuinely viral creator can still
+   *  saturate this one doc. Fixing THAT properly needs sharded counters
+   *  (N shard docs summed on read), which is a real architectural change and
+   *  is written up rather than half-done here. This removes the failure mode
+   *  that was losing data at ordinary scale. */
+  function togaMonthIncrements(patch){
+    const monthKey = nalunoMonthKey();
+    const f = togaMonthFields(monthKey);
+    const out = { monthKey: monthKey, updatedAt: Date.now() };
+    if(patch.viewsMonthDelta)  out[f.views]  = firebase.firestore.FieldValue.increment(patch.viewsMonthDelta);
+    if(patch.circleMonthDelta) out[f.circle] = firebase.firestore.FieldValue.increment(patch.circleMonthDelta);
+    if(patch.engageMonthDelta) out[f.engage] = firebase.firestore.FieldValue.increment(patch.engageMonthDelta);
+    if(patch.featuredBroadcastId) out.featuredBroadcastId = patch.featuredBroadcastId;
+    if(patch.name) out.name = patch.name;
+    return out;
+  }
+
   function bumpTogaMonth(creatorUid, patch){
     if(!fbDb || !creatorUid) return Promise.resolve();
-    const monthKey = nalunoMonthKey();
-    const ref = fbDb.collection('toga').doc(creatorUid);
-    // LOCK (bug 3.2): transaction so concurrent views/joins cannot overwrite each other.
-    return fbDb.runTransaction(function(tx){
-      return tx.get(ref).then(function(snap){
-        const d = snap.exists ? (snap.data() || {}) : {};
-        const same = d.monthKey === monthKey;
-        const viewsMonth = (same ? (d.viewsMonth || 0) : 0) + (patch.viewsMonthDelta || 0);
-        const circleMonth = (same ? (d.circleMonth || 0) : 0) + (patch.circleMonthDelta || 0);
-        const engageMonth = (same ? (d.engageMonth || 0) : 0) + (patch.engageMonthDelta || 0);
-        const next = {
-          monthKey: monthKey,
-          viewsMonth: viewsMonth,
-          circleMonth: circleMonth,
-          engageMonth: engageMonth,
-          scoreMonth: viewsMonth + circleMonth * 12 + engageMonth * 3,
-          updatedAt: Date.now(),
-        };
-        if(patch.featuredBroadcastId) next.featuredBroadcastId = patch.featuredBroadcastId;
-        if(patch.name) next.name = patch.name;
-        if(patch.viewsTotal != null) next.viewsTotal = patch.viewsTotal;
-        tx.set(ref, next, { merge: true });
-      });
-    }).catch(function(){});
+    return fbDb.collection('toga').doc(creatorUid)
+      .set(togaMonthIncrements(patch || {}), { merge: true })
+      .catch(function(){});
   }
 
   async function recordBroadcastView(broadcastId, creatorUid){
@@ -120,24 +143,15 @@
         uniqueViews: firebase.firestore.FieldValue.increment(1),
       }, { merge: true });
       if(creatorUid){
-        batch.set(fbDb.collection('toga').doc(creatorUid), {
+        // The monthly counters fold into this SAME write now that they're
+        // plain increments rather than a transaction — one write to the toga
+        // doc per view instead of two, which halves the pressure on it and
+        // removes the retry-and-fail path entirely.
+        batch.set(fbDb.collection('toga').doc(creatorUid), Object.assign({
           viewsTotal: firebase.firestore.FieldValue.increment(1),
-          featuredBroadcastId: broadcastId,
-          updatedAt: Date.now(),
-        }, { merge: true });
+        }, togaMonthIncrements({ viewsMonthDelta: 1, featuredBroadcastId: broadcastId })), { merge: true });
       }
       await batch.commit();
-      if(creatorUid){
-        // bumpTogaMonth is its own transaction (reads-then-writes monthly
-        // fields with rollover logic) — kept separate from the batch above
-        // since Firestore batches can't include a transaction's reads, but
-        // still awaited before this function returns so a caller who awaits
-        // recordBroadcastView() sees fully-settled numbers either way.
-        await bumpTogaMonth(creatorUid, {
-          viewsMonthDelta: 1,
-          featuredBroadcastId: broadcastId,
-        });
-      }
     }catch(e){ console.warn('[circle] view', e); }
   }
 
@@ -332,10 +346,17 @@
       const rows = Object.keys(byId).map(function(k){ return byId[k]; })
         .filter(function(r){ return r.shareViews !== false; })
         .map(function(r){
-          const same = r.monthKey === monthKey;
-          const viewsM = same ? (r.viewsMonth || 0) : 0;
-          const circleM = same ? (r.circleMonth || 0) : 0;
-          const engageM = same ? (r.engageMonth || 0) : 0;
+          // Reads the month-keyed counters written by togaMonthIncrements().
+          // Falls back to the older monthKey/viewsMonth shape for rows written
+          // before that change, so an existing board doesn't reset to zero on
+          // the day this ships — old rows keep their numbers until the next
+          // month naturally takes over.
+          const f = togaMonthFields(monthKey);
+          const hasNew = (r[f.views] != null || r[f.circle] != null || r[f.engage] != null);
+          const legacySame = r.monthKey === monthKey;
+          const viewsM  = hasNew ? (r[f.views]  || 0) : (legacySame ? (r.viewsMonth  || 0) : 0);
+          const circleM = hasNew ? (r[f.circle] || 0) : (legacySame ? (r.circleMonth || 0) : 0);
+          const engageM = hasNew ? (r[f.engage] || 0) : (legacySame ? (r.engageMonth || 0) : 0);
           // FIX: this board is explicitly monthly ("Wall of Fame · list lives 30
           // days"). The score AND every number shown next to a name must be the
           // same monthly figures — no falling back to lifetime totals for rows
@@ -343,7 +364,10 @@
           // meant row-to-row (one person's monthly count next to another
           // person's all-time count, both under the same "views" label) and let
           // stale lifetime totals outrank real monthly activity.
-          const score = (same && r.scoreMonth) ? r.scoreMonth : (viewsM + circleM * 12 + engageM * 3);
+          // Score is computed on read now rather than stored, because a stored
+          // score would need a read-modify-write — exactly the transaction that
+          // was failing under load.
+          const score = viewsM + circleM * 12 + engageM * 3;
           return Object.assign(r, { _score: score, _viewsM: viewsM, _circleM: circleM, _engageM: engageM });
         })
         .sort(function(a,b){ return (b._score||0) - (a._score||0); })

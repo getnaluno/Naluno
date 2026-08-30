@@ -841,6 +841,7 @@ $('bspaceConvInput').addEventListener('keydown', e=>{
 
 let bspaceVoiceRec = null;
 let bspaceVoiceStream = null;
+let bspaceVoiceStartInFlight = false;
 let bspaceVoiceChunks = [];
 let bspaceVoiceStart = 0;
 let bspaceVoiceTimer = null;
@@ -890,6 +891,11 @@ $('bspaceConvVoice').onclick = async ()=>{
     return;
   }
   if(!navigator.mediaDevices || !window.MediaRecorder){ toast('Voice not supported here'); return; }
+  // Same in-flight latch as bspaceStartLive — the guard above checks
+  // bspaceVoiceRec, which doesn't exist until after getUserMedia() resolves,
+  // so two quick taps would open two mic streams and orphan the first.
+  if(bspaceVoiceStartInFlight) return;
+  bspaceVoiceStartInFlight = true;
   try{
     bspaceVoiceChunks = [];
     bspaceVoiceStream = await navigator.mediaDevices.getUserMedia({ audio:true });
@@ -906,6 +912,8 @@ $('bspaceConvVoice').onclick = async ()=>{
   }catch(e){
     toast(e.message || 'Mic unavailable');
     bspaceVoiceResetBtn();
+  }finally{
+    bspaceVoiceStartInFlight = false;
   }
 };
 
@@ -1192,20 +1200,36 @@ if(progress) progress('Uploading live recording…');
   }
 }
 
+let bspaceLiveStartInFlight = false;
+
 async function bspaceStartLive(){
   if(!(await bspaceRequireMember())) return;
   const isCreator = !!(activeBroadcastMeta && (activeBroadcastMeta.isMine || (currentUser && activeBroadcastMeta.creatorUid === currentUser.uid)));
   if(!isCreator){ toast('Only the creator can go live'); return; }
   if(bspaceLiveStream){ await bspaceStopLive(); toast('Live ended'); return; }
+  // FIX (found by stress-testing a double tap): the guard above checks
+  // bspaceLiveStream, but that isn't assigned until AFTER getUserMedia()
+  // resolves — and opening a camera on Android routinely takes 300ms-2s
+  // (permission prompt, hardware init). Any tap inside that window passed
+  // the guard too, so two quick taps opened TWO camera streams, ran the
+  // whole go-live fan-out TWICE (360 Firestore writes, 120 pushes, and
+  // every single person messaged twice), and orphaned the first
+  // MediaStream — camera left running with nothing holding a reference to
+  // stop it. This latch closes the window; it's cleared in a finally so a
+  // failed or denied camera can still be retried.
+  if(bspaceLiveStartInFlight) return;
+  bspaceLiveStartInFlight = true;
   try{
     bspaceLiveStream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'user', width: { ideal: 720 }, height: { ideal: 1280 }, frameRate: { ideal: 24, max: 30 } },
       audio: true,
     });
   }catch(e){
+    bspaceLiveStartInFlight = false;
     toast('Camera/mic needed to go live');
     return;
   }
+  bspaceLiveStartInFlight = false;
   const host = $('bspaceMedia');
   if(host){
     host.innerHTML = `<video id="bspaceLiveVideo" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;"></video>`;

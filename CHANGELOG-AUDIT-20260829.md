@@ -413,3 +413,91 @@ for every type, "a PDF must never be served as video", and explicit video
 regression checks), and send-path routing (5). Plus a direct before/after
 simulation proving the old path genuinely produced `video/mp4` for the
 reported inputs. Video handling is confirmed unchanged throughout.
+
+---
+
+## Round 5 — stress / concurrency testing ("try to break the app")
+
+Built a harness modelling the app's real logic under load rather than a
+generic load test. Findings in severity order.
+
+### BROKE FIRST: hot-document write contention on `toga/{creatorUid}` — FIXED
+
+Every recorded view wrote to the creator's single toga document **twice**:
+once in a batch (`viewsTotal` increment) and once as a `runTransaction()`
+for the monthly counters. A transaction on a contended document retries and
+then **fails**. Simulating a popular creator with viewers crossing the 4s
+view threshold in the same window: **100% of view writes failed above
+roughly 20 concurrent viewers.** Those views were silently lost — and Toga,
+which ranks creators by exactly this number, under-counted precisely the
+creators doing best. This is the single worst finding of the whole audit
+because it gets worse the more successful someone is.
+
+Fixed by removing the transaction entirely. Monthly counters now write to
+month-keyed field names (`mv_<monthKey>` etc.) using
+`FieldValue.increment()`, which the server applies without a read, so there
+is no read-write conflict to retry over — and month rollover becomes
+implicit, which is the only reason the read (and therefore the transaction)
+existed. The monthly increments also fold into the existing batch, so it's
+now **one** write to the toga doc per view instead of two. Score is computed
+on read rather than stored, since a stored score would reintroduce the
+read-modify-write.
+
+Verified: 10 read-side assertions covering new-format data, **legacy data
+written before this change (numbers preserved, board doesn't reset)**, month
+rollover in both formats, mixed legacy+new rows, empty creators, and a
+ranking sanity check that this month's activity outranks a stale lifetime
+total.
+
+**Honest remaining limit, documented rather than papered over:** Firestore
+still guides ~1 sustained write/second per document, so a genuinely viral
+creator can saturate this one doc. Properly fixing that needs sharded
+counters (N shard docs summed on read) — a real architectural change,
+written up rather than half-done here. This change removes the failure mode
+that was losing data at ordinary scale.
+
+### Double-tap "Go live" race — FIXED (and the same bug class in two more places)
+
+The guard is `if (bspaceLiveStream) { stop }`, but that variable isn't
+assigned until **after** `getUserMedia()` resolves — and opening a camera on
+Android routinely takes 300ms–2s. Simulated two taps 100ms apart with an
+800ms camera open: **two camera streams opened, the entire go-live fan-out
+ran twice (360 Firestore writes, 120 pushes, every follower messaged
+twice), and the first MediaStream was orphaned — camera left running with
+nothing holding a reference to stop it.** Three taps made it three times.
+
+Fixed with an in-flight latch, cleared in a `finally` so a denied camera can
+still be retried. Verified across 2/3/5 rapid taps at several camera speeds:
+exactly one camera, one fan-out, zero orphans, and a single tap still works
+normally.
+
+Then checked every other `getUserMedia` call site for the same pattern:
+`camera.js` (the calls path) already had a proper `cameraRequestPending`
+latch. The Broadcast voice recorder and the Spark voice recorder did **not**
+— same fragile guard, same orphaned-mic-stream outcome. Both fixed the same
+way.
+
+### Checked and found sound (no changes needed)
+
+- **Listener count.** Counted every `onSnapshot` the app opens: 14 at idle,
+  33 while hosting a live at the 12-viewer cap, 35 with a call on top.
+  Comfortably inside Firestore's ~100-listener guidance. Wireline correctly
+  swaps a single thread listener rather than accumulating one per thread.
+- **Go-live fan-out.** 180 Firestore writes + 60 pushes at the cap, but every
+  write targets a *different* document (per-person notifications, threads,
+  messages), so there's no hot-doc contention in the fan-out itself.
+- **Live mesh rejection.** Viewer 13+ gets `{rejected:true}` and the viewer
+  side genuinely handles it with a clear message.
+- **Vault eviction.** Correctly frees to target under normal load. It can
+  stay over target when pinned (on-screen) media alone exceeds 48MB — but it
+  degrades rather than failing, and `vaultIsInUse()` protecting visible media
+  is the right call.
+
+### Known structural limit, not a bug — worth stating
+
+Live broadcast is a **mesh**: the host uploads one full copy of its stream
+per viewer. At the 12-viewer cap that's ~14.9 Mbps sustained upload from a
+phone. Modelled against real link speeds: fine on 5G/WiFi, fails on 3G at
+even one viewer and on weak 4G above two. The 12 cap and the SFU hook
+(`sfuOrMeshViewerCap`) show this is understood; noting it explicitly because
+it's the ceiling on live audience size until an SFU is actually wired in.

@@ -42,6 +42,7 @@ let sparkTheirLang = 'en';
 let sparkUnsub = null;
 let sparkMsgUnsub = null;
 let sparkVoiceRec = null;
+let sparkVoiceStartInFlight = false;
 let sparkVoiceChunks = [];
 let sparkVoiceStream = null;
 let sparkListen = null;
@@ -250,6 +251,11 @@ function stopSparkVoice(){
 
 async function startSparkVoice(){
   if(!navigator.mediaDevices){ toast('Voice is not available here'); return; }
+  // In-flight latch — sparkVoiceRec isn't assigned until after getUserMedia()
+  // resolves, so without this two quick taps open two mic streams and orphan
+  // the first (same bug class found by stress-testing the Go live button).
+  if(sparkVoiceStartInFlight) return;
+  sparkVoiceStartInFlight = true;
   stopSparkVoice();
   let heard = '';
   try{
@@ -301,6 +307,8 @@ async function startSparkVoice(){
     toast('Listening — release to send');
   }catch(e){
     toast('Allow the microphone, then try again');
+  }finally{
+    sparkVoiceStartInFlight = false;
   }
 }
 
