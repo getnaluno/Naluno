@@ -1520,6 +1520,32 @@ body:has(#sparkPage.active) .navbar{ display:none !important; }
 .spark-lg-row span{ color:var(--mint); text-align:right; }
 /* Community / Circle members sheet — opened only when the Community cell in
    the Impact dashboard is tapped (see openCircleMembers in circle.js). */
+/* Wireline document bubble — a document is not media, so it gets a real
+   file row (icon, name, size, Open) rather than being forced into an
+   image/video frame. */
+.doc-bubble{ padding:0 !important; background:transparent !important; border:none !important; }
+.doc-frame{
+  display:flex; align-items:center; gap:10px; cursor:pointer;
+  background:var(--surface-2); border:1px solid var(--line); border-radius:14px;
+  padding:10px 12px; min-width:190px; max-width:260px;
+}
+.doc-frame:active{ border-color:var(--mint); }
+.doc-icon{
+  width:34px; height:34px; border-radius:10px; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+  background:rgba(124,255,178,.12); color:var(--mint);
+}
+.doc-meta{ flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.doc-name{
+  font-size:13px; color:var(--text); font-weight:600;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.doc-sub{ font-family:var(--font-mono); font-size:10px; color:var(--text-dim); }
+.doc-pending{ font-family:var(--font-mono); font-size:9.5px; color:var(--text-dim); }
+.doc-get{
+  font-family:var(--font-mono); font-size:10.5px; color:var(--mint);
+  border:1px solid rgba(124,255,178,.4); border-radius:999px; padding:4px 10px; flex-shrink:0;
+}
 .circle-members-sheet{
   display:none; position:fixed; inset:0; z-index:600;
   background:rgba(5,6,10,.82); align-items:flex-end; justify-content:center;
