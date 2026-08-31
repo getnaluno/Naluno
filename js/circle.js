@@ -42,6 +42,17 @@
     }, { merge: true });
     joinedCreators[creatorUid] = true;
     try{ await bumpTogaMonth(creatorUid, { circleMonthDelta: 1 }); }catch(_){}
+    // Community Economy (spec §5) — action reported, value decided server-side.
+    try{
+      if(typeof nalunoTrack === 'function'){
+        nalunoTrack('CREATOR_FOLLOW', {
+          broadcast_id: broadcastId || '',
+          target_type: 'creator',
+          target_id: creatorUid,
+          creator_uid: creatorUid,
+        });
+      }
+    }catch(_){}
     if(broadcastId){
       try{
         await fbDb.collection('broadcasts').doc(broadcastId).set({
@@ -185,6 +196,19 @@
           // between them, just neither one reflecting the view that had
           // only just been kicked off. Awaiting it first means the repaint
           // reads the real, post-increment numbers.
+          // Community Economy (spec §5): reuse the SAME already-verified
+          // 4-seconds-of-real-playback threshold rather than inventing a
+          // second definition of "a view" that could disagree with the one
+          // the dashboard shows. Reported as an action only.
+          try{
+            if(typeof nalunoTrack === 'function'){
+              nalunoTrack('WATCH_COMPLETION', {
+                broadcast_id: broadcastId,
+                target_type: 'broadcast',
+                creator_uid: creatorUid || '',
+              });
+            }
+          }catch(_){}
           recordBroadcastView(broadcastId, creatorUid).then(function(){
             try{ if(typeof paintBspaceViews === 'function') paintBspaceViews(window.activeBroadcastMeta || { creatorUid: creatorUid, views: 0 }); }catch(_){}
           }).catch(function(){});

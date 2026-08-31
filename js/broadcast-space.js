@@ -818,6 +818,29 @@ async function bspacePost(col, payload){
       if(talk && creator && currentUser && creator !== currentUser.uid && typeof bumpTogaMonth === 'function'){
         bumpTogaMonth(creator, { engageMonthDelta: 1, featuredBroadcastId: activeBroadcastId });
       }
+      // Community Economy (spec §5): report the ACTION only. The Worker
+      // decides whether it is meaningful contribution and what it is worth —
+      // nothing here computes or sends a value. Fire-and-forget by design:
+      // the post above has already succeeded and must not be affected by
+      // anything the economy service does or fails to do (spec §48).
+      if(talk && typeof nalunoTrack === 'function'){
+        const isReply = !!(payload && payload.parent_id);
+        nalunoTrack(isReply ? 'COMMENT_REPLY' : 'BROADCAST_COMMENT', {
+          broadcast_id: activeBroadcastId,
+          target_type: 'conversation',
+          creator_uid: creator || '',
+          parent_event_id: (payload && payload.parent_id) || null,
+          text: (payload && payload.text) || '',
+        });
+      }
+      if(col === 'questions' && typeof nalunoTrack === 'function'){
+        nalunoTrack('BROADCAST_COMMENT', {
+          broadcast_id: activeBroadcastId,
+          target_type: 'question',
+          creator_uid: creator || '',
+          text: (payload && payload.text) || '',
+        });
+      }
     }catch(_){}
   }catch(e){
     console.warn('[bspace] post failed', e);

@@ -275,6 +275,98 @@ service cloud.firestore {
       );
     }
 
+    /* ============================================================
+       COMMUNITY ECONOMY (spec §3, §45, §52, §62)
+
+       These collections are written ONLY by the naluno-economy Worker, using
+       a service account. A service account bypasses these rules entirely, so
+       denying all client writes here costs the backend nothing and is what
+       actually enforces "the frontend can never control economic values".
+
+       This is the difference between a system that SAYS it is
+       server-authoritative and one that IS. A fully compromised client — one
+       that has been rewritten to POST whatever it likes — still cannot mint
+       a contribution point, raise its own trust tier, or alter a balance.
+       The most it can do is ask the Worker for something, and the Worker
+       decides.
+
+       Reads are allowed where the data is legitimately the user's own or is
+       already public (spec §46: never expose another user's financial detail
+       or any fraud signal).
+       ============================================================ */
+
+    // Immutable engagement events. Readable by their actor for traceability
+    // (spec §6: "why did this user receive these points?"), never writable.
+    match /engagementEvents/{eventId} {
+      allow read: if isSignedIn() && resource.data.actor_user_id == request.auth.uid;
+      allow write: if false;
+    }
+
+    // The contribution ledger IS the source of truth (spec §11). A user can
+    // audit their own rows; nobody can write one from a client.
+    match /contributionLedger/{ledgerId} {
+      allow read: if isSignedIn() && resource.data.user_id == request.auth.uid;
+      allow write: if false;
+    }
+
+    // Cached rollup — rebuildable from the ledger, so a client read is
+    // convenience only and still never authoritative.
+    match /contributionProfiles/{uid} {
+      allow read: if isSignedIn() && isOwner(uid);
+      allow write: if false;
+    }
+
+    // Trust profiles hold fraud signals. Spec §13/§46 is explicit that the
+    // formula and its inputs must not be exposed — so clients cannot read
+    // these AT ALL. The coarse tier reaches the user only via the Worker's
+    // /v1/me response, which returns a label and nothing else.
+    match /trustProfiles/{uid} {
+      allow read, write: if false;
+    }
+
+    // Community Value is a public, analytical, NON-monetary metric (§15/§16).
+    match /communityValue/{broadcastId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // Feature flags and economic rules are readable so the UI can hide
+    // unfinished features, but only an admin (via the Worker) may change them.
+    match /economyConfig/{docId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    /* Money-adjacent ledgers. Kept SEPARATE from each other by design
+       (spec §24, §25, §52 — never one merged wallet). Defined now so the
+       shape is fixed and auditable; all of it stays behind feature flags
+       with no real money until payment/KYC/AML is settled (spec §28). */
+    match /creatorSupport/{txId} {
+      allow read: if isSignedIn() && (
+        resource.data.supporter_user_id == request.auth.uid ||
+        resource.data.creator_user_id == request.auth.uid
+      );
+      allow write: if false;
+    }
+    match /creatorEarnings/{entryId} {
+      allow read: if isSignedIn() && resource.data.creator_user_id == request.auth.uid;
+      allow write: if false;
+    }
+    match /communityRewards/{rewardId} {
+      allow read: if isSignedIn() && resource.data.user_id == request.auth.uid;
+      allow write: if false;
+    }
+    match /rewardPools/{periodId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // Admin audit log (spec §33) — no silent financial modifications, and no
+    // client visibility into moderation/fraud decisions.
+    match /adminAudit/{entryId} {
+      allow read, write: if false;
+    }
+
     match /users/{uid}/circle/{memberUid} {
       allow read: if isSignedIn();
       allow write: if isSignedIn() && (isOwner(uid) || memberUid == request.auth.uid);
