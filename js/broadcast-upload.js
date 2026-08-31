@@ -39,21 +39,25 @@ async function bcastAuthHeader(force){
   return { 'Authorization': 'Bearer ' + token };
 }
 
-async function uploadBroadcastFile(blob, onProgress){
+async function uploadBroadcastFile(blob, onProgress, contentTypeOverride){
   try{ if(typeof nalunoKeepAliveStart === 'function') await nalunoKeepAliveStart('broadcast'); }catch(_){}
   try{
-    return await uploadBroadcastFileInner(blob, onProgress);
+    return await uploadBroadcastFileInner(blob, onProgress, contentTypeOverride);
   }finally{
     try{ if(typeof nalunoKeepAliveStop === 'function') nalunoKeepAliveStop(); }catch(_){}
   }
 }
-async function uploadBroadcastFileInner(blob, onProgress){
+async function uploadBroadcastFileInner(blob, onProgress, contentTypeOverride){
   if(!(blob instanceof Blob) && !(blob instanceof File)) throw new Error('Invalid media');
   const size = blob.size || 0;
-  if(size < 1) throw new Error('Empty video');
-  const contentType = bcastGuessType(blob);
+  if(size < 1) throw new Error('Empty file');
+  // contentTypeOverride lets non-video files (Wireline photos and documents)
+  // use this same proven upload path without bcastGuessType() forcing them
+  // to video/mp4 — it is video-only by design and always falls back to
+  // 'video/mp4', which is correct for Broadcast media and wrong for a photo.
+  const contentType = contentTypeOverride || bcastGuessType(blob);
   const endpoints = bcastUploadEndpoints();
-  if(!endpoints.length) throw new Error('Broadcast upload is not configured');
+  if(!endpoints.length) throw new Error('Upload is not configured');
   const base = endpoints[0];
   // Retry the SAME (correct-bucket) endpoint on transient failure — never a
   // different endpoint, and never one that could land in the wrong bucket.

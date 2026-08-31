@@ -978,11 +978,45 @@ async function nalunoUploadFileToR2(file, contentType, maxBytes, label){
 }
 
 async function uploadPhotoToR2(file){
-  return nalunoUploadFileToR2(file, nalunoPhotoContentType(file), PHOTO_MAX_BYTES, 'Photo');
+  const ct = nalunoPhotoContentType(file);
+  /* ROUTING FIX — this is why photos and documents "still don't go up" while
+     video works: they were never hitting the same service. Wireline VIDEO
+     goes to naluno-broadcast-upload via uploadBroadcastFile(); photos and
+     documents were POSTing to naluno-signal-upload instead.
+
+     Moving them onto the Broadcast worker, for two independently sufficient
+     reasons — both confirmed against that worker's actual source:
+
+     1. PERMANENCE. The Signal bucket has a 25-hour object-lifecycle delete
+        rule. A photo or PDF sent in a conversation is not ephemeral; even a
+        fully successful upload would have silently vanished from the thread
+        within a day. The Broadcast bucket has no expiry rule.
+
+     2. SAFETY ON READ. The Broadcast worker's serveObject() returns the
+        STORED httpMetadata.contentType directly. It has no equivalent of the
+        Signal worker's sniffVideoContentType(), which turns an unrecognised
+        '.bin' key into video/mp4 — the exact trap that made photos
+        unrenderable. So a photo or PDF there is served as itself regardless
+        of how its key is named.
+
+     Falls back to the original signal-worker POST if the Broadcast path is
+     genuinely unavailable, so this can never be worse than before. */
+  if(typeof uploadBroadcastFile === 'function'){
+    try{ return await uploadBroadcastFile(file, null, ct); }
+    catch(e){ console.warn('[upload] photo via Broadcast path failed, falling back to Signal worker', e && e.message); }
+  }
+  return nalunoUploadFileToR2(file, ct, PHOTO_MAX_BYTES, 'Photo');
 }
 
 async function uploadDocumentToR2(file){
-  return nalunoUploadFileToR2(file, nalunoDocumentContentType(file), DOCUMENT_MAX_BYTES, 'Document');
+  const ct = nalunoDocumentContentType(file);
+  // Same routing, same two reasons as uploadPhotoToR2 above — a document in a
+  // conversation must outlive 25 hours, and must be served as its real type.
+  if(typeof uploadBroadcastFile === 'function'){
+    try{ return await uploadBroadcastFile(file, null, ct); }
+    catch(e){ console.warn('[upload] document via Broadcast path failed, falling back to Signal worker', e && e.message); }
+  }
+  return nalunoUploadFileToR2(file, ct, DOCUMENT_MAX_BYTES, 'Document');
 }
 
 async function uploadVideoToR2(blobOrDataUrl){
