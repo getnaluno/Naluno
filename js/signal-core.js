@@ -1208,8 +1208,45 @@ async function saveSignalSegment(segment){
     }
     const ref = await fbDb.collection('users').doc(currentUser.uid).collection('signal').add(clean);
     return ref.id;
-  }catch(e){ toast('Couldn\u2019t post — try again'); return null; }
+  }catch(e){
+    /* This used to swallow the real error entirely — it toasted a generic
+       "Couldn't post" and discarded `e`. That single line is why this bug was
+       undiagnosable: the actual Firestore reason (permission-denied,
+       invalid-argument, document too large, an undefined field value) never
+       reached the console or the person. Worse, the publish queue then
+       toasted "Posted Signal" straight afterwards, overwriting the failure on
+       the shared toast element — so a failed write reported success.
+
+       Now the real reason is logged, surfaced, and recorded so it can be read
+       back later, and the failure is signalled to the caller instead of
+       returning a bare null that looks the same as "not signed in". */
+    const code = (e && e.code) ? e.code : '';
+    const msg = (e && e.message) ? e.message : String(e);
+    console.error('[signal] saveSignalSegment FAILED', code, msg, e);
+    try{
+      const size = JSON.stringify(clean).length;
+      console.error('[signal] failed document approx size:', size, 'bytes; fields:', Object.keys(clean).join(', '));
+      nalunoLastSignalError = { code, msg, size, at: Date.now() };
+      try{ localStorage.setItem('nalunoLastSignalError', JSON.stringify(nalunoLastSignalError)); }catch(_){}
+    }catch(_){}
+    // Say something specific where we can, rather than a generic failure.
+    if(code === 'permission-denied'){
+      toast('Signal blocked by server rules — not saved');
+    } else if(/longer than|exceeds|too large|invalid-argument/i.test(msg)){
+      toast('Signal too large to save — not saved');
+    } else {
+      toast('Couldn\u2019t save Signal: ' + (code || msg).slice(0, 60));
+    }
+    return null;
+  }
 }
+/* Readable from the console as `nalunoLastSignalError` if a post fails. */
+let nalunoLastSignalError = null;
+try{
+  const prev = localStorage.getItem('nalunoLastSignalError');
+  if(prev) nalunoLastSignalError = JSON.parse(prev);
+}catch(_){}
+try{ window.nalunoLastSignalError = function(){ return nalunoLastSignalError; }; }catch(_){}
 async function deleteSignalSegment(segmentId){
   if(!currentUser || !fbDb) return;
   try{ await fbDb.collection('users').doc(currentUser.uid).collection('signal').doc(String(segmentId)).delete(); }

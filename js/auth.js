@@ -747,6 +747,42 @@ function bindAuthListeners(){
   }, 12000);
 })();
 
+/* LAST-RESORT GATE WATCHDOG.
+
+   The entry gate is lifted by nalunoEnterApp() / nalunoShowSignIn(), and each
+   normal path does call one of them. But every one of those paths depends on
+   something else succeeding first — the Firebase SDK loading, auth resolving,
+   or a retry loop reaching its limit. If ANY of that stalls in a way we have
+   not anticipated, the gate simply stays up and the person is left looking at
+   a black screen after the logo with no way forward and nothing to report.
+
+   A black screen with no recovery is the worst failure mode this app has: it
+   is indistinguishable from the app being broken, and it gives the person
+   nothing to act on. This guarantees the gate always lifts, whatever else
+   went wrong, and says plainly what happened instead of failing silently.
+   It is deliberately a long timeout so it never pre-empts a slow-but-working
+   start on a poor connection. */
+(function nalunoGateWatchdog(){
+  setTimeout(function(){
+    try{
+      const gate = document.getElementById('authGate');
+      if(!gate || !gate.classList.contains('active')) return;   // already lifted
+      const app = document.getElementById('app');
+      if(app) app.style.visibility = '';
+      document.body.classList.remove('naluno-gated');
+      try{ if(typeof nalunoHideNativeSplash === 'function') nalunoHideNativeSplash(); }catch(_){}
+      const loading = document.getElementById('authGateLoading');
+      if(loading) loading.style.display = 'none';
+      const form = document.getElementById('authGateForm');
+      if(form) form.style.display = '';
+      if(typeof authStatus === 'function'){
+        authStatus('Sign-in did not start. Check your connection, or reload.', true);
+      }
+      console.warn('[naluno] gate watchdog fired — auth never resolved');
+    }catch(_){}
+  }, 12000);
+})();
+
 if(fbAuth){
   bindAuthListeners();
 } else {

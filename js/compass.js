@@ -970,6 +970,7 @@ async function postSegmentsNow(newSegments){
   }
   if(currentUser && fbDb){
     let failed = 0;
+    let saveFailed = 0;
     let lastErrorMessage = '';
     let videoIndex = 0;
     const totalVideos = newSegments.filter(s=>s.type==='video').length;
@@ -1030,19 +1031,52 @@ async function postSegmentsNow(newSegments){
           continue;
         }
       }
+      /* Photos: upload the bytes and store a URL, exactly as the video branch
+         above already does. A photo segment carries the whole image as a
+         base64 `dataUrl`; base64 inflates by ~4/3, so any photo over roughly
+         765 KB produces a document past Firestore's hard 1 MiB limit and the
+         write is rejected. Videos never hit this because they strip
+         dataUrl/videoBlob/sourceFile before saving. */
+      if(segToSave && segToSave.type === 'photo' && segToSave.dataUrl){
+        try{
+          if(typeof uploadPhotoToR2 === 'function'){
+            const src = (seg.sourceFile instanceof Blob || seg.sourceFile instanceof File)
+              ? seg.sourceFile
+              : await (await fetch(segToSave.dataUrl)).blob();
+            const photoUrl = await uploadPhotoToR2(src);
+            const { dataUrl, videoBlob, sourceFile, ...rest } = segToSave;
+            segToSave = { ...rest, photoUrl };
+          }
+        }catch(upErr){
+          console.warn('[signal] photo upload failed, saving inline instead', upErr && upErr.message);
+          // Falls through with the inline dataUrl. Small photos still save;
+          // large ones will now fail loudly rather than silently.
+        }
+      }
       const id = await saveSignalSegment(segToSave);
       if(id) mySignal.push({ id, ...segToSave });
+      else saveFailed++;
     }
     if(newSegments.length>failed) bumpTodayActivity();
     if(failed>0) toast(failed===1 ? `Video upload failed: ${lastErrorMessage}` : `${failed} videos failed to upload: ${lastErrorMessage}`);
+    /* If the media uploaded fine but the Firestore write did not, the post has
+       NOT actually been saved — it exists only in memory and disappears on the
+       next load. Previously nothing here noticed, postSegmentsNow returned
+       normally, and the publish queue then reported success. Throwing makes
+       the queue report the truth instead. */
+    if(saveFailed > 0 && failed === 0){
+      throw new Error(saveFailed === 1
+        ? 'Signal uploaded but could not be saved'
+        : saveFailed + ' Signals uploaded but could not be saved');
+    }
   } else {
-    /* FIX (photo/text Signals vanished from the strip): this branch used to
-       push the segments into the local array and localStorage ONLY — it never
-       called saveSignalSegment(), so a photo-only or text-only Signal was
-       never written to Firestore at all. It looked posted, because the strip
-       renders from the in-memory array. Then loadMySignal() runs on the next
-       reload, does `mySignal = snap.docs.map(...)` — an OVERWRITE, not a
-       merge — and the signal was gone.
+    /* NOT SIGNED IN / no Firestore — local-only path.
+       (I previously mis-read this `else` as "the non-video branch" and put a
+       Firestore save here. It is actually the branch for when there is no
+       currentUser or no fbDb, so a save can never succeed here by definition.
+       The real per-segment save happens in the signed-in loop above. The
+       calls below are harmless no-ops but the local push and localStorage
+       write are what genuinely matter on this path.)
 
        Video-only posts were unaffected because they take the branch above,
        which does persist. A mixed photo+video post also survived, since
