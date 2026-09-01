@@ -184,7 +184,10 @@ function renderBroadcastTab(){
             ? '<img src="'+src+'" class="mysignal-thumb" style="filter:'+(latest.filterCss||'')+'" />'
             : '<div class="avatar" style="width:100%;height:100%;background:#1F2333;font-size:11px;color:#7CFFB2;">▶</div>';
         } else {
-          thumb = '<img src="'+(latest.dataUrl||'')+'" class="mysignal-thumb" style="filter:'+(latest.filterCss||'')+'" />';
+          // photoUrl first: photos are uploaded to R2 now rather than being
+          // embedded as base64, so dataUrl is only present on a just-posted
+          // local row that has not been re-read from Firestore yet.
+          thumb = '<img src="'+(latest.thumbDataUrl || latest.photoUrl || latest.dataUrl || '')+'" class="mysignal-thumb" style="filter:'+(latest.filterCss||'')+'" />';
         }
       }catch(_){ thumb = ''; }
       const seen = (typeof mySignalSeen !== 'undefined' && mySignalSeen) ? ' seen' : '';
@@ -220,8 +223,8 @@ function renderBroadcastTab(){
           thumbInner = src
             ? '<img src="'+src+'" class="mysignal-thumb" style="filter:'+(latest.filterCss||'')+'" alt="" />'
             : '<div class="avatar" style="width:100%;height:100%;background:#1F2333;font-size:11px;color:#7CFFB2;">▶</div>';
-        } else if(latest && (latest.type === 'photo' || latest.dataUrl)){
-          thumbInner = '<img src="'+(latest.thumbDataUrl || latest.dataUrl || '')+'" class="mysignal-thumb" style="filter:'+(latest.filterCss||'')+'" alt="" />';
+        } else if(latest && (latest.type === 'photo' || latest.photoUrl || latest.dataUrl)){
+          thumbInner = '<img src="'+(latest.thumbDataUrl || latest.photoUrl || latest.dataUrl || '')+'" class="mysignal-thumb" style="filter:'+(latest.filterCss||'')+'" alt="" />';
         } else {
           thumbInner = '<div class="avatar" style="width:100%;height:100%;background:'+(c.color||'#7CFFB2')+';color:#0D0F17;font-weight:700;">'+(c.initials||'?')+'</div>';
         }
@@ -866,7 +869,9 @@ function clearSegTimer(){
 function signalPlaySrc(seg){
   if(!seg) return '';
   if(seg.localPlayUrl && String(seg.localPlayUrl).indexOf('blob:') === 0) return seg.localPlayUrl;
-  const raw = seg.videoUrl || seg.mediaUrl || seg.dataUrl || '';
+  // photoUrl included: a photo Signal read back from Firestore now carries a
+  // URL rather than an embedded base64 image.
+  const raw = seg.videoUrl || seg.mediaUrl || seg.photoUrl || seg.dataUrl || '';
   if(!raw) return '';
   if(String(raw).indexOf('blob:') === 0 || String(raw).indexOf('data:') === 0) return raw;
   const remote = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(raw) : raw;

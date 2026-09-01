@@ -58,7 +58,7 @@ async function ensureBroadcastFirestore(meta){
       description: meta.description || (seg.caption || seg.text || ''),
       tags: meta.tags || [],
       mediaType: seg.type || 'photo',
-      mediaUrl: seg.videoUrl || seg.dataUrl || null,
+      mediaUrl: seg.videoUrl || seg.photoUrl || seg.dataUrl || null,
       thumb: seg.thumbDataUrl || null,
       filterCss: seg.filterCss || '',
       bg: seg.bg || null,
@@ -96,7 +96,7 @@ function renderBspaceMedia(seg){
     if(typeof legacyBroadcastPlayUrl === 'function'){
       rawSrc = legacyBroadcastPlayUrl(Object.assign({}, seg, { chapters: chapters, mediaUrl: seg.mediaUrl || seg.videoUrl }));
     }
-    if(!rawSrc) rawSrc = seg.videoUrl || seg.mediaUrl || seg.dataUrl || (chapters && chapters[0] && chapters[0].mediaUrl) || '';
+    if(!rawSrc) rawSrc = seg.videoUrl || seg.mediaUrl || seg.photoUrl || seg.dataUrl || (chapters && chapters[0] && chapters[0].mediaUrl) || '';
     const playUrls = (typeof nalunoPlayCandidates === 'function') ? nalunoPlayCandidates(rawSrc, { bucket: 'broadcast' }) : [rawSrc];
     rawSrc = playUrls[0] || rawSrc;
     const mediaId = (typeof nalunoMediaIdFromUrl === 'function') ? nalunoMediaIdFromUrl(rawSrc) : '';
@@ -270,7 +270,12 @@ function renderBspaceMedia(seg){
     return;
   }
   // photo
-  host.innerHTML = `<img src="${bspaceEscape(seg.dataUrl || '')}" alt="" style="filter:${seg.filterCss || ''}" />`;
+  // photoUrl first — photo Signals are uploaded to R2 now, so dataUrl is
+  // only present on a freshly-posted local row.
+  const photoSrc = seg.photoUrl
+    ? ((typeof resolveMediaUrl === 'function') ? resolveMediaUrl(seg.photoUrl) : seg.photoUrl)
+    : (seg.dataUrl || '');
+  host.innerHTML = `<img src="${bspaceEscape(photoSrc)}" alt="" style="filter:${seg.filterCss || ''}" />`;
 }
 
 function setBspaceTab(name){

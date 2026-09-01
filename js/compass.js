@@ -1058,7 +1058,42 @@ async function postSegmentsNow(newSegments){
       const localId = now + Math.random() + i;
       mySignal.push({ id: localId, ...seg });
       try{
-        const savedId = await saveSignalSegment(seg);
+        /* SECOND FIX — the persistence fix alone was not enough.
+           A photo segment carries the whole image as a base64 `dataUrl`, and
+           nothing stripped it before writing, so the ENTIRE photo was being
+           embedded in the Firestore document. Base64 inflates bytes by ~4/3,
+           so any photo over roughly 765 KB produces a document larger than
+           Firestore's hard 1 MiB limit and the write is REJECTED. Typical
+           phone JPEGs sit right on that boundary, which is why some photo
+           Signals stuck and others silently vanished.
+           saveSignalSegment() catches the rejection and returns null, so the
+           failure was invisible — the Signal showed until the next load, then
+           disappeared, exactly as reported even after the earlier fix.
+
+           Videos never hit this because their branch uploads to R2 and strips
+           dataUrl/videoBlob/sourceFile before saving. Photos now do the same:
+           upload the bytes, store a URL, keep the document small. */
+        let toSave = seg;
+        if(seg.type === 'photo' && seg.dataUrl && typeof uploadPhotoToR2 === 'function'){
+          try{
+            const file = (seg.sourceFile instanceof Blob || seg.sourceFile instanceof File)
+              ? seg.sourceFile
+              : await (await fetch(seg.dataUrl)).blob();
+            const photoUrl = await uploadPhotoToR2(file);
+            const { dataUrl, videoBlob, sourceFile, ...rest } = seg;
+            toSave = { ...rest, photoUrl, thumbDataUrl: seg.thumbDataUrl || null };
+            // Keep the local row playable from the URL now that the heavy
+            // dataUrl is gone from what we persist.
+            const localRow = mySignal.find(function(x){ return x.id === localId; });
+            if(localRow) localRow.photoUrl = photoUrl;
+          }catch(upErr){
+            console.warn('[signal] photo upload failed, falling back to inline', upErr && upErr.message);
+            // Fall through with the original segment. If it is small enough
+            // Firestore still accepts it; if not, the catch below keeps it
+            // local rather than losing it.
+          }
+        }
+        const savedId = await saveSignalSegment(toSave);
         if(savedId){
           // Re-key to the real Firestore id so a later delete targets the
           // actual document rather than a local-only placeholder.
