@@ -367,6 +367,49 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    /* ============================================================
+       SPARK-LG SHARED LUGANDA BOOK
+
+       Found during an audit: this collection had NO rule at all, so every
+       cloud write was denied and the Luganda book has only ever existed
+       locally, per device. The app has been honestly saying so ("Cloud book
+       needs rules published") — that message was correct, it just never got
+       resolved. Teaching a word on one phone never reached anyone else and
+       did not survive a reinstall.
+
+       Honest limitation: SPARK_LG_GATE is a client-side passphrase, so rules
+       cannot verify it — anything shipped to a browser is readable by the
+       person holding it. These rules therefore enforce what they actually
+       can: you must be signed in, an entry must be stamped with your own
+       uid, and you may only remove your own entries. The gate remains a
+       deliberate speed bump in the UI, not a security boundary, and calling
+       it one would be misleading.
+       ============================================================ */
+    match /lexicon/{lang} {
+      allow read: if isSignedIn();
+      allow write: if false;   // the language doc itself is fixed
+      match /entries/{entryId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.by == request.auth.uid;
+        // Entries are append-only. Correcting one means adding a newer entry,
+        // which keeps the teaching history intact rather than letting it be
+        // silently rewritten.
+        allow update: if false;
+        allow delete: if isSignedIn() && resource.data.by == request.auth.uid;
+      }
+    }
+
+    /* Internal telemetry (metrics.js). Also had no rule, so every sampled
+       event was silently dropped — the .catch() there swallowed the denial,
+       which is why nothing ever surfaced. Write-only by design: a client has
+       no reason to read the telemetry stream back, and it must not become a
+       way to enumerate other people's activity. */
+    match /metrics/{entryId} {
+      allow read: if false;
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
     match /users/{uid}/circle/{memberUid} {
       allow read: if isSignedIn();
       allow write: if isSignedIn() && (isOwner(uid) || memberUid == request.auth.uid);

@@ -1036,8 +1036,37 @@ async function postSegmentsNow(newSegments){
     if(newSegments.length>failed) bumpTodayActivity();
     if(failed>0) toast(failed===1 ? `Video upload failed: ${lastErrorMessage}` : `${failed} videos failed to upload: ${lastErrorMessage}`);
   } else {
+    /* FIX (photo/text Signals vanished from the strip): this branch used to
+       push the segments into the local array and localStorage ONLY — it never
+       called saveSignalSegment(), so a photo-only or text-only Signal was
+       never written to Firestore at all. It looked posted, because the strip
+       renders from the in-memory array. Then loadMySignal() runs on the next
+       reload, does `mySignal = snap.docs.map(...)` — an OVERWRITE, not a
+       merge — and the signal was gone.
+
+       Video-only posts were unaffected because they take the branch above,
+       which does persist. A mixed photo+video post also survived, since
+       hasVideo is true for the whole post and sends every segment through
+       that same path. That is exactly why this looked intermittent rather
+       than broken: it depended entirely on whether the post contained video.
+
+       Now persisted the same way video is, with the local push still happening
+       first so the strip stays instant and an offline post is not lost. */
     const now = Date.now();
-    newSegments.forEach((seg,i)=> mySignal.push({ id: now+Math.random()+i, ...seg }));
+    for(let i = 0; i < newSegments.length; i++){
+      const seg = newSegments[i];
+      const localId = now + Math.random() + i;
+      mySignal.push({ id: localId, ...seg });
+      try{
+        const savedId = await saveSignalSegment(seg);
+        if(savedId){
+          // Re-key to the real Firestore id so a later delete targets the
+          // actual document rather than a local-only placeholder.
+          const row = mySignal.find(function(x){ return x.id === localId; });
+          if(row) row.id = savedId;
+        }
+      }catch(_){ /* stays local; saveSignalToStorage below keeps it for retry */ }
+    }
     saveSignalToStorage();
   }
   if(hasVideo){
