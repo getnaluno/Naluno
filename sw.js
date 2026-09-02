@@ -24,7 +24,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v130';
+const CACHE_NAME = 'naluno-shell-v131';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './splash-empty.png', './icon-maskable-512.png', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',
