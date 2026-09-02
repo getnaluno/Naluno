@@ -316,11 +316,14 @@ if($('newSignalBtn')) $('newSignalBtn').onclick = ()=> openComposer('signal');
 // Signal ring (empty) also opens signal composer via renderBroadcastTab
 
 function resetComposer(){
-  (composerItems || []).forEach(function(it){
-    if(it && it.dataUrl && String(it.dataUrl).indexOf('blob:') === 0){
-      try{ URL.revokeObjectURL(it.dataUrl); }catch(_){}
-    }
-  });
+  const dying = (composerItems || []).slice();
+  setTimeout(function(){
+    dying.forEach(function(it){
+      if(it && it.dataUrl && String(it.dataUrl).indexOf('blob:') === 0){
+        try{ URL.revokeObjectURL(it.dataUrl); }catch(_){}
+      }
+    });
+  }, 180000);
   composerType = 'photo'; composerItems = []; activeComposerItemIndex = -1; composerTransition = 'fade';
   document.querySelectorAll('.type-chip').forEach(c=>c.classList.toggle('active', c.dataset.type==='photo'));
   $('mediaFileInput').accept = (typeof IMAGE_PICK_ACCEPT === 'string') ? IMAGE_PICK_ACCEPT : 'image/*';
@@ -370,34 +373,46 @@ document.querySelectorAll('.type-chip').forEach(chip=>{
 });
 
 function nalunoOpenMediaPicker(){
-  // Fresh <input> each time — reusing a hidden input after Google Photos "Prepare"
-  // often yields zero files on Samsung. video/* only (no extensions) avoids transcode.
-  if(composerType === 'video'){
-    const inp = document.createElement('input');
-    inp.type = 'file';
-    inp.accept = 'video/*';
-    inp.style.cssText = 'position:fixed;left:-9999px;width:1px;height:1px;opacity:0;';
+  // Samsung WebView ignores display:none / off-screen inputs after Google Photos
+  // "Prepare". Overlay a real input on the drop zone so the tap IS the picker.
+  const host = $('uploadDrop') || document.body;
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = composerType === 'video'
+    ? 'video/*'
+    : ((typeof IMAGE_PICK_ACCEPT === 'string') ? IMAGE_PICK_ACCEPT : 'image/*');
+  if(composerType !== 'video') inp.multiple = true;
+  inp.setAttribute('aria-hidden', 'true');
+  inp.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;opacity:0.01;z-index:6;cursor:pointer;font-size:16px;';
+  const hostPos = host && host.style ? host.style.position : '';
+  if(host && host !== document.body){
+    if(getComputedStyle(host).position === 'static') host.style.position = 'relative';
+    host.appendChild(inp);
+  } else {
+    inp.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%;opacity:0.01;z-index:400;';
     document.body.appendChild(inp);
-    inp.addEventListener('change', function(){
-      const files = inp.files;
-      try{ document.body.removeChild(inp); }catch(_){}
-      if(!files || !files.length){
-        if(typeof toast === 'function') toast('No video came through — try Files app or a clip saved on this phone');
-        return;
-      }
-      if($('bgProcessBanner')){
-        $('bgProcessBanner').style.display = 'flex';
-        if(typeof setBgProgress === 'function') setBgProgress(0.05, 'Opening in Naluno…');
-      }
-      Promise.resolve(handleFiles(files)).finally(function(){
-        if($('bgProcessBanner') && !postInProgress) $('bgProcessBanner').style.display = 'none';
-      });
-    }, { once: true });
-    inp.click();
-    return;
   }
-  const el = $('mediaFileInput');
-  if(el){ el.accept = (typeof IMAGE_PICK_ACCEPT === 'string') ? IMAGE_PICK_ACCEPT : 'image/*'; el.click(); }
+  const cleanup = function(){
+    try{ inp.remove(); }catch(_){}
+    try{ if(host && host !== document.body && !hostPos) host.style.position = hostPos; }catch(_){}
+  };
+  inp.addEventListener('change', function(){
+    const files = inp.files;
+    cleanup();
+    if(!files || !files.length){
+      if(typeof toast === 'function') toast('No file came through — try the Files app');
+      return;
+    }
+    if($('bgProcessBanner')){
+      $('bgProcessBanner').style.display = 'flex';
+      if(typeof setBgProgress === 'function') setBgProgress(0.05, 'Opening in Naluno…');
+    }
+    Promise.resolve(handleFiles(files)).finally(function(){
+      if($('bgProcessBanner') && !postInProgress) $('bgProcessBanner').style.display = 'none';
+    });
+  }, { once: true });
+  setTimeout(cleanup, 120000);
+  try{ inp.click(); }catch(_){}
 }
 $('uploadDrop').onclick = ()=> nalunoOpenMediaPicker();
 $('mediaFileInput').onchange = (e)=>{
@@ -1167,7 +1182,13 @@ $('postBroadcastBtn').onclick = async ()=>{
       return;
     }
     const snapType = composerType;
-    const snapItems = composerItems.slice();
+    const snapItems = composerItems.map(function(item){
+      const copy = Object.assign({}, item);
+      if(item.sourceFile) copy.sourceFile = item.sourceFile;
+      if(item.videoBlob) copy.videoBlob = item.videoBlob;
+      else if(item.sourceFile) copy.videoBlob = item.sourceFile;
+      return copy;
+    });
     const textVal = ($('textBroadcastInput') && $('textBroadcastInput').value.trim()) || '';
     const finalTitle = title || (snapType==='text' ? (textVal.slice(0,80) || 'Broadcast') : 'Broadcast');
     const desc = caption || (snapType==='text' ? textVal : '');

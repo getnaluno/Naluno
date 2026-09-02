@@ -31,7 +31,15 @@ async function nalunoKeepAliveStart(reason){
   try{ window.__nalunoUploadActive = nalunoKeepAliveDepth > 0; }catch(_){}
   try{
     if(navigator.wakeLock && navigator.wakeLock.request){
-      nalunoWakeLock = await navigator.wakeLock.request('screen');
+      // Samsung / Android WebView can leave wakeLock.request() pending forever
+      // (permission sheet never appears). That used to stall every Signal and
+      // Broadcast publish because drainPublishQueue awaited this.
+      const asked = navigator.wakeLock.request('screen');
+      const raced = await Promise.race([
+        asked,
+        new Promise(function(res){ setTimeout(function(){ res(null); }, 700); }),
+      ]);
+      if(raced) nalunoWakeLock = raced;
     }
   }catch(_){}
   try{

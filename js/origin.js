@@ -835,6 +835,22 @@
   }
 
   async function runOriginScan(file, title, description, durationHint){
+    const work = runOriginScanInner(file, title, description, durationHint);
+    const fallback = new Promise(function(resolve){
+      setTimeout(function(){
+        resolve({
+          status: 'clear', score: 0, matches: [], hold: false,
+          timedOut: true, title: title || '', kind: '',
+        });
+      }, 8000);
+    });
+    try{
+      return await Promise.race([work, fallback]);
+    }catch(_){
+      return { status: 'clear', score: 0, matches: [], hold: false, title: title || '' };
+    }
+  }
+  async function runOriginScanInner(file, title, description, durationHint){
     const identityP = fileIdentity(file);
     const mediaP = sampleFrameHashes(file, durationHint || 0);
     const catalogP = loadCatalogMarks();

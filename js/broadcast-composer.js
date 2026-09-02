@@ -519,7 +519,14 @@ function bcompWire(){
     };
   }
   if($('bcompClose')) $('bcompClose').onclick = bcompClose;
-  if($('bcompPickBtn')) $('bcompPickBtn').onclick = ()=> $('bcompFileInput') && $('bcompFileInput').click();
+  if($('bcompPickBtn')) $('bcompPickBtn').onclick = function(e){
+    if(e && e.target && e.target.id === 'bcompFileInput') return;
+    if(e){ e.preventDefault(); e.stopPropagation(); }
+    const inp = $('bcompFileInput');
+    if(!inp) return;
+    try{ inp.value = ''; }catch(_){}
+    inp.click();
+  };
   if($('bcompFileInput')){
     $('bcompFileInput').onchange = (e)=>{
       const f = e.target.files && e.target.files[0];

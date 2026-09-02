@@ -723,7 +723,7 @@ window.nalunoSetBcastView = nalunoSetBcastView;
     // being consumed by the For You / My Broadcasts view switch. The Signal
     // strip (.bcast-strip / #myBcastStrip) was never added, so every
     // horizontal drag across the Signals was stolen by the view switch.
-    if(el.closest('#bcastSearchRow, input, textarea, select, .strand-rail, .feed-orient-btn, .toga-list, #togaBoard, .bcast-strip, #myBcastStrip')) return true;
+    if(el.closest('#bcastSearchRow, input, textarea, select, button, .join-btn, .signal-tile-create, #newBroadcastBtn, #broadcastGoLiveBtn, #composer, #bcomposer, .strand-rail, .feed-orient-btn, .toga-list, #togaBoard, .bcast-strip, #myBcastStrip')) return true;
     return false;
   }
   function onDown(e){

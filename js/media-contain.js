@@ -159,6 +159,7 @@ function nalunoLiveOrCameraEl(el){
     if(el.id === 'bviewerActiveVideo') return false;
     if(el.closest && (
       el.closest('#callOverlay') ||
+      el.closest('#composer') ||
       el.closest('#bcomposer') ||
       el.closest('#camStage') ||
       el.closest('#adjustStage')

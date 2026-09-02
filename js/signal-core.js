@@ -950,6 +950,9 @@ async function nalunoUploadFileToR2(file, contentType, maxBytes, label){
     const idToken = await currentUser.getIdToken(!!forceRefresh);
     const res = await fetch(SIGNAL_UPLOAD_WORKER_URL, {
       method: 'POST',
+      mode: 'cors',
+      credentials: 'omit',
+      keepalive: true,
       headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': contentType },
       body: file,
     });
@@ -1048,6 +1051,9 @@ async function uploadVideoToR2(blobOrDataUrl){
     const idToken = await currentUser.getIdToken(!!forceRefresh);
     const res = await fetch(SIGNAL_UPLOAD_WORKER_URL, {
       method: 'POST',
+      mode: 'cors',
+      credentials: 'omit',
+      keepalive: true,
       headers: {
         'Authorization': 'Bearer ' + idToken,
         'Content-Type': contentType,
@@ -1111,6 +1117,7 @@ async function uploadSignalChunked(blob, contentType){
   let headers = await authH(false);
   const initRes = await fetch(base + '/b/init', {
     method: 'POST',
+    mode: 'cors', credentials: 'omit', keepalive: true,
     headers: Object.assign({ 'Content-Type': 'application/json' }, headers),
     body: JSON.stringify({ contentType: contentType || 'video/mp4', bytes: size }),
   });
@@ -1119,6 +1126,7 @@ async function uploadSignalChunked(blob, contentType){
     headers = await authH(true);
     const retry = await fetch(base + '/b/init', {
       method: 'POST',
+      mode: 'cors', credentials: 'omit', keepalive: true,
       headers: Object.assign({ 'Content-Type': 'application/json' }, headers),
       body: JSON.stringify({ contentType: contentType || 'video/mp4', bytes: size }),
     });
@@ -1150,6 +1158,7 @@ async function uploadSignalChunked(blob, contentType){
       try{
         partRes = await fetch(partUrl, {
           method: 'PUT',
+          mode: 'cors', credentials: 'omit', keepalive: true,
           headers: Object.assign({ 'Content-Type': 'application/octet-stream' }, headers),
           body: chunk,
         });
@@ -1157,6 +1166,7 @@ async function uploadSignalChunked(blob, contentType){
           headers = await authH(true);
           partRes = await fetch(partUrl, {
             method: 'PUT',
+            mode: 'cors', credentials: 'omit', keepalive: true,
             headers: Object.assign({ 'Content-Type': 'application/octet-stream' }, headers),
             body: chunk,
           });
@@ -1176,6 +1186,7 @@ async function uploadSignalChunked(blob, contentType){
   }
   const doneRes = await fetch(base + '/b/complete', {
     method: 'POST',
+    mode: 'cors', credentials: 'omit', keepalive: true,
     headers: Object.assign({ 'Content-Type': 'application/json' }, headers),
     body: JSON.stringify({ key, uploadId, parts, bytes: size }),
   });
@@ -1437,22 +1448,42 @@ function enqueuePublishJob(job){
 async function drainPublishQueue(){
   if(publishBusy) return;
   publishBusy = true;
-  try{ if(typeof nalunoKeepAliveStart === 'function') await nalunoKeepAliveStart('publish'); }catch(_){}
-  while(publishQueue.length){
-    const job = publishQueue.shift();
+  let watchdog = null;
+  try{
+    watchdog = setTimeout(function(){
+      publishBusy = false;
+      try{ if(typeof nalunoKeepAliveStop === 'function') nalunoKeepAliveStop(); }catch(_){}
+    }, 8 * 60 * 1000);
     try{
-      showPublishChip(job.label || 'Working…');
-      await job.run((msg)=>{ showPublishChip(msg || job.label || 'Working…'); });
-      if(typeof toast === 'function') toast(job.doneMsg || 'Published');
-    }catch(e){
-      console.error('[publish-queue]', e);
-      if(typeof notifyPublishResult === 'function') notifyPublishResult(false, (job && job.label) || '');
-      else if(typeof toast === 'function') toast((e && e.message) || 'Publish failed');
+      if(typeof nalunoKeepAliveStart === 'function'){
+        await Promise.race([
+          nalunoKeepAliveStart('publish'),
+          new Promise(function(r){ setTimeout(r, 900); }),
+        ]);
+      }
+    }catch(_){}
+    while(publishQueue.length){
+      const job = publishQueue.shift();
+      try{
+        showPublishChip(job.label || 'Working…');
+        const runP = job.run(function(msg){ showPublishChip(msg || job.label || 'Working…'); });
+        const timeoutP = new Promise(function(_, rej){
+          setTimeout(function(){ rej(new Error('Upload timed out — check your connection and try again')); }, 6 * 60 * 1000);
+        });
+        await Promise.race([runP, timeoutP]);
+        if(typeof toast === 'function') toast(job.doneMsg || 'Published');
+      }catch(e){
+        console.error('[publish-queue]', e);
+        if(typeof notifyPublishResult === 'function') notifyPublishResult(false, (job && job.label) || '');
+        else if(typeof toast === 'function') toast((e && e.message) || 'Publish failed');
+      }
     }
+  }finally{
+    if(watchdog) try{ clearTimeout(watchdog); }catch(_){}
+    publishBusy = false;
+    try{ if(typeof nalunoKeepAliveStop === 'function') nalunoKeepAliveStop(); }catch(_){}
+    hidePublishChip();
   }
-  publishBusy = false;
-  try{ if(typeof nalunoKeepAliveStop === 'function') nalunoKeepAliveStop(); }catch(_){}
-  hidePublishChip();
 }
 
 

@@ -79,6 +79,9 @@ async function uploadBroadcastFileTo(base, blob, contentType, onProgress){
   const auth = await bcastAuthHeader(false);
   const initRes = await fetch(base + '/b/init', {
     method: 'POST',
+    mode: 'cors',
+    credentials: 'omit',
+    keepalive: true,
     headers: Object.assign({ 'Content-Type': 'application/json' }, auth),
     body: JSON.stringify({ contentType, bytes: size }),
   });
@@ -114,6 +117,9 @@ async function uploadBroadcastFileTo(base, blob, contentType, onProgress){
       try{
         partRes = await fetch(partUrl, {
           method: 'PUT',
+          mode: 'cors',
+          credentials: 'omit',
+          keepalive: true,
           headers: Object.assign({ 'Content-Type': 'application/octet-stream' }, auth),
           body: chunk,
         });
@@ -121,6 +127,9 @@ async function uploadBroadcastFileTo(base, blob, contentType, onProgress){
           const auth2 = await bcastAuthHeader(true);
           partRes = await fetch(partUrl, {
             method: 'PUT',
+            mode: 'cors',
+            credentials: 'omit',
+            keepalive: true,
             headers: Object.assign({ 'Content-Type': 'application/octet-stream' }, auth2),
             body: chunk,
           });
@@ -146,6 +155,9 @@ async function uploadBroadcastFileTo(base, blob, contentType, onProgress){
   if(onProgress) onProgress(0.97, 'Finishing upload…');
   const doneRes = await fetch(base + '/b/complete', {
     method: 'POST',
+    mode: 'cors',
+    credentials: 'omit',
+    keepalive: true,
     headers: Object.assign({ 'Content-Type': 'application/json' }, await bcastAuthHeader(false)),
     body: JSON.stringify({ key, uploadId, parts, bytes: size }),
   });
