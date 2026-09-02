@@ -443,6 +443,11 @@ window.__nalunoEntryT0 = Date.now();
 
       <button class="save-btn" id="myContributionBtn" style="margin:18px 20px 0; background:none; color:var(--mint); border:1px solid rgba(124,255,178,.35);">My Contribution</button>
 
+      <!-- Diagnostics: reachable without a phone console. Deliberately a plain
+           visible button rather than a hidden tap-sequence — when something is
+           already failing, a hidden gesture is the wrong thing to ask for. -->
+      <button class="save-btn" id="diagBtn" style="margin:18px 20px 0; background:none; color:var(--text-dim); border:1px solid var(--line);">Diagnostics</button>
+
       <button class="save-btn" id="signOutBtn" style="margin:22px 20px 0; background:none; color:var(--red); border:1px solid var(--line);">Sign out</button>
 
       <!-- Spec §30 PS: the Admin Console entry point is a single unlabelled dot
@@ -492,6 +497,22 @@ window.__nalunoEntryT0 = Date.now();
     </div>
   </div>
 
+
+  <!-- ---------------- Diagnostics ---------------- -->
+  <div class="call-overlay" id="diagPanel">
+    <div class="topbar" style="padding-top:18px;">
+      <div class="back-btn" id="diagCloseBtn" role="button" aria-label="Back"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
+      <div style="flex:1;">
+        <div style="font-family:var(--font-futuristic); font-weight:700; font-size:16px;">Diagnostics</div>
+        <div class="lobby-sub" style="text-align:left;max-width:none;font-size:11.5px;">What actually went wrong, in plain text.</div>
+      </div>
+    </div>
+    <div class="tab-scroll" style="padding:0 18px 24px;">
+      <div id="diagBody"></div>
+      <button type="button" id="diagCopyBtn" class="save-btn" style="width:100%;margin-top:14px;">Copy all</button>
+      <button type="button" id="diagClearBtn" class="save-btn" style="width:100%;margin-top:8px;background:none;color:var(--text-dim);border:1px solid var(--line);">Clear</button>
+    </div>
+  </div>
   <div class="call-overlay" id="findNalunoPanel">
     <div class="topbar" style="padding-top:18px;">
       <div class="back-btn" id="findNalunoCloseBtn" role="button" aria-label="Back"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
@@ -1220,6 +1241,9 @@ window.__nalunoEntryT0 = Date.now();
 <script src="firebase-config.js"></script>
 <!-- NALUNO_MODULES -->
 <script src="js/core.js?v=20260828y"></script>
+<!-- Loaded right after core.js so its global error handlers are installed
+     before the rest of the app runs and can capture anything they throw. -->
+<script src="js/diagnostics.js?v=20260901d"></script>
 <!-- LOAD ORDER: find.js defines contactAvatarStyleAttr(), used by band-list,
      band-room, wireline and signal-ui. auth.js calls loadBands() at top level,
      which ran BEFORE find.js had executed — a ReferenceError that aborted boot
