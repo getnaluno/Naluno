@@ -5,13 +5,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
-<link rel="manifest" href="manifest.json?v=20260828y">
+<link rel="manifest" href="manifest.json?v=20260903a">
 <meta name="theme-color" content="#0D0F17">
 <!-- Icons delayed until after the drawing intro so no PNG can flash. -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.08.28y">
+<meta name="app-version" content="2026.09.03a">
 <meta name="description" content="A statement from the future.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="Watch on Naluno.">
@@ -60,8 +60,8 @@
   #authGate{ visibility:visible !important; }
 </style>
 <link rel="apple-touch-startup-image" href="splash-empty.png">
-<link rel="stylesheet" href="css/app.css?v=20260828y" media="print" onload="this.media='all'">
-<noscript><link rel="stylesheet" href="css/app.css?v=20260828y"></noscript>
+<link rel="stylesheet" href="css/app.css?v=20260903a" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="css/app.css?v=20260903a"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -718,9 +718,10 @@ window.__nalunoEntryT0 = Date.now();
       </div>
     </div>
     <div class="tab-scroll" style="padding:14px 18px 32px;">
-      <input type="file" id="bcompFileInput" accept="video/*,image/*" style="display:none;" />
       <div style="display:flex;gap:8px;margin:0 0 12px;flex-wrap:wrap;">
-        <button type="button" id="bcompPickBtn" class="join-btn" style="flex:1;min-width:140px;margin:0; background:rgba(124,255,178,.12); color:var(--mint); border:1px solid rgba(124,255,178,.35);">Choose video or photo</button>
+        <button type="button" id="bcompPickBtn" class="join-btn" style="flex:1;min-width:140px;margin:0; background:rgba(124,255,178,.12); color:var(--mint); border:1px solid rgba(124,255,178,.35);position:relative;overflow:hidden;">Choose video or photo
+          <input type="file" id="bcompFileInput" accept="video/*,image/*" style="position:absolute;inset:0;width:100%;height:100%;opacity:0.01;font-size:16px;cursor:pointer;" />
+        </button>
         <button type="button" id="bcompGoLiveBtn" class="join-btn" style="flex:1;min-width:120px;margin:0; background:rgba(255,84,112,.15); color:#ff8a9a; border:1px solid rgba(255,84,112,.45);">Go live</button>
       </div>
       <div class="lobby-sub" style="margin:0 0 12px;text-align:left;max-width:none;">Upload a video/photo, or <strong style="color:var(--text);">Go live</strong> now — same Broadcast space & community. When live ends, it is saved as a live chapter. Videos longer than 4 minutes become chapters.</div>
@@ -1240,7 +1241,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
 <script src="firebase-config.js"></script>
 <!-- NALUNO_MODULES -->
-<script src="js/core.js?v=20260828y"></script>
+<script src="js/core.js?v=20260903a"></script>
 <!-- Loaded right after core.js so its global error handlers are installed
      before the rest of the app runs and can capture anything they throw. -->
 <script src="js/diagnostics.js?v=20260901d"></script>
@@ -1249,49 +1250,49 @@ window.__nalunoEntryT0 = Date.now();
      which ran BEFORE find.js had executed — a ReferenceError that aborted boot
      entirely. It must load before any consumer. -->
 <script src="js/find.js?v=20260901a"></script>
-<script src="js/media-contain.js?v=20260828y"></script>
-<script src="js/keep-alive.js?v=20260828y"></script>
-<script src="js/metrics.js?v=20260828y"></script>
-<script src="js/data.js?v=20260828y"></script>
-<script src="js/crypto.js?v=20260828y"></script>
-<script src="js/atmosphere.js?v=20260828y"></script>
-<script src="js/band-list.js?v=20260828y"></script>
-<script src="js/signal-core.js?v=20260828y"></script>
-<script src="js/broadcast-core.js?v=20260828y"></script>
-<script src="js/broadcast-upload.js?v=20260828y"></script>
-<script src="js/broadcast-composer.js?v=20260828y"></script>
-<script src="js/origin.js?v=20260828y"></script>
-<script src="js/strand.js?v=20260828y"></script>
-<script src="js/circle.js?v=20260828y"></script>
+<script src="js/media-contain.js?v=20260903a"></script>
+<script src="js/keep-alive.js?v=20260903a"></script>
+<script src="js/metrics.js?v=20260903a"></script>
+<script src="js/data.js?v=20260903a"></script>
+<script src="js/crypto.js?v=20260903a"></script>
+<script src="js/atmosphere.js?v=20260903a"></script>
+<script src="js/band-list.js?v=20260903a"></script>
+<script src="js/signal-core.js?v=20260903a"></script>
+<script src="js/broadcast-core.js?v=20260903a"></script>
+<script src="js/broadcast-upload.js?v=20260903a"></script>
+<script src="js/broadcast-composer.js?v=20260903a"></script>
+<script src="js/origin.js?v=20260903a"></script>
+<script src="js/strand.js?v=20260903a"></script>
+<script src="js/circle.js?v=20260903a"></script>
 <!-- Community Economy: reports actions only; all economic value is computed
      server-side by the naluno-economy Worker. Loaded AFTER circle.js so
      currentUser exists, and deliberately non-blocking — if this file failed
      to load entirely, Broadcast would behave exactly as it does today. -->
 <script src="js/economy.js?v=20260831a"></script>
 <script src="js/economy-ui.js?v=20260831a"></script>
-<script src="js/weather.js?v=20260828y"></script>
-<script src="js/beacon.js?v=20260828y"></script>
-<script src="js/compass.js?v=20260828y"></script>
-<script src="js/signal-ui.js?v=20260828y"></script>
-<script src="js/compat-lock.js?v=20260828y"></script>
-<script src="js/broadcast-space.js?v=20260828y"></script>
-<script src="js/media-vault.js?v=20260828y"></script>
-<script src="js/wireline.js?v=20260828y"></script>
-<script src="js/profile.js?v=20260828y"></script>
-<script src="js/auth.js?v=20260828y"></script>
-<script src="js/notifications.js?v=20260828y"></script>
-<script src="js/ice-core.js?v=20260828y"></script>
-<script src="js/camera.js?v=20260828y"></script>
-<script src="js/call-filters.js?v=20260828y"></script>
-<script src="js/calls.js?v=20260828y"></script>
-<script src="js/sfu-live.js?v=20260828y"></script>
-<script src="js/broadcast-live.js?v=20260828y"></script>
-<script src="js/band-room.js?v=20260828y"></script>
-<script src="js/pwa.js?v=20260828y"></script>
-<script src="js/spark-engine.js?v=20260828y"></script>
-<script src="js/spark-lg.js?v=20260828y"></script>
-<script src="js/spark-page.js?v=20260828y"></script>
-<script src="js/spark.js?v=20260828y"></script>
+<script src="js/weather.js?v=20260903a"></script>
+<script src="js/beacon.js?v=20260903a"></script>
+<script src="js/compass.js?v=20260903a"></script>
+<script src="js/signal-ui.js?v=20260903a"></script>
+<script src="js/compat-lock.js?v=20260903a"></script>
+<script src="js/broadcast-space.js?v=20260903a"></script>
+<script src="js/media-vault.js?v=20260903a"></script>
+<script src="js/wireline.js?v=20260903a"></script>
+<script src="js/profile.js?v=20260903a"></script>
+<script src="js/auth.js?v=20260903a"></script>
+<script src="js/notifications.js?v=20260903a"></script>
+<script src="js/ice-core.js?v=20260903a"></script>
+<script src="js/camera.js?v=20260903a"></script>
+<script src="js/call-filters.js?v=20260903a"></script>
+<script src="js/calls.js?v=20260903a"></script>
+<script src="js/sfu-live.js?v=20260903a"></script>
+<script src="js/broadcast-live.js?v=20260903a"></script>
+<script src="js/band-room.js?v=20260903a"></script>
+<script src="js/pwa.js?v=20260903a"></script>
+<script src="js/spark-engine.js?v=20260903a"></script>
+<script src="js/spark-lg.js?v=20260903a"></script>
+<script src="js/spark-page.js?v=20260903a"></script>
+<script src="js/spark.js?v=20260903a"></script>
 <!-- /NALUNO_MODULES -->
 </body>
 </html>
