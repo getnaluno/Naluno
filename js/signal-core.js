@@ -1227,6 +1227,9 @@ async function saveSignalSegment(segment){
       const size = JSON.stringify(clean).length;
       console.error('[signal] failed document approx size:', size, 'bytes; fields:', Object.keys(clean).join(', '));
       nalunoLastSignalError = { code, msg, size, at: Date.now() };
+      // Also into the on-device log, so it is readable from Diagnostics
+      // without needing a phone console at all.
+      try{ if(typeof nalunoDiag === 'function') nalunoDiag('signal-save-failed', (code||'') + ' ' + msg, 'doc ' + size + ' bytes; fields: ' + Object.keys(clean).join(',')); }catch(_){}
       try{ localStorage.setItem('nalunoLastSignalError', JSON.stringify(nalunoLastSignalError)); }catch(_){}
     }catch(_){}
     // Say something specific where we can, rather than a generic failure.
