@@ -1257,7 +1257,8 @@ body.naluno-overlay .navbar{
   display:none !important;
 }
 .call-overlay.active{ z-index:240; }
-#composer.active{ z-index:250 !important; }
+#composer.active{ z-index:280 !important; }
+#bcomposer.active{ z-index:280 !important; }
 #composer .tab-scroll{ padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px)); }
 
 .signal-window{
