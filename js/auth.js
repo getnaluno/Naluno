@@ -521,12 +521,29 @@ function bindAuthListeners(){
         Object.keys(cachedPrev).forEach(function(k){ realThreadPreviews[k] = cachedPrev[k]; });
         try{ renderWirelineList(); }catch(_){}
       }
-      const cachedSig = nalunoCacheRead('mySignal');
-      if(cachedSig && cachedSig.length && typeof mySignal !== 'undefined' && !mySignal.length){
+      /* FIX (confirmed from a console log full of 404s): the instant-paint
+         cache was restored WITHOUT applying the expiry filter that
+         pruneExpiredSignal() applies everywhere else. Signals from five and
+         six days ago were coming back out of localStorage at boot and being
+         rendered, and since the R2 bucket deletes objects after 25 hours
+         every one of their images 404'd — dozens of failed requests on every
+         single load, and briefly-visible dead tiles until Firestore replaced
+         them. Filtering on restore uses the same rule as everywhere else. */
+      const nowTs = Date.now();
+      const liveOnly = function(arr){
+        return (arr || []).filter(function(s){
+          if(!s) return false;
+          if(s.expiresAt && nowTs >= s.expiresAt) return false;      // own signals
+          if(s.latest && s.latest.expiresAt && nowTs >= s.latest.expiresAt) return false; // connection rows
+          return true;
+        });
+      };
+      const cachedSig = liveOnly(nalunoCacheRead('mySignal'));
+      if(cachedSig.length && typeof mySignal !== 'undefined' && !mySignal.length){
         mySignal = cachedSig;
       }
-      const cachedConnSig = nalunoCacheRead('connectionsSignals');
-      if(cachedConnSig && cachedConnSig.length && typeof connectionsSignals !== 'undefined' && !connectionsSignals.length){
+      const cachedConnSig = liveOnly(nalunoCacheRead('connectionsSignals'));
+      if(cachedConnSig.length && typeof connectionsSignals !== 'undefined' && !connectionsSignals.length){
         connectionsSignals = cachedConnSig;
       }
       const cachedBcast = nalunoCacheRead('feedBroadcasts');
