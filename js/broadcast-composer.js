@@ -375,8 +375,9 @@ async function bcompPublish(){
     toast('Already publishing…');
     return;
   }
-  if(!currentUser || !fbDb){ toast('Sign in first'); return; }
-  if(!bcompKind){ toast('Add a photo or video first'); return; }
+  bcompPublishing = true;
+  if(!currentUser || !fbDb){ bcompPublishing = false; toast('Sign in first'); return; }
+  if(!bcompKind){ bcompPublishing = false; toast('Add a photo or video first'); return; }
 
   const title = (($('bcompTitle') && $('bcompTitle').value) || '').trim();
   const tagsRaw = (($('bcompTags') && $('bcompTags').value) || '');
@@ -384,6 +385,7 @@ async function bcompPublish(){
   const desc = (($('bcompDesc') && $('bcompDesc').value) || '').trim();
 
   if(!title){
+    bcompPublishing = false;
     toast('Add a title for your Broadcast');
     return;
   }
@@ -396,6 +398,7 @@ async function bcompPublish(){
     ? originNeedsAck(window._bcompOrigin)
     : (window._bcompOrigin && (window._bcompOrigin.hold || window._bcompOrigin.status === 'match'));
   if(needsAck && !window._bcompOriginAck){
+    bcompPublishing = false;
     bcompPaintOrigin(window._bcompOrigin);
     toast('OriginID held this post — another creator already published a close match. Tick the box if it is yours, licensed, or a cover.');
     const pubBtn = $('bcompPublishBtn');

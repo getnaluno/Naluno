@@ -807,6 +807,7 @@ function startBandInviteListener(){
    Live WebRTC mesh was unreliable across devices. Instead: record a short clip,
    upload to R2 (same path as Signal videos), post into Band messages so every
    member can play it. Clears with the 2h settle window like text. */
+let bandRecStartInFlight = false;
 let bandRecStream = null;
 let bandRecorder = null;
 let bandRecChunks = [];
@@ -978,7 +979,10 @@ async function finishBandRecordingAndSend(){
       }
       toast('Uploading…');
       try{
-        const url = await uploadVideoToR2(blob);
+        const ct = blob.type || (mode === 'video' ? 'video/webm' : 'audio/webm');
+        const url = (typeof uploadBroadcastFile === 'function')
+          ? await uploadBroadcastFile(blob, null, ct)
+          : await uploadVideoToR2(blob);
         let thumb = null;
         if(mode === 'video'){
           try{ thumb = await generateVideoThumbnail(url); }catch(e){}
@@ -995,6 +999,7 @@ async function finishBandRecordingAndSend(){
 }
 
 async function startBandRecording(mode){
+  if(bandRecStartInFlight) return;
   if(bandRecorder && bandRecorder.state === 'recording'){
     toast('Already recording — tap Stop first');
     return;
@@ -1019,6 +1024,7 @@ async function startBandRecording(mode){
 
   unlockBandAudio();
   const wantVideo = mode === 'video';
+  bandRecStartInFlight = true;
   try{
     bandRecStream = await navigator.mediaDevices.getUserMedia(
       wantVideo
@@ -1026,6 +1032,7 @@ async function startBandRecording(mode){
         : { audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true }, video: false }
     );
   }catch(e){
+    bandRecStartInFlight = false;
     toast(wantVideo ? 'Camera/mic permission needed' : 'Microphone permission needed');
     return;
   }
@@ -1040,6 +1047,7 @@ async function startBandRecording(mode){
       toast('Couldn\u2019t start recorder');
       bandRecStream.getTracks().forEach(t=>t.stop());
       bandRecStream = null;
+      bandRecStartInFlight = false;
       return;
     }
   }
@@ -1050,9 +1058,11 @@ async function startBandRecording(mode){
     try{ bandRecorder.start(); }catch(e2){
       toast('Couldn\u2019t start recorder');
       stopBandRecording(true);
+      bandRecStartInFlight = false;
       return;
     }
   }
+  bandRecStartInFlight = false;
 
   showBandRecordBar(mode);
   const ab = $('bandAudioBtn'), vb = $('bandLiveBtn');

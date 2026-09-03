@@ -47,9 +47,10 @@ async function fetchTurnServers(){
 
   inflightIce = (async function(){
     try{
-      const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-      const kill = ctrl ? setTimeout(function(){ try{ ctrl.abort(); }catch(_){ } }, 1600) : null;
       const idToken = await currentUser.getIdToken();
+      const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      // Abort starts AFTER the token so a slow getIdToken cannot kill the fetch.
+      const kill = ctrl ? setTimeout(function(){ try{ ctrl.abort(); }catch(_){ } }, 2500) : null;
       const res = await fetch(TURN_CREDENTIALS_WORKER_URL, {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + idToken },
@@ -97,7 +98,9 @@ async function getIceServers(){
     }),
   ]);
   turn.then(function(cfg){
-    if(cfg && cfg.iceServers && cfg.iceServers.length > 2){
+    if(cfg && cfg.iceServers && cfg.iceServers.some(function(s){
+      return String((s && (s.urls || s.url)) || '').indexOf('turn:') >= 0;
+    })){
       cachedIceServers = cfg;
       cachedIceServersAt = Date.now();
     }
@@ -130,13 +133,25 @@ async function getIceServersPatient(budgetMs){
       setTimeout(function(){ resolve(null); }, budgetMs || LIVE_ICE_BUDGET_MS);
     }),
   ]);
+  function hasTurn(cfg){
+    return !!(cfg && cfg.iceServers && cfg.iceServers.some(function(s){
+      return String((s && (s.urls || s.url)) || '').indexOf('turn:') >= 0;
+    }));
+  }
+  if(hasTurn(raced)) return raced;
+  // STUN-only is not a win for live — keep waiting a little more
+  const late = await Promise.race([
+    turn,
+    new Promise(function(resolve){ setTimeout(function(){ resolve(null); }, 1200); }),
+  ]);
+  if(hasTurn(late)) return late;
   if(raced) return raced;
   // Budget ran out — give the fetch a little more room in the background
   // (it may still land and get cached for the NEXT connection this session,
   // e.g. the host's per-viewer connections after this first one) rather than
   // abandoning it outright, but don't make this call wait any longer.
   turn.then(function(cfg){
-    if(cfg && cfg.iceServers && cfg.iceServers.length > 2){
+    if(hasTurn(cfg)){
       cachedIceServers = cfg;
       cachedIceServersAt = Date.now();
     }

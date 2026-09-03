@@ -88,8 +88,8 @@ function renderWirelineList(){
 
   $('wirelineList').innerHTML = rows.map(r=>`
     <div class="contact-row" data-thread="${r.c.id}">
-      <div class="avatar" style="width:46px;height:46px;font-size:15px;${contactAvatarStyleAttr(r.c)}position:relative;">${r.c.photo&&r.c.photo.dataUrl?'':r.c.initials}</div>
-      <div class="contact-meta"><div class="contact-name">${r.c.name}</div><div class="contact-sub" style="${r.unread?'color:var(--text);font-weight:600;':''}">${escapeHtml(r.preview)}</div></div>
+      <div class="avatar" style="width:46px;height:46px;font-size:15px;${contactAvatarStyleAttr(r.c)}position:relative;">${r.c.photo&&r.c.photo.dataUrl?'':escapeHtml(r.c.initials||'')}</div>
+      <div class="contact-meta"><div class="contact-name">${escapeHtml(r.c.name||'')}</div><div class="contact-sub" style="${r.unread?'color:var(--text);font-weight:600;':''}">${escapeHtml(r.preview)}</div></div>
       <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px; flex-shrink:0;">
         <span class="bcast-time">${r.last ? timeAgo(r.last.ts) : ''}</span>
         ${r.unread ? '<span style="width:8px;height:8px;border-radius:50%;background:var(--mint);"></span>' : ''}
@@ -693,18 +693,11 @@ $('threadInput').addEventListener('keydown', e=>{
 });
 $('threadSendBtn').onclick = sendThreadMessage;
 (function wireSlipPicker(){
-  const btn = $('threadSlipBtn');
   const input = $('threadSlipInput');
-  if(!btn || !input) return;
-  btn.addEventListener('click', function(e){
-    e.preventDefault();
-    e.stopPropagation();
-    input.value = '';
-    input.click();
-  });
+  if(!input) return;
   input.addEventListener('change', function(){
     const file = input.files && input.files[0];
-    input.value = '';
+    try{ input.value = ''; }catch(_){}
     if(!file) return;
     if(!activeThreadContactId){ toast('Open a conversation first'); return; }
     sendSlipFile(file).catch(err=> toast((err && err.message) || 'Could not send slip'));
@@ -716,18 +709,11 @@ $('threadSendBtn').onclick = sendThreadMessage;
    picker default to the gallery, which is exactly the wrong place to look
    for a PDF. */
 (function wireDocPicker(){
-  const btn = $('threadDocBtn');
   const input = $('threadDocInput');
-  if(!btn || !input) return;
-  btn.addEventListener('click', function(e){
-    e.preventDefault();
-    e.stopPropagation();
-    input.value = '';
-    input.click();
-  });
+  if(!input) return;
   input.addEventListener('change', function(){
     const file = input.files && input.files[0];
-    input.value = '';
+    try{ input.value = ''; }catch(_){}
     if(!file) return;
     if(!activeThreadContactId){ toast('Open a conversation first'); return; }
     sendDocumentFile(file).catch(err=> toast((err && err.message) || 'Could not send document'));
@@ -1226,9 +1212,11 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
     }
     if(!raced.ok) throw raced.error;
     if(queueId) removeFromMessageQueue(queueId);
-    $('threadInput').value = '';
-    autoSizeThreadInput();
-    updateComposerButtons();
+    if(!queueId && payload && payload.type === 'text'){
+      $('threadInput').value = '';
+      autoSizeThreadInput();
+      updateComposerButtons();
+    }
     markMyActivity();
     bumpTodayActivity();
   }catch(e){
@@ -1337,7 +1325,11 @@ async function getVoiceAudio(msgId){
   // hop needed) — check the currently loaded thread before falling back to local cache.
   const liveMsgs = wirelineThreads[activeThreadContactId] || [];
   const liveMsg = liveMsgs.find(m=>String(m.id)===String(msgId));
-  if(liveMsg && liveMsg.dataUrl){ voiceAudioCache[msgId] = liveMsg.dataUrl; return liveMsg.dataUrl; }
+  if(liveMsg && (liveMsg.mediaUrl || liveMsg.audioUrl || liveMsg.dataUrl)){
+    const u = liveMsg.mediaUrl || liveMsg.audioUrl || liveMsg.dataUrl;
+    voiceAudioCache[msgId] = u;
+    return u;
+  }
   if(!storageAvailable) return null;
   try{
     const res = await window.storage.get('wireline:voice:'+msgId);
@@ -1499,14 +1491,19 @@ function pushVoiceMessage(contactId, dataUrl, durationSecs, waveform){
   if(!contactId) return;
   const c = contacts.find(x=>x.id===contactId);
   if(c && c.isReal && c.firebaseUid){
-    // Firestore documents cap out at 1MB; without a Storage bucket wired up yet, the
-    // audio has to live directly in the message doc, so there's a real, honest ceiling
-    // here — this isn't a bug, it's the actual limit of the current architecture.
-    if(dataUrl.length > 700000){
-      toast('That voice note is too long to send for real right now (~30s max until Storage is wired up)');
-      return;
-    }
-    sendRealMessage(c, { type:'voice', dataUrl, duration: durationSecs, waveform }, '🎙 Voice note');
+    (async function(){
+      try{
+        toast('Uploading voice…');
+        const blob = await (await fetch(dataUrl)).blob();
+        const ct = blob.type || 'audio/webm';
+        const url = (typeof uploadBroadcastFile === 'function')
+          ? await uploadBroadcastFile(blob, null, ct)
+          : await uploadVideoToR2(blob);
+        await sendRealMessage(c, { type:'voice', mediaUrl: url, duration: durationSecs, waveform }, '🎙 Voice note');
+      }catch(e){
+        toast((e && e.message) || 'Voice failed');
+      }
+    })();
     return;
   }
   if(!wirelineThreads[contactId]) wirelineThreads[contactId] = [];

@@ -182,6 +182,10 @@ function renderBspaceMedia(seg){
       vel.addEventListener('click', function(e){
         e.preventDefault();
         e.stopPropagation();
+        if(document.body.classList.contains('naluno-bspace-idle')){
+          try{ document.body.classList.remove('naluno-bspace-idle'); }catch(_){}
+          return;
+        }
         if(vel.paused) tryPlay();
         else {
           try{ vel.dataset.nalunoUserPaused = '1'; vel.dataset.nalunoWantPlay = '0'; }catch(_){}
@@ -310,7 +314,7 @@ function renderBspaceConversation(docs){
   };
   const reallyLived = !!(activeBroadcastMeta && (
     activeBroadcastMeta.live ||
-    (activeBroadcastMeta.lastLiveStartedAt && activeBroadcastMeta.lastLiveDurationMs)
+    (activeBroadcastMeta.lastLiveStartedAt && activeBroadcastMeta.lastLiveDurationMs != null)
   ));
 
   const pinned = [];
@@ -1300,6 +1304,14 @@ if(progress) progress('Uploading live recording…');
     };
     if(typeof enqueuePublishJob === 'function') enqueuePublishJob(job);
     else job.run(()=>{}).catch(e=> toast(e.message || 'Could not save live'));
+  } else {
+    try{
+      const liveEl = $('bspaceLiveVideo') || $('bspaceViewerLiveVideo');
+      if(liveEl){ try{ liveEl.srcObject = null; }catch(_){} }
+      if(typeof renderBspaceMedia === 'function' && activeBroadcastMeta && activeBroadcastMeta.segment){
+        renderBspaceMedia(activeBroadcastMeta.segment);
+      }
+    }catch(_){}
   }
 }
 
@@ -1324,9 +1336,15 @@ async function bspaceStartLive(){
   bspaceLiveStartInFlight = true;
   try{
     bspaceLiveStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user', width: { ideal: 720 }, height: { ideal: 1280 }, frameRate: { ideal: 24, max: 30 } },
+      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 1920 }, frameRate: { ideal: 30, max: 30 } },
       audio: true,
     });
+    try{
+      const vt = bspaceLiveStream.getVideoTracks()[0];
+      if(vt && vt.applyConstraints){
+        vt.applyConstraints({ width: { ideal: 1920 }, height: { ideal: 1920 }, frameRate: { ideal: 30 } }).catch(function(){});
+      }
+    }catch(_){}
   }catch(e){
     bspaceLiveStartInFlight = false;
     toast('Camera/mic needed to go live');
@@ -1339,6 +1357,7 @@ async function bspaceStartLive(){
     const v = $('bspaceLiveVideo');
     if(v){
       v.srcObject = bspaceLiveStream;
+      try{ v.dataset.nalunoKeepAlive = '1'; v.dataset.nalunoWantPlay = '1'; }catch(_){}
       v.play().catch(()=>{});
       try{ if(typeof nalunoCorrectVideoOrientation === 'function') nalunoCorrectVideoOrientation(v, bspaceLiveStream, true); }catch(_){}
     }
@@ -1458,7 +1477,7 @@ function bspaceWatchLiveState(){
         activeBroadcastMeta.live = !!d.live;
         activeBroadcastMeta.lastLiveStartedAt = d.lastLiveStartedAt || null;
         activeBroadcastMeta.lastLiveEndedAt = d.lastLiveEndedAt || null;
-        activeBroadcastMeta.lastLiveDurationMs = d.lastLiveDurationMs || null;
+        activeBroadcastMeta.lastLiveDurationMs = (d.lastLiveDurationMs != null) ? d.lastLiveDurationMs : null;
       }
     }catch(_){}
     const badge = $('bspaceLiveBadge');
@@ -1467,7 +1486,7 @@ function bspaceWatchLiveState(){
       if(d.live){
         // Present tense while actually live.
         badge.style.display = 'block';
-        badge.textContent = isCreator ? 'Live now' : 'Live now — join';
+        badge.textContent = isCreator ? 'Live now' : ((typeof bLiveViewerPc !== 'undefined' && bLiveViewerPc) ? 'Live now' : 'Live now — join');
       } else if(!bspaceLiveStream){
         // Past tense for a while after ending, then fade away — never a bare
         // "LIVE" left showing once it's over, and never silently blank either.
@@ -1479,7 +1498,7 @@ function bspaceWatchLiveState(){
         // compute a duration from. This means any already-corrupted data
         // from before that fix self-heals here without needing a migration.
         const endedAt = d.lastLiveEndedAt || 0;
-        const hadRealSession = !!(d.lastLiveStartedAt && d.lastLiveDurationMs);
+        const hadRealSession = !!(d.lastLiveStartedAt && d.lastLiveDurationMs != null);
         const recentEnough = endedAt && hadRealSession && (Date.now() - endedAt) < 24 * 60 * 60 * 1000;
         if(recentEnough){
           const dur = formatLiveDuration(d.lastLiveDurationMs);
@@ -1563,7 +1582,7 @@ async function openBroadcastSpaceById(id){
       live: !!d.live,
       lastLiveStartedAt: d.lastLiveStartedAt || null,
       lastLiveEndedAt: d.lastLiveEndedAt || null,
-      lastLiveDurationMs: d.lastLiveDurationMs || null,
+      lastLiveDurationMs: (d.lastLiveDurationMs != null) ? d.lastLiveDurationMs : null,
       strandId: d.strandId || null,
     });
   }catch(e){
@@ -1600,7 +1619,6 @@ if($('bspaceShareBtn')){
       if(navigator.share){
         await navigator.share({
           title: (activeBroadcastMeta && activeBroadcastMeta.title) || 'Naluno Broadcast',
-          text: 'Watch on Naluno',
           url: link
         });
       } else if(navigator.clipboard && navigator.clipboard.writeText){
@@ -1749,6 +1767,10 @@ function wireBspaceSeekAndAutoplay(v){
  *  never loop/restart the same clip, and never leave a "LIVE"-style badge or
  *  a frozen last frame with nothing for the person to do. */
 function bspaceOnPlaybackEnded(){
+  try{
+    if(bspaceOnPlaybackEnded._lock && (Date.now() - bspaceOnPlaybackEnded._lock) < 2800) return;
+    bspaceOnPlaybackEnded._lock = Date.now();
+  }catch(_){}
   try{ if(window.__bspaceNextTimer){ clearTimeout(window.__bspaceNextTimer); window.__bspaceNextTimer = null; } }catch(_){}
   const meta = activeBroadcastMeta || {};
   const curId = activeBroadcastId;
@@ -1780,9 +1802,17 @@ function bspaceOnPlaybackEnded(){
   // so this builds that list directly instead of reusing relatedBroadcasts().
   const tryStrand = function(){
     if(!meta.strandId) return false;
-    const pool = (typeof feedBroadcasts !== 'undefined' && feedBroadcasts) ? feedBroadcasts : [];
-    const siblings = pool.filter(function(x){ return x && !x.deleted && x.strandId === meta.strandId; })
-      .sort(function(a,b){ return (Number(a.createdAt)||0) - (Number(b.createdAt)||0); });
+    const pool = [];
+    try{
+      if(typeof feedBroadcasts !== 'undefined' && feedBroadcasts) pool.push.apply(pool, feedBroadcasts);
+      if(typeof myBroadcasts !== 'undefined' && myBroadcasts) pool.push.apply(pool, myBroadcasts);
+    }catch(_){}
+    const seen = {};
+    const siblings = pool.filter(function(x){
+      if(!x || x.deleted || x.strandId !== meta.strandId || seen[x.id]) return false;
+      seen[x.id] = true;
+      return true;
+    }).sort(function(a,b){ return (Number(a.createdAt)||0) - (Number(b.createdAt)||0); });
     let idx = -1;
     for(let i = 0; i < siblings.length; i++){
       if(siblings[i].id === curId){ idx = i; break; }
@@ -1845,7 +1875,7 @@ function wireBroadcastChapterPlayer(chapters, breathers, opts){
         : ((ch.title || ('Ch '+(i+1))) + (replaced ? ' · new' : ''));
       return `<span style="display:inline-flex;align-items:center;gap:4px;">
         <button type="button" data-ch="${i}" style="font-family:var(--font-mono);font-size:10px;padding:4px 8px;border-radius:999px;border:1px solid ${gone?'rgba(255,84,112,.5)':'var(--line)'};background:${gone?'rgba(255,84,112,.16)':(i===0?'rgba(124,255,178,.15)':'transparent')};color:${gone?'#ff8a9a':(i===0?'var(--mint)':'var(--text-dim)')};cursor:pointer;">${bspaceEscape(label)}</button>
-        ${canCut && gone ? '<button type="button" data-repch="'+i+'" style="font-family:var(--font-mono);font-size:10px;padding:3px 7px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--mint);cursor:pointer;">Replace</button>' : ''}
+        ${canCut && gone ? '<span class="naluno-pick-wrap" style="position:relative;display:inline-flex;overflow:hidden;"><button type="button" style="pointer-events:none;font-family:var(--font-mono);font-size:10px;padding:3px 7px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--mint);">Replace</button><input type="file" accept="video/mp4,video/quicktime,video/webm,video/*,.mp4,.mov,.webm,.m4v" data-repch="'+i+'" style="position:absolute;inset:0;width:100%;height:100%;opacity:0.01;font-size:16px;cursor:pointer;z-index:2;"></span>' : ''}
         ${canCut && !gone ? '<button type="button" data-delch="'+i+'" aria-label="Remove chapter" style="border:none;background:transparent;color:var(--text-dim);font-size:14px;cursor:pointer;line-height:1;">×</button>' : ''}
       </span>`;
     }).join('');
@@ -1858,10 +1888,12 @@ function wireBroadcastChapterPlayer(chapters, breathers, opts){
         deleteBroadcastChapter(parseInt(btn.getAttribute('data-delch'),10));
       };
     });
-    bar.querySelectorAll('[data-repch]').forEach(btn=>{
-      btn.onclick = function(e){
-        e.preventDefault(); e.stopPropagation();
-        replaceBroadcastChapter(parseInt(btn.getAttribute('data-repch'),10));
+    bar.querySelectorAll('input[data-repch]').forEach(inp=>{
+      inp.onchange = function(){
+        const file = inp.files && inp.files[0];
+        const idx = parseInt(inp.getAttribute('data-repch'),10);
+        try{ inp.value = ''; }catch(_){}
+        if(file) replaceBroadcastChapterWithFile(idx, file);
       };
     });
   }
@@ -2422,32 +2454,26 @@ async function deleteBroadcastChapter(index){
 function replaceBroadcastChapter(index){
   if(!activeBroadcastMeta || !activeBroadcastMeta.isMine) return;
   if(!bspaceChapterList || !bspaceChapterList[index]) return;
-  const inp = document.createElement('input');
-  inp.type = 'file';
-  inp.accept = 'video/*';
-  inp.style.display = 'none';
-  document.body.appendChild(inp);
-  inp.onchange = async function(){
-    const file = inp.files && inp.files[0];
-    try{ inp.remove(); }catch(_){}
-    if(!file) return;
-    toast('Uploading replacement…');
-    try{
-      let url = '';
-      if(typeof uploadBroadcastFile === 'function') url = await uploadBroadcastFile(file);
-      else if(typeof uploadVideoToR2 === 'function') url = await uploadVideoToR2(file);
-      if(!url) throw new Error('Upload failed');
-      const ch = bspaceChapterList[index];
-      ch.status = 'replaced';
-      ch.replacementUrl = url;
-      ch.replacedAt = Date.now();
-      await persistBroadcastChapters();
-      toast('Chapter replaced');
-      playBroadcastChapter(index, true);
-      wireBroadcastChapterPlayer(bspaceChapterList, bspaceBreatherList, { showChips: true });
-    }catch(e){
-      toast((e && e.message) || 'Replace failed');
-    }
-  };
-  inp.click();
+  toast('Tap Replace on the chapter chip');
+}
+async function replaceBroadcastChapterWithFile(index, file){
+  if(!activeBroadcastMeta || !activeBroadcastMeta.isMine) return;
+  if(!bspaceChapterList || !bspaceChapterList[index] || !file) return;
+  toast('Uploading replacement…');
+  try{
+    let url = '';
+    if(typeof uploadBroadcastFile === 'function') url = await uploadBroadcastFile(file);
+    else if(typeof uploadVideoToR2 === 'function') url = await uploadVideoToR2(file);
+    if(!url) throw new Error('Upload failed');
+    const ch = bspaceChapterList[index];
+    ch.status = 'replaced';
+    ch.replacementUrl = url;
+    ch.replacedAt = Date.now();
+    await persistBroadcastChapters();
+    toast('Chapter replaced');
+    playBroadcastChapter(index, true);
+    wireBroadcastChapterPlayer(bspaceChapterList, bspaceBreatherList, { showChips: true });
+  }catch(e){
+    toast((e && e.message) || 'Replace failed');
+  }
 }

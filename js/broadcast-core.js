@@ -384,7 +384,6 @@ async function sendPushToContact(contactOrUid, msg){
     const body = {
       calleeUid: uid,
       callerName: (msg && msg.fromName) || (currentProfile && currentProfile.name) || 'Someone',
-      callId: 'live-' + (msg && msg.broadcastId ? msg.broadcastId : Date.now()),
       title: (msg && msg.title) || 'Live on Naluno',
       body: (msg && msg.body) || 'Someone is live',
       type: 'broadcast_live',
@@ -393,7 +392,6 @@ async function sendPushToContact(contactOrUid, msg){
       fcmTokenWeb: tokens.web,
       fcmToken: tokens.primary,
       fcmTokenPlatform: tokens.platform,
-      preferPlatform: 'android',
     };
     await fetch(workerUrl, {
       method: 'POST',

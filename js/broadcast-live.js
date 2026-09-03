@@ -48,8 +48,10 @@ function bLiveCleanupViewer(){
   bLiveViewerUnsubs = [];
   if(bLiveViewerPc){ try{ bLiveViewerPc.close(); }catch(_){} bLiveViewerPc = null; }
   const v = $('bspaceViewerLiveVideo');
-  if(v){ try{ v.autoplay = true; v.playsInline = true; v.muted = false; }catch(_){} }
-  if(v){ v.srcObject = null; }
+  if(v){
+    try{ v.srcObject = null; }catch(_){}
+    try{ v.remove(); }catch(_){}
+  }
 }
 
 function bLiveUpdateViewerChrome(n){
@@ -192,14 +194,6 @@ async function bLiveHostAcceptViewer(viewerUid, data, stream){
   const pc = new RTCPeerConnection(await bLiveEnsureIce());
   bLiveHostPcs[viewerUid] = pc;
 
-  // Ensure live tracks are enabled before attaching
-  try{
-    stream.getTracks().forEach(function(track){
-      try{ track.enabled = true; }catch(_){}
-      try{ pc.addTrack(track, stream); }catch(e){ console.warn(e); }
-    });
-  }catch(e){ console.warn('[bcast-live] addTrack', e); }
-
   const ref = bLiveSessionRef(activeBroadcastId, viewerUid);
 
   pc.onicecandidate = e => {
@@ -221,7 +215,31 @@ async function bLiveHostAcceptViewer(viewerUid, data, stream){
     }
   };
 
+  // Offer first, then attach tracks onto the offer's transceivers.
+  // addTrack-before-SRD created extra senders the viewer's recvonly
+  // m-lines never mapped — join/react worked, video never arrived.
   await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+  try{
+    const tracks = stream.getTracks();
+    for(let i = 0; i < tracks.length; i++){
+      const track = tracks[i];
+      try{ track.enabled = true; }catch(_){}
+      const tr = pc.getTransceivers().find(function(t){
+        return t && t.receiver && t.receiver.track && t.receiver.track.kind === track.kind;
+      });
+      if(tr && tr.sender){
+        try{
+          tr.direction = 'sendonly';
+          await tr.sender.replaceTrack(track);
+        }catch(e){
+          try{ pc.addTrack(track, stream); }catch(_){}
+        }
+      } else {
+        try{ pc.addTrack(track, stream); }catch(e){ console.warn(e); }
+      }
+    }
+  }catch(e){ console.warn('[bcast-live] addTrack', e); }
+
   const answer = await pc.createAnswer();
   await pc.setLocalDescription(answer);
   await ref.set({
@@ -287,7 +305,19 @@ async function bLiveJoinAsViewer(){
     v.muted = true;
     v.playsInline = true;
     try{ v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline',''); }catch(_){}
-    if(v.srcObject !== remote) v.srcObject = remote;
+    const hasVideo = remote.getVideoTracks && remote.getVideoTracks().some(function(t){ return t && t.readyState !== 'ended'; });
+    if(!hasVideo) return;
+    try{
+      v.srcObject = null;
+      v.srcObject = remote;
+    }catch(_){
+      try{ v.srcObject = remote; }catch(_2){}
+    }
+    try{
+      v.dataset.nalunoWantPlay = '1';
+      v.dataset.nalunoKeepAlive = '1';
+      v.dataset.nalunoUserPaused = '0';
+    }catch(_){}
     try{ if(typeof nalunoCorrectVideoOrientation === 'function') nalunoCorrectVideoOrientation(v, remote, false); }catch(_){}
     const play = function(){
       v.play().then(function(){

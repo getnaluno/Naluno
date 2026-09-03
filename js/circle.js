@@ -484,7 +484,8 @@
     const src = togaPhotoSrc(r);
     const ch = String((r && r.name) || 'C').trim().charAt(0).toUpperCase() || 'C';
     const hues = ['#7CFFB2', '#00E5FF', '#7C4DFF', '#FF7A8A'];
-    const bg = (r && r.color) || hues[(rank ? rank - 1 : 0) % hues.length];
+    const raw = (r && r.color) || hues[(rank ? rank - 1 : 0) % hues.length];
+    const bg = /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(String(raw)) ? raw : '#7CFFB2';
     if(src){
       return '<span class="toga-face toga-face-pic" style="background:'+bg+'"><img src="'+escapeHtml(src)+'" alt=""></span>';
     }

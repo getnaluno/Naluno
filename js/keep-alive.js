@@ -40,6 +40,16 @@ async function nalunoKeepAliveStart(reason){
         new Promise(function(res){ setTimeout(function(){ res(null); }, 700); }),
       ]);
       if(raced) nalunoWakeLock = raced;
+      else {
+        asked.then(function(lock){
+          if(!lock) return;
+          if(nalunoKeepAliveDepth <= 0){
+            try{ lock.release(); }catch(_){}
+          } else {
+            nalunoWakeLock = lock;
+          }
+        }).catch(function(){});
+      }
     }
   }catch(_){}
   try{

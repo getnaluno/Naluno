@@ -836,14 +836,24 @@ function renderFilmstrip(){
         : `<img src="${item.dataUrl}" style="filter:${item.filterCss}; transform:${cropTransform(item.crop)};" />`}
       <div class="fs-remove" data-remove="${i}"><svg width="9" height="9" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="#fff" stroke-width="3" stroke-linecap="round"/></svg></div>
     </div>
-  `).join('') + `<div class="filmstrip-add" id="filmstripAdd"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>`;
+  `).join('') + `<div class="filmstrip-add" id="filmstripAdd"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><input type="file" id="filmstripFileInput" accept="${composerType==='video'?'video/mp4,video/quicktime,video/webm,video/*,.mp4,.mov,.webm,.m4v,.3gp':'image/jpeg,image/png,image/webp,image/*,.jpg,.jpeg,.png,.webp'}" multiple style="position:absolute;inset:0;width:100%;height:100%;opacity:0.01;font-size:16px;cursor:pointer;z-index:2;"></div>`;
   document.querySelectorAll('.filmstrip-item').forEach(el=>{
     el.onclick = ()=>{ activeComposerItemIndex = parseInt(el.dataset.idx); renderFilmstrip(); showActiveItemInPreview(); };
   });
   document.querySelectorAll('[data-remove]').forEach(el=>{
     el.onclick = (e)=>{ e.stopPropagation(); removeComposerItem(parseInt(el.dataset.remove)); };
   });
-  $('filmstripAdd').onclick = ()=> nalunoOpenMediaPicker();
+  const addInp = $('filmstripFileInput');
+  if(addInp){
+    addInp.onchange = function(e){
+      const files = e.target.files;
+      try{ e.target.value = ''; }catch(_){}
+      if(!files || !files.length) return;
+      Promise.resolve(handleFiles(files)).catch(function(err){
+        if(typeof toast === 'function') toast((err && err.message) || 'Could not open that file');
+      });
+    };
+  }
   $('transitionSection').style.display = composerItems.length>1 ? 'block' : 'none';
 }
 

@@ -33,10 +33,11 @@ public class CallMessagingService extends FirebaseMessagingService {
     if (data == null || data.isEmpty()) return;
 
     String type = data.get("type");
+    if ("broadcast_live".equals(type)) return;
     boolean isCall = "incoming_call".equals(type)
       || "call".equals(type)
-      || data.containsKey("callId")
-      || data.containsKey("call_id");
+      || ((type == null || type.isEmpty())
+          && (data.containsKey("callId") || data.containsKey("call_id")));
 
     if (!isCall) return;
 

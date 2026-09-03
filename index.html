@@ -1,17 +1,17 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.08.14d" />
+  <meta name="naluno-build" content="2026.09.03e" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
-<link rel="manifest" href="manifest.json?v=20260903d">
+<link rel="manifest" href="manifest.json?v=20260903e">
 <meta name="theme-color" content="#0D0F17">
 <!-- Icons delayed until after the drawing intro so no PNG can flash. -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.09.03d">
+<meta name="app-version" content="2026.09.03e">
 <meta name="description" content="A statement from the future.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="Watch on Naluno.">
@@ -60,8 +60,9 @@
   #authGate{ visibility:visible !important; }
 </style>
 <link rel="apple-touch-startup-image" href="splash-empty.png">
-<link rel="stylesheet" href="css/app.css?v=20260903d" media="print" onload="this.media='all'">
-<noscript><link rel="stylesheet" href="css/app.css?v=20260903d"></noscript>
+<link rel="stylesheet" href="css/app.css?v=20260903e" media="print" onload="this.media='all'">
+<script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
+<noscript><link rel="stylesheet" href="css/app.css?v=20260903e"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -383,12 +384,14 @@ window.__nalunoEntryT0 = Date.now();
         <div class="profile-hero">
           <div class="profile-avatar-wrap">
             <div class="avatar profile-avatar" id="profileAvatarBig" style="background:#7CFFB2;">YO</div>
-            <div class="avatar-edit" id="avatarEditBtn" role="button" aria-label="Edit profile photo"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z" stroke="#0D0F17" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+            <div class="avatar-edit naluno-pick-wrap" id="avatarEditBtn" role="button" aria-label="Edit profile photo" style="position:relative;overflow:hidden;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="pointer-events:none;"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z" stroke="#0D0F17" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <input type="file" id="avatarFileInput" accept="image/jpeg,image/png,image/webp,image/*,.jpg,.jpeg,.png,.webp" style="position:absolute;inset:0;width:100%;height:100%;opacity:0.01;font-size:16px;cursor:pointer;z-index:2;" />
+            </div>
           </div>
           <div id="avatarRemoveLink" style="display:none; font-family:var(--font-mono); font-size:11px; color:var(--text-dim); cursor:pointer; text-decoration:underline;">Remove photo</div>
-          <div class="swatch-row" id="swatchRow"></div>
+          <div id="swatchRow" class="swatch-row"></div>
         </div>
-        <input type="file" id="avatarFileInput" accept="image/*" style="display:none;" />
         <div class="field"><label>Display name</label><input id="nameInput" value="You" /></div>
         <div class="field"><label>Tagline</label><textarea id="taglineInput" rows="2">On air, mostly reachable.</textarea></div>
         <div class="field"><label>Handle</label><input id="numberInput" value="@you" placeholder="@MountainFox" autocomplete="off" /></div>
@@ -435,10 +438,12 @@ window.__nalunoEntryT0 = Date.now();
         <div class="greenroom-setting-head"><span class="dot"></span><span class="greenroom-setting-title">Ringtone</span></div>
         <div class="greenroom-setting-sub" id="ringtoneStatus">Using the built-in tone. You can use your own sound instead — this device only, for now.</div>
         <div style="display:flex; gap:10px; margin-top:14px;">
-          <button class="save-btn" id="uploadRingtoneBtn" style="flex:1; margin:0; background:var(--surface-2); color:var(--text); border:1px solid var(--line);">Upload a sound</button>
+          <span class="naluno-pick-wrap" style="position:relative;flex:1;display:inline-flex;overflow:hidden;">
+            <button class="save-btn" id="uploadRingtoneBtn" style="flex:1; margin:0; background:var(--surface-2); color:var(--text); border:1px solid var(--line); pointer-events:none;">Upload a sound</button>
+            <input type="file" id="ringtoneFileInput" accept="audio/mpeg,audio/mp3,audio/wav,audio/ogg,audio/aac,audio/*,.mp3,.wav,.m4a,.ogg" style="position:absolute;inset:0;width:100%;height:100%;opacity:0.01;font-size:16px;cursor:pointer;z-index:2;" />
+          </span>
           <button class="save-btn" id="resetRingtoneBtn" style="flex:1; margin:0; background:none; color:var(--text-dim); border:1px solid var(--line); display:none;">Use built-in</button>
         </div>
-        <input type="file" id="ringtoneFileInput" accept="audio/*" style="display:none;" />
       </div>
 
       <button class="save-btn" id="myContributionBtn" style="margin:18px 20px 0; background:none; color:var(--mint); border:1px solid rgba(124,255,178,.35);">My Contribution</button>
@@ -531,8 +536,6 @@ window.__nalunoEntryT0 = Date.now();
   </div>
 
   <!-- ===================== NAV ===================== -->
-  <input type="file" id="threadSlipInput" accept="image/*,video/*" tabindex="-1" aria-hidden="true" style="display:none" />
-  <input type="file" id="threadDocInput" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.rtf,.zip,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/csv,application/rtf,application/zip" tabindex="-1" aria-hidden="true" style="display:none" />
   <div class="navbar">
     <button class="navbtn active" data-tab="frequencies" id="frequenciesNavBtn" style="position:relative;">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2"/><path d="M4 20c0-3.5 3.5-6 8-6s8 2.5 8 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -906,12 +909,14 @@ window.__nalunoEntryT0 = Date.now();
     <audio id="threadAudioPlayer" style="display:none;"></audio>
     <div style="padding:10px 14px calc(env(safe-area-inset-bottom,0px) + 14px); border-top:1px solid var(--line); background:rgba(13,15,23,.92); backdrop-filter:blur(10px);">
       <div id="threadComposerNormal" style="display:flex; gap:9px; align-items:flex-end;">
-        <button type="button" class="ghost-btn" id="threadSlipBtn" aria-label="Send a photo or video" title="Photo or video" style="flex-shrink:0;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="4" y="5" width="16" height="14" rx="3" stroke="currentColor" stroke-width="1.8"/><circle cx="9" cy="10" r="1.6" fill="currentColor"/><path d="M7 16l3.2-3.4 2.3 2.2L16.5 11 20 16" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
-        </button>
-        <button type="button" class="ghost-btn" id="threadDocBtn" aria-label="Send a document" title="Document" style="flex-shrink:0;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8l-5-5z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M14 3v5h5" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
-        </button>
+        <span class="naluno-pick-wrap ghost-btn" id="threadSlipBtn" aria-label="Send a photo or video" title="Photo or video" style="flex-shrink:0;position:relative;overflow:hidden;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="pointer-events:none;"><rect x="4" y="5" width="16" height="14" rx="3" stroke="currentColor" stroke-width="1.8"/><circle cx="9" cy="10" r="1.6" fill="currentColor"/><path d="M7 16l3.2-3.4 2.3 2.2L16.5 11 20 16" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+          <input type="file" id="threadSlipInput" accept="image/jpeg,image/png,image/webp,image/*,video/mp4,video/*,.jpg,.jpeg,.png,.webp,.mp4,.mov,.webm" style="position:absolute;inset:0;width:100%;height:100%;opacity:0.01;font-size:16px;cursor:pointer;z-index:2;" />
+        </span>
+        <span class="naluno-pick-wrap ghost-btn" id="threadDocBtn" aria-label="Send a document" title="Document" style="flex-shrink:0;position:relative;overflow:hidden;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="pointer-events:none;"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8l-5-5z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M14 3v5h5" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+          <input type="file" id="threadDocInput" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.rtf,.zip,application/pdf" style="position:absolute;inset:0;width:100%;height:100%;opacity:0.01;font-size:16px;cursor:pointer;z-index:2;" />
+        </span>
         <div class="ghost-btn" id="threadMoodBtn" role="button" aria-label="Send a feeling instead of words" style="flex-shrink:0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="12" cy="12" r="4.5" stroke="currentColor" stroke-width="1.6"/></svg></div>
         <textarea id="threadInput" rows="1" placeholder="Send a signal…" style="flex:1; resize:none; background:var(--surface); border:1px solid var(--line); border-radius:20px; padding:11px 16px; color:var(--text); font-size:14px; outline:none; max-height:120px; font-family:inherit;"></textarea>
         <div class="ghost-btn" id="threadMicBtn" role="button" aria-label="Record a voice note" style="flex-shrink:0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 15a3 3 0 003-3V6a3 3 0 10-6 0v6a3 3 0 003 3z" stroke="currentColor" stroke-width="2"/><path d="M19 11a7 7 0 01-14 0M12 19v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
@@ -1244,58 +1249,58 @@ window.__nalunoEntryT0 = Date.now();
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
 <script src="firebase-config.js"></script>
 <!-- NALUNO_MODULES -->
-<script src="js/core.js?v=20260903d"></script>
+<script src="js/core.js?v=20260903e"></script>
 <!-- Loaded right after core.js so its global error handlers are installed
      before the rest of the app runs and can capture anything they throw. -->
-<script src="js/diagnostics.js?v=20260903d"></script>
+<script src="js/diagnostics.js?v=20260903e"></script>
 <!-- LOAD ORDER: find.js defines contactAvatarStyleAttr(), used by band-list,
      band-room, wireline and signal-ui. auth.js calls loadBands() at top level,
      which ran BEFORE find.js had executed — a ReferenceError that aborted boot
      entirely. It must load before any consumer. -->
-<script src="js/find.js?v=20260901a"></script>
-<script src="js/media-contain.js?v=20260903d"></script>
-<script src="js/keep-alive.js?v=20260903d"></script>
-<script src="js/metrics.js?v=20260903d"></script>
-<script src="js/data.js?v=20260903d"></script>
-<script src="js/crypto.js?v=20260903d"></script>
-<script src="js/atmosphere.js?v=20260903d"></script>
-<script src="js/band-list.js?v=20260903d"></script>
-<script src="js/signal-core.js?v=20260903d"></script>
-<script src="js/broadcast-core.js?v=20260903d"></script>
-<script src="js/broadcast-upload.js?v=20260903d"></script>
-<script src="js/broadcast-composer.js?v=20260903d"></script>
-<script src="js/origin.js?v=20260903d"></script>
-<script src="js/strand.js?v=20260903d"></script>
-<script src="js/circle.js?v=20260903d"></script>
+<script src="js/find.js?v=20260903e"></script>
+<script src="js/media-contain.js?v=20260903e"></script>
+<script src="js/keep-alive.js?v=20260903e"></script>
+<script src="js/metrics.js?v=20260903e"></script>
+<script src="js/data.js?v=20260903e"></script>
+<script src="js/crypto.js?v=20260903e"></script>
+<script src="js/atmosphere.js?v=20260903e"></script>
+<script src="js/band-list.js?v=20260903e"></script>
+<script src="js/signal-core.js?v=20260903e"></script>
+<script src="js/broadcast-core.js?v=20260903e"></script>
+<script src="js/broadcast-upload.js?v=20260903e"></script>
+<script src="js/broadcast-composer.js?v=20260903e"></script>
+<script src="js/origin.js?v=20260903e"></script>
+<script src="js/strand.js?v=20260903e"></script>
+<script src="js/circle.js?v=20260903e"></script>
 <!-- Community Economy: reports actions only; all economic value is computed
      server-side by the naluno-economy Worker. Loaded AFTER circle.js so
      currentUser exists, and deliberately non-blocking — if this file failed
      to load entirely, Broadcast would behave exactly as it does today. -->
-<script src="js/economy.js?v=20260831a"></script>
-<script src="js/economy-ui.js?v=20260831a"></script>
-<script src="js/weather.js?v=20260903d"></script>
-<script src="js/beacon.js?v=20260903d"></script>
-<script src="js/compass.js?v=20260903d"></script>
-<script src="js/signal-ui.js?v=20260903d"></script>
-<script src="js/compat-lock.js?v=20260903d"></script>
-<script src="js/broadcast-space.js?v=20260903d"></script>
-<script src="js/media-vault.js?v=20260903d"></script>
-<script src="js/wireline.js?v=20260903d"></script>
-<script src="js/profile.js?v=20260903d"></script>
-<script src="js/auth.js?v=20260903d"></script>
-<script src="js/notifications.js?v=20260903d"></script>
-<script src="js/ice-core.js?v=20260903d"></script>
-<script src="js/camera.js?v=20260903d"></script>
-<script src="js/call-filters.js?v=20260903d"></script>
-<script src="js/calls.js?v=20260903d"></script>
-<script src="js/sfu-live.js?v=20260903d"></script>
-<script src="js/broadcast-live.js?v=20260903d"></script>
-<script src="js/band-room.js?v=20260903d"></script>
-<script src="js/pwa.js?v=20260903d"></script>
-<script src="js/spark-engine.js?v=20260903d"></script>
-<script src="js/spark-lg.js?v=20260903d"></script>
-<script src="js/spark-page.js?v=20260903d"></script>
-<script src="js/spark.js?v=20260903d"></script>
+<script src="js/economy.js?v=20260903e"></script>
+<script src="js/economy-ui.js?v=20260903e"></script>
+<script src="js/weather.js?v=20260903e"></script>
+<script src="js/beacon.js?v=20260903e"></script>
+<script src="js/compass.js?v=20260903e"></script>
+<script src="js/signal-ui.js?v=20260903e"></script>
+<script src="js/compat-lock.js?v=20260903e"></script>
+<script src="js/broadcast-space.js?v=20260903e"></script>
+<script src="js/media-vault.js?v=20260903e"></script>
+<script src="js/wireline.js?v=20260903e"></script>
+<script src="js/profile.js?v=20260903e"></script>
+<script src="js/auth.js?v=20260903e"></script>
+<script src="js/notifications.js?v=20260903e"></script>
+<script src="js/ice-core.js?v=20260903e"></script>
+<script src="js/camera.js?v=20260903e"></script>
+<script src="js/call-filters.js?v=20260903e"></script>
+<script src="js/calls.js?v=20260903e"></script>
+<script src="js/sfu-live.js?v=20260903e"></script>
+<script src="js/broadcast-live.js?v=20260903e"></script>
+<script src="js/band-room.js?v=20260903e"></script>
+<script src="js/pwa.js?v=20260903e"></script>
+<script src="js/spark-engine.js?v=20260903e"></script>
+<script src="js/spark-lg.js?v=20260903e"></script>
+<script src="js/spark-page.js?v=20260903e"></script>
+<script src="js/spark.js?v=20260903e"></script>
 <!-- /NALUNO_MODULES -->
 </body>
 </html>

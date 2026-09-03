@@ -63,7 +63,9 @@ service cloud.firestore {
       match /messages/{messageId} {
         allow read: if isSignedIn()
           && request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants;
-        allow create: if isSignedIn() && request.resource.data.from == request.auth.uid;
+        allow create: if isSignedIn()
+          && request.resource.data.from == request.auth.uid
+          && request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants;
         // updates cover receipts (status) and reactions — both legitimately come from
         // the *other* participant, not just the author, so this stays permissive for now.
         allow update: if isSignedIn()
@@ -271,7 +273,10 @@ service cloud.firestore {
         request.auth.uid == uid
         || request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['viewsMonth', 'circleMonth', 'engageMonth', 'scoreMonth', 'viewsTotal',
-                      'monthKey', 'featuredBroadcastId', 'updatedAt', 'name'])
+                      'monthKey', 'featuredBroadcastId', 'updatedAt', 'name',
+                      'mv_' + request.resource.data.monthKey,
+                      'mc_' + request.resource.data.monthKey,
+                      'me_' + request.resource.data.monthKey])
       );
     }
 

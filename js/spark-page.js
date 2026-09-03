@@ -43,6 +43,7 @@ let sparkUnsub = null;
 let sparkMsgUnsub = null;
 let sparkVoiceRec = null;
 let sparkVoiceStartInFlight = false;
+let sparkVoiceGen = 0;
 let sparkVoiceChunks = [];
 let sparkVoiceStream = null;
 let sparkListen = null;
@@ -237,6 +238,7 @@ async function sendSparkIce(phrase){
 }
 
 function stopSparkVoice(){
+  sparkVoiceGen = (sparkVoiceGen || 0) + 1;
   try{ if(sparkListen) sparkListen.stop(); }catch(_){}
   sparkListen = null;
   try{ if(sparkVoiceRec && sparkVoiceRec.state !== 'inactive') sparkVoiceRec.stop(); }catch(_){}
@@ -257,6 +259,7 @@ async function startSparkVoice(){
   if(sparkVoiceStartInFlight) return;
   sparkVoiceStartInFlight = true;
   stopSparkVoice();
+  const gen = sparkVoiceGen;
   let heard = '';
   try{
     const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -276,29 +279,35 @@ async function startSparkVoice(){
   }catch(_){}
   try{
     sparkVoiceStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    if(gen !== sparkVoiceGen){
+      try{ sparkVoiceStream.getTracks().forEach(function(t){ t.stop(); }); }catch(_){}
+      sparkVoiceStream = null;
+      return;
+    }
     sparkVoiceChunks = [];
     sparkVoiceRec = new MediaRecorder(sparkVoiceStream);
     sparkVoiceRec.ondataavailable = function(e){ if(e.data && e.data.size) sparkVoiceChunks.push(e.data); };
     sparkVoiceRec.onstop = async function(){
-      // FIX (confirmed with a simulation — this threw a TypeError on every
-      // single voice note): stopSparkVoice() calls .stop() then immediately
-      // sets the module-level sparkVoiceRec to null, synchronously, well
-      // before this async onstop event actually fires. Reading
-      // sparkVoiceRec.mimeType here was reading a property off null every
-      // time, which meant this handler — the one that actually builds,
-      // uploads, and sends the voice message — never got past its first
-      // line. `this` inside a regular (non-arrow) function assigned to
-      // .onstop correctly refers to the MediaRecorder instance that fired
-      // the event, regardless of what the outer variable now points to.
       const blob = new Blob(sparkVoiceChunks, { type: this.mimeType || 'audio/webm' });
       let url = '';
       try{
-        if(typeof uploadVideoToR2 === 'function' && blob.size > 200){
-          url = await uploadVideoToR2(new File([blob], 'spark-voice.webm', { type: blob.type }));
+        if(blob.size > 200){
+          const file = new File([blob], 'spark-voice.webm', { type: blob.type || 'audio/webm' });
+          if(typeof uploadBroadcastFile === 'function') url = await uploadBroadcastFile(file, null, file.type);
+          else if(typeof uploadVideoToR2 === 'function') url = await uploadVideoToR2(file);
         }
-      }catch(_){}
+      }catch(e){
+        toast((e && e.message) || 'Voice upload failed');
+        return;
+      }
+      if(!url){ toast('Voice upload failed'); return; }
       const text = ($('sparkInput') && $('sparkInput').value.trim()) || heard || 'Voice';
-      await sendSparkText(text, { type: 'voice', audioUrl: url || '' });
+      try{
+        await sendSparkText(text, { type: 'voice', audioUrl: url });
+      }catch(e){
+        toast((e && e.message) || 'Could not send');
+        return;
+      }
       if($('sparkInput')) $('sparkInput').value = '';
     };
     sparkVoiceRec.start();

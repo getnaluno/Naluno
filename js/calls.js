@@ -295,7 +295,7 @@ function stopRingtone(){
 /* Custom ringtone — stored in this browser's localStorage (not Firestore, so it's
    this-device-only for now; syncing it across your own devices would need a Storage
    bucket, the same real gap voice notes have). */
-$('uploadRingtoneBtn').onclick = ()=> $('ringtoneFileInput').click();
+if($('uploadRingtoneBtn')) $('uploadRingtoneBtn').onclick = function(){ /* overlay input is the tap target */ };
 $('ringtoneFileInput').onchange = async (e)=>{
   const file = e.target.files[0];
   e.target.value = '';
@@ -924,8 +924,8 @@ function tuneVideoSender(sender){
   try{
     const params = sender.getParameters() || {};
     if(!params.encodings || !params.encodings.length) params.encodings = [{}];
-    params.encodings[0].maxBitrate = 900000;
-    params.encodings[0].maxFramerate = 24;
+    params.encodings[0].maxBitrate = 2500000;
+    params.encodings[0].maxFramerate = 30;
     sender.setParameters(params).catch(function(){});
   }catch(_){}
 }
@@ -1119,6 +1119,7 @@ function attachConnectionWatchdogs(pc){
       try{
         pc.getSenders().forEach(snd=>{
           if(snd.track){ try{ snd.track.enabled = true; }catch(_){} }
+          try{ if(snd.track && snd.track.kind === 'video') tuneVideoSender(snd); }catch(_){}
         });
       }catch(_){}
       try{ ensureRemoteVideoPlaying(); }catch(_){}

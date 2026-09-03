@@ -124,7 +124,7 @@ function lockOutChromeMediaSession(){
       navigator.mediaSession.metadata = null;
     }
   }catch(_){}
-  const playing = nalunoAnyAppMediaPlaying() || nalunoViewerWantsMedia();
+  const playing = nalunoAnyAppMediaPlaying();
   if(!playing){
     try{ navigator.mediaSession.playbackState = 'none'; }catch(_){}
   }
@@ -155,7 +155,7 @@ function nalunoLiveOrCameraEl(el){
   try{
     if(!el) return false;
     if(el.srcObject) return true;
-    if(el.id === 'bspaceViewerLiveVideo') return true;
+    if(el.id === 'bspaceViewerLiveVideo' || el.id === 'bspaceLiveVideo') return true;
     if(el.id === 'bviewerActiveVideo') return false;
     if(el.closest && (
       el.closest('#callOverlay') ||
@@ -230,7 +230,6 @@ function nalunoExclusiveMedia(keepEl){
     document.querySelectorAll('video, audio').forEach(function(el){
       try{
         if(keepEl && el === keepEl) return;
-        if(el.id === 'bviewerActiveVideo' || (el.closest && el.closest('#bviewer.active'))) return;
         if(nalunoLiveOrCameraEl(el)) return;
         if(el.closest && el.closest('#callOverlay')) return;
         if(nalunoClipElement(el)) return;
@@ -271,6 +270,8 @@ function pauseAppMediaForBackground(){
       try{
         if(el.closest && el.closest('#callOverlay')) return;
         if(nalunoClipElement(el)) return;
+        if(typeof nalunoLiveOrCameraEl === 'function' && nalunoLiveOrCameraEl(el)) return;
+        if(el.srcObject) return;
         if(el.paused) return;
         el.dataset.nalunoPausedHide = '1';
         el.pause();

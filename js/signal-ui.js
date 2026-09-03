@@ -810,11 +810,9 @@ try{ renderBroadcasts(); }catch(e){ console.warn(e); }
       if(v.__nalunoOn && (!pick || (v.__nalunoRatio||0) > (pick.__nalunoRatio||0))) pick = v;
     });
     if(!pick && vids[0]) pick = vids[0];
-    if(pick && typeof pauseAllStrandPreviews === 'function'){
-      /* playStrandPreview is inside strand.js IIFE — poke src+play directly */
-    }
     if(pick){
       try{
+        if(typeof pauseAllStrandPreviews === 'function') pauseAllStrandPreviews();
         pick.muted = true; pick.defaultMuted = true; pick.volume = 0;
         const src = pick.getAttribute('data-preview-src');
         if(src && pick.getAttribute('src') !== src) pick.src = src;

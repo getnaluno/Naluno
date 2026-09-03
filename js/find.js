@@ -30,22 +30,30 @@ function addRealContactToLocalList(firebaseUid, name, color, handle, photo){
    their own Callsign, which is the only place this used to work. */
 function contactAvatarStyleAttr(c){
   if(c && c.photo && c.photo.dataUrl){
-    return `background-image:url('${c.photo.dataUrl}'); background-size:cover; background-position:center;`;
+    const u = String(c.photo.dataUrl).replace(/['"\\]/g, '');
+    if(!/^(data:image\/|https?:|blob:)/i.test(u)) return 'background:#7CFFB2;';
+    return 'background-image:url("'+u+'");background-size:cover;background-position:center;';
   }
-  return `background:${(c && c.color) || '#7CFFB2'};`;
+  const color = String((c && c.color) || '#7CFFB2');
+  const safe = /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(color) ? color : '#7CFFB2';
+  return 'background:' + safe + ';';
 }
 function applyContactAvatarToEl(el, c){
   if(!el || !c) return;
   if(c.photo && c.photo.dataUrl){
-    el.style.backgroundImage = `url('${c.photo.dataUrl}')`;
-    el.style.backgroundSize = 'cover';
-    el.style.backgroundPosition = 'center';
-    el.textContent = '';
-  } else {
-    el.style.backgroundImage = '';
-    el.style.background = c.color || '#7CFFB2';
-    el.textContent = c.initials || '';
+    const u = String(c.photo.dataUrl).replace(/['"\\]/g, '');
+    if(/^(data:image\/|https?:|blob:)/i.test(u)){
+      el.style.backgroundImage = 'url("'+u+'")';
+      el.style.backgroundSize = 'cover';
+      el.style.backgroundPosition = 'center';
+      el.textContent = '';
+      return;
+    }
   }
+  el.style.backgroundImage = '';
+  const color = String(c.color || '#7CFFB2');
+  el.style.background = /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(color) ? color : '#7CFFB2';
+  el.textContent = c.initials || '';
 }
 let connectionsUnsub = null;
 let connectionsRefreshDebounce = null;

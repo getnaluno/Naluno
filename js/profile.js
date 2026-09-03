@@ -216,7 +216,7 @@ $('nameInput').addEventListener('input', e=>{
 });
 
 /* --- avatar photo upload + crop/pan/zoom (reuses the Adjust overlay) --- */
-$('avatarEditBtn').onclick = ()=> $('avatarFileInput').click();
+if($('avatarEditBtn')) $('avatarEditBtn').onclick = function(){ /* overlay input is the tap target */ };
 $('avatarFileInput').onchange = async (e)=>{
   const file = e.target.files[0];
   e.target.value = '';

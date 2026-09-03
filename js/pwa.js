@@ -6,7 +6,7 @@
    ============================================================ */
 /* ---------------- PWA INSTALL + CALL NOTIFICATION DEEP-LINK ---------------- */
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('sw.js?v=20260903d', { scope: './', updateViaCache: 'none' })
+  navigator.serviceWorker.register('sw.js?v=20260903e', { scope: './', updateViaCache: 'none' })
     .then(function(reg){ try{ reg.update(); }catch(_){} })
     .catch(function(e){ console.warn('[sw]', e); });
   // One automatic reload when a new SW takes control (clears stuck "sign-in not ready"
@@ -15,9 +15,9 @@ if('serviceWorker' in navigator){
     let reloaded = false;
     navigator.serviceWorker.addEventListener('controllerchange', function(){
       if(reloaded) return;
-      try{ if(sessionStorage.getItem('nalunoSwReload') === '1') return; }catch(_){}
+      try{ if(sessionStorage.getItem('nalunoSwReload') === '20260903e') return; }catch(_){}
       reloaded = true;
-      try{ sessionStorage.setItem('nalunoSwReload', '1'); }catch(_){}
+      try{ sessionStorage.setItem('nalunoSwReload', '20260903e'); }catch(_){}
       location.reload();
     });
   }catch(_){}
@@ -180,42 +180,34 @@ async function setupCapacitorPush(){
       await Push.addListener('pushNotificationActionPerformed', (action)=>{
         try{
           const data = (action && action.notification && action.notification.data) || {};
+          if(data.type === 'broadcast_live' || data.broadcastId){
+            const broadcastId = data.broadcastId || null;
+            if(broadcastId && typeof openBroadcastById === 'function'){
+              openBroadcastById(broadcastId);
+            }
+            return;
+          }
           const callId = data.callId || data.call_id || null;
           if(callId){ handleIncomingCallFromPush(callId); return; }
-          // FIX (found during a repo audit): this only ever checked for
-          // callId — a "someone went live" push (which carries broadcastId,
-          // not callId) was silently dropped here, both when it arrived
-          // while the app was open (pushNotificationReceived, below) and
-          // when the person tapped it from the notification tray (here).
-          // The web service worker already handles this correctly
-          // (data.type distinguishes a call from everything else); the
-          // native Capacitor listeners never had the equivalent. Tapping
-          // the notification should navigate, same as the web SW's own
-          // notificationclick handler does.
-          const broadcastId = data.broadcastId || null;
-          if(broadcastId && typeof openBroadcastById === 'function'){
-            openBroadcastById(broadcastId);
-          }
         }catch(e){}
       });
       await Push.addListener('pushNotificationReceived', (notif)=>{
         try{
           const data = (notif && notif.data) || {};
+          if(data.type === 'broadcast_live' || data.broadcastId){
+            if(typeof handleBroadcastLiveNotification === 'function'){
+              handleBroadcastLiveNotification({
+                type: 'broadcast_live',
+                fromName: data.callerName || data.fromName || null,
+                title: data.title || null,
+                broadcastId: data.broadcastId || null,
+              });
+            }
+            return;
+          }
           const callId = data.callId || data.call_id || null;
           if(callId && typeof handleIncomingCallFromPush === 'function'){
             handleIncomingCallFromPush(callId);
-            return;
-          }
-          // Foreground "went live" push — was silently dropped before (see
-          // note above); now shows the same tappable toast the rest of the
-          // app already uses for this exact event.
-          if(data.type === 'broadcast_live' && typeof handleBroadcastLiveNotification === 'function'){
-            handleBroadcastLiveNotification({
-              type: 'broadcast_live',
-              fromName: data.callerName || data.fromName || null,
-              title: data.title || null,
-              broadcastId: data.broadcastId || null,
-            });
           }
         }catch(e){}
       });
@@ -240,6 +232,19 @@ if(typeof firebase !== 'undefined' && firebase.messaging){
     const fgMessaging = firebase.messaging();
     fgMessaging.onMessage(payload=>{
       const data = (payload && payload.data) || {};
+      if(data.type === 'broadcast_live' || data.broadcastId){
+        if(typeof handleBroadcastLiveNotification === 'function'){
+          handleBroadcastLiveNotification({
+            type: 'broadcast_live',
+            fromName: data.fromName || data.callerName || 'Someone',
+            title: data.title || '',
+            broadcastId: data.broadcastId || '',
+          });
+        } else {
+          toast((data.title || 'Live on Naluno'));
+        }
+        return;
+      }
       const callId = data.callId || data.call_id || null;
       if(callId) handleIncomingCallFromPush(callId);
       else if(data.title) toast(data.title);
