@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v134: 09.03b upload — native file picker (no input-in-button), no keepalive on big bodies, JS not served stale, on-screen upload trail.
 // v133: 09.03a upload unblock — wake-lock cannot stall publish; swipe cannot steal New Broadcast; Signal composer skipped by exclusive play.
 // v115: 28y Toga name/score no overlap, Delete centered, Signal exclusive skip + preview pause.
 // v114: 28x Toga names slide without view-switch, Toga photos, swipe-left wraps to Toga home, Was live stays on real lives.
@@ -25,7 +26,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v133';
+const CACHE_NAME = 'naluno-shell-v134';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './splash-empty.png', './icon-maskable-512.png', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',
@@ -96,12 +97,32 @@ self.addEventListener('fetch', event=>{
     const copy = r.clone();
     caches.open(CACHE_NAME).then(function(cache){
       cache.put(event.request, copy.clone()).catch(function(){});
-      cache.put(new Request(bare), copy).catch(function(){});
+      if(!isAppCode) cache.put(new Request(bare), copy).catch(function(){});
     }).catch(function(){});
   }
 
+  // App JS/CSS must not be served from a query-stripped cache. ignoreSearch
+  // is why GitHub updates looked like "nothing changed" — yesterday's
+  // uploader kept running. Network-first, match the exact ?v= URL only.
+  if(isAppCode){
+    event.respondWith((async ()=>{
+      try{
+        const response = await netTimeout(event.request, 8000);
+        if(response && response.ok && isShellResponse(response, path)){
+          putBare(response);
+          return response;
+        }
+      }catch(_){}
+      const exact = await caches.match(event.request);
+      if(exact && isShellResponse(exact, path)) return exact;
+      try{ return await fetch(event.request); }catch(_){}
+      return new Response('/* naluno: js miss */', { status: 503, headers: { 'Content-Type': 'application/javascript' } });
+    })());
+    return;
+  }
+
   event.respondWith((async ()=>{
-    const cached = await caches.match(event.request, { ignoreSearch: true })
+    const cached = await caches.match(event.request)
       || await caches.match(new Request(bare))
       || (isNav ? await caches.match('./index.html') : null);
     try{
