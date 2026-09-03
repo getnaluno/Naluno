@@ -1043,9 +1043,23 @@ async function uploadVideoToR2(blobOrDataUrl){
     contentType = (blob.type && String(blob.type).indexOf('audio/') === 0) ? blob.type : 'video/webm';
   }
 
-  // Whole-file POST of a phone clip hangs on Samsung Chrome (traces: POST
-  // then silence). Broadcast already uses chunked and works — Signals do too
-  // for anything bigger than a thumbnail.
+  // Phone traces 2026.09.03c: Signal worker POST /b/init → 401 with the same
+  // Firebase token Broadcast /b/init accepts. Live Signal worker GET /health
+  // is 405 (old deploy, token lookup likely missing FIREBASE_WEB_API_KEY).
+  // Route Signal media through the working Broadcast uploader so posting
+  // succeeds. Firestore still expires the Signal; the file URL is playable.
+  if(typeof uploadBroadcastFile === 'function'){
+    try{
+      if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Signal via Broadcast pipe', Math.round(blob.size/1024)+'KB');
+      const url = await uploadBroadcastFile(blob, null, contentType);
+      if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Signal upload ok');
+      return url;
+    }catch(e){
+      try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Signal via Broadcast FAIL', e && e.message); }catch(_){}
+      // fall through to Signal worker
+    }
+  }
+
   if(typeof uploadSignalChunked === 'function' && (blob.size || 0) > 512 * 1024){
     try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Signal chunked', Math.round(blob.size/1024)+'KB '+contentType); }catch(_){}
     return uploadSignalChunked(blob, contentType).then(function(url){
@@ -1137,7 +1151,11 @@ async function uploadSignalChunked(blob, contentType){
       body: JSON.stringify({ contentType: contentType || 'video/mp4', bytes: size }),
     });
     const retryBody = await retry.json().catch(()=>({}));
-    if(!retry.ok) throw new Error(retryBody.error || 'Upload init failed');
+    if(!retry.ok){
+      const why = retryBody.error || retryBody.message || ('init ' + retry.status);
+      try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Signal init 401', why); }catch(_){}
+      throw new Error(why);
+    }
     initBody.key = retryBody.key;
     initBody.uploadId = retryBody.uploadId;
   } else if(!initRes.ok){
