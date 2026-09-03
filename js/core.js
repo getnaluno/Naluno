@@ -76,12 +76,37 @@ function nalunoFetch(url, opts){
     for(const k in opts){ if(Object.prototype.hasOwnProperty.call(opts, k) && k !== 'keepalive') next[k] = opts[k]; }
     opts = next;
   }
+  const timeoutMs = (typeof opts.timeoutMs === 'number')
+    ? opts.timeoutMs
+    : (size > 2 * 1024 * 1024 ? 180000 : 25000);
+  const fetchOpts = {};
+  for(const k in opts){
+    if(Object.prototype.hasOwnProperty.call(opts, k) && k !== 'timeoutMs') fetchOpts[k] = opts[k];
+  }
+  const ctl = new AbortController();
+  const outer = fetchOpts.signal;
+  const timer = setTimeout(function(){ try{ ctl.abort(); }catch(_){} }, timeoutMs);
+  if(outer){
+    if(outer.aborted) ctl.abort();
+    else outer.addEventListener('abort', function(){ try{ ctl.abort(); }catch(_){} }, { once: true });
+  }
+  fetchOpts.signal = ctl.signal;
+  const label = (opts.method || 'GET') + ' ' + String(url).replace(/^https?:\/\/[^/]+/, '').slice(0, 48);
   try{
     if(typeof nalunoUploadLog === 'function'){
-      nalunoUploadLog((opts.method || 'GET') + ' ' + String(url).replace(/^https?:\/\/[^/]+/, '').slice(0, 56), size ? (Math.round(size/1024) + 'KB') : '');
+      nalunoUploadLog(label, size ? (Math.round(size/1024) + 'KB') : '');
     }
   }catch(_){}
-  return fetch(url, opts);
+  return fetch(url, fetchOpts).then(function(res){
+    clearTimeout(timer);
+    try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog(label + ' → ' + res.status); }catch(_){}
+    return res;
+  }).catch(function(e){
+    clearTimeout(timer);
+    const msg = (e && e.name === 'AbortError') ? ('timeout ' + timeoutMs + 'ms') : ((e && e.message) || 'fetch failed');
+    try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog(label + ' FAIL', msg); }catch(_){}
+    throw e;
+  });
 }
 try{ window.nalunoFetch = nalunoFetch; }catch(_){}
 
@@ -223,7 +248,7 @@ window.addEventListener('error', function(ev){
 window.addEventListener('unhandledrejection', function(ev){
   try{ console.error('[naluno:promise]', ev.reason); }catch(_){}
 });
-console.log('[naluno] build 2026.09.03b');
+console.log('[naluno] build 2026.09.03c');
 
 
 function nalunoShrinkImageDataUrl(dataUrl, maxEdge, quality){

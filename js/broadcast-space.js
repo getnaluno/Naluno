@@ -965,11 +965,22 @@ async function bspaceVoiceStopAndSend(){
   bspaceVoiceResetBtn();
   if(!blob){ toast('Nothing recorded'); return; }
   try{
+    if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Broadcast voice', Math.round(blob.size/1024)+'KB');
     if(btn) btn.textContent = 'Uploading…';
-    const url = await uploadVideoToR2(blob);
+    const ct = (blob.type && String(blob.type).indexOf('audio/') === 0) ? blob.type : 'audio/webm';
+    let url = null;
+    if(typeof uploadBroadcastFile === 'function'){
+      url = await uploadBroadcastFile(blob, null, ct);
+    } else if(typeof uploadVideoToR2 === 'function'){
+      url = await uploadVideoToR2(blob);
+    } else {
+      throw new Error('Uploader not loaded');
+    }
     await bspacePost('conversation', { type:'voice', mediaUrl:url, text:'', duration: Math.round((Date.now()-bspaceVoiceStart)/1000) });
     toast('Voice added');
+    try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Broadcast voice ok'); }catch(_){}
   }catch(e){
+    try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Broadcast voice FAIL', e && e.message); }catch(_){}
     toast(e.message || 'Voice failed');
   }finally{
     bspaceVoiceResetBtn();
@@ -1397,20 +1408,31 @@ if($('bspaceUpdateSend')){
 }
 
 if($('bspaceConvPhoto')){
-  $('bspaceConvPhoto').onclick = ()=> $('bspaceConvPhotoInput') && $('bspaceConvPhotoInput').click();
+  // Overlay input is the tap target — do not call input.click() from the button.
 }
 if($('bspaceConvPhotoInput')){
   $('bspaceConvPhotoInput').onchange = async ()=>{
     const file = $('bspaceConvPhotoInput').files && $('bspaceConvPhotoInput').files[0];
-    $('bspaceConvPhotoInput').value = '';
-    if(!file) return;
+    try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Broadcast photo pick', file ? (file.name+' '+file.size) : 'empty'); }catch(_){}
+    if(!file){
+      toast('No photo came through — try the Files app');
+      return;
+    }
     if(!(await bspaceRequireMember())) return;
     try{
       toast('Uploading photo…');
-      const url = await uploadVideoToR2(file);
+      const url = (typeof uploadPhotoToR2 === 'function')
+        ? await uploadPhotoToR2(file)
+        : (typeof uploadBroadcastFile === 'function')
+          ? await uploadBroadcastFile(file, null, (file.type && file.type.indexOf('image/')===0) ? file.type : 'image/jpeg')
+          : await uploadVideoToR2(file);
       await bspacePost('conversation', { type:'photo', mediaUrl: url, text: '' });
       toast('Photo shared');
-    }catch(e){ toast(e.message || 'Upload failed'); }
+      try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Broadcast photo ok'); }catch(_){}
+    }catch(e){
+      try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Broadcast photo FAIL', e && e.message); }catch(_){}
+      toast(e.message || 'Upload failed');
+    }
   };
 }
 

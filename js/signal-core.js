@@ -522,16 +522,14 @@ async function nalunoPrepareSignalVideo(source, onProgress){
   }
   if(!(blob instanceof Blob) && !(blob instanceof File)) throw new Error('Invalid media data');
   if(!(blob.size > 0)) throw new Error('Empty file — pick again from Files (not Google Photos prepare)');
-  // Always set a real streaming Content-Type later; detect HEVC for convert
-  const hevc = await nalunoSniffIsHevc(blob);
-  if(hevc){
-    if(onProgress) onProgress(0.02, 'Converting Samsung video for playback…');
-    const out = await nalunoTranscodeToWeb(blob, function(p){
-      if(onProgress) onProgress(0.02 + p * 0.75, 'Converting… ' + Math.round(p * 100) + '%');
-    }, (typeof MAX_VIDEO_SECONDS === 'number' ? MAX_VIDEO_SECONDS : 240));
-    return out;
-  }
-  // Very large single POST will fail — chunk path handles it in uploadVideoToR2
+  // Samsung HEVC convert (canvas + MediaRecorder) hangs around 6% on Chrome
+  // webapp — the traces show "Converting… 6%" then nothing. Broadcast already
+  // uploads the original and plays. Do the same here.
+  try{
+    const hevc = await nalunoSniffIsHevc(blob);
+    if(hevc && typeof nalunoUploadLog === 'function') nalunoUploadLog('Signal HEVC — upload original, skip convert');
+  }catch(_){}
+  if(onProgress) onProgress(1, 'Uploading original…');
   return blob;
 }
 
@@ -1039,12 +1037,21 @@ async function uploadVideoToR2(blobOrDataUrl){
   if(!contentType || /octet-stream|application\/download|binary\//i.test(contentType)){
     contentType = (blob.type && String(blob.type).indexOf('webm') >= 0) ? 'video/webm' : 'video/mp4';
   }
-  if((blob.type && String(blob.type).indexOf('webm') >= 0) || (blob._nalunoName && /\.webm$/i.test(blob._nalunoName))){
-    contentType = 'video/webm';
+  if((blob.type && String(blob.type).indexOf('audio/') === 0)){
+    contentType = blob.type;
+  } else if((blob.type && String(blob.type).indexOf('webm') >= 0) || (blob._nalunoName && /\.webm$/i.test(blob._nalunoName))){
+    contentType = (blob.type && String(blob.type).indexOf('audio/') === 0) ? blob.type : 'video/webm';
   }
 
-  if((blob.size || 0) > UPLOAD_MAX_BYTES && typeof uploadSignalChunked === 'function'){
-    return uploadSignalChunked(blob, contentType);
+  // Whole-file POST of a phone clip hangs on Samsung Chrome (traces: POST
+  // then silence). Broadcast already uses chunked and works — Signals do too
+  // for anything bigger than a thumbnail.
+  if(typeof uploadSignalChunked === 'function' && (blob.size || 0) > 512 * 1024){
+    try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Signal chunked', Math.round(blob.size/1024)+'KB '+contentType); }catch(_){}
+    return uploadSignalChunked(blob, contentType).then(function(url){
+      try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Signal chunked ok'); }catch(_){}
+      return url;
+    });
   }
 
   async function once(forceRefresh){

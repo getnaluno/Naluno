@@ -441,7 +441,11 @@ async function bcompPublish(){
       let breathers = null;
       if(snapKind === 'photo'){
         if(progress) progress('Uploading photo…');
-        mediaUrl = await uploadVideoToR2(snapFile);
+        mediaUrl = (typeof uploadPhotoToR2 === 'function')
+          ? await uploadPhotoToR2(snapFile)
+          : (typeof uploadBroadcastFile === 'function')
+            ? await uploadBroadcastFile(snapFile, null, (snapFile && snapFile.type) || 'image/jpeg')
+            : await uploadVideoToR2(snapFile);
         thumbUrl = mediaUrl;
       } else {
         const file = snapFile || snapBlob;

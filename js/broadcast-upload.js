@@ -23,10 +23,16 @@ function bcastUploadEndpoints(){
 
 function bcastGuessType(blob){
   if(blob && blob.type && blob.type !== 'application/octet-stream' && blob.type !== 'application/download'){
+    if(String(blob.type).indexOf('audio/') === 0) return blob.type;
+    if(String(blob.type).indexOf('image/') === 0) return blob.type;
     if(String(blob.type).indexOf('webm') >= 0) return 'video/webm';
     if(String(blob.type).indexOf('video/') === 0) return blob.type;
   }
   const name = (blob && (blob.name || blob._nalunoName)) ? String(blob.name || blob._nalunoName) : '';
+  if(/\.(jpe?g)$/i.test(name)) return 'image/jpeg';
+  if(/\.png$/i.test(name)) return 'image/png';
+  if(/\.webp$/i.test(name)) return 'image/webp';
+  if(/\.webm$/i.test(name) && /audio/i.test((blob && blob.type) || '')) return 'audio/webm';
   if(/\.webm$/i.test(name)) return 'video/webm';
   if(/\.mov$/i.test(name)) return 'video/quicktime';
   if(/\.mp4$/i.test(name) || /\.m4v$/i.test(name) || /\.hevc$/i.test(name)) return 'video/mp4';
