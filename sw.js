@@ -1,5 +1,5 @@
 // Naluno service worker — offline shell + background call push.
-// v135: 09.03c Signal skip HEVC hang, chunked Signal upload, Broadcast voice/photo on working worker.
+// v136: 09.03d Signal videos use the working Broadcast upload pipe (Signal /b/init 401).
 // v133: 09.03a upload unblock — wake-lock cannot stall publish; swipe cannot steal New Broadcast; Signal composer skipped by exclusive play.
 // v115: 28y Toga name/score no overlap, Delete centered, Signal exclusive skip + preview pause.
 // v114: 28x Toga names slide without view-switch, Toga photos, swipe-left wraps to Toga home, Was live stays on real lives.
@@ -26,7 +26,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v135';
+const CACHE_NAME = 'naluno-shell-v136';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './splash-empty.png', './icon-maskable-512.png', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',
