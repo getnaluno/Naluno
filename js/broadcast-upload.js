@@ -40,9 +40,15 @@ async function bcastAuthHeader(force){
 }
 
 async function uploadBroadcastFile(blob, onProgress, contentTypeOverride){
+  try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Broadcast upload start', (blob && blob.size) ? Math.round(blob.size/1024)+'KB' : ''); }catch(_){}
   try{ if(typeof nalunoKeepAliveStart === 'function') await nalunoKeepAliveStart('broadcast'); }catch(_){}
   try{
-    return await uploadBroadcastFileInner(blob, onProgress, contentTypeOverride);
+    const url = await uploadBroadcastFileInner(blob, onProgress, contentTypeOverride);
+    try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Broadcast upload ok', url); }catch(_){}
+    return url;
+  }catch(e){
+    try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Broadcast upload FAIL', e && e.message); }catch(_){}
+    throw e;
   }finally{
     try{ if(typeof nalunoKeepAliveStop === 'function') nalunoKeepAliveStop(); }catch(_){}
   }
@@ -77,11 +83,10 @@ async function uploadBroadcastFileInner(blob, onProgress, contentTypeOverride){
 async function uploadBroadcastFileTo(base, blob, contentType, onProgress){
   const size = blob.size;
   const auth = await bcastAuthHeader(false);
-  const initRes = await fetch(base + '/b/init', {
+  const initRes = await (typeof nalunoFetch === 'function' ? nalunoFetch : fetch)(base + '/b/init', {
     method: 'POST',
     mode: 'cors',
     credentials: 'omit',
-    keepalive: true,
     headers: Object.assign({ 'Content-Type': 'application/json' }, auth),
     body: JSON.stringify({ contentType, bytes: size }),
   });
@@ -115,21 +120,19 @@ async function uploadBroadcastFileTo(base, blob, contentType, onProgress){
     while(attempt < 6){
       attempt++;
       try{
-        partRes = await fetch(partUrl, {
+        partRes = await (typeof nalunoFetch === 'function' ? nalunoFetch : fetch)(partUrl, {
           method: 'PUT',
           mode: 'cors',
           credentials: 'omit',
-          keepalive: true,
           headers: Object.assign({ 'Content-Type': 'application/octet-stream' }, auth),
           body: chunk,
         });
         if(partRes.status === 401 || partRes.status === 403){
           const auth2 = await bcastAuthHeader(true);
-          partRes = await fetch(partUrl, {
+          partRes = await (typeof nalunoFetch === 'function' ? nalunoFetch : fetch)(partUrl, {
             method: 'PUT',
             mode: 'cors',
             credentials: 'omit',
-            keepalive: true,
             headers: Object.assign({ 'Content-Type': 'application/octet-stream' }, auth2),
             body: chunk,
           });
@@ -153,11 +156,10 @@ async function uploadBroadcastFileTo(base, blob, contentType, onProgress){
     sent = end;
   }
   if(onProgress) onProgress(0.97, 'Finishing upload…');
-  const doneRes = await fetch(base + '/b/complete', {
+  const doneRes = await (typeof nalunoFetch === 'function' ? nalunoFetch : fetch)(base + '/b/complete', {
     method: 'POST',
     mode: 'cors',
     credentials: 'omit',
-    keepalive: true,
     headers: Object.assign({ 'Content-Type': 'application/json' }, await bcastAuthHeader(false)),
     body: JSON.stringify({ key, uploadId, parts, bytes: size }),
   });

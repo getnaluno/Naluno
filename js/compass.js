@@ -264,6 +264,7 @@ $('compassInput').addEventListener('input', function(){
 });
 
 function openComposer(mode){
+  try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('open composer', mode || 'signal'); }catch(_){}
   composerMode = mode === 'broadcast' ? 'broadcast' : 'signal';
   resetComposer();
   const label = $('composerModeLabel');
@@ -326,8 +327,10 @@ function resetComposer(){
   }, 180000);
   composerType = 'photo'; composerItems = []; activeComposerItemIndex = -1; composerTransition = 'fade';
   document.querySelectorAll('.type-chip').forEach(c=>c.classList.toggle('active', c.dataset.type==='photo'));
-  $('mediaFileInput').accept = (typeof IMAGE_PICK_ACCEPT === 'string') ? IMAGE_PICK_ACCEPT : 'image/*';
-  $('mediaFileInput').value = '';
+  if($('mediaFileInput')){
+    $('mediaFileInput').accept = (typeof IMAGE_PICK_ACCEPT === 'string') ? IMAGE_PICK_ACCEPT : 'image/jpeg,image/png,image/webp,image/*';
+    try{ $('mediaFileInput').value = ''; }catch(_){}
+  }
   $('uploadDropLabel').textContent = 'Choose photos from your library';
   $('uploadDrop').style.display = 'flex';
   $('uploadPreview').style.display = 'none';
@@ -354,13 +357,17 @@ document.querySelectorAll('.type-chip').forEach(chip=>{
       $('mediaComposer').style.display = 'block';
       $('textComposer').style.display = 'none';
       if(composerType==='video'){
-        $('mediaFileInput').accept = 'video/*';
-        $('mediaFileInput').removeAttribute('multiple');
+        if($('mediaFileInput')){
+          $('mediaFileInput').accept = (typeof VIDEO_PICK_ACCEPT === 'string') ? VIDEO_PICK_ACCEPT : 'video/mp4,video/quicktime,video/webm,video/*';
+          $('mediaFileInput').removeAttribute('multiple');
+        }
       } else {
-        $('mediaFileInput').accept = (typeof IMAGE_PICK_ACCEPT === 'string') ? IMAGE_PICK_ACCEPT : 'image/*';
-        $('mediaFileInput').setAttribute('multiple', '');
+        if($('mediaFileInput')){
+          $('mediaFileInput').accept = (typeof IMAGE_PICK_ACCEPT === 'string') ? IMAGE_PICK_ACCEPT : 'image/jpeg,image/png,image/webp,image/*';
+          $('mediaFileInput').setAttribute('multiple', '');
+        }
       }
-      $('mediaFileInput').value = '';
+      if($('mediaFileInput')) try{ $('mediaFileInput').value = ''; }catch(_){}
       $('uploadDropLabel').textContent = composerType==='video' ? 'Choose videos from your library' : 'Choose photos from your library';
       $('uploadDrop').style.display = 'flex';
       $('uploadPreview').style.display = 'none';
@@ -373,57 +380,32 @@ document.querySelectorAll('.type-chip').forEach(chip=>{
 });
 
 function nalunoOpenMediaPicker(){
-  // Samsung WebView ignores display:none / off-screen inputs after Google Photos
-  // "Prepare". Overlay a real input on the drop zone so the tap IS the picker.
-  const host = $('uploadDrop') || document.body;
-  const inp = document.createElement('input');
-  inp.type = 'file';
-  inp.accept = composerType === 'video'
-    ? 'video/*'
-    : ((typeof IMAGE_PICK_ACCEPT === 'string') ? IMAGE_PICK_ACCEPT : 'image/*');
-  if(composerType !== 'video') inp.multiple = true;
-  inp.setAttribute('aria-hidden', 'true');
-  inp.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;opacity:0.01;z-index:6;cursor:pointer;font-size:16px;';
-  const hostPos = host && host.style ? host.style.position : '';
-  if(host && host !== document.body){
-    if(getComputedStyle(host).position === 'static') host.style.position = 'relative';
-    host.appendChild(inp);
-  } else {
-    inp.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%;opacity:0.01;z-index:400;';
-    document.body.appendChild(inp);
+  try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Signal picker tap', composerType); }catch(_){}
+  const inp = $('mediaFileInput');
+  if(!inp){
+    if(typeof toast === 'function') toast('Picker missing — refresh Naluno');
+    return;
   }
-  const cleanup = function(){
-    try{ inp.remove(); }catch(_){}
-    try{ if(host && host !== document.body && !hostPos) host.style.position = hostPos; }catch(_){}
-  };
-  inp.addEventListener('change', function(){
-    const files = inp.files;
-    cleanup();
-    if(!files || !files.length){
-      if(typeof toast === 'function') toast('No file came through — try the Files app');
-      return;
-    }
-    if($('bgProcessBanner')){
-      $('bgProcessBanner').style.display = 'flex';
-      if(typeof setBgProgress === 'function') setBgProgress(0.05, 'Opening in Naluno…');
-    }
-    Promise.resolve(handleFiles(files)).finally(function(){
-      if($('bgProcessBanner') && !postInProgress) $('bgProcessBanner').style.display = 'none';
-    });
-  }, { once: true });
-  setTimeout(cleanup, 120000);
-  try{ inp.click(); }catch(_){}
+  try{ inp.value = ''; }catch(_){}
 }
-$('uploadDrop').onclick = ()=> nalunoOpenMediaPicker();
+$('mediaFileInput').addEventListener('click', function(){
+  try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Signal library opening', composerType); }catch(_){}
+});
 $('mediaFileInput').onchange = (e)=>{
   const files = e.target.files;
-  e.target.value = '';
-  if(!files || !files.length) return;
+  try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Signal files', files && files.length); }catch(_){}
+  if(!files || !files.length){
+    if(typeof toast === 'function') toast('No file came through — try the Files app');
+    return;
+  }
   if($('bgProcessBanner')){
     $('bgProcessBanner').style.display = 'flex';
     if(typeof setBgProgress === 'function') setBgProgress(0.05, 'Opening in Naluno…');
   }
-  Promise.resolve(handleFiles(files)).finally(function(){
+  Promise.resolve(handleFiles(files)).catch(function(err){
+    try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Signal open FAIL', err && err.message); }catch(_){}
+    if(typeof toast === 'function') toast((err && err.message) || 'Could not open that file');
+  }).finally(function(){
     if($('bgProcessBanner') && !postInProgress) $('bgProcessBanner').style.display = 'none';
   });
 };
@@ -469,6 +451,7 @@ let trimCurrentFile = null;
 let trimObjectUrl = null;
 
 async function handleFiles(fileList){
+  try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('handleFiles', (fileList && fileList.length) || 0); }catch(_){}
   const files = Array.from(fileList || []).filter(function(f){ return f && (f.size || 0) > 0; });
   if(!files.length){
     if(typeof toast === 'function') toast('That file was empty — pick again from the Files app');
@@ -956,8 +939,11 @@ function renderTransitionChips(){
 
 function updatePostButtonState(){
   const valid = composerType==='text' ? $('textBroadcastInput').value.trim().length>0 : composerItems.length>0;
-  $('postBroadcastBtn').disabled = !valid;
-  $('postBroadcastBtn').style.opacity = valid ? '1' : '.5';
+  const btn = $('postBroadcastBtn');
+  if(!btn) return;
+  btn.removeAttribute('disabled');
+  btn.setAttribute('aria-disabled', valid ? 'false' : 'true');
+  btn.style.opacity = valid ? '1' : '.5';
 }
 
 let postInProgress = false;
@@ -977,6 +963,7 @@ window.addEventListener('beforeunload', e=>{
    straight-through trim flow — same proven code path either way, just two different
    places that can trigger it. */
 async function postSegmentsNow(newSegments){
+  try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('postSegmentsNow', (newSegments && newSegments.length) || 0); }catch(_){}
   const hasVideo = newSegments.some(s=>s.type==='video');
   if(hasVideo){
     postInProgress = true;
@@ -1162,7 +1149,21 @@ async function postSegmentsNow(newSegments){
 }
 
 $('postBroadcastBtn').onclick = async ()=>{
-  if($('postBroadcastBtn').disabled || postInProgress) return;
+  try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Post tapped', composerMode + ' items=' + composerItems.length + ' type=' + composerType); }catch(_){}
+  if(postInProgress){
+    try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Post ignored — already in progress'); }catch(_){}
+    toast('Already publishing…');
+    return;
+  }
+  const valid = composerType==='text' ? ($('textBroadcastInput') && $('textBroadcastInput').value.trim().length>0) : composerItems.length>0;
+  if(!valid){
+    toast(composerType==='text' ? 'Write something first' : 'Pick a photo or video first');
+    return;
+  }
+  if($('postBroadcastBtn').getAttribute('aria-disabled') === 'true'){
+    toast(composerType==='text' ? 'Write something first' : 'Pick a photo or video first');
+    return;
+  }
   postInProgress = true;
   const now = Date.now();
 

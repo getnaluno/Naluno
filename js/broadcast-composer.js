@@ -19,6 +19,7 @@ let bcompKind = null; // 'video' | 'photo' | null
 let bcompPublishing = false;
 
 function bcompOpen(){
+  try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('open Broadcast composer'); }catch(_){}
   if(!currentUser){ toast('Sign in to publish a Broadcast'); return; }
   bcompReset();
   const el = $('bcomposer');
@@ -28,6 +29,15 @@ function bcompOpen(){
       if(typeof fillStrandSelect === 'function') fillStrandSelect($('bcompStrand'));
     }).catch(function(){});
   }
+  try{
+    const ping = typeof nalunoFetch === 'function' ? nalunoFetch : fetch;
+    ping('https://naluno-broadcast-upload.naluno.workers.dev/', { method: 'GET', mode: 'cors' })
+      .then(function(r){ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('bcast-worker', r.status); })
+      .catch(function(e){ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('bcast-worker FAIL', e && e.message); });
+    ping('https://naluno-signal-upload.naluno.workers.dev/', { method: 'GET', mode: 'cors' })
+      .then(function(r){ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('signal-worker', r.status); })
+      .catch(function(e){ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('signal-worker FAIL', e && e.message); });
+  }catch(_){}
 }
 
 function bcompClose(){
@@ -62,7 +72,12 @@ function bcompReset(){
   window._bcompOrigin = null;
   window._bcompOriginAck = false;
   const pub = $('bcompPublishBtn');
-  if(pub){ pub.disabled = true; pub.textContent = 'Publish Broadcast'; }
+  if(pub){
+    pub.removeAttribute('disabled');
+    pub.setAttribute('aria-disabled', 'true');
+    pub.style.opacity = '.5';
+    pub.textContent = 'Publish Broadcast';
+  }
   const fileIn = $('bcompFileInput');
   if(fileIn) fileIn.value = '';
   const prog = $('bcompProgress');
@@ -263,6 +278,7 @@ function compressBroadcastVideo(file, onProgress){
 }
 
 async function bcompOnFileChosen(file){
+  try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Broadcast file', file && (file.name + ' ' + Math.round((file.size||0)/1024) + 'KB')); }catch(_){}
   if(!file) return;
   const isVideo = (typeof nalunoFileLooksLikeVideo === 'function')
     ? nalunoFileLooksLikeVideo(file)
@@ -291,7 +307,7 @@ async function bcompOnFileChosen(file){
     bcompDuration = 0;
     if(prev) prev.innerHTML = `<img src="${bcompPreviewUrl}" alt="" style="width:100%;max-height:42vh;object-fit:contain;border-radius:14px;background:#000;" />`;
     if(status) status.textContent = 'Photo ready — add a title and publish';
-    if(pub){ pub.disabled = false; pub.textContent = 'Publish Broadcast'; }
+    if(pub){ pub.removeAttribute('disabled'); pub.setAttribute('aria-disabled', 'false'); pub.style.opacity = '1'; pub.textContent = 'Publish Broadcast'; }
     bcompKickOriginScan();
     return;
   }
@@ -303,7 +319,7 @@ async function bcompOnFileChosen(file){
 
   // Enable Publish immediately — duration probe must not trap the picker.
   bcompCompressedBlob = file;
-  if(pub){ pub.disabled = false; pub.textContent = 'Publish Broadcast'; }
+  if(pub){ pub.removeAttribute('disabled'); pub.setAttribute('aria-disabled', 'false'); pub.style.opacity = '1'; pub.textContent = 'Publish Broadcast'; }
   if(status) status.textContent = 'Opening the original…';
 
   const duration = await bcompProbeDuration(file);
@@ -330,7 +346,7 @@ async function bcompOnFileChosen(file){
       status.textContent = `Ready · ${mins}:${String(secs).padStart(2,'0')} · ${mb} MB · original kept`;
     }
   }
-  if(pub){ pub.disabled = false; pub.textContent = 'Publish Broadcast'; }
+  if(pub){ pub.removeAttribute('disabled'); pub.setAttribute('aria-disabled', 'false'); pub.style.opacity = '1'; pub.textContent = 'Publish Broadcast'; }
   bcompKickOriginScan();
 }
 
@@ -354,7 +370,11 @@ async function bcompKickOriginScan(){
 }
 
 async function bcompPublish(){
-  if(bcompPublishing) return;
+  try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Publish Broadcast tapped', bcompKind || 'none'); }catch(_){}
+  if(bcompPublishing){
+    toast('Already publishing…');
+    return;
+  }
   if(!currentUser || !fbDb){ toast('Sign in first'); return; }
   if(!bcompKind){ toast('Add a photo or video first'); return; }
 
@@ -368,17 +388,9 @@ async function bcompPublish(){
     return;
   }
 
-  if(typeof runOriginScan === 'function' && bcompFile && !window._bcompOrigin){
-    const pubBtn = $('bcompPublishBtn');
-    if(pubBtn){ pubBtn.disabled = true; pubBtn.textContent = 'OriginID reading…'; }
-    try{
-      window._bcompOrigin = await runOriginScan(bcompFile, title, desc, bcompDuration || 0);
-      bcompPaintOrigin(window._bcompOrigin);
-    }catch(e){
-      console.warn('[origin]', e);
-    } finally {
-      if(pubBtn){ pubBtn.disabled = false; pubBtn.textContent = 'Publish Broadcast'; }
-    }
+  // OriginID is advisory only — never stall Publish waiting for it.
+  if(!window._bcompOrigin){
+    window._bcompOrigin = { status: 'clear', score: 0, matches: [], hold: false, skipped: true };
   }
   const needsAck = (typeof originNeedsAck === 'function')
     ? originNeedsAck(window._bcompOrigin)
@@ -519,19 +531,20 @@ function bcompWire(){
     };
   }
   if($('bcompClose')) $('bcompClose').onclick = bcompClose;
-  if($('bcompPickBtn')) $('bcompPickBtn').onclick = function(e){
-    if(e && e.target && e.target.id === 'bcompFileInput') return;
-    if(e){ e.preventDefault(); e.stopPropagation(); }
-    const inp = $('bcompFileInput');
-    if(!inp) return;
-    try{ inp.value = ''; }catch(_){}
-    inp.click();
-  };
+  // Native overlay input is the tap target — never nest it in a button and
+  // never call input.click() from JS. Samsung Chrome swallows that gesture.
   if($('bcompFileInput')){
+    $('bcompFileInput').addEventListener('click', function(){
+      try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Broadcast library opening'); }catch(_){}
+    });
     $('bcompFileInput').onchange = (e)=>{
       const f = e.target.files && e.target.files[0];
-      e.target.value = '';
-      if(f) bcompOnFileChosen(f);
+      try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Broadcast change', f ? (f.name + ' ' + f.size) : 'empty'); }catch(_){}
+      if(!f){
+        if(typeof toast === 'function') toast('No file came through — try the Files app');
+        return;
+      }
+      bcompOnFileChosen(f);
     };
   }
   if($('bcompPublishBtn')) $('bcompPublishBtn').onclick = bcompPublish;

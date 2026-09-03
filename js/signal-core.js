@@ -539,8 +539,8 @@ window.nalunoSniffIsHevc = nalunoSniffIsHevc;
 window.nalunoTranscodeToWeb = nalunoTranscodeToWeb;
 window.nalunoPrepareSignalVideo = nalunoPrepareSignalVideo;
 
-const VIDEO_PICK_ACCEPT = 'video/*';
-const IMAGE_PICK_ACCEPT = 'image/*';
+const VIDEO_PICK_ACCEPT = 'video/mp4,video/quicktime,video/webm,video/*,.mp4,.mov,.webm,.m4v,.3gp';
+const IMAGE_PICK_ACCEPT = 'image/jpeg,image/png,image/webp,image/*,.jpg,.jpeg,.png,.webp';
 const BCAST_PICK_ACCEPT = VIDEO_PICK_ACCEPT + ',' + IMAGE_PICK_ACCEPT;
 
 function nalunoProbeDuration(file, timeoutMs){
@@ -948,11 +948,10 @@ async function nalunoUploadFileToR2(file, contentType, maxBytes, label){
   }
   async function once(forceRefresh){
     const idToken = await currentUser.getIdToken(!!forceRefresh);
-    const res = await fetch(SIGNAL_UPLOAD_WORKER_URL, {
+    const res = await (typeof nalunoFetch === 'function' ? nalunoFetch : fetch)(SIGNAL_UPLOAD_WORKER_URL, {
       method: 'POST',
       mode: 'cors',
       credentials: 'omit',
-      keepalive: true,
       headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': contentType },
       body: file,
     });
@@ -1023,6 +1022,7 @@ async function uploadDocumentToR2(file){
 }
 
 async function uploadVideoToR2(blobOrDataUrl){
+  try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Signal media upload start'); }catch(_){}
   if(!currentUser) throw new Error('Sign in again to upload');
   let blob = blobOrDataUrl;
   if(typeof blobOrDataUrl === 'string'){
@@ -1049,11 +1049,10 @@ async function uploadVideoToR2(blobOrDataUrl){
 
   async function once(forceRefresh){
     const idToken = await currentUser.getIdToken(!!forceRefresh);
-    const res = await fetch(SIGNAL_UPLOAD_WORKER_URL, {
+    const res = await (typeof nalunoFetch === 'function' ? nalunoFetch : fetch)(SIGNAL_UPLOAD_WORKER_URL, {
       method: 'POST',
       mode: 'cors',
       credentials: 'omit',
-      keepalive: true,
       headers: {
         'Authorization': 'Bearer ' + idToken,
         'Content-Type': contentType,
@@ -1115,18 +1114,18 @@ async function uploadSignalChunked(blob, contentType){
     return { 'Authorization': 'Bearer ' + token };
   };
   let headers = await authH(false);
-  const initRes = await fetch(base + '/b/init', {
+  const initRes = await (typeof nalunoFetch === 'function' ? nalunoFetch : fetch)(base + '/b/init', {
     method: 'POST',
-    mode: 'cors', credentials: 'omit', keepalive: true,
+    mode: 'cors', credentials: 'omit',
     headers: Object.assign({ 'Content-Type': 'application/json' }, headers),
     body: JSON.stringify({ contentType: contentType || 'video/mp4', bytes: size }),
   });
   const initBody = await initRes.json().catch(()=>({}));
   if(initRes.status === 401 || initRes.status === 403){
     headers = await authH(true);
-    const retry = await fetch(base + '/b/init', {
+    const retry = await (typeof nalunoFetch === 'function' ? nalunoFetch : fetch)(base + '/b/init', {
       method: 'POST',
-      mode: 'cors', credentials: 'omit', keepalive: true,
+      mode: 'cors', credentials: 'omit',
       headers: Object.assign({ 'Content-Type': 'application/json' }, headers),
       body: JSON.stringify({ contentType: contentType || 'video/mp4', bytes: size }),
     });
@@ -1156,17 +1155,17 @@ async function uploadSignalChunked(blob, contentType){
     while(attempt < 6){
       attempt++;
       try{
-        partRes = await fetch(partUrl, {
+        partRes = await (typeof nalunoFetch === 'function' ? nalunoFetch : fetch)(partUrl, {
           method: 'PUT',
-          mode: 'cors', credentials: 'omit', keepalive: true,
+          mode: 'cors', credentials: 'omit',
           headers: Object.assign({ 'Content-Type': 'application/octet-stream' }, headers),
           body: chunk,
         });
         if(partRes.status === 401 || partRes.status === 403){
           headers = await authH(true);
-          partRes = await fetch(partUrl, {
+          partRes = await (typeof nalunoFetch === 'function' ? nalunoFetch : fetch)(partUrl, {
             method: 'PUT',
-            mode: 'cors', credentials: 'omit', keepalive: true,
+            mode: 'cors', credentials: 'omit',
             headers: Object.assign({ 'Content-Type': 'application/octet-stream' }, headers),
             body: chunk,
           });
@@ -1184,9 +1183,9 @@ async function uploadSignalChunked(blob, contentType){
     if(!partRes || !partRes.ok) throw new Error(partBody.error || ('Part ' + partNum + ' failed'));
     parts.push({ part: partNum, etag: partBody.etag });
   }
-  const doneRes = await fetch(base + '/b/complete', {
+  const doneRes = await (typeof nalunoFetch === 'function' ? nalunoFetch : fetch)(base + '/b/complete', {
     method: 'POST',
-    mode: 'cors', credentials: 'omit', keepalive: true,
+    mode: 'cors', credentials: 'omit',
     headers: Object.assign({ 'Content-Type': 'application/json' }, headers),
     body: JSON.stringify({ key, uploadId, parts, bytes: size }),
   });
@@ -1439,6 +1438,7 @@ function hidePublishChip(){
 }
 
 function enqueuePublishJob(job){
+  try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('queue ' + (job && job.label), 'n=' + (publishQueue.length+1)); }catch(_){}
   publishQueue.push(job);
   showPublishChip(job.label || 'Publishing in background…');
   if(typeof toast === 'function') toast('Publishing in background — you can leave this screen');
@@ -1446,8 +1446,12 @@ function enqueuePublishJob(job){
 }
 
 async function drainPublishQueue(){
-  if(publishBusy) return;
+  if(publishBusy){
+    try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('queue busy, waiting'); }catch(_){}
+    return;
+  }
   publishBusy = true;
+  try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('queue drain start'); }catch(_){}
   let watchdog = null;
   try{
     watchdog = setTimeout(function(){
@@ -1474,6 +1478,7 @@ async function drainPublishQueue(){
         if(typeof toast === 'function') toast(job.doneMsg || 'Published');
       }catch(e){
         console.error('[publish-queue]', e);
+        try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('queue FAIL', e && e.message); }catch(_){}
         if(typeof notifyPublishResult === 'function') notifyPublishResult(false, (job && job.label) || '');
         else if(typeof toast === 'function') toast((e && e.message) || 'Publish failed');
       }

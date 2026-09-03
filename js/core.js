@@ -29,6 +29,63 @@ function toast(msg, onTap){
   }
 }
 
+/** Visible + console + diagnostics trail for Signal/Broadcast upload.
+ *  Chrome's Errors-only filter hides console.log — use warn, and paint
+ *  an on-screen chip so a phone without DevTools still shows the path. */
+function nalunoUploadLog(msg, detail){
+  try{
+    const line = '[upload] ' + String(msg || '') + (detail != null ? ' ' + String(detail).slice(0, 220) : '');
+    console.warn(line);
+    if(typeof nalunoDiag === 'function') nalunoDiag('upload', msg, detail);
+  }catch(_){}
+  try{
+    let el = document.getElementById('nalunoUploadTrace');
+    if(!el && document.body){
+      el = document.createElement('div');
+      el.id = 'nalunoUploadTrace';
+      el.style.cssText = 'display:none;position:fixed;left:10px;right:10px;top:calc(env(safe-area-inset-top,0px) + 6px);z-index:10050;padding:8px 12px;border-radius:12px;background:rgba(13,15,23,.94);border:1px solid rgba(124,255,178,.45);color:#7CFFB2;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:1.35;pointer-events:none;';
+      document.body.appendChild(el);
+    }
+    if(!el) return;
+    const prev = el.getAttribute('data-lines') || '';
+    const lines = (prev ? prev.split('\n') : []).concat([String(msg || '')]);
+    const keep = lines.slice(-4);
+    el.setAttribute('data-lines', keep.join('\n'));
+    el.textContent = keep.join(' · ');
+    el.style.display = 'block';
+    clearTimeout(nalunoUploadLog._hide);
+    nalunoUploadLog._hide = setTimeout(function(){ el.style.display = 'none'; }, 20000);
+  }catch(_){}
+}
+try{ window.nalunoUploadLog = nalunoUploadLog; }catch(_){}
+
+/** fetch wrapper: Chrome silently rejects keepalive bodies over 64KB.
+ *  That was added in 09.03a on 8MB chunk PUTs and would abort uploads
+ *  with no useful console line on some Samsung Chrome builds. */
+function nalunoFetch(url, opts){
+  opts = opts || {};
+  const body = opts.body;
+  let size = 0;
+  try{
+    if(body && typeof body.size === 'number') size = body.size;
+    else if(body && typeof body.byteLength === 'number') size = body.byteLength;
+    else if(typeof body === 'string') size = body.length;
+  }catch(_){}
+  if(opts.keepalive && size > 32000){
+    const next = {};
+    for(const k in opts){ if(Object.prototype.hasOwnProperty.call(opts, k) && k !== 'keepalive') next[k] = opts[k]; }
+    opts = next;
+  }
+  try{
+    if(typeof nalunoUploadLog === 'function'){
+      nalunoUploadLog((opts.method || 'GET') + ' ' + String(url).replace(/^https?:\/\/[^/]+/, '').slice(0, 56), size ? (Math.round(size/1024) + 'KB') : '');
+    }
+  }catch(_){}
+  return fetch(url, opts);
+}
+try{ window.nalunoFetch = nalunoFetch; }catch(_){}
+
+
 /* FIX ("app is static and vertical — make it sensitive to orientation"):
    manifest.json used to hard-lock orientation:"portrait", so the app never
    actually rotated at all no matter how the phone was held — that's the
@@ -166,7 +223,7 @@ window.addEventListener('error', function(ev){
 window.addEventListener('unhandledrejection', function(ev){
   try{ console.error('[naluno:promise]', ev.reason); }catch(_){}
 });
-console.log('[naluno] build 2026.08.21d');
+console.log('[naluno] build 2026.09.03b');
 
 
 function nalunoShrinkImageDataUrl(dataUrl, maxEdge, quality){
