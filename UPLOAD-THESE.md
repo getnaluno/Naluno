@@ -1,42 +1,49 @@
-# GitHub update — exact files
+# GitHub update — 2026.09.03b (upload unblock)
 
-Every file is at its correct repo path. Copy over the root of your
-`getnaluno/Naluno` checkout, keep the structure, commit.
+Copy these files over the root of `getnaluno/Naluno`. Keep the folder
+structure. Commit and push. Force-close the webapp after it deploys.
 
-Verified byte-identical to the tested working copy; all JS passes
-`node --check` from a fresh extraction; covers every file that differs from
-the live repo.
+## Why nothing changed last time
 
-## Files (21 changed + 3 new)
+Live workers are healthy (CORS, auth, `/b/init` all respond).
+The 09.03a zip reached GitHub. Uploads still did nothing and the
+console stayed empty because:
 
-**Root** — `index.html`, `sw.js` (cache v123), `firestore.rules`,
-`AndroidManifest.xml`, `BeaconFindService.java`
+1. Broadcast file input was nested inside a `<button>` (invalid HTML).
+   Samsung Chrome never fires `change`. Publish stayed disabled.
+   Disabled buttons do not fire click — so no log, no toast, no fetch.
+2. Signal used a hidden `display:none` input plus a programmatic
+   `.click()`. Same Samsung failure mode.
+3. Service worker matched JS with `ignoreSearch: true` and a 2.5s
+   timeout, so a slow phone kept yesterday’s uploader.
+4. `keepalive: true` on 8MB chunk PUTs hits Chrome’s 64KB keepalive
+   quota and aborts the request.
 
-**css/** — `app.css`
+## Files
 
-**js/** — `broadcast-core.js`, `broadcast-space.js`, `circle.js`, `core.js`,
-`keep-alive.js`, `media-contain.js`, `notifications.js`, `pwa.js`,
-`signal-core.js`, `signal-ui.js`, `spark-lg.js`, `spark-page.js`,
-`spark.js`, `strand.js`, `wireline.js`
+- `index.html`
+- `sw.js` (cache **v134**)
+- `css/app.css`
+- `js/core.js`
+- `js/signal-core.js`
+- `js/broadcast-upload.js`
+- `js/broadcast-composer.js`
+- `js/compass.js`
+- `js/pwa.js`
+- `js/signal-ui.js`
+- `signal-worker-index.js` (optional — see below)
 
-**signal-worker/** (new) — `index.js`, `wrangler.toml`, `README.md`
+## After push
 
-`js/calls.js` deliberately NOT here — untouched throughout.
+Force-close Naluno (not just swipe away). Re-open. You should see
+`[naluno] build 2026.09.03b` in the console, and a green chip at the
+top of the screen the moment you tap Choose / Post.
 
-## Not just a file upload
+Workers do **not** need a redeploy for this ship. They already accept
+uploads. `signal-worker-index.js` only adds a `/health` GET if you
+later run `npx wrangler deploy` on `naluno-signal-upload`.
 
-1. `firebase deploy --only firestore:rules` — or Spark's in-person Callsign
-   swap stays broken.
-2. `cd signal-worker && npx wrangler deploy` — or photo/document content
-   types are still served wrong.
-3. The two native Android files go in the Capacitor project, and
-   `BeaconFindService.java` needs this in Gradle first:
-   `implementation "androidx.security:security-crypto:1.1.0-alpha06"`
+## Still config, not this zip
 
-Note: the new Delete-your-own-post feature needs **no** rules change — the
-permission already existed and simply had no UI.
-
-## Still config, not code
-
-R2 `naluno-signal` deletes objects at 25h, so 3-day/7-day Signal options
-stay capped. Restore steps in `signal-worker/README.md`.
+R2 `naluno-signal` still deletes objects at ~25h. That is a bucket
+lifecycle rule, not this code.

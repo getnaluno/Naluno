@@ -26,7 +26,7 @@ function corsHeaders(origin, extra) {
   return Object.assign({
     'Access-Control-Allow-Origin': origin || '*',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS, HEAD',
-    'Access-Control-Allow-Headers': 'Authorization, Content-Type, Range',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type, Range, Content-Length, X-Requested-With',
     'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges, Content-Type',
     'Access-Control-Max-Age': '86400',
   }, extra || {});
@@ -165,6 +165,10 @@ export default {
 
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: corsHeaders(origin) });
+    }
+
+    if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
+      return json({ ok: true, service: 'naluno-signal-upload', routes: ['POST /', 'POST /b/init', 'PUT /b/part', 'POST /b/complete', 'GET /o/**'] }, 200, origin);
     }
 
     if ((request.method === 'GET' || request.method === 'HEAD') && url.pathname.startsWith('/o/')) {
