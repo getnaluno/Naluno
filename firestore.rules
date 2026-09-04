@@ -121,17 +121,32 @@ service cloud.firestore {
         allow write: if isOwner(uid); // you can only mark *yourself* as tuned in
       }
       match /messages/{messageId} {
-        allow read: if isSignedIn();
+        function bandData() {
+          return get(/databases/$(database)/documents/bands/$(bandId)).data;
+        }
+        function epochMs() {
+          return bandData().messageEpoch is number ? int(bandData().messageEpoch) : 0;
+        }
+        function msgMs() {
+          return resource.data.ts is timestamp ? resource.data.ts.toMillis()
+            : (resource.data.ts is number ? int(resource.data.ts) : 0);
+        }
+        // After messageEpoch is stamped, the previous session is unreadable.
+        // That is the "cannot be retrieved" line — hide is not enough.
+        allow read: if isSignedIn() && (epochMs() == 0 || msgMs() >= epochMs());
         allow create: if isSignedIn() && request.resource.data.from == request.auth.uid;
-        // Sender can hard-delete their own line. After the square empties,
-        // any signed-in member (or anyone, if lastEmptiedAt is set) can prune
-        // the settled chatter so the 2h wipe actually lands in Firestore.
         allow delete: if isSignedIn() && (
           resource.data.from == request.auth.uid
-          || request.auth.uid in get(/databases/$(database)/documents/bands/$(bandId)).data.memberUids
-          || get(/databases/$(database)/documents/bands/$(bandId)).data.lastEmptiedAt != null
-          || get(/databases/$(database)/documents/bands/$(bandId)).data.messageEpoch != null
+          || request.auth.uid in bandData().memberUids
+          || bandData().lastEmptiedAt != null
+          || bandData().messageEpoch != null
         );
+      }
+      match /wipe/{messageId} {
+        // Ids queued at empty-time so prune can delete without re-reading
+        // message text after the epoch cutoff. Contains no conversation body.
+        allow read, write: if isSignedIn() &&
+          request.auth.uid in get(/databases/$(database)/documents/bands/$(bandId)).data.memberUids;
       }
       match /invites/{inviteId} {
         allow read, write: if isSignedIn();
