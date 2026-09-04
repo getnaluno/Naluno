@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v141: 09.04d crop bake, band wipe, wireline envelopes, live auto-join, community count.
 // v140: 09.04c avatars via https+img overlay; call Decline is Decline; stop ringing after hangup; profile photoUrl.
 // v139: 09.04b lobby always opens; sticky column (search/strand); band wipe sticks; avatars; swipe pauses media.
 // v138: 09.04a Signal playback no dual-load (AbortError 20 stutter); all video types on pickers.
@@ -30,7 +31,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v140';
+const CACHE_NAME = 'naluno-shell-v141';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './splash-empty.png', './icon-maskable-512.png', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',

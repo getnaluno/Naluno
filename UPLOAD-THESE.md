@@ -1,70 +1,51 @@
-# GitHub update — 2026.09.04c (avatars, Wireline send, calls, notifications)
+# GitHub update — 2026.09.04d
 
 Copy these files over the root of `getnaluno/Naluno`. Keep the folder
 structure. Commit and push. Force-close the webapp after it deploys
 (not just swipe away). Re-open. Console should show:
 
-`[naluno] build 2026.09.04c`
+`[naluno] build 2026.09.04d`
 
-Service worker cache: **naluno-shell-v140**.
+Service worker cache: **naluno-shell-v141**.
 
 Do not rebuild architecture. Signal / Broadcast upload paths were not
-changed in this sweep.
+changed.
 
 ## What this fixes
 
-1. **Avatars in Frequencies + Wireline** — list rows always show color +
-   initials. Photos are an `<img>` overlay and only from an https URL.
-   Failed loads remove the image; they no longer leave a black disc.
-   Saving your Callsign photo now uploads to R2 and writes `photoUrl` on
-   `users/{uid}` so the other phone can actually fetch the face.
-2. **Callee sees the caller’s face** — the call document now carries
-   `callerPhotoUrl` (https only) plus name / color / initials. Incoming
-   UI paints that with the same `<img>` overlay.
-3. **Wireline composer** — text leaves the box immediately. A 450ms lock
-   stops double-send. The bubble is optimistic; encrypt only uses a
-   public key already on the contact (no extra Firestore wait).
-4. **Call ring after leaving** — closing the lobby / overlay stops
-   ringback and ringtone, clears the audio element, and tells the
-   service worker the call is handled. Android Back hangs up.
-5. **Call notification** — Decline is Decline (it no longer answers).
-   One follow-up ring at 2.5s, cancelled if you already handled it.
-   Tapping Decline writes `declined` on the call doc.
-6. **Broadcast leftover audio** — leaving the Broadcast room pauses and
-   unloads every `#bspace` video/audio, clears the media host, and
-   locks Chrome’s media session.
-
-## Files
-
-- `index.html` (build 2026.09.04c)
-- `sw.js` (cache **v140**)
-- `css/app.css`
-- `js/core.js`
-- `js/pwa.js`
-- `js/find.js`
-- `js/auth.js`
-- `js/profile.js`
-- `js/calls.js`
-- `js/wireline.js`
-- `js/signal-ui.js`
-- `js/band-list.js`
-- `js/band-room.js`
-- `js/broadcast-space.js`
-- `js/media-contain.js`
-- `UPLOAD-THESE.md` (this file)
-
-A full-repo zip is also provided: `naluno-play-20260904c-full.zip`.
-You can upload the whole zip contents over the repo root.
+1. **Avatars everywhere** — Callsign photos now resolve live for every
+   face: Band card stack (“What if?” initials), Band roster, Band
+   messages, Find, Signal viewer, Circle/Toga, calls. The stack no
+   longer paints a frozen `memberInfo` snapshot that was copied before
+   photos hydrated.
+2. **Callsign crop** — Saving bakes pan/zoom into a square JPEG, then
+   uploads that. The circle no longer applies `translate(-50%,-50%)` on
+   an inset image (that is what pushed faces out of bounds). Avatar
+   adjust is a circular clip so drag stays inside the face.
+3. **Go live** — Opening a live Broadcast joins automatically so the
+   host is visible without a second tap. Host track attach maps
+   recvonly transceivers more strictly and retries a failed PC.
+4. **Broadcast after a phone notification** — pause stores
+   `currentTime` and restore snaps back if Chrome jumped or restarted.
+   Swiping off a plate still sets want-play off, so resume cannot
+   restart a video you already left.
+5. **Band wipe** — After 2h empty, messages are cut at
+   `max(lastEmptiedAt, messageEpoch)` even if Firestore delete is slow.
+   Rules allow prune when `messageEpoch` is set. Timestamp objects no
+   longer make the 2h clock `NaN`.
+6. **Wireline decrypt** — Each text is sealed in envelopes for both
+   people (plus the legacy ciphertext). Decrypt cache persists on
+   device. Failed lines no longer show a fake empty bubble.
+7. **Community count** — The Impact number is the Circle roster
+   size, the same list the sheet opens. Not the Broadcast’s own
+   `memberUids` (that is why it showed 1 while two people were listed).
 
 ## After push
 
-Force-close Naluno. Re-open. Confirm the build chip / console line
-`2026.09.04c`. Then:
+Force-close Naluno. Re-open. Confirm `2026.09.04d`. Then:
 
-- Wireline + Frequencies show initials immediately; faces appear once
-  that person has a `photoUrl` (re-save your Callsign photo once)
-- Place a call — callee sees your name, color, and photo
-- Send a Wireline text — it leaves the box at once, one copy
-- Leave a ringing call with Back — ring and notification stop
-- Notification Decline does not open the incoming screen
-- Leave a Broadcast — audio does not keep playing in the shade
+- Re-save your Callsign photo once so the baked `photoUrl` lands
+- Band “What if?” stack should show photos, not MM / M / K / AW
+- Band “Cleared” should show an empty thread, not last night’s clips
+- Open a live as a viewer — picture should appear without a second Join
+- Community tap number = people in the sheet

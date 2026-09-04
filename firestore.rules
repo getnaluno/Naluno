@@ -130,6 +130,7 @@ service cloud.firestore {
           resource.data.from == request.auth.uid
           || request.auth.uid in get(/databases/$(database)/documents/bands/$(bandId)).data.memberUids
           || get(/databases/$(database)/documents/bands/$(bandId)).data.lastEmptiedAt != null
+          || get(/databases/$(database)/documents/bands/$(bandId)).data.messageEpoch != null
         );
       }
       match /invites/{inviteId} {
