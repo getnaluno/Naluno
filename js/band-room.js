@@ -17,8 +17,16 @@ async function flushBandOutbox(){
   const rows = loadBandOutbox();
   if(!rows.length) return;
   const left = [];
+  const settle = (typeof BAND_SETTLE_MS === 'number') ? BAND_SETTLE_MS : 7200000;
   for(const row of rows){
     try{
+      const band = (typeof bands !== 'undefined' && bands)
+        ? bands.find(function(x){ return x.firestoreId === row.bandId; })
+        : null;
+      if(band && typeof bandSettleElapsed === 'function' && bandSettleElapsed(band)){
+        continue; // session is gone — do not resurrect queued clips
+      }
+      if(row.ts && (Date.now() - row.ts) > settle) continue;
       const ref = fbDb.collection('bands').doc(row.bandId).collection('messages');
       await ref.add(Object.assign({}, row.payload, {
         from: currentUser.uid,
@@ -46,10 +54,18 @@ async function loadOlderBandMessages(){
   if(!fbDb || !activeBandId || bandLoadingOlder) return;
   const b = activeBand();
   if(!b || !b.isReal || !b.firestoreId) return;
+  const cut = bandWipeCut(b);
+  if(bandSettleElapsed(b) && !cut) return;
   bandLoadingOlder = true;
   try{
     const bandRef = fbDb.collection('bands').doc(b.firestoreId);
     let q = bandRef.collection('messages').orderBy('ts','desc').limit(40);
+    if(cut && firebase.firestore && firebase.firestore.Timestamp){
+      q = bandRef.collection('messages')
+        .where('ts', '>', firebase.firestore.Timestamp.fromMillis(cut))
+        .orderBy('ts','desc')
+        .limit(40);
+    }
     if(bandOldestMsgDoc) q = q.startAfter(bandOldestMsgDoc);
     const snap = await q.get();
     if(snap.empty){ if(typeof toast==='function') toast('No older messages'); return; }
@@ -81,13 +97,15 @@ async function renderBandMessagesFromDocs(docs){
       ts: bandMsgTs(m),
     };
   }).filter(row => !seen.has(row._id));
-  await Promise.all(rows.map(async row=>{
+  const cut = bandWipeCut(activeBand());
+  const kept = cut ? rows.filter(function(row){ return bandMsgTs(row) > cut; }) : rows;
+  await Promise.all(kept.map(async row=>{
     if(row.type === 'system' || row.type === 'invite' || row.type === 'audio' || row.type === 'video') return;
     if(row.encrypted && row.envelopes && typeof decryptBandMessage === 'function'){
       row.text = await decryptBandMessage(row);
     }
   }));
-  bandOlderMessages[activeBandId] = rows.concat(bandOlderMessages[activeBandId] || []);
+  bandOlderMessages[activeBandId] = kept.concat(bandOlderMessages[activeBandId] || []);
   renderBandMessages(true);
 }
 /** Wire once per band-room open: scrolling near the top loads the previous page. */
@@ -243,7 +261,7 @@ function updateBandSettleNote(){
   if(b.lastEmptiedAt){
     const left = BAND_SETTLE_MS - (Date.now() - bandEmptiedMs(b));
     if(left <= 0){
-      el.textContent = 'Cleared · next messages start fresh';
+      el.textContent = 'Cleared · previous session is deleted';
       return;
     }
     const mins = Math.ceil(left / 60000);
@@ -372,45 +390,220 @@ let bandMetaUnsub = null;
 let bandSettleTimer = null;
 let bandInviteUnsub = null;
 
+function bandWipeCut(b){
+  if(!b) return 0;
+  const epoch = bandEpochMs(b);
+  const emptied = bandEmptiedMs(b);
+  if(bandSettleElapsed(b)) return Math.max(emptied, epoch);
+  return epoch || 0;
+}
+function wipeLocalBandSession(b, cut){
+  if(!b) return;
+  const id = b.id;
+  const keep = function(m){ return bandMsgTs(m) > cut; };
+  if(id && bandMessages[id]) bandMessages[id] = (bandMessages[id] || []).filter(keep);
+  if(id && bandOlderMessages[id]) bandOlderMessages[id] = (bandOlderMessages[id] || []).filter(keep);
+  try{
+    const fid = b.firestoreId;
+    const rows = loadBandOutbox().filter(function(r){
+      if(fid && r.bandId === fid) return false;
+      if(r.ts && (Date.now() - r.ts) > ((typeof BAND_SETTLE_MS === 'number') ? BAND_SETTLE_MS : 7200000)) return false;
+      return true;
+    });
+    saveBandOutbox(rows);
+  }catch(_){}
+}
+function nalunoForgetBandMedia(url){
+  if(!url || typeof url !== 'string') return;
+  try{
+    if(typeof caches !== 'undefined' && caches.keys){
+      caches.keys().then(function(keys){
+        keys.forEach(function(k){
+          caches.open(k).then(function(c){ return c.delete(url); }).catch(function(){});
+        });
+      }).catch(function(){});
+    }
+  }catch(_){}
+}
+async function snapshotBandWipeQueue(bandRef, cut){
+  if(!bandRef || !fbDb) return 0;
+  try{
+    const snap = await bandRef.collection('messages').limit(400).get();
+    if(snap.empty) return 0;
+    const batch = fbDb.batch();
+    let n = 0;
+    snap.docs.forEach(function(d){
+      const data = d.data() || {};
+      const ts = bandMsgTs(data);
+      if(cut && ts && ts >= cut) return;
+      batch.set(bandRef.collection('wipe').doc(d.id), {
+        mediaUrl: data.mediaUrl || null,
+        queuedAt: Date.now(),
+      }, { merge:true });
+      n++;
+    });
+    if(n) await batch.commit();
+    return n;
+  }catch(e){ console.warn('[band] wipe queue', e); return 0; }
+}
+async function deleteBandWipeBatch(bandRef, cut){
+  if(!bandRef || !fbDb) return { deleted:0, leftover:true };
+  let deleted = 0;
+  let failed = 0;
+  for(let i = 0; i < 25; i++){
+    const ids = [];
+    const urls = [];
+    try{
+      const w = await bandRef.collection('wipe').limit(80).get();
+      w.docs.forEach(function(d){
+        ids.push(d.id);
+        const u = (d.data() || {}).mediaUrl;
+        if(u) urls.push(u);
+      });
+    }catch(_){}
+    if(!ids.length){
+      try{
+        const snap = await bandRef.collection('messages').limit(80).get();
+        snap.docs.forEach(function(d){
+          const ts = bandMsgTs(d.data() || {});
+          if(cut && ts && ts >= cut) return;
+          ids.push(d.id);
+          const u = (d.data() || {}).mediaUrl;
+          if(u) urls.push(u);
+        });
+      }catch(_){}
+    }
+    if(!ids.length) break;
+    const batch = fbDb.batch();
+    ids.forEach(function(id){
+      batch.delete(bandRef.collection('messages').doc(id));
+      batch.delete(bandRef.collection('wipe').doc(id));
+    });
+    try{
+      await batch.commit();
+      deleted += ids.length;
+    }catch(e){
+      console.warn('[band] prune batch', e);
+      for(let k = 0; k < ids.length; k++){
+        const id = ids[k];
+        try{
+          await bandRef.collection('messages').doc(id).delete();
+          await bandRef.collection('wipe').doc(id).delete();
+          deleted++;
+        }catch(e2){ failed++; console.warn('[band] prune one', e2); }
+      }
+    }
+    urls.forEach(function(url){ try{ nalunoForgetBandMedia(url); }catch(_){} });
+  }
+  let leftover = false;
+  try{
+    const w = await bandRef.collection('wipe').limit(1).get();
+    leftover = !w.empty;
+  }catch(_){ leftover = failed > 0; }
+  return { deleted: deleted, leftover: leftover || failed > 0 };
+}
+
 async function pruneSettledBandMessages(bandRef, b){
   if(!bandRef || !b || !bandIsSettled(b)) return;
   if(b._pruning) return;
   b._pruning = true;
   try{
-    // Stamp the session boundary FIRST so clients hide old lines even if a
-    // delete batch is denied or slow. Previously epoch was written after
-    // deletes, so a rules miss left the chatter forever.
-    const epoch = Date.now();
-    b.messageEpoch = epoch;
-    await bandRef.set({
-      messageEpoch: epoch,
-      lastEmptiedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    }, { merge:true });
-    if(activeBandId && b.id === activeBandId && bandMessages[activeBandId]){
-      bandMessages[activeBandId] = [];
+    const emptied = bandEmptiedMs(b) || Date.now();
+    // 1. Queue ids of the DEAD session while they are still readable.
+    await snapshotBandWipeQueue(bandRef, emptied);
+    await deleteBandWipeBatch(bandRef, emptied);
+
+    // 2. Stamp epoch = now so leftover docs are unreadable even if a delete missed.
+    const cut = Math.max(emptied, bandEpochMs(b) || 0, Date.now());
+    b.messageEpoch = cut;
+    wipeLocalBandSession(b, cut);
+    if(activeBandId && b.id === activeBandId){
       try{ renderBandMessages(); }catch(_){}
     }
-    for(let i = 0; i < 10; i++){
-      const snap = await bandRef.collection('messages').limit(80).get();
-      if(snap.empty) break;
-      const batch = fbDb.batch();
-      let n = 0;
-      snap.docs.forEach(d => {
-        const ts = bandMsgTs(d.data() || {});
-        if(ts && ts >= epoch) return; // keep anything sent after the wipe stamp
-        batch.delete(d.ref);
-        n++;
-      });
-      if(n) await batch.commit();
-      if(snap.size < 80) break;
-      if(!n) break;
+    await bandRef.set({
+      messageEpoch: cut,
+    }, { merge:true });
+
+    // 3. Delete remaining wipe-queue ids (no message read required).
+    //    Still keyed to emptied so a message sent in the new gathering is kept.
+    const result = await deleteBandWipeBatch(bandRef, emptied);
+
+    // 4. Only drop lastEmptiedAt when the session is actually gone.
+    //    Clearing it early is what let old clips stream back in.
+    if(!result.leftover){
+      b.lastEmptiedAt = null;
+      await bandRef.set({ lastEmptiedAt: null }, { merge:true });
     }
-    // Drop lastEmptiedAt so the NEXT occupancy gets a fresh 2h clock.
-    // messageEpoch keeps any undeleted leftover hidden.
-    b.lastEmptiedAt = null;
-    await bandRef.set({ lastEmptiedAt: null }, { merge:true });
   }catch(e){ console.warn('[band] prune', e); }
   finally{ b._pruning = false; }
+}
+window.pruneSettledBandMessages = pruneSettledBandMessages;
+
+setInterval(function(){
+  try{
+    if(typeof bands === 'undefined' || !bands || !fbDb) return;
+    bands.forEach(function(b){
+      if(b && b.isReal && b.firestoreId && bandSettleElapsed(b)){
+        pruneSettledBandMessages(fbDb.collection('bands').doc(b.firestoreId), b);
+      }
+    });
+  }catch(_){}
+}, 20000);
+
+function bandMessagesQuery(bandRef, b){
+  const cut = bandWipeCut(b);
+  if(cut && typeof firebase !== 'undefined' && firebase.firestore && firebase.firestore.Timestamp){
+    return bandRef.collection('messages')
+      .where('ts', '>', firebase.firestore.Timestamp.fromMillis(cut))
+      .orderBy('ts', 'desc')
+      .limit(60);
+  }
+  return bandRef.collection('messages').orderBy('ts','desc').limit(60);
+}
+function attachBandMessagesListener(bandRef, b){
+  if(bandMessagesUnsub){ try{ bandMessagesUnsub(); }catch(_){} bandMessagesUnsub = null; }
+  if(!bandRef || !b || !currentUser) return;
+  const cut = bandWipeCut(b);
+  b._msgCut = cut;
+  const id = b.id;
+  bandMessagesUnsub = bandMessagesQuery(bandRef, b).onSnapshot(async function(snap){
+    const rows = snap.docs.slice().reverse().map(function(d){
+      const m = d.data();
+      return {
+        fromMe: m.from === currentUser.uid,
+        fromUid: m.from,
+        text: m.text || '',
+        type: m.type || 'text',
+        mediaUrl: m.mediaUrl || null,
+        thumb: m.thumb || null,
+        duration: m.duration || null,
+        encrypted: !!m.encrypted,
+        envelopes: m.envelopes || null,
+        ts: bandMsgTs(m),
+      };
+    }).filter(function(row){ return !cut || bandMsgTs(row) > cut; });
+    await Promise.all(rows.map(async function(row){
+      if(row.type === 'system' || row.type === 'invite' || row.type === 'audio' || row.type === 'video') return;
+      if(row.encrypted && row.envelopes){
+        row.text = await decryptBandMessage(row);
+      }
+    }));
+    bandMessages[id] = rows;
+    renderBandMessages();
+  }, function(){ /* messages just won't sync this session */ });
+}
+
+function stampBandEmpty(bandRef, b){
+  if(!bandRef) return;
+  if(b) b.lastEmptiedAt = Date.now();
+  bandRef.set({ lastEmptiedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge:true })
+    .then(function(){ snapshotBandWipeQueue(bandRef, b && bandEmptiedMs(b)); })
+    .catch(function(){ snapshotBandWipeQueue(bandRef, b && bandEmptiedMs(b)); });
+}
+function clearBandEmptyClock(bandRef, b){
+  if(!bandRef) return;
+  if(b) b.lastEmptiedAt = null;
+  bandRef.set({ lastEmptiedAt: null }, { merge:true }).catch(function(){});
 }
 
 function openBandRoom(id){
@@ -454,6 +647,8 @@ function openBandRoom(id){
       }
       updateBandSettleNote();
       if(bandIsSettled(b)) pruneSettledBandMessages(bandRef, b);
+      const nextCut = bandWipeCut(b);
+      if(nextCut !== b._msgCut) attachBandMessagesListener(bandRef, b);
       renderBandMessages();
     }, ()=>{});
 
@@ -493,23 +688,23 @@ function openBandRoom(id){
         });
       });
       const totalPresent = others.length + (amTunedIn ? 1 : 0);
-      // Debounce empty/occupied writes — stops flicker when presence docs churn
       if(totalPresent === 0){
         if(!b._emptySince) b._emptySince = Date.now();
-        if(!b.lastEmptiedAt && (Date.now() - b._emptySince) > 2500){
-          b.lastEmptiedAt = Date.now();
-          bandRef.set({ lastEmptiedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge:true }).catch(()=>{});
+        if((Date.now() - b._emptySince) > 2500){
+          // Always restamp the latest empty time — a leftover stamp from a
+          // previous cycle is what let last night's clips survive as "Cleared".
+          stampBandEmpty(bandRef, b);
         }
       } else {
         b._emptySince = null;
-        // People back during the 2h grace: keep the chatter, reset the empty clock.
-        // After the window, do NOT clear lastEmptiedAt — that resurrected messages
-        // because prune never got to delete them.
         if(b.lastEmptiedAt && !bandSettleElapsed(b)){
-          b.lastEmptiedAt = null;
-          bandRef.set({ lastEmptiedAt: null }, { merge:true }).catch(()=>{});
+          // Still inside the 2h grace — session continues.
+          clearBandEmptyClock(bandRef, b);
         } else if(b.lastEmptiedAt && bandSettleElapsed(b)){
+          // New gathering after the old one died. Hard-delete the old session
+          // (epoch stamps first so it cannot stream back).
           pruneSettledBandMessages(bandRef, b);
+          attachBandMessagesListener(bandRef, b);
         }
       }
       renderBandRoster();
@@ -522,31 +717,7 @@ function openBandRoom(id){
       }
     }, ()=>{ /* presence just won't update this session */ });
 
-    bandMessagesUnsub = bandRef.collection('messages').orderBy('ts','desc').limit(60).onSnapshot(async snap=>{
-      const rows = snap.docs.slice().reverse().map(d=>{
-        const m = d.data();
-        return {
-          fromMe: m.from === currentUser.uid,
-          fromUid: m.from,
-          text: m.text || '',
-          type: m.type || 'text',
-          mediaUrl: m.mediaUrl || null,
-          thumb: m.thumb || null,
-          duration: m.duration || null,
-          encrypted: !!m.encrypted,
-          envelopes: m.envelopes || null,
-          ts: bandMsgTs(m),
-        };
-      });
-      await Promise.all(rows.map(async row=>{
-        if(row.type === 'system' || row.type === 'invite' || row.type === 'audio' || row.type === 'video') return;
-        if(row.encrypted && row.envelopes){
-          row.text = await decryptBandMessage(row);
-        }
-      }));
-      bandMessages[id] = rows;
-      renderBandMessages();
-    }, ()=>{ /* messages just won't sync this session */ });
+    attachBandMessagesListener(bandRef, b);
 
     bandSettleTimer = setInterval(function(){
       updateBandSettleNote();
@@ -644,8 +815,7 @@ async function markBandEmptyIfLast(bandRef, b){
       return ts && (now - ts) < 90 * 1000;
     });
     if(others.length === 0){
-      if(b) b.lastEmptiedAt = Date.now();
-      await bandRef.set({ lastEmptiedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge:true });
+      stampBandEmpty(bandRef, b);
     }
   }catch(e){ console.warn('[band] empty stamp', e); }
 }
@@ -677,8 +847,7 @@ $('bandTuneBtn').onclick = ()=>{
       startBandPresenceHeartbeat();
       bumpTodayActivity();
       if(b.lastEmptiedAt && !bandSettleElapsed(b)){
-        b.lastEmptiedAt = null;
-        fbDb.collection('bands').doc(b.firestoreId).set({ lastEmptiedAt: null }, { merge:true }).catch(()=>{});
+        clearBandEmptyClock(fbDb.collection('bands').doc(b.firestoreId), b);
       } else if(b.lastEmptiedAt && bandSettleElapsed(b)){
         pruneSettledBandMessages(fbDb.collection('bands').doc(b.firestoreId), b);
       }
