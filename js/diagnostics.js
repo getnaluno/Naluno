@@ -50,7 +50,9 @@ try{
   });
   window.addEventListener('unhandledrejection', function(e){
     const r = e && e.reason;
-    nalunoDiag('promise-rejection', (r && r.message) || String(r || 'unknown'), (r && r.code) || '');
+    const msg = (r && r.message) || String(r || 'unknown');
+    if(/interrupted by a new load request/i.test(msg) || (r && r.name === 'AbortError')) return;
+    nalunoDiag('promise-rejection', msg, (r && r.code) || '');
   });
 }catch(_){}
 

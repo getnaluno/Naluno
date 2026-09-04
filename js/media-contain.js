@@ -124,7 +124,7 @@ function lockOutChromeMediaSession(){
       navigator.mediaSession.metadata = null;
     }
   }catch(_){}
-  const playing = nalunoAnyAppMediaPlaying();
+  const playing = nalunoAnyAppMediaPlaying() || nalunoViewerWantsMedia();
   if(!playing){
     try{ navigator.mediaSession.playbackState = 'none'; }catch(_){}
   }
@@ -315,6 +315,9 @@ function nalunoKeepAliveWatch(){
         if(!el.paused) return;
         // User explicitly paused → kick button is visible; leave it.
         if(el.dataset.nalunoUserPaused === '1') return;
+        // Buffering looks paused on Samsung. Don't poke play() until there
+        // is something to play — that was restarting the load.
+        if((el.readyState || 0) < 3) return;
         const p = el.play();
         if(p && p.catch) p.catch(function(){});
       }catch(_){}

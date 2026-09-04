@@ -282,7 +282,7 @@ async function bcompOnFileChosen(file){
   if(!file) return;
   const isVideo = (typeof nalunoFileLooksLikeVideo === 'function')
     ? nalunoFileLooksLikeVideo(file)
-    : ((file.type || '').indexOf('video/') === 0 || /\.(mp4|mov|webm|m4v|3gp|mkv)$/i.test(file.name || ''));
+    : ((file.type || '').indexOf('video/') === 0 || /\.(mp4|mov|webm|m4v|3gp|mkv|avi|mpeg|mpg|ogv|ts|hevc|wmv)$/i.test(file.name || ''));
   const isImage = (typeof nalunoFileLooksLikeImage === 'function')
     ? nalunoFileLooksLikeImage(file)
     : ((file.type || '').indexOf('image/') === 0 || /\.(jpe?g|png|gif|webp|heic)$/i.test(file.name || ''));

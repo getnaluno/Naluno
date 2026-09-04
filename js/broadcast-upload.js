@@ -34,8 +34,17 @@ function bcastGuessType(blob){
   if(/\.webp$/i.test(name)) return 'image/webp';
   if(/\.webm$/i.test(name) && /audio/i.test((blob && blob.type) || '')) return 'audio/webm';
   if(/\.webm$/i.test(name)) return 'video/webm';
-  if(/\.mov$/i.test(name)) return 'video/quicktime';
-  if(/\.mp4$/i.test(name) || /\.m4v$/i.test(name) || /\.hevc$/i.test(name)) return 'video/mp4';
+  if(/\.mov$/i.test(name) || /\.qt$/i.test(name)) return 'video/quicktime';
+  if(/\.m4v$/i.test(name)) return 'video/x-m4v';
+  if(/\.3g2$/i.test(name)) return 'video/3gpp2';
+  if(/\.3gp$/i.test(name)) return 'video/3gpp';
+  if(/\.mkv$/i.test(name)) return 'video/x-matroska';
+  if(/\.avi$/i.test(name)) return 'video/x-msvideo';
+  if(/\.(mpg|mpeg)$/i.test(name)) return 'video/mpeg';
+  if(/\.ogv$/i.test(name)) return 'video/ogg';
+  if(/\.(ts|m2ts|mts)$/i.test(name)) return 'video/mp2t';
+  if(/\.wmv$/i.test(name)) return 'video/x-ms-wmv';
+  if(/\.mp4$/i.test(name) || /\.hevc$/i.test(name) || /\.h265$/i.test(name)) return 'video/mp4';
   return 'video/mp4';
 }
 

@@ -879,7 +879,14 @@ function signalPlaySrc(seg){
     if(local) return local;
   }
   if(typeof vaultIngestUrl === 'function'){
-    vaultIngestUrl(remote, key).catch(function(){});
+    // Defer so we do not race the playing <video> for the same bytes.
+    setTimeout(function(){
+      try{
+        const v = document.getElementById('bviewerActiveVideo');
+        if(v && !v.paused) return;
+        vaultIngestUrl(remote, key).catch(function(){});
+      }catch(_){}
+    }, 15000);
   }
   return remote;
 }
@@ -902,6 +909,16 @@ function signalEnsurePlayableSrc(videoEl, remoteUrl){
     if(videoEl && !videoEl.paused && (videoEl.readyState >= 2 || (videoEl.currentTime || 0) > 0.05)){
       resolve(true); return;
     }
+    try{
+      if(typeof nalunoMediaIsBuffering === 'function' && nalunoMediaIsBuffering(videoEl)){
+        resolve(true); return;
+      }
+      if(videoEl.dataset && videoEl.dataset.nalunoWantPlay === '1' && !videoEl.ended){
+        if((videoEl.readyState || 0) >= 1 || videoEl.networkState === 2){
+          resolve(true); return;
+        }
+      }
+    }catch(_){}
     if(videoEl.dataset && videoEl.dataset.blobTried === '1'){ resolve(false); return; }
     try{ videoEl.dataset.blobTried = '1'; }catch(_){}
     const urls = (typeof nalunoPlayCandidates === 'function') ? nalunoPlayCandidates(remoteUrl, { bucket: 'signal' }) : [remoteUrl];
@@ -922,6 +939,11 @@ function signalEnsurePlayableSrc(videoEl, remoteUrl){
           if(videoEl && !videoEl.paused && (videoEl.currentTime || 0) > 0.05){
             resolve(true); return;
           }
+          try{
+            if(videoEl.dataset && videoEl.dataset.nalunoWantPlay === '1' && (videoEl.readyState || 0) >= 2){
+              resolve(true); return;
+            }
+          }catch(_){}
           const obj = URL.createObjectURL(blob);
           try{ videoEl.src = obj; }catch(_){}
           resolve(true);
@@ -988,7 +1010,7 @@ function playSegment(idx, direction=1){
       ? ` poster="${String(seg.thumbDataUrl).replace(/"/g,'&quot;')}"`
       : '';
     // relative (not absolute) so flex parent keeps real height; contain so landscape is full frame
-    bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" src="${safeSrc}" preload="auto" playsinline webkit-playsinline muted${posterAttr} style="filter:${seg.filterCss || ''}; display:block; width:100%; height:100%; object-fit:cover; background:#000; border-radius:12px;"></video>${captionHtml}<div class="cam-expand-btn" id="bviewerMuteToggle" style="right:auto; left:14px; top:14px; z-index:3;" role="button" aria-label="Toggle sound"></div><button type="button" id="bviewerPlayKick" style="display:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;width:64px;height:64px;border-radius:50%;border:none;background:rgba(124,255,178,.92);color:#0D0F17;font-size:22px;box-shadow:0 8px 28px rgba(0,0,0,.45);cursor:pointer;" aria-label="Play">▶</button>`;
+    bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" preload="auto" playsinline webkit-playsinline muted${posterAttr} style="filter:${seg.filterCss || ''}; display:block; width:100%; height:100%; object-fit:cover; background:#000; border-radius:12px;"></video>${captionHtml}<div class="cam-expand-btn" id="bviewerMuteToggle" style="right:auto; left:14px; top:14px; z-index:3;" role="button" aria-label="Toggle sound"></div><button type="button" id="bviewerPlayKick" style="display:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;width:64px;height:64px;border-radius:50%;border:none;background:rgba(124,255,178,.92);color:#0D0F17;font-size:22px;box-shadow:0 8px 28px rgba(0,0,0,.45);cursor:pointer;" aria-label="Play">▶</button>`;
     durationMs = Math.round((isFinite(seg.duration) && seg.duration > 0 ? seg.duration : 15) * 1000);
   } else {
     const imgSrc = signalPlaySrc(seg);
@@ -1096,10 +1118,19 @@ function playSegment(idx, direction=1){
         });
       }
     };
-    v.addEventListener('waiting', function(){ setTimeout(kickPlay, 300); });
-    v.addEventListener('stalled', kickPlay);
+    v.addEventListener('waiting', function(){
+      // Buffer underrun is normal on mobile. Re-calling play() or swapping
+      // src here was aborting the decoder (Chrome AbortError 20).
+    });
+    v.addEventListener('stalled', function(){
+      setTimeout(function(){
+        if(!v || v.ended) return;
+        if(v.dataset && v.dataset.nalunoUserPaused === '1') return;
+        if(v.paused && v.readyState >= 3) kickPlay();
+      }, 1600);
+    });
     v.addEventListener('suspend', function(){
-      if(!playedOnce) setTimeout(kickPlay, 400);
+      if(!playedOnce && v.paused && (v.readyState || 0) >= 3) setTimeout(kickPlay, 800);
     });
 
     // Prefer bindMediaElement for recovery + vault; always keep preload=auto
@@ -1202,15 +1233,21 @@ function playSegment(idx, direction=1){
     // Start NOW — opening the story is a user gesture. Do NOT call load() here:
     // load() resets the element and leaves a poster that never plays.
     startPlayback();
-    setTimeout(function(){ if(v.paused) startPlayback(); }, 400);
+    setTimeout(function(){
+      if(!v.paused || playedOnce) return;
+      if((v.readyState || 0) >= 1 || v.networkState === 2) return;
+      startPlayback();
+    }, 700);
     setTimeout(function(){
       if(playedOnce || !v.paused) return;
+      if((v.readyState || 0) >= 1 || v.networkState === 2) return;
+      // Only blob-fetch when the element never even got metadata.
       signalEnsurePlayableSrc(v, videoSrc).then(function(ok){
-        if(ok) startPlayback();
-        else showKick(true);
+        if(ok && v.paused && !playedOnce) startPlayback();
+        else if(!ok) showKick(true);
       });
-    }, 800);
-    setTimeout(function(){ if(v.paused && !playedOnce){ showKick(true); } }, 1600);
+    }, 10000);
+    setTimeout(function(){ if(v.paused && !playedOnce && (v.readyState || 0) < 1){ showKick(true); } }, 12000);
 
     // Do not arm a wall-clock skip. Google Photos / HEVC metadata duration
     // is often half the real clip — a timer would cut playback. ended handles it.

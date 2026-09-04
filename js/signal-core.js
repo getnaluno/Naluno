@@ -180,10 +180,12 @@ function nalunoFileLooksLikeVideo(file){
   const t = String(file.type || '').toLowerCase();
   if(t.indexOf('video/') === 0) return true;
   if(t && t.indexOf('image/') === 0) return false;
+  if(t && t.indexOf('audio/') === 0) return false;
   const name = String(file.name || '');
-  if(/\.(mp4|m4v|mov|webm|3gp|3g2|mkv|avi|hevc)$/i.test(name)) return true;
-  // Android/Google Photos after export: empty MIME, name without extension
-  if(!t && (file.size || 0) > 50000) return true;
+  if(/\.(mp4|m4v|mov|qt|webm|3gp|3g2|mkv|avi|mpg|mpeg|mpe|ogv|ogg|ts|m2ts|mts|hevc|h265|wmv|flv|asf|f4v|vob)$/i.test(name)) return true;
+  // Android Gallery / Files: empty or generic MIME, often no extension.
+  const generic = !t || t === 'application/octet-stream' || t === 'application/download' || t === 'binary/octet-stream';
+  if(generic && (file.size || 0) > 80000 && (!name || name.indexOf('.') < 0 || /\.(mp4|mov|webm|mkv|avi|3gp)/i.test(name))) return true;
   return false;
 }
 function nalunoFileLooksLikeImage(file){
@@ -295,12 +297,19 @@ function nalunoGuessContentType(blob){
   if(/\.webp$/i.test(name)) return 'image/webp';
   if(/\.gif$/i.test(name)) return 'image/gif';
   if(/\.webm$/i.test(name)) return 'video/webm';
-  if(/\.mov$/i.test(name)) return 'video/quicktime';
+  if(/\.mov$/i.test(name) || /\.qt$/i.test(name)) return 'video/quicktime';
   if(/\.m4v$/i.test(name)) return 'video/x-m4v';
+  if(/\.3g2$/i.test(name)) return 'video/3gpp2';
   if(/\.3gp$/i.test(name)) return 'video/3gpp';
   if(/\.mkv$/i.test(name)) return 'video/x-matroska';
+  if(/\.avi$/i.test(name)) return 'video/x-msvideo';
+  if(/\.(mpg|mpeg|mpe)$/i.test(name)) return 'video/mpeg';
+  if(/\.(ogv|ogg)$/i.test(name)) return 'video/ogg';
+  if(/\.(ts|m2ts|mts)$/i.test(name)) return 'video/mp2t';
+  if(/\.wmv$/i.test(name) || /\.asf$/i.test(name)) return 'video/x-ms-wmv';
+  if(/\.flv$/i.test(name) || /\.f4v$/i.test(name)) return 'video/x-flv';
   if(/\.mp4$/i.test(name)) return 'video/mp4';
-  if(/\.hevc$/i.test(name)) return 'video/mp4';
+  if(/\.hevc$/i.test(name) || /\.h265$/i.test(name)) return 'video/mp4';
   if(nalunoFileLooksLikeImage(blob)) return 'image/jpeg';
   // Samsung often hands empty MIME — still video for Signal/Broadcast
   if(!t && (blob.size || 0) > 10000) return 'video/mp4';
@@ -537,7 +546,7 @@ window.nalunoSniffIsHevc = nalunoSniffIsHevc;
 window.nalunoTranscodeToWeb = nalunoTranscodeToWeb;
 window.nalunoPrepareSignalVideo = nalunoPrepareSignalVideo;
 
-const VIDEO_PICK_ACCEPT = 'video/mp4,video/quicktime,video/webm,video/*,.mp4,.mov,.webm,.m4v,.3gp';
+const VIDEO_PICK_ACCEPT = 'video/*,video/mp4,video/quicktime,video/webm,video/x-m4v,video/3gpp,video/3gpp2,video/x-matroska,video/avi,video/x-msvideo,video/mpeg,video/ogg,video/mp2t,video/x-ms-wmv,.mp4,.m4v,.mov,.qt,.webm,.3gp,.3g2,.mkv,.avi,.mpg,.mpeg,.ogv,.ts,.m2ts,.mts,.hevc,.h265,.wmv,.flv';
 const IMAGE_PICK_ACCEPT = 'image/jpeg,image/png,image/webp,image/*,.jpg,.jpeg,.png,.webp';
 const BCAST_PICK_ACCEPT = VIDEO_PICK_ACCEPT + ',' + IMAGE_PICK_ACCEPT;
 
@@ -569,6 +578,33 @@ function nalunoProbeDuration(file, timeoutMs){
   });
 }
 
+function nalunoPlayIgnoreAbort(p){
+  if(p && typeof p.catch === 'function'){
+    p.catch(function(e){
+      const n = (e && e.name) || '';
+      const m = String((e && e.message) || '');
+      if(n === 'AbortError' || n === 'NotAllowedError' || /interrupted/i.test(m)) return;
+    });
+  }
+  return p;
+}
+window.nalunoPlayIgnoreAbort = nalunoPlayIgnoreAbort;
+
+function nalunoMediaIsBuffering(el){
+  if(!el) return false;
+  try{
+    if(el.ended) return false;
+    if(el.dataset && el.dataset.nalunoUserPaused === '1') return false;
+    if(!el.paused) return false;
+    const want = el.dataset && (el.dataset.nalunoWantPlay === '1' || el.dataset.nalunoKeepAlive === '1');
+    if(!want) return false;
+    const rs = el.readyState || 0;
+    const ns = el.networkState;
+    return rs >= 1 || ns === 2;
+  }catch(_){ return false; }
+}
+window.nalunoMediaIsBuffering = nalunoMediaIsBuffering;
+
 function attachPlaybackGuard(el, url, guardOpts){
   if(!el || el.dataset.nalunoGuard === '1') return;
   el.dataset.nalunoGuard = '1';
@@ -578,6 +614,7 @@ function attachPlaybackGuard(el, url, guardOpts){
   const isBroadcast = kind === 'broadcast';
   let recovering = false;
   let waitHits = 0;
+  let lastWaitTime = 0;
   const recover = function(reason){
     if(recovering || !el) return;
     if(el.dataset.nalunoUserPaused === '1') return;
@@ -587,14 +624,14 @@ function attachPlaybackGuard(el, url, guardOpts){
     recovering = true;
     try{ el.preload = 'auto'; }catch(_){}
     try{
-      // Nudge past a stuck keyframe / false end — never call load() (aborts play).
-      if(el.ended || el.paused || el.readyState < 3){
+      // Nudge past a stuck keyframe / false end — never call load() and never
+      // reassign src (that aborts play() → AbortError 20 / Signal stutter).
+      if((el.ended || el.paused) && el.readyState >= 2){
         try{ el.currentTime = Math.max(0, t + 0.05); }catch(_){}
+        nalunoPlayIgnoreAbort(el.play());
       }
-      const p = el.play();
-      if(p && p.catch) p.catch(function(){});
     }catch(_){}
-    setTimeout(function(){ recovering = false; }, 1600);
+    setTimeout(function(){ recovering = false; }, 2200);
     try{
       if(typeof nalunoMediaDiag === 'function'){
         nalunoMediaDiag(el.dataset.broadcastId || null, el.dataset.mediaId || null, 'playback_recover', reason || 'guard');
@@ -603,33 +640,31 @@ function attachPlaybackGuard(el, url, guardOpts){
   };
   el.addEventListener('waiting', function(){
     waitHits++;
+    const t0 = el.currentTime || 0;
+    lastWaitTime = t0;
     setTimeout(function(){
       if(el.ended) return;
       if(el.dataset.nalunoUserPaused === '1') return;
-      if(!el.paused && el.readyState < 3) recover('waiting');
-      else if(el.paused){ el.play().catch(function(){}); }
-      // Repeated underruns: Signals may hard-recover into a blob; Broadcast stays on Worker URL.
-      if(waitHits >= 3 && !el.dataset.hardRecovered && url){
-        el.dataset.hardRecovered = '1';
-        if(isBroadcast){
-          try{
-            const bust = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'r=' + Date.now();
-            el.src = bust;
-          }catch(_){}
-          el.play().catch(function(){});
-        } else if(typeof signalEnsurePlayableSrc === 'function'){
-          signalEnsurePlayableSrc(el, url).then(function(ok){
-            if(ok) el.play().catch(function(){});
-          });
-        }
+      if(!el.paused) return;
+      const t1 = el.currentTime || 0;
+      if(t1 > t0 + 0.04) return;
+      if(el.readyState >= 3){
+        nalunoPlayIgnoreAbort(el.play());
+        return;
       }
-    }, 400);
+      // Still filling the buffer — do not swap src. Dual-download was the stutter.
+    }, 900);
   });
-  el.addEventListener('stalled', function(){ recover('stalled'); });
+  el.addEventListener('stalled', function(){
+    setTimeout(function(){
+      if(el.ended || el.dataset.nalunoUserPaused === '1') return;
+      if(el.paused && el.readyState >= 3) recover('stalled');
+    }, 1400);
+  });
   el.addEventListener('suspend', function(){
     if(el.dataset.nalunoUserPaused === '1') return;
-    if(el.paused && !el.ended && (el.currentTime || 0) > 0.05){
-      setTimeout(function(){ if(el.paused && !el.ended) recover('suspend'); }, 600);
+    if(el.paused && !el.ended && (el.currentTime || 0) > 0.05 && el.readyState >= 3){
+      setTimeout(function(){ if(el.paused && !el.ended && el.readyState >= 3) recover('suspend'); }, 800);
     }
   });
   el.addEventListener('ended', function(){
@@ -646,8 +681,16 @@ function attachPlaybackGuard(el, url, guardOpts){
     }catch(_){}
   });
   // LOCK (20260825b brief): Broadcast never enters the vault. Signals only.
+  // Do not ingest while this element is still loading — that second fetch
+  // starves the player on Samsung Chrome.
   if(!isBroadcast && typeof vaultIngestUrl === 'function' && url && String(url).indexOf('blob:') !== 0){
-    vaultIngestUrl(url).catch(function(){});
+    setTimeout(function(){
+      try{
+        if(el && (el.ended || el.dataset.nalunoUserPaused === '1')){
+          vaultIngestUrl(url).catch(function(){});
+        }
+      }catch(_){}
+    }, 12000);
   }
 }
 
