@@ -864,7 +864,50 @@ function nalunoReadCachedProfile(uid){
 }
 function nalunoWriteCachedProfile(uid, profile){
   if(!uid || !profile) return;
-  try{ localStorage.setItem('nalunoProfile:' + uid, JSON.stringify(profile)); }catch(_){}
+  try{
+    const copy = Object.assign({}, profile);
+    if(copy.photo && copy.photo.dataUrl && String(copy.photo.dataUrl).length > 80000){
+      copy.photo = { crop: copy.photo.crop || null };
+    }
+    localStorage.setItem('nalunoProfile:' + uid, JSON.stringify(copy));
+  }catch(_){}
+}
+
+function nalunoEnsureProfilePhotoUrl(profile){
+  if(!profile || !currentUser || !fbDb) return;
+  if(profile.photoUrl && /^https?:/i.test(profile.photoUrl)) return;
+  const data = profile.photo && profile.photo.dataUrl;
+  if(!data) return;
+  if(/^https?:/i.test(data)){
+    profile.photoUrl = data;
+    fbDb.collection('users').doc(currentUser.uid).set({
+      photoUrl: data,
+      photo: { dataUrl: data, crop: (profile.photo && profile.photo.crop) || null }
+    }, { merge:true }).catch(function(){});
+    return;
+  }
+  if(String(data).indexOf('data:image') !== 0) return;
+  if(typeof uploadPhotoToR2 !== 'function') return;
+  if(nalunoEnsureProfilePhotoUrl._busy) return;
+  nalunoEnsureProfilePhotoUrl._busy = true;
+  (async function(){
+    try{
+      const file = (typeof nalunoDataUrlToFile === 'function')
+        ? await nalunoDataUrlToFile(data, 'avatar.jpg')
+        : await (await fetch(data)).blob();
+      const url = await uploadPhotoToR2(file);
+      if(!url) return;
+      if(currentProfile){
+        currentProfile.photoUrl = url;
+        if(currentProfile.photo) currentProfile.photo.dataUrl = url;
+      }
+      await fbDb.collection('users').doc(currentUser.uid).set({
+        photoUrl: url,
+        photo: { dataUrl: url, crop: (currentProfile && currentProfile.photo && currentProfile.photo.crop) || null }
+      }, { merge:true });
+    }catch(e){ console.warn('[profile] photoUrl backfill', e && e.message); }
+    finally{ nalunoEnsureProfilePhotoUrl._busy = false; }
+  })();
 }
 
 function loadRealProfile(user){
@@ -877,6 +920,7 @@ function loadRealProfile(user){
     if(doc.exists){
       const incoming = { photo:null, ...DEFAULT_PROFILE, ...doc.data() };
       currentProfile = incoming;
+      try{ nalunoEnsureProfilePhotoUrl(currentProfile); }catch(_){}
       if(isCallsignEditing()){
         // Keep view-mode labels in sync for when they exit, but leave the form alone.
         try{
@@ -985,6 +1029,12 @@ $('saveProfileBtn').onclick = async ()=>{
   const finalName = $('nameInput').value.trim() || 'You';
   const requestedHandle = normalizeHandle($('numberInput').value, finalName);
   const recoverySaved = (($('recoveryEmailInput') && $('recoveryEmailInput').value) || '').trim();
+  if(btn){
+    btn.dataset.saving = '1';
+    btn.dataset.prevLabel = btn.textContent;
+    btn.textContent = 'Saving…';
+    btn.style.opacity = '0.7';
+  }
   let photoOut = draftPhoto;
   if(photoOut && photoOut.dataUrl && typeof nalunoShrinkImageDataUrl === 'function'){
     try{
@@ -992,22 +1042,33 @@ $('saveProfileBtn').onclick = async ()=>{
       photoOut = Object.assign({}, photoOut, { dataUrl: slim });
     }catch(_){}
   }
+  let photoUrlOut = null;
+  try{
+    if(photoOut && photoOut.dataUrl && /^https?:/i.test(photoOut.dataUrl)){
+      photoUrlOut = photoOut.dataUrl;
+    } else if(photoOut && photoOut.dataUrl && String(photoOut.dataUrl).indexOf('data:image') === 0 && typeof uploadPhotoToR2 === 'function'){
+      const file = (typeof nalunoDataUrlToFile === 'function')
+        ? await nalunoDataUrlToFile(photoOut.dataUrl, 'avatar.jpg')
+        : await (await fetch(photoOut.dataUrl)).blob();
+      photoUrlOut = await uploadPhotoToR2(file);
+      if(photoUrlOut){
+        photoOut = Object.assign({}, photoOut, { dataUrl: photoUrlOut });
+      }
+    } else if(photoOut && currentProfile && currentProfile.photoUrl && /^https?:/i.test(currentProfile.photoUrl)){
+      photoUrlOut = currentProfile.photoUrl;
+    }
+  }catch(upErr){
+    console.warn('[profile] avatar upload', upErr && upErr.message);
+  }
   const nextProfile = {
     name: finalName,
     tagline: $('taglineInput').value.trim(),
     number: requestedHandle,
     color: selectedSwatch ? selectedSwatch.dataset.c : '#7CFFB2',
     photo: photoOut,
+    photoUrl: photoUrlOut || null,
     recoveryEmail: recoverySaved || (currentProfile && currentProfile.recoveryEmail) || null,
   };
-
-  // Instant UI feedback — never leave the user staring at a frozen button.
-  if(btn){
-    btn.dataset.saving = '1';
-    btn.dataset.prevLabel = btn.textContent;
-    btn.textContent = 'Saving…';
-    btn.style.opacity = '0.7';
-  }
 
   if(currentUser && fbDb){
     try{
@@ -1022,8 +1083,12 @@ $('saveProfileBtn').onclick = async ()=>{
       applyProfileToUI(currentProfile);
       showCallsignView();
       toast('Callsign saved');
+      const cloudProfile = Object.assign({}, nextProfile);
+      if(cloudProfile.photo && cloudProfile.photo.dataUrl && String(cloudProfile.photo.dataUrl).length > 80000){
+        cloudProfile.photo = { crop: cloudProfile.photo.crop || null };
+      }
       // Persist in background — snapshot will confirm; we ignore mid-edit overwrites.
-      fbDb.collection('users').doc(currentUser.uid).set(nextProfile, { merge:true }).catch(e=>{
+      fbDb.collection('users').doc(currentUser.uid).set(cloudProfile, { merge:true }).catch(e=>{
         toast(e.message || 'Saved on device, but cloud sync failed');
       });
     }catch(e){

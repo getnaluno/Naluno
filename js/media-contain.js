@@ -134,6 +134,7 @@ function nalunoViewerWantsMedia(){
 function nalunoPauseDetachedMedia(){
   try{
     const onBroadcast = !!(document.getElementById('tab-broadcast') && document.getElementById('tab-broadcast').classList.contains('active'));
+    const bspaceOpen = !!(document.getElementById('bspace') && document.getElementById('bspace').classList.contains('active'));
     document.querySelectorAll('video, audio').forEach(function(el){
       try{
         if(typeof nalunoLiveOrCameraEl === 'function' && nalunoLiveOrCameraEl(el)) return;
@@ -144,6 +145,14 @@ function nalunoPauseDetachedMedia(){
         el.dataset.nalunoWantPlay = '0';
         delete el.dataset.nalunoKeepAlive;
         try{ el.pause(); }catch(_){}
+        if(!bspaceOpen && el.closest && el.closest('#bspace')){
+          try{
+            if(el.src && !el.dataset.nalunoPrevSrc) el.dataset.nalunoPrevSrc = el.src;
+            el.removeAttribute('src');
+            el.srcObject = null;
+            el.load();
+          }catch(_){}
+        }
       }catch(_){}
     });
     if(!onBroadcast && typeof pauseAllStrandPreviews === 'function') pauseAllStrandPreviews();

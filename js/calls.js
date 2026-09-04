@@ -75,8 +75,53 @@ function showCallScreen(id){
     }
     if($('bspaceLiveBanner')) $('bspaceLiveBanner').style.pointerEvents = 'none';
   }catch(_){}
+  try{
+    if(!window.__nalunoCallHist){
+      window.__nalunoCallHist = true;
+      history.pushState({ nalunoCall: 1 }, '');
+    }
+  }catch(_){}
+}
+function nalunoTellSwCallHandled(callId){
+  try{
+    const msg = { type: 'naluno-call-handled', callId: callId || '' };
+    if(navigator.serviceWorker && navigator.serviceWorker.controller){
+      navigator.serviceWorker.controller.postMessage(msg);
+    }
+    if(navigator.serviceWorker && navigator.serviceWorker.ready){
+      navigator.serviceWorker.ready.then(function(reg){
+        try{ if(reg.active) reg.active.postMessage(msg); }catch(_){}
+      }).catch(function(){});
+    }
+  }catch(_){}
+}
+function nalunoDismissCallNotifications(callId){
+  try{ nalunoTellSwCallHandled(callId); }catch(_){}
+  try{
+    if(!navigator.serviceWorker || !navigator.serviceWorker.ready) return;
+    navigator.serviceWorker.ready.then(function(reg){
+      return reg.getNotifications();
+    }).then(function(list){
+      (list || []).forEach(function(n){
+        const d = n.data || {};
+        if(d.type === 'incoming_call' && (!callId || !d.callId || d.callId === callId)){
+          try{ n.close(); }catch(_){}
+        }
+      });
+    }).catch(function(){});
+  }catch(_){}
 }
 function closeCallOverlay(){
+  try{ stopCallerTone(); }catch(_){}
+  try{ stopRingtone(); }catch(_){}
+  try{
+    if(ringtoneAudioEl){
+      ringtoneAudioEl.pause();
+      ringtoneAudioEl.removeAttribute('src');
+      ringtoneAudioEl.load();
+    }
+  }catch(_){}
+  try{ nalunoDismissCallNotifications(activeCallId); }catch(_){}
   const ov = $('callOverlay');
   if(ov){
     ov.classList.remove('active');
@@ -93,8 +138,27 @@ function closeCallOverlay(){
       $('wirelineThread').style.zIndex = '';
       $('wirelineThread').style.pointerEvents = '';
     }
+    if($('bspaceLiveBanner')) $('bspaceLiveBanner').style.pointerEvents = '';
   }catch(_){}
+  const hadHist = !!window.__nalunoCallHist;
+  try{ window.__nalunoCallHist = false; }catch(_){}
+  if(hadHist){
+    try{
+      if(history.state && history.state.nalunoCall) history.back();
+    }catch(_){}
+  }
 }
+
+window.addEventListener('popstate', function(){
+  if(!window.__nalunoCallHist) return;
+  window.__nalunoCallHist = false;
+  try{
+    if($('callOverlay') && $('callOverlay').classList.contains('active')){
+      if(typeof endActiveCall === 'function') endActiveCall('back');
+      else closeCallOverlayAndStopCamera();
+    }
+  }catch(_){}
+});
 
 
 /* Remember which full-screen surface was open so hangup can restore it.
@@ -289,7 +353,10 @@ function stopRingtone(){
   clearInterval(ringtoneTimer); ringtoneTimer = null;
   ringtoneActiveNodes.forEach(osc=>{ try{ osc.stop(); }catch(e){} });
   ringtoneActiveNodes = [];
-  if(ringtoneAudioEl){ ringtoneAudioEl.pause(); }
+  if(ringtoneAudioEl){
+    try{ ringtoneAudioEl.pause(); }catch(_){}
+    try{ ringtoneAudioEl.removeAttribute('src'); ringtoneAudioEl.load(); }catch(_){}
+  }
 }
 
 /* Custom ringtone — stored in this browser's localStorage (not Firestore, so it's
@@ -1260,13 +1327,22 @@ function handleIncomingCall(callId, data){
   // Cache SDP offer now — Answer must not wait on another Firestore get()
   pendingIncomingOffer = (data && data.offer) ? data.offer : null;
   const c = contacts.find(x=>x.firebaseUid===data.callerUid);
-  const name = c ? c.name : 'Someone';
-  const color = c ? c.color : '#8B90A8';
-  const initials = c ? c.initials : '?';
+  const name = (c ? c.name : null) || data.callerName || 'Someone';
+  const color = (c ? c.color : null) || data.callerColor || '#8B90A8';
+  const initials = (c ? c.initials : null) || data.callerInitials || (name[0] || '?');
   currentCallContactId = c ? c.id : null;
   $('incomingName').textContent = name;
-  $('incomingAvatar').style.background = color; $('incomingAvatar').textContent = initials;
-  $('remoteName').textContent = name; $('remoteAvatar').style.background = color; $('remoteAvatar').textContent = initials;
+  $('remoteName').textContent = name;
+  const callerPic = data.callerPhotoUrl || data.callerPhoto || null;
+  if(c && callerPic && typeof mergeContactPhoto === 'function') mergeContactPhoto(c, callerPic);
+  const face = c || { name: name, color: color, initials: initials, photoUrl: callerPic, photo: callerPic ? { dataUrl: callerPic } : null };
+  if(typeof applyContactAvatarToEl === 'function'){
+    applyContactAvatarToEl($('incomingAvatar'), face);
+    applyContactAvatarToEl($('remoteAvatar'), face);
+  } else {
+    $('incomingAvatar').style.background = color; $('incomingAvatar').textContent = initials;
+    $('remoteAvatar').style.background = color; $('remoteAvatar').textContent = initials;
+  }
   $('incomingSceneNote').style.display = 'none';
   $('incomingSelfTag').textContent = 'prepping…';
   snapshotUiBeforeCall();
@@ -1473,7 +1549,6 @@ async function startRealCall(c){
   // half-closed PCs, and stuck flags that break the next dial to the same person.
   if(notifyRepeatInterval){ try{ clearInterval(notifyRepeatInterval); }catch(_){} try{ clearTimeout(notifyRepeatInterval); }catch(_){} notifyRepeatInterval = null; }
   clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
-  stopCallerTone();
   stopRingtone();
   if(peerConnection || activeCallDocUnsub || callerCandidatesUnsub || calleeCandidatesUnsub || activeCallId){
     teardownCallConnection();
@@ -1535,6 +1610,19 @@ async function startRealCall(c){
     status: 'ringing',
     offer: { type: offer.type, sdp: offer.sdp },
     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    callerName: (currentProfile && currentProfile.name) || 'Someone',
+    callerColor: (currentProfile && currentProfile.color) || '#7CFFB2',
+    callerInitials: (typeof initialsFor === 'function' && currentProfile)
+      ? initialsFor(currentProfile.name || 'You')
+      : ((currentProfile && currentProfile.name) || 'Y').slice(0,2),
+    callerPhotoUrl: (function(){
+      try{
+        if(typeof contactPhotoSrc === 'function' && currentProfile){
+          return contactPhotoSrc(currentProfile, { skipData: true }) || currentProfile.photoUrl || null;
+        }
+      }catch(_){}
+      return (currentProfile && currentProfile.photoUrl) || null;
+    })(),
   });
   notifyCalleeOfIncomingCall(c.firebaseUid, currentProfile ? currentProfile.name : null, callRef.id);
 
@@ -1713,7 +1801,8 @@ $('joinBtn').onclick = async ()=>{
   }
   callActionInProgress = true;
   showCallScreen('ringing');
-  try{ await startRealCall(c); startCallerTone(); }
+  try{ startCallerTone(); }catch(_){}
+  try{ await startRealCall(c); }
   catch(e){ toast(e.message || 'Couldn\u2019t start the call'); closeCallOverlayAndStopCamera(); }
   finally{ callActionInProgress = false; }
 };
@@ -1724,18 +1813,27 @@ $('cancelCall').onclick = ()=>{
 $('ringFallbackHint').onclick = ()=>{ if(currentCallContactId) showAsyncFallback(currentCallContactId, 'timeout'); };
 
 $('declineIncoming').onclick = ()=>{
+  declineIncomingCall(activeCallId);
+};
+function declineIncomingCall(callId){
   stopRingtone();
-  const callId = activeCallId;
-  if(callId && fbDb){
-    fbDb.collection('calls').doc(callId).update({ status:'declined' }).catch(()=>{});
+  const id = callId || activeCallId;
+  try{ nalunoTellSwCallHandled(id); }catch(_){}
+  if(id && typeof fbDb !== 'undefined' && fbDb){
+    fbDb.collection('calls').doc(id).update({ status:'declined' }).catch(()=>{});
   }
+  if(id && activeCallId && id !== activeCallId) return;
+  const overlayOpen = $('callOverlay') && $('callOverlay').classList.contains('active');
+  if(!overlayOpen && !activeCallId) return;
   teardownCallConnection();
   closeCallOverlay();
   stopCameraStream();
   try{ if(typeof cameraRelease === 'function') cameraRelease('call'); }catch(_){}
   currentCallContactId = null;
   callActionInProgress = false;
-};
+  try{ restoreUiAfterCall(); }catch(_){}
+}
+window.declineIncomingCall = declineIncomingCall;
 $('acceptIncoming').onclick = async ()=>{
   if(callActionInProgress) return;
   stopRingtone();

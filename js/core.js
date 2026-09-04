@@ -247,7 +247,7 @@ window.addEventListener('error', function(ev){
 window.addEventListener('unhandledrejection', function(ev){
   try{ console.error('[naluno:promise]', ev.reason); }catch(_){}
 });
-console.log('[naluno] build 2026.09.04b');
+console.log('[naluno] build 2026.09.04c');
 
 
 function nalunoShrinkImageDataUrl(dataUrl, maxEdge, quality){
@@ -268,6 +268,14 @@ function nalunoShrinkImageDataUrl(dataUrl, maxEdge, quality){
     };
     img.onerror = function(){ resolve(dataUrl); };
     img.src = dataUrl;
+  });
+}
+function nalunoDataUrlToFile(dataUrl, name){
+  return fetch(dataUrl).then(function(r){ return r.blob(); }).then(function(blob){
+    const ct = blob.type || 'image/jpeg';
+    const n = name || 'avatar.jpg';
+    try{ return new File([blob], n, { type: ct }); }
+    catch(_){ try{ blob.name = n; }catch(__){} return blob; }
   });
 }
 

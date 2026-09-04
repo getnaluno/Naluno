@@ -38,69 +38,130 @@ function addRealContactToLocalList(firebaseUid, name, color, handle, photo){
   contacts.push(row);
   return row;
 }
-/* Resolve a displayable avatar URL from every shape this app has stored:
-   photo.dataUrl (legacy inline), photo.url / photoUrl (R2 https), or a bare
-   https string. Toga already knew about photoUrl; Wireline/Frequencies did not. */
-function contactPhotoSrc(c){
+/* Resolve a displayable avatar URL from every shape this app has stored.
+   Prefer https (R2 / photoUrl). Samsung Chrome often fails CSS background-image
+   with large data: URLs, which is why Toga (an <img>) showed faces and
+   Wireline/Frequencies (background-image + blanked initials) showed empty circles. */
+function contactPhotoSrc(c, opts){
   if(!c) return '';
   try{
     const photo = c.photo;
-    const candidates = [
-      photo && photo.dataUrl,
+    const httpsFirst = [];
+    const dataLater = [];
+    const rawList = [
+      c.photoUrl,
       photo && photo.url,
       photo && photo.downloadUrl,
-      c.photoUrl,
+      photo && photo.dataUrl,
       (typeof photo === 'string') ? photo : ''
     ];
-    for(let i = 0; i < candidates.length; i++){
-      const raw = String(candidates[i] || '').trim();
+    for(let i = 0; i < rawList.length; i++){
+      const raw = String(rawList[i] || '').trim();
       if(!raw) continue;
       const u = raw.replace(/['"\\]/g, '');
-      if(/^(data:image\/|https?:|blob:)/i.test(u)) return u;
+      if(/^https?:/i.test(u) || /^blob:/i.test(u)) httpsFirst.push(u);
+      else if(/^data:image\//i.test(u)) dataLater.push(u);
+    }
+    if(httpsFirst.length) return httpsFirst[0];
+    // List rows (compact) never use data: URLs — Samsung Chrome paints those
+    // as a black disc over the initials. Photos in lists need an https URL.
+    if(opts && (opts.skipData || opts.compact)) return '';
+    if(dataLater.length){
+      const u = dataLater[0];
+      if(opts && opts.compact && u.length > 140000) return '';
+      return u;
     }
   }catch(_){}
   return '';
 }
+function contactAvatarColor(c){
+  const color = String((c && c.color) || '#7CFFB2');
+  return /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(color) ? color : '#7CFFB2';
+}
 function mergeContactPhoto(target, incoming){
   if(!target) return;
+  const existingHttps = contactPhotoSrc(target, { skipData: true });
   if(incoming && typeof incoming === 'object'){
-    const src = contactPhotoSrc({ photo: incoming, photoUrl: incoming.url || incoming.dataUrl });
-    if(src){
+    const src = contactPhotoSrc({ photo: incoming, photoUrl: incoming.photoUrl || incoming.url || incoming.dataUrl });
+    if(!src) return;
+    if(/^https?:/i.test(src)){
+      target.photoUrl = src;
       target.photo = incoming;
-      if(/^https?:/i.test(src)) target.photoUrl = src;
+      if(!target.photo.dataUrl) target.photo.dataUrl = src;
+    } else if(!existingHttps){
+      target.photo = incoming;
     }
   } else if(typeof incoming === 'string' && /^(data:image\/|https?:|blob:)/i.test(incoming)){
-    target.photo = { dataUrl: incoming };
-    if(/^https?:/i.test(incoming)) target.photoUrl = incoming;
+    if(/^https?:/i.test(incoming)){
+      target.photoUrl = incoming;
+      target.photo = { dataUrl: incoming };
+    } else if(!existingHttps){
+      target.photo = { dataUrl: incoming };
+    }
   }
 }
-/* Renders an actual uploaded photo when a contact has one, falling back to color +
-   initials otherwise — used everywhere a real contact's avatar shows up, not just
-   their own Callsign, which is the only place this used to work. */
+/* Color + initials ALWAYS. Photo is an <img> on top so a failed load never
+   leaves a blank disc — onerror just removes the image. */
+function contactAvatarHtml(c, sizePx, extraInner){
+  const size = sizePx || 46;
+  const font = Math.max(10, Math.round(size * 0.33));
+  const color = contactAvatarColor(c);
+  const rawInit = String((c && c.initials) || '').trim();
+  const fallback = (typeof initialsFor === 'function')
+    ? initialsFor((c && c.name) || 'Y')
+    : String(((c && c.name) || '?').replace(/^\s+/, '').slice(0, 1)).toUpperCase();
+  const initialsText = rawInit || fallback || '?';
+  const initials = (typeof escapeHtml === 'function') ? escapeHtml(initialsText) : initialsText;
+  const src = contactPhotoSrc(c, { compact: true });
+  const img = src
+    ? '<img class="avatar-pic" alt="" referrerpolicy="no-referrer" src="'+src+'" onerror="this.onerror=null;this.remove();">'
+    : '';
+  return '<div class="avatar" style="width:'+size+'px;height:'+size+'px;font-size:'+font+'px;background:'+color+';position:relative;overflow:hidden;color:#0D0F17;">'
+    + initials + img + (extraInner || '') + '</div>';
+}
 function contactAvatarStyleAttr(c){
-  const src = contactPhotoSrc(c);
-  if(src){
-    return 'background-image:url("'+src+'");background-size:cover;background-position:center;';
-  }
-  const color = String((c && c.color) || '#7CFFB2');
-  const safe = /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(color) ? color : '#7CFFB2';
-  return 'background:' + safe + ';';
+  // Never emit background-image here. Callers that still concatenate this
+  // into a style attr get a solid color; the <img> overlay is contactAvatarHtml.
+  return 'background:' + contactAvatarColor(c) + ';';
 }
 function applyContactAvatarToEl(el, c){
   if(!el || !c) return;
-  const src = contactPhotoSrc(c);
-  if(src){
-    el.style.backgroundImage = 'url("'+src+'")';
-    el.style.backgroundSize = 'cover';
-    el.style.backgroundPosition = 'center';
-    el.textContent = '';
-    return;
-  }
-  el.style.backgroundImage = '';
-  const color = String(c.color || '#7CFFB2');
-  el.style.background = /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(color) ? color : '#7CFFB2';
-  el.textContent = c.initials || '';
+  try{
+    el.style.backgroundImage = '';
+    el.style.background = contactAvatarColor(c);
+    el.style.position = el.style.position || 'relative';
+    el.style.overflow = 'hidden';
+    el.style.color = '#0D0F17';
+    const rawInit = String(c.initials || '').trim();
+    const fallback = (typeof initialsFor === 'function')
+      ? initialsFor(c.name || 'Y')
+      : String((c.name || '?').replace(/^\s+/, '').slice(0, 1)).toUpperCase();
+    el.textContent = rawInit || fallback || '?';
+    const src = contactPhotoSrc(c, { skipData: true }) || contactPhotoSrc(c);
+    if(!src) return;
+    const img = document.createElement('img');
+    img.className = 'avatar-pic';
+    img.alt = '';
+    img.referrerPolicy = 'no-referrer';
+    img.onerror = function(){ try{ this.remove(); }catch(_){} };
+    img.src = src;
+    el.appendChild(img);
+  }catch(_){}
 }
+window.contactPhotoSrc = contactPhotoSrc;
+window.contactAvatarHtml = contactAvatarHtml;
+window.contactAvatarColor = contactAvatarColor;
+window.applyContactAvatarToEl = applyContactAvatarToEl;
+window.mergeContactPhoto = mergeContactPhoto;
+function slimCloudPhoto(photo, photoUrl){
+  const url = photoUrl
+    || (photo && photo.url)
+    || (photo && photo.dataUrl && /^https?:/i.test(photo.dataUrl) ? photo.dataUrl : '');
+  if(url && /^https?:/i.test(url)) return { photo: { dataUrl: url }, photoUrl: url };
+  if(photo && photo.dataUrl && String(photo.dataUrl).length < 80000) return { photo: photo, photoUrl: null };
+  return { photo: photo ? { crop: photo.crop || null } : null, photoUrl: url || null };
+}
+
 let connectionsUnsub = null;
 let connectionsRefreshDebounce = null;
 function loadRealConnections(uid){
@@ -170,11 +231,11 @@ async function refreshContactLiveProfile(firebaseUid){
     const livePhoto = d.photo || null;
     const liveUrl = d.photoUrl || null;
     const beforeSrc = contactPhotoSrc(c);
-    if(livePhoto) mergeContactPhoto(c, livePhoto);
     if(liveUrl){
       c.photoUrl = liveUrl;
-      if(!contactPhotoSrc(c)) mergeContactPhoto(c, liveUrl);
+      mergeContactPhoto(c, liveUrl);
     }
+    if(livePhoto) mergeContactPhoto(c, livePhoto);
     if(contactPhotoSrc(c) !== beforeSrc) changed = true;
     // Do not null out a connection-snapshot photo just because the users
     // doc omitted `photo` (large dataUrls often fail to persist there).
@@ -254,10 +315,18 @@ async function connectWithUser(theirUid, theirData, handle){
     const myConnRef = fbDb.collection('users').doc(currentUser.uid).collection('connections').doc(theirUid);
     const theirConnRef = fbDb.collection('users').doc(theirUid).collection('connections').doc(currentUser.uid);
     const batch = fbDb.batch();
-    batch.set(myConnRef, { name: theirData.name||'Unknown', handle: theirData.number || ('@'+handle), color: theirData.color||'#7CFFB2', photo: theirData.photo || null, connectedAt: firebase.firestore.FieldValue.serverTimestamp() });
-    batch.set(theirConnRef, { name: currentProfile.name, handle: currentProfile.number, color: currentProfile.color, photo: currentProfile.photo || null, connectedAt: firebase.firestore.FieldValue.serverTimestamp() });
+    const myPhoto = (typeof slimCloudPhoto === 'function')
+      ? slimCloudPhoto(currentProfile.photo, currentProfile.photoUrl)
+      : { photo: currentProfile.photo || null, photoUrl: currentProfile.photoUrl || null };
+    const theirPhoto = (typeof slimCloudPhoto === 'function')
+      ? slimCloudPhoto(theirData.photo, theirData.photoUrl)
+      : { photo: theirData.photo || null, photoUrl: theirData.photoUrl || null };
+    batch.set(myConnRef, { name: theirData.name||'Unknown', handle: theirData.number || ('@'+handle), color: theirData.color||'#7CFFB2', photo: theirPhoto.photo, photoUrl: theirPhoto.photoUrl, connectedAt: firebase.firestore.FieldValue.serverTimestamp() });
+    batch.set(theirConnRef, { name: currentProfile.name, handle: currentProfile.number, color: currentProfile.color, photo: myPhoto.photo, photoUrl: myPhoto.photoUrl, connectedAt: firebase.firestore.FieldValue.serverTimestamp() });
     await batch.commit();
     addRealContactToLocalList(theirUid, theirData.name||'Unknown', theirData.color, theirData.number||('@'+handle), theirData.photo);
+    const row = contacts.find(x=>x.firebaseUid===theirUid);
+    if(row && theirData.photoUrl) mergeContactPhoto(row, theirData.photoUrl);
     toast('Connected with ' + (theirData.name||'them'));
     closeFindPeople();
     renderContacts();

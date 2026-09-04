@@ -119,13 +119,27 @@ function normalizeHandle(raw, fallbackName){
 
 /* Renders either the uploaded+cropped photo or the color+initials fallback into an avatar element */
 function applyAvatarVisual(el, profile){
-  if(profile.photo && profile.photo.dataUrl){
-    el.style.background = 'var(--surface-2)';
-    el.innerHTML = `<img src="${profile.photo.dataUrl}" style="position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; transform:${cropTransform(profile.photo.crop)};" draggable="false" />`;
+  if(!el || !profile) return;
+  const src = (typeof contactPhotoSrc === 'function')
+    ? (contactPhotoSrc(profile, { skipData: true }) || contactPhotoSrc(profile))
+    : ((profile.photoUrl) || (profile.photo && profile.photo.dataUrl) || '');
+  const init = (typeof initialsFor === 'function') ? initialsFor(profile.name || 'You') : 'Y';
+  const color = (typeof contactAvatarColor === 'function')
+    ? contactAvatarColor(profile)
+    : (profile.color || '#7CFFB2');
+  el.style.background = src ? 'var(--surface-2)' : color;
+  el.style.position = el.style.position || 'relative';
+  el.style.overflow = 'hidden';
+  el.style.color = '#0D0F17';
+  if(src){
+    const crop = (profile.photo && profile.photo.crop && typeof cropTransform === 'function')
+      ? cropTransform(profile.photo.crop)
+      : '';
+    const safe = String(src).replace(/"/g, '');
+    el.innerHTML = init + '<img class="avatar-pic" alt="" referrerpolicy="no-referrer" src="'+safe+'" style="'+(crop ? ('object-fit:cover;transform:'+crop+';') : '')+'" onerror="this.onerror=null;this.remove();" draggable="false" />';
   } else {
-    el.style.background = profile.color;
     el.innerHTML = '';
-    el.textContent = initialsFor(profile.name);
+    el.textContent = init;
   }
 }
 

@@ -1443,7 +1443,7 @@ function renderContacts(){
       ? `<div style="font-family:var(--font-mono); font-size:10.5px; color:var(--mint); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(c.publicBands.slice(0,3).map(b=>b.name).join(' · '))}${c.publicBands.length>3?'…':''}</div>`
       : '';
     return `<div class="contact-row" data-id="${c.id}">
-      <div class="avatar" style="width:46px;height:46px;font-size:15px;${contactAvatarStyleAttr(c)}position:relative;">${(typeof contactPhotoSrc==='function' ? contactPhotoSrc(c) : (c.photo&&c.photo.dataUrl))?'':c.initials}${signalBarsHtml(c)}</div>
+      ${typeof contactAvatarHtml === 'function' ? contactAvatarHtml(c, 46, signalBarsHtml(c)) : ('<div class="avatar" style="width:46px;height:46px;background:'+(c.color||'#7CFFB2')+';">'+c.initials+'</div>')}
       <div class="contact-meta"><div class="contact-name">${escapeHtml(c.name)}</div><div class="contact-sub">${signalSubText(c)}</div>${bandBits}</div>
       <div class="call-icon-btn" data-call="${c.id}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.3 1.8.6 2.7a2 2 0 01-.4 2.1L8 9.9a16 16 0 006 6l1.4-1.3a2 2 0 012.1-.4c.9.3 1.8.5 2.7.6a2 2 0 011.8 2.1z" stroke="currentColor" stroke-width="1.8"/></svg></div>
     </div>`;

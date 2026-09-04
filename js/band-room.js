@@ -265,15 +265,14 @@ function renderBandRoster(){
   const live = b.isReal ? realBandLiveMembers : liveBandMembers(b);
   let html = live.map(c=>{
     return `<div style="display:flex; flex-direction:column; align-items:center; gap:5px; flex-shrink:0;">
-      <div class="avatar" style="width:44px;height:44px;font-size:14px;${contactAvatarStyleAttr(c)}position:relative;">${(typeof contactPhotoSrc==='function' ? contactPhotoSrc(c) : (c.photo&&c.photo.dataUrl))?'':c.initials}${b.isReal ? '' : signalBarsHtml(c)}</div>
+      <div style="display:flex; flex-direction:column; align-items:center; gap:5px; flex-shrink:0;">
+      ${typeof contactAvatarHtml==='function' ? contactAvatarHtml(c, 44, b.isReal ? '' : signalBarsHtml(c)) : ('<div class="avatar" style="width:44px;height:44px;background:'+(c.color||'#7CFFB2')+';">'+c.initials+'</div>')}
       <span style="font-size:10.5px; color:rgba(255,255,255,.75); font-family:var(--font-mono);">${escapeHtml((c.name||'').split(' ')[0])}</span>
     </div>`;
   }).join('');
   if(amTunedIn){
-    const myStyle = contactAvatarStyleAttr(currentProfile.photo && (currentProfile.photo.dataUrl || currentProfile.photoUrl) ? currentProfile : (currentProfile.photoUrl ? { photoUrl: currentProfile.photoUrl, color:'var(--mint)' } : { color:'var(--mint)' }));
-    const myText = (typeof contactPhotoSrc==='function' ? contactPhotoSrc(currentProfile) : (currentProfile.photo && currentProfile.photo.dataUrl)) ? '' : 'You';
     html += `<div style="display:flex; flex-direction:column; align-items:center; gap:5px; flex-shrink:0;">
-      <div class="avatar" style="width:44px;height:44px;font-size:13px;${myStyle}color:#0D0F17;">${myText}</div>
+      ${typeof contactAvatarHtml==='function' ? contactAvatarHtml(currentProfile || { color:'#7CFFB2', initials:'You' }, 44) : ''}
       <span style="font-size:10.5px; color:var(--mint); font-family:var(--font-mono);">You</span>
     </div>`;
   }
@@ -711,7 +710,7 @@ function openBandInviteSheet(){
   } else {
     $('bandInvitePicker').innerHTML = candidates.map(c=>`
       <div class="contact-row" style="cursor:default;">
-        <div class="avatar" style="width:40px;height:40px;font-size:13px;${contactAvatarStyleAttr(c)}">${(typeof contactPhotoSrc==='function' ? contactPhotoSrc(c) : (c.photo&&c.photo.dataUrl))?'':c.initials}</div>
+        ${typeof contactAvatarHtml==='function' ? contactAvatarHtml(c, 40) : ''}
         <div class="contact-meta"><div class="contact-name">${escapeHtml(c.name)}</div><div class="contact-sub">${escapeHtml(c.handle||'')}</div></div>
         <button data-inv-text="${c.id}" style="padding:8px 10px; border-radius:999px; border:1px solid var(--line); background:var(--surface-2); color:var(--text); font-size:11px; font-family:var(--font-mono); cursor:pointer;">Text</button>
         <button data-inv-video="${c.id}" style="padding:8px 10px; border-radius:999px; border:none; background:var(--mint); color:#0D0F17; font-size:11px; font-family:var(--font-mono); font-weight:700; cursor:pointer;">Video</button>
@@ -1292,7 +1291,7 @@ function renderBandLiveGrid(){
     const name = (m.name||'Someone').split(' ')[0];
     return `<div data-live-tile="${m.uid}" class="band-live-tile" style="position:relative;aspect-ratio:9/16;border-radius:14px;overflow:hidden;background:#0a0c14;border:1px solid rgba(124,255,178,.25);display:flex;align-items:center;justify-content:center;">
       <video data-remote-live="${m.uid}" autoplay playsinline style="display:none;width:100%;height:100%;object-fit:cover;"></video>
-      <div class="avatar live-avatar" style="width:56px;height:56px;font-size:18px;${typeof contactAvatarStyleAttr==='function'?contactAvatarStyleAttr(m):''}">${(typeof contactPhotoSrc==='function' ? contactPhotoSrc(m) : (m.photo&&m.photo.dataUrl))?'':(m.initials||'?')}</div>
+      ${typeof contactAvatarHtml==='function' ? contactAvatarHtml(m, 56) : ''}
       <div style="position:absolute;left:6px;bottom:6px;font-family:var(--font-mono);font-size:9px;background:rgba(13,15,23,.85);color:var(--mint);padding:2px 6px;border-radius:999px;">${escapeHtml(name)} · live</div>
     </div>`;
   }).join('');

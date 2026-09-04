@@ -88,7 +88,7 @@ function renderWirelineList(){
 
   $('wirelineList').innerHTML = rows.map(r=>`
     <div class="contact-row" data-thread="${r.c.id}">
-      <div class="avatar" style="width:46px;height:46px;font-size:15px;${contactAvatarStyleAttr(r.c)}position:relative;">${(typeof contactPhotoSrc==='function' ? contactPhotoSrc(r.c) : (r.c.photo&&r.c.photo.dataUrl))?'':escapeHtml(r.c.initials||'')}</div>
+      ${typeof contactAvatarHtml === 'function' ? contactAvatarHtml(r.c, 46) : ('<div class="avatar" style="width:46px;height:46px;font-size:15px;background:'+((r.c.color)||'#7CFFB2')+';">'+escapeHtml(r.c.initials||'')+'</div>')}
       <div class="contact-meta"><div class="contact-name">${escapeHtml(r.c.name||'')}</div><div class="contact-sub" style="${r.unread?'color:var(--text);font-weight:600;':''}">${escapeHtml(r.preview)}</div></div>
       <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px; flex-shrink:0;">
         <span class="bcast-time">${r.last ? timeAgo(r.last.ts) : ''}</span>
@@ -320,9 +320,12 @@ function openThread(contactId){
       const mapped = await Promise.all(snap.docs.map(async d=>{
         const m = d.data();
         let text = m.text;
-if(m.encrypted && m.ciphertext && m.iv){
+        if(m.encrypted && m.ciphertext && m.iv){
           const cacheKey = d.id + ':' + (m.ciphertext || '').slice(0, 24);
-          if(wirelineDecryptCache[cacheKey]){
+          const cmidKey = m.clientMsgId ? ('cmid:' + m.clientMsgId) : '';
+          if(cmidKey && wirelineDecryptCache[cmidKey]){
+            text = wirelineDecryptCache[cmidKey];
+          } else if(wirelineDecryptCache[cacheKey]){
             text = wirelineDecryptCache[cacheKey];
           } else {
             let pk = c.publicKey;
@@ -356,6 +359,7 @@ if(m.encrypted && m.ciphertext && m.iv){
           callId: m.callId || null,
           callerUid: m.callerUid || null,
           calleeUid: m.calleeUid || null,
+          clientMsgId: m.clientMsgId || null,
           ts: m.ts && m.ts.toMillis ? m.ts.toMillis() : Date.now(),
           status: m.status || 'sent',
           reaction: m.reaction,
@@ -375,7 +379,11 @@ if(m.encrypted && m.ciphertext && m.iv){
       });
       const rest = mapped.filter(m => !(m.type === 'missed_call' && m.callId));
       const missed = Array.from(byCall.values());
-      wirelineThreads[contactId] = rest.concat(missed).sort((a,b)=>a.ts-b.ts);
+      const seenCmid = new Set(mapped.map(function(m){ return m.clientMsgId; }).filter(Boolean));
+      const keepPending = (prev || []).filter(function(m){
+        return m && m.pending && m.clientMsgId && !seenCmid.has(m.clientMsgId);
+      });
+      wirelineThreads[contactId] = rest.concat(missed).concat(keepPending).sort((a,b)=>a.ts-b.ts);
       renderThreadMessages();
       mapped.forEach(function(m){
         if((m.type==='photo' || m.type==='video' || m.type==='document') && m.mediaUrl && typeof vaultIngestUrl === 'function'){
@@ -967,8 +975,16 @@ function documentBubbleHtml(m){
 function sendThreadMessage(){
   const text = $('threadInput').value.trim();
   if(!text || !activeThreadContactId) return;
+  if(sendThreadMessage._lock) return;
   const c = contacts.find(x=>x.id===activeThreadContactId);
   if(!c) return;
+  // Clear the composer FIRST. Waiting on Firestore/encrypt was why the
+  // text sat in the box for seconds and people tapped Send again.
+  $('threadInput').value = '';
+  autoSizeThreadInput();
+  updateComposerButtons();
+  sendThreadMessage._lock = true;
+  setTimeout(function(){ sendThreadMessage._lock = false; }, 450);
   if(c.isReal && c.firebaseUid){
     sendRealMessage(c, { type:'text', text }, text);
     return;
@@ -1125,23 +1141,46 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
   // seconds, and if the original write does eventually land in the
   // background, the id lets a retry recognize that and skip re-sending.
   const cmid = clientMsgId || ('c' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
+  if(payload && payload.text){
+    try{ wirelineDecryptCache['cmid:' + cmid] = payload.text; }catch(_){}
+  }
+  if(!queueId){
+    try{
+      const localC = contacts.find(x=>x.firebaseUid===c.firebaseUid);
+      const cid = localC ? localC.id : activeThreadContactId;
+      if(cid){
+        if(!wirelineThreads[cid]) wirelineThreads[cid] = [];
+        if(!wirelineThreads[cid].some(function(m){ return m.clientMsgId === cmid; })){
+          wirelineThreads[cid].push({
+            id: 'local-' + cmid,
+            from: 'me',
+            type: payload.type || 'text',
+            text: payload.text || previewText || '',
+            ts: Date.now(),
+            status: 'sent',
+            clientMsgId: cmid,
+            pending: true,
+            mediaUrl: payload.mediaUrl || null,
+            duration: payload.duration || null,
+            mood: payload.mood || null,
+          });
+        }
+        if(activeThreadContactId === cid) renderThreadMessages();
+        renderWirelineList();
+      }
+    }catch(_){}
+  }
   try{
     let finalPayload = payload;
     let finalPreview = previewText;
     if(payload.type === 'text'){
-      // Re-enabled (see crypto.js for why this is safe now — password-backed
-      // key recovery fixes the durability gap that caused the earlier
-      // rollback). Encrypts whenever the recipient's public key is available;
-      // falls back to plaintext only when it genuinely isn't yet (e.g. they
-      // haven't opened the app since this shipped) — a message is never lost
-      // over this, it's just not encrypted for that one send.
+      // Encrypt only if we already have their public key locally. Fetching it
+      // here used to stall the send for a full Firestore round-trip — the
+      // composer sat full, people tapped Send again, and the other side
+      // got duplicates. RefreshContactLiveProfile already hydrates publicKey.
       let encrypted = null;
       try{
-        let pk = c.publicKey;
-        if(!pk && fbDb){
-          const pdoc = await fbDb.collection('users').doc(c.firebaseUid).get();
-          if(pdoc.exists && pdoc.data().publicKey){ pk = pdoc.data().publicKey; c.publicKey = pk; }
-        }
+        const pk = c.publicKey;
         if(pk && typeof encryptMessageText === 'function'){
           encrypted = await encryptMessageText(c.firebaseUid, pk, payload.text);
         }
