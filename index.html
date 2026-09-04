@@ -1,17 +1,17 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.09.03e" />
+  <meta name="naluno-build" content="2026.09.04a" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
-<link rel="manifest" href="manifest.json?v=20260903e">
+<link rel="manifest" href="manifest.json?v=20260904a">
 <meta name="theme-color" content="#0D0F17">
 <!-- Icons delayed until after the drawing intro so no PNG can flash. -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.09.03e">
+<meta name="app-version" content="2026.09.04a">
 <meta name="description" content="A statement from the future.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="Watch on Naluno.">
@@ -60,9 +60,9 @@
   #authGate{ visibility:visible !important; }
 </style>
 <link rel="apple-touch-startup-image" href="splash-empty.png">
-<link rel="stylesheet" href="css/app.css?v=20260903e" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="css/app.css?v=20260904a" media="print" onload="this.media='all'">
 <script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="css/app.css?v=20260903e"></noscript>
+<noscript><link rel="stylesheet" href="css/app.css?v=20260904a"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -724,7 +724,7 @@ window.__nalunoEntryT0 = Date.now();
       <div style="display:flex;gap:8px;margin:0 0 12px;flex-wrap:wrap;">
         <div id="bcompPickWrap" style="flex:1;min-width:140px;position:relative;overflow:hidden;border-radius:999px;">
           <div class="join-btn" id="bcompPickBtn" style="margin:0;width:100%;background:rgba(124,255,178,.12);color:var(--mint);border:1px solid rgba(124,255,178,.35);pointer-events:none;">Choose video or photo</div>
-          <input type="file" id="bcompFileInput" accept="video/mp4,video/quicktime,video/webm,video/*,image/jpeg,image/png,image/webp,image/*,.mp4,.mov,.webm,.m4v,.3gp,.jpg,.jpeg,.png,.webp" style="position:absolute;inset:0;width:100%;height:100%;opacity:0.01;font-size:18px;cursor:pointer;z-index:2;" />
+          <input type="file" id="bcompFileInput" accept="video/*,video/mp4,video/quicktime,video/webm,video/x-matroska,video/3gpp,image/jpeg,image/png,image/webp,image/*,.mp4,.mov,.webm,.m4v,.3gp,.mkv,.avi,.mpg,.mpeg,.ogv,.ts,.hevc,.jpg,.jpeg,.png,.webp" style="position:absolute;inset:0;width:100%;height:100%;opacity:0.01;font-size:18px;cursor:pointer;z-index:2;" />
         </div>
         <button type="button" id="bcompGoLiveBtn" class="join-btn" style="flex:1;min-width:120px;margin:0; background:rgba(255,84,112,.15); color:#ff8a9a; border:1px solid rgba(255,84,112,.45);">Go live</button>
       </div>
@@ -911,7 +911,7 @@ window.__nalunoEntryT0 = Date.now();
       <div id="threadComposerNormal" style="display:flex; gap:9px; align-items:flex-end;">
         <span class="naluno-pick-wrap ghost-btn" id="threadSlipBtn" aria-label="Send a photo or video" title="Photo or video" style="flex-shrink:0;position:relative;overflow:hidden;">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="pointer-events:none;"><rect x="4" y="5" width="16" height="14" rx="3" stroke="currentColor" stroke-width="1.8"/><circle cx="9" cy="10" r="1.6" fill="currentColor"/><path d="M7 16l3.2-3.4 2.3 2.2L16.5 11 20 16" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
-          <input type="file" id="threadSlipInput" accept="image/jpeg,image/png,image/webp,image/*,video/mp4,video/*,.jpg,.jpeg,.png,.webp,.mp4,.mov,.webm" style="position:absolute;inset:0;width:100%;height:100%;opacity:0.01;font-size:16px;cursor:pointer;z-index:2;" />
+          <input type="file" id="threadSlipInput" accept="image/jpeg,image/png,image/webp,image/*,video/*,video/mp4,video/quicktime,video/webm,.jpg,.jpeg,.png,.webp,.mp4,.mov,.webm,.mkv,.avi,.3gp" style="position:absolute;inset:0;width:100%;height:100%;opacity:0.01;font-size:16px;cursor:pointer;z-index:2;" />
         </span>
         <span class="naluno-pick-wrap ghost-btn" id="threadDocBtn" aria-label="Send a document" title="Document" style="flex-shrink:0;position:relative;overflow:hidden;">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="pointer-events:none;"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8l-5-5z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M14 3v5h5" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
@@ -1249,58 +1249,58 @@ window.__nalunoEntryT0 = Date.now();
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
 <script src="firebase-config.js"></script>
 <!-- NALUNO_MODULES -->
-<script src="js/core.js?v=20260903e"></script>
+<script src="js/core.js?v=20260904a"></script>
 <!-- Loaded right after core.js so its global error handlers are installed
      before the rest of the app runs and can capture anything they throw. -->
-<script src="js/diagnostics.js?v=20260903e"></script>
+<script src="js/diagnostics.js?v=20260904a"></script>
 <!-- LOAD ORDER: find.js defines contactAvatarStyleAttr(), used by band-list,
      band-room, wireline and signal-ui. auth.js calls loadBands() at top level,
      which ran BEFORE find.js had executed — a ReferenceError that aborted boot
      entirely. It must load before any consumer. -->
-<script src="js/find.js?v=20260903e"></script>
-<script src="js/media-contain.js?v=20260903e"></script>
-<script src="js/keep-alive.js?v=20260903e"></script>
-<script src="js/metrics.js?v=20260903e"></script>
-<script src="js/data.js?v=20260903e"></script>
-<script src="js/crypto.js?v=20260903e"></script>
-<script src="js/atmosphere.js?v=20260903e"></script>
-<script src="js/band-list.js?v=20260903e"></script>
-<script src="js/signal-core.js?v=20260903e"></script>
-<script src="js/broadcast-core.js?v=20260903e"></script>
-<script src="js/broadcast-upload.js?v=20260903e"></script>
-<script src="js/broadcast-composer.js?v=20260903e"></script>
-<script src="js/origin.js?v=20260903e"></script>
-<script src="js/strand.js?v=20260903e"></script>
-<script src="js/circle.js?v=20260903e"></script>
+<script src="js/find.js?v=20260904a"></script>
+<script src="js/media-contain.js?v=20260904a"></script>
+<script src="js/keep-alive.js?v=20260904a"></script>
+<script src="js/metrics.js?v=20260904a"></script>
+<script src="js/data.js?v=20260904a"></script>
+<script src="js/crypto.js?v=20260904a"></script>
+<script src="js/atmosphere.js?v=20260904a"></script>
+<script src="js/band-list.js?v=20260904a"></script>
+<script src="js/signal-core.js?v=20260904a"></script>
+<script src="js/broadcast-core.js?v=20260904a"></script>
+<script src="js/broadcast-upload.js?v=20260904a"></script>
+<script src="js/broadcast-composer.js?v=20260904a"></script>
+<script src="js/origin.js?v=20260904a"></script>
+<script src="js/strand.js?v=20260904a"></script>
+<script src="js/circle.js?v=20260904a"></script>
 <!-- Community Economy: reports actions only; all economic value is computed
      server-side by the naluno-economy Worker. Loaded AFTER circle.js so
      currentUser exists, and deliberately non-blocking — if this file failed
      to load entirely, Broadcast would behave exactly as it does today. -->
-<script src="js/economy.js?v=20260903e"></script>
-<script src="js/economy-ui.js?v=20260903e"></script>
-<script src="js/weather.js?v=20260903e"></script>
-<script src="js/beacon.js?v=20260903e"></script>
-<script src="js/compass.js?v=20260903e"></script>
-<script src="js/signal-ui.js?v=20260903e"></script>
-<script src="js/compat-lock.js?v=20260903e"></script>
-<script src="js/broadcast-space.js?v=20260903e"></script>
-<script src="js/media-vault.js?v=20260903e"></script>
-<script src="js/wireline.js?v=20260903e"></script>
-<script src="js/profile.js?v=20260903e"></script>
-<script src="js/auth.js?v=20260903e"></script>
-<script src="js/notifications.js?v=20260903e"></script>
-<script src="js/ice-core.js?v=20260903e"></script>
-<script src="js/camera.js?v=20260903e"></script>
-<script src="js/call-filters.js?v=20260903e"></script>
-<script src="js/calls.js?v=20260903e"></script>
-<script src="js/sfu-live.js?v=20260903e"></script>
-<script src="js/broadcast-live.js?v=20260903e"></script>
-<script src="js/band-room.js?v=20260903e"></script>
-<script src="js/pwa.js?v=20260903e"></script>
-<script src="js/spark-engine.js?v=20260903e"></script>
-<script src="js/spark-lg.js?v=20260903e"></script>
-<script src="js/spark-page.js?v=20260903e"></script>
-<script src="js/spark.js?v=20260903e"></script>
+<script src="js/economy.js?v=20260904a"></script>
+<script src="js/economy-ui.js?v=20260904a"></script>
+<script src="js/weather.js?v=20260904a"></script>
+<script src="js/beacon.js?v=20260904a"></script>
+<script src="js/compass.js?v=20260904a"></script>
+<script src="js/signal-ui.js?v=20260904a"></script>
+<script src="js/compat-lock.js?v=20260904a"></script>
+<script src="js/broadcast-space.js?v=20260904a"></script>
+<script src="js/media-vault.js?v=20260904a"></script>
+<script src="js/wireline.js?v=20260904a"></script>
+<script src="js/profile.js?v=20260904a"></script>
+<script src="js/auth.js?v=20260904a"></script>
+<script src="js/notifications.js?v=20260904a"></script>
+<script src="js/ice-core.js?v=20260904a"></script>
+<script src="js/camera.js?v=20260904a"></script>
+<script src="js/call-filters.js?v=20260904a"></script>
+<script src="js/calls.js?v=20260904a"></script>
+<script src="js/sfu-live.js?v=20260904a"></script>
+<script src="js/broadcast-live.js?v=20260904a"></script>
+<script src="js/band-room.js?v=20260904a"></script>
+<script src="js/pwa.js?v=20260904a"></script>
+<script src="js/spark-engine.js?v=20260904a"></script>
+<script src="js/spark-lg.js?v=20260904a"></script>
+<script src="js/spark-page.js?v=20260904a"></script>
+<script src="js/spark.js?v=20260904a"></script>
 <!-- /NALUNO_MODULES -->
 </body>
 </html>

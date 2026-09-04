@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v138: 09.04a Signal playback no dual-load (AbortError 20 stutter); all video types on pickers.
 // v137: 09.03e Samsung overlay pickers, live WebRTC order, live push not a call, SW ?v= fallback.
 // v136: 09.03d Signal videos use the working Broadcast upload pipe (Signal /b/init 401).
 // v133: 09.03a upload unblock — wake-lock cannot stall publish; swipe cannot steal New Broadcast; Signal composer skipped by exclusive play.
@@ -27,7 +28,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v137';
+const CACHE_NAME = 'naluno-shell-v138';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './splash-empty.png', './icon-maskable-512.png', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',
