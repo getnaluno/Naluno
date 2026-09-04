@@ -88,7 +88,7 @@ function renderWirelineList(){
 
   $('wirelineList').innerHTML = rows.map(r=>`
     <div class="contact-row" data-thread="${r.c.id}">
-      <div class="avatar" style="width:46px;height:46px;font-size:15px;${contactAvatarStyleAttr(r.c)}position:relative;">${r.c.photo&&r.c.photo.dataUrl?'':escapeHtml(r.c.initials||'')}</div>
+      <div class="avatar" style="width:46px;height:46px;font-size:15px;${contactAvatarStyleAttr(r.c)}position:relative;">${(typeof contactPhotoSrc==='function' ? contactPhotoSrc(r.c) : (r.c.photo&&r.c.photo.dataUrl))?'':escapeHtml(r.c.initials||'')}</div>
       <div class="contact-meta"><div class="contact-name">${escapeHtml(r.c.name||'')}</div><div class="contact-sub" style="${r.unread?'color:var(--text);font-weight:600;':''}">${escapeHtml(r.preview)}</div></div>
       <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px; flex-shrink:0;">
         <span class="bcast-time">${r.last ? timeAgo(r.last.ts) : ''}</span>

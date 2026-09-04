@@ -38,7 +38,7 @@ function renderBandList(){
   $('bandList').innerHTML = bands.map(b=>{
     const grad = bandVibePreviewGradient[b.vibe] || bandVibePreviewGradient.aurora;
     if(b.isReal){
-      const avatars = (b.memberInfo||[]).slice(0,4).map(m=>`<div class="avatar" style="width:28px;height:28px;font-size:10px;${contactAvatarStyleAttr(m)}">${m.photo&&m.photo.dataUrl?'':m.initials}</div>`).join('');
+      const avatars = (b.memberInfo||[]).slice(0,4).map(m=>`<div class="avatar" style="width:28px;height:28px;font-size:10px;${contactAvatarStyleAttr(m)}">${(typeof contactPhotoSrc==='function' ? contactPhotoSrc(m) : (m.photo&&m.photo.dataUrl))?'':m.initials}</div>`).join('');
       return `<div class="band-card" data-band="${b.id}">
         <div class="band-card-bg" style="background:${grad};"></div>
         <div class="band-card-inner">
@@ -194,7 +194,7 @@ function renderBandVibeChips(){
 function renderBandMemberPicker(){
   $('bandMemberPicker').innerHTML = contacts.map(c=>`
     <div class="contact-row" data-pick="${c.id}" style="cursor:pointer;">
-      <div class="avatar" style="width:40px;height:40px;font-size:13px;${contactAvatarStyleAttr(c)}position:relative;">${c.photo&&c.photo.dataUrl?'':c.initials}${signalBarsHtml(c)}</div>
+      <div class="avatar" style="width:40px;height:40px;font-size:13px;${contactAvatarStyleAttr(c)}position:relative;">${(typeof contactPhotoSrc==='function' ? contactPhotoSrc(c) : (c.photo&&c.photo.dataUrl))?'':c.initials}${signalBarsHtml(c)}</div>
       <div class="contact-meta"><div class="contact-name">${escapeHtml(c.name)}</div><div class="contact-sub">${signalSubText(c)}</div></div>
       <div class="switch ${bandComposerMembers.has(c.id)?'on':''}" data-picksw="${c.id}"></div>
     </div>`).join('');

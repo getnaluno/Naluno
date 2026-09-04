@@ -79,6 +79,10 @@ document.querySelectorAll('.navbtn').forEach(btn=>{
     if(screen) screen.classList.add('active');
     if(btn.dataset.tab === 'frequencies' && typeof clearMissedCallBadge === 'function') clearMissedCallBadge();
     if(btn.dataset.tab === 'compass' && typeof showCompassLockScreenIfNeeded === 'function') showCompassLockScreenIfNeeded();
+    if(btn.dataset.tab !== 'broadcast'){
+      try{ if(typeof pauseAllStrandPreviews === 'function') pauseAllStrandPreviews(); }catch(_){}
+      try{ if(typeof nalunoPauseDetachedMedia === 'function') nalunoPauseDetachedMedia(); }catch(_){}
+    }
     captureNavState();
   };
 });

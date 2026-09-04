@@ -512,7 +512,11 @@ function bindAuthListeners(){
       const cachedContacts = nalunoCacheRead('contacts');
       if(cachedContacts && cachedContacts.length && typeof addRealContactToLocalList === 'function'){
         cachedContacts.forEach(function(row){
-          addRealContactToLocalList(row.firebaseUid, row.name, row.color, row.handle, row.photo);
+          const added = addRealContactToLocalList(row.firebaseUid, row.name, row.color, row.handle, row.photo);
+          if(added){
+            if(row.photoUrl){ added.photoUrl = row.photoUrl; if(typeof mergeContactPhoto==='function') mergeContactPhoto(added, row.photoUrl); }
+            if(row.lastActivityTs) added.lastActivityTs = row.lastActivityTs;
+          }
         });
         try{ renderContacts(); }catch(_){}
       }

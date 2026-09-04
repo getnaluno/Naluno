@@ -78,7 +78,7 @@ async function renderBandMessagesFromDocs(docs){
       duration: m.duration || null,
       encrypted: !!m.encrypted,
       envelopes: m.envelopes || null,
-      ts: m.ts && m.ts.toMillis ? m.ts.toMillis() : 0,
+      ts: bandMsgTs(m),
     };
   }).filter(row => !seen.has(row._id));
   await Promise.all(rows.map(async row=>{
@@ -176,16 +176,24 @@ function bandMessageHtml(m){
   }
   return `<div class="${rowClass}">${nameHtml}<div class="msg-bubble">${escapeHtml(m.text || '')}</div><div class="msg-time">${formatClockTime(m.ts)}</div></div>`;
 }
-function bandIsSettled(b){
+function bandMsgTs(m){
+  if(!m || m.ts == null) return 0;
+  try{
+    if(typeof m.ts.toMillis === 'function') return m.ts.toMillis();
+    if(typeof m.ts === 'number' && isFinite(m.ts)) return m.ts;
+    if(typeof m.ts.seconds === 'number') return (m.ts.seconds * 1000) + Math.floor((m.ts.nanoseconds || 0) / 1e6);
+  }catch(_){}
+  return 0;
+}
+function bandSettleElapsed(b){
   if(!b || !b.lastEmptiedAt) return false;
-  // Only count live bodies for the Band that is actually open. Leftover
-  // realBandLiveMembers from a previous room (or amTunedIn on another square)
-  // used to keep EVERY band "busy", so the 2h wipe never fired.
-  if(activeBandId && b.id === activeBandId){
-    const liveCount = (b.isReal ? realBandLiveMembers.length : 0) + (amTunedIn ? 1 : 0);
-    if(liveCount > 0) return false;
-  }
-  return (Date.now() - b.lastEmptiedAt) >= BAND_SETTLE_MS;
+  const settle = (typeof BAND_SETTLE_MS === 'number') ? BAND_SETTLE_MS : (2 * 60 * 60 * 1000);
+  return (Date.now() - b.lastEmptiedAt) >= settle;
+}
+function bandIsSettled(b){
+  // 2h after the square emptied — occupancy must not block the wipe.
+  // Opening the room used to reset lastEmptiedAt and resurrect the chatter.
+  return bandSettleElapsed(b);
 }
 function updateBandSettleNote(){
   const el = $('bandSettleNote'); if(!el) return;
@@ -221,12 +229,14 @@ function renderBandMessages(preserveScroll){
   const older = bandOlderMessages[activeBandId] || [];
   let msgs = older.concat(bandMessages[activeBandId] || []);
   // After the settle window, the square is a blank page again.
-  if(b && bandIsSettled(b)) msgs = [];
-  else if(b){
-    // messageEpoch: only show messages from the current "session" after a full wipe
+  // After the settle window, hide the previous session. Epoch is the
+  // durable boundary — lastEmptiedAt can flap with presence.
+  if(b){
     const epoch = b.messageEpoch || 0;
     if(epoch){
-      msgs = msgs.filter(m => (m.ts || 0) >= epoch);
+      msgs = msgs.filter(m => bandMsgTs(m) >= epoch);
+    } else if(bandSettleElapsed(b)){
+      msgs = [];
     }
   }
   // Drop empty text bubbles (failed decrypt / pruned payload shells)
@@ -255,13 +265,13 @@ function renderBandRoster(){
   const live = b.isReal ? realBandLiveMembers : liveBandMembers(b);
   let html = live.map(c=>{
     return `<div style="display:flex; flex-direction:column; align-items:center; gap:5px; flex-shrink:0;">
-      <div class="avatar" style="width:44px;height:44px;font-size:14px;${contactAvatarStyleAttr(c)}position:relative;">${c.photo&&c.photo.dataUrl?'':c.initials}${b.isReal ? '' : signalBarsHtml(c)}</div>
+      <div class="avatar" style="width:44px;height:44px;font-size:14px;${contactAvatarStyleAttr(c)}position:relative;">${(typeof contactPhotoSrc==='function' ? contactPhotoSrc(c) : (c.photo&&c.photo.dataUrl))?'':c.initials}${b.isReal ? '' : signalBarsHtml(c)}</div>
       <span style="font-size:10.5px; color:rgba(255,255,255,.75); font-family:var(--font-mono);">${escapeHtml((c.name||'').split(' ')[0])}</span>
     </div>`;
   }).join('');
   if(amTunedIn){
-    const myStyle = contactAvatarStyleAttr(currentProfile.photo && currentProfile.photo.dataUrl ? currentProfile : { color:'var(--mint)' });
-    const myText = (currentProfile.photo && currentProfile.photo.dataUrl) ? '' : 'You';
+    const myStyle = contactAvatarStyleAttr(currentProfile.photo && (currentProfile.photo.dataUrl || currentProfile.photoUrl) ? currentProfile : (currentProfile.photoUrl ? { photoUrl: currentProfile.photoUrl, color:'var(--mint)' } : { color:'var(--mint)' }));
+    const myText = (typeof contactPhotoSrc==='function' ? contactPhotoSrc(currentProfile) : (currentProfile.photo && currentProfile.photo.dataUrl)) ? '' : 'You';
     html += `<div style="display:flex; flex-direction:column; align-items:center; gap:5px; flex-shrink:0;">
       <div class="avatar" style="width:44px;height:44px;font-size:13px;${myStyle}color:#0D0F17;">${myText}</div>
       <span style="font-size:10.5px; color:var(--mint); font-family:var(--font-mono);">You</span>
@@ -347,10 +357,21 @@ async function pruneSettledBandMessages(bandRef, b){
       const snap = await bandRef.collection('messages').limit(80).get();
       if(snap.empty) break;
       const batch = fbDb.batch();
-      snap.docs.forEach(d => batch.delete(d.ref));
-      await batch.commit();
+      let n = 0;
+      snap.docs.forEach(d => {
+        const ts = bandMsgTs(d.data() || {});
+        if(ts && ts >= epoch) return; // keep anything sent after the wipe stamp
+        batch.delete(d.ref);
+        n++;
+      });
+      if(n) await batch.commit();
       if(snap.size < 80) break;
+      if(!n) break;
     }
+    // Drop lastEmptiedAt so the NEXT occupancy gets a fresh 2h clock.
+    // messageEpoch keeps any undeleted leftover hidden.
+    b.lastEmptiedAt = null;
+    await bandRef.set({ lastEmptiedAt: null }, { merge:true });
   }catch(e){ console.warn('[band] prune', e); }
   finally{ b._pruning = false; }
 }
@@ -438,9 +459,14 @@ function openBandRoom(id){
         }
       } else {
         b._emptySince = null;
-        if(b.lastEmptiedAt){
+        // People back during the 2h grace: keep the chatter, reset the empty clock.
+        // After the window, do NOT clear lastEmptiedAt — that resurrected messages
+        // because prune never got to delete them.
+        if(b.lastEmptiedAt && !bandSettleElapsed(b)){
           b.lastEmptiedAt = null;
           bandRef.set({ lastEmptiedAt: null }, { merge:true }).catch(()=>{});
+        } else if(b.lastEmptiedAt && bandSettleElapsed(b)){
+          pruneSettledBandMessages(bandRef, b);
         }
       }
       renderBandRoster();
@@ -466,7 +492,7 @@ function openBandRoom(id){
           duration: m.duration || null,
           encrypted: !!m.encrypted,
           envelopes: m.envelopes || null,
-          ts: m.ts && m.ts.toMillis ? m.ts.toMillis() : Date.now(),
+          ts: bandMsgTs(m),
         };
       });
       await Promise.all(rows.map(async row=>{
@@ -607,9 +633,11 @@ $('bandTuneBtn').onclick = ()=>{
     if(amTunedIn){
       startBandPresenceHeartbeat();
       bumpTodayActivity();
-      if(b.lastEmptiedAt){
+      if(b.lastEmptiedAt && !bandSettleElapsed(b)){
         b.lastEmptiedAt = null;
         fbDb.collection('bands').doc(b.firestoreId).set({ lastEmptiedAt: null }, { merge:true }).catch(()=>{});
+      } else if(b.lastEmptiedAt && bandSettleElapsed(b)){
+        pruneSettledBandMessages(fbDb.collection('bands').doc(b.firestoreId), b);
       }
     } else {
       // Step out: stop THIS user's live only (not the whole band)
@@ -683,7 +711,7 @@ function openBandInviteSheet(){
   } else {
     $('bandInvitePicker').innerHTML = candidates.map(c=>`
       <div class="contact-row" style="cursor:default;">
-        <div class="avatar" style="width:40px;height:40px;font-size:13px;${contactAvatarStyleAttr(c)}">${c.photo&&c.photo.dataUrl?'':c.initials}</div>
+        <div class="avatar" style="width:40px;height:40px;font-size:13px;${contactAvatarStyleAttr(c)}">${(typeof contactPhotoSrc==='function' ? contactPhotoSrc(c) : (c.photo&&c.photo.dataUrl))?'':c.initials}</div>
         <div class="contact-meta"><div class="contact-name">${escapeHtml(c.name)}</div><div class="contact-sub">${escapeHtml(c.handle||'')}</div></div>
         <button data-inv-text="${c.id}" style="padding:8px 10px; border-radius:999px; border:1px solid var(--line); background:var(--surface-2); color:var(--text); font-size:11px; font-family:var(--font-mono); cursor:pointer;">Text</button>
         <button data-inv-video="${c.id}" style="padding:8px 10px; border-radius:999px; border:none; background:var(--mint); color:#0D0F17; font-size:11px; font-family:var(--font-mono); font-weight:700; cursor:pointer;">Video</button>
@@ -1264,7 +1292,7 @@ function renderBandLiveGrid(){
     const name = (m.name||'Someone').split(' ')[0];
     return `<div data-live-tile="${m.uid}" class="band-live-tile" style="position:relative;aspect-ratio:9/16;border-radius:14px;overflow:hidden;background:#0a0c14;border:1px solid rgba(124,255,178,.25);display:flex;align-items:center;justify-content:center;">
       <video data-remote-live="${m.uid}" autoplay playsinline style="display:none;width:100%;height:100%;object-fit:cover;"></video>
-      <div class="avatar live-avatar" style="width:56px;height:56px;font-size:18px;${typeof contactAvatarStyleAttr==='function'?contactAvatarStyleAttr(m):''}">${m.photo&&m.photo.dataUrl?'':(m.initials||'?')}</div>
+      <div class="avatar live-avatar" style="width:56px;height:56px;font-size:18px;${typeof contactAvatarStyleAttr==='function'?contactAvatarStyleAttr(m):''}">${(typeof contactPhotoSrc==='function' ? contactPhotoSrc(m) : (m.photo&&m.photo.dataUrl))?'':(m.initials||'?')}</div>
       <div style="position:absolute;left:6px;bottom:6px;font-family:var(--font-mono);font-size:9px;background:rgba(13,15,23,.85);color:var(--mint);padding:2px 6px;border-radius:999px;">${escapeHtml(name)} · live</div>
     </div>`;
   }).join('');

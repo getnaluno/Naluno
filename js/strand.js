@@ -287,7 +287,7 @@
       });
       videos.forEach(function(v){
         if(v === best) playStrandPreview(v);
-        else if(v === __strandPreviewActive) pauseStrandPreview(v);
+        else pauseStrandPreview(v);
       });
     }, { root: root, threshold: [0.25, 0.55, 0.75, 0.9] });
     videos.forEach(function(v){ __strandPreviewIO.observe(v); });

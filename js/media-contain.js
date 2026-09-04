@@ -87,6 +87,30 @@ function nalunoAnyAppMediaPlaying(){
   return false;
 }
 
+function nalunoActiveViewerContains(el){
+  try{
+    const bv = document.getElementById('bviewer');
+    if(bv && bv.classList.contains('active') && el && bv.contains(el)) return true;
+    const bs = document.getElementById('bspace');
+    if(bs && bs.classList.contains('active') && el && bs.contains(el)) return true;
+  }catch(_){}
+  return false;
+}
+
+function nalunoMediaMayKeepAlive(el){
+  if(!el) return false;
+  try{
+    if(el.dataset && el.dataset.nalunoWantPlay === '0') return false;
+    if(el.dataset && el.dataset.nalunoUserPaused === '1') return false;
+    if(nalunoActiveViewerContains(el)) return true;
+    if(el.dataset && el.dataset.nalunoPreview === '1'){
+      const tab = document.getElementById('tab-broadcast');
+      if(tab && tab.classList.contains('active') && el.__nalunoOn) return true;
+    }
+  }catch(_){}
+  return false;
+}
+
 function nalunoViewerWantsMedia(){
   try{
     const bv = document.getElementById('bviewer');
@@ -98,13 +122,36 @@ function nalunoViewerWantsMedia(){
     const els = document.querySelectorAll('video[data-naluno-want-play="1"], video[data-naluno-keep-alive="1"]');
     for(let i = 0; i < els.length; i++){
       const el = els[i];
-      if(el.dataset && el.dataset.nalunoWantPlay === '0') continue;
-      if(el.dataset && el.dataset.nalunoUserPaused === '1') continue;
+      if(!nalunoMediaMayKeepAlive(el)) continue;
       return true;
     }
   }catch(_){}
   return false;
 }
+
+/** Pause feed/preview players that are no longer on screen. Does not clear src
+ *  (unlike stopAllAppMediaAndLockSession) so coming back can resume. */
+function nalunoPauseDetachedMedia(){
+  try{
+    const onBroadcast = !!(document.getElementById('tab-broadcast') && document.getElementById('tab-broadcast').classList.contains('active'));
+    document.querySelectorAll('video, audio').forEach(function(el){
+      try{
+        if(typeof nalunoLiveOrCameraEl === 'function' && nalunoLiveOrCameraEl(el)) return;
+        if(el.closest && el.closest('#callOverlay')) return;
+        if(typeof nalunoClipElement === 'function' && nalunoClipElement(el)) return;
+        if(nalunoActiveViewerContains(el)) return;
+        if(el.dataset && el.dataset.nalunoPreview === '1' && onBroadcast && el.__nalunoOn) return;
+        el.dataset.nalunoWantPlay = '0';
+        delete el.dataset.nalunoKeepAlive;
+        try{ el.pause(); }catch(_){}
+      }catch(_){}
+    });
+    if(!onBroadcast && typeof pauseAllStrandPreviews === 'function') pauseAllStrandPreviews();
+  }catch(_){}
+  try{ lockOutChromeMediaSession(); }catch(_){}
+}
+window.nalunoPauseDetachedMedia = nalunoPauseDetachedMedia;
+window.nalunoMediaMayKeepAlive = nalunoMediaMayKeepAlive;
 
 /** LOCK (20260825c): Chrome / One UI must NEVER own Naluno media.
  *  - Always null metadata (no title/artist → no shade card content).
@@ -291,7 +338,7 @@ function resumeAppMediaAfterForeground(){
       if(!(el.dataset && el.dataset.nalunoPausedHide === '1')) return;
       delete el.dataset.nalunoPausedHide;
       // Resume only if this element still wants to play (user did not pause it).
-      const want = el.dataset.nalunoWantPlay === '1' || el.dataset.nalunoKeepAlive === '1';
+      const want = nalunoMediaMayKeepAlive(el);
       if(!want) return;
       if(el.ended) return;
       const p = el.play();
@@ -309,14 +356,14 @@ function nalunoKeepAliveWatch(){
     if(nalunoCallUiOpen()) return;
     document.querySelectorAll('video[data-naluno-want-play="1"], video[data-naluno-keep-alive="1"]').forEach(function(el){
       try{
-        if(el.dataset.nalunoWantPlay === '0') return;
+        if(!nalunoMediaMayKeepAlive(el)){
+          if(el.dataset) el.dataset.nalunoWantPlay = '0';
+          try{ el.pause(); }catch(_){}
+          return;
+        }
         if(el.ended) return;
         if(el.closest && el.closest('#callOverlay')) return;
         if(!el.paused) return;
-        // User explicitly paused → kick button is visible; leave it.
-        if(el.dataset.nalunoUserPaused === '1') return;
-        // Buffering looks paused on Samsung. Don't poke play() until there
-        // is something to play — that was restarting the load.
         if((el.readyState || 0) < 3) return;
         const p = el.play();
         if(p && p.catch) p.catch(function(){});

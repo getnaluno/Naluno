@@ -12,8 +12,18 @@
 let nextRealContactId = 1000000;
 function addRealContactToLocalList(firebaseUid, name, color, handle, photo){
   const existing = contacts.find(c=>c.firebaseUid===firebaseUid);
-  if(existing){ existing.name = name; existing.color = color || existing.color; existing.handle = handle || existing.handle; existing.photo = photo || null; existing.initials = initialsFor(name); return; }
-  contacts.push({
+  if(existing){
+    existing.name = name;
+    existing.color = color || existing.color;
+    existing.handle = handle || existing.handle;
+    existing.initials = initialsFor(name);
+    // Never wipe a photo we already have just because the connection snapshot
+    // arrived without one — that is why Wireline/Frequencies lost avatars
+    // while Toga (which reads users/{uid}.photoUrl) still showed them.
+    mergeContactPhoto(existing, photo);
+    return existing;
+  }
+  const row = {
     id: nextRealContactId++,
     firebaseUid,
     name,
@@ -23,16 +33,54 @@ function addRealContactToLocalList(firebaseUid, name, color, handle, photo){
     photo: photo || null,
     lastActivityTs: Date.now(), // freshly connected — reachable right now, decays normally after
     isReal: true,
-  });
+  };
+  mergeContactPhoto(row, photo);
+  contacts.push(row);
+  return row;
+}
+/* Resolve a displayable avatar URL from every shape this app has stored:
+   photo.dataUrl (legacy inline), photo.url / photoUrl (R2 https), or a bare
+   https string. Toga already knew about photoUrl; Wireline/Frequencies did not. */
+function contactPhotoSrc(c){
+  if(!c) return '';
+  try{
+    const photo = c.photo;
+    const candidates = [
+      photo && photo.dataUrl,
+      photo && photo.url,
+      photo && photo.downloadUrl,
+      c.photoUrl,
+      (typeof photo === 'string') ? photo : ''
+    ];
+    for(let i = 0; i < candidates.length; i++){
+      const raw = String(candidates[i] || '').trim();
+      if(!raw) continue;
+      const u = raw.replace(/['"\\]/g, '');
+      if(/^(data:image\/|https?:|blob:)/i.test(u)) return u;
+    }
+  }catch(_){}
+  return '';
+}
+function mergeContactPhoto(target, incoming){
+  if(!target) return;
+  if(incoming && typeof incoming === 'object'){
+    const src = contactPhotoSrc({ photo: incoming, photoUrl: incoming.url || incoming.dataUrl });
+    if(src){
+      target.photo = incoming;
+      if(/^https?:/i.test(src)) target.photoUrl = src;
+    }
+  } else if(typeof incoming === 'string' && /^(data:image\/|https?:|blob:)/i.test(incoming)){
+    target.photo = { dataUrl: incoming };
+    if(/^https?:/i.test(incoming)) target.photoUrl = incoming;
+  }
 }
 /* Renders an actual uploaded photo when a contact has one, falling back to color +
    initials otherwise — used everywhere a real contact's avatar shows up, not just
    their own Callsign, which is the only place this used to work. */
 function contactAvatarStyleAttr(c){
-  if(c && c.photo && c.photo.dataUrl){
-    const u = String(c.photo.dataUrl).replace(/['"\\]/g, '');
-    if(!/^(data:image\/|https?:|blob:)/i.test(u)) return 'background:#7CFFB2;';
-    return 'background-image:url("'+u+'");background-size:cover;background-position:center;';
+  const src = contactPhotoSrc(c);
+  if(src){
+    return 'background-image:url("'+src+'");background-size:cover;background-position:center;';
   }
   const color = String((c && c.color) || '#7CFFB2');
   const safe = /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(color) ? color : '#7CFFB2';
@@ -40,15 +88,13 @@ function contactAvatarStyleAttr(c){
 }
 function applyContactAvatarToEl(el, c){
   if(!el || !c) return;
-  if(c.photo && c.photo.dataUrl){
-    const u = String(c.photo.dataUrl).replace(/['"\\]/g, '');
-    if(/^(data:image\/|https?:|blob:)/i.test(u)){
-      el.style.backgroundImage = 'url("'+u+'")';
-      el.style.backgroundSize = 'cover';
-      el.style.backgroundPosition = 'center';
-      el.textContent = '';
-      return;
-    }
+  const src = contactPhotoSrc(c);
+  if(src){
+    el.style.backgroundImage = 'url("'+src+'")';
+    el.style.backgroundSize = 'cover';
+    el.style.backgroundPosition = 'center';
+    el.textContent = '';
+    return;
   }
   el.style.backgroundImage = '';
   const color = String(c.color || '#7CFFB2');
@@ -67,15 +113,33 @@ function loadRealConnections(uid){
   connectionsUnsub = fbDb.collection('users').doc(uid).collection('connections').onSnapshot(snap=>{
     snap.forEach(doc=>{
       const d = doc.data();
-      addRealContactToLocalList(doc.id, d.name || 'Unknown', d.color, d.handle, d.photo);
+      const row = addRealContactToLocalList(doc.id, d.name || 'Unknown', d.color, d.handle, d.photo);
+      if(row && d.photoUrl){
+        row.photoUrl = d.photoUrl;
+        mergeContactPhoto(row, d.photoUrl);
+      }
     });
     renderContacts();
     renderBandList();
     applyAtmosphere();
     try{
       nalunoCacheWrite('contacts', contacts.filter(function(c){ return c.isReal; }).map(function(c){
-        const photo = (c.photo && c.photo.dataUrl && c.photo.dataUrl.length < 120000) ? c.photo : null;
-        return { firebaseUid:c.firebaseUid, name:c.name, color:c.color, handle:c.handle, photo:photo };
+        const src = (typeof contactPhotoSrc === 'function') ? contactPhotoSrc(c) : '';
+        let photo = null;
+        if(src && /^https?:/i.test(src)){
+          photo = { dataUrl: src };
+        } else if(c.photo && c.photo.dataUrl && String(c.photo.dataUrl).length < 120000){
+          photo = c.photo;
+        }
+        return {
+          firebaseUid:c.firebaseUid,
+          name:c.name,
+          color:c.color,
+          handle:c.handle,
+          photo:photo,
+          photoUrl: c.photoUrl || (/^https?:/i.test(src) ? src : null),
+          lastActivityTs: c.lastActivityTs || null
+        };
       }));
     }catch(_){}
     // Both of these fire N parallel Firestore reads (one per real connection) — used
@@ -103,11 +167,30 @@ async function refreshContactLiveProfile(firebaseUid){
     const c = contacts.find(cc=>cc.firebaseUid===firebaseUid);
     if(!c) return;
     let changed = false;
-    if(d.photo && JSON.stringify(d.photo) !== JSON.stringify(c.photo)){ c.photo = d.photo; changed = true; }
-    if(!d.photo && c.photo){ c.photo = null; changed = true; }
+    const livePhoto = d.photo || null;
+    const liveUrl = d.photoUrl || null;
+    const beforeSrc = contactPhotoSrc(c);
+    if(livePhoto) mergeContactPhoto(c, livePhoto);
+    if(liveUrl){
+      c.photoUrl = liveUrl;
+      if(!contactPhotoSrc(c)) mergeContactPhoto(c, liveUrl);
+    }
+    if(contactPhotoSrc(c) !== beforeSrc) changed = true;
+    // Do not null out a connection-snapshot photo just because the users
+    // doc omitted `photo` (large dataUrls often fail to persist there).
     if(d.publicKey && JSON.stringify(d.publicKey) !== JSON.stringify(c.publicKey)){ c.publicKey = d.publicKey; delete sharedKeyCache[firebaseUid]; changed = true; }
     if(d.name && d.name !== c.name){ c.name = d.name; c.initials = initialsFor(d.name); changed = true; }
     if(d.color && d.color !== c.color){ c.color = d.color; changed = true; }
+    // Reachability from their own heartbeat, not only local last-exchange.
+    try{
+      const remoteTs = d.lastActivityTs && d.lastActivityTs.toMillis
+        ? d.lastActivityTs.toMillis()
+        : (typeof d.lastActivityTs === 'number' ? d.lastActivityTs : 0);
+      if(remoteTs && (!c.lastActivityTs || remoteTs > c.lastActivityTs)){
+        c.lastActivityTs = remoteTs;
+        changed = true;
+      }
+    }catch(_){}
     // Public Band memberships — every connection can see which squares you belong to.
     const pb = Array.isArray(d.publicBands) ? d.publicBands : [];
     if(JSON.stringify(pb) !== JSON.stringify(c.publicBands || [])){

@@ -1304,25 +1304,30 @@ function startOutgoingCall(contactId){
     return;
   }
   if(!currentUser || !fbDb){ toast('Sign in required for calls'); return; }
-  if(computeSignal(c).tier === 'off'){
-    // Off the grid means off the grid — don't waste the person's time pretending to ring.
-    showAsyncFallback(contactId, 'off');
-    return;
-  }
+  // Always open the lobby. Off-grid used to skip straight to the fallback,
+  // so tapping Call never showed camera/Greenroom — lastActivityTs is a
+  // local last-exchange guess, not live presence, so looking "off the grid"
+  // must not block the lobby.
+  const sig = computeSignal(c);
   $('lobbyContactName').textContent = 'Call ' + c.name.split(' ')[0] + '?';
   $('ringName').textContent = c.name;
-  $('ringAvatar').style.background = c.color; $('ringAvatar').textContent = c.initials;
   $('remoteName').textContent = c.name;
-  $('remoteAvatar').style.background = c.color; $('remoteAvatar').textContent = c.initials;
+  if(typeof applyContactAvatarToEl === 'function'){
+    applyContactAvatarToEl($('ringAvatar'), c);
+    applyContactAvatarToEl($('remoteAvatar'), c);
+  } else {
+    $('ringAvatar').style.background = c.color; $('ringAvatar').textContent = c.initials;
+    $('remoteAvatar').style.background = c.color; $('remoteAvatar').textContent = c.initials;
+  }
   $('sceneReadyNote').style.display = 'none';
-  $('ringFallbackHint').style.display = computeSignal(c).tier === 'fading' ? 'flex' : 'none';
+  $('ringFallbackHint').style.display = (sig.tier === 'fading' || sig.tier === 'off') ? 'flex' : 'none';
   snapshotUiBeforeCall();
   // Soft-hide wireline without clearing contact id (needed for hangup restore)
   try{
     if($('wirelineThread')) $('wirelineThread').classList.remove('active');
   }catch(_){}
   showCallScreen('lobby');
-  console.log('[call] lobby open for', contactId);
+  console.log('[call] lobby open for', contactId, 'signal', sig.tier);
   // Camera async — lobby must appear immediately even if gUM is slow
   const camPromise = (typeof enableCameraForCall === 'function')
     ? enableCameraForCall()
@@ -1623,6 +1628,7 @@ function showAsyncFallback(contactId, reason){
   if(notifyRepeatInterval){ try{ clearInterval(notifyRepeatInterval); }catch(_){} try{ clearTimeout(notifyRepeatInterval); }catch(_){} notifyRepeatInterval = null; }
   currentCallContactId = contactId;
   $('asyncAvatar').style.background = c.color; $('asyncAvatar').textContent = c.initials;
+  if(typeof applyContactAvatarToEl === 'function') applyContactAvatarToEl($('asyncAvatar'), c);
   $('asyncName').textContent = c.name;
   const first = c.name.split(' ')[0];
   if(reason === 'off'){

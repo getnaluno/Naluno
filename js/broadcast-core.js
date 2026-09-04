@@ -334,23 +334,36 @@ async function loadFeedBroadcasts(){
 
 async function searchBroadcasts(query){
   const q = (query || '').trim().toLowerCase();
-  if(!q || !fbDb){ broadcastSearchResults = []; return []; }
+  if(!q){ broadcastSearchResults = []; return []; }
   // Client-side search over a recent public slice + feed (no full-text index required)
-  let pool = feedBroadcasts.slice();
+  let pool = (feedBroadcasts || []).slice();
   try{
-    const snap = await fbDb.collection('broadcasts').orderBy('createdAt', 'desc').limit(80).get();
-    snap.docs.forEach(d => {
-      const data = d.data();
-      if(data.deleted) return;
-      if(!pool.find(x => x.id === d.id)) pool.push({ id: d.id, ...data });
-    });
+    if(typeof myBroadcasts !== 'undefined' && myBroadcasts && myBroadcasts.length){
+      myBroadcasts.forEach(function(b){ if(b && !pool.find(function(x){ return x.id === b.id; })) pool.push(b); });
+    }
   }catch(_){}
+  try{
+    if(fbDb){
+      const snap = await fbDb.collection('broadcasts').orderBy('createdAt', 'desc').limit(80).get();
+      snap.docs.forEach(d => {
+        const data = d.data();
+        if(data.deleted) return;
+        if(!pool.find(x => x.id === d.id)) pool.push({ id: d.id, ...data });
+      });
+    }
+  }catch(_){}
+  function hayOf(b){
+    if(!b) return '';
+    if(b.searchText) return String(b.searchText).toLowerCase();
+    return [b.title, b.description, b.creatorName, b.strandName, b.strandId, ...(b.tags||[])].join(' ').toLowerCase();
+  }
   const scored = pool.map(b => {
-    const hay = (b.searchText || [b.title, b.description, b.creatorName, ...(b.tags||[])].join(' ')).toLowerCase();
+    const hay = hayOf(b);
     let score = 0;
     if(hay.includes(q)) score += 5;
     q.split(/\s+/).forEach(w => { if(w.length > 1 && hay.includes(w)) score += 2; });
     if((b.title||'').toLowerCase().startsWith(q)) score += 3;
+    if((b.strandName||'').toLowerCase().includes(q)) score += 4;
     if(b.live) score += 4;
     return { b, score };
   }).filter(x => x.score > 0).sort((a,c) => c.score - a.score || (c.b.createdAt||0)-(a.b.createdAt||0));

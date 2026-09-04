@@ -89,7 +89,13 @@ function bumpContactActivity(contactId){
 async function saveContactActivity(){
   if(!storageAvailable) return;
   try{
-    const data = {}; contacts.forEach(c=>{ if(c.lastActivityTs != null) data[c.id] = c.lastActivityTs; });
+    const data = {};
+    contacts.forEach(c=>{
+      if(c.lastActivityTs == null) return;
+      const key = c.firebaseUid || ('id:' + c.id);
+      data[key] = c.lastActivityTs;
+      data[c.id] = c.lastActivityTs; // keep old key so a mixed cache still restores
+    });
     await window.storage.set('contacts:activity', JSON.stringify(data));
   }catch(e){ /* best-effort */ }
 }
@@ -99,7 +105,12 @@ async function loadContactActivity(){
       const res = await window.storage.get('contacts:activity');
       if(res && res.value){
         const data = JSON.parse(res.value);
-        contacts.forEach(c=>{ if(data[c.id] != null) c.lastActivityTs = data[c.id]; });
+        contacts.forEach(c=>{
+          const byUid = c.firebaseUid != null ? data[c.firebaseUid] : null;
+          const byId = data[c.id];
+          const ts = byUid != null ? byUid : byId;
+          if(ts != null) c.lastActivityTs = ts;
+        });
       }
     }catch(e){ /* nothing saved yet — seed values stand */ }
   }

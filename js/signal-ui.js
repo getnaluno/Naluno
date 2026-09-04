@@ -368,6 +368,7 @@ function nalunoArmFlipFeed(grid){
             document.body.classList.remove('naluno-bcast-watch');
             try{ if(typeof nalunoExitFeedLandscape === 'function') nalunoExitFeedLandscape(); }catch(_){}
             try{ if(typeof pauseAllStrandPreviews === 'function') pauseAllStrandPreviews(); }catch(_){}
+            try{ if(typeof nalunoPauseDetachedMedia === 'function') nalunoPauseDetachedMedia(); }catch(_){}
           }
         }, 0);
       });
@@ -446,6 +447,13 @@ function nalunoRevealBroadcastPlates(grid){
       if(en.isIntersecting){
         sawHit = true;
         en.target.classList.add('in-view');
+      } else {
+        en.target.classList.remove('in-view');
+        try{
+          en.target.querySelectorAll('video, audio').forEach(function(v){
+            try{ v.pause(); }catch(_){}
+          });
+        }catch(_){}
       }
     });
   }, { root: root, threshold: 0.08, rootMargin: '40px 0px 0px 0px' });
@@ -459,6 +467,12 @@ function nalunoRevealBroadcastPlates(grid){
     window.__nalunoPlateIO = new IntersectionObserver(function(entries){
       entries.forEach(function(en){
         if(en.isIntersecting) en.target.classList.add('in-view');
+        else {
+          en.target.classList.remove('in-view');
+          try{
+            en.target.querySelectorAll('video, audio').forEach(function(v){ try{ v.pause(); }catch(_){} });
+          }catch(_){}
+        }
       });
     }, { root: null, threshold: 0.05 });
     plates.forEach(function(p){ window.__nalunoPlateIO.observe(p); });
@@ -609,6 +623,8 @@ function nalunoSetBcastView(view, viaSwipe){
       if(typeof clearStrandFolderState === 'function') clearStrandFolderState();
     }
   }catch(_){}
+  try{ if(typeof pauseAllStrandPreviews === 'function') pauseAllStrandPreviews(); }catch(_){}
+  try{ if(typeof nalunoPauseDetachedMedia === 'function') nalunoPauseDetachedMedia(); }catch(_){}
   try{ document.body.classList.toggle('naluno-bcast-mine', next === 'mine'); }catch(_){}
   try{
     const scroller = document.getElementById('broadcastTabScroll');
@@ -1427,7 +1443,7 @@ function renderContacts(){
       ? `<div style="font-family:var(--font-mono); font-size:10.5px; color:var(--mint); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(c.publicBands.slice(0,3).map(b=>b.name).join(' · '))}${c.publicBands.length>3?'…':''}</div>`
       : '';
     return `<div class="contact-row" data-id="${c.id}">
-      <div class="avatar" style="width:46px;height:46px;font-size:15px;${contactAvatarStyleAttr(c)}position:relative;">${c.photo&&c.photo.dataUrl?'':c.initials}${signalBarsHtml(c)}</div>
+      <div class="avatar" style="width:46px;height:46px;font-size:15px;${contactAvatarStyleAttr(c)}position:relative;">${(typeof contactPhotoSrc==='function' ? contactPhotoSrc(c) : (c.photo&&c.photo.dataUrl))?'':c.initials}${signalBarsHtml(c)}</div>
       <div class="contact-meta"><div class="contact-name">${escapeHtml(c.name)}</div><div class="contact-sub">${signalSubText(c)}</div>${bandBits}</div>
       <div class="call-icon-btn" data-call="${c.id}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.3 1.8.6 2.7a2 2 0 01-.4 2.1L8 9.9a16 16 0 006 6l1.4-1.3a2 2 0 012.1-.4c.9.3 1.8.5 2.7.6a2 2 0 011.8 2.1z" stroke="currentColor" stroke-width="1.8"/></svg></div>
     </div>`;
@@ -1511,24 +1527,41 @@ function openMyBroadcast(){ openMySignalStory(); }
   const host = $('bcastSearchResults');
   if(!input || !host) return;
   let timer = null;
+  async function run(q){
+    q = (q || '').trim();
+    if(!q){ host.style.display = 'none'; host.innerHTML = ''; return; }
+    host.style.display = 'block';
+    host.innerHTML = `<div style="padding:8px;color:var(--text-dim);font-size:12px;">Searching…</div>`;
+    let results = [];
+    try{ results = await searchBroadcasts(q); }catch(e){ console.warn('[search]', e); }
+    if(input.value.trim() !== q) return; // stale
+    if(!results.length){
+      host.innerHTML = `<div style="padding:12px;color:var(--text-dim);font-size:13px;">No Broadcasts match “${escapeHtml(q)}”</div>`;
+      return;
+    }
+    host.innerHTML = `<div class="bcast-plate-grid">${results.slice(0,12).map(b => broadcastThumbHtml(b)).join('')}</div>`;
+    host.querySelectorAll('[data-broadcast-id]').forEach(el=>{
+      el.onclick = ()=> openBroadcastById(el.dataset.broadcastId);
+    });
+    host.querySelectorAll('[data-strand-id]').forEach(el=>{
+      el.onclick = function(e){
+        if(e){ e.preventDefault(); e.stopPropagation(); }
+        if(typeof openStrandFolder === 'function') openStrandFolder(el.getAttribute('data-strand-id'));
+      };
+    });
+  }
   input.addEventListener('input', ()=>{
     clearTimeout(timer);
-    timer = setTimeout(async ()=>{
-      const q = input.value.trim();
-      if(!q){ host.style.display = 'none'; host.innerHTML = ''; return; }
-      host.style.display = 'block';
-      host.innerHTML = `<div style="padding:8px;color:var(--text-dim);font-size:12px;">Searching…</div>`;
-      const results = await searchBroadcasts(q);
-      if(!results.length){
-        host.innerHTML = `<div style="padding:12px;color:var(--text-dim);font-size:13px;">No Broadcasts match “${escapeHtml(q)}”</div>`;
-        return;
-      }
-      host.innerHTML = `<div class="bcast-plate-grid">${results.slice(0,12).map(b => broadcastThumbHtml(b)).join('')}</div>`;
-      host.querySelectorAll('[data-broadcast-id]').forEach(el=>{
-        el.onclick = ()=> openBroadcastById(el.dataset.broadcastId);
-      });
-    }, 280);
+    timer = setTimeout(function(){ run(input.value); }, 220);
   });
+  input.addEventListener('keydown', function(e){
+    if(e && (e.key === 'Enter' || e.keyCode === 13)){
+      e.preventDefault();
+      clearTimeout(timer);
+      run(input.value);
+    }
+  });
+  input.addEventListener('search', function(){ run(input.value); });
 })();
 
 
