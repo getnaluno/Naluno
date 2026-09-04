@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v140: 09.04c avatars via https+img overlay; call Decline is Decline; stop ringing after hangup; profile photoUrl.
 // v139: 09.04b lobby always opens; sticky column (search/strand); band wipe sticks; avatars; swipe pauses media.
 // v138: 09.04a Signal playback no dual-load (AbortError 20 stutter); all video types on pickers.
 // v137: 09.03e Samsung overlay pickers, live WebRTC order, live push not a call, SW ?v= fallback.
@@ -29,7 +30,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v139';
+const CACHE_NAME = 'naluno-shell-v140';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './splash-empty.png', './icon-maskable-512.png', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',
@@ -147,6 +148,37 @@ self.addEventListener('fetch', event=>{
   })());
 });
 
+const handledCallIds = {};
+function markCallHandled(callId){
+  if(callId) handledCallIds[callId] = Date.now();
+  const cutoff = Date.now() - 10 * 60 * 1000;
+  Object.keys(handledCallIds).forEach(function(k){
+    if(handledCallIds[k] < cutoff) delete handledCallIds[k];
+  });
+}
+function isCallHandled(callId){
+  return !!(callId && handledCallIds[callId]);
+}
+async function closeCallNotifications(callId){
+  try{
+    const list = await self.registration.getNotifications();
+    (list || []).forEach(function(n){
+      const d = n.data || {};
+      if(d.type === 'incoming_call' && (!callId || !d.callId || d.callId === callId)){
+        try{ n.close(); }catch(_){}
+      }
+    });
+  }catch(_){}
+}
+
+self.addEventListener('message', event=>{
+  const msg = (event && event.data) || {};
+  if(msg.type === 'naluno-call-handled' || msg.type === 'naluno-decline-call'){
+    markCallHandled(msg.callId);
+    event.waitUntil(closeCallNotifications(msg.callId));
+  }
+});
+
 self.addEventListener('push', event=>{
   let data = {};
   try{ data = event.data ? event.data.json() : {}; }catch(e){ try{ data = { body: event.data.text() }; }catch(_){} }
@@ -166,6 +198,7 @@ self.addEventListener('push', event=>{
   // as a real incoming call. Only an actual call gets that treatment now.
   const isCall = data.type === 'incoming_call' || (!data.type && !!callId);
   if(isCall){
+    if(callId && isCallHandled(callId)) return;
     const title = data.title || 'Incoming call — Naluno';
     const body = data.body || 'Tap to answer';
     event.waitUntil((async ()=>{
@@ -187,10 +220,15 @@ self.addEventListener('push', event=>{
       for(const client of clientList){
         try{ client.postMessage({ type: 'naluno-incoming-call', callId }); }catch(_){}
       }
+      // One follow-up only, and only if the call is still ringing. A second
+      // delayed re-show at 6s is why the notification kept insisting after
+      // the lobby was already closed.
       if(callId){
         await new Promise(r => setTimeout(r, 2500));
-        await self.registration.showNotification(title, Object.assign({}, opts, { renotify: true }));
-        await new Promise(r => setTimeout(r, 3500));
+        if(isCallHandled(callId)){
+          await closeCallNotifications(callId);
+          return;
+        }
         await self.registration.showNotification(title, Object.assign({}, opts, { renotify: true }));
       }
     })());
@@ -230,6 +268,18 @@ self.addEventListener('notificationclick', event=>{
     return;
   }
   const callId = data.callId || '';
+  const action = event.action || '';
+  if(action === 'decline'){
+    markCallHandled(callId);
+    event.waitUntil((async ()=>{
+      await closeCallNotifications(callId);
+      const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      for(const client of clientList){
+        try{ client.postMessage({ type: 'naluno-decline-call', callId }); }catch(_){}
+      }
+    })());
+    return;
+  }
   const target = callId ? ('./?call=' + encodeURIComponent(callId)) : (data.url || './');
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList=>{
