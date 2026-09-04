@@ -464,18 +464,21 @@
   function togaPhotoSrc(r){
     if(!r) return '';
     try{
-      if(r.photo && r.photo.dataUrl) return r.photo.dataUrl;
+      if(typeof contactPhotoSrc === 'function'){
+        const live = contactPhotoSrc(r, { skipData: true }) || contactPhotoSrc(r);
+        if(live) return live;
+      }
       if(r.photoUrl) return r.photoUrl;
-      // Accepts either shape: Toga rows key the creator by `id`, Circle
-      // member rows key the person by `uid`. Found in adversarial review —
-      // checking only `id` meant a Circle member row for the signed-in
-      // person would silently never pick up their own locally-set photo,
-      // falling back to an initial for the one person whose photo is
-      // guaranteed to be available.
+      if(r.photo && r.photo.dataUrl) return r.photo.dataUrl;
       const selfId = r.id || r.uid;
       if(typeof currentUser !== 'undefined' && currentUser && selfId === currentUser.uid
-        && typeof currentProfile !== 'undefined' && currentProfile && currentProfile.photo && currentProfile.photo.dataUrl){
-        return currentProfile.photo.dataUrl;
+        && typeof currentProfile !== 'undefined' && currentProfile){
+        if(typeof contactPhotoSrc === 'function'){
+          const self = contactPhotoSrc(currentProfile, { skipData: true }) || contactPhotoSrc(currentProfile);
+          if(self) return self;
+        }
+        if(currentProfile.photoUrl) return currentProfile.photoUrl;
+        if(currentProfile.photo && currentProfile.photo.dataUrl) return currentProfile.photo.dataUrl;
       }
     }catch(_){}
     return '';
@@ -521,8 +524,8 @@
       return fbDb.collection('users').doc(r.id).get().then(function(snap){
         if(!snap.exists) return;
         const d = snap.data() || {};
+        if(d.photoUrl) r.photoUrl = d.photoUrl;
         if(d.photo) r.photo = d.photo;
-        else if(d.photoUrl) r.photoUrl = d.photoUrl;
         if(d.color) r.color = d.color;
         if(!r.name && d.name) r.name = d.name;
         togaPhotoCache[r.id] = { photo: d.photo || null, photoUrl: d.photoUrl || null, color: d.color || null, name: d.name || null };

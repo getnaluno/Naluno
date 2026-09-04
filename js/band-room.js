@@ -143,19 +143,34 @@ function bandMessageHtml(m){
     return `<div class="msg-row them"><div style="font-size:10.5px; color:var(--mint); margin-bottom:3px; padding:0 3px;">Invite</div><div class="msg-bubble" style="border:1px solid rgba(124,255,178,.35);">${escapeHtml(m.text)}</div><div class="msg-time">${formatClockTime(m.ts)}</div></div>`;
   }
   let name = 'You';
+  let face = (typeof nalunoLiveFace === 'function' && currentUser)
+    ? nalunoLiveFace(currentUser.uid, currentProfile)
+    : (currentProfile || { name:'You', color:'#7CFFB2', initials:'Y' });
   if(!m.fromMe){
     name = 'Someone';
+    face = { name:'Someone', color:'#8B90A8', initials:'?' };
     if(m.fromUid){
       const b = activeBand();
       const info = b && (b.memberInfo||[]).find(mm=>mm.uid===m.fromUid);
-      name = info ? info.name.split(' ')[0] : 'Someone';
-    } else {
+      const c = contacts.find(x=>x.firebaseUid===m.fromUid);
+      if(typeof nalunoLiveFace === 'function'){
+        face = nalunoLiveFace(m.fromUid, c || info);
+        name = (face.name || 'Someone').split(' ')[0];
+      } else if(c){
+        face = c;
+        name = c.name.split(' ')[0];
+      } else if(info){
+        face = info;
+        name = (info.name || 'Someone').split(' ')[0];
+      }
+    } else if(m.contactId){
       const c = contacts.find(x=>x.id===m.contactId);
-      name = c ? c.name.split(' ')[0] : 'Someone';
+      if(c){ face = c; name = c.name.split(' ')[0]; }
     }
   }
+  const av = (typeof contactAvatarHtml === 'function') ? contactAvatarHtml(face, 28) : '';
   const rowClass = m.fromMe ? 'msg-row me' : 'msg-row them';
-  const nameHtml = m.fromMe ? '' : `<div style="font-size:10.5px; color:var(--text-dim); margin-bottom:3px; padding:0 3px;">${escapeHtml(name)}</div>`;
+  const nameHtml = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">${av}<span style="font-size:10.5px; color:${m.fromMe ? 'var(--mint)' : 'var(--text-dim)'};">${escapeHtml(name)}</span></div>`;
   const dur = m.duration ? Math.round(m.duration) + 's' : '';
   if(m.type === 'audio' && m.mediaUrl){
     const labelColor = m.fromMe ? 'rgba(13,15,23,.7)' : 'var(--mint)';
@@ -185,10 +200,31 @@ function bandMsgTs(m){
   }catch(_){}
   return 0;
 }
+function bandEmptiedMs(b){
+  if(!b || b.lastEmptiedAt == null || b.lastEmptiedAt === false) return 0;
+  try{
+    const v = b.lastEmptiedAt;
+    if(typeof v.toMillis === 'function') return v.toMillis();
+    if(typeof v === 'number' && isFinite(v)) return v;
+    if(v && typeof v.seconds === 'number') return (v.seconds * 1000) + Math.floor((v.nanoseconds || 0) / 1e6);
+  }catch(_){}
+  return 0;
+}
+function bandEpochMs(b){
+  if(!b || b.messageEpoch == null) return 0;
+  try{
+    const v = b.messageEpoch;
+    if(typeof v.toMillis === 'function') return v.toMillis();
+    if(typeof v === 'number' && isFinite(v)) return v;
+    if(v && typeof v.seconds === 'number') return (v.seconds * 1000) + Math.floor((v.nanoseconds || 0) / 1e6);
+  }catch(_){}
+  return 0;
+}
 function bandSettleElapsed(b){
-  if(!b || !b.lastEmptiedAt) return false;
+  const emptied = bandEmptiedMs(b);
+  if(!emptied) return false;
   const settle = (typeof BAND_SETTLE_MS === 'number') ? BAND_SETTLE_MS : (2 * 60 * 60 * 1000);
-  return (Date.now() - b.lastEmptiedAt) >= settle;
+  return (Date.now() - emptied) >= settle;
 }
 function bandIsSettled(b){
   // 2h after the square emptied — occupancy must not block the wipe.
@@ -205,7 +241,7 @@ function updateBandSettleNote(){
     return;
   }
   if(b.lastEmptiedAt){
-    const left = BAND_SETTLE_MS - (Date.now() - b.lastEmptiedAt);
+    const left = BAND_SETTLE_MS - (Date.now() - bandEmptiedMs(b));
     if(left <= 0){
       el.textContent = 'Cleared · next messages start fresh';
       return;
@@ -232,11 +268,13 @@ function renderBandMessages(preserveScroll){
   // After the settle window, hide the previous session. Epoch is the
   // durable boundary — lastEmptiedAt can flap with presence.
   if(b){
-    const epoch = b.messageEpoch || 0;
-    if(epoch){
+    const epoch = bandEpochMs(b);
+    const emptied = bandEmptiedMs(b);
+    if(bandSettleElapsed(b)){
+      const cut = Math.max(emptied, epoch);
+      msgs = msgs.filter(m => bandMsgTs(m) > cut);
+    } else if(epoch){
       msgs = msgs.filter(m => bandMsgTs(m) >= epoch);
-    } else if(bandSettleElapsed(b)){
-      msgs = [];
     }
   }
   // Drop empty text bubbles (failed decrypt / pruned payload shells)
@@ -272,7 +310,7 @@ function renderBandRoster(){
   }).join('');
   if(amTunedIn){
     html += `<div style="display:flex; flex-direction:column; align-items:center; gap:5px; flex-shrink:0;">
-      ${typeof contactAvatarHtml==='function' ? contactAvatarHtml(currentProfile || { color:'#7CFFB2', initials:'You' }, 44) : ''}
+      ${typeof contactAvatarHtml==='function' ? contactAvatarHtml((typeof nalunoLiveFace==='function' && currentUser) ? nalunoLiveFace(currentUser.uid, currentProfile) : (currentProfile || { color:'#7CFFB2', initials:'You' }), 44) : ''}
       <span style="font-size:10.5px; color:var(--mint); font-family:var(--font-mono);">You</span>
     </div>`;
   }
@@ -443,7 +481,13 @@ function openBandRoom(id){
       realBandLiveMembers = others.map(d=>{
         const info = (b.memberInfo||[]).find(m=>m.uid===d.id);
         const data = d.data() || {};
-        return Object.assign(info || { uid:d.id, name:'Someone', color:'#8B90A8', initials:'?' }, {
+        const face = (typeof nalunoLiveFace === 'function')
+          ? nalunoLiveFace(d.id, info)
+          : (info || { uid:d.id, name:'Someone', color:'#8B90A8', initials:'?' });
+        if(typeof nalunoHydrateFace === 'function' && typeof contactPhotoSrc === 'function' && !contactPhotoSrc(face, { skipData: true })){
+          nalunoHydrateFace(d.id);
+        }
+        return Object.assign({}, face, {
           live: !!data.live,
           liveMode: data.mode || null,
         });

@@ -132,11 +132,18 @@ function applyAvatarVisual(el, profile){
   el.style.overflow = 'hidden';
   el.style.color = '#0D0F17';
   if(src){
-    const crop = (profile.photo && profile.photo.crop && typeof cropTransform === 'function')
-      ? cropTransform(profile.photo.crop)
-      : '';
+    // Baked avatars need no extra transform. Live drafts still pan/zoom
+    // around center — never translate(-50%,-50%) on an inset:0 image.
+    const crop = profile.photo && profile.photo.crop;
+    const baked = !crop || (crop.scale === 1 && !crop.xPct && !crop.yPct);
+    let extra = 'object-fit:cover;';
+    if(!baked && crop){
+      const s = (typeof crop.scale === 'number' && crop.scale > 0) ? crop.scale : 1;
+      const x = crop.xPct || 0, y = crop.yPct || 0;
+      extra += 'transform-origin:center center;transform:translate('+x+'%,'+y+'%) scale('+s+');';
+    }
     const safe = String(src).replace(/"/g, '');
-    el.innerHTML = init + '<img class="avatar-pic" alt="" referrerpolicy="no-referrer" src="'+safe+'" style="'+(crop ? ('object-fit:cover;transform:'+crop+';') : '')+'" onerror="this.onerror=null;this.remove();" draggable="false" />';
+    el.innerHTML = init + '<img class="avatar-pic" alt="" referrerpolicy="no-referrer" src="'+safe+'" style="'+extra+'" onerror="this.onerror=null;this.remove();" draggable="false" />';
   } else {
     el.innerHTML = '';
     el.textContent = init;

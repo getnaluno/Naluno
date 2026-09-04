@@ -153,6 +153,130 @@ window.contactAvatarHtml = contactAvatarHtml;
 window.contactAvatarColor = contactAvatarColor;
 window.applyContactAvatarToEl = applyContactAvatarToEl;
 window.mergeContactPhoto = mergeContactPhoto;
+/* One face object for every surface (Band stack, roster, Wireline, calls).
+   Always prefers the live Callsign over a Band memberInfo snapshot taken
+   before photos hydrated — that is why "What if?" showed initials. */
+const nalunoFaceCache = {};
+const nalunoFaceHydrating = {};
+let nalunoFaceHydrateTimer = null;
+function nalunoLiveFace(uid, fallback){
+  const base = (fallback && typeof fallback === 'object') ? fallback : {};
+  const face = {
+    uid: uid || base.uid || base.firebaseUid || null,
+    name: base.name || 'Someone',
+    color: base.color || '#8B90A8',
+    initials: base.initials || '',
+    photo: base.photo || null,
+    photoUrl: base.photoUrl || null,
+  };
+  if(uid && typeof currentUser !== 'undefined' && currentUser && uid === currentUser.uid
+    && typeof currentProfile !== 'undefined' && currentProfile){
+    face.name = currentProfile.name || face.name;
+    face.color = currentProfile.color || face.color;
+    face.photo = currentProfile.photo || face.photo;
+    face.photoUrl = currentProfile.photoUrl || face.photoUrl;
+  }
+  const c = (uid && typeof contacts !== 'undefined' && contacts)
+    ? contacts.find(function(cc){ return cc.firebaseUid === uid; })
+    : null;
+  if(c){
+    face.name = c.name || face.name;
+    face.color = c.color || face.color;
+    face.initials = c.initials || face.initials;
+    face.photo = c.photo || face.photo;
+    face.photoUrl = c.photoUrl || face.photoUrl;
+  }
+  const cached = uid ? nalunoFaceCache[uid] : null;
+  if(cached){
+    if(cached.photoUrl) face.photoUrl = cached.photoUrl;
+    if(cached.photo && !face.photo) face.photo = cached.photo;
+    if(cached.name && (!face.name || face.name === 'Someone')) face.name = cached.name;
+    if(cached.color && (!face.color || face.color === '#8B90A8')) face.color = cached.color;
+  }
+  if(typeof togaPhotoCache !== 'undefined' && uid && togaPhotoCache[uid]){
+    const t = togaPhotoCache[uid];
+    if(t.photoUrl) face.photoUrl = face.photoUrl || t.photoUrl;
+    if(t.photo && !face.photo) face.photo = t.photo;
+    if(t.name && (!face.name || face.name === 'Someone')) face.name = t.name;
+    if(t.color) face.color = face.color || t.color;
+  }
+  if(!face.initials){
+    face.initials = (typeof initialsFor === 'function')
+      ? initialsFor(face.name || '?')
+      : String((face.name || '?').trim().charAt(0) || '?').toUpperCase();
+  }
+  return face;
+}
+function nalunoFaceHydratePaint(){
+  if(nalunoFaceHydrateTimer) return;
+  nalunoFaceHydrateTimer = setTimeout(function(){
+    nalunoFaceHydrateTimer = null;
+    try{ if(typeof renderBandList === 'function') renderBandList(); }catch(_){}
+    try{ if(typeof renderContacts === 'function') renderContacts(); }catch(_){}
+    try{ if(typeof renderWirelineList === 'function') renderWirelineList(); }catch(_){}
+    try{
+      if(typeof renderBandRoster === 'function' && typeof activeBandId !== 'undefined' && activeBandId){
+        renderBandRoster();
+      }
+    }catch(_){}
+  }, 60);
+}
+function nalunoHydrateFace(uid){
+  if(!uid || typeof fbDb === 'undefined' || !fbDb) return;
+  if(nalunoFaceHydrating[uid]) return;
+  if(nalunoFaceCache[uid] && nalunoFaceCache[uid].photoUrl) return;
+  const already = nalunoLiveFace(uid);
+  if(typeof contactPhotoSrc === 'function' && contactPhotoSrc(already, { skipData: true })){
+    nalunoFaceCache[uid] = {
+      photoUrl: already.photoUrl || contactPhotoSrc(already, { skipData: true }),
+      photo: already.photo || null,
+      name: already.name,
+      color: already.color,
+    };
+    return;
+  }
+  nalunoFaceHydrating[uid] = 1;
+  fbDb.collection('users').doc(uid).get().then(function(snap){
+    if(!snap.exists) return;
+    const d = snap.data() || {};
+    const url = d.photoUrl || null;
+    nalunoFaceCache[uid] = {
+      photo: d.photo || null,
+      photoUrl: url,
+      color: d.color || null,
+      name: d.name || null,
+    };
+    if(typeof togaPhotoCache !== 'undefined'){
+      togaPhotoCache[uid] = nalunoFaceCache[uid];
+    }
+    const row = (typeof contacts !== 'undefined' && contacts)
+      ? contacts.find(function(cc){ return cc.firebaseUid === uid; })
+      : null;
+    if(row){
+      if(url) mergeContactPhoto(row, url);
+      if(d.photo) mergeContactPhoto(row, d.photo);
+      if(d.name && d.name !== row.name){
+        row.name = d.name;
+        row.initials = (typeof initialsFor === 'function') ? initialsFor(d.name) : row.initials;
+      }
+      if(d.color) row.color = d.color;
+    }
+    if(typeof currentUser !== 'undefined' && currentUser && uid === currentUser.uid
+      && typeof currentProfile !== 'undefined' && currentProfile){
+      if(url){
+        currentProfile.photoUrl = url;
+        mergeContactPhoto(currentProfile, url);
+      }
+      if(d.photo) mergeContactPhoto(currentProfile, d.photo);
+    }
+    nalunoFaceHydratePaint();
+  }).catch(function(){}).then(function(){
+    nalunoFaceHydrating[uid] = 1;
+  });
+}
+window.nalunoLiveFace = nalunoLiveFace;
+window.nalunoHydrateFace = nalunoHydrateFace;
+window.nalunoFaceCache = nalunoFaceCache;
 function slimCloudPhoto(photo, photoUrl){
   const url = photoUrl
     || (photo && photo.url)
@@ -294,9 +418,16 @@ async function searchHandle(){
     }
     const data = userDoc.data();
     const already = contacts.some(c => c.firebaseUid === theirUid);
+    const face = {
+      name: data.name || 'Unknown',
+      initials: initialsFor(data.name || '?'),
+      color: data.color || '#7CFFB2',
+      photo: data.photo || null,
+      photoUrl: data.photoUrl || null,
+    };
     $('findPeopleResult').innerHTML = `
       <div class="contact-row" style="cursor:default;">
-        <div class="avatar" style="width:46px;height:46px;font-size:15px;background:${data.color||'#7CFFB2'};">${initialsFor(data.name||'?')}</div>
+        ${typeof contactAvatarHtml === 'function' ? contactAvatarHtml(face, 46) : ('<div class="avatar" style="width:46px;height:46px;font-size:15px;background:'+(face.color)+';">'+escapeHtml(face.initials)+'</div>')}
         <div class="contact-meta"><div class="contact-name">${escapeHtml(data.name||'Unknown')}</div><div class="contact-sub">${escapeHtml(data.number||('@'+handle))}</div></div>
       </div>
       <button class="join-btn" id="connectResultBtn" style="margin-top:14px;" ${already?'disabled':''}>${already?'Already connected':'Connect'}</button>`;

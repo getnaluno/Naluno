@@ -1038,8 +1038,14 @@ $('saveProfileBtn').onclick = async ()=>{
   let photoOut = draftPhoto;
   if(photoOut && photoOut.dataUrl && typeof nalunoShrinkImageDataUrl === 'function'){
     try{
-      const slim = await nalunoShrinkImageDataUrl(photoOut.dataUrl, 480, 0.7);
+      const slim = await nalunoShrinkImageDataUrl(photoOut.dataUrl, 720, 0.82);
       photoOut = Object.assign({}, photoOut, { dataUrl: slim });
+    }catch(_){}
+  }
+  if(photoOut && photoOut.dataUrl && typeof nalunoBakeCroppedImage === 'function'){
+    try{
+      const baked = await nalunoBakeCroppedImage(photoOut.dataUrl, photoOut.crop || { scale:1, xPct:0, yPct:0 }, 480);
+      photoOut = { dataUrl: baked, crop: { scale:1, xPct:0, yPct:0 } };
     }catch(_){}
   }
   let photoUrlOut = null;

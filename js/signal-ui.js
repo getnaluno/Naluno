@@ -22,6 +22,7 @@ $('adjustBtn').onclick = ()=>{
   if(isVideo){ $('adjustVideo').src = item.dataUrl; $('adjustVideo').pause(); }
   else { $('adjustImg').src = item.dataUrl; }
   $('adjustZoom').value = Math.round(adjustWorkingCrop.scale*100);
+  if($('adjustStage')) $('adjustStage').classList.remove('avatar-adjust');
   applyAdjustTransform();
   $('adjustOverlay').classList.add('active');
 };
@@ -37,6 +38,7 @@ function openAvatarAdjust(dataUrl, crop, onSave){
   $('adjustVideo').style.display = 'none';
   $('adjustImg').src = dataUrl;
   $('adjustZoom').value = Math.round(adjustWorkingCrop.scale*100);
+  if($('adjustStage')) $('adjustStage').classList.add('avatar-adjust');
   applyAdjustTransform();
   $('adjustOverlay').classList.add('active');
 }
@@ -66,6 +68,7 @@ adjustStage.addEventListener('pointercancel', ()=>{ adjustDragStart = null; });
 
 $('adjustCancel').onclick = ()=>{
   $('adjustOverlay').classList.remove('active');
+  if($('adjustStage')) $('adjustStage').classList.remove('avatar-adjust');
   if(adjustContext==='avatar'){ pendingAvatarDataUrl = null; avatarAdjustCallback = null; }
 };
 $('adjustSave').onclick = ()=>{
@@ -79,6 +82,7 @@ $('adjustSave').onclick = ()=>{
     showActiveItemInPreview();
   }
   $('adjustOverlay').classList.remove('active');
+  if($('adjustStage')) $('adjustStage').classList.remove('avatar-adjust');
   toast('Adjustment saved');
 };
 
@@ -1321,8 +1325,9 @@ async function openBroadcast(contactId){
     if(segments.length===0){ toast(c.name.split(' ')[0] + '\u2019s signal has faded'); return; }
     viewingMine = false;
     currentSegments = segments;
-    $('bviewerAvatar').style.background = c.color; $('bviewerAvatar').textContent = c.initials;
     $('bviewerName').textContent = c.name;
+    if(typeof applyContactAvatarToEl === 'function') applyContactAvatarToEl($('bviewerAvatar'), c);
+    else { $('bviewerAvatar').style.background = c.color; $('bviewerAvatar').textContent = c.initials; }
     $('bviewerStatus').textContent = signalMeta[computeSignal(c).tier].label;
     $('bviewerStatus').style.display = 'block';
     $('bviewerMessage').style.display = 'flex';
@@ -1472,6 +1477,11 @@ function openMySignalStory(){
   currentSegments = typeof sortSignalSegments === 'function' ? sortSignalSegments(mySignal.slice()) : mySignal.slice();
   currentSegmentIndex = 0;
   if($('bviewerName')) $('bviewerName').textContent = (currentProfile && currentProfile.name) || 'You';
+  if($('bviewerAvatar') && typeof applyContactAvatarToEl === 'function'){
+    applyContactAvatarToEl($('bviewerAvatar'), (typeof nalunoLiveFace === 'function' && currentUser)
+      ? nalunoLiveFace(currentUser.uid, currentProfile)
+      : (currentProfile || { name:'You', color:'#7CFFB2', initials:'Y' }));
+  }
   if($('bviewerRemove')){
     $('bviewerRemove').style.display = 'inline-flex';
     $('bviewerRemove').style.alignItems = 'center';
@@ -1511,8 +1521,11 @@ async function openContactSignalStory(contactId){
   signalRememberView(entry.contact.firebaseUid || contactId, currentSegments);
   currentSegmentIndex = 0;
   $('bviewerName').textContent = entry.contact.name || 'Signal';
-  $('bviewerAvatar').textContent = entry.contact.initials || '?';
-  $('bviewerAvatar').style.background = entry.contact.color || '#7CFFB2';
+  if(typeof applyContactAvatarToEl === 'function') applyContactAvatarToEl($('bviewerAvatar'), entry.contact);
+  else {
+    $('bviewerAvatar').textContent = entry.contact.initials || '?';
+    $('bviewerAvatar').style.background = entry.contact.color || '#7CFFB2';
+  }
   $('bviewer').classList.add('active');
   playSegment(0);
 }

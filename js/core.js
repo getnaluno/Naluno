@@ -247,7 +247,7 @@ window.addEventListener('error', function(ev){
 window.addEventListener('unhandledrejection', function(ev){
   try{ console.error('[naluno:promise]', ev.reason); }catch(_){}
 });
-console.log('[naluno] build 2026.09.04c');
+console.log('[naluno] build 2026.09.04d');
 
 
 function nalunoShrinkImageDataUrl(dataUrl, maxEdge, quality){
@@ -276,6 +276,40 @@ function nalunoDataUrlToFile(dataUrl, name){
     const n = name || 'avatar.jpg';
     try{ return new File([blob], n, { type: ct }); }
     catch(_){ try{ blob.name = n; }catch(__){} return blob; }
+  });
+}
+/** Bake pan/zoom into a square JPEG so every avatar (lists, calls, Band)
+ *  shows the same crop without CSS transforms. Samsung Chrome paints
+ *  transformed <img> outside overflow:hidden; a pre-cropped file does not. */
+function nalunoBakeCroppedImage(dataUrl, crop, edge){
+  return new Promise(function(resolve){
+    if(!dataUrl){ resolve(dataUrl); return; }
+    const img = new Image();
+    img.onload = function(){
+      try{
+        const size = edge || 480;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#1a1d2a';
+        ctx.fillRect(0, 0, size, size);
+        const scale = (crop && typeof crop.scale === 'number' && crop.scale > 0) ? crop.scale : 1;
+        const xPct = (crop && typeof crop.xPct === 'number') ? crop.xPct : 0;
+        const yPct = (crop && typeof crop.yPct === 'number') ? crop.yPct : 0;
+        const iw = img.width || 1, ih = img.height || 1;
+        const cover = Math.max(size / iw, size / ih);
+        const dw = iw * cover * scale;
+        const dh = ih * cover * scale;
+        const dx = (size - dw) / 2 + (xPct / 100) * size;
+        const dy = (size - dh) / 2 + (yPct / 100) * size;
+        ctx.drawImage(img, dx, dy, dw, dh);
+        resolve(canvas.toDataURL('image/jpeg', 0.84));
+      }catch(_){ resolve(dataUrl); }
+    };
+    img.onerror = function(){ resolve(dataUrl); };
+    img.crossOrigin = 'anonymous';
+    img.src = dataUrl;
   });
 }
 

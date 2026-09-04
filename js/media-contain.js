@@ -142,6 +142,7 @@ function nalunoPauseDetachedMedia(){
         if(typeof nalunoClipElement === 'function' && nalunoClipElement(el)) return;
         if(nalunoActiveViewerContains(el)) return;
         if(el.dataset && el.dataset.nalunoPreview === '1' && onBroadcast && el.__nalunoOn) return;
+        try{ if(!el.paused) el.dataset.nalunoPauseAt = String(el.currentTime || 0); }catch(_){}
         el.dataset.nalunoWantPlay = '0';
         delete el.dataset.nalunoKeepAlive;
         try{ el.pause(); }catch(_){}
@@ -329,6 +330,7 @@ function pauseAppMediaForBackground(){
         if(typeof nalunoLiveOrCameraEl === 'function' && nalunoLiveOrCameraEl(el)) return;
         if(el.srcObject) return;
         if(el.paused) return;
+        try{ el.dataset.nalunoPauseAt = String(el.currentTime || 0); }catch(_){}
         el.dataset.nalunoPausedHide = '1';
         el.pause();
       }catch(_){}
@@ -346,10 +348,15 @@ function resumeAppMediaAfterForeground(){
     try{
       if(!(el.dataset && el.dataset.nalunoPausedHide === '1')) return;
       delete el.dataset.nalunoPausedHide;
-      // Resume only if this element still wants to play (user did not pause it).
       const want = nalunoMediaMayKeepAlive(el);
       if(!want) return;
       if(el.ended) return;
+      try{
+        const at = parseFloat(el.dataset.nalunoPauseAt);
+        if(isFinite(at) && Math.abs((el.currentTime || 0) - at) > 1.2){
+          el.currentTime = at;
+        }
+      }catch(_){}
       const p = el.play();
       if(p && p.catch) p.catch(function(){});
     }catch(_){}

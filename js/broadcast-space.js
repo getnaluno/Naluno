@@ -1088,28 +1088,28 @@ $('bspaceResSend').onclick = async ()=>{
 function renderBspaceImpact(){
   const grid = $('bspaceImpactGrid');
   if(!grid || !activeBroadcastId || !fbDb) return;
+  const creatorUid = (activeBroadcastMeta && activeBroadcastMeta.creatorUid) || '';
   Promise.all([
     fbDb.collection('broadcasts').doc(activeBroadcastId).collection('conversation').get(),
     fbDb.collection('broadcasts').doc(activeBroadcastId).collection('questions').get(),
     fbDb.collection('broadcasts').doc(activeBroadcastId).collection('results').get(),
     fbDb.collection('broadcasts').doc(activeBroadcastId).collection('resources').get(),
     fbDb.collection('broadcasts').doc(activeBroadcastId).get(),
-  ]).then(([conv, qs, res, resources, doc])=>{
+    creatorUid ? fbDb.collection('users').doc(creatorUid).collection('circle').limit(200).get() : Promise.resolve(null),
+  ]).then(([conv, qs, res, resources, doc, circleSnap])=>{
     const members = (doc.exists && doc.data().memberUids) || [];
+    const circleRows = [];
+    if(circleSnap && circleSnap.docs){
+      circleSnap.forEach(function(d){ circleRows.push(d.id); });
+    }
+    const communityN = circleRows.length || members.length;
     const answered = qs.docs.filter(d => (d.data().answers && d.data().answers.length) || d.data().bestAnswer).length;
-    // FIX ("dashboard shows Conversations when there are none"): conv.size
-    // counted every document in the collection, including the "is live
-    // now"/"was live" SYSTEM messages posted automatically when a creator
-    // goes live — not something anyone actually said. A broadcast that's
-    // only ever been live once, with zero real chat, was showing a non-zero
-    // Conversations count purely from those automatic notices. Counts only
-    // genuine person-authored entries now.
     const realConvCount = conv.docs.filter(d => {
       const t = d.data().type;
       return t !== 'system' && t !== 'live';
     }).length;
     const cells = [
-      ['Community', members.length],
+      ['Community', communityN],
       ['Conversations', realConvCount],
       ['Questions', qs.size],
       ['Answered', answered],

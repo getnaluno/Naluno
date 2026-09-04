@@ -144,7 +144,12 @@ async function bLiveStartHost(stream){
       const data = change.doc.data() || {};
       if(!data.offer || data.answer) continue; // wait for offer; skip if already answered
       if(data.ts && (Date.now() - data.ts) > 180000) continue;
-      if(bLiveHostPcs[uid]) continue;
+      if(bLiveHostPcs[uid]){
+        const st = bLiveHostPcs[uid].connectionState;
+        if(st && st !== 'failed' && st !== 'closed' && st !== 'disconnected') continue;
+        try{ bLiveHostPcs[uid].close(); }catch(_){}
+        delete bLiveHostPcs[uid];
+      }
       if(Object.keys(bLiveHostPcs).length >= bLiveEffectiveMaxViewers()){
         change.doc.ref.set({ rejected: true, reason: 'full' }, { merge: true }).catch(()=>{});
         continue;
@@ -221,21 +226,35 @@ async function bLiveHostAcceptViewer(viewerUid, data, stream){
   await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
   try{
     const tracks = stream.getTracks();
+    const unused = pc.getTransceivers().slice();
     for(let i = 0; i < tracks.length; i++){
       const track = tracks[i];
       try{ track.enabled = true; }catch(_){}
-      const tr = pc.getTransceivers().find(function(t){
-        return t && t.receiver && t.receiver.track && t.receiver.track.kind === track.kind;
-      });
-      if(tr && tr.sender){
-        try{
-          tr.direction = 'sendonly';
-          await tr.sender.replaceTrack(track);
-        }catch(e){
+      let idx = -1;
+      for(let t = 0; t < unused.length; t++){
+        const rec = unused[t] && unused[t].receiver && unused[t].receiver.track;
+        if(rec && rec.kind === track.kind){ idx = t; break; }
+      }
+      if(idx >= 0){
+        const tr = unused.splice(idx, 1)[0];
+        try{ tr.direction = 'sendonly'; }catch(_){}
+        try{ await tr.sender.replaceTrack(track); }
+        catch(e){
           try{ pc.addTrack(track, stream); }catch(_){}
         }
       } else {
-        try{ pc.addTrack(track, stream); }catch(e){ console.warn(e); }
+        try{
+          if(pc.addTransceiver){
+            const tr = pc.addTransceiver(track, { direction: 'sendonly', streams: [stream] });
+            if(tr && tr.sender && !tr.sender.track){
+              try{ await tr.sender.replaceTrack(track); }catch(_){}
+            }
+          } else {
+            pc.addTrack(track, stream);
+          }
+        }catch(e){
+          try{ pc.addTrack(track, stream); }catch(_){}
+        }
       }
     }
   }catch(e){ console.warn('[bcast-live] addTrack', e); }
@@ -642,9 +661,15 @@ function bLiveOnSpaceOpened(isLive, isCreator){
   if(isLive && !isCreator){
     bLiveShowJoinUi(true);
     if(activeBroadcastId) bLiveWatchViewerCount(activeBroadcastId);
-    // Make join impossible to miss
     const badge = $('bspaceLiveBadge');
-    if(badge){ badge.style.display = 'block'; badge.textContent = 'Live now — join'; }
+    if(badge){ badge.style.display = 'block'; badge.textContent = 'Live now — joining'; }
+    if(!bLiveViewerPc){
+      setTimeout(function(){
+        try{
+          if(activeBroadcastId && !bLiveViewerPc && !bLiveHost) bLiveJoinAsViewer();
+        }catch(_){}
+      }, 350);
+    }
   } else if(isLive && isCreator){
     bLiveShowJoinUi(false);
     const ban = $('bspaceJoinLiveBanner');

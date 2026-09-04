@@ -27,6 +27,42 @@ function liveBandMembers(band){
     .map(id => contacts.find(c=>c.id===id))
     .filter(c => c && computeSignal(c).tier === 'strong');
 }
+function bandCardFaces(b){
+  const faces = [];
+  const seen = new Set();
+  function add(uid, fallback){
+    const key = uid || (fallback && (fallback.uid || fallback.firebaseUid || fallback.id));
+    if(!key || seen.has(String(key))) return;
+    seen.add(String(key));
+    const face = (typeof nalunoLiveFace === 'function')
+      ? nalunoLiveFace(uid, fallback)
+      : (fallback || { uid: uid, name:'Someone', color:'#8B90A8', initials:'?' });
+    faces.push(face);
+    if(uid && typeof nalunoHydrateFace === 'function'
+      && typeof contactPhotoSrc === 'function'
+      && !contactPhotoSrc(face, { skipData: true })){
+      nalunoHydrateFace(uid);
+    }
+  }
+  const infos = b.memberInfo || [];
+  const uids = (b.memberUids && b.memberUids.length)
+    ? b.memberUids.slice()
+    : infos.map(function(m){ return m.uid; });
+  uids.forEach(function(uid){
+    add(uid, infos.find(function(m){ return m.uid === uid; }));
+  });
+  infos.forEach(function(m){ add(m.uid, m); });
+  if(typeof currentUser !== 'undefined' && currentUser && currentUser.uid){
+    add(currentUser.uid, (typeof currentProfile !== 'undefined' ? currentProfile : null));
+  }
+  if(b.memberIds && typeof contacts !== 'undefined'){
+    b.memberIds.forEach(function(id){
+      const c = contacts.find(function(x){ return x.id === id; });
+      if(c) add(c.firebaseUid || ('local-'+c.id), c);
+    });
+  }
+  return faces;
+}
 function renderBandList(){
   if(!bands.length){
     $('bandList').innerHTML = `<div style="padding:28px 12px; text-align:center; color:var(--text-dim);">
@@ -38,7 +74,7 @@ function renderBandList(){
   $('bandList').innerHTML = bands.map(b=>{
     const grad = bandVibePreviewGradient[b.vibe] || bandVibePreviewGradient.aurora;
     if(b.isReal){
-      const avatars = (b.memberInfo||[]).slice(0,4).map(m=> (typeof contactAvatarHtml==='function' ? contactAvatarHtml(m, 28) : `<div class="avatar" style="width:28px;height:28px;font-size:10px;background:${m.color||'#7CFFB2'};">${m.initials||''}</div>`)).join('');
+      const avatars = bandCardFaces(b).slice(0,4).map(m=> (typeof contactAvatarHtml==='function' ? contactAvatarHtml(m, 28) : `<div class="avatar" style="width:28px;height:28px;font-size:10px;background:${m.color||'#7CFFB2'};">${m.initials||''}</div>`)).join('');
       return `<div class="band-card" data-band="${b.id}">
         <div class="band-card-bg" style="background:${grad};"></div>
         <div class="band-card-inner">
@@ -51,7 +87,7 @@ function renderBandList(){
       </div>`;
     }
     const live = liveBandMembers(b);
-    const avatars = live.slice(0,4).map(c=>`<div class="avatar" style="width:28px;height:28px;font-size:10px;background:${c.color};">${c.initials}</div>`).join('');
+    const avatars = live.slice(0,4).map(c=> (typeof contactAvatarHtml==='function' ? contactAvatarHtml(c, 28) : `<div class="avatar" style="width:28px;height:28px;font-size:10px;background:${c.color};">${c.initials}</div>`)).join('');
     const text = live.length ? live.length + (live.length===1 ? ' person tuned in' : ' people tuned in') : 'Quiet right now';
     return `<div class="band-card" data-band="${b.id}">
       <div class="band-card-bg" style="background:${grad};"></div>
@@ -110,9 +146,16 @@ async function loadRealBands(uid){
     snap.docChanges().forEach(change=>{
       const doc = change.doc;
       const d = doc.data();
-      const memberInfo = (d.memberUids||[]).filter(u=>u!==uid).map(u=>{
+      const memberInfo = (d.memberUids||[]).map(u=>{
+        if(typeof nalunoLiveFace === 'function'){
+          const face = nalunoLiveFace(u);
+          if(typeof nalunoHydrateFace === 'function' && typeof contactPhotoSrc === 'function' && !contactPhotoSrc(face, { skipData: true })){
+            nalunoHydrateFace(u);
+          }
+          return face;
+        }
         const c = contacts.find(cc=>cc.firebaseUid===u);
-        return c ? { uid:u, name:c.name, color:c.color, initials:c.initials, photo:c.photo } : { uid:u, name:'Someone', color:'#8B90A8', initials:'?', photo:null };
+        return c ? { uid:u, name:c.name, color:c.color, initials:c.initials, photo:c.photo, photoUrl:c.photoUrl || null } : { uid:u, name:'Someone', color:'#8B90A8', initials:'?', photo:null, photoUrl:null };
       });
       const lastEmptiedAt = d.lastEmptiedAt && d.lastEmptiedAt.toMillis ? d.lastEmptiedAt.toMillis() : (d.lastEmptiedAt || null);
       const messageEpoch = d.messageEpoch || 0;
@@ -241,7 +284,12 @@ async function createRealBand(name, vibe, memberContacts){
       lastEmptiedAt: null,
       // Market square: no owner privileges — createdBy is history only.
     });
-    const memberInfo = memberContacts.map(c=>({ uid:c.firebaseUid, name:c.name, color:c.color, initials:c.initials, photo:c.photo }));
+    const memberInfo = (typeof nalunoLiveFace === 'function')
+      ? allUids.map(function(u){
+          const c = memberContacts.find(function(x){ return x.firebaseUid === u; });
+          return nalunoLiveFace(u, c || (typeof currentProfile !== 'undefined' ? currentProfile : null));
+        })
+      : memberContacts.map(c=>({ uid:c.firebaseUid, name:c.name, color:c.color, initials:c.initials, photo:c.photo, photoUrl:c.photoUrl || null }));
     addRealBandToLocalList(docRef.id, name, vibe, memberInfo, currentUser.uid, { memberUids: allUids, lastEmptiedAt: null });
     renderBandList();
     closeBandComposer();

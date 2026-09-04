@@ -320,29 +320,23 @@ function openThread(contactId){
       const mapped = await Promise.all(snap.docs.map(async d=>{
         const m = d.data();
         let text = m.text;
-        if(m.encrypted && m.ciphertext && m.iv){
-          const cacheKey = d.id + ':' + (m.ciphertext || '').slice(0, 24);
+        if(m.encrypted && (m.ciphertext || (m.envelopes && (m.envelopes[currentUser.uid] || Object.keys(m.envelopes).length)))){
+          const cacheKey = d.id + ':' + ((m.ciphertext || (m.envelopes && m.envelopes[currentUser.uid] && m.envelopes[currentUser.uid].ciphertext) || '')).slice(0, 24);
           const cmidKey = m.clientMsgId ? ('cmid:' + m.clientMsgId) : '';
           if(cmidKey && wirelineDecryptCache[cmidKey]){
             text = wirelineDecryptCache[cmidKey];
           } else if(wirelineDecryptCache[cacheKey]){
             text = wirelineDecryptCache[cacheKey];
           } else {
-            let pk = c.publicKey;
-            if(!pk && fbDb && c.firebaseUid){
-              try{
-                const doc = await fbDb.collection('users').doc(c.firebaseUid).get();
-                if(doc.exists && doc.data().publicKey){ pk = doc.data().publicKey; c.publicKey = pk; }
-              }catch(_){}
-            }
-            const decrypted = await decryptMessageText(c.firebaseUid, pk, m.ciphertext, m.iv);
-            if(decrypted !== null){
+            const decrypted = await decryptWirelineMessage(m, c);
+            if(decrypted !== null && decrypted !== undefined && decrypted !== ''){
               text = decrypted;
               wirelineDecryptCache[cacheKey] = decrypted;
+              try{ persistWirelineDecryptCache(); }catch(_){}
             } else if(m.text){
               text = m.text;
             } else {
-              text = 'Message from another device';
+              text = 'Encrypted · open on the device that sent this';
             }
           }
         }
@@ -505,6 +499,55 @@ function reactionBadgeHtml(m){
 }
 /* Session-only: once a ciphertext decrypts, keep plaintext so UI never flips to lock icon. */
 const wirelineDecryptCache = {};
+(function loadWirelineDecryptCache(){
+  try{
+    const raw = localStorage.getItem('nalunoDecryptCache');
+    if(!raw) return;
+    const o = JSON.parse(raw);
+    if(o && typeof o === 'object') Object.keys(o).forEach(function(k){ wirelineDecryptCache[k] = o[k]; });
+  }catch(_){}
+})();
+function persistWirelineDecryptCache(){
+  try{
+    const keys = Object.keys(wirelineDecryptCache);
+    let src = wirelineDecryptCache;
+    if(keys.length > 400){
+      src = {};
+      keys.slice(-300).forEach(function(k){ src[k] = wirelineDecryptCache[k]; });
+    }
+    localStorage.setItem('nalunoDecryptCache', JSON.stringify(src));
+  }catch(_){}
+}
+async function decryptWirelineMessage(m, contact){
+  const env = m.envelopes && currentUser ? m.envelopes[currentUser.uid] : null;
+  const ct = env ? env.ciphertext : m.ciphertext;
+  const iv = env ? env.iv : m.iv;
+  if(!ct || !iv || typeof decryptMessageText !== 'function') return m.text || null;
+  const sender = m.from || (contact && contact.firebaseUid);
+  // Own envelope is sealed to my public key.
+  if(env && currentUser && sender === currentUser.uid){
+    try{
+      const mine = await ensureMyKeyPair();
+      if(mine && mine.publicJwk){
+        const p = await decryptMessageText(currentUser.uid, mine.publicJwk, ct, iv);
+        if(p != null) return p;
+      }
+    }catch(_){}
+  }
+  let pk = contact && contact.publicKey;
+  if(!pk && fbDb && contact && contact.firebaseUid){
+    try{
+      const doc = await fbDb.collection('users').doc(contact.firebaseUid).get();
+      if(doc.exists && doc.data().publicKey){ pk = doc.data().publicKey; contact.publicKey = pk; }
+    }catch(_){}
+  }
+  try{
+    const peer = sender && sender !== (currentUser && currentUser.uid) ? sender : (contact && contact.firebaseUid);
+    const p = await decryptMessageText(peer, pk, ct, iv);
+    if(p != null) return p;
+  }catch(_){}
+  return m.text || null;
+}
 function renderThreadMessages(){
   const queued = (localQueuedMessages[activeThreadContactId] || []).map(q => ({
     id: q.queueId, from:'me', ts: q.queuedAt, status:'queued',
@@ -1142,7 +1185,7 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
   // background, the id lets a retry recognize that and skip re-sending.
   const cmid = clientMsgId || ('c' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
   if(payload && payload.text){
-    try{ wirelineDecryptCache['cmid:' + cmid] = payload.text; }catch(_){}
+    try{ wirelineDecryptCache['cmid:' + cmid] = payload.text; persistWirelineDecryptCache(); }catch(_){}
   }
   if(!queueId){
     try{
@@ -1174,19 +1217,26 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
     let finalPayload = payload;
     let finalPreview = previewText;
     if(payload.type === 'text'){
-      // Encrypt only if we already have their public key locally. Fetching it
-      // here used to stall the send for a full Firestore round-trip — the
-      // composer sat full, people tapped Send again, and the other side
-      // got duplicates. RefreshContactLiveProfile already hydrates publicKey.
       let encrypted = null;
+      let envelopes = null;
       try{
+        envelopes = {};
         const pk = c.publicKey;
         if(pk && typeof encryptMessageText === 'function'){
           encrypted = await encryptMessageText(c.firebaseUid, pk, payload.text);
+          if(encrypted) envelopes[c.firebaseUid] = encrypted;
         }
-      }catch(_){ encrypted = null; }
-      finalPayload = encrypted
-        ? { type:'text', ciphertext: encrypted.ciphertext, iv: encrypted.iv, encrypted:true }
+        if(typeof ensureMyKeyPair === 'function' && currentUser){
+          const mine = await ensureMyKeyPair();
+          if(mine && mine.publicJwk){
+            const encMe = await encryptMessageText(currentUser.uid, mine.publicJwk, payload.text);
+            if(encMe) envelopes[currentUser.uid] = encMe;
+          }
+        }
+        if(!Object.keys(envelopes).length) envelopes = null;
+      }catch(_){ encrypted = null; envelopes = null; }
+      finalPayload = (encrypted || envelopes)
+        ? { type:'text', ciphertext: encrypted ? encrypted.ciphertext : null, iv: encrypted ? encrypted.iv : null, encrypted:true, envelopes: envelopes || null }
         : { type:'text', text: payload.text, encrypted:false };
       finalPreview = previewText;
     }
