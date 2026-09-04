@@ -75,11 +75,11 @@
   .toast{ position:absolute; top:16px; left:50%; transform:translateX(-50%) translateY(-10px); background:var(--surface-2); border:1px solid var(--line); padding:9px 16px; border-radius:999px; font-size:12px; font-family:var(--font-mono); opacity:0; pointer-events:none; transition:opacity .25s, transform .25s; z-index:60; white-space:nowrap; }
   .toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
   svg{ display:block; }
-  .avatar{ border-radius:50%; display:flex; align-items:center; justify-content:center; font-family:var(--font-display); font-weight:600; flex-shrink:0; color:#0D0F17; position:relative; overflow:hidden; }
+  .avatar{ border-radius:50%; display:flex; align-items:center; justify-content:center; font-family:var(--font-display); font-weight:600; flex-shrink:0; color:#0D0F17; position:relative; overflow:hidden; isolation:isolate; transform:translateZ(0); -webkit-mask-image:radial-gradient(#000 99%, transparent 100%); mask-image:radial-gradient(#000 99%, transparent 100%); }
   .avatar img.avatar-pic, img.avatar-pic{
     position:absolute; inset:0; width:100%; height:100%;
     object-fit:cover; border-radius:inherit; display:block;
-    pointer-events:none; z-index:1;
+    pointer-events:none; z-index:1; transform-origin:center center;
   }
 
   /* ---------- app header (logo) ---------- */
@@ -539,8 +539,16 @@
   .transition-chip.active{ border-color:var(--mint); color:var(--mint); background:rgba(124,255,178,.08); }
 
   /* --- adjust (crop/pan/zoom) --- */
-  .adjust-stage{ position:relative; width:100%; aspect-ratio:3/4; max-height:50vh; border-radius:20px; overflow:hidden; background:#000; touch-action:none; }
-  .adjust-stage img, .adjust-stage video{ position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; user-select:none; -webkit-user-drag:none; }
+  .adjust-stage{ position:relative; width:100%; aspect-ratio:3/4; max-height:50vh; border-radius:20px; overflow:hidden; background:#000; touch-action:none; isolation:isolate; transform:translateZ(0); contain:paint; -webkit-clip-path:inset(0 round 20px); clip-path:inset(0 round 20px); }
+  .adjust-stage img, .adjust-stage video{ position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; user-select:none; -webkit-user-drag:none; will-change:transform; backface-visibility:hidden; }
+  .adjust-stage.avatar-adjust{
+    aspect-ratio:1/1; max-height:min(56vw, 360px); width:min(86%, 360px); margin:0 auto;
+    border-radius:50%;
+    -webkit-clip-path:circle(50% at 50% 50%);
+    clip-path:circle(50% at 50% 50%);
+    -webkit-mask-image:radial-gradient(#000 99%, transparent 100%);
+    mask-image:radial-gradient(#000 99%, transparent 100%);
+  }
   .adjust-controls{ padding:18px 4px; }
   .adjust-zoom-row{ display:flex; align-items:center; gap:10px; margin-top:6px; }
   .adjust-zoom-row input[type=range]{ flex:1; accent-color:var(--mint); }
@@ -597,8 +605,9 @@
   .band-name{ font-family:var(--font-futuristic); font-weight:700; font-size:16px; letter-spacing:.02em; }
   .band-live-row{ display:flex; align-items:center; gap:10px; margin-top:12px; }
   .band-avatar-stack{ display:flex; }
-  .band-avatar-stack .avatar{ width:28px; height:28px; font-size:10px; border:2px solid var(--bg); margin-left:-8px; position:relative; }
+  .band-avatar-stack .avatar{ width:28px; height:28px; font-size:10px; border:2px solid var(--bg); margin-left:-8px; position:relative; overflow:hidden; isolation:isolate; }
   .band-avatar-stack .avatar:first-child{ margin-left:0; }
+  .band-avatar-stack .avatar img.avatar-pic{ z-index:2; -webkit-transform:translateZ(0); transform:translateZ(0); }
   .band-live-text{ font-family:var(--font-mono); font-size:11.5px; color:var(--text-dim); }
   .voice-bubble{ display:flex; align-items:center; gap:9px; min-width:180px; }
   .voice-play-btn{ width:30px; height:30px; border-radius:50%; border:none; flex-shrink:0; display:flex; align-items:center; justify-content:center; cursor:pointer; }
