@@ -6,7 +6,7 @@
    ============================================================ */
 /* ---------------- PWA INSTALL + CALL NOTIFICATION DEEP-LINK ---------------- */
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('sw.js?v=20260904f', { scope: './', updateViaCache: 'none' })
+  navigator.serviceWorker.register('sw.js?v=20260905a', { scope: './', updateViaCache: 'none' })
     .then(function(reg){ try{ reg.update(); }catch(_){} })
     .catch(function(e){ console.warn('[sw]', e); });
   // One automatic reload when a new SW takes control (clears stuck "sign-in not ready"
@@ -15,9 +15,9 @@ if('serviceWorker' in navigator){
     let reloaded = false;
     navigator.serviceWorker.addEventListener('controllerchange', function(){
       if(reloaded) return;
-      try{ if(sessionStorage.getItem('nalunoSwReload') === '20260904f') return; }catch(_){}
+      try{ if(sessionStorage.getItem('nalunoSwReload') === '20260905a') return; }catch(_){}
       reloaded = true;
-      try{ sessionStorage.setItem('nalunoSwReload', '20260904f'); }catch(_){}
+      try{ sessionStorage.setItem('nalunoSwReload', '20260905a'); }catch(_){}
       location.reload();
     });
   }catch(_){}

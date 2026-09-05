@@ -36,12 +36,19 @@ function nalunoRunAfterEntry(fn){
 }
 function nalunoEnterApp(){
   nalunoHideNativeSplash();
+  try{ if(typeof markNalunoOnboardComplete === 'function') markNalunoOnboardComplete(); }catch(_){}
   nalunoRunAfterEntry(function(){
     document.body.classList.remove('naluno-gated');
     const app = document.getElementById('app');
     if(app) app.style.visibility = '';
     const gate = $('authGate');
     if(!gate) return;
+    try{
+      window.__nalunoOnboardActive = false;
+      const w = $('nalunoWelcome'); if(w) w.classList.remove('on');
+      const t = $('nalunoTour'); if(t) t.classList.remove('on');
+      const legal = $('nalunoLegal'); if(legal) legal.classList.remove('on');
+    }catch(_){}
     gate.classList.add('naluno-entry-out');
     setTimeout(function(){
       gate.classList.remove('active');
@@ -56,10 +63,14 @@ function nalunoShowSignIn(){
       const loading = $('authGateLoading');
       const form = $('authGateForm');
       if(loading) loading.style.display = 'none';
-      if(form) form.style.display = 'flex';
       document.body.classList.add('naluno-gated');
       const gate = $('authGate');
       if(gate) gate.classList.add('active');
+      if(typeof nalunoMaybeOnboard === 'function' && nalunoMaybeOnboard()){
+        if(form) form.style.display = 'none';
+        return;
+      }
+      if(form) form.style.display = 'flex';
     }catch(_){}
   });
 }
@@ -752,6 +763,11 @@ function bindAuthListeners(){
     try{
       const gate = document.getElementById('authGate');
       if(!gate || !gate.classList.contains('active')) return;   // already lifted
+      if(window.__nalunoOnboardActive) return;                 // welcome / tour is the gate
+      const welcome = document.getElementById('nalunoWelcome');
+      const tour = document.getElementById('nalunoTour');
+      if(welcome && welcome.classList.contains('on')) return;
+      if(tour && tour.classList.contains('on')) return;
       const app = document.getElementById('app');
       if(app) app.style.visibility = '';
       document.body.classList.remove('naluno-gated');
@@ -788,6 +804,11 @@ function bindAuthListeners(){
     try{
       const gate = document.getElementById('authGate');
       if(!gate || !gate.classList.contains('active')) return;   // already lifted
+      if(window.__nalunoOnboardActive) return;                 // welcome / tour is the gate
+      const welcome = document.getElementById('nalunoWelcome');
+      const tour = document.getElementById('nalunoTour');
+      if(welcome && welcome.classList.contains('on')) return;
+      if(tour && tour.classList.contains('on')) return;
       const app = document.getElementById('app');
       if(app) app.style.visibility = '';
       document.body.classList.remove('naluno-gated');
