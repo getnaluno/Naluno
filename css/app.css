@@ -2074,3 +2074,220 @@ html[data-atmosphere="buzzing"] .naluno-aurora{
   .naluno-aurora, .navbar::before, .tab-header::after{ animation:none !important; }
 }
 
+/* ---------- First-run welcome + tour + legal ---------- */
+#authGate.naluno-entry-play{
+  flex-direction: column;
+}
+.naluno-onboard{
+  display: none;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  max-width: 460px;
+  margin: 0 auto;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: calc(18px + env(safe-area-inset-top, 0px)) 28px calc(22px + env(safe-area-inset-bottom, 0px));
+  z-index: 2;
+  background: #0D0F17;
+}
+.naluno-onboard.on{ display: flex; }
+.onboard-stage{
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-height: 0;
+}
+.onboard-hero{
+  width: 220px;
+  height: 168px;
+  margin-bottom: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.onboard-hero-svg{ width: 220px; height: 168px; }
+.tour-hero{
+  width: 96px;
+  height: 96px;
+  margin-bottom: 22px;
+}
+.onboard-step-svg{ width: 80px; height: 80px; }
+.onboard-title{
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 26px;
+  letter-spacing: -0.03em;
+  color: var(--text);
+  line-height: 1.2;
+  margin: 0 0 12px;
+}
+.onboard-legal{
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--text-dim);
+  max-width: 320px;
+  margin: 0;
+}
+.welcome-inline{
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--mint);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+.welcome-inline:active{ opacity: .7; }
+.welcome-lang-wrap{
+  position: relative;
+  margin-top: 28px;
+}
+.welcome-lang{
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 10px 16px;
+  font-size: 14px;
+  min-height: 44px;
+  cursor: pointer;
+}
+.welcome-lang-menu{
+  display: none;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  top: calc(100% + 8px);
+  min-width: 160px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+  z-index: 3;
+}
+.welcome-lang-menu.on{ display: block; }
+.welcome-lang-menu button{
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text);
+  padding: 12px 16px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.welcome-lang-menu button:active{ background: var(--surface); }
+.onboard-foot{ width: 100%; padding-top: 18px; }
+.onboard-agree{
+  width: 100%;
+  min-height: 52px;
+  border-radius: 999px;
+  text-transform: none;
+  letter-spacing: .02em;
+  font-size: 15px;
+  font-family: var(--font-display);
+}
+.tour-top{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 44px;
+}
+.tour-text-btn{
+  background: none;
+  border: none;
+  color: var(--mint);
+  font-size: 15px;
+  font-weight: 600;
+  padding: 10px 4px;
+  min-height: 44px;
+  cursor: pointer;
+}
+.tour-dots{
+  display: flex;
+  gap: 6px;
+  margin-top: 28px;
+  justify-content: center;
+}
+.tour-dot{
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line);
+}
+.tour-dot.on{ background: var(--mint); width: 16px; border-radius: 99px; }
+.welcome-legal-line{
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+#nalunoLegal{
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 520;
+  align-items: stretch;
+  justify-content: center;
+  background: rgba(5,6,10,.72);
+}
+#nalunoLegal.on{ display: flex; }
+.naluno-legal-sheet{
+  width: 100%;
+  max-width: 460px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  color: var(--text);
+}
+.naluno-legal-bar{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: calc(14px + env(safe-area-inset-top, 0px)) 8px 12px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.naluno-legal-heading{
+  flex: 1;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 16px;
+  text-align: center;
+}
+.naluno-legal-body{
+  flex: 1;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 18px 22px calc(28px + env(safe-area-inset-bottom, 0px));
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--text);
+}
+.naluno-legal-body h3{
+  font-family: var(--font-display);
+  font-size: 15.5px;
+  font-weight: 650;
+  margin: 22px 0 8px;
+  color: var(--text);
+}
+.naluno-legal-body p{ margin: 0 0 12px; color: var(--text-dim); }
+.naluno-legal-body ul{ margin: 0 0 12px 18px; color: var(--text-dim); }
+.naluno-legal-body li{ margin: 0 0 6px; }
+.naluno-legal-body .legal-kicker{
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--mint);
+  margin-bottom: 16px;
+}
+
+
