@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v143: 09.04f diagnostics in admin, weather follows Find Naluno live coords.
 // v142: 09.04e Band 2h wipe is a hard delete + unreadability cutoff, not a hide.
 // v141: 09.04d crop bake, band wipe, wireline envelopes, live auto-join, community count.
 // v140: 09.04c avatars via https+img overlay; call Decline is Decline; stop ringing after hangup; profile photoUrl.
@@ -32,7 +33,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v142';
+const CACHE_NAME = 'naluno-shell-v143';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './splash-empty.png', './icon-maskable-512.png', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',

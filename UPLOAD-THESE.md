@@ -1,43 +1,37 @@
-# GitHub update — 2026.09.04e
+# GitHub update — 2026.09.04f
 
 Copy these files over the root of `getnaluno/Naluno`. Keep the folder
 structure. Commit and push. Force-close the webapp after it deploys
 (not just swipe away). Re-open. Console should show:
 
-`[naluno] build 2026.09.04e`
+`[naluno] build 2026.09.04f`
 
-Service worker cache: **naluno-shell-v142**.
-
-Also deploy **firestore.rules** (Firebase console or `firebase deploy --only firestore:rules`).
-The 2h Band wipe cannot actually delete without the new rules.
+Service worker cache: **naluno-shell-v143**.
 
 Do not rebuild architecture. Signal / Broadcast upload paths were not
-changed.
+changed. Do not push unless asked.
 
 ## What this fixes
 
-1. **Band 2h wipe is a hard delete.** After the square has been empty
-   for 2 hours, every message doc is removed from Firestore. A wipe
-   queue is snapshotted at empty-time so deletes still run even after
-   the docs become unreadable. `lastEmptiedAt` is only cleared when the
-   session is actually gone — clearing it early is what let last
-   night's clips stream back as "Cleared".
-2. **Cannot be retrieved.** Rules deny read of any message with
-   `ts < messageEpoch`. The live listener and "load older" query only
-   ask for `ts > cutoff`. Offline outbox rows for a settled Band are
-   dropped, not flushed. The previous session is not in memory, not in
-   the cache, and not readable on the server.
-3. **Empty clock always restamps.** Leaving the square writes a fresh
-   `lastEmptiedAt`. A leftover stamp from an older cycle can no longer
-   sit there while a new conversation is treated as already "Cleared".
-4. **Avatars, crop, live, Community, Wireline** from 09.04d stay in
-   this build.
+1. **Diagnostics live in the Admin Console.** 6 taps on the dot below
+   Sign out. The device log is in that overlay (copy / clear), not on
+   Callsign. Worker unlock is still required for economy admin; the
+   log is visible as soon as the panel opens.
+2. **Weather follows this phone.** Find Naluno’s live ping is the
+   place weather reads. No more hardcoded Al Ain. High-accuracy GPS,
+   Open-Meteo `minutely_15`, reverse-geocode via BigDataCloud. The
+   strip waits for this phone’s place instead of inventing a city.
+   Moving more than 250 m refreshes; otherwise it polls every 3
+   minutes. Native Android Find writes also feed the same live place.
+3. **09.04e Band 2h wipe** (hard delete + unreadability) stays in
+   this build. Deploy **firestore.rules** if that is not live yet.
 
-## After push
+## After copy-over
 
-Force-close Naluno. Re-open. Confirm `2026.09.04e`. Then:
+Force-close Naluno. Re-open. Confirm `2026.09.04f`. Then:
 
-- Deploy firestore.rules
-- Band that has been empty > 2h should open Quiet, with no voice/video
-  from the previous gathering
-- New messages after that start a new session and get their own 2h clock
+- Weather strip should name the city you are actually in (Abu Dhabi
+  when you are there), not Al Ain
+- Turn Find Naluno on: weather should track that ping in real time
+- 6 taps on the Callsign dot → Diagnostics, no Diagnostics button
+  on Callsign itself

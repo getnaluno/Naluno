@@ -1,17 +1,17 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.09.04e" />
+  <meta name="naluno-build" content="2026.09.04f" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
-<link rel="manifest" href="manifest.json?v=20260904e">
+<link rel="manifest" href="manifest.json?v=20260904f">
 <meta name="theme-color" content="#0D0F17">
 <!-- Icons delayed until after the drawing intro so no PNG can flash. -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.09.04e">
+<meta name="app-version" content="2026.09.04f">
 <meta name="description" content="A statement from the future.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="Watch on Naluno.">
@@ -60,9 +60,9 @@
   #authGate{ visibility:visible !important; }
 </style>
 <link rel="apple-touch-startup-image" href="splash-empty.png">
-<link rel="stylesheet" href="css/app.css?v=20260904e" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="css/app.css?v=20260904f" media="print" onload="this.media='all'">
 <script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="css/app.css?v=20260904e"></noscript>
+<noscript><link rel="stylesheet" href="css/app.css?v=20260904f"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -180,8 +180,8 @@ window.__nalunoEntryT0 = Date.now();
   <!-- ===================== FREQUENCIES ===================== -->
   <div id="weatherStrip" aria-live="polite">
     <div class="weather-track">
-      <span id="weatherStripA">Weather is updating…   ·   </span>
-      <span id="weatherStripB">Weather is updating…   ·   </span>
+      <span id="weatherStripA">Waiting for this phone's place…   ·   </span>
+      <span id="weatherStripB">Waiting for this phone's place…   ·   </span>
     </div>
     <button type="button" id="weatherStripDismiss" aria-label="Hide weather">×</button>
   </div>
@@ -448,11 +448,6 @@ window.__nalunoEntryT0 = Date.now();
 
       <button class="save-btn" id="myContributionBtn" style="margin:18px 20px 0; background:none; color:var(--mint); border:1px solid rgba(124,255,178,.35);">My Contribution</button>
 
-      <!-- Diagnostics: reachable without a phone console. Deliberately a plain
-           visible button rather than a hidden tap-sequence — when something is
-           already failing, a hidden gesture is the wrong thing to ask for. -->
-      <button class="save-btn" id="diagBtn" style="margin:18px 20px 0; background:none; color:var(--text-dim); border:1px solid var(--line);">Diagnostics</button>
-
       <button class="save-btn" id="signOutBtn" style="margin:22px 20px 0; background:none; color:var(--red); border:1px solid var(--line);">Sign out</button>
 
       <!-- Spec §30 PS: the Admin Console entry point is a single unlabelled dot
@@ -499,25 +494,17 @@ window.__nalunoEntryT0 = Date.now();
         <div id="adminGateMsg" class="lobby-sub" style="text-align:left;max-width:none;margin-top:10px;"></div>
       </div>
       <div id="adminBody" style="display:none;"></div>
-    </div>
-  </div>
-
-
-  <!-- ---------------- Diagnostics ---------------- -->
-  <div class="call-overlay" id="diagPanel">
-    <div class="topbar" style="padding-top:18px;">
-      <div class="back-btn" id="diagCloseBtn" role="button" aria-label="Back"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
-      <div style="flex:1;">
-        <div style="font-family:var(--font-futuristic); font-weight:700; font-size:16px;">Diagnostics</div>
-        <div class="lobby-sub" style="text-align:left;max-width:none;font-size:11.5px;">What actually went wrong, in plain text.</div>
+      <div id="adminDiagWrap" class="bspace-card" style="margin-top:16px;">
+        <div class="who">Diagnostics</div>
+        <div class="lobby-sub" style="text-align:left;max-width:none;font-size:11px;margin:4px 0 10px;">Device log — copy this if something breaks. Not shown on Callsign.</div>
+        <div id="diagBody"></div>
+        <button type="button" id="diagCopyBtn" class="save-btn" style="width:100%;margin-top:12px;">Copy all</button>
+        <button type="button" id="diagClearBtn" class="save-btn" style="width:100%;margin-top:8px;background:none;color:var(--text-dim);border:1px solid var(--line);">Clear</button>
       </div>
     </div>
-    <div class="tab-scroll" style="padding:0 18px 24px;">
-      <div id="diagBody"></div>
-      <button type="button" id="diagCopyBtn" class="save-btn" style="width:100%;margin-top:14px;">Copy all</button>
-      <button type="button" id="diagClearBtn" class="save-btn" style="width:100%;margin-top:8px;background:none;color:var(--text-dim);border:1px solid var(--line);">Clear</button>
-    </div>
   </div>
+
+
   <div class="call-overlay" id="findNalunoPanel">
     <div class="topbar" style="padding-top:18px;">
       <div class="back-btn" id="findNalunoCloseBtn" role="button" aria-label="Back"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
@@ -1249,58 +1236,58 @@ window.__nalunoEntryT0 = Date.now();
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
 <script src="firebase-config.js"></script>
 <!-- NALUNO_MODULES -->
-<script src="js/core.js?v=20260904e"></script>
+<script src="js/core.js?v=20260904f"></script>
 <!-- Loaded right after core.js so its global error handlers are installed
      before the rest of the app runs and can capture anything they throw. -->
-<script src="js/diagnostics.js?v=20260904e"></script>
+<script src="js/diagnostics.js?v=20260904f"></script>
 <!-- LOAD ORDER: find.js defines contactAvatarStyleAttr(), used by band-list,
      band-room, wireline and signal-ui. auth.js calls loadBands() at top level,
      which ran BEFORE find.js had executed — a ReferenceError that aborted boot
      entirely. It must load before any consumer. -->
-<script src="js/find.js?v=20260904e"></script>
-<script src="js/media-contain.js?v=20260904e"></script>
-<script src="js/keep-alive.js?v=20260904e"></script>
-<script src="js/metrics.js?v=20260904e"></script>
-<script src="js/data.js?v=20260904e"></script>
-<script src="js/crypto.js?v=20260904e"></script>
-<script src="js/atmosphere.js?v=20260904e"></script>
-<script src="js/band-list.js?v=20260904e"></script>
-<script src="js/signal-core.js?v=20260904e"></script>
-<script src="js/broadcast-core.js?v=20260904e"></script>
-<script src="js/broadcast-upload.js?v=20260904e"></script>
-<script src="js/broadcast-composer.js?v=20260904e"></script>
-<script src="js/origin.js?v=20260904e"></script>
-<script src="js/strand.js?v=20260904e"></script>
-<script src="js/circle.js?v=20260904e"></script>
+<script src="js/find.js?v=20260904f"></script>
+<script src="js/media-contain.js?v=20260904f"></script>
+<script src="js/keep-alive.js?v=20260904f"></script>
+<script src="js/metrics.js?v=20260904f"></script>
+<script src="js/data.js?v=20260904f"></script>
+<script src="js/crypto.js?v=20260904f"></script>
+<script src="js/atmosphere.js?v=20260904f"></script>
+<script src="js/band-list.js?v=20260904f"></script>
+<script src="js/signal-core.js?v=20260904f"></script>
+<script src="js/broadcast-core.js?v=20260904f"></script>
+<script src="js/broadcast-upload.js?v=20260904f"></script>
+<script src="js/broadcast-composer.js?v=20260904f"></script>
+<script src="js/origin.js?v=20260904f"></script>
+<script src="js/strand.js?v=20260904f"></script>
+<script src="js/circle.js?v=20260904f"></script>
 <!-- Community Economy: reports actions only; all economic value is computed
      server-side by the naluno-economy Worker. Loaded AFTER circle.js so
      currentUser exists, and deliberately non-blocking — if this file failed
      to load entirely, Broadcast would behave exactly as it does today. -->
-<script src="js/economy.js?v=20260904e"></script>
-<script src="js/economy-ui.js?v=20260904e"></script>
-<script src="js/weather.js?v=20260904e"></script>
-<script src="js/beacon.js?v=20260904e"></script>
-<script src="js/compass.js?v=20260904e"></script>
-<script src="js/signal-ui.js?v=20260904e"></script>
-<script src="js/compat-lock.js?v=20260904e"></script>
-<script src="js/broadcast-space.js?v=20260904e"></script>
-<script src="js/media-vault.js?v=20260904e"></script>
-<script src="js/wireline.js?v=20260904e"></script>
-<script src="js/profile.js?v=20260904e"></script>
-<script src="js/auth.js?v=20260904e"></script>
-<script src="js/notifications.js?v=20260904e"></script>
-<script src="js/ice-core.js?v=20260904e"></script>
-<script src="js/camera.js?v=20260904e"></script>
-<script src="js/call-filters.js?v=20260904e"></script>
-<script src="js/calls.js?v=20260904e"></script>
-<script src="js/sfu-live.js?v=20260904e"></script>
-<script src="js/broadcast-live.js?v=20260904e"></script>
-<script src="js/band-room.js?v=20260904e"></script>
-<script src="js/pwa.js?v=20260904e"></script>
-<script src="js/spark-engine.js?v=20260904e"></script>
-<script src="js/spark-lg.js?v=20260904e"></script>
-<script src="js/spark-page.js?v=20260904e"></script>
-<script src="js/spark.js?v=20260904e"></script>
+<script src="js/economy.js?v=20260904f"></script>
+<script src="js/economy-ui.js?v=20260904f"></script>
+<script src="js/weather.js?v=20260904f"></script>
+<script src="js/beacon.js?v=20260904f"></script>
+<script src="js/compass.js?v=20260904f"></script>
+<script src="js/signal-ui.js?v=20260904f"></script>
+<script src="js/compat-lock.js?v=20260904f"></script>
+<script src="js/broadcast-space.js?v=20260904f"></script>
+<script src="js/media-vault.js?v=20260904f"></script>
+<script src="js/wireline.js?v=20260904f"></script>
+<script src="js/profile.js?v=20260904f"></script>
+<script src="js/auth.js?v=20260904f"></script>
+<script src="js/notifications.js?v=20260904f"></script>
+<script src="js/ice-core.js?v=20260904f"></script>
+<script src="js/camera.js?v=20260904f"></script>
+<script src="js/call-filters.js?v=20260904f"></script>
+<script src="js/calls.js?v=20260904f"></script>
+<script src="js/sfu-live.js?v=20260904f"></script>
+<script src="js/broadcast-live.js?v=20260904f"></script>
+<script src="js/band-room.js?v=20260904f"></script>
+<script src="js/pwa.js?v=20260904f"></script>
+<script src="js/spark-engine.js?v=20260904f"></script>
+<script src="js/spark-lg.js?v=20260904f"></script>
+<script src="js/spark-page.js?v=20260904f"></script>
+<script src="js/spark.js?v=20260904f"></script>
 <!-- /NALUNO_MODULES -->
 </body>
 </html>
