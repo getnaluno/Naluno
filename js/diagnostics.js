@@ -105,26 +105,16 @@ function renderDiagPanel(){
   el.innerHTML = '<pre id="diagText" style="white-space:pre-wrap;word-break:break-word;'
     + 'font-family:var(--font-mono);font-size:10.5px;line-height:1.5;color:var(--text-dim);'
     + 'background:var(--surface-2);border:1px solid var(--line);border-radius:12px;'
-    + 'padding:12px;margin:0;">' + escapeHtml(text) + '</pre>';
+    + 'padding:12px;margin:0;max-height:240px;overflow:auto;">' + escapeHtml(text) + '</pre>';
 }
 
 function openDiagPanel(){
-  const p = $('diagPanel');
-  if(!p) return;
-  p.classList.add('active');
   renderDiagPanel();
 }
-function closeDiagPanel(){
-  const p = $('diagPanel');
-  if(p) p.classList.remove('active');
-}
+function closeDiagPanel(){}
 
 (function wireDiag(){
   function bind(){
-    const open = $('diagBtn');
-    if(open) open.onclick = openDiagPanel;
-    const close = $('diagCloseBtn');
-    if(close) close.onclick = closeDiagPanel;
     const copy = $('diagCopyBtn');
     if(copy) copy.onclick = function(){
       const text = nalunoDiagFormat();
@@ -135,8 +125,6 @@ function closeDiagPanel(){
           return;
         }
       }catch(_){}
-      // Fallback for browsers that refuse clipboard access: select the text
-      // so it can be copied by hand rather than leaving a dead button.
       try{
         const pre = $('diagText');
         const range = document.createRange();
@@ -155,14 +143,9 @@ function closeDiagPanel(){
       toast('Cleared');
     };
   }
-  /* This file loads early (right after core.js) so its error handlers are
-     installed before anything else can throw — which means the panel markup
-     further down the page does not exist yet at that moment. Binding
-     therefore has to happen later. Belt and braces: try immediately in case
-     the DOM is already complete, and also on DOMContentLoaded. bind() only
-     assigns to elements it actually finds, so running it twice is harmless
-     and running it early simply does nothing. */
   bind();
   document.addEventListener('DOMContentLoaded', bind);
   window.addEventListener('load', bind);
 })();
+window.renderDiagPanel = renderDiagPanel;
+window.openDiagPanel = openDiagPanel;

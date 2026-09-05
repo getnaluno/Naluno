@@ -164,6 +164,7 @@ function openAdminPanel(){
   if(body){ body.style.display = 'none'; body.innerHTML = ''; }
   const msg = $('adminGateMsg'); if(msg) msg.textContent = '';
   const inp = $('adminPassInput'); if(inp) inp.value = '';
+  try{ if(typeof renderDiagPanel === 'function') renderDiagPanel(); }catch(_){}
 }
 function closeAdminPanel(){
   const p = $('adminPanel');

@@ -84,6 +84,89 @@ function formatFindAge(ts){
   return Math.round(s / 86400) + ' d ago';
 }
 
+/** This phone's live place for Weather (and anything else that must follow Find).
+ *  Prefers the in-memory watch, then this-device beacon row, then last ping.
+ *  Never invents a city. Returns null until GPS has actually spoken. */
+function nalunoLiveCoords(){
+  const now = Date.now();
+  const FRESH_MS = 10 * 60 * 1000;
+  if(findNalunoLastLat != null && findNalunoLastLng != null && (now - findNalunoLastWrite) < FRESH_MS){
+    let place = '';
+    try{
+      const raw = localStorage.getItem('nalunoLastBeacon');
+      if(raw){
+        const b = JSON.parse(raw);
+        if(b && b.place && Math.abs(Number(b.lat) - findNalunoLastLat) < 0.001) place = b.place;
+      }
+    }catch(_){}
+    return {
+      lat: findNalunoLastLat,
+      lng: findNalunoLastLng,
+      lon: findNalunoLastLng,
+      ts: findNalunoLastWrite,
+      source: 'watch',
+      accuracy: null,
+      place: place,
+    };
+  }
+  try{
+    const id = nalunoDeviceId();
+    const mine = (findNalunoDevices || []).find(function(d){ return d && d.id === id && d.lat != null; });
+    if(mine && (!mine.ts || (now - mine.ts) < FRESH_MS)){
+      return {
+        lat: Number(mine.lat),
+        lng: Number(mine.lng),
+        lon: Number(mine.lng),
+        ts: mine.ts || 0,
+        source: 'beacon',
+        accuracy: mine.accuracy || null,
+        place: mine.placeName || '',
+      };
+    }
+  }catch(_){}
+  try{
+    const raw = localStorage.getItem('nalunoLastBeacon');
+    if(raw){
+      const b = JSON.parse(raw);
+      if(b && b.lat != null && (!b.ts || (now - b.ts) < FRESH_MS)){
+        const lng = b.lng != null ? b.lng : b.lon;
+        return {
+          lat: Number(b.lat),
+          lng: Number(lng),
+          lon: Number(lng),
+          ts: b.ts || 0,
+          source: 'cache',
+          accuracy: b.accuracy || null,
+          place: b.place || '',
+        };
+      }
+    }
+  }catch(_){}
+  return null;
+}
+
+function nalunoFindWatching(){
+  return findNalunoWatchId != null;
+}
+
+function publishBeaconLocal(lat, lng, accuracy, place, ts, source){
+  const when = ts || Date.now();
+  try{
+    localStorage.setItem('nalunoLastBeacon', JSON.stringify({
+      lat: lat, lng: lng, lon: lng, accuracy: accuracy || null,
+      place: place || '', ts: when, deviceId: nalunoDeviceId(),
+    }));
+  }catch(_){}
+  try{
+    window.dispatchEvent(new CustomEvent('naluno-location', {
+      detail: {
+        lat: lat, lng: lng, lon: lng, accuracy: accuracy || null,
+        place: place || '', ts: when, source: source || 'find',
+      },
+    }));
+  }catch(_){}
+}
+
 function mapsLinks(lat, lng){
   const q = encodeURIComponent(lat + ',' + lng);
   return {
@@ -125,6 +208,31 @@ async function lookupPlaceName(lat, lng){
     const raw = localStorage.getItem('nalunoPlace:' + key);
     if(raw){ findPlaceCache[key] = raw; return raw; }
   }catch(_){}
+  function remember(name){
+    if(!name) return '';
+    findPlaceCache[key] = name;
+    try{ localStorage.setItem('nalunoPlace:' + key, name); }catch(_){}
+    return name;
+  }
+  // BigDataCloud first — Nominatim often 403s from a phone browser (no User-Agent).
+  try{
+    const url = 'https://api.bigdatacloud.net/data/reverse-geocode-client?latitude='
+      + encodeURIComponent(lat) + '&longitude=' + encodeURIComponent(lng)
+      + '&localityLanguage=en';
+    const res = await fetch(url);
+    if(res.ok){
+      const j = await res.json();
+      const bits = [];
+      const loc = j.locality || j.localityInfo && j.localityInfo.informative && j.localityInfo.informative[0] && j.localityInfo.informative[0].name;
+      const city = j.city || j.locality;
+      if(loc && loc !== city) bits.push(loc);
+      if(city) bits.push(city);
+      if(j.principalSubdivision && j.principalSubdivision !== city && j.principalSubdivision !== loc) bits.push(j.principalSubdivision);
+      if(j.countryName) bits.push(j.countryName);
+      const name = bits.filter(Boolean).filter(function(v, i, a){ return a.indexOf(v) === i; }).join(', ');
+      if(name) return remember(name);
+    }
+  }catch(_){}
   try{
     const url = 'https://nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1&zoom=16'
       + '&lat=' + encodeURIComponent(lat)
@@ -133,11 +241,7 @@ async function lookupPlaceName(lat, lng){
     const res = await fetch(url, { headers: { 'Accept-Language': 'en', 'Accept': 'application/json' } });
     if(!res.ok) return '';
     const name = placeFromNominatim(await res.json());
-    if(name){
-      findPlaceCache[key] = name;
-      try{ localStorage.setItem('nalunoPlace:' + key, name); }catch(_){}
-    }
-    return name || '';
+    return remember(name);
   }catch(_){
     return '';
   }
@@ -191,6 +295,9 @@ async function writeBeaconPing(pos, opts){
   findNalunoLastLat = lat;
   findNalunoLastLng = lng;
   findNalunoLastWrite = now;
+  // Weather must not wait on reverse-geocode (up to 2.5s). Fire the live
+  // place the moment GPS speaks, then fill the name in.
+  publishBeaconLocal(lat, lng, accuracy, '', now, 'find');
   const ref = beaconRef();
   if(!ref) return false;
   try{
@@ -209,7 +316,10 @@ async function writeBeaconPing(pos, opts){
       enabled: true,
       ua: String(navigator.userAgent || '').slice(0, 140),
     };
-    if(placeName) payload.placeName = placeName;
+    if(placeName){
+      payload.placeName = placeName;
+      publishBeaconLocal(lat, lng, accuracy, placeName, now, 'find');
+    }
     // Paint immediately so Find does not wait for a reload
     const localRow = Object.assign({ id: nalunoDeviceId() }, payload);
     const others = (findNalunoDevices || []).filter(function(d){ return d.id !== localRow.id; });
@@ -228,7 +338,7 @@ function geoOnce(){
   return new Promise(function(resolve, reject){
     function fail(err){ reject(err || { code: 2 }); }
     if(window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.Geolocation){
-      Capacitor.Plugins.Geolocation.getCurrentPosition({ enableHighAccuracy:false, timeout:20000 })
+      Capacitor.Plugins.Geolocation.getCurrentPosition({ enableHighAccuracy:true, timeout:20000 })
         .then(function(p){ resolve(p); })
         .catch(function(){ webGeo(); });
       return;
@@ -242,8 +352,8 @@ function geoOnce(){
           else fail(err);
         }, opts);
       }
-      attempt({ enableHighAccuracy:false, timeout:15000, maximumAge:180000 }, function(){
-        attempt({ enableHighAccuracy:true, timeout:20000, maximumAge:0 }, null);
+      attempt({ enableHighAccuracy:true, timeout:12000, maximumAge:0 }, function(){
+        attempt({ enableHighAccuracy:false, timeout:15000, maximumAge:15000 }, null);
       });
     }
   });
@@ -415,6 +525,24 @@ function listenFindNalunoDevices(){
     .onSnapshot(function(snap){
       findListenRetry = 0;
       findNalunoDevices = snap.docs.map(function(d){ return Object.assign({ id: d.id }, d.data()); });
+      // Native Android Find writes skip writeBeaconPing. Surface THIS phone's
+      // row so weather (and anything else listening) follows the live place.
+      try{
+        const id = nalunoDeviceId();
+        const mine = (findNalunoDevices || []).find(function(d){ return d && d.id === id && d.lat != null; });
+        if(mine){
+          const ts = mine.ts || Date.now();
+          const moved = (findNalunoLastLat == null) ||
+            (Math.abs(mine.lat - findNalunoLastLat) + Math.abs((mine.lng || 0) - (findNalunoLastLng || 0)) > 0.0003);
+          const newer = ts > (findNalunoLastWrite || 0) + 400;
+          if(moved || newer){
+            findNalunoLastLat = mine.lat;
+            findNalunoLastLng = mine.lng;
+            if(ts > findNalunoLastWrite) findNalunoLastWrite = ts;
+            publishBeaconLocal(mine.lat, mine.lng, mine.accuracy || null, mine.placeName || '', ts, 'beacon-snap');
+          }
+        }
+      }catch(_){}
       renderFindNalunoPanel();
     }, function(err){
       console.warn('[find-naluno] listen', err);
@@ -550,3 +678,7 @@ window.addEventListener('online', resumeFindNalunoIfEnabled);
 
 try{ wireFindNalunoUi(); }catch(_){}
 try{ resumeFindNalunoIfEnabled(); }catch(_){}
+window.nalunoLiveCoords = nalunoLiveCoords;
+window.nalunoFindWatching = nalunoFindWatching;
+window.lookupPlaceName = lookupPlaceName;
+window.publishBeaconLocal = publishBeaconLocal;
