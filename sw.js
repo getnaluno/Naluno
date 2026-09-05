@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v144: 09.05a first-run welcome, real Privacy/Terms, Next/Skip how-it-works tour.
 // v143: 09.04f diagnostics in admin, weather follows Find Naluno live coords.
 // v142: 09.04e Band 2h wipe is a hard delete + unreadability cutoff, not a hide.
 // v141: 09.04d crop bake, band wipe, wireline envelopes, live auto-join, community count.
@@ -33,7 +34,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v143';
+const CACHE_NAME = 'naluno-shell-v144';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './splash-empty.png', './icon-maskable-512.png', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',
@@ -46,7 +47,7 @@ const CORE_ASSETS = [
   './js/sfu-live.js', './js/compass.js', './js/weather.js', './js/beacon.js', './js/find.js', './js/profile.js', './js/notifications.js',
   './js/ice-core.js', './js/compat-lock.js', './js/keep-alive.js', './js/media-contain.js',
   './js/spark.js', './js/spark-page.js', './js/spark-engine.js', './js/spark-lg.js',
-  './js/diagnostics.js', './js/economy.js', './js/economy-ui.js',
+  './js/diagnostics.js', './js/economy.js', './js/economy-ui.js', './js/onboard.js',
 ];
 
 self.addEventListener('install', event=>{

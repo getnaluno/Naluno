@@ -1,17 +1,17 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.09.04f" />
+  <meta name="naluno-build" content="2026.09.05a" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
-<link rel="manifest" href="manifest.json?v=20260904f">
+<link rel="manifest" href="manifest.json?v=20260905a">
 <meta name="theme-color" content="#0D0F17">
 <!-- Icons delayed until after the drawing intro so no PNG can flash. -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.09.04f">
+<meta name="app-version" content="2026.09.05a">
 <meta name="description" content="A statement from the future.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="Watch on Naluno.">
@@ -60,9 +60,9 @@
   #authGate{ visibility:visible !important; }
 </style>
 <link rel="apple-touch-startup-image" href="splash-empty.png">
-<link rel="stylesheet" href="css/app.css?v=20260904f" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="css/app.css?v=20260905a" media="print" onload="this.media='all'">
 <script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="css/app.css?v=20260904f"></noscript>
+<noscript><link rel="stylesheet" href="css/app.css?v=20260905a"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -153,6 +153,60 @@ window.__nalunoEntryT0 = Date.now();
       <button type="button" id="authUseEmailBtn" style="background:none;border:none;color:var(--text-dim);font-family:var(--font-mono);font-size:11px;cursor:pointer;text-decoration:underline;padding:4px;">Use email instead</button>
       <input id="authEmailInput" type="email" autocomplete="email" placeholder="Email" style="display:none; width:100%; background:var(--surface); border:1px solid var(--line); border-radius:13px; padding:12px 14px; color:var(--text); font-size:14px; outline:none;" />
       <div id="authGateStatus" style="font-family:var(--font-mono); font-size:11px; color:var(--text-dim); min-height:14px;"></div>
+      <div class="welcome-legal-line" style="margin-top:8px;">
+        <button type="button" class="welcome-inline" id="authPrivacyBtn">Privacy Policy</button>
+        <span aria-hidden="true"> · </span>
+        <button type="button" class="welcome-inline" id="authTermsBtn">Terms of Service</button>
+      </div>
+    </div>
+
+    <div id="nalunoWelcome" class="naluno-onboard" aria-label="Welcome to Naluno">
+      <div class="onboard-stage">
+        <div id="welcomeHero" class="onboard-hero" aria-hidden="true"></div>
+        <h1 id="welcomeTitle" class="onboard-title">Welcome to Naluno</h1>
+        <p id="welcomeLegal" class="onboard-legal">Read our Privacy Policy. Tap “Agree and continue” to accept our Terms of Service.</p>
+        <div class="welcome-lang-wrap">
+          <button type="button" id="welcomeLangBtn" class="welcome-lang" aria-haspopup="listbox" aria-expanded="false">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M3 12h18M12 3c2.5 3 4 6.5 4 9s-1.5 6-4 9c-2.5-3-4-6.5-4-9s1.5-6 4-9z" stroke="currentColor" stroke-width="1.5"/></svg>
+            <span id="welcomeLangLabel">English</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+          <div id="welcomeLangMenu" class="welcome-lang-menu" role="listbox">
+            <button type="button" id="welcomeLangEn" role="option">English</button>
+            <button type="button" id="welcomeLangLg" role="option">Luganda</button>
+          </div>
+        </div>
+      </div>
+      <div class="onboard-foot">
+        <button type="button" id="welcomeAgreeBtn" class="join-btn onboard-agree">Agree and continue</button>
+      </div>
+    </div>
+
+    <div id="nalunoTour" class="naluno-onboard" aria-label="How Naluno works">
+      <div class="tour-top">
+        <button type="button" id="tourBackBtn" class="tour-text-btn">Back</button>
+        <button type="button" id="tourSkipBtn" class="tour-text-btn">Skip</button>
+      </div>
+      <div class="onboard-stage tour-stage">
+        <div id="tourIcon" class="onboard-hero tour-hero" aria-hidden="true"></div>
+        <h1 id="tourTitle" class="onboard-title">Your name here is a Callsign</h1>
+        <p id="tourBody" class="onboard-legal">You pick a handle — a name that is yours. No phone number. No SIM card.</p>
+        <div id="tourDots" class="tour-dots" aria-hidden="true"></div>
+      </div>
+      <div class="onboard-foot">
+        <button type="button" id="tourNextBtn" class="join-btn onboard-agree">Next</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="nalunoLegal" class="naluno-legal" role="dialog" aria-modal="true" aria-labelledby="nalunoLegalTitle">
+    <div class="naluno-legal-sheet">
+      <div class="naluno-legal-bar">
+        <button type="button" id="nalunoLegalBack" class="back-btn" aria-label="Back"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+        <div id="nalunoLegalTitle" class="naluno-legal-heading">Privacy Policy</div>
+        <span style="width:36px;"></span>
+      </div>
+      <div id="nalunoLegalBody" class="naluno-legal-body"></div>
     </div>
   </div>
 
@@ -449,6 +503,12 @@ window.__nalunoEntryT0 = Date.now();
       <button class="save-btn" id="myContributionBtn" style="margin:18px 20px 0; background:none; color:var(--mint); border:1px solid rgba(124,255,178,.35);">My Contribution</button>
 
       <button class="save-btn" id="signOutBtn" style="margin:22px 20px 0; background:none; color:var(--red); border:1px solid var(--line);">Sign out</button>
+
+      <div class="welcome-legal-line" style="margin:14px 20px 0; text-align:center;">
+        <button type="button" class="welcome-inline" id="callsignPrivacyBtn">Privacy Policy</button>
+        <span aria-hidden="true"> · </span>
+        <button type="button" class="welcome-inline" id="callsignTermsBtn">Terms of Service</button>
+      </div>
 
       <!-- Spec §30 PS: the Admin Console entry point is a single unlabelled dot
            below Sign out, requiring 6 taps to reach a password gateway. It is
@@ -1236,58 +1296,59 @@ window.__nalunoEntryT0 = Date.now();
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
 <script src="firebase-config.js"></script>
 <!-- NALUNO_MODULES -->
-<script src="js/core.js?v=20260904f"></script>
+<script src="js/core.js?v=20260905a"></script>
 <!-- Loaded right after core.js so its global error handlers are installed
      before the rest of the app runs and can capture anything they throw. -->
-<script src="js/diagnostics.js?v=20260904f"></script>
+<script src="js/diagnostics.js?v=20260905a"></script>
 <!-- LOAD ORDER: find.js defines contactAvatarStyleAttr(), used by band-list,
      band-room, wireline and signal-ui. auth.js calls loadBands() at top level,
      which ran BEFORE find.js had executed — a ReferenceError that aborted boot
      entirely. It must load before any consumer. -->
-<script src="js/find.js?v=20260904f"></script>
-<script src="js/media-contain.js?v=20260904f"></script>
-<script src="js/keep-alive.js?v=20260904f"></script>
-<script src="js/metrics.js?v=20260904f"></script>
-<script src="js/data.js?v=20260904f"></script>
-<script src="js/crypto.js?v=20260904f"></script>
-<script src="js/atmosphere.js?v=20260904f"></script>
-<script src="js/band-list.js?v=20260904f"></script>
-<script src="js/signal-core.js?v=20260904f"></script>
-<script src="js/broadcast-core.js?v=20260904f"></script>
-<script src="js/broadcast-upload.js?v=20260904f"></script>
-<script src="js/broadcast-composer.js?v=20260904f"></script>
-<script src="js/origin.js?v=20260904f"></script>
-<script src="js/strand.js?v=20260904f"></script>
-<script src="js/circle.js?v=20260904f"></script>
+<script src="js/find.js?v=20260905a"></script>
+<script src="js/media-contain.js?v=20260905a"></script>
+<script src="js/keep-alive.js?v=20260905a"></script>
+<script src="js/metrics.js?v=20260905a"></script>
+<script src="js/data.js?v=20260905a"></script>
+<script src="js/crypto.js?v=20260905a"></script>
+<script src="js/atmosphere.js?v=20260905a"></script>
+<script src="js/band-list.js?v=20260905a"></script>
+<script src="js/signal-core.js?v=20260905a"></script>
+<script src="js/broadcast-core.js?v=20260905a"></script>
+<script src="js/broadcast-upload.js?v=20260905a"></script>
+<script src="js/broadcast-composer.js?v=20260905a"></script>
+<script src="js/origin.js?v=20260905a"></script>
+<script src="js/strand.js?v=20260905a"></script>
+<script src="js/circle.js?v=20260905a"></script>
 <!-- Community Economy: reports actions only; all economic value is computed
      server-side by the naluno-economy Worker. Loaded AFTER circle.js so
      currentUser exists, and deliberately non-blocking — if this file failed
      to load entirely, Broadcast would behave exactly as it does today. -->
-<script src="js/economy.js?v=20260904f"></script>
-<script src="js/economy-ui.js?v=20260904f"></script>
-<script src="js/weather.js?v=20260904f"></script>
-<script src="js/beacon.js?v=20260904f"></script>
-<script src="js/compass.js?v=20260904f"></script>
-<script src="js/signal-ui.js?v=20260904f"></script>
-<script src="js/compat-lock.js?v=20260904f"></script>
-<script src="js/broadcast-space.js?v=20260904f"></script>
-<script src="js/media-vault.js?v=20260904f"></script>
-<script src="js/wireline.js?v=20260904f"></script>
-<script src="js/profile.js?v=20260904f"></script>
-<script src="js/auth.js?v=20260904f"></script>
-<script src="js/notifications.js?v=20260904f"></script>
-<script src="js/ice-core.js?v=20260904f"></script>
-<script src="js/camera.js?v=20260904f"></script>
-<script src="js/call-filters.js?v=20260904f"></script>
-<script src="js/calls.js?v=20260904f"></script>
-<script src="js/sfu-live.js?v=20260904f"></script>
-<script src="js/broadcast-live.js?v=20260904f"></script>
-<script src="js/band-room.js?v=20260904f"></script>
-<script src="js/pwa.js?v=20260904f"></script>
-<script src="js/spark-engine.js?v=20260904f"></script>
-<script src="js/spark-lg.js?v=20260904f"></script>
-<script src="js/spark-page.js?v=20260904f"></script>
-<script src="js/spark.js?v=20260904f"></script>
+<script src="js/economy.js?v=20260905a"></script>
+<script src="js/economy-ui.js?v=20260905a"></script>
+<script src="js/weather.js?v=20260905a"></script>
+<script src="js/beacon.js?v=20260905a"></script>
+<script src="js/compass.js?v=20260905a"></script>
+<script src="js/signal-ui.js?v=20260905a"></script>
+<script src="js/compat-lock.js?v=20260905a"></script>
+<script src="js/broadcast-space.js?v=20260905a"></script>
+<script src="js/media-vault.js?v=20260905a"></script>
+<script src="js/wireline.js?v=20260905a"></script>
+<script src="js/profile.js?v=20260905a"></script>
+<script src="js/onboard.js?v=20260905a"></script>
+<script src="js/auth.js?v=20260905a"></script>
+<script src="js/notifications.js?v=20260905a"></script>
+<script src="js/ice-core.js?v=20260905a"></script>
+<script src="js/camera.js?v=20260905a"></script>
+<script src="js/call-filters.js?v=20260905a"></script>
+<script src="js/calls.js?v=20260905a"></script>
+<script src="js/sfu-live.js?v=20260905a"></script>
+<script src="js/broadcast-live.js?v=20260905a"></script>
+<script src="js/band-room.js?v=20260905a"></script>
+<script src="js/pwa.js?v=20260905a"></script>
+<script src="js/spark-engine.js?v=20260905a"></script>
+<script src="js/spark-lg.js?v=20260905a"></script>
+<script src="js/spark-page.js?v=20260905a"></script>
+<script src="js/spark.js?v=20260905a"></script>
 <!-- /NALUNO_MODULES -->
 </body>
 </html>
