@@ -1,4 +1,6 @@
 // Naluno service worker — offline shell + background call push.
+// v147: 09.06a background ring while the web app is open but unused.
+// v146: 09.05b shell (GitHub).
 // v145: 09.05b Wireline E2E (WhatsApp fan-out + HKDF + live public keys), 3D vibes, no onboard flash.
 // v144: 09.05a first-run welcome, real Privacy/Terms, Next/Skip how-it-works tour.
 // v143: 09.04f diagnostics in admin, weather follows Find Naluno live coords.
@@ -35,7 +37,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v146';
+const CACHE_NAME = 'naluno-shell-v147';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './splash-empty.png', './icon-maskable-512.png', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',
@@ -154,6 +156,7 @@ self.addEventListener('fetch', event=>{
 });
 
 const handledCallIds = {};
+const ringLoopTimers = {};
 function markCallHandled(callId){
   if(callId) handledCallIds[callId] = Date.now();
   const cutoff = Date.now() - 10 * 60 * 1000;
@@ -163,6 +166,19 @@ function markCallHandled(callId){
 }
 function isCallHandled(callId){
   return !!(callId && handledCallIds[callId]);
+}
+function stopRingLoop(callId){
+  if(callId){
+    if(ringLoopTimers[callId]){
+      try{ clearTimeout(ringLoopTimers[callId]); }catch(_){}
+      delete ringLoopTimers[callId];
+    }
+    return;
+  }
+  Object.keys(ringLoopTimers).forEach(function(k){
+    try{ clearTimeout(ringLoopTimers[k]); }catch(_){}
+    delete ringLoopTimers[k];
+  });
 }
 async function closeCallNotifications(callId){
   try{
@@ -175,12 +191,63 @@ async function closeCallNotifications(callId){
     });
   }catch(_){}
 }
+function callNotifyOpts(callId, body){
+  return {
+    body: body || 'Tap to answer',
+    icon: './icon-192.png',
+    badge: './icon-192.png',
+    tag: callId || 'naluno-call',
+    renotify: true,
+    requireInteraction: true,
+    silent: false,
+    vibrate: [500, 200, 500, 200, 500, 200, 500],
+    data: { callId: callId || '', type: 'incoming_call', url: callId ? ('./?call=' + encodeURIComponent(callId)) : './' },
+    actions: [
+      { action: 'answer', title: 'Answer' },
+      { action: 'decline', title: 'Decline' },
+    ],
+  };
+}
+/** Keep the OS sounding while the call is still ringing. Chrome will not
+ *  play in-page audio in a hidden PWA; repeating a noisy notification is
+ *  how a backgrounded web app actually rings. Stops the instant the page
+ *  says the call was handled. */
+function startRingLoop(callId, title, body, loop){
+  if(callId && isCallHandled(callId)) return;
+  stopRingLoop(callId);
+  const t = title || 'Incoming call — Naluno';
+  const b = body || 'Tap to answer';
+  self.registration.showNotification(t, callNotifyOpts(callId, b)).catch(function(){});
+  if(loop === false) return;
+  let n = 1;
+  const max = 16;
+  function tick(){
+    if((callId && isCallHandled(callId)) || n >= max){
+      stopRingLoop(callId);
+      if(callId && isCallHandled(callId)) closeCallNotifications(callId);
+      return;
+    }
+    n++;
+    self.registration.showNotification(t, callNotifyOpts(callId, b)).catch(function(){});
+    if(callId) ringLoopTimers[callId] = setTimeout(tick, 2200);
+  }
+  if(callId) ringLoopTimers[callId] = setTimeout(tick, 2200);
+}
 
 self.addEventListener('message', event=>{
   const msg = (event && event.data) || {};
   if(msg.type === 'naluno-call-handled' || msg.type === 'naluno-decline-call'){
     markCallHandled(msg.callId);
+    stopRingLoop(msg.callId);
     event.waitUntil(closeCallNotifications(msg.callId));
+    return;
+  }
+  if(msg.type === 'naluno-start-ring'){
+    startRingLoop(msg.callId, msg.title, msg.body, msg.loop !== false);
+    return;
+  }
+  if(msg.type === 'naluno-stop-ring-loop'){
+    stopRingLoop(msg.callId);
   }
 });
 
@@ -197,44 +264,16 @@ self.addEventListener('push', event=>{
     }
   }catch(_){}
   const callId = data.callId || data.call_id || data.tag || '';
-  // FIX: every push used to get call-style "Answer/Decline" buttons, insistent
-  // vibration, and requireInteraction — including a plain "X is live" alert,
-  // which made no sense (there's nothing to answer or decline) and could read
-  // as a real incoming call. Only an actual call gets that treatment now.
   const isCall = data.type === 'incoming_call' || (!data.type && !!callId);
   if(isCall){
     if(callId && isCallHandled(callId)) return;
     const title = data.title || 'Incoming call — Naluno';
     const body = data.body || 'Tap to answer';
     event.waitUntil((async ()=>{
-      const opts = {
-        body, icon: './icon-192.png', badge: './icon-192.png',
-        tag: callId || 'naluno-call',
-        renotify: true,
-        requireInteraction: true,
-        silent: false,
-        vibrate: [500, 200, 500, 200, 500, 200, 500],
-        data: { callId, type: 'incoming_call', url: callId ? ('./?call=' + encodeURIComponent(callId)) : './' },
-        actions: [
-          { action: 'answer', title: 'Answer' },
-          { action: 'decline', title: 'Decline' },
-        ],
-      };
-      await self.registration.showNotification(title, opts);
+      startRingLoop(callId, title, body);
       const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
       for(const client of clientList){
         try{ client.postMessage({ type: 'naluno-incoming-call', callId }); }catch(_){}
-      }
-      // One follow-up only, and only if the call is still ringing. A second
-      // delayed re-show at 6s is why the notification kept insisting after
-      // the lobby was already closed.
-      if(callId){
-        await new Promise(r => setTimeout(r, 2500));
-        if(isCallHandled(callId)){
-          await closeCallNotifications(callId);
-          return;
-        }
-        await self.registration.showNotification(title, Object.assign({}, opts, { renotify: true }));
       }
     })());
     return;
@@ -276,6 +315,7 @@ self.addEventListener('notificationclick', event=>{
   const action = event.action || '';
   if(action === 'decline'){
     markCallHandled(callId);
+    stopRingLoop(callId);
     event.waitUntil((async ()=>{
       await closeCallNotifications(callId);
       const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });

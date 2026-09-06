@@ -1,42 +1,35 @@
-# GitHub update — 2026.09.05b
+# GitHub update — 2026.09.06a
 
 Copy these files over the root of `getnaluno/Naluno`. Keep the folder
 structure. Commit and push. Force-close the webapp after it deploys
 (not just swipe away). Re-open. Console should show:
 
-`[naluno] build 2026.09.05b`
+`[naluno] build 2026.09.06a`
 
-Service worker cache: **naluno-shell-v145**.
+Service worker cache: **naluno-shell-v147**.
 
 Do not rebuild architecture. Signal / Broadcast upload paths were not
 changed.
 
 ## What this fixes
 
-1. **Wireline encryption actually opens.** Sends now fan-out like WhatsApp:
-   fetch the other person's *current* public key, seal one envelope for
-   them and one for this phone, stamp `senderPub` on the packet. If they
-   have no key yet, the text stays readable — never a locked blob.
-   Decrypt uses the key that sealed the message, not whoever's profile
-   key happens to be published later. A phone that lost its private key
-   mints a new identity so *new* messages work; old ones stay locked
-   with a plain ask-them-to-send-again line.
-2. **Welcome + tour no longer flash on refresh.** Returning phones are
-   marked before paint (`data-naluno-known`). Both panels start `hidden`
-   with empty titles, so even a slow stylesheet cannot stack
-   “Welcome to Naluno” on top of “Your name here is a Callsign”.
-3. **Wireline vibes are 3D.** Exhausted, Calm, Thinking of you, In awe,
-   At peace, Missing you, Overwhelmed each have their own depth, light,
-   and motion — not a flat Greenroom tint.
+**The web app rings while it is open in the background.** Chrome will
+not play in-page audio once Naluno is not on screen. Incoming calls now:
+
+1. Keep a Firestore listener alive and retry if it dies.
+2. Start the in-app ringtone (and do not pause it on hide).
+3. Ask the service worker to show a noisy incoming-call notification.
+4. If you have switched away, that notification **keeps sounding every
+   ~2 seconds** until you answer, decline, or the caller hangs up.
+5. Push wake is sent to **both** the web token and the Android token
+   (`preferPlatform: both`).
+
+Turn on Call notifications once under Callsign if you have not already.
+The OS sound is what you hear when Naluno is open but unused.
 
 ## After push
 
-Force-close Naluno. Re-open. Confirm `2026.09.05b`.
+Force-close Naluno. Re-open. Confirm `2026.09.06a`.
 
-Send a new Wireline text. Both phones should read it. Older locked
-bubbles from before this build stay locked until that person sends
-again.
-
-To preview the welcome on a phone that already has an account: clear
-this site’s data (or the keys `nalunoWelcomeOk`, `nalunoTourOk`, and
-`nalunoLastUid`), then reopen signed out.
+Leave Naluno running, switch to another app, have someone call you.
+You should hear the notification ring and see Answer / Decline.
