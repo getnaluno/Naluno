@@ -1,4 +1,6 @@
 // Naluno service worker — offline shell + background call push.
+// v149: 09.06b /app/ firebase-config path + living site. App shell is /app/.
+// v148: site at / , app at /app/.
 // v147: 09.06a background ring while the web app is open but unused.
 // v146: 09.05b shell (GitHub).
 // v145: 09.05b Wireline E2E (WhatsApp fan-out + HKDF + live public keys), 3D vibes, no onboard flash.
@@ -37,20 +39,20 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v148';
+const CACHE_NAME = 'naluno-shell-v149';
 const CORE_ASSETS = [
-  './', './index.html', './manifest.json', './splash-empty.png', './icon-maskable-512.png', './icon-192.png', './icon-512.png',
-  './firebase-config.js', './css/app.css',
-  './js/core.js', './js/metrics.js', './js/data.js', './js/crypto.js', './js/atmosphere.js',
-  './js/pwa.js', './js/auth.js', './js/camera.js', './js/call-filters.js', './js/calls.js', './js/media-vault.js', './js/wireline.js',
-  './js/band-room.js', './js/band-list.js', './js/broadcast-core.js', './js/broadcast-space.js',
-  './js/broadcast-live.js', './js/broadcast-composer.js', './js/broadcast-upload.js',
-  './js/origin.js', './js/strand.js', './js/circle.js',
-  './js/signal-core.js', './js/signal-ui.js',
-  './js/sfu-live.js', './js/compass.js', './js/weather.js', './js/beacon.js', './js/find.js', './js/profile.js', './js/notifications.js',
-  './js/ice-core.js', './js/compat-lock.js', './js/keep-alive.js', './js/media-contain.js',
-  './js/spark.js', './js/spark-page.js', './js/spark-engine.js', './js/spark-lg.js',
-  './js/diagnostics.js', './js/economy.js', './js/economy-ui.js', './js/onboard.js',
+  '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
+  '/firebase-config.js', '/css/app.css',
+  '/js/core.js', '/js/metrics.js', '/js/data.js', '/js/crypto.js', '/js/atmosphere.js',
+  '/js/pwa.js', '/js/auth.js', '/js/camera.js', '/js/call-filters.js', '/js/calls.js', '/js/media-vault.js', '/js/wireline.js',
+  '/js/band-room.js', '/js/band-list.js', '/js/broadcast-core.js', '/js/broadcast-space.js',
+  '/js/broadcast-live.js', '/js/broadcast-composer.js', '/js/broadcast-upload.js',
+  '/js/origin.js', '/js/strand.js', '/js/circle.js',
+  '/js/signal-core.js', '/js/signal-ui.js',
+  '/js/sfu-live.js', '/js/compass.js', '/js/weather.js', '/js/beacon.js', '/js/find.js', '/js/profile.js', '/js/notifications.js',
+  '/js/ice-core.js', '/js/compat-lock.js', '/js/keep-alive.js', '/js/media-contain.js',
+  '/js/spark.js', '/js/spark-page.js', '/js/spark-engine.js', '/js/spark-lg.js',
+  '/js/diagnostics.js', '/js/economy.js', '/js/economy-ui.js', '/js/onboard.js',
 ];
 
 self.addEventListener('install', event=>{
@@ -169,19 +171,21 @@ self.addEventListener('fetch', event=>{
   }
 
   event.respondWith((async ()=>{
+    const appShellReq = new Request(self.location.origin + '/app/index.html');
+    const isAppNav = isNav && (path === '/app' || path === '/app/' || path.indexOf('/app/') === 0);
     const cached = await caches.match(event.request)
       || await caches.match(new Request(bare))
-      || (isNav ? await caches.match('./index.html') : null);
+      || (isAppNav ? await caches.match(appShellReq) : null);
     try{
-      const response = await netTimeout(event.request, 2500);
+      const response = await netTimeout(event.request, isAppNav ? 8000 : 2500);
       if(response && response.ok){
         if(isSameOrigin) putBare(response);
         return response;
       }
     }catch(_){}
     if(cached) return cached;
-    if(isNav){
-      const html = await caches.match('./index.html');
+    if(isAppNav){
+      const html = await caches.match(appShellReq) || await caches.match(new Request(self.location.origin + '/app/'));
       if(html) return html;
     }
     return new Response('', { status: 503 });
