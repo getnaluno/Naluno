@@ -100,9 +100,41 @@ function initFirebaseApp(){
     // environments (storage partitioning, certain mobile browsers, or when IndexedDB
     // is flaky) silently fall back to session-only, which makes every open look like
     // a fresh start and skips the remembered-user path.
-    fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(e=>{
-      console.warn('[Naluno auth] could not set LOCAL persistence:', e);
-    });
+    /* FIX (some devices sign out on refresh).
+       LOCAL persistence is backed by IndexedDB. When IndexedDB is unavailable
+       — private/incognito mode, storage pressure, some Android WebViews, or a
+       browser with site data partitioned — this call REJECTS, and the previous
+       code only logged a warning and carried on. Firebase then falls back to
+       its default in-memory state, so the sign-in lives exactly as long as the
+       page does and every refresh looks like a fresh start.
+
+       That is why it hit "some devices" and not others, and why it looked
+       random: it depends on the storage environment, not on anything the
+       person did.
+
+       Now it degrades in steps instead of falling straight to nothing:
+       LOCAL → SESSION (survives a refresh, dies with the tab) → in-memory as
+       the last resort. Each outcome is recorded so Diagnostics can show which
+       one is actually in force rather than leaving it a mystery. */
+    fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
+      .then(function(){
+        try{ window.__nalunoAuthPersistence = 'LOCAL'; }catch(_){}
+      })
+      .catch(function(e){
+        console.warn('[Naluno auth] LOCAL persistence unavailable:', e && e.message);
+        try{ if(typeof nalunoDiag === 'function') nalunoDiag('auth-persistence', 'LOCAL failed: ' + (e && e.message)); }catch(_){}
+        return fbAuth.setPersistence(firebase.auth.Auth.Persistence.SESSION)
+          .then(function(){
+            try{ window.__nalunoAuthPersistence = 'SESSION'; }catch(_){}
+            console.warn('[Naluno auth] falling back to SESSION persistence — sign-in will not survive closing the tab');
+            try{ if(typeof nalunoDiag === 'function') nalunoDiag('auth-persistence', 'using SESSION fallback'); }catch(_){}
+          })
+          .catch(function(e2){
+            try{ window.__nalunoAuthPersistence = 'NONE'; }catch(_){}
+            console.warn('[Naluno auth] no durable persistence available:', e2 && e2.message);
+            try{ if(typeof nalunoDiag === 'function') nalunoDiag('auth-persistence', 'NONE — sign-in cannot survive a refresh: ' + (e2 && e2.message)); }catch(_){}
+          });
+      });
     fbDb = firebase.firestore();
     // This was never turned on before, and it's very likely the root cause behind two
     // separate complaints at once: Frequencies taking 2-3 seconds to appear on every

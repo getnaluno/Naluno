@@ -101,13 +101,83 @@ async function registerWebPushToken(){
     const payload = { fcmTokenWeb: token, fcmTokenPlatform: 'web', fcmTokenUpdatedAt: Date.now() };
     if(!existing.fcmTokenAndroid) payload.fcmToken = token;
     await userRef.set(payload, { merge:true });
-    console.log('[push] web token registered');
+    try{ localStorage.setItem('nalunoPushTokenAt', String(Date.now())); }catch(_){}
+    try{ localStorage.setItem('nalunoPushToken', token); }catch(_){}
+    if(existing.fcmTokenWeb && existing.fcmTokenWeb !== token){
+      console.log('[push] web token ROTATED — stored token was stale, now updated');
+      try{ if(typeof nalunoDiag === 'function') nalunoDiag('push-token-rotated', 'stale token replaced'); }catch(_){}
+    } else {
+      console.log('[push] web token registered');
+    }
     return token;
   }catch(e){
     console.warn('[push] registerWebPushToken', e);
+    try{ if(typeof nalunoDiag === 'function') nalunoDiag('push-register-failed', (e && e.message) || String(e)); }catch(_){}
     return null;
   }
 }
+
+/* FIX — "background calling works, then suddenly stops".
+
+   The push token was written to Firestore exactly ONCE, at sign-in, and never
+   looked at again. FCM web tokens are not permanent: they rotate when the
+   browser updates, when the service worker is replaced, when push
+   subscriptions are reset, or after long inactivity. When that happens the
+   token stored on the user document is dead. The call-notify worker keeps
+   sending to it, FCM keeps accepting the request, and the phone simply never
+   rings again — with nothing failing visibly anywhere.
+
+   That is exactly the reported shape: it works, and then one day it stops,
+   with no action from the person and no error to point at.
+
+   getToken() always returns the CURRENT token, so re-registering is all that
+   is needed — it writes whatever is live now. Done on returning to the
+   foreground, throttled so it costs one Firestore write at most every few
+   hours, plus an immediate check if the locally-remembered token no longer
+   matches. */
+const NALUNO_PUSH_REFRESH_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+async function keepPushTokenFresh(force){
+  try{
+    if(typeof currentUser === 'undefined' || !currentUser || !fbDb) return;
+    if(typeof isNativeShell === 'function' && isNativeShell()) return; // native has its own path
+    if(typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+
+    let lastAt = 0, lastToken = '';
+    try{
+      lastAt = parseInt(localStorage.getItem('nalunoPushTokenAt') || '0', 10) || 0;
+      lastToken = localStorage.getItem('nalunoPushToken') || '';
+    }catch(_){}
+
+    const due = force || !lastAt || (Date.now() - lastAt) > NALUNO_PUSH_REFRESH_MS;
+
+    // Cheap check first: ask for the current token and compare. If it has
+    // rotated, re-register immediately regardless of the throttle — a stale
+    // token means the phone cannot ring, which is worth a write straight away.
+    if(!due){
+      try{
+        const registration = await navigator.serviceWorker.ready;
+        const current = await firebase.messaging().getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
+        if(current && lastToken && current === lastToken) return; // still valid, nothing to do
+      }catch(_){ return; }
+    }
+    await registerWebPushToken();
+  }catch(e){
+    console.warn('[push] keepPushTokenFresh', e && e.message);
+  }
+}
+
+(function watchPushTokenHealth(){
+  try{
+    document.addEventListener('visibilitychange', function(){
+      if(!document.hidden) setTimeout(function(){ keepPushTokenFresh(false); }, 2500);
+    });
+    window.addEventListener('online', function(){
+      setTimeout(function(){ keepPushTokenFresh(false); }, 3000);
+    });
+  }catch(_){}
+})();
+try{ window.keepPushTokenFresh = keepPushTokenFresh; }catch(_){}
 
 
 /** Call on every resume so killed-app wake keeps a fresh token. */

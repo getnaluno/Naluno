@@ -1655,9 +1655,32 @@ $('threadMoodBtn').onclick = ()=>{
     $('threadComposerMood').style.display = 'flex';
   }
 };
+/* FIX (vibes sent twice — visible as duplicate pairs in the thread).
+   Each tap generates its own clientMsgId, so sendRealMessage's dedupe — which
+   protects against ITS OWN retries — cannot catch a double INVOCATION: the two
+   writes are genuinely different messages as far as it can tell.
+
+   The double invocation itself comes from the tap: a `click` handler on a
+   touch device can fire twice (the synthetic click that follows touchend, or a
+   fast double-tap landing before the picker finishes hiding). Hiding the
+   picker first was not enough because both events are already queued in the
+   same frame.
+
+   A short re-entrancy latch is the reliable guard regardless of which of those
+   it is: the same mood to the same person cannot be sent twice inside 1.5s.
+   Deliberately keyed on mood+contact rather than a global lock, so sending two
+   DIFFERENT feelings quickly, or the same feeling to two people, still works. */
+let __lastMoodSend = { key: '', at: 0 };
+
 function sendMoodMessage(moodKey){
   if(!activeThreadContactId) return;
   const id = activeThreadContactId;
+  const dedupeKey = String(id) + ':' + String(moodKey);
+  const now = Date.now();
+  if(__lastMoodSend.key === dedupeKey && (now - __lastMoodSend.at) < 1500){
+    return;   // same feeling, same person, same tap — ignore the echo
+  }
+  __lastMoodSend = { key: dedupeKey, at: now };
   const c = contacts.find(x=>x.id===id);
   $('threadComposerMood').style.display = 'none';
   $('threadComposerNormal').style.display = 'flex';
