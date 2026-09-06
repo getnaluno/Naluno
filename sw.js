@@ -88,6 +88,39 @@ self.addEventListener('fetch', event=>{
   const isNav = event.request.mode === 'navigate' || path.endsWith('.html') || path.endsWith('/');
   const bare = url.origin + url.pathname;
 
+  /* The marketing site now lives at "/" and the app at "/app/".
+     This service worker was registered at scope "/" long before that, and its
+     navigation handling is cache-first — so on every device that already has
+     Naluno installed it would happily serve the CACHED APP SHELL at the new
+     website address. The site would look like it had never been deployed, and
+     no amount of re-uploading would change it.
+
+     The root document is therefore always network-first and is never served
+     from, or written to, the shell cache. Everything under /app/ keeps the
+     existing cache-first behaviour untouched, which is what makes the app
+     open instantly and work offline. */
+  const isSiteRoot = url.origin === self.location.origin &&
+    (path === '/' || path === '/index.html');
+  if(isSiteRoot && isNav){
+    event.respondWith((async ()=>{
+      try{
+        const fresh = await fetch(event.request, { cache: 'no-store' });
+        if(fresh && fresh.ok) return fresh;
+      }catch(_){}
+      // Offline on the landing page: send them to the app, which IS cached.
+      const appShell = await caches.match(new Request(self.location.origin + '/app/'))
+        || await caches.match(new Request(self.location.origin + '/'));
+      if(appShell) return appShell;
+      return new Response(
+        '<!doctype html><meta charset=utf-8><title>Naluno</title>'
+        + '<body style="background:#0A0C12;color:#E8ECF5;font-family:system-ui;'
+        + 'display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center">'
+        + '<div><p>You are offline.</p><p><a style="color:#7CFFB2" href="/app/">Open Naluno</a></p></div>',
+        { status: 200, headers: { 'Content-Type': 'text/html' } });
+    })());
+    return;
+  }
+
   function netTimeout(req, ms){
     const ctl = new AbortController();
     const t = setTimeout(function(){ ctl.abort(); }, ms);
