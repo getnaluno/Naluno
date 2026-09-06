@@ -85,6 +85,38 @@ function firebaseReady(){
     && typeof firebaseConfig !== 'undefined'
     && firebaseConfig.apiKey && firebaseConfig.apiKey !== 'YOUR_API_KEY';
 }
+function ensureFirebaseConfig(done){
+  if(firebaseReady()){ if(done) done(true); return; }
+  if(typeof firebaseConfig !== 'undefined' && firebaseConfig && firebaseConfig.apiKey && firebaseConfig.apiKey !== 'YOUR_API_KEY'){
+    if(done) done(typeof firebase !== 'undefined');
+    return;
+  }
+  if(window.__nalunoCfgInject){
+    if(done){
+      let n = 0;
+      const t = setInterval(function(){
+        n++;
+        if(firebaseReady() || n > 40){ clearInterval(t); done(firebaseReady()); }
+      }, 80);
+    }
+    return;
+  }
+  window.__nalunoCfgInject = true;
+  const urls = ['/firebase-config.js?v=20260906b', '../firebase-config.js?v=20260906b'];
+  function tryUrl(i){
+    if(typeof firebaseConfig !== 'undefined' && firebaseConfig && firebaseConfig.apiKey){
+      if(done) done(typeof firebase !== 'undefined');
+      return;
+    }
+    if(i >= urls.length){ if(done) done(false); return; }
+    const s = document.createElement('script');
+    s.src = urls[i];
+    s.onload = function(){ if(done) done(typeof firebase !== 'undefined'); };
+    s.onerror = function(){ tryUrl(i + 1); };
+    document.head.appendChild(s);
+  }
+  tryUrl(0);
+}
 function initFirebaseApp(){
   if(fbAuth) return true;
   if(!firebaseReady()) return false;
@@ -195,7 +227,13 @@ function injectFirebaseScripts(){
 }
 
 initFirebaseApp();
-if(!fbAuth) injectFirebaseScripts();
+if(!fbAuth){
+  ensureFirebaseConfig(function(){
+    try{ initFirebaseApp(); }catch(_){}
+    if(!fbAuth) injectFirebaseScripts();
+  });
+  if(!fbAuth) injectFirebaseScripts();
+}
 
 function authStatus(msg, isError){
   const el = $('authGateStatus');
@@ -273,7 +311,7 @@ async function nativeGoogleSignIn(){
 }
 
 $('googleSignInBtn').onclick = async ()=>{
-  if(!fbAuth){ try{ injectFirebaseScripts(); }catch(_){} initFirebaseApp(); }
+  if(!fbAuth){ try{ ensureFirebaseConfig(); }catch(_){} try{ injectFirebaseScripts(); }catch(_){} initFirebaseApp(); }
   if(!fbAuth){ authStatus('Connecting to sign-in… tap again in a moment.', true); return; }
   nalunoJustSignedIn = true;
 
@@ -358,7 +396,7 @@ if($('authUseEmailBtn')){
 }
 
 function nalunoHandleSignIn(){
-  if(!fbAuth){ try{ injectFirebaseScripts(); }catch(_){} initFirebaseApp(); }
+  if(!fbAuth){ try{ ensureFirebaseConfig(); }catch(_){} try{ injectFirebaseScripts(); }catch(_){} initFirebaseApp(); }
   if(!fbAuth){ authStatus('Connecting to sign-in… tap again in a moment.', true); return; }
   const { email, password, handle, recovery } = emailAuthInputs();
   if(!password || password.length < 6){ authStatus('Enter your password (6+ characters).', true); return; }
@@ -392,7 +430,7 @@ function nalunoHandleSignIn(){
 };
 
 async function nalunoHandleSignUp(){
-  if(!fbAuth){ try{ injectFirebaseScripts(); }catch(_){} initFirebaseApp(); }
+  if(!fbAuth){ try{ ensureFirebaseConfig(); }catch(_){} try{ injectFirebaseScripts(); }catch(_){} initFirebaseApp(); }
   if(!fbAuth){ authStatus('Connecting to sign-in… tap again in a moment.', true); return; }
   const { email, password, handle } = emailAuthInputs();
   if(!password || password.length < 6){ authStatus('Password needs to be at least 6 characters.', true); return; }
@@ -499,7 +537,7 @@ async function nalunoHandleSignUp(){
   }
 };
 async function nalunoForgotPassword(){
-  if(!fbAuth){ try{ injectFirebaseScripts(); }catch(_){} initFirebaseApp(); }
+  if(!fbAuth){ try{ ensureFirebaseConfig(); }catch(_){} try{ injectFirebaseScripts(); }catch(_){} initFirebaseApp(); }
   if(!fbAuth){ authStatus('Connecting to sign-in… tap again in a moment.', true); return; }
   const { email, handle, recovery } = emailAuthInputs();
   const visibleEmail = ($('authEmailInput') && $('authEmailInput').style.display !== 'none' && $('authEmailInput').value.trim()) || '';
@@ -863,9 +901,10 @@ function bindAuthListeners(){
 if(fbAuth){
   bindAuthListeners();
 } else {
-  // Firebase SDK missing or init failed (often SW timed out gstatic on mobile).
-  // Keep the form visible and retry — do NOT full-page reload (that felt like
-  // "sign in twice" when the first attempt raced the SDK).
+  // Firebase SDK missing, init failed, OR firebase-config.js 404'd because
+  // the app now lives at /app/ and a relative config path pointed at
+  // /app/firebase-config.js (which does not exist). Reload config from
+  // the site root and retry — do NOT full-page reload.
   try{
     nalunoShowSignIn();
   }catch(_){}
@@ -873,10 +912,11 @@ if(fbAuth){
   let authTries = 0;
   const authRetry = setInterval(function(){
     authTries++;
+    try{ ensureFirebaseConfig(); }catch(_){}
     try{ injectFirebaseScripts(); }catch(_){}
     if(initFirebaseApp() && fbAuth){
       clearInterval(authRetry);
-      authStatus('Sign-in ready — try again.', false);
+      authStatus('', false);
       try{ bindAuthListeners(); }catch(_){}
       return;
     }
