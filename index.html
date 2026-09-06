@@ -1,17 +1,17 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.09.05a" />
+  <meta name="naluno-build" content="2026.09.05b" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
-<link rel="manifest" href="manifest.json?v=20260905a">
+<link rel="manifest" href="manifest.json?v=20260905b">
 <meta name="theme-color" content="#0D0F17">
 <!-- Icons delayed until after the drawing intro so no PNG can flash. -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.09.05a">
+<meta name="app-version" content="2026.09.05b">
 <meta name="description" content="A statement from the future.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="Watch on Naluno.">
@@ -58,11 +58,61 @@
   @keyframes brandShimmer{ 0%{ background-position:0% 50%; } 100%{ background-position:300% 50%; } }
   body.naluno-gated #app{ visibility:hidden !important; }
   #authGate{ visibility:visible !important; }
+  /* Welcome + tour stay fully gone until JS adds .on.
+     hidden attribute is the UA fallback; these rules cover delayed app.css.
+     Returning phones (data-naluno-known) never show either panel. */
+  #nalunoWelcome, #nalunoTour, #nalunoLegal, .welcome-lang-menu{
+    display:none !important;
+    visibility:hidden !important;
+    pointer-events:none !important;
+    position:absolute !important;
+    inset:0 !important;
+    opacity:0 !important;
+  }
+  html[data-naluno-known] #nalunoWelcome,
+  html[data-naluno-known] #nalunoTour{
+    display:none !important;
+    visibility:hidden !important;
+    opacity:0 !important;
+  }
+  #nalunoWelcome.on, #nalunoTour.on{
+    display:flex !important;
+    visibility:visible !important;
+    pointer-events:auto !important;
+    opacity:1 !important;
+  }
+  html[data-naluno-known] #nalunoWelcome.on,
+  html[data-naluno-known] #nalunoTour.on{
+    display:none !important;
+    visibility:hidden !important;
+    opacity:0 !important;
+    pointer-events:none !important;
+  }
+  #nalunoLegal.on{ display:flex !important; visibility:visible !important; opacity:1 !important; pointer-events:auto !important; }
+  .welcome-lang-menu.on{ display:block !important; visibility:visible !important; opacity:1 !important; pointer-events:auto !important; }
+  #welcomeAgreeBtn, #tourNextBtn{
+    width:100%; min-height:52px; border:none; border-radius:999px;
+    background:#7CFFB2; color:#0D0F17; font-size:15px; font-weight:700;
+  }
+  .tour-text-btn, .welcome-lang, .welcome-lang-menu button{
+    background:#171A26; color:#EDEFF7; border:1px solid #2A2E42;
+  }
 </style>
+<script>
+(function(){
+  try{
+    var known = false;
+    try{
+      known = localStorage.getItem('nalunoWelcomeOk') === '1' || !!localStorage.getItem('nalunoLastUid');
+    }catch(e){}
+    if(known) document.documentElement.setAttribute('data-naluno-known', '1');
+  }catch(e){}
+})();
+</script>
 <link rel="apple-touch-startup-image" href="splash-empty.png">
-<link rel="stylesheet" href="css/app.css?v=20260905a" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="css/app.css?v=20260905b" media="print" onload="this.media='all'">
 <script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="css/app.css?v=20260905a"></noscript>
+<noscript><link rel="stylesheet" href="css/app.css?v=20260905b"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -160,11 +210,11 @@ window.__nalunoEntryT0 = Date.now();
       </div>
     </div>
 
-    <div id="nalunoWelcome" class="naluno-onboard" aria-label="Welcome to Naluno">
+    <div id="nalunoWelcome" class="naluno-onboard" hidden aria-label="Welcome to Naluno">
       <div class="onboard-stage">
         <div id="welcomeHero" class="onboard-hero" aria-hidden="true"></div>
-        <h1 id="welcomeTitle" class="onboard-title">Welcome to Naluno</h1>
-        <p id="welcomeLegal" class="onboard-legal">Read our Privacy Policy. Tap “Agree and continue” to accept our Terms of Service.</p>
+        <h1 id="welcomeTitle" class="onboard-title"></h1>
+        <p id="welcomeLegal" class="onboard-legal"></p>
         <div class="welcome-lang-wrap">
           <button type="button" id="welcomeLangBtn" class="welcome-lang" aria-haspopup="listbox" aria-expanded="false">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M3 12h18M12 3c2.5 3 4 6.5 4 9s-1.5 6-4 9c-2.5-3-4-6.5-4-9s1.5-6 4-9z" stroke="currentColor" stroke-width="1.5"/></svg>
@@ -182,15 +232,15 @@ window.__nalunoEntryT0 = Date.now();
       </div>
     </div>
 
-    <div id="nalunoTour" class="naluno-onboard" aria-label="How Naluno works">
+    <div id="nalunoTour" class="naluno-onboard" hidden aria-label="How Naluno works">
       <div class="tour-top">
         <button type="button" id="tourBackBtn" class="tour-text-btn">Back</button>
         <button type="button" id="tourSkipBtn" class="tour-text-btn">Skip</button>
       </div>
       <div class="onboard-stage tour-stage">
         <div id="tourIcon" class="onboard-hero tour-hero" aria-hidden="true"></div>
-        <h1 id="tourTitle" class="onboard-title">Your name here is a Callsign</h1>
-        <p id="tourBody" class="onboard-legal">You pick a handle — a name that is yours. No phone number. No SIM card.</p>
+        <h1 id="tourTitle" class="onboard-title"></h1>
+        <p id="tourBody" class="onboard-legal"></p>
         <div id="tourDots" class="tour-dots" aria-hidden="true"></div>
       </div>
       <div class="onboard-foot">
@@ -199,7 +249,7 @@ window.__nalunoEntryT0 = Date.now();
     </div>
   </div>
 
-  <div id="nalunoLegal" class="naluno-legal" role="dialog" aria-modal="true" aria-labelledby="nalunoLegalTitle">
+  <div id="nalunoLegal" class="naluno-legal" hidden role="dialog" aria-modal="true" aria-labelledby="nalunoLegalTitle">
     <div class="naluno-legal-sheet">
       <div class="naluno-legal-bar">
         <button type="button" id="nalunoLegalBack" class="back-btn" aria-label="Back"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
@@ -1296,59 +1346,59 @@ window.__nalunoEntryT0 = Date.now();
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
 <script src="firebase-config.js"></script>
 <!-- NALUNO_MODULES -->
-<script src="js/core.js?v=20260905a"></script>
+<script src="js/core.js?v=20260905b"></script>
 <!-- Loaded right after core.js so its global error handlers are installed
      before the rest of the app runs and can capture anything they throw. -->
-<script src="js/diagnostics.js?v=20260905a"></script>
+<script src="js/diagnostics.js?v=20260905b"></script>
 <!-- LOAD ORDER: find.js defines contactAvatarStyleAttr(), used by band-list,
      band-room, wireline and signal-ui. auth.js calls loadBands() at top level,
      which ran BEFORE find.js had executed — a ReferenceError that aborted boot
      entirely. It must load before any consumer. -->
-<script src="js/find.js?v=20260905a"></script>
-<script src="js/media-contain.js?v=20260905a"></script>
-<script src="js/keep-alive.js?v=20260905a"></script>
-<script src="js/metrics.js?v=20260905a"></script>
-<script src="js/data.js?v=20260905a"></script>
-<script src="js/crypto.js?v=20260905a"></script>
-<script src="js/atmosphere.js?v=20260905a"></script>
-<script src="js/band-list.js?v=20260905a"></script>
-<script src="js/signal-core.js?v=20260905a"></script>
-<script src="js/broadcast-core.js?v=20260905a"></script>
-<script src="js/broadcast-upload.js?v=20260905a"></script>
-<script src="js/broadcast-composer.js?v=20260905a"></script>
-<script src="js/origin.js?v=20260905a"></script>
-<script src="js/strand.js?v=20260905a"></script>
-<script src="js/circle.js?v=20260905a"></script>
+<script src="js/find.js?v=20260905b"></script>
+<script src="js/media-contain.js?v=20260905b"></script>
+<script src="js/keep-alive.js?v=20260905b"></script>
+<script src="js/metrics.js?v=20260905b"></script>
+<script src="js/data.js?v=20260905b"></script>
+<script src="js/crypto.js?v=20260905b"></script>
+<script src="js/atmosphere.js?v=20260905b"></script>
+<script src="js/band-list.js?v=20260905b"></script>
+<script src="js/signal-core.js?v=20260905b"></script>
+<script src="js/broadcast-core.js?v=20260905b"></script>
+<script src="js/broadcast-upload.js?v=20260905b"></script>
+<script src="js/broadcast-composer.js?v=20260905b"></script>
+<script src="js/origin.js?v=20260905b"></script>
+<script src="js/strand.js?v=20260905b"></script>
+<script src="js/circle.js?v=20260905b"></script>
 <!-- Community Economy: reports actions only; all economic value is computed
      server-side by the naluno-economy Worker. Loaded AFTER circle.js so
      currentUser exists, and deliberately non-blocking — if this file failed
      to load entirely, Broadcast would behave exactly as it does today. -->
-<script src="js/economy.js?v=20260905a"></script>
-<script src="js/economy-ui.js?v=20260905a"></script>
-<script src="js/weather.js?v=20260905a"></script>
-<script src="js/beacon.js?v=20260905a"></script>
-<script src="js/compass.js?v=20260905a"></script>
-<script src="js/signal-ui.js?v=20260905a"></script>
-<script src="js/compat-lock.js?v=20260905a"></script>
-<script src="js/broadcast-space.js?v=20260905a"></script>
-<script src="js/media-vault.js?v=20260905a"></script>
-<script src="js/wireline.js?v=20260905a"></script>
-<script src="js/profile.js?v=20260905a"></script>
-<script src="js/onboard.js?v=20260905a"></script>
-<script src="js/auth.js?v=20260905a"></script>
-<script src="js/notifications.js?v=20260905a"></script>
-<script src="js/ice-core.js?v=20260905a"></script>
-<script src="js/camera.js?v=20260905a"></script>
-<script src="js/call-filters.js?v=20260905a"></script>
-<script src="js/calls.js?v=20260905a"></script>
-<script src="js/sfu-live.js?v=20260905a"></script>
-<script src="js/broadcast-live.js?v=20260905a"></script>
-<script src="js/band-room.js?v=20260905a"></script>
-<script src="js/pwa.js?v=20260905a"></script>
-<script src="js/spark-engine.js?v=20260905a"></script>
-<script src="js/spark-lg.js?v=20260905a"></script>
-<script src="js/spark-page.js?v=20260905a"></script>
-<script src="js/spark.js?v=20260905a"></script>
+<script src="js/economy.js?v=20260905b"></script>
+<script src="js/economy-ui.js?v=20260905b"></script>
+<script src="js/weather.js?v=20260905b"></script>
+<script src="js/beacon.js?v=20260905b"></script>
+<script src="js/compass.js?v=20260905b"></script>
+<script src="js/signal-ui.js?v=20260905b"></script>
+<script src="js/compat-lock.js?v=20260905b"></script>
+<script src="js/broadcast-space.js?v=20260905b"></script>
+<script src="js/media-vault.js?v=20260905b"></script>
+<script src="js/wireline.js?v=20260905b"></script>
+<script src="js/profile.js?v=20260905b"></script>
+<script src="js/onboard.js?v=20260905b"></script>
+<script src="js/auth.js?v=20260905b"></script>
+<script src="js/notifications.js?v=20260905b"></script>
+<script src="js/ice-core.js?v=20260905b"></script>
+<script src="js/camera.js?v=20260905b"></script>
+<script src="js/call-filters.js?v=20260905b"></script>
+<script src="js/calls.js?v=20260905b"></script>
+<script src="js/sfu-live.js?v=20260905b"></script>
+<script src="js/broadcast-live.js?v=20260905b"></script>
+<script src="js/band-room.js?v=20260905b"></script>
+<script src="js/pwa.js?v=20260905b"></script>
+<script src="js/spark-engine.js?v=20260905b"></script>
+<script src="js/spark-lg.js?v=20260905b"></script>
+<script src="js/spark-page.js?v=20260905b"></script>
+<script src="js/spark.js?v=20260905b"></script>
 <!-- /NALUNO_MODULES -->
 </body>
 </html>

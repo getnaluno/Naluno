@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v145: 09.05b Wireline E2E (WhatsApp fan-out + HKDF + live public keys), 3D vibes, no onboard flash.
 // v144: 09.05a first-run welcome, real Privacy/Terms, Next/Skip how-it-works tour.
 // v143: 09.04f diagnostics in admin, weather follows Find Naluno live coords.
 // v142: 09.04e Band 2h wipe is a hard delete + unreadability cutoff, not a hide.
@@ -34,7 +35,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v144';
+const CACHE_NAME = 'naluno-shell-v145';
 const CORE_ASSETS = [
   './', './index.html', './manifest.json', './splash-empty.png', './icon-maskable-512.png', './icon-192.png', './icon-512.png',
   './firebase-config.js', './css/app.css',
