@@ -861,6 +861,54 @@ async function createPeerConnection(){
   }
   try{ if(typeof prewarmIceServers === 'function') prewarmIceServers(); }catch(_){}
   const pc = new RTCPeerConnection(ice);
+
+  /* FIX — "calls sometimes don't go through / take long to connect".
+     The connection above is deliberately built with IceCore.now(), which is
+     the CACHED TURN config if warm and STUN-ONLY if not. That part is right:
+     stalling the offer on a TURN fetch would make every call slow.
+
+     What was missing is the other half. On a cold cache (first call after
+     sign-in, or 25+ minutes idle — the cache TTL) the connection was created
+     STUN-only and the TURN servers fetched by prewarmIceServers() were NEVER
+     applied to it. STUN-only fails on symmetric NAT, which is most mobile
+     carrier networks, so that call simply never connects.
+
+     The existing `pc.restartIce()` recovery could not help either: restartIce
+     re-gathers using the connection's CURRENT configuration, which was still
+     STUN-only. So the recovery path was re-trying the exact thing that had
+     just failed.
+
+     This upgrades the live connection the moment real TURN credentials
+     arrive — setConfiguration() then restartIce() — but ONLY while the call
+     is still trying to connect. Once connected, nothing is touched, so a
+     working call is never disturbed. Entirely non-blocking: the offer is
+     still sent immediately with whatever was available. */
+  try{
+    if(typeof getIceServers === 'function'){
+      getIceServers().then(function(fresh){
+        try{
+          if(!pc || !fresh || !fresh.iceServers || !fresh.iceServers.length) return;
+          if(pc.signalingState === 'closed') return;
+          const st = pc.connectionState;
+          if(st === 'connected' || st === 'completed' || st === 'closed') return;
+          // Only worth doing if we actually gained a TURN server we lacked.
+          const hadTurn = (ice.iceServers || []).some(function(s2){
+            return /^turns?:/i.test(String((s2 && s2.urls) || ''));
+          });
+          const hasTurn = fresh.iceServers.some(function(s2){
+            const u = (s2 && s2.urls) || '';
+            return Array.isArray(u) ? u.some(function(x){ return /^turns?:/i.test(String(x)); })
+                                    : /^turns?:/i.test(String(u));
+          });
+          if(hadTurn || !hasTurn) return;
+          if(typeof pc.setConfiguration !== 'function') return;
+          console.log('[call] TURN arrived after offer — upgrading ICE config and restarting');
+          pc.setConfiguration(fresh);
+          if(typeof pc.restartIce === 'function') pc.restartIce();
+        }catch(e){ console.warn('[call] ICE upgrade skipped', e && e.message); }
+      }).catch(function(){});
+    }
+  }catch(_){}
   remoteCombinedStream = new MediaStream();
 
   pc.ontrack = function(e){
@@ -1288,18 +1336,78 @@ async function clearMissedCallBadge(){
   }catch(e){ /* badge just stays until next successful attempt */ }
 }
 
+let incomingListenerRetries = 0;
+let incomingListenerRetryTimer = null;
+
+/* FIX — "calls sometimes refuse to ring".
+   This listener is started exactly ONCE, from auth.js on sign-in. Its error
+   handler used to be an empty function whose own comment said "incoming calls
+   just won't be detected this session" — and that is precisely what happened.
+   A single transient snapshot error (a network blip, a token refresh, the
+   phone sleeping and the stream closing) silently killed the listener for the
+   rest of the session. The person stays signed in, the app looks completely
+   normal, and their phone simply never rings again until they restart it.
+
+   That is also why it looked intermittent and unreproducible: nothing is
+   broken at the moment of the failed call, something broke minutes or hours
+   earlier and left no trace.
+
+   Now it re-subscribes with backoff, and re-subscribes on reconnect and on
+   returning to the foreground — the two moments a dead listener is most
+   likely and most cheaply repaired. */
 function startIncomingCallListener(){
   if(!fbDb || !currentUser) return;
-  if(incomingCallUnsub) incomingCallUnsub();
-  incomingCallUnsub = fbDb.collection('calls')
-    .where('calleeUid','==',currentUser.uid)
-    .where('status','==','ringing')
-    .onSnapshot(snap=>{
-      snap.docChanges().forEach(change=>{
-        if(change.type==='added') handleIncomingCall(change.doc.id, change.doc.data());
+  if(incomingCallUnsub){ try{ incomingCallUnsub(); }catch(_){} incomingCallUnsub = null; }
+  if(incomingListenerRetryTimer){ clearTimeout(incomingListenerRetryTimer); incomingListenerRetryTimer = null; }
+  try{
+    incomingCallUnsub = fbDb.collection('calls')
+      .where('calleeUid','==',currentUser.uid)
+      .where('status','==','ringing')
+      .onSnapshot(snap=>{
+        incomingListenerRetries = 0;   // a healthy snapshot clears the backoff
+        snap.docChanges().forEach(change=>{
+          if(change.type==='added') handleIncomingCall(change.doc.id, change.doc.data());
+        });
+      }, function(err){
+        console.warn('[call] incoming listener error — will retry', err && err.message);
+        incomingCallUnsub = null;
+        scheduleIncomingListenerRetry();
       });
-    }, ()=>{ /* incoming calls just won't be detected this session */ });
+  }catch(e){
+    console.warn('[call] incoming listener could not start — will retry', e && e.message);
+    scheduleIncomingListenerRetry();
+  }
 }
+
+function scheduleIncomingListenerRetry(){
+  if(incomingListenerRetryTimer) return;
+  // 1s, 2s, 4s, 8s, capped at 30s. Never gives up entirely: an unringable
+  // phone is worse than a few retries, and this costs nothing when idle.
+  const delay = Math.min(30000, 1000 * Math.pow(2, Math.min(incomingListenerRetries, 5)));
+  incomingListenerRetries++;
+  incomingListenerRetryTimer = setTimeout(function(){
+    incomingListenerRetryTimer = null;
+    if(typeof currentUser !== 'undefined' && currentUser) startIncomingCallListener();
+  }, delay);
+}
+
+/* Re-arm at the two moments a dead listener is most likely: coming back
+   online, and returning to the foreground after the phone slept. Both simply
+   re-subscribe, which is a no-op cost when the listener is already healthy. */
+(function watchIncomingListenerHealth(){
+  function rearm(){
+    try{
+      if(typeof currentUser === 'undefined' || !currentUser) return;
+      if(!incomingCallUnsub) startIncomingCallListener();
+    }catch(_){}
+  }
+  try{
+    window.addEventListener('online', function(){ setTimeout(rearm, 800); });
+    document.addEventListener('visibilitychange', function(){
+      if(!document.hidden) setTimeout(rearm, 500);
+    });
+  }catch(_){}
+})();
 function handleIncomingCall(callId, data){
   // Calls always win over live / band / lobby camera preview.
   callActionInProgress = false;
@@ -1649,7 +1757,7 @@ async function startRealCall(c){
     if(d.answer && !remoteDescriptionSet && peerConnection){
       remoteDescriptionSet = true;
       peerConnection.setRemoteDescription(new RTCSessionDescription(d.answer)).then(()=>{
-        pendingRemoteCandidates.forEach(cand => peerConnection.addIceCandidate(new RTCIceCandidate(cand)).catch(()=>{}));
+        if(peerConnection) pendingRemoteCandidates.forEach(cand => { try{ peerConnection.addIceCandidate(new RTCIceCandidate(cand)).catch(()=>{}); }catch(_){} });
         pendingRemoteCandidates = [];
       }).catch(err => console.log('[call] setRemoteDescription(answer) failed:', err));
     }
@@ -1687,8 +1795,17 @@ async function startRealCall(c){
     snap.docChanges().forEach(change=>{
       if(change.type!=='added') return;
       const cand = change.doc.data();
-      if(remoteDescriptionSet) peerConnection.addIceCandidate(new RTCIceCandidate(cand)).catch(()=>{});
-      else pendingRemoteCandidates.push(cand);
+      // Null guard: these snapshot callbacks can still fire after the call has
+      // been torn down (Firestore delivers a final batch as listeners detach),
+      // and `peerConnection` is set to null on teardown. Calling
+      // .addIceCandidate on null throws SYNCHRONOUSLY, so the trailing
+      // .catch() never sees it — the error escapes into the snapshot handler
+      // and aborts the rest of that batch.
+      if(remoteDescriptionSet && peerConnection){
+        try{ peerConnection.addIceCandidate(new RTCIceCandidate(cand)).catch(()=>{}); }catch(_){}
+      } else if(!remoteDescriptionSet){
+        pendingRemoteCandidates.push(cand);
+      }
     });
   });
 
@@ -1886,7 +2003,7 @@ $('acceptIncoming').onclick = async ()=>{
 
     await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
     remoteDescriptionSet = true;
-    pendingRemoteCandidates.forEach(cand => peerConnection.addIceCandidate(new RTCIceCandidate(cand)).catch(()=>{}));
+    if(peerConnection) pendingRemoteCandidates.forEach(cand => { try{ peerConnection.addIceCandidate(new RTCIceCandidate(cand)).catch(()=>{}); }catch(_){} });
     pendingRemoteCandidates = [];
 
     const answer = await peerConnection.createAnswer();
@@ -1904,7 +2021,7 @@ $('acceptIncoming').onclick = async ()=>{
     if(callerCandidatesUnsub) callerCandidatesUnsub();
     callerCandidatesUnsub = callRef.collection('callerCandidates').onSnapshot(snap=>{
       snap.docChanges().forEach(change=>{
-        if(change.type==='added') peerConnection.addIceCandidate(new RTCIceCandidate(change.doc.data())).catch(()=>{});
+        if(change.type==='added' && peerConnection){ try{ peerConnection.addIceCandidate(new RTCIceCandidate(change.doc.data())).catch(()=>{}); }catch(_){} }
       });
     });
 
