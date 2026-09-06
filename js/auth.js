@@ -45,9 +45,12 @@ function nalunoEnterApp(){
     if(!gate) return;
     try{
       window.__nalunoOnboardActive = false;
-      const w = $('nalunoWelcome'); if(w) w.classList.remove('on');
-      const t = $('nalunoTour'); if(t) t.classList.remove('on');
-      const legal = $('nalunoLegal'); if(legal) legal.classList.remove('on');
+      const w = $('nalunoWelcome');
+      if(w){ w.classList.remove('on'); w.setAttribute('hidden',''); }
+      const t = $('nalunoTour');
+      if(t){ t.classList.remove('on'); t.setAttribute('hidden',''); }
+      const legal = $('nalunoLegal');
+      if(legal){ legal.classList.remove('on'); legal.setAttribute('hidden',''); }
     }catch(_){}
     gate.classList.add('naluno-entry-out');
     setTimeout(function(){
@@ -986,6 +989,7 @@ function loadRealProfile(user){
   try{ if(typeof ensureCallPushReady === 'function') ensureCallPushReady(); }catch(_){}
   flushMessageQueue();
   ensureMyKeyPair();
+  try{ if(typeof publishMyPublicKey === 'function') publishMyPublicKey(); }catch(_){}
   checkForPendingVideoJob();
 }
 /* If the person already granted notification permission in a previous session, re-fetch

@@ -346,8 +346,14 @@ function onboardEls(){
 
 function hideOnboardSurfaces(){
   const e = onboardEls();
-  if(e.welcome) e.welcome.classList.remove('on');
-  if(e.tour) e.tour.classList.remove('on');
+  if(e.welcome){
+    e.welcome.classList.remove('on');
+    e.welcome.setAttribute('hidden', '');
+  }
+  if(e.tour){
+    e.tour.classList.remove('on');
+    e.tour.setAttribute('hidden', '');
+  }
 }
 
 function showAuthForm(){
@@ -391,8 +397,14 @@ function showWelcome(){
   window.__nalunoOnboardActive = true;
   if(e.loading) e.loading.style.display = 'none';
   if(e.form) e.form.style.display = 'none';
-  if(e.tour) e.tour.classList.remove('on');
-  if(e.welcome) e.welcome.classList.add('on');
+  if(e.tour){
+    e.tour.classList.remove('on');
+    e.tour.setAttribute('hidden', '');
+  }
+  if(e.welcome){
+    e.welcome.removeAttribute('hidden');
+    e.welcome.classList.add('on');
+  }
   if(e.gate) e.gate.classList.add('active');
   document.body.classList.add('naluno-gated');
   paintWelcome();
@@ -433,8 +445,14 @@ function showTour(startAt){
   onboardTourIndex = typeof startAt === 'number' ? startAt : 0;
   if(e.loading) e.loading.style.display = 'none';
   if(e.form) e.form.style.display = 'none';
-  if(e.welcome) e.welcome.classList.remove('on');
-  if(e.tour) e.tour.classList.add('on');
+  if(e.welcome){
+    e.welcome.classList.remove('on');
+    e.welcome.setAttribute('hidden', '');
+  }
+  if(e.tour){
+    e.tour.removeAttribute('hidden');
+    e.tour.classList.add('on');
+  }
   if(e.gate) e.gate.classList.add('active');
   document.body.classList.add('naluno-gated');
   paintTour();
@@ -458,12 +476,16 @@ function openNalunoLegal(kind){
   body.innerHTML = isPrivacy ? nalunoPrivacyHtml() : nalunoTermsHtml();
   body.scrollTop = 0;
   legal.classList.add('on');
+  legal.removeAttribute('hidden');
   legal.setAttribute('data-kind', isPrivacy ? 'privacy' : 'terms');
 }
 
 function closeNalunoLegal(){
   const legal = $('nalunoLegal');
-  if(legal) legal.classList.remove('on');
+  if(legal){
+    legal.classList.remove('on');
+    legal.setAttribute('hidden', '');
+  }
 }
 
 /**
@@ -472,8 +494,15 @@ function closeNalunoLegal(){
  */
 function nalunoMaybeOnboard(){
   try{
+    if(document.documentElement.getAttribute('data-naluno-known') === '1'){
+      markNalunoOnboardComplete();
+      hideOnboardSurfaces();
+      return false;
+    }
     if(nalunoIsReturningDevice()){
       markNalunoOnboardComplete();
+      try{ document.documentElement.setAttribute('data-naluno-known', '1'); }catch(_){}
+      hideOnboardSurfaces();
       return false;
     }
   }catch(_){}

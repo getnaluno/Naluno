@@ -314,6 +314,14 @@ function openThread(contactId){
   if(c.isReal && c.firebaseUid && fbDb && currentUser){
     wirelineThreads[contactId] = wirelineThreads[contactId] || [];
     renderThreadMessages();
+    try{
+      if(typeof fetchUserPublicKey === 'function'){
+        fetchUserPublicKey(c.firebaseUid, true).then(function(jwk){
+          if(jwk) c.publicKey = jwk;
+        }).catch(function(){});
+      }
+      if(typeof publishMyPublicKey === 'function') publishMyPublicKey();
+    }catch(_){}
     const tid = realThreadId(c.firebaseUid);
     const threadRef = fbDb.collection('threads').doc(tid);
     activeThreadUnsubscribe = threadRef.collection('messages').orderBy('ts','asc').onSnapshot(async snap=>{
@@ -328,15 +336,17 @@ function openThread(contactId){
           } else if(wirelineDecryptCache[cacheKey]){
             text = wirelineDecryptCache[cacheKey];
           } else {
-            const decrypted = await decryptWirelineMessage(m, c);
-            if(decrypted !== null && decrypted !== undefined && decrypted !== ''){
+            const opener = (typeof nalunoOpenSealed === 'function') ? nalunoOpenSealed : decryptWirelineMessage;
+            const decrypted = await opener(m, c);
+            if(decrypted !== null && decrypted !== undefined){
               text = decrypted;
               wirelineDecryptCache[cacheKey] = decrypted;
+              if(cmidKey) wirelineDecryptCache[cmidKey] = decrypted;
               try{ persistWirelineDecryptCache(); }catch(_){}
             } else if(m.text){
               text = m.text;
             } else {
-              text = 'Encrypted · open on the device that sent this';
+              text = (typeof NALUNO_SEAL_FAIL === 'string') ? NALUNO_SEAL_FAIL : 'Couldn\u2019t read this on this phone. Ask them to send it again.';
             }
           }
         }
@@ -475,9 +485,9 @@ function voiceBubbleHtml(m){
 }
 function moodBubbleHtml(m){
   const mood = MOODS.find(x=>x.key===m.mood) || MOODS[0];
-  return `<div style="width:150px; height:90px; border-radius:14px; overflow:hidden; position:relative;">
-    <canvas class="mood-canvas" data-vibe="${mood.vibe}" width="150" height="90" style="width:100%; height:100%; display:block;"></canvas>
-    <div style="position:absolute; left:9px; bottom:7px; font-family:var(--font-mono); font-size:9.5px; color:rgba(255,255,255,.85); text-shadow:0 1px 3px rgba(0,0,0,.6);">${escapeHtml(mood.label)}</div>
+  return `<div class="mood-orb mood-orb-bubble" data-mood="${mood.key}">
+    <canvas class="mood-canvas" data-mood="${mood.key}" data-vibe="${mood.vibe}" width="220" height="132"></canvas>
+    <div class="mood-orb-label">${escapeHtml(mood.label)}</div>
   </div>`;
 }
 /* Reactions replace 👍❤️😂 with something that actually tells the sender what landed —
@@ -519,22 +529,25 @@ function persistWirelineDecryptCache(){
   }catch(_){}
 }
 async function decryptWirelineMessage(m, contact){
+  if(typeof nalunoOpenSealed === 'function'){
+    try{ return await nalunoOpenSealed(m, contact); }catch(_){}
+  }
   const env = m.envelopes && currentUser ? m.envelopes[currentUser.uid] : null;
   const ct = env ? env.ciphertext : m.ciphertext;
   const iv = env ? env.iv : m.iv;
   if(!ct || !iv || typeof decryptMessageText !== 'function') return m.text || null;
   const sender = m.from || (contact && contact.firebaseUid);
-  // Own envelope is sealed to my public key.
+  const kdf = (env && env.kdf) || m.kdf;
   if(env && currentUser && sender === currentUser.uid){
     try{
       const mine = await ensureMyKeyPair();
       if(mine && mine.publicJwk){
-        const p = await decryptMessageText(currentUser.uid, mine.publicJwk, ct, iv);
+        const p = await decryptMessageText(currentUser.uid, mine.publicJwk, ct, iv, kdf);
         if(p != null) return p;
       }
     }catch(_){}
   }
-  let pk = contact && contact.publicKey;
+  let pk = (env && env.senderPub) || m.senderPub || (contact && contact.publicKey);
   if(!pk && fbDb && contact && contact.firebaseUid){
     try{
       const doc = await fbDb.collection('users').doc(contact.firebaseUid).get();
@@ -543,7 +556,7 @@ async function decryptWirelineMessage(m, contact){
   }
   try{
     const peer = sender && sender !== (currentUser && currentUser.uid) ? sender : (contact && contact.firebaseUid);
-    const p = await decryptMessageText(peer, pk, ct, iv);
+    const p = await decryptMessageText(peer, pk, ct, iv, kdf);
     if(p != null) return p;
   }catch(_){}
   return m.text || null;
@@ -1217,27 +1230,25 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
     let finalPayload = payload;
     let finalPreview = previewText;
     if(payload.type === 'text'){
-      let encrypted = null;
-      let envelopes = null;
+      let sealed = null;
       try{
-        envelopes = {};
-        const pk = c.publicKey;
-        if(pk && typeof encryptMessageText === 'function'){
-          encrypted = await encryptMessageText(c.firebaseUid, pk, payload.text);
-          if(encrypted) envelopes[c.firebaseUid] = encrypted;
+        if(typeof nalunoSealText === 'function'){
+          sealed = await nalunoSealText(payload.text, c.firebaseUid);
         }
-        if(typeof ensureMyKeyPair === 'function' && currentUser){
-          const mine = await ensureMyKeyPair();
-          if(mine && mine.publicJwk){
-            const encMe = await encryptMessageText(currentUser.uid, mine.publicJwk, payload.text);
-            if(encMe) envelopes[currentUser.uid] = encMe;
-          }
-        }
-        if(!Object.keys(envelopes).length) envelopes = null;
-      }catch(_){ encrypted = null; envelopes = null; }
-      finalPayload = (encrypted || envelopes)
-        ? { type:'text', ciphertext: encrypted ? encrypted.ciphertext : null, iv: encrypted ? encrypted.iv : null, encrypted:true, envelopes: envelopes || null }
-        : { type:'text', text: payload.text, encrypted:false };
+      }catch(_){ sealed = null; }
+      if(sealed && sealed.encrypted && sealed.envelopes){
+        finalPayload = {
+          type:'text',
+          ciphertext: sealed.ciphertext || null,
+          iv: sealed.iv || null,
+          encrypted: true,
+          envelopes: sealed.envelopes,
+          senderPub: sealed.senderPub || null,
+          kdf: sealed.kdf || 'hkdf',
+        };
+      } else {
+        finalPayload = { type:'text', text: payload.text, encrypted:false };
+      }
       finalPreview = previewText;
     }
     const wire = Object.assign({}, finalPayload);
@@ -1625,9 +1636,9 @@ $('threadAudioPlayer').addEventListener('ended', ()=>{ currentPlayingVoiceId = n
 /* ---------------- MOOD PICKER (silent communication) ---------------- */
 function renderMoodPicker(){
   $('threadComposerMood').innerHTML = MOODS.map(m=>`
-    <div class="mood-pick-card" data-mood="${m.key}" style="flex-shrink:0; width:76px; height:56px; border-radius:12px; overflow:hidden; position:relative; cursor:pointer; border:1px solid var(--line);">
-      <canvas class="mood-canvas" data-vibe="${m.vibe}" width="76" height="56" style="width:100%; height:100%; display:block;"></canvas>
-      <div style="position:absolute; left:5px; bottom:3px; font-family:var(--font-mono); font-size:7.5px; color:rgba(255,255,255,.85); text-shadow:0 1px 2px rgba(0,0,0,.6);">${escapeHtml(m.label)}</div>
+    <div class="mood-orb mood-orb-pick" data-mood="${m.key}" role="button" tabindex="0">
+      <canvas class="mood-canvas" data-mood="${m.key}" data-vibe="${m.vibe}" width="152" height="112"></canvas>
+      <div class="mood-orb-label">${escapeHtml(m.label)}</div>
     </div>`).join('');
   document.querySelectorAll('#threadComposerMood [data-mood]').forEach(el=>{
     el.onclick = ()=> sendMoodMessage(el.dataset.mood);
@@ -1664,19 +1675,181 @@ function sendMoodMessage(moodKey){
   advanceReceipt(id, msg);
   maybeSimulateReply(id);
 }
-/* Animates every visible mood-canvas — in the picker and in sent bubbles alike — reusing
-   backgroundPresets directly. Only runs while Wireline's thread overlay is open. */
+/* 3D mood scenes. Each feeling has its own depth, light, and motion so
+   Exhausted is not a recolour of Calm. Perspective: camera looks +z. */
+function moodHash(i, salt){
+  const x = Math.sin((i + 1) * 127.1 + (salt || 0) * 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
+function moodProject(x, y, z, w, h, fov){
+  const s = fov / Math.max(0.18, z);
+  return { x: w * 0.5 + x * s, y: h * 0.52 + y * s, r: s };
+}
+function paintMood3d(ctx, w, h, t, key){
+  const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const tt = reduced ? 0.4 : t;
+  if(key === 'exhausted') paintMoodExhausted(ctx, w, h, tt);
+  else if(key === 'calm') paintMoodCalm(ctx, w, h, tt);
+  else if(key === 'warm') paintMoodWarm(ctx, w, h, tt);
+  else if(key === 'wonder') paintMoodWonder(ctx, w, h, tt);
+  else if(key === 'peaceful') paintMoodPeaceful(ctx, w, h, tt);
+  else if(key === 'longing') paintMoodLonging(ctx, w, h, tt);
+  else if(key === 'overwhelmed') paintMoodOverwhelmed(ctx, w, h, tt);
+  else paintMoodCalm(ctx, w, h, tt);
+}
+function paintMoodExhausted(ctx, w, h, t){
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, '#12151c'); g.addColorStop(1, '#07080c');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+  const lamp = ctx.createRadialGradient(w * 0.5, h * 0.18, 4, w * 0.5, h * 0.18, w * 0.7);
+  lamp.addColorStop(0, 'rgba(90,110,140,0.22)'); lamp.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = lamp; ctx.fillRect(0, 0, w, h);
+  for(let i = 0; i < 42; i++){
+    const u = moodHash(i, 1);
+    const z = 0.35 + moodHash(i, 2) * 2.4;
+    const x = (u - 0.5) * 2.2;
+    const fall = ((t * (0.18 + moodHash(i, 3) * 0.22) + moodHash(i, 4)) % 1);
+    const y = -1.1 + fall * 2.6;
+    const p = moodProject(x, y, z, w, h, Math.min(w, h) * 0.55);
+    const len = 10 + (1 / z) * 18;
+    ctx.strokeStyle = 'rgba(170,190,220,' + (0.18 + 0.45 / z) + ')';
+    ctx.lineWidth = Math.max(1, 2.4 / z);
+    ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x - 1.2 / z, p.y + len); ctx.stroke();
+  }
+}
+function paintMoodCalm(ctx, w, h, t){
+  ctx.fillStyle = '#071016'; ctx.fillRect(0, 0, w, h);
+  const bands = [
+    { c:'124,255,178', ph:0, sp:0.22 },
+    { c:'0,229,255', ph:2.1, sp:0.16 },
+    { c:'90,140,255', ph:4.0, sp:0.12 },
+  ];
+  bands.forEach(function(b, i){
+    const z = 0.8 + i * 0.45;
+    const y = Math.sin(t * b.sp + b.ph) * 0.22;
+    const x = Math.cos(t * b.sp * 0.7 + b.ph) * 0.18;
+    const p = moodProject(x, y, z, w, h, Math.min(w, h) * 0.9);
+    const rad = (80 + i * 28) * (p.r / 80);
+    const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, rad);
+    g.addColorStop(0, 'rgba(' + b.c + ',0.42)');
+    g.addColorStop(1, 'rgba(' + b.c + ',0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+  });
+}
+function paintMoodWarm(ctx, w, h, t){
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, '#2a1510'); g.addColorStop(1, '#120804');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+  const beat = 0.55 + 0.45 * Math.sin(t * 1.15);
+  const core = ctx.createRadialGradient(w * 0.5, h * 0.62, 2, w * 0.5, h * 0.62, w * 0.55);
+  core.addColorStop(0, 'rgba(255,170,90,' + (0.42 + 0.28 * beat) + ')');
+  core.addColorStop(0.45, 'rgba(255,90,70,0.18)');
+  core.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = core; ctx.fillRect(0, 0, w, h);
+  for(let i = 0; i < 28; i++){
+    const u = moodHash(i, 8);
+    const z = 0.4 + moodHash(i, 9) * 2.1;
+    const ang = t * 0.25 + u * Math.PI * 2;
+    const x = Math.cos(ang) * (0.15 + moodHash(i, 10) * 0.7);
+    const y = Math.sin(ang * 0.8) * 0.35 - 0.1 * z;
+    const p = moodProject(x, y, z, w, h, Math.min(w, h) * 0.7);
+    ctx.fillStyle = 'rgba(255,210,140,' + (0.25 + 0.55 / z) + ')';
+    ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(0.8, 2.6 / z), 0, Math.PI * 2); ctx.fill();
+  }
+}
+function paintMoodWonder(ctx, w, h, t){
+  ctx.fillStyle = '#03040a'; ctx.fillRect(0, 0, w, h);
+  for(let i = 0; i < 70; i++){
+    let z = ((moodHash(i, 11) + t * (0.22 + moodHash(i, 12) * 0.35)) % 1) * 2.6 + 0.2;
+    const x = (moodHash(i, 13) - 0.5) * 2.4;
+    const y = (moodHash(i, 14) - 0.5) * 1.6;
+    const p = moodProject(x, y, z, w, h, Math.min(w, h) * 0.72);
+    const tw = 0.45 + 0.55 * Math.abs(Math.sin(t * 2 + i));
+    ctx.fillStyle = (i % 9 === 0) ? 'rgba(124,255,178,' + tw + ')' : 'rgba(230,240,255,' + tw + ')';
+    ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(0.5, (2.8 / z) * tw), 0, Math.PI * 2); ctx.fill();
+  }
+  const neb = ctx.createRadialGradient(w * 0.62, h * 0.38, 0, w * 0.62, h * 0.38, w * 0.5);
+  neb.addColorStop(0, 'rgba(90,70,255,0.22)'); neb.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = neb; ctx.fillRect(0, 0, w, h);
+}
+function paintMoodPeaceful(ctx, w, h, t){
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, '#1a3a24'); g.addColorStop(1, '#07140c');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+  ctx.save(); ctx.globalAlpha = 0.12;
+  for(let i = 0; i < 5; i++){
+    const rx = w * (0.12 + i * 0.18) + Math.sin(t * 0.2 + i) * 8;
+    ctx.fillStyle = '#EFFFCE';
+    ctx.beginPath();
+    ctx.moveTo(rx, 0); ctx.lineTo(rx + w * 0.08, 0); ctx.lineTo(rx - w * 0.04, h); ctx.lineTo(rx - w * 0.12, h);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+  for(let i = 0; i < 36; i++){
+    const z = 0.45 + moodHash(i, 20) * 2.0;
+    const x = (moodHash(i, 21) - 0.5) * 2.0;
+    const y = Math.sin(t * 0.35 + i) * 0.15 + (moodHash(i, 22) - 0.45);
+    const p = moodProject(x, y, z, w, h, Math.min(w, h) * 0.65);
+    ctx.fillStyle = 'rgba(220,255,190,' + (0.2 + 0.5 / z) + ')';
+    ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(0.7, 2.2 / z), 0, Math.PI * 2); ctx.fill();
+  }
+}
+function paintMoodLonging(ctx, w, h, t){
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, '#0a0b1a'); g.addColorStop(0.55, '#2a1838'); g.addColorStop(1, '#6a2a18');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+  const moonX = w * 0.78, moonY = h * 0.22, moonR = Math.min(w, h) * 0.11;
+  const glow = ctx.createRadialGradient(moonX, moonY, 0, moonX, moonY, moonR * 3.2);
+  glow.addColorStop(0, 'rgba(255,230,170,0.4)'); glow.addColorStop(1, 'rgba(255,230,170,0)');
+  ctx.fillStyle = glow; ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = '#FFE9B8';
+  ctx.beginPath(); ctx.arc(moonX, moonY, moonR, 0, Math.PI * 2); ctx.fill();
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.beginPath(); ctx.arc(moonX - moonR * 0.38, moonY - moonR * 0.12, moonR * 0.9, 0, Math.PI * 2); ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
+  for(let i = 0; i < 24; i++){
+    const z = 0.5 + moodHash(i, 30) * 1.8;
+    const x = ((moodHash(i, 31) + t * 0.04) % 1) * 2.4 - 1.2;
+    const y = 0.35 + moodHash(i, 32) * 0.4;
+    const p = moodProject(x, y, z, w, h, Math.min(w, h) * 0.6);
+    ctx.fillStyle = 'rgba(255,200,140,' + (0.15 + 0.35 / z) + ')';
+    ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(0.6, 1.8 / z), 0, Math.PI * 2); ctx.fill();
+  }
+}
+function paintMoodOverwhelmed(ctx, w, h, t){
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, '#0c2430'); g.addColorStop(1, '#031016');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+  for(let i = 0; i < 70; i++){
+    let z = ((moodHash(i, 40) + t * (0.7 + moodHash(i, 41) * 0.9)) % 1) * 2.8 + 0.15;
+    const x = (moodHash(i, 42) - 0.5) * 1.6;
+    const y = (moodHash(i, 43) - 0.55) * 1.5;
+    const p = moodProject(x, y, z, w, h, Math.min(w, h) * 0.85);
+    const len = 8 + 22 / z;
+    ctx.strokeStyle = 'rgba(200,240,255,' + (0.15 + 0.55 / z) + ')';
+    ctx.lineWidth = Math.max(1, 3.2 / z);
+    ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x, p.y + len); ctx.stroke();
+  }
+  const mist = ctx.createRadialGradient(w * 0.5, h, 0, w * 0.5, h, w * 0.7);
+  mist.addColorStop(0, 'rgba(220,250,255,0.32)'); mist.addColorStop(1, 'rgba(220,250,255,0)');
+  ctx.fillStyle = mist; ctx.fillRect(0, h * 0.62, w, h * 0.4);
+}
+
 const moodAnimStart = performance.now();
 function moodAnimTick(now){
   requestAnimationFrame(moodAnimTick);
-  if(!$('wirelineThread').classList.contains('active')) return;
+  const thread = $('wirelineThread');
+  if(!thread || !thread.classList.contains('active')) return;
   const canvases = document.querySelectorAll('.mood-canvas');
-  if(canvases.length===0) return;
+  if(canvases.length === 0) return;
   const t = (now - moodAnimStart) / 1000;
-  canvases.forEach(c=>{
-    const preset = backgroundPresets[c.dataset.vibe];
-    if(!preset || preset.type!=='canvas') return;
-    preset.painter(c.getContext('2d'), c.width, c.height, t);
+  canvases.forEach(function(c){
+    const ctx = c.getContext('2d');
+    if(!ctx) return;
+    const key = c.dataset.mood;
+    if(key){ paintMood3d(ctx, c.width, c.height, t, key); return; }
+    const preset = typeof backgroundPresets !== 'undefined' ? backgroundPresets[c.dataset.vibe] : null;
+    if(preset && preset.type === 'canvas' && preset.painter) preset.painter(ctx, c.width, c.height, t);
   });
 }
 requestAnimationFrame(moodAnimTick);

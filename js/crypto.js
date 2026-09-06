@@ -5,30 +5,25 @@
    Scripts share globals (intentional) so load order matches the old monolith.
    ============================================================ */
 /* ---------------- Wireline text crypto ----------------
-   ECDH (P-256) + AES-GCM-256 end-to-end encryption. Historically disabled after
-   messages became permanently undecryptable when a device's local storage was
-   wiped (reinstall, browser storage pressure, a new device) — the private key
-   was gone for good with no way to recover it, so ciphertext-only text could
-   vanish. That was a durability gap, not a flaw in the encryption itself.
-   Fixed with real password-backed key backup/recovery (see backupPrivateKeyWithPassword
-   / recoverPrivateKeyWithPassword below) — the server only ever custodies a
-   password-wrapped blob it cannot open, so this doesn't weaken confidentiality,
-   it's the same backup pattern real E2E products use. With that fixed, encryption
-   is back on for the send path in wireline.js and band-room.js.
+   ECDH (P-256) + AES-GCM-256 end-to-end encryption, following the same
+   client-side rules WhatsApp / Signal publish (not a port of libsignal):
 
-   Honest limits, stated plainly rather than promised away: this protects message
-   content from anyone reading the database directly, including Naluno's own
-   operators — that's what "end-to-end" means. It does NOT protect against a
-   compromised device (if someone's phone is unlocked and the app is open, the
-   messages are as readable as any app's), and the backup's strength is bounded
-   by the account password's strength (a weak, guessable password weakens the
-   backup along with it — this is disclosed to the person, not hidden). No
-   messaging product, including this one, can honestly claim to be permanently
-   unbreakable forever; what can be delivered is a correct, standard, well-reviewed
-   implementation with no shortcuts in the parts that are within its control,
-   which is what this is. Google/native sign-in accounts have no password to
-   derive a backup key from — those identities do not yet have a recovery path
-   if local storage is lost; that's a known, disclosed gap, not silently ignored. */
+   1. Encrypt on this phone. The server only ever stores ciphertext.
+   2. Client fan-out: one envelope for the other person, one for this phone,
+      each sealed to that identity's current public key.
+   3. Stamp senderPub on the packet so decrypt uses the key that sealed it,
+      not whoever's publicKey happens to be published later.
+   4. If the other person has no published key yet, send readable text —
+      never a blob they cannot open.
+   5. A phone that lost its private key mints a new identity and publishes it.
+      Old envelopes stay locked (honest fail). New messages work.
+
+   HKDF-SHA256 wraps the ECDH secret on new envelopes (kdf:'hkdf'). Older
+   envelopes used the raw bits; decrypt tries both.
+
+   Honest limits: this protects content from anyone reading the database,
+   including Naluno. It does not protect a compromised unlocked phone.
+   Google/native accounts use a one-time recovery code for backup. */
 const E2E_DB_NAME = 'naluno-keys', E2E_STORE = 'keys';
 function openKeyDb(){
   return new Promise((resolve, reject)=>{
@@ -40,17 +35,7 @@ function openKeyDb(){
   });
 }
 
-/* ---------------- PENDING VIDEO JOB PERSISTENCE ----------------
-   A refresh or accidental navigation used to wipe an in-progress trim/split entirely —
-   everything lived only in JS memory. The beforeunload warning stops that from
-   happening by accident, but doesn't help if the tab genuinely does close (a crash, a
-   real navigation away, low-memory tab eviction on mobile). This is the real fix:
-   the original file plus the exact trim selection gets saved to IndexedDB the moment
-   extraction starts, checked for on every app load, and offered back as a one-tap
-   resume — not literally continuing from 50% (that's not meaningful for a real-time
-   capture process), but never losing the file pick and trim choices, which is the
-   actually painful part of "starting over." Cleared the moment a job finishes, either
-   by succeeding or by a normal in-session failure the person already saw a toast for. */
+/* ---------------- PENDING VIDEO JOB PERSISTENCE ---------------- */
 const PENDING_JOB_DB_NAME = 'naluno-pending-video', PENDING_JOB_STORE = 'job';
 function openPendingJobDb(){
   return new Promise((resolve, reject)=>{
@@ -67,7 +52,7 @@ function savePendingVideoJob(job){
     tx.objectStore(PENDING_JOB_STORE).put(job, 'current');
     tx.oncomplete = ()=> resolve();
     tx.onerror = ()=> reject(tx.error);
-  })).catch(()=>{}); // if IndexedDB is unavailable, the job just isn't recoverable after a reload — no worse than before this existed
+  })).catch(()=>{});
 }
 function getPendingVideoJob(){
   return openPendingJobDb().then(db => new Promise((resolve)=>{
@@ -84,9 +69,6 @@ function clearPendingVideoJob(){
     tx.onerror = ()=> resolve();
   })).catch(()=>{});
 }
-/* Checked once at startup — if a job survived an unexpected reload, offer it back
-   rather than silently discarding it or silently auto-restarting a real, possibly
-   lengthy re-encoding job without asking first. */
 async function checkForPendingVideoJob(){
   const job = await getPendingVideoJob();
   if(!job) return;
@@ -94,8 +76,6 @@ async function checkForPendingVideoJob(){
   if(proceed){
     openTrimOverlay(job.file);
     if(job.start != null && job.end != null){
-      // Restore the exact selection once the video metadata loads, rather than
-      // resetting to the full range.
       const v = $('trimPreviewVideo');
       const applySelection = ()=>{
         const duration = v.duration || 1;
@@ -127,7 +107,7 @@ function idbSet(key, value){
 }
 function arrayBufferToBase64(buf){
   let binary = '';
-  const bytes = new Uint8Array(buf);
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
   for(let i=0;i<bytes.byteLength;i++) binary += String.fromCharCode(bytes[i]);
   return btoa(binary);
 }
@@ -139,14 +119,6 @@ function base64ToArrayBuffer(b64){
 }
 
 let myKeyPairPromise = null;
-/* Loads the existing key pair from this device if one exists, otherwise generates a
-   real one and publishes only the public half. Cached as a promise so concurrent
-   callers share one generation/load rather than racing to create two key pairs.
-
-   IMPORTANT: we store JWKs in IndexedDB, never the live CryptoKey objects.
-   Storing CryptoKey directly is unreliable across reloads in many browsers — the
-   private key often comes back unusable, which is exactly why messages were
-   failing to decrypt after a refresh or on the other device. */
 async function importMyKeyPairFromJwks(privateJwk, publicJwk){
   const privateKey = await crypto.subtle.importKey(
     'jwk', privateJwk, { name:'ECDH', namedCurve:'P-256' }, true, ['deriveKey','deriveBits']
@@ -168,88 +140,188 @@ function readKeyPairBackup(){
 function writeKeyPairBackup(privateJwk, publicJwk){
   try{ localStorage.setItem('nalunoE2eKeyPair', JSON.stringify({ privateJwk, publicJwk })); }catch(_){}
 }
+async function persistMyKeyPair(privateJwk, publicJwk){
+  try{ await idbSet('myKeyPair', { privateJwk, publicJwk }); }catch(_){}
+  writeKeyPairBackup(privateJwk, publicJwk);
+}
+/** Read whatever this phone already has. Never mints. Recovery must run before mint. */
+async function loadLocalKeyPair(){
+  if(!window.crypto || !window.crypto.subtle) return null;
+  try{
+    const stored = (window.indexedDB ? await idbGet('myKeyPair') : null) || readKeyPairBackup();
+    if(stored && stored.privateJwk && stored.publicJwk){
+      const keys = await importMyKeyPairFromJwks(stored.privateJwk, stored.publicJwk);
+      writeKeyPairBackup(stored.privateJwk, stored.publicJwk);
+      return keys;
+    }
+    if(stored && stored.privateKey && stored.publicKey){
+      try{
+        const privateJwk = await crypto.subtle.exportKey('jwk', stored.privateKey);
+        const publicJwk = await crypto.subtle.exportKey('jwk', stored.publicKey);
+        await persistMyKeyPair(privateJwk, publicJwk);
+        return { privateKey: stored.privateKey, publicKey: stored.publicKey, privateJwk, publicJwk };
+      }catch(_){}
+    }
+  }catch(_){}
+  return null;
+}
+async function mintAndPublishKeyPair(){
+  const keyPair = await crypto.subtle.generateKey(
+    { name:'ECDH', namedCurve:'P-256' }, true, ['deriveKey','deriveBits']
+  );
+  const privateJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
+  const publicJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+  await persistMyKeyPair(privateJwk, publicJwk);
+  if(typeof currentUser !== 'undefined' && currentUser && typeof fbDb !== 'undefined' && fbDb){
+    fbDb.collection('users').doc(currentUser.uid).set({
+      publicKey: publicJwkCompact(publicJwk),
+      publicKeyUpdatedAt: Date.now(),
+      e2eRotatedAt: Date.now(),
+    }, { merge:true }).catch(function(){});
+  }
+  return { privateKey: keyPair.privateKey, publicKey: keyPair.publicKey, privateJwk, publicJwk };
+}
 function ensureMyKeyPair(){
   if(myKeyPairPromise) return myKeyPairPromise;
   myKeyPairPromise = (async ()=>{
     if(!window.crypto || !window.crypto.subtle) return null;
-    // 1. Try to load previously stored JWKs and re-import them into live CryptoKeys.
+    const local = await loadLocalKeyPair();
+    if(local && local.privateKey){
+      try{ publishMyPublicKey(); }catch(_){}
+      return local;
+    }
     try{
-      const stored = (window.indexedDB ? await idbGet('myKeyPair') : null) || readKeyPairBackup();
-      if(stored && stored.privateJwk && stored.publicJwk){
-        const keys = await importMyKeyPairFromJwks(stored.privateJwk, stored.publicJwk);
-        writeKeyPairBackup(stored.privateJwk, stored.publicJwk);
-        return keys;
-      }
-      // Legacy path: older builds stored the CryptoKey objects themselves. If we still
-      // have usable ones, migrate them to JWKs so future loads are reliable.
-      if(stored && stored.privateKey && stored.publicKey){
-        try{
-          const privateJwk = await crypto.subtle.exportKey('jwk', stored.privateKey);
-          const publicJwk = await crypto.subtle.exportKey('jwk', stored.publicKey);
-          await idbSet('myKeyPair', { privateJwk, publicJwk });
-          writeKeyPairBackup(privateJwk, publicJwk);
-          if(currentUser && fbDb){
-            fbDb.collection('users').doc(currentUser.uid).set({ publicKey: publicJwk }, { merge:true }).catch(()=>{});
-          }
-          return { privateKey: stored.privateKey, publicKey: stored.publicKey, privateJwk, publicJwk };
-        }catch(e){ /* fall through to generate a fresh pair */ }
-      }
-    }catch(e){ /* nothing stored yet on this device */ }
-    // 2. Never mint a new pair if this account already published a publicKey —
-    //    that is what made old messages unreadble after a few days.
-    try{
-      if(currentUser && fbDb){
-        const snap = await fbDb.collection('users').doc(currentUser.uid).get();
-        if(snap.exists && snap.data().publicKey){
-          return null;
-        }
-      }
-    }catch(_){}
-    try{
-      const keyPair = await crypto.subtle.generateKey(
-        { name:'ECDH', namedCurve:'P-256' }, true, ['deriveKey','deriveBits']
-      );
-      const privateJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
-      const publicJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
-      try{ await idbSet('myKeyPair', { privateJwk, publicJwk }); }catch(_){}
-      writeKeyPairBackup(privateJwk, publicJwk);
-      if(currentUser && fbDb){
-        fbDb.collection('users').doc(currentUser.uid).set({ publicKey: publicJwk }, { merge:true }).catch(()=>{});
-      }
-      return { privateKey: keyPair.privateKey, publicKey: keyPair.publicKey, privateJwk, publicJwk };
+      return await mintAndPublishKeyPair();
     }catch(e){ return null; }
   })();
   return myKeyPairPromise;
 }
 
-let sharedKeyCache = {}; // { [theirUid]: Promise<CryptoKey|null> }
+let sharedKeyCache = {};
+function sharedCacheKey(theirUid, theirPublicKeyJwk, kdf){
+  const x = theirPublicKeyJwk && theirPublicKeyJwk.x ? String(theirPublicKeyJwk.x).slice(0, 24) : 'none';
+  return String(theirUid || '') + ':' + x + ':' + String(kdf || 'raw');
+}
 function clearSharedKeyCache(theirUid){
-  if(theirUid) delete sharedKeyCache[theirUid];
-  else sharedKeyCache = {};
+  if(!theirUid){ sharedKeyCache = {}; return; }
+  const prefix = String(theirUid) + ':';
+  Object.keys(sharedKeyCache).forEach(function(k){
+    if(k === theirUid || k.indexOf(prefix) === 0) delete sharedKeyCache[k];
+  });
 }
 
-/* ---------------- Key backup/recovery (fixes "fails to decrypt after a while") ----------------
-   The historical failure wasn't the crypto itself — ECDH P-256 + AES-GCM-256 is correct,
-   standard, and was never the weak point. The failure was DURABILITY: if a device's
-   IndexedDB/localStorage ever got wiped (reinstall, browser storage pressure, a new
-   device), the private key was gone for good, and every message ever encrypted to that
-   identity became permanently unreadable — including, cruelly, messages the person
-   just received that day. That's what forced the plaintext-only rollback.
+function publicJwkCompact(jwk){
+  if(!jwk || !jwk.x || !jwk.y) return null;
+  return { kty: 'EC', crv: jwk.crv || 'P-256', x: jwk.x, y: jwk.y };
+}
 
-   This wraps the private key with a key derived (PBKDF2-SHA256, 250k iterations —
-   deliberately expensive to slow down offline guessing) from a SECRET, and stores the
-   wrapped blob in Firestore. The server only ever custodies ciphertext it cannot open —
-   it never sees the secret or the raw private key — so this does not weaken E2E
-   confidentiality; it's the same pattern real E2E products use for backup.
+const _publicKeyMem = {};
+async function fetchUserPublicKey(uid, force){
+  if(!uid) return null;
+  if(typeof currentUser !== 'undefined' && currentUser && uid === currentUser.uid){
+    const mine = await ensureMyKeyPair();
+    return mine && mine.publicJwk ? publicJwkCompact(mine.publicJwk) : null;
+  }
+  const hit = _publicKeyMem[uid];
+  if(!force && hit && hit.jwk && (Date.now() - hit.at) < 20000) return hit.jwk;
+  let jwk = null;
+  if(typeof fbDb !== 'undefined' && fbDb){
+    try{
+      const doc = await fbDb.collection('users').doc(uid).get();
+      if(doc.exists && doc.data() && doc.data().publicKey) jwk = publicJwkCompact(doc.data().publicKey);
+    }catch(_){}
+  }
+  if(!jwk && typeof contacts !== 'undefined' && contacts){
+    const c = contacts.find(function(x){ return x && x.firebaseUid === uid; });
+    if(c && c.publicKey) jwk = publicJwkCompact(c.publicKey);
+  }
+  if(jwk){
+    _publicKeyMem[uid] = { jwk: jwk, at: Date.now() };
+    try{
+      if(typeof contacts !== 'undefined' && contacts){
+        const c = contacts.find(function(x){ return x && x.firebaseUid === uid; });
+        if(c) c.publicKey = jwk;
+      }
+    }catch(_){}
+  }
+  return jwk;
+}
+async function publishMyPublicKey(){
+  try{
+    const keys = await loadLocalKeyPair();
+    if(!keys || !keys.publicJwk || typeof currentUser === 'undefined' || !currentUser || typeof fbDb === 'undefined' || !fbDb) return false;
+    await fbDb.collection('users').doc(currentUser.uid).set({
+      publicKey: publicJwkCompact(keys.publicJwk),
+      publicKeyUpdatedAt: Date.now(),
+    }, { merge: true });
+    return true;
+  }catch(_){ return false; }
+}
 
-   Two kinds of secret, one shared mechanism underneath:
-   - Password accounts: the account password itself. Nothing extra to remember.
-   - Google/native sign-in accounts (no password to derive from): a random 16-character
-     recovery code, generated once at key creation and shown to the person exactly once,
-     the same pattern Signal's PIN and most crypto-wallet seed phrases use — the person
-     is explicitly told to save it, and told plainly that losing both the device and the
-     code means that device's history is not recoverable (true of any real E2E system;
-     stated rather than hidden). */
+const NALUNO_KDF_HKDF = 'hkdf';
+const NALUNO_KDF_RAW = 'raw';
+const NALUNO_HKDF_INFO = 'naluno-wireline-v1';
+
+async function hkdfAesKey(ikmBits){
+  const hkdfKey = await crypto.subtle.importKey('raw', ikmBits, 'HKDF', false, ['deriveBits']);
+  const out = await crypto.subtle.deriveBits(
+    { name:'HKDF', hash:'SHA-256', salt: new Uint8Array(32), info: new TextEncoder().encode(NALUNO_HKDF_INFO) },
+    hkdfKey,
+    256
+  );
+  return crypto.subtle.importKey('raw', out, { name:'AES-GCM', length:256 }, false, ['encrypt','decrypt']);
+}
+async function deriveAesFromEcdh(theirPublicKeyJwk, kdf){
+  const myKeys = await ensureMyKeyPair();
+  if(!myKeys || !myKeys.privateKey || !theirPublicKeyJwk || !theirPublicKeyJwk.x) return null;
+  const theirPublicKey = await crypto.subtle.importKey(
+    'jwk', publicJwkCompact(theirPublicKeyJwk), { name:'ECDH', namedCurve:'P-256' }, false, []
+  );
+  let bits;
+  try{
+    bits = await crypto.subtle.deriveBits(
+      { name:'ECDH', public: theirPublicKey },
+      myKeys.privateKey,
+      256
+    );
+  }catch(_){
+    if(kdf === NALUNO_KDF_HKDF) return null;
+    return crypto.subtle.deriveKey(
+      { name:'ECDH', public: theirPublicKey },
+      myKeys.privateKey,
+      { name:'AES-GCM', length:256 },
+      false,
+      ['encrypt','decrypt']
+    );
+  }
+  if(kdf === NALUNO_KDF_HKDF){
+    try{ return await hkdfAesKey(bits); }catch(_){ return null; }
+  }
+  return crypto.subtle.importKey('raw', bits, { name:'AES-GCM', length:256 }, false, ['encrypt','decrypt']);
+}
+
+function getSharedAesKey(theirUid, theirPublicKeyJwk, kdf){
+  const ck = sharedCacheKey(theirUid, theirPublicKeyJwk, kdf);
+  if(sharedKeyCache[ck]) return sharedKeyCache[ck];
+  sharedKeyCache[ck] = (async function(){
+    if(!theirPublicKeyJwk){
+      delete sharedKeyCache[ck];
+      return null;
+    }
+    try{
+      const key = await deriveAesFromEcdh(theirPublicKeyJwk, kdf || NALUNO_KDF_RAW);
+      if(!key){ delete sharedKeyCache[ck]; return null; }
+      return key;
+    }catch(e){
+      console.warn('[e2e] deriveKey failed for', theirUid, e);
+      delete sharedKeyCache[ck];
+      return null;
+    }
+  })();
+  return sharedKeyCache[ck];
+}
+
+/* ---------------- Key backup/recovery ---------------- */
 const E2E_BACKUP_ITERATIONS = 250000;
 async function deriveWrappingKey(secret, saltBytes){
   const baseKey = await crypto.subtle.importKey(
@@ -264,7 +336,7 @@ async function deriveWrappingKey(secret, saltBytes){
   );
 }
 async function backupPrivateKeyWithSecret(privateJwk, secret, method){
-  if(!secret || !currentUser || !fbDb) return false;
+  if(!secret || typeof currentUser === 'undefined' || !currentUser || typeof fbDb === 'undefined' || !fbDb) return false;
   try{
     const salt = crypto.getRandomValues(new Uint8Array(16));
     const wrapKey = await deriveWrappingKey(secret, salt);
@@ -277,19 +349,15 @@ async function backupPrivateKeyWithSecret(privateJwk, secret, method){
         iv: arrayBufferToBase64(iv),
         salt: arrayBufferToBase64(salt),
         iterations: E2E_BACKUP_ITERATIONS,
-        method: method || 'password', // 'password' | 'recovery_code'
+        method: method || 'password',
         v: 1,
       },
     }, { merge:true });
     return true;
   }catch(e){ console.warn('[e2e] backup failed', e); return false; }
 }
-/** Attempts to recover the private key from Firestore using a secret (password or
- *  recovery code) just provided by the person. Only meaningful when this device has
- *  no local key at all — never overwrites a key that's already present. Returns the
- *  recovered {privateJwk, publicJwk} or null. */
 async function recoverPrivateKeyWithSecret(uid, secret){
-  if(!uid || !secret || !fbDb) return null;
+  if(!uid || !secret || typeof fbDb === 'undefined' || !fbDb) return null;
   try{
     const snap = await fbDb.collection('users').doc(uid).get();
     if(!snap.exists) return null;
@@ -313,19 +381,13 @@ async function recoverPrivateKeyWithSecret(uid, secret){
     const privateJwk = JSON.parse(new TextDecoder().decode(plainBuf));
     return { privateJwk, publicJwk };
   }catch(e){
-    // Wrong secret, corrupted backup, or no backup — all indistinguishable from
-    // "recovery not possible right now," which is the correct, safe failure mode.
     console.warn('[e2e] recovery unavailable', e);
     return null;
   }
 }
-// Backward-compatible names.
 function backupPrivateKeyWithPassword(privateJwk, password){ return backupPrivateKeyWithSecret(privateJwk, password, 'password'); }
 function recoverPrivateKeyWithPassword(uid, password){ return recoverPrivateKeyWithSecret(uid, password); }
 
-/** Readable, hard-to-transcribe-wrong recovery code: groups of 4 from an alphabet with
- *  no ambiguous characters (no 0/O, 1/I/l) — the same design goal as a lot of real-world
- *  license/activation codes, applied here because someone will be copying this by hand. */
 function generateRecoveryCode(){
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const bytes = crypto.getRandomValues(new Uint8Array(16));
@@ -334,43 +396,44 @@ function generateRecoveryCode(){
     code += alphabet[bytes[i] % alphabet.length];
     if(i % 4 === 3 && i < 15) code += '-';
   }
-  return code; // e.g. "H7QK-9MRT-4XBP-2VNC"
+  return code;
 }
-/** For accounts with no password (Google/native sign-in): generates a recovery code,
- *  backs up the key with it, and returns the code so the caller can show it to the
- *  person ONCE. There is no other copy of this code anywhere — losing it before saving
- *  it means this backup is unusable, same as any recovery code/seed phrase. */
 async function backupPrivateKeyWithNewRecoveryCode(privateJwk){
   const code = generateRecoveryCode();
   const ok = await backupPrivateKeyWithSecret(privateJwk, code, 'recovery_code');
   return ok ? code : null;
 }
 
-/** Called right after a successful sign-in, while the secret (password, or a recovery
- *  code the person just entered) is still in hand — never stored, used once, then gone.
- *  If this device already has a working key, this is a no-op. If not, and a secret was
- *  provided, tries recovery before falling back to treating this as a brand-new identity. */
 async function ensureMyKeyPairWithRecovery(secret){
-  // A key already usable locally? Nothing to do — never overwrite it.
-  const existing = await ensureMyKeyPair();
-  if(existing && existing.privateKey) return existing;
-  if(!secret || !currentUser) return existing;
+  const existing = await loadLocalKeyPair();
+  if(existing && existing.privateKey){
+    myKeyPairPromise = Promise.resolve(existing);
+    return existing;
+  }
+  if(!secret || typeof currentUser === 'undefined' || !currentUser){
+    myKeyPairPromise = null;
+    return ensureMyKeyPair();
+  }
   const recovered = await recoverPrivateKeyWithSecret(currentUser.uid, secret);
-  if(!recovered) return existing;
+  if(!recovered){
+    myKeyPairPromise = null;
+    return ensureMyKeyPair();
+  }
   try{
     const keys = await importMyKeyPairFromJwks(recovered.privateJwk, recovered.publicJwk);
-    try{ await idbSet('myKeyPair', { privateJwk: recovered.privateJwk, publicJwk: recovered.publicJwk }); }catch(_){}
-    writeKeyPairBackup(recovered.privateJwk, recovered.publicJwk);
+    await persistMyKeyPair(recovered.privateJwk, recovered.publicJwk);
     myKeyPairPromise = Promise.resolve(keys);
+    try{ publishMyPublicKey(); }catch(_){}
     console.info('[e2e] identity recovered from backup — this device can decrypt existing messages again');
     return keys;
-  }catch(e){ console.warn('[e2e] recovered key failed to import', e); return existing; }
+  }catch(e){
+    console.warn('[e2e] recovered key failed to import', e);
+    myKeyPairPromise = null;
+    return ensureMyKeyPair();
+  }
 }
-/** Checks (a cheap Firestore read) whether this account has a key backup at all, and
- *  which kind — used to decide whether to prompt for a recovery code on a fresh device
- *  signed in via Google, without asking every single time regardless of relevance. */
 async function checkE2eBackupStatus(uid){
-  if(!uid || !fbDb) return { hasBackup:false, method:null };
+  if(!uid || typeof fbDb === 'undefined' || !fbDb) return { hasBackup:false, method:null };
   try{
     const snap = await fbDb.collection('users').doc(uid).get();
     const backup = snap.exists && (snap.data() || {}).e2eKeyBackup;
@@ -378,9 +441,6 @@ async function checkE2eBackupStatus(uid){
   }catch(_){ return { hasBackup:false, method:null }; }
 }
 
-/** Shows the recovery code exactly once, unmissable, with a copy button — the same
- *  "you will not see this again, save it now" treatment a wallet seed phrase or a
- *  Signal PIN gets. Resolves once the person confirms they've saved it. */
 function showRecoveryCodeModal(code){
   return new Promise(function(resolve){
     const overlay = document.createElement('div');
@@ -414,12 +474,6 @@ function showRecoveryCodeModal(code){
     };
   });
 }
-/** Asks for a recovery code on a fresh device — plain prompt-level UI is intentional
- *  here: this fires rarely (once per new device for a Google/native account with a
- *  backup), and the person is expected to be reading the code off something they
- *  saved elsewhere, not typing from memory. Returns the trimmed code, or null if
- *  they skip it (encryption then just behaves as it would for a brand-new identity
- *  on this device — nothing else in the app is blocked on this). */
 function promptForRecoveryCode(){
   try{
     const entered = window.prompt(
@@ -429,50 +483,23 @@ function promptForRecoveryCode(){
   }catch(_){ return null; }
 }
 
-function getSharedAesKey(theirUid, theirPublicKeyJwk){
-  if(sharedKeyCache[theirUid]) return sharedKeyCache[theirUid];
-  sharedKeyCache[theirUid] = (async ()=>{
-    if(!theirPublicKeyJwk){
-      delete sharedKeyCache[theirUid]; // allow retry when key arrives
-      return null;
-    }
-    const myKeys = await ensureMyKeyPair();
-    if(!myKeys || !myKeys.privateKey){
-      delete sharedKeyCache[theirUid];
-      return null;
-    }
-    try{
-      const theirPublicKey = await crypto.subtle.importKey(
-        'jwk', theirPublicKeyJwk, { name:'ECDH', namedCurve:'P-256' }, false, []
-      );
-      return await crypto.subtle.deriveKey(
-        { name:'ECDH', public: theirPublicKey },
-        myKeys.privateKey,
-        { name:'AES-GCM', length:256 },
-        false,
-        ['encrypt','decrypt']
-      );
-    }catch(e){
-      console.warn('[e2e] deriveKey failed for', theirUid, e);
-      delete sharedKeyCache[theirUid];
-      return null;
-    }
-  })();
-  return sharedKeyCache[theirUid];
-}
-async function encryptMessageText(theirUid, theirPublicKeyJwk, plaintext){
-  const aesKey = await getSharedAesKey(theirUid, theirPublicKeyJwk);
-  if(!aesKey) return null; // no key available — caller falls back to plaintext
+async function encryptMessageText(theirUid, theirPublicKeyJwk, plaintext, kdfName){
+  const kdf = kdfName || NALUNO_KDF_HKDF;
+  const aesKey = await getSharedAesKey(theirUid, theirPublicKeyJwk, kdf);
+  if(!aesKey) return null;
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const encoded = new TextEncoder().encode(plaintext);
   const ciphertext = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, aesKey, encoded);
-  // Pass the Uint8Array itself (not .buffer) so we never accidentally include
-  // extra bytes from a larger underlying ArrayBuffer.
-  return { ciphertext: arrayBufferToBase64(ciphertext), iv: arrayBufferToBase64(iv) };
+  return { ciphertext: arrayBufferToBase64(ciphertext), iv: arrayBufferToBase64(iv), kdf: kdf };
 }
-async function decryptMessageText(theirUid, theirPublicKeyJwk, ciphertextB64, ivB64){
-  async function attempt(jwk){
-    const aesKey = await getSharedAesKey(theirUid, jwk);
+async function decryptMessageText(theirUid, theirPublicKeyJwk, ciphertextB64, ivB64, kdfName){
+  const order = [];
+  const first = kdfName || NALUNO_KDF_RAW;
+  order.push(first);
+  if(first !== NALUNO_KDF_HKDF) order.push(NALUNO_KDF_HKDF);
+  if(first !== NALUNO_KDF_RAW) order.push(NALUNO_KDF_RAW);
+  async function attempt(jwk, kdf){
+    const aesKey = await getSharedAesKey(theirUid, jwk, kdf);
     if(!aesKey) return null;
     const plainBuf = await crypto.subtle.decrypt(
       { name:'AES-GCM', iv: new Uint8Array(base64ToArrayBuffer(ivB64)) },
@@ -481,13 +508,12 @@ async function decryptMessageText(theirUid, theirPublicKeyJwk, ciphertextB64, iv
     );
     return new TextDecoder().decode(plainBuf);
   }
-  try{
-    const once = await attempt(theirPublicKeyJwk);
-    if(once != null) return once;
-  }catch(e){
-    console.warn('[e2e] decrypt failed', e);
+  for(let i = 0; i < order.length; i++){
+    try{
+      const once = await attempt(theirPublicKeyJwk, order[i]);
+      if(once != null) return once;
+    }catch(_){}
   }
-  // Clear stuck key and retry once (stale publicKey / race on first open)
   try{
     clearSharedKeyCache(theirUid);
     let jwk = theirPublicKeyJwk;
@@ -497,12 +523,111 @@ async function decryptMessageText(theirUid, theirPublicKeyJwk, ciphertextB64, iv
         if(doc.exists && doc.data().publicKey) jwk = doc.data().publicKey;
       }catch(_){}
     }
-    return await attempt(jwk);
+    for(let i = 0; i < order.length; i++){
+      try{
+        const again = await attempt(jwk, order[i]);
+        if(again != null) return again;
+      }catch(_){}
+    }
   }catch(e){
     console.warn('[e2e] decrypt retry failed', e);
-    return null;
   }
+  return null;
 }
+
+/** WhatsApp / Signal rule: encrypt on this phone, for each recipient's current
+ *  public key (client fanout). We also seal a copy to ourselves so this thread
+ *  still opens here. If the other person has no published key yet, send
+ *  readable text — never a blob they cannot open. */
+async function nalunoSealText(plaintext, peerUid){
+  if(plaintext == null) plaintext = '';
+  const mine = await ensureMyKeyPair();
+  if(!mine || !mine.publicJwk || typeof currentUser === 'undefined' || !currentUser){
+    return { encrypted: false, text: plaintext };
+  }
+  const peerJwk = peerUid ? await fetchUserPublicKey(peerUid, true) : null;
+  const senderPub = publicJwkCompact(mine.publicJwk);
+  const envelopes = {};
+  if(peerJwk){
+    const forPeer = await encryptMessageText(peerUid, peerJwk, plaintext, NALUNO_KDF_HKDF);
+    if(forPeer){
+      forPeer.senderPub = senderPub;
+      envelopes[peerUid] = forPeer;
+    }
+  }
+  const forMe = await encryptMessageText(currentUser.uid, mine.publicJwk, plaintext, NALUNO_KDF_HKDF);
+  if(forMe){
+    forMe.senderPub = senderPub;
+    envelopes[currentUser.uid] = forMe;
+  }
+  if(!peerUid || !envelopes[peerUid]){
+    return { encrypted: false, text: plaintext };
+  }
+  return {
+    encrypted: true,
+    text: null,
+    envelopes: envelopes,
+    ciphertext: envelopes[peerUid].ciphertext,
+    iv: envelopes[peerUid].iv,
+    kdf: NALUNO_KDF_HKDF,
+    senderPub: senderPub,
+  };
+}
+
+const NALUNO_SEAL_FAIL = 'Couldn\u2019t read this on this phone. Ask them to send it again.';
+
+async function nalunoOpenSealed(m, peerContact){
+  if(!m) return '';
+  if(!m.encrypted) return m.text != null ? m.text : '';
+  const myUid = typeof currentUser !== 'undefined' && currentUser ? currentUser.uid : null;
+  const env = (m.envelopes && myUid && m.envelopes[myUid]) || null;
+  const ct = env ? env.ciphertext : m.ciphertext;
+  const iv = env ? env.iv : m.iv;
+  if(!ct || !iv) return m.text != null ? m.text : null;
+  const kdf = (env && env.kdf) || m.kdf || NALUNO_KDF_RAW;
+  const sender = m.from || m.fromUid || (peerContact && peerContact.firebaseUid);
+  const tries = [];
+  function addTry(uid, jwk){
+    if(!jwk || !jwk.x) return;
+    tries.push({ uid: uid, jwk: publicJwkCompact(jwk) });
+  }
+  addTry(sender, env && env.senderPub);
+  addTry(sender, m.senderPub);
+  if(sender === myUid){
+    try{
+      const mine = await ensureMyKeyPair();
+      if(mine) addTry(myUid, mine.publicJwk);
+    }catch(_){}
+  }
+  const peerUid = peerContact && peerContact.firebaseUid;
+  if(peerUid){
+    addTry(peerUid, peerContact.publicKey);
+    try{ addTry(peerUid, await fetchUserPublicKey(peerUid)); }catch(_){}
+  }
+  if(sender && sender !== myUid){
+    try{ addTry(sender, await fetchUserPublicKey(sender)); }catch(_){}
+  }
+  const seen = {};
+  for(let i = 0; i < tries.length; i++){
+    const t = tries[i];
+    const k = sharedCacheKey(t.uid, t.jwk, kdf);
+    if(seen[k]) continue;
+    seen[k] = true;
+    try{
+      const p = await decryptMessageText(t.uid, t.jwk, ct, iv, kdf);
+      if(p != null) return p;
+    }catch(_){}
+  }
+  return m.text != null ? m.text : null;
+}
+
+window.fetchUserPublicKey = fetchUserPublicKey;
+window.publishMyPublicKey = publishMyPublicKey;
+window.nalunoSealText = nalunoSealText;
+window.nalunoOpenSealed = nalunoOpenSealed;
+window.NALUNO_SEAL_FAIL = NALUNO_SEAL_FAIL;
+window.publicJwkCompact = publicJwkCompact;
+window.NALUNO_KDF_HKDF = NALUNO_KDF_HKDF;
 
 function signalSubText(c){
   const { tier } = computeSignal(c);
@@ -513,4 +638,3 @@ function signalSubText(c){
   if(elapsedMin < 1) return label + ' · just now';
   return label + ' · last exchange ' + timeAgo(c.lastActivityTs);
 }
-

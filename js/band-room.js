@@ -1378,37 +1378,50 @@ async function resolvePublicKeyForUid(uid){
 async function encryptBandMessageForMembers(memberUids, plaintext){
   const envelopes = {};
   let any = false;
+  let senderPub = null;
+  try{
+    const mine = await ensureMyKeyPair();
+    if(mine && mine.publicJwk) senderPub = publicJwkCompact(mine.publicJwk);
+  }catch(_){}
   for(const uid of memberUids){
     try{
-      const jwk = await resolvePublicKeyForUid(uid);
+      const jwk = (typeof fetchUserPublicKey === 'function')
+        ? await fetchUserPublicKey(uid, true)
+        : await resolvePublicKeyForUid(uid);
       if(!jwk) continue;
       const enc = await encryptMessageText(uid, jwk, plaintext);
-      if(enc){ envelopes[uid] = enc; any = true; }
+      if(enc){
+        if(senderPub) enc.senderPub = senderPub;
+        envelopes[uid] = enc;
+        any = true;
+      }
     }catch(e){}
   }
   return any ? envelopes : null;
 }
 async function decryptBandMessage(m){
   if(!m.encrypted || !m.envelopes) return m.text || '';
+  if(typeof nalunoOpenSealed === 'function'){
+    try{
+      const peer = contacts.find(function(c){ return c.firebaseUid === (m.fromUid || m.from); }) || { firebaseUid: m.fromUid || m.from };
+      const opened = await nalunoOpenSealed(m, peer);
+      if(opened != null) return opened;
+    }catch(_){}
+  }
   const mine = m.envelopes[currentUser.uid];
   if(!mine){
-    // Not sealed for us — show plaintext fallback if sender included it,
-    // otherwise say so plainly rather than let the bubble render empty and
-    // silently vanish from the list (bandMessageIsEmpty would otherwise hide it).
     return m.text || 'Message not available on this device';
   }
-  // Shared secret is ECDH(myPrivate, senderPublic) — always use sender's key
   const senderUid = m.fromUid || m.from;
-  const theirJwk = await resolvePublicKeyForUid(senderUid);
+  const theirJwk = mine.senderPub || m.senderPub || await resolvePublicKeyForUid(senderUid);
   if(!theirJwk) return m.text || 'Message not available on this device';
   try{
-    const plain = await decryptMessageText(senderUid, theirJwk, mine.ciphertext, mine.iv);
+    const plain = await decryptMessageText(senderUid, theirJwk, mine.ciphertext, mine.iv, mine.kdf);
     if(plain != null) return plain;
   }catch(e){}
-  // Own message: key was derived with self uid
   if(senderUid === currentUser.uid){
     try{
-      const plain2 = await decryptMessageText(currentUser.uid, theirJwk, mine.ciphertext, mine.iv);
+      const plain2 = await decryptMessageText(currentUser.uid, theirJwk, mine.ciphertext, mine.iv, mine.kdf);
       if(plain2 != null) return plain2;
     }catch(e){}
   }
