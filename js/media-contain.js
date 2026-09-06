@@ -48,6 +48,14 @@ function nalunoCallUiOpen(){
   try{ if(window.__nalunoCallActive) return true; }catch(_){}
   return false;
 }
+function nalunoIsRingtoneEl(el){
+  try{
+    if(!el) return false;
+    if(el.id === 'nalunoRingtone') return true;
+    if(el.dataset && el.dataset.nalunoRingtone === '1') return true;
+  }catch(_){}
+  return false;
+}
 
 function nalunoClipElement(el){
   try{
@@ -326,6 +334,7 @@ function pauseAppMediaForBackground(){
     document.querySelectorAll('video, audio').forEach(function(el){
       try{
         if(el.closest && el.closest('#callOverlay')) return;
+        if(typeof nalunoIsRingtoneEl === 'function' && nalunoIsRingtoneEl(el)) return;
         if(nalunoClipElement(el)) return;
         if(typeof nalunoLiveOrCameraEl === 'function' && nalunoLiveOrCameraEl(el)) return;
         if(el.srcObject) return;

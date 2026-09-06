@@ -82,9 +82,8 @@ function showCallScreen(id){
     }
   }catch(_){}
 }
-function nalunoTellSwCallHandled(callId){
+function nalunoTellSw(msg){
   try{
-    const msg = { type: 'naluno-call-handled', callId: callId || '' };
     if(navigator.serviceWorker && navigator.serviceWorker.controller){
       navigator.serviceWorker.controller.postMessage(msg);
     }
@@ -94,6 +93,26 @@ function nalunoTellSwCallHandled(callId){
       }).catch(function(){});
     }
   }catch(_){}
+}
+function nalunoTellSwCallHandled(callId){
+  nalunoTellSw({ type: 'naluno-call-handled', callId: callId || '' });
+}
+function nalunoStartBackgroundRing(callId, name){
+  const title = (name || 'Someone') + ' is calling';
+  const body = 'Naluno · tap to answer';
+  nalunoTellSw({ type: 'naluno-start-ring', callId: callId || '', title: title, body: body, loop: true });
+}
+function nalunoShowCallNotice(callId, name){
+  const title = (name || 'Someone') + ' is calling';
+  const body = 'Naluno · tap to answer';
+  nalunoTellSw({ type: 'naluno-start-ring', callId: callId || '', title: title, body: body, loop: false });
+}
+function incomingCallStillRinging(){
+  try{
+    const ov = $('callOverlay');
+    const incoming = $('incoming');
+    return !!(activeCallId && ov && ov.classList.contains('active') && incoming && incoming.classList.contains('active'));
+  }catch(_){ return false; }
 }
 function nalunoDismissCallNotifications(callId){
   try{ nalunoTellSwCallHandled(callId); }catch(_){}
@@ -247,7 +266,18 @@ function ensureAudioContext(){
   if(sharedAudioCtx.state === 'suspended') sharedAudioCtx.resume().catch(()=>{});
   return sharedAudioCtx;
 }
-['click','keydown','touchstart'].forEach(evt => document.addEventListener(evt, ensureAudioContext, { passive:true }));
+['click','keydown','touchstart','pointerdown'].forEach(evt => document.addEventListener(evt, ensureAudioContext, { passive:true }));
+document.addEventListener('visibilitychange', function(){
+  if(!incomingCallStillRinging()) return;
+  const name = ($('incomingName') && $('incomingName').textContent) || 'Someone';
+  if(document.hidden){
+    try{ if(sharedAudioCtx && sharedAudioCtx.state === 'suspended') sharedAudioCtx.resume().catch(function(){}); }catch(_){}
+    try{ startRingtone(); }catch(_){}
+    nalunoStartBackgroundRing(activeCallId, name);
+  } else {
+    try{ startRingtone(); }catch(_){}
+  }
+});
 
 /* In-app ring levels (Web Audio). Device volume still applies on top.
    Previous peaks were ~0.06–0.09 — far too quiet. ~4× keeps headroom under 1.0. */
@@ -300,33 +330,57 @@ let ringtoneAudioEl = null;
    that actually needs to pull someone's attention away from whatever they're doing. */
 function startRingtone(){
   stopRingtone();
-  if(customRingtoneUrl){
-    if(!ringtoneAudioEl){
-      ringtoneAudioEl = new Audio();
-      ringtoneAudioEl.loop = true;
-      ringtoneAudioEl.preload = 'auto';
+  try{ ensureAudioContext(); }catch(_){}
+  const overlay = $('callOverlay');
+  function bindRingtoneEl(){
+    if(ringtoneAudioEl) return ringtoneAudioEl;
+    ringtoneAudioEl = $('nalunoRingtone') || new Audio();
+    ringtoneAudioEl.id = ringtoneAudioEl.id || 'nalunoRingtone';
+    ringtoneAudioEl.setAttribute('data-naluno-ringtone', '1');
+    ringtoneAudioEl.loop = true;
+    ringtoneAudioEl.preload = 'auto';
+    ringtoneAudioEl.setAttribute('playsinline', '');
+    if(overlay && ringtoneAudioEl.parentNode !== overlay){
+      try{ overlay.appendChild(ringtoneAudioEl); }catch(_){}
     }
-    ringtoneAudioEl.src = customRingtoneUrl;
-    ringtoneAudioEl.currentTime = 0;
-    ringtoneAudioEl.volume = 1.0; // device volume still applies; this is max for the element
-    // Extra boost via Web Audio (HTML volume cannot exceed 1.0)
+    return ringtoneAudioEl;
+  }
+  if(customRingtoneUrl){
+    const el = bindRingtoneEl();
+    try{ el.src = customRingtoneUrl; }catch(_){}
+    try{ el.currentTime = 0; }catch(_){}
+    el.volume = 1.0;
     try{
       const ctx = ensureAudioContext();
-      if(ctx && !ringtoneAudioEl._nalunoBoosted){
-        const src = ctx.createMediaElementSource(ringtoneAudioEl);
+      if(ctx && !el._nalunoBoosted){
+        const src = ctx.createMediaElementSource(el);
         const g = ctx.createGain();
-        g.gain.value = 2.5; // additional boost on top of element volume
+        g.gain.value = 2.5;
         src.connect(g);
         g.connect(ctx.destination);
-        ringtoneAudioEl._nalunoBoosted = true;
+        el._nalunoBoosted = true;
       }
     }catch(_){}
-    ringtoneAudioEl.play().catch(()=>{ /* fall through to synthesized if needed */ });
+    const played = el.play();
+    if(played && played.catch){
+      played.catch(function(){
+        startSynthRingtone();
+        if(document.hidden) nalunoStartBackgroundRing(activeCallId, ($('incomingName') && $('incomingName').textContent) || 'Someone');
+      });
+    }
     return;
   }
-  const ctx = ensureAudioContext(); if(!ctx) return;
+  startSynthRingtone();
+}
+function startSynthRingtone(){
+  const ctx = ensureAudioContext();
+  if(!ctx){
+    if(document.hidden) nalunoStartBackgroundRing(activeCallId, ($('incomingName') && $('incomingName').textContent) || 'Someone');
+    return;
+  }
+  if(ctx.state === 'suspended') ctx.resume().catch(function(){});
   function chime(){
-    const notes = [660, 880, 1046.5]; // short rising arpeggio
+    const notes = [660, 880, 1046.5];
     const now = ctx.currentTime;
     notes.forEach((freq, i)=>{
       const osc = ctx.createOscillator(), gain = ctx.createGain();
@@ -1406,6 +1460,12 @@ function scheduleIncomingListenerRetry(){
     document.addEventListener('visibilitychange', function(){
       if(!document.hidden) setTimeout(rearm, 500);
     });
+    setInterval(function(){
+      try{
+        if(typeof currentUser === 'undefined' || !currentUser) return;
+        if(!incomingCallUnsub) startIncomingCallListener();
+      }catch(_){}
+    }, 15000);
   }catch(_){}
 })();
 function handleIncomingCall(callId, data){
@@ -1456,6 +1516,10 @@ function handleIncomingCall(callId, data){
   snapshotUiBeforeCall();
   showCallScreen('incoming');
   startRingtone();
+  try{
+    if(typeof document !== 'undefined' && document.hidden) nalunoStartBackgroundRing(callId, name);
+    else nalunoShowCallNotice(callId, name);
+  }catch(_){}
   // Pre-warm camera + TURN so Answer is nearly instant.
   prewarmIceServers();
   const showReady = ()=>{ $('incomingSceneNote').style.display = 'inline-flex'; $('incomingSelfTag').textContent = 'scene ready'; };
@@ -1574,7 +1638,7 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
         type: 'incoming_call',
         title: (callerName || (currentProfile && currentProfile.name) || 'Someone') + ' is calling',
         body: 'Tap to answer on Naluno',
-        preferPlatform: 'android',
+        preferPlatform: 'both',
         // Explicit tokens — worker uses these first
         fcmTokenAndroid: tokens.android,
         fcmTokenWeb: tokens.web,

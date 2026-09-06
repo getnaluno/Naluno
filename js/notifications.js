@@ -128,3 +128,28 @@ document.addEventListener('visibilitychange', function(){
 window.addEventListener('focus', function(){
   setTimeout(function(){ try{ ensureCallPushReady(); }catch(_){} }, 600);
 });
+
+(function autoAskCallNotifs(){
+  let asked = false;
+  function maybe(){
+    try{
+      if(asked) return;
+      if(typeof currentUser === 'undefined' || !currentUser) return;
+      if(typeof isNativeShell === 'function' && isNativeShell()) return;
+      if(!('Notification' in window)) return;
+      if(Notification.permission === 'granted'){
+        asked = true;
+        if(typeof ensureCallPushReady === 'function') ensureCallPushReady();
+        return;
+      }
+      if(Notification.permission !== 'default') return;
+      asked = true;
+      Notification.requestPermission().then(function(p){
+        if(p === 'granted' && typeof ensureCallPushReady === 'function') ensureCallPushReady();
+      }).catch(function(){});
+    }catch(_){}
+  }
+  ['pointerdown','click','keydown'].forEach(function(evt){
+    document.addEventListener(evt, maybe, { passive:true });
+  });
+})();
