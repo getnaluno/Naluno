@@ -246,7 +246,7 @@ function nalunoPrivacyHtml(){
     + '<h3>9. Compass</h3>'
     + '<p>Compass is a private notebook plus an assistant. Messages you type there are stored on your account so the thread is still there when you reopen it. You can lock Compass with a password on the device. Weather and Find answers use the live data described above. The assistant runs on a Naluno worker; do not put secrets in Compass that you would not want processed to produce a reply.</p>'
     + '<h3>10. Diagnostics</h3>'
-    + '<p>The app keeps a short error log on this device so a break can be copied and sent. That log does not upload by itself. It lives under the hidden Admin Console, not on Callsign.</p>'
+    + '<p>The app keeps a short error log on this device so a break can be copied and sent. That log does not upload by itself. It is not shown on Callsign.</p>'
     + '<h3>11. Who we share with (processors)</h3>'
     + '<p>We use other companies to run the service, not to sell your data:</p>'
     + '<ul>'
