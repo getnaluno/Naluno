@@ -245,6 +245,16 @@
         __adminPass = '';
         return;
       }
+      if(res.status === 503){
+        // The worker is reachable but ADMIN_PASSPHRASE was never set on it.
+        // This used to render as "Passphrase not accepted", which meant a
+        // secret that did not exist looked exactly like one typed wrong —
+        // you could retype a correct passphrase forever and never learn that.
+        const b = await res.json().catch(function(){ return {}; });
+        setMsg('adminGateMsg', b.error || 'Admin passphrase is not configured on the server.');
+        __adminPass = '';
+        return;
+      }
       if(!res.ok){
         setMsg('adminGateMsg', 'Passphrase not accepted.');
         __adminPass = '';
