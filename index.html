@@ -219,8 +219,11 @@ footer a:hover{color:var(--mint);}
    of "/". Both are forwarded straight through to /app/ with the query intact. */
 (function(){
   try{
-    var q = window.location.search || '';
-    var isDeepLink = /[?&](broadcast|strand|spark|call|signal)=/.test(q);
+    var host = (window.location.hostname || '').toLowerCase();
+    if(host === 'admin.getnaluno.com' || host === 'admin.naluno.com'){
+      window.location.replace('/admin/' + q + (window.location.hash || ''));
+      return;
+    }
     var isInstalled = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
     var isIosInstalled = window.navigator.standalone === true;
     if(isDeepLink || isInstalled || isIosInstalled){

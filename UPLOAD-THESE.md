@@ -1,36 +1,37 @@
-# GitHub update — 2026.09.06b
+# GitHub update — 2026.09.07a
 
-Copy over the repo root. Keep the `app/` folder. Force-close Naluno after
-it deploys, then reopen. Console should show:
+Copy over the repo root. Keep `app/` and add `admin/`.
+Force-close Naluno after it deploys, then reopen. Console should show:
 
-`[naluno] build 2026.09.06b`
+`[naluno] build 2026.09.07a`
 
-Service worker cache: **naluno-shell-v149**.
+Service worker cache: **naluno-shell-v150**.
 
-## Why sign-in failed
+## What changed
 
-The app moved to `/app/`. `firebase-config.js` was still loaded as a
-**relative** file, so the phone asked for `/app/firebase-config.js`,
-which does not exist. Firebase never started. After 16 seconds the form
-said:
+The Admin Console is no longer inside the member app. There is no 6-tap
+dot on Callsign. Operators open:
 
-> Sign-in could not start — check the connection, then tap again.
+**https://getnaluno.com/admin/**
 
-The service worker was also being registered as `sw.js` with scope `./`,
-which from `/app/` is `/app/sw.js` — another miss.
+That address is not linked from the public website or the app. Search
+engines are told to stay out. The service worker never caches it, so a
+normal phone cannot keep a copy after visiting by accident.
 
-## What this fixes
+Getting in still needs all three:
 
-- Config loads from `/firebase-config.js`
-- Auth retries that path if the first load missed it
-- Service worker registers at `/sw.js` with scope `/`
-- App shell cache is `/app/index.html`, not the marketing page
-- The public website is alive: aurora, live waveform, stations that
-  tune in as you scroll
+1. Sign in with an allowed Firebase account
+2. The Worker `ADMIN_UIDS` list
+3. The Worker `ADMIN_PASSPHRASE`
+
+A signed-in person who is not on the list just sees “Not available.”
+
+Device diagnostics (the on-phone error log) now live on that same desk,
+same origin, so a break on this browser can still be copied there.
 
 Signal / Broadcast upload paths were not changed.
 
 ## After push
 
-Force-close. Re-open. Sign in with handle + password or Google.
-The getnaluno.com landing should move.
+Members: force-close, reopen, use the app as usual.
+Operators: open getnaluno.com/admin/ in the browser, sign in, unlock.

@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v150: 09.07a Control Centre at /admin/, never cached, gone from the member app.
 // v149: 09.06b /app/ firebase-config path + living site. App shell is /app/.
 // v148: site at / , app at /app/.
 // v147: 09.06a background ring while the web app is open but unused.
@@ -39,7 +40,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v149';
+const CACHE_NAME = 'naluno-shell-v150';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -103,6 +104,24 @@ self.addEventListener('fetch', event=>{
      open instantly and work offline. */
   const isSiteRoot = url.origin === self.location.origin &&
     (path === '/' || path === '/index.html');
+  const isAdminNav = url.origin === self.location.origin &&
+    (path === '/admin' || path === '/admin/' || path.indexOf('/admin/') === 0);
+  /* Control Centre is never cached and never served from the app shell.
+     Public phones that already have this worker must not be able to
+     "install" the operator desk by visiting it once. */
+  if(isAdminNav){
+    event.respondWith((async ()=>{
+      try{
+        const fresh = await fetch(event.request, { cache: 'no-store' });
+        if(fresh) return fresh;
+      }catch(_){}
+      return new Response('Not available.', {
+        status: 404,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8', 'X-Robots-Tag': 'noindex, nofollow' }
+      });
+    })());
+    return;
+  }
   if(isSiteRoot && isNav){
     event.respondWith((async ()=>{
       try{

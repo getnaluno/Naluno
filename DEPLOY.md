@@ -56,10 +56,12 @@ moves.
 ## Files
 
 ```
-/index.html          the website (new)
+/index.html          the website
+/app/index.html      the member app
+/admin/index.html    operator Control Centre — not linked, not cached
 /manifest.json       start_url -> /app/
-/sw.js               root network-first, cache v148
-/app/index.html      the app, asset paths absolute
+/sw.js               root network-first, /admin never cached, cache v150
+/robots.txt          Disallow: /admin/
 ```
 
 Everything else — `js/`, `css/`, icons, workers — is untouched and stays put.
