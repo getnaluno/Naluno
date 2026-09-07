@@ -256,7 +256,18 @@
         return;
       }
       if(!res.ok){
-        setMsg('adminGateMsg', 'Passphrase not accepted.');
+        /* Say WHICH thing is wrong instead of one message for every case.
+           header_received:false means the passphrase never reached the
+           worker at all — a completely different problem from typing it
+           wrong, and previously indistinguishable. */
+        const b = await res.json().catch(function(){ return {}; });
+        if(b && b.header_received === false){
+          setMsg('adminGateMsg', 'The passphrase never reached the server — the request was blocked before it was sent.');
+        } else if(b && b.received_length === 0){
+          setMsg('adminGateMsg', 'No passphrase was sent. Type it again and press Unlock.');
+        } else {
+          setMsg('adminGateMsg', 'Passphrase not accepted. Spacing and capitals do not matter — the text itself differs.');
+        }
         __adminPass = '';
         return;
       }
