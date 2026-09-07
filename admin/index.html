@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Naluno</title>
+<meta name="robots" content="noindex, nofollow, noarchive" />
+<meta name="googlebot" content="noindex, nofollow, noarchive" />
+<meta name="theme-color" content="#07080D" />
+<link rel="icon" href="/icon-192.png" />
+<link rel="canonical" href="https://getnaluno.com/admin/" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Space+Grotesk:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --void:#07080D; --panel:#12151F; --line:#232838;
+  --ink:#E8ECF5; --ink-dim:#7C8497; --mint:#7CFFB2; --cyan:#00E5FF;
+  --violet:#7C4DFF; --red:#FF5470;
+  --display:'Orbitron', sans-serif;
+  --body:'Space Grotesk', system-ui, sans-serif;
+  --dial:'IBM Plex Mono', monospace;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;background:var(--void);color:var(--ink);font-family:var(--body);min-height:100%;}
+body{overflow-x:hidden;}
+.field{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;}
+.blob{position:absolute;border-radius:50%;filter:blur(80px);mix-blend-mode:screen;opacity:.4;}
+.blob.a{width:48vw;height:48vw;left:-10vw;top:-8vh;background:radial-gradient(circle,rgba(124,255,178,.35),transparent 70%);animation:dA 20s ease-in-out infinite;}
+.blob.b{width:42vw;height:42vw;right:-12vw;bottom:-10vh;background:radial-gradient(circle,rgba(124,77,255,.3),transparent 70%);animation:dB 24s ease-in-out infinite;}
+@keyframes dA{50%{transform:translate(6vw,5vh) scale(1.1);}}
+@keyframes dB{50%{transform:translate(-5vw,-6vh) scale(1.12);}}
+.wrap{position:relative;z-index:1;max-width:880px;margin:0 auto;padding:22px 22px 80px;}
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0 28px;}
+.brand{display:flex;align-items:center;gap:10px;}
+.mark-live{position:relative;width:30px;height:30px;}
+.mark-live svg{width:30px;height:30px;overflow:visible;filter:drop-shadow(0 0 8px rgba(124,255,178,.7));}
+.ping{position:absolute;inset:-5px;border-radius:50%;border:1px solid rgba(124,255,178,.4);animation:ping 2.4s ease-out infinite;}
+@keyframes ping{to{transform:scale(1.7);opacity:0;}}
+.word{font-family:var(--display);font-weight:700;letter-spacing:.16em;font-size:15px;
+  background:linear-gradient(90deg,#7CFFB2,#00E5FF,#7C4DFF,#7CFFB2);background-size:280% 100%;
+  -webkit-background-clip:text;background-clip:text;color:transparent;animation:shimmer 8s linear infinite;}
+@keyframes shimmer{to{background-position:280% 50%;}}
+.clock{font-family:var(--dial);font-size:11px;color:var(--ink-dim);letter-spacing:.04em;}
+.clock b{color:var(--mint);font-weight:500;}
+.panel{
+  background:rgba(18,21,31,.78);border:1px solid rgba(124,255,178,.18);
+  border-radius:4px;padding:22px 22px 20px;
+  box-shadow:0 0 40px rgba(0,229,255,.06) inset, 0 24px 60px rgba(0,0,0,.35);
+  backdrop-filter:blur(14px);
+}
+h1{font-family:var(--display);font-weight:500;font-size:22px;letter-spacing:.04em;margin:0 0 6px;}
+.sub{color:var(--ink-dim);font-size:14px;margin:0 0 20px;}
+label{display:block;font-family:var(--dial);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-dim);margin:12px 0 6px;}
+input{
+  width:100%;background:#0D1018;border:1px solid var(--line);border-radius:10px;
+  padding:12px 14px;color:var(--ink);font-family:var(--body);font-size:15px;
+}
+input:focus{outline:2px solid var(--cyan);outline-offset:2px;}
+.row{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;}
+button{
+  font-family:var(--dial);font-size:12px;letter-spacing:.06em;border:none;cursor:pointer;
+  padding:12px 18px;border-radius:2px;
+}
+.primary{background:var(--mint);color:var(--void);}
+.ghost{background:transparent;color:var(--ink-dim);border:1px solid var(--line);}
+.danger{background:transparent;color:var(--red);border:1px solid var(--line);}
+.msg{min-height:18px;font-size:13px;margin-top:12px;color:var(--red);}
+.msg.ok{color:var(--mint);}
+.card{border:1px solid var(--line);background:rgba(10,12,18,.55);border-radius:4px;padding:14px 16px;margin:0 0 12px;}
+.card .who{font-family:var(--dial);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mint);margin-bottom:8px;}
+.hidden{display:none !important;}
+#consoleView{margin-top:18px;}
+.flag-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-family:var(--dial);font-size:12px;}
+.flag-row button{padding:6px 10px;font-size:10.5px;}
+#toast{
+  position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(20px);
+  background:#12151F;border:1px solid var(--mint);color:var(--mint);
+  font-family:var(--dial);font-size:12px;padding:10px 16px;border-radius:4px;
+  opacity:0;pointer-events:none;transition:opacity .2s, transform .2s;z-index:50;
+}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+pre.diag{
+  white-space:pre-wrap;word-break:break-word;font-family:var(--dial);font-size:10.5px;
+  line-height:1.5;color:var(--ink-dim);background:#0D1018;border:1px solid var(--line);
+  border-radius:8px;padding:12px;max-height:240px;overflow:auto;margin:0;
+}
+@media (prefers-reduced-motion: reduce){
+  .blob,.word,.ping{animation:none !important;}
+}
+</style>
+</head>
+<body>
+<div class="field" aria-hidden="true"><div class="blob a"></div><div class="blob b"></div></div>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <div class="mark-live">
+        <span class="ping"></span>
+        <svg viewBox="0 0 68 68" fill="none">
+          <circle cx="34" cy="38" r="11" stroke="#7CFFB2" stroke-width="3"/>
+          <path d="M34 27V21" stroke="#7CFFB2" stroke-width="3" stroke-linecap="round"/>
+          <path d="M22 20c6-8 18-8 24 0" stroke="#00E5FF" stroke-width="2.2" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div class="word">NALUNO</div>
+    </div>
+    <div class="clock"><b id="liveClock">--:--:--</b> · private</div>
+  </header>
+
+  <div class="panel" id="signPanel">
+    <h1>Sign in</h1>
+    <p class="sub">This desk is not part of the public app. You need an allowed account.</p>
+    <label for="adminHandle">Handle</label>
+    <input id="adminHandle" autocomplete="username" placeholder="your handle" />
+    <label for="adminPassword">Password</label>
+    <input id="adminPassword" type="password" autocomplete="current-password" placeholder="password" />
+    <div class="row">
+      <button type="button" class="primary" id="adminSignInBtn">Sign in</button>
+      <button type="button" class="ghost" id="adminGoogleBtn">Google</button>
+    </div>
+    <div class="msg" id="signMsg"></div>
+  </div>
+
+  <div class="panel hidden" id="gatePanel">
+    <h1>Unlock</h1>
+    <p class="sub" id="gateWho"></p>
+    <label for="adminPassInput">Passphrase</label>
+    <input id="adminPassInput" type="password" autocomplete="off" placeholder="passphrase" />
+    <div class="row">
+      <button type="button" class="primary" id="adminUnlockBtn">Unlock</button>
+      <button type="button" class="danger" id="adminSignOutBtn">Sign out</button>
+    </div>
+    <div class="msg" id="adminGateMsg"></div>
+  </div>
+
+  <div id="consoleView" class="hidden">
+    <div class="panel" style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+      <div>
+        <h1 style="margin:0;">Control Centre</h1>
+        <p class="sub" style="margin:4px 0 0;" id="consoleWho">Every change is logged.</p>
+      </div>
+      <div class="row" style="margin:0;">
+        <button type="button" class="ghost" id="adminLockBtn">Lock</button>
+        <button type="button" class="danger" id="adminSignOutBtn2">Sign out</button>
+      </div>
+    </div>
+    <div id="adminBody"></div>
+    <div class="card" id="adminDiagWrap">
+      <div class="who">This device · diagnostics</div>
+      <p class="sub" style="margin:0 0 10px;">Error log from this browser only. Same origin as the app, so a break on this phone can be copied here.</p>
+      <div id="diagBody"></div>
+      <div class="row">
+        <button type="button" class="primary" id="diagCopyBtn">Copy all</button>
+        <button type="button" class="ghost" id="diagClearBtn">Clear</button>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+<script src="/firebase-config.js?v=20260907a"></script>
+<script src="/js/diagnostics.js?v=20260907a"></script>
+<script src="/js/admin-console.js?v=20260907a"></script>
+</body>
+</html>
