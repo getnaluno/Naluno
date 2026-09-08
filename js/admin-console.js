@@ -454,6 +454,13 @@
     const who = $('gateWho');
     if(who) who.textContent = whoLine(user);
     setMsg('signMsg', '');
+    /* THIS is the path that runs when you are signed in and land on the gate.
+       It was showing the gate without ever asking the worker whether a
+       password exists yet, so the screen stayed in its default "Unlock" state
+       forever and the setup fields were never revealed — no matter what the
+       server said. refreshGateState() was only wired into lockConsole(),
+       which runs on sign-out and on Lock, i.e. never on the normal way in. */
+    try{ refreshGateState(); }catch(_){}
     try{ if(typeof renderDiagPanel === 'function') renderDiagPanel(); }catch(_){}
   }
 
