@@ -96,6 +96,10 @@
     show('consoleView', false);
     show('gatePanel', !!currentUser);
     show('signPanel', !currentUser);
+    // Decide which gate to show — "set a password" or "enter it" — before the
+    // person types anything, so a first-time admin is never asked for a
+    // password that does not exist yet.
+    if(currentUser) { try{ refreshGateState(); }catch(_){} }
     const inp = $('adminPassInput'); if(inp) inp.value = '';
     setMsg('adminGateMsg', '');
   }
@@ -230,44 +234,119 @@
       }).join('') || '<div class="sub">No entries.</div>';
     };
 
-    try{ if(typeof renderDiagPanel === 'function') renderDiagPanel(); }catch(_){}
+    try{ const chg = $('adminChangePwBtn'); if(chg) chg.onclick = changeAdminPassword; }catch(_){}
+  try{ if(typeof renderDiagPanel === 'function') renderDiagPanel(); }catch(_){}
+  }
+
+  /* Rewritten. The gate now has two states instead of one:
+
+       - No password set yet  -> offer to create one.
+       - Password set         -> ask for it, like any normal login.
+
+     The old flow had a single "enter the passphrase" screen whose only
+     failure message was "not accepted", whether the password was wrong, had
+     never been set, or the request never left the browser. There was nothing
+     to act on, and no way to change it without the CLI. */
+
+  let __needsSetup = false;
+
+  async function refreshGateState(){
+    if(!currentUser) return;
+    try{
+      const idToken = await currentUser.getIdToken(false);
+      const res = await fetch(WORKER + '/v1/admin/status', {
+        headers: { 'Authorization': 'Bearer ' + idToken },
+      });
+      if(res.status === 404){
+        // Not on the allowlist. Deliberately vague — this account should not
+        // learn whether an admin console exists here.
+        __needsSetup = false;
+        setGateMode('locked');
+        setMsg('adminGateMsg', 'Not available for this account.');
+        return;
+      }
+      if(!res.ok){ setGateMode('locked'); return; }
+      const b = await res.json();
+      __needsSetup = !!b.needs_setup;
+      setGateMode(__needsSetup ? 'setup' : 'locked');
+    }catch(_){
+      setGateMode('locked');
+      setMsg('adminGateMsg', 'Couldn\u2019t reach the service.');
+    }
+  }
+
+  function setGateMode(mode){
+    const confirmRow = $('adminPassConfirmRow');
+    const btn = $('adminUnlockBtn');
+    const title = $('adminGateTitle');
+    const hint = $('adminGateHint');
+    if(mode === 'setup'){
+      if(confirmRow) confirmRow.style.display = '';
+      if(btn) btn.textContent = 'Create password';
+      if(title) title.textContent = 'Set your password';
+      if(hint) hint.textContent = 'First time here. Choose a password for this console — at least 8 characters. You can change it later from inside.';
+    } else {
+      if(confirmRow) confirmRow.style.display = 'none';
+      if(btn) btn.textContent = 'Unlock';
+      if(title) title.textContent = 'Unlock';
+      if(hint) hint.textContent = '';
+    }
   }
 
   async function adminUnlock(){
     const inp = $('adminPassInput');
     if(!inp || !currentUser) return;
-    __adminPass = inp.value || '';
-    setMsg('adminGateMsg', 'Checking…');
+    const typed = (inp.value || '').trim();
+    if(!typed){ setMsg('adminGateMsg', 'Enter your password.'); return; }
+
+    if(__needsSetup){
+      const confirmEl = $('adminPassConfirm');
+      const confirmVal = ((confirmEl && confirmEl.value) || '').trim();
+      if(typed.length < 8){ setMsg('adminGateMsg', 'Use at least 8 characters.'); return; }
+      if(typed !== confirmVal){ setMsg('adminGateMsg', 'The two passwords do not match.'); return; }
+      setMsg('adminGateMsg', 'Saving\u2026');
+      try{
+        const idToken = await currentUser.getIdToken(false);
+        const res = await fetch(WORKER + '/v1/admin/password', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ next_password: typed }),
+        });
+        const b = await res.json().catch(function(){ return {}; });
+        if(!res.ok || !b.ok){ setMsg('adminGateMsg', b.error || 'Could not save the password.'); return; }
+        __needsSetup = false;
+        setGateMode('locked');
+        if(confirmEl) confirmEl.value = '';
+        setMsg('adminGateMsg', '');
+        // Straight in — they just proved who they are by setting it.
+      }catch(_){
+        setMsg('adminGateMsg', 'Couldn\u2019t reach the service.');
+        return;
+      }
+    }
+
+    __adminPass = typed;
+    setMsg('adminGateMsg', 'Checking\u2026');
     try{
       const res = await adminFetch('overview');
       if(res.status === 404){
-        setMsg('adminGateMsg', 'Not available.');
+        setMsg('adminGateMsg', 'Not available for this account.');
         __adminPass = '';
         return;
       }
-      if(res.status === 503){
-        // The worker is reachable but ADMIN_PASSPHRASE was never set on it.
-        // This used to render as "Passphrase not accepted", which meant a
-        // secret that did not exist looked exactly like one typed wrong —
-        // you could retype a correct passphrase forever and never learn that.
-        const b = await res.json().catch(function(){ return {}; });
-        setMsg('adminGateMsg', b.error || 'Admin passphrase is not configured on the server.');
+      if(res.status === 409){
+        // Password vanished between screens (deleted in Firestore, say).
+        __needsSetup = true;
+        setGateMode('setup');
+        setMsg('adminGateMsg', 'No password is set. Create one now.');
         __adminPass = '';
         return;
       }
       if(!res.ok){
-        /* Say WHICH thing is wrong instead of one message for every case.
-           header_received:false means the passphrase never reached the
-           worker at all — a completely different problem from typing it
-           wrong, and previously indistinguishable. */
         const b = await res.json().catch(function(){ return {}; });
-        if(b && b.header_received === false){
-          setMsg('adminGateMsg', 'The passphrase never reached the server — the request was blocked before it was sent.');
-        } else if(b && b.received_length === 0){
-          setMsg('adminGateMsg', 'No passphrase was sent. Type it again and press Unlock.');
-        } else {
-          setMsg('adminGateMsg', 'Passphrase not accepted. Spacing and capitals do not matter — the text itself differs.');
-        }
+        setMsg('adminGateMsg', b.code === 'no_password'
+          ? 'Enter your password.'
+          : 'Password not accepted.');
         __adminPass = '';
         return;
       }
@@ -276,14 +355,39 @@
       show('signPanel', false);
       show('consoleView', true);
       const who = $('consoleWho');
-      if(who) who.textContent = whoLine(currentUser) + ' · every change is logged.';
-      try{ document.title = 'Naluno · Control'; }catch(_){}
+      if(who) who.textContent = whoLine(currentUser) + ' \u00b7 every change is logged.';
+      try{ document.title = 'Naluno \u00b7 Control'; }catch(_){}
       renderAdminOverview(data);
     }catch(_){
-      setMsg('adminGateMsg', 'Couldn’t reach the service.');
+      setMsg('adminGateMsg', 'Couldn\u2019t reach the service.');
       __adminPass = '';
     }
   }
+
+  /** Change it from inside the console — no CLI, no redeploy. */
+  async function changeAdminPassword(){
+    if(!currentUser) return;
+    const cur = window.prompt('Current password:');
+    if(cur === null) return;
+    const next = window.prompt('New password (at least 8 characters):');
+    if(next === null) return;
+    const again = window.prompt('Type the new password again:');
+    if(again === null) return;
+    if((next || '').trim() !== (again || '').trim()){ toast('The two new passwords do not match'); return; }
+    try{
+      const idToken = await currentUser.getIdToken(false);
+      const res = await fetch(WORKER + '/v1/admin/password', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ current_password: (cur||'').trim(), next_password: (next||'').trim() }),
+      });
+      const b = await res.json().catch(function(){ return {}; });
+      if(!res.ok || !b.ok){ toast(b.error || 'Could not change the password'); return; }
+      __adminPass = (next||'').trim();
+      toast('Password changed');
+    }catch(_){ toast('Couldn\u2019t reach the service'); }
+  }
+  try{ window.changeAdminPassword = changeAdminPassword; }catch(_){}
 
   async function signInHandle(){
     if(!initFirebase()){ setMsg('signMsg', 'Sign-in is not ready.'); return; }
