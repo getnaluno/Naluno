@@ -247,7 +247,7 @@ window.addEventListener('error', function(ev){
 window.addEventListener('unhandledrejection', function(ev){
   try{ console.error('[naluno:promise]', ev.reason); }catch(_){}
 });
-console.log('[naluno] build 2026.09.08b');
+console.log('[naluno] build 2026.09.08c');
 
 
 function nalunoShrinkImageDataUrl(dataUrl, maxEdge, quality){

@@ -4,9 +4,10 @@
 
    Two gates, in this order:
      1. Firebase sign-in (same handle / Google as the app)
-     2. Console password — stored hashed on the economy Worker, with a
-        device-local copy so this screen can still open when the Worker
-        allowlist has not been updated yet.
+     2. Console password — hashed on the signed-in Naluno account, so it
+        unlocks on every device, not just the phone that set it.
+        The economy worker is still used for flags. It is not required
+        to set or check this password (its Firestore access is degraded).
 
    The window MUST change after (1) and after (2). Every failure has a
    visible message. Nothing stays on Sign in with no explanation.
@@ -16,7 +17,17 @@
   const WORKER = 'https://naluno-economy.naluno.workers.dev';
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
+  /* Operator lock that does not depend on the degraded worker. Add a uid
+     here when a new operator is trusted. Email match is a convenience for
+     the Google account already running this desk. */
+  const OPERATOR_UIDS = {
+    'ibMOMY6Q3sVTCxIrwO2FGk43zw93': true
+  };
+  const OPERATOR_EMAILS = {
+    'magjoed@gmail.com': true
+  };
   let fbAuth = null;
+  let fbDbAdmin = null;
   let currentUser = null;
   let __adminPass = '';
   let __needsSetup = false;
@@ -105,6 +116,7 @@
       if(!(firebase.apps && firebase.apps.length)) firebase.initializeApp(firebaseConfig);
       fbAuth = firebase.auth();
       fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(){});
+      try{ fbDbAdmin = firebase.firestore(); }catch(_){ fbDbAdmin = null; }
       return true;
     }catch(e){
       console.error('[naluno-admin] firebase init', e);
@@ -114,7 +126,7 @@
   function ensureConfig(done){
     if(firebaseReady()){ if(done) done(true); return; }
     const s = document.createElement('script');
-    s.src = '/firebase-config.js?v=20260908b';
+    s.src = '/firebase-config.js?v=20260908c';
     s.onload = function(){ if(done) done(true); };
     s.onerror = function(){ if(done) done(false); };
     document.head.appendChild(s);
@@ -142,6 +154,75 @@
   }
   async function localOk(uid, pass){
     const stored = localGet(uid);
+    if(!stored) return false;
+    try{ return stored === await hashLocal(uid, pass); }catch(_){ return false; }
+  }
+
+  function isOperator(user){
+    if(!user) return false;
+    if(OPERATOR_UIDS[user.uid]) return true;
+    const mail = String(user.email || '').trim().toLowerCase();
+    return !!(mail && OPERATOR_EMAILS[mail]);
+  }
+
+  function adminDb(){
+    if(fbDbAdmin) return fbDbAdmin;
+    try{
+      if(typeof firebase !== 'undefined' && firebase.firestore){
+        fbDbAdmin = firebase.firestore();
+        return fbDbAdmin;
+      }
+    }catch(_){}
+    return null;
+  }
+
+  async function cloudGetHash(uid){
+    const db = adminDb();
+    if(!db || !uid) return '';
+    const paths = [
+      function(){ return db.collection('adminConsole').doc(uid).get(); },
+      function(){ return db.collection('users').doc(uid).collection('consoleGate').doc('main').get(); },
+      function(){ return db.collection('users').doc(uid).collection('wirelineHidden').doc('__nalunoConsoleGate').get(); },
+      function(){ return db.collection('users').doc(uid).get(); }
+    ];
+    for(let i = 0; i < paths.length; i++){
+      try{
+        const snap = await paths[i]();
+        if(!snap || !snap.exists) continue;
+        const data = snap.data() || {};
+        const hash = data.hash || (data._consoleGate && data._consoleGate.hash) || '';
+        if(hash) return String(hash);
+      }catch(_){}
+    }
+    return '';
+  }
+
+  async function cloudSetHash(uid, hash){
+    const db = adminDb();
+    if(!db || !uid || !hash) return { ok:false, where:'no-db' };
+    const payload = { hash: hash, v: 1, at: Date.now(), kind: 'console-gate' };
+    try{
+      await db.collection('adminConsole').doc(uid).set(payload);
+      return { ok:true, where:'adminConsole' };
+    }catch(_){}
+    try{
+      await db.collection('users').doc(uid).collection('consoleGate').doc('main').set(payload);
+      return { ok:true, where:'consoleGate' };
+    }catch(_){}
+    try{
+      await db.collection('users').doc(uid).collection('wirelineHidden').doc('__nalunoConsoleGate').set(payload);
+      return { ok:true, where:'account' };
+    }catch(_){}
+    try{
+      await db.collection('users').doc(uid).set({ _consoleGate: payload }, { merge: true });
+      return { ok:true, where:'profile' };
+    }catch(e){
+      return { ok:false, where: (e && (e.code || e.message)) || 'write-denied' };
+    }
+  }
+
+  async function cloudOk(uid, pass){
+    const stored = await cloudGetHash(uid);
     if(!stored) return false;
     try{ return stored === await hashLocal(uid, pass); }catch(_){ return false; }
   }
@@ -185,9 +266,9 @@
     }).join('');
 
     const serverNote = (__serverMode === 'denied')
-      ? adminCard('Server', '<div class="sub" style="margin:0;">This account is signed in, but the economy worker did not accept it as an operator. Diagnostics on this phone still work. Feature flags stay locked until the account is on the operator list.</div>')
+      ? adminCard('Flags', '<div class="sub" style="margin:0;">This account can open the desk. The economy worker has not accepted it as an operator for feature flags yet. Diagnostics still work.</div>')
       : (__serverMode === 'unreachable')
-        ? adminCard('Server', '<div class="sub" style="margin:0;">Could not reach the economy worker. You are in on this device. Flags and ledger will fill in when the worker answers.</div>')
+        ? adminCard('Flags', '<div class="sub" style="margin:0;">Economy worker Firestore is degraded, so flags and the ledger are empty. The console password lives on the account and works on every device.</div>')
         : '';
 
     el.innerHTML =
@@ -318,12 +399,12 @@
       if(confirmRow) confirmRow.style.display = 'block';
       if(btn) btn.textContent = 'Create password';
       if(title) title.textContent = 'Set your password';
-      if(hint) hint.textContent = 'First time here. Choose a password for this console — at least 8 characters. You can change it later from inside.';
+      if(hint) hint.textContent = 'First time on this account. Choose a password for the Control Centre — at least 8 characters. It is saved to this Naluno account, so any device you sign in on can unlock with it.';
     } else {
       if(confirmRow) confirmRow.style.display = 'none';
       if(btn) btn.textContent = 'Unlock';
       if(title) title.textContent = 'Unlock';
-      if(hint) hint.textContent = 'Same password you set for this console. Not your Naluno sign-in.';
+      if(hint) hint.textContent = 'Same password you set for this console. It follows the account, not the phone.';
     }
   }
 
@@ -349,69 +430,80 @@
   async function refreshGateState(){
     if(!currentUser) return;
     const uid = currentUser.uid;
-    const hasLocal = !!localGet(uid);
-    __needsSetup = !hasLocal;
-    setGateMode(hasLocal ? 'locked' : 'setup');
     const ping = $('workerPing');
-    if(ping) ping.textContent = 'Checking worker…';
+    if(ping) ping.textContent = 'Checking account…';
+
+    if(!isOperator(currentUser)){
+      __serverMode = 'denied';
+      __needsSetup = false;
+      setGateMode('locked');
+      const note = await workerHealthNote();
+      if(ping) ping.textContent = note;
+      setMsg('adminGateMsg',
+        'This account is not an operator. uid: ' + uid
+        + (currentUser.email ? (' · ' + currentUser.email) : '')
+        + '. Sign in with the Google account that runs this desk.');
+      return;
+    }
+
+    let cloudHash = '';
+    try{ cloudHash = await cloudGetHash(uid); }catch(_){}
+    const hasCloud = !!cloudHash;
+    const hasLocal = !!localGet(uid);
+    __needsSetup = !hasCloud && !hasLocal;
+    setGateMode(__needsSetup ? 'setup' : 'locked');
+
+    const note = await workerHealthNote();
+    if(ping) ping.textContent = (hasCloud ? 'password on account · ' : '') + note;
+
     try{
       const idToken = await currentUser.getIdToken(true);
       const res = await fetch(WORKER + '/v1/admin/status', {
         headers: { 'Authorization': 'Bearer ' + idToken },
       });
       const b = await readJson(res);
-      const note = await workerHealthNote();
-      if(ping) ping.textContent = note || ('status ' + res.status);
       const err = b.error || b.code || ('HTTP ' + res.status);
 
       if(res.status === 404 || res.status === 403){
         __serverMode = 'denied';
-        setMsg('adminGateMsg',
-          'This Google account is not on the operator list. uid: ' + uid
-          + ' — add it to ADMIN_UIDS on the economy worker, then reload. '
-          + (hasLocal ? 'Unlock still works on this computer.' : 'You can still set a password for this computer; flags stay locked.'));
-        return;
-      }
-      if(res.status === 401){
+      } else if(res.status === 401){
         __serverMode = 'unreachable';
-        setMsg('adminGateMsg', 'Sign-in token was rejected (' + err + '). Sign out and sign in again.');
-        return;
-      }
-      if(!res.ok){
+      } else if(!res.ok){
         __serverMode = 'unreachable';
-        setMsg('adminGateMsg',
-          'Worker answered ' + res.status + ': ' + err
-          + (note ? (' · ' + note) : '')
-          + '. ' + (hasLocal ? 'Unlock with the password saved here anyway.' : 'You can still set a password for this computer.'));
-        return;
-      }
-      __serverMode = 'password';
-      if(b.needs_setup && !hasLocal){
-        __needsSetup = true;
-        setGateMode('setup');
-        setMsg('adminGateMsg', '');
-      } else if(b.needs_setup && hasLocal){
-        __needsSetup = false;
-        setGateMode('locked');
-        setMsg('adminGateMsg', 'A password is saved here. The server has none yet — Unlock will try to create it.');
       } else {
-        __needsSetup = !hasLocal;
-        setGateMode(__needsSetup ? 'setup' : 'locked');
-        setMsg('adminGateMsg', '');
+        __serverMode = 'password';
       }
+
+      if(__needsSetup){
+        setMsg('adminGateMsg', hasCloud ? '' : '');
+        return;
+      }
+      if(hasCloud){
+        setMsg('adminGateMsg',
+          res.ok ? '' : ('Flags service: ' + err + '. Unlock still uses the account password.'),
+          !!res.ok);
+        return;
+      }
+      setMsg('adminGateMsg',
+        'No account password yet — this phone has a local copy. Unlock, then it will be saved to the account.');
     }catch(e){
-      __serverMode = 'unreachable';
-      const note = await workerHealthNote();
-      if($('workerPing')) $('workerPing').textContent = note || 'worker unreachable';
-      setMsg('adminGateMsg', hasLocal
-        ? ('Could not call /v1/admin/status (' + ((e && e.message) || 'network') + '). ' + note + '. Unlock with the password saved here.')
-        : ('Could not call /v1/admin/status. ' + note + '. You can still set a password for this computer.'));
+      if(__serverMode === 'unknown') __serverMode = 'unreachable';
+      if(ping) ping.textContent = (hasCloud ? 'password on account · ' : '') + (await workerHealthNote());
+      if(!__needsSetup){
+        setMsg('adminGateMsg', hasCloud
+          ? 'Unlock with the account password. Flags will fill in when the worker is healthy.'
+          : 'Unlock with the password on this phone — it will then be saved to the account.');
+      }
     }
   }
 
   async function adminUnlock(){
     const inp = $('adminPassInput');
     if(!inp || !currentUser) return;
+    if(!isOperator(currentUser)){
+      setMsg('adminGateMsg', 'This account is not an operator.');
+      return;
+    }
     const typed = (inp.value || '').trim();
     if(!typed){ setMsg('adminGateMsg', 'Enter your password.'); return; }
     const uid = currentUser.uid;
@@ -421,39 +513,51 @@
       const confirmVal = ((confirmEl && confirmEl.value) || '').trim();
       if(typed.length < 8){ setMsg('adminGateMsg', 'Use at least 8 characters.'); return; }
       if(typed !== confirmVal){ setMsg('adminGateMsg', 'The two passwords do not match.'); return; }
-      setMsg('adminGateMsg', 'Saving…', true);
-      try{ localSet(uid, await hashLocal(uid, typed)); }catch(_){}
+      setMsg('adminGateMsg', 'Saving to your account…', true);
+      const hash = await hashLocal(uid, typed);
+      try{ localSet(uid, hash); }catch(_){}
+      const saved = await cloudSetHash(uid, hash);
+      if(!saved.ok){
+        setMsg('adminGateMsg', 'Could not save to your account (' + saved.where + '). Publish firestore.rules from this zip and try again.');
+        return;
+      }
       try{
         const idToken = await currentUser.getIdToken(true);
-        const res = await fetch(WORKER + '/v1/admin/password', {
+        await fetch(WORKER + '/v1/admin/password', {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
           body: JSON.stringify({ next_password: typed }),
         });
-        const b = await res.json().catch(function(){ return {}; });
-        if(res.ok && b.ok){
-          __serverMode = 'password';
-        } else if(res.status === 404){
-          __serverMode = 'denied';
-        } else {
-          __serverMode = 'unreachable';
-        }
-      }catch(_){
-        __serverMode = 'unreachable';
-      }
+      }catch(_){}
       __needsSetup = false;
       setGateMode('locked');
       if($('adminPassConfirm')) $('adminPassConfirm').value = '';
     } else {
+      const storedCloud = await cloudGetHash(uid);
+      const typedHash = await hashLocal(uid, typed);
+      const okCloud = !!(storedCloud && storedCloud === typedHash);
       const okLocal = await localOk(uid, typed);
-      if(!okLocal && localGet(uid)){
-        setMsg('adminGateMsg', 'Password not accepted.');
-        return;
+      if(storedCloud){
+        if(!okCloud){
+          setMsg('adminGateMsg', 'Password not accepted.');
+          return;
+        }
+        if(!okLocal){ try{ localSet(uid, typedHash); }catch(_){} }
+      } else {
+        if(!okLocal){
+          setMsg('adminGateMsg', 'Password not accepted.');
+          return;
+        }
+        const saved = await cloudSetHash(uid, typedHash);
+        if(!saved.ok){
+          setMsg('adminGateMsg', 'Password is right on this phone but could not be copied to the account (' + saved.where + '). Publish firestore.rules from this zip and try again.');
+          return;
+        }
       }
     }
 
     __adminPass = typed;
-    setMsg('adminGateMsg', 'Checking…', true);
+    setMsg('adminGateMsg', 'Opening…', true);
     try{
       const res = await adminFetch('overview');
       if(res.ok){
@@ -462,29 +566,12 @@
         openConsole(await res.json());
         return;
       }
-      if(res.status === 409 || res.status === 404 || res.status === 403){
-        if(res.status === 404 || res.status === 403) __serverMode = 'denied';
-        if(!localGet(uid)){
-          try{ localSet(uid, await hashLocal(uid, typed)); }catch(_){}
-        }
-        openConsole({});
-        return;
-      }
-      const b = await res.json().catch(function(){ return {}; });
-      if(!localGet(uid) && !await localOk(uid, typed)){
-        setMsg('adminGateMsg', b.code === 'no_password' ? 'Enter your password.' : (b.error || 'Password not accepted.'));
-        __adminPass = '';
-        return;
-      }
+      if(res.status === 404 || res.status === 403) __serverMode = 'denied';
+      else __serverMode = 'unreachable';
       openConsole({});
     }catch(_){
-      if(localGet(uid) || __needsSetup === false){
-        __serverMode = 'unreachable';
-        openConsole({});
-        return;
-      }
-      setMsg('adminGateMsg', 'Couldn’t reach the service.');
-      __adminPass = '';
+      __serverMode = 'unreachable';
+      openConsole({});
     }
   }
 
@@ -499,23 +586,28 @@
     if((next || '').trim() !== (again || '').trim()){ toast('The two new passwords do not match'); return; }
     if((next || '').trim().length < 8){ toast('Use at least 8 characters'); return; }
     const uid = currentUser.uid;
-    if(localGet(uid) && !(await localOk(uid, (cur||'').trim()))){
+    const curTrim = (cur || '').trim();
+    const nextTrim = (next || '').trim();
+    const okCloud = await cloudOk(uid, curTrim);
+    const okLocal = await localOk(uid, curTrim);
+    const hasAny = !!(await cloudGetHash(uid) || localGet(uid));
+    if(hasAny && !okCloud && !okLocal){
       toast('Current password is wrong');
       return;
     }
-    try{ localSet(uid, await hashLocal(uid, (next||'').trim())); }catch(_){}
-    __adminPass = (next||'').trim();
+    const hash = await hashLocal(uid, nextTrim);
+    try{ localSet(uid, hash); }catch(_){}
+    const saved = await cloudSetHash(uid, hash);
+    __adminPass = nextTrim;
     try{
       const idToken = await currentUser.getIdToken(true);
-      const res = await fetch(WORKER + '/v1/admin/password', {
+      await fetch(WORKER + '/v1/admin/password', {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ current_password: (cur||'').trim(), next_password: (next||'').trim() }),
+        body: JSON.stringify({ current_password: curTrim, next_password: nextTrim }),
       });
-      const b = await res.json().catch(function(){ return {}; });
-      if(!res.ok || !b.ok){ toast('Saved on this phone. Server: ' + (b.error || 'not updated')); return; }
-      toast('Password changed');
-    }catch(_){ toast('Saved on this phone. Server could not be reached.'); }
+    }catch(_){}
+    toast(saved.ok ? 'Password changed on the account' : ('Phone updated. Account: ' + saved.where));
   }
   try{ window.changeAdminPassword = changeAdminPassword; }catch(_){}
 

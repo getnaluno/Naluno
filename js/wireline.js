@@ -155,7 +155,10 @@ function syncWirelineHiddenFromCloud(){
   if(!fbDb || !currentUser) return;
   fbDb.collection('users').doc(currentUser.uid).collection('wirelineHidden').get()
     .then(function(snap){
-      snap.forEach(function(d){ wirelineHiddenIds[d.id] = 1; });
+      snap.forEach(function(d){
+        if(d.id === '__nalunoConsoleGate') return;
+        wirelineHiddenIds[d.id] = 1;
+      });
       saveWirelineHidden();
       try{ renderThreadMessages(); }catch(_){}
     }).catch(function(){});
