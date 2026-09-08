@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v153: 09.08c console password on the account (Firestore), not this phone.
 // v152: 09.08b admin worker errors shown honestly.
 // v151: 09.08a admin desk actually changes window (local password + cache bust).
 // v150: 09.07a Control Centre at /admin/, never cached, gone from the member app.
@@ -42,7 +43,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v152';
+const CACHE_NAME = 'naluno-shell-v153';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',

@@ -393,6 +393,17 @@ service cloud.firestore {
        Recovery is deliberate and manual: delete adminCredentials/{uid} from
        the Firestore console and the next visit offers to set a new password.
        That requires project access, which is the right bar for a reset. */
+    /* Console password hash. Owner-only. The economy worker cannot write
+       this while its service account is degraded, so the signed-in operator
+       stores the hash themselves. Any device signed in as this uid can read
+       it. Other people cannot. */
+    match /adminConsole/{uid} {
+      allow read, write: if isOwner(uid);
+    }
+    match /users/{uid}/consoleGate/{docId} {
+      allow read, write: if isOwner(uid);
+    }
+
     match /adminCredentials/{uid} {
       allow read, write: if false;
     }

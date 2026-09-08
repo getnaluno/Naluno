@@ -1,35 +1,38 @@
-# GitHub update — 2026.09.08b
+# GitHub update — 2026.09.08c
 
-The worker **is answering**. `/health` returns 200
-`2.0.0-admin-password`. `/v1/flags` returns `"degraded": true`.
+The economy worker is **up** (`health 200`) but its service account
+**cannot read Firestore** (`degraded: true`, status `500 Economy service
+error`). That is why a password set on one phone never reached the next.
 
-The red line on your screen was a lie: the client called
-`/v1/admin/status` with your Google token, got a real error that was
-not 401 and not 404 (almost certainly **403 not on the operator list**
-or **500 Firestore degraded**), and printed “Worker did not answer”.
+This build stops using the worker for the console password.
 
-This build prints the actual HTTP status and error, shows the full
-uid (`ibMOMY6Q…` was truncated), and still lets Unlock open the desk
-with the password saved on that computer.
+The password is hashed (PBKDF2) and saved on the signed-in Naluno
+account. Sign in as the same Google account on any device and Unlock
+works. The worker is still used for flags; those stay empty until its
+Firestore access is repaired.
 
-## After push
+## You must also publish rules
 
-Hard-reload `https://getnaluno.com/admin/`. The cyan line under Unlock
-should show health + version. The red line should name the status.
+`firestore.rules` now allows the owner to read/write:
 
-If it says this account is not on the operator list, on the machine
-that deploys the economy worker:
+- `adminConsole/{uid}`
+- `users/{uid}/consoleGate/{docId}`
+
+From the machine that has Firebase:
 
 ```
-npx wrangler secret put ADMIN_UIDS
+firebase deploy --only firestore:rules
 ```
 
-Paste the **full uid** shown on the Unlock screen (the magjoed@gmail.com
-account), then reload `/admin/`.
+Until that lands, the desk falls back to an owner-only path that current
+rules already allow. After rules land, the dedicated collection is used.
 
-If it says Firestore degraded, the worker secret `GOOGLE_PRIVATE_KEY` /
-`GOOGLE_CLIENT_EMAIL` cannot read Firestore — that is why flags are
-`degraded: true` and why `/status` cannot see whether a password exists.
+## After the GitHub push
 
-Unlock with the console password still opens the desk on this computer
-either way.
+1. Hard-reload `https://getnaluno.com/admin/`
+2. Sign in with magjoed@gmail.com
+3. You should see **Set your password** (first time on the account)
+4. Create it once
+5. On another phone: sign in as the same Google account → **Unlock**
+
+uid locked as operator: `ibMOMY6Q3sVTCxIrwO2FGk43zw93`
