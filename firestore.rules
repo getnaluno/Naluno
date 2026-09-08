@@ -384,6 +384,19 @@ service cloud.firestore {
 
     // Admin audit log (spec §33) — no silent financial modifications, and no
     // client visibility into moderation/fraud decisions.
+    /* Admin password hashes. Written ONLY by the economy Worker via its
+       service account, which bypasses these rules. No client may read or
+       write them under any circumstance — not even the admin whose hash it
+       is. Reading is pointless (it is a PBKDF2 hash, not the password) and
+       writing would let a compromised browser set its own credential.
+
+       Recovery is deliberate and manual: delete adminCredentials/{uid} from
+       the Firestore console and the next visit offers to set a new password.
+       That requires project access, which is the right bar for a reset. */
+    match /adminCredentials/{uid} {
+      allow read, write: if false;
+    }
+
     match /adminAudit/{entryId} {
       allow read, write: if false;
     }
