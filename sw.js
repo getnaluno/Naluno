@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v154: 09.08d Spark Wiktionary Luganda + more languages, same live engines.
 // v153: 09.08c console password on the account (Firestore), not this phone.
 // v152: 09.08b admin worker errors shown honestly.
 // v151: 09.08a admin desk actually changes window (local password + cache bust).
@@ -43,7 +44,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v153';
+const CACHE_NAME = 'naluno-shell-v154';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -55,7 +56,7 @@ const CORE_ASSETS = [
   '/js/signal-core.js', '/js/signal-ui.js',
   '/js/sfu-live.js', '/js/compass.js', '/js/weather.js', '/js/beacon.js', '/js/find.js', '/js/profile.js', '/js/notifications.js',
   '/js/ice-core.js', '/js/compat-lock.js', '/js/keep-alive.js', '/js/media-contain.js',
-  '/js/spark.js', '/js/spark-page.js', '/js/spark-engine.js', '/js/spark-lg.js',
+  '/js/spark.js', '/js/spark-page.js', '/js/spark-engine.js', '/js/spark-lg-wikt.js', '/js/spark-lg.js',
   '/js/diagnostics.js', '/js/economy.js', '/js/economy-ui.js', '/js/onboard.js',
 ];
 
