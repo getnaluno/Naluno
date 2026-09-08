@@ -115,6 +115,7 @@ function closeDiagPanel(){}
 
 (function wireDiag(){
   function bind(){
+    if(typeof $ !== 'function') return;
     const copy = $('diagCopyBtn');
     if(copy) copy.onclick = function(){
       const text = nalunoDiagFormat();

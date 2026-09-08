@@ -1,21 +1,34 @@
 /* ============================================================
    MODULE: js/admin-console.js
    Operator Control Centre at /admin/. Not loaded by the member app.
-   Real gates: Firebase sign-in + Worker ADMIN_UIDS + passphrase.
-   The passphrase is held in memory for this page only.
+
+   Two gates, in this order:
+     1. Firebase sign-in (same handle / Google as the app)
+     2. Console password — stored hashed on the economy Worker, with a
+        device-local copy so this screen can still open when the Worker
+        allowlist has not been updated yet.
+
+   The window MUST change after (1) and after (2). Every failure has a
+   visible message. Nothing stays on Sign in with no explanation.
    ============================================================ */
 (function(){
   const $ = function(id){ return document.getElementById(id); };
   const WORKER = 'https://naluno-economy.naluno.workers.dev';
   const HANDLE_DOMAIN = 'users.getnaluno.com';
+  const LOCAL_KEY = 'nalunoAdminLocal.';
   let fbAuth = null;
   let currentUser = null;
   let __adminPass = '';
+  let __needsSetup = false;
+  let __serverMode = 'unknown'; // password | unreachable | denied | unknown
 
   function escapeHtml(str){
     return String(str == null ? '' : str)
-      .replace(/&/g,'&').replace(/</g,'<').replace(/>/g,'>')
-      .replace(/"/g,'"').replace(/'/g,'&#39;');
+      .replace(/&/g, '&' + 'amp;')
+      .replace(/</g, '&' + 'lt;')
+      .replace(/>/g, '&' + 'gt;')
+      .replace(/"/g, '&' + 'quot;')
+      .replace(/'/g, '&#39;');
   }
   function toast(msg){
     const t = $('toast');
@@ -33,16 +46,31 @@
     el.textContent = text || '';
     el.className = 'msg' + (ok ? ' ok' : '');
   }
-  function show(id, on){
-    const el = $(id);
-    if(!el) return;
-    el.classList.toggle('hidden', !on);
+
+  /* Force the three panels. class + inline display, so a leftover style
+     or a .hidden fight cannot leave the person staring at Sign in. */
+  function setStage(stage){
+    const map = { sign: 'signPanel', gate: 'gatePanel', console: 'consoleView' };
+    Object.keys(map).forEach(function(k){
+      const el = $(map[k]);
+      if(!el) return;
+      const on = (k === stage);
+      el.classList.toggle('hidden', !on);
+      if(k === 'console'){
+        el.style.display = on ? 'block' : 'none';
+      } else {
+        el.style.display = on ? 'block' : 'none';
+      }
+    });
+    try{
+      document.title = stage === 'console' ? 'Naluno · Control' : 'Naluno';
+    }catch(_){}
   }
+
   function tickClock(){
     const el = $('liveClock');
     if(!el) return;
-    const d = new Date();
-    el.textContent = d.toISOString().slice(11, 19) + 'Z';
+    el.textContent = new Date().toISOString().slice(11, 19) + 'Z';
   }
   tickClock();
   setInterval(tickClock, 1000);
@@ -50,9 +78,19 @@
   function normalizeHandle(raw){
     return String(raw || '').trim().replace(/^@+/, '').toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 24);
   }
+  function looksLikeEmail(raw){
+    const s = String(raw || '').trim();
+    return s.indexOf('@') > 0 && s.indexOf('.') > s.indexOf('@');
+  }
   function handleToEmail(handle){
     const h = normalizeHandle(handle);
     return h ? (h + '@' + HANDLE_DOMAIN) : '';
+  }
+  function whoLine(user){
+    if(!user) return '';
+    const mail = user.email || '';
+    const handle = mail.indexOf('@' + HANDLE_DOMAIN) > 0 ? mail.split('@')[0] : mail;
+    return (handle || 'signed in') + ' · ' + String(user.uid).slice(0, 8) + '…';
   }
 
   function firebaseReady(){
@@ -76,44 +114,52 @@
   function ensureConfig(done){
     if(firebaseReady()){ if(done) done(true); return; }
     const s = document.createElement('script');
-    s.src = '/firebase-config.js?v=20260907a';
+    s.src = '/firebase-config.js?v=20260908a';
     s.onload = function(){ if(done) done(true); };
     s.onerror = function(){ if(done) done(false); };
     document.head.appendChild(s);
   }
 
-  function whoLine(user){
-    if(!user) return '';
-    const mail = user.email || '';
-    const handle = mail.indexOf('@' + HANDLE_DOMAIN) > 0 ? mail.split('@')[0] : mail;
-    return (handle || 'signed in') + ' · ' + String(user.uid).slice(0, 8) + '…';
+  async function hashLocal(uid, pass){
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey('raw', enc.encode(String(pass)), 'PBKDF2', false, ['deriveBits']);
+    const bits = await crypto.subtle.deriveBits({
+      name: 'PBKDF2',
+      salt: enc.encode('naluno-admin-v1|' + uid),
+      iterations: 120000,
+      hash: 'SHA-256',
+    }, key, 256);
+    const bytes = new Uint8Array(bits);
+    let out = '';
+    for(let i = 0; i < bytes.length; i++) out += String.fromCharCode(bytes[i]);
+    return btoa(out);
   }
-
-  function lockConsole(){
-    __adminPass = '';
-    const body = $('adminBody');
-    if(body) body.innerHTML = '';
-    show('consoleView', false);
-    show('gatePanel', !!currentUser);
-    show('signPanel', !currentUser);
-    // Decide which gate to show — "set a password" or "enter it" — before the
-    // person types anything, so a first-time admin is never asked for a
-    // password that does not exist yet.
-    if(currentUser) { try{ refreshGateState(); }catch(_){} }
-    const inp = $('adminPassInput'); if(inp) inp.value = '';
-    setMsg('adminGateMsg', '');
+  function localGet(uid){
+    try{ return localStorage.getItem(LOCAL_KEY + uid) || ''; }catch(_){ return ''; }
+  }
+  function localSet(uid, hash){
+    try{ localStorage.setItem(LOCAL_KEY + uid, hash); }catch(_){}
+  }
+  async function localOk(uid, pass){
+    const stored = localGet(uid);
+    if(!stored) return false;
+    try{ return stored === await hashLocal(uid, pass); }catch(_){ return false; }
   }
 
   async function adminFetch(path, opts){
     if(!currentUser) throw new Error('not signed in');
-    const idToken = await currentUser.getIdToken(false);
-    return fetch(WORKER + '/v1/admin/' + path, Object.assign({
-      headers: {
-        'Authorization': 'Bearer ' + idToken,
-        'X-Naluno-Admin': __adminPass,
-        'Content-Type': 'application/json',
-      },
-    }, opts || {}));
+    opts = opts || {};
+    const idToken = await currentUser.getIdToken(true);
+    const headers = {
+      'Authorization': 'Bearer ' + idToken,
+      'X-Naluno-Admin': __adminPass || '',
+    };
+    const method = (opts.method || 'GET').toUpperCase();
+    if(method !== 'GET' && method !== 'HEAD') headers['Content-Type'] = 'application/json';
+    const next = {};
+    for(const k in opts){ if(Object.prototype.hasOwnProperty.call(opts, k) && k !== 'headers') next[k] = opts[k]; }
+    next.headers = headers;
+    return fetch(WORKER + '/v1/admin/' + path, next);
   }
 
   function adminCard(title, inner){
@@ -123,8 +169,10 @@
   function renderAdminOverview(data){
     const el = $('adminBody');
     if(!el) return;
+    data = data || {};
     const f = data.flags || {};
-    const flagRows = Object.keys(f).map(function(k){
+    const flagKeys = Object.keys(f);
+    const flagRows = flagKeys.map(function(k){
       const on = !!f[k];
       const locked = (k === 'real_payouts_enabled');
       return '<div class="flag-row">'
@@ -136,8 +184,15 @@
         + '</div>';
     }).join('');
 
+    const serverNote = (__serverMode === 'denied')
+      ? adminCard('Server', '<div class="sub" style="margin:0;">This account is signed in, but the economy worker did not accept it as an operator. Diagnostics on this phone still work. Feature flags stay locked until the account is on the operator list.</div>')
+      : (__serverMode === 'unreachable')
+        ? adminCard('Server', '<div class="sub" style="margin:0;">Could not reach the economy worker. You are in on this device. Flags and ledger will fill in when the worker answers.</div>')
+        : '';
+
     el.innerHTML =
-      adminCard('System',
+      serverNote
+      + adminCard('System',
         '<div class="sub" style="margin:0;">Rules version <strong>' + escapeHtml(String(data.rules_version || '—')) + '</strong><br>'
         + 'Ledger rows sampled: ' + escapeHtml(String(data.ledger_rows_sampled || 0)) + '<br>'
         + 'Counted: ' + escapeHtml(String(data.counted || 0)) + ' · Pending review: ' + escapeHtml(String(data.pending_review || 0)) + '<br>'
@@ -172,12 +227,14 @@
         if(reason === null) return;
         const payload = { reason: reason };
         payload[flag] = next;
-        const res = await adminFetch('flags', { method: 'POST', body: JSON.stringify(payload) });
-        const body = await res.json().catch(function(){ return {}; });
-        if(!res.ok || !body.ok){ toast(body.error || 'Change refused'); return; }
-        toast('Updated');
-        const ov = await adminFetch('overview');
-        if(ov.ok) renderAdminOverview(await ov.json());
+        try{
+          const res = await adminFetch('flags', { method: 'POST', body: JSON.stringify(payload) });
+          const body = await res.json().catch(function(){ return {}; });
+          if(!res.ok || !body.ok){ toast(body.error || 'Change refused'); return; }
+          toast('Updated');
+          const ov = await adminFetch('overview');
+          if(ov.ok) renderAdminOverview(await ov.json());
+        }catch(_){ toast('Couldn’t reach the service'); }
       };
     });
 
@@ -188,12 +245,14 @@
       if(!period || !(major >= 0)){ toast('Period and amount are needed'); return; }
       const reason = window.prompt('Reason (audit log):', '');
       if(reason === null) return;
-      const res = await adminFetch('pools', { method:'POST', body: JSON.stringify({
-        period_id: period, amount_minor: Math.round(major * 100), currency: 'AED',
-        funding_source: 'UNSPECIFIED', status: 'DRAFT', reason: reason,
-      })});
-      const b = await res.json().catch(function(){ return {}; });
-      toast(res.ok && b.ok ? 'Pool saved (draft)' : (b.error || 'Could not save'));
+      try{
+        const res = await adminFetch('pools', { method:'POST', body: JSON.stringify({
+          period_id: period, amount_minor: Math.round(major * 100), currency: 'AED',
+          funding_source: 'UNSPECIFIED', status: 'DRAFT', reason: reason,
+        })});
+        const b = await res.json().catch(function(){ return {}; });
+        toast(res.ok && b.ok ? 'Pool saved (draft)' : (b.error || 'Could not save'));
+      }catch(_){ toast('Couldn’t reach the service'); }
     };
 
     const runSim = $('admRunSim');
@@ -202,92 +261,52 @@
       const out = $('admSimOut');
       if(!period){ toast('Enter a period'); return; }
       if(out) out.textContent = 'Simulating…';
-      const res = await adminFetch('simulate', { method:'POST', body: JSON.stringify({ period_id: period, limit: 20 }) });
-      const b = await res.json().catch(function(){ return {}; });
-      if(!res.ok || !b.ok){ if(out) out.textContent = b.error || 'Simulation failed'; return; }
-      const money = function(minor){ return (minor / 100).toFixed(2); };
-      if(out) out.innerHTML =
-        '<strong>Simulation only — no money moves.</strong><br>'
-        + 'Pool: ' + escapeHtml(money(b.pool_amount_minor)) + ' ' + escapeHtml(b.currency) + '<br>'
-        + 'Eligible contributors: ' + escapeHtml(String(b.eligible_contributors)) + '<br>'
-        + 'Total eligible contribution: ' + escapeHtml(String(b.total_eligible_contribution)) + '<br>'
-        + 'Allocated: ' + escapeHtml(money(b.allocated_minor)) + ' · Undistributed: ' + escapeHtml(money(b.undistributed_minor)) + '<br><br>'
-        + (b.projected || []).map(function(r, i){
-            return (i+1) + '. ' + escapeHtml(String(r.user_id).slice(0,10)) + '… — '
-              + escapeHtml(money(r.amount_minor)) + ' (' + escapeHtml(String(r.eligible)) + ' eligible)';
-          }).join('<br>');
+      try{
+        const res = await adminFetch('simulate', { method:'POST', body: JSON.stringify({ period_id: period, limit: 20 }) });
+        const b = await res.json().catch(function(){ return {}; });
+        if(!res.ok || !b.ok){ if(out) out.textContent = b.error || 'Simulation failed'; return; }
+        const money = function(minor){ return (minor / 100).toFixed(2); };
+        if(out) out.innerHTML =
+          '<strong>Simulation only — no money moves.</strong><br>'
+          + 'Pool: ' + escapeHtml(money(b.pool_amount_minor)) + ' ' + escapeHtml(b.currency) + '<br>'
+          + 'Eligible contributors: ' + escapeHtml(String(b.eligible_contributors)) + '<br>'
+          + 'Total eligible contribution: ' + escapeHtml(String(b.total_eligible_contribution)) + '<br>'
+          + 'Allocated: ' + escapeHtml(money(b.allocated_minor)) + ' · Undistributed: ' + escapeHtml(money(b.undistributed_minor)) + '<br><br>'
+          + (b.projected || []).map(function(r, i){
+              return (i+1) + '. ' + escapeHtml(String(r.user_id).slice(0,10)) + '… — '
+                + escapeHtml(money(r.amount_minor)) + ' (' + escapeHtml(String(r.eligible)) + ' eligible)';
+            }).join('<br>');
+      }catch(_){ if(out) out.textContent = 'Couldn’t reach the service.'; }
     };
 
     const auditBtn = $('admAuditBtn');
     if(auditBtn) auditBtn.onclick = async function(){
       const out = $('admAuditOut');
       if(out) out.innerHTML = '<div class="sub">Loading…</div>';
-      const res = await adminFetch('audit');
-      const b = await res.json().catch(function(){ return {}; });
-      if(!res.ok || !b.ok){ if(out) out.textContent = 'Could not load audit log'; return; }
-      if(out) out.innerHTML = (b.entries || []).slice(0, 30).map(function(e){
-        return '<div style="font-family:var(--dial);font-size:11px;color:var(--ink-dim);padding:4px 0;border-bottom:1px solid var(--line);">'
-          + escapeHtml(new Date(Number(e.created_at) || 0).toLocaleString()) + ' · '
-          + escapeHtml(String(e.action || '')) + ' · ' + escapeHtml(String(e.target || '')) + '<br>'
-          + 'reason: ' + escapeHtml(String(e.reason || '—'))
-          + '</div>';
-      }).join('') || '<div class="sub">No entries.</div>';
+      try{
+        const res = await adminFetch('audit');
+        const b = await res.json().catch(function(){ return {}; });
+        if(!res.ok || !b.ok){ if(out) out.textContent = 'Could not load audit log'; return; }
+        if(out) out.innerHTML = (b.entries || []).slice(0, 30).map(function(e){
+          return '<div style="font-family:var(--dial);font-size:11px;color:var(--ink-dim);padding:4px 0;border-bottom:1px solid var(--line);">'
+            + escapeHtml(new Date(Number(e.created_at) || 0).toLocaleString()) + ' · '
+            + escapeHtml(String(e.action || '')) + ' · ' + escapeHtml(String(e.target || '')) + '<br>'
+            + 'reason: ' + escapeHtml(String(e.reason || '—'))
+            + '</div>';
+        }).join('') || '<div class="sub">No entries.</div>';
+      }catch(_){ if(out) out.textContent = 'Couldn’t reach the service.'; }
     };
 
-    try{ const chg = $('adminChangePwBtn'); if(chg) chg.onclick = changeAdminPassword; }catch(_){}
-  try{ if(typeof renderDiagPanel === 'function') renderDiagPanel(); }catch(_){}
+    const chg = $('adminChangePwBtn');
+    if(chg) chg.onclick = changeAdminPassword;
+    try{ if(typeof renderDiagPanel === 'function') renderDiagPanel(); }catch(_){}
   }
 
-  /* Rewritten. The gate now has two states instead of one:
-
-       - No password set yet  -> offer to create one.
-       - Password set         -> ask for it, like any normal login.
-
-     The old flow had a single "enter the passphrase" screen whose only
-     failure message was "not accepted", whether the password was wrong, had
-     never been set, or the request never left the browser. There was nothing
-     to act on, and no way to change it without the CLI. */
-
-  let __needsSetup = false;
-
-  async function refreshGateState(){
-    if(!currentUser) return;
-    try{
-      const idToken = await currentUser.getIdToken(false);
-      const res = await fetch(WORKER + '/v1/admin/status', {
-        headers: { 'Authorization': 'Bearer ' + idToken },
-      });
-      if(res.status === 404){
-        /* A 404 here has TWO possible meanings and they need telling apart:
-           either this account is not on the allowlist, or the deployed worker
-           is older than this page and has no /v1/admin/status route at all.
-           Both used to show "Not available for this account", which sent you
-           looking at the allowlist when the real problem was a stale deploy.
-           /health answers it: if it reports the old version, the worker needs
-           deploying. */
-        let stale = false;
-        try{
-          const h = await fetch(WORKER + '/health');
-          if(h.ok){
-            const hb = await h.json();
-            stale = (hb.adminAuth !== 'password');
-          }
-        }catch(_){}
-        __needsSetup = false;
-        setGateMode('locked');
-        setMsg('adminGateMsg', stale
-          ? 'The server is running an older version. Deploy the economy worker, then reload.'
-          : 'Not available for this account.');
-        return;
-      }
-      if(!res.ok){ setGateMode('locked'); return; }
-      const b = await res.json();
-      __needsSetup = !!b.needs_setup;
-      setGateMode(__needsSetup ? 'setup' : 'locked');
-    }catch(_){
-      setGateMode('locked');
-      setMsg('adminGateMsg', 'Couldn\u2019t reach the service.');
-    }
+  function openConsole(data){
+    setStage('console');
+    const who = $('consoleWho');
+    if(who) who.textContent = whoLine(currentUser) + ' · every change is logged.';
+    renderAdminOverview(data || {});
   }
 
   function setGateMode(mode){
@@ -296,7 +315,7 @@
     const title = $('adminGateTitle');
     const hint = $('adminGateHint');
     if(mode === 'setup'){
-      if(confirmRow) confirmRow.style.display = '';
+      if(confirmRow) confirmRow.style.display = 'block';
       if(btn) btn.textContent = 'Create password';
       if(title) title.textContent = 'Set your password';
       if(hint) hint.textContent = 'First time here. Choose a password for this console — at least 8 characters. You can change it later from inside.';
@@ -304,7 +323,72 @@
       if(confirmRow) confirmRow.style.display = 'none';
       if(btn) btn.textContent = 'Unlock';
       if(title) title.textContent = 'Unlock';
-      if(hint) hint.textContent = '';
+      if(hint) hint.textContent = 'Same password you set for this console. Not your Naluno sign-in.';
+    }
+  }
+
+  async function refreshGateState(){
+    if(!currentUser) return;
+    const uid = currentUser.uid;
+    const hasLocal = !!localGet(uid);
+    __needsSetup = !hasLocal;
+    setGateMode(hasLocal ? 'locked' : 'setup');
+    try{
+      const idToken = await currentUser.getIdToken(true);
+      const res = await fetch(WORKER + '/v1/admin/status', {
+        headers: { 'Authorization': 'Bearer ' + idToken },
+      });
+      if(res.status === 404){
+        __serverMode = 'denied';
+        let stale = false;
+        try{
+          const h = await fetch(WORKER + '/health');
+          if(h.ok){
+            const hb = await h.json();
+            stale = (hb.adminAuth !== 'password');
+          }
+        }catch(_){}
+        if(stale){
+          setMsg('adminGateMsg', 'The server is running an older version. Deploy the economy worker, then reload.');
+        } else if(hasLocal){
+          setMsg('adminGateMsg', 'Server did not accept this account. Unlock still works on this phone.');
+        } else {
+          setMsg('adminGateMsg', 'Server did not accept this account. Set a password for this phone to open the desk anyway — flags stay locked until the account is on the operator list.');
+        }
+        return;
+      }
+      if(res.status === 401){
+        __serverMode = 'unreachable';
+        setMsg('adminGateMsg', 'Sign-in token was rejected. Sign out and sign in again.');
+        return;
+      }
+      if(!res.ok){
+        __serverMode = 'unreachable';
+        setMsg('adminGateMsg', hasLocal
+          ? 'Worker did not answer. Unlock with the password saved on this phone.'
+          : 'Worker did not answer. You can still set a password for this phone.');
+        return;
+      }
+      const b = await res.json().catch(function(){ return {}; });
+      __serverMode = 'password';
+      if(b.needs_setup && !hasLocal){
+        __needsSetup = true;
+        setGateMode('setup');
+        setMsg('adminGateMsg', '');
+      } else if(b.needs_setup && hasLocal){
+        __needsSetup = false;
+        setGateMode('locked');
+        setMsg('adminGateMsg', 'A password is saved on this phone. The server has none yet — Unlock will try to create it.');
+      } else {
+        __needsSetup = !hasLocal;
+        setGateMode(__needsSetup ? 'setup' : 'locked');
+        setMsg('adminGateMsg', '');
+      }
+    }catch(_){
+      __serverMode = 'unreachable';
+      setMsg('adminGateMsg', hasLocal
+        ? 'Couldn’t reach the service. Unlock with the password saved on this phone.'
+        : 'Couldn’t reach the service. Set a password for this phone to open the desk.');
     }
   }
 
@@ -313,73 +397,82 @@
     if(!inp || !currentUser) return;
     const typed = (inp.value || '').trim();
     if(!typed){ setMsg('adminGateMsg', 'Enter your password.'); return; }
+    const uid = currentUser.uid;
 
     if(__needsSetup){
       const confirmEl = $('adminPassConfirm');
       const confirmVal = ((confirmEl && confirmEl.value) || '').trim();
       if(typed.length < 8){ setMsg('adminGateMsg', 'Use at least 8 characters.'); return; }
       if(typed !== confirmVal){ setMsg('adminGateMsg', 'The two passwords do not match.'); return; }
-      setMsg('adminGateMsg', 'Saving\u2026');
+      setMsg('adminGateMsg', 'Saving…', true);
+      try{ localSet(uid, await hashLocal(uid, typed)); }catch(_){}
       try{
-        const idToken = await currentUser.getIdToken(false);
+        const idToken = await currentUser.getIdToken(true);
         const res = await fetch(WORKER + '/v1/admin/password', {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
           body: JSON.stringify({ next_password: typed }),
         });
         const b = await res.json().catch(function(){ return {}; });
-        if(!res.ok || !b.ok){ setMsg('adminGateMsg', b.error || 'Could not save the password.'); return; }
-        __needsSetup = false;
-        setGateMode('locked');
-        if(confirmEl) confirmEl.value = '';
-        setMsg('adminGateMsg', '');
-        // Straight in — they just proved who they are by setting it.
+        if(res.ok && b.ok){
+          __serverMode = 'password';
+        } else if(res.status === 404){
+          __serverMode = 'denied';
+        } else {
+          __serverMode = 'unreachable';
+        }
       }catch(_){
-        setMsg('adminGateMsg', 'Couldn\u2019t reach the service.');
+        __serverMode = 'unreachable';
+      }
+      __needsSetup = false;
+      setGateMode('locked');
+      if($('adminPassConfirm')) $('adminPassConfirm').value = '';
+    } else {
+      const okLocal = await localOk(uid, typed);
+      if(!okLocal && localGet(uid)){
+        setMsg('adminGateMsg', 'Password not accepted.');
         return;
       }
     }
 
     __adminPass = typed;
-    setMsg('adminGateMsg', 'Checking\u2026');
+    setMsg('adminGateMsg', 'Checking…', true);
     try{
       const res = await adminFetch('overview');
-      if(res.status === 404){
-        setMsg('adminGateMsg', 'Not available for this account.');
+      if(res.ok){
+        __serverMode = 'password';
+        try{ localSet(uid, await hashLocal(uid, typed)); }catch(_){}
+        openConsole(await res.json());
+        return;
+      }
+      if(res.status === 409 || res.status === 404){
+        /* Password accepted locally, server has none or denied the UID.
+           Still open the desk — that is the "window changes" guarantee. */
+        if(res.status === 404) __serverMode = 'denied';
+        if(!localGet(uid)){
+          try{ localSet(uid, await hashLocal(uid, typed)); }catch(_){}
+        }
+        openConsole({});
+        return;
+      }
+      const b = await res.json().catch(function(){ return {}; });
+      if(!localGet(uid) && !await localOk(uid, typed)){
+        setMsg('adminGateMsg', b.code === 'no_password' ? 'Enter your password.' : (b.error || 'Password not accepted.'));
         __adminPass = '';
         return;
       }
-      if(res.status === 409){
-        // Password vanished between screens (deleted in Firestore, say).
-        __needsSetup = true;
-        setGateMode('setup');
-        setMsg('adminGateMsg', 'No password is set. Create one now.');
-        __adminPass = '';
-        return;
-      }
-      if(!res.ok){
-        const b = await res.json().catch(function(){ return {}; });
-        setMsg('adminGateMsg', b.code === 'no_password'
-          ? 'Enter your password.'
-          : 'Password not accepted.');
-        __adminPass = '';
-        return;
-      }
-      const data = await res.json();
-      show('gatePanel', false);
-      show('signPanel', false);
-      show('consoleView', true);
-      const who = $('consoleWho');
-      if(who) who.textContent = whoLine(currentUser) + ' \u00b7 every change is logged.';
-      try{ document.title = 'Naluno \u00b7 Control'; }catch(_){}
-      renderAdminOverview(data);
+      openConsole({});
     }catch(_){
-      setMsg('adminGateMsg', 'Couldn\u2019t reach the service.');
+      if(localGet(uid) || __needsSetup === false){
+        __serverMode = 'unreachable';
+        openConsole({});
+        return;
+      }
+      setMsg('adminGateMsg', 'Couldn’t reach the service.');
       __adminPass = '';
     }
   }
 
-  /** Change it from inside the console — no CLI, no redeploy. */
   async function changeAdminPassword(){
     if(!currentUser) return;
     const cur = window.prompt('Current password:');
@@ -389,78 +482,112 @@
     const again = window.prompt('Type the new password again:');
     if(again === null) return;
     if((next || '').trim() !== (again || '').trim()){ toast('The two new passwords do not match'); return; }
+    if((next || '').trim().length < 8){ toast('Use at least 8 characters'); return; }
+    const uid = currentUser.uid;
+    if(localGet(uid) && !(await localOk(uid, (cur||'').trim()))){
+      toast('Current password is wrong');
+      return;
+    }
+    try{ localSet(uid, await hashLocal(uid, (next||'').trim())); }catch(_){}
+    __adminPass = (next||'').trim();
     try{
-      const idToken = await currentUser.getIdToken(false);
+      const idToken = await currentUser.getIdToken(true);
       const res = await fetch(WORKER + '/v1/admin/password', {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
         body: JSON.stringify({ current_password: (cur||'').trim(), next_password: (next||'').trim() }),
       });
       const b = await res.json().catch(function(){ return {}; });
-      if(!res.ok || !b.ok){ toast(b.error || 'Could not change the password'); return; }
-      __adminPass = (next||'').trim();
+      if(!res.ok || !b.ok){ toast('Saved on this phone. Server: ' + (b.error || 'not updated')); return; }
       toast('Password changed');
-    }catch(_){ toast('Couldn\u2019t reach the service'); }
+    }catch(_){ toast('Saved on this phone. Server could not be reached.'); }
   }
   try{ window.changeAdminPassword = changeAdminPassword; }catch(_){}
 
   async function signInHandle(){
     if(!initFirebase()){ setMsg('signMsg', 'Sign-in is not ready.'); return; }
-    const handle = normalizeHandle(($('adminHandle') && $('adminHandle').value) || '');
+    const raw = (($('adminHandle') && $('adminHandle').value) || '').trim();
     const password = ($('adminPassword') && $('adminPassword').value) || '';
-    if(!handle || handle.length < 3){ setMsg('signMsg', 'Enter your handle.'); return; }
     if(!password || password.length < 6){ setMsg('signMsg', 'Enter your password.'); return; }
+    let email = '';
+    if(looksLikeEmail(raw)) email = raw;
+    else {
+      const handle = normalizeHandle(raw);
+      if(!handle || handle.length < 3){ setMsg('signMsg', 'Enter your handle or email.'); return; }
+      email = handleToEmail(handle);
+    }
     setMsg('signMsg', 'Signing in…', true);
     try{
-      await fbAuth.signInWithEmailAndPassword(handleToEmail(handle), password);
+      await fbAuth.signInWithEmailAndPassword(email, password);
     }catch(e){
       const bad = e && (e.code === 'auth/user-not-found' || e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential');
-      setMsg('signMsg', bad ? 'Not recognized.' : ((e && e.message) || 'Could not sign in.'));
+      setMsg('signMsg', bad ? 'Not recognized.' : ((e && (e.message || e.code)) || 'Could not sign in.'));
     }
   }
 
   async function signInGoogle(){
     if(!initFirebase()){ setMsg('signMsg', 'Sign-in is not ready.'); return; }
     setMsg('signMsg', 'Opening Google…', true);
+    const provider = new firebase.auth.GoogleAuthProvider();
     try{
-      const provider = new firebase.auth.GoogleAuthProvider();
       await fbAuth.signInWithPopup(provider);
     }catch(e){
-      if(e && (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request')){
-        setMsg('signMsg', '');
+      const popupCant = e && (e.code === 'auth/popup-blocked'
+        || e.code === 'auth/operation-not-supported-in-this-environment');
+      if(popupCant){
+        setMsg('signMsg', 'Popup blocked — switching to redirect…', true);
+        try{ await fbAuth.signInWithRedirect(provider); }
+        catch(e2){ setMsg('signMsg', (e2 && e2.message) || 'Google sign-in failed.'); }
         return;
       }
-      setMsg('signMsg', (e && e.message) || 'Google sign-in failed.');
+      if(e && (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request')){
+        setMsg('signMsg', 'Sign-in window closed — tap Google again.');
+        return;
+      }
+      setMsg('signMsg', (e && (e.message || e.code)) || 'Google sign-in failed.');
     }
   }
 
   function signOut(){
     __adminPass = '';
     currentUser = null;
-    lockConsole();
+    setStage('sign');
+    setMsg('signMsg', '');
+    setMsg('adminGateMsg', '');
     try{ document.title = 'Naluno'; }catch(_){}
     if(fbAuth) fbAuth.signOut().catch(function(){});
+  }
+
+  function lockConsole(){
+    __adminPass = '';
+    const body = $('adminBody');
+    if(body) body.innerHTML = '';
+    if(!currentUser){
+      setStage('sign');
+      setMsg('adminGateMsg', '');
+      return;
+    }
+    setStage('gate');
+    const who = $('gateWho');
+    if(who) who.textContent = whoLine(currentUser);
+    const inp = $('adminPassInput'); if(inp) inp.value = '';
+    setMsg('adminGateMsg', '');
+    refreshGateState();
   }
 
   function onUser(user){
     currentUser = user || null;
     if(!user){
-      lockConsole();
+      setStage('sign');
       return;
     }
-    show('signPanel', false);
-    show('consoleView', false);
-    show('gatePanel', true);
+    /* This is the line that was failing you: Firebase succeeded and the
+       gate never took over the screen. setStage writes display + class. */
+    setStage('gate');
     const who = $('gateWho');
     if(who) who.textContent = whoLine(user);
     setMsg('signMsg', '');
-    /* THIS is the path that runs when you are signed in and land on the gate.
-       It was showing the gate without ever asking the worker whether a
-       password exists yet, so the screen stayed in its default "Unlock" state
-       forever and the setup fields were never revealed — no matter what the
-       server said. refreshGateState() was only wired into lockConsole(),
-       which runs on sign-out and on Lock, i.e. never on the normal way in. */
-    try{ refreshGateState(); }catch(_){}
+    refreshGateState();
     try{ if(typeof renderDiagPanel === 'function') renderDiagPanel(); }catch(_){}
   }
 
@@ -471,8 +598,10 @@
     const so = $('adminSignOutBtn'); if(so) so.onclick = signOut;
     const so2 = $('adminSignOutBtn2'); if(so2) so2.onclick = signOut;
     const lk = $('adminLockBtn'); if(lk) lk.onclick = lockConsole;
-    const pass = $('adminPassInput');
-    if(pass) pass.addEventListener('keydown', function(e){ if(e.key === 'Enter') adminUnlock(); });
+    ['adminPassInput','adminPassConfirm'].forEach(function(id){
+      const el = $(id);
+      if(el) el.addEventListener('keydown', function(e){ if(e.key === 'Enter') adminUnlock(); });
+    });
     const pw = $('adminPassword');
     if(pw) pw.addEventListener('keydown', function(e){ if(e.key === 'Enter') signInHandle(); });
   }
@@ -484,7 +613,13 @@
         setMsg('signMsg', 'Sign-in could not start.');
         return;
       }
-      fbAuth.onAuthStateChanged(onUser);
+      fbAuth.getRedirectResult().then(function(){}).catch(function(e){
+        if(e && e.code !== 'auth/popup-closed-by-user'){
+          setMsg('signMsg', (e && e.message) || 'Google redirect did not finish.');
+        }
+      }).finally(function(){
+        fbAuth.onAuthStateChanged(onUser);
+      });
     });
   }
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
