@@ -1,37 +1,39 @@
-# GitHub update — 2026.09.07a
+# GitHub update — 2026.09.08a
 
-Copy over the repo root. Keep `app/` and add `admin/`.
-Force-close Naluno after it deploys, then reopen. Console should show:
+Copy over the repo root. Keep `app/` and `admin/`.
+Force-close Naluno, then reopen. Console should show:
 
-`[naluno] build 2026.09.07a`
+`[naluno] build 2026.09.08a`
 
-Service worker cache: **naluno-shell-v150**.
+Service worker cache: **naluno-shell-v151**.
 
-## What changed
+Then open **https://getnaluno.com/admin/** and hard-reload that tab.
 
-The Admin Console is no longer inside the member app. There is no 6-tap
-dot on Callsign. Operators open:
+## Why login did nothing
 
-**https://getnaluno.com/admin/**
+Three separate bugs stacked:
 
-That address is not linked from the public website or the app. Search
-engines are told to stay out. The service worker never caches it, so a
-normal phone cannot keep a copy after visiting by accident.
+1. **The phone kept the old admin script.** HTML still asked for
+   `admin-console.js?v=20260907a`, so every rewrite you uploaded looked
+   like “nothing changed”. Cache key is now `20260908a`.
 
-Getting in still needs all three:
+2. **Google on Samsung Chrome.** Popup is blocked or unsupported in the
+   installed app. The desk now falls back to redirect, and actually
+   reads the result when you come back.
 
-1. Sign in with an allowed Firebase account
-2. The Worker `ADMIN_UIDS` list
-3. The Worker `ADMIN_PASSPHRASE`
+3. **Unlock never left the gate.** `/v1/admin/status` 404 (account not
+   on the Worker allowlist) was treated as a hard stop. The password you
+   set in the UI never opened the window. The desk now saves that
+   password on this phone as well. After you create it, Control Centre
+   opens. Server flags stay locked until the account is on the operator
+   list — diagnostics still work.
 
-A signed-in person who is not on the list just sees “Not available.”
-
-Device diagnostics (the on-phone error log) now live on that same desk,
-same origin, so a break on this browser can still be copied there.
-
-Signal / Broadcast upload paths were not changed.
+Handle or email both work on the first screen. After Firebase accepts
+you, Sign in is forced off and Unlock is forced on (class + display),
+so the window cannot stay put.
 
 ## After push
 
-Members: force-close, reopen, use the app as usual.
-Operators: open getnaluno.com/admin/ in the browser, sign in, unlock.
+Hard-reload `/admin/`. Sign in with the same handle or Google you use
+in Naluno. First visit: **Set your password** (twice, 8+ characters).
+That is the moment the window should switch to Control Centre.

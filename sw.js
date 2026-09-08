@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v151: 09.08a admin desk actually changes window (local password + cache bust).
 // v150: 09.07a Control Centre at /admin/, never cached, gone from the member app.
 // v149: 09.06b /app/ firebase-config path + living site. App shell is /app/.
 // v148: site at / , app at /app/.
@@ -40,7 +41,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v150';
+const CACHE_NAME = 'naluno-shell-v151';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
