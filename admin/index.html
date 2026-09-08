@@ -123,10 +123,15 @@ pre.diag{
   </div>
 
   <div class="panel hidden" id="gatePanel">
-    <h1>Unlock</h1>
+    <h1 id="adminGateTitle">Unlock</h1>
     <p class="sub" id="gateWho"></p>
-    <label for="adminPassInput">Passphrase</label>
-    <input id="adminPassInput" type="password" autocomplete="off" placeholder="passphrase" />
+    <p class="sub" id="adminGateHint"></p>
+    <label for="adminPassInput">Password</label>
+    <input id="adminPassInput" type="password" autocomplete="current-password" placeholder="password" />
+    <div id="adminPassConfirmRow" style="display:none;">
+      <label for="adminPassConfirm">Confirm password</label>
+      <input id="adminPassConfirm" type="password" autocomplete="new-password" placeholder="type it again" />
+    </div>
     <div class="row">
       <button type="button" class="primary" id="adminUnlockBtn">Unlock</button>
       <button type="button" class="danger" id="adminSignOutBtn">Sign out</button>
@@ -141,6 +146,7 @@ pre.diag{
         <p class="sub" style="margin:4px 0 0;" id="consoleWho">Every change is logged.</p>
       </div>
       <div class="row" style="margin:0;">
+        <button type="button" class="ghost" id="adminChangePwBtn">Change password</button>
         <button type="button" class="ghost" id="adminLockBtn">Lock</button>
         <button type="button" class="danger" id="adminSignOutBtn2">Sign out</button>
       </div>
