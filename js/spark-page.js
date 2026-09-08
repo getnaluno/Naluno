@@ -6,23 +6,41 @@
    ============================================================ */
 
 const SPARK_LANGS = [
-  { id:'en', name:'English', rec:'en-US' },
-  { id:'ar', name:'العربية', rec:'ar-AE' },
-  { id:'fr', name:'Français', rec:'fr-FR' },
-  { id:'sw', name:'Kiswahili', rec:'sw-KE' },
-  { id:'lg', name:'Luganda', rec:'lg-UG' },
-  { id:'es', name:'Español', rec:'es-ES' },
-  { id:'pt', name:'Português', rec:'pt-BR' },
-  { id:'hi', name:'हिन्दी', rec:'hi-IN' },
-  { id:'zh', name:'中文', rec:'zh-CN' },
-  { id:'tr', name:'Türkçe', rec:'tr-TR' },
-  { id:'de', name:'Deutsch', rec:'de-DE' },
-  { id:'ru', name:'Русский', rec:'ru-RU' },
-  { id:'ko', name:'한국어', rec:'ko-KR' },
-  { id:'ja', name:'日本語', rec:'ja-JP' },
-  { id:'am', name:'አማርኛ', rec:'am-ET' },
-  { id:'so', name:'Soomaali', rec:'so-SO' },
-  { id:'fa', name:'فارسی', rec:'fa-IR' },
+  { id:'en', name:'English', rec:'en-US', group:'Naluno' },
+  { id:'lg', name:'Luganda', rec:'lg-UG', group:'Naluno' },
+  { id:'sw', name:'Kiswahili', rec:'sw-KE', group:'Naluno' },
+  { id:'ar', name:'العربية', rec:'ar-AE', group:'Naluno' },
+  { id:'fr', name:'Français', rec:'fr-FR', group:'Naluno' },
+  { id:'am', name:'አማርኛ', rec:'am-ET', group:'Africa' },
+  { id:'so', name:'Soomaali', rec:'so-SO', group:'Africa' },
+  { id:'rw', name:'Ikinyarwanda', rec:'rw-RW', group:'Africa' },
+  { id:'zu', name:'isiZulu', rec:'zu-ZA', group:'Africa' },
+  { id:'ha', name:'Hausa', rec:'ha-NG', group:'Africa' },
+  { id:'yo', name:'Yorùbá', rec:'yo-NG', group:'Africa' },
+  { id:'ig', name:'Igbo', rec:'ig-NG', group:'Africa' },
+  { id:'ur', name:'اردو', rec:'ur-PK', group:'Asia' },
+  { id:'hi', name:'हिन्दी', rec:'hi-IN', group:'Asia' },
+  { id:'bn', name:'বাংলা', rec:'bn-BD', group:'Asia' },
+  { id:'fa', name:'فارسی', rec:'fa-IR', group:'Asia' },
+  { id:'tr', name:'Türkçe', rec:'tr-TR', group:'Asia' },
+  { id:'th', name:'ไทย', rec:'th-TH', group:'Asia' },
+  { id:'vi', name:'Tiếng Việt', rec:'vi-VN', group:'Asia' },
+  { id:'id', name:'Bahasa Indonesia', rec:'id-ID', group:'Asia' },
+  { id:'ms', name:'Bahasa Melayu', rec:'ms-MY', group:'Asia' },
+  { id:'tl', name:'Tagalog', rec:'tl-PH', group:'Asia' },
+  { id:'zh', name:'中文', rec:'zh-CN', group:'Asia' },
+  { id:'ja', name:'日本語', rec:'ja-JP', group:'Asia' },
+  { id:'ko', name:'한국어', rec:'ko-KR', group:'Asia' },
+  { id:'es', name:'Español', rec:'es-ES', group:'Europe' },
+  { id:'pt', name:'Português', rec:'pt-BR', group:'Europe' },
+  { id:'de', name:'Deutsch', rec:'de-DE', group:'Europe' },
+  { id:'it', name:'Italiano', rec:'it-IT', group:'Europe' },
+  { id:'nl', name:'Nederlands', rec:'nl-NL', group:'Europe' },
+  { id:'pl', name:'Polski', rec:'pl-PL', group:'Europe' },
+  { id:'uk', name:'Українська', rec:'uk-UA', group:'Europe' },
+  { id:'sv', name:'Svenska', rec:'sv-SE', group:'Europe' },
+  { id:'ro', name:'Română', rec:'ro-RO', group:'Europe' },
+  { id:'ru', name:'Русский', rec:'ru-RU', group:'Europe' },
 ];
 
 const SPARK_ICE = [
@@ -123,8 +141,16 @@ async function openSparkPage(otherUid, otherName){
 function fillSparkLangSelects(){
   const sel = $('sparkMyLang');
   if(!sel) return;
-  sel.innerHTML = SPARK_LANGS.map(function(l){
-    return '<option value="' + l.id + '"' + (l.id === sparkMyLang ? ' selected' : '') + '>' + l.name + '</option>';
+  const groups = [];
+  SPARK_LANGS.forEach(function(l){
+    const g = l.group || 'More';
+    if(groups.indexOf(g) < 0) groups.push(g);
+  });
+  sel.innerHTML = groups.map(function(g){
+    const opts = SPARK_LANGS.filter(function(l){ return (l.group || 'More') === g; }).map(function(l){
+      return '<option value="' + l.id + '"' + (l.id === sparkMyLang ? ' selected' : '') + '>' + l.name + '</option>';
+    }).join('');
+    return '<optgroup label="' + g + '">' + opts + '</optgroup>';
   }).join('');
   sel.onchange = async function(){
     sparkMyLang = sel.value;
