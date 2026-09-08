@@ -258,11 +258,26 @@
         headers: { 'Authorization': 'Bearer ' + idToken },
       });
       if(res.status === 404){
-        // Not on the allowlist. Deliberately vague — this account should not
-        // learn whether an admin console exists here.
+        /* A 404 here has TWO possible meanings and they need telling apart:
+           either this account is not on the allowlist, or the deployed worker
+           is older than this page and has no /v1/admin/status route at all.
+           Both used to show "Not available for this account", which sent you
+           looking at the allowlist when the real problem was a stale deploy.
+           /health answers it: if it reports the old version, the worker needs
+           deploying. */
+        let stale = false;
+        try{
+          const h = await fetch(WORKER + '/health');
+          if(h.ok){
+            const hb = await h.json();
+            stale = (hb.adminAuth !== 'password');
+          }
+        }catch(_){}
         __needsSetup = false;
         setGateMode('locked');
-        setMsg('adminGateMsg', 'Not available for this account.');
+        setMsg('adminGateMsg', stale
+          ? 'The server is running an older version. Deploy the economy worker, then reload.'
+          : 'Not available for this account.');
         return;
       }
       if(!res.ok){ setGateMode('locked'); return; }
