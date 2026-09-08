@@ -90,7 +90,7 @@
     if(!user) return '';
     const mail = user.email || '';
     const handle = mail.indexOf('@' + HANDLE_DOMAIN) > 0 ? mail.split('@')[0] : mail;
-    return (handle || 'signed in') + ' · ' + String(user.uid).slice(0, 8) + '…';
+    return (handle || 'signed in') + ' · ' + String(user.uid);
   }
 
   function firebaseReady(){
@@ -114,7 +114,7 @@
   function ensureConfig(done){
     if(firebaseReady()){ if(done) done(true); return; }
     const s = document.createElement('script');
-    s.src = '/firebase-config.js?v=20260908a';
+    s.src = '/firebase-config.js?v=20260908b';
     s.onload = function(){ if(done) done(true); };
     s.onerror = function(){ if(done) done(false); };
     document.head.appendChild(s);
@@ -327,49 +327,64 @@
     }
   }
 
+  async function readJson(res){
+    try{ return await res.json(); }catch(_){ return {}; }
+  }
+  async function workerHealthNote(){
+    const bits = [];
+    try{
+      const h = await fetch(WORKER + '/health');
+      const hb = await readJson(h);
+      bits.push('health ' + (h.status) + ' ' + (hb.version || ''));
+      if(hb.adminAuth) bits.push(String(hb.adminAuth));
+    }catch(e){ bits.push('health unreachable'); }
+    try{
+      const f = await fetch(WORKER + '/v1/flags');
+      const fb = await readJson(f);
+      if(fb.degraded) bits.push('Firestore degraded');
+    }catch(_){}
+    return bits.filter(Boolean).join(' · ');
+  }
+
   async function refreshGateState(){
     if(!currentUser) return;
     const uid = currentUser.uid;
     const hasLocal = !!localGet(uid);
     __needsSetup = !hasLocal;
     setGateMode(hasLocal ? 'locked' : 'setup');
+    const ping = $('workerPing');
+    if(ping) ping.textContent = 'Checking worker…';
     try{
       const idToken = await currentUser.getIdToken(true);
       const res = await fetch(WORKER + '/v1/admin/status', {
         headers: { 'Authorization': 'Bearer ' + idToken },
       });
-      if(res.status === 404){
+      const b = await readJson(res);
+      const note = await workerHealthNote();
+      if(ping) ping.textContent = note || ('status ' + res.status);
+      const err = b.error || b.code || ('HTTP ' + res.status);
+
+      if(res.status === 404 || res.status === 403){
         __serverMode = 'denied';
-        let stale = false;
-        try{
-          const h = await fetch(WORKER + '/health');
-          if(h.ok){
-            const hb = await h.json();
-            stale = (hb.adminAuth !== 'password');
-          }
-        }catch(_){}
-        if(stale){
-          setMsg('adminGateMsg', 'The server is running an older version. Deploy the economy worker, then reload.');
-        } else if(hasLocal){
-          setMsg('adminGateMsg', 'Server did not accept this account. Unlock still works on this phone.');
-        } else {
-          setMsg('adminGateMsg', 'Server did not accept this account. Set a password for this phone to open the desk anyway — flags stay locked until the account is on the operator list.');
-        }
+        setMsg('adminGateMsg',
+          'This Google account is not on the operator list. uid: ' + uid
+          + ' — add it to ADMIN_UIDS on the economy worker, then reload. '
+          + (hasLocal ? 'Unlock still works on this computer.' : 'You can still set a password for this computer; flags stay locked.'));
         return;
       }
       if(res.status === 401){
         __serverMode = 'unreachable';
-        setMsg('adminGateMsg', 'Sign-in token was rejected. Sign out and sign in again.');
+        setMsg('adminGateMsg', 'Sign-in token was rejected (' + err + '). Sign out and sign in again.');
         return;
       }
       if(!res.ok){
         __serverMode = 'unreachable';
-        setMsg('adminGateMsg', hasLocal
-          ? 'Worker did not answer. Unlock with the password saved on this phone.'
-          : 'Worker did not answer. You can still set a password for this phone.');
+        setMsg('adminGateMsg',
+          'Worker answered ' + res.status + ': ' + err
+          + (note ? (' · ' + note) : '')
+          + '. ' + (hasLocal ? 'Unlock with the password saved here anyway.' : 'You can still set a password for this computer.'));
         return;
       }
-      const b = await res.json().catch(function(){ return {}; });
       __serverMode = 'password';
       if(b.needs_setup && !hasLocal){
         __needsSetup = true;
@@ -378,17 +393,19 @@
       } else if(b.needs_setup && hasLocal){
         __needsSetup = false;
         setGateMode('locked');
-        setMsg('adminGateMsg', 'A password is saved on this phone. The server has none yet — Unlock will try to create it.');
+        setMsg('adminGateMsg', 'A password is saved here. The server has none yet — Unlock will try to create it.');
       } else {
         __needsSetup = !hasLocal;
         setGateMode(__needsSetup ? 'setup' : 'locked');
         setMsg('adminGateMsg', '');
       }
-    }catch(_){
+    }catch(e){
       __serverMode = 'unreachable';
+      const note = await workerHealthNote();
+      if($('workerPing')) $('workerPing').textContent = note || 'worker unreachable';
       setMsg('adminGateMsg', hasLocal
-        ? 'Couldn’t reach the service. Unlock with the password saved on this phone.'
-        : 'Couldn’t reach the service. Set a password for this phone to open the desk.');
+        ? ('Could not call /v1/admin/status (' + ((e && e.message) || 'network') + '). ' + note + '. Unlock with the password saved here.')
+        : ('Could not call /v1/admin/status. ' + note + '. You can still set a password for this computer.'));
     }
   }
 
@@ -445,10 +462,8 @@
         openConsole(await res.json());
         return;
       }
-      if(res.status === 409 || res.status === 404){
-        /* Password accepted locally, server has none or denied the UID.
-           Still open the desk — that is the "window changes" guarantee. */
-        if(res.status === 404) __serverMode = 'denied';
+      if(res.status === 409 || res.status === 404 || res.status === 403){
+        if(res.status === 404 || res.status === 403) __serverMode = 'denied';
         if(!localGet(uid)){
           try{ localSet(uid, await hashLocal(uid, typed)); }catch(_){}
         }
