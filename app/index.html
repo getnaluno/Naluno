@@ -576,6 +576,28 @@ window.__nalunoEntryT0 = Date.now();
     </div>
   </div>
 
+  <!-- Report sheet. Send stays disabled until a real reason is typed, and the
+       worker enforces the same rule again server-side. -->
+  <div class="call-overlay" id="reportSheet">
+    <div class="topbar" style="padding-top:18px;">
+      <div class="back-btn" id="reportCloseBtn" role="button" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
+      <div style="flex:1;">
+        <div style="font-family:var(--font-futuristic); font-weight:700; font-size:16px;" id="reportWho">Report this</div>
+        <div class="lobby-sub" style="text-align:left;max-width:none;font-size:11.5px;">A person will read this. Nothing is hidden or removed automatically.</div>
+      </div>
+    </div>
+    <div class="tab-scroll" style="padding:0 18px 24px;">
+      <div class="section-label">What is wrong?</div>
+      <select id="reportReasonCode" style="width:100%;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:11px 12px;color:var(--text);margin-bottom:12px;"></select>
+      <div class="section-label">Tell us what happened</div>
+      <textarea id="reportReason" rows="5" placeholder="What did you see? Without this we can&rsquo;t act on the report."
+        style="width:100%;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px;color:var(--text);resize:vertical;font-family:inherit;"></textarea>
+      <div class="lobby-sub" style="text-align:left;max-width:none;font-size:11px;margin-top:6px;">A reason is required &mdash; reports without one can&rsquo;t be acted on, so they aren&rsquo;t accepted.</div>
+      <button type="button" id="reportSendBtn" class="save-btn" style="width:100%;margin-top:14px;" disabled>Send report</button>
+      <div id="reportMsg" class="lobby-sub" style="text-align:left;max-width:none;margin-top:10px;"></div>
+    </div>
+  </div>
+
   <div class="call-overlay" id="findNalunoPanel">
     <div class="topbar" style="padding-top:18px;">
       <div class="back-btn" id="findNalunoCloseBtn" role="button" aria-label="Back"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
@@ -1116,6 +1138,7 @@ window.__nalunoEntryT0 = Date.now();
             <div style="font-size:11px; font-family:var(--font-mono); color:rgba(255,255,255,.65);" id="bspaceCreatorMeta">Broadcast</div>
           </div>
           <button type="button" class="bspace-mini" id="bspaceShareBtn" title="Copy link">Share</button>
+          <button type="button" class="bspace-mini" id="bspaceReportBtn" title="Report this Broadcast or creator">Report</button>
           <button type="button" class="bspace-mini" id="bspaceDeleteBtn" style="display:none;color:#ff8a8a;">Delete</button>
           <button type="button" class="bspace-mini" id="bspaceGoLive" style="display:none;">Go live</button>
         </div>
@@ -1335,6 +1358,7 @@ window.__nalunoEntryT0 = Date.now();
      server-side by the naluno-economy Worker. Loaded AFTER circle.js so
      currentUser exists, and deliberately non-blocking — if this file failed
      to load entirely, Broadcast would behave exactly as it does today. -->
+<script src="/js/report.js?v=20260909a"></script>
 <script src="/js/economy.js?v=20260908d"></script>
 <script src="/js/economy-ui.js?v=20260908d"></script>
 <script src="/js/weather.js?v=20260908d"></script>
