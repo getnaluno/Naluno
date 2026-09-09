@@ -404,6 +404,17 @@ service cloud.firestore {
       allow read, write: if isOwner(uid);
     }
 
+    /* Reports. Written ONLY by the economy Worker's service account, which
+       bypasses these rules — so the reason requirement cannot be sidestepped
+       by writing straight to Firestore from a rewritten client.
+
+       No client may read them at all. A reporter must not be able to check
+       whether their report was acted on (that invites retaliation), and a
+       reported person must never see who reported them. */
+    match /reports/{reportId} {
+      allow read, write: if false;
+    }
+
     match /adminCredentials/{uid} {
       allow read, write: if false;
     }
