@@ -247,6 +247,253 @@
     return '<div class="card"><div class="who">' + escapeHtml(title) + '</div>' + inner + '</div>';
   }
 
+  /* ---------------- Tabs (spec §30) ----------------
+     Each tab fetches only its own data, on first open, and caches it. The
+     console used to render everything into one block on unlock, which meant
+     one slow or failing query held up the whole screen. */
+
+  let __tabCache = {};
+  let __activeTab = 'broadcast';
+
+  function money(minor, ccy){
+    const v = (Number(minor) || 0) / 100;
+    return v.toFixed(2) + (ccy ? ' ' + ccy : '');
+  }
+  function kpi(label, value){
+    return '<div class="kpi"><b>' + escapeHtml(String(value)) + '</b><span>' + escapeHtml(label) + '</span></div>';
+  }
+  function kpis(pairs){
+    return '<div class="kpi-row">' + pairs.map(function(p){ return kpi(p[0], p[1]); }).join('') + '</div>';
+  }
+  function table(headers, rows){
+    if(!rows.length) return '<p class="sub">Nothing recorded yet.</p>';
+    return '<table class="tbl"><thead><tr>'
+      + headers.map(function(h){ return '<th>' + escapeHtml(h) + '</th>'; }).join('')
+      + '</tr></thead><tbody>'
+      + rows.map(function(r){
+          return '<tr>' + r.map(function(c){ return '<td>' + escapeHtml(String(c == null ? '' : c)) + '</td>'; }).join('') + '</tr>';
+        }).join('')
+      + '</tbody></table>';
+  }
+  function card(title, inner){
+    return '<div class="card"><div class="who">' + escapeHtml(title) + '</div>' + inner + '</div>';
+  }
+  /* An explicit, visible note when a system is switched off. A tab that shows
+     zeros for something that was never activated reads as "nobody used it",
+     which is a different and misleading claim. */
+  function inactiveNote(text){
+    return '<div class="inactive-note">' + escapeHtml(text) + '</div>';
+  }
+
+  async function loadTab(tab, force){
+    const el = $('adminBody');
+    if(!el) return;
+    if(!force && __tabCache[tab]){ renderTab(tab, __tabCache[tab]); return; }
+    el.innerHTML = '<p class="sub">Loading\u2026</p>';
+    if(tab === 'system'){
+      try{
+        const res = await adminFetch('overview');
+        if(!res.ok) throw new Error('overview ' + res.status);
+        const d = await res.json();
+        __tabCache[tab] = d; renderTab(tab, d);
+      }catch(_){ el.innerHTML = '<p class="sub">Couldn\u2019t load this section.</p>'; }
+      return;
+    }
+    const route = { broadcast:'broadcasts', contribution:'contribution', trust:'trust',
+                    value:'value', support:'support', rewards:'rewards', financial:'financial' }[tab];
+    try{
+      const res = await adminFetch(route);
+      if(res.status === 404){
+        el.innerHTML = '<p class="sub">This section needs a newer economy worker. Deploy it, then reload.</p>';
+        return;
+      }
+      if(!res.ok) throw new Error(route + ' ' + res.status);
+      const d = await res.json();
+      __tabCache[tab] = d; renderTab(tab, d);
+    }catch(_){
+      el.innerHTML = '<p class="sub">Couldn\u2019t load this section.</p>';
+    }
+  }
+
+  function renderTab(tab, d){
+    const el = $('adminBody');
+    if(!el) return;
+    d = d || {};
+    if(tab === 'system'){ renderAdminOverview(d); return; }
+
+    if(tab === 'broadcast'){
+      el.innerHTML =
+        kpis([['Broadcasts', d.total || 0], ['Total views', d.total_views || 0],
+              ['Creators', (d.creators || []).length], ['Deleted', d.deleted || 0]])
+        + card('Creators by views', table(['Creator', 'Broadcasts', 'Views'],
+            (d.creators || []).map(function(c){ return [String(c.creator_uid).slice(0,12) + '\u2026', c.broadcasts, c.views]; })))
+        + card('Recent Broadcasts', table(['Title', 'Creator', 'Views', 'Live'],
+            (d.recent || []).map(function(b){
+              return [b.title, String(b.creator_uid).slice(0,10) + '\u2026', b.views, b.live ? 'LIVE' : ''];
+            })))
+        + card('Reports & moderation', '<p class="sub">No reporting queue is wired yet. Content removal currently happens in the app by the author or the Broadcast creator, and each removal is recorded in the audit log.</p>');
+      return;
+    }
+
+    if(tab === 'contribution'){
+      const r = d.rules || {};
+      el.innerHTML =
+        kpis([['Counted', d.counted || 0], ['Points', d.total_points || 0],
+              ['Eligible', d.total_eligible || 0], ['Pending review', d.pending_review || 0],
+              ['Reversed', d.reversed || 0]])
+        + card('Rules version ' + (d.rules_version || '\u2014'),
+            table(['Event', 'Base points', 'Daily cap'],
+              Object.keys((r.events) || {}).map(function(k){
+                return [k, r.events[k].base, r.events[k].dailyCap || '\u2014'];
+              })))
+        + card('Multipliers',
+            '<p class="sub">Low-effort \u00d7' + ((r.quality && r.quality.lowEffortMultiplier) || '\u2014')
+            + ' \u00b7 substantive \u00d7' + ((r.quality && r.quality.substantiveMultiplier) || '\u2014')
+            + ' \u00b7 creator replied \u00d7' + ((r.quality && r.quality.creatorRepliedBonus) || '\u2014')
+            + ' \u00b7 sparked discussion \u00d7' + ((r.quality && r.quality.sparkedDiscussionBonus) || '\u2014')
+            + '. Repeat interaction with the same Broadcast decays to \u00d7'
+            + ((r.diminishing && r.diminishing.perBroadcastDecay) || '\u2014') + ' each time.</p>')
+        + card('By event type', table(['Event', 'Count', 'Points'],
+            (d.by_type || []).map(function(t){ return [t.event_type, t.count, t.points]; })))
+        + card('Recent ledger', table(['Event', 'Points', 'Eligible', 'Tier', 'Status'],
+            (d.recent || []).map(function(x){
+              return [x.event_type, x.points, x.eligible_points, x.trust_tier, x.status];
+            })));
+      return;
+    }
+
+    if(tab === 'trust'){
+      const t = d.tiers || {};
+      el.innerHTML =
+        kpis([['Profiles', d.profiles || 0], ['High', t.HIGH || 0], ['Medium', t.MEDIUM || 0],
+              ['Low', t.LOW || 0], ['New', t.NEW || 0]])
+        + '<p class="sub">Trust is never shown to the person it describes, and the formula is not exposed (§13, §37). Points are still earned at every tier \u2014 the tier only limits what counts as <em>eligible</em>.</p>'
+        + card('Flagged accounts', table(['User', 'Tier', 'Risk flags', 'Removed', 'Restricted'],
+            (d.flagged || []).map(function(f){
+              return [String(f.user_id).slice(0,14) + '\u2026', f.tier, f.riskFlags, f.removedContentCount, f.restricted ? 'YES' : ''];
+            })));
+      return;
+    }
+
+    if(tab === 'value'){
+      el.innerHTML =
+        kpis([['Broadcasts with value', d.broadcasts_with_value || 0], ['Total value', d.total_value || 0]])
+        + '<p class="sub">Community Value is an analytical measurement of contribution around a Broadcast. It is <strong>not</strong> a currency amount and must never be presented as one (§15, §16).</p>'
+        + card('Highest value Broadcasts', table(['Broadcast', 'Value', 'Events'],
+            (d.top || []).map(function(v){ return [String(v.broadcast_id).slice(0,16) + '\u2026', v.value, v.events]; })));
+      return;
+    }
+
+    if(tab === 'support'){
+      const bs = d.by_status || {};
+      el.innerHTML =
+        (d.inactive ? inactiveNote('Creator Support is switched off. No payment provider is connected and no money can move. These figures are the ledger structure only.') : '')
+        + kpis([['Transactions', d.transactions || 0], ['Pending', bs.PENDING || 0],
+                ['Succeeded', bs.SUCCEEDED || 0], ['Failed', bs.FAILED || 0],
+                ['Refunded', bs.REFUNDED || 0], ['Disputed', bs.DISPUTED || 0]])
+        + card('Recent transactions', table(['Supporter', 'Creator', 'Amount', 'Status'],
+            (d.recent || []).map(function(t){
+              return [String(t.supporter_user_id||'').slice(0,10)+'\u2026', String(t.creator_user_id||'').slice(0,10)+'\u2026',
+                      money(t.amount_minor, t.currency), t.status];
+            })));
+      return;
+    }
+
+    if(tab === 'rewards'){
+      el.innerHTML =
+        (d.inactive ? inactiveNote('Community Rewards is switched off. Pools can be drafted and simulations run, but no allocation is ever paid out while this is off.') : '')
+        + kpis([['Pools', (d.pools || []).length], ['Allocations', d.allocations || 0]])
+        + card('Reward pools', table(['Period', 'Amount', 'Status', 'Funding'],
+            (d.pools || []).map(function(p){ return [p.period_id, money(p.amount_minor, p.currency), p.status, p.funding_source]; })))
+        + card('Simulation (§29 \u2014 nothing moves)',
+            '<input id="admSimPeriod" placeholder="Period e.g. 2026-09" />'
+          + '<input id="admSimPool" placeholder="Pool amount e.g. 10000" inputmode="decimal" />'
+          + '<div class="row"><button type="button" class="ghost" id="admSavePool">Save pool</button>'
+          + '<button type="button" class="primary" id="admRunSim">Run simulation</button></div>'
+          + '<div id="admSimOut" class="sub"></div>');
+      wireRewardControls();
+      return;
+    }
+
+    if(tab === 'financial'){
+      const cs = d.creator_support || {}, ce = d.creator_earnings || {},
+            cr = d.community_rewards || {}, rp = d.reward_pools || {};
+      el.innerHTML =
+        (d.no_money_has_moved ? inactiveNote('Real payouts are disabled. No money has moved through any of these ledgers. They are shown so the structure is auditable before it is ever activated.') : '')
+        + '<p class="sub">Each ledger is reported separately and never combined into a single balance (§24, §25, §52).</p>'
+        + card('Creator Support', kpis([
+            ['Transactions', cs.transactions || 0], ['Succeeded', cs.succeeded || 0],
+            ['Gross', money(cs.gross_minor, d.currency)], ['Fees', money(cs.fees_minor, d.currency)],
+            ['Net to creators', money(cs.net_minor, d.currency)]]))
+        + card('Creator earnings', kpis([['Entries', ce.entries || 0], ['Total', money(ce.total_minor, d.currency)]]))
+        + card('Community rewards', kpis([['Allocations', cr.allocations || 0], ['Total', money(cr.total_minor, d.currency)]]))
+        + card('Reward pools', kpis([['Pools', rp.count || 0], ['Committed', money(rp.committed_minor, d.currency)]]))
+        + card('Platform revenue, refunds, chargebacks',
+            '<p class="sub">Not yet recorded. These require a payment provider, which is deliberately not connected until payment, KYC/AML and tax requirements are settled (§27, §28, §41).</p>');
+      return;
+    }
+  }
+
+  /* Shared by the System overview and the Rewards tab, which both render
+     the pool + simulation controls. Extracted so the two cannot drift. */
+  function wireRewardControls(){
+    const savePool = $('admSavePool');
+    if(savePool) savePool.onclick = async function(){
+      const period = ($('admSimPeriod') && $('admSimPeriod').value || '').trim();
+      const major = Number(($('admSimPool') && $('admSimPool').value || '').replace(/[^0-9.]/g, ''));
+      if(!period || !(major >= 0)){ toast('Period and amount are needed'); return; }
+      const reason = window.prompt('Reason (audit log):', '');
+      if(reason === null) return;
+      try{
+        const res = await adminFetch('pools', { method:'POST', body: JSON.stringify({
+          period_id: period, amount_minor: Math.round(major * 100), currency: 'AED',
+          funding_source: 'UNSPECIFIED', status: 'DRAFT', reason: reason,
+        })});
+        const b = await res.json().catch(function(){ return {}; });
+        toast(res.ok && b.ok ? 'Pool saved (draft)' : (b.error || 'Could not save'));
+      }catch(_){ toast('Couldn’t reach the service'); }
+    };
+
+    const runSim = $('admRunSim');
+    if(runSim) runSim.onclick = async function(){
+      const period = ($('admSimPeriod') && $('admSimPeriod').value || '').trim();
+      const out = $('admSimOut');
+      if(!period){ toast('Enter a period'); return; }
+      if(out) out.textContent = 'Simulating…';
+      try{
+        const res = await adminFetch('simulate', { method:'POST', body: JSON.stringify({ period_id: period, limit: 20 }) });
+        const b = await res.json().catch(function(){ return {}; });
+        if(!res.ok || !b.ok){ if(out) out.textContent = b.error || 'Simulation failed'; return; }
+        const money = function(minor){ return (minor / 100).toFixed(2); };
+        if(out) out.innerHTML =
+          '<strong>Simulation only — no money moves.</strong><br>'
+          + 'Pool: ' + escapeHtml(money(b.pool_amount_minor)) + ' ' + escapeHtml(b.currency) + '<br>'
+          + 'Eligible contributors: ' + escapeHtml(String(b.eligible_contributors)) + '<br>'
+          + 'Total eligible contribution: ' + escapeHtml(String(b.total_eligible_contribution)) + '<br>'
+          + 'Allocated: ' + escapeHtml(money(b.allocated_minor)) + ' · Undistributed: ' + escapeHtml(money(b.undistributed_minor)) + '<br><br>'
+          + (b.projected || []).map(function(r, i){
+              return (i+1) + '. ' + escapeHtml(String(r.user_id).slice(0,10)) + '… — '
+                + escapeHtml(money(r.amount_minor)) + ' (' + escapeHtml(String(r.eligible)) + ' eligible)';
+            }).join('<br>');
+      }catch(_){ if(out) out.textContent = 'Couldn’t reach the service.'; }
+    };
+
+  }
+
+  function wireAdminTabs(){
+    const nav = $('adminTabs');
+    if(!nav) return;
+    nav.querySelectorAll('.atab').forEach(function(btn){
+      btn.onclick = function(){
+        const tab = btn.getAttribute('data-tab');
+        if(!tab || tab === __activeTab) return;
+        __activeTab = tab;
+        nav.querySelectorAll('.atab').forEach(function(b){ b.classList.toggle('on', b === btn); });
+        loadTab(tab, false);
+      };
+    });
+  }
+
   function renderAdminOverview(data){
     const el = $('adminBody');
     if(!el) return;
@@ -319,47 +566,6 @@
       };
     });
 
-    const savePool = $('admSavePool');
-    if(savePool) savePool.onclick = async function(){
-      const period = ($('admSimPeriod') && $('admSimPeriod').value || '').trim();
-      const major = Number(($('admSimPool') && $('admSimPool').value || '').replace(/[^0-9.]/g, ''));
-      if(!period || !(major >= 0)){ toast('Period and amount are needed'); return; }
-      const reason = window.prompt('Reason (audit log):', '');
-      if(reason === null) return;
-      try{
-        const res = await adminFetch('pools', { method:'POST', body: JSON.stringify({
-          period_id: period, amount_minor: Math.round(major * 100), currency: 'AED',
-          funding_source: 'UNSPECIFIED', status: 'DRAFT', reason: reason,
-        })});
-        const b = await res.json().catch(function(){ return {}; });
-        toast(res.ok && b.ok ? 'Pool saved (draft)' : (b.error || 'Could not save'));
-      }catch(_){ toast('Couldn’t reach the service'); }
-    };
-
-    const runSim = $('admRunSim');
-    if(runSim) runSim.onclick = async function(){
-      const period = ($('admSimPeriod') && $('admSimPeriod').value || '').trim();
-      const out = $('admSimOut');
-      if(!period){ toast('Enter a period'); return; }
-      if(out) out.textContent = 'Simulating…';
-      try{
-        const res = await adminFetch('simulate', { method:'POST', body: JSON.stringify({ period_id: period, limit: 20 }) });
-        const b = await res.json().catch(function(){ return {}; });
-        if(!res.ok || !b.ok){ if(out) out.textContent = b.error || 'Simulation failed'; return; }
-        const money = function(minor){ return (minor / 100).toFixed(2); };
-        if(out) out.innerHTML =
-          '<strong>Simulation only — no money moves.</strong><br>'
-          + 'Pool: ' + escapeHtml(money(b.pool_amount_minor)) + ' ' + escapeHtml(b.currency) + '<br>'
-          + 'Eligible contributors: ' + escapeHtml(String(b.eligible_contributors)) + '<br>'
-          + 'Total eligible contribution: ' + escapeHtml(String(b.total_eligible_contribution)) + '<br>'
-          + 'Allocated: ' + escapeHtml(money(b.allocated_minor)) + ' · Undistributed: ' + escapeHtml(money(b.undistributed_minor)) + '<br><br>'
-          + (b.projected || []).map(function(r, i){
-              return (i+1) + '. ' + escapeHtml(String(r.user_id).slice(0,10)) + '… — '
-                + escapeHtml(money(r.amount_minor)) + ' (' + escapeHtml(String(r.eligible)) + ' eligible)';
-            }).join('<br>');
-      }catch(_){ if(out) out.textContent = 'Couldn’t reach the service.'; }
-    };
-
     const auditBtn = $('admAuditBtn');
     if(auditBtn) auditBtn.onclick = async function(){
       const out = $('admAuditOut');
@@ -387,7 +593,15 @@
     setStage('console');
     const who = $('consoleWho');
     if(who) who.textContent = whoLine(currentUser) + ' · every change is logged.';
-    renderAdminOverview(data || {});
+    /* Spec §30: the console opens into tabs rather than rendering every
+       section into one block. The overview payload we already have is seeded
+       into the System tab so it is not fetched twice, and each other tab
+       loads its own data the first time it is opened — so one slow or failing
+       query can no longer hold up the whole screen. */
+    __tabCache = { system: data || {} };
+    __activeTab = 'broadcast';
+    wireAdminTabs();
+    loadTab('broadcast', false);
   }
 
   function setGateMode(mode){
