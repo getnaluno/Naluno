@@ -253,7 +253,7 @@
      one slow or failing query held up the whole screen. */
 
   let __tabCache = {};
-  let __activeTab = 'broadcast';
+  let __activeTab = 'activity';
 
   function money(minor, ccy){
     const v = (Number(minor) || 0) / 100;
@@ -299,8 +299,13 @@
       }catch(_){ el.innerHTML = '<p class="sub">Couldn\u2019t load this section.</p>'; }
       return;
     }
-    const route = { broadcast:'broadcasts', contribution:'contribution', trust:'trust',
-                    value:'value', support:'support', rewards:'rewards', financial:'financial' }[tab];
+    const route = { activity:'activity', users:'users', moderation:'moderation', reports:'reports',
+                    broadcast:'broadcasts', contribution:'contribution', trust:'trust',
+                    value:'value', support:'support', rewards:'rewards',
+                    financial:'financial', trace:'trace' }[tab];
+    // Trace needs a subject before it can show anything, so it renders its
+    // own search form rather than fetching on open.
+    if(tab === 'trace'){ renderTab('trace', __tabCache.trace || {}); return; }
     try{
       const res = await adminFetch(route);
       if(res.status === 404){
@@ -320,6 +325,103 @@
     if(!el) return;
     d = d || {};
     if(tab === 'system'){ renderAdminOverview(d); return; }
+
+    if(tab === 'activity'){
+      el.innerHTML =
+        '<p class="sub">Live counts from stored data. Today is UTC.</p>'
+        + kpis([['Broadcasts today', d.broadcasts_today || 0], ['Comments', d.comments || 0],
+                ['Replies', d.replies || 0], ['Shares', d.shares || 0], ['Views', d.views || 0]])
+        + kpis([['Contributors', d.contributors || 0], ['Contribution points', d.contribution_points || 0],
+                ['Flagged activity', d.flagged_activity || 0], ['Pending review', d.pending_review || 0]])
+        + card('Notes',
+            '<p class="sub">Comments, replies and shares are counted from engagement events recorded today. '
+          + 'Contributors and points are lifetime totals from the contribution ledger. '
+          + 'Flagged activity counts accounts carrying a risk flag, removed content, or a restriction — '
+          + 'not a report queue, which does not exist yet.</p>');
+      return;
+    }
+
+    if(tab === 'users'){
+      el.innerHTML =
+        '<div class="row"><input id="admUserQ" placeholder="Search name, handle, email or uid" style="flex:1" />'
+        + '<button type="button" class="ghost" id="admUserSearch">Search</button></div>'
+        + kpis([['Users', d.total || 0], ['Matching', d.matched || 0]])
+        + card('Users', table(['Name', 'Handle', 'Tier', 'Points', 'Flags', 'State', ''],
+            (d.users || []).map(function(u){
+              const state = u.suspended ? 'SUSPENDED' : (u.restricted ? 'restricted' : '');
+              return [u.name || '(no name)', u.handle || '', u.tier, u.contribution_points,
+                      u.risk_flags, state,
+                      '<<BTN:' + u.uid + '>>'];
+            })))
+        + '<div id="admUserDetail"></div>';
+      // Buttons cannot go through escapeHtml, so they are stitched in after.
+      el.innerHTML = el.innerHTML.replace(/&lt;&lt;BTN:([A-Za-z0-9_-]+)&gt;&gt;/g,
+        '<button type="button" class="ghost admUserOpen" data-uid="$1">Open</button>');
+      wireUsersTab();
+      return;
+    }
+
+    if(tab === 'reports'){
+      const byReason = d.by_reason || {};
+      el.innerHTML =
+        kpis([['Open', d.open || 0], ['Actioned', d.actioned || 0],
+              ['Dismissed', d.dismissed || 0], ['Total', d.total || 0]])
+        + ((d.repeat_targets || []).length
+            ? card('Reported more than once',
+                '<p class="sub">One account reported repeatedly is a stronger signal than many reported once.</p>'
+              + table(['Target','Open reports'],
+                  (d.repeat_targets || []).map(function(t){ return [String(t.target).slice(0,18)+'\u2026', t.reports]; })))
+            : '')
+        + card('By reason', table(['Reason','Count'],
+            Object.keys(byReason).map(function(k){ return [k, byReason[k]]; })))
+        + card('Reports', table(['Reported','By','What','Reason given','Status',''],
+            (d.reports || []).map(function(r){
+              return [String(r.target_user_id || r.target_id).slice(0,14)+'\u2026',
+                      String(r.reporter_uid).slice(0,10)+'\u2026',
+                      r.target_type, r.reason, r.status,
+                      r.status === 'OPEN' ? '<<RPT:' + r.id + '>>' : (r.resolution || '')];
+            })));
+      el.innerHTML = el.innerHTML.replace(/&lt;&lt;RPT:([A-Za-z0-9_-]+)&gt;&gt;/g,
+        '<button type="button" class="ghost admRptAct" data-id="$1" data-d="ACTIONED">Action</button>'
+      + ' <button type="button" class="ghost admRptAct" data-id="$1" data-d="DISMISSED">Dismiss</button>');
+      wireReportActions();
+      return;
+    }
+
+    if(tab === 'moderation'){
+      el.innerHTML =
+        (d.reports_supported === false
+          ? inactiveNote('There is no report button in the app yet, so there is no report queue to show. What follows is everything that currently needs a decision.')
+          : '')
+        + kpis([['Suspended', (d.suspended || []).length], ['Restricted', (d.restricted || []).length],
+                ['Pending review', (d.pending_review || []).length], ['Reversed', d.reversed_count || 0]])
+        + card('Suspended accounts', table(['User', 'Reason', 'When'],
+            (d.suspended || []).map(function(x){
+              return [String(x.uid).slice(0,16)+'\u2026', x.reason || '\u2014',
+                      x.at ? new Date(Number(x.at)).toLocaleDateString() : ''];
+            })))
+        + card('Restricted accounts', table(['User', 'Risk flags'],
+            (d.restricted || []).map(function(x){ return [String(x.uid).slice(0,16)+'\u2026', x.riskFlags]; })))
+        + card('Contribution held for review',
+            '<p class="sub">Earned by accounts that are new or low trust. Points are recorded but not counted as eligible until reviewed (\u00a712, \u00a735).</p>'
+          + table(['User', 'Event', 'Points', 'Why held'],
+            (d.pending_review || []).map(function(r){
+              return [String(r.user_id).slice(0,12)+'\u2026', r.event_type, r.points, r.reason];
+            })));
+      return;
+    }
+
+    if(tab === 'trace'){
+      const t = d.chain ? d : null;
+      el.innerHTML =
+        '<p class="sub">Answers "why did this person receive this amount?" by walking the chain backwards from a reward period to the original Broadcasts \u2014 using stored data only.</p>'
+        + '<div class="row"><input id="admTraceUid" placeholder="User id" style="flex:1" value="' + escapeHtml((t && t.user_id) || '') + '" />'
+        + '<input id="admTracePeriod" placeholder="Period e.g. 2026-09" value="' + escapeHtml((t && t.period_id) || '') + '" />'
+        + '<button type="button" class="primary" id="admTraceRun">Trace</button></div>'
+        + '<div id="admTraceOut">' + (t ? traceHtml(t) : '') + '</div>';
+      wireTraceTab();
+      return;
+    }
 
     if(tab === 'broadcast'){
       el.innerHTML =
@@ -480,6 +582,187 @@
 
   }
 
+  /* ---- Users tab: search, open one user, act on them ---- */
+  function wireUsersTab(){
+    const search = $('admUserSearch'), q = $('admUserQ');
+    async function run(){
+      const term = (q && q.value || '').trim();
+      const el = $('adminBody');
+      if(el) el.innerHTML = '<p class="sub">Searching\u2026</p>';
+      try{
+        const res = await adminFetch('users' + (term ? '?q=' + encodeURIComponent(term) : ''));
+        const d = await res.json();
+        __tabCache.users = d;
+        renderTab('users', d);
+        const again = $('admUserQ'); if(again) again.value = term;
+      }catch(_){ if(el) el.innerHTML = '<p class="sub">Couldn\u2019t search.</p>'; }
+    }
+    if(search) search.onclick = run;
+    if(q) q.addEventListener('keydown', function(e){ if(e.key === 'Enter'){ e.preventDefault(); run(); } });
+
+    document.querySelectorAll('.admUserOpen').forEach(function(btn){
+      btn.onclick = async function(){
+        const target = btn.getAttribute('data-uid');
+        const out = $('admUserDetail');
+        if(out) out.innerHTML = '<p class="sub">Loading\u2026</p>';
+        try{
+          const res = await adminFetch('user?uid=' + encodeURIComponent(target));
+          const u = await res.json();
+          if(!res.ok || !u.ok){ if(out) out.innerHTML = '<p class="sub">Couldn\u2019t load that user.</p>'; return; }
+          if(out) out.innerHTML = userDetailHtml(u);
+          wireUserActions(target);
+        }catch(_){ if(out) out.innerHTML = '<p class="sub">Couldn\u2019t load that user.</p>'; }
+      };
+    });
+  }
+
+  function userDetailHtml(u){
+    const p = u.profile || {}, t = u.trust || {}, c = u.contribution || {};
+    const act = function(a, label, cls){
+      return '<button type="button" class="' + cls + ' admUserAct" data-act="' + a + '">' + label + '</button>';
+    };
+    return card('User \u00b7 ' + escapeHtml(p.name || u.uid),
+        '<p class="sub">' + escapeHtml(p.handle || '') + ' ' + escapeHtml(p.email || '')
+      + ' \u00b7 uid ' + escapeHtml(u.uid) + '</p>'
+      + kpis([['Trust tier', u.tier], ['Points', c.total_points || 0], ['Eligible', c.eligible_points || 0],
+              ['Risk flags', t.risk_flags || 0], ['Removed content', t.removed_content || 0],
+              ['State', t.suspended ? 'SUSPENDED' : (t.restricted ? 'restricted' : 'ok')]])
+      + (t.suspended ? '<p class="sub">Suspended: ' + escapeHtml(t.suspended_reason || '\u2014') + '</p>' : '')
+      + '<div class="row">'
+      + (t.suspended ? act('unsuspend','Lift suspension','primary') : act('suspend','Suspend','danger'))
+      + (t.restricted ? act('unrestrict','Remove restriction','ghost') : act('restrict','Restrict','ghost'))
+      + act('flag','Add risk flag','ghost')
+      + act('clear_flags','Clear flags','ghost')
+      + '</div>')
+    + card('Their Broadcasts', table(['Title','Views'],
+        (u.broadcasts || []).map(function(b){ return [b.title, b.views]; })))
+    + card('What they posted', table(['Type','Broadcast','Text','When'],
+        (u.events || []).map(function(e){
+          return [e.event_type, String(e.broadcast_id||'').slice(0,10)+'\u2026',
+                  e.text || '', e.ts ? new Date(Number(e.ts)).toLocaleDateString() : ''];
+        })))
+    + '<div class="row"><button type="button" class="ghost" id="admCostBtn">What this user costs</button></div>'
+    + '<div id="admUserCost"></div>'
+    + card('Their contribution ledger', table(['Event','Points','Eligible','Status','Why'],
+        (u.ledger || []).map(function(l){
+          return [l.event_type, l.points, l.eligible_points, l.status, l.reason || ''];
+        })));
+  }
+
+  function wireUserActions(target){
+    const costBtn = $('admCostBtn');
+    if(costBtn) costBtn.onclick = function(){ loadUserCost(target); };
+    document.querySelectorAll('.admUserAct').forEach(function(btn){
+      btn.onclick = async function(){
+        const action = btn.getAttribute('data-act');
+        /* A reason is mandatory, not optional — it goes in the audit log, and
+           an unexplained suspension is exactly what §33 exists to prevent. */
+        const reason = window.prompt('Reason for "' + action + '" (recorded in the audit log):', '');
+        if(reason === null) return;
+        if(!reason.trim()){ toast('A reason is required'); return; }
+        try{
+          const res = await adminFetch('user-action', { method:'POST', body: JSON.stringify({
+            user_id: target, action: action, reason: reason.trim(),
+          })});
+          const b = await res.json().catch(function(){ return {}; });
+          if(!res.ok || !b.ok){ toast(b.error || 'Action refused'); return; }
+          toast('Done \u2014 logged');
+          const r2 = await adminFetch('user?uid=' + encodeURIComponent(target));
+          const u2 = await r2.json();
+          const out = $('admUserDetail');
+          if(out && u2.ok){ out.innerHTML = userDetailHtml(u2); wireUserActions(target); }
+        }catch(_){ toast('Couldn\u2019t reach the service'); }
+      };
+    });
+  }
+
+  function wireReportActions(){
+    document.querySelectorAll('.admRptAct').forEach(function(btn){
+      btn.onclick = async function(){
+        const id = btn.getAttribute('data-id');
+        const decision = btn.getAttribute('data-d');
+        const note = window.prompt('Note for the audit log (what you decided and why):', '');
+        if(note === null) return;
+        if(!note.trim()){ toast('A note is required'); return; }
+        try{
+          const res = await adminFetch('report-action', { method:'POST', body: JSON.stringify({
+            report_id: id, decision: decision, note: note.trim(),
+          })});
+          const b = await res.json().catch(function(){ return {}; });
+          if(!res.ok || !b.ok){ toast(b.error || 'Could not update'); return; }
+          toast('Report ' + decision.toLowerCase());
+          loadTab('reports', true);
+        }catch(_){ toast('Couldn\u2019t reach the service'); }
+      };
+    });
+  }
+
+  /** Per-user cost. Loaded on demand — it scans that person's events and
+   *  ledger, so it is not run for every row of the user list. */
+  async function loadUserCost(target){
+    const out = $('admUserCost');
+    if(out) out.innerHTML = '<p class="sub">Measuring\u2026</p>';
+    try{
+      const res = await adminFetch('user-cost?uid=' + encodeURIComponent(target) + '&days=30');
+      const c = await res.json();
+      if(!res.ok || !c.ok){ if(out) out.innerHTML = '<p class="sub">' + escapeHtml(c.error || 'Could not measure.') + '</p>'; return; }
+      const m = c.measured || {}, cost = c.cost_usd || {};
+      if(out) out.innerHTML = card('What this user costs',
+          kpis([['Per day (USD)', '$' + (cost.per_day || 0).toFixed(6)],
+                ['30 days (USD)', '$' + (cost.total_for_window || 0).toFixed(4)],
+                ['Stored', (m.stored_mb || 0) + ' MB'],
+                ['Doc writes', m.firestore_doc_writes || 0],
+                ['Events', m.engagement_events || 0]])
+        + '<p class="sub"><strong>This is not a bill.</strong> ' + escapeHtml(c.basis || '') + '</p>'
+        + (c.unmeasured_warning ? '<p class="sub">' + escapeHtml(c.unmeasured_warning) + '</p>' : '')
+        + '<p class="sub">Rates used: writes $' + ((c.rates||{}).firestore_write_per_100k_usd)
+        + '/100k \u00b7 reads $' + ((c.rates||{}).firestore_read_per_100k_usd)
+        + '/100k \u00b7 R2 storage $' + ((c.rates||{}).r2_storage_gb_month_usd)
+        + '/GB-month. ' + escapeHtml((c.rates||{}).note || '') + '</p>');
+    }catch(_){ if(out) out.innerHTML = '<p class="sub">Couldn\u2019t measure.</p>'; }
+  }
+
+  /* ---- Trace: the accountability chain ---- */
+  function traceHtml(t){
+    const money = function(m, c){ return ((Number(m)||0)/100).toFixed(2) + (c ? ' ' + c : ''); };
+    const head = t.pool
+      ? kpis([['Would receive', money(t.amount_minor, t.pool.currency)],
+              ['Their eligible', t.eligible_points], ['Period total', t.period_total_eligible],
+              ['Share', (t.share * 100).toFixed(3) + '%'], ['Pool', money(t.pool.amount_minor, t.pool.currency)]])
+      : kpis([['Their eligible', t.eligible_points], ['Period total', t.period_total_eligible],
+              ['Share', (t.share * 100).toFixed(3) + '%'], ['Ledger rows', t.ledger_rows]]);
+    return head
+      + (t.is_projection ? inactiveNote('Nothing has been paid. This reconstructs how the figure would be arrived at, from stored data only.') : '')
+      + card('The chain',
+          '<p class="sub">amount \u2192 reward period \u2192 eligible contribution \u2192 contribution ledger \u2192 engagement event \u2192 original Broadcast</p>'
+        + table(['Event','Base','\u00d7Quality','\u00d7Decay','Points','Eligible','Rules','Broadcast','What was said'],
+            (t.chain || []).map(function(c){
+              return [c.event_type, c.base_points, c.quality_multiplier, c.diminishing_factor,
+                      c.points, c.eligible_points, c.rules_version,
+                      String(c.broadcast_id||'').slice(0,10)+'\u2026',
+                      (c.event && c.event.text) ? c.event.text : ''];
+            })));
+  }
+
+  function wireTraceTab(){
+    const btn = $('admTraceRun');
+    if(!btn) return;
+    btn.onclick = async function(){
+      const uidv = ($('admTraceUid') && $('admTraceUid').value || '').trim();
+      const per  = ($('admTracePeriod') && $('admTracePeriod').value || '').trim();
+      const out = $('admTraceOut');
+      if(!uidv){ toast('Enter a user id'); return; }
+      if(out) out.innerHTML = '<p class="sub">Tracing\u2026</p>';
+      try{
+        const res = await adminFetch('trace?uid=' + encodeURIComponent(uidv) + (per ? '&period=' + encodeURIComponent(per) : ''));
+        const t = await res.json();
+        if(!res.ok || !t.ok){ if(out) out.innerHTML = '<p class="sub">' + escapeHtml(t.error || 'Could not trace.') + '</p>'; return; }
+        __tabCache.trace = t;
+        if(out) out.innerHTML = traceHtml(t);
+      }catch(_){ if(out) out.innerHTML = '<p class="sub">Couldn\u2019t reach the service.</p>'; }
+    };
+  }
+
   function wireAdminTabs(){
     const nav = $('adminTabs');
     if(!nav) return;
@@ -599,9 +882,9 @@
        loads its own data the first time it is opened — so one slow or failing
        query can no longer hold up the whole screen. */
     __tabCache = { system: data || {} };
-    __activeTab = 'broadcast';
+    __activeTab = 'activity';
     wireAdminTabs();
-    loadTab('broadcast', false);
+    loadTab('activity', false);
   }
 
   function setGateMode(mode){

@@ -1629,6 +1629,25 @@ async function bspaceMarkBest(qid, answerText){
 }
 
 
+/* Report entry point, beside Share rather than buried in a menu — someone who
+   needs it should not have to hunt for it. Reports the Broadcast AND
+   identifies its creator, so a pattern across several Broadcasts by the same
+   person becomes visible in the console rather than looking like unrelated
+   one-offs. */
+if($('bspaceReportBtn')){
+  $('bspaceReportBtn').onclick = function(){
+    if(typeof openReportSheet !== 'function'){ toast('Reporting isn\u2019t available right now'); return; }
+    const meta = activeBroadcastMeta || {};
+    openReportSheet({
+      target_type: 'broadcast',
+      target_id: activeBroadcastId || '',
+      target_user_id: meta.creatorUid || '',
+      broadcast_id: activeBroadcastId || '',
+      name: meta.creatorName || meta.title || 'this Broadcast',
+    });
+  };
+}
+
 if($('bspaceShareBtn')){
   $('bspaceShareBtn').onclick = async ()=>{
     if(!activeBroadcastId) return;
