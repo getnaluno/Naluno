@@ -253,7 +253,7 @@
      one slow or failing query held up the whole screen. */
 
   let __tabCache = {};
-  let __activeTab = 'activity';
+  let __activeTab = 'overview';
 
   function money(minor, ccy){
     const v = (Number(minor) || 0) / 100;
@@ -299,7 +299,7 @@
       }catch(_){ el.innerHTML = '<p class="sub">Couldn\u2019t load this section.</p>'; }
       return;
     }
-    const route = { activity:'activity', users:'users', moderation:'moderation', reports:'reports',
+    const route = { overview:'overview-v2', activity:'activity', users:'users', moderation:'moderation', reports:'reports',
                     broadcast:'broadcasts', contribution:'contribution', trust:'trust',
                     value:'value', support:'support', rewards:'rewards',
                     financial:'financial', trace:'trace' }[tab];
@@ -325,6 +325,70 @@
     if(!el) return;
     d = d || {};
     if(tab === 'system'){ renderAdminOverview(d); return; }
+
+    if(tab === 'overview'){
+      const u=d.users||{}, cr=d.creators||{}, c=d.content||{}, e=d.economy||{},
+            sf=d.safety||{}, st=d.storage||{}, ni=d.not_instrumented||{};
+      renderStrip(d);
+      const alerts = d.alerts || [];
+      el.innerHTML =
+        card('What needs your attention',
+          alerts.length
+            ? alerts.map(function(a){
+                return '<div class="alert ' + escapeHtml(a.level) + '">'
+                  + (a.level === 'critical' ? '\u25cf ' : '\u25cb ')
+                  + escapeHtml(a.text)
+                  + (a.tab ? '<button type="button" class="ghost ccGo" data-go="' + escapeHtml(a.tab) + '">Open</button>' : '')
+                  + '</div>';
+              }).join('')
+            : '<div class="alert ok">\u25cf Nothing needs a decision right now.</div>')
+
+        + card('Are people coming back?',
+            kpis([['Registered', u.total||0], ['Active now', u.active_now||0],
+                  ['DAU', u.dau||0], ['WAU', u.wau||0], ['MAU', u.mau||0],
+                  ['Returning today', u.returning_today||0],
+                  ['Stickiness', u.stickiness == null ? '\u2014' : u.stickiness + '%']])
+          + kpis([['New today', u.new_today||0], ['New 7d', u.new_7d||0], ['New 30d', u.new_30d||0]])
+          + '<p class="gap-note">Stickiness is DAU\u00f7MAU \u2014 how much of your monthly audience shows up on a given day.</p>')
+
+        + card('What are people making?',
+            kpis([['Broadcasts', c.broadcasts_total||0], ['Today', c.broadcasts_today||0],
+                  ['Creators', cr.total||0], ['Active creators (30d)', cr.active_30d||0]])
+          + kpis([['Comments', c.comments||0], ['Replies', c.replies||0],
+                  ['Shares', c.shares||0], ['Views', c.views||0],
+                  ['Engagement today', c.total_engagement_today||0]]))
+
+        + card('Who is contributing?',
+            kpis([['Contributors', e.contributors||0], ['Points', e.contribution_points||0],
+                  ['Eligible', e.eligible_points||0],
+                  ['Reward liability', money(e.reward_liability_minor, 'AED')],
+                  ['Support transactions', e.support_transactions||0]])
+          + '<p class="gap-note">Reward liability is what would be owed if every pool not yet marked paid were distributed. Nothing has been paid.</p>')
+
+        + card('Can we trust the activity?',
+            kpis([['Open reports', sf.open_reports||0], ['Suspended', sf.suspended||0],
+                  ['Flagged', sf.flagged||0], ['Held for review', sf.pending_review||0]]))
+
+        + card('Storage we can account for',
+            kpis([['Accounted', (st.accounted_mb||0) + ' MB'],
+                  ['Broadcasts with no size', st.unmeasured_broadcasts||0]]))
+
+        + card('Not instrumented yet',
+            '<p class="gap-note">These are asked for and deliberately <strong>not</strong> shown as numbers, because there is no real source for them. Inventing them would be worse than leaving them out \u2014 you would make decisions on figures that mean nothing.</p>'
+          + '<ul class="gap-note">' + Object.keys(ni).map(function(k){
+              return '<li><strong>' + escapeHtml(k.replace(/_/g, ' ')) + '</strong> \u2014 ' + escapeHtml(ni[k]) + '</li>';
+            }).join('') + '</ul>');
+
+      el.querySelectorAll('.ccGo').forEach(function(b){
+        b.onclick = function(){
+          const t = b.getAttribute('data-go');
+          const nav = $('adminTabs');
+          const target = nav && nav.querySelector('[data-tab="' + t + '"]');
+          if(target) target.click();
+        };
+      });
+      return;
+    }
 
     if(tab === 'activity'){
       el.innerHTML =
@@ -763,6 +827,28 @@
     };
   }
 
+  /** The health strip that sits above every tab. Rendered from the Overview
+   *  payload rather than fetching its own data, so it can never disagree with
+   *  the numbers below it. */
+  function renderStrip(d){
+    const el = $('ccStrip');
+    if(!el) return;
+    const u=d.users||{}, c=d.content||{}, sf=d.safety||{}, e=d.economy||{};
+    const alerts = (d.alerts||[]);
+    const crit = alerts.filter(function(a){ return a.level==='critical'; }).length;
+    const warn = alerts.filter(function(a){ return a.level==='warning'; }).length;
+    const health = crit ? '\u25cf NEEDS ATTENTION' : (warn ? '\u25cf DEGRADED' : '\u25cf OPERATIONAL');
+    const colour = crit ? '#ff8a9a' : (warn ? '#ffc266' : 'var(--mint,#7CFFB2)');
+    el.innerHTML =
+      '<span class="h" style="color:' + colour + '">NALUNO ' + health + '</span>'
+      + '<span class="m">Online <b>' + (u.active_now||0) + '</b></span>'
+      + '<span class="m">DAU <b>' + (u.dau||0) + '</b></span>'
+      + '<span class="m">Broadcasts <b>' + (c.broadcasts_total||0) + '</b></span>'
+      + '<span class="m">Engagement today <b>' + (c.total_engagement_today||0) + '</b></span>'
+      + '<span class="m">Reward liability <b>' + money(e.reward_liability_minor,'AED') + '</b></span>'
+      + '<span class="m">Alerts <b>' + alerts.length + '</b></span>';
+  }
+
   function wireAdminTabs(){
     const nav = $('adminTabs');
     if(!nav) return;
@@ -882,9 +968,9 @@
        loads its own data the first time it is opened — so one slow or failing
        query can no longer hold up the whole screen. */
     __tabCache = { system: data || {} };
-    __activeTab = 'activity';
+    __activeTab = 'overview';
     wireAdminTabs();
-    loadTab('activity', false);
+    loadTab('overview', false);
   }
 
   function setGateMode(mode){
