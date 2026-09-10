@@ -115,6 +115,22 @@ pre.diag{
     .tbl{ width:100%; border-collapse:collapse; font-size:12px; }
     .tbl th{ text-align:left; color:var(--dim,#7C8497); font-weight:500; padding:7px 8px; border-bottom:1px solid var(--line,#232838); }
     .tbl td{ padding:7px 8px; border-bottom:1px solid var(--line,#232838); }
+
+    .cc-strip{
+      display:flex; flex-wrap:wrap; gap:14px; align-items:center;
+      padding:10px 12px; margin-bottom:12px; border-radius:10px;
+      background:var(--panel,#12151F); border:1px solid var(--line,#232838);
+      font-size:12px;
+    }
+    .cc-strip .h{ font-weight:600; letter-spacing:.04em; }
+    .cc-strip .m{ color:var(--dim,#7C8497); }
+    .cc-strip .m b{ color:var(--ink,#E8ECF5); font-weight:600; }
+    .alert{ display:flex; gap:9px; align-items:flex-start; padding:9px 11px; border-radius:9px; margin-bottom:7px; font-size:12.5px; }
+    .alert.critical{ background:rgba(255,84,112,.10); border:1px solid rgba(255,84,112,.35); }
+    .alert.warning{ background:rgba(255,180,80,.08); border:1px solid rgba(255,180,80,.30); }
+    .alert.ok{ background:rgba(124,255,178,.07); border:1px solid rgba(124,255,178,.28); }
+    .alert button{ margin-left:auto; }
+    .gap-note{ color:var(--dim,#7C8497); font-size:11.5px; line-height:1.6; }
 </style>
 </head>
 <body>
@@ -181,8 +197,12 @@ pre.diag{
     </div>
     <!-- Spec §30: the console is organised into tabs, not one long block.
          Order follows the specification's own list. -->
+    <!-- Always-visible health strip (spec: "at the very top"). Rendered from
+         the Overview payload so it is never a separate, drifting source. -->
+    <div id="ccStrip" class="cc-strip"></div>
     <nav class="admin-tabs" id="adminTabs" role="tablist">
-      <button type="button" class="atab on" data-tab="activity" role="tab">Activity</button>
+      <button type="button" class="atab on" data-tab="overview" role="tab">Overview</button>
+      <button type="button" class="atab" data-tab="activity" role="tab">Activity</button>
       <button type="button" class="atab" data-tab="users" role="tab">Users</button>
       <button type="button" class="atab" data-tab="moderation" role="tab">Moderation</button>
       <button type="button" class="atab" data-tab="reports" role="tab">Reports</button>
