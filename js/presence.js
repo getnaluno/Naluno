@@ -40,19 +40,43 @@ async function sendPresence(reason){
     // Never more than one beat per minute, whatever triggers it.
     if(now - __presenceLastSent < 60000 && reason !== 'signin') return;
     __presenceLastSent = now;
-    const idToken = await currentUser.getIdToken(false);
-    await fetch(PRESENCE_WORKER_URL + '/v1/presence', {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        platform: nalunoPlatform(),
-        app_version: (function(){
-          try{ const m = document.querySelector('meta[name="app-version"]'); return m ? m.content : ''; }catch(_){ return ''; }
-        })(),
-        reason: reason || 'beat',
-      }),
-      keepalive: reason === 'hide',   // so the last beat survives the tab closing
-    });
+    const platform = nalunoPlatform();
+    const appVersion = (function(){
+      try{ const m = document.querySelector('meta[name="app-version"]'); return m ? m.content : ''; }catch(_){ return ''; }
+    })();
+
+    /* Stamp the account itself. The economy worker used to be the only
+       place "who is here" was written — and when Google rejects its
+       service account, the Control Centre could not count anyone. The
+       signed-in person is always allowed to update their own user doc,
+       so lastSeen survives a dead worker. */
+    try{
+      const db = (typeof fbDb !== 'undefined' && fbDb)
+        ? fbDb
+        : (typeof firebase !== 'undefined' && firebase.firestore ? firebase.firestore() : null);
+      if(db){
+        db.collection('users').doc(currentUser.uid).set({
+          lastSeen: now,
+          lastPlatform: platform,
+          lastAppVersion: appVersion,
+          lastPresenceReason: reason || 'beat',
+        }, { merge: true }).catch(function(){});
+      }
+    }catch(_){}
+
+    try{
+      const idToken = await currentUser.getIdToken(false);
+      await fetch(PRESENCE_WORKER_URL + '/v1/presence', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          platform: platform,
+          app_version: appVersion,
+          reason: reason || 'beat',
+        }),
+        keepalive: reason === 'hide',
+      });
+    }catch(_){ /* worker optional — lastSeen already written */ }
   }catch(_){ /* presence must never affect the app */ }
 }
 

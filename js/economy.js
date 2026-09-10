@@ -26,11 +26,16 @@ const ECONOMY_WORKER_URL = 'https://naluno-economy.naluno.workers.dev';
    unfinished monetary feature. */
 let nalunoEconomyFlags = {
   broadcast_enabled: true,
+  signals_enabled: true,
+  toga_enabled: true,
   contribution_enabled: true,
   community_value_enabled: true,
   creator_support_enabled: false,
   community_rewards_enabled: false,
   real_payouts_enabled: false,
+  content_hub_enabled: false,
+  sports_enabled: false,
+  movies_enabled: false,
 };
 let nalunoEconomyFlagsLoaded = false;
 
@@ -40,13 +45,27 @@ function nalunoEconomyFlag(name){
 
 async function loadEconomyFlags(){
   if(nalunoEconomyFlagsLoaded) return nalunoEconomyFlags;
+  let fromFs = null;
   try{
-    const res = await fetch(ECONOMY_WORKER_URL + '/v1/flags');
-    if(res.ok){
-      const body = await res.json();
-      if(body && body.flags) nalunoEconomyFlags = Object.assign({}, nalunoEconomyFlags, body.flags);
+    const db = (typeof fbDb !== 'undefined' && fbDb)
+      ? fbDb
+      : (typeof firebase !== 'undefined' && firebase.firestore ? firebase.firestore() : null);
+    if(db){
+      const snap = await db.collection('economyConfig').doc('flags').get();
+      if(snap && snap.exists) fromFs = snap.data() || null;
     }
-  }catch(_){ /* offline or worker down — keep the safe defaults */ }
+  }catch(_){}
+  if(fromFs){
+    nalunoEconomyFlags = Object.assign({}, nalunoEconomyFlags, fromFs);
+  } else {
+    try{
+      const res = await fetch(ECONOMY_WORKER_URL + '/v1/flags');
+      if(res.ok){
+        const body = await res.json();
+        if(body && body.flags) nalunoEconomyFlags = Object.assign({}, nalunoEconomyFlags, body.flags);
+      }
+    }catch(_){ /* offline or worker down — keep the safe defaults */ }
+  }
   nalunoEconomyFlagsLoaded = true;
   try{ document.body.classList.toggle('naluno-support-on', nalunoEconomyFlag('creator_support_enabled')); }catch(_){}
   return nalunoEconomyFlags;
