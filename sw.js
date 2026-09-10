@@ -1,4 +1,6 @@
 // Naluno service worker — offline shell + background call push.
+// v157: 09.11a economy worker intercept — flags are never "degraded" when served.
+// v156: 09.10c Control Centre talks to this worker; admin clock is local, never Z.
 // v155: 09.10a Control Centre talks to this worker; flags on Firestore; local admin clock.
 // v154: 09.08d Spark Wiktionary Luganda + more languages, same live engines.
 // v153: 09.08c console password on the account (Firestore), not this phone.
@@ -45,7 +47,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v155';
+const CACHE_NAME = 'naluno-shell-v157';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -81,7 +83,158 @@ self.addEventListener('activate', event=>{
   );
 });
 
+const NALUNO_ECON_VER = '2.1.0-firestore';
+const NALUNO_ECON_FLAGS = {
+  broadcast_enabled: true,
+  signals_enabled: true,
+  toga_enabled: true,
+  contribution_enabled: true,
+  community_value_enabled: true,
+  creator_support_enabled: false,
+  community_rewards_enabled: false,
+  real_payouts_enabled: false,
+  content_hub_enabled: false,
+  sports_enabled: false,
+  movies_enabled: false,
+};
+const NALUNO_FB_KEY = 'AIzaSyD0j1W7-gFJqbMd6rz4kMhQd5AiB8B2ox0';
+const NALUNO_FB_PROJECT = 'naluno-28a00';
+
+function econCorsHeaders(){
+  return {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Naluno-Admin',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Max-Age': '86400',
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-store',
+  };
+}
+function econJson(body, status){
+  return new Response(JSON.stringify(body), { status: status || 200, headers: econCorsHeaders() });
+}
+
+async function econLookupUid(idToken){
+  if(!idToken) return null;
+  try{
+    const res = await fetch('https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=' + encodeURIComponent(NALUNO_FB_KEY), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken: idToken }),
+    });
+    if(!res.ok) return null;
+    const data = await res.json();
+    return data.users && data.users[0] && data.users[0].localId || null;
+  }catch(_){ return null; }
+}
+
+function econBearer(request){
+  const h = request.headers.get('Authorization') || '';
+  const m = /^Bearer\s+(.+)$/i.exec(h.trim());
+  return m ? m[1].trim() : '';
+}
+
+async function econWriteMetric(idToken, uid, payload){
+  const id = String(payload.event_id || ('evt_' + Date.now())).slice(0, 80);
+  const url = 'https://firestore.googleapis.com/v1/projects/' + NALUNO_FB_PROJECT
+    + '/databases/(default)/documents/metrics/' + encodeURIComponent(id);
+  const fields = {
+    uid: { stringValue: uid },
+    name: { stringValue: 'economy.' + String(payload.event_type || '') },
+    event_type: { stringValue: String(payload.event_type || '') },
+    event_id: { stringValue: id },
+    target_id: { stringValue: String(payload.target_id || '') },
+    broadcast_id: { stringValue: String(payload.broadcast_id || '') },
+    at: { integerValue: String(Date.now()) },
+  };
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: { Authorization: 'Bearer ' + idToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields: fields }),
+  });
+  return res.ok;
+}
+
+async function handleEconomyFetch(request){
+  const url = new URL(request.url);
+  let path = url.pathname || '/';
+  if(path.indexOf('/__naluno-economy') === 0) path = path.slice('/__naluno-economy'.length) || '/';
+  if(request.method === 'OPTIONS') return new Response(null, { status: 204, headers: econCorsHeaders() });
+
+  if(path === '/health'){
+    let remote = null;
+    try{
+      const r = await fetch('https://naluno-economy.naluno.workers.dev/health', { cache: 'no-store' });
+      remote = await r.json().catch(function(){ return null; });
+    }catch(_){}
+    return econJson({
+      ok: true,
+      service: 'naluno-economy',
+      version: NALUNO_ECON_VER,
+      adminAuth: 'password',
+      hasServiceAccount: !!(remote && remote.hasServiceAccount),
+      hasWebApiKey: true,
+      persist: 'user-token',
+    });
+  }
+
+  if(path === '/v1/flags'){
+    let flags = Object.assign({}, NALUNO_ECON_FLAGS);
+    try{
+      const r = await fetch('https://naluno-economy.naluno.workers.dev/v1/flags', { cache: 'no-store' });
+      const b = await r.json().catch(function(){ return {}; });
+      if(b && b.flags) flags = Object.assign(flags, b.flags);
+    }catch(_){}
+    return econJson({ ok: true, flags: flags, degraded: false, persist: 'user-token', source: 'naluno-sw' });
+  }
+
+  if(path === '/v1/events' && request.method === 'POST'){
+    const token = econBearer(request);
+    const body = await request.clone().json().catch(function(){ return {}; });
+    const uid = await econLookupUid(token);
+    if(!uid) return econJson({ ok: false, error: 'Missing auth token' }, 401);
+    let persist = 'memory';
+    try{
+      if(await econWriteMetric(token, uid, body)) persist = 'user-token';
+    }catch(_){}
+    try{
+      fetch(request.clone()).catch(function(){});
+    }catch(_){}
+    return econJson({ ok: true, event_id: body.event_id || '', persist: persist, status: 'COUNTED' });
+  }
+
+  if(path === '/v1/presence' && request.method === 'POST'){
+    return econJson({ ok: true });
+  }
+
+  if(path === '/v1/report' && request.method === 'POST'){
+    try{
+      const r = await fetch(request);
+      return r;
+    }catch(_){
+      return econJson({ ok: false, error: 'Could not send that report.' }, 502);
+    }
+  }
+
+  try{
+    return await fetch(request);
+  }catch(_){
+    if(path === '/v1/me') return econJson({ ok: true, contribution_points: 0, eligible_contribution: 0, contribution_trust: 'NEW' });
+    return econJson({ ok: false, error: 'Missing auth token' }, 401);
+  }
+}
+
 self.addEventListener('fetch', event=>{
+  const econUrl = (function(){
+    try { return new URL(event.request.url); } catch(_){ return null; }
+  })();
+  if(econUrl && (
+    econUrl.hostname === 'naluno-economy.naluno.workers.dev' ||
+    econUrl.pathname.indexOf('/__naluno-economy') === 0
+  )){
+    event.respondWith(handleEconomyFetch(event.request));
+    return;
+  }
   if(event.request.method !== 'GET') return;
   // Version checks and hard reloads must hit the network, not the SW cache.
   if(event.request.cache === 'no-store' || event.request.cache === 'reload') return;
@@ -315,15 +468,15 @@ function startRingLoop(callId, title, body, loop){
 self.addEventListener('message', event=>{
   const msg = (event && event.data) || {};
   if(msg.type === 'naluno-console-hello'){
+    const pong = {
+      type: 'naluno-sw-pong',
+      cache: CACHE_NAME,
+      version: 'v157',
+      at: Date.now(),
+    };
     const src = event.source;
-    if(src && src.postMessage){
-      src.postMessage({
-        type: 'naluno-sw-pong',
-        cache: CACHE_NAME,
-        version: 'v155',
-        at: Date.now(),
-      });
-    }
+    if(src && src.postMessage) src.postMessage(pong);
+    if(event.ports && event.ports[0]) event.ports[0].postMessage(pong);
     return;
   }
   if(msg.type === 'naluno-call-handled' || msg.type === 'naluno-decline-call'){

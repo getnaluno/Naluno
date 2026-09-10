@@ -367,6 +367,21 @@ service cloud.firestore {
       allow write: if isOperator();
     }
 
+    /* Inbox the economy worker (or the signed-in person, via the worker
+       holding their ID token) uses when the Google service account cannot
+       write the authoritative ledger. No points/amount fields are allowed,
+       so a rewritten client cannot mint value here. */
+    match /economyInbox/{eventId} {
+      allow read: if isOperator() || (isSignedIn() && resource.data.actor_user_id == request.auth.uid);
+      allow create: if isSignedIn()
+        && request.resource.data.actor_user_id == request.auth.uid
+        && !('points' in request.resource.data)
+        && !('amount' in request.resource.data)
+        && !('eligible_points' in request.resource.data)
+        && !('contribution_points' in request.resource.data);
+      allow update, delete: if false;
+    }
+
     /* Money-adjacent ledgers. Kept SEPARATE from each other by design
        (spec §24, §25, §52 — never one merged wallet). Defined now so the
        shape is fixed and auditable; all of it stays behind feature flags
