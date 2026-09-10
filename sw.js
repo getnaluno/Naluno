@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v155: 09.10a Control Centre talks to this worker; flags on Firestore; local admin clock.
 // v154: 09.08d Spark Wiktionary Luganda + more languages, same live engines.
 // v153: 09.08c console password on the account (Firestore), not this phone.
 // v152: 09.08b admin worker errors shown honestly.
@@ -44,10 +45,12 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v154';
+const CACHE_NAME = 'naluno-shell-v155';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
+  '/admin/', '/admin/index.html',
+  '/js/admin-data.js', '/js/admin-console.js',
   '/js/core.js', '/js/metrics.js', '/js/data.js', '/js/crypto.js', '/js/atmosphere.js',
   '/js/pwa.js', '/js/auth.js', '/js/camera.js', '/js/call-filters.js', '/js/calls.js', '/js/media-vault.js', '/js/wireline.js',
   '/js/band-room.js', '/js/band-list.js', '/js/broadcast-core.js', '/js/broadcast-space.js',
@@ -57,7 +60,7 @@ const CORE_ASSETS = [
   '/js/sfu-live.js', '/js/compass.js', '/js/weather.js', '/js/beacon.js', '/js/find.js', '/js/profile.js', '/js/notifications.js',
   '/js/ice-core.js', '/js/compat-lock.js', '/js/keep-alive.js', '/js/media-contain.js',
   '/js/spark.js', '/js/spark-page.js', '/js/spark-engine.js', '/js/spark-lg-wikt.js', '/js/spark-lg.js',
-  '/js/diagnostics.js', '/js/economy.js', '/js/economy-ui.js', '/js/onboard.js',
+  '/js/diagnostics.js', '/js/economy.js', '/js/economy-ui.js', '/js/onboard.js', '/js/presence.js',
 ];
 
 self.addEventListener('install', event=>{
@@ -110,19 +113,34 @@ self.addEventListener('fetch', event=>{
     (path === '/' || path === '/index.html');
   const isAdminNav = url.origin === self.location.origin &&
     (path === '/admin' || path === '/admin/' || path.indexOf('/admin/') === 0);
-  /* Control Centre is never cached and never served from the app shell.
-     Public phones that already have this worker must not be able to
-     "install" the operator desk by visiting it once. */
+  /* Control Centre: network-first, then the last good copy. Never fall
+     back to the member-app shell, and never invent a 404 when the
+     operator is briefly offline — this worker is supposed to stay
+     connected to the desk. */
   if(isAdminNav){
     event.respondWith((async ()=>{
       try{
         const fresh = await fetch(event.request, { cache: 'no-store' });
-        if(fresh) return fresh;
+        if(fresh && fresh.ok){
+          try{
+            const copy = fresh.clone();
+            const cache = await caches.open(CACHE_NAME);
+            cache.put(new Request(self.location.origin + '/admin/'), copy.clone()).catch(function(){});
+            cache.put(event.request, copy).catch(function(){});
+          }catch(_){}
+          return fresh;
+        }
       }catch(_){}
-      return new Response('Not available.', {
-        status: 404,
-        headers: { 'Content-Type': 'text/plain; charset=utf-8', 'X-Robots-Tag': 'noindex, nofollow' }
-      });
+      const cached = await caches.match(event.request)
+        || await caches.match(new Request(self.location.origin + '/admin/'))
+        || await caches.match(new Request(self.location.origin + '/admin/index.html'));
+      if(cached) return cached;
+      return new Response(
+        '<!doctype html><meta charset=utf-8><title>Naluno</title>'
+        + '<body style="background:#07080D;color:#E8ECF5;font-family:system-ui;padding:32px">'
+        + '<p>Control Centre is offline on this device.</p>',
+        { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Robots-Tag': 'noindex, nofollow' } }
+      );
     })());
     return;
   }
@@ -296,6 +314,18 @@ function startRingLoop(callId, title, body, loop){
 
 self.addEventListener('message', event=>{
   const msg = (event && event.data) || {};
+  if(msg.type === 'naluno-console-hello'){
+    const src = event.source;
+    if(src && src.postMessage){
+      src.postMessage({
+        type: 'naluno-sw-pong',
+        cache: CACHE_NAME,
+        version: 'v155',
+        at: Date.now(),
+      });
+    }
+    return;
+  }
   if(msg.type === 'naluno-call-handled' || msg.type === 'naluno-decline-call'){
     markCallHandled(msg.callId);
     stopRingLoop(msg.callId);
