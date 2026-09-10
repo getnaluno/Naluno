@@ -7,6 +7,8 @@
 <meta name="robots" content="noindex, nofollow, noarchive" />
 <meta name="googlebot" content="noindex, nofollow, noarchive" />
 <meta name="theme-color" content="#07080D" />
+<meta name="naluno-build" content="2026.09.10a" />
+<meta name="app-version" content="2026.09.10a" />
 <link rel="icon" href="/icon-192.png" />
 <link rel="canonical" href="https://getnaluno.com/admin/" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -16,7 +18,7 @@
 :root{
   --void:#07080D; --panel:#12151F; --line:#232838;
   --ink:#E8ECF5; --ink-dim:#7C8497; --mint:#7CFFB2; --cyan:#00E5FF;
-  --violet:#7C4DFF; --red:#FF5470;
+  --red:#FF5470; --warn:#FFC266;
   --display:'Orbitron', sans-serif;
   --body:'Space Grotesk', system-ui, sans-serif;
   --dial:'IBM Plex Mono', monospace;
@@ -25,32 +27,36 @@
 html,body{margin:0;background:var(--void);color:var(--ink);font-family:var(--body);min-height:100%;}
 body{overflow-x:hidden;}
 .field{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;}
-.blob{position:absolute;border-radius:50%;filter:blur(80px);mix-blend-mode:screen;opacity:.4;}
+.blob{position:absolute;border-radius:50%;filter:blur(80px);mix-blend-mode:screen;opacity:.35;}
 .blob.a{width:48vw;height:48vw;left:-10vw;top:-8vh;background:radial-gradient(circle,rgba(124,255,178,.35),transparent 70%);animation:dA 20s ease-in-out infinite;}
-.blob.b{width:42vw;height:42vw;right:-12vw;bottom:-10vh;background:radial-gradient(circle,rgba(124,77,255,.3),transparent 70%);animation:dB 24s ease-in-out infinite;}
+.blob.b{width:42vw;height:42vw;right:-12vw;bottom:-10vh;background:radial-gradient(circle,rgba(0,229,255,.22),transparent 70%);animation:dB 24s ease-in-out infinite;}
 @keyframes dA{50%{transform:translate(6vw,5vh) scale(1.1);}}
 @keyframes dB{50%{transform:translate(-5vw,-6vh) scale(1.12);}}
-.wrap{position:relative;z-index:1;max-width:880px;margin:0 auto;padding:22px 22px 80px;}
-.top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0 28px;}
+.wrap{position:relative;z-index:1;max-width:1080px;margin:0 auto;padding:18px 16px 80px;}
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0 22px;}
 .brand{display:flex;align-items:center;gap:10px;}
 .mark-live{position:relative;width:30px;height:30px;}
 .mark-live svg{width:30px;height:30px;overflow:visible;filter:drop-shadow(0 0 8px rgba(124,255,178,.7));}
 .ping{position:absolute;inset:-5px;border-radius:50%;border:1px solid rgba(124,255,178,.4);animation:ping 2.4s ease-out infinite;}
 @keyframes ping{to{transform:scale(1.7);opacity:0;}}
 .word{font-family:var(--display);font-weight:700;letter-spacing:.16em;font-size:15px;
-  background:linear-gradient(90deg,#7CFFB2,#00E5FF,#7C4DFF,#7CFFB2);background-size:280% 100%;
+  background:linear-gradient(90deg,#7CFFB2,#00E5FF,#7CFFB2);background-size:280% 100%;
   -webkit-background-clip:text;background-clip:text;color:transparent;animation:shimmer 8s linear infinite;}
 @keyframes shimmer{to{background-position:280% 50%;}}
-.clock{font-family:var(--dial);font-size:11px;color:var(--ink-dim);letter-spacing:.04em;}
-.clock b{color:var(--mint);font-weight:500;}
+.clock-block{text-align:right;}
+.clock{font-family:var(--dial);font-size:12px;color:var(--mint);letter-spacing:.04em;font-weight:500;}
+.clock-sub{font-family:var(--dial);font-size:10px;color:var(--ink-dim);margin-top:2px;}
+.sw-badge{display:inline-block;margin-left:8px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);
+  font-family:var(--dial);font-size:10px;color:var(--ink-dim);letter-spacing:.04em;}
+.sw-badge.on{color:var(--mint);border-color:rgba(124,255,178,.4);}
 .panel{
   background:rgba(18,21,31,.78);border:1px solid rgba(124,255,178,.18);
-  border-radius:4px;padding:22px 22px 20px;
+  border-radius:14px;padding:22px 22px 20px;
   box-shadow:0 0 40px rgba(0,229,255,.06) inset, 0 24px 60px rgba(0,0,0,.35);
   backdrop-filter:blur(14px);
 }
 h1{font-family:var(--display);font-weight:500;font-size:22px;letter-spacing:.04em;margin:0 0 6px;}
-.sub{color:var(--ink-dim);font-size:14px;margin:0 0 20px;}
+.sub{color:var(--ink-dim);font-size:14px;margin:0 0 20px;line-height:1.5;}
 label{display:block;font-family:var(--dial);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-dim);margin:12px 0 6px;}
 input{
   width:100%;background:#0D1018;border:1px solid var(--line);border-radius:10px;
@@ -60,77 +66,78 @@ input:focus{outline:2px solid var(--cyan);outline-offset:2px;}
 .row{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;}
 button{
   font-family:var(--dial);font-size:12px;letter-spacing:.06em;border:none;cursor:pointer;
-  padding:12px 18px;border-radius:2px;
+  padding:12px 18px;border-radius:8px;
 }
 .primary{background:var(--mint);color:var(--void);}
 .ghost{background:transparent;color:var(--ink-dim);border:1px solid var(--line);}
 .danger{background:transparent;color:var(--red);border:1px solid var(--line);}
 .msg{min-height:18px;font-size:13px;margin-top:12px;color:var(--red);}
 .msg.ok{color:var(--mint);}
-.card{border:1px solid var(--line);background:rgba(10,12,18,.55);border-radius:4px;padding:14px 16px;margin:0 0 12px;}
+.card{border:1px solid var(--line);background:rgba(10,12,18,.55);border-radius:12px;padding:14px 16px;margin:0 0 12px;}
 .card .who{font-family:var(--dial);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mint);margin-bottom:8px;}
 .hidden{display:none !important;}
 #consoleView{margin-top:18px;}
-.flag-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-family:var(--dial);font-size:12px;}
+.flag-row{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px;}
 .flag-row button{padding:6px 10px;font-size:10.5px;}
 #toast{
   position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(20px);
   background:#12151F;border:1px solid var(--mint);color:var(--mint);
-  font-family:var(--dial);font-size:12px;padding:10px 16px;border-radius:4px;
+  font-family:var(--dial);font-size:12px;padding:10px 16px;border-radius:8px;
   opacity:0;pointer-events:none;transition:opacity .2s, transform .2s;z-index:50;
 }
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
-pre.diag{
-  white-space:pre-wrap;word-break:break-word;font-family:var(--dial);font-size:10.5px;
-  line-height:1.5;color:var(--ink-dim);background:#0D1018;border:1px solid var(--line);
-  border-radius:8px;padding:12px;max-height:240px;overflow:auto;margin:0;
+.admin-tabs{
+  display:flex; gap:2px; flex-wrap:nowrap; margin-bottom:14px;
+  border-bottom:1px solid var(--line);
+  overflow-x:auto; -webkit-overflow-scrolling:touch;
+  scrollbar-width:none;
 }
+.admin-tabs::-webkit-scrollbar{display:none;}
+.atab{
+  background:none; border:none; border-bottom:2px solid transparent;
+  color:var(--ink-dim); font-family:inherit; font-size:12.5px;
+  padding:10px 14px; cursor:pointer; white-space:nowrap;
+}
+.atab:hover{ color:var(--ink); }
+.atab.on{ color:var(--mint); border-bottom-color:var(--mint); }
+.atab:focus-visible{ outline:2px solid var(--cyan); outline-offset:-2px; }
+.kpi-row{ display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+.kpi{
+  flex:1 1 140px; background:var(--panel);
+  border:1px solid var(--line); border-radius:12px; padding:12px 14px;
+}
+.kpi b{ display:block; font-size:22px; color:var(--mint); font-weight:600; font-variant-numeric:tabular-nums; }
+.kpi span{ font-size:11px; color:var(--ink-dim); }
+.inactive-note{
+  border:1px solid rgba(255,180,80,.35); background:rgba(255,180,80,.07);
+  border-radius:12px; padding:12px 14px; margin-bottom:12px; font-size:13px; line-height:1.5;
+}
+.tbl{ width:100%; border-collapse:collapse; font-size:12px; }
+.tbl th{ text-align:left; color:var(--ink-dim); font-weight:500; padding:7px 8px; border-bottom:1px solid var(--line); }
+.tbl td{ padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+.cc-strip{
+  display:flex; flex-wrap:wrap; gap:14px; align-items:center;
+  padding:10px 12px; margin-bottom:12px; border-radius:12px;
+  background:var(--panel); border:1px solid var(--line);
+  font-size:12px;
+}
+.cc-strip .h{ font-weight:600; letter-spacing:.04em; }
+.cc-strip .m{ color:var(--ink-dim); }
+.cc-strip .m b{ color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums; }
+.alert{ display:flex; gap:9px; align-items:flex-start; padding:9px 11px; border-radius:9px; margin-bottom:7px; font-size:12.5px; }
+.alert.critical{ background:rgba(255,84,112,.10); border:1px solid rgba(255,84,112,.35); }
+.alert.warning{ background:rgba(255,180,80,.08); border:1px solid rgba(255,180,80,.30); }
+.alert.ok{ background:rgba(124,255,178,.07); border:1px solid rgba(124,255,178,.28); }
+.alert button{ margin-left:auto; }
+.gap-note{ color:var(--ink-dim); font-size:11.5px; line-height:1.6; }
 @media (prefers-reduced-motion: reduce){
   .blob,.word,.ping{animation:none !important;}
 }
-
-    .admin-tabs{
-      display:flex; gap:2px; flex-wrap:wrap; margin-bottom:14px;
-      border-bottom:1px solid var(--line, #232838);
-    }
-    .atab{
-      background:none; border:none; border-bottom:2px solid transparent;
-      color:var(--dim, #7C8497); font-family:inherit; font-size:12.5px;
-      padding:10px 14px; cursor:pointer; white-space:nowrap;
-    }
-    .atab:hover{ color:var(--ink, #E8ECF5); }
-    .atab.on{ color:var(--mint, #7CFFB2); border-bottom-color:var(--mint, #7CFFB2); }
-    .atab:focus-visible{ outline:2px solid var(--cyan, #00E5FF); outline-offset:-2px; }
-    .kpi-row{ display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
-    .kpi{
-      flex:1 1 150px; background:var(--panel,#12151F);
-      border:1px solid var(--line,#232838); border-radius:10px; padding:12px 14px;
-    }
-    .kpi b{ display:block; font-size:22px; color:var(--mint,#7CFFB2); font-weight:600; }
-    .kpi span{ font-size:11px; color:var(--dim,#7C8497); }
-    .inactive-note{
-      border:1px solid rgba(255,180,80,.35); background:rgba(255,180,80,.07);
-      border-radius:10px; padding:12px 14px; margin-bottom:12px; font-size:13px;
-    }
-    .tbl{ width:100%; border-collapse:collapse; font-size:12px; }
-    .tbl th{ text-align:left; color:var(--dim,#7C8497); font-weight:500; padding:7px 8px; border-bottom:1px solid var(--line,#232838); }
-    .tbl td{ padding:7px 8px; border-bottom:1px solid var(--line,#232838); }
-
-    .cc-strip{
-      display:flex; flex-wrap:wrap; gap:14px; align-items:center;
-      padding:10px 12px; margin-bottom:12px; border-radius:10px;
-      background:var(--panel,#12151F); border:1px solid var(--line,#232838);
-      font-size:12px;
-    }
-    .cc-strip .h{ font-weight:600; letter-spacing:.04em; }
-    .cc-strip .m{ color:var(--dim,#7C8497); }
-    .cc-strip .m b{ color:var(--ink,#E8ECF5); font-weight:600; }
-    .alert{ display:flex; gap:9px; align-items:flex-start; padding:9px 11px; border-radius:9px; margin-bottom:7px; font-size:12.5px; }
-    .alert.critical{ background:rgba(255,84,112,.10); border:1px solid rgba(255,84,112,.35); }
-    .alert.warning{ background:rgba(255,180,80,.08); border:1px solid rgba(255,180,80,.30); }
-    .alert.ok{ background:rgba(124,255,178,.07); border:1px solid rgba(124,255,178,.28); }
-    .alert button{ margin-left:auto; }
-    .gap-note{ color:var(--dim,#7C8497); font-size:11.5px; line-height:1.6; }
+@media (max-width: 640px){
+  .wrap{padding:12px 12px 72px;}
+  .kpi b{font-size:18px;}
+  h1{font-size:18px;}
+}
 </style>
 </head>
 <body>
@@ -148,7 +155,10 @@ pre.diag{
       </div>
       <div class="word">NALUNO</div>
     </div>
-    <div class="clock"><b id="liveClock">--:--:--</b> · private</div>
+    <div class="clock-block">
+      <div class="clock" id="liveClock">--:--:--</div>
+      <div class="clock-sub"><span id="liveClockZone"></span> · private <span id="swBadge" class="sw-badge">worker…</span></div>
+    </div>
   </header>
 
   <div class="panel" id="signPanel">
@@ -195,37 +205,30 @@ pre.diag{
         <button type="button" class="danger" id="adminSignOutBtn2">Sign out</button>
       </div>
     </div>
-    <!-- Spec §30: the console is organised into tabs, not one long block.
-         Order follows the specification's own list. -->
-    <!-- Always-visible health strip (spec: "at the very top"). Rendered from
-         the Overview payload so it is never a separate, drifting source. -->
     <div id="ccStrip" class="cc-strip"></div>
     <nav class="admin-tabs" id="adminTabs" role="tablist">
       <button type="button" class="atab on" data-tab="overview" role="tab">Overview</button>
-      <button type="button" class="atab" data-tab="activity" role="tab">Activity</button>
+      <button type="button" class="atab" data-tab="health" role="tab">Health</button>
+      <button type="button" class="atab" data-tab="alerts" role="tab">Alerts</button>
       <button type="button" class="atab" data-tab="users" role="tab">Users</button>
-      <button type="button" class="atab" data-tab="moderation" role="tab">Moderation</button>
-      <button type="button" class="atab" data-tab="reports" role="tab">Reports</button>
       <button type="button" class="atab" data-tab="broadcast" role="tab">Broadcast</button>
-      <button type="button" class="atab" data-tab="contribution" role="tab">Contribution</button>
+      <button type="button" class="atab" data-tab="signals" role="tab">Signals</button>
+      <button type="button" class="atab" data-tab="journey" role="tab">Journey</button>
+      <button type="button" class="atab" data-tab="creators" role="tab">Creators</button>
+      <button type="button" class="atab" data-tab="toga" role="tab">Toga</button>
+      <button type="button" class="atab" data-tab="community" role="tab">Community</button>
       <button type="button" class="atab" data-tab="trust" role="tab">Trust</button>
-      <button type="button" class="atab" data-tab="value" role="tab">Community Value</button>
-      <button type="button" class="atab" data-tab="support" role="tab">Creator Support</button>
-      <button type="button" class="atab" data-tab="rewards" role="tab">Community Rewards</button>
-      <button type="button" class="atab" data-tab="financial" role="tab">Financial</button>
-      <button type="button" class="atab" data-tab="trace" role="tab">Trace</button>
-      <button type="button" class="atab" data-tab="system" role="tab">System</button>
+      <button type="button" class="atab" data-tab="economy" role="tab">Economy</button>
+      <button type="button" class="atab" data-tab="support" role="tab">Support</button>
+      <button type="button" class="atab" data-tab="money" role="tab">Money</button>
+      <button type="button" class="atab" data-tab="content" role="tab">Content Hub</button>
+      <button type="button" class="atab" data-tab="analytics" role="tab">Analytics</button>
+      <button type="button" class="atab" data-tab="notifications" role="tab">Notify</button>
+      <button type="button" class="atab" data-tab="search" role="tab">Search</button>
+      <button type="button" class="atab" data-tab="flags" role="tab">Flags</button>
+      <button type="button" class="atab" data-tab="audit" role="tab">Audit</button>
     </nav>
     <div id="adminBody"></div>
-    <div class="card" id="adminDiagWrap">
-      <div class="who">This device · diagnostics</div>
-      <p class="sub" style="margin:0 0 10px;">Error log from this browser only. Same origin as the app, so a break on this phone can be copied here.</p>
-      <div id="diagBody"></div>
-      <div class="row">
-        <button type="button" class="primary" id="diagCopyBtn">Copy all</button>
-        <button type="button" class="ghost" id="diagClearBtn">Clear</button>
-      </div>
-    </div>
   </div>
 </div>
 <div id="toast"></div>
@@ -233,8 +236,8 @@ pre.diag{
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
-<script src="/firebase-config.js?v=20260908c"></script>
-<script src="/js/diagnostics.js?v=20260908c"></script>
-<script src="/js/admin-console.js?v=20260908c"></script>
+<script src="/firebase-config.js?v=20260910a"></script>
+<script src="/js/admin-data.js?v=20260910a"></script>
+<script src="/js/admin-console.js?v=20260910a"></script>
 </body>
 </html>
