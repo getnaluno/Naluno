@@ -411,6 +411,14 @@ service cloud.firestore {
        No client may read them at all. A reporter must not be able to check
        whether their report was acted on (that invites retaliation), and a
        reported person must never see who reported them. */
+    /* Session heartbeats. Written only by the Worker's service account.
+       No client reads them: presence reveals when a person is online, which
+       is exactly the kind of thing that should not be queryable by anyone
+       else in the app. */
+    match /presence/{docId} {
+      allow read, write: if false;
+    }
+
     match /reports/{reportId} {
       allow read, write: if false;
     }
