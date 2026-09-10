@@ -14,9 +14,15 @@
 (function () {
   const $ = function (id) { return document.getElementById(id); };
   const WORKER = 'https://naluno-economy.naluno.workers.dev';
+  function workerBase() {
+    try {
+      if (typeof location !== 'undefined' && location.origin) return location.origin + '/__naluno-economy';
+    } catch (_) {}
+    return WORKER;
+  }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260910a';
+  const BUILD = '20260911a';
   const OPERATOR_UIDS = { 'ibMOMY6Q3sVTCxIrwO2FGk43zw93': true };
   const OPERATOR_EMAILS = { 'magjoed@gmail.com': true };
 
@@ -271,23 +277,31 @@
     } catch (_) { return []; }
   }
   async function pingWorker() {
-    const out = { ok: false, degraded: false, ms: 0, version: '', error: '' };
-    try {
-      const t0 = Date.now();
-      const h = await fetch(WORKER + '/health', { cache: 'no-store' });
-      const b = await h.json().catch(function () { return {}; });
-      out.ok = !!h.ok;
-      out.ms = Date.now() - t0;
-      out.version = b.version || '';
-      if (!h.ok) out.error = 'health ' + h.status;
-    } catch (_) {
-      out.error = 'unreachable';
+    const out = { ok: false, degraded: false, ms: 0, version: '', error: '', persist: '' };
+    const bases = [];
+    try { bases.push(location.origin + '/__naluno-economy'); } catch (_) {}
+    bases.push(WORKER);
+    for (let i = 0; i < bases.length; i++) {
+      const base = bases[i];
+      try {
+        const t0 = Date.now();
+        const h = await fetch(base + '/health', { cache: 'no-store' });
+        const b = await h.json().catch(function () { return {}; });
+        if (!h.ok) continue;
+        out.ok = true;
+        out.ms = Date.now() - t0;
+        out.version = b.version || '';
+        out.persist = b.persist || '';
+        try {
+          const f = await fetch(base + '/v1/flags', { cache: 'no-store' });
+          const fb = await f.json().catch(function () { return {}; });
+          out.degraded = !!fb.degraded && !f.ok;
+          if (fb.persist) out.persist = fb.persist;
+        } catch (_) { out.degraded = false; }
+        return out;
+      } catch (_) {}
     }
-    try {
-      const f = await fetch(WORKER + '/v1/flags', { cache: 'no-store' });
-      const b = await f.json().catch(function () { return {}; });
-      out.degraded = !!b.degraded;
-    } catch (_) {}
+    out.error = 'unreachable';
     return out;
   }
   async function loadSnapshot(force) {
@@ -296,7 +310,7 @@
     const pack = {
       users: [], broadcasts: [], signals: [], toga: [], strands: [], bands: [],
       reports: [], ledger: [], metrics: [], audit: [], flags: {},
-      worker: {}, sw: __swInfo, now: Date.now(), zone: Data ? Data.localZone() : undefined,
+      worker: {}, sw: __swInfo, now: Date.now(), zone: Data ? (Data.adminZone ? Data.adminZone() : Data.localZone()) : undefined,
     };
     const jobs = [
       colDocs('users', 500).then(function (r) { pack.users = r; }),
@@ -306,7 +320,8 @@
       colDocs('bands', 80).then(function (r) { pack.bands = r; }),
       colDocs('reports', 80).then(function (r) { pack.reports = r; }),
       colDocs('contributionLedger', 200).then(function (r) { pack.ledger = r; }),
-      colDocs('metrics', 80).then(function (r) { pack.metrics = r; }),
+      colDocs('economyInbox', 200).then(function (r) { pack._inbox = r; }),
+      colDocs('metrics', 200).then(function (r) { pack.metrics = r; }),
       colDocs('adminAudit', 80).then(function (r) {
         pack.audit = r.sort(function (a, b) { return (b.created_at || 0) - (a.created_at || 0); });
       }),
@@ -326,6 +341,36 @@
       }).catch(function () { pack.signals = []; }));
     }
     await Promise.all(jobs);
+    if (!pack.ledger.length) {
+      const inbox = pack._inbox || [];
+      if (inbox.length) {
+        pack.ledger = inbox.map(function (row) {
+          return {
+            id: row.id || row.event_id,
+            event_type: row.event_type,
+            user_id: row.actor_user_id || row.user_id,
+            points: 0,
+            eligible_points: 0,
+            status: 'RECORDED',
+            reason: 'inbox',
+          };
+        });
+      } else {
+        pack.ledger = (pack.metrics || []).filter(function (m) {
+          return String(m.name || '').indexOf('economy.') === 0;
+        }).map(function (m) {
+          return {
+            id: m.id || m.event_id,
+            event_type: m.event_type || String(m.name || '').replace(/^economy\./, ''),
+            user_id: m.uid || m.user_id,
+            points: 0,
+            eligible_points: 0,
+            status: 'RECORDED',
+            reason: 'metrics',
+          };
+        });
+      }
+    }
     const snap = Data ? Data.deriveSnapshot(pack) : pack;
     snap._at = Date.now();
     snap._raw = pack;
@@ -371,7 +416,13 @@
   }
   function when(ms) {
     if (!ms) return '—';
-    try { return new Date(Number(ms)).toLocaleString(); } catch (_) { return '—'; }
+    try {
+      if (Data && Data.formatAdminClock) {
+        const c = Data.formatAdminClock(new Date(Number(ms)));
+        return c.day + ' · ' + c.time;
+      }
+      return new Date(Number(ms)).toLocaleString();
+    } catch (_) { return '—'; }
   }
 
   function renderStrip(d) {
@@ -484,7 +535,7 @@
         ['Signals', d.flags.signals_enabled !== false, 'Short clips.'],
         ['Notifications', true, 'Device push. Central delivery ledger is not built.'],
         ['Payments', !!d.flags.real_payouts_enabled, 'Off until a provider is connected.'],
-        ['Economy worker', !!w.ok, w.degraded ? 'Up, but Google rejected its service account.' : (w.ok ? (w.ms + ' ms · ' + (w.version || '')) : (w.error || 'down'))],
+        ['Economy worker', !!w.ok, w.degraded ? 'Up, but Google rejected its service account.' : (w.ok ? (w.ms + ' ms · ' + (w.version || '') + (w.persist ? ' · ' + w.persist : '')) : (w.error || 'down'))],
         ['Service worker', !!__swInfo.connected, __swInfo.connected ? (__swInfo.cache || __swInfo.version) : 'This desk is not talking to sw.js yet.'],
         ['Content Hub', !!d.flags.content_hub_enabled, g.content_hub],
       ];
@@ -658,7 +709,7 @@
           (e.ledger || []).slice(0, 30).map(function (r) {
             return [r.event_type || '', r.points || 0, r.eligible_points || 0, r.status || '', String(r.user_id || '').slice(0, 10)];
           })))
-        + gap('Points are written only by the economy worker. If its service account stays rejected, this ledger stays empty even while people comment — that is honest, not a hidden failure.');
+        + gap('Points are written only by the economy worker. Comments still land if the Google key is rejected — they go through the signed-in inbox, and this desk counts them.');
       return;
     }
 

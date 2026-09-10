@@ -42,9 +42,23 @@
     }
   }
 
+  function adminZone() {
+    const z = localZone();
+    if (z === 'UTC' || z === 'Etc/UTC' || z === 'Etc/GMT') return 'Asia/Dubai';
+    return z;
+  }
+
+  function zoneFriendly(zone) {
+    const z = zone || adminZone();
+    if (z === 'Asia/Dubai' || z === 'Asia/Muscat') return 'Gulf Standard Time';
+    if (z === 'Africa/Kampala' || z === 'Africa/Nairobi') return 'East Africa Time';
+    if (z === 'UTC' || z === 'Etc/UTC') return 'UTC';
+    return String(z).replace(/_/g, ' ');
+  }
+
   function formatAdminClock(date, zone) {
     const d = date instanceof Date ? date : new Date(date || Date.now());
-    const tz = zone || localZone();
+    const tz = zone || adminZone();
     let time = '';
     let tzName = '';
     let day = '';
@@ -75,6 +89,9 @@
       time = d.toTimeString().slice(0, 8);
       tzName = tz;
     }
+    if (/Z$/i.test(time)) time = time.replace(/Z$/i, '');
+    if (!tzName || tzName === 'Z' || /Z$/i.test(tzName)) tzName = tz === 'UTC' ? 'UTC' : zoneFriendly(tz);
+    if (tzName === 'GMT+4' || tzName === 'UTC+4' || tzName === 'GMT+04:00') tzName = 'GST';
     return {
       time: time,
       zone: tz,
@@ -88,7 +105,7 @@
   function localYmd(ms, zone) {
     try {
       return new Intl.DateTimeFormat('en-CA', {
-        timeZone: zone || localZone(),
+        timeZone: zone || adminZone(),
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',
@@ -99,7 +116,7 @@
   }
 
   function startOfLocalDay(ms, zone) {
-    const tz = zone || localZone();
+    const tz = zone || adminZone();
     const ymd = localYmd(ms || Date.now(), tz);
     try {
       const fmt = new Intl.DateTimeFormat('en-CA', {
@@ -140,7 +157,7 @@
   function deriveSnapshot(raw) {
     raw = raw || {};
     const now = num(raw.now) || Date.now();
-    const zone = raw.zone || localZone();
+    const zone = raw.zone || adminZone();
     const users = raw.users || [];
     const broadcasts = raw.broadcasts || [];
     const signals = raw.signals || [];
@@ -249,7 +266,7 @@
     });
 
     const alerts = [];
-    if (worker && worker.degraded) {
+    if (worker && worker.degraded && !worker.ok) {
       alerts.push({
         level: 'warning',
         tab: 'health',
@@ -400,6 +417,8 @@
     DEFAULT_FLAGS: DEFAULT_FLAGS,
     FLAG_META: FLAG_META,
     localZone: localZone,
+    adminZone: adminZone,
+    zoneFriendly: zoneFriendly,
     localYmd: localYmd,
     formatAdminClock: formatAdminClock,
     startOfLocalDay: startOfLocalDay,

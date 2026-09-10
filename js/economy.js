@@ -104,6 +104,36 @@ function nalunoEventId(){
 
 async function econPost(payload){
   if(typeof currentUser === 'undefined' || !currentUser) return false;
+  try{
+    const db = (typeof fbDb !== 'undefined' && fbDb)
+      ? fbDb
+      : (typeof firebase !== 'undefined' && firebase.firestore ? firebase.firestore() : null);
+    if(db){
+      db.collection('metrics').doc(payload.event_id).set({
+        uid: currentUser.uid,
+        name: 'economy.' + payload.event_type,
+        event_type: payload.event_type,
+        event_id: payload.event_id,
+        target_id: payload.target_id || '',
+        broadcast_id: payload.broadcast_id || '',
+        at: Date.now(),
+      }).catch(function(){});
+      db.collection('economyInbox').doc(payload.event_id).set({
+        event_id: payload.event_id,
+        event_type: payload.event_type,
+        actor_user_id: currentUser.uid,
+        target_type: payload.target_type || '',
+        target_id: payload.target_id || '',
+        broadcast_id: payload.broadcast_id || '',
+        parent_event_id: payload.parent_event_id || '',
+        creator_uid: payload.creator_uid || '',
+        session_id: payload.session_id || '',
+        text: payload.text || '',
+        ts: Date.now(),
+        client_ts: payload.client_ts || Date.now(),
+      }).catch(function(){});
+    }
+  }catch(_){}
   const idToken = await currentUser.getIdToken(false);
   const res = await fetch(ECONOMY_WORKER_URL + '/v1/events', {
     method: 'POST',
