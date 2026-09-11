@@ -46,10 +46,17 @@ function weatherCodeLabel(code){
   return 'Mixed skies';
 }
 
-function isHardcodedAlAin(lat, lon){
+function isLegacyDefaultAlAin(lat, lon, source){
+  const src = String(source || '').toLowerCase();
+  if (src === 'gps' || src === 'find' || src === 'beacon' || src === 'beacon-cache'
+      || src === 'beacon-snap' || src === 'native' || src === 'desk') return false;
   const la = Number(lat), lo = Number(lon);
   if(!isFinite(la) || !isFinite(lo)) return false;
   return Math.abs(la - 24.2075) < 0.0002 && Math.abs(lo - 55.7447) < 0.0002;
+}
+
+function isHardcodedAlAin(lat, lon, source){
+  return isLegacyDefaultAlAin(lat, lon, source);
 }
 
 function weatherHaversineM(aLat, aLon, bLat, bLon){
@@ -66,7 +73,6 @@ function rememberLiveCoords(lat, lon, extra){
   extra = extra || {};
   const la = Number(lat), lo = Number(lon);
   if(!isFinite(la) || !isFinite(lo)) return null;
-  if(isHardcodedAlAin(la, lo)) return weatherLive;
   weatherLive = {
     lat: la,
     lon: lo,
@@ -84,7 +90,6 @@ function coordsFromFind(){
       const c = nalunoLiveCoords();
       if(c && c.lat != null){
         const lon = c.lng != null ? c.lng : c.lon;
-        if(isHardcodedAlAin(c.lat, lon)) return null;
         return {
           lat: Number(c.lat),
           lon: Number(lon),
@@ -102,7 +107,7 @@ function coordsFromFind(){
       const b = JSON.parse(raw);
       if(b && b.lat != null && b.ts && (Date.now() - b.ts) < WEATHER_FRESH_MS){
         const lon = b.lng != null ? b.lng : b.lon;
-        if(isHardcodedAlAin(b.lat, lon)) return null;
+        if(isLegacyDefaultAlAin(b.lat, lon, b.source)) return null;
         return {
           lat: Number(b.lat),
           lon: Number(lon),
@@ -369,7 +374,7 @@ async function refreshWeather(force){
     const cached = localStorage.getItem(WEATHER_CACHE_KEY);
     if(cached && !weatherLast){
       const c = JSON.parse(cached);
-      if(c && c.lat && !isHardcodedAlAin(c.lat, c.lon) && (Date.now() - (c.ts || 0)) < 30 * 60 * 1000){
+      if(c && c.lat && !isLegacyDefaultAlAin(c.lat, c.lon, c.source) && (Date.now() - (c.ts || 0)) < 30 * 60 * 1000){
         weatherLast = c;
         paintWeatherStrip(weatherLast);
       }
@@ -379,7 +384,7 @@ async function refreshWeather(force){
     const data = await fetchWeather(!!force);
     paintWeatherStrip(data);
   }catch(_){
-    if(weatherLast && !isHardcodedAlAin(weatherLast.lat, weatherLast.lon)) paintWeatherStrip(weatherLast);
+    if(weatherLast && !isLegacyDefaultAlAin(weatherLast.lat, weatherLast.lon, weatherLast.source)) paintWeatherStrip(weatherLast);
     else paintWeatherWaiting();
   }
 }
@@ -388,7 +393,7 @@ function onNalunoLocation(ev){
   const d = (ev && ev.detail) || {};
   if(d.lat == null) return;
   const lon = d.lng != null ? d.lng : d.lon;
-  if(lon == null || isHardcodedAlAin(d.lat, lon)) return;
+  if(lon == null || isLegacyDefaultAlAin(d.lat, lon, d.source)) return;
   rememberLiveCoords(d.lat, lon, d);
   const moved = (weatherLast && weatherLast.lat != null)
     ? weatherHaversineM(weatherLast.lat, weatherLast.lon, Number(d.lat), Number(lon))

@@ -42,9 +42,39 @@
     }
   }
 
+  let __adminZoneOverride = '';
+
+  function isUtcName(z) {
+    const s = String(z || '');
+    return s === 'UTC' || s === 'Etc/UTC' || s === 'Etc/GMT' || s === 'Etc/GMT+0' || s === 'Etc/GMT-0';
+  }
+
+  function readStoredZone() {
+    try {
+      const z = sessionStorage.getItem('nalunoAdminZone') || localStorage.getItem('nalunoAdminZone') || '';
+      if (z && !isUtcName(z)) return z;
+    } catch (_) {}
+    return '';
+  }
+
+  /* The desk clock follows the device that opened it.
+     Never remap UTC → Asia/Dubai / Al Ain. If the host reports UTC, GPS
+     reverse-geocode (setAdminZone) is what names the real place. */
   function adminZone() {
-    const z = localZone();
-    if (z === 'UTC' || z === 'Etc/UTC' || z === 'Etc/GMT') return 'Asia/Dubai';
+    if (__adminZoneOverride) return __adminZoneOverride;
+    const stored = readStoredZone();
+    if (stored) return stored;
+    return localZone();
+  }
+
+  function setAdminZone(zone) {
+    const z = String(zone || '').trim();
+    if (!z) return adminZone();
+    __adminZoneOverride = z;
+    try {
+      sessionStorage.setItem('nalunoAdminZone', z);
+      if (!isUtcName(z)) localStorage.setItem('nalunoAdminZone', z);
+    } catch (_) {}
     return z;
   }
 
@@ -52,7 +82,7 @@
     const z = zone || adminZone();
     if (z === 'Asia/Dubai' || z === 'Asia/Muscat') return 'Gulf Standard Time';
     if (z === 'Africa/Kampala' || z === 'Africa/Nairobi') return 'East Africa Time';
-    if (z === 'UTC' || z === 'Etc/UTC') return 'UTC';
+    if (isUtcName(z)) return 'UTC';
     return String(z).replace(/_/g, ' ');
   }
 
@@ -168,6 +198,8 @@
     const ledger = raw.ledger || [];
     const metrics = raw.metrics || [];
     const audit = raw.audit || [];
+    const beacons = raw.beacons || [];
+    const originMarks = raw.originMarks || [];
     const flags = Object.assign({}, DEFAULT_FLAGS, raw.flags || {});
     const worker = raw.worker || {};
     const sw = raw.sw || {};
@@ -176,6 +208,32 @@
     const day7 = now - 7 * 86400000;
     const day30 = now - 30 * 86400000;
     const activeCut = now - 10 * 60 * 1000;
+
+    const beaconByUid = {};
+    beacons.forEach(function (b) {
+      const uid = String(b.uid || b.userId || '');
+      if (!uid) return;
+      if (!beaconByUid[uid] || num(b.ts) > num(beaconByUid[uid].ts)) beaconByUid[uid] = b;
+    });
+    users.forEach(function (u) {
+      const lat = u.lastLat != null ? Number(u.lastLat) : (u.lat != null ? Number(u.lat) : NaN);
+      const lng = u.lastLng != null ? Number(u.lastLng) : Number(u.lastLng === 0 ? 0 : (u.lng != null ? u.lng : u.lon));
+      if (isFinite(lat) && isFinite(lng) && !(lat === 0 && lng === 0)) {
+        u.lastLat = lat;
+        u.lastLng = lng;
+        return;
+      }
+      const b = beaconByUid[u.id];
+      if (!b || b.lat == null || (b.lng == null && b.lon == null)) return;
+      u.lastLat = Number(b.lat);
+      u.lastLng = Number(b.lng != null ? b.lng : b.lon);
+      u.lastAccuracy = b.accuracy;
+      u.lastPlace = b.placeName || b.place || u.lastPlace || '';
+      u.lastLocationAt = num(b.ts);
+      u.lastLocationSource = b.source || 'beacon';
+      u.lastDeviceId = b.deviceId || b.id || '';
+      u.lastDeviceLabel = b.label || '';
+    });
 
     const liveUsers = users.filter(function (u) { return seenOf(u) >= activeCut; });
     const dauUsers = users.filter(function (u) { return seenOf(u) >= day0; });
@@ -210,6 +268,14 @@
       replies += num(b.replies || b.replyCount);
       shares += num(b.shares || b.shareCount);
     });
+    const ledgerComments = ledger.filter(function (r) {
+      return String(r.event_type || '') === 'BROADCAST_COMMENT';
+    }).length;
+    const ledgerReplies = ledger.filter(function (r) {
+      return String(r.event_type || '') === 'COMMENT_REPLY';
+    }).length;
+    if (ledgerComments > comments) comments = ledgerComments;
+    if (ledgerReplies > replies) replies = ledgerReplies;
 
     const creatorMap = {};
     activeB.forEach(function (b) {
@@ -312,6 +378,14 @@
 
     const stickiness = mauUsers.length ? Math.round((dauUsers.length / mauUsers.length) * 100) : null;
 
+    const withCoords = users.filter(function (u) {
+      return u.lastLat != null && u.lastLng != null && isFinite(Number(u.lastLat)) && isFinite(Number(u.lastLng));
+    });
+    const originHeld = originMarks.filter(function (m) {
+      const st = String(m.status || '').toLowerCase();
+      return !!m.hold || st === 'hold' || st === 'match';
+    });
+
     return {
       now: now,
       zone: zone,
@@ -363,7 +437,23 @@
         active: sigActive.length,
         expired: sigExpired,
         today: sigToday.length,
-        list: signals,
+        list: signals.slice().sort(function (a, b) {
+          return num(b.createdAt || b.ts) - num(a.createdAt || a.ts);
+        }),
+      },
+      locations: {
+        with_coords: withCoords.length,
+        devices: beacons.length,
+        recent: beacons.slice().sort(function (a, b) { return num(b.ts) - num(a.ts); }).slice(0, 40),
+        list: withCoords,
+        beacons: beacons,
+      },
+      origin: {
+        total: originMarks.length,
+        held: originHeld.length,
+        list: originMarks.slice().sort(function (a, b) {
+          return num(b.createdAt) - num(a.createdAt);
+        }).slice(0, 40),
       },
       creators: {
         total: creatorList.length,
@@ -418,6 +508,7 @@
     FLAG_META: FLAG_META,
     localZone: localZone,
     adminZone: adminZone,
+    setAdminZone: setAdminZone,
     zoneFriendly: zoneFriendly,
     localYmd: localYmd,
     formatAdminClock: formatAdminClock,

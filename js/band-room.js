@@ -30,7 +30,7 @@ async function flushBandOutbox(){
       const ref = fbDb.collection('bands').doc(row.bandId).collection('messages');
       await ref.add(Object.assign({}, row.payload, {
         from: currentUser.uid,
-        ts: firebase.firestore.FieldValue.serverTimestamp(),
+        ts: bandNowTimestamp(),
       }));
     }catch(e){ left.push(row); }
   }
@@ -81,22 +81,8 @@ async function loadOlderBandMessages(){
 async function renderBandMessagesFromDocs(docs){
   if(!activeBandId || !docs || !docs.length) return;
   const seen = new Set((bandOlderMessages[activeBandId] || []).map(m => m._id));
-  const rows = docs.map(d=>{
-    const m = d.data();
-    return {
-      _id: d.id,
-      fromMe: m.from === (currentUser && currentUser.uid),
-      fromUid: m.from,
-      text: m.text || '',
-      type: m.type || 'text',
-      mediaUrl: m.mediaUrl || null,
-      thumb: m.thumb || null,
-      duration: m.duration || null,
-      encrypted: !!m.encrypted,
-      envelopes: m.envelopes || null,
-      ts: bandMsgTs(m),
-    };
-  }).filter(row => !seen.has(row._id));
+  const uid = currentUser && currentUser.uid;
+  const rows = docs.map(function(d){ return mapBandMessageDoc(d, uid); }).filter(row => !seen.has(row._id));
   const cut = bandWipeCut(activeBand());
   const kept = cut ? rows.filter(function(row){ return bandMsgTs(row) > cut; }) : rows;
   await Promise.all(kept.map(async row=>{
@@ -142,12 +128,109 @@ let bandAnimStart = performance.now();
 let bandPresenceUnsub = null;
 let bandMessagesUnsub = null;
 let realBandLiveMembers = []; // resolved {uid,name,color,initials} for who's actually tuned in, real bands only
+let bandLocalMedia = {}; // { docId: blob: URL } — sender plays the clip before R2 is done
+let bandLocalRows = {};  // { docId: row } — keep the bubble on screen until Firestore catches up
 
 function activeBand(){ return bands.find(b=>b.id===activeBandId); }
 
+function bandNowTimestamp(){
+  try{
+    if(typeof firebase !== 'undefined' && firebase.firestore && firebase.firestore.Timestamp){
+      return firebase.firestore.Timestamp.fromMillis(Date.now());
+    }
+  }catch(_){}
+  return Date.now();
+}
+function bandMediaSrc(m){
+  if(!m) return '';
+  if(m._id && bandLocalMedia[m._id]) return bandLocalMedia[m._id];
+  const url = m.mediaUrl;
+  if(!url) return '';
+  return (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(url) : url;
+}
+function rememberBandLocalRow(row){
+  if(!row || !row._id) return;
+  bandLocalRows[row._id] = row;
+}
+function forgetBandLocalRow(docId, revokeBlob){
+  if(!docId) return;
+  delete bandLocalRows[docId];
+  if(revokeBlob && bandLocalMedia[docId]){
+    try{ URL.revokeObjectURL(bandLocalMedia[docId]); }catch(_){}
+    delete bandLocalMedia[docId];
+  } else if(revokeBlob){
+    delete bandLocalMedia[docId];
+  }
+}
+function clearBandLocalMedia(){
+  Object.keys(bandLocalMedia).forEach(function(k){
+    try{ URL.revokeObjectURL(bandLocalMedia[k]); }catch(_){}
+  });
+  bandLocalMedia = {};
+  bandLocalRows = {};
+}
+function mapBandMessageDoc(d, uid){
+  let m = {};
+  try{ m = d.data({ serverTimestamps: 'estimate' }) || {}; }
+  catch(_){ try{ m = d.data() || {}; }catch(e2){ m = {}; } }
+  return {
+    _id: d.id,
+    fromMe: m.from === uid,
+    fromUid: m.from,
+    text: m.text || '',
+    type: m.type || 'text',
+    mediaUrl: m.mediaUrl || null,
+    thumb: m.thumb || null,
+    duration: m.duration || null,
+    pending: !!m.pending,
+    encrypted: !!m.encrypted,
+    envelopes: m.envelopes || null,
+    ts: bandMsgTs(m),
+  };
+}
+function mergeBandLiveRows(id, remote){
+  const seen = new Set();
+  const out = [];
+  (remote || []).forEach(function(r){
+    if(r && r._id && bandLocalRows[r._id]){
+      const loc = bandLocalRows[r._id];
+      if(!r.mediaUrl && loc.mediaUrl) r = Object.assign({}, r, { mediaUrl: loc.mediaUrl, thumb: r.thumb || loc.thumb });
+      const remoteReady = !!(r.mediaUrl && String(r.mediaUrl).indexOf('blob:') !== 0);
+      if(remoteReady){
+        forgetBandLocalRow(r._id, true);
+      } else if(r.type !== 'audio' && r.type !== 'video'){
+        forgetBandLocalRow(r._id, false);
+      }
+    }
+    if(r && r._id) seen.add(r._id);
+    out.push(r);
+  });
+  Object.keys(bandLocalRows).forEach(function(k){
+    const loc = bandLocalRows[k];
+    if(!loc || loc.bandId !== id) return;
+    if(seen.has(k)) return;
+    out.push(loc);
+  });
+  out.sort(function(a, b){ return bandMsgTs(a) - bandMsgTs(b); });
+  return out;
+}
+function pushBandLocal(row){
+  if(!row || !row.bandId) return;
+  rememberBandLocalRow(row);
+  if(!bandMessages[row.bandId]) bandMessages[row.bandId] = [];
+  const list = bandMessages[row.bandId];
+  const idx = list.findIndex(function(m){ return m._id && m._id === row._id; });
+  if(idx >= 0) list[idx] = row;
+  else list.push(row);
+  if(activeBandId === row.bandId) renderBandMessages();
+}
+
 function bandMessageIsEmpty(m){
   if(!m) return true;
-  if(m.type === 'audio' || m.type === 'video') return !m.mediaUrl || String(m.mediaUrl).length < 8;
+  if(m.type === 'audio' || m.type === 'video'){
+    if(m.pending) return false;
+    return !bandMediaSrc(m);
+  }
   if(m.type === 'invite' || m.type === 'system') return false;
   return !(m.text && String(m.text).trim());
 }
@@ -190,19 +273,33 @@ function bandMessageHtml(m){
   const rowClass = m.fromMe ? 'msg-row me' : 'msg-row them';
   const nameHtml = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">${av}<span style="font-size:10.5px; color:${m.fromMe ? 'var(--mint)' : 'var(--text-dim)'};">${escapeHtml(name)}</span></div>`;
   const dur = m.duration ? Math.round(m.duration) + 's' : '';
-  if(m.type === 'audio' && m.mediaUrl){
+  const src = bandMediaSrc(m);
+  const sending = !!m.pending && (!m.mediaUrl || String(m.mediaUrl).indexOf('blob:') === 0);
+  if(m.type === 'audio'){
     const labelColor = m.fromMe ? 'rgba(13,15,23,.7)' : 'var(--mint)';
-    const src = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(m.mediaUrl) : m.mediaUrl;
+    const label = sending ? 'Voice · sending…' : ('Voice · ' + (dur || 'clip'));
+    if(!src){
+      return `<div class="${rowClass}">${nameHtml}<div class="msg-bubble band-voice-bubble">
+        <div class="band-voice-label" style="color:${labelColor}">${label}</div>
+        <div class="recording-dot" style="display:inline-block;margin-top:8px;"></div>
+      </div><div class="msg-time">${formatClockTime(m.ts)}</div></div>`;
+    }
     return `<div class="${rowClass}">${nameHtml}<div class="msg-bubble band-voice-bubble">
-      <div class="band-voice-label" style="color:${labelColor}">Voice · ${dur || 'clip'}</div>
+      <div class="band-voice-label" style="color:${labelColor}">${label}</div>
       <button type="button" class="naluno-clip-play" aria-label="Play">▶</button>
       <video class="band-audio-player naluno-clip" playsinline webkit-playsinline preload="auto" src="${escapeHtml(src)}"></video>
     </div><div class="msg-time">${formatClockTime(m.ts)}</div></div>`;
   }
-  if(m.type === 'video' && m.mediaUrl){
-    const src = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(m.mediaUrl) : m.mediaUrl;
+  if(m.type === 'video'){
+    const label = sending ? 'Video · sending…' : ('Video · ' + (dur || 'clip'));
+    if(!src){
+      return `<div class="${rowClass}">${nameHtml}<div class="msg-bubble" style="padding:12px 14px; background:rgba(0,0,0,.35);">
+        <div style="font-family:var(--font-mono); font-size:10px; color:var(--mint);">${label}</div>
+        <div class="recording-dot" style="display:inline-block;margin-top:10px;"></div>
+      </div><div class="msg-time">${formatClockTime(m.ts)}</div></div>`;
+    }
     return `<div class="${rowClass}">${nameHtml}<div class="msg-bubble" style="padding:8px; background:rgba(0,0,0,.35); position:relative;">
-      <div style="font-family:var(--font-mono); font-size:10px; color:var(--mint); margin:0 0 6px 4px;">Video · ${dur || 'clip'}</div>
+      <div style="font-family:var(--font-mono); font-size:10px; color:var(--mint); margin:0 0 6px 4px;">${label}</div>
       <button type="button" class="naluno-clip-play" aria-label="Play">▶</button>
       <video class="naluno-clip band-video-player" playsinline webkit-playsinline preload="auto" src="${escapeHtml(src)}" poster="${m.thumb ? escapeHtml(m.thumb) : ''}" style="width:100%; max-width:260px; border-radius:12px; background:#000; display:block;"></video>
     </div><div class="msg-time">${formatClockTime(m.ts)}</div></div>`;
@@ -566,30 +663,23 @@ function attachBandMessagesListener(bandRef, b){
   const cut = bandWipeCut(b);
   b._msgCut = cut;
   const id = b.id;
-  bandMessagesUnsub = bandMessagesQuery(bandRef, b).onSnapshot(async function(snap){
+  bandMessagesUnsub = bandMessagesQuery(bandRef, b).onSnapshot(function(snap){
+    const uid = currentUser && currentUser.uid;
     const rows = snap.docs.slice().reverse().map(function(d){
-      const m = d.data();
-      return {
-        fromMe: m.from === currentUser.uid,
-        fromUid: m.from,
-        text: m.text || '',
-        type: m.type || 'text',
-        mediaUrl: m.mediaUrl || null,
-        thumb: m.thumb || null,
-        duration: m.duration || null,
-        encrypted: !!m.encrypted,
-        envelopes: m.envelopes || null,
-        ts: bandMsgTs(m),
-      };
+      return mapBandMessageDoc(d, uid);
     }).filter(function(row){ return !cut || bandMsgTs(row) > cut; });
-    await Promise.all(rows.map(async function(row){
+    bandMessages[id] = mergeBandLiveRows(id, rows);
+    renderBandMessages();
+    const lockedId = id;
+    Promise.all(rows.map(async function(row){
       if(row.type === 'system' || row.type === 'invite' || row.type === 'audio' || row.type === 'video') return;
-      if(row.encrypted && row.envelopes){
+      if(row.encrypted && row.envelopes && typeof decryptBandMessage === 'function'){
         row.text = await decryptBandMessage(row);
       }
-    }));
-    bandMessages[id] = rows;
-    renderBandMessages();
+    })).then(function(){
+      if(!bandMessages[lockedId]) return;
+      renderBandMessages();
+    }).catch(function(){});
   }, function(){ /* messages just won't sync this session */ });
 }
 
@@ -749,6 +839,7 @@ function closeBandRoom(){
   // pages or cursor into the next band that gets opened.
   if(activeBandId) delete bandOlderMessages[activeBandId];
   bandOldestMsgDoc = null;
+  clearBandLocalMedia();
   $('bandRoom').classList.remove('active');
   amTunedIn = false;
   activeBandId = null;
@@ -978,7 +1069,7 @@ async function inviteToBand(contactId, mode){
       from: currentUser.uid,
       type: 'system',
       text: (currentProfile.name || 'Someone') + ' invited ' + c.name.split(' ')[0],
-      ts: firebase.firestore.FieldValue.serverTimestamp(),
+      ts: bandNowTimestamp(),
     });
     // Wireline text invite
     const inviteText = 'Join me on the Band “' + b.name + '” in Band — open Band and tune in. Chatter is in the moment and clears 2h after the last person leaves.';
@@ -1173,16 +1264,34 @@ async function postBandMediaMessage(type, mediaUrl, duration, thumb){
     thumb: thumb || null,
     text: '',
     encrypted: false,
-    ts: firebase.firestore.FieldValue.serverTimestamp(),
+    pending: false,
+    ts: bandNowTimestamp(),
   };
   try{
     await fbDb.collection('bands').doc(b.firestoreId).collection('messages').add(payload);
     markMyActivity();
-    toast(type === 'video' ? 'Video shared with the Band' : 'Audio shared with the Band');
   }catch(e){
     console.warn('[band] media post failed', e);
     toast(e.message || 'Couldn\u2019t post recording');
   }
+}
+
+function bandMessagesCol(b){
+  return fbDb.collection('bands').doc(b.firestoreId).collection('messages');
+}
+async function bandUploadClip(blob, contentType){
+  if(typeof uploadBroadcastFile === 'function') return uploadBroadcastFile(blob, null, contentType);
+  if(typeof uploadVideoToR2 === 'function') return uploadVideoToR2(blob);
+  throw new Error('Upload is not ready');
+}
+async function bandQuickThumb(blob){
+  if(!blob || typeof generateVideoThumbnail !== 'function') return null;
+  try{
+    return await Promise.race([
+      generateVideoThumbnail(blob),
+      new Promise(function(res){ setTimeout(function(){ res(null); }, 900); })
+    ]);
+  }catch(_){ return null; }
 }
 
 async function finishBandRecordingAndSend(){
@@ -1217,20 +1326,90 @@ async function finishBandRecordingAndSend(){
         resolve();
         return;
       }
-      toast('Uploading…');
+
+      const b = activeBand();
+      const live = !!(b && b.isReal && b.firestoreId && fbDb && currentUser);
+      const col = live ? bandMessagesCol(b) : null;
+      const docId = col ? col.doc().id : ('local-' + Date.now());
+      let blobUrl = '';
+      try{ blobUrl = URL.createObjectURL(blob); }catch(_){}
+      if(blobUrl) bandLocalMedia[docId] = blobUrl;
+
+      const localRow = {
+        _id: docId,
+        _local: true,
+        bandId: b && b.id,
+        fromMe: true,
+        fromUid: currentUser && currentUser.uid,
+        type: mode === 'video' ? 'video' : 'audio',
+        mediaUrl: blobUrl || null,
+        thumb: null,
+        duration: durationSecs,
+        pending: true,
+        text: '',
+        encrypted: false,
+        ts: Date.now(),
+      };
+      pushBandLocal(localRow);
+
+      if(!col){
+        toast('Open a live Band to share recordings');
+        resolve();
+        return;
+      }
+
+      const payload = {
+        from: currentUser.uid,
+        type: localRow.type,
+        mediaUrl: null,
+        duration: durationSecs,
+        thumb: null,
+        pending: true,
+        text: '',
+        encrypted: false,
+        ts: bandNowTimestamp(),
+      };
+      // Land the bubble in the live query immediately — do not wait on R2.
+      col.doc(docId).set(payload).catch(function(e){ console.warn('[band] placeholder', e); });
+      markMyActivity();
+
       try{
         const ct = blob.type || (mode === 'video' ? 'video/webm' : 'audio/webm');
-        const url = (typeof uploadBroadcastFile === 'function')
-          ? await uploadBroadcastFile(blob, null, ct)
-          : await uploadVideoToR2(blob);
+        const thumbP = (mode === 'video') ? bandQuickThumb(blob) : Promise.resolve(null);
+        const url = await bandUploadClip(blob, ct);
         let thumb = null;
-        if(mode === 'video'){
-          try{ thumb = await generateVideoThumbnail(url); }catch(e){}
+        try{ thumb = await thumbP; }catch(_){}
+        const patch = { mediaUrl: url, pending: false };
+        if(thumb) patch.thumb = thumb;
+        localRow.mediaUrl = url;
+        localRow.thumb = thumb;
+        localRow.pending = false;
+        pushBandLocal(localRow);
+        try{
+          await col.doc(docId).update(patch);
+        }catch(upErr){
+          try{
+            await col.doc(docId).set(Object.assign({}, payload, patch, { ts: bandNowTimestamp() }), { merge: true });
+          }catch(setErr){
+            const fresh = col.doc().id;
+            await col.doc(fresh).set(Object.assign({}, payload, patch, { pending: false, ts: bandNowTimestamp() }));
+            if(bandLocalMedia[docId]){
+              bandLocalMedia[fresh] = bandLocalMedia[docId];
+              delete bandLocalMedia[docId];
+            }
+            forgetBandLocalRow(docId, false);
+            try{ await col.doc(docId).delete(); }catch(_){}
+          }
         }
-        await postBandMediaMessage(mode === 'video' ? 'video' : 'audio', url, durationSecs, thumb);
       }catch(e){
         console.warn('[band] upload failed', e);
         toast(e.message || 'Upload failed');
+        try{ await col.doc(docId).delete(); }catch(_){}
+        forgetBandLocalRow(docId, true);
+        if(b && bandMessages[b.id]){
+          bandMessages[b.id] = bandMessages[b.id].filter(function(m){ return m._id !== docId; });
+        }
+        if(activeBandId === (b && b.id)) renderBandMessages();
       }
       resolve();
     };
@@ -1440,6 +1619,22 @@ async function sendBandMessage(){
       toast('Offline — Band message queued');
       return;
     }
+    const col = fbDb.collection('bands').doc(b.firestoreId).collection('messages');
+    const docId = col.doc().id;
+    const localTs = Date.now();
+    pushBandLocal({
+      _id: docId,
+      _local: true,
+      bandId: b.id,
+      fromMe: true,
+      fromUid: currentUser.uid,
+      text,
+      type: 'text',
+      ts: localTs,
+      encrypted: false,
+    });
+    $('bandInput').value = '';
+    markMyActivity();
     // Re-enabled (see crypto.js — password/recovery-code backup fixed the
     // durability gap that caused this to be turned off). Encrypts a separate
     // envelope per member using their public key; falls back to plaintext
@@ -1454,16 +1649,14 @@ async function sendBandMessage(){
     }catch(_){ envelopes = null; }
     const payload = {
       from: currentUser.uid,
-      ts: firebase.firestore.FieldValue.serverTimestamp(),
+      ts: bandNowTimestamp(),
       type: 'text',
       encrypted: !!envelopes,
       envelopes: envelopes || null,
       text: envelopes ? null : text, // plaintext omitted once truly sealed for everyone
     };
-    fbDb.collection('bands').doc(b.firestoreId).collection('messages').add(payload)
+    col.doc(docId).set(payload)
       .catch(e=> toast(e.message || 'Couldn\u2019t send'));
-    $('bandInput').value = '';
-    markMyActivity();
     return;
   }
   if(!bandMessages[activeBandId]) bandMessages[activeBandId] = [];

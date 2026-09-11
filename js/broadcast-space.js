@@ -838,7 +838,16 @@ async function bspacePost(col, payload){
       from: currentUser.uid,
       ts: Date.now(),
     }, payload));
-    await fbDb.collection('broadcasts').doc(activeBroadcastId).set({ updatedAt: Date.now() }, { merge:true });
+    const parentPatch = { updatedAt: Date.now() };
+    const talk = col === 'conversation' && payload && payload.type !== 'system';
+    if (talk) {
+      if (payload && payload.parent_id) parentPatch.replies = firebase.firestore.FieldValue.increment(1);
+      else parentPatch.comments = firebase.firestore.FieldValue.increment(1);
+    }
+    if (col === 'questions') {
+      parentPatch.comments = firebase.firestore.FieldValue.increment(1);
+    }
+    await fbDb.collection('broadcasts').doc(activeBroadcastId).set(parentPatch, { merge:true });
     try{
       const creator = activeBroadcastMeta && activeBroadcastMeta.creatorUid;
       const talk = col === 'conversation' && payload && payload.type !== 'system';

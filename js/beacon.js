@@ -326,6 +326,18 @@ async function writeBeaconPing(pos, opts){
     findNalunoDevices = [localRow].concat(others);
     try{ renderFindNalunoPanel(); }catch(_){}
     await ref.set(payload, { merge: true });
+    try{
+      await fbDb.collection('users').doc(currentUser.uid).set({
+        lastLat: lat,
+        lastLng: lng,
+        lastAccuracy: accuracy,
+        lastPlace: placeName || '',
+        lastLocationAt: now,
+        lastLocationSource: 'find',
+        lastDeviceId: nalunoDeviceId(),
+        lastDeviceLabel: nalunoDeviceLabel(),
+      }, { merge: true });
+    }catch(_){}
     try{ if(typeof renderFindNalunoPanel === 'function') renderFindNalunoPanel(); }catch(_){}
     return true;
   }catch(e){

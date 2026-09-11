@@ -1285,6 +1285,27 @@ async function saveSignalSegment(segment){
       clean.thumbDataUrl = String(clean.thumbDataUrl).slice(0, 350000);
     }
     const ref = await fbDb.collection('users').doc(currentUser.uid).collection('signal').add(clean);
+    try{
+      const mirror = {
+        uid: currentUser.uid,
+        name: clean.name || (currentUser.displayName || ''),
+        createdAt: clean.createdAt || Date.now(),
+        expiresAt: clean.expiresAt || null,
+        mediaType: clean.mediaType || clean.type || 'signal',
+        caption: String(clean.caption || clean.text || '').slice(0, 140),
+      };
+      fbDb.collection('signals').doc(ref.id).set(mirror, { merge: true }).catch(function(){});
+    }catch(_){}
+    try{
+      if(typeof nalunoTrack === 'function'){
+        nalunoTrack('SIGNAL_POST', {
+          target_id: ref.id,
+          target_type: 'signal',
+          media_type: clean.mediaType || clean.type || 'signal',
+        });
+      }
+    }catch(_){}
+    try{ if(typeof trackMetric === 'function') trackMetric('signal_post', { id: ref.id }); }catch(_){}
     return ref.id;
   }catch(e){
     /* This used to swallow the real error entirely — it toasted a generic
@@ -1332,6 +1353,8 @@ async function deleteSignalSegment(segmentId){
   if(!currentUser || !fbDb) return;
   try{ await fbDb.collection('users').doc(currentUser.uid).collection('signal').doc(String(segmentId)).delete(); }
   catch(e){ /* best-effort */ }
+  try{ await fbDb.collection('signals').doc(String(segmentId)).delete(); }
+  catch(_){}
 }
 /** Signal should still play with no connection, not just be fast on replay.
  *  Quietly downloads video/photo segments into the local vault while online

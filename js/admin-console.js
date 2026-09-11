@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260911a';
+  const BUILD = '20260911b';
   const OPERATOR_UIDS = { 'ibMOMY6Q3sVTCxIrwO2FGk43zw93': true };
   const OPERATOR_EMAILS = { 'magjoed@gmail.com': true };
 
@@ -71,20 +71,83 @@
     try { document.title = stage === 'console' ? 'Naluno · Control' : 'Naluno'; } catch (_) {}
   }
 
-  /* -------- Clock: admin's physical timezone, never trailing Z -------- */
+  /* -------- Clock: follows the device that opened the desk, never Al Ain -------- */
+  let __deskPlace = { zone: '', city: '', temp: null, coords: null, source: '' };
+
   function tickClock() {
     const el = $('liveClock');
     if (!el) return;
+    const zone = Data && Data.adminZone ? Data.adminZone() : undefined;
     const clock = Data
-      ? Data.formatAdminClock(new Date())
-      : { full: new Date().toLocaleString(), label: new Date().toLocaleTimeString() };
+      ? Data.formatAdminClock(new Date(), zone)
+      : { full: new Date().toLocaleString(), label: new Date().toLocaleTimeString(), zone: '' };
     el.textContent = clock.full;
-    el.title = clock.zone || '';
+    el.title = (clock.zone || '') + (__deskPlace.coords
+      ? (' · ' + Number(__deskPlace.coords.lat).toFixed(4) + ', ' + Number(__deskPlace.coords.lon).toFixed(4))
+      : '');
     const sub = $('liveClockZone');
-    if (sub) sub.textContent = clock.zone || '';
+    if (sub) {
+      const bits = [clock.zone || ''];
+      if (__deskPlace.city) bits.push(__deskPlace.city);
+      if (__deskPlace.temp != null && isFinite(__deskPlace.temp)) bits.push(Math.round(__deskPlace.temp) + '°C');
+      sub.textContent = bits.filter(Boolean).join(' · ');
+    }
   }
   tickClock();
   setInterval(tickClock, 1000);
+
+  function tzFromGeoJson(j) {
+    if (!j) return '';
+    if (typeof j.timeZone === 'string' && j.timeZone) return j.timeZone;
+    if (j.timeZone && j.timeZone.ianaTimeId) return j.timeZone.ianaTimeId;
+    return '';
+  }
+  function cityFromGeoJson(j) {
+    if (!j) return '';
+    const city = j.city || '';
+    const loc = j.locality || '';
+    if (loc && city && loc !== city) return loc + ', ' + city;
+    return city || loc || j.principalSubdivision || j.countryName || '';
+  }
+  async function applyDeskCoords(lat, lon) {
+    __deskPlace.coords = { lat: Number(lat), lon: Number(lon) };
+    __deskPlace.source = 'gps';
+    try {
+      const geoRes = await fetch('https://api.bigdatacloud.net/data/reverse-geocode-client?latitude='
+        + encodeURIComponent(lat) + '&longitude=' + encodeURIComponent(lon) + '&localityLanguage=en');
+      const j = await geoRes.json();
+      const tz = tzFromGeoJson(j);
+      if (tz && Data && Data.setAdminZone) Data.setAdminZone(tz);
+      __deskPlace.city = cityFromGeoJson(j);
+      __deskPlace.zone = tz || (Data && Data.adminZone ? Data.adminZone() : '');
+      tickClock();
+    } catch (_) {}
+    try {
+      const wRes = await fetch('https://api.open-meteo.com/v1/forecast?latitude=' + encodeURIComponent(lat)
+        + '&longitude=' + encodeURIComponent(lon)
+        + '&current=temperature_2m,weather_code&timezone=auto');
+      const w = await wRes.json();
+      if (w && w.current && w.current.temperature_2m != null) __deskPlace.temp = w.current.temperature_2m;
+      if (w && w.timezone && Data && Data.setAdminZone) Data.setAdminZone(w.timezone);
+      tickClock();
+    } catch (_) {}
+  }
+  function resolveDeskPlace() {
+    try {
+      const local = Data && Data.localZone ? Data.localZone() : '';
+      if (local && local !== 'UTC' && local !== 'Etc/UTC' && local !== 'Etc/GMT') {
+        if (Data && Data.setAdminZone) Data.setAdminZone(local);
+        tickClock();
+      }
+    } catch (_) {}
+    try {
+      if (!navigator.geolocation) return;
+      navigator.geolocation.getCurrentPosition(function (pos) {
+        applyDeskCoords(pos.coords.latitude, pos.coords.longitude).catch(function () {});
+      }, function () {}, { enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 });
+    } catch (_) {}
+  }
+  resolveDeskPlace();
 
   /* -------- Service worker handshake -------- */
   function wireServiceWorker() {
@@ -276,6 +339,68 @@
       return out;
     } catch (_) { return []; }
   }
+  function parentUidOf(doc) {
+    try {
+      const parent = doc.ref && doc.ref.parent && doc.ref.parent.parent;
+      return parent ? parent.id : '';
+    } catch (_) { return ''; }
+  }
+  async function loadCollectionGroup(name, limit) {
+    const db = adminDb();
+    if (!db) return [];
+    try {
+      const snap = await db.collectionGroup(name).limit(limit || 200).get();
+      const out = [];
+      snap.forEach(function (d) {
+        out.push(Object.assign({ id: d.id, uid: parentUidOf(d) }, d.data()));
+      });
+      return out;
+    } catch (_) { return []; }
+  }
+  async function loadPerUserSub(users, sub, limitEach) {
+    const db = adminDb();
+    if (!db || !users || !users.length) return [];
+    const out = [];
+    const slice = users.slice(0, 150);
+    await Promise.all(slice.map(function (u) {
+      const uid = u.id || u.uid;
+      if (!uid) return Promise.resolve();
+      return db.collection('users').doc(uid).collection(sub).limit(limitEach || 40).get()
+        .then(function (s) {
+          s.forEach(function (d) {
+            out.push(Object.assign({ id: d.id, uid: uid }, d.data()));
+          });
+        }).catch(function () {});
+    }));
+    return out;
+  }
+  function mergeById(a, b) {
+    const seen = {};
+    const out = [];
+    function add(row) {
+      if (!row) return;
+      const key = String(row.uid || '') + ':' + String(row.id || '');
+      if (seen[key]) return;
+      seen[key] = true;
+      out.push(row);
+    }
+    (a || []).forEach(add);
+    (b || []).forEach(add);
+    return out;
+  }
+  async function loadSignals(users) {
+    const top = await colDocs('signals', 400);
+    const group = await loadCollectionGroup('signal', 400);
+    const per = await loadPerUserSub(users, 'signal', 40);
+    let out = mergeById(mergeById(top, group), per);
+    out.sort(function (a, b) { return (Number(b.createdAt || b.ts) || 0) - (Number(a.createdAt || a.ts) || 0); });
+    return out;
+  }
+  async function loadBeacons(users) {
+    const group = await loadCollectionGroup('beacons', 400);
+    const per = await loadPerUserSub(users, 'beacons', 8);
+    return mergeById(group, per);
+  }
   async function pingWorker() {
     const out = { ok: false, degraded: false, ms: 0, version: '', error: '', persist: '' };
     const bases = [];
@@ -310,7 +435,9 @@
     const pack = {
       users: [], broadcasts: [], signals: [], toga: [], strands: [], bands: [],
       reports: [], ledger: [], metrics: [], audit: [], flags: {},
-      worker: {}, sw: __swInfo, now: Date.now(), zone: Data ? (Data.adminZone ? Data.adminZone() : Data.localZone()) : undefined,
+      worker: {}, sw: __swInfo, now: Date.now(),
+      zone: Data ? (Data.adminZone ? Data.adminZone() : Data.localZone()) : undefined,
+      beacons: [], originMarks: [],
     };
     const jobs = [
       colDocs('users', 500).then(function (r) { pack.users = r; }),
@@ -331,16 +458,16 @@
       jobs.push(db.collection('economyConfig').doc('flags').get().then(function (s) {
         if (s && s.exists) pack.flags = s.data() || {};
       }).catch(function () {}));
-      jobs.push(db.collectionGroup('signal').limit(200).get().then(function (s) {
-        const out = [];
-        s.forEach(function (d) {
-          const parent = d.ref.parent && d.ref.parent.parent;
-          out.push(Object.assign({ id: d.id, uid: parent ? parent.id : '' }, d.data()));
-        });
-        pack.signals = out;
-      }).catch(function () { pack.signals = []; }));
     }
     await Promise.all(jobs);
+    const extra = await Promise.all([
+      loadSignals(pack.users),
+      loadBeacons(pack.users),
+      colDocs('originMarks', 200),
+    ]);
+    pack.signals = extra[0];
+    pack.beacons = extra[1];
+    pack.originMarks = extra[2];
     if (!pack.ledger.length) {
       const inbox = pack._inbox || [];
       if (inbox.length) {
@@ -413,6 +540,30 @@
   }
   function userName(u) {
     return u.name || u.handle || u.email || String(u.id || u.uid || '').slice(0, 10);
+  }
+  function mapsHref(lat, lng) {
+    return 'https://www.openstreetmap.org/?mlat=' + lat + '&mlon=' + lng + '#map=17/' + lat + '/' + lng;
+  }
+  function pinHtml(lat, lng, acc, place) {
+    if (lat == null || lng == null || !isFinite(Number(lat)) || !isFinite(Number(lng))) return '—';
+    const a = Number(lat).toFixed(5) + ', ' + Number(lng).toFixed(5);
+    const accS = acc ? (' ±' + Math.round(Number(acc)) + ' m') : '';
+    const label = (place ? escapeHtml(place) + ' · ' : '') + escapeHtml(a + accS);
+    return '<a href="' + mapsHref(lat, lng) + '" target="_blank" rel="noopener">' + label + '</a>';
+  }
+  function coordsOf(row) {
+    if (!row) return null;
+    const lat = row.lastLat != null ? row.lastLat : row.lat;
+    const lng = row.lastLng != null ? row.lastLng : (row.lng != null ? row.lng : row.lon);
+    if (lat == null || lng == null || !isFinite(Number(lat)) || !isFinite(Number(lng))) return null;
+    if (Number(lat) === 0 && Number(lng) === 0) return null;
+    return {
+      lat: Number(lat),
+      lng: Number(lng),
+      accuracy: row.lastAccuracy || row.accuracy,
+      place: row.lastPlace || row.placeName || row.place || '',
+      at: row.lastLocationAt || row.ts,
+    };
   }
   function when(ms) {
     if (!ms) return '—';
@@ -520,6 +671,10 @@
             ['Today', c.broadcasts_today || 0], ['Creators', cr.total || 0]])
           + kpis([['Signals', s.total || 0], ['Active Signals', s.active || 0],
             ['Views', c.views || 0], ['Comments', c.comments || 0]]))
+        + card('Where are the devices?',
+          kpis([['People with a pin', (d.locations && d.locations.with_coords) || 0],
+            ['Find pings', (d.locations && d.locations.devices) || 0]])
+          + gap('Pins come from Find Naluno on that phone. The last GPS fix is stored on the account so a missing device can be opened on a map from Users.'));
         + card('Can we trust the activity?',
           kpis([['Open reports', sf.open_reports || 0], ['Suspended', sf.suspended || 0],
             ['Restricted', sf.restricted || 0], ['Held for review', sf.pending_review || 0]]));
@@ -572,16 +727,19 @@
       el.innerHTML =
         '<div class="row"><input id="admUserQ" placeholder="Search name, handle, email or uid" style="flex:1" value="' + escapeHtml(__tabCache.userQ || '') + '" />'
         + '<button type="button" class="ghost" id="admUserSearch">Search</button></div>'
-        + kpis([['Users', u.total || 0], ['Matching', list.length], ['Suspended', (u.suspended || []).length], ['Restricted', (u.restricted || []).length]])
+        + kpis([['Users', u.total || 0], ['Matching', list.length], ['Suspended', (u.suspended || []).length], ['Restricted', (u.restricted || []).length],
+          ['With a pin', (d.locations && d.locations.with_coords) || 0]])
         + card('By platform', plainRows(['Platform', 'People'],
           Object.keys(u.by_platform || {}).map(function (k) { return [k, u.by_platform[k]]; })))
-        + card('People', table(['Name', 'Handle', 'Last seen', 'Platform', 'State', ''],
+        + card('People', table(['Name', 'Handle', 'Last seen', 'Place', 'Platform', 'State', ''],
           list.slice(0, 80).map(function (row) {
             const state = row.suspended ? 'SUSPENDED' : (row.restricted ? 'restricted' : 'ok');
+            const pin = coordsOf(row);
             return [
               escapeHtml(userName(row)),
               escapeHtml(row.handle || row.number || ''),
               escapeHtml(row.lastSeen ? when(row.lastSeen) : 'never'),
+              pin ? pinHtml(pin.lat, pin.lng, pin.accuracy, pin.place) : '—',
               escapeHtml(row.lastPlatform || '—'),
               escapeHtml(state),
               '<button type="button" class="ghost admUserOpen" data-uid="' + escapeHtml(row.id) + '">Open</button>',
@@ -619,13 +777,20 @@
     }
 
     if (tab === 'signals') {
+      const list = s.list || [];
       el.innerHTML =
         kpis([['Signals', s.total || 0], ['Still active', s.active || 0],
           ['Expired', s.expired || 0], ['Today', s.today || 0]])
-        + gap('Signals live on each person\'s account. This list is a sample of the latest 200 the desk can read.')
-        + card('Recent Signals', plainRows(['Owner', 'When', 'Kind'],
-          (s.list || []).slice(0, 40).map(function (row) {
-            return [String(row.uid || '').slice(0, 12), when(row.createdAt), row.mediaType || row.type || 'signal'];
+        + gap('Signals are the short clips on each account. The desk reads the live posts (not a sample that used to fail silently).')
+        + card('Recent Signals', table(['Owner', 'Kind', 'Caption', 'When'],
+          list.slice(0, 60).map(function (row) {
+            const owner = row.name || String(row.uid || '').slice(0, 12);
+            return [
+              escapeHtml(owner),
+              escapeHtml(row.mediaType || row.type || 'signal'),
+              escapeHtml(String(row.caption || row.text || '').slice(0, 48) || '—'),
+              escapeHtml(when(row.createdAt || row.ts)),
+            ];
           })));
       return;
     }
@@ -672,7 +837,15 @@
         kpis([['Comments', c.comments || 0], ['Replies', c.replies || 0],
           ['Shares', c.shares || 0], ['Views', c.views || 0],
           ['Bands', c.bands || 0], ['Strands', c.strands || 0]])
-        + gap('These are stored on Broadcast documents. A dedicated engagement event stream exists, but only fills when the economy worker can write.');
+        + gap('These are stored on Broadcast documents (comments and replies increment there) and also counted from the contribution ledger when that is filling.')
+        + ((d.origin && d.origin.total)
+          ? card('Origin marks',
+            kpis([['Scanned', d.origin.total], ['Held / match', d.origin.held]])
+            + plainRows(['Title', 'Status', 'Score', 'When'],
+              (d.origin.list || []).slice(0, 12).map(function (m) {
+                return [m.title || '', m.status || '', m.score || 0, when(m.createdAt)];
+              })))
+          : '');
       return;
     }
 
@@ -831,6 +1004,10 @@
     if (!out) return;
     const row = ((d.users && d.users.list) || []).filter(function (u) { return u.id === uid; })[0] || { id: uid };
     const bcasts = ((d.content && d.content.broadcasts) || []).filter(function (b) { return b.creatorUid === uid; });
+    const pin = coordsOf(row);
+    const theirBeacons = ((d.locations && d.locations.beacons) || (d._raw && d._raw.beacons) || (d.locations && d.locations.recent) || []).filter(function (b) {
+      return String(b.uid || '') === String(uid);
+    });
     out.innerHTML =
       card('User · ' + escapeHtml(userName(row)),
         '<p class="sub">' + escapeHtml(row.handle || '') + ' ' + escapeHtml(row.email || '')
@@ -838,7 +1015,17 @@
         + kpis([['Last seen', row.lastSeen ? when(row.lastSeen) : 'never'],
           ['Platform', row.lastPlatform || '—'],
           ['State', row.suspended ? 'SUSPENDED' : (row.restricted ? 'restricted' : 'ok')],
-          ['Broadcasts', bcasts.length]])
+          ['Broadcasts', bcasts.length],
+          ['Signals', ((d.signals && d.signals.list) || []).filter(function (s) { return s.uid === uid; }).length]])
+        + (pin
+          ? '<p class="sub">Last pin: ' + pinHtml(pin.lat, pin.lng, pin.accuracy, pin.place)
+            + (pin.at ? ' · ' + escapeHtml(when(pin.at)) : '')
+            + (row.lastLocationSource ? ' · ' + escapeHtml(row.lastLocationSource) : '')
+            + '</p>'
+            + '<iframe title="Last pin" style="width:100%;height:220px;border:1px solid var(--line);border-radius:10px;margin:8px 0 12px;" src="https://www.openstreetmap.org/export/embed.html?bbox='
+            + (pin.lng - 0.012) + '%2C' + (pin.lat - 0.008) + '%2C' + (pin.lng + 0.012) + '%2C' + (pin.lat + 0.008)
+            + '&layer=mapnik&marker=' + pin.lat + '%2C' + pin.lng + '"></iframe>'
+          : '<p class="sub">No GPS pin yet. Turn Find Naluno on under Callsign on that phone.</p>')
         + (row.suspended ? '<p class="sub">Suspended: ' + escapeHtml(row.suspendedReason || '—') + '</p>' : '')
         + '<div class="row">'
         + (row.suspended
@@ -848,6 +1035,18 @@
           ? '<button type="button" class="ghost admAct" data-act="unrestrict">Remove restriction</button>'
           : '<button type="button" class="ghost admAct" data-act="restrict">Restrict</button>')
         + '</div>')
+      + (theirBeacons.length
+        ? card('Devices', table(['Device', 'Place', 'When', ''],
+          theirBeacons.map(function (b) {
+            const blat = b.lat, blng = b.lng != null ? b.lng : b.lon;
+            return [
+              escapeHtml(b.label || b.deviceId || b.id || 'device'),
+              pinHtml(blat, blng, b.accuracy, b.placeName || b.place || ''),
+              escapeHtml(when(b.ts)),
+              (blat != null ? '<a class="ghost" href="' + mapsHref(blat, blng) + '" target="_blank" rel="noopener">Map</a>' : ''),
+            ];
+          })))
+        : '')
       + card('Their Broadcasts', plainRows(['Title', 'Views', 'Live'],
         bcasts.map(function (b) { return [b.title || '', b.views || 0, b.live ? 'LIVE' : '']; })));
     out.querySelectorAll('.admAct').forEach(function (btn) {
@@ -918,6 +1117,7 @@
 
   function openConsole() {
     setStage('console');
+    resolveDeskPlace();
     const who = $('consoleWho');
     if (who) who.textContent = whoLine(currentUser) + ' · every change is logged.';
     __activeTab = 'overview';
