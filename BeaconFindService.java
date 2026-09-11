@@ -301,24 +301,50 @@ public class BeaconFindService extends Service implements LocationListener {
     if (idToken == null || idToken.isEmpty()) return;
 
     try {
-      String path = "https://firestore.googleapis.com/v1/projects/" + projectId
+      long when = loc.getTime() > 0 ? loc.getTime() : System.currentTimeMillis();
+      String beaconPath = "https://firestore.googleapis.com/v1/projects/" + projectId
           + "/databases/(default)/documents/users/" + enc(uid) + "/beacons/" + enc(deviceId)
           + "?updateMask.fieldPaths=lat&updateMask.fieldPaths=lng"
           + "&updateMask.fieldPaths=accuracy&updateMask.fieldPaths=ts"
           + "&updateMask.fieldPaths=label&updateMask.fieldPaths=deviceId"
           + "&updateMask.fieldPaths=enabled&updateMask.fieldPaths=source";
-      String body = "{"
+      String beaconBody = "{"
           + "\"fields\":{"
           + "\"lat\":{\"doubleValue\":" + loc.getLatitude() + "},"
           + "\"lng\":{\"doubleValue\":" + loc.getLongitude() + "},"
           + "\"accuracy\":{\"doubleValue\":" + loc.getAccuracy() + "},"
-          + "\"ts\":{\"integerValue\":\"" + loc.getTime() + "\"},"
+          + "\"ts\":{\"integerValue\":\"" + when + "\"},"
           + "\"label\":{\"stringValue\":" + jsonStr(label) + "},"
           + "\"deviceId\":{\"stringValue\":" + jsonStr(deviceId) + "},"
           + "\"enabled\":{\"booleanValue\":true},"
           + "\"source\":{\"stringValue\":\"native\"}"
           + "}}";
-      HttpURLConnection c = (HttpURLConnection) new URL(path).openConnection();
+      patchFirestore(idToken, beaconPath, beaconBody);
+
+      String userPath = "https://firestore.googleapis.com/v1/projects/" + projectId
+          + "/databases/(default)/documents/users/" + enc(uid)
+          + "?updateMask.fieldPaths=lastLat&updateMask.fieldPaths=lastLng"
+          + "&updateMask.fieldPaths=lastAccuracy&updateMask.fieldPaths=lastLocationAt"
+          + "&updateMask.fieldPaths=lastLocationSource&updateMask.fieldPaths=lastDeviceId"
+          + "&updateMask.fieldPaths=lastDeviceLabel";
+      String userBody = "{"
+          + "\"fields\":{"
+          + "\"lastLat\":{\"doubleValue\":" + loc.getLatitude() + "},"
+          + "\"lastLng\":{\"doubleValue\":" + loc.getLongitude() + "},"
+          + "\"lastAccuracy\":{\"doubleValue\":" + loc.getAccuracy() + "},"
+          + "\"lastLocationAt\":{\"integerValue\":\"" + when + "\"},"
+          + "\"lastLocationSource\":{\"stringValue\":\"native\"},"
+          + "\"lastDeviceId\":{\"stringValue\":" + jsonStr(deviceId) + "},"
+          + "\"lastDeviceLabel\":{\"stringValue\":" + jsonStr(label) + "}"
+          + "}}";
+      patchFirestore(idToken, userPath, userBody);
+    } catch (Exception ignored) {}
+  }
+
+  private void patchFirestore(String idToken, String path, String body) {
+    HttpURLConnection c = null;
+    try {
+      c = (HttpURLConnection) new URL(path).openConnection();
       c.setRequestMethod("PATCH");
       c.setRequestProperty("Authorization", "Bearer " + idToken);
       c.setRequestProperty("Content-Type", "application/json");
@@ -329,8 +355,10 @@ public class BeaconFindService extends Service implements LocationListener {
       os.write(body.getBytes(StandardCharsets.UTF_8));
       os.close();
       c.getResponseCode();
-      c.disconnect();
-    } catch (Exception ignored) {}
+    } catch (Exception ignored) {
+    } finally {
+      if (c != null) c.disconnect();
+    }
   }
 
   private String refreshIdToken(String apiKey, String refreshToken) {

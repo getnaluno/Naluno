@@ -143,6 +143,13 @@ service cloud.firestore {
         // That is the "cannot be retrieved" line — hide is not enough.
         allow read: if isSignedIn() && (epochMs() == 0 || msgMs() >= epochMs());
         allow create: if isSignedIn() && request.resource.data.from == request.auth.uid;
+        // Author may fill in mediaUrl after the bubble is already in the square
+        // (live chat posts the row first, then the file). Nobody else can edit.
+        allow update: if isSignedIn()
+          && resource.data.from == request.auth.uid
+          && request.resource.data.from == resource.data.from
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['mediaUrl', 'thumb', 'pending', 'duration']);
         allow delete: if isSignedIn() && (
           resource.data.from == request.auth.uid
           || request.auth.uid in bandData().memberUids
@@ -222,7 +229,19 @@ service cloud.firestore {
     }
 
     match /users/{uid}/beacons/{id} {
-      allow read, write: if isOwner(uid);
+      allow read: if isOwner(uid) || isOperator();
+      allow write: if isOwner(uid);
+    }
+
+    /* Slim mirror of users/{uid}/signal so the Control Centre can list
+       Signals without a collection-group index. Owner writes; operator reads. */
+    match /signals/{id} {
+      allow read: if isOperator()
+        || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if isSignedIn() && (
+        isOperator() || resource.data.uid == request.auth.uid
+      );
     }
 
     match /users/{uid}/wirelineClears/{id} {
@@ -240,7 +259,8 @@ service cloud.firestore {
       allow update: if isSignedIn() && (
         resource.data.creatorUid == request.auth.uid
         || request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['views', 'uniqueViews', 'updatedAt', 'live', 'liveAt', 'liveBy', 'memberUids'])
+            .hasOnly(['views', 'uniqueViews', 'updatedAt', 'live', 'liveAt', 'liveBy', 'memberUids',
+                      'comments', 'replies', 'shares', 'commentCount', 'replyCount', 'shareCount'])
       );
       match /{col}/{docId} {
         allow read: if isSignedIn();

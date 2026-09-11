@@ -1,4 +1,6 @@
 // Naluno service worker — offline shell + background call push.
+// v159: 09.11c Band audio/video drop in immediately (placeholder + client ts).
+// v158: 09.11b desk clock follows this device; GPS weather; Signals + Find pins reported.
 // v157: 09.11a economy worker intercept — flags are never "degraded" when served.
 // v156: 09.10c Control Centre talks to this worker; admin clock is local, never Z.
 // v155: 09.10a Control Centre talks to this worker; flags on Firestore; local admin clock.
@@ -47,7 +49,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v157';
+const CACHE_NAME = 'naluno-shell-v159';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -471,7 +473,7 @@ self.addEventListener('message', event=>{
     const pong = {
       type: 'naluno-sw-pong',
       cache: CACHE_NAME,
-      version: 'v157',
+      version: 'v158',
       at: Date.now(),
     };
     const src = event.source;

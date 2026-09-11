@@ -1,29 +1,18 @@
-# GitHub update — 2026.09.10a
+# GitHub update — 2026.09.11c
 
-Control Centre rebuild. Unlock no longer depends on the economy worker.
-Tabs read Naluno through the signed-in operator. Clock is local, not Zulu.
+Band live chat: audio and video drop into the square immediately.
 
 ## Must publish
 
-1. **firestore.rules** — operator can read economy collections and write
-   `economyConfig/flags`. Until this is published, flag toggles and
-   suspend/restrict will say so instead of silently failing.
-2. **admin/index.html**, **js/admin-data.js**, **js/admin-console.js**
-3. **sw.js**, **js/pwa.js**, **js/presence.js**, **js/economy.js**
-4. **app/index.html** (script versions)
+1. **js/band-room.js**
+2. **firestore.rules** — the author can update `mediaUrl` / `thumb` / `pending` on their own Band message. Until this is published the clip still appears, then a fallback write fills the file.
+3. **sw.js**, **js/pwa.js**, **app/index.html** (cache `naluno-shell-v159`, `?v=20260911c`)
 
 ## What changed
 
-- Time in the header is the admin device timezone (Asia/Dubai on a
-  UAE phone), never `04:30:23Z`.
-- Unlock does not print the Google service-account error. That belongs
-  on Health, as a warning, and does not block the desk.
-- Feature flags are stored at `economyConfig/flags` and read by the
-  member app from Firestore first. Worker flags are a fallback only.
-- Presence also writes `users/{uid}.lastSeen`, so DAU / active-now
-  still work when the worker cannot write.
-- The service worker registers on the desk, answers a hello ping, and
-  no longer 404s `/admin/` when the network blips.
+- Stop recording → the bubble is in the Band at once (you see the clip, everyone else sees “sending…”).
+- File upload no longer blocks the drop-in. Thumbnail is grabbed from the local clip, not re-downloaded.
+- Message time is stamped on the phone so the live query does not hide the row until the server clock arrives.
+- Text does the same: it is on screen before encrypt/write finishes.
 
-Copy over, then in Chrome: Settings → Site settings → getnaluno.com →
-Clear & reset if an old worker is stuck. Hard reload `/admin/`.
+Copy over, then close Naluno tabs → site info → clear & reset if an old worker is stuck → open once.
