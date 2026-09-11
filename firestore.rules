@@ -472,6 +472,24 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    /* Operator inbox. Public contact is written only by the economy
+       worker's service account (bypasses these rules), so a rewritten
+       page cannot dump spam here. A signed-in person may create their
+       own Compass request (delete-account / write-to-Naluno) as a
+       fallback when the worker cannot. Compass notebooks stay private
+       — this collection is not a dump of AI chat. */
+    match /deskMail/{id} {
+      allow read: if isOperator();
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.text is string
+        && request.resource.data.text.size() > 1
+        && request.resource.data.text.size() < 6001
+        && request.resource.data.status == 'new';
+      allow update: if isOperator();
+      allow delete: if false;
+    }
+
     match /adminCredentials/{uid} {
       allow read, write: if false;
     }

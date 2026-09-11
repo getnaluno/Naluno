@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v161: 09.11e contact form, Compass delete/write, Control Centre Mail.
 // v160: 09.11d pitch surface — landing proof, OG, public privacy/terms.
 // v159: 09.11c Band audio/video drop in immediately (placeholder + client ts).
 // v158: 09.11b desk clock follows this device; GPS weather; Signals + Find pins reported.
@@ -50,7 +51,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v160';
+const CACHE_NAME = 'naluno-shell-v161';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -86,7 +87,7 @@ self.addEventListener('activate', event=>{
   );
 });
 
-const NALUNO_ECON_VER = '2.1.0-firestore';
+const NALUNO_ECON_VER = '2.2.0-mail';
 const NALUNO_ECON_FLAGS = {
   broadcast_enabled: true,
   signals_enabled: true,
@@ -216,6 +217,15 @@ async function handleEconomyFetch(request){
       return r;
     }catch(_){
       return econJson({ ok: false, error: 'Could not send that report.' }, 502);
+    }
+  }
+
+  if(path === '/v1/mail' && request.method === 'POST'){
+    try{
+      const r = await fetch(request);
+      return r;
+    }catch(_){
+      return econJson({ ok: false, error: 'Could not send just now. Try again in a minute.' }, 502);
     }
   }
 

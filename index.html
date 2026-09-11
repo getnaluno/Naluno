@@ -75,6 +75,25 @@ h2{font-family:var(--display); font-weight:500; font-size:clamp(24px,3.2vw,34px)
 .step p{margin:0; color:var(--ink-dim);}
 .close{padding:72px 0 40px; border-top:1px solid var(--line); margin-top:56px;}
 .close p{color:var(--ink-dim); max-width:54ch; margin:0 0 24px;}
+.contact{padding:56px 0 24px; border-top:1px solid var(--line);}
+.contact form{max-width:520px; display:grid; gap:12px;}
+.contact label{font-family:var(--dial); font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-dim);}
+.contact input, .contact textarea{
+  width:100%; background:rgba(18,21,31,.7); border:1px solid var(--line); color:var(--ink);
+  font-family:var(--body); font-size:16px; padding:12px 14px; border-radius:2px;
+}
+.contact textarea{min-height:140px; resize:vertical;}
+.contact input:focus, .contact textarea:focus{outline:1px solid var(--mint); border-color:var(--mint);}
+.contact .row-check{display:flex; gap:10px; align-items:flex-start; color:var(--ink-dim); font-size:14px;}
+.contact .row-check input{width:auto; margin-top:3px;}
+.contact .hp{position:absolute; left:-10000px; width:1px; height:1px; overflow:hidden;}
+.contact .note{font-size:13.5px; color:var(--ink-dim); margin:0 0 18px; max-width:54ch;}
+.contact .status{font-family:var(--dial); font-size:12.5px; min-height:1.4em;}
+.contact .status.ok{color:var(--mint);}
+.contact .status.err{color:#FF5470;}
+.contact button[type=submit]{font-family:var(--dial); font-size:12.5px; letter-spacing:.06em; color:var(--void);
+  background:var(--mint); border:0; padding:12px 20px; border-radius:2px; cursor:pointer; width:fit-content;}
+.contact button[type=submit]:disabled{opacity:.55; cursor:wait;}
 footer{padding:28px 0 56px; border-top:1px solid var(--line); display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap;
   font-family:var(--dial); font-size:11.5px; color:var(--ink-dim);}
 footer a{text-decoration:none;}
@@ -150,6 +169,7 @@ footer a:hover{color:var(--mint);}
       <div class="cta-row">
         <a class="cta" href="/app/">Open Naluno</a>
         <a class="ghost" href="#try">Try it in a minute</a>
+        <a class="ghost" href="#contact">Write to Naluno</a>
       </div>
     </div>
     <aside class="device" aria-hidden="true">
@@ -205,15 +225,89 @@ footer a:hover{color:var(--mint);}
     <p>That sounds like a low bar until you’ve used something that fails at it. Naluno is a progressive web app — open it now, or install it and keep the Callsign on this phone.</p>
     <div class="cta-row">
       <a class="cta" href="/app/">Open Naluno</a>
+      <a class="ghost" href="#contact">Write to Naluno</a>
       <a class="ghost" href="/privacy">Privacy</a>
       <a class="ghost" href="/terms">Terms</a>
     </div>
   </section>
 
+  <section class="contact" id="contact">
+    <h2>Write to Naluno</h2>
+    <p class="note">A person reads this. Use it for a question, a problem, or to ask that an account be deleted. Compass stays private — only what you send here, or with Write to Naluno inside Compass, is seen by the people who run it.</p>
+    <form id="nalunoContact" novalidate>
+      <label class="hp" aria-hidden="true">Company <input type="text" name="company" tabindex="-1" autocomplete="off"></label>
+      <label for="cName">Name</label>
+      <input id="cName" name="name" maxlength="80" autocomplete="name" />
+      <label for="cHandle">Handle, if you have one</label>
+      <input id="cHandle" name="handle" maxlength="40" autocomplete="username" />
+      <label for="cEmail">Reply-to (so we can write back)</label>
+      <input id="cEmail" name="email" type="email" maxlength="120" autocomplete="email" inputmode="email" />
+      <label for="cText">Message</label>
+      <textarea id="cText" name="text" required maxlength="6000" placeholder="What should we know?"></textarea>
+      <label class="row-check"><input id="cDelete" type="checkbox" name="delete" /> This is a request to delete a Naluno account.</label>
+      <button type="submit" id="cSend">Send</button>
+      <div class="status" id="cStatus" role="status"></div>
+    </form>
+  </section>
+
   <footer>
     <div>Naluno · getnaluno.com</div>
-    <div><a href="/app/">App</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></div>
+    <div><a href="/app/">App</a> · <a href="#contact">Contact</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></div>
   </footer>
 </div>
+<script>
+(function(){
+  var form = document.getElementById('nalunoContact');
+  if(!form) return;
+  var MAIL = 'https://naluno-economy.naluno.workers.dev/v1/mail';
+  var status = document.getElementById('cStatus');
+  var btn = document.getElementById('cSend');
+  function setStatus(kind, text){
+    status.className = 'status' + (kind ? ' ' + kind : '');
+    status.textContent = text || '';
+  }
+  form.addEventListener('submit', function(e){
+    e.preventDefault();
+    var text = (document.getElementById('cText').value || '').trim();
+    if(text.length < 2){ setStatus('err', 'Write a message first.'); return; }
+    var wantDelete = !!(document.getElementById('cDelete') && document.getElementById('cDelete').checked);
+    var email = (document.getElementById('cEmail').value || '').trim();
+    var handle = (document.getElementById('cHandle').value || '').trim();
+    if(wantDelete && !email && !handle){
+      setStatus('err', 'Leave a handle or a reply-to so we know which account.');
+      return;
+    }
+    btn.disabled = true;
+    setStatus('', 'Sending…');
+    fetch(MAIL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source: 'web',
+        kind: wantDelete ? 'delete-account' : 'contact',
+        name: (document.getElementById('cName').value || '').trim(),
+        handle: handle,
+        email: email,
+        text: text,
+        company: (form.elements.company && form.elements.company.value) || ''
+      })
+    }).then(function(res){ return res.json().then(function(j){ return { res: res, j: j }; }); })
+      .then(function(pack){
+        if(pack.j && pack.j.ok){
+          form.reset();
+          setStatus('ok', wantDelete
+            ? 'Request received. A person will close the account by hand — this is not instant.'
+            : 'Received. A person will read this.');
+          return;
+        }
+        setStatus('err', (pack.j && pack.j.error) || 'Could not send just now. Try again in a minute.');
+      })
+      .catch(function(){
+        setStatus('err', 'Could not send just now. Check the connection and try again.');
+      })
+      .then(function(){ btn.disabled = false; });
+  });
+})();
+</script>
 </body>
 </html>
