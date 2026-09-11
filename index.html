@@ -281,6 +281,8 @@ footer a:hover{color:var(--mint);}
     setStatus('', 'Sending…');
     fetch(MAIL, {
       method: 'POST',
+      cache: 'no-store',
+      credentials: 'omit',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         source: 'web',
