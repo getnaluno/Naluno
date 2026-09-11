@@ -1,32 +1,27 @@
-# GitHub / Cloudflare / Firebase — 2026.09.11f
+# Naluno — upload these
 
-Contact send on the website was failing. The worker refused anonymous mail
-before it ever wrote or emailed, and the service worker was standing in
-front of that request — which is why Chrome painted “No internet
-connection” on a live 5G tab.
-
-Only these files. Do not upload a full tree.
+One zip. Every file that still needs publishing. Paths inside match GitHub.
 
 The inbox address is **not** in any of these files.
 
-## Must publish
+## 1. Worker (do this first)
 
-1. **workers/economy/** — `npx wrangler deploy` from this folder.
-   `INBOX_TO` is already on the worker. Do not put it in a file.
-2. **firestore.rules** — `firebase deploy --only firestore:rules`
-   (Control Centre Mail can then keep public contact even without a
-   Google service account)
-3. **index.html** — contact form
-4. **sw.js**, **js/pwa.js**, **app/index.html** — cache `naluno-shell-v162`,
-   `?v=20260911f`. Mail is no longer intercepted.
+From `workers/economy`:
 
-## After upload
+    npx wrangler deploy
 
-Close every Naluno tab once so the new service worker takes, then send
-again. The “Hei” from this phone never left the device.
+`INBOX_TO` is already on the worker. Do not put it in a file.
 
-First FormSubmit mail: open the inbox and click the confirmation link
-FormSubmit sends. After that, every contact lands there.
+## 2. Firestore
 
-Control Centre **Mail** still receives the message even if that
-confirmation is still waiting.
+    firebase deploy --only firestore:rules
+
+## 3. GitHub Pages
+
+Upload the rest as they sit in this zip (`index.html` at the site root, `app/`, `admin/`, `js/`, `sw.js`, `privacy/`, `terms/`).
+
+## After
+
+Close every Naluno tab once, then send again. The earlier “Hei” never left the phone.
+
+First FormSubmit mail: open the inbox and click the confirmation link they send. After that, every contact lands there. Control Centre **Mail** still receives it if that click is still waiting.
