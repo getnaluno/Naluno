@@ -200,6 +200,7 @@
     const audit = raw.audit || [];
     const beacons = raw.beacons || [];
     const originMarks = raw.originMarks || [];
+    const deskMail = raw.deskMail || raw.mail || [];
     const flags = Object.assign({}, DEFAULT_FLAGS, raw.flags || {});
     const worker = raw.worker || {};
     const sw = raw.sw || {};
@@ -331,6 +332,16 @@
       return n.indexOf('fail') >= 0 || n.indexOf('error') >= 0;
     });
 
+    const mailList = deskMail.slice().sort(function (a, b) {
+      return num(b.ts || b.createdAt) - num(a.ts || a.createdAt);
+    });
+    const mailNew = mailList.filter(function (m) {
+      return String(m.status || 'new').toLowerCase() === 'new';
+    });
+    const mailDeletes = mailList.filter(function (m) {
+      return String(m.kind || '') === 'delete-account' && String(m.status || 'new').toLowerCase() !== 'done';
+    });
+
     const alerts = [];
     if (worker && worker.degraded && !worker.ok) {
       alerts.push({
@@ -358,6 +369,20 @@
         level: 'warning',
         tab: 'users',
         text: suspended.length + ' account' + (suspended.length === 1 ? '' : 's') + ' currently suspended.',
+      });
+    }
+    if (mailDeletes.length) {
+      alerts.push({
+        level: 'critical',
+        tab: 'mail',
+        text: mailDeletes.length + ' account-deletion request' + (mailDeletes.length === 1 ? '' : 's') + ' waiting.',
+      });
+    }
+    if (mailNew.length) {
+      alerts.push({
+        level: mailDeletes.length ? 'warning' : 'critical',
+        tab: 'mail',
+        text: mailNew.length + ' new message' + (mailNew.length === 1 ? '' : 's') + ' from the contact page or Compass.',
       });
     }
     if (sw && sw.connected === false) {
@@ -473,6 +498,14 @@
         restricted: restricted.length,
         flagged: users.filter(function (u) { return num(u.riskFlags || u.risk_flags) > 0; }).length,
         pending_review: ledgerPending.length,
+      },
+      mail: {
+        total: mailList.length,
+        unread: mailNew.length,
+        deletes: mailDeletes.length,
+        compass: mailList.filter(function (m) { return String(m.source || '') === 'compass'; }).length,
+        web: mailList.filter(function (m) { return String(m.source || '') === 'web'; }).length,
+        list: mailList,
       },
       economy: {
         contributors: (function () {

@@ -92,9 +92,136 @@ $('compassLockToggleBtn').onclick = async ()=>{
    into this pass. The Worker's own system prompt is told this directly, so it never
    falsely implies access it doesn't have. */
 const COMPASS_WORKER_URL = 'https://naluno-compass.naluno.workers.dev';
+const NALUNO_MAIL_URL = 'https://naluno-economy.naluno.workers.dev/v1/mail';
 let compassMessages = [];
 let compassUnsub = null;
 let compassLoaded = false;
+let compassMailBusy = false;
+
+function compassLooksLikeDelete(text){
+  const t = String(text || '').toLowerCase().replace(/[’']/g, "'");
+  if(/\b(right to be forgotten|forget me|gdpr delete)\b/.test(t)) return true;
+  const wantsGone = /\b(delete|close|remove|erase|deactivate|wipe)\b/.test(t);
+  const accountish = /\b(account|my data|my info|my information|my profile|callsign|my naluno)\b/.test(t);
+  return wantsGone && accountish;
+}
+function compassLooksLikeOperatorMail(text){
+  const t = String(text || '').toLowerCase();
+  return /\b(write to naluno|contact naluno|message naluno|email naluno|talk to (the )?(naluno )?(team|staff|people who run)|tell naluno|contact the (team|people who run naluno))\b/.test(t);
+}
+function compassIdentity(){
+  const p = (typeof currentProfile !== 'undefined' && currentProfile) ? currentProfile : {};
+  const u = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : null;
+  return {
+    name: String(p.displayName || p.name || '').slice(0, 80),
+    handle: String(p.handle || '').slice(0, 40),
+    email: String((u && u.email) || p.email || '').slice(0, 120),
+    uid: (u && u.uid) || '',
+  };
+}
+function pushCompassNote(text){
+  const row = { from:'compass', text: String(text || ''), ts: Date.now() };
+  compassMessages.push(row);
+  renderCompassMessages();
+  try{
+    if(fbDb && currentUser){
+      fbDb.collection('users').doc(currentUser.uid).collection('compassMessages').add({
+        from:'compass', text: row.text, ts: firebase.firestore.FieldValue.serverTimestamp(),
+      }).catch(function(){});
+    }
+  }catch(_){}
+}
+async function sendNalunoOperatorMail(kind, text){
+  const id = compassIdentity();
+  const payload = {
+    source: 'compass',
+    kind: kind,
+    name: id.name,
+    handle: id.handle,
+    email: id.email,
+    text: String(text || '').trim(),
+  };
+  let token = '';
+  try{ if(currentUser && currentUser.getIdToken) token = await currentUser.getIdToken(); }catch(_){}
+  let mailed = false;
+  try{
+    const res = await fetch(NALUNO_MAIL_URL, {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, token ? { 'Authorization': 'Bearer ' + token } : {}),
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(function(){ return {}; });
+    mailed = !!(res.ok && data && data.ok);
+  }catch(_){}
+  if(mailed) return true;
+  if(!fbDb || !currentUser) return false;
+  try{
+    await fbDb.collection('deskMail').add({
+      source: 'compass',
+      kind: kind,
+      name: id.name,
+      handle: id.handle,
+      email: id.email,
+      uid: currentUser.uid,
+      text: payload.text,
+      ts: Date.now(),
+      status: 'new',
+    });
+    return true;
+  }catch(_){ return false; }
+}
+async function requestAccountDeletion(extra){
+  if(compassMailBusy) return;
+  if(!currentUser){ toast('Sign in first'); return; }
+  const ok = window.confirm('This sends a delete request to the people who run Naluno. They only see this request — not your Compass notes. The account is not removed instantly. Continue?');
+  if(!ok){
+    pushCompassNote('No request was sent. You can ask again anytime.');
+    return;
+  }
+  compassMailBusy = true;
+  try{
+    const who = compassIdentity();
+    const text = 'Please delete my Naluno account.'
+      + (who.handle ? ' Handle: ' + who.handle + '.' : '')
+      + (who.uid ? ' Uid: ' + who.uid + '.' : '')
+      + (extra ? '\n\n' + String(extra).trim() : '');
+    const sent = await sendNalunoOperatorMail('delete-account', text);
+    if(sent){
+      pushCompassNote('Request received. The people who run Naluno have it — your handle, this account, and that you asked for it to be deleted. Compass notes stay on your account until they remove it. This is not instant; they close it by hand. If you did not mean this, use Write to Naluno and say so.');
+    } else {
+      pushCompassNote('Could not send that just now. Try again, or use the contact form on getnaluno.com.');
+    }
+  } finally { compassMailBusy = false; }
+}
+async function writeToNaluno(preset){
+  if(compassMailBusy) return;
+  if(!currentUser){ toast('Sign in first'); return; }
+  let text = String(preset || '').trim();
+  if(!text){
+    const typed = ($('compassInput') && $('compassInput').value) || '';
+    text = String(typed || '').trim();
+  }
+  if(!text){
+    text = window.prompt('What should we tell Naluno?') || '';
+    text = String(text).trim();
+  }
+  if(text.length < 2){ toast('Write a message first'); return; }
+  const ok = window.confirm('Send this to the people who run Naluno? They will not see the rest of Compass — only this message.');
+  if(!ok){
+    pushCompassNote('Nothing was sent.');
+    return;
+  }
+  compassMailBusy = true;
+  try{
+    const sent = await sendNalunoOperatorMail('operator', text);
+    if($('compassInput')) $('compassInput').value = '';
+    if(sent){
+      pushCompassNote('Sent. A person at Naluno has your message. Compass stays private — they only see what you just sent, not this notebook.');
+    } else {
+      pushCompassNote('Could not send that just now. Try again, or use the contact form on getnaluno.com.');
+    }
+  } finally { compassMailBusy = false; }
+}
 
 /* Escapes first, then applies a small, safe set of formatting on top — never renders
    raw AI output directly. This is what actually fixes numbered points and bold text
@@ -148,6 +275,15 @@ async function sendCompassMessage(){
   fbDb.collection('users').doc(currentUser.uid).collection('compassMessages').add({
     from:'user', text, ts: firebase.firestore.FieldValue.serverTimestamp(),
   }).catch(()=>{});
+
+  if(compassLooksLikeDelete(text)){
+    requestAccountDeletion(text);
+    return;
+  }
+  if(compassLooksLikeOperatorMail(text)){
+    writeToNaluno(text);
+    return;
+  }
 
   if(typeof isWeatherQuery === 'function' && isWeatherQuery(text)){
     const thinkingW = { from:'compass', text: '...', ts: Date.now(), thinking:true };
@@ -262,6 +398,8 @@ $('compassInput').addEventListener('input', function(){
   this.style.height = 'auto';
   this.style.height = Math.min(120, this.scrollHeight) + 'px';
 });
+if($('compassDeleteBtn')) $('compassDeleteBtn').onclick = function(){ requestAccountDeletion(); };
+if($('compassWriteBtn')) $('compassWriteBtn').onclick = function(){ writeToNaluno(''); };
 
 function openComposer(mode){
   try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('open composer', mode || 'signal'); }catch(_){}

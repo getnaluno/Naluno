@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260911b';
+  const BUILD = '20260911e';
   const OPERATOR_UIDS = { 'ibMOMY6Q3sVTCxIrwO2FGk43zw93': true };
   const OPERATOR_EMAILS = { 'magjoed@gmail.com': true };
 
@@ -437,7 +437,7 @@
       reports: [], ledger: [], metrics: [], audit: [], flags: {},
       worker: {}, sw: __swInfo, now: Date.now(),
       zone: Data ? (Data.adminZone ? Data.adminZone() : Data.localZone()) : undefined,
-      beacons: [], originMarks: [],
+      beacons: [], originMarks: [], deskMail: [],
     };
     const jobs = [
       colDocs('users', 500).then(function (r) { pack.users = r; }),
@@ -446,6 +446,7 @@
       colDocs('strands', 200).then(function (r) { pack.strands = r; }),
       colDocs('bands', 80).then(function (r) { pack.bands = r; }),
       colDocs('reports', 80).then(function (r) { pack.reports = r; }),
+      colDocs('deskMail', 200).then(function (r) { pack.deskMail = r; }),
       colDocs('contributionLedger', 200).then(function (r) { pack.ledger = r; }),
       colDocs('economyInbox', 200).then(function (r) { pack._inbox = r; }),
       colDocs('metrics', 200).then(function (r) { pack.metrics = r; }),
@@ -714,6 +715,61 @@
             ((d.metrics && d.metrics.list) || []).slice(0, 20).map(function (m) {
               return [m.name || '', when(m.createdAt && m.createdAt.toMillis ? m.createdAt.toMillis() : m.createdAt), String(m.uid || '').slice(0, 10)];
             })));
+      return;
+    }
+
+    if (tab === 'mail') {
+      const mail = (d.mail && d.mail.list) || [];
+      const q = (__tabCache.mailQ || 'new');
+      const filtered = mail.filter(function (m) {
+        const st = String(m.status || 'new').toLowerCase();
+        if (q === 'new') return st === 'new';
+        if (q === 'delete') return String(m.kind || '') === 'delete-account';
+        if (q === 'compass') return String(m.source || '') === 'compass';
+        if (q === 'web') return String(m.source || '') === 'web';
+        if (q === 'done') return st === 'done';
+        return true;
+      });
+      el.innerHTML =
+        kpis([['New', (d.mail && d.mail.unread) || 0], ['Delete asks', (d.mail && d.mail.deletes) || 0],
+          ['Compass', (d.mail && d.mail.compass) || 0], ['Website', (d.mail && d.mail.web) || 0]])
+        + '<div class="row" style="margin-bottom:12px;">'
+        + ['new', 'all', 'delete', 'compass', 'web', 'done'].map(function (k) {
+          const on = q === k ? ' primary' : ' ghost';
+          const label = k === 'new' ? 'New' : k === 'delete' ? 'Delete' : k === 'compass' ? 'Compass' : k === 'web' ? 'Website' : k === 'done' ? 'Done' : 'All';
+          return '<button type="button" class="' + on.trim() + ' mailFilter" data-q="' + k + '">' + label + '</button>';
+        }).join('')
+        + '</div>'
+        + card('Inbox', filtered.length
+          ? filtered.map(function (m) {
+            const st = String(m.status || 'new').toLowerCase();
+            const kind = String(m.kind || 'contact');
+            const who = [m.name, m.handle ? '@' + m.handle : '', m.email].filter(Boolean).join(' · ') || (m.uid || 'visitor');
+            const reply = m.email
+              ? '<a class="ghost" href="mailto:' + encodeURIComponent(m.email) + '">Reply</a> '
+              : '';
+            return '<div class="alert ' + (kind === 'delete-account' ? 'critical' : (st === 'new' ? 'warning' : 'ok')) + '">'
+              + '<div class="sub">' + escapeHtml(when(m.ts)) + ' · ' + escapeHtml(m.source || '') + ' · ' + escapeHtml(kind) + ' · ' + escapeHtml(st) + '</div>'
+              + '<div style="margin:6px 0 8px;"><b>' + escapeHtml(who) + '</b>'
+              + (m.uid ? ' <span class="sub">' + escapeHtml(String(m.uid).slice(0, 12)) + '</span>' : '')
+              + '</div>'
+              + '<div style="white-space:pre-wrap;font-size:14px;line-height:1.45;">' + escapeHtml(m.text || '') + '</div>'
+              + '<div class="row" style="margin-top:10px;">'
+              + reply
+              + (st !== 'read' && st !== 'done' ? '<button type="button" class="ghost admMail" data-id="' + escapeHtml(m.id) + '" data-st="read">Mark read</button> ' : '')
+              + (st !== 'done' ? '<button type="button" class="ghost admMail" data-id="' + escapeHtml(m.id) + '" data-st="done">Done</button>' : '')
+              + '</div></div>';
+          }).join('')
+          : '<p class="sub">Nothing in this filter. Contact-page and Compass requests land here. Compass notebooks are not copied — only what someone sent as a request.</p>');
+      el.querySelectorAll('.mailFilter').forEach(function (btn) {
+        btn.onclick = function () {
+          __tabCache.mailQ = btn.getAttribute('data-q') || 'new';
+          loadTab('mail', false);
+        };
+      });
+      el.querySelectorAll('.admMail').forEach(function (btn) {
+        btn.onclick = function () { actMail(btn.getAttribute('data-id'), btn.getAttribute('data-st')); };
+      });
       return;
     }
 
@@ -1072,6 +1128,23 @@
       await loadTab('users', true);
     } catch (e) {
       toast((e && e.message) || 'Could not update that account. Publish the new firestore.rules.');
+    }
+  }
+
+  async function actMail(id, status) {
+    if (!id || !status) return;
+    const db = adminDb();
+    if (!db) { toast('Database is not ready'); return; }
+    const patch = { status: status, updatedAt: Date.now(), updatedBy: currentUser.uid };
+    if (status === 'read') patch.readAt = Date.now();
+    if (status === 'done') patch.doneAt = Date.now();
+    try {
+      await db.collection('deskMail').doc(id).set(patch, { merge: true });
+      await writeAudit('mail-' + status, id, status);
+      toast(status === 'done' ? 'Marked done' : 'Marked read');
+      await loadTab('mail', true);
+    } catch (e) {
+      toast((e && e.message) || 'Could not update mail. Publish the new firestore.rules.');
     }
   }
 
