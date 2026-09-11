@@ -1,1392 +1,243 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.09.11b" />
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NALUNO</title>
-<link rel="manifest" href="/manifest.json?v=20260908d">
-<meta name="theme-color" content="#0D0F17">
-<!-- Icons delayed until after the drawing intro so no PNG can flash. -->
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.09.11b">
-<meta name="description" content="A statement from the future.">
-<meta property="og:title" content="Naluno">
-<meta property="og:description" content="Watch on Naluno.">
-<style id="nalunoEntryBoot">
-  html,body{ background:#0D0F17 !important; margin:0; }
-  #authGate{
-    position:fixed; inset:0; z-index:500;
-    background:#0D0F17 !important;
-    display:flex; align-items:center; justify-content:center;
-  }
-  .naluno-entry-logo{ display:flex; flex-direction:column; align-items:center; gap:16px; }
-  .naluno-entry-mark-wrap{ position:relative; width:92px; height:92px; display:flex; align-items:center; justify-content:center; }
-  .naluno-entry-mark{
-    width:68px; height:68px; overflow:visible;
-    filter:drop-shadow(0 0 12px rgba(124,255,178,.55));
-    animation: entryMarkIn .85s cubic-bezier(.2,.85,.2,1) both;
-  }
-  .naluno-entry-mark .em-core{ fill:none; stroke-dasharray:38; stroke-dashoffset:38; animation: entryDraw .9s ease forwards .12s, entryCoreGlow 2.4s ease-in-out 1.1s infinite; }
-  .naluno-entry-mark .em-stem{ fill:none; stroke-dasharray:8; stroke-dashoffset:8; animation: entryDraw .45s ease forwards .42s; }
-  .naluno-entry-mark .em-arc-1{ fill:none; opacity:0; animation: entryArcPulse 1.9s ease-out .55s infinite; }
-  .naluno-entry-mark .em-arc-2{ fill:none; opacity:0; animation: entryArcPulse 1.9s ease-out .9s infinite; }
-  .naluno-entry-ping{
-    position:absolute; inset:10px; border-radius:50%;
-    border:1.5px solid rgba(124,255,178,.55); pointer-events:none;
-    animation: entryPing 2.2s ease-out infinite;
-  }
-  .naluno-entry-ping.delay{ animation-delay:.7s; border-color:rgba(0,229,255,.4); }
-  .naluno-entry-word{
-    font-family: Orbitron, 'Space Grotesk', sans-serif;
-    font-weight:800; font-size:26px; letter-spacing:.28em;
-    background: linear-gradient(90deg, #7CFFB2, #00E5FF, #7C4DFF, #7CFFB2);
-    background-size:300% 100%;
-    -webkit-background-clip:text; background-clip:text; color:transparent;
-    animation: entryWordIn .75s ease both .48s, brandShimmer 5s linear infinite;
-  }
-  #authGate .greenroom-pill{ opacity:0; animation: entryWordIn .6s ease both .9s; }
-  #authGate.naluno-entry-out{ opacity:0; pointer-events:none; transition:opacity .45s ease; }
-  @keyframes entryMarkIn{ from{ transform:scale(.55); opacity:0; } to{ transform:scale(1); opacity:1; } }
-  @keyframes entryDraw{ to{ stroke-dashoffset:0; } }
-  @keyframes entryCoreGlow{ 0%,100%{ filter:drop-shadow(0 0 2px rgba(124,255,178,.4)); } 50%{ filter:drop-shadow(0 0 8px rgba(124,255,178,.95)); } }
-  @keyframes entryArcPulse{ 0%{ opacity:.1; } 35%{ opacity:.95; } 100%{ opacity:.18; } }
-  @keyframes entryPing{ 0%{ transform:scale(.55); opacity:.7; } 100%{ transform:scale(1.55); opacity:0; } }
-  @keyframes entryWordIn{ from{ opacity:0; transform:translateY(12px) scale(.94); letter-spacing:.42em; } to{ opacity:1; transform:none; } }
-  @keyframes brandShimmer{ 0%{ background-position:0% 50%; } 100%{ background-position:300% 50%; } }
-  body.naluno-gated #app{ visibility:hidden !important; }
-  #authGate{ visibility:visible !important; }
-  /* Welcome + tour stay fully gone until JS adds .on.
-     hidden attribute is the UA fallback; these rules cover delayed app.css.
-     Returning phones (data-naluno-known) never show either panel. */
-  #nalunoWelcome, #nalunoTour, #nalunoLegal, .welcome-lang-menu{
-    display:none !important;
-    visibility:hidden !important;
-    pointer-events:none !important;
-    position:absolute !important;
-    inset:0 !important;
-    opacity:0 !important;
-  }
-  html[data-naluno-known] #nalunoWelcome,
-  html[data-naluno-known] #nalunoTour{
-    display:none !important;
-    visibility:hidden !important;
-    opacity:0 !important;
-  }
-  #nalunoWelcome.on, #nalunoTour.on{
-    display:flex !important;
-    visibility:visible !important;
-    pointer-events:auto !important;
-    opacity:1 !important;
-  }
-  html[data-naluno-known] #nalunoWelcome.on,
-  html[data-naluno-known] #nalunoTour.on{
-    display:none !important;
-    visibility:hidden !important;
-    opacity:0 !important;
-    pointer-events:none !important;
-  }
-  #nalunoLegal.on{ display:flex !important; visibility:visible !important; opacity:1 !important; pointer-events:auto !important; }
-  .welcome-lang-menu.on{ display:block !important; visibility:visible !important; opacity:1 !important; pointer-events:auto !important; }
-  #welcomeAgreeBtn, #tourNextBtn{
-    width:100%; min-height:52px; border:none; border-radius:999px;
-    background:#7CFFB2; color:#0D0F17; font-size:15px; font-weight:700;
-  }
-  .tour-text-btn, .welcome-lang, .welcome-lang-menu button{
-    background:#171A26; color:#EDEFF7; border:1px solid #2A2E42;
-  }
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Naluno</title>
+<meta name="robots" content="noindex, nofollow, noarchive" />
+<meta name="googlebot" content="noindex, nofollow, noarchive" />
+<meta name="theme-color" content="#07080D" />
+<meta name="naluno-build" content="2026.09.11b" />
+<meta name="app-version" content="2026.09.11b" />
+<link rel="icon" href="/icon-192.png" />
+<link rel="canonical" href="https://getnaluno.com/admin/" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Space+Grotesk:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --void:#07080D; --panel:#12151F; --line:#232838;
+  --ink:#E8ECF5; --ink-dim:#7C8497; --mint:#7CFFB2; --cyan:#00E5FF;
+  --red:#FF5470; --warn:#FFC266;
+  --display:'Orbitron', sans-serif;
+  --body:'Space Grotesk', system-ui, sans-serif;
+  --dial:'IBM Plex Mono', monospace;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;background:var(--void);color:var(--ink);font-family:var(--body);min-height:100%;}
+body{overflow-x:hidden;}
+.field{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;}
+.blob{position:absolute;border-radius:50%;filter:blur(80px);mix-blend-mode:screen;opacity:.35;}
+.blob.a{width:48vw;height:48vw;left:-10vw;top:-8vh;background:radial-gradient(circle,rgba(124,255,178,.35),transparent 70%);animation:dA 20s ease-in-out infinite;}
+.blob.b{width:42vw;height:42vw;right:-12vw;bottom:-10vh;background:radial-gradient(circle,rgba(0,229,255,.22),transparent 70%);animation:dB 24s ease-in-out infinite;}
+@keyframes dA{50%{transform:translate(6vw,5vh) scale(1.1);}}
+@keyframes dB{50%{transform:translate(-5vw,-6vh) scale(1.12);}}
+.wrap{position:relative;z-index:1;max-width:1080px;margin:0 auto;padding:18px 16px 80px;}
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0 22px;}
+.brand{display:flex;align-items:center;gap:10px;}
+.mark-live{position:relative;width:30px;height:30px;}
+.mark-live svg{width:30px;height:30px;overflow:visible;filter:drop-shadow(0 0 8px rgba(124,255,178,.7));}
+.ping{position:absolute;inset:-5px;border-radius:50%;border:1px solid rgba(124,255,178,.4);animation:ping 2.4s ease-out infinite;}
+@keyframes ping{to{transform:scale(1.7);opacity:0;}}
+.word{font-family:var(--display);font-weight:700;letter-spacing:.16em;font-size:15px;
+  background:linear-gradient(90deg,#7CFFB2,#00E5FF,#7CFFB2);background-size:280% 100%;
+  -webkit-background-clip:text;background-clip:text;color:transparent;animation:shimmer 8s linear infinite;}
+@keyframes shimmer{to{background-position:280% 50%;}}
+.clock-block{text-align:right;}
+.clock{font-family:var(--dial);font-size:12px;color:var(--mint);letter-spacing:.04em;font-weight:500;}
+.clock-sub{font-family:var(--dial);font-size:10px;color:var(--ink-dim);margin-top:2px;}
+.sw-badge{display:inline-block;margin-left:8px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);
+  font-family:var(--dial);font-size:10px;color:var(--ink-dim);letter-spacing:.04em;}
+.sw-badge.on{color:var(--mint);border-color:rgba(124,255,178,.4);}
+.panel{
+  background:rgba(18,21,31,.78);border:1px solid rgba(124,255,178,.18);
+  border-radius:14px;padding:22px 22px 20px;
+  box-shadow:0 0 40px rgba(0,229,255,.06) inset, 0 24px 60px rgba(0,0,0,.35);
+  backdrop-filter:blur(14px);
+}
+h1{font-family:var(--display);font-weight:500;font-size:22px;letter-spacing:.04em;margin:0 0 6px;}
+.sub{color:var(--ink-dim);font-size:14px;margin:0 0 20px;line-height:1.5;}
+label{display:block;font-family:var(--dial);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-dim);margin:12px 0 6px;}
+input{
+  width:100%;background:#0D1018;border:1px solid var(--line);border-radius:10px;
+  padding:12px 14px;color:var(--ink);font-family:var(--body);font-size:15px;
+}
+input:focus{outline:2px solid var(--cyan);outline-offset:2px;}
+.row{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;}
+button{
+  font-family:var(--dial);font-size:12px;letter-spacing:.06em;border:none;cursor:pointer;
+  padding:12px 18px;border-radius:8px;
+}
+.primary{background:var(--mint);color:var(--void);}
+.ghost{background:transparent;color:var(--ink-dim);border:1px solid var(--line);}
+.danger{background:transparent;color:var(--red);border:1px solid var(--line);}
+.msg{min-height:18px;font-size:13px;margin-top:12px;color:var(--red);}
+.msg.ok{color:var(--mint);}
+.card{border:1px solid var(--line);background:rgba(10,12,18,.55);border-radius:12px;padding:14px 16px;margin:0 0 12px;}
+.card .who{font-family:var(--dial);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mint);margin-bottom:8px;}
+.hidden{display:none !important;}
+#consoleView{margin-top:18px;}
+.flag-row{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px;}
+.flag-row button{padding:6px 10px;font-size:10.5px;}
+#toast{
+  position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(20px);
+  background:#12151F;border:1px solid var(--mint);color:var(--mint);
+  font-family:var(--dial);font-size:12px;padding:10px 16px;border-radius:8px;
+  opacity:0;pointer-events:none;transition:opacity .2s, transform .2s;z-index:50;
+}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+.admin-tabs{
+  display:flex; gap:2px; flex-wrap:nowrap; margin-bottom:14px;
+  border-bottom:1px solid var(--line);
+  overflow-x:auto; -webkit-overflow-scrolling:touch;
+  scrollbar-width:none;
+}
+.admin-tabs::-webkit-scrollbar{display:none;}
+.atab{
+  background:none; border:none; border-bottom:2px solid transparent;
+  color:var(--ink-dim); font-family:inherit; font-size:12.5px;
+  padding:10px 14px; cursor:pointer; white-space:nowrap;
+}
+.atab:hover{ color:var(--ink); }
+.atab.on{ color:var(--mint); border-bottom-color:var(--mint); }
+.atab:focus-visible{ outline:2px solid var(--cyan); outline-offset:-2px; }
+.kpi-row{ display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+.kpi{
+  flex:1 1 140px; background:var(--panel);
+  border:1px solid var(--line); border-radius:12px; padding:12px 14px;
+}
+.kpi b{ display:block; font-size:22px; color:var(--mint); font-weight:600; font-variant-numeric:tabular-nums; }
+.kpi span{ font-size:11px; color:var(--ink-dim); }
+.inactive-note{
+  border:1px solid rgba(255,180,80,.35); background:rgba(255,180,80,.07);
+  border-radius:12px; padding:12px 14px; margin-bottom:12px; font-size:13px; line-height:1.5;
+}
+.tbl{ width:100%; border-collapse:collapse; font-size:12px; }
+.tbl th{ text-align:left; color:var(--ink-dim); font-weight:500; padding:7px 8px; border-bottom:1px solid var(--line); }
+.tbl td{ padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+.cc-strip{
+  display:flex; flex-wrap:wrap; gap:14px; align-items:center;
+  padding:10px 12px; margin-bottom:12px; border-radius:12px;
+  background:var(--panel); border:1px solid var(--line);
+  font-size:12px;
+}
+.cc-strip .h{ font-weight:600; letter-spacing:.04em; }
+.cc-strip .m{ color:var(--ink-dim); }
+.cc-strip .m b{ color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums; }
+.alert{ display:flex; gap:9px; align-items:flex-start; padding:9px 11px; border-radius:9px; margin-bottom:7px; font-size:12.5px; }
+.alert.critical{ background:rgba(255,84,112,.10); border:1px solid rgba(255,84,112,.35); }
+.alert.warning{ background:rgba(255,180,80,.08); border:1px solid rgba(255,180,80,.30); }
+.alert.ok{ background:rgba(124,255,178,.07); border:1px solid rgba(124,255,178,.28); }
+.alert button{ margin-left:auto; }
+.gap-note{ color:var(--ink-dim); font-size:11.5px; line-height:1.6; }
+@media (prefers-reduced-motion: reduce){
+  .blob,.word,.ping{animation:none !important;}
+}
+@media (max-width: 640px){
+  .wrap{padding:12px 12px 72px;}
+  .kpi b{font-size:18px;}
+  h1{font-size:18px;}
+}
 </style>
-<script>
-(function(){
-  try{
-    var known = false;
-    try{
-      known = localStorage.getItem('nalunoWelcomeOk') === '1' || !!localStorage.getItem('nalunoLastUid');
-    }catch(e){}
-    if(known) document.documentElement.setAttribute('data-naluno-known', '1');
-  }catch(e){}
-})();
-</script>
-<link rel="apple-touch-startup-image" href="/splash-empty.png">
-<link rel="stylesheet" href="/css/app.css?v=20260908d" media="print" onload="this.media='all'">
-<script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="/css/app.css?v=20260908d"></noscript>
 </head>
-<body class="naluno-gated">
-<script>
-window.__nalunoEntryT0 = Date.now();
-(function(){
-  function hideSplash(){
-    try{
-      var C = window.Capacitor;
-      var p = C && ((C.Plugins && C.Plugins.SplashScreen) || C.SplashScreen);
-      if(p && p.hide) p.hide({ fadeOutDuration: 0 });
-    }catch(e){}
-  }
-  hideSplash();
-  document.addEventListener('deviceready', hideSplash);
-  window.addEventListener('load', hideSplash);
-  var n = 0;
-  var t = setInterval(function(){
-    hideSplash();
-    if(++n > 40) clearInterval(t);
-  }, 80);
-  setTimeout(function(){
-    if(document.querySelector('link[rel="icon"]')) return;
-    var a = document.createElement('link'); a.rel = 'icon'; a.href = '/icon-192.png';
-    var b = document.createElement('link'); b.rel = 'apple-touch-icon'; b.href = '/icon-192.png';
-    document.head.appendChild(a); document.head.appendChild(b);
-  }, 3200);
-})();
-</script>
-
-  <div class="call-overlay active naluno-entry-play" id="authGate" style="position:fixed;inset:0;z-index:500;background:#0D0F17;display:flex;align-items:center;justify-content:center;">
-    <div id="authGateLoading" class="naluno-entry" style="display:flex; flex-direction:column; align-items:center; gap:18px;">
-      <div class="naluno-entry-logo">
-        <div class="naluno-entry-mark-wrap">
-          <span class="naluno-entry-ping"></span>
-          <span class="naluno-entry-ping delay"></span>
-          <svg class="brand-mark naluno-entry-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <circle class="em-core" cx="12" cy="16" r="6" stroke="#7CFFB2" stroke-width="2" stroke-dasharray="38" stroke-dashoffset="38">
-              <animate attributeName="stroke-dashoffset" from="38" to="0" dur="0.9s" begin="0.12s" fill="freeze"/>
-            </circle>
-            <path class="em-stem" d="M12 2v6" stroke="#7CFFB2" stroke-width="2" stroke-linecap="round" stroke-dasharray="8" stroke-dashoffset="8">
-              <animate attributeName="stroke-dashoffset" from="8" to="0" dur="0.45s" begin="0.42s" fill="freeze"/>
-            </path>
-            <path class="em-arc em-arc-1" d="M7 5a12 12 0 0110 0" stroke="#00E5FF" stroke-width="1.6" stroke-linecap="round"/>
-            <path class="em-arc em-arc-2" d="M4 2a17 17 0 0116 0" stroke="#7C4DFF" stroke-width="1.4" stroke-linecap="round"/>
-          </svg>
-        </div>
-        <span class="brand-word naluno-entry-word">NALUNO</span>
+<body>
+<div class="field" aria-hidden="true"><div class="blob a"></div><div class="blob b"></div></div>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <div class="mark-live">
+        <span class="ping"></span>
+        <svg viewBox="0 0 68 68" fill="none">
+          <circle cx="34" cy="38" r="11" stroke="#7CFFB2" stroke-width="3"/>
+          <path d="M34 27V21" stroke="#7CFFB2" stroke-width="3" stroke-linecap="round"/>
+          <path d="M22 20c6-8 18-8 24 0" stroke="#00E5FF" stroke-width="2.2" stroke-linecap="round"/>
+        </svg>
       </div>
-      <div class="greenroom-pill ready" style="position:static;"><span class="swirl"></span><span style="font-family:var(--font-mono); font-size:11px;">One moment…</span></div>
+      <div class="word">NALUNO</div>
     </div>
-    <div id="authGateForm" class="naluno-entry" style="display:none; text-align:center; padding:0 32px; flex-direction:column; align-items:center; gap:18px; width:100%; max-width:340px;">
-      <div class="naluno-entry-logo settled">
-        <div class="naluno-entry-mark-wrap">
-          <span class="naluno-entry-ping"></span>
-          <span class="naluno-entry-ping delay"></span>
-          <svg class="brand-mark naluno-entry-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <circle class="em-core" cx="12" cy="16" r="6" stroke="#7CFFB2" stroke-width="2"/>
-            <path class="em-stem" d="M12 2v6" stroke="#7CFFB2" stroke-width="2" stroke-linecap="round"/>
-            <path class="em-arc em-arc-1" d="M7 5a12 12 0 0110 0" stroke="#00E5FF" stroke-width="1.6" stroke-linecap="round"/>
-            <path class="em-arc em-arc-2" d="M4 2a17 17 0 0116 0" stroke="#7C4DFF" stroke-width="1.4" stroke-linecap="round"/>
-          </svg>
-        </div>
-        <span class="brand-word naluno-entry-word">NALUNO</span>
-      </div>
-      <div style="color:var(--text-dim); font-size:13.5px; line-height:1.5; max-width:280px;">No phone number. No SIM card. Just a name that's yours wherever you go.</div>
-      <div style="color:var(--text-dim); font-size:12.5px; line-height:1.45; max-width:300px; margin-bottom:2px;">Use a <strong style="color:var(--text);">handle + password</strong> — no email needed. Google or email still work if you have them.</div>
-
-      <div style="width:100%; display:flex; flex-direction:column; gap:9px;">
-        <form id="authHandleForm" autocomplete="off" onsubmit="return false;" style="width:100%; display:flex; flex-direction:column; gap:9px;">
-        <input id="authHandleInput" type="text" name="naluno-handle" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" placeholder="Handle (e.g. namuli)" style="width:100%; background:var(--surface); border:1px solid var(--line); border-radius:13px; padding:12px 14px; color:var(--text); font-size:14px; outline:none;" />
-        <input id="authPasswordInput" type="password" name="naluno-secret" autocomplete="off" data-lpignore="true" data-1p-ignore="true" placeholder="Password (6+ characters)" style="width:100%; background:var(--surface); border:1px solid var(--line); border-radius:13px; padding:12px 14px; color:var(--text); font-size:14px; outline:none;" />
-        <input id="authRecoveryInput" type="email" name="naluno-recovery" autocomplete="off" placeholder="Recovery email (optional — for forgotten password)" style="width:100%; background:var(--surface); border:1px solid var(--line); border-radius:13px; padding:12px 14px; color:var(--text); font-size:14px; outline:none;" />
-        <div style="display:flex; gap:9px;">
-          <button type="button" id="emailSignInBtn" class="join-btn" style="flex:1; background:var(--surface-2); color:var(--text); border:1px solid var(--line); padding:12px;">Sign in</button>
-          <button type="button" id="emailSignUpBtn" class="join-btn" style="flex:1; padding:12px;">Create account</button>
-        </div>
-        <button type="button" id="authForgotBtn" style="background:none;border:none;color:var(--text-dim);font-family:var(--font-mono);font-size:11px;cursor:pointer;text-decoration:underline;padding:2px;">Forgot password?</button>
-        </form>
-      </div>
-
-      <div style="display:flex; align-items:center; gap:10px; width:100%; margin-top:4px;">
-        <div style="flex:1; height:1px; background:var(--line);"></div>
-        <span style="font-family:var(--font-mono); font-size:10px; color:var(--text-dim);">OR</span>
-        <div style="flex:1; height:1px; background:var(--line);"></div>
-      </div>
-
-      <button id="googleSignInBtn" class="join-btn" style="width:auto; padding:14px 26px;">Sign in with Google</button>
-      <button type="button" id="authUseEmailBtn" style="background:none;border:none;color:var(--text-dim);font-family:var(--font-mono);font-size:11px;cursor:pointer;text-decoration:underline;padding:4px;">Use email instead</button>
-      <input id="authEmailInput" type="email" autocomplete="email" placeholder="Email" style="display:none; width:100%; background:var(--surface); border:1px solid var(--line); border-radius:13px; padding:12px 14px; color:var(--text); font-size:14px; outline:none;" />
-      <div id="authGateStatus" style="font-family:var(--font-mono); font-size:11px; color:var(--text-dim); min-height:14px;"></div>
-      <div class="welcome-legal-line" style="margin-top:8px;">
-        <button type="button" class="welcome-inline" id="authPrivacyBtn">Privacy Policy</button>
-        <span aria-hidden="true"> · </span>
-        <button type="button" class="welcome-inline" id="authTermsBtn">Terms of Service</button>
-      </div>
+    <div class="clock-block">
+      <div class="clock" id="liveClock">--:--:--</div>
+      <div class="clock-sub"><span id="liveClockZone"></span> · private <span id="swBadge" class="sw-badge">worker…</span></div>
     </div>
+  </header>
 
-    <div id="nalunoWelcome" class="naluno-onboard" hidden aria-label="Welcome to Naluno">
-      <div class="onboard-stage">
-        <div id="welcomeHero" class="onboard-hero" aria-hidden="true"></div>
-        <h1 id="welcomeTitle" class="onboard-title"></h1>
-        <p id="welcomeLegal" class="onboard-legal"></p>
-        <div class="welcome-lang-wrap">
-          <button type="button" id="welcomeLangBtn" class="welcome-lang" aria-haspopup="listbox" aria-expanded="false">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M3 12h18M12 3c2.5 3 4 6.5 4 9s-1.5 6-4 9c-2.5-3-4-6.5-4-9s1.5-6 4-9z" stroke="currentColor" stroke-width="1.5"/></svg>
-            <span id="welcomeLangLabel">English</span>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-          </button>
-          <div id="welcomeLangMenu" class="welcome-lang-menu" role="listbox">
-            <button type="button" id="welcomeLangEn" role="option">English</button>
-            <button type="button" id="welcomeLangLg" role="option">Luganda</button>
-          </div>
-        </div>
-      </div>
-      <div class="onboard-foot">
-        <button type="button" id="welcomeAgreeBtn" class="join-btn onboard-agree">Agree and continue</button>
-      </div>
+  <div class="panel" id="signPanel">
+    <h1>Sign in</h1>
+    <p class="sub">This desk is not part of the public app. You need an allowed account.</p>
+    <label for="adminHandle">Handle or email</label>
+    <input id="adminHandle" autocomplete="username" placeholder="handle or email" />
+    <label for="adminPassword">Password</label>
+    <input id="adminPassword" type="password" autocomplete="current-password" placeholder="password" />
+    <div class="row">
+      <button type="button" class="primary" id="adminSignInBtn">Sign in</button>
+      <button type="button" class="ghost" id="adminGoogleBtn">Google</button>
     </div>
-
-    <div id="nalunoTour" class="naluno-onboard" hidden aria-label="How Naluno works">
-      <div class="tour-top">
-        <button type="button" id="tourBackBtn" class="tour-text-btn">Back</button>
-        <button type="button" id="tourSkipBtn" class="tour-text-btn">Skip</button>
-      </div>
-      <div class="onboard-stage tour-stage">
-        <div id="tourIcon" class="onboard-hero tour-hero" aria-hidden="true"></div>
-        <h1 id="tourTitle" class="onboard-title"></h1>
-        <p id="tourBody" class="onboard-legal"></p>
-        <div id="tourDots" class="tour-dots" aria-hidden="true"></div>
-      </div>
-      <div class="onboard-foot">
-        <button type="button" id="tourNextBtn" class="join-btn onboard-agree">Next</button>
-      </div>
-    </div>
+    <div class="msg" id="signMsg"></div>
   </div>
 
-  <div id="nalunoLegal" class="naluno-legal" hidden role="dialog" aria-modal="true" aria-labelledby="nalunoLegalTitle">
-    <div class="naluno-legal-sheet">
-      <div class="naluno-legal-bar">
-        <button type="button" id="nalunoLegalBack" class="back-btn" aria-label="Back"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
-        <div id="nalunoLegalTitle" class="naluno-legal-heading">Privacy Policy</div>
-        <span style="width:36px;"></span>
-      </div>
-      <div id="nalunoLegalBody" class="naluno-legal-body"></div>
+  <div class="panel hidden" id="gatePanel">
+    <h1 id="adminGateTitle">Unlock</h1>
+    <p class="sub" id="gateWho"></p>
+    <p class="sub" id="adminGateHint"></p>
+    <p class="sub" id="workerPing" style="font-family:var(--dial);font-size:11px;letter-spacing:.02em;color:var(--cyan);"></p>
+    <label for="adminPassInput">Password</label>
+    <input id="adminPassInput" type="password" autocomplete="current-password" placeholder="password" />
+    <div id="adminPassConfirmRow" style="display:none;">
+      <label for="adminPassConfirm">Confirm password</label>
+      <input id="adminPassConfirm" type="password" autocomplete="new-password" placeholder="type it again" />
     </div>
+    <div class="row">
+      <button type="button" class="primary" id="adminUnlockBtn">Unlock</button>
+      <button type="button" class="danger" id="adminSignOutBtn">Sign out</button>
+    </div>
+    <div class="msg" id="adminGateMsg"></div>
   </div>
 
-
-<div class="app" id="app">
-  <div class="naluno-aurora" aria-hidden="true"></div>
-
-  <!-- ===================== SIGN IN ===================== -->
-  <!-- ===================== INSTALL PROMPT ===================== -->
-  <div id="installBanner" style="display:none; position:absolute; top:0; left:0; right:0; z-index:95; background:var(--surface-2); border-bottom:1px solid var(--line); padding:10px 14px; align-items:center; gap:10px;">
-    <div class="avatar" style="width:30px;height:30px;font-size:11px;background:#7CFFB2;flex-shrink:0;">N</div>
-    <div data-install-label style="flex:1; font-size:12.5px; color:var(--text); line-height:1.35;">Install Naluno for the full-screen experience</div>
-    <button id="installBannerBtn" style="padding:7px 14px; border-radius:999px; border:none; background:var(--mint); color:#0D0F17; font-family:var(--font-futuristic); font-weight:700; font-size:10.5px; letter-spacing:.04em; text-transform:uppercase; cursor:pointer; flex-shrink:0;">Install</button>
-    <div id="installBannerClose" role="button" aria-label="Dismiss" style="width:24px; height:24px; flex-shrink:0; display:flex; align-items:center; justify-content:center; color:var(--text-dim); cursor:pointer;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
-  </div>
-
-  <!-- Full Android APK (shell) — shown when ANDROID_APK_URL is set in firebase-config.js -->
-  <div id="apkBanner" style="display:none; position:absolute; top:0; left:0; right:0; z-index:94; background:linear-gradient(90deg,rgba(124,255,178,.12),rgba(124,77,255,.1)); border-bottom:1px solid var(--line); padding:10px 14px; align-items:center; gap:10px;">
-    <div class="avatar" style="width:30px;height:30px;font-size:11px;background:#7C4DFF;flex-shrink:0;color:#fff;">A</div>
-    <div style="flex:1; font-size:12.5px; color:var(--text); line-height:1.35;">Get the full Android app — call wake when Naluno is closed</div>
-    <a id="apkBannerBtn" href="#" download style="padding:7px 14px; border-radius:999px; border:none; background:var(--mint); color:#0D0F17; font-family:var(--font-futuristic); font-weight:700; font-size:10.5px; letter-spacing:.04em; text-transform:uppercase; cursor:pointer; flex-shrink:0; text-decoration:none;">Download</a>
-    <div id="apkBannerClose" role="button" aria-label="Dismiss" style="width:24px; height:24px; flex-shrink:0; display:flex; align-items:center; justify-content:center; color:var(--text-dim); cursor:pointer;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
-  </div>
-
-  <!-- ===================== FREQUENCIES ===================== -->
-  <div id="weatherStrip" aria-live="polite">
-    <div class="weather-track">
-      <span id="weatherStripA">Waiting for this phone's place…   ·   </span>
-      <span id="weatherStripB">Waiting for this phone's place…   ·   </span>
-    </div>
-    <button type="button" id="weatherStripDismiss" aria-label="Hide weather">×</button>
-  </div>
-
-  <section class="tabscreen active" id="tab-frequencies">
-    <div class="tab-header">
-      <div class="brand-row">
-        <svg class="brand-mark" viewBox="0 0 24 24" fill="none"><path d="M12 2v6" stroke="#7CFFB2" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="16" r="6" stroke="#7CFFB2" stroke-width="2"/><path d="M7 5a12 12 0 0110 0" stroke="#8B90A8" stroke-width="1.6" stroke-linecap="round"/><path d="M4 2a17 17 0 0116 0" stroke="#8B90A8" stroke-width="1.4" stroke-linecap="round" opacity=".6"/></svg>
-        <span class="brand-word">NALUNO</span>
+  <div id="consoleView" class="hidden">
+    <div class="panel" style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+      <div>
+        <h1 style="margin:0;">Control Centre</h1>
+        <p class="sub" style="margin:4px 0 0;" id="consoleWho">Every change is logged.</p>
       </div>
-      <div class="ghost-btn" id="findPeopleBtn" title="Find people by handle" aria-label="Find people by handle">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="6" stroke="currentColor" stroke-width="1.8"/><path d="M20 20l-4.5-4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M11 8v6M8 11h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-        <span class="ghost-btn-label">Connect</span>
+      <div class="row" style="margin:0;">
+        <button type="button" class="ghost" id="adminChangePwBtn">Change password</button>
+        <button type="button" class="ghost" id="adminLockBtn">Lock</button>
+        <button type="button" class="danger" id="adminSignOutBtn2">Sign out</button>
       </div>
     </div>
-    <div class="tab-title" style="padding:0 22px 8px; display:flex; align-items:center; justify-content:space-between;">
-      <span>Frequencies</span>
-      <span id="atmosphereLabel" style="font-family:var(--font-mono); font-size:10.5px; font-weight:500; letter-spacing:.04em; color:var(--text-dim); border:1px solid var(--line); border-radius:999px; padding:5px 11px; cursor:pointer;"></span>
-    </div>
-    <div class="search-pill">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M21 21l-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-      <input id="frequencySearchInput" placeholder="Search frequencies" />
-    </div>
-    <div class="tab-scroll">
-      <div class="section-label" id="strongLabel">Strong signal</div>
-      <div id="strongList"></div>
-      <div class="section-label" style="margin-top:8px;" id="fadingLabel">Fading</div>
-      <div id="fadingList"></div>
-      <div class="section-label" style="margin-top:8px;" id="offLabel">Off the grid</div>
-      <div id="offList"></div>
-    </div>
-  </section>
-
-  <!-- ===================== WIRELINE (direct messages) ===================== -->
-  <section class="tabscreen" id="tab-wireline">
-    <div class="tab-header">
-      <div class="tab-title">Wireline</div>
-      <span></span>
-    </div>
-    <div class="tab-scroll">
-      <div class="section-label">Open channels</div>
-      <div id="wirelineList"></div>
-    </div>
-  </section>
-
-  <!-- ===================== BAND (live shared frequency) ===================== -->
-  <section class="tabscreen" id="tab-band">
-    <div class="tab-header">
-      <div class="tab-title">Band</div>
-      <div class="ghost-btn" id="newBandBtn" title="Start a frequency" aria-label="Start a frequency">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-      </div>
-    </div>
-    <div class="tab-scroll">
-      <div class="section-label">Your frequencies</div>
-      <div id="bandList"></div>
-    </div>
-  </section>
-
-  <!-- ===================== BROADCAST ===================== -->
-  <section class="tabscreen" id="tab-broadcast">
-    <div class="topbar">
-      <div class="tab-title">Signal &amp; Broadcast</div>
-    </div>
-    <div class="bcast-sticky" id="bcastSticky">
-      <div class="bcast-view-tabs" id="bcastViewTabs">
-        <button type="button" class="bcast-view-tab active" data-bcast-view="foryou">For You</button>
-        <button type="button" class="bcast-view-tab" data-bcast-view="mine">My Broadcasts</button>
-        <button type="button" class="bcast-search-tab" id="bcastSearchTab" aria-expanded="false" aria-controls="bcastSearchRow">Search</button>
-      </div>
-      <div class="bcast-search-row" id="bcastSearchRow" hidden>
-        <input type="text" inputmode="search" enterkeyhint="search" id="bcastSearchInput" placeholder="Search Broadcasts — topic, person, idea…" autocomplete="off" autocorrect="off" spellcheck="false" />
-      </div>
-      <div id="bcastSearchResults" style="display:none;"></div>
-      <div id="bcastStrandBar" class="bcast-strand-bar" style="display:none;">
-        <button type="button" class="bcast-strand-back" id="bcastStrandBack" aria-label="Back to Broadcasts">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
-        <div style="min-width:0;flex:1;">
-          <div class="bcast-strand-title" id="bcastStrandTitle">Strand</div>
-          <div class="bcast-strand-sub" id="bcastStrandSub"></div>
-        </div>
-        <button type="button" class="bcast-strand-back" id="bcastStrandShareBtn" aria-label="Share this Strand">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M18 8a3 3 0 1 0-2.83-4H15a3 3 0 0 0 .09 4.26L8.91 11.7a3 3 0 1 0 0 4.6l6.18 3.44a3 3 0 1 0 .82-1.74L9.73 14.56a3 3 0 0 0 0-1.12l6.18-3.44A2.99 2.99 0 0 0 18 8Z" fill="currentColor"/></svg>
-        </button>
-      </div>
-    </div>
-    <div class="tab-scroll bcast-feed" id="broadcastTabScroll">
-      <div class="bcast-feed-head" id="bcastFeedHead">
-      <div id="bcastForYouHome" class="bcast-foryou-home">
-      <!-- SIGNAL: ephemeral -->
-      <div class="signal-head">
-        <div class="signal-head-copy">
-          <div class="section-label signal-head-label">Signals <span>short clips · 24h to 7 days</span></div>
-        </div>
-        <button type="button" class="signal-see-all" id="signalSeeAllBtn">See all</button>
-      </div>
-      <!-- Architecture lock: same #newSignalBtn id + openComposer('signal') path.
-           Hidden so the create action lives on the first rounded-square tile. -->
-      <button type="button" id="newSignalBtn" class="join-btn signal-create-legacy" hidden aria-hidden="true">+ New Signal</button>
-      <div class="bcast-strip" id="myBcastStrip"></div>
-
-      <div class="toga-panel toga-banner" id="togaPanel">
-        <div class="toga-expand open" id="togaExpandBtn" aria-expanded="true">
-          <span class="toga-faces" id="togaFaceStack" aria-hidden="true"></span>
-          <span class="toga-head-wrap">
-            <span class="toga-wof">wall of fame</span>
-            <span class="toga-month" id="togaMonthLabel">this month</span>
-          </span>
-          <span class="toga-pill" aria-hidden="true">Toga</span>
-        </div>
-        <div id="togaBody">
-          <div class="lobby-sub" style="margin:0 0 10px;line-height:1.45;text-align:left;max-width:none;">The ten creators who moved Naluno this month. Scored from people who actually watched, people who joined their Circle, and conversation around their Broadcasts. Views must be public to qualify. The list lives 30 days. Tap a name to open their Broadcast.</div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-            <button type="button" class="toga-tog" id="togaShareBtn">Views shared</button>
-          </div>
-          <div id="togaBoard"></div>
-        </div>
-      </div>
-
-      <!-- BROADCAST: permanent -->
-      <div class="section-label signal-head-label" style="margin-top:18px;">Broadcast <span>permanent · Circle · Strand</span></div>
-      <div style="display:flex; gap:8px; margin:0 0 10px; align-items:center; flex-wrap:wrap;">
-        <button type="button" id="newBroadcastBtn" class="join-btn" style="margin:0; flex:1; min-width:120px; padding:12px 14px; font-size:12px; letter-spacing:.04em; background:rgba(124,255,178,.15); color:var(--mint); border:1px solid rgba(124,255,178,.35);">+ New Broadcast</button>
-        <button type="button" id="broadcastGoLiveBtn" class="join-btn" style="margin:0; flex:1; min-width:100px; padding:12px 14px; font-size:12px; letter-spacing:.04em; background:rgba(255,84,112,.12); color:#ff8a9a; border:1px solid rgba(255,84,112,.4);">Go live</button>
-      </div>
-      <button type="button" class="bcast-scroll-cue" id="bcastScrollCue">
-        <span class="bcast-scroll-cue-kicker">Swipe up</span>
-        <span class="bcast-scroll-cue-copy">Broadcasts play full screen below</span>
-        <span class="bcast-scroll-cue-chevron" aria-hidden="true">▾</span>
-      </button>
-      </div>
-      </div>
-      <div id="bcastPlateGrid" class="bcast-plate-grid"></div>
-      <div id="bcastPlateEmpty" style="display:none;padding:24px 12px;text-align:center;color:var(--text-dim);font-size:13px;line-height:1.5;">
-        No permanent Broadcasts yet.<br/>Use <strong style="color:var(--mint);">+ New Broadcast</strong> — not the Signal button.
-      </div>
-    </div>
-  </section>
-
-  <!-- ===================== COMPASS ===================== -->
-  <section class="tabscreen" id="tab-compass" style="display:flex; flex-direction:column;">
-    <div class="tab-header">
-      <div class="tab-title">Compass</div>
-      <button type="button" class="ghost-btn" id="compassWeatherBtn" aria-label="Weather" title="Show weather strip" style="width:34px;height:34px;margin-right:6px;">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.8"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-      </button>
-      <button type="button" class="ghost-btn" id="compassFindBtn" aria-label="Find Naluno" title="Find Naluno" style="width:34px;height:34px;">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.8"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.5 1.5M16.9 16.9l1.5 1.5M5.6 18.4l1.5-1.5M16.9 7.1l1.5-1.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-      </button>
-      <div class="cam-expand-btn" id="compassLockToggleBtn" style="position:static; width:34px; height:34px;" role="button" aria-label="Compass privacy">
-        <svg id="compassLockIcon" width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="5" y="11" width="14" height="9" rx="2" stroke="currentColor" stroke-width="2"/><path d="M8 11V8a4 4 0 018 0v3" stroke="currentColor" stroke-width="2"/></svg>
-      </div>
-    </div>
-    <div id="compassContent" style="flex:1; display:flex; flex-direction:column; min-height:0;">
-      <div id="compassMessages" style="flex:1; overflow-y:auto; padding:14px 16px; display:flex; flex-direction:column; gap:10px;">
-        <div class="msg-empty">
-          <span style="font-family:var(--font-futuristic); font-size:14px;">Your companion, growing with you</span>
-          <span style="font-size:12.5px;">Ask for a plan, think through a decision, or just talk something through. Compass remembers this conversation as you go.</span>
-        </div>
-      </div>
-      <div style="padding:10px 14px calc(env(safe-area-inset-bottom,0px) + 14px); border-top:1px solid var(--line); background:rgba(13,15,23,.92); backdrop-filter:blur(10px);">
-        <div style="display:flex; gap:9px; align-items:flex-end;">
-          <textarea id="compassInput" rows="1" placeholder="Ask Compass anything…" style="flex:1; resize:none; background:var(--surface); border:1px solid var(--line); border-radius:20px; padding:11px 16px; color:var(--text); font-size:14px; outline:none; max-height:120px; font-family:inherit;"></textarea>
-          <div class="ghost-btn" id="compassSendBtn" role="button" aria-label="Send" style="background:var(--mint); border-color:var(--mint); color:#0D0F17; flex-shrink:0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" stroke="#0D0F17" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-        </div>
-      </div>
-    </div>
-    <div id="compassLockScreen" style="display:none; flex:1; flex-direction:column; align-items:center; justify-content:center; gap:16px; padding:24px;">
-      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" style="color:var(--mint);"><rect x="5" y="11" width="14" height="9" rx="2" stroke="currentColor" stroke-width="2"/><path d="M8 11V8a4 4 0 018 0v3" stroke="currentColor" stroke-width="2"/></svg>
-      <div style="font-family:var(--font-futuristic); font-size:15px; text-align:center;" id="compassLockTitle">Compass is locked</div>
-      <input type="password" id="compassLockInput" placeholder="Enter password" style="width:100%; max-width:280px; background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:12px 16px; color:var(--text); font-size:14px; outline:none; text-align:center;" />
-      <div class="lobby-sub" id="compassLockError" style="display:none; color:#FF5470;">Wrong password — try again</div>
-      <button id="compassLockSubmitBtn" style="background:var(--mint); color:#0D0F17; border:none; border-radius:14px; padding:12px 32px; font-weight:700; font-size:14px;">Unlock</button>
-    </div>
-  </section>
-
-  <!-- ===================== CALLSIGN (profile) ===================== -->
-  <section class="tabscreen" id="tab-callsign">
-    <div class="tab-header"><div class="tab-title">Callsign</div><span></span></div>
-    <div class="tab-scroll">
-
-      <!-- VIEW MODE: read-only display of the saved callsign -->
-      <div id="callsignView">
-        <div class="profile-hero">
-          <div class="avatar profile-avatar" id="viewAvatar" style="background:#7CFFB2; position:relative;">YO</div>
-        </div>
-        <div style="text-align:center; padding:0 24px 22px;">
-          <div style="font-family:var(--font-futuristic); font-weight:700; font-size:18px; letter-spacing:.03em;" id="viewName">You</div>
-          <div style="color:var(--text-dim); font-size:13.5px; margin-top:5px; line-height:1.4;" id="viewTagline">On air, mostly reachable.</div>
-          <div style="font-family:var(--font-mono); font-size:12.5px; color:var(--mint); margin-top:12px;" id="viewNumber">@you</div>
-          <button type="button" id="sparkOpenBtn" class="save-btn" style="margin-top:16px;background:var(--surface-2);color:var(--text);border:1px solid var(--line);">Spark</button>
-          <div style="font-family:var(--font-mono); font-size:11px; color:var(--mint); margin-top:10px;" id="viewMySignal">Strong signal · this device</div>
-        </div>
-        <button class="save-btn" id="editCallsignBtn" style="background:var(--surface-2); color:var(--text); border:1px solid var(--line);">Edit callsign</button>
-      </div>
-
-      <!-- EDIT MODE: the editable form -->
-      <div id="callsignEdit" style="display:none;">
-        <div class="profile-hero">
-          <div class="profile-avatar-wrap">
-            <div class="avatar profile-avatar" id="profileAvatarBig" style="background:#7CFFB2;">YO</div>
-            <div class="avatar-edit naluno-pick-wrap" id="avatarEditBtn" role="button" aria-label="Edit profile photo" style="position:relative;overflow:hidden;">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="pointer-events:none;"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z" stroke="#0D0F17" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              <input type="file" id="avatarFileInput" accept="image/jpeg,image/png,image/webp,image/*,.jpg,.jpeg,.png,.webp" style="position:absolute;inset:0;width:100%;height:100%;opacity:0.01;font-size:16px;cursor:pointer;z-index:2;" />
-            </div>
-          </div>
-          <div id="avatarRemoveLink" style="display:none; font-family:var(--font-mono); font-size:11px; color:var(--text-dim); cursor:pointer; text-decoration:underline;">Remove photo</div>
-          <div id="swatchRow" class="swatch-row"></div>
-        </div>
-        <div class="field"><label>Display name</label><input id="nameInput" value="You" /></div>
-        <div class="field"><label>Tagline</label><textarea id="taglineInput" rows="2">On air, mostly reachable.</textarea></div>
-        <div class="field"><label>Handle</label><input id="numberInput" value="@you" placeholder="@MountainFox" autocomplete="off" /></div>
-        <div class="field"><label>Recovery email</label><input id="recoveryEmailInput" type="email" autocomplete="off" placeholder="Email to reset a forgotten password" /></div>
-        <div class="lobby-sub" style="margin:-10px 20px 4px; text-align:left;">No phone numbers, no SIM cards. Just a name that's yours wherever you go.</div>
-        <div style="display:flex; gap:10px; padding:0 20px;">
-          <button class="save-btn" id="cancelCallsignBtn" style="flex:1; background:var(--surface-2); color:var(--text); border:1px solid var(--line);">Cancel</button>
-          <button class="save-btn" id="saveProfileBtn" style="flex:1;">Save callsign</button>
-        </div>
-      </div>
-
-      <div class="greenroom-setting">
-        <div class="greenroom-setting-head"><span class="dot"></span><span class="greenroom-setting-title">Greenroom</span></div>
-        <div class="greenroom-setting-sub">Filters and live backgrounds on your call. The other person sees what you pick. Off sends your camera as it is.</div>
-        <div class="toggle-row">
-          <span style="font-size:13px;">Use filters on calls</span>
-          <div class="switch on" id="greenroomToggle"></div>
-        </div>
-        <div class="toggle-row">
-          <span style="font-size:13px;">Suggest a filter from the room</span>
-          <div class="switch on" id="autoTintToggle"></div>
-        </div>
-      </div>
-
-      <div class="greenroom-setting">
-        <div class="greenroom-setting-head"><span class="dot"></span><span class="greenroom-setting-title">Find Naluno</span></div>
-        <div class="greenroom-setting-sub" id="findNalunoStatus">Turn this on before the phone is taken. Sign in on another device to see the last place. The Android app keeps reporting while the phone is on and online, even if Naluno is closed. A phone that is off can only show its last ping.</div>
-        <div class="toggle-row">
-          <span style="font-size:13px;">Report this phone</span>
-          <div class="switch" id="findNalunoToggle"></div>
-        </div>
-        <div class="greenroom-setting-sub" style="margin-top:10px;">To see the map, unlock Compass and tap the radar.</div>
-      </div>
-
-      <div class="greenroom-setting">
-        <div class="greenroom-setting-head"><span class="dot"></span><span class="greenroom-setting-title">Call notifications</span></div>
-        <div class="greenroom-setting-sub" id="callNotifStatus">Get notified of an incoming call even when Naluno isn't open. Needs your permission once.</div>
-        <button class="save-btn" id="enableCallNotifsBtn" style="margin:14px 0 0; background:var(--surface-2); color:var(--text); border:1px solid var(--line);">Enable call notifications</button>
-        <a class="save-btn" id="downloadAndroidAppBtn" href="#" style="display:none; margin:10px 0 0; background:var(--mint); color:#0D0F17; border:none; text-align:center; text-decoration:none;">Download Android app</a>
-        <div class="greenroom-setting-sub" id="androidAppHint" style="display:none; margin-top:8px;">Full app: rings when closed. Chrome install alone cannot do that on Android.</div>
-      </div>
-
-      <div class="greenroom-setting">
-        <div class="greenroom-setting-head"><span class="dot"></span><span class="greenroom-setting-title">Ringtone</span></div>
-        <div class="greenroom-setting-sub" id="ringtoneStatus">Using the built-in tone. You can use your own sound instead — this device only, for now.</div>
-        <div style="display:flex; gap:10px; margin-top:14px;">
-          <span class="naluno-pick-wrap" style="position:relative;flex:1;display:inline-flex;overflow:hidden;">
-            <button class="save-btn" id="uploadRingtoneBtn" style="flex:1; margin:0; background:var(--surface-2); color:var(--text); border:1px solid var(--line); pointer-events:none;">Upload a sound</button>
-            <input type="file" id="ringtoneFileInput" accept="audio/mpeg,audio/mp3,audio/wav,audio/ogg,audio/aac,audio/*,.mp3,.wav,.m4a,.ogg" style="position:absolute;inset:0;width:100%;height:100%;opacity:0.01;font-size:16px;cursor:pointer;z-index:2;" />
-          </span>
-          <button class="save-btn" id="resetRingtoneBtn" style="flex:1; margin:0; background:none; color:var(--text-dim); border:1px solid var(--line); display:none;">Use built-in</button>
-        </div>
-      </div>
-
-      <button class="save-btn" id="myContributionBtn" style="margin:18px 20px 0; background:none; color:var(--mint); border:1px solid rgba(124,255,178,.35);">My Contribution</button>
-
-      <button class="save-btn" id="signOutBtn" style="margin:22px 20px 0; background:none; color:var(--red); border:1px solid var(--line);">Sign out</button>
-
-      <div class="welcome-legal-line" style="margin:14px 20px 0; text-align:center;">
-        <button type="button" class="welcome-inline" id="callsignPrivacyBtn">Privacy Policy</button>
-        <span aria-hidden="true"> · </span>
-        <button type="button" class="welcome-inline" id="callsignTermsBtn">Terms of Service</button>
-      </div>
-    </div>
-  </section>
-
-  <!-- ---------------- My Contribution (spec §36) ---------------- -->
-  <div class="call-overlay" id="contributionPanel">
-    <div class="topbar" style="padding-top:18px;">
-      <div class="back-btn" id="contributionCloseBtn" role="button" aria-label="Back"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
-      <div style="flex:1;">
-        <div style="font-family:var(--font-futuristic); font-weight:700; font-size:16px;">My Contribution</div>
-        <div class="lobby-sub" style="text-align:left;max-width:none;font-size:11.5px;">What you have added to the community.</div>
-      </div>
-    </div>
-    <div class="tab-scroll" style="padding:0 18px 24px;">
-      <div id="contributionBody"></div>
-    </div>
-  </div>
-
-  <!-- Report sheet. Send stays disabled until a real reason is typed, and the
-       worker enforces the same rule again server-side. -->
-  <div class="call-overlay" id="reportSheet">
-    <div class="topbar" style="padding-top:18px;">
-      <div class="back-btn" id="reportCloseBtn" role="button" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
-      <div style="flex:1;">
-        <div style="font-family:var(--font-futuristic); font-weight:700; font-size:16px;" id="reportWho">Report this</div>
-        <div class="lobby-sub" style="text-align:left;max-width:none;font-size:11.5px;">A person will read this. Nothing is hidden or removed automatically.</div>
-      </div>
-    </div>
-    <div class="tab-scroll" style="padding:0 18px 24px;">
-      <div class="section-label">What is wrong?</div>
-      <select id="reportReasonCode" style="width:100%;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:11px 12px;color:var(--text);margin-bottom:12px;"></select>
-      <div class="section-label">Tell us what happened</div>
-      <textarea id="reportReason" rows="5" placeholder="What did you see? Without this we can&rsquo;t act on the report."
-        style="width:100%;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px;color:var(--text);resize:vertical;font-family:inherit;"></textarea>
-      <div class="lobby-sub" style="text-align:left;max-width:none;font-size:11px;margin-top:6px;">A reason is required &mdash; reports without one can&rsquo;t be acted on, so they aren&rsquo;t accepted.</div>
-      <button type="button" id="reportSendBtn" class="save-btn" style="width:100%;margin-top:14px;" disabled>Send report</button>
-      <div id="reportMsg" class="lobby-sub" style="text-align:left;max-width:none;margin-top:10px;"></div>
-    </div>
-  </div>
-
-  <div class="call-overlay" id="findNalunoPanel">
-    <div class="topbar" style="padding-top:18px;">
-      <div class="back-btn" id="findNalunoCloseBtn" role="button" aria-label="Back"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
-      <div style="flex:1;">
-        <div style="font-family:var(--font-futuristic); font-weight:700; font-size:16px;">Find Naluno</div>
-        <div class="lobby-sub">Last place this account reported</div>
-      </div>
-    </div>
-    <div class="tab-scroll" style="padding:12px 16px calc(28px + env(safe-area-inset-bottom,0px));">
-      <div class="lobby-sub" style="margin-bottom:10px;">A phone that is off can only show that last ping.</div>
-      <div id="findNalunoMap"></div>
-      <div id="findNalunoMeta" class="lobby-sub" style="margin:10px 0;"></div>
-      <div id="findNalunoList"></div>
-      <button type="button" class="save-btn" id="findNalunoPingBtn" style="margin-top:14px;">Ping this phone now</button>
-    </div>
-  </div>
-
-  <!-- ===================== NAV ===================== -->
-  <div class="navbar">
-    <button class="navbtn active" data-tab="frequencies" id="frequenciesNavBtn" style="position:relative;">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2"/><path d="M4 20c0-3.5 3.5-6 8-6s8 2.5 8 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-      <span>Frequencies</span>
-      <span id="missedCallBadge" style="display:none; position:absolute; top:-2px; right:14px; min-width:16px; height:16px; padding:0 3px; border-radius:8px; background:#FF5470; border:1.5px solid var(--bg); color:#fff; font-family:var(--font-mono); font-size:10px; font-weight:700; line-height:13px; text-align:center;"></span>
-    </button>
-    <button class="navbtn" data-tab="wireline" id="wirelineNavBtn" style="position:relative;">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4 12h4l2-6 4 12 2-6h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      <span>Wireline</span>
-      <span id="wirelineNavDot" style="display:none; position:absolute; top:5px; right:calc(50% - 20px); width:8px; height:8px; border-radius:50%; background:var(--mint); border:2px solid var(--bg);"></span>
-    </button>
-    <button class="navbtn" data-tab="band">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="2"/><circle cx="5" cy="7" r="2" fill="currentColor"/><circle cx="19" cy="7" r="2" fill="currentColor"/><circle cx="12" cy="19" r="2" fill="currentColor"/></svg>
-      <span>Band</span>
-    </button>
-    <button class="navbtn" data-tab="broadcast">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/><path d="M7.5 7.5a6.5 6.5 0 000 9M16.5 7.5a6.5 6.5 0 010 9M4 4a11 11 0 000 16M20 4a11 11 0 010 16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-      <span>Broadcast</span>
-    </button>
-    <button class="navbtn" data-tab="compass">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><path d="M15 9l-2 5-5 2 2-5 5-2z" fill="currentColor"/></svg>
-      <span>Compass</span>
-    </button>
-    <button class="navbtn" data-tab="callsign">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="16" rx="3" stroke="currentColor" stroke-width="2"/><path d="M8 10h8M8 14h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-      <span>Callsign</span>
-    </button>
-  </div>
-
-  <!-- ===================== CALL OVERLAY ===================== -->
-  <div class="call-overlay" id="callOverlay">
-    <audio id="nalunoRingtone" data-naluno-ringtone="1" preload="auto" playsinline loop style="display:none"></audio>
-
-    <!-- LOBBY (outgoing pre-call, Greenroom prep happens here) -->
-    <section class="callscreen" id="lobby">
-      <div class="topbar">
-        <div class="back-btn" id="lobbyBack" role="button" aria-label="Back"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-        <span class="eyebrow">Calling</span>
-        <span style="width:36px;"></span>
-      </div>
-      <div class="lobby-body">
-        <video id="sendRawVideo" autoplay playsinline muted style="position:fixed;left:-9999px;top:0;width:320px;height:180px;opacity:0;pointer-events:none;"></video>
-        <canvas id="sendCanvas" style="position:fixed;left:-9999px;top:0;width:320px;height:180px;opacity:0;pointer-events:none;"></canvas>
-        <div class="cam-stage" id="camStage">
-          <video id="camRawVideo" autoplay playsinline muted style="display:none;"></video>
-          <canvas id="camStageCanvas" style="position:absolute;inset:0;width:100%;height:100%;"></canvas>
-          <div class="signature-glow" id="camSignatureGlow"></div>
-          <div class="cam-empty-fallback" id="camFallback">
-            Camera not connected yet<br>
-            <button class="enable-cam-btn" id="enableCamBtn">Enable camera</button>
-          </div>
-          <div class="greenroom-pill" id="greenroomPill"><span class="swirl"></span><span id="greenroomLabel">Greenroom · scanning</span></div>
-          <div class="self-chip">You</div>
-          <div class="self-chip" id="camQualityBadge" style="display:none; left:auto; right:14px; color:var(--mint);"></div>
-          <div class="cam-expand-btn" id="camExpandBtn" role="button" aria-label="Expand camera view"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-          <div class="cam-expand-btn" id="camCaptureBtn" style="right:auto; left:12px; top:auto; bottom:52px;" role="button" aria-label="Take a photo"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M4 8h2l1.5-2h9L18 8h2a2 2 0 012 2v9a2 2 0 01-2 2H4a2 2 0 01-2-2v-9a2 2 0 012-2z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="14" r="3.5" stroke="currentColor" stroke-width="2"/></svg></div>
-        </div>
-        <div style="width:100%;">
-          <div class="section-label" style="padding:0 2px 6px;">Live background</div>
-          <div class="filter-chip-row" id="lobbyBgChipRow" style="padding:0 2px 4px;"></div>
-        </div>
-        <div>
-          <div class="lobby-title" id="lobbyContactName">Ready to join?</div>
-          <div class="lobby-sub">Greenroom will suggest a background automatically — tap one above to choose your own.</div>
-        </div>
-        <div class="precheck-row">
-          <div class="precheck" id="toggleCam" role="button" aria-label="Toggle camera"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 8L21 5V19L15 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><rect x="3" y="6" width="12" height="12" rx="2" stroke="currentColor" stroke-width="2"/></svg>Camera</div>
-          <div class="precheck" id="toggleMic" role="button" aria-label="Toggle microphone"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 15a3 3 0 003-3V6a3 3 0 10-6 0v6a3 3 0 003 3z" stroke="currentColor" stroke-width="2"/><path d="M19 11a7 7 0 01-14 0M12 19v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Mic</div>
-          <div class="precheck" id="lobbySwitchCam" role="button" aria-label="Switch camera"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M4 4v5h5M20 20v-5h-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M4.5 9A8 8 0 0119 8M19.5 15A8 8 0 015 16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Flip</div>
-        </div>
-      </div>
-      <div class="lobby-footer"><button class="join-btn" id="joinBtn">Start call</button></div>
-    </section>
-
-    <!-- OUTGOING RINGING -->
-    <section class="callscreen" id="ringing">
-      <div class="topbar" style="position:absolute; top:0; left:0; right:0;"><span class="eyebrow">Outgoing call</span><span></span></div>
-      <div class="ring-center">
-        <div class="ring-wrap"><div class="ripple r1"></div><div class="ripple r2"></div><div class="ripple r3"></div><div class="avatar ring-avatar" id="ringAvatar" style="background:#7CFFB2;">··</div></div>
-        <div class="ring-name" id="ringName">—</div>
-        <div class="ring-status">ringing…</div>
-        <div class="scene-ready-note" id="sceneReadyNote" style="display:none;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Greenroom ready</div>
-        <div class="scene-ready-note" id="ringFallbackHint" style="display:none; cursor:pointer; background:none; border-color:var(--line); color:var(--text-dim);">Not picking up? Leave a voice signal instead</div>
-      </div>
-      <div class="ring-actions" style="justify-content:center;">
-        <button class="round-btn decline" id="cancelCall" aria-label="Cancel call"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.3 1.8.6 2.7a2 2 0 01-.4 2.1L8 9.9a16 16 0 006 6l1.4-1.3a2 2 0 012.1-.4c.9.3 1.8.5 2.7.6a2 2 0 011.8 2.1z" stroke="#0D0F17" stroke-width="2" transform="rotate(135 12 12)"/></svg></button>
-      </div>
-    </section>
-
-    <!-- ASYNC FALLBACK — when a call can't reasonably connect, degrade gracefully into Wireline
-         instead of ringing into nothing. Reachability decides this, same as everywhere else. -->
-    <section class="callscreen" id="asyncFallback">
-      <div class="topbar" style="position:absolute; top:0; left:0; right:0;"><span class="eyebrow" id="asyncEyebrow">No answer yet</span><span></span></div>
-      <div class="ring-center">
-        <div class="ring-wrap"><div class="avatar ring-avatar" id="asyncAvatar" style="background:#7CFFB2;">··</div></div>
-        <div class="ring-name" id="asyncName">—</div>
-        <div class="ring-status" id="asyncMessage">hasn't picked up</div>
-      </div>
-      <div style="padding:0 26px 30px; display:flex; flex-direction:column; gap:10px;">
-        <button class="join-btn" id="asyncLeaveVoiceBtn">Leave a voice signal</button>
-        <button class="join-btn" id="asyncSendTextBtn" style="background:var(--surface-2); color:var(--text); border:1px solid var(--line);">Send a message instead</button>
-        <button class="join-btn" id="asyncKeepRingingBtn" style="display:none; background:none; color:var(--text-dim); border:1px solid var(--line);">Keep ringing</button>
-        <button class="join-btn" id="asyncCancelBtn" style="background:none; color:var(--red); border:none;">Cancel call</button>
-      </div>
-    </section>
-
-    <!-- INCOMING CALL (Greenroom auto-preps before the person answers) -->
-    <section class="callscreen" id="incoming">
-      <div class="topbar" style="position:absolute; top:0; left:0; right:0;"><span class="eyebrow">Incoming call</span><span></span></div>
-      <div class="incoming-self" id="incomingSelf">
-        <video id="incomingSelfVideo" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;transform:scaleX(-1);"></video>
-        <div class="tag" id="incomingSelfTag">prepping…</div>
-      </div>
-      <div class="ring-center">
-        <div class="ring-wrap"><div class="ripple r1"></div><div class="ripple r2"></div><div class="ripple r3"></div><div class="avatar ring-avatar" id="incomingAvatar" style="background:#FFB86B;">MK</div></div>
-        <div class="ring-name" id="incomingName">—</div>
-        <div class="ring-status">incoming call…</div>
-        <div class="scene-ready-note" id="incomingSceneNote" style="display:none;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Your scene is set — answer whenever</div>
-      </div>
-      <div class="ring-actions">
-        <button class="round-btn decline" id="declineIncoming" aria-label="Decline call"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.3 1.8.6 2.7a2 2 0 01-.4 2.1L8 9.9a16 16 0 006 6l1.4-1.3a2 2 0 012.1-.4c.9.3 1.8.5 2.7.6a2 2 0 011.8 2.1z" stroke="#0D0F17" stroke-width="2" transform="rotate(135 12 12)"/></svg></button>
-        <button class="round-btn accept" id="acceptIncoming" aria-label="Accept call"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.3 1.8.6 2.7a2 2 0 01-.4 2.1L8 9.9a16 16 0 006 6l1.4-1.3a2 2 0 012.1-.4c.9.3 1.8.5 2.7.6a2 2 0 011.8 2.1z" stroke="#0D0F17" stroke-width="2"/></svg></button>
-      </div>
-    </section>
-
-    <!-- IN CALL -->
-    <section class="callscreen" id="incall">
-      <div class="remote-stage">
-        <video id="remoteVideo" autoplay playsinline webkit-playsinline style="display:none; position:absolute; inset:0; width:100%; height:100%; object-fit:cover; background:#0a0a0a;" disablePictureInPicture controlsList="nodownload nofullscreen noremoteplayback"></video>
-        <div class="remote-placeholder" id="remotePlaceholder" style="display:flex;"><div class="avatar remote-avatar" id="remoteAvatar" style="background:#7CFFB2;">··</div><span style="font-family:var(--font-futuristic); font-size:12px; letter-spacing:.06em;" id="remoteName">—</span></div>
-      </div>
-      <div class="incall-top">
-        <div class="call-info-pill"><span class="eyebrow live">Connected</span><span class="timer" id="callTimer">00:00</span></div>
-        <div style="display:flex; gap:8px;">
-          <div class="icon-btn" id="viewToggleBtn" role="button" aria-label="Toggle view size" title="Switch big / small view"><svg width="17" height="17" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" stroke-width="1.8"/><rect x="12" y="12" width="7" height="7" rx="1" fill="currentColor" opacity=".85"/></svg></div>
-          <div class="icon-btn" id="bgPickerBtn" role="button" aria-label="Choose live background"><svg width="17" height="17" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/><circle cx="9" cy="10" r="1.3" fill="currentColor"/><circle cx="14.5" cy="9" r="1.1" fill="currentColor"/><circle cx="15.5" cy="14" r="1.2" fill="currentColor"/><path d="M12 3a9 9 0 000 18c1.2 0 1.4-.9.9-1.6-.5-.7-.2-1.7.8-1.7H15a4 4 0 004-4c0-5.8-3.6-10.7-7-10.7z" stroke="currentColor" stroke-width="1.6"/></svg></div>
-          <div class="icon-btn" id="switchCam" role="button" aria-label="Switch camera"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 4v5h5M20 20v-5h-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M4.5 9A8 8 0 0119 8M19.5 15A8 8 0 015 16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
-        </div>
-      </div>
-      <div class="filter-chip-row" id="incallBgChipRow" style="display:flex; position:absolute; left:0; right:0; bottom:130px; z-index:6; padding:0 20px; margin:0;"></div>
-      <div class="waveform" id="waveform"></div>
-      <div class="local-pip" id="localPip">
-        <video id="pipRawVideo" autoplay playsinline muted style="display:none;"></video>
-        <canvas id="pipStageCanvas" style="position:absolute;inset:0;width:100%;height:100%;"></canvas>
-        <div class="signature-glow" id="pipSignatureGlow"></div>
-        <div class="mute-badge"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M12 15a3 3 0 003-3V6a3 3 0 10-6 0v6a3 3 0 003 3z" stroke="#fff" stroke-width="2.4"/><path d="M3 3l18 18" stroke="#fff" stroke-width="2.4"/></svg></div>
-      </div>
-      <div class="controls-bar">
-        <div class="ctrl" id="micBtn" role="button" aria-label="Mute microphone"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 15a3 3 0 003-3V6a3 3 0 10-6 0v6a3 3 0 003 3z" stroke="currentColor" stroke-width="2"/><path d="M19 11a7 7 0 01-14 0M12 19v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
-        <div class="ctrl" id="camBtn" role="button" aria-label="Turn camera off"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M15 8L21 5V19L15 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><rect x="3" y="6" width="12" height="12" rx="2" stroke="currentColor" stroke-width="2"/></svg></div>
-        <div class="ctrl end" id="endBtn" role="button" aria-label="End call"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.3 1.8.6 2.7a2 2 0 01-.4 2.1L8 9.9a16 16 0 006 6l1.4-1.3a2 2 0 012.1-.4c.9.3 1.8.5 2.7.6a2 2 0 011.8 2.1z" stroke="#fff" stroke-width="2.2" transform="rotate(135 12 12)"/></svg></div>
-        <div class="ctrl" id="chatBtn" role="button" aria-label="Open chat"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M21 11.5a8.4 8.4 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.4 8.4 0 01-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.4 8.4 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg></div>
-      </div>
-    </section>
-  </div>
-
-  <!-- ===================== BROADCAST VIEWER ===================== -->
-  <div class="call-overlay" id="bviewer">
-    <div class="bviewer-bars" id="bviewerBars"></div>
-    <div class="bviewer-head">
-      <div class="avatar" id="bviewerAvatar" style="width:34px;height:34px;font-size:12px;background:#7CFFB2;">··</div>
-      <div><div style="font-size:13px;font-weight:600;" id="bviewerName">—</div><div style="font-size:11px;color:var(--text-dim);font-family:var(--font-mono);" id="bviewerTime"></div></div>
-      <div id="bviewerStatus" style="display:none; margin-left:10px; font-size:10.5px; font-family:var(--font-mono); color:var(--mint); border:1px solid rgba(124,255,178,.3); background:rgba(124,255,178,.08); padding:4px 9px; border-radius:999px;">Strong signal</div>
-      <div style="margin-left:auto; display:flex; gap:8px; align-items:center;">
-        <div class="bviewer-close" id="bviewerMessage" style="display:none;" title="Message" aria-label="Message this person"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M4 12h4l2-6 4 12 2-6h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-        <button type="button" id="bviewerRemove" title="Delete this Signal" aria-label="Delete this Signal">Delete</button>
-        <div class="bviewer-close" id="bviewerClose" role="button" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
-      </div>
-    </div>
-    <div class="bviewer-body" id="bviewerBody"><div class="avatar" id="bviewerBig" style="width:140px;height:140px;font-size:44px;background:#7CFFB2;">··</div></div>
-    <div class="bviewer-tap-zone left" id="bviewerPrevZone"></div>
-    <div class="bviewer-tap-zone right" id="bviewerNextZone"></div>
-  </div>
-
-  <!-- ===================== BROADCAST COMPOSER ===================== -->
-
-  <!-- ===================== BROADCAST COMPOSER (dedicated — not Signal) ===================== -->
-  <div class="call-overlay" id="bcomposer">
-    <div class="topbar" style="padding-top:calc(env(safe-area-inset-top,0px) + 12px);">
-      <div class="back-btn" id="bcompClose" role="button" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
-      <div style="flex:1;min-width:0;">
-        <div style="font-weight:700;font-family:var(--font-futuristic);font-size:14px;">New Broadcast</div>
-        <div style="font-size:11px;color:var(--text-dim);font-family:var(--font-mono);">Permanent · up to 3 hours · chapters if longer than 4 min</div>
-      </div>
-    </div>
-    <div class="tab-scroll" style="padding:14px 18px 32px;">
-      <div style="display:flex;gap:8px;margin:0 0 12px;flex-wrap:wrap;">
-        <div id="bcompPickWrap" style="flex:1;min-width:140px;position:relative;overflow:hidden;border-radius:999px;">
-          <div class="join-btn" id="bcompPickBtn" style="margin:0;width:100%;background:rgba(124,255,178,.12);color:var(--mint);border:1px solid rgba(124,255,178,.35);pointer-events:none;">Choose video or photo</div>
-          <input type="file" id="bcompFileInput" accept="video/*,video/mp4,video/quicktime,video/webm,video/x-matroska,video/3gpp,image/jpeg,image/png,image/webp,image/*,.mp4,.mov,.webm,.m4v,.3gp,.mkv,.avi,.mpg,.mpeg,.ogv,.ts,.hevc,.jpg,.jpeg,.png,.webp" style="position:absolute;inset:0;width:100%;height:100%;opacity:0.01;font-size:18px;cursor:pointer;z-index:2;" />
-        </div>
-        <button type="button" id="bcompGoLiveBtn" class="join-btn" style="flex:1;min-width:120px;margin:0; background:rgba(255,84,112,.15); color:#ff8a9a; border:1px solid rgba(255,84,112,.45);">Go live</button>
-      </div>
-      <div class="lobby-sub" style="margin:0 0 12px;text-align:left;max-width:none;">Upload a video/photo, or <strong style="color:var(--text);">Go live</strong> now — same Broadcast space & community. When live ends, it is saved as a live chapter. Videos longer than 4 minutes become chapters.</div>
-      <div id="bcompPreview" style="margin-bottom:12px;"></div>
-      <div id="bcompProgress" style="display:none;font-family:var(--font-mono);font-size:11px;color:var(--mint);margin:0 0 8px;"></div>
-      <div id="bcompStatus" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);margin:0 0 14px;"></div>
-      <div class="section-label" style="padding-left:2px;">Strand</div>
-      <div class="lobby-sub" style="margin:0 0 8px;">Related Broadcasts live on a Strand. Pick one you already keep, or name a new one.</div>
-      <select id="bcompStrand" style="width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:13px;">
-        <option value="">New Strand</option>
-      </select>
-      <input id="bcompStrandName" maxlength="48" placeholder="Name this Strand — Café craft" style="width:100%;margin-bottom:12px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:13px;font-family:inherit;" />
-      <div id="bcompOrigin" style="display:none;margin:0 0 14px;padding:12px 14px;border-radius:14px;border:1px solid var(--line);background:rgba(23,26,38,.9);"></div>
-
-      <input id="bcompTitle" maxlength="120" placeholder="Broadcast title (required)" style="width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:14px;font-family:inherit;" />
-      <input id="bcompTags" maxlength="120" placeholder="Topics (comma separated)" style="width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:13px;font-family:inherit;" />
-      <textarea id="bcompDesc" maxlength="2000" rows="3" placeholder="What is this Broadcast about? (optional)" style="width:100%;margin-bottom:14px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:13px;font-family:inherit;resize:vertical;"></textarea>
-      <button type="button" class="join-btn" id="bcompPublishBtn" style="margin:0;">Publish Broadcast</button>
-    </div>
-  </div>
-
-  <div class="call-overlay" id="composer">
-    <div class="topbar" style="padding-top:20px;">
-      <div class="back-btn" id="composerClose" role="button" aria-label="Close composer"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
-      <div style="flex:1;min-width:0;">
-        <div style="font-weight:700;font-family:var(--font-futuristic);font-size:14px;" id="composerModeLabel">New Signal</div>
-        <div style="font-size:11px;color:var(--text-dim);font-family:var(--font-mono);" id="composerModeHint">Ephemeral · 24h to 7 days · not a Broadcast</div>
-      </div>
-      <span class="eyebrow">New broadcast</span>
-      <span style="width:36px;"></span>
-    </div>
-    <div class="tab-scroll" style="padding:16px 20px 24px;">
-      <div class="type-chip-row">
-        <button class="type-chip active" data-type="photo">Photo</button>
-        <button class="type-chip" data-type="video">Video</button>
-        <button class="type-chip" data-type="text">Text</button>
-      </div>
-
-      <div id="mediaComposer">
-        <div class="upload-drop" id="uploadDrop">
-          <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M12 16V4M12 4l-4 4M12 4l4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-          <span id="uploadDropLabel">Choose photos from your library</span>
-          <input type="file" id="mediaFileInput" accept="image/jpeg,image/png,image/webp,image/*,.jpg,.jpeg,.png,.webp" multiple />
-        </div>
-
-        <div class="filmstrip" id="filmstrip" style="display:none;"></div>
-
-        <div class="upload-preview" id="uploadPreview" style="display:none;">
-          <img id="previewImg" style="display:none;" />
-          <video id="previewVideo" style="display:none;" muted playsinline></video>
-          <div class="preview-actions">
-            <div class="ghost-btn" id="adjustBtn" title="Adjust" aria-label="Adjust photo" style="background:rgba(13,15,23,.75);">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M6 2v14a2 2 0 002 2h14M18 22V8a2 2 0 00-2-2H2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </div>
-            <div class="ghost-btn" id="clearMediaBtn" title="Remove" aria-label="Remove media" style="background:rgba(13,15,23,.75);">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-            </div>
-          </div>
-        </div>
-
-        <div class="filter-chip-row" id="filterChipRow" style="display:none;"></div>
-
-        <div id="transitionSection" style="display:none;">
-          <div class="section-label" style="padding-left:2px;">Transition between clips</div>
-          <div class="transition-chip-row" id="transitionChipRow"></div>
-        </div>
-
-        <textarea class="composer-caption" id="captionInput" rows="2" placeholder="Add a caption (optional)"></textarea>
-      </div>
-
-      <div id="textComposer" style="display:none;">
-        <div class="swatch-row" id="textBgRow" style="margin-bottom:14px;"></div>
-        <div class="text-compose-preview" id="textComposePreview">
-          <textarea id="textBroadcastInput" placeholder="What's happening?" maxlength="180"></textarea>
-        </div>
-      </div>
-
-      <div id="signalTtlRow" style="margin-top:14px;">
-        <!-- 3-day / 7-day chips removed on purpose (20260829): the naluno-signal
-             R2 bucket has a hard 25-hour object lifecycle rule, so a Signal set
-             to 3 or 7 days kept existing in Firestore while its actual video
-             file was deleted at ~25h — the "Signal stops working before the set
-             days" bug. Restore these two chips the moment that bucket's
-             lifecycle rule is extended to 168 hours; nothing else needs to
-             change, signalTtlMs() already supports 72 and 168. -->
-        <div class="section-label" style="padding-left:2px;">Lives for</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button type="button" class="ttl-chip on" data-ttl="24">24 hours</button>
-        </div>
-        <div class="lobby-sub" style="text-align:left;max-width:none;margin-top:6px;font-size:11.5px;">Longer options are coming back soon.</div>
-      </div>
-      <div id="broadcastFields" style="display:none;margin-top:14px;">
-        <input id="bcastTitleInput" maxlength="120" placeholder="Broadcast title" style="width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:14px;font-family:inherit;" />
-        <input id="bcastTagsInput" maxlength="120" placeholder="Topics (comma separated)" style="width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:13px;font-family:inherit;" />
-        <div style="font-size:11px;color:var(--text-dim);font-family:var(--font-mono);margin-bottom:4px;">Permanent — searchable, shareable, community-backed</div>
-      </div>
-      <div id="signalLinkBroadcastRow" style="display:none;margin-top:10px;">
-        <div class="section-label" style="padding-left:2px;">Optional · attach to a Broadcast</div>
-        <select id="signalLinkBroadcast" style="width:100%;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:13px;">
-          <option value="">None — standalone Signal</option>
-        </select>
-      </div>
-      <button type="button" class="join-btn" id="postBroadcastBtn" style="margin-top:18px;">Post Signal</button>
-    </div>
-  </div>
-
-  <!-- ===================== ADJUST (crop/pan/zoom) ===================== -->
-  <div class="call-overlay" id="adjustOverlay">
-    <div class="topbar" style="padding-top:20px;">
-      <span class="eyebrow" id="adjustTitle">Adjust</span>
-    </div>
-    <div class="tab-scroll" style="padding:14px 20px 24px; display:flex; flex-direction:column;">
-      <div class="adjust-stage" id="adjustStage">
-        <img id="adjustImg" style="display:none;" draggable="false" />
-        <video id="adjustVideo" style="display:none;" muted loop playsinline></video>
-      </div>
-      <div class="adjust-controls">
-        <div class="adjust-zoom-row">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" style="color:var(--text-dim); flex-shrink:0;"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/></svg>
-          <input type="range" id="adjustZoom" min="100" max="250" value="100" />
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="color:var(--text-dim); flex-shrink:0;"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/></svg>
-        </div>
-        <div class="lobby-sub" style="margin-top:10px;">Drag to reposition, use the slider to zoom</div>
-        <div class="adjust-actions">
-          <button id="adjustCancel">Cancel</button>
-          <button class="primary" id="adjustSave">Save adjustment</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ===================== TRIM (long/large video) ===================== -->
-  <div class="call-overlay" id="trimOverlay">
-    <div class="topbar" style="padding-top:20px;">
-      <span class="eyebrow">Trim video</span>
-    </div>
-    <div class="tab-scroll" style="padding:14px 20px 24px; display:flex; flex-direction:column;">
-      <div class="adjust-stage" id="trimStage">
-        <video id="trimPreviewVideo" muted playsinline style="width:100%; height:100%; object-fit:cover; transform:translate(-50%,-50%);"></video>
-        <div id="trimPreviewPlayBtn" role="button" aria-label="Preview with sound" style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:56px; height:56px; border-radius:50%; background:rgba(13,15,23,.7); backdrop-filter:blur(6px); border:1px solid var(--line); display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:5;">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="var(--mint)"/></svg>
-        </div>
-        <div id="trimProgressOverlay" style="display:none; position:absolute; inset:0; background:rgba(13,15,23,.85); align-items:center; justify-content:center; flex-direction:column; gap:10px;">
-          <div class="greenroom-pill ready" style="position:static;"><span class="swirl"></span><span id="trimProgressLabel">Preparing clip… 0%</span></div>
-        </div>
-      </div>
-      <div id="trimFilterRow" class="filter-chip-row" style="padding-top:12px;"></div>
-      <div class="adjust-controls">
-        <div class="lobby-sub" id="trimRangeLabel" style="margin-top:10px; text-align:center;">0:00 – 0:00</div>
-        <div style="padding:14px 4px 0;">
-          <label style="font-family:var(--font-mono); font-size:11px; color:var(--text-dim); letter-spacing:.06em; text-transform:uppercase;">Start</label>
-          <input type="range" id="trimStartSlider" min="0" max="1000" value="0" style="width:100%; accent-color:var(--mint); margin-top:4px;" />
-          <label style="font-family:var(--font-mono); font-size:11px; color:var(--text-dim); letter-spacing:.06em; text-transform:uppercase; margin-top:10px; display:block;">End</label>
-          <input type="range" id="trimEndSlider" min="0" max="1000" value="1000" style="width:100%; accent-color:var(--mint); margin-top:4px;" />
-        </div>
-        <div class="lobby-sub" id="trimAutoSplitNote" style="margin-top:12px;"></div>
-        <div class="adjust-actions" style="flex-wrap:wrap;">
-          <button id="trimCancel">Cancel</button>
-          <button id="trimAutoSplitBtn">Split into parts instead</button>
-          <button class="primary" id="trimSave" style="flex:1 1 100%;">Use this clip</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ===================== WIRELINE THREAD (conversation) ===================== -->
-  <div class="call-overlay" id="wirelineThread">
-    <div class="topbar" style="padding-top:20px; align-items:center; gap:10px;">
-      <div class="back-btn" id="threadBack" role="button" aria-label="Back to Wireline"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-      <div style="display:flex; align-items:center; gap:10px; flex:1; min-width:0;">
-        <div class="avatar" id="threadAvatar" style="width:36px;height:36px;font-size:13px;flex-shrink:0;">AO</div>
-        <div style="min-width:0;">
-          <div style="font-weight:600; font-size:14.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" id="threadName">Name</div>
-          <div style="font-size:11px; color:var(--text-dim); font-family:var(--font-mono);" id="threadStatus">Strong signal</div>
-        </div>
-      </div>
-      <button type="button" class="ghost-btn" id="threadClearBtn" aria-label="Clear chat on your side" title="Clear your side"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2m2 0v13a2 2 0 01-2 2H9a2 2 0 01-2-2V7h10z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-      <div class="ghost-btn" id="threadCallBtn" role="button" aria-label="Call"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.3 1.8.6 2.7a2 2 0 01-.4 2.1L8 9.9a16 16 0 006 6l1.4-1.3a2 2 0 012.1-.4c.9.3 1.8.5 2.7.6a2 2 0 011.8 2.1z" stroke="currentColor" stroke-width="1.8"/></svg></div>
-    </div>
-    <div id="threadMessages" style="flex:1; overflow-y:auto; padding:16px 16px 8px; display:flex; flex-direction:column; gap:10px;"></div>
-    <audio id="threadAudioPlayer" style="display:none;"></audio>
-    <div style="padding:10px 14px calc(env(safe-area-inset-bottom,0px) + 14px); border-top:1px solid var(--line); background:rgba(13,15,23,.92); backdrop-filter:blur(10px);">
-      <div id="threadComposerNormal" style="display:flex; gap:9px; align-items:flex-end;">
-        <span class="naluno-pick-wrap ghost-btn" id="threadSlipBtn" aria-label="Send a photo or video" title="Photo or video" style="flex-shrink:0;position:relative;overflow:hidden;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="pointer-events:none;"><rect x="4" y="5" width="16" height="14" rx="3" stroke="currentColor" stroke-width="1.8"/><circle cx="9" cy="10" r="1.6" fill="currentColor"/><path d="M7 16l3.2-3.4 2.3 2.2L16.5 11 20 16" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
-          <input type="file" id="threadSlipInput" accept="image/jpeg,image/png,image/webp,image/*,video/*,video/mp4,video/quicktime,video/webm,.jpg,.jpeg,.png,.webp,.mp4,.mov,.webm,.mkv,.avi,.3gp" style="position:absolute;inset:0;width:100%;height:100%;opacity:0.01;font-size:16px;cursor:pointer;z-index:2;" />
-        </span>
-        <span class="naluno-pick-wrap ghost-btn" id="threadDocBtn" aria-label="Send a document" title="Document" style="flex-shrink:0;position:relative;overflow:hidden;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="pointer-events:none;"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8l-5-5z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M14 3v5h5" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
-          <input type="file" id="threadDocInput" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.rtf,.zip,application/pdf" style="position:absolute;inset:0;width:100%;height:100%;opacity:0.01;font-size:16px;cursor:pointer;z-index:2;" />
-        </span>
-        <div class="ghost-btn" id="threadMoodBtn" role="button" aria-label="Send a feeling instead of words" style="flex-shrink:0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="12" cy="12" r="4.5" stroke="currentColor" stroke-width="1.6"/></svg></div>
-        <textarea id="threadInput" rows="1" placeholder="Send a signal…" style="flex:1; resize:none; background:var(--surface); border:1px solid var(--line); border-radius:20px; padding:11px 16px; color:var(--text); font-size:14px; outline:none; max-height:120px; font-family:inherit;"></textarea>
-        <div class="ghost-btn" id="threadMicBtn" role="button" aria-label="Record a voice note" style="flex-shrink:0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 15a3 3 0 003-3V6a3 3 0 10-6 0v6a3 3 0 003 3z" stroke="currentColor" stroke-width="2"/><path d="M19 11a7 7 0 01-14 0M12 19v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
-        <div class="ghost-btn" id="threadSendBtn" role="button" aria-label="Send message" style="display:none; background:var(--mint); border-color:var(--mint); color:#0D0F17; flex-shrink:0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" stroke="#0D0F17" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-      </div>
-      <div id="threadComposerMood" style="display:none; gap:8px; overflow-x:auto; padding:2px 0;"></div>
-      <div id="threadComposerRecording" style="display:none; align-items:center; gap:10px;">
-        <div class="ghost-btn" id="voiceCancelBtn" role="button" aria-label="Discard recording" style="background:var(--red); border-color:var(--red); color:#fff; flex-shrink:0;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2m2 0v13a2 2 0 01-2 2H9a2 2 0 01-2-2V7h10z" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-        <div class="recording-dot"></div>
-        <div class="recording-timer" id="recordingTimer">0:00</div>
-        <div class="waveform" id="recordingWaveform" style="position:static; flex:1; height:22px;"></div>
-        <div class="ghost-btn" id="voiceConfirmBtn" role="button" aria-label="Send voice note" style="background:var(--mint); border-color:var(--mint); color:#0D0F17; flex-shrink:0;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="#0D0F17" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ===================== BAND ROOM (live shared frequency) ===================== -->
-  <div class="call-overlay" id="bandRoom">
-    <canvas id="bandBgCanvas" style="position:absolute; inset:0; width:100%; height:100%;"></canvas>
-    <div style="position:relative; z-index:2; display:flex; flex-direction:column; height:100%;">
-      <div class="topbar" style="padding-top:20px; align-items:center; gap:10px;">
-        <div class="back-btn" id="bandRoomBack" role="button" aria-label="Leave frequency view"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-        <div style="flex:1; min-width:0;">
-          <div style="font-weight:700; font-family:var(--font-futuristic); font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" id="bandRoomName">—</div>
-          <div style="font-size:11px; font-family:var(--font-mono); color:var(--mint);" id="bandRoomLiveCount">Quiet right now</div>
-        </div>
-        <button id="bandTuneBtn" style="padding:9px 16px; border-radius:999px; border:none; background:var(--mint); color:#0D0F17; font-family:var(--font-futuristic); font-weight:700; font-size:11.5px; letter-spacing:.05em; text-transform:uppercase; cursor:pointer; flex-shrink:0;">Tune in</button>
-      </div>
-      <div id="bandRoster" style="display:flex; gap:14px; padding:10px 16px 4px; overflow-x:auto; flex-shrink:0;"></div>
-      <div id="bandLiveFloat" class="band-live-float" style="display:none; right:16px; bottom:160px;"><div class="grip"></div><video id="bandLiveFloatVideo" autoplay playsinline muted></video><div class="live-tag">LIVE</div></div>
-      <div id="bandLiveStage" style="display:none; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; padding:6px 12px 8px; max-height:42vh; overflow-y:auto; flex-shrink:0;"></div>
-      <div style="padding:4px 16px 6px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; flex-shrink:0;">
-        <span id="bandSettleNote" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(124,255,178,.75); flex:1; min-width:140px;">Band · messages clear 2h after the last person leaves</span>
-        <span id="bandCopyLinkBtn" role="button" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(255,255,255,.55); cursor:pointer; text-decoration:underline; text-underline-offset:2px; white-space:nowrap;">Copy link</span>
-        <span id="bandInviteBtn" role="button" style="font-family:var(--font-mono); font-size:10.5px; color:var(--mint); cursor:pointer; text-decoration:underline; text-underline-offset:2px; white-space:nowrap;">Invite</span>
-        <span id="bandBellBtn" role="button" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(255,255,255,.55); cursor:pointer; text-decoration:underline; text-underline-offset:2px; white-space:nowrap;">Ring</span>
-        <span id="leaveBandForGoodLink" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(255,255,255,.35); cursor:pointer; text-decoration:underline; text-underline-offset:2px; white-space:nowrap;">Leave band</span>
-      </div>
-      <div id="bandMessages" style="flex:1; overflow-y:auto; padding:10px 16px; display:flex; flex-direction:column; gap:10px; min-height:100px;"></div>
-      <div style="padding:10px 12px calc(env(safe-area-inset-bottom,0px) + 12px); display:flex; flex-direction:column; gap:8px; border-top:1px solid rgba(255,255,255,.08); background:rgba(13,15,23,.6); backdrop-filter:blur(12px);">
-        <div style="display:flex; gap:8px; align-items:center;">
-          <input id="bandInput" placeholder="Say something in the moment…" style="flex:1; background:rgba(23,26,38,.8); border:1px solid var(--line); border-radius:20px; padding:11px 16px; color:var(--text); font-size:14px; outline:none; font-family:inherit;" />
-          <div class="ghost-btn" id="bandSendBtn" role="button" aria-label="Send" style="background:var(--mint); border-color:var(--mint); color:#0D0F17; flex-shrink:0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" stroke="#0D0F17" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-        </div>
-        <div style="display:flex; gap:8px; justify-content:center;">
-          <button type="button" id="bandVoiceBtn" title="Voice note" style="display:none !important;">Voice</button>
-          <button type="button" id="bandAudioBtn" title="Record audio for the Band" style="flex:1; max-width:140px; padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.2); background:rgba(13,15,23,.55); color:#fff; font-family:var(--font-mono); font-size:11px; cursor:pointer;">Record audio</button>
-          <button type="button" id="bandLiveBtn" title="Record video for the Band" style="flex:1; max-width:120px; padding:10px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.2); background:rgba(13,15,23,.55); color:#fff; font-family:var(--font-mono); font-size:11px; cursor:pointer;">Record video</button>
-        </div>
-      </div>
-      <div id="bandRecordBar" style="display:none; position:absolute; left:12px; right:12px; bottom:120px; z-index:8; padding:12px 14px; border-radius:16px; background:rgba(13,15,23,.92); border:1px solid rgba(255,80,80,.4); backdrop-filter:blur(12px);">
-        <div style="display:flex; align-items:center; gap:10px;">
-          <div class="recording-dot"></div>
-          <span id="bandRecordLabel" style="font-family:var(--font-mono); font-size:12px; color:#fff; flex:1;">Recording…</span>
-          <span id="bandRecordTimer" style="font-family:var(--font-mono); font-size:13px; color:var(--mint);">0:00</span>
-          <button type="button" id="bandRecordStopBtn" style="padding:8px 14px; border-radius:999px; border:none; background:var(--red); color:#fff; font-family:var(--font-mono); font-size:11px; cursor:pointer;">Stop & send</button>
-        </div>
-        <video id="bandRecordPreview" autoplay playsinline muted style="display:none; width:100%; max-height:180px; margin-top:10px; border-radius:12px; object-fit:cover; background:#000;"></video>
-      </div>
-    </div>
-  </div>
-
-  <!-- ===================== NEW FREQUENCY (create a Band) ===================== -->
-  <div class="call-overlay" id="bandComposer">
-    <div class="topbar" style="padding-top:20px;">
-      <div class="back-btn" id="bandComposerClose" role="button" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
-      <span class="eyebrow">New Band</span>
-      <span style="width:36px;"></span>
-    </div>
-    <div class="tab-scroll" style="padding:16px 20px 24px;">
-      <div style="font-size:12.5px; color:var(--text-dim); margin:0 0 14px; line-height:1.45;">A Band has no owner — even you can’t delete it. Messages clear 2 hours after the last person leaves.</div>
-      <div class="field" style="padding:0 0 16px;"><label>Name</label><input id="bandNameInput" placeholder="Name this Band" /></div>
-      <div class="section-label" style="padding:0 0 8px;">Vibe</div>
-      <div class="filter-chip-row" id="bandVibeChipRow" style="padding:0 0 16px;"></div>
-      <div class="section-label" style="padding:0 0 8px;">Who can tune in</div>
-      <div id="bandMemberPicker"></div>
-      <button class="join-btn" id="createBandBtn" style="margin-top:20px;" disabled>Start Band</button>
-    </div>
-  </div>
-
-  <!-- ===================== BAND INVITE (text or video) ===================== -->
-  <div class="call-overlay" id="bandInviteSheet">
-    <div class="topbar" style="padding-top:20px;">
-      <div class="back-btn" id="bandInviteClose" role="button" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
-      <span class="eyebrow">Invite to Band</span>
-      <span style="width:36px;"></span>
-    </div>
-    <div class="tab-scroll" style="padding:16px 20px 24px;">
-      <div style="font-size:12.5px; color:var(--text-dim); margin:0 0 12px; line-height:1.45;">Invite a connection into <strong id="bandInviteBandName">this Band</strong> — by text, or start a video call.</div>
-      <div id="bandInvitePicker"></div>
-    </div>
-  </div>
-
-  <!-- ===================== EMOTION WHEEL ===================== -->
-  <div class="emotion-wheel-backdrop" id="emotionWheelBackdrop">
-    <div class="emotion-wheel" id="emotionWheel">
-      <div class="emotion-wheel-center">How did<br>that land?</div>
-    </div>
-  </div>
-
-  <!-- ===================== FIND PEOPLE ===================== -->
-  <div class="call-overlay" id="findPeopleOverlay">
-    <div class="topbar" style="padding-top:20px;">
-      <div class="back-btn" id="findPeopleClose" role="button" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
-      <span class="eyebrow">Find people</span>
-      <span style="width:36px;"></span>
-    </div>
-    <div class="tab-scroll" style="padding:16px 20px 24px;">
-      <div class="field" style="padding:0 0 8px;">
-        <label>Handle</label>
-        <input id="findHandleInput" placeholder="@theirhandle" />
-      </div>
-      <button class="join-btn" id="findHandleBtn" style="margin-top:8px;">Search</button>
-      <div id="findPeopleResult" style="margin-top:22px;"></div>
-    </div>
-  </div>
-
-  <div class="toast" id="toast"></div>
-  <div id="bgProcessBanner" style="display:none; position:fixed; left:12px; right:12px; bottom:88px; z-index:500; background:rgba(13,15,23,.94); backdrop-filter:blur(10px); border:1px solid var(--line); border-radius:14px; padding:12px 16px; align-items:center; gap:10px; font-family:var(--font-mono); font-size:12.5px; color:var(--text); overflow:hidden;">
-    <div id="bgProcessFill" style="position:absolute; inset:0; width:0%; background:linear-gradient(90deg, rgba(124,255,178,.32), rgba(124,255,178,.14)); transition:width .35s ease; z-index:0;"></div>
-    <div class="greenroom-pill ready" style="position:relative; z-index:1; width:100%; justify-content:flex-start; background:transparent; border:none; padding:0;"><span class="swirl"></span><span id="bgProcessLabel">Preparing video… 0%</span></div>
-  </div>
-  <div id="updateBanner" style="position:absolute; left:10px; right:10px; bottom:calc(env(safe-area-inset-bottom,0px) + 78px); z-index:90; background:var(--mint); color:#0D0F17; border-radius:16px; padding:13px 16px; display:none; align-items:center; justify-content:space-between; gap:10px; box-shadow:0 10px 30px rgba(0,0,0,.4);">
-    <span style="font-size:13px; font-weight:600;">A new version of Naluno is ready</span>
-    <button id="updateBannerBtn" style="background:#0D0F17; color:var(--mint); border:none; border-radius:999px; padding:8px 16px; font-weight:700; font-size:12.5px; font-family:var(--font-body); cursor:pointer; flex-shrink:0;">Update</button>
+    <div id="ccStrip" class="cc-strip"></div>
+    <nav class="admin-tabs" id="adminTabs" role="tablist">
+      <button type="button" class="atab on" data-tab="overview" role="tab">Overview</button>
+      <button type="button" class="atab" data-tab="health" role="tab">Health</button>
+      <button type="button" class="atab" data-tab="alerts" role="tab">Alerts</button>
+      <button type="button" class="atab" data-tab="users" role="tab">Users</button>
+      <button type="button" class="atab" data-tab="broadcast" role="tab">Broadcast</button>
+      <button type="button" class="atab" data-tab="signals" role="tab">Signals</button>
+      <button type="button" class="atab" data-tab="journey" role="tab">Journey</button>
+      <button type="button" class="atab" data-tab="creators" role="tab">Creators</button>
+      <button type="button" class="atab" data-tab="toga" role="tab">Toga</button>
+      <button type="button" class="atab" data-tab="community" role="tab">Community</button>
+      <button type="button" class="atab" data-tab="trust" role="tab">Trust</button>
+      <button type="button" class="atab" data-tab="economy" role="tab">Economy</button>
+      <button type="button" class="atab" data-tab="support" role="tab">Support</button>
+      <button type="button" class="atab" data-tab="money" role="tab">Money</button>
+      <button type="button" class="atab" data-tab="content" role="tab">Content Hub</button>
+      <button type="button" class="atab" data-tab="analytics" role="tab">Analytics</button>
+      <button type="button" class="atab" data-tab="notifications" role="tab">Notify</button>
+      <button type="button" class="atab" data-tab="search" role="tab">Search</button>
+      <button type="button" class="atab" data-tab="flags" role="tab">Flags</button>
+      <button type="button" class="atab" data-tab="audit" role="tab">Audit</button>
+    </nav>
+    <div id="adminBody"></div>
   </div>
 </div>
-
-
-  <!-- ===================== BROADCAST SPACE (living community) ===================== -->
-  <div class="bspace" id="bspace">
-    <div class="bspace-scroll" id="bspaceScroll">
-      <div class="bspace-hero" id="bspaceHero">
-        <div class="bspace-topbar">
-          <div class="back-btn" id="bspaceBack" role="button" aria-label="Back" style="background:rgba(13,15,23,.55);"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-          <div style="flex:1; min-width:0;">
-            <div style="font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" id="bspaceCreatorName">—</div>
-            <div style="font-size:11px; font-family:var(--font-mono); color:rgba(255,255,255,.65);" id="bspaceCreatorMeta">Broadcast</div>
-          </div>
-          <button type="button" class="bspace-mini" id="bspaceShareBtn" title="Copy link">Share</button>
-          <button type="button" class="bspace-mini" id="bspaceReportBtn" title="Report this Broadcast or creator">Report</button>
-          <button type="button" class="bspace-mini" id="bspaceDeleteBtn" style="display:none;color:#ff8a8a;">Delete</button>
-          <button type="button" class="bspace-mini" id="bspaceGoLive" style="display:none;">Go live</button>
-        </div>
-        <div id="bspaceLiveBadge" style="display:none;position:absolute;left:12px;bottom:12px;z-index:3;font-family:var(--font-mono);font-size:10px;background:var(--red);color:#fff;padding:4px 10px;border-radius:999px;letter-spacing:.04em;">LIVE</div>
-        <div id="bspaceMedia" style="width:100%;height:100%;"></div>
-      </div>
-      <div class="bspace-body">
-        <h1 class="bspace-title" id="bspaceTitle">—</h1>
-        <p class="bspace-desc" id="bspaceDesc"></p>
-        <div class="bspace-tags" id="bspaceTags"></div>
-        <div id="bspaceViewRow" class="bspace-view-row" style="display:none;"></div>
-        <button type="button" class="bspace-join" id="bspaceJoinBtn">+ Circle</button>
-        <div id="bspaceStrandRow" style="display:none;margin:10px 0 14px;padding:12px;border:1px solid var(--line);border-radius:16px;background:var(--surface);">
-          <div class="hint" style="margin-bottom:8px;">Add this published Broadcast to a Strand — related rooms are suggested from the Strand you pick.</div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-            <select id="bspaceStrandPick" style="flex:1;min-width:140px;min-height:40px;border-radius:12px;border:1px solid var(--line);background:var(--surface-2);color:var(--text);padding:0 10px;"></select>
-            <input id="bspaceStrandNew" placeholder="or new Strand name" maxlength="48" style="flex:1;min-width:140px;min-height:40px;border-radius:12px;border:1px solid var(--line);background:var(--surface-2);color:var(--text);padding:0 10px;" />
-            <button type="button" class="bspace-mini primary" id="bspaceStrandSave">Save Strand</button>
-          </div>
-        </div>
-
-        <div class="bspace-tabs" id="bspaceTabs">
-          <button type="button" class="bspace-tab on" data-bspan="conversation">Conversation</button>
-          <button type="button" class="bspace-tab" data-bspan="questions">Questions</button>
-          <button type="button" class="bspace-tab" data-bspan="results">Results</button>
-          <button type="button" class="bspace-tab" data-bspan="resources">Resources</button>
-          <button type="button" class="bspace-tab" data-bspan="journey">Journey</button>
-          <button type="button" class="bspace-tab" data-bspan="updates" id="bspaceUpdatesTab" style="display:none;">Updates</button>
-        </div>
-
-        <div class="bspace-panel" id="bspan-conversation">
-          <div class="bspace-section">
-            <h3>Continue the conversation</h3>
-            <p class="hint">Chat about this Broadcast. Type a message, leave a short voice note, or share a photo.</p>
-            <div id="bspaceConversation"></div>
-            <div class="bspace-composer">
-              <input id="bspaceConvInput" placeholder="Write a message…" maxlength="800" />
-              <button type="button" class="bspace-mini primary" id="bspaceConvSend">Send</button>
-              <button type="button" class="bspace-mini" id="bspaceConvVoice">Voice</button>
-              <span id="bspaceConvPhotoWrap" style="position:relative;display:inline-flex;overflow:hidden;">
-                <button type="button" class="bspace-mini" id="bspaceConvPhoto" style="pointer-events:none;">Photo</button>
-                <input type="file" id="bspaceConvPhotoInput" accept="image/jpeg,image/png,image/webp,image/*,.jpg,.jpeg,.png,.webp" style="position:absolute;inset:0;width:100%;height:100%;opacity:0.01;font-size:18px;cursor:pointer;z-index:2;" />
-              </span>
-            </div>
-          </div>
-        </div>
-        <div class="bspace-panel" id="bspan-questions" style="display:none;">
-          <div class="bspace-section">
-            <h3>Questions</h3>
-            <p class="hint">Ask the creator or the community. Answers stay here so others can learn from them too.</p>
-            <div id="bspaceQuestions"></div>
-            <div class="bspace-composer">
-              <input id="bspaceQInput" placeholder="Ask a question…" maxlength="400" />
-              <button type="button" class="bspace-mini primary" id="bspaceQSend">Ask</button>
-            </div>
-          </div>
-        </div>
-        <div class="bspace-panel" id="bspan-results" style="display:none;">
-          <div class="bspace-section">
-            <h3>Results</h3>
-            <p class="hint">Tried something from this Broadcast? Share what happened for you.</p>
-            <div id="bspaceResults"></div>
-            <div class="bspace-composer">
-              <input id="bspaceResultInput" placeholder="I tried this and…" maxlength="400" />
-              <button type="button" class="bspace-mini primary" id="bspaceResultSend">Share result</button>
-            </div>
-          </div>
-        </div>
-        <div class="bspace-panel" id="bspan-resources" style="display:none;">
-          <div class="bspace-section">
-            <h3>Resources</h3>
-            <p class="hint">Helpful links and materials collected for this Broadcast.</p>
-            <div id="bspaceResources"></div>
-            <div class="bspace-composer" id="bspaceResourceComposer" style="display:none;">
-              <input id="bspaceResTitle" placeholder="Resource title" maxlength="120" />
-              <input id="bspaceResUrl" placeholder="https://…" maxlength="500" />
-              <button type="button" class="bspace-mini primary" id="bspaceResSend">Attach</button>
-            </div>
-          </div>
-        </div>
-        <div class="bspace-panel" id="bspan-updates" style="display:none;">
-          <div class="bspace-section">
-            <h3>Updates</h3>
-            <p class="hint">Follow-ups and corrections from the creator as this Broadcast grows.</p>
-            <div id="bspaceUpdates"></div>
-          </div>
-        </div>
-        <div class="bspace-panel" id="bspan-journey" style="display:none;">
-          <div class="bspace-section">
-            <h3>Journey</h3>
-            <p class="hint">A simple timeline of joins, questions, and milestones.</p>
-            <div class="bspace-journey" id="bspaceJourney"></div>
-          </div>
-        </div>
-
-        
-        <div class="bspace-section" id="bspaceDashboard" style="display:none;">
-          <h3>Impact</h3>
-          <p class="hint">A quick look at how people are engaging with this space.</p>
-          <div id="bspaceImpactGrid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;"></div>
-          <div id="circleMembersSheet" class="circle-members-sheet">
-            <div class="circle-members-panel">
-              <div class="circle-members-head">
-                <div style="font-family:var(--font-futuristic);font-size:15px;">Community</div>
-                <button type="button" class="ghost-btn" id="circleMembersClose" style="width:28px;height:28px;">×</button>
-              </div>
-              <div class="lobby-sub" style="text-align:left;max-width:none;padding:0 14px 10px;">People who joined this Circle. Tap a name to open their Broadcasts.</div>
-              <div id="circleMembersList" class="circle-members-list"></div>
-            </div>
-          </div>
-          <div class="bspace-composer" style="margin-top:12px;">
-            <input id="bspaceUpdateInput" placeholder="Update this Broadcast (correction, news, pin)…" maxlength="500" />
-            <button type="button" class="bspace-mini primary" id="bspaceUpdateSend">Post update</button>
-          </div>
-        </div>
-
-        <div class="bspace-section" id="bspaceRelatedWrap">
-          <h3>Nearby Broadcasts</h3>
-          <p class="hint">A strip from this Strand first — tap a title to walk in.</p>
-          <div id="bspaceRelated" class="bspace-nearby-strip"></div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-
-
-  <div id="sparkSheet" style="display:none;position:fixed;inset:0;z-index:200;background:rgba(7,8,14,.92);align-items:center;justify-content:center;padding:24px;">
-    <div style="width:100%;max-width:340px;background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:22px 20px;text-align:center;">
-      <div style="font-family:var(--font-futuristic);font-size:18px;margin-bottom:6px;">Spark</div>
-      <div style="font-size:12.5px;color:var(--text-dim);line-height:1.45;margin-bottom:16px;">Two phones, one pulse. Show this to someone next to you, or enter theirs.</div>
-      <img id="sparkQr" alt="" style="width:180px;height:180px;border-radius:16px;background:#0a0c12;margin:0 auto 12px;display:block;" />
-      <div id="sparkCode" style="font-family:var(--font-mono);font-size:22px;letter-spacing:.28em;color:var(--mint);margin-bottom:14px;">————</div>
-      <input id="sparkJoinInput" maxlength="6" autocomplete="off" placeholder="Their pulse" style="width:100%;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:11px 12px;color:var(--text);text-align:center;letter-spacing:.2em;font-family:var(--font-mono);font-size:16px;text-transform:uppercase;" />
-      <div style="display:flex;gap:8px;margin-top:12px;">
-        <button type="button" id="sparkJoinBtn" class="join-btn" style="flex:1;padding:11px;">Join theirs</button>
-        <button type="button" id="sparkCloseBtn" class="join-btn" style="flex:1;padding:11px;background:var(--surface-2);color:var(--text);border:1px solid var(--line);">Done</button>
-      </div>
-      <div id="sparkStatus" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);min-height:16px;margin-top:10px;"></div>
-      <button type="button" id="sparkOpenLastBtn" class="join-btn" style="width:100%;margin-top:10px;padding:10px;background:transparent;color:var(--mint);border:1px solid var(--line);">Open last Spark page</button>
-    </div>
-  </div>
-
-  <div class="call-overlay" id="sparkPage">
-    <div class="topbar" style="padding-top:18px;">
-      <div class="back-btn" id="sparkPageBack" role="button" aria-label="Back"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
-      <div style="flex:1;">
-        <div style="font-family:var(--font-futuristic);font-weight:700;font-size:16px;" id="sparkPageName">Spark</div>
-        <div class="lobby-sub">They speak <span id="sparkTheirLangLabel">their language</span></div>
-      </div>
-      <button type="button" class="ghost-btn" id="sparkLgOpenBtn" title="Luganda book" style="width:34px;height:34px;margin-right:6px;">Lg</button>
-      <select id="sparkMyLang" aria-label="Your language" style="background:var(--surface);border:1px solid var(--line);color:var(--text);border-radius:999px;padding:6px 10px;font-size:12px;"></select>
-    </div>
-    <div class="spark-bridge" aria-hidden="true"><span></span></div>
-    <div id="sparkIce" class="spark-ice-row"></div>
-    <div id="sparkPageMsgs" class="spark-msgs"></div>
-    <div class="spark-compose">
-      <button type="button" id="sparkTalkBtn" class="spark-talk" aria-label="Hold to speak">●</button>
-      <textarea id="sparkInput" rows="1" placeholder="Write as you speak…"></textarea>
-      <button type="button" id="sparkSendBtn" class="spark-send">Send</button>
-    </div>
-    <div id="sparkLgBook">
-      <div class="spark-lg-head">
-        <div style="font-family:var(--font-futuristic);">Luganda book</div>
-        <button type="button" class="ghost-btn" id="sparkLgCloseBtn" style="width:28px;height:28px;">×</button>
-      </div>
-      <div class="lobby-sub" style="padding:0 14px 8px;">Luganda uses the same live translator as every other Spark language. This book is extra — Wiktionary (CC BY-SA) plus words people teach. Anyone can read it. Only people with the password can teach it.</div>
-      <div id="sparkLgGate" style="padding:0 14px 10px;">
-        <input id="sparkLgPass" type="password" autocomplete="off" placeholder="Book password" style="width:100%;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;color:var(--text);" />
-        <button type="button" id="sparkLgUnlockBtn" class="spark-send" style="margin-top:8px;width:100%;">Unlock teaching</button>
-      </div>
-      <div id="sparkLgEditForm" style="display:none;flex-direction:column;gap:8px;padding:0 14px 10px;">
-        <div style="display:flex;gap:8px;">
-          <input id="sparkLgSrc" placeholder="English" style="flex:1;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px 10px;color:var(--text);" />
-          <input id="sparkLgDst" placeholder="Luganda" style="flex:1;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px 10px;color:var(--text);" />
-        </div>
-        <div style="display:flex;gap:8px;">
-          <button type="button" id="sparkLgSearchBtn" style="flex:1;background:var(--surface-2);color:var(--text-dim);border:1px solid var(--line);border-radius:12px;padding:8px 10px;font-size:12px;">Search verified sources</button>
-          <button type="button" id="sparkLgAddBtn" class="spark-send" style="flex:1;">Add</button>
-        </div>
-        <div id="sparkLgSearchResults" style="display:none;"></div>
-      </div>
-      <div id="sparkLgList"></div>
-    </div>
-  </div>
+<div id="toast"></div>
 
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
-<script src="/firebase-config.js?v=20260908d"></script>
-<!-- NALUNO_MODULES -->
-<script src="/js/core.js?v=20260908d"></script>
-<!-- Loaded right after core.js so its global error handlers are installed
-     before the rest of the app runs and can capture anything they throw. -->
-<script src="/js/diagnostics.js?v=20260908d"></script>
-<!-- LOAD ORDER: find.js defines contactAvatarStyleAttr(), used by band-list,
-     band-room, wireline and signal-ui. auth.js calls loadBands() at top level,
-     which ran BEFORE find.js had executed — a ReferenceError that aborted boot
-     entirely. It must load before any consumer. -->
-<script src="/js/find.js?v=20260908d"></script>
-<script src="/js/media-contain.js?v=20260908d"></script>
-<script src="/js/keep-alive.js?v=20260908d"></script>
-<script src="/js/metrics.js?v=20260908d"></script>
-<script src="/js/data.js?v=20260908d"></script>
-<script src="/js/crypto.js?v=20260908d"></script>
-<script src="/js/atmosphere.js?v=20260908d"></script>
-<script src="/js/band-list.js?v=20260908d"></script>
-<script src="/js/signal-core.js?v=20260911b"></script>
-<script src="/js/broadcast-core.js?v=20260908d"></script>
-<script src="/js/broadcast-upload.js?v=20260908d"></script>
-<script src="/js/broadcast-composer.js?v=20260908d"></script>
-<script src="/js/origin.js?v=20260908d"></script>
-<script src="/js/strand.js?v=20260908d"></script>
-<script src="/js/circle.js?v=20260908d"></script>
-<!-- Community Economy: reports actions only; all economic value is computed
-     server-side by the naluno-economy Worker. Loaded AFTER circle.js so
-     currentUser exists, and deliberately non-blocking — if this file failed
-     to load entirely, Broadcast would behave exactly as it does today. -->
-<script src="/js/presence.js?v=20260910a"></script>
-<script src="/js/report.js?v=20260909a"></script>
-<script src="/js/economy.js?v=20260910a"></script>
-<script src="/js/economy-ui.js?v=20260908d"></script>
-<script src="/js/weather.js?v=20260911b"></script>
-<script src="/js/beacon.js?v=20260911b"></script>
-<script src="/js/compass.js?v=20260908d"></script>
-<script src="/js/signal-ui.js?v=20260908d"></script>
-<script src="/js/compat-lock.js?v=20260908d"></script>
-<script src="/js/broadcast-space.js?v=20260911b"></script>
-<script src="/js/media-vault.js?v=20260908d"></script>
-<script src="/js/wireline.js?v=20260908d"></script>
-<script src="/js/profile.js?v=20260908d"></script>
-<script src="/js/onboard.js?v=20260908d"></script>
-<script src="/js/auth.js?v=20260908d"></script>
-<script src="/js/notifications.js?v=20260908d"></script>
-<script src="/js/ice-core.js?v=20260908d"></script>
-<script src="/js/camera.js?v=20260908d"></script>
-<script src="/js/call-filters.js?v=20260908d"></script>
-<script src="/js/calls.js?v=20260908d"></script>
-<script src="/js/sfu-live.js?v=20260908d"></script>
-<script src="/js/broadcast-live.js?v=20260908d"></script>
-<script src="/js/band-room.js?v=20260911c"></script>
-<script src="/js/pwa.js?v=20260911c"></script>
-<script src="/js/spark-engine.js?v=20260908d"></script>
-<script src="/js/spark-lg-wikt.js?v=20260908d"></script>
-<script src="/js/spark-lg.js?v=20260908d"></script>
-<script src="/js/spark-page.js?v=20260908d"></script>
-<script src="/js/spark.js?v=20260908d"></script>
-<!-- /NALUNO_MODULES -->
+<script src="/firebase-config.js?v=20260911b"></script>
+<script src="/js/admin-data.js?v=20260911b"></script>
+<script src="/js/admin-console.js?v=20260911b"></script>
 </body>
 </html>
