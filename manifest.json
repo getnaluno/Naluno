@@ -1,7 +1,7 @@
 {
   "name": "Naluno",
   "short_name": "Naluno",
-  "description": "A statement from the future.",
+  "description": "A quieter way to reach people. No phone number.",
   "start_url": "/app/",
   "scope": "/",
   "display": "standalone",
