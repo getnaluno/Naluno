@@ -27,12 +27,36 @@
     contribution_enabled: { label: 'Contribution tracking', group: 'Community', note: 'Count comments, replies, shares.' },
     community_value_enabled: { label: 'Community value', group: 'Community', note: 'A measurement, never money.' },
     creator_support_enabled: { label: 'Creator Support', group: 'Money', note: 'Donate to a creator. Off until a payment provider is connected.' },
-    community_rewards_enabled: { label: 'Community Rewards', group: 'Money', note: 'Pool split. Off until you turn it on.' },
+    community_rewards_enabled: { label: 'Community Rewards', group: 'Money', note: 'Pool split. Off until switched on.' },
     real_payouts_enabled: { label: 'Real payouts', group: 'Money', note: 'Locked. Requires a signed off-console decision.' },
     content_hub_enabled: { label: 'Content Hub', group: 'Hub', note: 'Sports / movies / channels. Not built yet.' },
     sports_enabled: { label: 'Sports', group: 'Hub', note: 'Requires Content Hub.' },
     movies_enabled: { label: 'Movies', group: 'Hub', note: 'Requires Content Hub.' },
   };
+
+  const TERMS = [
+    { abbr: 'AED', name: 'United Arab Emirates dirham', note: 'Naluno’s operating currency. Shown next to USD at a peg of 3.6725.' },
+    { abbr: 'USD', name: 'United States dollar', note: 'Shown next to dirham amounts for comparison.' },
+    { abbr: 'DAU', name: 'Daily active users', note: 'Accounts with a heartbeat during the operator device’s local day.' },
+    { abbr: 'WAU', name: 'Weekly active users', note: 'Accounts with a heartbeat in the last 7 days.' },
+    { abbr: 'MAU', name: 'Monthly active users', note: 'Accounts with a heartbeat in the last 30 days.' },
+    { abbr: 'R2', name: 'Cloudflare R2', note: 'Object storage for Broadcast and Signal media. Download bandwidth (egress) is not billed.' },
+    { abbr: 'FCM', name: 'Firebase Cloud Messaging', note: 'Device push notifications. Not billed.' },
+    { abbr: 'TURN', name: 'Traversal Using Relays around NAT', note: 'Relays a call when a direct connection fails. Cost is per gigabyte of relayed media.' },
+    { abbr: 'Spark', name: 'Firebase Spark', note: 'The free Firebase plan: 50,000 reads per day, 20,000 writes per day, 1 GB of document storage.' },
+    { abbr: 'Blaze', name: 'Firebase Blaze', note: 'Pay-as-you-go Firebase, after Spark limits.' },
+    { abbr: 'GPS', name: 'Global Positioning System', note: 'Last device pin from Find Naluno.' },
+    { abbr: 'UTC', name: 'Coordinated Universal Time', note: 'Day boundaries follow the operator device timezone, not UTC.' },
+    { abbr: 'SW', name: 'Service worker', note: 'Caches the app shell and handles background events on the device.' },
+    { abbr: 'UID', name: 'User identifier', note: 'The account id in Firebase Auth and Firestore.' },
+    { abbr: 'GB', name: 'Gigabyte', note: '1,000,000,000 bytes in this model.' },
+    { abbr: 'AI', name: 'Artificial intelligence', note: 'Compass and related billed usage, recorded as a cash amount.' },
+    { abbr: 'CAC', name: 'Customer acquisition cost', note: 'Not known. Not estimated on this console.' },
+    { abbr: 'LTV', name: 'Lifetime value', note: 'Not known. Not estimated on this console.' },
+    { abbr: 'D1 / D7', name: 'Day-1 / day-7 retention', note: 'Share of a signup cohort still active N days later. Needs a session log. Still-here is used instead.' },
+    { abbr: 'CPU / RAM', name: 'Processor / memory', note: 'Instance utilisation. Cloudflare and Firebase do not expose this to the console.' },
+    { abbr: 'PWA', name: 'Progressive web app', note: 'The installable Naluno website.' },
+  ];
 
   function localZone() {
     try {
@@ -401,10 +425,10 @@
       line('fs_reads', 'Firestore reads (model)', fsReadUsd, readsMonth, 'reads/mo'),
       line('fs_writes', 'Firestore writes (model)', fsWriteUsd, writesMonth, 'writes/mo'),
       line('workers', 'Workers requests (model)', workersUsd, workerReqs, 'reqs/mo'),
-      line('turn', 'TURN / call relay', turnUsd, turnMinutes, 'minutes'),
-      line('r2_egress', 'R2 bandwidth (egress is $0)', 0, viewsStored, 'stored views'),
-      line('fcm', 'Push (FCM is free)', 0, dauN, 'DAU'),
-      line('compass', 'Compass / AI (typed bill)', 0, compassAed, 'AED', compassAed),
+      line('turn', 'Call relay (TURN)', turnUsd, turnMinutes, 'minutes'),
+      line('r2_egress', 'R2 bandwidth (egress not billed)', 0, viewsStored, 'stored views'),
+      line('fcm', 'Push notifications (FCM, not billed)', 0, dauN, 'DAU'),
+      line('compass', 'Compass / AI (recorded bill)', 0, compassAed, 'AED', compassAed),
       line('fixed', 'Fixed (domain, store, typed)', 0, fixedAed, 'AED', fixedAed),
     ];
     const meteredAed = lines.reduce(function (a, L) { return a + L.aed; }, 0);
@@ -579,16 +603,17 @@
     });
     const firstGate = gates.filter(function (g) { return g.mau != null; })[0] || null;
     const alreadyOver = gates.filter(function (g) { return g.already; });
-    let headline = 'You are not being billed for usage. Spark and Cloudflare free currently invoice AED 0.';
+    let headline = 'Usage is within free allowances. Firebase Spark and Cloudflare currently invoice AED 0.00.';
     if (invoiceAed > 0) {
-      headline = 'Serving with the invoice you typed: ' + moneyPair(invoiceAed) + '.';
+      headline = 'Serving from the recorded invoice: ' + moneyPair(invoiceAed) + '.';
     } else if (alreadyOver.length) {
-      headline = 'Model says you are past free cap on '
+      headline = 'Usage is past a free allowance on '
         + alreadyOver.map(function (g) { return g.label; }).join(', ')
-        + '. After-free-tier is ' + moneyPair(billableAed) + '.';
+        + '. After-free-tier estimate is ' + moneyPair(billableAed) + '.';
     } else if (firstGate && firstGate.mau_display) {
-      headline = 'You are not being billed for usage. At this mix, the first list-price bill is '
-        + firstGate.label + ' around ' + firstGate.mau_display.toLocaleString('en-GB') + ' MAU.';
+      headline = 'Usage is within free allowances. At the current mix, the first list-price bill is '
+        + firstGate.label + ' around ' + firstGate.mau_display.toLocaleString('en-GB')
+        + ' monthly active users (MAU).';
     }
 
     return {
@@ -625,15 +650,14 @@
       first_gate: firstGate,
       headline: headline,
       assumptions: [
-        'Broadcast media stays on R2 (full GB-month). Signals last 25 hours, then they fall off.',
-        'R2 has no egress fee. Watching a Broadcast does not bill bandwidth.',
-        'When a file has no stored size, video is counted at ~1 Mbps, a photo at 400 KB, unknown video at 8 MB.',
-        'Firestore reads/writes are a model (150 reads and 24 writes per MAU per day), not a Google invoice.',
-        'Spark + Cloudflare free currently bill AED 0 on usage. Type a real invoice when one exists.',
-        'TURN is zero until you type call minutes. Compass / AI is zero until you type that bill. FCM push is free.',
-        'Platform share (presence, workers, domain) is split across MAU, not dormant accounts.',
-        'The first bill is the first free cap you leave. Reads usually go first (~330 MAU at 150 reads/person/day).',
-        'CAC, LTV and revenue are unknown. This desk will not invent them.',
+        'Broadcast media remains on Cloudflare R2 for a full gigabyte-month. Signals last 25 hours, then they fall off.',
+        'Cloudflare R2 has no egress fee. Watching a Broadcast does not bill bandwidth.',
+        'When a file has no stored size, video is counted at about 1 Mbps, a photo at 400 KB, unknown video at 8 MB.',
+        'Firestore reads and writes are a model (150 reads and 24 writes per monthly active user per day), not a Google invoice.',
+        'Firebase Spark and Cloudflare free plans currently bill AED 0.00 on usage. Invoiced spend is the amount recorded under Bills.',
+        'Call relay (TURN) is zero until minutes are recorded. Compass / artificial intelligence (AI) is zero until that bill is recorded. Push (FCM) is not billed.',
+        'Platform share (presence, workers, domain) is split across monthly active users, not dormant accounts.',
+        'The first bill is the first free allowance that usage exceeds. Firestore reads usually go first (about 330 monthly active users at 150 reads per person per day).',
       ],
     };
   }
@@ -801,14 +825,14 @@
       alerts.push({
         level: 'warning',
         tab: 'health',
-        text: 'The economy worker cannot use Google Firestore (its service account was rejected). The desk reads Naluno itself, so the numbers still work. Flags are saved on this account.',
+        text: 'The economy worker cannot use Google Firestore (its service account was rejected). The console reads Naluno itself, so the numbers still work. Flags are saved on this account.',
       });
     }
     if (worker && worker.error && !worker.ok) {
       alerts.push({
         level: 'warning',
         tab: 'health',
-        text: 'Economy worker did not answer. Broadcast and this desk still run.',
+        text: 'Economy worker did not answer. Broadcast and this console still run.',
       });
     }
     if (openReports.length) {
@@ -843,7 +867,7 @@
       alerts.push({
         level: 'warning',
         tab: 'health',
-        text: 'This desk is not connected to the service worker yet. Reload once so background ringing and cache stay in step.',
+        text: 'This console is not connected to the service worker yet. Reload once so background ringing and cache stay in step.',
       });
     }
     if (!alerts.length) {
@@ -998,15 +1022,15 @@
       audit: audit,
       gaps: {
         notifications: 'Delivery receipts live on the device. There is no central sent/delivered ledger yet.',
-        search: 'Search queries are not stored, so trending and zero-result reports cannot be honest yet.',
+        search: 'Search queries are not stored, so trending and zero-result reports are not available.',
         payments: 'No payment provider is connected. Ledgers exist so the shape is auditable before money moves.',
         content_hub: 'Sports, movies and channels are not in the product yet.',
-        cpu_memory: 'Cloudflare and Firebase do not expose instance CPU/RAM to this desk.',
-        unit_econ: 'Invoices are not connected. Metered numbers are list-price maths from usage. Spark + Cloudflare free currently invoice AED 0 until you leave the free tier or type a bill.',
-        retention: 'True D1/D7 needs a session log. Still-here is people who signed up at least N days ago and had a heartbeat in the last N days.',
-        cac: 'We do not know what it costs to acquire a person. Do not invent CAC or LTV.',
-        store: 'App-store download counts are not in Firestore. Registration is the first number we can stand behind.',
-        native: 'Closed-tab ringtone needs a native shell and Unrestricted battery. Do not claim lock-screen ring.',
+        cpu_memory: 'Cloudflare and Firebase do not expose instance processor (CPU) or memory (RAM) to this console.',
+        unit_econ: 'Invoices are not connected. Metered figures are list-price maths from usage. Firebase Spark and Cloudflare free plans currently invoice AED 0.00 until usage exceeds those allowances or an invoice is recorded.',
+        retention: 'Day-1 / day-7 (D1 / D7) retention needs a session log. Still-here is people who signed up at least N days ago and had a heartbeat in the last N days.',
+        cac: 'Customer acquisition cost (CAC) and lifetime value (LTV) are not known and are not estimated here.',
+        store: 'App-store download counts are not in Firestore. Registration is the first number on record.',
+        native: 'Closed-tab ringtone requires a native shell and Unrestricted battery. Lock-screen ring is not available.',
       },
     };
   }
@@ -1014,6 +1038,7 @@
   root.NalunoAdminData = {
     DEFAULT_FLAGS: DEFAULT_FLAGS,
     FLAG_META: FLAG_META,
+    TERMS: TERMS,
     localZone: localZone,
     adminZone: adminZone,
     setAdminZone: setAdminZone,

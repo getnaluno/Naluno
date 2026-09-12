@@ -9,7 +9,7 @@
 
    Tabs read Naluno through the signed-in operator's Firebase SDK.
    The economy worker is optional. A rejected service account must
-   never block this desk or paint a red error on Unlock.
+   never block this console or paint a red error on Unlock.
    ============================================================ */
 (function () {
   const $ = function (id) { return document.getElementById(id); };
@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260912b';
+  const BUILD = '20260912c';
   const OPERATOR_UIDS = { 'ibMOMY6Q3sVTCxIrwO2FGk43zw93': true };
   const OPERATOR_EMAILS = { 'magjoed@gmail.com': true };
 
@@ -539,6 +539,16 @@
   function bytesLabel(n) {
     return Data && Data.formatBytes ? Data.formatBytes(n) : String(n || 0);
   }
+  function termsBlock() {
+    const terms = (Data && Data.TERMS) || [];
+    if (!terms.length) return '';
+    return card('Terms',
+      '<p class="sub" style="margin-bottom:8px;">Abbreviations used on this console.</p>'
+      + '<dl class="terms">' + terms.map(function (t) {
+        return '<div class="term-row"><dt>' + escapeHtml(t.abbr) + '</dt><dd><strong>'
+          + escapeHtml(t.name) + '</strong> — ' + escapeHtml(t.note) + '</dd></div>';
+      }).join('') + '</dl>');
+  }
   function personCost(d, uid) {
     const list = (d && d.costs && d.costs.people) || [];
     for (let i = 0; i < list.length; i++) if (list[i].uid === uid) return list[i];
@@ -620,11 +630,11 @@
     const e = d.economy || {};
     const alerts = d.alerts || [];
     const colour = d.healthTone === 'critical' ? '#ff8a9a' : (d.healthTone === 'warning' ? '#ffc266' : 'var(--mint)');
-    const swBit = (__swInfo.connected ? 'SW on' : 'SW off');
+    const swBit = (__swInfo.connected ? 'Service worker on' : 'Service worker off');
     el.innerHTML =
       '<span class="h" style="color:' + colour + '">NALUNO ' + escapeHtml(d.healthLabel || '') + '</span>'
       + '<span class="m">Online <b>' + (u.active_now || 0) + '</b></span>'
-      + '<span class="m">DAU <b>' + (u.dau || 0) + '</b></span>'
+      + '<span class="m">Daily active <b>' + (u.dau || 0) + '</b></span>'
       + '<span class="m">Broadcasts <b>' + (c.broadcasts_total || 0) + '</b></span>'
       + '<span class="m">Live <b>' + (c.broadcasts_live || 0) + '</b></span>'
       + '<span class="m">Alerts <b>' + alerts.filter(function (a) { return a.level !== 'ok'; }).length + '</b></span>'
@@ -688,7 +698,7 @@
     if (tab === 'overview') {
       const alerts = d.alerts || [];
       el.innerHTML =
-        card('What needs your attention',
+        card('What needs attention',
           alerts.map(function (a) {
             return '<div class="alert ' + escapeHtml(a.level) + '">'
               + escapeHtml(a.text)
@@ -697,36 +707,36 @@
           }).join(''))
         + card('Are people coming back?',
           kpis([['Registered', u.total || 0], ['Active now', u.active_now || 0],
-            ['DAU', u.dau || 0], ['WAU', u.wau || 0], ['MAU', u.mau || 0],
+            ['Daily active (DAU)', u.dau || 0], ['Weekly active (WAU)', u.wau || 0], ['Monthly active (MAU)', u.mau || 0],
             ['Returning today', u.returning_today || 0],
             ['Stickiness', u.stickiness == null ? '—' : u.stickiness + '%']])
           + kpis([['New today', u.new_today || 0], ['New 7 days', u.new_7d || 0], ['New 30 days', u.new_30d || 0]])
-          + gap('Today is your local day (' + (d.zone || '') + '), not UTC. Stickiness is DAU ÷ MAU. Active now means a heartbeat in the last 10 minutes.'))
+          + gap('Today follows the operator device timezone (' + (d.zone || '') + '), not UTC (Coordinated Universal Time). Stickiness is daily active ÷ monthly active. Active now means a heartbeat in the last 10 minutes.'))
         + card('Still here',
           kpis([['≥7 days still in 7d', u.still_7_pct == null ? '—' : u.still_7_pct + '%'],
             ['of', (u.still_7 || 0) + ' / ' + (u.still_7_of || 0)],
             ['≥30 days still in 30d', u.still_30_pct == null ? '—' : u.still_30_pct + '%'],
             ['of', (u.still_30 || 0) + ' / ' + (u.still_30_of || 0)]])
-          + gap(g.retention || 'True D1/D7 needs a session log. Still-here is not cohort retention.'))
+          + gap(g.retention || 'Day-1 / day-7 retention needs a session log. Still-here is not cohort retention.'))
         + card('What each person costs',
           kpis([['Invoiced this month', aedUsd((d.costs && d.costs.invoice_aed) || 0)],
             ['List-price usage', aedUsd((d.costs && d.costs.metered_aed) || 0)],
             ['After free tier', aedUsd((d.costs && d.costs.billable_aed) || 0)],
-            ['Per MAU', aedUsd((d.costs && d.costs.per_mau_aed) || 0)]])
+            ['Per monthly active', aedUsd((d.costs && d.costs.per_mau_aed) || 0)]])
           + gap((d.costs && d.costs.headline) || g.unit_econ || '')
           + '<div class="row"><button type="button" class="ghost ccGo" data-go="money">Open Money</button></div>')
-        + card('Pitch snapshot',
+        + card('On record',
           kpis([['Live', 'getnaluno.com'],
             ['Registered', u.total || 0],
-            ['MAU', u.mau || 0],
+            ['Monthly active', u.mau || 0],
             ['Revenue', 'none']])
           + kpis([['Play Store', 'not listed'],
-            ['CAC / LTV', 'unknown'],
+            ['Acquisition cost', 'not known'],
             ['Payouts', 'locked'],
             ['First bill', (d.costs && d.costs.first_gate && d.costs.first_gate.mau_display)
-              ? ('~' + Number(d.costs.first_gate.mau_display).toLocaleString('en-GB') + ' MAU')
+              ? ('~' + Number(d.costs.first_gate.mau_display).toLocaleString('en-GB') + ' monthly active')
               : 'still free']])
-          + gap('Registered people, not downloads. Cost-to-serve is the Money model. Do not invent CAC, LTV, lock-screen ring, or store numbers.'))
+          + gap('Counts are registered accounts, not store downloads. Cost-to-serve is the Money model. Customer acquisition cost (CAC) and lifetime value (LTV) are not estimated. Lock-screen ring is not available.'))
         + card('What are people making?',
           kpis([['Broadcasts', c.broadcasts_total || 0], ['Live now', c.broadcasts_live || 0],
             ['Today', c.broadcasts_today || 0], ['Creators', cr.total || 0]])
@@ -735,10 +745,11 @@
         + card('Where are the devices?',
           kpis([['People with a pin', (d.locations && d.locations.with_coords) || 0],
             ['Find pings', (d.locations && d.locations.devices) || 0]])
-          + gap('Pins come from Find Naluno on that phone. The last GPS fix is stored on the account so a missing device can be opened on a map from Users.'));
+          + gap('Pins come from Find Naluno on that phone. The last GPS (Global Positioning System) fix is stored on the account so a missing device can be opened on a map from Users.'));
         + card('Can we trust the activity?',
           kpis([['Open reports', sf.open_reports || 0], ['Suspended', sf.suspended || 0],
-            ['Restricted', sf.restricted || 0], ['Held for review', sf.pending_review || 0]]));
+            ['Restricted', sf.restricted || 0], ['Held for review', sf.pending_review || 0]]))
+        + termsBlock();
       goButtons();
       return;
     }
@@ -752,13 +763,13 @@
         ['Notifications', true, 'Device push. Central delivery ledger is not built.'],
         ['Payments', !!d.flags.real_payouts_enabled, 'Off until a provider is connected.'],
         ['Economy worker', !!w.ok, w.degraded ? 'Up, but Google rejected its service account.' : (w.ok ? (w.ms + ' ms · ' + (w.version || '') + (w.persist ? ' · ' + w.persist : '')) : (w.error || 'down'))],
-        ['Service worker', !!__swInfo.connected, __swInfo.connected ? (__swInfo.cache || __swInfo.version) : 'This desk is not talking to sw.js yet.'],
+        ['Service worker', !!__swInfo.connected, __swInfo.connected ? (__swInfo.cache || __swInfo.version) : 'The service worker (SW) is not connected on this session.'],
         ['Content Hub', !!d.flags.content_hub_enabled, g.content_hub],
       ];
       el.innerHTML =
         card('Is Naluno working?',
           kpis([['App version', BUILD], ['Worker', w.ok ? (w.ms + ' ms') : 'down'],
-            ['SW', __swInfo.connected ? 'connected' : 'off'],
+            ['Service worker', __swInfo.connected ? 'connected' : 'off'],
             ['Metric failures', (d.metrics && d.metrics.failures) || 0]]))
         + card('Live status', services.map(function (row) {
           const on = row[1];
@@ -766,7 +777,7 @@
             + '<span style="color:' + (on ? 'var(--mint)' : 'var(--ink-dim)') + ';">' + (on ? 'ON' : 'OFF') + '</span></div>'
             + '<p class="gap-note" style="margin:0 0 8px;">' + escapeHtml(row[2] || '') + '</p>';
         }).join(''))
-        + card('What this desk cannot invent',
+        + card('What is not measured',
           '<ul class="gap-note"><li>' + escapeHtml(g.cpu_memory || '') + '</li>'
           + '<li>' + escapeHtml(g.notifications || '') + '</li>'
           + '<li>' + escapeHtml(g.search || '') + '</li></ul>')
@@ -845,7 +856,7 @@
         + '<button type="button" class="ghost" id="admUserSearch">Search</button></div>'
         + kpis([['Users', u.total || 0], ['Matching', list.length], ['Suspended', (u.suspended || []).length], ['Restricted', (u.restricted || []).length],
           ['With a pin', (d.locations && d.locations.with_coords) || 0],
-          ['Per MAU', aedUsd((d.costs && d.costs.per_mau_aed) || 0)]])
+          ['Per monthly active', aedUsd((d.costs && d.costs.per_mau_aed) || 0)]])
         + card('By platform', plainRows(['Platform', 'People'],
           Object.keys(u.by_platform || {}).map(function (k) { return [k, u.by_platform[k]]; })))
         + card('People', table(['Name', 'Handle', 'Last seen', 'Place', 'Cost / mo', 'State', ''],
@@ -921,7 +932,7 @@
         card('Do Signals bring people into Broadcast?',
           kpis([['Signals stored', impressions], ['Broadcasts stored', bOpens],
             ['Rough conversion', rate + '%']])
-          + gap('A true Signal → Broadcast funnel needs per-open events. Those are not stored yet, so this is a stock count, not a conversion rate you should steer by.'));
+          + gap('A Signal → Broadcast funnel needs per-open events. Those are not stored yet, so this is a stock count, not a conversion rate.'));
       return;
     }
 
@@ -1001,7 +1012,7 @@
           (e.ledger || []).slice(0, 30).map(function (r) {
             return [r.event_type || '', r.points || 0, r.eligible_points || 0, r.status || '', String(r.user_id || '').slice(0, 10)];
           })))
-        + gap('Points are written only by the economy worker. Comments still land if the Google key is rejected — they go through the signed-in inbox, and this desk counts them.');
+        + gap('Points are written only by the economy worker. Comments still land if the Google key is rejected — they go through the signed-in inbox, and this console counts them.');
       return;
     }
 
@@ -1025,32 +1036,32 @@
       el.innerHTML =
         inactiveNote('Real payouts are disabled. No money has moved. Revenue does not exist yet.')
         + card('What does each person cost Naluno?',
-          '<p class="sub">' + escapeHtml((costs.headline) || 'List prices × usage on this desk.') + '</p>'
-          + kpis([['Invoiced (typed)', aedUsd(costs.invoice_aed || 0)],
+          '<p class="sub">' + escapeHtml((costs.headline) || 'List prices × usage on this console.') + '</p>'
+          + kpis([['Invoiced (recorded)', aedUsd(costs.invoice_aed || 0)],
             ['List-price usage', aedUsd(costs.metered_aed || 0)],
             ['After free tier', aedUsd(costs.billable_aed || 0)],
-            ['Serving with', costs.invoice_aed ? 'invoice' : (costs.on_free_tier ? 'free tier' : 'Blaze / paid')]])
+            ['Serving with', costs.invoice_aed ? 'invoice' : (costs.on_free_tier ? 'Firebase Spark (free)' : 'Firebase Blaze (paid)')]])
           + kpis([['Per registered', aedUsd(costs.per_registered_aed || 0)],
-            ['Per MAU', aedUsd(costs.per_mau_aed || 0)],
-            ['Per DAU', aedUsd(costs.per_dau_aed || 0)],
+            ['Per monthly active (MAU)', aedUsd(costs.per_mau_aed || 0)],
+            ['Per daily active (DAU)', aedUsd(costs.per_dau_aed || 0)],
             ['R2 stored', (costs.storage && costs.storage.r2_gb != null) ? Number(costs.storage.r2_gb).toFixed(3) + ' GB' : '—']])
           + gap(g.unit_econ || ''))
-        + card('When you start paying',
+        + card('Free-tier limits',
           (costs.gates && costs.gates.length
-            ? plainRows(['Cap', 'Free allowance', 'Around MAU', 'Status'],
+            ? plainRows(['Cap', 'Free allowance', 'Around monthly active', 'Status'],
               costs.gates.map(function (gate) {
                 const mau = gate.mau_display == null ? 'needs usage' : ('~' + Number(gate.mau_display).toLocaleString('en-GB'));
                 return [gate.label, gate.free, mau, gate.already ? 'past free' : 'still free'];
               }))
-            : '<p class="sub">Free-tier gates appear once usage is on file.</p>')
-          + gap('Reads usually go first. Model: 150 Firestore reads per MAU per day. Spark allows 50,000/day ≈ 330 MAU. R2 egress is $0. FCM is free.'))
+            : '<p class="sub">Free-tier limits appear once usage is on file.</p>')
+          + gap('Firestore reads usually go first. Model: 150 Firestore reads per monthly active user per day. Firebase Spark allows 50,000 reads per day, about 330 monthly active users. Cloudflare R2 egress is not billed. Push (FCM) is not billed.'))
         + card('Bills and extras (this browser)',
-          '<label>Invoiced this month (AED)</label><input id="costInvoice" inputmode="decimal" placeholder="0" />'
+          '<label>Invoiced this month (AED, dirham)</label><input id="costInvoice" inputmode="decimal" placeholder="0" />'
           + '<label>Fixed monthly — domain, store, tools (AED)</label><input id="costFixed" inputmode="decimal" placeholder="0" />'
           + '<label>Call minutes this month (TURN)</label><input id="costTurn" inputmode="decimal" placeholder="0" />'
           + '<label>Compass / AI this month (AED)</label><input id="costCompass" inputmode="decimal" placeholder="0" />'
           + '<div class="row"><button type="button" class="primary" id="costBtn">Recalculate cost</button></div>'
-          + '<p class="sub" id="costHint"></p>')
+          + '<p class="sub" id="costHint">Invoiced spend is the amount recorded here. Until an invoice is recorded, that figure is AED 0.00.</p>')
         + card('Where the list-price goes',
           plainRows(['Line', 'Quantity', 'AED / month'],
             lines.map(function (L) {
@@ -1059,10 +1070,10 @@
                 : (Math.round(Number(L.qty) || 0) + (L.unit ? ' ' + L.unit : ''));
               return [L.label, qty, aedUsd(L.aed)];
             }))
-          + gap('Broadcast is the expensive part — it stays. Signals fall off after 25 hours.'))
+          + gap('Broadcast is the expensive part — it remains on storage. Signals fall off after 25 hours.'))
         + card('People, most expensive first',
           top.length
-            ? plainRows(['Person', 'MAU', 'Media', 'Uploads', 'Variable', 'Share', 'This month'],
+            ? plainRows(['Person', 'Monthly active', 'Media', 'Uploads', 'Variable', 'Share', 'This month'],
               top.map(function (p) {
                 return [
                   (p.name || p.uid.slice(0, 10)) + (p.handle ? ' · ' + p.handle : ''),
@@ -1075,33 +1086,25 @@
                 ];
               }))
             : '<p class="sub">No people on file yet. The math still works at zero.</p>')
-        + card('If everyone stored like the people you have now',
-          plainRows(['MAU', 'List-price / month', 'After free tier', 'Per MAU'],
+        + card('Mix projection',
+          plainRows(['Monthly active', 'List-price / month', 'After free tier', 'Per monthly active'],
             scale.map(function (row) {
               return [row.n.toLocaleString('en-GB'), aedUsd(row.gross_aed), aedUsd(row.billable_aed), aedUsd(row.per_mau_aed)];
             }))
-          + gap('This is a mix projection, not a forecast. Empty product → only the typed fixed bill.'))
+          + gap('This is a mix projection, not a forecast. With no usage on file, only the recorded fixed bill remains.'))
         + card('Runway',
           '<p class="sub">Cash and burn stay on this browser until a finance ledger exists.</p>'
-          + '<label>Cash on hand (AED)</label><input id="runCash" inputmode="decimal" placeholder="e.g. 80000" />'
+          + '<label>Cash on hand (AED, dirham)</label><input id="runCash" inputmode="decimal" placeholder="e.g. 80000" />'
           + '<label>Monthly burn (AED)</label><input id="runBurn" inputmode="decimal" placeholder="e.g. 12000" />'
           + '<div class="row"><button type="button" class="primary" id="runBtn">Estimate runway</button></div>'
           + '<div id="runOut" class="sub"></div>')
-        + card('Before you sit with an investor',
-          '<ul class="sub" style="padding-left:18px;line-height:1.55">'
-          + '<li>Live at getnaluno.com. Not on Play Store.</li>'
-          + '<li>Registered people, not downloads.</li>'
-          + '<li>Cost-to-serve is this model, shown in AED and USD (peg 3.6725). Invoiced spend is what you type (AED 0 until a bill exists).</li>'
-          + '<li>No revenue. Creator Support and payouts are off.</li>'
-          + '<li>' + escapeHtml(g.cac || 'Do not invent CAC or LTV.') + '</li>'
-          + '<li>' + escapeHtml(g.native || 'Do not claim lock-screen ring.') + '</li>'
-          + '<li>Mail and delete requests are read by a person, not instant.</li>'
-          + '</ul>'
-          + (assum.length
-            ? '<p class="sub" style="margin-top:10px">Assumptions</p><ul class="sub" style="padding-left:18px;line-height:1.55">'
+        + (assum.length
+          ? card('Assumptions',
+            '<ul class="sub" style="padding-left:18px;line-height:1.55;margin:0;">'
               + assum.map(function (t) { return '<li>' + escapeHtml(t) + '</li>'; }).join('')
-              + '</ul>'
-            : ''));
+              + '</ul>')
+          : '')
+        + termsBlock();
       try {
         if ($('costInvoice')) $('costInvoice').value = String(inputs.invoiceAed || '');
         if ($('costFixed')) $('costFixed').value = String(inputs.fixedAed || '');
@@ -1150,7 +1153,7 @@
     if (tab === 'analytics') {
       el.innerHTML =
         card('What are people doing?',
-          kpis([['Sessions (approx DAU)', u.dau || 0], ['Broadcasts viewed (stored views)', c.views || 0],
+          kpis([['Sessions (approx daily active)', u.dau || 0], ['Broadcasts viewed (stored views)', c.views || 0],
             ['Comments', c.comments || 0], ['Signals', s.total || 0]]))
         + gap('Screen-by-screen paths and completion rates are not stored. Showing them as numbers would be a guess.');
       return;
@@ -1159,7 +1162,7 @@
     if (tab === 'notifications') {
       el.innerHTML =
         card('Notifications',
-          kpis([['Users with an FCM token',
+          kpis([['Users with a push token (FCM)',
             (u.list || []).filter(function (row) { return !!(row.fcmToken || row.fcmTokenAndroid); }).length]])
           + gap(g.notifications || ''));
       return;
@@ -1247,7 +1250,7 @@
             + ' · uploads ' + (pc.uploads || 0)
             + ' · variable ' + escapeHtml(aed(pc.variable_aed))
             + ' · platform share ' + escapeHtml(aed(pc.share_aed))
-            + (pc.mau ? '' : ' · not in MAU, so no platform share')
+            + (pc.mau ? '' : ' · not monthly active, so no platform share')
             + '</p>';
         })()
         + (pin
@@ -1387,13 +1390,13 @@
     if (mode === 'setup') {
       if (confirmRow) confirmRow.style.display = 'block';
       if (btn) btn.textContent = 'Create password';
-      if (title) title.textContent = 'Set your password';
-      if (hint) hint.textContent = 'First time on this account. Choose a password for the Control Centre — at least 8 characters. It is saved to this Naluno account, so any device you sign in on can unlock with it.';
+      if (title) title.textContent = 'Set a password';
+      if (hint) hint.textContent = 'First time on this account. Choose a password for the Control Centre — at least 8 characters. It is saved to this Naluno account, so any signed-in device can unlock with it.';
     } else {
       if (confirmRow) confirmRow.style.display = 'none';
       if (btn) btn.textContent = 'Unlock';
       if (title) title.textContent = 'Unlock';
-      if (hint) hint.textContent = 'Same password you set for this console. It follows the account, not the phone.';
+      if (hint) hint.textContent = 'The password for this console. It follows the account, not the phone.';
     }
   }
 
@@ -1410,7 +1413,7 @@
       setMsg('adminGateMsg',
         'This account is not an operator. uid: ' + uid
         + (currentUser.email ? (' · ' + currentUser.email) : '')
-        + '. Sign in with the Google account that runs this desk.');
+        + '. Sign in with the Google account that runs this console.');
       return;
     }
 
@@ -1432,7 +1435,7 @@
       return;
     }
     const typed = (inp.value || '').trim();
-    if (!typed) { setMsg('adminGateMsg', 'Enter your password.'); return; }
+    if (!typed) { setMsg('adminGateMsg', 'Enter the password.'); return; }
     const uid = currentUser.uid;
 
     if (__needsSetup) {
@@ -1440,12 +1443,12 @@
       const confirmVal = ((confirmEl && confirmEl.value) || '').trim();
       if (typed.length < 8) { setMsg('adminGateMsg', 'Use at least 8 characters.'); return; }
       if (typed !== confirmVal) { setMsg('adminGateMsg', 'The two passwords do not match.'); return; }
-      setMsg('adminGateMsg', 'Saving to your account…', true);
+      setMsg('adminGateMsg', 'Saving to this account…', true);
       const hash = await hashLocal(uid, typed);
       try { localSet(uid, hash); } catch (_) {}
       const saved = await cloudSetHash(uid, hash);
       if (!saved.ok) {
-        setMsg('adminGateMsg', 'Could not save to your account (' + saved.where + '). Publish firestore.rules from this zip and try again.');
+        setMsg('adminGateMsg', 'Could not save to this account (' + saved.where + '). Publish firestore.rules from this zip and try again.');
         return;
       }
       __needsSetup = false;
@@ -1502,12 +1505,12 @@
     if (!initFirebase()) { setMsg('signMsg', 'Sign-in is not ready.'); return; }
     const raw = (($('adminHandle') && $('adminHandle').value) || '').trim();
     const password = ($('adminPassword') && $('adminPassword').value) || '';
-    if (!password || password.length < 6) { setMsg('signMsg', 'Enter your password.'); return; }
+    if (!password || password.length < 6) { setMsg('signMsg', 'Enter the password.'); return; }
     let email = '';
     if (looksLikeEmail(raw)) email = raw;
     else {
       const handle = normalizeHandle(raw);
-      if (!handle || handle.length < 3) { setMsg('signMsg', 'Enter your handle or email.'); return; }
+      if (!handle || handle.length < 3) { setMsg('signMsg', 'Enter a handle or email.'); return; }
       email = handleToEmail(handle);
     }
     setMsg('signMsg', 'Signing in…', true);
