@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260911e';
+  const BUILD = '20260912b';
   const OPERATOR_UIDS = { 'ibMOMY6Q3sVTCxIrwO2FGk43zw93': true };
   const OPERATOR_EMAILS = { 'magjoed@gmail.com': true };
 
@@ -438,6 +438,7 @@
       worker: {}, sw: __swInfo, now: Date.now(),
       zone: Data ? (Data.adminZone ? Data.adminZone() : Data.localZone()) : undefined,
       beacons: [], originMarks: [], deskMail: [],
+      costInputs: readCostInputs(),
     };
     const jobs = [
       colDocs('users', 500).then(function (r) { pack.users = r; }),
@@ -508,6 +509,40 @@
 
   function money(minor, ccy) {
     return Data ? Data.money(minor, ccy) : ((Number(minor) || 0) / 100).toFixed(2);
+  }
+  function readCostInputs() {
+    try {
+      return {
+        invoiceAed: Number(localStorage.getItem('nalunoCostInvoice') || 0) || 0,
+        fixedAed: Number(localStorage.getItem('nalunoCostFixed') || 0) || 0,
+        turnMinutes: Number(localStorage.getItem('nalunoCostTurnMin') || 0) || 0,
+        compassAed: Number(localStorage.getItem('nalunoCostCompass') || 0) || 0,
+      };
+    } catch (_) {
+      return { invoiceAed: 0, fixedAed: 0, turnMinutes: 0, compassAed: 0 };
+    }
+  }
+  function writeCostInputs(v) {
+    try {
+      localStorage.setItem('nalunoCostInvoice', String(v.invoiceAed || 0));
+      localStorage.setItem('nalunoCostFixed', String(v.fixedAed || 0));
+      localStorage.setItem('nalunoCostTurnMin', String(v.turnMinutes || 0));
+      localStorage.setItem('nalunoCostCompass', String(v.compassAed || 0));
+    } catch (_) {}
+  }
+  function aed(n) {
+    return Data && Data.formatAed ? Data.formatAed(n) : ('AED ' + (Number(n) || 0).toFixed(2));
+  }
+  function aedUsd(n) {
+    return Data && Data.moneyPair ? Data.moneyPair(n) : aed(n);
+  }
+  function bytesLabel(n) {
+    return Data && Data.formatBytes ? Data.formatBytes(n) : String(n || 0);
+  }
+  function personCost(d, uid) {
+    const list = (d && d.costs && d.costs.people) || [];
+    for (let i = 0; i < list.length; i++) if (list[i].uid === uid) return list[i];
+    return null;
   }
   function kpi(label, value) {
     return '<div class="kpi"><b>' + escapeHtml(String(value == null ? '—' : value)) + '</b><span>' + escapeHtml(label) + '</span></div>';
@@ -667,6 +702,31 @@
             ['Stickiness', u.stickiness == null ? '—' : u.stickiness + '%']])
           + kpis([['New today', u.new_today || 0], ['New 7 days', u.new_7d || 0], ['New 30 days', u.new_30d || 0]])
           + gap('Today is your local day (' + (d.zone || '') + '), not UTC. Stickiness is DAU ÷ MAU. Active now means a heartbeat in the last 10 minutes.'))
+        + card('Still here',
+          kpis([['≥7 days still in 7d', u.still_7_pct == null ? '—' : u.still_7_pct + '%'],
+            ['of', (u.still_7 || 0) + ' / ' + (u.still_7_of || 0)],
+            ['≥30 days still in 30d', u.still_30_pct == null ? '—' : u.still_30_pct + '%'],
+            ['of', (u.still_30 || 0) + ' / ' + (u.still_30_of || 0)]])
+          + gap(g.retention || 'True D1/D7 needs a session log. Still-here is not cohort retention.'))
+        + card('What each person costs',
+          kpis([['Invoiced this month', aedUsd((d.costs && d.costs.invoice_aed) || 0)],
+            ['List-price usage', aedUsd((d.costs && d.costs.metered_aed) || 0)],
+            ['After free tier', aedUsd((d.costs && d.costs.billable_aed) || 0)],
+            ['Per MAU', aedUsd((d.costs && d.costs.per_mau_aed) || 0)]])
+          + gap((d.costs && d.costs.headline) || g.unit_econ || '')
+          + '<div class="row"><button type="button" class="ghost ccGo" data-go="money">Open Money</button></div>')
+        + card('Pitch snapshot',
+          kpis([['Live', 'getnaluno.com'],
+            ['Registered', u.total || 0],
+            ['MAU', u.mau || 0],
+            ['Revenue', 'none']])
+          + kpis([['Play Store', 'not listed'],
+            ['CAC / LTV', 'unknown'],
+            ['Payouts', 'locked'],
+            ['First bill', (d.costs && d.costs.first_gate && d.costs.first_gate.mau_display)
+              ? ('~' + Number(d.costs.first_gate.mau_display).toLocaleString('en-GB') + ' MAU')
+              : 'still free']])
+          + gap('Registered people, not downloads. Cost-to-serve is the Money model. Do not invent CAC, LTV, lock-screen ring, or store numbers.'))
         + card('What are people making?',
           kpis([['Broadcasts', c.broadcasts_total || 0], ['Live now', c.broadcasts_live || 0],
             ['Today', c.broadcasts_today || 0], ['Creators', cr.total || 0]])
@@ -784,19 +844,21 @@
         '<div class="row"><input id="admUserQ" placeholder="Search name, handle, email or uid" style="flex:1" value="' + escapeHtml(__tabCache.userQ || '') + '" />'
         + '<button type="button" class="ghost" id="admUserSearch">Search</button></div>'
         + kpis([['Users', u.total || 0], ['Matching', list.length], ['Suspended', (u.suspended || []).length], ['Restricted', (u.restricted || []).length],
-          ['With a pin', (d.locations && d.locations.with_coords) || 0]])
+          ['With a pin', (d.locations && d.locations.with_coords) || 0],
+          ['Per MAU', aedUsd((d.costs && d.costs.per_mau_aed) || 0)]])
         + card('By platform', plainRows(['Platform', 'People'],
           Object.keys(u.by_platform || {}).map(function (k) { return [k, u.by_platform[k]]; })))
-        + card('People', table(['Name', 'Handle', 'Last seen', 'Place', 'Platform', 'State', ''],
+        + card('People', table(['Name', 'Handle', 'Last seen', 'Place', 'Cost / mo', 'State', ''],
           list.slice(0, 80).map(function (row) {
             const state = row.suspended ? 'SUSPENDED' : (row.restricted ? 'restricted' : 'ok');
             const pin = coordsOf(row);
+            const pc = personCost(d, row.id);
             return [
               escapeHtml(userName(row)),
               escapeHtml(row.handle || row.number || ''),
               escapeHtml(row.lastSeen ? when(row.lastSeen) : 'never'),
               pin ? pinHtml(pin.lat, pin.lng, pin.accuracy, pin.place) : '—',
-              escapeHtml(row.lastPlatform || '—'),
+              escapeHtml(pc ? aed(pc.monthly_aed) : '—'),
               escapeHtml(state),
               '<button type="button" class="ghost admUserOpen" data-uid="' + escapeHtml(row.id) + '">Open</button>',
             ];
@@ -893,7 +955,7 @@
         kpis([['Comments', c.comments || 0], ['Replies', c.replies || 0],
           ['Shares', c.shares || 0], ['Views', c.views || 0],
           ['Bands', c.bands || 0], ['Strands', c.strands || 0]])
-        + gap('These are stored on Broadcast documents (comments and replies increment there) and also counted from the contribution ledger when that is filling.')
+        + gap('These are stored on Broadcast documents (comments and replies increment there) and also counted from the contribution ledger when that is filling. Community value is a measurement — never money.')
         + ((d.origin && d.origin.total)
           ? card('Origin marks',
             kpis([['Scanned', d.origin.total], ['Held / match', d.origin.held]])
@@ -931,6 +993,7 @@
       const off = !d.flags.contribution_enabled;
       el.innerHTML =
         (off ? inactiveNote('Contribution tracking is switched off.') : '')
+        + inactiveNote('Contribution points are a measurement. They are not money, not a wallet, and not a promise to pay.')
         + kpis([['Ledger rows', (e.ledger || []).length], ['Points', e.contribution_points || 0],
           ['Eligible', e.eligible_points || 0], ['Pending review', (e.pending_review || []).length],
           ['Contributors', e.contributors || 0]])
@@ -950,18 +1013,118 @@
     }
 
     if (tab === 'money') {
+      const inputs = readCostInputs();
+      const raw = d._raw || {};
+      const costs = (Data && Data.estimateCosts)
+        ? Data.estimateCosts(Object.assign({}, raw, { now: d.now, zone: d.zone, costInputs: inputs }))
+        : (d.costs || {});
+      const lines = costs.lines || [];
+      const top = costs.top || [];
+      const scale = costs.scale || [];
+      const assum = costs.assumptions || [];
       el.innerHTML =
-        inactiveNote('Real payouts are disabled. No money has moved.')
+        inactiveNote('Real payouts are disabled. No money has moved. Revenue does not exist yet.')
+        + card('What does each person cost Naluno?',
+          '<p class="sub">' + escapeHtml((costs.headline) || 'List prices × usage on this desk.') + '</p>'
+          + kpis([['Invoiced (typed)', aedUsd(costs.invoice_aed || 0)],
+            ['List-price usage', aedUsd(costs.metered_aed || 0)],
+            ['After free tier', aedUsd(costs.billable_aed || 0)],
+            ['Serving with', costs.invoice_aed ? 'invoice' : (costs.on_free_tier ? 'free tier' : 'Blaze / paid')]])
+          + kpis([['Per registered', aedUsd(costs.per_registered_aed || 0)],
+            ['Per MAU', aedUsd(costs.per_mau_aed || 0)],
+            ['Per DAU', aedUsd(costs.per_dau_aed || 0)],
+            ['R2 stored', (costs.storage && costs.storage.r2_gb != null) ? Number(costs.storage.r2_gb).toFixed(3) + ' GB' : '—']])
+          + gap(g.unit_econ || ''))
+        + card('When you start paying',
+          (costs.gates && costs.gates.length
+            ? plainRows(['Cap', 'Free allowance', 'Around MAU', 'Status'],
+              costs.gates.map(function (gate) {
+                const mau = gate.mau_display == null ? 'needs usage' : ('~' + Number(gate.mau_display).toLocaleString('en-GB'));
+                return [gate.label, gate.free, mau, gate.already ? 'past free' : 'still free'];
+              }))
+            : '<p class="sub">Free-tier gates appear once usage is on file.</p>')
+          + gap('Reads usually go first. Model: 150 Firestore reads per MAU per day. Spark allows 50,000/day ≈ 330 MAU. R2 egress is $0. FCM is free.'))
+        + card('Bills and extras (this browser)',
+          '<label>Invoiced this month (AED)</label><input id="costInvoice" inputmode="decimal" placeholder="0" />'
+          + '<label>Fixed monthly — domain, store, tools (AED)</label><input id="costFixed" inputmode="decimal" placeholder="0" />'
+          + '<label>Call minutes this month (TURN)</label><input id="costTurn" inputmode="decimal" placeholder="0" />'
+          + '<label>Compass / AI this month (AED)</label><input id="costCompass" inputmode="decimal" placeholder="0" />'
+          + '<div class="row"><button type="button" class="primary" id="costBtn">Recalculate cost</button></div>'
+          + '<p class="sub" id="costHint"></p>')
+        + card('Where the list-price goes',
+          plainRows(['Line', 'Quantity', 'AED / month'],
+            lines.map(function (L) {
+              const qty = L.unit === 'GB-month' || L.unit === 'GB'
+                ? Number(L.qty || 0).toFixed(4) + ' ' + L.unit
+                : (Math.round(Number(L.qty) || 0) + (L.unit ? ' ' + L.unit : ''));
+              return [L.label, qty, aedUsd(L.aed)];
+            }))
+          + gap('Broadcast is the expensive part — it stays. Signals fall off after 25 hours.'))
+        + card('People, most expensive first',
+          top.length
+            ? plainRows(['Person', 'MAU', 'Media', 'Uploads', 'Variable', 'Share', 'This month'],
+              top.map(function (p) {
+                return [
+                  (p.name || p.uid.slice(0, 10)) + (p.handle ? ' · ' + p.handle : ''),
+                  p.mau ? 'yes' : 'no',
+                  bytesLabel((p.broadcast_bytes || 0) + (p.signal_bytes || 0)),
+                  p.uploads || 0,
+                  aedUsd(p.variable_aed),
+                  aedUsd(p.share_aed),
+                  aedUsd(p.monthly_aed),
+                ];
+              }))
+            : '<p class="sub">No people on file yet. The math still works at zero.</p>')
+        + card('If everyone stored like the people you have now',
+          plainRows(['MAU', 'List-price / month', 'After free tier', 'Per MAU'],
+            scale.map(function (row) {
+              return [row.n.toLocaleString('en-GB'), aedUsd(row.gross_aed), aedUsd(row.billable_aed), aedUsd(row.per_mau_aed)];
+            }))
+          + gap('This is a mix projection, not a forecast. Empty product → only the typed fixed bill.'))
         + card('Runway',
-          '<p class="sub">Enter cash and monthly burn. This stays on this browser only until a finance ledger exists.</p>'
+          '<p class="sub">Cash and burn stay on this browser until a finance ledger exists.</p>'
           + '<label>Cash on hand (AED)</label><input id="runCash" inputmode="decimal" placeholder="e.g. 80000" />'
           + '<label>Monthly burn (AED)</label><input id="runBurn" inputmode="decimal" placeholder="e.g. 12000" />'
           + '<div class="row"><button type="button" class="primary" id="runBtn">Estimate runway</button></div>'
-          + '<div id="runOut" class="sub"></div>');
+          + '<div id="runOut" class="sub"></div>')
+        + card('Before you sit with an investor',
+          '<ul class="sub" style="padding-left:18px;line-height:1.55">'
+          + '<li>Live at getnaluno.com. Not on Play Store.</li>'
+          + '<li>Registered people, not downloads.</li>'
+          + '<li>Cost-to-serve is this model, shown in AED and USD (peg 3.6725). Invoiced spend is what you type (AED 0 until a bill exists).</li>'
+          + '<li>No revenue. Creator Support and payouts are off.</li>'
+          + '<li>' + escapeHtml(g.cac || 'Do not invent CAC or LTV.') + '</li>'
+          + '<li>' + escapeHtml(g.native || 'Do not claim lock-screen ring.') + '</li>'
+          + '<li>Mail and delete requests are read by a person, not instant.</li>'
+          + '</ul>'
+          + (assum.length
+            ? '<p class="sub" style="margin-top:10px">Assumptions</p><ul class="sub" style="padding-left:18px;line-height:1.55">'
+              + assum.map(function (t) { return '<li>' + escapeHtml(t) + '</li>'; }).join('')
+              + '</ul>'
+            : ''));
       try {
+        if ($('costInvoice')) $('costInvoice').value = String(inputs.invoiceAed || '');
+        if ($('costFixed')) $('costFixed').value = String(inputs.fixedAed || '');
+        if ($('costTurn')) $('costTurn').value = String(inputs.turnMinutes || '');
+        if ($('costCompass')) $('costCompass').value = String(inputs.compassAed || '');
         $('runCash').value = localStorage.getItem('nalunoRunwayCash') || '';
         $('runBurn').value = localStorage.getItem('nalunoRunwayBurn') || '';
       } catch (_) {}
+      if ($('costBtn')) $('costBtn').onclick = function () {
+        const next = {
+          invoiceAed: Number(($('costInvoice') && $('costInvoice').value) || 0) || 0,
+          fixedAed: Number(($('costFixed') && $('costFixed').value) || 0) || 0,
+          turnMinutes: Number(($('costTurn') && $('costTurn').value) || 0) || 0,
+          compassAed: Number(($('costCompass') && $('costCompass').value) || 0) || 0,
+        };
+        writeCostInputs(next);
+        if (d._raw) d._raw.costInputs = next;
+        if (d.costs && Data && Data.estimateCosts) {
+          d.costs = Data.estimateCosts(Object.assign({}, d._raw || {}, { now: d.now, zone: d.zone, costInputs: next }));
+        }
+        toast('Cost recalculated');
+        renderTab('money', d);
+      };
       if ($('runBtn')) $('runBtn').onclick = function () {
         const cash = Number(($('runCash') && $('runCash').value) || 0);
         const burn = Number(($('runBurn') && $('runBurn').value) || 0);
@@ -1072,7 +1235,21 @@
           ['Platform', row.lastPlatform || '—'],
           ['State', row.suspended ? 'SUSPENDED' : (row.restricted ? 'restricted' : 'ok')],
           ['Broadcasts', bcasts.length],
-          ['Signals', ((d.signals && d.signals.list) || []).filter(function (s) { return s.uid === uid; }).length]])
+          ['Signals', ((d.signals && d.signals.list) || []).filter(function (s) { return s.uid === uid; }).length],
+          ['Cost / month', (function () {
+            const pc = personCost(d, uid);
+            return pc ? aed(pc.monthly_aed) : '—';
+          })()]])
+        + (function () {
+          const pc = personCost(d, uid);
+          if (!pc) return '';
+          return '<p class="sub">Media ' + escapeHtml(bytesLabel((pc.broadcast_bytes || 0) + (pc.signal_bytes || 0)))
+            + ' · uploads ' + (pc.uploads || 0)
+            + ' · variable ' + escapeHtml(aed(pc.variable_aed))
+            + ' · platform share ' + escapeHtml(aed(pc.share_aed))
+            + (pc.mau ? '' : ' · not in MAU, so no platform share')
+            + '</p>';
+        })()
         + (pin
           ? '<p class="sub">Last pin: ' + pinHtml(pin.lat, pin.lng, pin.accuracy, pin.place)
             + (pin.at ? ' · ' + escapeHtml(when(pin.at)) : '')
