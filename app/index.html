@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.09.13s" />
+  <meta name="naluno-build" content="2026.09.14c" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.09.13s">
+<meta name="app-version" content="2026.09.14c">
 <meta name="description" content="A statement from the future.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="Watch on Naluno.">
@@ -110,9 +110,9 @@
 })();
 </script>
 <link rel="apple-touch-startup-image" href="/splash-empty.png">
-<link rel="stylesheet" href="/css/app.css?v=20260913s" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/css/app.css?v=20260914c" media="print" onload="this.media='all'">
 <script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="/css/app.css?v=20260913s"></noscript>
+<noscript><link rel="stylesheet" href="/css/app.css?v=20260914c"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -426,23 +426,6 @@ window.__nalunoEntryT0 = Date.now();
     </div>
   </section>
 
-  <!-- ===================== CREATOR SUPPORT =====================
-       Always in the app. Control Centre On/Off makes this tab
-       active or inactive — it is never removed. -->
-  <section class="tabscreen" id="tab-support">
-    <div class="tab-header">
-      <div class="tab-title">Support</div>
-      <span class="support-flag-chip" id="supportFlagChip">Off</span>
-    </div>
-    <div class="tab-scroll" id="supportTabScroll" style="padding:0 18px calc(28px + env(safe-area-inset-bottom,0px));">
-      <div class="support-banner" id="supportBanner"></div>
-      <p class="lobby-sub" style="text-align:left;max-width:none;margin:10px 0 16px;font-size:12.5px;line-height:1.5;">Send a creator a thank-you in dirham. Voluntary. You can use every other part of Naluno without ever opening this.</p>
-      <div id="supportMine"></div>
-      <div class="section-label" style="padding:12px 4px 8px;">Creators</div>
-      <div id="supportCreatorList"></div>
-    </div>
-  </section>
-
   <!-- ===================== COMPASS ===================== -->
   <section class="tabscreen" id="tab-compass" style="display:flex; flex-direction:column;">
     <div class="tab-header">
@@ -609,9 +592,9 @@ window.__nalunoEntryT0 = Date.now();
     <div class="tab-scroll" style="padding:0 18px 24px;">
       <div class="section-label">Amount</div>
       <div class="support-amt-row" id="supportAmountRow">
-        <button type="button" class="support-amt" data-minor="500">AED 5</button>
-        <button type="button" class="support-amt on" data-minor="1000">AED 10</button>
-        <button type="button" class="support-amt" data-minor="2500">AED 25</button>
+        <button type="button" class="support-amt" data-minor="500">5</button>
+        <button type="button" class="support-amt on" data-minor="1000">10</button>
+        <button type="button" class="support-amt" data-minor="2500">25</button>
       </div>
       <p class="lobby-sub" style="text-align:left;max-width:none;margin:12px 0 0;font-size:11.5px;line-height:1.5;">This records an intent. It is not a payment. You can use Naluno without ever sending one.</p>
       <button type="button" id="supportSheetSend" class="save-btn" style="width:100%;margin-top:18px;">Record support</button>
@@ -677,11 +660,6 @@ window.__nalunoEntryT0 = Date.now();
     <button class="navbtn" data-tab="broadcast">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/><path d="M7.5 7.5a6.5 6.5 0 000 9M16.5 7.5a6.5 6.5 0 010 9M4 4a11 11 0 000 16M20 4a11 11 0 010 16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
       <span>Broadcast</span>
-    </button>
-    <button class="navbtn inactive" data-tab="support" id="supportNavBtn" style="position:relative;" aria-disabled="true" title="Creator Support is off — the tab is here, inactive">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><ellipse cx="12" cy="8" rx="7" ry="2.6" stroke="currentColor" stroke-width="1.8"/><path d="M5 8v7.5c0 1.5 3.1 2.7 7 2.7s7-1.2 7-2.7V8" stroke="currentColor" stroke-width="1.8"/><ellipse cx="12" cy="15.5" rx="7" ry="2.6" stroke="currentColor" stroke-width="1.8"/></svg>
-      <span>Support</span>
-      <span class="nav-off-dot" aria-hidden="true"></span>
     </button>
     <button class="navbtn" data-tab="compass">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><path d="M15 9l-2 5-5 2 2-5 5-2z" fill="currentColor"/></svg>
@@ -1200,7 +1178,15 @@ window.__nalunoEntryT0 = Date.now();
         <div id="bspaceViewRow" class="bspace-view-row" style="display:none;"></div>
         <button type="button" class="bspace-join" id="bspaceJoinBtn">+ Circle</button>
         <div id="bspaceSupportSlot" class="bspace-support-slot">
-          <button type="button" id="bspaceSupportBtn" class="bspace-support-btn off" title="Creator Support is off — the tab is still there">Support · off</button>
+          <div class="bspace-support-panel">
+            <div class="bspace-support-head">
+              <div class="bspace-support-kicker">Support creator</div>
+              <span class="support-flag-chip" id="supportFlagChip">Off</span>
+            </div>
+            <div class="support-banner" id="supportBanner"></div>
+            <button type="button" id="bspaceSupportBtn" class="bspace-support-btn off" title="Creator Support is off">Support · off</button>
+            <div id="supportMine"></div>
+          </div>
         </div>
         <div id="bspaceStrandRow" style="display:none;margin:10px 0 14px;padding:12px;border:1px solid var(--line);border-radius:16px;background:var(--surface);">
           <div class="hint" style="margin-bottom:8px;">Add this published Broadcast to a Strand — related rooms are suggested from the Strand you pick.</div>
@@ -1403,7 +1389,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/broadcast-upload.js?v=20260908d"></script>
 <script src="/js/broadcast-composer.js?v=20260908d"></script>
 <script src="/js/origin.js?v=20260908d"></script>
-<script src="/js/strand.js?v=20260912d"></script>
+<script src="/js/strand.js?v=20260914c"></script>
 <script src="/js/circle.js?v=20260908d"></script>
 <!-- Community Economy: reports actions only; all economic value is computed
      server-side by the naluno-economy Worker. Loaded AFTER circle.js so
@@ -1411,18 +1397,19 @@ window.__nalunoEntryT0 = Date.now();
      to load entirely, Broadcast would behave exactly as it does today. -->
 <script src="/js/presence.js?v=20260910a"></script>
 <script src="/js/report.js?v=20260909a"></script>
-<script src="/js/economy.js?v=20260913s"></script>
-<script src="/js/economy-ui.js?v=20260913s"></script>
+<script src="/js/currency.js?v=20260914c"></script>
+<script src="/js/economy.js?v=20260914c"></script>
+<script src="/js/economy-ui.js?v=20260914c"></script>
 <script src="/js/weather.js?v=20260911b"></script>
 <script src="/js/beacon.js?v=20260911b"></script>
 <script src="/js/compass.js?v=20260911e"></script>
-<script src="/js/signal-ui.js?v=20260912d"></script>
+<script src="/js/signal-ui.js?v=20260914c"></script>
 <script src="/js/compat-lock.js?v=20260908d"></script>
-<script src="/js/broadcast-space.js?v=20260913s"></script>
-<script src="/js/ads.js?v=20260913a"></script>
+<script src="/js/broadcast-space.js?v=20260914c"></script>
+<script src="/js/ads.js?v=20260914c"></script>
 <script src="/js/media-vault.js?v=20260908d"></script>
 <script src="/js/wireline.js?v=20260908d"></script>
-<script src="/js/profile.js?v=20260913s"></script>
+<script src="/js/profile.js?v=20260914c"></script>
 <script src="/js/onboard.js?v=20260908d"></script>
 <script src="/js/auth.js?v=20260908d"></script>
 <script src="/js/notifications.js?v=20260908d"></script>
@@ -1433,7 +1420,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/sfu-live.js?v=20260908d"></script>
 <script src="/js/broadcast-live.js?v=20260908d"></script>
 <script src="/js/band-room.js?v=20260911c"></script>
-<script src="/js/pwa.js?v=20260913s"></script>
+<script src="/js/pwa.js?v=20260914c"></script>
 <script src="/js/spark-engine.js?v=20260908d"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>
 <script src="/js/spark-lg.js?v=20260908d"></script>
