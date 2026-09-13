@@ -268,8 +268,10 @@
     background:var(--text-dim); border:1.5px solid var(--bg);
   }
   .navbtn.inactive .nav-off-dot{ display:block; }
-  body.naluno-support-on .navbtn#supportNavBtn .nav-off-dot{ display:none; }
-  body.naluno-support-on .navbtn#supportNavBtn.inactive{ opacity:1; }
+  /* Support is Broadcast-only. If an old cached shell still has the nav tab, hide it. */
+  .navbtn[data-tab="support"],
+  #supportNavBtn,
+  #tab-support{ display:none !important; }
 
   /* ---------- tab screens ---------- */
   .tabscreen{ position:absolute; inset:0; bottom:66px; display:flex; flex-direction:column; opacity:0; pointer-events:none; transition:opacity .25s; }
@@ -910,6 +912,20 @@ body.naluno-bcast-mine .bcast-feed-head{
   padding:0;
   scroll-snap-align:none;
   scroll-snap-stop:normal;
+}
+body.naluno-strand-open #bcastForYouHome,
+body.naluno-strand-open .bcast-feed-head{
+  display:none !important;
+  min-height:0 !important;
+  height:0 !important;
+  padding:0 !important;
+  overflow:hidden !important;
+  scroll-snap-align:none;
+}
+body.naluno-strand-open #bcastViewTabs,
+body.naluno-strand-open #bcastSearchRow,
+body.naluno-strand-open #bcastSearchResults{
+  display:none !important;
 }
 .bcast-scroll-cue{
   width:100%; margin:8px 0 0; padding:12px 10px 4px;
@@ -2387,7 +2403,7 @@ html[data-atmosphere="buzzing"] .naluno-aurora{
   margin-bottom: 16px;
 }
 
-/* ---------- Creator Support tab (always present; flag = active/inactive) ---------- */
+/* ---------- Creator Support (inside Broadcast, below Circle) ---------- */
 .support-flag-chip{
   font-family: var(--font-mono);
   font-size: 10px;
@@ -2475,6 +2491,21 @@ html[data-atmosphere="buzzing"] .naluno-aurora{
   border-color: var(--mint);
 }
 .bspace-support-slot{ margin: -8px 0 18px; }
+.bspace-support-panel{
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 16px;
+  padding: 12px 12px 10px;
+}
+.bspace-support-head{
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-bottom: 8px;
+}
+.bspace-support-kicker{
+  font-family: var(--font-futuristic); font-weight: 700;
+  font-size: 12px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text);
+}
 .bspace-support-btn{
   width: 100%; padding: 12px 16px;
   border-radius: 14px; border: 1px solid rgba(124,255,178,.35);
@@ -2486,7 +2517,16 @@ html[data-atmosphere="buzzing"] .naluno-aurora{
 .bspace-support-btn.off{
   color: var(--text-dim); border-color: var(--line); opacity: .7;
 }
-.tab-support.support-inactive .support-row{ pointer-events: auto; }
+.bspace-support-panel .support-banner{ margin: 0 0 10px; }
+.bspace-support-panel #supportMine{ margin-top: 8px; }
+.naluno-ad-sound{
+  position:absolute; right:14px; top:14px; z-index:3;
+  padding:8px 12px; border-radius:999px;
+  background:rgba(13,15,23,.78); border:1px solid rgba(124,255,178,.45);
+  color:#7CFFB2; font-family:var(--font-mono, ui-monospace, monospace);
+  font-size:11px; letter-spacing:.08em; text-transform:uppercase; cursor:pointer;
+}
+.naluno-ad-sound.muted{ color:#E8ECF5; border-color:rgba(232,236,245,.35); }
 
 
 
