@@ -1,5 +1,4 @@
 // Naluno service worker — offline shell + background call push.
-// v162: 09.11f contact send — do not intercept /v1/mail (Chrome offline banner).
 // v161: 09.11e contact form, Compass delete/write, Control Centre Mail.
 // v160: 09.11d pitch surface — landing proof, OG, public privacy/terms.
 // v159: 09.11c Band audio/video drop in immediately (placeholder + client ts).
@@ -57,7 +56,7 @@ const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
   '/admin/', '/admin/index.html',
-  '/js/admin-data.js', '/js/admin-console.js',
+  '/js/admin-data.js', '/js/admin-console.js', '/js/ads.js',
   '/js/core.js', '/js/metrics.js', '/js/data.js', '/js/crypto.js', '/js/atmosphere.js',
   '/js/pwa.js', '/js/auth.js', '/js/camera.js', '/js/call-filters.js', '/js/calls.js', '/js/media-vault.js', '/js/wireline.js',
   '/js/band-room.js', '/js/band-list.js', '/js/broadcast-core.js', '/js/broadcast-space.js',
@@ -88,7 +87,7 @@ self.addEventListener('activate', event=>{
   );
 });
 
-const NALUNO_ECON_VER = '2.2.1-mail';
+const NALUNO_ECON_VER = '2.2.0-mail';
 const NALUNO_ECON_FLAGS = {
   broadcast_enabled: true,
   signals_enabled: true,
@@ -221,6 +220,15 @@ async function handleEconomyFetch(request){
     }
   }
 
+  if(path === '/v1/mail' && request.method === 'POST'){
+    try{
+      const r = await fetch(request);
+      return r;
+    }catch(_){
+      return econJson({ ok: false, error: 'Could not send just now. Try again in a minute.' }, 502);
+    }
+  }
+
   try{
     return await fetch(request);
   }catch(_){
@@ -237,12 +245,6 @@ self.addEventListener('fetch', event=>{
     econUrl.hostname === 'naluno-economy.naluno.workers.dev' ||
     econUrl.pathname.indexOf('/__naluno-economy') === 0
   )){
-    var econPath = econUrl.pathname || '/';
-    if(econPath.indexOf('/__naluno-economy') === 0) econPath = econPath.slice('/__naluno-economy'.length) || '/';
-    // Contact/delete mail must hit the worker on this device's network.
-    // Intercepting it is what painted "No internet connection" on a live
-    // 5G tab and hid the worker's own answer behind a 502.
-    if(econPath === '/v1/mail') return;
     event.respondWith(handleEconomyFetch(event.request));
     return;
   }
