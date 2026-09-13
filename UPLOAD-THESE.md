@@ -1,20 +1,15 @@
-# GitHub / Firebase — 2026.09.12e
+# GitHub / Firebase — 2026.09.12f
 
-Watch-time ads, faster Control Centre, lighter first app install.
+Ad overlay sits on the paused video, stays until Skip, and the video comes back with sound.
 Only these files. Do not upload a full tree.
-
-The operator inbox address is not in any of these files.
 
 ## Must publish
 
-1. **js/ads.js** — skippable break after every N minutes of actual watching (default 1). The old every-four-cards weave is gone. Clock runs only while a Signal or Broadcast is playing, not on muted feed previews.
-2. **js/admin-console.js**, **admin/index.html** — Ads tab has a How often control (1–30 minutes). Snapshot loads core numbers first, then fills the rest. Tab switches reuse a 90-second cache. Upload helper loads only when saving a unit.
-3. **app/index.html**, **js/pwa.js**, **sw.js** — cache `naluno-shell-v163`, `?v=20260912e`. Admin and Spark files are no longer precached on first app install.
+1. **js/ads.js** — overlay z-index sits above Broadcast and Signal players. The unit covers the paused video. It loops until Skip (the 5s mark only unlocks Skip; it does not dismiss). Skip restores the original video with sound.
+2. **js/media-contain.js** — pause / exclusive / detach leave the ad player alone so it cannot be killed from underneath.
+3. **js/broadcast-space.js** — chapter-break unit fills the video frame. No auto-dismiss. Skip only. Sound restored on the Broadcast.
+4. **app/index.html**, **js/pwa.js**, **sw.js** — cache `naluno-shell-v164`, `?v=20260912f`.
 
 ## After upload
 
 Close Naluno tabs once so the new service worker takes.
-
-Pacing is stored on `economyConfig/flags.adEveryMin` (already readable by signed-in accounts, writable by operators). No new Firestore rules.
-
-The 30-second brand film is a separate download. To run it in the app, upload it from Control Centre → Ads as a live unit.
