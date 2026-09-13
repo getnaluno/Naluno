@@ -2127,26 +2127,78 @@ function playBroadcastChapter(index, userInitiated){
 function showBreatherAdSlot(breather, onDone){
   const el = $('bspaceBreather');
   if(!el){ if(onDone) onDone(); return; }
-  const ad = breather && breather.adSlot;
+  try{
+    const v = $('bspaceVideoEl');
+    if(v){
+      v.dataset.nalunoUserPaused = '1';
+      v.dataset.nalunoWantPlay = '0';
+      try{ v.pause(); }catch(_){}
+    }
+  }catch(_){}
+  let ad = breather && breather.adSlot;
+  if((!ad || ad.status !== 'ready') && typeof NalunoAds !== 'undefined' && NalunoAds.breatherSlot){
+    try{ ad = NalunoAds.breatherSlot('broadcast-break'); }catch(_){}
+    if(breather) breather.adSlot = ad;
+  }
   el.style.display = 'flex';
   const label = $('bspaceBreatherLabel');
   const adLine = $('bspaceBreatherAd');
-  if(label) label.textContent = (breather && breather.label) || 'Chapter break';
+  if(label) label.textContent = (ad && ad.status === 'ready') ? 'Ad' : ((breather && breather.label) || 'Chapter break');
   if(adLine){
-    // Architecture for ads: when inventory is ready, render creative here.
-    // Today: reserved slot only (no network ad call).
     if(ad && ad.status === 'ready' && ad.creativeHtml){
       adLine.innerHTML = ad.creativeHtml;
+      try{ if(typeof NalunoAds !== 'undefined' && NalunoAds.wireBreather) NalunoAds.wireBreather(adLine, ad); }catch(_){}
     } else if(ad && ad.enabled){
-      adLine.textContent = 'Ad slot · reserved for future inventory';
+      adLine.textContent = 'Next chapter…';
     } else {
       adLine.textContent = 'Next chapter…';
     }
   }
   if(bspaceBreatherTimer) clearTimeout(bspaceBreatherTimer);
   const wait = (breather && breather.durationMs) || 1200;
-  // If ad is ready and longer, use ad max duration
   const adWait = (ad && ad.status === 'ready' && ad.maxDurationMs) ? ad.maxDurationMs : wait;
+  const skip = (ad && ad.status === 'ready') ? Math.max(0, Number(ad.skipAfterSec) || 5) : 0;
+  let skipBtn = $('bspaceAdSkip');
+  if(ad && ad.status === 'ready'){
+    if(!skipBtn){
+      skipBtn = document.createElement('button');
+      skipBtn.type = 'button';
+      skipBtn.id = 'bspaceAdSkip';
+      skipBtn.style.cssText = 'margin-top:8px;padding:8px 14px;border-radius:999px;border:1px solid rgba(124,255,178,.4);background:rgba(13,15,23,.7);color:#E8ECF5;font-size:12px;cursor:pointer;';
+      el.appendChild(skipBtn);
+    }
+    skipBtn.style.display = 'inline-flex';
+    skipBtn.disabled = skip > 0;
+    skipBtn.textContent = skip > 0 ? ('Skip in ' + skip + 's') : 'Skip';
+    let left = skip;
+    const finish = function(){
+      hideBreatherAdSlot();
+      if(onDone) onDone();
+    };
+    skipBtn.onclick = function(){
+      if(skipBtn.disabled) return;
+      try{ if(ad && ad.ad && typeof NalunoAds !== 'undefined') NalunoAds.track(ad.ad, 'skip'); }catch(_){}
+      finish();
+    };
+    if(bspaceBreatherTimer) clearTimeout(bspaceBreatherTimer);
+    if(skip > 0){
+      bspaceBreatherTimer = setInterval(function(){
+        left -= 1;
+        if(left <= 0){
+          skipBtn.disabled = false;
+          skipBtn.textContent = 'Skip';
+          try{ clearInterval(bspaceBreatherTimer); }catch(_){}
+          bspaceBreatherTimer = setTimeout(finish, Math.max(800, Math.min(adWait, 15000) - skip * 1000));
+        } else {
+          skipBtn.textContent = 'Skip in ' + left + 's';
+        }
+      }, 1000);
+    } else {
+      bspaceBreatherTimer = setTimeout(finish, Math.min(adWait, 15000));
+    }
+    return;
+  }
+  if(skipBtn) skipBtn.style.display = 'none';
   bspaceBreatherTimer = setTimeout(()=>{
     hideBreatherAdSlot();
     if(onDone) onDone();
@@ -2155,8 +2207,26 @@ function showBreatherAdSlot(breather, onDone){
 
 function hideBreatherAdSlot(){
   const el = $('bspaceBreather');
-  if(el) el.style.display = 'none';
-  if(bspaceBreatherTimer){ clearTimeout(bspaceBreatherTimer); bspaceBreatherTimer = null; }
+  if(el){
+    try{
+      el.querySelectorAll('video, audio').forEach(function(v){
+        try{
+          v.dataset.nalunoUserPaused = '1';
+          v.dataset.nalunoWantPlay = '0';
+          v.pause();
+          v.muted = true;
+        }catch(_){}
+      });
+    }catch(_){}
+    el.style.display = 'none';
+  }
+  const skipBtn = $('bspaceAdSkip');
+  if(skipBtn) skipBtn.style.display = 'none';
+  if(bspaceBreatherTimer){
+    try{ clearTimeout(bspaceBreatherTimer); }catch(_){}
+    try{ clearInterval(bspaceBreatherTimer); }catch(_){}
+    bspaceBreatherTimer = null;
+  }
 }
 
 
@@ -2361,6 +2431,17 @@ function nalunoStrandSiblingsFor(id){
 }
 
 function nalunoBspaceStep(dir){
+  try{
+    const v = document.getElementById('bspaceVideoEl');
+    if(v){
+      v.dataset.nalunoUserPaused = '1';
+      v.dataset.nalunoWantPlay = '0';
+      delete v.dataset.nalunoKeepAlive;
+      try{ v.muted = true; v.volume = 0; }catch(_){}
+      try{ v.pause(); }catch(_){}
+    }
+  }catch(_){}
+  try{ if(typeof nalunoPauseLeavingMedia === 'function') nalunoPauseLeavingMedia(); }catch(_){}
   const id = activeBroadcastId;
   if(!id){
     try{ closeBroadcastSpace(); }catch(_){}

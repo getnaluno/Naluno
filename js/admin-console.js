@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260912c';
+  const BUILD = '20260912d';
   const OPERATOR_UIDS = { 'ibMOMY6Q3sVTCxIrwO2FGk43zw93': true };
   const OPERATOR_EMAILS = { 'magjoed@gmail.com': true };
 
@@ -437,7 +437,7 @@
       reports: [], ledger: [], metrics: [], audit: [], flags: {},
       worker: {}, sw: __swInfo, now: Date.now(),
       zone: Data ? (Data.adminZone ? Data.adminZone() : Data.localZone()) : undefined,
-      beacons: [], originMarks: [], deskMail: [],
+      beacons: [], originMarks: [], deskMail: [], deskAds: [],
       costInputs: readCostInputs(),
     };
     const jobs = [
@@ -448,6 +448,7 @@
       colDocs('bands', 80).then(function (r) { pack.bands = r; }),
       colDocs('reports', 80).then(function (r) { pack.reports = r; }),
       colDocs('deskMail', 200).then(function (r) { pack.deskMail = r; }),
+      colDocs('deskAds', 80).then(function (r) { pack.deskAds = r; }),
       colDocs('contributionLedger', 200).then(function (r) { pack.ledger = r; }),
       colDocs('economyInbox', 200).then(function (r) { pack._inbox = r; }),
       colDocs('metrics', 200).then(function (r) { pack.metrics = r; }),
@@ -841,6 +842,96 @@
       el.querySelectorAll('.admMail').forEach(function (btn) {
         btn.onclick = function () { actMail(btn.getAttribute('data-id'), btn.getAttribute('data-st')); };
       });
+      return;
+    }
+
+    if (tab === 'ads') {
+      const ads = (d.ads && d.ads.list) || [];
+      const q = (__tabCache.adsQ || 'all');
+      const filtered = ads.filter(function (a) {
+        const st = String(a.status || 'paused');
+        if (q === 'live') return st === 'live';
+        if (q === 'paused') return st !== 'live';
+        return true;
+      });
+      const ctr = (d.ads && d.ads.impressions) ? (Math.round(((d.ads.clicks || 0) / d.ads.impressions) * 1000) / 10) : 0;
+      el.innerHTML =
+        kpis([['Live', (d.ads && d.ads.live) || 0], ['Paused', (d.ads && d.ads.paused) || 0],
+          ['Impressions', (d.ads && d.ads.impressions) || 0], ['Clicks', (d.ads && d.ads.clicks) || 0],
+          ['Skips', (d.ads && d.ads.skips) || 0], ['Click-through', ctr ? (ctr + '%') : '—']])
+        + card('How ads work on Naluno',
+          '<p class="gap-note">Inventory is first-party: a creative is uploaded here and stored on Cloudflare R2 (object storage). There is no third-party network, no auction, and no tracker. A live unit appears as a native 9:16 plate in For You (every four cards) and as a skippable chapter break inside a Broadcast. Every unit is labelled <b>Ad</b>. The call to action (CTA) must be an https address. Sound starts only when someone opens the unit. Swiping away pauses it.</p>')
+        + card('New unit',
+          '<label for="adFile">Creative — 9:16 video or image, about 6–30 seconds</label>'
+          + '<input id="adFile" type="file" accept="video/*,image/*" />'
+          + '<label for="adHeadline">Headline</label>'
+          + '<input id="adHeadline" maxlength="80" placeholder="What the unit is about" />'
+          + '<label for="adAdvertiser">Advertiser</label>'
+          + '<input id="adAdvertiser" maxlength="60" placeholder="Brand or person shown on the unit" />'
+          + '<label for="adCtaLabel">Call to action (CTA)</label>'
+          + '<input id="adCtaLabel" maxlength="24" placeholder="Open" value="Open" />'
+          + '<label for="adCtaUrl">Call to action address (https only)</label>'
+          + '<input id="adCtaUrl" type="url" placeholder="https://" />'
+          + '<label for="adPlace">Placement</label>'
+          + '<select id="adPlace">'
+          + '<option value="both">For You feed and Broadcast break</option>'
+          + '<option value="in-feed">For You feed only</option>'
+          + '<option value="broadcast-break">Broadcast chapter break only</option>'
+          + '</select>'
+          + '<label for="adSkip">Skip after (seconds)</label>'
+          + '<input id="adSkip" type="number" min="0" max="15" value="5" />'
+          + '<div class="row">'
+          + '<button type="button" class="primary" id="adSaveLive">Upload and go live</button>'
+          + '<button type="button" class="ghost" id="adSavePaused">Upload paused</button>'
+          + '</div>'
+          + '<div class="msg" id="adMsg"></div>')
+        + '<div class="row" style="margin:12px 0;">'
+        + ['all', 'live', 'paused'].map(function (k) {
+          const on = q === k ? ' primary' : ' ghost';
+          const label = k === 'all' ? 'All' : (k === 'live' ? 'Live' : 'Paused');
+          return '<button type="button" class="' + on.trim() + ' adsFilter" data-q="' + k + '">' + label + '</button>';
+        }).join('')
+        + '</div>'
+        + card('Inventory', filtered.length
+          ? filtered.map(function (a) {
+            const st = String(a.status || 'paused');
+            const places = Array.isArray(a.placements) ? a.placements.join(', ') : (a.placement || '');
+            const thumb = a.thumbUrl || (String(a.mediaType || '').indexOf('image') === 0 ? a.mediaUrl : '');
+            const media = thumb
+              ? '<img class="ad-preview" src="' + escapeHtml(thumb) + '" alt="" />'
+              : (a.mediaUrl
+                ? '<video class="ad-preview" src="' + escapeHtml(a.mediaUrl) + '" muted playsinline></video>'
+                : '<div class="ad-preview"></div>');
+            const impr = Number(a.impressions) || 0;
+            const clicks = Number(a.clicks) || 0;
+            const rate = impr ? (Math.round((clicks / impr) * 1000) / 10) + '%' : '—';
+            return '<div class="alert ' + (st === 'live' ? 'ok' : 'warning') + ' ad-row">'
+              + media
+              + '<div class="ad-body">'
+              + '<div class="sub">' + escapeHtml(st) + ' · ' + escapeHtml(places) + ' · skip ' + escapeHtml(String(a.skipAfterSec != null ? a.skipAfterSec : 5)) + 's</div>'
+              + '<div style="margin:4px 0;"><b>' + escapeHtml(a.headline || a.advertiser || a.id) + '</b></div>'
+              + '<div class="sub">' + escapeHtml(a.advertiser || '') + (a.ctaUrl ? ' · ' + escapeHtml(a.ctaUrl) : '') + '</div>'
+              + '<div class="sub" style="margin-top:6px;">Impressions ' + impr + ' · Clicks ' + clicks + ' · Skips ' + (Number(a.skips) || 0) + ' · Click-through ' + rate + '</div>'
+              + '<div class="row" style="margin-top:10px;">'
+              + (st === 'live'
+                ? '<button type="button" class="ghost admAd" data-id="' + escapeHtml(a.id) + '" data-act="pause">Pause</button>'
+                : '<button type="button" class="primary admAd" data-id="' + escapeHtml(a.id) + '" data-act="live">Go live</button>')
+              + '<button type="button" class="danger admAd" data-id="' + escapeHtml(a.id) + '" data-act="delete">Remove</button>'
+              + '</div></div></div>';
+          }).join('')
+          : '<p class="sub">No units in this filter. Upload a 9:16 creative above. It will not appear in the app until it is live, and firestore.rules for deskAds must be published.</p>');
+      el.querySelectorAll('.adsFilter').forEach(function (btn) {
+        btn.onclick = function () {
+          __tabCache.adsQ = btn.getAttribute('data-q') || 'all';
+          loadTab('ads', false);
+        };
+      });
+      el.querySelectorAll('.admAd').forEach(function (btn) {
+        btn.onclick = function () { actAd(btn.getAttribute('data-id'), btn.getAttribute('data-act')); };
+      });
+      const save = function (status) { saveAd(status); };
+      if ($('adSaveLive')) $('adSaveLive').onclick = function () { save('live'); };
+      if ($('adSavePaused')) $('adSavePaused').onclick = function () { save('paused'); };
       return;
     }
 
@@ -1311,6 +1402,111 @@
     }
   }
 
+
+  function placementsFrom(val) {
+    const v = String(val || 'both');
+    if (v === 'in-feed') return ['in-feed'];
+    if (v === 'broadcast-break') return ['broadcast-break'];
+    return ['in-feed', 'broadcast-break'];
+  }
+  function httpsOnly(raw) {
+    const s = String(raw || '').trim();
+    if (!s) return '';
+    try {
+      const u = new URL(s);
+      if (u.protocol !== 'https:') return '';
+      return u.href;
+    } catch (_) { return ''; }
+  }
+  async function saveAd(status) {
+    const db = adminDb();
+    if (!db) { toast('Database is not ready'); return; }
+    if (!currentUser) { toast('Sign in again'); return; }
+    try { window.currentUser = currentUser; } catch (_) {}
+    const fileEl = $('adFile');
+    const file = fileEl && fileEl.files && fileEl.files[0];
+    const headline = (($('adHeadline') && $('adHeadline').value) || '').trim().slice(0, 80);
+    const advertiser = (($('adAdvertiser') && $('adAdvertiser').value) || '').trim().slice(0, 60);
+    const ctaLabel = ((($('adCtaLabel') && $('adCtaLabel').value) || 'Open').trim() || 'Open').slice(0, 24);
+    const ctaUrl = httpsOnly(($('adCtaUrl') && $('adCtaUrl').value) || '');
+    const place = ($('adPlace') && $('adPlace').value) || 'both';
+    let skip = parseInt(($('adSkip') && $('adSkip').value) || '5', 10);
+    if (!isFinite(skip)) skip = 5;
+    skip = Math.max(0, Math.min(15, skip));
+    if (!file) { setMsg('adMsg', 'Choose a video or image.'); return; }
+    if (!headline && !advertiser) { setMsg('adMsg', 'Add a headline or an advertiser name.'); return; }
+    if (($('adCtaUrl') && $('adCtaUrl').value.trim()) && !ctaUrl) {
+      setMsg('adMsg', 'The call to action must be an https address.');
+      return;
+    }
+    const isImage = String(file.type || '').indexOf('image/') === 0 || /\.(png|jpe?g|webp|gif)$/i.test(file.name || '');
+    setMsg('adMsg', 'Uploading…', true);
+    toast('Uploading creative…');
+    let url = '';
+    try {
+      if (typeof uploadBroadcastFile !== 'function') throw new Error('Upload helper is not loaded');
+      const ctype = isImage ? (file.type || 'image/jpeg') : (file.type || 'video/mp4');
+      url = await uploadBroadcastFile(file, function (p, label) {
+        setMsg('adMsg', label || ('Uploading… ' + Math.round((p || 0) * 100) + '%'), true);
+      }, ctype);
+    } catch (e) {
+      setMsg('adMsg', (e && e.message) || 'Upload failed');
+      return;
+    }
+    if (!url) { setMsg('adMsg', 'Upload returned no address.'); return; }
+    const doc = {
+      status: status === 'live' ? 'live' : 'paused',
+      placements: placementsFrom(place),
+      placement: place,
+      headline: headline,
+      advertiser: advertiser,
+      ctaLabel: ctaLabel,
+      ctaUrl: ctaUrl,
+      mediaUrl: url,
+      mediaType: isImage ? 'image' : 'video',
+      thumbUrl: isImage ? url : '',
+      skipAfterSec: skip,
+      impressions: 0,
+      clicks: 0,
+      skips: 0,
+      bytes: file.size || 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      createdBy: currentUser.uid,
+    };
+    try {
+      const ref = await db.collection('deskAds').add(doc);
+      await writeAudit('ad-create', ref.id, doc.status + ' · ' + (headline || advertiser));
+      toast(doc.status === 'live' ? 'Live in the app' : 'Saved paused');
+      setMsg('adMsg', 'Saved.', true);
+      await loadTab('ads', true);
+    } catch (e) {
+      setMsg('adMsg', (e && e.message) || 'Could not save. Publish the new firestore.rules.');
+    }
+  }
+  async function actAd(id, action) {
+    if (!id || !action) return;
+    const db = adminDb();
+    if (!db) { toast('Database is not ready'); return; }
+    try {
+      if (action === 'delete') {
+        const ok = window.confirm('Remove this unit from inventory? It will leave the app immediately.');
+        if (!ok) return;
+        await db.collection('deskAds').doc(id).delete();
+        await writeAudit('ad-delete', id, 'removed');
+        toast('Removed');
+      } else {
+        const status = action === 'live' ? 'live' : 'paused';
+        await db.collection('deskAds').doc(id).set({ status: status, updatedAt: Date.now(), updatedBy: currentUser.uid }, { merge: true });
+        await writeAudit('ad-' + status, id, status);
+        toast(status === 'live' ? 'Live in the app' : 'Paused');
+      }
+      await loadTab('ads', true);
+    } catch (e) {
+      toast((e && e.message) || 'Could not update that unit. Publish the new firestore.rules.');
+    }
+  }
+
   async function actMail(id, status) {
     if (!id || !status) return;
     const db = adminDb();
@@ -1543,6 +1739,7 @@
   function signOut() {
     __adminPass = '';
     currentUser = null;
+    try { window.currentUser = null; } catch (_) {}
     setStage('sign');
     setMsg('signMsg', '');
     setMsg('adminGateMsg', '');
@@ -1563,6 +1760,7 @@
   }
   function onUser(user) {
     currentUser = user || null;
+    try { window.currentUser = currentUser; } catch (_) {}
     if (!user) { setStage('sign'); return; }
     setStage('gate');
     const who = $('gateWho');

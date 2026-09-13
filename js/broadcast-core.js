@@ -503,6 +503,7 @@ window.notifyFrequenciesLive = notifyFrequenciesLive;
 
 function openBroadcastById(id){
   if(!id) return;
+  try{ if(typeof nalunoPauseLeavingMedia === 'function') nalunoPauseLeavingMedia(); }catch(_){}
   try{ if(typeof pauseAllStrandPreviews === 'function') pauseAllStrandPreviews(); }catch(_){}
   if(typeof openBroadcastSpaceById === 'function') openBroadcastSpaceById(id);
   else toast('Opening Broadcast…');

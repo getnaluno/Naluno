@@ -455,7 +455,12 @@ function nalunoRevealBroadcastPlates(grid){
         en.target.classList.remove('in-view');
         try{
           en.target.querySelectorAll('video, audio').forEach(function(v){
-            try{ v.pause(); }catch(_){}
+            try{
+              v.dataset.nalunoUserPaused = '1';
+              v.dataset.nalunoWantPlay = '0';
+              v.muted = true;
+              v.pause();
+            }catch(_){}
           });
         }catch(_){}
       }
@@ -474,7 +479,14 @@ function nalunoRevealBroadcastPlates(grid){
         else {
           en.target.classList.remove('in-view');
           try{
-            en.target.querySelectorAll('video, audio').forEach(function(v){ try{ v.pause(); }catch(_){} });
+            en.target.querySelectorAll('video, audio').forEach(function(v){
+              try{
+                v.dataset.nalunoUserPaused = '1';
+                v.dataset.nalunoWantPlay = '0';
+                v.muted = true;
+                v.pause();
+              }catch(_){}
+            });
           }catch(_){}
         }
       });
@@ -877,11 +889,12 @@ function clearSegTimer(){
   if(segTimer){ clearTimeout(segTimer); segTimer = null; }
   if(currentVideoEl){
     currentVideoEl.onended = null;
+    try{ currentVideoEl.dataset.nalunoUserPaused = '1'; currentVideoEl.dataset.nalunoWantPlay = '0'; }catch(_){}
     try{ currentVideoEl.pause(); }catch(_){}
-    try{ currentVideoEl.muted = true; }catch(_){}
-    try{ currentVideoEl.removeAttribute('src'); currentVideoEl.load(); }catch(_){}
+    try{ currentVideoEl.muted = true; currentVideoEl.volume = 0; }catch(_){}
     currentVideoEl = null;
   }
+  try{ if(typeof nalunoPauseLeavingMedia === 'function') nalunoPauseLeavingMedia(); }catch(_){}
 }
 
 function signalPlaySrc(seg){
@@ -1303,6 +1316,7 @@ function playSegment(idx, direction=1){
   }
 }
 function goToSegment(idx){
+  try{ if(typeof nalunoPauseLeavingMedia === 'function') nalunoPauseLeavingMedia(); }catch(_){}
   clearSegTimer();
   if(idx < 0){ playSegment(0, 1); return; }
   if(idx >= currentSegments.length){
@@ -1370,6 +1384,7 @@ function sortSignalSegments(segments){
   return groupList.flatMap(g=>g.group);
 }
 function closeBroadcast(){
+  try{ if(typeof nalunoPauseLeavingMedia === 'function') nalunoPauseLeavingMedia(); }catch(_){}
   clearSegTimer();
   try{ currentVideoEl && currentVideoEl.pause(); }catch(_){}
   currentVideoEl = null;

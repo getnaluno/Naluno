@@ -289,6 +289,32 @@ window.nalunoRestoreClearedSrc = nalunoRestoreClearedSrc;
 window.stopAllAppMediaAndLockSession = stopAllAppMediaAndLockSession;
 window.lockOutChromeMediaSession = lockOutChromeMediaSession;
 
+/** Swipe-away / next-clip: pause and mute every other player BEFORE the
+ *  DOM is replaced. A detached <video> that was still playing keeps audio
+ *  in Chrome even after innerHTML swap. The playback guard will not
+ *  restart anything marked nalunoUserPaused. */
+function nalunoPauseLeavingMedia(keepEl){
+  try{
+    document.querySelectorAll('video, audio').forEach(function(el){
+      try{
+        if(keepEl && el === keepEl) return;
+        if(typeof nalunoLiveOrCameraEl === 'function' && nalunoLiveOrCameraEl(el)) return;
+        if(el.closest && el.closest('#callOverlay')) return;
+        if(typeof nalunoClipElement === 'function' && nalunoClipElement(el)) return;
+        if(el.srcObject) return;
+        el.dataset.nalunoWantPlay = '0';
+        el.dataset.nalunoUserPaused = '1';
+        delete el.dataset.nalunoKeepAlive;
+        try{ el.muted = true; el.volume = 0; }catch(_){}
+        try{ el.pause(); }catch(_){}
+      }catch(_){}
+    });
+  }catch(_){}
+  try{ if(typeof pauseAllStrandPreviews === 'function') pauseAllStrandPreviews(); }catch(_){}
+  try{ if(typeof lockOutChromeMediaSession === 'function') lockOutChromeMediaSession(); }catch(_){}
+}
+window.nalunoPauseLeavingMedia = nalunoPauseLeavingMedia;
+
 /** Only one Naluno surface may play. Keep `keepEl` running; pause the rest. */
 function nalunoExclusiveMedia(keepEl){
   try{
@@ -299,13 +325,10 @@ function nalunoExclusiveMedia(keepEl){
         if(el.closest && el.closest('#callOverlay')) return;
         if(nalunoClipElement(el)) return;
         el.dataset.nalunoWantPlay = '0';
-        delete el.dataset.nalunoKeepAlive;
-        if(el.dataset && el.dataset.nalunoPreview === '1'){
-          try{ el.pause(); }catch(_){}
-          return;
-        }
         el.dataset.nalunoUserPaused = '1';
-        el.pause();
+        delete el.dataset.nalunoKeepAlive;
+        try{ el.muted = true; }catch(_){}
+        try{ el.pause(); }catch(_){}
       }catch(_){}
     });
   }catch(_){}

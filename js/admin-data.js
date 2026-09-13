@@ -56,6 +56,8 @@
     { abbr: 'D1 / D7', name: 'Day-1 / day-7 retention', note: 'Share of a signup cohort still active N days later. Needs a session log. Still-here is used instead.' },
     { abbr: 'CPU / RAM', name: 'Processor / memory', note: 'Instance utilisation. Cloudflare and Firebase do not expose this to the console.' },
     { abbr: 'PWA', name: 'Progressive web app', note: 'The installable Naluno website.' },
+    { abbr: 'Ad', name: 'Advertisement', note: 'A paid unit on Naluno. Always labelled Ad. First-party inventory uploaded from this console, not a third-party network.' },
+    { abbr: 'CTA', name: 'Call to action', note: 'The button on an ad (Open, Visit, Watch) that leads to an https address.' },
   ];
 
   function localZone() {
@@ -679,6 +681,7 @@
     const beacons = raw.beacons || [];
     const originMarks = raw.originMarks || [];
     const deskMail = raw.deskMail || raw.mail || [];
+    const deskAds = raw.deskAds || raw.ads || [];
     const flags = Object.assign({}, DEFAULT_FLAGS, raw.flags || {});
     const worker = raw.worker || {};
     const sw = raw.sw || {};
@@ -813,6 +816,14 @@
     const mailList = deskMail.slice().sort(function (a, b) {
       return num(b.ts || b.createdAt) - num(a.ts || a.createdAt);
     });
+    const adsList = deskAds.slice().sort(function (a, b) {
+      return num(b.updatedAt || b.createdAt) - num(a.updatedAt || a.createdAt);
+    });
+    const adsLive = adsList.filter(function (a) { return String(a.status || '') === 'live'; });
+    const adsPaused = adsList.filter(function (a) { return String(a.status || '') !== 'live'; });
+    const adsImpr = adsList.reduce(function (n, a) { return n + num(a.impressions); }, 0);
+    const adsClicks = adsList.reduce(function (n, a) { return n + num(a.clicks); }, 0);
+    const adsSkips = adsList.reduce(function (n, a) { return n + num(a.skips); }, 0);
     const mailNew = mailList.filter(function (m) {
       return String(m.status || 'new').toLowerCase() === 'new';
     });
@@ -999,6 +1010,15 @@
         compass: mailList.filter(function (m) { return String(m.source || '') === 'compass'; }).length,
         web: mailList.filter(function (m) { return String(m.source || '') === 'web'; }).length,
         list: mailList,
+      },
+      ads: {
+        total: adsList.length,
+        live: adsLive.length,
+        paused: adsPaused.length,
+        impressions: adsImpr,
+        clicks: adsClicks,
+        skips: adsSkips,
+        list: adsList,
       },
       economy: {
         contributors: (function () {

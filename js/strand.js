@@ -209,7 +209,12 @@
 
   function pauseStrandPreview(video){
     if(!video) return;
-    try{ video.pause(); }catch(_){}
+    try{
+      video.dataset.nalunoUserPaused = '1';
+      video.dataset.nalunoWantPlay = '0';
+      video.muted = true;
+      video.pause();
+    }catch(_){}
     if(__strandPreviewActive === video) __strandPreviewActive = null;
   }
   function pauseAllStrandPreviews(root){
@@ -233,6 +238,7 @@
       pauseStrandPreview(__strandPreviewActive);
     }
     try{
+      video.dataset.nalunoUserPaused = '0';
       video.muted = true;
       video.defaultMuted = true;
       video.volume = 0;
@@ -360,8 +366,16 @@
       cards.push({ ts: Number(b.createdAt) || 0, html: plateHtml(b) });
     });
     cards.sort(function(a,b){ return (b.ts || 0) - (a.ts || 0); });
-    grid.innerHTML = cards.map(function(c){ return c.html; }).join('');
+    let htmls = cards.map(function(c){ return c.html; });
+    try{
+      const mine = (typeof bcastActiveView !== 'undefined' && bcastActiveView === 'mine');
+      if(!mine && typeof NalunoAds !== 'undefined' && NalunoAds.weaveHtml){
+        htmls = NalunoAds.weaveHtml(htmls, 'in-feed');
+      }
+    }catch(_){}
+    grid.innerHTML = htmls.join('');
     bindBroadcastEntryClicks(grid);
+    try{ if(typeof NalunoAds !== 'undefined' && NalunoAds.bindPlates) NalunoAds.bindPlates(grid); }catch(_){}
     try{ if(typeof nalunoRevealBroadcastPlates === 'function') nalunoRevealBroadcastPlates(grid); }catch(_){}
     try{ armStrandPreviews(grid); }catch(_){}
   }
