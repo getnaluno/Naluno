@@ -7,8 +7,8 @@
 <meta name="robots" content="noindex, nofollow, noarchive" />
 <meta name="googlebot" content="noindex, nofollow, noarchive" />
 <meta name="theme-color" content="#07080D" />
-<meta name="naluno-build" content="2026.09.12c" />
-<meta name="app-version" content="2026.09.12c" />
+<meta name="naluno-build" content="2026.09.12d" />
+<meta name="app-version" content="2026.09.12d" />
 <link rel="icon" href="/icon-192.png" />
 <link rel="canonical" href="https://getnaluno.com/admin/" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -63,6 +63,15 @@ input{
   padding:12px 14px;color:var(--ink);font-family:var(--body);font-size:15px;
 }
 input:focus{outline:2px solid var(--cyan);outline-offset:2px;}
+textarea,select{
+  width:100%;background:#0D1018;border:1px solid var(--line);border-radius:10px;
+  padding:12px 14px;color:var(--ink);font-family:var(--body);font-size:15px;
+}
+textarea{min-height:72px;resize:vertical;}
+select:focus,textarea:focus{outline:2px solid var(--cyan);outline-offset:2px;}
+.ad-preview{width:72px;height:128px;object-fit:cover;border-radius:8px;background:#000;display:block;}
+.ad-row{display:flex;gap:12px;align-items:flex-start;}
+.ad-row .ad-body{flex:1;min-width:0;}
 .row{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;}
 button{
   font-family:var(--dial);font-size:12px;letter-spacing:.06em;border:none;cursor:pointer;
@@ -219,6 +228,7 @@ button{
       <button type="button" class="atab" data-tab="health" role="tab">Health</button>
       <button type="button" class="atab" data-tab="alerts" role="tab">Alerts</button>
       <button type="button" class="atab" data-tab="mail" role="tab">Mail</button>
+      <button type="button" class="atab" data-tab="ads" role="tab">Ads</button>
       <button type="button" class="atab" data-tab="users" role="tab">Users</button>
       <button type="button" class="atab" data-tab="broadcast" role="tab">Broadcast</button>
       <button type="button" class="atab" data-tab="signals" role="tab">Signals</button>
@@ -245,8 +255,9 @@ button{
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
-<script src="/firebase-config.js?v=20260912c"></script>
-<script src="/js/admin-data.js?v=20260912c"></script>
-<script src="/js/admin-console.js?v=20260912c"></script>
+<script src="/firebase-config.js?v=20260912d"></script>
+<script src="/js/admin-data.js?v=20260912d"></script>
+<script src="/js/broadcast-upload.js?v=20260912d"></script>
+<script src="/js/admin-console.js?v=20260912d"></script>
 </body>
 </html>
