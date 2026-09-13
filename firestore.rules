@@ -491,7 +491,9 @@ service cloud.firestore {
     }
 
     /* First-party ad inventory. Operator writes. Signed-in members
-       read live units and may increment view/click/skip counters only. */
+       read live units and may increment impression, click, skip and
+       completed-view counters only. viewCompletes may be missing on
+       older rows; it is not required to already be a number. */
     match /deskAds/{id} {
       allow read: if isOperator()
         || (isSignedIn() && resource.data.status == 'live');
@@ -502,7 +504,7 @@ service cloud.firestore {
       allow update: if isOperator()
         || (isSignedIn()
             && request.resource.data.diff(resource.data).affectedKeys()
-                 .hasOnly(['impressions', 'clicks', 'skips', 'updatedAt'])
+                 .hasOnly(['impressions', 'clicks', 'skips', 'viewCompletes', 'updatedAt'])
             && request.resource.data.status == resource.data.status
             && request.resource.data.mediaUrl == resource.data.mediaUrl
             && request.resource.data.impressions is number

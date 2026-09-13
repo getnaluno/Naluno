@@ -1,15 +1,21 @@
-# GitHub / Firebase — 2026.09.12f
+# GitHub / Firebase — 2026.09.13a
 
-Ad overlay sits on the paused video, stays until Skip, and the video comes back with sound.
+Booked ad revenue on the Control Centre, completed-view tracking in the app.
 Only these files. Do not upload a full tree.
+
+The operator inbox address is not in any of these files.
 
 ## Must publish
 
-1. **js/ads.js** — overlay z-index sits above Broadcast and Signal players. The unit covers the paused video. It loops until Skip (the 5s mark only unlocks Skip; it does not dismiss). Skip restores the original video with sound.
-2. **js/media-contain.js** — pause / exclusive / detach leave the ad player alone so it cannot be killed from underneath.
-3. **js/broadcast-space.js** — chapter-break unit fills the video frame. No auto-dismiss. Skip only. Sound restored on the Broadcast.
-4. **app/index.html**, **js/pwa.js**, **sw.js** — cache `naluno-shell-v164`, `?v=20260912f`.
+1. **firestore.rules** — signed-in members may increment `viewCompletes` on live `deskAds` rows, along with impressions, clicks and skips. Older rows without `viewCompletes` still accept the other counters.
+2. **js/admin-data.js**, **js/admin-console.js**, **admin/index.html** — Ads and Money show booked revenue from the rate card × observed events. eCPM, CPC and CPV (with acronyms defined) live on `economyConfig/adRates`. Each unit books one model. Cash has not moved. There is no third-party auction.
+3. **js/ads.js**, **js/broadcast-space.js** — a completed view is counted after the rate-card seconds of actual play (default 15). Skip before that does not count a view. Skip is not a click.
+4. **app/index.html**, **js/pwa.js**, **sw.js** — cache `naluno-shell-v165`, `?v=20260913a`.
 
 ## After upload
 
 Close Naluno tabs once so the new service worker takes.
+
+Publish the Firestore rules before expecting completed-view counts. Then type eCPM / CPC / CPV on Control Centre → Ads. The math runs at AED 0.00 until rates are set.
+
+ARPDAU on this desk is lifetime booked ÷ today’s daily active users until a day rollup exists. That is not a day’s take.
