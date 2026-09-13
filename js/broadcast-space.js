@@ -2190,6 +2190,7 @@ function showBreatherAdSlot(breather, onDone){
     };
     skipBtn.onclick = function(){
       if(skipBtn.disabled) return;
+      try{ if(typeof NalunoAds !== 'undefined' && NalunoAds.disarmViewComplete) NalunoAds.disarmViewComplete(); }catch(_){}
       try{ if(ad && ad.ad && typeof NalunoAds !== 'undefined') NalunoAds.track(ad.ad, 'skip'); }catch(_){}
       finish();
     };
@@ -2240,6 +2241,7 @@ function resumeBspaceAfterAd(){
 }
 
 function hideBreatherAdSlot(){
+  try{ if(typeof NalunoAds !== 'undefined' && NalunoAds.disarmViewComplete) NalunoAds.disarmViewComplete(); }catch(_){}
   const el = $('bspaceBreather');
   if(el){
     try{

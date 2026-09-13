@@ -58,6 +58,14 @@
     { abbr: 'PWA', name: 'Progressive web app', note: 'The installable Naluno website.' },
     { abbr: 'Ad', name: 'Advertisement', note: 'A paid unit on Naluno. Always labelled Ad. First-party inventory uploaded from this console, not a third-party network.' },
     { abbr: 'CTA', name: 'Call to action', note: 'The button on an ad (Open, Visit, Watch) that leads to an https address.' },
+    { abbr: 'CPM', name: 'Cost per mille', note: 'Advertiser rate for one thousand impressions. Booked as (impressions ÷ 1,000) × eCPM.' },
+    { abbr: 'eCPM', name: 'Effective cost per mille', note: 'The rate card for one thousand impressions, in AED. Set on this console. Not an auction.' },
+    { abbr: 'CPC', name: 'Cost per click', note: 'Advertiser rate for one tap on the call to action. Booked as clicks × CPC.' },
+    { abbr: 'CPV', name: 'Cost per view', note: 'Advertiser rate for a completed view (default 15 seconds of the unit playing). Booked as completed views × CPV.' },
+    { abbr: 'CPA', name: 'Cost per action', note: 'Not used. Naluno does not count installs or off-platform conversions.' },
+    { abbr: 'RPM', name: 'Revenue per mille', note: 'Booked revenue per one thousand impressions. Blends whichever billing model each unit uses.' },
+    { abbr: 'ARPDAU', name: 'Average revenue per daily active user', note: 'Lifetime booked ad revenue ÷ today’s daily active users, until a day rollup exists. That is not a day’s take.' },
+    { abbr: 'ARPU', name: 'Average revenue per user', note: 'Lifetime booked ad revenue ÷ registered accounts.' },
   ];
 
   function localZone() {
@@ -279,6 +287,121 @@
   function moneyPair(aedVal) {
     const a = num(aedVal);
     return formatAed(a) + ' · ' + formatUsd(a / COST_RATES.usd_to_aed);
+  }
+
+
+  const DEFAULT_AD_RATES = {
+    ecpmAed: 0,
+    cpcAed: 0,
+    cpvAed: 0,
+    viewCompleteSec: 15,
+  };
+
+  function clampAdRate(n) {
+    n = Number(n);
+    if (!isFinite(n) || n < 0) return 0;
+    return Math.min(100000, n);
+  }
+  function billModelOf(ad) {
+    const m = String((ad && ad.billModel) || 'cpm').toLowerCase();
+    if (m === 'cpc' || m === 'cpv' || m === 'cpm') return m;
+    return 'cpm';
+  }
+  /* Booked ad revenue from observed events × the operator rate card.
+     Cash has not moved. There is no third-party auction. */
+  function estimateAdRevenue(raw) {
+    raw = raw || {};
+    const ads = raw.deskAds || raw.ads || [];
+    const ratesIn = Object.assign({}, DEFAULT_AD_RATES, raw.adRates || {});
+    const ecpm = clampAdRate(ratesIn.ecpmAed);
+    const cpc = clampAdRate(ratesIn.cpcAed);
+    const cpv = clampAdRate(ratesIn.cpvAed);
+    let viewSec = Math.round(Number(ratesIn.viewCompleteSec) || 15);
+    if (!isFinite(viewSec) || viewSec < 1) viewSec = 15;
+    if (viewSec > 60) viewSec = 60;
+    const units = ads.map(function (ad) {
+      const impressions = Math.max(0, Math.round(num(ad && ad.impressions)));
+      let clicks = Math.max(0, Math.round(num(ad && ad.clicks)));
+      let skips = Math.max(0, Math.round(num(ad && ad.skips)));
+      let views = Math.max(0, Math.round(num(ad && (ad.viewCompletes != null ? ad.viewCompletes : ad.views))));
+      if (clicks > impressions) clicks = impressions;
+      if (skips > impressions) skips = impressions;
+      if (views > impressions) views = impressions;
+      const unitEcpm = ad && ad.ecpmAed != null ? clampAdRate(ad.ecpmAed) : ecpm;
+      const unitCpc = ad && ad.cpcAed != null ? clampAdRate(ad.cpcAed) : cpc;
+      const unitCpv = ad && ad.cpvAed != null ? clampAdRate(ad.cpvAed) : cpv;
+      const cpmAed = (impressions / 1000) * unitEcpm;
+      const cpcAed = clicks * unitCpc;
+      const cpvAed = views * unitCpv;
+      const model = billModelOf(ad);
+      const bookedAed = model === 'cpc' ? cpcAed : (model === 'cpv' ? cpvAed : cpmAed);
+      return {
+        id: (ad && ad.id) || '',
+        headline: (ad && ad.headline) || '',
+        advertiser: (ad && ad.advertiser) || '',
+        status: (ad && ad.status) || 'paused',
+        billModel: model,
+        impressions: impressions,
+        clicks: clicks,
+        skips: skips,
+        viewCompletes: views,
+        ecpmAed: unitEcpm,
+        cpcRateAed: unitCpc,
+        cpvRateAed: unitCpv,
+        cpmAed: cpmAed,
+        cpcAed: cpcAed,
+        cpvAed: cpvAed,
+        bookedAed: bookedAed,
+      };
+    });
+    const impressions = units.reduce(function (n, u) { return n + u.impressions; }, 0);
+    const clicks = units.reduce(function (n, u) { return n + u.clicks; }, 0);
+    const skips = units.reduce(function (n, u) { return n + u.skips; }, 0);
+    const viewCompletes = units.reduce(function (n, u) { return n + u.viewCompletes; }, 0);
+    const cpmAed = units.reduce(function (n, u) { return n + u.cpmAed; }, 0);
+    const cpcAed = units.reduce(function (n, u) { return n + u.cpcAed; }, 0);
+    const cpvAed = units.reduce(function (n, u) { return n + u.cpvAed; }, 0);
+    const bookedAed = units.reduce(function (n, u) { return n + u.bookedAed; }, 0);
+    const rpmAed = impressions ? (bookedAed / impressions) * 1000 : 0;
+    const users = raw.users || [];
+    const now = raw.now || Date.now();
+    const zone = raw.zone;
+    const day0 = startOfLocalDay(now, zone);
+    const dau = users.filter(function (u) { return seenOf(u) >= day0; }).length;
+    const registered = users.length;
+    const ctr = impressions ? (clicks / impressions) * 100 : 0;
+    const viewRate = impressions ? (viewCompletes / impressions) * 100 : 0;
+    return {
+      rates: { ecpmAed: ecpm, cpcAed: cpc, cpvAed: cpv, viewCompleteSec: viewSec },
+      impressions: impressions,
+      clicks: clicks,
+      skips: skips,
+      viewCompletes: viewCompletes,
+      ctr: ctr,
+      viewRate: viewRate,
+      cpmAed: cpmAed,
+      cpcAed: cpcAed,
+      cpvAed: cpvAed,
+      bookedAed: bookedAed,
+      rpmAed: rpmAed,
+      arpdauAed: dau ? bookedAed / dau : 0,
+      arpuAed: registered ? bookedAed / registered : 0,
+      dau: dau,
+      registered: registered,
+      units: units,
+      cash: false,
+      assumptions: [
+        'Booked ad revenue is rate-card maths × observed events. Cash has not moved until an advertiser pays.',
+        'There is no third-party auction. The operator sets eCPM, CPC and CPV on this console.',
+        'Each unit books one model (CPM, CPC or CPV). The other two lines are diagnostics, not extra cash.',
+        'A skip is not a click. Clicks and completed views cannot exceed impressions.',
+        'A session may see the same unit at most three times. That is the current invalid-traffic filter, not a full fraud pipeline.',
+        'A completed view is ' + viewSec + ' seconds of the unit actually playing, or the creative ending without a skip before that.',
+        'ARPDAU is lifetime booked ÷ today’s daily active users until a day rollup exists. That overstates a day’s take.',
+        'ARPU is lifetime booked ÷ registered accounts.',
+        'Customer acquisition cost (CAC) and lifetime value (LTV) are not estimated.',
+      ],
+    };
   }
 
   function roundMau(n) {
@@ -824,6 +947,8 @@
     const adsImpr = adsList.reduce(function (n, a) { return n + num(a.impressions); }, 0);
     const adsClicks = adsList.reduce(function (n, a) { return n + num(a.clicks); }, 0);
     const adsSkips = adsList.reduce(function (n, a) { return n + num(a.skips); }, 0);
+    const adsViews = adsList.reduce(function (n, a) { return n + num(a.viewCompletes); }, 0);
+    const adRevenue = estimateAdRevenue(raw);
     const mailNew = mailList.filter(function (m) {
       return String(m.status || 'new').toLowerCase() === 'new';
     });
@@ -1018,7 +1143,9 @@
         impressions: adsImpr,
         clicks: adsClicks,
         skips: adsSkips,
+        viewCompletes: adsViews,
         list: adsList,
+        revenue: adRevenue,
       },
       economy: {
         contributors: (function () {
@@ -1049,6 +1176,7 @@
         unit_econ: 'Invoices are not connected. Metered figures are list-price maths from usage. Firebase Spark and Cloudflare free plans currently invoice AED 0.00 until usage exceeds those allowances or an invoice is recorded.',
         retention: 'Day-1 / day-7 (D1 / D7) retention needs a session log. Still-here is people who signed up at least N days ago and had a heartbeat in the last N days.',
         cac: 'Customer acquisition cost (CAC) and lifetime value (LTV) are not known and are not estimated here.',
+        ad_revenue: 'Booked ad revenue is rate-card maths × observed events. Cash has not moved. There is no third-party auction.',
         store: 'App-store download counts are not in Firestore. Registration is the first number on record.',
         native: 'Closed-tab ringtone requires a native shell and Unrestricted battery. Lock-screen ring is not available.',
       },
@@ -1070,6 +1198,8 @@
     money: money,
     COST_RATES: COST_RATES,
     estimateCosts: estimateCosts,
+    estimateAdRevenue: estimateAdRevenue,
+    DEFAULT_AD_RATES: DEFAULT_AD_RATES,
     mediaBytesOf: mediaBytesOf,
     formatAed: formatAed,
     formatUsd: formatUsd,

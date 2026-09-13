@@ -9,7 +9,7 @@
      watch-break      — skippable overlay after every N minutes of watching
      broadcast-break  — skippable chapter-break inside a Broadcast
 
-   OWNERSHIP: inventory, pick, render, skip, impression/click.
+   OWNERSHIP: inventory, pick, render, skip, impression/click/view.
    Playback pause lives in media-contain.js (nalunoPauseLeavingMedia).
    ============================================================ */
 (function (root) {
@@ -18,7 +18,9 @@
   const DEFAULT_SKIP = 5;
   const MAX_SKIP = 15;
   const SESSION_CAP = 3;
+  const DEFAULT_VIEW_SEC = 15;
   let __everyMin = DEFAULT_EVERY_MIN;
+  let __viewCompleteSec = DEFAULT_VIEW_SEC;
 
   let __live = [];
   let __loadedAt = 0;
@@ -30,6 +32,8 @@
   let __adOpen = false;
   let __pausedForAd = null;
   let __watchTimer = null;
+  let __viewTimer = null;
+  let __viewThisOpen = false;
 
   function escapeHtml(str) {
     return String(str == null ? '' : str)
@@ -207,9 +211,73 @@
     bindPlates(grid);
   }
 
+  function fieldForKind(kind) {
+    if (kind === 'click') return 'clicks';
+    if (kind === 'skip') return 'skips';
+    if (kind === 'view') return 'viewCompletes';
+    return 'impressions';
+  }
+  function clampViewSec(n) {
+    n = Math.round(Number(n) || DEFAULT_VIEW_SEC);
+    if (!isFinite(n) || n < 1) return DEFAULT_VIEW_SEC;
+    return Math.min(60, n);
+  }
+  function viewCompleteSec() {
+    try {
+      if (typeof nalunoAdRates !== 'undefined' && nalunoAdRates && nalunoAdRates.viewCompleteSec != null) {
+        return clampViewSec(nalunoAdRates.viewCompleteSec);
+      }
+    } catch (_) {}
+    return clampViewSec(__viewCompleteSec);
+  }
+  function setViewCompleteSec(n) {
+    __viewCompleteSec = clampViewSec(n);
+    return __viewCompleteSec;
+  }
+  function loadAdRates() {
+    const db = (typeof fbDb !== 'undefined' && fbDb) ? fbDb : null;
+    if (!db) return;
+    try {
+      db.collection('economyConfig').doc('adRates').get().then(function (s) {
+        if (!s || !s.exists) return;
+        const d = s.data() || {};
+        __viewCompleteSec = clampViewSec(d.viewCompleteSec);
+        try { window.nalunoAdRates = d; } catch (_) {}
+      }).catch(function () {});
+    } catch (_) {}
+  }
+  function disarmViewComplete() {
+    if (__viewTimer) {
+      try { clearInterval(__viewTimer); } catch (_) {}
+      __viewTimer = null;
+    }
+  }
+  function armViewComplete(ad, videoEl) {
+    disarmViewComplete();
+    __viewThisOpen = false;
+    if (!ad || !ad.id) return;
+    const need = viewCompleteSec() * 1000;
+    let accum = 0;
+    let last = Date.now();
+    __viewTimer = setInterval(function () {
+      const now = Date.now();
+      const dt = Math.min(2000, now - last);
+      last = now;
+      let playing = true;
+      if (videoEl) {
+        try { playing = !videoEl.paused && !videoEl.ended; } catch (_) {}
+      }
+      if (playing) accum += dt;
+      if (accum >= need && !__viewThisOpen) {
+        __viewThisOpen = true;
+        disarmViewComplete();
+        track(ad, 'view');
+      }
+    }, 400);
+  }
   function track(ad, kind) {
     if (!ad || !ad.id) return;
-    const field = kind === 'click' ? 'clicks' : (kind === 'skip' ? 'skips' : 'impressions');
+    const field = fieldForKind(kind);
     try {
       const db = (typeof fbDb !== 'undefined' && fbDb) ? fbDb : null;
       if (!db) return;
@@ -270,6 +338,7 @@
     } catch (_) {}
   }
   function closeViewer() {
+    disarmViewComplete();
     __adOpen = false;
     if (typeof document === 'undefined') {
       resumeAfterAd();
@@ -397,6 +466,9 @@
       try {
         if (typeof nalunoExclusiveMedia === 'function') nalunoExclusiveMedia(v);
       } catch (_) {}
+      armViewComplete(ad, v);
+    } else {
+      armViewComplete(ad, null);
     }
     host.onclick = function () {
       const av = document.getElementById('nalunoAdVideo');
@@ -432,6 +504,7 @@
       skipBtn.onclick = function (e) {
         if (e) { e.preventDefault(); e.stopPropagation(); }
         if (skipBtn.disabled) return;
+        disarmViewComplete();
         track(ad, 'skip');
         closeViewer();
       };
@@ -501,6 +574,9 @@
             try { v.muted = false; v.volume = 1; v.play().catch(function () {}); } catch (_) {}
           }
         };
+        armViewComplete(ad, v);
+      } else {
+        armViewComplete(ad, null);
       }
     } catch (_) {}
     const cta = host.querySelector('.naluno-break-cta');
@@ -534,6 +610,8 @@
       impressions: Number(row.impressions) || 0,
       clicks: Number(row.clicks) || 0,
       skips: Number(row.skips) || 0,
+      viewCompletes: Number(row.viewCompletes) || 0,
+      billModel: (function () { const m = String(row.billModel || 'cpm').toLowerCase(); return (m === 'cpc' || m === 'cpv') ? m : 'cpm'; })(),
       createdAt: Number(row.createdAt) || 0,
       updatedAt: Number(row.updatedAt) || 0,
       bytes: Number(row.bytes) || 0,
@@ -579,6 +657,7 @@
     injectStyle();
     startWatchClock();
     function go() {
+      loadAdRates();
       load(false).then(function () { listen(); });
     }
     if (typeof fbDb !== 'undefined' && fbDb) go();
@@ -614,6 +693,11 @@
     openViewer: openViewer,
     closeViewer: closeViewer,
     track: track,
+    fieldForKind: fieldForKind,
+    viewCompleteSec: viewCompleteSec,
+    setViewCompleteSec: setViewCompleteSec,
+    armViewComplete: armViewComplete,
+    disarmViewComplete: disarmViewComplete,
     load: load,
     listen: listen,
     applyDocs: applyDocs,

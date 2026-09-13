@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260912e';
+  const BUILD = '20260913a';
   const OPERATOR_UIDS = { 'ibMOMY6Q3sVTCxIrwO2FGk43zw93': true };
   const OPERATOR_EMAILS = { 'magjoed@gmail.com': true };
 
@@ -435,6 +435,7 @@
       worker: {}, sw: __swInfo, now: Date.now(),
       zone: Data ? (Data.adminZone ? Data.adminZone() : Data.localZone()) : undefined,
       beacons: [], originMarks: [], deskMail: [], deskAds: [],
+      adRates: {},
       costInputs: readCostInputs(),
     };
     const core = [
@@ -447,6 +448,9 @@
     if (db) {
       core.push(db.collection('economyConfig').doc('flags').get().then(function (s) {
         if (s && s.exists) pack.flags = s.data() || {};
+      }).catch(function () {}));
+      core.push(db.collection('economyConfig').doc('adRates').get().then(function (s) {
+        if (s && s.exists) pack.adRates = s.data() || {};
       }).catch(function () {}));
     }
     await Promise.all(core);
@@ -726,7 +730,7 @@
           kpis([['Live', 'getnaluno.com'],
             ['Registered', u.total || 0],
             ['Monthly active', u.mau || 0],
-            ['Revenue', 'none']])
+            ['Booked ads', aedUsd((d.ads && d.ads.revenue && d.ads.revenue.bookedAed) || 0)]])
           + kpis([['Play Store', 'not listed'],
             ['Acquisition cost', 'not known'],
             ['Payouts', 'locked'],
@@ -850,13 +854,49 @@
         if (q === 'paused') return st !== 'live';
         return true;
       });
-      const ctr = (d.ads && d.ads.impressions) ? (Math.round(((d.ads.clicks || 0) / d.ads.impressions) * 1000) / 10) : 0;
+      const rev = (d.ads && d.ads.revenue) || {};
+      const rates = rev.rates || { ecpmAed: 0, cpcAed: 0, cpvAed: 0, viewCompleteSec: 15 };
+      const ctr = rev.ctr != null ? rev.ctr : ((d.ads && d.ads.impressions) ? ((d.ads.clicks || 0) / d.ads.impressions) * 100 : 0);
+      const viewRate = rev.viewRate != null ? rev.viewRate : 0;
+      function pct1(n) {
+        n = Number(n) || 0;
+        if (!n) return '—';
+        return (Math.round(n * 10) / 10) + '%';
+      }
+      function billLabel(m) {
+        if (m === 'cpc') return 'CPC (cost per click)';
+        if (m === 'cpv') return 'CPV (cost per view)';
+        return 'CPM (cost per mille)';
+      }
+      const unitById = {};
+      (rev.units || []).forEach(function (u) { if (u && u.id) unitById[u.id] = u; });
       el.innerHTML =
         kpis([['Live', (d.ads && d.ads.live) || 0], ['Paused', (d.ads && d.ads.paused) || 0],
           ['Impressions', (d.ads && d.ads.impressions) || 0], ['Clicks', (d.ads && d.ads.clicks) || 0],
-          ['Skips', (d.ads && d.ads.skips) || 0], ['Click-through', ctr ? (ctr + '%') : '—']])
+          ['Completed views', (d.ads && d.ads.viewCompletes) || 0], ['Booked', aedUsd(rev.bookedAed || 0)]])
+        + kpis([['Skips', (d.ads && d.ads.skips) || 0], ['Click-through', pct1(ctr)],
+          ['View rate', pct1(viewRate)], ['RPM (revenue per mille)', aedUsd(rev.rpmAed || 0)],
+          ['ARPDAU', aedUsd(rev.arpdauAed || 0)], ['ARPU', aedUsd(rev.arpuAed || 0)]])
+        + card('Booked ad revenue',
+          '<p class="gap-note">Booked ad revenue is rate-card maths × observed events. Cash has not moved until an advertiser pays. There is no third-party auction.</p>'
+          + kpis([['CPM line (diagnostic)', aedUsd(rev.cpmAed || 0)],
+            ['CPC line (diagnostic)', aedUsd(rev.cpcAed || 0)],
+            ['CPV line (diagnostic)', aedUsd(rev.cpvAed || 0)],
+            ['Booked (chosen models)', aedUsd(rev.bookedAed || 0)]])
+          + '<p class="gap-note">Each unit books one model — CPM (cost per mille), CPC (cost per click) or CPV (cost per view). The other two lines are diagnostics, not extra cash. RPM (revenue per mille) is booked ÷ impressions × 1,000. ARPDAU (average revenue per daily active user) here is lifetime booked ÷ today’s daily active users, until a day rollup exists — that is not a day’s take. ARPU (average revenue per user) is lifetime booked ÷ registered accounts.</p>')
+        + card('Rate card',
+          '<label for="adRateEcpm">eCPM (effective cost per mille) — AED per 1,000 impressions</label>'
+          + '<input id="adRateEcpm" inputmode="decimal" value="' + escapeHtml(String(rates.ecpmAed != null ? rates.ecpmAed : 0)) + '" />'
+          + '<label for="adRateCpc">CPC (cost per click) — AED per tap</label>'
+          + '<input id="adRateCpc" inputmode="decimal" value="' + escapeHtml(String(rates.cpcAed != null ? rates.cpcAed : 0)) + '" />'
+          + '<label for="adRateCpv">CPV (cost per view) — AED per completed view</label>'
+          + '<input id="adRateCpv" inputmode="decimal" value="' + escapeHtml(String(rates.cpvAed != null ? rates.cpvAed : 0)) + '" />'
+          + '<label for="adRateViewSec">Completed view after (seconds of the unit playing)</label>'
+          + '<input id="adRateViewSec" type="number" min="1" max="60" value="' + escapeHtml(String(rates.viewCompleteSec != null ? rates.viewCompleteSec : 15)) + '" />'
+          + '<div class="row"><button type="button" class="primary" id="adSaveRates">Save rate card</button></div>'
+          + '<p class="gap-note" style="margin-top:8px;">The math runs at AED 0.00 until rates are typed. Saving the card recalculates every unit immediately. Rates are first-party — not an auction.</p>')
         + card('How ads work on Naluno',
-          '<p class="gap-note">Inventory is first-party: a creative is uploaded here and stored on Cloudflare R2 (object storage). There is no third-party network, no auction, and no tracker. A live unit appears as a skippable break after every N minutes of watching Signal or Broadcast, and as a chapter break inside a Broadcast. Every unit is labelled <b>Ad</b>. The call to action (CTA) must be an https address. Sound starts only when someone opens the unit. Swiping away pauses it.</p>')
+          '<p class="gap-note">Inventory is first-party: a creative is uploaded here and stored on Cloudflare R2 (object storage). There is no third-party network, no auction, and no tracker. A live unit appears as a skippable break after every N minutes of watching Signal or Broadcast, and as a chapter break inside a Broadcast. Every unit is labelled <b>Ad</b>. The call to action (CTA) must be an https address. Sound starts only when someone opens the unit. Swiping away pauses it. A completed view is counted after the seconds on the rate card, or if the creative ends without a skip before that. A skip is not a click. A session may see the same unit at most three times.</p>')
         + card('How often',
           '<label for="adEveryMin">Show a break after every (minutes of watching)</label>'
           + '<input id="adEveryMin" type="number" min="1" max="30" value="' + escapeHtml(String((d.flags && d.flags.adEveryMin) != null ? d.flags.adEveryMin : 1)) + '" />'
@@ -878,6 +918,12 @@
           + '<option value="both">Watch-time break and Broadcast chapter break</option>'
           + '<option value="in-feed">Watch-time break only</option>'
           + '<option value="broadcast-break">Broadcast chapter break only</option>'
+          + '</select>'
+          + '<label for="adBill">Billing model</label>'
+          + '<select id="adBill">'
+          + '<option value="cpm">CPM (cost per mille) — impressions</option>'
+          + '<option value="cpc">CPC (cost per click) — taps</option>'
+          + '<option value="cpv">CPV (cost per view) — completed views</option>'
           + '</select>'
           + '<label for="adSkip">Skip after (seconds)</label>'
           + '<input id="adSkip" type="number" min="0" max="15" value="5" />'
@@ -909,14 +955,17 @@
                 : '<div class="ad-preview"></div>');
             const impr = Number(a.impressions) || 0;
             const clicks = Number(a.clicks) || 0;
+            const views = Number(a.viewCompletes) || 0;
             const rate = impr ? (Math.round((clicks / impr) * 1000) / 10) + '%' : '—';
+            const u = unitById[a.id] || {};
+            const model = u.billModel || a.billModel || 'cpm';
             return '<div class="alert ' + (st === 'live' ? 'ok' : 'warning') + ' ad-row">'
               + media
               + '<div class="ad-body">'
-              + '<div class="sub">' + escapeHtml(st) + ' · ' + escapeHtml(places) + ' · skip ' + escapeHtml(String(a.skipAfterSec != null ? a.skipAfterSec : 5)) + 's</div>'
+              + '<div class="sub">' + escapeHtml(st) + ' · ' + escapeHtml(places) + ' · skip ' + escapeHtml(String(a.skipAfterSec != null ? a.skipAfterSec : 5)) + 's · ' + escapeHtml(billLabel(model)) + '</div>'
               + '<div style="margin:4px 0;"><b>' + escapeHtml(a.headline || a.advertiser || a.id) + '</b></div>'
               + '<div class="sub">' + escapeHtml(a.advertiser || '') + (a.ctaUrl ? ' · ' + escapeHtml(a.ctaUrl) : '') + '</div>'
-              + '<div class="sub" style="margin-top:6px;">Impressions ' + impr + ' · Clicks ' + clicks + ' · Skips ' + (Number(a.skips) || 0) + ' · Click-through ' + rate + '</div>'
+              + '<div class="sub" style="margin-top:6px;">Impressions ' + impr + ' · Clicks ' + clicks + ' · Skips ' + (Number(a.skips) || 0) + ' · Completed views ' + views + ' · Click-through ' + rate + ' · Booked ' + aedUsd(u.bookedAed || 0) + '</div>'
               + '<div class="row" style="margin-top:10px;">'
               + (st === 'live'
                 ? '<button type="button" class="ghost admAd" data-id="' + escapeHtml(a.id) + '" data-act="pause">Pause</button>'
@@ -924,7 +973,14 @@
               + '<button type="button" class="danger admAd" data-id="' + escapeHtml(a.id) + '" data-act="delete">Remove</button>'
               + '</div></div></div>';
           }).join('')
-          : '<p class="sub">No units in this filter. Upload a 9:16 creative above. It will not appear in the app until it is live, and firestore.rules for deskAds must be published.</p>');
+          : '<p class="sub">No units in this filter. Upload a 9:16 creative above. It will not appear in the app until it is live, and firestore.rules for deskAds must be published.</p>')
+        + (rev.assumptions && rev.assumptions.length
+          ? card('Assumptions',
+            '<ul class="sub" style="padding-left:18px;line-height:1.55;margin:0;">'
+            + rev.assumptions.map(function (t) { return '<li>' + escapeHtml(t) + '</li>'; }).join('')
+            + '</ul>')
+          : '')
+        + termsBlock();
       el.querySelectorAll('.adsFilter').forEach(function (btn) {
         btn.onclick = function () {
           __tabCache.adsQ = btn.getAttribute('data-q') || 'all';
@@ -938,6 +994,7 @@
       if ($('adSaveLive')) $('adSaveLive').onclick = function () { save('live'); };
       if ($('adSavePaused')) $('adSavePaused').onclick = function () { save('paused'); };
       if ($('adSavePace')) $('adSavePace').onclick = function () { saveAdPacing(); };
+      if ($('adSaveRates')) $('adSaveRates').onclick = function () { saveAdRates(); };
       return;
     }
 
@@ -1130,8 +1187,22 @@
       const top = costs.top || [];
       const scale = costs.scale || [];
       const assum = costs.assumptions || [];
+      const adRev = (d.ads && d.ads.revenue) || {};
       el.innerHTML =
-        inactiveNote('Real payouts are disabled. No money has moved. Revenue does not exist yet.')
+        inactiveNote('Real payouts are disabled. No money has moved.')
+        + card('Booked ad revenue',
+          '<p class="sub">Booked ad revenue is rate-card maths × observed events. Cash has not moved until an advertiser pays. There is no third-party auction.</p>'
+          + kpis([['Booked ads', aedUsd(adRev.bookedAed || 0)],
+            ['RPM (revenue per mille)', aedUsd(adRev.rpmAed || 0)],
+            ['ARPDAU', aedUsd(adRev.arpdauAed || 0)],
+            ['ARPU', aedUsd(adRev.arpuAed || 0)]])
+          + kpis([['Impressions', adRev.impressions || 0],
+            ['Clicks', adRev.clicks || 0],
+            ['Completed views', adRev.viewCompletes || 0],
+            ['After free-tier cost', aedUsd(costs.billable_aed || 0)]])
+          + gap((g.ad_revenue || 'Booked ad revenue is rate-card maths × observed events. Cash has not moved.')
+            + ' Booked minus cost is not profit. Cost is list-price maths until an invoice is recorded.')
+          + '<div class="row"><button type="button" class="ghost ccGo" data-go="ads">Open Ads</button></div>')
         + card('What does each person cost Naluno?',
           '<p class="sub">' + escapeHtml((costs.headline) || 'List prices × usage on this console.') + '</p>'
           + kpis([['Invoiced (recorded)', aedUsd(costs.invoice_aed || 0)],
@@ -1237,6 +1308,7 @@
         const months = cash / burn;
         if (out) out.textContent = 'Estimated runway: ' + months.toFixed(1) + ' months.';
       };
+      goButtons();
       return;
     }
 
@@ -1417,12 +1489,53 @@
     if (typeof uploadBroadcastFile === 'function') return Promise.resolve();
     return new Promise(function (resolve, reject) {
       const s = document.createElement('script');
-      s.src = '/js/broadcast-upload.js?v=20260912e';
+      s.src = '/js/broadcast-upload.js?v=20260913a';
       s.onload = function () { resolve(); };
       s.onerror = function () { reject(new Error('Upload helper did not load')); };
       document.head.appendChild(s);
     });
   }
+
+  async function saveAdRates() {
+    const db = adminDb();
+    if (!db) { toast('Database is not ready'); return; }
+    function nRate(id) {
+      let n = Number(($(id) && $(id).value) || 0);
+      if (!isFinite(n) || n < 0) n = 0;
+      if (n > 100000) n = 100000;
+      return n;
+    }
+    const ecpm = nRate('adRateEcpm');
+    const cpc = nRate('adRateCpc');
+    const cpv = nRate('adRateCpv');
+    let viewSec = parseInt(($('adRateViewSec') && $('adRateViewSec').value) || '15', 10);
+    if (!isFinite(viewSec) || viewSec < 1) viewSec = 15;
+    if (viewSec > 60) viewSec = 60;
+    const doc = {
+      ecpmAed: ecpm,
+      cpcAed: cpc,
+      cpvAed: cpv,
+      viewCompleteSec: viewSec,
+      updatedAt: Date.now(),
+      updatedBy: currentUser && currentUser.uid,
+    };
+    try {
+      await db.collection('economyConfig').doc('adRates').set(doc, { merge: true });
+      await writeAudit('ad-rates', 'adRates', 'eCPM ' + ecpm + ' · CPC ' + cpc + ' · CPV ' + cpv + ' · view ' + viewSec + 's');
+      if (__snap) {
+        if (__snap._raw) __snap._raw.adRates = doc;
+        if (Data && Data.estimateAdRevenue && __snap._raw) {
+          const next = Data.estimateAdRevenue(__snap._raw);
+          if (__snap.ads) __snap.ads.revenue = next;
+        }
+      }
+      toast('Rate card saved. Booked revenue is maths, not cash.');
+      loadTab('ads', false);
+    } catch (e) {
+      toast((e && e.message) || 'Could not save the rate card.');
+    }
+  }
+
   async function saveAdPacing() {
     const db = adminDb();
     if (!db) { toast('Database is not ready'); return; }
@@ -1471,6 +1584,8 @@
     const ctaLabel = ((($('adCtaLabel') && $('adCtaLabel').value) || 'Open').trim() || 'Open').slice(0, 24);
     const ctaUrl = httpsOnly(($('adCtaUrl') && $('adCtaUrl').value) || '');
     const place = ($('adPlace') && $('adPlace').value) || 'both';
+    let bill = String(($('adBill') && $('adBill').value) || 'cpm').toLowerCase();
+    if (bill !== 'cpc' && bill !== 'cpv') bill = 'cpm';
     let skip = parseInt(($('adSkip') && $('adSkip').value) || '5', 10);
     if (!isFinite(skip)) skip = 5;
     skip = Math.max(0, Math.min(15, skip));
@@ -1507,9 +1622,11 @@
       mediaType: isImage ? 'image' : 'video',
       thumbUrl: isImage ? url : '',
       skipAfterSec: skip,
+      billModel: bill,
       impressions: 0,
       clicks: 0,
       skips: 0,
+      viewCompletes: 0,
       bytes: file.size || 0,
       createdAt: Date.now(),
       updatedAt: Date.now(),
