@@ -6,7 +6,7 @@
    auction. Every unit is labelled Ad.
 
    Placements:
-     in-feed          — native 9:16 plate in For You, every N cards
+     watch-break      — skippable overlay after every N minutes of watching
      broadcast-break  — skippable chapter-break inside a Broadcast
 
    OWNERSHIP: inventory, pick, render, skip, impression/click.
@@ -14,23 +14,29 @@
    ============================================================ */
 (function (root) {
   const COL = 'deskAds';
-  const FREQUENCY = 4;
+  const DEFAULT_EVERY_MIN = 1;
   const DEFAULT_SKIP = 5;
   const MAX_SKIP = 15;
   const SESSION_CAP = 3;
+  let __everyMin = DEFAULT_EVERY_MIN;
 
   let __live = [];
   let __loadedAt = 0;
   let __unsub = null;
-  let __rr = { 'in-feed': 0, 'broadcast-break': 0 };
+  let __rr = { 'in-feed': 0, 'broadcast-break': 0, 'watch-break': 0 };
   const __sessionHits = {};
+  let __watchAccum = 0;
+  let __watchLast = 0;
+  let __adOpen = false;
+  let __pausedForAd = null;
+  let __watchTimer = null;
 
   function escapeHtml(str) {
     return String(str == null ? '' : str)
-      .replace(/&/g, '&')
-      .replace(/</g, '<')
-      .replace(/>/g, '>')
-      .replace(/"/g, '"')
+      .replace(/&/g, '&' + 'amp;')
+      .replace(/</g, '&' + 'lt;')
+      .replace(/>/g, '&' + 'gt;')
+      .replace(/"/g, '&' + 'quot;')
       .replace(/'/g, '&#39;');
   }
 
@@ -75,6 +81,27 @@
     return String((ad && ad.id) || '') + ':' + String(place || '');
   }
 
+  function clampMin(n) {
+    n = Number(n);
+    if (!isFinite(n) || n < 1) return 1;
+    return Math.min(30, Math.round(n));
+  }
+  function everyMin() {
+    try {
+      if (typeof nalunoEconomyFlags !== 'undefined' && nalunoEconomyFlags && nalunoEconomyFlags.adEveryMin != null) {
+        return clampMin(nalunoEconomyFlags.adEveryMin);
+      }
+    } catch (_) {}
+    return clampMin(__everyMin);
+  }
+  function setEveryMin(n) {
+    __everyMin = clampMin(n);
+    return __everyMin;
+  }
+  function intervalMs() {
+    return everyMin() * 60 * 1000;
+  }
+
   function underCap(ad, place) {
     const k = sessionKey(ad, place);
     return (__sessionHits[k] || 0) < SESSION_CAP;
@@ -104,21 +131,8 @@
   }
 
   function weaveHtml(cards, place) {
-    const list = liveFor(place || 'in-feed');
-    if (!list.length || !cards || !cards.length) return cards || [];
-    const out = [];
-    let n = 0;
-    for (let i = 0; i < cards.length; i++) {
-      out.push(cards[i]);
-      if ((i + 1) % FREQUENCY === 0) {
-        const ad = list[n % list.length];
-        if (ad) {
-          out.push(plateHtml(ad));
-          n++;
-        }
-      }
-    }
-    return out;
+    // Time-based breaks replaced the every-four-cards weave.
+    return cards || [];
   }
 
   function plateHtml(ad) {
@@ -190,25 +204,6 @@
   function injectFeed(grid) {
     if (!grid || typeof document === 'undefined') return;
     injectStyle();
-    const ads = liveFor('in-feed');
-    if (!ads.length) return;
-    const kids = Array.prototype.slice.call(grid.children || []);
-    if (kids.length < 2) return;
-    let inserted = 0;
-    const every = FREQUENCY;
-    for (let i = every - 1; i < kids.length; i += every) {
-      const ad = ads[inserted % ads.length];
-      if (!ad) break;
-      const wrap = document.createElement('div');
-      wrap.innerHTML = plateHtml(ad);
-      const node = wrap.firstElementChild;
-      if (!node) continue;
-      const ref = kids[i];
-      if (ref && ref.parentNode === grid) grid.insertBefore(node, ref);
-      else grid.appendChild(node);
-      markShown(ad, 'in-feed');
-      inserted++;
-    }
     bindPlates(grid);
   }
 
@@ -229,28 +224,95 @@
     } catch (_) {}
   }
 
-  function closeViewer() {
-    if (typeof document === 'undefined') return;
-    const el = document.getElementById('nalunoAdViewer');
+  function isWatchVideo(el) {
+    if (!el || el.paused || el.ended) return false;
+    try {
+      if (el.dataset && el.dataset.nalunoPreview === '1') return false;
+      if (el.classList && el.classList.contains('strand-preview')) return false;
+      if (el.closest && el.closest('#nalunoAdViewer, #callOverlay, #composer, #bcomposer, #camStage')) return false;
+      if (el.srcObject) return false;
+    } catch (_) {}
+    return true;
+  }
+  function resumeAfterAd() {
+    const el = __pausedForAd;
+    __pausedForAd = null;
     if (!el) return;
     try {
-      el.querySelectorAll('video, audio').forEach(function (v) {
-        try {
-          v.dataset.nalunoUserPaused = '1';
-          v.dataset.nalunoWantPlay = '0';
-          v.pause();
-          v.muted = true;
-          v.removeAttribute('src');
-          v.load();
-        } catch (_) {}
-      });
+      el.dataset.nalunoUserPaused = '0';
+      el.dataset.nalunoWantPlay = '1';
+      el.dataset.nalunoKeepAlive = '1';
+      const p = el.play();
+      if (p && p.catch) p.catch(function () {});
     } catch (_) {}
-    el.classList.add('hidden');
-    el.innerHTML = '';
+  }
+  function closeViewer() {
+    __adOpen = false;
+    if (typeof document === 'undefined') {
+      resumeAfterAd();
+      return;
+    }
+    const el = document.getElementById('nalunoAdViewer');
+    if (el) {
+      try {
+        el.querySelectorAll('video, audio').forEach(function (v) {
+          try {
+            v.dataset.nalunoUserPaused = '1';
+            v.dataset.nalunoWantPlay = '0';
+            v.pause();
+            v.muted = true;
+            v.removeAttribute('src');
+            v.load();
+          } catch (_) {}
+        });
+      } catch (_) {}
+      el.classList.add('hidden');
+      el.innerHTML = '';
+    }
+    resumeAfterAd();
+  }
+  function maybeWatchBreak() {
+    if (__adOpen) return;
+    if (typeof document === 'undefined') return;
+    if (__watchAccum < intervalMs()) return;
+    const playing = Array.prototype.slice.call(document.querySelectorAll('video')).filter(isWatchVideo)[0];
+    if (!playing) return;
+    const ad = pick('in-feed') || pick('broadcast-break');
+    if (!ad) { __watchAccum = 0; return; }
+    __pausedForAd = playing;
+    try {
+      playing.dataset.nalunoUserPaused = '1';
+      playing.dataset.nalunoWantPlay = '0';
+      playing.pause();
+    } catch (_) {}
+    __watchAccum = 0;
+    openViewer(ad, 'watch-break');
+  }
+  function tickWatch() {
+    if (typeof document === 'undefined') return;
+    const now = Date.now();
+    if (!__watchLast) __watchLast = now;
+    const dt = Math.min(2500, now - __watchLast);
+    __watchLast = now;
+    if (__adOpen) return;
+    let watching = false;
+    try {
+      watching = Array.prototype.slice.call(document.querySelectorAll('video')).some(isWatchVideo);
+    } catch (_) {}
+    if (watching) {
+      __watchAccum += dt;
+      maybeWatchBreak();
+    }
+  }
+  function startWatchClock() {
+    if (__watchTimer || typeof document === 'undefined') return;
+    __watchLast = Date.now();
+    __watchTimer = setInterval(tickWatch, 1000);
   }
 
   function openViewer(ad, place) {
     if (!ad || typeof document === 'undefined') return;
+    __adOpen = true;
     injectStyle();
     try {
       if (typeof nalunoPauseLeavingMedia === 'function') nalunoPauseLeavingMedia();
@@ -463,19 +525,17 @@
 
   function boot() {
     injectStyle();
+    startWatchClock();
     function go() {
       load(false).then(function () { listen(); });
     }
     if (typeof fbDb !== 'undefined' && fbDb) go();
-    else {
-      let n = 0;
-      const iv = setInterval(function () {
-        n++;
-        if ((typeof fbDb !== 'undefined' && fbDb) || n > 40) {
-          clearInterval(iv);
-          if (typeof fbDb !== 'undefined' && fbDb) go();
-        }
-      }, 250);
+    else if (typeof firebase !== 'undefined' && firebase.auth) {
+      try {
+        firebase.auth().onAuthStateChanged(function () { go(); });
+      } catch (_) { go(); }
+    } else {
+      setTimeout(go, 1200);
     }
   }
 
@@ -485,8 +545,12 @@
   }
 
   root.NalunoAds = {
-    FREQUENCY: FREQUENCY,
+    DEFAULT_EVERY_MIN: DEFAULT_EVERY_MIN,
     DEFAULT_SKIP: DEFAULT_SKIP,
+    everyMin: everyMin,
+    setEveryMin: setEveryMin,
+    intervalMs: intervalMs,
+    clampMin: clampMin,
     pick: pick,
     liveFor: liveFor,
     weaveHtml: weaveHtml,

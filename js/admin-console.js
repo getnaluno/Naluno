@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260912d';
+  const BUILD = '20260912e';
   const OPERATOR_UIDS = { 'ibMOMY6Q3sVTCxIrwO2FGk43zw93': true };
   const OPERATOR_EMAILS = { 'magjoed@gmail.com': true };
 
@@ -391,15 +391,12 @@
   async function loadSignals(users) {
     const top = await colDocs('signals', 400);
     const group = await loadCollectionGroup('signal', 400);
-    const per = await loadPerUserSub(users, 'signal', 40);
-    let out = mergeById(mergeById(top, group), per);
+    let out = mergeById(top, group);
     out.sort(function (a, b) { return (Number(b.createdAt || b.ts) || 0) - (Number(a.createdAt || a.ts) || 0); });
     return out;
   }
   async function loadBeacons(users) {
-    const group = await loadCollectionGroup('beacons', 400);
-    const per = await loadPerUserSub(users, 'beacons', 8);
-    return mergeById(group, per);
+    return loadCollectionGroup('beacons', 400);
   }
   async function pingWorker() {
     const out = { ok: false, degraded: false, ms: 0, version: '', error: '', persist: '' };
@@ -430,7 +427,7 @@
     return out;
   }
   async function loadSnapshot(force) {
-    if (!force && __snap && (Date.now() - (__snap._at || 0) < 15000)) return __snap;
+    if (!force && __snap && (Date.now() - (__snap._at || 0) < 90000)) return __snap;
     const db = adminDb();
     const pack = {
       users: [], broadcasts: [], signals: [], toga: [], strands: [], bands: [],
@@ -440,72 +437,67 @@
       beacons: [], originMarks: [], deskMail: [], deskAds: [],
       costInputs: readCostInputs(),
     };
-    const jobs = [
+    const core = [
       colDocs('users', 500).then(function (r) { pack.users = r; }),
       colDocs('broadcasts', 400).then(function (r) { pack.broadcasts = r; }),
+      colDocs('reports', 80).then(function (r) { pack.reports = r; }),
+      colDocs('deskMail', 80).then(function (r) { pack.deskMail = r; }),
+      colDocs('deskAds', 80).then(function (r) { pack.deskAds = r; }),
+    ];
+    if (db) {
+      core.push(db.collection('economyConfig').doc('flags').get().then(function (s) {
+        if (s && s.exists) pack.flags = s.data() || {};
+      }).catch(function () {}));
+    }
+    await Promise.all(core);
+    function finish(p) {
+      const snap = Data ? Data.deriveSnapshot(p) : p;
+      snap._at = Date.now();
+      snap._raw = p;
+      __snap = snap;
+      return snap;
+    }
+    const first = finish(pack);
+    Promise.all([
       colDocs('toga', 80).then(function (r) { pack.toga = r; }),
       colDocs('strands', 200).then(function (r) { pack.strands = r; }),
       colDocs('bands', 80).then(function (r) { pack.bands = r; }),
-      colDocs('reports', 80).then(function (r) { pack.reports = r; }),
-      colDocs('deskMail', 200).then(function (r) { pack.deskMail = r; }),
-      colDocs('deskAds', 80).then(function (r) { pack.deskAds = r; }),
       colDocs('contributionLedger', 200).then(function (r) { pack.ledger = r; }),
       colDocs('economyInbox', 200).then(function (r) { pack._inbox = r; }),
-      colDocs('metrics', 200).then(function (r) { pack.metrics = r; }),
+      colDocs('metrics', 80).then(function (r) { pack.metrics = r; }),
       colDocs('adminAudit', 80).then(function (r) {
         pack.audit = r.sort(function (a, b) { return (b.created_at || 0) - (a.created_at || 0); });
       }),
       pingWorker().then(function (w) { pack.worker = w; }),
-    ];
-    if (db) {
-      jobs.push(db.collection('economyConfig').doc('flags').get().then(function (s) {
-        if (s && s.exists) pack.flags = s.data() || {};
-      }).catch(function () {}));
-    }
-    await Promise.all(jobs);
-    const extra = await Promise.all([
-      loadSignals(pack.users),
-      loadBeacons(pack.users),
-      colDocs('originMarks', 200),
-    ]);
-    pack.signals = extra[0];
-    pack.beacons = extra[1];
-    pack.originMarks = extra[2];
-    if (!pack.ledger.length) {
-      const inbox = pack._inbox || [];
-      if (inbox.length) {
-        pack.ledger = inbox.map(function (row) {
-          return {
-            id: row.id || row.event_id,
-            event_type: row.event_type,
-            user_id: row.actor_user_id || row.user_id,
-            points: 0,
-            eligible_points: 0,
-            status: 'RECORDED',
-            reason: 'inbox',
-          };
-        });
-      } else {
-        pack.ledger = (pack.metrics || []).filter(function (m) {
-          return String(m.name || '').indexOf('economy.') === 0;
-        }).map(function (m) {
-          return {
-            id: m.id || m.event_id,
-            event_type: m.event_type || String(m.name || '').replace(/^economy\./, ''),
-            user_id: m.uid || m.user_id,
-            points: 0,
-            eligible_points: 0,
-            status: 'RECORDED',
-            reason: 'metrics',
-          };
-        });
+      loadSignals(pack.users).then(function (r) { pack.signals = r; }),
+      loadBeacons(pack.users).then(function (r) { pack.beacons = r; }),
+      colDocs('originMarks', 200).then(function (r) { pack.originMarks = r; }),
+    ]).then(function () {
+      if (!pack.ledger.length) {
+        const inbox = pack._inbox || [];
+        if (inbox.length) {
+          pack.ledger = inbox.map(function (row) {
+            return {
+              id: row.id || row.event_id,
+              event_type: row.event_type,
+              user_id: row.actor_user_id || row.user_id,
+              points: 0,
+              eligible_points: 0,
+              status: 'RECORDED',
+              reason: 'inbox',
+            };
+          });
+        }
       }
-    }
-    const snap = Data ? Data.deriveSnapshot(pack) : pack;
-    snap._at = Date.now();
-    snap._raw = pack;
-    __snap = snap;
-    return snap;
+      const next = finish(pack);
+      try {
+        if (next && __activeTab) {
+          renderStrip(next);
+          renderTab(__activeTab, next);
+        }
+      } catch (_) {}
+    }).catch(function () {});
+    return first;
   }
 
   function money(minor, ccy) {
@@ -662,13 +654,17 @@
   async function loadTab(tab, force) {
     const el = $('adminBody');
     if (!el) return;
-    el.innerHTML = '<p class="sub">Loading…</p>';
+    if (__snap && !force) {
+      try { renderStrip(__snap); renderTab(tab, __snap); } catch (_) {}
+    } else {
+      el.innerHTML = '<p class="sub">Loading…</p>';
+    }
     try {
       const d = await loadSnapshot(!!force);
       renderStrip(d);
       renderTab(tab, d);
     } catch (e) {
-      el.innerHTML = '<p class="sub">Could not load this section. ' + escapeHtml((e && e.message) || '') + '</p>';
+      if (!__snap) el.innerHTML = '<p class="sub">Could not load this section. ' + escapeHtml((e && e.message) || '') + '</p>';
     }
   }
 
@@ -860,7 +856,12 @@
           ['Impressions', (d.ads && d.ads.impressions) || 0], ['Clicks', (d.ads && d.ads.clicks) || 0],
           ['Skips', (d.ads && d.ads.skips) || 0], ['Click-through', ctr ? (ctr + '%') : '—']])
         + card('How ads work on Naluno',
-          '<p class="gap-note">Inventory is first-party: a creative is uploaded here and stored on Cloudflare R2 (object storage). There is no third-party network, no auction, and no tracker. A live unit appears as a native 9:16 plate in For You (every four cards) and as a skippable chapter break inside a Broadcast. Every unit is labelled <b>Ad</b>. The call to action (CTA) must be an https address. Sound starts only when someone opens the unit. Swiping away pauses it.</p>')
+          '<p class="gap-note">Inventory is first-party: a creative is uploaded here and stored on Cloudflare R2 (object storage). There is no third-party network, no auction, and no tracker. A live unit appears as a skippable break after every N minutes of watching Signal or Broadcast, and as a chapter break inside a Broadcast. Every unit is labelled <b>Ad</b>. The call to action (CTA) must be an https address. Sound starts only when someone opens the unit. Swiping away pauses it.</p>')
+        + card('How often',
+          '<label for="adEveryMin">Show a break after every (minutes of watching)</label>'
+          + '<input id="adEveryMin" type="number" min="1" max="30" value="' + escapeHtml(String((d.flags && d.flags.adEveryMin) != null ? d.flags.adEveryMin : 1)) + '" />'
+          + '<div class="row"><button type="button" class="ghost" id="adSavePace">Save pacing</button></div>'
+          + '<p class="gap-note" style="margin-top:8px;">Default is 1 minute. The clock only runs while a Signal or Broadcast is actually playing, not on muted feed previews.</p>')
         + card('New unit',
           '<label for="adFile">Creative — 9:16 video or image, about 6–30 seconds</label>'
           + '<input id="adFile" type="file" accept="video/*,image/*" />'
@@ -874,8 +875,8 @@
           + '<input id="adCtaUrl" type="url" placeholder="https://" />'
           + '<label for="adPlace">Placement</label>'
           + '<select id="adPlace">'
-          + '<option value="both">For You feed and Broadcast break</option>'
-          + '<option value="in-feed">For You feed only</option>'
+          + '<option value="both">Watch-time break and Broadcast chapter break</option>'
+          + '<option value="in-feed">Watch-time break only</option>'
           + '<option value="broadcast-break">Broadcast chapter break only</option>'
           + '</select>'
           + '<label for="adSkip">Skip after (seconds)</label>'
@@ -895,7 +896,11 @@
         + card('Inventory', filtered.length
           ? filtered.map(function (a) {
             const st = String(a.status || 'paused');
-            const places = Array.isArray(a.placements) ? a.placements.join(', ') : (a.placement || '');
+            const places = (Array.isArray(a.placements) ? a.placements : [a.placement || '']).map(function (p) {
+              if (p === 'in-feed') return 'watch-time';
+              if (p === 'broadcast-break') return 'Broadcast chapter';
+              return p;
+            }).filter(Boolean).join(', ');
             const thumb = a.thumbUrl || (String(a.mediaType || '').indexOf('image') === 0 ? a.mediaUrl : '');
             const media = thumb
               ? '<img class="ad-preview" src="' + escapeHtml(thumb) + '" alt="" />'
@@ -932,6 +937,7 @@
       const save = function (status) { saveAd(status); };
       if ($('adSaveLive')) $('adSaveLive').onclick = function () { save('live'); };
       if ($('adSavePaused')) $('adSavePaused').onclick = function () { save('paused'); };
+      if ($('adSavePace')) $('adSavePace').onclick = function () { saveAdPacing(); };
       return;
     }
 
@@ -1277,7 +1283,10 @@
 
     if (tab === 'flags') {
       const meta = (Data && Data.FLAG_META) || {};
-      const keys = Object.keys(d.flags || {});
+      const skipFlag = { updatedAt: 1, updatedBy: 1, adEveryMin: 1 };
+      const keys = Object.keys(meta).length
+        ? Object.keys(meta)
+        : Object.keys(d.flags || {}).filter(function (k) { return !skipFlag[k]; });
       el.innerHTML =
         gap('Flags live in Firestore (economyConfig/flags). The member app reads them there. The economy worker is not required, which is why a rejected Google key can no longer freeze this tab.')
         + card('Feature flags', keys.map(function (k) {
@@ -1403,6 +1412,37 @@
   }
 
 
+
+  function ensureUploadHelper() {
+    if (typeof uploadBroadcastFile === 'function') return Promise.resolve();
+    return new Promise(function (resolve, reject) {
+      const s = document.createElement('script');
+      s.src = '/js/broadcast-upload.js?v=20260912e';
+      s.onload = function () { resolve(); };
+      s.onerror = function () { reject(new Error('Upload helper did not load')); };
+      document.head.appendChild(s);
+    });
+  }
+  async function saveAdPacing() {
+    const db = adminDb();
+    if (!db) { toast('Database is not ready'); return; }
+    let n = parseInt(($('adEveryMin') && $('adEveryMin').value) || '1', 10);
+    if (!isFinite(n) || n < 1) n = 1;
+    if (n > 30) n = 30;
+    try {
+      await db.collection('economyConfig').doc('flags').set({
+        adEveryMin: n,
+        updatedAt: Date.now(),
+        updatedBy: currentUser.uid,
+      }, { merge: true });
+      await writeAudit('ad-pacing', String(n), n + ' minute' + (n === 1 ? '' : 's'));
+      if (__snap && __snap.flags) __snap.flags.adEveryMin = n;
+      toast('Breaks after every ' + n + ' minute' + (n === 1 ? '' : 's') + ' of watching');
+    } catch (e) {
+      toast((e && e.message) || 'Could not save pacing.');
+    }
+  }
+
   function placementsFrom(val) {
     const v = String(val || 'both');
     if (v === 'in-feed') return ['in-feed'];
@@ -1423,6 +1463,7 @@
     if (!db) { toast('Database is not ready'); return; }
     if (!currentUser) { toast('Sign in again'); return; }
     try { window.currentUser = currentUser; } catch (_) {}
+    try { await ensureUploadHelper(); } catch (e) { setMsg('adMsg', (e && e.message) || 'Upload helper failed'); return; }
     const fileEl = $('adFile');
     const file = fileEl && fileEl.files && fileEl.files[0];
     const headline = (($('adHeadline') && $('adHeadline').value) || '').trim().slice(0, 80);
