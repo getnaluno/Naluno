@@ -1,21 +1,25 @@
-# GitHub / Firebase — 2026.09.13a
+# GitHub update — 2026.09.14c
 
-Booked ad revenue on the Control Centre, completed-view tracking in the app.
-Only these files. Do not upload a full tree.
+**Zip:** `naluno-play-20260914c-github-update.zip`
 
-The operator inbox address is not in any of these files.
+Upload this. Do **not** upload `20260913s` (Support still on the nav) or `20260914b` (Strand bar still splits off For You).
+
+## What this drop does
+
+- Creator Support lives **only** inside a Broadcast, under Circle. No nav tab.
+- A Strand’s bar stays **on that Strand**. Signals, Toga, For You / My Broadcasts / Search hide while you are inside it. Back returns you.
+- “Was live” on a Broadcast disappears after **24 hours**. Live-now still shows while it is live.
+- Ad that plays through resumes the Broadcast, with audio. Operator picks the currency (ISO list, including UGX); amounts convert live.
+
+Cache: `naluno-shell-v168`, `?v=20260914c`.
 
 ## Must publish
 
-1. **firestore.rules** — signed-in members may increment `viewCompletes` on live `deskAds` rows, along with impressions, clicks and skips. Older rows without `viewCompletes` still accept the other counters.
-2. **js/admin-data.js**, **js/admin-console.js**, **admin/index.html** — Ads and Money show booked revenue from the rate card × observed events. eCPM, CPC and CPV (with acronyms defined) live on `economyConfig/adRates`. Each unit books one model. Cash has not moved. There is no third-party auction.
-3. **js/ads.js**, **js/broadcast-space.js** — a completed view is counted after the rate-card seconds of actual play (default 15). Skip before that does not count a view. Skip is not a click.
-4. **app/index.html**, **js/pwa.js**, **sw.js** — cache `naluno-shell-v165`, `?v=20260913a`.
+sw.js, js/pwa.js, app/index.html, css/app.css,
+js/economy-ui.js, js/economy.js, js/profile.js, js/currency.js,
+js/ads.js, js/broadcast-space.js, js/strand.js, js/signal-ui.js,
+admin/index.html, js/admin-console.js, js/admin-data.js.
 
 ## After upload
 
-Close Naluno tabs once so the new service worker takes.
-
-Publish the Firestore rules before expecting completed-view counts. Then type eCPM / CPC / CPV on Control Centre → Ads. The math runs at AED 0.00 until rates are set.
-
-ARPDAU on this desk is lifetime booked ÷ today’s daily active users until a day rollup exists. That is not a day’s take.
+Close every Naluno tab → site info → clear site data once → open. The new worker (`v168`) has to take, or the phone will keep the old shell.

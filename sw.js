@@ -1,5 +1,8 @@
 // Naluno service worker — offline shell + background call push.
+// v168: 09.14c Strand chrome stays with the Strand; was-live pin expires at 24h.
+// v167: 09.14b Creator Support is Broadcast-only (below Circle). Nav tab gone.
 // v166: 09.13s Creator Support tab always in the app; flag makes it active/inactive.
+
 // v160: 09.11d pitch surface — landing proof, OG, public privacy/terms.
 // v159: 09.11c Band audio/video drop in immediately (placeholder + client ts).
 // v158: 09.11b desk clock follows this device; GPS weather; Signals + Find pins reported.
@@ -51,7 +54,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v166';
+const CACHE_NAME = 'naluno-shell-v168';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -64,7 +67,7 @@ const CORE_ASSETS = [
   '/js/signal-core.js', '/js/signal-ui.js',
   '/js/sfu-live.js', '/js/compass.js', '/js/weather.js', '/js/beacon.js', '/js/find.js', '/js/profile.js', '/js/notifications.js',
   '/js/ice-core.js', '/js/compat-lock.js', '/js/keep-alive.js', '/js/media-contain.js',
-  '/js/diagnostics.js', '/js/economy.js', '/js/economy-ui.js', '/js/onboard.js', '/js/presence.js',
+  '/js/diagnostics.js', '/js/currency.js', '/js/economy.js', '/js/economy-ui.js', '/js/onboard.js', '/js/presence.js',
 ];
 
 self.addEventListener('install', event=>{
