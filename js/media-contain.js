@@ -57,6 +57,16 @@ function nalunoIsRingtoneEl(el){
   return false;
 }
 
+function nalunoAdSurface(el){
+  try{
+    if(!el) return false;
+    if(el.id === 'nalunoAdVideo') return true;
+    if(el.classList && el.classList.contains('naluno-break-ad')) return true;
+    if(el.closest && el.closest('#nalunoAdViewer, #bspaceBreather')) return true;
+  }catch(_){}
+  return false;
+}
+
 function nalunoClipElement(el){
   try{
     if(!el) return false;
@@ -148,6 +158,7 @@ function nalunoPauseDetachedMedia(){
         if(typeof nalunoLiveOrCameraEl === 'function' && nalunoLiveOrCameraEl(el)) return;
         if(el.closest && el.closest('#callOverlay')) return;
         if(typeof nalunoClipElement === 'function' && nalunoClipElement(el)) return;
+        if(nalunoAdSurface(el)) return;
         if(nalunoActiveViewerContains(el)) return;
         if(el.dataset && el.dataset.nalunoPreview === '1' && onBroadcast && el.__nalunoOn) return;
         try{ if(!el.paused) el.dataset.nalunoPauseAt = String(el.currentTime || 0); }catch(_){}
@@ -241,6 +252,7 @@ function stopAllAppMediaAndLockSession(){
         if(nalunoLiveOrCameraEl(el)) return;
         if(el.closest && el.closest('#callOverlay')) return;
         if(nalunoClipElement(el)) return;
+        if(nalunoAdSurface(el)) return;
         el.dataset.nalunoWantPlay = '0';
         el.dataset.nalunoUserPaused = '1';
         delete el.dataset.nalunoKeepAlive;
@@ -301,6 +313,7 @@ function nalunoPauseLeavingMedia(keepEl){
         if(typeof nalunoLiveOrCameraEl === 'function' && nalunoLiveOrCameraEl(el)) return;
         if(el.closest && el.closest('#callOverlay')) return;
         if(typeof nalunoClipElement === 'function' && nalunoClipElement(el)) return;
+        if(nalunoAdSurface(el) && keepEl !== el) return;
         if(el.srcObject) return;
         el.dataset.nalunoWantPlay = '0';
         el.dataset.nalunoUserPaused = '1';
@@ -313,6 +326,7 @@ function nalunoPauseLeavingMedia(keepEl){
   try{ if(typeof pauseAllStrandPreviews === 'function') pauseAllStrandPreviews(); }catch(_){}
   try{ if(typeof lockOutChromeMediaSession === 'function') lockOutChromeMediaSession(); }catch(_){}
 }
+window.nalunoAdSurface = nalunoAdSurface;
 window.nalunoPauseLeavingMedia = nalunoPauseLeavingMedia;
 
 /** Only one Naluno surface may play. Keep `keepEl` running; pause the rest. */
@@ -324,6 +338,7 @@ function nalunoExclusiveMedia(keepEl){
         if(nalunoLiveOrCameraEl(el)) return;
         if(el.closest && el.closest('#callOverlay')) return;
         if(nalunoClipElement(el)) return;
+        if(nalunoAdSurface(el) && keepEl !== el) return;
         el.dataset.nalunoWantPlay = '0';
         el.dataset.nalunoUserPaused = '1';
         delete el.dataset.nalunoKeepAlive;

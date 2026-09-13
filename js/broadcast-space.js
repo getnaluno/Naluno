@@ -112,7 +112,7 @@ function renderBspaceMedia(seg){
       <div class="bspace-media-frame" style="position:relative;width:100%;height:100%;background:#000;overflow:hidden;min-height:180px;">
         <video id="bspaceVideoEl" playsinline webkit-playsinline preload="auto" poster="${seg.thumbDataUrl ? bspaceEscape(seg.thumbDataUrl) : ''}" style="width:100%;height:100%;object-fit:cover;display:block;background:#000;filter:${seg.filterCss || ''}"></video>
         <button type="button" id="bspacePlayKick" aria-label="Play" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:6;width:64px;height:64px;border-radius:50%;border:none;background:rgba(124,255,178,.92);color:#0D0F17;font-size:22px;box-shadow:0 8px 28px rgba(0,0,0,.45);cursor:pointer;">▶</button>
-        <div id="bspaceBreather" style="display:none;position:absolute;inset:0;background:rgba(13,15,23,.92);align-items:center;justify-content:center;flex-direction:column;gap:10px;z-index:3;">
+        <div id="bspaceBreather" style="display:none;position:absolute;inset:0;background:#07080D;align-items:center;justify-content:center;flex-direction:column;gap:10px;z-index:12;">
           <div style="font-family:var(--font-futuristic);font-size:15px;color:var(--mint);" id="bspaceBreatherLabel">Chapter break</div>
           <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);" id="bspaceBreatherAd">Next chapter in a moment</div>
           <button type="button" id="bspaceReplaceChBtn" style="display:none;margin-top:8px;padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:rgba(124,255,178,.12);color:var(--mint);font-family:var(--font-mono);font-size:12px;">Replace chapter</button>
@@ -2141,10 +2141,17 @@ function showBreatherAdSlot(breather, onDone){
     if(breather) breather.adSlot = ad;
   }
   el.style.display = 'flex';
+  try{
+    const kick = $('bspacePlayKick');
+    if(kick){ kick.style.display = 'none'; kick.dataset.adHidden = '1'; }
+  }catch(_){}
   const label = $('bspaceBreatherLabel');
   const adLine = $('bspaceBreatherAd');
   if(label) label.textContent = (ad && ad.status === 'ready') ? 'Ad' : ((breather && breather.label) || 'Chapter break');
   if(adLine){
+    adLine.style.position = 'absolute';
+    adLine.style.inset = '0';
+    adLine.style.margin = '0';
     if(ad && ad.status === 'ready' && ad.creativeHtml){
       adLine.innerHTML = ad.creativeHtml;
       try{ if(typeof NalunoAds !== 'undefined' && NalunoAds.wireBreather) NalunoAds.wireBreather(adLine, ad); }catch(_){}
@@ -2155,8 +2162,6 @@ function showBreatherAdSlot(breather, onDone){
     }
   }
   if(bspaceBreatherTimer) clearTimeout(bspaceBreatherTimer);
-  const wait = (breather && breather.durationMs) || 1200;
-  const adWait = (ad && ad.status === 'ready' && ad.maxDurationMs) ? ad.maxDurationMs : wait;
   const skip = (ad && ad.status === 'ready') ? Math.max(0, Number(ad.skipAfterSec) || 5) : 0;
   let skipBtn = $('bspaceAdSkip');
   if(ad && ad.status === 'ready'){
@@ -2164,7 +2169,7 @@ function showBreatherAdSlot(breather, onDone){
       skipBtn = document.createElement('button');
       skipBtn.type = 'button';
       skipBtn.id = 'bspaceAdSkip';
-      skipBtn.style.cssText = 'margin-top:8px;padding:8px 14px;border-radius:999px;border:1px solid rgba(124,255,178,.4);background:rgba(13,15,23,.7);color:#E8ECF5;font-size:12px;cursor:pointer;';
+      skipBtn.style.cssText = 'position:absolute;left:16px;right:16px;bottom:28px;z-index:4;padding:14px 16px;border-radius:12px;border:1px solid rgba(124,255,178,.4);background:rgba(13,15,23,.78);color:#E8ECF5;font-size:13px;cursor:pointer;';
       el.appendChild(skipBtn);
     }
     skipBtn.style.display = 'inline-flex';
@@ -2172,15 +2177,26 @@ function showBreatherAdSlot(breather, onDone){
     skipBtn.textContent = skip > 0 ? ('Skip in ' + skip + 's') : 'Skip';
     let left = skip;
     const finish = function(){
+      try{
+        const cv = $('bspaceVideoEl');
+        if(cv){
+          cv.muted = false;
+          if(!cv.volume) cv.volume = 1;
+        }
+      }catch(_){}
       hideBreatherAdSlot();
       if(onDone) onDone();
+      resumeBspaceAfterAd();
     };
     skipBtn.onclick = function(){
       if(skipBtn.disabled) return;
       try{ if(ad && ad.ad && typeof NalunoAds !== 'undefined') NalunoAds.track(ad.ad, 'skip'); }catch(_){}
       finish();
     };
-    if(bspaceBreatherTimer) clearTimeout(bspaceBreatherTimer);
+    if(bspaceBreatherTimer){
+      try{ clearTimeout(bspaceBreatherTimer); }catch(_){}
+      try{ clearInterval(bspaceBreatherTimer); }catch(_){}
+    }
     if(skip > 0){
       bspaceBreatherTimer = setInterval(function(){
         left -= 1;
@@ -2188,21 +2204,39 @@ function showBreatherAdSlot(breather, onDone){
           skipBtn.disabled = false;
           skipBtn.textContent = 'Skip';
           try{ clearInterval(bspaceBreatherTimer); }catch(_){}
-          bspaceBreatherTimer = setTimeout(finish, Math.max(800, Math.min(adWait, 15000) - skip * 1000));
+          bspaceBreatherTimer = null;
         } else {
           skipBtn.textContent = 'Skip in ' + left + 's';
         }
       }, 1000);
-    } else {
-      bspaceBreatherTimer = setTimeout(finish, Math.min(adWait, 15000));
     }
     return;
   }
   if(skipBtn) skipBtn.style.display = 'none';
-  bspaceBreatherTimer = setTimeout(()=>{
+  const wait = Math.max(400, Math.min((breather && breather.durationMs) || 1200, 2500));
+  bspaceBreatherTimer = setTimeout(function(){
     hideBreatherAdSlot();
     if(onDone) onDone();
-  }, Math.min(adWait, 15000));
+    else resumeBspaceAfterAd();
+  }, wait);
+}
+
+function resumeBspaceAfterAd(){
+  const v = $('bspaceVideoEl');
+  if(!v) return;
+  try{
+    v.dataset.nalunoUserPaused = '0';
+    v.dataset.nalunoWantPlay = '1';
+    v.dataset.nalunoKeepAlive = '1';
+    v.muted = false;
+    if(!v.volume) v.volume = 1;
+    const p = v.play();
+    if(p && p.catch){
+      p.catch(function(){
+        try{ v.muted = false; v.volume = 1; v.play().catch(function(){}); }catch(_){}
+      });
+    }
+  }catch(_){}
 }
 
 function hideBreatherAdSlot(){
@@ -2220,6 +2254,13 @@ function hideBreatherAdSlot(){
     }catch(_){}
     el.style.display = 'none';
   }
+  try{
+    const kick = $('bspacePlayKick');
+    if(kick && kick.dataset.adHidden === '1'){
+      kick.style.display = '';
+      delete kick.dataset.adHidden;
+    }
+  }catch(_){}
   const skipBtn = $('bspaceAdSkip');
   if(skipBtn) skipBtn.style.display = 'none';
   if(bspaceBreatherTimer){

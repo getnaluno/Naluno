@@ -171,7 +171,7 @@
       + 'background:rgba(13,15,23,.78);border:1px solid rgba(124,255,178,.45);color:#7CFFB2;'
       + 'font-family:var(--font-mono, ui-monospace, monospace);font-size:10px;letter-spacing:.12em;text-transform:uppercase;}'
       + '.naluno-ad-plate .bcast-plate-sub{color:#7CFFB2;}'
-      + '#nalunoAdViewer{position:fixed;inset:0;z-index:80;background:#07080D;display:flex;flex-direction:column;}'
+      + '#nalunoAdViewer{position:fixed;inset:0;z-index:260 !important;background:#07080D;display:flex;flex-direction:column;}'
       + '#nalunoAdViewer.hidden{display:none !important;}'
       + '#nalunoAdViewer .ad-stage{flex:1;position:relative;background:#000;display:flex;align-items:center;justify-content:center;}'
       + '#nalunoAdViewer video,#nalunoAdViewer img{width:100%;height:100%;object-fit:contain;background:#000;}'
@@ -229,21 +229,44 @@
     try {
       if (el.dataset && el.dataset.nalunoPreview === '1') return false;
       if (el.classList && el.classList.contains('strand-preview')) return false;
-      if (el.closest && el.closest('#nalunoAdViewer, #callOverlay, #composer, #bcomposer, #camStage')) return false;
+      if (el.classList && el.classList.contains('naluno-break-ad')) return false;
+      if (el.id === 'nalunoAdVideo') return false;
+      if (el.closest && el.closest('#nalunoAdViewer, #bspaceBreather, #callOverlay, #composer, #bcomposer, #camStage')) return false;
       if (el.srcObject) return false;
     } catch (_) {}
     return true;
   }
+  function snapshotEl(el) {
+    if (!el) return null;
+    let muted = true, vol = 1, time = 0;
+    try { muted = !!el.muted; } catch (_) {}
+    try {
+      vol = (typeof el.volume === 'number' && isFinite(el.volume) && el.volume > 0) ? el.volume : 1;
+    } catch (_) {}
+    try { time = el.currentTime || 0; } catch (_) {}
+    return { el: el, muted: muted, volume: vol, time: time };
+  }
   function resumeAfterAd() {
-    const el = __pausedForAd;
+    const snap = __pausedForAd;
     __pausedForAd = null;
-    if (!el) return;
+    if (!snap || !snap.el) return;
+    const el = snap.el;
     try {
       el.dataset.nalunoUserPaused = '0';
       el.dataset.nalunoWantPlay = '1';
       el.dataset.nalunoKeepAlive = '1';
+      el.muted = false;
+      el.volume = (snap.volume > 0 ? snap.volume : 1);
       const p = el.play();
-      if (p && p.catch) p.catch(function () {});
+      if (p && p.catch) {
+        p.catch(function () {
+          try {
+            el.muted = false;
+            el.volume = snap.volume > 0 ? snap.volume : 1;
+            el.play().catch(function () {});
+          } catch (_) {}
+        });
+      }
     } catch (_) {}
   }
   function closeViewer() {
@@ -279,7 +302,7 @@
     if (!playing) return;
     const ad = pick('in-feed') || pick('broadcast-break');
     if (!ad) { __watchAccum = 0; return; }
-    __pausedForAd = playing;
+    __pausedForAd = snapshotEl(playing);
     try {
       playing.dataset.nalunoUserPaused = '1';
       playing.dataset.nalunoWantPlay = '0';
@@ -324,15 +347,18 @@
       host.id = 'nalunoAdViewer';
       host.setAttribute('role', 'dialog');
       host.setAttribute('aria-label', 'Advertisement');
-      document.body.appendChild(host);
     }
+    try { document.body.appendChild(host); } catch (_) {}
+    host.style.zIndex = '260';
+    host.style.position = 'fixed';
+    host.style.inset = '0';
     const src = mediaUrlOf(ad);
     const isVideo = String(ad.mediaType || '').indexOf('image') !== 0;
     const skipAt = skipAfterOf(ad);
     const ctaUrl = httpsUrl(ad.ctaUrl);
     const ctaLabel = (ad.ctaLabel || 'Open').slice(0, 24);
     const media = isVideo
-      ? '<video id="nalunoAdVideo" playsinline webkit-playsinline autoplay></video>'
+      ? '<video id="nalunoAdVideo" playsinline webkit-playsinline autoplay loop></video>'
       : '<img src="' + escapeHtml(src) + '" alt="" />';
     host.classList.remove('hidden');
     host.innerHTML =
@@ -341,7 +367,6 @@
       + '<div class="ad-chrome">'
       + '<span class="naluno-ad-kicker">Ad</span>'
       + '<span style="color:#E8ECF5;font-size:14px;">' + escapeHtml((ad.advertiser || ad.headline || 'Sponsored').slice(0, 48)) + '</span>'
-      + '<button type="button" class="ad-skip" id="nalunoAdClose" style="margin-left:auto;flex:0 0 auto;padding:8px 12px;">Close</button>'
       + '</div>'
       + '<div class="ad-cta">'
       + (ctaUrl ? '<button type="button" class="go" id="nalunoAdCta">' + escapeHtml(ctaLabel) + '</button>' : '')
@@ -358,6 +383,7 @@
         v.dataset.nalunoUserPaused = '0';
         v.muted = false;
       } catch (_) {}
+      try { v.loop = true; } catch (_) {}
       v.src = src;
       const p = v.play();
       if (p && p.catch) {
@@ -365,8 +391,19 @@
           try { v.muted = true; v.play().catch(function () {}); } catch (_) {}
         });
       }
-      v.onended = function () { closeViewer(); };
+      v.onended = function () {
+        try { v.currentTime = 0; v.play().catch(function () {}); } catch (_) {}
+      };
+      try {
+        if (typeof nalunoExclusiveMedia === 'function') nalunoExclusiveMedia(v);
+      } catch (_) {}
     }
+    host.onclick = function () {
+      const av = document.getElementById('nalunoAdVideo');
+      if (av && av.muted) {
+        try { av.muted = false; av.volume = 1; av.play().catch(function () {}); } catch (_) {}
+      }
+    };
 
     let left = skipAt;
     const skipBtn = document.getElementById('nalunoAdSkip');
@@ -391,10 +428,9 @@
       skipBtn.textContent = 'Skip';
     }
 
-    const closeBtn = document.getElementById('nalunoAdClose');
-    if (closeBtn) closeBtn.onclick = function () { closeViewer(); };
     if (skipBtn) {
-      skipBtn.onclick = function () {
+      skipBtn.onclick = function (e) {
+        if (e) { e.preventDefault(); e.stopPropagation(); }
         if (skipBtn.disabled) return;
         track(ad, 'skip');
         closeViewer();
@@ -402,7 +438,8 @@
     }
     const cta = document.getElementById('nalunoAdCta');
     if (cta && ctaUrl) {
-      cta.onclick = function () {
+      cta.onclick = function (e) {
+        if (e) { e.preventDefault(); e.stopPropagation(); }
         track(ad, 'click');
         try { window.open(ctaUrl, '_blank', 'noopener'); } catch (_) { location.href = ctaUrl; }
       };
@@ -420,21 +457,21 @@
     const isVideo = String(ad.mediaType || '').indexOf('image') !== 0;
     const ctaUrl = httpsUrl(ad.ctaUrl);
     const media = isVideo
-      ? '<video class="naluno-break-ad" playsinline webkit-playsinline autoplay muted src="' + escapeHtml(src) + '" style="width:min(72vw,240px);height:min(40vh,420px);object-fit:cover;border-radius:12px;background:#000;"></video>'
-      : '<img src="' + escapeHtml(src) + '" alt="" style="width:min(72vw,240px);height:min(40vh,420px);object-fit:cover;border-radius:12px;" />';
-    const html = '<div class="naluno-break-wrap" data-ad-id="' + escapeHtml(ad.id) + '" style="display:flex;flex-direction:column;align-items:center;gap:10px;">'
-      + '<span class="naluno-ad-kicker" style="position:static;">Ad</span>'
+      ? '<video class="naluno-break-ad" playsinline webkit-playsinline autoplay loop src="' + escapeHtml(src) + '" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;"></video>'
+      : '<img src="' + escapeHtml(src) + '" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;" />';
+    const html = '<div class="naluno-break-wrap" data-ad-id="' + escapeHtml(ad.id) + '" style="position:absolute;inset:0;">'
       + media
-      + '<div style="color:#E8ECF5;font-size:14px;text-align:center;">' + escapeHtml((ad.headline || '').slice(0, 72)) + '</div>'
-      + '<div style="color:#7C8497;font-size:12px;">' + escapeHtml((ad.advertiser || '').slice(0, 40)) + '</div>'
-      + (ctaUrl ? '<button type="button" class="naluno-break-cta" data-cta="' + escapeHtml(ctaUrl) + '" style="padding:10px 16px;border-radius:10px;border:none;background:#7CFFB2;color:#07080D;font-size:13px;cursor:pointer;">' + escapeHtml((ad.ctaLabel || 'Open').slice(0, 24)) + '</button>' : '')
+      + '<span class="naluno-ad-kicker" style="position:absolute;left:10px;top:10px;">Ad</span>'
+      + '<div style="position:absolute;left:16px;right:16px;bottom:86px;color:#E8ECF5;font-size:14px;text-align:center;">' + escapeHtml((ad.headline || '').slice(0, 72)) + '</div>'
+      + '<div style="position:absolute;left:16px;right:16px;bottom:66px;color:#7C8497;font-size:12px;text-align:center;">' + escapeHtml((ad.advertiser || '').slice(0, 40)) + '</div>'
+      + (ctaUrl ? '<button type="button" class="naluno-break-cta" data-cta="' + escapeHtml(ctaUrl) + '" style="position:absolute;left:16px;right:16px;bottom:16px;padding:12px 16px;border-radius:10px;border:none;background:#7CFFB2;color:#07080D;font-size:13px;cursor:pointer;">' + escapeHtml((ad.ctaLabel || 'Open').slice(0, 24)) + '</button>' : '')
       + '</div>';
     return {
       enabled: true,
       status: 'ready',
       adId: ad.id,
       skipAfterSec: skip,
-      maxDurationMs: Math.max(1200, (skip + 8) * 1000),
+      maxDurationMs: 0,
       creativeHtml: html,
       ad: ad,
     };
@@ -447,8 +484,23 @@
     try {
       const v = host.querySelector('video.naluno-break-ad');
       if (v) {
+        try {
+          v.loop = true;
+          v.muted = false;
+          v.dataset.nalunoWantPlay = '1';
+          v.dataset.nalunoUserPaused = '0';
+        } catch (_) {}
         const p = v.play();
-        if (p && p.catch) p.catch(function () {});
+        if (p && p.catch) {
+          p.catch(function () {
+            try { v.muted = true; v.play().catch(function () {}); } catch (_) {}
+          });
+        }
+        v.onclick = function () {
+          if (v.muted) {
+            try { v.muted = false; v.volume = 1; v.play().catch(function () {}); } catch (_) {}
+          }
+        };
       }
     } catch (_) {}
     const cta = host.querySelector('.naluno-break-cta');
