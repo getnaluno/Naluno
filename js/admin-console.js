@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260913s';
+  const BUILD = '20260914c';
   const OPERATOR_UIDS = { 'ibMOMY6Q3sVTCxIrwO2FGk43zw93': true };
   const OPERATOR_EMAILS = { 'magjoed@gmail.com': true };
 
@@ -436,6 +436,7 @@
       zone: Data ? (Data.adminZone ? Data.adminZone() : Data.localZone()) : undefined,
       beacons: [], originMarks: [], deskMail: [], deskAds: [],
       adRates: {},
+      currency: {},
       costInputs: readCostInputs(),
     };
     const core = [
@@ -451,6 +452,18 @@
       }).catch(function () {}));
       core.push(db.collection('economyConfig').doc('adRates').get().then(function (s) {
         if (s && s.exists) pack.adRates = s.data() || {};
+      }).catch(function () {}));
+      core.push(db.collection('economyConfig').doc('currency').get().then(function (s) {
+        if (s && s.exists) pack.currency = s.data() || {};
+        const C = Ccy();
+        if (C && pack.currency && pack.currency.code) C.setCode(pack.currency.code);
+      }).catch(function () {}));
+      core.push(db.collection('economyConfig').doc('fxRates').get().then(function (s) {
+        if (s && s.exists) {
+          const fx = s.data() || {};
+          const C = Ccy();
+          if (C && fx.rates) C.applyRates(fx.rates, { source: 'desk', fetchedAt: fx.fetchedAt });
+        }
       }).catch(function () {}));
     }
     await Promise.all(core);
@@ -533,6 +546,51 @@
   }
   function aedUsd(n) {
     return Data && Data.moneyPair ? Data.moneyPair(n) : aed(n);
+  }
+  function Ccy() {
+    try { if (typeof NalunoCurrency !== 'undefined') return NalunoCurrency; } catch (_) {}
+    return null;
+  }
+  function opCode() {
+    const C = Ccy();
+    return (C && C.code && C.code()) || 'AED';
+  }
+  function opName() {
+    const C = Ccy();
+    return (C && C.nameOf) ? C.nameOf(opCode()) : 'United Arab Emirates dirham';
+  }
+  function moneyLabel() {
+    return opCode() + ' · ' + opName();
+  }
+  async function saveOperatingCurrency(code) {
+    const C = Ccy();
+    if (!C) return;
+    const next = C.norm(code);
+    if (!next) return;
+    try {
+      await C.saveCode(adminDb(), currentUser && currentUser.uid, next);
+      await C.fetchLive(true);
+      try { await C.publishRates(adminDb()); } catch (_) {}
+      try { await writeAudit('currency', next, C.nameOf(next)); } catch (_) {}
+      toast('Currency is now ' + next + '. Amounts convert live.');
+      loadTab(__activeTab, true);
+    } catch (e) {
+      toast((e && e.message) || 'Could not save the currency.');
+    }
+  }
+  function wireCurrencySelect(id) {
+    const el = $(id);
+    if (!el) return;
+    el.onchange = function () { saveOperatingCurrency(el.value); };
+  }
+  function currencyCard() {
+    const C = Ccy();
+    if (!C) return '';
+    return card('Operating currency',
+      '<p class="sub">Every amount on Naluno follows this code. Pick any ISO 4217 currency, including UGX. Conversion is live against a USD book — nothing is hardcoded to dirham.</p>'
+      + '<label for="opCurrency">Currency</label>'
+      + C.selectHtml('opCurrency', opCode())
+      + '<p class="gap-note" style="margin-top:8px;" id="opFxLine">' + escapeHtml(C.quoteLine()) + '</p>');
   }
   function bytesLabel(n) {
     return Data && Data.formatBytes ? Data.formatBytes(n) : String(n || 0);
@@ -637,9 +695,12 @@
       + '<span class="m">Live <b>' + (c.broadcasts_live || 0) + '</b></span>'
       + '<span class="m">Alerts <b>' + alerts.filter(function (a) { return a.level !== 'ok'; }).length + '</b></span>'
       + '<span class="m">' + escapeHtml(swBit) + '</span>'
+      + '<span class="m">Currency</span>'
+      + (Ccy() ? Ccy().selectHtml('ccStripCurrency', opCode()) : ('<span class="m"><b>' + escapeHtml(opCode()) + '</b></span>'))
       + '<button type="button" class="ghost" id="ccRefresh" style="margin-left:auto;padding:6px 10px;">Refresh</button>';
     const btn = $('ccRefresh');
     if (btn) btn.onclick = function () { loadTab(__activeTab, true); };
+    wireCurrencySelect('ccStripCurrency');
   }
 
   function wireAdminTabs() {
@@ -886,18 +947,18 @@
             ['Booked (chosen models)', aedUsd(rev.bookedAed || 0)]])
           + '<p class="gap-note">Each unit books one model — CPM (cost per mille), CPC (cost per click) or CPV (cost per view). The other two lines are diagnostics, not extra cash. RPM (revenue per mille) is booked ÷ impressions × 1,000. ARPDAU (average revenue per daily active user) here is lifetime booked ÷ today’s daily active users, until a day rollup exists — that is not a day’s take. ARPU (average revenue per user) is lifetime booked ÷ registered accounts.</p>')
         + card('Rate card',
-          '<label for="adRateEcpm">eCPM (effective cost per mille) — AED per 1,000 impressions</label>'
-          + '<input id="adRateEcpm" inputmode="decimal" value="' + escapeHtml(String(rates.ecpmAed != null ? rates.ecpmAed : 0)) + '" />'
-          + '<label for="adRateCpc">CPC (cost per click) — AED per tap</label>'
-          + '<input id="adRateCpc" inputmode="decimal" value="' + escapeHtml(String(rates.cpcAed != null ? rates.cpcAed : 0)) + '" />'
-          + '<label for="adRateCpv">CPV (cost per view) — AED per completed view</label>'
-          + '<input id="adRateCpv" inputmode="decimal" value="' + escapeHtml(String(rates.cpvAed != null ? rates.cpvAed : 0)) + '" />'
+          '<label for="adRateEcpm">eCPM (effective cost per mille) — ' + escapeHtml(opCode()) + ' per 1,000 impressions</label>'
+          + '<input id="adRateEcpm" inputmode="decimal" value="' + escapeHtml(String(rates.ecpmAed != null ? (Ccy() && Ccy().convert ? Ccy().convert(rates.ecpmAed, 'AED', opCode()) : rates.ecpmAed) : 0)) + '" />'
+          + '<label for="adRateCpc">CPC (cost per click) — ' + escapeHtml(opCode()) + ' per tap</label>'
+          + '<input id="adRateCpc" inputmode="decimal" value="' + escapeHtml(String(rates.cpcAed != null ? (Ccy() && Ccy().convert ? Ccy().convert(rates.cpcAed, 'AED', opCode()) : rates.cpcAed) : 0)) + '" />'
+          + '<label for="adRateCpv">CPV (cost per view) — ' + escapeHtml(opCode()) + ' per completed view</label>'
+          + '<input id="adRateCpv" inputmode="decimal" value="' + escapeHtml(String(rates.cpvAed != null ? (Ccy() && Ccy().convert ? Ccy().convert(rates.cpvAed, 'AED', opCode()) : rates.cpvAed) : 0)) + '" />'
           + '<label for="adRateViewSec">Completed view after (seconds of the unit playing)</label>'
           + '<input id="adRateViewSec" type="number" min="1" max="60" value="' + escapeHtml(String(rates.viewCompleteSec != null ? rates.viewCompleteSec : 15)) + '" />'
           + '<div class="row"><button type="button" class="primary" id="adSaveRates">Save rate card</button></div>'
-          + '<p class="gap-note" style="margin-top:8px;">The math runs at AED 0.00 until rates are typed. Saving the card recalculates every unit immediately. Rates are first-party — not an auction.</p>')
+          + '<p class="gap-note" style="margin-top:8px;">The math runs at ' + escapeHtml(aed(0)) + ' until rates are typed. Saving the card recalculates every unit immediately. Rates are first-party — not an auction. Typed in ' + escapeHtml(moneyLabel()) + ' and converted live.</p>')
         + card('How ads work on Naluno',
-          '<p class="gap-note">Inventory is first-party: a creative is uploaded here and stored on Cloudflare R2 (object storage). There is no third-party network, no auction, and no tracker. A live unit appears as a skippable break after every N minutes of watching Signal or Broadcast, and as a chapter break inside a Broadcast. Every unit is labelled <b>Ad</b>. The call to action (CTA) must be an https address. Sound starts only when someone opens the unit. Swiping away pauses it. A completed view is counted after the seconds on the rate card, or if the creative ends without a skip before that. A skip is not a click. A session may see the same unit at most three times.</p>')
+          '<p class="gap-note">Inventory is first-party: a creative is uploaded here and stored on Cloudflare R2 (object storage). There is no third-party network, no auction, and no tracker. A live unit appears as a skippable break after every N minutes of watching Signal or Broadcast, and as a chapter break inside a Broadcast. Every unit is labelled <b>Ad</b>. The call to action (CTA) must be an https address. The unit plays with its own audio. If it is not skipped, the Broadcast or Signal resumes when the unit ends. Swiping away pauses it. A completed view is counted after the seconds on the rate card, or if the creative ends without a skip before that. A skip is not a click. A session may see the same unit at most three times.</p>')
         + card('How often',
           '<label for="adEveryMin">Show a break after every (minutes of watching)</label>'
           + '<input id="adEveryMin" type="number" min="1" max="30" value="' + escapeHtml(String((d.flags && d.flags.adEveryMin) != null ? d.flags.adEveryMin : 1)) + '" />'
@@ -1176,21 +1237,25 @@
       const txs = (d.economy && d.economy.support_list) || [];
       el.innerHTML =
         (on
-          ? '<div class="alert ok">Creator Support is ON. The Support tab in the app is active. No payment provider is connected, so intents are recorded and no money moves.</div>'
-          : inactiveNote('Creator Support is off. The Support tab is still in the app, inactive. Nothing can be charged.'))
-        + kpis([['App tab', 'always there'], ['State', on ? 'active' : 'inactive'],
+          ? '<div class="alert ok">Creator Support is ON. It lives inside Broadcast, below Circle. No payment provider is connected, so intents are recorded and no money moves.</div>'
+          : inactiveNote('Creator Support is off. The panel still sits under Circle in Broadcast, inactive. Nothing can be charged.'))
+        + kpis([['Place', 'Broadcast · below Circle'], ['State', on ? 'active' : 'inactive'],
           ['Intents on file', txs.length || (d.economy && d.economy.support_transactions) || 0],
           ['Real payouts', d.flags.real_payouts_enabled ? 'on' : 'locked']])
         + (txs.length
           ? card('Recorded intents', plainRows(['When', 'From', 'To', 'Amount', 'Status'],
             txs.slice(0, 30).map(function (r) {
+              const C = Ccy();
+              const ccy = r.currency || 'AED';
+              const major = (Number(r.amount_minor) || 0) / ((C && C.digits) ? Math.pow(10, C.digits(ccy)) : 100);
+              const shown = C && C.formatFrom ? C.formatFrom(major, ccy) : (major.toFixed(2) + ' ' + ccy);
               return [when(r.created_at || r.createdAt),
                 String(r.supporter_user_id || '').slice(0, 10),
                 String(r.creator_user_id || '').slice(0, 10),
-                ((Number(r.amount_minor) || 0) / 100).toFixed(2) + ' ' + (r.currency || 'AED'),
+                shown,
                 r.status || 'intent'];
             })))
-          : gap('No support intents on file. Turning the flag on does not move money — it only makes the app tab active.'))
+          : gap('No support intents on file. Turning the flag on does not move money — it only makes the Broadcast panel active.'))
         + gap(g.payments || '');
       return;
     }
@@ -1206,8 +1271,18 @@
       const scale = costs.scale || [];
       const assum = costs.assumptions || [];
       const adRev = (d.ads && d.ads.revenue) || {};
+      const C = Ccy();
+      function fromAedField(aedVal) {
+        if (C && C.convert) return C.convert(Number(aedVal) || 0, 'AED', opCode());
+        return Number(aedVal) || 0;
+      }
+      function toAedField(opVal) {
+        if (C && C.convert) return C.convert(Number(opVal) || 0, opCode(), 'AED');
+        return Number(opVal) || 0;
+      }
       el.innerHTML =
-        inactiveNote('Real payouts are disabled. No money has moved.')
+        currencyCard()
+        + inactiveNote('Real payouts are disabled. No money has moved.')
         + card('Booked ad revenue',
           '<p class="sub">Booked ad revenue is rate-card maths × observed events. Cash has not moved until an advertiser pays. There is no third-party auction.</p>'
           + kpis([['Booked ads', aedUsd(adRev.bookedAed || 0)],
@@ -1242,14 +1317,14 @@
             : '<p class="sub">Free-tier limits appear once usage is on file.</p>')
           + gap('Firestore reads usually go first. Model: 150 Firestore reads per monthly active user per day. Firebase Spark allows 50,000 reads per day, about 330 monthly active users. Cloudflare R2 egress is not billed. Push (FCM) is not billed.'))
         + card('Bills and extras (this browser)',
-          '<label>Invoiced this month (AED, dirham)</label><input id="costInvoice" inputmode="decimal" placeholder="0" />'
-          + '<label>Fixed monthly — domain, store, tools (AED)</label><input id="costFixed" inputmode="decimal" placeholder="0" />'
+          '<label>Invoiced this month (' + escapeHtml(moneyLabel()) + ')</label><input id="costInvoice" inputmode="decimal" placeholder="0" />'
+          + '<label>Fixed monthly — domain, store, tools (' + escapeHtml(opCode()) + ')</label><input id="costFixed" inputmode="decimal" placeholder="0" />'
           + '<label>Call minutes this month (TURN)</label><input id="costTurn" inputmode="decimal" placeholder="0" />'
-          + '<label>Compass / AI this month (AED)</label><input id="costCompass" inputmode="decimal" placeholder="0" />'
+          + '<label>Compass / AI this month (' + escapeHtml(opCode()) + ')</label><input id="costCompass" inputmode="decimal" placeholder="0" />'
           + '<div class="row"><button type="button" class="primary" id="costBtn">Recalculate cost</button></div>'
-          + '<p class="sub" id="costHint">Invoiced spend is the amount recorded here. Until an invoice is recorded, that figure is AED 0.00.</p>')
+          + '<p class="sub" id="costHint">Invoiced spend is the amount recorded here. Until an invoice is recorded, that figure is ' + escapeHtml(aed(0)) + '.</p>')
         + card('Where the list-price goes',
-          plainRows(['Line', 'Quantity', 'AED / month'],
+          plainRows(['Line', 'Quantity', moneyLabel()],
             lines.map(function (L) {
               const qty = L.unit === 'GB-month' || L.unit === 'GB'
                 ? Number(L.qty || 0).toFixed(4) + ' ' + L.unit
@@ -1280,8 +1355,8 @@
           + gap('This is a mix projection, not a forecast. With no usage on file, only the recorded fixed bill remains.'))
         + card('Runway',
           '<p class="sub">Cash and burn stay on this browser until a finance ledger exists.</p>'
-          + '<label>Cash on hand (AED, dirham)</label><input id="runCash" inputmode="decimal" placeholder="e.g. 80000" />'
-          + '<label>Monthly burn (AED)</label><input id="runBurn" inputmode="decimal" placeholder="e.g. 12000" />'
+          + '<label>Cash on hand (' + escapeHtml(moneyLabel()) + ')</label><input id="runCash" inputmode="decimal" placeholder="e.g. 80000" />'
+          + '<label>Monthly burn (' + escapeHtml(opCode()) + ')</label><input id="runBurn" inputmode="decimal" placeholder="e.g. 12000" />'
           + '<div class="row"><button type="button" class="primary" id="runBtn">Estimate runway</button></div>'
           + '<div id="runOut" class="sub"></div>')
         + (assum.length
@@ -1292,31 +1367,34 @@
           : '')
         + termsBlock();
       try {
-        if ($('costInvoice')) $('costInvoice').value = String(inputs.invoiceAed || '');
-        if ($('costFixed')) $('costFixed').value = String(inputs.fixedAed || '');
+        if ($('costInvoice')) $('costInvoice').value = String(fromAedField(inputs.invoiceAed) || '');
+        if ($('costFixed')) $('costFixed').value = String(fromAedField(inputs.fixedAed) || '');
         if ($('costTurn')) $('costTurn').value = String(inputs.turnMinutes || '');
-        if ($('costCompass')) $('costCompass').value = String(inputs.compassAed || '');
-        $('runCash').value = localStorage.getItem('nalunoRunwayCash') || '';
-        $('runBurn').value = localStorage.getItem('nalunoRunwayBurn') || '';
+        if ($('costCompass')) $('costCompass').value = String(fromAedField(inputs.compassAed) || '');
+        const runCashAed = Number(localStorage.getItem('nalunoRunwayCash') || 0) || 0;
+        const runBurnAed = Number(localStorage.getItem('nalunoRunwayBurn') || 0) || 0;
+        $('runCash').value = runCashAed ? String(fromAedField(runCashAed)) : '';
+        $('runBurn').value = runBurnAed ? String(fromAedField(runBurnAed)) : '';
       } catch (_) {}
+      wireCurrencySelect('opCurrency');
       if ($('costBtn')) $('costBtn').onclick = function () {
         const next = {
-          invoiceAed: Number(($('costInvoice') && $('costInvoice').value) || 0) || 0,
-          fixedAed: Number(($('costFixed') && $('costFixed').value) || 0) || 0,
+          invoiceAed: toAedField(($('costInvoice') && $('costInvoice').value) || 0),
+          fixedAed: toAedField(($('costFixed') && $('costFixed').value) || 0),
           turnMinutes: Number(($('costTurn') && $('costTurn').value) || 0) || 0,
-          compassAed: Number(($('costCompass') && $('costCompass').value) || 0) || 0,
+          compassAed: toAedField(($('costCompass') && $('costCompass').value) || 0),
         };
         writeCostInputs(next);
         if (d._raw) d._raw.costInputs = next;
         if (d.costs && Data && Data.estimateCosts) {
           d.costs = Data.estimateCosts(Object.assign({}, d._raw || {}, { now: d.now, zone: d.zone, costInputs: next }));
         }
-        toast('Cost recalculated');
+        toast('Cost recalculated in ' + opCode());
         renderTab('money', d);
       };
       if ($('runBtn')) $('runBtn').onclick = function () {
-        const cash = Number(($('runCash') && $('runCash').value) || 0);
-        const burn = Number(($('runBurn') && $('runBurn').value) || 0);
+        const cash = toAedField(($('runCash') && $('runCash').value) || 0);
+        const burn = toAedField(($('runBurn') && $('runBurn').value) || 0);
         try {
           localStorage.setItem('nalunoRunwayCash', String(cash));
           localStorage.setItem('nalunoRunwayBurn', String(burn));
@@ -1324,7 +1402,7 @@
         const out = $('runOut');
         if (!burn) { if (out) out.textContent = 'Burn has to be more than zero.'; return; }
         const months = cash / burn;
-        if (out) out.textContent = 'Estimated runway: ' + months.toFixed(1) + ' months.';
+        if (out) out.textContent = 'Estimated runway: ' + months.toFixed(1) + ' months · ' + aed(cash) + ' on hand.';
       };
       goButtons();
       return;
@@ -1523,9 +1601,13 @@
       if (n > 100000) n = 100000;
       return n;
     }
-    const ecpm = nRate('adRateEcpm');
-    const cpc = nRate('adRateCpc');
-    const cpv = nRate('adRateCpv');
+    const ecpmTyped = nRate('adRateEcpm');
+    const cpcTyped = nRate('adRateCpc');
+    const cpvTyped = nRate('adRateCpv');
+    const C = Ccy();
+    const ecpm = C && C.convert ? C.convert(ecpmTyped, opCode(), 'AED') : ecpmTyped;
+    const cpc = C && C.convert ? C.convert(cpcTyped, opCode(), 'AED') : cpcTyped;
+    const cpv = C && C.convert ? C.convert(cpvTyped, opCode(), 'AED') : cpvTyped;
     let viewSec = parseInt(($('adRateViewSec') && $('adRateViewSec').value) || '15', 10);
     if (!isFinite(viewSec) || viewSec < 1) viewSec = 15;
     if (viewSec > 60) viewSec = 60;
@@ -1533,13 +1615,14 @@
       ecpmAed: ecpm,
       cpcAed: cpc,
       cpvAed: cpv,
+      currency: opCode(),
       viewCompleteSec: viewSec,
       updatedAt: Date.now(),
       updatedBy: currentUser && currentUser.uid,
     };
     try {
       await db.collection('economyConfig').doc('adRates').set(doc, { merge: true });
-      await writeAudit('ad-rates', 'adRates', 'eCPM ' + ecpm + ' · CPC ' + cpc + ' · CPV ' + cpv + ' · view ' + viewSec + 's');
+      await writeAudit('ad-rates', 'adRates', 'eCPM ' + ecpmTyped + ' ' + opCode() + ' · CPC ' + cpcTyped + ' · CPV ' + cpvTyped + ' · view ' + viewSec + 's');
       if (__snap) {
         if (__snap._raw) __snap._raw.adRates = doc;
         if (Data && Data.estimateAdRevenue && __snap._raw) {
@@ -1747,6 +1830,13 @@
     if (who) who.textContent = whoLine(currentUser) + ' · every change is logged.';
     __activeTab = 'overview';
     wireAdminTabs();
+    try {
+      const C = Ccy();
+      if (C) {
+        C.listen(adminDb());
+        C.fetchLive(false).then(function () { try { C.publishRates(adminDb()); } catch (_) {} });
+      }
+    } catch (_) {}
     const nav = $('adminTabs');
     if (nav) nav.querySelectorAll('.atab').forEach(function (b) {
       b.classList.toggle('on', b.getAttribute('data-tab') === 'overview');
@@ -1958,6 +2048,15 @@
     });
     const pw = $('adminPassword');
     if (pw) pw.addEventListener('keydown', function (e) { if (e.key === 'Enter') signInHandle(); });
+  }
+  if (typeof document !== 'undefined') {
+    document.addEventListener('naluno-currency', function () {
+      if (!__snap) return;
+      try { renderStrip(__snap); } catch (_) {}
+      if (__activeTab === 'money' || __activeTab === 'ads' || __activeTab === 'support') {
+        try { renderTab(__activeTab, __snap); } catch (_) {}
+      }
+    });
   }
   function boot() {
     bind();

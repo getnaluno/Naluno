@@ -23,8 +23,8 @@ const ECONOMY_WORKER_URL = 'https://naluno-economy.naluno.workers.dev';
 /* Feature flags are fetched once and then live-watched. Until they arrive we
    assume the conservative default: engagement tracking on, ALL money features
    off (spec §28/§58) — so a slow flag fetch can never briefly expose an
-   unfinished monetary feature. Creator Support's tab is always in the app;
-   the flag only makes that tab active or inactive. */
+   unfinished monetary feature. Creator Support lives inside Broadcast,
+   below Circle; the flag only makes that panel active or inactive. */
 let nalunoEconomyFlags = {
   broadcast_enabled: true,
   signals_enabled: true,
@@ -49,21 +49,12 @@ function applyEconomyFlagsToUi(){
   const supportOn = nalunoEconomyFlag('creator_support_enabled');
   try{ document.body.classList.toggle('naluno-support-on', supportOn); }catch(_){}
   try{ document.body.classList.toggle('naluno-support-off', !supportOn); }catch(_){}
-  const nav = (typeof document !== 'undefined') ? document.getElementById('supportNavBtn') : null;
-  if(nav){
-    nav.classList.toggle('inactive', !supportOn);
-    nav.setAttribute('aria-disabled', supportOn ? 'false' : 'true');
-    nav.title = supportOn
-      ? 'Creator Support'
-      : 'Creator Support is off — the tab is here, inactive';
-  }
+  try{ if(typeof stripSupportNavTab === 'function') stripSupportNavTab(); }catch(_){}
   const chip = (typeof document !== 'undefined') ? document.getElementById('supportFlagChip') : null;
   if(chip){
     chip.textContent = supportOn ? 'On' : 'Off';
     chip.classList.toggle('on', supportOn);
   }
-  const tab = (typeof document !== 'undefined') ? document.getElementById('tab-support') : null;
-  if(tab) tab.classList.toggle('support-inactive', !supportOn);
   try{
     document.dispatchEvent(new CustomEvent('naluno-flags', { detail: Object.assign({}, nalunoEconomyFlags) }));
   }catch(_){}
@@ -108,6 +99,12 @@ async function loadEconomyFlags(){
   nalunoEconomyFlagsLoaded = true;
   applyEconomyFlagsToUi();
   watchEconomyFlags();
+  try{
+    if(typeof NalunoCurrency !== 'undefined' && NalunoCurrency && NalunoCurrency.listen){
+      NalunoCurrency.listen();
+      NalunoCurrency.fetchLive(false);
+    }
+  }catch(_){}
   return nalunoEconomyFlags;
 }
 
@@ -265,7 +262,7 @@ async function fetchCommunityValue(broadcastId){
 
 /* Boot: load flags, drain anything queued from a previous session, and retry
    on reconnect. All non-blocking. Live-watch flags so Control Centre On/Off
-   flips the Support tab without a reload. */
+   flips Creator Support under Circle without a reload. */
 (function initEconomy(){
   try{
     applyEconomyFlagsToUi();

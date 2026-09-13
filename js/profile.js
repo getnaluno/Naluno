@@ -30,6 +30,9 @@ function captureNavState(){
 
 function applyNavState(state){
   if(!state || !state.tabId) return;
+  if(state.tabId === 'tab-support' || state.navTab === 'support'){
+    state = Object.assign({}, state, { tabId: 'tab-broadcast', navTab: 'broadcast' });
+  }
   try{
     document.querySelectorAll('.navbtn').forEach(b=>{
       b.classList.toggle('active', b.dataset.tab === state.navTab || ('tab-'+b.dataset.tab) === state.tabId);
@@ -71,6 +74,12 @@ function restoreNavStateOnBoot(){
 
 document.querySelectorAll('.navbtn').forEach(btn=>{
   btn.onclick = ()=>{
+    if(btn.dataset.tab === 'support'){
+      try{ if(typeof stripSupportNavTab === 'function') stripSupportNavTab(); }catch(_){}
+      const bcast = document.querySelector('.navbtn[data-tab="broadcast"]');
+      if(bcast && bcast !== btn){ bcast.click(); }
+      return;
+    }
     try{ if(typeof closeThread === 'function') closeThread(); }catch(_){}
     document.querySelectorAll('.navbtn').forEach(b=>b.classList.remove('active'));
     document.querySelectorAll('.tabscreen').forEach(s=>s.classList.remove('active'));
@@ -79,9 +88,6 @@ document.querySelectorAll('.navbtn').forEach(btn=>{
     if(screen) screen.classList.add('active');
     if(btn.dataset.tab === 'frequencies' && typeof clearMissedCallBadge === 'function') clearMissedCallBadge();
     if(btn.dataset.tab === 'compass' && typeof showCompassLockScreenIfNeeded === 'function') showCompassLockScreenIfNeeded();
-    if(btn.dataset.tab === 'support' && typeof renderSupportTab === 'function'){
-      try{ renderSupportTab(); }catch(_){}
-    }
     if(btn.dataset.tab !== 'broadcast'){
       try{ if(typeof pauseAllStrandPreviews === 'function') pauseAllStrandPreviews(); }catch(_){}
       try{ if(typeof nalunoPauseDetachedMedia === 'function') nalunoPauseDetachedMedia(); }catch(_){}

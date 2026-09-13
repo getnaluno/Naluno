@@ -305,12 +305,30 @@ function renderBspaceConversation(docs){
     el.parentNode.insertBefore(pin, el);
   }
 
+  const LIVE_NOTICE_TTL_MS = 24 * 60 * 60 * 1000;
   const isLiveSystem = (m)=>{
     if(!m) return false;
     if(m.kind === 'went_live' || m.kind === 'was_live') return true;
     if(m.type === 'live') return true;
     const t = (m.text || '').toLowerCase();
     return /\b(is live now|was live|went live|join live)\b/.test(t);
+  };
+  const liveNoticeRefTs = (m)=>{
+    const ended = Number((activeBroadcastMeta && activeBroadcastMeta.lastLiveEndedAt) || 0);
+    const ts = Number(m && m.ts) || 0;
+    return ended || ts || 0;
+  };
+  const liveNoticeFresh = (m)=>{
+    if(!m) return false;
+    const currentlyLive = !!(activeBroadcastMeta && activeBroadcastMeta.live);
+    const kind = String(m.kind || '');
+    const text = String(m.text || '').toLowerCase();
+    const isPresent = kind === 'went_live' || /\bis live now|join live\b/.test(text);
+    if(currentlyLive && isPresent) return true;
+    if(currentlyLive && kind === 'was_live') return false;
+    const when = liveNoticeRefTs(m);
+    if(!when) return false;
+    return (Date.now() - when) < LIVE_NOTICE_TTL_MS;
   };
   const reallyLived = !!(activeBroadcastMeta && (
     activeBroadcastMeta.live ||
@@ -321,8 +339,9 @@ function renderBspaceConversation(docs){
   const rest = [];
   (docs || []).forEach(d=>{
     const m = d.data ? d.data() : d;
-    if(isLiveSystem(m)) pinned.push({ d, m });
-    else rest.push({ d, m });
+    if(isLiveSystem(m)){
+      if(liveNoticeFresh(m)) pinned.push({ d, m });
+    } else rest.push({ d, m });
   });
 
   // Newest live notice only (top of conversation, not buried).
@@ -330,11 +349,9 @@ function renderBspaceConversation(docs){
   if(pinned.length && reallyLived){
     pinned.sort((a,b)=> (b.m.ts||0) - (a.m.ts||0));
     const latest = pinned[0].m;
-    const stillLive = !!(activeBroadcastMeta && activeBroadcastMeta.live) ||
-      /is live now|join live/i.test(String(latest.text || ''));
-    const past = /was live|ended|recording saved/i.test(String(latest.text || ''));
-    const label = (stillLive && !past) ? '● LIVE' : '● WAS LIVE';
-    const fallbackText = (stillLive && !past)
+    const stillLive = !!(activeBroadcastMeta && activeBroadcastMeta.live);
+    const label = stillLive ? '● LIVE' : '● WAS LIVE';
+    const fallbackText = stillLive
       ? 'Creator is live now — join to watch'
       : 'Creator was live';
     // FIX: "MAGAMBO is live now" / "MAGAMBO was live" read in third person
@@ -2152,13 +2169,28 @@ function showBreatherAdSlot(breather, onDone){
   const label = $('bspaceBreatherLabel');
   const adLine = $('bspaceBreatherAd');
   if(label) label.textContent = (ad && ad.status === 'ready') ? 'Ad' : ((breather && breather.label) || 'Chapter break');
+  let finished = false;
+  const finish = function(){
+    if(finished) return;
+    finished = true;
+    try{
+      const cv = $('bspaceVideoEl');
+      if(cv){
+        cv.muted = false;
+        if(!cv.volume) cv.volume = 1;
+      }
+    }catch(_){}
+    hideBreatherAdSlot();
+    if(onDone) onDone();
+    resumeBspaceAfterAd();
+  };
   if(adLine){
     adLine.style.position = 'absolute';
     adLine.style.inset = '0';
     adLine.style.margin = '0';
     if(ad && ad.status === 'ready' && ad.creativeHtml){
       adLine.innerHTML = ad.creativeHtml;
-      try{ if(typeof NalunoAds !== 'undefined' && NalunoAds.wireBreather) NalunoAds.wireBreather(adLine, ad); }catch(_){}
+      try{ if(typeof NalunoAds !== 'undefined' && NalunoAds.wireBreather) NalunoAds.wireBreather(adLine, ad, finish); }catch(_){}
     } else if(ad && ad.enabled){
       adLine.textContent = 'Next chapter…';
     } else {
@@ -2180,18 +2212,6 @@ function showBreatherAdSlot(breather, onDone){
     skipBtn.disabled = skip > 0;
     skipBtn.textContent = skip > 0 ? ('Skip in ' + skip + 's') : 'Skip';
     let left = skip;
-    const finish = function(){
-      try{
-        const cv = $('bspaceVideoEl');
-        if(cv){
-          cv.muted = false;
-          if(!cv.volume) cv.volume = 1;
-        }
-      }catch(_){}
-      hideBreatherAdSlot();
-      if(onDone) onDone();
-      resumeBspaceAfterAd();
-    };
     skipBtn.onclick = function(){
       if(skipBtn.disabled) return;
       try{ if(typeof NalunoAds !== 'undefined' && NalunoAds.disarmViewComplete) NalunoAds.disarmViewComplete(); }catch(_){}

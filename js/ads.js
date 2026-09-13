@@ -34,6 +34,8 @@
   let __watchTimer = null;
   let __viewTimer = null;
   let __viewThisOpen = false;
+  let __endTimer = null;
+  let __adFinish = null;
 
   function escapeHtml(str) {
     return String(str == null ? '' : str)
@@ -187,7 +189,11 @@
       + 'font-family:var(--font-mono, ui-monospace, monospace);font-size:13px;letter-spacing:.04em;cursor:pointer;}'
       + '#nalunoAdViewer .ad-cta .go{background:#7CFFB2;color:#07080D;border:none;}'
       + '#nalunoAdViewer .ad-cta .skip,#nalunoAdViewer .ad-skip{background:rgba(13,15,23,.7);color:#E8ECF5;}'
-      + '#nalunoAdViewer .ad-skip[disabled]{opacity:.55;cursor:default;}';
+      + '#nalunoAdViewer .ad-skip[disabled]{opacity:.55;cursor:default;}'
+      + '#nalunoAdViewer .naluno-ad-sound{position:absolute;right:14px;top:14px;z-index:3;padding:8px 12px;border-radius:999px;'
+      + 'background:rgba(13,15,23,.78);border:1px solid rgba(124,255,178,.45);color:#7CFFB2;'
+      + 'font-family:var(--font-mono, ui-monospace, monospace);font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;}'
+      + '#nalunoAdViewer .naluno-ad-sound.muted{color:#E8ECF5;border-color:rgba(232,236,245,.35);}';
     document.head.appendChild(css);
   }
 
@@ -314,6 +320,66 @@
     try { time = el.currentTime || 0; } catch (_) {}
     return { el: el, muted: muted, volume: vol, time: time };
   }
+  function clearEndTimer() {
+    if (__endTimer) {
+      try { clearTimeout(__endTimer); } catch (_) {}
+      __endTimer = null;
+    }
+    __adFinish = null;
+  }
+  function playAdWithSound(v, soundBtn) {
+    if (!v) return;
+    try {
+      v.defaultMuted = false;
+      v.muted = false;
+      v.volume = 1;
+      v.loop = false;
+      v.dataset.nalunoWantPlay = '1';
+      v.dataset.nalunoUserPaused = '0';
+      v.removeAttribute('muted');
+    } catch (_) {}
+    function markSound(on) {
+      if (!soundBtn) return;
+      soundBtn.classList.toggle('muted', !on);
+      soundBtn.textContent = on ? 'Sound on' : 'Tap for sound';
+    }
+    markSound(true);
+    const go = function () {
+      const p = v.play();
+      if (p && p.catch) {
+        p.catch(function () {
+          try {
+            v.muted = false;
+            v.volume = 1;
+            const p2 = v.play();
+            if (p2 && p2.catch) {
+              p2.catch(function () {
+                try {
+                  v.muted = true;
+                  v.play().then(function () {
+                    try { v.muted = false; v.volume = 1; } catch (_) {}
+                    markSound(!v.muted);
+                  }).catch(function () { markSound(false); });
+                } catch (_) { markSound(false); }
+              });
+            }
+          } catch (_) { markSound(false); }
+        });
+      }
+    };
+    go();
+    if (soundBtn) {
+      soundBtn.onclick = function (e) {
+        if (e) { e.preventDefault(); e.stopPropagation(); }
+        try {
+          v.muted = false;
+          v.volume = 1;
+          v.play().catch(function () {});
+          markSound(true);
+        } catch (_) {}
+      };
+    }
+  }
   function resumeAfterAd() {
     const snap = __pausedForAd;
     __pausedForAd = null;
@@ -339,6 +405,7 @@
   }
   function closeViewer() {
     disarmViewComplete();
+    clearEndTimer();
     __adOpen = false;
     if (typeof document === 'undefined') {
       resumeAfterAd();
@@ -407,8 +474,7 @@
     __adOpen = true;
     injectStyle();
     try {
-      if (typeof nalunoPauseLeavingMedia === 'function') nalunoPauseLeavingMedia();
-      else if (typeof nalunoExclusiveMedia === 'function') nalunoExclusiveMedia(null);
+      if (typeof nalunoExclusiveMedia === 'function') nalunoExclusiveMedia(null);
     } catch (_) {}
     let host = document.getElementById('nalunoAdViewer');
     if (!host) {
@@ -427,7 +493,7 @@
     const ctaUrl = httpsUrl(ad.ctaUrl);
     const ctaLabel = (ad.ctaLabel || 'Open').slice(0, 24);
     const media = isVideo
-      ? '<video id="nalunoAdVideo" playsinline webkit-playsinline autoplay loop></video>'
+      ? '<video id="nalunoAdVideo" playsinline webkit-playsinline autoplay></video>'
       : '<img src="' + escapeHtml(src) + '" alt="" />';
     host.classList.remove('hidden');
     host.innerHTML =
@@ -437,6 +503,7 @@
       + '<span class="naluno-ad-kicker">Ad</span>'
       + '<span style="color:#E8ECF5;font-size:14px;">' + escapeHtml((ad.advertiser || ad.headline || 'Sponsored').slice(0, 48)) + '</span>'
       + '</div>'
+      + (isVideo ? '<button type="button" class="naluno-ad-sound" id="nalunoAdSound">Sound on</button>' : '')
       + '<div class="ad-cta">'
       + (ctaUrl ? '<button type="button" class="go" id="nalunoAdCta">' + escapeHtml(ctaLabel) + '</button>' : '')
       + '<button type="button" class="skip" id="nalunoAdSkip" disabled>Skip in ' + skipAt + 's</button>'
@@ -445,35 +512,53 @@
     track(ad, 'impression');
     markShown(ad, place || 'in-feed');
 
+    const finish = function () {
+      closeViewer();
+    };
+    __adFinish = finish;
+
     const v = document.getElementById('nalunoAdVideo');
+    const soundBtn = document.getElementById('nalunoAdSound');
     if (v && src) {
-      try {
-        v.dataset.nalunoWantPlay = '1';
-        v.dataset.nalunoUserPaused = '0';
-        v.muted = false;
-      } catch (_) {}
-      try { v.loop = true; } catch (_) {}
+      playAdWithSound(v, soundBtn);
       v.src = src;
-      const p = v.play();
-      if (p && p.catch) {
-        p.catch(function () {
-          try { v.muted = true; v.play().catch(function () {}); } catch (_) {}
-        });
-      }
-      v.onended = function () {
-        try { v.currentTime = 0; v.play().catch(function () {}); } catch (_) {}
+      try { v.load(); } catch (_) {}
+      playAdWithSound(v, soundBtn);
+      v.onended = function () { finish(); };
+      v.onerror = function () {
+        if (!skipAt) finish();
       };
       try {
         if (typeof nalunoExclusiveMedia === 'function') nalunoExclusiveMedia(v);
       } catch (_) {}
       armViewComplete(ad, v);
+      v.addEventListener('loadedmetadata', function () {
+        try {
+          if (isFinite(v.duration) && v.duration > 0 && v.duration < 120) {
+            /* natural ended handles resume; keep a safety net a beat after duration */
+            clearEndTimer();
+            __endTimer = setTimeout(function () {
+              if (__adOpen) finish();
+            }, Math.round(v.duration * 1000) + 800);
+          }
+        } catch (_) {}
+      });
     } else {
       armViewComplete(ad, null);
+      const hold = Math.max(skipAt, viewCompleteSec(), 8) * 1000;
+      clearEndTimer();
+      __endTimer = setTimeout(function () {
+        if (__adOpen) finish();
+      }, hold);
     }
     host.onclick = function () {
       const av = document.getElementById('nalunoAdVideo');
-      if (av && av.muted) {
+      if (av) {
         try { av.muted = false; av.volume = 1; av.play().catch(function () {}); } catch (_) {}
+        if (soundBtn) {
+          soundBtn.classList.remove('muted');
+          soundBtn.textContent = 'Sound on';
+        }
       }
     };
 
@@ -530,11 +615,12 @@
     const isVideo = String(ad.mediaType || '').indexOf('image') !== 0;
     const ctaUrl = httpsUrl(ad.ctaUrl);
     const media = isVideo
-      ? '<video class="naluno-break-ad" playsinline webkit-playsinline autoplay loop src="' + escapeHtml(src) + '" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;"></video>'
+      ? '<video class="naluno-break-ad" playsinline webkit-playsinline autoplay src="' + escapeHtml(src) + '" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;"></video>'
       : '<img src="' + escapeHtml(src) + '" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;" />';
     const html = '<div class="naluno-break-wrap" data-ad-id="' + escapeHtml(ad.id) + '" style="position:absolute;inset:0;">'
       + media
       + '<span class="naluno-ad-kicker" style="position:absolute;left:10px;top:10px;">Ad</span>'
+      + '<button type="button" class="naluno-ad-sound" style="position:absolute;right:10px;top:10px;">Sound on</button>'
       + '<div style="position:absolute;left:16px;right:16px;bottom:86px;color:#E8ECF5;font-size:14px;text-align:center;">' + escapeHtml((ad.headline || '').slice(0, 72)) + '</div>'
       + '<div style="position:absolute;left:16px;right:16px;bottom:66px;color:#7C8497;font-size:12px;text-align:center;">' + escapeHtml((ad.advertiser || '').slice(0, 40)) + '</div>'
       + (ctaUrl ? '<button type="button" class="naluno-break-cta" data-cta="' + escapeHtml(ctaUrl) + '" style="position:absolute;left:16px;right:16px;bottom:16px;padding:12px 16px;border-radius:10px;border:none;background:#7CFFB2;color:#07080D;font-size:13px;cursor:pointer;">' + escapeHtml((ad.ctaLabel || 'Open').slice(0, 24)) + '</button>' : '')
@@ -544,39 +630,38 @@
       status: 'ready',
       adId: ad.id,
       skipAfterSec: skip,
-      maxDurationMs: 0,
+      maxDurationMs: isVideo ? 0 : Math.max(skip, viewCompleteSec(), 8) * 1000,
       creativeHtml: html,
       ad: ad,
     };
   }
 
-  function wireBreather(host, slot) {
+  function wireBreather(host, slot, onEnded) {
     if (!host || !slot || slot.status !== 'ready') return;
     const ad = slot.ad;
     if (ad) track(ad, 'impression');
     try {
       const v = host.querySelector('video.naluno-break-ad');
+      const soundBtn = host.querySelector('.naluno-ad-sound');
       if (v) {
-        try {
-          v.loop = true;
-          v.muted = false;
-          v.dataset.nalunoWantPlay = '1';
-          v.dataset.nalunoUserPaused = '0';
-        } catch (_) {}
-        const p = v.play();
-        if (p && p.catch) {
-          p.catch(function () {
-            try { v.muted = true; v.play().catch(function () {}); } catch (_) {}
-          });
-        }
-        v.onclick = function () {
-          if (v.muted) {
-            try { v.muted = false; v.volume = 1; v.play().catch(function () {}); } catch (_) {}
-          }
-        };
+        playAdWithSound(v, soundBtn);
+        v.onended = function () { if (typeof onEnded === 'function') onEnded(); };
+        v.onerror = function () { if (typeof onEnded === 'function') onEnded(); };
         armViewComplete(ad, v);
+        v.addEventListener('loadedmetadata', function () {
+          try {
+            if (isFinite(v.duration) && v.duration > 0) {
+              slot.maxDurationMs = Math.round(v.duration * 1000) + 800;
+            }
+          } catch (_) {}
+        });
       } else {
+        if (soundBtn) soundBtn.style.display = 'none';
         armViewComplete(ad, null);
+        if (typeof onEnded === 'function') {
+          const hold = slot.maxDurationMs || Math.max(skipAfterOf(ad), viewCompleteSec(), 8) * 1000;
+          setTimeout(onEnded, hold);
+        }
       }
     } catch (_) {}
     const cta = host.querySelector('.naluno-break-cta');

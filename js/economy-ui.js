@@ -1,15 +1,16 @@
 /* ============================================================
    MODULE: js/economy-ui.js
    The visible surface of the Community Economy: the person's own
-   contribution dashboard (§36) and the Creator Support tab (§20).
+   contribution dashboard (§36) and Creator Support inside Broadcast,
+   below Circle (§20). Not a nav tab.
 
    The operator Control Centre is a separate site at /admin/ — it is not
    loaded, linked, or reachable from this member app.
 
-   Creator Support's TAB is always in the app. Control Centre On/Off
-   makes that tab active or inactive — it never removes it. Voluntary
-   and non-aggressive (§22, §39): no pressure, no gating of watching,
-   talking, or publishing. Nothing here is required to use Naluno.
+   Creator Support lives only inside a Broadcast, under Circle. Control
+   Centre On/Off makes that panel active or inactive — it never removes
+   it. Voluntary and non-aggressive (§22, §39): no pressure, no gating of
+   watching, talking, or publishing. Nothing here is required to use Naluno.
 
    Everything shown here is READ from the server. Nothing in this file
    computes a point, a balance or an eligibility decision — it renders
@@ -19,7 +20,27 @@
    ============================================================ */
 
 const ECONOMY_UI_WORKER = 'https://naluno-economy.naluno.workers.dev';
-const SUPPORT_AMOUNTS = [500, 1000, 2500]; // integer fils (§43) — never floats
+
+function supportCcy(){
+  try{
+    if(typeof NalunoCurrency !== 'undefined' && NalunoCurrency && NalunoCurrency.code){
+      return NalunoCurrency.code() || 'AED';
+    }
+  }catch(_){}
+  return 'AED';
+}
+function supportPresets(){
+  try{
+    if(typeof NalunoCurrency !== 'undefined' && NalunoCurrency && NalunoCurrency.supportPresets){
+      return NalunoCurrency.supportPresets();
+    }
+  }catch(_){}
+  return [
+    { major: 5, minor: 500, currency: 'AED', label: 'AED 5' },
+    { major: 10, minor: 1000, currency: 'AED', label: 'AED 10' },
+    { major: 25, minor: 2500, currency: 'AED', label: 'AED 25' },
+  ];
+}
 
 function supportIsOn(){
   return typeof nalunoEconomyFlag === 'function' && nalunoEconomyFlag('creator_support_enabled');
@@ -79,9 +100,9 @@ async function renderContributionPanel(){
     + '</div>';
 }
 
-/* ---------------- Creator Support tab + sheet (§19–§22, §40) ----------------
-   The tab is ALWAYS painted. The flag only flips active / inactive.
-   Inactive still opens — it just cannot record an intent. */
+/* ---------------- Creator Support (Broadcast, below Circle) ----------------
+   The panel is ALWAYS painted inside a Broadcast. The flag only flips
+   active / inactive. Inactive still opens — it just cannot record an intent. */
 
 function nalunoSupportButtonHtml(){
   const on = supportIsOn();
@@ -91,35 +112,66 @@ function nalunoSupportButtonHtml(){
     + '</button>';
 }
 
+/* Old shells (v166) still had a Support nav tab. Pull it out so a mixed
+   cache can never put Support back on the bar. Lives only under Circle. */
+function stripSupportNavTab(){
+  try{
+    const btn = document.getElementById('supportNavBtn')
+      || document.querySelector('.navbar .navbtn[data-tab="support"]');
+    if(btn && btn.parentNode) btn.parentNode.removeChild(btn);
+    const tab = document.getElementById('tab-support');
+    if(tab && tab.parentNode) tab.parentNode.removeChild(tab);
+  }catch(_){}
+}
+
 function paintBspaceSupportButton(){
+  stripSupportNavTab();
   const host = $('bspaceSupportSlot') || $('bspaceJoinBtn');
   if(!host) return;
   let btn = $('bspaceSupportBtn');
   const on = supportIsOn();
   if(!btn){
     if($('bspaceSupportSlot')){
-      $('bspaceSupportSlot').innerHTML = nalunoSupportButtonHtml();
+      const slot = $('bspaceSupportSlot');
+      if(slot && !slot.querySelector('.bspace-support-panel')){
+        slot.innerHTML = '<div class="bspace-support-panel">'
+          + '<div class="bspace-support-head"><div class="bspace-support-kicker">Support creator</div>'
+          + '<span class="support-flag-chip" id="supportFlagChip">Off</span></div>'
+          + '<div class="support-banner" id="supportBanner"></div>'
+          + nalunoSupportButtonHtml()
+          + '<div id="supportMine"></div></div>';
+      }
       btn = $('bspaceSupportBtn');
     } else {
       const wrap = document.createElement('div');
       wrap.id = 'bspaceSupportSlot';
       wrap.className = 'bspace-support-slot';
-      wrap.innerHTML = nalunoSupportButtonHtml();
+      wrap.innerHTML = '<div class="bspace-support-panel">'
+        + '<div class="bspace-support-head"><div class="bspace-support-kicker">Support creator</div>'
+        + '<span class="support-flag-chip" id="supportFlagChip">Off</span></div>'
+        + '<div class="support-banner" id="supportBanner"></div>'
+        + nalunoSupportButtonHtml()
+        + '<div id="supportMine"></div></div>';
       host.insertAdjacentElement('afterend', wrap);
       btn = $('bspaceSupportBtn');
     }
   }
   if(!btn) return;
   btn.classList.toggle('off', !on);
-  btn.textContent = on ? 'Support creator' : 'Support · off';
-  btn.title = on ? 'Support this creator' : 'Creator Support is off — the tab is still there';
+  const meta = (typeof activeBroadcastMeta !== 'undefined') ? activeBroadcastMeta : null;
+  const first = meta && meta.creatorName ? String(meta.creatorName).split(' ')[0] : '';
+  btn.textContent = on
+    ? (first ? ('Support ' + first) : 'Support creator')
+    : 'Support · off';
+  btn.title = on ? 'Support this creator' : 'Creator Support is off';
   btn.onclick = function(){
-    const meta = (typeof activeBroadcastMeta !== 'undefined') ? activeBroadcastMeta : null;
-    const uid = meta && meta.creatorUid;
-    const name = meta && meta.creatorName;
+    const m = (typeof activeBroadcastMeta !== 'undefined') ? activeBroadcastMeta : null;
+    const uid = m && m.creatorUid;
+    const name = m && m.creatorName;
     const bid = (typeof activeBroadcastId !== 'undefined') ? activeBroadcastId : '';
     openSupportSheet(uid, name, bid);
   };
+  try{ renderSupportTab(); }catch(_){}
 }
 
 function listSupportCreators(){
@@ -172,7 +224,7 @@ async function loadMySupportRows(){
         list.push({
           id: d.id,
           amount: Number(x.amount_minor) || 0,
-          currency: x.currency || 'AED',
+          currency: x.currency || supportCcy(),
           status: x.status || 'intent',
           name: x.creator_name || x.supporter_name || '',
           other: x.creator_user_id === uid ? x.supporter_user_id : x.creator_user_id,
@@ -188,9 +240,15 @@ async function loadMySupportRows(){
   }
 }
 
-function formatSupportAed(minor){
+function formatSupportMoney(minor, currency){
+  const ccy = currency || supportCcy();
+  try{
+    if(typeof NalunoCurrency !== 'undefined' && NalunoCurrency && NalunoCurrency.formatMinor){
+      return NalunoCurrency.formatMinor(minor, ccy);
+    }
+  }catch(_){}
   const n = Number(minor) || 0;
-  return 'AED ' + (n / 100).toFixed(0);
+  return ccy + ' ' + (n / 100).toFixed(0);
 }
 
 function renderSupportTab(){
@@ -202,7 +260,7 @@ function renderSupportTab(){
     banner.className = 'support-banner' + (on ? ' on' : '');
     banner.innerHTML = on
       ? '<strong>On.</strong> Support is voluntary and separate from watching, talking, or publishing. No payment is taken until a provider is connected — an intent is recorded, nothing is charged.'
-      : '<strong>Off.</strong> This tab stays here so you can see it. The operator has not switched Creator Support on, so nothing can be charged and no intent is recorded.';
+      : '<strong>Off.</strong> This stays under Circle so you can see it. The operator has not switched Creator Support on, so nothing can be charged and no intent is recorded.';
   }
   if(listEl){
     const creators = listSupportCreators();
@@ -243,7 +301,7 @@ function renderSupportTab(){
       function line(r, dir){
         const when = r.at ? new Date(r.at).toLocaleDateString() : '';
         return '<div class="support-hist">'
-          + '<span>' + supportEsc(dir) + ' · ' + supportEsc(formatSupportAed(r.amount)) + '</span>'
+          + '<span>' + supportEsc(dir) + ' · ' + supportEsc(formatSupportMoney(r.amount, r.currency)) + '</span>'
           + '<span>' + supportEsc(r.status) + (when ? ' · ' + when : '') + '</span>'
           + '</div>';
       }
@@ -263,26 +321,41 @@ function closeSupportSheet(){
 
 function openSupportSheet(creatorUid, creatorName, broadcastId){
   if(!supportIsOn()){
-    toast('Creator Support is off. The tab is here — it just isn’t live.');
+    toast('Creator Support is off.');
     return;
   }
   if(typeof currentUser === 'undefined' || !currentUser){ toast('Sign in first'); return; }
   if(!creatorUid){ toast('Pick a creator'); return; }
   if(creatorUid === currentUser.uid){ toast('You can’t support yourself'); return; }
+  const presets = supportPresets();
   __supportSheet = {
     uid: creatorUid,
     name: creatorName || 'this creator',
     broadcastId: broadcastId || '',
-    amount: 1000,
+    amount: presets[1] ? presets[1].minor : (presets[0] && presets[0].minor) || 0,
+    currency: supportCcy(),
   };
   const panel = $('supportSheet');
   const who = $('supportSheetWho');
   const hint = $('supportSheetHint');
   if(who) who.textContent = 'Support ' + String(__supportSheet.name).split(' ')[0];
-  if(hint) hint.textContent = 'Voluntary. Separate from anything you earn. No payment is taken until a provider is connected.';
-  document.querySelectorAll('#supportAmountRow .support-amt').forEach(function(b){
-    b.classList.toggle('on', Number(b.getAttribute('data-minor')) === __supportSheet.amount);
-  });
+  if(hint) hint.textContent = 'Voluntary. Separate from anything you earn. No payment is taken until a provider is connected. Amounts are in ' + supportCcy() + '.';
+  const row = $('supportAmountRow');
+  if(row){
+    row.innerHTML = presets.map(function(p, i){
+      const on = p.minor === __supportSheet.amount || (!__supportSheet.amount && i === 1);
+      if(on) __supportSheet.amount = p.minor;
+      return '<button type="button" class="support-amt' + (on ? ' on' : '') + '" data-minor="' + p.minor + '">' + supportEsc(p.label) + '</button>';
+    }).join('');
+    row.querySelectorAll('.support-amt').forEach(function(b){
+      b.onclick = function(){
+        __supportSheet.amount = Number(b.getAttribute('data-minor')) || 0;
+        row.querySelectorAll('.support-amt').forEach(function(x){
+          x.classList.toggle('on', x === b);
+        });
+      };
+    });
+  }
   const msg = $('supportSheetMsg');
   if(msg) msg.textContent = '';
   if(panel) panel.classList.add('active');
@@ -309,7 +382,7 @@ async function submitSupportIntent(){
         creator_user_id: uid,
         broadcast_id: __supportSheet.broadcastId || '',
         amount_minor: amountMinor,
-        currency: 'AED',
+        currency: __supportSheet.currency || supportCcy(),
         // §44: one key per attempt, so a retry can never charge twice.
         idempotency_key: 'sup_' + (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '' + Math.random())),
       }),
@@ -353,6 +426,7 @@ function wireSupportSheet(){
 
 (function wireEconomyUi(){
   function bind(){
+    stripSupportNavTab();
     const cc = $('contributionCloseBtn');
     if(cc) cc.onclick = closeContributionPanel;
     const openBtn = $('myContributionBtn');
@@ -361,6 +435,11 @@ function wireSupportSheet(){
     renderSupportTab();
     paintBspaceSupportButton();
     document.addEventListener('naluno-flags', function(){
+      stripSupportNavTab();
+      renderSupportTab();
+      paintBspaceSupportButton();
+    });
+    document.addEventListener('naluno-currency', function(){
       renderSupportTab();
       paintBspaceSupportButton();
     });
@@ -375,3 +454,4 @@ window.closeSupportSheet = closeSupportSheet;
 window.nalunoSupportButtonHtml = nalunoSupportButtonHtml;
 window.paintBspaceSupportButton = paintBspaceSupportButton;
 window.renderSupportTab = renderSupportTab;
+window.stripSupportNavTab = stripSupportNavTab;

@@ -619,7 +619,16 @@ function renderBroadcasts(){
 
 function nalunoSetBcastView(view, viaSwipe){
   const next = (view === 'mine') ? 'mine' : 'foryou';
-  if(next === bcastActiveView) return;
+  if(next === bcastActiveView){
+    // Already on this view — if a Strand is open, leave it so For You /
+    // My Broadcasts never keep a Strand bar sitting on Signals + Toga.
+    try{
+      if(typeof getOpenStrandFolderId === 'function' && getOpenStrandFolderId()){
+        if(typeof closeStrandFolder === 'function') closeStrandFolder();
+      }
+    }catch(_){}
+    return;
+  }
   const dir = next === 'mine' ? 'left' : 'right';
   bcastActiveView = next;
   // FIX ("the strand share bar leaks back into the Toga page when swiping

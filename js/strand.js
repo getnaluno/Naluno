@@ -385,6 +385,10 @@
     openStrandFolderId = id || null;
     try{ document.body.classList.toggle('naluno-strand-open', !!openStrandFolderId); }catch(_){}
     if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
+    try{
+      const scroller = document.getElementById('broadcastTabScroll');
+      if(scroller) scroller.scrollTop = 0;
+    }catch(_){}
   }
   function closeStrandFolder(){
     openStrandFolderId = null;

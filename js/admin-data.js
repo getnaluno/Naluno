@@ -26,7 +26,7 @@
     toga_enabled: { label: 'Toga', group: 'Product', note: 'Wall of Fame ranking.' },
     contribution_enabled: { label: 'Contribution tracking', group: 'Community', note: 'Count comments, replies, shares.' },
     community_value_enabled: { label: 'Community value', group: 'Community', note: 'A measurement, never money.' },
-    creator_support_enabled: { label: 'Creator Support', group: 'Money', note: 'Donate to a creator. The Support tab is always in the app. Off = inactive (nothing can be charged). On = active. Off until a payment provider is connected.' },
+    creator_support_enabled: { label: 'Creator Support', group: 'Money', note: 'Donate to a creator. Lives inside Broadcast, below Circle — not as a nav tab. Off = inactive (nothing can be charged). On = active. Off until a payment provider is connected.' },
     community_rewards_enabled: { label: 'Community Rewards', group: 'Money', note: 'Pool split. Off until switched on.' },
     real_payouts_enabled: { label: 'Real payouts', group: 'Money', note: 'Locked. Requires a signed off-console decision.' },
     content_hub_enabled: { label: 'Content Hub', group: 'Hub', note: 'Sports / movies / channels. Not built yet.' },
@@ -35,8 +35,9 @@
   };
 
   const TERMS = [
-    { abbr: 'AED', name: 'United Arab Emirates dirham', note: 'Naluno’s operating currency. Shown next to USD at a peg of 3.6725.' },
-    { abbr: 'USD', name: 'United States dollar', note: 'Shown next to dirham amounts for comparison.' },
+    { abbr: 'AED', name: 'United Arab Emirates dirham', note: 'A currency on the ISO 4217 list. No longer the hardcoded operating currency — the operator picks any code, including UGX, and amounts convert in real time.' },
+    { abbr: 'USD', name: 'United States dollar', note: 'FX book is USD-based. Shown next to the operating currency for comparison.' },
+    { abbr: 'UGX', name: 'Ugandan shilling', note: 'On the ISO 4217 list. Zero minor units. Pickable as the operating currency from Control Centre.' },
     { abbr: 'DAU', name: 'Daily active users', note: 'Accounts with a heartbeat during the operator device’s local day.' },
     { abbr: 'WAU', name: 'Weekly active users', note: 'Accounts with a heartbeat in the last 7 days.' },
     { abbr: 'MAU', name: 'Monthly active users', note: 'Accounts with a heartbeat in the last 30 days.' },
@@ -59,7 +60,7 @@
     { abbr: 'Ad', name: 'Advertisement', note: 'A paid unit on Naluno. Always labelled Ad. First-party inventory uploaded from this console, not a third-party network.' },
     { abbr: 'CTA', name: 'Call to action', note: 'The button on an ad (Open, Visit, Watch) that leads to an https address.' },
     { abbr: 'CPM', name: 'Cost per mille', note: 'Advertiser rate for one thousand impressions. Booked as (impressions ÷ 1,000) × eCPM.' },
-    { abbr: 'eCPM', name: 'Effective cost per mille', note: 'The rate card for one thousand impressions, in AED. Set on this console. Not an auction.' },
+    { abbr: 'eCPM', name: 'Effective cost per mille', note: 'The rate card for one thousand impressions, in the operating currency. Set on this console. Not an auction.' },
     { abbr: 'CPC', name: 'Cost per click', note: 'Advertiser rate for one tap on the call to action. Booked as clicks × CPC.' },
     { abbr: 'CPV', name: 'Cost per view', note: 'Advertiser rate for a completed view (default 15 seconds of the unit playing). Booked as completed views × CPV.' },
     { abbr: 'CPA', name: 'Cost per action', note: 'Not used. Naluno does not count installs or off-platform conversions.' },
@@ -253,11 +254,33 @@
     dau_worker_reqs: 20,
   };
 
+  function fx() {
+    try {
+      if (typeof NalunoCurrency !== 'undefined' && NalunoCurrency) return NalunoCurrency;
+    } catch (_) {}
+    return null;
+  }
+  function operatingCode() {
+    const C = fx();
+    return (C && C.code && C.code()) || COST_RATES.currency || 'AED';
+  }
   function usdAed(usd) {
     return num(usd) * COST_RATES.usd_to_aed;
   }
+  function usdToOperating(usd) {
+    const C = fx();
+    if (C && C.convert) return C.convert(num(usd), 'USD', operatingCode());
+    return usdAed(usd);
+  }
+  function aedToOperating(aedVal) {
+    const C = fx();
+    if (C && C.convert) return C.convert(num(aedVal), 'AED', operatingCode());
+    return num(aedVal);
+  }
 
   function formatAed(n) {
+    const C = fx();
+    if (C && C.formatFrom) return C.formatFrom(n, 'AED');
     const x = num(n);
     if (!isFinite(x)) return '—';
     if (x === 0) return 'AED 0.00';
@@ -276,6 +299,8 @@
   }
 
   function formatUsd(n) {
+    const C = fx();
+    if (C && C.formatMajor) return C.formatMajor(n, 'USD');
     const x = num(n);
     if (!isFinite(x)) return '—';
     if (x === 0) return '$0.00';
@@ -285,6 +310,8 @@
   }
 
   function moneyPair(aedVal) {
+    const C = fx();
+    if (C && C.pairFrom) return C.pairFrom(aedVal, 'AED');
     const a = num(aedVal);
     return formatAed(a) + ' · ' + formatUsd(a / COST_RATES.usd_to_aed);
   }
@@ -728,7 +755,7 @@
     });
     const firstGate = gates.filter(function (g) { return g.mau != null; })[0] || null;
     const alreadyOver = gates.filter(function (g) { return g.already; });
-    let headline = 'Usage is within free allowances. Firebase Spark and Cloudflare currently invoice AED 0.00.';
+    let headline = 'Usage is within free allowances. Firebase Spark and Cloudflare currently invoice ' + formatAed(0) + '.';
     if (invoiceAed > 0) {
       headline = 'Serving from the recorded invoice: ' + moneyPair(invoiceAed) + '.';
     } else if (alreadyOver.length) {
@@ -779,7 +806,7 @@
         'Cloudflare R2 has no egress fee. Watching a Broadcast does not bill bandwidth.',
         'When a file has no stored size, video is counted at about 1 Mbps, a photo at 400 KB, unknown video at 8 MB.',
         'Firestore reads and writes are a model (150 reads and 24 writes per monthly active user per day), not a Google invoice.',
-        'Firebase Spark and Cloudflare free plans currently bill AED 0.00 on usage. Invoiced spend is the amount recorded under Bills.',
+        'Firebase Spark and Cloudflare free plans currently bill ' + formatAed(0) + ' on usage. Invoiced spend is the amount recorded under Bills.',
         'Call relay (TURN) is zero until minutes are recorded. Compass / artificial intelligence (AI) is zero until that bill is recorded. Push (FCM) is not billed.',
         'Platform share (presence, workers, domain) is split across monthly active users, not dormant accounts.',
         'The first bill is the first free allowance that usage exceeds. Firestore reads usually go first (about 330 monthly active users at 150 reads per person per day).',
@@ -1174,7 +1201,7 @@
         payments: 'No payment provider is connected. Ledgers exist so the shape is auditable before money moves.',
         content_hub: 'Sports, movies and channels are not in the product yet.',
         cpu_memory: 'Cloudflare and Firebase do not expose instance processor (CPU) or memory (RAM) to this console.',
-        unit_econ: 'Invoices are not connected. Metered figures are list-price maths from usage. Firebase Spark and Cloudflare free plans currently invoice AED 0.00 until usage exceeds those allowances or an invoice is recorded.',
+        unit_econ: 'Invoices are not connected. Metered figures are list-price maths from usage. Firebase Spark and Cloudflare free plans currently invoice ' + formatAed(0) + ' until usage exceeds those allowances or an invoice is recorded.',
         retention: 'Day-1 / day-7 (D1 / D7) retention needs a session log. Still-here is people who signed up at least N days ago and had a heartbeat in the last N days.',
         cac: 'Customer acquisition cost (CAC) and lifetime value (LTV) are not known and are not estimated here.',
         ad_revenue: 'Booked ad revenue is rate-card maths × observed events. Cash has not moved. There is no third-party auction.',
@@ -1208,5 +1235,8 @@
     moneyPair: moneyPair,
     roundMau: roundMau,
     usdAed: usdAed,
+    usdToOperating: usdToOperating,
+    aedToOperating: aedToOperating,
+    operatingCode: operatingCode,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
