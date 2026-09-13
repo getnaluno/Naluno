@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260913a';
+  const BUILD = '20260913s';
   const OPERATOR_UIDS = { 'ibMOMY6Q3sVTCxIrwO2FGk43zw93': true };
   const OPERATOR_EMAILS = { 'magjoed@gmail.com': true };
 
@@ -468,6 +468,7 @@
       colDocs('bands', 80).then(function (r) { pack.bands = r; }),
       colDocs('contributionLedger', 200).then(function (r) { pack.ledger = r; }),
       colDocs('economyInbox', 200).then(function (r) { pack._inbox = r; }),
+      colDocs('creatorSupport', 80).then(function (r) { pack.creatorSupport = r; }),
       colDocs('metrics', 80).then(function (r) { pack.metrics = r; }),
       colDocs('adminAudit', 80).then(function (r) {
         pack.audit = r.sort(function (a, b) { return (b.created_at || 0) - (a.created_at || 0); });
@@ -1171,8 +1172,25 @@
     }
 
     if (tab === 'support') {
+      const on = !!d.flags.creator_support_enabled;
+      const txs = (d.economy && d.economy.support_list) || [];
       el.innerHTML =
-        inactiveNote('Creator Support is off. No payment provider is connected, so no money can move.')
+        (on
+          ? '<div class="alert ok">Creator Support is ON. The Support tab in the app is active. No payment provider is connected, so intents are recorded and no money moves.</div>'
+          : inactiveNote('Creator Support is off. The Support tab is still in the app, inactive. Nothing can be charged.'))
+        + kpis([['App tab', 'always there'], ['State', on ? 'active' : 'inactive'],
+          ['Intents on file', txs.length || (d.economy && d.economy.support_transactions) || 0],
+          ['Real payouts', d.flags.real_payouts_enabled ? 'on' : 'locked']])
+        + (txs.length
+          ? card('Recorded intents', plainRows(['When', 'From', 'To', 'Amount', 'Status'],
+            txs.slice(0, 30).map(function (r) {
+              return [when(r.created_at || r.createdAt),
+                String(r.supporter_user_id || '').slice(0, 10),
+                String(r.creator_user_id || '').slice(0, 10),
+                ((Number(r.amount_minor) || 0) / 100).toFixed(2) + ' ' + (r.currency || 'AED'),
+                r.status || 'intent'];
+            })))
+          : gap('No support intents on file. Turning the flag on does not move money — it only makes the app tab active.'))
         + gap(g.payments || '');
       return;
     }

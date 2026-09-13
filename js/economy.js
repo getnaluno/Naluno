@@ -20,10 +20,11 @@
 
 const ECONOMY_WORKER_URL = 'https://naluno-economy.naluno.workers.dev';
 
-/* Feature flags are fetched once and cached. Until they arrive we assume the
-   conservative default: engagement tracking on, ALL money features off
-   (spec §28/§58) — so a slow flag fetch can never briefly expose an
-   unfinished monetary feature. */
+/* Feature flags are fetched once and then live-watched. Until they arrive we
+   assume the conservative default: engagement tracking on, ALL money features
+   off (spec §28/§58) — so a slow flag fetch can never briefly expose an
+   unfinished monetary feature. Creator Support's tab is always in the app;
+   the flag only makes that tab active or inactive. */
 let nalunoEconomyFlags = {
   broadcast_enabled: true,
   signals_enabled: true,
@@ -38,13 +39,51 @@ let nalunoEconomyFlags = {
   movies_enabled: false,
 };
 let nalunoEconomyFlagsLoaded = false;
+let nalunoEconomyFlagsUnsub = null;
 
 function nalunoEconomyFlag(name){
   return !!nalunoEconomyFlags[name];
 }
 
+function applyEconomyFlagsToUi(){
+  const supportOn = nalunoEconomyFlag('creator_support_enabled');
+  try{ document.body.classList.toggle('naluno-support-on', supportOn); }catch(_){}
+  try{ document.body.classList.toggle('naluno-support-off', !supportOn); }catch(_){}
+  const nav = (typeof document !== 'undefined') ? document.getElementById('supportNavBtn') : null;
+  if(nav){
+    nav.classList.toggle('inactive', !supportOn);
+    nav.setAttribute('aria-disabled', supportOn ? 'false' : 'true');
+    nav.title = supportOn
+      ? 'Creator Support'
+      : 'Creator Support is off — the tab is here, inactive';
+  }
+  const chip = (typeof document !== 'undefined') ? document.getElementById('supportFlagChip') : null;
+  if(chip){
+    chip.textContent = supportOn ? 'On' : 'Off';
+    chip.classList.toggle('on', supportOn);
+  }
+  const tab = (typeof document !== 'undefined') ? document.getElementById('tab-support') : null;
+  if(tab) tab.classList.toggle('support-inactive', !supportOn);
+  try{
+    document.dispatchEvent(new CustomEvent('naluno-flags', { detail: Object.assign({}, nalunoEconomyFlags) }));
+  }catch(_){}
+}
+
+function mergeEconomyFlags(next){
+  if(!next || typeof next !== 'object') return;
+  const prev = !!nalunoEconomyFlags.creator_support_enabled;
+  Object.keys(next).forEach(function(k){
+    nalunoEconomyFlags[k] = next[k];
+  });
+  nalunoEconomyFlagsLoaded = true;
+  applyEconomyFlagsToUi();
+  const now = !!nalunoEconomyFlags.creator_support_enabled;
+  if(prev !== now && typeof window !== 'undefined' && typeof window.renderSupportTab === 'function'){
+    try{ window.renderSupportTab(); }catch(_){}
+  }
+}
+
 async function loadEconomyFlags(){
-  if(nalunoEconomyFlagsLoaded) return nalunoEconomyFlags;
   let fromFs = null;
   try{
     const db = (typeof fbDb !== 'undefined' && fbDb)
@@ -56,19 +95,36 @@ async function loadEconomyFlags(){
     }
   }catch(_){}
   if(fromFs){
-    nalunoEconomyFlags = Object.assign({}, nalunoEconomyFlags, fromFs);
+    mergeEconomyFlags(fromFs);
   } else {
     try{
       const res = await fetch(ECONOMY_WORKER_URL + '/v1/flags');
       if(res.ok){
         const body = await res.json();
-        if(body && body.flags) nalunoEconomyFlags = Object.assign({}, nalunoEconomyFlags, body.flags);
+        if(body && body.flags) mergeEconomyFlags(body.flags);
       }
     }catch(_){ /* offline or worker down — keep the safe defaults */ }
   }
   nalunoEconomyFlagsLoaded = true;
-  try{ document.body.classList.toggle('naluno-support-on', nalunoEconomyFlag('creator_support_enabled')); }catch(_){}
+  applyEconomyFlagsToUi();
+  watchEconomyFlags();
   return nalunoEconomyFlags;
+}
+
+function watchEconomyFlags(){
+  if(nalunoEconomyFlagsUnsub) return;
+  try{
+    const db = (typeof fbDb !== 'undefined' && fbDb)
+      ? fbDb
+      : (typeof firebase !== 'undefined' && firebase.firestore ? firebase.firestore() : null);
+    if(!db || !db.collection) return;
+    nalunoEconomyFlagsUnsub = db.collection('economyConfig').doc('flags').onSnapshot(
+      function(snap){
+        if(snap && snap.exists) mergeEconomyFlags(snap.data() || {});
+      },
+      function(){ nalunoEconomyFlagsUnsub = null; }
+    );
+  }catch(_){}
 }
 
 /* ---------------- Offline queue ----------------
@@ -208,10 +264,23 @@ async function fetchCommunityValue(broadcastId){
 }
 
 /* Boot: load flags, drain anything queued from a previous session, and retry
-   on reconnect. All non-blocking. */
+   on reconnect. All non-blocking. Live-watch flags so Control Centre On/Off
+   flips the Support tab without a reload. */
 (function initEconomy(){
   try{
+    applyEconomyFlagsToUi();
     loadEconomyFlags();
+    setTimeout(function(){ try{ watchEconomyFlags(); }catch(_){} }, 2500);
+    try{
+      if(typeof firebase !== 'undefined' && firebase.auth){
+        firebase.auth().onAuthStateChanged(function(){
+          setTimeout(function(){
+            try{ watchEconomyFlags(); }catch(_){}
+            try{ loadEconomyFlags(); }catch(_){}
+          }, 400);
+        });
+      }
+    }catch(_){}
     setTimeout(flushEconomyQueue, 4000);
     window.addEventListener('online', function(){ setTimeout(flushEconomyQueue, 1200); });
     document.addEventListener('visibilitychange', function(){
@@ -222,5 +291,9 @@ async function fetchCommunityValue(broadcastId){
 
 window.nalunoTrack = nalunoTrack;
 window.nalunoEconomyFlag = nalunoEconomyFlag;
+window.nalunoEconomyFlags = nalunoEconomyFlags;
+window.applyEconomyFlagsToUi = applyEconomyFlagsToUi;
+window.loadEconomyFlags = loadEconomyFlags;
+window.watchEconomyFlags = watchEconomyFlags;
 window.fetchMyContribution = fetchMyContribution;
 window.fetchCommunityValue = fetchCommunityValue;

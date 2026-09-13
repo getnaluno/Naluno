@@ -77,7 +77,20 @@ assert.strictEqual(snap.users.suspended.length, 1);
 assert.strictEqual(snap.content.broadcasts_total, 1);
 assert.strictEqual(snap.content.broadcasts_live, 1);
 assert.strictEqual(snap.content.broadcasts_deleted, 1);
-assert.strictEqual(snap.signals.today, 1);
+assert.ok(D.DEFAULT_FLAGS.creator_support_enabled === false, 'Creator Support defaults off');
+assert.ok(D.FLAG_META.creator_support_enabled, 'Creator Support flag meta');
+assert.ok(/tab is always in the app/i.test(D.FLAG_META.creator_support_enabled.note), 'flag note says the app tab stays');
+const snapSupport = D.deriveSnapshot({
+  now: Date.parse('2026-09-10T08:30:00Z'),
+  zone: 'Asia/Dubai',
+  users: [],
+  broadcasts: [],
+  flags: { creator_support_enabled: true },
+  creatorSupport: [{ id: 't1', amount_minor: 1000, currency: 'AED', supporter_user_id: 'a', creator_user_id: 'b' }],
+});
+assert.strictEqual(snapSupport.economy.support_transactions, 1);
+assert.strictEqual(snapSupport.economy.support_list.length, 1);
+
 assert.ok(snap.locations.with_coords >= 1, 'beacon coords must roll up onto the user');
 assert.strictEqual(snap.origin.held, 1);
 assert.ok(snap.users.list.filter(function (u) { return u.id === 'a' && u.lastLat; }).length === 1);

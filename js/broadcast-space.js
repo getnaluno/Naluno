@@ -744,6 +744,10 @@ async function openBroadcastSpace(meta){
   }
 
   try{
+    if(typeof paintBspaceSupportButton === 'function') paintBspaceSupportButton();
+  }catch(_){}
+
+  try{
     if(typeof armBroadcastViewWatch === 'function'){
       armBroadcastViewWatch(activeBroadcastId, meta.creatorUid, isCreator);
     }
