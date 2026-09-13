@@ -1,5 +1,5 @@
 // Naluno service worker — offline shell + background call push.
-// v161: 09.11e contact form, Compass delete/write, Control Centre Mail.
+// v166: 09.13s Creator Support tab always in the app; flag makes it active/inactive.
 // v160: 09.11d pitch surface — landing proof, OG, public privacy/terms.
 // v159: 09.11c Band audio/video drop in immediately (placeholder + client ts).
 // v158: 09.11b desk clock follows this device; GPS weather; Signals + Find pins reported.
@@ -51,7 +51,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v165';
+const CACHE_NAME = 'naluno-shell-v166';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
