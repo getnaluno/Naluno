@@ -8,9 +8,10 @@
    ECDH (P-256) + AES-GCM-256 end-to-end encryption, following the same
    client-side rules WhatsApp / Signal publish (not a port of libsignal):
 
-   1. Encrypt on this phone. The server only ever stores ciphertext.
-   2. Client fan-out: one envelope for the other person, one for this phone,
-      each sealed to that identity's current public key.
+   1. Encrypt on this phone. The server only ever holds ciphertext, and only
+      until the other phone copies it into its local chat database.
+   2. Client fan-out: one envelope for the other person (the mailbox drop),
+      plus the plaintext already saved on this phone.
    3. Stamp senderPub on the packet so decrypt uses the key that sealed it,
       not whoever's publicKey happens to be published later.
    4. If the other person has no published key yet, send readable text —
@@ -21,9 +22,10 @@
    HKDF-SHA256 wraps the ECDH secret on new envelopes (kdf:'hkdf'). Older
    envelopes used the raw bits; decrypt tries both.
 
-   Honest limits: this protects content from anyone reading the database,
+   Honest limits: this protects content from anyone reading the mailbox,
    including Naluno. It does not protect a compromised unlocked phone.
-   Google/native accounts use a one-time recovery code for backup. */
+   History is on the phone. A new phone starts empty unless a copy is imported.
+   Google/native accounts use a one-time recovery code for the identity key. */
 const E2E_DB_NAME = 'naluno-keys', E2E_STORE = 'keys';
 function openKeyDb(){
   return new Promise((resolve, reject)=>{

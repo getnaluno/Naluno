@@ -16,6 +16,112 @@ let activeThreadContactId = null;
 // openThread), and demo contacts that used to seed this no longer exist.
 const wirelineSeed = {};
 
+function wireKindLabel(type){
+  try{
+    if(typeof NalunoWireMailbox !== 'undefined' && NalunoWireMailbox.kindLabel) return NalunoWireMailbox.kindLabel(type);
+    if(typeof NalunoChatStore !== 'undefined' && NalunoChatStore.kindLabel) return NalunoChatStore.kindLabel(type);
+  }catch(_){}
+  return 'Message';
+}
+function persistWireRow(contactId, msg, otherUid){
+  if(msg && contactId != null){
+    if(!wirelineThreads[contactId]) wirelineThreads[contactId] = [];
+    const list = wirelineThreads[contactId];
+    const idx = list.findIndex(function(m){
+      if(!m) return false;
+      if(msg.id && String(m.id) === String(msg.id)) return true;
+      if(msg.clientMsgId && m.clientMsgId && String(m.clientMsgId) === String(msg.clientMsgId)) return true;
+      return false;
+    });
+    if(idx >= 0) list[idx] = Object.assign({}, list[idx], msg);
+    else list.push(msg);
+    list.sort(function(a,b){ return (a.ts||0) - (b.ts||0); });
+  }
+  try{
+    if(typeof NalunoChatStore !== 'undefined' && NalunoChatStore.putMessage){
+      const tid = (otherUid && typeof currentUser !== 'undefined' && currentUser && typeof realThreadId === 'function')
+        ? realThreadId(otherUid)
+        : ('local:' + contactId);
+      NalunoChatStore.putMessage(Object.assign({}, msg, {
+        threadId: tid,
+        otherUid: otherUid || '',
+        contactId: contactId
+      }));
+      const preview = (msg && msg.text) ? String(msg.text).slice(0, 80) : wireKindLabel(msg && msg.type);
+      NalunoChatStore.putThread({
+        threadId: tid,
+        otherUid: otherUid || '',
+        contactId: contactId,
+        text: preview,
+        lastKind: (msg && msg.type) || 'text',
+        ts: (msg && msg.ts) || Date.now(),
+        fromMe: !!(msg && msg.from === 'me'),
+        unread: !!(msg && msg.from === 'them' && !msg.read)
+      });
+    }
+  }catch(_){}
+  try{ saveWireline(); }catch(_){}
+}
+function applyLocalReaction(otherUid, cmid, reaction){
+  const match = function(row){
+    if(!row) return false;
+    return String(row.clientMsgId||'') === String(cmid) || String(row.id||'') === String(cmid);
+  };
+  Object.keys(wirelineThreads).forEach(function(k){
+    (wirelineThreads[k]||[]).forEach(function(row){
+      if(match(row)) row.reaction = reaction;
+    });
+  });
+  try{
+    if(typeof NalunoChatStore !== 'undefined'){
+      NalunoChatStore.listAllMessages().then(function(all){
+        all.forEach(function(row){
+          if(match(row)){
+            row.reaction = reaction;
+            NalunoChatStore.putMessage(row);
+          }
+        });
+      }).catch(function(){});
+    }
+  }catch(_){}
+  try{ renderThreadMessages(); }catch(_){}
+}
+async function hydrateWirelineFromStore(){
+  try{
+    if(typeof NalunoChatStore === 'undefined') return;
+    const msgs = await NalunoChatStore.listAllMessages();
+    msgs.forEach(function(m){
+      let cid = m.contactId;
+      if(cid == null && m.otherUid){
+        const c = contacts.find(function(x){ return x.firebaseUid === m.otherUid; });
+        cid = c ? c.id : null;
+      }
+      if(cid == null) return;
+      if(!wirelineThreads[cid]) wirelineThreads[cid] = [];
+      const exists = wirelineThreads[cid].some(function(x){
+        return String(x.id)===String(m.id) || (m.clientMsgId && x.clientMsgId && String(x.clientMsgId)===String(m.clientMsgId));
+      });
+      if(!exists) wirelineThreads[cid].push(m);
+    });
+    Object.keys(wirelineThreads).forEach(function(k){
+      wirelineThreads[k].sort(function(a,b){ return (a.ts||0)-(b.ts||0); });
+    });
+    const th = await NalunoChatStore.listThreads();
+    th.forEach(function(t){
+      if(!t.otherUid) return;
+      const cut = clearedAtForKey(t.otherUid);
+      if(cut && t.ts && t.ts <= cut) return;
+      realThreadPreviews[t.otherUid] = {
+        text: t.text || wireKindLabel(t.lastKind),
+        ts: t.ts,
+        fromMe: !!t.fromMe,
+        unread: !!t.unread
+      };
+    });
+    renderWirelineList();
+  }catch(_){}
+}
+
 function dayStampKey(ts){
   const d = new Date(ts || Date.now());
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
@@ -227,6 +333,11 @@ async function clearMySideOfThread(){
   list.forEach(function(m){ if(m && m.id) wirelineHiddenIds[String(m.id)] = 1; });
   saveWirelineHidden();
   if(c.firebaseUid) delete realThreadPreviews[c.firebaseUid];
+  try{
+    if(typeof NalunoChatStore !== 'undefined' && c.firebaseUid && typeof realThreadId === 'function' && currentUser){
+      NalunoChatStore.clearThread(realThreadId(c.firebaseUid));
+    }
+  }catch(_){}
   if(c.isReal && c.firebaseUid && fbDb && currentUser){
     try{
       await fbDb.collection('users').doc(currentUser.uid).collection('wirelineClears').doc(c.firebaseUid).set({
@@ -252,6 +363,7 @@ function startThreadsListListener(){
   if(!fbDb || !currentUser) return;
   syncWirelineClearsFromCloud();
   syncWirelineHiddenFromCloud();
+  try{ if(typeof NalunoWireMailbox !== 'undefined') NalunoWireMailbox.startMailbox(); }catch(_){}
   if(threadsListUnsubscribe) threadsListUnsubscribe();
   threadsListUnsubscribe = fbDb.collection('threads')
     .where('participants', 'array-contains', currentUser.uid)
@@ -266,8 +378,10 @@ function startThreadsListListener(){
           delete realThreadPreviews[otherUid];
           return;
         }
+        const local = realThreadPreviews[otherUid];
+        const kindText = (typeof wireKindLabel === 'function') ? wireKindLabel(d.lastKind || 'text') : 'Message';
         realThreadPreviews[otherUid] = {
-          text: d.lastMessageText || '',
+          text: (local && local.text) || kindText,
           ts: previewTs,
           fromMe: d.lastMessageFrom === currentUser.uid,
           unread: d.lastMessageFrom !== currentUser.uid && !(d.readBy||[]).includes(currentUser.uid),
@@ -300,6 +414,37 @@ function bindThreadChrome(){
   }
 }
 bindThreadChrome();
+function bindWireCopy(){
+  const saveBtn = $('wireSaveCopyBtn');
+  if(saveBtn && !saveBtn._bound){
+    saveBtn._bound = 1;
+    saveBtn.onclick = function(){
+      if(typeof NalunoWireMailbox === 'undefined'){ toast('Chat copy is not ready'); return; }
+      NalunoWireMailbox.saveCopy().then(function(){ toast('Chat copy saved on this phone'); }).catch(function(e){
+        toast((e && e.message) || 'Could not save a copy');
+      });
+    };
+  }
+  const loadBtn = $('wireLoadCopyBtn');
+  const fileEl = $('wireLoadCopyFile');
+  if(loadBtn && fileEl && !loadBtn._bound){
+    loadBtn._bound = 1;
+    loadBtn.onclick = function(){ fileEl.click(); };
+    fileEl.onchange = function(){
+      const f = fileEl.files && fileEl.files[0];
+      fileEl.value = '';
+      if(!f) return;
+      if(typeof NalunoWireMailbox === 'undefined'){ toast('Chat copy is not ready'); return; }
+      NalunoWireMailbox.loadCopy(f).then(function(out){
+        toast('Imported ' + (out.messages||0) + ' messages onto this phone');
+        try{ hydrateWirelineFromStore(); }catch(_){}
+      }).catch(function(e){
+        toast((e && e.message) || 'Could not open that copy');
+      });
+    };
+  }
+}
+try{ bindWireCopy(); }catch(_){}
 
 function openThread(contactId){
   const c = contacts.find(x=>x.id===contactId); if(!c) return;
@@ -325,86 +470,30 @@ function openThread(contactId){
       }
       if(typeof publishMyPublicKey === 'function') publishMyPublicKey();
     }catch(_){}
-    const tid = realThreadId(c.firebaseUid);
-    const threadRef = fbDb.collection('threads').doc(tid);
-    activeThreadUnsubscribe = threadRef.collection('messages').orderBy('ts','asc').onSnapshot(async snap=>{
-      const mapped = await Promise.all(snap.docs.map(async d=>{
-        const m = d.data();
-        let text = m.text;
-        if(m.encrypted && (m.ciphertext || (m.envelopes && (m.envelopes[currentUser.uid] || Object.keys(m.envelopes).length)))){
-          const cacheKey = d.id + ':' + ((m.ciphertext || (m.envelopes && m.envelopes[currentUser.uid] && m.envelopes[currentUser.uid].ciphertext) || '')).slice(0, 24);
-          const cmidKey = m.clientMsgId ? ('cmid:' + m.clientMsgId) : '';
-          if(cmidKey && wirelineDecryptCache[cmidKey]){
-            text = wirelineDecryptCache[cmidKey];
-          } else if(wirelineDecryptCache[cacheKey]){
-            text = wirelineDecryptCache[cacheKey];
-          } else {
-            const opener = (typeof nalunoOpenSealed === 'function') ? nalunoOpenSealed : decryptWirelineMessage;
-            const decrypted = await opener(m, c);
-            if(decrypted !== null && decrypted !== undefined){
-              text = decrypted;
-              wirelineDecryptCache[cacheKey] = decrypted;
-              if(cmidKey) wirelineDecryptCache[cmidKey] = decrypted;
-              try{ persistWirelineDecryptCache(); }catch(_){}
-            } else if(m.text){
-              text = m.text;
-            } else {
-              text = (typeof NALUNO_SEAL_FAIL === 'string') ? NALUNO_SEAL_FAIL : 'Couldn\u2019t read this on this phone. Ask them to send it again.';
+    try{
+      if(typeof NalunoWireMailbox !== 'undefined' && NalunoWireMailbox.importLegacyOnce){
+        NalunoWireMailbox.importLegacyOnce(contactId, c.firebaseUid).then(function(){
+          if(activeThreadContactId === contactId) renderThreadMessages();
+        }).catch(function(){});
+      }
+    }catch(_){}
+    try{ hydrateWirelineFromStore(); }catch(_){}
+    (wirelineThreads[contactId] || []).forEach(function(m){
+      if(m && m.from === 'them'){
+        m.read = true;
+        if(m.status !== 'read'){
+          m.status = 'read';
+          try{
+            if(typeof NalunoWireMailbox !== 'undefined' && m.clientMsgId){
+              NalunoWireMailbox.writeReceipt(c.firebaseUid, m.clientMsgId, 'read');
             }
-          }
+          }catch(_){}
         }
-        const msgType = m.type || 'text';
-        const isSys = msgType === 'missed_call' || msgType === 'system' || m.system === true;
-        if(isSys && !text) text = m.text || (msgType === 'missed_call' ? 'Missed call' : 'System');
-        return {
-          id: d.id,
-          from: isSys ? 'system' : (m.from===currentUser.uid ? 'me' : 'them'),
-          type: isSys && msgType === 'text' ? 'system' : msgType,
-          text, mood: m.mood, waveform: m.waveform, duration: m.duration, dataUrl: m.dataUrl,
-          mediaUrl: m.mediaUrl || null, mime: m.mime || null, fileName: m.fileName || null,
-          vaultKey: m.mediaUrl && typeof vaultKeyForUrl === 'function' ? vaultKeyForUrl(m.mediaUrl) : null,
-          callId: m.callId || null,
-          callerUid: m.callerUid || null,
-          calleeUid: m.calleeUid || null,
-          clientMsgId: m.clientMsgId || null,
-          ts: m.ts && m.ts.toMillis ? m.ts.toMillis() : Date.now(),
-          status: m.status || 'sent',
-          reaction: m.reaction,
-        };
-      }));
-      // Decryption is async — by the time it resolves, the person may have already
-      // navigated to a different thread. Only apply this if it's still the one open.
-      if(activeThreadContactId !== contactId) return;
-      // Keep local missed_call rows that have not appeared in Firestore yet
-      const prev = wirelineThreads[contactId] || [];
-      const byCall = new Map();
-      mapped.forEach(m => {
-        if(m.type === 'missed_call' && m.callId) byCall.set(m.callId, m);
-      });
-      prev.forEach(m => {
-        if(m.type === 'missed_call' && m.callId && !byCall.has(m.callId)) byCall.set(m.callId, m);
-      });
-      const rest = mapped.filter(m => !(m.type === 'missed_call' && m.callId));
-      const missed = Array.from(byCall.values());
-      const seenCmid = new Set(mapped.map(function(m){ return m.clientMsgId; }).filter(Boolean));
-      const keepPending = (prev || []).filter(function(m){
-        return m && m.pending && m.clientMsgId && !seenCmid.has(m.clientMsgId);
-      });
-      wirelineThreads[contactId] = rest.concat(missed).concat(keepPending).sort((a,b)=>a.ts-b.ts);
-      renderThreadMessages();
-      mapped.forEach(function(m){
-        if((m.type==='photo' || m.type==='video' || m.type==='document') && m.mediaUrl && typeof vaultIngestUrl === 'function'){
-          const remote = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(m.mediaUrl) : m.mediaUrl;
-          vaultIngestUrl(remote, m.vaultKey).catch(function(){});
-        }
-      });
-      // This thread is actively open, so any of their messages just received count as read.
-      threadRef.update({ readBy: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) }).catch(()=>{});
-      snap.docs.forEach(d=>{
-        const m = d.data();
-        if(m.from !== currentUser.uid && m.status !== 'read') d.ref.update({ status:'read' }).catch(()=>{});
-      });
-    }, err=>{ toast('Couldn\u2019t load messages: ' + err.message); });
+      }
+    });
+    if(realThreadPreviews[c.firebaseUid]) realThreadPreviews[c.firebaseUid].unread = false;
+    try{ renderThreadMessages(); }catch(_){}
+    try{ renderWirelineList(); }catch(_){}
   } else {
     (wirelineThreads[contactId] || []).forEach(m=>{ if(m.from==='them') m.read = true; });
     renderThreadMessages();
@@ -670,18 +759,20 @@ function deleteThreadMessage(msgId){
   const mine = row && row.from === 'me';
   wirelineHiddenIds[String(msgId)] = 1;
   saveWirelineHidden();
+  try{
+    if(typeof NalunoChatStore !== 'undefined') NalunoChatStore.deleteMessage(String(msgId));
+  }catch(_){}
   if(c && c.isReal && c.firebaseUid && fbDb && currentUser){
     const tid = realThreadId(c.firebaseUid);
     const ref = fbDb.collection('threads').doc(tid).collection('messages').doc(String(msgId));
     if(mine){
-      ref.delete().catch(function(e){ toast(e.message || 'Couldn\u2019t delete'); });
+      ref.delete().catch(function(){});
     }
     fbDb.collection('users').doc(currentUser.uid).collection('wirelineHidden').doc(String(msgId))
       .set({ hiddenAt: Date.now(), otherUid: c.firebaseUid }).catch(function(){});
-  } else {
-    wirelineThreads[activeThreadContactId] = list.filter(m=>String(m.id)!==String(msgId));
-    saveWireline();
   }
+  wirelineThreads[activeThreadContactId] = (wirelineThreads[activeThreadContactId] || []).filter(function(m){ return String(m.id)!==String(msgId); });
+  try{ saveWireline(); }catch(_){}
   renderThreadMessages();
   renderWirelineList();
 }
@@ -717,13 +808,26 @@ function chooseEmotion(key){
   const emo = EMOTIONS.find(e=>e.key===key);
   const c = contacts.find(x=>x.id===activeThreadContactId);
   const msgId = emotionWheelTargetMsgId;
-  if(emo && c && c.isReal && c.firebaseUid && fbDb){
-    const tid = realThreadId(c.firebaseUid);
-    fbDb.collection('threads').doc(tid).collection('messages').doc(String(msgId))
-      .update({ reaction: { key: emo.key, label: emo.label, color: emo.color } })
-      .catch(e=> toast(e.message || 'Couldn\u2019t react'));
-    // the open thread's onSnapshot listener will re-render once Firestore confirms the write
-  } else {
+  const reaction = emo ? { key: emo.key, label: emo.label, color: emo.color } : null;
+  if(emo && c){
+    const list = wirelineThreads[activeThreadContactId] || [];
+    const msg = list.find(function(m){ return String(m.id)===String(msgId); });
+    if(msg){
+      msg.reaction = reaction;
+      persistWireRow(activeThreadContactId, msg, c.firebaseUid || '');
+    }
+    if(c.isReal && c.firebaseUid && fbDb && currentUser && typeof NalunoWireMailbox !== 'undefined'){
+      const tid = realThreadId(c.firebaseUid);
+      const cmid = (msg && msg.clientMsgId) || msgId;
+      NalunoWireMailbox.sendDrop(c.firebaseUid, tid, 'rx-' + cmid + '-' + Date.now(), {
+        type: 'reaction',
+        encrypted: false,
+        targetClientMsgId: cmid,
+        reaction: reaction
+      }, 'reaction').catch(function(){});
+    }
+    renderThreadMessages();
+  } else if(emo){
     const msgs = wirelineThreads[activeThreadContactId] || [];
     const msg = msgs.find(m=>String(m.id)===String(msgId));
     if(msg && emo){
@@ -1273,21 +1377,43 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
         }
       }catch(_){ /* dedupe check failed — fall through and send; worst case is a rare duplicate, not a lost message */ }
     }
-    const writeOp = threadRef.set({
-      participants: [currentUser.uid, c.firebaseUid].sort(),
-      lastMessageAt: firebase.firestore.FieldValue.serverTimestamp(),
-      lastMessageText: finalPreview,
-      lastMessageFrom: currentUser.uid,
-      readBy: [currentUser.uid],
-    }, { merge:true }).then(function(){
-      return threadRef.collection('messages').add({
-        from: currentUser.uid,
-        ts: firebase.firestore.FieldValue.serverTimestamp(),
-        status: 'sent',
-        clientMsgId: cmid,
-        ...wire,
-      });
-    });
+    try{
+      const localC = contacts.find(function(x){ return x.firebaseUid===c.firebaseUid; });
+      const cid = localC ? localC.id : activeThreadContactId;
+      if(cid != null){
+        persistWireRow(cid, {
+          id: 'local-' + cmid,
+          from: 'me',
+          type: payload.type || 'text',
+          text: payload.text || previewText || '',
+          ts: Date.now(),
+          status: 'sent',
+          clientMsgId: cmid,
+          mediaUrl: payload.mediaUrl || null,
+          duration: payload.duration || null,
+          mood: payload.mood || null,
+          pending: false
+        }, c.firebaseUid);
+      }
+    }catch(_){}
+    const writeOp = (typeof NalunoWireMailbox !== 'undefined' && NalunoWireMailbox.sendDrop)
+      ? NalunoWireMailbox.sendDrop(c.firebaseUid, tid, cmid, wire, payload.type || 'text')
+      : threadRef.set({
+          participants: [currentUser.uid, c.firebaseUid].sort(),
+          lastMessageAt: firebase.firestore.FieldValue.serverTimestamp(),
+          lastMessageText: wireKindLabel(payload.type || 'text'),
+          lastKind: payload.type || 'text',
+          lastMessageFrom: currentUser.uid,
+          readBy: [currentUser.uid],
+        }, { merge:true }).then(function(){
+          return fbDb.collection('wireDrop').doc(c.firebaseUid).collection('inbox').doc(String(cmid)).set(Object.assign({}, wire, {
+            from: currentUser.uid,
+            to: c.firebaseUid,
+            threadId: tid,
+            clientMsgId: cmid,
+            ts: Date.now()
+          }));
+        });
     const raced = await nalunoRaceTimeout(writeOp, 7000);
     if(raced.timedOut){
       // Never leave the person guessing: give a real, honest state instead of
@@ -1984,24 +2110,27 @@ async function recordMissedCallInWireline(contactId, opts){
         }catch(_){}
       }
       const preview = missedCallLabelForViewer({ callerUid, calleeUid, incoming });
-      await threadRef.set({
-        participants: [currentUser.uid, c.firebaseUid].sort(),
-        lastMessageAt: firebase.firestore.FieldValue.serverTimestamp(),
-        lastMessageText: preview,
-        lastMessageFrom: 'system',
-        readBy: [currentUser.uid],
-      }, { merge: true });
-      await threadRef.collection('messages').add({
-        from: currentUser.uid,
-        type: 'missed_call',
-        text: 'Missed call',
-        callId: callId || null,
-        callerUid: callerUid,
-        calleeUid: calleeUid,
-        system: true,
-        ts: firebase.firestore.FieldValue.serverTimestamp(),
-        status: 'sent',
-      });
+      const cmid = 'miss-' + (callId || Date.now());
+      if(typeof NalunoWireMailbox !== 'undefined' && NalunoWireMailbox.sendDrop){
+        await NalunoWireMailbox.sendDrop(c.firebaseUid, tid, cmid, {
+          type: 'missed_call',
+          encrypted: false,
+          text: 'Missed call',
+          callId: callId || null,
+          callerUid: callerUid,
+          calleeUid: calleeUid,
+          system: true
+        }, 'missed_call');
+      } else {
+        await threadRef.set({
+          participants: [currentUser.uid, c.firebaseUid].sort(),
+          lastMessageAt: firebase.firestore.FieldValue.serverTimestamp(),
+          lastKind: 'missed_call',
+          lastMessageText: preview,
+          lastMessageFrom: 'system',
+          readBy: [currentUser.uid],
+        }, { merge: true });
+      }
     }
   }catch(e){ console.warn('[wireline] missed call persist', e); }
 }

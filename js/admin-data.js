@@ -67,6 +67,8 @@
     { abbr: 'RPM', name: 'Revenue per mille', note: 'Booked revenue per one thousand impressions. Blends whichever billing model each unit uses.' },
     { abbr: 'ARPDAU', name: 'Average revenue per daily active user', note: 'Lifetime booked ad revenue ÷ today’s daily active users, until a day rollup exists. That is not a day’s take.' },
     { abbr: 'ARPU', name: 'Average revenue per user', note: 'Lifetime booked ad revenue ÷ registered accounts.' },
+    { abbr: 'IndexedDB', name: 'Indexed Database', note: 'The chat database on the phone. The browser equivalent of SQLite. Wireline history lives here after delivery, not on Naluno’s servers.' },
+    { abbr: 'SQLite', name: 'SQLite', note: 'The usual on-phone chat database in native apps. This progressive web app uses IndexedDB for the same job.' },
   ];
 
   function localZone() {
@@ -1207,6 +1209,7 @@
         ad_revenue: 'Booked ad revenue is rate-card maths × observed events. Cash has not moved. There is no third-party auction.',
         store: 'App-store download counts are not in Firestore. Registration is the first number on record.',
         native: 'Closed-tab ringtone requires a native shell and Unrestricted battery. Lock-screen ring is not available.',
+        wire_store: 'Wireline history lives on the phone (IndexedDB). The server is a mailbox: encrypted drops are deleted after the other phone takes them. A photo that is too large for the drop is parked on Cloudflare R2 so it can be fetched, not as the archive.',
       },
     };
   }
