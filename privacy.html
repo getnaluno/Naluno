@@ -43,7 +43,7 @@ footer{max-width:720px;margin:48px auto 0;padding-top:22px;border-top:1px solid 
   <h3>4. People you connect with</h3>
   <p>Frequencies are connections you make on purpose — search a handle, accept a request, or Spark in person. We store those connections so both of you can see each other, message, and call. We do not scrape your phone’s address book.</p>
   <h3>5. Messages</h3>
-  <p><strong>Wireline</strong> (one-to-one) uses end-to-end encryption. The text of those messages is stored in a form we cannot read. We can still see that a conversation exists, who the two people are, and roughly when something was sent.</p>
+  <p><strong>Wireline</strong> (one-to-one) uses end-to-end encryption. The chat database lives on this phone (IndexedDB — the browser’s equivalent of SQLite). The server holds an encrypted drop only until the other phone copies it, then that drop is deleted. Naluno can still see that a conversation exists, who the two people are, and roughly when something last moved — not the words. A new phone starts empty unless a copy is opened from Wireline (Save copy). Photos that are too large for the drop are parked on Cloudflare R2 so the other phone can fetch them; that file is a holding tray, not the archive. Band is unchanged: a room, wiped about 2 hours after it is empty.</p>
   <p><strong>Band</strong> is a shared room. While people are in the square, messages and clips are stored so everyone there can see them. When the last person leaves, the gathering is deleted after 2 hours. After that wipe, those messages are removed and are not readable.</p>
   <h3>6. Video and photos you publish</h3>
   <p><strong>Signal</strong> is a short clip meant to fade — about a day, then removed. <strong>Broadcast</strong> stays until you delete it. Live video is a real-time call between devices; Naluno does not keep a copy of the live picture as a file unless you publish a Broadcast. Media files are stored on Cloudflare R2 through Naluno’s own upload workers. Copyright in what you create stays with you.</p>
@@ -60,7 +60,7 @@ footer{max-width:720px;margin:48px auto 0;padding-top:22px;border-top:1px solid 
   <h3>12. How long we keep it</h3>
   <ul>
     <li>Account and Callsign — until you delete the account.</li>
-    <li>Wireline — while the thread exists; bodies stay encrypted.</li>
+    <li>Wireline — on this phone after delivery. Encrypted drops on the server last until the other phone takes them, or about 7 days, whichever is first.</li>
     <li>Band — deleted about 2 hours after the room is empty.</li>
     <li>Signal media — about 25 hours.</li>
     <li>Broadcast — until you delete it.</li>

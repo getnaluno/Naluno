@@ -54,13 +54,13 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v168';
+const CACHE_NAME = 'naluno-shell-v169';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
   '/js/ads.js',
   '/js/core.js', '/js/metrics.js', '/js/data.js', '/js/crypto.js', '/js/atmosphere.js',
-  '/js/pwa.js', '/js/auth.js', '/js/camera.js', '/js/call-filters.js', '/js/calls.js', '/js/media-vault.js', '/js/wireline.js',
+  '/js/pwa.js', '/js/auth.js', '/js/camera.js', '/js/call-filters.js', '/js/calls.js', '/js/media-vault.js', '/js/chat-store.js', '/js/wire-mailbox.js', '/js/wireline.js',
   '/js/band-room.js', '/js/band-list.js', '/js/broadcast-core.js', '/js/broadcast-space.js',
   '/js/broadcast-live.js', '/js/broadcast-composer.js', '/js/broadcast-upload.js',
   '/js/origin.js', '/js/strand.js', '/js/circle.js',
