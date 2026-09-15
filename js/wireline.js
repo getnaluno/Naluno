@@ -309,20 +309,8 @@ function syncWirelineClearsFromCloud(){
 }
 loadWirelineClearsLocal();
 
-async function clearMySideOfThread(){
-  const c = contacts.find(x=>x.id===activeThreadContactId)
-    || contacts.find(x=>String(x.id)===String(activeThreadContactId));
-  if(!c){
-    toast('Open a conversation first');
-    return;
-  }
-  if(clearMySideOfThread._arm !== activeThreadContactId){
-    clearMySideOfThread._arm = activeThreadContactId;
-    toast('Tap Clear again to empty your side only');
-    setTimeout(function(){ if(clearMySideOfThread._arm === activeThreadContactId) clearMySideOfThread._arm = null; }, 3500);
-    return;
-  }
-  clearMySideOfThread._arm = null;
+async function wipeContactSide(c){
+  if(!c) return;
   const at = Date.now();
   const key = wirelineClearKey(c);
   wirelineClearedAt[key] = at;
@@ -354,8 +342,26 @@ async function clearMySideOfThread(){
     wirelineThreads[c.id] = [];
     try{ saveWireline(); }catch(_){}
   }
+}
+
+async function clearMySideOfThread(){
+  const c = contacts.find(x=>x.id===activeThreadContactId)
+    || contacts.find(x=>String(x.id)===String(activeThreadContactId));
+  if(!c){
+    toast('Open a conversation first');
+    return;
+  }
+  if(clearMySideOfThread._arm !== activeThreadContactId){
+    clearMySideOfThread._arm = activeThreadContactId;
+    toast('Tap Clear again to empty your side only');
+    setTimeout(function(){ if(clearMySideOfThread._arm === activeThreadContactId) clearMySideOfThread._arm = null; }, 3500);
+    return;
+  }
+  clearMySideOfThread._arm = null;
+  await wipeContactSide(c);
   renderThreadMessages();
   renderWirelineList();
+  try{ fillHistoryScreen(); }catch(_){}
   toast('Chat cleared on your side');
 }
 
@@ -414,22 +420,208 @@ function bindThreadChrome(){
   }
 }
 bindThreadChrome();
-function bindWireCopy(){
-  const saveBtn = $('wireSaveCopyBtn');
-  if(saveBtn && !saveBtn._bound){
-    saveBtn._bound = 1;
-    saveBtn.onclick = function(){
-      if(typeof NalunoWireMailbox === 'undefined'){ toast('Chat copy is not ready'); return; }
-      NalunoWireMailbox.saveCopy().then(function(){ toast('Chat copy saved on this phone'); }).catch(function(e){
-        toast((e && e.message) || 'Could not save a copy');
-      });
-    };
+function closeWireSetScreens(){
+  const b = $('wireBackupScreen');
+  const h = $('wireHistoryScreen');
+  if(b){ b.classList.remove('active'); b.setAttribute('aria-hidden','true'); }
+  if(h){ h.classList.remove('active'); h.setAttribute('aria-hidden','true'); }
+}
+function openWireBackup(){
+  closeWireSetScreens();
+  fillBackupScreen();
+  const el = $('wireBackupScreen');
+  if(el){ el.classList.add('active'); el.setAttribute('aria-hidden','false'); }
+}
+function openWireHistory(){
+  closeWireSetScreens();
+  fillHistoryScreen();
+  const el = $('wireHistoryScreen');
+  if(el){ el.classList.add('active'); el.setAttribute('aria-hidden','false'); }
+}
+function formatBackupWhen(ts){
+  const n = Number(ts);
+  if(!n) return 'Never';
+  const d = new Date(n);
+  if(!isFinite(d.getTime())) return 'Never';
+  return d.toLocaleString(undefined, { dateStyle:'medium', timeStyle:'short' });
+}
+function formatBackupBytes(n){
+  n = Number(n) || 0;
+  if(!n) return '—';
+  if(n < 1024) return n + ' B';
+  if(n < 1024*1024) return (n/1024).toFixed(1) + ' KB';
+  return (n/(1024*1024)).toFixed(1) + ' MB';
+}
+function fillBackupScreen(){
+  const lastEl = $('wireBackupLast');
+  const sizeEl = $('wireBackupSize');
+  if(!lastEl) return;
+  if(typeof NalunoChatStore === 'undefined'){
+    lastEl.textContent = 'Never';
+    if(sizeEl) sizeEl.textContent = '—';
+    return;
   }
-  const loadBtn = $('wireLoadCopyBtn');
+  Promise.all([
+    NalunoChatStore.getMeta('lastBackupAt'),
+    NalunoChatStore.getMeta('lastBackupBytes')
+  ]).then(function(pair){
+    lastEl.textContent = formatBackupWhen(pair[0]);
+    if(sizeEl) sizeEl.textContent = formatBackupBytes(pair[1]);
+  }).catch(function(){
+    lastEl.textContent = 'Never';
+    if(sizeEl) sizeEl.textContent = '—';
+  });
+}
+function fillHistoryScreen(){
+  const listEl = $('wireHistoryList');
+  const sumEl = $('wireHistorySummary');
+  if(!listEl) return;
+  const rows = [];
+  (contacts||[]).forEach(function(c){
+    if(!c) return;
+    if(c.isReal){
+      const p = c.firebaseUid && realThreadPreviews[c.firebaseUid];
+      if(!(p && (p.ts || p.text))) return;
+      const cut = clearedAtForContact(c);
+      if(cut && p.ts && p.ts <= cut) return;
+      const msgs = wirelineThreads[c.id] || [];
+      rows.push({ c:c, count: msgs.length, ts: p.ts, preview: p.text || '' });
+      return;
+    }
+    const msgs = wirelineThreads[c.id] || [];
+    const last = msgs[msgs.length-1];
+    if(!last) return;
+    const cutLocal = clearedAtForContact(c);
+    if(cutLocal && last.ts && last.ts <= cutLocal) return;
+    rows.push({ c:c, count: msgs.length, ts: last.ts, preview: last.text || wireKindLabel(last.type) });
+  });
+  rows.sort(function(a,b){ return (b.ts||0) - (a.ts||0); });
+  if(sumEl){
+    if(!rows.length) sumEl.textContent = 'Nothing stored on this phone yet.';
+    else sumEl.textContent = rows.length + (rows.length===1 ? ' conversation' : ' conversations') + ' on this phone.';
+  }
+  if(!rows.length){
+    listEl.innerHTML = '';
+    return;
+  }
+  listEl.innerHTML = rows.map(function(r){
+    const ago = r.ts && typeof timeAgo === 'function' ? timeAgo(r.ts) : '';
+    const countLabel = r.count ? (r.count + (r.count===1 ? ' message' : ' messages')) : 'Conversation';
+    const av = (typeof contactAvatarHtml === 'function')
+      ? contactAvatarHtml(r.c, 40)
+      : ('<div class="avatar" style="width:40px;height:40px;font-size:13px;background:'+((r.c.color)||'#7CFFB2')+';">'+escapeHtml(r.c.initials||'')+'</div>');
+    return '<div class="wire-hist-row">'
+      + av
+      + '<div class="wire-hist-meta"><div class="wire-hist-name">'+escapeHtml(r.c.name||'')+'</div>'
+      + '<div class="wire-hist-sub">'+escapeHtml(countLabel + (ago ? ' · ' + ago : ''))+'</div></div>'
+      + '<button type="button" class="wire-hist-clear" data-hist-clear="'+escapeHtml(String(r.c.id))+'">Clear</button>'
+      + '</div>';
+  }).join('');
+  listEl.querySelectorAll('[data-hist-clear]').forEach(function(btn){
+    btn.onclick = function(e){
+      e.preventDefault();
+      e.stopPropagation();
+      const id = btn.getAttribute('data-hist-clear');
+      const n = parseInt(id, 10);
+      clearHistoryRow(isFinite(n) ? n : id);
+    };
+  });
+}
+async function clearHistoryRow(contactId){
+  const c = contacts.find(function(x){ return x.id===contactId; })
+    || contacts.find(function(x){ return String(x.id)===String(contactId); });
+  if(!c) return;
+  if(clearHistoryRow._arm !== c.id){
+    clearHistoryRow._arm = c.id;
+    toast('Tap Clear again — this phone only');
+    setTimeout(function(){ if(clearHistoryRow._arm === c.id) clearHistoryRow._arm = null; }, 3500);
+    return;
+  }
+  clearHistoryRow._arm = null;
+  await wipeContactSide(c);
+  if(activeThreadContactId === c.id){
+    try{ renderThreadMessages(); }catch(_){}
+  }
+  renderWirelineList();
+  fillHistoryScreen();
+  toast('Chat cleared on your side');
+}
+async function clearAllHistoryOnPhone(){
+  if(clearAllHistoryOnPhone._arm !== 1){
+    clearAllHistoryOnPhone._arm = 1;
+    toast('Tap Clear all again — this phone only');
+    setTimeout(function(){ clearAllHistoryOnPhone._arm = 0; }, 3500);
+    return;
+  }
+  clearAllHistoryOnPhone._arm = 0;
+  const list = (contacts||[]).slice();
+  for(let i=0;i<list.length;i++){
+    try{ await wipeContactSide(list[i]); }catch(_){}
+  }
+  try{
+    if(typeof NalunoChatStore !== 'undefined' && NalunoChatStore.clearAll){
+      await NalunoChatStore.clearAll();
+    }
+  }catch(_){}
+  Object.keys(wirelineThreads).forEach(function(k){ wirelineThreads[k] = []; });
+  realThreadPreviews = {};
+  try{ saveWireline(); }catch(_){}
+  try{ if(activeThreadContactId) renderThreadMessages(); }catch(_){}
+  renderWirelineList();
+  fillHistoryScreen();
+  toast('Conversations cleared on this phone');
+}
+function bindWireMenu(){
+  const btn = $('wireMenuBtn');
+  const sheet = $('wireMenuSheet');
   const fileEl = $('wireLoadCopyFile');
-  if(loadBtn && fileEl && !loadBtn._bound){
-    loadBtn._bound = 1;
-    loadBtn.onclick = function(){ fileEl.click(); };
+  if(!btn || !sheet || btn._bound) return;
+  btn._bound = 1;
+  function setMenuOpen(open){
+    sheet.hidden = !open;
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+  function closeMenu(){ setMenuOpen(false); }
+  btn.onclick = function(e){
+    e.preventDefault();
+    e.stopPropagation();
+    setMenuOpen(sheet.hidden);
+  };
+  document.addEventListener('click', function(e){
+    const wrap = btn.closest('.wire-menu-wrap');
+    if(wrap && wrap.contains(e.target)) return;
+    closeMenu();
+  });
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape'){
+      if(!sheet.hidden){ closeMenu(); return; }
+      closeWireSetScreens();
+    }
+  });
+  const backupBtn = $('wireMenuBackup');
+  const historyBtn = $('wireMenuHistory');
+  if(backupBtn) backupBtn.onclick = function(e){ e.stopPropagation(); closeMenu(); openWireBackup(); };
+  if(historyBtn) historyBtn.onclick = function(e){ e.stopPropagation(); closeMenu(); openWireHistory(); };
+  const backB = $('wireBackupBack');
+  const backH = $('wireHistoryBack');
+  if(backB) backB.onclick = closeWireSetScreens;
+  if(backH) backH.onclick = closeWireSetScreens;
+  const saveNow = $('wireBackupSave');
+  if(saveNow) saveNow.onclick = function(){
+    if(typeof NalunoWireMailbox === 'undefined'){ toast('Chat copy is not ready'); return; }
+    NalunoWireMailbox.saveCopy().then(function(){
+      toast('Chat copy saved on this phone');
+      fillBackupScreen();
+    }).catch(function(e){
+      toast((e && e.message) || 'Could not save a copy');
+    });
+  };
+  const openCopy = $('wireBackupOpen');
+  if(openCopy && fileEl){
+    openCopy.onclick = function(){ fileEl.click(); };
+  }
+  if(fileEl && !fileEl._bound){
+    fileEl._bound = 1;
     fileEl.onchange = function(){
       const f = fileEl.files && fileEl.files[0];
       fileEl.value = '';
@@ -438,16 +630,21 @@ function bindWireCopy(){
       NalunoWireMailbox.loadCopy(f).then(function(out){
         toast('Imported ' + (out.messages||0) + ' messages onto this phone');
         try{ hydrateWirelineFromStore(); }catch(_){}
+        fillBackupScreen();
+        fillHistoryScreen();
       }).catch(function(e){
         toast((e && e.message) || 'Could not open that copy');
       });
     };
   }
+  const clearAllBtn = $('wireHistoryClearAll');
+  if(clearAllBtn) clearAllBtn.onclick = function(){ clearAllHistoryOnPhone(); };
 }
-try{ bindWireCopy(); }catch(_){}
+try{ bindWireMenu(); }catch(_){}
 
 function openThread(contactId){
   const c = contacts.find(x=>x.id===contactId); if(!c) return;
+  try{ closeWireSetScreens(); }catch(_){}
   activeThreadContactId = contactId;
   applyContactAvatarToEl($('threadAvatar'), c);
   $('threadName').textContent = c.name;

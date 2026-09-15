@@ -282,6 +282,8 @@
     if (!S) throw new Error('Chat store is not ready');
     const pack = await S.exportBackup();
     const blob = new Blob([JSON.stringify(pack)], { type: 'application/json' });
+    try { await S.setMeta('lastBackupAt', Date.now()); } catch (_) {}
+    try { await S.setMeta('lastBackupBytes', blob.size); } catch (_) {}
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;

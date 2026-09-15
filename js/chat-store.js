@@ -168,6 +168,18 @@
     }
   }
 
+  async function clearAll() {
+    const threads = await listThreads();
+    const ids = {};
+    threads.forEach(function (t) { if (t && t.threadId) ids[t.threadId] = 1; });
+    const msgs = await listAllMessages();
+    msgs.forEach(function (m) { if (m && m.threadId) ids[m.threadId] = 1; });
+    const keys = Object.keys(ids);
+    for (let i = 0; i < keys.length; i++) await clearThread(keys[i]);
+    const leftover = await listAllMessages();
+    for (let j = 0; j < leftover.length; j++) await deleteMessage(leftover[j].id);
+  }
+
   async function putThread(row) {
     if (!row || !row.threadId) return null;
     const rec = Object.assign({}, row);
@@ -300,6 +312,7 @@
     listAllMessages: listAllMessages,
     deleteMessage: deleteMessage,
     clearThread: clearThread,
+    clearAll: clearAll,
     putThread: putThread,
     listThreads: listThreads,
     putMedia: putMedia,
