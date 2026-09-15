@@ -1,4 +1,6 @@
 // Naluno service worker — offline shell + background call push.
+// v170: 09.15b Wireline kebab → Chat backup / Chat history (on-phone copy, no Drive).
+// v169: 09.15a Wireline IndexedDB store + mailbox drops.
 // v168: 09.14c Strand chrome stays with the Strand; was-live pin expires at 24h.
 // v167: 09.14b Creator Support is Broadcast-only (below Circle). Nav tab gone.
 // v166: 09.13s Creator Support tab always in the app; flag makes it active/inactive.
@@ -54,7 +56,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v169';
+const CACHE_NAME = 'naluno-shell-v170';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
