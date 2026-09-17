@@ -187,10 +187,16 @@ function renderWirelineList(){
   }).sort((a,b)=> (b.last?b.last.ts:0) - (a.last?a.last.ts:0));
 
   if(!rows.length){
-    $('wirelineList').innerHTML = `<div class="lobby-sub" style="padding:28px 20px;text-align:center;">No conversations yet. Start one from Frequencies — Wireline only lists people you have already written or called.</div>`;
+    const label = $('wirelineSectionLabel');
+    if(label) label.hidden = true;
+    $('wirelineList').innerHTML = (typeof emptyStateHtml === 'function')
+      ? emptyStateHtml('No conversations yet', 'Start one from Frequencies. Wireline only lists people you have already written or called.')
+      : '<div class="empty-state"><p class="empty-state-copy">No conversations yet.</p></div>';
     if($('wirelineNavDot')) $('wirelineNavDot').style.display = 'none';
     return;
   }
+  const wireLabel = $('wirelineSectionLabel');
+  if(wireLabel) wireLabel.hidden = false;
 
   $('wirelineList').innerHTML = rows.map(r=>`
     <div class="contact-row" data-thread="${r.c.id}">

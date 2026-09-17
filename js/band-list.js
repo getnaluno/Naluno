@@ -64,13 +64,15 @@ function bandCardFaces(b){
   return faces;
 }
 function renderBandList(){
+  const label = $('bandSectionLabel');
   if(!bands.length){
-    $('bandList').innerHTML = `<div style="padding:28px 12px; text-align:center; color:var(--text-dim);">
-      <div style="font-family:var(--font-futuristic); font-size:15px; color:var(--text); margin-bottom:8px;">No squares yet</div>
-      <div style="font-size:13px; line-height:1.45;">Start a Band with your connections. No one owns it — messages clear 2 hours after the last person leaves.</div>
-    </div>`;
+    if(label) label.hidden = true;
+    $('bandList').innerHTML = (typeof emptyStateHtml === 'function')
+      ? emptyStateHtml('No squares yet', 'Start a Band with your connections. No one owns it — messages clear 2 hours after the last person leaves.')
+      : '<div class="empty-state"><p class="empty-state-copy">No squares yet.</p></div>';
     return;
   }
+  if(label) label.hidden = false;
   $('bandList').innerHTML = bands.map(b=>{
     const grad = bandVibePreviewGradient[b.vibe] || bandVibePreviewGradient.aurora;
     if(b.isReal){

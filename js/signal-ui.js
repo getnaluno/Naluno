@@ -1463,8 +1463,15 @@ function renderContacts(){
       : '';
   });
   if(query && visible.length===0){
-    $('strongLabel').style.display = 'block';
-    $('strongList').innerHTML = `<div style="padding:20px 10px; color:var(--text-dim); font-size:13px; text-align:center;">No one matches "${escapeHtml(query)}" in your frequencies yet.</div>`;
+    $('strongLabel').style.display = 'none';
+    $('strongList').innerHTML = (typeof emptyStateHtml === 'function')
+      ? emptyStateHtml('', 'No one matches “'+escapeHtml(query)+'” in your frequencies.')
+      : '<div class="empty-state"><p class="empty-state-copy">No match.</p></div>';
+  } else if(!query && visible.length===0){
+    $('strongLabel').style.display = 'none';
+    $('strongList').innerHTML = (typeof emptyStateHtml === 'function')
+      ? emptyStateHtml('No frequencies yet', 'Connect someone — search a handle, or Spark in person.')
+      : '<div class="empty-state"><p class="empty-state-copy">No frequencies yet.</p></div>';
   }
 
   function rowHtml(c){

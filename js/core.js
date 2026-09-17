@@ -29,6 +29,11 @@ function toast(msg, onTap){
   }
 }
 
+function emptyStateHtml(title, copy){
+  const t = title ? ('<div class="empty-state-title">'+title+'</div>') : '';
+  return '<div class="empty-state">'+t+'<p class="empty-state-copy">'+copy+'</p></div>';
+}
+
 /** Visible + console + diagnostics trail for Signal/Broadcast upload.
  *  Chrome's Errors-only filter hides console.log — use warn, and paint
  *  an on-screen chip so a phone without DevTools still shows the path. */

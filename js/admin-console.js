@@ -22,7 +22,33 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260914c';
+  const BUILD = '20260915c';
+  let __appMeta = { label: '', shell: '' };
+  function liveAppLabel() {
+    return __appMeta.label || BUILD;
+  }
+  async function loadLiveAppMeta() {
+    try {
+      const r = await fetch('/app/index.html?nalunoMeta=1', { cache: 'no-store' });
+      if (r && r.ok) {
+        const t = await r.text();
+        const m = t.match(/naluno-build["']\s+content=["']([^"']+)/i)
+          || t.match(/content=["']([^"']+)["']\s+name=["']naluno-build/i);
+        const v = t.match(/app-version["']\s+content=["']([^"']+)/i);
+        if (m) __appMeta.label = m[1];
+        else if (v) __appMeta.label = v[1];
+      }
+    } catch (_) {}
+    try {
+      const r2 = await fetch('/sw.js?nalunoMeta=1', { cache: 'no-store' });
+      if (r2 && r2.ok) {
+        const t2 = await r2.text();
+        const c = t2.match(/CACHE_NAME\s*=\s*['"]([^'"]+)['"]/);
+        if (c) __appMeta.shell = c[1];
+      }
+    } catch (_) {}
+    return __appMeta;
+  }
   const OPERATOR_UIDS = { 'ibMOMY6Q3sVTCxIrwO2FGk43zw93': true };
   const OPERATOR_EMAILS = { 'magjoed@gmail.com': true };
 
@@ -427,6 +453,7 @@
     return out;
   }
   async function loadSnapshot(force) {
+    try { await loadLiveAppMeta(); } catch (_) {}
     if (!force && __snap && (Date.now() - (__snap._at || 0) < 90000)) return __snap;
     const db = adminDb();
     const pack = {
@@ -694,6 +721,7 @@
       + '<span class="m">Broadcasts <b>' + (c.broadcasts_total || 0) + '</b></span>'
       + '<span class="m">Live <b>' + (c.broadcasts_live || 0) + '</b></span>'
       + '<span class="m">Alerts <b>' + alerts.filter(function (a) { return a.level !== 'ok'; }).length + '</b></span>'
+      + '<span class="m">App <b>' + escapeHtml(liveAppLabel()) + '</b></span>'
       + '<span class="m">' + escapeHtml(swBit) + '</span>'
       + '<span class="m">Currency</span>'
       + (Ccy() ? Ccy().selectHtml('ccStripCurrency', opCode()) : ('<span class="m"><b>' + escapeHtml(opCode()) + '</b></span>'))
@@ -831,7 +859,7 @@
       ];
       el.innerHTML =
         card('Is Naluno working?',
-          kpis([['App version', BUILD], ['Worker', w.ok ? (w.ms + ' ms') : 'down'],
+          kpis([['App version', liveAppLabel()], ['Worker', w.ok ? (w.ms + ' ms') : 'down'],
             ['Service worker', __swInfo.connected ? 'connected' : 'off'],
             ['Metric failures', (d.metrics && d.metrics.failures) || 0]]))
         + card('Live status', services.map(function (row) {
