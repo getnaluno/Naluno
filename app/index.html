@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.09.15b" />
+  <meta name="naluno-build" content="2026.09.15c" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.09.15b">
+<meta name="app-version" content="2026.09.15c">
 <meta name="description" content="A statement from the future.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="Watch on Naluno.">
@@ -110,9 +110,9 @@
 })();
 </script>
 <link rel="apple-touch-startup-image" href="/splash-empty.png">
-<link rel="stylesheet" href="/css/app.css?v=20260915b" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/css/app.css?v=20260915c" media="print" onload="this.media='all'">
 <script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="/css/app.css?v=20260915b"></noscript>
+<noscript><link rel="stylesheet" href="/css/app.css?v=20260915c"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -341,7 +341,7 @@ window.__nalunoEntryT0 = Date.now();
       </span>
     </div>
     <div class="tab-scroll">
-      <div class="section-label">Open channels</div>
+      <div class="section-label" id="wirelineSectionLabel">Open channels</div>
       <div id="wirelineList"></div>
     </div>
   </section>
@@ -355,7 +355,7 @@ window.__nalunoEntryT0 = Date.now();
       </div>
     </div>
     <div class="tab-scroll">
-      <div class="section-label">Your frequencies</div>
+      <div class="section-label" id="bandSectionLabel">Your frequencies</div>
       <div id="bandList"></div>
     </div>
   </section>
@@ -435,8 +435,8 @@ window.__nalunoEntryT0 = Date.now();
       </div>
       </div>
       <div id="bcastPlateGrid" class="bcast-plate-grid"></div>
-      <div id="bcastPlateEmpty" style="display:none;padding:24px 12px;text-align:center;color:var(--text-dim);font-size:13px;line-height:1.5;">
-        No permanent Broadcasts yet.<br/>Use <strong style="color:var(--mint);">+ New Broadcast</strong> — not the Signal button.
+      <div id="bcastPlateEmpty" class="empty-state" style="display:none;">
+        <p class="empty-state-copy">No permanent Broadcasts yet. Use <strong style="color:var(--mint);">+ New Broadcast</strong> — not the Signal button.</p>
       </div>
     </div>
   </section>
@@ -445,7 +445,8 @@ window.__nalunoEntryT0 = Date.now();
   <section class="tabscreen" id="tab-compass" style="display:flex; flex-direction:column;">
     <div class="tab-header">
       <div class="tab-title">Compass</div>
-      <button type="button" class="ghost-btn" id="compassWeatherBtn" aria-label="Weather" title="Show weather strip" style="width:34px;height:34px;margin-right:6px;">
+      <div class="tab-header-actions">
+      <button type="button" class="ghost-btn" id="compassWeatherBtn" aria-label="Weather" title="Show weather strip" style="width:34px;height:34px;">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.8"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       </button>
       <button type="button" class="ghost-btn" id="compassFindBtn" aria-label="Find Naluno" title="Find Naluno" style="width:34px;height:34px;">
@@ -453,6 +454,7 @@ window.__nalunoEntryT0 = Date.now();
       </button>
       <div class="cam-expand-btn" id="compassLockToggleBtn" style="position:static; width:34px; height:34px;" role="button" aria-label="Compass privacy">
         <svg id="compassLockIcon" width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="5" y="11" width="14" height="9" rx="2" stroke="currentColor" stroke-width="2"/><path d="M8 11V8a4 4 0 018 0v3" stroke="currentColor" stroke-width="2"/></svg>
+      </div>
       </div>
     </div>
     <div id="compassContent" style="flex:1; display:flex; flex-direction:column; min-height:0;">
@@ -1425,7 +1427,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
 <script src="/firebase-config.js?v=20260908d"></script>
 <!-- NALUNO_MODULES -->
-<script src="/js/core.js?v=20260908d"></script>
+<script src="/js/core.js?v=20260915c"></script>
 <!-- Loaded right after core.js so its global error handlers are installed
      before the rest of the app runs and can capture anything they throw. -->
 <script src="/js/diagnostics.js?v=20260908d"></script>
@@ -1442,7 +1444,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/chat-store.js?v=20260915b"></script>
 <script src="/js/wire-mailbox.js?v=20260915b"></script>
 <script src="/js/atmosphere.js?v=20260908d"></script>
-<script src="/js/band-list.js?v=20260908d"></script>
+<script src="/js/band-list.js?v=20260915c"></script>
 <script src="/js/signal-core.js?v=20260911b"></script>
 <script src="/js/broadcast-core.js?v=20260912d"></script>
 <script src="/js/broadcast-upload.js?v=20260908d"></script>
@@ -1462,12 +1464,12 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/weather.js?v=20260911b"></script>
 <script src="/js/beacon.js?v=20260911b"></script>
 <script src="/js/compass.js?v=20260911e"></script>
-<script src="/js/signal-ui.js?v=20260914c"></script>
+<script src="/js/signal-ui.js?v=20260915c"></script>
 <script src="/js/compat-lock.js?v=20260908d"></script>
 <script src="/js/broadcast-space.js?v=20260914c"></script>
 <script src="/js/ads.js?v=20260914c"></script>
 <script src="/js/media-vault.js?v=20260908d"></script>
-<script src="/js/wireline.js?v=20260915b"></script>
+<script src="/js/wireline.js?v=20260915c"></script>
 <script src="/js/profile.js?v=20260914c"></script>
 <script src="/js/onboard.js?v=20260908d"></script>
 <script src="/js/auth.js?v=20260908d"></script>
@@ -1479,7 +1481,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/sfu-live.js?v=20260908d"></script>
 <script src="/js/broadcast-live.js?v=20260908d"></script>
 <script src="/js/band-room.js?v=20260911c"></script>
-<script src="/js/pwa.js?v=20260915b"></script>
+<script src="/js/pwa.js?v=20260915c"></script>
 <script src="/js/spark-engine.js?v=20260908d"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>
 <script src="/js/spark-lg.js?v=20260908d"></script>
