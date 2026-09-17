@@ -1016,25 +1016,46 @@ function openBandInviteSheet(){
       <div class="contact-row" style="cursor:default;">
         ${typeof contactAvatarHtml==='function' ? contactAvatarHtml(c, 40) : ''}
         <div class="contact-meta"><div class="contact-name">${escapeHtml(c.name)}</div><div class="contact-sub">${escapeHtml(c.handle||'')}</div></div>
-        <button data-inv-text="${c.id}" style="padding:8px 10px; border-radius:999px; border:1px solid var(--line); background:var(--surface-2); color:var(--text); font-size:11px; font-family:var(--font-mono); cursor:pointer;">Text</button>
-        <button data-inv-video="${c.id}" style="padding:8px 10px; border-radius:999px; border:none; background:var(--mint); color:#0D0F17; font-size:11px; font-family:var(--font-mono); font-weight:700; cursor:pointer;">Video</button>
+        <button type="button" class="band-inv-btn ghost" data-inv-text="${c.id}">Text</button>
+        <button type="button" class="band-inv-btn mint" data-inv-video="${c.id}">Video</button>
       </div>`).join('');
-    $('bandInvitePicker').querySelectorAll('[data-inv-text]').forEach(el=>{
-      el.onclick = ()=> inviteToBand(parseInt(el.dataset.invText), 'text');
-    });
-    $('bandInvitePicker').querySelectorAll('[data-inv-video]').forEach(el=>{
-      el.onclick = ()=> inviteToBand(parseInt(el.dataset.invVideo), 'video');
-    });
+    function bindInv(sel, mode){
+      $('bandInvitePicker').querySelectorAll(sel).forEach(el=>{
+        const fire = function(e){
+          if(e){ e.preventDefault(); e.stopPropagation(); }
+          el.classList.add('press');
+          const id = parseInt(el.getAttribute(mode==='text' ? 'data-inv-text' : 'data-inv-video'), 10);
+          inviteToBand(id, mode, el);
+        };
+        el.onclick = fire;
+        el.ontouchstart = function(){ el.classList.add('press'); };
+        el.ontouchend = function(){ el.classList.remove('press'); };
+      });
+    }
+    bindInv('[data-inv-text]', 'text');
+    bindInv('[data-inv-video]', 'video');
   }
   $('bandInviteSheet').classList.add('active');
 }
-$('bandInviteBtn').onclick = openBandInviteSheet;
+$('bandInviteBtn').onclick = function(){
+  this.classList.add('press');
+  const btn = this;
+  setTimeout(function(){ btn.classList.remove('press'); }, 180);
+  openBandInviteSheet();
+};
 $('bandInviteClose').onclick = ()=> $('bandInviteSheet').classList.remove('active');
 
-async function inviteToBand(contactId, mode){
+async function inviteToBand(contactId, mode, btn){
   const b = activeBand();
   const c = contacts.find(x=>x.id===contactId);
   if(!b || !c || !c.firebaseUid || !fbDb || !currentUser) return;
+  if(inviteToBand._busy) return;
+  inviteToBand._busy = 1;
+  if(btn){
+    btn.classList.add('busy','press');
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
+  }
   try{
     // Membership: add them to the square so they can open it.
     await fbDb.collection('bands').doc(b.firestoreId).update({
@@ -1090,14 +1111,25 @@ async function inviteToBand(contactId, mode){
         }),
       }).catch(()=>{});
     }catch(e){}
-    $('bandInviteSheet').classList.remove('active');
+    if(btn){
+      btn.classList.remove('busy','press');
+      btn.classList.add('sent');
+      btn.textContent = 'Sent';
+    }
     toast(mode === 'video' ? ('Invited ' + c.name.split(' ')[0] + ' · opening video') : ('Invited ' + c.name.split(' ')[0] + ' · notified'));
+    setTimeout(function(){ $('bandInviteSheet').classList.remove('active'); }, 380);
     if(mode === 'video'){
-      setTimeout(()=> startOutgoingCall(c.id), 400);
+      setTimeout(()=> startOutgoingCall(c.id), 500);
     }
   }catch(e){
+    if(btn){
+      btn.classList.remove('busy','press');
+      btn.disabled = false;
+      btn.textContent = (mode === 'video') ? 'Video' : 'Text';
+    }
     toast(e.message || 'Couldn\u2019t invite');
   }
+  inviteToBand._busy = 0;
 }
 
 /* Listen for square invites + live Broadcast alerts in the personal inbox */

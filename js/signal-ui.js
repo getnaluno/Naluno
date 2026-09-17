@@ -181,7 +181,8 @@ function renderBroadcastTab(){
       let thumb = '';
       try{
         if(latest.type==='text'){
-          thumb = '<div class="avatar" style="width:100%;height:100%;background:'+(latest.bg||'#333')+';font-size:9px;padding:4px;text-align:center;line-height:1.15;">'+escapeHtml(String(latest.text||'').slice(0,26))+'</div>';
+          const st = (typeof signalTextCardStyle === 'function') ? signalTextCardStyle(latest) : ('background:'+(latest.bg||'#333')+';');
+          thumb = '<div class="avatar" style="width:100%;height:100%;'+st+'font-size:9px;padding:4px;text-align:center;line-height:1.15;">'+escapeHtml(String(latest.text||'').slice(0,26))+'</div>';
         } else if(latest.type==='video'){
           const src = latest.thumbDataUrl || '';
           thumb = src
@@ -221,7 +222,8 @@ function renderBroadcastTab(){
       let thumbInner = '';
       try{
         if(latest && latest.type === 'text'){
-          thumbInner = '<div class="avatar" style="width:100%;height:100%;background:'+(latest.bg||c.color||'#333')+';font-size:9px;padding:4px;text-align:center;line-height:1.15;color:#fff;">'+escapeHtml(String(latest.text||'').slice(0,26))+'</div>';
+          const st = (typeof signalTextCardStyle === 'function') ? signalTextCardStyle(latest) : ('background:'+(latest.bg||c.color||'#333')+';color:#fff;');
+          thumbInner = '<div class="avatar" style="width:100%;height:100%;'+st+'font-size:9px;padding:4px;text-align:center;line-height:1.15;">'+escapeHtml(String(latest.text||'').slice(0,26))+'</div>';
         } else if(latest && latest.type === 'video'){
           const src = latest.thumbDataUrl || '';
           thumbInner = src
@@ -1043,7 +1045,8 @@ function playSegment(idx, direction=1){
     bodyHtml = `<div class="avatar ${animClass}" style="width:140px;height:140px;font-size:44px;background:${seg.color};">${seg.initials}</div>`;
     durationMs = 4000;
   } else if(seg.type==='text'){
-    bodyHtml = `<div class="bviewer-text-card ${animClass}" style="background:${seg.bg}; border-radius:20px; width:100%; height:100%;">${escapeHtml(seg.text)}</div>`;
+    const st = (typeof signalTextCardStyle === 'function') ? signalTextCardStyle(seg) : ('background:'+(seg.bg||'#333')+';');
+    bodyHtml = `<div class="bviewer-text-card ${animClass}" style="${st} border-radius:20px; width:100%; height:100%;">${escapeHtml(seg.text)}</div>`;
     durationMs = 4000;
   } else if(seg.type==='video' || isVideoSeg){
     const videoSrc = signalPlaySrc(seg);

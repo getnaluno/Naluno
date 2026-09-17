@@ -1483,8 +1483,50 @@ const textBgGradients = [
   'linear-gradient(160deg,#7CFFB2,#4FBF87)',
   'linear-gradient(160deg,#FF5470,#7C4DFF)',
   'linear-gradient(160deg,#4FBF87,#00E5FF)',
+  'linear-gradient(135deg,#0D0F17,#7C4DFF 78%)',
+  'linear-gradient(180deg,#FF3DA6,#7C4DFF)',
+  'linear-gradient(120deg,#00E5FF,#7CFFB2)',
+  'linear-gradient(200deg,#1a0a2e,#ff6b6b)',
+  'linear-gradient(160deg,#142850,#00a8cc)',
+  'linear-gradient(145deg,#2d1b4e,#c9a227)',
+  'radial-gradient(circle at 30% 20%, #7CFFB2, #0D0F17 70%)',
+  'radial-gradient(circle at 70% 80%, #FF5470, #171A26 65%)',
+  'linear-gradient(90deg,#7CFFB2,#00E5FF,#7C4DFF)',
   '#000000',
+  '#0D0F17',
+  '#7C4DFF',
+  '#FF5470',
+  '#14213d',
+  '#1F2333',
 ];
+const textFgColors = ['#ffffff','#EDEFF7','#0D0F17','#7CFFB2','#00E5FF','#FFB86B','#FF5470','#7C4DFF','#FF3DA6'];
+const textTypefaces = [
+  { key:'display', label:'Grotesk', family:"'Space Grotesk', sans-serif", weight:600 },
+  { key:'futura', label:'Orbit', family:"'Orbitron', sans-serif", weight:700 },
+  { key:'serif', label:'Serif', family:"Georgia, 'Times New Roman', serif", weight:600 },
+  { key:'mono', label:'Mono', family:"'JetBrains Mono', monospace", weight:500 },
+  { key:'editorial', label:'Editorial', family:"Palatino, 'Palatino Linotype', serif", weight:500 },
+  { key:'heavy', label:'Heavy', family:"'Space Grotesk', sans-serif", weight:800 },
+];
+const textSizes = [
+  { key:'s', label:'S', px:18 },
+  { key:'m', label:'M', px:24 },
+  { key:'l', label:'L', px:32 },
+  { key:'xl', label:'XL', px:40 },
+];
+function signalTextFace(key){
+  return (textTypefaces.find(function(f){ return f.key === key; }) || textTypefaces[0]);
+}
+function signalTextSize(key){
+  return (textSizes.find(function(s){ return s.key === key; }) || textSizes[1]);
+}
+function signalTextCardStyle(seg){
+  const face = signalTextFace(seg && seg.fontKey);
+  const size = signalTextSize(seg && seg.fontSize);
+  const bg = (seg && seg.bg) || textBgGradients[0];
+  const color = (seg && seg.textColor) || '#ffffff';
+  return 'background:'+bg+';color:'+color+';font-family:'+face.family+';font-weight:'+face.weight+';font-size:'+size.px+'px;';
+}
 const transitionOptions = { fade:'Fade', slide:'Slide', zoom:'Zoom', cut:'Cut' };
 const MAX_VIDEO_SECONDS = 4 * 60;
 
@@ -1498,6 +1540,9 @@ let composerType = 'photo';
 let composerItems = [];       // [{ id, kind:'photo'|'video', dataUrl, filterKey, filterCss, crop:{scale,xPct,yPct}, caption, duration }]
 let activeComposerItemIndex = -1;
 let composerTextBg = textBgGradients[0];
+let composerTextColor = '#ffffff';
+let composerTextFace = 'display';
+let composerTextSize = 'm';
 let composerTransition = 'fade';
 
 

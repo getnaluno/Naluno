@@ -236,18 +236,49 @@ function renderBandVibeChips(){
     el.onclick = ()=>{ bandComposerVibe = el.dataset.vibe; renderBandVibeChips(); };
   });
 }
+function isMeBandContact(c){
+  if(!c) return true;
+  try{
+    if(typeof currentUser !== 'undefined' && currentUser){
+      if(c.firebaseUid && c.firebaseUid === currentUser.uid) return true;
+      if(String(c.id) === String(currentUser.uid)) return true;
+    }
+  }catch(_){}
+  return false;
+}
+function bandPickerContacts(){
+  const seenUid = new Set();
+  const seenId = new Set();
+  const out = [];
+  (contacts||[]).forEach(function(c){
+    if(!c || isMeBandContact(c)) return;
+    if(c.firebaseUid){
+      if(seenUid.has(c.firebaseUid)) return;
+      seenUid.add(c.firebaseUid);
+    }
+    if(c.id != null){
+      if(seenId.has(String(c.id))) return;
+      seenId.add(String(c.id));
+    }
+    out.push(c);
+  });
+  return out;
+}
 function renderBandMemberPicker(){
-  $('bandMemberPicker').innerHTML = contacts.map(c=>`
+  const list = bandPickerContacts();
+  $('bandMemberPicker').innerHTML = list.map(c=>`
     <div class="contact-row" data-pick="${c.id}" style="cursor:pointer;">
       ${typeof contactAvatarHtml==='function' ? contactAvatarHtml(c, 40, signalBarsHtml(c)) : ''}
       <div class="contact-meta"><div class="contact-name">${escapeHtml(c.name)}</div><div class="contact-sub">${signalSubText(c)}</div></div>
       <div class="switch ${bandComposerMembers.has(c.id)?'on':''}" data-picksw="${c.id}"></div>
-    </div>`).join('');
-  document.querySelectorAll('[data-pick]').forEach(el=>{
+    </div>`).join('') || '<div class="empty-state"><p class="empty-state-copy">Connect someone on Frequencies first — then they can tune in.</p></div>';
+  document.querySelectorAll('#bandMemberPicker [data-pick]').forEach(el=>{
     el.onclick = ()=>{
       const id = parseInt(el.dataset.pick);
+      if(!isFinite(id)) return;
       if(bandComposerMembers.has(id)) bandComposerMembers.delete(id); else bandComposerMembers.add(id);
-      renderBandMemberPicker();
+      const sw = el.querySelector('.switch');
+      if(sw) sw.classList.toggle('on', bandComposerMembers.has(id));
       updateCreateBandButton();
     };
   });
