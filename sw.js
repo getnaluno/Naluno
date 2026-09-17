@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v171: 09.15c empty states centered; desk reads live app build.
 // v170: 09.15b Wireline kebab → Chat backup / Chat history (on-phone copy, no Drive).
 // v169: 09.15a Wireline IndexedDB store + mailbox drops.
 // v168: 09.14c Strand chrome stays with the Strand; was-live pin expires at 24h.
@@ -56,7 +57,8 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v170';
+const CACHE_NAME = 'naluno-shell-v171';
+const APP_BUILD = '20260915c';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -487,7 +489,7 @@ self.addEventListener('message', event=>{
     const pong = {
       type: 'naluno-sw-pong',
       cache: CACHE_NAME,
-      version: 'v158',
+      version: (typeof APP_BUILD === 'string' && APP_BUILD) ? APP_BUILD : String(CACHE_NAME).replace(/^naluno-shell-/, ''),
       at: Date.now(),
     };
     const src = event.source;

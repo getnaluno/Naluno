@@ -1,18 +1,17 @@
-# GitHub / Firebase — 2026.09.15b
+# GitHub / Firebase — 2026.09.15c
 
-Wireline three-dot menu → Chat backup and Chat history.
+Empty states sit in the middle of the pane. Control Centre reads the live app build from `/app/index.html`, so a new app upload is what the desk reports.
+
 Only these files. Do not upload a full tree.
 
 The operator inbox address is not in any of these files.
 
 ## Must publish
 
-1. **app/index.html**, **css/app.css**, **js/wireline.js**, **js/wire-mailbox.js**, **js/chat-store.js** — kebab on Wireline. Chat backup saves a JSON copy on this phone (Files / Drive space is the person’s; Naluno does not keep it). Chat history lists conversations on this phone and can clear them here only.
-2. **js/pwa.js**, **sw.js** — cache `naluno-shell-v170`, `?v=20260915b`.
-3. **privacy.html**, **privacy/index.html**, **terms.html**, **terms/index.html** — copy now says Chat backup, not Save copy.
+1. **css/app.css**, **app/index.html**, **js/core.js**, **js/wireline.js**, **js/band-list.js**, **js/signal-ui.js** — centered empty states on Wireline, Band, Frequencies, and Broadcast. Compass actions stay grouped on the right.
+2. **js/pwa.js**, **sw.js** — cache `naluno-shell-v171`, `?v=20260915c`. Service-worker handshake reports this build, not an old `v158`.
+3. **admin/index.html**, **js/admin-console.js** — Health / strip **App version** is read from the live app. Upload these with the app so the desk and the member shell stay on the same stamp.
 
 ## After upload
 
-Close Naluno tabs once so the new service worker takes.
-
-A new phone still starts empty until a copy is opened from Chat backup.
+Close Naluno tabs once so the new service worker takes. Refresh Control Centre once.
