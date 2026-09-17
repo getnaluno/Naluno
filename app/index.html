@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.09.15c" />
+  <meta name="naluno-build" content="2026.09.15d" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.09.15c">
+<meta name="app-version" content="2026.09.15d">
 <meta name="description" content="A statement from the future.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="Watch on Naluno.">
@@ -110,9 +110,9 @@
 })();
 </script>
 <link rel="apple-touch-startup-image" href="/splash-empty.png">
-<link rel="stylesheet" href="/css/app.css?v=20260915c" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/css/app.css?v=20260915d" media="print" onload="this.media='all'">
 <script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="/css/app.css?v=20260915c"></noscript>
+<noscript><link rel="stylesheet" href="/css/app.css?v=20260915d"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -921,7 +921,14 @@ window.__nalunoEntryT0 = Date.now();
       </div>
 
       <div id="textComposer" style="display:none;">
-        <div class="swatch-row" id="textBgRow" style="margin-bottom:14px;"></div>
+        <div class="text-style-label">Background</div>
+        <div class="swatch-row" id="textBgRow" style="margin-bottom:8px;"></div>
+        <div class="text-style-label">Text colour</div>
+        <div class="swatch-row" id="textFgRow" style="margin-bottom:8px;"></div>
+        <div class="text-style-label">Type</div>
+        <div class="filter-chip-row" id="textFaceRow"></div>
+        <div class="text-style-label">Size</div>
+        <div class="filter-chip-row" id="textSizeRow"></div>
         <div class="text-compose-preview" id="textComposePreview">
           <textarea id="textBroadcastInput" placeholder="What's happening?" maxlength="180"></textarea>
         </div>
@@ -1117,7 +1124,7 @@ window.__nalunoEntryT0 = Date.now();
       <div style="padding:4px 16px 6px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; flex-shrink:0;">
         <span id="bandSettleNote" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(124,255,178,.75); flex:1; min-width:140px;">Band · messages clear 2h after the last person leaves</span>
         <span id="bandCopyLinkBtn" role="button" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(255,255,255,.55); cursor:pointer; text-decoration:underline; text-underline-offset:2px; white-space:nowrap;">Copy link</span>
-        <span id="bandInviteBtn" role="button" style="font-family:var(--font-mono); font-size:10.5px; color:var(--mint); cursor:pointer; text-decoration:underline; text-underline-offset:2px; white-space:nowrap;">Invite</span>
+        <span id="bandInviteBtn" class="band-room-action" role="button" style="font-family:var(--font-mono); font-size:10.5px; color:var(--mint); cursor:pointer; text-decoration:underline; text-underline-offset:2px; white-space:nowrap;">Invite</span>
         <span id="bandBellBtn" role="button" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(255,255,255,.55); cursor:pointer; text-decoration:underline; text-underline-offset:2px; white-space:nowrap;">Ring</span>
         <span id="leaveBandForGoodLink" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(255,255,255,.35); cursor:pointer; text-decoration:underline; text-underline-offset:2px; white-space:nowrap;">Leave band</span>
       </div>
@@ -1444,8 +1451,8 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/chat-store.js?v=20260915b"></script>
 <script src="/js/wire-mailbox.js?v=20260915b"></script>
 <script src="/js/atmosphere.js?v=20260908d"></script>
-<script src="/js/band-list.js?v=20260915c"></script>
-<script src="/js/signal-core.js?v=20260911b"></script>
+<script src="/js/band-list.js?v=20260915d"></script>
+<script src="/js/signal-core.js?v=20260915d"></script>
 <script src="/js/broadcast-core.js?v=20260912d"></script>
 <script src="/js/broadcast-upload.js?v=20260908d"></script>
 <script src="/js/broadcast-composer.js?v=20260908d"></script>
@@ -1463,8 +1470,8 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/economy-ui.js?v=20260914c"></script>
 <script src="/js/weather.js?v=20260911b"></script>
 <script src="/js/beacon.js?v=20260911b"></script>
-<script src="/js/compass.js?v=20260911e"></script>
-<script src="/js/signal-ui.js?v=20260915c"></script>
+<script src="/js/compass.js?v=20260915d"></script>
+<script src="/js/signal-ui.js?v=20260915d"></script>
 <script src="/js/compat-lock.js?v=20260908d"></script>
 <script src="/js/broadcast-space.js?v=20260914c"></script>
 <script src="/js/ads.js?v=20260914c"></script>
@@ -1480,8 +1487,8 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/calls.js?v=20260908d"></script>
 <script src="/js/sfu-live.js?v=20260908d"></script>
 <script src="/js/broadcast-live.js?v=20260908d"></script>
-<script src="/js/band-room.js?v=20260911c"></script>
-<script src="/js/pwa.js?v=20260915c"></script>
+<script src="/js/band-room.js?v=20260915d"></script>
+<script src="/js/pwa.js?v=20260915d"></script>
 <script src="/js/spark-engine.js?v=20260908d"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>
 <script src="/js/spark-lg.js?v=20260908d"></script>
