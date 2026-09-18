@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v176: 09.18e full-song ringtone (IndexedDB + Files picker, not the 4MB sound sheet).
 // v175: 09.18d one missed-call chip per call; FCM onBackgroundMessage so a backgrounded web app still rings.
 // v173: 09.18a close Callsign, restore, violation close, friendly permissions.
 // v172: 09.15d Band vibe wrap, smooth tune-in switch, invite press, Signal text styles.
@@ -60,8 +61,8 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v175';
-const APP_BUILD = '20260918d';
+const CACHE_NAME = 'naluno-shell-v176';
+const APP_BUILD = '20260918e';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',

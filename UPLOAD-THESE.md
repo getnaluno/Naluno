@@ -1,18 +1,16 @@
-# GitHub — 2026.09.18d
+# GitHub — 2026.09.18e
 
-One missed-call chip per call (stable id `miss-{callId}`; only the caller sends the drop).
-
-Web call notify: the service worker now runs Firebase messaging `onBackgroundMessage`, so a PWA that is open but unused still gets a ringing OS notification.
+Own ringtone can be a full song. The picker opens Files / Music (not the short-sound sheet). The track is kept on this phone in IndexedDB (up to 40MB), not in the 4MB localStorage slot.
 
 Only these files. Do not upload a full tree.
 
 ## Must upload
 
 1. **app/index.html**
-2. **sw.js**, **js/pwa.js**
-3. **js/calls.js**, **js/wireline.js**, **js/wire-mailbox.js**
+2. **js/calls.js**
+3. **js/pwa.js**, **sw.js**
 
-Cache `naluno-shell-v175`, `?v=20260918d`.
+Cache `naluno-shell-v176`, `?v=20260918e`.
 
 Close Naluno tabs once so the new worker takes.
 
