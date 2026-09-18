@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v174: 09.18b no Control Centre in member copy; suppress permission toast.
 // v173: 09.18a close Callsign, restore, violation close, friendly permissions.
 // v172: 09.15d Band vibe wrap, smooth tune-in switch, invite press, Signal text styles.
 // v171: 09.15c empty states centered; desk reads live app build.
@@ -59,8 +60,8 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v173';
-const APP_BUILD = '20260918a';
+const CACHE_NAME = 'naluno-shell-v174';
+const APP_BUILD = '20260918b';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
