@@ -60,7 +60,10 @@ a{color:inherit;}
 .mark-live svg{width:34px; height:34px; overflow:visible; filter:drop-shadow(0 0 8px rgba(124,255,178,.55));}
 .mark-live .ring{position:absolute; inset:-4px; border-radius:50%; border:1px solid rgba(124,255,178,.4); animation:ping 2.6s ease-out infinite;}
 @keyframes ping{0%{transform:scale(.7); opacity:.8;} 100%{transform:scale(1.7); opacity:0;}}
-.word{font-family:var(--display); font-weight:700; font-size:18px; letter-spacing:.16em; color:var(--mint);}
+.word{font-family:var(--display); font-weight:700; font-size:18px; letter-spacing:.16em;
+  background:linear-gradient(90deg,#7CFFB2,#00E5FF,#7CFFB2); background-size:240% 100%;
+  -webkit-background-clip:text; background-clip:text; color:transparent; animation:shimmer 9s linear infinite;}
+@keyframes shimmer{to{background-position:240% 50%;}}
 .cta{font-family:var(--dial); font-size:12.5px; letter-spacing:.06em; color:var(--void); background:var(--mint);
   text-decoration:none; padding:12px 20px; border-radius:2px; display:inline-block;
   transition-property:transform, filter, box-shadow; transition-duration:var(--motion-quick); transition-timing-function:var(--ease);}
@@ -88,6 +91,18 @@ a{color:inherit;}
 .tuner-grid{position:absolute; inset:0; background:repeating-linear-gradient(90deg, transparent 0 7px, rgba(124,255,178,.12) 7px 8px);}
 .tuner-sweep{position:absolute; top:0; bottom:0; width:28%; background:linear-gradient(90deg, transparent, rgba(124,255,178,.35), rgba(0,229,255,.4), transparent); animation:sweep 4.8s ease-in-out infinite;}
 @keyframes sweep{0%{transform:translateX(-40%)} 100%{transform:translateX(380%)}}
+.still{margin:0 0 56px; border:1px solid var(--line); background:#0b0d14; overflow:hidden;}
+.still img{display:block; width:100%; height:auto; max-height:420px; object-fit:cover; filter:saturate(.92) contrast(1.05);}
+.still figcaption{font-family:var(--dial); font-size:11px; letter-spacing:.08em; color:var(--ink-dim); padding:12px 16px; border-top:1px solid var(--line);}
+.duo{display:grid; grid-template-columns:1.15fr .85fr; gap:18px; margin:0 0 72px;}
+.duo .still{margin:0;}
+.freq-map{display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:0 0 72px;}
+.freq{border:1px solid var(--line); padding:18px 16px 20px; min-height:140px; background:rgba(18,21,31,.45);
+  transition-property:border-color, transform; transition-duration:var(--motion-fast); transition-timing-function:var(--ease);}
+.freq:hover{border-color:rgba(124,255,178,.4); transform:translateY(-2px);}
+.freq .k{font-family:var(--dial); font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--mint); margin:0 0 8px;}
+.freq h3{font-family:var(--display); font-weight:500; font-size:16px; margin:0 0 8px;}
+.freq p{margin:0; color:var(--ink-dim); font-size:13.5px; line-height:1.45;}
 .proof{display:grid; grid-template-columns:repeat(3,1fr); gap:1px; background:var(--line); border:1px solid var(--line); margin:0 0 72px;}
 .proof div{background:var(--void); padding:18px 20px; transition-property:background-color; transition-duration:var(--motion-fast); transition-timing-function:var(--ease);}
 .proof div:hover{background:#0d1018;}
@@ -214,12 +229,14 @@ footer a:hover{color:var(--mint);}
 @media (max-width:860px){
   .hero{grid-template-columns:1fr; gap:36px; padding:18px 0 40px;}
   .device{margin:0 auto;}
-  .proof,.pillars,.steps{grid-template-columns:1fr;}
+  .proof,.pillars,.steps,.duo,.freq-map{grid-template-columns:1fr;}
+  .still img{max-height:280px;}
   body{font-size:16px;}
   .beacon{top:12%;}
 }
 @media (prefers-reduced-motion: reduce){
-  .mark-live .ring, .blob, .beacon span, .live-dot, .tuner-sweep, .device, .btns .a, .eq i, .av-wrap .halo, .enter, .sub .dots span{animation:none !important;}
+  .mark-live .ring, .blob, .beacon span, .live-dot, .tuner-sweep, .device, .btns .a, .eq i, .av-wrap .halo, .enter, .sub .dots span, .word{animation:none !important;}
+  .word{color:var(--mint); background:none; -webkit-background-clip:unset; background-clip:unset;}
   .enter, .reveal{opacity:1; transform:none; filter:none;}
   .cta:active, .contact button[type=submit]:active{transform:none;}
   .pillar:hover{transform:none;}
@@ -329,6 +346,11 @@ footer a:hover{color:var(--mint);}
 
   <div class="tuner" aria-hidden="true"><div class="tuner-grid"></div><div class="tuner-sweep"></div></div>
 
+  <figure class="still reveal">
+    <img src="/img/site-night.jpg" width="1600" height="900" alt="Night balcony, a phone glowing mint over a city">
+    <figcaption>Night. A handle. The people who already know it.</figcaption>
+  </figure>
+
   <div class="proof">
     <div class="reveal"><b>No phone number</b><span>A handle is enough. People who know it can reach you. Everyone else cannot.</span></div>
     <div class="reveal delay-1"><b>Calls that ring</b><span>A private line between two people. The picture and the sound go phone to phone.</span></div>
@@ -337,6 +359,23 @@ footer a:hover{color:var(--mint);}
 
   <h2 class="reveal">What it is</h2>
   <p class="lead reveal delay-1">Naluno is a communication app, not a feed. You choose who is on your Frequencies. Nothing here is suggested to you.</p>
+  <div class="freq-map">
+    <article class="freq reveal"><div class="k">88.1</div><h3>Callsign</h3><p>A handle that is yours. No phone number. No SIM.</p></article>
+    <article class="freq reveal delay-1"><div class="k">101.3</div><h3>Wireline</h3><p>A private line. Text is end-to-end. Lives on this phone.</p></article>
+    <article class="freq reveal delay-2"><div class="k">107.9</div><h3>Band</h3><p>A room. When the last person leaves, it wipes.</p></article>
+    <article class="freq reveal delay-3"><div class="k">114.2</div><h3>Broadcast</h3><p>Video you leave behind. Signal is the short clip that fades.</p></article>
+  </div>
+  <div class="duo">
+    <figure class="still reveal">
+      <img src="/img/site-together.jpg" width="1400" height="933" alt="Two people on a night bench, phones in their hands">
+      <figcaption>Reach the people who actually matter. Not the square.</figcaption>
+    </figure>
+    <div class="freq reveal delay-1" style="min-height:auto; display:flex; flex-direction:column; justify-content:flex-end;">
+      <div class="k">On frequency</div>
+      <h3>No feed. No suggestions.</h3>
+      <p>You choose who is on your Frequencies. Spark swaps handles in person — no typing. Calls ring. Bands wipe. Signal fades on its own.</p>
+    </div>
+  </div>
   <div class="pillars">
     <article class="pillar reveal">
       <div class="k">88.1 · Callsign</div>

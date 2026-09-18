@@ -1,20 +1,23 @@
-# GitHub / Firebase — 2026.09.15d
+# GitHub / Firebase — 2026.09.18a
 
-Band vibe chips stay visible and wrap. Who-can-tune-in switches slide in place. Band invite Text / Video show Sending then Sent. Signal text has more backgrounds, colours, type, and sizes.
+People can close their own Callsign, with a reason that lands on the Control Centre. The desk can restore a closed Callsign, and can close one for a violation, also with a reason. The public site has night stills and a frequency map. The “Missing or insufficient permissions” toast is mapped to a plain line; ad listeners wait until someone is signed in.
 
 Only these files. Do not upload a full tree.
 
 The operator inbox address is not in any of these files.
 
+**Publish firestore.rules** or close / restore / ads counters will be blocked.
+
 ## Must publish
 
-1. **css/app.css** — vibe chips wrap instead of hiding under the next block; tune-in switch slides; invite buttons have a press and Sent state; Signal text style rows wrap.
-2. **app/index.html** — Signal text composer: Background, Text colour, Type, Size. Band invite button is a room action.
-3. **js/signal-core.js**, **js/compass.js**, **js/signal-ui.js** — more backgrounds and colours, six typefaces, S / M / L / XL. Posted text keeps the chosen style.
-4. **js/band-list.js** — Who can tune in no longer lists you twice; the switch toggles without rebuilding the list.
-5. **js/band-room.js** — Text / Video invite: Sending immediately, Sent on success, then the sheet closes.
-6. **js/pwa.js**, **sw.js** — cache `naluno-shell-v172`, `?v=20260915d`.
+1. **firestore.rules** — closed Callsigns, accountEvents, handle tombstones, ad counter writes, operator mail.
+2. **app/index.html**, **css/app.css**, **js/auth.js**, **js/core.js**, **js/compass.js**, **js/find.js**, **js/ads.js**, **js/currency.js**, **js/onboard.js**, **js/pwa.js**, **sw.js** — Callsign close, closed gate, friendly errors, ads after sign-in.
+3. **admin/index.html**, **js/admin-console.js**, **js/admin-data.js** — Close for violation, Restore Callsign, Closed count.
+4. **index.html**, **img/site-night.jpg**, **img/site-together.jpg** — public site.
+5. **privacy.html**, **privacy/index.html**, **terms.html**, **terms/index.html** — close / restore copy.
+
+Cache `naluno-shell-v173`, `?v=20260918a`.
 
 ## After upload
 
-Close Naluno tabs once so the new service worker takes.
+Close Naluno tabs once so the new service worker takes. Refresh Control Centre once. Publish the new Firestore rules from this zip (Firebase console → Firestore → Rules, or `firebase deploy --only firestore:rules`).

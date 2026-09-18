@@ -14,8 +14,15 @@ service cloud.firestore {
     // ---- Identity ----
     match /users/{uid} {
       allow read: if isSignedIn();
-      allow create, delete: if isOwner(uid);
-      allow update: if isOwner(uid) || isOperator();
+      allow create: if isOwner(uid);
+      allow delete: if isOperator();
+      // Owner may update while the Callsign is open, including closing it.
+      // Once closed, only the Control Centre operator may write (restore).
+      allow update: if isOperator() || (
+        isOwner(uid) && (
+          !('accountState' in resource.data) || resource.data.accountState != 'closed'
+        )
+      );
     }
 
     // handles/{handle} maps a claimed handle -> uid. Enforces uniqueness: Firestore
@@ -26,10 +33,11 @@ service cloud.firestore {
       allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
       // Only the current owner can re-write their own handle doc (e.g. a redundant
       // re-save) — this must NEVER let someone else's uid overwrite an existing claim.
-      allow update: if isSignedIn()
-        && resource.data.uid == request.auth.uid
-        && request.resource.data.uid == request.auth.uid;
-      allow delete: if false; // not transferable in Phase 1 — revisit later
+      allow update: if isOperator()
+        || (isSignedIn()
+            && resource.data.uid == request.auth.uid
+            && request.resource.data.uid == request.auth.uid);
+      allow delete: if isOperator();
     }
 
     // ---- Broadcast (your signal) ----
@@ -497,12 +505,13 @@ service cloud.firestore {
        — this collection is not a dump of AI chat. */
     match /deskMail/{id} {
       allow read: if isOperator();
-      allow create: if isSignedIn()
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.text is string
-        && request.resource.data.text.size() > 1
-        && request.resource.data.text.size() < 6001
-        && request.resource.data.status == 'new';
+      allow create: if isOperator()
+        || (isSignedIn()
+            && request.resource.data.uid == request.auth.uid
+            && request.resource.data.text is string
+            && request.resource.data.text.size() > 1
+            && request.resource.data.text.size() < 6001
+            && request.resource.data.status == 'new');
       allow update: if isOperator();
       allow delete: if false;
     }
@@ -523,10 +532,7 @@ service cloud.firestore {
             && request.resource.data.diff(resource.data).affectedKeys()
                  .hasOnly(['impressions', 'clicks', 'skips', 'viewCompletes', 'updatedAt'])
             && request.resource.data.status == resource.data.status
-            && request.resource.data.mediaUrl == resource.data.mediaUrl
-            && request.resource.data.impressions is number
-            && request.resource.data.clicks is number
-            && request.resource.data.skips is number);
+            && request.resource.data.mediaUrl == resource.data.mediaUrl);
       allow delete: if isOperator();
     }
 
@@ -579,6 +585,21 @@ service cloud.firestore {
 
     match /adminAudit/{id} {
       allow read, create: if isOperator();
+      allow update, delete: if false;
+    }
+
+    /* Close / restore history. Operator reads. The owner may record their
+       own close. Restore is operator-only. */
+    match /accountEvents/{id} {
+      allow read: if isOperator();
+      allow create: if isOperator()
+        || (isSignedIn()
+            && request.resource.data.uid == request.auth.uid
+            && request.resource.data.action == 'close'
+            && request.resource.data.kind == 'self'
+            && request.resource.data.reason is string
+            && request.resource.data.reason.size() > 7
+            && request.resource.data.reason.size() < 2001);
       allow update, delete: if false;
     }
 
