@@ -175,11 +175,11 @@ async function requestAccountDeletion(extra){
   if(!currentUser){ toast('Sign in first'); return; }
   let reason = String(extra || '').trim();
   if(reason.length < 8){
-    reason = window.prompt('Why are you closing this Callsign? A reason is stored on the Control Centre.') || '';
+    reason = window.prompt('Why are you closing this Callsign?') || '';
     reason = String(reason).trim();
   }
   if(reason.length < 8){ toast('Write a reason first'); return; }
-  const ok = window.confirm('Close this Callsign? It leaves the air. Restore is done from the Control Centre, not from Compass.');
+  const ok = window.confirm('Close this Callsign? It leaves the air. It can be restored.');
   if(!ok){
     pushCompassNote('Nothing was closed.');
     return;
@@ -189,7 +189,7 @@ async function requestAccountDeletion(extra){
     if(typeof closeOwnCallsign === 'function'){
       const done = await closeOwnCallsign(reason);
       if(done){
-        pushCompassNote('Callsign closed. The reason is on the Control Centre. It can be restored from there.');
+        pushCompassNote('Callsign closed. It can be restored.');
         return;
       }
     }

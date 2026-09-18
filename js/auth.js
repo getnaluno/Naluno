@@ -1027,8 +1027,8 @@ function showClosedCallsignGate(data){
   if(title) title.textContent = kind === 'violation' ? 'This Callsign was closed' : 'This Callsign is closed';
   if(body){
     body.textContent = kind === 'violation'
-      ? 'Naluno closed this Callsign. Write to Naluno if that was a mistake. Restore is done from the Control Centre, not from this phone.'
-      : 'You closed this Callsign. It can be restored from the Control Centre. The handle stays reserved so a restore still lands on you.';
+      ? 'Naluno closed this Callsign. Write to Naluno if that was a mistake. It can be restored.'
+      : 'You closed this Callsign. It can be restored. Your handle stays yours.';
   }
   el.style.display = 'flex';
   try{ if(typeof nalunoShowSignIn === 'function'){ /* stay signed in so restore can see the uid */ } }catch(_){}
@@ -1137,13 +1137,13 @@ function bindCallsignCloseForm(){
       if(!mine){ toast('Save a handle first'); return; }
       if(typed !== mine){ toast('Type your handle to confirm'); return; }
       if(reason.length < 8){ toast('Write a reason first'); return; }
-      const ok = window.confirm('Close @' + mine + '? The Callsign leaves the air. It can be restored from the Control Centre.');
+      const ok = window.confirm('Close @' + mine + '? The Callsign leaves the air. It can be restored.');
       if(!ok) return;
       go.disabled = true;
       try{
         await closeOwnCallsign(reason);
       }catch(e){
-        toast(e.message || 'Could not close this Callsign');
+        toast('Could not close this Callsign right now');
       }finally{
         go.disabled = false;
       }
@@ -1237,9 +1237,11 @@ function loadRealProfile(user){
     }, function(err){
       const msg = String((err && err.message) || err || '');
       const denied = /permission|insufficient/i.test(msg);
-      if(denied && listenRetry < 6){
-        listenRetry++;
-        setTimeout(attach, Math.min(8000, 300 * listenRetry * listenRetry));
+      if(denied){
+        if(listenRetry < 8){
+          listenRetry++;
+          setTimeout(attach, Math.min(8000, 300 * listenRetry * listenRetry));
+        }
         return;
       }
       if(!gotFirstSnapshot) toast('Couldn\u2019t load your callsign — check your connection');
@@ -1375,10 +1377,12 @@ $('saveProfileBtn').onclick = async ()=>{
       }
       // Persist in background — snapshot will confirm; we ignore mid-edit overwrites.
       fbDb.collection('users').doc(currentUser.uid).set(cloudProfile, { merge:true }).catch(e=>{
-        toast(e.message || 'Saved on device, but cloud sync failed');
+        const m = String((e && e.message) || '');
+        if(/permission|insufficient/i.test(m)) return;
+        toast('Saved on this phone. Cloud sync can wait.');
       });
     }catch(e){
-      toast(e.message || 'Couldn\u2019t save — try a different handle');
+      toast('Couldn\u2019t save — try a different handle');
     }finally{
       if(btn){
         btn.dataset.saving = '0';

@@ -53,7 +53,7 @@ $('enableCallNotifsBtn').onclick = async ()=>{
     $('callNotifStatus').textContent = 'Call notifications are on — you\u2019ll be notified even with the app closed.';
     toast('Call notifications enabled');
   }catch(e){
-    toast(e.message || 'Couldn\u2019t enable notifications');
+    toast('Couldn\u2019t enable notifications');
   }
 };
 $('autoTintToggle').onclick = function(){ this.classList.toggle('on'); };

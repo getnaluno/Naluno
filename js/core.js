@@ -13,8 +13,11 @@ const $ = id => document.getElementById(id);
 function nalunoFriendlyError(msg){
   const s = String(msg == null ? '' : msg);
   if(!s) return s;
-  if(/missing or insufficient permissions|permission-denied/i.test(s)){
-    return 'This was blocked. Sign out and back in, then try again.';
+  // Firestore's default denial. Never show it — it is not something a
+  // person can act on, and it was popping on Callsign from a background
+  // write (token not attached yet, or a collection the phone cannot see).
+  if(/missing or insufficient permissions|permission-denied|FirebaseError: Missing/i.test(s)){
+    return '';
   }
   if(/failed to fetch|networkerror|network request failed|unavailable/i.test(s)){
     return 'No connection right now — try again in a moment.';
@@ -31,7 +34,9 @@ try{ window.nalunoFriendlyError = nalunoFriendlyError; }catch(_){}
  *  the toast had no way to be tapped at all, so navigating was never
  *  actually possible despite the code clearly intending it to be). */
 function toast(msg, onTap){
-  const t = $('toast'); t.textContent = nalunoFriendlyError(msg); t.classList.add('show');
+  const text = nalunoFriendlyError(msg);
+  if(!text) return;
+  const t = $('toast'); if(!t) return; t.textContent = text; t.classList.add('show');
   clearTimeout(toast._t); toast._t = setTimeout(()=>t.classList.remove('show'), typeof onTap === 'function' ? 6500 : 1900);
   if(typeof onTap === 'function'){
     t.style.cursor = 'pointer';
@@ -269,7 +274,7 @@ window.addEventListener('error', function(ev){
 window.addEventListener('unhandledrejection', function(ev){
   try{ console.error('[naluno:promise]', ev.reason); }catch(_){}
 });
-console.log('[naluno] build 2026.09.18a');
+console.log('[naluno] build 2026.09.18b');
 
 
 function nalunoShrinkImageDataUrl(dataUrl, maxEdge, quality){
