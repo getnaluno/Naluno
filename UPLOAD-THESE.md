@@ -1,17 +1,19 @@
-# GitHub — 2026.09.18c
+# GitHub — 2026.09.18d
 
-Control Centre Search looks up handle, uid, email and name against the live handle map (Callsigns live in `number`, not `handle`). Users tab Search does the same.
+One missed-call chip per call (stable id `miss-{callId}`; only the caller sends the drop).
 
-Website is a radio field: night still, ticker, a tuner you turn. Not a stack of cards.
+Web call notify: the service worker now runs Firebase messaging `onBackgroundMessage`, so a PWA that is open but unused still gets a ringing OS notification.
 
 Only these files. Do not upload a full tree.
 
 ## Must upload
 
-1. **index.html**
-2. **img/site-dial.jpg**, **img/site-rain.jpg**
-3. **admin/index.html**, **js/admin-console.js**, **js/admin-data.js**
+1. **app/index.html**
+2. **sw.js**, **js/pwa.js**
+3. **js/calls.js**, **js/wireline.js**, **js/wire-mailbox.js**
 
-Cache `?v=20260918c` on the console scripts.
+Cache `naluno-shell-v175`, `?v=20260918d`.
+
+Close Naluno tabs once so the new worker takes.
 
 The operator inbox address is not in any of these files.

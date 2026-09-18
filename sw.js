@@ -1,5 +1,5 @@
 // Naluno service worker — offline shell + background call push.
-// v174: 09.18b no Control Centre in member copy; suppress permission toast.
+// v175: 09.18d one missed-call chip per call; FCM onBackgroundMessage so a backgrounded web app still rings.
 // v173: 09.18a close Callsign, restore, violation close, friendly permissions.
 // v172: 09.15d Band vibe wrap, smooth tune-in switch, invite press, Signal text styles.
 // v171: 09.15c empty states centered; desk reads live app build.
@@ -60,8 +60,8 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v174';
-const APP_BUILD = '20260918b';
+const CACHE_NAME = 'naluno-shell-v175';
+const APP_BUILD = '20260918d';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -444,16 +444,19 @@ async function closeCallNotifications(callId){
   }catch(_){}
 }
 function callNotifyOpts(callId, body){
+  const appUrl = callId
+    ? ('/app/?call=' + encodeURIComponent(callId))
+    : '/app/';
   return {
     body: body || 'Tap to answer',
-    icon: './icon-192.png',
-    badge: './icon-192.png',
-    tag: callId || 'naluno-call',
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    tag: callId ? ('naluno-call:' + callId) : 'naluno-call',
     renotify: true,
     requireInteraction: true,
     silent: false,
     vibrate: [500, 200, 500, 200, 500, 200, 500],
-    data: { callId: callId || '', type: 'incoming_call', url: callId ? ('./?call=' + encodeURIComponent(callId)) : './' },
+    data: { callId: callId || '', type: 'incoming_call', url: appUrl },
     actions: [
       { action: 'answer', title: 'Answer' },
       { action: 'decline', title: 'Decline' },
@@ -466,11 +469,14 @@ function callNotifyOpts(callId, body){
  *  says the call was handled. */
 function startRingLoop(callId, title, body, loop){
   if(callId && isCallHandled(callId)) return;
-  stopRingLoop(callId);
   const t = title || 'Incoming call — Naluno';
   const b = body || 'Tap to answer';
-  self.registration.showNotification(t, callNotifyOpts(callId, b)).catch(function(){});
+  const already = !!(callId && ringLoopTimers[callId]);
+  if(!already){
+    self.registration.showNotification(t, callNotifyOpts(callId, b)).catch(function(){});
+  }
   if(loop === false) return;
+  if(already) return;
   let n = 1;
   const max = 16;
   function tick(){
@@ -485,6 +491,42 @@ function startRingLoop(callId, title, body, loop){
   }
   if(callId) ringLoopTimers[callId] = setTimeout(tick, 2200);
 }
+
+/* FCM web encrypts the payload. Without firebase.messaging() in THIS worker,
+   a backgrounded (not killed) PWA never decrypts the call wake — onMessage
+   on the frozen page also never runs. This is what actually rings a web
+   app that is open but unused. */
+try{
+  importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js');
+  importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js');
+  if(typeof firebase !== 'undefined' && firebase.apps && !firebase.apps.length){
+    firebase.initializeApp({
+      apiKey: 'AIzaSyD0j1W7-gFJqbMd6rz4kMhQd5AiB8B2ox0',
+      authDomain: 'naluno-28a00.firebaseapp.com',
+      projectId: 'naluno-28a00',
+      storageBucket: 'naluno-28a00.firebasestorage.app',
+      messagingSenderId: '183354363901',
+      appId: '1:183354363901:web:e1a4c4eb30ad5937d39394'
+    });
+  }
+  if(typeof firebase !== 'undefined' && firebase.messaging){
+    firebase.messaging().onBackgroundMessage(function(payload){
+      const data = Object.assign({}, (payload && payload.data) || {});
+      try{
+        if(payload && payload.notification){
+          if(!data.title && payload.notification.title) data.title = payload.notification.title;
+          if(!data.body && payload.notification.body) data.body = payload.notification.body;
+        }
+      }catch(_){}
+      const callId = data.callId || data.call_id || '';
+      const isCall = data.type === 'incoming_call' || !!callId;
+      if(!isCall) return;
+      if(callId && isCallHandled(callId)) return;
+      const who = data.callerName || (data.title || '').replace(/\s+is calling$/i, '') || 'Someone';
+      startRingLoop(callId, who + ' is calling', data.body || 'Tap to answer on Naluno');
+    });
+  }
+}catch(e){}
 
 self.addEventListener('message', event=>{
   const msg = (event && event.data) || {};
@@ -589,7 +631,7 @@ self.addEventListener('notificationclick', event=>{
     })());
     return;
   }
-  const target = callId ? ('./?call=' + encodeURIComponent(callId)) : (data.url || './');
+  const target = callId ? ('/app/?call=' + encodeURIComponent(callId)) : (data.url || '/app/');
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList=>{
       for(const client of clientList){
