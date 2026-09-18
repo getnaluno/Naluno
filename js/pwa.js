@@ -6,7 +6,7 @@
    ============================================================ */
 /* ---------------- PWA INSTALL + CALL NOTIFICATION DEEP-LINK ---------------- */
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js?v=20260918b', { scope: '/', updateViaCache: 'none' })
+  navigator.serviceWorker.register('/sw.js?v=20260918d', { scope: '/', updateViaCache: 'none' })
     .then(function(reg){ try{ reg.update(); }catch(_){} })
     .catch(function(e){ console.warn('[sw]', e); });
   // One automatic reload when a new SW takes control (clears stuck "sign-in not ready"
@@ -15,9 +15,9 @@ if('serviceWorker' in navigator){
     let reloaded = false;
     navigator.serviceWorker.addEventListener('controllerchange', function(){
       if(reloaded) return;
-      try{ if(sessionStorage.getItem('nalunoSwReload') === '20260918b') return; }catch(_){}
+      try{ if(sessionStorage.getItem('nalunoSwReload') === '20260918d') return; }catch(_){}
       reloaded = true;
-      try{ sessionStorage.setItem('nalunoSwReload', '20260918b'); }catch(_){}
+      try{ sessionStorage.setItem('nalunoSwReload', '20260918d'); }catch(_){}
       location.reload();
     });
   }catch(_){}
@@ -82,6 +82,10 @@ async function handleIncomingCallFromPush(callId){
   if(!callId || !fbDb || !currentUser) return;
   if($('callOverlay').classList.contains('active') && activeCallId === callId) return;
   try{
+    const hidden = (typeof document !== 'undefined' && (document.hidden || document.visibilityState !== 'visible'));
+    if(hidden && typeof nalunoStartBackgroundRing === 'function'){
+      nalunoStartBackgroundRing(callId, 'Someone');
+    }
     const snap = await fbDb.collection('calls').doc(callId).get();
     if(!snap.exists) return;
     const data = snap.data() || {};
@@ -246,7 +250,13 @@ if(typeof firebase !== 'undefined' && firebase.messaging){
   try{
     const fgMessaging = firebase.messaging();
     fgMessaging.onMessage(payload=>{
-      const data = (payload && payload.data) || {};
+      const data = Object.assign({}, (payload && payload.data) || {});
+      try{
+        if(payload && payload.notification){
+          if(!data.title && payload.notification.title) data.title = payload.notification.title;
+          if(!data.body && payload.notification.body) data.body = payload.notification.body;
+        }
+      }catch(_){}
       if(data.type === 'broadcast_live' || data.broadcastId){
         if(typeof handleBroadcastLiveNotification === 'function'){
           handleBroadcastLiveNotification({
@@ -261,8 +271,16 @@ if(typeof firebase !== 'undefined' && firebase.messaging){
         return;
       }
       const callId = data.callId || data.call_id || null;
-      if(callId) handleIncomingCallFromPush(callId);
-      else if(data.title) toast(data.title);
+      if(callId){
+        const who = data.callerName || String(data.title || '').replace(/\s+is calling$/i, '') || 'Someone';
+        const hidden = (typeof document !== 'undefined' && (document.hidden || document.visibilityState !== 'visible'));
+        if(hidden && typeof nalunoStartBackgroundRing === 'function'){
+          nalunoStartBackgroundRing(callId, who);
+        }
+        handleIncomingCallFromPush(callId);
+        return;
+      }
+      if(data.title) toast(data.title);
     });
   }catch(e){ /* messaging not available in this context */ }
 }

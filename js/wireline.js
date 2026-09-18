@@ -31,6 +31,7 @@ function persistWireRow(contactId, msg, otherUid){
       if(!m) return false;
       if(msg.id && String(m.id) === String(msg.id)) return true;
       if(msg.clientMsgId && m.clientMsgId && String(m.clientMsgId) === String(msg.clientMsgId)) return true;
+      if(msg.type === 'missed_call' && m.type === 'missed_call' && msg.callId && m.callId && String(m.callId) === String(msg.callId)) return true;
       return false;
     });
     if(idx >= 0) list[idx] = Object.assign({}, list[idx], msg);
@@ -99,7 +100,9 @@ async function hydrateWirelineFromStore(){
       if(cid == null) return;
       if(!wirelineThreads[cid]) wirelineThreads[cid] = [];
       const exists = wirelineThreads[cid].some(function(x){
-        return String(x.id)===String(m.id) || (m.clientMsgId && x.clientMsgId && String(x.clientMsgId)===String(m.clientMsgId));
+        return String(x.id)===String(m.id)
+          || (m.clientMsgId && x.clientMsgId && String(x.clientMsgId)===String(m.clientMsgId))
+          || (m.type === 'missed_call' && x.type === 'missed_call' && m.callId && x.callId && String(x.callId)===String(m.callId));
       });
       if(!exists) wirelineThreads[cid].push(m);
     });
@@ -863,10 +866,10 @@ function renderThreadMessages(){
   }));
   const cActive = contacts.find(x=>x.id===activeThreadContactId);
   const cut = clearedAtForContact(cActive);
-  const msgs = [...(wirelineThreads[activeThreadContactId] || []), ...queued]
+  const msgs = collapseMissedCallRows([...(wirelineThreads[activeThreadContactId] || []), ...queued]
     .filter(m => msgTs(m) > cut)
     .filter(m => !wirelineHiddenIds[String(m.id)])
-    .sort((a,b)=>a.ts-b.ts);
+    .sort((a,b)=>a.ts-b.ts));
   if(msgs.length===0){
     const clearedNote = cut
       ? 'Chat cleared on your side. They still have the conversation.'
@@ -2244,6 +2247,34 @@ function missedCallLabelForViewer(m){
   return m.text || 'Missed call';
 }
 
+function missedCallRowId(callId){
+  return callId ? ('miss-' + String(callId)) : ('missed_' + Date.now() + '_' + Math.random().toString(36).slice(2,6));
+}
+
+function collapseMissedCallRows(msgs){
+  const seen = {};
+  const out = [];
+  (msgs || []).forEach(function(m){
+    if(m && m.type === 'missed_call' && m.callId){
+      const k = String(m.callId);
+      if(seen[k] != null){
+        const prev = out[seen[k]];
+        out[seen[k]] = Object.assign({}, prev, m, {
+          id: prev.id || m.id,
+          ts: Math.min(Number(prev.ts) || Number(m.ts) || Date.now(), Number(m.ts) || Number(prev.ts) || Date.now()),
+          callerUid: prev.callerUid || m.callerUid,
+          calleeUid: prev.calleeUid || m.calleeUid,
+          callId: k,
+        });
+        return;
+      }
+      seen[k] = out.length;
+    }
+    out.push(m);
+  });
+  return out;
+}
+
 async function recordMissedCallInWireline(contactId, opts){
   opts = opts || {};
   if(!contactId) return;
@@ -2251,88 +2282,67 @@ async function recordMissedCallInWireline(contactId, opts){
   const ts = opts.ts || Date.now();
   const c = contacts.find(x => x.id === contactId || String(x.id) === String(contactId));
   const otherUid = c && c.firebaseUid ? c.firebaseUid : null;
-  // Who am I in this call?
   const incoming = !!opts.incoming;
   const callerUid = opts.callerUid || (incoming ? otherUid : (currentUser && currentUser.uid)) || null;
   const calleeUid = opts.calleeUid || (incoming ? (currentUser && currentUser.uid) : otherUid) || null;
+  const rowId = missedCallRowId(callId);
 
   if(!wirelineThreads[contactId]) wirelineThreads[contactId] = [];
-  // Dedupe local by callId — never two chips for one call
+  const list = wirelineThreads[contactId];
+  let existingIdx = -1;
   if(callId){
-    const existingIdx = wirelineThreads[contactId].findIndex(m => m.type === 'missed_call' && m.callId === callId);
-    if(existingIdx >= 0){
-      const row = wirelineThreads[contactId][existingIdx];
-      row.callerUid = row.callerUid || callerUid;
-      row.calleeUid = row.calleeUid || calleeUid;
-      try{ saveWireline(); }catch(_){}
-      try{ renderWirelineList(); }catch(_){}
-      if(activeThreadContactId === contactId) try{ renderThreadMessages(); }catch(_){}
-      // Still try Firestore if not persisted yet
-    } else {
-      wirelineThreads[contactId].push({
-        id: 'missed_' + (callId || Date.now()) + '_' + Math.random().toString(36).slice(2,6),
-        from: 'system',
-        type: 'missed_call',
-        text: 'Missed call', // neutral store; UI picks label
-        callId: callId,
-        callerUid: callerUid,
-        calleeUid: calleeUid,
-        ts: ts,
-        status: 'sent',
-      });
-      try{ saveWireline(); }catch(_){}
-    }
+    existingIdx = list.findIndex(function(m){
+      return m && m.type === 'missed_call' && (String(m.callId) === String(callId) || String(m.id) === rowId || String(m.clientMsgId) === rowId);
+    });
+  }
+  if(existingIdx >= 0){
+    const row = list[existingIdx];
+    row.callerUid = row.callerUid || callerUid;
+    row.calleeUid = row.calleeUid || calleeUid;
+    row.callId = row.callId || callId;
+    row.clientMsgId = row.clientMsgId || rowId;
+    try{ persistWireRow(contactId, row, otherUid); }catch(_){ try{ saveWireline(); }catch(_){ } }
   } else {
-    wirelineThreads[contactId].push({
-      id: 'missed_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
+    const row = {
+      id: rowId,
       from: 'system',
       type: 'missed_call',
       text: 'Missed call',
+      callId: callId || null,
       callerUid: callerUid,
       calleeUid: calleeUid,
+      clientMsgId: rowId,
       ts: ts,
       status: 'sent',
-    });
-    try{ saveWireline(); }catch(_){}
+      system: true,
+    };
+    list.push(row);
+    try{ persistWireRow(contactId, row, otherUid); }catch(_){ try{ saveWireline(); }catch(_){ } }
   }
+  wirelineThreads[contactId] = collapseMissedCallRows(wirelineThreads[contactId]);
   try{ renderWirelineList(); }catch(_){}
   if(activeThreadContactId === contactId) {
     try{ renderThreadMessages(); }catch(_){}
   }
 
-  // Single Firestore row per callId (either side may race; first write wins)
+  // Only the caller sends a drop. The other phone records locally if it is
+  // open; if it was closed, this drop is the chip they see. Sending from both
+  // sides was listing the same call twice.
+  if(incoming) return;
   try{
-    if(c && c.isReal && c.firebaseUid && fbDb && currentUser){
+    if(c && c.isReal && c.firebaseUid && fbDb && currentUser && callId){
       const tid = realThreadId(c.firebaseUid);
-      const threadRef = fbDb.collection('threads').doc(tid);
-      if(callId){
-        try{
-          const existing = await threadRef.collection('messages')
-            .where('callId', '==', callId).limit(1).get();
-          if(!existing.empty) return;
-        }catch(_){}
-      }
-      const preview = missedCallLabelForViewer({ callerUid, calleeUid, incoming });
-      const cmid = 'miss-' + (callId || Date.now());
+      const cmid = rowId;
       if(typeof NalunoWireMailbox !== 'undefined' && NalunoWireMailbox.sendDrop){
         await NalunoWireMailbox.sendDrop(c.firebaseUid, tid, cmid, {
           type: 'missed_call',
           encrypted: false,
           text: 'Missed call',
-          callId: callId || null,
+          callId: callId,
           callerUid: callerUid,
           calleeUid: calleeUid,
           system: true
         }, 'missed_call');
-      } else {
-        await threadRef.set({
-          participants: [currentUser.uid, c.firebaseUid].sort(),
-          lastMessageAt: firebase.firestore.FieldValue.serverTimestamp(),
-          lastKind: 'missed_call',
-          lastMessageText: preview,
-          lastMessageFrom: 'system',
-          readBy: [currentUser.uid],
-        }, { merge: true });
       }
     }
   }catch(e){ console.warn('[wireline] missed call persist', e); }

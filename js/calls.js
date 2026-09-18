@@ -101,6 +101,25 @@ function nalunoStartBackgroundRing(callId, name){
   const title = (name || 'Someone') + ' is calling';
   const body = 'Naluno · tap to answer';
   nalunoTellSw({ type: 'naluno-start-ring', callId: callId || '', title: title, body: body, loop: true });
+  try{
+    if(typeof document !== 'undefined' && document.hidden && typeof Notification !== 'undefined' && Notification.permission === 'granted'){
+      if(!(navigator.serviceWorker && navigator.serviceWorker.controller)){
+        const n = new Notification(title, {
+          body: body,
+          tag: callId ? ('naluno-call:' + callId) : 'naluno-call',
+          renotify: true,
+          requireInteraction: true,
+          icon: '/icon-192.png',
+          data: { callId: callId || '', type: 'incoming_call' }
+        });
+        n.onclick = function(){
+          try{ n.close(); }catch(_){}
+          try{ window.focus(); }catch(_){}
+          if(callId && typeof handleIncomingCallFromPush === 'function') handleIncomingCallFromPush(callId);
+        };
+      }
+    }
+  }catch(_){}
 }
 function nalunoShowCallNotice(callId, name){
   const title = (name || 'Someone') + ' is calling';
@@ -113,6 +132,17 @@ function incomingCallStillRinging(){
     const incoming = $('incoming');
     return !!(activeCallId && ov && ov.classList.contains('active') && incoming && incoming.classList.contains('active'));
   }catch(_){ return false; }
+}
+let incomingCallKeepAlive = false;
+function startIncomingKeepAlive(){
+  if(incomingCallKeepAlive) return;
+  incomingCallKeepAlive = true;
+  try{ if(typeof nalunoKeepAliveStart === 'function') nalunoKeepAliveStart('incoming-call'); }catch(_){}
+}
+function stopIncomingKeepAlive(){
+  if(!incomingCallKeepAlive) return;
+  incomingCallKeepAlive = false;
+  try{ if(typeof nalunoKeepAliveStop === 'function') nalunoKeepAliveStop(); }catch(_){}
 }
 function nalunoDismissCallNotifications(callId){
   try{ nalunoTellSwCallHandled(callId); }catch(_){}
@@ -141,6 +171,7 @@ function closeCallOverlay(){
     }
   }catch(_){}
   try{ nalunoDismissCallNotifications(activeCallId); }catch(_){}
+  try{ stopIncomingKeepAlive(); }catch(_){}
   const ov = $('callOverlay');
   if(ov){
     ov.classList.remove('active');
@@ -1516,6 +1547,7 @@ function handleIncomingCall(callId, data){
   snapshotUiBeforeCall();
   showCallScreen('incoming');
   startRingtone();
+  try{ startIncomingKeepAlive(); }catch(_){}
   try{
     if(typeof document !== 'undefined' && document.hidden) nalunoStartBackgroundRing(callId, name);
     else nalunoShowCallNotice(callId, name);

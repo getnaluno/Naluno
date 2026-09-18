@@ -133,6 +133,16 @@
       const contactId = contactIdForUid(fromUid) != null ? contactIdForUid(fromUid) : fromUid;
       const isSys = m.type === 'missed_call' || m.type === 'system' || m.system === true;
       const open = contactId != null && typeof activeThreadContactId !== 'undefined' && activeThreadContactId === contactId;
+      if (m.type === 'missed_call' && m.callId && contactId != null && typeof wirelineThreads !== 'undefined') {
+        const already = (wirelineThreads[contactId] || []).some(function (row) {
+          return row && row.type === 'missed_call' && String(row.callId) === String(m.callId);
+        });
+        if (already) {
+          doc.ref.delete().catch(function () {});
+          if (fromUid) writeReceipt(fromUid, cmid, open ? 'read' : 'delivered');
+          return;
+        }
+      }
       const row = {
         id: doc.id,
         from: isSys ? 'system' : 'them',
