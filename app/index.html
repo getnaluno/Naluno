@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.09.18a" />
+  <meta name="naluno-build" content="2026.09.18b" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.09.18a">
+<meta name="app-version" content="2026.09.18b">
 <meta name="description" content="A statement from the future.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="Watch on Naluno.">
@@ -110,9 +110,9 @@
 })();
 </script>
 <link rel="apple-touch-startup-image" href="/splash-empty.png">
-<link rel="stylesheet" href="/css/app.css?v=20260918a" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/css/app.css?v=20260918b" media="print" onload="this.media='all'">
 <script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="/css/app.css?v=20260918a"></noscript>
+<noscript><link rel="stylesheet" href="/css/app.css?v=20260918b"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -575,10 +575,10 @@ window.__nalunoEntryT0 = Date.now();
 
       <div class="greenroom-setting" id="closeCallsignBox">
         <div class="greenroom-setting-head"><span class="dot" style="background:var(--red);"></span><span class="greenroom-setting-title">Close this Callsign</span></div>
-        <div class="greenroom-setting-sub">This is how you delete the account. The Callsign leaves the air. A reason is stored on the Control Centre. It can be restored from there. The handle stays reserved so a restore still lands on you.</div>
+        <div class="greenroom-setting-sub">This is how you delete the account. The Callsign leaves the air. You can restore it later. Your handle stays yours.</div>
         <button type="button" class="save-btn" id="closeCallsignBtn" style="margin:14px 0 0; background:none; color:var(--red); border:1px solid var(--line);">Close Callsign</button>
         <div id="closeCallsignForm" style="display:none; margin-top:14px;">
-          <div class="field" style="padding:0 0 8px;"><label>Reason (kept on the Control Centre)</label>
+          <div class="field" style="padding:0 0 8px;"><label>Reason</label>
             <textarea id="closeCallsignReason" rows="3" maxlength="2000" placeholder="Why are you closing this Callsign?"></textarea>
           </div>
           <div class="field" style="padding:0 0 8px;"><label>Type your handle to confirm</label>
@@ -1230,7 +1230,7 @@ window.__nalunoEntryT0 = Date.now();
     <div class="closed-callsign-card">
       <div class="word" style="font-family:var(--font-futuristic); letter-spacing:.16em; color:var(--mint); font-size:13px; margin-bottom:14px;">NALUNO</div>
       <h2 id="closedCallsignTitle">This Callsign is closed</h2>
-      <p id="closedCallsignBody" class="closed-callsign-copy">The Callsign is off the air. Restore is done from the Control Centre.</p>
+      <p id="closedCallsignBody" class="closed-callsign-copy">The Callsign is off the air. It can be restored.</p>
       <button type="button" class="save-btn" id="closedCallsignLeave" style="margin-top:18px; background:var(--mint); color:#0D0F17; border:none;">Sign out</button>
     </div>
   </div>
@@ -1460,7 +1460,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
 <script src="/firebase-config.js?v=20260908d"></script>
 <!-- NALUNO_MODULES -->
-<script src="/js/core.js?v=20260918a"></script>
+<script src="/js/core.js?v=20260918b"></script>
 <!-- Loaded right after core.js so its global error handlers are installed
      before the rest of the app runs and can capture anything they throw. -->
 <script src="/js/diagnostics.js?v=20260908d"></script>
@@ -1496,7 +1496,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/economy-ui.js?v=20260914c"></script>
 <script src="/js/weather.js?v=20260911b"></script>
 <script src="/js/beacon.js?v=20260911b"></script>
-<script src="/js/compass.js?v=20260918a"></script>
+<script src="/js/compass.js?v=20260918b"></script>
 <script src="/js/signal-ui.js?v=20260915d"></script>
 <script src="/js/compat-lock.js?v=20260908d"></script>
 <script src="/js/broadcast-space.js?v=20260914c"></script>
@@ -1504,9 +1504,9 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/media-vault.js?v=20260908d"></script>
 <script src="/js/wireline.js?v=20260915c"></script>
 <script src="/js/profile.js?v=20260914c"></script>
-<script src="/js/onboard.js?v=20260918a"></script>
-<script src="/js/auth.js?v=20260918a"></script>
-<script src="/js/notifications.js?v=20260908d"></script>
+<script src="/js/onboard.js?v=20260918b"></script>
+<script src="/js/auth.js?v=20260918b"></script>
+<script src="/js/notifications.js?v=20260918b"></script>
 <script src="/js/ice-core.js?v=20260908d"></script>
 <script src="/js/camera.js?v=20260908d"></script>
 <script src="/js/call-filters.js?v=20260908d"></script>
@@ -1514,7 +1514,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/sfu-live.js?v=20260908d"></script>
 <script src="/js/broadcast-live.js?v=20260908d"></script>
 <script src="/js/band-room.js?v=20260915d"></script>
-<script src="/js/pwa.js?v=20260918a"></script>
+<script src="/js/pwa.js?v=20260918b"></script>
 <script src="/js/spark-engine.js?v=20260908d"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>
 <script src="/js/spark-lg.js?v=20260908d"></script>
