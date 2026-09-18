@@ -55,8 +55,10 @@ footer{max-width:720px;margin:48px auto 0;padding-top:22px;border-top:1px solid 
   <p>Compass is a private notebook plus an assistant. Messages you type there are stored on your account. You can lock Compass with a password on the device. The people who run Naluno cannot read that notebook. If you use <strong>Write to Naluno</strong> or <strong>Close my Callsign</strong>, that one request is sent to them — not the rest of the conversation.</p>
   <h3>10. Diagnostics</h3>
   <p>The app keeps a short error log on this device so a break can be copied and sent. That log does not upload by itself.</p>
+  <h3>10a. The public website</h3>
+  <p>The pages at getnaluno.com record how the site is used: that a visit happened, roughly how long it lasted, the country (from the network, not from GPS), city when the network provides it, the kind of device and browser, the referring site, the page path, and whether someone tapped Open Naluno. A random id lives in this browser so return visits can be counted. It is not a Callsign and is not joined to an account. The people who run Naluno read these counts. Messages you type in the contact form are mail, not this log.</p>
   <h3>11. Who we share with (processors)</h3>
-  <p>Google Firebase (accounts, database, push), Cloudflare (file storage and edge workers), Open-Meteo (weather), a reverse-geocoder for place names, and a TURN/STUN provider so a call can connect. We do not sell lists of people.</p>
+  <p>Google Firebase (accounts, database, push), Cloudflare (file storage and edge workers), Open-Meteo (weather), a reverse-geocoder for place names, GeoJS (country of a website visit, from the network address), and a TURN/STUN provider so a call can connect. We do not sell lists of people.</p>
   <h3>12. How long we keep it</h3>
   <ul>
     <li>Account and Callsign — until you close the Callsign, or we close it. A closed Callsign can be restored.</li>
@@ -80,5 +82,9 @@ footer{max-width:720px;margin:48px auto 0;padding-top:22px;border-top:1px solid 
   <p>Use the contact form on getnaluno.com, or Compass after you sign in (Write to Naluno). Say that your message is about privacy so it is treated as one. The mailbox itself is not published on the website.</p>
 </main>
 <footer><a href="/">Home</a> · <a href="/terms">Terms</a> · <a href="/app/">App</a></footer>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+<script src="/firebase-config.js?v=20260914c"></script>
+<script src="/js/site-pulse.js?v=20260918g"></script>
 </body>
 </html>

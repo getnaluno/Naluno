@@ -583,6 +583,36 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    /* Public website + app-open pulse. No auth. No Callsign. Operator reads.
+       A session id is a random client token; updates must keep the same vid.
+       Daily rollups are increment-only counters. These numbers are
+       client-reported — treat them as traffic, not identity. */
+    match /siteSessions/{id} {
+      allow read: if isOperator();
+      allow create: if id.size() > 8 && id.size() < 90
+        && request.resource.data.vid is string
+        && request.resource.data.vid.size() > 8
+        && request.resource.data.vid.size() < 90
+        && request.resource.data.kind in ['web', 'app']
+        && request.resource.data.startedAt is int
+        && request.resource.data.ms is int
+        && request.resource.data.keys().size() < 32;
+      allow update: if request.resource.data.vid == resource.data.vid
+        && request.resource.data.kind == resource.data.kind
+        && request.resource.data.startedAt == resource.data.startedAt
+        && request.resource.data.ms is int
+        && request.resource.data.ms >= resource.data.ms
+        && request.resource.data.ms < 172800000
+        && request.resource.data.keys().size() < 32;
+      allow delete: if isOperator();
+    }
+    match /siteDays/{day} {
+      allow read: if isOperator();
+      allow create, update: if day.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && request.resource.data.keys().size() < 80;
+      allow delete: if isOperator();
+    }
+
     match /adminAudit/{id} {
       allow read, create: if isOperator();
       allow update, delete: if false;
