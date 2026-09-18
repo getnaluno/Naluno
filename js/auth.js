@@ -1006,49 +1006,161 @@ function nalunoEnsureProfilePhotoUrl(profile){
   })();
 }
 
-function loadRealProfile(user){
-  if(profileUnsub) profileUnsub();
-  // Live listener for profile. CRITICAL: while the edit form is open, never call
-  // applyProfileToUI / showCallsignView — presence heartbeats and other merges would
-  // overwrite mid-typing and kick the user out of the form ("text jumps away").
-  let gotFirstSnapshot = false;
-  profileUnsub = fbDb.collection('users').doc(user.uid).onSnapshot(doc=>{
-    if(doc.exists){
-      const incoming = { photo:null, ...DEFAULT_PROFILE, ...doc.data() };
-      currentProfile = incoming;
-      try{ nalunoEnsureProfilePhotoUrl(currentProfile); }catch(_){}
-      if(isCallsignEditing()){
-        // Keep view-mode labels in sync for when they exit, but leave the form alone.
-        try{
-          $('viewName').textContent = incoming.name;
-          $('viewTagline').textContent = incoming.tagline;
-          $('viewNumber').textContent = incoming.number;
-          applyAvatarVisual($('viewAvatar'), incoming);
-        }catch(e){}
-      } else {
-        applyProfileToUI(currentProfile);
-        nalunoWriteCachedProfile(user.uid, currentProfile);
-        try{ nalunoCacheWrite('profile', currentProfile); }catch(_){}
-        if(!gotFirstSnapshot) showCallsignView();
-      }
-    } else if(!gotFirstSnapshot){
-      const cached = nalunoReadCachedProfile(user.uid);
-      if(cached && (cached.name || cached.number)){
-        currentProfile = { photo:null, ...DEFAULT_PROFILE, ...cached };
-        applyProfileToUI(currentProfile);
-        if(!isCallsignEditing()) showCallsignView();
-      } else if(typeof nalunoIsOnline === 'function' ? nalunoIsOnline() : navigator.onLine){
-        currentProfile = { ...DEFAULT_PROFILE, name: user.displayName || 'You', number: '@' + user.uid.slice(0,8) };
-        applyProfileToUI(currentProfile);
-        showCallsignEdit();
-      }
+function nalunoAccountIsClosed(data){
+  if(!data) return false;
+  const state = String(data.accountState || '').toLowerCase();
+  return state === 'closed' || data.deleted === true;
+}
+
+function hideClosedCallsignGate(){
+  const el = $('closedCallsignGate');
+  if(el) el.style.display = 'none';
+}
+
+function showClosedCallsignGate(data){
+  const el = $('closedCallsignGate');
+  if(!el){ toast('This Callsign is closed'); return; }
+  data = data || {};
+  const kind = String(data.closedKind || data.deleteKind || 'self');
+  const title = $('closedCallsignTitle');
+  const body = $('closedCallsignBody');
+  if(title) title.textContent = kind === 'violation' ? 'This Callsign was closed' : 'This Callsign is closed';
+  if(body){
+    body.textContent = kind === 'violation'
+      ? 'Naluno closed this Callsign. Write to Naluno if that was a mistake. Restore is done from the Control Centre, not from this phone.'
+      : 'You closed this Callsign. It can be restored from the Control Centre. The handle stays reserved so a restore still lands on you.';
+  }
+  el.style.display = 'flex';
+  try{ if(typeof nalunoShowSignIn === 'function'){ /* stay signed in so restore can see the uid */ } }catch(_){}
+}
+
+async function writeAccountEvent(row){
+  if(!fbDb) return;
+  try{
+    await fbDb.collection('accountEvents').add(Object.assign({
+      ts: Date.now(),
+      uid: currentUser && currentUser.uid,
+    }, row || {}));
+  }catch(_){}
+}
+
+async function notifyDeskOfClose(reason, kind){
+  const who = (typeof compassIdentity === 'function') ? compassIdentity() : {
+    name: (currentProfile && currentProfile.name) || '',
+    handle: ((currentProfile && currentProfile.number) || '').replace(/^@/, ''),
+    email: '',
+  };
+  const text = (kind === 'violation' ? 'Callsign closed for a violation.' : 'Callsign closed by the owner.')
+    + (who.handle ? ' Handle: @' + who.handle + '.' : '')
+    + (currentUser ? ' Uid: ' + currentUser.uid + '.' : '')
+    + '\n\nReason: ' + String(reason || '').trim();
+  try{
+    if(typeof sendNalunoOperatorMail === 'function'){
+      await sendNalunoOperatorMail(kind === 'violation' ? 'violation-close' : 'delete-account', text);
+      return;
     }
-    if(currentProfile) nalunoWriteCachedProfile(user.uid, currentProfile);
-        try{ nalunoCacheWrite('profile', currentProfile); }catch(_){}
-    gotFirstSnapshot = true;
-  }, ()=>{
-    toast('Couldn\u2019t load your callsign — check your connection');
+  }catch(_){}
+  if(!fbDb || !currentUser) return;
+  try{
+    await fbDb.collection('deskMail').add({
+      source: 'callsign',
+      kind: kind === 'violation' ? 'violation-close' : 'delete-account',
+      name: who.name || '',
+      handle: who.handle || '',
+      email: who.email || '',
+      uid: currentUser.uid,
+      text: text,
+      ts: Date.now(),
+      status: 'new',
+    });
+  }catch(_){}
+}
+
+async function closeOwnCallsign(reason){
+  if(!currentUser || !fbDb){ toast('Sign in first'); return false; }
+  const why = String(reason || '').trim();
+  if(why.length < 8){ toast('Write a reason (at least a short sentence)'); return false; }
+  const handle = ((currentProfile && currentProfile.number) || '').replace(/^@/, '').toLowerCase();
+  const now = Date.now();
+  const patch = {
+    accountState: 'closed',
+    closedAt: now,
+    closedBy: currentUser.uid,
+    closedKind: 'self',
+    closedReason: why.slice(0, 2000),
+    closedPublic: 'Closed by the owner',
+    deleted: true,
+    deletedAt: now,
+  };
+  await fbDb.collection('users').doc(currentUser.uid).set(patch, { merge: true });
+  if(handle){
+    try{
+      await fbDb.collection('handles').doc(handle).set({
+        uid: currentUser.uid,
+        closed: true,
+        closedAt: now,
+      }, { merge: true });
+    }catch(_){}
+  }
+  await writeAccountEvent({
+    action: 'close',
+    kind: 'self',
+    reason: why.slice(0, 2000),
+    by: currentUser.uid,
+    handle: handle || '',
   });
+  try{ await notifyDeskOfClose(why, 'self'); }catch(_){}
+  currentProfile = Object.assign({}, currentProfile || {}, patch);
+  showClosedCallsignGate(patch);
+  toast('Callsign closed');
+  return true;
+}
+
+function bindCallsignCloseForm(){
+  const openBtn = $('closeCallsignBtn');
+  const form = $('closeCallsignForm');
+  const cancel = $('closeCallsignCancel');
+  const go = $('closeCallsignConfirm');
+  if(openBtn && form){
+    openBtn.onclick = function(){
+      form.style.display = form.style.display === 'none' ? 'block' : 'none';
+    };
+  }
+  if(cancel && form){
+    cancel.onclick = function(){ form.style.display = 'none'; };
+  }
+  if(go){
+    go.onclick = async function(){
+      const reason = (($('closeCallsignReason') && $('closeCallsignReason').value) || '').trim();
+      const typed = (($('closeCallsignHandle') && $('closeCallsignHandle').value) || '').replace(/^@/, '').trim().toLowerCase();
+      const mine = ((currentProfile && currentProfile.number) || '').replace(/^@/, '').toLowerCase();
+      if(!mine){ toast('Save a handle first'); return; }
+      if(typed !== mine){ toast('Type your handle to confirm'); return; }
+      if(reason.length < 8){ toast('Write a reason first'); return; }
+      const ok = window.confirm('Close @' + mine + '? The Callsign leaves the air. It can be restored from the Control Centre.');
+      if(!ok) return;
+      go.disabled = true;
+      try{
+        await closeOwnCallsign(reason);
+      }catch(e){
+        toast(e.message || 'Could not close this Callsign');
+      }finally{
+        go.disabled = false;
+      }
+    };
+  }
+  const leave = $('closedCallsignLeave');
+  if(leave){
+    leave.onclick = function(){
+      hideClosedCallsignGate();
+      if(typeof fbAuth !== 'undefined' && fbAuth) fbAuth.signOut().catch(function(){});
+    };
+  }
+}
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bindCallsignCloseForm);
+else bindCallsignCloseForm();
+
+function startSignedInListeners(user){
   loadRealConnections(user.uid);
   startThreadsListListener();
   loadRealBands(user.uid);
@@ -1063,6 +1175,77 @@ function loadRealProfile(user){
   ensureMyKeyPair();
   try{ if(typeof publishMyPublicKey === 'function') publishMyPublicKey(); }catch(_){}
   checkForPendingVideoJob();
+}
+
+function loadRealProfile(user){
+  if(profileUnsub) profileUnsub();
+  hideClosedCallsignGate();
+  // Live listener for profile. CRITICAL: while the edit form is open, never call
+  // applyProfileToUI / showCallsignView — presence heartbeats and other merges would
+  // overwrite mid-typing and kick the user out of the form ("text jumps away").
+  let gotFirstSnapshot = false;
+  let closedGate = false;
+  let listenRetry = 0;
+  function attach(){
+    if(profileUnsub){ try{ profileUnsub(); }catch(_){} profileUnsub = null; }
+    profileUnsub = fbDb.collection('users').doc(user.uid).onSnapshot(doc=>{
+      listenRetry = 0;
+      if(doc.exists){
+        const incoming = { photo:null, ...DEFAULT_PROFILE, ...doc.data() };
+        currentProfile = incoming;
+        if(nalunoAccountIsClosed(incoming)){
+          closedGate = true;
+          showClosedCallsignGate(incoming);
+          gotFirstSnapshot = true;
+          return;
+        }
+        if(closedGate){
+          closedGate = false;
+          hideClosedCallsignGate();
+          startSignedInListeners(user);
+        }
+        try{ nalunoEnsureProfilePhotoUrl(currentProfile); }catch(_){}
+        if(isCallsignEditing()){
+          try{
+            $('viewName').textContent = incoming.name;
+            $('viewTagline').textContent = incoming.tagline;
+            $('viewNumber').textContent = incoming.number;
+            applyAvatarVisual($('viewAvatar'), incoming);
+          }catch(e){}
+        } else {
+          applyProfileToUI(currentProfile);
+          nalunoWriteCachedProfile(user.uid, currentProfile);
+          try{ nalunoCacheWrite('profile', currentProfile); }catch(_){}
+          if(!gotFirstSnapshot) showCallsignView();
+        }
+      } else if(!gotFirstSnapshot){
+        const cached = nalunoReadCachedProfile(user.uid);
+        if(cached && (cached.name || cached.number)){
+          currentProfile = { photo:null, ...DEFAULT_PROFILE, ...cached };
+          applyProfileToUI(currentProfile);
+          if(!isCallsignEditing()) showCallsignView();
+        } else if(typeof nalunoIsOnline === 'function' ? nalunoIsOnline() : navigator.onLine){
+          currentProfile = { ...DEFAULT_PROFILE, name: user.displayName || 'You', number: '@' + user.uid.slice(0,8) };
+          applyProfileToUI(currentProfile);
+          showCallsignEdit();
+        }
+      }
+      if(currentProfile) nalunoWriteCachedProfile(user.uid, currentProfile);
+      try{ nalunoCacheWrite('profile', currentProfile); }catch(_){}
+      if(!gotFirstSnapshot && !closedGate) startSignedInListeners(user);
+      gotFirstSnapshot = true;
+    }, function(err){
+      const msg = String((err && err.message) || err || '');
+      const denied = /permission|insufficient/i.test(msg);
+      if(denied && listenRetry < 6){
+        listenRetry++;
+        setTimeout(attach, Math.min(8000, 300 * listenRetry * listenRetry));
+        return;
+      }
+      if(!gotFirstSnapshot) toast('Couldn\u2019t load your callsign — check your connection');
+    });
+  }
+  attach();
 }
 /* If the person already granted notification permission in a previous session, re-fetch
    and re-save their token silently — this is what was actually breaking: the token

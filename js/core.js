@@ -5,6 +5,23 @@
    Scripts share globals (intentional) so load order matches the old monolith.
    ============================================================ */
 const $ = id => document.getElementById(id);
+/** Map Firebase/SDK jargon to a line a person can act on.
+ *  "Missing or insufficient permissions" is Firestore's default denial —
+ *  it was leaking onto the toast from Callsign save, Band start, Wireline,
+ *  and handle search whenever a rule blocked a write (or the auth token
+ *  had not attached yet). */
+function nalunoFriendlyError(msg){
+  const s = String(msg == null ? '' : msg);
+  if(!s) return s;
+  if(/missing or insufficient permissions|permission-denied/i.test(s)){
+    return 'This was blocked. Sign out and back in, then try again.';
+  }
+  if(/failed to fetch|networkerror|network request failed|unavailable/i.test(s)){
+    return 'No connection right now — try again in a moment.';
+  }
+  return s;
+}
+try{ window.nalunoFriendlyError = nalunoFriendlyError; }catch(_){}
 /** onTap is optional and backward-compatible — every existing call site
  *  passes only msg and is completely unaffected. Added specifically so a
  *  "someone went live" toast can actually be tapped through to the
@@ -14,7 +31,7 @@ const $ = id => document.getElementById(id);
  *  the toast had no way to be tapped at all, so navigating was never
  *  actually possible despite the code clearly intending it to be). */
 function toast(msg, onTap){
-  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  const t = $('toast'); t.textContent = nalunoFriendlyError(msg); t.classList.add('show');
   clearTimeout(toast._t); toast._t = setTimeout(()=>t.classList.remove('show'), typeof onTap === 'function' ? 6500 : 1900);
   if(typeof onTap === 'function'){
     t.style.cursor = 'pointer';
@@ -252,7 +269,7 @@ window.addEventListener('error', function(ev){
 window.addEventListener('unhandledrejection', function(ev){
   try{ console.error('[naluno:promise]', ev.reason); }catch(_){}
 });
-console.log('[naluno] build 2026.09.08d');
+console.log('[naluno] build 2026.09.18a');
 
 
 function nalunoShrinkImageDataUrl(dataUrl, maxEdge, quality){

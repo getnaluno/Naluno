@@ -881,6 +881,7 @@
     });
     const suspended = users.filter(function (u) { return !!(u.suspended || u.status === 'SUSPENDED'); });
     const restricted = users.filter(function (u) { return !!(u.restricted || u.status === 'RESTRICTED'); });
+    const closed = users.filter(function (u) { return u.accountState === 'closed' || u.deleted === true; });
 
     const byPlatform = {};
     users.forEach(function (u) {
@@ -1094,6 +1095,7 @@
         still_30_pct: still30Pct,
         suspended: suspended,
         restricted: restricted,
+        closed: closed,
         by_platform: byPlatform,
       },
       content: {

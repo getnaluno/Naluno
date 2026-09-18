@@ -7,7 +7,7 @@
 const NALUNO_WELCOME_KEY = 'nalunoWelcomeOk';
 const NALUNO_TOUR_KEY = 'nalunoTourOk';
 const NALUNO_LANG_KEY = 'nalunoLang';
-const NALUNO_LEGAL_EFFECTIVE = '5 September 2026';
+const NALUNO_LEGAL_EFFECTIVE = '18 September 2026';
 
 function nalunoOnboardLang(){
   try{
@@ -268,7 +268,7 @@ function nalunoPrivacyHtml(){
     + '<li>Compass — until you clear it or delete the account.</li>'
     + '</ul>'
     + '<h3>13. Your choices</h3>'
-    + '<p>You can edit Callsign, remove a photo, turn Find Naluno off, hide the weather strip, lock Compass, refuse notifications, and sign out. You can ask us to delete an account through Compass or getnaluno.com. Some copies (for example a Signal already expired, or a Band already wiped) are already gone.</p>'
+    + '<p>You can edit Callsign, remove a photo, turn Find Naluno off, hide the weather strip, lock Compass, refuse notifications, and sign out. You can close the Callsign from Callsign (a reason is stored on the Control Centre). Compass and getnaluno.com can also reach the people who run Naluno. Some copies (for example a Signal already expired, or a Band already wiped) are already gone. A closed Callsign can be restored from the Control Centre.</p>'
     + '<h3>14. Children</h3>'
     + '<p>Naluno is not for children under 13. If you are 13–17, use it only with a parent or guardian’s permission where your country requires that.</p>'
     + '<h3>15. Security</h3>'
@@ -313,7 +313,7 @@ function nalunoTermsHtml(){
     + '<h3>10. Availability</h3>'
     + '<p>We aim to keep Naluno up. We do not promise it will always work, that a call will always connect, or that a file will last forever. Phones, networks, and app stores fail. A force-close and reopen after an update is sometimes required.</p>'
     + '<h3>11. Ending the account</h3>'
-    + '<p>You may sign out at any time. You may ask for the account to be deleted. We may suspend or close an account that breaks these terms, harms others, or puts the service at risk. Band wipes, Signal expiry, and encryption still apply — we cannot hand you a Band that has already been deleted.</p>'
+    + '<p>You may sign out at any time. You may close the Callsign from Callsign; a reason is stored on the Control Centre. We may suspend or close an account that breaks these terms, harms others, or puts the service at risk, and that close is also stored with a reason. A closed Callsign can be restored from the Control Centre. Band wipes, Signal expiry, and encryption still apply — we cannot hand you a Band that has already been deleted.</p>'
     + '<h3>12. The app is not a bank, a lawyer, or emergency services</h3>'
     + '<p>Compass can be wrong. Weather is a forecast, not a guarantee. Find Naluno is last-known, not a live spy feed. If you need police, medical help, or a bank, use those services directly.</p>'
     + '<h3>13. Disclaimer</h3>'

@@ -522,6 +522,9 @@
     const db = dbOf(passedDb);
     if (!db || !db.collection) return;
     try {
+      if (typeof firebase !== 'undefined' && firebase.auth && !firebase.auth().currentUser) return;
+    } catch (_) {}
+    try {
       __unsub = db.collection('economyConfig').doc('currency').onSnapshot(function (snap) {
         if (!snap || !snap.exists) return;
         const d = snap.data() || {};

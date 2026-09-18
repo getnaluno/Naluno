@@ -406,6 +406,10 @@ async function searchHandle(){
       $('findPeopleResult').innerHTML = `<div style="color:var(--text-dim); font-size:13px;">No one found at @${escapeHtml(handle)}.</div>`;
       return;
     }
+    if(handleDoc.data() && handleDoc.data().closed){
+      $('findPeopleResult').innerHTML = `<div style="color:var(--text-dim); font-size:13px;">No one found at @${escapeHtml(handle)}.</div>`;
+      return;
+    }
     const theirUid = handleDoc.data().uid;
     if(theirUid === currentUser.uid){
       $('findPeopleResult').innerHTML = `<div style="color:var(--text-dim); font-size:13px;">That\u2019s you.</div>`;
@@ -417,6 +421,10 @@ async function searchHandle(){
       return;
     }
     const data = userDoc.data();
+    if(data && (data.accountState === 'closed' || data.deleted === true)){
+      $('findPeopleResult').innerHTML = `<div style="color:var(--text-dim); font-size:13px;">No one found at @${escapeHtml(handle)}.</div>`;
+      return;
+    }
     const already = contacts.some(c => c.firebaseUid === theirUid);
     const face = {
       name: data.name || 'Unknown',
@@ -435,7 +443,7 @@ async function searchHandle(){
       $('connectResultBtn').onclick = ()=> connectWithUser(theirUid, data, handle);
     }
   }catch(e){
-    $('findPeopleResult').innerHTML = `<div style="color:var(--red); font-size:13px;">${escapeHtml(e.message||'Search failed')}</div>`;
+    $('findPeopleResult').innerHTML = `<div style="color:var(--red); font-size:13px;">${escapeHtml((typeof nalunoFriendlyError === 'function' ? nalunoFriendlyError(e.message) : e.message)||'Search failed')}</div>`;
   }
 }
 $('findHandleBtn').onclick = searchHandle;

@@ -173,23 +173,36 @@ async function sendNalunoOperatorMail(kind, text){
 async function requestAccountDeletion(extra){
   if(compassMailBusy) return;
   if(!currentUser){ toast('Sign in first'); return; }
-  const ok = window.confirm('This sends a delete request to the people who run Naluno. They only see this request — not your Compass notes. The account is not removed instantly. Continue?');
+  let reason = String(extra || '').trim();
+  if(reason.length < 8){
+    reason = window.prompt('Why are you closing this Callsign? A reason is stored on the Control Centre.') || '';
+    reason = String(reason).trim();
+  }
+  if(reason.length < 8){ toast('Write a reason first'); return; }
+  const ok = window.confirm('Close this Callsign? It leaves the air. Restore is done from the Control Centre, not from Compass.');
   if(!ok){
-    pushCompassNote('No request was sent. You can ask again anytime.');
+    pushCompassNote('Nothing was closed.');
     return;
   }
   compassMailBusy = true;
   try{
+    if(typeof closeOwnCallsign === 'function'){
+      const done = await closeOwnCallsign(reason);
+      if(done){
+        pushCompassNote('Callsign closed. The reason is on the Control Centre. It can be restored from there.');
+        return;
+      }
+    }
     const who = compassIdentity();
     const text = 'Please delete my Naluno account.'
       + (who.handle ? ' Handle: ' + who.handle + '.' : '')
       + (who.uid ? ' Uid: ' + who.uid + '.' : '')
-      + (extra ? '\n\n' + String(extra).trim() : '');
+      + '\n\n' + reason;
     const sent = await sendNalunoOperatorMail('delete-account', text);
     if(sent){
-      pushCompassNote('Request received. The people who run Naluno have it — your handle, this account, and that you asked for it to be deleted. Compass notes stay on your account until they remove it. This is not instant; they close it by hand. If you did not mean this, use Write to Naluno and say so.');
+      pushCompassNote('Request received. The people who run Naluno have it. This is not instant if the Callsign could not close from this phone.');
     } else {
-      pushCompassNote('Could not send that just now. Try again, or use the contact form on getnaluno.com.');
+      pushCompassNote('Could not send that just now. Close it from Callsign, or use the contact form on getnaluno.com.');
     }
   } finally { compassMailBusy = false; }
 }

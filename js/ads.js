@@ -741,15 +741,20 @@
   function boot() {
     injectStyle();
     startWatchClock();
+    function signedIn() {
+      try {
+        return !!(typeof firebase !== 'undefined' && firebase.auth && firebase.auth().currentUser);
+      } catch (_) { return false; }
+    }
     function go() {
+      if (!signedIn()) return;
       loadAdRates();
       load(false).then(function () { listen(); });
     }
-    if (typeof fbDb !== 'undefined' && fbDb) go();
-    else if (typeof firebase !== 'undefined' && firebase.auth) {
+    if (typeof firebase !== 'undefined' && firebase.auth) {
       try {
-        firebase.auth().onAuthStateChanged(function () { go(); });
-      } catch (_) { go(); }
+        firebase.auth().onAuthStateChanged(function (u) { if (u) go(); });
+      } catch (_) { setTimeout(go, 800); }
     } else {
       setTimeout(go, 1200);
     }

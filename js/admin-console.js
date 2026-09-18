@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260915c';
+  const BUILD = '20260918a';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -886,7 +886,7 @@
       const filtered = mail.filter(function (m) {
         const st = String(m.status || 'new').toLowerCase();
         if (q === 'new') return st === 'new';
-        if (q === 'delete') return String(m.kind || '') === 'delete-account';
+        if (q === 'delete') return String(m.kind || '') === 'delete-account' || String(m.kind || '') === 'violation-close';
         if (q === 'compass') return String(m.source || '') === 'compass';
         if (q === 'web') return String(m.source || '') === 'web';
         if (q === 'done') return st === 'done';
@@ -1098,14 +1098,14 @@
       el.innerHTML =
         '<div class="row"><input id="admUserQ" placeholder="Search name, handle, email or uid" style="flex:1" value="' + escapeHtml(__tabCache.userQ || '') + '" />'
         + '<button type="button" class="ghost" id="admUserSearch">Search</button></div>'
-        + kpis([['Users', u.total || 0], ['Matching', list.length], ['Suspended', (u.suspended || []).length], ['Restricted', (u.restricted || []).length],
+        + kpis([['Users', u.total || 0], ['Matching', list.length], ['Closed', (u.closed || []).length], ['Suspended', (u.suspended || []).length], ['Restricted', (u.restricted || []).length],
           ['With a pin', (d.locations && d.locations.with_coords) || 0],
           ['Per monthly active', aedUsd((d.costs && d.costs.per_mau_aed) || 0)]])
         + card('By platform', plainRows(['Platform', 'People'],
           Object.keys(u.by_platform || {}).map(function (k) { return [k, u.by_platform[k]]; })))
         + card('People', table(['Name', 'Handle', 'Last seen', 'Place', 'Cost / mo', 'State', ''],
           list.slice(0, 80).map(function (row) {
-            const state = row.suspended ? 'SUSPENDED' : (row.restricted ? 'restricted' : 'ok');
+            const state = (row.accountState === 'closed' || row.deleted) ? 'CLOSED' : (row.suspended ? 'SUSPENDED' : (row.restricted ? 'restricted' : 'ok'));
             const pin = coordsOf(row);
             const pc = personCost(d, row.id);
             return [
@@ -1532,7 +1532,7 @@
         + ' · uid ' + escapeHtml(uid) + '</p>'
         + kpis([['Last seen', row.lastSeen ? when(row.lastSeen) : 'never'],
           ['Platform', row.lastPlatform || '—'],
-          ['State', row.suspended ? 'SUSPENDED' : (row.restricted ? 'restricted' : 'ok')],
+          ['State', (row.accountState === 'closed' || row.deleted) ? 'CLOSED' : (row.suspended ? 'SUSPENDED' : (row.restricted ? 'restricted' : 'ok'))],
           ['Broadcasts', bcasts.length],
           ['Signals', ((d.signals && d.signals.list) || []).filter(function (s) { return s.uid === uid; }).length],
           ['Cost / month', (function () {
@@ -1559,7 +1559,14 @@
             + '&layer=mapnik&marker=' + pin.lat + '%2C' + pin.lng + '"></iframe>'
           : '<p class="sub">No GPS pin yet. Turn Find Naluno on under Callsign on that phone.</p>')
         + (row.suspended ? '<p class="sub">Suspended: ' + escapeHtml(row.suspendedReason || '—') + '</p>' : '')
+        + (row.accountState === 'closed' || row.deleted
+          ? '<p class="sub">Closed ' + escapeHtml(when(row.closedAt || row.deletedAt)) + ' · '
+            + escapeHtml(row.closedKind || 'self') + ' · ' + escapeHtml(row.closedReason || row.deletedReason || '—') + '</p>'
+          : '')
         + '<div class="row">'
+        + (row.accountState === 'closed' || row.deleted
+          ? '<button type="button" class="primary admAct" data-act="restore">Restore Callsign</button>'
+          : '<button type="button" class="danger admAct" data-act="close">Close for violation</button>')
         + (row.suspended
           ? '<button type="button" class="primary admAct" data-act="unsuspend">Lift suspension</button>'
           : '<button type="button" class="danger admAct" data-act="suspend">Suspend</button>')
@@ -1597,8 +1604,62 @@
     if (action === 'unsuspend') { patch.suspended = false; patch.suspendedReason = ''; }
     if (action === 'restrict') { patch.restricted = true; patch.restrictedReason = reason.trim(); }
     if (action === 'unrestrict') { patch.restricted = false; patch.restrictedReason = ''; }
+    if (action === 'close') {
+      patch.accountState = 'closed';
+      patch.closedAt = Date.now();
+      patch.closedBy = currentUser.uid;
+      patch.closedKind = 'violation';
+      patch.closedReason = reason.trim();
+      patch.closedPublic = 'Closed by Naluno';
+      patch.deleted = true;
+      patch.deletedAt = Date.now();
+    }
+    if (action === 'restore') {
+      patch.accountState = 'active';
+      patch.deleted = false;
+      patch.restoredAt = Date.now();
+      patch.restoredBy = currentUser.uid;
+      patch.restoreReason = reason.trim();
+      patch.closedKind = '';
+      patch.closedPublic = '';
+    }
     try {
       await db.collection('users').doc(uid).set(patch, { merge: true });
+      if (action === 'close' || action === 'restore') {
+        const person = (__snap && __snap.users && (__snap.users.list || []).find(function (u) { return u.id === uid; })) || {};
+        const handle = String(person.handle || person.number || '').replace(/^@/, '').toLowerCase();
+        if (handle) {
+          try {
+            const href = db.collection('handles').doc(handle);
+            if (action === 'close') await href.set({ uid: uid, closed: true, closedAt: Date.now() }, { merge: true });
+            else await href.set({ uid: uid, closed: false }, { merge: true });
+          } catch (_) {}
+        }
+        try {
+          await db.collection('accountEvents').add({
+            uid: uid,
+            action: action,
+            kind: action === 'close' ? 'violation' : 'restore',
+            reason: reason.trim(),
+            by: currentUser.uid,
+            handle: handle || '',
+            ts: Date.now(),
+          });
+        } catch (_) {}
+        try {
+          await db.collection('deskMail').add({
+            source: 'console',
+            kind: action === 'close' ? 'violation-close' : 'restore',
+            uid: uid,
+            handle: handle || '',
+            name: '',
+            text: (action === 'close' ? 'Closed for a violation. ' : 'Callsign restored. ') + reason.trim(),
+            ts: Date.now(),
+            status: 'new',
+            by: currentUser.uid,
+          });
+        } catch (_) {}
+      }
       await writeAudit(action, uid, reason.trim());
       toast('Done — logged');
       await loadTab('users', true);
