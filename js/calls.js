@@ -447,10 +447,11 @@ function stopRingtone(){
 }
 
 /* Custom ringtone — a full song on this phone. IndexedDB holds the file
-   (localStorage's 4MB cap is why a track used to be refused). Android's
-   audio/* picker is the short-sound sheet; the input uses file extensions
-   so Files / Music opens instead. */
-const RINGTONE_MAX_BYTES = 40 * 1024 * 1024;
+   (localStorage's 4MB cap is why a track used to be refused). No accept=
+   filter on the picker: Android's audio/* sheet is short sounds, and a
+   short extension list hid flac/wma/aiff and the rest. Files opens with
+   every file; we only refuse photos/docs and oversized tracks. */
+const RINGTONE_MAX_BYTES = 80 * 1024 * 1024;
 function ringtoneDbOpen(){
   return new Promise(function(resolve, reject){
     try{
@@ -512,11 +513,12 @@ $('ringtoneFileInput').onchange = async (e)=>{
   if(!file) return;
   const mime = String(file.type || '').toLowerCase();
   const name = String(file.name || 'song');
-  const looksAudio = /^audio\//.test(mime) || /\.(mp3|m4a|aac|wav|ogg|flac|opus|webm|mp4)$/i.test(name);
-  if(!looksAudio){ toast('Pick an audio file'); return; }
-  if(file.size > RINGTONE_MAX_BYTES){ toast('That track is too large — pick one under 40MB'); return; }
+  const looksDoc = /^(image|text)\//.test(mime) || /^application\/(pdf|zip|msword|vnd\.|json|xml)/.test(mime)
+    || /\.(png|jpe?g|gif|webp|heic|bmp|svg|pdf|txt|doc|docx|xls|xlsx|ppt|pptx|zip|html?)$/i.test(name);
+  if(looksDoc){ toast('Pick a song, not that file'); return; }
+  if(file.size > RINGTONE_MAX_BYTES){ toast('That track is too large — pick one under 80MB'); return; }
   try{
-    await ringtoneDbPut({ blob: file, name: name, type: file.type || 'audio/mpeg', at: Date.now() });
+    await ringtoneDbPut({ blob: file, name: name, type: file.type || 'application/octet-stream', at: Date.now() });
     try{ localStorage.removeItem('naluno:customRingtone'); }catch(_){}
     try{ localStorage.setItem('naluno:customRingtoneName', name); }catch(_){}
     setCustomRingtoneFromBlob(file, name);
@@ -537,7 +539,7 @@ $('resetRingtoneBtn').onclick = ()=>{
   }
   customRingtoneUrl = null;
   customRingtoneName = '';
-  if($('ringtoneStatus')) $('ringtoneStatus').textContent = 'Using the built-in tone. You can pick a full song from this phone — this device only.';
+  if($('ringtoneStatus')) $('ringtoneStatus').textContent = 'Using the built-in tone. Any music file on this phone — this device only.';
   if($('resetRingtoneBtn')) $('resetRingtoneBtn').style.display = 'none';
   toast('Back to the built-in tone');
 };
