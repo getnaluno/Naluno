@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260918a';
+  const BUILD = '20260918c';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -413,6 +413,95 @@
     (a || []).forEach(add);
     (b || []).forEach(add);
     return out;
+  }
+  function personHandle(row) {
+    return String((row && (row.handle || row.number)) || '').replace(/^@/, '');
+  }
+  function personBlob(row) {
+    if (!row) return '';
+    return [
+      row.name, row.displayName, row.handle, row.number,
+      row.email, row.id, row.uid, row.accountState, row.closedKind
+    ].map(function (x) { return String(x || '').toLowerCase(); }).join(' ');
+  }
+  function mergeUserIntoSnap(row) {
+    if (!row || !row.id) return;
+    if (!__snap) return;
+    if (!__snap.users) __snap.users = { list: [] };
+    if (!__snap.users.list) __snap.users.list = [];
+    const i = __snap.users.list.findIndex(function (u) { return u.id === row.id; });
+    const next = Object.assign({}, i >= 0 ? __snap.users.list[i] : {}, row, {
+      id: row.id,
+      handle: personHandle(row) || (i >= 0 ? personHandle(__snap.users.list[i]) : ''),
+    });
+    if (i >= 0) __snap.users.list[i] = next;
+    else __snap.users.list.unshift(next);
+    if (__snap._raw) {
+      __snap._raw.users = __snap._raw.users || [];
+      const j = __snap._raw.users.findIndex(function (u) { return u.id === row.id; });
+      if (j >= 0) __snap._raw.users[j] = Object.assign({}, __snap._raw.users[j], next);
+      else __snap._raw.users.unshift(next);
+    }
+    return next;
+  }
+  async function findPeople(q) {
+    const raw = String(q || '').trim();
+    if (!raw) return [];
+    const needle = raw.replace(/^@/, '').toLowerCase();
+    const found = {};
+    function add(row) {
+      if (!row) return;
+      const id = row.id || row.uid;
+      if (!id) return;
+      const prev = found[id] || { id: id };
+      found[id] = Object.assign({}, prev, row, {
+        id: id,
+        handle: personHandle(row) || personHandle(prev),
+      });
+    }
+    const fromSnap = []
+      .concat((__snap && __snap.users && __snap.users.list) || [])
+      .concat((__snap && __snap._raw && __snap._raw.users) || []);
+    fromSnap.forEach(function (row) {
+      if (personBlob(row).indexOf(needle) >= 0) add(row);
+    });
+    const db = adminDb();
+    if (db) {
+      const looksUid = /^[A-Za-z0-9]{20,}$/.test(raw) && raw.indexOf('@') < 0 && raw.indexOf('.') < 0;
+      if (looksUid) {
+        try {
+          const s = await db.collection('users').doc(raw).get();
+          if (s.exists) add(Object.assign({ id: s.id }, s.data()));
+        } catch (_) {}
+      }
+      try {
+        const h = await db.collection('handles').doc(needle).get();
+        if (h.exists) {
+          const data = h.data() || {};
+          const uid = data.uid;
+          if (uid) {
+            try {
+              const u = await db.collection('users').doc(uid).get();
+              if (u.exists) add(Object.assign({ id: u.id }, u.data(), { handle: needle, closed: data.closed }));
+              else add({ id: uid, handle: needle, closed: data.closed });
+            } catch (_) {
+              add({ id: uid, handle: needle, closed: data.closed });
+            }
+          }
+        }
+      } catch (_) {}
+      function byField(field, value) {
+        return db.collection('users').where(field, '==', value).limit(8).get().then(function (s) {
+          s.forEach(function (d) { add(Object.assign({ id: d.id }, d.data())); });
+        }).catch(function () {});
+      }
+      await Promise.all([
+        byField('number', needle),
+        byField('handle', needle),
+        raw.indexOf('@') >= 0 ? byField('email', raw) : Promise.resolve(),
+      ]);
+    }
+    return Object.keys(found).map(function (k) { return found[k]; });
   }
   async function loadSignals(users) {
     const top = await colDocs('signals', 400);
@@ -1089,15 +1178,24 @@
     }
 
     if (tab === 'users') {
-      const q = (__tabCache.userQ || '').toLowerCase();
-      const list = (u.list || []).filter(function (row) {
+      const q = (__tabCache.userQ || '').toLowerCase().replace(/^@/, '');
+      let list = (u.list || []).filter(function (row) {
         if (!q) return true;
-        const blob = ((row.name || '') + ' ' + (row.handle || '') + ' ' + (row.email || '') + ' ' + (row.id || '')).toLowerCase();
-        return blob.indexOf(q) >= 0;
+        return personBlob(row).indexOf(q) >= 0;
       });
+      if (q && __tabCache.userHits && __tabCache.userHits.length) {
+        const seen = {};
+        list.forEach(function (row) { seen[row.id] = true; });
+        __tabCache.userHits.forEach(function (row) {
+          if (!row || !row.id || seen[row.id]) return;
+          seen[row.id] = true;
+          list.push(row);
+        });
+      }
       el.innerHTML =
-        '<div class="row"><input id="admUserQ" placeholder="Search name, handle, email or uid" style="flex:1" value="' + escapeHtml(__tabCache.userQ || '') + '" />'
+        '<div class="row"><input id="admUserQ" placeholder="Handle, uid, email or name" style="flex:1" value="' + escapeHtml(__tabCache.userQ || '') + '" />'
         + '<button type="button" class="ghost" id="admUserSearch">Search</button></div>'
+        + '<p class="sub" id="admUserHint" style="margin:8px 0 0;">Looks up the live handle map as well as loaded accounts.</p>'
         + kpis([['Users', u.total || 0], ['Matching', list.length], ['Closed', (u.closed || []).length], ['Suspended', (u.suspended || []).length], ['Restricted', (u.restricted || []).length],
           ['With a pin', (d.locations && d.locations.with_coords) || 0],
           ['Per monthly active', aedUsd((d.costs && d.costs.per_mau_aed) || 0)]])
@@ -1110,7 +1208,7 @@
             const pc = personCost(d, row.id);
             return [
               escapeHtml(userName(row)),
-              escapeHtml(row.handle || row.number || ''),
+              escapeHtml(personHandle(row) || row.handle || row.number || ''),
               escapeHtml(row.lastSeen ? when(row.lastSeen) : 'never'),
               pin ? pinHtml(pin.lat, pin.lng, pin.accuracy, pin.place) : '—',
               escapeHtml(pc ? aed(pc.monthly_aed) : '—'),
@@ -1121,15 +1219,29 @@
         + '<div id="admUserDetail"></div>';
       const run = function () {
         const inp = $('admUserQ');
+        const hint = $('admUserHint');
         __tabCache.userQ = (inp && inp.value) || '';
-        renderTab('users', d);
+        const query = String(__tabCache.userQ || '').trim();
+        if (!query) {
+          __tabCache.userHits = [];
+          renderTab('users', d);
+          return;
+        }
+        if (hint) hint.textContent = 'Looking…';
+        findPeople(query).then(function (rows) {
+          __tabCache.userHits = rows || [];
+          (rows || []).forEach(mergeUserIntoSnap);
+          renderTab('users', __snap || d);
+        }).catch(function () {
+          renderTab('users', d);
+        });
       };
       if ($('admUserSearch')) $('admUserSearch').onclick = run;
       if ($('admUserQ')) $('admUserQ').addEventListener('keydown', function (ev) {
         if (ev.key === 'Enter') { ev.preventDefault(); run(); }
       });
       el.querySelectorAll('.admUserOpen').forEach(function (btn) {
-        btn.onclick = function () { openUser(btn.getAttribute('data-uid'), d); };
+        btn.onclick = function () { openUser(btn.getAttribute('data-uid'), __snap || d); };
       });
       return;
     }
@@ -1462,7 +1574,54 @@
     }
 
     if (tab === 'search') {
-      el.innerHTML = card('Search', gap(g.search || ''));
+      const q = __tabCache.searchQ || '';
+      const hits = __tabCache.searchHits || [];
+      el.innerHTML =
+        card('Find a Callsign',
+          '<p class="sub" style="margin:0 0 12px;">Handle, uid, email or name. Hits the live handle map, not only the first page of loaded accounts.</p>'
+          + '<div class="row"><input id="admFindQ" placeholder="@handle, uid, email, name" style="flex:1" value="' + escapeHtml(q) + '" />'
+          + '<button type="button" class="primary" id="admFindGo">Find</button></div>'
+          + '<p class="sub" id="admFindHint" style="margin:10px 0 0;"></p>')
+        + (hits.length
+          ? card('Matches', table(['Name', 'Handle', 'Uid', 'State', ''],
+            hits.map(function (row) {
+              const state = (row.accountState === 'closed' || row.deleted || row.closed) ? 'CLOSED' : (row.suspended ? 'SUSPENDED' : 'ok');
+              return [
+                escapeHtml(userName(row)),
+                escapeHtml(personHandle(row) || '—'),
+                escapeHtml(String(row.id || '').slice(0, 22)),
+                escapeHtml(state),
+                '<button type="button" class="ghost admFindOpen" data-uid="' + escapeHtml(row.id) + '">Open</button>',
+              ];
+            })))
+          : (q ? '<p class="sub">No match for that yet.</p>' : ''))
+        + '<div id="admUserDetail"></div>';
+      const go = function () {
+        const inp = $('admFindQ');
+        const hint = $('admFindHint');
+        __tabCache.searchQ = (inp && inp.value) || '';
+        const query = String(__tabCache.searchQ || '').trim();
+        if (!query) {
+          __tabCache.searchHits = [];
+          renderTab('search', d);
+          return;
+        }
+        if (hint) hint.textContent = 'Looking…';
+        findPeople(query).then(function (rows) {
+          __tabCache.searchHits = rows || [];
+          (rows || []).forEach(mergeUserIntoSnap);
+          renderTab('search', __snap || d);
+        }).catch(function () {
+          if (hint) hint.textContent = 'Could not look that up just now.';
+        });
+      };
+      if ($('admFindGo')) $('admFindGo').onclick = go;
+      if ($('admFindQ')) $('admFindQ').addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); go(); }
+      });
+      el.querySelectorAll('.admFindOpen').forEach(function (btn) {
+        btn.onclick = function () { openUser(btn.getAttribute('data-uid'), __snap || d); };
+      });
       return;
     }
 

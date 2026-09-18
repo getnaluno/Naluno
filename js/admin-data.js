@@ -639,7 +639,7 @@
       return {
         uid: u.id,
         name: nameOf[u.id] || String(u.id || '').slice(0, 10),
-        handle: u.handle || '',
+        handle: u.handle || u.number || '',
         mau: !!mauSet[u.id],
         broadcast_bytes: s.broadcast_bytes,
         signal_bytes: s.signal_bytes,
@@ -820,7 +820,15 @@
     raw = raw || {};
     const now = num(raw.now) || Date.now();
     const zone = raw.zone || adminZone();
-    const users = raw.users || [];
+    const users = (raw.users || []).map(function (u) {
+      const row = Object.assign({}, u);
+      const h = String(row.handle || row.number || '').replace(/^@/, '');
+      if (h) {
+        row.handle = h;
+        if (!row.number) row.number = h;
+      }
+      return row;
+    });
     const broadcasts = raw.broadcasts || [];
     const signals = raw.signals || [];
     const toga = raw.toga || [];
@@ -1201,7 +1209,7 @@
       audit: audit,
       gaps: {
         notifications: 'Delivery receipts live on the device. There is no central sent/delivered ledger yet.',
-        search: 'Search queries are not stored, so trending and zero-result reports are not available.',
+        search: 'Find a Callsign, uid, email or name. Looks up the live handle map, not only the first loaded page of accounts.',
         payments: 'No payment provider is connected. Ledgers exist so the shape is auditable before money moves.',
         content_hub: 'Sports, movies and channels are not in the product yet.',
         cpu_memory: 'Cloudflare and Firebase do not expose instance processor (CPU) or memory (RAM) to this console.',
