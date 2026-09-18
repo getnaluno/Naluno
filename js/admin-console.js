@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260918c';
+  const BUILD = '20260918g';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -365,6 +365,18 @@
       return out;
     } catch (_) { return []; }
   }
+  async function colDocsOrder(name, field, limit) {
+    const db = adminDb();
+    if (!db) return [];
+    try {
+      const snap = await db.collection(name).orderBy(field, 'desc').limit(limit || 400).get();
+      const out = [];
+      snap.forEach(function (d) { out.push(Object.assign({ id: d.id }, d.data())); });
+      return out;
+    } catch (_) {
+      return colDocs(name, limit);
+    }
+  }
   function parentUidOf(doc) {
     try {
       const parent = doc.ref && doc.ref.parent && doc.ref.parent.parent;
@@ -551,6 +563,7 @@
       worker: {}, sw: __swInfo, now: Date.now(),
       zone: Data ? (Data.adminZone ? Data.adminZone() : Data.localZone()) : undefined,
       beacons: [], originMarks: [], deskMail: [], deskAds: [],
+      siteSessions: [], siteDays: [],
       adRates: {},
       currency: {},
       costInputs: readCostInputs(),
@@ -561,6 +574,8 @@
       colDocs('reports', 80).then(function (r) { pack.reports = r; }),
       colDocs('deskMail', 80).then(function (r) { pack.deskMail = r; }),
       colDocs('deskAds', 80).then(function (r) { pack.deskAds = r; }),
+      colDocsOrder('siteSessions', 'startedAt', 800).then(function (r) { pack.siteSessions = r; }),
+      colDocs('siteDays', 180).then(function (r) { pack.siteDays = r; }),
     ];
     if (db) {
       core.push(db.collection('economyConfig').doc('flags').get().then(function (s) {
@@ -726,6 +741,30 @@
     for (let i = 0; i < list.length; i++) if (list[i].uid === uid) return list[i];
     return null;
   }
+  function dur(ms) {
+    ms = Number(ms) || 0;
+    if (ms < 1000) return '0s';
+    const s = Math.round(ms / 1000);
+    if (s < 60) return s + 's';
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    if (m < 60) return r ? (m + 'm ' + r + 's') : (m + 'm');
+    const h = Math.floor(m / 60);
+    return (m % 60) ? (h + 'h ' + (m % 60) + 'm') : (h + 'h');
+  }
+  function bars(items, limit) {
+    items = (items || []).slice(0, limit || 12);
+    if (!items.length) return '<p class="sub">Nothing recorded yet.</p>';
+    const max = Math.max.apply(null, items.map(function (i) { return Number(i.n) || 0; })) || 1;
+    return items.map(function (i) {
+      const n = Number(i.n) || 0;
+      const pct = Math.max(2, Math.round(100 * n / max));
+      return '<div class="flag-row" style="gap:10px;">'
+        + '<span style="flex:0 0 118px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(String(i.label || '')) + '</span>'
+        + '<span style="flex:1;height:8px;background:var(--line);border-radius:99px;overflow:hidden;"><i style="display:block;height:100%;width:' + pct + '%;background:linear-gradient(90deg,var(--mint),var(--cyan));"></i></span>'
+        + '<span style="width:46px;text-align:right;font-variant-numeric:tabular-nums;font-family:var(--dial);font-size:11px;">' + n + '</span></div>';
+    }).join('');
+  }
   function kpi(label, value) {
     return '<div class="kpi"><b>' + escapeHtml(String(value == null ? '—' : value)) + '</b><span>' + escapeHtml(label) + '</span></div>';
   }
@@ -809,7 +848,9 @@
       + '<span class="m">Daily active <b>' + (u.dau || 0) + '</b></span>'
       + '<span class="m">Broadcasts <b>' + (c.broadcasts_total || 0) + '</b></span>'
       + '<span class="m">Live <b>' + (c.broadcasts_live || 0) + '</b></span>'
-      + '<span class="m">Alerts <b>' + alerts.filter(function (a) { return a.level !== 'ok'; }).length + '</b></span>'
+      + '<span class="m">Site now <b>' + ((d.site && d.site.live) || 0) + '</b></span>'
+      + '<span class="m">Site today <b>' + ((d.site && d.site.today) || 0) + '</b></span>'
+      + '<span class="m">Opened app <b>' + ((d.site && d.site.app_opens_today) || 0) + '</b></span>'
       + '<span class="m">App <b>' + escapeHtml(liveAppLabel()) + '</b></span>'
       + '<span class="m">' + escapeHtml(swBit) + '</span>'
       + '<span class="m">Currency</span>'
@@ -917,6 +958,14 @@
               ? ('~' + Number(d.costs.first_gate.mau_display).toLocaleString('en-GB') + ' monthly active')
               : 'still free']])
           + gap('Counts are registered accounts, not store downloads. Cost-to-serve is the Money model. Customer acquisition cost (CAC) and lifetime value (LTV) are not estimated. Lock-screen ring is not available.'))
+        + card('The public website',
+          kpis([['On the site now', (d.site && d.site.live) || 0],
+            ['Visits today', (d.site && d.site.today) || 0],
+            ['Unique today', (d.site && d.site.uniques_today) || 0],
+            ['Opened Naluno today', (d.site && d.site.app_opens_today) || 0],
+            ['Avg time today', dur((d.site && d.site.avg_ms) || 0)],
+            ['Countries today', ((d.site && d.site.countries) || []).length]])
+          + '<div class="row"><button type="button" class="ghost ccGo" data-go="analytics">Open Analytics</button></div>')
         + card('What are people making?',
           kpis([['Broadcasts', c.broadcasts_total || 0], ['Live now', c.broadcasts_live || 0],
             ['Today', c.broadcasts_today || 0], ['Creators', cr.total || 0]])
@@ -1556,11 +1605,63 @@
     }
 
     if (tab === 'analytics') {
+      const site = d.site || {};
+      const recent = site.recent || [];
       el.innerHTML =
-        card('What are people doing?',
-          kpis([['Sessions (approx daily active)', u.dau || 0], ['Broadcasts viewed (stored views)', c.views || 0],
-            ['Comments', c.comments || 0], ['Signals', s.total || 0]]))
-        + gap('Screen-by-screen paths and completion rates are not stored. Showing them as numbers would be a guess.');
+        card('getnaluno.com right now',
+          kpis([['On the site now', site.live || 0],
+            ['Visits today', site.today || 0],
+            ['Unique today', site.uniques_today || 0],
+            ['New today', site.new_today || 0],
+            ['Returning today', site.returning_today || 0],
+            ['Week (7d)', site.week || 0]]))
+        + card('Time on the site',
+          kpis([['Average today', dur(site.avg_ms || 0)],
+            ['Median today', dur(site.median_ms || 0)],
+            ['Total attention today', dur(site.total_ms_today || 0)],
+            ['Bounce', (site.bounce || 0) + '%'],
+            ['Bounced visits', site.bounce_n || 0],
+            ['Installed (standalone)', site.standalone_today || 0]]))
+        + card('Opened Naluno',
+          kpis([['Opened the app today', site.app_opens_today || 0],
+            ['Open taps today', site.open_clicks_today || 0],
+            ['Visit → open', (site.convert_pct || 0) + '%'],
+            ['App opens (sampled)', site.app_opens || 0],
+            ['Contact form today', site.contact_today || 0],
+            ['Tuner taps today', site.tune_today || 0]])
+          + gap('Opened the app counts a load of /app on this origin, once per browser per day. Open taps are the mint buttons on the public pages. A tap that stays in the same tab is both.'))
+        + card('Countries today', bars(site.countries, 16))
+        + card('Countries (daily rollup)', bars(site.countries_all, 16))
+        + card('Cities today', bars(site.cities, 12))
+        + card('Devices today', bars(site.devices, 8) + bars(site.os, 8) + bars(site.browsers, 8))
+        + card('How they arrived', bars(site.refs, 12) + (site.utm && site.utm.length ? bars(site.utm, 8) : ''))
+        + card('Pages today', bars(site.paths, 8))
+        + card('Language · screen · connection', bars(site.langs, 8) + bars(site.screens, 8) + bars(site.conn, 6))
+        + card('Hour of day (operator timezone)', bars(site.hours, 24))
+        + card('Last 30 days on record',
+          kpis([['Visits (rollup)', site.day_visits || 0],
+            ['App opens (rollup)', site.day_app || 0],
+            ['Attention (rollup)', dur(site.day_ms || 0)],
+            ['Day files', (site.days || []).length]])
+          + plainRows(['Day', 'Visits', 'App opens', 'Attention'],
+            (site.days || []).slice(0, 31).map(function (row) {
+              return [row.id || '', Number(row.visits) || 0, Number(row.appOpens || row.openApp) || 0, dur(row.ms || 0)];
+            })))
+        + card('Latest visits',
+          table(['When', 'Where', 'Device', 'From', 'Time', 'Opened'],
+            recent.slice(0, 25).map(function (s) {
+              const where = [s.city, s.region, s.country].filter(Boolean).join(', ') || (s.tz || '—');
+              const device = [s.device, s.os, s.browser].filter(Boolean).join(' · ');
+              return [
+                escapeHtml(when(s.lastAt || s.startedAt)),
+                escapeHtml(where),
+                escapeHtml(device || '—'),
+                escapeHtml(s.ref || 'direct'),
+                escapeHtml(dur(s.ms || 0)),
+                (Number(s.openApp) > 0 || s.kind === 'app') ? 'yes' : '',
+              ];
+            })))
+        + gap(g.site || '');
       return;
     }
 

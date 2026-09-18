@@ -816,6 +816,121 @@
     };
   }
 
+  function tallyMap(rows, keyFn) {
+    const out = {};
+    (rows || []).forEach(function (row) {
+      const k = String(keyFn(row) || '').trim();
+      if (!k || k === 'undefined') return;
+      out[k] = (out[k] || 0) + 1;
+    });
+    return Object.keys(out).map(function (k) { return { label: k, n: out[k] }; })
+      .sort(function (a, b) { return b.n - a.n; });
+  }
+  function medianOf(nums) {
+    const a = (nums || []).slice().filter(function (n) { return isFinite(n); }).sort(function (x, y) { return x - y; });
+    if (!a.length) return 0;
+    const mid = Math.floor(a.length / 2);
+    return a.length % 2 ? a[mid] : Math.round((a[mid - 1] + a[mid]) / 2);
+  }
+  function hourInZone(ts, zone) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-GB', { timeZone: zone || 'UTC', hour: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(ts));
+      const h = parts.filter(function (p) { return p.type === 'hour'; })[0];
+      return h ? Number(h.value) : new Date(ts).getHours();
+    } catch (_) {
+      return new Date(ts).getHours();
+    }
+  }
+  function deriveSitePulse(sessions, days, now, zone) {
+    sessions = sessions || [];
+    days = days || [];
+    const day0 = startOfLocalDay(now, zone);
+    const day7 = now - 7 * 86400000;
+    const liveCut = now - 2 * 60 * 1000;
+    function tsOf(s) { return num(s.startedAt || s.createdAt || s.lastAt); }
+    const web = sessions.filter(function (s) { return String(s.kind || 'web') !== 'app'; });
+    const appOnly = sessions.filter(function (s) { return String(s.kind || '') === 'app'; });
+    const today = web.filter(function (s) { return tsOf(s) >= day0; });
+    const week = web.filter(function (s) { return tsOf(s) >= day7; });
+    const live = sessions.filter(function (s) { return num(s.lastAt) >= liveCut && String(s.kind || 'web') !== 'app'; });
+    const vids = {};
+    const vidsToday = {};
+    web.forEach(function (s) {
+      const v = String(s.vid || s.id || '');
+      if (!v) return;
+      vids[v] = 1;
+      if (tsOf(s) >= day0) vidsToday[v] = 1;
+    });
+    const returningToday = today.filter(function (s) { return s.fresh === false; }).length;
+    const newToday = today.filter(function (s) { return s.fresh === true; }).length;
+    const durations = today.map(function (s) { return num(s.ms); }).filter(function (n) { return n >= 0; });
+    const avgMs = durations.length ? Math.round(durations.reduce(function (a, b) { return a + b; }, 0) / durations.length) : 0;
+    const bounced = today.filter(function (s) { return num(s.ms) < 8000 && !num(s.openApp) && num(s.scroll) < 25; }).length;
+    const opened = today.filter(function (s) { return num(s.openApp) > 0; }).length;
+    const appToday = appOnly.filter(function (s) { return tsOf(s) >= day0; });
+    const hours = [];
+    for (let h = 0; h < 24; h++) hours.push({ label: (h < 10 ? '0' : '') + h + ':00', n: 0 });
+    today.forEach(function (s) {
+      const h = hourInZone(tsOf(s) || now, zone);
+      if (h >= 0 && h < 24) hours[h].n += 1;
+    });
+    const dayRows = days.slice().sort(function (a, b) { return String(b.id || '').localeCompare(String(a.id || '')); });
+    const dayVisits = dayRows.reduce(function (a, d) { return a + num(d.visits); }, 0);
+    const dayApp = dayRows.reduce(function (a, d) { return a + num(d.appOpens || d.openApp); }, 0);
+    const dayMs = dayRows.reduce(function (a, d) { return a + num(d.ms); }, 0);
+    const countryFromDays = {};
+    dayRows.forEach(function (d) {
+      const c = d.countries || {};
+      Object.keys(c).forEach(function (k) { countryFromDays[k] = (countryFromDays[k] || 0) + num(c[k]); });
+    });
+    const countriesLive = tallyMap(today, function (s) { return s.country || '??'; });
+    const countriesAll = Object.keys(countryFromDays).length
+      ? Object.keys(countryFromDays).map(function (k) { return { label: k, n: countryFromDays[k] }; }).sort(function (a, b) { return b.n - a.n; })
+      : tallyMap(web, function (s) { return s.country || '??'; });
+    return {
+      sessions: sessions.length,
+      web: web.length,
+      today: today.length,
+      week: week.length,
+      uniques_today: Object.keys(vidsToday).length,
+      uniques: Object.keys(vids).length,
+      live: live.length,
+      new_today: newToday,
+      returning_today: returningToday,
+      avg_ms: avgMs,
+      median_ms: medianOf(durations),
+      total_ms_today: durations.reduce(function (a, b) { return a + b; }, 0),
+      bounce: today.length ? Math.round(100 * bounced / today.length) : 0,
+      bounce_n: bounced,
+      open_clicks_today: today.reduce(function (a, s) { return a + num(s.openApp); }, 0),
+      open_sessions_today: opened,
+      convert_pct: today.length ? Math.round(100 * opened / today.length) : 0,
+      app_opens_today: appToday.length,
+      app_opens: appOnly.length,
+      contact_today: today.reduce(function (a, s) { return a + num(s.contact); }, 0),
+      tune_today: today.reduce(function (a, s) { return a + num(s.tune); }, 0),
+      countries: countriesLive,
+      countries_all: countriesAll,
+      cities: tallyMap(today.filter(function (s) { return s.city; }), function (s) { return (s.city || '') + (s.country ? ', ' + s.country : ''); }),
+      devices: tallyMap(today, function (s) { return s.device || 'unknown'; }),
+      os: tallyMap(today, function (s) { return s.os || 'unknown'; }),
+      browsers: tallyMap(today, function (s) { return s.browser || 'unknown'; }),
+      langs: tallyMap(today, function (s) { return s.lang || 'unknown'; }),
+      refs: tallyMap(today, function (s) { return s.ref || 'direct'; }),
+      utm: tallyMap(today.filter(function (s) { return s.utm; }), function (s) { return s.utm; }),
+      paths: tallyMap(today, function (s) { return s.path || '/'; }),
+      hours: hours,
+      screens: tallyMap(today, function (s) { return s.screen || 'unknown'; }),
+      conn: tallyMap(today.filter(function (s) { return s.conn; }), function (s) { return s.conn; }),
+      standalone_today: today.filter(function (s) { return !!s.standalone; }).length,
+      days: dayRows,
+      day_visits: dayVisits,
+      day_app: dayApp,
+      day_ms: dayMs,
+      recent: web.slice().sort(function (a, b) { return num(b.lastAt || b.startedAt) - num(a.lastAt || a.startedAt); }).slice(0, 40),
+    };
+  }
+
   function deriveSnapshot(raw) {
     raw = raw || {};
     const now = num(raw.now) || Date.now();
@@ -842,6 +957,8 @@
     const originMarks = raw.originMarks || [];
     const deskMail = raw.deskMail || raw.mail || [];
     const deskAds = raw.deskAds || raw.ads || [];
+    const siteSessions = raw.siteSessions || [];
+    const siteDays = raw.siteDays || [];
     const flags = Object.assign({}, DEFAULT_FLAGS, raw.flags || {});
     const worker = raw.worker || {};
     const sw = raw.sw || {};
@@ -1205,6 +1322,7 @@
         failures: failMetrics.length,
         list: metrics,
       },
+      site: deriveSitePulse(siteSessions, siteDays, now, zone),
       costs: costs,
       audit: audit,
       gaps: {
@@ -1220,6 +1338,7 @@
         store: 'App-store download counts are not in Firestore. Registration is the first number on record.',
         native: 'Closed-tab ringtone requires a native shell and Unrestricted battery. Lock-screen ring is not available.',
         wire_store: 'Wireline history lives on the phone (IndexedDB). The server is a mailbox: encrypted drops are deleted after the other phone takes them. A photo that is too large for the drop is parked on Cloudflare R2 so it can be fetched, not as the archive.',
+        site: 'Website counts are written by the public pages themselves. Country comes from the network (not GPS). A random browser id counts return visits and is not a Callsign. Publish firestore.rules for siteSessions and siteDays or the numbers stay at zero.',
       },
     };
   }
