@@ -354,6 +354,8 @@ function stopCallerTone(){
 let ringtoneTimer = null;
 let ringtoneActiveNodes = [];
 let customRingtoneUrl = null;
+let customRingtoneName = '';
+let customRingtoneObjectUrl = null;
 let ringtoneAudioEl = null;
 /* Receiver-side ringtone — a short rising chime, repeating, unless a custom sound has
    been uploaded in Callsign, in which case that plays instead. Deliberately more
@@ -444,36 +446,99 @@ function stopRingtone(){
   }
 }
 
-/* Custom ringtone — stored in this browser's localStorage (not Firestore, so it's
-   this-device-only for now; syncing it across your own devices would need a Storage
-   bucket, the same real gap voice notes have). */
+/* Custom ringtone — a full song on this phone. IndexedDB holds the file
+   (localStorage's 4MB cap is why a track used to be refused). Android's
+   audio/* picker is the short-sound sheet; the input uses file extensions
+   so Files / Music opens instead. */
+const RINGTONE_MAX_BYTES = 40 * 1024 * 1024;
+function ringtoneDbOpen(){
+  return new Promise(function(resolve, reject){
+    try{
+      const req = indexedDB.open('naluno-ringtone', 1);
+      req.onupgradeneeded = function(){
+        const db = req.result;
+        if(!db.objectStoreNames.contains('meta')) db.createObjectStore('meta');
+      };
+      req.onsuccess = function(){ resolve(req.result); };
+      req.onerror = function(){ reject(req.error); };
+    }catch(e){ reject(e); }
+  });
+}
+function ringtoneDbPut(record){
+  return ringtoneDbOpen().then(function(db){
+    return new Promise(function(resolve, reject){
+      const tx = db.transaction('meta', 'readwrite');
+      tx.objectStore('meta').put(record, 'current');
+      tx.oncomplete = function(){ resolve(); };
+      tx.onerror = function(){ reject(tx.error); };
+    });
+  });
+}
+function ringtoneDbGet(){
+  return ringtoneDbOpen().then(function(db){
+    return new Promise(function(resolve, reject){
+      const tx = db.transaction('meta', 'readonly');
+      const req = tx.objectStore('meta').get('current');
+      req.onsuccess = function(){ resolve(req.result || null); };
+      req.onerror = function(){ reject(req.error); };
+    });
+  });
+}
+function ringtoneDbClear(){
+  return ringtoneDbOpen().then(function(db){
+    return new Promise(function(resolve){
+      try{
+        const tx = db.transaction('meta', 'readwrite');
+        tx.objectStore('meta').delete('current');
+        tx.oncomplete = function(){ resolve(); };
+        tx.onerror = function(){ resolve(); };
+      }catch(_){ resolve(); }
+    });
+  });
+}
+function setCustomRingtoneFromBlob(blob, name){
+  if(customRingtoneObjectUrl){
+    try{ URL.revokeObjectURL(customRingtoneObjectUrl); }catch(_){}
+    customRingtoneObjectUrl = null;
+  }
+  customRingtoneObjectUrl = URL.createObjectURL(blob);
+  customRingtoneUrl = customRingtoneObjectUrl;
+  customRingtoneName = name || '';
+}
 if($('uploadRingtoneBtn')) $('uploadRingtoneBtn').onclick = function(){ /* overlay input is the tap target */ };
 $('ringtoneFileInput').onchange = async (e)=>{
   const file = e.target.files[0];
   e.target.value = '';
   if(!file) return;
-  if(file.size > 4*1024*1024){ toast('Keep it under 4MB for now'); return; }
+  const mime = String(file.type || '').toLowerCase();
+  const name = String(file.name || 'song');
+  const looksAudio = /^audio\//.test(mime) || /\.(mp3|m4a|aac|wav|ogg|flac|opus|webm|mp4)$/i.test(name);
+  if(!looksAudio){ toast('Pick an audio file'); return; }
+  if(file.size > RINGTONE_MAX_BYTES){ toast('That track is too large — pick one under 40MB'); return; }
   try{
-    const dataUrl = await new Promise((resolve, reject)=>{
-      const r = new FileReader();
-      r.onload = ()=> resolve(r.result);
-      r.onerror = reject;
-      r.readAsDataURL(file);
-    });
-    localStorage.setItem('naluno:customRingtone', dataUrl);
-    customRingtoneUrl = dataUrl;
-    $('ringtoneStatus').textContent = 'Using your uploaded sound: ' + file.name;
-    $('resetRingtoneBtn').style.display = 'block';
+    await ringtoneDbPut({ blob: file, name: name, type: file.type || 'audio/mpeg', at: Date.now() });
+    try{ localStorage.removeItem('naluno:customRingtone'); }catch(_){}
+    try{ localStorage.setItem('naluno:customRingtoneName', name); }catch(_){}
+    setCustomRingtoneFromBlob(file, name);
+    if($('ringtoneStatus')) $('ringtoneStatus').textContent = 'Using “' + name + '” — the whole track, looping.';
+    if($('resetRingtoneBtn')) $('resetRingtoneBtn').style.display = 'block';
     toast('Ringtone updated');
   }catch(err){
-    toast('Couldn\u2019t use that file');
+    toast('Couldn\u2019t keep that song on this phone');
   }
 };
 $('resetRingtoneBtn').onclick = ()=>{
   try{ localStorage.removeItem('naluno:customRingtone'); }catch(e){}
+  try{ localStorage.removeItem('naluno:customRingtoneName'); }catch(e){}
+  ringtoneDbClear().catch(function(){});
+  if(customRingtoneObjectUrl){
+    try{ URL.revokeObjectURL(customRingtoneObjectUrl); }catch(_){}
+    customRingtoneObjectUrl = null;
+  }
   customRingtoneUrl = null;
-  $('ringtoneStatus').textContent = 'Using the built-in tone. You can use your own sound instead — this device only, for now.';
-  $('resetRingtoneBtn').style.display = 'none';
+  customRingtoneName = '';
+  if($('ringtoneStatus')) $('ringtoneStatus').textContent = 'Using the built-in tone. You can pick a full song from this phone — this device only.';
+  if($('resetRingtoneBtn')) $('resetRingtoneBtn').style.display = 'none';
   toast('Back to the built-in tone');
 };
 $('signOutBtn').onclick = ()=>{
@@ -485,14 +550,32 @@ $('signOutBtn').onclick = ()=>{
   // tearing down every live listener — nothing else needed here.
 };
 (function loadCustomRingtone(){
-  try{
-    const saved = localStorage.getItem('naluno:customRingtone');
-    if(saved){
-      customRingtoneUrl = saved;
-      $('ringtoneStatus').textContent = 'Using your uploaded sound.';
-      $('resetRingtoneBtn').style.display = 'block';
+  ringtoneDbGet().then(function(rec){
+    if(rec && rec.blob){
+      setCustomRingtoneFromBlob(rec.blob, rec.name || '');
+      const label = rec.name ? ('Using “' + rec.name + '” — the whole track, looping.') : 'Using your song.';
+      if($('ringtoneStatus')) $('ringtoneStatus').textContent = label;
+      if($('resetRingtoneBtn')) $('resetRingtoneBtn').style.display = 'block';
+      return;
     }
-  }catch(e){ /* localStorage unavailable — built-in tone still works fine */ }
+    try{
+      const saved = localStorage.getItem('naluno:customRingtone');
+      if(saved){
+        customRingtoneUrl = saved;
+        if($('ringtoneStatus')) $('ringtoneStatus').textContent = 'Using your uploaded sound.';
+        if($('resetRingtoneBtn')) $('resetRingtoneBtn').style.display = 'block';
+      }
+    }catch(e){}
+  }).catch(function(){
+    try{
+      const saved = localStorage.getItem('naluno:customRingtone');
+      if(saved){
+        customRingtoneUrl = saved;
+        if($('ringtoneStatus')) $('ringtoneStatus').textContent = 'Using your uploaded sound.';
+        if($('resetRingtoneBtn')) $('resetRingtoneBtn').style.display = 'block';
+      }
+    }catch(e){}
+  });
 })();
 
 /* ---------------- REAL CALLS (WebRTC, Firestore signaling) ----------------
