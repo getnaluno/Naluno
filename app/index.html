@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.09.15d" />
+  <meta name="naluno-build" content="2026.09.18a" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.09.15d">
+<meta name="app-version" content="2026.09.18a">
 <meta name="description" content="A statement from the future.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="Watch on Naluno.">
@@ -110,9 +110,9 @@
 })();
 </script>
 <link rel="apple-touch-startup-image" href="/splash-empty.png">
-<link rel="stylesheet" href="/css/app.css?v=20260915d" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/css/app.css?v=20260918a" media="print" onload="this.media='all'">
 <script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="/css/app.css?v=20260915d"></noscript>
+<noscript><link rel="stylesheet" href="/css/app.css?v=20260918a"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -466,7 +466,7 @@ window.__nalunoEntryT0 = Date.now();
       </div>
       <div style="padding:10px 14px calc(env(safe-area-inset-bottom,0px) + 14px); border-top:1px solid var(--line); background:rgba(13,15,23,.92); backdrop-filter:blur(10px);">
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin:0 0 8px;">
-          <button type="button" class="ghost-btn" id="compassDeleteBtn" style="width:auto;height:auto;padding:8px 10px;font-size:11.5px;letter-spacing:.03em;">Ask to delete my account</button>
+          <button type="button" class="ghost-btn" id="compassDeleteBtn" style="width:auto;height:auto;padding:8px 10px;font-size:11.5px;letter-spacing:.03em;">Close my Callsign</button>
           <button type="button" class="ghost-btn" id="compassWriteBtn" style="width:auto;height:auto;padding:8px 10px;font-size:11.5px;letter-spacing:.03em;">Write to Naluno</button>
         </div>
         <div style="display:flex; gap:9px; align-items:flex-end;">
@@ -572,6 +572,24 @@ window.__nalunoEntryT0 = Date.now();
       </div>
 
       <button class="save-btn" id="myContributionBtn" style="margin:18px 20px 0; background:none; color:var(--mint); border:1px solid rgba(124,255,178,.35);">My Contribution</button>
+
+      <div class="greenroom-setting" id="closeCallsignBox">
+        <div class="greenroom-setting-head"><span class="dot" style="background:var(--red);"></span><span class="greenroom-setting-title">Close this Callsign</span></div>
+        <div class="greenroom-setting-sub">This is how you delete the account. The Callsign leaves the air. A reason is stored on the Control Centre. It can be restored from there. The handle stays reserved so a restore still lands on you.</div>
+        <button type="button" class="save-btn" id="closeCallsignBtn" style="margin:14px 0 0; background:none; color:var(--red); border:1px solid var(--line);">Close Callsign</button>
+        <div id="closeCallsignForm" style="display:none; margin-top:14px;">
+          <div class="field" style="padding:0 0 8px;"><label>Reason (kept on the Control Centre)</label>
+            <textarea id="closeCallsignReason" rows="3" maxlength="2000" placeholder="Why are you closing this Callsign?"></textarea>
+          </div>
+          <div class="field" style="padding:0 0 8px;"><label>Type your handle to confirm</label>
+            <input id="closeCallsignHandle" autocomplete="off" placeholder="@yourhandle" />
+          </div>
+          <div style="display:flex; gap:10px;">
+            <button type="button" class="save-btn" id="closeCallsignCancel" style="flex:1; background:var(--surface-2); color:var(--text); border:1px solid var(--line);">Cancel</button>
+            <button type="button" class="save-btn" id="closeCallsignConfirm" style="flex:1; background:none; color:var(--red); border:1px solid var(--red);">Close it</button>
+          </div>
+        </div>
+      </div>
 
       <button class="save-btn" id="signOutBtn" style="margin:22px 20px 0; background:none; color:var(--red); border:1px solid var(--line);">Sign out</button>
 
@@ -1208,6 +1226,14 @@ window.__nalunoEntryT0 = Date.now();
   </div>
 
   <div class="toast" id="toast"></div>
+  <div id="closedCallsignGate" class="closed-callsign-gate" style="display:none;" role="dialog" aria-labelledby="closedCallsignTitle">
+    <div class="closed-callsign-card">
+      <div class="word" style="font-family:var(--font-futuristic); letter-spacing:.16em; color:var(--mint); font-size:13px; margin-bottom:14px;">NALUNO</div>
+      <h2 id="closedCallsignTitle">This Callsign is closed</h2>
+      <p id="closedCallsignBody" class="closed-callsign-copy">The Callsign is off the air. Restore is done from the Control Centre.</p>
+      <button type="button" class="save-btn" id="closedCallsignLeave" style="margin-top:18px; background:var(--mint); color:#0D0F17; border:none;">Sign out</button>
+    </div>
+  </div>
   <div id="bgProcessBanner" style="display:none; position:fixed; left:12px; right:12px; bottom:88px; z-index:500; background:rgba(13,15,23,.94); backdrop-filter:blur(10px); border:1px solid var(--line); border-radius:14px; padding:12px 16px; align-items:center; gap:10px; font-family:var(--font-mono); font-size:12.5px; color:var(--text); overflow:hidden;">
     <div id="bgProcessFill" style="position:absolute; inset:0; width:0%; background:linear-gradient(90deg, rgba(124,255,178,.32), rgba(124,255,178,.14)); transition:width .35s ease; z-index:0;"></div>
     <div class="greenroom-pill ready" style="position:relative; z-index:1; width:100%; justify-content:flex-start; background:transparent; border:none; padding:0;"><span class="swirl"></span><span id="bgProcessLabel">Preparing video… 0%</span></div>
@@ -1434,7 +1460,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
 <script src="/firebase-config.js?v=20260908d"></script>
 <!-- NALUNO_MODULES -->
-<script src="/js/core.js?v=20260915c"></script>
+<script src="/js/core.js?v=20260918a"></script>
 <!-- Loaded right after core.js so its global error handlers are installed
      before the rest of the app runs and can capture anything they throw. -->
 <script src="/js/diagnostics.js?v=20260908d"></script>
@@ -1442,7 +1468,7 @@ window.__nalunoEntryT0 = Date.now();
      band-room, wireline and signal-ui. auth.js calls loadBands() at top level,
      which ran BEFORE find.js had executed — a ReferenceError that aborted boot
      entirely. It must load before any consumer. -->
-<script src="/js/find.js?v=20260908d"></script>
+<script src="/js/find.js?v=20260918a"></script>
 <script src="/js/media-contain.js?v=20260912f"></script>
 <script src="/js/keep-alive.js?v=20260908d"></script>
 <script src="/js/metrics.js?v=20260908d"></script>
@@ -1465,21 +1491,21 @@ window.__nalunoEntryT0 = Date.now();
      to load entirely, Broadcast would behave exactly as it does today. -->
 <script src="/js/presence.js?v=20260910a"></script>
 <script src="/js/report.js?v=20260909a"></script>
-<script src="/js/currency.js?v=20260914c"></script>
+<script src="/js/currency.js?v=20260918a"></script>
 <script src="/js/economy.js?v=20260914c"></script>
 <script src="/js/economy-ui.js?v=20260914c"></script>
 <script src="/js/weather.js?v=20260911b"></script>
 <script src="/js/beacon.js?v=20260911b"></script>
-<script src="/js/compass.js?v=20260915d"></script>
+<script src="/js/compass.js?v=20260918a"></script>
 <script src="/js/signal-ui.js?v=20260915d"></script>
 <script src="/js/compat-lock.js?v=20260908d"></script>
 <script src="/js/broadcast-space.js?v=20260914c"></script>
-<script src="/js/ads.js?v=20260914c"></script>
+<script src="/js/ads.js?v=20260918a"></script>
 <script src="/js/media-vault.js?v=20260908d"></script>
 <script src="/js/wireline.js?v=20260915c"></script>
 <script src="/js/profile.js?v=20260914c"></script>
-<script src="/js/onboard.js?v=20260908d"></script>
-<script src="/js/auth.js?v=20260908d"></script>
+<script src="/js/onboard.js?v=20260918a"></script>
+<script src="/js/auth.js?v=20260918a"></script>
 <script src="/js/notifications.js?v=20260908d"></script>
 <script src="/js/ice-core.js?v=20260908d"></script>
 <script src="/js/camera.js?v=20260908d"></script>
@@ -1488,7 +1514,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/sfu-live.js?v=20260908d"></script>
 <script src="/js/broadcast-live.js?v=20260908d"></script>
 <script src="/js/band-room.js?v=20260915d"></script>
-<script src="/js/pwa.js?v=20260915d"></script>
+<script src="/js/pwa.js?v=20260918a"></script>
 <script src="/js/spark-engine.js?v=20260908d"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>
 <script src="/js/spark-lg.js?v=20260908d"></script>
