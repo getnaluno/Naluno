@@ -68,7 +68,7 @@ function renderBandList(){
   if(!bands.length){
     if(label) label.hidden = true;
     $('bandList').innerHTML = (typeof emptyStateHtml === 'function')
-      ? emptyStateHtml('No squares yet', 'Start a Band with your connections. No one owns it — messages clear 2 hours after the last person leaves.')
+      ? emptyStateHtml('No squares yet', 'Start a Band with your connections. No one owns it — messages clear 2 hours after the last person leaves.', 'rooms')
       : '<div class="empty-state"><p class="empty-state-copy">No squares yet.</p></div>';
     return;
   }

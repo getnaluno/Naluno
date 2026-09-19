@@ -35,40 +35,41 @@
   };
 
   const TERMS = [
-    { abbr: 'AED', name: 'United Arab Emirates dirham', note: 'A currency on the ISO 4217 list. No longer the hardcoded operating currency — the operator picks any code, including UGX, and amounts convert in real time.' },
-    { abbr: 'USD', name: 'United States dollar', note: 'FX book is USD-based. Shown next to the operating currency for comparison.' },
-    { abbr: 'UGX', name: 'Ugandan shilling', note: 'On the ISO 4217 list. Zero minor units. Pickable as the operating currency from Control Centre.' },
-    { abbr: 'DAU', name: 'Daily active users', note: 'Accounts with a heartbeat during the operator device’s local day.' },
-    { abbr: 'WAU', name: 'Weekly active users', note: 'Accounts with a heartbeat in the last 7 days.' },
-    { abbr: 'MAU', name: 'Monthly active users', note: 'Accounts with a heartbeat in the last 30 days.' },
-    { abbr: 'R2', name: 'Cloudflare R2', note: 'Object storage for Broadcast and Signal media. Download bandwidth (egress) is not billed.' },
-    { abbr: 'FCM', name: 'Firebase Cloud Messaging', note: 'Device push notifications. Not billed.' },
-    { abbr: 'TURN', name: 'Traversal Using Relays around NAT', note: 'Relays a call when a direct connection fails. Cost is per gigabyte of relayed media.' },
-    { abbr: 'Spark', name: 'Firebase Spark', note: 'The free Firebase plan: 50,000 reads per day, 20,000 writes per day, 1 GB of document storage.' },
-    { abbr: 'Blaze', name: 'Firebase Blaze', note: 'Pay-as-you-go Firebase, after Spark limits.' },
-    { abbr: 'GPS', name: 'Global Positioning System', note: 'Last device pin from Find Naluno.' },
-    { abbr: 'UTC', name: 'Coordinated Universal Time', note: 'Day boundaries follow the operator device timezone, not UTC.' },
-    { abbr: 'SW', name: 'Service worker', note: 'Caches the app shell and handles background events on the device.' },
-    { abbr: 'UID', name: 'User identifier', note: 'The account id in Firebase Auth and Firestore.' },
+    { abbr: 'AED', name: 'United Arab Emirates dirham', note: 'A currency on the list. Not hardcoded — pick any code, including UGX, and amounts convert live.' },
+    { abbr: 'USD', name: 'United States dollar', note: 'Shown next to the operating currency for comparison.' },
+    { abbr: 'UGX', name: 'Ugandan shilling', note: 'On the currency list. No cents. Pickable as the operating currency from this console.' },
+    { abbr: 'DAU', name: 'Active today', note: 'People who used the app during this phone’s calendar day.' },
+    { abbr: 'WAU', name: 'Active this week', note: 'People who used the app in the last 7 days.' },
+    { abbr: 'MAU', name: 'Active this month', note: 'People who used the app in the last 30 days.' },
+    { abbr: 'R2', name: 'File storage', note: 'Where Broadcast and Signal files live. Downloads are not billed.' },
+    { abbr: 'FCM', name: 'Push notifications', note: 'The ping on the phone. Not billed.' },
+    { abbr: 'TURN', name: 'Call relay', note: 'Carries a call when a direct connection fails. Charged per gigabyte carried.' },
+    { abbr: 'Spark', name: 'Stand next to someone', note: 'In the Naluno app: two phones, one pulse. Different from the free hosting plan of the same name.' },
+    { abbr: 'Firebase Spark', name: 'Free hosting plan', note: 'Google’s free plan: 50,000 reads a day, 20,000 writes a day, 1 GB of storage. Not the Spark button in the app.' },
+    { abbr: 'Blaze', name: 'Paid hosting plan', note: 'Pay as you go, after the free plan’s limits.' },
+    { abbr: 'GPS', name: 'This phone’s place', note: 'Last pin from Find Naluno on that device.' },
+    { abbr: 'UTC', name: 'World clock', note: 'Days on this console follow this phone’s clock, not the world clock.' },
+    { abbr: 'SW', name: 'Offline helper', note: 'The bit on the phone that caches the app and can ring in the background.' },
+    { abbr: 'UID', name: 'Account id', note: 'The id of an account in sign-in and in the live records.' },
     { abbr: 'GB', name: 'Gigabyte', note: '1,000,000,000 bytes in this model.' },
-    { abbr: 'AI', name: 'Artificial intelligence', note: 'Compass and related billed usage, recorded as a cash amount.' },
-    { abbr: 'CAC', name: 'Customer acquisition cost', note: 'Not known. Not estimated on this console.' },
-    { abbr: 'LTV', name: 'Lifetime value', note: 'Not known. Not estimated on this console.' },
-    { abbr: 'D1 / D7', name: 'Day-1 / day-7 retention', note: 'Share of a signup cohort still active N days later. Needs a session log. Still-here is used instead.' },
-    { abbr: 'CPU / RAM', name: 'Processor / memory', note: 'Instance utilisation. Cloudflare and Firebase do not expose this to the console.' },
-    { abbr: 'PWA', name: 'Progressive web app', note: 'The installable Naluno website.' },
-    { abbr: 'Ad', name: 'Advertisement', note: 'A paid unit on Naluno. Always labelled Ad. First-party inventory uploaded from this console, not a third-party network.' },
-    { abbr: 'CTA', name: 'Call to action', note: 'The button on an ad (Open, Visit, Watch) that leads to an https address.' },
-    { abbr: 'CPM', name: 'Cost per mille', note: 'Advertiser rate for one thousand impressions. Booked as (impressions ÷ 1,000) × eCPM.' },
-    { abbr: 'eCPM', name: 'Effective cost per mille', note: 'The rate card for one thousand impressions, in the operating currency. Set on this console. Not an auction.' },
-    { abbr: 'CPC', name: 'Cost per click', note: 'Advertiser rate for one tap on the call to action. Booked as clicks × CPC.' },
-    { abbr: 'CPV', name: 'Cost per view', note: 'Advertiser rate for a completed view (default 15 seconds of the unit playing). Booked as completed views × CPV.' },
-    { abbr: 'CPA', name: 'Cost per action', note: 'Not used. Naluno does not count installs or off-platform conversions.' },
-    { abbr: 'RPM', name: 'Revenue per mille', note: 'Booked revenue per one thousand impressions. Blends whichever billing model each unit uses.' },
-    { abbr: 'ARPDAU', name: 'Average revenue per daily active user', note: 'Lifetime booked ad revenue ÷ today’s daily active users, until a day rollup exists. That is not a day’s take.' },
-    { abbr: 'ARPU', name: 'Average revenue per user', note: 'Lifetime booked ad revenue ÷ registered accounts.' },
-    { abbr: 'IndexedDB', name: 'Indexed Database', note: 'The chat database on the phone. The browser equivalent of SQLite. Wireline history lives here after delivery, not on Naluno’s servers.' },
-    { abbr: 'SQLite', name: 'SQLite', note: 'The usual on-phone chat database in native apps. This progressive web app uses IndexedDB for the same job.' },
+    { abbr: 'AI', name: 'Compass help', note: 'Compass and related billed usage, recorded as a cash amount.' },
+    { abbr: 'CAC', name: 'What it cost to get them', note: 'Not known. Not guessed on this console.' },
+    { abbr: 'LTV', name: 'What they are worth over a lifetime', note: 'Not known. Not guessed on this console.' },
+    { abbr: 'D1 / D7', name: 'Came back after 1 day / 7 days', note: 'Share of a signup group still active N days later. Needs a session log. Still-here is used instead.' },
+    { abbr: 'CPU / RAM', name: 'Processor / memory', note: 'Hosting does not show this to the console.' },
+    { abbr: 'PWA', name: 'Home Screen app', note: 'The installable Naluno website.' },
+    { abbr: 'Ad', name: 'Advertisement', note: 'A paid unit on Naluno. Always labelled Ad. Uploaded from this console, not an outside network.' },
+    { abbr: 'CTA', name: 'Button on an ad', note: 'Open, Visit, or Watch — must lead to an https address.' },
+    { abbr: 'CPM', name: 'Per thousand views', note: 'Advertiser rate for one thousand views. Booked as (views ÷ 1,000) × the rate.' },
+    { abbr: 'eCPM', name: 'Rate per thousand views', note: 'The rate card for one thousand views, in the operating currency. Set here. Not an auction.' },
+    { abbr: 'CPC', name: 'Per tap', note: 'Advertiser rate for one tap on the button. Booked as taps × the rate.' },
+    { abbr: 'CPV', name: 'Per completed watch', note: 'Advertiser rate for a completed watch (default 15 seconds). Booked as completed watches × the rate.' },
+    { abbr: 'CPA', name: 'Per action', note: 'Not used. Naluno does not count installs or off-site conversions.' },
+    { abbr: 'RPM', name: 'Take per thousand views', note: 'Booked revenue per one thousand views. Mixes whichever billing each ad uses.' },
+    { abbr: 'ARPDAU', name: 'Per person active today', note: 'Lifetime booked ads ÷ people active today. That is not a day’s take until a daily total exists.' },
+    { abbr: 'ARPU', name: 'Per registered account', note: 'Lifetime booked ads ÷ everyone who signed up.' },
+    { abbr: 'IndexedDB', name: 'On-phone chat store', note: 'Wireline history lives here after delivery, not on Naluno’s servers.' },
+    { abbr: 'SQLite', name: 'Usual on-phone chat store', note: 'What native apps use. This Home Screen app uses IndexedDB for the same job.' },
   ];
 
   function localZone() {
@@ -421,14 +422,14 @@
       cash: false,
       assumptions: [
         'Booked ad revenue is rate-card maths × observed events. Cash has not moved until an advertiser pays.',
-        'There is no third-party auction. The operator sets eCPM, CPC and CPV on this console.',
-        'Each unit books one model (CPM, CPC or CPV). The other two lines are diagnostics, not extra cash.',
-        'A skip is not a click. Clicks and completed views cannot exceed impressions.',
-        'A session may see the same unit at most three times. That is the current invalid-traffic filter, not a full fraud pipeline.',
-        'A completed view is ' + viewSec + ' seconds of the unit actually playing, or the creative ending without a skip before that.',
-        'ARPDAU is lifetime booked ÷ today’s daily active users until a day rollup exists. That overstates a day’s take.',
-        'ARPU is lifetime booked ÷ registered accounts.',
-        'Customer acquisition cost (CAC) and lifetime value (LTV) are not estimated.',
+        'There is no outside auction. The rates per thousand views, per tap, and per completed watch are set here.',
+        'Each ad books one model. The other two lines are checks, not extra cash.',
+        'A skip is not a tap. Taps and completed watches cannot exceed views.',
+        'A session may see the same ad at most three times.',
+        'A completed watch is ' + viewSec + ' seconds of the ad actually playing, or the ad ending without a skip before that.',
+        'Per person active today is lifetime booked ÷ people active today, until a day total exists. That overstates a day’s take.',
+        'Per registered account is lifetime booked ÷ everyone who signed up.',
+        'We do not guess what it costs to acquire a person, or what they are worth over a lifetime.',
       ],
     };
   }
@@ -579,10 +580,10 @@
       line('fs_reads', 'Firestore reads (model)', fsReadUsd, readsMonth, 'reads/mo'),
       line('fs_writes', 'Firestore writes (model)', fsWriteUsd, writesMonth, 'writes/mo'),
       line('workers', 'Workers requests (model)', workersUsd, workerReqs, 'reqs/mo'),
-      line('turn', 'Call relay (TURN)', turnUsd, turnMinutes, 'minutes'),
-      line('r2_egress', 'R2 bandwidth (egress not billed)', 0, viewsStored, 'stored views'),
-      line('fcm', 'Push notifications (FCM, not billed)', 0, dauN, 'DAU'),
-      line('compass', 'Compass / AI (recorded bill)', 0, compassAed, 'AED', compassAed),
+      line('turn', 'Call relay', turnUsd, turnMinutes, 'minutes'),
+      line('r2_egress', 'File downloads (not billed)', 0, viewsStored, 'stored views'),
+      line('fcm', 'Push notifications (not billed)', 0, dauN, 'people today'),
+      line('compass', 'Compass help (recorded bill)', 0, compassAed, 'AED', compassAed),
       line('fixed', 'Fixed (domain, store, typed)', 0, fixedAed, 'AED', fixedAed),
     ];
     const meteredAed = lines.reduce(function (a, L) { return a + L.aed; }, 0);
@@ -757,7 +758,7 @@
     });
     const firstGate = gates.filter(function (g) { return g.mau != null; })[0] || null;
     const alreadyOver = gates.filter(function (g) { return g.already; });
-    let headline = 'Usage is within free allowances. Firebase Spark and Cloudflare currently invoice ' + formatAed(0) + '.';
+    let headline = 'Usage is within free allowances. The free hosting plan and Cloudflare currently invoice ' + formatAed(0) + '.';
     if (invoiceAed > 0) {
       headline = 'Serving from the recorded invoice: ' + moneyPair(invoiceAed) + '.';
     } else if (alreadyOver.length) {
@@ -767,7 +768,7 @@
     } else if (firstGate && firstGate.mau_display) {
       headline = 'Usage is within free allowances. At the current mix, the first list-price bill is '
         + firstGate.label + ' around ' + firstGate.mau_display.toLocaleString('en-GB')
-        + ' monthly active users (MAU).';
+        + ' people active in a month.';
     }
 
     return {
@@ -804,14 +805,14 @@
       first_gate: firstGate,
       headline: headline,
       assumptions: [
-        'Broadcast media remains on Cloudflare R2 for a full gigabyte-month. Signals last 25 hours, then they fall off.',
-        'Cloudflare R2 has no egress fee. Watching a Broadcast does not bill bandwidth.',
+        'Broadcast files stay in storage for a full month. Signals last 25 hours, then they fall off.',
+        'Watching a Broadcast does not bill download bandwidth.',
         'When a file has no stored size, video is counted at about 1 Mbps, a photo at 400 KB, unknown video at 8 MB.',
-        'Firestore reads and writes are a model (150 reads and 24 writes per monthly active user per day), not a Google invoice.',
-        'Firebase Spark and Cloudflare free plans currently bill ' + formatAed(0) + ' on usage. Invoiced spend is the amount recorded under Bills.',
-        'Call relay (TURN) is zero until minutes are recorded. Compass / artificial intelligence (AI) is zero until that bill is recorded. Push (FCM) is not billed.',
-        'Platform share (presence, workers, domain) is split across monthly active users, not dormant accounts.',
-        'The first bill is the first free allowance that usage exceeds. Firestore reads usually go first (about 330 monthly active users at 150 reads per person per day).',
+        'Database reads and writes are a model (150 reads and 24 writes per person active this month, per day), not an invoice.',
+        'The free hosting plan and Cloudflare currently bill ' + formatAed(0) + ' on usage. Invoiced spend is the amount recorded under Bills.',
+        'Call relay is zero until minutes are recorded. Compass help is zero until that bill is recorded. Push notifications are not billed.',
+        'Shared cost (presence, background jobs, domain) is split across people active this month, not dormant accounts.',
+        'The first bill is the first free allowance that usage exceeds. Database reads usually go first (about 330 people active in a month at 150 reads per person per day).',
       ],
     };
   }
@@ -1326,19 +1327,19 @@
       costs: costs,
       audit: audit,
       gaps: {
-        notifications: 'Delivery receipts live on the device. There is no central sent/delivered ledger yet.',
-        search: 'Find a Callsign, uid, email or name. Looks up the live handle map, not only the first loaded page of accounts.',
-        payments: 'No payment provider is connected. Ledgers exist so the shape is auditable before money moves.',
+        notifications: 'We can see who has a push token. We cannot yet see if each ping arrived.',
+        search: 'Find a Callsign, email, name or account id. Looks up the live handle map, not only the first loaded page of accounts.',
+        payments: 'No payments company is connected. Ledgers exist so the shape is auditable before money moves.',
         content_hub: 'Sports, movies and channels are not in the product yet.',
-        cpu_memory: 'Cloudflare and Firebase do not expose instance processor (CPU) or memory (RAM) to this console.',
-        unit_econ: 'Invoices are not connected. Metered figures are list-price maths from usage. Firebase Spark and Cloudflare free plans currently invoice ' + formatAed(0) + ' until usage exceeds those allowances or an invoice is recorded.',
-        retention: 'Day-1 / day-7 (D1 / D7) retention needs a session log. Still-here is people who signed up at least N days ago and had a heartbeat in the last N days.',
-        cac: 'Customer acquisition cost (CAC) and lifetime value (LTV) are not known and are not estimated here.',
-        ad_revenue: 'Booked ad revenue is rate-card maths × observed events. Cash has not moved. There is no third-party auction.',
-        store: 'App-store download counts are not in Firestore. Registration is the first number on record.',
-        native: 'Closed-tab ringtone requires a native shell and Unrestricted battery. Lock-screen ring is not available.',
-        wire_store: 'Wireline history lives on the phone (IndexedDB). The server is a mailbox: encrypted drops are deleted after the other phone takes them. A photo that is too large for the drop is parked on Cloudflare R2 so it can be fetched, not as the archive.',
-        site: 'Website counts are written by the public pages themselves. Country comes from the network (not GPS). A random browser id counts return visits and is not a Callsign. Publish firestore.rules for siteSessions and siteDays or the numbers stay at zero.',
+        cpu_memory: 'Hosting does not show processor or memory use on this console.',
+        unit_econ: 'No invoice is connected. The figures are list-price maths from usage. The free hosting plan and Cloudflare currently invoice ' + formatAed(0) + ' until usage goes over those allowances or an invoice is recorded.',
+        retention: 'Still-here is people who signed up at least N days ago and used the app again in that window. A true came-back-after-1-day / 7-day group needs a session log we do not have yet.',
+        cac: 'We do not guess what it costs to acquire a person, or what they are worth over a lifetime.',
+        ad_revenue: 'Booked ad revenue is rate-card maths × observed events. Cash has not moved. There is no outside auction.',
+        store: 'Store download counts are not in the live records. Registration is the first number on file.',
+        native: 'Closed-tab ringtone needs the Android app and Unrestricted battery. Lock-screen ring is not available.',
+        wire_store: 'Wireline history lives on the phone. The server is a mailbox: encrypted drops are deleted after the other phone takes them. A photo that is too large for the drop is parked in file storage so it can be fetched, not as the archive.',
+        site: 'Website counts are written by the public pages themselves. Country comes from the network (not this phone’s place). A random browser id counts return visits and is not a Callsign. Publish firestore.rules for siteSessions and siteDays or the numbers stay at zero.',
       },
     };
   }

@@ -168,6 +168,11 @@ let bcastActiveView = 'foryou';
 
 function renderBroadcastTab(){
   try{ if(typeof pruneExpiredSignal === 'function') pruneExpiredSignal(); }catch(_){}
+  nalunoPaintBcastChrome(bcastActiveView);
+  if(bcastActiveView === 'toga'){
+    try{ if(typeof renderTogaBoard === 'function') renderTogaBoard(); }catch(_){}
+    return;
+  }
   const stripEl = document.getElementById('myBcastStrip');
   const grid = document.getElementById('bcastPlateGrid');
   const empty = document.getElementById('bcastPlateEmpty');
@@ -619,19 +624,39 @@ function renderBroadcasts(){
   try{ renderBroadcastTab(); }catch(e){ console.warn('[signal] render', e); }
 }
 
+function nalunoPaintBcastChrome(view){
+  const home = document.getElementById('bcastForYouHome');
+  const toga = document.getElementById('togaPanel');
+  const grid = document.getElementById('bcastPlateGrid');
+  const empty = document.getElementById('bcastPlateEmpty');
+  const cue = document.getElementById('bcastScrollCue');
+  if(home) home.style.display = (view === 'toga') ? 'none' : '';
+  if(toga){
+    if(view === 'toga') toga.removeAttribute('hidden');
+    else toga.setAttribute('hidden', '');
+  }
+  if(grid) grid.style.display = (view === 'toga') ? 'none' : '';
+  if(empty && view === 'toga') empty.style.display = 'none';
+  if(cue) cue.style.display = (view === 'toga') ? 'none' : '';
+  try{
+    document.body.classList.toggle('naluno-bcast-mine', view === 'mine');
+    document.body.classList.toggle('naluno-bcast-toga', view === 'toga');
+  }catch(_){}
+}
+
 function nalunoSetBcastView(view, viaSwipe){
-  const next = (view === 'mine') ? 'mine' : 'foryou';
+  const next = (view === 'mine' || view === 'toga') ? view : 'foryou';
   if(next === bcastActiveView){
-    // Already on this view — if a Strand is open, leave it so For You /
-    // My Broadcasts never keep a Strand bar sitting on Signals + Toga.
     try{
       if(typeof getOpenStrandFolderId === 'function' && getOpenStrandFolderId()){
         if(typeof closeStrandFolder === 'function') closeStrandFolder();
       }
     }catch(_){}
+    nalunoPaintBcastChrome(next);
     return;
   }
-  const dir = next === 'mine' ? 'left' : 'right';
+  const order = { foryou: 0, mine: 1, toga: 2 };
+  const dir = (order[next] || 0) > (order[bcastActiveView] || 0) ? 'left' : 'right';
   bcastActiveView = next;
   // FIX ("the strand share bar leaks back into the Toga page when swiping
   // back from Broadcasts"): this function resets the scroll position and
@@ -653,6 +678,7 @@ function nalunoSetBcastView(view, viaSwipe){
   try{ if(typeof pauseAllStrandPreviews === 'function') pauseAllStrandPreviews(); }catch(_){}
   try{ if(typeof nalunoPauseDetachedMedia === 'function') nalunoPauseDetachedMedia(); }catch(_){}
   try{ document.body.classList.toggle('naluno-bcast-mine', next === 'mine'); }catch(_){}
+  nalunoPaintBcastChrome(next);
   try{
     const scroller = document.getElementById('broadcastTabScroll');
     if(scroller) scroller.scrollTop = 0;
@@ -686,9 +712,9 @@ function nalunoSetBcastView(view, viaSwipe){
 }
 window.nalunoSetBcastView = nalunoSetBcastView;
 
-/* One-time binding for the For You / My Broadcasts tabs — a presentation
-   switch only (see bcastActiveView above); re-renders through the exact
-   same renderBroadcastTab() path everything else already uses.
+/* One-time binding for For You / My Broadcasts / Toga —
+   a presentation switch only (see bcastActiveView above); re-renders through
+   the exact same renderBroadcastTab() path everything else already uses.
    Horizontal swipe on the Broadcast tab is the same switch. Vertical
    flip-scroll of plates is untouched. */
 (function bindBcastViewTabs(){
@@ -809,10 +835,11 @@ window.nalunoSetBcastView = nalunoSetBcastView;
       if(typeof closeStrandFolder === 'function') closeStrandFolder();
     }
     if(dx < 0){
-      if(bcastActiveView === 'mine') nalunoSetBcastView('foryou', true);
-      else nalunoSetBcastView('mine', true);
+      if(bcastActiveView === 'foryou') nalunoSetBcastView('mine', true);
+      else if(bcastActiveView === 'mine') nalunoSetBcastView('toga', true);
     } else {
-      nalunoSetBcastView('foryou', true);
+      if(bcastActiveView === 'toga') nalunoSetBcastView('mine', true);
+      else if(bcastActiveView === 'mine') nalunoSetBcastView('foryou', true);
     }
   }
   surface.addEventListener('touchstart', onDown, { passive: true });
@@ -1473,7 +1500,7 @@ function renderContacts(){
   } else if(!query && visible.length===0){
     $('strongLabel').style.display = 'none';
     $('strongList').innerHTML = (typeof emptyStateHtml === 'function')
-      ? emptyStateHtml('No frequencies yet', 'Connect someone — search a handle, or Spark in person.')
+      ? emptyStateHtml('No frequencies yet', 'Connect someone — search a handle, or Spark in person.', 'people')
       : '<div class="empty-state"><p class="empty-state-copy">No frequencies yet.</p></div>';
   }
 

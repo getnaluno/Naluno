@@ -51,9 +51,10 @@ function toast(msg, onTap){
   }
 }
 
-function emptyStateHtml(title, copy){
+function emptyStateHtml(title, copy, hint){
+  const h = hint ? ('<div class="empty-state-hint">'+hint+'</div>') : '';
   const t = title ? ('<div class="empty-state-title">'+title+'</div>') : '';
-  return '<div class="empty-state">'+t+'<p class="empty-state-copy">'+copy+'</p></div>';
+  return '<div class="empty-state">'+t+h+'<p class="empty-state-copy">'+copy+'</p></div>';
 }
 
 /** Visible + console + diagnostics trail for Signal/Broadcast upload.

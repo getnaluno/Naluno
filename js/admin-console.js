@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260918g';
+  const BUILD = '20260918h';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -718,7 +718,7 @@
     const C = Ccy();
     if (!C) return '';
     return card('Operating currency',
-      '<p class="sub">Every amount on Naluno follows this code. Pick any ISO 4217 currency, including UGX. Conversion is live against a USD book — nothing is hardcoded to dirham.</p>'
+      '<p class="sub">Every amount on Naluno follows this code. Pick any currency, including UGX. Conversion is live — nothing is hardcoded to dirham.</p>'
       + '<label for="opCurrency">Currency</label>'
       + C.selectHtml('opCurrency', opCode())
       + '<p class="gap-note" style="margin-top:8px;" id="opFxLine">' + escapeHtml(C.quoteLine()) + '</p>');
@@ -730,7 +730,7 @@
     const terms = (Data && Data.TERMS) || [];
     if (!terms.length) return '';
     return card('Terms',
-      '<p class="sub" style="margin-bottom:8px;">Abbreviations used on this console.</p>'
+      '<p class="sub" style="margin-bottom:8px;">Short names used here, in ordinary words.</p>'
       + '<dl class="terms">' + terms.map(function (t) {
         return '<div class="term-row"><dt>' + escapeHtml(t.abbr) + '</dt><dd><strong>'
           + escapeHtml(t.name) + '</strong> — ' + escapeHtml(t.note) + '</dd></div>';
@@ -841,11 +841,11 @@
     const e = d.economy || {};
     const alerts = d.alerts || [];
     const colour = d.healthTone === 'critical' ? '#ff8a9a' : (d.healthTone === 'warning' ? '#ffc266' : 'var(--mint)');
-    const swBit = (__swInfo.connected ? 'Service worker on' : 'Service worker off');
+    const swBit = (__swInfo.connected ? 'Offline helper on' : 'Offline helper off');
     el.innerHTML =
       '<span class="h" style="color:' + colour + '">NALUNO ' + escapeHtml(d.healthLabel || '') + '</span>'
       + '<span class="m">Online <b>' + (u.active_now || 0) + '</b></span>'
-      + '<span class="m">Daily active <b>' + (u.dau || 0) + '</b></span>'
+      + '<span class="m">Active today <b>' + (u.dau || 0) + '</b></span>'
       + '<span class="m">Broadcasts <b>' + (c.broadcasts_total || 0) + '</b></span>'
       + '<span class="m">Live <b>' + (c.broadcasts_live || 0) + '</b></span>'
       + '<span class="m">Site now <b>' + ((d.site && d.site.live) || 0) + '</b></span>'
@@ -927,37 +927,37 @@
               + '</div>';
           }).join(''))
         + card('Are people coming back?',
-          kpis([['Registered', u.total || 0], ['Active now', u.active_now || 0],
-            ['Daily active (DAU)', u.dau || 0], ['Weekly active (WAU)', u.wau || 0], ['Monthly active (MAU)', u.mau || 0],
+          kpis([['Registered', u.total || 0], ['On the app now', u.active_now || 0],
+            ['Active today', u.dau || 0], ['Active this week', u.wau || 0], ['Active this month', u.mau || 0],
             ['Returning today', u.returning_today || 0],
-            ['Stickiness', u.stickiness == null ? '—' : u.stickiness + '%']])
-          + kpis([['New today', u.new_today || 0], ['New 7 days', u.new_7d || 0], ['New 30 days', u.new_30d || 0]])
-          + gap('Today follows the operator device timezone (' + (d.zone || '') + '), not UTC (Coordinated Universal Time). Stickiness is daily active ÷ monthly active. Active now means a heartbeat in the last 10 minutes.'))
+            ['Come-back rate', u.stickiness == null ? '—' : u.stickiness + '%']])
+          + kpis([['New today', u.new_today || 0], ['New last 7 days', u.new_7d || 0], ['New last 30 days', u.new_30d || 0]])
+          + gap('Dates follow this phone’s clock (' + (d.zone || '') + '). Come-back rate is how many of this month’s people were also here today. On the app now means a heartbeat in the last 10 minutes.'))
         + card('Still here',
-          kpis([['≥7 days still in 7d', u.still_7_pct == null ? '—' : u.still_7_pct + '%'],
+          kpis([['Signed up ≥7 days ago, active this week', u.still_7_pct == null ? '—' : u.still_7_pct + '%'],
             ['of', (u.still_7 || 0) + ' / ' + (u.still_7_of || 0)],
-            ['≥30 days still in 30d', u.still_30_pct == null ? '—' : u.still_30_pct + '%'],
+            ['Signed up ≥30 days ago, active this month', u.still_30_pct == null ? '—' : u.still_30_pct + '%'],
             ['of', (u.still_30 || 0) + ' / ' + (u.still_30_of || 0)]])
-          + gap(g.retention || 'Day-1 / day-7 retention needs a session log. Still-here is not cohort retention.'))
+          + gap(g.retention || 'Still-here is people who signed up at least N days ago and used the app again in that window.'))
         + card('What each person costs',
           kpis([['Invoiced this month', aedUsd((d.costs && d.costs.invoice_aed) || 0)],
             ['List-price usage', aedUsd((d.costs && d.costs.metered_aed) || 0)],
             ['After free tier', aedUsd((d.costs && d.costs.billable_aed) || 0)],
-            ['Per monthly active', aedUsd((d.costs && d.costs.per_mau_aed) || 0)]])
+            ['Per person active this month', aedUsd((d.costs && d.costs.per_mau_aed) || 0)]])
           + gap((d.costs && d.costs.headline) || g.unit_econ || '')
           + '<div class="row"><button type="button" class="ghost ccGo" data-go="money">Open Money</button></div>')
         + card('On record',
           kpis([['Live', 'getnaluno.com'],
             ['Registered', u.total || 0],
-            ['Monthly active', u.mau || 0],
+            ['Active this month', u.mau || 0],
             ['Booked ads', aedUsd((d.ads && d.ads.revenue && d.ads.revenue.bookedAed) || 0)]])
           + kpis([['Play Store', 'not listed'],
-            ['Acquisition cost', 'not known'],
+            ['What it cost to get them', 'not known'],
             ['Payouts', 'locked'],
             ['First bill', (d.costs && d.costs.first_gate && d.costs.first_gate.mau_display)
-              ? ('~' + Number(d.costs.first_gate.mau_display).toLocaleString('en-GB') + ' monthly active')
+              ? ('around ' + Number(d.costs.first_gate.mau_display).toLocaleString('en-GB') + ' people active in a month')
               : 'still free']])
-          + gap('Counts are registered accounts, not store downloads. Cost-to-serve is the Money model. Customer acquisition cost (CAC) and lifetime value (LTV) are not estimated. Lock-screen ring is not available.'))
+          + gap('These are registered accounts, not store downloads. Cost-to-serve is on Money. We do not guess what it costs to acquire a person, or what they are worth over a lifetime.'))
         + card('The public website',
           kpis([['On the site now', (d.site && d.site.live) || 0],
             ['Visits today', (d.site && d.site.today) || 0],
@@ -974,7 +974,7 @@
         + card('Where are the devices?',
           kpis([['People with a pin', (d.locations && d.locations.with_coords) || 0],
             ['Find pings', (d.locations && d.locations.devices) || 0]])
-          + gap('Pins come from Find Naluno on that phone. The last GPS (Global Positioning System) fix is stored on the account so a missing device can be opened on a map from Users.'));
+          + gap('Pins come from Find Naluno on that phone. The last place is stored on the account so a missing device can be opened on a map from Users.'))
         + card('Can we trust the activity?',
           kpis([['Open reports', sf.open_reports || 0], ['Suspended', sf.suspended || 0],
             ['Restricted', sf.restricted || 0], ['Held for review', sf.pending_review || 0]]))
@@ -985,21 +985,21 @@
 
     if (tab === 'health') {
       const services = [
-        ['Authentication', true, 'Firebase Auth is how people sign in.'],
-        ['Database', !!adminDb(), 'Firestore, through this signed-in operator.'],
-        ['Broadcast', !!d.flags.broadcast_enabled, 'Long-form rooms.'],
-        ['Signals', d.flags.signals_enabled !== false, 'Short clips.'],
-        ['Notifications', true, 'Device push. Central delivery ledger is not built.'],
-        ['Payments', !!d.flags.real_payouts_enabled, 'Off until a provider is connected.'],
-        ['Economy worker', !!w.ok, w.degraded ? 'Up, but Google rejected its service account.' : (w.ok ? (w.ms + ' ms · ' + (w.version || '') + (w.persist ? ' · ' + w.persist : '')) : (w.error || 'down'))],
-        ['Service worker', !!__swInfo.connected, __swInfo.connected ? (__swInfo.cache || __swInfo.version) : 'The service worker (SW) is not connected on this session.'],
+        ['Sign-in', true, 'How people create a Callsign and come back.'],
+        ['Database', !!adminDb(), 'The live records this console is reading now.'],
+        ['Broadcast', !!d.flags.broadcast_enabled, 'Long video rooms.'],
+        ['Signals', d.flags.signals_enabled !== false, 'Short clips that fade.'],
+        ['Notifications', true, 'A ping on the phone. We cannot yet see if each one arrived.'],
+        ['Payments', !!d.flags.real_payouts_enabled, 'Off until a payments company is connected.'],
+        ['Background jobs', !!w.ok, w.degraded ? 'Up, but Google rejected its work account.' : (w.ok ? (w.ms + ' ms · ' + (w.version || '') + (w.persist ? ' · ' + w.persist : '')) : (w.error || 'down'))],
+        ['Offline helper', !!__swInfo.connected, __swInfo.connected ? (__swInfo.cache || __swInfo.version) : 'Not connected on this session.'],
         ['Content Hub', !!d.flags.content_hub_enabled, g.content_hub],
       ];
       el.innerHTML =
         card('Is Naluno working?',
-          kpis([['App version', liveAppLabel()], ['Worker', w.ok ? (w.ms + ' ms') : 'down'],
-            ['Service worker', __swInfo.connected ? 'connected' : 'off'],
-            ['Metric failures', (d.metrics && d.metrics.failures) || 0]]))
+          kpis([['App version', liveAppLabel()], ['Background jobs', w.ok ? (w.ms + ' ms') : 'down'],
+            ['Offline helper', __swInfo.connected ? 'connected' : 'off'],
+            ['Client errors (sample)', (d.metrics && d.metrics.failures) || 0]]))
         + card('Live status', services.map(function (row) {
           const on = row[1];
           return '<div class="flag-row"><span style="flex:1;">' + escapeHtml(row[0]) + '</span>'
@@ -1092,39 +1092,39 @@
         return (Math.round(n * 10) / 10) + '%';
       }
       function billLabel(m) {
-        if (m === 'cpc') return 'CPC (cost per click)';
-        if (m === 'cpv') return 'CPV (cost per view)';
-        return 'CPM (cost per mille)';
+        if (m === 'cpc') return 'Per tap';
+        if (m === 'cpv') return 'Per completed watch';
+        return 'Per thousand views';
       }
       const unitById = {};
       (rev.units || []).forEach(function (u) { if (u && u.id) unitById[u.id] = u; });
       el.innerHTML =
         kpis([['Live', (d.ads && d.ads.live) || 0], ['Paused', (d.ads && d.ads.paused) || 0],
-          ['Impressions', (d.ads && d.ads.impressions) || 0], ['Clicks', (d.ads && d.ads.clicks) || 0],
-          ['Completed views', (d.ads && d.ads.viewCompletes) || 0], ['Booked', aedUsd(rev.bookedAed || 0)]])
-        + kpis([['Skips', (d.ads && d.ads.skips) || 0], ['Click-through', pct1(ctr)],
-          ['View rate', pct1(viewRate)], ['RPM (revenue per mille)', aedUsd(rev.rpmAed || 0)],
-          ['ARPDAU', aedUsd(rev.arpdauAed || 0)], ['ARPU', aedUsd(rev.arpuAed || 0)]])
+          ['Views', (d.ads && d.ads.impressions) || 0], ['Taps', (d.ads && d.ads.clicks) || 0],
+          ['Completed watches', (d.ads && d.ads.viewCompletes) || 0], ['Booked', aedUsd(rev.bookedAed || 0)]])
+        + kpis([['Skips', (d.ads && d.ads.skips) || 0], ['Tap-through', pct1(ctr)],
+          ['View rate', pct1(viewRate)], ['Per thousand views', aedUsd(rev.rpmAed || 0)],
+          ['Per person active today', aedUsd(rev.arpdauAed || 0)], ['Per registered account', aedUsd(rev.arpuAed || 0)]])
         + card('Booked ad revenue',
-          '<p class="gap-note">Booked ad revenue is rate-card maths × observed events. Cash has not moved until an advertiser pays. There is no third-party auction.</p>'
-          + kpis([['CPM line (diagnostic)', aedUsd(rev.cpmAed || 0)],
-            ['CPC line (diagnostic)', aedUsd(rev.cpcAed || 0)],
-            ['CPV line (diagnostic)', aedUsd(rev.cpvAed || 0)],
+          '<p class="gap-note">Booked ad revenue is rate-card maths × observed events. Cash has not moved until an advertiser pays. There is no outside auction.</p>'
+          + kpis([['Per thousand views (check)', aedUsd(rev.cpmAed || 0)],
+            ['Per tap (check)', aedUsd(rev.cpcAed || 0)],
+            ['Per completed watch (check)', aedUsd(rev.cpvAed || 0)],
             ['Booked (chosen models)', aedUsd(rev.bookedAed || 0)]])
-          + '<p class="gap-note">Each unit books one model — CPM (cost per mille), CPC (cost per click) or CPV (cost per view). The other two lines are diagnostics, not extra cash. RPM (revenue per mille) is booked ÷ impressions × 1,000. ARPDAU (average revenue per daily active user) here is lifetime booked ÷ today’s daily active users, until a day rollup exists — that is not a day’s take. ARPU (average revenue per user) is lifetime booked ÷ registered accounts.</p>')
+          + '<p class="gap-note">Each ad books one model — per thousand views, per tap, or per completed watch. The other two lines are checks, not extra cash. “Per thousand” revenue is booked ÷ views × 1,000. “Per person active today” is lifetime booked ÷ today’s active people — that is not a day’s take. “Per registered account” is lifetime booked ÷ everyone who signed up.</p>')
         + card('Rate card',
-          '<label for="adRateEcpm">eCPM (effective cost per mille) — ' + escapeHtml(opCode()) + ' per 1,000 impressions</label>'
+          '<label for="adRateEcpm">Per thousand views — ' + escapeHtml(opCode()) + ' per 1,000 views</label>'
           + '<input id="adRateEcpm" inputmode="decimal" value="' + escapeHtml(String(rates.ecpmAed != null ? (Ccy() && Ccy().convert ? Ccy().convert(rates.ecpmAed, 'AED', opCode()) : rates.ecpmAed) : 0)) + '" />'
-          + '<label for="adRateCpc">CPC (cost per click) — ' + escapeHtml(opCode()) + ' per tap</label>'
+          + '<label for="adRateCpc">Per tap — ' + escapeHtml(opCode()) + ' each</label>'
           + '<input id="adRateCpc" inputmode="decimal" value="' + escapeHtml(String(rates.cpcAed != null ? (Ccy() && Ccy().convert ? Ccy().convert(rates.cpcAed, 'AED', opCode()) : rates.cpcAed) : 0)) + '" />'
-          + '<label for="adRateCpv">CPV (cost per view) — ' + escapeHtml(opCode()) + ' per completed view</label>'
+          + '<label for="adRateCpv">Per completed watch — ' + escapeHtml(opCode()) + ' each</label>'
           + '<input id="adRateCpv" inputmode="decimal" value="' + escapeHtml(String(rates.cpvAed != null ? (Ccy() && Ccy().convert ? Ccy().convert(rates.cpvAed, 'AED', opCode()) : rates.cpvAed) : 0)) + '" />'
-          + '<label for="adRateViewSec">Completed view after (seconds of the unit playing)</label>'
+          + '<label for="adRateViewSec">Completed watch after (seconds of the ad playing)</label>'
           + '<input id="adRateViewSec" type="number" min="1" max="60" value="' + escapeHtml(String(rates.viewCompleteSec != null ? rates.viewCompleteSec : 15)) + '" />'
           + '<div class="row"><button type="button" class="primary" id="adSaveRates">Save rate card</button></div>'
           + '<p class="gap-note" style="margin-top:8px;">The math runs at ' + escapeHtml(aed(0)) + ' until rates are typed. Saving the card recalculates every unit immediately. Rates are first-party — not an auction. Typed in ' + escapeHtml(moneyLabel()) + ' and converted live.</p>')
         + card('How ads work on Naluno',
-          '<p class="gap-note">Inventory is first-party: a creative is uploaded here and stored on Cloudflare R2 (object storage). There is no third-party network, no auction, and no tracker. A live unit appears as a skippable break after every N minutes of watching Signal or Broadcast, and as a chapter break inside a Broadcast. Every unit is labelled <b>Ad</b>. The call to action (CTA) must be an https address. The unit plays with its own audio. If it is not skipped, the Broadcast or Signal resumes when the unit ends. Swiping away pauses it. A completed view is counted after the seconds on the rate card, or if the creative ends without a skip before that. A skip is not a click. A session may see the same unit at most three times.</p>')
+          '<p class="gap-note">You upload the ad here. It is stored with the videos. There is no outside ad network, no auction, and no tracker. A live ad can appear as a skippable break after every N minutes of watching, and as a chapter break inside a Broadcast. Every ad is labelled <b>Ad</b>. The button on it must be an https address. The ad plays with its own sound. If it is not skipped, the video continues when the ad ends. Swiping away pauses it. A completed watch is counted after the seconds on the rate card, or if the ad ends without a skip. A skip is not a tap. The same person may see the same ad at most three times in a session.</p>')
         + card('How often',
           '<label for="adEveryMin">Show a break after every (minutes of watching)</label>'
           + '<input id="adEveryMin" type="number" min="1" max="30" value="' + escapeHtml(String((d.flags && d.flags.adEveryMin) != null ? d.flags.adEveryMin : 1)) + '" />'
@@ -1193,7 +1193,7 @@
               + '<div class="sub">' + escapeHtml(st) + ' · ' + escapeHtml(places) + ' · skip ' + escapeHtml(String(a.skipAfterSec != null ? a.skipAfterSec : 5)) + 's · ' + escapeHtml(billLabel(model)) + '</div>'
               + '<div style="margin:4px 0;"><b>' + escapeHtml(a.headline || a.advertiser || a.id) + '</b></div>'
               + '<div class="sub">' + escapeHtml(a.advertiser || '') + (a.ctaUrl ? ' · ' + escapeHtml(a.ctaUrl) : '') + '</div>'
-              + '<div class="sub" style="margin-top:6px;">Impressions ' + impr + ' · Clicks ' + clicks + ' · Skips ' + (Number(a.skips) || 0) + ' · Completed views ' + views + ' · Click-through ' + rate + ' · Booked ' + aedUsd(u.bookedAed || 0) + '</div>'
+              + '<div class="sub" style="margin-top:6px;">Views ' + impr + ' · Taps ' + clicks + ' · Skips ' + (Number(a.skips) || 0) + ' · Completed watches ' + views + ' · Tap-through ' + rate + ' · Booked ' + aedUsd(u.bookedAed || 0) + '</div>'
               + '<div class="row" style="margin-top:10px;">'
               + (st === 'live'
                 ? '<button type="button" class="ghost admAd" data-id="' + escapeHtml(a.id) + '" data-act="pause">Pause</button>'
@@ -1473,14 +1473,14 @@
         currencyCard()
         + inactiveNote('Real payouts are disabled. No money has moved.')
         + card('Booked ad revenue',
-          '<p class="sub">Booked ad revenue is rate-card maths × observed events. Cash has not moved until an advertiser pays. There is no third-party auction.</p>'
+          '<p class="sub">Booked ad revenue is rate-card maths × observed events. Cash has not moved until an advertiser pays. There is no outside auction.</p>'
           + kpis([['Booked ads', aedUsd(adRev.bookedAed || 0)],
-            ['RPM (revenue per mille)', aedUsd(adRev.rpmAed || 0)],
-            ['ARPDAU', aedUsd(adRev.arpdauAed || 0)],
-            ['ARPU', aedUsd(adRev.arpuAed || 0)]])
-          + kpis([['Impressions', adRev.impressions || 0],
-            ['Clicks', adRev.clicks || 0],
-            ['Completed views', adRev.viewCompletes || 0],
+            ['Per thousand views', aedUsd(adRev.rpmAed || 0)],
+            ['Per person active today', aedUsd(adRev.arpdauAed || 0)],
+            ['Per registered account', aedUsd(adRev.arpuAed || 0)]])
+          + kpis([['Views', adRev.impressions || 0],
+            ['Taps', adRev.clicks || 0],
+            ['Completed watches', adRev.viewCompletes || 0],
             ['After free-tier cost', aedUsd(costs.billable_aed || 0)]])
           + gap((g.ad_revenue || 'Booked ad revenue is rate-card maths × observed events. Cash has not moved.')
             + ' Booked minus cost is not profit. Cost is list-price maths until an invoice is recorded.')
@@ -1490,21 +1490,21 @@
           + kpis([['Invoiced (recorded)', aedUsd(costs.invoice_aed || 0)],
             ['List-price usage', aedUsd(costs.metered_aed || 0)],
             ['After free tier', aedUsd(costs.billable_aed || 0)],
-            ['Serving with', costs.invoice_aed ? 'invoice' : (costs.on_free_tier ? 'Firebase Spark (free)' : 'Firebase Blaze (paid)')]])
-          + kpis([['Per registered', aedUsd(costs.per_registered_aed || 0)],
-            ['Per monthly active (MAU)', aedUsd(costs.per_mau_aed || 0)],
-            ['Per daily active (DAU)', aedUsd(costs.per_dau_aed || 0)],
-            ['R2 stored', (costs.storage && costs.storage.r2_gb != null) ? Number(costs.storage.r2_gb).toFixed(3) + ' GB' : '—']])
+            ['Serving with', costs.invoice_aed ? 'invoice' : (costs.on_free_tier ? 'free hosting plan' : 'paid hosting plan')]])
+          + kpis([['Per registered account', aedUsd(costs.per_registered_aed || 0)],
+            ['Per person active this month', aedUsd(costs.per_mau_aed || 0)],
+            ['Per person active today', aedUsd(costs.per_dau_aed || 0)],
+            ['Files stored', (costs.storage && costs.storage.r2_gb != null) ? Number(costs.storage.r2_gb).toFixed(3) + ' GB' : '—']])
           + gap(g.unit_econ || ''))
         + card('Free-tier limits',
           (costs.gates && costs.gates.length
-            ? plainRows(['Cap', 'Free allowance', 'Around monthly active', 'Status'],
+            ? plainRows(['Cap', 'Free allowance', 'Around people in a month', 'Status'],
               costs.gates.map(function (gate) {
                 const mau = gate.mau_display == null ? 'needs usage' : ('~' + Number(gate.mau_display).toLocaleString('en-GB'));
                 return [gate.label, gate.free, mau, gate.already ? 'past free' : 'still free'];
               }))
             : '<p class="sub">Free-tier limits appear once usage is on file.</p>')
-          + gap('Firestore reads usually go first. Model: 150 Firestore reads per monthly active user per day. Firebase Spark allows 50,000 reads per day, about 330 monthly active users. Cloudflare R2 egress is not billed. Push (FCM) is not billed.'))
+          + gap('Database reads usually go first. Model: 150 reads per person active this month, per day. The free hosting plan allows 50,000 reads per day, about 330 people active in a month. File downloads are not billed. Push notifications are not billed.'))
         + card('Bills and extras (this browser)',
           '<label>Invoiced this month (' + escapeHtml(moneyLabel()) + ')</label><input id="costInvoice" inputmode="decimal" placeholder="0" />'
           + '<label>Fixed monthly — domain, store, tools (' + escapeHtml(opCode()) + ')</label><input id="costFixed" inputmode="decimal" placeholder="0" />'
@@ -1523,7 +1523,7 @@
           + gap('Broadcast is the expensive part — it remains on storage. Signals fall off after 25 hours.'))
         + card('People, most expensive first',
           top.length
-            ? plainRows(['Person', 'Monthly active', 'Media', 'Uploads', 'Variable', 'Share', 'This month'],
+            ? plainRows(['Person', 'Active this month', 'Media', 'Uploads', 'Variable', 'Share', 'This month'],
               top.map(function (p) {
                 return [
                   (p.name || p.uid.slice(0, 10)) + (p.handle ? ' · ' + p.handle : ''),
@@ -1537,7 +1537,7 @@
               }))
             : '<p class="sub">No people on file yet. The math still works at zero.</p>')
         + card('Mix projection',
-          plainRows(['Monthly active', 'List-price / month', 'After free tier', 'Per monthly active'],
+          plainRows(['People in a month', 'List-price / month', 'After free tier', 'Per person'],
             scale.map(function (row) {
               return [row.n.toLocaleString('en-GB'), aedUsd(row.gross_aed), aedUsd(row.billable_aed), aedUsd(row.per_mau_aed)];
             }))
@@ -1637,7 +1637,7 @@
         + card('How they arrived', bars(site.refs, 12) + (site.utm && site.utm.length ? bars(site.utm, 8) : ''))
         + card('Pages today', bars(site.paths, 8))
         + card('Language · screen · connection', bars(site.langs, 8) + bars(site.screens, 8) + bars(site.conn, 6))
-        + card('Hour of day (operator timezone)', bars(site.hours, 24))
+        + card('Hour of day (this phone’s clock)', bars(site.hours, 24))
         + card('Last 30 days on record',
           kpis([['Visits (rollup)', site.day_visits || 0],
             ['App opens (rollup)', site.day_app || 0],
@@ -1668,7 +1668,7 @@
     if (tab === 'notifications') {
       el.innerHTML =
         card('Notifications',
-          kpis([['Users with a push token (FCM)',
+          kpis([['People with a push token',
             (u.list || []).filter(function (row) { return !!(row.fcmToken || row.fcmTokenAndroid); }).length]])
           + gap(g.notifications || ''));
       return;
@@ -1679,12 +1679,12 @@
       const hits = __tabCache.searchHits || [];
       el.innerHTML =
         card('Find a Callsign',
-          '<p class="sub" style="margin:0 0 12px;">Handle, uid, email or name. Hits the live handle map, not only the first page of loaded accounts.</p>'
-          + '<div class="row"><input id="admFindQ" placeholder="@handle, uid, email, name" style="flex:1" value="' + escapeHtml(q) + '" />'
+          '<p class="sub" style="margin:0 0 12px;">Handle, email, name or account id. Hits the live handle map, not only the first page of loaded accounts.</p>'
+          + '<div class="row"><input id="admFindQ" placeholder="@handle, email, name, id" style="flex:1" value="' + escapeHtml(q) + '" />'
           + '<button type="button" class="primary" id="admFindGo">Find</button></div>'
           + '<p class="sub" id="admFindHint" style="margin:10px 0 0;"></p>')
         + (hits.length
-          ? card('Matches', table(['Name', 'Handle', 'Uid', 'State', ''],
+          ? card('Matches', table(['Name', 'Handle', 'Id', 'State', ''],
             hits.map(function (row) {
               const state = (row.accountState === 'closed' || row.deleted || row.closed) ? 'CLOSED' : (row.suspended ? 'SUSPENDED' : 'ok');
               return [

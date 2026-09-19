@@ -193,7 +193,7 @@ function renderWirelineList(){
     const label = $('wirelineSectionLabel');
     if(label) label.hidden = true;
     $('wirelineList').innerHTML = (typeof emptyStateHtml === 'function')
-      ? emptyStateHtml('No conversations yet', 'Start one from Frequencies. Wireline only lists people you have already written or called.')
+      ? emptyStateHtml('No conversations yet', 'Start one from Frequencies. Wireline only lists people you have already written or called.', 'messages')
       : '<div class="empty-state"><p class="empty-state-copy">No conversations yet.</p></div>';
     if($('wirelineNavDot')) $('wirelineNavDot').style.display = 'none';
     return;

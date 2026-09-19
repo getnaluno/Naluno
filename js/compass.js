@@ -411,7 +411,6 @@ $('compassInput').addEventListener('input', function(){
   this.style.height = 'auto';
   this.style.height = Math.min(120, this.scrollHeight) + 'px';
 });
-if($('compassDeleteBtn')) $('compassDeleteBtn').onclick = function(){ requestAccountDeletion(); };
 if($('compassWriteBtn')) $('compassWriteBtn').onclick = function(){ writeToNaluno(''); };
 
 function openComposer(mode){

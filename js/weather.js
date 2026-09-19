@@ -353,6 +353,22 @@ function paintWeatherStrip(data){
   if(b) b.textContent = line + '   ·   ';
 }
 
+function weatherWanted(){
+  try{
+    return localStorage.getItem(WEATHER_HIDE_KEY) === '0';
+  }catch(_){ return false; }
+}
+function stopWeatherTimer(){
+  if(weatherTimer){ clearInterval(weatherTimer); weatherTimer = null; }
+}
+function startWeatherTimer(){
+  stopWeatherTimer();
+  weatherTimer = setInterval(function(){
+    if(!weatherWanted()) return;
+    refreshWeather().catch(function(){});
+  }, WEATHER_POLL_MS);
+}
+
 function showWeatherStrip(){
   setWeatherHidden(false);
   const el = $('weatherStrip');
@@ -360,6 +376,7 @@ function showWeatherStrip(){
   document.body.classList.add('weather-on');
   if(!weatherLast) paintWeatherWaiting();
   refreshWeather().catch(function(){});
+  startWeatherTimer();
 }
 
 function hideWeatherStrip(){
@@ -367,6 +384,7 @@ function hideWeatherStrip(){
   const el = $('weatherStrip');
   if(el) el.classList.remove('on');
   document.body.classList.remove('weather-on');
+  stopWeatherTimer();
 }
 
 async function refreshWeather(force){
@@ -395,6 +413,7 @@ function onNalunoLocation(ev){
   const lon = d.lng != null ? d.lng : d.lon;
   if(lon == null || isLegacyDefaultAlAin(d.lat, lon, d.source)) return;
   rememberLiveCoords(d.lat, lon, d);
+  if(!weatherWanted()) return;
   const moved = (weatherLast && weatherLast.lat != null)
     ? weatherHaversineM(weatherLast.lat, weatherLast.lon, Number(d.lat), Number(lon))
     : Infinity;
@@ -439,9 +458,10 @@ async function formatWeatherReply(queryText){
 /** Compact system-hint for the AI worker — current + tonight precip. */
 async function weatherSystemHint(){
   try{
-    const data = weatherLast && (Date.now() - weatherLast.ts < 90 * 1000)
-      ? weatherLast
-      : await fetchWeather(true);
+    let data = null;
+    if(weatherLast && (Date.now() - weatherLast.ts < 90 * 1000)) data = weatherLast;
+    else if(weatherWanted()) data = await fetchWeather(true);
+    if(!data) return '';
     let hint = weatherLine(data);
     if(data.tonight){
       hint += ' | Tonight rain chance ~' + data.tonight.maxPrecip + '%';
@@ -461,15 +481,16 @@ function bindWeatherStrip(){
   const x = $('weatherStripDismiss');
   if(x) x.onclick = function(){ hideWeatherStrip(); };
   const recall = $('compassWeatherBtn');
-  if(recall) recall.onclick = function(){ showWeatherStrip(); toast('Weather is back on the strip'); };
+  if(recall) recall.onclick = function(){ showWeatherStrip(); toast('Weather is on the strip — from this phone'); };
   try{ window.addEventListener('naluno-location', onNalunoLocation); }catch(_){}
-  if(weatherHidden()){
-    hideWeatherStrip();
-  } else {
+  if(weatherWanted()){
     showWeatherStrip();
+  } else {
+    const el = $('weatherStrip');
+    if(el) el.classList.remove('on');
+    document.body.classList.remove('weather-on');
+    stopWeatherTimer();
   }
-  if(weatherTimer) clearInterval(weatherTimer);
-  weatherTimer = setInterval(function(){ refreshWeather().catch(function(){}); }, WEATHER_POLL_MS);
 }
 
 window.isWeatherQuery = isWeatherQuery;
