@@ -228,9 +228,19 @@
     if(!video) return;
     try{
       const bs = document.getElementById('bspace');
-      if(bs && bs.classList.contains('active')) return;
+      if(bs && bs.classList.contains('active')){
+        pauseStrandPreview(video);
+        return;
+      }
       const bv = document.getElementById('bviewer');
-      if(bv && bv.classList.contains('active')) return;
+      if(bv && bv.classList.contains('active')){
+        pauseStrandPreview(video);
+        return;
+      }
+      if(document.body && document.body.classList.contains('naluno-bspace-open')){
+        pauseStrandPreview(video);
+        return;
+      }
     }catch(_){}
     const src = video.getAttribute('data-preview-src') || '';
     if(!src) return;
@@ -276,6 +286,13 @@
     const scroller = document.getElementById('broadcastTabScroll');
     const root = (scroller && scroller.clientHeight > 40) ? scroller : null;
     __strandPreviewIO = new IntersectionObserver(function(entries){
+      try{
+        const bs = document.getElementById('bspace');
+        if((bs && bs.classList.contains('active')) || (document.body && document.body.classList.contains('naluno-bspace-open'))){
+          videos.forEach(pauseStrandPreview);
+          return;
+        }
+      }catch(_){}
       entries.forEach(function(en){
         en.target.__nalunoRatio = en.intersectionRatio;
         en.target.__nalunoOn = en.isIntersecting;

@@ -332,13 +332,25 @@
     if (!isFinite(n) || n < 0) return 0;
     return Math.min(100000, n);
   }
+  function clampPaidAed(n) {
+    n = Number(n);
+    if (!isFinite(n) || n < 0) return 0;
+    return Math.min(1e9, n);
+  }
   function billModelOf(ad) {
     const m = String((ad && ad.billModel) || 'cpm').toLowerCase();
     if (m === 'cpc' || m === 'cpv' || m === 'cpm') return m;
     return 'cpm';
   }
+  function paidAedOf(ad) {
+    if (!ad) return 0;
+    const n = ad.paidAed != null ? ad.paidAed : (ad.paid_aed != null ? ad.paid_aed : 0);
+    return clampPaidAed(n);
+  }
   /* Booked ad revenue from observed events × the operator rate card.
-     Cash has not moved. There is no third-party auction. */
+     Cash has not moved. There is no third-party auction.
+     Prepaid is the amount the operator typed. Used = booked. Left = prepaid − used.
+     When prepaid is set and left hits zero, the unit is spent. */
   function estimateAdRevenue(raw) {
     raw = raw || {};
     const ads = raw.deskAds || raw.ads || [];
@@ -365,10 +377,17 @@
       const cpvAed = views * unitCpv;
       const model = billModelOf(ad);
       const bookedAed = model === 'cpc' ? cpcAed : (model === 'cpv' ? cpvAed : cpmAed);
+      const paidAed = paidAedOf(ad);
+      const remainingAed = paidAed > 0 ? Math.max(0, paidAed - bookedAed) : null;
+      const spent = !!(ad && ad.spent) || (paidAed > 0 && bookedAed >= paidAed);
       return {
         id: (ad && ad.id) || '',
         headline: (ad && ad.headline) || '',
         advertiser: (ad && ad.advertiser) || '',
+        advertiserHandle: (ad && (ad.advertiserHandle || ad.handle)) || '',
+        advertiserEmail: (ad && ad.advertiserEmail) || '',
+        advertiserPhone: (ad && ad.advertiserPhone) || '',
+        advertiserContact: (ad && ad.advertiserContact) || '',
         status: (ad && ad.status) || 'paused',
         billModel: model,
         impressions: impressions,
@@ -382,6 +401,10 @@
         cpcAed: cpcAed,
         cpvAed: cpvAed,
         bookedAed: bookedAed,
+        paidAed: paidAed,
+        usedAed: bookedAed,
+        remainingAed: remainingAed,
+        spent: spent,
       };
     });
     const impressions = units.reduce(function (n, u) { return n + u.impressions; }, 0);
@@ -392,6 +415,12 @@
     const cpcAed = units.reduce(function (n, u) { return n + u.cpcAed; }, 0);
     const cpvAed = units.reduce(function (n, u) { return n + u.cpvAed; }, 0);
     const bookedAed = units.reduce(function (n, u) { return n + u.bookedAed; }, 0);
+    const paidAed = units.reduce(function (n, u) { return n + u.paidAed; }, 0);
+    const remainingAed = units.reduce(function (n, u) {
+      if (u.paidAed > 0) return n + Math.max(0, u.paidAed - u.bookedAed);
+      return n;
+    }, 0);
+    const spentCount = units.filter(function (u) { return u.spent; }).length;
     const rpmAed = impressions ? (bookedAed / impressions) * 1000 : 0;
     const users = raw.users || [];
     const now = raw.now || Date.now();
@@ -413,6 +442,9 @@
       cpcAed: cpcAed,
       cpvAed: cpvAed,
       bookedAed: bookedAed,
+      paidAed: paidAed,
+      remainingAed: remainingAed,
+      spentCount: spentCount,
       rpmAed: rpmAed,
       arpdauAed: dau ? bookedAed / dau : 0,
       arpuAed: registered ? bookedAed / registered : 0,
@@ -422,6 +454,8 @@
       cash: false,
       assumptions: [
         'Booked ad revenue is rate-card maths × observed events. Cash has not moved until an advertiser pays.',
+        'Prepaid is the amount typed here — what the advertiser actually paid. Used is booked maths. Left is prepaid minus used.',
+        'When left hits zero the ad pauses itself and leaves the app until more prepaid is typed.',
         'There is no outside auction. The rates per thousand views, per tap, and per completed watch are set here.',
         'Each ad books one model. The other two lines are checks, not extra cash.',
         'A skip is not a tap. Taps and completed watches cannot exceed views.',

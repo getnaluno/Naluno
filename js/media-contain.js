@@ -160,7 +160,7 @@ function nalunoPauseDetachedMedia(){
         if(typeof nalunoClipElement === 'function' && nalunoClipElement(el)) return;
         if(nalunoAdSurface(el)) return;
         if(nalunoActiveViewerContains(el)) return;
-        if(el.dataset && el.dataset.nalunoPreview === '1' && onBroadcast && el.__nalunoOn) return;
+        if(el.dataset && el.dataset.nalunoPreview === '1' && onBroadcast && el.__nalunoOn && !bspaceOpen) return;
         try{ if(!el.paused) el.dataset.nalunoPauseAt = String(el.currentTime || 0); }catch(_){}
         el.dataset.nalunoWantPlay = '0';
         delete el.dataset.nalunoKeepAlive;

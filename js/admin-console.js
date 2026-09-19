@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260918i';
+  const BUILD = '20260918j';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -60,6 +60,12 @@
   let __tabCache = {};
   let __activeTab = 'overview';
   let __snap = null;
+  let __livePack = null;
+  let __liveUnsubs = [];
+  let __liveArmed = false;
+  let __liveTimer = null;
+  let __workerTimer = null;
+  let __spentLatch = {};
   let __swInfo = { connected: false, cache: '', version: '' };
   const Data = (typeof NalunoAdminData !== 'undefined') ? NalunoAdminData : null;
 
@@ -553,9 +559,201 @@
     out.error = 'unreachable';
     return out;
   }
+
+  function snapRows(snap) {
+    const out = [];
+    if (!snap) return out;
+    snap.forEach(function (d) { out.push(Object.assign({ id: d.id }, d.data())); });
+    return out;
+  }
+  function groupRows(snap) {
+    const out = [];
+    if (!snap) return out;
+    snap.forEach(function (d) {
+      out.push(Object.assign({ id: d.id, uid: parentUidOf(d) }, d.data()));
+    });
+    return out;
+  }
+  function bodyHasFocus() {
+    try {
+      const el = document.activeElement;
+      if (!el) return false;
+      const tag = (el.tagName || '').toLowerCase();
+      if (tag !== 'input' && tag !== 'textarea' && tag !== 'select') return false;
+      return !!(el.closest && el.closest('#adminBody'));
+    } catch (_) { return false; }
+  }
+  function commitPack(p) {
+    if (!p) return __snap;
+    p.now = Date.now();
+    p.sw = __swInfo;
+    try { p.costInputs = readCostInputs(); } catch (_) {}
+    const snap = Data ? Data.deriveSnapshot(p) : p;
+    snap._at = Date.now();
+    snap._raw = p;
+    __snap = snap;
+    return snap;
+  }
+  function applyLivePack() {
+    if (!__livePack) return;
+    try {
+      if (__livePack._signalsTop || __livePack._signalsGroup) {
+        __livePack.signals = mergeById(__livePack._signalsTop || [], __livePack._signalsGroup || []);
+      }
+    } catch (_) {}
+    try {
+      if ((!__livePack.ledger || !__livePack.ledger.length) && __livePack._inbox && __livePack._inbox.length) {
+        __livePack.ledger = __livePack._inbox.map(function (row) {
+          return {
+            id: row.id || row.event_id,
+            event_type: row.event_type,
+            user_id: row.actor_user_id || row.user_id,
+            points: 0,
+            eligible_points: 0,
+            status: 'RECORDED',
+            reason: 'inbox',
+          };
+        });
+      }
+    } catch (_) {}
+    try {
+      if (Array.isArray(__livePack.audit)) {
+        __livePack.audit.sort(function (a, b) { return (b.created_at || 0) - (a.created_at || 0); });
+      }
+    } catch (_) {}
+    const snap = commitPack(__livePack);
+    try { maybePauseSpentAds(snap); } catch (_) {}
+    try { renderStrip(snap); } catch (_) {}
+    if (!bodyHasFocus()) {
+      try { renderTab(__activeTab, snap); } catch (_) {}
+    }
+  }
+  function scheduleLive() {
+    if (__liveTimer) {
+      try { clearTimeout(__liveTimer); } catch (_) {}
+    }
+    __liveTimer = setTimeout(function () {
+      __liveTimer = null;
+      applyLivePack();
+    }, 280);
+  }
+  function dropLiveListeners() {
+    __liveUnsubs.forEach(function (u) {
+      try { if (typeof u === 'function') u(); } catch (_) {}
+    });
+    __liveUnsubs = [];
+    __liveArmed = false;
+    if (__liveTimer) {
+      try { clearTimeout(__liveTimer); } catch (_) {}
+      __liveTimer = null;
+    }
+    if (__workerTimer) {
+      try { clearInterval(__workerTimer); } catch (_) {}
+      __workerTimer = null;
+    }
+  }
+  function listenCol(name, limit, key, orderField) {
+    const db = adminDb();
+    if (!db) return;
+    try {
+      let q = db.collection(name);
+      if (orderField) q = q.orderBy(orderField, 'desc');
+      q = q.limit(limit || 400);
+      const unsub = q.onSnapshot(function (s) {
+        if (!__livePack) return;
+        __livePack[key] = snapRows(s);
+        scheduleLive();
+      }, function () {
+        if (orderField) listenCol(name, limit, key);
+      });
+      __liveUnsubs.push(unsub);
+    } catch (_) {
+      if (orderField) {
+        try { listenCol(name, limit, key); } catch (_2) {}
+      }
+    }
+  }
+  function listenDoc(col, id, key, applyFn) {
+    const db = adminDb();
+    if (!db) return;
+    try {
+      const unsub = db.collection(col).doc(id).onSnapshot(function (s) {
+        if (!__livePack) return;
+        const data = (s && s.exists) ? (s.data() || {}) : {};
+        if (typeof applyFn === 'function') applyFn(data);
+        else __livePack[key] = data;
+        scheduleLive();
+      }, function () {});
+      __liveUnsubs.push(unsub);
+    } catch (_) {}
+  }
+  function listenGroup(name, limit, onRows) {
+    const db = adminDb();
+    if (!db) return;
+    try {
+      const unsub = db.collectionGroup(name).limit(limit || 400).onSnapshot(function (s) {
+        if (!__livePack) return;
+        onRows(groupRows(s));
+        scheduleLive();
+      }, function () {});
+      __liveUnsubs.push(unsub);
+    } catch (_) {}
+  }
+  function armLiveListeners() {
+    if (__liveArmed) return;
+    const db = adminDb();
+    if (!db) return;
+    __liveArmed = true;
+    listenCol('users', 500, 'users');
+    listenCol('broadcasts', 400, 'broadcasts');
+    listenCol('reports', 80, 'reports');
+    listenCol('deskMail', 80, 'deskMail');
+    listenCol('deskAds', 80, 'deskAds');
+    listenCol('siteSessions', 800, 'siteSessions', 'startedAt');
+    listenCol('siteDays', 180, 'siteDays');
+    listenCol('toga', 80, 'toga');
+    listenCol('strands', 200, 'strands');
+    listenCol('bands', 80, 'bands');
+    listenCol('contributionLedger', 200, 'ledger');
+    listenCol('economyInbox', 200, '_inbox');
+    listenCol('creatorSupport', 80, 'creatorSupport');
+    listenCol('metrics', 80, 'metrics');
+    listenCol('adminAudit', 80, 'audit');
+    listenCol('originMarks', 200, 'originMarks');
+    listenCol('signals', 400, '_signalsTop');
+    listenDoc('economyConfig', 'flags', 'flags');
+    listenDoc('economyConfig', 'adRates', 'adRates');
+    listenDoc('economyConfig', 'currency', 'currency', function (data) {
+      __livePack.currency = data;
+      const C = Ccy();
+      if (C && data && data.code) C.setCode(data.code);
+    });
+    listenDoc('economyConfig', 'fxRates', 'fxRates', function (fx) {
+      const C = Ccy();
+      if (C && fx && fx.rates) C.applyRates(fx.rates, { source: 'desk', fetchedAt: fx.fetchedAt });
+    });
+    listenGroup('signal', 400, function (rows) {
+      __livePack._signalsGroup = rows;
+      __livePack.signals = mergeById(__livePack._signalsTop || [], rows);
+    });
+    listenGroup('beacons', 400, function (rows) {
+      __livePack.beacons = rows;
+    });
+    if (__workerTimer) {
+      try { clearInterval(__workerTimer); } catch (_) {}
+    }
+    __workerTimer = setInterval(function () {
+      pingWorker().then(function (w) {
+        if (!__livePack) return;
+        __livePack.worker = w || {};
+        scheduleLive();
+      }).catch(function () {});
+    }, 20000);
+  }
+
   async function loadSnapshot(force) {
     try { await loadLiveAppMeta(); } catch (_) {}
-    if (!force && __snap && (Date.now() - (__snap._at || 0) < 90000)) return __snap;
+    if (!force && __snap && (__liveArmed || (Date.now() - (__snap._at || 0) < 90000))) return __snap;
     const db = adminDb();
     const pack = {
       users: [], broadcasts: [], signals: [], toga: [], strands: [], bands: [],
@@ -599,13 +797,11 @@
     }
     await Promise.all(core);
     function finish(p) {
-      const snap = Data ? Data.deriveSnapshot(p) : p;
-      snap._at = Date.now();
-      snap._raw = p;
-      __snap = snap;
-      return snap;
+      __livePack = p;
+      return commitPack(p);
     }
     const first = finish(pack);
+    try { armLiveListeners(); } catch (_) {}
     Promise.all([
       colDocs('toga', 80).then(function (r) { pack.toga = r; }),
       colDocs('strands', 200).then(function (r) { pack.strands = r; }),
@@ -1098,20 +1294,54 @@
       }
       const unitById = {};
       (rev.units || []).forEach(function (u) { if (u && u.id) unitById[u.id] = u; });
+      function fromAedNum(n) {
+        const C = Ccy();
+        if (C && C.convert) return C.convert(Number(n) || 0, 'AED', opCode());
+        return Number(n) || 0;
+      }
+      function paidBoxVal(aedVal) {
+        const n = fromAedNum(aedVal);
+        if (!n) return '';
+        return String(Math.round(n * 10000) / 10000);
+      }
+      function adContactHtml(a) {
+        const bits = [];
+        const handle = String((a && a.advertiserHandle) || '').replace(/^@/, '').trim();
+        const email = String((a && a.advertiserEmail) || '').trim();
+        const phone = String((a && a.advertiserPhone) || '').trim();
+        const extra = String((a && a.advertiserContact) || '').trim();
+        if (handle) bits.push('@' + escapeHtml(handle));
+        if (email) {
+          const safe = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email);
+          bits.push(safe
+            ? ('<a href="mailto:' + escapeHtml(email) + '">' + escapeHtml(email) + '</a>')
+            : escapeHtml(email));
+        }
+        if (phone) {
+          const tel = phone.replace(/[^\d+]/g, '');
+          bits.push(tel
+            ? ('<a href="tel:' + escapeHtml(tel) + '">' + escapeHtml(phone) + '</a>')
+            : escapeHtml(phone));
+        }
+        if (extra) bits.push(escapeHtml(extra));
+        return bits.length ? bits.join(' · ') : 'No contact on file';
+      }
       el.innerHTML =
         kpis([['Live', (d.ads && d.ads.live) || 0], ['Paused', (d.ads && d.ads.paused) || 0],
           ['Views', (d.ads && d.ads.impressions) || 0], ['Taps', (d.ads && d.ads.clicks) || 0],
           ['Completed watches', (d.ads && d.ads.viewCompletes) || 0], ['Booked', aedUsd(rev.bookedAed || 0)]])
-        + kpis([['Skips', (d.ads && d.ads.skips) || 0], ['Tap-through', pct1(ctr)],
-          ['View rate', pct1(viewRate)], ['Per thousand views', aedUsd(rev.rpmAed || 0)],
+        + kpis([['Prepaid', aedUsd(rev.paidAed || 0)], ['Used', aedUsd(rev.bookedAed || 0)],
+          ['Left', aedUsd(rev.remainingAed || 0)], ['Used up', rev.spentCount || 0],
+          ['Skips', (d.ads && d.ads.skips) || 0], ['Tap-through', pct1(ctr)]])
+        + kpis([['View rate', pct1(viewRate)], ['Per thousand views', aedUsd(rev.rpmAed || 0)],
           ['Per person active today', aedUsd(rev.arpdauAed || 0)], ['Per registered account', aedUsd(rev.arpuAed || 0)]])
         + card('Booked ad revenue',
-          '<p class="gap-note">Booked ad revenue is rate-card maths × observed events. Cash has not moved until an advertiser pays. There is no outside auction.</p>'
+          '<p class="gap-note">Booked (used) is rate-card maths × observed events. Prepaid is what you type — the money the advertiser paid. Left is prepaid minus used. Cash has not moved until they pay. There is no outside auction.</p>'
           + kpis([['Per thousand views (check)', aedUsd(rev.cpmAed || 0)],
             ['Per tap (check)', aedUsd(rev.cpcAed || 0)],
             ['Per completed watch (check)', aedUsd(rev.cpvAed || 0)],
             ['Booked (chosen models)', aedUsd(rev.bookedAed || 0)]])
-          + '<p class="gap-note">Each ad books one model — per thousand views, per tap, or per completed watch. The other two lines are checks, not extra cash. “Per thousand” revenue is booked ÷ views × 1,000. “Per person active today” is lifetime booked ÷ today’s active people — that is not a day’s take. “Per registered account” is lifetime booked ÷ everyone who signed up.</p>')
+          + '<p class="gap-note">Each ad books one model — per thousand views, per tap, or per completed watch. The other two lines are checks, not extra cash. When left hits zero the ad pauses itself and leaves the app until more prepaid is typed.</p>')
         + card('Rate card',
           '<label for="adRateEcpm">Per thousand views — ' + escapeHtml(opCode()) + ' per 1,000 views</label>'
           + '<input id="adRateEcpm" inputmode="decimal" value="' + escapeHtml(String(rates.ecpmAed != null ? (Ccy() && Ccy().convert ? Ccy().convert(rates.ecpmAed, 'AED', opCode()) : rates.ecpmAed) : 0)) + '" />'
@@ -1137,6 +1367,15 @@
           + '<input id="adHeadline" maxlength="80" placeholder="What the unit is about" />'
           + '<label for="adAdvertiser">Advertiser</label>'
           + '<input id="adAdvertiser" maxlength="60" placeholder="Brand or person shown on the unit" />'
+          + '<label for="adAdvHandle">Advertiser Callsign</label>'
+          + '<input id="adAdvHandle" maxlength="40" placeholder="@handle" />'
+          + '<label for="adAdvEmail">Advertiser email</label>'
+          + '<input id="adAdvEmail" type="email" maxlength="120" placeholder="name@brand.com" autocomplete="off" />'
+          + '<label for="adAdvPhone">Advertiser phone</label>'
+          + '<input id="adAdvPhone" type="tel" maxlength="32" placeholder="+256…" />'
+          + '<label for="adPaid">Money paid by the advertiser — ' + escapeHtml(opCode()) + '</label>'
+          + '<input id="adPaid" inputmode="decimal" placeholder="0" />'
+          + '<p class="gap-note">Type what they actually paid. Used is rate-card maths from views, taps or completed watches. Left is paid minus used. When left hits zero the ad pauses itself and leaves the app.</p>'
           + '<label for="adCtaLabel">Call to action (CTA)</label>'
           + '<input id="adCtaLabel" maxlength="24" placeholder="Open" value="Open" />'
           + '<label for="adCtaUrl">Call to action address (https only)</label>'
@@ -1187,17 +1426,35 @@
             const rate = impr ? (Math.round((clicks / impr) * 1000) / 10) + '%' : '—';
             const u = unitById[a.id] || {};
             const model = u.billModel || a.billModel || 'cpm';
-            return '<div class="alert ' + (st === 'live' ? 'ok' : 'warning') + ' ad-row">'
+            const paidAed = Number(u.paidAed != null ? u.paidAed : a.paidAed) || 0;
+            const usedAed = Number(u.bookedAed) || 0;
+            const leftAed = paidAed > 0 ? Math.max(0, paidAed - usedAed) : null;
+            const spent = !!(u.spent || a.spent || (paidAed > 0 && usedAed >= paidAed));
+            const moneyLine = paidAed > 0
+              ? ('Paid ' + aedUsd(paidAed) + ' · Used ' + aedUsd(usedAed) + ' · Left ' + aedUsd(leftAed || 0))
+              : ('No prepaid typed · Used ' + aedUsd(usedAed));
+            const spentNote = spent ? '<div class="sub" style="color:#ffc266;margin-top:4px;">Used up — paused. Type more paid to go live again.</div>' : '';
+            return '<div class="alert ' + (st === 'live' && !spent ? 'ok' : 'warning') + ' ad-row">'
               + media
               + '<div class="ad-body">'
-              + '<div class="sub">' + escapeHtml(st) + ' · ' + escapeHtml(places) + ' · skip ' + escapeHtml(String(a.skipAfterSec != null ? a.skipAfterSec : 5)) + 's · ' + escapeHtml(billLabel(model)) + '</div>'
+              + '<div class="sub">' + escapeHtml(spent ? 'used up' : st) + ' · ' + escapeHtml(places) + ' · skip ' + escapeHtml(String(a.skipAfterSec != null ? a.skipAfterSec : 5)) + 's · ' + escapeHtml(billLabel(model)) + '</div>'
               + '<div style="margin:4px 0;"><b>' + escapeHtml(a.headline || a.advertiser || a.id) + '</b></div>'
               + '<div class="sub">' + escapeHtml(a.advertiser || '') + (a.ctaUrl ? ' · ' + escapeHtml(a.ctaUrl) : '') + '</div>'
-              + '<div class="sub" style="margin-top:6px;">Views ' + impr + ' · Taps ' + clicks + ' · Skips ' + (Number(a.skips) || 0) + ' · Completed watches ' + views + ' · Tap-through ' + rate + ' · Booked ' + aedUsd(u.bookedAed || 0) + '</div>'
+              + '<div class="sub" style="margin-top:4px;">' + adContactHtml(a) + '</div>'
+              + '<div class="sub" style="margin-top:6px;">Views ' + impr + ' · Taps ' + clicks + ' · Skips ' + (Number(a.skips) || 0) + ' · Completed watches ' + views + ' · Tap-through ' + rate + '</div>'
+              + '<div class="sub" style="margin-top:4px;">' + moneyLine + '</div>'
+              + spentNote
+              + '<div class="row" style="margin-top:10px;align-items:center;gap:8px;flex-wrap:wrap;">'
+              + '<label class="sub" for="adPaid-' + escapeHtml(a.id) + '" style="margin:0;">Paid</label>'
+              + '<input class="adPaidEdit" id="adPaid-' + escapeHtml(a.id) + '" data-id="' + escapeHtml(a.id) + '" inputmode="decimal" value="' + escapeHtml(paidBoxVal(paidAed)) + '" style="width:120px;" />'
+              + '<button type="button" class="ghost admAdPaid" data-id="' + escapeHtml(a.id) + '">Save paid</button>'
+              + '</div>'
               + '<div class="row" style="margin-top:10px;">'
               + (st === 'live'
                 ? '<button type="button" class="ghost admAd" data-id="' + escapeHtml(a.id) + '" data-act="pause">Pause</button>'
-                : '<button type="button" class="primary admAd" data-id="' + escapeHtml(a.id) + '" data-act="live">Go live</button>')
+                : (spent
+                  ? '<button type="button" class="ghost" disabled>Used up</button>'
+                  : '<button type="button" class="primary admAd" data-id="' + escapeHtml(a.id) + '" data-act="live">Go live</button>'))
               + '<button type="button" class="danger admAd" data-id="' + escapeHtml(a.id) + '" data-act="delete">Remove</button>'
               + '</div></div></div>';
           }).join('')
@@ -1217,6 +1474,9 @@
       });
       el.querySelectorAll('.admAd').forEach(function (btn) {
         btn.onclick = function () { actAd(btn.getAttribute('data-id'), btn.getAttribute('data-act')); };
+      });
+      el.querySelectorAll('.admAdPaid').forEach(function (btn) {
+        btn.onclick = function () { saveAdPaid(btn.getAttribute('data-id')); };
       });
       const save = function (status) { saveAd(status); };
       if ($('adSaveLive')) $('adSaveLive').onclick = function () { save('live'); };
@@ -2021,6 +2281,25 @@
       return u.href;
     } catch (_) { return ''; }
   }
+  function parsePaidAed(raw) {
+    let n = Number(raw);
+    if (!isFinite(n) || n < 0) n = 0;
+    if (n > 1e9) n = 1e9;
+    const C = Ccy();
+    return C && C.convert ? C.convert(n, opCode(), 'AED') : n;
+  }
+  function cleanHandle(raw) {
+    return String(raw || '').trim().replace(/^@/, '').slice(0, 40);
+  }
+  function cleanEmail(raw) {
+    const s = String(raw || '').trim().slice(0, 120);
+    if (!s) return '';
+    if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(s)) return '';
+    return s;
+  }
+  function cleanPhone(raw) {
+    return String(raw || '').trim().slice(0, 32);
+  }
   async function saveAd(status) {
     const db = adminDb();
     if (!db) { toast('Database is not ready'); return; }
@@ -2031,6 +2310,10 @@
     const file = fileEl && fileEl.files && fileEl.files[0];
     const headline = (($('adHeadline') && $('adHeadline').value) || '').trim().slice(0, 80);
     const advertiser = (($('adAdvertiser') && $('adAdvertiser').value) || '').trim().slice(0, 60);
+    const advertiserHandle = cleanHandle(($('adAdvHandle') && $('adAdvHandle').value) || '');
+    const advertiserEmail = cleanEmail(($('adAdvEmail') && $('adAdvEmail').value) || '');
+    const advertiserPhone = cleanPhone(($('adAdvPhone') && $('adAdvPhone').value) || '');
+    const paidAed = parsePaidAed(($('adPaid') && $('adPaid').value) || '0');
     const ctaLabel = ((($('adCtaLabel') && $('adCtaLabel').value) || 'Open').trim() || 'Open').slice(0, 24);
     const ctaUrl = httpsOnly(($('adCtaUrl') && $('adCtaUrl').value) || '');
     const place = ($('adPlace') && $('adPlace').value) || 'both';
@@ -2041,6 +2324,10 @@
     skip = Math.max(0, Math.min(15, skip));
     if (!file) { setMsg('adMsg', 'Choose a video or image.'); return; }
     if (!headline && !advertiser) { setMsg('adMsg', 'Add a headline or an advertiser name.'); return; }
+    if (($('adAdvEmail') && $('adAdvEmail').value.trim()) && !advertiserEmail) {
+      setMsg('adMsg', 'That email does not look right.');
+      return;
+    }
     if (($('adCtaUrl') && $('adCtaUrl').value.trim()) && !ctaUrl) {
       setMsg('adMsg', 'The call to action must be an https address.');
       return;
@@ -2066,6 +2353,11 @@
       placement: place,
       headline: headline,
       advertiser: advertiser,
+      advertiserHandle: advertiserHandle,
+      advertiserEmail: advertiserEmail,
+      advertiserPhone: advertiserPhone,
+      paidAed: paidAed,
+      spent: false,
       ctaLabel: ctaLabel,
       ctaUrl: ctaUrl,
       mediaUrl: url,
@@ -2102,10 +2394,24 @@
         if (!ok) return;
         await db.collection('deskAds').doc(id).delete();
         await writeAudit('ad-delete', id, 'removed');
+        delete __spentLatch[id];
         toast('Removed');
       } else {
-        const status = action === 'live' ? 'live' : 'paused';
-        await db.collection('deskAds').doc(id).set({ status: status, updatedAt: Date.now(), updatedBy: currentUser.uid }, { merge: true });
+        let status = action === 'live' ? 'live' : 'paused';
+        if (status === 'live') {
+          const units = (__snap && __snap.ads && __snap.ads.revenue && __snap.ads.revenue.units) || [];
+          const unit = units.filter(function (u) { return u && u.id === id; })[0];
+          if (unit && unit.spent) {
+            toast('Prepaid is used up. Type more paid first.');
+            return;
+          }
+        }
+        const patch = { status: status, updatedAt: Date.now(), updatedBy: currentUser.uid };
+        if (status === 'live') {
+          patch.spent = false;
+          delete __spentLatch[id];
+        }
+        await db.collection('deskAds').doc(id).set(patch, { merge: true });
         await writeAudit('ad-' + status, id, status);
         toast(status === 'live' ? 'Live in the app' : 'Paused');
       }
@@ -2113,6 +2419,62 @@
     } catch (e) {
       toast((e && e.message) || 'Could not update that unit. Publish the new firestore.rules.');
     }
+  }
+  async function saveAdPaid(id) {
+    if (!id) return;
+    const db = adminDb();
+    if (!db) { toast('Database is not ready'); return; }
+    const inp = document.getElementById('adPaid-' + id) || document.querySelector('.adPaidEdit[data-id="' + id + '"]');
+    const paidAed = parsePaidAed((inp && inp.value) || '0');
+    const units = (__snap && __snap.ads && __snap.ads.revenue && __snap.ads.revenue.units) || [];
+    const unit = units.filter(function (u) { return u && u.id === id; })[0] || {};
+    const used = Number(unit.bookedAed) || 0;
+    const spent = paidAed > 0 && used >= paidAed;
+    const patch = {
+      paidAed: paidAed,
+      spent: spent,
+      updatedAt: Date.now(),
+      updatedBy: currentUser && currentUser.uid,
+    };
+    if (spent) {
+      patch.status = 'paused';
+      __spentLatch[id] = true;
+    } else {
+      delete __spentLatch[id];
+    }
+    try {
+      await db.collection('deskAds').doc(id).set(patch, { merge: true });
+      await writeAudit('ad-paid', id, String(Math.round(paidAed * 100) / 100) + ' AED');
+      toast(spent ? 'Prepaid saved. Used up — paused.' : 'Prepaid saved');
+      try { if (inp) inp.blur(); } catch (_) {}
+      loadTab('ads', false);
+    } catch (e) {
+      toast((e && e.message) || 'Could not save prepaid.');
+    }
+  }
+  function maybePauseSpentAds(snap) {
+    const db = adminDb();
+    if (!db) return;
+    const units = (snap && snap.ads && snap.ads.revenue && snap.ads.revenue.units) || [];
+    units.forEach(function (u) {
+      if (!u || !u.id) return;
+      if (String(u.status || '') !== 'live') return;
+      if (!u.spent) return;
+      if (__spentLatch[u.id]) return;
+      __spentLatch[u.id] = true;
+      db.collection('deskAds').doc(u.id).set({
+        status: 'paused',
+        spent: true,
+        spentAt: Date.now(),
+        updatedAt: Date.now(),
+        updatedBy: currentUser && currentUser.uid,
+      }, { merge: true }).then(function () {
+        writeAudit('ad-spent', u.id, 'prepaid used up');
+        toast('An ad used up its prepaid and paused.');
+      }).catch(function () {
+        delete __spentLatch[u.id];
+      });
+    });
   }
 
   async function actMail(id, status) {
@@ -2355,6 +2717,10 @@
     __adminPass = '';
     currentUser = null;
     try { window.currentUser = null; } catch (_) {}
+    dropLiveListeners();
+    __snap = null;
+    __livePack = null;
+    __spentLatch = {};
     setStage('sign');
     setMsg('signMsg', '');
     setMsg('adminGateMsg', '');
@@ -2363,6 +2729,9 @@
   }
   function lockConsole() {
     __adminPass = '';
+    dropLiveListeners();
+    __snap = null;
+    __livePack = null;
     const body = $('adminBody');
     if (body) body.innerHTML = '';
     if (!currentUser) { setStage('sign'); return; }

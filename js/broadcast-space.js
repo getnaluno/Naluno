@@ -705,8 +705,26 @@ async function openBroadcastSpace(meta){
     if(pin){ pin.style.display = 'none'; pin.innerHTML = ''; }
   }catch(_){}
   $('bspace').classList.add('active');
+  try{ document.body.classList.add('naluno-bspace-open'); }catch(_){}
   $('bspaceScroll').scrollTop = 0;
+  try{ if(typeof nalunoExitFeedLandscape === 'function') nalunoExitFeedLandscape(); }catch(_){}
   try{ if(typeof pauseAllStrandPreviews === 'function') pauseAllStrandPreviews(); }catch(_){}
+  try{ if(typeof nalunoPauseDetachedMedia === 'function') nalunoPauseDetachedMedia(); }catch(_){}
+  try{
+    document.querySelectorAll('video, audio').forEach(function(el){
+      try{
+        if(el.closest && el.closest('#bspace')) return;
+        if(el.closest && el.closest('#callOverlay')) return;
+        if(el.closest && el.closest('#nalunoAdViewer')) return;
+        el.__nalunoOn = false;
+        el.dataset.nalunoWantPlay = '0';
+        el.dataset.nalunoUserPaused = '1';
+        delete el.dataset.nalunoKeepAlive;
+        try{ el.muted = true; }catch(_){}
+        try{ el.pause(); }catch(_){}
+      }catch(_){}
+    });
+  }catch(_){}
   try{
     const other = document.getElementById('bspaceVideoEl');
     if(typeof nalunoExclusiveMedia === 'function') nalunoExclusiveMedia(other || null);
@@ -844,6 +862,7 @@ function closeBroadcastSpace(){
     }
   }catch(_){}
   try{ if(typeof nalunoPauseDetachedMedia === 'function') nalunoPauseDetachedMedia(); }catch(_){}
+  try{ document.body.classList.remove('naluno-bspace-open'); }catch(_){}
   $('bspace').classList.remove('active');
 }
 

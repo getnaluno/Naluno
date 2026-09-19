@@ -66,7 +66,42 @@
 
   function isLive(ad) {
     if (!ad) return false;
-    return String(ad.status || '') === 'live' && !!(ad.mediaUrl || ad.creativeUrl);
+    if (String(ad.status || '') !== 'live') return false;
+    if (!(ad.mediaUrl || ad.creativeUrl)) return false;
+    if (isSpent(ad)) return false;
+    return true;
+  }
+  function ratesNow() {
+    try {
+      if (typeof nalunoAdRates !== 'undefined' && nalunoAdRates) return nalunoAdRates;
+    } catch (_) {}
+    return {};
+  }
+  function paidAedOf(ad) {
+    const n = Number(ad && ad.paidAed);
+    if (!isFinite(n) || n <= 0) return 0;
+    return n;
+  }
+  function bookedAedOf(ad) {
+    if (!ad) return 0;
+    const rates = ratesNow();
+    const model = String(ad.billModel || 'cpm').toLowerCase();
+    const impr = Math.max(0, Number(ad.impressions) || 0);
+    const clicks = Math.max(0, Number(ad.clicks) || 0);
+    const views = Math.max(0, Number(ad.viewCompletes) || 0);
+    const ecpm = Number(ad.ecpmAed != null ? ad.ecpmAed : rates.ecpmAed) || 0;
+    const cpc = Number(ad.cpcAed != null ? ad.cpcAed : rates.cpcAed) || 0;
+    const cpv = Number(ad.cpvAed != null ? ad.cpvAed : rates.cpvAed) || 0;
+    if (model === 'cpc') return clicks * cpc;
+    if (model === 'cpv') return views * cpv;
+    return (impr / 1000) * ecpm;
+  }
+  function isSpent(ad) {
+    if (!ad) return true;
+    if (ad.spent) return true;
+    const paid = paidAedOf(ad);
+    if (paid <= 0) return false;
+    return bookedAedOf(ad) >= paid;
   }
 
   function mediaUrlOf(ad) {
@@ -189,11 +224,7 @@
       + 'font-family:var(--font-mono, ui-monospace, monospace);font-size:13px;letter-spacing:.04em;cursor:pointer;}'
       + '#nalunoAdViewer .ad-cta .go{background:#7CFFB2;color:#07080D;border:none;}'
       + '#nalunoAdViewer .ad-cta .skip,#nalunoAdViewer .ad-skip{background:rgba(13,15,23,.7);color:#E8ECF5;}'
-      + '#nalunoAdViewer .ad-skip[disabled]{opacity:.55;cursor:default;}'
-      + '#nalunoAdViewer .naluno-ad-sound{position:absolute;right:14px;top:14px;z-index:3;padding:8px 12px;border-radius:999px;'
-      + 'background:rgba(13,15,23,.78);border:1px solid rgba(124,255,178,.45);color:#7CFFB2;'
-      + 'font-family:var(--font-mono, ui-monospace, monospace);font-size:11px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;}'
-      + '#nalunoAdViewer .naluno-ad-sound.muted{color:#E8ECF5;border-color:rgba(232,236,245,.35);}';
+      + '#nalunoAdViewer .ad-skip[disabled]{opacity:.55;cursor:default;}';
     document.head.appendChild(css);
   }
 
@@ -294,7 +325,11 @@
       const patch = { updatedAt: Date.now() };
       if (inc) patch[field] = inc;
       else patch[field] = (Number(ad[field]) || 0) + 1;
+      ad[field] = (Number(ad[field]) || 0) + 1;
       ref.set(patch, { merge: true }).catch(function () {});
+      if (isSpent(ad)) {
+        __live = __live.filter(function (a) { return a && a.id !== ad.id; });
+      }
     } catch (_) {}
   }
 
@@ -327,7 +362,7 @@
     }
     __adFinish = null;
   }
-  function playAdWithSound(v, soundBtn) {
+  function playAdWithSound(v) {
     if (!v) return;
     try {
       v.defaultMuted = false;
@@ -338,12 +373,6 @@
       v.dataset.nalunoUserPaused = '0';
       v.removeAttribute('muted');
     } catch (_) {}
-    function markSound(on) {
-      if (!soundBtn) return;
-      soundBtn.classList.toggle('muted', !on);
-      soundBtn.textContent = on ? 'Sound on' : 'Tap for sound';
-    }
-    markSound(true);
     const go = function () {
       const p = v.play();
       if (p && p.catch) {
@@ -358,27 +387,15 @@
                   v.muted = true;
                   v.play().then(function () {
                     try { v.muted = false; v.volume = 1; } catch (_) {}
-                    markSound(!v.muted);
-                  }).catch(function () { markSound(false); });
-                } catch (_) { markSound(false); }
+                  }).catch(function () {});
+                } catch (_) {}
               });
             }
-          } catch (_) { markSound(false); }
+          } catch (_) {}
         });
       }
     };
     go();
-    if (soundBtn) {
-      soundBtn.onclick = function (e) {
-        if (e) { e.preventDefault(); e.stopPropagation(); }
-        try {
-          v.muted = false;
-          v.volume = 1;
-          v.play().catch(function () {});
-          markSound(true);
-        } catch (_) {}
-      };
-    }
   }
   function resumeAfterAd() {
     const snap = __pausedForAd;
@@ -503,7 +520,6 @@
       + '<span class="naluno-ad-kicker">Ad</span>'
       + '<span style="color:#E8ECF5;font-size:14px;">' + escapeHtml((ad.advertiser || ad.headline || 'Sponsored').slice(0, 48)) + '</span>'
       + '</div>'
-      + (isVideo ? '<button type="button" class="naluno-ad-sound" id="nalunoAdSound">Sound on</button>' : '')
       + '<div class="ad-cta">'
       + (ctaUrl ? '<button type="button" class="go" id="nalunoAdCta">' + escapeHtml(ctaLabel) + '</button>' : '')
       + '<button type="button" class="skip" id="nalunoAdSkip" disabled>Skip in ' + skipAt + 's</button>'
@@ -518,12 +534,11 @@
     __adFinish = finish;
 
     const v = document.getElementById('nalunoAdVideo');
-    const soundBtn = document.getElementById('nalunoAdSound');
     if (v && src) {
-      playAdWithSound(v, soundBtn);
+      playAdWithSound(v);
       v.src = src;
       try { v.load(); } catch (_) {}
-      playAdWithSound(v, soundBtn);
+      playAdWithSound(v);
       v.onended = function () { finish(); };
       v.onerror = function () {
         if (!skipAt) finish();
@@ -555,10 +570,6 @@
       const av = document.getElementById('nalunoAdVideo');
       if (av) {
         try { av.muted = false; av.volume = 1; av.play().catch(function () {}); } catch (_) {}
-        if (soundBtn) {
-          soundBtn.classList.remove('muted');
-          soundBtn.textContent = 'Sound on';
-        }
       }
     };
 
@@ -620,7 +631,6 @@
     const html = '<div class="naluno-break-wrap" data-ad-id="' + escapeHtml(ad.id) + '" style="position:absolute;inset:0;">'
       + media
       + '<span class="naluno-ad-kicker" style="position:absolute;left:10px;top:10px;">Ad</span>'
-      + '<button type="button" class="naluno-ad-sound" style="position:absolute;right:10px;top:10px;">Sound on</button>'
       + '<div style="position:absolute;left:16px;right:16px;bottom:86px;color:#E8ECF5;font-size:14px;text-align:center;">' + escapeHtml((ad.headline || '').slice(0, 72)) + '</div>'
       + '<div style="position:absolute;left:16px;right:16px;bottom:66px;color:#7C8497;font-size:12px;text-align:center;">' + escapeHtml((ad.advertiser || '').slice(0, 40)) + '</div>'
       + (ctaUrl ? '<button type="button" class="naluno-break-cta" data-cta="' + escapeHtml(ctaUrl) + '" style="position:absolute;left:16px;right:16px;bottom:16px;padding:12px 16px;border-radius:10px;border:none;background:#7CFFB2;color:#07080D;font-size:13px;cursor:pointer;">' + escapeHtml((ad.ctaLabel || 'Open').slice(0, 24)) + '</button>' : '')
@@ -642,9 +652,8 @@
     if (ad) track(ad, 'impression');
     try {
       const v = host.querySelector('video.naluno-break-ad');
-      const soundBtn = host.querySelector('.naluno-ad-sound');
       if (v) {
-        playAdWithSound(v, soundBtn);
+        playAdWithSound(v);
         v.onended = function () { if (typeof onEnded === 'function') onEnded(); };
         v.onerror = function () { if (typeof onEnded === 'function') onEnded(); };
         armViewComplete(ad, v);
@@ -656,7 +665,6 @@
           } catch (_) {}
         });
       } else {
-        if (soundBtn) soundBtn.style.display = 'none';
         armViewComplete(ad, null);
         if (typeof onEnded === 'function') {
           const hold = slot.maxDurationMs || Math.max(skipAfterOf(ad), viewCompleteSec(), 8) * 1000;
@@ -697,6 +705,11 @@
       skips: Number(row.skips) || 0,
       viewCompletes: Number(row.viewCompletes) || 0,
       billModel: (function () { const m = String(row.billModel || 'cpm').toLowerCase(); return (m === 'cpc' || m === 'cpv') ? m : 'cpm'; })(),
+      paidAed: Number(row.paidAed) || 0,
+      spent: !!row.spent,
+      ecpmAed: row.ecpmAed,
+      cpcAed: row.cpcAed,
+      cpvAed: row.cpvAed,
       createdAt: Number(row.createdAt) || 0,
       updatedAt: Number(row.updatedAt) || 0,
       bytes: Number(row.bytes) || 0,
