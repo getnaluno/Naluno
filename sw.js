@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v178: 09.18h first-run: nav taglines, Toga as a Broadcast header, weather opt-in, Spark on Frequencies.
 // v177: 09.18f ringtone picker: every music file (no format filter).
 // v176: 09.18e full-song ringtone (IndexedDB + Files picker, not the 4MB sound sheet).
 // v175: 09.18d one missed-call chip per call; FCM onBackgroundMessage so a backgrounded web app still rings.
@@ -62,8 +63,8 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v177';
-const APP_BUILD = '20260918f';
+const CACHE_NAME = 'naluno-shell-v178';
+const APP_BUILD = '20260918h';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
