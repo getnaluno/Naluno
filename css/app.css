@@ -419,7 +419,15 @@
   #wirelineThread, #bandRoom, #bspace, #findNalunoPanel, #sparkPage, #wireBackupScreen, #wireHistoryScreen{
     bottom: calc(66px + env(safe-area-inset-bottom, 0px));
   }
-  #bspace.active{ z-index: 100 !important; }
+  #bspace.active{ z-index: 180 !important; inset: 0 !important; bottom: 0 !important; }
+  body.naluno-bspace-open .navbar{
+    visibility: hidden;
+    pointer-events: none;
+  }
+  body.naluno-bspace-open #tab-broadcast{
+    visibility: hidden;
+    pointer-events: none;
+  }
   #bandRoom.active{ z-index: 100 !important; }
   .callscreen{ position:absolute; inset:0; display:flex; flex-direction:column; opacity:0; pointer-events:none; transition:opacity .3s ease; }
   .callscreen.active{ opacity:1; pointer-events:auto; }
@@ -1880,7 +1888,7 @@ body.naluno-landscape-media #bviewer,
 body.naluno-landscape-media #bspace{
   position: fixed !important;
   inset: 0 !important;
-  z-index: 90 !important;
+  z-index: 180 !important;
   background: #000 !important;
 }
 body.naluno-landscape-media .bviewer-body.native-preview,
@@ -2579,14 +2587,6 @@ html[data-atmosphere="buzzing"] .naluno-aurora{
 }
 .bspace-support-panel .support-banner{ margin: 0 0 10px; }
 .bspace-support-panel #supportMine{ margin-top: 8px; }
-.naluno-ad-sound{
-  position:absolute; right:14px; top:14px; z-index:3;
-  padding:8px 12px; border-radius:999px;
-  background:rgba(13,15,23,.78); border:1px solid rgba(124,255,178,.45);
-  color:#7CFFB2; font-family:var(--font-mono, ui-monospace, monospace);
-  font-size:11px; letter-spacing:.08em; text-transform:uppercase; cursor:pointer;
-}
-.naluno-ad-sound.muted{ color:#E8ECF5; border-color:rgba(232,236,245,.35); }
 
 /* ---------- Wireline kebab + Chat backup / Chat history ---------- */
 .wire-menu-wrap{ position:relative; }
