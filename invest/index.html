@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Naluno — the next layer</title>
+<meta name="description" content="Naluno is already being built. This page is for investors, strategic partners and people who can help take it to the next stage." />
+<meta name="theme-color" content="#07080D" />
+<link rel="canonical" href="https://getnaluno.com/invest/" />
+<meta property="og:title" content="Naluno — the next layer" />
+<meta property="og:description" content="A private messenger already in development. Conversations with investors and strategic partners — not an offer of securities." />
+<meta property="og:url" content="https://getnaluno.com/invest/" />
+<meta property="og:type" content="website" />
+<meta property="og:image" content="https://getnaluno.com/og.jpg" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Naluno — the next layer" />
+<meta name="twitter:description" content="A private messenger already in development. Conversations with investors and strategic partners." />
+<meta name="twitter:image" content="https://getnaluno.com/og.jpg" />
+<link rel="icon" href="/icon-192.png" />
+<link rel="apple-touch-icon" href="/icon-192.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Space+Grotesk:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --void:#07080D; --ink:#E8ECF5; --ink-dim:#8A92A6; --mint:#7CFFB2; --cyan:#00E5FF; --violet:#7C4DFF;
+  --display:'Orbitron', sans-serif; --body:'Space Grotesk', system-ui, sans-serif; --dial:'IBM Plex Mono', monospace;
+  --ease:cubic-bezier(0.22, 1, 0.36, 1);
+}
+*{box-sizing:border-box;}
+html{scroll-behavior:smooth;}
+html,body{margin:0; background:#05060A; color:var(--ink);}
+body{font-family:var(--body); font-size:17px; line-height:1.55; -webkit-font-smoothing:antialiased; overflow-x:hidden;}
+a{color:inherit;}
+.sky{position:fixed; inset:0; z-index:0; overflow:hidden; pointer-events:none;}
+.sky img{width:100%; height:100%; object-fit:cover; transform:scale(1.08); filter:saturate(.75) contrast(1.1) brightness(.5);}
+.sky::after{content:""; position:absolute; inset:0;
+  background:
+    radial-gradient(70% 45% at 80% 10%, rgba(124,255,178,.1), transparent 55%),
+    linear-gradient(180deg, rgba(5,6,10,.35) 0%, rgba(5,6,10,.72) 38%, #05060A 100%);}
+.scan{position:fixed; inset:0; z-index:1; pointer-events:none; opacity:.07; mix-blend-mode:overlay;
+  background:repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0,0,0,.45) 2px 3px);}
+.wrap{position:relative; z-index:2;}
+.top{display:flex; align-items:center; justify-content:space-between; padding:22px 28px; position:sticky; top:0; z-index:30;
+  background:linear-gradient(to bottom, rgba(5,6,10,.9), transparent);}
+.brand{display:flex; align-items:center; gap:12px; text-decoration:none;}
+.mark-live{position:relative; width:34px; height:34px;}
+.mark-live svg{width:34px; height:34px; overflow:visible; filter:drop-shadow(0 0 8px rgba(124,255,178,.55));}
+.mark-live .ring{position:absolute; inset:-4px; border-radius:50%; border:1px solid rgba(124,255,178,.4);}
+.word{font-family:var(--display); font-weight:700; font-size:18px; letter-spacing:.16em; color:var(--mint);}
+.cta{font-family:var(--dial); font-size:12.5px; letter-spacing:.06em; color:#05060A; background:var(--mint);
+  text-decoration:none; padding:12px 20px; border-radius:2px; display:inline-block; border:0; cursor:pointer;}
+.cta:hover{filter:brightness(1.06);}
+.cta-line{font-family:var(--dial); font-size:12.5px; letter-spacing:.06em; color:var(--mint); background:transparent;
+  text-decoration:none; padding:11px 20px; border-radius:2px; display:inline-block; border:1px solid rgba(124,255,178,.45);}
+.cta-line:hover{background:rgba(124,255,178,.1);}
+.ghost{font-family:var(--dial); font-size:12.5px; letter-spacing:.06em; color:var(--ink-dim); text-decoration:none; border-bottom:1px solid rgba(255,255,255,.18); padding-bottom:3px;}
+.ghost:hover{color:var(--mint); border-color:var(--mint);}
+.cta-row{display:flex; gap:16px; flex-wrap:wrap; align-items:center;}
+.kicker{display:flex; align-items:center; gap:10px; font-family:var(--dial); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--mint); margin:0 0 18px;}
+.live-dot{width:7px; height:7px; border-radius:50%; background:var(--mint); box-shadow:0 0 8px var(--mint);}
+.hero{padding:36px 28px 28px; max-width:820px;}
+.hero h1{font-family:var(--display); font-weight:500; font-size:clamp(34px, 6vw, 64px); line-height:1.04; letter-spacing:-.03em; margin:0 0 18px; text-wrap:balance;}
+.hero h1 em{font-style:normal; color:var(--mint);}
+.hero .lede{max-width:48ch; color:rgba(232,236,245,.8); font-size:18px; margin:0 0 22px;}
+.legal{font-family:var(--dial); font-size:12px; letter-spacing:.02em; color:var(--ink-dim); max-width:56ch; margin:18px 0 0;}
+section.block{position:relative; z-index:2; padding:56px 28px 8px; max-width:960px;}
+section.block h2{font-family:var(--display); font-weight:500; font-size:clamp(22px, 3.4vw, 34px); margin:0 0 14px; letter-spacing:-.02em;}
+section.block .k{font-family:var(--dial); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--mint); margin:0 0 10px;}
+section.block p{color:rgba(232,236,245,.78); max-width:58ch; margin:0 0 12px;}
+section.block ul{margin:8px 0 0; padding:0; list-style:none;}
+section.block li{position:relative; padding:0 0 10px 18px; color:rgba(232,236,245,.78); max-width:58ch;}
+section.block li::before{content:""; position:absolute; left:0; top:10px; width:7px; height:7px; border-radius:50%; background:var(--mint); box-shadow:0 0 10px var(--mint);}
+.grid3{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:16px; margin:28px 0 8px;}
+.cap{font-family:var(--dial); font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-dim); margin:10px 0 0;}
+.device{border-radius:28px; border:1px solid rgba(124,255,178,.28); background:rgba(13,15,23,.94); padding:10px 10px 14px;
+  box-shadow:0 24px 60px rgba(0,0,0,.45); min-height:340px;}
+.device-notch{width:72px; height:7px; border-radius:99px; background:#1a1e2c; margin:4px auto 10px;}
+.status-bar{display:flex; justify-content:space-between; font-family:var(--dial); font-size:10px; letter-spacing:.08em; color:var(--ink-dim); padding:0 8px 10px;}
+.status-bar b{color:var(--mint); font-weight:500;}
+.av{width:64px; height:64px; border-radius:50%; margin:18px auto 8px; background:linear-gradient(160deg,#7CFFB2,#00E5FF);
+  color:#0D0F17; font-family:var(--display); font-weight:700; font-size:20px; display:flex; align-items:center; justify-content:center;}
+.who{font-family:var(--display); font-size:20px; text-align:center; margin:0 0 4px;}
+.sub{font-family:var(--dial); font-size:11px; color:var(--mint); letter-spacing:.08em; text-align:center;}
+.btns{display:flex; justify-content:space-between; padding:28px 22px 8px;}
+.btns i{width:52px; height:52px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-style:normal; font-family:var(--dial); font-size:10px;}
+.btns .d{background:#FF5470; color:#fff;}
+.btns .a{background:var(--mint); color:#0D0F17;}
+.thread{padding:4px 8px 0; display:flex; flex-direction:column; gap:8px;}
+.thread h4{margin:0 0 6px; font-family:var(--display); font-weight:500; font-size:14px;}
+.bubble{max-width:86%; padding:10px 12px; font-size:13.5px; line-height:1.4; border-radius:14px;}
+.bubble.in{align-self:flex-start; background:#1a2030; border-bottom-left-radius:4px;}
+.bubble.out{align-self:flex-end; background:rgba(124,255,178,.16); border-bottom-right-radius:4px;}
+.lock{margin-top:auto; padding:16px 8px 0; font-family:var(--dial); font-size:10px; letter-spacing:.06em; color:var(--ink-dim); text-align:center;}
+.desk{border:1px solid rgba(124,255,178,.22); background:rgba(10,12,18,.88); border-radius:16px; padding:14px 14px 12px; min-height:340px;
+  font-family:var(--dial); box-shadow:0 24px 60px rgba(0,0,0,.45);}
+.desk .bar{display:flex; justify-content:space-between; align-items:center; color:var(--mint); font-size:11px; letter-spacing:.12em; text-transform:uppercase; margin-bottom:12px;}
+.desk .kpis{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px;}
+.desk .kpi{border:1px solid rgba(124,255,178,.16); padding:10px 10px 8px; border-radius:8px;}
+.desk .kpi b{display:block; font-family:var(--display); font-size:20px; color:var(--ink); letter-spacing:0; font-weight:500;}
+.desk .kpi span{font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-dim);}
+.desk .tabs{display:flex; gap:8px; font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-dim); margin-bottom:12px;}
+.desk .tabs i{font-style:normal; padding:4px 0; border-bottom:1px solid transparent;}
+.desk .tabs i.on{color:var(--mint); border-color:var(--mint);}
+.desk table{width:100%; border-collapse:collapse; font-size:11px; color:rgba(232,236,245,.78);}
+.desk th{text-align:left; font-weight:500; color:var(--ink-dim); padding:6px 0; border-bottom:1px solid rgba(255,255,255,.08); letter-spacing:.08em; text-transform:uppercase; font-size:9px;}
+.desk td{padding:8px 0; border-bottom:1px solid rgba(255,255,255,.06);}
+.desk .sample{margin:12px 0 0; font-size:10px; color:var(--ink-dim); letter-spacing:.04em;}
+.look{display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:12px; margin-top:18px; max-width:640px;}
+.look div{border:1px solid rgba(124,255,178,.2); padding:16px 16px 14px; border-radius:12px; background:rgba(8,10,16,.55);}
+.look strong{display:block; font-family:var(--display); font-weight:500; font-size:15px; margin-bottom:4px;}
+.look span{color:var(--ink-dim); font-size:14px;}
+.contact{position:relative; z-index:2; padding:56px 28px 24px; max-width:560px;}
+.contact h2{font-family:var(--display); font-weight:500; font-size:clamp(24px,3vw,34px); margin:0 0 12px;}
+.contact form{display:grid; gap:12px;}
+.contact label{font-family:var(--dial); font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-dim);}
+.contact input, .contact textarea, .contact select{
+  width:100%; background:rgba(8,10,16,.7); border:0; border-bottom:1px solid rgba(124,255,178,.28); color:var(--ink);
+  font-family:var(--body); font-size:16px; padding:12px 0; border-radius:0;
+}
+.contact select{appearance:none; background-image:linear-gradient(45deg, transparent 50%, var(--mint) 50%), linear-gradient(135deg, var(--mint) 50%, transparent 50%);
+  background-position:calc(100% - 14px) 22px, calc(100% - 9px) 22px; background-size:6px 6px, 6px 6px; background-repeat:no-repeat;}
+.contact option{background:#12151F; color:var(--ink);}
+.contact textarea{min-height:140px; resize:vertical;}
+.contact input:focus, .contact textarea:focus, .contact select:focus{outline:none; border-bottom-color:var(--mint);}
+.contact .hp{position:absolute; left:-10000px; width:1px; height:1px; overflow:hidden;}
+.contact .note{font-size:15px; color:var(--ink-dim); margin:0 0 18px; max-width:48ch;}
+.contact .status{font-family:var(--dial); font-size:12.5px; min-height:1.4em;}
+.contact .status.ok{color:var(--mint);}
+.contact .status.err{color:#FF5470;}
+.contact button[type=submit]{width:fit-content; min-height:44px;}
+.contact button[type=submit]:disabled{opacity:.55; cursor:wait;}
+.split{display:grid; grid-template-columns:1fr 1fr; gap:12px;}
+footer{position:relative; z-index:2; padding:28px 28px 56px; display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap;
+  font-family:var(--dial); font-size:11.5px; color:var(--ink-dim);}
+footer a{text-decoration:none;}
+footer a:hover{color:var(--mint);}
+@media (max-width:860px){
+  .hero,.block,.contact,footer,.top{padding-left:18px; padding-right:18px;}
+  .grid3,.look,.split{grid-template-columns:1fr;}
+}
+@media (prefers-reduced-motion: reduce){ html{scroll-behavior:auto;} }
+</style>
+</head>
+<body>
+<div class="sky" aria-hidden="true"><img src="/img/site-night.jpg" alt="" width="1600" height="900"></div>
+<div class="scan" aria-hidden="true"></div>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="/">
+      <div class="mark-live">
+        <span class="ring"></span>
+        <svg viewBox="0 0 68 68" fill="none" aria-hidden="true">
+          <circle cx="34" cy="38" r="11" stroke="#7CFFB2" stroke-width="3"/>
+          <path d="M34 27V21" stroke="#7CFFB2" stroke-width="3" stroke-linecap="round"/>
+          <path d="M22 20c6-8 18-8 24 0" stroke="#00E5FF" stroke-width="2.2" stroke-linecap="round" opacity=".9"/>
+          <path d="M16 14c9-12 27-12 36 0" stroke="#7C4DFF" stroke-width="2" stroke-linecap="round" opacity=".75"/>
+        </svg>
+      </div>
+      <div class="word">NALUNO</div>
+    </a>
+    <div class="cta-row">
+      <a class="cta-line" href="#talk">Talk to the founder</a>
+      <a class="cta" href="/app/">Open Naluno</a>
+    </div>
+  </header>
+
+  <section class="hero">
+    <p class="kicker"><span class="live-dot" aria-hidden="true"></span> Next layer</p>
+    <h1>We are building the<br><em>next layer of Naluno.</em></h1>
+    <p class="lede">A private messenger is already on the air. The next stage is scale — the technology, the creator ecosystem, and a wider public launch. This page is how serious conversations start.</p>
+    <div class="cta-row">
+      <a class="cta" href="#talk">Start a conversation</a>
+      <a class="ghost" href="/">Back to Naluno</a>
+    </div>
+    <p class="legal">This is not an offer of securities. There is no valuation, share price, ownership percentage, promised return or minimum ticket on this site. Terms, if any, are handled privately after the company structure is in place.</p>
+  </section>
+</div>
+
+<section class="block" id="about">
+  <p class="k">About Naluno</p>
+  <h2>A private line in a loud square</h2>
+  <p>Most apps ask for a phone number, then spend the relationship broadcasting to everyone. Naluno inverts that. You pick a Callsign — a name, not a SIM. People who know it can write and call you. Everyone else cannot.</p>
+  <p>Around that private line sit the rest of the product: Wireline (messages that live on the phone), Band (rooms that wipe), Broadcast and Signal (video you leave, and clips that fade), Spark (find someone standing next to you). The opportunity is a communications layer that creators and communities can actually own — without an ad network in the middle, and without turning a handle into a public billboard.</p>
+</section>
+
+<section class="block" id="built">
+  <p class="k">What has been built</p>
+  <h2>Infrastructure, not a slide</h2>
+  <p>The messenger is running. People create a Callsign, write, call, and leave Broadcasts. There is an operating desk behind it — inventory, mail, health, money — so the product can be run, not only demoed. The pictures below are sanitised previews. No accounts, no addresses, no keys, no live desk.</p>
+  <div class="grid3" aria-hidden="true">
+    <div>
+      <div class="device">
+        <div class="device-notch"></div>
+        <div class="status-bar"><span>NALUNO</span><b>INCOMING</b></div>
+        <div class="av">A</div>
+        <div class="who">Amina</div>
+        <div class="sub">incoming call</div>
+        <div class="btns"><i class="d">Decline</i><i class="a">Accept</i></div>
+        <div class="lock">Callsign · not a phone number</div>
+      </div>
+      <p class="cap">Member app · call that rings</p>
+    </div>
+    <div>
+      <div class="device">
+        <div class="device-notch"></div>
+        <div class="status-bar"><span>WIRELINE</span><b>E2E</b></div>
+        <div class="thread">
+          <h4>Amina</h4>
+          <div class="bubble in">Are you on this?</div>
+          <div class="bubble out">On frequency. Calling you.</div>
+        </div>
+        <div class="lock">end-to-end · lives on this phone</div>
+      </div>
+      <p class="cap">Member app · private line</p>
+    </div>
+    <div>
+      <div class="desk">
+        <div class="bar"><span>Naluno · operating desk</span><span>sample</span></div>
+        <div class="tabs"><i class="on">Overview</i><i>Users</i><i>Mail</i><i>Money</i></div>
+        <div class="kpis">
+          <div class="kpi"><b>—</b><span>Online now</span></div>
+          <div class="kpi"><b>—</b><span>Active today</span></div>
+          <div class="kpi"><b>—</b><span>Broadcasts</span></div>
+          <div class="kpi"><b>—</b><span>Site today</span></div>
+        </div>
+        <table>
+          <thead><tr><th>Strip</th><th>State</th></tr></thead>
+          <tbody>
+            <tr><td>Health</td><td>live sample</td></tr>
+            <tr><td>Mail</td><td>person reads it</td></tr>
+            <tr><td>Ads</td><td>first-party only</td></tr>
+          </tbody>
+        </table>
+        <p class="sample">Figures omitted on purpose. This is a picture of the desk, not the desk.</p>
+      </div>
+      <p class="cap">Operating desk · sanitised</p>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="stage">
+  <p class="k">Current stage</p>
+  <h2>Being prepared for a wider launch</h2>
+  <p>Naluno is in active development. The core product is already in people’s hands. The work now is to harden it, grow the creator side, and prepare a public launch that can take the load. This page exists so that conversation can start before a formal raise is on paper.</p>
+</section>
+
+<section class="block" id="next">
+  <p class="k">The next stage</p>
+  <h2>What further support would go toward</h2>
+  <p>Additional capital and strategic help would be used in areas such as:</p>
+  <ul>
+    <li>Technology and infrastructure</li>
+    <li>Product development</li>
+    <li>Security and reliability</li>
+    <li>Legal and compliance work</li>
+    <li>Creator acquisition</li>
+    <li>Marketing and user growth</li>
+    <li>Scaling the team and operations</li>
+  </ul>
+</section>
+
+<section class="block" id="looking">
+  <p class="k">Looking for</p>
+  <h2>People who can take this further</h2>
+  <p>Naluno is open to conversations with:</p>
+  <div class="look">
+    <div><strong>Investors</strong><span>People who fund the next stage. Terms are not on this page.</span></div>
+    <div><strong>Strategic partners</strong><span>Distribution, infrastructure, or a market Naluno should be in.</span></div>
+    <div><strong>Industry mentors</strong><span>Advisory from people who have shipped this kind of product.</span></div>
+    <div><strong>Networks and expertise</strong><span>Introductions and craft that shorten the path to launch.</span></div>
+  </div>
+</section>
+
+<section class="contact" id="talk">
+  <h2>Talk to the founder</h2>
+  <p class="note">A person reads this. Use it if you want to invest, partner, advise, or help in another way. It is not a payment, and it is not a subscription.</p>
+  <form id="nalunoInvest" novalidate>
+    <label class="hp" aria-hidden="true">Website <input type="text" name="website" tabindex="-1" autocomplete="off"></label>
+    <label for="iName">Full name</label>
+    <input id="iName" name="name" maxlength="80" autocomplete="name" required />
+    <div class="split">
+      <div>
+        <label for="iEmail">Email</label>
+        <input id="iEmail" name="email" type="email" maxlength="120" autocomplete="email" inputmode="email" required />
+      </div>
+      <div>
+        <label for="iPhone">Phone / WhatsApp <span style="text-transform:none;letter-spacing:0;">(optional)</span></label>
+        <input id="iPhone" name="phone" maxlength="40" autocomplete="tel" inputmode="tel" />
+      </div>
+    </div>
+    <div class="split">
+      <div>
+        <label for="iOrg">Organisation / company <span style="text-transform:none;letter-spacing:0;">(optional)</span></label>
+        <input id="iOrg" name="organisation" maxlength="80" autocomplete="organization" />
+      </div>
+      <div>
+        <label for="iCountry">Country</label>
+        <input id="iCountry" name="country" maxlength="80" autocomplete="country-name" required />
+      </div>
+    </div>
+    <label for="iInterest">What are you interested in?</label>
+    <select id="iInterest" name="interest" required>
+      <option value="" selected disabled>Choose one</option>
+      <option value="investment">Investment</option>
+      <option value="partnership">Strategic partnership</option>
+      <option value="mentorship">Mentorship / advisory</option>
+      <option value="other">Other</option>
+    </select>
+    <label for="iText">Message</label>
+    <textarea id="iText" name="text" required maxlength="6000" placeholder="Who you are, and what a useful next step looks like."></textarea>
+    <button class="cta" type="submit" id="iSend">Start a conversation</button>
+    <div class="status" id="iStatus" role="status"></div>
+  </form>
+</section>
+
+<footer>
+  <div>Naluno · getnaluno.com</div>
+  <div><a href="/">Home</a> · <a href="/app/">App</a> · <a href="/invest/">Invest</a> · <a href="/#contact">Contact</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></div>
+</footer>
+
+<script>
+(function(){
+  var form = document.getElementById('nalunoInvest');
+  if(!form) return;
+  var MAIL = 'https://naluno-economy.naluno.workers.dev/v1/mail';
+  var status = document.getElementById('iStatus');
+  var btn = document.getElementById('iSend');
+  function setStatus(kind, text){
+    status.className = 'status' + (kind ? ' ' + kind : '');
+    status.textContent = text || '';
+  }
+  function emailOk(s){
+    return /^[^\s@]{1,64}@[^\s@]{1,190}\.[A-Za-z]{2,24}$/.test(String(s || '').trim());
+  }
+  form.addEventListener('submit', function(e){
+    e.preventDefault();
+    var name = (document.getElementById('iName').value || '').trim();
+    var email = (document.getElementById('iEmail').value || '').trim();
+    var phone = (document.getElementById('iPhone').value || '').trim();
+    var org = (document.getElementById('iOrg').value || '').trim();
+    var country = (document.getElementById('iCountry').value || '').trim();
+    var interest = (document.getElementById('iInterest').value || '').trim();
+    var message = (document.getElementById('iText').value || '').trim();
+    if(!name){ setStatus('err', 'Leave a name.'); return; }
+    if(!emailOk(email)){ setStatus('err', 'Leave a reply-to email.'); return; }
+    if(!country){ setStatus('err', 'Leave a country.'); return; }
+    if(!interest){ setStatus('err', 'Choose what you are interested in.'); return; }
+    if(message.length < 2){ setStatus('err', 'Write a message first.'); return; }
+    var lines = [];
+    lines.push('Interest: ' + interest);
+    lines.push('Country: ' + country);
+    if(org) lines.push('Organisation: ' + org);
+    if(phone) lines.push('Phone/WhatsApp: ' + phone);
+    lines.push('');
+    lines.push(message);
+    btn.disabled = true;
+    setStatus('', 'Sending…');
+    fetch(MAIL, {
+      method: 'POST',
+      cache: 'no-store',
+      credentials: 'omit',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source: 'web',
+        kind: 'invest',
+        name: name,
+        email: email,
+        phone: phone,
+        organisation: org,
+        country: country,
+        interest: interest,
+        text: lines.join('\n'),
+        website: (form.elements.website && form.elements.website.value) || ''
+      })
+    }).then(function(res){ return res.json().then(function(j){ return { res: res, j: j }; }); })
+      .then(function(pack){
+        if(pack.j && pack.j.ok){
+          form.reset();
+          setStatus('ok', 'Received. A person will read this and write back.');
+          try{ if(window.nalunoPulse) window.nalunoPulse('contact'); }catch(_){}
+          return;
+        }
+        setStatus('err', (pack.j && pack.j.error) || 'Could not send just now. Try again in a minute.');
+      })
+      .catch(function(){
+        setStatus('err', 'Could not send just now. Check the connection and try again.');
+      })
+      .then(function(){ btn.disabled = false; });
+  });
+})();
+</script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+<script src="/firebase-config.js?v=20260914c"></script>
+<script src="/js/site-pulse.js?v=20260918g"></script>
+</body>
+</html>
