@@ -24,6 +24,7 @@ function wireKindLabel(type){
   return 'Message';
 }
 function persistWireRow(contactId, msg, otherUid){
+  if(msg && typeof isWireMessageHidden === 'function' && isWireMessageHidden(msg)) return;
   if(msg && contactId != null){
     if(!wirelineThreads[contactId]) wirelineThreads[contactId] = [];
     const list = wirelineThreads[contactId];
@@ -104,7 +105,7 @@ async function hydrateWirelineFromStore(){
           || (m.clientMsgId && x.clientMsgId && String(x.clientMsgId)===String(m.clientMsgId))
           || (m.type === 'missed_call' && x.type === 'missed_call' && m.callId && x.callId && String(x.callId)===String(m.callId));
       });
-      if(!exists) wirelineThreads[cid].push(m);
+      if(!exists && !isWireMessageHidden(m)) wirelineThreads[cid].push(m);
     });
     Object.keys(wirelineThreads).forEach(function(k){
       wirelineThreads[k].sort(function(a,b){ return (a.ts||0)-(b.ts||0); });
@@ -266,6 +267,59 @@ function loadWirelineHiddenLocal(){
 function saveWirelineHidden(){
   try{ localStorage.setItem('nalunoWirelineHidden', JSON.stringify(wirelineHiddenIds)); }catch(_){}
 }
+function hideWireMessageKeys(msg){
+  if(!msg) return;
+  const keys = [msg.id, msg.clientMsgId];
+  keys.forEach(function(k){
+    if(k == null || k === '') return;
+    const s = String(k);
+    wirelineHiddenIds[s] = 1;
+    if(s.indexOf('local-') !== 0) wirelineHiddenIds['local-' + s] = 1;
+    if(s.indexOf('cmid:') !== 0) wirelineHiddenIds['cmid:' + s] = 1;
+  });
+  saveWirelineHidden();
+}
+function isWireMessageHidden(m){
+  if(!m) return true;
+  if(m.id != null && wirelineHiddenIds[String(m.id)]) return true;
+  if(m.clientMsgId != null && wirelineHiddenIds[String(m.clientMsgId)]) return true;
+  if(m.clientMsgId != null && wirelineHiddenIds['local-' + String(m.clientMsgId)]) return true;
+  return false;
+}
+function dropQueuedForMessage(msg, contactId){
+  try{
+    const cmid = msg && (msg.clientMsgId || msg.id);
+    const text = msg && msg.text;
+    saveMessageQueueToStorage(getMessageQueue().filter(function(item){
+      if(contactId != null && String(item.contactId) !== String(contactId) && String(item.queueId) !== String(msg && msg.id)) return true;
+      if(cmid && (String(item.clientMsgId) === String(cmid) || String(item.queueId) === String(cmid))) return false;
+      if(text && item.payload && String(item.payload.text || '') === String(text)) return false;
+      if(msg && msg.id && String(item.queueId) === String(msg.id)) return false;
+      return true;
+    }));
+    rebuildLocalQueuedMessagesIndex();
+  }catch(_){}
+}
+function collapseDuplicateTexts(list){
+  const out = [];
+  const seenCmid = new Set();
+  (list || []).forEach(function(m){
+    if(!m) return;
+    const cmid = m.clientMsgId ? String(m.clientMsgId) : '';
+    if(cmid){
+      if(seenCmid.has(cmid)) return;
+      seenCmid.add(cmid);
+    }
+    const prev = out[out.length - 1];
+    if(prev && prev.from === m.from && (prev.type || 'text') === (m.type || 'text')
+      && String(prev.text || '') && String(prev.text || '') === String(m.text || '')
+      && Math.abs((Number(m.ts) || 0) - (Number(prev.ts) || 0)) < 180000){
+      return;
+    }
+    out.push(m);
+  });
+  return out;
+}
 function syncWirelineHiddenFromCloud(){
   if(!fbDb || !currentUser) return;
   fbDb.collection('users').doc(currentUser.uid).collection('wirelineHidden').get()
@@ -327,8 +381,16 @@ async function wipeContactSide(c){
   if(c.id != null) wirelineClearedAt[String(c.id)] = at;
   saveWirelineClears();
   const list = wirelineThreads[c.id] || wirelineThreads[activeThreadContactId] || [];
-  list.forEach(function(m){ if(m && m.id) wirelineHiddenIds[String(m.id)] = 1; });
+  list.forEach(function(m){ hideWireMessageKeys(m); });
   saveWirelineHidden();
+  try{
+    const q = getMessageQueue().filter(function(item){
+      return String(item.contactId) !== String(c.id)
+        && String(item.firebaseUid) !== String(c.firebaseUid || '');
+    });
+    saveMessageQueueToStorage(q);
+    rebuildLocalQueuedMessagesIndex();
+  }catch(_){}
   if(c.firebaseUid) delete realThreadPreviews[c.firebaseUid];
   try{
     if(typeof NalunoChatStore !== 'undefined' && c.firebaseUid && typeof realThreadId === 'function' && currentUser){
@@ -866,10 +928,10 @@ function renderThreadMessages(){
   }));
   const cActive = contacts.find(x=>x.id===activeThreadContactId);
   const cut = clearedAtForContact(cActive);
-  const msgs = collapseMissedCallRows([...(wirelineThreads[activeThreadContactId] || []), ...queued]
+  const msgs = collapseDuplicateTexts(collapseMissedCallRows([...(wirelineThreads[activeThreadContactId] || []), ...queued]
     .filter(m => msgTs(m) > cut)
-    .filter(m => !wirelineHiddenIds[String(m.id)])
-    .sort((a,b)=>a.ts-b.ts));
+    .filter(m => !isWireMessageHidden(m))
+    .sort((a,b)=>a.ts-b.ts)));
   if(msgs.length===0){
     const clearedNote = cut
       ? 'Chat cleared on your side. They still have the conversation.'
@@ -963,10 +1025,15 @@ function deleteThreadMessage(msgId){
   const list = wirelineThreads[activeThreadContactId] || [];
   const row = list.find(function(m){ return String(m.id) === String(msgId); });
   const mine = row && row.from === 'me';
-  wirelineHiddenIds[String(msgId)] = 1;
-  saveWirelineHidden();
+  hideWireMessageKeys(row || { id: msgId });
+  dropQueuedForMessage(row || { id: msgId }, activeThreadContactId);
   try{
-    if(typeof NalunoChatStore !== 'undefined') NalunoChatStore.deleteMessage(String(msgId));
+    if(typeof NalunoChatStore !== 'undefined'){
+      NalunoChatStore.deleteMessage(String(msgId));
+      if(row && row.clientMsgId) NalunoChatStore.deleteMessage(String(row.clientMsgId));
+      if(row && row.clientMsgId) NalunoChatStore.deleteMessage('local-' + String(row.clientMsgId));
+      if(row && row.clientMsgId) NalunoChatStore.deleteMessage('cmid:' + String(row.clientMsgId));
+    }
   }catch(_){}
   if(c && c.isReal && c.firebaseUid && fbDb && currentUser){
     const tid = realThreadId(c.firebaseUid);
@@ -976,6 +1043,10 @@ function deleteThreadMessage(msgId){
     }
     fbDb.collection('users').doc(currentUser.uid).collection('wirelineHidden').doc(String(msgId))
       .set({ hiddenAt: Date.now(), otherUid: c.firebaseUid }).catch(function(){});
+    if(row && row.clientMsgId && String(row.clientMsgId) !== String(msgId)){
+      fbDb.collection('users').doc(currentUser.uid).collection('wirelineHidden').doc(String(row.clientMsgId))
+        .set({ hiddenAt: Date.now(), otherUid: c.firebaseUid }).catch(function(){});
+    }
   }
   wirelineThreads[activeThreadContactId] = (wirelineThreads[activeThreadContactId] || []).filter(function(m){ return String(m.id)!==String(msgId); });
   try{ saveWireline(); }catch(_){}

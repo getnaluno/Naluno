@@ -626,21 +626,27 @@ function renderBroadcasts(){
 
 function nalunoPaintBcastChrome(view){
   const home = document.getElementById('bcastForYouHome');
+  const head = document.getElementById('bcastFeedHead');
   const toga = document.getElementById('togaPanel');
   const grid = document.getElementById('bcastPlateGrid');
   const empty = document.getElementById('bcastPlateEmpty');
   const cue = document.getElementById('bcastScrollCue');
-  if(home) home.style.display = (view === 'toga') ? 'none' : '';
+  const togaOn = (view === 'toga');
+  if(home) home.style.display = togaOn ? 'none' : '';
+  if(head){
+    if(togaOn) head.setAttribute('hidden', '');
+    else head.removeAttribute('hidden');
+  }
   if(toga){
-    if(view === 'toga') toga.removeAttribute('hidden');
+    if(togaOn) toga.removeAttribute('hidden');
     else toga.setAttribute('hidden', '');
   }
-  if(grid) grid.style.display = (view === 'toga') ? 'none' : '';
-  if(empty && view === 'toga') empty.style.display = 'none';
-  if(cue) cue.style.display = (view === 'toga') ? 'none' : '';
+  if(grid) grid.style.display = togaOn ? 'none' : '';
+  if(empty && togaOn) empty.style.display = 'none';
+  if(cue) cue.style.display = togaOn ? 'none' : '';
   try{
     document.body.classList.toggle('naluno-bcast-mine', view === 'mine');
-    document.body.classList.toggle('naluno-bcast-toga', view === 'toga');
+    document.body.classList.toggle('naluno-bcast-toga', togaOn);
   }catch(_){}
 }
 

@@ -164,6 +164,10 @@
         read: !!open,
         reaction: m.reaction,
       };
+      if (typeof isWireMessageHidden === 'function' && isWireMessageHidden(row)) {
+        doc.ref.delete().catch(function () {});
+        return;
+      }
       if (contactId != null) persistRow(contactId, row, fromUid);
       if (fromUid && typeof realThreadPreviews !== 'undefined') {
         realThreadPreviews[fromUid] = {

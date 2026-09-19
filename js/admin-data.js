@@ -35,7 +35,7 @@
   };
 
   const TERMS = [
-    { abbr: 'AED', name: 'United Arab Emirates dirham', note: 'A currency on the list. Not hardcoded — pick any code, including UGX, and amounts convert live.' },
+    { abbr: 'AED', name: 'United Arab Emirates dirham', note: 'A currency on the list. Pick any code, including UGX, and amounts convert live.' },
     { abbr: 'USD', name: 'United States dollar', note: 'Shown next to the operating currency for comparison.' },
     { abbr: 'UGX', name: 'Ugandan shilling', note: 'On the currency list. No cents. Pickable as the operating currency from this console.' },
     { abbr: 'DAU', name: 'Active today', note: 'People who used the app during this phone’s calendar day.' },

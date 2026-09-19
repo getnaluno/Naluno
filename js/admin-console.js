@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260918h';
+  const BUILD = '20260918i';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -718,7 +718,7 @@
     const C = Ccy();
     if (!C) return '';
     return card('Operating currency',
-      '<p class="sub">Every amount on Naluno follows this code. Pick any currency, including UGX. Conversion is live — nothing is hardcoded to dirham.</p>'
+      '<p class="sub">Every amount on Naluno follows this currency. Pick any, including UGX. Amounts convert live.</p>'
       + '<label for="opCurrency">Currency</label>'
       + C.selectHtml('opCurrency', opCode())
       + '<p class="gap-note" style="margin-top:8px;" id="opFxLine">' + escapeHtml(C.quoteLine()) + '</p>');

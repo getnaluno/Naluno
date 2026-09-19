@@ -1049,6 +1049,14 @@ async function inviteToBand(contactId, mode, btn){
   const b = activeBand();
   const c = contacts.find(x=>x.id===contactId);
   if(!b || !c || !c.firebaseUid || !fbDb || !currentUser) return;
+  if(c.firebaseUid === currentUser.uid){ toast('That is you'); return; }
+  inviteToBand._sent = inviteToBand._sent || {};
+  const sentKey = String(b.firestoreId) + ':' + c.firebaseUid + ':' + (mode || 'text');
+  if(inviteToBand._sent[sentKey] && (Date.now() - inviteToBand._sent[sentKey]) < 120000){
+    if(btn){ btn.textContent = 'Sent'; btn.classList.add('sent'); }
+    toast('Already invited ' + (c.name || 'them').split(' ')[0]);
+    return;
+  }
   if(inviteToBand._busy) return;
   inviteToBand._busy = 1;
   if(btn){
@@ -1095,6 +1103,7 @@ async function inviteToBand(contactId, mode, btn){
     // Wireline text invite
     const inviteText = 'Join me on the Band “' + b.name + '” in Band — open Band and tune in. Chatter is in the moment and clears 2h after the last person leaves.';
     await sendRealMessage(c, { type:'text', text: inviteText }, 'Band invite · ' + b.name);
+    inviteToBand._sent[sentKey] = Date.now();
     // Push wake (reuses call-notify worker title/body path)
     try{
       const idToken = await currentUser.getIdToken();

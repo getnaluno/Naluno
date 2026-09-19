@@ -243,44 +243,74 @@ function isMeBandContact(c){
       if(c.firebaseUid && c.firebaseUid === currentUser.uid) return true;
       if(String(c.id) === String(currentUser.uid)) return true;
     }
+    if(typeof currentProfile !== 'undefined' && currentProfile){
+      const mine = String(currentProfile.number || '').replace(/^@/,'').toLowerCase();
+      const theirs = String(c.handle || '').replace(/^@/,'').toLowerCase();
+      if(mine && theirs && mine === theirs) return true;
+    }
   }catch(_){}
   return false;
 }
+function bandPickKey(c){
+  if(!c) return '';
+  if(c.firebaseUid) return 'u:' + String(c.firebaseUid);
+  if(c.id != null && c.id !== '') return 'i:' + String(c.id);
+  return '';
+}
 function bandPickerContacts(){
-  const seenUid = new Set();
-  const seenId = new Set();
+  const seen = new Set();
   const out = [];
   (contacts||[]).forEach(function(c){
     if(!c || isMeBandContact(c)) return;
-    if(c.firebaseUid){
-      if(seenUid.has(c.firebaseUid)) return;
-      seenUid.add(c.firebaseUid);
-    }
-    if(c.id != null){
-      if(seenId.has(String(c.id))) return;
-      seenId.add(String(c.id));
-    }
+    const key = bandPickKey(c);
+    if(!key || seen.has(key)) return;
+    seen.add(key);
     out.push(c);
   });
   return out;
 }
+function bandPickLabel(c){
+  const name = String((c && c.name) || '').trim();
+  if(name && name !== 'You') return name;
+  const handle = String((c && c.handle) || '').trim();
+  if(handle) return handle.charAt(0) === '@' ? handle : '@' + handle;
+  return 'Someone';
+}
 function renderBandMemberPicker(){
   const list = bandPickerContacts();
-  $('bandMemberPicker').innerHTML = list.map(c=>`
-    <div class="contact-row" data-pick="${c.id}" style="cursor:pointer;">
-      ${typeof contactAvatarHtml==='function' ? contactAvatarHtml(c, 40, signalBarsHtml(c)) : ''}
-      <div class="contact-meta"><div class="contact-name">${escapeHtml(c.name)}</div><div class="contact-sub">${signalSubText(c)}</div></div>
-      <div class="switch ${bandComposerMembers.has(c.id)?'on':''}" data-picksw="${c.id}"></div>
-    </div>`).join('') || '<div class="empty-state"><p class="empty-state-copy">Connect someone on Frequencies first — then they can tune in.</p></div>';
-  document.querySelectorAll('#bandMemberPicker [data-pick]').forEach(el=>{
-    el.onclick = ()=>{
-      const id = parseInt(el.dataset.pick);
-      if(!isFinite(id)) return;
-      if(bandComposerMembers.has(id)) bandComposerMembers.delete(id); else bandComposerMembers.add(id);
-      const sw = el.querySelector('.switch');
-      if(sw) sw.classList.toggle('on', bandComposerMembers.has(id));
-      updateCreateBandButton();
+  $('bandMemberPicker').innerHTML = list.map(function(c){
+    const key = bandPickKey(c);
+    const on = bandComposerMembers.has(key);
+    return '<div class="contact-row" data-pick="'+escapeHtml(key)+'" role="button" aria-pressed="'+(on?'true':'false')+'">'
+      + (typeof contactAvatarHtml==='function' ? contactAvatarHtml(c, 40, signalBarsHtml(c)) : '')
+      + '<div class="contact-meta"><div class="contact-name">'+escapeHtml(bandPickLabel(c))+'</div><div class="contact-sub">'+escapeHtml(signalSubText(c))+'</div></div>'
+      + '<div class="switch'+(on?' on':'')+'" data-picksw="'+escapeHtml(key)+'"></div>'
+      + '</div>';
+  }).join('') || '<div class="empty-state"><p class="empty-state-copy">Connect someone on Frequencies first — then they can tune in.</p></div>';
+  function togglePick(key){
+    if(!key) return;
+    if(bandComposerMembers.has(key)) bandComposerMembers.delete(key);
+    else bandComposerMembers.add(key);
+    const on = bandComposerMembers.has(key);
+    const row = $('bandMemberPicker').querySelector('[data-pick="'+key.replace(/"/g,'')+'"]');
+    if(row){
+      row.setAttribute('aria-pressed', on ? 'true' : 'false');
+      const sw = row.querySelector('.switch');
+      if(sw) sw.classList.toggle('on', on);
+    }
+    updateCreateBandButton();
+  }
+  document.querySelectorAll('#bandMemberPicker [data-pick]').forEach(function(el){
+    let armed = 0;
+    const fire = function(e){
+      if(e){ try{ e.preventDefault(); e.stopPropagation(); }catch(_){} }
+      const now = Date.now();
+      if(now - armed < 400) return;
+      armed = now;
+      togglePick(el.getAttribute('data-pick'));
     };
+    el.onclick = fire;
+    el.addEventListener('touchend', fire, { passive: false });
   });
 }
 function updateCreateBandButton(){
@@ -292,14 +322,16 @@ $('bandNameInput').addEventListener('input', updateCreateBandButton);
 $('createBandBtn').onclick = ()=>{
   if($('createBandBtn').disabled) return;
   const name = $('bandNameInput').value.trim();
-  const selected = Array.from(bandComposerMembers).map(id=>contacts.find(c=>c.id===id)).filter(Boolean);
+  const selected = Array.from(bandComposerMembers).map(function(key){
+    return (contacts||[]).find(function(c){ return bandPickKey(c) === key; });
+  }).filter(Boolean);
   const allReal = currentUser && fbDb && selected.length>0 && selected.every(c=>c.isReal && c.firebaseUid);
   if(allReal){
     createRealBand(name, bandComposerVibe, selected);
     return;
   }
   const id = Date.now();
-  bands.push({ id, name, vibe: bandComposerVibe, memberIds: Array.from(bandComposerMembers) });
+  bands.push({ id, name, vibe: bandComposerVibe, memberIds: selected.map(function(c){ return c.id; }) });
   saveBands();
   renderBandList();
   closeBandComposer();
