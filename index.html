@@ -189,8 +189,10 @@ a{color:inherit;}
 .close h2{font-family:var(--display); font-weight:500; font-size:clamp(32px, 6vw, 64px); line-height:1.05; margin:0 0 16px; letter-spacing:-.03em; max-width:16ch;}
 .close p{color:var(--ink-dim); max-width:48ch; margin:0 0 24px;}
 
-.next-layer{position:relative; z-index:2; min-height:72vh; display:flex; align-items:flex-end; padding:72px 28px 56px; overflow:hidden;}
+.next-layer{position:relative; z-index:2; min-height:72vh; display:flex; align-items:flex-end; padding:72px 28px 56px; overflow:hidden;
+  background:#05060A url('/img/site-together.jpg') center/cover no-repeat;}
 .next-layer img.bg{position:absolute; inset:0; width:100%; height:100%; object-fit:cover; filter:saturate(.78) contrast(1.1) brightness(.52);}
+.next-layer img.bg[hidden]{display:none;}
 .next-layer::after{content:""; position:absolute; inset:0; background:linear-gradient(180deg, rgba(5,6,10,.18), rgba(5,6,10,.86) 68%);}
 .next-copy{position:relative; z-index:1; max-width:640px;}
 .next-copy .k{font-family:var(--dial); font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:var(--mint); margin:0 0 12px;}
@@ -383,7 +385,7 @@ footer a:hover{color:var(--mint);}
 </section>
 
 <section class="next-layer" id="next">
-  <img class="bg" src="/img/site-together.jpg" width="1600" height="900" alt="">
+  <img class="bg" src="/img/site-together.jpg" width="1600" height="900" alt="" onerror="this.hidden=true">
   <div class="next-copy">
     <p class="k">Next layer</p>
     <h2>We are building the next layer of Naluno</h2>
