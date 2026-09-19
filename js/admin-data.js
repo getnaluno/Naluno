@@ -1145,6 +1145,10 @@
     const mailDeletes = mailList.filter(function (m) {
       return String(m.kind || '') === 'delete-account' && String(m.status || 'new').toLowerCase() !== 'done';
     });
+    const mailInvest = mailList.filter(function (m) {
+      const k = String(m.kind || '').toLowerCase();
+      return k === 'invest' || k === 'investment' || k === 'partnership' || !!m.interest;
+    });
 
     const alerts = [];
     if (worker && worker.degraded && !worker.ok) {
@@ -1323,6 +1327,7 @@
         total: mailList.length,
         unread: mailNew.length,
         deletes: mailDeletes.length,
+        invest: mailInvest.length,
         compass: mailList.filter(function (m) { return String(m.source || '') === 'compass'; }).length,
         web: mailList.filter(function (m) { return String(m.source || '') === 'web'; }).length,
         list: mailList,

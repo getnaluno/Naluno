@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260918j';
+  const BUILD = '20260919a';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -1217,22 +1217,36 @@
     if (tab === 'mail') {
       const mail = (d.mail && d.mail.list) || [];
       const q = (__tabCache.mailQ || 'new');
+      function isInvestMail(m) {
+        const k = String(m.kind || '').toLowerCase();
+        return k === 'invest' || k === 'investment' || k === 'partnership' || !!m.interest;
+      }
+      function interestLabel(v) {
+        const x = String(v || '').toLowerCase();
+        if (x === 'partnership') return 'Strategic partnership';
+        if (x === 'mentorship') return 'Mentorship / advisory';
+        if (x === 'other') return 'Other';
+        if (x === 'investment') return 'Investment';
+        return v || '';
+      }
       const filtered = mail.filter(function (m) {
         const st = String(m.status || 'new').toLowerCase();
         if (q === 'new') return st === 'new';
         if (q === 'delete') return String(m.kind || '') === 'delete-account' || String(m.kind || '') === 'violation-close';
+        if (q === 'invest') return isInvestMail(m);
         if (q === 'compass') return String(m.source || '') === 'compass';
         if (q === 'web') return String(m.source || '') === 'web';
         if (q === 'done') return st === 'done';
         return true;
       });
       el.innerHTML =
-        kpis([['New', (d.mail && d.mail.unread) || 0], ['Delete asks', (d.mail && d.mail.deletes) || 0],
+        kpis([['New', (d.mail && d.mail.unread) || 0], ['Invest / partners', (d.mail && d.mail.invest) || 0],
+          ['Delete asks', (d.mail && d.mail.deletes) || 0],
           ['Compass', (d.mail && d.mail.compass) || 0], ['Website', (d.mail && d.mail.web) || 0]])
         + '<div class="row" style="margin-bottom:12px;">'
-        + ['new', 'all', 'delete', 'compass', 'web', 'done'].map(function (k) {
+        + ['new', 'all', 'invest', 'delete', 'compass', 'web', 'done'].map(function (k) {
           const on = q === k ? ' primary' : ' ghost';
-          const label = k === 'new' ? 'New' : k === 'delete' ? 'Delete' : k === 'compass' ? 'Compass' : k === 'web' ? 'Website' : k === 'done' ? 'Done' : 'All';
+          const label = k === 'new' ? 'New' : k === 'invest' ? 'Invest' : k === 'delete' ? 'Delete' : k === 'compass' ? 'Compass' : k === 'web' ? 'Website' : k === 'done' ? 'Done' : 'All';
           return '<button type="button" class="' + on.trim() + ' mailFilter" data-q="' + k + '">' + label + '</button>';
         }).join('')
         + '</div>'
@@ -1240,23 +1254,28 @@
           ? filtered.map(function (m) {
             const st = String(m.status || 'new').toLowerCase();
             const kind = String(m.kind || 'contact');
-            const who = [m.name, m.handle ? '@' + m.handle : '', m.email].filter(Boolean).join(' · ') || (m.uid || 'visitor');
+            const invest = isInvestMail(m);
+            const who = [m.name, m.organisation, m.handle ? '@' + m.handle : '', m.email, m.phone].filter(Boolean).join(' · ') || (m.uid || 'visitor');
+            const meta = [m.country, interestLabel(m.interest)].filter(Boolean).join(' · ');
             const reply = m.email
               ? '<a class="ghost" href="mailto:' + encodeURIComponent(m.email) + '">Reply</a> '
               : '';
-            return '<div class="alert ' + (kind === 'delete-account' ? 'critical' : (st === 'new' ? 'warning' : 'ok')) + '">'
-              + '<div class="sub">' + escapeHtml(when(m.ts)) + ' · ' + escapeHtml(m.source || '') + ' · ' + escapeHtml(kind) + ' · ' + escapeHtml(st) + '</div>'
+            const tel = (m.phone && String(m.phone).replace(/[^\d+]/g, ''))
+              ? '<a class="ghost" href="tel:' + encodeURIComponent(String(m.phone).replace(/[^\d+]/g, '')) + '">Call / WhatsApp</a> '
+              : '';
+            return '<div class="alert ' + (kind === 'delete-account' ? 'critical' : (invest ? 'ok' : (st === 'new' ? 'warning' : 'ok'))) + '">'
+              + '<div class="sub">' + escapeHtml(when(m.ts)) + ' · ' + escapeHtml(m.source || '') + ' · ' + escapeHtml(kind) + (meta ? ' · ' + escapeHtml(meta) : '') + ' · ' + escapeHtml(st) + '</div>'
               + '<div style="margin:6px 0 8px;"><b>' + escapeHtml(who) + '</b>'
               + (m.uid ? ' <span class="sub">' + escapeHtml(String(m.uid).slice(0, 12)) + '</span>' : '')
               + '</div>'
               + '<div style="white-space:pre-wrap;font-size:14px;line-height:1.45;">' + escapeHtml(m.text || '') + '</div>'
               + '<div class="row" style="margin-top:10px;">'
-              + reply
+              + reply + tel
               + (st !== 'read' && st !== 'done' ? '<button type="button" class="ghost admMail" data-id="' + escapeHtml(m.id) + '" data-st="read">Mark read</button> ' : '')
               + (st !== 'done' ? '<button type="button" class="ghost admMail" data-id="' + escapeHtml(m.id) + '" data-st="done">Done</button>' : '')
               + '</div></div>';
           }).join('')
-          : '<p class="sub">Nothing in this filter. Contact-page and Compass requests land here. Compass notebooks are not copied — only what someone sent as a request.</p>');
+          : '<p class="sub">Nothing in this filter. Website contact, the invest page, and Compass requests land here. Compass notebooks are not copied — only what someone sent as a request.</p>');
       el.querySelectorAll('.mailFilter').forEach(function (btn) {
         btn.onclick = function () {
           __tabCache.mailQ = btn.getAttribute('data-q') || 'new';
