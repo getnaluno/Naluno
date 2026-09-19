@@ -392,15 +392,12 @@ test("public mail without a service account still emails and does not leak the i
   setFetchImpl(null);
 });
 
-test("public mail without inbox still lands in deskMail via the web API key", async () => {
+test("public mail without inbox does not write deskMail via the public API key", async () => {
   resetMemory();
   const calls = [];
   setFetchImpl(async (url) => {
     const u = String(url);
     calls.push(u);
-    if (u.includes("firestore.googleapis.com") && u.includes("/deskMail/") && u.includes("key=")) {
-      return new Response(JSON.stringify({ name: "ok" }), { status: 200 });
-    }
     return new Response("{}", { status: 403 });
   });
   const res = await handleRequest(
@@ -411,12 +408,10 @@ test("public mail without inbox still lands in deskMail via the web API key", as
     }),
     ENV,
   );
-  assert.equal(res.status, 200);
+  assert.equal(res.status, 503);
   const body = await res.json();
-  assert.equal(body.ok, true);
-  assert.equal(body.emailed, false);
-  assert.equal(body.persist, "firestore");
-  assert.ok(calls.some((u) => u.includes("/deskMail/") && u.includes("key=test-key")));
+  assert.equal(body.ok, false);
+  assert.equal(calls.some((u) => u.includes("/deskMail/") && u.includes("key=")), false);
   setFetchImpl(null);
 });
 
@@ -494,4 +489,48 @@ test("health reports hasInbox without returning the mailbox", async () => {
   const dump = JSON.stringify(body);
   assert.equal(dump.includes("secret-inbox"), false);
   assert.equal(dump.includes("nolegoafrica"), false);
+});
+
+
+test("a member token cannot call /v1/admin/flags", async () => {
+  resetMemory();
+  setFetchImpl(async (url) => {
+    if (String(url).includes("accounts:lookup")) {
+      return new Response(JSON.stringify({ users: [{ localId: "user_a", email: "a@x.com" }] }), { status: 200 });
+    }
+    return new Response("{}", { status: 403 });
+  });
+  const res = await handleRequest(
+    req("/v1/admin/flags", {
+      method: "POST",
+      headers: { Authorization: "Bearer tok", "Content-Type": "application/json" },
+      body: JSON.stringify({ broadcast_enabled: false }),
+    }),
+    ENV,
+  );
+  assert.equal(res.status, 403);
+  const body = await res.json();
+  assert.equal(body.ok, false);
+  assert.match(String(body.error || ""), /operator/i);
+  setFetchImpl(null);
+});
+
+test("a member token cannot call /v1/admin/user-action", async () => {
+  resetMemory();
+  setFetchImpl(async (url) => {
+    if (String(url).includes("accounts:lookup")) {
+      return new Response(JSON.stringify({ users: [{ localId: "user_a", email: "member@x.com" }] }), { status: 200 });
+    }
+    return new Response("{}", { status: 403 });
+  });
+  const res = await handleRequest(
+    req("/v1/admin/user-action", {
+      method: "POST",
+      headers: { Authorization: "Bearer tok", "Content-Type": "application/json" },
+      body: JSON.stringify({ uid: "someone", action: "suspend" }),
+    }),
+    ENV,
+  );
+  assert.equal(res.status, 403);
+  setFetchImpl(null);
 });

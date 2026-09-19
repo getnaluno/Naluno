@@ -20,7 +20,7 @@
  *      key rotation hiccuped.
  */
 
-export const VERSION = "2.2.1-mail";
+export const VERSION = "2.2.3-security";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -863,7 +863,7 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
   return json({ ok: false, error: "unknown admin route" }, 404);
 }
 
-const MAIL_KINDS = { contact: 1, "delete-account": 1, operator: 1, privacy: 1 };
+const MAIL_KINDS = { contact: 1, "delete-account": 1, operator: 1, privacy: 1, invest: 1 };
 
 function clientIp(request) {
   const cf = request.headers.get("CF-Connecting-IP") || request.headers.get("cf-connecting-ip");
@@ -905,6 +905,14 @@ async function deliverInboxEmail(env, row) {
       ? "Naluno · delete-account request"
       : row.kind === "privacy"
         ? "Naluno · privacy"
+        : row.kind === "invest"
+          ? "Naluno · " + (row.interest === "partnership"
+            ? "strategic partnership"
+            : row.interest === "mentorship"
+              ? "mentorship"
+              : row.interest === "other"
+                ? "conversation"
+                : "investment")
         : row.source === "compass"
           ? "Naluno · Compass"
           : "Naluno · contact";
@@ -914,6 +922,10 @@ async function deliverInboxEmail(env, row) {
     "Name: " + (row.name || "—"),
     "Handle: " + (row.handle || "—"),
     "Reply-to: " + (row.email || "—"),
+    "Phone: " + (row.phone || "—"),
+    "Organisation: " + (row.organisation || "—"),
+    "Country: " + (row.country || "—"),
+    "Interest: " + (row.interest || "—"),
     "Uid: " + (row.uid || "—"),
     "Id: " + row.id,
     "",
@@ -996,13 +1008,9 @@ async function persistMail(env, saToken, userToken, row) {
     );
     if (r.ok) return "user-token";
   }
-  const pub = await fsFetchPublic(
-    env,
-    "PATCH",
-    "/deskMail/" + encodeURIComponent(row.id) + "?currentDocument.exists=false",
-    toFsFields(row),
-  );
-  if (pub.ok) return "firestore";
+  /* Never write deskMail with only the public web API key. That path
+     has no Firebase user, so a loosened rule would let anyone stamp
+     operator mail. Memory + email remain the unauthenticated fallback. */
   return saToken || userToken ? "failed" : "memory";
 }
 
@@ -1021,6 +1029,7 @@ async function handleMail(request, env, saToken) {
 
   let kind = String(body.kind || "contact").toLowerCase().replace(/\s+/g, "-");
   if (kind === "delete" || kind === "deleteaccount" || kind === "delete_account") kind = "delete-account";
+  if (kind === "investment" || kind === "investor" || kind === "partnership" || kind === "mentor" || kind === "mentorship") kind = "invest";
   if (!MAIL_KINDS[kind]) kind = "contact";
 
   const token = bearer(request);
@@ -1029,6 +1038,13 @@ async function handleMail(request, env, saToken) {
   if (kind === "delete-account" && !user && !String(body.email || body.handle || "").trim()) {
     return json({ ok: false, error: "Sign in, or leave a handle or email so we know which account." }, 400);
   }
+
+  const INTERESTS = { investment: 1, partnership: 1, mentorship: 1, other: 1 };
+  let interest = String(body.interest || "").toLowerCase().trim().replace(/\s+/g, "-").replace(/\//g, "-");
+  if (interest === "strategic-partnership" || interest === "strategic_partnership" || interest === "partner") interest = "partnership";
+  if (interest === "mentorship-advisory" || interest === "mentorship/advisory" || interest === "advisory" || interest === "mentor") interest = "mentorship";
+  if (interest === "invest") interest = "investment";
+  if (!INTERESTS[interest]) interest = kind === "invest" ? "investment" : "";
 
   const sourceRaw = String(body.source || (user ? "compass" : "web")).toLowerCase();
   const source = sourceRaw === "compass" ? "compass" : "web";
@@ -1040,6 +1056,10 @@ async function handleMail(request, env, saToken) {
     name: String(body.name || "").trim().slice(0, 80),
     handle: String(body.handle || "").trim().slice(0, 40),
     email: String(body.email || "").trim().slice(0, 120),
+    phone: String(body.phone || body.whatsapp || "").trim().slice(0, 40),
+    organisation: String(body.organisation || body.org || "").trim().slice(0, 80),
+    country: String(body.country || "").trim().slice(0, 80),
+    interest,
     uid: user ? user.uid : "",
     text,
     ts: Date.now(),
@@ -1048,6 +1068,14 @@ async function handleMail(request, env, saToken) {
   if (user) {
     if (!row.email && user.email) row.email = String(user.email).slice(0, 120);
     if (!row.name && user.name) row.name = String(user.name).slice(0, 80);
+  }
+  if (kind === "invest") {
+    if (!row.name || !looksLikeEmail(row.email)) {
+      return json({ ok: false, error: "Leave a name and a reply-to email." }, 400);
+    }
+    if (!row.country) {
+      return json({ ok: false, error: "Leave a country so we know where to start." }, 400);
+    }
   }
 
   const persist = await persistMail(env, saToken, user ? token : "", row);
