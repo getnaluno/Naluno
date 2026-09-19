@@ -61,6 +61,12 @@ a{color:inherit;}
   transition:filter 150ms var(--ease), box-shadow 150ms var(--ease), transform 150ms var(--ease);}
 .cta:hover{filter:brightness(1.06); box-shadow:0 0 28px rgba(124,255,178,.28);}
 .cta:active{transform:scale(.96);}
+.cta-line{font-family:var(--dial); font-size:12.5px; letter-spacing:.06em; color:var(--mint); background:transparent;
+  text-decoration:none; padding:11px 20px; border-radius:2px; display:inline-block;
+  border:1px solid rgba(124,255,178,.45); cursor:pointer;
+  transition:filter 150ms var(--ease), box-shadow 150ms var(--ease), transform 150ms var(--ease), background 150ms var(--ease);}
+.cta-line:hover{background:rgba(124,255,178,.1); box-shadow:0 0 22px rgba(124,255,178,.16);}
+.cta-line:active{transform:scale(.96);}
 .ghost{font-family:var(--dial); font-size:12.5px; letter-spacing:.06em; color:var(--ink-dim); text-decoration:none; border-bottom:1px solid rgba(255,255,255,.18); padding-bottom:3px;}
 .ghost:hover{color:var(--mint); border-color:var(--mint);}
 .stage{min-height:100svh; display:grid; grid-template-columns:1.15fr .85fr; gap:40px; align-items:center; padding:12px 28px 64px; position:relative;}
@@ -183,6 +189,15 @@ a{color:inherit;}
 .close h2{font-family:var(--display); font-weight:500; font-size:clamp(32px, 6vw, 64px); line-height:1.05; margin:0 0 16px; letter-spacing:-.03em; max-width:16ch;}
 .close p{color:var(--ink-dim); max-width:48ch; margin:0 0 24px;}
 
+.next-layer{position:relative; z-index:2; min-height:72vh; display:flex; align-items:flex-end; padding:72px 28px 56px; overflow:hidden;}
+.next-layer img.bg{position:absolute; inset:0; width:100%; height:100%; object-fit:cover; filter:saturate(.78) contrast(1.1) brightness(.52);}
+.next-layer::after{content:""; position:absolute; inset:0; background:linear-gradient(180deg, rgba(5,6,10,.18), rgba(5,6,10,.86) 68%);}
+.next-copy{position:relative; z-index:1; max-width:640px;}
+.next-copy .k{font-family:var(--dial); font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:var(--mint); margin:0 0 12px;}
+.next-copy h2{font-family:var(--display); font-weight:500; font-size:clamp(28px, 5.4vw, 52px); line-height:1.06; letter-spacing:-.03em; margin:0 0 16px; max-width:16ch;}
+.next-copy p{color:rgba(232,236,245,.82); max-width:48ch; margin:0 0 12px; font-size:17px;}
+.next-copy .cta-row{margin-top:22px;}
+
 .contact{position:relative; z-index:2; padding:40px 28px 24px; max-width:560px;}
 .contact h2{font-family:var(--display); font-weight:500; font-size:clamp(24px,3vw,34px); margin:0 0 12px;}
 .contact form{display:grid; gap:12px;}
@@ -213,7 +228,7 @@ footer a:hover{color:var(--mint);}
   .stage{grid-template-columns:1fr; padding:8px 18px 48px; min-height:auto;}
   .hz{font-size:22vw; top:8%; right:auto; left:12px;}
   .device{margin:12px auto 0;}
-  .top,.tune,.night,.spine,.close,.contact,footer{padding-left:18px; padding-right:18px;}
+  .top,.tune,.night,.spine,.close,.next-layer,.contact,footer{padding-left:18px; padding-right:18px;}
   .stations button{font-size:10px;}
   .night{min-height:64vh;}
 }
@@ -367,6 +382,21 @@ footer a:hover{color:var(--mint);}
   </div>
 </section>
 
+<section class="next-layer" id="next">
+  <img class="bg" src="/img/site-together.jpg" width="1600" height="900" alt="">
+  <div class="next-copy">
+    <p class="k">Next layer</p>
+    <h2>We are building the next layer of Naluno</h2>
+    <p>Naluno is being built as a platform where creators, communities and digital experiences come together.</p>
+    <p>The platform is already being developed, with the next stage focused on scaling the technology, growing the creator ecosystem and preparing Naluno for wider public launch.</p>
+    <p>We are open to conversations with investors, strategic partners and people who can help take Naluno to the next stage.</p>
+    <div class="cta-row">
+      <a class="cta" href="/invest/">Explore the opportunity</a>
+      <a class="cta-line" href="/invest/#talk">Talk to the founder</a>
+    </div>
+  </div>
+</section>
+
 <section class="contact" id="contact">
   <h2>Write to Naluno</h2>
   <p class="note">A person reads this. Use it for a question, a problem, or to ask that an account be deleted.</p>
@@ -388,7 +418,7 @@ footer a:hover{color:var(--mint);}
 
 <footer>
   <div>Naluno · getnaluno.com</div>
-  <div><a href="/app/">App</a> · <a href="#contact">Contact</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></div>
+  <div><a href="/app/">App</a> · <a href="/invest/">Invest</a> · <a href="#contact">Contact</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></div>
 </footer>
 
 <script>

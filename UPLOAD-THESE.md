@@ -1,17 +1,20 @@
-# GitHub — 2026.09.18j
+# GitHub — 2026.09.19a
 
-Ads now take prepaid, used, left, and pause when the money is gone. Console updates live. Opening a Broadcast closes the feed under it. Ads no longer show a Sound on mark.
+Investor / partner pathway on the public site. Enquiries land in Mail. No app architecture change.
 
 Only these files. Do not upload a full tree.
 
 ## Must upload
 
-1. **app/index.html**
-2. **css/app.css**
-3. **js/ads.js**, **js/broadcast-space.js**, **js/strand.js**, **js/media-contain.js**
-4. **js/admin-console.js**, **js/admin-data.js**, **admin/index.html**
-5. **js/pwa.js**, **sw.js** — shell v180 / 20260918j
+1. **index.html** — homepage “next layer” section
+2. **invest/index.html** — the invest page
+3. **invest.html**, **investment/index.html** — short redirects to /invest/
+4. **js/admin-console.js**, **js/admin-data.js**, **admin/index.html** — Mail tab “Invest” filter
 
-If 18i (Toga / Band toggles / Wireline invites / currency copy) is not on the live site yet, also upload the 18i files from that list.
+## Also publish (Cloudflare worker)
 
-Prepaid is what you type. Used is rate-card maths. Left is prepaid minus used. When left hits zero the ad pauses and leaves the app. Type more paid to send it live again. Contact (Callsign, email, phone) sits on the unit. The console no longer waits for Refresh. Opening a Broadcast pauses and covers the plate underneath. The ad still plays with its own sound — the Sound on chip is gone.
+5. **workers/economy/handler.mjs** (and the test) so Invest is its own mail kind with name, email, phone, organisation, country, interest.
+
+Until the worker is published, the form still arrives as website mail. The message itself already contains country, interest, organisation and phone.
+
+No valuation, share price, or return on the public page. The operating-desk picture is a sanitised mock — it is not the live desk, and it does not link to it.
