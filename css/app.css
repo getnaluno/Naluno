@@ -956,6 +956,37 @@ body.naluno-strand-open #bcastSearchRow,
 body.naluno-strand-open #bcastSearchResults{
   display:none !important;
 }
+body.naluno-bcast-toga .bcast-feed-head,
+body.naluno-bcast-toga #bcastForYouHome,
+body.naluno-bcast-toga #bcastPlateGrid,
+body.naluno-bcast-toga #bcastPlateEmpty,
+body.naluno-bcast-toga #bcastScrollCue{
+  display:none !important;
+  min-height:0 !important;
+  height:0 !important;
+  padding:0 !important;
+  overflow:hidden !important;
+  scroll-snap-align:none !important;
+}
+body.naluno-bcast-toga #broadcastTabScroll.bcast-feed{
+  scroll-snap-type: none;
+  padding: 8px 14px 28px;
+}
+body.naluno-bcast-toga #togaPanel{
+  display:block !important;
+  margin: 4px 0 28px;
+  min-height: calc(var(--bcast-stage-h, 70svh) - 96px);
+}
+body.naluno-bcast-toga .toga-list{
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: visible;
+  scroll-snap-type: none;
+  gap: 8px;
+}
+body.naluno-bcast-toga .toga-list li{ width:100%; }
+body.naluno-bcast-toga .toga-name-row{ width:100%; }
+body.naluno-bcast-toga .toga-strip-hint{ display:none; }
 .bcast-scroll-cue{
   width:100%; margin:8px 0 0; padding:12px 10px 4px;
   border:none; background:transparent; color:var(--text);
@@ -2792,6 +2823,7 @@ html[data-atmosphere="buzzing"] .naluno-aurora{
 
 #togaPanel[hidden]{ display:none !important; }
 #togaPanel:not([hidden]){ display:block; margin:8px 4px 18px; }
+.bcast-feed-head[hidden]{ display:none !important; min-height:0 !important; height:0 !important; padding:0 !important; overflow:hidden !important; }
 
 
 
