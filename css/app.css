@@ -64,7 +64,8 @@
     }
   }
   body.naluno-landscape .navbar{ padding-top:6px; padding-bottom:6px; }
-  body.naluno-landscape .navbtn span:not([id]){ display:none; }
+  body.naluno-landscape .navbtn .nav-name,
+  body.naluno-landscape .navbtn .nav-hint{ display:none; }
   button, input, textarea{ font-family:inherit; }
 
   /* ---------- shared ---------- */
@@ -245,7 +246,7 @@
     animation: headerScan 7s linear infinite;
   }
   .navbtn{
-    flex:1; display:flex; flex-direction:column; align-items:center; gap:3px; padding:6px 2px;
+    flex:1; display:flex; flex-direction:column; align-items:center; gap:1px; padding:5px 1px 4px;
     background:none; border:none; color:var(--text-dim); cursor:pointer; border-radius:12px;
     transition: color .25s, background .25s, box-shadow .25s, opacity .25s;
   }
@@ -255,7 +256,12 @@
     box-shadow: inset 0 0 0 1px rgba(124,255,178,.16), 0 0 18px -8px rgba(124,255,178,.55);
   }
   .navbtn.active svg{ filter: drop-shadow(0 0 5px rgba(124,255,178,.55)); }
-  .navbtn span{ font-size:9.5px; font-family:var(--font-mono); letter-spacing:.02em; }
+  .navbtn span.nav-name{ font-size:9px; font-family:var(--font-mono); letter-spacing:.01em; line-height:1.1; }
+  .navbtn span.nav-hint{
+    font-size:8px; font-family:var(--font-mono); letter-spacing:.02em; text-transform:none;
+    color:var(--text-dim); opacity:.55; line-height:1; margin-top:0;
+  }
+  .navbtn.active span.nav-hint{ color:var(--mint); opacity:.7; }
   .navbtn.inactive{ opacity:.48; }
   .navbtn.inactive.active{ opacity:.85; color:var(--text-dim);
     background:rgba(139,144,168,.08);
@@ -274,12 +280,12 @@
   #tab-support{ display:none !important; }
 
   /* ---------- tab screens ---------- */
-  .tabscreen{ position:absolute; inset:0; bottom:66px; display:flex; flex-direction:column; opacity:0; pointer-events:none; transition:opacity .25s; }
+  .tabscreen{ position:absolute; inset:0; bottom:74px; display:flex; flex-direction:column; opacity:0; pointer-events:none; transition:opacity .25s; }
   .tabscreen.active{ opacity:1; pointer-events:auto; }
   .tab-header{
     padding:22px 22px 14px; display:flex; align-items:center; justify-content:space-between;
     background:var(--atmosphere-tint); background-repeat:no-repeat; transition:background 1.2s ease;
-    position:relative;
+    position:relative; gap:8px; flex-wrap:wrap;
   }
   .tab-header::after{
     content:''; position:absolute; left:0; right:0; bottom:0; height:1px;
@@ -298,7 +304,7 @@
      and easy to misread — a search icon alone doesn't say what it searches
      FOR. Scoped to this one button only (by id, not the shared .ghost-btn
      class) so every other icon-only ghost-btn elsewhere is unaffected. */
-  #findPeopleBtn{ width:auto; border-radius:999px; padding:0 14px 0 12px; gap:6px; }
+  #findPeopleBtn, #sparkOpenBtn{ width:auto; border-radius:999px; padding:0 14px 0 12px; gap:6px; }
   .ghost-btn-label{ font-family:var(--font-mono); font-size:11.5px; letter-spacing:.02em; white-space:nowrap; }
 
   /* ---------- FREQUENCIES (contacts) ---------- */
@@ -2678,7 +2684,15 @@ html[data-atmosphere="buzzing"] .naluno-aurora{
   font-size:15px;
   letter-spacing:.03em;
   color:var(--text);
-  margin:0 0 8px;
+  margin:0 0 4px;
+}
+.empty-state-hint{
+  font-family:var(--font-mono);
+  font-size:11px;
+  letter-spacing:.03em;
+  color:var(--text-dim);
+  opacity:.7;
+  margin:0 0 10px;
 }
 .empty-state-copy{
   margin:0 auto;
@@ -2776,8 +2790,8 @@ html[data-atmosphere="buzzing"] .naluno-aurora{
 }
 #textFgRow .swatch{ box-shadow: inset 0 0 0 1px rgba(255,255,255,.18); }
 
-
-
+#togaPanel[hidden]{ display:none !important; }
+#togaPanel:not([hidden]){ display:block; margin:8px 4px 18px; }
 
 
 
