@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260919a';
+  const BUILD = '20260919b';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -1893,7 +1893,11 @@
             ['Unique today', site.uniques_today || 0],
             ['New today', site.new_today || 0],
             ['Returning today', site.returning_today || 0],
-            ['Week (7d)', site.week || 0]]))
+            ['Week (7d)', site.week || 0]])
+          + kpis([['Visits (30d)', site.month || 0],
+            ['Unique (30d)', site.uniques_30d || 0],
+            ['New (30d)', site.new_30d || 0],
+            ['Returning (30d)', site.returning_30d || 0]]))
         + card('Time on the site',
           kpis([['Average today', dur(site.avg_ms || 0)],
             ['Median today', dur(site.median_ms || 0)],
@@ -1917,11 +1921,11 @@
         + card('Pages today', bars(site.paths, 8))
         + card('Language · screen · connection', bars(site.langs, 8) + bars(site.screens, 8) + bars(site.conn, 6))
         + card('Hour of day (this phone’s clock)', bars(site.hours, 24))
-        + card('Last 30 days on record',
-          kpis([['Visits (rollup)', site.day_visits || 0],
-            ['App opens (rollup)', site.day_app || 0],
-            ['Attention (rollup)', dur(site.day_ms || 0)],
-            ['Day files', (site.days || []).length]])
+        + card('Last 30 days',
+          kpis([['Visits (30d)', site.day_visits || 0],
+            ['App opens (30d)', site.day_app || 0],
+            ['Attention (30d)', dur(site.day_ms || 0)],
+            ['Days on file', (site.days || []).length]])
           + plainRows(['Day', 'Visits', 'App opens', 'Attention'],
             (site.days || []).slice(0, 31).map(function (row) {
               return [row.id || '', Number(row.visits) || 0, Number(row.appOpens || row.openApp) || 0, dur(row.ms || 0)];

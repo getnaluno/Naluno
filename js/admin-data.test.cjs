@@ -77,6 +77,69 @@ assert.strictEqual(snap.users.suspended.length, 1);
 assert.strictEqual(snap.content.broadcasts_total, 1);
 assert.strictEqual(snap.content.broadcasts_live, 1);
 assert.strictEqual(snap.content.broadcasts_deleted, 1);
+
+const adRev = D.estimateAdRevenue({
+  now: Date.parse('2026-09-10T08:30:00Z'),
+  zone: 'Asia/Dubai',
+  users: [{ id: 'a', lastSeen: Date.parse('2026-09-10T08:25:00Z') }],
+  adRates: { ecpmAed: 10, cpcAed: 1, cpvAed: 2, viewCompleteSec: 15 },
+  deskAds: [
+    { id: 'ad1', status: 'live', billModel: 'cpm', impressions: 1000, clicks: 10, viewCompletes: 5, paidAed: 8 },
+    { id: 'ad2', status: 'live', billModel: 'cpc', impressions: 20, clicks: 4, viewCompletes: 2, paidAed: 10 },
+  ],
+});
+assert.strictEqual(adRev.units[0].bookedAed, 10);
+assert.strictEqual(adRev.units[0].paidAed, 8);
+assert.strictEqual(adRev.units[0].remainingAed, 0);
+assert.ok(adRev.units[0].spent, 'prepaid 8 against booked 10 is spent');
+assert.strictEqual(adRev.units[1].bookedAed, 4);
+assert.strictEqual(adRev.units[1].remainingAed, 6);
+assert.ok(!adRev.units[1].spent);
+assert.strictEqual(adRev.paidAed, 18);
+assert.strictEqual(adRev.spentCount, 1);
+assert.ok(adRev.assumptions.some(function (t) { return /prepaid/i.test(t); }));
+assert.ok(adRev.assumptions.some(function (t) { return /pauses itself/i.test(t); }));
+
+const mailSnap = D.deriveSnapshot({
+  now: Date.parse('2026-09-10T08:30:00Z'),
+  zone: 'Asia/Dubai',
+  users: [],
+  broadcasts: [],
+  deskMail: [
+    { id: 'm1', kind: 'invest', interest: 'investment', status: 'new', ts: Date.parse('2026-09-10T08:00:00Z'), text: 'Hello' },
+    { id: 'm2', kind: 'contact', status: 'new', ts: Date.parse('2026-09-10T07:00:00Z'), text: 'Hi' },
+  ],
+});
+assert.strictEqual(mailSnap.mail.invest, 1);
+assert.strictEqual(mailSnap.mail.unread, 2);
+
+const sitePulse = D.deriveSnapshot({
+  now: Date.parse('2026-09-10T08:30:00Z'),
+  zone: 'Asia/Dubai',
+  siteSessions: [
+    { id: 'w1', kind: 'web', vid: 'v1', fresh: true, startedAt: Date.parse('2026-09-10T07:00:00Z'), lastAt: Date.parse('2026-09-10T08:20:00Z'), ms: 40000 },
+    { id: 'w2', kind: 'web', vid: 'v2', fresh: false, startedAt: Date.parse('2026-09-05T07:00:00Z'), lastAt: Date.parse('2026-09-05T07:10:00Z'), ms: 10000 },
+    { id: 'w3', kind: 'web', vid: 'v3', fresh: false, startedAt: Date.parse('2026-08-20T07:00:00Z'), lastAt: Date.parse('2026-08-20T07:10:00Z'), ms: 9000 },
+    { id: 'w4', kind: 'web', vid: 'v4', fresh: false, startedAt: Date.parse('2026-07-01T07:00:00Z'), lastAt: Date.parse('2026-07-01T07:10:00Z'), ms: 8000 },
+  ],
+  siteDays: [
+    { id: '2026-09-10', visits: 5, appOpens: 1, ms: 1000 },
+    { id: '2026-08-20', visits: 3, appOpens: 0, ms: 500 },
+    { id: '2026-07-01', visits: 99, appOpens: 9, ms: 9000 },
+  ],
+});
+assert.strictEqual(sitePulse.site.today, 1, 'visits today');
+assert.strictEqual(sitePulse.site.week, 2, 'visits in rolling 7d');
+assert.strictEqual(sitePulse.site.month, 3, 'visits in rolling 30d — July session is out');
+assert.strictEqual(sitePulse.site.uniques_today, 1);
+assert.strictEqual(sitePulse.site.uniques_30d, 3);
+assert.strictEqual(sitePulse.site.new_today, 1);
+assert.strictEqual(sitePulse.site.returning_30d, 2);
+assert.strictEqual(sitePulse.site.day_visits, 8, '30d rollup excludes July');
+assert.strictEqual(sitePulse.site.day_app, 1);
+assert.ok(sitePulse.site.days.every(function (d) { return d.id >= '2026-08-11'; }), 'day files are the last 30 days');
+assert.strictEqual(sitePulse.site.days.length, 2);
+
 assert.ok(D.DEFAULT_FLAGS.creator_support_enabled === false, 'Creator Support defaults off');
 assert.ok(D.FLAG_META.creator_support_enabled, 'Creator Support flag meta');
 assert.ok(/tab is always in the app/i.test(D.FLAG_META.creator_support_enabled.note), 'flag note says the app tab stays');

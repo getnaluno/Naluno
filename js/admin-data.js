@@ -881,23 +881,31 @@
     days = days || [];
     const day0 = startOfLocalDay(now, zone);
     const day7 = now - 7 * 86400000;
+    const day30 = now - 30 * 86400000;
+    const ymd30 = localYmd(day30, zone);
     const liveCut = now - 2 * 60 * 1000;
     function tsOf(s) { return num(s.startedAt || s.createdAt || s.lastAt); }
     const web = sessions.filter(function (s) { return String(s.kind || 'web') !== 'app'; });
     const appOnly = sessions.filter(function (s) { return String(s.kind || '') === 'app'; });
     const today = web.filter(function (s) { return tsOf(s) >= day0; });
     const week = web.filter(function (s) { return tsOf(s) >= day7; });
+    const month = web.filter(function (s) { return tsOf(s) >= day30; });
     const live = sessions.filter(function (s) { return num(s.lastAt) >= liveCut && String(s.kind || 'web') !== 'app'; });
     const vids = {};
     const vidsToday = {};
+    const vids30 = {};
     web.forEach(function (s) {
       const v = String(s.vid || s.id || '');
       if (!v) return;
       vids[v] = 1;
-      if (tsOf(s) >= day0) vidsToday[v] = 1;
+      const ts = tsOf(s);
+      if (ts >= day0) vidsToday[v] = 1;
+      if (ts >= day30) vids30[v] = 1;
     });
     const returningToday = today.filter(function (s) { return s.fresh === false; }).length;
     const newToday = today.filter(function (s) { return s.fresh === true; }).length;
+    const returning30 = month.filter(function (s) { return s.fresh === false; }).length;
+    const new30 = month.filter(function (s) { return s.fresh === true; }).length;
     const durations = today.map(function (s) { return num(s.ms); }).filter(function (n) { return n >= 0; });
     const avgMs = durations.length ? Math.round(durations.reduce(function (a, b) { return a + b; }, 0) / durations.length) : 0;
     const bounced = today.filter(function (s) { return num(s.ms) < 8000 && !num(s.openApp) && num(s.scroll) < 25; }).length;
@@ -910,11 +918,12 @@
       if (h >= 0 && h < 24) hours[h].n += 1;
     });
     const dayRows = days.slice().sort(function (a, b) { return String(b.id || '').localeCompare(String(a.id || '')); });
-    const dayVisits = dayRows.reduce(function (a, d) { return a + num(d.visits); }, 0);
-    const dayApp = dayRows.reduce(function (a, d) { return a + num(d.appOpens || d.openApp); }, 0);
-    const dayMs = dayRows.reduce(function (a, d) { return a + num(d.ms); }, 0);
+    const days30 = dayRows.filter(function (d) { return String(d.id || '') >= ymd30; });
+    const dayVisits = days30.reduce(function (a, d) { return a + num(d.visits); }, 0);
+    const dayApp = days30.reduce(function (a, d) { return a + num(d.appOpens || d.openApp); }, 0);
+    const dayMs = days30.reduce(function (a, d) { return a + num(d.ms); }, 0);
     const countryFromDays = {};
-    dayRows.forEach(function (d) {
+    days30.forEach(function (d) {
       const c = d.countries || {};
       Object.keys(c).forEach(function (k) { countryFromDays[k] = (countryFromDays[k] || 0) + num(c[k]); });
     });
@@ -927,11 +936,15 @@
       web: web.length,
       today: today.length,
       week: week.length,
+      month: month.length,
       uniques_today: Object.keys(vidsToday).length,
+      uniques_30d: Object.keys(vids30).length,
       uniques: Object.keys(vids).length,
       live: live.length,
       new_today: newToday,
       returning_today: returningToday,
+      new_30d: new30,
+      returning_30d: returning30,
       avg_ms: avgMs,
       median_ms: medianOf(durations),
       total_ms_today: durations.reduce(function (a, b) { return a + b; }, 0),
@@ -958,7 +971,8 @@
       screens: tallyMap(today, function (s) { return s.screen || 'unknown'; }),
       conn: tallyMap(today.filter(function (s) { return s.conn; }), function (s) { return s.conn; }),
       standalone_today: today.filter(function (s) { return !!s.standalone; }).length,
-      days: dayRows,
+      days: days30,
+      days_all: dayRows,
       day_visits: dayVisits,
       day_app: dayApp,
       day_ms: dayMs,
