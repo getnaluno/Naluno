@@ -1,13 +1,21 @@
-# GitHub — 2026.09.19b
+# GitHub — 2026.09.19c
 
-Homepage NEXT LAYER photo + 30-day website stats on Analytics.
+Security hardening. Attacker-has-the-source model.
 
-Only these files. Do not upload a full tree.
+## Must publish (Firebase — this is the one that actually locks the live product)
 
-## Must upload
+1. **firestore.rules** — `firebase deploy --only firestore:rules`
 
-1. **img/site-together.jpg** — the NEXT LAYER background. It was not in 19a. Night / dial / rain are already live; this one is not. Without it the section shows a broken-image icon.
-2. **index.html** — same photo, plus hide the tag if the file 404s so the icon never appears.
-3. **js/admin-data.js**, **js/admin-console.js**, **admin/index.html** — Analytics “getnaluno.com right now” now has Visits / Unique / New / Returning for 30 days under Week (7d). The day table is a real 30-day window.
+Until this is published, the live app is still on the old rules.
 
-If 19a is not on the site yet, upload that first (invest page + Mail), then these.
+## Must upload (GitHub)
+
+2. **firestore.rules** (so git matches what Firebase has)
+3. **SECURITY-REPORT.md** — the written report
+4. **js/firestore-rules.test.cjs** — contract tests for the rules file
+
+## Also publish (Cloudflare worker)
+
+5. **workers/economy/handler.mjs** (2.2.3-security) and the test.
+
+Mail no longer tries to write the operator inbox with the public web API key.

@@ -10,6 +10,32 @@ service cloud.firestore {
     function isOperator() {
       return isSignedIn() && request.auth.uid == 'ibMOMY6Q3sVTCxIrwO2FGk43zw93';
     }
+    /* Numeric bump from a member: never decrease, never jump more than 1
+       in a single write. FieldValue.increment(1) passes. A rewritten
+       client setting impressions: 999999 does not. */
+    function numOf(data, field) {
+      return field in data && data[field] is int ? int(data[field])
+           : (field in data && data[field] is float ? data[field]
+           : 0);
+    }
+    function bumpedAtMost(field, maxDelta) {
+      let oldV = numOf(resource.data, field);
+      let newV = numOf(request.resource.data, field);
+      return newV >= oldV && (newV - oldV) <= maxDelta;
+    }
+    /* A member may close their own Callsign. They may not lift a
+       suspension or restriction the desk put on them. */
+    function ownerKeepsModeration() {
+      return !request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(['suspended', 'suspendedReason', 'suspendedAt', 'restricted', 'restrictedReason', 'restrictedAt']);
+    }
+    function stampedAsSelf() {
+      return (!('from' in request.resource.data) || request.resource.data.from == request.auth.uid)
+        && (!('fromUid' in request.resource.data) || request.resource.data.fromUid == request.auth.uid)
+        && (!('uid' in request.resource.data) || request.resource.data.uid == request.auth.uid)
+        && (!('creatorUid' in request.resource.data) || request.resource.data.creatorUid == request.auth.uid)
+        && (!('by' in request.resource.data) || request.resource.data.by == request.auth.uid);
+    }
 
     // ---- Identity ----
     match /users/{uid} {
@@ -21,7 +47,7 @@ service cloud.firestore {
       allow update: if isOperator() || (
         isOwner(uid) && (
           !('accountState' in resource.data) || resource.data.accountState != 'closed'
-        )
+        ) && ownerKeepsModeration()
       );
     }
 
@@ -85,7 +111,12 @@ service cloud.firestore {
           && request.resource.data.from == request.auth.uid
           && request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants;
         allow update: if isSignedIn()
-          && request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants;
+          && request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants
+          && (
+            resource.data.from == request.auth.uid
+            || request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['read', 'readAt', 'delivered', 'taken', 'status'])
+          );
         allow delete: if isSignedIn() && resource.data.from == request.auth.uid;
       }
     }
@@ -118,7 +149,10 @@ service cloud.firestore {
     match /calls/{callId} {
       allow read: if isSignedIn() && (request.auth.uid == resource.data.callerUid || request.auth.uid == resource.data.calleeUid);
       allow create: if isSignedIn() && request.auth.uid == request.resource.data.callerUid;
-      allow update: if isSignedIn() && (request.auth.uid == resource.data.callerUid || request.auth.uid == resource.data.calleeUid);
+      allow update: if isSignedIn()
+        && (request.auth.uid == resource.data.callerUid || request.auth.uid == resource.data.calleeUid)
+        && request.resource.data.callerUid == resource.data.callerUid
+        && request.resource.data.calleeUid == resource.data.calleeUid;
 
       match /callerCandidates/{candId} {
         allow read, create: if isSignedIn() && (
@@ -167,7 +201,12 @@ service cloud.firestore {
         // After messageEpoch is stamped, the previous session is unreadable.
         // That is the "cannot be retrieved" line — hide is not enough.
         allow read: if isSignedIn() && (epochMs() == 0 || msgMs() >= epochMs());
-        allow create: if isSignedIn() && request.resource.data.from == request.auth.uid;
+        allow create: if isSignedIn()
+          && request.resource.data.from == request.auth.uid
+          && (
+            request.auth.uid in bandData().memberUids
+            || bandData().createdBy == request.auth.uid
+          );
         // Author may fill in mediaUrl after the bubble is already in the square
         // (live chat posts the row first, then the file). Nobody else can edit.
         allow update: if isSignedIn()
@@ -177,9 +216,10 @@ service cloud.firestore {
               .hasOnly(['mediaUrl', 'thumb', 'pending', 'duration']);
         allow delete: if isSignedIn() && (
           resource.data.from == request.auth.uid
-          || request.auth.uid in bandData().memberUids
-          || bandData().lastEmptiedAt != null
-          || bandData().messageEpoch != null
+          || (
+            request.auth.uid in bandData().memberUids
+            && (bandData().lastEmptiedAt != null || bandData().messageEpoch != null)
+          )
         );
       }
       match /wipe/{messageId} {
@@ -189,12 +229,21 @@ service cloud.firestore {
           request.auth.uid in get(/databases/$(database)/documents/bands/$(bandId)).data.memberUids;
       }
       match /invites/{inviteId} {
-        allow read, write: if isSignedIn();
+        allow read, write: if isSignedIn() && (
+          request.auth.uid in get(/databases/$(database)/documents/bands/$(bandId)).data.memberUids
+          || get(/databases/$(database)/documents/bands/$(bandId)).data.createdBy == request.auth.uid
+        );
       }
       match /mesh/{pairId} {
-        allow read, write: if isSignedIn();
+        allow read, write: if isSignedIn() && (
+          request.auth.uid in get(/databases/$(database)/documents/bands/$(bandId)).data.memberUids
+          || get(/databases/$(database)/documents/bands/$(bandId)).data.createdBy == request.auth.uid
+        );
         match /{iceCol}/{iceId} {
-          allow read, write: if isSignedIn();
+          allow read, write: if isSignedIn() && (
+            request.auth.uid in get(/databases/$(database)/documents/bands/$(bandId)).data.memberUids
+            || get(/databases/$(database)/documents/bands/$(bandId)).data.createdBy == request.auth.uid
+          );
         }
       }
     }
@@ -242,14 +291,19 @@ service cloud.firestore {
       allow create: if isSignedIn() && request.auth.uid in request.resource.data.participants;
       allow update: if isSignedIn() && request.auth.uid in resource.data.participants;
       match /messages/{messageId} {
-        allow read: if isSignedIn();
-        allow create: if isSignedIn() && request.resource.data.from == request.auth.uid;
+        allow read: if isSignedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/sparkRooms/$(roomId)).data.participants;
+        allow create: if isSignedIn()
+          && request.resource.data.from == request.auth.uid
+          && request.auth.uid in get(/databases/$(database)/documents/sparkRooms/$(roomId)).data.participants;
       }
     }
 
     match /users/{uid}/notifications/{nid} {
       allow read: if isOwner(uid);
-      allow create: if isSignedIn();
+      allow create: if isSignedIn()
+        && request.resource.data.keys().size() < 24
+        && stampedAsSelf();
       allow update, delete: if isOwner(uid);
     }
 
@@ -289,7 +343,9 @@ service cloud.firestore {
       );
       match /{col}/{docId} {
         allow read: if isSignedIn();
-        allow create: if isSignedIn();
+        allow create: if isSignedIn()
+          && request.resource.data.keys().size() < 40
+          && stampedAsSelf();
         // Author or broadcast creator may edit/delete subdocs (journey, conversation, etc.).
         allow update, delete: if isSignedIn() && (
           resource.data.from == request.auth.uid
@@ -332,20 +388,52 @@ service cloud.firestore {
 
     match /originMarks/{id} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn();
+      allow create: if isSignedIn()
+        && request.resource.data.creatorUid == request.auth.uid
+        && request.resource.data.keys().size() < 24;
     }
 
     match /toga/{uid} {
       allow read: if isSignedIn();
-      // Own doc, or any signed-in user may bump scores (views/circle/engage) for ranking.
-      allow create, update: if isSignedIn() && (
+      // Own doc can be rewritten. Others may only bump counters by 1 and
+      // may not rename the row. First write from a viewer is a create of
+      // those same small numbers.
+      allow create: if isSignedIn() && (
         request.auth.uid == uid
-        || request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['viewsMonth', 'circleMonth', 'engageMonth', 'scoreMonth', 'viewsTotal',
-                      'monthKey', 'featuredBroadcastId', 'updatedAt', 'name',
+        || (
+          request.resource.data.keys().hasOnly(['viewsMonth', 'circleMonth', 'engageMonth', 'scoreMonth', 'viewsTotal',
+                      'monthKey', 'featuredBroadcastId', 'updatedAt',
                       'mv_' + request.resource.data.monthKey,
                       'mc_' + request.resource.data.monthKey,
                       'me_' + request.resource.data.monthKey])
+          && numOf(request.resource.data, 'viewsMonth') <= 1
+          && numOf(request.resource.data, 'circleMonth') <= 1
+          && numOf(request.resource.data, 'engageMonth') <= 1
+          && numOf(request.resource.data, 'scoreMonth') <= 1
+          && numOf(request.resource.data, 'viewsTotal') <= 1
+          && numOf(request.resource.data, 'mv_' + request.resource.data.monthKey) <= 1
+          && numOf(request.resource.data, 'mc_' + request.resource.data.monthKey) <= 1
+          && numOf(request.resource.data, 'me_' + request.resource.data.monthKey) <= 1
+        )
+      );
+      allow update: if isSignedIn() && (
+        request.auth.uid == uid
+        || (
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['viewsMonth', 'circleMonth', 'engageMonth', 'scoreMonth', 'viewsTotal',
+                      'monthKey', 'featuredBroadcastId', 'updatedAt',
+                      'mv_' + request.resource.data.monthKey,
+                      'mc_' + request.resource.data.monthKey,
+                      'me_' + request.resource.data.monthKey])
+          && bumpedAtMost('viewsMonth', 1)
+          && bumpedAtMost('circleMonth', 1)
+          && bumpedAtMost('engageMonth', 1)
+          && bumpedAtMost('scoreMonth', 1)
+          && bumpedAtMost('viewsTotal', 1)
+          && bumpedAtMost('mv_' + request.resource.data.monthKey, 1)
+          && bumpedAtMost('mc_' + request.resource.data.monthKey, 1)
+          && bumpedAtMost('me_' + request.resource.data.monthKey, 1)
+        )
       );
     }
 
@@ -492,7 +580,11 @@ service cloud.firestore {
     match /reports/{reportId} {
       allow read: if isOperator();
       allow create: if isSignedIn()
-        && request.resource.data.reporter_uid == request.auth.uid;
+        && request.resource.data.reporter_uid == request.auth.uid
+        && request.resource.data.keys().size() < 20
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() > 9
+        && request.resource.data.reason.size() < 4001;
       allow update: if isOperator();
       allow delete: if false;
     }
@@ -532,7 +624,11 @@ service cloud.firestore {
             && request.resource.data.diff(resource.data).affectedKeys()
                  .hasOnly(['impressions', 'clicks', 'skips', 'viewCompletes', 'updatedAt'])
             && request.resource.data.status == resource.data.status
-            && request.resource.data.mediaUrl == resource.data.mediaUrl);
+            && request.resource.data.mediaUrl == resource.data.mediaUrl
+            && bumpedAtMost('impressions', 1)
+            && bumpedAtMost('clicks', 1)
+            && bumpedAtMost('skips', 1)
+            && bumpedAtMost('viewCompletes', 1));
       allow delete: if isOperator();
     }
 
