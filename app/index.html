@@ -12,9 +12,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
 <meta name="app-version" content="2026.09.19g">
-<meta name="description" content="A private messenger. A Callsign instead of a phone number.">
+<meta name="description" content="Naluno brings private communication, communities and creator-led content into one place. A Callsign instead of a phone number.">
 <meta property="og:title" content="Naluno">
-<meta property="og:description" content="A private messenger. You pick a name — not a phone number. People who know it can write and call you.">
+<meta property="og:description" content="Private communication, communities and creator-led content. A Callsign — not a phone number.">
 <style id="nalunoEntryBoot">
   html,body{ background:#0D0F17 !important; margin:0; }
   #authGate{
@@ -269,7 +269,7 @@ window.__nalunoEntryT0 = Date.now();
   <!-- ===================== INSTALL PROMPT ===================== -->
   <div id="installBanner" style="display:none; position:absolute; top:0; left:0; right:0; z-index:95; background:var(--surface-2); border-bottom:1px solid var(--line); padding:10px 14px; align-items:center; gap:10px;">
     <div class="avatar" style="width:30px;height:30px;font-size:11px;background:#7CFFB2;flex-shrink:0;">N</div>
-    <div data-install-label style="flex:1; font-size:12.5px; color:var(--text); line-height:1.35;">Add Naluno to Home Screen so calls can find this phone</div>
+    <div data-install-label style="flex:1; font-size:12.5px; color:var(--text); line-height:1.35;">Add Naluno to Home Screen</div>
     <button id="installBannerBtn" style="padding:7px 14px; border-radius:999px; border:none; background:var(--mint); color:#0D0F17; font-family:var(--font-futuristic); font-weight:700; font-size:10.5px; letter-spacing:.04em; text-transform:uppercase; cursor:pointer; flex-shrink:0;">Install</button>
     <div id="installBannerClose" role="button" aria-label="Dismiss" style="width:24px; height:24px; flex-shrink:0; display:flex; align-items:center; justify-content:center; color:var(--text-dim); cursor:pointer;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
   </div>
@@ -277,7 +277,7 @@ window.__nalunoEntryT0 = Date.now();
   <!-- Full Android APK (shell) — shown when ANDROID_APK_URL is set in firebase-config.js -->
   <div id="apkBanner" style="display:none; position:absolute; top:0; left:0; right:0; z-index:94; background:linear-gradient(90deg,rgba(124,255,178,.12),rgba(124,77,255,.1)); border-bottom:1px solid var(--line); padding:10px 14px; align-items:center; gap:10px;">
     <div class="avatar" style="width:30px;height:30px;font-size:11px;background:#7C4DFF;flex-shrink:0;color:#fff;">A</div>
-    <div style="flex:1; font-size:12.5px; color:var(--text); line-height:1.35;">Get the full Android app — call wake when Naluno is closed</div>
+    <div style="flex:1; font-size:12.5px; color:var(--text); line-height:1.35;">Android: the full app for calls when Naluno is closed</div>
     <a id="apkBannerBtn" href="#" download style="padding:7px 14px; border-radius:999px; border:none; background:var(--mint); color:#0D0F17; font-family:var(--font-futuristic); font-weight:700; font-size:10.5px; letter-spacing:.04em; text-transform:uppercase; cursor:pointer; flex-shrink:0; text-decoration:none;">Download</a>
     <div id="apkBannerClose" role="button" aria-label="Dismiss" style="width:24px; height:24px; flex-shrink:0; display:flex; align-items:center; justify-content:center; color:var(--text-dim); cursor:pointer;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
   </div>
@@ -561,7 +561,7 @@ window.__nalunoEntryT0 = Date.now();
         <div class="greenroom-setting-sub" id="callNotifStatus">Get notified of an incoming call even when Naluno isn't open. Needs your permission once.</div>
         <button class="save-btn" id="enableCallNotifsBtn" style="margin:14px 0 0; background:var(--surface-2); color:var(--text); border:1px solid var(--line);">Enable call notifications</button>
         <a class="save-btn" id="downloadAndroidAppBtn" href="#" style="display:none; margin:10px 0 0; background:var(--mint); color:#0D0F17; border:none; text-align:center; text-decoration:none;">Download Android app</a>
-        <div class="greenroom-setting-sub" id="androidAppHint" style="display:none; margin-top:8px;">Full app: rings when closed. Chrome install alone cannot do that on Android.</div>
+        <div class="greenroom-setting-sub" id="androidAppHint" style="display:none; margin-top:8px;">Android: the full app for calls when Naluno is closed. Home Screen install is the browser app.</div>
       </div>
 
       <div class="greenroom-setting">
@@ -1526,7 +1526,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/sfu-live.js?v=20260908d"></script>
 <script src="/js/broadcast-live.js?v=20260908d"></script>
 <script src="/js/band-room.js?v=20260918i"></script>
-<script src="/js/pwa.js?v=20260919g"></script>
+<script src="/js/pwa.js?v=20260921b"></script>
 <script src="/js/spark-engine.js?v=20260908d"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>
 <script src="/js/spark-lg.js?v=20260908d"></script>
