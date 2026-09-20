@@ -66,11 +66,23 @@ service cloud.firestore {
 
     // handles/{handle} maps a claimed handle -> uid. Enforces uniqueness: Firestore
     // rejects a second create() at the same document path, so two people racing to
-    // claim "@nova" can't both succeed.
+    // claim "@nova" can't both succeed. Reserved identities live in reservedHandles
+    // (and reservedCores) and cannot be claimed unless the signer is the bound
+    // official holder (so the existing @naluno account keeps it).
     match /handles/{handle} {
       allow get: if true; // handle lookup needs to work before sign-in resolves
       allow list: if isOperator();
-      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && handle.matches('^[a-z0-9_]{3,24}$')
+        && (
+          !exists(/databases/$(database)/documents/reservedHandles/$(handle))
+          || get(/databases/$(database)/documents/reservedHandles/$(handle)).data.holderUid == request.auth.uid
+        )
+        && (
+          !exists(/databases/$(database)/documents/reservedCores/$(handle))
+          || get(/databases/$(database)/documents/reservedCores/$(handle)).data.holderUid == request.auth.uid
+        );
       // Only the current owner can re-write their own handle doc (e.g. a redundant
       // re-save) — this must NEVER let someone else's uid overwrite an existing claim.
       allow update: if isOperator()
@@ -78,6 +90,28 @@ service cloud.firestore {
             && resource.data.uid == request.auth.uid
             && request.resource.data.uid == request.auth.uid);
       allow delete: if isOperator();
+    }
+
+    /* Protected Callsigns. Members may get a known id so sign-up can refuse
+       it. The full list is desk-only. Writes are desk-only. */
+    match /reservedHandles/{handle} {
+      allow get: if true;
+      allow list: if isOperator();
+      allow create, update, delete: if isOperator();
+    }
+    match /reservedCores/{core} {
+      allow get: if true;
+      allow list: if isOperator();
+      allow create, update, delete: if isOperator();
+    }
+    match /handleFlags/{id} {
+      allow read: if isOperator();
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.handle is string
+        && request.resource.data.handle.size() >= 3
+        && request.resource.data.handle.size() < 32;
+      allow update, delete: if isOperator();
     }
 
     // ---- Broadcast (your signal) ----

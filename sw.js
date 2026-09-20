@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v185: 09.21c reserved handles / protected identity.
 // v180: 09.18j ads prepaid/used/left + pause when spent; console live; bspace closes feed under-layer; no Sound on chip.
 // v179: 09.18i Toga tab paints; Band invite toggles; Wireline closed invites stay gone.
 // v178: 09.18h first-run: nav taglines, Toga as a Broadcast header, weather opt-in, Spark on Frequencies.
@@ -65,8 +66,8 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v184';
-const APP_BUILD = '20260919g';
+const CACHE_NAME = 'naluno-shell-v185';
+const APP_BUILD = '20260921c';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -79,7 +80,7 @@ const CORE_ASSETS = [
   '/js/signal-core.js', '/js/signal-ui.js',
   '/js/sfu-live.js', '/js/compass.js', '/js/weather.js', '/js/beacon.js', '/js/find.js', '/js/profile.js', '/js/notifications.js',
   '/js/ice-core.js', '/js/compat-lock.js', '/js/keep-alive.js', '/js/media-contain.js',
-  '/js/diagnostics.js', '/js/currency.js', '/js/economy.js', '/js/economy-ui.js', '/js/onboard.js', '/js/presence.js',
+  '/js/diagnostics.js', '/js/currency.js', '/js/economy.js', '/js/economy-ui.js', '/js/onboard.js', '/js/presence.js', '/js/handle-guard.js',
 ];
 
 self.addEventListener('install', event=>{
