@@ -1,28 +1,22 @@
-# GitHub — 2026.09.19f
+# GitHub — 2026.09.19g
 
-Upload these together (Compass lock + Strand episode pictures).
+Wireline upload bar, pause that stays paused, no diagnostic chips, camcorder mirror, Callsign that stays after refresh.
 
-## Compass lock
+## Upload
 
-1. js/vault.js
-2. js/auth.js
-3. js/compass.js
-4. js/beacon.js
+1. js/core.js
+2. js/signal-core.js
+3. js/wireline.js
+4. js/compass.js
+5. js/profile.js
+6. js/media-contain.js
+7. js/calls.js
+8. js/auth.js
+9. js/presence.js
+10. js/notifications.js
+11. js/pwa.js
+12. css/app.css
+13. app/index.html
+14. sw.js
 
-## Strand episode pictures (E2–E5)
-
-5. js/signal-core.js
-6. js/strand.js
-7. js/broadcast-core.js
-8. js/broadcast-space.js
-
-## Shell
-
-9. app/index.html
-10. sw.js
-
-No Firestore rules in this pack. Broadcast video files themselves are unchanged.
-
-After upload: open For You. Episode tiles recapture a frame from the existing video and, if it is yours, save a real JPEG so they stay.
-
-Set the Compass password once more if this session already lost it.
+After upload: open Callsign once and tap Save if this phone already reset to You.
