@@ -1,26 +1,25 @@
-# GitHub + worker — 2026.09.19h
+# GitHub — 2026.09.21a
 
-Admin password now actually gates. Your operator account is not locked out.
+Website Visitors, Reach, Quality, and Analytics. No notes in the console or the app.
 
 ## Upload to GitHub
 
-1. js/admin-console.js
-2. admin/index.html
-3. firestore.rules
-4. js/firestore-rules.test.cjs
-5. workers/economy/handler.mjs
-6. workers/economy/economy.test.mjs
+1. js/site-pulse.js
+2. js/admin-data.js
+3. js/admin-console.js
+4. admin/index.html
+5. firestore.rules
+6. js/firestore-rules.test.cjs
+7. js/admin-data.test.cjs
+8. index.html
+9. invest/index.html
+10. terms.html
+11. privacy.html
+12. app/index.html
+13. js/spark-lg.js
 
 ## Then
 
-1. Publish firestore.rules in Firebase.
-2. Deploy the economy worker (`naluno-economy`) with this handler.mjs.
+Publish firestore.rules in Firebase. The new visitor fields (landing page, trail, source, 5-second mark, bot, self) are denied until those rules are live.
 
-## First open after this
-
-Sign in with the same Google account. Unlock with the password you already use.
-If the console asks you to create a password, set the same one.
-
-You will not be locked out: your uid still opens the desk, a verified
-magjoed@gmail.com still opens it, and if no password is stored yet the
-first visit is setup — not a wall.
+The economy worker does not need a new deploy for this pack.
