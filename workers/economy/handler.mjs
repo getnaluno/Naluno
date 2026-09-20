@@ -20,7 +20,7 @@
  *      key rotation hiccuped.
  */
 
-export const VERSION = "2.2.5-ratelimit";
+export const VERSION = "2.3.0-admin-gate";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -378,6 +378,7 @@ async function verifyIdToken(env, idToken) {
     uid: u.localId,
     email: u.email || "",
     name: u.displayName || "",
+    emailVerified: u.emailVerified === true,
     customAttributes: u.customAttributes || "",
   };
 }
@@ -566,7 +567,6 @@ function isOperatorUser(env, user) {
   if (user.uid === operatorUid(env)) return true;
   const extra = String(env.OPERATOR_UIDS || "");
   if (extra && extra.split(/[,\s]+/).indexOf(user.uid) >= 0) return true;
-  if ((user.email || "").toLowerCase() === "magjoed@gmail.com") return true;
   const raw = user.customAttributes || "";
   if (raw) {
     try {
@@ -576,6 +576,10 @@ function isOperatorUser(env, user) {
       /* ignore */
     }
   }
+  /* Email is a fallback so a rebuilt Google account is not locked out.
+     It is not enough on its own: the address must be verified. */
+  const mail = String(user.email || "").trim().toLowerCase();
+  if (mail === "magjoed@gmail.com" && user.emailVerified === true) return true;
   return false;
 }
 
@@ -627,23 +631,121 @@ async function stampOperatorClaim(env, uid) {
 
 async function sha256Hex(s) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
-  const bytes = new Uint8Array(buf);
+  return bytesToHex(new Uint8Array(buf));
+}
+function bytesToHex(bytes) {
   let hex = "";
   for (let i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, "0");
   return hex;
 }
+function bytesToB64(bytes) {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+function b64ToBytes(s) {
+  const bin = atob(String(s || ""));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+function timingEq(a, b) {
+  const x = String(a || "");
+  const y = String(b || "");
+  if (x.length !== y.length) return false;
+  let d = 0;
+  for (let i = 0; i < x.length; i++) d |= x.charCodeAt(i) ^ y.charCodeAt(i);
+  return d === 0;
+}
+const PBKDF2_ITERS = 150000;
+async function pbkdf2Bytes(password, saltBytes, iters) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(String(password)), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", hash: "SHA-256", salt: saltBytes, iterations: iters || PBKDF2_ITERS },
+    key,
+    256,
+  );
+  return new Uint8Array(bits);
+}
+async function hashPasswordV2(password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const hash = await pbkdf2Bytes(password, salt, PBKDF2_ITERS);
+  return {
+    v: 2,
+    algo: "pbkdf2-sha256",
+    iters: PBKDF2_ITERS,
+    salt: bytesToB64(salt),
+    hash: bytesToHex(hash),
+    updated_at: Date.now(),
+  };
+}
+async function passwordMatches(stored, uid, password) {
+  if (!stored || !password) return false;
+  if (typeof stored === "string") {
+    const sha = await sha256Hex(uid + ":" + password);
+    if (timingEq(sha, stored)) return true;
+    const legacy = await pbkdf2Bytes(password, new TextEncoder().encode("naluno-admin-v1|" + uid), 120000);
+    return timingEq(bytesToB64(legacy), stored);
+  }
+  if (stored && stored.v === 2 && stored.salt && stored.hash) {
+    const got = await pbkdf2Bytes(password, b64ToBytes(stored.salt), Number(stored.iters) || PBKDF2_ITERS);
+    return timingEq(bytesToHex(got), stored.hash);
+  }
+  if (stored && stored.hash) return passwordMatches(stored.hash, uid, password);
+  return false;
+}
+function recordFromDoc(doc) {
+  if (!doc) return null;
+  if (doc.v === 2 && doc.hash && doc.salt) return doc;
+  if (doc.hash) return doc.v === 2 ? doc : String(doc.hash);
+  return null;
+}
+async function loadPasswordRecord(env, uid, saToken) {
+  if (memory.passwords.has(uid)) return memory.passwords.get(uid);
+  const token = saToken;
+  if (!token || !uid) return null;
+  const paths = [
+    "/adminCredentials/" + encodeURIComponent(uid),
+    "/adminConsole/" + encodeURIComponent(uid),
+  ];
+  for (let i = 0; i < paths.length; i++) {
+    try {
+      const r = await fsFetch(env, token, "GET", paths[i]);
+      if (!r.ok) continue;
+      const rec = recordFromDoc(fromFsDoc(r.data));
+      if (rec) {
+        memory.passwords.set(uid, rec);
+        return rec;
+      }
+    } catch {
+      /* try next */
+    }
+  }
+  return null;
+}
+async function persistPasswordRecord(env, uid, rec, saToken, userToken) {
+  memory.passwords.set(uid, rec);
+  const body = toFsFields(typeof rec === "string" ? { hash: rec, v: 1, updated_at: Date.now() } : rec);
+  if (saToken) {
+    const r = await fsFetch(env, saToken, "PATCH", "/adminCredentials/" + encodeURIComponent(uid), body);
+    if (r.ok) return "firestore-sa";
+  }
+  if (userToken) {
+    const r = await fsFetch(env, userToken, "PATCH", "/adminConsole/" + encodeURIComponent(uid), body);
+    if (r.ok) return "user-token";
+  }
+  return "memory";
+}
 
 async function handleAdmin(env, request, path, url, user, userToken, saToken) {
-  const adminPass = request.headers.get("X-Naluno-Admin") || "";
-  const needPass = path !== "/v1/admin/status" && path !== "/v1/admin/password";
   if (!isOperatorUser(env, user)) return json({ ok: false, error: "not an operator" }, 403);
-  if (needPass && adminPass) {
-    const stored = memory.passwords.get(user.uid);
-    if (stored) {
-      const hashed = await sha256Hex(user.uid + ":" + adminPass);
-      if (hashed !== stored) {
-        /* still allow — console password also lives on the account */
-      }
+  const adminPass = request.headers.get("X-Naluno-Admin") || "";
+  const stored = await loadPasswordRecord(env, user.uid, saToken);
+  const openPath = path === "/v1/admin/status" || path === "/v1/admin/password" || path === "/v1/admin/unlock";
+  if (!openPath && stored) {
+    if (!adminPass) return json({ ok: false, error: "console password required" }, 401);
+    if (!(await passwordMatches(stored, user.uid, adminPass))) {
+      return json({ ok: false, error: "console password not accepted" }, 401);
     }
   }
 
@@ -656,31 +758,44 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
 
   if (path === "/v1/admin/status" && request.method === "GET") {
     const stamped = await stampOperatorClaim(env, user.uid);
+    const rec = stored || await loadPasswordRecord(env, user.uid, saToken);
     return json({
       ok: true,
       operator: true,
       uid: user.uid,
-      hasPassword: memory.passwords.has(user.uid),
+      hasPassword: !!rec,
       persist: saToken ? "firestore-sa" : "user-token",
       version: VERSION,
       claim: stamped ? "operator" : "",
     });
   }
 
+  if (path === "/v1/admin/unlock" && request.method === "POST") {
+    const body = await request.json().catch(() => ({}));
+    const pass = String(body.password || adminPass || "").trim();
+    const rec = stored || await loadPasswordRecord(env, user.uid, saToken);
+    if (!rec) return json({ ok: true, setup: true, hasPassword: false });
+    if (!pass || !(await passwordMatches(rec, user.uid, pass))) {
+      return json({ ok: false, error: "console password not accepted" }, 401);
+    }
+    return json({ ok: true, hasPassword: true });
+  }
+
   if (path === "/v1/admin/password" && request.method === "POST") {
     const body = await request.json().catch(() => ({}));
     const next = String(body.next_password || "").trim();
     if (next.length < 8) return json({ ok: false, error: "Use at least 8 characters" }, 400);
-    const hashed = await sha256Hex(user.uid + ":" + next);
-    memory.passwords.set(user.uid, hashed);
-    if (userToken) {
-      await fsFetch(env, userToken, "PATCH", "/adminConsole/" + encodeURIComponent(user.uid), toFsFields({
-        hash: hashed,
-        updated_at: Date.now(),
-      }));
+    const rec = stored || await loadPasswordRecord(env, user.uid, saToken);
+    if (rec) {
+      const current = String(body.current_password || adminPass || "").trim();
+      if (!current || !(await passwordMatches(rec, user.uid, current))) {
+        return json({ ok: false, error: "current password is wrong" }, 401);
+      }
     }
+    const hashed = await hashPasswordV2(next);
+    const where = await persistPasswordRecord(env, user.uid, hashed, saToken, userToken);
     memory.audit.unshift({ action: "password-set", actor: user.uid, ts: Date.now() });
-    return json({ ok: true });
+    return json({ ok: true, persist: where });
   }
 
   if (path === "/v1/admin/flags" && request.method === "POST") {

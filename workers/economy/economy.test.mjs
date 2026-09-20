@@ -559,3 +559,100 @@ test("an operator custom claim can call /v1/admin/status", async () => {
   assert.equal(body.uid, "claim_op");
   setFetchImpl(null);
 });
+
+function mockOperatorLookup(extra) {
+  setFetchImpl(async (url) => {
+    if (String(url).includes("accounts:lookup")) {
+      return new Response(JSON.stringify({
+        users: [Object.assign({
+          localId: ENV.OPERATOR_UID,
+          email: "magjoed@gmail.com",
+          emailVerified: true,
+        }, extra || {})],
+      }), { status: 200 });
+    }
+    return new Response("{}", { status: 200 });
+  });
+}
+
+test("admin password is required after it is set", async () => {
+  resetMemory();
+  mockOperatorLookup();
+  const headers = { Authorization: "Bearer tok", "Content-Type": "application/json" };
+  let res = await handleRequest(
+    req("/v1/admin/flags", { method: "POST", headers, body: JSON.stringify({ toga_enabled: false }) }),
+    ENV,
+  );
+  assert.equal(res.status, 200);
+
+  res = await handleRequest(
+    req("/v1/admin/password", { method: "POST", headers, body: JSON.stringify({ next_password: "correcthorse" }) }),
+    ENV,
+  );
+  assert.equal(res.status, 200);
+
+  res = await handleRequest(
+    req("/v1/admin/flags", { method: "POST", headers, body: JSON.stringify({ toga_enabled: true }) }),
+    ENV,
+  );
+  assert.equal(res.status, 401);
+
+  res = await handleRequest(
+    req("/v1/admin/flags", {
+      method: "POST",
+      headers: Object.assign({ "X-Naluno-Admin": "wrong-password" }, headers),
+      body: JSON.stringify({ toga_enabled: true }),
+    }),
+    ENV,
+  );
+  assert.equal(res.status, 401);
+
+  res = await handleRequest(
+    req("/v1/admin/flags", {
+      method: "POST",
+      headers: Object.assign({ "X-Naluno-Admin": "correcthorse" }, headers),
+      body: JSON.stringify({ toga_enabled: true }),
+    }),
+    ENV,
+  );
+  assert.equal(res.status, 200);
+  setFetchImpl(null);
+});
+
+test("unverified operator email is not enough", async () => {
+  resetMemory();
+  setFetchImpl(async (url) => {
+    if (String(url).includes("accounts:lookup")) {
+      return new Response(JSON.stringify({
+        users: [{ localId: "intruder", email: "magjoed@gmail.com", emailVerified: false }],
+      }), { status: 200 });
+    }
+    return new Response("{}", { status: 200 });
+  });
+  const res = await handleRequest(
+    req("/v1/admin/status", { headers: { Authorization: "Bearer tok" } }),
+    ENV,
+  );
+  assert.equal(res.status, 403);
+  setFetchImpl(null);
+});
+
+test("verified operator email still opens status so the admin is not locked out", async () => {
+  resetMemory();
+  setFetchImpl(async (url) => {
+    if (String(url).includes("accounts:lookup")) {
+      return new Response(JSON.stringify({
+        users: [{ localId: "rebuilt_uid", email: "magjoed@gmail.com", emailVerified: true }],
+      }), { status: 200 });
+    }
+    return new Response("{}", { status: 200 });
+  });
+  const res = await handleRequest(
+    req("/v1/admin/status", { headers: { Authorization: "Bearer tok" } }),
+    ENV,
+  );
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.operator, true);
+  setFetchImpl(null);
+});
