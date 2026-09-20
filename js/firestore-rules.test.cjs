@@ -27,7 +27,8 @@ must(/allow get: if true; \/\/ handle lookup/, 'handle lookup stays public get, 
 must(/match \/sparks\/\{code\}[\s\S]*allow get: if isSignedIn\(\);\s*allow list: if isOperator\(\);/, 'Spark codes are not listable to members');
 must(/hasOnly\(\['vid', 'kind', 'path'/, 'siteSessions only accept the pulse shape');
 must(/bumpedAtMost\('visits', 1\)/, 'siteDays visit counters cannot jump');
-must(/match \/deskRate\/\{id\}/, 'mail rate docs are not client-writable');
+must(/match \/adminConsole\/\{uid\} \{\s*allow read, write: if false;/, 'adminConsole hashes are not client-writable');
+must(/match \/adminCredentials\/\{uid\} \{\s*allow read, write: if false;/, 'adminCredentials hashes are not client-writable');
 
 mustNot(/match \/bands\/\{bandId\}[\s\S]*match \/invites\/\{inviteId\} \{\s*allow read, write: if isSignedIn\(\);/, 'Band invites are no longer any-signed-in');
 mustNot(/match \/sparkRooms\/\{roomId\}[\s\S]*match \/messages\/\{messageId\} \{\s*allow read: if isSignedIn\(\);/, 'Spark room messages are no longer world-readable to members');

@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260919e';
+  const BUILD = '20260919f';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -272,7 +272,29 @@
     if (__operatorClaim) return true;
     if (OPERATOR_UIDS[user.uid]) return true;
     const mail = String(user.email || '').trim().toLowerCase();
-    return !!(mail && OPERATOR_EMAILS[mail]);
+    if (mail && OPERATOR_EMAILS[mail] && user.emailVerified) return true;
+    return false;
+  }
+
+  async function adminWorker(path, opts) {
+    opts = opts || {};
+    const tok = currentUser ? await currentUser.getIdToken() : '';
+    const headers = Object.assign({
+      Authorization: tok ? ('Bearer ' + tok) : '',
+      'Content-Type': 'application/json',
+    }, opts.headers || {});
+    if (__adminPass) headers['X-Naluno-Admin'] = __adminPass;
+    const bases = [WORKER];
+    try { if (location && location.origin) bases.unshift(location.origin + '/__naluno-economy'); } catch (_) {}
+    let last = null;
+    for (let i = 0; i < bases.length; i++) {
+      try {
+        const res = await fetch(bases[i] + path, Object.assign({}, opts, { headers: headers, cache: 'no-store' }));
+        last = res;
+        if (res.ok || res.status === 401 || res.status === 403) return res;
+      } catch (_) {}
+    }
+    return last;
   }
 
   function firebaseReady() {
@@ -2647,11 +2669,21 @@
 
     let cloudHash = '';
     try { cloudHash = await cloudGetHash(uid); } catch (_) {}
-    const hasCloud = !!cloudHash;
     const hasLocal = !!localGet(uid);
-    __needsSetup = !hasCloud && !hasLocal;
+    let hasWorker = false;
+    try {
+      const st = await adminWorker('/v1/admin/status', { method: 'GET' });
+      const body = st ? await st.json().catch(function () { return {}; }) : {};
+      hasWorker = !!(st && st.ok && body.hasPassword);
+      if (st && st.ok && body.operator === false) {
+        setMsg('adminGateMsg', 'This account is not an operator on the worker.');
+      }
+    } catch (_) {}
+    __needsSetup = !hasWorker && !cloudHash && !hasLocal;
     setGateMode(__needsSetup ? 'setup' : 'locked');
-    if (ping) ping.textContent = hasCloud ? 'password on this account' : (hasLocal ? 'password on this phone — will copy to the account on unlock' : '');
+    if (ping) ping.textContent = hasWorker
+      ? 'password on the console'
+      : (cloudHash ? 'password on this account' : (hasLocal ? 'password on this phone' : ''));
     setMsg('adminGateMsg', '');
     stampOperatorClaim();
   }
@@ -2672,32 +2704,61 @@
       const confirmVal = ((confirmEl && confirmEl.value) || '').trim();
       if (typed.length < 8) { setMsg('adminGateMsg', 'Use at least 8 characters.'); return; }
       if (typed !== confirmVal) { setMsg('adminGateMsg', 'The two passwords do not match.'); return; }
-      setMsg('adminGateMsg', 'Saving to this account…', true);
+      setMsg('adminGateMsg', 'Saving…', true);
       const hash = await hashLocal(uid, typed);
       try { localSet(uid, hash); } catch (_) {}
-      const saved = await cloudSetHash(uid, hash);
-      if (!saved.ok) {
-        setMsg('adminGateMsg', 'Could not save to this account (' + saved.where + '). Publish firestore.rules from this zip and try again.');
-        return;
+      let workerOk = false;
+      try {
+        const res = await adminWorker('/v1/admin/password', {
+          method: 'POST',
+          body: JSON.stringify({ next_password: typed }),
+        });
+        const body = res ? await res.json().catch(function () { return {}; }) : {};
+        workerOk = !!(res && res.ok && body.ok);
+        if (!workerOk && res && res.status === 401) {
+          setMsg('adminGateMsg', body.error || 'Could not save the password.');
+          return;
+        }
+      } catch (_) {}
+      if (!workerOk) {
+        const saved = await cloudSetHash(uid, hash);
+        if (!saved.ok) {
+          setMsg('adminGateMsg', 'Saved on this phone. Cloud copy failed — you can still unlock here.');
+        }
       }
       __needsSetup = false;
       setGateMode('locked');
       if ($('adminPassConfirm')) $('adminPassConfirm').value = '';
     } else {
-      const storedCloud = await cloudGetHash(uid);
-      const typedHash = await hashLocal(uid, typed);
-      const okCloud = !!(storedCloud && storedCloud === typedHash);
-      const okLocal = await localOk(uid, typed);
-      if (storedCloud) {
-        if (!okCloud) { setMsg('adminGateMsg', 'Password not accepted.'); return; }
-        if (!okLocal) { try { localSet(uid, typedHash); } catch (_) {} }
-      } else {
-        if (!okLocal) { setMsg('adminGateMsg', 'Password not accepted.'); return; }
-        const saved = await cloudSetHash(uid, typedHash);
-        if (!saved.ok) {
-          setMsg('adminGateMsg', 'Password is right on this phone but could not be copied to the account (' + saved.where + '). Publish firestore.rules from this zip and try again.');
+      let workerVerdict = null;
+      try {
+        const res = await adminWorker('/v1/admin/unlock', {
+          method: 'POST',
+          body: JSON.stringify({ password: typed }),
+        });
+        if (res && res.status === 401) {
+          setMsg('adminGateMsg', 'Password not accepted.');
           return;
         }
+        const body = res ? await res.json().catch(function () { return {}; }) : {};
+        if (res && res.ok && body.ok && !body.setup) workerVerdict = true;
+        if (res && res.ok && body.setup) workerVerdict = 'setup';
+      } catch (_) {}
+      if (workerVerdict === true) {
+        try { localSet(uid, await hashLocal(uid, typed)); } catch (_) {}
+      } else {
+        const storedCloud = await cloudGetHash(uid);
+        const typedHash = await hashLocal(uid, typed);
+        const okCloud = !!(storedCloud && storedCloud === typedHash);
+        const okLocal = await localOk(uid, typed);
+        if (!okCloud && !okLocal) { setMsg('adminGateMsg', 'Password not accepted.'); return; }
+        try {
+          await adminWorker('/v1/admin/password', {
+            method: 'POST',
+            body: JSON.stringify({ next_password: typed }),
+          });
+        } catch (_) {}
+        if (storedCloud && !okLocal) { try { localSet(uid, typedHash); } catch (_) {} }
       }
     }
     __adminPass = typed;
@@ -2725,10 +2786,23 @@
     if (hasAny && !okCloud && !okLocal) { toast('Current password is wrong'); return; }
     const hash = await hashLocal(uid, nextTrim);
     try { localSet(uid, hash); } catch (_) {}
-    const saved = await cloudSetHash(uid, hash);
+    let workerOk = false;
+    try {
+      const res = await adminWorker('/v1/admin/password', {
+        method: 'POST',
+        body: JSON.stringify({ current_password: curTrim, next_password: nextTrim }),
+      });
+      workerOk = !!(res && res.ok);
+      if (res && res.status === 401) { toast('Current password is wrong'); return; }
+    } catch (_) {}
+    if (!workerOk) {
+      const saved = await cloudSetHash(uid, hash);
+      toast(saved.ok ? 'Password changed' : 'Phone updated. Worker copy failed.');
+    } else {
+      toast('Password changed');
+    }
     __adminPass = nextTrim;
     await writeAudit('password-change', uid, 'operator changed console password');
-    toast(saved.ok ? 'Password changed on the account' : ('Phone updated. Account: ' + saved.where));
   }
 
   async function signInHandle() {
