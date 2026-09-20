@@ -442,8 +442,8 @@
   .cam-stage.expanded{ aspect-ratio:3/8; max-height:80vh; }
   .cam-expand-btn{ position:absolute; right:12px; top:12px; width:30px; height:30px; border-radius:50%; background:rgba(13,15,23,.72); backdrop-filter:blur(8px); border:1px solid var(--line); display:flex; align-items:center; justify-content:center; color:var(--text); cursor:pointer; z-index:4; transition:transform .3s ease; }
   .cam-expand-btn.expanded{ transform:rotate(180deg); }
-  .cam-blur, .cam-sharp{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; transform:scaleX(-1); }
-  .cam-blur{ filter: blur(26px) saturate(1.15) brightness(.9); transform: scaleX(-1) scale(1.2); }
+  .cam-blur, .cam-sharp{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  .cam-blur{ filter: blur(26px) saturate(1.15) brightness(.9); transform: scale(1.2); }
   .cam-sharp{
     -webkit-mask-image: radial-gradient(ellipse 36% 46% at 50% 44%, black 85%, transparent 97%);
     mask-image: radial-gradient(ellipse 36% 46% at 50% 44%, black 85%, transparent 97%);
