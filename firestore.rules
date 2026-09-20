@@ -650,6 +650,9 @@ service cloud.firestore {
     match /adminCredentials/{uid} {
       allow read, write: if false;
     }
+    match /deskRate/{id} {
+      allow read, write: if false;
+    }
 
     /* ============================================================
        SPARK-LG SHARED LUGANDA BOOK

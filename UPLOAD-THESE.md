@@ -1,35 +1,31 @@
-# GitHub — 2026.09.19d
+# GitHub — 2026.09.19e
 
 Leftover security that does **not** change Broadcast playback URLs or existing videos.
 
 ## Must publish (Firebase)
 
-1. **firestore.rules** — `firebase deploy --only firestore:rules`
+1. **firestore.rules**
+2. **storage.rules** (Firebase Storage is unused; this locks it)
 
-Until this is published, listing every member and reading Spark codes as a list still works.
+Until (1) is published, listing every member still works.
 
 ## Must upload (GitHub)
 
-2. firestore.rules
-3. js/vault.js (new)
-4. js/auth.js
-5. js/compass.js
-6. js/crypto.js
-7. js/admin-console.js
-8. js/firestore-rules.test.cjs
-9. app/index.html
-10. sw.js
-11. admin/index.html
-12. SECURITY-REPORT.md
-13. UPLOAD-THESE.md
+3. firestore.rules, storage.rules
+4. js/vault.js, js/auth.js, js/compass.js, js/crypto.js
+5. js/pwa.js, js/notifications.js
+6. js/admin-console.js, js/firestore-rules.test.cjs
+7. app/index.html, sw.js, admin/index.html
+8. SECURITY-REPORT.md, UPLOAD-THESE.md
 
 ## Also publish (Cloudflare)
 
-14. workers/economy/handler.mjs (2.2.4-vault)
+9. workers/economy/handler.mjs (2.2.5-ratelimit)
+10. **workers/call-notify/** (1.0.0-secure) → existing `naluno-call-notify` worker
 
-Stamps `operator: true` on the desk account when `/v1/admin/status` is called. The uid check stays, so the desk still opens if the stamp fails.
+   Copy the same `GOOGLE_SERVICE_ACCOUNT` secret the economy worker already has.
 
 ## What this does not change
 
 - Broadcast / Signal media URLs (`/o/…`) stay public. Existing videos keep playing.
-- Call wake tokens stay on the public profile so the current call-notify worker still rings a closed phone.
+- Call wake tokens stay on the public profile (and are now also in the vault) so a delay in publishing call-notify cannot silence phones.

@@ -20,7 +20,7 @@ Broadcast videos were not touched. Playback URLs (`/o/…`) stay as they are so 
 
 | Surface | How it is enforced |
 |---|---|
-| Desk powers | `isOperator()` — uid **or** Firebase custom claim `operator: true`. Not the password screen, not `/admin` |
+| Desk powers | `isOperator()` — uid **or** Firebase custom claim `operator: true` |
 | Contribution / trust / payouts | Client writes denied. Points computed in the worker |
 | Wireline drops | `from` / `to` bound to the signer |
 | Compass notebook | Owner only |
@@ -29,32 +29,44 @@ Broadcast videos were not touched. Playback URLs (`/o/…`) stay as they are so 
 | Broadcast / Signal create | Must stamp your own uid |
 | Closed Callsign | Owner cannot write once closed |
 | R2 upload | ID token. Key is `u/{yourUid}/…` |
-| Ad meters / Toga scores | +1 per write. Others cannot rename a Toga row |
+| Ad meters / Toga scores | +1 per write |
 | Band invites / mesh / posts | Members or creator |
 | Spark room messages | Participants only |
 | Reports | Reason required in rules |
+| Firebase Storage | Locked (`allow read, write: if false`). Media is on R2 |
 
 ---
 
-## This pack (19d) — leftover work that does not break the app
+## 19d — leftover work that does not break the app
 
-| Change | Why it is safe for current videos and calls |
+| Change | Why it is safe |
 |---|---|
-| Members can **get** a known `users/{uid}` but cannot **list** the whole collection | Names and photos for Frequencies / Spark / Toga still load. A rewritten client can no longer dump every recovery email and token in one query |
-| Handles and Spark codes: get, not list | Looking up `@nova` still works. Listing every Spark code does not |
-| Private **vault** (`users/{uid}/vault/main`) for recovery email, Compass lock, E2E backup, desk password | On next sign-in those fields move off the public profile. Call wake **tokens stay public** so the current call-notify worker still rings a closed phone |
-| Website pulse: known fields only; visit counters +1 | Analytics still write. An attacker cannot invent arbitrary counters or jump visits by a million |
-| Operator custom claim | Additive. The hardcoded uid still works if the stamp fails. Desk does not lock you out |
-| **Not done:** signed playback URLs | Would break every existing Broadcast file in the feed |
+| Members **get** a known `users/{uid}` but cannot **list** the collection | Names still load. A rewritten client cannot dump every profile in one query |
+| Handles and Spark codes: get, not list | Lookup still works |
+| Private **vault** for recovery email, Compass lock, E2E backup, desk password | Moves off the public profile on next sign-in |
+| Website pulse: known fields; visit counters +1 | Analytics still write |
+| Operator custom claim | Additive. The uid check still works |
+
+---
+
+## 19e — this pack
+
+| Change | Why it is safe |
+|---|---|
+| **Call-notify worker** looks tokens up on the server. A rewritten client cannot push a stranger's call, a Band they are not in, or a Broadcast they did not create. Client-supplied tokens are used **only** if the lookup is empty, so the current worker swap cannot silence existing phones | In-app ring still works even if push is delayed |
+| Push tokens are **also** written to the vault. They stay on the public profile until this worker is live, so wake does not drop | Dual-write |
+| Mail rate limit also stored in Firestore (`deskRate`, client-denied) | Survives a worker restart. Memory limit still applies first |
+| Firebase Storage rules deny all | App does not use Storage. Media stays on R2. **Does not change Broadcast playback** |
 
 ---
 
 ## Still open (honest)
 
-1. A member who already knows a uid can still `get` that public profile, including FCM tokens, until call-notify looks tokens up server-side (worker source is not in this repo).
-2. Website pulse is still unauthenticated. App Check would kill analytics until you enrol reCAPTCHA in Firebase — left off on purpose.
+1. Public profiles still carry FCM tokens until the new call-notify worker is live **and** a later pack strips them. A member who already knows a uid can still `get` that token.
+2. Website pulse is still unauthenticated. App Check would kill analytics until reCAPTCHA is enrolled — left off.
 3. Desk password is still a screen lock. Steal the operator Google session and the SDK is enough.
-4. Media `GET /o/**` is still public if the URL leaks. Required for in-feed video.
+4. Media `GET /o/**` is still public if the URL leaks. Required for in-feed video. **Not changing this.**
+5. TURN credentials worker is not in this repo. The app already sends an ID token; without the worker source we cannot prove the other side checks it.
 
 ---
 
@@ -62,24 +74,28 @@ Broadcast videos were not touched. Playback URLs (`/o/…`) stay as they are so 
 
 | Test | Result |
 |---|---|
-| `js/firestore-rules.test.cjs` (19c + 19d contracts) | Pass |
-| Economy worker 23 tests, including member 403 on admin routes and **custom-claim operator 200** on `/v1/admin/status` | 23/23 pass |
-| Call-site review: vault writes are own-uid only; public profile still has name/photo/publicKey/fcmToken; Broadcast upload URLs unchanged | Matches |
+| `js/firestore-rules.test.cjs` + Storage lock | Pass |
+| Economy worker tests (mail, admin 403, custom-claim operator) | Pass |
+| Call-notify: no token 401, cannot notify self, unknown type 400, stranger call 403, **server tokens win over a client-supplied token** | Pass |
 
-After you publish rules, as a member in the browser:
+After you publish rules, as a member:
 
 - `db.collection('users').limit(5).get()` → permission-denied
-- `db.collection('users').doc(knownUid).get()` → still works (name/photo)
-- `db.collection('sparks').get()` → permission-denied
-- `db.collection('sparks').doc(code).get()` → still works if you have the code
+- `db.collection('users').doc(knownUid).get()` → still works
 - Existing Broadcast videos play as before
+
+After you publish call-notify:
+
+- POST with someone else's `callId` → 403
+- POST with a random FCM token, when the vault has a real one → the random token is ignored
 
 ---
 
 ## What you need to do
 
-1. Upload the 19d GitHub files (see `UPLOAD-THESE.md`).
-2. **Publish `firestore.rules` to Firebase.**
-3. Publish economy worker **2.2.4-vault**.
-4. Open the desk once (Unlock). That stamps `operator: true` on the account. The uid check still works if the stamp fails.
-5. Sign in to the app once on your phone so your recovery email / Compass lock / E2E backup move into the vault.
+1. Upload the 19e GitHub files (see `UPLOAD-THESE.md`).
+2. **Publish `firestore.rules` and `storage.rules` to Firebase.**
+3. Publish economy worker **2.2.5-ratelimit**.
+4. Publish call-notify worker **1.0.0-secure** to the existing `naluno-call-notify` worker (copy the same service-account secret).
+5. Open the desk once so `operator: true` is stamped.
+6. Sign in to the app once so recovery / Compass / E2E move into the vault, and push tokens dual-write.
