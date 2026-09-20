@@ -20,7 +20,7 @@
  *      key rotation hiccuped.
  */
 
-export const VERSION = "2.2.4-vault";
+export const VERSION = "2.2.5-ratelimit";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -955,6 +955,30 @@ function mailRateLimited(ip) {
   return prune(ip, 60 * 60 * 1000, 8) || prune(ip + ":burst", 8000, 2);
 }
 
+async function mailRateLimitedDurable(env, saToken, ip) {
+  if (!saToken) return false;
+  try {
+    const hex = await sha256Hex("mail:" + String(ip || "unknown"));
+    const id = "m" + hex.slice(0, 20);
+    const got = await fsFetch(env, saToken, "GET", "/deskRate/" + encodeURIComponent(id));
+    const now = Date.now();
+    let hits = [];
+    if (got.ok && got.data) {
+      const d = fromFsDoc(got.data);
+      hits = Array.isArray(d.hits) ? d.hits.map(Number).filter((t) => now - t < 60 * 60 * 1000) : [];
+    }
+    if (hits.length >= 12) return true;
+    hits.push(now);
+    await fsFetch(env, saToken, "PATCH", "/deskRate/" + encodeURIComponent(id), toFsFields({
+      hits: hits.slice(-24),
+      updatedAt: now,
+    }));
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 async function deliverInboxEmail(env, row) {
   const to = mailInbox(env);
   if (!to || !looksLikeEmail(to)) return { emailed: false, via: "" };
@@ -1075,6 +1099,9 @@ async function persistMail(env, saToken, userToken, row) {
 async function handleMail(request, env, saToken) {
   const ip = clientIp(request);
   if (mailRateLimited(ip)) {
+    return json({ ok: false, error: "Please wait a moment and try again." }, 429);
+  }
+  if (await mailRateLimitedDurable(env, saToken, ip)) {
     return json({ ok: false, error: "Please wait a moment and try again." }, 429);
   }
   const body = await request.json().catch(() => ({}));
