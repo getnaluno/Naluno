@@ -324,11 +324,11 @@ function showInstallBanner(mode){
   const btn = $('installBannerBtn');
   const label = ban.querySelector('[data-install-label]') || ban.children[1];
   if(mode === 'ios'){
-    if(label) label.textContent = 'Add Naluno to your Home Screen — Share → Add to Home Screen';
+    if(label) label.textContent = 'Add Naluno to Home Screen — Share, then Add to Home Screen';
     if(btn){ btn.textContent = 'How'; btn.style.display = ''; }
     ban.dataset.mode = 'ios';
   } else {
-    if(label) label.textContent = 'Install Naluno for full-screen calls & faster open';
+    if(label) label.textContent = 'Add Naluno to Home Screen';
     if(btn){ btn.textContent = 'Install'; btn.style.display = ''; }
     ban.dataset.mode = 'android';
   }
@@ -583,7 +583,7 @@ function showInstallPromptSoon(){
     if(!ban) return;
     const label = ban.querySelector('[data-install-label]');
     if(isIosDevice()){
-      if(label) label.textContent = 'Add Naluno to your Home Screen — Share, then Add to Home Screen';
+      if(label) label.textContent = 'Add Naluno to Home Screen — Share, then Add to Home Screen';
       if($('installBannerBtn')) $('installBannerBtn').textContent = 'How';
       $('installBannerBtn').onclick = function(){
         toast('Tap Share, then Add to Home Screen');
