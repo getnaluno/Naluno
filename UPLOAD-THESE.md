@@ -1,31 +1,28 @@
-# GitHub — 2026.09.19e
+# GitHub — 2026.09.19f
 
-Leftover security that does **not** change Broadcast playback URLs or existing videos.
+Upload these together (Compass lock + Strand episode pictures).
 
-## Must publish (Firebase)
+## Compass lock
 
-1. **firestore.rules**
-2. **storage.rules** (Firebase Storage is unused; this locks it)
+1. js/vault.js
+2. js/auth.js
+3. js/compass.js
+4. js/beacon.js
 
-Until (1) is published, listing every member still works.
+## Strand episode pictures (E2–E5)
 
-## Must upload (GitHub)
+5. js/signal-core.js
+6. js/strand.js
+7. js/broadcast-core.js
+8. js/broadcast-space.js
 
-3. firestore.rules, storage.rules
-4. js/vault.js, js/auth.js, js/compass.js, js/crypto.js
-5. js/pwa.js, js/notifications.js
-6. js/admin-console.js, js/firestore-rules.test.cjs
-7. app/index.html, sw.js, admin/index.html
-8. SECURITY-REPORT.md, UPLOAD-THESE.md
+## Shell
 
-## Also publish (Cloudflare)
+9. app/index.html
+10. sw.js
 
-9. workers/economy/handler.mjs (2.2.5-ratelimit)
-10. **workers/call-notify/** (1.0.0-secure) → existing `naluno-call-notify` worker
+No Firestore rules in this pack. Broadcast video files themselves are unchanged.
 
-   Copy the same `GOOGLE_SERVICE_ACCOUNT` secret the economy worker already has.
+After upload: open For You. Episode tiles recapture a frame from the existing video and, if it is yours, save a real JPEG so they stay.
 
-## What this does not change
-
-- Broadcast / Signal media URLs (`/o/…`) stay public. Existing videos keep playing.
-- Call wake tokens stay on the public profile (and are now also in the vault) so a delay in publishing call-notify cannot silence phones.
+Set the Compass password once more if this session already lost it.
