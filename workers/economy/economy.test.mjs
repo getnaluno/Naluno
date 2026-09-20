@@ -534,3 +534,28 @@ test("a member token cannot call /v1/admin/user-action", async () => {
   assert.equal(res.status, 403);
   setFetchImpl(null);
 });
+
+test("an operator custom claim can call /v1/admin/status", async () => {
+  resetMemory();
+  setFetchImpl(async (url) => {
+    if (String(url).includes("accounts:lookup")) {
+      return new Response(JSON.stringify({
+        users: [{ localId: "claim_op", email: "desk@x.com", customAttributes: JSON.stringify({ operator: true }) }],
+      }), { status: 200 });
+    }
+    if (String(url).includes("oauth2.googleapis.com/token")) {
+      return new Response(JSON.stringify({ access_token: "sa", expires_in: 3600 }), { status: 200 });
+    }
+    return new Response("{}", { status: 200 });
+  });
+  const res = await handleRequest(
+    req("/v1/admin/status", { headers: { Authorization: "Bearer tok" } }),
+    ENV,
+  );
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.operator, true);
+  assert.equal(body.uid, "claim_op");
+  setFetchImpl(null);
+});

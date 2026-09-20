@@ -20,7 +20,7 @@
  *      key rotation hiccuped.
  */
 
-export const VERSION = "2.2.3-security";
+export const VERSION = "2.2.4-vault";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -378,6 +378,7 @@ async function verifyIdToken(env, idToken) {
     uid: u.localId,
     email: u.email || "",
     name: u.displayName || "",
+    customAttributes: u.customAttributes || "",
   };
 }
 
@@ -566,7 +567,62 @@ function isOperatorUser(env, user) {
   const extra = String(env.OPERATOR_UIDS || "");
   if (extra && extra.split(/[,\s]+/).indexOf(user.uid) >= 0) return true;
   if ((user.email || "").toLowerCase() === "magjoed@gmail.com") return true;
+  const raw = user.customAttributes || "";
+  if (raw) {
+    try {
+      const c = typeof raw === "string" ? JSON.parse(raw) : raw;
+      if (c && c.operator === true) return true;
+    } catch {
+      /* ignore */
+    }
+  }
   return false;
+}
+
+async function saAccessTokenScoped(env, scope) {
+  const sa = parseServiceAccount(
+    env.GOOGLE_SERVICE_ACCOUNT ||
+      env.FIREBASE_SERVICE_ACCOUNT ||
+      env.SERVICE_ACCOUNT_JSON ||
+      env.GOOGLE_SA_JSON ||
+      "",
+  );
+  if (!sa) return "";
+  try {
+    const jwt = await signRs256Jwt(sa, { now: Math.floor(Date.now() / 1000), scope });
+    const res = await _fetch(sa.token_uri || "https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "grant_type=" + encodeURIComponent("urn:ietf:params:oauth:grant-type:jwt-bearer") + "&assertion=" + encodeURIComponent(jwt),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || !body.access_token) return "";
+    return body.access_token;
+  } catch {
+    return "";
+  }
+}
+
+async function stampOperatorClaim(env, uid) {
+  if (!uid) return false;
+  const token = await saAccessTokenScoped(
+    env,
+    "https://www.googleapis.com/auth/identitytoolkit",
+  );
+  if (!token) return false;
+  try {
+    const res = await _fetch(
+      "https://identitytoolkit.googleapis.com/v1/projects/" + projectId(env) + "/accounts:update",
+      {
+        method: "POST",
+        headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+        body: JSON.stringify({ localId: uid, customAttributes: JSON.stringify({ operator: true }) }),
+      },
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 async function sha256Hex(s) {
@@ -599,6 +655,7 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
   };
 
   if (path === "/v1/admin/status" && request.method === "GET") {
+    const stamped = await stampOperatorClaim(env, user.uid);
     return json({
       ok: true,
       operator: true,
@@ -606,6 +663,7 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
       hasPassword: memory.passwords.has(user.uid),
       persist: saToken ? "firestore-sa" : "user-token",
       version: VERSION,
+      claim: stamped ? "operator" : "",
     });
   }
 
