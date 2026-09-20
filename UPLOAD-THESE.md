@@ -1,27 +1,27 @@
-# GitHub — 2026.09.21c
+# GitHub — 2026.09.21d
 
-Reserved Handle / Protected Identity. Lives in Firestore + the economy worker, not only in the app.
+Reserved handles. Identity bind. Economy worker 2.4.0-handles.
 
 ## Upload to GitHub
 
-1. js/handle-guard.js
-2. js/handle-guard.test.cjs
-3. js/auth.js
-4. js/admin-data.js
-5. js/admin-console.js
-6. js/admin-data.test.cjs
-7. js/firestore-rules.test.cjs
-8. firestore.rules
-9. admin/index.html
-10. app/index.html
-11. sw.js
-12. workers/economy/handler.mjs
-13. workers/economy/economy.test.mjs
+1. firestore.rules
+2. workers/economy/handler.mjs
+3. js/handle-guard.js
+4. js/auth.js
+5. js/admin-data.js
+6. js/admin-console.js
+7. admin/index.html
+8. app/index.html
+9. sw.js
+
+Tests can go up too. They are not required for the live product.
 
 ## Then
 
-1. Publish firestore.rules in Firebase. Until that is live, a reserved name can still be written if someone bypasses the worker.
-2. Deploy the economy worker (`2.4.0-handles`). Sign-up talks to `/v1/handle/check` and `/v1/handle/claim`.
-3. Open Admin → Identity once. It seeds the reserved list and binds the existing @naluno account as the official holder.
+1. Publish firestore.rules in Firebase.
+2. Deploy the economy worker 2.4.0-handles.
+3. Open Admin → Identity once. That seeds the list and binds the existing @naluno account.
 
-The Identity desk is the live list. Adding a name there is enough — you do not need another code change.
+If 21c is already live (rules published, worker 2.4.0-handles deployed):
+only replace js/admin-console.js and admin/index.html.
+Do not remove reserved names to use them. Bind an account on Identity instead.
