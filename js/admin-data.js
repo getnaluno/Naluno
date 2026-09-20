@@ -876,6 +876,48 @@
       return new Date(ts).getHours();
     }
   }
+  function pageLabel(p) {
+    p = String(p || '/');
+    if (p === '/' || p === '' || p === '/index.html' || p === '/website.html') return 'Home';
+    if (p.indexOf('/invest') === 0 || p.indexOf('/investment') === 0) return 'Invest';
+    if (p.indexOf('/app') === 0) return 'App';
+    if (p.indexOf('/privacy') === 0) return 'Privacy';
+    if (p.indexOf('/terms') === 0) return 'Terms';
+    if (p.indexOf('/admin') === 0) return 'Console';
+    return p;
+  }
+  function prettyTrail(trail) {
+    const raw = String(trail || '').trim();
+    if (!raw) return '';
+    return raw.split(/\s*→\s*/).map(function (p) { return pageLabel(p); }).join(' → ');
+  }
+  function classifySiteSource(ref, utm, ua) {
+    const u = String(utm || '').toLowerCase();
+    const r = String(ref || '').toLowerCase();
+    const a = String(ua || '').toLowerCase();
+    const blob = u + ' ' + r;
+    if (/gclid|gbraid|wbraid|utm_source=google|\bgoogle|bing|yahoo|duckduckgo|baidu|yandex/.test(blob)) return 'Google';
+    if (/msclkid/.test(blob)) return 'Bing';
+    if (/fbclid|facebook|fb\.me|fban|fbav|fb_iab/.test(blob) || /fban|fbav|fb_iab|facebook/.test(a)) return 'Facebook';
+    if (/instagram|ig\.me/.test(blob) || /instagram/.test(a)) return 'Instagram';
+    if (/whatsapp|wa\.me|android-app:\/\/com\.whatsapp/.test(blob) || /whatsapp/.test(a)) return 'WhatsApp';
+    if (/(^|\s)x\.com|twitter|t\.co/.test(blob) || /twitter/.test(a)) return 'X';
+    if (/linkedin/.test(blob)) return 'LinkedIn';
+    if (/telegram|t\.me/.test(blob) || /telegram/.test(a)) return 'Telegram';
+    if (/youtube|youtu\.be/.test(blob)) return 'YouTube';
+    if (/tiktok/.test(blob) || /tiktok/.test(a)) return 'TikTok';
+    if (r === 'internal' || r === 'inside') return 'Inside';
+    if (!r || r === 'direct') return 'Direct';
+    return String(ref);
+  }
+  function sessionLooksBot(s) {
+    if (!s) return false;
+    if (s.bot === true) return true;
+    if (s.bot === false) return false;
+    const ua = String(s.ua || '');
+    return /bot|crawl|spider|slurp|bingpreview|facebookexternalhit|headless|lighthouse|gtmetrix|pingdom|bytespider|semrush|ahrefs/i.test(ua)
+      || (/whatsapp/i.test(ua) && !/mozilla/i.test(ua));
+  }
   function deriveSitePulse(sessions, days, now, zone) {
     sessions = sessions || [];
     days = days || [];
@@ -885,12 +927,15 @@
     const ymd30 = localYmd(day30, zone);
     const liveCut = now - 2 * 60 * 1000;
     function tsOf(s) { return num(s.startedAt || s.createdAt || s.lastAt); }
-    const web = sessions.filter(function (s) { return String(s.kind || 'web') !== 'app'; });
-    const appOnly = sessions.filter(function (s) { return String(s.kind || '') === 'app'; });
+    const webAll = sessions.filter(function (s) { return String(s.kind || 'web') !== 'app'; });
+    const bots = webAll.filter(function (s) { return sessionLooksBot(s); });
+    const selfs = webAll.filter(function (s) { return !!s.self && !sessionLooksBot(s); });
+    const web = webAll.filter(function (s) { return !sessionLooksBot(s) && !s.self; });
+    const appOnly = sessions.filter(function (s) { return String(s.kind || '') === 'app' && !sessionLooksBot(s) && !s.self; });
     const today = web.filter(function (s) { return tsOf(s) >= day0; });
     const week = web.filter(function (s) { return tsOf(s) >= day7; });
     const month = web.filter(function (s) { return tsOf(s) >= day30; });
-    const live = sessions.filter(function (s) { return num(s.lastAt) >= liveCut && String(s.kind || 'web') !== 'app'; });
+    const live = web.filter(function (s) { return num(s.lastAt) >= liveCut; });
     const vids = {};
     const vidsToday = {};
     const vids30 = {};
@@ -908,8 +953,12 @@
     const new30 = month.filter(function (s) { return s.fresh === true; }).length;
     const durations = today.map(function (s) { return num(s.ms); }).filter(function (n) { return n >= 0; });
     const avgMs = durations.length ? Math.round(durations.reduce(function (a, b) { return a + b; }, 0) / durations.length) : 0;
-    const bounced = today.filter(function (s) { return num(s.ms) < 8000 && !num(s.openApp) && num(s.scroll) < 25; }).length;
+    const bounced = today.filter(function (s) { return num(s.ms) < 5000 && !s.engaged && !num(s.openApp) && !num(s.invest) && !num(s.contact); }).length;
+    const engagedN = today.filter(function (s) { return !!s.engaged || !!s.five || num(s.ms) >= 5000; }).length;
+    const fiveMarked = today.filter(function (s) { return s.engaged === true || s.five === true; }).length;
     const opened = today.filter(function (s) { return num(s.openApp) > 0; }).length;
+    const investReach = today.filter(function (s) { return num(s.invest) > 0 || s.path === '/invest' || s.land === '/invest' || String(s.trail || '').indexOf('/invest') >= 0; }).length;
+    const contactN = today.reduce(function (a, s) { return a + num(s.contact); }, 0);
     const appToday = appOnly.filter(function (s) { return tsOf(s) >= day0; });
     const hours = [];
     for (let h = 0; h < 24; h++) hours.push({ label: (h < 10 ? '0' : '') + h + ':00', n: 0 });
@@ -950,13 +999,22 @@
       total_ms_today: durations.reduce(function (a, b) { return a + b; }, 0),
       bounce: today.length ? Math.round(100 * bounced / today.length) : 0,
       bounce_n: bounced,
+      engaged_today: engagedN,
+      five_marked: fiveMarked,
+      five_working: today.length ? (fiveMarked > 0 || engagedN > 0) : false,
       open_clicks_today: today.reduce(function (a, s) { return a + num(s.openApp); }, 0),
       open_sessions_today: opened,
       convert_pct: today.length ? Math.round(100 * opened / today.length) : 0,
       app_opens_today: appToday.length,
       app_opens: appOnly.length,
-      contact_today: today.reduce(function (a, s) { return a + num(s.contact); }, 0),
+      contact_today: contactN,
+      invest_today: investReach,
+      invest_clicks_today: today.reduce(function (a, s) { return a + num(s.invest); }, 0),
       tune_today: today.reduce(function (a, s) { return a + num(s.tune); }, 0),
+      bots_today: bots.filter(function (s) { return tsOf(s) >= day0; }).length,
+      bots: bots.length,
+      self_today: selfs.filter(function (s) { return tsOf(s) >= day0; }).length,
+      self: selfs.length,
       countries: countriesLive,
       countries_all: countriesAll,
       cities: tallyMap(today.filter(function (s) { return s.city; }), function (s) { return (s.city || '') + (s.country ? ', ' + s.country : ''); }),
@@ -965,8 +1023,12 @@
       browsers: tallyMap(today, function (s) { return s.browser || 'unknown'; }),
       langs: tallyMap(today, function (s) { return s.lang || 'unknown'; }),
       refs: tallyMap(today, function (s) { return s.ref || 'direct'; }),
+      sources: tallyMap(today, function (s) { return s.source || classifySiteSource(s.ref, s.utm, s.ua); }),
       utm: tallyMap(today.filter(function (s) { return s.utm; }), function (s) { return s.utm; }),
-      paths: tallyMap(today, function (s) { return s.path || '/'; }),
+      paths: tallyMap(today, function (s) { return pageLabel(s.path || '/'); }),
+      land: tallyMap(today, function (s) { return pageLabel(s.land || s.path || '/'); }),
+      exit: tallyMap(today, function (s) { return pageLabel(s.exit || s.path || '/'); }),
+      journeys: tallyMap(today, function (s) { return prettyTrail(s.trail) || pageLabel(s.path || '/'); }),
       hours: hours,
       screens: tallyMap(today, function (s) { return s.screen || 'unknown'; }),
       conn: tallyMap(today.filter(function (s) { return s.conn; }), function (s) { return s.conn; }),
@@ -1401,6 +1463,8 @@
     DEFAULT_FLAGS: DEFAULT_FLAGS,
     FLAG_META: FLAG_META,
     TERMS: TERMS,
+    classifySiteSource: classifySiteSource,
+    pageLabel: pageLabel,
     localZone: localZone,
     adminZone: adminZone,
     setAdminZone: setAdminZone,

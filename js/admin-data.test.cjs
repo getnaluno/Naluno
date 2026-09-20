@@ -117,10 +117,13 @@ const sitePulse = D.deriveSnapshot({
   now: Date.parse('2026-09-10T08:30:00Z'),
   zone: 'Asia/Dubai',
   siteSessions: [
-    { id: 'w1', kind: 'web', vid: 'v1', fresh: true, startedAt: Date.parse('2026-09-10T07:00:00Z'), lastAt: Date.parse('2026-09-10T08:20:00Z'), ms: 40000 },
+    { id: 'w1', kind: 'web', vid: 'v1', fresh: true, startedAt: Date.parse('2026-09-10T07:00:00Z'), lastAt: Date.parse('2026-09-10T08:20:00Z'), ms: 40000, path: '/', land: '/', source: 'Google', device: 'phone', os: 'Android', engaged: true, five: true, trail: '/ → /invest' },
     { id: 'w2', kind: 'web', vid: 'v2', fresh: false, startedAt: Date.parse('2026-09-05T07:00:00Z'), lastAt: Date.parse('2026-09-05T07:10:00Z'), ms: 10000 },
     { id: 'w3', kind: 'web', vid: 'v3', fresh: false, startedAt: Date.parse('2026-08-20T07:00:00Z'), lastAt: Date.parse('2026-08-20T07:10:00Z'), ms: 9000 },
     { id: 'w4', kind: 'web', vid: 'v4', fresh: false, startedAt: Date.parse('2026-07-01T07:00:00Z'), lastAt: Date.parse('2026-07-01T07:10:00Z'), ms: 8000 },
+    { id: 'bot1', kind: 'web', vid: 'vb', bot: true, startedAt: Date.parse('2026-09-10T07:30:00Z'), lastAt: Date.parse('2026-09-10T07:31:00Z'), ms: 800, ua: 'Googlebot' },
+    { id: 'self1', kind: 'web', vid: 'vs', self: true, startedAt: Date.parse('2026-09-10T07:40:00Z'), lastAt: Date.parse('2026-09-10T07:41:00Z'), ms: 12000, path: '/' },
+    { id: 'wa1', kind: 'web', vid: 'vw', fresh: true, startedAt: Date.parse('2026-09-10T07:50:00Z'), lastAt: Date.parse('2026-09-10T07:55:00Z'), ms: 8000, path: '/invest', ref: 'direct', ua: 'Mozilla/5.0 WhatsApp/2.24' },
   ],
   siteDays: [
     { id: '2026-09-10', visits: 5, appOpens: 1, ms: 1000 },
@@ -128,21 +131,29 @@ const sitePulse = D.deriveSnapshot({
     { id: '2026-07-01', visits: 99, appOpens: 9, ms: 9000 },
   ],
 });
-assert.strictEqual(sitePulse.site.today, 1, 'visits today');
-assert.strictEqual(sitePulse.site.week, 2, 'visits in rolling 7d');
-assert.strictEqual(sitePulse.site.month, 3, 'visits in rolling 30d — July session is out');
-assert.strictEqual(sitePulse.site.uniques_today, 1);
-assert.strictEqual(sitePulse.site.uniques_30d, 3);
-assert.strictEqual(sitePulse.site.new_today, 1);
+assert.strictEqual(sitePulse.site.today, 2, 'visits today exclude bot and self');
+assert.strictEqual(sitePulse.site.week, 3, 'visits in rolling 7d');
+assert.strictEqual(sitePulse.site.month, 4, 'visits in rolling 30d — July session is out');
+assert.strictEqual(sitePulse.site.uniques_today, 2);
+assert.strictEqual(sitePulse.site.uniques_30d, 4);
+assert.strictEqual(sitePulse.site.new_today, 2);
 assert.strictEqual(sitePulse.site.returning_30d, 2);
 assert.strictEqual(sitePulse.site.day_visits, 8, '30d rollup excludes July');
 assert.strictEqual(sitePulse.site.day_app, 1);
 assert.ok(sitePulse.site.days.every(function (d) { return d.id >= '2026-08-11'; }), 'day files are the last 30 days');
 assert.strictEqual(sitePulse.site.days.length, 2);
+assert.strictEqual(sitePulse.site.bots_today, 1);
+assert.strictEqual(sitePulse.site.self_today, 1);
+assert.ok(sitePulse.site.sources.some(function (x) { return x.label === 'Google'; }), 'Google source');
+assert.ok(sitePulse.site.sources.some(function (x) { return x.label === 'WhatsApp'; }), 'WhatsApp from UA');
+assert.ok(sitePulse.site.land.some(function (x) { return x.label === 'Home'; }), 'landing pretty-label');
+assert.ok(sitePulse.site.five_working === true, '5s measurement seen');
+assert.strictEqual(D.classifySiteSource('direct', '', 'Mozilla/5.0 WhatsApp/2'), 'WhatsApp');
+assert.strictEqual(D.classifySiteSource('l.facebook.com', '', ''), 'Facebook');
+assert.strictEqual(D.pageLabel('/invest'), 'Invest');
 
 assert.ok(D.DEFAULT_FLAGS.creator_support_enabled === false, 'Creator Support defaults off');
 assert.ok(D.FLAG_META.creator_support_enabled, 'Creator Support flag meta');
-assert.ok(/tab is always in the app/i.test(D.FLAG_META.creator_support_enabled.note), 'flag note says the app tab stays');
 const snapSupport = D.deriveSnapshot({
   now: Date.parse('2026-09-10T08:30:00Z'),
   zone: 'Asia/Dubai',

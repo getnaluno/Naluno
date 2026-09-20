@@ -25,7 +25,7 @@ must(/allow get: if isSignedIn\(\);\s*allow list: if isOperator\(\);/, 'members 
 must(/match \/vault\/\{id\}/, 'private vault exists under the user');
 must(/allow get: if true; \/\/ handle lookup/, 'handle lookup stays public get, not list');
 must(/match \/sparks\/\{code\}[\s\S]*allow get: if isSignedIn\(\);\s*allow list: if isOperator\(\);/, 'Spark codes are not listable to members');
-must(/hasOnly\(\['vid', 'kind', 'path'/, 'siteSessions only accept the pulse shape');
+must(/hasOnly\(\['vid', 'kind', 'path', 'land'/, 'siteSessions accept landing, trail and source fields');
 must(/bumpedAtMost\('visits', 1\)/, 'siteDays visit counters cannot jump');
 must(/match \/adminConsole\/\{uid\} \{\s*allow read, write: if false;/, 'adminConsole hashes are not client-writable');
 must(/match \/adminCredentials\/\{uid\} \{\s*allow read, write: if false;/, 'adminCredentials hashes are not client-writable');

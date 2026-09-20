@@ -403,7 +403,7 @@ async function sparkLgTeach(src, dst){
         gate: SPARK_LG_GATE,
       });
     }catch(e){
-      toast('Saved on this phone. Cloud book needs rules published.');
+      toast('Saved on this phone.');
     }
   }
   toast('Added to the Luganda book');

@@ -101,8 +101,51 @@
       if (IS_APP) return '/app';
       if (PATH === '/privacy' || PATH.indexOf('/privacy') === 0) return '/privacy';
       if (PATH === '/terms' || PATH.indexOf('/terms') === 0) return '/terms';
+      if (PATH === '/invest' || PATH.indexOf('/invest') === 0) return '/invest';
       if (PATH === '' || PATH === '/') return '/';
       return clip(PATH, 40);
+    }
+    function clickSource() {
+      try {
+        var q = new URLSearchParams(location.search || '');
+        if (q.get('gclid') || q.get('gbraid') || q.get('wbraid')) return 'Google';
+        if (q.get('msclkid')) return 'Bing';
+        if (q.get('fbclid')) return 'Facebook';
+        if (q.get('ttclid')) return 'TikTok';
+        if (q.get('li_fat_id')) return 'LinkedIn';
+      } catch (_) {}
+      return '';
+    }
+    function classifySource(ref, utm) {
+      var click = clickSource();
+      if (click) return click;
+      var blob = String(utm || '').toLowerCase() + ' ' + String(ref || '').toLowerCase();
+      var ua = '';
+      try { ua = String(navigator.userAgent || '').toLowerCase(); } catch (_) {}
+      if (/google|bing|yahoo|duckduckgo|baidu|yandex/.test(blob)) return 'Google';
+      if (/facebook|fb\.me|fbclid|fban|fbav/.test(blob) || /fban|fbav|fb_iab/.test(ua)) return 'Facebook';
+      if (/instagram|ig\.me/.test(blob) || /instagram/.test(ua)) return 'Instagram';
+      if (/whatsapp|wa\.me|android-app:\/\/com\.whatsapp/.test(blob) || /whatsapp/.test(ua)) return 'WhatsApp';
+      if (/(^|\s)x\.com|twitter|t\.co/.test(blob) || /twitter/i.test(ua)) return 'X';
+      if (/linkedin/.test(blob)) return 'LinkedIn';
+      if (/telegram|t\.me/.test(blob) || /telegram/.test(ua)) return 'Telegram';
+      if (/youtube|youtu\.be/.test(blob)) return 'YouTube';
+      if (/tiktok/.test(blob) || /tiktok/.test(ua)) return 'TikTok';
+      if (ref === 'internal') return 'Inside';
+      if (!ref || ref === 'direct') return 'Direct';
+      return clip(ref, 40);
+    }
+    function looksBot() {
+      try {
+        if (navigator.webdriver) return true;
+      } catch (_) {}
+      var ua = String(navigator.userAgent || '');
+      if (/bot|crawl|spider|slurp|bingpreview|facebookexternalhit|headless|lighthouse|gtmetrix|pingdom|bytespider|semrush|ahrefs/i.test(ua)) return true;
+      if (/whatsapp/i.test(ua) && !/mozilla/i.test(ua)) return true;
+      try {
+        if (!window.screen || window.screen.width < 2) return true;
+      } catch (_) {}
+      return false;
     }
     function connType() {
       try {
@@ -133,10 +176,30 @@
     var openApp = 0;
     var contact = 0;
     var tune = 0;
+    var invest = 0;
     var lastFlushMs = 0;
     var dayIncd = false;
+    var engaged = false;
     var db = null;
     var wrote = false;
+    var bot = looksBot();
+    var self = false;
+    try {
+      var qStaff = new URLSearchParams(location.search || '');
+      if (qStaff.get('naluno_staff') === '1') storeSet(localStorage, 'naluno:pulse:staff', '1');
+      if (qStaff.get('naluno_staff') === '0') { try { localStorage.removeItem('naluno:pulse:staff'); } catch (_) {} }
+    } catch (_) {}
+    self = storeGet(localStorage, 'naluno:pulse:staff') === '1';
+    var land = storeGet(sessionStorage, 'naluno:pulse:land') || pathKey();
+    storeSet(sessionStorage, 'naluno:pulse:land', land);
+    var trailList = [];
+    try { trailList = JSON.parse(storeGet(sessionStorage, 'naluno:pulse:trail') || '[]') || []; } catch (_) { trailList = []; }
+    if (!Array.isArray(trailList)) trailList = [];
+    if (trailList[trailList.length - 1] !== pathKey()) trailList.push(pathKey());
+    if (trailList.length > 8) trailList = trailList.slice(-8);
+    try { storeSet(sessionStorage, 'naluno:pulse:trail', JSON.stringify(trailList)); } catch (_) {}
+    var trail = clip(trailList.join(' → '), 160);
+    var source = classifySource(refHost(), utmBlob());
 
     function visibleMs() {
       var extra = document.hidden ? 0 : Math.max(0, Date.now() - visAt);
@@ -189,6 +252,10 @@
         vid: clip(vid, 80),
         kind: IS_APP ? 'app' : 'web',
         path: pathKey(),
+        land: clip(land, 40),
+        trail: trail,
+        exit: pathKey(),
+        source: clip(source, 40),
         hash: clip((location.hash || '').replace(/^#/, ''), 24),
         ref: refHost(),
         utm: utmBlob(),
@@ -207,11 +274,16 @@
         openApp: openApp,
         contact: contact,
         tune: tune,
+        invest: invest,
         scroll: scrollPct,
         ua: clip(navigator.userAgent || '', 160),
         standalone: !!standalone,
         conn: connType(),
-        fresh: !!fresh
+        fresh: !!fresh,
+        engaged: !!engaged,
+        five: !!engaged,
+        bot: !!bot,
+        self: !!self
       };
       if (extra) Object.keys(extra).forEach(function (k) { row[k] = extra[k]; });
       return row;
@@ -236,9 +308,10 @@
         }
         if (uaInfo.form && fields.visits) patch['devices.' + uaInfo.form] = inc(1);
         if (fields.visits) {
-          var host = refHost().replace(/[./]/g, '_');
+          var host = (source || refHost()).replace(/[./]/g, '_');
           if (host) patch['refs.' + clip(host, 40)] = inc(1);
-          patch['paths.' + pathKey().replace(/[./]/g, '_') ] = inc(1);
+          patch['sources.' + clip((source || 'Direct').replace(/[./\s]/g, '_'), 40)] = inc(1);
+          patch['paths.' + land.replace(/[./]/g, '_') ] = inc(1);
         }
         return firestore.collection('siteDays').doc(ymd(new Date())).set(patch, { merge: true });
       }).catch(function () {});
@@ -249,22 +322,31 @@
       var delta = Math.max(0, ms - lastFlushMs);
       lastFlushMs = ms;
       var p = writeSession();
-      if (forceDay && !dayIncd && !IS_APP) {
+      if (forceDay && !dayIncd && !IS_APP && engaged && !bot && !self) {
         dayIncd = true;
         p = p.then(function () {
-          return incDay({ visits: 1, uniques: fresh ? 1 : 0, ms: delta || 1 });
+          return incDay({ visits: 1, uniques: fresh ? 1 : 0, engaged: 1, ms: delta || 1 });
         });
-      } else if (delta > 4000) {
+      } else if (delta > 4000 && !bot && !self) {
         p = p.then(function () { return incDay({ ms: delta }); });
       }
       return p;
+    }
+
+    function markEngaged() {
+      if (engaged || IS_APP || bot || self) return;
+      engaged = true;
+      flush(true);
     }
 
     function bump(field) {
       if (field === 'openApp') openApp += 1;
       if (field === 'contact') contact += 1;
       if (field === 'tune') tune += 1;
+      if (field === 'invest') invest += 1;
+      markEngaged();
       writeSession();
+      if (bot || self) return;
       var o = {}; o[field] = 1;
       incDay(o);
     }
@@ -291,6 +373,9 @@
         if (href === '/app' || href === '/app/' || href.indexOf('/app/') === 0 || href.indexOf('/app?') === 0) {
           bump('openApp');
         }
+        if (href.indexOf('/invest') === 0 || href.indexOf('/#next') >= 0) {
+          bump('invest');
+        }
       }
       var st = t.closest && t.closest('#stations button');
       if (st) bump('tune');
@@ -309,15 +394,30 @@
 
     function startWeb() {
       geoThen().then(function () {
-        return flush(true);
+        return writeSession();
       });
+      setTimeout(markEngaged, 5000);
+      if (pathKey() === '/invest') bump('invest');
+      try {
+        var next = document.getElementById('next');
+        if (next && typeof IntersectionObserver === 'function') {
+          var io = new IntersectionObserver(function (entries) {
+            for (var i = 0; i < entries.length; i++) {
+              if (entries[i].isIntersecting) { bump('invest'); io.disconnect(); break; }
+            }
+          }, { threshold: 0.35 });
+          io.observe(next);
+        }
+      } catch (_) {}
       setInterval(function () {
         if (document.hidden) return;
+        if (visibleMs() >= 5000) markEngaged();
         flush(false);
       }, 45000);
     }
 
     function startApp() {
+      if (bot || self) return;
       if (storeGet(localStorage, DAY_KEY)) return;
       storeSet(localStorage, DAY_KEY, '1');
       geoThen().then(function () {

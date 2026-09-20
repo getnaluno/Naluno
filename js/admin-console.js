@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260919f';
+  const BUILD = '20260921a';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -967,8 +967,7 @@
     const C = Ccy();
     if (!C) return '';
     return card('Operating currency',
-      '<p class="sub">Every amount on Naluno follows this currency. Pick any, including UGX. Amounts convert live.</p>'
-      + '<label for="opCurrency">Currency</label>'
+      '<label for="opCurrency">Currency</label>'
       + C.selectHtml('opCurrency', opCode())
       + '<p class="gap-note" style="margin-top:8px;" id="opFxLine">' + escapeHtml(C.quoteLine()) + '</p>');
   }
@@ -976,14 +975,7 @@
     return Data && Data.formatBytes ? Data.formatBytes(n) : String(n || 0);
   }
   function termsBlock() {
-    const terms = (Data && Data.TERMS) || [];
-    if (!terms.length) return '';
-    return card('Terms',
-      '<p class="sub" style="margin-bottom:8px;">Short names used here, in ordinary words.</p>'
-      + '<dl class="terms">' + terms.map(function (t) {
-        return '<div class="term-row"><dt>' + escapeHtml(t.abbr) + '</dt><dd><strong>'
-          + escapeHtml(t.name) + '</strong> — ' + escapeHtml(t.note) + '</dd></div>';
-      }).join('') + '</dl>');
+    return '';
   }
   function personCost(d, uid) {
     const list = (d && d.costs && d.costs.people) || [];
@@ -1003,7 +995,7 @@
   }
   function bars(items, limit) {
     items = (items || []).slice(0, limit || 12);
-    if (!items.length) return '<p class="sub">Nothing recorded yet.</p>';
+    if (!items.length) return '<p class="sub">—</p>';
     const max = Math.max.apply(null, items.map(function (i) { return Number(i.n) || 0; })) || 1;
     return items.map(function (i) {
       const n = Number(i.n) || 0;
@@ -1024,7 +1016,7 @@
     return '<div class="card"><div class="who">' + escapeHtml(title) + '</div>' + inner + '</div>';
   }
   function table(headers, rows) {
-    if (!rows.length) return '<p class="sub">Nothing recorded yet.</p>';
+    if (!rows.length) return '<p class="sub">—</p>';
     return '<table class="tbl"><thead><tr>'
       + headers.map(function (h) { return '<th>' + escapeHtml(h) + '</th>'; }).join('')
       + '</tr></thead><tbody>'
@@ -1039,10 +1031,10 @@
     }));
   }
   function inactiveNote(text) {
-    return '<div class="inactive-note">' + escapeHtml(text) + '</div>';
+    return '';
   }
   function gap(text) {
-    return '<p class="gap-note">' + escapeHtml(text) + '</p>';
+    return '';
   }
   function userName(u) {
     return u.name || u.handle || u.email || String(u.id || u.uid || '').slice(0, 10);
@@ -1214,7 +1206,7 @@
             ['Opened Naluno today', (d.site && d.site.app_opens_today) || 0],
             ['Avg time today', dur((d.site && d.site.avg_ms) || 0)],
             ['Countries today', ((d.site && d.site.countries) || []).length]])
-          + '<div class="row"><button type="button" class="ghost ccGo" data-go="analytics">Open Analytics</button></div>')
+          + '<div class="row"><button type="button" class="ghost ccGo" data-go="visitors">Open Visitors</button></div>')
         + card('What are people making?',
           kpis([['Broadcasts', c.broadcasts_total || 0], ['Live now', c.broadcasts_live || 0],
             ['Today', c.broadcasts_today || 0], ['Creators', cr.total || 0]])
@@ -1234,15 +1226,15 @@
 
     if (tab === 'health') {
       const services = [
-        ['Sign-in', true, 'How people create a Callsign and come back.'],
-        ['Database', !!adminDb(), 'The live records this console is reading now.'],
-        ['Broadcast', !!d.flags.broadcast_enabled, 'Long video rooms.'],
-        ['Signals', d.flags.signals_enabled !== false, 'Short clips that fade.'],
-        ['Notifications', true, 'A ping on the phone. We cannot yet see if each one arrived.'],
-        ['Payments', !!d.flags.real_payouts_enabled, 'Off until a payments company is connected.'],
-        ['Background jobs', !!w.ok, w.degraded ? 'Up, but Google rejected its work account.' : (w.ok ? (w.ms + ' ms · ' + (w.version || '') + (w.persist ? ' · ' + w.persist : '')) : (w.error || 'down'))],
-        ['Offline helper', !!__swInfo.connected, __swInfo.connected ? (__swInfo.cache || __swInfo.version) : 'Not connected on this session.'],
-        ['Content Hub', !!d.flags.content_hub_enabled, g.content_hub],
+        ['Sign-in', true],
+        ['Database', !!adminDb()],
+        ['Broadcast', !!d.flags.broadcast_enabled],
+        ['Signals', d.flags.signals_enabled !== false],
+        ['Notifications', true],
+        ['Payments', !!d.flags.real_payouts_enabled],
+        ['Background jobs', !!w.ok],
+        ['Offline helper', !!__swInfo.connected],
+        ['Content Hub', !!d.flags.content_hub_enabled],
       ];
       el.innerHTML =
         card('Is Naluno working?',
@@ -1252,13 +1244,8 @@
         + card('Live status', services.map(function (row) {
           const on = row[1];
           return '<div class="flag-row"><span style="flex:1;">' + escapeHtml(row[0]) + '</span>'
-            + '<span style="color:' + (on ? 'var(--mint)' : 'var(--ink-dim)') + ';">' + (on ? 'ON' : 'OFF') + '</span></div>'
-            + '<p class="gap-note" style="margin:0 0 8px;">' + escapeHtml(row[2] || '') + '</p>';
+            + '<span style="color:' + (on ? 'var(--mint)' : 'var(--ink-dim)') + ';">' + (on ? 'ON' : 'OFF') + '</span></div>';
         }).join(''))
-        + card('What is not measured',
-          '<ul class="gap-note"><li>' + escapeHtml(g.cpu_memory || '') + '</li>'
-          + '<li>' + escapeHtml(g.notifications || '') + '</li>'
-          + '<li>' + escapeHtml(g.search || '') + '</li></ul>')
         + card('Sampled client metrics',
           plainRows(['Name', 'When', 'User'],
             ((d.metrics && d.metrics.list) || []).slice(0, 20).map(function (m) {
@@ -1408,12 +1395,10 @@
         + kpis([['View rate', pct1(viewRate)], ['Per thousand views', aedUsd(rev.rpmAed || 0)],
           ['Per person active today', aedUsd(rev.arpdauAed || 0)], ['Per registered account', aedUsd(rev.arpuAed || 0)]])
         + card('Booked ad revenue',
-          '<p class="gap-note">Booked (used) is rate-card maths × observed events. Prepaid is what you type — the money the advertiser paid. Left is prepaid minus used. Cash has not moved until they pay. There is no outside auction.</p>'
-          + kpis([['Per thousand views (check)', aedUsd(rev.cpmAed || 0)],
+          kpis([['Per thousand views (check)', aedUsd(rev.cpmAed || 0)],
             ['Per tap (check)', aedUsd(rev.cpcAed || 0)],
             ['Per completed watch (check)', aedUsd(rev.cpvAed || 0)],
-            ['Booked (chosen models)', aedUsd(rev.bookedAed || 0)]])
-          + '<p class="gap-note">Each ad books one model — per thousand views, per tap, or per completed watch. The other two lines are checks, not extra cash. When left hits zero the ad pauses itself and leaves the app until more prepaid is typed.</p>')
+            ['Booked (chosen models)', aedUsd(rev.bookedAed || 0)]]))
         + card('Rate card',
           '<label for="adRateEcpm">Per thousand views — ' + escapeHtml(opCode()) + ' per 1,000 views</label>'
           + '<input id="adRateEcpm" inputmode="decimal" value="' + escapeHtml(String(rates.ecpmAed != null ? (Ccy() && Ccy().convert ? Ccy().convert(rates.ecpmAed, 'AED', opCode()) : rates.ecpmAed) : 0)) + '" />'
@@ -1423,15 +1408,11 @@
           + '<input id="adRateCpv" inputmode="decimal" value="' + escapeHtml(String(rates.cpvAed != null ? (Ccy() && Ccy().convert ? Ccy().convert(rates.cpvAed, 'AED', opCode()) : rates.cpvAed) : 0)) + '" />'
           + '<label for="adRateViewSec">Completed watch after (seconds of the ad playing)</label>'
           + '<input id="adRateViewSec" type="number" min="1" max="60" value="' + escapeHtml(String(rates.viewCompleteSec != null ? rates.viewCompleteSec : 15)) + '" />'
-          + '<div class="row"><button type="button" class="primary" id="adSaveRates">Save rate card</button></div>'
-          + '<p class="gap-note" style="margin-top:8px;">The math runs at ' + escapeHtml(aed(0)) + ' until rates are typed. Saving the card recalculates every unit immediately. Rates are first-party — not an auction. Typed in ' + escapeHtml(moneyLabel()) + ' and converted live.</p>')
-        + card('How ads work on Naluno',
-          '<p class="gap-note">You upload the ad here. It is stored with the videos. There is no outside ad network, no auction, and no tracker. A live ad can appear as a skippable break after every N minutes of watching, and as a chapter break inside a Broadcast. Every ad is labelled <b>Ad</b>. The button on it must be an https address. The ad plays with its own sound. If it is not skipped, the video continues when the ad ends. Swiping away pauses it. A completed watch is counted after the seconds on the rate card, or if the ad ends without a skip. A skip is not a tap. The same person may see the same ad at most three times in a session.</p>')
+          + '<div class="row"><button type="button" class="primary" id="adSaveRates">Save rate card</button></div>')
         + card('How often',
           '<label for="adEveryMin">Show a break after every (minutes of watching)</label>'
           + '<input id="adEveryMin" type="number" min="1" max="30" value="' + escapeHtml(String((d.flags && d.flags.adEveryMin) != null ? d.flags.adEveryMin : 1)) + '" />'
-          + '<div class="row"><button type="button" class="ghost" id="adSavePace">Save pacing</button></div>'
-          + '<p class="gap-note" style="margin-top:8px;">Default is 1 minute. The clock only runs while a Signal or Broadcast is actually playing, not on muted feed previews.</p>')
+          + '<div class="row"><button type="button" class="ghost" id="adSavePace">Save pacing</button></div>')
         + card('New unit',
           '<label for="adFile">Creative — 9:16 video or image, about 6–30 seconds</label>'
           + '<input id="adFile" type="file" accept="video/*,image/*" />'
@@ -1447,7 +1428,6 @@
           + '<input id="adAdvPhone" type="tel" maxlength="32" placeholder="+256…" />'
           + '<label for="adPaid">Money paid by the advertiser — ' + escapeHtml(opCode()) + '</label>'
           + '<input id="adPaid" inputmode="decimal" placeholder="0" />'
-          + '<p class="gap-note">Type what they actually paid. Used is rate-card maths from views, taps or completed watches. Left is paid minus used. When left hits zero the ad pauses itself and leaves the app.</p>'
           + '<label for="adCtaLabel">Call to action (CTA)</label>'
           + '<input id="adCtaLabel" maxlength="24" placeholder="Open" value="Open" />'
           + '<label for="adCtaUrl">Call to action address (https only)</label>'
@@ -1530,14 +1510,7 @@
               + '<button type="button" class="danger admAd" data-id="' + escapeHtml(a.id) + '" data-act="delete">Remove</button>'
               + '</div></div></div>';
           }).join('')
-          : '<p class="sub">No units in this filter. Upload a 9:16 creative above. It will not appear in the app until it is live, and firestore.rules for deskAds must be published.</p>')
-        + (rev.assumptions && rev.assumptions.length
-          ? card('Assumptions',
-            '<ul class="sub" style="padding-left:18px;line-height:1.55;margin:0;">'
-            + rev.assumptions.map(function (t) { return '<li>' + escapeHtml(t) + '</li>'; }).join('')
-            + '</ul>')
-          : '')
-        + termsBlock();
+          : '<p class="sub">—</p>');
       el.querySelectorAll('.adsFilter').forEach(function (btn) {
         btn.onclick = function () {
           __tabCache.adsQ = btn.getAttribute('data-q') || 'all';
@@ -1875,18 +1848,10 @@
             }))
           + gap('This is a mix projection, not a forecast. With no usage on file, only the recorded fixed bill remains.'))
         + card('Runway',
-          '<p class="sub">Cash and burn stay on this browser until a finance ledger exists.</p>'
-          + '<label>Cash on hand (' + escapeHtml(moneyLabel()) + ')</label><input id="runCash" inputmode="decimal" placeholder="e.g. 80000" />'
+          '<label>Cash on hand (' + escapeHtml(moneyLabel()) + ')</label><input id="runCash" inputmode="decimal" placeholder="e.g. 80000" />'
           + '<label>Monthly burn (' + escapeHtml(opCode()) + ')</label><input id="runBurn" inputmode="decimal" placeholder="e.g. 12000" />'
           + '<div class="row"><button type="button" class="primary" id="runBtn">Estimate runway</button></div>'
-          + '<div id="runOut" class="sub"></div>')
-        + (assum.length
-          ? card('Assumptions',
-            '<ul class="sub" style="padding-left:18px;line-height:1.55;margin:0;">'
-              + assum.map(function (t) { return '<li>' + escapeHtml(t) + '</li>'; }).join('')
-              + '</ul>')
-          : '')
-        + termsBlock();
+          + '<div id="runOut" class="sub"></div>');
       try {
         if ($('costInvoice')) $('costInvoice').value = String(fromAedField(inputs.invoiceAed) || '');
         if ($('costFixed')) $('costFixed').value = String(fromAedField(inputs.fixedAed) || '');
@@ -1930,15 +1895,79 @@
     }
 
     if (tab === 'content') {
-      el.innerHTML =
-        inactiveNote('Content Hub (sports, movies, channels, providers) is not in the product yet.')
-        + gap('When it arrives, rights-expiry alerts belong at the top of this tab so they can never hide.');
+      el.innerHTML = '';
       return;
     }
 
-    if (tab === 'analytics') {
+    if (tab === 'visitors' || tab === 'reach' || tab === 'quality' || tab === 'analytics') {
       const site = d.site || {};
       const recent = site.recent || [];
+      const fiveYes = (site.five_marked || 0) > 0 || (site.engaged_today || 0) > 0;
+      const fiveLabel = !site.today ? '—' : (fiveYes ? 'Yes' : 'No');
+      const botsIn = (site.bots_today || 0) > 0 || (site.bots || 0) > 0 ? 'No' : 'No';
+      const selfIn = 'No';
+      const recentTable = table(['When', 'Landed', 'From', 'Device', 'Pages', 'Time', 'App'],
+        recent.slice(0, 40).map(function (s) {
+          const device = [s.device, s.os].filter(Boolean).join(' · ');
+          const land = (Data && Data.pageLabel) ? Data.pageLabel(s.land || s.path || '/') : (s.land || s.path || '/');
+          const from = s.source || ((Data && Data.classifySiteSource) ? Data.classifySiteSource(s.ref, s.utm, s.ua) : (s.ref || 'Direct'));
+          const trail = s.trail || s.path || '/';
+          return [
+            escapeHtml(when(s.lastAt || s.startedAt)),
+            escapeHtml(land),
+            escapeHtml(from),
+            escapeHtml(device || '—'),
+            escapeHtml(trail),
+            escapeHtml(dur(s.ms || 0)),
+            (Number(s.openApp) > 0 || s.kind === 'app') ? 'yes' : '',
+          ];
+        }));
+      if (tab === 'visitors') {
+        el.innerHTML =
+          card('Which page did they land on?',
+            kpis([['Visits today', site.today || 0], ['On the site now', site.live || 0], ['Unique today', site.uniques_today || 0]])
+            + bars(site.land || site.paths, 12))
+          + card('Where did they come from?',
+            bars(site.sources, 12)
+            + (site.utm && site.utm.length ? bars(site.utm, 8) : ''))
+          + card('What device are they using?',
+            bars(site.devices, 8) + bars(site.os, 8) + bars(site.browsers, 8))
+          + card('What pages before leaving?',
+            bars(site.journeys, 12) + bars(site.exit, 8))
+          + card('Latest visits', recentTable);
+        return;
+      }
+      if (tab === 'reach') {
+        el.innerHTML =
+          card('Clicked the Naluno / app link',
+            kpis([['Taps on the app link', site.open_clicks_today || 0],
+              ['Visits that opened it', site.open_sessions_today || 0],
+              ['Visit → open', (site.convert_pct || 0) + '%'],
+              ['App loads today', site.app_opens_today || 0]]))
+          + card('Reached investment / partnership',
+            kpis([['Reached the section', site.invest_today || 0],
+              ['Invest taps', site.invest_clicks_today || 0]]))
+          + card('Submitted a contact / investor enquiry',
+            kpis([['Enquiries sent', site.contact_today || 0]]));
+        return;
+      }
+      if (tab === 'quality') {
+        el.innerHTML =
+          card('Is the 5-second measurement working?',
+            kpis([['Working', fiveLabel],
+              ['Stayed 5s+', site.engaged_today || 0],
+              ['Left before 5s', site.bounce_n || 0],
+              ['Bounce', (site.bounce || 0) + '%']]))
+          + card('Are bots and crawlers included?',
+            kpis([['Included', botsIn],
+              ['Excluded today', site.bots_today || 0],
+              ['Excluded (on file)', site.bots || 0]]))
+          + card('Are your own visits counted?',
+            kpis([['Included', selfIn],
+              ['Excluded today', site.self_today || 0],
+              ['Excluded (on file)', site.self || 0]]));
+        return;
+      }
       el.innerHTML =
         card('getnaluno.com right now',
           kpis([['On the site now', site.live || 0],
@@ -1955,25 +1984,10 @@
           kpis([['Average today', dur(site.avg_ms || 0)],
             ['Median today', dur(site.median_ms || 0)],
             ['Total attention today', dur(site.total_ms_today || 0)],
-            ['Bounce', (site.bounce || 0) + '%'],
-            ['Bounced visits', site.bounce_n || 0],
             ['Installed (standalone)', site.standalone_today || 0]]))
-        + card('Opened Naluno',
-          kpis([['Opened the app today', site.app_opens_today || 0],
-            ['Open taps today', site.open_clicks_today || 0],
-            ['Visit → open', (site.convert_pct || 0) + '%'],
-            ['App opens (sampled)', site.app_opens || 0],
-            ['Contact form today', site.contact_today || 0],
-            ['Tuner taps today', site.tune_today || 0]])
-          + gap('Opened the app counts a load of /app on this origin, once per browser per day. Open taps are the mint buttons on the public pages. A tap that stays in the same tab is both.'))
         + card('Countries today', bars(site.countries, 16))
-        + card('Countries (daily rollup)', bars(site.countries_all, 16))
         + card('Cities today', bars(site.cities, 12))
-        + card('Devices today', bars(site.devices, 8) + bars(site.os, 8) + bars(site.browsers, 8))
-        + card('How they arrived', bars(site.refs, 12) + (site.utm && site.utm.length ? bars(site.utm, 8) : ''))
-        + card('Pages today', bars(site.paths, 8))
-        + card('Language · screen · connection', bars(site.langs, 8) + bars(site.screens, 8) + bars(site.conn, 6))
-        + card('Hour of day (this phone’s clock)', bars(site.hours, 24))
+        + card('Hour of day', bars(site.hours, 24))
         + card('Last 30 days',
           kpis([['Visits (30d)', site.day_visits || 0],
             ['App opens (30d)', site.day_app || 0],
@@ -1983,21 +1997,7 @@
             (site.days || []).slice(0, 31).map(function (row) {
               return [row.id || '', Number(row.visits) || 0, Number(row.appOpens || row.openApp) || 0, dur(row.ms || 0)];
             })))
-        + card('Latest visits',
-          table(['When', 'Where', 'Device', 'From', 'Time', 'Opened'],
-            recent.slice(0, 25).map(function (s) {
-              const where = [s.city, s.region, s.country].filter(Boolean).join(', ') || (s.tz || '—');
-              const device = [s.device, s.os, s.browser].filter(Boolean).join(' · ');
-              return [
-                escapeHtml(when(s.lastAt || s.startedAt)),
-                escapeHtml(where),
-                escapeHtml(device || '—'),
-                escapeHtml(s.ref || 'direct'),
-                escapeHtml(dur(s.ms || 0)),
-                (Number(s.openApp) > 0 || s.kind === 'app') ? 'yes' : '',
-              ];
-            })))
-        + gap(g.site || '');
+        + card('Latest visits', recentTable);
       return;
     }
 
@@ -2015,8 +2015,7 @@
       const hits = __tabCache.searchHits || [];
       el.innerHTML =
         card('Find a Callsign',
-          '<p class="sub" style="margin:0 0 12px;">Handle, email, name or account id. Hits the live handle map, not only the first page of loaded accounts.</p>'
-          + '<div class="row"><input id="admFindQ" placeholder="@handle, email, name, id" style="flex:1" value="' + escapeHtml(q) + '" />'
+          '<div class="row"><input id="admFindQ" placeholder="@handle, email, name, id" style="flex:1" value="' + escapeHtml(q) + '" />'
           + '<button type="button" class="primary" id="admFindGo">Find</button></div>'
           + '<p class="sub" id="admFindHint" style="margin:10px 0 0;"></p>')
         + (hits.length
@@ -2080,13 +2079,12 @@
         ? Object.keys(meta)
         : Object.keys(d.flags || {}).filter(function (k) { return !skipFlag[k]; });
       el.innerHTML =
-        gap('Flags live in Firestore (economyConfig/flags). The member app reads them there. The economy worker is not required, which is why a rejected Google key can no longer freeze this tab.')
-        + card('Feature flags', keys.map(function (k) {
+        card('Feature flags', keys.map(function (k) {
           const on = !!d.flags[k];
-          const m = meta[k] || { label: k, note: '' };
+          const m = meta[k] || { label: k };
           const locked = k === 'real_payouts_enabled';
           return '<div class="flag-row">'
-            + '<span style="flex:1;"><strong>' + escapeHtml(m.label || k) + '</strong><br><span class="gap-note">' + escapeHtml(m.note || k) + '</span></span>'
+            + '<span style="flex:1;"><strong>' + escapeHtml(m.label || k) + '</strong></span>'
             + '<span style="color:' + (on ? 'var(--mint)' : 'var(--ink-dim)') + ';">' + (on ? 'ON' : 'OFF') + '</span>'
             + (locked
               ? '<span style="font-size:10px;color:var(--ink-dim);">locked</span>'
@@ -2260,7 +2258,7 @@
       toast('Done — logged');
       await loadTab('users', true);
     } catch (e) {
-      toast((e && e.message) || 'Could not update that account. Publish the new firestore.rules.');
+      toast((e && e.message) || 'Could not update that account.');
     }
   }
 
@@ -2457,7 +2455,7 @@
       setMsg('adMsg', 'Saved.', true);
       await loadTab('ads', true);
     } catch (e) {
-      setMsg('adMsg', (e && e.message) || 'Could not save. Publish the new firestore.rules.');
+      setMsg('adMsg', (e && e.message) || 'Could not save.');
     }
   }
   async function actAd(id, action) {
@@ -2493,7 +2491,7 @@
       }
       await loadTab('ads', true);
     } catch (e) {
-      toast((e && e.message) || 'Could not update that unit. Publish the new firestore.rules.');
+      toast((e && e.message) || 'Could not update that unit.');
     }
   }
   async function saveAdPaid(id) {
@@ -2566,7 +2564,7 @@
       toast(status === 'done' ? 'Marked done' : 'Marked read');
       await loadTab('mail', true);
     } catch (e) {
-      toast((e && e.message) || 'Could not update mail. Publish the new firestore.rules.');
+      toast((e && e.message) || 'Could not update mail.');
     }
   }
 
@@ -2606,11 +2604,12 @@
       toast(flag + ' · ' + (next ? 'ON' : 'OFF'));
       await loadTab('flags', true);
     } catch (e) {
-      toast((e && e.message) || 'Could not save the flag. Publish the new firestore.rules.');
+      toast((e && e.message) || 'Could not save the flag.');
     }
   }
 
   function openConsole() {
+    try { localStorage.setItem('naluno:pulse:staff', '1'); } catch (_) {}
     setStage('console');
     resolveDeskPlace();
     const who = $('consoleWho');
@@ -2762,6 +2761,7 @@
       }
     }
     __adminPass = typed;
+    try { localStorage.setItem('naluno:pulse:staff', '1'); } catch (_) {}
     setMsg('adminGateMsg', 'Opening…', true);
     stampOperatorClaim();
     openConsole();
