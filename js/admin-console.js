@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260921c';
+  const BUILD = '20260921d';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -522,6 +522,82 @@
     });
     toast('@' + h + ' is reserved');
     return true;
+  }
+  async function resolveAccount(query) {
+    const raw = String(query || '').trim();
+    if (!raw) return null;
+    const self = raw.toLowerCase();
+    if (self === 'me' || self === 'this account' || self === 'myself') {
+      if (!currentUser) return null;
+      return { id: currentUser.uid, name: 'this account' };
+    }
+    const rows = await findPeople(raw);
+    if (rows && rows[0] && (rows[0].id || rows[0].uid)) {
+      return Object.assign({ id: rows[0].id || rows[0].uid }, rows[0]);
+    }
+    if (/^[A-Za-z0-9]{20,}$/.test(raw) && raw.indexOf('@') < 0) {
+      return { id: raw };
+    }
+    return null;
+  }
+  function holderLabel(uid, d) {
+    if (!uid) return '—';
+    const list = ((d && d.users && d.users.list) || []);
+    const u = list.filter(function (x) { return x.id === uid || x.uid === uid; })[0];
+    if (u) {
+      const h = personHandle(u);
+      const name = u.name || '';
+      if (h) return '@' + h;
+      if (name) return name;
+    }
+    return String(uid).slice(0, 10);
+  }
+  async function bindReservedHolder(handle, who, opts) {
+    opts = opts || {};
+    const h = normAdminHandle(handle);
+    if (!h) {
+      toast('Enter a reserved handle');
+      return false;
+    }
+    const person = await resolveAccount(who);
+    const uid = person && (person.id || person.uid);
+    if (!uid) {
+      toast('Could not find that account. Use a handle, name, or uid.');
+      return false;
+    }
+    const db = adminDb();
+    if (db) {
+      try {
+        const existing = await db.collection('handles').doc(h).get();
+        if (existing && existing.exists) {
+          const owner = String((existing.data() || {}).uid || '');
+          if (owner && owner !== uid) {
+            toast('@' + h + ' is already on another account. Do not remove the reservation to take it.');
+            return false;
+          }
+        }
+      } catch (_) {}
+    }
+    const prev = ((__snap && __snap.identity && __snap.identity.list) || []).filter(function (r) {
+      return r.handle === h;
+    })[0] || { category: 'official', reason: 'Official account' };
+    const ok = await saveReservedHandle(h, prev.category || 'official', prev.reason || '', uid);
+    if (!ok) return false;
+    if (db && opts.claim !== false) {
+      try {
+        await db.collection('handles').doc(h).set({ uid: uid, claimedAt: Date.now() }, { merge: true });
+      } catch (_) {}
+    }
+    toast('@' + h + ' can be used by ' + (personHandle(person) ? ('@' + personHandle(person)) : 'that account') + ' — keep it reserved');
+    return true;
+  }
+  async function clearReservedHolder(handle) {
+    const h = normAdminHandle(handle);
+    if (!h) return false;
+    const prev = ((__snap && __snap.identity && __snap.identity.list) || []).filter(function (r) {
+      return r.handle === h;
+    })[0] || { category: 'other', reason: '' };
+    return saveReservedHandle(h, prev.category || 'other', prev.reason || '', '');
   }
   async function removeReservedHandle(handle, reason) {
     const h = normAdminHandle(handle);
@@ -2275,7 +2351,7 @@
           ['Open flags', (idn.open_flags || []).length],
         ])
         + card('Reserved Handles',
-          '<p class="sub">Protected Callsigns inside Naluno. These names cannot be claimed on sign-up. This does not reserve names on other products.</p>'
+          '<p class="sub">These names stay reserved. Do not click Remove to use one — Remove lets anyone take it. Bind an existing account instead. That account can then save the Callsign in the app.</p>'
           + '<div class="row" style="margin-top:0;">'
           + '<input id="idSearch" placeholder="Search handle, reason or category" style="flex:1" value="' + escapeHtml(__tabCache.identityQ || '') + '" />'
           + '<select id="idCatFilter" style="width:auto;min-width:120px;padding:8px 10px;">'
@@ -2292,7 +2368,9 @@
                 'Reserved',
                 catSelect(row.category, row.handle),
                 '<input class="idReason" data-handle="' + escapeHtml(row.handle) + '" value="' + escapeHtml(row.reason || '') + '" style="padding:6px 8px;font-size:12px;" />',
-                row.holderUid ? escapeHtml(String(row.holderUid).slice(0, 10)) : '—',
+                row.holderUid
+                  ? (escapeHtml(holderLabel(row.holderUid, d)) + ' <button type="button" class="ghost idUnbind" data-handle="' + escapeHtml(row.handle) + '" style="padding:4px 8px;font-size:10px;">Clear</button>')
+                  : '—',
                 escapeHtml(when(row.createdAt || row.updatedAt)),
                 escapeHtml(String(row.updatedBy || row.createdBy || '').slice(0, 8) || '—'),
                 '<button type="button" class="ghost idSave" data-handle="' + escapeHtml(row.handle) + '">Save</button> '
@@ -2310,6 +2388,14 @@
           + '<input id="idNewReason" placeholder="internal reason" style="flex:1;min-width:160px;" />'
           + '<button type="button" class="primary" id="idAdd">Add</button>'
           + '<button type="button" class="ghost" id="idSeed">Seed list</button>'
+          + '</div>')
+        + card('Give a reserved name to an account',
+          '<p class="sub">The name stays reserved. Only this account may use it. Create the account first with any ordinary handle, then bind it here, then save the reserved Callsign on that account.</p>'
+          + '<div class="row" style="margin-top:0;">'
+          + '<input id="idBindHandle" placeholder="reserved handle" style="flex:1;min-width:140px;" />'
+          + '<input id="idBindWho" placeholder="existing handle, name or uid" style="flex:1;min-width:180px;" />'
+          + '<button type="button" class="primary" id="idBind">Give</button>'
+          + '<button type="button" class="ghost" id="idBindMe">Give to me</button>'
           + '</div>')
         + card('Potential brand impersonation / similarity detected',
           ((idn.flags || []).length
@@ -2355,7 +2441,7 @@
         btn.onclick = function () {
           const h = btn.getAttribute('data-handle');
           if (!h) return;
-          if (!window.confirm('Remove @' + h + ' from the reserved list?')) return;
+          if (!window.confirm('Remove @' + h + ' from the reserved list? Anyone will then be able to register it. To give it to an official account, bind the account instead.')) return;
           removeReservedHandle(h, 'removed from Identity').then(function (ok) {
             if (ok) loadTab('identity', true);
           });
@@ -2378,6 +2464,27 @@
       };
       if ($('idSeed')) $('idSeed').onclick = function () {
         seedIdentity().then(function () { loadTab('identity', true); toast('Protected names are on the list'); });
+      };
+      el.querySelectorAll('.idUnbind').forEach(function (btn) {
+        btn.onclick = function () {
+          const h = btn.getAttribute('data-handle');
+          clearReservedHolder(h).then(function (ok) {
+            if (ok) loadTab('identity', true);
+          });
+        };
+      });
+      if ($('idBind')) $('idBind').onclick = function () {
+        const h = $('idBindHandle') && $('idBindHandle').value;
+        const who = $('idBindWho') && $('idBindWho').value;
+        bindReservedHolder(h, who).then(function (ok) {
+          if (ok) loadTab('identity', true);
+        });
+      };
+      if ($('idBindMe')) $('idBindMe').onclick = function () {
+        const h = $('idBindHandle') && $('idBindHandle').value;
+        bindReservedHolder(h, 'me').then(function (ok) {
+          if (ok) loadTab('identity', true);
+        });
       };
       return;
     }
