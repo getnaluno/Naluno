@@ -1,22 +1,26 @@
-# GitHub — 2026.09.19g
+# GitHub + worker — 2026.09.19h
 
-Wireline upload bar, pause that stays paused, no diagnostic chips, camcorder mirror, Callsign that stays after refresh.
+Admin password now actually gates. Your operator account is not locked out.
 
-## Upload
+## Upload to GitHub
 
-1. js/core.js
-2. js/signal-core.js
-3. js/wireline.js
-4. js/compass.js
-5. js/profile.js
-6. js/media-contain.js
-7. js/calls.js
-8. js/auth.js
-9. js/presence.js
-10. js/notifications.js
-11. js/pwa.js
-12. css/app.css
-13. app/index.html
-14. sw.js
+1. js/admin-console.js
+2. admin/index.html
+3. firestore.rules
+4. js/firestore-rules.test.cjs
+5. workers/economy/handler.mjs
+6. workers/economy/economy.test.mjs
 
-After upload: open Callsign once and tap Save if this phone already reset to You.
+## Then
+
+1. Publish firestore.rules in Firebase.
+2. Deploy the economy worker (`naluno-economy`) with this handler.mjs.
+
+## First open after this
+
+Sign in with the same Google account. Unlock with the password you already use.
+If the console asks you to create a password, set the same one.
+
+You will not be locked out: your uid still opens the desk, a verified
+magjoed@gmail.com still opens it, and if no password is stored yet the
+first visit is setup — not a wall.
