@@ -20,7 +20,7 @@
  *      key rotation hiccuped.
  */
 
-export const VERSION = "2.3.0-admin-gate";
+export const VERSION = "2.4.0-handles";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -64,6 +64,9 @@ const memory = {
   pools: new Map(),
   mail: new Map(),
   mailHits: new Map(),
+  reserved: new Map(),
+  handleFlags: new Map(),
+  handles: new Map(),
 };
 
 let _fetch = globalThis.fetch.bind(globalThis);
@@ -84,6 +87,9 @@ export function resetMemory() {
   memory.pools.clear();
   memory.mail.clear();
   memory.mailHits.clear();
+  memory.reserved.clear();
+  memory.handleFlags.clear();
+  memory.handles.clear();
   saCache = { token: "", exp: 0, err: "" };
 }
 export function getMemory() {
@@ -583,6 +589,357 @@ function isOperatorUser(env, user) {
   return false;
 }
 
+const HANDLE_RESERVED_MSG = "This handle is reserved and cannot be claimed.";
+const HANDLE_TAKEN_MSG = "That handle is taken — try another.";
+const HANDLE_FORMAT_MSG = "Choose a handle with at least 3 letters (a–z, 0–9, _).";
+export const SEED_RESERVED = [
+  { handle: "naluno", category: "official", reason: "Brand" },
+  { handle: "getnaluno", category: "official", reason: "Brand" },
+  { handle: "nalunoapp", category: "official", reason: "Brand" },
+  { handle: "nalunohq", category: "official", reason: "Brand" },
+  { handle: "nalunoofficial", category: "official", reason: "Brand" },
+  { handle: "nalunoteam", category: "official", reason: "Brand" },
+  { handle: "nalunofounder", category: "official", reason: "Brand" },
+  { handle: "nalunocreators", category: "official", reason: "Brand" },
+  { handle: "nalunoinvest", category: "official", reason: "Brand" },
+  { handle: "nalunosupport", category: "support", reason: "Support" },
+  { handle: "nalunohelp", category: "support", reason: "Support" },
+  { handle: "nalunonews", category: "support", reason: "Support" },
+  { handle: "admin", category: "system", reason: "System" },
+  { handle: "administrator", category: "system", reason: "System" },
+  { handle: "nalunoadmin", category: "system", reason: "System" },
+  { handle: "nalunosystem", category: "system", reason: "System" },
+  { handle: "nalunosecurity", category: "system", reason: "System" },
+  { handle: "nalunomoderator", category: "system", reason: "System" },
+  { handle: "nalunostaff", category: "system", reason: "System" },
+  { handle: "official", category: "system", reason: "System" },
+  { handle: "support", category: "support", reason: "Support" },
+  { handle: "security", category: "system", reason: "System" },
+  { handle: "system", category: "system", reason: "System" },
+  { handle: "moderator", category: "system", reason: "System" },
+];
+
+export function normHandle(raw) {
+  return String(raw || "")
+    .trim()
+    .replace(/^@+/, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "")
+    .slice(0, 24);
+}
+export function handleCore(raw) {
+  return normHandle(raw).replace(/_/g, "");
+}
+function handleFormatOk(h) {
+  return /^[a-z0-9_]{3,24}$/.test(h);
+}
+function foldLookalikes(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/0/g, "o")
+    .replace(/1/g, "l")
+    .replace(/i/g, "l")
+    .replace(/3/g, "e")
+    .replace(/5/g, "s")
+    .replace(/8/g, "b")
+    .replace(/_/g, "");
+}
+function levenshtein(a, b) {
+  a = String(a || "");
+  b = String(b || "");
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const row = [];
+  for (let j = 0; j <= b.length; j++) row[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    let prev = i - 1;
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cur = row[j];
+      const cost = a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1;
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + cost);
+      prev = cur;
+    }
+  }
+  return row[b.length];
+}
+export function matchReserved(raw, list) {
+  const h = normHandle(raw);
+  const core = handleCore(h);
+  for (let i = 0; i < (list || []).length; i++) {
+    const row = list[i] || {};
+    const rh = normHandle(row.handle || row.id || "");
+    if (!rh) continue;
+    if (h === rh || core === handleCore(rh) || core === String(row.core || "")) return row;
+  }
+  return null;
+}
+export function similarityAgainst(raw, list) {
+  if (matchReserved(raw, list)) return null;
+  const h = normHandle(raw);
+  const core = handleCore(h);
+  const folded = foldLookalikes(h);
+  if (core.length < 3) return null;
+  let best = null;
+  for (let i = 0; i < (list || []).length; i++) {
+    const row = list[i] || {};
+    const rh = normHandle(row.handle || row.id || "");
+    if (!rh) continue;
+    const rc = handleCore(rh);
+    const rf = foldLookalikes(rh);
+    if (h === rh || core === rc) continue;
+    let reason = "";
+    let score = 0;
+    if (folded === rf) { reason = "lookalike characters"; score = 90; }
+    else if (core.indexOf(rc) === 0 && rc.length >= 5 && /^[0-9]+$/.test(core.slice(rc.length))) {
+      reason = "protected name plus numbers"; score = 80;
+    } else if (rc.length >= 5 && core.indexOf(rc) >= 0) {
+      reason = "contains a protected name"; score = 75;
+    } else if (rf.length >= 5 && folded.indexOf(rf) >= 0) {
+      reason = "contains a protected name"; score = 72;
+    } else if (rc.length >= 5 && levenshtein(core, rc) === 1) {
+      reason = "one character from a protected name"; score = 70;
+    } else if (rf.length >= 5 && levenshtein(folded, rf) === 1) {
+      reason = "one character from a protected name"; score = 68;
+    }
+    if (reason && (!best || score > best.score)) {
+      best = { handle: h, reserved: rh, category: row.category || "other", reason, score };
+    }
+  }
+  return best;
+}
+
+function reservedList() {
+  return Array.from(memory.reserved.values());
+}
+function canonicalReserved() {
+  return reservedList()
+    .filter((r) => !r.aliasOf)
+    .sort((a, b) => String(a.handle || "").localeCompare(String(b.handle || "")));
+}
+function rememberReserved(row) {
+  if (!row || !row.handle) return;
+  memory.reserved.set(row.handle, row);
+}
+function rememberFlag(row) {
+  if (!row) return;
+  const id = row.id || ("f_" + String(row.handle || "") + "_" + String(row.uid || "").slice(0, 8));
+  row.id = id;
+  memory.handleFlags.set(id, row);
+}
+
+async function fsGetDoc(env, token, path) {
+  const r = token
+    ? await fsFetch(env, token, "GET", path)
+    : await fsFetchPublic(env, "GET", path);
+  if (!r.ok) return null;
+  return fromFsDoc(r.data);
+}
+async function fsPutDoc(env, token, path, obj) {
+  if (!token) return { ok: false };
+  return fsFetch(env, token, "PATCH", path, toFsFields(obj));
+}
+async function loadReservedFromFs(env, token) {
+  const t = token;
+  if (!t && !apiKey(env)) return reservedList();
+  const r = t
+    ? await fsFetch(env, t, "GET", "/reservedHandles?pageSize=400")
+    : await fsFetchPublic(env, "GET", "/reservedHandles?pageSize=400");
+  if (r.ok && r.data && r.data.documents) {
+    r.data.documents.forEach((doc) => rememberReserved(fromFsDoc(doc)));
+  }
+  return reservedList();
+}
+function reservedPayload(row, actor, now) {
+  const handle = normHandle(row.handle);
+  const core = handleCore(handle);
+  return {
+    handle,
+    core,
+    category: ["official", "system", "support", "other"].indexOf(row.category) >= 0 ? row.category : "other",
+    reason: String(row.reason || "").slice(0, 240),
+    status: "reserved",
+    holderUid: String(row.holderUid || "").slice(0, 80),
+    createdAt: Number(row.createdAt) || now,
+    createdBy: row.createdBy || actor || "",
+    updatedAt: now,
+    updatedBy: actor || "",
+  };
+}
+async function writeReservedPair(env, token, row) {
+  const handle = row.handle;
+  const core = row.core || handleCore(handle);
+  rememberReserved(row);
+  if (!token) return;
+  await fsPutDoc(env, token, "/reservedHandles/" + encodeURIComponent(handle), row);
+  if (core) {
+    await fsPutDoc(env, token, "/reservedCores/" + encodeURIComponent(core), {
+      handle,
+      core,
+      holderUid: row.holderUid || "",
+      category: row.category,
+    });
+  }
+  if (core && core !== handle) {
+    const alias = Object.assign({}, row, { handle: core, aliasOf: handle });
+    await fsPutDoc(env, token, "/reservedHandles/" + encodeURIComponent(core), alias);
+    rememberReserved(alias);
+  }
+}
+async function deleteReservedPair(env, token, handle) {
+  const h = normHandle(handle);
+  const row = memory.reserved.get(h);
+  const core = (row && row.core) || handleCore(h);
+  memory.reserved.delete(h);
+  if (core && core !== h) memory.reserved.delete(core);
+  if (!token) return;
+  await fsFetch(env, token, "DELETE", "/reservedHandles/" + encodeURIComponent(h));
+  if (core) {
+    await fsFetch(env, token, "DELETE", "/reservedCores/" + encodeURIComponent(core));
+    if (core !== h) await fsFetch(env, token, "DELETE", "/reservedHandles/" + encodeURIComponent(core));
+  }
+}
+async function writeAdminAudit(env, token, row) {
+  const rec = Object.assign({ created_at: Date.now() }, row);
+  memory.audit.unshift(rec);
+  if (token) {
+    await fsFetch(env, token, "POST", "/adminAudit", toFsFields(rec));
+  }
+}
+async function loadHandleFlagsFromFs(env, token) {
+  if (!token) return Array.from(memory.handleFlags.values());
+  const r = await fsFetch(env, token, "GET", "/handleFlags?pageSize=200");
+  if (r.ok && r.data && r.data.documents) {
+    r.data.documents.forEach((doc) => rememberFlag(fromFsDoc(doc)));
+  }
+  return Array.from(memory.handleFlags.values());
+}
+async function flagHandle(env, token, flag) {
+  const id = flag.id || ((flag.kind === "reserved-block" ? "b_" : "f_") + String(flag.handle || "") + "_" + String(flag.uid || "").slice(0, 8));
+  const row = Object.assign({ id, status: "open", createdAt: Date.now() }, flag);
+  rememberFlag(row);
+  if (token) await fsPutDoc(env, token, "/handleFlags/" + encodeURIComponent(id), row);
+  return row;
+}
+async function seedReserved(env, token, actor) {
+  const now = Date.now();
+  await loadReservedFromFs(env, token);
+  const owner = await fsGetDoc(env, token, "/handles/naluno");
+  const holder = (owner && owner.uid) || "";
+  let wrote = 0;
+  for (let i = 0; i < SEED_RESERVED.length; i++) {
+    const seed = SEED_RESERVED[i];
+    const existing = memory.reserved.get(seed.handle);
+    if (existing && existing.handle) {
+      if (seed.handle === "naluno" && holder && !existing.holderUid) {
+        const next = Object.assign({}, existing, { holderUid: holder, updatedAt: now, updatedBy: actor || "seed" });
+        await writeReservedPair(env, token, next);
+        wrote += 1;
+      }
+      continue;
+    }
+    const row = reservedPayload(Object.assign({}, seed, {
+      holderUid: seed.handle === "naluno" ? holder : "",
+      createdBy: actor || "seed",
+    }), actor || "seed", now);
+    await writeReservedPair(env, token, row);
+    wrote += 1;
+  }
+  return { ok: true, wrote, total: memory.reserved.size, nalunoHolder: holder };
+}
+
+async function handleCheck(env, url, saToken) {
+  const h = normHandle(url.searchParams.get("h") || url.searchParams.get("handle") || "");
+  if (!handleFormatOk(h)) {
+    return json({ ok: false, handle: h, error: HANDLE_FORMAT_MSG, code: "format" });
+  }
+  await loadReservedFromFs(env, saToken);
+  if (!memory.reserved.size) {
+    SEED_RESERVED.forEach((s) => rememberReserved(reservedPayload(s, "seed", Date.now())));
+  }
+  const list = reservedList();
+  const hit = matchReserved(h, list);
+  if (hit) {
+    return json({
+      ok: false,
+      handle: h,
+      reserved: true,
+      error: HANDLE_RESERVED_MSG,
+      code: "reserved",
+    });
+  }
+  const claimed = await fsGetDoc(env, saToken, "/handles/" + encodeURIComponent(h));
+  const taken = !!(claimed && claimed.uid);
+  if (taken) {
+    return json({ ok: false, handle: h, taken: true, error: HANDLE_TAKEN_MSG, code: "taken" });
+  }
+  return json({
+    ok: true,
+    handle: h,
+    available: true,
+  });
+}
+
+async function handleClaim(env, user, userToken, saToken, body) {
+  const h = normHandle(body && body.handle);
+  if (!handleFormatOk(h)) return json({ ok: false, error: HANDLE_FORMAT_MSG, code: "format" }, 400);
+  const token = saToken || userToken;
+  await loadReservedFromFs(env, token);
+  if (!memory.reserved.size) {
+    SEED_RESERVED.forEach((s) => rememberReserved(reservedPayload(s, "seed", Date.now())));
+  }
+  const list = reservedList();
+  const hit = matchReserved(h, list);
+  if (hit && String(hit.holderUid || "") !== user.uid) {
+    await flagHandle(env, token, {
+      kind: "reserved-block",
+      handle: h,
+      uid: user.uid,
+      reserved: hit.handle || h,
+      reason: "reserved",
+      score: 100,
+      status: "open",
+    });
+    return json({ ok: false, error: HANDLE_RESERVED_MSG, code: "reserved", reserved: true }, 409);
+  }
+  const existing = memory.handles.get(h) || await fsGetDoc(env, token, "/handles/" + encodeURIComponent(h));
+  if (existing && existing.uid && existing.uid !== user.uid) {
+    return json({ ok: false, error: HANDLE_TAKEN_MSG, code: "taken", taken: true }, 409);
+  }
+  const doc = { uid: user.uid, claimedAt: Date.now() };
+  memory.handles.set(h, doc);
+  if (token) {
+    const path = "/handles/" + encodeURIComponent(h);
+    if (existing && existing.uid === user.uid) {
+      await fsPutDoc(env, token, path, doc);
+    } else {
+      const wrote = await fsFetch(env, token, "PATCH", path + "?currentDocument.exists=false", toFsFields(doc));
+      if (!wrote.ok) {
+        const again = await fsGetDoc(env, token, path);
+        if (again && again.uid && again.uid !== user.uid) {
+          memory.handles.set(h, again);
+          return json({ ok: false, error: HANDLE_TAKEN_MSG, code: "taken", taken: true }, 409);
+        }
+        if (!again || !again.uid) await fsPutDoc(env, token, path, doc);
+      }
+    }
+  }
+  const similar = similarityAgainst(h, list);
+  if (similar) {
+    await flagHandle(env, token, {
+      kind: "similar",
+      handle: h,
+      uid: user.uid,
+      reserved: similar.reserved,
+      reason: similar.reason,
+      score: similar.score,
+      status: "open",
+    });
+  }
+  return json({ ok: true, handle: h, official: !!(hit && hit.holderUid === user.uid) });
+}
+
 async function saAccessTokenScoped(env, scope) {
   const sa = parseServiceAccount(
     env.GOOGLE_SERVICE_ACCOUNT ||
@@ -958,6 +1315,113 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
   if (path === "/v1/admin/audit" && request.method === "GET") {
     const rows = await listCol("adminAudit", 80);
     return json({ ok: true, audit: rows.length ? rows : memory.audit });
+  }
+
+  if (path === "/v1/admin/handles/seed" && request.method === "POST") {
+    const token = saToken || userToken;
+    const result = await seedReserved(env, token, user.uid);
+    await writeAdminAudit(env, token, {
+      action: "handle-seed",
+      target: "reservedHandles",
+      reason: "seed",
+      actor: user.uid,
+      actorEmail: user.email || "",
+      extra: { wrote: result.wrote, total: result.total },
+    });
+    return json(result);
+  }
+
+  if (path === "/v1/admin/handles" && request.method === "GET") {
+    const token = saToken || userToken;
+    await loadReservedFromFs(env, token);
+    if (!memory.reserved.size) {
+      SEED_RESERVED.forEach((s) => rememberReserved(reservedPayload(s, "seed", Date.now())));
+    }
+    const flags = await loadHandleFlagsFromFs(env, token);
+    const naluno = memory.reserved.get("naluno") || {};
+    return json({
+      ok: true,
+      reserved: canonicalReserved(),
+      flags: flags.sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0)),
+      nalunoHolder: naluno.holderUid || "",
+      total: canonicalReserved().length,
+    });
+  }
+
+  if (path === "/v1/admin/handles" && request.method === "POST") {
+    const body = await request.json().catch(() => ({}));
+    const token = saToken || userToken;
+    await loadReservedFromFs(env, token);
+    const h = normHandle(body.handle);
+    if (!handleFormatOk(h)) return json({ ok: false, error: HANDLE_FORMAT_MSG }, 400);
+    const prev = memory.reserved.get(h) || null;
+    const now = Date.now();
+    const row = reservedPayload({
+      handle: h,
+      category: body.category || (prev && prev.category) || "other",
+      reason: body.reason != null ? body.reason : ((prev && prev.reason) || ""),
+      holderUid: body.holderUid != null ? body.holderUid : ((prev && prev.holderUid) || ""),
+      createdAt: (prev && prev.createdAt) || now,
+      createdBy: (prev && prev.createdBy) || user.uid,
+    }, user.uid, now);
+    await writeReservedPair(env, token, row);
+    await writeAdminAudit(env, token, {
+      action: prev ? "handle-update" : "handle-reserve",
+      target: h,
+      reason: row.reason,
+      actor: user.uid,
+      actorEmail: user.email || "",
+      extra: {
+        previous: prev ? { category: prev.category, reason: prev.reason, holderUid: prev.holderUid } : null,
+        next: { category: row.category, reason: row.reason, holderUid: row.holderUid },
+      },
+    });
+    return json({ ok: true, handle: h, reserved: row });
+  }
+
+  if (path === "/v1/admin/handles/remove" && request.method === "POST") {
+    const body = await request.json().catch(() => ({}));
+    const token = saToken || userToken;
+    await loadReservedFromFs(env, token);
+    const h = normHandle(body.handle);
+    if (!h) return json({ ok: false, error: "handle required" }, 400);
+    const prev = memory.reserved.get(h) || null;
+    await deleteReservedPair(env, token, h);
+    await writeAdminAudit(env, token, {
+      action: "handle-unreserve",
+      target: h,
+      reason: String(body.reason || ""),
+      actor: user.uid,
+      actorEmail: user.email || "",
+      extra: { previous: prev },
+    });
+    return json({ ok: true, handle: h });
+  }
+
+  if (path === "/v1/admin/handles/flag" && request.method === "POST") {
+    const body = await request.json().catch(() => ({}));
+    const token = saToken || userToken;
+    const id = String(body.id || "");
+    if (!id) return json({ ok: false, error: "id required" }, 400);
+    await loadHandleFlagsFromFs(env, token);
+    const prev = memory.handleFlags.get(id) || { id };
+    const next = Object.assign({}, prev, {
+      status: String(body.status || "reviewed").slice(0, 24),
+      note: String(body.note || "").slice(0, 240),
+      reviewedBy: user.uid,
+      reviewedAt: Date.now(),
+    });
+    rememberFlag(next);
+    if (token) await fsPutDoc(env, token, "/handleFlags/" + encodeURIComponent(id), next);
+    await writeAdminAudit(env, token, {
+      action: "handle-flag",
+      target: id,
+      reason: next.status,
+      actor: user.uid,
+      actorEmail: user.email || "",
+      extra: { previous: prev.status || "open", next: next.status, handle: next.handle || "" },
+    });
+    return json({ ok: true, flag: next });
   }
 
   if (path === "/v1/admin/simulate" && request.method === "POST") {
@@ -1344,6 +1808,10 @@ export async function handleRequest(request, env = {}, ctx = {}) {
       return handleMail(request, env, saToken);
     }
 
+    if (path === "/v1/handle/check" && request.method === "GET") {
+      return handleCheck(env, url, saToken);
+    }
+
     const auth = await requireUser(env, request);
     if (auth.error) {
       if (path === "/" || path.startsWith("/v1/")) return auth.error;
@@ -1449,6 +1917,11 @@ export async function handleRequest(request, env = {}, ctx = {}) {
 
     if (path === "/v1/support/intent" && request.method === "POST") {
       return json({ ok: false, error: "Support isn’t available yet" }, 400);
+    }
+
+    if (path === "/v1/handle/claim" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      return handleClaim(env, user, userToken, saToken, body);
     }
 
     if (path.startsWith("/v1/admin/")) {

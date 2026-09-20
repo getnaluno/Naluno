@@ -10,6 +10,9 @@ import {
   setFetchImpl,
   signRs256Jwt,
   getMemory,
+  SEED_RESERVED,
+  matchReserved,
+  normHandle,
 } from "./handler.mjs";
 
 const ENV = {
@@ -654,5 +657,167 @@ test("verified operator email still opens status so the admin is not locked out"
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.operator, true);
+  setFetchImpl(null);
+});
+
+test("handle check blocks reserved names and allows ordinary ones", async () => {
+  resetMemory();
+  setFetchImpl(async (url) => {
+    if (String(url).includes("firestore.googleapis.com")) {
+      return new Response("{}", { status: 404 });
+    }
+    return new Response("{}", { status: 404 });
+  });
+  const blocked = await handleRequest(req("/v1/handle/check?h=Naluno"), ENV);
+  const b = await blocked.json();
+  assert.equal(b.ok, false);
+  assert.equal(b.code, "reserved");
+  assert.match(b.error, /reserved and cannot be claimed/i);
+  assert.equal(b.similar, undefined);
+
+  const underscore = await handleRequest(req("/v1/handle/check?h=n_aluno"), ENV);
+  const u = await underscore.json();
+  assert.equal(u.ok, false);
+  assert.equal(u.code, "reserved");
+
+  const ok = await handleRequest(req("/v1/handle/check?h=amina"), ENV);
+  const a = await ok.json();
+  assert.equal(a.ok, true);
+  assert.equal(a.handle, "amina");
+  setFetchImpl(null);
+});
+
+test("handle claim refuses reserved names and logs a flag", async () => {
+  resetMemory();
+  setFetchImpl(async (url) => {
+    if (String(url).includes("accounts:lookup")) {
+      return new Response(JSON.stringify({ users: [{ localId: "user_a" }] }), { status: 200 });
+    }
+    return new Response("{}", { status: 404 });
+  });
+  const res = await handleRequest(
+    req("/v1/handle/claim", {
+      method: "POST",
+      headers: { Authorization: "Bearer tok", "Content-Type": "application/json" },
+      body: JSON.stringify({ handle: "nalunosupport" }),
+    }),
+    ENV,
+  );
+  assert.equal(res.status, 409);
+  const body = await res.json();
+  assert.equal(body.reserved, true);
+  assert.match(body.error, /reserved and cannot be claimed/i);
+  const flags = Array.from(getMemory().handleFlags.values());
+  assert.ok(flags.some((f) => f.kind === "reserved-block" && f.handle === "nalunosupport"));
+  setFetchImpl(null);
+});
+
+test("handle claim allows a free name and flags a lookalike", async () => {
+  resetMemory();
+  setFetchImpl(async (url) => {
+    if (String(url).includes("accounts:lookup")) {
+      return new Response(JSON.stringify({ users: [{ localId: "user_a" }] }), { status: 200 });
+    }
+    return new Response("{}", { status: 404 });
+  });
+  const res = await handleRequest(
+    req("/v1/handle/claim", {
+      method: "POST",
+      headers: { Authorization: "Bearer tok", "Content-Type": "application/json" },
+      body: JSON.stringify({ handle: "nalun0" }),
+    }),
+    ENV,
+  );
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.handle, "nalun0");
+  const flags = Array.from(getMemory().handleFlags.values());
+  assert.ok(flags.some((f) => f.handle === "nalun0" && f.kind === "similar"));
+  setFetchImpl(null);
+});
+
+test("two claims of the same handle cannot both win", async () => {
+  resetMemory();
+  setFetchImpl(async (url) => {
+    if (String(url).includes("accounts:lookup")) {
+      return new Response(JSON.stringify({ users: [{ localId: "user_a" }] }), { status: 200 });
+    }
+    return new Response("{}", { status: 404 });
+  });
+  const first = await handleRequest(
+    req("/v1/handle/claim", {
+      method: "POST",
+      headers: { Authorization: "Bearer tok", "Content-Type": "application/json" },
+      body: JSON.stringify({ handle: "kato" }),
+    }),
+    ENV,
+  );
+  assert.equal((await first.json()).ok, true);
+  setFetchImpl(async (url) => {
+    if (String(url).includes("accounts:lookup")) {
+      return new Response(JSON.stringify({ users: [{ localId: "user_b" }] }), { status: 200 });
+    }
+    return new Response("{}", { status: 404 });
+  });
+  const second = await handleRequest(
+    req("/v1/handle/claim", {
+      method: "POST",
+      headers: { Authorization: "Bearer tok2", "Content-Type": "application/json" },
+      body: JSON.stringify({ handle: "kato" }),
+    }),
+    ENV,
+  );
+  assert.equal(second.status, 409);
+  const body = await second.json();
+  assert.equal(body.taken, true);
+  setFetchImpl(null);
+});
+
+test("operator can seed, add, list and remove reserved handles", async () => {
+  resetMemory();
+  setFetchImpl(async (url) => {
+    if (String(url).includes("accounts:lookup")) {
+      return new Response(JSON.stringify({
+        users: [{ localId: ENV.OPERATOR_UID, email: "magjoed@gmail.com", emailVerified: true }],
+      }), { status: 200 });
+    }
+    return new Response("{}", { status: 200 });
+  });
+  const headers = { Authorization: "Bearer tok", "Content-Type": "application/json" };
+  const seed = await handleRequest(req("/v1/admin/handles/seed", { method: "POST", headers, body: "{}" }), ENV);
+  const seeded = await seed.json();
+  assert.equal(seeded.ok, true);
+  assert.ok(seeded.total >= SEED_RESERVED.length);
+
+  const add = await handleRequest(
+    req("/v1/admin/handles", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ handle: "nalunostudio", category: "official", reason: "Studio" }),
+    }),
+    ENV,
+  );
+  assert.equal((await add.json()).ok, true);
+
+  const list = await handleRequest(req("/v1/admin/handles", { headers }), ENV);
+  const listed = await list.json();
+  assert.equal(listed.ok, true);
+  assert.ok(listed.reserved.some((r) => r.handle === "naluno" && r.category === "official"));
+  assert.ok(listed.reserved.some((r) => r.handle === "nalunostudio"));
+
+  const drop = await handleRequest(
+    req("/v1/admin/handles/remove", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ handle: "nalunostudio", reason: "no longer used" }),
+    }),
+    ENV,
+  );
+  assert.equal((await drop.json()).ok, true);
+  const after = await (await handleRequest(req("/v1/admin/handles", { headers }), ENV)).json();
+  assert.ok(!after.reserved.some((r) => r.handle === "nalunostudio"));
+  assert.equal(normHandle("NALUNO"), "naluno");
+  assert.ok(matchReserved("naluno_help", SEED_RESERVED));
   setFetchImpl(null);
 });
