@@ -55,12 +55,12 @@ async function sendPresence(reason){
         ? fbDb
         : (typeof firebase !== 'undefined' && firebase.firestore ? firebase.firestore() : null);
       if(db){
-        db.collection('users').doc(currentUser.uid).set({
+        db.collection('users').doc(currentUser.uid).update({
           lastSeen: now,
           lastPlatform: platform,
           lastAppVersion: appVersion,
           lastPresenceReason: reason || 'beat',
-        }, { merge: true }).catch(function(){});
+        }).catch(function(){});
       }
     }catch(_){}
 

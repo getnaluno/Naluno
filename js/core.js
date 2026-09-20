@@ -36,6 +36,7 @@ try{ window.nalunoFriendlyError = nalunoFriendlyError; }catch(_){}
 function toast(msg, onTap){
   const text = nalunoFriendlyError(msg);
   if(!text) return;
+  if(/\[naluno|naluno-upload|app error:|queue busy| → \d{3}\b/i.test(text)) return;
   const t = $('toast'); if(!t) return; t.textContent = text; t.classList.add('show');
   clearTimeout(toast._t); toast._t = setTimeout(()=>t.classList.remove('show'), typeof onTap === 'function' ? 6500 : 1900);
   if(typeof onTap === 'function'){
@@ -57,34 +58,46 @@ function emptyStateHtml(title, copy, hint){
   return '<div class="empty-state">'+t+h+'<p class="empty-state-copy">'+copy+'</p></div>';
 }
 
-/** Visible + console + diagnostics trail for Signal/Broadcast upload.
- *  Chrome's Errors-only filter hides console.log — use warn, and paint
- *  an on-screen chip so a phone without DevTools still shows the path. */
+/** Console only. Never paint a diagnostic chip on the phone. */
 function nalunoUploadLog(msg, detail){
   try{ console.warn('[naluno-upload]', msg, detail || ''); }catch(_){}
-  const line = String(msg || '') + (detail ? (' ' + detail) : '');
-  if(!/fail|error|timeout|401|ok|pipe|start/i.test(line)) return;
-  try{
-    let el = document.getElementById('nalunoUploadTrace');
-    if(!el){
-      el = document.createElement('div');
-      el.id = 'nalunoUploadTrace';
-      el.style.cssText = 'display:none;position:fixed;left:10px;right:10px;top:calc(env(safe-area-inset-top,0px) + 6px);z-index:10050;padding:8px 12px;border-radius:12px;background:rgba(13,15,23,.94);border:1px solid rgba(124,255,178,.45);color:#7CFFB2;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:1.35;pointer-events:none;';
-      (document.body || document.documentElement).appendChild(el);
-    }
-    const prev = el.getAttribute('data-lines') || '';
-    const lines = (prev ? prev.split('\n') : []).concat([String(msg || '')]);
-    const keep = lines.slice(-3);
-    el.setAttribute('data-lines', keep.join('\n'));
-    el.textContent = keep.join(' · ');
-    if(/fail|error|timeout|401/i.test(line)){
-      el.style.display = 'block';
-      clearTimeout(nalunoUploadLog._hide);
-      nalunoUploadLog._hide = setTimeout(function(){ el.style.display = 'none'; }, 12000);
-    }
-  }catch(_){}
 }
 try{ window.nalunoUploadLog = nalunoUploadLog; }catch(_){}
+
+function nalunoOnWireline(){
+  try{
+    const th = document.getElementById('wirelineThread');
+    if(th && th.classList.contains('active')) return true;
+    const tab = document.getElementById('tab-wireline');
+    if(tab && tab.classList.contains('active')) return true;
+  }catch(_){}
+  return false;
+}
+function nalunoProgressAllowed(){
+  if(nalunoOnWireline()) return false;
+  try{
+    const c = document.getElementById('composer');
+    if(c && c.classList.contains('active')) return true;
+    const b = document.getElementById('bcomposer');
+    if(b && b.classList.contains('active')) return true;
+  }catch(_){}
+  return false;
+}
+function nalunoHideProgressChrome(){
+  try{
+    const chip = document.getElementById('publishBgChip');
+    if(chip) chip.style.display = 'none';
+    const ban = document.getElementById('bgProcessBanner');
+    if(ban && !nalunoProgressAllowed()) ban.style.display = 'none';
+    const tr = document.getElementById('nalunoUploadTrace');
+    if(tr){ tr.style.display = 'none'; tr.textContent = ''; }
+  }catch(_){}
+}
+try{
+  window.nalunoOnWireline = nalunoOnWireline;
+  window.nalunoProgressAllowed = nalunoProgressAllowed;
+  window.nalunoHideProgressChrome = nalunoHideProgressChrome;
+}catch(_){}
 
 /** fetch wrapper: Chrome silently rejects keepalive bodies over 64KB.
  *  That was added in 09.03a on 8MB chunk PUTs and would abort uploads
@@ -263,14 +276,9 @@ setTimeout(checkForUpdate, 4000); // small delay so this isn't competing with th
 
 
 
-/* Surface fatal errors so deploys that break the app are visible */
+/* Surface fatal errors in the console only — never as in-app diagnostics. */
 window.addEventListener('error', function(ev){
-  try{
-    console.error('[naluno]', ev.message, ev.filename, ev.lineno);
-    if(typeof toast === 'function' && ev.message && /\$|null|undefined|is not a function/i.test(ev.message)){
-      toast('App error: ' + String(ev.message).slice(0, 80));
-    }
-  }catch(_){}
+  try{ console.error('[naluno]', ev.message, ev.filename, ev.lineno); }catch(_){}
 });
 window.addEventListener('unhandledrejection', function(ev){
   try{ console.error('[naluno:promise]', ev.reason); }catch(_){}

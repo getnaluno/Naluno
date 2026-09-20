@@ -357,53 +357,44 @@ let customRingtoneUrl = null;
 let customRingtoneName = '';
 let customRingtoneObjectUrl = null;
 let ringtoneAudioEl = null;
-/* Receiver-side ringtone — a short rising chime, repeating, unless a custom sound has
-   been uploaded in Callsign, in which case that plays instead. Deliberately more
-   melodic/attention-grabbing than the caller's tone by default, since this is the one
-   that actually needs to pull someone's attention away from whatever they're doing. */
+let ringtoneBuffer = null;
+let ringtoneWebSource = null;
 function startRingtone(){
   stopRingtone();
   try{ ensureAudioContext(); }catch(_){}
-  const overlay = $('callOverlay');
-  function bindRingtoneEl(){
-    if(ringtoneAudioEl) return ringtoneAudioEl;
-    ringtoneAudioEl = $('nalunoRingtone') || new Audio();
-    ringtoneAudioEl.id = ringtoneAudioEl.id || 'nalunoRingtone';
-    ringtoneAudioEl.setAttribute('data-naluno-ringtone', '1');
-    ringtoneAudioEl.loop = true;
-    ringtoneAudioEl.preload = 'auto';
-    ringtoneAudioEl.setAttribute('playsinline', '');
-    if(overlay && ringtoneAudioEl.parentNode !== overlay){
-      try{ overlay.appendChild(ringtoneAudioEl); }catch(_){}
-    }
-    return ringtoneAudioEl;
-  }
   if(customRingtoneUrl){
-    const el = bindRingtoneEl();
-    try{ el.src = customRingtoneUrl; }catch(_){}
-    try{ el.currentTime = 0; }catch(_){}
-    el.volume = 1.0;
-    try{
-      const ctx = ensureAudioContext();
-      if(ctx && !el._nalunoBoosted){
-        const src = ctx.createMediaElementSource(el);
-        const g = ctx.createGain();
-        g.gain.value = 2.5;
-        src.connect(g);
-        g.connect(ctx.destination);
-        el._nalunoBoosted = true;
-      }
-    }catch(_){}
-    const played = el.play();
-    if(played && played.catch){
-      played.catch(function(){
-        startSynthRingtone();
-        if(document.hidden) nalunoStartBackgroundRing(activeCallId, ($('incomingName') && $('incomingName').textContent) || 'Someone');
-      });
-    }
+    playCustomRingtoneWebAudio().catch(function(){ startSynthRingtone(); });
     return;
   }
   startSynthRingtone();
+}
+function playCustomRingtoneWebAudio(){
+  const ctx = ensureAudioContext();
+  if(!ctx) return Promise.reject(new Error('no audio'));
+  const startBuf = function(buffer){
+    if(ctx.state === 'suspended') ctx.resume().catch(function(){});
+    try{ if(ringtoneWebSource) ringtoneWebSource.stop(); }catch(_){}
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.loop = true;
+    const g = ctx.createGain();
+    g.gain.value = 1.6;
+    src.connect(g);
+    g.connect(ctx.destination);
+    src.start(0);
+    ringtoneWebSource = src;
+    ringtoneActiveNodes.push(src);
+  };
+  if(ringtoneBuffer){
+    startBuf(ringtoneBuffer);
+    return Promise.resolve();
+  }
+  return fetch(customRingtoneUrl).then(function(r){ return r.arrayBuffer(); }).then(function(ab){
+    return ctx.decodeAudioData(ab.slice ? ab.slice(0) : ab);
+  }).then(function(buffer){
+    ringtoneBuffer = buffer;
+    startBuf(buffer);
+  });
 }
 function startSynthRingtone(){
   const ctx = ensureAudioContext();
@@ -440,6 +431,11 @@ function stopRingtone(){
   clearInterval(ringtoneTimer); ringtoneTimer = null;
   ringtoneActiveNodes.forEach(osc=>{ try{ osc.stop(); }catch(e){} });
   ringtoneActiveNodes = [];
+  if(ringtoneWebSource){
+    try{ ringtoneWebSource.stop(); }catch(_){}
+    try{ ringtoneWebSource.disconnect(); }catch(_){}
+    ringtoneWebSource = null;
+  }
   if(ringtoneAudioEl){
     try{ ringtoneAudioEl.pause(); }catch(_){}
     try{ ringtoneAudioEl.removeAttribute('src'); ringtoneAudioEl.load(); }catch(_){}
@@ -505,6 +501,7 @@ function setCustomRingtoneFromBlob(blob, name){
   customRingtoneObjectUrl = URL.createObjectURL(blob);
   customRingtoneUrl = customRingtoneObjectUrl;
   customRingtoneName = name || '';
+  ringtoneBuffer = null;
 }
 if($('uploadRingtoneBtn')) $('uploadRingtoneBtn').onclick = function(){ /* overlay input is the tap target */ };
 $('ringtoneFileInput').onchange = async (e)=>{

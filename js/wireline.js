@@ -722,6 +722,7 @@ function openThread(contactId){
   updateThreadStatusLabel();
   $('threadInput').value = '';
   updateComposerButtons();
+  try{ if(typeof nalunoHideProgressChrome === 'function') nalunoHideProgressChrome(); }catch(_){}
   $('wirelineThread').classList.add('active');
   try{ bindThreadChrome(); }catch(_){}
 
@@ -1283,9 +1284,7 @@ async function sendSlipFile(file){
   let url = '';
   try{
     if(isVideo && typeof uploadBroadcastFile === 'function'){
-      url = await uploadBroadcastFile(file, function(p, msg){
-        if(typeof showPublishChip === 'function') showPublishChip(msg || ('Slip ' + Math.round((p||0)*100) + '%'));
-      });
+      url = await uploadBroadcastFile(file, null);
     } else if(!isVideo && typeof uploadPhotoToR2 === 'function'){
       // Photos go through their own uploader now, not the video one. Every
       // content-type fallback in the video path lands on video/mp4, so a
@@ -1999,7 +1998,6 @@ function pushVoiceMessage(contactId, dataUrl, durationSecs, waveform){
   if(c && c.isReal && c.firebaseUid){
     (async function(){
       try{
-        toast('Uploading voice…');
         const blob = await (await fetch(dataUrl)).blob();
         const ct = blob.type || 'audio/webm';
         const url = (typeof uploadBroadcastFile === 'function')

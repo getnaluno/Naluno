@@ -628,8 +628,12 @@ let trimFileQueue = [];
    text next to a spinner. frac is 0-1; pass null to leave the fill where it is
    (useful for a label-only update like "Uploading...", before real percentages start). */
 function setBgProgress(frac, text){
-  $('bgProcessLabel').textContent = text;
-  if(frac != null) $('bgProcessFill').style.width = Math.round(Math.min(1,Math.max(0,frac))*100) + '%';
+  if(typeof nalunoProgressAllowed === 'function' && !nalunoProgressAllowed()){
+    try{ if(typeof nalunoHideProgressChrome === 'function') nalunoHideProgressChrome(); }catch(_){}
+    return;
+  }
+  if($('bgProcessLabel')) $('bgProcessLabel').textContent = text;
+  if(frac != null && $('bgProcessFill')) $('bgProcessFill').style.width = Math.round(Math.min(1,Math.max(0,frac))*100) + '%';
 }
 let trimCurrentFile = null;
 let trimObjectUrl = null;
@@ -1212,8 +1216,10 @@ async function postSegmentsNow(newSegments){
   const hasVideo = newSegments.some(s=>s.type==='video');
   if(hasVideo){
     postInProgress = true;
-    $('bgProcessBanner').style.display = 'flex';
-    setBgProgress(0, 'Uploading to your signal\u2026');
+    if(typeof nalunoProgressAllowed === 'function' ? nalunoProgressAllowed() : true){
+      $('bgProcessBanner').style.display = 'flex';
+      setBgProgress(0, 'Uploading to your signal\u2026');
+    }
   }
   if(currentUser && fbDb){
     let failed = 0;

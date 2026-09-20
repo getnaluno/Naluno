@@ -86,6 +86,7 @@ document.querySelectorAll('.navbtn').forEach(btn=>{
     btn.classList.add('active');
     const screen = $('tab-'+btn.dataset.tab);
     if(screen) screen.classList.add('active');
+    try{ if(typeof nalunoHideProgressChrome === 'function') nalunoHideProgressChrome(); }catch(_){}
     if(btn.dataset.tab === 'frequencies' && typeof clearMissedCallBadge === 'function') clearMissedCallBadge();
     if(btn.dataset.tab === 'compass' && typeof showCompassLockScreenIfNeeded === 'function') showCompassLockScreenIfNeeded();
     if(btn.dataset.tab !== 'broadcast'){
@@ -190,8 +191,8 @@ function markMyActivity(){
   if(currentUser && fbDb && Date.now() - lastRemoteHeartbeat > 20000){
     lastRemoteHeartbeat = Date.now();
     fbDb.collection('users').doc(currentUser.uid)
-      .set({ lastActivityTs: firebase.firestore.FieldValue.serverTimestamp() }, { merge:true })
-      .catch(()=>{ /* best-effort — a missed heartbeat just means slightly stale presence */ });
+      .update({ lastActivityTs: firebase.firestore.FieldValue.serverTimestamp() })
+      .catch(()=>{});
   }
 }
 ['click','keydown','touchstart'].forEach(evt => document.addEventListener(evt, markMyActivity, { passive:true }));

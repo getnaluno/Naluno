@@ -142,7 +142,10 @@ async function saveNativeFcmToken(token){
       window.__nalunoNativeFcmToken = token || window.__nalunoNativeFcmToken;
       return false;
     }
-    await fbDb.collection('users').doc(currentUser.uid).set({
+    const ref = fbDb.collection('users').doc(currentUser.uid);
+    const snap = await ref.get();
+    if(!snap.exists) return false;
+    await ref.set({
       fcmToken: token,
       fcmTokenAndroid: token,
       fcmTokenPlatform: 'android',

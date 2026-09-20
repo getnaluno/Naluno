@@ -90,6 +90,11 @@ function containMediaElement(el){
   // Custom UI is preferred; strip native controls for containment.
   try{ el.removeAttribute('controls'); }catch(_){}
   try{ el.controls = false; }catch(_){}
+  try{
+    if(!nalunoLiveOrCameraEl(el) && el.style && /scaleX\(\s*-1\s*\)/.test(String(el.style.transform||''))){
+      el.style.transform = String(el.style.transform).replace(/scaleX\(\s*-1\s*\)/g, 'none');
+    }
+  }catch(_){}
 }
 
 function nalunoAnyAppMediaPlaying(){
@@ -191,6 +196,36 @@ window.nalunoMediaMayKeepAlive = nalunoMediaMayKeepAlive;
  *  28l: also treat an open Signal story / Broadcast space as "playing" so the
  *  2s lock timer cannot pause a clip that is still buffering.
  */
+function nalunoMarkUserPaused(el){
+  try{
+    if(!el || !el.dataset) return;
+    el.dataset.nalunoUserPaused = '1';
+    el.dataset.nalunoWantPlay = '0';
+    delete el.dataset.nalunoKeepAlive;
+    delete el.dataset.nalunoPausedHide;
+  }catch(_){}
+}
+function nalunoPauseAllForUser(){
+  try{
+    document.querySelectorAll('video, audio').forEach(function(el){
+      try{
+        if(el.closest && el.closest('#callOverlay')) return;
+        if(typeof nalunoIsRingtoneEl === 'function' && nalunoIsRingtoneEl(el)){
+          try{ el.pause(); }catch(_){}
+          return;
+        }
+        nalunoMarkUserPaused(el);
+        try{ el.pause(); }catch(_){}
+      }catch(_){}
+    });
+  }catch(_){}
+  try{ if(typeof pauseAllStrandPreviews === 'function') pauseAllStrandPreviews(); }catch(_){}
+  try{
+    if(navigator.mediaSession) navigator.mediaSession.playbackState = 'paused';
+  }catch(_){}
+  lockOutChromeMediaSession();
+}
+window.nalunoPauseAllForUser = nalunoPauseAllForUser;
 function lockOutChromeMediaSession(){
   if(!navigator.mediaSession) return;
   try{ navigator.mediaSession.metadata = null; }catch(_){}
@@ -213,7 +248,15 @@ function lockOutChromeMediaSession(){
   // effect was "advertise that these buttons exist". Clearing to null and
   // stopping there is what actually removes them.
   ['play','pause','seekbackward','seekforward','seekto','previoustrack','nexttrack','stop'].forEach(function(a){
-    try{ navigator.mediaSession.setActionHandler(a, null); }catch(_){}
+    try{
+      if(a === 'pause' || a === 'stop'){
+        navigator.mediaSession.setActionHandler(a, function(){ nalunoPauseAllForUser(); });
+      } else if(a === 'play'){
+        navigator.mediaSession.setActionHandler(a, function(){ /* stay paused until they tap in Naluno */ });
+      } else {
+        navigator.mediaSession.setActionHandler(a, null);
+      }
+    }catch(_){}
   });
   // Position state is what draws the scrubber on that card. Clearing it
   // unconditionally (not only when paused, as before) means there's no
@@ -379,6 +422,7 @@ function pauseAppMediaForBackground(){
         if(el.paused) return;
         try{ el.dataset.nalunoPauseAt = String(el.currentTime || 0); }catch(_){}
         el.dataset.nalunoPausedHide = '1';
+        nalunoMarkUserPaused(el);
         el.pause();
       }catch(_){}
     });
@@ -391,23 +435,6 @@ function resumeAppMediaAfterForeground(){
     try{ clearTimeout(nalunoPauseHideTimer); }catch(_){}
     nalunoPauseHideTimer = null;
   }
-  document.querySelectorAll('video, audio').forEach(function(el){
-    try{
-      if(!(el.dataset && el.dataset.nalunoPausedHide === '1')) return;
-      delete el.dataset.nalunoPausedHide;
-      const want = nalunoMediaMayKeepAlive(el);
-      if(!want) return;
-      if(el.ended) return;
-      try{
-        const at = parseFloat(el.dataset.nalunoPauseAt);
-        if(isFinite(at) && Math.abs((el.currentTime || 0) - at) > 1.2){
-          el.currentTime = at;
-        }
-      }catch(_){}
-      const p = el.play();
-      if(p && p.catch) p.catch(function(){});
-    }catch(_){}
-  });
   lockOutChromeMediaSession();
 }
 
@@ -463,8 +490,9 @@ document.addEventListener('playing', function(e){
 
 document.addEventListener('pause', function(e){
   const el = e.target;
-  if(el && el.closest && el.closest('#callOverlay')) return;
-  // User paused inside Naluno → kill the OS media card so Chrome cannot keep playing.
+  if(!el || (el.tagName !== 'VIDEO' && el.tagName !== 'AUDIO')) return;
+  if(el.closest && el.closest('#callOverlay')) return;
+  nalunoMarkUserPaused(el);
   lockOutChromeMediaSession();
   setTimeout(lockOutChromeMediaSession, 40);
   setTimeout(lockOutChromeMediaSession, 300);

@@ -454,7 +454,10 @@ function nalunoTranscodeToWeb(file, onProgress, maxSeconds){
         const draw = function(){
           if(settled) return;
           try{
-            if(video.videoWidth) ctx.drawImage(video, 0, 0, cw, ch);
+            if(video.videoWidth){
+              ctx.setTransform(1, 0, 0, 1, 0, 0);
+              ctx.drawImage(video, 0, 0, cw, ch);
+            }
           }catch(_){}
           const tNow = video.currentTime || 0;
           if(onProgress){
@@ -1581,6 +1584,10 @@ function ensurePublishChip(){
   return chip;
 }
 function showPublishChip(text){
+  if(typeof nalunoProgressAllowed === 'function' && !nalunoProgressAllowed()){
+    try{ if(typeof nalunoHideProgressChrome === 'function') nalunoHideProgressChrome(); }catch(_){}
+    return;
+  }
   const chip = ensurePublishChip();
   chip.style.display = 'block';
   chip.textContent = text;
@@ -1593,8 +1600,6 @@ function hidePublishChip(){
 function enqueuePublishJob(job){
   try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('queue ' + (job && job.label), 'n=' + (publishQueue.length+1)); }catch(_){}
   publishQueue.push(job);
-  showPublishChip(job.label || 'Publishing in background…');
-  if(typeof toast === 'function') toast('Publishing in background — you can leave this screen');
   drainPublishQueue();
 }
 

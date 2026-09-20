@@ -44,7 +44,8 @@ $('enableCallNotifsBtn').onclick = async ()=>{
     // Store web token separately. Do not overwrite primary fcmToken if an Android token already exists.
     const userRef = fbDb.collection('users').doc(currentUser.uid);
     const snap = await userRef.get();
-    const existing = snap.exists ? snap.data() : {};
+    if(!snap.exists) return;
+    const existing = snap.data() || {};
     const payload = { fcmTokenWeb: token, fcmTokenPlatform: 'web' };
     if(!existing.fcmTokenAndroid){
       payload.fcmToken = token;
@@ -98,7 +99,8 @@ async function registerWebPushToken(){
     if(!token) return null;
     const userRef = fbDb.collection('users').doc(currentUser.uid);
     const snap = await userRef.get();
-    const existing = snap.exists ? snap.data() : {};
+    if(!snap.exists) return null;
+    const existing = snap.data() || {};
     const payload = { fcmTokenWeb: token, fcmTokenPlatform: 'web', fcmTokenUpdatedAt: Date.now() };
     if(!existing.fcmTokenAndroid) payload.fcmToken = token;
     await userRef.set(payload, { merge:true });

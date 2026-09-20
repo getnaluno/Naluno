@@ -960,9 +960,53 @@ function nalunoReadCachedProfile(uid){
     return p;
   }catch(_){ return null; }
 }
+function nalunoProfileHasIdentity(p){
+  if(!p) return false;
+  const name = String(p.name || '').trim();
+  const number = String(p.number || '').trim();
+  if(!name || name === 'You') return false;
+  if(!number || number === '@you') return false;
+  return true;
+}
+function nalunoMergeUserDoc(previous, data){
+  const d = data && typeof data === 'object' ? data : {};
+  const prev = previous && typeof previous === 'object' ? previous : {};
+  const cached = (currentUser && typeof nalunoReadCachedProfile === 'function')
+    ? (nalunoReadCachedProfile(currentUser.uid) || {})
+    : {};
+  const local = nalunoProfileHasIdentity(prev) ? prev
+    : (nalunoProfileHasIdentity(cached) ? cached : prev);
+  const incoming = Object.assign({ photo:null }, DEFAULT_PROFILE, cached, prev, d);
+  if(!nalunoProfileHasIdentity(d) && nalunoProfileHasIdentity(local)){
+    incoming.name = local.name;
+    incoming.number = local.number;
+    if(!d.tagline && local.tagline) incoming.tagline = local.tagline;
+    if(!d.color && local.color) incoming.color = local.color;
+    if(!d.photo && local.photo) incoming.photo = local.photo;
+    if(!d.photoUrl && local.photoUrl) incoming.photoUrl = local.photoUrl;
+  }
+  return incoming;
+}
+function nalunoHealUserIdentity(profile){
+  if(!currentUser || !fbDb || !nalunoProfileHasIdentity(profile)) return;
+  if(nalunoHealUserIdentity._sent) return;
+  nalunoHealUserIdentity._sent = true;
+  const patch = {
+    name: profile.name,
+    number: profile.number,
+  };
+  if(profile.tagline) patch.tagline = profile.tagline;
+  if(profile.color) patch.color = profile.color;
+  if(profile.photoUrl) patch.photoUrl = profile.photoUrl;
+  fbDb.collection('users').doc(currentUser.uid).set(patch, { merge:true }).catch(function(){});
+}
 function nalunoWriteCachedProfile(uid, profile){
   if(!uid || !profile) return;
   try{
+    if(!nalunoProfileHasIdentity(profile)){
+      const existing = nalunoReadCachedProfile(uid);
+      if(nalunoProfileHasIdentity(existing)) return;
+    }
     const copy = Object.assign({}, profile);
     if(copy.photo && copy.photo.dataUrl && String(copy.photo.dataUrl).length > 80000){
       copy.photo = { crop: copy.photo.crop || null };
@@ -1182,6 +1226,13 @@ function startSignedInListeners(user){
 function loadRealProfile(user){
   if(profileUnsub) profileUnsub();
   hideClosedCallsignGate();
+  try{
+    const cachedBoot = nalunoReadCachedProfile(user.uid);
+    if(nalunoProfileHasIdentity(cachedBoot)){
+      currentProfile = Object.assign({ photo:null }, DEFAULT_PROFILE, cachedBoot);
+      if(!isCallsignEditing()) applyProfileToUI(currentProfile);
+    }
+  }catch(_){}
   // Live listener for profile. CRITICAL: while the edit form is open, never call
   // applyProfileToUI / showCallsignView — presence heartbeats and other merges would
   // overwrite mid-typing and kick the user out of the form ("text jumps away").
@@ -1215,7 +1266,7 @@ function loadRealProfile(user){
       listenRetry = 0;
       if(doc.exists){
         const previous = currentProfile;
-        const incoming = { photo:null, ...DEFAULT_PROFILE, ...doc.data() };
+        const incoming = nalunoMergeUserDoc(previous, doc.data());
         currentProfile = incoming;
         try{
           if(typeof nalunoVault !== 'undefined'){
@@ -1224,6 +1275,9 @@ function loadRealProfile(user){
             if(nalunoVault.migrateFromPublic) nalunoVault.migrateFromPublic(doc.data(), user.uid);
           }
         }catch(_){}
+        if(!nalunoProfileHasIdentity(doc.data()) && nalunoProfileHasIdentity(currentProfile)){
+          nalunoHealUserIdentity(currentProfile);
+        }
         if(nalunoAccountIsClosed(incoming)){
           closedGate = true;
           showClosedCallsignGate(incoming);
@@ -1251,8 +1305,8 @@ function loadRealProfile(user){
         }
       } else if(!gotFirstSnapshot){
         const cached = nalunoReadCachedProfile(user.uid);
-        if(cached && (cached.name || cached.number)){
-          currentProfile = { photo:null, ...DEFAULT_PROFILE, ...cached };
+        if(nalunoProfileHasIdentity(cached) || (cached && (cached.name || cached.number))){
+          currentProfile = nalunoMergeUserDoc(cached, {});
           applyProfileToUI(currentProfile);
           if(!isCallsignEditing()) showCallsignView();
         } else if(typeof nalunoIsOnline === 'function' ? nalunoIsOnline() : navigator.onLine){
@@ -1401,6 +1455,8 @@ $('saveProfileBtn').onclick = async ()=>{
       // Optimistic local apply so the form closes immediately.
       currentProfile = nextProfile;
       applyProfileToUI(currentProfile);
+      nalunoWriteCachedProfile(currentUser.uid, currentProfile);
+      try{ nalunoCacheWrite('profile', currentProfile); }catch(_){}
       showCallsignView();
       toast('Callsign saved');
       const cloudProfile = Object.assign({}, nextProfile);
