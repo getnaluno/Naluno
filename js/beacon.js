@@ -446,13 +446,16 @@ async function enableFindNaluno(){
 }
 
 async function disableFindNaluno(){
-  if(currentProfile && currentProfile.compassPasswordHash){
+  const storedHash = (typeof compassStoredHash === 'function')
+    ? compassStoredHash()
+    : (currentProfile && currentProfile.compassPasswordHash);
+  if(storedHash){
     const entered = prompt('Enter your Compass password to turn Find Naluno off:');
     if(!entered) return;
     try{
       if(typeof sha256Hex === 'function'){
         const hash = await sha256Hex(entered);
-        if(hash !== currentProfile.compassPasswordHash){
+        if(hash !== storedHash){
           toast('Password did not match');
           return;
         }

@@ -896,20 +896,37 @@ function generateVideoThumbnail(videoSrcOrBlob){
   });
 }
 
-/** Prefer uploading a small JPEG to R2 so list cards stay fast and CORS-safe. */
+/** Prefer uploading a small JPEG to the Broadcast bucket (permanent, served
+ *  as image/jpeg). The old path used uploadVideoToR2, which could land in
+ *  the 25-hour Signal bucket or be stored as video/mp4 — both make <img>
+ *  tiles go blank while the episode video itself still plays. */
+function nalunoThumbLooksDead(url){
+  const u = String(url || '');
+  if(!u) return true;
+  if(/naluno-signal-upload/i.test(u)) return true;
+  return false;
+}
 async function persistThumbnailDataUrl(dataUrl){
   if(!dataUrl || typeof dataUrl !== 'string') return null;
-  if(dataUrl.indexOf('data:image') !== 0) return dataUrl; // already a remote url
+  if(dataUrl.indexOf('data:image') !== 0){
+    return nalunoThumbLooksDead(dataUrl) ? null : dataUrl;
+  }
   try{
-    if(typeof uploadVideoToR2 === 'function'){
-      const res = await fetch(dataUrl);
-      const blob = await res.blob();
-      if(blob && blob.size > 0 && blob.size < 2*1024*1024){
-        return await uploadVideoToR2(blob);
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    if(blob && blob.size > 0 && blob.size < 2*1024*1024){
+      const jpeg = new Blob([blob], { type: 'image/jpeg' });
+      try{ jpeg.name = 'thumb.jpg'; jpeg._nalunoName = 'thumb.jpg'; }catch(_){}
+      if(typeof uploadPhotoToR2 === 'function'){
+        const url = await uploadPhotoToR2(jpeg);
+        if(url && !nalunoThumbLooksDead(url)) return url;
+      }
+      if(typeof uploadBroadcastFile === 'function'){
+        const url = await uploadBroadcastFile(jpeg, null, 'image/jpeg');
+        if(url && !nalunoThumbLooksDead(url)) return url;
       }
     }
   }catch(_){}
-  // Fallback: store compact data URL in Firestore (ok for ~50–150KB thumbs)
   return dataUrl;
 }
 

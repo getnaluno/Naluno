@@ -54,17 +54,18 @@ function strandShareUrl(id){
 function broadcastThumbHtml(b){
   const title = escapeHtml((b.title || 'Broadcast').slice(0, 48));
   const creator = escapeHtml((b.creatorName || 'Someone').split(' ')[0]);
-  const thumb = b.thumbUrl || '';
+  const thumb = (b.thumbUrl && !(typeof nalunoThumbLooksDead === 'function' && nalunoThumbLooksDead(b.thumbUrl))) ? b.thumbUrl : '';
   const photo = thumb || ((b.mediaType === 'photo') ? (b.mediaUrl || '') : '');
   const preview = (!b.live && b.mediaType !== 'photo')
     ? (b.mediaUrl || b.videoUrl || '')
     : '';
+  const rescue = preview ? ` data-media="${escapeHtml(preview)}" data-bcast-id="${escapeHtml(b.id || '')}" onerror="nalunoRescueThumb(this)"` : '';
   let inner;
   if(preview){
-    inner = (photo ? `<img src="${escapeHtml(photo)}" alt="" class="strand-poster" />` : '')
+    inner = (photo ? `<img src="${escapeHtml(photo)}" alt="" class="strand-poster"${rescue} />` : `<img alt="" class="strand-poster" data-need-thumb="1"${rescue} style="display:none" />`)
       + `<video class="strand-preview" muted playsinline webkit-playsinline loop preload="none" poster="${escapeHtml(photo)}" data-preview-src="${escapeHtml(preview)}" data-naluno-preview="1"></video>`;
   } else if(photo){
-    inner = `<img src="${escapeHtml(photo)}" alt="" class="bcast-plate-media" loading="lazy" onerror="this.style.display='none';this.parentNode.classList.add('no-thumb')" />`;
+    inner = `<img src="${escapeHtml(photo)}" alt="" class="bcast-plate-media" loading="lazy"${rescue} />`;
   } else {
     inner = `<div class="bcast-plate-fallback">${escapeHtml((b.creatorName || '?').slice(0,1).toUpperCase())}</div>`;
   }

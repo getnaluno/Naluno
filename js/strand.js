@@ -159,7 +159,87 @@
   }
   function broadcastPosterSrc(b){
     if(!b) return '';
-    return b.thumbUrl || ((b.mediaType === 'photo') ? (b.mediaUrl || '') : '') || '';
+    const t = b.thumbUrl || '';
+    if(t && !(typeof nalunoThumbLooksDead === 'function' && nalunoThumbLooksDead(t))) return t;
+    if(b.mediaType === 'photo') return b.mediaUrl || '';
+    return '';
+  }
+
+  const __thumbRescue = {};
+  function hideBrokenThumb(img){
+    try{
+      const tile = img.closest('.strand-rail-tile');
+      img.remove();
+      if(tile) tile.classList.add('strand-rail-fallback');
+    }catch(_){
+      try{ img.style.display = 'none'; }catch(__){}
+    }
+  }
+  async function nalunoRescueThumb(img){
+    if(!img || img.dataset.rescuing === '1') return;
+    img.dataset.rescuing = '1';
+    img.onerror = null;
+    const media = img.getAttribute('data-media') || '';
+    const id = img.getAttribute('data-bcast-id') || '';
+    const key = id || media;
+    if(!media){ hideBrokenThumb(img); return; }
+    if(!__thumbRescue[key]){
+      __thumbRescue[key] = (async function(){
+        let data = null;
+        try{
+          if(typeof generateVideoThumbnail === 'function') data = await generateVideoThumbnail(media);
+        }catch(_){}
+        if(!data) return null;
+        let stored = data;
+        try{
+          if(typeof persistThumbnailDataUrl === 'function'){
+            const up = await persistThumbnailDataUrl(data);
+            if(up) stored = up;
+          }
+        }catch(_){}
+        try{
+          if(id && typeof fbDb !== 'undefined' && fbDb && typeof currentUser !== 'undefined' && currentUser
+             && stored && String(stored).indexOf('data:') !== 0){
+            const snap = await fbDb.collection('broadcasts').doc(id).get();
+            const d = snap.exists ? (snap.data() || {}) : {};
+            if(d.creatorUid === currentUser.uid){
+              await fbDb.collection('broadcasts').doc(id).set({ thumbUrl: stored }, { merge: true });
+            }
+          }
+        }catch(_){}
+        return stored;
+      })();
+    }
+    try{
+      const url = await __thumbRescue[key];
+      if(url){ img.src = url; img.style.display = ''; return; }
+    }catch(_){}
+    try{
+      if(media){
+        const v = document.createElement('video');
+        v.muted = true;
+        v.playsInline = true;
+        v.setAttribute('playsinline', '');
+        v.preload = 'metadata';
+        v.src = media;
+        v.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;';
+        img.replaceWith(v);
+        return;
+      }
+    }catch(_){}
+    hideBrokenThumb(img);
+  }
+  window.nalunoRescueThumb = nalunoRescueThumb;
+  window.armStrandThumbs = armStrandThumbs;
+  function armStrandThumbs(root){
+    const scope = root || document;
+    try{
+      scope.querySelectorAll('img[data-media]').forEach(function(img){
+        if(img.dataset.needThumb === '1' && !img.getAttribute('src')){
+          nalunoRescueThumb(img);
+        }
+      });
+    }catch(_){}
   }
 
   function strandFolderHtml(f){
@@ -171,9 +251,15 @@
     const rest = items.slice(1, 5);
     const rail = rest.map(function(b, i){
       const thumb = broadcastPosterSrc(b);
+      const media = broadcastPreviewSrc(b);
+      const bid = escapeHtml(String(b.id || ''));
       const label = 'E' + (i + 2);
+      const mediaAttr = media ? (' data-media="' + escapeHtml(media) + '" data-bcast-id="' + bid + '" onerror="nalunoRescueThumb(this)"') : '';
       if(thumb){
-        return '<div class="strand-rail-tile"><img src="' + escapeHtml(thumb) + '" alt="" /><span>' + label + '</span></div>';
+        return '<div class="strand-rail-tile"><img src="' + escapeHtml(thumb) + '" alt=""' + mediaAttr + ' /><span>' + label + '</span></div>';
+      }
+      if(media){
+        return '<div class="strand-rail-tile"><img alt="" data-need-thumb="1"' + mediaAttr + ' /><span>' + label + '</span></div>';
       }
       const ch = escapeHtml(String((b.creatorName || '?')).slice(0,1).toUpperCase());
       return '<div class="strand-rail-tile strand-rail-fallback">' + ch + '<span>' + label + '</span></div>';
@@ -361,6 +447,7 @@
         pauseAllStrandPreviews(grid);
         try{ if(typeof nalunoRevealBroadcastPlates === 'function') nalunoRevealBroadcastPlates(grid); }catch(_){}
         try{ armStrandPreviews(grid); }catch(_){}
+        try{ armStrandThumbs(grid); }catch(_){}
         return;
       }
       openStrandFolderId = null;
@@ -395,6 +482,7 @@
     try{ if(typeof NalunoAds !== 'undefined' && NalunoAds.bindPlates) NalunoAds.bindPlates(grid); }catch(_){}
     try{ if(typeof nalunoRevealBroadcastPlates === 'function') nalunoRevealBroadcastPlates(grid); }catch(_){}
     try{ armStrandPreviews(grid); }catch(_){}
+    try{ armStrandThumbs(grid); }catch(_){}
   }
 
   function openStrandFolder(id){

@@ -17,8 +17,17 @@ async function sha256Hex(text){
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
 }
+function compassStoredHash(){
+  try{
+    if(typeof nalunoVault !== 'undefined' && typeof nalunoVault.get === 'function'){
+      const v = nalunoVault.get('compassPasswordHash');
+      if(v) return v;
+    }
+  }catch(_){}
+  return (currentProfile && currentProfile.compassPasswordHash) || '';
+}
 function compassIsLocked(){
-  return !!(currentProfile && currentProfile.compassPasswordHash) && !compassUnlockedThisSession;
+  return !!compassStoredHash() && !compassUnlockedThisSession;
 }
 function showCompassLockScreenIfNeeded(){
   if(compassIsLocked()){
@@ -38,7 +47,7 @@ function showCompassLockScreenIfNeeded(){
 $('compassLockSubmitBtn').onclick = async ()=>{
   const entered = $('compassLockInput').value;
   const hash = await sha256Hex(entered);
-  if(hash === currentProfile.compassPasswordHash){
+  if(hash === compassStoredHash()){
     compassUnlockedThisSession = true;
     showCompassLockScreenIfNeeded();
     try{
@@ -56,17 +65,21 @@ $('compassLockInput').addEventListener('keydown', e=>{
 });
 $('compassLockToggleBtn').onclick = async ()=>{
   if(!currentUser || !fbDb) return;
-  const hasPassword = !!(currentProfile && currentProfile.compassPasswordHash);
+  const hasPassword = !!compassStoredHash();
   if(!hasPassword){
     const newPass = prompt('Set a password to lock Compass — leave blank to cancel:');
     if(!newPass) return;
     const hash = await sha256Hex(newPass);
-    if(typeof nalunoVault !== 'undefined' && nalunoVault.write){
-      await nalunoVault.write({ compassPasswordHash: hash });
-    } else {
-      await fbDb.collection('users').doc(currentUser.uid).set({ compassPasswordHash: hash }, { merge:true });
+    try{
+      if(typeof nalunoVault !== 'undefined' && nalunoVault.write){
+        await nalunoVault.write({ compassPasswordHash: hash });
+      } else {
+        await fbDb.collection('users').doc(currentUser.uid).set({ compassPasswordHash: hash }, { merge:true });
+      }
+    }catch(e){
+      try{ await fbDb.collection('users').doc(currentUser.uid).set({ compassPasswordHash: hash }, { merge:true }); }catch(_){}
     }
-    currentProfile.compassPasswordHash = hash;
+    if(currentProfile) currentProfile.compassPasswordHash = hash;
     toast('Compass is now locked with a password');
   } else {
     const action = prompt('Compass is currently password-protected. Type "remove" to remove the password, or type a new password to change it:');
@@ -74,23 +87,28 @@ $('compassLockToggleBtn').onclick = async ()=>{
     const currentPass = prompt('Confirm your current Compass password:');
     if(!currentPass) return;
     const currentHash = await sha256Hex(currentPass);
-    if(currentHash !== currentProfile.compassPasswordHash){ toast('Incorrect current password'); return; }
+    if(currentHash !== compassStoredHash()){ toast('Incorrect current password'); return; }
     if(action.trim().toLowerCase() === 'remove'){
-      if(typeof nalunoVault !== 'undefined' && nalunoVault.write){
-        await nalunoVault.write({ compassPasswordHash: firebase.firestore.FieldValue.delete() });
-      } else {
+      try{
+        if(typeof nalunoVault !== 'undefined' && nalunoVault.write){
+          await nalunoVault.write({ compassPasswordHash: firebase.firestore.FieldValue.delete() });
+        }
         await fbDb.collection('users').doc(currentUser.uid).set({ compassPasswordHash: firebase.firestore.FieldValue.delete() }, { merge:true });
-      }
-      delete currentProfile.compassPasswordHash;
+      }catch(_){}
+      if(currentProfile) delete currentProfile.compassPasswordHash;
       toast('Compass password removed');
     } else {
       const newHash = await sha256Hex(action);
-      if(typeof nalunoVault !== 'undefined' && nalunoVault.write){
-        await nalunoVault.write({ compassPasswordHash: newHash });
-      } else {
-        await fbDb.collection('users').doc(currentUser.uid).set({ compassPasswordHash: newHash }, { merge:true });
+      try{
+        if(typeof nalunoVault !== 'undefined' && nalunoVault.write){
+          await nalunoVault.write({ compassPasswordHash: newHash });
+        } else {
+          await fbDb.collection('users').doc(currentUser.uid).set({ compassPasswordHash: newHash }, { merge:true });
+        }
+      }catch(e){
+        try{ await fbDb.collection('users').doc(currentUser.uid).set({ compassPasswordHash: newHash }, { merge:true }); }catch(_){}
       }
-      currentProfile.compassPasswordHash = newHash;
+      if(currentProfile) currentProfile.compassPasswordHash = newHash;
       toast('Compass password updated');
     }
   }

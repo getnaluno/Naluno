@@ -1196,7 +1196,11 @@ function loadRealProfile(user){
     if(!r) return;
     vaultUnsub = r.onSnapshot(function(snap){
       const v = snap.exists ? (snap.data() || {}) : {};
-      if(currentProfile) nalunoVault.mergeInto(currentProfile, v);
+      if(typeof nalunoVault !== 'undefined' && nalunoVault.acceptSnapshot){
+        nalunoVault.acceptSnapshot(v);
+      } else if(currentProfile && typeof nalunoVault !== 'undefined'){
+        nalunoVault.mergeInto(currentProfile, v);
+      }
       try{
         if($('recoveryEmailInput') && v.recoveryEmail != null && !isCallsignEditing()){
           $('recoveryEmailInput').value = v.recoveryEmail || '';
@@ -1210,11 +1214,14 @@ function loadRealProfile(user){
     profileUnsub = fbDb.collection('users').doc(user.uid).onSnapshot(doc=>{
       listenRetry = 0;
       if(doc.exists){
+        const previous = currentProfile;
         const incoming = { photo:null, ...DEFAULT_PROFILE, ...doc.data() };
         currentProfile = incoming;
         try{
-          if(typeof nalunoVault !== 'undefined' && nalunoVault.migrateFromPublic){
-            nalunoVault.migrateFromPublic(doc.data(), user.uid);
+          if(typeof nalunoVault !== 'undefined'){
+            if(typeof nalunoVault.stitch === 'function') nalunoVault.stitch(currentProfile, previous);
+            else if(typeof nalunoVault.mergeInto === 'function') nalunoVault.mergeInto(currentProfile, nalunoVault._cache || {});
+            if(nalunoVault.migrateFromPublic) nalunoVault.migrateFromPublic(doc.data(), user.uid);
           }
         }catch(_){}
         if(nalunoAccountIsClosed(incoming)){

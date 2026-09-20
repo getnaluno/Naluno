@@ -626,12 +626,17 @@ function renderBspaceRelated(){
     }
     const head = `<div class="hint" style="margin-bottom:8px;">${bspaceEscape(rel.label || 'Nearby')}</div>`;
     el.innerHTML = head + '<div class="nearby-strip">' + rel.items.map(function(item){
-      const thumb = item.thumbUrl || item.thumb || '';
-      const media = thumb
-        ? '<img src="'+bspaceEscape(thumb)+'" alt="" />'
-        : '<div class="nearby-fallback">'+bspaceEscape(String(item.creatorName||'?').slice(0,1).toUpperCase())+'</div>';
+      const thumbRaw = item.thumbUrl || item.thumb || '';
+      const thumb = (thumbRaw && !(typeof nalunoThumbLooksDead === 'function' && nalunoThumbLooksDead(thumbRaw))) ? thumbRaw : '';
+      const media = item.mediaUrl || item.videoUrl || '';
+      const rescue = media ? (' data-media="'+bspaceEscape(media)+'" data-bcast-id="'+bspaceEscape(item.id||'')+'" onerror="nalunoRescueThumb(this)"') : '';
+      const mediaHtml = thumb
+        ? '<img src="'+bspaceEscape(thumb)+'" alt=""'+rescue+' />'
+        : (media
+          ? '<img alt="" data-need-thumb="1"'+rescue+' />'
+          : '<div class="nearby-fallback">'+bspaceEscape(String(item.creatorName||'?').slice(0,1).toUpperCase())+'</div>');
       return `<button type="button" class="nearby-tile" data-rel-id="${bspaceEscape(item.id)}">
-        <div class="nearby-frame">${media}<span class="nearby-title">${bspaceEscape((item.title||'Broadcast').slice(0,42))}</span></div>
+        <div class="nearby-frame">${mediaHtml}<span class="nearby-title">${bspaceEscape((item.title||'Broadcast').slice(0,42))}</span></div>
       </button>`;
     }).join('') + '</div>';
     el.querySelectorAll('[data-rel-id]').forEach(function(node){
@@ -640,6 +645,8 @@ function renderBspaceRelated(){
         if(typeof openBroadcastById === 'function') openBroadcastById(id);
       };
     });
+    try{ if(typeof armStrandThumbs === 'function') armStrandThumbs(el); }catch(_){}
+    try{ el.querySelectorAll('img[data-need-thumb="1"]').forEach(function(img){ if(typeof nalunoRescueThumb === 'function') nalunoRescueThumb(img); }); }catch(_){}
   }
   if(typeof relatedBroadcasts === 'function'){
     relatedBroadcasts(b).then(paint).catch(function(){ paint({ items: [], label: 'Related Broadcasts' }); });
