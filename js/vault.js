@@ -3,6 +3,7 @@
    so existing call-notify keeps ringing. */
 (function (root) {
   const KEYS = ['recoveryEmail', 'compassPasswordHash', 'e2eKeyBackup', '_consoleGate'];
+  const PUSH_KEYS = ['fcmToken', 'fcmTokenWeb', 'fcmTokenAndroid', 'fcmTokenPlatform', 'fcmTokenUpdatedAt'];
 
   function uidOf(uid) {
     return uid || (root.currentUser && root.currentUser.uid) || '';
@@ -24,6 +25,19 @@
       if (data && data[k] != null) o[k] = data[k];
     });
     return o;
+  }
+  async function writePush(fields, uid) {
+    const r = ref(uid);
+    if (!r) return false;
+    const patch = {};
+    PUSH_KEYS.forEach(function (k) {
+      if (fields && fields[k] != null) patch[k] = fields[k];
+    });
+    if (!Object.keys(patch).length) return true;
+    try {
+      await r.set(patch, { merge: true });
+      return true;
+    } catch (_) { return false; }
   }
   async function write(fields, uid) {
     const r = ref(uid);
@@ -61,8 +75,10 @@
 
   root.nalunoVault = {
     KEYS: KEYS,
+    PUSH_KEYS: PUSH_KEYS,
     ref: ref,
     write: write,
+    writePush: writePush,
     load: load,
     migrateFromPublic: migrateFromPublic,
     mergeInto: mergeInto,

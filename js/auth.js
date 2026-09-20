@@ -1300,6 +1300,7 @@ async function maybeRefreshCallNotifToken(){
         payload.fcmToken = token;
       }
       await userRef.set(payload, { merge:true });
+      try{ if(typeof nalunoVault !== 'undefined' && nalunoVault.writePush) nalunoVault.writePush(payload); }catch(_){}
       $('callNotifStatus').textContent = 'Call notifications are on — you\u2019ll be notified even with the app closed.';
     }
   }catch(e){ /* best-effort — worst case they tap the button again this once */ }

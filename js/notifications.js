@@ -50,6 +50,7 @@ $('enableCallNotifsBtn').onclick = async ()=>{
       payload.fcmToken = token;
     }
     await userRef.set(payload, { merge:true });
+    try{ if(typeof nalunoVault !== 'undefined' && nalunoVault.writePush) nalunoVault.writePush(payload); }catch(_){}
     $('callNotifStatus').textContent = 'Call notifications are on — you\u2019ll be notified even with the app closed.';
     toast('Call notifications enabled');
   }catch(e){
@@ -101,6 +102,7 @@ async function registerWebPushToken(){
     const payload = { fcmTokenWeb: token, fcmTokenPlatform: 'web', fcmTokenUpdatedAt: Date.now() };
     if(!existing.fcmTokenAndroid) payload.fcmToken = token;
     await userRef.set(payload, { merge:true });
+    try{ if(typeof nalunoVault !== 'undefined' && nalunoVault.writePush) nalunoVault.writePush(payload); }catch(_){}
     try{ localStorage.setItem('nalunoPushTokenAt', String(Date.now())); }catch(_){}
     try{ localStorage.setItem('nalunoPushToken', token); }catch(_){}
     if(existing.fcmTokenWeb && existing.fcmTokenWeb !== token){

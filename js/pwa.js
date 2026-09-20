@@ -148,6 +148,16 @@ async function saveNativeFcmToken(token){
       fcmTokenPlatform: 'android',
       fcmTokenUpdatedAt: Date.now(),
     }, { merge: true });
+    try{
+      if(typeof nalunoVault !== 'undefined' && nalunoVault.writePush){
+        nalunoVault.writePush({
+          fcmToken: token,
+          fcmTokenAndroid: token,
+          fcmTokenPlatform: 'android',
+          fcmTokenUpdatedAt: Date.now(),
+        });
+      }
+    }catch(_){}
     window.__nalunoNativeFcmToken = token;
     try{
       if($('callNotifStatus')){
