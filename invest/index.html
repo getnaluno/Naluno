@@ -380,7 +380,7 @@ footer a:hover{color:var(--mint);}
         if(pack.j && pack.j.ok){
           form.reset();
           setStatus('ok', 'Received. A person will read this and write back.');
-          try{ if(window.nalunoPulse) window.nalunoPulse('contact'); }catch(_){}
+          try{ if(window.nalunoPulse){ window.nalunoPulse('invest'); window.nalunoPulse('contact'); } }catch(_){}
           return;
         }
         setStatus('err', (pack.j && pack.j.error) || 'Could not send just now. Try again in a minute.');
@@ -395,6 +395,6 @@ footer a:hover{color:var(--mint);}
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 <script src="/firebase-config.js?v=20260914c"></script>
-<script src="/js/site-pulse.js?v=20260918g"></script>
+<script src="/js/site-pulse.js?v=20260921a"></script>
 </body>
 </html>
