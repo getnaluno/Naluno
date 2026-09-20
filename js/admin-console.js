@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260921a';
+  const BUILD = '20260921c';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -401,6 +401,174 @@
     try { await db.collection('adminAudit').add(row); } catch (_) {}
   }
 
+  function handleGuard() {
+    try {
+      if (typeof NalunoHandleGuard !== 'undefined') return NalunoHandleGuard;
+    } catch (_) {}
+    return null;
+  }
+  function normAdminHandle(raw) {
+    const G = handleGuard();
+    if (G) return G.normHandle(raw);
+    return String(raw || '').replace(/^@/, '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 24);
+  }
+  async function seedIdentity() {
+    try {
+      await adminWorker('/v1/admin/handles/seed', { method: 'POST', body: '{}' });
+    } catch (_) {}
+    const db = adminDb();
+    if (!db) return;
+    const G = handleGuard();
+    const seed = (G && G.SEED_RESERVED) || [];
+    let holder = '';
+    try {
+      const n = await db.collection('handles').doc('naluno').get();
+      if (n && n.exists) holder = String((n.data() || {}).uid || '');
+    } catch (_) {}
+    const existing = await colDocs('reservedHandles', 400);
+    const have = {};
+    existing.forEach(function (r) { have[String(r.handle || r.id || '')] = true; });
+    const now = Date.now();
+    const actor = currentUser ? currentUser.uid : 'seed';
+    for (let i = 0; i < seed.length; i++) {
+      const s = seed[i];
+      if (have[s.handle]) {
+        if (s.handle === 'naluno' && holder) {
+          try {
+            await db.collection('reservedHandles').doc('naluno').set({
+              holderUid: holder, updatedAt: now, updatedBy: actor,
+            }, { merge: true });
+          } catch (_) {}
+        }
+        continue;
+      }
+      const core = String(s.handle || '').replace(/_/g, '');
+      const row = {
+        handle: s.handle,
+        core: core,
+        category: s.category || 'other',
+        reason: s.reason || '',
+        status: 'reserved',
+        holderUid: s.handle === 'naluno' ? holder : '',
+        createdAt: now,
+        createdBy: actor,
+        updatedAt: now,
+        updatedBy: actor,
+      };
+      try {
+        await db.collection('reservedHandles').doc(s.handle).set(row);
+        await db.collection('reservedCores').doc(core).set({
+          handle: s.handle, core: core, holderUid: row.holderUid, category: s.category,
+        });
+      } catch (_) {}
+    }
+    try { await writeAudit('handle-seed', 'reservedHandles', 'seed'); } catch (_) {}
+  }
+  async function saveReservedHandle(handle, category, reason, holderUid) {
+    const h = normAdminHandle(handle);
+    const G = handleGuard();
+    if (G && !G.handleFormatOk(h)) {
+      toast(G.FORMAT_MSG);
+      return false;
+    }
+    if (!h || h.length < 3) {
+      toast('Choose a handle with at least 3 letters (a–z, 0–9, _).');
+      return false;
+    }
+    const cat = ['official', 'system', 'support', 'other'].indexOf(category) >= 0 ? category : 'other';
+    const db = adminDb();
+    const now = Date.now();
+    const actor = currentUser ? currentUser.uid : '';
+    const prev = ((__snap && __snap.identity && __snap.identity.list) || []).filter(function (r) {
+      return r.handle === h;
+    })[0] || null;
+    const row = {
+      handle: h,
+      core: h.replace(/_/g, ''),
+      category: cat,
+      reason: String(reason || '').slice(0, 240),
+      status: 'reserved',
+      holderUid: holderUid != null ? String(holderUid) : (prev ? prev.holderUid : ''),
+      createdAt: prev ? prev.createdAt : now,
+      createdBy: prev ? prev.createdBy : actor,
+      updatedAt: now,
+      updatedBy: actor,
+    };
+    if (db) {
+      try {
+        await db.collection('reservedHandles').doc(h).set(row, { merge: true });
+        await db.collection('reservedCores').doc(row.core).set({
+          handle: h, core: row.core, holderUid: row.holderUid, category: cat,
+        }, { merge: true });
+        if (row.core !== h) {
+          await db.collection('reservedHandles').doc(row.core).set(Object.assign({}, row, {
+            handle: row.core, aliasOf: h,
+          }), { merge: true });
+        }
+      } catch (e) {
+        toast('Could not save that handle');
+        return false;
+      }
+    }
+    try {
+      await adminWorker('/v1/admin/handles', {
+        method: 'POST',
+        body: JSON.stringify({ handle: h, category: cat, reason: row.reason, holderUid: row.holderUid }),
+      });
+    } catch (_) {}
+    await writeAudit(prev ? 'handle-update' : 'handle-reserve', h, row.reason, {
+      previous: prev ? { category: prev.category, reason: prev.reason } : null,
+      next: { category: cat, reason: row.reason },
+    });
+    toast('@' + h + ' is reserved');
+    return true;
+  }
+  async function removeReservedHandle(handle, reason) {
+    const h = normAdminHandle(handle);
+    if (!h) return false;
+    const db = adminDb();
+    const core = h.replace(/_/g, '');
+    if (db) {
+      try {
+        await db.collection('reservedHandles').doc(h).delete();
+        if (core) await db.collection('reservedCores').doc(core).delete();
+        if (core !== h) await db.collection('reservedHandles').doc(core).delete();
+      } catch (e) {
+        toast('Could not remove that handle');
+        return false;
+      }
+    }
+    try {
+      await adminWorker('/v1/admin/handles/remove', {
+        method: 'POST',
+        body: JSON.stringify({ handle: h, reason: reason || '' }),
+      });
+    } catch (_) {}
+    await writeAudit('handle-unreserve', h, reason || '');
+    toast('@' + h + ' is no longer reserved');
+    return true;
+  }
+  async function reviewHandleFlag(id, status) {
+    if (!id) return;
+    const db = adminDb();
+    if (db) {
+      try {
+        await db.collection('handleFlags').doc(id).set({
+          status: status,
+          reviewedBy: currentUser ? currentUser.uid : '',
+          reviewedAt: Date.now(),
+        }, { merge: true });
+      } catch (_) {}
+    }
+    try {
+      await adminWorker('/v1/admin/handles/flag', {
+        method: 'POST',
+        body: JSON.stringify({ id: id, status: status }),
+      });
+    } catch (_) {}
+    await writeAudit('handle-flag', id, status);
+  }
+
   /* -------- Live snapshot from Firestore (operator SDK) -------- */
   async function colDocs(name, limit) {
     const db = adminDb();
@@ -774,6 +942,8 @@
     listenCol('adminAudit', 80, 'audit');
     listenCol('originMarks', 200, 'originMarks');
     listenCol('signals', 400, '_signalsTop');
+    listenCol('reservedHandles', 400, 'reservedHandles');
+    listenCol('handleFlags', 200, 'handleFlags');
     listenDoc('economyConfig', 'flags', 'flags');
     listenDoc('economyConfig', 'adRates', 'adRates');
     listenDoc('economyConfig', 'currency', 'currency', function (data) {
@@ -815,6 +985,7 @@
       zone: Data ? (Data.adminZone ? Data.adminZone() : Data.localZone()) : undefined,
       beacons: [], originMarks: [], deskMail: [], deskAds: [],
       siteSessions: [], siteDays: [],
+      reservedHandles: [], handleFlags: [],
       adRates: {},
       currency: {},
       costInputs: readCostInputs(),
@@ -827,6 +998,8 @@
       colDocs('deskAds', 80).then(function (r) { pack.deskAds = r; }),
       colDocsOrder('siteSessions', 'startedAt', 800).then(function (r) { pack.siteSessions = r; }),
       colDocs('siteDays', 180).then(function (r) { pack.siteDays = r; }),
+      colDocs('reservedHandles', 400).then(function (r) { pack.reservedHandles = r; }),
+      colDocs('handleFlags', 200).then(function (r) { pack.handleFlags = r; }),
     ];
     if (db) {
       core.push(db.collection('economyConfig').doc('flags').get().then(function (s) {
@@ -2069,6 +2242,143 @@
             + '</div>';
         }).join(''));
       goButtons();
+      return;
+    }
+
+    if (tab === 'identity') {
+      const idn = d.identity || { list: [], flags: [], open_flags: [], by_category: {}, total: 0 };
+      const q = String(__tabCache.identityQ || '').toLowerCase().replace(/^@/, '');
+      const catFilter = String(__tabCache.identityCat || '');
+      let list = (idn.list || []).filter(function (row) {
+        if (catFilter && row.category !== catFilter) return false;
+        if (!q) return true;
+        return [row.handle, row.reason, row.category, row.holderUid].join(' ').toLowerCase().indexOf(q) >= 0;
+      });
+      const catLabel = { official: 'Official', system: 'System', support: 'Support', other: 'Other' };
+      const catSelect = function (current, handle) {
+        return '<select class="idCat" data-handle="' + escapeHtml(handle) + '" style="width:auto;min-width:110px;padding:6px 8px;font-size:12px;">'
+          + ['official', 'system', 'support', 'other'].map(function (c) {
+            return '<option value="' + c + '"' + (c === current ? ' selected' : '') + '>' + (catLabel[c] || c) + '</option>';
+          }).join('')
+          + '</select>';
+      };
+      if (!__tabCache.identitySeedTried) {
+        __tabCache.identitySeedTried = true;
+        seedIdentity().then(function () { loadTab('identity', true); }).catch(function () {});
+      }
+      el.innerHTML =
+        kpis([
+          ['Reserved', idn.total || 0],
+          ['Official', (idn.by_category && idn.by_category.official) || 0],
+          ['System', (idn.by_category && idn.by_category.system) || 0],
+          ['Support', (idn.by_category && idn.by_category.support) || 0],
+          ['Open flags', (idn.open_flags || []).length],
+        ])
+        + card('Reserved Handles',
+          '<p class="sub">Protected Callsigns inside Naluno. These names cannot be claimed on sign-up. This does not reserve names on other products.</p>'
+          + '<div class="row" style="margin-top:0;">'
+          + '<input id="idSearch" placeholder="Search handle, reason or category" style="flex:1" value="' + escapeHtml(__tabCache.identityQ || '') + '" />'
+          + '<select id="idCatFilter" style="width:auto;min-width:120px;padding:8px 10px;">'
+          + '<option value="">All</option>'
+          + '<option value="official"' + (catFilter === 'official' ? ' selected' : '') + '>Official</option>'
+          + '<option value="system"' + (catFilter === 'system' ? ' selected' : '') + '>System</option>'
+          + '<option value="support"' + (catFilter === 'support' ? ' selected' : '') + '>Support</option>'
+          + '<option value="other"' + (catFilter === 'other' ? ' selected' : '') + '>Other</option>'
+          + '</select></div>'
+          + table(['Handle', 'Status', 'Category', 'Reason', 'Holder', 'When', 'Who', ''],
+            list.map(function (row) {
+              return [
+                '@' + escapeHtml(row.handle),
+                'Reserved',
+                catSelect(row.category, row.handle),
+                '<input class="idReason" data-handle="' + escapeHtml(row.handle) + '" value="' + escapeHtml(row.reason || '') + '" style="padding:6px 8px;font-size:12px;" />',
+                row.holderUid ? escapeHtml(String(row.holderUid).slice(0, 10)) : '—',
+                escapeHtml(when(row.createdAt || row.updatedAt)),
+                escapeHtml(String(row.updatedBy || row.createdBy || '').slice(0, 8) || '—'),
+                '<button type="button" class="ghost idSave" data-handle="' + escapeHtml(row.handle) + '">Save</button> '
+                + '<button type="button" class="ghost idDrop" data-handle="' + escapeHtml(row.handle) + '">Remove</button>',
+              ];
+            }))
+          + '<div class="row">'
+          + '<input id="idNewHandle" placeholder="handle" style="flex:1;min-width:140px;" />'
+          + '<select id="idNewCat" style="width:auto;min-width:130px;padding:8px 10px;">'
+          + '<option value="official">Official</option>'
+          + '<option value="system">System</option>'
+          + '<option value="support">Support</option>'
+          + '<option value="other">Other</option>'
+          + '</select>'
+          + '<input id="idNewReason" placeholder="internal reason" style="flex:1;min-width:160px;" />'
+          + '<button type="button" class="primary" id="idAdd">Add</button>'
+          + '<button type="button" class="ghost" id="idSeed">Seed list</button>'
+          + '</div>')
+        + card('Potential brand impersonation / similarity detected',
+          ((idn.flags || []).length
+            ? table(['Handle', 'Close to', 'Why', 'Who', 'When', 'Status', ''],
+              (idn.flags || []).slice(0, 40).map(function (f) {
+                return [
+                  '@' + escapeHtml(f.handle),
+                  f.reserved ? ('@' + escapeHtml(f.reserved)) : '—',
+                  escapeHtml(f.reason || ''),
+                  escapeHtml(String(f.uid || '').slice(0, 10)),
+                  escapeHtml(when(f.createdAt)),
+                  escapeHtml(f.status || 'open'),
+                  (f.status === 'open' || f.status === 'new')
+                    ? ('<button type="button" class="ghost idFlag" data-id="' + escapeHtml(f.id) + '" data-s="reviewed">Reviewed</button> '
+                      + '<button type="button" class="ghost idFlag" data-id="' + escapeHtml(f.id) + '" data-s="dismissed">Dismiss</button>')
+                    : '',
+                ];
+              }))
+            : '<p class="sub">No similar handles have been flagged.</p>'));
+      const search = $('idSearch');
+      if (search) {
+        search.oninput = function () {
+          __tabCache.identityQ = search.value;
+        };
+        search.onchange = function () { loadTab('identity', false); };
+      }
+      const catEl = $('idCatFilter');
+      if (catEl) catEl.onchange = function () {
+        __tabCache.identityCat = catEl.value;
+        loadTab('identity', false);
+      };
+      el.querySelectorAll('.idSave').forEach(function (btn) {
+        btn.onclick = function () {
+          const h = btn.getAttribute('data-handle');
+          const sel = el.querySelector('.idCat[data-handle="' + h + '"]');
+          const reason = el.querySelector('.idReason[data-handle="' + h + '"]');
+          saveReservedHandle(h, sel ? sel.value : 'other', reason ? reason.value : '').then(function (ok) {
+            if (ok) loadTab('identity', true);
+          });
+        };
+      });
+      el.querySelectorAll('.idDrop').forEach(function (btn) {
+        btn.onclick = function () {
+          const h = btn.getAttribute('data-handle');
+          if (!h) return;
+          if (!window.confirm('Remove @' + h + ' from the reserved list?')) return;
+          removeReservedHandle(h, 'removed from Identity').then(function (ok) {
+            if (ok) loadTab('identity', true);
+          });
+        };
+      });
+      el.querySelectorAll('.idFlag').forEach(function (btn) {
+        btn.onclick = function () {
+          reviewHandleFlag(btn.getAttribute('data-id'), btn.getAttribute('data-s')).then(function () {
+            loadTab('identity', true);
+          });
+        };
+      });
+      if ($('idAdd')) $('idAdd').onclick = function () {
+        const h = $('idNewHandle') && $('idNewHandle').value;
+        const c = $('idNewCat') && $('idNewCat').value;
+        const r = $('idNewReason') && $('idNewReason').value;
+        saveReservedHandle(h, c, r).then(function (ok) {
+          if (ok) loadTab('identity', true);
+        });
+      };
+      if ($('idSeed')) $('idSeed').onclick = function () {
+        seedIdentity().then(function () { loadTab('identity', true); toast('Protected names are on the list'); });
+      };
       return;
     }
 

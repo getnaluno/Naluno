@@ -262,6 +262,100 @@ function handleToAuthEmail(handle){
   return h + '@' + NALUNO_HANDLE_EMAIL_DOMAIN;
 }
 
+function nalunoHandleGuard(){
+  try{
+    if(typeof NalunoHandleGuard !== 'undefined') return NalunoHandleGuard;
+  }catch(_){}
+  try{
+    if(typeof window !== 'undefined' && window.NalunoHandleGuard) return window.NalunoHandleGuard;
+  }catch(_){}
+  return null;
+}
+function nalunoEconomyUrl(){
+  try{
+    if(typeof location !== 'undefined' && location.origin) return location.origin + '/__naluno-economy';
+  }catch(_){}
+  return 'https://naluno-economy.naluno.workers.dev';
+}
+function reservedHandleMessage(){
+  const G = nalunoHandleGuard();
+  return (G && G.RESERVED_MSG) || 'This handle is reserved and cannot be claimed.';
+}
+
+async function reservedBlockReason(handle, uid){
+  const G = nalunoHandleGuard();
+  const clean = G ? G.normHandle(handle) : normalizeAuthHandle(handle);
+  const reservedMsg = reservedHandleMessage();
+  if(G){
+    if(!G.handleFormatOk(clean)) return G.FORMAT_MSG;
+    const d = G.decideHandle(clean, { reserved: G.SEED_RESERVED, uid: uid || '' });
+    if(!d.ok && d.code === 'reserved') return reservedMsg;
+    if(!d.ok && d.code === 'format') return d.error;
+  } else if(!clean || clean.length < 3){
+    return 'Choose a handle with at least 3 letters (a–z, 0–9, _).';
+  }
+  if(typeof fbDb === 'undefined' || !fbDb) return null;
+  try{
+    const doc = await fbDb.collection('reservedHandles').doc(clean).get();
+    if(doc && doc.exists){
+      const holder = String((doc.data() || {}).holderUid || '');
+      if(!holder || holder !== uid) return reservedMsg;
+    }
+  }catch(_){}
+  try{
+    const core = G ? G.handleCore(clean) : String(clean).replace(/_/g, '');
+    if(core){
+      const c = await fbDb.collection('reservedCores').doc(core).get();
+      if(c && c.exists){
+        const holder = String((c.data() || {}).holderUid || '');
+        if(!holder || holder !== uid) return reservedMsg;
+      }
+    }
+  }catch(_){}
+  return null;
+}
+
+async function workerHandleCheck(handle){
+  try{
+    const r = await fetch(nalunoEconomyUrl() + '/v1/handle/check?h=' + encodeURIComponent(handle), { cache: 'no-store' });
+    if(!r) return null;
+    return await r.json();
+  }catch(_){ return null; }
+}
+
+async function workerHandleClaim(handle, user){
+  try{
+    const tok = user && user.getIdToken ? await user.getIdToken() : '';
+    if(!tok) return null;
+    const r = await fetch(nalunoEconomyUrl() + '/v1/handle/claim', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ handle: handle }),
+      cache: 'no-store',
+    });
+    const j = await r.json().catch(function(){ return null; });
+    if(j) j._status = r.status;
+    return j;
+  }catch(_){ return null; }
+}
+
+async function flagSimilarHandle(handle, uid, similar){
+  if(!fbDb || !similar || !handle || !uid) return;
+  try{
+    const id = 'f_' + handle + '_' + String(uid).slice(0, 8);
+    await fbDb.collection('handleFlags').doc(id).set({
+      handle: handle,
+      uid: uid,
+      kind: 'similar',
+      reserved: similar.reserved || '',
+      reason: similar.reason || '',
+      score: similar.score || 0,
+      status: 'open',
+      createdAt: Date.now(),
+    }, { merge: true });
+  }catch(_){}
+}
+
 function isNativeShell(){
   try{
     return !!(window.Capacitor && (
@@ -450,6 +544,16 @@ async function nalunoHandleSignUp(){
   try{
     // Pre-check handle availability when signing up with handle
     if(!usingEmail && handle && fbDb){
+      const blocked = await reservedBlockReason(handle, '');
+      if(blocked){
+        authStatus(blocked, true);
+        return;
+      }
+      const checked = await workerHandleCheck(handle);
+      if(checked && checked.ok === false){
+        authStatus(checked.error || (checked.reserved ? reservedHandleMessage() : 'That handle is taken — try another.'), true);
+        return;
+      }
       const href = fbDb.collection('handles').doc(handle);
       const snap = await href.get();
       if(snap.exists){
@@ -491,11 +595,12 @@ async function nalunoHandleSignUp(){
         authStatus('Account created — welcome.');
       }catch(he){
         console.warn('[auth] claim handle', he);
-        // The account is real and usable (fallback profile above already
-        // covers it) — the person just needs a different handle. Take them
-        // straight to Callsign, already open to editing, instead of leaving
-        // them to guess where to fix it.
-        authStatus('"' + handle + '" was taken right as you signed up — pick another Callsign below.', true);
+        const msg = String((he && he.message) || '');
+        if(/reserved and cannot be claimed/i.test(msg)){
+          authStatus(msg, true);
+        } else {
+          authStatus('"' + handle + '" was taken right as you signed up — pick another Callsign below.', true);
+        }
         try{
           currentUser = user;
           if(typeof loadRealProfile === 'function') loadRealProfile(user);
@@ -930,17 +1035,61 @@ if(fbAuth){
 }
 
 /* Claims handles/{handle} -> uid via a transaction, so two people racing for the
-   same handle can't both win — Firestore rejects the loser's write. */
+   same handle can't both win — Firestore rejects the loser's write. Reserved
+   identities are refused by the economy worker, then by reservedHandles in
+   Firestore, then by this transaction. */
 async function claimHandle(handle, uid){
-  const clean = handle.replace(/^@/, '').toLowerCase();
+  const G = nalunoHandleGuard();
+  const clean = G ? G.normHandle(handle) : String(handle || '').replace(/^@/, '').toLowerCase();
+  if(G && !G.handleFormatOk(clean)) throw new Error(G.FORMAT_MSG);
+  const reservedMsg = reservedHandleMessage();
+  const blocked = await reservedBlockReason(clean, uid);
+  if(blocked) throw new Error(blocked);
+
+  const worker = await workerHandleClaim(clean, (typeof currentUser !== 'undefined' && currentUser) ? currentUser : null);
+  if(worker && worker.ok){
+    if(G){
+      const sim = G.similarityAgainst(clean, G.SEED_RESERVED);
+      if(sim) flagSimilarHandle(clean, uid, sim);
+    }
+    return '@' + (worker.handle || clean);
+  }
+  if(worker && (worker.code === 'reserved' || worker.reserved)){
+    throw new Error(worker.error || reservedMsg);
+  }
+  if(worker && (worker.code === 'taken' || worker.taken)){
+    throw new Error(worker.error || 'That handle is taken — try another.');
+  }
+  if(worker && worker.error && (worker.code === 'format')){
+    throw new Error(worker.error);
+  }
+
   const ref = fbDb.collection('handles').doc(clean);
   await fbDb.runTransaction(async tx=>{
+    const reservedRef = fbDb.collection('reservedHandles').doc(clean);
+    const reservedSnap = await tx.get(reservedRef);
+    if(reservedSnap.exists){
+      const holder = String((reservedSnap.data() || {}).holderUid || '');
+      if(!holder || holder !== uid) throw new Error(reservedMsg);
+    }
+    const core = G ? G.handleCore(clean) : String(clean).replace(/_/g, '');
+    if(core && core !== clean){
+      const coreSnap = await tx.get(fbDb.collection('reservedCores').doc(core));
+      if(coreSnap.exists){
+        const holder = String((coreSnap.data() || {}).holderUid || '');
+        if(!holder || holder !== uid) throw new Error(reservedMsg);
+      }
+    }
     const doc = await tx.get(ref);
     if(doc.exists && doc.data().uid !== uid){
       throw new Error('That handle is already taken');
     }
-    tx.set(ref, { uid });
+    tx.set(ref, { uid, claimedAt: Date.now() });
   });
+  if(G){
+    const sim = G.similarityAgainst(clean, G.SEED_RESERVED);
+    if(sim) flagSimilarHandle(clean, uid, sim);
+  }
   return '@' + clean;
 }
 
@@ -1480,7 +1629,9 @@ $('saveProfileBtn').onclick = async ()=>{
         toast('Saved on this phone. Cloud sync can wait.');
       });
     }catch(e){
-      toast('Couldn\u2019t save — try a different handle');
+      const msg = String((e && e.message) || '');
+      if(/reserved and cannot be claimed/i.test(msg)) toast(msg);
+      else toast('Couldn\u2019t save — try a different handle');
     }finally{
       if(btn){
         btn.dataset.saving = '0';

@@ -29,9 +29,16 @@ must(/hasOnly\(\['vid', 'kind', 'path', 'land'/, 'siteSessions accept landing, t
 must(/bumpedAtMost\('visits', 1\)/, 'siteDays visit counters cannot jump');
 must(/match \/adminConsole\/\{uid\} \{\s*allow read, write: if false;/, 'adminConsole hashes are not client-writable');
 must(/match \/adminCredentials\/\{uid\} \{\s*allow read, write: if false;/, 'adminCredentials hashes are not client-writable');
+must(/match \/reservedHandles\/\{handle\}/, 'reserved handles live in Firestore');
+must(/reservedHandles\/\$\(handle\)/, 'handle create is denied when the name is reserved');
+must(/holderUid == request\.auth\.uid/, 'the bound official account may keep a reserved handle');
+must(/reservedCores\/\$\(handle\)/, 'handle create also checks reservedCores');
+must(/match \/reservedCores\/\{core\}/, 'reserved cores catch underscore variants');
+must(/match \/handleFlags\/\{id\}/, 'similarity flags are desk-readable');
+must(/handle\.matches\('\^\[a-z0-9_\]\{3,24\}\$'\)/, 'claimed handles must be the normalised form');
 
 mustNot(/match \/bands\/\{bandId\}[\s\S]*match \/invites\/\{inviteId\} \{\s*allow read, write: if isSignedIn\(\);/, 'Band invites are no longer any-signed-in');
-mustNot(/match \/sparkRooms\/\{roomId\}[\s\S]*match \/messages\/\{messageId\} \{\s*allow read: if isSignedIn\(\);/, 'Spark room messages are no longer world-readable to members');
+mustNot(/match \/sparkRooms\/\{roomId\}[\s\S]*match \/messages\/\{messageId\} \{\s*allow read, write: if isSignedIn\(\);/, 'Spark room messages are no longer world-readable to members');
 mustNot(/allow create: if isSignedIn\(\);\s*allow update, delete: if isOwner\(uid\);/, 'notifications create is no longer any-signed-in with no stamp');
 
 console.log('firestore-rules contract tests passed');
@@ -39,4 +46,3 @@ console.log('firestore-rules contract tests passed');
 const storage = fs.readFileSync(__dirname + '/../storage.rules', 'utf8');
 assert.ok(/allow read, write: if false/.test(storage), 'Firebase Storage is locked — media is on R2');
 console.log('storage-rules contract tests passed');
-

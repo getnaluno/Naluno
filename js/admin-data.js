@@ -1042,6 +1042,54 @@
     };
   }
 
+  function deriveIdentity(reservedHandles, handleFlags) {
+    const reserved = (reservedHandles || []).filter(function (r) {
+      return r && (r.handle || r.id) && !r.aliasOf;
+    }).map(function (r) {
+      const handle = String(r.handle || r.id || '').replace(/^@/, '').toLowerCase();
+      const cat = String(r.category || 'other').toLowerCase();
+      return {
+        handle: handle,
+        core: r.core || handle.replace(/_/g, ''),
+        status: r.status || 'reserved',
+        category: (cat === 'official' || cat === 'system' || cat === 'support') ? cat : 'other',
+        reason: r.reason || '',
+        holderUid: r.holderUid || '',
+        createdAt: num(r.createdAt || r.created_at),
+        createdBy: r.createdBy || '',
+        updatedAt: num(r.updatedAt || r.updated_at),
+        updatedBy: r.updatedBy || '',
+      };
+    }).sort(function (a, b) { return a.handle.localeCompare(b.handle); });
+    const byCategory = { official: 0, system: 0, support: 0, other: 0 };
+    reserved.forEach(function (r) { byCategory[r.category] = (byCategory[r.category] || 0) + 1; });
+    const flags = (handleFlags || []).map(function (f) {
+      return {
+        id: f.id || '',
+        handle: String(f.handle || '').replace(/^@/, '').toLowerCase(),
+        uid: f.uid || '',
+        kind: f.kind || (f.reason === 'reserved' ? 'reserved-block' : 'similar'),
+        reserved: f.reserved || '',
+        reason: f.reason || '',
+        score: num(f.score),
+        status: String(f.status || 'open').toLowerCase(),
+        createdAt: num(f.createdAt || f.created_at),
+        note: f.note || '',
+      };
+    }).sort(function (a, b) { return num(b.createdAt) - num(a.createdAt); });
+    const openFlags = flags.filter(function (f) { return f.status === 'open' || f.status === 'new'; });
+    const official = reserved.filter(function (r) { return r.handle === 'naluno'; })[0] || null;
+    return {
+      total: reserved.length,
+      list: reserved,
+      by_category: byCategory,
+      flags: flags,
+      open_flags: openFlags,
+      official_naluno: official,
+      official_holder: official ? (official.holderUid || '') : '',
+    };
+  }
+
   function deriveSnapshot(raw) {
     raw = raw || {};
     const now = num(raw.now) || Date.now();
@@ -1070,6 +1118,8 @@
     const deskAds = raw.deskAds || raw.ads || [];
     const siteSessions = raw.siteSessions || [];
     const siteDays = raw.siteDays || [];
+    const reservedHandles = raw.reservedHandles || [];
+    const handleFlags = raw.handleFlags || [];
     const flags = Object.assign({}, DEFAULT_FLAGS, raw.flags || {});
     const worker = raw.worker || {};
     const sw = raw.sw || {};
@@ -1226,6 +1276,8 @@
       return k === 'invest' || k === 'investment' || k === 'partnership' || !!m.interest;
     });
 
+    const identity = deriveIdentity(reservedHandles, handleFlags);
+
     const alerts = [];
     if (worker && worker.degraded && !worker.ok) {
       alerts.push({
@@ -1274,6 +1326,13 @@
         level: 'warning',
         tab: 'health',
         text: 'This console is not connected to the service worker yet. Reload once so background ringing and cache stay in step.',
+      });
+    }
+    if (identity.open_flags.length) {
+      alerts.push({
+        level: 'warning',
+        tab: 'identity',
+        text: identity.open_flags.length + ' handle' + (identity.open_flags.length === 1 ? '' : 's') + ' look close to a protected Naluno identity.',
       });
     }
     if (!alerts.length) {
@@ -1439,6 +1498,7 @@
         list: metrics,
       },
       site: deriveSitePulse(siteSessions, siteDays, now, zone),
+      identity: identity,
       costs: costs,
       audit: audit,
       gaps: {
@@ -1473,6 +1533,7 @@
     formatAdminClock: formatAdminClock,
     startOfLocalDay: startOfLocalDay,
     deriveSnapshot: deriveSnapshot,
+    deriveIdentity: deriveIdentity,
     money: money,
     COST_RATES: COST_RATES,
     estimateCosts: estimateCosts,

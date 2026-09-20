@@ -174,6 +174,27 @@ const utcClock = D.formatAdminClock(new Date('2026-09-10T04:30:23Z'), 'UTC');
 assert.strictEqual(utcClock.time, '04:30:23');
 assert.ok(utcClock.full.indexOf('04:30:23Z') === -1, 'must not append Z to the time');
 
+const ident = D.deriveSnapshot({
+  now: Date.parse('2026-09-10T08:30:00Z'),
+  zone: 'Asia/Dubai',
+  reservedHandles: [
+    { handle: 'naluno', category: 'official', reason: 'Brand', holderUid: 'ibMOMY6Q3sVTCxIrwO2FGk43zw93', createdAt: 1 },
+    { handle: 'nalunosupport', category: 'support', reason: 'Support', createdAt: 1 },
+    { handle: 'nalunosupport', aliasOf: 'nalunosupport', category: 'support' },
+  ],
+  handleFlags: [
+    { id: 'f_nalun0_user', handle: 'nalun0', uid: 'u1', reserved: 'naluno', reason: 'lookalike characters', status: 'open', createdAt: 2 },
+  ],
+});
+assert.ok(ident.identity);
+assert.strictEqual(ident.identity.total, 2, 'aliases are not counted twice');
+assert.strictEqual(ident.identity.by_category.official, 1);
+assert.strictEqual(ident.identity.by_category.support, 1);
+assert.strictEqual(ident.identity.open_flags.length, 1);
+assert.strictEqual(ident.identity.official_holder, 'ibMOMY6Q3sVTCxIrwO2FGk43zw93');
+assert.ok(ident.alerts.some(function (a) { return a.tab === 'identity'; }));
+assert.ok(typeof D.deriveIdentity === 'function');
+
 console.log('admin-data tests passed', {
   dubai: clock.full,
   day0: new Date(day0).toISOString(),
