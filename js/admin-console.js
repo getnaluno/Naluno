@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260919b';
+  const BUILD = '20260919d';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -250,8 +250,26 @@
     const handle = mail.indexOf('@' + HANDLE_DOMAIN) > 0 ? mail.split('@')[0] : mail;
     return (handle || 'signed in') + ' · ' + String(user.uid);
   }
+  async function refreshOperatorClaim() {
+    __operatorClaim = false;
+    if (!currentUser || !currentUser.getIdTokenResult) return;
+    try {
+      const r = await currentUser.getIdTokenResult();
+      __operatorClaim = !!(r && r.claims && r.claims.operator);
+    } catch (_) {}
+  }
+  async function stampOperatorClaim() {
+    if (!currentUser) return;
+    try {
+      const tok = await currentUser.getIdToken();
+      await fetch(WORKER + '/v1/admin/status', { headers: { Authorization: 'Bearer ' + tok }, cache: 'no-store' });
+      await currentUser.getIdToken(true);
+      await refreshOperatorClaim();
+    } catch (_) {}
+  }
   function isOperator(user) {
     if (!user) return false;
+    if (__operatorClaim) return true;
     if (OPERATOR_UIDS[user.uid]) return true;
     const mail = String(user.email || '').trim().toLowerCase();
     return !!(mail && OPERATOR_EMAILS[mail]);
@@ -313,6 +331,7 @@
     const db = adminDb();
     if (!db || !uid) return '';
     const paths = [
+      function () { return db.collection('users').doc(uid).collection('vault').doc('main').get(); },
       function () { return db.collection('adminConsole').doc(uid).get(); },
       function () { return db.collection('users').doc(uid).collection('consoleGate').doc('main').get(); },
       function () { return db.collection('users').doc(uid).collection('wirelineHidden').doc('__nalunoConsoleGate').get(); },
@@ -333,11 +352,11 @@
     const db = adminDb();
     if (!db || !uid || !hash) return { ok: false, where: 'no-db' };
     const payload = { hash: hash, v: 1, at: Date.now(), kind: 'console-gate' };
+    try { await db.collection('users').doc(uid).collection('vault').doc('main').set({ _consoleGate: payload, hash: hash, v: 1, at: payload.at }, { merge: true }); return { ok: true, where: 'vault' }; } catch (_) {}
     try { await db.collection('adminConsole').doc(uid).set(payload); return { ok: true, where: 'adminConsole' }; } catch (_) {}
     try { await db.collection('users').doc(uid).collection('consoleGate').doc('main').set(payload); return { ok: true, where: 'consoleGate' }; } catch (_) {}
     try { await db.collection('users').doc(uid).collection('wirelineHidden').doc('__nalunoConsoleGate').set(payload); return { ok: true, where: 'account' }; } catch (_) {}
-    try { await db.collection('users').doc(uid).set({ _consoleGate: payload }, { merge: true }); return { ok: true, where: 'profile' }; }
-    catch (e) { return { ok: false, where: (e && (e.code || e.message)) || 'write-denied' }; }
+    return { ok: false, where: 'write-denied' };
   }
   async function cloudOk(uid, pass) {
     const stored = await cloudGetHash(uid);
@@ -517,6 +536,18 @@
         byField('number', needle),
         byField('handle', needle),
         raw.indexOf('@') >= 0 ? byField('email', raw) : Promise.resolve(),
+        raw.indexOf('@') >= 0
+          ? db.collectionGroup('vault').where('recoveryEmail', '==', raw).limit(8).get().then(function (s) {
+            return Promise.all(s.docs.map(function (d) {
+              const parent = d.ref.parent && d.ref.parent.parent;
+              const uid = parent ? parent.id : '';
+              if (!uid) return null;
+              return db.collection('users').doc(uid).get().then(function (u) {
+                add(Object.assign({ id: uid }, u.exists ? u.data() : {}, { recoveryEmail: (d.data() || {}).recoveryEmail }));
+              });
+            }));
+          }).catch(function () {})
+          : Promise.resolve(),
       ]);
     }
     return Object.keys(found).map(function (k) { return found[k]; });
@@ -2601,6 +2632,7 @@
     const uid = currentUser.uid;
     const ping = $('workerPing');
     if (ping) ping.textContent = 'Checking account…';
+    await refreshOperatorClaim();
 
     if (!isOperator(currentUser)) {
       __needsSetup = false;
@@ -2621,6 +2653,7 @@
     setGateMode(__needsSetup ? 'setup' : 'locked');
     if (ping) ping.textContent = hasCloud ? 'password on this account' : (hasLocal ? 'password on this phone — will copy to the account on unlock' : '');
     setMsg('adminGateMsg', '');
+    stampOperatorClaim();
   }
 
   async function adminUnlock() {
@@ -2669,6 +2702,7 @@
     }
     __adminPass = typed;
     setMsg('adminGateMsg', 'Opening…', true);
+    stampOperatorClaim();
     openConsole();
   }
 

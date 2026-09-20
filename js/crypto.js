@@ -345,7 +345,7 @@ async function backupPrivateKeyWithSecret(privateJwk, secret, method){
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const plaintext = new TextEncoder().encode(JSON.stringify(privateJwk));
     const wrapped = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, wrapKey, plaintext);
-    await fbDb.collection('users').doc(currentUser.uid).set({
+    const row = {
       e2eKeyBackup: {
         wrapped: arrayBufferToBase64(wrapped),
         iv: arrayBufferToBase64(iv),
@@ -354,16 +354,28 @@ async function backupPrivateKeyWithSecret(privateJwk, secret, method){
         method: method || 'password',
         v: 1,
       },
-    }, { merge:true });
+    };
+    if(typeof nalunoVault !== 'undefined' && nalunoVault.write){
+      await nalunoVault.write(row);
+    } else {
+      await fbDb.collection('users').doc(currentUser.uid).set(row, { merge:true });
+    }
     return true;
   }catch(e){ console.warn('[e2e] backup failed', e); return false; }
 }
 async function recoverPrivateKeyWithSecret(uid, secret){
   if(!uid || !secret || typeof fbDb === 'undefined' || !fbDb) return null;
   try{
-    const snap = await fbDb.collection('users').doc(uid).get();
-    if(!snap.exists) return null;
-    const d = snap.data() || {};
+    let d = {};
+    try{
+      const snap = await fbDb.collection('users').doc(uid).get();
+      if(snap.exists) d = snap.data() || {};
+    }catch(_){}
+    try{
+      if(typeof nalunoVault !== 'undefined' && nalunoVault.load){
+        d = Object.assign({}, d, await nalunoVault.load(uid));
+      }
+    }catch(_){}
     const backup = d.e2eKeyBackup;
     const publicJwk = d.publicKey;
     if(!backup || !backup.wrapped || !publicJwk) return null;
@@ -437,8 +449,17 @@ async function ensureMyKeyPairWithRecovery(secret){
 async function checkE2eBackupStatus(uid){
   if(!uid || typeof fbDb === 'undefined' || !fbDb) return { hasBackup:false, method:null };
   try{
-    const snap = await fbDb.collection('users').doc(uid).get();
-    const backup = snap.exists && (snap.data() || {}).e2eKeyBackup;
+    let backup = null;
+    try{
+      if(typeof nalunoVault !== 'undefined' && nalunoVault.load){
+        const v = await nalunoVault.load(uid);
+        if(v && v.e2eKeyBackup) backup = v.e2eKeyBackup;
+      }
+    }catch(_){}
+    if(!backup){
+      const snap = await fbDb.collection('users').doc(uid).get();
+      backup = snap.exists && (snap.data() || {}).e2eKeyBackup;
+    }
     return backup ? { hasBackup:true, method: backup.method || 'password' } : { hasBackup:false, method:null };
   }catch(_){ return { hasBackup:false, method:null }; }
 }

@@ -61,7 +61,11 @@ $('compassLockToggleBtn').onclick = async ()=>{
     const newPass = prompt('Set a password to lock Compass — leave blank to cancel:');
     if(!newPass) return;
     const hash = await sha256Hex(newPass);
-    await fbDb.collection('users').doc(currentUser.uid).set({ compassPasswordHash: hash }, { merge:true });
+    if(typeof nalunoVault !== 'undefined' && nalunoVault.write){
+      await nalunoVault.write({ compassPasswordHash: hash });
+    } else {
+      await fbDb.collection('users').doc(currentUser.uid).set({ compassPasswordHash: hash }, { merge:true });
+    }
     currentProfile.compassPasswordHash = hash;
     toast('Compass is now locked with a password');
   } else {
@@ -72,12 +76,20 @@ $('compassLockToggleBtn').onclick = async ()=>{
     const currentHash = await sha256Hex(currentPass);
     if(currentHash !== currentProfile.compassPasswordHash){ toast('Incorrect current password'); return; }
     if(action.trim().toLowerCase() === 'remove'){
-      await fbDb.collection('users').doc(currentUser.uid).set({ compassPasswordHash: firebase.firestore.FieldValue.delete() }, { merge:true });
+      if(typeof nalunoVault !== 'undefined' && nalunoVault.write){
+        await nalunoVault.write({ compassPasswordHash: firebase.firestore.FieldValue.delete() });
+      } else {
+        await fbDb.collection('users').doc(currentUser.uid).set({ compassPasswordHash: firebase.firestore.FieldValue.delete() }, { merge:true });
+      }
       delete currentProfile.compassPasswordHash;
       toast('Compass password removed');
     } else {
       const newHash = await sha256Hex(action);
-      await fbDb.collection('users').doc(currentUser.uid).set({ compassPasswordHash: newHash }, { merge:true });
+      if(typeof nalunoVault !== 'undefined' && nalunoVault.write){
+        await nalunoVault.write({ compassPasswordHash: newHash });
+      } else {
+        await fbDb.collection('users').doc(currentUser.uid).set({ compassPasswordHash: newHash }, { merge:true });
+      }
       currentProfile.compassPasswordHash = newHash;
       toast('Compass password updated');
     }

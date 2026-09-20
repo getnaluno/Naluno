@@ -477,8 +477,10 @@ async function nalunoHandleSignUp(){
           tagline: '',
           createdAt: Date.now(),
           authMethod: 'handle',
-          recoveryEmail: recovery || null,
         }, { merge: true });
+        if (recovery && typeof nalunoVault !== 'undefined' && nalunoVault.write) {
+          try { await nalunoVault.write({ recoveryEmail: recovery }, user.uid); } catch (_) {}
+        }
       }catch(_){}
       try{
         const claimed = await claimHandle(handle, user.uid);
@@ -1186,13 +1188,35 @@ function loadRealProfile(user){
   let gotFirstSnapshot = false;
   let closedGate = false;
   let listenRetry = 0;
+  let vaultUnsub = null;
+  function attachVault(user){
+    if(vaultUnsub){ try{ vaultUnsub(); }catch(_){} vaultUnsub = null; }
+    if(typeof nalunoVault === 'undefined' || !nalunoVault.ref) return;
+    const r = nalunoVault.ref(user.uid);
+    if(!r) return;
+    vaultUnsub = r.onSnapshot(function(snap){
+      const v = snap.exists ? (snap.data() || {}) : {};
+      if(currentProfile) nalunoVault.mergeInto(currentProfile, v);
+      try{
+        if($('recoveryEmailInput') && v.recoveryEmail != null && !isCallsignEditing()){
+          $('recoveryEmailInput').value = v.recoveryEmail || '';
+        }
+      }catch(_){}
+    }, function(){});
+  }
   function attach(){
     if(profileUnsub){ try{ profileUnsub(); }catch(_){} profileUnsub = null; }
+    attachVault(user);
     profileUnsub = fbDb.collection('users').doc(user.uid).onSnapshot(doc=>{
       listenRetry = 0;
       if(doc.exists){
         const incoming = { photo:null, ...DEFAULT_PROFILE, ...doc.data() };
         currentProfile = incoming;
+        try{
+          if(typeof nalunoVault !== 'undefined' && nalunoVault.migrateFromPublic){
+            nalunoVault.migrateFromPublic(doc.data(), user.uid);
+          }
+        }catch(_){}
         if(nalunoAccountIsClosed(incoming)){
           closedGate = true;
           showClosedCallsignGate(incoming);
@@ -1374,6 +1398,16 @@ $('saveProfileBtn').onclick = async ()=>{
       const cloudProfile = Object.assign({}, nextProfile);
       if(cloudProfile.photo && cloudProfile.photo.dataUrl && String(cloudProfile.photo.dataUrl).length > 80000){
         cloudProfile.photo = { crop: cloudProfile.photo.crop || null };
+      }
+      const recovery = cloudProfile.recoveryEmail || null;
+      delete cloudProfile.recoveryEmail;
+      try{
+        if(typeof nalunoVault !== 'undefined' && nalunoVault.write){
+          nalunoVault.write({ recoveryEmail: recovery || firebase.firestore.FieldValue.delete() });
+        }
+      }catch(_){}
+      if(typeof nalunoVault !== 'undefined' && nalunoVault.stripPublic){
+        Object.assign(cloudProfile, nalunoVault.stripPublic());
       }
       // Persist in background — snapshot will confirm; we ignore mid-edit overwrites.
       fbDb.collection('users').doc(currentUser.uid).set(cloudProfile, { merge:true }).catch(e=>{

@@ -20,6 +20,13 @@ must(/hasOnly\(\['read', 'readAt', 'delivered', 'taken', 'status'\]\)/, 'Wirelin
 must(/request\.resource\.data\.creatorUid == request\.auth\.uid/, 'origin marks must belong to the signer');
 must(/reason\.size\(\) > 9/, 'reports require a real reason in rules, not only in the worker');
 must(/lastEmptiedAt != null \|\| bandData\(\)\.messageEpoch != null/, 'Band prune deletes require membership, not any signed-in user');
+must(/request\.auth\.token\.operator == true/, 'operator custom claim is accepted in rules');
+must(/allow get: if isSignedIn\(\);\s*allow list: if isOperator\(\);/, 'members can get a known user but cannot list the whole collection');
+must(/match \/vault\/\{id\}/, 'private vault exists under the user');
+must(/allow get: if true; \/\/ handle lookup/, 'handle lookup stays public get, not list');
+must(/match \/sparks\/\{code\}[\s\S]*allow get: if isSignedIn\(\);\s*allow list: if isOperator\(\);/, 'Spark codes are not listable to members');
+must(/hasOnly\(\['vid', 'kind', 'path'/, 'siteSessions only accept the pulse shape');
+must(/bumpedAtMost\('visits', 1\)/, 'siteDays visit counters cannot jump');
 
 mustNot(/match \/bands\/\{bandId\}[\s\S]*match \/invites\/\{inviteId\} \{\s*allow read, write: if isSignedIn\(\);/, 'Band invites are no longer any-signed-in');
 mustNot(/match \/sparkRooms\/\{roomId\}[\s\S]*match \/messages\/\{messageId\} \{\s*allow read: if isSignedIn\(\);/, 'Spark room messages are no longer world-readable to members');
