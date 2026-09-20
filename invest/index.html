@@ -4,11 +4,11 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Naluno — the next layer</title>
-<meta name="description" content="Naluno is already being built. This page is for investors, strategic partners and people who can help take it to the next stage." />
+<meta name="description" content="Naluno brings private communication, communities and creator-led content into one place. This page is for investors, strategic partners and people who can help take it further." />
 <meta name="theme-color" content="#07080D" />
 <link rel="canonical" href="https://getnaluno.com/invest/" />
 <meta property="og:title" content="Naluno — the next layer" />
-<meta property="og:description" content="A private messenger already in development. Conversations with investors and strategic partners — not an offer of securities." />
+<meta property="og:description" content="A platform already in development. Conversations with investors and strategic partners — not an offer of securities." />
 <meta property="og:url" content="https://getnaluno.com/invest/" />
 <meta property="og:type" content="website" />
 <meta property="og:image" content="https://getnaluno.com/og.jpg" />
@@ -16,7 +16,7 @@
 <meta property="og:image:height" content="630" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="Naluno — the next layer" />
-<meta name="twitter:description" content="A private messenger already in development. Conversations with investors and strategic partners." />
+<meta name="twitter:description" content="A platform already in development. Conversations with investors and strategic partners." />
 <meta name="twitter:image" content="https://getnaluno.com/og.jpg" />
 <link rel="icon" href="/icon-192.png" />
 <link rel="apple-touch-icon" href="/icon-192.png" />
@@ -112,6 +112,17 @@ section.block li::before{content:""; position:absolute; left:0; top:10px; width:
 .look div{border:1px solid rgba(124,255,178,.2); padding:16px 16px 14px; border-radius:12px; background:rgba(8,10,16,.55);}
 .look strong{display:block; font-family:var(--display); font-weight:500; font-size:15px; margin-bottom:4px;}
 .look span{color:var(--ink-dim); font-size:14px;}
+.built-grid{display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:12px; margin:22px 0 18px; max-width:720px;}
+.built-grid div{border:1px solid rgba(124,255,178,.2); padding:16px 16px 14px; border-radius:12px; background:rgba(8,10,16,.55);}
+.built-grid strong{display:block; font-family:var(--display); font-weight:500; font-size:15px; margin-bottom:6px;}
+.built-grid span{color:var(--ink-dim); font-size:14.5px; line-height:1.45;}
+.flow{list-style:none; margin:22px 0 8px; padding:0; display:flex; flex-wrap:wrap;}
+.flow li{flex:1 1 140px; padding:4px 18px 14px 0; font-family:var(--dial); font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--mint);}
+.flow li span{display:block; margin-top:6px; font-family:var(--body); font-size:15px; letter-spacing:0; text-transform:none; color:var(--ink); max-width:18ch; line-height:1.4;}
+.bcast-card{min-height:220px; border-radius:16px; padding:22px 18px; margin:8px 8px 0;
+  background:linear-gradient(160deg,#1a1530 0%, #123d32 48%, #7CFFB2 160%); color:var(--ink); display:flex; flex-direction:column; justify-content:flex-end;}
+.bcast-card .meta{font-family:var(--dial); font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--mint); margin:0 0 14px;}
+.bcast-card p{font-family:var(--display); font-weight:500; font-size:20px; line-height:1.25; margin:0 0 10px;}
 .contact{position:relative; z-index:2; padding:56px 28px 24px; max-width:560px;}
 .contact h2{font-family:var(--display); font-weight:500; font-size:clamp(24px,3vw,34px); margin:0 0 12px;}
 .contact form{display:grid; gap:12px;}
@@ -139,7 +150,7 @@ footer a{text-decoration:none;}
 footer a:hover{color:var(--mint);}
 @media (max-width:860px){
   .hero,.block,.contact,footer,.top{padding-left:18px; padding-right:18px;}
-  .grid3,.look,.split{grid-template-columns:1fr;}
+  .grid3,.look,.split,.built-grid{grid-template-columns:1fr;}
 }
 @media (prefers-reduced-motion: reduce){ html{scroll-behavior:auto;} }
 </style>
@@ -170,26 +181,52 @@ footer a:hover{color:var(--mint);}
   <section class="hero">
     <p class="kicker"><span class="live-dot" aria-hidden="true"></span> Next layer</p>
     <h1>We are building the<br><em>next layer of Naluno.</em></h1>
-    <p class="lede">A private messenger is already on the air. The next stage is scale — the technology, the creator ecosystem, and a wider public launch. This page is how serious conversations start.</p>
+    <p class="lede">Naluno brings private communication, communities and creator-led content into one place. The product is already on the air. The next stage is scale. This page is how serious conversations start.</p>
     <div class="cta-row">
       <a class="cta" href="#talk">Start a conversation</a>
-      <a class="ghost" href="/">Back to Naluno</a>
+      <a class="ghost" href="#built">What’s been built</a>
+      <a class="ghost" href="/app/">View the platform</a>
     </div>
     <p class="legal">This is not an offer of securities. There is no valuation, share price, ownership percentage, promised return or minimum ticket on this site. Terms, if any, are handled privately after the company structure is in place.</p>
   </section>
 </div>
 
 <section class="block" id="about">
-  <p class="k">About Naluno</p>
-  <h2>A private line in a loud square</h2>
-  <p>Most apps ask for a phone number, then spend the relationship broadcasting to everyone. Naluno inverts that. You pick a Callsign — a name, not a SIM. People who know it can write and call you. Everyone else cannot.</p>
-  <p>Around that private line sit the rest of the product: Wireline (messages that live on the phone), Band (rooms that wipe), Broadcast and Signal (video you leave, and clips that fade), Spark (find someone standing next to you). The opportunity is a communications layer that creators and communities can actually own — without an ad network in the middle, and without turning a handle into a public billboard.</p>
+  <p class="k">What Naluno is</p>
+  <h2>Communication, creators and communities — one place</h2>
+  <p>Most of the internet splits those into different apps. A private line here. A creator feed there. A group somewhere else. Naluno is being built so they do not have to live apart.</p>
+  <p>You pick a Callsign — a name, not a phone number. People who know it can write, call, and find your Broadcasts. Around that sit Wireline, Band, Broadcast, Signals and Compass. The opportunity is a layer that creators and communities can actually grow around, without an outside ad network in the middle, and without turning a handle into a public billboard.</p>
+</section>
+
+<section class="block" id="why">
+  <p class="k">Why this</p>
+  <h2>A different kind of digital space</h2>
+  <p>Naluno is being built around participation, not around a square that shouts at everyone.</p>
+  <ol class="flow">
+    <li>01<span>People communicate</span></li>
+    <li>02<span>Creators publish</span></li>
+    <li>03<span>Communities participate</span></li>
+    <li>04<span>Naluno measures the activity</span></li>
+    <li>05<span>The ecosystem can grow around that participation</span></li>
+  </ol>
 </section>
 
 <section class="block" id="built">
   <p class="k">What has been built</p>
-  <h2>Infrastructure, not a slide</h2>
-  <p>The messenger is running. People create a Callsign, write, call, and leave Broadcasts. There is an operating desk behind it — inventory, mail, health, money — so the product can be run, not only demoed. The pictures below are sanitised previews. No accounts, no addresses, no keys, no live desk.</p>
+  <h2>On the air, not on a slide</h2>
+  <p>People create a Callsign, write, call, gather in Bands, and leave Broadcasts. Compass sits beside that. The pictures below are the member product — not a private desk.</p>
+  <div class="built-grid">
+    <div><strong>Communication</strong><span>Private calls and messaging around a Callsign.</span></div>
+    <div><strong>Broadcast</strong><span>Creator-led video and photo spaces, with live chapters.</span></div>
+    <div><strong>Signals</strong><span>Short-form clips that fade and move people into Broadcast.</span></div>
+    <div><strong>Bands</strong><span>Community rooms around participation, not ownership. They wipe.</span></div>
+    <div><strong>Compass</strong><span>An AI companion inside the Naluno experience.</span></div>
+    <div><strong>Callsign</strong><span>A name that is yours. No SIM. The rest of the product hangs off it.</span></div>
+  </div>
+  <div class="cta-row" style="margin-bottom:28px;">
+    <a class="cta" href="/app/">View the platform</a>
+    <a class="ghost" href="/">Back to Naluno</a>
+  </div>
   <div class="grid3" aria-hidden="true">
     <div>
       <div class="device">
@@ -201,7 +238,20 @@ footer a:hover{color:var(--mint);}
         <div class="btns"><i class="d">Decline</i><i class="a">Accept</i></div>
         <div class="lock">Callsign · not a phone number</div>
       </div>
-      <p class="cap">Member app · call that rings</p>
+      <p class="cap">Calls that ring</p>
+    </div>
+    <div>
+      <div class="device">
+        <div class="device-notch"></div>
+        <div class="status-bar"><span>BROADCAST</span><b>LIVE</b></div>
+        <div class="bcast-card">
+          <div class="meta">114.2 · chapter 2</div>
+          <p>East End after rain</p>
+          <cite style="font-style:normal;font-family:var(--dial);font-size:11px;letter-spacing:.06em;">Amina · 12 in the room</cite>
+        </div>
+        <div class="lock">stays · Signal is the clip that fades</div>
+      </div>
+      <p class="cap">Broadcast · creator space</p>
     </div>
     <div>
       <div class="device">
@@ -214,37 +264,28 @@ footer a:hover{color:var(--mint);}
         </div>
         <div class="lock">end-to-end · lives on this phone</div>
       </div>
-      <p class="cap">Member app · private line</p>
-    </div>
-    <div>
-      <div class="desk">
-        <div class="bar"><span>Naluno · operating desk</span><span>sample</span></div>
-        <div class="tabs"><i class="on">Overview</i><i>Users</i><i>Mail</i><i>Money</i></div>
-        <div class="kpis">
-          <div class="kpi"><b>—</b><span>Online now</span></div>
-          <div class="kpi"><b>—</b><span>Active today</span></div>
-          <div class="kpi"><b>—</b><span>Broadcasts</span></div>
-          <div class="kpi"><b>—</b><span>Site today</span></div>
-        </div>
-        <table>
-          <thead><tr><th>Strip</th><th>State</th></tr></thead>
-          <tbody>
-            <tr><td>Health</td><td>live sample</td></tr>
-            <tr><td>Mail</td><td>person reads it</td></tr>
-            <tr><td>Ads</td><td>first-party only</td></tr>
-          </tbody>
-        </table>
-        <p class="sample">Figures omitted on purpose. This is a picture of the desk, not the desk.</p>
-      </div>
-      <p class="cap">Operating desk · sanitised</p>
+      <p class="cap">Wireline · private line</p>
     </div>
   </div>
+</section>
+
+<section class="block" id="shape">
+  <p class="k">How it fits together</p>
+  <h2>The shape of the product</h2>
+  <p>Callsign is the person. Wireline and calls are the private line. Band is the room. Broadcast and Signals are what creators leave. Compass sits beside all of it.</p>
+  <p>Participation is counted so the ecosystem can grow around it — not as a public billboard, and not as a promise of money.</p>
 </section>
 
 <section class="block" id="stage">
   <p class="k">Current stage</p>
   <h2>Being prepared for a wider launch</h2>
   <p>Naluno is in active development. The core product is already in people’s hands. The work now is to harden it, grow the creator side, and prepare a public launch that can take the load. This page exists so that conversation can start before a formal raise is on paper.</p>
+</section>
+
+<section class="block" id="sustain">
+  <p class="k">How it can sustain itself</p>
+  <h2>Direction, not a forecast</h2>
+  <p>Naluno is meant to grow around the activity on it. Labelled first-party ads — never an outside network, never an auction. Creator Support later, when a payments company is connected. That is the direction. It is not live money, and it is not a projection.</p>
 </section>
 
 <section class="block" id="next">
