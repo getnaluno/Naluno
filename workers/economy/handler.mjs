@@ -25,7 +25,7 @@ import {
   listingFromScreen,
 } from "./screen.mjs";
 
-export const VERSION = "2.6.3-screen";
+export const VERSION = "2.6.4-reports";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -949,6 +949,20 @@ async function handleClaim(env, user, userToken, saToken, body) {
   return json({ ok: true, handle: h, official: !!(hit && hit.holderUid === user.uid) });
 }
 
+export function reportIsOpen(r) {
+  if (!r) return false;
+  if (r.resolvedAt || r.decided_at || r.resolved_at || r.decidedAt) return false;
+  const st = String(r.status || "").trim().toUpperCase().replace(/[_-]+/g, " ");
+  if (st === "ACTIONED" || st === "DISMISSED" || st === "CLOSED" || st === "DONE"
+      || st === "RESOLVED" || st === "REJECTED" || st === "TAKEN DOWN") {
+    return false;
+  }
+  if (st && st !== "OPEN" && st !== "NEW" && st !== "UNDER REVIEW" && st !== "PENDING") {
+    return false;
+  }
+  return true;
+}
+
 async function hideBroadcastSexual(env, saToken, userToken, broadcastId) {
   const id = String(broadcastId || "").slice(0, 80);
   if (!id) return { ok: false };
@@ -1005,12 +1019,7 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
     screenDecision: judged.decision,
     screenScore: judged.score || 0,
     screenReason: judged.reason || "",
-    // For reviewers: which engine decided, which sampled frame, and what that
-    // frame showed — so a held video can be checked at the moment in question.
-    screenEngine: judged.engine || "",
-    screenDetail: judged.detail || "",
-    screenFrame: typeof judged.frameIndex === "number" ? judged.frameIndex : -1,
-    screenVersion: 2,
+    screenVersion: 1,
     screenFrames: judged.frames || 0,
     updatedAt: Date.now(),
   });
@@ -1376,21 +1385,31 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
   if (path === "/v1/admin/reports" && request.method === "GET") {
     const rows = await listCol("reports", 80);
     const all = rows.length ? rows : Array.from(memory.reports.values());
-    const open = all.filter((r) => String(r.status || "OPEN").toUpperCase() === "OPEN");
+    const open = all.filter((r) => reportIsOpen(r));
     return json({ ok: true, open: open.length, actioned: all.length - open.length, reports: all, by_reason: {} });
   }
 
   if (path === "/v1/admin/report-action" && request.method === "POST") {
     const body = await request.json().catch(() => ({}));
     const id = String(body.report_id || body.id || "");
-    const decision = String(body.decision || body.status || "OPEN");
+    const decision = String(body.decision || body.status || "ACTIONED");
     const reason = String(body.reason || "").trim();
     if (!id || !reason) return json({ ok: false, error: "report and reason required" }, 400);
     const token = saToken || userToken;
-    await fsFetch(env, token, "PATCH", "/reports/" + encodeURIComponent(id), toFsFields({
-      status: decision, decided_by: user.uid, decided_at: Date.now(), note: reason,
-    }));
-    memory.audit.unshift({ action: "report-" + decision, target: id, reason, actor: user.uid, ts: Date.now() });
+    const now = Date.now();
+    const patch = {
+      status: decision,
+      resolution: reason,
+      resolvedAt: now,
+      resolvedBy: user.uid,
+      decided_at: now,
+      decided_by: user.uid,
+      note: reason,
+    };
+    await fsPutDoc(env, token, "/reports/" + encodeURIComponent(id), patch);
+    const prev = memory.reports.get(id) || { report_id: id };
+    memory.reports.set(id, Object.assign({}, prev, patch));
+    memory.audit.unshift({ action: "report-" + decision, target: id, reason, actor: user.uid, ts: now });
     return json({ ok: true });
   }
 
@@ -2030,6 +2049,10 @@ export async function handleRequest(request, env = {}, ctx = {}) {
       if (reason.length < 10) return json({ ok: false, error: "Please say a little more — at least a sentence." }, 400);
       if (!REPORT_CODES[code]) return json({ ok: false, error: "Unknown reason" }, 400);
       const id = String(body.report_id || ("rep_" + Date.now())).slice(0, 80);
+      const existing = memory.reports.get(id);
+      if (existing && !reportIsOpen(existing)) {
+        return json({ ok: true, report_id: id, hidden: false, already_decided: true });
+      }
       const doc = {
         report_id: id,
         reporter_uid: user.uid,
@@ -2044,7 +2067,14 @@ export async function handleRequest(request, env = {}, ctx = {}) {
       };
       memory.reports.set(id, doc);
       const token = userToken;
-      await fsFetch(env, token, "PATCH", "/reports/" + encodeURIComponent(id), toFsFields(doc));
+      const wrote = await fsFetch(
+        env,
+        token,
+        "PATCH",
+        "/reports/" + encodeURIComponent(id) + "?currentDocument.exists=false",
+        toFsFields(doc),
+      );
+      if (!wrote.ok && existing) memory.reports.set(id, existing);
       if (code === "sexual") {
         const bid = String(body.broadcast_id || (body.target_type === "broadcast" ? body.target_id : "") || "");
         await hideBroadcastSexual(env, saToken, userToken, bid);

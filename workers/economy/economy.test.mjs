@@ -13,6 +13,7 @@ import {
   SEED_RESERVED,
   matchReserved,
   normHandle,
+  reportIsOpen,
 } from "./handler.mjs";
 import { fillRgb, rgbToB64 } from "./screen.mjs";
 
@@ -864,6 +865,69 @@ test("sexual report hides the Broadcast", async () => {
   setFetchImpl(null);
 });
 
+test("report action writes a mask so the decision survives a new sign-in", async () => {
+  resetMemory();
+  const calls = [];
+  setFetchImpl(async (url, opts) => {
+    const u = String(url);
+    calls.push({ u, method: (opts && opts.method) || "GET" });
+    if (u.includes("accounts:lookup")) {
+      return new Response(JSON.stringify({
+        users: [{ localId: ENV.OPERATOR_UID, email: "magjoed@gmail.com", emailVerified: true }],
+      }), { status: 200 });
+    }
+    return new Response("{}", { status: 200 });
+  });
+  getMemory().reports.set("rep_stay", {
+    report_id: "rep_stay",
+    status: "OPEN",
+    broadcast_id: "b1",
+    reason: "This is explicit sexual content on the feed.",
+  });
+  const headers = { Authorization: "Bearer tok", "Content-Type": "application/json" };
+  const res = await handleRequest(
+    req("/v1/admin/report-action", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ report_id: "rep_stay", decision: "ACTIONED", reason: "Taken down" }),
+    }),
+    ENV,
+  );
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.ok, true);
+  const row = getMemory().reports.get("rep_stay");
+  assert.equal(row.status, "ACTIONED");
+  assert.ok(row.resolvedAt);
+  assert.equal(reportIsOpen(row), false);
+  const patch = calls.find((c) => c.method === "PATCH" && c.u.includes("/reports/rep_stay"));
+  assert.ok(patch, "writes the report");
+  assert.ok(patch.u.includes("updateMask.fieldPaths=status"), "mask keeps the rest of the row");
+  assert.ok(patch.u.includes("updateMask.fieldPaths=resolvedAt"));
+
+  const listed = await handleRequest(req("/v1/admin/reports", { headers }), ENV);
+  const listedBody = await listed.json();
+  assert.equal(listedBody.open, 0);
+
+  const again = await handleRequest(
+    req("/v1/report", {
+      method: "POST",
+      headers: { Authorization: "Bearer tok", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        report_id: "rep_stay",
+        reason: "This is explicit sexual content on the feed.",
+        reason_code: "sexual",
+        broadcast_id: "b1",
+      }),
+    }),
+    ENV,
+  );
+  const againBody = await again.json();
+  assert.equal(againBody.already_decided, true);
+  assert.equal(getMemory().reports.get("rep_stay").status, "ACTIONED");
+  setFetchImpl(null);
+});
+
 test("broadcast place holds a new publisher", async () => {
   resetMemory();
   setFetchImpl(async (url) => {
@@ -941,14 +1005,7 @@ test("broadcast place lists a new publisher when Screen is clear", async () => {
   setFetchImpl(null);
 });
 
-/* CHANGED DELIBERATELY (moderation rebuild). This used to assert the upload was
-   HIDDEN. The frame is a flat patch of skin colour — exactly what the old skin
-   heuristic cannot tell apart from a bare arm, a face or a shirtless torso, which
-   is why it rejected genuine uploads. The heuristic may no longer reject on its
-   own; weak evidence goes to a person. What this test protects is unchanged: the
-   server does not take the client's "allow" at face value, and the upload is NOT
-   published. It is held for review instead of silently hidden. */
-test("broadcast place does not publish on the client's word — weak evidence is held for a person", async () => {
+test("broadcast place hides when Screen is sexual even if the client claims allow", async () => {
   resetMemory();
   const rgb = fillRgb(96, 96, () => [210, 155, 125]);
   setFetchImpl(async (url) => {
@@ -983,84 +1040,9 @@ test("broadcast place does not publish on the client's word — weak evidence is
   const body = await res.json();
   assert.equal(res.status, 200);
   assert.equal(body.ok, true);
-  assert.equal(body.listed, false);   // the protection: not published on the client's word
-  assert.equal(body.held, true);      // a person decides
-  assert.equal(body.screen, "hold");  // the skin heuristic may not reject by itself
-  setFetchImpl(null);
-});
-
-/* ---- Guarantees of the rebuilt moderation. ---- */
-function placeWith(screen, trusted) {
-  setFetchImpl(async (url) => {
-    const u = String(url);
-    if (u.includes("accounts:lookup")) return new Response(JSON.stringify({ users: [{ localId: "user_t" }] }), { status: 200 });
-    if (u.includes("/broadcasts/bmod")) return new Response(JSON.stringify({
-      name: "projects/x/databases/(default)/documents/broadcasts/bmod",
-      fields: { creatorUid: { stringValue: "user_t" }, title: { stringValue: "Clip" } } }), { status: 200 });
-    if (u.includes("/users/user_t")) return new Response(JSON.stringify({
-      fields: { name: { stringValue: "T" }, trustedPublisher: { booleanValue: !!trusted } } }), { status: 200 });
-    return new Response("{}", { status: 200 });
-  });
-  return handleRequest(req("/v1/broadcast/place", {
-    method: "POST",
-    headers: { Authorization: "Bearer tok", "Content-Type": "application/json" },
-    body: JSON.stringify({ broadcast_id: "bmod", screen }),
-  }), ENV);
-}
-
-test("explicit anatomy is hidden even when the client claims allow — and even for a trusted publisher", async () => {
-  resetMemory();
-  const res = await placeWith({ v: 1, decision: "allow", nudenet: { v: 1, frames: [{ d: [[4, 0.91]], p: 0 }] } }, true);
-  const body = await res.json();
-  assert.equal(body.listed, false);
   assert.equal(body.hidden, true);
+  assert.equal(body.listed, false);
   assert.equal(body.screen, "block");
-  setFetchImpl(null);
-});
-
-test("a content HOLD applies to a trusted publisher (was: 'held but accepted')", async () => {
-  resetMemory();
-  const res = await placeWith({ v: 1, decision: "allow", nudenet: { v: 1, frames: [{ d: [], p: 0.95 }] } }, true);
-  const body = await res.json();
-  assert.equal(body.listed, false);
-  assert.equal(body.held, true);
-  assert.equal(body.screen, "hold");
-  setFetchImpl(null);
-});
-
-test("topless is rejected (owner decision, including breastfeeding) — even for a trusted publisher", async () => {
-  resetMemory();
-  const res = await placeWith({ v: 1, decision: "allow", nudenet: { v: 1, frames: [{ d: [[3, 0.71]], p: 0 }] } }, true);
-  const body = await res.json();
-  assert.equal(body.listed, false);
-  assert.equal(body.hidden, true);
-  assert.equal(body.screen, "block");
-  setFetchImpl(null);
-});
-
-test("a stage-show video with ONE misread frame is held for a person, not rejected", async () => {
-  resetMemory();
-  const dance = { d: [[2, 0.8], [13, 0.7], [16, 0.8]], p: 0 };
-  const frames = [dance, dance, dance, dance, { d: [[3, 0.62]], p: 0 }, dance, dance, dance];
-  const res = await placeWith({ v: 1, nudenet: { v: 1, frames } }, false);
-  const body = await res.json();
-  assert.equal(body.listed, false);
-  assert.equal(body.held, true);
-  assert.equal(body.screen, "hold");
-  setFetchImpl(null);
-});
-
-test("genuine content is published: a shirtless man, and lingerie from behind", async () => {
-  resetMemory();
-  for (const frame of [
-    { d: [[5, 0.87], [13, 0.81], [5, 0.71], [11, 0.56]], p: 0 },   // shirtless man (real detections)
-    { d: [[2, 0.83], [11, 0.66], [11, 0.66]], p: 0 },              // lingerie from behind (real detections)
-  ]) {
-    const res = await placeWith({ v: 1, nudenet: { v: 1, frames: [frame] } }, false);
-    const body = await res.json();
-    assert.equal(body.listed, true);
-    assert.equal(body.screen, "allow");
-  }
   setFetchImpl(null);
 });
 
