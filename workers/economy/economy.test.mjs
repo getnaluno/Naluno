@@ -982,3 +982,63 @@ test("broadcast place hides when Screen is sexual even if the client claims allo
   setFetchImpl(null);
 });
 
+test("broadcast place PATCH uses updateMask so listing does not wipe media", async () => {
+  resetMemory();
+  const rgb = fillRgb(96, 96, () => [40, 160, 50]);
+  const calls = [];
+  const sa = await genSa();
+  setFetchImpl(async (url, opts) => {
+    const u = String(url);
+    calls.push({ u, method: (opts && opts.method) || "GET" });
+    if (u.includes("oauth2.googleapis.com/token")) {
+      return new Response(JSON.stringify({ access_token: "sa", expires_in: 3600 }), { status: 200 });
+    }
+    if (u.includes("accounts:lookup")) {
+      return new Response(JSON.stringify({ users: [{ localId: "user_a" }] }), { status: 200 });
+    }
+    if (u.includes("/broadcasts/bmask")) {
+      return new Response(JSON.stringify({
+        name: "projects/x/databases/(default)/documents/broadcasts/bmask",
+        fields: {
+          creatorUid: { stringValue: "user_a" },
+          title: { stringValue: "Garden" },
+          mediaUrl: { stringValue: "https://media.example/garden.mp4" },
+        },
+      }), { status: 200 });
+    }
+    if (u.includes("/users/user_a")) {
+      return new Response(JSON.stringify({
+        fields: { name: { stringValue: "A" } },
+      }), { status: 200 });
+    }
+    return new Response("{}", { status: 200 });
+  });
+  const res = await handleRequest(
+    req("/v1/broadcast/place", {
+      method: "POST",
+      headers: { Authorization: "Bearer tok", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        broadcast_id: "bmask",
+        screen: { v: 2, w: 96, h: 96, frames: [{ rgb: rgbToB64(rgb) }] },
+      }),
+    }),
+    {
+      ...ENV,
+      GOOGLE_SERVICE_ACCOUNT: JSON.stringify({
+        client_email: sa.client_email,
+        private_key: sa.private_key,
+        project_id: sa.project_id,
+        token_uri: sa.token_uri,
+      }),
+    },
+  );
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.ok, true);
+  const patch = calls.find((c) => c.method === "PATCH" && c.u.includes("/broadcasts/bmask"));
+  assert.ok(patch, "place writes a listing patch");
+  assert.ok(patch.u.includes("updateMask.fieldPaths=listed"), "mask keeps mediaUrl");
+  assert.ok(patch.u.includes("updateMask.fieldPaths=held"));
+  setFetchImpl(null);
+});
+

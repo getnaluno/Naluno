@@ -16,7 +16,7 @@ const W = 96;
 const H = 96;
 
 test("screen version", () => {
-  assert.equal(SCREEN_VERSION, 2);
+  assert.equal(SCREEN_VERSION, 3);
 });
 
 test("video samples more than the first still", () => {
@@ -49,6 +49,19 @@ test("bedroom close-up blocks", () => {
   const rgb = fillRgb(W, H, (x, y, w, h) => {
     if (y < h * 0.18) return [155, 170, 188];
     return [200, 140, 110];
+  });
+  const d = decideFromHints([hintFromFeatures(featuresFromRgb(rgb, W, H))]);
+  assert.equal(d.decision, "block");
+});
+
+test("indoor couple with faces still blocks", () => {
+  const rgb = fillRgb(W, H, (x, y, w, h) => {
+    const nx = x / w, ny = y / h;
+    const h1 = (nx - 0.32) * (nx - 0.32) + (ny - 0.2) * (ny - 0.2);
+    const h2 = (nx - 0.64) * (nx - 0.64) + (ny - 0.22) * (ny - 0.22);
+    if (h1 < 0.03 || h2 < 0.03) return [210, 160, 130];
+    if (ny > 0.32 && ny < 0.82 && nx > 0.16 && nx < 0.84) return [200, 145, 115];
+    return [48, 32, 24];
   });
   const d = decideFromHints([hintFromFeatures(featuresFromRgb(rgb, W, H))]);
   assert.equal(d.decision, "block");

@@ -25,7 +25,7 @@ import {
   listingFromScreen,
 } from "./screen.mjs";
 
-export const VERSION = "2.6.1-screen";
+export const VERSION = "2.6.3-screen";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -743,7 +743,11 @@ async function fsGetDoc(env, token, path) {
 }
 async function fsPutDoc(env, token, path, obj) {
   if (!token) return { ok: false };
-  return fsFetch(env, token, "PATCH", path, toFsFields(obj));
+  const keys = Object.keys(obj || {}).filter((k) => obj[k] !== undefined);
+  if (!keys.length) return { ok: false };
+  const mask = keys.map((k) => "updateMask.fieldPaths=" + encodeURIComponent(k)).join("&");
+  const suffix = path.includes("?") ? "&" : "?";
+  return fsFetch(env, token, "PATCH", path + suffix + mask, toFsFields(obj));
 }
 async function loadReservedFromFs(env, token) {
   const t = token;
@@ -1010,7 +1014,8 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
     patch.held = false;
     patch.hidden = true;
   }
-  if (saToken) await fsPutDoc(env, saToken, "/broadcasts/" + encodeURIComponent(id), patch);
+  const writeTok = saToken || ((patch.hidden || judged.decision === "block") ? userToken : "");
+  if (writeTok) await fsPutDoc(env, writeTok, "/broadcasts/" + encodeURIComponent(id), patch);
   return json({
     ok: true,
     listed: !!patch.listed,

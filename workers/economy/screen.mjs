@@ -4,7 +4,7 @@
  * Never calls a third-party scanner. CSAM is a separate legal path.
  */
 
-export const SCREEN_VERSION = 2;
+export const SCREEN_VERSION = 3;
 export const SCREEN_SIZE = 96;
 export const SCREEN_MAX_FRAMES = 8;
 
@@ -256,6 +256,28 @@ export function isCloseup(f) {
   return false;
 }
 
+/** Indoor skin-heavy scene with people in frame. Heads being visible must not
+ *  make a sex scene look like a portrait — that was the miss. Beachwear is
+ *  excluded first. */
+export function isIntimate(f) {
+  if (!f) return false;
+  if (isBeachwear(f)) return false;
+  const scene = (f.sky || 0) + (f.veg || 0);
+  const cloth = f.cloth || 0;
+  const skin = f.skinRatio || 0;
+  const center = f.centerSkin || 0;
+  const body = ((f.midSkin || 0) + (f.botSkin || 0)) / 2;
+  const top = f.topSkin || 0;
+  const smooth = skin > 0.28 && (f.skinEdge || 0) < 0.09;
+  if (scene > 0.1) return false;
+  if (cloth > 0.08) return false;
+  if (skin > 0.34 && center > 0.38 && scene < 0.08 && smooth) {
+    if (body > 0.3 && top > 0.12) return true;
+    if ((f.blobCount || 0) >= 2 && body > 0.22 && skin > 0.4) return true;
+  }
+  return false;
+}
+
 function rawHint(f) {
   let h = 0;
   h += 0.3 * f.centerSkin;
@@ -277,13 +299,14 @@ function rawHint(f) {
 }
 
 export function classifyFrame(f) {
-  if (!f) return { hint: 0, beachwear: false, closeup: false };
+  if (!f) return { hint: 0, beachwear: false, closeup: false, intimate: false };
   const beachwear = isBeachwear(f);
   const closeup = isCloseup(f);
+  const intimate = isIntimate(f);
   let hint = rawHint(f);
-  if (closeup && !beachwear) hint = Math.max(hint, 0.86);
+  if ((closeup || intimate) && !beachwear) hint = Math.max(hint, 0.86);
   else if (beachwear) hint = Math.min(hint, 0.22);
-  return { hint: clamp01(hint), beachwear, closeup };
+  return { hint: clamp01(hint), beachwear, closeup, intimate };
 }
 
 export function hintFromFeatures(f) {
