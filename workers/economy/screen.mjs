@@ -4,9 +4,9 @@
  * Never calls a third-party scanner. CSAM is a separate legal path.
  */
 
-export const SCREEN_VERSION = 1;
+export const SCREEN_VERSION = 2;
 export const SCREEN_SIZE = 96;
-export const SCREEN_MAX_FRAMES = 6;
+export const SCREEN_MAX_FRAMES = 8;
 
 const SEX_WORDS = /\b(porn|porno|xxx|nsfw|onlyfans|nudes?|naked|hentai|cumshot|sex\s*tape)\b/i;
 
@@ -14,6 +14,13 @@ function clamp01(x) {
   if (x < 0) return 0;
   if (x > 1) return 1;
   return x;
+}
+
+export function videoScreenSpots(duration) {
+  const d = Number(duration) || 0;
+  if (d > 8) return [0.08, 0.2, 0.34, 0.48, 0.62, 0.76, 0.88, 0.95];
+  if (d > 2) return [0.12, 0.3, 0.5, 0.7, 0.9];
+  return [0.22, 0.55, 0.85];
 }
 
 export function isSkinRgb(r, g, b) {
@@ -27,6 +34,22 @@ export function isSkinRgb(r, g, b) {
   const ycbcr = cr >= 120 && cr <= 185 && cb >= 72 && cb <= 138;
   const ratio = r > b && (r - g) >= 2 && (r - b) >= 6 && (g - b) > -25;
   return ycbcr && ratio;
+}
+
+function hsvOf(r, g, b) {
+  const mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
+  const mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
+  const v = mx / 255;
+  const d = mx - mn;
+  const s = mx === 0 ? 0 : d / mx;
+  let h = 0;
+  if (d !== 0) {
+    if (mx === r) h = ((g - b) / d) * 60;
+    else if (mx === g) h = 120 + ((b - r) / d) * 60;
+    else h = 240 + ((r - g) / d) * 60;
+    if (h < 0) h += 360;
+  }
+  return { h, s, v };
 }
 
 function unionFind(n) {
@@ -67,6 +90,10 @@ export function featuresFromRgb(rgb, w, h) {
   let midN = 0;
   let botN = 0;
   let greenBlue = 0;
+  let cloth = 0;
+  let sky = 0;
+  let veg = 0;
+  let sheet = 0;
   let lumSum = 0;
   let lumSq = 0;
   const hist = new Uint32Array(16);
@@ -95,9 +122,11 @@ export function featuresFromRgb(rgb, w, h) {
       if (y < yTop) topN++;
       else if (y < yBot) midN++;
       else botN++;
+      const hsv = hsvOf(r, g, b);
       if (g > r + 12 && g > b - 8) greenBlue++;
       else if (b > r + 18 && b > g + 4) greenBlue++;
-      if (isSkinRgb(r, g, b)) {
+      const sk = isSkinRgb(r, g, b);
+      if (sk) {
         skin[i] = 1;
         skinN++;
         if (inCenter) centerSkin++;
@@ -105,6 +134,20 @@ export function featuresFromRgb(rgb, w, h) {
         if (y < yTop) topSkin++;
         else if (y < yBot) midSkin++;
         else botSkin++;
+      } else {
+        // Swimwear / clothes: saturated yellow-red-magenta, not foliage or sky.
+        const fashionHue = hsv.h < 80 || hsv.h > 300;
+        if (hsv.s > 0.42 && hsv.v > 0.28 && fashionHue) cloth++;
+      }
+      // Real sky/ocean: saturated enough that muted bedsheets fail.
+      if (hsv.s >= 0.22 && lum >= 125 && hsv.v > 0.45 && b > r + 12 && b > g - 8 && hsv.h >= 170 && hsv.h <= 230) {
+        sky++;
+      }
+      if (!sk && g > r + 8 && g > b - 10 && hsv.s > 0.2 && hsv.h >= 55 && hsv.h <= 170) {
+        veg++;
+      }
+      if (hsv.h >= 185 && hsv.h <= 250 && hsv.s < 0.32 && hsv.v > 0.28 && hsv.v < 0.9 && lum < 170) {
+        sheet++;
       }
     }
   }
@@ -170,6 +213,10 @@ export function featuresFromRgb(rgb, w, h) {
     skinEdge: skinEdgeN ? skinEdgeSum / skinEdgeN : 0,
     entropy: entropy,
     greenBlue: greenBlue / n,
+    cloth: cloth / n,
+    sky: sky / n,
+    veg: veg / n,
+    sheet: sheet / n,
     topSkin: topN ? topSkin / topN : 0,
     midSkin: midN ? midSkin / midN : 0,
     botSkin: botN ? botSkin / botN : 0,
@@ -178,8 +225,38 @@ export function featuresFromRgb(rgb, w, h) {
   };
 }
 
-export function hintFromFeatures(f) {
-  if (!f) return 0;
+export function isBeachwear(f) {
+  if (!f) return false;
+  const scene = (f.sky || 0) + (f.veg || 0);
+  const cloth = f.cloth || 0;
+  const sheet = f.sheet || 0;
+  const sky = f.sky || 0;
+  if (sheet > 0.12 && scene < 0.08) return false;
+  // Beach / pool: real sky plus a head in frame. Swimwear often hashes as skin, so do not require a clothing count.
+  if (sky > 0.08 && f.topSkin > 0.2 && sheet < 0.1) return true;
+  if (scene > 0.08 && cloth > 0.04 && f.topSkin > 0.18 && sheet < 0.12) return true;
+  if (cloth > 0.08 && f.topSkin > 0.22 && sheet < 0.1 && scene > 0.04) return true;
+  return false;
+}
+
+export function isCloseup(f) {
+  if (!f) return false;
+  const scene = (f.sky || 0) + (f.veg || 0);
+  const cloth = f.cloth || 0;
+  const sheet = f.sheet || 0;
+  const lower = ((f.midSkin || 0) + (f.botSkin || 0)) / 2;
+  const noHead = (f.topSkin || 0) < 0.22;
+  const smooth = (f.skinRatio || 0) > 0.28 && (f.skinEdge || 0) < 0.085;
+  if (cloth > 0.06) return false;
+  // Sky in the corner of a close-up is not a beach portrait.
+  if (scene > 0.12 && sheet < 0.1 && (f.topSkin || 0) > 0.18) return false;
+  if (noHead && lower > 0.45 && (f.skinRatio || 0) > 0.28 && cloth < 0.035) return true;
+  if (smooth && noHead && cloth < 0.03 && scene < 0.1) return true;
+  if (sheet > 0.12 && noHead && (f.skinRatio || 0) > 0.3 && cloth < 0.03) return true;
+  return false;
+}
+
+function rawHint(f) {
   let h = 0;
   h += 0.3 * f.centerSkin;
   h += 0.22 * f.blobMax;
@@ -190,12 +267,27 @@ export function hintFromFeatures(f) {
   if (f.topSkin > f.midSkin && f.topSkin > f.botSkin * 1.15 && f.botSkin < 0.28 && f.blobMax < 0.55) {
     h *= 0.42;
   }
-  if (f.greenBlue > 0.16 || f.entropy > 3.6) h *= 0.62;
+  const scene = (f.sky || 0) + (f.veg || 0);
+  if (scene > 0.14 && (f.sheet || 0) < 0.1) h *= 0.55;
   if (f.edgeDensity > 0.22 && f.skinRatio < 0.45) h *= 0.7;
-  if (f.greenBlue < 0.12 && f.skinRatio < 0.06 && f.entropy < 2.4 && f.edgeDensity < 0.1 && f.lumVar < 0.05 && f.meanLum > 0.22 && f.meanLum < 0.85) {
+  if (scene < 0.08 && (f.sheet || 0) < 0.1 && f.skinRatio < 0.06 && f.entropy < 2.4 && f.edgeDensity < 0.1 && f.lumVar < 0.05 && f.meanLum > 0.22 && f.meanLum < 0.85) {
     h = Math.max(h, 0.36);
   }
   return clamp01(h);
+}
+
+export function classifyFrame(f) {
+  if (!f) return { hint: 0, beachwear: false, closeup: false };
+  const beachwear = isBeachwear(f);
+  const closeup = isCloseup(f);
+  let hint = rawHint(f);
+  if (closeup && !beachwear) hint = Math.max(hint, 0.86);
+  else if (beachwear) hint = Math.min(hint, 0.22);
+  return { hint: clamp01(hint), beachwear, closeup };
+}
+
+export function hintFromFeatures(f) {
+  return classifyFrame(f).hint;
 }
 
 export function decideFromHints(hints, opts) {
@@ -214,10 +306,11 @@ export function decideFromHints(hints, opts) {
   const lex = SEX_WORDS.test(String(title));
   let decision = "hold";
   let reason = "screen";
-  if ((max >= 0.78 && mean >= 0.5) || max >= 0.84 || (lex && max >= 0.55)) {
+  // One strong late frame is enough to stop. Mean must not wash it out.
+  if (max >= 0.84 || (max >= 0.78 && mean >= 0.45) || (lex && max >= 0.55)) {
     decision = "block";
     reason = "screen";
-  } else if (max < 0.3 && mean < 0.22 && !lex) {
+  } else if (max < 0.3 && mean < 0.24 && !lex) {
     decision = "allow";
     reason = "";
   } else if (lex) {

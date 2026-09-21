@@ -9,13 +9,49 @@ import {
   listingFromScreen,
   fillRgb,
   rgbToB64,
+  videoScreenSpots,
 } from "./screen.mjs";
 
 const W = 96;
 const H = 96;
 
 test("screen version", () => {
-  assert.equal(SCREEN_VERSION, 1);
+  assert.equal(SCREEN_VERSION, 2);
+});
+
+test("video samples more than the first still", () => {
+  assert.ok(videoScreenSpots(1).length >= 3);
+  assert.ok(videoScreenSpots(12).length >= 8);
+  assert.ok(videoScreenSpots(12).at(-1) >= 0.9);
+});
+
+test("one late sexual still blocks even if earlier stills are clear", () => {
+  assert.equal(decideFromHints([0.12, 0.14, 0.18, 0.86]).decision, "block");
+});
+
+test("beach swimwear allows", () => {
+  const rgb = fillRgb(W, H, (x, y, w, h) => {
+    if (y < h * 0.3) {
+      const cx = w / 2, cy = h * 0.16, r = w * 0.16;
+      if ((x - cx) * (x - cx) + (y - cy) * (y - cy) < r * r) return [210, 160, 130];
+      return [80, 165, 225];
+    }
+    if (x < w * 0.14 || x > w * 0.86) return [35, 110, 45];
+    if (y > h * 0.38 && y < h * 0.52 && x > w * 0.32 && x < w * 0.68) return [235, 60, 80];
+    if (y > h * 0.86) return [210, 185, 130];
+    return [200, 150, 118];
+  });
+  const d = decideFromHints([hintFromFeatures(featuresFromRgb(rgb, W, H))]);
+  assert.equal(d.decision, "allow");
+});
+
+test("bedroom close-up blocks", () => {
+  const rgb = fillRgb(W, H, (x, y, w, h) => {
+    if (y < h * 0.18) return [155, 170, 188];
+    return [200, 140, 110];
+  });
+  const d = decideFromHints([hintFromFeatures(featuresFromRgb(rgb, W, H))]);
+  assert.equal(d.decision, "block");
 });
 
 test("green field allows", () => {
