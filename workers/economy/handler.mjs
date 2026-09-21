@@ -1005,7 +1005,12 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
     screenDecision: judged.decision,
     screenScore: judged.score || 0,
     screenReason: judged.reason || "",
-    screenVersion: 1,
+    // For reviewers: which engine decided, which sampled frame, and what that
+    // frame showed — so a held video can be checked at the moment in question.
+    screenEngine: judged.engine || "",
+    screenDetail: judged.detail || "",
+    screenFrame: typeof judged.frameIndex === "number" ? judged.frameIndex : -1,
+    screenVersion: 2,
     screenFrames: judged.frames || 0,
     updatedAt: Date.now(),
   });

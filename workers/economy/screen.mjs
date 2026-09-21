@@ -360,68 +360,208 @@ export function bytesFromB64(s) {
   }
 }
 
-/* ---- Model verdict (nsfwjs) ----
-   Same policy as js/nsfw-model.js, and it MUST stay in step with it.
-   explicit = Porn + Hentai. Sexy is deliberately excluded — that is where
-   bikinis and swimwear land, and they are to be accepted. */
-const MODEL_REJECT_AT = 0.70;
-const MODEL_REVIEW_AT = 0.30;
-const MODEL_CLASSES = ["Drawing", "Hentai", "Neutral", "Porn", "Sexy"];
+  /* =====================================================================================
+     NALUNO MODERATION RULEBOOK
+     IDENTICAL in js/nudenet.js and workers/economy/screen.mjs. Change both or neither.
+     The same definitions are shown to human reviewers in the console, so a person and
+     the machine apply one standard.
 
-/** Validate model scores before trusting them.
- *  This rejects malformed or garbage payloads — five probabilities that are
- *  numbers in [0,1] and sum to ~1, per frame. It does NOT stop a careful
- *  forger: the scores are computed on the device, so a modified client could
- *  send a plausible "clean" set. That is the known limit of on-device
- *  screening, stated here rather than hidden. */
-function validModelFrames(model) {
-  if (!model || typeof model !== "object") return null;
-  const frames = Array.isArray(model.frames) ? model.frames.slice(0, 12) : [];
+     ------------------------------------------------------------------------------------
+     WHAT "EXPLICIT" MEANS ON NALUNO — rejected
+     ------------------------------------------------------------------------------------
+     A photo or video is explicit if it shows ANY of these, of any person, in any setting:
+
+       1. GENITALS — exposed male or female genitals.
+       2. ANUS — exposed.
+       3. FEMALE BREAST — an exposed female nipple/areola ("topless"). This includes
+          breastfeeding, for now. Owner decision, to be revisited as Naluno grows.
+       4. NUDITY — two or more of the above exposed together.
+       5. SEXUAL ACTS — intercourse, oral sex, masturbation, sexual touching of
+          genitals — EVEN IF the genitals themselves are hidden.
+
+     "Pornographic" on Naluno means content made to show 1-5. A video is pornographic
+     if those things appear in it; its title, music or intent do not change that.
+
+     ------------------------------------------------------------------------------------
+     WHAT IS NOT EXPLICIT — accepted, however "sexy"
+     ------------------------------------------------------------------------------------
+     Naluno allows sensual, glamorous and revealing content. None of these is rejected:
+
+       - Bikinis, swimwear, lingerie, underwear, bodysuits — as long as nipples and
+         genitals are covered.
+       - Thongs and G-strings: exposed BUTTOCKS are allowed (the anus is not).
+       - Shirtless men — a male chest is not nudity.
+       - Cleavage, sideboob with the nipple covered, midriffs, bare backs, bare legs.
+       - Dancing, twerking, pole and stage shows, suggestive poses, sensual movement,
+         modelling, fitness, beach, pool and bedroom photos — clothed as above.
+       - Kissing and affection between clothed people.
+       - Tight, short or sheer clothing that still covers nipples and genitals.
+
+     The test is WHAT IS EXPOSED, never how much skin shows or how provocative it looks.
+
+     ------------------------------------------------------------------------------------
+     HOW THE MACHINE APPLIES THIS — and where it stops
+     ------------------------------------------------------------------------------------
+     The detector (NudeNet) reports body parts with a confidence 0-1. It reliably sees
+     rules 1-4. It CANNOT see rule 5 when the anatomy is hidden: an act with no exposed
+     part has nothing to detect. Those are caught by reports and human review, and a
+     screenshot of a video player (the usual disguise for reposted porn) is held.
+
+     Confidence bands — chosen so that a wrong guess goes to a PERSON, not straight to
+     rejection. The breast threshold is higher than the genital one because cleavage
+     and bikini tops are its most common misread.
+
+                                  REJECT      HOLD (a person looks)
+       genitals / anus            >= 0.50     0.30 - 0.50
+       female breast (topless)    >= 0.55     0.35 - 0.55
+       two intimate parts         each >= 0.40
+       video-player screenshot                >= 0.85
+
+     VIDEOS are judged across all sampled frames (3, 5 or 8 depending on length):
+       - REJECT if any single frame is near-certain (>= 0.80), or if TWO OR MORE frames
+         reach the reject level. Real explicit video shows it repeatedly.
+       - HOLD if only ONE frame reaches the reject level. One frame out of eight is how
+         a dancer's turn or a lighting flash gets misread — that goes to a person, it
+         does not reject a genuine video.
+     Nothing explicit becomes public under these rules: anything uncertain is held.
+     ===================================================================================== */
+  var MOD_LABELS = ["FEMALE_GENITALIA_COVERED","FACE_FEMALE","BUTTOCKS_EXPOSED","FEMALE_BREAST_EXPOSED",
+    "FEMALE_GENITALIA_EXPOSED","MALE_BREAST_EXPOSED","ANUS_EXPOSED","FEET_EXPOSED","BELLY_COVERED",
+    "FEET_COVERED","ARMPITS_COVERED","ARMPITS_EXPOSED","FACE_MALE","BELLY_EXPOSED",
+    "MALE_GENITALIA_EXPOSED","ANUS_COVERED","FEMALE_BREAST_COVERED","BUTTOCKS_COVERED"];
+  var MOD_ANATOMY = { FEMALE_GENITALIA_EXPOSED: 1, MALE_GENITALIA_EXPOSED: 1, ANUS_EXPOSED: 1 };
+  var MOD_INTIMATE = { FEMALE_GENITALIA_EXPOSED: 1, MALE_GENITALIA_EXPOSED: 1, ANUS_EXPOSED: 1, FEMALE_BREAST_EXPOSED: 1 };
+  var MOD_REVEALING = { MALE_BREAST_EXPOSED: 1, BUTTOCKS_EXPOSED: 1, BELLY_EXPOSED: 1 };
+  var MOD_T = {
+    anatomyReject: 0.50, anatomyHold: 0.30,
+    breastReject: 0.55,  breastHold: 0.35,
+    pair: 0.40, certain: 0.80, player: 0.85,
+  };
+  /* Plain-language reasons, shown to uploaders and reviewers. */
+  var MOD_REASON_TEXT = {
+    "genitals": "exposed genitals",
+    "anus": "exposed anus",
+    "topless": "an exposed female breast",
+    "nudity": "nudity",
+    "possible-genitals": "possible exposed genitals",
+    "possible-anus": "possible exposed anus",
+    "possible-topless": "a possibly exposed female breast",
+    "single-frame": "one frame that may be explicit",
+    "video-player-screenshot": "a screenshot of a video player",
+    "revealing-allowed": "revealing but allowed",
+  };
+  function modAnatomyReason(cls, possible) {
+    var base = cls === "ANUS_EXPOSED" ? "anus" : "genitals";
+    return possible ? "possible-" + base : base;
+  }
+
+  /* One frame -> { level: "certain"|"reject"|"hold"|"allow", reason, score }.
+     frame: { d: [[classIndex, score], ...], p: playerScore } */
+  function modAssessFrame(frame) {
+    var best = {}, i, cls, sc;
+    var d = (frame && frame.d) || [];
+    for (i = 0; i < d.length; i++) {
+      cls = MOD_LABELS[d[i][0]]; sc = Number(d[i][1]) || 0;
+      if (cls && (!(cls in best) || sc > best[cls])) best[cls] = sc;
+    }
+    var anatomy = 0, anatomyCls = "", intimate = 0, revealing = 0;
+    for (cls in best) {
+      if (MOD_ANATOMY[cls] && best[cls] > anatomy) { anatomy = best[cls]; anatomyCls = cls; }
+      if (MOD_INTIMATE[cls] && best[cls] >= MOD_T.pair) intimate++;
+      if (MOD_REVEALING[cls] && best[cls] >= 0.5) revealing++;
+    }
+    var breast = best.FEMALE_BREAST_EXPOSED || 0;
+    var player = Number(frame && frame.p) || 0;
+    var top = Math.max(anatomy, breast);
+    if (anatomy >= MOD_T.certain) return { level: "certain", reason: modAnatomyReason(anatomyCls), score: anatomy };
+    if (breast  >= MOD_T.certain) return { level: "certain", reason: "topless", score: breast };
+    if (anatomy >= MOD_T.anatomyReject) return { level: "reject", reason: modAnatomyReason(anatomyCls), score: anatomy };
+    if (breast  >= MOD_T.breastReject)  return { level: "reject", reason: "topless", score: breast };
+    if (intimate >= 2)                  return { level: "reject", reason: "nudity", score: top };
+    if (anatomy >= MOD_T.anatomyHold)   return { level: "hold", reason: modAnatomyReason(anatomyCls, true), score: anatomy };
+    if (breast  >= MOD_T.breastHold)    return { level: "hold", reason: "possible-topless", score: breast };
+    if (player  >= MOD_T.player)        return { level: "hold", reason: "video-player-screenshot", score: player };
+    return { level: "allow", reason: revealing ? "revealing-allowed" : "", score: top };
+  }
+
+  /* A photo is one frame. A video is several, judged together (see rulebook). */
+  function modDecide(frames) {
+    if (!frames || !frames.length) return { decision: "unread", reason: "unread", score: 0, frame: -1 };
+    var a = [], k, certain = null, rejects = [], holds = [];
+    for (k = 0; k < frames.length; k++) {
+      var r = modAssessFrame(frames[k]); r.frame = k; a.push(r);
+      if (r.level === "certain" && (!certain || r.score > certain.score)) certain = r;
+      if (r.level === "reject") rejects.push(r);
+      if (r.level === "hold") holds.push(r);
+    }
+    var byScore = function (x, y) { return y.score - x.score; };
+    if (certain) return { decision: "block", reason: certain.reason, score: certain.score, frame: certain.frame };
+    if (frames.length === 1 && rejects.length) {
+      return { decision: "block", reason: rejects[0].reason, score: rejects[0].score, frame: 0 };
+    }
+    if (rejects.length >= 2) {
+      rejects.sort(byScore);
+      return { decision: "block", reason: rejects[0].reason, score: rejects[0].score, frame: rejects[0].frame, frames: rejects.length };
+    }
+    if (rejects.length === 1) {
+      return { decision: "hold", reason: "single-frame", score: rejects[0].score, frame: rejects[0].frame, detail: rejects[0].reason };
+    }
+    if (holds.length) {
+      holds.sort(byScore);
+      return { decision: "hold", reason: holds[0].reason, score: holds[0].score, frame: holds[0].frame };
+    }
+    var allowed = a.slice().sort(byScore)[0];
+    var revealing = a.some(function (x) { return x.reason === "revealing-allowed"; });
+    return { decision: "allow", reason: revealing ? "revealing-allowed" : "", score: allowed.score, frame: -1 };
+  }
+  function modReasonText(reason) { return MOD_REASON_TEXT[reason] || ""; }
+  /* Kept for callers that ask about a single frame. */
+  function modDecideFrame(frame) { return modDecide([frame]); }
+  /* ===================================================================================== */
+
+/** Validate NudeNet detections before trusting them. Rejects malformed or
+ *  garbage payloads. It cannot stop a careful forger — detections are computed
+ *  on the device — which is the known limit of on-device screening. */
+function validNudenetFrames(nn) {
+  if (!nn || typeof nn !== "object" || !Array.isArray(nn.frames)) return null;
+  const frames = nn.frames.slice(0, 12);
   if (!frames.length) return null;
   const out = [];
   for (const f of frames) {
-    if (!f || typeof f !== "object") return null;
-    let sum = 0;
-    for (const k of MODEL_CLASSES) {
-      const v = Number(f[k]);
-      if (!Number.isFinite(v) || v < 0 || v > 1) return null;
-      sum += v;
+    if (!f || typeof f !== "object" || !Array.isArray(f.d) || f.d.length > 60) return null;
+    const d = [];
+    for (const row of f.d) {
+      if (!Array.isArray(row) || row.length !== 2) return null;
+      const c = Number(row[0]), sc = Number(row[1]);
+      if (!Number.isInteger(c) || c < 0 || c >= MOD_LABELS.length) return null;
+      if (!Number.isFinite(sc) || sc < 0 || sc > 1) return null;
+      d.push([c, sc]);
     }
-    if (Math.abs(sum - 1) > 0.05) return null;
-    out.push(f);
+    const pl = f.p == null ? 0 : Number(f.p);
+    if (!Number.isFinite(pl) || pl < 0 || pl > 1) return null;
+    out.push({ d, p: pl });
   }
   return out;
 }
-
-export function decideFromModel(frames) {
-  let worst = 0, maxSexy = 0;
-  for (const f of frames) {
-    const e = (Number(f.Porn) || 0) + (Number(f.Hentai) || 0);
-    if (e > worst) worst = e;
-    maxSexy = Math.max(maxSexy, Number(f.Sexy) || 0);
-  }
-  let decision = "allow", reason = maxSexy >= 0.5 ? "revealing-allowed" : "";
-  if (worst >= MODEL_REJECT_AT) { decision = "block"; reason = "explicit"; }
-  else if (worst >= MODEL_REVIEW_AT) { decision = "hold"; reason = "review"; }
-  return { decision, score: Math.round(worst * 100), reason, explicit: worst, sexy: maxSexy };
-}
+export { modDecide, modDecideFrame, modAssessFrame, modReasonText, MOD_LABELS, MOD_T };
 
 export function judgeScreenPayload(payload, opts) {
   const title = (opts && opts.title) || "";
   if (!payload || typeof payload !== "object") {
     return { decision: "unread", score: 0, hasScreen: false, reason: "unread", frames: 0 };
   }
-  /* Prefer the model when valid scores are present. Before this, the server
-     re-ran the skin heuristic on every upload — so even a correct on-device
-     verdict ("that is a bikini, accept it") was silently overruled by the
-     check that could not tell a bikini from nudity. */
-  const modelFrames = validModelFrames(payload.model);
-  if (modelFrames) {
-    const d = decideFromModel(modelFrames);
+  /* NudeNet detections, when present and valid, decide. Otherwise the server
+     would re-run the skin heuristic and overrule a correct on-device verdict
+     with the check that cannot tell a bikini from nudity. Old NSFWJS payloads
+     ("model") are deliberately ignored: that classifier called lingerie porn
+     and missed an explicit act, so its verdicts are not trusted. */
+  const nnFrames = validNudenetFrames(payload.nudenet);
+  if (nnFrames) {
+    const d = modDecide(nnFrames);
     return {
-      decision: d.decision, score: d.score, hasScreen: true,
-      reason: d.reason, frames: modelFrames.length,
-      engine: "model", explicit: d.explicit, sexy: d.sexy,
+      decision: d.decision, score: Math.round((d.score || 0) * 100), hasScreen: true,
+      reason: d.reason, frames: nnFrames.length, engine: "nudenet",
+      detail: d.detail || "", frameIndex: typeof d.frame === "number" ? d.frame : -1,
     };
   }
   const w = Number(payload.w) || 0;
@@ -443,14 +583,21 @@ export function judgeScreenPayload(payload, opts) {
     return { decision: "unread", score: 0, hasScreen: false, reason: "unread", frames: 0 };
   }
   const d = decideFromHints(hints, { title });
+  /* The skin heuristic is only a fallback now, and it cannot tell a bikini
+     from nudity (a bikini indoors scored the same as explicit nudity). So it
+     is never allowed to REJECT by itself: its "block" becomes "hold", and a
+     person decides. Auto-rejecting genuine content on weak evidence is the
+     exact failure this rebuild fixes. */
+  const decision = d.decision === "block" ? "hold" : d.decision;
   return {
-    decision: d.decision,
+    decision,
     score: d.score,
     hasScreen: true,
-    reason: d.reason,
+    reason: d.decision === "block" ? "heuristic-only" : d.reason,
     frames: hints.length,
     max: d.max,
     mean: d.mean,
+    engine: "heuristic",
   };
 }
 
@@ -471,14 +618,19 @@ export function listingFromScreen(opts) {
       heldReason: "",
     };
   }
+  /* A content HOLD applies to everyone. Trust used to be checked first, so a
+     trusted publisher's held upload was published anyway — "held but
+     accepted". Trust exists to skip the NEW-PUBLISHER hold (we already know
+     you); it was never meant to overrule a screen that says a person needs
+     to look at this particular upload. */
+  if (hasScreen && decision === "hold") {
+    return { listed: false, held: true, hidden: false, heldReason: "screen" };
+  }
   if (trusted) {
     return { listed: true, held: false, hidden: false, heldReason: "" };
   }
   if (hasScreen && decision === "allow") {
     return { listed: true, held: false, hidden: false, heldReason: "" };
-  }
-  if (hasScreen && decision === "hold") {
-    return { listed: false, held: true, hidden: false, heldReason: "screen" };
   }
   return { listed: false, held: true, hidden: false, heldReason: "new-publisher" };
 }
