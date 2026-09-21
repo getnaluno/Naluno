@@ -1,6 +1,6 @@
-# GitHub — 2026.09.21f
+# GitHub — 2026.09.21g
 
-Naluno Screen: first-party stills at upload (Origin samples). Clear goes out. Unsure waits on Trust. Sexual is stopped. No Hive / Cloudflare / third-party porn API.
+Naluno Screen v2: a beach bikini goes out. An explicit close-up is stopped. Videos are read through the file (including late stills), not only the first frame.
 
 ## Upload to GitHub
 
@@ -17,18 +17,14 @@ Naluno Screen: first-party stills at upload (Origin samples). Clear goes out. Un
 11. js/broadcast-space.js
 12. js/admin-data.js
 13. js/admin-console.js
-14. js/firestore-rules.test.cjs
-15. admin/index.html
-16. app/index.html
-17. sw.js
-
-Identity (21c–21d) and Broadcast safety hide-on-sexual-report (21e) stay in these files. If those were not published yet, this zip still includes them.
+14. admin/index.html
+15. app/index.html
+16. sw.js
 
 ## Then
 
-1. Publish firestore.rules (Screen fields are desk/worker only).
-2. Deploy economy worker **2.6.0-screen** (must include `screen.mjs` next to `handler.mjs`).
-3. If Identity is not live yet: open Admin → Identity once.
-4. Trust now shows *why* something is waiting (Screen unsure vs new publisher).
+1. Publish firestore.rules if 21f is not live yet.
+2. Deploy economy worker **2.6.1-screen** (`screen.mjs` next to `handler.mjs`).
+3. Upload the app files.
 
-Do not claim this stops everything. Sexual reports still take a Broadcast down. CSAM stays a separate legal path.
+Screen is first-party. It does not send the file to anyone else. It will miss some things — a sexual report still takes a Broadcast down.
