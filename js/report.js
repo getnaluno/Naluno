@@ -42,6 +42,25 @@ function openReportSheet(detail){
   }
   const sheet = document.getElementById('reportSheet');
   if(!sheet) return;
+  /* FIX ("the report button is off"). The sheet shares the .call-overlay
+     class, which is position:ABSOLUTE and lives inside #app — a
+     position:relative, overflow:hidden box. The Broadcast space it opens
+     from is position:FIXED at <body> level and covers the whole viewport.
+     So the sheet was being laid out and clipped inside #app, underneath a
+     full-screen layer it could never escape, and its z-index:360 was
+     competing from inside the wrong box. The tap registered; nothing
+     visible happened.
+
+     Moving the sheet to <body> on open puts it in the same layer as the
+     Broadcast space, and position:fixed makes it cover the viewport rather
+     than #app's rectangle. Done at open time rather than by editing the
+     markup, so it is correct however the page was served or cached. */
+  if(sheet.parentElement !== document.body){
+    document.body.appendChild(sheet);
+  }
+  sheet.style.position = 'fixed';
+  sheet.style.inset = '0';
+  sheet.style.zIndex = '2147483000';
   sheet.classList.add('active');
   sheet.dataset.targetType = d.target_type || 'broadcast';
   sheet.dataset.targetId = d.target_id || '';

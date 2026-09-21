@@ -3078,6 +3078,44 @@
     }
   }
 
+  /* Resolve a report LOCALLY the moment the write succeeds.
+
+     Why this is needed: actReport used to reload the Trust tab from a fresh
+     one-shot read, while the live listeners separately re-commit their own
+     cached pack (__livePack) whenever ANY watched collection changes. If a
+     users/broadcasts/siteSessions listener fired before the reports update
+     had arrived, applyLivePack() re-committed the OLD reports — status still
+     OPEN — and the "report waiting for a decision" alert came straight back.
+     Whether it stayed gone depended on which network response won.
+
+     Patching the report in BOTH packs removes the race: there is no longer a
+     stale copy anywhere for a later re-commit to restore. The live listener
+     still delivers the authoritative document afterwards, and it agrees. */
+  function markReportLocally(id, decision, note) {
+    const patch = function (rows) {
+      if (!Array.isArray(rows)) return;
+      rows.forEach(function (r) {
+        if (r && (r.id === id || r._id === id || r.report_id === id)) {
+          r.status = decision;
+          r.resolution = note || r.resolution || '';
+          r.resolvedAt = Date.now();
+        }
+      });
+    };
+    try { if (__livePack) patch(__livePack.reports); } catch (_) {}
+    try { if (__snap && __snap._raw) patch(__snap._raw.reports); } catch (_) {}
+    // Re-derive from the corrected raw pack so the attention list, the alert
+    // count and the health label are all recomputed together — patching the
+    // derived fields by hand would let them drift apart.
+    try {
+      if (__snap && __snap._raw) {
+        const fresh = commitPack(__snap._raw);
+        renderStrip(fresh);
+        renderTab(__activeTab, fresh);
+      }
+    } catch (_) {}
+  }
+
   async function actReport(id, decision) {
     const note = window.prompt('Note for the audit log:', '');
     if (note === null) return;
@@ -3101,8 +3139,10 @@
         }, { merge: true });
       }
       await writeAudit('report-' + decision, id, note.trim());
-      toast('Report ' + String(decision).toLowerCase());
-      await loadTab('trust', true);
+      // Clear it on screen immediately, then reconcile with the server.
+      markReportLocally(id, decision, note.trim());
+      toast('Report ' + String(decision).toLowerCase() + ' — cleared');
+      await loadTab(__activeTab, true);
     } catch (e) {
       toast((e && e.message) || 'Could not update the report.');
     }
