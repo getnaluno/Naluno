@@ -100,6 +100,9 @@ function nalunoPublisherTrusted(){
 }
 function nalunoBroadcastListingFields(screen){
   const decision = (screen && screen.decision) || '';
+  if(decision === 'block'){
+    return { listed: false, held: true, heldReason: 'screen', hidden: false };
+  }
   if(nalunoPublisherTrusted()){
     return { listed: true, held: false, heldReason: '', hidden: false };
   }

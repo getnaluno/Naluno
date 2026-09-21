@@ -727,6 +727,7 @@ async function openBroadcastSpace(meta){
   $('bspaceResourceComposer').style.display = isCreator ? 'flex' : 'none';
   $('bspaceGoLive').style.display = isCreator ? 'inline-block' : 'none';
   if($('bspaceDeleteBtn')) $('bspaceDeleteBtn').style.display = isCreator ? 'inline-block' : 'none';
+  if($('bspaceReportBtn')) $('bspaceReportBtn').style.display = isCreator ? 'none' : 'inline-block';
   const strandRow = $('bspaceStrandRow');
   if(strandRow){
     strandRow.style.display = isCreator ? 'block' : 'none';
@@ -1719,22 +1720,28 @@ async function bspaceMarkBest(qid, answerText){
 }
 
 
-/* Report entry point, beside Share rather than buried in a menu — someone who
-   needs it should not have to hunt for it. Reports the Broadcast AND
-   identifies its creator, so a pattern across several Broadcasts by the same
-   person becomes visible in the console rather than looking like unrelated
-   one-offs. */
+function bspaceOpenReport(){
+  if(typeof openReportSheet !== 'function'){ toast('Reporting isn’t available right now'); return; }
+  const meta = activeBroadcastMeta || {};
+  if(currentUser && meta.creatorUid && meta.creatorUid === currentUser.uid){
+    toast('This is yours — use Delete if it should come down.');
+    return;
+  }
+  openReportSheet({
+    target_type: 'broadcast',
+    target_id: activeBroadcastId || '',
+    target_user_id: meta.creatorUid || '',
+    broadcast_id: activeBroadcastId || '',
+    name: meta.creatorName || meta.title || 'this Broadcast',
+  });
+}
+
+/* Report sits beside Share. The sheet must sit above this space or the tap
+   looks dead. Own Broadcasts hide Report (Delete is the control). */
 if($('bspaceReportBtn')){
-  $('bspaceReportBtn').onclick = function(){
-    if(typeof openReportSheet !== 'function'){ toast('Reporting isn\u2019t available right now'); return; }
-    const meta = activeBroadcastMeta || {};
-    openReportSheet({
-      target_type: 'broadcast',
-      target_id: activeBroadcastId || '',
-      target_user_id: meta.creatorUid || '',
-      broadcast_id: activeBroadcastId || '',
-      name: meta.creatorName || meta.title || 'this Broadcast',
-    });
+  $('bspaceReportBtn').onclick = function(e){
+    if(e){ e.preventDefault(); e.stopPropagation(); }
+    bspaceOpenReport();
   };
 }
 

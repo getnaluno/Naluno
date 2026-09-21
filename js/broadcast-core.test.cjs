@@ -4,6 +4,7 @@ const assert = require('assert');
 const src = fs.readFileSync(__dirname + '/broadcast-core.js', 'utf8');
 
 assert.match(src, /function nalunoBroadcastListingFields\(screen\)/, 'listing reads Screen');
+assert.match(src, /if\(decision === 'block'\)/, 'Screen block is not listed even for a trusted publisher');
 assert.match(src, /if\(decision === 'allow'\)/, 'Screen-allow lists a new publisher at create');
 assert.match(src, /nalunoBroadcastListingFields\(screenReport\)/, 'create uses the Screen report');
 assert.match(src, /https:\/\/naluno-economy\.naluno\.workers\.dev/, 'place talks to the economy worker directly');

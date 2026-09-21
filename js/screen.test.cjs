@@ -9,7 +9,7 @@ ctx.window = ctx;
 vm.runInNewContext(src, ctx);
 const S = ctx.NalunoScreen;
 assert.ok(S, 'NalunoScreen missing');
-assert.strictEqual(S.VERSION, 2);
+assert.strictEqual(S.VERSION, 3);
 assert.ok(S.videoScreenSpots(1).length >= 3, 'short clips still get more than one still');
 assert.ok(S.videoScreenSpots(12).length >= 8, 'longer clips sample through the file, including late');
 assert.ok(S.videoScreenSpots(12).slice(-1)[0] >= 0.9, 'last sample is near the end');
@@ -91,5 +91,16 @@ const bedroom = fill(W, H, function (x, y, w, h) {
 });
 const bedD = decideRgb(bedroom);
 assert.strictEqual(bedD.decision, 'block', 'explicit close-up should stop, got ' + bedD.decision + ' score ' + bedD.score);
+
+const couple = fill(W, H, function (x, y, w, h) {
+  const nx = x / w, ny = y / h;
+  const h1 = (nx - 0.32) * (nx - 0.32) + (ny - 0.2) * (ny - 0.2);
+  const h2 = (nx - 0.64) * (nx - 0.64) + (ny - 0.22) * (ny - 0.22);
+  if (h1 < 0.03 || h2 < 0.03) return [210, 160, 130];
+  if (ny > 0.32 && ny < 0.82 && nx > 0.16 && nx < 0.84) return [200, 145, 115];
+  return [48, 32, 24];
+});
+const coupleD = decideRgb(couple);
+assert.strictEqual(coupleD.decision, 'block', 'indoor sex-with-faces should stop, got ' + coupleD.decision + ' score ' + coupleD.score);
 
 console.log('screen contract tests passed');

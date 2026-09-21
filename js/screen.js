@@ -3,7 +3,7 @@
    MUST NOT touch calls / WebRTC. CSAM is a separate legal path.
    Keep the numeric core in step with workers/economy/screen.mjs. */
 (function (root) {
-  const SCREEN_VERSION = 2;
+  const SCREEN_VERSION = 3;
   const SCREEN_SIZE = 96;
   const SCREEN_MAX_FRAMES = 8;
   const SEX_WORDS = /\b(porn|porno|xxx|nsfw|onlyfans|nudes?|naked|hentai|cumshot|sex\s*tape)\b/i;
@@ -240,6 +240,24 @@
     if (sheetN > 0.12 && noHead && (f.skinRatio || 0) > 0.3 && clothN < 0.03) return true;
     return false;
   }
+  function isIntimate(f) {
+    if (!f) return false;
+    if (isBeachwear(f)) return false;
+    const scene = (f.sky || 0) + (f.veg || 0);
+    const clothN = f.cloth || 0;
+    const skin = f.skinRatio || 0;
+    const center = f.centerSkin || 0;
+    const body = ((f.midSkin || 0) + (f.botSkin || 0)) / 2;
+    const top = f.topSkin || 0;
+    const smooth = skin > 0.28 && (f.skinEdge || 0) < 0.09;
+    if (scene > 0.1) return false;
+    if (clothN > 0.08) return false;
+    if (skin > 0.34 && center > 0.38 && scene < 0.08 && smooth) {
+      if (body > 0.3 && top > 0.12) return true;
+      if ((f.blobCount || 0) >= 2 && body > 0.22 && skin > 0.4) return true;
+    }
+    return false;
+  }
   function rawHint(f) {
     let h = 0;
     h += 0.3 * f.centerSkin;
@@ -260,13 +278,14 @@
     return clamp01(h);
   }
   function classifyFrame(f) {
-    if (!f) return { hint: 0, beachwear: false, closeup: false };
+    if (!f) return { hint: 0, beachwear: false, closeup: false, intimate: false };
     const beachwear = isBeachwear(f);
     const closeup = isCloseup(f);
+    const intimate = isIntimate(f);
     let hint = rawHint(f);
-    if (closeup && !beachwear) hint = Math.max(hint, 0.86);
+    if ((closeup || intimate) && !beachwear) hint = Math.max(hint, 0.86);
     else if (beachwear) hint = Math.min(hint, 0.22);
-    return { hint: clamp01(hint), beachwear, closeup };
+    return { hint: clamp01(hint), beachwear, closeup, intimate };
   }
   function hintFromFeatures(f) {
     return classifyFrame(f).hint;
@@ -517,6 +536,7 @@
     classifyFrame: classifyFrame,
     isBeachwear: isBeachwear,
     isCloseup: isCloseup,
+    isIntimate: isIntimate,
     videoScreenSpots: videoScreenSpots,
     decideFromHints: decideFromHints,
     fromStills: fromStills,
