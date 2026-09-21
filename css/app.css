@@ -56,16 +56,38 @@
      shell to the SMALLER of the two real dimensions instead, keeping it
      phone-proportioned and fully on-screen — actually responsive to
      orientation, not just unlocked and left to render badly. */
+  /* LANDSCAPE ON A PHONE — works like WhatsApp: the app fills the whole
+     screen, the header and tab bar stay, and the tab NAMES stay visible.
+
+     The previous rule set `width:auto` on the shell. The body is a centred
+     flex container, so `auto` means "shrink to fit the content" — and the
+     content has no width of its own, so the shell collapsed to 0 px wide at
+     the centre of the screen. Measured in a real browser at 915x412: the app
+     was 0 px wide. That was the blank screen: everything was there, inside a
+     box with no width. It also tried to keep a narrow portrait-shaped column,
+     which is not what a rotated phone app does. */
   @media (orientation:landscape) and (max-height:600px){
     .app{
-      width:auto; height:100dvh; max-height:100dvh;
-      max-width:min(460px, calc(100dvh * 0.52));
-      border-radius:0;
+      width:100%; max-width:100%;
+      height:100dvh; max-height:100dvh;
+      border-radius:0; box-shadow:none;
     }
   }
-  body.naluno-landscape .navbar{ padding-top:6px; padding-bottom:6px; }
-  body.naluno-landscape .navbtn .nav-name,
+  /* Landscape has about half the height of portrait, so the chrome gets a
+     little tighter — the content area is what the screen is for. The tab
+     NAME stays (like WhatsApp); only the small second line ("people",
+     "messages") is dropped to save height. */
+  body.naluno-landscape .navbar{ padding-top:4px; padding-bottom:4px; }
   body.naluno-landscape .navbtn .nav-hint{ display:none; }
+  @media (orientation:landscape) and (max-height:600px){
+    /* With half the height, content sits under the tab bar far more often;
+       a near-solid bar keeps it from showing through. */
+    .navbar{ background:rgba(13,15,23,.96); }
+    /* Rotated, the camera cutout is on the LEFT or RIGHT edge. The browser
+       already keeps clear of it (no viewport-fit=cover), so this is 0 there;
+       it protects the Android shell if it ever draws edge-to-edge. */
+    .app{ padding-left:env(safe-area-inset-left,0px); padding-right:env(safe-area-inset-right,0px); box-sizing:border-box; }
+  }
   button, input, textarea{ font-family:inherit; }
 
   /* ---------- shared ---------- */
