@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v189: 09.21j Broadcast publish: Screen-allow lists at create; economy proxy reaches the worker.
 // v188: 09.21g Screen: beach bikini goes out; explicit close-up is stopped; videos sample later stills.
 // v187: 09.21f Naluno Screen — first-party stills at upload (allow / hold / block).
 // v185: 09.21c reserved handles / protected identity.
@@ -68,8 +69,8 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v188';
-const APP_BUILD = '20260921g';
+const CACHE_NAME = 'naluno-shell-v189';
+const APP_BUILD = '20260921j';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -246,7 +247,17 @@ async function handleEconomyFetch(request){
   }
 
   try{
-    return await fetch(request);
+    const dest = 'https://naluno-economy.naluno.workers.dev' + path + (url.search || '');
+    const hdrs = new Headers(request.headers);
+    try{ hdrs.delete('host'); }catch(_){}
+    const init = { method: request.method, headers: hdrs };
+    if(request.method !== 'GET' && request.method !== 'HEAD'){
+      init.body = await request.arrayBuffer();
+    }
+    const r = await fetch(dest, init);
+    const out = new Headers(r.headers);
+    out.set('Access-Control-Allow-Origin', '*');
+    return new Response(r.body, { status: r.status, statusText: r.statusText, headers: out });
   }catch(_){
     if(path === '/v1/me') return econJson({ ok: true, contribution_points: 0, eligible_contribution: 0, contribution_trust: 'NEW' });
     return econJson({ ok: false, error: 'Missing auth token' }, 401);

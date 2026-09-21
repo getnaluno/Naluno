@@ -46,6 +46,17 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.restricted != true
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.suspended != true;
     }
+    /* Creator (or the worker using their token) may hide. They may not list
+       or unhide. Listing is decided at create; the desk lifts a hold. */
+    function creatorMayTightenListing() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['listed', 'hidden', 'held', 'hiddenReason', 'hiddenAt', 'hiddenBy', 'heldReason',
+                  'screenDecision', 'screenScore', 'screenReason', 'screenVersion', 'screenFrames', 'updatedAt'])
+        && request.resource.data.hidden == true
+        && request.resource.data.listed == false
+        && request.resource.data.held == false
+        && resource.data.hidden != true;
+    }
     function stampedAsSelf() {
       return (!('from' in request.resource.data) || request.resource.data.from == request.auth.uid)
         && (!('fromUid' in request.resource.data) || request.resource.data.fromUid == request.auth.uid)
@@ -399,17 +410,16 @@ service cloud.firestore {
       allow create: if isSignedIn()
         && request.resource.data.creatorUid == request.auth.uid
         && request.resource.data.listed is bool
-        && (
-          request.resource.data.listed == false
-          || isTrustedPublisher()
-        )
         && (!('hidden' in request.resource.data) || request.resource.data.hidden == false);
       // Creator may rewrite; others may only touch engagement/live/membership fields.
-      // listed / hidden / held are desk + worker only.
+      // listed / hidden / held are desk + worker. Creator may only tighten to hidden.
       allow update: if isOperator()
         || (isSignedIn()
             && resource.data.creatorUid == request.auth.uid
             && keepsBroadcastListing())
+        || (isSignedIn()
+            && resource.data.creatorUid == request.auth.uid
+            && creatorMayTightenListing())
         || (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['views', 'uniqueViews', 'updatedAt', 'live', 'liveAt', 'liveBy', 'memberUids',
                       'comments', 'replies', 'shares', 'commentCount', 'replyCount', 'shareCount']));
