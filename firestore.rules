@@ -30,7 +30,21 @@ service cloud.firestore {
        suspension or restriction the desk put on them. */
     function ownerKeepsModeration() {
       return !request.resource.data.diff(resource.data).affectedKeys()
-        .hasAny(['suspended', 'suspendedReason', 'suspendedAt', 'restricted', 'restrictedReason', 'restrictedAt']);
+        .hasAny(['suspended', 'suspendedReason', 'suspendedAt', 'restricted', 'restrictedReason', 'restrictedAt', 'trustedPublisher', 'sexualReports']);
+    }
+    /* Creators may edit their Broadcast. They may not list, unhide, or
+       clear a hold the desk put on it. */
+    function keepsBroadcastListing() {
+      return !request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(['listed', 'hidden', 'held', 'hiddenReason', 'hiddenAt', 'hiddenBy', 'heldReason',
+                 'screenDecision', 'screenScore', 'screenReason', 'screenVersion', 'screenFrames']);
+    }
+    function isTrustedPublisher() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.trustedPublisher == true
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.restricted != true
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.suspended != true;
     }
     function stampedAsSelf() {
       return (!('from' in request.resource.data) || request.resource.data.from == request.auth.uid)
@@ -382,14 +396,23 @@ service cloud.firestore {
 
     match /broadcasts/{id} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.resource.data.creatorUid == request.auth.uid;
+      allow create: if isSignedIn()
+        && request.resource.data.creatorUid == request.auth.uid
+        && request.resource.data.listed is bool
+        && (
+          request.resource.data.listed == false
+          || isTrustedPublisher()
+        )
+        && (!('hidden' in request.resource.data) || request.resource.data.hidden == false);
       // Creator may rewrite; others may only touch engagement/live/membership fields.
-      allow update: if isSignedIn() && (
-        resource.data.creatorUid == request.auth.uid
-        || request.resource.data.diff(resource.data).affectedKeys()
+      // listed / hidden / held are desk + worker only.
+      allow update: if isOperator()
+        || (isSignedIn()
+            && resource.data.creatorUid == request.auth.uid
+            && keepsBroadcastListing())
+        || (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['views', 'uniqueViews', 'updatedAt', 'live', 'liveAt', 'liveBy', 'memberUids',
-                      'comments', 'replies', 'shares', 'commentCount', 'replyCount', 'shareCount'])
-      );
+                      'comments', 'replies', 'shares', 'commentCount', 'replyCount', 'shareCount']));
       match /{col}/{docId} {
         allow read: if isSignedIn();
         allow create: if isSignedIn()

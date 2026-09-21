@@ -1,27 +1,34 @@
-# GitHub — 2026.09.21d
+# GitHub — 2026.09.21f
 
-Reserved handles. Identity bind. Economy worker 2.4.0-handles.
+Naluno Screen: first-party stills at upload (Origin samples). Clear goes out. Unsure waits on Trust. Sexual is stopped. No Hive / Cloudflare / third-party porn API.
 
 ## Upload to GitHub
 
 1. firestore.rules
 2. workers/economy/handler.mjs
-3. js/handle-guard.js
-4. js/auth.js
-5. js/admin-data.js
-6. js/admin-console.js
-7. admin/index.html
-8. app/index.html
-9. sw.js
+3. workers/economy/screen.mjs
+4. workers/economy/screen.test.mjs
+5. workers/economy/economy.test.mjs
+6. js/screen.js
+7. js/screen.test.cjs
+8. js/origin.js
+9. js/broadcast-core.js
+10. js/broadcast-composer.js
+11. js/broadcast-space.js
+12. js/admin-data.js
+13. js/admin-console.js
+14. js/firestore-rules.test.cjs
+15. admin/index.html
+16. app/index.html
+17. sw.js
 
-Tests can go up too. They are not required for the live product.
+Identity (21c–21d) and Broadcast safety hide-on-sexual-report (21e) stay in these files. If those were not published yet, this zip still includes them.
 
 ## Then
 
-1. Publish firestore.rules in Firebase.
-2. Deploy the economy worker 2.4.0-handles.
-3. Open Admin → Identity once. That seeds the list and binds the existing @naluno account.
+1. Publish firestore.rules (Screen fields are desk/worker only).
+2. Deploy economy worker **2.6.0-screen** (must include `screen.mjs` next to `handler.mjs`).
+3. If Identity is not live yet: open Admin → Identity once.
+4. Trust now shows *why* something is waiting (Screen unsure vs new publisher).
 
-If 21c is already live (rules published, worker 2.4.0-handles deployed):
-only replace js/admin-console.js and admin/index.html.
-Do not remove reserved names to use them. Bind an account on Identity instead.
+Do not claim this stops everything. Sexual reports still take a Broadcast down. CSAM stays a separate legal path.
