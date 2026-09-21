@@ -1,30 +1,21 @@
-# GitHub — 2026.09.21k
+# GitHub — 2026.09.21l
 
-Screen was letting indoor sex through when faces were in the shot (it only treated “no head” as explicit). Report on a Broadcast sat behind the player, so the tap did nothing.
+A decided report came back on every new Control Centre sign-in. The last pack only hid it on the open screen. This pack writes the decision, and Take down closes the reports on that Broadcast.
 
 ## Upload to GitHub
 
-1. firestore.rules (if 21j is not live yet)
-2. workers/economy/handler.mjs
-3. workers/economy/screen.mjs
-4. workers/economy/screen.test.mjs
+1. admin/index.html
+2. js/admin-data.js
+3. js/admin-console.js
+4. workers/economy/handler.mjs
 5. workers/economy/economy.test.mjs
-6. js/screen.js
-7. js/screen.test.cjs
-8. js/broadcast-core.js
-9. js/broadcast-core.test.cjs
-10. js/broadcast-space.js
-11. js/pwa.js
-12. css/app.css
-13. app/index.html
-14. sw.js
+6. js/admin-data.test.cjs
 
 ## Then
 
-1. Publish firestore.rules if 21j is not live.
-2. Deploy economy worker **2.6.3-screen** (`screen.mjs` next to `handler.mjs`).
-3. Upload the app files.
+1. Deploy economy worker **2.6.4-reports** (`handler.mjs` next to `screen.mjs`).
+2. Upload the three Control Centre files. Hard-refresh `/admin/` so it loads **2026.09.21l**.
 
-Take this already-out Broadcast down from Trust (or Delete on your list). New uploads of the same kind are stopped. A bikini still goes out. Report opens on someone else’s Broadcast.
+Sign in once. The waiting report that was already taken down leaves, and it stays gone after Sign out. Action or Dismiss still needs a note, and that note is what the next session reads.
 
-Screen is first-party. It will still miss some things — a sexual report still takes a Broadcast down.
+A sexual report that only auto-hid a Broadcast still waits until you Action or Dismiss it — that is the remaining decision.
