@@ -14,6 +14,7 @@ import {
   matchReserved,
   normHandle,
 } from "./handler.mjs";
+import { fillRgb, rgbToB64 } from "./screen.mjs";
 
 const ENV = {
   FIREBASE_PROJECT_ID: "naluno-28a00",
@@ -821,3 +822,163 @@ test("operator can seed, add, list and remove reserved handles", async () => {
   assert.ok(matchReserved("naluno_help", SEED_RESERVED));
   setFetchImpl(null);
 });
+
+test("sexual report hides the Broadcast", async () => {
+  resetMemory();
+  const writes = [];
+  setFetchImpl(async (url, opts) => {
+    const u = String(url);
+    if (u.includes("accounts:lookup")) {
+      return new Response(JSON.stringify({ users: [{ localId: "user_a" }] }), { status: 200 });
+    }
+    if (u.includes("/broadcasts/bporn") && (!opts || opts.method === "GET")) {
+      return new Response(JSON.stringify({
+        name: "projects/x/databases/(default)/documents/broadcasts/bporn",
+        fields: { creatorUid: { stringValue: "creator1" }, listed: { booleanValue: true } },
+      }), { status: 200 });
+    }
+    if (u.includes("firestore.googleapis.com") && opts && opts.method === "PATCH") {
+      writes.push(u);
+      return new Response("{}", { status: 200 });
+    }
+    return new Response("{}", { status: 200 });
+  });
+  const res = await handleRequest(
+    req("/v1/report", {
+      method: "POST",
+      headers: { Authorization: "Bearer tok", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        reason: "This is explicit sexual content on the feed.",
+        reason_code: "sexual",
+        broadcast_id: "bporn",
+        target_type: "broadcast",
+        target_id: "bporn",
+      }),
+    }),
+    ENV,
+  );
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.hidden, true);
+  setFetchImpl(null);
+});
+
+test("broadcast place holds a new publisher", async () => {
+  resetMemory();
+  setFetchImpl(async (url) => {
+    const u = String(url);
+    if (u.includes("accounts:lookup")) {
+      return new Response(JSON.stringify({ users: [{ localId: "user_a" }] }), { status: 200 });
+    }
+    if (u.includes("/broadcasts/bnew")) {
+      return new Response(JSON.stringify({
+        name: "projects/x/databases/(default)/documents/broadcasts/bnew",
+        fields: { creatorUid: { stringValue: "user_a" } },
+      }), { status: 200 });
+    }
+    if (u.includes("/users/user_a")) {
+      return new Response(JSON.stringify({
+        fields: { name: { stringValue: "A" } },
+      }), { status: 200 });
+    }
+    return new Response("{}", { status: 200 });
+  });
+  const res = await handleRequest(
+    req("/v1/broadcast/place", {
+      method: "POST",
+      headers: { Authorization: "Bearer tok", "Content-Type": "application/json" },
+      body: JSON.stringify({ broadcast_id: "bnew" }),
+    }),
+    ENV,
+  );
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.held, true);
+  assert.equal(body.listed, false);
+  setFetchImpl(null);
+});
+
+test("broadcast place lists a new publisher when Screen is clear", async () => {
+  resetMemory();
+  const rgb = fillRgb(96, 96, () => [40, 160, 50]);
+  setFetchImpl(async (url) => {
+    const u = String(url);
+    if (u.includes("accounts:lookup")) {
+      return new Response(JSON.stringify({ users: [{ localId: "user_a" }] }), { status: 200 });
+    }
+    if (u.includes("/broadcasts/bclear")) {
+      return new Response(JSON.stringify({
+        name: "projects/x/databases/(default)/documents/broadcasts/bclear",
+        fields: { creatorUid: { stringValue: "user_a" }, title: { stringValue: "Garden" } },
+      }), { status: 200 });
+    }
+    if (u.includes("/users/user_a")) {
+      return new Response(JSON.stringify({
+        fields: { name: { stringValue: "A" } },
+      }), { status: 200 });
+    }
+    return new Response("{}", { status: 200 });
+  });
+  const res = await handleRequest(
+    req("/v1/broadcast/place", {
+      method: "POST",
+      headers: { Authorization: "Bearer tok", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        broadcast_id: "bclear",
+        screen: { v: 1, w: 96, h: 96, frames: [{ rgb: rgbToB64(rgb) }] },
+      }),
+    }),
+    ENV,
+  );
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.listed, true);
+  assert.equal(body.held, false);
+  assert.equal(body.screen, "allow");
+  setFetchImpl(null);
+});
+
+test("broadcast place hides when Screen is sexual even if the client claims allow", async () => {
+  resetMemory();
+  const rgb = fillRgb(96, 96, () => [210, 155, 125]);
+  setFetchImpl(async (url) => {
+    const u = String(url);
+    if (u.includes("accounts:lookup")) {
+      return new Response(JSON.stringify({ users: [{ localId: "user_t" }] }), { status: 200 });
+    }
+    if (u.includes("/broadcasts/bblock")) {
+      return new Response(JSON.stringify({
+        name: "projects/x/databases/(default)/documents/broadcasts/bblock",
+        fields: { creatorUid: { stringValue: "user_t" }, title: { stringValue: "Clip" } },
+      }), { status: 200 });
+    }
+    if (u.includes("/users/user_t")) {
+      return new Response(JSON.stringify({
+        fields: { name: { stringValue: "T" }, trustedPublisher: { booleanValue: true } },
+      }), { status: 200 });
+    }
+    return new Response("{}", { status: 200 });
+  });
+  const res = await handleRequest(
+    req("/v1/broadcast/place", {
+      method: "POST",
+      headers: { Authorization: "Bearer tok", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        broadcast_id: "bblock",
+        screen: { v: 1, w: 96, h: 96, decision: "allow", frames: [{ rgb: rgbToB64(rgb) }] },
+      }),
+    }),
+    ENV,
+  );
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.hidden, true);
+  assert.equal(body.listed, false);
+  assert.equal(body.screen, "block");
+  setFetchImpl(null);
+});
+

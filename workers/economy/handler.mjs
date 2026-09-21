@@ -20,7 +20,12 @@
  *      key rotation hiccuped.
  */
 
-export const VERSION = "2.4.0-handles";
+import {
+  judgeScreenPayload,
+  listingFromScreen,
+} from "./screen.mjs";
+
+export const VERSION = "2.6.0-screen";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -940,6 +945,83 @@ async function handleClaim(env, user, userToken, saToken, body) {
   return json({ ok: true, handle: h, official: !!(hit && hit.holderUid === user.uid) });
 }
 
+async function hideBroadcastSexual(env, saToken, userToken, broadcastId) {
+  const id = String(broadcastId || "").slice(0, 80);
+  if (!id) return { ok: false };
+  const token = saToken || userToken;
+  const patch = {
+    hidden: true,
+    listed: false,
+    held: false,
+    hiddenReason: "sexual",
+    hiddenAt: Date.now(),
+    hiddenBy: "report",
+    live: false,
+  };
+  if (saToken) await fsPutDoc(env, saToken, "/broadcasts/" + encodeURIComponent(id), patch);
+  const row = await fsGetDoc(env, token, "/broadcasts/" + encodeURIComponent(id));
+  const uid = row && row.creatorUid;
+  let restricted = false;
+  if (uid && saToken) {
+    const profile = await fsGetDoc(env, saToken, "/users/" + encodeURIComponent(uid));
+    const n = Number((profile && profile.sexualReports) || 0) + 1;
+    const extra = { sexualReports: n, updatedAt: Date.now() };
+    if (n >= 3) {
+      extra.restricted = true;
+      extra.restrictedReason = "Repeated sexual-content reports";
+      extra.restrictedAt = Date.now();
+      restricted = true;
+    }
+    await fsPutDoc(env, saToken, "/users/" + encodeURIComponent(uid), extra);
+  }
+  return { ok: true, id, restricted };
+}
+
+async function placeBroadcast(env, user, userToken, saToken, body) {
+  const id = String((body && body.broadcast_id) || "").slice(0, 80);
+  if (!id) return json({ ok: false, error: "broadcast_id required" }, 400);
+  const token = saToken || userToken;
+  const row = await fsGetDoc(env, token, "/broadcasts/" + encodeURIComponent(id));
+  if (!row) return json({ ok: false, error: "missing" }, 404);
+  if (row.creatorUid && row.creatorUid !== user.uid && !isOperatorUser(env, user)) {
+    return json({ ok: false, error: "not yours" }, 403);
+  }
+  const profile = await fsGetDoc(env, token, "/users/" + encodeURIComponent(row.creatorUid || user.uid));
+  const trusted = !!(profile && profile.trustedPublisher)
+    && !(profile && profile.restricted)
+    && !(profile && profile.suspended);
+  const judged = judgeScreenPayload(body && body.screen, { title: row.title || "" });
+  const listing = listingFromScreen({
+    trusted,
+    hidden: !!row.hidden,
+    hasScreen: judged.hasScreen,
+    decision: judged.decision,
+  });
+  const patch = Object.assign({}, listing, {
+    screenDecision: judged.decision,
+    screenScore: judged.score || 0,
+    screenReason: judged.reason || "",
+    screenVersion: 1,
+    screenFrames: judged.frames || 0,
+    updatedAt: Date.now(),
+  });
+  if (row.hidden) {
+    patch.listed = false;
+    patch.held = false;
+    patch.hidden = true;
+  }
+  if (saToken) await fsPutDoc(env, saToken, "/broadcasts/" + encodeURIComponent(id), patch);
+  return json({
+    ok: true,
+    listed: !!patch.listed,
+    held: !!patch.held,
+    hidden: !!patch.hidden,
+    heldReason: patch.heldReason || "",
+    screen: judged.decision,
+    screenScore: judged.score || 0,
+  });
+}
+
 async function saAccessTokenScoped(env, scope) {
   const sa = parseServiceAccount(
     env.GOOGLE_SERVICE_ACCOUNT ||
@@ -1422,6 +1504,47 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
       extra: { previous: prev.status || "open", next: next.status, handle: next.handle || "" },
     });
     return json({ ok: true, flag: next });
+  }
+
+  if (path === "/v1/admin/broadcast-moderation" && request.method === "POST") {
+    const body = await request.json().catch(() => ({}));
+    const token = saToken || userToken;
+    const id = String(body.broadcast_id || body.id || "").slice(0, 80);
+    const action = String(body.action || "");
+    const reason = String(body.reason || "").trim();
+    if (!id || !action) return json({ ok: false, error: "broadcast and action required" }, 400);
+    const now = Date.now();
+    let patch = { updatedAt: now };
+    if (action === "let-out") {
+      patch = { listed: true, held: false, heldReason: "", hidden: false, live: false, updatedAt: now };
+    } else if (action === "take-down") {
+      patch = {
+        listed: false, held: false, hidden: true,
+        hiddenReason: reason || "taken down", hiddenAt: now, hiddenBy: user.uid, live: false, updatedAt: now,
+      };
+    } else if (action === "restore") {
+      patch = { listed: true, held: false, hidden: false, hiddenReason: "", live: false, updatedAt: now };
+    } else if (action === "trust-publisher") {
+      const row = await fsGetDoc(env, token, "/broadcasts/" + encodeURIComponent(id));
+      const uid = String(body.user_id || (row && row.creatorUid) || "");
+      if (!uid) return json({ ok: false, error: "user_id required" }, 400);
+      await fsPutDoc(env, token, "/users/" + encodeURIComponent(uid), {
+        trustedPublisher: true, updatedAt: now,
+      });
+      await writeAdminAudit(env, token, {
+        action: "trust-publisher", target: uid, reason: reason || "trusted publisher",
+        actor: user.uid, actorEmail: user.email || "",
+      });
+      return json({ ok: true, trustedPublisher: uid });
+    } else {
+      return json({ ok: false, error: "unknown action" }, 400);
+    }
+    await fsPutDoc(env, token, "/broadcasts/" + encodeURIComponent(id), patch);
+    await writeAdminAudit(env, token, {
+      action: "broadcast-" + action, target: id, reason: reason || action,
+      actor: user.uid, actorEmail: user.email || "", extra: patch,
+    });
+    return json({ ok: true, broadcast_id: id, action, patch });
   }
 
   if (path === "/v1/admin/simulate" && request.method === "POST") {
@@ -1912,11 +2035,20 @@ export async function handleRequest(request, env = {}, ctx = {}) {
       memory.reports.set(id, doc);
       const token = userToken;
       await fsFetch(env, token, "PATCH", "/reports/" + encodeURIComponent(id), toFsFields(doc));
-      return json({ ok: true, report_id: id });
+      if (code === "sexual") {
+        const bid = String(body.broadcast_id || (body.target_type === "broadcast" ? body.target_id : "") || "");
+        await hideBroadcastSexual(env, saToken, userToken, bid);
+      }
+      return json({ ok: true, report_id: id, hidden: code === "sexual" });
     }
 
     if (path === "/v1/support/intent" && request.method === "POST") {
       return json({ ok: false, error: "Support isn’t available yet" }, 400);
+    }
+
+    if (path === "/v1/broadcast/place" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      return placeBroadcast(env, user, userToken, saToken, body);
     }
 
     if (path === "/v1/handle/claim" && request.method === "POST") {
