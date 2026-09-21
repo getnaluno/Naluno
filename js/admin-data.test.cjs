@@ -60,6 +60,8 @@ const snap = D.deriveSnapshot({
   broadcasts: [
     { id: 'b1', title: 'One', creatorUid: 'a', creatorName: 'A', views: 12, live: true, createdAt: Date.parse('2026-09-10T02:00:00Z') },
     { id: 'b2', title: 'Two', creatorUid: 'b', creatorName: 'B', views: 5, deleted: true },
+    { id: 'b3', title: 'Held', creatorUid: 'a', held: true, listed: false, createdAt: Date.parse('2026-09-10T03:00:00Z') },
+    { id: 'b4', title: 'Down', creatorUid: 'a', hidden: true, listed: false, hiddenReason: 'sexual', createdAt: Date.parse('2026-09-10T04:00:00Z') },
   ],
   signals: [{ id: 's1', uid: 'a', createdAt: Date.parse('2026-09-10T03:00:00Z') }],
   beacons: [{ id: 'phone', uid: 'a', lat: 0.3476, lng: 32.5825, ts: Date.parse('2026-09-10T08:20:00Z'), placeName: 'Kampala', accuracy: 12 }],
@@ -74,9 +76,26 @@ assert.strictEqual(snap.users.active_now, 2);
 assert.strictEqual(snap.users.new_today, 1);
 assert.strictEqual(snap.users.returning_today, 1);
 assert.strictEqual(snap.users.suspended.length, 1);
-assert.strictEqual(snap.content.broadcasts_total, 1);
+assert.strictEqual(snap.content.broadcasts_total, 3);
 assert.strictEqual(snap.content.broadcasts_live, 1);
 assert.strictEqual(snap.content.broadcasts_deleted, 1);
+assert.strictEqual(snap.content.broadcasts_held, 1);
+assert.strictEqual(snap.content.broadcasts_hidden, 1);
+assert.strictEqual(snap.healthLabel, 'OPERATIONAL', 'a Trust queue is not a down platform');
+assert.ok(snap.alerts.some(function (a) { return /waiting to go out/i.test(a.text); }), 'held still needs a look');
+assert.ok(!snap.alerts.some(function (a) { return /taken down/i.test(a.text); }), 'taken-down is done, not an alert');
+assert.ok(snap.attention.some(function (a) { return /waiting to go out/i.test(a.text); }));
+assert.ok(!snap.attention.some(function (a) { return /taken down/i.test(a.text); }));
+
+const down = D.deriveSnapshot({
+  now: Date.parse('2026-09-10T08:30:00Z'),
+  zone: 'Asia/Dubai',
+  users: [],
+  broadcasts: [],
+  worker: { ok: false, error: 'unreachable', ms: 0 },
+  sw: { connected: true },
+});
+assert.strictEqual(down.healthLabel, 'DEGRADED', 'worker silence is the only degraded state');
 
 const adRev = D.estimateAdRevenue({
   now: Date.parse('2026-09-10T08:30:00Z'),
@@ -112,6 +131,7 @@ const mailSnap = D.deriveSnapshot({
 });
 assert.strictEqual(mailSnap.mail.invest, 1);
 assert.strictEqual(mailSnap.mail.unread, 2);
+assert.strictEqual(mailSnap.healthLabel, 'NEEDS ATTENTION');
 
 const sitePulse = D.deriveSnapshot({
   now: Date.parse('2026-09-10T08:30:00Z'),

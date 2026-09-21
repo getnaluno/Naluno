@@ -1281,18 +1281,14 @@
     const identity = deriveIdentity(reservedHandles, handleFlags);
 
     const alerts = [];
-    if (worker && worker.degraded && !worker.ok) {
+    if (worker && !worker.ok && (worker.degraded || worker.error)) {
       alerts.push({
         level: 'warning',
+        kind: 'service',
         tab: 'health',
-        text: 'The economy worker cannot use Google Firestore (its service account was rejected). The console reads Naluno itself, so the numbers still work. Flags are saved on this account.',
-      });
-    }
-    if (worker && worker.error && !worker.ok) {
-      alerts.push({
-        level: 'warning',
-        tab: 'health',
-        text: 'Economy worker did not answer. Broadcast and this console still run.',
+        text: worker.error === 'unreachable'
+          ? 'Economy worker did not answer. Broadcast and this console still run.'
+          : 'The economy worker cannot use Google Firestore (its service account was rejected). The console reads Naluno itself, so the numbers still work. Flags are saved on this account.',
       });
     }
     if (openReports.length) {
@@ -1305,6 +1301,7 @@
     if (suspended.length) {
       alerts.push({
         level: 'warning',
+        attention: false,
         tab: 'users',
         text: suspended.length + ' account' + (suspended.length === 1 ? '' : 's') + ' currently suspended.',
       });
@@ -1326,6 +1323,7 @@
     if (sw && sw.connected === false) {
       alerts.push({
         level: 'warning',
+        attention: false,
         tab: 'health',
         text: 'This console is not connected to the service worker yet. Reload once so background ringing and cache stay in step.',
       });
@@ -1333,6 +1331,7 @@
     if (identity.open_flags.length) {
       alerts.push({
         level: 'warning',
+        attention: true,
         tab: 'identity',
         text: identity.open_flags.length + ' handle' + (identity.open_flags.length === 1 ? '' : 's') + ' look close to a protected Naluno identity.',
       });
@@ -1340,25 +1339,22 @@
     if (heldB.length) {
       alerts.push({
         level: 'warning',
+        attention: true,
         tab: 'trust',
         text: heldB.length + ' Broadcast' + (heldB.length === 1 ? '' : 's') + ' waiting to go out.',
-      });
-    }
-    if (hiddenB.length) {
-      alerts.push({
-        level: 'warning',
-        tab: 'trust',
-        text: hiddenB.length + ' Broadcast' + (hiddenB.length === 1 ? '' : 's') + ' taken down.',
       });
     }
     if (!alerts.length) {
       alerts.push({ level: 'ok', tab: '', text: 'Nothing needs a decision right now.' });
     }
 
+    const serviceDown = alerts.some(function (a) { return a.kind === 'service'; });
+    const pending = alerts.filter(function (a) {
+      return a.level === 'critical' || a.attention === true || a.kind === 'service';
+    });
     const crit = alerts.filter(function (a) { return a.level === 'critical'; }).length;
-    const warn = alerts.filter(function (a) { return a.level === 'warning'; }).length;
-    const healthLabel = crit ? 'NEEDS ATTENTION' : (warn ? 'DEGRADED' : 'OPERATIONAL');
-    const healthTone = crit ? 'critical' : (warn ? 'warning' : 'ok');
+    const healthLabel = serviceDown ? 'DEGRADED' : (crit ? 'NEEDS ATTENTION' : 'OPERATIONAL');
+    const healthTone = serviceDown ? 'warning' : (crit ? 'critical' : 'ok');
 
     const stickiness = mauUsers.length ? Math.round((dauUsers.length / mauUsers.length) * 100) : null;
 
@@ -1387,6 +1383,7 @@
       worker: worker,
       sw: sw,
       alerts: alerts,
+      attention: pending.length ? pending : [{ level: 'ok', tab: '', text: 'Nothing needs a decision right now.' }],
       healthLabel: healthLabel,
       healthTone: healthTone,
       users: {

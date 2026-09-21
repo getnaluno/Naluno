@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260921e';
+  const BUILD = '20260921i';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -1279,6 +1279,71 @@
       }).join('')
       + '</tbody></table>';
   }
+  function bcastMediaUrl(b) {
+    if (!b) return '';
+    if (b.mediaUrl) return String(b.mediaUrl);
+    if (b.videoUrl) return String(b.videoUrl);
+    const ch = Array.isArray(b.chapters) ? b.chapters[0] : null;
+    return String((ch && (ch.mediaUrl || ch.url)) || '');
+  }
+  function bcastIsPhoto(b) {
+    const t = String((b && b.mediaType) || '').toLowerCase();
+    if (t === 'photo' || t === 'image') return true;
+    if (t === 'video') return false;
+    return /\.(jpe?g|png|webp|gif)(\?|$)/i.test(bcastMediaUrl(b));
+  }
+  function trustReviewCard(b, mode) {
+    const media = bcastMediaUrl(b);
+    const thumb = String((b && (b.thumbUrl || b.thumb)) || '');
+    const photo = bcastIsPhoto(b);
+    const why = mode === 'hidden'
+      ? (b.hiddenReason === 'screen' ? 'Naluno Screen' : (b.hiddenReason || 'taken down'))
+      : (b.heldReason === 'screen' ? 'Screen unsure' : (b.heldReason || 'new publisher'));
+    const screenBit = b.screenDecision
+      ? ('Screen ' + b.screenDecision + (b.screenScore != null ? (' · ' + b.screenScore) : ''))
+      : '';
+    let frame;
+    if (photo && media) {
+      frame = '<img class="review-media" alt="" src="' + escapeHtml(media) + '" />';
+    } else if (media) {
+      frame = '<video class="review-media" playsinline webkit-playsinline controls preload="none" poster="'
+        + escapeHtml(thumb) + '" src="' + escapeHtml(media) + '"></video>';
+    } else if (thumb) {
+      frame = '<img class="review-media" alt="" src="' + escapeHtml(thumb) + '" />';
+    } else {
+      frame = '<div class="review-missing">No file on this Broadcast</div>';
+    }
+    const id = escapeHtml(b.id || '');
+    const uid = escapeHtml(b.creatorUid || '');
+    const actions = mode === 'hidden'
+      ? '<button type="button" class="ghost admBmod" data-id="' + id + '" data-a="restore">Restore</button>'
+      : ('<button type="button" class="primary admBmod" data-id="' + id + '" data-a="let-out">Let out</button> '
+        + '<button type="button" class="ghost admBmod" data-id="' + id + '" data-a="take-down">Take down</button> '
+        + '<button type="button" class="ghost admBmod" data-id="' + id + '" data-uid="' + uid + '" data-a="trust-publisher">Trust publisher</button>');
+    return '<div class="review-card">'
+      + '<div class="review-frame">' + frame + '</div>'
+      + '<div class="review-meta">'
+      + '<div class="review-title">' + escapeHtml(b.title || b.id || '') + '</div>'
+      + '<div class="sub">' + escapeHtml(b.creatorName || String(b.creatorUid || '').slice(0, 10))
+      + ' · ' + escapeHtml(why)
+      + (screenBit ? ' · ' + escapeHtml(screenBit) : '')
+      + '</div>'
+      + '<div class="row" style="margin-top:10px;">' + actions + '</div>'
+      + '</div></div>';
+  }
+  function wireTrustMedia(root) {
+    if (!root) return;
+    const clips = root.querySelectorAll('video.review-media');
+    clips.forEach(function (v) {
+      v.addEventListener('play', function () {
+        clips.forEach(function (other) {
+          if (other !== v) {
+            try { other.pause(); } catch (_) {}
+          }
+        });
+      });
+    });
+  }
   function plainRows(headers, rows) {
     return table(headers, rows.map(function (r) {
       return r.map(function (c) { return escapeHtml(String(c == null ? '' : c)); });
@@ -1412,7 +1477,7 @@
     }
 
     if (tab === 'overview') {
-      const alerts = d.alerts || [];
+      const alerts = (d.attention && d.attention.length) ? d.attention : (d.alerts || []);
       el.innerHTML =
         card('What needs attention',
           alerts.map(function (a) {
@@ -1964,28 +2029,12 @@
             }))
           : '<p class="sub">No open reports.</p>')
         + card('Waiting to go out', held.length
-          ? table(['Broadcast', 'Creator', 'Why', ''],
-            held.map(function (b) {
-              return [
-                escapeHtml(b.title || b.id),
-                escapeHtml(b.creatorName || String(b.creatorUid || '').slice(0, 10)),
-                escapeHtml(b.heldReason === 'screen' ? 'Screen unsure' : (b.heldReason || 'new publisher')),
-                '<button type="button" class="primary admBmod" data-id="' + escapeHtml(b.id) + '" data-a="let-out">Let out</button> '
-                + '<button type="button" class="ghost admBmod" data-id="' + escapeHtml(b.id) + '" data-a="take-down">Take down</button> '
-                + '<button type="button" class="ghost admBmod" data-id="' + escapeHtml(b.id) + '" data-uid="' + escapeHtml(b.creatorUid || '') + '" data-a="trust-publisher">Trust publisher</button>',
-              ];
-            }))
+          ? '<p class="sub">Watch here, then Let out or Take down. It stays on their list until you decide.</p>'
+            + '<div class="review-list">' + held.map(function (b) { return trustReviewCard(b, 'held'); }).join('') + '</div>'
           : '<p class="sub">No Broadcasts waiting. Unsure Screen reads wait here. A new Callsign without a clear read still waits.</p>')
         + card('Taken down', hidden.length
-          ? table(['Broadcast', 'Why', 'When', ''],
-            hidden.map(function (b) {
-              return [
-                escapeHtml(b.title || b.id),
-                escapeHtml(b.hiddenReason === 'screen' ? 'Naluno Screen' : (b.hiddenReason || 'taken down')),
-                escapeHtml(when(b.hiddenAt || b.updatedAt)),
-                '<button type="button" class="ghost admBmod" data-id="' + escapeHtml(b.id) + '" data-a="restore">Restore</button>',
-              ];
-            }))
+          ? '<p class="sub">Already decided. Restore only if that was a mistake.</p>'
+            + '<div class="review-list">' + hidden.map(function (b) { return trustReviewCard(b, 'hidden'); }).join('') + '</div>'
           : '<p class="sub">Nothing taken down.</p>')
         + card('Suspended', plainRows(['Person', 'Reason'],
           (u.suspended || []).map(function (row) {
@@ -1999,6 +2048,7 @@
           modBroadcast(btn.getAttribute('data-id'), btn.getAttribute('data-a'), btn.getAttribute('data-uid') || '');
         };
       });
+      wireTrustMedia(el);
       return;
     }
 
