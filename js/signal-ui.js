@@ -1380,7 +1380,7 @@ async function openBroadcast(contactId){
   const c = contacts.find(x=>x.id===contactId); if(!c || !c.isReal || !c.firebaseUid || !fbDb) return;
   try{
     const snap = await fbDb.collection('users').doc(c.firebaseUid).collection('signal').orderBy('createdAt','asc').get();
-    const segments = sortSignalSegments(snap.docs.map(d=>({ id:d.id, ...d.data() })).filter(s => Date.now() < s.expiresAt));
+    const segments = sortSignalSegments(snap.docs.map(d=>({ id:d.id, ...d.data() })).filter(s => Date.now() < s.expiresAt && !s.held && !s.hidden));
     if(segments.length===0){ toast(c.name.split(' ')[0] + '\u2019s signal has faded'); return; }
     viewingMine = false;
     currentSegments = segments;
@@ -1575,12 +1575,13 @@ async function openContactSignalStory(contactId){
   if(fbDb && entry.contact.firebaseUid){
     try{
       const snap = await fbDb.collection('users').doc(entry.contact.firebaseUid).collection('signal').orderBy('createdAt','asc').get();
-      segments = sortSignalSegments(snap.docs.map(d=>({ id:d.id, ...d.data() })).filter(s => Date.now() < s.expiresAt));
+      segments = sortSignalSegments(snap.docs.map(d=>({ id:d.id, ...d.data() })).filter(s => Date.now() < s.expiresAt && !s.held && !s.hidden));
     }catch(_){}
   }
   if(!segments.length){
     const cached = nalunoCacheRead('signalView:' + (entry.contact.firebaseUid || contactId));
-    if(cached && cached.length) segments = cached;
+    // The cache may predate a hold, so it gets the same rule.
+    if(cached && cached.length) segments = cached.filter(function(x){ return x && !x.held && !x.hidden; });
   }
   if(!segments.length){ toast('Signal expired'); return; }
   currentSegments = segments;

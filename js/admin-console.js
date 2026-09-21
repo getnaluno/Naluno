@@ -1292,6 +1292,53 @@
     if (t === 'video') return false;
     return /\.(jpe?g|png|webp|gif)(\?|$)/i.test(bcastMediaUrl(b));
   }
+  /* Same wording as MOD_REASON_TEXT in js/nudenet.js — a test checks they match,
+     so a reviewer never reads a different reason than the uploader was shown. */
+  const MOD_REASON_TEXT = {
+    'genitals': 'exposed genitals',
+    'anus': 'exposed anus',
+    'topless': 'an exposed female breast',
+    'nudity': 'nudity',
+    'possible-genitals': 'possible exposed genitals',
+    'possible-anus': 'possible exposed anus',
+    'possible-topless': 'a possibly exposed female breast',
+    'single-frame': 'one frame that may be explicit',
+    'video-player-screenshot': 'a screenshot of a video player',
+    'revealing-allowed': 'revealing but allowed',
+  };
+  function screenWhy(b) {
+    const r = String((b && b.screenReason) || '');
+    if (r === 'heuristic-only') return 'Old skin check only (detector did not run) — judge it yourself';
+    let t = MOD_REASON_TEXT[r] || r;
+    if (r === 'single-frame' && b.screenDetail) {
+      t = 'one frame may show ' + (MOD_REASON_TEXT[b.screenDetail] || b.screenDetail);
+    }
+    if (typeof b.screenFrame === 'number' && b.screenFrame >= 0 && b.screenFrames > 1) {
+      t += ' (frame ' + (b.screenFrame + 1) + ' of ' + b.screenFrames + ')';
+    }
+    return t;
+  }
+  /* The rulebook reviewers work from. It is the SAME standard the detector
+     applies (js/nudenet.js), so a person and the machine agree on the line. */
+  function moderationRulebookHtml() {
+    return '<details class="rulebook"><summary><strong>Moderation rulebook</strong> — what counts as explicit</summary>'
+      + '<p><strong>Reject</strong> anything that shows, of any person, in any setting:</p><ul>'
+      + '<li>Exposed genitals</li><li>Exposed anus</li>'
+      + '<li>An exposed female nipple — topless, <em>including breastfeeding</em> (for now)</li>'
+      + '<li>Sexual acts — intercourse, oral sex, masturbation, sexual touching — <em>even when the genitals are hidden</em></li></ul>'
+      + '<p><strong>Accept</strong>, however sensual or revealing:</p><ul>'
+      + '<li>Bikinis, swimwear, lingerie, underwear, bodysuits — nipples and genitals covered</li>'
+      + '<li>Thongs: exposed buttocks are fine (the anus is not)</li>'
+      + '<li>Shirtless men</li>'
+      + '<li>Cleavage, midriffs, bare backs and legs; tight, short or sheer clothes that still cover</li>'
+      + '<li>Dancing, twerking, pole and stage shows, suggestive poses, modelling, fitness, beach, pool, bedroom</li>'
+      + '<li>Kissing and affection between clothed people</li></ul>'
+      + '<p><strong>The test is what is exposed</strong> — never how much skin shows or how provocative it looks. '
+      + 'When a video is held for one frame, check that moment: a turn, a shadow or a flash is often what the detector misread.</p>'
+      + '<p>The detector cannot see a sexual act when nothing is exposed. That is why screenshots of video players are held — '
+      + 'look at what the video is before approving it.</p></details>';
+  }
+
   function trustReviewCard(b, mode) {
     const media = bcastMediaUrl(b);
     const thumb = String((b && (b.thumbUrl || b.thumb)) || '');
@@ -1300,7 +1347,8 @@
       ? (b.hiddenReason === 'screen' ? 'Naluno Screen' : (b.hiddenReason || 'taken down'))
       : (b.heldReason === 'screen' ? 'Screen unsure' : (b.heldReason || 'new publisher'));
     const screenBit = b.screenDecision
-      ? ('Screen ' + b.screenDecision + (b.screenScore != null ? (' · ' + b.screenScore) : ''))
+      ? ('Screen ' + b.screenDecision + (b.screenReason ? (' — ' + screenWhy(b)) : '')
+         + (b.screenScore != null ? (' · ' + b.screenScore) : ''))
       : '';
     let frame;
     if (photo && media) {
@@ -2011,7 +2059,8 @@
       const held = (c.held || []).slice(0, 40);
       const hidden = (c.hidden || []).slice(0, 40);
       el.innerHTML =
-        kpis([['Open reports', sf.open_reports || 0], ['Waiting to go out', held.length || c.broadcasts_held || 0],
+        moderationRulebookHtml()
+        + kpis([['Open reports', sf.open_reports || 0], ['Waiting to go out', held.length || c.broadcasts_held || 0],
           ['Taken down', hidden.length || c.broadcasts_hidden || 0],
           ['Suspended', sf.suspended || 0], ['Restricted', sf.restricted || 0]])
         + card('Open reports', (sf.open || []).length

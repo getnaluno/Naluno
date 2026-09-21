@@ -727,6 +727,9 @@ function bindAuthListeners(){
           if(!s) return false;
           if(s.expiresAt && nowTs >= s.expiresAt) return false;      // own signals
           if(s.latest && s.latest.expiresAt && nowTs >= s.latest.expiresAt) return false; // connection rows
+          // A connection's held Signal must not flash back from the instant-paint
+          // cache. Your OWN held Signals stay visible to you (no .latest on those).
+          if(s.latest && (s.latest.held || s.latest.hidden)) return false;
           return true;
         });
       };

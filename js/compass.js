@@ -1211,8 +1211,54 @@ window.addEventListener('beforeunload', e=>{
 /* The actual upload+save logic, shared by the normal composer flow and the new
    straight-through trim flow — same proven code path either way, just two different
    places that can trigger it. */
+/* Signals were never screened: anything posted as a Signal skipped moderation
+   entirely and went straight to connections' strips. Every photo and video
+   segment is now checked BEFORE upload, with the same detector and policy as
+   Broadcasts. Explicit -> the post is refused. Uncertain -> the segment is
+   marked held and connections do not see it until it is cleared (the poster
+   still does). An auto-split video shares one source file, so each file is
+   screened once, not once per part.
+
+   Honest limit: Signals are written straight to Firestore by the app, so
+   there is no server step to re-check this. It stops honest mistakes and
+   casual uploads; a deliberately modified app could skip it. Report and the
+   console remain the backstop. */
+async function nalunoScreenSignalSegments(segs){
+  if(typeof runNalunoScreen !== 'function') return { blocked: null };
+  const seen = new Map();
+  for(const seg of segs){
+    if(seg.type !== 'photo' && seg.type !== 'video') continue;
+    let file = seg.sourceFile || seg.videoBlob || null;
+    if(!file && seg.dataUrl){
+      try{ file = await (await fetch(seg.dataUrl)).blob(); }catch(_){ file = null; }
+    }
+    if(!file) continue;
+    let verdict = seen.get(file);
+    if(!verdict){
+      try{
+        verdict = await runNalunoScreen(file, seg.caption || '', seg.duration || 0);
+      }catch(_){ verdict = null; }
+      seen.set(file, verdict || { decision: 'unread' });
+      verdict = seen.get(file);
+    }
+    if(verdict.decision === 'block') return { blocked: verdict };
+    if(verdict.decision === 'hold'){
+      seg.held = true;
+      seg.heldReason = verdict.reason || 'screen';
+    }
+  }
+  return { blocked: null };
+}
+
 async function postSegmentsNow(newSegments){
   try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('postSegmentsNow', (newSegments && newSegments.length) || 0); }catch(_){}
+  const screened = await nalunoScreenSignalSegments(newSegments);
+  if(screened.blocked){
+    // Thrown, not toasted-and-returned: the publish queue reports a thrown
+    // error, instead of announcing "Posted Signal" for something that was not.
+    const why = (screened.blocked && screened.blocked.reasonText) ? ' It shows ' + screened.blocked.reasonText + '.' : '';
+    throw new Error('Not posted.' + why + ' Swimwear, lingerie and shirtless photos are fine \u2014 exposed genitals, exposed female breasts and sexual acts are not.');
+  }
   const hasVideo = newSegments.some(s=>s.type==='video');
   if(hasVideo){
     postInProgress = true;

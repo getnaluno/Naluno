@@ -382,8 +382,20 @@ async function bcompKickOriginScan(){
       window._bcompOrigin = { status: 'clear', score: 0, matches: [], hold: false, skipped: true };
     }
     try{
-      let screen = (window._bcompOrigin && window._bcompOrigin.screen) || null;
-      if(!screen) screen = await screenP;
+      /* The detector's verdict comes first. OriginID runs its own screen, but
+         with the old skin heuristic — and this used to PREFER it, so the
+         detector was consulted only when OriginID produced nothing, which was
+         almost never. The heuristic is now only a fallback, and it may never
+         reject by itself. */
+      let screen = await screenP;
+      if(!screen || screen.decision === 'unread'){
+        const o = (window._bcompOrigin && window._bcompOrigin.screen) || null;
+        if(o){
+          screen = Object.assign({}, o);
+          if(screen.decision === 'block'){ screen.decision = 'hold'; screen.reason = 'heuristic-only'; }
+          screen.engine = 'heuristic';
+        }
+      }
       window._bcompScreen = screen;
       bcompPaintScreen(screen);
       return screen;
@@ -424,7 +436,9 @@ async function bcompPublish(){
       ]);
     }
   }catch(_){}
-  let screen = window._bcompScreen || (window._bcompOrigin && window._bcompOrigin.screen) || window._nalunoLastScreen || null;
+  // Detector verdict (set above) first; never fall back to a raw heuristic
+  // verdict that could still carry a "block".
+  let screen = window._bcompScreen || null;
   if(!screen && bcompFile && typeof runNalunoScreen === 'function'){
     try{
       const titleNow = title;
@@ -686,12 +700,19 @@ function bcompPaintScreen(report){
     body = 'Stills from this file can go out.';
     color = 'var(--mint)';
   } else if(d === 'hold'){
-    title = 'Naluno Screen · not sure';
-    body = 'This waits for a look. It stays on your list until it is cleared.';
+    title = 'Naluno Screen · a person will check';
+    body = 'This waits for a quick look before it goes out'
+      + (report && report.reasonText ? ' (we saw ' + report.reasonText + ')' : '')
+      + '. It stays on your list until it is cleared.';
     color = '#ffc266';
   } else if(d === 'block'){
     title = 'Naluno Screen · stopped';
-    body = 'This cannot go out. Broadcast is not for sexual content.';
+    /* Say WHAT was found and what IS allowed. Someone posting a legitimate
+       swimwear or stage shot should be able to see where the line is. */
+    body = 'This cannot go out'
+      + (report && report.reasonText ? ': it shows ' + report.reasonText : '')
+      + '. Naluno allows swimwear, lingerie, shirtless men and sensual content — '
+      + 'not exposed genitals, exposed female breasts, or sexual acts.';
     color = '#ff8a9a';
   }
   box.innerHTML = '<div style="font-family:var(--font-futuristic);font-size:13px;margin-bottom:4px;color:' + color + ';">' + title + '</div>'

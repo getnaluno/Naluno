@@ -103,14 +103,17 @@ function nalunoBroadcastListingFields(screen){
   if(decision === 'block'){
     return { listed: false, held: true, heldReason: 'screen', hidden: false };
   }
+  /* A content HOLD applies to everyone, trusted or not. Trust used to be
+     checked first, so a trusted publisher's held upload went public anyway
+     ("held but accepted"). Trust only skips the new-publisher hold below. */
+  if(decision === 'hold'){
+    return { listed: false, held: true, heldReason: 'screen', hidden: false };
+  }
   if(nalunoPublisherTrusted()){
     return { listed: true, held: false, heldReason: '', hidden: false };
   }
   if(decision === 'allow'){
     return { listed: true, held: false, heldReason: '', hidden: false };
-  }
-  if(decision === 'hold'){
-    return { listed: false, held: true, heldReason: 'screen', hidden: false };
   }
   return { listed: false, held: true, heldReason: 'new-publisher', hidden: false };
 }

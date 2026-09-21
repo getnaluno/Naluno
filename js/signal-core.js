@@ -1432,10 +1432,16 @@ async function loadConnectionsSignalsNow(){
   const realContacts = contacts.filter(c => c.isReal && c.firebaseUid);
   const results = await Promise.all(realContacts.map(async c=>{
     try{
-      const snap = await fbDb.collection('users').doc(c.firebaseUid).collection('signal').orderBy('createdAt','desc').limit(1).get();
+      /* Held segments (flagged for review by moderation) are never shown to
+         connections. Reading a few rather than just the newest means one held
+         clip does not hide everything that person posted before it. */
+      const snap = await fbDb.collection('users').doc(c.firebaseUid).collection('signal').orderBy('createdAt','desc').limit(6).get();
       if(snap.empty) return null;
-      const latest = snap.docs[0].data();
-      if(Date.now() >= latest.expiresAt) return null;
+      const now = Date.now();
+      const visible = snap.docs.map(function(d){ return d.data(); })
+        .filter(function(x){ return x && !x.held && !x.hidden && now < x.expiresAt; });
+      if(!visible.length) return null;
+      const latest = visible[0];
       return { contactId: c.id, contact: c, latest };
     }catch(e){ return null; }
   }));
