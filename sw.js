@@ -1,4 +1,5 @@
 // Naluno service worker — offline shell + background call push.
+// v190: 09.21k Screen stops indoor sex-with-faces; Report sheet sits above Broadcast.
 // v189: 09.21j Broadcast publish: Screen-allow lists at create; economy proxy reaches the worker.
 // v188: 09.21g Screen: beach bikini goes out; explicit close-up is stopped; videos sample later stills.
 // v187: 09.21f Naluno Screen — first-party stills at upload (allow / hold / block).
@@ -69,8 +70,8 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v189';
-const APP_BUILD = '20260921j';
+const CACHE_NAME = 'naluno-shell-v190';
+const APP_BUILD = '20260921k';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
