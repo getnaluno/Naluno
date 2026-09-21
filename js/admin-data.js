@@ -1090,6 +1090,47 @@
     };
   }
 
+  function reportStatusKey(r) {
+    return String((r && r.status) || '').trim().toUpperCase().replace(/[_-]+/g, ' ');
+  }
+
+  function reportTargetBroadcastId(r) {
+    if (!r) return '';
+    if (r.broadcast_id) return String(r.broadcast_id);
+    if (String(r.target_type || '') === 'broadcast') return String(r.target_id || '');
+    return '';
+  }
+
+  /* A report is waiting only until a person has decided.
+     Action / Dismiss writes status plus a resolved clock. Take-down of that
+     Broadcast is also a decision. Missing status used to count as OPEN forever,
+     so a resolved row came back on every new Control Centre sign-in. */
+  function reportIsOpen(r, broadcasts) {
+    if (!r) return false;
+    if (r.resolvedAt || r.decided_at || r.resolved_at || r.decidedAt) return false;
+    const st = reportStatusKey(r);
+    if (st === 'ACTIONED' || st === 'DISMISSED' || st === 'CLOSED' || st === 'DONE'
+        || st === 'RESOLVED' || st === 'REJECTED' || st === 'TAKEN DOWN') {
+      return false;
+    }
+    if (st && st !== 'OPEN' && st !== 'NEW' && st !== 'UNDER REVIEW' && st !== 'PENDING') {
+      return false;
+    }
+    if (broadcasts && broadcasts.length) {
+      const bid = reportTargetBroadcastId(r);
+      if (bid) {
+        for (let i = 0; i < broadcasts.length; i++) {
+          const b = broadcasts[i];
+          if (!b) continue;
+          if (String(b.id || b.broadcast_id || '') !== bid) continue;
+          const hiddenBy = String(b.hiddenBy || '');
+          if ((b.hidden || b.deleted) && hiddenBy && hiddenBy !== 'report') return false;
+        }
+      }
+    }
+    return true;
+  }
+
   function deriveSnapshot(raw) {
     raw = raw || {};
     const now = num(raw.now) || Date.now();
@@ -1240,8 +1281,7 @@
     });
 
     const openReports = reports.filter(function (r) {
-      const st = String(r.status || 'OPEN').toUpperCase();
-      return st === 'OPEN' || st === 'NEW' || st === 'UNDER REVIEW';
+      return reportIsOpen(r, broadcasts);
     });
     const ledgerPending = ledger.filter(function (r) {
       return String(r.status || '').toUpperCase() === 'PENDING_REVIEW' || r.pending_review;
@@ -1553,6 +1593,8 @@
     startOfLocalDay: startOfLocalDay,
     deriveSnapshot: deriveSnapshot,
     deriveIdentity: deriveIdentity,
+    reportIsOpen: reportIsOpen,
+    reportTargetBroadcastId: reportTargetBroadcastId,
     money: money,
     COST_RATES: COST_RATES,
     estimateCosts: estimateCosts,

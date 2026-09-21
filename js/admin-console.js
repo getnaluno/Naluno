@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260921i';
+  const BUILD = '20260921l';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -651,13 +651,20 @@
   }
 
   /* -------- Live snapshot from Firestore (operator SDK) -------- */
+  function rowFromDoc(d, extra) {
+    const data = (d && d.data && d.data()) || {};
+    const id = String((d && d.id) || '');
+    /* Document id always wins. A field named id on the row used to overwrite
+       it, so Action wrote a stub and the original stayed OPEN after sign-out. */
+    return Object.assign({}, extra || {}, data, { id: id, _id: id });
+  }
   async function colDocs(name, limit) {
     const db = adminDb();
     if (!db) return [];
     try {
       const snap = await db.collection(name).limit(limit || 400).get();
       const out = [];
-      snap.forEach(function (d) { out.push(Object.assign({ id: d.id }, d.data())); });
+      snap.forEach(function (d) { out.push(rowFromDoc(d)); });
       return out;
     } catch (_) { return []; }
   }
@@ -667,7 +674,7 @@
     try {
       const snap = await db.collection(name).orderBy(field, 'desc').limit(limit || 400).get();
       const out = [];
-      snap.forEach(function (d) { out.push(Object.assign({ id: d.id }, d.data())); });
+      snap.forEach(function (d) { out.push(rowFromDoc(d)); });
       return out;
     } catch (_) {
       return colDocs(name, limit);
@@ -686,7 +693,7 @@
       const snap = await db.collectionGroup(name).limit(limit || 200).get();
       const out = [];
       snap.forEach(function (d) {
-        out.push(Object.assign({ id: d.id, uid: parentUidOf(d) }, d.data()));
+        out.push(rowFromDoc(d, { uid: parentUidOf(d) }));
       });
       return out;
     } catch (_) { return []; }
@@ -702,7 +709,7 @@
       return db.collection('users').doc(uid).collection(sub).limit(limitEach || 40).get()
         .then(function (s) {
           s.forEach(function (d) {
-            out.push(Object.assign({ id: d.id, uid: uid }, d.data()));
+            out.push(rowFromDoc(d, { uid: uid }));
           });
         }).catch(function () {});
     }));
@@ -865,14 +872,14 @@
   function snapRows(snap) {
     const out = [];
     if (!snap) return out;
-    snap.forEach(function (d) { out.push(Object.assign({ id: d.id }, d.data())); });
+    snap.forEach(function (d) { out.push(rowFromDoc(d)); });
     return out;
   }
   function groupRows(snap) {
     const out = [];
     if (!snap) return out;
     snap.forEach(function (d) {
-      out.push(Object.assign({ id: d.id, uid: parentUidOf(d) }, d.data()));
+      out.push(rowFromDoc(d, { uid: parentUidOf(d) }));
     });
     return out;
   }
@@ -1148,6 +1155,14 @@
           renderTab(__activeTab, next);
         }
       } catch (_) {}
+      healStuckReports(pack).then(function (changed) {
+        if (!changed) return;
+        const fresh = finish(pack);
+        try {
+          renderStrip(fresh);
+          if (__activeTab) renderTab(__activeTab, fresh);
+        } catch (_) {}
+      }).catch(function () {});
     }).catch(function () {});
     return first;
   }
@@ -3141,13 +3156,18 @@
      stale copy anywhere for a later re-commit to restore. The live listener
      still delivers the authoritative document afterwards, and it agrees. */
   function markReportLocally(id, decision, note) {
+    const now = Date.now();
+    const want = String(id || '');
     const patch = function (rows) {
       if (!Array.isArray(rows)) return;
       rows.forEach(function (r) {
-        if (r && (r.id === id || r._id === id || r.report_id === id)) {
+        if (!r) return;
+        if (String(r.id || '') === want || String(r._id || '') === want || String(r.report_id || '') === want) {
           r.status = decision;
           r.resolution = note || r.resolution || '';
-          r.resolvedAt = Date.now();
+          r.resolvedAt = now;
+          r.decided_at = now;
+          r.resolvedBy = currentUser ? currentUser.uid : r.resolvedBy;
         }
       });
     };
@@ -3165,21 +3185,201 @@
     } catch (_) {}
   }
 
+  function reportDecisionPatch(decision, note) {
+    const now = Date.now();
+    const who = currentUser ? currentUser.uid : '';
+    const text = String(note || '').trim();
+    return {
+      status: decision,
+      resolution: text,
+      resolvedAt: now,
+      resolvedBy: who,
+      decided_at: now,
+      decided_by: who,
+      note: text,
+    };
+  }
+
+  function reportRowKeys(r) {
+    if (!r) return [];
+    return [r.id, r._id, r.report_id].map(function (x) { return String(x || ''); }).filter(Boolean);
+  }
+
+  async function findReportRefs(id) {
+    const db = adminDb();
+    const want = String(id || '');
+    if (!db || !want) return [];
+    const seen = {};
+    const refs = [];
+    function add(ref) {
+      if (!ref || !ref.id || seen[ref.id]) return;
+      seen[ref.id] = true;
+      refs.push(ref);
+    }
+    try {
+      const direct = await db.collection('reports').doc(want).get();
+      if (direct && direct.exists) add(direct.ref);
+    } catch (_) {}
+    try {
+      const q = await db.collection('reports').where('report_id', '==', want).limit(8).get();
+      q.forEach(function (d) { add(d.ref); });
+    } catch (_) {}
+    try {
+      ((__livePack && __livePack.reports) || []).forEach(function (r) {
+        if (!r) return;
+        if (reportRowKeys(r).indexOf(want) < 0) return;
+        const real = String(r.id || r._id || '');
+        if (real) add(db.collection('reports').doc(real));
+      });
+    } catch (_) {}
+    return refs;
+  }
+
+  async function persistReportDecision(id, decision, note) {
+    const db = adminDb();
+    if (!db) return 0;
+    const text = String(note || '').trim();
+    const patch = reportDecisionPatch(decision, text);
+    const refs = await findReportRefs(id);
+    let n = 0;
+    for (let i = 0; i < refs.length; i++) {
+      await refs[i].set(patch, { merge: true });
+      markReportLocally(refs[i].id, decision, text);
+      n += 1;
+    }
+    markReportLocally(id, decision, text);
+    try {
+      await adminWorker('/v1/admin/report-action', {
+        method: 'POST',
+        body: JSON.stringify({
+          report_id: id,
+          id: id,
+          decision: decision,
+          status: decision,
+          reason: text || decision,
+        }),
+      });
+    } catch (_) {}
+    return n;
+  }
+
+  function liveReportRows() {
+    if (__livePack && Array.isArray(__livePack.reports)) return __livePack.reports;
+    if (__snap && __snap._raw && Array.isArray(__snap._raw.reports)) return __snap._raw.reports;
+    return [];
+  }
+
+  function reportIsWaiting(r) {
+    try {
+      if (Data && typeof Data.reportIsOpen === 'function') {
+        return Data.reportIsOpen(r, (__livePack && __livePack.broadcasts) || []);
+      }
+    } catch (_) {}
+    const st = String((r && r.status) || '').toUpperCase();
+    if (r && (r.resolvedAt || r.decided_at)) return false;
+    return !st || st === 'OPEN' || st === 'NEW' || st === 'UNDER REVIEW';
+  }
+
+  async function closeReportsForBroadcast(bid, decision, note) {
+    const db = adminDb();
+    const target = String(bid || '');
+    if (!db || !target) return 0;
+    const ids = [];
+    liveReportRows().forEach(function (r) {
+      if (!r || !reportIsWaiting(r)) return;
+      const hit = String(r.broadcast_id || (r.target_type === 'broadcast' ? r.target_id : '') || '');
+      if (hit === target) ids.push(r.id || r.report_id);
+    });
+    try {
+      const q = await db.collection('reports').where('broadcast_id', '==', target).limit(40).get();
+      q.forEach(function (d) { ids.push(d.id); });
+    } catch (_) {}
+    try {
+      const q2 = await db.collection('reports').where('target_id', '==', target).limit(40).get();
+      q2.forEach(function (d) { ids.push(d.id); });
+    } catch (_) {}
+    const seen = {};
+    let n = 0;
+    for (let i = 0; i < ids.length; i++) {
+      const id = String(ids[i] || '');
+      if (!id || seen[id]) continue;
+      seen[id] = true;
+      n += await persistReportDecision(id, decision, note);
+    }
+    return n;
+  }
+
+  let __healedReports = false;
+  async function healStuckReports(pack) {
+    if (__healedReports || !pack) return 0;
+    const db = adminDb();
+    if (!db) return 0;
+    __healedReports = true;
+    const broadcasts = pack.broadcasts || [];
+    const byId = {};
+    broadcasts.forEach(function (b) {
+      if (b && (b.id || b.broadcast_id)) byId[String(b.id || b.broadcast_id)] = b;
+    });
+    const auditClosed = {};
+    (pack.audit || []).forEach(function (a) {
+      const act = String((a && a.action) || '');
+      const t = String((a && (a.target || a.target_id)) || '');
+      if (!t) return;
+      if (act === 'report-ACTIONED' || act === 'report-DISMISSED') {
+        auditClosed[t] = act.replace('report-', '');
+      }
+    });
+    const jobs = [];
+    (pack.reports || []).forEach(function (r) {
+      if (!r || !reportIsWaiting(r)) return;
+      const keys = reportRowKeys(r);
+      let decision = '';
+      let note = '';
+      keys.forEach(function (k) {
+        if (auditClosed[k]) {
+          decision = auditClosed[k];
+          note = 'Closed from an earlier session';
+        }
+      });
+      const bid = String(r.broadcast_id || (r.target_type === 'broadcast' ? r.target_id : '') || '');
+      const b = bid ? byId[bid] : null;
+      if (!decision && b && (b.hidden || b.deleted)) {
+        const hiddenBy = String(b.hiddenBy || '');
+        if (hiddenBy && hiddenBy !== 'report') {
+          decision = 'ACTIONED';
+          note = 'Broadcast already taken down';
+        }
+      }
+      if (decision) jobs.push(persistReportDecision(r.id || r.report_id, decision, note));
+    });
+    if (!jobs.length) return 0;
+    const counts = await Promise.all(jobs);
+    let n = 0;
+    counts.forEach(function (c) { n += Number(c) || 0; });
+    return n;
+  }
+
   async function actReport(id, decision) {
+    if (!id || !decision) return;
     const note = window.prompt('Note for the audit log:', '');
     if (note === null) return;
     if (!String(note).trim()) { toast('A note is required'); return; }
     const db = adminDb();
     if (!db) return;
     try {
-      const snap = await db.collection('reports').doc(id).get();
-      const data = (snap && snap.exists) ? (snap.data() || {}) : {};
-      await db.collection('reports').doc(id).set({
-        status: decision,
-        resolution: note.trim(),
-        resolvedAt: Date.now(),
-        resolvedBy: currentUser.uid,
-      }, { merge: true });
+      const refs = await findReportRefs(id);
+      let data = {};
+      if (refs.length) {
+        try {
+          const snap = await refs[0].get();
+          data = (snap && snap.exists) ? (snap.data() || {}) : {};
+        } catch (_) {}
+      }
+      const wrote = await persistReportDecision(id, decision, note.trim());
+      if (!wrote) {
+        toast('Could not find that report to close.');
+        return;
+      }
       const bid = data.broadcast_id || (data.target_type === 'broadcast' ? data.target_id : '');
       if (decision === 'ACTIONED' && bid && (data.reason_code === 'sexual' || data.reason_code === 'violence')) {
         await db.collection('broadcasts').doc(bid).set({
@@ -3188,8 +3388,6 @@
         }, { merge: true });
       }
       await writeAudit('report-' + decision, id, note.trim());
-      // Clear it on screen immediately, then reconcile with the server.
-      markReportLocally(id, decision, note.trim());
       toast('Report ' + String(decision).toLowerCase() + ' — cleared');
       await loadTab(__activeTab, true);
     } catch (e) {
@@ -3216,6 +3414,7 @@
           hiddenReason: String(why || 'taken down').slice(0, 80),
           hiddenAt: now, hiddenBy: currentUser.uid, updatedAt: now,
         }, { merge: true });
+        try { await closeReportsForBroadcast(id, 'ACTIONED', 'Broadcast taken down'); } catch (_) {}
         toast('Taken down');
       } else if (action === 'restore') {
         await db.collection('broadcasts').doc(id).set({
@@ -3263,6 +3462,7 @@
   function openConsole() {
     try { localStorage.setItem('naluno:pulse:staff', '1'); } catch (_) {}
     setStage('console');
+    __healedReports = false;
     resolveDeskPlace();
     const who = $('consoleWho');
     if (who) who.textContent = whoLine(currentUser) + ' · every change is logged.';

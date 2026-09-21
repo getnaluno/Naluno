@@ -214,6 +214,67 @@ assert.strictEqual(ident.identity.open_flags.length, 1);
 assert.strictEqual(ident.identity.official_holder, 'ibMOMY6Q3sVTCxIrwO2FGk43zw93');
 assert.ok(ident.alerts.some(function (a) { return a.tab === 'identity'; }));
 assert.ok(typeof D.deriveIdentity === 'function');
+assert.ok(typeof D.reportIsOpen === 'function');
+
+assert.strictEqual(D.reportIsOpen({ status: 'OPEN' }), true);
+assert.strictEqual(D.reportIsOpen({ status: 'NEW' }), true);
+assert.strictEqual(D.reportIsOpen({ status: 'UNDER REVIEW' }), true);
+assert.strictEqual(D.reportIsOpen({}), true, 'missing status is still waiting');
+assert.strictEqual(D.reportIsOpen({ status: 'ACTIONED' }), false);
+assert.strictEqual(D.reportIsOpen({ status: 'DISMISSED' }), false);
+assert.strictEqual(D.reportIsOpen({ status: 'OPEN', resolvedAt: 1 }), false, 'resolved clock closes it');
+assert.strictEqual(D.reportIsOpen({ status: 'OPEN', decided_at: 1 }), false, 'worker decided_at closes it');
+assert.strictEqual(D.reportIsOpen({ status: 'closed' }), false);
+
+const waitingReport = D.deriveSnapshot({
+  now: Date.parse('2026-09-10T08:30:00Z'),
+  zone: 'Asia/Dubai',
+  users: [],
+  broadcasts: [{ id: 'b1', listed: true }],
+  reports: [{ id: 'rep_1', status: 'OPEN', broadcast_id: 'b1', reason: 'sexual content here' }],
+  worker: { ok: true },
+  sw: { connected: true },
+});
+assert.strictEqual(waitingReport.safety.open_reports, 1);
+assert.strictEqual(waitingReport.healthLabel, 'NEEDS ATTENTION');
+assert.ok(waitingReport.attention.some(function (a) { return /report/.test(a.text); }));
+
+const actionedStaysGone = D.deriveSnapshot({
+  now: Date.parse('2026-09-10T08:30:00Z'),
+  zone: 'Asia/Dubai',
+  users: [],
+  broadcasts: [{ id: 'b1', listed: true }],
+  reports: [{ id: 'rep_1', status: 'ACTIONED', broadcast_id: 'b1', resolvedAt: 9 }],
+  worker: { ok: true },
+  sw: { connected: true },
+});
+assert.strictEqual(actionedStaysGone.safety.open_reports, 0, 'Actioned report does not return on a new sign-in');
+assert.strictEqual(actionedStaysGone.healthLabel, 'OPERATIONAL');
+assert.ok(!actionedStaysGone.attention.some(function (a) { return /report/.test(a.text); }));
+
+const takenDownClosesReport = D.deriveSnapshot({
+  now: Date.parse('2026-09-10T08:30:00Z'),
+  zone: 'Asia/Dubai',
+  users: [],
+  broadcasts: [{ id: 'b1', hidden: true, listed: false, hiddenBy: 'ibMOMY6Q3sVTCxIrwO2FGk43zw93', hiddenReason: 'sexual' }],
+  reports: [{ id: 'rep_1', status: 'OPEN', broadcast_id: 'b1' }],
+  worker: { ok: true },
+  sw: { connected: true },
+});
+assert.strictEqual(takenDownClosesReport.safety.open_reports, 0, 'take-down is the decision');
+assert.ok(!takenDownClosesReport.attention.some(function (a) { return /report/.test(a.text); }));
+
+const sexualHideStillWaits = D.deriveSnapshot({
+  now: Date.parse('2026-09-10T08:30:00Z'),
+  zone: 'Asia/Dubai',
+  users: [],
+  broadcasts: [{ id: 'b1', hidden: true, listed: false, hiddenBy: 'report', hiddenReason: 'sexual' }],
+  reports: [{ id: 'rep_1', status: 'OPEN', broadcast_id: 'b1' }],
+  worker: { ok: true },
+  sw: { connected: true },
+});
+assert.strictEqual(sexualHideStillWaits.safety.open_reports, 1, 'auto-hide still needs a person');
+assert.ok(sexualHideStillWaits.attention.some(function (a) { return /report/.test(a.text); }));
 
 console.log('admin-data tests passed', {
   dubai: clock.full,
