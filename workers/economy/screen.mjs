@@ -360,10 +360,69 @@ export function bytesFromB64(s) {
   }
 }
 
+/* ---- Model verdict (nsfwjs) ----
+   Same policy as js/nsfw-model.js, and it MUST stay in step with it.
+   explicit = Porn + Hentai. Sexy is deliberately excluded — that is where
+   bikinis and swimwear land, and they are to be accepted. */
+const MODEL_REJECT_AT = 0.70;
+const MODEL_REVIEW_AT = 0.30;
+const MODEL_CLASSES = ["Drawing", "Hentai", "Neutral", "Porn", "Sexy"];
+
+/** Validate model scores before trusting them.
+ *  This rejects malformed or garbage payloads — five probabilities that are
+ *  numbers in [0,1] and sum to ~1, per frame. It does NOT stop a careful
+ *  forger: the scores are computed on the device, so a modified client could
+ *  send a plausible "clean" set. That is the known limit of on-device
+ *  screening, stated here rather than hidden. */
+function validModelFrames(model) {
+  if (!model || typeof model !== "object") return null;
+  const frames = Array.isArray(model.frames) ? model.frames.slice(0, 12) : [];
+  if (!frames.length) return null;
+  const out = [];
+  for (const f of frames) {
+    if (!f || typeof f !== "object") return null;
+    let sum = 0;
+    for (const k of MODEL_CLASSES) {
+      const v = Number(f[k]);
+      if (!Number.isFinite(v) || v < 0 || v > 1) return null;
+      sum += v;
+    }
+    if (Math.abs(sum - 1) > 0.05) return null;
+    out.push(f);
+  }
+  return out;
+}
+
+export function decideFromModel(frames) {
+  let worst = 0, maxSexy = 0;
+  for (const f of frames) {
+    const e = (Number(f.Porn) || 0) + (Number(f.Hentai) || 0);
+    if (e > worst) worst = e;
+    maxSexy = Math.max(maxSexy, Number(f.Sexy) || 0);
+  }
+  let decision = "allow", reason = maxSexy >= 0.5 ? "revealing-allowed" : "";
+  if (worst >= MODEL_REJECT_AT) { decision = "block"; reason = "explicit"; }
+  else if (worst >= MODEL_REVIEW_AT) { decision = "hold"; reason = "review"; }
+  return { decision, score: Math.round(worst * 100), reason, explicit: worst, sexy: maxSexy };
+}
+
 export function judgeScreenPayload(payload, opts) {
   const title = (opts && opts.title) || "";
   if (!payload || typeof payload !== "object") {
     return { decision: "unread", score: 0, hasScreen: false, reason: "unread", frames: 0 };
+  }
+  /* Prefer the model when valid scores are present. Before this, the server
+     re-ran the skin heuristic on every upload — so even a correct on-device
+     verdict ("that is a bikini, accept it") was silently overruled by the
+     check that could not tell a bikini from nudity. */
+  const modelFrames = validModelFrames(payload.model);
+  if (modelFrames) {
+    const d = decideFromModel(modelFrames);
+    return {
+      decision: d.decision, score: d.score, hasScreen: true,
+      reason: d.reason, frames: modelFrames.length,
+      engine: "model", explicit: d.explicit, sexy: d.sexy,
+    };
   }
   const w = Number(payload.w) || 0;
   const h = Number(payload.h) || 0;
