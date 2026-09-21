@@ -70,7 +70,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v190';
+const CACHE_NAME = 'naluno-shell-v191';
 const APP_BUILD = '20260921k';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
@@ -285,6 +285,14 @@ self.addEventListener('fetch', event=>{
   // leaves firebase undefined on mobile → "Sign-in is not ready yet."
   // Sign-in needs the network anyway; let the browser load CDN scripts normally.
   if(!isSameOrigin) return;
+  /* The on-device explicit-content model (/models/nsfw/) is a 2.6 MB binary
+     shard plus its manifest. It must not go through the shell-cache path
+     below: that path wraps fetches in a short network timeout meant for small
+     app files, and a large first download would be cut off — the model would
+     fail to load and every upload would silently fall back to the weaker
+     heuristic. Passed straight to the network; the browser's HTTP cache still
+     keeps it, so it downloads once. */
+  if(url.pathname.indexOf('/models/') === 0) return;
 
   const path = url.pathname || '';
   const isAppCode = path.includes('/js/') || path.endsWith('.js') ||
