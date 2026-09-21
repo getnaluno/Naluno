@@ -69,8 +69,12 @@ function bcompReset(){
   if(strandName) strandName.value = '';
   const originBox = $('bcompOrigin');
   if(originBox){ originBox.style.display = 'none'; originBox.innerHTML = ''; }
+  const screenBox = $('bcompScreen');
+  if(screenBox){ screenBox.style.display = 'none'; screenBox.innerHTML = ''; }
   window._bcompOrigin = null;
   window._bcompOriginAck = false;
+  window._bcompScreen = null;
+  window._bcompScreenP = null;
   const pub = $('bcompPublishBtn');
   if(pub){
     pub.removeAttribute('disabled');
@@ -357,16 +361,38 @@ async function bcompKickOriginScan(){
     box.style.display = 'block';
     box.innerHTML = '<div style="font-family:var(--font-futuristic);font-size:13px;">OriginID reading…</div><div style="font-size:12.5px;color:var(--text-dim);margin-top:4px;">Picture, motion, and sound against Naluno, then the open web.</div>';
   }
+  const screenBox = $('bcompScreen');
+  if(screenBox){
+    screenBox.style.display = 'block';
+    screenBox.innerHTML = '<div style="font-family:var(--font-futuristic);font-size:13px;">Naluno Screen reading stills…</div><div style="font-size:12.5px;color:var(--text-dim);margin-top:4px;">Clear goes out. Unsure waits. Sexual is stopped.</div>';
+  }
   const title = (($('bcompTitle') && $('bcompTitle').value) || '').trim();
   const desc = (($('bcompDesc') && $('bcompDesc').value) || '').trim();
-  try{
-    window._bcompOriginAck = false;
-    window._bcompOrigin = await runOriginScan(bcompFile, title, desc, bcompDuration || 0);
-    bcompPaintOrigin(window._bcompOrigin);
-  }catch(e){
-    console.warn('[origin]', e);
-    if(box) box.innerHTML = '<div style="font-size:12.5px;color:var(--text-dim);">OriginID could not finish. You can still publish.</div>';
-  }
+  const work = (async function(){
+    try{
+      window._bcompOriginAck = false;
+      window._bcompOrigin = await runOriginScan(bcompFile, title, desc, bcompDuration || 0);
+      bcompPaintOrigin(window._bcompOrigin);
+      let screen = (window._bcompOrigin && window._bcompOrigin.screen) || window._nalunoLastScreen || null;
+      if(!screen && typeof runNalunoScreen === 'function'){
+        screen = await runNalunoScreen(bcompFile, title, bcompDuration || 0);
+      }
+      window._bcompScreen = screen;
+      bcompPaintScreen(screen);
+      return screen;
+    }catch(e){
+      if(box) box.innerHTML = '<div style="font-size:12.5px;color:var(--text-dim);">OriginID could not finish. You can still publish.</div>';
+      try{
+        if(typeof runNalunoScreen === 'function' && bcompFile){
+          window._bcompScreen = await runNalunoScreen(bcompFile, title, bcompDuration || 0);
+          bcompPaintScreen(window._bcompScreen);
+        }
+      }catch(_){}
+      return window._bcompScreen;
+    }
+  })();
+  window._bcompScreenP = work;
+  return work;
 }
 
 async function bcompPublish(){
@@ -387,6 +413,35 @@ async function bcompPublish(){
   if(!title){
     bcompPublishing = false;
     toast('Add a title for your Broadcast');
+    return;
+  }
+
+  try{
+    if(window._bcompScreenP){
+      await Promise.race([
+        window._bcompScreenP,
+        new Promise(function(ok){ setTimeout(ok, 7000); }),
+      ]);
+    }
+  }catch(_){}
+  let screen = window._bcompScreen || (window._bcompOrigin && window._bcompOrigin.screen) || window._nalunoLastScreen || null;
+  if(!screen && bcompFile && typeof runNalunoScreen === 'function'){
+    try{
+      const titleNow = title;
+      screen = await Promise.race([
+        runNalunoScreen(bcompFile, titleNow, bcompDuration || 0),
+        new Promise(function(ok){ setTimeout(function(){ ok(null); }, 6000); }),
+      ]);
+      window._bcompScreen = screen;
+      bcompPaintScreen(screen);
+    }catch(_){}
+  }
+  if(screen && screen.decision === 'block'){
+    bcompPublishing = false;
+    bcompPaintScreen(screen);
+    toast('This cannot go out. Naluno Screen stopped it.');
+    const pubBtn = $('bcompPublishBtn');
+    if(pubBtn) pubBtn.textContent = 'Cannot publish';
     return;
   }
 
@@ -430,6 +485,7 @@ async function bcompPublish(){
   const snapStrandId = strandId;
   const snapStrandName = strandName;
   const snapOrigin = window._bcompOrigin || null;
+  const snapScreen = window._bcompScreen || (snapOrigin && snapOrigin.screen) || window._nalunoLastScreen || null;
   bcompPublishing = false;
   bcompClose();
 
@@ -515,6 +571,7 @@ async function bcompPublish(){
         mediaType, mediaUrl, thumbUrl, filterCss: '',
         chapters, breathers,
         strandId: snapStrandId, strandName: snapStrandName, origin: snapOrigin,
+        screen: snapScreen,
       });
       if(typeof loadFeedBroadcasts === 'function') await loadFeedBroadcasts();
       if(typeof notifyPublishResult === 'function') notifyPublishResult(true, snapTitle);
@@ -614,6 +671,37 @@ if($('bcompGoLiveBtn')){
     if(e){ e.preventDefault(); e.stopPropagation(); }
     bcompStartGoLive();
   };
+}
+
+function bcompPaintScreen(report){
+  const box = $('bcompScreen');
+  if(!box) return;
+  box.style.display = 'block';
+  const d = (report && report.decision) || 'unread';
+  let title = 'Naluno Screen';
+  let body = 'Could not read stills. This waits for a look if you publish.';
+  let color = 'var(--text-dim)';
+  if(d === 'allow'){
+    title = 'Naluno Screen · clear';
+    body = 'Stills from this file can go out.';
+    color = 'var(--mint)';
+  } else if(d === 'hold'){
+    title = 'Naluno Screen · not sure';
+    body = 'This waits for a look. It stays on your list until it is cleared.';
+    color = '#ffc266';
+  } else if(d === 'block'){
+    title = 'Naluno Screen · stopped';
+    body = 'This cannot go out. Broadcast is not for sexual content.';
+    color = '#ff8a9a';
+  }
+  box.innerHTML = '<div style="font-family:var(--font-futuristic);font-size:13px;margin-bottom:4px;color:' + color + ';">' + title + '</div>'
+    + '<div style="font-size:12.5px;color:var(--text-dim);line-height:1.45;">' + body + '</div>';
+  const pub = $('bcompPublishBtn');
+  if(pub && d === 'block'){
+    pub.setAttribute('aria-disabled', 'true');
+    pub.style.opacity = '.5';
+    pub.textContent = 'Cannot publish';
+  }
 }
 
 function bcompPaintOrigin(report){

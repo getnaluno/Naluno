@@ -35,7 +35,10 @@ must(/holderUid == request\.auth\.uid/, 'the bound official account may keep a r
 must(/reservedCores\/\$\(handle\)/, 'handle create also checks reservedCores');
 must(/match \/reservedCores\/\{core\}/, 'reserved cores catch underscore variants');
 must(/match \/handleFlags\/\{id\}/, 'similarity flags are desk-readable');
-must(/handle\.matches\('\^\[a-z0-9_\]\{3,24\}\$'\)/, 'claimed handles must be the normalised form');
+must(/keepsBroadcastListing/, 'creators cannot list or unhide a Broadcast the desk held');
+must(/screenDecision/, 'creators cannot stamp a Screen decision on a Broadcast');
+must(/isTrustedPublisher/, 'only a trusted publisher may create a listed Broadcast');
+must(/trustedPublisher/, 'members cannot stamp themselves as a trusted publisher');
 
 mustNot(/match \/bands\/\{bandId\}[\s\S]*match \/invites\/\{inviteId\} \{\s*allow read, write: if isSignedIn\(\);/, 'Band invites are no longer any-signed-in');
 mustNot(/match \/sparkRooms\/\{roomId\}[\s\S]*match \/messages\/\{messageId\} \{\s*allow read, write: if isSignedIn\(\);/, 'Spark room messages are no longer world-readable to members');

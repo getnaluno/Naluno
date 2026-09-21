@@ -22,7 +22,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260921d';
+  const BUILD = '20260921e';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -463,6 +463,11 @@
       } catch (_) {}
     }
     try { await writeAudit('handle-seed', 'reservedHandles', 'seed'); } catch (_) {}
+    try {
+      if (currentUser) {
+        await db.collection('users').doc(currentUser.uid).set({ trustedPublisher: true }, { merge: true });
+      }
+    } catch (_) {}
   }
   async function saveReservedHandle(handle, category, reason, holderUid) {
     const h = normAdminHandle(handle);
@@ -1938,23 +1943,61 @@
     }
 
     if (tab === 'trust') {
+      const held = (c.held || []).slice(0, 40);
+      const hidden = (c.hidden || []).slice(0, 40);
       el.innerHTML =
-        kpis([['Open reports', sf.open_reports || 0], ['Suspended', sf.suspended || 0],
-          ['Restricted', sf.restricted || 0], ['Flagged', sf.flagged || 0]])
-        + card('Open reports', plainRows(['Target', 'By', 'Reason', 'Status', ''],
-          (sf.open || []).map(function (r) {
-            return [String(r.target_user_id || r.target_id || '').slice(0, 12),
-              String(r.reporter_uid || '').slice(0, 10),
-              r.reason || '', r.status || 'OPEN',
-              '<button type="button" class="ghost admRpt" data-id="' + escapeHtml(r.id) + '" data-d="ACTIONED">Action</button> '
-              + '<button type="button" class="ghost admRpt" data-id="' + escapeHtml(r.id) + '" data-d="DISMISSED">Dismiss</button>'];
-          })))
+        kpis([['Open reports', sf.open_reports || 0], ['Waiting to go out', held.length || c.broadcasts_held || 0],
+          ['Taken down', hidden.length || c.broadcasts_hidden || 0],
+          ['Suspended', sf.suspended || 0], ['Restricted', sf.restricted || 0]])
+        + card('Open reports', (sf.open || []).length
+          ? table(['Target', 'Why', 'Note', ''],
+            (sf.open || []).map(function (r) {
+              const bid = r.broadcast_id || (r.target_type === 'broadcast' ? r.target_id : '');
+              return [
+                escapeHtml(String(r.target_user_id || r.target_id || '').slice(0, 12)),
+                escapeHtml(r.reason_code || '') + (r.reason ? (' · ' + escapeHtml(String(r.reason).slice(0, 80))) : ''),
+                escapeHtml(r.status || 'OPEN'),
+                '<button type="button" class="ghost admRpt" data-id="' + escapeHtml(r.id) + '" data-d="ACTIONED">Action</button> '
+                + '<button type="button" class="ghost admRpt" data-id="' + escapeHtml(r.id) + '" data-d="DISMISSED">Dismiss</button>'
+                + (bid ? (' <button type="button" class="ghost admBmod" data-id="' + escapeHtml(bid) + '" data-a="take-down">Take down</button>') : ''),
+              ];
+            }))
+          : '<p class="sub">No open reports.</p>')
+        + card('Waiting to go out', held.length
+          ? table(['Broadcast', 'Creator', 'Why', ''],
+            held.map(function (b) {
+              return [
+                escapeHtml(b.title || b.id),
+                escapeHtml(b.creatorName || String(b.creatorUid || '').slice(0, 10)),
+                escapeHtml(b.heldReason === 'screen' ? 'Screen unsure' : (b.heldReason || 'new publisher')),
+                '<button type="button" class="primary admBmod" data-id="' + escapeHtml(b.id) + '" data-a="let-out">Let out</button> '
+                + '<button type="button" class="ghost admBmod" data-id="' + escapeHtml(b.id) + '" data-a="take-down">Take down</button> '
+                + '<button type="button" class="ghost admBmod" data-id="' + escapeHtml(b.id) + '" data-uid="' + escapeHtml(b.creatorUid || '') + '" data-a="trust-publisher">Trust publisher</button>',
+              ];
+            }))
+          : '<p class="sub">No Broadcasts waiting. Unsure Screen reads wait here. A new Callsign without a clear read still waits.</p>')
+        + card('Taken down', hidden.length
+          ? table(['Broadcast', 'Why', 'When', ''],
+            hidden.map(function (b) {
+              return [
+                escapeHtml(b.title || b.id),
+                escapeHtml(b.hiddenReason === 'screen' ? 'Naluno Screen' : (b.hiddenReason || 'taken down')),
+                escapeHtml(when(b.hiddenAt || b.updatedAt)),
+                '<button type="button" class="ghost admBmod" data-id="' + escapeHtml(b.id) + '" data-a="restore">Restore</button>',
+              ];
+            }))
+          : '<p class="sub">Nothing taken down.</p>')
         + card('Suspended', plainRows(['Person', 'Reason'],
           (u.suspended || []).map(function (row) {
             return [userName(row), row.suspendedReason || row.suspended_reason || '—'];
           })));
       el.querySelectorAll('.admRpt').forEach(function (btn) {
         btn.onclick = function () { actReport(btn.getAttribute('data-id'), btn.getAttribute('data-d')); };
+      });
+      el.querySelectorAll('.admBmod').forEach(function (btn) {
+        btn.onclick = function () {
+          modBroadcast(btn.getAttribute('data-id'), btn.getAttribute('data-a'), btn.getAttribute('data-uid') || '');
+        };
       });
       return;
     }
@@ -2992,17 +3035,70 @@
     const db = adminDb();
     if (!db) return;
     try {
+      const snap = await db.collection('reports').doc(id).get();
+      const data = (snap && snap.exists) ? (snap.data() || {}) : {};
       await db.collection('reports').doc(id).set({
         status: decision,
         resolution: note.trim(),
         resolvedAt: Date.now(),
         resolvedBy: currentUser.uid,
       }, { merge: true });
+      const bid = data.broadcast_id || (data.target_type === 'broadcast' ? data.target_id : '');
+      if (decision === 'ACTIONED' && bid && (data.reason_code === 'sexual' || data.reason_code === 'violence')) {
+        await db.collection('broadcasts').doc(bid).set({
+          hidden: true, listed: false, held: false, live: false,
+          hiddenReason: data.reason_code, hiddenAt: Date.now(), hiddenBy: currentUser.uid,
+        }, { merge: true });
+      }
       await writeAudit('report-' + decision, id, note.trim());
       toast('Report ' + String(decision).toLowerCase());
       await loadTab('trust', true);
     } catch (e) {
       toast((e && e.message) || 'Could not update the report.');
+    }
+  }
+
+  async function modBroadcast(id, action, uid) {
+    if (!id || !action) return;
+    const db = adminDb();
+    if (!db) return;
+    const now = Date.now();
+    try {
+      if (action === 'let-out') {
+        await db.collection('broadcasts').doc(id).set({
+          listed: true, held: false, heldReason: '', hidden: false, updatedAt: now,
+        }, { merge: true });
+        toast('That Broadcast is on the public feed');
+      } else if (action === 'take-down') {
+        const why = window.prompt('Why is this coming down?', 'sexual');
+        if (why === null) return;
+        await db.collection('broadcasts').doc(id).set({
+          listed: false, held: false, hidden: true, live: false,
+          hiddenReason: String(why || 'taken down').slice(0, 80),
+          hiddenAt: now, hiddenBy: currentUser.uid, updatedAt: now,
+        }, { merge: true });
+        toast('Taken down');
+      } else if (action === 'restore') {
+        await db.collection('broadcasts').doc(id).set({
+          listed: true, held: false, hidden: false, hiddenReason: '', updatedAt: now,
+        }, { merge: true });
+        toast('Restored to the public feed');
+      } else if (action === 'trust-publisher') {
+        const who = uid || '';
+        if (!who) { toast('Missing account'); return; }
+        await db.collection('users').doc(who).set({ trustedPublisher: true, updatedAt: now }, { merge: true });
+        toast('Their next Broadcasts go out live');
+      }
+      try {
+        await adminWorker('/v1/admin/broadcast-moderation', {
+          method: 'POST',
+          body: JSON.stringify({ broadcast_id: id, action: action, user_id: uid || '', reason: action }),
+        });
+      } catch (_) {}
+      await writeAudit('broadcast-' + action, id, uid || '');
+      await loadTab('trust', true);
+    } catch (e) {
+      toast((e && e.message) || 'Could not update that Broadcast.');
     }
   }
 

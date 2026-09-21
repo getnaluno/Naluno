@@ -231,17 +231,26 @@
             const ctx = c.getContext('2d', { willReadFrequently: true });
             ctx.drawImage(img, 0, 0, 64, 64);
             const h = stillFromCanvas(c, img);
+            let still = null;
+            try{
+              const sc = document.createElement('canvas');
+              sc.width = 96; sc.height = 96;
+              const sctx = sc.getContext('2d', { willReadFrequently: true });
+              sctx.drawImage(img, 0, 0, 96, 96);
+              const imgd = sctx.getImageData(0, 0, 96, 96);
+              still = { w: 96, h: 96, data: imgd.data };
+            }catch(_s){}
             try{ URL.revokeObjectURL(url); }catch(_){}
-            resolve(h || '');
+            resolve({ hash: h || '', still: still });
           }catch(_){
             try{ URL.revokeObjectURL(url); }catch(_2){}
-            resolve('');
+            resolve({ hash: '', still: null });
           }
         };
-        img.onerror = function(){ try{ URL.revokeObjectURL(url); }catch(_){} resolve(''); };
+        img.onerror = function(){ try{ URL.revokeObjectURL(url); }catch(_){} resolve({ hash: '', still: null }); };
         img.src = url;
-        setTimeout(function(){ resolve(''); }, 5000);
-      }catch(_){ resolve(''); }
+        setTimeout(function(){ resolve({ hash: '', still: null }); }, 5000);
+      }catch(_){ resolve({ hash: '', still: null }); }
     });
   }
   function fingerprintSamples(samples, sampleRate){
@@ -362,10 +371,28 @@
       }catch(_){ resolve(''); }
     });
   }
+  function scoreStills(stills, title){
+    try{
+      if(typeof nalunoScreenFromStills === 'function' && stills && stills.length){
+        return nalunoScreenFromStills(stills, title || '');
+      }
+    }catch(_){}
+    return null;
+  }
   function sampleFrameHashes(file, durationHint){
     if(looksImage(file) && !looksVideo(file)){
-      return hashStillImage(file).then(function(h){
-        return { duration: 0, hashes: h ? [h] : [], photoHash: h, audioHash: '', kind: 'photo' };
+      return hashStillImage(file).then(function(row){
+        const h = (row && typeof row === 'object') ? (row.hash || '') : (row || '');
+        const stills = (row && row.still) ? [row.still] : [];
+        return {
+          duration: 0,
+          hashes: h ? [h] : [],
+          photoHash: h,
+          audioHash: '',
+          kind: 'photo',
+          stills: stills,
+          screen: scoreStills(stills, ''),
+        };
       });
     }
     if(looksAudio(file) && !looksVideo(file)){
@@ -381,6 +408,7 @@
       v.muted = true; v.playsInline = true; v.preload = 'auto';
       const url = URL.createObjectURL(file);
       const hashes = [];
+      const stills = [];
       let settled = false;
       const finish = function(duration, audioHash){
         if(settled) return;
@@ -393,10 +421,14 @@
           photoHash: hashes[0] || '',
           audioHash: audioHash || '',
           kind: 'video',
+          stills: stills,
+          screen: scoreStills(stills, ''),
         });
       };
       const canvas = document.createElement('canvas');
       canvas.width = 64; canvas.height = 64;
+      const screenCanvas = document.createElement('canvas');
+      screenCanvas.width = 96; screenCanvas.height = 96;
       const grab = function(){
         try{
           const ctx = canvas.getContext('2d');
@@ -404,6 +436,14 @@
             ctx.drawImage(v, 0, 0, 64, 64);
             const h = stillFromCanvas(canvas, v);
             if(h) hashes.push(h);
+          }
+        }catch(_){}
+        try{
+          const sctx = screenCanvas.getContext('2d', { willReadFrequently: true });
+          if(sctx){
+            sctx.drawImage(v, 0, 0, 96, 96);
+            const imgd = sctx.getImageData(0, 0, 96, 96);
+            stills.push({ w: 96, h: 96, data: imgd.data });
           }
         }catch(_){}
       };
@@ -894,6 +934,11 @@
     if(report.matchCreatorUid){
       try{ report.matchCreatorName = await resolveMatchCreatorName(report.matchCreatorUid); }catch(_){ report.matchCreatorName = ''; }
     }
+    try{
+      report.screen = (frames.stills && frames.stills.length)
+        ? scoreStills(frames.stills, title || '')
+        : (frames.screen || null);
+    }catch(_){ report.screen = frames.screen || null; }
     return report;
   }
 
@@ -940,7 +985,12 @@
   window.originScoreCatalog = scoreCatalog;
   window.originFuseChannels = fuseChannels;
   window.originDhashFromCanvas = dHashFromCanvas;
-  window.originHashStillImage = hashStillImage;
+  window.originHashStillImage = function(file){
+    return hashStillImage(file).then(function(row){
+      if(typeof row === 'string') return row;
+      return (row && row.hash) || '';
+    });
+  };
   window.originHamming = hamming;
   window.originMakeDna = makeDna;
 })();

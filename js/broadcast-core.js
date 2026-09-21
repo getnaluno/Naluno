@@ -70,6 +70,8 @@ function broadcastThumbHtml(b){
     inner = `<div class="bcast-plate-fallback">${escapeHtml((b.creatorName || '?').slice(0,1).toUpperCase())}</div>`;
   }
   const live = b.live ? `<span class="bcast-plate-live">LIVE</span>` : '';
+  const hold = (!b.live && b.held) ? `<span class="bcast-plate-live" style="background:rgba(255,194,102,.2);color:#ffc266;border-color:rgba(255,194,102,.4);">Waiting</span>` : '';
+  const down = (!b.live && b.hidden) ? `<span class="bcast-plate-live" style="background:rgba(255,84,112,.18);color:#ff8a9a;border-color:rgba(255,84,112,.4);">Taken down</span>` : '';
   const viewsBit = (typeof formatNalunoViews === 'function' && (b.shareViews !== false))
     ? `<span class="bcast-plate-views">${escapeHtml(formatNalunoViews(b.views || 0))}</span>`
     : '';
@@ -77,6 +79,8 @@ function broadcastThumbHtml(b){
     <div class="bcast-plate-frame">
       ${inner}
       ${live}
+      ${hold}
+      ${down}
       ${viewsBit}
       <div class="bcast-plate-scan"></div>
     </div>
@@ -87,7 +91,60 @@ function broadcastThumbHtml(b){
   </article>`;
 }
 
-async function createPermanentBroadcast({ title, description, tags, mediaType, mediaUrl, thumbUrl, filterCss, chapters, breathers, strandId, strandName, origin }){
+function nalunoPublisherTrusted(){
+  try{
+    const p = (typeof currentProfile !== 'undefined' && currentProfile) || {};
+    if(p.restricted || p.suspended) return false;
+    return !!p.trustedPublisher;
+  }catch(_){ return false; }
+}
+function nalunoBroadcastListingFields(){
+  if(nalunoPublisherTrusted()){
+    return { listed: true, held: false, heldReason: '', hidden: false };
+  }
+  return { listed: false, held: true, heldReason: 'new-publisher', hidden: false };
+}
+/** On the public feed. Legacy docs without listed stay visible until hidden/held. */
+function broadcastIsPublic(b){
+  if(!b || b.deleted) return false;
+  if(b.hidden) return false;
+  if(b.held) return false;
+  if(b.listed === false) return false;
+  return true;
+}
+function broadcastVisibleTo(b, uid){
+  if(!b || b.deleted) return false;
+  if(uid && b.creatorUid === uid) return true;
+  return broadcastIsPublic(b);
+}
+function nalunoEconomyUrlBroadcast(){
+  try{
+    if(typeof location !== 'undefined' && location.origin) return location.origin + '/__naluno-economy';
+  }catch(_){}
+  return 'https://naluno-economy.naluno.workers.dev';
+}
+async function nalunoPlaceBroadcast(id, screen){
+  if(!id) return null;
+  try{
+    const user = (typeof currentUser !== 'undefined') ? currentUser : null;
+    const tok = user && user.getIdToken ? await user.getIdToken() : '';
+    if(!tok) return null;
+    let packed = null;
+    try{
+      if(screen && typeof nalunoScreenPack === 'function') packed = nalunoScreenPack(screen);
+      else if(screen && screen.packed) packed = screen.packed;
+    }catch(_){}
+    const r = await fetch(nalunoEconomyUrlBroadcast() + '/v1/broadcast/place', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ broadcast_id: id, screen: packed }),
+      cache: 'no-store',
+    });
+    return await r.json().catch(function(){ return null; });
+  }catch(_){ return null; }
+}
+
+async function createPermanentBroadcast({ title, description, tags, mediaType, mediaUrl, thumbUrl, filterCss, chapters, breathers, strandId, strandName, origin, screen }){
   if(!currentUser || !fbDb) throw new Error('Sign in required');
   const now = Date.now();
   const ref = fbDb.collection('broadcasts').doc();
@@ -95,6 +152,7 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
   // breathers: [{ afterChapterIndex, durationMs, adSlot: { enabled, inventoryId, status } }]
   const chapterList = Array.isArray(chapters) ? chapters : null;
   const primaryUrl = mediaUrl || (chapterList && chapterList[0] && chapterList[0].mediaUrl) || null;
+  const screenReport = screen || (origin && origin.screen) || (typeof window !== 'undefined' ? window._nalunoLastScreen : null) || null;
   const doc = {
     creatorUid: currentUser.uid,
     creatorName: (currentProfile && currentProfile.name) || currentUser.displayName || 'Someone',
@@ -134,21 +192,39 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
       ...(tags || []),
     ].join(' ').toLowerCase(),
   };
+  Object.assign(doc, nalunoBroadcastListingFields());
   await ref.set(doc);
   await ref.collection('journey').add({
     type: 'created',
-    text: 'Broadcast published',
+    text: doc.held ? 'Broadcast waiting to go out' : 'Broadcast published',
     ts: now,
     by: currentUser.uid,
   });
   try{
     if(typeof saveOriginMark === 'function' && origin) await saveOriginMark(ref.id, origin, title);
   }catch(_){}
+  let placed = null;
+  try{ placed = await nalunoPlaceBroadcast(ref.id, screenReport); }catch(_){ placed = null; }
+  if(placed && typeof placed.listed === 'boolean'){
+    doc.listed = !!placed.listed;
+    doc.held = !!placed.held;
+    doc.hidden = !!placed.hidden;
+    if(placed.heldReason) doc.heldReason = placed.heldReason;
+    else if(placed.listed) doc.heldReason = '';
+    if(placed.hidden && placed.screen === 'block') doc.hiddenReason = 'screen';
+  }
   const full = { id: ref.id, ...doc };
   myBroadcasts = [full, ...myBroadcasts.filter(x => x.id !== ref.id)];
   // Optimistic plate update — don't wait for onSnapshot (avoids "must refresh")
-  feedBroadcasts = [full, ...feedBroadcasts.filter(x => x.id !== ref.id)].slice(0, 80);
+  if(broadcastIsPublic(full)){
+    feedBroadcasts = [full, ...feedBroadcasts.filter(x => x.id !== ref.id)].slice(0, 80);
+  }
   if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
+  if(full.hidden && placed && placed.screen === 'block'){
+    try{ toast('This cannot go out.'); }catch(_){}
+  } else if(full.held){
+    try{ toast('Saved on your list. It goes out after a first look.'); }catch(_){}
+  }
   return full;
 }
 
@@ -236,6 +312,7 @@ function applyBroadcastDocsToFeed(docs){
   docs.forEach(function(d){
     const data = d.data() || {};
     if(data.deleted) return;
+    if(!broadcastIsPublic(data)) return;
     const row = Object.assign({}, prevById[d.id] || {}, data, { id: d.id });
     row.mediaId = broadcastStableMediaId(row) || row.mediaId || null;
     list.push(row);
@@ -249,6 +326,8 @@ function applyBroadcastDocsToFeed(docs){
   if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
 }
 window.broadcastStableMediaId = broadcastStableMediaId;
+window.broadcastIsPublic = broadcastIsPublic;
+window.broadcastVisibleTo = broadcastVisibleTo;
 
 
 /** Realtime plate list — no refresh required for new Broadcasts. */
@@ -318,7 +397,7 @@ async function loadFeedBroadcasts(){
       const snap = await fbDb.collection('broadcasts').where('creatorUid', 'in', chunk).limit(30).get();
       snap.docs.forEach(d => {
         const data = d.data();
-        if(!data.deleted) list.push({ id: d.id, ...data });
+        if(!data.deleted && broadcastIsPublic(data)) list.push({ id: d.id, ...data });
       });
     }catch(_){}
   }
@@ -349,6 +428,7 @@ async function searchBroadcasts(query){
       snap.docs.forEach(d => {
         const data = d.data();
         if(data.deleted) return;
+        if(!broadcastIsPublic(data)) return;
         if(!pool.find(x => x.id === d.id)) pool.push({ id: d.id, ...data });
       });
     }

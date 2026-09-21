@@ -1178,6 +1178,8 @@
     const activeB = broadcasts.filter(function (b) { return !b.deleted; });
     const deletedB = broadcasts.filter(function (b) { return !!b.deleted; });
     const liveB = activeB.filter(function (b) { return !!b.live; });
+    const heldB = activeB.filter(function (b) { return !!b.held && !b.hidden; });
+    const hiddenB = activeB.filter(function (b) { return !!b.hidden; });
     const bToday = activeB.filter(function (b) { return num(b.createdAt) >= day0; });
     let viewsTotal = 0;
     let comments = 0;
@@ -1335,6 +1337,20 @@
         text: identity.open_flags.length + ' handle' + (identity.open_flags.length === 1 ? '' : 's') + ' look close to a protected Naluno identity.',
       });
     }
+    if (heldB.length) {
+      alerts.push({
+        level: 'warning',
+        tab: 'trust',
+        text: heldB.length + ' Broadcast' + (heldB.length === 1 ? '' : 's') + ' waiting to go out.',
+      });
+    }
+    if (hiddenB.length) {
+      alerts.push({
+        level: 'warning',
+        tab: 'trust',
+        text: hiddenB.length + ' Broadcast' + (hiddenB.length === 1 ? '' : 's') + ' taken down.',
+      });
+    }
     if (!alerts.length) {
       alerts.push({ level: 'ok', tab: '', text: 'Nothing needs a decision right now.' });
     }
@@ -1402,6 +1418,10 @@
         broadcasts_today: bToday.length,
         broadcasts_deleted: deletedB.length,
         broadcasts_live: liveB.length,
+        broadcasts_held: heldB.length,
+        broadcasts_hidden: hiddenB.length,
+        held: heldB,
+        hidden: hiddenB,
         broadcasts: activeB,
         recent: activeB.slice().sort(function (a, b) {
           return num(b.createdAt || b.updatedAt) - num(a.createdAt || a.updatedAt);
@@ -1457,6 +1477,8 @@
         restricted: restricted.length,
         flagged: users.filter(function (u) { return num(u.riskFlags || u.risk_flags) > 0; }).length,
         pending_review: ledgerPending.length,
+        held_broadcasts: heldB.length,
+        hidden_broadcasts: hiddenB.length,
       },
       mail: {
         total: mailList.length,

@@ -51,7 +51,10 @@ async function ensureBroadcastFirestore(meta){
   if(meta.broadcastId && snap.exists) return id;
   if(!snap.exists){
     const seg = meta.segment || {};
-    await ref.set({
+    const listing = (typeof nalunoBroadcastListingFields === 'function')
+      ? nalunoBroadcastListingFields()
+      : { listed: false, held: true, heldReason: 'new-publisher', hidden: false };
+    await ref.set(Object.assign({
       creatorUid: meta.creatorUid || currentUser.uid,
       creatorName: meta.creatorName || (currentProfile && currentProfile.name) || 'Someone',
       title: meta.title || (seg.text ? String(seg.text).slice(0, 80) : 'Broadcast'),
@@ -66,7 +69,7 @@ async function ensureBroadcastFirestore(meta){
       updatedAt: Date.now(),
       memberUids: [meta.creatorUid || currentUser.uid],
       source: meta.isMine ? 'signal_self' : 'signal_contact',
-    }, { merge:true });
+    }, listing));
     // Journey seed
     await ref.collection('journey').add({
       type: 'created',
@@ -668,6 +671,23 @@ async function openBroadcastSpace(meta){
   if(meta.breathers) meta.breathers = meta.breathers;
 
   // meta: { isMine, contactId?, segment, creatorUid, creatorName, title?, description?, tags? }
+  if(meta && meta.broadcastId && typeof fbDb !== 'undefined' && fbDb){
+    try{
+      const snap = await fbDb.collection('broadcasts').doc(meta.broadcastId).get();
+      if(snap.exists){
+        const data = snap.data() || {};
+        const uid = (typeof currentUser !== 'undefined' && currentUser) ? currentUser.uid : '';
+        if(typeof broadcastVisibleTo === 'function' && !broadcastVisibleTo(data, uid)){
+          toast('This Broadcast isn’t available.');
+          return;
+        }
+        meta.held = !!data.held;
+        meta.hidden = !!data.hidden;
+      }
+    }catch(_){}
+  }
+
+  // meta: { isMine, contactId?, segment, creatorUid, creatorName, title?, description?, tags? }
   activeBroadcastMeta = meta;
   if(meta.broadcastId) activeBroadcastId = meta.broadcastId;
   if(!activeBroadcastMeta.chapters && meta.segment && meta.segment.chapters){
@@ -683,6 +703,20 @@ async function openBroadcastSpace(meta){
   $('bspaceCreatorMeta').textContent = meta.isMine ? 'Your Broadcast' : 'Creator Circle';
   $('bspaceTitle').textContent = title;
   $('bspaceDesc').textContent = desc;
+  try{
+    const note = $('bspaceModNote');
+    if(note){
+      if(meta.hidden){
+        note.textContent = 'This Broadcast was taken down. It is not on the public feed.';
+        note.style.display = 'block';
+      } else if(meta.held){
+        note.textContent = 'Waiting to go out. Naluno Screen was not sure. It is on your list only until it is cleared.';
+        note.style.display = 'block';
+      } else {
+        note.style.display = 'none';
+      }
+    }
+  }catch(_){}
   const tags = meta.tags && meta.tags.length ? meta.tags : (seg.type ? [seg.type] : ['idea']);
   $('bspaceTags').innerHTML = tags.map(t => `<span class="bspace-tag">${bspaceEscape(t)}</span>`).join('');
   renderBspaceMedia(seg);
