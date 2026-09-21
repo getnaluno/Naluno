@@ -449,7 +449,9 @@
       };
       v.onloadedmetadata = async function(){
         const d = isFinite(v.duration) ? v.duration : (durationHint || 0);
-        const spots = d > 8 ? [0.08,0.18,0.3,0.42,0.54,0.66,0.78,0.9] : (d > 2 ? [0.12,0.32,0.5,0.68,0.88] : [0.2]);
+        const spots = (typeof nalunoVideoScreenSpots === 'function')
+          ? nalunoVideoScreenSpots(d)
+          : (d > 8 ? [0.08,0.2,0.34,0.48,0.62,0.76,0.88,0.95] : (d > 2 ? [0.12,0.3,0.5,0.7,0.9] : [0.22,0.55,0.85]));
         let audioHash = '';
         try{
           const Ctx = window.AudioContext || window.webkitAudioContext;

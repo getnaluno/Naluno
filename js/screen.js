@@ -3,15 +3,21 @@
    MUST NOT touch calls / WebRTC. CSAM is a separate legal path.
    Keep the numeric core in step with workers/economy/screen.mjs. */
 (function (root) {
-  const SCREEN_VERSION = 1;
+  const SCREEN_VERSION = 2;
   const SCREEN_SIZE = 96;
-  const SCREEN_MAX_FRAMES = 6;
+  const SCREEN_MAX_FRAMES = 8;
   const SEX_WORDS = /\b(porn|porno|xxx|nsfw|onlyfans|nudes?|naked|hentai|cumshot|sex\s*tape)\b/i;
 
   function clamp01(x) {
     if (x < 0) return 0;
     if (x > 1) return 1;
     return x;
+  }
+  function videoScreenSpots(duration) {
+    const d = Number(duration) || 0;
+    if (d > 8) return [0.08, 0.2, 0.34, 0.48, 0.62, 0.76, 0.88, 0.95];
+    if (d > 2) return [0.12, 0.3, 0.5, 0.7, 0.9];
+    return [0.22, 0.55, 0.85];
   }
   function isSkinRgb(r, g, b) {
     const y = 0.299 * r + 0.587 * g + 0.114 * b;
@@ -24,6 +30,21 @@
     const ycbcr = cr >= 120 && cr <= 185 && cb >= 72 && cb <= 138;
     const ratio = r > b && (r - g) >= 2 && (r - b) >= 6 && (g - b) > -25;
     return ycbcr && ratio;
+  }
+  function hsvOf(r, g, b) {
+    const mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
+    const mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
+    const v = mx / 255;
+    const d = mx - mn;
+    const s = mx === 0 ? 0 : d / mx;
+    let h = 0;
+    if (d !== 0) {
+      if (mx === r) h = ((g - b) / d) * 60;
+      else if (mx === g) h = 120 + ((b - r) / d) * 60;
+      else h = 240 + ((r - g) / d) * 60;
+      if (h < 0) h += 360;
+    }
+    return { h, s, v };
   }
   function unionFind(n) {
     const p = new Int32Array(n);
@@ -62,6 +83,10 @@
     let midN = 0;
     let botN = 0;
     let greenBlue = 0;
+    let cloth = 0;
+    let sky = 0;
+    let veg = 0;
+    let sheet = 0;
     let lumSum = 0;
     let lumSq = 0;
     const hist = new Uint32Array(16);
@@ -89,9 +114,11 @@
         if (y < yTop) topN++;
         else if (y < yBot) midN++;
         else botN++;
+        const hsv = hsvOf(r, g, b);
         if (g > r + 12 && g > b - 8) greenBlue++;
         else if (b > r + 18 && b > g + 4) greenBlue++;
-        if (isSkinRgb(r, g, b)) {
+        const sk = isSkinRgb(r, g, b);
+        if (sk) {
           skin[i] = 1;
           skinN++;
           if (inCenter) centerSkin++;
@@ -99,6 +126,18 @@
           if (y < yTop) topSkin++;
           else if (y < yBot) midSkin++;
           else botSkin++;
+        } else {
+          const fashionHue = hsv.h < 80 || hsv.h > 300;
+          if (hsv.s > 0.42 && hsv.v > 0.28 && fashionHue) cloth++;
+        }
+        if (hsv.s >= 0.22 && lum >= 125 && hsv.v > 0.45 && b > r + 12 && b > g - 8 && hsv.h >= 170 && hsv.h <= 230) {
+          sky++;
+        }
+        if (!sk && g > r + 8 && g > b - 10 && hsv.s > 0.2 && hsv.h >= 55 && hsv.h <= 170) {
+          veg++;
+        }
+        if (hsv.h >= 185 && hsv.h <= 250 && hsv.s < 0.32 && hsv.v > 0.28 && hsv.v < 0.9 && lum < 170) {
+          sheet++;
         }
       }
     }
@@ -163,6 +202,10 @@
       skinEdge: skinEdgeN ? skinEdgeSum / skinEdgeN : 0,
       entropy: entropy,
       greenBlue: greenBlue / n,
+      cloth: cloth / n,
+      sky: sky / n,
+      veg: veg / n,
+      sheet: sheet / n,
       topSkin: topN ? topSkin / topN : 0,
       midSkin: midN ? midSkin / midN : 0,
       botSkin: botN ? botSkin / botN : 0,
@@ -170,8 +213,34 @@
       lumVar: lumVar,
     };
   }
-  function hintFromFeatures(f) {
-    if (!f) return 0;
+  function isBeachwear(f) {
+    if (!f) return false;
+    const scene = (f.sky || 0) + (f.veg || 0);
+    const clothN = f.cloth || 0;
+    const sheetN = f.sheet || 0;
+    const skyN = f.sky || 0;
+    if (sheetN > 0.12 && scene < 0.08) return false;
+    if (skyN > 0.08 && f.topSkin > 0.2 && sheetN < 0.1) return true;
+    if (scene > 0.08 && clothN > 0.04 && f.topSkin > 0.18 && sheetN < 0.12) return true;
+    if (clothN > 0.08 && f.topSkin > 0.22 && sheetN < 0.1 && scene > 0.04) return true;
+    return false;
+  }
+  function isCloseup(f) {
+    if (!f) return false;
+    const scene = (f.sky || 0) + (f.veg || 0);
+    const clothN = f.cloth || 0;
+    const sheetN = f.sheet || 0;
+    const lower = ((f.midSkin || 0) + (f.botSkin || 0)) / 2;
+    const noHead = (f.topSkin || 0) < 0.22;
+    const smooth = (f.skinRatio || 0) > 0.28 && (f.skinEdge || 0) < 0.085;
+    if (clothN > 0.06) return false;
+    if (scene > 0.12 && sheetN < 0.1 && (f.topSkin || 0) > 0.18) return false;
+    if (noHead && lower > 0.45 && (f.skinRatio || 0) > 0.28 && clothN < 0.035) return true;
+    if (smooth && noHead && clothN < 0.03 && scene < 0.1) return true;
+    if (sheetN > 0.12 && noHead && (f.skinRatio || 0) > 0.3 && clothN < 0.03) return true;
+    return false;
+  }
+  function rawHint(f) {
     let h = 0;
     h += 0.3 * f.centerSkin;
     h += 0.22 * f.blobMax;
@@ -182,12 +251,25 @@
     if (f.topSkin > f.midSkin && f.topSkin > f.botSkin * 1.15 && f.botSkin < 0.28 && f.blobMax < 0.55) {
       h *= 0.42;
     }
-    if (f.greenBlue > 0.16 || f.entropy > 3.6) h *= 0.62;
+    const scene = (f.sky || 0) + (f.veg || 0);
+    if (scene > 0.14 && (f.sheet || 0) < 0.1) h *= 0.55;
     if (f.edgeDensity > 0.22 && f.skinRatio < 0.45) h *= 0.7;
-    if (f.greenBlue < 0.12 && f.skinRatio < 0.06 && f.entropy < 2.4 && f.edgeDensity < 0.1 && f.lumVar < 0.05 && f.meanLum > 0.22 && f.meanLum < 0.85) {
+    if (scene < 0.08 && (f.sheet || 0) < 0.1 && f.skinRatio < 0.06 && f.entropy < 2.4 && f.edgeDensity < 0.1 && f.lumVar < 0.05 && f.meanLum > 0.22 && f.meanLum < 0.85) {
       h = Math.max(h, 0.36);
     }
     return clamp01(h);
+  }
+  function classifyFrame(f) {
+    if (!f) return { hint: 0, beachwear: false, closeup: false };
+    const beachwear = isBeachwear(f);
+    const closeup = isCloseup(f);
+    let hint = rawHint(f);
+    if (closeup && !beachwear) hint = Math.max(hint, 0.86);
+    else if (beachwear) hint = Math.min(hint, 0.22);
+    return { hint: clamp01(hint), beachwear, closeup };
+  }
+  function hintFromFeatures(f) {
+    return classifyFrame(f).hint;
   }
   function decideFromHints(hints, opts) {
     const title = (opts && opts.title) || "";
@@ -205,10 +287,10 @@
     const lex = SEX_WORDS.test(String(title));
     let decision = "hold";
     let reason = "screen";
-    if ((max >= 0.78 && mean >= 0.5) || max >= 0.84 || (lex && max >= 0.55)) {
+    if (max >= 0.84 || (max >= 0.78 && mean >= 0.45) || (lex && max >= 0.55)) {
       decision = "block";
       reason = "screen";
-    } else if (max < 0.3 && mean < 0.22 && !lex) {
+    } else if (max < 0.3 && mean < 0.24 && !lex) {
       decision = "allow";
       reason = "";
     } else if (lex) {
@@ -392,7 +474,7 @@
       };
       v.onloadedmetadata = async function () {
         const d = isFinite(v.duration) ? v.duration : durationHint || 0;
-        const spots = d > 8 ? [0.08, 0.22, 0.4, 0.58, 0.76, 0.92] : d > 2 ? [0.15, 0.4, 0.65, 0.88] : [0.25];
+        const spots = videoScreenSpots(d);
         for (let i = 0; i < spots.length; i++) {
           try {
             v.currentTime = Math.max(0.05, spots[i] * (d || 1));
@@ -432,6 +514,10 @@
     isSkinRgb: isSkinRgb,
     featuresFromRgb: featuresFromRgb,
     hintFromFeatures: hintFromFeatures,
+    classifyFrame: classifyFrame,
+    isBeachwear: isBeachwear,
+    isCloseup: isCloseup,
+    videoScreenSpots: videoScreenSpots,
     decideFromHints: decideFromHints,
     fromStills: fromStills,
     packPayload: packPayload,
@@ -443,4 +529,5 @@
   root.nalunoScreenFromStills = fromStills;
   root.runNalunoScreen = runOnFile;
   root.nalunoScreenPack = packPayload;
+  root.nalunoVideoScreenSpots = videoScreenSpots;
 })(typeof window !== "undefined" ? window : typeof globalThis !== "undefined" ? globalThis : this);

@@ -9,7 +9,10 @@ ctx.window = ctx;
 vm.runInNewContext(src, ctx);
 const S = ctx.NalunoScreen;
 assert.ok(S, 'NalunoScreen missing');
-assert.strictEqual(S.VERSION, 1);
+assert.strictEqual(S.VERSION, 2);
+assert.ok(S.videoScreenSpots(1).length >= 3, 'short clips still get more than one still');
+assert.ok(S.videoScreenSpots(12).length >= 8, 'longer clips sample through the file, including late');
+assert.ok(S.videoScreenSpots(12).slice(-1)[0] >= 0.9, 'last sample is near the end');
 
 function fill(w, h, fn) {
   const rgb = new Uint8Array(w * h * 3);
@@ -64,5 +67,29 @@ assert.strictEqual(unread.decision, 'unread');
 
 const holdMid = S.decideFromHints([0.45, 0.4]);
 assert.strictEqual(holdMid.decision, 'hold');
+
+const lateHit = S.decideFromHints([0.12, 0.14, 0.18, 0.86]);
+assert.strictEqual(lateHit.decision, 'block', 'one late sexual still must stop the upload');
+
+const beach = fill(W, H, function (x, y, w, h) {
+  if (y < h * 0.30) {
+    const cx = w / 2, cy = h * 0.16, r = w * 0.16;
+    if ((x - cx) * (x - cx) + (y - cy) * (y - cy) < r * r) return [210, 160, 130];
+    return [80, 165, 225];
+  }
+  if (x < w * 0.14 || x > w * 0.86) return [35, 110, 45];
+  if (y > h * 0.38 && y < h * 0.52 && x > w * 0.32 && x < w * 0.68) return [235, 60, 80];
+  if (y > h * 0.86) return [210, 185, 130];
+  return [200, 150, 118];
+});
+const beachD = decideRgb(beach);
+assert.strictEqual(beachD.decision, 'allow', 'beach bikini-style should go out, got ' + beachD.decision + ' score ' + beachD.score);
+
+const bedroom = fill(W, H, function (x, y, w, h) {
+  if (y < h * 0.18) return [155, 170, 188];
+  return [200, 140, 110];
+});
+const bedD = decideRgb(bedroom);
+assert.strictEqual(bedD.decision, 'block', 'explicit close-up should stop, got ' + bedD.decision + ' score ' + bedD.score);
 
 console.log('screen contract tests passed');
