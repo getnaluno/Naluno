@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.09.21c" />
+  <meta name="naluno-build" content="2026.09.21f" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.09.21c">
+<meta name="app-version" content="2026.09.21f">
 <meta name="description" content="Naluno brings private communication, communities and creator-led content into one place. A Callsign instead of a phone number.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="Private communication, communities and creator-led content. A Callsign — not a phone number.">
@@ -881,7 +881,7 @@ window.__nalunoEntryT0 = Date.now();
         </div>
         <button type="button" id="bcompGoLiveBtn" class="join-btn" style="flex:1;min-width:120px;margin:0; background:rgba(255,84,112,.15); color:#ff8a9a; border:1px solid rgba(255,84,112,.45);">Go live</button>
       </div>
-      <div class="lobby-sub" style="margin:0 0 12px;text-align:left;max-width:none;">Upload a video/photo, or <strong style="color:var(--text);">Go live</strong> now — same Broadcast space & community. When live ends, it is saved as a live chapter. Videos longer than 4 minutes become chapters.</div>
+      <div class="lobby-sub" style="margin:0 0 12px;text-align:left;max-width:none;">Upload a video/photo, or <strong style="color:var(--text);">Go live</strong> now — same Broadcast space & community. When live ends, it is saved as a live chapter. Videos longer than 4 minutes become chapters. Broadcast is not for sexual content. Naluno Screen reads stills from your file at upload — clear goes out, unsure waits, sexual is stopped.</div>
       <div id="bcompPreview" style="margin-bottom:12px;"></div>
       <div id="bcompProgress" style="display:none;font-family:var(--font-mono);font-size:11px;color:var(--mint);margin:0 0 8px;"></div>
       <div id="bcompStatus" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);margin:0 0 14px;"></div>
@@ -892,6 +892,7 @@ window.__nalunoEntryT0 = Date.now();
       </select>
       <input id="bcompStrandName" maxlength="48" placeholder="Name this Strand — Café craft" style="width:100%;margin-bottom:12px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:13px;font-family:inherit;" />
       <div id="bcompOrigin" style="display:none;margin:0 0 14px;padding:12px 14px;border-radius:14px;border:1px solid var(--line);background:rgba(23,26,38,.9);"></div>
+      <div id="bcompScreen" style="display:none;margin:0 0 14px;padding:12px 14px;border-radius:14px;border:1px solid var(--line);background:rgba(23,26,38,.9);"></div>
 
       <input id="bcompTitle" maxlength="120" placeholder="Broadcast title (required)" style="width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:14px;font-family:inherit;" />
       <input id="bcompTags" maxlength="120" placeholder="Topics (comma separated)" style="width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:13px;font-family:inherit;" />
@@ -1276,6 +1277,7 @@ window.__nalunoEntryT0 = Date.now();
       <div class="bspace-body">
         <h1 class="bspace-title" id="bspaceTitle">—</h1>
         <p class="bspace-desc" id="bspaceDesc"></p>
+        <p class="bspace-desc" id="bspaceModNote" style="display:none;color:#ffc266;"></p>
         <div class="bspace-tags" id="bspaceTags"></div>
         <div id="bspaceViewRow" class="bspace-view-row" style="display:none;"></div>
         <button type="button" class="bspace-join" id="bspaceJoinBtn">+ Circle</button>
@@ -1491,18 +1493,19 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/atmosphere.js?v=20260908d"></script>
 <script src="/js/band-list.js?v=20260918i"></script>
 <script src="/js/signal-core.js?v=20260919g"></script>
-<script src="/js/broadcast-core.js?v=20260919f"></script>
+<script src="/js/broadcast-core.js?v=20260921f"></script>
 <script src="/js/broadcast-upload.js?v=20260908d"></script>
-<script src="/js/broadcast-composer.js?v=20260908d"></script>
-<script src="/js/origin.js?v=20260908d"></script>
-<script src="/js/strand.js?v=20260919f"></script>
+<script src="/js/broadcast-composer.js?v=20260921f"></script>
+<script src="/js/screen.js?v=20260921f"></script>
+<script src="/js/origin.js?v=20260921f"></script>
+<script src="/js/strand.js?v=20260921e"></script>
 <script src="/js/circle.js?v=20260908d"></script>
 <!-- Community Economy: reports actions only; all economic value is computed
      server-side by the naluno-economy Worker. Loaded AFTER circle.js so
      currentUser exists, and deliberately non-blocking — if this file failed
      to load entirely, Broadcast would behave exactly as it does today. -->
 <script src="/js/presence.js?v=20260919g"></script>
-<script src="/js/report.js?v=20260909a"></script>
+<script src="/js/report.js?v=20260921e"></script>
 <script src="/js/currency.js?v=20260918a"></script>
 <script src="/js/economy.js?v=20260914c"></script>
 <script src="/js/economy-ui.js?v=20260914c"></script>
@@ -1511,12 +1514,12 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/compass.js?v=20260919g"></script>
 <script src="/js/signal-ui.js?v=20260918i"></script>
 <script src="/js/compat-lock.js?v=20260908d"></script>
-<script src="/js/broadcast-space.js?v=20260919f"></script>
+<script src="/js/broadcast-space.js?v=20260921f"></script>
 <script src="/js/ads.js?v=20260918j"></script>
 <script src="/js/media-vault.js?v=20260908d"></script>
 <script src="/js/wireline.js?v=20260919g"></script>
 <script src="/js/profile.js?v=20260919g"></script>
-<script src="/js/onboard.js?v=20260918b"></script>
+<script src="/js/onboard.js?v=20260921e"></script>
 <script src="/js/handle-guard.js?v=20260921c"></script>
 <script src="/js/auth.js?v=20260921c"></script>
 <script src="/js/notifications.js?v=20260919g"></script>
