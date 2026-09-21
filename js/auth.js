@@ -272,9 +272,6 @@ function nalunoHandleGuard(){
   return null;
 }
 function nalunoEconomyUrl(){
-  try{
-    if(typeof location !== 'undefined' && location.origin) return location.origin + '/__naluno-economy';
-  }catch(_){}
   return 'https://naluno-economy.naluno.workers.dev';
 }
 function reservedHandleMessage(){

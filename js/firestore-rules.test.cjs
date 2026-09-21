@@ -37,8 +37,14 @@ must(/match \/reservedCores\/\{core\}/, 'reserved cores catch underscore variant
 must(/match \/handleFlags\/\{id\}/, 'similarity flags are desk-readable');
 must(/keepsBroadcastListing/, 'creators cannot list or unhide a Broadcast the desk held');
 must(/screenDecision/, 'creators cannot stamp a Screen decision on a Broadcast');
-must(/isTrustedPublisher/, 'only a trusted publisher may create a listed Broadcast');
+must(/isTrustedPublisher/, 'trusted publisher helper stays in rules');
 must(/trustedPublisher/, 'members cannot stamp themselves as a trusted publisher');
+must(/creatorMayTightenListing/, 'creator may hide a Broadcast, never unhide it');
+must(/request\.resource\.data\.listed is bool/, 'create always stamps listed');
+mustNot(
+  /listed == false\s+\|\|\s+isTrustedPublisher/,
+  'Screen-allow new publishers may create listed — live worker cannot lift a hold without a service account',
+);
 
 mustNot(/match \/bands\/\{bandId\}[\s\S]*match \/invites\/\{inviteId\} \{\s*allow read, write: if isSignedIn\(\);/, 'Band invites are no longer any-signed-in');
 mustNot(/match \/sparkRooms\/\{roomId\}[\s\S]*match \/messages\/\{messageId\} \{\s*allow read, write: if isSignedIn\(\);/, 'Spark room messages are no longer world-readable to members');

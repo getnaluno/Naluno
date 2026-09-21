@@ -971,7 +971,7 @@
     const hit = (report.matches || []).find(function(m){
       return m.source === 'naluno' && !m.sameCreator && (m.score || 0) >= 70;
     });
-    return !!hit || report.status === 'match';
+    return !!hit;
   }
   window.runOriginScan = runOriginScan;
   window.originNeedsAck = originNeedsAck;

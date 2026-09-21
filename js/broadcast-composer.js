@@ -369,26 +369,26 @@ async function bcompKickOriginScan(){
   const title = (($('bcompTitle') && $('bcompTitle').value) || '').trim();
   const desc = (($('bcompDesc') && $('bcompDesc').value) || '').trim();
   const work = (async function(){
+    const titleNow = title;
+    const screenP = (typeof runNalunoScreen === 'function' && bcompFile)
+      ? runNalunoScreen(bcompFile, titleNow, bcompDuration || 0).catch(function(){ return null; })
+      : Promise.resolve(null);
     try{
       window._bcompOriginAck = false;
-      window._bcompOrigin = await runOriginScan(bcompFile, title, desc, bcompDuration || 0);
+      window._bcompOrigin = await runOriginScan(bcompFile, titleNow, desc, bcompDuration || 0);
       bcompPaintOrigin(window._bcompOrigin);
-      let screen = (window._bcompOrigin && window._bcompOrigin.screen) || window._nalunoLastScreen || null;
-      if(!screen && typeof runNalunoScreen === 'function'){
-        screen = await runNalunoScreen(bcompFile, title, bcompDuration || 0);
-      }
+    }catch(e){
+      if(box) box.innerHTML = '<div style="font-size:12.5px;color:var(--text-dim);">OriginID could not finish. You can still publish.</div>';
+      window._bcompOrigin = { status: 'clear', score: 0, matches: [], hold: false, skipped: true };
+    }
+    try{
+      let screen = (window._bcompOrigin && window._bcompOrigin.screen) || null;
+      if(!screen) screen = await screenP;
       window._bcompScreen = screen;
       bcompPaintScreen(screen);
       return screen;
-    }catch(e){
-      if(box) box.innerHTML = '<div style="font-size:12.5px;color:var(--text-dim);">OriginID could not finish. You can still publish.</div>';
-      try{
-        if(typeof runNalunoScreen === 'function' && bcompFile){
-          window._bcompScreen = await runNalunoScreen(bcompFile, title, bcompDuration || 0);
-          bcompPaintScreen(window._bcompScreen);
-        }
-      }catch(_){}
-      return window._bcompScreen;
+    }catch(_){
+      return window._bcompScreen || null;
     }
   })();
   window._bcompScreenP = work;
@@ -420,7 +420,7 @@ async function bcompPublish(){
     if(window._bcompScreenP){
       await Promise.race([
         window._bcompScreenP,
-        new Promise(function(ok){ setTimeout(ok, 7000); }),
+        new Promise(function(ok){ setTimeout(ok, 10000); }),
       ]);
     }
   }catch(_){}

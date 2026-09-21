@@ -98,9 +98,16 @@ function nalunoPublisherTrusted(){
     return !!p.trustedPublisher;
   }catch(_){ return false; }
 }
-function nalunoBroadcastListingFields(){
+function nalunoBroadcastListingFields(screen){
+  const decision = (screen && screen.decision) || '';
   if(nalunoPublisherTrusted()){
     return { listed: true, held: false, heldReason: '', hidden: false };
+  }
+  if(decision === 'allow'){
+    return { listed: true, held: false, heldReason: '', hidden: false };
+  }
+  if(decision === 'hold'){
+    return { listed: false, held: true, heldReason: 'screen', hidden: false };
   }
   return { listed: false, held: true, heldReason: 'new-publisher', hidden: false };
 }
@@ -118,9 +125,6 @@ function broadcastVisibleTo(b, uid){
   return broadcastIsPublic(b);
 }
 function nalunoEconomyUrlBroadcast(){
-  try{
-    if(typeof location !== 'undefined' && location.origin) return location.origin + '/__naluno-economy';
-  }catch(_){}
   return 'https://naluno-economy.naluno.workers.dev';
 }
 async function nalunoPlaceBroadcast(id, screen){
@@ -192,26 +196,28 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
       ...(tags || []),
     ].join(' ').toLowerCase(),
   };
-  Object.assign(doc, nalunoBroadcastListingFields());
+  Object.assign(doc, nalunoBroadcastListingFields(screenReport));
   await ref.set(doc);
-  await ref.collection('journey').add({
-    type: 'created',
-    text: doc.held ? 'Broadcast waiting to go out' : 'Broadcast published',
-    ts: now,
-    by: currentUser.uid,
-  });
+  try{
+    await ref.collection('journey').add({
+      type: 'created',
+      text: doc.held ? 'Broadcast waiting to go out' : 'Broadcast published',
+      ts: now,
+      by: currentUser.uid,
+    });
+  }catch(_){}
   try{
     if(typeof saveOriginMark === 'function' && origin) await saveOriginMark(ref.id, origin, title);
   }catch(_){}
   let placed = null;
   try{ placed = await nalunoPlaceBroadcast(ref.id, screenReport); }catch(_){ placed = null; }
-  if(placed && typeof placed.listed === 'boolean'){
-    doc.listed = !!placed.listed;
-    doc.held = !!placed.held;
-    doc.hidden = !!placed.hidden;
-    if(placed.heldReason) doc.heldReason = placed.heldReason;
-    else if(placed.listed) doc.heldReason = '';
-    if(placed.hidden && placed.screen === 'block') doc.hiddenReason = 'screen';
+  // Place cannot lift a hold without a service account. Only apply a hide.
+  if(placed && (placed.hidden || placed.screen === 'block')){
+    doc.listed = false;
+    doc.held = false;
+    doc.hidden = true;
+    doc.hiddenReason = 'screen';
+    doc.heldReason = '';
   }
   const full = { id: ref.id, ...doc };
   myBroadcasts = [full, ...myBroadcasts.filter(x => x.id !== ref.id)];
