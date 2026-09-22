@@ -48,6 +48,9 @@ function showCallScreen(id){
   document.querySelectorAll('.callscreen').forEach(s=>s.classList.remove('active'));
   const screen = $(id);
   if(screen) screen.classList.add('active');
+  if(id !== 'incall'){
+    try{ closeIncallWire(); }catch(_){}
+  }
   const ov = $('callOverlay');
   if(ov){
     ov.classList.add('active');
@@ -1362,6 +1365,7 @@ function endActiveCall(reason){
   currentCallContactId = null;
   callActionInProgress = false;
   incallViewMode = 0;
+  try{ closeIncallWire(); }catch(_){}
   try{
     $('incall').classList.remove('swap-focus');
     if($('localPip')) $('localPip').classList.remove('large');
@@ -2080,6 +2084,7 @@ function closeCallOverlayAndStopCamera(){
   currentCallContactId = null;
   callActionInProgress = false;
   incallViewMode = 0;
+  try{ closeIncallWire(); }catch(_){}
   try{
     $('incall').classList.remove('swap-focus');
     if($('localPip')) $('localPip').classList.remove('large');
@@ -2315,6 +2320,206 @@ if($('viewToggleBtn')){
 $('endBtn').onclick = ()=>{
   endActiveCall('hangup');
 };
+
+function incallIsLive(){
+  try{
+    return !!( $('incall') && $('incall').classList.contains('active')
+      && $('callOverlay') && $('callOverlay').classList.contains('active') );
+  }catch(_){ return false; }
+}
+function incallWireContact(){
+  const id = (typeof currentCallContactId !== 'undefined') ? currentCallContactId : null;
+  if(id == null) return null;
+  const list = (typeof contacts !== 'undefined' && Array.isArray(contacts)) ? contacts : [];
+  return list.find(function(x){ return x && x.id === id; })
+    || list.find(function(x){ return x && String(x.id) === String(id); })
+    || null;
+}
+function incallWireEscape(s){
+  if(typeof escapeHtml === 'function') return escapeHtml(String(s || ''));
+  return String(s || '').replace(/[<>&"]/g, '');
+}
+function incallWirePreview(m){
+  if(!m) return '';
+  if(m.type === 'voice') return 'Voice';
+  if(m.type === 'mood') return 'Feeling';
+  if(m.type === 'photo') return 'Photo';
+  if(m.type === 'video') return 'Video';
+  if(m.type === 'document') return 'File';
+  if(m.type === 'missed_call') return m.text || 'Missed call';
+  if(m.type === 'system') return m.text || 'Note';
+  return String(m.text || '').trim();
+}
+function renderIncallWire(){
+  const box = $('incallWireMsgs');
+  const incall = $('incall');
+  if(!box || !incall || !incall.classList.contains('wire-open')) return;
+  const c = incallWireContact();
+  const cid = c ? c.id : currentCallContactId;
+  const queued = (typeof localQueuedMessages !== 'undefined' && localQueuedMessages[cid])
+    ? localQueuedMessages[cid].map(function(q){ return Object.assign({ id:q.queueId, from:'me', ts:q.queuedAt, status:'queued' }, q.payload); })
+    : [];
+  let msgs = [];
+  try{
+    const live = (typeof wirelineThreads !== 'undefined' && wirelineThreads[cid]) ? wirelineThreads[cid] : [];
+    msgs = live.concat(queued);
+    if(typeof collapseMissedCallRows === 'function') msgs = collapseMissedCallRows(msgs);
+    if(typeof collapseDuplicateTexts === 'function') msgs = collapseDuplicateTexts(msgs);
+    const cut = (c && typeof clearedAtForContact === 'function') ? clearedAtForContact(c) : 0;
+    msgs = msgs.filter(function(m){
+      if(!m) return false;
+      if(typeof isWireMessageHidden === 'function' && isWireMessageHidden(m)) return false;
+      const ts = Number(m.ts) || 0;
+      return ts > (cut || 0);
+    }).sort(function(a,b){ return (a.ts||0) - (b.ts||0); });
+  }catch(_){ msgs = []; }
+  msgs = msgs.slice(-40);
+  if(!msgs.length){
+    box.innerHTML = '<div class="incall-wire-empty">Type here. They stay on screen, and so do you.</div>';
+    return;
+  }
+  box.innerHTML = msgs.map(function(m){
+    const kind = (m.type === 'system' || m.type === 'missed_call') ? 'system' : (m.from === 'me' ? 'me' : 'them');
+    const text = incallWirePreview(m) || '·';
+    return '<div class="incall-wire-row ' + kind + '"><div class="incall-wire-bubble">' + incallWireEscape(text) + '</div></div>';
+  }).join('');
+  box.scrollTop = box.scrollHeight;
+}
+function pinIncallWireKeyboard(){
+  const incall = $('incall');
+  if(!incall) return;
+  if(!incall.classList.contains('wire-open')){
+    incall.style.setProperty('--incall-kb', '0px');
+    incall.classList.remove('wire-typing');
+    return;
+  }
+  let occluded = 0;
+  try{
+    const vv = window.visualViewport;
+    if(vv) occluded = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+  }catch(_){}
+  incall.style.setProperty('--incall-kb', Math.round(occluded) + 'px');
+  incall.classList.toggle('wire-typing', occluded > 80);
+}
+function closeIncallWire(){
+  const incall = $('incall');
+  const panel = $('incallWire');
+  if(incall){
+    incall.classList.remove('wire-open');
+    incall.classList.remove('wire-typing');
+    incall.style.setProperty('--incall-kb', '0px');
+  }
+  if(panel) panel.setAttribute('aria-hidden', 'true');
+  if($('chatBtn')) $('chatBtn').classList.remove('active');
+  try{
+    const inp = $('incallWireInput');
+    if(inp && document.activeElement === inp) inp.blur();
+  }catch(_){}
+}
+function openIncallWire(){
+  if(!incallIsLive()) return;
+  const c = incallWireContact();
+  if(!c){ try{ toast('No one on this call'); }catch(_){ } return; }
+  const incall = $('incall');
+  const panel = $('incallWire');
+  if(!incall || !panel) return;
+  try{
+    if($('wirelineThread')){
+      $('wirelineThread').classList.remove('active');
+      $('wirelineThread').style.pointerEvents = 'none';
+    }
+  }catch(_){}
+  try{
+    if(typeof activeThreadContactId !== 'undefined') activeThreadContactId = c.id;
+  }catch(_){}
+  incall.classList.add('wire-open');
+  panel.setAttribute('aria-hidden', 'false');
+  try{
+    if($('localPip')) $('localPip').classList.remove('large');
+    if(typeof resetPipLayoutStyles === 'function') resetPipLayoutStyles();
+  }catch(_){}
+  if($('chatBtn')){
+    $('chatBtn').classList.add('active');
+    $('chatBtn').classList.remove('has-wire');
+  }
+  const title = $('incallWireTitle');
+  if(title) title.textContent = (c.name || 'Wireline').split(' ')[0];
+  try{ if(typeof hydrateWirelineFromStore === 'function') hydrateWirelineFromStore(); }catch(_){}
+  renderIncallWire();
+  pinIncallWireKeyboard();
+  const box = $('incallWireMsgs');
+  if(box) box.scrollTop = box.scrollHeight;
+}
+function toggleIncallWire(){
+  const incall = $('incall');
+  if(incall && incall.classList.contains('wire-open')) closeIncallWire();
+  else openIncallWire();
+}
+function sendIncallWire(){
+  if(!incallIsLive()) return;
+  const inp = $('incallWireInput');
+  const text = ((inp && inp.value) || '').trim();
+  if(!text) return;
+  const c = incallWireContact();
+  if(!c){ try{ toast('No one on this call'); }catch(_){ } return; }
+  try{ if(typeof activeThreadContactId !== 'undefined') activeThreadContactId = c.id; }catch(_){}
+  if(inp) inp.value = '';
+  try{
+    if($('threadInput')) $('threadInput').value = text;
+    if(typeof sendThreadMessage === 'function') sendThreadMessage();
+  }catch(_){}
+  renderIncallWire();
+}
+function notifyIncallWire(contactId){
+  if(!incallIsLive()) return;
+  if(contactId == null || currentCallContactId == null) return;
+  if(String(contactId) !== String(currentCallContactId)) return;
+  const incall = $('incall');
+  if(incall && incall.classList.contains('wire-open')){
+    renderIncallWire();
+    return;
+  }
+  if($('chatBtn')) $('chatBtn').classList.add('has-wire');
+}
+
+if($('chatBtn')){
+  $('chatBtn').onclick = function(e){
+    try{ if(e) e.stopPropagation(); }catch(_){}
+    toggleIncallWire();
+  };
+}
+if($('incallWireClose')) $('incallWireClose').onclick = function(){ closeIncallWire(); };
+if($('incallWireForm')){
+  $('incallWireForm').addEventListener('submit', function(e){
+    try{ e.preventDefault(); }catch(_){}
+    sendIncallWire();
+  });
+}
+if($('incallWireInput')){
+  $('incallWireInput').addEventListener('keydown', function(e){
+    if(e.key === 'Enter' && !e.shiftKey){
+      e.preventDefault();
+      sendIncallWire();
+    }
+  });
+  $('incallWireInput').addEventListener('input', function(){
+    const el = $('incallWireInput');
+    if(!el) return;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 88) + 'px';
+  });
+  $('incallWireInput').addEventListener('focus', pinIncallWireKeyboard);
+  $('incallWireInput').addEventListener('blur', function(){
+    setTimeout(pinIncallWireKeyboard, 80);
+  });
+}
+try{
+  if(window.visualViewport){
+    window.visualViewport.addEventListener('resize', pinIncallWireKeyboard);
+    window.visualViewport.addEventListener('scroll', pinIncallWireKeyboard);
+  }
+}catch(_){}
+window.addEventListener('resize', pinIncallWireKeyboard);
 
 /* draggable local pip */
 const pip = $('localPip');

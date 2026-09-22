@@ -12,6 +12,20 @@
    signal strength, same way replies are: off-the-grid contacts never advance past 'sent'. */
 let wirelineThreads = {}; // { [contactId]: [{ id, from, type:'text'|'voice', text?, dataUrl?, duration?, waveform?, ts, read?, status? }] }
 let activeThreadContactId = null;
+function wirelineIsViewing(contactId){
+  if(contactId == null) return false;
+  try{
+    if($('incall') && $('incall').classList.contains('active') && $('incall').classList.contains('wire-open')){
+      if(typeof currentCallContactId !== 'undefined' && String(currentCallContactId) === String(contactId)) return true;
+    }
+  }catch(_){}
+  try{
+    if($('wirelineThread') && $('wirelineThread').classList.contains('active')
+      && typeof activeThreadContactId !== 'undefined'
+      && String(activeThreadContactId) === String(contactId)) return true;
+  }catch(_){}
+  return false;
+}
 // Empty now — real threads load live from Firestore per-contact when opened (see
 // openThread), and demo contacts that used to seed this no longer exist.
 const wirelineSeed = {};
@@ -63,6 +77,9 @@ function persistWireRow(contactId, msg, otherUid){
     }
   }catch(_){}
   try{ saveWireline(); }catch(_){}
+  try{
+    if(msg && msg.from === 'them' && typeof notifyIncallWire === 'function') notifyIncallWire(contactId);
+  }catch(_){}
 }
 function applyLocalReaction(otherUid, cmid, reaction){
   const match = function(row){
@@ -1011,6 +1028,7 @@ function renderThreadMessages(){
   });
   wireLongPressReactions('#threadMessages .msg-row[data-msgid]');
   $('threadMessages').scrollTop = $('threadMessages').scrollHeight;
+  try{ if(typeof renderIncallWire === 'function') renderIncallWire(); }catch(_){}
 }
 /* Hard delete — the message is just gone, no "this message was deleted" stamp left
    behind. That stamp is a design choice some apps make on purpose; this app doesn't
@@ -1780,12 +1798,19 @@ function maybeSimulateReply(contactId){
   setTimeout(()=>{
     const text = replies[Math.floor(Math.random()*replies.length)];
     if(!wirelineThreads[contactId]) wirelineThreads[contactId] = [];
-    const isViewing = activeThreadContactId === contactId && $('wirelineThread').classList.contains('active');
+    const isViewing = wirelineIsViewing(contactId);
     wirelineThreads[contactId].push({ id: Date.now()+Math.random(), from:'them', type:'text', text, ts: Date.now(), read: isViewing });
     saveWireline();
     bumpContactActivity(contactId);
-    if(isViewing) renderThreadMessages();
-    else toast(c.name.split(' ')[0] + ' sent a message');
+    if(isViewing){
+      renderThreadMessages();
+      try{ if(typeof notifyIncallWire === 'function') notifyIncallWire(contactId); }catch(_){}
+    } else {
+      try{ if(typeof notifyIncallWire === 'function') notifyIncallWire(contactId); }catch(_){}
+      if(!(typeof currentCallContactId !== 'undefined' && String(currentCallContactId) === String(contactId))){
+        toast(c.name.split(' ')[0] + ' sent a message');
+      }
+    }
   }, delay);
 }
 
