@@ -2861,3 +2861,53 @@ html[data-atmosphere="buzzing"] .naluno-aurora{
     font-size:13px; opacity:.92;
   }
   .msg-tx-tag{ display:block; font-size:10px; letter-spacing:.06em; color:var(--mint); margin-bottom:2px; }
+
+  /* ---- Wireline ON a call ----
+     A sheet that slides up INSIDE the call. Deliberately position:absolute,
+     never fixed: a fixed panel becomes a new full screen and the call
+     disappears behind it, which is the whole thing this must not do. */
+  .incall-wire{
+    position:absolute; left:0; right:0; bottom:0; z-index:6;
+    display:flex; flex-direction:column; gap:8px;
+    max-height:52%; padding:10px 12px calc(12px + var(--incall-kb, 0px));
+    background:linear-gradient(to top, rgba(10,12,18,.97) 70%, rgba(10,12,18,.82));
+    border-top:1px solid rgba(124,255,178,.22);
+    border-radius:18px 18px 0 0;
+    transform:translateY(102%); opacity:0; pointer-events:none;
+    transition:transform .22s ease, opacity .18s ease;
+  }
+  #incall.wire-open .incall-wire{ transform:translateY(0); opacity:1; pointer-events:auto; }
+  /* The self-view moves out of the sheet's way instead of being hidden. */
+  #incall.wire-open .local-pip{ bottom:calc(54% + 8px); transition:bottom .22s ease; }
+  #incall.wire-open .call-controls{ opacity:0; pointer-events:none; transition:opacity .15s ease; }
+  .incall-wire-top{ display:flex; align-items:center; justify-content:space-between; }
+  .incall-wire-title{ font-family:var(--font-futuristic); font-size:12.5px; color:var(--mint); letter-spacing:.06em; }
+  .incall-wire-close{ background:none; border:none; color:var(--text-dim); cursor:pointer; padding:4px; }
+  .incall-wire-msgs{ flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:6px; min-height:60px; }
+  .incall-wire-empty{ color:var(--text-dim); font-size:12px; text-align:center; padding:14px 6px; }
+  .incall-wire-row{ display:flex; }
+  .incall-wire-row.me{ justify-content:flex-end; }
+  .incall-wire-row.system{ justify-content:center; }
+  .incall-wire-bubble{
+    max-width:78%; padding:7px 11px; border-radius:14px; font-size:13px; line-height:1.35;
+    background:rgba(255,255,255,.10); color:var(--text);
+  }
+  .incall-wire-row.me .incall-wire-bubble{ background:rgba(124,255,178,.18); }
+  .incall-wire-row.system .incall-wire-bubble{ background:none; color:var(--text-dim); font-size:11.5px; }
+  .incall-wire-form{ display:flex; gap:8px; align-items:flex-end; }
+  .incall-wire-form textarea{
+    flex:1; resize:none; max-height:88px; padding:9px 12px; border-radius:16px;
+    background:rgba(255,255,255,.08); border:1px solid var(--line); color:var(--text);
+    font-family:inherit; font-size:13px;
+  }
+  .incall-wire-send{
+    background:var(--mint); color:#0D0F17; border:none; border-radius:50%;
+    width:38px; height:38px; display:flex; align-items:center; justify-content:center; cursor:pointer;
+  }
+  /* The chat bubble shows a dot when something arrives while the sheet is shut. */
+  #chatBtn.has-wire::after{
+    content:''; position:absolute; top:6px; right:6px; width:8px; height:8px;
+    border-radius:50%; background:var(--mint);
+  }
+  #chatBtn{ position:relative; }
+  #chatBtn.active{ background:rgba(124,255,178,.18); }
