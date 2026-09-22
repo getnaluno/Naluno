@@ -1,79 +1,79 @@
-# Landscape: the app now fills the screen, like WhatsApp
+# Two fixes: the in-call chat bubble, and the translate bar
 
-See `screenshots/` — BEFORE is blank, AFTER is the full app.
+## 1. The bubble — my mistake, and how it happened
 
-## What was wrong
+I built the Lifeline package from commit `405e6ac`. At that commit, in-call
+Wireline **did not exist**. It was added afterwards, in `029bb90`, touching
+`calls.js`, `app/index.html`, `css/app.css` and `wireline.js`.
 
-Measured in a real browser at your phone's landscape size: **the app was
-0 pixels wide.** Everything was there — header, content, tab bar — inside a
-box with no width, sitting in the dead centre of the screen. That was the
-blank screen.
+My package shipped `app/index.html` and `js/wireline.js` from the **older**
+commit. Deploying it put those two files back, which removed:
 
-The cause was one CSS rule for landscape phones. It set the app's width to
-`auto`. The page centres the app in a flex container, where `auto` means
-"shrink to fit your content" — and the content has no width of its own, so
-the app shrank to nothing. The rule was also trying to keep a narrow
-portrait-shaped column, which isn't what a rotated phone app should do.
+- the whole `#incallWire` sheet markup (`incallWireMsgs`, `incallWireInput`,
+  `incallWireForm`, `incallWireClose`, `incallWireTitle`),
+- `wirelineIsViewing()` from `wireline.js`,
+- the call that repaints the sheet when the thread changes.
 
-A second rule hid the tab names in landscape — the opposite of what you
-wanted.
+`calls.js` survived untouched, so the button still called `openIncallWire()` —
+which added the `wire-open` class to nothing, then hit `renderIncallWire()`
+and threw. The bubble looked dead because it had nothing to open.
 
-## What it does now
+**Restored:** the sheet markup back inside the live call section, the CSS, and
+`wirelineIsViewing()`. The sheet is `position: absolute`, never `fixed`, so it
+slides up **inside** the call — the other person stays on screen, your
+self-view moves out of the way instead of disappearing, and the hangup button
+stays where it is. Read receipts work from the sheet again, which they had
+stopped doing.
 
-Like WhatsApp in landscape:
+Your own `js/incall-wire.test.cjs` now passes — it was failing on the live
+repo before this. I updated four assertions in it for the new cache-bust
+stamps (`2026.09.23a`) and added four checks: the send form and close button
+exist, the bubble cannot switch tabs, and `wirelineIsViewing` is present.
 
-- The app **fills the whole screen**, edge to edge.
-- The header stays, with Spark and Connect.
-- The **tab bar stays at the bottom with every tab's name** (Frequencies,
-  Wireline, Band, Broadcast, Compass, Callsign). Only the small second line
-  under each name ("people", "messages") is dropped, because landscape has
-  half the height.
-- The header and tab bar are a little tighter, so the content gets the room.
-- The tab bar is nearly solid in landscape, so content scrolling under it
-  doesn't show through.
+**To avoid this repeating:** when I hand you a package, files I did not change
+should not be in it. `app/index.html` and `wireline.js` were in that bundle
+because Lifeline genuinely edited them — but built from a stale clone. From
+now I will diff against the live repo immediately before packaging and tell
+you if anything newer would be overwritten.
 
-## Tested in a real browser
+## 2. The translate bar was real, but unreachable
 
-| | before | after |
-|---|---|---|
-| Rotate a running app to landscape | 0 px wide, no tab names | full screen, all 6 names |
-| Small / mid / large phones in landscape | 0 px wide | full width |
-| Rotate back to portrait | fine | fine |
-| Tablet and desktop | 460 px card | 460 px card — unchanged |
+The script and the bar were deployed correctly. The problem was where I hooked
+it: at the **bottom** of `renderThreadMessages()` — and that function
+**returns early when a thread has no messages yet**. So in a new or empty
+chat the bar never rendered at all. In a chat with messages it should have
+appeared above the composer.
 
-Every tab checked in landscape: each fills the width, nothing scrolls
-sideways.
+Moved to the top of the function, so it always renders. Open any Wireline
+chat and you will see **"Translate this chat"** just above where you type;
+tap it, choose the language they write in, and their messages appear in yours
+underneath the original.
 
-## One side effect, deliberately kept
+## 3. Two failing tests that are NOT from this
 
-The old rule hid tab names on **desktop and tablet** too, because any screen
-wider than it is tall counted as "landscape". They now show there as well,
-matching the phone. That hiding was never intended.
-
-## How I checked — including a mistake I nearly made
-
-I rendered the app in a headless browser and measured it. Twice the test
-itself misled me, and I checked before trusting it:
-
-- The app went blank after a second in **both** orientations — but that's
-  because there is no internet in the test environment, so the sign-in code
-  re-hides the app. Not a bug on your phone.
-- Some runs showed a huge unstyled page. The stylesheet loads *after* the
-  page (a speed trick), and the test was measuring too early. The test now
-  waits for it.
-
-Had I not checked either, I'd have "fixed" problems that don't exist.
+`js/ads-inventory.test.cjs` ("ads pack cache-bust") and
+`js/console-pass.test.cjs` already fail on your live repo, before any of
+today's changes. They look like the same pattern — a file changed without its
+version stamp being bumped, or an older file uploaded over a newer one. I have
+not touched either. Worth a look, as it suggests something else was
+overwritten too.
 
 ## Files
 
 ```
-css/app.css        the landscape fix
-app/index.html     stylesheet version bumped, so phones fetch the new one
-sw.js              cache bumped, so installed apps update
+app/index.html          in-call sheet restored, cache-bust to 23a
+css/app.css             the sheet's styles
+js/wireline.js          wirelineIsViewing() restored; translate bar moved up
+js/incall-wire.test.cjs stamps updated + 4 extra checks
+sw.js                   cache bumped
 ```
 
-Built on your live repo, which already has the moderation rulebook — so this
-does not undo it.
+Nothing from Lifeline or the moderation work is affected — both worker suites
+still pass 47/47, and the Lifeline and translation hooks in `wireline.js` are
+intact.
 
-`js/nsfw-model.js` is still in the repo. It's no longer loaded, so it's
-harmless, but it can be deleted.
+## Test it
+
+- **Bubble:** start a video call, tap the speech bubble. The sheet slides up
+  over the bottom of the call; both videos keep playing. Type, send, close.
+- **Translation:** open any chat; the bar sits above the composer.
