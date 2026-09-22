@@ -25,7 +25,7 @@ import {
   listingFromScreen,
 } from "./screen.mjs";
 
-export const VERSION = "2.6.5-console-pass";
+export const VERSION = "2.6.6-console-pass";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -1161,9 +1161,23 @@ function recordFromDoc(doc) {
   if (inner.hash) return inner.v === 2 ? inner : String(inner.hash);
   return null;
 }
-async function loadPasswordRecord(env, uid, saToken, userToken) {
-  if (memory.passwords.has(uid)) return memory.passwords.get(uid);
-  if (!uid) return null;
+function recKey(rec) {
+  if (!rec) return "";
+  if (typeof rec === "string") return "s:" + rec;
+  return "v" + String(rec.v || "") + ":" + String(rec.salt || "") + ":" + String(rec.hash || "");
+}
+async function collectPasswordRecords(env, uid, saToken, userToken) {
+  const out = [];
+  const seen = new Set();
+  function add(rec) {
+    if (!rec) return;
+    const k = recKey(rec);
+    if (!k || seen.has(k)) return;
+    seen.add(k);
+    out.push(rec);
+  }
+  if (uid && memory.passwords.has(uid)) add(memory.passwords.get(uid));
+  if (!uid) return out;
   const attempts = [];
   if (saToken) {
     attempts.push([saToken, "/adminCredentials/" + encodeURIComponent(uid)]);
@@ -1178,16 +1192,30 @@ async function loadPasswordRecord(env, uid, saToken, userToken) {
     try {
       const r = await fsFetch(env, attempts[i][0], "GET", attempts[i][1]);
       if (!r.ok) continue;
-      const rec = recordFromDoc(fromFsDoc(r.data));
-      if (rec) {
-        memory.passwords.set(uid, rec);
-        return rec;
-      }
+      add(recordFromDoc(fromFsDoc(r.data)));
     } catch {
       /* try next */
     }
   }
+  return out;
+}
+async function matchPasswordRecord(recs, uid, password) {
+  if (!password) return null;
+  for (let i = 0; i < recs.length; i++) {
+    try {
+      if (await passwordMatches(recs[i], uid, password)) return recs[i];
+    } catch {
+      /* try next copy */
+    }
+  }
   return null;
+}
+async function loadPasswordRecord(env, uid, saToken, userToken) {
+  const recs = await collectPasswordRecords(env, uid, saToken, userToken);
+  if (!recs.length) return null;
+  const rec = recs[0];
+  if (uid && rec) memory.passwords.set(uid, rec);
+  return rec;
 }
 async function persistPasswordRecord(env, uid, rec, saToken, userToken) {
   memory.passwords.set(uid, rec);
@@ -1213,11 +1241,12 @@ async function persistPasswordRecord(env, uid, rec, saToken, userToken) {
 async function handleAdmin(env, request, path, url, user, userToken, saToken) {
   if (!isOperatorUser(env, user)) return json({ ok: false, error: "not an operator" }, 403);
   const adminPass = request.headers.get("X-Naluno-Admin") || "";
-  const stored = await loadPasswordRecord(env, user.uid, saToken, userToken);
+  const recs = await collectPasswordRecords(env, user.uid, saToken, userToken);
+  const stored = recs[0] || null;
   const openPath = path === "/v1/admin/status" || path === "/v1/admin/password" || path === "/v1/admin/unlock";
   if (!openPath && stored) {
     if (!adminPass) return json({ ok: false, error: "console password required" }, 401);
-    if (!(await passwordMatches(stored, user.uid, adminPass))) {
+    if (!(await matchPasswordRecord(recs, user.uid, adminPass))) {
       return json({ ok: false, error: "console password not accepted" }, 401);
     }
   }
@@ -1231,12 +1260,11 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
 
   if (path === "/v1/admin/status" && request.method === "GET") {
     const stamped = await stampOperatorClaim(env, user.uid);
-    const rec = stored || await loadPasswordRecord(env, user.uid, saToken, userToken);
     return json({
       ok: true,
       operator: true,
       uid: user.uid,
-      hasPassword: !!rec,
+      hasPassword: recs.length > 0,
       persist: saToken ? "firestore-sa" : "user-token",
       version: VERSION,
       claim: stamped ? "operator" : "",
@@ -1246,11 +1274,12 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
   if (path === "/v1/admin/unlock" && request.method === "POST") {
     const body = await request.json().catch(() => ({}));
     const pass = String(body.password || adminPass || "").trim();
-    const rec = stored || await loadPasswordRecord(env, user.uid, saToken, userToken);
-    if (!rec) return json({ ok: true, setup: true, hasPassword: false });
-    if (!pass || !(await passwordMatches(rec, user.uid, pass))) {
+    if (!recs.length) return json({ ok: true, setup: true, hasPassword: false });
+    const matched = await matchPasswordRecord(recs, user.uid, pass);
+    if (!matched) {
       return json({ ok: false, error: "console password not accepted" }, 401);
     }
+    memory.passwords.set(user.uid, matched);
     return json({ ok: true, hasPassword: true });
   }
 
@@ -1258,10 +1287,9 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
     const body = await request.json().catch(() => ({}));
     const next = String(body.next_password || "").trim();
     if (next.length < 8) return json({ ok: false, error: "Use at least 8 characters" }, 400);
-    const rec = stored || await loadPasswordRecord(env, user.uid, saToken, userToken);
-    if (rec) {
+    if (recs.length) {
       const current = String(body.current_password || adminPass || "").trim();
-      if (!current || !(await passwordMatches(rec, user.uid, current))) {
+      if (!current || !(await matchPasswordRecord(recs, user.uid, current))) {
         return json({ ok: false, error: "current password is wrong" }, 401);
       }
     }

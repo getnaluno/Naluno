@@ -1170,3 +1170,104 @@ test("console password survives worker restart on the account vault", async () =
   setFetchImpl(null);
 });
 
+test("unlock accepts the account copy when worker memory has an older hash", async () => {
+  resetMemory();
+  const vault = { body: null };
+  setFetchImpl(async (url, opts) => {
+    const u = String(url);
+    const method = (opts && opts.method) || "GET";
+    if (u.includes("accounts:lookup")) {
+      return new Response(JSON.stringify({
+        users: [{
+          localId: ENV.OPERATOR_UID,
+          email: "magjoed@gmail.com",
+          emailVerified: true,
+        }],
+      }), { status: 200 });
+    }
+    if (u.includes("/vault/main") && method === "PATCH") {
+      vault.body = JSON.parse(opts.body);
+      return new Response(JSON.stringify(vault.body), { status: 200 });
+    }
+    if (u.includes("/vault/main")) {
+      if (!vault.body) return new Response("{}", { status: 404 });
+      return new Response(JSON.stringify(vault.body), { status: 200 });
+    }
+    if (method === "PATCH") return new Response("{}", { status: 403 });
+    return new Response("{}", { status: 200 });
+  });
+  const headers = { Authorization: "Bearer tok", "Content-Type": "application/json" };
+  let res = await handleRequest(
+    req("/v1/admin/password", { method: "POST", headers, body: JSON.stringify({ next_password: "correcthorse" }) }),
+    ENV,
+  );
+  assert.equal(res.status, 200);
+  getMemory().passwords.set(ENV.OPERATOR_UID, {
+    v: 2,
+    salt: "AAAA",
+    hash: "deadbeef",
+    iters: 150000,
+  });
+  res = await handleRequest(
+    req("/v1/admin/unlock", { method: "POST", headers, body: JSON.stringify({ password: "correcthorse" }) }),
+    ENV,
+  );
+  const body = await res.json();
+  assert.equal(res.status, 200, "stale memory must not reject the account copy");
+  assert.equal(body.ok, true);
+  assert.equal(body.hasPassword, true);
+  setFetchImpl(null);
+});
+
+test("password change accepts the account copy when worker memory is stale", async () => {
+  resetMemory();
+  const vault = { body: null };
+  setFetchImpl(async (url, opts) => {
+    const u = String(url);
+    const method = (opts && opts.method) || "GET";
+    if (u.includes("accounts:lookup")) {
+      return new Response(JSON.stringify({
+        users: [{
+          localId: ENV.OPERATOR_UID,
+          email: "magjoed@gmail.com",
+          emailVerified: true,
+        }],
+      }), { status: 200 });
+    }
+    if (u.includes("/vault/main") && method === "PATCH") {
+      vault.body = JSON.parse(opts.body);
+      return new Response(JSON.stringify(vault.body), { status: 200 });
+    }
+    if (u.includes("/vault/main")) {
+      if (!vault.body) return new Response("{}", { status: 404 });
+      return new Response(JSON.stringify(vault.body), { status: 200 });
+    }
+    if (method === "PATCH") return new Response("{}", { status: 403 });
+    return new Response("{}", { status: 200 });
+  });
+  const headers = { Authorization: "Bearer tok", "Content-Type": "application/json" };
+  let res = await handleRequest(
+    req("/v1/admin/password", { method: "POST", headers, body: JSON.stringify({ next_password: "correcthorse" }) }),
+    ENV,
+  );
+  assert.equal(res.status, 200);
+  getMemory().passwords.set(ENV.OPERATOR_UID, {
+    v: 2,
+    salt: "AAAA",
+    hash: "deadbeef",
+    iters: 150000,
+  });
+  res = await handleRequest(
+    req("/v1/admin/password", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ current_password: "correcthorse", next_password: "newpassphrase" }),
+    }),
+    ENV,
+  );
+  const body = await res.json();
+  assert.equal(res.status, 200, "stale memory must not block a matching account copy");
+  assert.equal(body.ok, true);
+  setFetchImpl(null);
+});
+
