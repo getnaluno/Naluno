@@ -347,10 +347,66 @@
     const n = ad.paidAed != null ? ad.paidAed : (ad.paid_aed != null ? ad.paid_aed : 0);
     return clampPaidAed(n);
   }
+  /* One ad's own book. Never mixes another unit's views, taps, or money. */
+  function adUnitStats(ad, ratesIn) {
+    const rates = Object.assign({}, DEFAULT_AD_RATES, ratesIn || {});
+    const ecpm = clampAdRate(rates.ecpmAed);
+    const cpc = clampAdRate(rates.cpcAed);
+    const cpv = clampAdRate(rates.cpvAed);
+    const impressions = Math.max(0, Math.round(num(ad && ad.impressions)));
+    let clicks = Math.max(0, Math.round(num(ad && ad.clicks)));
+    let skips = Math.max(0, Math.round(num(ad && ad.skips)));
+    let views = Math.max(0, Math.round(num(ad && (ad.viewCompletes != null ? ad.viewCompletes : ad.views))));
+    if (clicks > impressions) clicks = impressions;
+    if (skips > impressions) skips = impressions;
+    if (views > impressions) views = impressions;
+    const unitEcpm = ad && ad.ecpmAed != null ? clampAdRate(ad.ecpmAed) : ecpm;
+    const unitCpc = ad && ad.cpcAed != null ? clampAdRate(ad.cpcAed) : cpc;
+    const unitCpv = ad && ad.cpvAed != null ? clampAdRate(ad.cpvAed) : cpv;
+    const cpmAed = (impressions / 1000) * unitEcpm;
+    const cpcAed = clicks * unitCpc;
+    const cpvAed = views * unitCpv;
+    const model = billModelOf(ad);
+    const bookedAed = model === 'cpc' ? cpcAed : (model === 'cpv' ? cpvAed : cpmAed);
+    const paidAed = paidAedOf(ad);
+    const remainingAed = paidAed > 0 ? Math.max(0, paidAed - bookedAed) : null;
+    const spent = !!(ad && ad.spent) || (paidAed > 0 && bookedAed >= paidAed);
+    return {
+      id: (ad && ad.id) || '',
+      headline: (ad && ad.headline) || '',
+      advertiser: (ad && ad.advertiser) || '',
+      advertiserHandle: (ad && (ad.advertiserHandle || ad.handle)) || '',
+      advertiserEmail: (ad && ad.advertiserEmail) || '',
+      advertiserPhone: (ad && ad.advertiserPhone) || '',
+      advertiserContact: (ad && ad.advertiserContact) || '',
+      status: (ad && ad.status) || 'paused',
+      billModel: model,
+      impressions: impressions,
+      clicks: clicks,
+      skips: skips,
+      viewCompletes: views,
+      ctr: impressions ? (clicks / impressions) * 100 : 0,
+      viewRate: impressions ? (views / impressions) * 100 : 0,
+      skipRate: impressions ? (skips / impressions) * 100 : 0,
+      ecpmAed: unitEcpm,
+      cpcRateAed: unitCpc,
+      cpvRateAed: unitCpv,
+      cpmAed: cpmAed,
+      cpcAed: cpcAed,
+      cpvAed: cpvAed,
+      bookedAed: bookedAed,
+      paidAed: paidAed,
+      usedAed: bookedAed,
+      remainingAed: remainingAed,
+      spent: spent,
+    };
+  }
   /* Booked ad revenue from observed events × the operator rate card.
      Cash has not moved. There is no third-party auction.
      Prepaid is the amount the operator typed. Used = booked. Left = prepaid − used.
-     When prepaid is set and left hits zero, the unit is spent. */
+     When prepaid is set and left hits zero, the unit is spent.
+     Journal totals are the sum of each unit's own book — they are never
+     written back onto a unit. */
   function estimateAdRevenue(raw) {
     raw = raw || {};
     const ads = raw.deskAds || raw.ads || [];
@@ -361,52 +417,7 @@
     let viewSec = Math.round(Number(ratesIn.viewCompleteSec) || 15);
     if (!isFinite(viewSec) || viewSec < 1) viewSec = 15;
     if (viewSec > 60) viewSec = 60;
-    const units = ads.map(function (ad) {
-      const impressions = Math.max(0, Math.round(num(ad && ad.impressions)));
-      let clicks = Math.max(0, Math.round(num(ad && ad.clicks)));
-      let skips = Math.max(0, Math.round(num(ad && ad.skips)));
-      let views = Math.max(0, Math.round(num(ad && (ad.viewCompletes != null ? ad.viewCompletes : ad.views))));
-      if (clicks > impressions) clicks = impressions;
-      if (skips > impressions) skips = impressions;
-      if (views > impressions) views = impressions;
-      const unitEcpm = ad && ad.ecpmAed != null ? clampAdRate(ad.ecpmAed) : ecpm;
-      const unitCpc = ad && ad.cpcAed != null ? clampAdRate(ad.cpcAed) : cpc;
-      const unitCpv = ad && ad.cpvAed != null ? clampAdRate(ad.cpvAed) : cpv;
-      const cpmAed = (impressions / 1000) * unitEcpm;
-      const cpcAed = clicks * unitCpc;
-      const cpvAed = views * unitCpv;
-      const model = billModelOf(ad);
-      const bookedAed = model === 'cpc' ? cpcAed : (model === 'cpv' ? cpvAed : cpmAed);
-      const paidAed = paidAedOf(ad);
-      const remainingAed = paidAed > 0 ? Math.max(0, paidAed - bookedAed) : null;
-      const spent = !!(ad && ad.spent) || (paidAed > 0 && bookedAed >= paidAed);
-      return {
-        id: (ad && ad.id) || '',
-        headline: (ad && ad.headline) || '',
-        advertiser: (ad && ad.advertiser) || '',
-        advertiserHandle: (ad && (ad.advertiserHandle || ad.handle)) || '',
-        advertiserEmail: (ad && ad.advertiserEmail) || '',
-        advertiserPhone: (ad && ad.advertiserPhone) || '',
-        advertiserContact: (ad && ad.advertiserContact) || '',
-        status: (ad && ad.status) || 'paused',
-        billModel: model,
-        impressions: impressions,
-        clicks: clicks,
-        skips: skips,
-        viewCompletes: views,
-        ecpmAed: unitEcpm,
-        cpcRateAed: unitCpc,
-        cpvRateAed: unitCpv,
-        cpmAed: cpmAed,
-        cpcAed: cpcAed,
-        cpvAed: cpvAed,
-        bookedAed: bookedAed,
-        paidAed: paidAed,
-        usedAed: bookedAed,
-        remainingAed: remainingAed,
-        spent: spent,
-      };
-    });
+    const units = ads.map(function (ad) { return adUnitStats(ad, ratesIn); });
     const impressions = units.reduce(function (n, u) { return n + u.impressions; }, 0);
     const clicks = units.reduce(function (n, u) { return n + u.clicks; }, 0);
     const skips = units.reduce(function (n, u) { return n + u.skips; }, 0);
@@ -1599,6 +1610,7 @@
     COST_RATES: COST_RATES,
     estimateCosts: estimateCosts,
     estimateAdRevenue: estimateAdRevenue,
+    adUnitStats: adUnitStats,
     DEFAULT_AD_RATES: DEFAULT_AD_RATES,
     mediaBytesOf: mediaBytesOf,
     formatAed: formatAed,

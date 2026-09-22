@@ -107,7 +107,22 @@ const adRev = D.estimateAdRevenue({
     { id: 'ad2', status: 'live', billModel: 'cpc', impressions: 20, clicks: 4, viewCompletes: 2, paidAed: 10 },
   ],
 });
-assert.strictEqual(adRev.units[0].bookedAed, 10);
+assert.strictEqual(adRev.units[0].impressions, 1000, 'ad1 keeps its own views');
+assert.strictEqual(adRev.units[1].impressions, 20, 'ad2 keeps its own views');
+assert.strictEqual(adRev.impressions, 1020, 'journal is the sum, not mixed into a unit');
+assert.strictEqual(adRev.units[0].clicks, 10);
+assert.strictEqual(adRev.units[1].clicks, 4);
+assert.notStrictEqual(adRev.units[0].clicks, adRev.clicks, 'a unit must not carry the house total');
+assert.ok(Math.abs(adRev.units[0].ctr - 1) < 1e-9);
+assert.ok(Math.abs(adRev.units[1].ctr - 20) < 1e-9);
+assert.strictEqual(D.adUnitStats(adRev.units[0], { ecpmAed: 10, cpcAed: 1, cpvAed: 2 }).id, 'ad1');
+const onlyAd2 = D.adUnitStats(
+  { id: 'ad2', billModel: 'cpc', impressions: 20, clicks: 4, viewCompletes: 2, paidAed: 10 },
+  { ecpmAed: 10, cpcAed: 1, cpvAed: 2 }
+);
+assert.strictEqual(onlyAd2.bookedAed, 4);
+assert.strictEqual(onlyAd2.impressions, 20);
+assert.notStrictEqual(onlyAd2.impressions, adRev.impressions);
 assert.strictEqual(adRev.units[0].paidAed, 8);
 assert.strictEqual(adRev.units[0].remainingAed, 0);
 assert.ok(adRev.units[0].spent, 'prepaid 8 against booked 10 is spent');

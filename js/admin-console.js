@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260922c';
+  const BUILD = '20260922d';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -1739,6 +1739,25 @@
       }
       const unitById = {};
       (rev.units || []).forEach(function (u) { if (u && u.id) unitById[u.id] = u; });
+      const editingId = __tabCache.adsEditId || '';
+      const viewingId = __tabCache.adsViewId || '';
+      const editing = editingId ? (ads.filter(function (a) { return a && a.id === editingId; })[0] || null) : null;
+      const viewing = viewingId ? (ads.filter(function (a) { return a && a.id === viewingId; })[0] || null) : null;
+      const f = editing || {};
+      function selected(cur, want) { return String(cur) === String(want) ? ' selected' : ''; }
+      function placeOf(a) {
+        const p = (a && Array.isArray(a.placements) && a.placements.length)
+          ? a.placements.map(String)
+          : [String((a && a.placement) || 'both')];
+        const feed = p.indexOf('in-feed') >= 0 || p.indexOf('watch-break') >= 0;
+        const br = p.indexOf('broadcast-break') >= 0;
+        if (p.indexOf('both') >= 0 || (feed && br)) return 'both';
+        if (br) return 'broadcast-break';
+        if (feed) return 'in-feed';
+        return 'both';
+      }
+      const placeNow = placeOf(f);
+      const billNow = String(f.billModel || 'cpm').toLowerCase();
       function fromAedNum(n) {
         const C = Ccy();
         if (C && C.convert) return C.convert(Number(n) || 0, 'AED', opCode());
@@ -1772,16 +1791,17 @@
         return bits.length ? bits.join(' · ') : 'No contact on file';
       }
       el.innerHTML =
-        kpis([['Live', (d.ads && d.ads.live) || 0], ['Paused', (d.ads && d.ads.paused) || 0],
-          ['Views', (d.ads && d.ads.impressions) || 0], ['Taps', (d.ads && d.ads.clicks) || 0],
-          ['Completed watches', (d.ads && d.ads.viewCompletes) || 0], ['Booked', aedUsd(rev.bookedAed || 0)]])
-        + kpis([['Prepaid', aedUsd(rev.paidAed || 0)], ['Used', aedUsd(rev.bookedAed || 0)],
-          ['Left', aedUsd(rev.remainingAed || 0)], ['Used up', rev.spentCount || 0],
-          ['Skips', (d.ads && d.ads.skips) || 0], ['Tap-through', pct1(ctr)]])
-        + kpis([['View rate', pct1(viewRate)], ['Per thousand views', aedUsd(rev.rpmAed || 0)],
-          ['Per person active today', aedUsd(rev.arpdauAed || 0)], ['Per registered account', aedUsd(rev.arpuAed || 0)]])
-        + card('Booked ad revenue',
-          kpis([['Per thousand views (check)', aedUsd(rev.cpmAed || 0)],
+        card('Journal',
+          '<p class="sub">House totals across every unit. Open Analytics on a unit for that advertiser’s own book.</p>'
+          + kpis([['Live', (d.ads && d.ads.live) || 0], ['Paused', (d.ads && d.ads.paused) || 0],
+            ['Views', (d.ads && d.ads.impressions) || 0], ['Taps', (d.ads && d.ads.clicks) || 0],
+            ['Completed watches', (d.ads && d.ads.viewCompletes) || 0], ['Booked', aedUsd(rev.bookedAed || 0)]])
+          + kpis([['Prepaid', aedUsd(rev.paidAed || 0)], ['Used', aedUsd(rev.bookedAed || 0)],
+            ['Left', aedUsd(rev.remainingAed || 0)], ['Used up', rev.spentCount || 0],
+            ['Skips', (d.ads && d.ads.skips) || 0], ['Tap-through', pct1(ctr)]])
+          + kpis([['View rate', pct1(viewRate)], ['Per thousand views', aedUsd(rev.rpmAed || 0)],
+            ['Per person active today', aedUsd(rev.arpdauAed || 0)], ['Per registered account', aedUsd(rev.arpuAed || 0)]])
+          + kpis([['Per thousand views (check)', aedUsd(rev.cpmAed || 0)],
             ['Per tap (check)', aedUsd(rev.cpcAed || 0)],
             ['Per completed watch (check)', aedUsd(rev.cpvAed || 0)],
             ['Booked (chosen models)', aedUsd(rev.bookedAed || 0)]]))
@@ -1799,44 +1819,86 @@
           '<label for="adEveryMin">Show a break after every (minutes of watching)</label>'
           + '<input id="adEveryMin" type="number" min="1" max="30" value="' + escapeHtml(String((d.flags && d.flags.adEveryMin) != null ? d.flags.adEveryMin : 1)) + '" />'
           + '<div class="row"><button type="button" class="ghost" id="adSavePace">Save pacing</button></div>')
-        + card('New unit',
-          '<label for="adFile">Creative — 9:16 video or image, about 6–30 seconds</label>'
+        + card(editing ? ('Edit · ' + (f.headline || f.advertiser || editingId)) : 'New unit',
+          (editing ? '<p class="sub">Counters stay on this unit. Leave the file empty to keep the current creative.</p>' : '')
+          + '<label for="adFile">' + (editing ? 'Replace creative (optional)' : 'Creative — 9:16 video or image, about 6–30 seconds') + '</label>'
           + '<input id="adFile" type="file" accept="video/*,image/*" />'
           + '<label for="adHeadline">Headline</label>'
-          + '<input id="adHeadline" maxlength="80" placeholder="What the unit is about" />'
+          + '<input id="adHeadline" maxlength="80" placeholder="What the unit is about" value="' + escapeHtml(f.headline || '') + '" />'
           + '<label for="adAdvertiser">Advertiser</label>'
-          + '<input id="adAdvertiser" maxlength="60" placeholder="Brand or person shown on the unit" />'
+          + '<input id="adAdvertiser" maxlength="60" placeholder="Brand or person shown on the unit" value="' + escapeHtml(f.advertiser || '') + '" />'
           + '<label for="adAdvHandle">Advertiser Callsign</label>'
-          + '<input id="adAdvHandle" maxlength="40" placeholder="@handle" />'
+          + '<input id="adAdvHandle" maxlength="40" placeholder="@handle" value="' + escapeHtml(f.advertiserHandle || '') + '" />'
           + '<label for="adAdvEmail">Advertiser email</label>'
-          + '<input id="adAdvEmail" type="email" maxlength="120" placeholder="name@brand.com" autocomplete="off" />'
+          + '<input id="adAdvEmail" type="email" maxlength="120" placeholder="name@brand.com" autocomplete="off" value="' + escapeHtml(f.advertiserEmail || '') + '" />'
           + '<label for="adAdvPhone">Advertiser phone</label>'
-          + '<input id="adAdvPhone" type="tel" maxlength="32" placeholder="+256…" />'
+          + '<input id="adAdvPhone" type="tel" maxlength="32" placeholder="+256…" value="' + escapeHtml(f.advertiserPhone || '') + '" />'
           + '<label for="adPaid">Money paid by the advertiser — ' + escapeHtml(opCode()) + '</label>'
-          + '<input id="adPaid" inputmode="decimal" placeholder="0" />'
+          + '<input id="adPaid" inputmode="decimal" placeholder="0" value="' + escapeHtml(paidBoxVal(Number(f.paidAed) || 0)) + '" />'
           + '<label for="adCtaLabel">Call to action (CTA)</label>'
-          + '<input id="adCtaLabel" maxlength="24" placeholder="Open" value="Open" />'
+          + '<input id="adCtaLabel" maxlength="24" placeholder="Open" value="' + escapeHtml(f.ctaLabel || 'Open') + '" />'
           + '<label for="adCtaUrl">Call to action address (https only)</label>'
-          + '<input id="adCtaUrl" type="url" placeholder="https://" />'
+          + '<input id="adCtaUrl" type="url" placeholder="https://" value="' + escapeHtml(f.ctaUrl || '') + '" />'
           + '<label for="adPlace">Placement</label>'
           + '<select id="adPlace">'
-          + '<option value="both">Watch-time break and Broadcast chapter break</option>'
-          + '<option value="in-feed">Watch-time break only</option>'
-          + '<option value="broadcast-break">Broadcast chapter break only</option>'
+          + '<option value="both"' + selected(placeNow, 'both') + '>Watch-time break and Broadcast chapter break</option>'
+          + '<option value="in-feed"' + selected(placeNow, 'in-feed') + '>Watch-time break only</option>'
+          + '<option value="broadcast-break"' + selected(placeNow, 'broadcast-break') + '>Broadcast chapter break only</option>'
           + '</select>'
           + '<label for="adBill">Billing model</label>'
           + '<select id="adBill">'
-          + '<option value="cpm">CPM (cost per mille) — impressions</option>'
-          + '<option value="cpc">CPC (cost per click) — taps</option>'
-          + '<option value="cpv">CPV (cost per view) — completed views</option>'
+          + '<option value="cpm"' + selected(billNow, 'cpm') + '>CPM (cost per mille) — impressions</option>'
+          + '<option value="cpc"' + selected(billNow, 'cpc') + '>CPC (cost per click) — taps</option>'
+          + '<option value="cpv"' + selected(billNow, 'cpv') + '>CPV (cost per view) — completed views</option>'
           + '</select>'
           + '<label for="adSkip">Skip after (seconds)</label>'
-          + '<input id="adSkip" type="number" min="0" max="15" value="5" />'
+          + '<input id="adSkip" type="number" min="0" max="15" value="' + escapeHtml(String(f.skipAfterSec != null ? f.skipAfterSec : 5)) + '" />'
           + '<div class="row">'
-          + '<button type="button" class="primary" id="adSaveLive">Upload and go live</button>'
-          + '<button type="button" class="ghost" id="adSavePaused">Upload paused</button>'
+          + (editing
+            ? ('<button type="button" class="primary" id="adSaveLive">Save and publish again</button>'
+              + '<button type="button" class="ghost" id="adSavePaused">Save paused</button>'
+              + '<button type="button" class="ghost" id="adEditCancel">Cancel</button>')
+            : ('<button type="button" class="primary" id="adSaveLive">Upload and go live</button>'
+              + '<button type="button" class="ghost" id="adSavePaused">Upload paused</button>'))
           + '</div>'
           + '<div class="msg" id="adMsg"></div>')
+        + (viewing ? (function () {
+          const a = viewing;
+          const u = unitById[a.id] || (Data && Data.adUnitStats ? Data.adUnitStats(a, rates) : {});
+          const impr = Number(u.impressions != null ? u.impressions : a.impressions) || 0;
+          const taps = Number(u.clicks != null ? u.clicks : a.clicks) || 0;
+          const skipsN = Number(u.skips != null ? u.skips : a.skips) || 0;
+          const watches = Number(u.viewCompletes != null ? u.viewCompletes : a.viewCompletes) || 0;
+          const paidAed = Number(u.paidAed != null ? u.paidAed : a.paidAed) || 0;
+          const usedAed = Number(u.bookedAed) || 0;
+          const leftAed = paidAed > 0 ? Math.max(0, paidAed - usedAed) : 0;
+          const model = u.billModel || a.billModel || 'cpm';
+          const thumb = a.thumbUrl || (String(a.mediaType || '').indexOf('image') === 0 ? a.mediaUrl : '');
+          const media = thumb
+            ? '<img class="ad-preview" src="' + escapeHtml(thumb) + '" alt="" />'
+            : (a.mediaUrl
+              ? '<video class="ad-preview" src="' + escapeHtml(a.mediaUrl) + '" muted playsinline></video>'
+              : '');
+          return card('This ad',
+            '<p class="sub">Independent of every other unit. The journal above is the house total.</p>'
+            + '<div class="ad-row">' + media + '<div class="ad-body">'
+            + '<div style="margin:0 0 6px;"><b>' + escapeHtml(a.headline || a.advertiser || a.id) + '</b></div>'
+            + '<div class="sub">' + escapeHtml(a.advertiser || '') + '</div>'
+            + '<div class="sub" style="margin-top:4px;">' + adContactHtml(a) + '</div>'
+            + '<div class="sub" style="margin-top:4px;">' + escapeHtml(billLabel(model)) + (a.ctaUrl ? ' · ' + escapeHtml(a.ctaUrl) : '') + '</div>'
+            + '</div></div>'
+            + kpis([['Views', impr], ['Taps', taps], ['Skips', skipsN], ['Completed watches', watches],
+              ['Tap-through', pct1(u.ctr)], ['View rate', pct1(u.viewRate)]])
+            + kpis([['Prepaid', aedUsd(paidAed)], ['Used', aedUsd(usedAed)], ['Left', aedUsd(leftAed)],
+              ['Booked', aedUsd(u.bookedAed || 0)], ['Skip rate', pct1(u.skipRate)]])
+            + kpis([['Per thousand views (check)', aedUsd(u.cpmAed || 0)], ['Per tap (check)', aedUsd(u.cpcAed || 0)],
+              ['Per completed watch (check)', aedUsd(u.cpvAed || 0)]])
+            + '<div class="sub" style="margin-top:8px;">Created ' + escapeHtml(when(a.createdAt)) + ' · Updated ' + escapeHtml(when(a.updatedAt)) + '</div>'
+            + '<div class="row" style="margin-top:12px;">'
+            + '<button type="button" class="primary admAdEdit" data-id="' + escapeHtml(a.id) + '">Edit</button>'
+            + '<button type="button" class="ghost" id="adViewBack">Back to inventory</button>'
+            + '</div>');
+        })() : '')
         + '<div class="row" style="margin:12px 0;">'
         + ['all', 'live', 'paused'].map(function (k) {
           const on = q === k ? ' primary' : ' ghost';
@@ -1858,11 +1920,11 @@
               : (a.mediaUrl
                 ? '<video class="ad-preview" src="' + escapeHtml(a.mediaUrl) + '" muted playsinline></video>'
                 : '<div class="ad-preview"></div>');
-            const impr = Number(a.impressions) || 0;
-            const clicks = Number(a.clicks) || 0;
-            const views = Number(a.viewCompletes) || 0;
-            const rate = impr ? (Math.round((clicks / impr) * 1000) / 10) + '%' : '—';
             const u = unitById[a.id] || {};
+            const impr = Number(u.impressions != null ? u.impressions : a.impressions) || 0;
+            const clicks = Number(u.clicks != null ? u.clicks : a.clicks) || 0;
+            const views = Number(u.viewCompletes != null ? u.viewCompletes : a.viewCompletes) || 0;
+            const rate = pct1(u.ctr != null ? u.ctr : (impr ? (clicks / impr) * 100 : 0));
             const model = u.billModel || a.billModel || 'cpm';
             const paidAed = Number(u.paidAed != null ? u.paidAed : a.paidAed) || 0;
             const usedAed = Number(u.bookedAed) || 0;
@@ -1872,14 +1934,15 @@
               ? ('Paid ' + aedUsd(paidAed) + ' · Used ' + aedUsd(usedAed) + ' · Left ' + aedUsd(leftAed || 0))
               : ('No prepaid typed · Used ' + aedUsd(usedAed));
             const spentNote = spent ? '<div class="sub" style="color:#ffc266;margin-top:4px;">Used up — paused. Type more paid to go live again.</div>' : '';
-            return '<div class="alert ' + (st === 'live' && !spent ? 'ok' : 'warning') + ' ad-row">'
+            const onThis = viewingId === a.id;
+            return '<div class="alert ' + (st === 'live' && !spent ? 'ok' : 'warning') + ' ad-row"' + (onThis ? ' style="border-color:rgba(124,255,178,.55);"' : '') + '>'
               + media
               + '<div class="ad-body">'
               + '<div class="sub">' + escapeHtml(spent ? 'used up' : st) + ' · ' + escapeHtml(places) + ' · skip ' + escapeHtml(String(a.skipAfterSec != null ? a.skipAfterSec : 5)) + 's · ' + escapeHtml(billLabel(model)) + '</div>'
               + '<div style="margin:4px 0;"><b>' + escapeHtml(a.headline || a.advertiser || a.id) + '</b></div>'
               + '<div class="sub">' + escapeHtml(a.advertiser || '') + (a.ctaUrl ? ' · ' + escapeHtml(a.ctaUrl) : '') + '</div>'
               + '<div class="sub" style="margin-top:4px;">' + adContactHtml(a) + '</div>'
-              + '<div class="sub" style="margin-top:6px;">Views ' + impr + ' · Taps ' + clicks + ' · Skips ' + (Number(a.skips) || 0) + ' · Completed watches ' + views + ' · Tap-through ' + rate + '</div>'
+              + '<div class="sub" style="margin-top:6px;">Views ' + impr + ' · Taps ' + clicks + ' · Skips ' + (Number(u.skips != null ? u.skips : a.skips) || 0) + ' · Completed watches ' + views + ' · Tap-through ' + rate + '</div>'
               + '<div class="sub" style="margin-top:4px;">' + moneyLine + '</div>'
               + spentNote
               + '<div class="row" style="margin-top:10px;align-items:center;gap:8px;flex-wrap:wrap;">'
@@ -1888,6 +1951,8 @@
               + '<button type="button" class="ghost admAdPaid" data-id="' + escapeHtml(a.id) + '">Save paid</button>'
               + '</div>'
               + '<div class="row" style="margin-top:10px;">'
+              + '<button type="button" class="ghost admAdEdit" data-id="' + escapeHtml(a.id) + '">Edit</button>'
+              + '<button type="button" class="ghost admAdView" data-id="' + escapeHtml(a.id) + '">Analytics</button>'
               + (st === 'live'
                 ? '<button type="button" class="ghost admAd" data-id="' + escapeHtml(a.id) + '" data-act="pause">Pause</button>'
                 : (spent
@@ -1896,7 +1961,7 @@
               + '<button type="button" class="danger admAd" data-id="' + escapeHtml(a.id) + '" data-act="delete">Remove</button>'
               + '</div></div></div>';
           }).join('')
-          : '<p class="sub">—</p>');
+          : '<p class="sub">No units in this filter. Upload a 9:16 creative above.</p>');
       el.querySelectorAll('.adsFilter').forEach(function (btn) {
         btn.onclick = function () {
           __tabCache.adsQ = btn.getAttribute('data-q') || 'all';
@@ -1909,6 +1974,28 @@
       el.querySelectorAll('.admAdPaid').forEach(function (btn) {
         btn.onclick = function () { saveAdPaid(btn.getAttribute('data-id')); };
       });
+      el.querySelectorAll('.admAdEdit').forEach(function (btn) {
+        btn.onclick = function () {
+          __tabCache.adsEditId = btn.getAttribute('data-id') || '';
+          __tabCache.adsViewId = '';
+          loadTab('ads', false);
+          setTimeout(function () { try { const n = $('adHeadline'); if (n) n.focus(); } catch (_) {} }, 40);
+        };
+      });
+      el.querySelectorAll('.admAdView').forEach(function (btn) {
+        btn.onclick = function () {
+          __tabCache.adsViewId = btn.getAttribute('data-id') || '';
+          loadTab('ads', false);
+        };
+      });
+      if ($('adViewBack')) $('adViewBack').onclick = function () {
+        __tabCache.adsViewId = '';
+        loadTab('ads', false);
+      };
+      if ($('adEditCancel')) $('adEditCancel').onclick = function () {
+        __tabCache.adsEditId = '';
+        loadTab('ads', false);
+      };
       const save = function (status) { saveAd(status); };
       if ($('adSaveLive')) $('adSaveLive').onclick = function () { save('live'); };
       if ($('adSavePaused')) $('adSavePaused').onclick = function () { save('paused'); };
@@ -2957,7 +3044,13 @@
     if (!db) { toast('Database is not ready'); return; }
     if (!currentUser) { toast('Sign in again'); return; }
     try { window.currentUser = currentUser; } catch (_) {}
-    try { await ensureUploadHelper(); } catch (e) { setMsg('adMsg', (e && e.message) || 'Upload helper failed'); return; }
+    const editId = __tabCache.adsEditId || '';
+    const existing = (editId && __snap && __snap.ads && __snap.ads.list)
+      ? (__snap.ads.list.filter(function (a) { return a && a.id === editId; })[0] || null)
+      : null;
+    try { await ensureUploadHelper(); } catch (e) {
+      if (!editId) { setMsg('adMsg', (e && e.message) || 'Upload helper failed'); return; }
+    }
     const fileEl = $('adFile');
     const file = fileEl && fileEl.files && fileEl.files[0];
     const headline = (($('adHeadline') && $('adHeadline').value) || '').trim().slice(0, 80);
@@ -2974,7 +3067,7 @@
     let skip = parseInt(($('adSkip') && $('adSkip').value) || '5', 10);
     if (!isFinite(skip)) skip = 5;
     skip = Math.max(0, Math.min(15, skip));
-    if (!file) { setMsg('adMsg', 'Choose a video or image.'); return; }
+    if (!file && !editId) { setMsg('adMsg', 'Choose a video or image.'); return; }
     if (!headline && !advertiser) { setMsg('adMsg', 'Add a headline or an advertiser name.'); return; }
     if (($('adAdvEmail') && $('adAdvEmail').value.trim()) && !advertiserEmail) {
       setMsg('adMsg', 'That email does not look right.');
@@ -2984,23 +3077,41 @@
       setMsg('adMsg', 'The call to action must be an https address.');
       return;
     }
-    const isImage = String(file.type || '').indexOf('image/') === 0 || /\.(png|jpe?g|webp|gif)$/i.test(file.name || '');
-    setMsg('adMsg', 'Uploading…', true);
-    toast('Uploading creative…');
-    let url = '';
-    try {
-      if (typeof uploadBroadcastFile !== 'function') throw new Error('Upload helper is not loaded');
-      const ctype = isImage ? (file.type || 'image/jpeg') : (file.type || 'video/mp4');
-      url = await uploadBroadcastFile(file, function (p, label) {
-        setMsg('adMsg', label || ('Uploading… ' + Math.round((p || 0) * 100) + '%'), true);
-      }, ctype);
-    } catch (e) {
-      setMsg('adMsg', (e && e.message) || 'Upload failed');
-      return;
+    if (status === 'live' && editId) {
+      const units = (__snap && __snap.ads && __snap.ads.revenue && __snap.ads.revenue.units) || [];
+      const unit = units.filter(function (u) { return u && u.id === editId; })[0];
+      if (unit && unit.spent && paidAed > 0) {
+        const used = Number(unit.bookedAed) || 0;
+        if (used >= paidAed) {
+          setMsg('adMsg', 'Prepaid is used up. Type more paid first.');
+          return;
+        }
+      }
     }
-    if (!url) { setMsg('adMsg', 'Upload returned no address.'); return; }
+    let url = (existing && existing.mediaUrl) || '';
+    let isImage = existing && String(existing.mediaType || '').indexOf('image') === 0;
+    if (file) {
+      isImage = String(file.type || '').indexOf('image/') === 0 || /\.(png|jpe?g|webp|gif)$/i.test(file.name || '');
+      setMsg('adMsg', 'Uploading…', true);
+      toast('Uploading creative…');
+      try {
+        if (typeof uploadBroadcastFile !== 'function') throw new Error('Upload helper is not loaded');
+        const ctype = isImage ? (file.type || 'image/jpeg') : (file.type || 'video/mp4');
+        url = await uploadBroadcastFile(file, function (p, label) {
+          setMsg('adMsg', label || ('Uploading… ' + Math.round((p || 0) * 100) + '%'), true);
+        }, ctype);
+      } catch (e) {
+        setMsg('adMsg', (e && e.message) || 'Upload failed');
+        return;
+      }
+      if (!url) { setMsg('adMsg', 'Upload returned no address.'); return; }
+    }
+    const usedAed = existing && __snap && __snap.ads && __snap.ads.revenue
+      ? Number(((__snap.ads.revenue.units || []).filter(function (u) { return u && u.id === editId; })[0] || {}).bookedAed) || 0
+      : 0;
+    const spent = paidAed > 0 && usedAed >= paidAed;
     const doc = {
-      status: status === 'live' ? 'live' : 'paused',
+      status: (status === 'live' && !spent) ? 'live' : 'paused',
       placements: placementsFrom(place),
       placement: place,
       headline: headline,
@@ -3009,27 +3120,41 @@
       advertiserEmail: advertiserEmail,
       advertiserPhone: advertiserPhone,
       paidAed: paidAed,
-      spent: false,
+      spent: spent,
       ctaLabel: ctaLabel,
       ctaUrl: ctaUrl,
-      mediaUrl: url,
-      mediaType: isImage ? 'image' : 'video',
-      thumbUrl: isImage ? url : '',
       skipAfterSec: skip,
       billModel: bill,
-      impressions: 0,
-      clicks: 0,
-      skips: 0,
-      viewCompletes: 0,
-      bytes: file.size || 0,
-      createdAt: Date.now(),
       updatedAt: Date.now(),
-      createdBy: currentUser.uid,
+      updatedBy: currentUser.uid,
     };
+    if (url) {
+      doc.mediaUrl = url;
+      doc.mediaType = isImage ? 'image' : 'video';
+      doc.thumbUrl = isImage ? url : (existing && existing.thumbUrl) || '';
+    }
+    if (file) doc.bytes = file.size || 0;
     try {
-      const ref = await db.collection('deskAds').add(doc);
-      await writeAudit('ad-create', ref.id, doc.status + ' · ' + (headline || advertiser));
-      toast(doc.status === 'live' ? 'Live in the app' : 'Saved paused');
+      if (editId) {
+        await db.collection('deskAds').doc(editId).set(doc, { merge: true });
+        await writeAudit('ad-edit', editId, doc.status + ' · ' + (headline || advertiser));
+        toast(doc.status === 'live' ? 'Published again' : 'Saved');
+        __tabCache.adsEditId = '';
+        __tabCache.adsViewId = editId;
+      } else {
+        doc.impressions = 0;
+        doc.clicks = 0;
+        doc.skips = 0;
+        doc.viewCompletes = 0;
+        doc.bytes = file ? (file.size || 0) : 0;
+        doc.createdAt = Date.now();
+        doc.createdBy = currentUser.uid;
+        if (!doc.mediaUrl) { setMsg('adMsg', 'Choose a video or image.'); return; }
+        const ref = await db.collection('deskAds').add(doc);
+        await writeAudit('ad-create', ref.id, doc.status + ' · ' + (headline || advertiser));
+        toast(doc.status === 'live' ? 'Live in the app' : 'Saved paused');
+        __tabCache.adsViewId = ref.id;
+      }
       setMsg('adMsg', 'Saved.', true);
       await loadTab('ads', true);
     } catch (e) {
@@ -3047,6 +3172,8 @@
         await db.collection('deskAds').doc(id).delete();
         await writeAudit('ad-delete', id, 'removed');
         delete __spentLatch[id];
+        if (__tabCache.adsEditId === id) __tabCache.adsEditId = '';
+        if (__tabCache.adsViewId === id) __tabCache.adsViewId = '';
         toast('Removed');
       } else {
         let status = action === 'live' ? 'live' : 'paused';
