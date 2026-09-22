@@ -360,6 +360,10 @@ function showAuthForm(){
   const e = onboardEls();
   hideOnboardSurfaces();
   window.__nalunoOnboardActive = false;
+  if(typeof nalunoRevealSignIn === 'function'){
+    nalunoRevealSignIn();
+    return;
+  }
   if(e.loading) e.loading.style.display = 'none';
   if(e.form) e.form.style.display = 'flex';
   if(e.gate) e.gate.classList.add('active');
@@ -405,7 +409,10 @@ function showWelcome(){
     e.welcome.removeAttribute('hidden');
     e.welcome.classList.add('on');
   }
-  if(e.gate) e.gate.classList.add('active');
+  if(e.gate){
+    e.gate.classList.add('active');
+    e.gate.classList.add('naluno-onboard-on');
+  }
   document.body.classList.add('naluno-gated');
   paintWelcome();
 }
@@ -453,7 +460,10 @@ function showTour(startAt){
     e.tour.removeAttribute('hidden');
     e.tour.classList.add('on');
   }
-  if(e.gate) e.gate.classList.add('active');
+  if(e.gate){
+    e.gate.classList.add('active');
+    e.gate.classList.add('naluno-onboard-on');
+  }
   document.body.classList.add('naluno-gated');
   paintTour();
 }

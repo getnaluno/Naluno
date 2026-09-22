@@ -25,7 +25,7 @@ function nalunoHideNativeSplash(){
   try{
     const C = window.Capacitor;
     const p = C && ((C.Plugins && C.Plugins.SplashScreen) || C.SplashScreen);
-    if(p && p.hide) p.hide({ fadeOutDuration: 0 });
+    if(p && p.hide) p.hide({ fadeOutDuration: 220 });
   }catch(_){}
 }
 function nalunoRunAfterEntry(fn){
@@ -34,10 +34,36 @@ function nalunoRunAfterEntry(fn){
   const wait = Math.max(0, NALUNO_ENTRY_MS - (Date.now() - t0));
   setTimeout(function(){ try{ fn(); }catch(e){} }, wait);
 }
+function nalunoSettleEntryLogo(){
+  try{
+    const logo = document.getElementById('nalunoEntryLogo');
+    if(logo) logo.classList.add('settled');
+  }catch(_){}
+}
+function nalunoRevealSignIn(){
+  nalunoSettleEntryLogo();
+  const gate = $('authGate');
+  const loading = $('authGateLoading');
+  const form = $('authGateForm');
+  document.body.classList.add('naluno-gated');
+  if(gate){
+    gate.classList.add('active');
+    gate.classList.remove('naluno-onboard-on');
+    gate.classList.add('naluno-entry-ready');
+  }
+  if(form) form.style.display = 'flex';
+  setTimeout(function(){
+    try{
+      const g = document.getElementById('authGate');
+      if(loading && g && g.classList.contains('naluno-entry-ready')) loading.style.display = 'none';
+    }catch(_){}
+  }, 520);
+}
 function nalunoEnterApp(){
   nalunoHideNativeSplash();
   try{ if(typeof markNalunoOnboardComplete === 'function') markNalunoOnboardComplete(); }catch(_){}
   nalunoRunAfterEntry(function(){
+    nalunoSettleEntryLogo();
     document.body.classList.remove('naluno-gated');
     const app = document.getElementById('app');
     if(app) app.style.visibility = '';
@@ -56,16 +82,16 @@ function nalunoEnterApp(){
     setTimeout(function(){
       gate.classList.remove('active');
       gate.classList.remove('naluno-entry-out');
-    }, 450);
+      gate.classList.remove('naluno-entry-ready');
+      gate.classList.remove('naluno-onboard-on');
+    }, 720);
   });
 }
 function nalunoShowSignIn(){
   nalunoHideNativeSplash();
   nalunoRunAfterEntry(function(){
     try{
-      const loading = $('authGateLoading');
       const form = $('authGateForm');
-      if(loading) loading.style.display = 'none';
       document.body.classList.add('naluno-gated');
       const gate = $('authGate');
       if(gate) gate.classList.add('active');
@@ -73,12 +99,13 @@ function nalunoShowSignIn(){
         if(form) form.style.display = 'none';
         return;
       }
-      if(form) form.style.display = 'flex';
+      nalunoRevealSignIn();
     }catch(_){}
   });
 }
 window.nalunoEnterApp = nalunoEnterApp;
 window.nalunoShowSignIn = nalunoShowSignIn;
+window.nalunoRevealSignIn = nalunoRevealSignIn;
 
 function firebaseReady(){
   return typeof firebase !== 'undefined'
