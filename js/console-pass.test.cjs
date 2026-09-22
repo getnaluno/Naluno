@@ -5,7 +5,8 @@ const assert = require('assert');
 const root = path.resolve(__dirname, '..');
 const adminSrc = fs.readFileSync(path.join(__dirname, 'admin-console.js'), 'utf8');
 const adminHtml = fs.readFileSync(path.join(root, 'admin/index.html'), 'utf8');
-const workerSrc = fs.readFileSync(path.join(root, '..', 'workers/economy/handler.mjs'), 'utf8');
+/* The worker lives in this repo at workers/economy, not one level above it. */
+const workerSrc = fs.readFileSync(path.join(root, 'workers/economy/handler.mjs'), 'utf8');
 
 assert.ok(adminSrc.includes("const BUILD = '20260922e'"), 'console stamped 22e');
 assert.ok(/naluno-build" content="2026\.09\.22e"/.test(adminHtml), 'admin html 22e');

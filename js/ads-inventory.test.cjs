@@ -14,7 +14,9 @@ assert.ok(adminSrc.includes('Save and publish again'), 'edit republish');
 assert.ok(adminSrc.includes('const editId = __tabCache.adsEditId'), 'save uses the same unit');
 assert.ok(adminSrc.includes('Counters stay on this unit'), 'edit does not reset counters');
 assert.ok(dataSrc.includes('function adUnitStats'), 'each ad has its own book');
-assert.ok(html.includes('admin-console.js?v=20260922d'), 'ads pack cache-bust');
+/* admin-console.js was bumped to 22e (console-pass.test.cjs asserts 22e);
+   this test was left on 22d, so the two tests contradicted each other. */
+assert.ok(html.includes('admin-console.js?v=20260922e'), 'ads pack cache-bust');
 assert.ok(html.includes('admin-data.js?v=20260922d'), 'maths cache-bust');
 
 console.log('ads-inventory tests passed');
