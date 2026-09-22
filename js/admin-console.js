@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260922d';
+  const BUILD = '20260922e';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -353,9 +353,25 @@
     try { return stored === await hashLocal(uid, pass); } catch (_) { return false; }
   }
 
-  async function cloudGetHash(uid) {
+  async function pbkdf2Hex(pass, saltB64, iters) {
+    const bin = atob(String(saltB64 || ''));
+    const salt = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) salt[i] = bin.charCodeAt(i);
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(String(pass)), 'PBKDF2', false, ['deriveBits']);
+    const bits = await crypto.subtle.deriveBits({
+      name: 'PBKDF2',
+      salt: salt,
+      iterations: Number(iters) || 150000,
+      hash: 'SHA-256',
+    }, key, 256);
+    const bytes = new Uint8Array(bits);
+    let hex = '';
+    for (let i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, '0');
+    return hex;
+  }
+  async function cloudGetRecord(uid) {
     const db = adminDb();
-    if (!db || !uid) return '';
+    if (!db || !uid) return null;
     const paths = [
       function () { return db.collection('users').doc(uid).collection('vault').doc('main').get(); },
       function () { return db.collection('adminConsole').doc(uid).get(); },
@@ -368,26 +384,40 @@
         const snap = await paths[i]();
         if (!snap || !snap.exists) continue;
         const data = snap.data() || {};
-        const hash = data.hash || (data._consoleGate && data._consoleGate.hash) || '';
-        if (hash) return String(hash);
+        const g = (data._consoleGate && typeof data._consoleGate === 'object') ? data._consoleGate : null;
+        if (g && Number(g.v) === 2 && g.hash && g.salt) {
+          return { v: 2, hash: String(g.hash), salt: String(g.salt), iters: Number(g.iters) || 150000 };
+        }
+        const hash = (g && g.hash) || data.hash || '';
+        if (hash) return { v: 1, hash: String(hash) };
       } catch (_) {}
     }
-    return '';
+    return null;
+  }
+  async function cloudGetHash(uid) {
+    const rec = await cloudGetRecord(uid);
+    return rec && rec.hash ? String(rec.hash) : '';
   }
   async function cloudSetHash(uid, hash) {
     const db = adminDb();
     if (!db || !uid || !hash) return { ok: false, where: 'no-db' };
     const payload = { hash: hash, v: 1, at: Date.now(), kind: 'console-gate' };
-    try { await db.collection('users').doc(uid).collection('vault').doc('main').set({ _consoleGate: payload, hash: hash, v: 1, at: payload.at }, { merge: true }); return { ok: true, where: 'vault' }; } catch (_) {}
+    try { await db.collection('users').doc(uid).collection('vault').doc('main').set({ _consoleGate: payload }, { merge: true }); return { ok: true, where: 'vault' }; } catch (_) {}
     try { await db.collection('adminConsole').doc(uid).set(payload); return { ok: true, where: 'adminConsole' }; } catch (_) {}
     try { await db.collection('users').doc(uid).collection('consoleGate').doc('main').set(payload); return { ok: true, where: 'consoleGate' }; } catch (_) {}
     try { await db.collection('users').doc(uid).collection('wirelineHidden').doc('__nalunoConsoleGate').set(payload); return { ok: true, where: 'account' }; } catch (_) {}
     return { ok: false, where: 'write-denied' };
   }
   async function cloudOk(uid, pass) {
-    const stored = await cloudGetHash(uid);
-    if (!stored) return false;
-    try { return stored === await hashLocal(uid, pass); } catch (_) { return false; }
+    const rec = await cloudGetRecord(uid);
+    if (!rec) return false;
+    try {
+      if (rec.v === 2 && rec.salt && rec.hash) {
+        const got = await pbkdf2Hex(pass, rec.salt, rec.iters);
+        return got === rec.hash;
+      }
+      return rec.hash === await hashLocal(uid, pass);
+    } catch (_) { return false; }
   }
 
   async function writeAudit(action, target, reason, extra) {
@@ -3697,12 +3727,12 @@
         });
         const body = res ? await res.json().catch(function () { return {}; }) : {};
         workerOk = !!(res && res.ok && body.ok && body.persist && body.persist !== 'memory');
-        if (!workerOk && res && res.status === 401) {
-          setMsg('adminGateMsg', body.error || 'Could not save the password.');
-          return;
-        }
+        /* 401 here means an older copy is on the worker. This phone is already saved. */
       } catch (_) {}
-      const saved = await cloudSetHash(uid, hash);
+      let saved = { ok: workerOk, where: workerOk ? 'worker' : '' };
+      try {
+        if (!(await cloudOk(uid, typed))) saved = await cloudSetHash(uid, hash);
+      } catch (_) {}
       if (!workerOk && !saved.ok) {
         setMsg('adminGateMsg', 'Saved on this phone. Cloud copy failed — you can still unlock here.');
       }
@@ -3716,27 +3746,25 @@
           method: 'POST',
           body: JSON.stringify({ password: typed }),
         });
-        if (res && res.status === 401) {
-          setMsg('adminGateMsg', 'Password not accepted.');
-          return;
-        }
         const body = res ? await res.json().catch(function () { return {}; }) : {};
         if (res && res.ok && body.ok && !body.setup) workerVerdict = true;
         if (res && res.ok && body.setup) workerVerdict = 'setup';
+        /* 401 is not final — this phone or the account copy may still match. */
       } catch (_) {}
       if (workerVerdict === true) {
         try { localSet(uid, await hashLocal(uid, typed)); } catch (_) {}
-        try { await cloudSetHash(uid, await hashLocal(uid, typed)); } catch (_) {}
+        try {
+          if (!(await cloudOk(uid, typed))) await cloudSetHash(uid, await hashLocal(uid, typed));
+        } catch (_) {}
       } else {
-        const storedCloud = await cloudGetHash(uid);
         const typedHash = await hashLocal(uid, typed);
-        const okCloud = !!(storedCloud && storedCloud === typedHash);
+        const okCloud = await cloudOk(uid, typed);
         const okLocal = await localOk(uid, typed);
         if (!okCloud && !okLocal) { setMsg('adminGateMsg', 'Password not accepted.'); return; }
         try {
           await adminWorker('/v1/admin/password', {
             method: 'POST',
-            body: JSON.stringify({ next_password: typed }),
+            body: JSON.stringify({ current_password: typed, next_password: typed }),
           });
         } catch (_) {}
         try { localSet(uid, typedHash); } catch (_) {}
@@ -3776,7 +3804,7 @@
         body: JSON.stringify({ current_password: curTrim, next_password: nextTrim }),
       });
       workerOk = !!(res && res.ok);
-      if (res && res.status === 401) { toast('Current password is wrong'); return; }
+      if (res && res.status === 401 && !okCloud && !okLocal) { toast('Current password is wrong'); return; }
     } catch (_) {}
     if (!workerOk) {
       const saved = await cloudSetHash(uid, hash);
