@@ -12,20 +12,6 @@
    signal strength, same way replies are: off-the-grid contacts never advance past 'sent'. */
 let wirelineThreads = {}; // { [contactId]: [{ id, from, type:'text'|'voice', text?, dataUrl?, duration?, waveform?, ts, read?, status? }] }
 let activeThreadContactId = null;
-function wirelineIsViewing(contactId){
-  if(contactId == null) return false;
-  try{
-    if($('incall') && $('incall').classList.contains('active') && $('incall').classList.contains('wire-open')){
-      if(typeof currentCallContactId !== 'undefined' && String(currentCallContactId) === String(contactId)) return true;
-    }
-  }catch(_){}
-  try{
-    if($('wirelineThread') && $('wirelineThread').classList.contains('active')
-      && typeof activeThreadContactId !== 'undefined'
-      && String(activeThreadContactId) === String(contactId)) return true;
-  }catch(_){}
-  return false;
-}
 // Empty now — real threads load live from Firestore per-contact when opened (see
 // openThread), and demo contacts that used to seed this no longer exist.
 const wirelineSeed = {};
@@ -77,9 +63,6 @@ function persistWireRow(contactId, msg, otherUid){
     }
   }catch(_){}
   try{ saveWireline(); }catch(_){}
-  try{
-    if(msg && msg.from === 'them' && typeof notifyIncallWire === 'function') notifyIncallWire(contactId);
-  }catch(_){}
 }
 function applyLocalReaction(otherUid, cmid, reaction){
   const match = function(row){
@@ -687,6 +670,12 @@ function bindWireMenu(){
     }
   });
   const backupBtn = $('wireMenuBackup');
+  const lifelineBtn = $('wireMenuLifeline');
+  if(lifelineBtn) lifelineBtn.onclick = function(){
+    try{ closeMenu(); }catch(_){}
+    const t = window.prompt('Paste the Naluno SMS you received:');
+    if(t && typeof nalunoLifelineImportSms === 'function') nalunoLifelineImportSms(t);
+  };
   const historyBtn = $('wireMenuHistory');
   if(backupBtn) backupBtn.onclick = function(e){ e.stopPropagation(); closeMenu(); openWireBackup(); };
   if(historyBtn) historyBtn.onclick = function(e){ e.stopPropagation(); closeMenu(); openWireHistory(); };
@@ -940,6 +929,7 @@ async function decryptWirelineMessage(m, contact){
   return m.text || null;
 }
 function renderThreadMessages(){
+  try{ if(typeof nalunoLifelineRenderBar === 'function') nalunoLifelineRenderBar(); }catch(_){}
   const queued = (localQueuedMessages[activeThreadContactId] || []).map(q => ({
     id: q.queueId, from:'me', ts: q.queuedAt, status:'queued',
     ...q.payload,
@@ -979,7 +969,12 @@ function renderThreadMessages(){
     else if(m.type==='mood'){ bubbleInner = moodBubbleHtml(m); bubbleClass = 'msg-bubble mood-bubble-wrap'; }
     else if(m.type==='photo' || m.type==='video'){ bubbleInner = slipBubbleHtml(m); bubbleClass = 'msg-bubble slip-bubble'; }
     else if(m.type==='document'){ bubbleInner = documentBubbleHtml(m); bubbleClass = 'msg-bubble doc-bubble'; }
-    else { bubbleInner = escapeHtml(m.text || ''); }
+    else {
+      // Translation, when this thread has it on, is appended UNDER the original
+      // so the person's own words are never replaced by a machine's.
+      bubbleInner = escapeHtml(m.text || '')
+        + ((typeof wireTranslationHtml === 'function') ? wireTranslationHtml(m) : '');
+    }
     const receipt = m.from==='me' ? receiptTickHtml(m.status || 'sent') : '';
     const deleteBtn = m.from==='me' ? `<span class="msg-delete-btn" data-delmsg="${m.id}" title="Delete" aria-label="Delete message"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2m2 0v13a2 2 0 01-2 2H9a2 2 0 01-2-2V7h10z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>` : '';
     return dayHtml + `<div class="msg-row ${m.from}" data-msgid="${m.id}">
@@ -988,6 +983,7 @@ function renderThreadMessages(){
       ${reactionBadgeHtml(m)}
     </div>`;
   }).join('');
+  try{ if(typeof wireTranslateAfterRender === 'function') wireTranslateAfterRender(); }catch(_){}
   document.querySelectorAll('[data-voice]').forEach(el=>{
     el.onclick = ()=> toggleVoicePlay(el.dataset.voice);
   });
@@ -1028,7 +1024,6 @@ function renderThreadMessages(){
   });
   wireLongPressReactions('#threadMessages .msg-row[data-msgid]');
   $('threadMessages').scrollTop = $('threadMessages').scrollHeight;
-  try{ if(typeof renderIncallWire === 'function') renderIncallWire(); }catch(_){}
 }
 /* Hard delete — the message is just gone, no "this message was deleted" stamp left
    behind. That stamp is a design choice some apps make on purpose; this app doesn't
@@ -1484,10 +1479,16 @@ function rebuildLocalQueuedMessagesIndex(){
     localQueuedMessages[item.contactId].push(item);
   });
 }
-function queueMessageForLater(contactId, firebaseUid, payload, previewText){
+/* clientMsgId is now carried on the queued copy. It was only set on the
+   timeout path before, so a message queued while offline went out under a
+   NEW id when the connection came back. That is invisible normally, but with
+   Lifeline the same message can also arrive by SMS or mesh, and the thread
+   de-duplicates on clientMsgId — without a stable id it would appear twice. */
+function queueMessageForLater(contactId, firebaseUid, payload, previewText, clientMsgId){
   const queue = getMessageQueue();
   const queueId = 'queued-' + Date.now() + '-' + Math.random().toString(36).slice(2);
-  queue.push({ queueId, contactId, firebaseUid, payload, previewText, queuedAt: Date.now() });
+  queue.push({ queueId, contactId, firebaseUid, payload, previewText, queuedAt: Date.now(),
+               clientMsgId: clientMsgId || null });
   saveMessageQueueToStorage(queue);
   rebuildLocalQueuedMessagesIndex();
   return queueId;
@@ -1575,7 +1576,11 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
   if((typeof nalunoIsOnline === 'function' ? !nalunoIsOnline() : !navigator.onLine) && !queueId){
     const c2 = contacts.find(x=>x.firebaseUid===c.firebaseUid);
     if(c2){
-      queueMessageForLater(c2.id, c.firebaseUid, payload, previewText);
+      const offId = clientMsgId || ('c' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
+      queueMessageForLater(c2.id, c.firebaseUid, payload, previewText, offId);
+      // Still queued for the internet AND handed to Lifeline, which can move
+      // it by relay, by mesh, or by SMS. Same id, so it arrives once.
+      try{ if(typeof nalunoLifelineHandoff === 'function') nalunoLifelineHandoff(c2, payload, offId); }catch(_){}
       $('threadInput').value = '';
       autoSizeThreadInput();
       updateComposerButtons();
@@ -1725,6 +1730,10 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
           saveMessageQueueToStorage(q);
           rebuildLocalQueuedMessagesIndex();
         }catch(_){}
+        // A write that times out while the device believes it is online is
+        // what a block looks like from inside the app. Lifeline's relay is
+        // exactly for this.
+        try{ if(typeof nalunoLifelineHandoff === 'function') nalunoLifelineHandoff(c2, payload, cmid); }catch(_){}
       }
       $('threadInput').value = '';
       autoSizeThreadInput();
@@ -1750,7 +1759,8 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
       // what was typed.
       const c2 = contacts.find(x=>x.firebaseUid===c.firebaseUid);
       if(c2){
-        queueMessageForLater(c2.id, c.firebaseUid, payload, previewText);
+        queueMessageForLater(c2.id, c.firebaseUid, payload, previewText, cmid);
+        try{ if(typeof nalunoLifelineHandoff === 'function') nalunoLifelineHandoff(c2, payload, cmid); }catch(_){}
         $('threadInput').value = '';
         autoSizeThreadInput();
         updateComposerButtons();
@@ -1798,19 +1808,12 @@ function maybeSimulateReply(contactId){
   setTimeout(()=>{
     const text = replies[Math.floor(Math.random()*replies.length)];
     if(!wirelineThreads[contactId]) wirelineThreads[contactId] = [];
-    const isViewing = wirelineIsViewing(contactId);
+    const isViewing = activeThreadContactId === contactId && $('wirelineThread').classList.contains('active');
     wirelineThreads[contactId].push({ id: Date.now()+Math.random(), from:'them', type:'text', text, ts: Date.now(), read: isViewing });
     saveWireline();
     bumpContactActivity(contactId);
-    if(isViewing){
-      renderThreadMessages();
-      try{ if(typeof notifyIncallWire === 'function') notifyIncallWire(contactId); }catch(_){}
-    } else {
-      try{ if(typeof notifyIncallWire === 'function') notifyIncallWire(contactId); }catch(_){}
-      if(!(typeof currentCallContactId !== 'undefined' && String(currentCallContactId) === String(contactId))){
-        toast(c.name.split(' ')[0] + ' sent a message');
-      }
-    }
+    if(isViewing) renderThreadMessages();
+    else toast(c.name.split(' ')[0] + ' sent a message');
   }, delay);
 }
 
