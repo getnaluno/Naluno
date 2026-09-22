@@ -512,6 +512,9 @@
       if (typeof fbDb !== 'undefined' && fbDb) return fbDb;
     } catch (_) {}
     try {
+      return firebase.app('naluno-console').firestore();
+    } catch (_) {}
+    try {
       if (typeof firebase !== 'undefined' && firebase.firestore) return firebase.firestore();
     } catch (_) {}
     return null;
@@ -522,7 +525,13 @@
     const db = dbOf(passedDb);
     if (!db || !db.collection) return;
     try {
-      if (typeof firebase !== 'undefined' && firebase.auth && !firebase.auth().currentUser) return;
+      /* A passed db is already scoped (Control Centre). Do not require the
+         member-app session — that is a different sign-in. */
+      if (!passedDb) {
+        var u = null;
+        try { u = firebase.auth && firebase.auth().currentUser; } catch (_) {}
+        if (!u) return;
+      }
     } catch (_) {}
     try {
       __unsub = db.collection('economyConfig').doc('currency').onSnapshot(function (snap) {

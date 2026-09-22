@@ -3,7 +3,8 @@
    Operator Control Centre at /admin/. Not loaded by the member app.
 
    Two gates:
-     1. Firebase sign-in (same Google / handle as the app)
+     1. Firebase sign-in (same Google / handle as the app — a separate
+        session from the member app, even on the same email)
      2. Console password — hashed onto the signed-in account, so it
         follows the person, not the phone.
 
@@ -22,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260921l';
+  const BUILD = '20260922b';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -297,19 +298,24 @@
     return last;
   }
 
+  const CONSOLE_APP = 'naluno-console';
   function firebaseReady() {
     return typeof firebase !== 'undefined'
       && typeof firebaseConfig !== 'undefined'
       && firebaseConfig.apiKey && firebaseConfig.apiKey !== 'YOUR_API_KEY';
   }
+  function consoleApp() {
+    try { return firebase.app(CONSOLE_APP); }
+    catch (_) { return firebase.initializeApp(firebaseConfig, CONSOLE_APP); }
+  }
   function initFirebase() {
     if (fbAuth) return true;
     if (!firebaseReady()) return false;
     try {
-      if (!(firebase.apps && firebase.apps.length)) firebase.initializeApp(firebaseConfig);
-      fbAuth = firebase.auth();
+      const app = consoleApp();
+      fbAuth = app.auth();
       fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function () {});
-      try { fbDbAdmin = firebase.firestore(); } catch (_) { fbDbAdmin = null; }
+      try { fbDbAdmin = app.firestore(); } catch (_) { fbDbAdmin = null; }
       return true;
     } catch (e) {
       console.error('[naluno-admin] firebase init', e);
@@ -319,10 +325,8 @@
   function adminDb() {
     if (fbDbAdmin) return fbDbAdmin;
     try {
-      if (typeof firebase !== 'undefined' && firebase.firestore) {
-        fbDbAdmin = firebase.firestore();
-        return fbDbAdmin;
-      }
+      fbDbAdmin = consoleApp().firestore();
+      return fbDbAdmin;
     } catch (_) {}
     return null;
   }
