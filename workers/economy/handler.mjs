@@ -25,7 +25,7 @@ import {
   listingFromScreen,
 } from "./screen.mjs";
 
-export const VERSION = "2.6.4-reports";
+export const VERSION = "2.6.6-console-pass";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -1181,6 +1181,55 @@ async function loadPasswordRecord(env, uid, saToken) {
   }
   return null;
 }
+/* Gather EVERY stored copy of the console password, not just the first one
+   found. The console writes its gate to more than one place — the worker's
+   own adminCredentials doc, the adminConsole doc, and the account's vault
+   (`_consoleGate`, written with the user's own token so it survives even
+   when the worker cannot reach Firestore). Reading only one of them is why a
+   password set on one phone could be refused on another: the copies had
+   drifted, and whichever the worker happened to read first won.
+
+   (Restored: an earlier upload of an older handler.mjs reverted this.) */
+async function collectPasswordRecords(env, uid, saToken) {
+  const out = [];
+  if (memory.passwords.has(uid)) {
+    const m = memory.passwords.get(uid);
+    if (m) out.push({ rec: m, where: "memory" });
+  }
+  if (!saToken || !uid) return out;
+  const paths = [
+    ["/adminCredentials/" + encodeURIComponent(uid), "adminCredentials"],
+    ["/adminConsole/" + encodeURIComponent(uid), "adminConsole"],
+    ["/users/" + encodeURIComponent(uid) + "/vault/main", "vault"],
+  ];
+  for (let i = 0; i < paths.length; i++) {
+    try {
+      const r = await fsFetch(env, saToken, "GET", paths[i][0]);
+      if (!r.ok) continue;
+      const doc = fromFsDoc(r.data);
+      const raw = paths[i][1] === "vault" ? (doc && doc._consoleGate) : doc;
+      const rec = recordFromDoc(raw);
+      if (rec) out.push({ rec, where: paths[i][1] });
+    } catch {
+      /* a missing copy is normal, not an error */
+    }
+  }
+  return out;
+}
+
+/** Accept ANY copy that matches. Returns the record that worked, so the
+ *  caller can make it the one the worker remembers. */
+async function matchPasswordRecord(records, uid, password) {
+  for (let i = 0; i < records.length; i++) {
+    try {
+      if (await passwordMatches(records[i].rec, uid, password)) return records[i].rec;
+    } catch {
+      /* a corrupt copy must not stop the others being tried */
+    }
+  }
+  return null;
+}
+
 async function persistPasswordRecord(env, uid, rec, saToken, userToken) {
   memory.passwords.set(uid, rec);
   const body = toFsFields(typeof rec === "string" ? { hash: rec, v: 1, updated_at: Date.now() } : rec);
@@ -1198,13 +1247,17 @@ async function persistPasswordRecord(env, uid, rec, saToken, userToken) {
 async function handleAdmin(env, request, path, url, user, userToken, saToken) {
   if (!isOperatorUser(env, user)) return json({ ok: false, error: "not an operator" }, 403);
   const adminPass = request.headers.get("X-Naluno-Admin") || "";
-  const stored = await loadPasswordRecord(env, user.uid, saToken);
+  const records = await collectPasswordRecords(env, user.uid, saToken);
   const openPath = path === "/v1/admin/status" || path === "/v1/admin/password" || path === "/v1/admin/unlock";
-  if (!openPath && stored) {
+  if (!openPath && records.length) {
     if (!adminPass) return json({ ok: false, error: "console password required" }, 401);
-    if (!(await passwordMatches(stored, user.uid, adminPass))) {
+    const matched = await matchPasswordRecord(records, user.uid, adminPass);
+    if (!matched) {
       return json({ ok: false, error: "console password not accepted" }, 401);
     }
+    // Remember the copy that actually worked, so the next request agrees
+    // with this one instead of picking a stale copy again.
+    memory.passwords.set(user.uid, matched);
   }
 
   const listCol = async (name, limit) => {
@@ -1216,12 +1269,11 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
 
   if (path === "/v1/admin/status" && request.method === "GET") {
     const stamped = await stampOperatorClaim(env, user.uid);
-    const rec = stored || await loadPasswordRecord(env, user.uid, saToken);
     return json({
       ok: true,
       operator: true,
       uid: user.uid,
-      hasPassword: !!rec,
+      hasPassword: records.length > 0,
       persist: saToken ? "firestore-sa" : "user-token",
       version: VERSION,
       claim: stamped ? "operator" : "",
@@ -1231,11 +1283,13 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
   if (path === "/v1/admin/unlock" && request.method === "POST") {
     const body = await request.json().catch(() => ({}));
     const pass = String(body.password || adminPass || "").trim();
-    const rec = stored || await loadPasswordRecord(env, user.uid, saToken);
-    if (!rec) return json({ ok: true, setup: true, hasPassword: false });
-    if (!pass || !(await passwordMatches(rec, user.uid, pass))) {
+    if (!records.length) return json({ ok: true, setup: true, hasPassword: false });
+    // Any stored copy may be the current one, so try them all before saying no.
+    const matched = pass ? await matchPasswordRecord(records, user.uid, pass) : null;
+    if (!matched) {
       return json({ ok: false, error: "console password not accepted" }, 401);
     }
+    memory.passwords.set(user.uid, matched);
     return json({ ok: true, hasPassword: true });
   }
 
@@ -1243,10 +1297,12 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
     const body = await request.json().catch(() => ({}));
     const next = String(body.next_password || "").trim();
     if (next.length < 8) return json({ ok: false, error: "Use at least 8 characters" }, 400);
-    const rec = stored || await loadPasswordRecord(env, user.uid, saToken);
-    if (rec) {
+    if (records.length) {
+      // Changing it accepts the current password from ANY stored copy: the
+      // copies can drift, and refusing a password that is genuinely current
+      // on this person's own account is how people get locked out.
       const current = String(body.current_password || adminPass || "").trim();
-      if (!current || !(await passwordMatches(rec, user.uid, current))) {
+      if (!current || !(await matchPasswordRecord(records, user.uid, current))) {
         return json({ ok: false, error: "current password is wrong" }, 401);
       }
     }
