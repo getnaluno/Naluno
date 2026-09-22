@@ -1,79 +1,123 @@
-# Two fixes: the in-call chat bubble, and the translate bar
+# Offline speed, the two failing tests, and honest answers on translate + mesh
 
-## 1. The bubble — my mistake, and how it happened
+## 1. Offline open: 10.5 seconds of waiting, removed
 
-I built the Lifeline package from commit `405e6ac`. At that commit, in-call
-Wireline **did not exist**. It was added afterwards, in `029bb90`, touching
-`calls.js`, `app/index.html`, `css/app.css` and `wireline.js`.
+The service worker asked the **network first** and only fell back to the
+cache — waiting up to **8 seconds for the page** and **2.5 seconds for every
+file**.
 
-My package shipped `app/index.html` and `js/wireline.js` from the **older**
-commit. Deploying it put those two files back, which removed:
+A phone is rarely cleanly offline. It is on Wi-Fi with no internet, or a dead
+mobile connection. Those requests do not fail, they **hang** until the timeout
+runs out. So opening Naluno meant sitting through them. WhatsApp opens
+instantly because it reads its own storage first and talks to the network
+afterwards.
 
-- the whole `#incallWire` sheet markup (`incallWireMsgs`, `incallWireInput`,
-  `incallWireForm`, `incallWireClose`, `incallWireTitle`),
-- `wirelineIsViewing()` from `wireline.js`,
-- the call that repaints the sheet when the thread changes.
+Now the app is served **from cache first** and refreshed in the background.
+Measured on the worker's own decision with a hanging network:
 
-`calls.js` survived untouched, so the button still called `openIncallWire()` —
-which added the `wire-open` class to nothing, then hit `renderIncallWire()`
-and threw. The bubble looked dead because it had nothing to open.
+| | before | after |
+|---|---|---|
+| the page | 8,008 ms | **0 ms** |
+| its files | 2,503 ms | **0 ms** |
+| **total before anything is drawn** | **10,511 ms** | **0 ms** |
 
-**Restored:** the sheet markup back inside the live call section, the CSS, and
-`wirelineIsViewing()`. The sheet is `position: absolute`, never `fixed`, so it
-slides up **inside** the call — the other person stays on screen, your
-self-view moves out of the way instead of disappearing, and the hangup button
-stays where it is. Read receipts work from the sheet again, which they had
-stopped doing.
+A new version still appears after one extra open (the worker already calls
+`skipWaiting` and `clients.claim`).
 
-Your own `js/incall-wire.test.cjs` now passes — it was failing on the live
-repo before this. I updated four assertions in it for the new cache-bust
-stamps (`2026.09.23a`) and added four checks: the send form and close button
-exist, the bubble cannot switch tabs, and `wirelineIsViewing` is present.
+**Honest about the measurement:** this is the service worker's decision,
+proved in isolation. I could not reproduce a full dead-network boot in a
+headless browser, so I am not claiming a measured whole-app figure — only
+that the 10.5 seconds of waiting is gone from the path.
 
-**To avoid this repeating:** when I hand you a package, files I did not change
-should not be in it. `app/index.html` and `wireline.js` were in that bundle
-because Lifeline genuinely edited them — but built from a stale clone. From
-now I will diff against the live repo immediately before packaging and tell
-you if anything newer would be overwritten.
+## 2. The two failing tests — both were test bugs, and one hid a real loss
 
-## 2. The translate bar was real, but unreachable
+**`ads-inventory`** expected `admin-console.js?v=20260922d` while
+`console-pass` expected `22e`, and the file is `22e`. The two tests
+contradicted each other. Fixed to `22e`.
 
-The script and the bar were deployed correctly. The problem was where I hooked
-it: at the **bottom** of `renderThreadMessages()` — and that function
-**returns early when a thread has no messages yet**. So in a new or empty
-chat the bar never rendered at all. In a chat with messages it should have
-appeared above the composer.
+**`console-pass`** read the worker from `../workers/economy/handler.mjs` —
+one level too high, outside the repo. Fixed.
 
-Moved to the top of the function, so it always renders. Open any Wireline
-chat and you will see **"Translate this chat"** just above where you type;
-tap it, choose the language they write in, and their messages appear in yours
-underneath the original.
+With the path fixed it then failed for a real reason: **the worker was
+2.6.4, not 2.6.6.** My Lifeline package shipped `workers/economy/handler.mjs`
+from the old commit and reverted someone's console-password work — the same
+mistake as the in-call bubble, in a second file I did not notice.
 
-## 3. Two failing tests that are NOT from this
+**Restored** (`2.6.6-console-pass`): the worker now reads **every** stored
+copy of the console password — its own record, the `adminConsole` doc, and
+the account vault's `_consoleGate` — and accepts any that matches, then
+remembers the one that worked. Reading only the first copy is why a password
+set on one phone could be refused on another. Unlocking and changing the
+password both use every copy now.
 
-`js/ads-inventory.test.cjs` ("ads pack cache-bust") and
-`js/console-pass.test.cjs` already fail on your live repo, before any of
-today's changes. They look like the same pattern — a file changed without its
-version stamp being bumped, or an older file uploaded over a newer one. I have
-not touched either. Worth a look, as it suggests something else was
-overwritten too.
+**Every test in the repo passes: 10/10, plus 47/47 in the worker.**
+
+## 3. Translate — the code is right; your phone is not running it
+
+I checked the deployed files: `wireline-translate.js` is loaded,
+`#translateBar` sits inside the thread directly above the composer, and the
+hook is above the early return. I ran the deployed app in a real browser and
+called the hook: the bar renders, reading **"Translate this chat"**.
+
+So the files on GitHub are correct and your phone has older ones.
+
+**How to tell for certain:** open **Callsign → Diagnostics**. The build line
+should read **2026.09.23a**. If it shows anything older you are running an
+old bundle, and translate cannot appear no matter what is on GitHub.
+
+Two ways that happens:
+
+- **The installed Android app.** `capacitor.config.json` has `webDir: "."`
+  and no `server.url`, so the APK **bundles its own copy** of the web files.
+  Uploading to GitHub does not change an installed APK — it needs rebuilding
+  and reinstalling.
+- **A stale cached shell** in the PWA. With today's change the worker also
+  refreshes in the background, so one extra open settles it.
+
+## 4. Offline phone-to-phone — why nothing arrived, plainly
+
+Bluetooth being on is not enough, and this is not a bug I can fix in these
+files.
+
+**The mesh needs the Android plugin compiled into the app.** I wrote
+`NalunoMeshPlugin.java` last round and said then that it had never been
+compiled or run. Until an APK is built that includes it, **there is no
+phone-to-phone transport at all** — the web app cannot do it, because the
+browser has no way to connect two phones directly. So a fully offline phone
+had nothing to send through, and the message stayed queued. That is expected,
+not a failure of the routing.
+
+What works offline **today**, with no build:
+
+- **SMS.** Open the chat; the Lifeline bar offers **Send by SMS** with the
+  segment count. That is the route that survived both Uganda shutdowns, and
+  it is the only one that reaches another country.
+
+To get the mesh working:
+
+1. Add `implementation 'com.google.android.gms:play-services-nearby:19.3.0'`.
+2. Put `NalunoMeshPlugin.java` beside `MainActivity.java` (already registered).
+3. Build, install on **both** phones.
+4. Test: both in aeroplane mode with Bluetooth on, within about 10 metres.
+
+Even then, delivery is **eventual** — the phones must be near each other or
+near someone else running Naluno.
 
 ## Files
 
 ```
-app/index.html          in-call sheet restored, cache-bust to 23a
-css/app.css             the sheet's styles
-js/wireline.js          wirelineIsViewing() restored; translate bar moved up
-js/incall-wire.test.cjs stamps updated + 4 extra checks
-sw.js                   cache bumped
+sw.js                            cache-first app shell
+workers/economy/handler.mjs      restored to 2.6.6-console-pass
+js/ads-inventory.test.cjs        stamp corrected
+js/console-pass.test.cjs         worker path corrected
 ```
 
-Nothing from Lifeline or the moderation work is affected — both worker suites
-still pass 47/47, and the Lifeline and translation hooks in `wireline.js` are
-intact.
+Deploy the web files, then `cd workers/economy && npx wrangler deploy` — the
+worker restore matters for admin unlock across devices.
 
-## Test it
+## What I am changing about how I work
 
-- **Bubble:** start a video call, tap the speech bubble. The sheet slides up
-  over the bottom of the call; both videos keep playing. Type, send, close.
-- **Translation:** open any chat; the bar sits above the composer.
+Twice now I have handed you a package containing a file built from a stale
+clone, which reverted someone else's newer work. From now on I will diff every
+file in a package against the live repo immediately before I hand it over, and
+tell you if anything would be overwritten.

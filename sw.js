@@ -70,7 +70,7 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v197';
+const CACHE_NAME = 'naluno-shell-v198';
 const APP_BUILD = '20260922a';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
@@ -419,6 +419,32 @@ self.addEventListener('fetch', event=>{
     const cached = await caches.match(event.request)
       || await caches.match(new Request(bare))
       || (isAppNav ? await caches.match(appShellReq) : null);
+
+    /* SPEED: serve the app from cache FIRST, then refresh it in the
+       background (stale-while-revalidate).
+
+       This used to go to the network first and only fall back to the cache,
+       waiting up to 8s for the page and 2.5s for every file. When a phone is
+       offline it is rarely cleanly offline — it is on Wi-Fi with no internet,
+       or on a dead mobile connection — and those requests do not fail, they
+       HANG until the timeout. Opening the app meant sitting through them one
+       layer at a time, which is why it took five seconds or more when
+       WhatsApp opens instantly: WhatsApp reads its own storage first and
+       talks to the network afterwards.
+
+       Now the app paints from cache immediately and the newer copy is
+       fetched behind it, so the next open has it. The service worker still
+       calls skipWaiting/clients.claim, so a new version never takes more
+       than one extra open to appear. */
+    if(cached && isSameOrigin && (isAppCode || isAppNav)){
+      event.waitUntil((async ()=>{
+        try{
+          const fresh = await netTimeout(event.request, 12000);
+          if(fresh && fresh.ok) putBare(fresh);
+        }catch(_){ /* offline: keep what we have */ }
+      })());
+      return cached;
+    }
     try{
       const response = await netTimeout(event.request, isAppNav ? 8000 : 2500);
       if(response && response.ok){
