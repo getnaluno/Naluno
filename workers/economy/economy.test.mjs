@@ -1106,3 +1106,67 @@ test("broadcast place PATCH uses updateMask so listing does not wipe media", asy
   setFetchImpl(null);
 });
 
+test("console password survives worker restart on the account vault", async () => {
+  resetMemory();
+  const vault = { body: null };
+  setFetchImpl(async (url, opts) => {
+    const u = String(url);
+    const method = (opts && opts.method) || "GET";
+    if (u.includes("accounts:lookup")) {
+      return new Response(JSON.stringify({
+        users: [{
+          localId: ENV.OPERATOR_UID,
+          email: "magjoed@gmail.com",
+          emailVerified: true,
+        }],
+      }), { status: 200 });
+    }
+    if (u.includes("/vault/main") && method === "PATCH") {
+      vault.body = JSON.parse(opts.body);
+      return new Response(JSON.stringify(vault.body), { status: 200 });
+    }
+    if (u.includes("/vault/main")) {
+      if (!vault.body) return new Response("{}", { status: 404 });
+      return new Response(JSON.stringify(vault.body), { status: 200 });
+    }
+    if (u.includes("/adminConsole/") && method === "PATCH") {
+      return new Response("{}", { status: 403 });
+    }
+    if (u.includes("/adminCredentials/") && method === "PATCH") {
+      return new Response("{}", { status: 403 });
+    }
+    return new Response("{}", { status: 200 });
+  });
+  const headers = { Authorization: "Bearer tok", "Content-Type": "application/json" };
+  let res = await handleRequest(
+    req("/v1/admin/password", { method: "POST", headers, body: JSON.stringify({ next_password: "correcthorse" }) }),
+    ENV,
+  );
+  let body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.persist, "user-token");
+  assert.ok(vault.body && vault.body.fields && vault.body.fields._consoleGate, "hash lands on the account vault");
+
+  resetMemory();
+  res = await handleRequest(req("/v1/admin/status", { headers }), ENV);
+  body = await res.json();
+  assert.equal(body.hasPassword, true, "status still sees the password after memory drop");
+
+  res = await handleRequest(
+    req("/v1/admin/unlock", { method: "POST", headers, body: JSON.stringify({ password: "correcthorse" }) }),
+    ENV,
+  );
+  body = await res.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.hasPassword, true);
+  assert.equal(body.setup, undefined);
+
+  res = await handleRequest(
+    req("/v1/admin/unlock", { method: "POST", headers, body: JSON.stringify({ password: "wrong-one" }) }),
+    ENV,
+  );
+  assert.equal(res.status, 401);
+  setFetchImpl(null);
+});
+
