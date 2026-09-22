@@ -16,9 +16,11 @@ assert.ok(/fbAuth\s*=\s*app\.auth\(\)/.test(adminSrc), 'console auth is the name
 assert.ok(!/fbAuth\s*=\s*firebase\.auth\(\)/.test(adminSrc), 'console must not use default auth()');
 assert.ok(!/fbDbAdmin\s*=\s*firebase\.firestore\(\)/.test(adminSrc), 'console must not use default firestore()');
 assert.ok(adminSrc.includes('app.firestore()') || adminSrc.includes('consoleApp().firestore()'), 'console firestore on named app');
-assert.ok(adminSrc.includes("const BUILD = '20260922b'"), 'admin build 20260922b');
-assert.ok(adminHtml.includes('2026.09.22b'), 'admin html build 2026.09.22b');
-assert.ok(adminHtml.includes('admin-console.js?v=20260922b'), 'admin cache-bust');
+assert.ok(adminSrc.includes("const BUILD = '20260922c'"), 'admin build 20260922c');
+assert.ok(adminHtml.includes('2026.09.22c'), 'admin html build 2026.09.22c');
+assert.ok(adminHtml.includes('admin-console.js?v=20260922c'), 'admin cache-bust');
+assert.ok(adminSrc.includes("body.persist !== 'memory'"), 'memory persist is not treated as saved on the account');
+assert.ok(adminSrc.includes('cloudSetHash(uid, hash)'), 'setup always writes the account copy');
 
 assert.ok(/fbAuth\s*=\s*firebase\.auth\(\)/.test(authSrc), 'member stays on [DEFAULT]');
 assert.ok(!authSrc.includes('naluno-console'), 'member must not bind the console app');

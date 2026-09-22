@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260922b';
+  const BUILD = '20260922c';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -3569,17 +3569,15 @@
           body: JSON.stringify({ next_password: typed }),
         });
         const body = res ? await res.json().catch(function () { return {}; }) : {};
-        workerOk = !!(res && res.ok && body.ok);
+        workerOk = !!(res && res.ok && body.ok && body.persist && body.persist !== 'memory');
         if (!workerOk && res && res.status === 401) {
           setMsg('adminGateMsg', body.error || 'Could not save the password.');
           return;
         }
       } catch (_) {}
-      if (!workerOk) {
-        const saved = await cloudSetHash(uid, hash);
-        if (!saved.ok) {
-          setMsg('adminGateMsg', 'Saved on this phone. Cloud copy failed — you can still unlock here.');
-        }
+      const saved = await cloudSetHash(uid, hash);
+      if (!workerOk && !saved.ok) {
+        setMsg('adminGateMsg', 'Saved on this phone. Cloud copy failed — you can still unlock here.');
       }
       __needsSetup = false;
       setGateMode('locked');
@@ -3601,6 +3599,7 @@
       } catch (_) {}
       if (workerVerdict === true) {
         try { localSet(uid, await hashLocal(uid, typed)); } catch (_) {}
+        try { await cloudSetHash(uid, await hashLocal(uid, typed)); } catch (_) {}
       } else {
         const storedCloud = await cloudGetHash(uid);
         const typedHash = await hashLocal(uid, typed);
@@ -3613,7 +3612,8 @@
             body: JSON.stringify({ next_password: typed }),
           });
         } catch (_) {}
-        if (storedCloud && !okLocal) { try { localSet(uid, typedHash); } catch (_) {} }
+        try { localSet(uid, typedHash); } catch (_) {}
+        if (!okCloud) { try { await cloudSetHash(uid, typedHash); } catch (_) {} }
       }
     }
     __adminPass = typed;
