@@ -928,8 +928,34 @@ async function decryptWirelineMessage(m, contact){
   }catch(_){}
   return m.text || null;
 }
+/* Is this conversation actually on screen right now?
+   True for the full Wireline thread AND for the mini sheet on a live call —
+   otherwise a message read during a call would never be marked as read, and
+   the sender would keep seeing it as undelivered.
+   (Restored: an earlier upload of an older wireline.js removed this, which
+   left calls.js calling functions that no longer existed.) */
+function wirelineIsViewing(contactId){
+  try{
+    if(contactId == null) return false;
+    if(String(activeThreadContactId) !== String(contactId)) return false;
+    const incall = document.getElementById('incall');
+    if(incall && incall.classList.contains('wire-open')) return true;
+    const thread = document.getElementById('wirelineThread');
+    return !!(thread && thread.classList.contains('active'));
+  }catch(_){ return false; }
+}
+
 function renderThreadMessages(){
   try{ if(typeof nalunoLifelineRenderBar === 'function') nalunoLifelineRenderBar(); }catch(_){}
+  /* Moved to the TOP. This used to sit at the bottom of the function, after
+     the early return taken when a thread has no messages yet — so in a brand
+     new chat the "Translate this chat" bar never appeared at all. */
+  try{ if(typeof wireTranslateAfterRender === 'function') wireTranslateAfterRender(); }catch(_){}
+  /* Keep the on-call sheet in step with the thread it mirrors. */
+  try{
+    const ic = document.getElementById('incall');
+    if(ic && ic.classList.contains('wire-open') && typeof renderIncallWire === 'function') renderIncallWire();
+  }catch(_){}
   const queued = (localQueuedMessages[activeThreadContactId] || []).map(q => ({
     id: q.queueId, from:'me', ts: q.queuedAt, status:'queued',
     ...q.payload,
@@ -983,7 +1009,6 @@ function renderThreadMessages(){
       ${reactionBadgeHtml(m)}
     </div>`;
   }).join('');
-  try{ if(typeof wireTranslateAfterRender === 'function') wireTranslateAfterRender(); }catch(_){}
   document.querySelectorAll('[data-voice]').forEach(el=>{
     el.onclick = ()=> toggleVoicePlay(el.dataset.voice);
   });

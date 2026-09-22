@@ -37,9 +37,17 @@ assert.ok(wire.includes('function wirelineIsViewing'), 'on-call sheet counts as 
 assert.ok(wire.includes("classList.contains('wire-open')"), 'viewing includes the call sheet');
 assert.ok(wire.includes('renderIncallWire'), 'thread refresh paints the call sheet');
 
-assert.ok(html.includes('naluno-build" content="2026.09.22f"'), 'app stamped 22f');
-assert.ok(html.includes('calls.js?v=20260922f'), 'calls cache-bust');
-assert.ok(html.includes('wireline.js?v=20260922f'), 'wireline cache-bust');
-assert.ok(html.includes('app.css?v=20260922f'), 'css cache-bust');
+/* Stamps bumped to 23a: the sheet's markup and CSS were rebuilt after an
+   older index.html was uploaded over them, so phones must refetch. */
+assert.ok(html.includes('naluno-build" content="2026.09.23a"'), 'app stamped 23a');
+assert.ok(html.includes('calls.js?v=20260923a'), 'calls cache-bust');
+assert.ok(html.includes('wireline.js?v=20260923a'), 'wireline cache-bust');
+assert.ok(html.includes('app.css?v=20260923a'), 'css cache-bust');
+
+/* The bubble must never navigate away from the call. */
+assert.ok(!/chatBtn[\s\S]{0,400}showTab\(/.test(calls), 'bubble does not switch tabs');
+assert.ok(html.includes('id="incallWireForm"'), 'send form on the call');
+assert.ok(html.includes('id="incallWireClose"'), 'close without hanging up');
+assert.ok(wire.includes('function wirelineIsViewing'), 'read receipts work from the call sheet');
 
 console.log('incall-wire tests passed');
