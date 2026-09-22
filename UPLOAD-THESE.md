@@ -1,18 +1,24 @@
-# GitHub — 2026.09.22b
+# GitHub — 2026.09.22c
 
-Signing out of Naluno was also signing out of Control Centre, and the other way around. Same browser, same email, one shared sign-in.
+Control Centre password now lives on the Naluno account, not only on this phone.
 
-They are separate now. The app keeps its session. The console keeps its own. Same email is fine.
+The last save never stuck: the worker kept it in memory, then forgot it. That is why the desk said “first time” after Google sign-in.
 
 ## Upload to GitHub
 
 1. admin/index.html
 2. js/admin-console.js
-3. js/currency.js
+3. js/currency.js (from 22b — keep it)
 4. js/auth-isolation.test.cjs
+5. workers/economy/handler.mjs
+6. workers/economy/economy.test.mjs
+
+## Deploy the worker
+
+Same `workers/economy/handler.mjs` to the economy worker. Version **2.6.5-console-pass**.
 
 ## Then
 
-Hard-refresh Control Centre so it loads **2026.09.22b**. Google-sign-in there once — that first sign-in binds the console only. The app stays as it is.
+Hard-refresh Control Centre. Set the password **once more**. After that it follows the account: any signed-in device can unlock with it. This phone also keeps a copy so it still works if the worker is down.
 
-After that: sign out of Naluno and Control Centre should still be in. Sign out of Control Centre and Naluno should still be in.
+Do not create the password until this pack is live, or it will not land on the account.
