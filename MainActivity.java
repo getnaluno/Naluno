@@ -25,6 +25,9 @@ public class MainActivity extends BridgeActivity {
   @Override
   protected void onCreate(Bundle savedInstanceState) {
     interceptSystemSplash();
+    // Lifeline's offline mesh transport (Bluetooth / Wi-Fi, no internet).
+    // Must be registered BEFORE super.onCreate so the web layer can see it.
+    registerPlugin(NalunoMeshPlugin.class);
     super.onCreate(savedInstanceState);
     paintLaunchBackground();
     handleCallIntent(getIntent());
