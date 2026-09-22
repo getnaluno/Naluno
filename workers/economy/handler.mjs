@@ -25,7 +25,7 @@ import {
   listingFromScreen,
 } from "./screen.mjs";
 
-export const VERSION = "2.6.6-console-pass";
+export const VERSION = "2.6.4-reports";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -1154,86 +1154,43 @@ async function passwordMatches(stored, uid, password) {
 }
 function recordFromDoc(doc) {
   if (!doc) return null;
-  const inner = (doc._consoleGate && typeof doc._consoleGate === "object")
-    ? doc._consoleGate
-    : doc;
-  if (inner.v === 2 && inner.hash && inner.salt) return inner;
-  if (inner.hash) return inner.v === 2 ? inner : String(inner.hash);
+  if (doc.v === 2 && doc.hash && doc.salt) return doc;
+  if (doc.hash) return doc.v === 2 ? doc : String(doc.hash);
   return null;
 }
-function recKey(rec) {
-  if (!rec) return "";
-  if (typeof rec === "string") return "s:" + rec;
-  return "v" + String(rec.v || "") + ":" + String(rec.salt || "") + ":" + String(rec.hash || "");
-}
-async function collectPasswordRecords(env, uid, saToken, userToken) {
-  const out = [];
-  const seen = new Set();
-  function add(rec) {
-    if (!rec) return;
-    const k = recKey(rec);
-    if (!k || seen.has(k)) return;
-    seen.add(k);
-    out.push(rec);
-  }
-  if (uid && memory.passwords.has(uid)) add(memory.passwords.get(uid));
-  if (!uid) return out;
-  const attempts = [];
-  if (saToken) {
-    attempts.push([saToken, "/adminCredentials/" + encodeURIComponent(uid)]);
-    attempts.push([saToken, "/adminConsole/" + encodeURIComponent(uid)]);
-  }
-  if (userToken) {
-    attempts.push([userToken, "/users/" + encodeURIComponent(uid) + "/vault/main"]);
-    attempts.push([userToken, "/adminConsole/" + encodeURIComponent(uid)]);
-    attempts.push([userToken, "/users/" + encodeURIComponent(uid) + "/consoleGate/main"]);
-  }
-  for (let i = 0; i < attempts.length; i++) {
+async function loadPasswordRecord(env, uid, saToken) {
+  if (memory.passwords.has(uid)) return memory.passwords.get(uid);
+  const token = saToken;
+  if (!token || !uid) return null;
+  const paths = [
+    "/adminCredentials/" + encodeURIComponent(uid),
+    "/adminConsole/" + encodeURIComponent(uid),
+  ];
+  for (let i = 0; i < paths.length; i++) {
     try {
-      const r = await fsFetch(env, attempts[i][0], "GET", attempts[i][1]);
+      const r = await fsFetch(env, token, "GET", paths[i]);
       if (!r.ok) continue;
-      add(recordFromDoc(fromFsDoc(r.data)));
+      const rec = recordFromDoc(fromFsDoc(r.data));
+      if (rec) {
+        memory.passwords.set(uid, rec);
+        return rec;
+      }
     } catch {
       /* try next */
     }
   }
-  return out;
-}
-async function matchPasswordRecord(recs, uid, password) {
-  if (!password) return null;
-  for (let i = 0; i < recs.length; i++) {
-    try {
-      if (await passwordMatches(recs[i], uid, password)) return recs[i];
-    } catch {
-      /* try next copy */
-    }
-  }
   return null;
-}
-async function loadPasswordRecord(env, uid, saToken, userToken) {
-  const recs = await collectPasswordRecords(env, uid, saToken, userToken);
-  if (!recs.length) return null;
-  const rec = recs[0];
-  if (uid && rec) memory.passwords.set(uid, rec);
-  return rec;
 }
 async function persistPasswordRecord(env, uid, rec, saToken, userToken) {
   memory.passwords.set(uid, rec);
-  const flat = typeof rec === "string"
-    ? { hash: rec, v: 1, kind: "console-gate", updated_at: Date.now() }
-    : Object.assign({}, rec, { kind: "console-gate", updated_at: rec.updated_at || Date.now() });
+  const body = toFsFields(typeof rec === "string" ? { hash: rec, v: 1, updated_at: Date.now() } : rec);
   if (saToken) {
-    const r = await fsPutDoc(env, saToken, "/adminCredentials/" + encodeURIComponent(uid), flat);
-    if (r && r.ok) return "firestore-sa";
+    const r = await fsFetch(env, saToken, "PATCH", "/adminCredentials/" + encodeURIComponent(uid), body);
+    if (r.ok) return "firestore-sa";
   }
   if (userToken) {
-    /* Vault is owner-writable. adminConsole is denied to every browser. */
-    const v = await fsPutDoc(env, userToken, "/users/" + encodeURIComponent(uid) + "/vault/main", {
-      _consoleGate: flat,
-    });
-    if (v && v.ok) return "user-token";
-    const a = await fsPutDoc(env, userToken, "/adminConsole/" + encodeURIComponent(uid), flat);
-    if (a && a.ok) return "user-token";
+    const r = await fsFetch(env, userToken, "PATCH", "/adminConsole/" + encodeURIComponent(uid), body);
+    if (r.ok) return "user-token";
   }
   return "memory";
 }
@@ -1241,12 +1198,11 @@ async function persistPasswordRecord(env, uid, rec, saToken, userToken) {
 async function handleAdmin(env, request, path, url, user, userToken, saToken) {
   if (!isOperatorUser(env, user)) return json({ ok: false, error: "not an operator" }, 403);
   const adminPass = request.headers.get("X-Naluno-Admin") || "";
-  const recs = await collectPasswordRecords(env, user.uid, saToken, userToken);
-  const stored = recs[0] || null;
+  const stored = await loadPasswordRecord(env, user.uid, saToken);
   const openPath = path === "/v1/admin/status" || path === "/v1/admin/password" || path === "/v1/admin/unlock";
   if (!openPath && stored) {
     if (!adminPass) return json({ ok: false, error: "console password required" }, 401);
-    if (!(await matchPasswordRecord(recs, user.uid, adminPass))) {
+    if (!(await passwordMatches(stored, user.uid, adminPass))) {
       return json({ ok: false, error: "console password not accepted" }, 401);
     }
   }
@@ -1260,11 +1216,12 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
 
   if (path === "/v1/admin/status" && request.method === "GET") {
     const stamped = await stampOperatorClaim(env, user.uid);
+    const rec = stored || await loadPasswordRecord(env, user.uid, saToken);
     return json({
       ok: true,
       operator: true,
       uid: user.uid,
-      hasPassword: recs.length > 0,
+      hasPassword: !!rec,
       persist: saToken ? "firestore-sa" : "user-token",
       version: VERSION,
       claim: stamped ? "operator" : "",
@@ -1274,12 +1231,11 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
   if (path === "/v1/admin/unlock" && request.method === "POST") {
     const body = await request.json().catch(() => ({}));
     const pass = String(body.password || adminPass || "").trim();
-    if (!recs.length) return json({ ok: true, setup: true, hasPassword: false });
-    const matched = await matchPasswordRecord(recs, user.uid, pass);
-    if (!matched) {
+    const rec = stored || await loadPasswordRecord(env, user.uid, saToken);
+    if (!rec) return json({ ok: true, setup: true, hasPassword: false });
+    if (!pass || !(await passwordMatches(rec, user.uid, pass))) {
       return json({ ok: false, error: "console password not accepted" }, 401);
     }
-    memory.passwords.set(user.uid, matched);
     return json({ ok: true, hasPassword: true });
   }
 
@@ -1287,9 +1243,10 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
     const body = await request.json().catch(() => ({}));
     const next = String(body.next_password || "").trim();
     if (next.length < 8) return json({ ok: false, error: "Use at least 8 characters" }, 400);
-    if (recs.length) {
+    const rec = stored || await loadPasswordRecord(env, user.uid, saToken);
+    if (rec) {
       const current = String(body.current_password || adminPass || "").trim();
-      if (!current || !(await matchPasswordRecord(recs, user.uid, current))) {
+      if (!current || !(await passwordMatches(rec, user.uid, current))) {
         return json({ ok: false, error: "current password is wrong" }, 401);
       }
     }
@@ -1951,6 +1908,27 @@ async function handleMail(request, env, saToken) {
   });
 }
 
+/* ---- Lifeline relay helpers ---- */
+const _lifelineHits = new Map();
+/** Best-effort per-IP rate limit (per isolate). Stops casual abuse of the
+ *  dead drop as free storage; not a security boundary. */
+function lifelineRate(ip, perMinute) {
+  const now = Date.now(), k = ip + "|" + Math.floor(now / 60000);
+  const n = (_lifelineHits.get(k) || 0) + 1;
+  _lifelineHits.set(k, n);
+  if (_lifelineHits.size > 5000) _lifelineHits.clear();
+  return n <= perMinute;
+}
+function lifelineB64u(str) {
+  try {
+    let s = String(str).replace(/-/g, "+").replace(/_/g, "/"); while (s.length % 4) s += "=";
+    const bin = atob(s), out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  } catch (_) { return null; }
+}
+function lifelineHex(b) { let s = ""; for (let i = 0; i < b.length; i++) s += (b[i] < 16 ? "0" : "") + b[i].toString(16); return s; }
+
 export async function handleRequest(request, env = {}, ctx = {}) {
   if (request.method === "OPTIONS") return corsPreflight();
   const url = new URL(request.url);
@@ -1974,6 +1952,61 @@ export async function handleRequest(request, env = {}, ctx = {}) {
     }
 
     const saToken = hasSaConfigured(env) ? await saAccessToken(env) : "";
+
+    /* ---- LIFELINE RELAY: an encrypted dead drop ----
+       For when the internet is up but Naluno or Google is blocked. It works
+       WITHOUT Firebase sign-in on purpose: refreshing a sign-in needs Google,
+       which may be exactly what is blocked.
+       It is safe to leave unauthenticated because it cannot learn anything:
+       each packet is end-to-end sealed, and is filed under a tag that only
+       the two people in the conversation can compute, changing daily. The
+       relay sees random bytes under a random label. A forged packet simply
+       fails to open on the recipient's phone. Limits stop it being used as
+       free storage. */
+    if (path === "/v1/lifeline/drop" && request.method === "POST") {
+      if (!saToken) return json({ ok: false, error: "relay storage not configured" }, 503);
+      const ip = request.headers.get("CF-Connecting-IP") || "?";
+      if (!lifelineRate(ip, 60)) return json({ ok: false, error: "slow down" }, 429);
+      const body = await request.json().catch(() => ({}));
+      const p = String(body.p || "");
+      if (!/^[A-Za-z0-9_-]{60,5600}$/.test(p)) return json({ ok: false, error: "bad packet" }, 400);
+      const bytes = lifelineB64u(p);
+      // [version][tag 12][iv 12][ciphertext >= 16]
+      if (!bytes || bytes[0] !== 1 || bytes.length < 41 || bytes.length > 4096) return json({ ok: false, error: "bad packet" }, 400);
+      const tag = lifelineHex(bytes.slice(1, 13));
+      const id = lifelineHex(bytes.slice(13, 21));
+      const exp = Date.now() + 72 * 3600 * 1000;
+      const r = await fsFetch(env, saToken, "PATCH", "/lifelineDrops/" + tag + "_" + id,
+        toFsFields({ tag, p, exp, at: Date.now() }));
+      if (!r.ok) return json({ ok: false, error: "store failed" }, 502);
+      return json({ ok: true });
+    }
+    if (path === "/v1/lifeline/pick" && request.method === "POST") {
+      if (!saToken) return json({ ok: false, error: "relay storage not configured" }, 503);
+      const ip = request.headers.get("CF-Connecting-IP") || "?";
+      if (!lifelineRate(ip, 120)) return json({ ok: false, error: "slow down" }, 429);
+      const body = await request.json().catch(() => ({}));
+      const tags = (Array.isArray(body.tags) ? body.tags : [])
+        .filter((t) => typeof t === "string" && /^[0-9a-f]{24}$/.test(t)).slice(0, 300);
+      if (!tags.length) return json({ ok: true, packets: [] });
+      const now = Date.now(), out = [];
+      // Firestore "in" takes at most 30 values per query.
+      for (let i = 0; i < tags.length && out.length < 200; i += 30) {
+        const chunk = tags.slice(i, i + 30);
+        const q = await fsFetch(env, saToken, "POST", ":runQuery", { structuredQuery: {
+          from: [{ collectionId: "lifelineDrops" }],
+          where: { fieldFilter: { field: { fieldPath: "tag" }, op: "IN",
+            value: { arrayValue: { values: chunk.map((t) => ({ stringValue: t })) } } } },
+          limit: 100 } });
+        const rows = Array.isArray(q.data) ? q.data : [];
+        rows.forEach((row) => {
+          if (!row || !row.document) return;
+          const d = fromFsDoc(row.document);
+          if (Number(d.exp) > now && d.p) out.push(String(d.p));
+        });
+      }
+      return json({ ok: true, packets: out.slice(0, 200) });
+    }
 
     if (path === "/v1/flags") {
       const token = bearer(request);
