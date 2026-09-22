@@ -42,8 +42,20 @@ public class MainActivity extends BridgeActivity {
         getSplashScreen().setOnExitAnimationListener(new android.window.SplashScreen.OnExitAnimationListener() {
           @Override
           public void onSplashScreenExit(android.window.SplashScreenView view) {
-            try { view.setAlpha(0f); } catch (Exception e) {}
-            try { view.remove(); } catch (Exception e) {}
+            try {
+              view.animate()
+                .alpha(0f)
+                .setDuration(220)
+                .withEndAction(new Runnable() {
+                  @Override public void run() {
+                    try { view.remove(); } catch (Exception e) {}
+                  }
+                })
+                .start();
+            } catch (Exception e) {
+              try { view.setAlpha(0f); } catch (Exception e2) {}
+              try { view.remove(); } catch (Exception e2) {}
+            }
           }
         });
       } catch (Exception e) {

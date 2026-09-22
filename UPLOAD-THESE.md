@@ -1,21 +1,22 @@
-# GitHub — 2026.09.21l
+# GitHub — 2026.09.22a
 
-A decided report came back on every new Control Centre sign-in. The last pack only hid it on the open screen. This pack writes the decision, and Take down closes the reports on that Broadcast.
+The opening logo was drawing, then the stylesheet loaded and played that intro again — so the mark vanished and grew back. Sign-in also swapped in a second logo.
+
+This build keeps one logo. The draw runs once. Sign-in arrives under it.
 
 ## Upload to GitHub
 
-1. admin/index.html
-2. js/admin-data.js
-3. js/admin-console.js
-4. workers/economy/handler.mjs
-5. workers/economy/economy.test.mjs
-6. js/admin-data.test.cjs
+1. app/index.html
+2. css/app.css
+3. js/auth.js
+4. js/onboard.js
+5. js/pwa.js
+6. sw.js
+7. js/entry-boot.test.cjs
+8. MainActivity.java (Play build — system splash now fades instead of cutting)
 
 ## Then
 
-1. Deploy economy worker **2.6.4-reports** (`handler.mjs` next to `screen.mjs`).
-2. Upload the three Control Centre files. Hard-refresh `/admin/` so it loads **2026.09.21l**.
+Hard-refresh the app so it loads **2026.09.22a**. Cold-open Naluno: the mark should draw once, then hold, then the next screen should arrive under the same mark.
 
-Sign in once. The waiting report that was already taken down leaves, and it stays gone after Sign out. Action or Dismiss still needs a note, and that note is what the next session reads.
-
-A sexual report that only auto-hid a Broadcast still waits until you Action or Dismiss it — that is the remaining decision.
+The Android store app needs a new Play build for the system splash fade. The web / Home Screen app is this upload.
