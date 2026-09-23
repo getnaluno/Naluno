@@ -39,9 +39,15 @@ function signalTtlMs(){
   return SIGNAL_TTL_OPTIONS[hours] || SIGNAL_TTL_OPTIONS[24];
 }
 
+/* Share links go through the worker so the message carries a real preview:
+   the Broadcast's own picture, its title and who made it. A link straight to
+   getnaluno.com cannot do that — it is static hosting, so every Broadcast
+   would serve the same generic tags and every share would look identical.
+   The worker page forwards into the app immediately.
+   One constant, so this can move to a custom domain later. */
+const NALUNO_LINK_BASE = 'https://naluno-economy.naluno.workers.dev';
 function broadcastShareUrl(id){
-  const base = (location.origin && location.origin !== 'null') ? location.origin : 'https://getnaluno.com';
-  return base.replace(/\/$/, '') + '/?broadcast=' + encodeURIComponent(id);
+  return NALUNO_LINK_BASE + '/b/' + encodeURIComponent(id);
 }
 
 /** Share a whole Strand (a creator's ordered set of Broadcasts), not just one item in it. */
@@ -638,6 +644,21 @@ function openBroadcastById(id){
     const params = new URLSearchParams(location.search || '');
     const id = params.get('broadcast');
     if(!id) return;
+    /* Go to Broadcast IMMEDIATELY, before waiting for sign-in. This used to
+       wait for auth first, so a shared link landed on Frequencies and sat
+       there for a second before jumping — the link looked like it had opened
+       the wrong thing. Switching the tab first means the person only ever
+       sees where they were going. */
+    const goBroadcastTab = function(){
+      try{
+        const nav = document.querySelector('.navbtn[data-tab="broadcast"]');
+        if(nav){ nav.click(); return true; }
+      }catch(_){}
+      return false;
+    };
+    if(!goBroadcastTab()){
+      document.addEventListener('DOMContentLoaded', goBroadcastTab, { once: true });
+    }
     let n = 0;
     const iv = setInterval(()=>{
       n++;

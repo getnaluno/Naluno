@@ -1454,6 +1454,58 @@
       + 'look at what the video is before approving it.</p></details>';
   }
 
+  /* A reported Broadcast, watchable in the console.
+     The report queue used to be a text table: you could read that something
+     was reported but not SEE it without going into the app and hunting for
+     it. For a sexual or terrorism report that delay is the whole problem.
+     This puts the same player the held/taken-down lists use next to the
+     report, with the reason, who reported it, and the decisions. */
+  function reportReviewCard(r) {
+    const bid = r.broadcast_id || (r.target_type === 'broadcast' ? r.target_id : '');
+    const b = bid ? findBroadcast(bid) : null;
+    const urgent = URGENT_REPORT_CODES[r.reason_code] ? true : false;
+    let frame = '<div class="review-missing">' + (bid ? 'This Broadcast is not in the console\u2019s current list' : 'Not about a Broadcast') + '</div>';
+    if (b) {
+      const media = bcastMediaUrl(b);
+      const thumb = String((b && (b.thumbUrl || b.thumb)) || '');
+      if (bcastIsPhoto(b) && media) frame = '<img class="review-media" alt="" src="' + escapeHtml(media) + '" />';
+      else if (media) frame = '<video class="review-media" playsinline webkit-playsinline controls preload="none" poster="' + escapeHtml(thumb) + '" src="' + escapeHtml(media) + '"></video>';
+      else if (thumb) frame = '<img class="review-media" alt="" src="' + escapeHtml(thumb) + '" />';
+    }
+    const state = b
+      ? (b.hidden ? 'already taken down' : (b.held ? 'held, off the feed' : 'still on the feed'))
+      : '';
+    const id = escapeHtml(r.id || '');
+    const actions = '<button type="button" class="ghost admRpt" data-id="' + id + '" data-d="ACTIONED">Action</button> '
+      + '<button type="button" class="ghost admRpt" data-id="' + id + '" data-d="DISMISSED">Dismiss</button>'
+      + (bid && b && !b.hidden ? ' <button type="button" class="danger admBmod" data-id="' + escapeHtml(bid) + '" data-a="take-down">Take down</button>' : '')
+      + (bid && b && (b.hidden || b.held) ? ' <button type="button" class="ghost admBmod" data-id="' + escapeHtml(bid) + '" data-a="' + (b.hidden ? 'restore' : 'let-out') + '">Put back</button>' : '');
+    return '<div class="review-card' + (urgent ? ' review-urgent' : '') + '">'
+      + '<div class="review-frame">' + frame + '</div>'
+      + '<div class="review-meta">'
+      + '<div class="review-title">' + escapeHtml((b && (b.title || b.id)) || bid || 'Report') + '</div>'
+      + '<div class="sub">' + (urgent ? '<strong>URGENT</strong> \u00b7 ' : '')
+      + escapeHtml(r.reason_code || '') + (state ? (' \u00b7 ' + escapeHtml(state)) : '')
+      + ' \u00b7 reported by ' + escapeHtml(String(r.reporter_uid || '').slice(0, 10)) + '\u2026</div>'
+      + (r.reason ? '<div class="sub" style="margin-top:4px;">\u201c' + escapeHtml(String(r.reason).slice(0, 220)) + '\u201d</div>' : '')
+      + '<div class="row" style="margin-top:10px;">' + actions + '</div>'
+      + '</div></div>';
+  }
+  const URGENT_REPORT_CODES = {
+    sexual: 1, terrorism: 1, recruitment: 1, child_exploitation: 1,
+    sexual_exploitation: 1, violence: 1,
+  };
+  /* The reported Broadcast may be anywhere in the snapshot, not just in the
+     held or taken-down lists. */
+  function findBroadcast(id) {
+    try {
+      const raw = (__snap && __snap._raw) || {};
+      const all = [].concat(raw.broadcasts || [], (__snap && __snap.content && __snap.content.held) || [],
+        (__snap && __snap.content && __snap.content.hidden) || []);
+      return all.find(function (b) { return b && (b.id === id || b._id === id); }) || null;
+    } catch (_) { return null; }
+  }
+
   function trustReviewCard(b, mode) {
     const media = bcastMediaUrl(b);
     const thumb = String((b && (b.thumbUrl || b.thumb)) || '');
@@ -2317,18 +2369,8 @@
           ['Taken down', hidden.length || c.broadcasts_hidden || 0],
           ['Suspended', sf.suspended || 0], ['Restricted', sf.restricted || 0]])
         + card('Open reports', (sf.open || []).length
-          ? table(['Target', 'Why', 'Note', ''],
-            (sf.open || []).map(function (r) {
-              const bid = r.broadcast_id || (r.target_type === 'broadcast' ? r.target_id : '');
-              return [
-                escapeHtml(String(r.target_user_id || r.target_id || '').slice(0, 12)),
-                escapeHtml(r.reason_code || '') + (r.reason ? (' · ' + escapeHtml(String(r.reason).slice(0, 80))) : ''),
-                escapeHtml(r.status || 'OPEN'),
-                '<button type="button" class="ghost admRpt" data-id="' + escapeHtml(r.id) + '" data-d="ACTIONED">Action</button> '
-                + '<button type="button" class="ghost admRpt" data-id="' + escapeHtml(r.id) + '" data-d="DISMISSED">Dismiss</button>'
-                + (bid ? (' <button type="button" class="ghost admBmod" data-id="' + escapeHtml(bid) + '" data-a="take-down">Take down</button>') : ''),
-              ];
-            }))
+          ? '<p class="sub">Watch it here \u2014 no need to open the app. Urgent reports (sexual, terrorism and the rest) are already off the feed; these buttons decide what happens next.</p>'
+            + '<div class="review-list">' + (sf.open || []).map(reportReviewCard).join('') + '</div>'
           : '<p class="sub">No open reports.</p>')
         + card('Waiting to go out', held.length
           ? '<p class="sub">Watch here, then Let out or Take down. It stays on their list until you decide.</p>'

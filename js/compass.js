@@ -17,14 +17,37 @@ async function sha256Hex(text){
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
 }
+/* The Compass password kept disappearing.
+   Its hash lives in the vault, whose cache is IN MEMORY ONLY — it is empty
+   until the vault finishes loading from Firestore, and stays empty offline or
+   if that load fails. Meanwhile the public profile copy is deliberately
+   stripped when the vault takes ownership. So on a fresh start the hash read
+   back as "" for a while, compassIsLocked() said false, and Compass simply
+   opened: the password looked lost.
+   A local copy makes it survive restarts and work offline. It is only a
+   SHA-256 hash — the password itself is still never stored anywhere. */
+const COMPASS_HASH_KEY = 'nalunoCompassPasswordHash';
+function compassLocalHash(){
+  try{ return localStorage.getItem(COMPASS_HASH_KEY) || ''; }catch(_){ return ''; }
+}
+function compassRememberHash(hash){
+  try{
+    if(hash) localStorage.setItem(COMPASS_HASH_KEY, hash);
+    else localStorage.removeItem(COMPASS_HASH_KEY);
+  }catch(_){}
+}
 function compassStoredHash(){
   try{
     if(typeof nalunoVault !== 'undefined' && typeof nalunoVault.get === 'function'){
       const v = nalunoVault.get('compassPasswordHash');
-      if(v) return v;
+      if(v){ compassRememberHash(v); return v; }
     }
   }catch(_){}
-  return (currentProfile && currentProfile.compassPasswordHash) || '';
+  const fromProfile = (currentProfile && currentProfile.compassPasswordHash) || '';
+  if(fromProfile){ compassRememberHash(fromProfile); return fromProfile; }
+  // Nothing loaded yet (or we are offline): fall back to the local copy so the
+  // lock holds instead of quietly letting Compass open.
+  return compassLocalHash();
 }
 function compassIsLocked(){
   return !!compassStoredHash() && !compassUnlockedThisSession;
@@ -80,6 +103,7 @@ $('compassLockToggleBtn').onclick = async ()=>{
       try{ await fbDb.collection('users').doc(currentUser.uid).set({ compassPasswordHash: hash }, { merge:true }); }catch(_){}
     }
     if(currentProfile) currentProfile.compassPasswordHash = hash;
+    compassRememberHash(hash);
     toast('Compass is now locked with a password');
   } else {
     const action = prompt('Compass is currently password-protected. Type "remove" to remove the password, or type a new password to change it:');
@@ -96,6 +120,7 @@ $('compassLockToggleBtn').onclick = async ()=>{
         await fbDb.collection('users').doc(currentUser.uid).set({ compassPasswordHash: firebase.firestore.FieldValue.delete() }, { merge:true });
       }catch(_){}
       if(currentProfile) delete currentProfile.compassPasswordHash;
+      compassRememberHash('');
       toast('Compass password removed');
     } else {
       const newHash = await sha256Hex(action);
