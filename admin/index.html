@@ -7,8 +7,8 @@
 <meta name="robots" content="noindex, nofollow, noarchive" />
 <meta name="googlebot" content="noindex, nofollow, noarchive" />
 <meta name="theme-color" content="#07080D" />
-<meta name="naluno-build" content="2026.09.23c" />
-<meta name="app-version" content="2026.09.23c" />
+<meta name="naluno-build" content="2026.09.23d" />
+<meta name="app-version" content="2026.09.23d" />
 <link rel="icon" href="/icon-192.png" />
 <link rel="canonical" href="https://getnaluno.com/admin/" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -183,6 +183,15 @@ button{
     .rulebook summary{ cursor:pointer; }
     .rulebook ul{ margin:6px 0 10px; padding-left:18px; }
     .rulebook p{ margin:8px 0 4px; }
+
+    /* Offered instead of yanking the page away while you are reading. */
+    .admin-refresh-pill{
+      position:fixed; left:50%; transform:translateX(-50%); bottom:18px; z-index:60;
+      display:none; padding:9px 16px; border-radius:999px; cursor:pointer;
+      background:var(--mint,#7CFFB2); color:#0D0F17; border:none;
+      font-family:inherit; font-size:12.5px; font-weight:600;
+      box-shadow:0 6px 20px rgba(0,0,0,.45);
+    }
 </style>
 </head>
 <body>
@@ -292,6 +301,6 @@ button{
 <script src="/js/currency.js?v=20260922b"></script>
 <script src="/js/handle-guard.js?v=20260921c"></script>
 <script src="/js/admin-data.js?v=20260922d"></script>
-<script src="/js/admin-console.js?v=20260923c"></script>
+<script src="/js/admin-console.js?v=20260923d"></script>
 </body>
 </html>
