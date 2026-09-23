@@ -1,104 +1,104 @@
-# Points recovery + the counting fixes you never received
+# One upload: reports, notices, Compass, and share-link previews
 
-Built against **6c57600**, the live commit. I diffed every file in this
-package against it before packaging: all nine are files I actually changed,
-none would overwrite anything newer.
+Everything from the previous round **plus** the link job, in a single package
+built against **7deaaa4**. All 12 files are ones I changed; I diffed the whole
+package against live before handing it over.
 
-## First — the build you never got
+---
 
-The counting audit package was never committed. I checked: `fsIncrement`, the
-share event, the ads fix and the console refresh hold are all absent from the
-live repo. **Everything from that package is folded into this one**, rebuilt
-on 6c57600, so there is one thing to deploy rather than two.
+# NEW: share links now carry a preview
 
-That package fixed:
+A link's picture and title come from `og:` tags in the page it points to.
+`getnaluno.com` is static hosting, so **every Broadcast served the same tags**
+— WhatsApp showed the same generic image for all of them, and nobody could
+tell what they were being sent.
 
-- **Points being destroyed.** Totals were read from a Worker's memory and
-  written back whole. A cold isolate starts at zero, so someone on 500 points
-  could be written down to 3. Totals now move by Firestore **increment** — no
-  read step, nothing to lose.
-- **Replays double-counting.** De-duplication was also in memory. The event id
-  is now claimed in Firestore before scoring.
-- **Sharing never counting.** `BROADCAST_SHARE` is worth 2 points and the app
-  never sent it. Now emitted when a share actually succeeds.
-- **Ad counters being reset** by one phone writing an absolute count.
-- **Reward simulation** computed from a nearly-empty isolate memory. It reads
-  the stored profiles now.
-- **The console refreshing while you read.** Held until you are done, with a
-  "New activity · Refresh" button.
-- **Four tests pinned to a fixed date**, failing whenever anything was rebuilt.
+Share links now go through the worker: `…/b/<id>`. That page returns the
+Broadcast's **own thumbnail, its title and who made it**, then forwards
+straight into the app. It returns a normal page rather than a redirect on
+purpose, because several link crawlers do not follow redirects and would show
+nothing at all.
 
-## New — recovering the lost points
+**The safety part.** A Broadcast that is deleted, hidden, held or unlisted
+gets **no preview** — no title, no picture, just "This Broadcast isn't
+available". Without that, a Broadcast removed after a report would keep
+showing its own snapshot in every chat it had been shared into. Previews are
+cached for five minutes so a takedown takes effect quickly.
 
-The ledger survived. Every scored event wrote its own row keyed by event id,
-so rows were never overwritten — only the summed totals were. Adding the rows
-back up gives what each total should have been.
+`NALUNO_LINK_BASE` in `js/broadcast-core.js` is one constant — point it at a
+custom domain whenever you want prettier links.
 
-**In the console: Community → "Repair contribution totals".**
+**7 tests**, including: a taken-down Broadcast leaks neither title nor
+picture; a title containing `<script>` cannot break out of the page; a
+`javascript:` thumbnail is refused; junk paths are not treated as ids; and it
+still forwards correctly with no service account, just without a picture.
 
-- **Check what would change** — a dry run. Writes nothing. Shows rows scanned,
-  people affected, points to restore, and the first fifteen changes.
-- **Apply the repair** — asks for confirmation, writes the totals, logs to the
-  audit trail.
+---
 
-Run the dry run first, and run it again after applying: if it reports
-`more rows remain`, or anything was skipped, a second pass finishes the job.
+# From the previous round (unchanged, included here)
 
-### Two safety rules, and why
+**The console player is back, on the reports themselves.** Reports were a text
+table — you could read that something was reported but not see it. They now
+render with the same player, the reporter's words, whether it is still on the
+feed, and Action / Dismiss / Take down / Put back. Urgent reports outlined in
+red.
 
-**It never lowers a total** unless you explicitly force it. The fault made
-totals too *small*. If a stored total is *higher* than the ledger says, that
-points to missing ledger rows rather than extra points — and silently deleting
-someone's points to "fix" them would repeat the original mistake in the other
-direction.
+**Why your test report never disappeared.** The removal was the *last* thing
+the report handler did, after scoring and several other writes, and only ran
+when a service account was configured — yet the response said `hidden: true`
+regardless. The existing test asserted that false success. Removal now happens
+**immediately** after the report is recorded, and a failure is reported as
+`hide_error` instead of claiming success. **Check `/health` for
+`hasServiceAccount`** — without it nothing can be removed automatically.
 
-**A profile it cannot read is skipped, not assumed to be zero.** My own
-adversarial test caught this one: treating a failed read as zero made the
-"never lower" rule blind, so a stored 900 could have been written down to 3
-purely because a read failed. Absent (404) means zero; an error means unknown,
-and unknown means leave it alone.
+**Terrorism and the rest.** terrorism, recruitment, child exploitation, sexual
+exploitation and threats of violence now take a Broadcast off the feed
+immediately, recorded as `reported-<code>`. Sexual is hidden outright. An
+ordinary report changes nothing.
 
-## Adversarial testing — 19 checks, all passing
+**The owner is told, and can appeal.** Wireline is end-to-end encrypted and
+the worker holds no keys, so it cannot send a Wireline message — and a
+platform message disguised as a person's would be dishonest anyway. It writes
+a notice shown at the top of Wireline, clearly from Naluno, with an **Appeal**
+button feeding the appeals the console already lists.
 
-I tried to break the repair rather than confirm it works:
+**Compass kept losing its password** because the vault cache is memory-only —
+empty after a restart or offline, so the lock check said "not locked". A local
+copy of the hash now holds it.
 
-- an **empty ledger does not wipe everyone to zero**
-- a stored total **higher** than the ledger is refused (and says so)
-- `force: true` is required to lower one
-- an **unreadable profile is skipped**, and a failed read cannot write 900 → 3
-- **1,200 rows page correctly** with none lost or double-counted
-- a **reversal row subtracts** rather than being ignored
-- a row with **no user** is not credited to anyone
-- **junk numbers** count as zero rather than NaN
-- the repair still applies if the **audit write fails**
-- **no sign-in is refused**
-- nothing to change → writes nothing even with `apply`
+**Shared links open the Broadcast** instead of flashing Frequencies first.
 
-Plus the full suite: **10/10 repo tests, 47/47 worker tests, 29/29 counting
-audit checks.**
+---
 
-## Honest limits
+## Still owed: a clearer explanation of "Open a Naluno SMS"
 
-- The repair rebuilds totals from ledger rows. **If a ledger row itself was
-  never written** — an event lost before it reached the worker — those points
-  cannot be recovered, because nothing recorded them.
-- Run it when things are quiet. It reads the ledger, then writes totals; an
-  event landing in between would be overwritten by the absolute write. Its row
-  survives, so running it again picks that up.
-- It repairs `contributionProfiles` only. Broadcast view counts and ad
-  counters were never affected by this fault.
+Noted and kept. We return to it now the link job is done.
+
+## Tested
+
+- Worker **57/57** (7 new link tests, 3 report tests)
+- All **10 repo tests**
+- **30 adversarial checks** from the previous round, re-run and passing
 
 ## Files
 
 ```
-workers/economy/handler.mjs   atomic totals, durable de-dup, real simulation,
-                              and the new /v1/admin/recompute-profiles
-js/admin-console.js           repair buttons + refreshes held while you read
-admin/index.html              the Refresh pill, stamp bump
-js/broadcast-space.js         BROADCAST_SHARE emitted
-js/ads.js                     no absolute-count fallback
-js/*.test.cjs (4)             unpinned from fixed dates
+workers/economy/handler.mjs    link previews, removal-first, terrorism, owner notice
+workers/economy/link.test.mjs  NEW
+workers/economy/economy.test.mjs  the test that asserted a false success, corrected
+js/broadcast-core.js           share URL -> preview route; links open directly
+js/admin-console.js            the player on reports
+js/notices.js                  NEW — notice + Appeal
+js/compass.js                  password survives restarts and offline
+app/index.html, css/app.css, admin/index.html, firestore.rules, sw.js
 ```
 
-Deploy the web files, then `cd workers/economy && npx wrangler deploy` — the
-worker must go first, or the repair button has nothing to call.
+## Deploy
+
+1. Push the web files.
+2. `firebase deploy --only firestore:rules`
+3. `cd workers/economy && npx wrangler deploy` — **required**: share links now
+   point at the worker, so without it a shared link will not open.
+
+Then send yourself a Broadcast link and check the preview shows that
+Broadcast's own picture.

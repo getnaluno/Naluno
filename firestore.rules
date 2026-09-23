@@ -659,6 +659,17 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    /* Notices from Naluno (a Broadcast taken off the feed, and the appeal).
+       Written by the economy Worker's service account, which bypasses rules.
+       The owner may read their own and mark one appealed — nothing else. */
+    match /users/{uid}/notices/{noticeId} {
+      allow read: if isOwner(uid);
+      allow update: if isOwner(uid)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['appealed', 'appealedAt']);
+      allow create, delete: if false;
+    }
+
     match /reports/{reportId} {
       allow read: if isOperator();
       allow create: if isSignedIn()
