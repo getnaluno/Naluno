@@ -2425,6 +2425,72 @@ export async function handleRequest(request, env = {}, ctx = {}) {
        relay sees random bytes under a random label. A forged packet simply
        fails to open on the recipient's phone. Limits stop it being used as
        free storage. */
+    /* ---- SHARE LINKS WITH A PREVIEW ----
+       A link's preview picture and title come from og: tags in the page it
+       points at. getnaluno.com is static hosting, so every Broadcast served
+       the same tags: WhatsApp showed the same generic image for all of them,
+       and people could not tell what they were being sent.
+
+       This serves per-Broadcast tags and then forwards into the app. It
+       returns 200 HTML rather than a redirect on purpose — several link
+       crawlers do not follow redirects, and would show nothing.
+
+       SAFETY: only a Broadcast that is genuinely public gets a preview. One
+       that is deleted, hidden, held or unlisted returns a plain page with no
+       title and no picture. Otherwise a Broadcast removed after a report
+       would keep showing its own snapshot in every chat it was shared to. */
+    if (request.method === "GET" && /^\/b\/[A-Za-z0-9_-]{1,80}$/.test(path)) {
+      const bid = path.slice(3);
+      const appUrl = "https://getnaluno.com/app/?broadcast=" + encodeURIComponent(bid);
+      const esc = (v) => String(v == null ? "" : v)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+      let title = "Naluno", desc = "A quieter way to reach people.", image = "";
+      try {
+        const tok = hasSaConfigured(env) ? await saAccessToken(env) : "";
+        if (tok) {
+          const b = await fsGetDoc(env, tok, "/broadcasts/" + encodeURIComponent(bid));
+          const publicOk = b && !b.deleted && !b.hidden && !b.held && b.listed !== false;
+          if (publicOk) {
+            if (b.title) title = String(b.title).slice(0, 110);
+            const who = b.creatorName ? ("by " + String(b.creatorName).slice(0, 40)) : "";
+            desc = (who ? who + " \u00b7 " : "") + "Watch on Naluno";
+            const thumb = String(b.thumbUrl || b.thumb || "");
+            if (/^https:\/\//.test(thumb)) image = thumb;
+          } else if (b) {
+            title = "This Broadcast isn\u2019t available";
+            desc = "It may have been taken down or made private.";
+          }
+        }
+      } catch { /* fall through to the generic card */ }
+      const html = "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        + "<title>" + esc(title) + "</title>"
+        + "<meta property=\"og:type\" content=\"video.other\">"
+        + "<meta property=\"og:site_name\" content=\"Naluno\">"
+        + "<meta property=\"og:title\" content=\"" + esc(title) + "\">"
+        + "<meta property=\"og:description\" content=\"" + esc(desc) + "\">"
+        + "<meta property=\"og:url\" content=\"" + esc(appUrl) + "\">"
+        + (image ? "<meta property=\"og:image\" content=\"" + esc(image) + "\">" : "")
+        + "<meta name=\"twitter:card\" content=\"" + (image ? "summary_large_image" : "summary") + "\">"
+        + "<meta name=\"twitter:title\" content=\"" + esc(title) + "\">"
+        + "<meta name=\"twitter:description\" content=\"" + esc(desc) + "\">"
+        + (image ? "<meta name=\"twitter:image\" content=\"" + esc(image) + "\">" : "")
+        + "<link rel=\"canonical\" href=\"" + esc(appUrl) + "\">"
+        + "<meta http-equiv=\"refresh\" content=\"0;url=" + esc(appUrl) + "\">"
+        + "</head><body style=\"background:#0D0F17;color:#E8ECF5;font-family:system-ui;text-align:center;padding:48px 20px;\">"
+        + "<p>Opening Naluno\u2026</p><p><a style=\"color:#7CFFB2\" href=\"" + esc(appUrl) + "\">Open this Broadcast</a></p>"
+        + "<script>location.replace(" + JSON.stringify(appUrl) + ");</scr" + "ipt>"
+        + "</body></html>";
+      return new Response(html, { status: 200, headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        // Crawlers re-fetch often; a short cache keeps a taken-down Broadcast
+        // from keeping its preview for long.
+        "Cache-Control": "public, max-age=300",
+        "Access-Control-Allow-Origin": "*",
+      } });
+    }
+
     if (path === "/v1/lifeline/drop" && request.method === "POST") {
       if (!saToken) return json({ ok: false, error: "relay storage not configured" }, 503);
       const ip = request.headers.get("CF-Connecting-IP") || "?";
@@ -2899,6 +2965,49 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         toFsFields(doc),
       );
       if (!wrote.ok && existing) memory.reports.set(id, existing);
+
+      /* TAKE IT OUT OF PUBLIC VIEW FIRST.
+         This used to happen at the very END of the report handler, after
+         scoring, case-opening and several other writes. Anything throwing in
+         between left the report saved and the Broadcast still on the feed —
+         which is what happened to the test report. Urgency is the whole point
+         of these categories, so the removal now happens immediately after the
+         report is recorded, and nothing after it can prevent it.
+
+         sexual            -> hidden (off the feed entirely)
+         terrorism and the other urgent categories -> held for a human
+         Both are reversible by a person in the console. */
+      const hideNow = String(body.broadcast_id || (body.target_type === "broadcast" ? body.target_id : "") || "");
+      const URGENT_HOLD = { terrorism: 1, recruitment: 1, child_exploitation: 1, sexual_exploitation: 1, violence: 1 };
+      let autoHidden = false, autoHeld = false, autoError = "";
+      if (hideNow && (code === "sexual" || URGENT_HOLD[code])) {
+        if (!saToken) {
+          /* Only the service account may touch someone else's Broadcast, so
+             without it nothing can be removed. Say so instead of returning a
+             cheerful ok while the content stays up. */
+          autoError = "no-service-account";
+        } else {
+          try {
+            if (code === "sexual") {
+              await hideBroadcastSexual(env, saToken, userToken, hideNow);
+              autoHidden = true;
+            } else {
+              await fsPutDoc(env, saToken, "/broadcasts/" + encodeURIComponent(hideNow), {
+                listed: false,
+                held: true,
+                live: false,
+                heldReason: "reported-" + code,
+                safetyDecision: "ESCALATE",
+                updatedAt: Date.now(),
+              });
+              autoHeld = true;
+            }
+          } catch (e) {
+            autoError = (e && e.message) ? String(e.message).slice(0, 120) : "hide failed";
+          }
+        }
+      }
+
       const targetType = String(body.target_type || "public");
       const privateTarget = isPrivateSurface(targetType);
       const scored = privateTarget
@@ -2968,28 +3077,36 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         human_reviewed: false,
         action_taken: "case opened",
       }));
-      if (code === "sexual") {
-        const bid = String(body.broadcast_id || (body.target_type === "broadcast" ? body.target_id : "") || "");
-        await hideBroadcastSexual(env, saToken, userToken, bid);
-      } else if (urgentCode) {
-        const bid = String(body.broadcast_id || (body.target_type === "broadcast" ? body.target_id : "") || "");
-        if (bid && (saToken || userToken)) {
-          await fsPutDoc(env, saToken || userToken, "/broadcasts/" + encodeURIComponent(bid), {
-            listed: false,
-            held: true,
-            heldReason: "safety-urgent",
-            safetyDecision: "ESCALATE",
-            updatedAt: Date.now(),
+      // (the removal already happened above, before any scoring could fail)
+      /* Tell the person whose Broadcast it is. Nobody should discover their
+         work was taken off the feed by noticing it missing. Wireline messages
+         are end-to-end encrypted and the worker holds no keys, so this is a
+         notice FROM Naluno rather than a forged message from a person — the
+         app shows it in Wireline and offers the appeal. */
+      try {
+        const ownerUid = String(body.target_user_id || "")
+          || (hideNow && saToken ? String(((await fsGetDoc(env, saToken, "/broadcasts/" + encodeURIComponent(hideNow))) || {}).creatorUid || "") : "");
+        if (ownerUid && (autoHidden || autoHeld) && saToken) {
+          await fsPutDoc(env, saToken, "/users/" + encodeURIComponent(ownerUid) + "/notices/" + encodeURIComponent(id), {
+            notice_id: id,
+            kind: autoHidden ? "broadcast_hidden" : "broadcast_held",
+            broadcast_id: hideNow,
+            reason_code: code,
+            case_id: opened.case_id,
+            appealable: true,
+            ts: Date.now(),
           });
         }
-      }
+      } catch { /* the removal stands even if the notice cannot be written */ }
+
       return json({
         ok: true,
         report_id: id,
         case_id: opened.case_id,
         priority: opened.priority,
-        hidden: code === "sexual",
-        held: urgentCode,
+        hidden: autoHidden,
+        held: autoHeld,
+        hide_error: autoError,
         contents_collected: opened.contents_collected,
       });
     }

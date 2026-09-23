@@ -823,6 +823,18 @@ test("operator can seed, add, list and remove reserved handles", async () => {
   setFetchImpl(null);
 });
 
+/* An ENV with a usable service account, for the removal tests. */
+async function saTestEnv() {
+  const pair = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048,
+    publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]);
+  const b = new Uint8Array(await crypto.subtle.exportKey("pkcs8", pair.privateKey));
+  let bin = ""; for (let i = 0; i < b.length; i++) bin += String.fromCharCode(b[i]);
+  const pem = "-----BEGIN PRIVATE KEY-----\n" + btoa(bin).replace(/(.{64})/g, "$1\n") + "\n-----END PRIVATE KEY-----\n";
+  return Object.assign({}, ENV, { GOOGLE_SERVICE_ACCOUNT: JSON.stringify({
+    client_email: "sa@naluno-28a00.iam.gserviceaccount.com", private_key: pem,
+    project_id: "naluno-28a00", token_uri: "https://oauth2.googleapis.com/token" }) });
+}
+
 test("sexual report hides the Broadcast", async () => {
   resetMemory();
   const writes = [];
@@ -860,7 +872,80 @@ test("sexual report hides the Broadcast", async () => {
   const body = await res.json();
   assert.equal(res.status, 200);
   assert.equal(body.ok, true);
+  /* CHANGED DELIBERATELY. This ENV has no service account, and only the
+     service account may touch someone else's Broadcast — so nothing can be
+     hidden here. The old code returned hidden:true anyway, reporting success
+     while the content stayed on the feed. That cosmetic "true" is almost
+     certainly why a real test report never disappeared. It now tells the
+     truth, and says what is missing. */
+  assert.equal(body.hidden, false);
+  assert.equal(body.hide_error, "no-service-account");
+  assert.ok(!writes.some((w) => String(w).includes("/broadcasts/bporn")), "the Broadcast itself was never written");
+  setFetchImpl(null);
+});
+
+/* With a service account, it really does remove it — and the removal happens
+   before any scoring, so nothing later can prevent it. */
+function reportFetch(writes) {
+  setFetchImpl(async (url, opts) => {
+    const u = String(url);
+    if (u.includes("oauth2.googleapis.com/token")) return new Response(JSON.stringify({ access_token: "sa", expires_in: 3600 }), { status: 200 });
+    if (u.includes("accounts:lookup")) return new Response(JSON.stringify({ users: [{ localId: "user_a" }] }), { status: 200 });
+    if (u.includes("/broadcasts/") && (!opts || opts.method === "GET")) {
+      return new Response(JSON.stringify({ name: "x/broadcasts/bx",
+        fields: { creatorUid: { stringValue: "creator1" }, listed: { booleanValue: true } } }), { status: 200 });
+    }
+    if (opts && (opts.method === "PATCH" || opts.method === "POST")) {
+      writes.push({ url: u, body: opts.body ? String(opts.body) : "" });
+      return new Response("{}", { status: 200 });
+    }
+    return new Response("{}", { status: 200 });
+  });
+}
+async function sendReport(code, env) {
+  return handleRequest(req("/v1/report", {
+    method: "POST",
+    headers: { Authorization: "Bearer tok", "Content-Type": "application/json" },
+    body: JSON.stringify({ reason: "This needs a person to look at it now please.",
+      reason_code: code, broadcast_id: "bx", target_type: "broadcast", target_id: "bx" }),
+  }), env);
+}
+
+test("a sexual report really hides the Broadcast when the worker can write", async () => {
+  resetMemory();
+  const env = await saTestEnv();
+  const writes = []; reportFetch(writes);
+  const body = await (await sendReport("sexual", env)).json();
   assert.equal(body.hidden, true);
+  assert.equal(body.hide_error, "");
+  const patch = writes.find((w) => w.url.includes("/broadcasts/bx"));
+  assert.ok(patch, "the Broadcast document was written");
+  assert.ok(patch.body.includes("hidden"), "marked hidden");
+  setFetchImpl(null);
+});
+
+test("terrorism and the other urgent reports take it off the feed for a human", async () => {
+  for (const code of ["terrorism", "recruitment", "child_exploitation", "sexual_exploitation", "violence"]) {
+    resetMemory();
+    const env = await saTestEnv();
+    const writes = []; reportFetch(writes);
+    const body = await (await sendReport(code, env)).json();
+    assert.equal(body.held, true, code + " should be held");
+    const patch = writes.find((w) => w.url.includes("/broadcasts/bx"));
+    assert.ok(patch && patch.body.includes("reported-" + code), code + " records why");
+    assert.ok(patch.body.includes("listed"), code + " is unlisted");
+    setFetchImpl(null);
+  }
+});
+
+test("an ordinary report does NOT remove anything", async () => {
+  resetMemory();
+  const env = await saTestEnv();
+  const writes = []; reportFetch(writes);
+  const body = await (await sendReport("spam", env)).json();
+  assert.equal(body.hidden, false);
+  assert.equal(body.held, false);
+  assert.ok(!writes.some((w) => w.url.includes("/broadcasts/bx")), "the Broadcast is untouched");
   setFetchImpl(null);
 });
 
