@@ -334,6 +334,8 @@ window.__nalunoEntryT0 = Date.now();
 
   <!-- ===================== WIRELINE (direct messages) ===================== -->
   <section class="tabscreen" id="tab-wireline">
+    <!-- Notices from Naluno (a Broadcast taken off the feed, and the appeal). -->
+    <div id="noticeBar" style="display:none;"></div>
     <div class="tab-header">
       <div class="tab-title">Wireline</div>
       <span class="wire-menu-wrap">
@@ -1575,6 +1577,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/wireline.js?v=20260923a"></script>
 <!-- Lifeline: Wireline when the internet is blocked or cut. Loads after
      crypto.js (keys) and wireline.js (thread insertion). -->
+<script src="/js/notices.js?v=20260923n"></script>
 <script src="/js/lifeline.js?v=20260922a"></script>
 <script src="/js/lifeline-wire.js?v=20260922a"></script>
 <!-- Wireline translation reuses Spark's engine and language list. -->
