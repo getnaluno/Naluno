@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.09.23a" />
+  <meta name="naluno-build" content="2026.09.23c" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.09.22a">
+<meta name="app-version" content="2026.09.23c">
 <meta name="description" content="Naluno brings private communication, communities and creator-led content into one place. A Callsign instead of a phone number.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="Private communication, communities and creator-led content. A Callsign — not a phone number.">
@@ -671,6 +671,23 @@ window.__nalunoEntryT0 = Date.now();
       <div class="lobby-sub" style="text-align:left;max-width:none;font-size:11px;margin-top:6px;">A reason is required &mdash; reports without one can&rsquo;t be acted on, so they aren&rsquo;t accepted.</div>
       <button type="button" id="reportSendBtn" class="save-btn" style="width:100%;margin-top:14px;" disabled>Send report</button>
       <div id="reportMsg" class="lobby-sub" style="text-align:left;max-width:none;margin-top:10px;"></div>
+    </div>
+  </div>
+
+  <div class="call-overlay" id="appealSheet">
+    <div class="topbar" style="padding-top:18px;">
+      <div class="back-btn" id="appealCloseBtn" role="button" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
+      <div style="flex:1;">
+        <div style="font-family:var(--font-futuristic); font-weight:700; font-size:16px;">Appeal a safety hold</div>
+        <div class="lobby-sub" style="text-align:left;max-width:none;font-size:11.5px;">A person looks again. This does not open private chats.</div>
+      </div>
+    </div>
+    <div class="tab-scroll" style="padding:0 18px 24px;">
+      <div class="section-label">Why should this be allowed?</div>
+      <textarea id="appealNote" rows="5" placeholder="Journalism, history, education, or what the check got wrong."
+        style="width:100%;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px;color:var(--text);resize:vertical;font-family:inherit;"></textarea>
+      <button type="button" id="appealSendBtn" class="save-btn" style="width:100%;margin-top:14px;">Send appeal</button>
+      <div id="appealMsg" class="lobby-sub" style="text-align:left;max-width:none;margin-top:10px;"></div>
     </div>
   </div>
 
@@ -1526,8 +1543,9 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/wire-mailbox.js?v=20260918i"></script>
 <script src="/js/atmosphere.js?v=20260908d"></script>
 <script src="/js/band-list.js?v=20260918i"></script>
-<script src="/js/signal-core.js?v=20260919g"></script>
-<script src="/js/broadcast-core.js?v=20260921k"></script>
+<script type="module" src="/workers/economy/safety-boot.mjs?v=20260923c"></script>
+<script src="/js/signal-core.js?v=20260923c"></script>
+<script src="/js/broadcast-core.js?v=20260923c"></script>
 <script src="/js/broadcast-upload.js?v=20260908d"></script>
 <script src="/js/broadcast-composer.js?v=20260921j"></script>
 <script src="/js/screen.js?v=20260921k"></script>
@@ -1542,7 +1560,7 @@ window.__nalunoEntryT0 = Date.now();
      currentUser exists, and deliberately non-blocking — if this file failed
      to load entirely, Broadcast would behave exactly as it does today. -->
 <script src="/js/presence.js?v=20260919g"></script>
-<script src="/js/report.js?v=20260921e"></script>
+<script src="/js/report.js?v=20260923c"></script>
 <script src="/js/currency.js?v=20260918a"></script>
 <script src="/js/economy.js?v=20260914c"></script>
 <script src="/js/economy-ui.js?v=20260914c"></script>
@@ -1551,7 +1569,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/compass.js?v=20260919g"></script>
 <script src="/js/signal-ui.js?v=20260918i"></script>
 <script src="/js/compat-lock.js?v=20260908d"></script>
-<script src="/js/broadcast-space.js?v=20260921k"></script>
+<script src="/js/broadcast-space.js?v=20260923c"></script>
 <script src="/js/ads.js?v=20260918j"></script>
 <script src="/js/media-vault.js?v=20260908d"></script>
 <script src="/js/wireline.js?v=20260923a"></script>
@@ -1564,7 +1582,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/profile.js?v=20260919g"></script>
 <script src="/js/onboard.js?v=20260922a"></script>
 <script src="/js/handle-guard.js?v=20260921c"></script>
-<script src="/js/auth.js?v=20260922a"></script>
+<script src="/js/auth.js?v=20260923c"></script>
 <script src="/js/notifications.js?v=20260919g"></script>
 <script src="/js/ice-core.js?v=20260908d"></script>
 <script src="/js/camera.js?v=20260908d"></script>
@@ -1573,7 +1591,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/sfu-live.js?v=20260908d"></script>
 <script src="/js/broadcast-live.js?v=20260908d"></script>
 <script src="/js/band-room.js?v=20260918i"></script>
-<script src="/js/pwa.js?v=20260922a"></script>
+<script src="/js/pwa.js?v=20260923c"></script>
 <script src="/js/spark-engine.js?v=20260908d"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>
 <script src="/js/spark-lg.js?v=20260908d"></script>
