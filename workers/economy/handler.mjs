@@ -24,8 +24,29 @@ import {
   judgeScreenPayload,
   listingFromScreen,
 } from "./screen.mjs";
+import {
+  scorePublicText,
+  scoreBehaviour,
+  matchKnownHash,
+  combineRisk,
+  buildCase,
+  buildAudit,
+  assertAuditAppend,
+  decideHuman,
+  buildAppeal,
+  applyAppeal,
+  isPrivateSurface,
+  applySafetyEvent,
+  emptyLedger,
+  fingerprintPublic,
+  observeCluster,
+  weighReports,
+  safetyOverview,
+  scrubCase,
+  statementFor,
+} from "./safety.mjs";
 
-export const VERSION = "2.6.6-console-pass";
+export const VERSION = "2.6.9-safety";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -55,6 +76,8 @@ const POINTS = {
 const REPORT_CODES = {
   harassment: 1, hate: 1, violence: 1, sexual: 1, scam: 1,
   impersonation: 1, stolen: 1, spam: 1, other: 1,
+  terrorism: 1, recruitment: 1, child_exploitation: 1,
+  sexual_exploitation: 1, fraud: 1, dangerous: 1, illegal: 1,
 };
 
 const memory = {
@@ -72,6 +95,14 @@ const memory = {
   reserved: new Map(),
   handleFlags: new Map(),
   handles: new Map(),
+  safetyCases: new Map(),
+  safetyAudit: [],
+  safetyAppeals: new Map(),
+  safetyLedgers: new Map(),
+  safetyClusters: {},
+  safetyBirths: new Map(),
+  safetyPrints: new Map(),
+  safetyReportHits: [],
 };
 
 let _fetch = globalThis.fetch.bind(globalThis);
@@ -95,6 +126,14 @@ export function resetMemory() {
   memory.reserved.clear();
   memory.handleFlags.clear();
   memory.handles.clear();
+  memory.safetyCases.clear();
+  memory.safetyAudit = [];
+  memory.safetyAppeals.clear();
+  memory.safetyLedgers.clear();
+  memory.safetyClusters = {};
+  memory.safetyBirths.clear();
+  memory.safetyPrints.clear();
+  memory.safetyReportHits = [];
   saCache = { token: "", exp: 0, err: "" };
 }
 export function getMemory() {
@@ -995,6 +1034,57 @@ async function hideBroadcastSexual(env, saToken, userToken, broadcastId) {
   return { ok: true, id, restricted };
 }
 
+function hashList(env) {
+  const raw = env && (env.SAFETY_HASHES || env.SAFETY_HASH_LIST) || "";
+  if (!raw) return [];
+  try {
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+async function persistSafetyCase(env, saToken, userToken, row) {
+  memory.safetyCases.set(row.case_id, row);
+  const token = saToken || userToken;
+  if (!token) return "memory";
+  const wrote = await fsPutDoc(env, token, "/safetyCases/" + encodeURIComponent(row.case_id), row);
+  return wrote && wrote.ok ? (saToken ? "firestore-sa" : "user-token") : "memory";
+}
+async function persistSafetyAudit(env, saToken, userToken, row) {
+  assertAuditAppend(memory.safetyAudit, row);
+  memory.safetyAudit.unshift(row);
+  if (memory.safetyAudit.length > 400) memory.safetyAudit.length = 400;
+  const token = saToken || userToken;
+  if (!token) return "memory";
+  const wrote = await fsPutDoc(env, token, "/safetyAudit/" + encodeURIComponent(row.audit_id), row);
+  return wrote && wrote.ok ? (saToken ? "firestore-sa" : "user-token") : "memory";
+}
+function safetyHold(decision) {
+  return decision === "REVIEW" || decision === "REMOVE" || decision === "ESCALATE" || decision === "AGE_RESTRICT" || decision === "REGION_RESTRICT";
+}
+async function openHeldCase(env, saToken, userToken, fields, why, detectedBy) {
+  const opened = buildCase(fields);
+  await persistSafetyCase(env, saToken, userToken, opened);
+  await persistSafetyAudit(env, saToken, userToken, buildAudit({
+    case_id: opened.case_id,
+    who: fields.reporter_id || "system",
+    what: detectedBy === "report" ? "report-opened" : "held-public",
+    why: String(why || opened.priority).slice(0, 180),
+    detected_by: detectedBy || "classifier",
+    human_reviewed: false,
+    action_taken: opened.priority === "URGENT" ? "urgent queue" : "case opened",
+  }));
+  return opened;
+}
+function safetyQueue() {
+  return Array.from(memory.safetyCases.values())
+    .sort(function (a, b) {
+      const rank = { URGENT: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+      return (rank[a.priority] ?? 4) - (rank[b.priority] ?? 4) || (b.created_at || 0) - (a.created_at || 0);
+    });
+}
+
 async function placeBroadcast(env, user, userToken, saToken, body) {
   const id = String((body && body.broadcast_id) || "").slice(0, 80);
   if (!id) return json({ ok: false, error: "broadcast_id required" }, 400);
@@ -1009,6 +1099,10 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
     && !(profile && profile.restricted)
     && !(profile && profile.suspended);
   const judged = judgeScreenPayload(body && body.screen, { title: row.title || "" });
+  const safety = scorePublicText(
+    [row.title, row.caption, body && body.caption, body && body.title].filter(Boolean).join(" \n "),
+    { surface: "broadcast" },
+  );
   const listing = listingFromScreen({
     trusted,
     hidden: !!row.hidden,
@@ -1021,8 +1115,31 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
     screenReason: judged.reason || "",
     screenVersion: 1,
     screenFrames: judged.frames || 0,
+    safetyScore: safety.score,
+    safetyDecision: safety.decision,
+    safetyUrgent: !!safety.urgent,
     updatedAt: Date.now(),
   });
+  let safetyCase = "";
+  if (safetyHold(safety.decision)) {
+    patch.listed = false;
+    patch.held = true;
+    patch.heldReason = safety.decision === "AGE_RESTRICT"
+      ? "age-review"
+      : (safety.urgent ? "safety-urgent" : "safety-review");
+    const opened = await openHeldCase(env, saToken, userToken, {
+      reporter_id: "system",
+      reported_user_id: row.creatorUid || user.uid,
+      content_id: id,
+      content_type: "broadcast",
+      surface: "broadcast",
+      reason_code: safety.urgent ? "terrorism" : (safety.decision === "AGE_RESTRICT" ? "sexual" : "dangerous"),
+      evidence_reference: "broadcast:" + id,
+      result: safety,
+      contents_collected: true,
+    }, safety.decision + " " + safety.score, "classifier");
+    safetyCase = opened.case_id;
+  }
   if (row.hidden) {
     patch.listed = false;
     patch.held = false;
@@ -1038,6 +1155,11 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
     heldReason: patch.heldReason || "",
     screen: judged.decision,
     screenScore: judged.score || 0,
+    safety: safety.decision,
+    safetyScore: safety.score,
+    safetyUrgent: !!safety.urgent,
+    safety_case: safetyCase,
+    statement: statementFor(safety),
   });
 }
 
@@ -1154,92 +1276,86 @@ async function passwordMatches(stored, uid, password) {
 }
 function recordFromDoc(doc) {
   if (!doc) return null;
-  if (doc.v === 2 && doc.hash && doc.salt) return doc;
-  if (doc.hash) return doc.v === 2 ? doc : String(doc.hash);
+  const inner = (doc._consoleGate && typeof doc._consoleGate === "object")
+    ? doc._consoleGate
+    : doc;
+  if (inner.v === 2 && inner.hash && inner.salt) return inner;
+  if (inner.hash) return inner.v === 2 ? inner : String(inner.hash);
   return null;
 }
-async function loadPasswordRecord(env, uid, saToken) {
-  if (memory.passwords.has(uid)) return memory.passwords.get(uid);
-  const token = saToken;
-  if (!token || !uid) return null;
-  const paths = [
-    "/adminCredentials/" + encodeURIComponent(uid),
-    "/adminConsole/" + encodeURIComponent(uid),
-  ];
-  for (let i = 0; i < paths.length; i++) {
+function recKey(rec) {
+  if (!rec) return "";
+  if (typeof rec === "string") return "s:" + rec;
+  return "v" + String(rec.v || "") + ":" + String(rec.salt || "") + ":" + String(rec.hash || "");
+}
+async function collectPasswordRecords(env, uid, saToken, userToken) {
+  const out = [];
+  const seen = new Set();
+  function add(rec) {
+    if (!rec) return;
+    const k = recKey(rec);
+    if (!k || seen.has(k)) return;
+    seen.add(k);
+    out.push(rec);
+  }
+  if (uid && memory.passwords.has(uid)) add(memory.passwords.get(uid));
+  if (!uid) return out;
+  const attempts = [];
+  if (saToken) {
+    attempts.push([saToken, "/adminCredentials/" + encodeURIComponent(uid)]);
+    attempts.push([saToken, "/adminConsole/" + encodeURIComponent(uid)]);
+  }
+  if (userToken) {
+    attempts.push([userToken, "/users/" + encodeURIComponent(uid) + "/vault/main"]);
+    attempts.push([userToken, "/adminConsole/" + encodeURIComponent(uid)]);
+    attempts.push([userToken, "/users/" + encodeURIComponent(uid) + "/consoleGate/main"]);
+  }
+  for (let i = 0; i < attempts.length; i++) {
     try {
-      const r = await fsFetch(env, token, "GET", paths[i]);
+      const r = await fsFetch(env, attempts[i][0], "GET", attempts[i][1]);
       if (!r.ok) continue;
-      const rec = recordFromDoc(fromFsDoc(r.data));
-      if (rec) {
-        memory.passwords.set(uid, rec);
-        return rec;
-      }
+      add(recordFromDoc(fromFsDoc(r.data)));
     } catch {
       /* try next */
     }
   }
-  return null;
-}
-/* Gather EVERY stored copy of the console password, not just the first one
-   found. The console writes its gate to more than one place — the worker's
-   own adminCredentials doc, the adminConsole doc, and the account's vault
-   (`_consoleGate`, written with the user's own token so it survives even
-   when the worker cannot reach Firestore). Reading only one of them is why a
-   password set on one phone could be refused on another: the copies had
-   drifted, and whichever the worker happened to read first won.
-
-   (Restored: an earlier upload of an older handler.mjs reverted this.) */
-async function collectPasswordRecords(env, uid, saToken) {
-  const out = [];
-  if (memory.passwords.has(uid)) {
-    const m = memory.passwords.get(uid);
-    if (m) out.push({ rec: m, where: "memory" });
-  }
-  if (!saToken || !uid) return out;
-  const paths = [
-    ["/adminCredentials/" + encodeURIComponent(uid), "adminCredentials"],
-    ["/adminConsole/" + encodeURIComponent(uid), "adminConsole"],
-    ["/users/" + encodeURIComponent(uid) + "/vault/main", "vault"],
-  ];
-  for (let i = 0; i < paths.length; i++) {
-    try {
-      const r = await fsFetch(env, saToken, "GET", paths[i][0]);
-      if (!r.ok) continue;
-      const doc = fromFsDoc(r.data);
-      const raw = paths[i][1] === "vault" ? (doc && doc._consoleGate) : doc;
-      const rec = recordFromDoc(raw);
-      if (rec) out.push({ rec, where: paths[i][1] });
-    } catch {
-      /* a missing copy is normal, not an error */
-    }
-  }
   return out;
 }
-
-/** Accept ANY copy that matches. Returns the record that worked, so the
- *  caller can make it the one the worker remembers. */
-async function matchPasswordRecord(records, uid, password) {
-  for (let i = 0; i < records.length; i++) {
+async function matchPasswordRecord(recs, uid, password) {
+  if (!password) return null;
+  for (let i = 0; i < recs.length; i++) {
     try {
-      if (await passwordMatches(records[i].rec, uid, password)) return records[i].rec;
+      if (await passwordMatches(recs[i], uid, password)) return recs[i];
     } catch {
-      /* a corrupt copy must not stop the others being tried */
+      /* try next copy */
     }
   }
   return null;
 }
-
+async function loadPasswordRecord(env, uid, saToken, userToken) {
+  const recs = await collectPasswordRecords(env, uid, saToken, userToken);
+  if (!recs.length) return null;
+  const rec = recs[0];
+  if (uid && rec) memory.passwords.set(uid, rec);
+  return rec;
+}
 async function persistPasswordRecord(env, uid, rec, saToken, userToken) {
   memory.passwords.set(uid, rec);
-  const body = toFsFields(typeof rec === "string" ? { hash: rec, v: 1, updated_at: Date.now() } : rec);
+  const flat = typeof rec === "string"
+    ? { hash: rec, v: 1, kind: "console-gate", updated_at: Date.now() }
+    : Object.assign({}, rec, { kind: "console-gate", updated_at: rec.updated_at || Date.now() });
   if (saToken) {
-    const r = await fsFetch(env, saToken, "PATCH", "/adminCredentials/" + encodeURIComponent(uid), body);
-    if (r.ok) return "firestore-sa";
+    const r = await fsPutDoc(env, saToken, "/adminCredentials/" + encodeURIComponent(uid), flat);
+    if (r && r.ok) return "firestore-sa";
   }
   if (userToken) {
-    const r = await fsFetch(env, userToken, "PATCH", "/adminConsole/" + encodeURIComponent(uid), body);
-    if (r.ok) return "user-token";
+    /* Vault is owner-writable. adminConsole is denied to every browser. */
+    const v = await fsPutDoc(env, userToken, "/users/" + encodeURIComponent(uid) + "/vault/main", {
+      _consoleGate: flat,
+    });
+    if (v && v.ok) return "user-token";
+    const a = await fsPutDoc(env, userToken, "/adminConsole/" + encodeURIComponent(uid), flat);
+    if (a && a.ok) return "user-token";
   }
   return "memory";
 }
@@ -1247,17 +1363,14 @@ async function persistPasswordRecord(env, uid, rec, saToken, userToken) {
 async function handleAdmin(env, request, path, url, user, userToken, saToken) {
   if (!isOperatorUser(env, user)) return json({ ok: false, error: "not an operator" }, 403);
   const adminPass = request.headers.get("X-Naluno-Admin") || "";
-  const records = await collectPasswordRecords(env, user.uid, saToken);
+  const recs = await collectPasswordRecords(env, user.uid, saToken, userToken);
+  const stored = recs[0] || null;
   const openPath = path === "/v1/admin/status" || path === "/v1/admin/password" || path === "/v1/admin/unlock";
-  if (!openPath && records.length) {
+  if (!openPath && stored) {
     if (!adminPass) return json({ ok: false, error: "console password required" }, 401);
-    const matched = await matchPasswordRecord(records, user.uid, adminPass);
-    if (!matched) {
+    if (!(await matchPasswordRecord(recs, user.uid, adminPass))) {
       return json({ ok: false, error: "console password not accepted" }, 401);
     }
-    // Remember the copy that actually worked, so the next request agrees
-    // with this one instead of picking a stale copy again.
-    memory.passwords.set(user.uid, matched);
   }
 
   const listCol = async (name, limit) => {
@@ -1273,19 +1386,128 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
       ok: true,
       operator: true,
       uid: user.uid,
-      hasPassword: records.length > 0,
+      hasPassword: recs.length > 0,
       persist: saToken ? "firestore-sa" : "user-token",
       version: VERSION,
       claim: stamped ? "operator" : "",
     });
   }
 
+  if (path === "/v1/admin/safety" && request.method === "GET") {
+    const q = (url.searchParams.get("q") || "").toLowerCase();
+    const status = (url.searchParams.get("status") || "").toLowerCase();
+    const priority = (url.searchParams.get("priority") || "").toUpperCase();
+    const from = Number(url.searchParams.get("from") || 0);
+    const to = Number(url.searchParams.get("to") || 0);
+    const all = safetyQueue();
+    let rows = all;
+    if (q) {
+      rows = rows.filter(function (c) {
+        return [c.case_id, c.content_id, c.reported_user_id, c.reporter_id, c.reason_code, c.priority, c.report_id, c.decision, c.review_status]
+          .join(" ").toLowerCase().includes(q);
+      });
+    }
+    if (status === "open") rows = rows.filter(function (c) { return c.review_status !== "decided"; });
+    else if (status === "decided") rows = rows.filter(function (c) { return c.review_status === "decided"; });
+    else if (status === "review") rows = rows.filter(function (c) { return c.review_status === "review" || c.appeal_status === "open"; });
+    if (priority) rows = rows.filter(function (c) { return c.priority === priority; });
+    if (from) rows = rows.filter(function (c) { return (c.created_at || 0) >= from; });
+    if (to) rows = rows.filter(function (c) { return (c.created_at || 0) <= to; });
+    const overview = safetyOverview(all, Array.from(memory.safetyAppeals.values()));
+    return json({
+      ok: true,
+      version: VERSION,
+      open: overview.open_cases,
+      urgent: overview.urgent,
+      overview: overview,
+      repeat_offenders: overview.repeat,
+      cases: rows.slice(0, 120).map(scrubCase),
+      behaviour: all.filter(function (c) {
+        return c && (c.content_type === "account" || c.surface === "behaviour");
+      }).slice(0, 40).map(scrubCase),
+      audit: memory.safetyAudit.slice(0, 40).map(function (row) {
+        const copy = Object.assign({}, row);
+        delete copy.body;
+        delete copy.message;
+        delete copy.public_text;
+        return copy;
+      }),
+      appeals: Array.from(memory.safetyAppeals.values()).slice(0, 40),
+      private_read: false,
+      auto_ban: false,
+    });
+  }
+
+  if (path === "/v1/admin/safety/decide" && request.method === "POST") {
+    const body = await request.json().catch(() => ({}));
+    const id = String(body.case_id || "");
+    const row = memory.safetyCases.get(id);
+    if (!row) return json({ ok: false, error: "case not found" }, 404);
+    let next;
+    try {
+      next = decideHuman(row, body.action, user.uid, body.why || "");
+    } catch (e) {
+      return json({ ok: false, error: (e && e.message) || "decision rejected" }, 400);
+    }
+    await persistSafetyCase(env, saToken, userToken, next);
+    const audit = buildAudit({
+      case_id: id,
+      who: user.uid,
+      what: "human-decision",
+      why: body.why || next.decision,
+      detected_by: "human",
+      human_reviewed: true,
+      action_taken: next.decision,
+    });
+    await persistSafetyAudit(env, saToken, userToken, audit);
+    const token = saToken || userToken;
+    const bid = row.content_id;
+    const isBroadcast = row.content_type === "broadcast" || row.surface === "broadcast";
+    if (token && bid && isBroadcast) {
+      if (next.decision === "REMOVE") {
+        await fsPutDoc(env, token, "/broadcasts/" + encodeURIComponent(bid), {
+          hidden: true, listed: false, held: false, hiddenReason: "safety", heldReason: "", updatedAt: Date.now(),
+        });
+      } else if (next.decision === "ALLOW" || next.decision === "RESTORE" || next.decision === "DISMISS") {
+        await fsPutDoc(env, token, "/broadcasts/" + encodeURIComponent(bid), {
+          hidden: false, listed: true, held: false, heldReason: "", updatedAt: Date.now(),
+        });
+      } else if (next.decision === "AGE_RESTRICT" || next.decision === "REGION_RESTRICT" || next.decision === "RESTRICT" || next.decision === "ESCALATE") {
+        await fsPutDoc(env, token, "/broadcasts/" + encodeURIComponent(bid), {
+          hidden: false,
+          listed: false,
+          held: true,
+          heldReason: next.decision === "AGE_RESTRICT" ? "age-review" : "safety-review",
+          updatedAt: Date.now(),
+        });
+      }
+    }
+    const who = row.reported_user_id;
+    if (token && who && (next.decision === "SUSPEND" || next.decision === "RESTRICT")) {
+      await fsPutDoc(env, token, "/users/" + encodeURIComponent(who), {
+        suspended: next.decision === "SUSPEND",
+        restricted: true,
+        permanentBan: false,
+        restrictedReason: String(body.why || "safety review").slice(0, 180),
+        restrictedAt: Date.now(),
+      });
+    }
+    if (token && who && row.content_type === "account" && (next.decision === "ALLOW" || next.decision === "RESTORE" || next.decision === "DISMISS")) {
+      await fsPutDoc(env, token, "/users/" + encodeURIComponent(who), {
+        suspended: false,
+        restricted: false,
+        permanentBan: false,
+        restrictedReason: "",
+      });
+    }
+    return json({ ok: true, case: scrubCase(next), audit_id: audit.audit_id, auto_ban: false, permanent_ban: false });
+  }
+
   if (path === "/v1/admin/unlock" && request.method === "POST") {
     const body = await request.json().catch(() => ({}));
     const pass = String(body.password || adminPass || "").trim();
-    if (!records.length) return json({ ok: true, setup: true, hasPassword: false });
-    // Any stored copy may be the current one, so try them all before saying no.
-    const matched = pass ? await matchPasswordRecord(records, user.uid, pass) : null;
+    if (!recs.length) return json({ ok: true, setup: true, hasPassword: false });
+    const matched = await matchPasswordRecord(recs, user.uid, pass);
     if (!matched) {
       return json({ ok: false, error: "console password not accepted" }, 401);
     }
@@ -1297,12 +1519,9 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
     const body = await request.json().catch(() => ({}));
     const next = String(body.next_password || "").trim();
     if (next.length < 8) return json({ ok: false, error: "Use at least 8 characters" }, 400);
-    if (records.length) {
-      // Changing it accepts the current password from ANY stored copy: the
-      // copies can drift, and refusing a password that is genuinely current
-      // on this person's own account is how people get locked out.
+    if (recs.length) {
       const current = String(body.current_password || adminPass || "").trim();
-      if (!current || !(await matchPasswordRecord(records, user.uid, current))) {
+      if (!current || !(await matchPasswordRecord(recs, user.uid, current))) {
         return json({ ok: false, error: "current password is wrong" }, 401);
       }
     }
@@ -2027,7 +2246,6 @@ export async function handleRequest(request, env = {}, ctx = {}) {
       const p = String(body.p || "");
       if (!/^[A-Za-z0-9_-]{60,5600}$/.test(p)) return json({ ok: false, error: "bad packet" }, 400);
       const bytes = lifelineB64u(p);
-      // [version][tag 12][iv 12][ciphertext >= 16]
       if (!bytes || bytes[0] !== 1 || bytes.length < 41 || bytes.length > 4096) return json({ ok: false, error: "bad packet" }, 400);
       const tag = lifelineHex(bytes.slice(1, 13));
       const id = lifelineHex(bytes.slice(13, 21));
@@ -2046,7 +2264,6 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         .filter((t) => typeof t === "string" && /^[0-9a-f]{24}$/.test(t)).slice(0, 300);
       if (!tags.length) return json({ ok: true, packets: [] });
       const now = Date.now(), out = [];
-      // Firestore "in" takes at most 30 values per query.
       for (let i = 0; i < tags.length && out.length < 200; i += 30) {
         const chunk = tags.slice(i, i + 30);
         const q = await fsFetch(env, saToken, "POST", ":runQuery", { structuredQuery: {
@@ -2174,6 +2391,276 @@ export async function handleRequest(request, env = {}, ctx = {}) {
       return json({ ok: true });
     }
 
+    if (path === "/v1/safety/event" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      const type = String(body.type || "").toUpperCase();
+      if (body.body || body.message || body.ciphertext || body.plaintext || body.wire_text || body.transcript || body.chat) {
+        return json({ ok: false, error: "private boundary", contents_collected: false }, 403);
+      }
+      if ((type === "LEGAL_REQUEST" || type === "ADMIN_ACTION") && !isOperatorUser(env, user)) {
+        return json({ ok: false, error: "operator only" }, 403);
+      }
+      const surface = String(body.surface || "");
+      if (isPrivateSurface(surface)) {
+        return json({ ok: false, error: "private boundary", decision: "PRIVATE", contents_collected: false }, 403);
+      }
+      let linked = 0;
+      if (type === "USER_CREATED") {
+        const device = String(body.device_key || "").slice(0, 80);
+        if (device) {
+          const now = Date.now();
+          const rows = (memory.safetyBirths.get(device) || []).filter(function (r) { return now - r.at < 86400000; });
+          if (!rows.some(function (r) { return r.uid === user.uid; })) rows.push({ uid: user.uid, at: now });
+          memory.safetyBirths.set(device, rows);
+          linked = rows.length;
+        }
+      }
+      const publicText = String(body.public_text || "");
+      const fp = publicText ? fingerprintPublic(publicText) : "";
+      let repeat = false;
+      if (fp) {
+        const key = user.uid + ":" + fp;
+        const prev = memory.safetyPrints.get(key) || 0;
+        if (prev && Date.now() - prev < 86400000) repeat = true;
+        memory.safetyPrints.set(key, Date.now());
+      }
+      const ledger = memory.safetyLedgers.get(user.uid) || emptyLedger(user.uid);
+      let applied;
+      try {
+        applied = applySafetyEvent(ledger, {
+          type: type,
+          surface: surface,
+          public_text: publicText,
+          uid: user.uid,
+          linked_accounts: linked,
+          repeat_public: repeat,
+          ban_evasion: !!body.ban_evasion,
+          known_hash: !!body.known_hash,
+        });
+      } catch (e) {
+        const msg = (e && e.message) || "rejected";
+        const code = msg === "private boundary" ? 403 : 400;
+        return json({ ok: false, error: msg, contents_collected: false }, code);
+      }
+      memory.safetyLedgers.set(user.uid, applied.ledger);
+      if (saToken) {
+        const counts = applied.counts;
+        await fsPutDoc(env, saToken, "/safetyLedgers/" + encodeURIComponent(user.uid), {
+          uid: user.uid,
+          counts: counts,
+          verified: !!applied.ledger.verified,
+          updatedAt: Date.now(),
+        });
+      }
+      let cluster = null;
+      if (fp) cluster = observeCluster(memory.safetyClusters, { fingerprint: fp, uid: user.uid });
+      let caseId = "";
+      const content = applied.content;
+      if (content && safetyHold(content.decision)) {
+        const opened = await openHeldCase(env, saToken, userToken, {
+          reporter_id: "system",
+          reported_user_id: user.uid,
+          content_id: String(body.content_id || ""),
+          content_type: surface || (type === "SIGNAL_PUBLISHED" ? "signal" : "broadcast"),
+          surface: surface || "public",
+          reason_code: content.urgent ? "violence" : (content.decision === "AGE_RESTRICT" ? "sexual" : "dangerous"),
+          evidence_reference: (surface || "public") + ":" + String(body.content_id || type),
+          result: content,
+          contents_collected: content.contents_collected !== false && type !== "LEGAL_REQUEST",
+        }, content.decision + " " + content.score, "classifier");
+        caseId = opened.case_id;
+      } else if (applied.behaviour && (applied.behaviour.decision === "REVIEW" || applied.behaviour.decision === "REMOVE")) {
+        const opened = await openHeldCase(env, saToken, userToken, {
+          reporter_id: "system",
+          reported_user_id: user.uid,
+          content_id: user.uid,
+          content_type: "account",
+          surface: "behaviour",
+          reason_code: "suspicious",
+          evidence_reference: "behaviour:" + user.uid,
+          result: applied.behaviour,
+          contents_collected: false,
+        }, applied.behaviour.signals.map(function (s) { return s.id; }).join(","), "behaviour");
+        caseId = opened.case_id;
+      } else if (cluster && cluster.human_required) {
+        const opened = await openHeldCase(env, saToken, userToken, {
+          reporter_id: "system",
+          reported_user_id: user.uid,
+          content_id: fp,
+          content_type: "account",
+          surface: "behaviour",
+          reason_code: "suspicious",
+          evidence_reference: "cluster:" + fp,
+          result: cluster,
+          contents_collected: false,
+        }, "coordinated public posts " + cluster.accounts, "network");
+        caseId = opened.case_id;
+      }
+      return json({
+        ok: true,
+        type: type,
+        case_id: caseId,
+        statement: content ? statementFor(content) : "",
+        content: content ? {
+          decision: content.decision,
+          score: content.score,
+          urgent: !!content.urgent,
+          auto_ban: false,
+          contents_collected: type === "LEGAL_REQUEST" ? false : !!content.contents_collected,
+        } : null,
+        behaviour: {
+          decision: applied.behaviour.decision,
+          score: applied.behaviour.score,
+          auto_ban: false,
+          contents_collected: false,
+          signals: (applied.behaviour.signals || []).map(function (s) { return s.id; }),
+        },
+        cluster: cluster ? { accounts: cluster.accounts, decision: cluster.decision, score: cluster.score } : null,
+        private_read: false,
+      });
+    }
+
+    if (path === "/v1/safety/score" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      const surface = String(body.surface || "public");
+      if (isPrivateSurface(surface)) {
+        return json({ ok: false, error: "private boundary", decision: "PRIVATE", contents_collected: false }, 403);
+      }
+      const result = scorePublicText(String(body.text || ""), { surface: surface });
+      result.statement = statementFor(result);
+      if (safetyHold(result.decision)) {
+        const opened = await openHeldCase(env, saToken, userToken, {
+          reporter_id: "system",
+          reported_user_id: user.uid,
+          content_id: String(body.content_id || ""),
+          content_type: surface,
+          surface: surface,
+          reason_code: result.urgent ? "violence" : (result.decision === "AGE_RESTRICT" ? "sexual" : "dangerous"),
+          evidence_reference: surface + ":" + String(body.content_id || "text"),
+          result: result,
+        }, result.decision + " " + result.score, "classifier");
+        result.case_id = opened.case_id;
+      }
+      const safe = {
+        ok: result.ok,
+        surface: result.surface,
+        decision: result.decision,
+        score: result.score,
+        signals: result.signals,
+        urgent: result.urgent,
+        monitor: result.monitor,
+        human_required: result.human_required,
+        auto_ban: false,
+        account_action_applied: false,
+        recommended_account_action: result.recommended_account_action,
+        contents_collected: result.contents_collected,
+        statement: result.statement,
+        case_id: result.case_id || "",
+        version: result.version,
+      };
+      return json({ ok: true, result: safe });
+    }
+
+    if (path === "/v1/safety/behaviour" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      const result = scoreBehaviour(body.counts || body);
+      if (result.decision === "REVIEW" || result.decision === "REMOVE") {
+        const opened = buildCase({
+          reporter_id: "system",
+          reported_user_id: user.uid,
+          content_id: user.uid,
+          content_type: "account",
+          surface: "behaviour",
+          reason_code: "suspicious",
+          evidence_reference: "behaviour:" + user.uid,
+          result: result,
+          contents_collected: false,
+        });
+        await persistSafetyCase(env, saToken, userToken, opened);
+        await persistSafetyAudit(env, saToken, userToken, buildAudit({
+          case_id: opened.case_id,
+          who: "system",
+          what: "behaviour-risk",
+          why: result.signals.map(function (s) { return s.id; }).join(","),
+          detected_by: "behaviour",
+          human_reviewed: false,
+          action_taken: "case opened",
+        }));
+        result.case_id = opened.case_id;
+      }
+      return json({ ok: true, result: result });
+    }
+
+    if (path === "/v1/safety/hash" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      if (body.bytes || body.file || body.data || body.image || body.blob) {
+        return json({ ok: false, error: "send the hash only" }, 400);
+      }
+      const result = matchKnownHash(body.sha256, hashList(env));
+      if (!result.ok) return json(result, 400);
+      if (result.matched) {
+        const opened = buildCase({
+          reporter_id: "system",
+          reported_user_id: user.uid,
+          content_id: String(body.content_id || ""),
+          content_type: String(body.surface || "public"),
+          surface: "public",
+          reason_code: result.category || "known",
+          evidence_reference: "hash:" + String(body.sha256 || "").slice(0, 16),
+          result: result,
+          contents_collected: false,
+        });
+        await persistSafetyCase(env, saToken, userToken, opened);
+        await persistSafetyAudit(env, saToken, userToken, buildAudit({
+          case_id: opened.case_id,
+          who: "system",
+          what: "known-hash",
+          why: result.category || "known",
+          detected_by: "hash",
+          human_reviewed: false,
+          action_taken: "held for review",
+        }));
+        result.case_id = opened.case_id;
+      }
+      return json({ ok: true, result: result });
+    }
+
+    if (path === "/v1/safety/appeal" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      let appeal;
+      try {
+        appeal = buildAppeal({
+          case_id: body.case_id,
+          appellant_uid: user.uid,
+          note: body.note,
+        });
+      } catch (e) {
+        return json({ ok: false, error: (e && e.message) || "appeal rejected" }, 400);
+      }
+      const existing = memory.safetyCases.get(appeal.case_id);
+      if (existing && existing.reported_user_id && existing.reported_user_id !== user.uid) {
+        return json({ ok: false, error: "not your case" }, 403);
+      }
+      memory.safetyAppeals.set(appeal.appeal_id, appeal);
+      if (existing) {
+        const next = applyAppeal(existing, appeal);
+        await persistSafetyCase(env, saToken, userToken, next);
+      }
+      if (userToken || saToken) {
+        await fsPutDoc(env, saToken || userToken, "/safetyAppeals/" + encodeURIComponent(appeal.appeal_id), appeal);
+      }
+      await persistSafetyAudit(env, saToken, userToken, buildAudit({
+        case_id: appeal.case_id,
+        who: user.uid,
+        what: "appeal-opened",
+        why: "person challenged the decision",
+        detected_by: "human",
+        human_reviewed: false,
+        action_taken: "appeal open",
+      }));
+      return json({ ok: true, appeal_id: appeal.appeal_id });
+    }
+
     if (path === "/v1/report" && request.method === "POST") {
       const body = await request.json().catch(() => ({}));
       const reason = String(body.reason || "").trim();
@@ -2207,11 +2694,99 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         toFsFields(doc),
       );
       if (!wrote.ok && existing) memory.reports.set(id, existing);
+      const targetType = String(body.target_type || "public");
+      const privateTarget = isPrivateSurface(targetType);
+      const scored = privateTarget
+        ? { decision: "PRIVATE", score: 0, signals: [], urgent: false, contents_collected: false }
+        : scorePublicText(String(body.caption || body.public_text || ""), { surface: targetType === "broadcast" || targetType === "signal" ? targetType : "public" });
+      const targetUser = String(body.target_user_id || "");
+      const now = Date.now();
+      memory.safetyReportHits.push({
+        reporter_uid: user.uid,
+        target_id: targetUser || String(body.target_id || ""),
+        at: now,
+        reporter_age_hours: Number(body.reporter_age_hours),
+      });
+      if (memory.safetyReportHits.length > 500) memory.safetyReportHits = memory.safetyReportHits.slice(-500);
+      const recentHits = memory.safetyReportHits.filter(function (r) {
+        return r.target_id && r.target_id === (targetUser || String(body.target_id || "")) && now - r.at < 3600000;
+      });
+      const weighed = weighReports(recentHits.filter(function (r) { return Number.isFinite(r.reporter_age_hours); }));
+      if (targetUser) {
+        const led = memory.safetyLedgers.get(targetUser) || emptyLedger(targetUser);
+        try {
+          const applied = applySafetyEvent(led, { type: "ACCOUNT_REPORTED", uid: targetUser });
+          memory.safetyLedgers.set(targetUser, applied.ledger);
+        } catch (_) {}
+      }
+      const prior = safetyQueue().filter(function (c) {
+        return c.reported_user_id && c.reported_user_id === targetUser;
+      }).length;
+      const blended = combineRisk(
+        scored.decision === "PRIVATE" ? null : scored,
+        null,
+        weighed.brigade ? weighed.weight : prior + 1,
+        weighed,
+      );
+      const urgentCode = code === "terrorism" || code === "recruitment" || code === "child_exploitation" || code === "violence";
+      const risk = urgentCode
+        ? Object.assign({}, blended, {
+          urgent: true,
+          score: Math.max(blended.score, 70),
+          decision: blended.decision === "REMOVE" || blended.decision === "ESCALATE" ? "ESCALATE" : "REVIEW",
+          human_required: true,
+          auto_ban: false,
+        })
+        : blended;
+      const opened = buildCase({
+        case_id: "TS-" + id.slice(0, 48),
+        reporter_id: user.uid,
+        reported_user_id: String(body.target_user_id || ""),
+        content_id: String(body.broadcast_id || body.target_id || ""),
+        content_type: targetType,
+        surface: privateTarget ? targetType : (targetType || "public"),
+        reason_code: code,
+        report_id: id,
+        evidence_reference: "report:" + id,
+        result: risk,
+        contents_collected: !privateTarget && !!(body.caption || body.public_text),
+        include_body: false,
+      });
+      if (privateTarget) opened.contents_collected = false;
+      await persistSafetyCase(env, saToken, userToken, opened);
+      await persistSafetyAudit(env, saToken, userToken, buildAudit({
+        case_id: opened.case_id,
+        who: user.uid,
+        what: "report-opened",
+        why: code,
+        detected_by: "report",
+        human_reviewed: false,
+        action_taken: "case opened",
+      }));
       if (code === "sexual") {
         const bid = String(body.broadcast_id || (body.target_type === "broadcast" ? body.target_id : "") || "");
         await hideBroadcastSexual(env, saToken, userToken, bid);
+      } else if (urgentCode) {
+        const bid = String(body.broadcast_id || (body.target_type === "broadcast" ? body.target_id : "") || "");
+        if (bid && (saToken || userToken)) {
+          await fsPutDoc(env, saToken || userToken, "/broadcasts/" + encodeURIComponent(bid), {
+            listed: false,
+            held: true,
+            heldReason: "safety-urgent",
+            safetyDecision: "ESCALATE",
+            updatedAt: Date.now(),
+          });
+        }
       }
-      return json({ ok: true, report_id: id, hidden: code === "sexual" });
+      return json({
+        ok: true,
+        report_id: id,
+        case_id: opened.case_id,
+        priority: opened.priority,
+        hidden: code === "sexual",
+        held: urgentCode,
+        contents_collected: opened.contents_collected,
+      });
     }
 
     if (path === "/v1/support/intent" && request.method === "POST") {
