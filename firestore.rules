@@ -13,6 +13,13 @@ service cloud.firestore {
         || request.auth.uid == 'ibMOMY6Q3sVTCxIrwO2FGk43zw93'
       );
     }
+    /* Either direction of a connection. A one-sided write used to let someone
+       watch a Signal (their own list had the other person) while the view
+       write looked only at the owner's list and was denied. */
+    function signalConnected(ownerUid) {
+      return exists(/databases/$(database)/documents/users/$(ownerUid)/connections/$(request.auth.uid))
+        || exists(/databases/$(database)/documents/users/$(request.auth.uid)/connections/$(ownerUid));
+    }
     /* Numeric bump from a member: never decrease, never jump more than 1
        in a single write. FieldValue.increment(1) passes. A rewritten
        client setting impressions: 999999 does not. */
@@ -156,15 +163,27 @@ service cloud.firestore {
       allow create, update: if isSignedIn()
         && request.auth.uid == viewerUid
         && request.resource.data.uid == viewerUid
-        && (isOwner(uid) || exists(/databases/$(database)/documents/users/$(uid)/connections/$(request.auth.uid)))
+        && (isOwner(uid) || signalConnected(uid))
         && request.resource.data.keys().hasOnly(['uid','name','viewedAt','reaction','reactedAt']);
       allow delete: if isOwner(uid) || (isSignedIn() && request.auth.uid == viewerUid);
+    }
+    /* Emoji only — no name. Connections can count reactions. Who watched
+       stays on viewers, which they cannot list. */
+    match /users/{uid}/signal/{segId}/reacts/{viewerUid} {
+      allow read: if isOwner(uid) || isOperator() || (isSignedIn() && signalConnected(uid));
+      allow create, update: if isSignedIn()
+        && request.auth.uid == viewerUid
+        && (isOwner(uid) || signalConnected(uid))
+        && request.resource.data.keys().hasOnly(['emoji','at'])
+        && request.resource.data.emoji is string
+        && request.resource.data.emoji.size() <= 8;
+      allow delete: if isSignedIn() && (request.auth.uid == viewerUid || isOwner(uid));
     }
 
     match /users/{uid}/signal/{segId} {
       allow read: if isOperator()
         || isOwner(uid)
-        || (isSignedIn() && exists(/databases/$(database)/documents/users/$(uid)/connections/$(request.auth.uid)));
+        || (isSignedIn() && signalConnected(uid));
       allow create, delete: if isOwner(uid);
     }
 

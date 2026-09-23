@@ -70,8 +70,8 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v204';
-const APP_BUILD = '20260923c';
+const CACHE_NAME = 'naluno-shell-v200';
+const APP_BUILD = '20260924a';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -81,7 +81,7 @@ const CORE_ASSETS = [
   '/js/band-room.js', '/js/band-list.js', '/js/broadcast-core.js', '/js/broadcast-space.js',
   '/js/broadcast-live.js', '/js/broadcast-composer.js', '/js/broadcast-upload.js',
   '/js/screen.js', '/js/origin.js', '/js/strand.js', '/js/circle.js',
-  '/js/signal-core.js', '/js/signal-ui.js',
+  '/js/signal-core.js', '/js/signal-ui.js', '/js/signal-social.js', '/js/broadcast-offline.js',
   '/js/sfu-live.js', '/js/compass.js', '/js/weather.js', '/js/beacon.js', '/js/find.js', '/js/profile.js', '/js/notifications.js',
   '/js/ice-core.js', '/js/compat-lock.js', '/js/keep-alive.js', '/js/media-contain.js',
   '/js/diagnostics.js', '/js/currency.js', '/js/economy.js', '/js/economy-ui.js', '/js/onboard.js', '/js/presence.js', '/js/handle-guard.js',
