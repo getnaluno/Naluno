@@ -968,6 +968,46 @@ function signalPlaySrc(seg){
   return remote;
 }
 
+/* Paint the social row for the segment on screen: reactions for someone
+   else's Signal, "Seen by" for your own, and the Broadcast button when the
+   Signal was made from one. Called each time a segment is shown. */
+async function signalPaintSocial(ownerUid, seg){
+  const row = document.getElementById('bviewerSocial');
+  const S = window.NalunoSignalSocial;
+  if(!row || !S || !seg) return;
+  const segId = seg.id || seg.segmentId || seg.docId || '';
+  const mine = !!(currentUser && ownerUid === currentUser.uid);
+  row.innerHTML = S.linkedBroadcastHtml(seg);
+  if(!segId){ S.wireLinkedBroadcast(row); return; }
+  if(mine){
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'sig-seen'; btn.textContent = 'Seen by';
+    btn.onclick = function(e){ try{ e.stopPropagation(); }catch(_){} S.openViewers(segId); };
+    row.appendChild(btn);
+    try{
+      const rows = await S.viewersOf(segId);
+      btn.textContent = rows.length ? ('Seen by ' + rows.length) : 'Seen by';
+      const sum = S.summarise(rows);
+      if(sum.length) btn.textContent += '  ' + sum.map(function(x){ return x.emoji + x.n; }).join(' ');
+    }catch(_){}
+  } else {
+    S.markViewed(ownerUid, segId);
+    const bar = document.createElement('div');
+    bar.innerHTML = S.reactionBarHtml('');
+    row.appendChild(bar.firstChild);
+    row.querySelectorAll('[data-react]').forEach(function(b){
+      b.onclick = async function(e){
+        try{ e.stopPropagation(); }catch(_){}
+        const next = await S.react(ownerUid, segId, b.getAttribute('data-react'));
+        row.querySelectorAll('[data-react]').forEach(function(x){
+          x.classList.toggle('on', next && x.getAttribute('data-react') === next);
+        });
+      };
+    });
+  }
+  S.wireLinkedBroadcast(row);
+}
+
 function signalRememberView(contactUid, segments){
   try{
     nalunoCacheWrite('signalView:' + (contactUid || 'me'), (segments || []).map(nalunoSlimMedia));
@@ -1035,6 +1075,13 @@ function signalEnsurePlayableSrc(videoEl, remoteUrl){
 }
 
 function playSegment(idx, direction=1){
+  /* Repaint the social row for THIS segment: reactions belong to the clip on
+     screen, not to the whole Signal, so moving between clips changes them. */
+  try{
+    const seg = currentSegments && currentSegments[idx];
+    const owner = viewingMine ? (currentUser && currentUser.uid) : (currentStoryOwnerUid || '');
+    if(seg && typeof signalPaintSocial === 'function') signalPaintSocial(owner, seg);
+  }catch(_){}
   if(viewingMine && $('bviewerRemove')){
     $('bviewerRemove').style.display = 'inline-flex';
     $('bviewerRemove').style.alignItems = 'center';
@@ -1566,6 +1613,7 @@ function openMySignalStory(){
   if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
 }
 
+let currentStoryOwnerUid = '';
 async function openContactSignalStory(contactId){
   viewingMine = false;
   const entry = (connectionsSignals||[]).find(x => x.contact && x.contact.id === contactId);
@@ -1586,6 +1634,7 @@ async function openContactSignalStory(contactId){
   if(!segments.length){ toast('Signal expired'); return; }
   currentSegments = segments;
   currentSegments.forEach(function(seg){ signalPlaySrc(seg); });
+  currentStoryOwnerUid = entry.contact.firebaseUid || '';
   signalRememberView(entry.contact.firebaseUid || contactId, currentSegments);
   currentSegmentIndex = 0;
   $('bviewerName').textContent = entry.contact.name || 'Signal';

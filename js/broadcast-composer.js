@@ -75,6 +75,20 @@ function bcompReset(){
   window._bcompOriginAck = false;
   window._bcompScreen = null;
   window._bcompScreenP = null;
+  /* Show the date box only when "Publish later" is ticked, and default it to
+     an hour from now so the field is never empty when it appears. */
+  if($('bcompSchedule') && !$('bcompSchedule').__wired){
+    $('bcompSchedule').__wired = true;
+    $('bcompSchedule').onchange = function(){
+      const box = $('bcompPublishAt');
+      if(!box) return;
+      box.style.display = this.checked ? 'block' : 'none';
+      if(this.checked && !box.value){
+        const t = new Date(Date.now() + 3600000 - new Date().getTimezoneOffset() * 60000);
+        box.value = t.toISOString().slice(0, 16);
+      }
+    };
+  }
   const pub = $('bcompPublishBtn');
   if(pub){
     pub.removeAttribute('disabled');
@@ -493,6 +507,17 @@ async function bcompPublish(){
   const snapFile = bcompFile;
   const snapBlob = bcompCompressedBlob || bcompFile;
   const snapDuration = bcompDuration || 0;
+  /* Read the publish options at the moment Publish is pressed, with the rest
+   of the snapshot — not later, when the sheet may already be closed. */
+const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
+  const snapVisibility = snapPrivate ? 'private' : 'public';
+  let snapPublishAt = 0;
+  try{
+    if($('bcompSchedule') && $('bcompSchedule').checked && $('bcompPublishAt') && $('bcompPublishAt').value){
+      const t = new Date($('bcompPublishAt').value).getTime();
+      if(isFinite(t) && t > Date.now()) snapPublishAt = t;
+    }
+  }catch(_){}
   const snapTitle = title;
   const snapDesc = desc;
   const snapTags = tags.slice();
@@ -582,6 +607,7 @@ async function bcompPublish(){
       }
       const b = await createPermanentBroadcast({
         title: snapTitle, description: snapDesc, tags: snapTags,
+        publishAt: snapPublishAt, visibility: snapVisibility,
         mediaType, mediaUrl, thumbUrl, filterCss: '',
         chapters, breathers,
         strandId: snapStrandId, strandName: snapStrandName, origin: snapOrigin,

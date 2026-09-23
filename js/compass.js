@@ -49,8 +49,47 @@ function compassStoredHash(){
   // lock holds instead of quietly letting Compass open.
   return compassLocalHash();
 }
+/* Every place the hash is kept. They can drift apart — the vault copy, the
+   older profile copy and the local copy are written at different moments, and
+   a stale one winning is why a password you know can be refused. Unlocking
+   accepts ANY of them, then writes the winner everywhere so they agree from
+   then on. (Same problem, same cure, as the console password.) */
+function compassAllHashes(){
+  const out = [];
+  try{
+    if(typeof nalunoVault !== 'undefined' && typeof nalunoVault.get === 'function'){
+      const v = nalunoVault.get('compassPasswordHash');
+      if(v) out.push(v);
+    }
+  }catch(_){}
+  const fromProfile = (currentProfile && currentProfile.compassPasswordHash) || '';
+  if(fromProfile) out.push(fromProfile);
+  const local = compassLocalHash();
+  if(local) out.push(local);
+  return out.filter(function(h, i){ return h && out.indexOf(h) === i; });
+}
+async function compassSyncHash(hash){
+  compassRememberHash(hash);
+  try{ if(currentProfile) currentProfile.compassPasswordHash = hash; }catch(_){}
+  try{
+    if(typeof nalunoVault !== 'undefined' && typeof nalunoVault.set === 'function'){
+      await nalunoVault.set('compassPasswordHash', hash);
+    }
+  }catch(_){}
+}
+/** Clear the lock everywhere. Used by the reset on the lock screen. */
+async function compassClearLock(){
+  compassRememberHash('');
+  try{ if(currentProfile) delete currentProfile.compassPasswordHash; }catch(_){}
+  try{
+    if(typeof nalunoVault !== 'undefined' && typeof nalunoVault.set === 'function'){
+      await nalunoVault.set('compassPasswordHash', '');
+    }
+  }catch(_){}
+  compassUnlockedThisSession = true;
+}
 function compassIsLocked(){
-  return !!compassStoredHash() && !compassUnlockedThisSession;
+  return compassAllHashes().length > 0 && !compassUnlockedThisSession;
 }
 function showCompassLockScreenIfNeeded(){
   if(compassIsLocked()){
@@ -67,10 +106,25 @@ function showCompassLockScreenIfNeeded(){
     loadCompassMessages();
   }
 }
+/* A way back in. Compass belongs to the signed-in account, and that account
+   is the stronger credential — a person already signed in as themselves is
+   not a stranger. So the lock can be cleared and set again, rather than
+   leaving someone locked out of their own Compass by a hash that drifted. */
+if($('compassLockResetBtn')) $('compassLockResetBtn').onclick = async ()=>{
+  const who = (currentUser && (currentUser.email || currentUser.uid)) || 'your account';
+  if(!confirm('Remove the Compass password for ' + who + '? You are signed in, so you can set a new one straight away.')) return;
+  try{ await compassClearLock(); }catch(_){}
+  showCompassLockScreenIfNeeded();
+  toast('Compass unlocked \u2014 set a new password in Compass settings');
+  try{ if($('compassLockToggleBtn')) $('compassLockToggleBtn').click(); }catch(_){}
+};
+
 $('compassLockSubmitBtn').onclick = async ()=>{
   const entered = $('compassLockInput').value;
   const hash = await sha256Hex(entered);
-  if(hash === compassStoredHash()){
+  if(compassAllHashes().indexOf(hash) >= 0){
+    // Make every copy agree with the one that just worked.
+    try{ await compassSyncHash(hash); }catch(_){}
     compassUnlockedThisSession = true;
     showCompassLockScreenIfNeeded();
     try{
@@ -88,7 +142,7 @@ $('compassLockInput').addEventListener('keydown', e=>{
 });
 $('compassLockToggleBtn').onclick = async ()=>{
   if(!currentUser || !fbDb) return;
-  const hasPassword = !!compassStoredHash();
+  const hasPassword = compassAllHashes().length > 0;
   if(!hasPassword){
     const newPass = prompt('Set a password to lock Compass — leave blank to cancel:');
     if(!newPass) return;
@@ -468,6 +522,14 @@ $('compassInput').addEventListener('input', function(){
 });
 if($('compassWriteBtn')) $('compassWriteBtn').onclick = function(){ writeToNaluno(''); };
 
+/* Preselects a Broadcast to link, then opens the Signal composer — the
+   entry point from an open Broadcast's "Share to Signal" button. */
+let __presetLinkBroadcast = null;
+function openSignalLinkedTo(broadcastId){
+  __presetLinkBroadcast = broadcastId || null;
+  openComposer('signal');
+}
+
 function openComposer(mode){
   try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('open composer', mode || 'signal'); }catch(_){}
   composerMode = mode === 'broadcast' ? 'broadcast' : 'signal';
@@ -504,6 +566,19 @@ function openComposer(mode){
       const mine = (typeof myBroadcasts !== 'undefined' ? myBroadcasts : []);
       sel.innerHTML = '<option value="">None — standalone Signal</option>' +
         mine.map(b => `<option value="${b.id}">${escapeHtml(b.title||'Broadcast')}</option>`).join('');
+      if(__presetLinkBroadcast){
+        // If the Broadcast that opened this composer is not in the "mine" list
+        // yet (a fresh publish, or the list has not reloaded), add it so the
+        // choice does not silently disappear.
+        if(!mine.some(b => b.id === __presetLinkBroadcast)){
+          const opt = document.createElement('option');
+          opt.value = __presetLinkBroadcast;
+          opt.textContent = (activeBroadcastMeta && activeBroadcastMeta.title) || 'This Broadcast';
+          sel.appendChild(opt);
+        }
+        sel.value = __presetLinkBroadcast;
+        __presetLinkBroadcast = null;
+      }
     }
     // Default Signal composer to Video so Gallery opens with video/* (not photos).
     try{

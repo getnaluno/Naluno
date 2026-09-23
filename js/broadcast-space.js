@@ -227,6 +227,25 @@ function renderBspaceMedia(seg){
             vel.src = rawSrc + (rawSrc.indexOf('?') >= 0 ? '&' : '?') + 'r=' + Date.now();
             vel.play().catch(function(){});
           }catch(_){}
+        } else if(!vel.dataset.offlineTried && window.NalunoOfflineBroadcast && rawSrc){
+          /* The network copy could not be reached after a retry — exactly the
+             moment saving something offline exists for. Fall back to the
+             cached copy automatically: the person should not have to
+             remember they saved this to make it play. */
+          vel.dataset.offlineTried = '1';
+          window.NalunoOfflineBroadcast.cachedUrlFor(rawSrc).then(function(blobUrl){
+            if(blobUrl){
+              vel.src = blobUrl;
+              vel.play().catch(function(){});
+              try{
+                const chip = document.getElementById('bspaceOfflineChip');
+                if(chip) chip.style.display = 'block';
+                if(activeBroadcastId && window.NalunoOfflineBroadcast) window.NalunoOfflineBroadcast.markWatched(activeBroadcastId);
+              }catch(_){}
+            } else {
+              showKick();
+            }
+          }).catch(function(){ showKick(); });
         } else {
           showKick();
         }
@@ -728,6 +747,16 @@ async function openBroadcastSpace(meta){
   $('bspaceGoLive').style.display = isCreator ? 'inline-block' : 'none';
   if($('bspaceDeleteBtn')) $('bspaceDeleteBtn').style.display = isCreator ? 'inline-block' : 'none';
   if($('bspaceReportBtn')) $('bspaceReportBtn').style.display = isCreator ? 'none' : 'inline-block';
+  try{
+    const O = window.NalunoOfflineBroadcast, btn = $('bspaceSaveOfflineBtn');
+    if(O && btn && activeBroadcastId){
+      const saved = O.isSaved(activeBroadcastId);
+      btn.textContent = saved ? 'Saved' : 'Save';
+      btn.classList.toggle('saved', saved);
+      if(saved) O.markWatched(activeBroadcastId);
+    }
+  }catch(_){}
+  const chip = $('bspaceOfflineChip'); if(chip) chip.style.display = 'none';
   const strandRow = $('bspaceStrandRow');
   if(strandRow){
     strandRow.style.display = isCreator ? 'block' : 'none';
@@ -1761,6 +1790,40 @@ function bspaceOpenReport(){
 
 /* Report sits beside Share. The sheet must sit above this space or the tap
    looks dead. Own Broadcasts hide Report (Delete is the control). */
+if($('bspaceSaveOfflineBtn')){
+  $('bspaceSaveOfflineBtn').onclick = async function(e){
+    try{ e.stopPropagation(); }catch(_){}
+    const btn = $('bspaceSaveOfflineBtn');
+    const O = window.NalunoOfflineBroadcast;
+    if(!O || !activeBroadcastId || !activeBroadcastMeta) return;
+    if(O.isSaved(activeBroadcastId)){
+      if(!confirm('Remove this from your saved Broadcasts?')) return;
+      await O.removeSaved(activeBroadcastId);
+      btn.textContent = 'Save'; btn.classList.remove('saved');
+      toast('Removed from saved');
+      return;
+    }
+    btn.classList.add('saving'); btn.textContent = 'Saving\u2026';
+    const r = await O.saveBroadcast({
+      id: activeBroadcastId,
+      mediaUrl: activeBroadcastMeta.mediaUrl,
+      thumbUrl: activeBroadcastMeta.thumbUrl,
+      title: activeBroadcastMeta.title,
+      creatorName: activeBroadcastMeta.creatorName,
+    }, function(frac){ btn.textContent = 'Saving \u2026 ' + Math.round(frac*100) + '%'; });
+    btn.classList.remove('saving');
+    if(r.ok){ btn.textContent = 'Saved'; btn.classList.add('saved'); toast('Saved \u2014 watch it without a connection'); }
+    else { btn.textContent = 'Save'; toast(r.error === 'not enough space \u2014 free up some saves' ? r.error : 'Could not save this'); }
+  };
+}
+if($('bspaceShareSignalBtn')){
+  $('bspaceShareSignalBtn').onclick = function(e){
+    try{ e.stopPropagation(); }catch(_){}
+    if(!activeBroadcastId){ return; }
+    if(typeof openSignalLinkedTo === 'function') openSignalLinkedTo(activeBroadcastId);
+    else toast('Signals are not available right now');
+  };
+}
 if($('bspaceReportBtn')){
   $('bspaceReportBtn').onclick = function(e){
     if(e){ e.preventDefault(); e.stopPropagation(); }
@@ -1771,7 +1834,9 @@ if($('bspaceReportBtn')){
 if($('bspaceShareBtn')){
   $('bspaceShareBtn').onclick = async ()=>{
     if(!activeBroadcastId) return;
-    const link = typeof broadcastShareUrl === 'function' ? broadcastShareUrl(activeBroadcastId) : (location.origin + '/?broadcast=' + activeBroadcastId);
+    const link = typeof broadcastShareUrl === 'function'
+      ? broadcastShareUrl(activeBroadcastId, (activeBroadcastMeta && activeBroadcastMeta.title) || '')
+      : (location.origin + '/?broadcast=' + activeBroadcastId);
     try{
       if(navigator.share){
         await navigator.share({

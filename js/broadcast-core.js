@@ -45,9 +45,29 @@ function signalTtlMs(){
    would serve the same generic tags and every share would look identical.
    The worker page forwards into the app immediately.
    One constant, so this can move to a custom domain later. */
+/* Share links.
+
+   The host is ONE constant. Point it at getnaluno.com once the Cloudflare
+   route for /b/* is in place (see READ-ME) and no shared link will ever
+   mention a worker again. It defaults to the worker because that is what
+   serves the preview picture today — a pretty link that shows nothing is a
+   worse trade than a plain one that shows the Broadcast.
+
+   The id comes first and the title follows it, so the id is never ambiguous
+   however someone titles a Broadcast:
+       /b/<id>/rain-over-kampala
+   The title part is decoration; the worker ignores it. */
 const NALUNO_LINK_BASE = 'https://naluno-economy.naluno.workers.dev';
-function broadcastShareUrl(id){
-  return NALUNO_LINK_BASE + '/b/' + encodeURIComponent(id);
+function broadcastLinkSlug(title){
+  return String(title || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+}
+function broadcastShareUrl(id, title){
+  const slug = broadcastLinkSlug(title);
+  return NALUNO_LINK_BASE + '/b/' + encodeURIComponent(id) + (slug ? '/' + slug : '');
 }
 
 /** Share a whole Strand (a creator's ordered set of Broadcasts), not just one item in it. */
@@ -124,11 +144,23 @@ function nalunoBroadcastListingFields(screen){
   return { listed: false, held: true, heldReason: 'new-publisher', hidden: false };
 }
 /** On the public feed. Legacy docs without listed stay visible until hidden/held. */
+/* Scheduled: not public until its moment arrives.
+   Private: never public — only the person who made it.
+   Both are also enforced in firestore.rules; this is what the app shows. */
+function broadcastIsScheduled(b){
+  const at = Number(b && b.publishAt) || 0;
+  return at > Date.now();
+}
+function broadcastIsPrivate(b){
+  return !!(b && b.visibility === 'private');
+}
 function broadcastIsPublic(b){
   if(!b || b.deleted) return false;
   if(b.hidden) return false;
   if(b.held) return false;
   if(b.listed === false) return false;
+  if(broadcastIsPrivate(b)) return false;
+  if(broadcastIsScheduled(b)) return false;
   return true;
 }
 function broadcastVisibleTo(b, uid){
@@ -160,7 +192,7 @@ async function nalunoPlaceBroadcast(id, screen){
   }catch(_){ return null; }
 }
 
-async function createPermanentBroadcast({ title, description, tags, mediaType, mediaUrl, thumbUrl, filterCss, chapters, breathers, strandId, strandName, origin, screen }){
+async function createPermanentBroadcast({ title, description, tags, mediaType, mediaUrl, thumbUrl, filterCss, chapters, breathers, strandId, strandName, origin, screen, publishAt, visibility }){
   if(!currentUser || !fbDb) throw new Error('Sign in required');
   const now = Date.now();
   const ref = fbDb.collection('broadcasts').doc();
@@ -184,6 +216,10 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
     breathers: Array.isArray(breathers) ? breathers : null,
     createdAt: now,
     updatedAt: now,
+    /* publishAt in the future = scheduled; visibility 'private' = only you.
+       Both default to "public now" so nothing changes for an ordinary post. */
+    publishAt: Number(publishAt) || now,
+    visibility: visibility === 'private' ? 'private' : 'public',
     views: 0,
     uniqueViews: 0,
     strandId: strandId || null,

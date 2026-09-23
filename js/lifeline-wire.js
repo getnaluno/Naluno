@@ -79,9 +79,28 @@
   }
 
   /* ---------------- 3. SMS ---------------- */
+  /* The SMS carries a TAPPABLE LINK, not a blob of characters.
+
+     It used to send the sealed packet as raw text, so the person receiving it
+     had to notice it was a Naluno message, open Naluno, find "Open a Naluno
+     SMS" and paste it in. That is a poor way to receive word from someone you
+     are worried about, and it pushed the moment of receiving outside Naluno.
+
+     The recipient is the FINAL destination — the packet is sealed for them
+     alone, and nobody carrying it can open it — so there is no reason for
+     them to unseal it by hand. Tapping the link opens Naluno and the message
+     lands in the right conversation.
+
+     Cost: the link adds about 30 characters, so a short message becomes two
+     SMS instead of one. A tap instead of copy-and-paste is worth a segment.
+     Pasting still works, for a phone that strips links. */
+  var LINK_BASE = 'https://getnaluno.com/?ll=';
+  function smsLineFor(packetB64) { return LINK_BASE + packetB64; }
   function smsBodyFor(uid) {
-    return outbox().filter(function (x) { return x.uid === uid; })
-      .map(function (x) { return L.SMS_PREFIX + x.p; }).join('\n');
+    var rows = outbox().filter(function (x) { return x.uid === uid; });
+    if (!rows.length) return '';
+    return 'Naluno message \u2014 tap to open:\n'
+      + rows.map(function (x) { return smsLineFor(x.p); }).join('\n');
   }
   function smsHref(body) {
     // iOS wants "&body=", Android "?body=".
@@ -89,7 +108,9 @@
     return 'sms:' + (ios ? '&' : '?') + 'body=' + encodeURIComponent(body);
   }
   function extractAll(text) {
-    var out = [], s = String(text || ''), re = /Naluno:([A-Za-z0-9_-]{40,})/g, m;
+    // Accepts both: a tapped or pasted link, and the older raw "Naluno:…".
+    var out = [], s = String(text || '').replace(/https?:\/\/[^\s]*[?&]ll=/g, 'Naluno:');
+    var re = /Naluno:([A-Za-z0-9_-]{40,})/g, m;
     while ((m = re.exec(s))) { try { out.push(L.unb64u(m[1])); } catch (_) {} }
     return out;
   }
@@ -205,7 +226,9 @@
     // Share target: "Share -> Naluno" on a received SMS opens /app/?lifeline_text=...
     try {
       var q = new URLSearchParams(root.location.search);
+      var linked = q.get('ll');
       var shared = q.get('lifeline_text') || q.get('text');
+      if (linked) shared = L.SMS_PREFIX + linked;   // tapped straight from an SMS
       if (shared && shared.indexOf(L.SMS_PREFIX) >= 0) {
         var wait = setInterval(function () {
           if (root.currentUser && (root.contacts || []).length) { clearInterval(wait); importSmsText(shared); }
