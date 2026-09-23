@@ -915,6 +915,29 @@ async function bspaceRequireMember(){
 
 async function bspacePost(col, payload){
   if(!(await bspaceRequireMember())) return;
+  const publicTalk = (col === 'conversation' || col === 'questions') && payload && payload.text && payload.type !== 'system';
+  if(publicTalk && window.NalunoSafety && typeof window.NalunoSafety.scorePublicText === 'function'){
+    let scored = null;
+    try{ scored = window.NalunoSafety.scorePublicText(String(payload.text), { surface: 'comment' }); }catch(_){}
+    const stop = scored && typeof nalunoSafetyStopped === 'function' && nalunoSafetyStopped(scored);
+    if(stop){
+      try{ toast(typeof nalunoSafetyStatement === 'function' ? nalunoSafetyStatement(scored) : 'Held for a safety review.'); }catch(_){}
+      try{
+        if(currentUser && currentUser.getIdToken){
+          const tok = await currentUser.getIdToken(false);
+          const res = await fetch('https://naluno-economy.naluno.workers.dev/v1/safety/score', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ surface: 'comment', text: String(payload.text), content_id: activeBroadcastId || '' }),
+          });
+          const body = await res.json().catch(function(){ return {}; });
+          const caseId = body && body.result && body.result.case_id;
+          if(caseId && typeof openSafetyAppeal === 'function') openSafetyAppeal(caseId, body.result.statement || '');
+        }
+      }catch(_){}
+      return;
+    }
+  }
   try{
     await fbDb.collection('broadcasts').doc(activeBroadcastId).collection(col).add(Object.assign({
       from: currentUser.uid,

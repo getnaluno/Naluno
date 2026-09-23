@@ -1305,17 +1305,60 @@ async function saveSignalSegment(segment){
       clean.thumbDataUrl = String(clean.thumbDataUrl).slice(0, 350000);
     }
     const ref = await fbDb.collection('users').doc(currentUser.uid).collection('signal').add(clean);
+    const publicText = String(clean.caption || clean.text || '').trim();
+    let safetyResult = null;
+    let hashMatched = false;
     try{
-      const mirror = {
-        uid: currentUser.uid,
-        name: clean.name || (currentUser.displayName || ''),
-        createdAt: clean.createdAt || Date.now(),
-        expiresAt: clean.expiresAt || null,
-        mediaType: clean.mediaType || clean.type || 'signal',
-        caption: String(clean.caption || clean.text || '').slice(0, 140),
-      };
-      fbDb.collection('signals').doc(ref.id).set(mirror, { merge: true }).catch(function(){});
+      const blobs = [];
+      Object.keys(segment || {}).forEach(function(k){
+        const v = segment[k];
+        if((typeof Blob !== 'undefined' && v instanceof Blob) || (typeof File !== 'undefined' && v instanceof File)) blobs.push(v);
+      });
+      if(blobs[0] && typeof nalunoSafetySha256 === 'function' && typeof nalunoSafetyCheckHash === 'function'){
+        const hex = await nalunoSafetySha256(await blobs[0].arrayBuffer());
+        const hit = await nalunoSafetyCheckHash(hex, ref.id, 'signal');
+        hashMatched = !!(hit && hit.matched);
+      }
     }catch(_){}
+    if(publicText && window.NalunoSafety && typeof window.NalunoSafety.scorePublicText === 'function'){
+      try{ safetyResult = window.NalunoSafety.scorePublicText(publicText, { surface: 'signal' }); }catch(_){}
+    }
+    const held = hashMatched || (safetyResult && typeof nalunoSafetyStopped === 'function' && nalunoSafetyStopped(safetyResult));
+    try{
+      if(!held){
+        const mirror = {
+          uid: currentUser.uid,
+          name: clean.name || (currentUser.displayName || ''),
+          createdAt: clean.createdAt || Date.now(),
+          expiresAt: clean.expiresAt || null,
+          mediaType: clean.mediaType || clean.type || 'signal',
+          caption: publicText.slice(0, 140),
+        };
+        fbDb.collection('signals').doc(ref.id).set(mirror, { merge: true }).catch(function(){});
+      }
+    }catch(_){}
+    if(held){
+      try{
+        toast(hashMatched
+          ? 'This Signal matches a known file and is held for review.'
+          : (typeof nalunoSafetyStatement === 'function' ? nalunoSafetyStatement(safetyResult) : 'This Signal is held for a safety review.'));
+      }catch(_){}
+      try{
+        if(!hashMatched && publicText && currentUser && currentUser.getIdToken){
+          const tok = await currentUser.getIdToken(false);
+          const res = await fetch('https://naluno-economy.naluno.workers.dev/v1/safety/score', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ surface: 'signal', text: publicText, content_id: ref.id }),
+          });
+          const body = await res.json().catch(function(){ return {}; });
+          const caseId = body && body.result && body.result.case_id;
+          if(caseId && typeof openSafetyAppeal === 'function') openSafetyAppeal(caseId, body.result.statement || '');
+        }
+      }catch(_){}
+    } else if(publicText && typeof nalunoSafetyEvent === 'function'){
+      nalunoSafetyEvent('SIGNAL_PUBLISHED', { surface: 'signal', content_id: ref.id, public_text: publicText });
+    }
     try{
       if(typeof nalunoTrack === 'function'){
         nalunoTrack('SIGNAL_POST', {

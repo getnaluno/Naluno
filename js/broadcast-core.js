@@ -202,7 +202,20 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
       ...(tags || []),
     ].join(' ').toLowerCase(),
   };
+  let safetyHold = null;
+  try{
+    if(window.NalunoSafety && typeof window.NalunoSafety.scorePublicText === 'function'){
+      safetyHold = window.NalunoSafety.scorePublicText([title, description].filter(Boolean).join('\n'), { surface: 'broadcast' });
+    }
+  }catch(_){}
+  const safetyStop = !!(safetyHold && typeof nalunoSafetyStopped === 'function' && nalunoSafetyStopped(safetyHold));
   Object.assign(doc, nalunoBroadcastListingFields(screenReport));
+  if(safetyStop){
+    doc.listed = false;
+    doc.held = true;
+    doc.hidden = false;
+    doc.heldReason = safetyHold.decision === 'AGE_RESTRICT' ? 'age-review' : (safetyHold.urgent ? 'safety-urgent' : 'safety-review');
+  }
   await ref.set(doc);
   try{
     await ref.collection('journey').add({
@@ -217,6 +230,12 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
   }catch(_){}
   let placed = null;
   try{ placed = await nalunoPlaceBroadcast(ref.id, screenReport); }catch(_){ placed = null; }
+  if(placed && (placed.heldReason === 'safety-review' || placed.heldReason === 'safety-urgent' || placed.heldReason === 'age-review')){
+    doc.listed = false;
+    doc.held = true;
+    doc.hidden = false;
+    doc.heldReason = placed.heldReason;
+  }
   // Place cannot lift a hold without a service account. Only apply a hide.
   if(placed && (placed.hidden || placed.screen === 'block')){
     doc.listed = false;
@@ -234,8 +253,19 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
   if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
   if(full.hidden && placed && placed.screen === 'block'){
     try{ toast('This cannot go out.'); }catch(_){}
+  } else if(safetyStop || (placed && (placed.heldReason === 'safety-review' || placed.heldReason === 'safety-urgent' || placed.heldReason === 'age-review'))){
+    try{ toast(typeof nalunoSafetyStatement === 'function' && safetyHold ? nalunoSafetyStatement(safetyHold) : 'Held for a safety review. This is not a ban.'); }catch(_){}
+    if(placed && placed.safety_case && typeof openSafetyAppeal === 'function'){
+      openSafetyAppeal(placed.safety_case, placed.statement || '');
+    }
   } else if(full.held){
     try{ toast('Saved on your list. It goes out after a first look.'); }catch(_){}
+  } else if(typeof nalunoSafetyEvent === 'function'){
+    nalunoSafetyEvent('BROADCAST_PUBLISHED', {
+      surface: 'broadcast',
+      content_id: ref.id,
+      public_text: [title, description].filter(Boolean).join('\n'),
+    });
   }
   return full;
 }

@@ -860,6 +860,15 @@ function bindAuthListeners(){
       authStatus('');
       nalunoEnterApp();
       loadRealProfile(user);
+      try{
+        if(typeof nalunoSafetyEvent === 'function'){
+          const bornKey = 'nalunoSafetyBorn.' + user.uid;
+          if(!localStorage.getItem(bornKey)){
+            localStorage.setItem(bornKey, '1');
+            nalunoSafetyEvent('USER_CREATED', {});
+          }
+        }
+      }catch(_){}
       // FIX: land on Callsign right after a fresh, explicit sign-in — but
       // never on a normal app reopen where Firebase just silently restored
       // an already-signed-in session (that keeps using the existing
@@ -1622,6 +1631,9 @@ $('saveProfileBtn').onclick = async ()=>{
 
   if(currentUser && fbDb){
     try{
+      const prevName = (currentProfile && currentProfile.name) || '';
+      const prevHandle = (currentProfile && currentProfile.number) || '';
+      const identityChanged = !!(prevName || prevHandle) && (prevName !== finalName || prevHandle !== requestedHandle);
       const handleChanged = requestedHandle !== (currentProfile.number || '');
       if(handleChanged){
         nextProfile.number = await claimHandle(requestedHandle, currentUser.uid);
@@ -1635,6 +1647,9 @@ $('saveProfileBtn').onclick = async ()=>{
       try{ nalunoCacheWrite('profile', currentProfile); }catch(_){}
       showCallsignView();
       toast('Callsign saved');
+      if(identityChanged && typeof nalunoSafetyEvent === 'function'){
+        try{ nalunoSafetyEvent('IDENTITY_CHANGED', {}); }catch(_){}
+      }
       const cloudProfile = Object.assign({}, nextProfile);
       if(cloudProfile.photo && cloudProfile.photo.dataUrl && String(cloudProfile.photo.dataUrl).length > 80000){
         cloudProfile.photo = { crop: cloudProfile.photo.crop || null };

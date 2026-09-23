@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260922e';
+  const BUILD = '20260923c';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -2191,6 +2191,12 @@
       return;
     }
 
+    if (tab === 'safety') {
+      el.innerHTML = '<p class="sub">Loading the safety queue…</p>';
+      loadSafetyCentre(el);
+      return;
+    }
+
     if (tab === 'trust') {
       const held = (c.held || []).slice(0, 40);
       const hidden = (c.hidden || []).slice(0, 40);
@@ -3471,6 +3477,244 @@
   }
 
   let __healedReports = false;
+  function scrubSafeRow(c) {
+    const o = Object.assign({}, c || {});
+    ['body', 'message', 'ciphertext', 'plaintext', 'wire_text', 'transcript', 'chat', 'public_text', 'text', 'caption', 'bytes', 'file'].forEach(function (k) {
+      delete o[k];
+    });
+    return o;
+  }
+  function safetyOverviewLocal(cases, appeals) {
+    const t = Date.now();
+    const day = 86400000;
+    const list = cases || [];
+    const open = list.filter(function (c) { return c && c.review_status !== 'decided'; });
+    const confirm = { REMOVE: 1, RESTRICT: 1, SUSPEND: 1, ESCALATE: 1, AGE_RESTRICT: 1, REGION_RESTRICT: 1 };
+    const overturn = { ALLOW: 1, RESTORE: 1, DISMISS: 1 };
+    let confirmed = 0;
+    let fp = 0;
+    const counts = {};
+    list.forEach(function (c) {
+      if (!c) return;
+      const auto = c.automated_risk_result && c.automated_risk_result.decision;
+      if (c.review_status === 'decided' && auto && auto !== 'ALLOW' && auto !== 'PRIVATE') {
+        if (confirm[c.decision]) confirmed += 1;
+        else if (overturn[c.decision]) fp += 1;
+      }
+      if (c.reported_user_id && (c.decision === 'REMOVE' || c.decision === 'RESTRICT' || c.decision === 'SUSPEND')) {
+        counts[c.reported_user_id] = (counts[c.reported_user_id] || 0) + 1;
+      }
+    });
+    const judged = confirmed + fp;
+    const repeat = Object.keys(counts).filter(function (uid) { return counts[uid] >= 2; })
+      .map(function (uid) { return { uid: uid, count: counts[uid] }; });
+    return {
+      reports_today: list.filter(function (c) { return c && c.reporter_id && c.reporter_id !== 'system' && t - (c.created_at || 0) < day; }).length,
+      open_cases: open.length,
+      urgent: open.filter(function (c) { return c.priority === 'URGENT'; }).length,
+      high: open.filter(function (c) { return c.priority === 'HIGH'; }).length,
+      medium: open.filter(function (c) { return c.priority === 'MEDIUM'; }).length,
+      low: open.filter(function (c) { return c.priority === 'LOW'; }).length,
+      automated_detections: list.filter(function (c) { return c && c.reporter_id === 'system' && t - (c.created_at || 0) < day; }).length,
+      content_removed: list.filter(function (c) { return c && c.decision === 'REMOVE'; }).length,
+      accounts_restricted: list.filter(function (c) { return c && (c.decision === 'RESTRICT' || c.decision === 'SUSPEND' || c.decision === 'AGE_RESTRICT' || c.decision === 'REGION_RESTRICT'); }).length,
+      appeals_open: (appeals || []).filter(function (a) { return a && a.status === 'open'; }).length,
+      repeat_offenders: repeat.length,
+      repeat: repeat,
+      detection_accuracy: judged ? Math.round((100 * confirmed) / judged) : null,
+      false_positive_rate: judged ? Math.round((100 * fp) / judged) : null,
+      judged: judged,
+    };
+  }
+  async function loadSafetyCentre(el, query) {
+    const rank = { URGENT: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+    let cases = [];
+    let audit = [];
+    let appeals = [];
+    let behaviour = [];
+    let overview = null;
+    let workerNote = '';
+    try {
+      const res = await adminWorker('/v1/admin/safety' + (query ? ('?' + query) : ''), { method: 'GET' });
+      const body = res && res.ok ? await res.json().catch(function () { return {}; }) : {};
+      if (res && !res.ok) workerNote = 'The safety desk on the worker did not answer. Showing the saved record only.';
+      cases = (body && body.cases) || [];
+      audit = (body && body.audit) || [];
+      appeals = (body && body.appeals) || [];
+      behaviour = (body && body.behaviour) || [];
+      overview = body && body.overview;
+    } catch (_) {
+      workerNote = 'The safety desk on the worker did not answer. Showing the saved record only.';
+    }
+    try {
+      const db = adminDb();
+      if (db) {
+        const snap = await db.collection('safetyCases').limit(80).get();
+        snap.forEach(function (doc) {
+          const row = scrubSafeRow(doc.data() || {});
+          row.case_id = row.case_id || doc.id;
+          if (!cases.some(function (c) { return c.case_id === row.case_id; })) cases.push(row);
+        });
+        const asnap = await db.collection('safetyAudit').limit(40).get();
+        asnap.forEach(function (doc) {
+          const row = doc.data() || {};
+          if (!audit.some(function (a) { return a.audit_id === (row.audit_id || doc.id); })) audit.push(row);
+        });
+        const psnap = await db.collection('safetyAppeals').limit(40).get();
+        psnap.forEach(function (doc) {
+          const row = doc.data() || {};
+          row.appeal_id = row.appeal_id || doc.id;
+          if (!appeals.some(function (a) { return a.appeal_id === row.appeal_id; })) appeals.push(row);
+        });
+      }
+    } catch (_) {}
+    cases = cases.map(scrubSafeRow);
+    cases.sort(function (a, b) {
+      return (rank[a.priority] == null ? 9 : rank[a.priority]) - (rank[b.priority] == null ? 9 : rank[b.priority]);
+    });
+    if (!overview) overview = safetyOverviewLocal(cases, appeals);
+    if (!behaviour.length) {
+      behaviour = cases.filter(function (c) { return c.content_type === 'account' || c.surface === 'behaviour'; });
+    }
+    const open = cases.filter(function (c) { return c.review_status !== 'decided'; });
+    function caseTable(rows) {
+      if (!rows.length) return '<p class="sub">Nothing in this queue.</p>';
+      return table(['Priority', 'Case', 'What', 'Score', 'Status', ''], rows.map(function (c) {
+        const risk = c.automated_risk_result || {};
+        const openRow = c.review_status !== 'decided';
+        const account = c.content_type === 'account' || c.surface === 'behaviour';
+        const buttons = '<button type="button" class="ghost admSafe" data-id="' + escapeHtml(c.case_id) + '" data-a="REMOVE">Remove</button> '
+          + '<button type="button" class="ghost admSafe" data-id="' + escapeHtml(c.case_id) + '" data-a="AGE_RESTRICT">Age</button> '
+          + '<button type="button" class="ghost admSafe" data-id="' + escapeHtml(c.case_id) + '" data-a="DISMISS">Dismiss</button> '
+          + '<button type="button" class="ghost admSafe" data-id="' + escapeHtml(c.case_id) + '" data-a="ESCALATE">Escalate</button> '
+          + (account
+            ? '<button type="button" class="ghost admSafe" data-id="' + escapeHtml(c.case_id) + '" data-a="SUSPEND">Suspend</button>'
+            : '<button type="button" class="ghost admSafe" data-id="' + escapeHtml(c.case_id) + '" data-a="RESTORE">Restore</button>');
+        return [
+          escapeHtml(c.priority || ''),
+          escapeHtml(c.case_id || ''),
+          escapeHtml((c.content_type || '') + ' ' + String(c.content_id || '').slice(0, 18)),
+          String(risk.score != null ? risk.score : ''),
+          escapeHtml((c.decision || c.review_status || 'open') + (c.statement ? '' : '')),
+          openRow ? buttons : escapeHtml(c.decision_reason || c.statement || ''),
+        ];
+      }));
+    }
+    function queue(name, pred) {
+      return card(name, caseTable(open.filter(pred)));
+    }
+    const rate = function (n) { return n == null ? '—' : (n + '%'); };
+    const repeat = overview.repeat || [];
+    el.innerHTML =
+      '<div class="alert">Private Wireline and Band conversations are not opened here. There is no control that reads messages. Public Broadcasts and Signals are scored. A machine cannot ban someone. A suspension is a human decision and can be appealed.</div>'
+      + (workerNote ? '<p class="sub">' + escapeHtml(workerNote) + '</p>' : '')
+      + '<div class="card"><div class="who">Find a case</div>'
+      + '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">'
+      + '<input id="safeQ" placeholder="Case, content, account, or report id" style="flex:1;min-width:180px;padding:8px 10px;">'
+      + '<select id="safeStatus" style="padding:8px;"><option value="">Any status</option><option value="open">Open</option><option value="review">Appeal / review</option><option value="decided">Decided</option></select>'
+      + '<select id="safePriority" style="padding:8px;"><option value="">Any priority</option><option>URGENT</option><option>HIGH</option><option>MEDIUM</option><option>LOW</option></select>'
+      + '<button type="button" class="ghost" id="safeSearch">Search</button>'
+      + '</div></div>'
+      + kpis([
+        ['Reports today', overview.reports_today],
+        ['Open', overview.open_cases],
+        ['Urgent', overview.urgent],
+        ['Detected today', overview.automated_detections],
+      ])
+      + kpis([
+        ['Removed', overview.content_removed],
+        ['Restricted', overview.accounts_restricted],
+        ['Appeals', overview.appeals_open],
+        ['Repeat', overview.repeat_offenders],
+      ])
+      + kpis([
+        ['Confirmed', rate(overview.detection_accuracy)],
+        ['False alarms', rate(overview.false_positive_rate)],
+        ['Reviewed', overview.judged || 0],
+        ['Private reads', 0],
+      ])
+      + '<p class="sub">Confirmed and false alarms stay blank until a person has agreed with or overturned the machine. One report does not take something down by itself.</p>'
+      + queue('Urgent', function (c) { return c.priority === 'URGENT'; })
+      + queue('High', function (c) { return c.priority === 'HIGH'; })
+      + queue('Medium', function (c) { return c.priority === 'MEDIUM'; })
+      + queue('Low', function (c) { return c.priority === 'LOW'; })
+      + card('Behaviour — no message text', behaviour.length
+        ? plainRows(['Case', 'Account', 'Score', 'Status'], behaviour.slice(0, 20).map(function (c) {
+          const risk = c.automated_risk_result || {};
+          return [c.case_id || '', String(c.reported_user_id || '').slice(0, 14), risk.score != null ? risk.score : '', c.decision || c.review_status || 'open'];
+        }))
+        : '<p class="sub">No behaviour flags. These come from follows, new accounts, repeated uploads, and coordinated public posts — not from chats.</p>')
+      + card('Repeat decisions', repeat.length
+        ? plainRows(['Account', 'Decisions'], repeat.slice(0, 12).map(function (r) {
+          return [String(r.uid || '').slice(0, 18), r.count];
+        }))
+        : '<p class="sub">Nobody has two removals or restrictions yet.</p>')
+      + card('Appeals', appeals.length
+        ? plainRows(['Case', 'From', 'Note', 'Status'], appeals.slice(0, 20).map(function (a) {
+          return [a.case_id || '', String(a.appellant_uid || '').slice(0, 10), String(a.note || '').slice(0, 80), a.status || ''];
+        }))
+        : '<p class="sub">No appeals.</p>')
+      + card('Audit — cannot be deleted', audit.length
+        ? plainRows(['When', 'Who', 'What', 'Why', 'Human'], audit.slice(0, 20).map(function (a) {
+          return [when(a.when), String(a.who || '').slice(0, 10), a.what || '', String(a.why || '').slice(0, 60), a.human_reviewed ? 'yes' : 'no'];
+        }))
+        : '<p class="sub">No audit rows yet.</p>');
+    const searchBtn = el.querySelector('#safeSearch');
+    if (searchBtn) searchBtn.onclick = function () {
+      const q = (el.querySelector('#safeQ').value || '').trim();
+      const status = el.querySelector('#safeStatus').value || '';
+      const priority = el.querySelector('#safePriority').value || '';
+      const parts = [];
+      if (q) parts.push('q=' + encodeURIComponent(q));
+      if (status) parts.push('status=' + encodeURIComponent(status));
+      if (priority) parts.push('priority=' + encodeURIComponent(priority));
+      loadSafetyCentre(el, parts.join('&'));
+    };
+    el.querySelectorAll('.admSafe').forEach(function (btn) {
+      btn.onclick = function () { decideSafetyCase(btn.getAttribute('data-id'), btn.getAttribute('data-a'), el); };
+    });
+  }
+  async function decideSafetyCase(caseId, action, el) {
+    if (!caseId || !action) return;
+    const why = window.prompt('Why this decision? A person has to say.') || '';
+    if (why.trim().length < 3) { toast('A reason is required.'); return; }
+    try {
+      const res = await adminWorker('/v1/admin/safety/decide', {
+        method: 'POST',
+        body: JSON.stringify({ case_id: caseId, action: action, why: why.trim() }),
+      });
+      const body = res ? await res.json().catch(function () { return {}; }) : {};
+      if (!res || !res.ok || !body.ok) {
+        const db = adminDb();
+        if (!db) { toast((body && body.error) || 'Could not decide'); return; }
+        await db.collection('safetyCases').doc(caseId).set({
+          review_status: 'decided',
+          decision: action,
+          decision_reason: why.trim(),
+          reviewer: currentUser ? currentUser.uid : '',
+          decided_at: Date.now(),
+          auto_ban: false,
+        }, { merge: true });
+        await db.collection('safetyAudit').add({
+          audit_id: 'aud_' + Date.now(),
+          case_id: caseId,
+          who: currentUser ? currentUser.uid : '',
+          what: 'human-decision',
+          when: Date.now(),
+          why: why.trim(),
+          detected_by: 'human',
+          human_reviewed: true,
+          action_taken: action,
+        });
+      }
+      toast('Decision recorded');
+      await writeAudit('safety-' + action, caseId, why.trim());
+      loadSafetyCentre(el);
+    } catch (e) {
+      toast((e && e.message) || 'Could not decide');
+    }
+  }
+
   async function healStuckReports(pack) {
     if (__healedReports || !pack) return 0;
     const db = adminDb();
