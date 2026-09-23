@@ -381,6 +381,41 @@ function toFsFields(obj) {
   return { fields };
 }
 
+/* Atomic field increments, done by Firestore itself.
+   Every total in this worker used to be a read-modify-write from `memory`,
+   an in-memory Map inside one Cloudflare isolate. Isolates are recycled
+   constantly, so a fresh one started a person at ZERO and then wrote that
+   back over their real lifetime total. Someone on 500 points who left a
+   comment could be written down to 3. Points were being destroyed quietly,
+   over and over, and reward simulations were computed from whatever little
+   happened to be in that isolate's memory.
+   An increment transform has no read step and no memory, so it cannot lose
+   what it never held. */
+async function fsIncrement(env, token, docPath, fields, setFields) {
+  if (!token) return { ok: false };
+  // Firestore's commit API wants the RESOURCE name
+  // ("projects/x/databases/(default)/documents/..."), not the URL.
+  const name = fsRoot(env).replace("https://firestore.googleapis.com/v1/", "") + docPath;
+  const transforms = Object.keys(fields).map((k) => ({
+    fieldPath: k,
+    increment: { integerValue: String(Math.round(Number(fields[k]) || 0)) },
+  }));
+  const writes = [];
+  if (setFields && Object.keys(setFields).length) {
+    writes.push({
+      update: { name, fields: toFsFields(setFields).fields },
+      updateMask: { fieldPaths: Object.keys(setFields) },
+    });
+  }
+  writes.push({ transform: { document: name, fieldTransforms: transforms } });
+  const res = await _fetch(fsRoot(env) + ":commit", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+    body: JSON.stringify({ writes }),
+  });
+  return { ok: res.ok, status: res.status };
+}
+
 async function fsFetch(env, token, method, path, body) {
   if (!token) return { ok: false, status: 0, data: null };
   const url = path.startsWith("http") ? path : fsRoot(env) + path;
@@ -538,8 +573,13 @@ async function persistEvent(env, userToken, saToken, row) {
   if (saToken) {
     const a = await fsFetch(env, saToken, "PATCH", "/engagementEvents/" + encodeURIComponent(row.event_id), toFsFields(eventDoc));
     const b = await fsFetch(env, saToken, "PATCH", "/contributionLedger/" + encodeURIComponent(row.ledger_id), toFsFields(ledgerDoc));
-    const p = profileOf(row.user_id);
-    await fsFetch(env, saToken, "PATCH", "/contributionProfiles/" + encodeURIComponent(row.user_id), toFsFields(p));
+    // Totals move by increments so a cold isolate cannot write a person's
+    // lifetime score back down to whatever it has seen since it started.
+    await fsIncrement(env, saToken, "/contributionProfiles/" + encodeURIComponent(row.user_id), {
+      total_points: Number(row.points) || 0,
+      eligible_points: Number(row.eligible_points) || 0,
+      events: 1,
+    }, { user_id: row.user_id, updated_at: row.ts });
     if (a.ok || b.ok) paths.push("sa");
   }
   if (userToken) {
@@ -1851,12 +1891,159 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
     return json({ ok: true, broadcast_id: id, action, patch });
   }
 
+  /* ---- REPAIR: rebuild contribution totals from the ledger ----
+     The worker used to write a person's lifetime total from a cold isolate's
+     memory, which overwrote real totals with whatever it had seen since it
+     started. That is fixed going forward (totals now move by increment), but
+     it cannot undo what was already written down.
+
+     The LEDGER survived: every scored event wrote its own row, keyed by event
+     id, so the rows are intact and were never overwritten. This recomputes
+     each person's totals by summing their rows — the same arithmetic
+     applyLedger() does, so the result is what the total should have been.
+
+     Two safety rules:
+       - It is a DRY RUN unless apply:true. You see what would change first.
+       - It will never LOWER someone's total unless force:true. The fault made
+         totals too small; if a stored total is higher than the ledger says,
+         that is more likely to be missing ledger rows than extra points, and
+         quietly deleting someone's points to "fix" them would repeat the
+         original mistake in the opposite direction. */
+  if (path === "/v1/admin/recompute-profiles" && request.method === "POST") {
+    if (!saToken) return json({ ok: false, error: "needs the service account" }, 503);
+    const body = await request.json().catch(() => ({}));
+    const apply = body.apply === true;
+    const force = body.force === true;
+    const totals = new Map();
+    let scanned = 0, pages = 0, cursor = body.cursor || null, done = true;
+
+    while (pages < 60) {
+      const q = {
+        from: [{ collectionId: "contributionLedger" }],
+        orderBy: [{ field: { fieldPath: "__name__" }, direction: "ASCENDING" }],
+        limit: 500,
+      };
+      if (cursor) q.startAt = { values: [{ referenceValue: cursor }], before: false };
+      const r = await fsFetch(env, saToken, "POST", ":runQuery", { structuredQuery: q });
+      const rows = (Array.isArray(r.data) ? r.data : []).filter((x) => x && x.document);
+      if (!rows.length) break;
+      rows.forEach((x) => {
+        const d = fromFsDoc(x.document);
+        const uid = String(d.user_id || "");
+        if (!uid) return;
+        const t = totals.get(uid) || { total_points: 0, eligible_points: 0, events: 0 };
+        t.total_points += Number(d.points) || 0;
+        t.eligible_points += Number(d.eligible_points) || 0;
+        t.events += 1;
+        totals.set(uid, t);
+        scanned++;
+      });
+      cursor = rows[rows.length - 1].document.name;
+      pages++;
+      if (rows.length < 500) { done = true; break; }
+      done = false;
+    }
+
+    const changes = [];
+    for (const [uid, t] of totals) {
+      /* A profile that is ABSENT (404) is genuinely zero. A profile we could
+         not READ (an error) is unknown — and assuming zero there would blind
+         the "never lower" guard below, letting a stored 900 be written down
+         to 3 because the read happened to fail. Unknown means skip. */
+      let before = { total_points: 0, eligible_points: 0, events: 0 };
+      let unreadable = false;
+      try {
+        const cur = await fsFetch(env, saToken, "GET", "/contributionProfiles/" + encodeURIComponent(uid));
+        if (cur.ok) {
+          const d = fromFsDoc(cur.data) || {};
+          before = {
+            total_points: Number(d.total_points) || 0,
+            eligible_points: Number(d.eligible_points) || 0,
+            events: Number(d.events) || 0,
+          };
+        } else if (cur.status !== 404) {
+          unreadable = true;
+        }
+      } catch { unreadable = true; }
+      if (unreadable) {
+        changes.push({ user_id: uid, before: null, after: t, gained: 0, action: "skipped-unreadable" });
+        continue;
+      }
+      const lower = t.total_points < before.total_points || t.eligible_points < before.eligible_points;
+      if (before.total_points === t.total_points && before.eligible_points === t.eligible_points) continue;
+      const entry = {
+        user_id: uid,
+        before,
+        after: t,
+        gained: t.total_points - before.total_points,
+        action: (lower && !force) ? "skipped-would-lower" : (apply ? "written" : "would-write"),
+      };
+      if (apply && !(lower && !force)) {
+        await fsFetch(env, saToken, "PATCH", "/contributionProfiles/" + encodeURIComponent(uid), toFsFields({
+          user_id: uid,
+          total_points: t.total_points,
+          eligible_points: t.eligible_points,
+          events: t.events,
+          updated_at: Date.now(),
+          repaired_at: Date.now(),
+        }));
+        memory.profiles.set(uid, Object.assign({ user_id: uid, updated_at: Date.now() }, t));
+      }
+      changes.push(entry);
+    }
+
+    if (apply) {
+      try {
+        await writeAdminAudit(env, saToken, {
+          action: "RECOMPUTE_PROFILES",
+          actor: user.uid,
+          people_changed: changes.length,
+          rows_scanned: scanned,
+          reason: String(body.reason || "repair totals from the contribution ledger"),
+        });
+      } catch { /* the repair itself still stands if the audit write fails */ }
+    }
+    changes.sort((a, b) => b.gained - a.gained);
+    return json({
+      ok: true,
+      dry_run: !apply,
+      ledger_rows_scanned: scanned,
+      people: totals.size,
+      changed: changes.length,
+      points_restored: changes.filter((c) => c.action !== "skipped-would-lower").reduce((a, c) => a + Math.max(0, c.gained), 0),
+      skipped_would_lower: changes.filter((c) => c.action === "skipped-would-lower").length,
+      skipped_unreadable: changes.filter((c) => c.action === "skipped-unreadable").length,
+      more: !done,
+      cursor: done ? null : cursor,
+      changes: changes.slice(0, 200),
+    });
+  }
+
   if (path === "/v1/admin/simulate" && request.method === "POST") {
     const body = await request.json().catch(() => ({}));
     const period = String(body.period_id || "");
     const pool = memory.pools.get(period);
     const amount = pool ? Number(pool.amount_minor) : 0;
-    const eligible = Array.from(memory.profiles.values()).filter((p) => p.eligible_points > 0);
+    /* Read the STORED profiles. This used to use memory.profiles, which on a
+       fresh isolate is empty or nearly so — meaning a simulation could show
+       one person receiving the entire pool simply because they were the only
+       one this isolate had seen. A payout figure computed from that is not a
+       number, it is an accident. */
+    let eligible = [];
+    if (saToken) {
+      try {
+        const q = await fsFetch(env, saToken, "POST", ":runQuery", { structuredQuery: {
+          from: [{ collectionId: "contributionProfiles" }], limit: 2000 } });
+        const rows = Array.isArray(q.data) ? q.data : [];
+        eligible = rows.filter((r) => r && r.document).map((r) => {
+          const d = fromFsDoc(r.document);
+          return { user_id: d.user_id || "", eligible_points: Number(d.eligible_points) || 0 };
+        }).filter((p) => p.eligible_points > 0);
+      } catch { eligible = []; }
+    }
+    if (!eligible.length) {
+      eligible = Array.from(memory.profiles.values()).filter((p) => p.eligible_points > 0);
+    }
     const total = eligible.reduce((a, p) => a + p.eligible_points, 0) || 1;
     const projected = eligible
       .sort((a, b) => b.eligible_points - a.eligible_points)
@@ -2326,6 +2513,24 @@ export async function handleRequest(request, env = {}, ctx = {}) {
       const eventId = String(body.event_id || "").slice(0, 80) || ("evt_" + Date.now());
       if (memory.events.has(eventId)) {
         return json({ ok: true, duplicate: true, event_id: eventId, persist: persistMode(!!saToken, ["memory"]) });
+      }
+      /* Durable de-duplication. The memory check above only holds within ONE
+         isolate, so a retry landing on a fresh isolate was scored a second
+         time. Claiming the event document first — create-only, which
+         Firestore refuses if it already exists — makes "has this already
+         counted?" a fact in the database rather than a guess in RAM.
+         This matters now that retries actually happen: the client's queue of
+         failed events is finally being flushed. */
+      if (saToken) {
+        const claim = await fsFetch(
+          env, saToken, "PATCH",
+          "/engagementEvents/" + encodeURIComponent(eventId) + "?currentDocument.exists=false",
+          toFsFields({ event_id: eventId, user_id: user.uid, event_type: eventType, claimed_at: Date.now() }),
+        );
+        if (!claim.ok && (claim.status === 409 || claim.status === 400)) {
+          memory.events.set(eventId, { event_id: eventId });
+          return json({ ok: true, duplicate: true, event_id: eventId, persist: persistMode(true, ["firestore"]) });
+        }
       }
       const scored = scoreEvent(eventType, body.text);
       const row = {
