@@ -145,6 +145,22 @@ service cloud.firestore {
     // this is what makes Frequencies and Broadcast the same set of real people instead
     // of two disconnected screens. This whole subcollection was missing from the rules
     // entirely, which is why every post silently failed permission checks.
+    /* Who watched a Signal segment, and how they reacted.
+       A viewer may write ONLY their own row and cannot read anyone else's —
+       the list of who watched belongs to the person whose Signal it is.
+       Writing is limited to people already connected to them, so a stranger
+       cannot appear in that list. */
+    match /users/{uid}/signal/{segId}/viewers/{viewerUid} {
+      allow read: if isOwner(uid) || isOperator();
+      allow get: if isSignedIn() && request.auth.uid == viewerUid;
+      allow create, update: if isSignedIn()
+        && request.auth.uid == viewerUid
+        && request.resource.data.uid == viewerUid
+        && (isOwner(uid) || exists(/databases/$(database)/documents/users/$(uid)/connections/$(request.auth.uid)))
+        && request.resource.data.keys().hasOnly(['uid','name','viewedAt','reaction','reactedAt']);
+      allow delete: if isOwner(uid) || (isSignedIn() && request.auth.uid == viewerUid);
+    }
+
     match /users/{uid}/signal/{segId} {
       allow read: if isOperator()
         || isOwner(uid)
@@ -406,7 +422,20 @@ service cloud.firestore {
     }
 
     match /broadcasts/{id} {
-      allow read: if isSignedIn();
+      /* Private and scheduled Broadcasts are enforced HERE, not only in the app.
+         Hiding something in the interface is not privacy: anyone could read the
+         document directly. A Broadcast marked private, or whose publishAt is
+         still in the future, is readable only by the person who made it (and
+         by an operator, for moderation). Documents without these fields are
+         unaffected. */
+      allow read: if isSignedIn() && (
+        resource.data.creatorUid == request.auth.uid
+        || isOperator()
+        || (
+          (!('visibility' in resource.data) || resource.data.visibility != 'private')
+          && (!('publishAt' in resource.data) || resource.data.publishAt <= request.time.toMillis())
+        )
+      );
       allow create: if isSignedIn()
         && request.resource.data.creatorUid == request.auth.uid
         && request.resource.data.listed is bool

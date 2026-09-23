@@ -275,7 +275,8 @@ footer a:hover{color:var(--mint);}
     var hash = window.location.hash || '';
     var params = {};
     try{ new URLSearchParams(q).forEach(function(v,k){ params[k]=v; }); }catch(e){}
-    var isDeepLink = !!(params.broadcast || params.strand || params.spark || params.call || params.band || params.origin || params.signal);
+    // `ll` is a Lifeline message tapped from an SMS — it must reach the app too.
+    var isDeepLink = !!(params.broadcast || params.strand || params.spark || params.call || params.band || params.origin || params.signal || params.ll);
     var host = (window.location.hostname || '').toLowerCase();
     if(host === 'admin.getnaluno.com' || host === 'admin.naluno.com'){
       window.location.replace('/admin/' + q + hash);

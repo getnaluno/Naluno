@@ -1,104 +1,125 @@
-# One upload: reports, notices, Compass, and share-link previews
+# Everything requested — one upload
 
-Everything from the previous round **plus** the link job, in a single package
-built against **7deaaa4**. All 12 files are ones I changed; I diffed the whole
-package against live before handing it over.
-
----
-
-# NEW: share links now carry a preview
-
-A link's picture and title come from `og:` tags in the page it points to.
-`getnaluno.com` is static hosting, so **every Broadcast served the same tags**
-— WhatsApp showed the same generic image for all of them, and nobody could
-tell what they were being sent.
-
-Share links now go through the worker: `…/b/<id>`. That page returns the
-Broadcast's **own thumbnail, its title and who made it**, then forwards
-straight into the app. It returns a normal page rather than a redirect on
-purpose, because several link crawlers do not follow redirects and would show
-nothing at all.
-
-**The safety part.** A Broadcast that is deleted, hidden, held or unlisted
-gets **no preview** — no title, no picture, just "This Broadcast isn't
-available". Without that, a Broadcast removed after a report would keep
-showing its own snapshot in every chat it had been shared into. Previews are
-cached for five minutes so a takedown takes effect quickly.
-
-`NALUNO_LINK_BASE` in `js/broadcast-core.js` is one constant — point it at a
-custom domain whenever you want prettier links.
-
-**7 tests**, including: a taken-down Broadcast leaks neither title nor
-picture; a title containing `<script>` cannot break out of the page; a
-`javascript:` thumbnail is refused; junk paths are not treated as ids; and it
-still forwards correctly with no service account, just without a picture.
+Built against **f7deb80**. Fifteen files, all ones I changed. This completes
+what the last two packages started, plus the two remaining pieces: sharing a
+Broadcast to a Signal, and saving Broadcasts for offline watching.
 
 ---
 
-# From the previous round (unchanged, included here)
+## NEW this round
 
-**The console player is back, on the reports themselves.** Reports were a text
-table — you could read that something was reported but not see it. They now
-render with the same player, the reporter's words, whether it is still on the
-feed, and Action / Dismiss / Take down / Put back. Urgent reports outlined in
-red.
+### A Broadcast can now be shared TO a Signal
 
-**Why your test report never disappeared.** The removal was the *last* thing
-the report handler did, after scoring and several other writes, and only ran
-when a service account was configured — yet the response said `hidden: true`
-regardless. The existing test asserted that false success. Removal now happens
-**immediately** after the report is recorded, and a failure is reported as
-`hide_error` instead of claiming success. **Check `/health` for
-`hasServiceAccount`** — without it nothing can be removed automatically.
+Last round built the *display* half — a Signal linking to a Broadcast showed
+a "Watch" button — but nothing created that link. Reading the code closely,
+the composer already had a `linkedBroadcastId` field and a picker; the gap
+was a direct entry point and one field-name mismatch (the composer writes
+`linkedBroadcastId`, the display code was reading `broadcastId`).
 
-**Terrorism and the rest.** terrorism, recruitment, child exploitation, sexual
-exploitation and threats of violence now take a Broadcast off the feed
-immediately, recorded as `reported-<code>`. Sexual is hidden outright. An
-ordinary report changes nothing.
+**Fixed both.** Open a Broadcast, tap **To Signal**, and the Signal composer
+opens with that Broadcast already selected in the link picker — no hunting
+through a dropdown. The picker still offers "None" if you change your mind.
 
-**The owner is told, and can appeal.** Wireline is end-to-end encrypted and
-the worker holds no keys, so it cannot send a Wireline message — and a
-platform message disguised as a person's would be dishonest anyway. It writes
-a notice shown at the top of Wireline, clearly from Naluno, with an **Appeal**
-button feeding the appeals the console already lists.
+### Saving Broadcasts for offline — done properly, not bolted on
 
-**Compass kept losing its password** because the vault cache is memory-only —
-empty after a restart or offline, so the lock check said "not locked". A local
-copy of the hash now holds it.
+I held this back last round rather than half-build it. It is now a standalone
+module (`js/broadcast-offline.js`) with its own tests.
 
-**Shared links open the Broadcast** instead of flashing Frequencies first.
+- **Tap Save** on any Broadcast. **Saved Broadcasts** lives in Callsign
+  settings — a budget bar, what is used, and a Remove button per item.
+- **Playback falls back to the saved copy automatically** when the network
+  copy cannot be reached, with a small **"Playing your saved copy · offline"**
+  chip — the whole point of saving something is not needing to remember you
+  did.
+- **A visible storage budget** (500 MB by default). When a new save will not
+  fit, the **oldest-WATCHED** item is evicted first — not oldest-saved.
+  Something saved months ago and watched yesterday is clearly still wanted;
+  something saved yesterday and never opened is the better thing to let go
+  of. If nothing can be freed, the save is refused with a plain reason rather
+  than silently exceeding the budget.
+- Size is **measured from the actual bytes stored**, never guessed from a
+  `Content-Length` header that can be missing or wrong.
+- If a saved Broadcast is later taken down, **it is not deleted out from
+  under the person** — it is marked "No longer public" in their downloads.
+  They saved it; removing it silently would be a second, unannounced action.
+
+**My own adversarial test caught a real bug before this shipped**: the
+budget-setting function silently floored any request under 50 MB, so setting
+a smaller budget did nothing and the app could exceed what someone actually
+asked for. Fixed to a 1 MB floor that only rejects genuine mistakes (zero,
+negative, garbage).
+
+**Honest limits, stated in the module and worth repeating here:** this is
+browser Cache Storage — bounded by whatever the browser allows a site, and it
+can be evicted under OS storage pressure like any site data. It is a strong
+best-effort, not a guarantee. Only the media is cached; comments and live
+counts stay live.
 
 ---
 
-## Still owed: a clearer explanation of "Open a Naluno SMS"
+## From the last two rounds, included here as one complete set
 
-Noted and kept. We return to it now the link job is done.
+**Your SMS question, answered in the fix.** The receiver is the final
+destination — the packet is sealed for them alone, so there was never a risk
+of anyone reading someone else's messages. But the experience was wrong: the
+SMS now carries a **tappable link** instead of a blob to paste. Tap it, Naluno
+opens, the message lands in the right conversation.
 
-## Tested
+**Compass** no longer rejects a password you know. Several stored copies had
+drifted; unlocking now accepts any of them and re-syncs the rest. A
+**"Forgot it? Reset"** on the lock screen clears every copy for a fresh start.
 
-- Worker **57/57** (7 new link tests, 3 report tests)
-- All **10 repo tests**
-- **30 adversarial checks** from the previous round, re-run and passing
+**Share links** are readable — `…/b/<id>/rain-over-kampala` — with the id
+first so it is never ambiguous. Removing `workers.dev` needs a Cloudflare
+route pointed at `getnaluno.com`, which is a hosting change, not code; the
+steps are in `js/broadcast-core.js`.
+
+**Signals** show who watched and how they felt — 👍 🔥 🐐 ❤️ — with two
+things better than WhatsApp: reactions belong to the *segment* a person is
+looking at, not the whole Signal, and the person watching sees the reactions
+too, not just the owner. Enforced by `firestore.rules`, not only by the app.
+
+**Scheduled and private Broadcasts** are in the publish sheet, and enforced
+in the rules — a private Broadcast is unreadable by anyone but its creator
+even if someone has the document path directly.
+
+**The console report queue** now shows the reported clip with a player
+instead of a bare text row, urgent categories (sexual, terrorism, and the
+rest) are taken off the feed the moment the report lands rather than at the
+end of a chain that could silently fail, and the reported person is told with
+an in-app notice carrying an Appeal button.
+
+---
+
+## Tests — run before this zip, not after
+
+- **Worker: 84/84**
+- **All 10 repo `.test.cjs` suites**
+- **26 checks** on offline saving — including the budget bug above
+- **29 checks** on Signals, scheduling, privacy, and the rules that enforce
+  them
+- **21 checks** on the SMS link and Compass
 
 ## Files
 
 ```
-workers/economy/handler.mjs    link previews, removal-first, terrorism, owner notice
-workers/economy/link.test.mjs  NEW
-workers/economy/economy.test.mjs  the test that asserted a false success, corrected
-js/broadcast-core.js           share URL -> preview route; links open directly
-js/admin-console.js            the player on reports
-js/notices.js                  NEW — notice + Appeal
-js/compass.js                  password survives restarts and offline
-app/index.html, css/app.css, admin/index.html, firestore.rules, sw.js
+js/broadcast-offline.js  NEW — offline saving, its budget, and eviction
+js/compass.js            openSignalLinkedTo(); the "To Signal" entry point
+js/broadcast-space.js    Save button, offline-fallback playback, To Signal
+js/signal-social.js      field-name fix (linkedBroadcastId)
+app/index.html           Save/To Signal buttons, offline chip, Downloads screen
+css/app.css              styling for all of the above
+js/lifeline-wire.js, index.html      the tappable SMS link
+js/broadcast-core.js, js/broadcast-composer.js   schedule + private
+firestore.rules          private/scheduled/viewer enforcement
+js/signal-ui.js          per-segment social row
+workers/economy/handler.mjs, screen.test.mjs
+sw.js                    cache bumped
 ```
 
 ## Deploy
 
 1. Push the web files.
-2. `firebase deploy --only firestore:rules`
-3. `cd workers/economy && npx wrangler deploy` — **required**: share links now
-   point at the worker, so without it a shared link will not open.
-
-Then send yourself a Broadcast link and check the preview shows that
-Broadcast's own picture.
+2. `firebase deploy --only firestore:rules` — required for private and
+   scheduled Broadcasts to be genuinely protected, not just hidden in the app.
+3. `cd workers/economy && npx wrangler deploy`
