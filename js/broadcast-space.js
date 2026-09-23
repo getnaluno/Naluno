@@ -1790,6 +1790,32 @@ function bspaceOpenReport(){
 
 /* Report sits beside Share. The sheet must sit above this space or the tap
    looks dead. Own Broadcasts hide Report (Delete is the control). */
+function bspaceOfflinePayload(){
+  const meta = activeBroadcastMeta || {};
+  const seg = meta.segment || {};
+  const chapters = (meta.chapters && meta.chapters.length) ? meta.chapters : (seg.chapters || []);
+  const raws = [];
+  const push = function(u){
+    if(!u || typeof u !== 'string') return;
+    const resolved = (typeof resolveMediaUrl === 'function') ? (resolveMediaUrl(u) || u) : u;
+    if(raws.indexOf(u) < 0) raws.push(u);
+    if(resolved && raws.indexOf(resolved) < 0) raws.push(resolved);
+  };
+  push(meta.mediaUrl);
+  push(seg.mediaUrl);
+  push(seg.videoUrl);
+  (chapters || []).forEach(function(c){ if(c && c.mediaUrl) push(c.mediaUrl); });
+  const playable = raws.filter(function(u){ return u && u.indexOf('blob:') !== 0 && u.indexOf('data:') !== 0; });
+  return {
+    id: activeBroadcastId,
+    mediaUrl: playable[0] || '',
+    mediaUrls: playable,
+    thumbUrl: meta.thumbUrl || seg.thumbDataUrl || seg.thumbUrl || '',
+    title: meta.title || '',
+    creatorName: meta.creatorName || '',
+  };
+}
+
 if($('bspaceSaveOfflineBtn')){
   $('bspaceSaveOfflineBtn').onclick = async function(e){
     try{ e.stopPropagation(); }catch(_){}
@@ -1803,17 +1829,16 @@ if($('bspaceSaveOfflineBtn')){
       toast('Removed from saved');
       return;
     }
+    const payload = bspaceOfflinePayload();
+    if(!payload.mediaUrl){
+      toast('This Broadcast has no video to save');
+      return;
+    }
     btn.classList.add('saving'); btn.textContent = 'Saving\u2026';
-    const r = await O.saveBroadcast({
-      id: activeBroadcastId,
-      mediaUrl: activeBroadcastMeta.mediaUrl,
-      thumbUrl: activeBroadcastMeta.thumbUrl,
-      title: activeBroadcastMeta.title,
-      creatorName: activeBroadcastMeta.creatorName,
-    }, function(frac){ btn.textContent = 'Saving \u2026 ' + Math.round(frac*100) + '%'; });
+    const r = await O.saveBroadcast(payload, function(frac){ btn.textContent = 'Saving \u2026 ' + Math.round(frac*100) + '%'; });
     btn.classList.remove('saving');
     if(r.ok){ btn.textContent = 'Saved'; btn.classList.add('saved'); toast('Saved \u2014 watch it without a connection'); }
-    else { btn.textContent = 'Save'; toast(r.error === 'not enough space \u2014 free up some saves' ? r.error : 'Could not save this'); }
+    else { btn.textContent = 'Save'; toast(r.error || 'Could not save this'); }
   };
 }
 if($('bspaceShareSignalBtn')){
@@ -1831,28 +1856,86 @@ if($('bspaceReportBtn')){
   };
 }
 
+/** A picture of this Broadcast for the share sheet. Chats unfurl whatever
+ *  URL they are given; getnaluno.com is one page for every Broadcast, so the
+ *  preview has to travel as the image itself. Drawn here — no worker URL. */
+async function bspaceShareCard(title, creator, thumbUrl){
+  const canvas = document.createElement('canvas');
+  canvas.width = 1200; canvas.height = 630;
+  const ctx = canvas.getContext('2d');
+  if(!ctx) return null;
+  ctx.fillStyle = '#0D0F17';
+  ctx.fillRect(0, 0, 1200, 630);
+  ctx.fillStyle = '#7CFFB2';
+  ctx.fillRect(0, 0, 10, 630);
+  if(thumbUrl && /^https?:/i.test(thumbUrl)){
+    try{
+      const img = await new Promise(function(resolve, reject){
+        const el = new Image();
+        el.crossOrigin = 'anonymous';
+        el.onload = function(){ resolve(el); };
+        el.onerror = function(){ reject(new Error('thumb')); };
+        el.src = thumbUrl;
+      });
+      const scale = Math.max(1200 / img.width, 630 / img.height);
+      const w = img.width * scale, h = img.height * scale;
+      ctx.globalAlpha = 0.55;
+      ctx.drawImage(img, (1200 - w) / 2, (630 - h) / 2, w, h);
+      ctx.globalAlpha = 1;
+      const fade = ctx.createLinearGradient(0, 280, 0, 630);
+      fade.addColorStop(0, 'rgba(13,15,23,0)');
+      fade.addColorStop(1, 'rgba(13,15,23,0.92)');
+      ctx.fillStyle = fade;
+      ctx.fillRect(0, 0, 1200, 630);
+    }catch(_){}
+  }
+  ctx.fillStyle = '#7CFFB2';
+  ctx.font = '600 28px sans-serif';
+  ctx.fillText('NALUNO', 56, 80);
+  ctx.fillStyle = '#E8ECF5';
+  ctx.font = '700 64px sans-serif';
+  const line = String(title || 'Broadcast').slice(0, 48);
+  ctx.fillText(line, 56, 460);
+  ctx.fillStyle = '#8A92A6';
+  ctx.font = '400 32px sans-serif';
+  ctx.fillText(creator ? ('by ' + String(creator).slice(0, 40)) : 'A Broadcast', 56, 520);
+  const blob = await new Promise(function(resolve){ canvas.toBlob(resolve, 'image/jpeg', 0.86); });
+  return blob && blob.size ? blob : null;
+}
+
 if($('bspaceShareBtn')){
   $('bspaceShareBtn').onclick = async ()=>{
     if(!activeBroadcastId) return;
+    const title = (activeBroadcastMeta && activeBroadcastMeta.title) || 'Naluno Broadcast';
+    const creator = (activeBroadcastMeta && activeBroadcastMeta.creatorName) || '';
     const link = typeof broadcastShareUrl === 'function'
-      ? broadcastShareUrl(activeBroadcastId, (activeBroadcastMeta && activeBroadcastMeta.title) || '')
-      : (location.origin + '/?broadcast=' + activeBroadcastId);
+      ? broadcastShareUrl(activeBroadcastId, title)
+      : ('https://getnaluno.com/app/?broadcast=' + encodeURIComponent(activeBroadcastId));
+    if(/workers\.dev/i.test(link)){
+      toast('Share link was refused — it pointed at a worker');
+      return;
+    }
+    const thumb = (activeBroadcastMeta && (activeBroadcastMeta.thumbUrl || (activeBroadcastMeta.segment && activeBroadcastMeta.segment.thumbDataUrl))) || '';
+    let files;
     try{
+      const card = await bspaceShareCard(title, creator, thumb);
+      if(card) files = [new File([card], 'naluno-broadcast.jpg', { type: 'image/jpeg' })];
+    }catch(_){}
+    const text = title + (creator ? (' — ' + creator) : '') + '\n' + link;
+    try{
+      const withFile = files && navigator.canShare && navigator.canShare({ files: files });
       if(navigator.share){
-        await navigator.share({
-          title: (activeBroadcastMeta && activeBroadcastMeta.title) || 'Naluno Broadcast',
-          url: link
-        });
+        const payload = { title: title, text: text, url: link };
+        if(withFile) payload.files = files;
+        await navigator.share(payload);
+      } else if(withFile && navigator.share){
+        await navigator.share({ title: title, text: text, files: files });
       } else if(navigator.clipboard && navigator.clipboard.writeText){
-        await navigator.clipboard.writeText(link);
+        await navigator.clipboard.writeText(text);
         toast('Link copied');
       } else {
         toast(link);
       }
-      /* BROADCAST_SHARE is worth 2 points in the worker's rules, but nothing
-         in the app ever sent it — so sharing has never counted for anyone.
-         Emitted only once the share or copy actually SUCCEEDED, so a cancelled
-         share sheet earns nothing. */
       try{
         if(typeof nalunoTrack === 'function'){
           nalunoTrack('BROADCAST_SHARE', {
@@ -1864,7 +1947,24 @@ if($('bspaceShareBtn')){
         }
       }catch(_){}
     }catch(e){
-      if(e && e.name !== 'AbortError') toast(link);
+      if(e && e.name === 'AbortError') return;
+      /* A phone that rejects the picture still gets the clean link. */
+      try{
+        if(navigator.share){
+          await navigator.share({ title: title, text: text, url: link });
+          return;
+        }
+      }catch(e2){
+        if(e2 && e2.name === 'AbortError') return;
+      }
+      try{
+        if(navigator.clipboard && navigator.clipboard.writeText){
+          await navigator.clipboard.writeText(text);
+          toast('Link copied');
+          return;
+        }
+      }catch(_){}
+      toast(link);
     }
   };
 }
@@ -1880,6 +1980,33 @@ if($('bspaceDeleteBtn')){
     }catch(e){ toast(e.message || 'Couldn’t delete'); }
   };
 }
+
+/* Share, Save, Report, Delete and Go live live in this menu. The top bar
+   was a row of pills that wrapped over the picture, especially while live. */
+(function wireBspaceMore(){
+  const btn = $('bspaceMoreBtn');
+  const menu = $('bspaceMoreMenu');
+  if(!btn || !menu || btn.__wired) return;
+  btn.__wired = true;
+  function shut(){
+    menu.setAttribute('hidden', '');
+    btn.setAttribute('aria-expanded', 'false');
+  }
+  btn.onclick = function(e){
+    if(e){ e.preventDefault(); e.stopPropagation(); }
+    const opening = menu.hasAttribute('hidden');
+    if(opening){
+      menu.removeAttribute('hidden');
+      btn.setAttribute('aria-expanded', 'true');
+    } else shut();
+  };
+  menu.addEventListener('click', function(){ shut(); });
+  document.addEventListener('click', function(e){
+    if(menu.hasAttribute('hidden')) return;
+    if(btn.contains(e.target) || menu.contains(e.target)) return;
+    shut();
+  });
+})();
 
 
 /* ---- Chapter player + breather / ad-slot architecture ---- */

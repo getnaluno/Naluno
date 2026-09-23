@@ -529,8 +529,8 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
   bcompClose();
 
   const job = {
-    label: 'Publishing Broadcast…',
-    doneMsg: 'Broadcast published',
+    label: snapPublishAt ? 'Scheduling Broadcast…' : 'Publishing Broadcast…',
+    doneMsg: snapPublishAt ? 'Scheduled — it stays off the public feed until then' : (snapVisibility === 'private' ? 'Saved as private' : 'Broadcast published'),
     run: async (progress)=>{
       let mediaType = snapKind;
       let mediaUrl = null;

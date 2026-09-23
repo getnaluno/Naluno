@@ -166,6 +166,100 @@ function rankBroadcastEntries(entries){
    filtered, or ordered changes — this only decides which one is shown. */
 let bcastActiveView = 'foryou';
 
+function renderScheduledDock(){
+  const dock = document.getElementById('bcastScheduleDock');
+  if(!dock) return;
+  const mine = (typeof myBroadcasts !== 'undefined' && myBroadcasts) ? myBroadcasts : [];
+  const rows = mine.filter(function(b){
+    if(!b || b.deleted) return false;
+    const scheduled = typeof broadcastIsScheduled === 'function' && broadcastIsScheduled(b);
+    const priv = typeof broadcastIsPrivate === 'function' && broadcastIsPrivate(b);
+    return scheduled || priv;
+  });
+  if(!rows.length){
+    dock.hidden = true;
+    dock.innerHTML = '';
+    return;
+  }
+  dock.hidden = false;
+  const esc = typeof escapeHtml === 'function' ? escapeHtml : function(s){ return String(s == null ? '' : s); };
+  dock.innerHTML = '<div class="section-label signal-head-label">Before it goes out <span>scheduled and private · not on the public feed</span></div>'
+    + rows.map(function(b){
+      const when = (typeof broadcastIsScheduled === 'function' && broadcastIsScheduled(b))
+        ? new Date(Number(b.publishAt)).toLocaleString()
+        : '';
+      const kind = (b.visibility === 'private') ? 'Private' : 'Scheduled';
+      const local = b.publishAt ? toDatetimeLocal(Number(b.publishAt)) : '';
+      return '<div class="sched-row" data-sched="'+esc(b.id)+'">'
+        + '<div class="sched-main"><div class="sched-title">'+esc(b.title || 'Broadcast')+'</div>'
+        + '<div class="sched-meta"><span class="bcast-badge '+(kind === 'Private' ? 'private' : 'scheduled')+'">'+kind+'</span>'
+        + (when ? ' Goes out '+esc(when) : ' Only you')+'</div></div>'
+        + '<button type="button" class="bspace-mini sched-edit">Edit</button>'
+        + '<form class="sched-form" hidden>'
+        + '<input class="sched-title-in" maxlength="120" value="'+esc(b.title || '')+'" />'
+        + '<label class="bcomp-opt"><input type="checkbox" class="sched-private"'+(b.visibility === 'private' ? ' checked' : '')+' /> Private</label>'
+        + '<input type="datetime-local" class="sched-when" value="'+esc(local)+'" />'
+        + '<div class="sched-actions">'
+        + '<button type="submit" class="bspace-mini primary">Save</button>'
+        + '<button type="button" class="bspace-mini sched-now">Publish now</button>'
+        + '</div></form></div>';
+    }).join('');
+  dock.querySelectorAll('.sched-row').forEach(function(row){
+    const id = row.getAttribute('data-sched');
+    const edit = row.querySelector('.sched-edit');
+    const form = row.querySelector('.sched-form');
+    if(edit && form){
+      edit.onclick = function(e){
+        if(e) e.stopPropagation();
+        form.hidden = !form.hidden;
+      };
+    }
+    if(!form) return;
+    form.onsubmit = async function(e){
+      if(e) e.preventDefault();
+      const title = (row.querySelector('.sched-title-in') || {}).value || '';
+      const priv = !!(row.querySelector('.sched-private') && row.querySelector('.sched-private').checked);
+      const raw = (row.querySelector('.sched-when') || {}).value || '';
+      let publishAt = Date.now();
+      if(!priv && raw){
+        const t = new Date(raw).getTime();
+        if(isFinite(t)) publishAt = t;
+      }
+      try{
+        await saveBroadcastEdits(id, {
+          title: title.trim() || 'Broadcast',
+          visibility: priv ? 'private' : 'public',
+          publishAt: publishAt,
+        });
+        toast(publishAt > Date.now() ? 'Schedule updated' : (priv ? 'Kept private' : 'It can go out now'));
+        renderBroadcastTab();
+      }catch(err){
+        toast((err && err.message) || 'Couldn’t save that');
+      }
+    };
+    const nowBtn = row.querySelector('.sched-now');
+    if(nowBtn){
+      nowBtn.onclick = async function(e){
+        if(e) e.stopPropagation();
+        try{
+          await saveBroadcastEdits(id, { visibility: 'public', publishAt: Date.now() });
+          toast('It’s on the public feed');
+          renderBroadcastTab();
+        }catch(err){
+          toast((err && err.message) || 'Couldn’t publish that');
+        }
+      };
+    }
+  });
+}
+function toDatetimeLocal(ms){
+  if(!ms) return '';
+  const d = new Date(ms);
+  if(!isFinite(d.getTime())) return '';
+  const pad = function(n){ return String(n).padStart(2, '0'); };
+  return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
+}
+
 function renderBroadcastTab(){
   try{ if(typeof pruneExpiredSignal === 'function') pruneExpiredSignal(); }catch(_){}
   nalunoPaintBcastChrome(bcastActiveView);
@@ -318,7 +412,13 @@ function renderBroadcastTab(){
   if(grid){
     const feedList = (typeof feedBroadcasts !== 'undefined' && feedBroadcasts) ? feedBroadcasts : [];
     const mineList = (typeof myBroadcasts !== 'undefined' && myBroadcasts) ? myBroadcasts : [];
-    const list = (bcastActiveView === 'mine' ? mineList : feedList).slice();
+    const list = (bcastActiveView === 'mine' ? mineList : feedList).slice().filter(function(b){
+      /* Scheduled and private live in the dock above the swipe, not in the
+         public plates. Held and taken-down still show on My Broadcasts. */
+      if(typeof broadcastIsScheduled === 'function' && broadcastIsScheduled(b)) return false;
+      if(typeof broadcastIsPrivate === 'function' && broadcastIsPrivate(b)) return false;
+      return true;
+    });
     if(typeof renderBroadcastEntryGrid === 'function'){
       renderBroadcastEntryGrid(grid, empty, list);
       try{ nalunoRevealBroadcastPlates(grid); }catch(_){}
@@ -342,6 +442,7 @@ function renderBroadcastTab(){
       try{ nalunoRevealBroadcastPlates(grid); }catch(_){}
     }
   }
+  try{ renderScheduledDock(); }catch(_){}
 }
 
 function nalunoSizeBroadcastStage(){
@@ -975,14 +1076,23 @@ async function signalPaintSocial(ownerUid, seg){
   const row = document.getElementById('bviewerSocial');
   const S = window.NalunoSignalSocial;
   if(!row || !S || !seg) return;
-  const segId = seg.id || seg.segmentId || seg.docId || '';
+  /* The Firestore document id, not a field that happened to be named id.
+     A missing id is why a view or a reaction had nowhere to land. */
+  const segId = String(seg.id || seg.segmentId || seg.docId || '');
   const mine = !!(currentUser && ownerUid === currentUser.uid);
   row.innerHTML = S.linkedBroadcastHtml(seg);
   if(!segId){ S.wireLinkedBroadcast(row); return; }
   if(mine){
     const btn = document.createElement('button');
     btn.type = 'button'; btn.className = 'sig-seen'; btn.textContent = 'Seen by';
-    btn.onclick = function(e){ try{ e.stopPropagation(); }catch(_){} S.openViewers(segId); };
+    /* pointerdown, not click: a story tap-zone and the 300ms click delay
+       both made this feel dead. The sheet opens in this same turn. */
+    const open = function(e){
+      if(e){ e.preventDefault(); e.stopPropagation(); }
+      S.openViewers(segId);
+    };
+    btn.addEventListener('pointerdown', open);
+    btn.onclick = open;
     row.appendChild(btn);
     try{
       const rows = await S.viewersOf(segId);
@@ -994,16 +1104,51 @@ async function signalPaintSocial(ownerUid, seg){
     S.markViewed(ownerUid, segId);
     const bar = document.createElement('div');
     bar.innerHTML = S.reactionBarHtml('');
-    row.appendChild(bar.firstChild);
+    const reactEl = bar.firstChild;
+    row.appendChild(reactEl);
+    const paintOn = function(next){
+      row.querySelectorAll('[data-react]').forEach(function(x){
+        x.classList.toggle('on', !!(next && x.getAttribute('data-react') === next));
+      });
+    };
     row.querySelectorAll('[data-react]').forEach(function(b){
-      b.onclick = async function(e){
-        try{ e.stopPropagation(); }catch(_){}
+      const go = async function(e){
+        if(e){ e.preventDefault(); e.stopPropagation(); }
         const next = await S.react(ownerUid, segId, b.getAttribute('data-react'));
-        row.querySelectorAll('[data-react]').forEach(function(x){
-          x.classList.toggle('on', next && x.getAttribute('data-react') === next);
-        });
+        if(next !== null) paintOn(next);
+        try{
+          if(typeof S.reactionCounts === 'function'){
+            const counts = await S.reactionCounts(ownerUid, segId);
+            let chip = row.querySelector('.sig-react-sum');
+            if(counts && counts.length){
+              if(!chip){
+                chip = document.createElement('div');
+                chip.className = 'sig-react-sum';
+                row.insertBefore(chip, reactEl);
+              }
+              chip.textContent = counts.map(function(x){ return x.emoji + x.n; }).join('  ');
+            } else if(chip) chip.textContent = '';
+          }
+        }catch(_){}
       };
+      b.addEventListener('pointerdown', function(e){ if(e) e.stopPropagation(); });
+      b.onclick = go;
     });
+    try{
+      if(typeof S.myReaction === 'function'){
+        const mineReact = await S.myReaction(ownerUid, segId);
+        if(mineReact) paintOn(mineReact);
+      }
+      if(typeof S.reactionCounts === 'function'){
+        const counts = await S.reactionCounts(ownerUid, segId);
+        if(counts && counts.length){
+          const chip = document.createElement('div');
+          chip.className = 'sig-react-sum';
+          chip.textContent = counts.map(function(x){ return x.emoji + x.n; }).join('  ');
+          row.insertBefore(chip, reactEl);
+        }
+      }
+    }catch(_){}
   }
   S.wireLinkedBroadcast(row);
 }
@@ -1427,7 +1572,7 @@ async function openBroadcast(contactId){
   const c = contacts.find(x=>x.id===contactId); if(!c || !c.isReal || !c.firebaseUid || !fbDb) return;
   try{
     const snap = await fbDb.collection('users').doc(c.firebaseUid).collection('signal').orderBy('createdAt','asc').get();
-    const segments = sortSignalSegments(snap.docs.map(d=>({ id:d.id, ...d.data() })).filter(s => Date.now() < s.expiresAt && !s.held && !s.hidden));
+    const segments = sortSignalSegments(snap.docs.map(function(d){ return (typeof signalRowFromDoc === 'function') ? signalRowFromDoc(d) : ({ id:d.id, ...d.data() }); }).filter(s => Date.now() < s.expiresAt && !s.held && !s.hidden));
     if(segments.length===0){ toast(c.name.split(' ')[0] + '\u2019s signal has faded'); return; }
     viewingMine = false;
     currentSegments = segments;
@@ -1623,7 +1768,7 @@ async function openContactSignalStory(contactId){
   if(fbDb && entry.contact.firebaseUid){
     try{
       const snap = await fbDb.collection('users').doc(entry.contact.firebaseUid).collection('signal').orderBy('createdAt','asc').get();
-      segments = sortSignalSegments(snap.docs.map(d=>({ id:d.id, ...d.data() })).filter(s => Date.now() < s.expiresAt && !s.held && !s.hidden));
+      segments = sortSignalSegments(snap.docs.map(function(d){ return (typeof signalRowFromDoc === 'function') ? signalRowFromDoc(d) : ({ id:d.id, ...d.data() }); }).filter(s => Date.now() < s.expiresAt && !s.held && !s.hidden));
     }catch(_){}
   }
   if(!segments.length){

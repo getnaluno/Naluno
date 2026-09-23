@@ -1284,6 +1284,16 @@ async function uploadSignalChunked(blob, contentType){
   return (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(url) : url;
 }
 
+function signalRowFromDoc(d){
+  const data = (d && typeof d.data === 'function') ? (d.data() || {}) : {};
+  const row = Object.assign({}, data);
+  /* Pin the document id LAST. A field named id inside the document used to
+     overwrite it, so views were written under an id the owner never queried. */
+  if(d && d.id) row.id = d.id;
+  return row;
+}
+window.signalRowFromDoc = signalRowFromDoc;
+
 function pruneExpiredSignal(){
   mySignal = mySignal.filter(s => Date.now() < s.expiresAt);
 }
@@ -1455,7 +1465,7 @@ async function loadMySignal(){
     // given, which happened to match posting order at first (built from a fresh local
     // push) but not on a later fresh read from the server.
     const snap = await fbDb.collection('users').doc(currentUser.uid).collection('signal').orderBy('createdAt','asc').get();
-    mySignal = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+    mySignal = snap.docs.map(signalRowFromDoc);
     pruneExpiredSignal();
     try{ nalunoCacheWrite('mySignal', mySignal.map(nalunoSlimMedia)); }catch(_){}
   }catch(e){ /* nothing posted yet, or offline */ }
@@ -1481,7 +1491,7 @@ async function loadConnectionsSignalsNow(){
       const snap = await fbDb.collection('users').doc(c.firebaseUid).collection('signal').orderBy('createdAt','desc').limit(6).get();
       if(snap.empty) return null;
       const now = Date.now();
-      const visible = snap.docs.map(function(d){ return d.data(); })
+      const visible = snap.docs.map(signalRowFromDoc)
         .filter(function(x){ return x && !x.held && !x.hidden && now < x.expiresAt; });
       if(!visible.length) return null;
       const latest = visible[0];

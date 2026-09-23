@@ -39,25 +39,12 @@ function signalTtlMs(){
   return SIGNAL_TTL_OPTIONS[hours] || SIGNAL_TTL_OPTIONS[24];
 }
 
-/* Share links go through the worker so the message carries a real preview:
-   the Broadcast's own picture, its title and who made it. A link straight to
-   getnaluno.com cannot do that — it is static hosting, so every Broadcast
-   would serve the same generic tags and every share would look identical.
-   The worker page forwards into the app immediately.
-   One constant, so this can move to a custom domain later. */
-/* Share links.
-
-   The host is ONE constant. Point it at getnaluno.com once the Cloudflare
-   route for /b/* is in place (see READ-ME) and no shared link will ever
-   mention a worker again. It defaults to the worker because that is what
-   serves the preview picture today — a pretty link that shows nothing is a
-   worse trade than a plain one that shows the Broadcast.
-
-   The id comes first and the title follows it, so the id is never ambiguous
-   however someone titles a Broadcast:
-       /b/<id>/rain-over-kampala
-   The title part is decoration; the worker ignores it. */
-const NALUNO_LINK_BASE = 'https://naluno-economy.naluno.workers.dev';
+/* Share links stay on getnaluno.com. A workers.dev URL in a chat is the
+   worker's address, not the product, and it is what people were sending.
+   A static page cannot unfurl a different picture per Broadcast (crawlers
+   do not run the app). The share therefore attaches a real card image —
+   the Broadcast's picture and title — and the link only opens the app.
+   The worker still serves /b/<id> for links already sent. */
 function broadcastLinkSlug(title){
   return String(title || '')
     .toLowerCase()
@@ -67,7 +54,8 @@ function broadcastLinkSlug(title){
 }
 function broadcastShareUrl(id, title){
   const slug = broadcastLinkSlug(title);
-  return NALUNO_LINK_BASE + '/b/' + encodeURIComponent(id) + (slug ? '/' + slug : '');
+  const base = 'https://getnaluno.com/app/?broadcast=' + encodeURIComponent(id || '');
+  return slug ? (base + '&t=' + encodeURIComponent(slug)) : base;
 }
 
 /** Share a whole Strand (a creator's ordered set of Broadcasts), not just one item in it. */
@@ -412,6 +400,30 @@ function applyBroadcastDocsToFeed(docs){
 window.broadcastStableMediaId = broadcastStableMediaId;
 window.broadcastIsPublic = broadcastIsPublic;
 window.broadcastVisibleTo = broadcastVisibleTo;
+
+/** Creator edits a Broadcast that is not on the public feed yet:
+ *  the time it goes out, the title, or whether it stays private. */
+async function saveBroadcastEdits(id, patch){
+  if(!id || !fbDb || !currentUser) throw new Error('Sign in required');
+  const next = { updatedAt: Date.now() };
+  if(patch && patch.title != null) next.title = String(patch.title).slice(0, 120);
+  if(patch && patch.description != null) next.description = String(patch.description).slice(0, 2000);
+  if(patch && patch.visibility) next.visibility = patch.visibility === 'private' ? 'private' : 'public';
+  if(patch && patch.publishAt != null){
+    const at = Number(patch.publishAt) || 0;
+    next.publishAt = at > 0 ? at : Date.now();
+  }
+  await fbDb.collection('broadcasts').doc(id).set(next, { merge: true });
+  const apply = function(list){
+    if(!list) return;
+    const row = list.find(function(b){ return b && b.id === id; });
+    if(row) Object.assign(row, next);
+  };
+  try{ apply(typeof myBroadcasts !== 'undefined' ? myBroadcasts : null); }catch(_){}
+  try{ apply(typeof feedBroadcasts !== 'undefined' ? feedBroadcasts : null); }catch(_){}
+  return next;
+}
+window.saveBroadcastEdits = saveBroadcastEdits;
 
 
 /** Realtime plate list — no refresh required for new Broadcasts. */

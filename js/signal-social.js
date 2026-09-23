@@ -29,29 +29,43 @@
   }
 
   /** Record that I watched this segment. Idempotent: merge, never a counter,
-   *  so watching twice is still one viewer. */
+   *  so watching twice is still one viewer. The "already seen" lock is set
+   *  only AFTER the write succeeds — setting it first meant one failed
+   *  attempt (rules, a cold token) silenced every later view in the session. */
   async function markViewed(ownerUid, segId) {
+    const uid = me();
+    if (!uid || !db() || !ownerUid || !segId) return false;
+    if (ownerUid === uid) return false;
+    const key = ownerUid + '|' + segId;
+    if (seenLocal[key]) return true;
     try {
-      const uid = me();
-      if (!uid || !db() || !ownerUid || !segId) return;
-      if (ownerUid === uid) return;                 // your own Signal is not a view
-      const key = ownerUid + '|' + segId;
-      if (seenLocal[key]) return;
-      seenLocal[key] = true;
       await viewerRef(ownerUid, segId, uid).set({
         uid: uid,
         name: (root.currentProfile && root.currentProfile.name) || 'Someone',
         viewedAt: Date.now(),
       }, { merge: true });
-    } catch (_) { /* a view that cannot be recorded must not break playback */ }
+      seenLocal[key] = true;
+      return true;
+    } catch (e) {
+      try { console.warn('[signal] view not saved', e && (e.code || e.message)); } catch (_) {}
+      return false;
+    }
   }
 
-  /** Set or clear my reaction to this segment. Tapping the same one removes it. */
+  function reactsRef(ownerUid, segId, uid) {
+    return db().collection('users').doc(ownerUid)
+      .collection('signal').doc(String(segId))
+      .collection('reacts').doc(uid);
+  }
+
+  /** Set or clear my reaction to this segment. Tapping the same one removes it.
+   *  The name list stays on viewers (owner only). The emoji itself is a second
+   *  row connections may count, without learning who watched. */
   async function react(ownerUid, segId, emoji) {
+    const uid = me();
+    if (!uid || !db() || !ownerUid || !segId) return null;
+    if (ownerUid === uid) { root.toast('That one is yours'); return null; }
     try {
-      const uid = me();
-      if (!uid || !db() || !ownerUid || !segId) return null;
-      if (ownerUid === uid) { root.toast('That one is yours'); return null; }
       const ref = viewerRef(ownerUid, segId, uid);
       const cur = await ref.get();
       const had = cur.exists ? (cur.data().reaction || '') : '';
@@ -63,22 +77,69 @@
         reactedAt: Date.now(),
         viewedAt: (cur.exists && cur.data().viewedAt) || Date.now(),
       }, { merge: true });
+      try {
+        const rr = reactsRef(ownerUid, segId, uid);
+        if (next) await rr.set({ emoji: next, at: Date.now() }, { merge: true });
+        else await rr.delete();
+      } catch (_) { /* counts are extra; the reaction on the viewer row is the record */ }
       return next;
-    } catch (_) { root.toast('Couldn\u2019t save that'); return null; }
+    } catch (e) {
+      const code = (e && e.code) || '';
+      root.toast(code === 'permission-denied'
+        ? 'Reactions are for people you’re connected with'
+        : 'Couldn’t save that');
+      return null;
+    }
   }
 
-  /** Everyone who watched one of MY segments. Only the owner may read this. */
+  /** Everyone who watched one of MY segments. Only the owner may read this.
+   *  Sorted here, not with orderBy, so a missing index cannot blank the list. */
   async function viewersOf(segId) {
     const uid = me();
     if (!uid || !db() || !segId) return [];
     try {
       const snap = await db().collection('users').doc(uid)
         .collection('signal').doc(String(segId))
-        .collection('viewers').orderBy('viewedAt', 'desc').limit(200).get();
+        .collection('viewers').limit(200).get();
       const out = [];
       snap.forEach(function (d) { out.push(d.data() || {}); });
+      out.sort(function (a, b) { return (Number(b.viewedAt) || 0) - (Number(a.viewedAt) || 0); });
       return out;
+    } catch (e) {
+      try { console.warn('[signal] viewers', e && (e.code || e.message)); } catch (_) {}
+      return [];
+    }
+  }
+
+  /** Emoji totals a viewer is allowed to see. Names are not in these rows. */
+  async function reactionCounts(ownerUid, segId) {
+    if (!db() || !ownerUid || !segId) return [];
+    try {
+      const snap = await db().collection('users').doc(ownerUid)
+        .collection('signal').doc(String(segId))
+        .collection('reacts').limit(200).get();
+      const counts = {};
+      snap.forEach(function (d) {
+        const e = d.data() && d.data().emoji;
+        if (e) counts[e] = (counts[e] || 0) + 1;
+      });
+      return REACTIONS.filter(function (e) { return counts[e]; })
+        .map(function (e) { return { emoji: e, n: counts[e] }; });
     } catch (_) { return []; }
+  }
+
+  async function myReaction(ownerUid, segId) {
+    const uid = me();
+    if (!uid || !db() || !ownerUid || !segId || ownerUid === uid) return '';
+    try {
+      const snap = await reactsRef(ownerUid, segId, uid).get();
+      return snap.exists ? (snap.data().emoji || '') : '';
+    } catch (_) {
+      try {
+        const v = await viewerRef(ownerUid, segId, uid).get();
+        return v.exists ? (v.data().reaction || '') : '';
+      } catch (__) { return ''; }
+    }
   }
 
   function esc(s) {
@@ -98,31 +159,48 @@
       .map(function (e) { return { emoji: e, n: counts[e] }; });
   }
 
-  /** The owner's sheet: who watched, and what each of them felt. */
-  async function openViewers(segId) {
+  /** Lift the sheet onto the page itself. It used to be a call-overlay that
+   *  opened underneath the Signal already on screen, so the tap looked dead. */
+  function liftViewers(sheet) {
+    try {
+      if (sheet.parentNode !== root.document.body) root.document.body.appendChild(sheet);
+    } catch (_) {}
+    sheet.style.position = 'fixed';
+    sheet.style.inset = '0';
+    sheet.style.zIndex = '2147483000';
+  }
+
+  /** The owner's sheet: who watched, and what each of them felt.
+   *  The sheet is visible BEFORE the list is fetched. Touch should not wait
+   *  on the network to feel like it did something. */
+  function openViewers(segId) {
     const sheet = root.document.getElementById('signalViewers');
     if (!sheet) return;
+    liftViewers(sheet);
     sheet.classList.add('active');
     const body = root.document.getElementById('signalViewersBody');
     if (body) body.innerHTML = '<p class="sub">Loading\u2026</p>';
-    const rows = await viewersOf(segId);
-    const sum = summarise(rows);
-    if (!body) return;
-    if (!rows.length) {
-      body.innerHTML = '<p class="sub">Nobody has watched this one yet.</p>';
-      return;
-    }
-    body.innerHTML =
-      '<div class="sv-count">' + rows.length + (rows.length === 1 ? ' person watched' : ' people watched') + '</div>'
-      + (sum.length ? '<div class="sv-sum">' + sum.map(function (x) {
-          return '<span class="sv-chip">' + x.emoji + ' ' + x.n + '</span>';
-        }).join('') + '</div>' : '')
-      + '<div class="sv-list">' + rows.map(function (r) {
-          const when = r.viewedAt ? new Date(Number(r.viewedAt)).toLocaleString() : '';
-          return '<div class="sv-row"><span class="sv-name">' + esc(r.name || 'Someone') + '</span>'
-            + '<span class="sv-react">' + (r.reaction ? esc(r.reaction) : '') + '</span>'
-            + '<span class="sv-when">' + esc(when) + '</span></div>';
-        }).join('') + '</div>';
+    viewersOf(segId).then(function (rows) {
+      const sum = summarise(rows);
+      if (!body) return;
+      if (!rows.length) {
+        body.innerHTML = '<p class="sub">Nobody has watched this one yet.</p>';
+        return;
+      }
+      body.innerHTML =
+        '<div class="sv-count">' + rows.length + (rows.length === 1 ? ' person watched' : ' people watched') + '</div>'
+        + (sum.length ? '<div class="sv-sum">' + sum.map(function (x) {
+            return '<span class="sv-chip">' + x.emoji + ' ' + x.n + '</span>';
+          }).join('') + '</div>' : '')
+        + '<div class="sv-list">' + rows.map(function (r) {
+            const when = r.viewedAt ? new Date(Number(r.viewedAt)).toLocaleString() : '';
+            return '<div class="sv-row"><span class="sv-name">' + esc(r.name || 'Someone') + '</span>'
+              + '<span class="sv-react">' + (r.reaction ? esc(r.reaction) : '') + '</span>'
+              + '<span class="sv-when">' + esc(when) + '</span></div>';
+          }).join('') + '</div>';
+    }).catch(function () {
+      if (body) body.innerHTML = '<p class="sub">Couldn’t load who watched. Try again.</p>';
+    });
   }
   function closeViewers() {
     const sheet = root.document.getElementById('signalViewers');
@@ -170,7 +248,7 @@
   })();
 
   root.NalunoSignalSocial = {
-    REACTIONS, markViewed, react, viewersOf, summarise,
+    REACTIONS, markViewed, react, viewersOf, summarise, reactionCounts, myReaction,
     openViewers, closeViewers, reactionBarHtml, linkedBroadcastHtml, wireLinkedBroadcast,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

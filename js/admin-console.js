@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260923d';
+  const BUILD = '20260924a';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -2261,16 +2261,37 @@
     }
 
     if (tab === 'broadcast') {
+      const all = c.broadcasts || c.recent || [];
+      const nowMs = Date.now();
+      function bState(b) {
+        if (!b) return '';
+        if (b.hidden) return 'Taken down';
+        if (b.held) return 'Held';
+        if (b.live) return 'Live';
+        if (b.visibility === 'private') return 'Private';
+        if (Number(b.publishAt) > nowMs) return 'Scheduled';
+        return 'Public';
+      }
+      const waiting = all.filter(function (b) {
+        return b && (b.visibility === 'private' || Number(b.publishAt) > nowMs);
+      });
       el.innerHTML =
         kpis([['Broadcasts', c.broadcasts_total || 0], ['Live', c.broadcasts_live || 0],
-          ['Today', c.broadcasts_today || 0], ['Deleted', c.broadcasts_deleted || 0],
+          ['Scheduled / private', waiting.length], ['Today', c.broadcasts_today || 0], ['Deleted', c.broadcasts_deleted || 0],
           ['Views', c.views || 0], ['Creators', cr.total || 0]])
+        + card('Not on the public feed yet', waiting.length
+          ? plainRows(['Title', 'Creator', 'State', 'Goes out'], waiting.slice(0, 30).map(function (b) {
+            const at = Number(b.publishAt);
+            return [b.title || '(untitled)', b.creatorName || String(b.creatorUid || '').slice(0, 10),
+              bState(b), at > nowMs ? when(at) : '—'];
+          }))
+          : '<p class="sub">Nothing scheduled or private.</p>')
         + card('Creators by views', plainRows(['Creator', 'Broadcasts', 'Views', 'Live'],
           (cr.top || []).map(function (x) { return [x.name || x.uid.slice(0, 10), x.broadcasts, x.views, x.live]; })))
-        + card('Recent', plainRows(['Title', 'Creator', 'Views', 'Live', 'When'],
+        + card('Recent', plainRows(['Title', 'Creator', 'State', 'Views', 'When'],
           (c.recent || []).slice(0, 30).map(function (b) {
             return [b.title || '(untitled)', b.creatorName || String(b.creatorUid || '').slice(0, 10),
-              b.views || 0, b.live ? 'LIVE' : '', when(b.createdAt)];
+              bState(b), b.views || 0, when(b.createdAt)];
           })));
       return;
     }
@@ -2280,7 +2301,7 @@
       el.innerHTML =
         kpis([['Signals', s.total || 0], ['Still active', s.active || 0],
           ['Expired', s.expired || 0], ['Today', s.today || 0]])
-        + gap('Signals are the short clips on each account. The desk reads the live posts (not a sample that used to fail silently).')
+        + gap('Signals are the short clips on each account. Who watched, and the reaction on a clip, stay on that Signal — Seen by — and are not copied into a public counter. The desk does not open Wireline or Band.')
         + card('Recent Signals', table(['Owner', 'Kind', 'Caption', 'When'],
           list.slice(0, 60).map(function (row) {
             const owner = row.name || String(row.uid || '').slice(0, 12);

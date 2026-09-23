@@ -100,15 +100,53 @@
     return free >= need;
   }
 
-  /** Save a Broadcast for offline. Reports progress via onProgress(0..1). */
+  async function fetchOne(url){
+    const list = [];
+    const add = function(u){ if(u && list.indexOf(u) < 0) list.push(u); };
+    add(url);
+    try{
+      if(typeof nalunoPlayCandidates === 'function'){
+        nalunoPlayCandidates(url, { bucket: 'broadcast' }).forEach(add);
+      }
+    }catch(_){}
+    let last = 'could not download';
+    for(let i = 0; i < list.length; i++){
+      try{
+        const res = await fetch(list[i], { mode: 'cors', credentials: 'omit' });
+        if(res && res.ok) return res;
+        last = 'download ' + (res ? res.status : 0);
+      }catch(e){
+        last = (e && e.message) || 'network blocked the download';
+      }
+    }
+    /* The player may already hold the bytes as a blob from a gesture fetch. */
+    try{
+      const v = root.document && root.document.getElementById('bspaceVideoEl');
+      if(v && v.src && String(v.src).indexOf('blob:') === 0){
+        const res = await fetch(v.src);
+        if(res && res.ok) return res;
+      }
+    }catch(_){}
+    const err = new Error(last);
+    err.naluno = true;
+    throw err;
+  }
+
+  /** Save a Broadcast for offline. Reports progress via onProgress(0..1).
+   *  Chapters are separate files — saving only the first URL left the rest
+   *  unable to play later. Cache.put is given a plain URL: a Request built
+   *  with mode "cors" is rejected by the Cache API and the save died after
+   *  the download had already succeeded. */
   async function saveBroadcast(b, onProgress) {
-    if (!b || !b.id || !b.mediaUrl) return { ok: false, error: 'nothing to save' };
+    if (!b || !b.id) return { ok: false, error: 'nothing to save' };
+    const urls = (b.mediaUrls && b.mediaUrls.length) ? b.mediaUrls.slice() : (b.mediaUrl ? [b.mediaUrl] : []);
+    const unique = [];
+    urls.forEach(function(u){ if(u && unique.indexOf(u) < 0) unique.push(u); });
+    if (!unique.length) return { ok: false, error: 'nothing to save' };
     if (isSaved(b.id)) return { ok: true, already: true };
     try {
-      const res = await fetch(b.mediaUrl, { mode: 'cors' });
-      if (!res.ok) return { ok: false, error: 'could not download' };
-      // Read with progress when the server reports a length; otherwise save
-      // in one step rather than pretending to show progress that is a guess.
+      const cache = await openCache();
+      const res = await fetchOne(unique[0]);
       const total = Number(res.headers.get('Content-Length')) || 0;
       let resp = res;
       if (total && res.body && typeof res.body.getReader === 'function') {
@@ -120,40 +158,42 @@
           if (done) break;
           chunks.push(value);
           got += value.length;
-          if (onProgress) onProgress(Math.min(1, got / total));
+          if (onProgress) onProgress(Math.min(0.95, got / total));
         }
-        resp = new Response(new Blob(chunks), { headers: res.headers });
+        resp = new Response(new Blob(chunks), { headers: { 'Content-Type': res.headers.get('Content-Type') || 'video/mp4' } });
       }
       const bytes = await measuredSize(resp);
       if (!bytes) return { ok: false, error: 'empty download' };
       const fit = await evictFor(bytes);
-      if (!fit) return { ok: false, error: 'not enough space \u2014 free up some saves' };
-      const cache = await openCache();
-      const cacheKey = new Request(b.mediaUrl, { mode: 'cors' });
-      await cache.put(cacheKey, resp.clone());
-      // A thumbnail makes the saved list recognisable without network.
+      if (!fit) return { ok: false, error: 'not enough space — free up some saves' };
+      for (let i = 0; i < unique.length; i++) {
+        const url = unique[i];
+        await cache.put(url, resp.clone());
+      }
       let thumbSaved = false;
-      if (b.thumbUrl) {
+      if (b.thumbUrl && /^https?:/i.test(b.thumbUrl)) {
         try {
-          const t = await fetch(b.thumbUrl, { mode: 'cors' });
-          if (t.ok) { await cache.put(new Request(b.thumbUrl, { mode: 'cors' }), t); thumbSaved = true; }
+          const t = await fetch(b.thumbUrl, { mode: 'cors', credentials: 'omit' });
+          if (t.ok) { await cache.put(b.thumbUrl, t); thumbSaved = true; }
         } catch (_) {}
       }
       const idx = load();
       idx[b.id] = {
-        url: b.mediaUrl, thumbUrl: thumbSaved ? b.thumbUrl : '',
+        url: unique[0], urls: unique, thumbUrl: thumbSaved ? b.thumbUrl : '',
         title: String(b.title || 'Broadcast').slice(0, 120),
         creatorName: String(b.creatorName || '').slice(0, 60),
         bytes: bytes, savedAt: Date.now(), lastWatchedAt: Date.now(),
-        // If a report ever takes this down, playback still works from what
-        // was saved — but the person is told, rather than it looking normal.
         takenDownSincePinned: false,
       };
       save(idx);
       if (onProgress) onProgress(1);
       return { ok: true, bytes: bytes };
     } catch (e) {
-      return { ok: false, error: (e && e.message) || 'save failed' };
+      const msg = (e && e.message) || 'save failed';
+      if (/cors|failed to fetch|network/i.test(msg)) {
+        return { ok: false, error: 'The video host blocked the save. Try again on Wi-Fi.' };
+      }
+      return { ok: false, error: msg };
     }
   }
 
@@ -161,7 +201,7 @@
     const idx = load();
     const e = idx[broadcastId];
     if (!e) return;
-    try { const cache = await openCache(); await cache.delete(e.url); if (e.thumbUrl) await cache.delete(e.thumbUrl); } catch (_) {}
+    try { const cache = await openCache(); await cache.delete(e.url); (e.urls || []).forEach(function (u) { cache.delete(u); }); if (e.thumbUrl) await cache.delete(e.thumbUrl); } catch (_) {}
     delete idx[broadcastId];
     save(idx);
   }
@@ -172,7 +212,23 @@
     if (!url) return null;
     try {
       const cache = await openCache();
-      const hit = await cache.match(new Request(url, { mode: 'cors' })) || await cache.match(url);
+      const aliases = [url];
+      try {
+        if (typeof resolveMediaUrl === 'function') {
+          const r = resolveMediaUrl(url);
+          if (r && aliases.indexOf(r) < 0) aliases.push(r);
+        }
+      } catch (_) {}
+      const idx = load();
+      Object.keys(idx).forEach(function (id) {
+        const e = idx[id];
+        const all = [e && e.url].concat((e && e.urls) || []);
+        if (all.indexOf(url) >= 0) all.forEach(function (u) { if (u && aliases.indexOf(u) < 0) aliases.push(u); });
+      });
+      let hit = null;
+      for (let i = 0; i < aliases.length && !hit; i++) {
+        hit = await cache.match(aliases[i]);
+      }
       if (!hit) return null;
       const blob = await hit.blob();
       return URL.createObjectURL(blob);
