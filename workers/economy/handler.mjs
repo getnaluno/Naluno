@@ -46,7 +46,7 @@ import {
   statementFor,
 } from "./safety.mjs";
 
-export const VERSION = "2.6.9-safety";
+export const VERSION = "2.6.10-play";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -2444,6 +2444,7 @@ export async function handleRequest(request, env = {}, ctx = {}) {
     if (shareMatch) {
       const bid = shareMatch[1];
       const appUrl = "https://getnaluno.com/app/?broadcast=" + encodeURIComponent(bid);
+      const selfUrl = url.origin + url.pathname;
       const esc = (v) => String(v == null ? "" : v)
         .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -2452,13 +2453,15 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         const tok = hasSaConfigured(env) ? await saAccessToken(env) : "";
         if (tok) {
           const b = await fsGetDoc(env, tok, "/broadcasts/" + encodeURIComponent(bid));
-          const publicOk = b && !b.deleted && !b.hidden && !b.held && b.listed !== false;
+          const publicOk = b && !b.deleted && !b.hidden && !b.held && b.listed !== false
+              && !(Number(b.publishAt) > Date.now()) && b.visibility !== "private";
           if (publicOk) {
             if (b.title) title = String(b.title).slice(0, 110);
             const who = b.creatorName ? ("by " + String(b.creatorName).slice(0, 40)) : "";
             desc = (who ? who + " \u00b7 " : "") + "Watch on Naluno";
             const thumb = String(b.thumbUrl || b.thumb || "");
             if (/^https:\/\//.test(thumb)) image = thumb;
+            if (!image && /^https:\/\//.test(String(b.mediaUrl || "")) && /\.(jpe?g|png|webp|gif)(\?|$)/i.test(String(b.mediaUrl))) image = String(b.mediaUrl);
           } else if (b) {
             title = "This Broadcast isn\u2019t available";
             desc = "It may have been taken down or made private.";
@@ -2472,8 +2475,9 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         + "<meta property=\"og:site_name\" content=\"Naluno\">"
         + "<meta property=\"og:title\" content=\"" + esc(title) + "\">"
         + "<meta property=\"og:description\" content=\"" + esc(desc) + "\">"
-        + "<meta property=\"og:url\" content=\"" + esc(appUrl) + "\">"
+        + "<meta property=\"og:url\" content=\"" + esc(selfUrl) + "\">"
         + (image ? "<meta property=\"og:image\" content=\"" + esc(image) + "\">" : "")
+          + (image ? "<meta property=\"og:image:width\" content=\"1200\"><meta property=\"og:image:height\" content=\"630\">" : "")
         + "<meta name=\"twitter:card\" content=\"" + (image ? "summary_large_image" : "summary") + "\">"
         + "<meta name=\"twitter:title\" content=\"" + esc(title) + "\">"
         + "<meta name=\"twitter:description\" content=\"" + esc(desc) + "\">"

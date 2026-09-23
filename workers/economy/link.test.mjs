@@ -40,6 +40,8 @@ test("a shared link carries the Broadcast's own picture and title — no sign-in
   assert.ok(html.includes('content="https://media.naluno/x.jpg"'));
   assert.ok(html.includes("by Joel"));
   assert.ok(html.includes("summary_large_image"));
+  assert.ok(html.includes('property="og:url" content="https://relay.example/b/b1"'), "crawlers must stay on this page");
+  assert.ok(!html.includes('og:url" content="https://getnaluno.com'), "og:url must not bounce to the generic site");
   assert.ok(html.includes("getnaluno.com/app/?broadcast=b1"), "forwards into the app");
   setFetchImpl(null);
 });
