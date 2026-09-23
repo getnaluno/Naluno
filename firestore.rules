@@ -671,6 +671,46 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    /* Trust & Safety. Public cases and an append-only audit.
+       Private Wireline / Band bodies are not a field here.
+       Nobody can delete the audit, including the operator. */
+    match /safetyCases/{caseId} {
+      allow read: if isOperator();
+      allow create: if isOperator()
+        || (isSignedIn()
+            && request.resource.data.contents_collected == false
+            && request.resource.data.auto_ban == false
+            && !request.resource.data.keys().hasAny(['body', 'message', 'ciphertext', 'plaintext', 'wire_text', 'transcript', 'chat', 'public_text']));
+      allow update: if isOperator()
+        && request.resource.data.auto_ban == false;
+      allow delete: if false;
+    }
+    match /safetyAudit/{auditId} {
+      allow read: if isOperator();
+      allow create: if isOperator()
+        || (isSignedIn() && request.resource.data.who == request.auth.uid);
+      allow update, delete: if false;
+    }
+    match /safetyAppeals/{appealId} {
+      allow read: if isOperator()
+        || (isSignedIn() && resource.data.appellant_uid == request.auth.uid);
+      allow create: if isSignedIn()
+        && request.resource.data.appellant_uid == request.auth.uid
+        && request.resource.data.note is string
+        && request.resource.data.note.size() > 9
+        && request.resource.data.note.size() < 2001;
+      allow update: if isOperator();
+      allow delete: if false;
+    }
+    match /safetyLedgers/{uid} {
+      allow read: if isOperator();
+      allow write: if false;
+    }
+    match /safetyClusters/{id} {
+      allow read: if isOperator();
+      allow write: if false;
+    }
+
     /* Operator inbox. Public contact is written only by the economy
        worker's service account (bypasses these rules), so a rewritten
        page cannot dump spam here. A signed-in person may create their
