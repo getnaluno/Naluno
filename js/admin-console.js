@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260923c';
+  const BUILD = '20260923d';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -937,6 +937,67 @@
     __snap = snap;
     return snap;
   }
+  /* ---- Keep what you opened, open ----
+     Live listeners fire whenever ANYTHING changes anywhere, and every one of
+     them re-rendered the whole tab. Open a user, a report, an audit row, and
+     it vanished mid-sentence. Nothing here is urgent enough to interrupt
+     someone reading.
+
+     So: the health strip keeps updating (it replaces no content), but the
+     tab's body only re-renders when the person is not in the middle of
+     something. If it wants to refresh while they are, it waits and offers a
+     button instead. */
+  let __pendingSnap = null, __lastTouch = 0;
+  function markTouch() { __lastTouch = Date.now(); }
+  (function watchTouches() {
+    try {
+      ['pointerdown', 'keydown', 'scroll', 'click'].forEach(function (ev) {
+        document.addEventListener(ev, function (e) {
+          try { if (e.target && e.target.closest && e.target.closest('#adminBody')) markTouch(); } catch (_) {}
+        }, true);
+      });
+    } catch (_) {}
+  })();
+  function somethingIsOpen() {
+    try {
+      const body = document.getElementById('adminBody');
+      if (!body) return false;
+      if (body.querySelector('details[open]')) return true;          // an expanded section
+      const detail = document.getElementById('admUserDetail');
+      if (detail && detail.innerHTML.trim()) return true;            // a user opened
+      if (body.querySelector('.modal.active, [data-open="1"]')) return true;
+      if (body.scrollTop > 40) return true;                          // scrolled in to read
+      const sc = body.closest('.tab-scroll') || document.scrollingElement;
+      if (sc && sc.scrollTop > 40) return true;
+      return false;
+    } catch (_) { return false; }
+  }
+  function refreshHeld() {
+    return bodyHasFocus() || somethingIsOpen() || (Date.now() - __lastTouch < 45000);
+  }
+  function showRefreshPill(on) {
+    let pill = document.getElementById('adminRefreshPill');
+    if (!on) { if (pill) pill.style.display = 'none'; return; }
+    if (!pill) {
+      pill = document.createElement('button');
+      pill.id = 'adminRefreshPill';
+      pill.type = 'button';
+      pill.className = 'admin-refresh-pill';
+      pill.textContent = 'New activity \u00b7 Refresh';
+      pill.onclick = function () {
+        const snap = __pendingSnap || __snap;
+        __pendingSnap = null;
+        __lastTouch = 0;
+        showRefreshPill(false);
+        try { renderTab(__activeTab, snap); } catch (_) {}
+      };
+      (document.getElementById('consoleView') || document.body).appendChild(pill);
+    }
+    pill.style.display = 'block';
+  }
+  /* Switching tab is a fresh start: nothing is half-read any more. */
+  function clearHeldRefresh() { __pendingSnap = null; __lastTouch = 0; showRefreshPill(false); }
+
   function applyLivePack() {
     if (!__livePack) return;
     try {
@@ -967,9 +1028,14 @@
     const snap = commitPack(__livePack);
     try { maybePauseSpentAds(snap); } catch (_) {}
     try { renderStrip(snap); } catch (_) {}
-    if (!bodyHasFocus()) {
-      try { renderTab(__activeTab, snap); } catch (_) {}
+    if (refreshHeld()) {
+      // Hold it. The person is reading; they decide when to take the update.
+      __pendingSnap = snap;
+      showRefreshPill(true);
+      return;
     }
+    showRefreshPill(false);
+    try { renderTab(__activeTab, snap); } catch (_) {}
   }
   function scheduleLive() {
     if (__liveTimer) {
@@ -1526,6 +1592,7 @@
         const tab = btn.getAttribute('data-tab');
         if (!tab) return;
         __activeTab = tab;
+        try{ clearHeldRefresh(); }catch(_){}   // a new tab is a fresh start
         nav.querySelectorAll('.atab').forEach(function (b) { b.classList.toggle('on', b === btn); });
         loadTab(tab, false);
       };
@@ -1547,6 +1614,44 @@
     } catch (e) {
       if (!__snap) el.innerHTML = '<p class="sub">Could not load this section. ' + escapeHtml((e && e.message) || '') + '</p>';
     }
+  }
+
+  /* The repair is a dry run first, always. Applying asks for confirmation,
+     because it writes people's totals. */
+  async function runRepair(apply) {
+    const out = document.getElementById('admRepairOut');
+    if (out) out.textContent = apply ? 'Repairing\u2026' : 'Checking\u2026';
+    try {
+      const res = await adminFetch('recompute-profiles', {
+        method: 'POST',
+        body: JSON.stringify(apply ? { apply: true, reason: 'repair totals from the ledger' } : {}),
+      });
+      const j = await res.json();
+      if (!res.ok || !j.ok) { if (out) out.textContent = (j && j.error) || 'Could not run the repair.'; return; }
+      const lines = [];
+      lines.push((j.dry_run ? 'Dry run. ' : 'Applied. ')
+        + j.ledger_rows_scanned + ' ledger rows, ' + j.people + ' people, '
+        + j.changed + ' to change, ' + j.points_restored + ' points to restore.');
+      if (j.skipped_would_lower) lines.push(j.skipped_would_lower + ' skipped because the repair would LOWER them (use force only if you are sure).');
+      if (j.skipped_unreadable) lines.push(j.skipped_unreadable + ' skipped because their profile could not be read \u2014 run it again.');
+      if (j.more) lines.push('More rows remain \u2014 run it again to continue.');
+      const rows = (j.changes || []).slice(0, 15).map(function (c) {
+        return String(c.user_id).slice(0, 12) + '\u2026  '
+          + (c.before ? c.before.total_points : '?') + ' \u2192 ' + c.after.total_points
+          + (c.gained > 0 ? '  (+' + c.gained + ')' : '') + '  ' + c.action;
+      });
+      if (out) out.innerHTML = escapeHtml(lines.join(' ')) + (rows.length ? '<pre style="white-space:pre-wrap;font-size:11px;">' + escapeHtml(rows.join('\n')) + '</pre>' : '');
+      if (apply) loadTab('community', true);
+    } catch (_) { if (out) out.textContent = 'Couldn\u2019t reach the service.'; }
+  }
+  function wireRepairButtons() {
+    const dry = document.getElementById('admRepairDry');
+    if (dry) dry.onclick = function () { runRepair(false); };
+    const go = document.getElementById('admRepairApply');
+    if (go) go.onclick = function () {
+      if (!window.confirm('Rebuild contribution totals from the ledger? It never lowers a total, and every change is logged.')) return;
+      runRepair(true);
+    };
   }
 
   function renderTab(tab, d) {
@@ -2187,7 +2292,13 @@
               (d.origin.list || []).slice(0, 12).map(function (m) {
                 return [m.title || '', m.status || '', m.score || 0, when(m.createdAt)];
               })))
-          : '');
+          : '')
+        + card('Repair contribution totals',
+            '<p class="sub">Totals were once written from the worker\u2019s memory, which could overwrite a real lifetime score with a much smaller number. That is fixed, but it cannot undo what was already written. The ledger rows survived, so totals can be rebuilt by adding them up.</p>'
+          + '<div class="row"><button type="button" class="ghost" id="admRepairDry">Check what would change</button>'
+          + '<button type="button" class="danger" id="admRepairApply">Apply the repair</button></div>'
+          + '<div id="admRepairOut" class="sub"></div>');
+      wireRepairButtons();
       return;
     }
 

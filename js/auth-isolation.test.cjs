@@ -16,9 +16,13 @@ assert.ok(/fbAuth\s*=\s*app\.auth\(\)/.test(adminSrc), 'console auth is the name
 assert.ok(!/fbAuth\s*=\s*firebase\.auth\(\)/.test(adminSrc), 'console must not use default auth()');
 assert.ok(!/fbDbAdmin\s*=\s*firebase\.firestore\(\)/.test(adminSrc), 'console must not use default firestore()');
 assert.ok(adminSrc.includes('app.firestore()') || adminSrc.includes('consoleApp().firestore()'), 'console firestore on named app');
-assert.ok(/const BUILD = '20260922[a-z]'/.test(adminSrc), 'admin build stamped');
-assert.ok(/2026\.09\.22/.test(adminHtml), 'admin html build stamped');
-assert.ok(/admin-console\.js\?v=20260922/.test(adminHtml), 'admin cache-bust');
+/* Was pinned to 20260922x, so it failed the moment anyone bumped the stamp.
+   What matters is that a stamp EXISTS and the page and the script agree. */
+assert.ok(/const BUILD = '\d{8}[a-z]?'/.test(adminSrc), 'admin build stamped');
+const __b = (adminSrc.match(/const BUILD = '(\d{8})[a-z]?'/) || [])[1];
+assert.ok(__b && adminHtml.includes('admin-console.js?v=' + __b), 'admin html and script share a stamp');
+assert.ok(/naluno-build" content="\d{4}\.\d{2}\.\d{2}[a-z]?"/.test(adminHtml), 'admin html build stamped');
+assert.ok(/admin-console\.js\?v=\d{8}[a-z]?/.test(adminHtml), 'admin cache-bust');
 assert.ok(adminSrc.includes("body.persist !== 'memory'"), 'memory persist is not treated as saved on the account');
 assert.ok(adminSrc.includes('cloudSetHash(uid, hash)'), 'setup always writes the account copy');
 

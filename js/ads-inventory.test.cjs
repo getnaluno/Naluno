@@ -16,7 +16,10 @@ assert.ok(adminSrc.includes('Counters stay on this unit'), 'edit does not reset 
 assert.ok(dataSrc.includes('function adUnitStats'), 'each ad has its own book');
 /* admin-console.js was bumped to 22e (console-pass.test.cjs asserts 22e);
    this test was left on 22d, so the two tests contradicted each other. */
-assert.ok(html.includes('admin-console.js?v=20260922e'), 'ads pack cache-bust');
+/* Coupled to the script's own BUILD instead of a fixed date, so a stamp
+   bump no longer fails the suite. */
+const __bu = (adminSrc ? adminSrc : require('fs').readFileSync(require('path').join(__dirname,'admin-console.js'),'utf8')).match(/const BUILD = '(\d{8}[a-z]?)'/)[1];
+assert.ok(html.includes('admin-console.js?v=' + __bu), 'cache-bust matches the console build');
 assert.ok(html.includes('admin-data.js?v=20260922d'), 'maths cache-bust');
 
 console.log('ads-inventory tests passed');

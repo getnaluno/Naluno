@@ -324,7 +324,15 @@
         : null;
       const patch = { updatedAt: Date.now() };
       if (inc) patch[field] = inc;
-      else patch[field] = (Number(ad[field]) || 0) + 1;
+      else {
+        /* No atomic increment available: write NOTHING for the counter.
+           The old fallback wrote (local copy + 1) as an absolute value, which
+           overwrites every impression or click recorded by other devices
+           since this one loaded the ad — turning a shared counter into
+           whatever this phone last saw. A missed count is a small error; a
+           counter reset to one phone's view is a wrong number. */
+        return;
+      }
       ad[field] = (Number(ad[field]) || 0) + 1;
       ref.set(patch, { merge: true }).catch(function () {});
       if (isSpent(ad)) {

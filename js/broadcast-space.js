@@ -1784,6 +1784,20 @@ if($('bspaceShareBtn')){
       } else {
         toast(link);
       }
+      /* BROADCAST_SHARE is worth 2 points in the worker's rules, but nothing
+         in the app ever sent it — so sharing has never counted for anyone.
+         Emitted only once the share or copy actually SUCCEEDED, so a cancelled
+         share sheet earns nothing. */
+      try{
+        if(typeof nalunoTrack === 'function'){
+          nalunoTrack('BROADCAST_SHARE', {
+            target_type: 'broadcast',
+            target_id: activeBroadcastId,
+            broadcast_id: activeBroadcastId,
+            creator_uid: (activeBroadcastMeta && activeBroadcastMeta.creatorUid) || '',
+          });
+        }
+      }catch(_){}
     }catch(e){
       if(e && e.name !== 'AbortError') toast(link);
     }
