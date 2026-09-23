@@ -1,123 +1,104 @@
-# Offline speed, the two failing tests, and honest answers on translate + mesh
+# Points recovery + the counting fixes you never received
 
-## 1. Offline open: 10.5 seconds of waiting, removed
+Built against **6c57600**, the live commit. I diffed every file in this
+package against it before packaging: all nine are files I actually changed,
+none would overwrite anything newer.
 
-The service worker asked the **network first** and only fell back to the
-cache — waiting up to **8 seconds for the page** and **2.5 seconds for every
-file**.
+## First — the build you never got
 
-A phone is rarely cleanly offline. It is on Wi-Fi with no internet, or a dead
-mobile connection. Those requests do not fail, they **hang** until the timeout
-runs out. So opening Naluno meant sitting through them. WhatsApp opens
-instantly because it reads its own storage first and talks to the network
-afterwards.
+The counting audit package was never committed. I checked: `fsIncrement`, the
+share event, the ads fix and the console refresh hold are all absent from the
+live repo. **Everything from that package is folded into this one**, rebuilt
+on 6c57600, so there is one thing to deploy rather than two.
 
-Now the app is served **from cache first** and refreshed in the background.
-Measured on the worker's own decision with a hanging network:
+That package fixed:
 
-| | before | after |
-|---|---|---|
-| the page | 8,008 ms | **0 ms** |
-| its files | 2,503 ms | **0 ms** |
-| **total before anything is drawn** | **10,511 ms** | **0 ms** |
+- **Points being destroyed.** Totals were read from a Worker's memory and
+  written back whole. A cold isolate starts at zero, so someone on 500 points
+  could be written down to 3. Totals now move by Firestore **increment** — no
+  read step, nothing to lose.
+- **Replays double-counting.** De-duplication was also in memory. The event id
+  is now claimed in Firestore before scoring.
+- **Sharing never counting.** `BROADCAST_SHARE` is worth 2 points and the app
+  never sent it. Now emitted when a share actually succeeds.
+- **Ad counters being reset** by one phone writing an absolute count.
+- **Reward simulation** computed from a nearly-empty isolate memory. It reads
+  the stored profiles now.
+- **The console refreshing while you read.** Held until you are done, with a
+  "New activity · Refresh" button.
+- **Four tests pinned to a fixed date**, failing whenever anything was rebuilt.
 
-A new version still appears after one extra open (the worker already calls
-`skipWaiting` and `clients.claim`).
+## New — recovering the lost points
 
-**Honest about the measurement:** this is the service worker's decision,
-proved in isolation. I could not reproduce a full dead-network boot in a
-headless browser, so I am not claiming a measured whole-app figure — only
-that the 10.5 seconds of waiting is gone from the path.
+The ledger survived. Every scored event wrote its own row keyed by event id,
+so rows were never overwritten — only the summed totals were. Adding the rows
+back up gives what each total should have been.
 
-## 2. The two failing tests — both were test bugs, and one hid a real loss
+**In the console: Community → "Repair contribution totals".**
 
-**`ads-inventory`** expected `admin-console.js?v=20260922d` while
-`console-pass` expected `22e`, and the file is `22e`. The two tests
-contradicted each other. Fixed to `22e`.
+- **Check what would change** — a dry run. Writes nothing. Shows rows scanned,
+  people affected, points to restore, and the first fifteen changes.
+- **Apply the repair** — asks for confirmation, writes the totals, logs to the
+  audit trail.
 
-**`console-pass`** read the worker from `../workers/economy/handler.mjs` —
-one level too high, outside the repo. Fixed.
+Run the dry run first, and run it again after applying: if it reports
+`more rows remain`, or anything was skipped, a second pass finishes the job.
 
-With the path fixed it then failed for a real reason: **the worker was
-2.6.4, not 2.6.6.** My Lifeline package shipped `workers/economy/handler.mjs`
-from the old commit and reverted someone's console-password work — the same
-mistake as the in-call bubble, in a second file I did not notice.
+### Two safety rules, and why
 
-**Restored** (`2.6.6-console-pass`): the worker now reads **every** stored
-copy of the console password — its own record, the `adminConsole` doc, and
-the account vault's `_consoleGate` — and accepts any that matches, then
-remembers the one that worked. Reading only the first copy is why a password
-set on one phone could be refused on another. Unlocking and changing the
-password both use every copy now.
+**It never lowers a total** unless you explicitly force it. The fault made
+totals too *small*. If a stored total is *higher* than the ledger says, that
+points to missing ledger rows rather than extra points — and silently deleting
+someone's points to "fix" them would repeat the original mistake in the other
+direction.
 
-**Every test in the repo passes: 10/10, plus 47/47 in the worker.**
+**A profile it cannot read is skipped, not assumed to be zero.** My own
+adversarial test caught this one: treating a failed read as zero made the
+"never lower" rule blind, so a stored 900 could have been written down to 3
+purely because a read failed. Absent (404) means zero; an error means unknown,
+and unknown means leave it alone.
 
-## 3. Translate — the code is right; your phone is not running it
+## Adversarial testing — 19 checks, all passing
 
-I checked the deployed files: `wireline-translate.js` is loaded,
-`#translateBar` sits inside the thread directly above the composer, and the
-hook is above the early return. I ran the deployed app in a real browser and
-called the hook: the bar renders, reading **"Translate this chat"**.
+I tried to break the repair rather than confirm it works:
 
-So the files on GitHub are correct and your phone has older ones.
+- an **empty ledger does not wipe everyone to zero**
+- a stored total **higher** than the ledger is refused (and says so)
+- `force: true` is required to lower one
+- an **unreadable profile is skipped**, and a failed read cannot write 900 → 3
+- **1,200 rows page correctly** with none lost or double-counted
+- a **reversal row subtracts** rather than being ignored
+- a row with **no user** is not credited to anyone
+- **junk numbers** count as zero rather than NaN
+- the repair still applies if the **audit write fails**
+- **no sign-in is refused**
+- nothing to change → writes nothing even with `apply`
 
-**How to tell for certain:** open **Callsign → Diagnostics**. The build line
-should read **2026.09.23a**. If it shows anything older you are running an
-old bundle, and translate cannot appear no matter what is on GitHub.
+Plus the full suite: **10/10 repo tests, 47/47 worker tests, 29/29 counting
+audit checks.**
 
-Two ways that happens:
+## Honest limits
 
-- **The installed Android app.** `capacitor.config.json` has `webDir: "."`
-  and no `server.url`, so the APK **bundles its own copy** of the web files.
-  Uploading to GitHub does not change an installed APK — it needs rebuilding
-  and reinstalling.
-- **A stale cached shell** in the PWA. With today's change the worker also
-  refreshes in the background, so one extra open settles it.
-
-## 4. Offline phone-to-phone — why nothing arrived, plainly
-
-Bluetooth being on is not enough, and this is not a bug I can fix in these
-files.
-
-**The mesh needs the Android plugin compiled into the app.** I wrote
-`NalunoMeshPlugin.java` last round and said then that it had never been
-compiled or run. Until an APK is built that includes it, **there is no
-phone-to-phone transport at all** — the web app cannot do it, because the
-browser has no way to connect two phones directly. So a fully offline phone
-had nothing to send through, and the message stayed queued. That is expected,
-not a failure of the routing.
-
-What works offline **today**, with no build:
-
-- **SMS.** Open the chat; the Lifeline bar offers **Send by SMS** with the
-  segment count. That is the route that survived both Uganda shutdowns, and
-  it is the only one that reaches another country.
-
-To get the mesh working:
-
-1. Add `implementation 'com.google.android.gms:play-services-nearby:19.3.0'`.
-2. Put `NalunoMeshPlugin.java` beside `MainActivity.java` (already registered).
-3. Build, install on **both** phones.
-4. Test: both in aeroplane mode with Bluetooth on, within about 10 metres.
-
-Even then, delivery is **eventual** — the phones must be near each other or
-near someone else running Naluno.
+- The repair rebuilds totals from ledger rows. **If a ledger row itself was
+  never written** — an event lost before it reached the worker — those points
+  cannot be recovered, because nothing recorded them.
+- Run it when things are quiet. It reads the ledger, then writes totals; an
+  event landing in between would be overwritten by the absolute write. Its row
+  survives, so running it again picks that up.
+- It repairs `contributionProfiles` only. Broadcast view counts and ad
+  counters were never affected by this fault.
 
 ## Files
 
 ```
-sw.js                            cache-first app shell
-workers/economy/handler.mjs      restored to 2.6.6-console-pass
-js/ads-inventory.test.cjs        stamp corrected
-js/console-pass.test.cjs         worker path corrected
+workers/economy/handler.mjs   atomic totals, durable de-dup, real simulation,
+                              and the new /v1/admin/recompute-profiles
+js/admin-console.js           repair buttons + refreshes held while you read
+admin/index.html              the Refresh pill, stamp bump
+js/broadcast-space.js         BROADCAST_SHARE emitted
+js/ads.js                     no absolute-count fallback
+js/*.test.cjs (4)             unpinned from fixed dates
 ```
 
 Deploy the web files, then `cd workers/economy && npx wrangler deploy` — the
-worker restore matters for admin unlock across devices.
-
-## What I am changing about how I work
-
-Twice now I have handed you a package containing a file built from a stale
-clone, which reverted someone else's newer work. From now on I will diff every
-file in a package against the live repo immediately before I hand it over, and
-tell you if anything would be overwritten.
+worker must go first, or the repair button has nothing to call.
