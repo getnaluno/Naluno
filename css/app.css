@@ -2911,3 +2911,22 @@ html[data-atmosphere="buzzing"] .naluno-aurora{
   }
   #chatBtn{ position:relative; }
   #chatBtn.active{ background:rgba(124,255,178,.18); }
+
+  /* A notice from Naluno (a Broadcast taken off the feed) + the appeal. */
+  #noticeBar{
+    margin:10px 14px 0; padding:12px 14px; border-radius:14px;
+    background:rgba(255,180,80,.08); border:1px solid rgba(255,180,80,.32);
+  }
+  #noticeBar .notice-from{
+    font-family:var(--font-futuristic); font-size:11px; letter-spacing:.08em;
+    color:#ffc266; margin-bottom:4px;
+  }
+  #noticeBar .notice-text{ font-size:13px; line-height:1.5; color:var(--text); }
+  #noticeBar .notice-appeal{
+    background:var(--mint); color:#0D0F17; border:none; border-radius:999px;
+    padding:7px 16px; font-family:inherit; font-size:12.5px; font-weight:600; cursor:pointer;
+  }
+  #noticeBar .notice-dismiss{
+    background:none; border:1px solid var(--line); color:var(--text-dim);
+    border-radius:999px; padding:7px 14px; font-family:inherit; font-size:12.5px; cursor:pointer;
+  }
