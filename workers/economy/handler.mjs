@@ -2439,8 +2439,10 @@ export async function handleRequest(request, env = {}, ctx = {}) {
        that is deleted, hidden, held or unlisted returns a plain page with no
        title and no picture. Otherwise a Broadcast removed after a report
        would keep showing its own snapshot in every chat it was shared to. */
-    if (request.method === "GET" && /^\/b\/[A-Za-z0-9_-]{1,80}$/.test(path)) {
-      const bid = path.slice(3);
+    // /b/<id> and /b/<id>/<readable-title>. The title is decoration only.
+    const shareMatch = request.method === "GET" ? path.match(/^\/b\/([A-Za-z0-9_-]{1,80})(?:\/[A-Za-z0-9-]{0,60})?$/) : null;
+    if (shareMatch) {
+      const bid = shareMatch[1];
       const appUrl = "https://getnaluno.com/app/?broadcast=" + encodeURIComponent(bid);
       const esc = (v) => String(v == null ? "" : v)
         .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")

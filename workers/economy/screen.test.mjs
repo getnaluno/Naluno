@@ -113,7 +113,14 @@ test("worker re-scores rgb and ignores client allow", () => {
     frames: [{ rgb: rgbToB64(rgb) }],
   });
   assert.equal(j.hasScreen, true);
-  assert.equal(j.decision, "block");
+  /* CHANGED DELIBERATELY. A flat patch of skin colour is exactly what the old
+     skin heuristic could not tell apart from a bare arm, a face or a
+     shirtless torso — which is why it rejected genuine uploads. Under the
+     moderation rulebook the heuristic may no longer REJECT on its own; weak
+     evidence goes to a person. What this test protects is unchanged: the
+     client's "allow" is ignored and the upload does not go out. */
+  assert.equal(j.decision, "hold");
+  assert.equal(listingFromScreen({ trusted: true, hasScreen: true, decision: j.decision }).listed, false);
 });
 
 test("listing: new publisher allow goes out, unread holds, block hides even trusted", () => {
