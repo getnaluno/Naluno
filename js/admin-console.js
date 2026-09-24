@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260924d';
+  const BUILD = '20260924e';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -1008,7 +1008,7 @@
      tab's body only re-renders when the person is not in the middle of
      something. If it wants to refresh while they are, it waits and offers a
      button instead. */
-  let __pendingSnap = null, __lastTouch = 0;
+  let __pendingSnap = null, __lastTouch = 0, __silentRetry = null;
   function markTouch() { __lastTouch = Date.now(); }
   (function watchTouches() {
     try {
@@ -1036,25 +1036,78 @@
   function refreshHeld() {
     return bodyHasFocus() || somethingIsOpen() || (Date.now() - __lastTouch < 45000);
   }
-  function showRefreshPill(on) {
-    let pill = document.getElementById('adminRefreshPill');
-    if (!on) { if (pill) pill.style.display = 'none'; return; }
-    if (!pill) {
-      pill = document.createElement('button');
-      pill.id = 'adminRefreshPill';
-      pill.type = 'button';
-      pill.className = 'admin-refresh-pill';
-      pill.textContent = 'New activity \u00b7 Refresh';
-      pill.onclick = function () {
-        const snap = __pendingSnap || __snap;
-        __pendingSnap = null;
-        __lastTouch = 0;
-        showRefreshPill(false);
-        try { renderTab(__activeTab, snap); } catch (_) {}
-      };
-      (document.getElementById('consoleView') || document.body).appendChild(pill);
-    }
-    pill.style.display = 'block';
+  function showRefreshPill() { /* retired — the desk refreshes itself */ }
+  function deskFieldFocused() {
+    try {
+      const a = document.activeElement;
+      const body = document.getElementById('adminBody');
+      if (!a || !body || !body.contains(a)) return false;
+      const tag = String(a.tagName || '').toLowerCase();
+      if (tag !== 'input' && tag !== 'textarea' && tag !== 'select') return false;
+      if (a.readOnly || a.disabled) return false;
+      return true;
+    } catch (_) { return false; }
+  }
+  function deskDrafting() {
+    if (deskFieldFocused()) return true;
+    try {
+      const body = document.getElementById('adminBody');
+      if (!body) return false;
+      const fields = body.querySelectorAll('input, textarea, select');
+      for (let i = 0; i < fields.length; i++) {
+        const el = fields[i];
+        if (el.getAttribute('data-keep')) continue;
+        if (el.type === 'file' || el.type === 'button' || el.type === 'hidden') continue;
+        if (String(el.value || '') !== String(el.defaultValue || '')) return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+  function scheduleSilentRetry() {
+    if (__silentRetry) return;
+    __silentRetry = setTimeout(function () {
+      __silentRetry = null;
+      if (__pendingSnap) applyLivePack();
+    }, 1800);
+  }
+  function captureDeskState() {
+    const body = document.getElementById('adminBody');
+    const state = { scroll: 0, open: [], fields: {} };
+    if (!body) return state;
+    try {
+      const sc = body.closest('.tab-scroll') || document.scrollingElement || body;
+      state.scroll = sc.scrollTop || 0;
+      body.querySelectorAll('details.desk-row[open][data-key]').forEach(function (d) {
+        state.open.push(d.getAttribute('data-key'));
+      });
+      body.querySelectorAll('[data-keep]').forEach(function (el) {
+        state.fields[el.getAttribute('data-keep')] = el.value;
+      });
+    } catch (_) {}
+    return state;
+  }
+  function restoreDeskState(state) {
+    const body = document.getElementById('adminBody');
+    if (!body || !state) return;
+    try {
+      (state.open || []).forEach(function (k) {
+        if (!k) return;
+        const list = body.querySelectorAll('details.desk-row[data-key]');
+        for (let i = 0; i < list.length; i++) {
+          if (list[i].getAttribute('data-key') === k) { list[i].open = true; break; }
+        }
+      });
+      Object.keys(state.fields || {}).forEach(function (k) {
+        const list = body.querySelectorAll('[data-keep]');
+        for (let i = 0; i < list.length; i++) {
+          if (list[i].getAttribute('data-keep') === k && document.activeElement !== list[i]) {
+            list[i].value = state.fields[k];
+          }
+        }
+      });
+      const sc = body.closest('.tab-scroll') || document.scrollingElement;
+      if (sc) sc.scrollTop = state.scroll || 0;
+    } catch (_) {}
   }
   /* Switching tab is a fresh start: nothing is half-read any more. */
   function clearHeldRefresh() { __pendingSnap = null; __lastTouch = 0; showRefreshPill(false); }
@@ -1089,14 +1142,15 @@
     const snap = commitPack(__livePack);
     try { maybePauseSpentAds(snap); } catch (_) {}
     try { renderStrip(snap); } catch (_) {}
-    if (refreshHeld()) {
-      // Hold it. The person is reading; they decide when to take the update.
+    if (deskDrafting()) {
       __pendingSnap = snap;
-      showRefreshPill(true);
+      scheduleSilentRetry();
       return;
     }
-    showRefreshPill(false);
+    __pendingSnap = null;
+    const kept = captureDeskState();
     try { renderTab(__activeTab, snap); } catch (_) {}
+    restoreDeskState(kept);
   }
   function scheduleLive() {
     if (__liveTimer) {
@@ -1267,13 +1321,13 @@
     listenCol('broadcasts', 400, 'broadcasts');
     listenCol('reports', 80, 'reports');
     listenCol('deskMail', 80, 'deskMail');
-    listenCol('deskAds', 80, 'deskAds');
+    listenCol('deskAds', 400, 'deskAds');
     listenCol('siteSessions', 800, 'siteSessions', 'startedAt');
     listenCol('siteDays', 180, 'siteDays');
     listenCol('toga', 80, 'toga');
     listenCol('strands', 200, 'strands');
     listenCol('bands', 80, 'bands');
-    listenCol('contributionLedger', 200, 'ledger');
+    listenCol('contributionLedger', 2000, 'ledger');
     listenCol('economyInbox', 200, '_inbox');
     listenCol('creatorSupport', 80, 'creatorSupport');
     listenCol('metrics', 80, 'metrics');
@@ -1333,7 +1387,7 @@
       colDocs('broadcasts', 400).then(function (r) { pack.broadcasts = r; }),
       colDocs('reports', 80).then(function (r) { pack.reports = r; }),
       colDocs('deskMail', 80).then(function (r) { pack.deskMail = r; }),
-      colDocs('deskAds', 80).then(function (r) { pack.deskAds = r; }),
+      colDocs('deskAds', 400).then(function (r) { pack.deskAds = r; }),
       colDocsOrder('siteSessions', 'startedAt', 800).then(function (r) { pack.siteSessions = r; }),
       colDocs('siteDays', 180).then(function (r) { pack.siteDays = r; }),
       colDocs('reservedHandles', 400).then(function (r) { pack.reservedHandles = r; }),
@@ -1370,7 +1424,7 @@
       colDocs('toga', 80).then(function (r) { pack.toga = r; }),
       colDocs('strands', 200).then(function (r) { pack.strands = r; }),
       colDocs('bands', 80).then(function (r) { pack.bands = r; }),
-      colDocs('contributionLedger', 200).then(function (r) { pack.ledger = r; }),
+      colDocs('contributionLedger', 2000).then(function (r) { pack.ledger = r; }),
       colDocs('economyInbox', 200).then(function (r) { pack._inbox = r; }),
       colDocs('creatorSupport', 80).then(function (r) { pack.creatorSupport = r; }),
       colDocs('metrics', 80).then(function (r) { pack.metrics = r; }),
@@ -1534,15 +1588,33 @@
   function card(title, inner) {
     return '<div class="card"><div class="who">' + escapeHtml(title) + '</div>' + inner + '</div>';
   }
+  function cellText(html) {
+    return String(html == null ? '' : html)
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&/g, '&')
+      .replace(/</g, '<')
+      .replace(/>/g, '>')
+      .replace(/&#39;/g, "'")
+      .replace(/"/g, '"')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
   function table(headers, rows) {
-    if (!rows.length) return '<p class="sub">—</p>';
-    return '<table class="tbl"><thead><tr>'
-      + headers.map(function (h) { return '<th>' + escapeHtml(h) + '</th>'; }).join('')
-      + '</tr></thead><tbody>'
-      + rows.map(function (r) {
-        return '<tr>' + r.map(function (c) { return '<td>' + c + '</td>'; }).join('') + '</tr>';
-      }).join('')
-      + '</tbody></table>';
+    if (!rows || !rows.length) return '<p class="sub">—</p>';
+    return '<div class="desk-list">' + rows.map(function (r, i) {
+      const cells = r || [];
+      const title = cellText(cells[0]) || ('Row ' + (i + 1));
+      const sub = cells.slice(1, 3).map(cellText).filter(Boolean).join(' · ');
+      const key = 'r' + i + ':' + title.slice(0, 48);
+      const body = (headers || []).map(function (h, idx) {
+        return '<div class="desk-kv"><span>' + escapeHtml(String(h || '')) + '</span><div>' + (cells[idx] == null ? '' : cells[idx]) + '</div></div>';
+      }).join('');
+      return '<details class="desk-row" data-key="' + escapeHtml(key) + '">'
+        + '<summary><span class="desk-row-title">' + escapeHtml(title) + '</span>'
+        + (sub ? '<span class="desk-row-sub">' + escapeHtml(sub) + '</span>' : '')
+        + '</summary><div class="desk-row-body">' + body + '</div></details>';
+    }).join('') + '</div>';
   }
   function bcastMediaUrl(b) {
     if (!b) return '';
@@ -1820,31 +1892,146 @@
 
   /* The repair is a dry run first, always. Applying asks for confirmation,
      because it writes people's totals. */
+  async function adminFetch(path, opts) {
+    const p = String(path || '');
+    const full = p.charAt(0) === '/' ? p : ('/v1/admin/' + p);
+    const res = await adminWorker(full, opts || {});
+    if (!res) throw new Error('Could not reach the service');
+    return res;
+  }
+  /* The worker is the preferred writer. When it cannot be reached, the desk
+     adds the ledger up itself and writes the profiles. Operators may write
+     contributionProfiles; members still cannot. */
+  async function readLedgerPages() {
+    const db = adminDb();
+    if (!db) throw new Error('Database is not ready');
+    const rows = [];
+    const FP = firebase.firestore.FieldPath.documentId();
+    let last = null;
+    for (let page = 0; page < 40; page++) {
+      let q = db.collection('contributionLedger').orderBy(FP).limit(400);
+      if (last) q = q.startAfter(last);
+      const snap = await q.get();
+      if (!snap || snap.empty) break;
+      snap.docs.forEach(function (d) {
+        rows.push(Object.assign({ id: d.id }, d.data() || {}));
+      });
+      last = snap.docs[snap.docs.length - 1];
+      if (snap.size < 400) break;
+    }
+    return rows;
+  }
+  async function localRepairTotals(apply) {
+    const db = adminDb();
+    const rows = await readLedgerPages();
+    const totals = {};
+    rows.forEach(function (r) {
+      const uid = String(r.user_id || '');
+      if (!uid) return;
+      if (!totals[uid]) totals[uid] = { total_points: 0, eligible_points: 0, events: 0 };
+      totals[uid].total_points += Number(r.points) || 0;
+      totals[uid].eligible_points += Number(r.eligible_points) || 0;
+      totals[uid].events += 1;
+    });
+    const changes = [];
+    const uids = Object.keys(totals);
+    for (let i = 0; i < uids.length; i++) {
+      const uid = uids[i];
+      const t = totals[uid];
+      let before = { total_points: 0, eligible_points: 0, events: 0 };
+      let unreadable = false;
+      try {
+        const cur = await db.collection('contributionProfiles').doc(uid).get();
+        if (cur && cur.exists) {
+          const d = cur.data() || {};
+          before = {
+            total_points: Number(d.total_points) || 0,
+            eligible_points: Number(d.eligible_points) || 0,
+            events: Number(d.events) || 0,
+          };
+        }
+      } catch (_) { unreadable = true; }
+      if (unreadable) {
+        changes.push({ user_id: uid, before: null, after: t, gained: 0, action: 'skipped-unreadable' });
+        continue;
+      }
+      if (before.total_points === t.total_points && before.eligible_points === t.eligible_points) continue;
+      const lower = t.total_points < before.total_points || t.eligible_points < before.eligible_points;
+      const action = (lower ? 'skipped-would-lower' : (apply ? 'written' : 'would-write'));
+      if (apply && !lower) {
+        await db.collection('contributionProfiles').doc(uid).set({
+          user_id: uid,
+          total_points: t.total_points,
+          eligible_points: t.eligible_points,
+          events: t.events,
+          updated_at: Date.now(),
+          repaired_at: Date.now(),
+          repaired_by: 'console',
+        }, { merge: true });
+      }
+      changes.push({
+        user_id: uid,
+        before: before,
+        after: t,
+        gained: t.total_points - before.total_points,
+        action: action,
+      });
+    }
+    changes.sort(function (a, b) { return (b.gained || 0) - (a.gained || 0); });
+    return {
+      ok: true,
+      source: 'ledger',
+      dry_run: !apply,
+      ledger_rows_scanned: rows.length,
+      people: uids.length,
+      changed: changes.length,
+      points_restored: changes.filter(function (c) { return c.action !== 'skipped-would-lower' && c.action !== 'skipped-unreadable'; })
+        .reduce(function (a, c) { return a + Math.max(0, c.gained || 0); }, 0),
+      skipped_would_lower: changes.filter(function (c) { return c.action === 'skipped-would-lower'; }).length,
+      skipped_unreadable: changes.filter(function (c) { return c.action === 'skipped-unreadable'; }).length,
+      changes: changes.slice(0, 200),
+    };
+  }
+  function paintRepair(out, j, via) {
+    const lines = [];
+    lines.push((via === 'ledger' ? 'Added up from the ledger on this console. ' : '')
+      + (j.dry_run ? 'Dry run. ' : 'Applied. ')
+      + (j.ledger_rows_scanned || 0) + ' ledger rows, ' + (j.people || 0) + ' people, '
+      + (j.changed || 0) + ' to change, ' + (j.points_restored || 0) + ' points to restore.');
+    if (j.skipped_would_lower) lines.push(j.skipped_would_lower + ' skipped because the repair would LOWER them.');
+    if (j.skipped_unreadable) lines.push(j.skipped_unreadable + ' skipped because their profile could not be read.');
+    if (j.more) lines.push('More rows remain — run it again to continue.');
+    const rows = (j.changes || []).slice(0, 15).map(function (c) {
+      return String(c.user_id).slice(0, 12) + '…  '
+        + (c.before ? c.before.total_points : '?') + ' → ' + (c.after ? c.after.total_points : '?')
+        + (c.gained > 0 ? '  (+' + c.gained + ')' : '') + '  ' + c.action;
+    });
+    if (out) out.innerHTML = escapeHtml(lines.join(' ')) + (rows.length ? '<pre style="white-space:pre-wrap;font-size:11px;">' + escapeHtml(rows.join('\n')) + '</pre>' : '');
+  }
   async function runRepair(apply) {
     const out = document.getElementById('admRepairOut');
-    if (out) out.textContent = apply ? 'Repairing\u2026' : 'Checking\u2026';
+    if (out) out.textContent = apply ? 'Repairing…' : 'Checking…';
+    let j = null;
+    let via = 'worker';
     try {
       const res = await adminFetch('recompute-profiles', {
         method: 'POST',
         body: JSON.stringify(apply ? { apply: true, reason: 'repair totals from the ledger' } : {}),
       });
-      const j = await res.json();
-      if (!res.ok || !j.ok) { if (out) out.textContent = (j && j.error) || 'Could not run the repair.'; return; }
-      const lines = [];
-      lines.push((j.dry_run ? 'Dry run. ' : 'Applied. ')
-        + j.ledger_rows_scanned + ' ledger rows, ' + j.people + ' people, '
-        + j.changed + ' to change, ' + j.points_restored + ' points to restore.');
-      if (j.skipped_would_lower) lines.push(j.skipped_would_lower + ' skipped because the repair would LOWER them (use force only if you are sure).');
-      if (j.skipped_unreadable) lines.push(j.skipped_unreadable + ' skipped because their profile could not be read \u2014 run it again.');
-      if (j.more) lines.push('More rows remain \u2014 run it again to continue.');
-      const rows = (j.changes || []).slice(0, 15).map(function (c) {
-        return String(c.user_id).slice(0, 12) + '\u2026  '
-          + (c.before ? c.before.total_points : '?') + ' \u2192 ' + c.after.total_points
-          + (c.gained > 0 ? '  (+' + c.gained + ')' : '') + '  ' + c.action;
-      });
-      if (out) out.innerHTML = escapeHtml(lines.join(' ')) + (rows.length ? '<pre style="white-space:pre-wrap;font-size:11px;">' + escapeHtml(rows.join('\n')) + '</pre>' : '');
-      if (apply) loadTab('community', true);
-    } catch (_) { if (out) out.textContent = 'Couldn\u2019t reach the service.'; }
+      j = await res.json();
+      if (!res.ok || !j || !j.ok) j = null;
+    } catch (_) { j = null; }
+    if (!j) {
+      try {
+        j = await localRepairTotals(!!apply);
+        via = 'ledger';
+      } catch (e) {
+        if (out) out.textContent = (e && e.message) ? e.message : 'Couldn’t reach the service.';
+        return;
+      }
+    }
+    paintRepair(out, j, via);
+    if (apply) loadTab('community', true);
   }
   function wireRepairButtons() {
     const dry = document.getElementById('admRepairDry');
@@ -2267,10 +2454,11 @@
     if (tab === 'ads') {
       const ads = (d.ads && d.ads.list) || [];
       const q = (__tabCache.adsQ || 'all');
+      const adNeedle = String(__tabCache.adsSearch || '').trim().toLowerCase();
       const filtered = ads.filter(function (a) {
         const st = String(a.status || 'paused');
-        if (q === 'live') return st === 'live';
-        if (q === 'paused') return st !== 'live';
+        if (q === 'live' && st !== 'live') return false;
+        if (q === 'paused' && st === 'live') return false;
         return true;
       });
       const rev = (d.ads && d.ads.revenue) || {};
@@ -2459,20 +2647,18 @@
           return '<button type="button" class="' + on.trim() + ' adsFilter" data-q="' + k + '">' + label + '</button>';
         }).join('')
         + '</div>'
-        + card('Inventory', filtered.length
-          ? filtered.map(function (a) {
+        + card('Inventory',
+          '<label for="adSearch">Search ads</label>'
+          + '<input id="adSearch" data-keep="adSearch" placeholder="Headline, advertiser, callsign, email, status" value="' + escapeHtml(__tabCache.adsSearch || '') + '" />'
+          + '<p class="sub" style="margin-top:8px;">' + filtered.length + ' shown' + (ads.length !== filtered.length ? (' of ' + ads.length) : '') + '. Tap a row for the book. Play reviews the creative, including ads sent from a Broadcast.</p>'
+          + (filtered.length
+          ? '<div class="desk-list">' + filtered.map(function (a) {
             const st = String(a.status || 'paused');
             const places = (Array.isArray(a.placements) ? a.placements : [a.placement || '']).map(function (p) {
               if (p === 'in-feed') return 'watch-time';
               if (p === 'broadcast-break') return 'Broadcast chapter';
               return p;
             }).filter(Boolean).join(', ');
-            const thumb = a.thumbUrl || (String(a.mediaType || '').indexOf('image') === 0 ? a.mediaUrl : '');
-            const media = thumb
-              ? '<img class="ad-preview" src="' + escapeHtml(thumb) + '" alt="" />'
-              : (a.mediaUrl
-                ? '<video class="ad-preview" src="' + escapeHtml(a.mediaUrl) + '" muted playsinline></video>'
-                : '<div class="ad-preview"></div>');
             const u = unitById[a.id] || {};
             const impr = Number(u.impressions != null ? u.impressions : a.impressions) || 0;
             const clicks = Number(u.clicks != null ? u.clicks : a.clicks) || 0;
@@ -2490,31 +2676,41 @@
                 : ('per thousand ' + aedUsd(u.ecpmAed || 0)));
             const unpaid = String(a.paymentStatus || '') === 'unpaid';
             const reviewHold = st !== 'live' && (String(a.review || '') === 'pending' || String(a.source || '') === 'broadcast');
+            const fromBroadcast = String(a.source || '') === 'broadcast';
             const moneyLine = paidAed > 0
               ? ('Paid ' + aedUsd(paidAed) + ' · Used ' + aedUsd(usedAed) + ' · Left ' + aedUsd(leftAed || 0) + ' · ' + rateBit)
               : ('No prepaid typed · Used ' + aedUsd(usedAed) + ' · ' + rateBit);
             const payNote = unpaid ? '<div class="sub" style="color:#ffc266;margin-top:4px;">Waiting for payment — provider not connected. Paused until you go live.</div>' : '';
             const reviewNote = reviewHold ? '<div class="sub" style="color:#ffc266;margin-top:4px;">Held for review — paused until you press Go live.</div>' : '';
             const spentNote = spent ? '<div class="sub" style="color:#ffc266;margin-top:4px;">Used up — paused. Type more paid to go live again.</div>' : '';
-            const onThis = viewingId === a.id;
-            return '<div class="alert ' + (st === 'live' && !spent ? 'ok' : 'warning') + ' ad-row"' + (onThis ? ' style="border-color:rgba(124,255,178,.55);"' : '') + '>'
-              + media
-              + '<div class="ad-body">'
+            const title = a.headline || a.advertiser || a.id;
+            const sub = (spent ? 'used up' : st) + (fromBroadcast ? ' · from a Broadcast' : '') + (a.advertiser ? (' · ' + a.advertiser) : '');
+            const canPlay = !!(a.mediaUrl || a.thumbUrl);
+            const blob = [title, a.advertiser, a.advertiserHandle, a.advertiserEmail, a.status, a.source, a.id]
+              .map(function (x) { return String(x || '').toLowerCase(); }).join(' ');
+            const hide = adNeedle && blob.indexOf(adNeedle) < 0;
+            return '<details class="desk-row" data-key="ad:' + escapeHtml(a.id) + '"' + (hide ? ' hidden' : '') + '>'
+              + '<summary>'
+              + '<span class="desk-row-title">' + escapeHtml(title) + '</span>'
+              + '<span class="desk-row-sub">' + escapeHtml(sub) + '</span>'
+              + (canPlay
+                ? '<button type="button" class="ghost admAdPlay" data-id="' + escapeHtml(a.id) + '">Play</button>'
+                : '<button type="button" class="ghost" disabled>No file</button>')
+              + '</summary>'
+              + '<div class="desk-row-body">'
               + '<div class="sub">' + escapeHtml(spent ? 'used up' : st) + ' · ' + escapeHtml(places) + ' · skip ' + escapeHtml(String(a.skipAfterSec != null ? a.skipAfterSec : 5)) + 's · ' + escapeHtml(billLabel(model)) + '</div>'
-              + '<div style="margin:4px 0;"><b>' + escapeHtml(a.headline || a.advertiser || a.id) + '</b></div>'
-              + '<div class="sub">' + escapeHtml(a.advertiser || '') + (a.ctaUrl ? ' · ' + escapeHtml(a.ctaUrl) : '') + '</div>'
+              + '<div class="sub" style="margin-top:4px;">' + escapeHtml(a.advertiser || '') + (a.ctaUrl ? ' · ' + escapeHtml(a.ctaUrl) : '') + '</div>'
               + '<div class="sub" style="margin-top:4px;">' + adContactHtml(a) + '</div>'
               + '<div class="sub" style="margin-top:6px;">Views ' + impr + ' · Taps ' + clicks + ' · Skips ' + (Number(u.skips != null ? u.skips : a.skips) || 0) + ' · Completed watches ' + views + ' · Tap-through ' + rate + '</div>'
               + '<div class="sub" style="margin-top:4px;">' + moneyLine + '</div>'
-              + payNote
-              + reviewNote
-              + spentNote
+              + payNote + reviewNote + spentNote
               + '<div class="row" style="margin-top:10px;align-items:center;gap:8px;flex-wrap:wrap;">'
               + '<label class="sub" for="adPaid-' + escapeHtml(a.id) + '" style="margin:0;">Paid</label>'
-              + '<input class="adPaidEdit" id="adPaid-' + escapeHtml(a.id) + '" data-id="' + escapeHtml(a.id) + '" inputmode="decimal" value="' + escapeHtml(paidBoxVal(paidAed)) + '" style="width:120px;" />'
+              + '<input class="adPaidEdit" id="adPaid-' + escapeHtml(a.id) + '" data-id="' + escapeHtml(a.id) + '" data-keep="adPaid-' + escapeHtml(a.id) + '" inputmode="decimal" value="' + escapeHtml(paidBoxVal(paidAed)) + '" style="width:120px;" />'
               + '<button type="button" class="ghost admAdPaid" data-id="' + escapeHtml(a.id) + '">Save paid</button>'
               + '</div>'
               + '<div class="row" style="margin-top:10px;">'
+              + (canPlay ? '<button type="button" class="ghost admAdPlay" data-id="' + escapeHtml(a.id) + '">Play</button>' : '')
               + '<button type="button" class="ghost admAdEdit" data-id="' + escapeHtml(a.id) + '">Edit</button>'
               + '<button type="button" class="ghost admAdView" data-id="' + escapeHtml(a.id) + '">Analytics</button>'
               + (st === 'live'
@@ -2523,13 +2719,30 @@
                   ? '<button type="button" class="ghost" disabled>Used up</button>'
                   : '<button type="button" class="primary admAd" data-id="' + escapeHtml(a.id) + '" data-act="live">Go live</button>'))
               + '<button type="button" class="danger admAd" data-id="' + escapeHtml(a.id) + '" data-act="delete">Remove</button>'
-              + '</div></div></div>';
-          }).join('')
-          : '<p class="sub">No units in this filter. Upload a 9:16 creative above.</p>');
+              + '</div></div></details>';
+          }).join('') + '</div>'
+          : '<p class="sub">No units match. Try another word, or upload a 9:16 creative above.</p>'));
       el.querySelectorAll('.adsFilter').forEach(function (btn) {
         btn.onclick = function () {
           __tabCache.adsQ = btn.getAttribute('data-q') || 'all';
           loadTab('ads', false);
+        };
+      });
+      const adSearch = $('adSearch');
+      if (adSearch) {
+        adSearch.oninput = function () {
+          __tabCache.adsSearch = adSearch.value;
+          const needle = adSearch.value.trim().toLowerCase();
+          el.querySelectorAll('details.desk-row[data-key^="ad:"]').forEach(function (row) {
+            const text = String(row.textContent || '').toLowerCase();
+            row.hidden = !!(needle && text.indexOf(needle) < 0);
+          });
+        };
+      }
+      el.querySelectorAll('.admAdPlay').forEach(function (btn) {
+        btn.onclick = function (ev) {
+          if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+          playAdPreview(btn.getAttribute('data-id'));
         };
       });
       el.querySelectorAll('.admAd').forEach(function (btn) {
@@ -2744,7 +2957,7 @@
               })))
           : '')
         + card('Repair contribution totals',
-            '<p class="sub">Totals were once written from the worker\u2019s memory, which could overwrite a real lifetime score with a much smaller number. That is fixed, but it cannot undo what was already written. The ledger rows survived, so totals can be rebuilt by adding them up.</p>'
+            '<p class="sub">Totals are the sum of the ledger. Check adds every row the console can read and writes the profiles. If the economy service is quiet, the console still does that itself — it never lowers a total.</p>'
           + '<div class="row"><button type="button" class="ghost" id="admRepairDry">Check what would change</button>'
           + '<button type="button" class="danger" id="admRepairApply">Apply the repair</button></div>'
           + '<div id="admRepairOut" class="sub"></div>');
@@ -3898,6 +4111,53 @@
     } catch (e) {
       setMsg('adMsg', (e && e.message) || 'Could not save.');
     }
+  }
+  function closeAdPlayer() {
+    const box = document.getElementById('adPlayer');
+    if (!box) return;
+    const stage = document.getElementById('adPlayerStage');
+    if (stage) {
+      stage.querySelectorAll('video').forEach(function (v) { try { v.pause(); } catch (_) {} });
+      stage.innerHTML = '';
+    }
+    box.hidden = true;
+  }
+  function playAdPreview(id) {
+    const list = (__snap && __snap.ads && __snap.ads.list) || [];
+    const a = list.filter(function (x) { return x && String(x.id) === String(id); })[0];
+    if (!a) { toast('That ad is not in this list'); return; }
+    const src = String(a.mediaUrl || '');
+    const thumb = String(a.thumbUrl || '');
+    if (!src && !thumb) { toast('No creative on this ad'); return; }
+    let box = document.getElementById('adPlayer');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'adPlayer';
+      box.className = 'ad-player';
+      box.innerHTML = '<div class="ad-player-card" role="dialog" aria-modal="true" aria-label="Ad preview">'
+        + '<div class="row" style="margin:0 0 10px;justify-content:space-between;align-items:center;">'
+        + '<b id="adPlayerTitle"></b>'
+        + '<button type="button" class="ghost" id="adPlayerClose">Close</button></div>'
+        + '<div id="adPlayerStage"></div></div>';
+      document.body.appendChild(box);
+      box.addEventListener('click', function (ev) { if (ev.target === box) closeAdPlayer(); });
+    }
+    const title = document.getElementById('adPlayerTitle');
+    if (title) title.textContent = a.headline || a.advertiser || 'Ad';
+    const stage = document.getElementById('adPlayerStage');
+    const kind = String(a.mediaType || '').toLowerCase();
+    const image = kind.indexOf('image') === 0 || (!src && !!thumb);
+    if (stage) {
+      if (image) {
+        stage.innerHTML = '<img alt="" src="' + escapeHtml(src || thumb) + '" />';
+      } else {
+        const poster = thumb ? (' poster="' + escapeHtml(thumb) + '"') : '';
+        stage.innerHTML = '<video controls autoplay playsinline webkit-playsinline src="' + escapeHtml(src) + '"' + poster + '></video>';
+      }
+    }
+    box.hidden = false;
+    const close = document.getElementById('adPlayerClose');
+    if (close) close.onclick = function () { closeAdPlayer(); };
   }
   async function actAd(id, action) {
     if (!id || !action) return;

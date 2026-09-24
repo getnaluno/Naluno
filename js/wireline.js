@@ -149,16 +149,33 @@ function formatClockTime(ts){
 
 function renderWirelineList(){
   const rows = contacts.map(c=>{
+    const queuedHere = (typeof localQueuedMessages !== 'undefined' && localQueuedMessages[c.id]) || [];
+    const lastQueued = queuedHere.length ? queuedHere[queuedHere.length - 1] : null;
+    const queuedPreview = lastQueued
+      ? ('Waiting in Naluno · ' + (lastQueued.previewText || (lastQueued.payload && lastQueued.payload.text) || 'Message'))
+      : '';
     if(c.isReal){
       const preview = realThreadPreviews[c.firebaseUid];
-      if(!preview){
-        return { c, last:null, preview:'No messages yet — say hello', unread:false };
+      const previewTs = preview && preview.ts ? preview.ts : 0;
+      const queuedNewer = lastQueued && lastQueued.queuedAt && lastQueued.queuedAt >= previewTs;
+      if(!preview && !lastQueued){
+        return { c, last:null, preview:'No messages yet — say hello', unread:false, waiting:false };
+      }
+      if(queuedNewer){
+        return {
+          c,
+          last: { ts: lastQueued.queuedAt },
+          preview: queuedPreview,
+          unread: false,
+          waiting: true,
+        };
       }
       return {
         c,
-        last: { ts: preview.ts },
-        preview: (preview.fromMe ? 'You: ' : '') + preview.text,
-        unread: preview.unread,
+        last: preview ? { ts: preview.ts } : null,
+        preview: preview ? ((preview.fromMe ? 'You: ' : '') + preview.text) : 'No messages yet — say hello',
+        unread: !!(preview && preview.unread),
+        waiting: !!lastQueued,
       };
     }
     const msgs = wirelineThreads[c.id] || [];
@@ -172,11 +189,17 @@ function renderWirelineList(){
       last.type==='missed_call' ? ('📞 ' + missedCallLabelForViewer(last)) :
       last.text
     ) : '';
-    const preview = last ? ((last.from==='me' ? 'You: ' : '') + lastText) : 'No messages yet — say hello';
+    const preview = lastQueued && (!last || lastQueued.queuedAt >= (last.ts || 0))
+      ? queuedPreview
+      : (last ? ((last.from==='me' ? 'You: ' : '') + lastText) : 'No messages yet — say hello');
     const unread = !!(last && last.from==='them' && !last.read);
-    return { c, last, preview, unread };
+    const lastStamp = lastQueued && (!last || lastQueued.queuedAt >= (last.ts || 0))
+      ? { ts: lastQueued.queuedAt }
+      : last;
+    return { c, last: lastStamp, preview, unread, waiting: !!lastQueued };
   }).filter(r=>{
     // Wireline is WhatsApp-style: only people you have actually contacted
+    if(r.waiting) return true;
     if(r.c && r.c.isReal){
       const p = r.c.firebaseUid && realThreadPreviews[r.c.firebaseUid];
       if(!(p && (p.ts || p.text))) return false;
@@ -208,6 +231,7 @@ function renderWirelineList(){
       <div class="contact-meta"><div class="contact-name">${escapeHtml(r.c.name||'')}</div><div class="contact-sub" style="${r.unread?'color:var(--text);font-weight:600;':''}">${escapeHtml(r.preview)}</div></div>
       <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px; flex-shrink:0;">
         <span class="bcast-time">${r.last ? timeAgo(r.last.ts) : ''}</span>
+        ${r.waiting ? '<span class="wire-wait">Waiting</span>' : ''}
         ${r.unread ? '<span style="width:8px;height:8px;border-radius:50%;background:var(--mint);"></span>' : ''}
       </div>
     </div>
@@ -1004,10 +1028,13 @@ function renderThreadMessages(){
         + ((typeof wireTranslationHtml === 'function') ? wireTranslationHtml(m) : '');
     }
     const receipt = m.from==='me' ? receiptTickHtml(m.status || 'sent') : '';
+    const waitNote = (m.from==='me' && m.status==='queued')
+      ? '<div class="msg-wait">Waiting in Naluno</div>' : '';
     const deleteBtn = m.from==='me' ? `<span class="msg-delete-btn" data-delmsg="${m.id}" title="Delete" aria-label="Delete message"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2m2 0v13a2 2 0 01-2 2H9a2 2 0 01-2-2V7h10z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>` : '';
     return dayHtml + `<div class="msg-row ${m.from}" data-msgid="${m.id}">
       <div class="${bubbleClass}">${bubbleInner}</div>
       <div class="msg-time">${formatClockTime(m.ts)}${receipt}${deleteBtn}</div>
+      ${waitNote}
       ${reactionBadgeHtml(m)}
     </div>`;
   }).join('');
@@ -1528,10 +1555,14 @@ function removeFromMessageQueue(queueId){
    'online' event), and once more right after sign-in in case connectivity was already
    restored before the tab reopened. Every attempt that still fails just stays queued
    for the next trigger — nothing is ever silently dropped. */
+let __flushingQueue = false;
 async function flushMessageQueue(){
+  if(__flushingQueue) return;
   if((typeof nalunoIsOnline === 'function' ? !nalunoIsOnline() : !navigator.onLine) || !currentUser || !fbDb) return;
   const queue = getMessageQueue();
   if(queue.length === 0) return;
+  __flushingQueue = true;
+  try{
   for(const item of queue){
     try{
       let payload = Object.assign({}, item.payload);
@@ -1568,8 +1599,15 @@ async function flushMessageQueue(){
   }
   if(activeThreadContactId) renderThreadMessages();
   renderWirelineList();
+  } finally { __flushingQueue = false; }
 }
 window.addEventListener('online', flushMessageQueue);
+document.addEventListener('visibilitychange', function(){
+  if(!document.hidden) flushMessageQueue();
+});
+setInterval(function(){
+  try{ if(getMessageQueue().length) flushMessageQueue(); }catch(_){}
+}, 12000);
 rebuildLocalQueuedMessagesIndex();
 
 /* Writes a message to the real Firestore thread and updates the thread's denormalized

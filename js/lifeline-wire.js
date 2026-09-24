@@ -75,7 +75,7 @@
     } catch (_) { /* no internet at all: mesh and SMS still work */ }
     if (mesh.router) { mesh.router.accept(s.bytes, 8); entry.routes.mesh = Date.now(); meshKick(); }
     var list = outbox(); list.push(entry); saveOutbox(list);
-    T(entry.routes.relay ? 'Sent through Lifeline relay' : 'Queued \u2014 you can send it by SMS from the chat');
+    T(entry.routes.relay ? 'Sent inside Naluno' : 'Held in Naluno — it sends when you are back online');
   }
 
   /* ---------------- 3. SMS ---------------- */
@@ -210,13 +210,21 @@
     if (!bar) return;
     var cid = root.activeThreadContactId;
     var c = (root.contacts || []).find(function (x) { return x && x.id === cid; });
-    var n = c ? outbox().filter(function (x) { return x.uid === c.firebaseUid; }).length : 0;
+    var n = 0;
+    try {
+      var q = (typeof root.getMessageQueue === 'function') ? root.getMessageQueue() : [];
+      n = q.filter(function (x) { return c && String(x.contactId) === String(c.id); }).length;
+    } catch (_) {}
+    if (!n && c) n = outbox().filter(function (x) { return x.uid === c.firebaseUid; }).length;
     if (!n) { bar.style.display = 'none'; return; }
-    var body = smsBodyFor(c.firebaseUid);
-    var seg = 0; body.split('\n').forEach(function (line) { seg += L.smsSegments(line); });
     bar.style.display = 'flex';
-    bar.innerHTML = '<span class="ll-text">' + n + ' waiting for the internet.</span>'
-      + '<a class="ll-btn" href="' + smsHref(body) + '">Send by SMS (' + seg + ' SMS)</a>';
+    bar.innerHTML = '<span class="ll-text">' + n + (n === 1 ? ' message is' : ' messages are')
+      + ' waiting in Naluno. It stays in this chat and sends when this phone is back online.</span>'
+      + '<button type="button" class="ll-btn" id="llTryNow">Try now</button>';
+    var go = bar.querySelector('#llTryNow');
+    if (go) go.onclick = function () {
+      try { if (typeof root.flushMessageQueue === 'function') root.flushMessageQueue(); } catch (_) {}
+    };
   }
 
   /* ---------------- wiring ---------------- */
