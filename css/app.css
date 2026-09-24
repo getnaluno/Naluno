@@ -3006,10 +3006,18 @@ html[data-atmosphere="buzzing"] .naluno-aurora{
 
   .bviewer-social{
     position:absolute; left:0; right:0; bottom:calc(14px + env(safe-area-inset-bottom,0px));
-    z-index:5; display:flex; flex-direction:column; align-items:center; gap:4px;
+    z-index:30; display:flex; flex-direction:column; align-items:center; gap:4px;
     pointer-events:none;
   }
   .bviewer-social > *{ pointer-events:auto; }
+  .sig-react{ position:relative; z-index:31; }
+
+  #bcastAdSheet input, #bcastAdSheet select{
+    width:100%; margin:0 0 10px; padding:12px 14px; border-radius:12px;
+    border:1px solid var(--line); background:rgba(23,26,38,.9); color:var(--text);
+    font-family:inherit; font-size:14px;
+  }
+  .cr-ad-label{ display:block; font-size:12px; color:var(--text-dim); margin:8px 0 4px; }
 
   /* Offline saving. */
   #bspaceOfflineChip{
@@ -3023,7 +3031,8 @@ html[data-atmosphere="buzzing"] .naluno-aurora{
   .dl-budget{ margin:0 0 14px; }
   .dl-bar{ height:8px; border-radius:999px; background:rgba(255,255,255,.08); overflow:hidden; margin:6px 0; }
   .dl-bar i{ display:block; height:100%; background:var(--mint); }
-  .dl-row{ display:flex; gap:12px; align-items:center; padding:10px 0; border-bottom:1px solid var(--line); }
+  .dl-row{ display:flex; gap:12px; align-items:center; padding:10px 0; border-bottom:1px solid var(--line); cursor:pointer; }
+  .dl-row:active{ background:rgba(124,255,178,.06); }
   .dl-thumb{ width:56px; height:56px; border-radius:10px; object-fit:cover; background:#0a0c14; flex-shrink:0; }
   .dl-info{ flex:1; min-width:0; }
   .dl-title{ font-size:13.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
