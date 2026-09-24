@@ -7,10 +7,19 @@ service cloud.firestore {
     /* The Control Centre operator. Used so the desk can read platform
        collections even while the economy Worker's service account is
        rejected by Google — the signed-in operator is the authority. */
+    function isSuper() {
+      return isSignedIn() && request.auth.uid == 'ibMOMY6Q3sVTCxIrwO2FGk43zw93';
+    }
+    function isActiveDesk() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/deskOperators/$(request.auth.uid))
+        && get(/databases/$(database)/documents/deskOperators/$(request.auth.uid)).data.revoked != true;
+    }
     function isOperator() {
       return isSignedIn() && (
         request.auth.token.operator == true
         || request.auth.uid == 'ibMOMY6Q3sVTCxIrwO2FGk43zw93'
+        || isActiveDesk()
       );
     }
     /* Either direction of a connection. A one-sided write used to let someone
@@ -80,10 +89,12 @@ service cloud.firestore {
       allow get: if isSignedIn();
       allow list: if isOperator();
       allow create: if isOwner(uid);
-      allow delete: if isOperator();
+      allow delete: if isSuper();
       // Owner may update while the Callsign is open, including closing it.
       // Once closed, only the Control Centre operator may write (restore).
-      allow update: if isOperator() || (
+      allow update: if isSuper() || (
+        isOperator() && uid != 'ibMOMY6Q3sVTCxIrwO2FGk43zw93'
+      ) || (
         isOwner(uid) && (
           !('accountState' in resource.data) || resource.data.accountState != 'closed'
         ) && ownerKeepsModeration()
@@ -92,7 +103,8 @@ service cloud.firestore {
          password hash. Owner + operator. Call wake tokens stay on the
          public profile so existing call-notify keeps working. */
       match /vault/{id} {
-        allow read, write: if isOwner(uid) || isOperator();
+        allow read: if isOwner(uid) || isOperator();
+        allow write: if isOwner(uid) || isSuper();
       }
     }
 
@@ -940,6 +952,18 @@ service cloud.firestore {
         && bumpedAtMost('engaged', 1)
         && numOf(request.resource.data, 'ms') >= numOf(resource.data, 'ms');
       allow delete: if isOperator();
+    }
+
+    match /deskOperators/{uid} {
+      allow get: if isSuper() || (isSignedIn() && request.auth.uid == uid);
+      allow list: if isSuper();
+      allow create, update: if isSuper()
+        && uid != 'ibMOMY6Q3sVTCxIrwO2FGk43zw93'
+        && request.resource.data.email is string
+        && request.resource.data.roles is list
+        && request.resource.data.roles.size() < 40
+        && request.resource.data.revoked is bool;
+      allow delete: if isSuper() && uid != 'ibMOMY6Q3sVTCxIrwO2FGk43zw93';
     }
 
     match /adminAudit/{id} {
