@@ -68,6 +68,7 @@
     ['support', 'Support'], ['money', 'Money'], ['content', 'Content Hub'], ['visitors', 'Visitors'],
     ['reach', 'Reach'], ['quality', 'Quality'], ['analytics', 'Analytics'], ['notifications', 'Notify'],
     ['search', 'Search'], ['flags', 'Flags'], ['audit', 'Audit'], ['books', 'Books'],
+    ['discovery', 'Discovery'],
   ];
   let __needsSetup = false;
   let __tabCache = {};
@@ -3570,6 +3571,92 @@
               return [when(row.created_at), row.actorEmail || String(row.actor || '').slice(0, 8),
                 row.action || '', row.target || '', row.reason || ''];
             })));
+      return;
+    }
+
+    if (tab === 'discovery') {
+      const Engine = window.NalunoDiscoverEngine;
+      const models = Engine ? Engine.models() : {};
+      el.innerHTML =
+        card('Discovery',
+          '<p class="sub">The feed ranks a Broadcast for this person. It does not rank the creator with the most followers, and it does not try to maximise time in the app. Features are compiled here from events. Phones do not scan the catalogue.</p>'
+          + '<p class="sub">Models on this desk: ' + escapeHtml(Object.keys(models).join(', ') || 'missing') + '.</p>'
+          + '<label for="discShare">Share of the feed kept for unfamiliar Broadcasts</label>'
+          + '<input id="discShare" type="number" min="0" max="0.6" step="0.01" value="0.22" />'
+          + '<label for="discCreator">Most one creator can take of a feed</label>'
+          + '<input id="discCreator" type="number" min="0.1" max="0.8" step="0.01" value="0.34" />'
+          + '<label for="discStreak">Same topic in a row, at most</label>'
+          + '<input id="discStreak" type="number" min="1" max="6" step="1" value="2" />'
+          + '<label for="discPct">Percent of people on the second model</label>'
+          + '<input id="discPct" type="number" min="0" max="50" step="1" value="0" />'
+          + '<p class="sub">Zero means everyone stays on ranker_v1. The second model is ranker_v2. This is a trial, not a permanent formula.</p>'
+          + '<div class="row"><button type="button" class="primary" id="discSave">Save the live model</button></div>'
+          + '<p class="msg" id="discMsg"></p>')
+        + card('Compile features',
+          '<p class="sub">Read recent events and write one feature row per Broadcast. The phone then ranks with those rows. This does not read follower counts.</p>'
+          + '<div class="row"><button type="button" class="ghost" id="discCompile">Compile</button></div>'
+          + '<div id="discOut" class="sub"></div>');
+      const db = adminDb();
+      function fill(data) {
+        data = data || {};
+        if ($('discShare') && data.discoveryShare != null) $('discShare').value = data.discoveryShare;
+        if ($('discCreator') && data.maxCreatorShare != null) $('discCreator').value = data.maxCreatorShare;
+        if ($('discStreak') && data.maxTopicStreak != null) $('discStreak').value = data.maxTopicStreak;
+        if ($('discPct') && data.experimentPercent != null) $('discPct').value = data.experimentPercent;
+      }
+      if (db) {
+        db.collection('discoveryConfig').doc('live').get().then(function (snap) {
+          if (snap && snap.exists) fill(snap.data());
+        }).catch(function () {});
+      }
+      const save = $('discSave');
+      if (save) save.onclick = function () {
+        const msg = $('discMsg');
+        if (!db) { if (msg) msg.textContent = 'Database is not ready'; return; }
+        const body = {
+          modelA: 'ranker_v1',
+          modelB: 'ranker_v2',
+          discoveryShare: Math.min(0.6, Math.max(0, Number($('discShare').value) || 0)),
+          maxCreatorShare: Math.min(0.8, Math.max(0.1, Number($('discCreator').value) || 0.34)),
+          maxTopicStreak: Math.min(6, Math.max(1, Math.round(Number($('discStreak').value) || 2))),
+          experimentPercent: Math.min(50, Math.max(0, Math.round(Number($('discPct').value) || 0))),
+          updatedAt: Date.now(),
+        };
+        if (msg) msg.textContent = 'Saving…';
+        db.collection('discoveryConfig').doc('live').set(body, { merge: true }).then(function () {
+          if (msg) msg.textContent = 'Saved. New sessions pick this up.';
+        }).catch(function (e) {
+          if (msg) msg.textContent = (e && e.message) || 'Could not save.';
+        });
+      };
+      const compile = $('discCompile');
+      if (compile) compile.onclick = async function () {
+        const out = $('discOut');
+        if (!db || !Engine) { if (out) out.textContent = 'Not ready.'; return; }
+        if (out) out.textContent = 'Reading events…';
+        try {
+          let snap;
+          try {
+            snap = await db.collection('recommendationEvents').orderBy('at', 'desc').limit(800).get();
+          } catch (_) {
+            snap = await db.collection('recommendationEvents').limit(800).get();
+          }
+          const events = (snap.docs || []).map(function (d) { return d.data() || {}; });
+          const rolled = Engine.rollup(events);
+          const ids = Object.keys(rolled.features || {});
+          for (let i = 0; i < ids.length; i++) {
+            const feat = rolled.features[ids[i]];
+            feat.updatedAt = Date.now();
+            feat.compiledBy = 'desk';
+            await db.collection('broadcastFeatures').doc(ids[i]).set(feat, { merge: true });
+          }
+          if (out) out.textContent = ids.length
+            ? ('Wrote features for ' + ids.length + ' Broadcast' + (ids.length === 1 ? '' : 's') + ' from ' + events.length + ' events.')
+            : 'No events yet. Features stay empty until people watch.';
+        } catch (e) {
+          if (out) out.textContent = (e && e.message) || 'Could not compile.';
+        }
+      };
       return;
     }
 

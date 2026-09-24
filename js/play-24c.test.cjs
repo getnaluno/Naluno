@@ -42,8 +42,8 @@ assert.ok(beacon.includes('if(place) block += place'), 'the place leads the repl
 assert.ok(html.includes('id="bcastOfflineWatch"'), 'Offline watch is inside My Broadcasts');
 assert.ok(html.includes('id="bcastPrivateWatch"'), 'Private broadcasts is inside My Broadcasts');
 assert.ok(!html.includes('id="openDownloadsBtn"'), 'saved broadcasts are not under Callsign');
-assert.ok(/2026\.09\.24[d-z]/.test(html), 'member build stamp');
+assert.ok(/2026\.09\.2[4-9]/.test(html), 'member build stamp');
 assert.ok(/naluno-shell-v20[3-9]/.test(sw), 'the shell cache moves');
-assert.ok(/APP_BUILD = '20260924[d-z]'/.test(sw), 'service worker build');
+assert.ok(/APP_BUILD = '2026092[4-9]/.test(sw), 'service worker build');
 
 console.log('play-24c tests passed');

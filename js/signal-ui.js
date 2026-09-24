@@ -419,6 +419,9 @@ function renderBroadcastTab(){
       if(typeof broadcastIsPrivate === 'function' && broadcastIsPrivate(b)) return false;
       return true;
     });
+    if(bcastActiveView !== 'mine' && window.NalunoDiscover && typeof NalunoDiscover.order === 'function'){
+      try{ list = NalunoDiscover.order(list); }catch(_){}
+    }
     if(typeof renderBroadcastEntryGrid === 'function'){
       renderBroadcastEntryGrid(grid, empty, list);
       try{ nalunoRevealBroadcastPlates(grid); }catch(_){}

@@ -463,13 +463,25 @@
     if(empty) empty.style.display = 'none';
 
     const cards = [];
+    const ranked = raw.some(function(b){ return b && typeof b._nalunoPlace === 'number'; });
     grouped.folders.forEach(function(f){
-      cards.push({ ts: f.latestAt || 0, html: strandFolderHtml(f) });
+      let place = 1e9;
+      (f.items || []).forEach(function(b){
+        if(b && typeof b._nalunoPlace === 'number' && b._nalunoPlace < place) place = b._nalunoPlace;
+      });
+      cards.push({ ts: f.latestAt || 0, place: place, html: strandFolderHtml(f) });
     });
     grouped.free.forEach(function(b){
-      cards.push({ ts: Number(b.createdAt) || 0, html: plateHtml(b) });
+      cards.push({
+        ts: Number(b.createdAt) || 0,
+        place: (b && typeof b._nalunoPlace === 'number') ? b._nalunoPlace : 1e9,
+        html: plateHtml(b),
+      });
     });
-    cards.sort(function(a,b){ return (b.ts || 0) - (a.ts || 0); });
+    cards.sort(function(a,b){
+      if(ranked) return (a.place || 0) - (b.place || 0);
+      return (b.ts || 0) - (a.ts || 0);
+    });
     let htmls = cards.map(function(c){ return c.html; });
     try{
       const mine = (typeof bcastActiveView !== 'undefined' && bcastActiveView === 'mine');

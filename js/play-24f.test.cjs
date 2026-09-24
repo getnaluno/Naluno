@@ -23,7 +23,7 @@ assert.ok(rules.includes('function answerGrewByOne()'), 'someone else can answer
 assert.ok(rules.includes('function isOperator()'), 'operator check is still there');
 assert.ok(profile.includes('contributionPanel'), 'phone back sees the contribution sheet');
 assert.ok(profile.includes('closeTop'), 'changing tab closes the sheet on top');
-assert.ok(sw.includes('naluno-shell-v205'), 'shell cache');
-assert.ok(app.includes('2026.09.24f'), 'member build stamp');
+assert.ok(/naluno-shell-v20[5-9]/.test(sw), 'shell cache');
+assert.ok(/2026\.09\.2[4-9]/.test(app), 'member build stamp');
 
 console.log('play-24f tests passed');
