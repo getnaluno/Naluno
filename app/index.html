@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.09.24b" />
+  <meta name="naluno-build" content="2026.09.24c" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.09.24b">
+<meta name="app-version" content="2026.09.24c">
 <meta name="description" content="Naluno brings private communication, communities and creator-led content into one place. A Callsign instead of a phone number.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="Private communication, communities and creator-led content. A Callsign — not a phone number.">
@@ -131,9 +131,9 @@
 })();
 </script>
 <link rel="apple-touch-startup-image" href="/splash-empty.png">
-<link rel="stylesheet" href="/css/app.css?v=20260924b" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/css/app.css?v=20260924c" media="print" onload="this.media='all'">
 <script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="/css/app.css?v=20260924b"></noscript>
+<noscript><link rel="stylesheet" href="/css/app.css?v=20260924c"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -391,6 +391,11 @@ window.__nalunoEntryT0 = Date.now();
         <button type="button" class="bcast-view-tab" data-bcast-view="toga">Toga</button>
         <button type="button" class="bcast-search-tab" id="bcastSearchTab" aria-expanded="false" aria-controls="bcastSearchRow">Search</button>
       </div>
+      <div class="bcast-mine-tools" id="bcastMineTools" hidden>
+        <button type="button" class="bcast-ghost-tool" id="bcastOfflineWatch">Offline watch</button>
+        <button type="button" class="bcast-ghost-tool" id="bcastPrivateWatch" aria-expanded="false" aria-controls="bcastPrivateDrawer">Private broadcasts</button>
+      </div>
+      <div class="bcast-private-drawer" id="bcastPrivateDrawer" hidden></div>
       <div class="bcast-search-row" id="bcastSearchRow" hidden>
         <input type="text" inputmode="search" enterkeyhint="search" id="bcastSearchInput" placeholder="Search Broadcasts — topic, person, idea…" autocomplete="off" autocorrect="off" spellcheck="false" />
       </div>
@@ -609,8 +614,6 @@ window.__nalunoEntryT0 = Date.now();
           </div>
         </div>
       </div>
-
-      <button class="save-btn" id="openDownloadsBtn" style="margin:22px 20px 0;">Saved Broadcasts (offline)</button>
 
       <button class="save-btn" id="signOutBtn" style="margin:14px 20px 0; background:none; color:var(--red); border:1px solid var(--line);">Sign out</button>
 
@@ -1641,7 +1644,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/signal-core.js?v=20260924a"></script>
 <script src="/js/broadcast-core.js?v=20260924a"></script>
 <script src="/js/broadcast-upload.js?v=20260908d"></script>
-<script src="/js/broadcast-composer.js?v=20260924b"></script>
+<script src="/js/broadcast-composer.js?v=20260924c"></script>
 <script src="/js/screen.js?v=20260921k"></script>
 <!-- nudenet.js MUST load after screen.js: it upgrades runNalunoScreen() in place
      and keeps the heuristic as a hold-only fallback. Replaces nsfw-model.js. -->
@@ -1654,29 +1657,29 @@ window.__nalunoEntryT0 = Date.now();
      currentUser exists, and deliberately non-blocking — if this file failed
      to load entirely, Broadcast would behave exactly as it does today. -->
 <script src="/js/presence.js?v=20260919g"></script>
-<script src="/js/report.js?v=20260924b"></script>
+<script src="/js/report.js?v=20260924c"></script>
 <script src="/js/currency.js?v=20260918a"></script>
 <script src="/js/economy.js?v=20260914c"></script>
 <script src="/js/economy-ui.js?v=20260914c"></script>
 <script src="/js/weather.js?v=20260918h"></script>
-<script src="/js/beacon.js?v=20260919f"></script>
-<script src="/js/compass.js?v=20260924b"></script>
-<script src="/js/signal-ui.js?v=20260924b"></script>
+<script src="/js/beacon.js?v=20260924c"></script>
+<script src="/js/compass.js?v=20260924c"></script>
+<script src="/js/signal-ui.js?v=20260924c"></script>
 <script src="/js/compat-lock.js?v=20260908d"></script>
-<script src="/js/broadcast-space.js?v=20260924b"></script>
-<script src="/js/ads.js?v=20260924b"></script>
+<script src="/js/broadcast-space.js?v=20260924c"></script>
+<script src="/js/ads.js?v=20260924c"></script>
 <script src="/js/media-vault.js?v=20260908d"></script>
-<script src="/js/wireline.js?v=20260924b"></script>
+<script src="/js/wireline.js?v=20260924c"></script>
 <!-- Lifeline: Wireline when the internet is blocked or cut. Loads after
      crypto.js (keys) and wireline.js (thread insertion). -->
 <script src="/js/notices.js?v=20260923n"></script>
-<script src="/js/broadcast-offline.js?v=20260924b"></script>
-<script src="/js/signal-social.js?v=20260924b"></script>
+<script src="/js/broadcast-offline.js?v=20260924c"></script>
+<script src="/js/signal-social.js?v=20260924c"></script>
 <script src="/js/lifeline.js?v=20260922a"></script>
 <script src="/js/lifeline-wire.js?v=20260922a"></script>
 <!-- Wireline translation reuses Spark's engine and language list. -->
 <script src="/js/wireline-translate.js?v=20260922a"></script>
-<script src="/js/profile.js?v=20260924b"></script>
+<script src="/js/profile.js?v=20260924c"></script>
 <script src="/js/onboard.js?v=20260922a"></script>
 <script src="/js/handle-guard.js?v=20260921c"></script>
 <script src="/js/auth.js?v=20260923c"></script>
@@ -1684,11 +1687,11 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/ice-core.js?v=20260908d"></script>
 <script src="/js/camera.js?v=20260908d"></script>
 <script src="/js/call-filters.js?v=20260908d"></script>
-<script src="/js/calls.js?v=20260924b"></script>
+<script src="/js/calls.js?v=20260924c"></script>
 <script src="/js/sfu-live.js?v=20260908d"></script>
 <script src="/js/broadcast-live.js?v=20260908d"></script>
-<script src="/js/band-room.js?v=20260924b"></script>
-<script src="/js/pwa.js?v=20260924b"></script>
+<script src="/js/band-room.js?v=20260924c"></script>
+<script src="/js/pwa.js?v=20260924c"></script>
 <script src="/js/spark-engine.js?v=20260908d"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>
 <script src="/js/spark-lg.js?v=20260908d"></script>
