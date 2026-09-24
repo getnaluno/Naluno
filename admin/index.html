@@ -7,8 +7,8 @@
 <meta name="robots" content="noindex, nofollow, noarchive" />
 <meta name="googlebot" content="noindex, nofollow, noarchive" />
 <meta name="theme-color" content="#07080D" />
-<meta name="naluno-build" content="2026.09.24c" />
-<meta name="app-version" content="2026.09.24c" />
+<meta name="naluno-build" content="2026.09.24e" />
+<meta name="app-version" content="2026.09.24e" />
 <link rel="icon" href="/icon-192.png" />
 <link rel="canonical" href="https://getnaluno.com/admin/" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -194,7 +194,46 @@ button{
     }
 
     /* An urgent report (sexual, terrorism and the rest) stands out. */
+    .desk-list{ display:flex; flex-direction:column; gap:6px; margin-top:8px; }
+    .desk-row{
+      border:1px solid var(--line); border-radius:12px; background:rgba(7,8,13,.35);
+      overflow:hidden;
+    }
+    .desk-row summary{
+      list-style:none; cursor:pointer; display:flex; align-items:center; gap:10px;
+      padding:10px 12px; min-height:44px;
+    }
+    .desk-row summary::-webkit-details-marker{ display:none; }
+    .desk-row-title{
+      font-weight:600; font-size:14px; min-width:0; overflow:hidden;
+      text-overflow:ellipsis; white-space:nowrap; flex:1 1 auto;
+    }
+    .desk-row-sub{
+      color:var(--ink-dim); font-size:12px; min-width:0; overflow:hidden;
+      text-overflow:ellipsis; white-space:nowrap; flex:0 1 42%;
+    }
+    .desk-row summary .ghost, .desk-row summary .primary{ flex:0 0 auto; padding:8px 12px; }
+    .desk-row-body{ padding:0 12px 12px; border-top:1px solid var(--line); }
+    .desk-kv{ display:grid; grid-template-columns:140px 1fr; gap:8px; padding:7px 0; border-bottom:1px solid var(--line); font-size:13px; }
+    .desk-kv span{ color:var(--ink-dim); font-family:var(--dial); font-size:11px; letter-spacing:.04em; }
     .review-card.review-urgent{ border-color:rgba(255,84,112,.55); box-shadow:0 0 0 1px rgba(255,84,112,.25) inset; }
+    .ad-player{
+      position:fixed; inset:0; z-index:80; background:rgba(0,0,0,.72);
+      display:flex; align-items:center; justify-content:center; padding:18px;
+    }
+    .ad-player[hidden]{ display:none !important; }
+    .ad-player-card{
+      width:min(420px, 100%); max-height:92vh; overflow:auto;
+      background:#0D1018; border:1px solid var(--line); border-radius:16px; padding:14px;
+    }
+    .ad-player-card video, .ad-player-card img{
+      width:100%; max-height:72vh; object-fit:contain; background:#000; border-radius:10px; display:block;
+    }
+    @media (max-width: 640px){
+      .desk-row summary{ flex-wrap:wrap; }
+      .desk-row-sub{ flex:1 1 100%; }
+      .desk-kv{ grid-template-columns:1fr; gap:2px; }
+    }
 </style>
 </head>
 <body>
@@ -306,6 +345,6 @@ button{
 <script src="/js/currency.js?v=20260922b"></script>
 <script src="/js/handle-guard.js?v=20260921c"></script>
 <script src="/js/admin-data.js?v=20260924b"></script>
-<script src="/js/admin-console.js?v=20260924d"></script>
+<script src="/js/admin-console.js?v=20260924e"></script>
 </body>
 </html>
