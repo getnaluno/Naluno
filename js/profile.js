@@ -72,6 +72,102 @@ function restoreNavStateOnBoot(){
   }catch(_){}
 }
 
+function nalunoShowTab(name){
+  if(!name || name === 'support') name = 'broadcast';
+  const btn = document.querySelector('.navbtn[data-tab="' + name + '"]');
+  document.querySelectorAll('.navbtn').forEach(function(b){ b.classList.toggle('active', b === btn); });
+  document.querySelectorAll('.tabscreen').forEach(function(s){ s.classList.remove('active'); });
+  const screen = $('tab-' + name);
+  if(screen) screen.classList.add('active');
+  try{ if(typeof nalunoHideProgressChrome === 'function') nalunoHideProgressChrome(); }catch(_){}
+  if(name === 'frequencies' && typeof clearMissedCallBadge === 'function') clearMissedCallBadge();
+  if(name === 'compass' && typeof showCompassLockScreenIfNeeded === 'function') showCompassLockScreenIfNeeded();
+  if(name !== 'broadcast'){
+    try{ if(typeof pauseAllStrandPreviews === 'function') pauseAllStrandPreviews(); }catch(_){}
+    try{ if(typeof nalunoPauseDetachedMedia === 'function') nalunoPauseDetachedMedia(); }catch(_){}
+  }
+  try{ captureNavState(); }catch(_){}
+}
+function nalunoCurrentTab(){
+  const b = document.querySelector('.navbtn.active');
+  return (b && b.dataset && b.dataset.tab) || 'frequencies';
+}
+
+/* Android system back. Each tab change and each full-screen surface pushes
+   a history entry. Back undoes that entry instead of leaving Naluno.
+   The root screen (nothing open, no earlier tab) still lets the system
+   close the app. A call keeps its own history in calls.js. */
+window.nalunoBack = (function(){
+  const ORDER = ['signalViewers','reportSheet','bcastAdSheet','downloadsPanel','bcomposer','composer','bviewer','bspace','bandRoom','wirelineThread'];
+  const CLOSE = {
+    signalViewers: function(){ try{ if(window.NalunoSignalSocial) window.NalunoSignalSocial.closeViewers(); }catch(_){} },
+    reportSheet: function(){ try{ if(typeof closeReportSheet === 'function') closeReportSheet(); }catch(_){} },
+    bcastAdSheet: function(){ try{ if(window.NalunoAds && window.NalunoAds.closeFromBroadcast) window.NalunoAds.closeFromBroadcast(); }catch(_){} },
+    downloadsPanel: function(){ try{ if(window.NalunoOfflineBroadcast) window.NalunoOfflineBroadcast.closeDownloads(); }catch(_){} },
+    bcomposer: function(){ try{ if(typeof bcompClose === 'function') bcompClose(); }catch(_){} },
+    composer: function(){ try{ if(typeof closeComposer === 'function') closeComposer(); }catch(_){} },
+    bviewer: function(){ try{ if(typeof closeBroadcast === 'function') closeBroadcast(); }catch(_){} },
+    bspace: function(){ try{ if(typeof closeBroadcastSpace === 'function') closeBroadcastSpace(); }catch(_){} },
+    bandRoom: function(){ try{ if(typeof closeBandRoom === 'function') closeBandRoom(); }catch(_){} },
+    wirelineThread: function(){ try{ if(typeof closeThread === 'function') closeThread(); }catch(_){} },
+  };
+  let lock = false;
+  function topOverlay(){
+    for(let i = 0; i < ORDER.length; i++){
+      const el = document.getElementById(ORDER[i]);
+      if(el && el.classList.contains('active')) return ORDER[i];
+    }
+    return null;
+  }
+  function snap(){
+    return { naluno: 1, tab: nalunoCurrentTab(), overlay: topOverlay() };
+  }
+  function same(a, b){
+    if(!a || !b) return false;
+    return a.tab === b.tab && (a.overlay || null) === (b.overlay || null);
+  }
+  function apply(st){
+    st = st || { tab: 'frequencies', overlay: null };
+    lock = true;
+    try{
+      if(st.tab && st.tab !== nalunoCurrentTab()) nalunoShowTab(st.tab);
+      ORDER.forEach(function(id){
+        if(id === st.overlay) return;
+        const el = document.getElementById(id);
+        if(el && el.classList.contains('active') && CLOSE[id]) CLOSE[id]();
+      });
+    }catch(_){}
+    lock = false;
+  }
+  function push(){
+    if(lock) return;
+    const next = snap();
+    const prev = history.state;
+    if(prev && prev.naluno && same(prev, next)) return;
+    try{ history.pushState(next, ''); }catch(_){}
+  }
+  function drop(id){
+    if(lock || window.__nalunoBackHold) return;
+    const st = history.state || {};
+    if(!st.naluno || st.overlay !== id) return;
+    lock = true;
+    try{ history.back(); }catch(_){ lock = false; }
+  }
+  window.addEventListener('popstate', function(){
+    if(window.__nalunoCallPop){ window.__nalunoCallPop = false; return; }
+    if(window.__nalunoCallHist) return;
+    if(lock){ lock = false; return; }
+    const st = history.state;
+    if(!st || !st.naluno) return;
+    apply(st);
+  });
+  try{
+    const cur = history.state;
+    if(!cur || !cur.naluno) history.replaceState({ naluno: 1, tab: nalunoCurrentTab(), overlay: null }, '');
+  }catch(_){}
+  return { push: push, drop: drop, apply: apply, top: topOverlay };
+})();
+
 document.querySelectorAll('.navbtn').forEach(btn=>{
   btn.onclick = ()=>{
     if(btn.dataset.tab === 'support'){
@@ -80,20 +176,10 @@ document.querySelectorAll('.navbtn').forEach(btn=>{
       if(bcast && bcast !== btn){ bcast.click(); }
       return;
     }
-    try{ if(typeof closeThread === 'function') closeThread(); }catch(_){}
-    document.querySelectorAll('.navbtn').forEach(b=>b.classList.remove('active'));
-    document.querySelectorAll('.tabscreen').forEach(s=>s.classList.remove('active'));
-    btn.classList.add('active');
-    const screen = $('tab-'+btn.dataset.tab);
-    if(screen) screen.classList.add('active');
-    try{ if(typeof nalunoHideProgressChrome === 'function') nalunoHideProgressChrome(); }catch(_){}
-    if(btn.dataset.tab === 'frequencies' && typeof clearMissedCallBadge === 'function') clearMissedCallBadge();
-    if(btn.dataset.tab === 'compass' && typeof showCompassLockScreenIfNeeded === 'function') showCompassLockScreenIfNeeded();
-    if(btn.dataset.tab !== 'broadcast'){
-      try{ if(typeof pauseAllStrandPreviews === 'function') pauseAllStrandPreviews(); }catch(_){}
-      try{ if(typeof nalunoPauseDetachedMedia === 'function') nalunoPauseDetachedMedia(); }catch(_){}
-    }
-    captureNavState();
+    try{ window.__nalunoBackHold = true; if(typeof closeThread === 'function') closeThread(); }catch(_){}
+    window.__nalunoBackHold = false;
+    nalunoShowTab(btn.dataset.tab);
+    try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
   };
 });
 

@@ -92,11 +92,13 @@ function openReportSheet(detail){
   if(msg) msg.textContent = '';
   const btn = document.getElementById('reportSendBtn');
   if(btn) btn.disabled = true;      // stays disabled until a real reason is typed
+  try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
 }
 
 function closeReportSheet(){
   const sheet = document.getElementById('reportSheet');
   if(sheet) sheet.classList.remove('active');
+  try{ if(window.nalunoBack) window.nalunoBack.drop('reportSheet'); }catch(_){}
 }
 
 async function submitReport(){

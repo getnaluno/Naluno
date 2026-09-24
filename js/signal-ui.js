@@ -1114,25 +1114,34 @@ async function signalPaintSocial(ownerUid, seg){
     row.querySelectorAll('[data-react]').forEach(function(b){
       const go = async function(e){
         if(e){ e.preventDefault(); e.stopPropagation(); }
-        const next = await S.react(ownerUid, segId, b.getAttribute('data-react'));
-        if(next !== null) paintOn(next);
+        if(b.__nalunoReacting) return;
+        b.__nalunoReacting = true;
         try{
-          if(typeof S.reactionCounts === 'function'){
-            const counts = await S.reactionCounts(ownerUid, segId);
-            let chip = row.querySelector('.sig-react-sum');
-            if(counts && counts.length){
-              if(!chip){
-                chip = document.createElement('div');
-                chip.className = 'sig-react-sum';
-                row.insertBefore(chip, reactEl);
-              }
-              chip.textContent = counts.map(function(x){ return x.emoji + x.n; }).join('  ');
-            } else if(chip) chip.textContent = '';
-          }
-        }catch(_){}
+          const next = await S.react(ownerUid, segId, b.getAttribute('data-react'));
+          if(next !== null) paintOn(next);
+          try{
+            if(typeof S.reactionCounts === 'function'){
+              const counts = await S.reactionCounts(ownerUid, segId);
+              let chip = row.querySelector('.sig-react-sum');
+              if(counts && counts.length){
+                if(!chip){
+                  chip = document.createElement('div');
+                  chip.className = 'sig-react-sum';
+                  row.insertBefore(chip, reactEl);
+                }
+                chip.textContent = counts.map(function(x){ return x.emoji + x.n; }).join('  ');
+              } else if(chip) chip.textContent = '';
+            }
+          }catch(_){}
+        } finally {
+          b.__nalunoReacting = false;
+        }
       };
-      b.addEventListener('pointerdown', function(e){ if(e) e.stopPropagation(); });
-      b.onclick = go;
+      /* pointerup, not click: the story tap-zones eat the click on a phone.
+         pointerdown only stops the tap from advancing the story. */
+      b.addEventListener('pointerdown', function(e){ if(e){ e.stopPropagation(); e.preventDefault(); } });
+      b.addEventListener('pointerup', go);
+      b.onclick = function(e){ if(e){ e.preventDefault(); e.stopPropagation(); } };
     });
     try{
       if(typeof S.myReaction === 'function'){
@@ -1586,6 +1595,7 @@ async function openBroadcast(contactId){
     $('bviewerRemove').style.display = 'none';
     renderBars(segments.length);
     $('bviewer').classList.add('active');
+    try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
     playSegment(0);
   }catch(e){
     toast('Couldn\u2019t load that signal right now');
@@ -1625,6 +1635,14 @@ function closeBroadcast(){
   clearSegTimer();
   try{ currentVideoEl && currentVideoEl.pause(); }catch(_){}
   currentVideoEl = null;
+  try{
+    const v = document.getElementById('bviewerActiveVideo');
+    if(v){
+      try{ v.pause(); }catch(_){}
+      try{ v.removeAttribute('src'); v.load(); }catch(_){}
+    }
+  }catch(_){}
+  const was = $('bviewer') && $('bviewer').classList.contains('active');
   $('bviewer').classList.remove('active');
   try{
     document.body.classList.remove('naluno-landscape-media');
@@ -1635,7 +1653,13 @@ function closeBroadcast(){
     if(typeof stopAllAppMediaAndLockSession === 'function') stopAllAppMediaAndLockSession();
     else if(typeof lockOutChromeMediaSession === 'function') lockOutChromeMediaSession();
   }catch(_){}
+  if(was){ try{ if(window.nalunoBack) window.nalunoBack.drop('bviewer'); }catch(_){} }
 }
+/* The linked-Broadcast button calls this. It used to be missing, so the
+   Signal stayed on screen and its video kept the phone's only decoder. */
+function closeSignalViewer(){ closeBroadcast(); }
+window.closeSignalViewer = closeSignalViewer;
+window.closeBroadcast = closeBroadcast;
 $('bviewerClose').onclick = closeBroadcast;
 function deleteCurrentSignalClip(){
   if(!viewingMine){
@@ -1750,6 +1774,7 @@ function openMySignalStory(){
   if($('bviewerMessage')) $('bviewerMessage').style.display = 'none';
   if($('bviewerStatus')) $('bviewerStatus').style.display = 'none';
   $('bviewer').classList.add('active');
+  try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
   if(typeof renderBars === 'function') renderBars(currentSegments.length);
   currentSegments.forEach(function(seg){ signalPlaySrc(seg); });
   signalRememberView('me', currentSegments);
@@ -1789,6 +1814,7 @@ async function openContactSignalStory(contactId){
     $('bviewerAvatar').style.background = entry.contact.color || '#7CFFB2';
   }
   $('bviewer').classList.add('active');
+  try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
   playSegment(0);
 }
 

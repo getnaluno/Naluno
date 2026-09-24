@@ -588,9 +588,14 @@ function openComposer(mode){
   }
   $('composer').classList.add('active');
   document.body.classList.add('naluno-overlay');
+  try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
 }
 
-function closeComposer(){ $('composer').classList.remove('active'); document.body.classList.remove('naluno-overlay'); }
+function closeComposer(){
+  $('composer').classList.remove('active');
+  document.body.classList.remove('naluno-overlay');
+  try{ if(window.nalunoBack) window.nalunoBack.drop('composer'); }catch(_){}
+}
 $('composerClose').onclick = closeComposer;
 if($('newSignalBtn')) $('newSignalBtn').onclick = ()=> openComposer('signal');
 // Broadcast uses dedicated bcomposer (js/broadcast-composer.js) — do not open Signal composer
@@ -1453,7 +1458,7 @@ async function postSegmentsNow(newSegments){
         }
       }
       const id = await saveSignalSegment(segToSave);
-      if(id) mySignal.push({ id, ...segToSave });
+      if(id) mySignal.push(Object.assign({}, segToSave, { id: id }));
       else saveFailed++;
     }
     if(newSegments.length>failed) bumpTodayActivity();

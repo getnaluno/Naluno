@@ -82,6 +82,11 @@
     if (!isFinite(n) || n <= 0) return 0;
     return n;
   }
+  function rateOrCard(unitVal, cardVal) {
+    const n = Number(unitVal);
+    if (unitVal == null || unitVal === '' || !isFinite(n) || n <= 0) return Number(cardVal) || 0;
+    return n;
+  }
   function bookedAedOf(ad) {
     if (!ad) return 0;
     const rates = ratesNow();
@@ -89,9 +94,9 @@
     const impr = Math.max(0, Number(ad.impressions) || 0);
     const clicks = Math.max(0, Number(ad.clicks) || 0);
     const views = Math.max(0, Number(ad.viewCompletes) || 0);
-    const ecpm = Number(ad.ecpmAed != null ? ad.ecpmAed : rates.ecpmAed) || 0;
-    const cpc = Number(ad.cpcAed != null ? ad.cpcAed : rates.cpcAed) || 0;
-    const cpv = Number(ad.cpvAed != null ? ad.cpvAed : rates.cpvAed) || 0;
+    const ecpm = rateOrCard(ad.ecpmAed, rates.ecpmAed);
+    const cpc = rateOrCard(ad.cpcAed, rates.cpcAed);
+    const cpv = rateOrCard(ad.cpvAed, rates.cpvAed);
     if (model === 'cpc') return clicks * cpc;
     if (model === 'cpv') return views * cpv;
     return (impr / 1000) * ecpm;
@@ -334,7 +339,9 @@
         return;
       }
       ad[field] = (Number(ad[field]) || 0) + 1;
-      ref.set(patch, { merge: true }).catch(function () {});
+      ref.set(patch, { merge: true }).catch(function (e) {
+        try { console.warn('[ads] track', field, e && (e.code || e.message)); } catch (_) {}
+      });
       if (isSpent(ad)) {
         __live = __live.filter(function (a) { return a && a.id !== ad.id; });
       }
@@ -761,6 +768,7 @@
 
   function boot() {
     injectStyle();
+    wireCreatorAd();
     startWatchClock();
     function signedIn() {
       try {
@@ -778,6 +786,214 @@
       } catch (_) { setTimeout(go, 800); }
     } else {
       setTimeout(go, 1200);
+    }
+  }
+
+  function adMoneyCode() {
+    try {
+      if (typeof NalunoCurrency !== 'undefined' && NalunoCurrency && NalunoCurrency.code) return NalunoCurrency.code();
+    } catch (_) {}
+    return 'AED';
+  }
+  function adToAed(n) {
+    const code = adMoneyCode();
+    try {
+      if (typeof NalunoCurrency !== 'undefined' && NalunoCurrency && NalunoCurrency.convert) {
+        return NalunoCurrency.convert(n, code, 'AED');
+      }
+    } catch (_) {}
+    return n;
+  }
+  function adFromAed(n) {
+    const code = adMoneyCode();
+    try {
+      if (typeof NalunoCurrency !== 'undefined' && NalunoCurrency && NalunoCurrency.convert) {
+        return NalunoCurrency.convert(n, 'AED', code);
+      }
+    } catch (_) {}
+    return n;
+  }
+  function broadcastMediaUrl(meta) {
+    const seg = (meta && meta.segment) || {};
+    const chapters = (meta && meta.chapters) || seg.chapters || null;
+    try {
+      if (typeof legacyBroadcastPlayUrl === 'function') {
+        const u = legacyBroadcastPlayUrl({
+          mediaUrl: seg.mediaUrl || (meta && meta.mediaUrl) || '',
+          videoUrl: seg.videoUrl || '',
+          chapters: chapters,
+          segment: seg,
+        });
+        if (u) return u;
+      }
+    } catch (_) {}
+    return seg.videoUrl || seg.mediaUrl || (meta && meta.mediaUrl) || '';
+  }
+  function closeFromBroadcast() {
+    const sheet = document.getElementById('bcastAdSheet');
+    const was = sheet && sheet.classList.contains('active');
+    if (sheet) sheet.classList.remove('active');
+    if (was) { try { if (window.nalunoBack) window.nalunoBack.drop('bcastAdSheet'); } catch (_) {} }
+  }
+  function openFromBroadcast(meta, broadcastId) {
+    const sheet = document.getElementById('bcastAdSheet');
+    if (!sheet) return;
+    if (sheet.parentElement !== document.body) document.body.appendChild(sheet);
+    sheet.style.position = 'fixed';
+    sheet.style.inset = '0';
+    sheet.style.zIndex = '2147483000';
+    const form = document.getElementById('bcastAdForm');
+    const pay = document.getElementById('bcastAdPay');
+    if (form) form.hidden = false;
+    if (pay) pay.hidden = true;
+    const profile = (typeof currentProfile !== 'undefined' && currentProfile) || {};
+    const user = (typeof currentUser !== 'undefined' && currentUser) || null;
+    const set = function (id, val) {
+      const el = document.getElementById(id);
+      if (el) el.value = val == null ? '' : String(val);
+    };
+    set('crAdHeadline', (meta && meta.title) || '');
+    set('crAdAdvertiser', profile.name || (meta && meta.creatorName) || '');
+    set('crAdHandle', profile.handle || profile.number || '');
+    set('crAdEmail', (user && user.email) || profile.email || '');
+    set('crAdPhone', profile.phone || '');
+    set('crAdPaid', '');
+    set('crAdCta', 'Open');
+    set('crAdUrl', '');
+    set('crAdPlace', 'both');
+    set('crAdBill', 'cpm');
+    set('crAdSkip', '5');
+    const note = document.getElementById('crAdMediaNote');
+    const media = broadcastMediaUrl(meta);
+    if (note) note.textContent = media
+      ? 'Creative is this Broadcast. Choose a file only if you want a different picture.'
+      : 'This Broadcast has no video address yet. Choose a file.';
+    const file = document.getElementById('crAdFile');
+    if (file) file.value = '';
+    const msg = document.getElementById('crAdMsg');
+    if (msg) msg.textContent = '';
+    const code = document.getElementById('crAdPaidLabel');
+    if (code) code.textContent = 'Prepaid amount — ' + adMoneyCode();
+    sheet.dataset.broadcastId = broadcastId || '';
+    sheet.dataset.mediaUrl = media || '';
+    sheet.classList.add('active');
+    try { if (window.nalunoBack) window.nalunoBack.push(); } catch (_) {}
+  }
+  async function saveFromBroadcast() {
+    const sheet = document.getElementById('bcastAdSheet');
+    const msg = document.getElementById('crAdMsg');
+    const say = function (t) { if (msg) msg.textContent = t || ''; };
+    const db = (typeof fbDb !== 'undefined' && fbDb) ? fbDb : null;
+    const user = (typeof currentUser !== 'undefined' && currentUser) || null;
+    if (!db || !user) { say('Sign in again.'); return; }
+    const val = function (id) {
+      const el = document.getElementById(id);
+      return el ? String(el.value || '').trim() : '';
+    };
+    const headline = val('crAdHeadline').slice(0, 80);
+    const advertiser = val('crAdAdvertiser').slice(0, 60);
+    if (!headline && !advertiser) { say('Add a headline or an advertiser name.'); return; }
+    const email = val('crAdEmail').slice(0, 120);
+    if (email && !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email)) { say('That email does not look right.'); return; }
+    let ctaUrl = val('crAdUrl');
+    if (ctaUrl && !httpsUrl(ctaUrl)) { say('The call to action must be an https address.'); return; }
+    ctaUrl = httpsUrl(ctaUrl);
+    let paidTyped = Number(val('crAdPaid') || '0');
+    if (!isFinite(paidTyped) || paidTyped < 0) paidTyped = 0;
+    const paidAed = Math.min(1000000, Math.max(0, Number(adToAed(paidTyped)) || 0));
+    let bill = val('crAdBill').toLowerCase();
+    if (bill !== 'cpc' && bill !== 'cpv') bill = 'cpm';
+    let skip = parseInt(val('crAdSkip') || '5', 10);
+    if (!isFinite(skip)) skip = 5;
+    skip = Math.max(0, Math.min(15, skip));
+    const place = val('crAdPlace') || 'both';
+    let mediaUrl = (sheet && sheet.dataset.mediaUrl) || '';
+    const fileEl = document.getElementById('crAdFile');
+    const file = fileEl && fileEl.files && fileEl.files[0];
+    let isImage = /\.(png|jpe?g|webp|gif)(\?|$)/i.test(mediaUrl);
+    if (file) {
+      isImage = String(file.type || '').indexOf('image/') === 0 || /\.(png|jpe?g|webp|gif)$/i.test(file.name || '');
+      say('Uploading…');
+      try {
+        if (typeof uploadBroadcastFile !== 'function') throw new Error('Upload is not available');
+        const ctype = isImage ? (file.type || 'image/jpeg') : (file.type || 'video/mp4');
+        mediaUrl = await uploadBroadcastFile(file, function () {}, ctype);
+      } catch (e) {
+        say((e && e.message) || 'Upload failed');
+        return;
+      }
+    }
+    if (!mediaUrl || String(mediaUrl).length < 9) { say('This Broadcast has no video to advertise yet.'); return; }
+    const doc = {
+      status: 'paused',
+      source: 'broadcast',
+      paymentStatus: 'unpaid',
+      creatorUid: user.uid,
+      broadcastId: (sheet && sheet.dataset.broadcastId) || '',
+      placements: placementsOf({ placement: place }),
+      placement: place,
+      headline: headline,
+      advertiser: advertiser,
+      advertiserHandle: val('crAdHandle').replace(/^@/, '').slice(0, 40),
+      advertiserEmail: email,
+      advertiserPhone: val('crAdPhone').slice(0, 32),
+      paidAed: paidAed,
+      spent: false,
+      ctaLabel: (val('crAdCta') || 'Open').slice(0, 24),
+      ctaUrl: ctaUrl || '',
+      skipAfterSec: skip,
+      billModel: bill,
+      mediaUrl: String(mediaUrl).slice(0, 1800),
+      mediaType: isImage ? 'image' : 'video',
+      thumbUrl: isImage ? String(mediaUrl).slice(0, 1800) : '',
+      impressions: 0,
+      clicks: 0,
+      skips: 0,
+      viewCompletes: 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      createdBy: user.uid,
+    };
+    say('Saving…');
+    try {
+      await db.collection(COL).add(doc);
+    } catch (e) {
+      const code = (e && e.code) || '';
+      say(code === 'permission-denied'
+        ? 'Saved on this phone, but the server refused it. Publish firestore.rules so a creator can add an ad.'
+        : ((e && e.message) || 'Could not save'));
+      return;
+    }
+    const form = document.getElementById('bcastAdForm');
+    const pay = document.getElementById('bcastAdPay');
+    if (form) form.hidden = true;
+    if (pay) pay.hidden = false;
+    const shown = adFromAed(paidAed);
+    const pretty = (Math.round(shown * 100) / 100).toFixed(2);
+    const line = document.getElementById('crAdPayAmount');
+    if (line) line.textContent = pretty + ' ' + adMoneyCode();
+    const note = document.getElementById('crAdPayNote');
+    if (note) note.textContent = paidAed > 0
+      ? 'A payment provider will open here for this amount. It isn’t connected yet, so nothing was charged. The ad is in the console, paused, and the same maths as every other ad applies once it is live.'
+      : 'No prepaid amount was typed. The ad is in the console, paused. Add the amount in the console before it goes live.';
+    say('');
+  }
+  function wireCreatorAd() {
+    if (typeof document === 'undefined') return;
+    const close = document.getElementById('bcastAdClose');
+    if (close && !close.__wired) {
+      close.__wired = true;
+      close.onclick = function () { closeFromBroadcast(); };
+    }
+    const save = document.getElementById('crAdSave');
+    if (save && !save.__wired) {
+      save.__wired = true;
+      save.onclick = function () { saveFromBroadcast(); };
+    }
+    const done = document.getElementById('crAdPayDone');
+    if (done && !done.__wired) {
+      done.__wired = true;
+      done.onclick = function () { closeFromBroadcast(); };
     }
   }
 
@@ -817,5 +1033,8 @@
     skipAfterOf: skipAfterOf,
     placementsOf: placementsOf,
     mediaUrlOf: mediaUrlOf,
+    openFromBroadcast: openFromBroadcast,
+    closeFromBroadcast: closeFromBroadcast,
+    saveFromBroadcast: saveFromBroadcast,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

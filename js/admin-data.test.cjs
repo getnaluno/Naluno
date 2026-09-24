@@ -134,6 +134,19 @@ assert.strictEqual(adRev.spentCount, 1);
 assert.ok(adRev.assumptions.some(function (t) { return /prepaid/i.test(t); }));
 assert.ok(adRev.assumptions.some(function (t) { return /pauses itself/i.test(t); }));
 
+const zeroOverride = D.adUnitStats(
+  { id: 'z', billModel: 'cpm', impressions: 1000, clicks: 0, viewCompletes: 0, paidAed: 0, ecpmAed: 0 },
+  { ecpmAed: 10, cpcAed: 1, cpvAed: 2 }
+);
+assert.strictEqual(zeroOverride.bookedAed, 10, 'a stored zero does not override the rate card');
+assert.strictEqual(zeroOverride.ecpmAed, 10);
+const cpvOnly = D.adUnitStats(
+  { id: 'v', billModel: 'cpv', impressions: 0, clicks: 0, viewCompletes: 3, paidAed: 10 },
+  { ecpmAed: 10, cpcAed: 1, cpvAed: 2 }
+);
+assert.strictEqual(cpvOnly.viewCompletes, 3, 'completed watches are not wiped when impressions failed');
+assert.strictEqual(cpvOnly.bookedAed, 6);
+
 const mailSnap = D.deriveSnapshot({
   now: Date.parse('2026-09-10T08:30:00Z'),
   zone: 'Asia/Dubai',

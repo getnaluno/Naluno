@@ -24,6 +24,7 @@ function bcompOpen(){
   bcompReset();
   const el = $('bcomposer');
   if(el) el.classList.add('active');
+  try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
   if(typeof loadMyStrands === 'function'){
     loadMyStrands().then(function(){
       if(typeof fillStrandSelect === 'function') fillStrandSelect($('bcompStrand'));
@@ -45,6 +46,7 @@ function bcompClose(){
   bcompReset();
   const el = $('bcomposer');
   if(el) el.classList.remove('active');
+  try{ if(window.nalunoBack) window.nalunoBack.drop('bcomposer'); }catch(_){}
 }
 
 function bcompReset(){

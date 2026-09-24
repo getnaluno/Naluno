@@ -747,6 +747,7 @@ async function openBroadcastSpace(meta){
   $('bspaceGoLive').style.display = isCreator ? 'inline-block' : 'none';
   if($('bspaceDeleteBtn')) $('bspaceDeleteBtn').style.display = isCreator ? 'inline-block' : 'none';
   if($('bspaceReportBtn')) $('bspaceReportBtn').style.display = isCreator ? 'none' : 'inline-block';
+  if($('bspaceAdvertiseBtn')) $('bspaceAdvertiseBtn').style.display = isCreator ? 'inline-block' : 'none';
   try{
     const O = window.NalunoOfflineBroadcast, btn = $('bspaceSaveOfflineBtn');
     if(O && btn && activeBroadcastId){
@@ -776,6 +777,7 @@ async function openBroadcastSpace(meta){
     if(pin){ pin.style.display = 'none'; pin.innerHTML = ''; }
   }catch(_){}
   $('bspace').classList.add('active');
+  try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
   try{ document.body.classList.add('naluno-bspace-open'); }catch(_){}
   $('bspaceScroll').scrollTop = 0;
   try{ if(typeof nalunoExitFeedLandscape === 'function') nalunoExitFeedLandscape(); }catch(_){}
@@ -884,6 +886,7 @@ async function openBroadcastSpace(meta){
 }
 
 function closeBroadcastSpace(){
+  const was = $('bspace') && $('bspace').classList.contains('active');
   bspaceForceLandscape = false;
   try{
     document.body.classList.remove('naluno-landscape-media', 'naluno-bspace-land-css', 'naluno-bspace-idle');
@@ -935,6 +938,7 @@ function closeBroadcastSpace(){
   try{ if(typeof nalunoPauseDetachedMedia === 'function') nalunoPauseDetachedMedia(); }catch(_){}
   try{ document.body.classList.remove('naluno-bspace-open'); }catch(_){}
   $('bspace').classList.remove('active');
+  if(was){ try{ if(window.nalunoBack) window.nalunoBack.drop('bspace'); }catch(_){} }
 }
 
 async function bspaceRequireMember(){
@@ -1978,6 +1982,17 @@ if($('bspaceDeleteBtn')){
       if(typeof loadFeedBroadcasts === 'function') await loadFeedBroadcasts();
       toast('Broadcast deleted');
     }catch(e){ toast(e.message || 'Couldn’t delete'); }
+  };
+}
+if($('bspaceAdvertiseBtn')){
+  $('bspaceAdvertiseBtn').onclick = function(e){
+    try{ if(e) e.stopPropagation(); }catch(_){}
+    if(!activeBroadcastId || !activeBroadcastMeta) return;
+    const mine = !!(activeBroadcastMeta.isMine || (currentUser && activeBroadcastMeta.creatorUid === currentUser.uid));
+    if(!mine){ toast('Only the creator can advertise this'); return; }
+    if(window.NalunoAds && typeof window.NalunoAds.openFromBroadcast === 'function'){
+      window.NalunoAds.openFromBroadcast(activeBroadcastMeta, activeBroadcastId);
+    } else toast('Ads are not available right now');
   };
 }
 

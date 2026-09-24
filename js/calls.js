@@ -197,14 +197,19 @@ function closeCallOverlay(){
   try{ window.__nalunoCallHist = false; }catch(_){}
   if(hadHist){
     try{
+      window.__nalunoCallPop = true;
       if(history.state && history.state.nalunoCall) history.back();
     }catch(_){}
   }
 }
 
 window.addEventListener('popstate', function(){
+  if(window.__nalunoCallPop && !window.__nalunoCallHist){
+    return;
+  }
   if(!window.__nalunoCallHist) return;
   window.__nalunoCallHist = false;
+  window.__nalunoCallPop = true;
   try{
     if($('callOverlay') && $('callOverlay').classList.contains('active')){
       if(typeof endActiveCall === 'function') endActiveCall('back');

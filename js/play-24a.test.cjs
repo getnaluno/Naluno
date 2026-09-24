@@ -21,8 +21,9 @@ assert.ok(space.includes('bspaceShareCard'), 'share attaches a preview card');
 assert.ok(space.includes('workers\\.dev'), 'client refuses a worker share url');
 
 assert.ok(social.includes('seenLocal[key] = true'), 'a view can be remembered');
-const mark = social.slice(social.indexOf('async function markViewed'), social.indexOf('function reactsRef'));
-assert.ok(mark.indexOf('await viewerRef') < mark.indexOf('seenLocal[key] = true'), 'failed view is retried');
+const markStart = social.indexOf('async function markViewed');
+const mark = social.slice(markStart, markStart + 900);
+assert.ok(mark.indexOf('await viewerRef') >= 0 && mark.indexOf('await viewerRef') < mark.indexOf('seenLocal[key] = true'), 'failed view is retried');
 assert.ok(social.includes('function openViewers'), 'seen by opens a sheet');
 const open = social.slice(social.indexOf('function openViewers'), social.indexOf('function closeViewers'));
 assert.ok(open.indexOf("classList.add('active')") < open.indexOf('viewersOf'), 'sheet opens before the query');

@@ -271,7 +271,7 @@
       '<div class="dl-budget"><div>' + fmtBytes(used) + ' of ' + fmtBytes(budget) + ' used</div>'
       + '<div class="dl-bar"><i style="width:' + pct + '%"></i></div></div>'
       + (rows.length ? rows.map(function (r) {
-          return '<div class="dl-row">'
+          return '<div class="dl-row" data-open="' + esc(r.id) + '" role="button" tabindex="0">'
             + (r.thumbUrl ? '<img class="dl-thumb" src="' + esc(r.thumbUrl) + '" alt="" />' : '<div class="dl-thumb"></div>')
             + '<div class="dl-info"><div class="dl-title">' + esc(r.title) + '</div>'
             + '<div class="dl-meta' + (r.takenDownSincePinned ? ' dl-taken-down' : '') + '">'
@@ -281,20 +281,59 @@
             + '</div>';
         }).join('') : '<p class="sub">Nothing saved yet. Open a Broadcast and tap Save.</p>');
     body.querySelectorAll('[data-remove]').forEach(function (btn) {
-      btn.onclick = async function () {
+      btn.onclick = async function (e) {
+        try{ if(e) e.stopPropagation(); }catch(_){}
         await removeSaved(btn.getAttribute('data-remove'));
         renderDownloads();
       };
     });
+    body.querySelectorAll('[data-open]').forEach(function (row) {
+      row.onclick = function () {
+        const id = row.getAttribute('data-open');
+        if (id) openSaved(id);
+      };
+    });
+  }
+  async function openSaved(broadcastId) {
+    const row = savedList().filter(function (r) { return r.id === broadcastId; })[0];
+    const prevHold = root.__nalunoBackHold;
+    root.__nalunoBackHold = true;
+    try { closeDownloads(); } catch (_) {}
+    root.__nalunoBackHold = prevHold;
+    const online = typeof navigator === 'undefined' || navigator.onLine !== false;
+    if (online && typeof fbDb !== 'undefined' && fbDb && broadcastId && typeof openBroadcastById === 'function') {
+      openBroadcastById(broadcastId);
+      return;
+    }
+    const play = row && (await cachedUrlFor(row.url || ''));
+    if (play && typeof root.openBroadcastSpace === 'function') {
+      root.openBroadcastSpace({
+        isMine: false,
+        broadcastId: broadcastId,
+        title: row.title || 'Broadcast',
+        creatorName: row.creatorName || '',
+        segment: {
+          type: 'video',
+          mediaUrl: play,
+          videoUrl: play,
+          thumbDataUrl: row.thumbUrl || '',
+        },
+      });
+      return;
+    }
+    try { root.toast('Couldn’t open that Broadcast'); } catch (_) {}
   }
   function openDownloads() {
     const p = root.document.getElementById('downloadsPanel');
     if (p) p.classList.add('active');
+    try{ if (root.nalunoBack) root.nalunoBack.push(); }catch(_){}
     renderDownloads();
   }
   function closeDownloads() {
     const p = root.document.getElementById('downloadsPanel');
+    const was = p && p.classList.contains('active');
     if (p) p.classList.remove('active');
+    if (was) { try{ if (root.nalunoBack) root.nalunoBack.drop('downloadsPanel'); }catch(_){} }
   }
   (function wire() {
     function bind() {

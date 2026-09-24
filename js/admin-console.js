@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260924a';
+  const BUILD = '20260924b';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -1980,6 +1980,9 @@
       el.innerHTML =
         card('Journal',
           '<p class="sub">House totals across every unit. Open Analytics on a unit for that advertiser’s own book.</p>'
+          + ((Number(rates.ecpmAed) || 0) === 0 && (Number(rates.cpcAed) || 0) === 0 && (Number(rates.cpvAed) || 0) === 0
+            ? '<p class="sub" style="color:#ffc266;">The rate card is zero, so Used stays zero no matter how many views there are. Type a rate above and save it. A zero stored on one unit does not override a saved card.</p>'
+            : '<p class="sub">Used = events × the rate card for the model on that unit. CPM is views ÷ 1,000 × the rate. CPC is taps × the rate. CPV is completed watches × the rate.</p>')
           + kpis([['Live', (d.ads && d.ads.live) || 0], ['Paused', (d.ads && d.ads.paused) || 0],
             ['Views', (d.ads && d.ads.impressions) || 0], ['Taps', (d.ads && d.ads.clicks) || 0],
             ['Completed watches', (d.ads && d.ads.viewCompletes) || 0], ['Booked', aedUsd(rev.bookedAed || 0)]])
@@ -2117,9 +2120,16 @@
             const usedAed = Number(u.bookedAed) || 0;
             const leftAed = paidAed > 0 ? Math.max(0, paidAed - usedAed) : null;
             const spent = !!(u.spent || a.spent || (paidAed > 0 && usedAed >= paidAed));
+            const rateBit = model === 'cpc'
+              ? ('tap rate ' + aedUsd(u.cpcRateAed || 0))
+              : (model === 'cpv'
+                ? ('watch rate ' + aedUsd(u.cpvRateAed || 0))
+                : ('per thousand ' + aedUsd(u.ecpmAed || 0)));
+            const unpaid = String(a.paymentStatus || '') === 'unpaid';
             const moneyLine = paidAed > 0
-              ? ('Paid ' + aedUsd(paidAed) + ' · Used ' + aedUsd(usedAed) + ' · Left ' + aedUsd(leftAed || 0))
-              : ('No prepaid typed · Used ' + aedUsd(usedAed));
+              ? ('Paid ' + aedUsd(paidAed) + ' · Used ' + aedUsd(usedAed) + ' · Left ' + aedUsd(leftAed || 0) + ' · ' + rateBit)
+              : ('No prepaid typed · Used ' + aedUsd(usedAed) + ' · ' + rateBit);
+            const payNote = unpaid ? '<div class="sub" style="color:#ffc266;margin-top:4px;">Waiting for payment — provider not connected. Paused until you go live.</div>' : '';
             const spentNote = spent ? '<div class="sub" style="color:#ffc266;margin-top:4px;">Used up — paused. Type more paid to go live again.</div>' : '';
             const onThis = viewingId === a.id;
             return '<div class="alert ' + (st === 'live' && !spent ? 'ok' : 'warning') + ' ad-row"' + (onThis ? ' style="border-color:rgba(124,255,178,.55);"' : '') + '>'
@@ -2131,6 +2141,7 @@
               + '<div class="sub" style="margin-top:4px;">' + adContactHtml(a) + '</div>'
               + '<div class="sub" style="margin-top:6px;">Views ' + impr + ' · Taps ' + clicks + ' · Skips ' + (Number(u.skips != null ? u.skips : a.skips) || 0) + ' · Completed watches ' + views + ' · Tap-through ' + rate + '</div>'
               + '<div class="sub" style="margin-top:4px;">' + moneyLine + '</div>'
+              + payNote
               + spentNote
               + '<div class="row" style="margin-top:10px;align-items:center;gap:8px;flex-wrap:wrap;">'
               + '<label class="sub" for="adPaid-' + escapeHtml(a.id) + '" style="margin:0;">Paid</label>'

@@ -730,6 +730,7 @@ function openThread(contactId){
   updateComposerButtons();
   try{ if(typeof nalunoHideProgressChrome === 'function') nalunoHideProgressChrome(); }catch(_){}
   $('wirelineThread').classList.add('active');
+  try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
   try{ bindThreadChrome(); }catch(_){}
 
   if(activeThreadUnsubscribe){ activeThreadUnsubscribe(); activeThreadUnsubscribe = null; }
@@ -781,6 +782,7 @@ function closeThread(){
   if(activeThreadUnsubscribe){ activeThreadUnsubscribe(); activeThreadUnsubscribe = null; }
   $('wirelineThread').classList.remove('active');
   activeThreadContactId = null;
+  try{ if(window.nalunoBack) window.nalunoBack.drop('wirelineThread'); }catch(_){}
 }
 $('threadBack').onclick = closeThread;
 function wirelineStartCallFromThread(){

@@ -821,6 +821,7 @@ function openBandRoom(id){
     renderBandMessages();
   }
   $('bandRoom').classList.add('active');
+  try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
   startBandAmbientAnim(b.vibe);
   updateBandSettleNote();
   // Pagination trigger (bug 1.8 fix) — purely additive, no effect unless scrolled to top.
@@ -844,6 +845,7 @@ function closeBandRoom(){
   amTunedIn = false;
   activeBandId = null;
   realBandLiveMembers = [];
+  try{ if(window.nalunoBack) window.nalunoBack.drop('bandRoom'); }catch(_){}
 }
 $('bandRoomBack').onclick = closeBandRoom;
 /* Leave for good = only you exit membership. The square itself cannot be deleted —

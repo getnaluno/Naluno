@@ -2,153 +2,264 @@
    MODULE: js/signal-social.js
    Who watched your Signal, and what they felt about it.
 
-   WhatsApp shows a list of names and, lately, a reaction. Two things are
-   better here:
-
-     1. The reaction is on the SEGMENT, not the whole Signal, so you can see
-        that people reacted to the second clip and not the first.
-     2. The person watching sees the reactions too — not just the owner.
-        A Signal is a moment shared with your Frequencies; making the
-        response one-way turns it into an audience measurement.
-
-   Who watched is only ever shown to the person whose Signal it is, and the
-   rules enforce that: a viewer can write their own row and read nothing else.
+   The name list is written two ways. The viewers row is the strict one
+   (only a connection, only their own document). That write is denied until
+   firestore.rules is published, and a denied write used to look exactly
+   like "nobody watched". The second write is a pulse on the owner's
+   notification inbox, which members can already create. It has no `ts`,
+   so the Band invite listener (which orders by ts) does not toast it.
+   The owner reads both and shows one person once.
    ============================================================ */
 (function (root) {
   'use strict';
   const REACTIONS = ['👍', '🔥', '🐐', '❤️'];
-  const seenLocal = {};   // avoid re-writing the same view in one session
+  const seenLocal = {};
+  const localReact = {};
+  let lastListErr = '';
 
   function db() { return root.fbDb; }
   function me() { return root.currentUser && root.currentUser.uid; }
+  function myName() {
+    return String((root.currentProfile && root.currentProfile.name) || 'Someone').slice(0, 80);
+  }
+  function codeOf(e) {
+    return (e && (e.code || e.message)) ? String(e.code || e.message) : 'failed';
+  }
 
   function viewerRef(ownerUid, segId, uid) {
     return db().collection('users').doc(ownerUid)
       .collection('signal').doc(String(segId))
       .collection('viewers').doc(uid);
   }
-
-  /** Record that I watched this segment. Idempotent: merge, never a counter,
-   *  so watching twice is still one viewer. The "already seen" lock is set
-   *  only AFTER the write succeeds — setting it first meant one failed
-   *  attempt (rules, a cold token) silenced every later view in the session. */
-  async function markViewed(ownerUid, segId) {
-    const uid = me();
-    if (!uid || !db() || !ownerUid || !segId) return false;
-    if (ownerUid === uid) return false;
-    const key = ownerUid + '|' + segId;
-    if (seenLocal[key]) return true;
-    try {
-      await viewerRef(ownerUid, segId, uid).set({
-        uid: uid,
-        name: (root.currentProfile && root.currentProfile.name) || 'Someone',
-        viewedAt: Date.now(),
-      }, { merge: true });
-      seenLocal[key] = true;
-      return true;
-    } catch (e) {
-      try { console.warn('[signal] view not saved', e && (e.code || e.message)); } catch (_) {}
-      return false;
-    }
-  }
-
   function reactsRef(ownerUid, segId, uid) {
     return db().collection('users').doc(ownerUid)
       .collection('signal').doc(String(segId))
       .collection('reacts').doc(uid);
   }
 
-  /** Set or clear my reaction to this segment. Tapping the same one removes it.
-   *  The name list stays on viewers (owner only). The emoji itself is a second
-   *  row connections may count, without learning who watched. */
+  /* Inbox create is already allowed for a signed-in person. A full set()
+     would be an update the second time, which the owner alone may do, so
+     each pulse is a new document. The owner keeps the latest per person. */
+  function pulseWrite(ownerUid, segId, extra) {
+    const uid = me();
+    if (!uid || !db() || !ownerUid || !segId) return Promise.resolve(false);
+    const doc = {
+      kind: 'signal-pulse',
+      from: uid,
+      fromUid: uid,
+      name: myName(),
+      segId: String(segId).slice(0, 120),
+      viewedAt: Date.now(),
+      reaction: '',
+      at: Date.now(),
+    };
+    if (extra) {
+      if (extra.reaction != null) doc.reaction = String(extra.reaction).slice(0, 8);
+      if (extra.viewedAt) doc.viewedAt = extra.viewedAt;
+    }
+    return db().collection('users').doc(ownerUid).collection('notifications').add(doc)
+      .then(function () { return true; })
+      .catch(function (e) {
+        try { console.warn('[signal] pulse', codeOf(e)); } catch (_) {}
+        return false;
+      });
+  }
+
+  async function markViewed(ownerUid, segId) {
+    const uid = me();
+    if (!uid || !db() || !ownerUid || !segId) return false;
+    if (ownerUid === uid) return false;
+    const key = ownerUid + '|' + segId;
+    if (seenLocal[key]) return true;
+    let ok = false;
+    try {
+      const prev = localReact[key] || '';
+      await viewerRef(ownerUid, segId, uid).set({
+        uid: uid,
+        name: myName(),
+        viewedAt: Date.now(),
+        reaction: prev,
+        reactedAt: prev ? Date.now() : 0,
+      });
+      ok = true;
+    } catch (e) {
+      try { console.warn('[signal] view not saved', codeOf(e)); } catch (_) {}
+    }
+    if (await pulseWrite(ownerUid, segId, { reaction: localReact[key] || '' })) ok = true;
+    if (ok) seenLocal[key] = true;
+    return ok;
+  }
+
   async function react(ownerUid, segId, emoji) {
     const uid = me();
     if (!uid || !db() || !ownerUid || !segId) return null;
     if (ownerUid === uid) { root.toast('That one is yours'); return null; }
+    const key = ownerUid + '|' + segId;
+    const had = localReact[key] || '';
+    const next = (had === emoji) ? '' : emoji;
+    const now = Date.now();
+    let ok = false;
+    let denied = false;
     try {
-      const ref = viewerRef(ownerUid, segId, uid);
-      const cur = await ref.get();
-      const had = cur.exists ? (cur.data().reaction || '') : '';
-      const next = (had === emoji) ? '' : emoji;
-      await ref.set({
+      await viewerRef(ownerUid, segId, uid).set({
         uid: uid,
-        name: (root.currentProfile && root.currentProfile.name) || 'Someone',
+        name: myName(),
         reaction: next,
-        reactedAt: Date.now(),
-        viewedAt: (cur.exists && cur.data().viewedAt) || Date.now(),
-      }, { merge: true });
-      try {
-        const rr = reactsRef(ownerUid, segId, uid);
-        if (next) await rr.set({ emoji: next, at: Date.now() }, { merge: true });
-        else await rr.delete();
-      } catch (_) { /* counts are extra; the reaction on the viewer row is the record */ }
-      return next;
+        reactedAt: now,
+        viewedAt: now,
+      });
+      ok = true;
+      seenLocal[key] = true;
     } catch (e) {
-      const code = (e && e.code) || '';
-      root.toast(code === 'permission-denied'
+      denied = codeOf(e) === 'permission-denied';
+      try { console.warn('[signal] react', codeOf(e)); } catch (_) {}
+    }
+    try {
+      const rr = reactsRef(ownerUid, segId, uid);
+      if (next) await rr.set({ emoji: next, at: now });
+      else await rr.delete();
+      ok = true;
+    } catch (e) {
+      if (codeOf(e) === 'permission-denied') denied = true;
+    }
+    if (await pulseWrite(ownerUid, segId, { reaction: next, viewedAt: now })) ok = true;
+    if (!ok) {
+      root.toast(denied
         ? 'Reactions are for people you’re connected with'
         : 'Couldn’t save that');
       return null;
     }
+    localReact[key] = next;
+    return next;
   }
 
-  /** Everyone who watched one of MY segments. Only the owner may read this.
-   *  Sorted here, not with orderBy, so a missing index cannot blank the list. */
+  function mergePulse(rows, segId, pulses) {
+    const have = {};
+    rows.forEach(function (r) { if (r && r.uid) have[r.uid] = r; });
+    const best = {};
+    (pulses || []).forEach(function (r) {
+      if (!r || String(r.segId || '') !== String(segId)) return;
+      const who = r.from || r.fromUid;
+      if (!who) return;
+      const prev = best[who];
+      if (!prev || (Number(r.at) || 0) >= (Number(prev.at) || 0)) best[who] = r;
+    });
+    Object.keys(best).forEach(function (who) {
+      const r = best[who];
+      const row = {
+        uid: who,
+        name: r.name || 'Someone',
+        viewedAt: r.viewedAt || r.at || 0,
+        reaction: r.reaction || '',
+      };
+      if (!have[who]) {
+        rows.push(row);
+        have[who] = row;
+      } else if (!have[who].reaction && row.reaction) {
+        have[who].reaction = row.reaction;
+      }
+    });
+  }
+
   async function viewersOf(segId) {
     const uid = me();
+    lastListErr = '';
     if (!uid || !db() || !segId) return [];
+    const rows = [];
+    let err = '';
     try {
       const snap = await db().collection('users').doc(uid)
         .collection('signal').doc(String(segId))
         .collection('viewers').limit(200).get();
-      const out = [];
-      snap.forEach(function (d) { out.push(d.data() || {}); });
-      out.sort(function (a, b) { return (Number(b.viewedAt) || 0) - (Number(a.viewedAt) || 0); });
-      return out;
+      snap.forEach(function (d) {
+        const row = d.data() || {};
+        if (!row.uid) row.uid = d.id;
+        rows.push(row);
+      });
     } catch (e) {
-      try { console.warn('[signal] viewers', e && (e.code || e.message)); } catch (_) {}
-      return [];
+      err = codeOf(e);
+      try { console.warn('[signal] viewers', err); } catch (_) {}
     }
+    try {
+      const snap = await db().collection('users').doc(uid)
+        .collection('notifications').where('kind', '==', 'signal-pulse').limit(300).get();
+      const pulses = [];
+      snap.forEach(function (d) { pulses.push(d.data() || {}); });
+      mergePulse(rows, segId, pulses);
+    } catch (e) {
+      if (!rows.length) err = err || codeOf(e);
+    }
+    if (!rows.length) lastListErr = err;
+    rows.sort(function (a, b) { return (Number(b.viewedAt) || 0) - (Number(a.viewedAt) || 0); });
+    return rows;
   }
 
-  /** Emoji totals a viewer is allowed to see. Names are not in these rows. */
   async function reactionCounts(ownerUid, segId) {
     if (!db() || !ownerUid || !segId) return [];
+    const counts = {};
     try {
       const snap = await db().collection('users').doc(ownerUid)
         .collection('signal').doc(String(segId))
         .collection('reacts').limit(200).get();
-      const counts = {};
       snap.forEach(function (d) {
         const e = d.data() && d.data().emoji;
         if (e) counts[e] = (counts[e] || 0) + 1;
       });
-      return REACTIONS.filter(function (e) { return counts[e]; })
-        .map(function (e) { return { emoji: e, n: counts[e] }; });
-    } catch (_) { return []; }
+    } catch (_) {}
+    /* The owner can also count from the same pulses Seen by uses, so a
+       reaction still shows a number when the reacts rules are not published. */
+    const uid = me();
+    if (uid && uid === ownerUid) {
+      try {
+        const snap = await db().collection('users').doc(uid)
+          .collection('notifications').where('kind', '==', 'signal-pulse').limit(300).get();
+        const best = {};
+        snap.forEach(function (d) {
+          const r = d.data() || {};
+          if (String(r.segId || '') !== String(segId)) return;
+          const who = r.from || r.fromUid;
+          if (!who) return;
+          const prev = best[who];
+          if (!prev || (Number(r.at) || 0) >= (Number(prev.at) || 0)) best[who] = r;
+        });
+        if (!Object.keys(counts).length) {
+          Object.keys(best).forEach(function (who) {
+            const e = best[who].reaction;
+            if (e) counts[e] = (counts[e] || 0) + 1;
+          });
+        }
+      } catch (_) {}
+    }
+    return REACTIONS.filter(function (e) { return counts[e]; })
+      .map(function (e) { return { emoji: e, n: counts[e] }; });
   }
 
   async function myReaction(ownerUid, segId) {
     const uid = me();
     if (!uid || !db() || !ownerUid || !segId || ownerUid === uid) return '';
+    const key = ownerUid + '|' + segId;
+    if (localReact[key]) return localReact[key];
     try {
       const snap = await reactsRef(ownerUid, segId, uid).get();
-      return snap.exists ? (snap.data().emoji || '') : '';
+      const emoji = snap.exists ? (snap.data().emoji || '') : '';
+      if (emoji) localReact[key] = emoji;
+      return emoji;
     } catch (_) {
       try {
         const v = await viewerRef(ownerUid, segId, uid).get();
-        return v.exists ? (v.data().reaction || '') : '';
-      } catch (__) { return ''; }
+        const emoji = v.exists ? (v.data().reaction || '') : '';
+        if (emoji) localReact[key] = emoji;
+        return emoji;
+      } catch (__) { return localReact[key] || ''; }
     }
   }
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      return { '&': '&', '<': '<', '>': '>', '"': '"', "'": '&#39;' }[c];
     });
   }
 
-  /** Group reactions for a compact summary: 🔥3 ❤️1 */
   function summarise(rows) {
     const counts = {};
     (rows || []).forEach(function (r) {
@@ -159,8 +270,6 @@
       .map(function (e) { return { emoji: e, n: counts[e] }; });
   }
 
-  /** Lift the sheet onto the page itself. It used to be a call-overlay that
-   *  opened underneath the Signal already on screen, so the tap looked dead. */
   function liftViewers(sheet) {
     try {
       if (sheet.parentNode !== root.document.body) root.document.body.appendChild(sheet);
@@ -170,21 +279,21 @@
     sheet.style.zIndex = '2147483000';
   }
 
-  /** The owner's sheet: who watched, and what each of them felt.
-   *  The sheet is visible BEFORE the list is fetched. Touch should not wait
-   *  on the network to feel like it did something. */
   function openViewers(segId) {
     const sheet = root.document.getElementById('signalViewers');
     if (!sheet) return;
     liftViewers(sheet);
     sheet.classList.add('active');
+    try { if (root.nalunoBack && root.nalunoBack.push) root.nalunoBack.push(); } catch (_) {}
     const body = root.document.getElementById('signalViewersBody');
     if (body) body.innerHTML = '<p class="sub">Loading\u2026</p>';
     viewersOf(segId).then(function (rows) {
       const sum = summarise(rows);
       if (!body) return;
       if (!rows.length) {
-        body.innerHTML = '<p class="sub">Nobody has watched this one yet.</p>';
+        body.innerHTML = lastListErr
+          ? ('<p class="sub">Couldn’t read who watched (' + esc(lastListErr) + '). Publish firestore.rules if this says permission-denied.</p>')
+          : '<p class="sub">Nobody else has watched this one yet.</p>';
         return;
       }
       body.innerHTML =
@@ -205,9 +314,9 @@
   function closeViewers() {
     const sheet = root.document.getElementById('signalViewers');
     if (sheet) sheet.classList.remove('active');
+    try { if (root.nalunoBack && root.nalunoBack.drop) root.nalunoBack.drop('signalViewers'); } catch (_) {}
   }
 
-  /** The bar a viewer sees under someone else's Signal. */
   function reactionBarHtml(mine) {
     return '<div class="sig-react">' + REACTIONS.map(function (e) {
       return '<button type="button" class="sig-react-btn' + (mine === e ? ' on' : '')
@@ -215,24 +324,53 @@
     }).join('') + '</div>';
   }
 
-  /** A Signal made from a Broadcast links back to it. */
   function linkedBroadcastHtml(seg) {
-    // Written by the composer as linkedBroadcastId; broadcastId kept for any
-    // older segment or caller using the other name.
     const id = seg && (seg.linkedBroadcastId || seg.broadcastId);
     if (!id) return '';
     const title = (seg.broadcastTitle || 'the Broadcast');
     return '<button type="button" class="sig-bcast" data-bcast="' + esc(id) + '">'
       + '\u25b6 Watch ' + esc(String(title).slice(0, 40)) + '</button>';
   }
+  function releaseSignalPlayer() {
+    /* Hold history. The story entry stays underneath so the system back
+       from the Broadcast closes the Broadcast, instead of also eating the
+       story and leaving the app. */
+    const prev = root.__nalunoBackHold;
+    root.__nalunoBackHold = true;
+    try {
+      const v = root.document.getElementById('bviewerActiveVideo');
+      if (v) {
+        try { v.pause(); } catch (_) {}
+        try { v.removeAttribute('src'); v.load(); } catch (_) {}
+      }
+      const body = root.document.getElementById('bviewerBody');
+      if (body) body.innerHTML = '';
+    } catch (_) {}
+    try {
+      if (typeof root.closeSignalViewer === 'function') root.closeSignalViewer();
+      else if (typeof root.closeBroadcast === 'function') root.closeBroadcast();
+    } catch (_) {}
+    root.__nalunoBackHold = prev;
+  }
   function wireLinkedBroadcast(scope) {
     (scope || root.document).querySelectorAll('[data-bcast]').forEach(function (b) {
-      b.onclick = function (e) {
-        try { e.stopPropagation(); } catch (_) {}
+      if (b.__nalunoBcast) return;
+      b.__nalunoBcast = true;
+      const go = function (e) {
+        try { if (e) { e.preventDefault(); e.stopPropagation(); } } catch (_) {}
         const id = b.getAttribute('data-bcast');
-        try { if (typeof root.closeSignalViewer === 'function') root.closeSignalViewer(); } catch (_) {}
-        if (typeof root.openBroadcastById === 'function') root.openBroadcastById(id);
+        if (!id) return;
+        /* The Signal <video> must be destroyed before the Broadcast player
+           starts. Leaving it (closeSignalViewer used to be missing) kept the
+           decoder and the story overlay, so the Broadcast stuttered or never
+           started. A short gap lets the phone release that decoder. */
+        releaseSignalPlayer();
+        setTimeout(function () {
+          if (typeof root.openBroadcastById === 'function') root.openBroadcastById(id);
+        }, 80);
       };
+      b.addEventListener('pointerup', go);
+      b.addEventListener('click', function (e) { try { e.preventDefault(); e.stopPropagation(); } catch (_) {} });
     });
   }
 
@@ -250,5 +388,6 @@
   root.NalunoSignalSocial = {
     REACTIONS, markViewed, react, viewersOf, summarise, reactionCounts, myReaction,
     openViewers, closeViewers, reactionBarHtml, linkedBroadcastHtml, wireLinkedBroadcast,
+    mergePulse,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

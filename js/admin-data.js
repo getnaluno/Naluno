@@ -332,6 +332,13 @@
     if (!isFinite(n) || n < 0) return 0;
     return Math.min(100000, n);
   }
+  /* A stored 0 is not a rate. It used to override the rate card, so a unit
+     saved without its own price booked nothing even after the card was set. */
+  function rateOrCard(unitVal, cardVal) {
+    const n = Number(unitVal);
+    if (unitVal == null || unitVal === '' || !isFinite(n) || n <= 0) return clampAdRate(cardVal);
+    return clampAdRate(n);
+  }
   function clampPaidAed(n) {
     n = Number(n);
     if (!isFinite(n) || n < 0) return 0;
@@ -357,12 +364,12 @@
     let clicks = Math.max(0, Math.round(num(ad && ad.clicks)));
     let skips = Math.max(0, Math.round(num(ad && ad.skips)));
     let views = Math.max(0, Math.round(num(ad && (ad.viewCompletes != null ? ad.viewCompletes : ad.views))));
-    if (clicks > impressions) clicks = impressions;
-    if (skips > impressions) skips = impressions;
-    if (views > impressions) views = impressions;
-    const unitEcpm = ad && ad.ecpmAed != null ? clampAdRate(ad.ecpmAed) : ecpm;
-    const unitCpc = ad && ad.cpcAed != null ? clampAdRate(ad.cpcAed) : cpc;
-    const unitCpv = ad && ad.cpvAed != null ? clampAdRate(ad.cpvAed) : cpv;
+    if (impressions > 0 && clicks > impressions) clicks = impressions;
+    if (impressions > 0 && skips > impressions) skips = impressions;
+    if (impressions > 0 && views > impressions) views = impressions;
+    const unitEcpm = rateOrCard(ad && ad.ecpmAed, ecpm);
+    const unitCpc = rateOrCard(ad && ad.cpcAed, cpc);
+    const unitCpv = rateOrCard(ad && ad.cpvAed, cpv);
     const cpmAed = (impressions / 1000) * unitEcpm;
     const cpcAed = clicks * unitCpc;
     const cpvAed = views * unitCpv;
