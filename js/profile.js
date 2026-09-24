@@ -70,6 +70,7 @@ function restoreNavStateOnBoot(){
     applyNavState(state);
     _navRestoredOnce = true;
   }catch(_){}
+  try{ if(window.nalunoBack && window.nalunoBack.seed) window.nalunoBack.seed(); }catch(_){}
 }
 
 function nalunoShowTab(name){
@@ -93,10 +94,11 @@ function nalunoCurrentTab(){
   return (b && b.dataset && b.dataset.tab) || 'frequencies';
 }
 
-/* Android system back. Each tab change and each full-screen surface pushes
-   a history entry. Back undoes that entry instead of leaving Naluno.
-   The root screen (nothing open, no earlier tab) still lets the system
-   close the app. A call keeps its own history in calls.js. */
+/* Android system back. Capacitor's WebView only treats a URL change as
+   history, so a pushState that keeps the same address makes Back finish
+   the activity. Each step writes a distinct #n/… address. The session
+   stack is what we apply if that pop arrives without our state object.
+   A call keeps its own history in calls.js. */
 window.nalunoBack = (function(){
   const ORDER = ['signalViewers','reportSheet','bcastAdSheet','downloadsPanel','bcomposer','composer','bviewer','bspace','bandRoom','wirelineThread'];
   const CLOSE = {
@@ -111,13 +113,49 @@ window.nalunoBack = (function(){
     bandRoom: function(){ try{ if(typeof closeBandRoom === 'function') closeBandRoom(); }catch(_){} },
     wirelineThread: function(){ try{ if(typeof closeThread === 'function') closeThread(); }catch(_){} },
   };
+  const STACK_KEY = 'naluno:tabStack:v2';
   let lock = false;
+  let seeded = false;
+  let seq = 1;
+  let poppedAt = 0;
   function topOverlay(){
     for(let i = 0; i < ORDER.length; i++){
       const el = document.getElementById(ORDER[i]);
       if(el && el.classList.contains('active')) return ORDER[i];
     }
     return null;
+  }
+  function readStack(){
+    try{
+      const raw = sessionStorage.getItem(STACK_KEY);
+      const arr = raw ? JSON.parse(raw) : null;
+      if(Array.isArray(arr)) return arr.filter(Boolean).slice(-8);
+    }catch(_){}
+    return [];
+  }
+  function writeStack(tabs){
+    try{ sessionStorage.setItem(STACK_KEY, JSON.stringify((tabs || []).filter(Boolean).slice(-8))); }catch(_){}
+  }
+  function noteTab(tab){
+    if(!tab) return;
+    const tabs = readStack();
+    if(tabs[tabs.length - 1] === tab) return;
+    tabs.push(tab);
+    writeStack(tabs);
+  }
+  function syncStack(tab){
+    if(!tab) return;
+    let tabs = readStack();
+    const idx = tabs.lastIndexOf(tab);
+    if(idx >= 0) tabs = tabs.slice(0, idx + 1);
+    else tabs.push(tab);
+    writeStack(tabs);
+  }
+  function urlFor(st){
+    const base = location.pathname + location.search;
+    const tab = encodeURIComponent((st && st.tab) || 'frequencies');
+    const over = st && st.overlay ? ('/' + encodeURIComponent(st.overlay)) : '';
+    return base + '#n/' + (st && st.i != null ? st.i : 0) + '/' + tab + over + '/' + (st && st.seq != null ? st.seq : 0);
   }
   function snap(){
     return { naluno: 1, tab: nalunoCurrentTab(), overlay: topOverlay() };
@@ -136,36 +174,129 @@ window.nalunoBack = (function(){
         const el = document.getElementById(id);
         if(el && el.classList.contains('active') && CLOSE[id]) CLOSE[id]();
       });
+      if(st.tab) syncStack(st.tab);
     }catch(_){}
     lock = false;
   }
+  function seed(){
+    const cur = nalunoCurrentTab();
+    const st = history.state;
+    if(seeded && st && st.naluno && st.tab === cur && (st.overlay || null) === (topOverlay() || null)) return;
+    let tabs = readStack();
+    if(!tabs.length) tabs = ['frequencies'];
+    if(tabs[tabs.length - 1] !== cur){
+      const at = tabs.lastIndexOf(cur);
+      if(at >= 0) tabs = tabs.slice(0, at + 1);
+      else tabs.push(cur);
+    }
+    if(tabs.length === 1 && tabs[0] !== 'frequencies') tabs = ['frequencies', tabs[0]];
+    if(tabs[tabs.length - 1] !== cur) tabs.push(cur);
+    const clean = [];
+    tabs.forEach(function(t){ if(t && clean[clean.length - 1] !== t) clean.push(t); });
+    tabs = clean.slice(-8);
+    writeStack(tabs);
+    const overlay = topOverlay();
+    try{
+      history.replaceState({ naluno: 1, tab: tabs[0], overlay: null, i: 0, seq: 0 }, '', urlFor({ i: 0, tab: tabs[0], seq: 0 }));
+      for(let i = 1; i < tabs.length; i++){
+        const isLast = i === tabs.length - 1;
+        history.pushState({
+          naluno: 1,
+          tab: tabs[i],
+          overlay: isLast ? overlay : null,
+          i: i,
+          seq: i,
+        }, '', urlFor({ i: i, tab: tabs[i], overlay: isLast ? overlay : null, seq: i }));
+      }
+      seq = Math.max(seq, tabs.length);
+    }catch(_){}
+    seeded = true;
+  }
   function push(){
     if(lock) return;
+    if(!seeded) seed();
     const next = snap();
     const prev = history.state;
-    if(prev && prev.naluno && same(prev, next)) return;
-    try{ history.pushState(next, ''); }catch(_){}
+    if(prev && prev.naluno && same(prev, next)){
+      if(!next.overlay) noteTab(next.tab);
+      return;
+    }
+    next.seq = ++seq;
+    next.i = (prev && prev.naluno && typeof prev.i === 'number') ? prev.i + 1 : seq;
+    try{ history.pushState(next, '', urlFor(next)); }catch(_){}
+    if(!next.overlay) noteTab(next.tab);
   }
   function drop(id){
     if(lock || window.__nalunoBackHold) return;
     const st = history.state || {};
     if(!st.naluno || st.overlay !== id) return;
     lock = true;
+    setTimeout(function(){ if(lock) lock = false; }, 700);
     try{ history.back(); }catch(_){ lock = false; }
   }
+  function fallbackUndo(){
+    const top = topOverlay();
+    if(top && CLOSE[top]){ CLOSE[top](); return true; }
+    const tabs = readStack();
+    if(tabs.length > 1){
+      const nextTabs = tabs.slice(0, -1);
+      writeStack(nextTabs);
+      apply({ tab: nextTabs[nextTabs.length - 1], overlay: null });
+      return true;
+    }
+    return false;
+  }
+  function onNativeBack(){
+    if(window.__nalunoCallHist){
+      try{ history.back(); }catch(_){}
+      return;
+    }
+    const top = topOverlay();
+    const tabs = readStack();
+    if(!top && tabs.length < 2){
+      try{
+        const App = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+        if(App && App.exitApp) App.exitApp();
+      }catch(_){}
+      return;
+    }
+    const before = history.state && history.state.seq;
+    try{ history.back(); }catch(_){}
+    setTimeout(function(){
+      if(Date.now() - poppedAt < 500) return;
+      const after = history.state && history.state.seq;
+      if(before != null && after === before) fallbackUndo();
+    }, 280);
+  }
+  function bindNative(){
+    let tries = 0;
+    const tick = function(){
+      tries++;
+      try{
+        const App = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+        if(App && App.addListener && !bindNative.done){
+          bindNative.done = true;
+          App.addListener('backButton', onNativeBack);
+          return;
+        }
+      }catch(_){}
+      if(tries < 24) setTimeout(tick, 300);
+    };
+    tick();
+  }
   window.addEventListener('popstate', function(){
+    poppedAt = Date.now();
     if(window.__nalunoCallPop){ window.__nalunoCallPop = false; return; }
     if(window.__nalunoCallHist) return;
     if(lock){ lock = false; return; }
     const st = history.state;
-    if(!st || !st.naluno) return;
-    apply(st);
+    if(st && st.naluno){ apply(st); return; }
+    /* The WebView popped an entry that was never ours. Still step the tab
+       instead of leaving the screen where it is — the next Back would exit. */
+    fallbackUndo();
   });
-  try{
-    const cur = history.state;
-    if(!cur || !cur.naluno) history.replaceState({ naluno: 1, tab: nalunoCurrentTab(), overlay: null }, '');
-  }catch(_){}
-  return { push: push, drop: drop, apply: apply, top: topOverlay };
+  bindNative();
+  return { push: push, drop: drop, apply: apply, top: topOverlay, seed: seed };
 })();
 
 document.querySelectorAll('.navbtn').forEach(btn=>{
@@ -189,8 +320,14 @@ document.querySelectorAll('.navbtn').forEach(btn=>{
 });
 // Hook common open/close after load
 document.addEventListener('DOMContentLoaded', function(){
-  setTimeout(restoreNavStateOnBoot, 200);
-  setTimeout(restoreNavStateOnBoot, 1200); // second chance after auth listeners
+  setTimeout(function(){
+    restoreNavStateOnBoot();
+    try{ if(window.nalunoBack && window.nalunoBack.seed) window.nalunoBack.seed(); }catch(_){}
+  }, 200);
+  setTimeout(function(){
+    restoreNavStateOnBoot();
+    try{ if(window.nalunoBack && window.nalunoBack.seed) window.nalunoBack.seed(); }catch(_){}
+  }, 1200);
 });
 setInterval(function(){ try{ captureNavState(); }catch(_){} }, 8000);
 

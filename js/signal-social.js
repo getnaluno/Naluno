@@ -17,10 +17,27 @@
   const localReact = {};
   let lastListErr = '';
 
-  function db() { return root.fbDb; }
-  function me() { return root.currentUser && root.currentUser.uid; }
+  /* fbDb and currentUser are top-level `let` bindings in auth.js. They are
+     visible to this classic script by name, and they are not properties of
+     window. Reading window.fbDb was always empty, so a view and a reaction
+     returned before any write — which looked exactly like "nobody watched". */
+  function db() {
+    try { if (typeof fbDb !== 'undefined' && fbDb) return fbDb; } catch (_) {}
+    return null;
+  }
+  function me() {
+    try {
+      if (typeof currentUser !== 'undefined' && currentUser && currentUser.uid) return currentUser.uid;
+    } catch (_) {}
+    return '';
+  }
   function myName() {
-    return String((root.currentProfile && root.currentProfile.name) || 'Someone').slice(0, 80);
+    try {
+      if (typeof currentProfile !== 'undefined' && currentProfile && currentProfile.name) {
+        return String(currentProfile.name).slice(0, 80);
+      }
+    } catch (_) {}
+    return 'Someone';
   }
   function codeOf(e) {
     return (e && (e.code || e.message)) ? String(e.code || e.message) : 'failed';
@@ -92,7 +109,10 @@
 
   async function react(ownerUid, segId, emoji) {
     const uid = me();
-    if (!uid || !db() || !ownerUid || !segId) return null;
+    if (!uid || !db() || !ownerUid || !segId) {
+      try { root.toast(!uid || !db() ? 'Sign in again, then try that' : 'Couldn’t save that'); } catch (_) {}
+      return null;
+    }
     if (ownerUid === uid) { root.toast('That one is yours'); return null; }
     const key = ownerUid + '|' + segId;
     const had = localReact[key] || '';
@@ -164,7 +184,10 @@
   async function viewersOf(segId) {
     const uid = me();
     lastListErr = '';
-    if (!uid || !db() || !segId) return [];
+    if (!uid || !db() || !segId) {
+      lastListErr = !uid || !db() ? 'not-signed-in' : '';
+      return [];
+    }
     const rows = [];
     let err = '';
     try {

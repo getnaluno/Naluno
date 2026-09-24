@@ -683,12 +683,43 @@ function attachBandMessagesListener(bandRef, b){
   }, function(){ /* messages just won't sync this session */ });
 }
 
-function stampBandEmpty(bandRef, b){
+function bandNewestMessageMs(b){
+  if(!b) return 0;
+  let newest = 0;
+  const rows = [].concat(bandMessages[b.id] || [], bandOlderMessages[b.id] || []);
+  rows.forEach(function(m){
+    const ts = bandMsgTs(m);
+    if(ts > newest) newest = ts;
+  });
+  return newest;
+}
+function stampBandEmpty(bandRef, b, leftAt){
   if(!bandRef) return;
-  if(b) b.lastEmptiedAt = Date.now();
-  bandRef.set({ lastEmptiedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge:true })
-    .then(function(){ snapshotBandWipeQueue(bandRef, b && bandEmptiedMs(b)); })
-    .catch(function(){ snapshotBandWipeQueue(bandRef, b && bandEmptiedMs(b)); });
+  const when = (typeof leftAt === 'number' && isFinite(leftAt) && leftAt > 0) ? leftAt : Date.now();
+  const have = bandEmptiedMs(b);
+  // Opening an empty room used to write serverTimestamp (now) on every
+  // presence snapshot, so the 2h clock never finished. Keep the earlier
+  // leave time. Only move the stamp backward, toward when people actually left.
+  if(have && have <= when + 1500){
+    if(bandSettleElapsed(b)) pruneSettledBandMessages(bandRef, b);
+    return;
+  }
+  if(b) b.lastEmptiedAt = when;
+  let value = when;
+  try{
+    if(typeof firebase !== 'undefined' && firebase.firestore && firebase.firestore.Timestamp && firebase.firestore.Timestamp.fromMillis){
+      value = firebase.firestore.Timestamp.fromMillis(when);
+    }
+  }catch(_){}
+  bandRef.set({ lastEmptiedAt: value }, { merge:true })
+    .then(function(){
+      if(b) b.lastEmptiedAt = when;
+      if(bandSettleElapsed(b)) pruneSettledBandMessages(bandRef, b);
+      else snapshotBandWipeQueue(bandRef, when);
+    })
+    .catch(function(){
+      if(b && bandSettleElapsed(b)) pruneSettledBandMessages(bandRef, b);
+    });
 }
 function clearBandEmptyClock(bandRef, b){
   if(!bandRef) return;
@@ -779,11 +810,19 @@ function openBandRoom(id){
       });
       const totalPresent = others.length + (amTunedIn ? 1 : 0);
       if(totalPresent === 0){
+        let latestBeat = 0;
+        snap.docs.forEach(function(d){
+          const data = d.data() || {};
+          const ts = data.tunedInAt && data.tunedInAt.toMillis ? data.tunedInAt.toMillis()
+            : (typeof data.tunedInAt === 'number' ? data.tunedInAt : 0);
+          if(ts > latestBeat) latestBeat = ts;
+        });
+        const leftAt = (latestBeat && latestBeat < now) ? latestBeat : now;
+        const settle = (typeof BAND_SETTLE_MS === 'number') ? BAND_SETTLE_MS : (2 * 60 * 60 * 1000);
+        const longGone = (now - leftAt) >= settle;
         if(!b._emptySince) b._emptySince = Date.now();
-        if((Date.now() - b._emptySince) > 2500){
-          // Always restamp the latest empty time — a leftover stamp from a
-          // previous cycle is what let last night's clips survive as "Cleared".
-          stampBandEmpty(bandRef, b);
+        if(longGone || (Date.now() - b._emptySince) > 2500){
+          stampBandEmpty(bandRef, b, leftAt);
         }
       } else {
         b._emptySince = null;
@@ -812,9 +851,20 @@ function openBandRoom(id){
     bandSettleTimer = setInterval(function(){
       updateBandSettleNote();
       const cur = activeBand();
-      if(cur && cur.isReal && cur.firestoreId && bandIsSettled(cur)){
-        pruneSettledBandMessages(fbDb.collection('bands').doc(cur.firestoreId), cur);
+      if(!cur || !cur.isReal || !cur.firestoreId || !fbDb) return;
+      const ref = fbDb.collection('bands').doc(cur.firestoreId);
+      const present = (realBandLiveMembers.length || 0) + (amTunedIn ? 1 : 0);
+      if(!present){
+        const msgAt = bandNewestMessageMs(cur);
+        const settle = (typeof BAND_SETTLE_MS === 'number') ? BAND_SETTLE_MS : (2 * 60 * 60 * 1000);
+        if(msgAt && (Date.now() - msgAt) >= settle){
+          const have = bandEmptiedMs(cur);
+          if(!have || have > msgAt + 1500) stampBandEmpty(ref, cur, msgAt);
+          else if(bandIsSettled(cur)) pruneSettledBandMessages(ref, cur);
+          return;
+        }
       }
+      if(bandIsSettled(cur)) pruneSettledBandMessages(ref, cur);
     }, 15000);
   } else {
     renderBandRoster();

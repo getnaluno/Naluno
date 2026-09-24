@@ -186,62 +186,105 @@ function findPlaceCacheKey(lat, lng){
 }
 
 function placeFromNominatim(data){
-  if(!data) return '';
+  if(!data) return null;
   const a = data.address || {};
-  const bits = [];
+  const house = a.house_number || '';
+  const road = a.road || a.pedestrian || a.footway || a.residential || '';
+  const street = [house, road].filter(Boolean).join(' ');
   const locality = a.neighbourhood || a.suburb || a.quarter || a.village || a.town || a.city_district || a.hamlet;
   const city = a.city || a.town || a.municipality || a.county;
-  const road = a.road || a.pedestrian;
-  if(road) bits.push(road);
-  if(locality && locality !== road) bits.push(locality);
-  if(city && city !== locality) bits.push(city);
+  const bits = [];
+  if(street) bits.push(street);
+  if(locality && locality !== road && locality !== street) bits.push(locality);
+  if(city && city !== locality && city !== road) bits.push(city);
   if(a.state && a.state !== city && a.state !== locality) bits.push(a.state);
   if(a.country) bits.push(a.country);
-  return bits.filter(Boolean).join(', ') || (data.display_name || '');
+  const text = bits.filter(Boolean).join(', ') || (data.display_name || '');
+  return text ? { text: text, road: !!road } : null;
+}
+
+function placeFromPhoton(feature){
+  const p = feature && feature.properties;
+  if(!p) return null;
+  const road = p.street || ((p.osm_key === 'highway' || p.osm_value === 'residential') ? p.name : '') || '';
+  const street = [p.housenumber, road].filter(Boolean).join(' ');
+  const locality = p.district || p.locality || p.suburb || '';
+  const city = p.city || p.county || p.town || '';
+  const bits = [];
+  if(street) bits.push(street);
+  if(locality && locality !== road && locality !== street) bits.push(locality);
+  if(city && city !== locality && city !== road) bits.push(city);
+  if(p.state && p.state !== city && p.state !== locality) bits.push(p.state);
+  if(p.country) bits.push(p.country);
+  const text = bits.filter(Boolean).join(', ');
+  return text ? { text: text, road: !!road } : null;
 }
 
 async function lookupPlaceName(lat, lng){
   if(lat == null || lng == null) return '';
   const key = findPlaceCacheKey(lat, lng);
+  const cacheKey = 'nalunoPlace:v2:' + key;
   if(findPlaceCache[key]) return findPlaceCache[key];
   try{
-    const raw = localStorage.getItem('nalunoPlace:' + key);
+    const raw = localStorage.getItem(cacheKey);
     if(raw){ findPlaceCache[key] = raw; return raw; }
   }catch(_){}
-  function remember(name){
-    if(!name) return '';
-    findPlaceCache[key] = name;
-    try{ localStorage.setItem('nalunoPlace:' + key, name); }catch(_){}
-    return name;
+  function rememberStreet(place){
+    if(!place || !place.road || !place.text) return '';
+    findPlaceCache[key] = place.text;
+    try{ localStorage.setItem(cacheKey, place.text); }catch(_){}
+    return place.text;
   }
-  // BigDataCloud first — Nominatim often 403s from a phone browser (no User-Agent).
+  const photonJob = (async function(){
+    try{
+      const url = 'https://photon.komoot.io/reverse?lat=' + encodeURIComponent(lat)
+        + '&lon=' + encodeURIComponent(lng);
+      const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+      if(!res.ok) return null;
+      const j = await res.json();
+      const features = (j && j.features) || [];
+      let best = null;
+      for(let i = 0; i < features.length && i < 5; i++){
+        const place = placeFromPhoton(features[i]);
+        if(!place) continue;
+        if(place.road) return place;
+        if(!best) best = place;
+      }
+      return best;
+    }catch(_){ return null; }
+  })();
+  const nominatimJob = (async function(){
+    try{
+      const url = 'https://nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1&zoom=18'
+        + '&lat=' + encodeURIComponent(lat)
+        + '&lon=' + encodeURIComponent(lng)
+        + '&accept-language=en';
+      const res = await fetch(url, { headers: { 'Accept-Language': 'en', 'Accept': 'application/json' } });
+      if(!res.ok) return null;
+      return placeFromNominatim(await res.json());
+    }catch(_){ return null; }
+  })();
+  const settled = await Promise.all([photonJob, nominatimJob]);
+  const withRoad = settled.filter(function(p){ return p && p.road && p.text; });
+  if(withRoad.length) return rememberStreet(withRoad[0]);
+  // A city-only answer is not stored. The next ping can still find the street.
+  const city = settled.filter(function(p){ return p && p.text; })[0];
+  if(city) return city.text;
   try{
     const url = 'https://api.bigdatacloud.net/data/reverse-geocode-client?latitude='
       + encodeURIComponent(lat) + '&longitude=' + encodeURIComponent(lng)
       + '&localityLanguage=en';
     const res = await fetch(url);
-    if(res.ok){
-      const j = await res.json();
-      const bits = [];
-      const loc = j.locality || j.localityInfo && j.localityInfo.informative && j.localityInfo.informative[0] && j.localityInfo.informative[0].name;
-      const city = j.city || j.locality;
-      if(loc && loc !== city) bits.push(loc);
-      if(city) bits.push(city);
-      if(j.principalSubdivision && j.principalSubdivision !== city && j.principalSubdivision !== loc) bits.push(j.principalSubdivision);
-      if(j.countryName) bits.push(j.countryName);
-      const name = bits.filter(Boolean).filter(function(v, i, a){ return a.indexOf(v) === i; }).join(', ');
-      if(name) return remember(name);
-    }
-  }catch(_){}
-  try{
-    const url = 'https://nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1&zoom=16'
-      + '&lat=' + encodeURIComponent(lat)
-      + '&lon=' + encodeURIComponent(lng)
-      + '&accept-language=en';
-    const res = await fetch(url, { headers: { 'Accept-Language': 'en', 'Accept': 'application/json' } });
     if(!res.ok) return '';
-    const name = placeFromNominatim(await res.json());
-    return remember(name);
+    const j = await res.json();
+    const bits = [];
+    const loc = j.locality || (j.localityInfo && j.localityInfo.informative && j.localityInfo.informative[0] && j.localityInfo.informative[0].name);
+    const cityName = j.city || j.locality;
+    if(loc && loc !== cityName) bits.push(loc);
+    if(cityName) bits.push(cityName);
+    if(j.principalSubdivision && j.principalSubdivision !== cityName && j.principalSubdivision !== loc) bits.push(j.principalSubdivision);
+    if(j.countryName) bits.push(j.countryName);
+    return bits.filter(Boolean).filter(function(v, i, a){ return a.indexOf(v) === i; }).join(', ');
   }catch(_){
     return '';
   }
@@ -267,7 +310,7 @@ async function formatFindNalunoReply(devices){
     const link = mapsLinks(d.lat, d.lng).osmEn;
     let block = '';
     if(place) block += place + '\n';
-    block += coords + acc + '\n';
+    else block += coords + acc + '\n';
     block += 'Seen ' + formatFindAge(d.ts);
     if(d.label) block += ' · ' + d.label;
     block += '\n' + link;
@@ -305,7 +348,7 @@ async function writeBeaconPing(pos, opts){
     try{
       placeName = await Promise.race([
         lookupPlaceName(lat, lng),
-        new Promise(function(res){ setTimeout(function(){ res(''); }, 2500); })
+        new Promise(function(res){ setTimeout(function(){ res(''); }, 4500); })
       ]);
     }catch(_){ placeName = ''; }
     const payload = {

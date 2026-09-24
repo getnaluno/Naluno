@@ -745,6 +745,21 @@ function nalunoPaintBcastChrome(view){
   if(grid) grid.style.display = togaOn ? 'none' : '';
   if(empty && togaOn) empty.style.display = 'none';
   if(cue) cue.style.display = togaOn ? 'none' : '';
+  const tools = document.getElementById('bcastMineTools');
+  const drawer = document.getElementById('bcastPrivateDrawer');
+  const mineOn = (view === 'mine');
+  if(tools){
+    if(mineOn) tools.removeAttribute('hidden');
+    else tools.setAttribute('hidden', '');
+  }
+  if(!mineOn && drawer){
+    drawer.setAttribute('hidden', '');
+    drawer.innerHTML = '';
+    const privBtn = document.getElementById('bcastPrivateWatch');
+    if(privBtn) privBtn.classList.remove('on');
+  } else if(mineOn && drawer && !drawer.hasAttribute('hidden')){
+    try{ nalunoRenderPrivateDrawer(); }catch(_){}
+  }
   try{
     document.body.classList.toggle('naluno-bcast-mine', view === 'mine');
     document.body.classList.toggle('naluno-bcast-toga', togaOn);
@@ -819,6 +834,47 @@ function nalunoSetBcastView(view, viaSwipe){
 }
 window.nalunoSetBcastView = nalunoSetBcastView;
 
+function nalunoRenderPrivateDrawer(){
+  const box = document.getElementById('bcastPrivateDrawer');
+  const btn = document.getElementById('bcastPrivateWatch');
+  if(!box) return;
+  const open = !box.hasAttribute('hidden');
+  if(btn){
+    btn.classList.toggle('on', open);
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+  if(!open){ box.innerHTML = ''; return; }
+  const mine = (typeof myBroadcasts !== 'undefined' && myBroadcasts) ? myBroadcasts : [];
+  const rows = mine.filter(function(b){
+    return b && !b.deleted && typeof broadcastIsPrivate === 'function' && broadcastIsPrivate(b);
+  });
+  const esc = typeof escapeHtml === 'function' ? escapeHtml : function(s){ return String(s == null ? '' : s); };
+  if(!rows.length){
+    box.innerHTML = '<p class="lobby-sub" style="margin:8px 0 4px;text-align:left;max-width:none;">Nothing is private. Mark one before it goes out, and it stays off the public feed.</p>';
+    return;
+  }
+  box.innerHTML = rows.map(function(b){
+    return '<button type="button" class="bcast-private-row" data-private="'+esc(b.id)+'"><b>'+esc(b.title || 'Broadcast')+'</b><span>Only you</span></button>';
+  }).join('');
+  box.querySelectorAll('[data-private]').forEach(function(row){
+    row.onclick = function(){
+      const id = row.getAttribute('data-private');
+      if(id && typeof openBroadcastById === 'function') openBroadcastById(id);
+    };
+  });
+}
+function nalunoTogglePrivateDrawer(){
+  const box = document.getElementById('bcastPrivateDrawer');
+  if(!box) return;
+  if(typeof bcastActiveView !== 'undefined' && bcastActiveView !== 'mine'){
+    try{ nalunoSetBcastView('mine', false); }catch(_){}
+  }
+  if(box.hasAttribute('hidden')) box.removeAttribute('hidden');
+  else box.setAttribute('hidden', '');
+  nalunoRenderPrivateDrawer();
+}
+window.nalunoTogglePrivateDrawer = nalunoTogglePrivateDrawer;
+
 /* One-time binding for For You / My Broadcasts / Toga —
    a presentation switch only (see bcastActiveView above); re-renders through
    the exact same renderBroadcastTab() path everything else already uses.
@@ -854,6 +910,22 @@ window.nalunoSetBcastView = nalunoSetBcastView;
         nalunoSetBcastView(view, false);
       };
     });
+  }
+  const offlineBtn = document.getElementById('bcastOfflineWatch');
+  if(offlineBtn){
+    offlineBtn.onclick = function(e){
+      if(e){ e.preventDefault(); e.stopPropagation(); }
+      if(window.NalunoOfflineBroadcast && window.NalunoOfflineBroadcast.openDownloads){
+        window.NalunoOfflineBroadcast.openDownloads();
+      }
+    };
+  }
+  const privateBtn = document.getElementById('bcastPrivateWatch');
+  if(privateBtn){
+    privateBtn.onclick = function(e){
+      if(e){ e.preventDefault(); e.stopPropagation(); }
+      nalunoTogglePrivateDrawer();
+    };
   }
   if(searchTab){
     searchTab.onclick = function(e){

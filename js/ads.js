@@ -955,14 +955,84 @@
       createdBy: user.uid,
     };
     say('Saving…');
+    const bid = String(doc.broadcastId || '');
+    let direct = false;
     try {
       await db.collection(COL).add(doc);
+      direct = true;
     } catch (e) {
       const code = (e && e.code) || '';
-      say(code === 'permission-denied'
-        ? 'Saved on this phone, but the server refused it. Publish firestore.rules so a creator can add an ad.'
-        : ((e && e.message) || 'Could not save'));
-      return;
+      if (code !== 'permission-denied') {
+        say((e && e.message) || 'Could not save');
+        return;
+      }
+    }
+    if (!direct) {
+      /* deskAds create is operator-only until rules are published. deskMail
+         create is already allowed for a signed-in person. The console, which
+         is the operator, turns that letter into a paused deskAds row. It does
+         not go live by itself. */
+      const summary = [
+        'Broadcast ad held for review',
+        doc.headline || doc.advertiser || 'Untitled',
+        'Paused until you go live. Nothing was charged.',
+      ].join('\n');
+      let packed = '';
+      try { packed = JSON.stringify(doc); } catch (_) { packed = ''; }
+      const mail = {
+        uid: user.uid,
+        status: 'new',
+        kind: 'broadcast-ad',
+        text: (summary + (packed ? ('\n' + packed) : '')).slice(0, 5900),
+        source: 'broadcast',
+        review: 'pending',
+        paymentStatus: 'unpaid',
+        creatorUid: user.uid,
+        broadcastId: bid,
+        headline: doc.headline,
+        advertiser: doc.advertiser,
+        advertiserHandle: doc.advertiserHandle,
+        advertiserEmail: doc.advertiserEmail,
+        advertiserPhone: doc.advertiserPhone,
+        paidAed: doc.paidAed,
+        spent: false,
+        billModel: doc.billModel,
+        mediaUrl: doc.mediaUrl,
+        mediaType: doc.mediaType,
+        thumbUrl: doc.thumbUrl || '',
+        placement: doc.placement,
+        placements: doc.placements,
+        ctaLabel: doc.ctaLabel,
+        ctaUrl: doc.ctaUrl || '',
+        skipAfterSec: doc.skipAfterSec,
+        createdAt: doc.createdAt,
+      };
+      try {
+        await db.collection('deskMail').add(mail);
+      } catch (e2) {
+        say((e2 && e2.message) || 'Could not send this to the console');
+        return;
+      }
+      if (bid && bid.length > 4) {
+        try {
+          await db.collection('broadcasts').doc(bid).collection('adHold').doc(user.uid).set({
+            from: user.uid,
+            uid: user.uid,
+            kind: 'broadcast-ad',
+            review: 'pending',
+            status: 'paused',
+            paymentStatus: 'unpaid',
+            source: 'broadcast',
+            headline: doc.headline,
+            advertiser: doc.advertiser,
+            mediaUrl: doc.mediaUrl,
+            paidAed: doc.paidAed,
+            billModel: doc.billModel,
+            broadcastId: bid,
+            createdAt: doc.createdAt,
+          }, { merge: true });
+        } catch (_) { /* the mail is the copy the console promotes */ }
+      }
     }
     const form = document.getElementById('bcastAdForm');
     const pay = document.getElementById('bcastAdPay');
@@ -974,8 +1044,8 @@
     if (line) line.textContent = pretty + ' ' + adMoneyCode();
     const note = document.getElementById('crAdPayNote');
     if (note) note.textContent = paidAed > 0
-      ? 'A payment provider will open here for this amount. It isn’t connected yet, so nothing was charged. The ad is in the console, paused, and the same maths as every other ad applies once it is live.'
-      : 'No prepaid amount was typed. The ad is in the console, paused. Add the amount in the console before it goes live.';
+      ? 'A payment provider will open here for this amount. It isn’t connected yet, so nothing was charged. The ad is paused in the console for a person to review. It stays off the air until they press Go live.'
+      : 'No prepaid amount was typed. The ad is paused in the console for a person to review. Nothing goes live until they press Go live.';
     say('');
   }
   function wireCreatorAd() {

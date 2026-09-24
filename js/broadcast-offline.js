@@ -338,7 +338,12 @@
   (function wire() {
     function bind() {
       const open = root.document.getElementById('openDownloadsBtn');
+      const ghost = root.document.getElementById('bcastOfflineWatch');
       if (open) open.onclick = openDownloads;
+      if (ghost) ghost.onclick = function (e) {
+        try { if (e) { e.preventDefault(); e.stopPropagation(); } } catch (_) {}
+        openDownloads();
+      };
       const close = root.document.getElementById('downloadsClose');
       if (close) close.onclick = closeDownloads;
     }

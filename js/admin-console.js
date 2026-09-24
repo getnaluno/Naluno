@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260924b';
+  const BUILD = '20260924c';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -1108,11 +1108,100 @@
       __liveUnsubs.push(unsub);
     } catch (_) {}
   }
+  /* A creator cannot write deskAds until rules are published. They can
+     write deskMail. Opening this console (the operator) copies that letter
+     into inventory as a paused unit. Go live is the human clearance — this
+     never sets status to live. */
+  const __heldPromoted = {};
+  function heldPayload(data) {
+    const row = data || {};
+    if (row.mediaUrl && String(row.mediaUrl).length > 8) return row;
+    const text = String(row.text || '');
+    const at = text.indexOf('\n{');
+    if (at >= 0) {
+      try {
+        const parsed = JSON.parse(text.slice(at + 1));
+        if (parsed && typeof parsed === 'object') return Object.assign({}, row, parsed);
+      } catch (_) {}
+    }
+    return row;
+  }
+  async function promoteHeldAd(db, mailId, data) {
+    if (!db || !mailId || __heldPromoted[mailId]) return;
+    const src = heldPayload(data);
+    if (String(src.kind || '') !== 'broadcast-ad') return;
+    if (String(src.status || 'new') !== 'new' && String((data || {}).status || '') !== 'new') return;
+    const media = String(src.mediaUrl || '');
+    if (media.length < 9) return;
+    __heldPromoted[mailId] = true;
+    const adId = 'hold_' + mailId;
+    try {
+      const ref = db.collection('deskAds').doc(adId);
+      const cur = await ref.get();
+      const prev = cur.exists ? (cur.data() || {}) : null;
+      if (prev && prev.status === 'live') {
+        await db.collection('deskMail').doc(mailId).set({ status: 'held', promotedAdId: adId }, { merge: true });
+        return;
+      }
+      const placements = Array.isArray(src.placements) ? src.placements : (src.placement ? [src.placement] : ['both']);
+      const doc = {
+        status: 'paused',
+        source: 'broadcast',
+        review: 'pending',
+        paymentStatus: src.paymentStatus || 'unpaid',
+        spent: false,
+        creatorUid: src.creatorUid || src.uid || '',
+        broadcastId: src.broadcastId || '',
+        placements: placements,
+        placement: src.placement || placements[0] || 'both',
+        headline: String(src.headline || '').slice(0, 80),
+        advertiser: String(src.advertiser || '').slice(0, 60),
+        advertiserHandle: src.advertiserHandle || '',
+        advertiserEmail: src.advertiserEmail || '',
+        advertiserPhone: src.advertiserPhone || '',
+        paidAed: Number(src.paidAed) || 0,
+        ctaLabel: src.ctaLabel || 'Open',
+        ctaUrl: src.ctaUrl || '',
+        skipAfterSec: src.skipAfterSec != null ? src.skipAfterSec : 5,
+        billModel: src.billModel || 'cpm',
+        mediaUrl: media.slice(0, 1800),
+        mediaType: src.mediaType || 'video',
+        thumbUrl: src.thumbUrl || '',
+        impressions: prev ? (Number(prev.impressions) || 0) : 0,
+        clicks: prev ? (Number(prev.clicks) || 0) : 0,
+        skips: prev ? (Number(prev.skips) || 0) : 0,
+        viewCompletes: prev ? (Number(prev.viewCompletes) || 0) : 0,
+        createdAt: prev && prev.createdAt ? prev.createdAt : (src.createdAt || Date.now()),
+        updatedAt: Date.now(),
+        heldFrom: mailId,
+      };
+      await ref.set(doc, { merge: true });
+      await db.collection('deskMail').doc(mailId).set({ status: 'held', promotedAdId: adId }, { merge: true });
+    } catch (e) {
+      __heldPromoted[mailId] = false;
+      try { console.warn('[ads] hold', e); } catch (_) {}
+    }
+  }
+  function armHeldAds() {
+    const db = adminDb();
+    if (!db || armHeldAds.done) return;
+    armHeldAds.done = true;
+    try {
+      const unsub = db.collection('deskMail').limit(40).onSnapshot(function (s) {
+        s.docs.forEach(function (d) {
+          const data = d.data() || {};
+          if (data.kind === 'broadcast-ad' && data.status === 'new') promoteHeldAd(db, d.id, data);
+        });
+      }, function () {});
+      __liveUnsubs.push(unsub);
+    } catch (_) { armHeldAds.done = false; }
+  }
   function armLiveListeners() {
     if (__liveArmed) return;
     const db = adminDb();
     if (!db) return;
     __liveArmed = true;
+    armHeldAds();
     listenCol('users', 500, 'users');
     listenCol('broadcasts', 400, 'broadcasts');
     listenCol('reports', 80, 'reports');
@@ -2126,10 +2215,12 @@
                 ? ('watch rate ' + aedUsd(u.cpvRateAed || 0))
                 : ('per thousand ' + aedUsd(u.ecpmAed || 0)));
             const unpaid = String(a.paymentStatus || '') === 'unpaid';
+            const reviewHold = st !== 'live' && (String(a.review || '') === 'pending' || String(a.source || '') === 'broadcast');
             const moneyLine = paidAed > 0
               ? ('Paid ' + aedUsd(paidAed) + ' · Used ' + aedUsd(usedAed) + ' · Left ' + aedUsd(leftAed || 0) + ' · ' + rateBit)
               : ('No prepaid typed · Used ' + aedUsd(usedAed) + ' · ' + rateBit);
             const payNote = unpaid ? '<div class="sub" style="color:#ffc266;margin-top:4px;">Waiting for payment — provider not connected. Paused until you go live.</div>' : '';
+            const reviewNote = reviewHold ? '<div class="sub" style="color:#ffc266;margin-top:4px;">Held for review — paused until you press Go live.</div>' : '';
             const spentNote = spent ? '<div class="sub" style="color:#ffc266;margin-top:4px;">Used up — paused. Type more paid to go live again.</div>' : '';
             const onThis = viewingId === a.id;
             return '<div class="alert ' + (st === 'live' && !spent ? 'ok' : 'warning') + ' ad-row"' + (onThis ? ' style="border-color:rgba(124,255,178,.55);"' : '') + '>'
@@ -2142,6 +2233,7 @@
               + '<div class="sub" style="margin-top:6px;">Views ' + impr + ' · Taps ' + clicks + ' · Skips ' + (Number(u.skips != null ? u.skips : a.skips) || 0) + ' · Completed watches ' + views + ' · Tap-through ' + rate + '</div>'
               + '<div class="sub" style="margin-top:4px;">' + moneyLine + '</div>'
               + payNote
+              + reviewNote
               + spentNote
               + '<div class="row" style="margin-top:10px;align-items:center;gap:8px;flex-wrap:wrap;">'
               + '<label class="sub" for="adPaid-' + escapeHtml(a.id) + '" style="margin:0;">Paid</label>'
