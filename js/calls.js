@@ -81,7 +81,7 @@ function showCallScreen(id){
   try{
     if(!window.__nalunoCallHist){
       window.__nalunoCallHist = true;
-      history.pushState({ nalunoCall: 1 }, '');
+      history.pushState({ nalunoCall: 1 }, '', location.pathname + location.search + '#call/' + Date.now());
     }
   }catch(_){}
 }

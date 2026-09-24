@@ -228,6 +228,7 @@ function openSafetyAppeal(caseId, statement){
   pinSafetySheet(sheet);
   sheet.dataset.caseId = caseId || '';
   sheet.classList.add('active');
+  try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
   const note = document.getElementById('appealNote');
   if(note) note.value = '';
   const msg = document.getElementById('appealMsg');
@@ -236,6 +237,7 @@ function openSafetyAppeal(caseId, statement){
 function closeSafetyAppeal(){
   const sheet = document.getElementById('appealSheet');
   if(sheet) sheet.classList.remove('active');
+  try{ if(window.nalunoBack) window.nalunoBack.drop('appealSheet'); }catch(_){}
 }
 async function submitSafetyAppeal(caseId, note){
   if(!currentUser || !caseId) return { ok: false };

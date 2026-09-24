@@ -518,20 +518,28 @@ bindThreadChrome();
 function closeWireSetScreens(){
   const b = $('wireBackupScreen');
   const h = $('wireHistoryScreen');
+  const bOn = !!(b && b.classList.contains('active'));
+  const hOn = !!(h && h.classList.contains('active'));
   if(b){ b.classList.remove('active'); b.setAttribute('aria-hidden','true'); }
   if(h){ h.classList.remove('active'); h.setAttribute('aria-hidden','true'); }
+  try{
+    if(bOn && window.nalunoBack) window.nalunoBack.drop('wireBackupScreen');
+    if(hOn && window.nalunoBack) window.nalunoBack.drop('wireHistoryScreen');
+  }catch(_){}
 }
 function openWireBackup(){
   closeWireSetScreens();
   fillBackupScreen();
   const el = $('wireBackupScreen');
   if(el){ el.classList.add('active'); el.setAttribute('aria-hidden','false'); }
+  try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
 }
 function openWireHistory(){
   closeWireSetScreens();
   fillHistoryScreen();
   const el = $('wireHistoryScreen');
   if(el){ el.classList.add('active'); el.setAttribute('aria-hidden','false'); }
+  try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
 }
 function formatBackupWhen(ts){
   const n = Number(ts);

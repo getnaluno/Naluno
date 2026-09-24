@@ -105,8 +105,14 @@ function nalunoCurrentTab(){
    stack is what we apply if that pop arrives without our state object.
    A call keeps its own history in calls.js. */
 window.nalunoBack = (function(){
-  const ORDER = ['signalViewers','reportSheet','bcastAdSheet','downloadsPanel','bcomposer','composer','bviewer','bspace','bandRoom','wirelineThread'];
+  const ORDER = ['appealSheet','contributionPanel','supportSheet','findNalunoPanel','wireBackupScreen','wireHistoryScreen','signalViewers','reportSheet','bcastAdSheet','downloadsPanel','bcomposer','composer','bviewer','bspace','bandRoom','wirelineThread'];
   const CLOSE = {
+    appealSheet: function(){ try{ if(typeof closeSafetyAppeal === 'function') closeSafetyAppeal(); }catch(_){} },
+    contributionPanel: function(){ try{ if(typeof closeContributionPanel === 'function') closeContributionPanel(); }catch(_){} },
+    supportSheet: function(){ try{ if(typeof closeSupportSheet === 'function') closeSupportSheet(); }catch(_){} },
+    findNalunoPanel: function(){ try{ if(typeof closeFindNaluno === 'function') closeFindNaluno(); }catch(_){} },
+    wireBackupScreen: function(){ try{ if(typeof closeWireSetScreens === 'function') closeWireSetScreens(); }catch(_){} },
+    wireHistoryScreen: function(){ try{ if(typeof closeWireSetScreens === 'function') closeWireSetScreens(); }catch(_){} },
     signalViewers: function(){ try{ if(window.NalunoSignalSocial) window.NalunoSignalSocial.closeViewers(); }catch(_){} },
     reportSheet: function(){ try{ if(typeof closeReportSheet === 'function') closeReportSheet(); }catch(_){} },
     bcastAdSheet: function(){ try{ if(window.NalunoAds && window.NalunoAds.closeFromBroadcast) window.NalunoAds.closeFromBroadcast(); }catch(_){} },
@@ -300,8 +306,20 @@ window.nalunoBack = (function(){
        instead of leaving the screen where it is — the next Back would exit. */
     fallbackUndo();
   });
+  function closeTop(){
+    const top = topOverlay();
+    if(!top || !CLOSE[top]) return;
+    window.__nalunoBackHold = true;
+    try{ CLOSE[top](); }catch(_){}
+    window.__nalunoBackHold = false;
+    const st = history.state;
+    if(st && st.naluno && st.overlay === top){
+      const next = { naluno: 1, tab: st.tab, overlay: null, i: st.i, seq: st.seq };
+      try{ history.replaceState(next, '', urlFor(next)); }catch(_){}
+    }
+  }
   bindNative();
-  return { push: push, drop: drop, apply: apply, top: topOverlay, seed: seed };
+  return { push: push, drop: drop, apply: apply, top: topOverlay, seed: seed, closeTop: closeTop };
 })();
 
 document.querySelectorAll('.navbtn').forEach(btn=>{
@@ -312,8 +330,7 @@ document.querySelectorAll('.navbtn').forEach(btn=>{
       if(bcast && bcast !== btn){ bcast.click(); }
       return;
     }
-    try{ window.__nalunoBackHold = true; if(typeof closeThread === 'function') closeThread(); }catch(_){}
-    window.__nalunoBackHold = false;
+    try{ if(window.nalunoBack && window.nalunoBack.closeTop) window.nalunoBack.closeTop(); }catch(_){}
     nalunoShowTab(btn.dataset.tab);
     try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
   };

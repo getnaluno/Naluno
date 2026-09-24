@@ -7,9 +7,16 @@ function loadBandOutbox(){
 function saveBandOutbox(rows){
   try{ localStorage.setItem(BAND_OUTBOX_KEY, JSON.stringify(rows || [])); }catch(_){}
 }
-function queueBandMessage(bandId, payload, preview){
+function queueBandMessage(bandId, payload, preview, docId){
   const rows = loadBandOutbox();
-  rows.push({ id: 'b'+Date.now()+Math.random().toString(36).slice(2,6), bandId, payload, preview, ts: Date.now() });
+  rows.push({
+    id: docId || ('b' + Date.now() + Math.random().toString(36).slice(2, 6)),
+    bandId: bandId,
+    payload: payload,
+    preview: preview,
+    ts: Date.now(),
+    docId: docId || null,
+  });
   saveBandOutbox(rows);
 }
 async function flushBandOutbox(){
@@ -18,17 +25,17 @@ async function flushBandOutbox(){
   if(!rows.length) return;
   const left = [];
   const settle = (typeof BAND_SETTLE_MS === 'number') ? BAND_SETTLE_MS : 7200000;
+  const bandsReady = (typeof bands !== 'undefined' && Array.isArray(bands) && bands.length);
   for(const row of rows){
     try{
-      const band = (typeof bands !== 'undefined' && bands)
-        ? bands.find(function(x){ return x.firestoreId === row.bandId; })
-        : null;
-      if(band && typeof bandSettleElapsed === 'function' && bandSettleElapsed(band)){
-        continue; // session is gone — do not resurrect queued clips
-      }
+      if(!bandsReady){ left.push(row); continue; }
+      const band = bands.find(function(x){ return x.firestoreId === row.bandId; });
+      if(!band) continue;
+      if(typeof bandSettleElapsed === 'function' && bandSettleElapsed(band)) continue;
       if(row.ts && (Date.now() - row.ts) > settle) continue;
-      const ref = fbDb.collection('bands').doc(row.bandId).collection('messages');
-      await ref.add(Object.assign({}, row.payload, {
+      const col = fbDb.collection('bands').doc(row.bandId).collection('messages');
+      const ref = row.docId ? col.doc(row.docId) : col.doc();
+      await ref.set(Object.assign({}, row.payload, {
         from: currentUser.uid,
         ts: bandNowTimestamp(),
       }));
@@ -1706,10 +1713,16 @@ async function sendBandMessage(){
   if(!amTunedIn){ toast('Tune in first to say something'); return; }
   const b = activeBand();
   if(b && b.isReal && b.firestoreId && fbDb && currentUser){
-    if(navigator.onLine === false){
-      queueBandMessage(b.firestoreId, { type:'text', text, encrypted:false }, text);
+    const online = (typeof nalunoIsOnline === 'function') ? nalunoIsOnline() : navigator.onLine !== false;
+    if(!online){
+      const holdId = 'band-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+      queueBandMessage(b.firestoreId, { type:'text', text, encrypted:false }, text, holdId);
+      pushBandLocal({
+        _id: holdId, _local: true, bandId: b.id, fromMe: true,
+        fromUid: currentUser.uid, text, type: 'text', ts: Date.now(), encrypted: false,
+      });
       $('bandInput').value = '';
-      toast('Offline — Band message queued');
+      toast('Held in Naluno — it sends when you are back online');
       return;
     }
     const col = fbDb.collection('bands').doc(b.firestoreId).collection('messages');
@@ -1749,7 +1762,10 @@ async function sendBandMessage(){
       text: envelopes ? null : text, // plaintext omitted once truly sealed for everyone
     };
     col.doc(docId).set(payload)
-      .catch(e=> toast(e.message || 'Couldn\u2019t send'));
+      .catch(function(){
+        queueBandMessage(b.firestoreId, payload, text, docId);
+        toast('Held in Naluno — it sends when you are back online');
+      });
     return;
   }
   if(!bandMessages[activeBandId]) bandMessages[activeBandId] = [];

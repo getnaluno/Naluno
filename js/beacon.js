@@ -699,6 +699,7 @@ function openFindNaluno(){
   findNalunoOpenAfterAuth = false;
   const panel = $('findNalunoPanel');
   if(panel) panel.classList.add('active');
+  try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
   syncFindNalunoToggle();
   listenFindNalunoDevices();
   if(findNalunoEnabledLocal()){
@@ -710,6 +711,7 @@ function openFindNaluno(){
 
 function closeFindNaluno(){
   if($('findNalunoPanel')) $('findNalunoPanel').classList.remove('active');
+  try{ if(window.nalunoBack) window.nalunoBack.drop('findNalunoPanel'); }catch(_){}
 }
 
 function wireFindNalunoUi(){

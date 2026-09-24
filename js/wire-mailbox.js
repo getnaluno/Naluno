@@ -113,6 +113,13 @@
         return;
       }
       const fromUid = m.from;
+      const contactId = contactIdForUid(fromUid);
+      if (contactId == null) {
+        /* Contacts often arrive after the mailbox listener. Saving under the
+           Firebase uid, then deleting the drop, made the chat empty. Leave
+           the drop and try again once the person is on this phone. */
+        return;
+      }
       let text = m.text;
       if (m.encrypted) {
         try {
@@ -130,7 +137,6 @@
         } catch (_) {}
       }
       const cmid = m.clientMsgId || doc.id;
-      const contactId = contactIdForUid(fromUid) != null ? contactIdForUid(fromUid) : fromUid;
       const isSys = m.type === 'missed_call' || m.type === 'system' || m.system === true;
       const open = contactId != null && typeof activeThreadContactId !== 'undefined' && activeThreadContactId === contactId;
       if (m.type === 'missed_call' && m.callId && contactId != null && typeof wirelineThreads !== 'undefined') {
@@ -221,6 +227,15 @@
     doc.ref.delete().catch(function () {});
   }
 
+  function retryPendingDrops() {
+    if (!fbDb || !currentUser) return;
+    try {
+      fbDb.collection('wireDrop').doc(currentUser.uid).collection('inbox').limit(40).get()
+        .then(function (snap) {
+          snap.docs.forEach(function (d) { takeDrop(d).catch(function () {}); });
+        }).catch(function () {});
+    } catch (_) {}
+  }
   function startMailbox() {
     if (!fbDb || !currentUser) return;
     try { if (typeof hydrateWirelineFromStore === 'function') hydrateWirelineFromStore(); } catch (_) {}
@@ -326,6 +341,7 @@
     sendDrop: sendDrop,
     writeReceipt: writeReceipt,
     startMailbox: startMailbox,
+    retryPendingDrops: retryPendingDrops,
     importLegacyOnce: importLegacyOnce,
     saveCopy: saveCopy,
     loadCopy: loadCopy,

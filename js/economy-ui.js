@@ -49,8 +49,8 @@ function supportIsOn(){
 function supportEsc(s){
   if(typeof escapeHtml === 'function') return escapeHtml(String(s == null ? '' : s));
   return String(s == null ? '' : s)
-    .replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>')
-    .replace(/"/g, '"');
+    .replace(/&/g, '&' + 'amp;').replace(/</g, '&' + 'lt;').replace(/>/g, '&' + 'gt;')
+    .replace(/"/g, '&' + 'quot;');
 }
 
 /* ---------------- My Contribution (§36) ---------------- */
@@ -59,11 +59,13 @@ function openContributionPanel(){
   const panel = $('contributionPanel');
   if(!panel) return;
   panel.classList.add('active');
+  try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
   renderContributionPanel();
 }
 function closeContributionPanel(){
   const panel = $('contributionPanel');
   if(panel) panel.classList.remove('active');
+  try{ if(window.nalunoBack) window.nalunoBack.drop('contributionPanel'); }catch(_){}
 }
 
 async function renderContributionPanel(){
@@ -346,6 +348,7 @@ let __supportSheet = { uid: '', name: '', broadcastId: '', amount: 1000 };
 function closeSupportSheet(){
   const panel = $('supportSheet');
   if(panel) panel.classList.remove('active');
+  try{ if(window.nalunoBack) window.nalunoBack.drop('supportSheet'); }catch(_){}
 }
 
 function openSupportSheet(creatorUid, creatorName, broadcastId){
@@ -388,6 +391,7 @@ function openSupportSheet(creatorUid, creatorName, broadcastId){
   const msg = $('supportSheetMsg');
   if(msg) msg.textContent = '';
   if(panel) panel.classList.add('active');
+  try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
 }
 
 async function submitSupportIntent(){

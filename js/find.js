@@ -307,6 +307,7 @@ function loadRealConnections(uid){
     renderContacts();
     renderBandList();
     applyAtmosphere();
+    try{ if(window.NalunoWireMailbox && window.NalunoWireMailbox.retryPendingDrops) window.NalunoWireMailbox.retryPendingDrops(); }catch(_){}
     try{
       nalunoCacheWrite('contacts', contacts.filter(function(c){ return c.isReal; }).map(function(c){
         const src = (typeof contactPhotoSrc === 'function') ? contactPhotoSrc(c) : '';
