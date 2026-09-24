@@ -737,6 +737,37 @@ service cloud.firestore {
        No client reads them: presence reveals when a person is online, which
        is exactly the kind of thing that should not be queryable by anyone
        else in the app. */
+    /* Discovery. A person writes only their own taste and their own events.
+       Broadcast-wide features and the live model are compiled by the desk.
+       Follower count is not a field the ranker reads. */
+    match /recommendationEvents/{eventId} {
+      allow read: if isOperator() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.type is string
+        && request.resource.data.type.size() < 40
+        && request.resource.data.keys().size() < 16
+        && !request.resource.data.keys().hasAny(['body', 'text', 'message', 'ciphertext', 'plaintext']);
+      allow update, delete: if false;
+    }
+    match /userInterestProfile/{uid} {
+      allow read: if isOwner(uid) || isOperator();
+      allow create, update: if isOwner(uid)
+        && request.resource.data.keys().size() < 16;
+      allow delete: if isOwner(uid);
+    }
+    match /broadcastFeatures/{broadcastId} {
+      allow read: if isSignedIn();
+      allow write: if isOperator();
+    }
+    match /discoveryConfig/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isOperator();
+    }
+    match /recommendationExperiments/{expId} {
+      allow read, write: if isOperator();
+    }
+
     match /presence/{docId} {
       allow read: if isOperator();
       allow write: if false;
