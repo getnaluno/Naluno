@@ -789,17 +789,42 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    /* First-party ad inventory. Operator writes. Signed-in members
-       read live units and may increment impression, click, skip and
-       completed-view counters only. viewCompletes may be missing on
-       older rows; it is not required to already be a number. */
+    /* First-party ad inventory. The operator writes any unit. A creator may
+       create one paused unit from their own Broadcast (source broadcast,
+       counters at zero, unpaid). They cannot publish it or edit anyone
+       else's. Signed-in members read live units and may increment
+       impression, click, skip and completed-view counters only.
+       viewCompletes may be missing on older rows; it is not required to
+       already be a number. */
     match /deskAds/{id} {
       allow read: if isOperator()
-        || (isSignedIn() && resource.data.status == 'live');
+        || (isSignedIn() && resource.data.status == 'live')
+        || (isSignedIn() && resource.data.creatorUid == request.auth.uid);
       allow create: if isOperator()
         && request.resource.data.status in ['live', 'paused']
         && request.resource.data.mediaUrl is string
-        && request.resource.data.mediaUrl.size() > 8;
+        && request.resource.data.mediaUrl.size() > 8
+        || (isSignedIn()
+            && request.resource.data.creatorUid == request.auth.uid
+            && request.resource.data.source == 'broadcast'
+            && request.resource.data.status == 'paused'
+            && request.resource.data.paymentStatus == 'unpaid'
+            && request.resource.data.spent == false
+            && request.resource.data.mediaUrl is string
+            && request.resource.data.mediaUrl.size() > 8
+            && request.resource.data.mediaUrl.size() < 2000
+            && request.resource.data.broadcastId is string
+            && request.resource.data.broadcastId.size() > 4
+            && request.resource.data.broadcastId.size() < 80
+            && request.resource.data.headline is string
+            && request.resource.data.headline.size() < 81
+            && request.resource.data.impressions == 0
+            && request.resource.data.clicks == 0
+            && request.resource.data.skips == 0
+            && request.resource.data.viewCompletes == 0
+            && request.resource.data.paidAed is number
+            && request.resource.data.paidAed >= 0
+            && request.resource.data.paidAed <= 1000000);
       allow update: if isOperator()
         || (isSignedIn()
             && request.resource.data.diff(resource.data).affectedKeys()
