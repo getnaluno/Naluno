@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.09.24c" />
+  <meta name="naluno-build" content="2026.09.24d" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.09.24c">
+<meta name="app-version" content="2026.09.24d">
 <meta name="description" content="Naluno brings private communication, communities and creator-led content into one place. A Callsign instead of a phone number.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="Private communication, communities and creator-led content. A Callsign — not a phone number.">
@@ -131,9 +131,9 @@
 })();
 </script>
 <link rel="apple-touch-startup-image" href="/splash-empty.png">
-<link rel="stylesheet" href="/css/app.css?v=20260924c" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/css/app.css?v=20260924d" media="print" onload="this.media='all'">
 <script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="/css/app.css?v=20260924c"></noscript>
+<noscript><link rel="stylesheet" href="/css/app.css?v=20260924d"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -1328,7 +1328,7 @@ window.__nalunoEntryT0 = Date.now();
       <div class="back-btn" id="bcastAdClose" role="button" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
       <div style="flex:1;min-width:0;">
         <div style="font-weight:700;font-family:var(--font-futuristic);font-size:14px;">Advertise</div>
-        <div style="font-size:11px;color:var(--text-dim);font-family:var(--font-mono);">Same book as every other ad</div>
+        <div style="font-size:11px;color:var(--text-dim);font-family:var(--font-mono);" id="bcastAdKicker">On this video</div>
       </div>
     </div>
     <div class="tab-scroll" id="bcastAdForm" style="padding:8px 18px 28px;">
@@ -1369,9 +1369,7 @@ window.__nalunoEntryT0 = Date.now();
       <p class="sub" id="crAdMsg"></p>
     </div>
     <div class="tab-scroll" id="bcastAdPay" hidden style="padding:18px;">
-      <div class="section-label">Payment</div>
-      <div id="crAdPayAmount" style="font-family:var(--font-futuristic);font-size:28px;color:var(--mint);margin:8px 0 12px;">0</div>
-      <p class="sub" id="crAdPayNote"></p>
+      <p class="sub" id="crAdPayNote">Your ad awaits a review. Once confirmed it will go live.</p>
       <button type="button" class="save-btn" id="crAdPayDone" style="margin-top:16px;background:var(--mint);color:#0D0F17;border:none;">Done</button>
     </div>
   </div>
@@ -1431,21 +1429,25 @@ window.__nalunoEntryT0 = Date.now();
         <button type="button" class="bspace-join" id="bspaceJoinBtn">+ Circle</button>
         <div id="bspaceSupportSlot" class="bspace-support-slot">
           <div class="bspace-support-panel">
-            <div class="bspace-support-head">
-              <div class="bspace-support-kicker">Support creator</div>
+            <button type="button" class="bspace-support-head" id="bspaceSupportToggle" aria-expanded="false">
+              <span class="bspace-support-kicker">Support creator</span>
               <span class="support-flag-chip" id="supportFlagChip">Off</span>
+            </button>
+            <div class="support-body" id="bspaceSupportBody" hidden>
+              <div class="support-banner" id="supportBanner"></div>
+              <button type="button" id="bspaceSupportBtn" class="bspace-support-btn off" title="Creator Support is off">Support</button>
+              <div id="supportMine"></div>
             </div>
-            <div class="support-banner" id="supportBanner"></div>
-            <button type="button" id="bspaceSupportBtn" class="bspace-support-btn off" title="Creator Support is off">Support · off</button>
-            <div id="supportMine"></div>
           </div>
         </div>
-        <div id="bspaceStrandRow" style="display:none;margin:10px 0 14px;padding:12px;border:1px solid var(--line);border-radius:16px;background:var(--surface);">
-          <div class="hint" style="margin-bottom:8px;">Add this published Broadcast to a Strand — related rooms are suggested from the Strand you pick.</div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-            <select id="bspaceStrandPick" style="flex:1;min-width:140px;min-height:40px;border-radius:12px;border:1px solid var(--line);background:var(--surface-2);color:var(--text);padding:0 10px;"></select>
-            <input id="bspaceStrandNew" placeholder="or new Strand name" maxlength="48" style="flex:1;min-width:140px;min-height:40px;border-radius:12px;border:1px solid var(--line);background:var(--surface-2);color:var(--text);padding:0 10px;" />
-            <button type="button" class="bspace-mini primary" id="bspaceStrandSave">Save Strand</button>
+        <div id="bspaceStrandRow" style="display:none;margin:10px 0 14px;">
+          <button type="button" class="bspace-disclose" id="bspaceStrandToggle" aria-expanded="false">Strand</button>
+          <div id="bspaceStrandBody" hidden>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+              <select id="bspaceStrandPick" style="flex:1;min-width:140px;min-height:40px;border-radius:12px;border:1px solid var(--line);background:var(--surface-2);color:var(--text);padding:0 10px;"></select>
+              <input id="bspaceStrandNew" placeholder="or new Strand name" maxlength="48" style="flex:1;min-width:140px;min-height:40px;border-radius:12px;border:1px solid var(--line);background:var(--surface-2);color:var(--text);padding:0 10px;" />
+              <button type="button" class="bspace-mini primary" id="bspaceStrandSave">Save Strand</button>
+            </div>
           </div>
         </div>
 
@@ -1642,9 +1644,9 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/band-list.js?v=20260918i"></script>
 <script type="module" src="/workers/economy/safety-boot.mjs?v=20260923c"></script>
 <script src="/js/signal-core.js?v=20260924a"></script>
-<script src="/js/broadcast-core.js?v=20260924a"></script>
+<script src="/js/broadcast-core.js?v=20260924d"></script>
 <script src="/js/broadcast-upload.js?v=20260908d"></script>
-<script src="/js/broadcast-composer.js?v=20260924c"></script>
+<script src="/js/broadcast-composer.js?v=20260924d"></script>
 <script src="/js/screen.js?v=20260921k"></script>
 <!-- nudenet.js MUST load after screen.js: it upgrades runNalunoScreen() in place
      and keeps the heuristic as a hold-only fallback. Replaces nsfw-model.js. -->
@@ -1657,29 +1659,29 @@ window.__nalunoEntryT0 = Date.now();
      currentUser exists, and deliberately non-blocking — if this file failed
      to load entirely, Broadcast would behave exactly as it does today. -->
 <script src="/js/presence.js?v=20260919g"></script>
-<script src="/js/report.js?v=20260924c"></script>
+<script src="/js/report.js?v=20260924d"></script>
 <script src="/js/currency.js?v=20260918a"></script>
 <script src="/js/economy.js?v=20260914c"></script>
-<script src="/js/economy-ui.js?v=20260914c"></script>
+<script src="/js/economy-ui.js?v=20260924d"></script>
 <script src="/js/weather.js?v=20260918h"></script>
-<script src="/js/beacon.js?v=20260924c"></script>
-<script src="/js/compass.js?v=20260924c"></script>
-<script src="/js/signal-ui.js?v=20260924c"></script>
+<script src="/js/beacon.js?v=20260924d"></script>
+<script src="/js/compass.js?v=20260924d"></script>
+<script src="/js/signal-ui.js?v=20260924d"></script>
 <script src="/js/compat-lock.js?v=20260908d"></script>
-<script src="/js/broadcast-space.js?v=20260924c"></script>
-<script src="/js/ads.js?v=20260924c"></script>
+<script src="/js/broadcast-space.js?v=20260924d"></script>
+<script src="/js/ads.js?v=20260924d"></script>
 <script src="/js/media-vault.js?v=20260908d"></script>
-<script src="/js/wireline.js?v=20260924c"></script>
+<script src="/js/wireline.js?v=20260924d"></script>
 <!-- Lifeline: Wireline when the internet is blocked or cut. Loads after
      crypto.js (keys) and wireline.js (thread insertion). -->
 <script src="/js/notices.js?v=20260923n"></script>
-<script src="/js/broadcast-offline.js?v=20260924c"></script>
-<script src="/js/signal-social.js?v=20260924c"></script>
+<script src="/js/broadcast-offline.js?v=20260924d"></script>
+<script src="/js/signal-social.js?v=20260924d"></script>
 <script src="/js/lifeline.js?v=20260922a"></script>
 <script src="/js/lifeline-wire.js?v=20260922a"></script>
 <!-- Wireline translation reuses Spark's engine and language list. -->
 <script src="/js/wireline-translate.js?v=20260922a"></script>
-<script src="/js/profile.js?v=20260924c"></script>
+<script src="/js/profile.js?v=20260924d"></script>
 <script src="/js/onboard.js?v=20260922a"></script>
 <script src="/js/handle-guard.js?v=20260921c"></script>
 <script src="/js/auth.js?v=20260923c"></script>
@@ -1687,11 +1689,11 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/ice-core.js?v=20260908d"></script>
 <script src="/js/camera.js?v=20260908d"></script>
 <script src="/js/call-filters.js?v=20260908d"></script>
-<script src="/js/calls.js?v=20260924c"></script>
+<script src="/js/calls.js?v=20260924d"></script>
 <script src="/js/sfu-live.js?v=20260908d"></script>
 <script src="/js/broadcast-live.js?v=20260908d"></script>
-<script src="/js/band-room.js?v=20260924c"></script>
-<script src="/js/pwa.js?v=20260924c"></script>
+<script src="/js/band-room.js?v=20260924d"></script>
+<script src="/js/pwa.js?v=20260924d"></script>
 <script src="/js/spark-engine.js?v=20260908d"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>
 <script src="/js/spark-lg.js?v=20260908d"></script>
