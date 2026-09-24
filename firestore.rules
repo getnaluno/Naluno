@@ -22,6 +22,17 @@ service cloud.firestore {
         || isActiveDesk()
       );
     }
+    function answerGrewByOne() {
+      let oldN = ('answers' in resource.data && resource.data.answers is list)
+        ? resource.data.answers.size() : 0;
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['answers'])
+        && request.resource.data.answers is list
+        && request.resource.data.answers.size() == oldN + 1
+        && request.resource.data.answers[request.resource.data.answers.size() - 1].from == request.auth.uid
+        && request.resource.data.answers[request.resource.data.answers.size() - 1].text is string
+        && request.resource.data.answers[request.resource.data.answers.size() - 1].text.size() > 0
+        && request.resource.data.answers[request.resource.data.answers.size() - 1].text.size() < 500;
+    }
     /* Either direction of a connection. A one-sided write used to let someone
        watch a Signal (their own list had the other person) while the view
        write looked only at the owner's list and was denied. */
@@ -494,7 +505,12 @@ service cloud.firestore {
           && request.resource.data.keys().size() < 40
           && stampedAsSelf();
         // Author or broadcast creator may edit/delete subdocs (journey, conversation, etc.).
-        allow update, delete: if isSignedIn() && (
+        allow update: if isSignedIn() && (
+          resource.data.from == request.auth.uid
+          || get(/databases/$(database)/documents/broadcasts/$(id)).data.creatorUid == request.auth.uid
+          || answerGrewByOne()
+        );
+        allow delete: if isSignedIn() && (
           resource.data.from == request.auth.uid
           || get(/databases/$(database)/documents/broadcasts/$(id)).data.creatorUid == request.auth.uid
         );
