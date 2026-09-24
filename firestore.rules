@@ -325,7 +325,10 @@ service cloud.firestore {
         allow delete: if isSignedIn() && (
           resource.data.from == request.auth.uid
           || (
-            request.auth.uid in bandData().memberUids
+            (
+              request.auth.uid in bandData().memberUids
+              || bandData().createdBy == request.auth.uid
+            )
             && (bandData().lastEmptiedAt != null || bandData().messageEpoch != null)
           )
         );
@@ -333,8 +336,10 @@ service cloud.firestore {
       match /wipe/{messageId} {
         // Ids queued at empty-time so prune can delete without re-reading
         // message text after the epoch cutoff. Contains no conversation body.
-        allow read, write: if isSignedIn() &&
-          request.auth.uid in get(/databases/$(database)/documents/bands/$(bandId)).data.memberUids;
+        allow read, write: if isSignedIn() && (
+          request.auth.uid in get(/databases/$(database)/documents/bands/$(bandId)).data.memberUids
+          || get(/databases/$(database)/documents/bands/$(bandId)).data.createdBy == request.auth.uid
+        );
       }
       match /invites/{inviteId} {
         allow read, write: if isSignedIn() && (
