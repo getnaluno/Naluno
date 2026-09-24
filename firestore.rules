@@ -622,7 +622,9 @@ service cloud.firestore {
     // convenience only and still never authoritative.
     match /contributionProfiles/{uid} {
       allow read: if isOperator() || (isSignedIn() && isOwner(uid));
-      allow write: if false;
+      /* The desk repairs totals from the ledger when the economy worker
+         cannot be reached. Members still cannot write a profile. */
+      allow write: if isOperator();
     }
 
     // Trust profiles hold fraud signals. Spec §13/§46 is explicit that the
