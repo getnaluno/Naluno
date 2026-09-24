@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260924c';
+  const BUILD = '20260924d';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -57,6 +57,18 @@
   let fbDbAdmin = null;
   let currentUser = null;
   let __adminPass = '';
+  let __deskOperator = null;
+  let __deskRoles = [];
+  const SUPER_UID = 'ibMOMY6Q3sVTCxIrwO2FGk43zw93';
+  const DESK_TAB_ROLES = [
+    ['overview', 'Overview'], ['health', 'Health'], ['alerts', 'Alerts'], ['mail', 'Mail'],
+    ['ads', 'Ads'], ['users', 'Users'], ['identity', 'Identity'], ['broadcast', 'Broadcast'],
+    ['signals', 'Signals'], ['journey', 'Journey'], ['creators', 'Creators'], ['toga', 'Toga'],
+    ['community', 'Community'], ['trust', 'Trust'], ['safety', 'Safety'], ['economy', 'Economy'],
+    ['support', 'Support'], ['money', 'Money'], ['content', 'Content Hub'], ['visitors', 'Visitors'],
+    ['reach', 'Reach'], ['quality', 'Quality'], ['analytics', 'Analytics'], ['notifications', 'Notify'],
+    ['search', 'Search'], ['flags', 'Flags'], ['audit', 'Audit'], ['books', 'Books'],
+  ];
   let __needsSetup = false;
   let __tabCache = {};
   let __activeTab = 'overview';
@@ -268,13 +280,61 @@
       await refreshOperatorClaim();
     } catch (_) {}
   }
+  function isSuperAdmin(user) {
+    if (!user) return false;
+    if (user.uid === SUPER_UID || OPERATOR_UIDS[user.uid]) return true;
+    const mail = String(user.email || '').trim().toLowerCase();
+    if (mail && OPERATOR_EMAILS[mail] && user.emailVerified) return true;
+    return false;
+  }
+  async function loadDeskOperator(user) {
+    __deskOperator = null;
+    __deskRoles = [];
+    if (!user || isSuperAdmin(user)) return;
+    const db = adminDb();
+    if (!db) return;
+    try {
+      const snap = await db.collection('deskOperators').doc(user.uid).get();
+      if (!snap.exists) return;
+      const data = snap.data() || {};
+      data.uid = user.uid;
+      __deskOperator = data;
+      __deskRoles = Array.isArray(data.roles) ? data.roles.map(String) : [];
+    } catch (_) {}
+  }
   function isOperator(user) {
     if (!user) return false;
+    if (isSuperAdmin(user)) return true;
+    if (__deskOperator && __deskOperator.uid === user.uid) return __deskOperator.revoked !== true;
     if (__operatorClaim) return true;
     if (OPERATOR_UIDS[user.uid]) return true;
     const mail = String(user.email || '').trim().toLowerCase();
     if (mail && OPERATOR_EMAILS[mail] && user.emailVerified) return true;
     return false;
+  }
+  function canDeskTab(tab) {
+    if (!currentUser) return false;
+    if (tab === 'admins') return isSuperAdmin(currentUser);
+    if (isSuperAdmin(currentUser)) return true;
+    if (__deskOperator) return (__deskRoles || []).indexOf(tab) >= 0;
+    return true;
+  }
+  function applyDeskTabs() {
+    const nav = $('adminTabs');
+    if (!nav) return;
+    let first = '';
+    nav.querySelectorAll('.atab').forEach(function (b) {
+      const tab = b.getAttribute('data-tab');
+      const ok = canDeskTab(tab);
+      b.style.display = ok ? '' : 'none';
+      b.disabled = !ok;
+      if (ok && !first) first = tab;
+      if (!ok) b.classList.remove('on');
+    });
+    if (__activeTab && !canDeskTab(__activeTab) && first) __activeTab = first;
+    nav.querySelectorAll('.atab').forEach(function (b) {
+      if (b.getAttribute('data-tab') === __activeTab && canDeskTab(__activeTab)) b.classList.add('on');
+    });
   }
 
   async function adminWorker(path, opts) {
@@ -401,6 +461,7 @@
   async function cloudSetHash(uid, hash) {
     const db = adminDb();
     if (!db || !uid || !hash) return { ok: false, where: 'no-db' };
+    if (uid === SUPER_UID && currentUser && currentUser.uid !== SUPER_UID) return { ok: false, where: 'protected' };
     const payload = { hash: hash, v: 1, at: Date.now(), kind: 'console-gate' };
     try { await db.collection('users').doc(uid).collection('vault').doc('main').set({ _consoleGate: payload }, { merge: true }); return { ok: true, where: 'vault' }; } catch (_) {}
     try { await db.collection('adminConsole').doc(uid).set(payload); return { ok: true, where: 'adminConsole' }; } catch (_) {}
@@ -1731,7 +1792,7 @@
     nav.querySelectorAll('.atab').forEach(function (btn) {
       btn.onclick = function () {
         const tab = btn.getAttribute('data-tab');
-        if (!tab) return;
+        if (!tab || !canDeskTab(tab)) return;
         __activeTab = tab;
         try{ clearHeldRefresh(); }catch(_){}   // a new tab is a fresh start
         nav.querySelectorAll('.atab').forEach(function (b) { b.classList.toggle('on', b === btn); });
@@ -1795,9 +1856,222 @@
     };
   }
 
+  function downloadText(name, mime, text) {
+    const blob = new Blob([text], { type: mime });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () {
+      try { URL.revokeObjectURL(a.href); a.remove(); } catch (_) {}
+    }, 1500);
+  }
+  function csvCell(v) {
+    const s = String(v == null ? '' : v);
+    if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  }
+  function csvTable(rows) {
+    return rows.map(function (r) { return r.map(csvCell).join(','); }).join('\r\n') + '\r\n';
+  }
+  function booksLines(d) {
+    const ads = (d.ads && d.ads.revenue) || {};
+    const list = (d.ads && d.ads.list) || [];
+    const ledger = (d.economy && d.economy.ledger) || [];
+    const support = (d.economy && d.economy.support_list) || [];
+    const costs = d.costs || {};
+    const stamp = new Date().toISOString().slice(0, 10);
+    const journal = [['Date', 'Account', 'Description', 'Debit AED', 'Credit AED', 'Status', 'Source', 'Note']];
+    function add(date, account, desc, debit, credit, status, source, note) {
+      journal.push([
+        date || stamp, account, desc,
+        debit ? Number(debit).toFixed(2) : '',
+        credit ? Number(credit).toFixed(2) : '',
+        status || '', source || '', note || '',
+      ]);
+    }
+    list.forEach(function (ad) {
+      const stats = (Data && Data.adUnitStats) ? Data.adUnitStats(ad, (d.ads && d.ads.rates) || null) : null;
+      const booked = stats ? stats.bookedAed : Number(ad.bookedAed || 0);
+      const paid = stats ? stats.paidAed : Number(ad.paidAed || 0);
+      const whenAt = ad.createdAt || ad.updatedAt;
+      const day = whenAt ? new Date(Number(whenAt)).toISOString().slice(0, 10) : stamp;
+      const name = ad.headline || ad.advertiser || ad.id || 'Ad';
+      if (booked > 0) {
+        add(day, 'Ad revenue booked', name, '', booked, ad.status || 'booked', ad.id || '', 'Rate card times observed events. Cash has not moved.');
+        add(day, 'Accounts receivable — ads', name, booked, '', ad.status || 'booked', ad.id || '', 'Opposite entry. Not cash.');
+      }
+      if (paid > 0) {
+        add(day, 'Customer deposits — ads', name, '', paid, ad.paymentStatus || 'unpaid', ad.id || '', 'Amount noted on the unit. Not collected.');
+      }
+    });
+    support.forEach(function (r) {
+      const major = (Number(r.amount_minor) || 0) / 100;
+      const day = (r.created_at || r.createdAt) ? new Date(Number(r.created_at || r.createdAt)).toISOString().slice(0, 10) : stamp;
+      add(day, 'Creator support intent', (r.currency || 'AED') + ' intent', '', major, r.status || 'intent', r.id || '', 'Not a charge. No payment has moved.');
+    });
+    ledger.forEach(function (r) {
+      const day = r.created_at ? new Date(Number(r.created_at)).toISOString().slice(0, 10) : stamp;
+      add(day, 'Contribution points', r.event_type || 'event', '', '', r.status || '', r.user_id || '', 'Points are not money. ' + (r.points || 0) + ' points, eligible ' + (r.eligible_points || 0));
+    });
+    const invoice = Number(costs.invoice_aed || costs.billable_aed || 0);
+    if (invoice > 0) {
+      add(stamp, 'Hosting and delivery', costs.headline || 'Estimated platform cost', invoice, '', 'estimate', 'costs', 'List-price estimate until an invoice is recorded.');
+      add(stamp, 'Accounts payable — hosting', 'Estimated platform cost', '', invoice, 'estimate', 'costs', 'Opposite entry. Not an invoice.');
+    }
+    const trial = {};
+    journal.slice(1).forEach(function (row) {
+      const acct = row[1];
+      if (!trial[acct]) trial[acct] = { debit: 0, credit: 0 };
+      trial[acct].debit += Number(row[3] || 0);
+      trial[acct].credit += Number(row[4] || 0);
+    });
+    const trialRows = [['Account', 'Debit AED', 'Credit AED', 'Note']];
+    Object.keys(trial).sort().forEach(function (k) {
+      trialRows.push([k, trial[k].debit.toFixed(2), trial[k].credit.toFixed(2), 'Booked, intent, or estimate. Not a bank balance.']);
+    });
+    trialRows.push(['Ad revenue booked (summary)', '', Number(ads.bookedAed || 0).toFixed(2), 'From the rate card.']);
+    trialRows.push(['Prepaid noted on ads', '', Number(ads.paidAed || 0).toFixed(2), 'Not collected.']);
+    return { stamp: stamp, journal: journal, trial: trialRows, adsBooked: Number(ads.bookedAed || 0), supportN: support.length, ledgerN: ledger.length };
+  }
+  function booksPdf(lines) {
+    function pdfSafe(s) {
+      return String(s || '').replace(/[^\x20-\x7E]/g, ' ');
+    }
+    const pages = [];
+    let cur = [];
+    lines.forEach(function (line) {
+      const text = pdfSafe(line);
+      const chunks = text.length ? text.match(/.{1,90}/g) : [''];
+      chunks.forEach(function (c) {
+        if (cur.length >= 46) { pages.push(cur); cur = []; }
+        cur.push(c);
+      });
+    });
+    if (cur.length) pages.push(cur);
+    if (!pages.length) pages.push(['Naluno books']);
+    const objects = [];
+    function add(body) { objects.push(body); return objects.length; }
+    const font = add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+    const pageIds = [];
+    pages.forEach(function (linesOn) {
+      let stream = 'BT /F1 10 Tf 48 800 Td 14 TL\n';
+      linesOn.forEach(function (line, i) {
+        const safe = String(line).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+        stream += (i === 0 ? '' : 'T*\n') + '(' + safe + ') Tj\n';
+      });
+      stream += 'ET';
+      const contents = add('<< /Length ' + stream.length + ' >>\nstream\n' + stream + '\nendstream');
+      const page = add('<< /Type /Page /Parent PAGES /MediaBox [0 0 595 842] /Contents ' + contents + ' 0 R /Resources << /Font << /F1 ' + font + ' 0 R >> >> >>');
+      pageIds.push(page);
+    });
+    const kids = pageIds.map(function (id) { return id + ' 0 R'; }).join(' ');
+    const pagesObj = add('<< /Type /Pages /Count ' + pageIds.length + ' /Kids [' + kids + '] >>');
+    const catalog = add('<< /Type /Catalog /Pages ' + pagesObj + ' 0 R >>');
+    let pdf = '%PDF-1.4\n';
+    const offsets = [0];
+    objects.forEach(function (body, i) {
+      offsets.push(pdf.length);
+      pdf += (i + 1) + ' 0 obj\n' + body.replace('Parent PAGES', 'Parent ' + pagesObj + ' 0 R') + '\nendobj\n';
+    });
+    const xref = pdf.length;
+    pdf += 'xref\n0 ' + (objects.length + 1) + '\n';
+    pdf += '0000000000 65535 f \n';
+    for (let i = 1; i < offsets.length; i++) {
+      pdf += String(offsets[i]).padStart(10, '0') + ' 00000 n \n';
+    }
+    pdf += 'trailer << /Size ' + (objects.length + 1) + ' /Root ' + catalog + ' 0 R >>\nstartxref\n' + xref + '\n%%EOF';
+    return pdf;
+  }
+  function booksWorkbook(pack) {
+    function xml(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>');
+    }
+    function sheet(name, rows) {
+      const body = rows.map(function (r) {
+        return '<Row>' + r.map(function (cell) {
+          const n = cell !== '' && cell != null && /^-?\d+(\.\d+)?$/.test(String(cell));
+          return '<Cell><Data ss:Type="' + (n ? 'Number' : 'String') + '">' + xml(cell) + '</Data></Cell>';
+        }).join('') + '</Row>';
+      }).join('');
+      return '<Worksheet ss:Name="' + xml(name) + '"><Table>' + body + '</Table></Worksheet>';
+    }
+    return '<?xml version="1.0"?>\n<?mso-application progid="Excel.Sheet"?>\n'
+      + '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">'
+      + sheet('Trial balance', pack.trial)
+      + sheet('Journal', pack.journal)
+      + '</Workbook>';
+  }
+  function mintApp() {
+    try { return firebase.app('naluno-mint'); }
+    catch (_) { return firebase.initializeApp(firebaseConfig, 'naluno-mint'); }
+  }
+  async function createDeskAdmin(email, password, roles) {
+    if (!isSuperAdmin(currentUser)) { toast('Only the superadmin can do that'); return; }
+    email = String(email || '').trim().toLowerCase();
+    password = String(password || '');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast('Enter a real email'); return; }
+    if (password.length < 8) { toast('Password needs at least 8 characters'); return; }
+    if (email === 'magjoed@gmail.com') { toast('That login cannot be reissued'); return; }
+    const db = adminDb();
+    if (!db) { toast('Database is not ready'); return; }
+    let uid = '';
+    try {
+      const cred = await mintApp().auth().createUserWithEmailAndPassword(email, password);
+      uid = cred.user && cred.user.uid;
+    } catch (e) {
+      const code = (e && e.code) || '';
+      if (code !== 'auth/email-already-in-use') {
+        toast((e && e.message) || 'Could not create that login');
+        return;
+      }
+      try {
+        const found = await db.collection('users').where('email', '==', email).limit(1).get();
+        found.forEach(function (doc) { uid = doc.id; });
+      } catch (_) {}
+      if (!uid) {
+        toast('That email already has a login, and this desk could not find the account. Use a new email.');
+        return;
+      }
+    } finally {
+      try { await mintApp().auth().signOut(); } catch (_) {}
+    }
+    if (!uid || uid === SUPER_UID) { toast('That account cannot be issued'); return; }
+    const hash = await hashLocal(uid, password);
+    const row = {
+      email: email,
+      roles: roles,
+      revoked: false,
+      gateHash: hash,
+      createdAt: Date.now(),
+      createdBy: currentUser.uid,
+      updatedAt: Date.now(),
+    };
+    await db.collection('deskOperators').doc(uid).set(row, { merge: true });
+    try { await cloudSetHash(uid, hash); } catch (_) {}
+    await writeAudit('admin-create', uid, email + ' · ' + roles.join(','));
+    toast('Admin created');
+  }
+  async function saveDeskAdmin(uid, patch) {
+    if (!isSuperAdmin(currentUser)) { toast('Only the superadmin can do that'); return; }
+    if (!uid || uid === SUPER_UID) { toast('The superadmin cannot be changed'); return; }
+    const db = adminDb();
+    if (!db) return;
+    patch.updatedAt = Date.now();
+    patch.updatedBy = currentUser.uid;
+    await db.collection('deskOperators').doc(uid).set(patch, { merge: true });
+    await writeAudit(patch.revoked ? 'admin-revoke' : 'admin-update', uid, (patch.roles || []).join(','));
+  }
+
   function renderTab(tab, d) {
     const el = $('adminBody');
     if (!el) return;
+    if (!canDeskTab(tab)) {
+      el.innerHTML = '<p class="sub">This login cannot open that section.</p>';
+      return;
+    }
     d = d || __snap || {};
     const u = d.users || {};
     const c = d.content || {};
@@ -3086,6 +3360,149 @@
       return;
     }
 
+    if (tab === 'books') {
+      if (!canDeskTab('books')) { el.innerHTML = '<p class="sub">This login cannot open the books.</p>'; return; }
+      const pack = booksLines(d);
+      el.innerHTML =
+        card('Books for the accountant',
+          '<p class="sub">Compiled from what this desk can already see. Booked ad maths, support intents, contribution points, and estimated hosting. Nothing here is a bank balance, and no cash has moved. Hand the files to the accountant or auditor as the working papers.</p>'
+          + kpis([
+            ['Ad revenue booked', aed(pack.adsBooked)],
+            ['Support intents', pack.supportN],
+            ['Ledger rows', pack.ledgerN],
+            ['As of', pack.stamp],
+          ])
+          + '<div class="row">'
+          + '<button type="button" class="primary" id="booksCsv">CSV</button>'
+          + '<button type="button" class="primary" id="booksXls">Excel</button>'
+          + '<button type="button" class="primary" id="booksPdf">PDF</button>'
+          + '<button type="button" class="ghost" id="booksJson">JSON</button>'
+          + '</div>'
+          + gap('CSV and Excel are the journal plus a trial balance. PDF is the same statements, page by page. JSON is the same rows for a system that does not want a spreadsheet. Points are labelled as points, not dirhams.'))
+        + card('Trial balance', plainRows(pack.trial[0], pack.trial.slice(1, 18).map(function (r) { return r; })));
+      const base = 'naluno-books-' + pack.stamp;
+      const csvBtn = $('booksCsv');
+      if (csvBtn) csvBtn.onclick = function () {
+        downloadText(base + '.csv', 'text/csv;charset=utf-8',
+          '\uFEFF' + csvTable([['Naluno books', pack.stamp]]) + '\r\n' + csvTable(pack.trial) + '\r\n' + csvTable(pack.journal));
+      };
+      const xlsBtn = $('booksXls');
+      if (xlsBtn) xlsBtn.onclick = function () {
+        downloadText(base + '.xls', 'application/vnd.ms-excel', booksWorkbook(pack));
+      };
+      const pdfBtn = $('booksPdf');
+      if (pdfBtn) pdfBtn.onclick = function () {
+        const lines = ['Naluno books  ' + pack.stamp, 'Working papers. Not a bank statement. Cash has not moved.', ''];
+        pack.trial.forEach(function (r) { lines.push(r.join('  |  ')); });
+        lines.push('');
+        lines.push('Journal');
+        pack.journal.forEach(function (r) { lines.push(r.join('  |  ')); });
+        downloadText(base + '.pdf', 'application/pdf', booksPdf(lines));
+      };
+      const jsonBtn = $('booksJson');
+      if (jsonBtn) jsonBtn.onclick = function () {
+        downloadText(base + '.json', 'application/json', JSON.stringify({
+          asOf: pack.stamp,
+          note: 'Booked, intent, and estimate only. Not cash.',
+          trial: pack.trial,
+          journal: pack.journal,
+        }, null, 2));
+      };
+      return;
+    }
+
+    if (tab === 'admins') {
+      if (!isSuperAdmin(currentUser)) { el.innerHTML = '<p class="sub">Only the superadmin can open this.</p>'; return; }
+      const checks = DESK_TAB_ROLES.map(function (pair) {
+        return '<label class="flag-row" style="border:none;"><input type="checkbox" class="desk-role" value="'
+          + escapeHtml(pair[0]) + '" /> ' + escapeHtml(pair[1]) + '</label>';
+      }).join('');
+      el.innerHTML =
+        card('Superadmin',
+          '<p class="sub">You have every section. This login cannot be revoked, overwritten, or deleted from here.</p>'
+          + '<p class="sub">' + escapeHtml(whoLine(currentUser)) + '</p>')
+        + card('Create an admin',
+          '<label for="deskAdminEmail">Email</label><input id="deskAdminEmail" type="email" autocomplete="off" />'
+          + '<label for="deskAdminPass">Password</label><input id="deskAdminPass" type="text" autocomplete="off" />'
+          + '<p class="sub">They sign in with this email and password, then unlock with the same password. Tick only the sections they may open.</p>'
+          + '<div id="deskRoleList">' + checks + '</div>'
+          + '<div class="row"><button type="button" class="primary" id="deskAdminCreate">Create admin</button></div>'
+          + '<p class="msg" id="deskAdminMsg"></p>')
+        + card('Issued admins', '<div id="deskAdminList"><p class="sub">Loading…</p></div>');
+      const createBtn = $('deskAdminCreate');
+      if (createBtn) createBtn.onclick = async function () {
+        const roles = [];
+        el.querySelectorAll('.desk-role').forEach(function (box) { if (box.checked) roles.push(box.value); });
+        const msg = $('deskAdminMsg');
+        if (!roles.length) { if (msg) msg.textContent = 'Choose at least one section.'; return; }
+        if (msg) msg.textContent = 'Creating…';
+        try {
+          await createDeskAdmin($('deskAdminEmail').value, $('deskAdminPass').value, roles);
+          if (msg) msg.textContent = '';
+          loadTab('admins', true);
+        } catch (e) {
+          if (msg) msg.textContent = (e && e.message) || 'Could not save that admin.';
+        }
+      };
+      const db = adminDb();
+      const list = $('deskAdminList');
+      if (db && list) {
+        db.collection('deskOperators').limit(40).get().then(function (snap) {
+          const rows = [];
+          snap.forEach(function (doc) {
+            if (doc.id === SUPER_UID) return;
+            const data = doc.data() || {};
+            rows.push({ id: doc.id, data: data });
+          });
+          if (!rows.length) { list.innerHTML = '<p class="sub">No other admins yet.</p>'; return; }
+          list.innerHTML = rows.map(function (row) {
+            const data = row.data;
+            const roleBoxes = DESK_TAB_ROLES.map(function (pair) {
+              const on = (data.roles || []).indexOf(pair[0]) >= 0;
+              return '<label class="flag-row" style="border:none;"><input type="checkbox" class="desk-role-edit" data-uid="'
+                + escapeHtml(row.id) + '" value="' + escapeHtml(pair[0]) + '"' + (on ? ' checked' : '') + ' /> '
+                + escapeHtml(pair[1]) + '</label>';
+            }).join('');
+            return '<div class="card" data-admin="' + escapeHtml(row.id) + '">'
+              + '<div class="who">' + escapeHtml(data.email || row.id) + (data.revoked ? ' · revoked' : '') + '</div>'
+              + roleBoxes
+              + '<div class="row">'
+              + '<button type="button" class="ghost desk-save" data-uid="' + escapeHtml(row.id) + '">Save access</button>'
+              + '<button type="button" class="danger desk-revoke" data-uid="' + escapeHtml(row.id) + '" data-next="' + (data.revoked ? '0' : '1') + '">'
+              + (data.revoked ? 'Restore' : 'Revoke') + '</button>'
+              + '</div></div>';
+          }).join('');
+          list.querySelectorAll('.desk-save').forEach(function (btn) {
+            btn.onclick = async function () {
+              const uid = btn.getAttribute('data-uid');
+              const roles = [];
+              list.querySelectorAll('.desk-role-edit').forEach(function (box) {
+                if (box.getAttribute('data-uid') === uid && box.checked) roles.push(box.value);
+              });
+              try {
+                await saveDeskAdmin(uid, { roles: roles, revoked: false });
+                toast('Access saved');
+              } catch (e) { toast((e && e.message) || 'Could not save'); }
+            };
+          });
+          list.querySelectorAll('.desk-revoke').forEach(function (btn) {
+            btn.onclick = async function () {
+              const uid = btn.getAttribute('data-uid');
+              const revoke = btn.getAttribute('data-next') === '1';
+              try {
+                await saveDeskAdmin(uid, { revoked: revoke });
+                toast(revoke ? 'Revoked' : 'Restored');
+                loadTab('admins', true);
+              } catch (e) { toast((e && e.message) || 'Could not update'); }
+            };
+          });
+        }).catch(function () {
+          list.innerHTML = '<p class="sub">Could not read the admin list. Publish firestore.rules so this desk can store admins.</p>';
+        });
+      }
+      return;
+    }
+
     el.innerHTML = '<p class="sub">Unknown section.</p>';
   }
 
@@ -3166,6 +3583,14 @@
   }
 
   async function actUser(uid, action) {
+    if (uid === SUPER_UID || OPERATOR_UIDS[uid]) {
+      toast('That account cannot be changed from here');
+      return;
+    }
+    if (!canDeskTab('users') && !canDeskTab('identity')) {
+      toast('That section is not on this login');
+      return;
+    }
     const reason = window.prompt('Reason for "' + action + '" (saved in the audit log):', '');
     if (reason === null) return;
     if (!String(reason).trim()) { toast('A reason is required'); return; }
@@ -4148,8 +4573,9 @@
     resolveDeskPlace();
     const who = $('consoleWho');
     if (who) who.textContent = whoLine(currentUser) + ' · every change is logged.';
-    __activeTab = 'overview';
+    __activeTab = canDeskTab('overview') ? 'overview' : (__activeTab || 'overview');
     wireAdminTabs();
+    applyDeskTabs();
     try {
       const C = Ccy();
       if (C) {
@@ -4188,6 +4614,7 @@
     const ping = $('workerPing');
     if (ping) ping.textContent = 'Checking account…';
     await refreshOperatorClaim();
+    await loadDeskOperator(currentUser);
 
     if (!isOperator(currentUser)) {
       __needsSetup = false;
@@ -4281,7 +4708,8 @@
         const typedHash = await hashLocal(uid, typed);
         const okCloud = await cloudOk(uid, typed);
         const okLocal = await localOk(uid, typed);
-        if (!okCloud && !okLocal) { setMsg('adminGateMsg', 'Password not accepted.'); return; }
+        const okDesk = !!(__deskOperator && __deskOperator.gateHash && __deskOperator.gateHash === typedHash);
+        if (!okCloud && !okLocal && !okDesk) { setMsg('adminGateMsg', 'Password not accepted.'); return; }
         try {
           await adminWorker('/v1/admin/password', {
             method: 'POST',

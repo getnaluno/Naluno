@@ -381,19 +381,21 @@
       b.__nalunoBcast = true;
       const go = function (e) {
         try { if (e) { e.preventDefault(); e.stopPropagation(); } } catch (_) {}
+        if (b.__nalunoOpening) return;
         const id = b.getAttribute('data-bcast');
         if (!id) return;
-        /* The Signal <video> must be destroyed before the Broadcast player
-           starts. Leaving it (closeSignalViewer used to be missing) kept the
-           decoder and the story overlay, so the Broadcast stuttered or never
-           started. A short gap lets the phone release that decoder. */
+        b.__nalunoOpening = true;
+        /* One press. The story player is released in this same turn so the
+           Broadcast does not wait on a second tap or a decoder gap. */
         releaseSignalPlayer();
-        setTimeout(function () {
+        try {
           if (typeof root.openBroadcastById === 'function') root.openBroadcastById(id);
-        }, 80);
+        } catch (_) {}
       };
-      b.addEventListener('pointerup', go);
-      b.addEventListener('click', function (e) { try { e.preventDefault(); e.stopPropagation(); } catch (_) {} });
+      b.addEventListener('pointerdown', go);
+      b.addEventListener('click', function (e) {
+        try { if (e) { e.preventDefault(); e.stopPropagation(); } } catch (_) {}
+      });
     });
   }
 

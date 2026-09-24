@@ -629,6 +629,13 @@ async function paintBspaceViews(meta){
       + '</div>';
   }
   row.innerHTML = html;
+  if(!row.__statToggle){
+    row.__statToggle = true;
+    row.addEventListener('click', function(e){
+      const card = e.target && e.target.closest ? e.target.closest('.bspace-stat-card') : null;
+      if(card) card.classList.toggle('open');
+    });
+  }
 }
 
 function renderBspaceRelated(){
@@ -861,9 +868,7 @@ async function openBroadcastSpace(meta){
     }
   }catch(_){}
 
-  try{
-    await paintBspaceViews(meta);
-  }catch(_){}
+  try{ paintBspaceViews(meta); }catch(_){}
 
   listenBspaceCollection('conversation', renderBspaceConversation, 'ts');
   listenBspaceCollection('questions', renderBspaceQuestions, 'ts');
@@ -936,7 +941,11 @@ function closeBroadcastSpace(){
     }
   }catch(_){}
   try{ if(typeof nalunoPauseDetachedMedia === 'function') nalunoPauseDetachedMedia(); }catch(_){}
-  try{ document.body.classList.remove('naluno-bspace-open'); }catch(_){}
+  try{ document.body.classList.remove('naluno-bspace-open', 'naluno-bcast-watch', 'naluno-feed-landscape'); }catch(_){}
+  try{
+    const scroller = document.getElementById('broadcastTabScroll');
+    if(scroller) scroller.scrollTop = 0;
+  }catch(_){}
   $('bspace').classList.remove('active');
   if(was){ try{ if(window.nalunoBack) window.nalunoBack.drop('bspace'); }catch(_){} }
 }
@@ -1023,6 +1032,25 @@ async function bspacePost(col, payload){
 }
 
 $('bspaceBack').onclick = closeBroadcastSpace;
+
+(function wireBspaceTidy(){
+  const desc = $('bspaceDesc');
+  if(desc && !desc.__tidy){
+    desc.__tidy = true;
+    desc.onclick = function(){ desc.classList.toggle('open'); };
+  }
+  const strandBtn = $('bspaceStrandToggle');
+  const strandBody = $('bspaceStrandBody');
+  if(strandBtn && strandBody && !strandBtn.__tidy){
+    strandBtn.__tidy = true;
+    strandBtn.onclick = function(){
+      const open = strandBody.hasAttribute('hidden');
+      if(open) strandBody.removeAttribute('hidden');
+      else strandBody.setAttribute('hidden', '');
+      strandBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+  }
+})();
 
 document.querySelectorAll('#bspaceTabs .bspace-tab').forEach(tab=>{
   tab.onclick = ()=> setBspaceTab(tab.dataset.bspan);
@@ -1697,59 +1725,84 @@ function bspaceWatchLiveState(){
 }
 
 
+function bspaceMetaFromRecord(id, d){
+  d = d || {};
+  const chapters = Array.isArray(d.chapters) ? d.chapters : null;
+  const primary = (typeof legacyBroadcastPlayUrl === 'function')
+    ? legacyBroadcastPlayUrl(d)
+    : (d.mediaUrl || d.videoUrl || (chapters && chapters[0] && chapters[0].mediaUrl) || null);
+  let mediaType = d.mediaType || 'photo';
+  if(d.mediaType === 'video' || d.videoUrl) mediaType = 'video';
+  if(mediaType === 'photo' && primary && (typeof looksLikeVideoUrl === 'function' ? looksLikeVideoUrl(primary) : /\.(mp4|webm|mov|m4v)(\?|$)/i.test(primary))){
+    mediaType = 'video';
+  }
+  if(chapters && chapters.length && chapters.some(function(c){ return c && c.mediaUrl && !c.silent && (c.start != null || c.duration); })){
+    if(primary) mediaType = 'video';
+  }
+  const segment = {
+    type: mediaType,
+    dataUrl: mediaType === 'photo' ? primary : null,
+    mediaUrl: primary,
+    videoUrl: mediaType === 'video' ? primary : null,
+    thumbDataUrl: d.thumbUrl || d.thumb || null,
+    text: mediaType === 'text' ? (d.description || d.title) : null,
+    bg: 'linear-gradient(160deg,#1a1f2e,#0d1018)',
+    filterCss: d.filterCss || '',
+    caption: d.description || '',
+    chapters: chapters,
+  };
+  if(segment.type === 'video' && !segment.videoUrl && segment.mediaUrl){
+    segment.videoUrl = segment.mediaUrl;
+  }
+  return {
+    isMine: !!(typeof currentUser !== 'undefined' && currentUser && d.creatorUid === currentUser.uid),
+    broadcastId: id,
+    segment: segment,
+    creatorUid: d.creatorUid,
+    creatorName: d.creatorName,
+    title: d.title,
+    description: d.description,
+    tags: d.tags || [],
+    chapters: d.chapters || null,
+    breathers: d.breathers || null,
+    live: !!d.live,
+    lastLiveStartedAt: d.lastLiveStartedAt || null,
+    lastLiveEndedAt: d.lastLiveEndedAt || null,
+    lastLiveDurationMs: (d.lastLiveDurationMs != null) ? d.lastLiveDurationMs : null,
+    strandId: d.strandId || null,
+    views: typeof d.views === 'number' ? d.views : 0,
+  };
+}
+
+function cachedBroadcastRow(id){
+  const pools = [];
+  try{ if(typeof feedBroadcasts !== 'undefined' && feedBroadcasts) pools.push(feedBroadcasts); }catch(_){}
+  try{ if(typeof myBroadcasts !== 'undefined' && myBroadcasts) pools.push(myBroadcasts); }catch(_){}
+  for(let p = 0; p < pools.length; p++){
+    const list = pools[p] || [];
+    for(let i = 0; i < list.length; i++){
+      if(list[i] && list[i].id === id) return list[i];
+    }
+  }
+  return null;
+}
+
 /* ---- Open permanent Broadcast by Firestore id ---- */
 async function openBroadcastSpaceById(id){
   if(!id){ toast('Missing Broadcast'); return; }
+  const cached = cachedBroadcastRow(id);
+  const cachedPlayable = cached && (cached.mediaUrl || cached.videoUrl || (cached.chapters && cached.chapters.length) || cached.mediaType === 'text' || cached.description);
+  if(cachedPlayable){
+    try{
+      await openBroadcastSpace(bspaceMetaFromRecord(id, cached));
+      return;
+    }catch(_){}
+  }
   if(!fbDb){ toast('Offline'); return; }
   try{
     const snap = await fbDb.collection('broadcasts').doc(id).get();
     if(!snap.exists || snap.data().deleted){ toast('Broadcast not found'); return; }
-    const d = snap.data();
-    const chapters = Array.isArray(d.chapters) ? d.chapters : null;
-    const primary = (typeof legacyBroadcastPlayUrl === 'function')
-      ? legacyBroadcastPlayUrl(d)
-      : (d.mediaUrl || d.videoUrl || (chapters && chapters[0] && chapters[0].mediaUrl) || null);
-    // Infer video when chapters or mediaType say so (never treat uploaded video as photo)
-    let mediaType = d.mediaType || 'photo';
-    if(d.mediaType === 'video' || d.videoUrl) mediaType = 'video';
-    if(mediaType === 'photo' && primary && (typeof looksLikeVideoUrl === 'function' ? looksLikeVideoUrl(primary) : /\.(mp4|webm|mov|m4v)(\?|$)/i.test(primary))){
-      mediaType = 'video';
-    }
-    if(chapters && chapters.length && chapters.some(c => c && c.mediaUrl && !c.silent && (c.start != null || c.duration))) {
-      if(primary) mediaType = 'video';
-    }
-    const segment = {
-      type: mediaType,
-      dataUrl: mediaType === 'photo' ? primary : null,
-      mediaUrl: primary,
-      videoUrl: mediaType === 'video' ? primary : null,
-      thumbDataUrl: d.thumbUrl || d.thumb || null,
-      text: mediaType === 'text' ? (d.description || d.title) : null,
-      bg: 'linear-gradient(160deg,#1a1f2e,#0d1018)',
-      filterCss: d.filterCss || '',
-      caption: d.description || '',
-      chapters: chapters,
-    };
-    if(segment.type === 'video' && !segment.videoUrl && segment.mediaUrl){
-      segment.videoUrl = segment.mediaUrl;
-    }
-    await openBroadcastSpace({
-      isMine: !!(currentUser && d.creatorUid === currentUser.uid),
-      broadcastId: id,
-      segment,
-      creatorUid: d.creatorUid,
-      creatorName: d.creatorName,
-      title: d.title,
-      description: d.description,
-      tags: d.tags || [],
-      chapters: d.chapters || null,
-      breathers: d.breathers || null,
-      live: !!d.live,
-      lastLiveStartedAt: d.lastLiveStartedAt || null,
-      lastLiveEndedAt: d.lastLiveEndedAt || null,
-      lastLiveDurationMs: (d.lastLiveDurationMs != null) ? d.lastLiveDurationMs : null,
-      strandId: d.strandId || null,
-    });
+    await openBroadcastSpace(bspaceMetaFromRecord(id, snap.data()));
   }catch(e){
     console.warn(e);
     toast('Couldn’t open Broadcast');

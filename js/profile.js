@@ -84,6 +84,11 @@ function nalunoShowTab(name){
   if(name === 'frequencies' && typeof clearMissedCallBadge === 'function') clearMissedCallBadge();
   if(name === 'compass' && typeof showCompassLockScreenIfNeeded === 'function') showCompassLockScreenIfNeeded();
   if(name !== 'broadcast'){
+    try{ document.body.classList.remove('naluno-bcast-watch', 'naluno-bspace-open', 'naluno-feed-landscape'); }catch(_){}
+    try{
+      const scroller = document.getElementById('broadcastTabScroll');
+      if(scroller) scroller.scrollTop = 0;
+    }catch(_){}
     try{ if(typeof pauseAllStrandPreviews === 'function') pauseAllStrandPreviews(); }catch(_){}
     try{ if(typeof nalunoPauseDetachedMedia === 'function') nalunoPauseDetachedMedia(); }catch(_){}
   }

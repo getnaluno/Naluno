@@ -832,16 +832,21 @@
   function closeFromBroadcast() {
     const sheet = document.getElementById('bcastAdSheet');
     const was = sheet && sheet.classList.contains('active');
-    if (sheet) sheet.classList.remove('active');
+    if (sheet) {
+      sheet.classList.remove('active');
+      sheet.classList.remove('over-video');
+    }
     if (was) { try { if (window.nalunoBack) window.nalunoBack.drop('bcastAdSheet'); } catch (_) {} }
   }
   function openFromBroadcast(meta, broadcastId) {
     const sheet = document.getElementById('bcastAdSheet');
+    const room = document.getElementById('bspace');
     if (!sheet) return;
-    if (sheet.parentElement !== document.body) document.body.appendChild(sheet);
-    sheet.style.position = 'fixed';
-    sheet.style.inset = '0';
-    sheet.style.zIndex = '2147483000';
+    if (room && sheet.parentElement !== room) room.appendChild(sheet);
+    sheet.classList.add('over-video');
+    sheet.style.position = '';
+    sheet.style.inset = '';
+    sheet.style.zIndex = '';
     const form = document.getElementById('bcastAdForm');
     const pay = document.getElementById('bcastAdPay');
     if (form) form.hidden = false;
@@ -1010,7 +1015,7 @@
       try {
         await db.collection('deskMail').add(mail);
       } catch (e2) {
-        say((e2 && e2.message) || 'Could not send this to the console');
+        say((e2 && e2.message) || 'Could not save this ad.');
         return;
       }
       if (bid && bid.length > 4) {
@@ -1043,9 +1048,7 @@
     const line = document.getElementById('crAdPayAmount');
     if (line) line.textContent = pretty + ' ' + adMoneyCode();
     const note = document.getElementById('crAdPayNote');
-    if (note) note.textContent = paidAed > 0
-      ? 'A payment provider will open here for this amount. It isn’t connected yet, so nothing was charged. The ad is paused in the console for a person to review. It stays off the air until they press Go live.'
-      : 'No prepaid amount was typed. The ad is paused in the console for a person to review. Nothing goes live until they press Go live.';
+    if (note) note.textContent = 'Your ad awaits a review. Once confirmed it will go live.';
     say('');
   }
   function wireCreatorAd() {

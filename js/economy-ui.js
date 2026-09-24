@@ -107,9 +107,7 @@ async function renderContributionPanel(){
 function nalunoSupportButtonHtml(){
   const on = supportIsOn();
   return '<button type="button" id="bspaceSupportBtn" class="bspace-support-btn' + (on ? '' : ' off') + '"'
-    + ' title="' + (on ? 'Support this creator' : 'Creator Support is off') + '">'
-    + (on ? 'Support creator' : 'Support · off')
-    + '</button>';
+    + ' title="' + (on ? 'Support this creator' : 'Support is off') + '">Support</button>';
 }
 
 /* Old shells (v166) still had a Support nav tab. Pull it out so a mixed
@@ -124,46 +122,72 @@ function stripSupportNavTab(){
   }catch(_){}
 }
 
+function supportPanelHtml(){
+  return '<div class="bspace-support-panel">'
+    + '<button type="button" class="bspace-support-head" id="bspaceSupportToggle" aria-expanded="false">'
+    + '<span class="bspace-support-kicker">Support creator</span>'
+    + '<span class="support-flag-chip" id="supportFlagChip">Off</span></button>'
+    + '<div class="support-body" id="bspaceSupportBody" hidden>'
+    + '<div class="support-banner" id="supportBanner"></div>'
+    + nalunoSupportButtonHtml()
+    + '<div id="supportMine"></div></div></div>';
+}
+
+function syncSupportChip(){
+  const on = supportIsOn();
+  const chip = $('supportFlagChip');
+  if(chip) chip.textContent = on ? 'On' : 'Off';
+  const toggle = $('bspaceSupportToggle');
+  if(toggle) toggle.setAttribute('aria-expanded', ($('bspaceSupportBody') && !$('bspaceSupportBody').hasAttribute('hidden')) ? 'true' : 'false');
+}
+
+function toggleSupportBody(){
+  const body = $('bspaceSupportBody');
+  const toggle = $('bspaceSupportToggle');
+  if(!body) return;
+  const open = body.hasAttribute('hidden');
+  if(open) body.removeAttribute('hidden');
+  else body.setAttribute('hidden', '');
+  if(toggle) toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  if(open){
+    try{ renderSupportTab(); }catch(_){}
+  }
+}
+
 function paintBspaceSupportButton(){
   stripSupportNavTab();
   const host = $('bspaceSupportSlot') || $('bspaceJoinBtn');
   if(!host) return;
   let btn = $('bspaceSupportBtn');
-  const on = supportIsOn();
   if(!btn){
     if($('bspaceSupportSlot')){
       const slot = $('bspaceSupportSlot');
       if(slot && !slot.querySelector('.bspace-support-panel')){
-        slot.innerHTML = '<div class="bspace-support-panel">'
-          + '<div class="bspace-support-head"><div class="bspace-support-kicker">Support creator</div>'
-          + '<span class="support-flag-chip" id="supportFlagChip">Off</span></div>'
-          + '<div class="support-banner" id="supportBanner"></div>'
-          + nalunoSupportButtonHtml()
-          + '<div id="supportMine"></div></div>';
+        slot.innerHTML = supportPanelHtml();
       }
       btn = $('bspaceSupportBtn');
     } else {
       const wrap = document.createElement('div');
       wrap.id = 'bspaceSupportSlot';
       wrap.className = 'bspace-support-slot';
-      wrap.innerHTML = '<div class="bspace-support-panel">'
-        + '<div class="bspace-support-head"><div class="bspace-support-kicker">Support creator</div>'
-        + '<span class="support-flag-chip" id="supportFlagChip">Off</span></div>'
-        + '<div class="support-banner" id="supportBanner"></div>'
-        + nalunoSupportButtonHtml()
-        + '<div id="supportMine"></div></div>';
+      wrap.innerHTML = supportPanelHtml();
       host.insertAdjacentElement('afterend', wrap);
       btn = $('bspaceSupportBtn');
     }
   }
-  if(!btn) return;
+  const toggle = $('bspaceSupportToggle');
+  if(toggle && !toggle.__wired){
+    toggle.__wired = true;
+    toggle.onclick = function(e){
+      if(e){ e.preventDefault(); e.stopPropagation(); }
+      toggleSupportBody();
+    };
+  }
+  if(!btn) { syncSupportChip(); return; }
+  const on = supportIsOn();
   btn.classList.toggle('off', !on);
-  const meta = (typeof activeBroadcastMeta !== 'undefined') ? activeBroadcastMeta : null;
-  const first = meta && meta.creatorName ? String(meta.creatorName).split(' ')[0] : '';
-  btn.textContent = on
-    ? (first ? ('Support ' + first) : 'Support creator')
-    : 'Support · off';
-  btn.title = on ? 'Support this creator' : 'Creator Support is off';
+  btn.textContent = 'Support';
+  btn.title = on ? 'Support this creator' : 'Support is off';
   btn.onclick = function(){
     const m = (typeof activeBroadcastMeta !== 'undefined') ? activeBroadcastMeta : null;
     const uid = m && m.creatorUid;
@@ -171,7 +195,11 @@ function paintBspaceSupportButton(){
     const bid = (typeof activeBroadcastId !== 'undefined') ? activeBroadcastId : '';
     openSupportSheet(uid, name, bid);
   };
-  try{ renderSupportTab(); }catch(_){}
+  syncSupportChip();
+  const body = $('bspaceSupportBody');
+  if(body && !body.hasAttribute('hidden')){
+    try{ renderSupportTab(); }catch(_){}
+  }
 }
 
 function listSupportCreators(){
@@ -259,9 +287,10 @@ function renderSupportTab(){
   if(banner){
     banner.className = 'support-banner' + (on ? ' on' : '');
     banner.innerHTML = on
-      ? '<strong>On.</strong> Support is voluntary and separate from watching, talking, or publishing. No payment is taken until a provider is connected — an intent is recorded, nothing is charged.'
-      : '<strong>Off.</strong> This stays under Circle so you can see it. The operator has not switched Creator Support on, so nothing can be charged and no intent is recorded.';
+      ? '<strong>On.</strong> Support is voluntary. Nothing is charged until payments are connected. Choosing an amount records an intent only.'
+      : '<strong>Off.</strong> Nothing can be charged and nothing is recorded.';
   }
+  syncSupportChip();
   if(listEl){
     const creators = listSupportCreators();
     if(!creators.length){
