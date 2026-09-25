@@ -952,6 +952,8 @@
         out.ms = Date.now() - t0;
         out.version = b.version || '';
         out.persist = b.persist || '';
+        out.payments = !!b.payments;
+        out.liveRooms = !!b.liveRooms;
         try {
           const f = await fetch(base + '/v1/flags', { cache: 'no-store' });
           const fb = await f.json().catch(function () { return {}; });
@@ -1325,6 +1327,10 @@
     listenCol('deskAds', 400, 'deskAds');
     listenCol('siteSessions', 800, 'siteSessions', 'startedAt');
     listenCol('siteDays', 180, 'siteDays');
+    listenCol('presenceDays', 2000, 'presenceDays');
+    listenCol('pushPings', 200, 'pushPings');
+    listenCol('pushReceipts', 200, 'pushReceipts');
+    listenCol('payments', 200, 'payments');
     listenCol('toga', 80, 'toga');
     listenCol('strands', 200, 'strands');
     listenCol('bands', 80, 'bands');
@@ -1378,6 +1384,7 @@
       zone: Data ? (Data.adminZone ? Data.adminZone() : Data.localZone()) : undefined,
       beacons: [], originMarks: [], deskMail: [], deskAds: [],
       siteSessions: [], siteDays: [],
+      presenceDays: [], pushPings: [], pushReceipts: [], payments: [],
       reservedHandles: [], handleFlags: [],
       adRates: {},
       currency: {},
@@ -1391,6 +1398,10 @@
       colDocs('deskAds', 400).then(function (r) { pack.deskAds = r; }),
       colDocsOrder('siteSessions', 'startedAt', 800).then(function (r) { pack.siteSessions = r; }),
       colDocs('siteDays', 180).then(function (r) { pack.siteDays = r; }),
+      colDocs('presenceDays', 2000).then(function (r) { pack.presenceDays = r; }),
+      colDocs('pushPings', 200).then(function (r) { pack.pushPings = r; }),
+      colDocs('pushReceipts', 200).then(function (r) { pack.pushReceipts = r; }),
+      colDocs('payments', 200).then(function (r) { pack.payments = r; }),
       colDocs('reservedHandles', 400).then(function (r) { pack.reservedHandles = r; }),
       colDocs('handleFlags', 200).then(function (r) { pack.handleFlags = r; }),
     ];
@@ -2304,6 +2315,23 @@
             ['Signed up ≥30 days ago, active this month', u.still_30_pct == null ? '—' : u.still_30_pct + '%'],
             ['of', (u.still_30 || 0) + ' / ' + (u.still_30_of || 0)]])
           + gap(g.retention || 'Still-here is people who signed up at least N days ago and used the app again in that window.'))
+        + card('Came back on the exact day',
+          kpis([['After 1 day', u.d1_pct == null ? '—' : u.d1_pct + '%'],
+            ['of', (u.d1 || 0) + ' / ' + (u.d1_of || 0)],
+            ['After 7 days', u.d7_pct == null ? '—' : u.d7_pct + '%'],
+            ['of', (u.d7 || 0) + ' / ' + (u.d7_of || 0)]])
+          + gap('A person counts only if they opened Naluno on that later day. A dash means nobody is old enough to measure yet.'))
+        + card('Did the alert arrive?',
+          kpis([['Handed to the push service', (d.proof && d.proof.handed) || 0],
+            ['Failed to hand off', (d.proof && d.proof.failed) || 0],
+            ['Shown on a phone', (d.proof && d.proof.arrived) || 0],
+            ['Tapped', (d.proof && d.proof.opened) || 0]])
+          + gap(g.notifications || ''))
+        + card('Payments confirmed',
+          kpis([['Paid notices', (d.proof && d.proof.paid) || 0],
+            ['Payment step', (d.worker && d.worker.payments) ? 'connected' : 'not connected'],
+            ['Live rooms past 12', (d.worker && d.worker.liveRooms) ? 'connected' : '12 people, direct']])
+          + gap(g.payments || ''))
         + card('What each person costs',
           kpis([['Invoiced this month', aedUsd((d.costs && d.costs.invoice_aed) || 0)],
             ['List-price usage', aedUsd((d.costs && d.costs.metered_aed) || 0)],
@@ -2681,7 +2709,7 @@
             const moneyLine = paidAed > 0
               ? ('Paid ' + aedUsd(paidAed) + ' · Used ' + aedUsd(usedAed) + ' · Left ' + aedUsd(leftAed || 0) + ' · ' + rateBit)
               : ('No prepaid typed · Used ' + aedUsd(usedAed) + ' · ' + rateBit);
-            const payNote = unpaid ? '<div class="sub" style="color:#ffc266;margin-top:4px;">Waiting for payment — provider not connected. Paused until you go live.</div>' : '';
+            const payNote = unpaid ? '<div class="sub" style="color:#ffc266;margin-top:4px;">Waiting for payment. It stays paused until the payment is confirmed and you go live.</div>' : '';
             const reviewNote = reviewHold ? '<div class="sub" style="color:#ffc266;margin-top:4px;">Held for review — paused until you press Go live.</div>' : '';
             const spentNote = spent ? '<div class="sub" style="color:#ffc266;margin-top:4px;">Used up — paused. Type more paid to go live again.</div>' : '';
             const title = a.headline || a.advertiser || a.id;
@@ -3029,7 +3057,7 @@
       const txs = (d.economy && d.economy.support_list) || [];
       el.innerHTML =
         (on
-          ? '<div class="alert ok">Creator Support is ON. It lives inside Broadcast, below Circle. No payment provider is connected, so intents are recorded and no money moves.</div>'
+          ? '<div class="alert ok">Creator Support is ON. It lives inside Broadcast, below Circle. A person is taken to pay. Nothing is marked paid until the payment notice confirms it.</div>'
           : inactiveNote('Creator Support is off. The panel still sits under Circle in Broadcast, inactive. Nothing can be charged.'))
         + kpis([['Place', 'Broadcast · below Circle'], ['State', on ? 'active' : 'inactive'],
           ['Intents on file', txs.length || (d.economy && d.economy.support_transactions) || 0],

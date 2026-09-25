@@ -962,8 +962,10 @@
     say('Saving…');
     const bid = String(doc.broadcastId || '');
     let direct = false;
+    let adId = '';
     try {
-      await db.collection(COL).add(doc);
+      const added = await db.collection(COL).add(doc);
+      adId = added && added.id ? added.id : '';
       direct = true;
     } catch (e) {
       const code = (e && e.code) || '';
@@ -1013,7 +1015,8 @@
         createdAt: doc.createdAt,
       };
       try {
-        await db.collection('deskMail').add(mail);
+        const mailed = await db.collection('deskMail').add(mail);
+        if (sheet) sheet.dataset.mailId = mailed && mailed.id ? mailed.id : '';
       } catch (e2) {
         say((e2 && e2.message) || 'Could not save this ad.');
         return;
@@ -1046,9 +1049,39 @@
     const shown = adFromAed(paidAed);
     const pretty = (Math.round(shown * 100) / 100).toFixed(2);
     const line = document.getElementById('crAdPayAmount');
-    if (line) line.textContent = pretty + ' ' + adMoneyCode();
+    if (line) line.textContent = paidAed > 0 ? (pretty + ' ' + adMoneyCode()) : '';
     const note = document.getElementById('crAdPayNote');
     if (note) note.textContent = 'Your ad awaits a review. Once confirmed it will go live.';
+    const payNow = document.getElementById('crAdPayNow');
+    if (payNow) {
+      payNow.hidden = !(paidAed > 0);
+      payNow.disabled = false;
+      payNow.textContent = 'Pay the prepaid amount';
+      payNow.onclick = async function () {
+        if (typeof nalunoCheckout !== 'function') {
+          say('Payments aren’t available yet. Nothing was charged.');
+          return;
+        }
+        payNow.disabled = true;
+        payNow.textContent = 'Opening…';
+        try {
+          const url = await nalunoCheckout({
+            kind: 'ad',
+            ad_id: adId,
+            mail_id: (sheet && sheet.dataset.mailId) || '',
+            broadcast_id: bid,
+            amount_minor: Math.round(paidAed * 100),
+            currency: 'AED',
+            idempotency_key: 'ad_' + (adId || (sheet && sheet.dataset.mailId) || bid) + '_' + Date.now(),
+          });
+          window.location.href = url;
+        } catch (err) {
+          payNow.disabled = false;
+          payNow.textContent = 'Pay the prepaid amount';
+          say((err && err.message) || 'Payments aren’t available yet. Nothing was charged.');
+        }
+      };
+    }
     say('');
   }
   function wireCreatorAd() {

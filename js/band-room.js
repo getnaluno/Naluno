@@ -1166,6 +1166,7 @@ async function inviteToBand(contactId, mode, btn){
     // Push wake (reuses call-notify worker title/body path)
     try{
       const idToken = await currentUser.getIdToken();
+      const pingId = (typeof nalunoPushId === 'function') ? nalunoPushId() : '';
       fetch(CALL_NOTIFY_WORKER_URL, {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
@@ -1176,8 +1177,17 @@ async function inviteToBand(contactId, mode, btn){
           title: ((currentProfile && currentProfile.name) || 'Someone') + ' invited you to a Band',
           body: b.name + ' · open Band to tune in',
           bandId: b.firestoreId,
+          pingId: pingId,
         }),
-      }).catch(()=>{});
+      }).then(function(res){
+        if(pingId && typeof nalunoNotePush === 'function'){
+          nalunoNotePush({ pingId: pingId, toUid: c.firebaseUid, type: 'band_invite', httpStatus: res ? res.status : 0 });
+        }
+      }).catch(function(){
+        if(pingId && typeof nalunoNotePush === 'function'){
+          nalunoNotePush({ pingId: pingId, toUid: c.firebaseUid, type: 'band_invite', httpStatus: 0 });
+        }
+      });
     }catch(e){}
     if(btn){
       btn.classList.remove('busy','press');

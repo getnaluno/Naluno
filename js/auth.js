@@ -1259,7 +1259,9 @@ function showClosedCallsignGate(data){
   if(body){
     body.textContent = kind === 'violation'
       ? 'Naluno closed this Callsign. Write to Naluno if that was a mistake. It can be restored.'
-      : 'You closed this Callsign. It can be restored. Your handle stays yours.';
+      : (data.erased
+        ? 'This Callsign is off the air. Broadcasts and Signals are removed, and the login is deleted. It cannot be restored.'
+        : 'You closed this Callsign. Broadcasts and Signals are removed. If this login is still here, sign in again and close it once more.');
   }
   el.style.display = 'flex';
   try{ if(typeof nalunoShowSignIn === 'function'){ /* stay signed in so restore can see the uid */ } }catch(_){}
@@ -1307,6 +1309,58 @@ async function notifyDeskOfClose(reason, kind){
   }catch(_){}
 }
 
+async function eraseOwnFiles(){
+  if(!currentUser) return { ok: false };
+  const uid = currentUser.uid;
+  let broadcasts = 0;
+  let signals = 0;
+  if(fbDb){
+    try{
+      const found = await fbDb.collection('broadcasts').where('creatorUid', '==', uid).limit(200).get();
+      for(let i = 0; i < found.docs.length; i++){
+        const row = found.docs[i];
+        await row.ref.set({ deleted: true, deletedAt: Date.now(), live: false }, { merge: true });
+        broadcasts++;
+      }
+    }catch(_){}
+    try{
+      const top = await fbDb.collection('signals').where('uid', '==', uid).limit(200).get();
+      for(let i = 0; i < top.docs.length; i++){
+        await top.docs[i].ref.delete();
+        signals++;
+      }
+    }catch(_){}
+    try{
+      const mine = await fbDb.collection('users').doc(uid).collection('signal').limit(200).get();
+      for(let i = 0; i < mine.docs.length; i++){
+        await mine.docs[i].ref.delete();
+        signals++;
+      }
+    }catch(_){}
+  }
+  const bases = [];
+  try{ if(typeof SIGNAL_UPLOAD_WORKER_URL === 'string') bases.push(SIGNAL_UPLOAD_WORKER_URL); }catch(_){}
+  try{ if(typeof BROADCAST_UPLOAD_WORKER_URL === 'string') bases.push(BROADCAST_UPLOAD_WORKER_URL); }catch(_){}
+  let files = 0;
+  let fileError = false;
+  const token = await currentUser.getIdToken(false);
+  for(let i = 0; i < bases.length; i++){
+    try{
+      const res = await fetch(String(bases[i]).replace(/\/+$/, '') + '/b/purge', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + token },
+      });
+      const body = await res.json().catch(function(){ return {}; });
+      if(res.ok) files += Number(body.deleted) || 0;
+      else if(res.status !== 404 && res.status !== 405) fileError = true;
+    }catch(_){ fileError = true; }
+  }
+  try{
+    if(typeof chatStoreClearAll === 'function') await chatStoreClearAll();
+  }catch(_){}
+  return { ok: !fileError, broadcasts: broadcasts, signals: signals, files: files };
+}
+
 async function closeOwnCallsign(reason){
   if(!currentUser || !fbDb){ toast('Sign in first'); return false; }
   const why = String(reason || '').trim();
@@ -1341,9 +1395,24 @@ async function closeOwnCallsign(reason){
     handle: handle || '',
   });
   try{ await notifyDeskOfClose(why, 'self'); }catch(_){}
-  currentProfile = Object.assign({}, currentProfile || {}, patch);
-  showClosedCallsignGate(patch);
-  toast('Callsign closed');
+  const erased = await eraseOwnFiles();
+  currentProfile = Object.assign({}, currentProfile || {}, patch, { erased: !!erased.ok });
+  showClosedCallsignGate(Object.assign({}, patch, { erased: !!erased.ok }));
+  if(!erased.ok){
+    toast('The Callsign is closed. Some files could not be removed. Stay signed in and close it again.');
+    return true;
+  }
+  try{
+    await currentUser.delete();
+    toast('Callsign closed. This login is deleted.');
+  }catch(e){
+    const code = e && (e.code || e.message) || '';
+    if(String(code).indexOf('requires-recent-login') >= 0){
+      toast('Broadcasts and Signals are removed. Sign in again to delete the login.');
+    }else{
+      toast('Callsign closed. The login could not be deleted yet.');
+    }
+  }
   return true;
 }
 
@@ -1368,7 +1437,7 @@ function bindCallsignCloseForm(){
       if(!mine){ toast('Save a handle first'); return; }
       if(typed !== mine){ toast('Type your handle to confirm'); return; }
       if(reason.length < 8){ toast('Write a reason first'); return; }
-      const ok = window.confirm('Close @' + mine + '? The Callsign leaves the air. It can be restored.');
+      const ok = window.confirm('Close @' + mine + '? This deletes your Broadcasts and Signals and deletes this login. It cannot be restored.');
       if(!ok) return;
       go.disabled = true;
       try{

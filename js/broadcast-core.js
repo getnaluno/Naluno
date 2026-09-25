@@ -571,6 +571,7 @@ async function sendPushToContact(contactOrUid, msg){
     }catch(_){}
     if(!tokens.android && !tokens.web && !tokens.primary) return;
     const idToken = await currentUser.getIdToken(false);
+    const pingId = (typeof nalunoPushId === 'function') ? nalunoPushId() : '';
     const body = {
       calleeUid: uid,
       callerName: (msg && msg.fromName) || (currentProfile && currentProfile.name) || 'Someone',
@@ -578,19 +579,23 @@ async function sendPushToContact(contactOrUid, msg){
       body: (msg && msg.body) || 'Someone is live',
       type: 'broadcast_live',
       broadcastId: (msg && msg.broadcastId) || null,
+      pingId: pingId,
       fcmTokenAndroid: tokens.android,
       fcmTokenWeb: tokens.web,
       fcmToken: tokens.primary,
       fcmTokenPlatform: tokens.platform,
     };
-    await fetch(workerUrl, {
+    const res = await fetch(workerUrl, {
       method: 'POST',
       headers: {
         'Authorization': 'Bearer ' + idToken,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
-    }).catch(function(){});
+    }).catch(function(){ return null; });
+    if(pingId && typeof nalunoNotePush === 'function'){
+      nalunoNotePush({ pingId: pingId, toUid: uid, type: 'broadcast_live', httpStatus: res ? res.status : 0 });
+    }
   }catch(e){ console.warn('[live] push', e); }
 }
 window.sendPushToContact = sendPushToContact;

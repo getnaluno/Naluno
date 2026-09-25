@@ -289,7 +289,7 @@ function renderSupportTab(){
   if(banner){
     banner.className = 'support-banner' + (on ? ' on' : '');
     banner.innerHTML = on
-      ? '<strong>On.</strong> Support is voluntary. Nothing is charged until payments are connected. Choosing an amount records an intent only.'
+      ? '<strong>On.</strong> Support is voluntary. You are taken to pay. Nothing is marked paid until that payment is confirmed.'
       : '<strong>Off.</strong> Nothing can be charged and nothing is recorded.';
   }
   syncSupportChip();
@@ -371,7 +371,7 @@ function openSupportSheet(creatorUid, creatorName, broadcastId){
   const who = $('supportSheetWho');
   const hint = $('supportSheetHint');
   if(who) who.textContent = 'Support ' + String(__supportSheet.name).split(' ')[0];
-  if(hint) hint.textContent = 'Voluntary. Separate from anything you earn. No payment is taken until a provider is connected. Amounts are in ' + supportCcy() + '.';
+  if(hint) hint.textContent = 'Voluntary. Separate from anything you earn. You will be taken to pay. Nothing is marked paid until the payment is confirmed. Amounts are in ' + supportCcy() + '.';
   const row = $('supportAmountRow');
   if(row){
     row.innerHTML = presets.map(function(p, i){
@@ -394,6 +394,21 @@ function openSupportSheet(creatorUid, creatorName, broadcastId){
   try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
 }
 
+async function nalunoCheckout(body){
+  if(typeof currentUser === 'undefined' || !currentUser) throw new Error('Sign in first');
+  const idToken = await currentUser.getIdToken(false);
+  const res = await fetch(ECONOMY_UI_WORKER + '/v1/pay/checkout', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  const data = await res.json().catch(function(){ return {}; });
+  if(!res.ok || !data.ok || !data.url){
+    throw new Error(data.error || 'Payments aren’t available yet. Nothing was charged.');
+  }
+  return data.url;
+}
+
 async function submitSupportIntent(){
   if(!supportIsOn()){
     toast('Creator Support is off. Nothing was charged.');
@@ -404,37 +419,24 @@ async function submitSupportIntent(){
   const amountMinor = Number(__supportSheet.amount) || 0;
   if(!uid || !(amountMinor > 0)){ toast('Pick an amount'); return; }
   const sendBtn = $('supportSheetSend');
-  if(sendBtn){ sendBtn.disabled = true; sendBtn.textContent = 'Recording…'; }
+  if(sendBtn){ sendBtn.disabled = true; sendBtn.textContent = 'Opening…'; }
   const msg = $('supportSheetMsg');
   try{
-    const idToken = await currentUser.getIdToken(false);
-    const res = await fetch(ECONOMY_UI_WORKER + '/v1/support/intent', {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        creator_user_id: uid,
-        broadcast_id: __supportSheet.broadcastId || '',
-        amount_minor: amountMinor,
-        currency: __supportSheet.currency || supportCcy(),
-        // §44: one key per attempt, so a retry can never charge twice.
-        idempotency_key: 'sup_' + (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '' + Math.random())),
-      }),
+    const url = await nalunoCheckout({
+      kind: 'support',
+      creator_user_id: uid,
+      broadcast_id: __supportSheet.broadcastId || '',
+      amount_minor: amountMinor,
+      currency: __supportSheet.currency || supportCcy(),
+      idempotency_key: 'sup_' + (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '' + Math.random())),
     });
-    const body = await res.json().catch(function(){ return {}; });
-    if(!res.ok || !body.ok){
-      if(msg) msg.textContent = body.error || 'Support isn’t available yet';
-      toast(body.error || 'Support isn’t available yet');
-      return;
-    }
-    // §21: the client NEVER treats this as paid. There is no provider wired,
-    // and even when there is, only a verified webhook may mark it succeeded.
-    toast('Recorded — no payment was taken. Payments aren’t live yet.');
-    closeSupportSheet();
-    renderSupportTab();
-  }catch(_){
-    toast('Couldn’t reach the service — nothing was charged');
+    window.location.href = url;
+  }catch(e){
+    const text = (e && e.message) || 'Payments aren’t available yet. Nothing was charged.';
+    if(msg) msg.textContent = text;
+    toast(text);
   }finally{
-    if(sendBtn){ sendBtn.disabled = false; sendBtn.textContent = 'Record support'; }
+    if(sendBtn){ sendBtn.disabled = false; sendBtn.textContent = 'Continue to pay'; }
   }
 }
 

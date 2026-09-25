@@ -26,7 +26,7 @@
     toga_enabled: { label: 'Toga', group: 'Product', note: 'Wall of Fame ranking.' },
     contribution_enabled: { label: 'Contribution tracking', group: 'Community', note: 'Count comments, replies, shares.' },
     community_value_enabled: { label: 'Community value', group: 'Community', note: 'A measurement, never money.' },
-    creator_support_enabled: { label: 'Creator Support', group: 'Money', note: 'Donate to a creator. Lives inside Broadcast, below Circle — not as a nav tab. Off = inactive (nothing can be charged). On = active. Off until a payment provider is connected.' },
+    creator_support_enabled: { label: 'Creator Support', group: 'Money', note: 'Donate to a creator. Lives inside Broadcast, below Circle — not as a nav tab. Off = the payment step is hidden. On = a person can be taken to pay. Nothing is marked paid until the payment is confirmed. Contribution points stay separate from this.' },
     community_rewards_enabled: { label: 'Community Rewards', group: 'Money', note: 'Pool split. Off until switched on.' },
     real_payouts_enabled: { label: 'Real payouts', group: 'Money', note: 'Locked. Requires a signed off-console decision.' },
     content_hub_enabled: { label: 'Content Hub', group: 'Hub', note: 'Sports / movies / channels. Not built yet.' },
@@ -217,6 +217,41 @@
   }
   function createdOf(u) {
     return num(u && (u.createdAt || u.created_at || 0));
+  }
+  function addCalendarDays(ymd, n) {
+    const p = String(ymd || '').split('-');
+    if (p.length !== 3) return '';
+    const dt = new Date(Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12));
+    if (!isFinite(dt.getTime())) return '';
+    dt.setUTCDate(dt.getUTCDate() + n);
+    return dt.toISOString().slice(0, 10);
+  }
+  function cohortReturn(users, days, now, zone) {
+    const have = {};
+    (days || []).forEach(function (row) {
+      const uid = String((row && row.uid) || '');
+      const day = String((row && row.day) || '');
+      if (!uid || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return;
+      if (!have[uid]) have[uid] = {};
+      have[uid][day] = 1;
+    });
+    const today = localYmd(now, zone);
+    function rate(offset) {
+      const cutoff = addCalendarDays(today, -offset);
+      let of = 0;
+      let hit = 0;
+      (users || []).forEach(function (u) {
+        const created = createdOf(u);
+        if (!created) return;
+        const signup = localYmd(created, zone);
+        if (!signup || signup > cutoff) return;
+        of++;
+        const back = addCalendarDays(signup, offset);
+        if (have[u.id] && have[u.id][back]) hit++;
+      });
+      return { of: of, hit: hit, pct: of ? Math.round((hit / of) * 1000) / 10 : null };
+    }
+    return { d1: rate(1), d7: rate(7) };
   }
   function money(minor, ccy) {
     return (num(minor) / 100).toFixed(2) + (ccy ? ' ' + ccy : '');
@@ -1432,6 +1467,10 @@
       const st = String(m.status || '').toLowerCase();
       return !!m.hold || st === 'hold' || st === 'match';
     });
+    const came = cohortReturn(users, raw.presenceDays || [], now, zone);
+    const pings = raw.pushPings || [];
+    const receipts = raw.pushReceipts || [];
+    const payments = raw.payments || [];
 
     return {
       now: now,
@@ -1463,6 +1502,12 @@
         still_30: still30.length,
         still_30_of: aged30.length,
         still_30_pct: still30Pct,
+        d1: came.d1.hit,
+        d1_of: came.d1.of,
+        d1_pct: came.d1.pct,
+        d7: came.d7.hit,
+        d7_of: came.d7.of,
+        d7_pct: came.d7.pct,
         suspended: suspended,
         restricted: restricted,
         closed: closed,
@@ -1578,18 +1623,26 @@
       identity: identity,
       costs: costs,
       audit: audit,
+      proof: {
+        handed: pings.filter(function (p) { return p.status === 'handed'; }).length,
+        failed: pings.filter(function (p) { return p.status === 'failed'; }).length,
+        arrived: receipts.filter(function (r) { return Number(r.arrivedAt) > 0; }).length,
+        opened: receipts.filter(function (r) { return Number(r.openedAt) > 0; }).length,
+        paid: payments.filter(function (p) { return p.status === 'paid'; }).length,
+        payments: payments.length,
+      },
       gaps: {
-        notifications: 'We can see who has a push token. We cannot yet see if each ping arrived.',
+        notifications: 'Handed means the alert was given to the push service. Arrived means a phone showed it. Opened means it was tapped. A phone that was force-stopped cannot report arrival until Naluno is opened again.',
         search: 'Find a Callsign, email, name or account id. Looks up the live handle map, not only the first loaded page of accounts.',
-        payments: 'No payments company is connected. Ledgers exist so the shape is auditable before money moves.',
+        payments: 'A payment is paid only after the signed payment notice says so. Until that notice is connected, nothing is marked paid.',
         content_hub: 'Sports, movies and channels are not in the product yet.',
         cpu_memory: 'Hosting does not show processor or memory use on this console.',
         unit_econ: 'No invoice is connected. The figures are list-price maths from usage. The free hosting plan and Cloudflare currently invoice ' + formatAed(0) + ' until usage goes over those allowances or an invoice is recorded.',
-        retention: 'Still-here is people who signed up at least N days ago and used the app again in that window. A true came-back-after-1-day / 7-day group needs a session log we do not have yet.',
+        retention: 'Came back after 1 day / 7 days counts a person who opened Naluno on that exact later day. Still-here is the wider window.',
         cac: 'We do not guess what it costs to acquire a person, or what they are worth over a lifetime.',
         ad_revenue: 'Booked ad revenue is rate-card maths × observed events. Cash has not moved. There is no outside auction.',
         store: 'Store download counts are not in the live records. Registration is the first number on file.',
-        native: 'Closed-tab ringtone needs the Android app and Unrestricted battery. Lock-screen ring is not available.',
+        native: 'Closed-tab ringtone needs the Android app and Unrestricted battery. The Android app can show the call on the lock screen. A browser tab cannot.',
         wire_store: 'Wireline history lives on the phone. The server is a mailbox: encrypted drops are deleted after the other phone takes them. A photo that is too large for the drop is parked in file storage so it can be fetched, not as the archive.',
         site: 'Website counts are written by the public pages themselves. Country comes from the network (not this phone’s place). A random browser id counts return visits and is not a Callsign. Publish firestore.rules for siteSessions and siteDays or the numbers stay at zero.',
       },
@@ -1610,6 +1663,7 @@
     formatAdminClock: formatAdminClock,
     startOfLocalDay: startOfLocalDay,
     deriveSnapshot: deriveSnapshot,
+    cohortReturn: cohortReturn,
     deriveIdentity: deriveIdentity,
     reportIsOpen: reportIsOpen,
     reportTargetBroadcastId: reportTargetBroadcastId,

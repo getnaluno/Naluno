@@ -1,98 +1,119 @@
 /* ============================================================
    MODULE: js/sfu-live.js
-   Broadcast LIVE scale path (Phase 2 of scale order).
-   1:1 calls.js is NEVER used here.
-
-   Mode:
-   - If window.NALUNO_SFU is configured (url + token endpoint), use SFU client path.
-   - Otherwise fall back to existing mesh in broadcast-live.js (≤12 viewers).
-
-   For 100k+ concurrent viewers you MUST provision a real SFU
-   (LiveKit / Cloudflare Calls / Daily / mediasoup) and set:
-     window.NALUNO_SFU = {
-       enabled: true,
-       // Provider-specific; filled when you have keys
-       provider: 'livekit', // or 'cloudflare' | 'custom'
-       url: '',             // wss://... or https token API
-       getToken: async function({ roomName, uid, role }){ return { token, url }; }
-     };
-
-   This module only defines the contract + feature detection so mesh
-   and SFU can coexist without breaking modules.
+   Broadcast live for more than 12 viewers.
+   The phone asks Naluno to open a room. If that room is not connected,
+   these functions return null and the direct mesh (12 viewers) is used.
+   The room secret never comes back to the phone.
+   1:1 calls are not this module.
    ============================================================ */
 
-function sfuIsConfigured(){
-  try{
-    const c = window.NALUNO_SFU;
-    return !!(c && c.enabled && typeof c.getToken === 'function');
-  }catch(_){ return false; }
+function sfuWorker() {
+  try {
+    if (typeof ECONOMY_UI_WORKER === 'string' && ECONOMY_UI_WORKER) return ECONOMY_UI_WORKER;
+  } catch (_) {}
+  return 'https://naluno-economy.naluno.workers.dev';
 }
 
-function sfuLiveMaxViewers(){
-  // Mesh hard limit stays in broadcast-live.js; SFU has no small hard cap client-side
-  return sfuIsConfigured() ? 100000 : 12;
+function sfuIsConfigured() {
+  return true;
 }
 
-/**
- * Publish local media into an SFU room for a broadcast live session.
- * Returns a handle with { leave } or null if SFU not configured (caller uses mesh).
- */
-async function sfuPublishLive(opts){
-  if(!sfuIsConfigured()) return null;
-  const roomName = opts.roomName || ('bcast_' + (opts.broadcastId || 'x'));
-  const role = 'host';
-  const creds = await window.NALUNO_SFU.getToken({
-    roomName: roomName,
-    uid: (typeof currentUser !== 'undefined' && currentUser) ? currentUser.uid : 'anon',
-    role: role,
-  });
-  trackMetric && trackMetric('sfu_publish_start', { room: roomName });
-  // Provider adapters can be plugged here without touching mesh code.
-  if(window.NALUNO_SFU.provider === 'custom' && typeof window.NALUNO_SFU.publish === 'function'){
-    const handle = await window.NALUNO_SFU.publish({
-      creds: creds,
-      stream: opts.stream,
-      roomName: roomName,
-    });
-    trackMetric && trackMetric('sfu_publish_ok', { room: roomName });
-    return handle;
-  }
-  console.warn('[sfu] provider adapter not installed — set NALUNO_SFU.publish or use mesh');
-  trackMetric && trackMetric('sfu_publish_fail', { reason: 'no_adapter' });
-  return null;
-}
-
-/**
- * Viewer joins SFU room; attaches remote media to videoEl.
- * Returns handle { leave } or null → caller falls back to mesh.
- */
-async function sfuJoinLive(opts){
-  if(!sfuIsConfigured()) return null;
-  const roomName = opts.roomName || ('bcast_' + (opts.broadcastId || 'x'));
-  const creds = await window.NALUNO_SFU.getToken({
-    roomName: roomName,
-    uid: (typeof currentUser !== 'undefined' && currentUser) ? currentUser.uid : 'anon',
-    role: 'viewer',
-  });
-  trackMetric && trackMetric('sfu_join_start', { room: roomName });
-  if(window.NALUNO_SFU.provider === 'custom' && typeof window.NALUNO_SFU.join === 'function'){
-    const handle = await window.NALUNO_SFU.join({
-      creds: creds,
-      videoEl: opts.videoEl,
-      roomName: roomName,
-    });
-    trackMetric && trackMetric('sfu_join_ok', { room: roomName });
-    return handle;
-  }
-  trackMetric && trackMetric('sfu_join_fail', { reason: 'no_adapter' });
-  return null;
-}
-
-/** Call from broadcast-live before enforcing mesh cap.
- *  Never raise the cap unless an SFU handle is actually live. */
-function sfuOrMeshViewerCap(){
-  try{
-    if(window.__nalunoSfuLiveHandle) return sfuLiveMaxViewers();
-  }catch(_){}
+function sfuLiveMaxViewers() {
+  try {
+    if (window.__nalunoSfuLiveHandle) return 100000;
+  } catch (_) {}
   return 12;
+}
+
+function sfuOrMeshViewerCap() {
+  return sfuLiveMaxViewers();
+}
+
+async function sfuPost(path, body) {
+  if (typeof currentUser === 'undefined' || !currentUser) return null;
+  const token = await currentUser.getIdToken(false);
+  const res = await fetch(sfuWorker() + path, {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  const data = await res.json().catch(function () { return {}; });
+  if (!res.ok || !data || !data.ok) return null;
+  return data;
+}
+
+async function sfuPublishLive(opts) {
+  opts = opts || {};
+  if (!opts.stream || !opts.broadcastId) return null;
+  let pc = null;
+  try {
+    pc = new RTCPeerConnection({ bundlePolicy: 'max-bundle', rtcpMuxPolicy: 'require' });
+    opts.stream.getTracks().forEach(function (track) { pc.addTrack(track, opts.stream); });
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    const data = await sfuPost('/v1/live/host', {
+      broadcastId: opts.broadcastId,
+      sdp: offer.sdp,
+      type: offer.type,
+    });
+    if (!data || !data.sdp) {
+      try { pc.close(); } catch (_) {}
+      return null;
+    }
+    await pc.setRemoteDescription({ type: data.type || 'answer', sdp: data.sdp });
+    const broadcastId = opts.broadcastId;
+    return {
+      leave: async function () {
+        try { pc.close(); } catch (_) {}
+        try { await sfuPost('/v1/live/end', { broadcastId: broadcastId }); } catch (_) {}
+      },
+    };
+  } catch (_) {
+    try { if (pc) pc.close(); } catch (__) {}
+    return null;
+  }
+}
+
+async function sfuJoinLive(opts) {
+  opts = opts || {};
+  if (!opts.broadcastId) return null;
+  let pc = null;
+  try {
+    const data = await sfuPost('/v1/live/watch', { broadcastId: opts.broadcastId });
+    if (!data || !data.sdp || !data.sessionId) return null;
+    pc = new RTCPeerConnection({ bundlePolicy: 'max-bundle', rtcpMuxPolicy: 'require' });
+    const remote = new MediaStream();
+    pc.ontrack = function (ev) {
+      if (ev.streams && ev.streams[0]) {
+        ev.streams[0].getTracks().forEach(function (t) {
+          if (!remote.getTracks().some(function (x) { return x.id === t.id; })) remote.addTrack(t);
+        });
+      } else if (ev.track) {
+        remote.addTrack(ev.track);
+      }
+      const v = opts.videoEl || document.getElementById('bspaceViewerLiveVideo');
+      if (v) {
+        v.srcObject = remote;
+        v.play && v.play().catch(function () {});
+      }
+    };
+    await pc.setRemoteDescription({ type: data.type || 'offer', sdp: data.sdp });
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    const sent = await sfuPost('/v1/live/answer', {
+      sessionId: data.sessionId,
+      sdp: answer.sdp,
+      type: answer.type,
+    });
+    if (!sent) {
+      try { pc.close(); } catch (_) {}
+      return null;
+    }
+    return {
+      leave: function () { try { pc.close(); } catch (_) {} },
+    };
+  } catch (_) {
+    try { if (pc) pc.close(); } catch (__) {}
+    return null;
+  }
 }

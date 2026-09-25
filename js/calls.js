@@ -1754,6 +1754,7 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
     try{
       const idToken = await currentUser.getIdToken(firstAttempt ? false : true);
       const tokens = await loadCalleePushTokens();
+      const pingId = (typeof nalunoPushId === 'function') ? nalunoPushId() : '';
       const payload = {
         calleeUid,
         callerName: callerName || (currentProfile && currentProfile.name) || 'Someone',
@@ -1762,6 +1763,7 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
         title: (callerName || (currentProfile && currentProfile.name) || 'Someone') + ' is calling',
         body: 'Tap to answer on Naluno',
         preferPlatform: 'both',
+        pingId: pingId,
         // Explicit tokens — worker uses these first
         fcmTokenAndroid: tokens.android,
         fcmTokenWeb: tokens.web,
@@ -1785,6 +1787,9 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(()=>({}));
+      if(pingId && typeof nalunoNotePush === 'function' && firstAttempt){
+        nalunoNotePush({ pingId: pingId, toUid: calleeUid, type: 'incoming_call', httpStatus: res.status });
+      }
       if(firstAttempt) console.log('[call] push response', res.status, data);
       const detail = String((data && (data.detail || data.error || data.message || JSON.stringify(data))) || '');
       const unregistered = /UNREGISTERED|NotRegistered|NOT_FOUND|no_token|missing_token/i.test(detail + JSON.stringify(data));

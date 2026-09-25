@@ -32,7 +32,16 @@ function bLiveSessionRef(bcastId, viewerUid){
   return fbDb.collection('broadcasts').doc(bcastId).collection('liveSessions').doc(viewerUid);
 }
 
+function bLiveDropSfu(){
+  let handle = null;
+  try{ handle = window.__nalunoSfuLiveHandle; window.__nalunoSfuLiveHandle = null; }catch(_){}
+  if(handle && typeof handle.leave === 'function'){
+    Promise.resolve(handle.leave()).catch(function(){});
+  }
+}
+
 function bLiveCleanupHost(){
+  bLiveDropSfu();
   Object.keys(bLiveHostPcs).forEach(uid => {
     try{ bLiveHostPcs[uid].close(); }catch(_){}
   });
@@ -44,6 +53,7 @@ function bLiveCleanupHost(){
 }
 
 function bLiveCleanupViewer(){
+  bLiveDropSfu();
   bLiveViewerUnsubs.forEach(u=>{ try{ u(); }catch(_){} });
   bLiveViewerUnsubs = [];
   if(bLiveViewerPc){ try{ bLiveViewerPc.close(); }catch(_){} bLiveViewerPc = null; }
@@ -94,6 +104,16 @@ async function bLiveEnsureIce(){
 async function bLiveStartHost(stream){
   if(!fbDb || !currentUser || !activeBroadcastId || !stream) return;
   bLiveCleanupHost();
+  if(typeof sfuPublishLive === 'function'){
+    try{
+      const handle = await sfuPublishLive({ stream: stream, broadcastId: activeBroadcastId });
+      if(handle){
+        window.__nalunoSfuLiveHandle = handle;
+        bLiveHost = true;
+        return;
+      }
+    }catch(_){}
+  }
   bLiveHost = true;
   if(typeof prewarmIceServers === 'function') prewarmIceServers();
 
@@ -301,7 +321,32 @@ async function bLiveStopHost(){
 async function bLiveJoinAsViewer(){
   if(!fbDb || !currentUser || !activeBroadcastId){ toast('Open a live Broadcast first'); return; }
   if(bLiveHost){ toast('You’re already the host'); return; }
-  if(bLiveViewerPc){ toast('Already joined'); return; }
+  if(bLiveViewerPc || window.__nalunoSfuLiveHandle) return;
+
+  if(typeof sfuJoinLive === 'function'){
+    const host = $('bspaceMedia');
+    if(host && !$('bspaceViewerLiveVideo')){
+      host.innerHTML = '<video id="bspaceViewerLiveVideo" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;background:#000;"></video>';
+    }
+    try{
+      const handle = await sfuJoinLive({
+        broadcastId: activeBroadcastId,
+        videoEl: $('bspaceViewerLiveVideo'),
+      });
+      if(handle){
+        window.__nalunoSfuLiveHandle = handle;
+        try{
+          await bLiveSessionRef(activeBroadcastId, currentUser.uid).set({
+            from: currentUser.uid,
+            sfu: true,
+            at: Date.now(),
+          }, { merge: true });
+        }catch(_){}
+        toast('You’re in the live room');
+        return;
+      }
+    }catch(_){}
+  }
 
   if(typeof prewarmIceServers === 'function') prewarmIceServers();
   toast('Joining live…');
@@ -663,10 +708,10 @@ function bLiveOnSpaceOpened(isLive, isCreator){
     if(activeBroadcastId) bLiveWatchViewerCount(activeBroadcastId);
     const badge = $('bspaceLiveBadge');
     if(badge){ badge.style.display = 'block'; badge.textContent = 'Live now — joining'; }
-    if(!bLiveViewerPc){
+    if(!bLiveViewerPc && !window.__nalunoSfuLiveHandle){
       setTimeout(function(){
         try{
-          if(activeBroadcastId && !bLiveViewerPc && !bLiveHost) bLiveJoinAsViewer();
+          if(activeBroadcastId && !bLiveViewerPc && !window.__nalunoSfuLiveHandle && !bLiveHost) bLiveJoinAsViewer();
         }catch(_){}
       }, 350);
     }
