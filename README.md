@@ -1,4 +1,4 @@
-Naluno 2026.09.26a
+Naluno 2026.09.26b
 
 Unzip into the repo root. Publish the site files.
-Workers and firestore.rules did not change.
+Workers and rules did not change.
