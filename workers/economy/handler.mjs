@@ -54,6 +54,9 @@ import {
   applyCheckoutEvent,
 } from "./pay.mjs";
 import {
+  billingSnapshot,
+} from "./books.mjs";
+import {
   callsReady,
   rememberRoom,
   takeRoom,
@@ -2649,6 +2652,13 @@ export async function handleRequest(request, env = {}, ctx = {}) {
     if (path === "/health") {
       const configured = hasSaConfigured(env);
       const saToken = configured ? await saAccessToken(env) : "";
+      let billing = { connected: false, invoices: [] };
+      try {
+        billing = await Promise.race([
+          billingSnapshot(env),
+          new Promise(function (ok) { setTimeout(function () { ok({ connected: false, invoices: [] }); }, 1500); }),
+        ]);
+      } catch (_) {}
       return json({
         ok: true,
         service: "naluno-economy",
@@ -2661,6 +2671,7 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         saError: saToken ? "" : saCache.err || "",
         payments: paymentsReady(env) && !!saToken,
         liveRooms: callsReady(env) && !!saToken,
+        billing: billing,
       });
     }
 
