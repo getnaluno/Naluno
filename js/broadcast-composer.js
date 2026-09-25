@@ -786,25 +786,24 @@ function bcompStartWriting(){
   if(box) box.style.display = 'block';
   if(!bcompChapterCount()) bcompAddChapter('', '');
   const status = $('bcompStatus');
-  if(status) status.textContent = 'Writing — add a title, then publish. This is not a live Broadcast.';
+  if(status) status.textContent = '';
   const pub = $('bcompPublishBtn');
   if(pub){ pub.textContent = 'Publish writing'; pub.removeAttribute('disabled'); }
 }
 
-/* ---- Go live stays on the Broadcast tab, not in this upload ---- */
-async function bcompStartGoLive(){
+/* Details first. The camera starts only after a title. */
+async function bcompStartGoLive(opts){
+  opts = opts || {};
   if(!currentUser || !fbDb){ toast('Sign in to go live'); return; }
-  const title = (($('bcompTitle') && $('bcompTitle').value) || '').trim() || ('Live · ' + new Date().toLocaleString());
-  const tagsRaw = (($('bcompTags') && $('bcompTags').value) || '');
-  const tags = tagsRaw.split(',').map(s=>s.trim()).filter(Boolean).slice(0, 12);
-  const desc = (($('bcompDesc') && $('bcompDesc').value) || '').trim() || 'Live Broadcast';
+  const title = String(opts.title || '').trim();
+  if(!title){ toast('Add a title'); return; }
+  const tags = Array.isArray(opts.tags) ? opts.tags : [];
+  const desc = String(opts.description || '').trim();
   try{
-    toast('Opening live Broadcast…');
-    // Create empty permanent broadcast shell (community features identical)
     const created = await createPermanentBroadcast({
       title,
       description: desc,
-      tags: tags.length ? tags : ['live'],
+      tags: tags.slice(0, 12),
       mediaType: 'video',
       mediaUrl: null,
       thumbUrl: null,
@@ -813,21 +812,46 @@ async function bcompStartGoLive(){
     });
     const id = created && created.id;
     if(!id) throw new Error('Broadcast shell missing id');
-    bcompClose();
     if(typeof openBroadcastSpaceById === 'function'){
       await openBroadcastSpaceById(id);
     }
-    // Start live camera into this space
     if(typeof bspaceStartLive === 'function'){
       await bspaceStartLive();
-    } else {
-      toast('Open Go live from the Broadcast space');
     }
   }catch(e){
     console.warn('[bcomp] go live', e);
     toast(e.message || 'Could not start live');
   }
 }
+
+function bliveClose(){
+  const sheet = $('bliveSetup');
+  if(sheet) sheet.classList.remove('active');
+  try{ if(window.nalunoBack) window.nalunoBack.drop('bliveSetup'); }catch(_){}
+}
+function bliveOpen(){
+  if(!currentUser || !fbDb){ toast('Sign in to go live'); return; }
+  const sheet = $('bliveSetup');
+  if(!sheet){ return; }
+  sheet.classList.add('active');
+  try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
+  const title = $('bliveTitle');
+  if(title){ try{ title.focus(); }catch(_){} }
+}
+async function bliveStart(){
+  const title = (($('bliveTitle') && $('bliveTitle').value) || '').trim();
+  if(!title){ toast('Add a title'); return; }
+  const desc = (($('bliveAbout') && $('bliveAbout').value) || '').trim();
+  const tags = (($('bliveTags') && $('bliveTags').value) || '').split(',').map(function(s){ return s.trim(); }).filter(Boolean).slice(0, 12);
+  const t = $('bliveTitle'), a = $('bliveAbout'), g = $('bliveTags');
+  if(t) t.value = '';
+  if(a) a.value = '';
+  if(g) g.value = '';
+  bliveClose();
+  await bcompStartGoLive({ title: title, description: desc, tags: tags });
+}
+if($('bliveSetupClose')) $('bliveSetupClose').onclick = bliveClose;
+if($('bliveStart')) $('bliveStart').onclick = function(){ bliveStart(); };
 
 function bcompPaintScreen(report){
   const box = $('bcompScreen');

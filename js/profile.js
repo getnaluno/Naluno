@@ -105,8 +105,9 @@ function nalunoCurrentTab(){
    stack is what we apply if that pop arrives without our state object.
    A call keeps its own history in calls.js. */
 window.nalunoBack = (function(){
-  const ORDER = ['discoverSheet','appealSheet','contributionPanel','supportSheet','findNalunoPanel','wireBackupScreen','wireHistoryScreen','signalViewers','reportSheet','bcastAdSheet','downloadsPanel','bcomposer','composer','bviewer','bspace','bandRoom','wirelineThread'];
+  const ORDER = ['bliveSetup','discoverSheet','appealSheet','contributionPanel','supportSheet','findNalunoPanel','wireBackupScreen','wireHistoryScreen','signalViewers','reportSheet','bcastAdSheet','downloadsPanel','bcomposer','composer','bviewer','bspace','bandRoom','wirelineThread'];
   const CLOSE = {
+    bliveSetup: function(){ try{ if(typeof bliveClose === 'function') bliveClose(); }catch(_){} },
     discoverSheet: function(){ try{ if(window.NalunoDiscover && window.NalunoDiscover.close) window.NalunoDiscover.close(); }catch(_){} },
     appealSheet: function(){ try{ if(typeof closeSafetyAppeal === 'function') closeSafetyAppeal(); }catch(_){} },
     contributionPanel: function(){ try{ if(typeof closeContributionPanel === 'function') closeContributionPanel(); }catch(_){} },

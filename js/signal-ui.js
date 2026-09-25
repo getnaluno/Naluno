@@ -1960,10 +1960,9 @@ if(typeof openContactSignalStory === 'function'){
 }
 
 
-/* Live starts from the Broadcast tab. It does not open the upload sheet. */
 function openGoLiveFromSignal(){
-  if(typeof bcompStartGoLive === 'function'){
-    bcompStartGoLive();
+  if(typeof bliveOpen === 'function'){
+    bliveOpen();
     return;
   }
   toast('Broadcast tools still loading');

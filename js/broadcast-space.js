@@ -771,7 +771,8 @@ async function openBroadcastSpace(meta){
   $('bspaceCreatorName').textContent = meta.creatorName || 'Someone';
   $('bspaceCreatorMeta').textContent = meta.isMine ? 'Your Broadcast' : 'Creator Circle';
   $('bspaceTitle').textContent = title;
-  $('bspaceDesc').textContent = desc;
+  $('bspaceDesc').textContent = bspaceShownAbout(desc);
+  bspaceCloseEdit();
   try{
     const note = $('bspaceModNote');
     if(note){
@@ -798,6 +799,7 @@ async function openBroadcastSpace(meta){
   if($('bspaceDeleteBtn')) $('bspaceDeleteBtn').style.display = isCreator ? 'inline-block' : 'none';
   if($('bspaceReportBtn')) $('bspaceReportBtn').style.display = isCreator ? 'none' : 'inline-block';
   if($('bspaceAdvertiseBtn')) $('bspaceAdvertiseBtn').style.display = isCreator ? 'inline-block' : 'none';
+  if($('bspaceEditBtn')) $('bspaceEditBtn').style.display = isCreator ? 'inline-block' : 'none';
   try{
     const O = window.NalunoOfflineBroadcast, btn = $('bspaceSaveOfflineBtn');
     if(O && btn && activeBroadcastId){
@@ -3106,3 +3108,116 @@ async function replaceBroadcastChapterWithFile(index, file){
     toast((e && e.message) || 'Replace failed');
   }
 }
+
+function bspaceShownAbout(desc){
+  const d = String(desc || '').trim();
+  if(!d || d === 'Live Broadcast') return '';
+  if(d === 'Watch, join the conversation, and explore questions and resources.') return '';
+  return d;
+}
+function bspaceCloseEdit(){
+  const box = $('bspaceEdit');
+  if(box) box.hidden = true;
+  const title = $('bspaceTitle');
+  const desc = $('bspaceDesc');
+  if(title) title.style.display = '';
+  if(desc) desc.style.display = '';
+}
+function bspaceOpenEdit(){
+  if(!activeBroadcastMeta || !activeBroadcastId) return;
+  const isCreator = !!(activeBroadcastMeta.isMine || (currentUser && activeBroadcastMeta.creatorUid === currentUser.uid));
+  if(!isCreator) return;
+  const box = $('bspaceEdit');
+  if(!box) return;
+  const title = $('bspaceEditTitle');
+  const about = $('bspaceEditAbout');
+  if(title) title.value = activeBroadcastMeta.title || '';
+  if(about) about.value = bspaceShownAbout(activeBroadcastMeta.description);
+  const host = $('bspaceEditChapters');
+  if(host){
+    host.innerHTML = '';
+    const writing = activeBroadcastMeta.segment && activeBroadcastMeta.segment.type === 'writing';
+    const chapters = writing && Array.isArray(activeBroadcastMeta.chapters) ? activeBroadcastMeta.chapters : [];
+    chapters.forEach(function(c, i){
+      const block = document.createElement('div');
+      block.className = 'bspace-edit-ch';
+      block.style.margin = '0 0 8px';
+      const ti = document.createElement('input');
+      ti.maxLength = 80;
+      ti.setAttribute('data-ch-title', String(i));
+      ti.value = (c && c.title) || '';
+      ti.style.cssText = 'width:100%;margin-bottom:6px;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:var(--surface-2);color:var(--text);font-size:14px;font-family:inherit;';
+      const tx = document.createElement('textarea');
+      tx.maxLength = 20000;
+      tx.rows = 6;
+      tx.setAttribute('data-ch-text', String(i));
+      tx.value = (c && c.text) || '';
+      tx.style.cssText = 'width:100%;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:var(--surface-2);color:var(--text);font-size:15px;line-height:1.45;font-family:inherit;resize:vertical;';
+      block.appendChild(ti);
+      block.appendChild(tx);
+      host.appendChild(block);
+    });
+  }
+  box.hidden = false;
+  const shownTitle = $('bspaceTitle');
+  const shownDesc = $('bspaceDesc');
+  if(shownTitle) shownTitle.style.display = 'none';
+  if(shownDesc) shownDesc.style.display = 'none';
+  try{ if($('bspaceMoreMenu')) $('bspaceMoreMenu').hidden = true; }catch(_){}
+}
+async function bspaceSaveEdit(){
+  if(!fbDb || !activeBroadcastId || !currentUser) return;
+  const title = (($('bspaceEditTitle') && $('bspaceEditTitle').value) || '').trim();
+  if(!title){ toast('Add a title'); return; }
+  const description = (($('bspaceEditAbout') && $('bspaceEditAbout').value) || '').trim().slice(0, 2000);
+  const writing = activeBroadcastMeta && activeBroadcastMeta.segment && activeBroadcastMeta.segment.type === 'writing';
+  const patch = {
+    title: title.slice(0, 120),
+    description: description,
+    updatedAt: Date.now(),
+    searchText: [title, description, (typeof currentProfile !== 'undefined' && currentProfile && currentProfile.name) || ''].join(' ').toLowerCase().slice(0, 6000),
+  };
+  if(writing){
+    const chapters = [];
+    document.querySelectorAll('#bspaceEditChapters .bspace-edit-ch').forEach(function(block, i){
+      const textEl = block.querySelector('[data-ch-text]');
+      const titleEl = block.querySelector('[data-ch-title]');
+      const text = ((textEl && textEl.value) || '').trim();
+      if(!text) return;
+      const chTitle = ((titleEl && titleEl.value) || '').trim().slice(0, 80) || ('Chapter ' + (i + 1));
+      chapters.push({ index: chapters.length, title: chTitle, text: text.slice(0, 20000) });
+    });
+    if(!chapters.length){ toast('The writing is empty'); return; }
+    const body = chapters.map(function(c){ return (c.title ? c.title + '\n' : '') + c.text; }).join('\n\n').slice(0, 80000);
+    patch.chapters = chapters;
+    patch.body = body;
+    patch.words = body.split(/\s+/).filter(Boolean).length;
+    patch.searchText = [title, description, body.slice(0, 4000)].join(' ').toLowerCase().slice(0, 8000);
+  }
+  const btn = $('bspaceEditSave');
+  if(btn) btn.disabled = true;
+  try{
+    await fbDb.collection('broadcasts').doc(activeBroadcastId).update(patch);
+    activeBroadcastMeta.title = patch.title;
+    activeBroadcastMeta.description = description;
+    if(patch.chapters){
+      activeBroadcastMeta.chapters = patch.chapters;
+      activeBroadcastMeta.body = patch.body;
+      if(activeBroadcastMeta.segment){
+        activeBroadcastMeta.segment.chapters = patch.chapters;
+        activeBroadcastMeta.segment.text = patch.body;
+      }
+      try{ renderBspaceMedia(activeBroadcastMeta.segment); }catch(_){}
+    }
+    $('bspaceTitle').textContent = patch.title;
+    $('bspaceDesc').textContent = description;
+    bspaceCloseEdit();
+  }catch(e){
+    toast((e && e.message) || 'Could not save');
+  }finally{
+    if(btn) btn.disabled = false;
+  }
+}
+if($('bspaceEditBtn')) $('bspaceEditBtn').onclick = function(){ bspaceOpenEdit(); };
+if($('bspaceEditCancel')) $('bspaceEditCancel').onclick = function(){ bspaceCloseEdit(); };
+if($('bspaceEditSave')) $('bspaceEditSave').onclick = function(){ bspaceSaveEdit(); };
