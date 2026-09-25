@@ -168,7 +168,7 @@ export default {
     }
 
     if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
-      return json({ ok: true, service: 'naluno-signal-upload', routes: ['POST /', 'POST /b/init', 'PUT /b/part', 'POST /b/complete', 'GET /o/**'] }, 200, origin);
+      return json({ ok: true, service: 'naluno-signal-upload', routes: ['POST /', 'POST /b/init', 'PUT /b/part', 'POST /b/complete', 'POST /b/purge', 'GET /o/**'] }, 200, origin);
     }
 
     if ((request.method === 'GET' || request.method === 'HEAD') && url.pathname.startsWith('/o/')) {
@@ -199,6 +199,32 @@ export default {
 
     if (!env.SIGNAL_BUCKET) {
       return json({ error: 'R2 binding missing (SIGNAL_BUCKET)' }, 500, origin);
+    }
+
+    /* Delete only this person's own files. The prefix is the signed-in uid. */
+    if (url.pathname === '/b/purge' && request.method === 'POST') {
+      const prefix = 'u/' + uid + '/';
+      let cursor = undefined;
+      let deleted = 0;
+      let pages = 0;
+      try {
+        while (pages < 20) {
+          pages++;
+          const listed = await env.SIGNAL_BUCKET.list({ prefix: prefix, cursor: cursor, limit: 500 });
+          const objs = (listed && listed.objects) || [];
+          for (let i = 0; i < objs.length; i++) {
+            const key = String(objs[i].key || '');
+            if (key.indexOf(prefix) !== 0) continue;
+            await env.SIGNAL_BUCKET.delete(key);
+            deleted++;
+          }
+          if (!listed || !listed.truncated) break;
+          cursor = listed.cursor;
+        }
+        return json({ ok: true, deleted: deleted }, 200, origin);
+      } catch (e) {
+        return json({ error: e.message || 'Could not remove files' }, 500, origin);
+      }
     }
 
     /* Chunked Broadcast upload — same bucket, no 95MB whole-file POST */

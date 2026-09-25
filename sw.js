@@ -70,8 +70,8 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v206';
-const APP_BUILD = '20260925a';
+const CACHE_NAME = 'naluno-shell-v207';
+const APP_BUILD = '20260925b';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -86,7 +86,7 @@ const CORE_ASSETS = [
   '/js/signal-core.js', '/js/signal-ui.js', '/js/signal-social.js', '/js/broadcast-offline.js',
   '/js/sfu-live.js', '/js/compass.js', '/js/weather.js', '/js/beacon.js', '/js/find.js', '/js/profile.js', '/js/notifications.js',
   '/js/ice-core.js', '/js/compat-lock.js', '/js/keep-alive.js', '/js/media-contain.js',
-  '/js/diagnostics.js', '/js/currency.js', '/js/economy.js', '/js/economy-ui.js', '/js/onboard.js', '/js/presence.js', '/js/handle-guard.js',
+  '/js/diagnostics.js', '/js/currency.js', '/js/economy.js', '/js/economy-ui.js', '/js/onboard.js', '/js/presence.js', '/js/session-log.js', '/js/push-receipt.js', '/js/handle-guard.js',
 ];
 
 self.addEventListener('install', event=>{
@@ -499,7 +499,7 @@ async function closeCallNotifications(callId){
     });
   }catch(_){}
 }
-function callNotifyOpts(callId, body){
+function callNotifyOpts(callId, body, pingId){
   const appUrl = callId
     ? ('/app/?call=' + encodeURIComponent(callId))
     : '/app/';
@@ -512,7 +512,7 @@ function callNotifyOpts(callId, body){
     requireInteraction: true,
     silent: false,
     vibrate: [500, 200, 500, 200, 500, 200, 500],
-    data: { callId: callId || '', type: 'incoming_call', url: appUrl },
+    data: { callId: callId || '', type: 'incoming_call', url: appUrl, pingId: pingId || '' },
     actions: [
       { action: 'answer', title: 'Answer' },
       { action: 'decline', title: 'Decline' },
@@ -523,13 +523,13 @@ function callNotifyOpts(callId, body){
  *  play in-page audio in a hidden PWA; repeating a noisy notification is
  *  how a backgrounded web app actually rings. Stops the instant the page
  *  says the call was handled. */
-function startRingLoop(callId, title, body, loop){
+function startRingLoop(callId, title, body, loop, pingId){
   if(callId && isCallHandled(callId)) return;
   const t = title || 'Incoming call — Naluno';
   const b = body || 'Tap to answer';
   const already = !!(callId && ringLoopTimers[callId]);
   if(!already){
-    self.registration.showNotification(t, callNotifyOpts(callId, b)).catch(function(){});
+    self.registration.showNotification(t, callNotifyOpts(callId, b, pingId)).catch(function(){});
   }
   if(loop === false) return;
   if(already) return;
@@ -542,7 +542,7 @@ function startRingLoop(callId, title, body, loop){
       return;
     }
     n++;
-    self.registration.showNotification(t, callNotifyOpts(callId, b)).catch(function(){});
+    self.registration.showNotification(t, callNotifyOpts(callId, b, pingId)).catch(function(){});
     if(callId) ringLoopTimers[callId] = setTimeout(tick, 2200);
   }
   if(callId) ringLoopTimers[callId] = setTimeout(tick, 2200);
@@ -579,7 +579,8 @@ try{
       if(!isCall) return;
       if(callId && isCallHandled(callId)) return;
       const who = data.callerName || (data.title || '').replace(/\s+is calling$/i, '') || 'Someone';
-      startRingLoop(callId, who + ' is calling', data.body || 'Tap to answer on Naluno');
+      startRingLoop(callId, who + ' is calling', data.body || 'Tap to answer on Naluno', undefined, data.pingId || '');
+      notePushArrival(data);
     });
   }
 }catch(e){}
@@ -613,6 +614,29 @@ self.addEventListener('message', event=>{
   }
 });
 
+function notePushArrival(data){
+  data = data || {};
+  const row = {
+    id: String(data.pingId || data.callId || data.broadcastId || Date.now()),
+    pingId: String(data.pingId || ''),
+    type: String(data.type || (data.callId ? 'incoming_call' : '')),
+    arrivedAt: Date.now(),
+    openedAt: 0,
+  };
+  return self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(list){
+    if(list && list.length){
+      list.forEach(function(client){
+        try{ client.postMessage({ type: 'naluno-push-arrived', row: row }); }catch(_){}
+      });
+      return;
+    }
+    return caches.open('naluno-push-receipts').then(function(cache){
+      const url = 'https://naluno.local/push/' + row.arrivedAt + '/' + encodeURIComponent(row.id);
+      return cache.put(new Request(url), new Response(JSON.stringify(row), { headers: { 'Content-Type': 'application/json' } }));
+    });
+  }).catch(function(){});
+}
+
 self.addEventListener('push', event=>{
   let data = {};
   try{ data = event.data ? event.data.json() : {}; }catch(e){ try{ data = { body: event.data.text() }; }catch(_){} }
@@ -632,7 +656,8 @@ self.addEventListener('push', event=>{
     const title = data.title || 'Incoming call — Naluno';
     const body = data.body || 'Tap to answer';
     event.waitUntil((async ()=>{
-      startRingLoop(callId, title, body);
+      startRingLoop(callId, title, body, undefined, data.pingId || '');
+      notePushArrival(data);
       const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
       for(const client of clientList){
         try{ client.postMessage({ type: 'naluno-incoming-call', callId }); }catch(_){}
@@ -645,13 +670,14 @@ self.addEventListener('push', event=>{
   const body = data.body || '';
   const broadcastId = data.broadcastId || '';
   event.waitUntil((async ()=>{
+    notePushArrival(data);
     await self.registration.showNotification(title, {
       body, icon: './icon-192.png', badge: './icon-192.png',
       tag: (data.type || 'naluno') + ':' + (broadcastId || Date.now()),
       renotify: false,
       requireInteraction: false,
       silent: false,
-      data: { type: data.type || 'general', broadcastId, url: broadcastId ? ('./?broadcast=' + encodeURIComponent(broadcastId)) : './' },
+      data: { type: data.type || 'general', broadcastId, pingId: data.pingId || '', url: broadcastId ? ('./?broadcast=' + encodeURIComponent(broadcastId)) : './' },
     });
   })());
 });
@@ -659,6 +685,14 @@ self.addEventListener('push', event=>{
 self.addEventListener('notificationclick', event=>{
   event.notification.close();
   const data = event.notification.data || {};
+  try{
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(list){
+      const row = { pingId: data.pingId || '', id: data.pingId || data.callId || data.broadcastId || '', type: data.type || '' };
+      list.forEach(function(client){
+        try{ client.postMessage({ type: 'naluno-push-opened', row: row }); }catch(_){}
+      });
+    });
+  }catch(_){}
   if(data.type && data.type !== 'incoming_call'){
     // Non-call notification: just open/focus the app at the right place —
     // never post a fake "incoming call" message for something that isn't one.

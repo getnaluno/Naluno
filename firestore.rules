@@ -1035,6 +1035,56 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    /* One row per person per day. The owner writes only their own day.
+       The desk reads the set to see who came back. */
+    match /presenceDays/{id} {
+      allow read: if isOperator();
+      allow create, update: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.day is string
+        && request.resource.data.day.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && id == request.auth.uid + '_' + request.resource.data.day
+        && request.resource.data.lastAt is number;
+      allow delete: if false;
+    }
+
+    /* The sender records that an alert was handed to the push service.
+       The phone that received it records arrival and a tap.
+       Neither side can write the other's row. */
+    match /pushPings/{id} {
+      allow read: if isOperator();
+      allow create: if isSignedIn()
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.toUid is string
+        && request.resource.data.pingId == id
+        && request.resource.data.status in ['handed', 'failed']
+        && request.resource.data.sentAt is number;
+      allow update, delete: if false;
+    }
+    match /pushReceipts/{id} {
+      allow read: if isOperator();
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.arrivedAt is number
+        && request.resource.data.pingId is string;
+      allow update: if isSignedIn()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['openedAt', 'arrivedAt', 'pingId', 'type']);
+      allow delete: if false;
+    }
+
+    /* Paid only by the service account, after a signed payment notice.
+       A phone cannot mark itself paid. */
+    match /payments/{id} {
+      allow read: if isOperator();
+      allow write: if false;
+    }
+    match /liveRooms/{id} {
+      allow read: if isOperator();
+      allow write: if false;
+    }
+
     match /users/{uid}/circle/{memberUid} {
       allow read: if isSignedIn();
       allow write: if isSignedIn() && (isOwner(uid) || memberUid == request.auth.uid);
