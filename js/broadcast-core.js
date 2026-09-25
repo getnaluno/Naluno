@@ -68,11 +68,11 @@ function broadcastIsWriting(b){
   return !!(b && (b.mediaType === 'writing' || b.kind === 'writing'));
 }
 function broadcastCoverUrl(b){
+  if(window.NalunoPass && typeof NalunoPass.coverUrl === 'function') return NalunoPass.coverUrl(b);
   if(!broadcastIsWriting(b)) return '';
   const url = (b.thumbUrl || b.mediaUrl || '');
   if(!url) return '';
-  if(typeof nalunoThumbLooksDead === 'function' && nalunoThumbLooksDead(url)) return '';
-  if(typeof looksLikeVideoUrl === 'function' && looksLikeVideoUrl(url)) return '';
+  if(/\.(mp4|webm|mov|m4v|m3u8)(\?|$)/i.test(url)) return '';
   return url;
 }
 function broadcastFeedText(b){
@@ -113,6 +113,8 @@ function broadcastThumbHtml(b){
   if(preview){
     inner = (photo ? `<img src="${escapeHtml(photo)}" alt="" class="strand-poster"${rescue} />` : `<img alt="" class="strand-poster" data-need-thumb="1"${rescue} style="display:none" />`)
       + `<video class="strand-preview" muted playsinline webkit-playsinline loop preload="none" poster="${escapeHtml(photo)}" data-preview-src="${escapeHtml(preview)}" data-naluno-preview="1"></video>`;
+  } else if(photo && writing){
+    inner = `<img src="${escapeHtml(photo)}" alt="" class="bcast-plate-media" />`;
   } else if(photo){
     inner = `<img src="${escapeHtml(photo)}" alt="" class="bcast-plate-media" loading="lazy"${rescue} />`;
   } else if(writing){

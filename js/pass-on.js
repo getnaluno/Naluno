@@ -89,6 +89,15 @@
     };
   }
 
+  function coverUrl(b) {
+    if (!b || (b.mediaType !== 'writing' && b.kind !== 'writing')) return '';
+    const url = String(b.thumbUrl || b.mediaUrl || '');
+    if (!url) return '';
+    if (/naluno-signal-upload/i.test(url)) return '';
+    if (/\.(mp4|webm|mov|m4v|m3u8)(\?|$)/i.test(url)) return '';
+    return url;
+  }
+
   function byline(credit) {
     if (!credit || !credit.creatorName) return '';
     return 'Original Broadcast by ' + credit.creatorName;
@@ -102,5 +111,6 @@
     lockedCredit: lockedCredit,
     creditForShare: creditForShare,
     byline: byline,
+    coverUrl: coverUrl,
   };
 });

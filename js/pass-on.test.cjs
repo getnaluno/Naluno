@@ -49,4 +49,8 @@ assert.strictEqual(fresh.creatorName, 'Magambo');
 assert.strictEqual(Pass.textKey(piece), Pass.textKey(piece));
 assert.notStrictEqual(Pass.textKey(piece), Pass.textKey(piece + ' extra sentence about the rain and the street and the cup'));
 
+assert.strictEqual(Pass.coverUrl({ mediaType: 'writing', thumbUrl: 'https://upload.example/o/b/photo-1' }), 'https://upload.example/o/b/photo-1');
+assert.strictEqual(Pass.coverUrl({ mediaType: 'writing', mediaUrl: 'https://upload.example/o/b/clip.mp4' }), '');
+assert.strictEqual(Pass.coverUrl({ mediaType: 'video', thumbUrl: 'https://upload.example/o/b/photo-1' }), '');
+
 console.log('pass-on tests passed');

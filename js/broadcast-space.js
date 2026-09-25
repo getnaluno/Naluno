@@ -137,84 +137,112 @@ async function bspaceSpeakWriting(text, lang, btn){
   });
 }
 
+function bspacePaintWriting(seg){
+  const box = $('bspaceWriting');
+  const listen = $('bspaceListenWrap');
+  if(!box) return;
+  const chapters = (seg && seg.chapters && seg.chapters.length) ? seg.chapters : [{ title: '', text: (seg && seg.text) || '' }];
+  const nav = chapters.length > 1
+    ? '<div style="display:flex;gap:6px;overflow:auto;padding:0 0 10px;">' + chapters.map(function(c, i){
+        return '<button type="button" data-write-ch="' + i + '" style="flex:0 0 auto;border-radius:999px;border:1px solid var(--line);background:' + (i === 0 ? 'rgba(124,255,178,.16)' : 'transparent') + ';color:var(--text);padding:6px 10px;font-size:12px;">' + bspaceEscape(c.title || ('Chapter ' + (i + 1))) + '</button>';
+      }).join('') + '</div>'
+    : '';
+  box.hidden = false;
+  box.innerHTML = nav + chapters.map(function(c, i){
+    const text = String(c.text || '');
+    const long = text.length > 180;
+    return '<article data-write-body="' + i + '" style="' + (i ? 'display:none;' : '') + '">'
+      + (c.title ? '<h2 style="margin:0 0 10px;font-family:var(--font-futuristic);font-size:18px;">' + bspaceEscape(c.title) + '</h2>' : '')
+      + '<div class="bspace-read-clamp" data-clamp="' + (long ? '1' : '0') + '" style="font-size:16px;line-height:1.55;white-space:pre-wrap;">' + bspaceEscape(text) + '</div>'
+      + (long ? '<button type="button" class="bspace-mini" data-write-more="' + i + '" style="margin-top:8px;">See more</button>' : '')
+      + '</article>';
+  }).join('');
+  if(listen) listen.hidden = false;
+  box.querySelectorAll('[data-write-ch]').forEach(function(btn){
+    btn.onclick = function(){
+      const n = btn.getAttribute('data-write-ch');
+      box.querySelectorAll('[data-write-body]').forEach(function(el){
+        el.style.display = el.getAttribute('data-write-body') === n ? 'block' : 'none';
+      });
+      box.querySelectorAll('[data-write-ch]').forEach(function(b){
+        b.style.background = b === btn ? 'rgba(124,255,178,.16)' : 'transparent';
+      });
+    };
+  });
+  box.querySelectorAll('[data-write-more]').forEach(function(btn){
+    btn.onclick = function(e){
+      if(e) e.stopPropagation();
+      const n = btn.getAttribute('data-write-more');
+      const article = box.querySelector('[data-write-body="' + n + '"]');
+      const clamp = article && article.querySelector('.bspace-read-clamp');
+      if(!clamp) return;
+      const open = clamp.getAttribute('data-clamp') === '1';
+      clamp.setAttribute('data-clamp', open ? '0' : '1');
+      btn.textContent = open ? 'See less' : 'See more';
+    };
+  });
+}
+function bspaceClearWriting(){
+  const box = $('bspaceWriting');
+  const listen = $('bspaceListenWrap');
+  if(box){ box.hidden = true; box.innerHTML = ''; }
+  if(listen) listen.hidden = true;
+  bspaceStopSpeak();
+}
+(function wireBspaceListen(){
+  const btn = $('bspaceListenBtn');
+  const hearBtn = $('bspaceHearBtn');
+  const hear = $('bspaceHear');
+  if(!btn || btn.__wired) return;
+  btn.__wired = true;
+  btn.onclick = function(e){
+    if(e) e.stopPropagation();
+    const box = $('bspaceWriting');
+    let shown = null;
+    if(box){
+      box.querySelectorAll('[data-write-body]').forEach(function(el){
+        if(!shown && el.style.display !== 'none') shown = el;
+      });
+    }
+    const text = shown ? shown.innerText : ((activeBroadcastMeta && (activeBroadcastMeta.body || (activeBroadcastMeta.segment && activeBroadcastMeta.segment.text))) || '');
+    bspaceSpeakWriting(text, hear ? hear.value : '', btn);
+  };
+  if(hearBtn && hear){
+    hearBtn.onclick = function(e){
+      if(e){ e.preventDefault(); e.stopPropagation(); }
+      hear.hidden = !hear.hidden;
+    };
+  }
+})();
+
 function renderBspaceMedia(seg){
   const host = $('bspaceMedia');
   const hero = $('bspaceHero');
-  if(hero) hero.classList.toggle('is-read', !!(seg && seg.type === 'writing'));
+  const writing = !!(seg && seg.type === 'writing');
+  const photo = writing && seg.thumbUrl && !/\.(mp4|webm|mov|m4v|m3u8)(\?|$)/i.test(seg.thumbUrl) ? seg.thumbUrl : '';
+  if(hero){
+    hero.classList.toggle('is-read', writing && !photo);
+    hero.classList.toggle('is-plain', writing && !photo);
+    hero.classList.toggle('is-photo', !!photo);
+  }
   if(!host) return;
   if(!seg){
+    bspaceClearWriting();
     host.innerHTML = `<div class="bspace-hero-text" style="color:var(--text-dim);">No media</div>`;
     return;
   }
-  if(seg.type === 'writing'){
+  if(writing){
     const dock = $('bspaceSeekDock');
     if(dock) dock.remove();
-    const chapters = (seg.chapters && seg.chapters.length) ? seg.chapters : [{ title: '', text: seg.text || '' }];
-    const nav = chapters.length > 1
-      ? '<div style="display:flex;gap:6px;overflow:auto;padding:0 0 10px;">' + chapters.map(function(c, i){
-          return '<button type="button" data-write-ch="' + i + '" style="flex:0 0 auto;border-radius:999px;border:1px solid var(--line);background:' + (i === 0 ? 'rgba(124,255,178,.16)' : 'transparent') + ';color:var(--text);padding:6px 10px;font-size:12px;">' + bspaceEscape(c.title || ('Chapter ' + (i + 1))) + '</button>';
-        }).join('') + '</div>'
-      : '';
-    const hear = '<div class="bspace-listen"><button type="button" class="bspace-mini" id="bspaceListenBtn">Listen</button>'
-      + '<select id="bspaceHear" aria-label="Listen in">'
-      + '<option value="">As written</option>'
-      + '<option value="en">English</option>'
-      + '<option value="lg">Luganda</option>'
-      + '<option value="sw">Kiswahili</option>'
-      + '<option value="fr">French</option>'
-      + '<option value="ar">Arabic</option>'
-      + '<option value="es">Spanish</option>'
-      + '</select></div>';
-    host.innerHTML = '<div class="bspace-read" style="height:100%;overflow:auto;padding:18px 16px 28px;text-align:left;">'
-      + (seg.thumbUrl ? '<img src="' + bspaceEscape(seg.thumbUrl) + '" alt="" style="width:100%;max-height:46vh;object-fit:cover;border-radius:14px;margin:0 0 14px;display:block;background:#000;" />' : '')
-      + hear
-      + nav
-      + chapters.map(function(c, i){
-          const text = String(c.text || '');
-          const long = text.length > 180;
-          return '<article data-write-body="' + i + '" style="' + (i ? 'display:none;' : '') + '">'
-            + (c.title ? '<h2 style="margin:0 0 10px;font-family:var(--font-futuristic);font-size:18px;">' + bspaceEscape(c.title) + '</h2>' : '')
-            + '<div class="bspace-read-clamp" data-clamp="' + (long ? '1' : '0') + '" style="font-size:16px;line-height:1.55;white-space:pre-wrap;">' + bspaceEscape(text) + '</div>'
-            + (long ? '<button type="button" class="bspace-mini" data-write-more="' + i + '" style="margin-top:8px;">See more</button>' : '')
-            + '</article>';
-        }).join('')
-      + '</div>';
-    host.querySelectorAll('[data-write-ch]').forEach(function(btn){
-      btn.onclick = function(){
-        const n = btn.getAttribute('data-write-ch');
-        host.querySelectorAll('[data-write-body]').forEach(function(el){
-          el.style.display = el.getAttribute('data-write-body') === n ? 'block' : 'none';
-        });
-        host.querySelectorAll('[data-write-ch]').forEach(function(b){
-          b.style.background = b === btn ? 'rgba(124,255,178,.16)' : 'transparent';
-        });
-      };
-    });
-    host.querySelectorAll('[data-write-more]').forEach(function(btn){
-      btn.onclick = function(e){
-        if(e) e.stopPropagation();
-        const n = btn.getAttribute('data-write-more');
-        const article = host.querySelector('[data-write-body="' + n + '"]');
-        const clamp = article && article.querySelector('.bspace-read-clamp');
-        if(!clamp) return;
-        const open = clamp.getAttribute('data-clamp') === '1';
-        clamp.setAttribute('data-clamp', open ? '0' : '1');
-        btn.textContent = open ? 'See less' : 'See more';
-      };
-    });
-    const listenBtn = host.querySelector('#bspaceListenBtn');
-    if(listenBtn){
-      listenBtn.onclick = function(e){
-        if(e) e.stopPropagation();
-        const hearSel = host.querySelector('#bspaceHear');
-        const lang = hearSel ? hearSel.value : '';
-        const shown = host.querySelector('[data-write-body]:not([style*="display:none"])') || host.querySelector('[data-write-body]');
-        const text = shown ? shown.innerText : (seg.text || '');
-        bspaceSpeakWriting(text, lang, listenBtn);
-      };
+    if(photo){
+      host.innerHTML = '<img class="bspace-cover" alt="" src="' + bspaceEscape(photo) + '" />';
+    } else {
+      host.innerHTML = '';
     }
+    bspacePaintWriting(seg);
     return;
   }
+  bspaceClearWriting();
   if(seg.type === 'text'){
     host.innerHTML = `<div class="bspace-hero-text" style="background:${seg.bg || 'var(--surface)'};">${bspaceEscape(seg.text || '')}</div>`;
     return;
@@ -1072,6 +1100,9 @@ async function openBroadcastSpace(meta){
     by.textContent = line;
     by.hidden = !line;
   }
+  const quiet = $('bspaceQuiet');
+  if(quiet) quiet.open = false;
+  try{ if($('bspaceMoreMenu')) $('bspaceMoreMenu').hidden = true; }catch(_){}
   bspaceCloseEdit();
   try{
     const note = $('bspaceModNote');
