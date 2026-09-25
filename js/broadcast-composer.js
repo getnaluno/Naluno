@@ -15,7 +15,20 @@ let bcompFile = null;       // original File
 let bcompPreviewUrl = null;
 let bcompCompressedBlob = null;
 let bcompDuration = 0;
+let bcompCoverFile = null;
+let bcompCoverUrl = '';
 let bcompKind = null; // 'video' | 'photo' | 'writing' | null
+function bcompClearCover(){
+  bcompCoverFile = null;
+  if(bcompCoverUrl){ try{ URL.revokeObjectURL(bcompCoverUrl); }catch(_){} }
+  bcompCoverUrl = '';
+  const img = $('bcompCoverPreview');
+  if(img){ img.removeAttribute('src'); img.style.display = 'none'; }
+  const clr = $('bcompCoverClear');
+  if(clr) clr.style.display = 'none';
+  const input = $('bcompCoverInput');
+  if(input) input.value = '';
+}
 let bcompPublishing = false;
 
 function bcompOpen(){
@@ -77,6 +90,7 @@ function bcompReset(){
   if(write) write.style.display = 'none';
   const chapters = $('bcompChapters');
   if(chapters) chapters.innerHTML = '';
+  bcompClearCover();
   window._bcompOrigin = null;
   window._bcompOriginAck = false;
   window._bcompScreen = null;
@@ -477,6 +491,20 @@ async function bcompPublish(){
     }catch(_){}
   }
   if(bcompKind === 'writing'){
+    if(bcompCoverFile && typeof runNalunoScreen === 'function'){
+      try{
+        const imgScreen = await Promise.race([
+          runNalunoScreen(bcompCoverFile, title, 0),
+          new Promise(function(ok){ setTimeout(function(){ ok(null); }, 6000); }),
+        ]);
+        if(imgScreen && imgScreen.decision === 'block'){
+          bcompPublishing = false;
+          bcompPaintScreen(imgScreen);
+          toast('This photo cannot go out.');
+          return;
+        }
+      }catch(_){}
+    }
     const piece = [title, desc].concat(bcompCollectChapters().map(function(c){ return c.title + '\n' + c.text; })).join('\n');
     let hold = null;
     try{
@@ -504,7 +532,8 @@ async function bcompPublish(){
   const needsAck = (typeof originNeedsAck === 'function')
     ? originNeedsAck(window._bcompOrigin)
     : (window._bcompOrigin && (window._bcompOrigin.hold || window._bcompOrigin.status === 'match'));
-  if(needsAck && !window._bcompOriginAck){
+  const nalunoCopy = !!(window._bcompOrigin && window._bcompOrigin.matchBroadcastId && window._bcompOrigin.matchCreatorUid && currentUser && window._bcompOrigin.matchCreatorUid !== currentUser.uid);
+  if(needsAck && !nalunoCopy && !window._bcompOriginAck){
     bcompPublishing = false;
     bcompPaintOrigin(window._bcompOrigin);
     toast('OriginID held this post — another creator already published a close match. Tick the box if it is yours, licensed, or a cover.');
@@ -547,6 +576,7 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
   const snapTags = tags.slice();
   const snapChapters = bcompKind === 'writing' ? bcompCollectChapters() : null;
   const snapBody = snapChapters ? snapChapters.map(function(c){ return (c.title ? c.title + '\n' : '') + c.text; }).join('\n\n') : '';
+  const snapCover = bcompKind === 'writing' ? bcompCoverFile : null;
   const snapStrandId = strandId;
   const snapStrandName = strandName;
   const snapOrigin = window._bcompOrigin || null;
@@ -560,17 +590,28 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
     run: async (progress)=>{
       if(snapKind === 'writing'){
         if(progress) progress('Saving writing…');
+        let coverUrl = null;
+        if(snapCover){
+          if(progress) progress('Uploading photo…');
+          coverUrl = (typeof uploadPhotoToR2 === 'function') ? await uploadPhotoToR2(snapCover) : null;
+          if(!coverUrl) throw new Error('Could not upload the photo');
+        }
         const words = snapBody.split(/\s+/).filter(Boolean).length;
+        let credit = null;
+        try{
+          if(typeof broadcastWritingCredit === 'function') credit = await broadcastWritingCredit(snapBody);
+        }catch(_){}
         const b = await createPermanentBroadcast({
           title: snapTitle, description: snapDesc, tags: snapTags,
           publishAt: snapPublishAt, visibility: snapVisibility,
-          mediaType: 'writing', mediaUrl: null, thumbUrl: null,
+          mediaType: 'writing', mediaUrl: coverUrl, thumbUrl: coverUrl,
           body: snapBody,
           words: words,
           durationSec: Math.max(30, Math.round(words / 3.3)),
           chapters: snapChapters,
           strandId: snapStrandId, strandName: snapStrandName,
           origin: { status: 'clear', score: 0, hold: false, skipped: true },
+          originCredit: credit,
           screen: snapScreen || { decision: 'allow', engine: 'text' },
         });
         if(typeof loadFeedBroadcasts === 'function') await loadFeedBroadcasts();
@@ -658,6 +699,7 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
         mediaType, mediaUrl, thumbUrl, filterCss: '',
         chapters, breathers,
         strandId: snapStrandId, strandName: snapStrandName, origin: snapOrigin,
+        originCredit: (typeof broadcastCreditFromOrigin === 'function') ? broadcastCreditFromOrigin(snapOrigin) : null,
         screen: snapScreen,
       });
       if(typeof loadFeedBroadcasts === 'function') await loadFeedBroadcasts();
@@ -722,6 +764,22 @@ if($('bcompWriteBtn')){
     bcompStartWriting();
   };
 }
+if($('bcompCoverInput')){
+  $('bcompCoverInput').onchange = function(){
+    const file = $('bcompCoverInput').files && $('bcompCoverInput').files[0];
+    if(!file) return;
+    const image = (file.type || '').indexOf('image/') === 0 || /\.(jpe?g|png|webp|gif)$/i.test(file.name || '');
+    if(!image){ toast('Choose a photo'); return; }
+    bcompClearCover();
+    bcompCoverFile = file;
+    bcompCoverUrl = URL.createObjectURL(file);
+    const img = $('bcompCoverPreview');
+    if(img){ img.src = bcompCoverUrl; img.style.display = 'block'; }
+    const clr = $('bcompCoverClear');
+    if(clr) clr.style.display = 'inline';
+  };
+}
+if($('bcompCoverClear')) $('bcompCoverClear').onclick = function(){ bcompClearCover(); };
 if($('bcompAddChapter')){
   $('bcompAddChapter').onclick = function(e){
     if(e){ e.preventDefault(); }

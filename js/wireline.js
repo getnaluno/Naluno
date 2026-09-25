@@ -1817,7 +1817,7 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
     }
     if(!raced.ok) throw raced.error;
     if(queueId) removeFromMessageQueue(queueId);
-    if(!queueId && payload && payload.type === 'text'){
+    if(!queueId && payload && payload.type === 'text' && $('threadInput')){
       $('threadInput').value = '';
       autoSizeThreadInput();
       updateComposerButtons();

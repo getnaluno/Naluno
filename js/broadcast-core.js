@@ -64,39 +64,76 @@ function strandShareUrl(id){
   return base.replace(/\/$/, '') + '/?strand=' + encodeURIComponent(id);
 }
 
+function broadcastIsWriting(b){
+  return !!(b && (b.mediaType === 'writing' || b.kind === 'writing'));
+}
+function broadcastCoverUrl(b){
+  if(!broadcastIsWriting(b)) return '';
+  const url = (b.thumbUrl || b.mediaUrl || '');
+  if(!url) return '';
+  if(typeof nalunoThumbLooksDead === 'function' && nalunoThumbLooksDead(url)) return '';
+  if(typeof looksLikeVideoUrl === 'function' && looksLikeVideoUrl(url)) return '';
+  return url;
+}
+function broadcastFeedText(b){
+  if(!b) return { text: '', more: false, lines: 4 };
+  const writing = broadcastIsWriting(b);
+  const bare = writing && !broadcastCoverUrl(b);
+  const raw = writing ? (b.body || b.description || '') : (b.description || '');
+  const lines = bare ? 8 : 4;
+  if(window.NalunoRoomThreads && typeof NalunoRoomThreads.feedCopy === 'function'){
+    return NalunoRoomThreads.feedCopy(raw, lines);
+  }
+  const text = String(raw).replace(/\s+/g, ' ').trim();
+  return { text: text, more: text.length > lines * 34, lines: lines };
+}
+
 /** Unique Naluno thumbnail: diagonal “frequency plate” with mint edge + title band */
 function broadcastThumbHtml(b){
-  const title = escapeHtml((b.title || 'Broadcast').slice(0, 48));
+  const title = escapeHtml((b.title || 'Broadcast').slice(0, 80));
   const creator = escapeHtml((b.creatorName || 'Someone').split(' ')[0]);
-  const writing = b.mediaType === 'writing' || b.kind === 'writing';
+  const writing = broadcastIsWriting(b);
+  const cover = broadcastCoverUrl(b);
   const thumb = (b.thumbUrl && !(typeof nalunoThumbLooksDead === 'function' && nalunoThumbLooksDead(b.thumbUrl))) ? b.thumbUrl : '';
-  const photo = writing ? '' : (thumb || ((b.mediaType === 'photo') ? (b.mediaUrl || '') : ''));
+  const photo = writing ? cover : (thumb || ((b.mediaType === 'photo') ? (b.mediaUrl || '') : ''));
   const preview = (!writing && !b.live && b.mediaType !== 'photo')
     ? (b.mediaUrl || b.videoUrl || '')
     : '';
   const rescue = preview ? ` data-media="${escapeHtml(preview)}" data-bcast-id="${escapeHtml(b.id || '')}" onerror="nalunoRescueThumb(this)"` : '';
+  const copy = broadcastFeedText(b);
+  const excerptHtml = copy.text
+    ? `<div class="bcast-plate-copy"><p class="bcast-plate-excerpt">${escapeHtml(copy.text)}</p>${copy.more ? '<span class="bcast-plate-more">See more</span>' : ''}</div>`
+    : '';
+  let mins = 0;
+  if(writing){
+    const words = Number(b.words) || (copy.text ? copy.text.split(' ').length : 0);
+    mins = Math.max(1, Math.round((Number(b.durationSec) || (words / 3.3)) / 60));
+  }
   let inner;
   if(preview){
     inner = (photo ? `<img src="${escapeHtml(photo)}" alt="" class="strand-poster"${rescue} />` : `<img alt="" class="strand-poster" data-need-thumb="1"${rescue} style="display:none" />`)
       + `<video class="strand-preview" muted playsinline webkit-playsinline loop preload="none" poster="${escapeHtml(photo)}" data-preview-src="${escapeHtml(preview)}" data-naluno-preview="1"></video>`;
   } else if(photo){
     inner = `<img src="${escapeHtml(photo)}" alt="" class="bcast-plate-media" loading="lazy"${rescue} />`;
+  } else if(writing){
+    inner = `<div class="bcast-plate-read"><div class="bcast-plate-kicker">Writing${mins ? ' · ' + mins + ' min' : ''}</div>${excerptHtml || '<p class="bcast-plate-excerpt">Writing</p>'}</div>`;
   } else {
-    const excerpt = writing
-      ? String(b.body || b.description || '').replace(/\s+/g, ' ').trim().slice(0, 140)
-      : '';
-    inner = writing
-      ? `<div class="bcast-plate-fallback" style="padding:16px;align-items:flex-end;text-align:left;font-size:12px;line-height:1.35;font-weight:500;">${excerpt ? escapeHtml(excerpt) : 'Writing'}</div>`
-      : `<div class="bcast-plate-fallback">${escapeHtml((b.creatorName || '?').slice(0,1).toUpperCase())}</div>`;
+    inner = `<div class="bcast-plate-fallback">${escapeHtml((b.creatorName || '?').slice(0,1).toUpperCase())}</div>`;
   }
   const live = b.live ? `<span class="bcast-plate-live">LIVE</span>` : '';
-  const writeMark = writing && !b.live ? `<span class="bcast-plate-live" style="background:rgba(124,255,178,.16);color:var(--mint);border-color:rgba(124,255,178,.4);">Writing</span>` : '';
+  const writeMark = writing && cover && !b.live ? `<span class="bcast-plate-live" style="background:rgba(124,255,178,.16);color:var(--mint);border-color:rgba(124,255,178,.4);">Writing</span>` : '';
   const hold = (!b.live && b.held) ? `<span class="bcast-plate-live" style="background:rgba(255,194,102,.2);color:#ffc266;border-color:rgba(255,194,102,.4);">Waiting</span>` : '';
   const down = (!b.live && b.hidden) ? `<span class="bcast-plate-live" style="background:rgba(255,84,112,.18);color:#ff8a9a;border-color:rgba(255,84,112,.4);">Taken down</span>` : '';
   const viewsBit = (typeof formatNalunoViews === 'function' && (b.shareViews !== false))
     ? `<span class="bcast-plate-views">${escapeHtml(formatNalunoViews(b.views || 0))}</span>`
     : '';
-  return `<article class="bcast-plate" data-broadcast-id="${escapeHtml(b.id)}" role="button" tabindex="0">
+  const writingBand = (writing && cover && excerptHtml)
+    ? `<div class="bcast-plate-kicker">Writing${mins ? ' · ' + mins + ' min' : ''}</div>${excerptHtml}`
+    : '';
+  const credit = (window.NalunoPass && typeof NalunoPass.lockedCredit === 'function') ? NalunoPass.lockedCredit(b) : null;
+  const byline = (credit && window.NalunoPass.byline) ? `<div class="bcast-plate-by">${escapeHtml(NalunoPass.byline(credit))}</div>` : '';
+  const metaExcerpt = writing ? writingBand : excerptHtml;
+  return `<article class="bcast-plate${writing ? ' is-writing' : ''}${writing && cover ? ' has-photo' : ''}" data-broadcast-id="${escapeHtml(b.id)}" role="button" tabindex="0">
     <div class="bcast-plate-frame">
       ${inner}
       ${live}
@@ -108,7 +145,9 @@ function broadcastThumbHtml(b){
     </div>
     <div class="bcast-plate-meta">
       <div class="bcast-plate-title">${title}</div>
-      <div class="bcast-plate-sub">${creator}${b.strandName ? ' · ' + escapeHtml(b.strandName) : (b.tags && b.tags[0] ? ' · ' + escapeHtml(b.tags[0]) : '')}</div>
+      ${metaExcerpt}
+      <div class="bcast-plate-sub">${creator}${mins && cover ? ' · ' + mins + ' min' : ''}${b.strandName ? ' · ' + escapeHtml(b.strandName) : (b.tags && b.tags[0] ? ' · ' + escapeHtml(b.tags[0]) : '')}</div>
+      ${byline}
     </div>
   </article>`;
 }
@@ -188,7 +227,48 @@ async function nalunoPlaceBroadcast(id, screen){
   }catch(_){ return null; }
 }
 
-async function createPermanentBroadcast({ title, description, tags, mediaType, mediaUrl, thumbUrl, filterCss, chapters, breathers, strandId, strandName, origin, screen, publishAt, visibility, body, words, durationSec }){
+async function broadcastWritingCredit(text){
+  if(!text || !window.NalunoPass || typeof NalunoPass.findCredit !== 'function') return null;
+  const uid = (typeof currentUser !== 'undefined' && currentUser) ? currentUser.uid : '';
+  const rows = [];
+  const seen = {};
+  function add(row){
+    if(!row || !row.id || seen[row.id]) return;
+    seen[row.id] = 1;
+    rows.push(row);
+  }
+  try{ (feedBroadcasts || []).forEach(add); }catch(_){}
+  try{ (typeof myBroadcasts !== 'undefined' && myBroadcasts || []).forEach(add); }catch(_){}
+  if(typeof fbDb !== 'undefined' && fbDb){
+    try{
+      const key = NalunoPass.textKey(text);
+      if(key){
+        const exact = await fbDb.collection('broadcasts').where('textKey', '==', key).limit(8).get();
+        exact.docs.forEach(function(d){ add(Object.assign({ id: d.id }, d.data() || {})); });
+      }
+    }catch(_){}
+    try{
+      const snap = await fbDb.collection('broadcasts').orderBy('createdAt', 'desc').limit(80).get();
+      snap.docs.forEach(function(d){ add(Object.assign({ id: d.id }, d.data() || {})); });
+    }catch(_){}
+  }
+  return NalunoPass.findCredit(text, rows, uid);
+}
+function broadcastCreditFromOrigin(origin){
+  if(!origin || !origin.matchBroadcastId || !origin.matchCreatorUid) return null;
+  const uid = (typeof currentUser !== 'undefined' && currentUser) ? currentUser.uid : '';
+  if(origin.matchCreatorUid === uid) return null;
+  if((Number(origin.score) || 0) < 86 && origin.status !== 'match') return null;
+  return {
+    broadcastId: String(origin.matchBroadcastId),
+    creatorUid: String(origin.matchCreatorUid),
+    creatorName: String(origin.matchCreatorName || 'Someone').slice(0, 80),
+    title: String(origin.matchTitle || '').slice(0, 120),
+    locked: true,
+  };
+}
+
+async function createPermanentBroadcast({ title, description, tags, mediaType, mediaUrl, thumbUrl, filterCss, chapters, breathers, strandId, strandName, origin, screen, publishAt, visibility, body, words, durationSec, originCredit, repostOf }){
   if(!currentUser || !fbDb) throw new Error('Sign in required');
   const now = Date.now();
   const ref = fbDb.collection('broadcasts').doc();
@@ -233,6 +313,7 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
     originDna: (origin && origin.dna) || '',
     originMatchTitle: (origin && origin.matchTitle) || '',
     originHold: !!(origin && origin.hold),
+    repostOf: repostOf ? String(repostOf) : null,
     memberUids: [currentUser.uid],
     live: false,
     liveAt: null,
@@ -245,6 +326,19 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
       ...(tags || []),
     ].join(' ').toLowerCase(),
   };
+  if(mediaType === 'writing' && window.NalunoPass && typeof NalunoPass.textKey === 'function'){
+    const key = NalunoPass.textKey(body || '');
+    if(key) doc.textKey = key;
+  }
+  if(originCredit && originCredit.creatorUid && originCredit.creatorUid !== currentUser.uid && originCredit.creatorName){
+    doc.originCredit = {
+      broadcastId: String(originCredit.broadcastId || ''),
+      creatorUid: String(originCredit.creatorUid),
+      creatorName: String(originCredit.creatorName).slice(0, 80),
+      title: String(originCredit.title || '').slice(0, 120),
+      locked: true,
+    };
+  }
   let safetyHold = null;
   try{
     if(window.NalunoSafety && typeof window.NalunoSafety.scorePublicText === 'function'){
