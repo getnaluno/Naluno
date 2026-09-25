@@ -61,17 +61,28 @@ function openContributionPanel(){
   panel.classList.add('active');
   try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
   renderContributionPanel();
+  if(openContributionPanel._timer) clearInterval(openContributionPanel._timer);
+  openContributionPanel._timer = setInterval(function(){
+    const open = $('contributionPanel');
+    if(!open || !open.classList.contains('active')){
+      clearInterval(openContributionPanel._timer);
+      openContributionPanel._timer = null;
+      return;
+    }
+    renderContributionPanel(true);
+  }, 8000);
 }
 function closeContributionPanel(){
   const panel = $('contributionPanel');
   if(panel) panel.classList.remove('active');
+  if(openContributionPanel._timer){ clearInterval(openContributionPanel._timer); openContributionPanel._timer = null; }
   try{ if(window.nalunoBack) window.nalunoBack.drop('contributionPanel'); }catch(_){}
 }
 
-async function renderContributionPanel(){
+async function renderContributionPanel(quiet){
   const el = $('contributionBody');
   if(!el) return;
-  el.innerHTML = '<div class="lobby-sub" style="text-align:left;max-width:none;">Loading…</div>';
+  if(!quiet) el.innerHTML = '<div class="lobby-sub" style="text-align:left;max-width:none;">Loading…</div>';
   const me = (typeof fetchMyContribution === 'function') ? await fetchMyContribution() : null;
   if(!me || !me.ok){
     // Honest failure. A zero here would read as "you have contributed

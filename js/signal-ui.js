@@ -1157,6 +1157,7 @@ async function signalPaintSocial(ownerUid, seg){
   const mine = !!(currentUser && ownerUid === currentUser.uid);
   row.innerHTML = S.linkedBroadcastHtml(seg);
   if(!segId){ S.wireLinkedBroadcast(row); return; }
+  try{ if(typeof S.watchSegment === 'function') S.watchSegment(ownerUid, segId); }catch(_){}
   if(mine){
     const btn = document.createElement('button');
     btn.type = 'button'; btn.className = 'sig-seen'; btn.textContent = 'Seen by';
@@ -1959,23 +1960,11 @@ if(typeof openContactSignalStory === 'function'){
 }
 
 
-/* Signal tab shortcut → same Broadcast gateway, live-first */
+/* Live starts from the Broadcast tab. It does not open the upload sheet. */
 function openGoLiveFromSignal(){
-  if(typeof bcompOpen === 'function'){
-    bcompOpen();
-    // Prefill title if empty
-    try{
-      if($('bcompTitle') && !$('bcompTitle').value){
-        $('bcompTitle').value = 'Live · ' + new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-      }
-      if($('bcompGoLiveBtn')){
-        $('bcompGoLiveBtn').scrollIntoView({ block: 'nearest' });
-      }
-    }catch(_){}
-    toast('Add a title, then tap Go live');
-  } else if(typeof bcompStartGoLive === 'function'){
+  if(typeof bcompStartGoLive === 'function'){
     bcompStartGoLive();
-  } else {
-    toast('Broadcast tools still loading');
+    return;
   }
+  toast('Broadcast tools still loading');
 }

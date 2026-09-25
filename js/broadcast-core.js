@@ -68,9 +68,10 @@ function strandShareUrl(id){
 function broadcastThumbHtml(b){
   const title = escapeHtml((b.title || 'Broadcast').slice(0, 48));
   const creator = escapeHtml((b.creatorName || 'Someone').split(' ')[0]);
+  const writing = b.mediaType === 'writing' || b.kind === 'writing';
   const thumb = (b.thumbUrl && !(typeof nalunoThumbLooksDead === 'function' && nalunoThumbLooksDead(b.thumbUrl))) ? b.thumbUrl : '';
-  const photo = thumb || ((b.mediaType === 'photo') ? (b.mediaUrl || '') : '');
-  const preview = (!b.live && b.mediaType !== 'photo')
+  const photo = writing ? '' : (thumb || ((b.mediaType === 'photo') ? (b.mediaUrl || '') : ''));
+  const preview = (!writing && !b.live && b.mediaType !== 'photo')
     ? (b.mediaUrl || b.videoUrl || '')
     : '';
   const rescue = preview ? ` data-media="${escapeHtml(preview)}" data-bcast-id="${escapeHtml(b.id || '')}" onerror="nalunoRescueThumb(this)"` : '';
@@ -81,9 +82,15 @@ function broadcastThumbHtml(b){
   } else if(photo){
     inner = `<img src="${escapeHtml(photo)}" alt="" class="bcast-plate-media" loading="lazy"${rescue} />`;
   } else {
-    inner = `<div class="bcast-plate-fallback">${escapeHtml((b.creatorName || '?').slice(0,1).toUpperCase())}</div>`;
+    const excerpt = writing
+      ? String(b.body || b.description || '').replace(/\s+/g, ' ').trim().slice(0, 140)
+      : '';
+    inner = writing
+      ? `<div class="bcast-plate-fallback" style="padding:16px;align-items:flex-end;text-align:left;font-size:12px;line-height:1.35;font-weight:500;">${excerpt ? escapeHtml(excerpt) : 'Writing'}</div>`
+      : `<div class="bcast-plate-fallback">${escapeHtml((b.creatorName || '?').slice(0,1).toUpperCase())}</div>`;
   }
   const live = b.live ? `<span class="bcast-plate-live">LIVE</span>` : '';
+  const writeMark = writing && !b.live ? `<span class="bcast-plate-live" style="background:rgba(124,255,178,.16);color:var(--mint);border-color:rgba(124,255,178,.4);">Writing</span>` : '';
   const hold = (!b.live && b.held) ? `<span class="bcast-plate-live" style="background:rgba(255,194,102,.2);color:#ffc266;border-color:rgba(255,194,102,.4);">Waiting</span>` : '';
   const down = (!b.live && b.hidden) ? `<span class="bcast-plate-live" style="background:rgba(255,84,112,.18);color:#ff8a9a;border-color:rgba(255,84,112,.4);">Taken down</span>` : '';
   const viewsBit = (typeof formatNalunoViews === 'function' && (b.shareViews !== false))
@@ -93,6 +100,7 @@ function broadcastThumbHtml(b){
     <div class="bcast-plate-frame">
       ${inner}
       ${live}
+      ${writeMark}
       ${hold}
       ${down}
       ${viewsBit}
@@ -180,7 +188,7 @@ async function nalunoPlaceBroadcast(id, screen){
   }catch(_){ return null; }
 }
 
-async function createPermanentBroadcast({ title, description, tags, mediaType, mediaUrl, thumbUrl, filterCss, chapters, breathers, strandId, strandName, origin, screen, publishAt, visibility }){
+async function createPermanentBroadcast({ title, description, tags, mediaType, mediaUrl, thumbUrl, filterCss, chapters, breathers, strandId, strandName, origin, screen, publishAt, visibility, body, words, durationSec }){
   if(!currentUser || !fbDb) throw new Error('Sign in required');
   const now = Date.now();
   const ref = fbDb.collection('broadcasts').doc();
@@ -197,6 +205,10 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
     tags: (tags || []).slice(0, 12).map(t => String(t).toLowerCase().slice(0, 32)),
     mediaType: mediaType || 'photo',
     mediaUrl: primaryUrl,
+    body: mediaType === 'writing' ? String(body || '').slice(0, 80000) : null,
+    words: mediaType === 'writing' ? (Number(words) || 0) : null,
+    durationSec: mediaType === 'writing' ? (Number(durationSec) || 0) : null,
+    kind: mediaType === 'writing' ? 'writing' : (mediaType || 'photo'),
     mediaId: (typeof nalunoMediaIdFromUrl === 'function' ? nalunoMediaIdFromUrl(primaryUrl) : null) || null,
     thumbUrl: thumbUrl || null,
     filterCss: filterCss || '',
@@ -228,6 +240,7 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
     searchText: [
       title || '',
       description || '',
+      mediaType === 'writing' ? String(body || '').slice(0, 4000) : '',
       (currentProfile && currentProfile.name) || '',
       ...(tags || []),
     ].join(' ').toLowerCase(),

@@ -302,6 +302,109 @@
     sheet.style.zIndex = '2147483000';
   }
 
+  let watchUnsubs = [];
+  let watchKey = '';
+
+  function stopWatch() {
+    watchUnsubs.forEach(function (u) { try { u(); } catch (_) {} });
+    watchUnsubs = [];
+    watchKey = '';
+  }
+
+  function paintSeenButton(rows) {
+    const btn = root.document.querySelector('#bviewerSocial .sig-seen');
+    if (!btn) return;
+    const sum = summarise(rows);
+    btn.textContent = rows.length ? ('Seen by ' + rows.length) : 'Seen by';
+    if (sum.length) btn.textContent += '  ' + sum.map(function (x) { return x.emoji + x.n; }).join(' ');
+  }
+
+  function paintViewerBody(rows) {
+    const sheet = root.document.getElementById('signalViewers');
+    const body = root.document.getElementById('signalViewersBody');
+    if (!sheet || !sheet.classList.contains('active') || !body) return;
+    if (!rows.length) {
+      body.innerHTML = lastListErr
+        ? ('<p class="sub">Couldn’t read who watched (' + esc(lastListErr) + '). Publish firestore.rules if this says permission-denied.</p>')
+        : '<p class="sub">Nobody else has watched this one yet.</p>';
+      return;
+    }
+    const sum = summarise(rows);
+    body.innerHTML =
+      '<div class="sv-count">' + rows.length + (rows.length === 1 ? ' person watched' : ' people watched') + '</div>'
+      + (sum.length ? '<div class="sv-sum">' + sum.map(function (x) {
+          return '<span class="sv-chip">' + x.emoji + ' ' + x.n + '</span>';
+        }).join('') + '</div>' : '')
+      + '<div class="sv-list">' + rows.map(function (r) {
+          const when = r.viewedAt ? new Date(Number(r.viewedAt)).toLocaleString() : '';
+          return '<div class="sv-row"><span class="sv-name">' + esc(r.name || 'Someone') + '</span>'
+            + '<span class="sv-react">' + (r.reaction ? esc(r.reaction) : '') + '</span>'
+            + '<span class="sv-when">' + esc(when) + '</span></div>';
+        }).join('') + '</div>';
+  }
+
+  function paintReactionChip(counts) {
+    const row = root.document.getElementById('bviewerSocial');
+    if (!row) return;
+    let chip = row.querySelector('.sig-react-sum');
+    const text = (counts || []).map(function (x) { return x.emoji + x.n; }).join('  ');
+    if (!text) {
+      if (chip) chip.textContent = '';
+      return;
+    }
+    if (!chip) {
+      chip = root.document.createElement('div');
+      chip.className = 'sig-react-sum';
+      const bar = row.querySelector('.sig-react');
+      if (bar) row.insertBefore(chip, bar);
+      else row.appendChild(chip);
+    }
+    chip.textContent = text;
+  }
+
+  function watchSegment(ownerUid, segId) {
+    const key = String(ownerUid || '') + '|' + String(segId || '');
+    if (!ownerUid || !segId) return;
+    if (watchKey === key && watchUnsubs.length) return;
+    stopWatch();
+    watchKey = key;
+    const database = db();
+    if (!database) return;
+    const refreshViewers = function () {
+      viewersOf(segId).then(function (rows) {
+        paintViewerBody(rows);
+        paintSeenButton(rows);
+      }).catch(function () {});
+    };
+    try {
+      watchUnsubs.push(database.collection('users').doc(ownerUid)
+        .collection('signal').doc(String(segId)).collection('viewers').limit(200)
+        .onSnapshot(refreshViewers, function () {}));
+    } catch (_) {}
+    const uid = me();
+    if (uid && uid === ownerUid) {
+      try {
+        watchUnsubs.push(database.collection('users').doc(uid)
+          .collection('notifications').where('kind', '==', 'signal-pulse').limit(80)
+          .onSnapshot(refreshViewers, function () {}));
+      } catch (_) {}
+    } else {
+      try {
+        watchUnsubs.push(database.collection('users').doc(ownerUid)
+          .collection('signal').doc(String(segId)).collection('reacts').limit(200)
+          .onSnapshot(function (snap) {
+            const counts = {};
+            snap.forEach(function (d) {
+              const e = d.data() && d.data().emoji;
+              if (e) counts[e] = (counts[e] || 0) + 1;
+            });
+            paintReactionChip(REACTIONS.filter(function (e) { return counts[e]; })
+              .map(function (e) { return { emoji: e, n: counts[e] }; }));
+          }, function () {}));
+      } catch (_) {}
+    }
+  }
+
   function openViewers(segId) {
     const sheet = root.document.getElementById('signalViewers');
     if (!sheet) return;
@@ -310,26 +413,11 @@
     try { if (root.nalunoBack && root.nalunoBack.push) root.nalunoBack.push(); } catch (_) {}
     const body = root.document.getElementById('signalViewersBody');
     if (body) body.innerHTML = '<p class="sub">Loading\u2026</p>';
+    const uid = me();
+    if (uid) watchSegment(uid, segId);
     viewersOf(segId).then(function (rows) {
-      const sum = summarise(rows);
-      if (!body) return;
-      if (!rows.length) {
-        body.innerHTML = lastListErr
-          ? ('<p class="sub">Couldn’t read who watched (' + esc(lastListErr) + '). Publish firestore.rules if this says permission-denied.</p>')
-          : '<p class="sub">Nobody else has watched this one yet.</p>';
-        return;
-      }
-      body.innerHTML =
-        '<div class="sv-count">' + rows.length + (rows.length === 1 ? ' person watched' : ' people watched') + '</div>'
-        + (sum.length ? '<div class="sv-sum">' + sum.map(function (x) {
-            return '<span class="sv-chip">' + x.emoji + ' ' + x.n + '</span>';
-          }).join('') + '</div>' : '')
-        + '<div class="sv-list">' + rows.map(function (r) {
-            const when = r.viewedAt ? new Date(Number(r.viewedAt)).toLocaleString() : '';
-            return '<div class="sv-row"><span class="sv-name">' + esc(r.name || 'Someone') + '</span>'
-              + '<span class="sv-react">' + (r.reaction ? esc(r.reaction) : '') + '</span>'
-              + '<span class="sv-when">' + esc(when) + '</span></div>';
-          }).join('') + '</div>';
+      paintViewerBody(rows);
+      paintSeenButton(rows);
     }).catch(function () {
       if (body) body.innerHTML = '<p class="sub">Couldn’t load who watched. Try again.</p>';
     });
@@ -413,6 +501,6 @@
   root.NalunoSignalSocial = {
     REACTIONS, markViewed, react, viewersOf, summarise, reactionCounts, myReaction,
     openViewers, closeViewers, reactionBarHtml, linkedBroadcastHtml, wireLinkedBroadcast,
-    mergePulse,
+    mergePulse, watchSegment, stopWatch,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

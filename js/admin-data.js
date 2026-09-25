@@ -1471,6 +1471,7 @@
     const pings = raw.pushPings || [];
     const receipts = raw.pushReceipts || [];
     const payments = raw.payments || [];
+    costs.vendors = vendorBooks(costs, raw.vendorInvoices || [], payments);
 
     return {
       now: now,
@@ -1649,6 +1650,94 @@
     };
   }
 
+  function vendorBooks(costs, invoices, payments) {
+    costs = costs || {};
+    const lines = costs.lines || [];
+    const lineBy = {};
+    lines.forEach(function (L) { if (L && L.key) lineBy[L.key] = L; });
+    const byKey = {};
+    (invoices || []).forEach(function (row) {
+      if (!row) return;
+      const key = String(row.key || row.vendor || '').toLowerCase();
+      if (!key) return;
+      const amount = num(row.amount_aed != null ? row.amount_aed : row.amountAed);
+      const at = num(row.updatedAt || row.createdAt || row.periodEnd);
+      const prev = byKey[key];
+      if (prev && at < prev.at) return;
+      byKey[key] = {
+        at: at,
+        amount: amount,
+        note: row.note || '',
+        source: row.source || 'invoice',
+      };
+    });
+    const catalog = [
+      ['r2_storage', 'Cloudflare', 'R2 storage'],
+      ['r2_class_a', 'Cloudflare', 'R2 uploads'],
+      ['r2_egress', 'Cloudflare', 'R2 downloads'],
+      ['workers', 'Cloudflare', 'Workers'],
+      ['turn', 'Cloudflare', 'Calls relay'],
+      ['fs_storage', 'Firebase', 'Firestore storage'],
+      ['fs_reads', 'Firebase', 'Firestore reads'],
+      ['fs_writes', 'Firebase', 'Firestore writes'],
+      ['fcm', 'Firebase', 'Cloud Messaging'],
+      ['compass', 'Other', 'Compass help'],
+      ['fixed', 'Other', 'Domain, store, typed costs'],
+      ['auth', 'Firebase', 'Sign-in'],
+      ['stripe', 'Stripe', 'Card payments'],
+    ];
+    let paidMinor = 0;
+    (payments || []).forEach(function (p) {
+      if (!p) return;
+      if (p.status === 'paid' || p.paymentStatus === 'paid') paidMinor += num(p.amount_minor || p.amountMinor);
+    });
+    const out = catalog.map(function (c) {
+      const L = lineBy[c[0]] || { aed: 0, qty: 0, unit: '' };
+      const inv = byKey[c[0]];
+      const metered = num(L.aed);
+      const amount = inv ? inv.amount : metered;
+      let status = 'within free allowance';
+      if (inv) status = 'invoiced';
+      else if (metered > 0.004) status = 'list-price';
+      let note = 'No charge yet. This line changes on its own when usage passes the free allowance.';
+      if (inv) note = inv.note || 'A real invoice replaced the estimate.';
+      else if (status === 'list-price') note = 'List price of usage already in these records. A connected invoice replaces this number.';
+      if (c[0] === 'stripe' && !inv) {
+        note = 'Fees are not guessed. Paid volume so far is ' + (paidMinor / 100).toFixed(2) + ' AED. This stays at zero until a Stripe invoice arrives.';
+      }
+      if (c[0] === 'auth' && !inv) {
+        note = 'Sign-in stays inside the free Firebase allowance until an invoice says otherwise.';
+      }
+      return {
+        key: c[0],
+        vendor: c[1],
+        service: c[2],
+        amount_aed: amount,
+        metered_aed: metered,
+        status: status,
+        qty: c[0] === 'stripe' ? (paidMinor / 100) : L.qty,
+        unit: c[0] === 'stripe' ? 'AED paid through' : (L.unit || ''),
+        note: note,
+      };
+    });
+    Object.keys(byKey).forEach(function (key) {
+      if (out.some(function (r) { return r.key === key; })) return;
+      const inv = byKey[key];
+      out.push({
+        key: key,
+        vendor: inv.source || 'Invoice',
+        service: key,
+        amount_aed: inv.amount,
+        metered_aed: 0,
+        status: 'invoiced',
+        qty: '',
+        unit: '',
+        note: inv.note || 'Invoice from a connected account.',
+      });
+    });
+    return out;
+  }
+
   root.NalunoAdminData = {
     DEFAULT_FLAGS: DEFAULT_FLAGS,
     FLAG_META: FLAG_META,
@@ -1670,6 +1759,7 @@
     money: money,
     COST_RATES: COST_RATES,
     estimateCosts: estimateCosts,
+    vendorBooks: vendorBooks,
     estimateAdRevenue: estimateAdRevenue,
     adUnitStats: adUnitStats,
     DEFAULT_AD_RATES: DEFAULT_AD_RATES,

@@ -1,0 +1,33 @@
+const fs = require('fs');
+const vm = require('vm');
+const assert = require('assert');
+
+const src = fs.readFileSync(__dirname + '/admin-data.js', 'utf8');
+const ctx = { window: {}, globalThis: {}, Intl: Intl, Date: Date };
+ctx.globalThis = ctx;
+vm.runInNewContext(src, ctx);
+const D = ctx.window.NalunoAdminData;
+const costs = D.estimateCosts({ users: [], broadcasts: [], signals: [], ledger: [], now: Date.now() });
+assert.ok(Array.isArray(costs.lines));
+const rows = D.vendorBooks(costs, [{ key: 'workers', amount_aed: 42, updatedAt: 10, note: 'real bill' }], [{ status: 'paid', amount_minor: 5000 }]);
+const workers = rows.filter(function (r) { return r.key === 'workers'; })[0];
+assert.strictEqual(workers.status, 'invoiced');
+assert.strictEqual(workers.amount_aed, 42);
+assert.strictEqual(workers.vendor, 'Cloudflare');
+const stripe = rows.filter(function (r) { return r.key === 'stripe'; })[0];
+assert.strictEqual(stripe.amount_aed, 0);
+assert.ok(stripe.note.indexOf('50.00') >= 0);
+const cloud = D.vendorBooks(costs, [{ key: 'cloudflare', amount_aed: 9, source: 'cloudflare', updatedAt: 3 }]);
+assert.ok(cloud.some(function (r) { return r.key === 'cloudflare' && r.status === 'invoiced' && r.amount_aed === 9; }));
+
+const html = fs.readFileSync(__dirname + '/../app/index.html', 'utf8');
+assert.ok(html.indexOf('id="bcompWriteBtn"') > 0);
+assert.ok(html.indexOf('id="bcompGoLiveBtn"') < 0);
+assert.ok(html.indexOf('id="broadcastGoLiveBtn"') > 0);
+const composer = fs.readFileSync(__dirname + '/broadcast-composer.js', 'utf8');
+assert.ok(composer.indexOf("mediaType: 'writing'") > 0);
+assert.ok(composer.indexOf('bcompGoLiveBtn') < 0);
+const social = fs.readFileSync(__dirname + '/signal-social.js', 'utf8');
+assert.ok(social.indexOf("collection('viewers')") > 0);
+assert.ok(social.indexOf('onSnapshot(refreshViewers') > 0);
+console.log('writers-books ok');

@@ -954,6 +954,7 @@
         out.persist = b.persist || '';
         out.payments = !!b.payments;
         out.liveRooms = !!b.liveRooms;
+        out.billing = b.billing || null;
         try {
           const f = await fetch(base + '/v1/flags', { cache: 'no-store' });
           const fb = await f.json().catch(function () { return {}; });
@@ -1136,6 +1137,11 @@
           };
         });
       }
+    } catch (_) {}
+    try {
+      const fsInv = __livePack.vendorInvoicesFs || [];
+      const pulled = __livePack._workerBilling || [];
+      __livePack.vendorInvoices = fsInv.concat(pulled);
     } catch (_) {}
     try {
       if (Array.isArray(__livePack.audit)) {
@@ -1331,6 +1337,7 @@
     listenCol('pushPings', 200, 'pushPings');
     listenCol('pushReceipts', 200, 'pushReceipts');
     listenCol('payments', 200, 'payments');
+    listenCol('vendorInvoices', 80, 'vendorInvoicesFs');
     listenCol('toga', 80, 'toga');
     listenCol('strands', 200, 'strands');
     listenCol('bands', 80, 'bands');
@@ -1368,6 +1375,7 @@
       pingWorker().then(function (w) {
         if (!__livePack) return;
         __livePack.worker = w || {};
+        if (w && w.billing && w.billing.invoices) __livePack._workerBilling = w.billing.invoices;
         scheduleLive();
       }).catch(function () {});
     }, 20000);
@@ -2115,7 +2123,13 @@
       add(day, 'Contribution points', r.event_type || 'event', '', '', r.status || '', r.user_id || '', 'Points are not money. ' + (r.points || 0) + ' points, eligible ' + (r.eligible_points || 0));
     });
     const invoice = Number(costs.invoice_aed || costs.billable_aed || 0);
-    if (invoice > 0) {
+    const vendors = (costs && costs.vendors) || [];
+    vendors.forEach(function (v) {
+      const amount = Number(v.amount_aed) || 0;
+      add(stamp, v.vendor + ' — ' + v.service, v.note || v.service, amount, '', v.status || '', v.key || '', v.status === 'invoiced' ? 'Invoice.' : 'Updates from live usage. Not a bank charge until status is invoiced.');
+      if (amount > 0) add(stamp, 'Accounts payable — ' + v.vendor, v.service, '', amount, v.status || '', v.key || '', 'Opposite entry.');
+    });
+    if (!vendors.length && invoice > 0) {
       add(stamp, 'Hosting and delivery', costs.headline || 'Estimated platform cost', invoice, '', 'estimate', 'costs', 'List-price estimate until an invoice is recorded.');
       add(stamp, 'Accounts payable — hosting', 'Estimated platform cost', '', invoice, 'estimate', 'costs', 'Opposite entry. Not an invoice.');
     }
@@ -2132,7 +2146,7 @@
     });
     trialRows.push(['Ad revenue booked (summary)', '', Number(ads.bookedAed || 0).toFixed(2), 'From the rate card.']);
     trialRows.push(['Prepaid noted on ads', '', Number(ads.paidAed || 0).toFixed(2), 'Not collected.']);
-    return { stamp: stamp, journal: journal, trial: trialRows, adsBooked: Number(ads.bookedAed || 0), supportN: support.length, ledgerN: ledger.length };
+    return { stamp: stamp, journal: journal, trial: trialRows, adsBooked: Number(ads.bookedAed || 0), supportN: support.length, ledgerN: ledger.length, vendors: vendors };
   }
   function booksPdf(lines) {
     function pdfSafe(s) {
@@ -2186,7 +2200,9 @@
   function booksWorkbook(pack) {
     function xml(s) {
       return String(s == null ? '' : s)
-        .replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>');
+        .split('&').join('&' + 'amp;')
+        .split('<').join('&' + 'lt;')
+        .split('>').join('&' + 'gt;');
     }
     function sheet(name, rows) {
       const body = rows.map(function (r) {
@@ -3693,7 +3709,7 @@
       const pack = booksLines(d);
       el.innerHTML =
         card('Books for the accountant',
-          '<p class="sub">Compiled from what this desk can already see. Booked ad maths, support intents, contribution points, and estimated hosting. Nothing here is a bank balance, and no cash has moved. Hand the files to the accountant or auditor as the working papers.</p>'
+          '<p class="sub">Every service that can later charge Naluno is a line: Cloudflare, Firebase, Stripe, and the rest. While the free allowance covers it, the line is zero. When usage passes that allowance, the same line shows the list price on its own. When a real invoice is connected, that invoice replaces the estimate. Nothing here is a bank balance.</p>'
           + kpis([
             ['Ad revenue booked', aed(pack.adsBooked)],
             ['Support intents', pack.supportN],
@@ -3707,6 +3723,11 @@
           + '<button type="button" class="ghost" id="booksJson">JSON</button>'
           + '</div>'
           + gap('CSV and Excel are the journal plus a trial balance. PDF is the same statements, page by page. JSON is the same rows for a system that does not want a spreadsheet. Points are labelled as points, not dirhams.'))
+        + card('What can charge Naluno', plainRows(
+            ['Vendor', 'Service', 'AED', 'Status'],
+            (pack.vendors || []).map(function (v) {
+              return [v.vendor, v.service, Number(v.amount_aed || 0).toFixed(2), v.status];
+            })))
         + card('Trial balance', plainRows(pack.trial[0], pack.trial.slice(1, 18).map(function (r) { return r; })));
       const base = 'naluno-books-' + pack.stamp;
       const csvBtn = $('booksCsv');

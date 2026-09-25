@@ -15,7 +15,7 @@ let bcompFile = null;       // original File
 let bcompPreviewUrl = null;
 let bcompCompressedBlob = null;
 let bcompDuration = 0;
-let bcompKind = null; // 'video' | 'photo' | null
+let bcompKind = null; // 'video' | 'photo' | 'writing' | null
 let bcompPublishing = false;
 
 function bcompOpen(){
@@ -73,6 +73,10 @@ function bcompReset(){
   if(originBox){ originBox.style.display = 'none'; originBox.innerHTML = ''; }
   const screenBox = $('bcompScreen');
   if(screenBox){ screenBox.style.display = 'none'; screenBox.innerHTML = ''; }
+  const write = $('bcompWrite');
+  if(write) write.style.display = 'none';
+  const chapters = $('bcompChapters');
+  if(chapters) chapters.innerHTML = '';
   window._bcompOrigin = null;
   window._bcompOriginAck = false;
   window._bcompScreen = null;
@@ -310,6 +314,7 @@ async function bcompOnFileChosen(file){
     toast('Choose a photo or video');
     return;
   }
+  bcompLeaveWriting();
 
   bcompFile = file;
   bcompCompressedBlob = null;
@@ -431,7 +436,12 @@ async function bcompPublish(){
   }
   bcompPublishing = true;
   if(!currentUser || !fbDb){ bcompPublishing = false; toast('Sign in first'); return; }
-  if(!bcompKind){ bcompPublishing = false; toast('Add a photo or video first'); return; }
+  if(!bcompKind){ bcompPublishing = false; toast('Add a photo, a video, or a piece of writing'); return; }
+  if(bcompKind === 'writing' && !bcompCollectChapters().length){
+    bcompPublishing = false;
+    toast('Write the piece first');
+    return;
+  }
 
   const title = (($('bcompTitle') && $('bcompTitle').value) || '').trim();
   const tagsRaw = (($('bcompTags') && $('bcompTags').value) || '');
@@ -465,6 +475,18 @@ async function bcompPublish(){
       window._bcompScreen = screen;
       bcompPaintScreen(screen);
     }catch(_){}
+  }
+  if(bcompKind === 'writing'){
+    const piece = [title, desc].concat(bcompCollectChapters().map(function(c){ return c.title + '\n' + c.text; })).join('\n');
+    let hold = null;
+    try{
+      if(window.NalunoSafety && typeof window.NalunoSafety.scorePublicText === 'function'){
+        hold = window.NalunoSafety.scorePublicText(piece, { surface: 'broadcast' });
+      }
+    }catch(_){}
+    const stopped = !!(hold && typeof nalunoSafetyStopped === 'function' && nalunoSafetyStopped(hold));
+    screen = { decision: stopped ? 'block' : 'allow', engine: 'text', reason: hold && hold.decision || '' };
+    window._bcompScreen = screen;
   }
   if(screen && screen.decision === 'block'){
     bcompPublishing = false;
@@ -523,6 +545,8 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
   const snapTitle = title;
   const snapDesc = desc;
   const snapTags = tags.slice();
+  const snapChapters = bcompKind === 'writing' ? bcompCollectChapters() : null;
+  const snapBody = snapChapters ? snapChapters.map(function(c){ return (c.title ? c.title + '\n' : '') + c.text; }).join('\n\n') : '';
   const snapStrandId = strandId;
   const snapStrandName = strandName;
   const snapOrigin = window._bcompOrigin || null;
@@ -534,6 +558,27 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
     label: snapPublishAt ? 'Scheduling Broadcast…' : 'Publishing Broadcast…',
     doneMsg: snapPublishAt ? 'Scheduled — it stays off the public feed until then' : (snapVisibility === 'private' ? 'Saved as private' : 'Broadcast published'),
     run: async (progress)=>{
+      if(snapKind === 'writing'){
+        if(progress) progress('Saving writing…');
+        const words = snapBody.split(/\s+/).filter(Boolean).length;
+        const b = await createPermanentBroadcast({
+          title: snapTitle, description: snapDesc, tags: snapTags,
+          publishAt: snapPublishAt, visibility: snapVisibility,
+          mediaType: 'writing', mediaUrl: null, thumbUrl: null,
+          body: snapBody,
+          words: words,
+          durationSec: Math.max(30, Math.round(words / 3.3)),
+          chapters: snapChapters,
+          strandId: snapStrandId, strandName: snapStrandName,
+          origin: { status: 'clear', score: 0, hold: false, skipped: true },
+          screen: snapScreen || { decision: 'allow', engine: 'text' },
+        });
+        if(typeof loadFeedBroadcasts === 'function') await loadFeedBroadcasts();
+        if(typeof notifyPublishResult === 'function') notifyPublishResult(true, snapTitle);
+        else if(typeof toast === 'function') toast('Writing published');
+        if(typeof openBroadcastById === 'function') openBroadcastById(b.id);
+        return;
+      }
       let mediaType = snapKind;
       let mediaUrl = null;
       let thumbUrl = null;
@@ -671,7 +716,82 @@ if(document.readyState === 'loading'){
 }
 
 
-/* ---- Go live from Broadcast gateway (same community space) ---- */
+if($('bcompWriteBtn')){
+  $('bcompWriteBtn').onclick = function(e){
+    if(e){ e.preventDefault(); e.stopPropagation(); }
+    bcompStartWriting();
+  };
+}
+if($('bcompAddChapter')){
+  $('bcompAddChapter').onclick = function(e){
+    if(e){ e.preventDefault(); }
+    bcompAddChapter();
+  };
+}
+
+function bcompLeaveWriting(){
+  const box = $('bcompWrite');
+  if(box) box.style.display = 'none';
+  if(bcompKind === 'writing') bcompKind = null;
+}
+function bcompChapterCount(){
+  const host = $('bcompChapters');
+  return host ? host.querySelectorAll('.bcomp-chapter').length : 0;
+}
+function bcompAddChapter(title, text){
+  const host = $('bcompChapters');
+  if(!host) return;
+  if(bcompChapterCount() >= 24){ toast('24 chapters is the limit'); return; }
+  const n = bcompChapterCount() + 1;
+  const block = document.createElement('div');
+  block.className = 'bcomp-chapter';
+  block.style.margin = '0 0 10px';
+  block.innerHTML = ''
+    + '<input maxlength="80" placeholder="Chapter ' + n + '" value="" style="width:100%;margin-bottom:6px;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:14px;font-family:inherit;" />'
+    + '<textarea maxlength="20000" rows="8" placeholder="Write this chapter" style="width:100%;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:15px;line-height:1.45;font-family:inherit;resize:vertical;"></textarea>';
+  host.appendChild(block);
+  const inputs = block.querySelectorAll('input, textarea');
+  if(inputs[0] && title) inputs[0].value = title;
+  if(inputs[1] && text) inputs[1].value = text;
+  if(inputs[1]){ try{ inputs[1].focus(); }catch(_){} }
+}
+function bcompCollectChapters(){
+  const host = $('bcompChapters');
+  if(!host) return [];
+  const out = [];
+  host.querySelectorAll('.bcomp-chapter').forEach(function(block, i){
+    const titleEl = block.querySelector('input');
+    const bodyEl = block.querySelector('textarea');
+    const text = ((bodyEl && bodyEl.value) || '').trim();
+    if(!text) return;
+    out.push({
+      index: out.length,
+      title: ((titleEl && titleEl.value) || '').trim().slice(0, 80) || ('Chapter ' + (i + 1)),
+      text: text.slice(0, 20000),
+    });
+  });
+  return out;
+}
+function bcompStartWriting(){
+  bcompFile = null;
+  bcompCompressedBlob = null;
+  bcompDuration = 0;
+  if(bcompPreviewUrl){ try{ URL.revokeObjectURL(bcompPreviewUrl); }catch(_){} bcompPreviewUrl = null; }
+  const prev = $('bcompPreview');
+  if(prev) prev.innerHTML = '';
+  const file = $('bcompFileInput');
+  if(file) file.value = '';
+  bcompKind = 'writing';
+  const box = $('bcompWrite');
+  if(box) box.style.display = 'block';
+  if(!bcompChapterCount()) bcompAddChapter('', '');
+  const status = $('bcompStatus');
+  if(status) status.textContent = 'Writing — add a title, then publish. This is not a live Broadcast.';
+  const pub = $('bcompPublishBtn');
+  if(pub){ pub.textContent = 'Publish writing'; pub.removeAttribute('disabled'); }
+}
+
+/* ---- Go live stays on the Broadcast tab, not in this upload ---- */
 async function bcompStartGoLive(){
   if(!currentUser || !fbDb){ toast('Sign in to go live'); return; }
   const title = (($('bcompTitle') && $('bcompTitle').value) || '').trim() || ('Live · ' + new Date().toLocaleString());
@@ -707,12 +827,6 @@ async function bcompStartGoLive(){
     console.warn('[bcomp] go live', e);
     toast(e.message || 'Could not start live');
   }
-}
-if($('bcompGoLiveBtn')){
-  $('bcompGoLiveBtn').onclick = function(e){
-    if(e){ e.preventDefault(); e.stopPropagation(); }
-    bcompStartGoLive();
-  };
 }
 
 function bcompPaintScreen(report){

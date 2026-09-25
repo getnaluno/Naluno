@@ -553,6 +553,16 @@
     const monthEl = $('togaMonthLabel');
     if(monthEl) monthEl.textContent = nalunoMonthLabel();
     try{ renderTogaBoard(); }catch(_){}
+    if(fbDb && !wireToga._live){
+      wireToga._live = true;
+      try{
+        fbDb.collection('toga').limit(80).onSnapshot(function(){
+          const board = $('togaBoard');
+          if(!board) return;
+          renderTogaBoard();
+        }, function(){});
+      }catch(_){}
+    }
     function setTogaOpen(open){
       if(!body) return;
       body.style.display = 'block';
@@ -577,12 +587,13 @@
      (which runs on every Broadcast open). Tapping a name opens that
      person's most recent Broadcast, so the list is a real way into their
      work rather than a dead roster. */
+  let circleMembersUnsub = null;
   async function openCircleMembers(creatorUid, fallbackMemberUids){
     const sheet = $('circleMembersSheet');
     const list = $('circleMembersList');
     if(!sheet || !list) return;
     sheet.classList.add('active');
-    list.innerHTML = '<div class="lobby-sub">Loading\u2026</div>';
+    if(!list.querySelector('.circle-member-row')) list.innerHTML = '<div class="lobby-sub">Loading\u2026</div>';
     let rows = [];
     try{
       if(fbDb && creatorUid){
@@ -665,8 +676,20 @@
         }, 220);
       };
     });
+    if(fbDb && creatorUid && !circleMembersUnsub){
+      let skipFirst = true;
+      try{
+        circleMembersUnsub = fbDb.collection('users').doc(creatorUid).collection('circle').limit(200).onSnapshot(function(){
+          if(skipFirst){ skipFirst = false; return; }
+          const sheet = $('circleMembersSheet');
+          if(!sheet || !sheet.classList.contains('active')) return;
+          openCircleMembers(creatorUid, fallbackMemberUids);
+        }, function(){});
+      }catch(_){}
+    }
   }
   function closeCircleMembers(){
+    if(circleMembersUnsub){ try{ circleMembersUnsub(); }catch(_){} circleMembersUnsub = null; }
     const sheet = $('circleMembersSheet');
     if(sheet) sheet.classList.remove('active');
   }

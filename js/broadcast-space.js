@@ -88,6 +88,37 @@ function renderBspaceMedia(seg){
     host.innerHTML = `<div class="bspace-hero-text" style="color:var(--text-dim);">No media</div>`;
     return;
   }
+  if(seg.type === 'writing'){
+    const dock = $('bspaceSeekDock');
+    if(dock) dock.remove();
+    const chapters = (seg.chapters && seg.chapters.length) ? seg.chapters : [{ title: '', text: seg.text || '' }];
+    const nav = chapters.length > 1
+      ? '<div style="display:flex;gap:6px;overflow:auto;padding:0 0 10px;">' + chapters.map(function(c, i){
+          return '<button type="button" data-write-ch="' + i + '" style="flex:0 0 auto;border-radius:999px;border:1px solid var(--line);background:' + (i === 0 ? 'rgba(124,255,178,.16)' : 'transparent') + ';color:var(--text);padding:6px 10px;font-size:12px;">' + bspaceEscape(c.title || ('Chapter ' + (i + 1))) + '</button>';
+        }).join('') + '</div>'
+      : '';
+    host.innerHTML = '<div class="bspace-read" style="height:100%;overflow:auto;padding:18px 16px 28px;text-align:left;">'
+      + nav
+      + chapters.map(function(c, i){
+          return '<article data-write-body="' + i + '" style="' + (i ? 'display:none;' : '') + '">'
+            + (c.title ? '<h2 style="margin:0 0 10px;font-family:var(--font-futuristic);font-size:18px;">' + bspaceEscape(c.title) + '</h2>' : '')
+            + '<div style="font-size:16px;line-height:1.55;white-space:pre-wrap;">' + bspaceEscape(c.text || '') + '</div>'
+            + '</article>';
+        }).join('')
+      + '</div>';
+    host.querySelectorAll('[data-write-ch]').forEach(function(btn){
+      btn.onclick = function(){
+        const n = btn.getAttribute('data-write-ch');
+        host.querySelectorAll('[data-write-body]').forEach(function(el){
+          el.style.display = el.getAttribute('data-write-body') === n ? 'block' : 'none';
+        });
+        host.querySelectorAll('[data-write-ch]').forEach(function(b){
+          b.style.background = b === btn ? 'rgba(124,255,178,.16)' : 'transparent';
+        });
+      };
+    });
+    return;
+  }
   if(seg.type === 'text'){
     host.innerHTML = `<div class="bspace-hero-text" style="background:${seg.bg || 'var(--surface)'};">${bspaceEscape(seg.text || '')}</div>`;
     return;
@@ -687,8 +718,20 @@ function renderBspaceRelated(){
 function listenBspaceCollection(colName, renderFn, orderField){
   if(!fbDb || !activeBroadcastId) return;
   const q = fbDb.collection('broadcasts').doc(activeBroadcastId).collection(colName).orderBy(orderField || 'ts', 'desc').limit(40);
-  const unsub = q.onSnapshot(snap => renderFn(snap.docs.slice().reverse()), ()=> renderFn([]));
+  const unsub = q.onSnapshot(function(snap){
+    renderFn(snap.docs.slice().reverse());
+    scheduleBspaceLivePaint();
+  }, function(){ renderFn([]); });
   bspaceUnsubs.push(unsub);
+}
+let bspaceLivePaintTimer = null;
+function scheduleBspaceLivePaint(){
+  if(bspaceLivePaintTimer) clearTimeout(bspaceLivePaintTimer);
+  bspaceLivePaintTimer = setTimeout(function(){
+    bspaceLivePaintTimer = null;
+    try{ if(typeof renderBspaceImpact === 'function') renderBspaceImpact(); }catch(_){}
+    try{ if(activeBroadcastMeta && typeof paintBspaceViews === 'function') paintBspaceViews(activeBroadcastMeta); }catch(_){}
+  }, 240);
 }
 
 async function openBroadcastSpace(meta){
@@ -1668,6 +1711,7 @@ function bspaceWatchLiveState(){
     try{
       if(activeBroadcastMeta){
         activeBroadcastMeta.live = !!d.live;
+        activeBroadcastMeta.views = typeof d.views === 'number' ? d.views : (activeBroadcastMeta.views || 0);
         activeBroadcastMeta.lastLiveStartedAt = d.lastLiveStartedAt || null;
         activeBroadcastMeta.lastLiveEndedAt = d.lastLiveEndedAt || null;
         activeBroadcastMeta.lastLiveDurationMs = (d.lastLiveDurationMs != null) ? d.lastLiveDurationMs : null;
@@ -1705,6 +1749,7 @@ function bspaceWatchLiveState(){
     if(typeof bLiveOnSpaceOpened === 'function'){
       bLiveOnSpaceOpened(!!d.live, isCreator);
     }
+    scheduleBspaceLivePaint();
     // Non-creator: always expose Join live while host is live
     if(d.live && !isCreator){
       if(typeof bLiveShowJoinUi === 'function') bLiveShowJoinUi(true);
@@ -1727,6 +1772,32 @@ function bspaceWatchLiveState(){
 
 function bspaceMetaFromRecord(id, d){
   d = d || {};
+  if(d.mediaType === 'writing' || d.kind === 'writing'){
+    const chapters = Array.isArray(d.chapters) ? d.chapters : [];
+    const text = d.body || chapters.map(function(c){ return c && c.text ? c.text : ''; }).filter(Boolean).join('\n\n') || d.description || '';
+    return {
+      isMine: !!(typeof currentUser !== 'undefined' && currentUser && d.creatorUid === currentUser.uid),
+      broadcastId: id,
+      segment: {
+        type: 'writing',
+        text: text,
+        chapters: chapters,
+        caption: d.description || '',
+        bg: 'linear-gradient(165deg,#141a16,#0d1018)',
+      },
+      creatorUid: d.creatorUid,
+      creatorName: d.creatorName,
+      title: d.title,
+      description: d.description,
+      tags: d.tags || [],
+      chapters: chapters,
+      body: text,
+      live: false,
+      strandId: d.strandId || null,
+      strandName: d.strandName || null,
+      views: typeof d.views === 'number' ? d.views : 0,
+    };
+  }
   const chapters = Array.isArray(d.chapters) ? d.chapters : null;
   const primary = (typeof legacyBroadcastPlayUrl === 'function')
     ? legacyBroadcastPlayUrl(d)
@@ -1791,7 +1862,7 @@ function cachedBroadcastRow(id){
 async function openBroadcastSpaceById(id){
   if(!id){ toast('Missing Broadcast'); return; }
   const cached = cachedBroadcastRow(id);
-  const cachedPlayable = cached && (cached.mediaUrl || cached.videoUrl || (cached.chapters && cached.chapters.length) || cached.mediaType === 'text' || cached.description);
+  const cachedPlayable = cached && (cached.mediaUrl || cached.videoUrl || (cached.chapters && cached.chapters.length) || cached.mediaType === 'text' || cached.mediaType === 'writing' || cached.kind === 'writing' || cached.body || cached.description);
   if(cachedPlayable){
     try{
       await openBroadcastSpace(bspaceMetaFromRecord(id, cached));
