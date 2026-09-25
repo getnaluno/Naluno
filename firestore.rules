@@ -1084,6 +1084,13 @@ service cloud.firestore {
       allow read: if isOperator();
       allow write: if false;
     }
+    /* A real invoice from Cloudflare, Firebase, Stripe, or a typed bill.
+       The phone cannot invent one. The desk can record one. The service
+       account can write one when a billing token is connected. */
+    match /vendorInvoices/{id} {
+      allow read: if isOperator();
+      allow write: if isOperator();
+    }
 
     match /users/{uid}/circle/{memberUid} {
       allow read: if isSignedIn();

@@ -1,21 +1,13 @@
-# Naluno
+Naluno 2026.09.25c
 
-A quieter way to reach people.
+Unzip into the repo root so these files replace the ones already there.
 
-Live: [getnaluno.com](https://getnaluno.com)
+Then publish:
+- The site files (app, admin, website, sw, js, firestore.rules).
+- The economy worker again, from workers/economy. Books reads Cloudflare's real invoices only after these two secrets exist on that worker:
+    npx wrangler secret put CF_API_TOKEN
+    npx wrangler secret put CF_ACCOUNT_ID
+  The token needs Account Analytics and Billing read. The account id is on the Cloudflare account page.
+  Until those secrets exist, Books still updates from Naluno's own usage and stays at zero while the free allowance covers it.
 
-You take a **Callsign** — a handle, not a phone number. People who know it can find you. **Wireline** is the private line between two of you. **Band** is a room that belongs to nobody; it fades when the last person leaves. **Broadcast** is what you leave behind on purpose. Calls cut through whatever else is on screen.
-
-## Try it
-
-Open [getnaluno.com/app](https://getnaluno.com/app/). Create a handle. Add it to the home screen. Find someone by theirs, or Spark in person.
-
-[Privacy](https://getnaluno.com/privacy) · [Terms](https://getnaluno.com/terms)
-
-## Run it
-
-This folder on a host that serves the site. Firebase Auth + Firestore (`firebase-config.js`, `firestore.rules`). Workers already pointed at from the app (TURN, call wake, media). Do not put secrets in the repo.
-
-## Native shell
-
-The Android files are a Capacitor wrap of the same web app, so a closed phone can still be asked to wake. Battery on that device must stay Unrestricted or the OS will sleep it.
+Do not redeploy the upload workers. They did not change.
