@@ -756,6 +756,15 @@ service cloud.firestore {
         && request.resource.data.keys().size() < 16;
       allow delete: if isOwner(uid);
     }
+    match /users/{uid}/lines/{lineId} {
+      allow read, delete: if isOwner(uid);
+      allow create, update: if isOwner(uid)
+        && request.resource.data.keys().size() < 12
+        && request.resource.data.text is string
+        && request.resource.data.text.size() > 0
+        && request.resource.data.text.size() < 280
+        && request.resource.data.broadcastId is string;
+    }
     match /broadcastFeatures/{broadcastId} {
       allow read: if isSignedIn();
       allow write: if isOperator();
