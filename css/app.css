@@ -3206,6 +3206,26 @@ html[data-atmosphere="buzzing"] .naluno-aurora{
   }
   #bspaceWriting{ margin:0 0 12px; }
   #bspaceWriting[hidden]{ display:none !important; }
+  #bspaceWriting.is-editing .bspace-inline-title,
+  #bspaceWriting.is-editing .bspace-inline-body,
+  input.bspace-inline-page,
+  textarea.bspace-inline-desc{
+    display:block; width:100%; box-sizing:border-box;
+    border:none; outline:none; background:transparent; color:var(--text);
+    padding:0; margin:0 0 10px; resize:none; border-radius:0;
+    box-shadow:none; font-family:inherit;
+  }
+  #bspaceWriting.is-editing .bspace-inline-title{
+    font-family:var(--font-futuristic); font-size:22px; font-weight:700; line-height:1.2;
+  }
+  #bspaceWriting.is-editing .bspace-inline-body{
+    font-size:16px; line-height:1.55; min-height:7.5em; white-space:pre-wrap;
+  }
+  input.bspace-inline-page{
+    font-family:var(--font-futuristic); font-size:26px; font-weight:700; letter-spacing:.01em; line-height:1.15; text-align:left;
+  }
+  textarea.bspace-inline-desc{ font-size:14px; line-height:1.45; color:var(--text-dim); min-height:1.4em; }
+  .bspace-inline-actions{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:4px 0 0; }
 
   .bcast-schedule-dock{ margin:4px 0 12px; }
   .sched-row{
