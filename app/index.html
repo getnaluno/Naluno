@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.09.26a" />
+  <meta name="naluno-build" content="2026.09.26b" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.09.26a">
+<meta name="app-version" content="2026.09.26b">
 <meta name="description" content="Naluno brings private communication, communities and creator-led content into one place. A Callsign instead of a phone number.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="Private communication, communities and creator-led content. A Callsign — not a phone number.">
@@ -131,9 +131,9 @@
 })();
 </script>
 <link rel="apple-touch-startup-image" href="/splash-empty.png">
-<link rel="stylesheet" href="/css/app.css?v=20260926a" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/css/app.css?v=20260926b" media="print" onload="this.media='all'">
 <script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="/css/app.css?v=20260926a"></noscript>
+<noscript><link rel="stylesheet" href="/css/app.css?v=20260926b"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -1435,10 +1435,7 @@ window.__nalunoEntryT0 = Date.now();
         <div id="bspaceOfflineChip" style="display:none;">Playing your saved copy · offline</div>
         <div class="bspace-topbar">
           <div class="back-btn" id="bspaceBack" role="button" aria-label="Back" style="background:rgba(13,15,23,.55);"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-          <div style="flex:1; min-width:0;">
-            <div style="font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" id="bspaceCreatorName">—</div>
-            <div style="font-size:11px; font-family:var(--font-mono); color:rgba(255,255,255,.65);" id="bspaceCreatorMeta">Broadcast</div>
-          </div>
+          <div style="flex:1;"></div>
           <div class="bspace-more-wrap" id="bspaceMoreWrap">
             <button type="button" class="bspace-mini bspace-more" id="bspaceMoreBtn" aria-label="More actions" aria-expanded="false" title="More">⋯</button>
           </div>
@@ -1447,7 +1444,15 @@ window.__nalunoEntryT0 = Date.now();
         <div id="bspaceMedia" style="width:100%;height:100%;"></div>
       </div>
       <div class="bspace-body">
-        <h1 class="bspace-title" id="bspaceTitle">—</h1>
+        <div class="bspace-title-row">
+          <h1 class="bspace-title" id="bspaceTitle">—</h1>
+          <span class="bspace-listen-inline" id="bspaceListenWrap" hidden>
+            <button type="button" id="bspaceListenBtn">Listen</button>
+            <select id="bspaceHear" aria-label="Language">
+              <option value="">As written</option>
+            </select>
+          </span>
+        </div>
         <p class="bspace-byline" id="bspaceByline" hidden></p>
         <div id="bspaceWriting" hidden></div>
         <p class="bspace-desc" id="bspaceDesc"></p>
@@ -1461,29 +1466,22 @@ window.__nalunoEntryT0 = Date.now();
           </div>
         </div>
         <p class="bspace-desc" id="bspaceModNote" style="display:none;color:#ffc266;"></p>
+        <div class="bspace-creator-row">
+          <div class="bspace-creator-id">
+            <div id="bspaceCreatorName">—</div>
+            <div id="bspaceCreatorMeta">Broadcast</div>
+          </div>
+          <button type="button" class="bspace-join" id="bspaceJoinBtn">Join</button>
+        </div>
+        <div class="bspace-tags" id="bspaceTags"></div>
         <div class="bspace-vote" id="bspaceVote">
           <button type="button" id="bspaceUp" aria-label="This was worth it">👍 <span id="bspaceUpN"></span></button>
           <button type="button" id="bspaceDown" aria-label="Not for me">👎 <span id="bspaceDownN"></span></button>
           <button type="button" id="bspaceKeepLine">Keep a line</button>
-          <span class="bspace-listen-inline" id="bspaceListenWrap" hidden>
-            <button type="button" id="bspaceListenBtn">Listen</button>
-            <button type="button" id="bspaceHearBtn" aria-label="Choose a language">Language</button>
-            <select id="bspaceHear" hidden aria-label="Listen in">
-              <option value="">As written</option>
-              <option value="en">English</option>
-              <option value="lg">Luganda</option>
-              <option value="sw">Kiswahili</option>
-              <option value="fr">French</option>
-              <option value="ar">Arabic</option>
-              <option value="es">Spanish</option>
-            </select>
-          </span>
         </div>
-        <div class="bspace-tags" id="bspaceTags"></div>
         <details class="bspace-quiet" id="bspaceQuiet">
           <summary>Room</summary>
         <div id="bspaceViewRow" class="bspace-view-row" style="display:none;"></div>
-        <button type="button" class="bspace-join" id="bspaceJoinBtn">+ Circle</button>
         <div id="bspaceSupportSlot" class="bspace-support-slot">
           <div class="bspace-support-panel">
             <button type="button" class="bspace-support-head" id="bspaceSupportToggle" aria-expanded="false">
@@ -1587,7 +1585,7 @@ window.__nalunoEntryT0 = Date.now();
         <div class="bspace-section" id="bspaceDashboard" style="display:none;">
           <h3>Impact</h3>
           <p class="hint">A quick look at how people are engaging with this space.</p>
-          <div id="bspaceImpactGrid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;"></div>
+          <div id="bspaceImpactGrid" class="bspace-impact"></div>
           <div id="circleMembersSheet" class="circle-members-sheet">
             <div class="circle-members-panel">
               <div class="circle-members-head">
@@ -1752,7 +1750,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/discover.js?v=20260925e"></script>
 <script src="/js/signal-ui.js?v=20260925d"></script>
 <script src="/js/compat-lock.js?v=20260908d"></script>
-<script src="/js/broadcast-space.js?v=20260926a"></script>
+<script src="/js/broadcast-space.js?v=20260926b"></script>
 <script src="/js/ads.js?v=20260925c"></script>
 <script src="/js/media-vault.js?v=20260908d"></script>
 <script src="/js/wireline.js?v=20260924f"></script>
@@ -1779,7 +1777,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/sfu-live.js?v=20260925c"></script>
 <script src="/js/broadcast-live.js?v=20260925c"></script>
 <script src="/js/band-room.js?v=20260924f"></script>
-<script src="/js/pwa.js?v=20260926a"></script>
+<script src="/js/pwa.js?v=20260926b"></script>
 <script src="/js/spark-engine.js?v=20260908d"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>
 <script src="/js/spark-lg.js?v=20260908d"></script>
