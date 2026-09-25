@@ -45,8 +45,24 @@ import {
   scrubCase,
   statementFor,
 } from "./safety.mjs";
+import {
+  paymentsReady,
+  aedMajorToMinor,
+  checkoutForm,
+  validateCheckout,
+  verifyStripeSignature,
+  applyCheckoutEvent,
+} from "./pay.mjs";
+import {
+  callsReady,
+  rememberRoom,
+  takeRoom,
+  forgetRoom,
+  publishTracks,
+  cfCalls,
+} from "./live.mjs";
 
-export const VERSION = "2.6.10-play";
+export const VERSION = "2.6.11-invite";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -2391,6 +2407,239 @@ function lifelineB64u(str) {
 }
 function lifelineHex(b) { let s = ""; for (let i = 0; i < b.length; i++) s += (b[i] < 16 ? "0" : "") + b[i].toString(16); return s; }
 
+const PAY_OFF = "Payments aren’t available yet. Nothing was charged.";
+const LIVE_OFF = "A larger live room is not connected yet.";
+
+function payOrigin(env) {
+  const raw = String((env && env.PAY_ORIGIN) || "https://getnaluno.com");
+  if (/^https:\/\/(getnaluno\.com|www\.getnaluno\.com)(\/|$)/.test(raw)) return raw.replace(/\/$/, "");
+  return "https://getnaluno.com";
+}
+
+async function payCheckout(env, user, saToken, body) {
+  if (!paymentsReady(env) || !saToken) return json({ ok: false, code: "not_connected", error: PAY_OFF }, 503);
+  const check = validateCheckout(body, user.uid);
+  if (check.error) return json({ ok: false, error: check.error }, 400);
+  if (check.kind === "support") {
+    const flags = await readFlags(env, saToken, null);
+    if (!flags.flags.creator_support_enabled) {
+      return json({ ok: false, error: "Creator Support is off. Nothing was charged." }, 403);
+    }
+  }
+  let expected = check.amount;
+  if (check.kind === "ad") {
+    const adId = String(body.ad_id || "");
+    const mailId = String(body.mail_id || "");
+    const doc = adId
+      ? await fsGetDoc(env, saToken, "/deskAds/" + encodeURIComponent(adId))
+      : await fsGetDoc(env, saToken, "/deskMail/" + encodeURIComponent(mailId));
+    if (!doc) return json({ ok: false, error: "This ad is not on file. Nothing was charged." }, 404);
+    const owner = String(doc.creatorUid || doc.uid || "");
+    if (owner && owner !== user.uid) return json({ ok: false, error: "This ad is not yours." }, 403);
+    expected = aedMajorToMinor(doc.paidAed);
+    if (expected < 200) return json({ ok: false, error: "There is no amount to pay. Nothing was charged." }, 400);
+  }
+  const supportId = check.kind === "support"
+    ? String(body.idempotency_key || body.support_id || ("sup_" + user.uid + "_" + Date.now())).slice(0, 120)
+    : "";
+  const ref = String(body.idempotency_key || supportId || ("pay_" + user.uid + "_" + Date.now())).slice(0, 180);
+  const origin = payOrigin(env);
+  const form = checkoutForm({
+    kind: check.kind,
+    amountMinor: expected,
+    currency: check.currency,
+    payerUid: user.uid,
+    creatorUid: String(body.creator_user_id || ""),
+    adId: String(body.ad_id || ""),
+    mailId: String(body.mail_id || ""),
+    broadcastId: String(body.broadcast_id || ""),
+    supportId: supportId,
+    ref: ref,
+    name: check.kind === "ad" ? "Naluno advertisement" : "Support a creator",
+    successUrl: origin + "/app/?pay=return",
+    cancelUrl: origin + "/app/?pay=cancel",
+  });
+  const res = await _fetch("https://api.stripe.com/v1/checkout/sessions", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + env.STRIPE_SECRET_KEY,
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Idempotency-Key": ref,
+    },
+    body: form,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.url) {
+    return json({ ok: false, error: "The payment step did not start. Nothing was charged." }, 502);
+  }
+  return json({ ok: true, url: data.url });
+}
+
+async function markPaid(env, saToken, pay) {
+  if (!pay || !saToken) return;
+  const existing = await fsGetDoc(env, saToken, "/payments/" + encodeURIComponent(pay.id));
+  if (existing && existing.status === "paid") return;
+  const now = Date.now();
+  await fsPutDoc(env, saToken, "/payments/" + encodeURIComponent(pay.id), {
+    status: "paid",
+    kind: pay.kind,
+    amount_minor: pay.amount_minor,
+    currency: pay.currency,
+    payer_uid: pay.payer_uid,
+    creator_user_id: pay.creator_user_id,
+    ad_id: pay.ad_id,
+    mail_id: pay.mail_id,
+    broadcast_id: pay.broadcast_id,
+    support_id: pay.support_id,
+    provider: "stripe",
+    paidAt: now,
+  });
+  if (pay.kind === "ad" && pay.ad_id) {
+    const ad = await fsGetDoc(env, saToken, "/deskAds/" + encodeURIComponent(pay.ad_id));
+    const need = aedMajorToMinor(ad && ad.paidAed);
+    if (ad && pay.amount_minor >= need && need >= 200) {
+      await fsPutDoc(env, saToken, "/deskAds/" + encodeURIComponent(pay.ad_id), {
+        paymentStatus: "paid",
+        paidAt: now,
+        stripeSession: pay.id,
+      });
+    }
+  }
+  if (pay.kind === "ad" && pay.mail_id) {
+    const mail = await fsGetDoc(env, saToken, "/deskMail/" + encodeURIComponent(pay.mail_id));
+    await fsPutDoc(env, saToken, "/deskMail/" + encodeURIComponent(pay.mail_id), {
+      paymentStatus: "paid",
+      paidAt: now,
+      stripeSession: pay.id,
+    });
+    const promoted = mail && mail.promotedAdId;
+    if (promoted && !pay.ad_id) {
+      const ad = await fsGetDoc(env, saToken, "/deskAds/" + encodeURIComponent(promoted));
+      const need = aedMajorToMinor(ad && ad.paidAed);
+      if (ad && pay.amount_minor >= need && need >= 200) {
+        await fsPutDoc(env, saToken, "/deskAds/" + encodeURIComponent(promoted), {
+          paymentStatus: "paid",
+          paidAt: now,
+          stripeSession: pay.id,
+        });
+      }
+    }
+  }
+  if (pay.kind === "support" && pay.support_id && pay.creator_user_id && pay.payer_uid !== pay.creator_user_id) {
+    await fsPutDoc(env, saToken, "/creatorSupport/" + encodeURIComponent(pay.support_id), {
+      status: "succeeded",
+      provider: "stripe",
+      supporter_user_id: pay.payer_uid,
+      creator_user_id: pay.creator_user_id,
+      broadcast_id: pay.broadcast_id || "",
+      amount_minor: pay.amount_minor,
+      currency: (pay.currency || "aed").toUpperCase(),
+      stripeSession: pay.id,
+      paidAt: now,
+    });
+  }
+}
+
+async function payWebhook(env, request, saToken) {
+  if (!paymentsReady(env) || !saToken) return json({ ok: false }, 503);
+  const raw = await request.text();
+  const header = request.headers.get("Stripe-Signature") || "";
+  const ok = await verifyStripeSignature(raw, header, env.STRIPE_WEBHOOK_SECRET, Date.now());
+  if (!ok) return json({ ok: false }, 400);
+  let event = null;
+  try { event = JSON.parse(raw); } catch (_) { return json({ ok: false }, 400); }
+  const pay = applyCheckoutEvent(event);
+  if (!pay) return json({ ok: true, ignored: true });
+  await markPaid(env, saToken, pay);
+  return json({ ok: true });
+}
+
+async function loadLiveRoom(env, saToken, broadcastId) {
+  const mem = takeRoom(broadcastId);
+  if (mem && !mem.ended) return mem;
+  if (!saToken) return null;
+  const doc = await fsGetDoc(env, saToken, "/liveRooms/" + encodeURIComponent(broadcastId));
+  if (!doc || doc.ended || !doc.sessionId) return null;
+  rememberRoom(broadcastId, doc);
+  return doc;
+}
+
+async function liveHost(env, user, saToken, body) {
+  if (!callsReady(env) || !saToken) return json({ ok: false, code: "not_connected", error: LIVE_OFF }, 503);
+  const broadcastId = String(body.broadcastId || "").slice(0, 80);
+  const sdp = String(body.sdp || "");
+  if (broadcastId.length < 4 || sdp.length < 20 || sdp.length > 100000) {
+    return json({ ok: false, error: "The live room could not start." }, 400);
+  }
+  const tracks = publishTracks(sdp);
+  if (!tracks.length) return json({ ok: false, error: "The live room could not start." }, 400);
+  const session = await cfCalls(env, _fetch, "/sessions/new", "POST", {});
+  const sessionId = session.data && session.data.sessionId;
+  if (!session.ok || !sessionId) return json({ ok: false, error: LIVE_OFF }, 502);
+  const published = await cfCalls(env, _fetch, "/sessions/" + encodeURIComponent(sessionId) + "/tracks/new", "POST", {
+    sessionDescription: { sdp: sdp, type: "offer" },
+    tracks: tracks,
+  });
+  const answer = published.data && published.data.sessionDescription;
+  if (!published.ok || !answer || !answer.sdp) return json({ ok: false, error: LIVE_OFF }, 502);
+  const names = (published.data.tracks || tracks).map(function (t) { return t.trackName; }).filter(Boolean);
+  const row = {
+    hostUid: user.uid,
+    sessionId: sessionId,
+    tracks: names,
+    ended: false,
+    at: Date.now(),
+  };
+  rememberRoom(broadcastId, row);
+  await fsPutDoc(env, saToken, "/liveRooms/" + encodeURIComponent(broadcastId), row);
+  return json({ ok: true, sdp: answer.sdp, type: answer.type || "answer" });
+}
+
+async function liveWatch(env, user, saToken, body) {
+  if (!callsReady(env) || !saToken) return json({ ok: false, code: "not_connected", error: LIVE_OFF }, 503);
+  const broadcastId = String(body.broadcastId || "").slice(0, 80);
+  const room = await loadLiveRoom(env, saToken, broadcastId);
+  if (!room || room.hostUid === user.uid) return json({ ok: false, code: "no_room" }, 404);
+  const session = await cfCalls(env, _fetch, "/sessions/new", "POST", {});
+  const sessionId = session.data && session.data.sessionId;
+  if (!session.ok || !sessionId) return json({ ok: false, error: LIVE_OFF }, 502);
+  const pulled = await cfCalls(env, _fetch, "/sessions/" + encodeURIComponent(sessionId) + "/tracks/new", "POST", {
+    tracks: (room.tracks || []).map(function (name) {
+      return { location: "remote", trackName: name, sessionId: room.sessionId };
+    }),
+  });
+  const desc = pulled.data && pulled.data.sessionDescription;
+  if (!pulled.ok || !desc || !desc.sdp) return json({ ok: false, error: LIVE_OFF }, 502);
+  return json({ ok: true, sessionId: sessionId, sdp: desc.sdp, type: desc.type || "offer" });
+}
+
+async function liveAnswer(env, user, body) {
+  if (!callsReady(env)) return json({ ok: false, error: LIVE_OFF }, 503);
+  const sessionId = String(body.sessionId || "");
+  const sdp = String(body.sdp || "");
+  if (!sessionId || sdp.length < 20) return json({ ok: false }, 400);
+  const done = await cfCalls(env, _fetch, "/sessions/" + encodeURIComponent(sessionId) + "/renegotiate", "PUT", {
+    sessionDescription: { sdp: sdp, type: body.type || "answer" },
+  });
+  if (!done.ok) return json({ ok: false, error: LIVE_OFF }, 502);
+  return json({ ok: true });
+}
+
+async function liveEnd(env, user, saToken, body) {
+  const broadcastId = String(body.broadcastId || "").slice(0, 80);
+  const room = await loadLiveRoom(env, saToken, broadcastId);
+  if (!room || room.hostUid !== user.uid) return json({ ok: false }, 403);
+  forgetRoom(broadcastId);
+  if (saToken) {
+    await fsPutDoc(env, saToken, "/liveRooms/" + encodeURIComponent(broadcastId), {
+      ended: true,
+      hostUid: user.uid,
+      at: Date.now(),
+    });
+  }
+  return json({ ok: true });
+}
+
 export async function handleRequest(request, env = {}, ctx = {}) {
   if (request.method === "OPTIONS") return corsPreflight();
   const url = new URL(request.url);
@@ -2410,6 +2659,8 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         hasInbox: !!(mailInbox(env) && looksLikeEmail(mailInbox(env))),
         persist: saToken ? "firestore-sa" : "user-token",
         saError: saToken ? "" : saCache.err || "",
+        payments: paymentsReady(env) && !!saToken,
+        liveRooms: callsReady(env) && !!saToken,
       });
     }
 
@@ -2566,6 +2817,10 @@ export async function handleRequest(request, env = {}, ctx = {}) {
 
     if (path === "/v1/mail" && request.method === "POST") {
       return handleMail(request, env, saToken);
+    }
+
+    if (path === "/v1/pay/webhook" && request.method === "POST") {
+      return payWebhook(env, request, saToken);
     }
 
     if (path === "/v1/handle/check" && request.method === "GET") {
@@ -3118,7 +3373,30 @@ export async function handleRequest(request, env = {}, ctx = {}) {
     }
 
     if (path === "/v1/support/intent" && request.method === "POST") {
-      return json({ ok: false, error: "Support isn’t available yet" }, 400);
+      const body = await request.json().catch(() => ({}));
+      return payCheckout(env, user, saToken, Object.assign({ kind: "support" }, body || {}));
+    }
+
+    if (path === "/v1/pay/checkout" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      return payCheckout(env, user, saToken, body || {});
+    }
+
+    if (path === "/v1/live/host" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      return liveHost(env, user, saToken, body || {});
+    }
+    if (path === "/v1/live/watch" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      return liveWatch(env, user, saToken, body || {});
+    }
+    if (path === "/v1/live/answer" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      return liveAnswer(env, user, body || {});
+    }
+    if (path === "/v1/live/end" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      return liveEnd(env, user, saToken, body || {});
     }
 
     if (path === "/v1/broadcast/place" && request.method === "POST") {
