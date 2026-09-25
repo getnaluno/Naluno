@@ -407,63 +407,73 @@ async function sparkEngineTranslate(text, from, to){
   const sl = sparkMapLang(from);
   const tl = sparkMapLang(to);
 
-  try{
-    const onAndroid = /Android/i.test(navigator.userAgent || '');
-    if(!onAndroid && typeof Translator !== 'undefined' && Translator.create && Translator.availability){
+  function sparkFirstOk(jobs){
+    return new Promise(function(resolve){
+      let left = jobs.length;
+      let won = false;
+      if(!left){ resolve(''); return; }
+      jobs.forEach(function(job){
+        Promise.resolve().then(job).then(function(out){
+          if(won) return;
+          if(out){ won = true; resolve(out); return; }
+          left--;
+          if(!won && left <= 0) resolve('');
+        }).catch(function(){
+          left--;
+          if(!won && left <= 0) resolve('');
+        });
+      });
+    });
+  }
+
+  const raced = await sparkFirstOk([
+    async function(){
+      const onAndroid = /Android/i.test(navigator.userAgent || '');
+      if(onAndroid || typeof Translator === 'undefined' || !Translator.create || !Translator.availability) return '';
       const avail = await Promise.race([
         Translator.availability({ sourceLanguage: sl, targetLanguage: tl }),
-        new Promise(function(res){ setTimeout(function(){ res('unavailable'); }, 1500); }),
+        new Promise(function(res){ setTimeout(function(){ res('unavailable'); }, 600); }),
       ]);
-      if(avail === 'available'){
-        const tr = await Promise.race([
-          Translator.create({ sourceLanguage: sl, targetLanguage: tl }),
-          new Promise(function(_, rej){ setTimeout(function(){ rej(new Error('timeout')); }, 2000); }),
-        ]);
-        const out = await tr.translate(src);
-        if(sparkTxAccept(src, out, from, to)){
-          sparkTxCacheSet(from, to, src, out);
-          return out;
-        }
-      }
-    }
-  }catch(_){}
-
-  try{
-    const res = await sparkFetch('https://naluno-spark-translate.naluno.workers.dev', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: src.slice(0, 800), from: sl, to: tl }),
-    }, 5500);
-    if(res.ok){
+      if(avail !== 'available') return '';
+      const tr = await Promise.race([
+        Translator.create({ sourceLanguage: sl, targetLanguage: tl }),
+        new Promise(function(_, rej){ setTimeout(function(){ rej(new Error('timeout')); }, 900); }),
+      ]);
+      const out = await tr.translate(src);
+      return sparkTxAccept(src, out, from, to) ? out : '';
+    },
+    async function(){
+      const res = await sparkFetch('https://naluno-spark-translate.naluno.workers.dev', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: src.slice(0, 800), from: sl, to: tl }),
+      }, 2200);
+      if(!res.ok) return '';
       const data = await res.json();
-      if(data && sparkTxAccept(src, data.text, from, to)){
-        sparkTxCacheSet(from, to, src, data.text);
-        return data.text;
-      }
-    }
-  }catch(_){}
-
-  try{
-    const gtx = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl='
-      + encodeURIComponent(sl) + '&tl=' + encodeURIComponent(tl)
-      + '&dt=t&q=' + encodeURIComponent(src.slice(0, 500));
-    const res = await sparkFetch(gtx, {}, 4000);
-    if(res.ok){
-      const data = await res.json();
-      const out = sparkParseGtx(data);
-      if(sparkTxAccept(src, out, from, to)){
-        sparkTxCacheSet(from, to, src, out);
-        return out;
-      }
-    }
-  }catch(_){}
+      return (data && sparkTxAccept(src, data.text, from, to)) ? data.text : '';
+    },
+    async function(){
+      const q = src.slice(0, 500);
+      const gtx = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl='
+        + encodeURIComponent(sl) + '&tl=' + encodeURIComponent(tl)
+        + '&dt=t&q=' + encodeURIComponent(q);
+      const res = await sparkFetch(gtx, {}, 1800);
+      if(!res.ok) return '';
+      const out = sparkParseGtx(await res.json());
+      return sparkTxAccept(q, out, from, to) ? out : '';
+    },
+  ]);
+  if(raced){
+    sparkTxCacheSet(from, to, src, raced);
+    return raced;
+  }
 
   try{
     const hosts = ['https://lingva.ml', 'https://lingva.garudalinux.org'];
     for(let i = 0; i < hosts.length; i++){
       try{
         const url = hosts[i] + '/api/v1/' + encodeURIComponent(sl) + '/' + encodeURIComponent(tl) + '/' + encodeURIComponent(src.slice(0, 500));
-        const res = await sparkFetch(url, {}, 3500);
+        const res = await sparkFetch(url, {}, 1600);
         if(!res.ok) continue;
         const data = await res.json();
         const out = data && (data.translation || data.text);

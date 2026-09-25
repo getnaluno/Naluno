@@ -156,41 +156,71 @@ try{
 
 let bspaceWriteOrig = [];
 let bspaceLangToken = 0;
-async function bspaceTranslateText(text, to){
+const bspaceTxMemo = Object.create(null);
+function bspaceTranslateChunk(bit, from, to){
+  if(typeof sparkEngineTranslate !== 'function') return Promise.resolve(bit);
+  return sparkEngineTranslate(bit, from, to).then(function(out){ return out || bit; }).catch(function(){ return bit; });
+}
+async function bspaceTranslateText(text, to, onPartial){
   if(!to || typeof sparkEngineTranslate !== 'function') return text;
   const guessed = (typeof sparkGuessLang === 'function') ? sparkGuessLang() : 'en';
   const from = guessed === to ? 'en' : guessed;
   const src = String(text || '');
-  const parts = [];
-  for(let i = 0; i < src.length; i += 450){
-    const bit = src.slice(i, i + 450);
-    let out = '';
-    try{ out = await sparkEngineTranslate(bit, from, to); }catch(_){}
-    if(!out && from !== 'en'){
-      try{ out = await sparkEngineTranslate(bit, 'en', to); }catch(_){}
-    }
-    parts.push(out || bit);
+  if(!src) return src;
+  if(from === to) return src;
+  const key = from + '>' + to + '\n' + src;
+  if(bspaceTxMemo[key]){
+    if(typeof onPartial === 'function') onPartial(bspaceTxMemo[key], true);
+    return bspaceTxMemo[key];
   }
-  return parts.join('');
+  const size = 480;
+  const bits = [];
+  for(let i = 0; i < src.length; i += size) bits.push(src.slice(i, i + size));
+  const outs = new Array(bits.length);
+  let pending = bits.length;
+  await new Promise(function(resolve){
+    if(!bits.length){ resolve(); return; }
+    bits.forEach(function(bit, idx){
+      bspaceTranslateChunk(bit, from, to).then(function(out){
+        outs[idx] = out;
+        pending--;
+        if(typeof onPartial === 'function'){
+          let acc = '';
+          let hole = false;
+          for(let j = 0; j < bits.length; j++){
+            if(outs[j] == null){ hole = true; acc += src.slice(j * size); break; }
+            acc += outs[j];
+          }
+          onPartial(acc, !hole && pending <= 0);
+        }
+        if(pending <= 0) resolve();
+      });
+    });
+  });
+  const joined = outs.map(function(o, i){ return o || bits[i]; }).join('');
+  bspaceTxMemo[key] = joined;
+  return joined;
 }
 async function bspaceApplyLanguage(lang){
   const box = $('bspaceWriting');
   if(!box) return;
   const token = ++bspaceLangToken;
   const articles = box.querySelectorAll('[data-write-body]');
+  const jobs = [];
   for(let i = 0; i < articles.length; i++){
-    if(token !== bspaceLangToken) return;
     const clamp = articles[i].querySelector('.bspace-read-clamp');
     if(!clamp) continue;
-    const orig = (bspaceWriteOrig[i] != null) ? bspaceWriteOrig[i] : (clamp.getAttribute('data-orig') || '');
+    const orig = (bspaceWriteOrig[i] != null) ? bspaceWriteOrig[i] : (clamp.getAttribute('data-orig') || clamp.textContent || '');
     if(!lang){
       clamp.textContent = orig;
       continue;
     }
-    const out = await bspaceTranslateText(orig, lang);
-    if(token !== bspaceLangToken) return;
-    clamp.textContent = out || orig;
+    jobs.push(bspaceTranslateText(orig, lang, function(partial){
+      if(token !== bspaceLangToken) return;
+      clamp.textContent = partial || orig;
+    }));
   }
+  await Promise.all(jobs);
 }
 
 function bspacePaintWriting(seg){
@@ -281,7 +311,9 @@ function bspaceClearWriting(){
   fillHear();
   window.bspaceFillHear = fillHear;
   document.addEventListener('DOMContentLoaded', fillHear);
-  if(hear) hear.onchange = function(){ bspaceApplyLanguage(hear.value); };
+  if(hear) hear.onchange = function(){
+    bspaceApplyLanguage(hear.value);
+  };
   btn.onclick = function(e){
     if(e) e.stopPropagation();
     const box = $('bspaceWriting');
@@ -516,12 +548,19 @@ function renderBspaceMedia(seg){
       }
     }catch(_){}
     let barHost = document.getElementById('bspaceChapterHost');
-    if(!barHost){
-      const title = $('bspaceTitle');
-      if(title && title.parentNode){
+    const title = $('bspaceTitle');
+    const titleRow = title && title.closest ? title.closest('.bspace-title-row') : null;
+    const listenRow = $('bspaceListenWrap');
+    const anchor = (listenRow && listenRow.parentNode) ? listenRow : (titleRow || title);
+    if(anchor && anchor.parentNode){
+      if(!barHost){
         barHost = document.createElement('div');
         barHost.id = 'bspaceChapterHost';
-        title.parentNode.insertBefore(barHost, title);
+      }
+      const after = anchor.nextSibling;
+      if(barHost !== after){
+        if(after) anchor.parentNode.insertBefore(barHost, after);
+        else anchor.parentNode.appendChild(barHost);
       }
     }
     if(barHost){
@@ -794,7 +833,9 @@ function bspaceRenderTalk(el, docs, col, emptyText, extraHtml){
   const Threads = window.NalunoRoomThreads;
   const grouped = Threads ? Threads.group(docs) : { tops: (docs || []).map(function(d){ return { id: d.id, m: d.data ? d.data() : d }; }), replies: {} };
   if(!grouped.tops.length){
-    el.innerHTML = '<div class="bspace-card"><div class="body" style="color:var(--text-dim);">' + emptyText + '</div></div>';
+    el.innerHTML = emptyText
+      ? '<div class="bspace-card"><div class="body" style="color:var(--text-dim);">' + emptyText + '</div></div>'
+      : '';
     return;
   }
   el.innerHTML = grouped.tops.map(function(row){
@@ -957,7 +998,7 @@ function renderBspaceConversation(docs){
     pin.style.display = 'none';
     pin.innerHTML = '';
   }
-  bspaceRenderTalk(el, rest, 'conversation', 'No messages yet. Say hello, leave a voice note, or share a photo.');
+  bspaceRenderTalk(el, rest, 'conversation', '');
 }
 
 function renderBspaceQuestions(docs){
