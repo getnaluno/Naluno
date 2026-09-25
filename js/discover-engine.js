@@ -15,6 +15,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const VALUE = {
     like: 1,
+    kept_line: 6,
     share: 4,
     save: 5,
     returned_later: 6,
@@ -28,6 +29,7 @@
   };
   const NEGATIVE = {
     not_interested: 12,
+    dislike: 8,
     hide_topic: 10,
     hide_creator: 20,
     block_creator: 40,
@@ -150,7 +152,9 @@
       + (Number(f.shares) || 0) * 3
       + (Number(f.saves) || 0) * 2.5
       + (Number(f.follows) || 0) * 4
-      + (Number(f.returns) || 0) * 2;
+      + (Number(f.returns) || 0) * 2
+      + (Number(f.likes) || 0) * 2
+      + (Number(f.keptLines) || 0) * 4;
     return {
       impressions: imp,
       rate: imp ? evidence / imp : 0,
@@ -218,6 +222,7 @@
     const f = b.features || {};
     const imp = Math.max(1, fit.impressions || 1);
     n += Math.min(1, (Number(f.negativeEvents) || 0) / imp * 4);
+    n += Math.min(1, (Number(f.dislikes) || 0) / imp * 4);
     n += Math.min(1, (Number(f.reports) || 0) / 3);
     return Math.min(1, n);
   }
@@ -268,7 +273,8 @@
     const f = b.features || {};
     const talk = (Number(f.meaningfulComments) || 0) * 2
       + (Number(f.questions) || 0) * 2
-      + (Number(f.answers) || 0);
+      + (Number(f.answers) || 0)
+      + (Number(f.commentReacts) || 0);
     const fromPoints = Math.min(0.2, (Number(f.contributionPoints) || 0) / 500);
     const community = Math.min(1, talk / 24 + fromPoints);
     const ageH = Math.max(0, (now - Number(b.createdAt || now)) / 3600000);
@@ -295,6 +301,12 @@
     score += w.quality * parts.quality;
     score -= w.negative * parts.negative;
     score -= w.manipulation * parts.manipulation;
+    const likes = Number(f.likes) || 0;
+    const dislikes = Number(f.dislikes) || 0;
+    const votes = likes + dislikes;
+    if (votes) score += ((likes / votes) - 0.5) * 0.9;
+    const kept = Number(f.keptLines) || 0;
+    if (kept) score += Math.min(0.35, kept / 12);
     const sources = sourcesFor(b, viewer, fit, rel, now);
     return {
       id: b.id,
@@ -457,6 +469,13 @@
     if (type === 'watch_50_percent' || type === 'watch_75_percent' || type === 'watch_90_percent' || type === 'watch_completed') lift(1);
     if (type === 'save' || type === 'share' || type === 'returned_later') lift(1.5);
     if (type === 'meaningful_comment' || type === 'question' || type === 'answer') lift(1.2);
+    if (type === 'like') lift(1.4);
+    if (type === 'unlike') lift(-1.4);
+    if (type === 'kept_line') lift(2);
+    if (type === 'comment_react') lift(0.4);
+    if (type === 'dislike') lift(-2);
+    if (type === 'undislike') lift(2);
+    if (type === 'comment_down') lift(-0.3);
     if (type === 'more') lift(2);
     if (type === 'less' || type === 'skip_fast') lift(-1.5);
     if (type === 'not_interested') {
@@ -494,6 +513,10 @@
       questions: 0,
       answers: 0,
       comments: 0,
+      likes: 0,
+      dislikes: 0,
+      keptLines: 0,
+      commentReacts: 0,
       negativeEvents: 0,
       reports: 0,
       watchSecSum: 0,
@@ -524,6 +547,16 @@
       if (type === 'comment') f.comments += 1;
       if (type === 'question') { f.questions += 1; f.meaningfulComments += 1; }
       if (type === 'answer') { f.answers += 1; f.meaningfulComments += 1; }
+      if (type === 'like') f.likes += 1;
+      if (type === 'unlike') f.likes = Math.max(0, f.likes - 1);
+      if (type === 'dislike') { f.dislikes += 1; f.negativeEvents += 1; }
+      if (type === 'undislike') {
+        f.dislikes = Math.max(0, f.dislikes - 1);
+        f.negativeEvents = Math.max(0, f.negativeEvents - 1);
+      }
+      if (type === 'kept_line') f.keptLines += 1;
+      if (type === 'comment_react') f.commentReacts += 1;
+      if (type === 'comment_down') f.commentReacts += 1;
       if (type === 'not_interested' || type === 'hide_creator' || type === 'skip_fast' || type === 'report') {
         f.negativeEvents += 1;
       }
@@ -558,6 +591,10 @@
         questions: f.questions,
         answers: f.answers,
         comments: f.comments,
+        likes: f.likes,
+        dislikes: f.dislikes,
+        keptLines: f.keptLines,
+        commentReacts: f.commentReacts,
         negativeEvents: f.negativeEvents,
         reports: f.reports,
         avgWatchSec: f.watchSamples ? Math.round(f.watchSecSum / f.watchSamples) : 0,

@@ -193,6 +193,22 @@
     profile = Engine.applyTaste(profile, ev);
     persistProfile();
     if (type !== 'more' && type !== 'less' && type !== 'reset' && type !== 'noop') writeEvent(ev);
+    if (id && (type === 'like' || type === 'unlike' || type === 'dislike' || type === 'undislike' || type === 'kept_line' || type === 'comment_react')) {
+      const f = Object.assign({ impressions: FEATURES[id] && FEATURES[id].impressions || 0 }, FEATURES[id] || {});
+      if (type === 'like') f.likes = (Number(f.likes) || 0) + 1;
+      if (type === 'unlike') f.likes = Math.max(0, (Number(f.likes) || 0) - 1);
+      if (type === 'dislike') {
+        f.dislikes = (Number(f.dislikes) || 0) + 1;
+        f.negativeEvents = (Number(f.negativeEvents) || 0) + 1;
+      }
+      if (type === 'undislike') {
+        f.dislikes = Math.max(0, (Number(f.dislikes) || 0) - 1);
+        f.negativeEvents = Math.max(0, (Number(f.negativeEvents) || 0) - 1);
+      }
+      if (type === 'kept_line') f.keptLines = (Number(f.keptLines) || 0) + 1;
+      if (type === 'comment_react') f.commentReacts = (Number(f.commentReacts) || 0) + 1;
+      FEATURES[id] = f;
+    }
     if (type === 'not_interested' || type === 'hide_creator' || type === 'hide_topic' || type === 'reset') {
       try { if (typeof renderBroadcastTab === 'function') renderBroadcastTab(); } catch (_) {}
     }
@@ -234,17 +250,15 @@
     sheet = document.createElement('div');
     sheet.id = 'discoverSheet';
     sheet.className = 'call-overlay';
-    sheet.innerHTML = '<div class="discover-card" role="dialog" aria-label="This feed">'
-      + '<div class="discover-top"><b>This feed</b><button type="button" id="discoverClose">Close</button></div>'
+    sheet.innerHTML = '<div class="discover-card" role="dialog" aria-label="Why this">'
+      + '<div class="discover-top"><b>Why this</b><button type="button" id="discoverClose">Close</button></div>'
       + '<p id="discoverWhy" class="discover-why"></p>'
       + '<div class="discover-actions">'
       + '<button type="button" id="discoverMore">More like this</button>'
       + '<button type="button" id="discoverLess">Less of this</button>'
       + '<button type="button" id="discoverSkip">Not interested</button>'
       + '<button type="button" id="discoverHide">Hide this creator</button>'
-      + '<button type="button" id="discoverReset">Reset what this phone has learned</button>'
       + '</div>'
-      + '<p class="discover-note">The feed is not trying to keep you here. It puts a Broadcast in front of you that is worth the time, including work you would not have opened on your own. Follower count does not decide who is shown.</p>'
       + '</div>';
     document.body.appendChild(sheet);
     sheet.querySelector('#discoverClose').onclick = close;
@@ -253,13 +267,6 @@
     sheet.querySelector('#discoverLess').onclick = function () { act('less'); };
     sheet.querySelector('#discoverSkip').onclick = function () { act('not_interested'); };
     sheet.querySelector('#discoverHide').onclick = function () { act('hide_creator'); };
-    sheet.querySelector('#discoverReset').onclick = function () {
-      profile = Engine.blankViewer();
-      persistProfile();
-      close();
-      try { if (typeof toast === 'function') toast('This phone has forgotten the feed'); } catch (_) {}
-      try { if (typeof renderBroadcastTab === 'function') renderBroadcastTab(); } catch (_) {}
-    };
     return sheet;
   }
   function currentId() {
@@ -275,22 +282,62 @@
       }
     } catch (_) {}
   }
-  function open() {
-    const sheet = ensureSheet();
+  function whyForPlaying() {
     const id = currentId();
-    const row = WHY[id];
-    const why = document.getElementById('discoverWhy');
-    if (why) {
-      why.textContent = row && row.why
-        ? row.why
-        : 'You opened this yourself. It was not placed by the feed.';
+    let b = { id: id };
+    try {
+      if (typeof activeBroadcastMeta !== 'undefined' && activeBroadcastMeta) {
+        const mid = activeBroadcastMeta.broadcastId || activeBroadcastMeta.id || '';
+        if (!id || !mid || mid === id) b = Object.assign({}, activeBroadcastMeta, { id: mid || id });
+      }
+    } catch (_) {}
+    if (b.id && FEATURES[b.id]) b.features = FEATURES[b.id];
+    try {
+      const scored = Engine.scoreOne(b, viewerNow(), modelForViewer(), Date.now());
+      if (scored && scored.why) {
+        WHY[b.id] = { why: scored.why, model: modelForViewer().id, sources: scored.sources };
+        return scored.why;
+      }
+    } catch (_) {}
+    return (WHY[id] && WHY[id].why) || 'You opened this yourself.';
+  }
+  function holdPlayback() {
+    const v = document.getElementById('bspaceVideoEl');
+    if (!v || v.paused) return;
+    try {
+      v.dataset.nalunoKeepAlive = '1';
+      v.dataset.nalunoWantPlay = '1';
+    } catch (_) {}
+    function resume() {
+      if (v && v.paused && v.dataset.nalunoUserPaused !== '1') {
+        const p = v.play();
+        if (p && p.catch) p.catch(function () {});
+      }
     }
+    resume();
+    setTimeout(resume, 60);
+    setTimeout(resume, 280);
+  }
+  function open() {
+    const room = document.getElementById('bspace');
+    const hero = document.getElementById('bspaceHero');
+    if (!room || !room.classList.contains('active')) return;
+    const host = (hero && room.contains(hero)) ? hero : room;
+    const sheet = ensureSheet();
+    if (sheet.parentElement !== host) host.appendChild(sheet);
+    sheet.classList.add('over-video');
+    const why = document.getElementById('discoverWhy');
+    if (why) why.textContent = whyForPlaying();
     sheet.classList.add('active');
+    holdPlayback();
     try { if (window.nalunoBack) window.nalunoBack.push(); } catch (_) {}
   }
   function close() {
     const sheet = document.getElementById('discoverSheet');
-    if (sheet) sheet.classList.remove('active');
+    if (sheet) {
+      sheet.classList.remove('active');
+      sheet.classList.remove('over-video');
+    }
     try { if (window.nalunoBack) window.nalunoBack.drop('discoverSheet'); } catch (_) {}
   }
 

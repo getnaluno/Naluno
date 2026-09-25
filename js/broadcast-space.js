@@ -16,6 +16,8 @@ let bspaceUnsubs = [];
 function bspaceClearListeners(){
   bspaceUnsubs.forEach(u=>{ try{ u(); }catch(e){} });
   bspaceUnsubs = [];
+  roomReactRows = [];
+  bspaceDocCache = {};
 }
 
 function bspaceEscape(s){
@@ -345,11 +347,349 @@ function setBspaceTab(name){
   });
 }
 
+let bspaceDocCache = {};
+let roomReactRows = [];
+const bspaceTalkOpen = {};
+const bspaceReactOpen = {};
+
+function bspaceReactRowsFor(target, targetId){
+  const want = String(targetId || '');
+  return roomReactRows.filter(function(r){
+    return r.target === target && String(r.targetId || '') === want;
+  });
+}
+function bspaceMyReact(target, targetId){
+  if(typeof currentUser === 'undefined' || !currentUser) return '';
+  const hit = bspaceReactRowsFor(target, targetId).find(function(r){ return r.from === currentUser.uid; });
+  return hit ? (hit.emoji || '') : '';
+}
+function bspaceReactSummary(target, targetId){
+  const counts = {};
+  bspaceReactRowsFor(target, targetId).forEach(function(r){
+    if(!r.emoji) return;
+    counts[r.emoji] = (counts[r.emoji] || 0) + 1;
+  });
+  return Object.keys(counts).map(function(e){
+    return counts[e] > 1 ? (e + ' ' + counts[e]) : e;
+  }).join('  ');
+}
+function bspacePaintVote(){
+  const up = $('bspaceUp');
+  const down = $('bspaceDown');
+  const upN = $('bspaceUpN');
+  const downN = $('bspaceDownN');
+  const rows = bspaceReactRowsFor('broadcast', '');
+  let ups = 0, downs = 0;
+  rows.forEach(function(r){
+    if(r.emoji === '👍') ups += 1;
+    if(r.emoji === '👎') downs += 1;
+  });
+  const mine = bspaceMyReact('broadcast', '');
+  if(up) up.classList.toggle('on', mine === '👍');
+  if(down) down.classList.toggle('on', mine === '👎');
+  if(upN) upN.textContent = ups ? String(ups) : '';
+  if(downN) downN.textContent = downs ? String(downs) : '';
+}
+async function bspaceSetReact(target, targetId, emoji){
+  if(!currentUser || !fbDb || !activeBroadcastId){ toast('Sign in to react'); return null; }
+  const docId = (String(target) + '_' + (targetId || 'root') + '_' + currentUser.uid).slice(0, 700);
+  const ref = fbDb.collection('broadcasts').doc(activeBroadcastId).collection('roomReacts').doc(docId);
+  const prev = bspaceMyReact(target, targetId);
+  if(prev === emoji){
+    await ref.delete();
+    return '';
+  }
+  await ref.set({
+    from: currentUser.uid,
+    target: String(target).slice(0, 24),
+    targetId: String(targetId || '').slice(0, 128),
+    emoji: String(emoji).slice(0, 8),
+    ts: Date.now(),
+  });
+  return emoji;
+}
+function bspaceNoteVote(prev, next){
+  if(!window.NalunoDiscover || typeof NalunoDiscover.note !== 'function' || !activeBroadcastId) return;
+  if(prev === '👍' && next !== '👍') NalunoDiscover.note('unlike', activeBroadcastId);
+  if(prev === '👎' && next !== '👎') NalunoDiscover.note('undislike', activeBroadcastId);
+  if(next === '👍') NalunoDiscover.note('like', activeBroadcastId);
+  if(next === '👎') NalunoDiscover.note('dislike', activeBroadcastId);
+}
+async function bspaceVote(kind){
+  const emoji = kind === 'down' ? '👎' : '👍';
+  const prev = bspaceMyReact('broadcast', '');
+  try{
+    const next = await bspaceSetReact('broadcast', '', emoji);
+    bspaceNoteVote(prev, next || '');
+  }catch(e){
+    toast((e && e.message) || 'Could not save that');
+  }
+}
+function listenRoomReacts(){
+  if(!fbDb || !activeBroadcastId) return;
+  const unsub = fbDb.collection('broadcasts').doc(activeBroadcastId).collection('roomReacts').limit(500).onSnapshot(function(snap){
+    roomReactRows = snap.docs.map(function(d){
+      const m = d.data() || {};
+      return { id: d.id, from: m.from || '', target: m.target || '', targetId: m.targetId || '', emoji: m.emoji || '' };
+    });
+    bspacePaintVote();
+    bspaceRepaintTalk();
+  }, function(){});
+  bspaceUnsubs.push(unsub);
+}
+function bspaceRepaintTalk(){
+  if(bspaceDocCache.conversation) renderBspaceConversation(bspaceDocCache.conversation);
+  if(bspaceDocCache.questions) renderBspaceQuestions(bspaceDocCache.questions);
+  if(bspaceDocCache.results) renderBspaceResults(bspaceDocCache.results);
+  if(bspaceDocCache.resources) renderBspaceResources(bspaceDocCache.resources);
+}
+function bspaceHoldPlayback(){
+  const v = $('bspaceVideoEl');
+  if(!v || v.paused) return;
+  try{ v.dataset.nalunoKeepAlive = '1'; v.dataset.nalunoWantPlay = '1'; }catch(_){}
+  function resume(){
+    if(v.paused && v.dataset.nalunoUserPaused !== '1'){
+      const p = v.play();
+      if(p && p.catch) p.catch(function(){});
+    }
+  }
+  resume();
+  setTimeout(resume, 60);
+  setTimeout(resume, 280);
+}
+function bspaceCloseLine(){
+  const sheet = $('bspaceLineSheet');
+  if(sheet) sheet.classList.remove('active');
+  try{ if(window.nalunoBack) window.nalunoBack.drop('bspaceLineSheet'); }catch(_){}
+}
+function bspaceEnsureLineSheet(){
+  let sheet = $('bspaceLineSheet');
+  if(sheet) return sheet;
+  sheet = document.createElement('div');
+  sheet.id = 'bspaceLineSheet';
+  sheet.className = 'call-overlay over-video';
+  sheet.innerHTML = '<div class="discover-card" role="dialog" aria-label="Keep a line">'
+    + '<div class="discover-top"><b>Keep a line</b><button type="button" id="bspaceLineClose">Close</button></div>'
+    + '<textarea id="bspaceLineText" maxlength="240" rows="3" placeholder="A sentence worth keeping"></textarea>'
+    + '<button type="button" class="bspace-mini primary" id="bspaceLineSave">Keep</button>'
+    + '<div id="bspaceLineList"></div></div>';
+  const room = $('bspace');
+  const hero = $('bspaceHero');
+  const host = (hero && room && room.contains(hero)) ? hero : room;
+  if(host) host.appendChild(sheet);
+  $('bspaceLineClose').onclick = bspaceCloseLine;
+  $('bspaceLineSave').onclick = function(){ bspaceSaveLine(); };
+  sheet.addEventListener('click', function(e){
+    const btn = e.target && e.target.closest ? e.target.closest('[data-line-drop]') : null;
+    if(!btn) return;
+    bspaceDropLine(btn.getAttribute('data-line-drop'));
+  });
+  return sheet;
+}
+async function bspacePaintLines(){
+  const host = $('bspaceLineList');
+  if(!host || !currentUser || !fbDb || !activeBroadcastId) return;
+  try{
+    const snap = await fbDb.collection('users').doc(currentUser.uid).collection('lines').limit(40).get();
+    const rows = snap.docs.map(function(d){ return Object.assign({ id: d.id }, d.data() || {}); })
+      .filter(function(r){ return r.broadcastId === activeBroadcastId; })
+      .sort(function(a, b){ return (b.ts || 0) - (a.ts || 0); });
+    host.innerHTML = rows.map(function(r){
+      return '<p class="bspace-line"><span>' + bspaceEscape(r.text || '') + '</span> <button type="button" data-line-drop="' + bspaceEscape(r.id) + '">Remove</button></p>';
+    }).join('');
+  }catch(_){}
+}
+function bspaceOpenLine(){
+  if(!currentUser){ toast('Sign in to keep a line'); return; }
+  const room = $('bspace');
+  const hero = $('bspaceHero');
+  if(!room || !room.classList.contains('active')) return;
+  const host = (hero && room.contains(hero)) ? hero : room;
+  const sheet = bspaceEnsureLineSheet();
+  if(sheet.parentElement !== host) host.appendChild(sheet);
+  sheet.classList.add('active');
+  bspaceHoldPlayback();
+  try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
+  bspacePaintLines();
+  const box = $('bspaceLineText');
+  if(box){ try{ box.focus(); }catch(_){} }
+}
+async function bspaceSaveLine(){
+  const box = $('bspaceLineText');
+  const text = ((box && box.value) || '').trim().slice(0, 240);
+  if(!text){ toast('Write the sentence'); return; }
+  if(!currentUser || !fbDb || !activeBroadcastId) return;
+  try{
+    await fbDb.collection('users').doc(currentUser.uid).collection('lines').add({
+      text: text,
+      broadcastId: activeBroadcastId,
+      title: (activeBroadcastMeta && activeBroadcastMeta.title) || '',
+      ts: Date.now(),
+    });
+    if(box) box.value = '';
+    if(window.NalunoDiscover && typeof NalunoDiscover.note === 'function'){
+      NalunoDiscover.note('kept_line', activeBroadcastId);
+    }
+    toast('Kept');
+    bspacePaintLines();
+  }catch(e){
+    toast((e && e.message) || 'Could not keep that');
+  }
+}
+async function bspaceDropLine(id){
+  if(!id || !currentUser || !fbDb) return;
+  try{
+    await fbDb.collection('users').doc(currentUser.uid).collection('lines').doc(id).delete();
+    bspacePaintLines();
+  }catch(e){
+    toast((e && e.message) || 'Could not remove that');
+  }
+}
+if($('bspaceUp')) $('bspaceUp').onclick = function(){ bspaceVote('up'); };
+if($('bspaceDown')) $('bspaceDown').onclick = function(){ bspaceVote('down'); };
+if($('bspaceKeepLine')) $('bspaceKeepLine').onclick = function(){ bspaceOpenLine(); };
+
+function bspaceTalkBody(col, m){
+  if(col === 'resources'){
+    if(m.url){
+      return '<a href="' + bspaceEscape(m.url) + '" target="_blank" rel="noopener" style="color:var(--mint);word-break:break-all;">' + bspaceEscape(m.title || m.url) + '</a>';
+    }
+    return bspaceEscape(m.title || m.text || 'Resource');
+  }
+  if(col !== 'conversation') return bspaceEscape(m.text || '');
+  const media = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(m.mediaUrl) : (m.mediaUrl || '');
+  const isVoice = media && (m.type === 'voice' || m.type === 'audio');
+  const isPhoto = media && (m.type === 'photo' || m.type === 'image');
+  if(isVoice){
+    return '<div style="font-family:var(--font-mono);font-size:10px;color:var(--mint);margin-bottom:6px;">Voice note</div>'
+      + '<video class="band-audio-player" controls playsinline preload="metadata" src="' + bspaceEscape(media) + '" style="width:100%;max-width:280px;height:44px;border-radius:8px;background:#0a0c14;"></video>';
+  }
+  if(isPhoto){
+    return '<img src="' + bspaceEscape(media) + '" alt="Photo" loading="lazy" style="max-width:100%;max-height:320px;border-radius:12px;display:block;background:#0a0c14;" />';
+  }
+  if(m.text) return bspaceEscape(m.text);
+  return '<span style="color:var(--text-dim);font-size:12px;">Attachment unavailable</span>';
+}
+function bspaceThreadCard(col, row){
+  const m = row.m || {};
+  const sum = bspaceReactSummary(col, row.id);
+  const reacts = (window.NalunoRoomThreads && NalunoRoomThreads.COMMENT_REACTS) || ['👍','👎','❤️','🔥','👏','💡'];
+  const mine = bspaceMyReact(col, row.id);
+  const pick = reacts.map(function(e){
+    return '<button type="button" class="bspace-emoji' + (mine === e ? ' on' : '') + '" data-emoji="' + e + '" data-target="' + bspaceEscape(row.id) + '">' + e + '</button>';
+  }).join('');
+  return '<div class="bspace-reply">'
+    + '<div class="who">' + bspaceEscape(bspaceWhoLabel(m.from)) + ' · ' + timeAgo(m.ts || Date.now()) + bspaceDeleteBtnHtml(col, row.id, m.from) + '</div>'
+    + '<div class="body">' + bspaceTalkBody(col, m) + '</div>'
+    + '<div class="bspace-post-tools"><button type="button" data-react-open="' + bspaceEscape(row.id) + '">React</button>'
+    + (sum ? '<span class="bspace-react-sum">' + sum + '</span>' : '') + '</div>'
+    + '<div class="bspace-react-pick"' + (bspaceReactOpen[col + ':' + row.id] ? '' : ' hidden') + '>' + pick + '</div>'
+    + '</div>';
+}
+function bspaceRenderTalk(el, docs, col, emptyText, extraHtml){
+  if(!el) return;
+  const Threads = window.NalunoRoomThreads;
+  const grouped = Threads ? Threads.group(docs) : { tops: (docs || []).map(function(d){ return { id: d.id, m: d.data ? d.data() : d }; }), replies: {} };
+  if(!grouped.tops.length){
+    el.innerHTML = '<div class="bspace-card"><div class="body" style="color:var(--text-dim);">' + emptyText + '</div></div>';
+    return;
+  }
+  el.innerHTML = grouped.tops.map(function(row){
+    const m = row.m || {};
+    const kids = (grouped.replies && grouped.replies[row.id]) || [];
+    const embedded = (col === 'questions' && Array.isArray(m.answers)) ? m.answers : [];
+    const n = kids.length + embedded.length;
+    const open = !!bspaceTalkOpen[col + ':' + row.id];
+    const reacts = (window.NalunoRoomThreads && NalunoRoomThreads.COMMENT_REACTS) || ['👍','👎','❤️','🔥','👏','💡'];
+    const mine = bspaceMyReact(col, row.id);
+    const sum = bspaceReactSummary(col, row.id);
+    const pick = reacts.map(function(e){
+      return '<button type="button" class="bspace-emoji' + (mine === e ? ' on' : '') + '" data-emoji="' + e + '" data-target="' + bspaceEscape(row.id) + '">' + e + '</button>';
+    }).join('');
+    const who = col === 'questions'
+      ? (bspaceEscape(bspaceWhoLabel(m.from)) + ' asks · ' + timeAgo(m.ts || Date.now()))
+      : (bspaceEscape(bspaceWhoLabel(m.from)) + ' · ' + timeAgo(m.ts || Date.now()));
+    const threadBits = kids.map(function(k){ return bspaceThreadCard(col, k); }).join('')
+      + embedded.map(function(a){
+        return '<div class="bspace-reply"><div class="who">' + bspaceEscape(bspaceWhoLabel(a.from)) + '</div><div class="body">' + bspaceEscape(a.text || '') + '</div></div>';
+      }).join('');
+    const extra = extraHtml ? extraHtml(m, row.id) : '';
+    const label = n ? (n + (n === 1 ? ' reply' : ' replies')) : 'Reply';
+    return '<div class="bspace-card" data-post="' + bspaceEscape(row.id) + '">'
+      + '<div class="who">' + who + bspaceDeleteBtnHtml(col, row.id, m.from) + '</div>'
+      + '<div class="body">' + bspaceTalkBody(col, m) + '</div>'
+      + extra
+      + '<div class="bspace-post-tools">'
+      + '<button type="button" data-react-open="' + bspaceEscape(row.id) + '">React</button>'
+      + (sum ? '<span class="bspace-react-sum">' + sum + '</span>' : '')
+      + '<button type="button" data-thread-toggle="' + bspaceEscape(row.id) + '">' + label + '</button>'
+      + '</div>'
+      + '<div class="bspace-react-pick"' + (bspaceReactOpen[col + ':' + row.id] ? '' : ' hidden') + '>' + pick + '</div>'
+      + '<div class="bspace-thread"' + (open ? '' : ' hidden') + '>' + threadBits
+      + '<div class="bspace-composer"><input data-reply-input="' + bspaceEscape(row.id) + '" maxlength="800" placeholder="Reply…" />'
+      + '<button type="button" class="bspace-mini primary" data-reply-send="' + bspaceEscape(row.id) + '">Reply</button></div>'
+      + '</div></div>';
+  }).join('');
+  bspaceWireDeleteButtons(el);
+  bspaceWireTalk(el, col);
+}
+function bspaceWireTalk(el, col){
+  el.onclick = function(e){
+    const t = e.target;
+    if(!t || !t.closest) return;
+    const reactBtn = t.closest('[data-react-open]');
+    if(reactBtn && el.contains(reactBtn)){
+      const id = reactBtn.getAttribute('data-react-open');
+      const key = col + ':' + id;
+      bspaceReactOpen[key] = !bspaceReactOpen[key];
+      const card = reactBtn.closest('.bspace-card, .bspace-reply');
+      const pick = card && card.querySelector('.bspace-react-pick');
+      if(pick) pick.hidden = !bspaceReactOpen[key];
+      return;
+    }
+    const emojiBtn = t.closest('[data-emoji]');
+    if(emojiBtn && el.contains(emojiBtn)){
+      const id = emojiBtn.getAttribute('data-target');
+      const emoji = emojiBtn.getAttribute('data-emoji');
+      bspaceSetReact(col, id, emoji).then(function(next){
+        if(window.NalunoDiscover && typeof NalunoDiscover.note === 'function' && next){
+          NalunoDiscover.note(emoji === '👎' ? 'comment_down' : 'comment_react', activeBroadcastId);
+        }
+      }).catch(function(err){ toast((err && err.message) || 'Could not react'); });
+      return;
+    }
+    const toggle = t.closest('[data-thread-toggle]');
+    if(toggle && el.contains(toggle)){
+      const id = toggle.getAttribute('data-thread-toggle');
+      const key = col + ':' + id;
+      bspaceTalkOpen[key] = !bspaceTalkOpen[key];
+      const card = toggle.closest('.bspace-card');
+      const thread = card && card.querySelector('.bspace-thread');
+      if(thread) thread.hidden = !bspaceTalkOpen[key];
+      if(bspaceTalkOpen[key]){
+        const input = card.querySelector('[data-reply-input]');
+        if(input){ try{ input.focus(); }catch(_){} }
+      }
+      return;
+    }
+    const send = t.closest('[data-reply-send]');
+    if(send && el.contains(send)){
+      const id = send.getAttribute('data-reply-send');
+      const card = send.closest('.bspace-card');
+      const input = card && card.querySelector('[data-reply-input]');
+      const text = ((input && input.value) || '').trim();
+      if(!text) return;
+      if(input) input.value = '';
+      bspaceTalkOpen[col + ':' + id] = true;
+      const payload = { type: 'text', text: text, parent_id: id };
+      bspacePost(col, payload);
+    }
+  };
+}
+
 function renderBspaceConversation(docs){
   const el = $('bspaceConversation');
   if(!el) return;
-
-  // Ensure pin host sits above the feed (once)
   let pin = $('bspaceLivePin');
   if(!pin){
     pin = document.createElement('div');
@@ -357,7 +697,6 @@ function renderBspaceConversation(docs){
     pin.style.cssText = 'display:none;margin:0 0 12px;';
     el.parentNode.insertBefore(pin, el);
   }
-
   const LIVE_NOTICE_TTL_MS = 24 * 60 * 60 * 1000;
   const isLiveSystem = (m)=>{
     if(!m) return false;
@@ -387,34 +726,20 @@ function renderBspaceConversation(docs){
     activeBroadcastMeta.live ||
     (activeBroadcastMeta.lastLiveStartedAt && activeBroadcastMeta.lastLiveDurationMs != null)
   ));
-
   const pinned = [];
   const rest = [];
   (docs || []).forEach(d=>{
     const m = d.data ? d.data() : d;
     if(isLiveSystem(m)){
       if(liveNoticeFresh(m)) pinned.push({ d, m });
-    } else rest.push({ d, m });
+    } else rest.push(d);
   });
-
-  // Newest live notice only (top of conversation, not buried).
-  // Regular uploaded videos must not inherit a "Was live" pin.
   if(pinned.length && reallyLived){
     pinned.sort((a,b)=> (b.m.ts||0) - (a.m.ts||0));
     const latest = pinned[0].m;
     const stillLive = !!(activeBroadcastMeta && activeBroadcastMeta.live);
     const label = stillLive ? '● LIVE' : '● WAS LIVE';
-    const fallbackText = stillLive
-      ? 'Creator is live now — join to watch'
-      : 'Creator was live';
-    // FIX: "MAGAMBO is live now" / "MAGAMBO was live" read in third person
-    // even when MAGAMBO is the one looking at their own broadcast — the
-    // stored text is fixed at write time and can't know who'll read it
-    // later. When this device belongs to whoever the message is from,
-    // reconstruct it addressed to "You" instead of falling back to the
-    // stored, name-baked text. Only applies to messages tagged with the new
-    // kind field — older messages (before this fix) still show their
-    // original stored text, unchanged.
+    const fallbackText = stillLive ? 'Creator is live now — join to watch' : 'Creator was live';
     const isMine = !!(currentUser && latest.from === currentUser.uid);
     let displayText = latest.text || fallbackText;
     if(isMine && latest.kind === 'went_live'){
@@ -424,169 +749,41 @@ function renderBspaceConversation(docs){
       displayText = 'You were live' + (dur ? ' for ' + dur : '') + '.';
     }
     pin.style.display = 'block';
-    pin.innerHTML = `<div class="bspace-card" style="border:1px solid rgba(124,255,178,.45);background:rgba(124,255,178,.08);">
-      <div class="who" style="color:var(--mint);">${label} · ${timeAgo(latest.ts || Date.now())}</div>
-      <div class="body" style="font-weight:600;">${bspaceEscape(displayText)}</div>
-    </div>`;
+    pin.innerHTML = '<div class="bspace-card" style="border:1px solid rgba(124,255,178,.45);background:rgba(124,255,178,.08);"><div class="who" style="color:var(--mint);">' + label + ' · ' + timeAgo(latest.ts || Date.now()) + '</div><div class="body" style="font-weight:600;">' + bspaceEscape(displayText) + '</div></div>';
   } else {
     pin.style.display = 'none';
     pin.innerHTML = '';
   }
-
-  if(!rest.length && !pinned.length){
-    el.innerHTML = `<div class="bspace-card"><div class="body" style="color:var(--text-dim);">No messages yet. Say hello, leave a voice note, or share a photo.</div></div>`;
-    return;
-  }
-  if(!rest.length){
-    el.innerHTML = '';
-    return;
-  }
-  el.innerHTML = rest.map(({ d, m })=>{
-    const media = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(m.mediaUrl) : (m.mediaUrl || '');
-    const isVoice = media && (m.type === 'voice' || m.type === 'audio');
-    const isPhoto = media && (m.type === 'photo' || m.type === 'image');
-    let body = '';
-    if(isVoice){
-      body = `<div style="font-family:var(--font-mono);font-size:10px;color:var(--mint);margin-bottom:6px;">Voice note</div>
-        <video class="band-audio-player" controls playsinline preload="metadata" src="${bspaceEscape(media)}" style="width:100%;max-width:280px;height:44px;border-radius:8px;background:#0a0c14;"></video>`;
-    } else if(isPhoto){
-      body = `<img src="${bspaceEscape(media)}" alt="Photo" loading="lazy" style="max-width:100%;max-height:320px;border-radius:12px;display:block;background:#0a0c14;" onerror="this.style.display='none';this.nextElementSibling&&(this.nextElementSibling.style.display='block');" />
-        <div style="display:none;color:var(--text-dim);font-size:12px;">Photo couldn’t load</div>`;
-    } else if(m.text){
-      body = bspaceEscape(m.text);
-    } else {
-      body = `<span style="color:var(--text-dim);font-size:12px;">Attachment unavailable</span>`;
-    }
-    // People make mistakes — anything you posted, you can take back. Shown to
-    // the author of the message, and to the Broadcast's creator (moderation of
-    // their own room). Matches the Firestore rule exactly, which already
-    // allowed `resource.data.from == uid || broadcast creator` — so this is
-    // surfacing a permission that already existed rather than widening one.
-    const delBtn = bspaceDeleteBtnHtml('conversation', (d && d.id) ? d.id : '', m.from);
-    return `<div class="bspace-card">
-      <div class="who">${bspaceEscape(bspaceWhoLabel(m.from))} · ${timeAgo(m.ts || Date.now())}${delBtn}</div>
-      <div class="body">${body}</div>
-    </div>`;
-  }).join('');
-  bspaceWireDeleteButtons(el);
-}
-
-
-/** Delete control for anything a person posted into a Broadcast. Shown to the
- *  author, and to the Broadcast's creator for their own room. Mirrors the
- *  Firestore rule exactly (`resource.data.from == uid || broadcast creator`),
- *  so it surfaces a permission that already existed rather than widening one.
- *  Shared by conversation / questions / results / resources so all four
- *  behave identically instead of drifting apart. */
-function bspaceDeleteBtnHtml(col, docId, fromUid){
-  if(!docId) return '';
-  const mine = !!(currentUser && fromUid === currentUser.uid);
-  const amCreator = !!(activeBroadcastMeta && (activeBroadcastMeta.isMine ||
-    (currentUser && activeBroadcastMeta.creatorUid === currentUser.uid)));
-  if(!mine && !amCreator) return '';
-  return `<button type="button" class="bspace-del" data-del-col="${bspaceEscape(col)}" data-del-id="${bspaceEscape(docId)}" data-del-mine="${mine ? '1' : '0'}" aria-label="Delete this">Delete</button>`;
-}
-
-function bspaceWireDeleteButtons(root){
-  if(!root) return;
-  root.querySelectorAll('[data-del-id]').forEach(function(btn){
-    btn.onclick = function(e){
-      if(e){ e.preventDefault(); e.stopPropagation(); }
-      bspaceDeletePostedDoc(
-        btn.getAttribute('data-del-col'),
-        btn.getAttribute('data-del-id'),
-        btn.getAttribute('data-del-mine') === '1'
-      );
-    };
-  });
-}
-
-/** Delete something posted into a Broadcast — a comment, question, voice
- *  note, photo, result or resource. Confirms first (it isn't recoverable),
- *  and reports honestly if refused rather than leaving the item on screen
- *  looking like nothing happened. */
-async function bspaceDeletePostedDoc(col, docId, mine){
-  if(!col || !docId || !fbDb || !activeBroadcastId) return;
-  const msg = mine
-    ? 'Delete this? It can\u2019t be undone.'
-    : 'Remove this from your Broadcast? It can\u2019t be undone.';
-  let ok = true;
-  try{ ok = window.confirm(msg); }catch(_){ ok = true; }
-  if(!ok) return;
-  try{
-    await fbDb.collection('broadcasts').doc(activeBroadcastId)
-      .collection(col).doc(docId).delete();
-    toast(mine ? 'Deleted' : 'Removed');
-    // The collection's own listener re-renders; no manual refresh needed.
-    try{ if(typeof renderBspaceImpact === 'function') renderBspaceImpact(); }catch(_){}
-  }catch(e){
-    console.warn('[bspace] delete ' + col, e);
-    toast('Couldn\u2019t delete that \u2014 check your connection');
-  }
+  bspaceRenderTalk(el, rest, 'conversation', 'No messages yet. Say hello, leave a voice note, or share a photo.');
 }
 
 function renderBspaceQuestions(docs){
   const el = $('bspaceQuestions');
-  if(!el) return;
-  if(!docs.length){
-    el.innerHTML = `<div class="bspace-card"><div class="body" style="color:var(--text-dim);">No questions yet — ask anything.</div></div>`;
-    return;
-  }
-  el.innerHTML = docs.map(d=>{
-    const m = d.data();
-    const best = m.bestAnswer ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line);"><span style="font-family:var(--font-mono);font-size:10px;color:var(--mint);">Best answer</span><div class="body">${bspaceEscape(m.bestAnswer)}</div></div>` : '';
+  bspaceRenderTalk(el, docs, 'questions', 'No questions yet — ask anything.', function(m, id){
+    const best = m.bestAnswer ? '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line);"><span style="font-family:var(--font-mono);font-size:10px;color:var(--mint);">Best answer</span><div class="body">' + bspaceEscape(m.bestAnswer) + '</div></div>' : '';
     const mark = (activeBroadcastMeta && activeBroadcastMeta.isMine && !m.bestAnswer)
-      ? `<button type="button" class="bspace-mini" data-mark-best="${d.id}" style="margin-top:8px;">Mark best from replies…</button>` : '';
-    return `<div class="bspace-card" data-qid="${d.id}">
-      <div class="who">${bspaceEscape(bspaceWhoLabel(m.from))} asks · ${timeAgo(m.ts || Date.now())}${bspaceDeleteBtnHtml('questions', d.id, m.from)}</div>
-      <div class="body">${bspaceEscape(m.text || '')}</div>
-      ${best}
-      ${m.answers && m.answers.length ? m.answers.map((a,i)=>`<div style="margin-top:6px;font-size:13px;color:var(--text-dim);">↳ ${bspaceEscape(a.text)} <span style="font-family:var(--font-mono);font-size:10px;">— ${bspaceEscape(bspaceWhoLabel(a.from))}</span>${(activeBroadcastMeta && activeBroadcastMeta.isMine && !m.bestAnswer) ? ` <button type="button" class="bspace-mini bspace-mark-best" data-qid="${d.id}" data-atext="${bspaceEscape(a.text).replace(/"/g,'&quot;')}" style="margin-left:6px;">Best</button>` : ''}</div>`).join('') : ''}
-      <div class="bspace-composer" style="margin-top:8px;">
-        <input class="bspace-answer-input" data-qid="${d.id}" placeholder="Answer this…" maxlength="400" />
-        <button type="button" class="bspace-mini primary bspace-answer-btn" data-qid="${d.id}">Answer</button>
-      </div>
-    </div>`;
-  }).join('');
-  el.querySelectorAll('.bspace-answer-btn').forEach(btn=>{
-    btn.onclick = ()=> bspaceAnswerQuestion(btn.dataset.qid);
+      ? '<button type="button" class="bspace-mini" data-mark-best="' + bspaceEscape(id) + '" style="margin-top:8px;">Mark best from replies…</button>' : '';
+    return best + mark;
   });
-  el.querySelectorAll('.bspace-mark-best').forEach(btn=>{
-    btn.onclick = ()=> bspaceMarkBest(btn.dataset.qid, btn.dataset.atext || btn.getAttribute('data-atext'));
+  if(!el) return;
+  el.querySelectorAll('[data-mark-best]').forEach(function(btn){
+    btn.onclick = function(e){
+      if(e){ e.stopPropagation(); }
+      const card = btn.closest('.bspace-card');
+      const replies = card ? card.querySelectorAll('.bspace-reply .body') : [];
+      const first = replies[0] ? replies[0].textContent : '';
+      if(!first){ toast('Open the replies first'); return; }
+      bspaceMarkBest(btn.getAttribute('data-mark-best'), first);
+    };
   });
-  bspaceWireDeleteButtons(el);
 }
 
 function renderBspaceResults(docs){
-  const el = $('bspaceResults');
-  if(!el) return;
-  if(!docs.length){
-    el.innerHTML = `<div class="bspace-card"><div class="body" style="color:var(--text-dim);">When this Broadcast changes something in someone’s life, it shows up here.</div></div>`;
-    return;
-  }
-  el.innerHTML = docs.map(d=>{
-    const m = d.data();
-    return `<div class="bspace-card">
-      <div class="who">${bspaceEscape(bspaceWhoLabel(m.from))} · ${timeAgo(m.ts || Date.now())}${bspaceDeleteBtnHtml('results', d.id, m.from)}</div>
-      <div class="body">${bspaceEscape(m.text || '')}</div>
-    </div>`;
-  }).join('');
-  bspaceWireDeleteButtons(el);
+  bspaceRenderTalk($('bspaceResults'), docs, 'results', 'When this Broadcast changes something in someone’s life, it shows up here.');
 }
 
 function renderBspaceResources(docs){
-  const el = $('bspaceResources');
-  if(!el) return;
-  if(!docs.length){
-    el.innerHTML = `<div class="bspace-card"><div class="body" style="color:var(--text-dim);">No resources attached yet.</div></div>`;
-    return;
-  }
-  el.innerHTML = docs.map(d=>{
-    const m = d.data();
-    const link = m.url ? `<a href="${bspaceEscape(m.url)}" target="_blank" rel="noopener" style="color:var(--mint);word-break:break-all;">${bspaceEscape(m.title || m.url)}</a>` : bspaceEscape(m.title || 'Resource');
-    return `<div class="bspace-card"><div class="who">${bspaceEscape(bspaceWhoLabel(m.from))}${bspaceDeleteBtnHtml('resources', d.id, m.from)}</div><div class="body">${link}</div></div>`;
-  }).join('');
-  bspaceWireDeleteButtons(el);
+  bspaceRenderTalk($('bspaceResources'), docs, 'resources', 'No resources attached yet.');
 }
 
 function renderBspaceJourney(docs){
@@ -717,9 +914,11 @@ function renderBspaceRelated(){
 
 function listenBspaceCollection(colName, renderFn, orderField){
   if(!fbDb || !activeBroadcastId) return;
-  const q = fbDb.collection('broadcasts').doc(activeBroadcastId).collection(colName).orderBy(orderField || 'ts', 'desc').limit(40);
+  const q = fbDb.collection('broadcasts').doc(activeBroadcastId).collection(colName).orderBy(orderField || 'ts', 'desc').limit(80);
   const unsub = q.onSnapshot(function(snap){
-    renderFn(snap.docs.slice().reverse());
+    const docs = snap.docs.slice().reverse();
+    bspaceDocCache[colName] = docs;
+    renderFn(docs);
     scheduleBspaceLivePaint();
   }, function(){ renderFn([]); });
   bspaceUnsubs.push(unsub);
@@ -915,6 +1114,7 @@ async function openBroadcastSpace(meta){
 
   try{ paintBspaceViews(meta); }catch(_){}
 
+  listenRoomReacts();
   listenBspaceCollection('conversation', renderBspaceConversation, 'ts');
   listenBspaceCollection('questions', renderBspaceQuestions, 'ts');
   listenBspaceCollection('results', renderBspaceResults, 'ts');
@@ -1036,6 +1236,9 @@ async function bspacePost(col, payload){
       if (payload && payload.parent_id) parentPatch.replies = firebase.firestore.FieldValue.increment(1);
       else parentPatch.comments = firebase.firestore.FieldValue.increment(1);
     }
+    if (payload && payload.parent_id && !talk) {
+      parentPatch.replies = firebase.firestore.FieldValue.increment(1);
+    }
     if (col === 'questions') {
       parentPatch.comments = firebase.firestore.FieldValue.increment(1);
     }
@@ -1051,6 +1254,10 @@ async function bspacePost(col, payload){
       // nothing here computes or sends a value. Fire-and-forget by design:
       // the post above has already succeeded and must not be affected by
       // anything the economy service does or fails to do (spec §48).
+      if ((col === 'conversation' || col === 'questions' || col === 'results') && payload && payload.type !== 'system' && window.NalunoDiscover && typeof NalunoDiscover.note === 'function') {
+        const kind = payload.parent_id ? 'answer' : (col === 'questions' ? 'question' : 'meaningful_comment');
+        NalunoDiscover.note(kind, activeBroadcastId);
+      }
       if(talk && typeof nalunoTrack === 'function'){
         const isReply = !!(payload && payload.parent_id);
         nalunoTrack(isReply ? 'COMMENT_REPLY' : 'BROADCAST_COMMENT', {
