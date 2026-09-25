@@ -61,6 +61,10 @@ service cloud.firestore {
     }
     /* Creators may edit their Broadcast. They may not list, unhide, or
        clear a hold the desk put on it. */
+    function keepsOriginCredit() {
+      return !('originCredit' in resource.data)
+        || request.resource.data.originCredit == resource.data.originCredit;
+    }
     function keepsBroadcastListing() {
       return !request.resource.data.diff(resource.data).affectedKeys()
         .hasAny(['listed', 'hidden', 'held', 'hiddenReason', 'hiddenAt', 'hiddenBy', 'heldReason',
@@ -492,7 +496,8 @@ service cloud.firestore {
       allow update: if isOperator()
         || (isSignedIn()
             && resource.data.creatorUid == request.auth.uid
-            && keepsBroadcastListing())
+            && keepsBroadcastListing()
+            && keepsOriginCredit())
         || (isSignedIn()
             && resource.data.creatorUid == request.auth.uid
             && creatorMayTightenListing())
