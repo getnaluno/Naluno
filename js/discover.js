@@ -356,6 +356,7 @@
     if (join && !join._nalunoDiscover) {
       join._nalunoDiscover = 1;
       join.addEventListener('click', function () {
+        if(join.classList.contains('joined')) return;
         const id = currentId();
         if (id) note('follow_creator', id);
       });

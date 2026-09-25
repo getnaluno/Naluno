@@ -69,6 +69,21 @@
     }
   }
 
+  async function leaveCreatorCircle(creatorUid, broadcastId){
+    if(!currentUser || !fbDb || !creatorUid) throw new Error('Sign in to leave');
+    if(creatorUid === currentUser.uid) return;
+    await fbDb.collection('users').doc(creatorUid).collection('circle').doc(currentUser.uid).delete();
+    delete joinedCreators[creatorUid];
+    if(broadcastId){
+      try{
+        await fbDb.collection('broadcasts').doc(broadcastId).set({
+          memberUids: firebase.firestore.FieldValue.arrayRemove(currentUser.uid),
+          updatedAt: Date.now(),
+        }, { merge: true });
+      }catch(_){}
+    }
+  }
+
   function nalunoMonthKey(){
     const d = new Date();
     return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
@@ -710,6 +725,7 @@
     else bind();
   })();
   window.joinCreatorCircle = joinCreatorCircle;
+  window.leaveCreatorCircle = leaveCreatorCircle;
   window.recordBroadcastView = recordBroadcastView;
   window.armBroadcastViewWatch = armBroadcastViewWatch;
   window.loadMyTogaSettings = loadMyTogaSettings;

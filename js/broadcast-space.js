@@ -155,7 +155,9 @@ try{
 }catch(_){}
 
 let bspaceWriteOrig = [];
+let bspaceWriteTitles = [];
 let bspaceLangToken = 0;
+let bspacePendingCover = null;
 const bspaceTxMemo = Object.create(null);
 function bspaceTranslateChunk(bit, from, to){
   if(typeof sparkEngineTranslate !== 'function') return Promise.resolve(bit);
@@ -203,22 +205,38 @@ async function bspaceTranslateText(text, to, onPartial){
 }
 async function bspaceApplyLanguage(lang){
   const box = $('bspaceWriting');
-  if(!box) return;
+  if(!box || box.classList.contains('is-editing')) return;
   const token = ++bspaceLangToken;
   const articles = box.querySelectorAll('[data-write-body]');
   const jobs = [];
+  function paint(el, text){
+    if(token !== bspaceLangToken || !el) return;
+    el.textContent = text;
+  }
   for(let i = 0; i < articles.length; i++){
     const clamp = articles[i].querySelector('.bspace-read-clamp');
-    if(!clamp) continue;
-    const orig = (bspaceWriteOrig[i] != null) ? bspaceWriteOrig[i] : (clamp.getAttribute('data-orig') || clamp.textContent || '');
+    const head = articles[i].querySelector('[data-write-title]');
+    const orig = (bspaceWriteOrig[i] != null) ? bspaceWriteOrig[i] : (clamp ? (clamp.textContent || '') : '');
+    const titleOrig = (bspaceWriteTitles[i] != null) ? bspaceWriteTitles[i] : (head ? (head.getAttribute('data-orig') || head.textContent || '') : '');
+    const chip = box.querySelector('[data-write-ch="' + i + '"]');
     if(!lang){
-      clamp.textContent = orig;
+      if(clamp) paint(clamp, orig);
+      if(head) paint(head, titleOrig);
+      if(chip) chip.textContent = titleOrig || ('Chapter ' + (i + 1));
       continue;
     }
-    jobs.push(bspaceTranslateText(orig, lang, function(partial){
-      if(token !== bspaceLangToken) return;
-      clamp.textContent = partial || orig;
-    }));
+    if(clamp && orig){
+      jobs.push(bspaceTranslateText(orig, lang, function(partial){
+        paint(clamp, partial || orig);
+      }));
+    }
+    if(titleOrig){
+      jobs.push(bspaceTranslateText(titleOrig, lang, function(partial){
+        const next = partial || titleOrig;
+        if(head) paint(head, next);
+        if(chip && token === bspaceLangToken) chip.textContent = next;
+      }));
+    }
   }
   await Promise.all(jobs);
 }
@@ -229,17 +247,20 @@ function bspacePaintWriting(seg){
   if(!box) return;
   const chapters = (seg && seg.chapters && seg.chapters.length) ? seg.chapters : [{ title: '', text: (seg && seg.text) || '' }];
   bspaceWriteOrig = chapters.map(function(c){ return String((c && c.text) || ''); });
+  bspaceWriteTitles = chapters.map(function(c){ return String((c && c.title) || ''); });
   const nav = chapters.length > 1
     ? '<div style="display:flex;gap:6px;overflow:auto;padding:0 0 10px;">' + chapters.map(function(c, i){
-        return '<button type="button" data-write-ch="' + i + '" style="flex:0 0 auto;border-radius:999px;border:1px solid var(--line);background:' + (i === 0 ? 'rgba(124,255,178,.16)' : 'transparent') + ';color:var(--text);padding:6px 10px;font-size:12px;">' + bspaceEscape(c.title || ('Chapter ' + (i + 1))) + '</button>';
+        const label = c.title || ('Chapter ' + (i + 1));
+        return '<button type="button" data-write-ch="' + i + '" style="flex:0 0 auto;border-radius:999px;border:1px solid var(--line);background:' + (i === 0 ? 'rgba(124,255,178,.16)' : 'transparent') + ';color:var(--text);padding:6px 10px;font-size:12px;">' + bspaceEscape(label) + '</button>';
       }).join('') + '</div>'
     : '';
   box.hidden = false;
   box.innerHTML = nav + chapters.map(function(c, i){
     const text = String(c.text || '');
     const long = text.length > 180;
+    const shownTitle = c.title || '';
     return '<article data-write-body="' + i + '" style="' + (i ? 'display:none;' : '') + '">'
-      + (c.title ? '<h2 style="margin:0 0 10px;font-family:var(--font-futuristic);font-size:18px;">' + bspaceEscape(c.title) + '</h2>' : '')
+      + '<h2 data-write-title="1" data-orig="' + bspaceEscape(shownTitle) + '" style="margin:0 0 10px;font-family:var(--font-futuristic);font-size:22px;line-height:1.2;' + (shownTitle ? '' : 'display:none;') + '">' + bspaceEscape(shownTitle) + '</h2>'
       + '<div class="bspace-read-clamp" data-clamp="' + (long ? '1' : '0') + '" style="font-size:16px;line-height:1.55;white-space:pre-wrap;">' + bspaceEscape(text) + '</div>'
       + (long ? '<button type="button" class="bspace-mini" data-write-more="' + i + '" style="margin-top:8px;">See more</button>' : '')
       + '</article>';
@@ -267,7 +288,7 @@ function bspacePaintWriting(seg){
       return;
     }
     const ch = e.target && e.target.closest && e.target.closest('[data-write-ch]');
-    if(!ch) return;
+    if(!ch || box.classList.contains('is-editing')) return;
     const n = ch.getAttribute('data-write-ch');
     box.querySelectorAll('[data-write-body]').forEach(function(el){
       el.style.display = el.getAttribute('data-write-body') === n ? '' : 'none';
@@ -1125,8 +1146,7 @@ function renderBspaceRelated(){
       el.innerHTML = `<div class="bspace-card"><div class="body" style="color:var(--text-dim);">${bspaceEscape(rel && rel.label ? rel.label : 'Nearby Broadcasts will fill this Strand.')}</div></div>`;
       return;
     }
-    const head = `<div class="hint" style="margin-bottom:8px;">${bspaceEscape(rel.label || 'Nearby')}</div>`;
-    el.innerHTML = head + '<div class="nearby-strip">' + rel.items.map(function(item){
+    el.innerHTML = '<div class="nearby-strip">' + rel.items.map(function(item){
       const thumbRaw = item.thumbUrl || item.thumb || '';
       const thumb = (thumbRaw && !(typeof nalunoThumbLooksDead === 'function' && nalunoThumbLooksDead(thumbRaw))) ? thumbRaw : '';
       const media = item.mediaUrl || item.videoUrl || '';
@@ -1348,7 +1368,7 @@ async function openBroadcastSpace(meta){
         : false);
       if(btn){
         btn.disabled = false;
-        btn.textContent = joined ? 'Joined' : 'Join';
+        btn.textContent = joined ? 'Leave' : 'Join';
         btn.classList.toggle('joined', joined);
       }
     }
@@ -1566,10 +1586,37 @@ document.querySelectorAll('#bspaceTabs .bspace-tab').forEach(tab=>{
 $('bspaceJoinBtn').onclick = async ()=>{
   if(!currentUser || !fbDb || !activeBroadcastId){ toast('Sign in to join'); return; }
   const btn = $('bspaceJoinBtn');
-  if(btn && btn.classList.contains('joined')) return;
+  if(btn && btn.disabled) return;
   const creatorUid = activeBroadcastMeta && activeBroadcastMeta.creatorUid;
   if(!creatorUid){ toast('Creator missing'); return; }
   if(currentUser.uid === creatorUid) return;
+  const joined = !!(btn && btn.classList.contains('joined'));
+  if(joined){
+    if(btn){ btn.disabled = true; btn.textContent = 'Leaving…'; }
+    try{
+      if(typeof leaveCreatorCircle === 'function'){
+        await leaveCreatorCircle(creatorUid, activeBroadcastId);
+      } else {
+        await fbDb.collection('users').doc(creatorUid).collection('circle').doc(currentUser.uid).delete();
+        await fbDb.collection('broadcasts').doc(activeBroadcastId).set({
+          memberUids: firebase.firestore.FieldValue.arrayRemove(currentUser.uid),
+          updatedAt: Date.now(),
+        }, { merge:true });
+      }
+      if(btn){
+        btn.textContent = 'Join';
+        btn.classList.remove('joined');
+        btn.disabled = false;
+      }
+      const name = ((activeBroadcastMeta && activeBroadcastMeta.creatorName) || 'this creator').split(' ')[0];
+      toast('You left ' + name + '’s Circle');
+    }catch(e){
+      console.warn('[bspace] leave', e);
+      if(btn){ btn.disabled = false; btn.textContent = 'Leave'; btn.classList.add('joined'); }
+      toast((e && e.message) || 'Couldn’t leave');
+    }
+    return;
+  }
   if(btn){ btn.disabled = true; btn.textContent = 'Joining…'; }
   try{
     if(typeof joinCreatorCircle === 'function'){
@@ -1583,17 +1630,14 @@ $('bspaceJoinBtn').onclick = async ()=>{
     }
     const name = ((activeBroadcastMeta && activeBroadcastMeta.creatorName) || 'this creator').split(' ')[0];
     if(btn){
-      // FIX: consistent with the rename elsewhere — "With [Name]" reads just
-      // as ambiguously close to a live-join confirmation as "Join [Name]"
-      // did. "In Circle" can't be mistaken for anything live-related.
-      btn.textContent = 'In Circle';
+      btn.textContent = 'Leave';
       btn.classList.add('joined');
       btn.disabled = false;
     }
     toast('You’re with ' + name + ' — every Broadcast of theirs');
   }catch(e){
     console.warn('[bspace] join', e);
-    if(btn){ btn.disabled = false; btn.textContent = '+ Circle'; }
+    if(btn){ btn.disabled = false; btn.textContent = 'Join'; btn.classList.remove('joined'); }
     toast(e.message || 'Couldn’t join — check connection / rules');
   }
 };
@@ -3660,18 +3704,189 @@ function bspaceShownAbout(desc){
   if(d === 'Watch, join the conversation, and explore questions and resources.') return '';
   return d;
 }
+function bspaceFitArea(el){
+  if(!el || el.tagName !== 'TEXTAREA') return;
+  el.style.height = 'auto';
+  el.style.height = Math.max(el.scrollHeight, 28) + 'px';
+}
+function bspaceRestorePageTitle(text){
+  const cur = document.getElementById('bspaceTitle');
+  if(!cur) return;
+  const value = text != null ? text : ((cur.tagName === 'INPUT' || cur.tagName === 'TEXTAREA') ? cur.value : cur.textContent);
+  if(cur.tagName !== 'H1'){
+    const h = document.createElement('h1');
+    h.className = 'bspace-title';
+    h.id = 'bspaceTitle';
+    h.textContent = value || '';
+    cur.replaceWith(h);
+  } else {
+    if(text != null) cur.textContent = text;
+    cur.style.display = '';
+  }
+}
+function bspaceRestoreDesc(text){
+  const cur = document.getElementById('bspaceDesc');
+  if(!cur) return;
+  const value = text != null ? text : (cur.tagName === 'TEXTAREA' ? cur.value : cur.textContent);
+  if(cur.tagName !== 'P'){
+    const p = document.createElement('p');
+    p.className = 'bspace-desc';
+    p.id = 'bspaceDesc';
+    p.textContent = value || '';
+    cur.replaceWith(p);
+    const writing = document.getElementById('bspaceWriting');
+    if(writing && writing.parentNode && p.parentNode === writing){
+      if(writing.nextSibling) writing.parentNode.insertBefore(p, writing.nextSibling);
+      else writing.parentNode.appendChild(p);
+    }
+    p.onclick = function(){ p.classList.toggle('open'); };
+  } else {
+    cur.textContent = value || '';
+    cur.style.display = '';
+  }
+}
+function bspaceEditTitleInline(){
+  const cur = document.getElementById('bspaceTitle');
+  if(!cur || cur.tagName === 'INPUT') return;
+  const input = document.createElement('input');
+  input.id = 'bspaceTitle';
+  input.className = 'bspace-title bspace-inline-page';
+  input.maxLength = 120;
+  input.value = (activeBroadcastMeta && activeBroadcastMeta.title) || cur.textContent || '';
+  cur.replaceWith(input);
+}
+function bspaceEditDescInline(){
+  const cur = document.getElementById('bspaceDesc');
+  if(!cur || cur.tagName === 'TEXTAREA') return;
+  const ta = document.createElement('textarea');
+  ta.id = 'bspaceDesc';
+  ta.className = 'bspace-desc bspace-inline-desc';
+  ta.maxLength = 2000;
+  ta.rows = 2;
+  ta.placeholder = 'What is this Broadcast about?';
+  ta.value = (cur.textContent || '').trim();
+  cur.replaceWith(ta);
+  bspaceFitArea(ta);
+  ta.addEventListener('input', function(){ bspaceFitArea(ta); });
+}
+function bspacePreviewCover(file){
+  if(!file) return;
+  bspacePendingCover = file;
+  const url = URL.createObjectURL(file);
+  const host = $('bspaceMedia');
+  const hero = $('bspaceHero');
+  if(hero){
+    hero.classList.remove('is-read', 'is-plain');
+    hero.classList.add('is-photo');
+  }
+  if(host){
+    host.style.display = '';
+    host.innerHTML = '<img class="bspace-cover" alt="" src="' + url + '" />';
+  }
+}
+function bspaceBeginInlineWrite(){
+  const box = $('bspaceWriting');
+  if(!box) return;
+  box.hidden = false;
+  box.classList.add('is-editing');
+  if(!box.querySelector('[data-write-body]')){
+    box.innerHTML = '<article data-write-body="0"><h2 data-write-title="1" data-orig=""></h2><div class="bspace-read-clamp" data-clamp="0"></div></article>';
+    bspaceWriteOrig = [''];
+    bspaceWriteTitles = [''];
+  }
+  box.querySelectorAll('[data-write-body]').forEach(function(article){
+    article.style.display = '';
+    const head = article.querySelector('[data-write-title]');
+    const clamp = article.querySelector('.bspace-read-clamp');
+    const more = article.querySelector('[data-write-more]');
+    const idx = Number(article.getAttribute('data-write-body')) || 0;
+    if(more) more.style.display = 'none';
+    if(head && head.tagName !== 'TEXTAREA'){
+      const ta = document.createElement('textarea');
+      ta.className = 'bspace-inline-title';
+      ta.setAttribute('data-write-title', '1');
+      ta.setAttribute('data-orig', (bspaceWriteTitles[idx] != null) ? bspaceWriteTitles[idx] : (head.getAttribute('data-orig') || ''));
+      ta.value = (bspaceWriteTitles[idx] != null) ? bspaceWriteTitles[idx] : (head.textContent || '');
+      ta.maxLength = 80;
+      ta.rows = 1;
+      ta.placeholder = 'Chapter';
+      head.replaceWith(ta);
+      bspaceFitArea(ta);
+      ta.addEventListener('input', function(){ bspaceFitArea(ta); });
+    }
+    if(clamp && clamp.tagName !== 'TEXTAREA'){
+      const ta = document.createElement('textarea');
+      ta.className = 'bspace-inline-body bspace-read-clamp';
+      ta.value = (bspaceWriteOrig[idx] != null) ? bspaceWriteOrig[idx] : (clamp.textContent || '');
+      ta.maxLength = 20000;
+      ta.rows = 6;
+      ta.placeholder = 'Write here';
+      clamp.replaceWith(ta);
+      bspaceFitArea(ta);
+      ta.addEventListener('input', function(){ bspaceFitArea(ta); });
+    }
+  });
+  let bar = box.querySelector('.bspace-inline-actions');
+  if(!bar){
+    bar = document.createElement('div');
+    bar.className = 'bspace-inline-actions';
+    bar.innerHTML = '<button type="button" class="bspace-mini" id="bspacePhotoBtn">Change photo</button>'
+      + '<input type="file" id="bspacePhotoInput" accept="image/jpeg,image/png,image/webp,image/*" hidden />'
+      + '<button type="button" class="bspace-mini primary" id="bspaceInlineSave">Save</button>'
+      + '<button type="button" class="bspace-mini" id="bspaceInlineCancel">Cancel</button>';
+    box.appendChild(bar);
+  }
+  const photoBtn = bar.querySelector('#bspacePhotoBtn');
+  const input = bar.querySelector('#bspacePhotoInput');
+  const seg = activeBroadcastMeta && activeBroadcastMeta.segment;
+  const hasPhoto = !!(bspacePendingCover || (seg && seg.thumbUrl));
+  if(photoBtn) photoBtn.textContent = hasPhoto ? 'Change photo' : 'Add photo';
+  if(photoBtn && input){
+    photoBtn.onclick = function(){ input.click(); };
+    input.onchange = function(){
+      const file = input.files && input.files[0];
+      if(!file) return;
+      bspacePreviewCover(file);
+      photoBtn.textContent = 'Change photo';
+    };
+  }
+  const save = bar.querySelector('#bspaceInlineSave');
+  const cancel = bar.querySelector('#bspaceInlineCancel');
+  if(save) save.onclick = function(){ bspaceSaveEdit(); };
+  if(cancel) cancel.onclick = function(){ bspacePendingCover = null; bspaceCloseEdit(); };
+  bspaceEditTitleInline();
+  bspaceEditDescInline();
+  const descNow = document.getElementById('bspaceDesc');
+  if(descNow && bar && descNow.parentNode !== box) box.insertBefore(descNow, bar);
+  try{ box.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }catch(_){}
+}
 function bspaceCloseEdit(){
-  const box = $('bspaceEdit');
-  if(box) box.hidden = true;
-  const title = $('bspaceTitle');
-  const desc = $('bspaceDesc');
-  if(title) title.style.display = '';
-  if(desc) desc.style.display = '';
+  const form = $('bspaceEdit');
+  if(form) form.hidden = true;
+  bspacePendingCover = null;
+  const writingBox = $('bspaceWriting');
+  const wasInline = !!(writingBox && writingBox.classList.contains('is-editing'));
+  bspaceRestorePageTitle((activeBroadcastMeta && activeBroadcastMeta.title) || '');
+  bspaceRestoreDesc(activeBroadcastMeta ? bspaceShownAbout(activeBroadcastMeta.description) : '');
+  if(wasInline){
+    writingBox.classList.remove('is-editing');
+    if(activeBroadcastMeta && activeBroadcastMeta.segment){
+      try{ renderBspaceMedia(activeBroadcastMeta.segment); }catch(_){}
+    }
+  }
 }
 function bspaceOpenEdit(){
   if(!activeBroadcastMeta || !activeBroadcastId) return;
   const isCreator = !!(activeBroadcastMeta.isMine || (currentUser && activeBroadcastMeta.creatorUid === currentUser.uid));
   if(!isCreator) return;
+  const writing = activeBroadcastMeta.segment && activeBroadcastMeta.segment.type === 'writing';
+  try{ if($('bspaceMoreMenu')) $('bspaceMoreMenu').hidden = true; }catch(_){}
+  if(writing){
+    const form = $('bspaceEdit');
+    if(form) form.hidden = true;
+    bspaceBeginInlineWrite();
+    return;
+  }
   const box = $('bspaceEdit');
   if(!box) return;
   const title = $('bspaceEditTitle');
@@ -3679,43 +3894,29 @@ function bspaceOpenEdit(){
   if(title) title.value = activeBroadcastMeta.title || '';
   if(about) about.value = bspaceShownAbout(activeBroadcastMeta.description);
   const host = $('bspaceEditChapters');
-  if(host){
-    host.innerHTML = '';
-    const writing = activeBroadcastMeta.segment && activeBroadcastMeta.segment.type === 'writing';
-    const chapters = writing && Array.isArray(activeBroadcastMeta.chapters) ? activeBroadcastMeta.chapters : [];
-    chapters.forEach(function(c, i){
-      const block = document.createElement('div');
-      block.className = 'bspace-edit-ch';
-      block.style.margin = '0 0 8px';
-      const ti = document.createElement('input');
-      ti.maxLength = 80;
-      ti.setAttribute('data-ch-title', String(i));
-      ti.value = (c && c.title) || '';
-      ti.style.cssText = 'width:100%;margin-bottom:6px;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:var(--surface-2);color:var(--text);font-size:14px;font-family:inherit;';
-      const tx = document.createElement('textarea');
-      tx.maxLength = 20000;
-      tx.rows = 6;
-      tx.setAttribute('data-ch-text', String(i));
-      tx.value = (c && c.text) || '';
-      tx.style.cssText = 'width:100%;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:var(--surface-2);color:var(--text);font-size:15px;line-height:1.45;font-family:inherit;resize:vertical;';
-      block.appendChild(ti);
-      block.appendChild(tx);
-      host.appendChild(block);
-    });
-  }
+  if(host) host.innerHTML = '';
   box.hidden = false;
   const shownTitle = $('bspaceTitle');
   const shownDesc = $('bspaceDesc');
   if(shownTitle) shownTitle.style.display = 'none';
   if(shownDesc) shownDesc.style.display = 'none';
-  try{ if($('bspaceMoreMenu')) $('bspaceMoreMenu').hidden = true; }catch(_){}
 }
 async function bspaceSaveEdit(){
   if(!fbDb || !activeBroadcastId || !currentUser) return;
-  const title = (($('bspaceEditTitle') && $('bspaceEditTitle').value) || '').trim();
-  if(!title){ toast('Add a title'); return; }
-  const description = (($('bspaceEditAbout') && $('bspaceEditAbout').value) || '').trim().slice(0, 2000);
   const writing = activeBroadcastMeta && activeBroadcastMeta.segment && activeBroadcastMeta.segment.type === 'writing';
+  const inline = !!(writing && $('bspaceWriting') && $('bspaceWriting').classList.contains('is-editing'));
+  let title = '';
+  let description = '';
+  if(inline){
+    const titleEl = document.getElementById('bspaceTitle');
+    title = ((titleEl && (titleEl.value != null && titleEl.tagName !== 'H1' ? titleEl.value : titleEl.textContent)) || '').trim();
+    const descEl = document.getElementById('bspaceDesc');
+    description = ((descEl && (descEl.tagName === 'TEXTAREA' ? descEl.value : descEl.textContent)) || '').trim().slice(0, 2000);
+  } else {
+    title = (($('bspaceEditTitle') && $('bspaceEditTitle').value) || '').trim();
+    description = (($('bspaceEditAbout') && $('bspaceEditAbout').value) || '').trim().slice(0, 2000);
+  }
+  if(!title){ toast('Add a title'); return; }
   const patch = {
     title: title.slice(0, 120),
     description: description,
@@ -3724,12 +3925,13 @@ async function bspaceSaveEdit(){
   };
   if(writing){
     const chapters = [];
-    document.querySelectorAll('#bspaceEditChapters .bspace-edit-ch').forEach(function(block, i){
-      const textEl = block.querySelector('[data-ch-text]');
-      const titleEl = block.querySelector('[data-ch-title]');
-      const text = ((textEl && textEl.value) || '').trim();
+    const root = inline ? document.querySelectorAll('#bspaceWriting [data-write-body]') : document.querySelectorAll('#bspaceEditChapters .bspace-edit-ch');
+    root.forEach(function(block, i){
+      const textEl = inline ? block.querySelector('.bspace-inline-body, .bspace-read-clamp') : block.querySelector('[data-ch-text]');
+      const titleEl = inline ? block.querySelector('[data-write-title]') : block.querySelector('[data-ch-title]');
+      const text = ((textEl && (textEl.value != null ? textEl.value : textEl.textContent)) || '').trim();
       if(!text) return;
-      const chTitle = ((titleEl && titleEl.value) || '').trim().slice(0, 80) || ('Chapter ' + (i + 1));
+      const chTitle = ((titleEl && (titleEl.value != null ? titleEl.value : titleEl.textContent)) || '').trim().slice(0, 80) || ('Chapter ' + (i + 1));
       chapters.push({ index: chapters.length, title: chTitle, text: text.slice(0, 20000) });
     });
     if(!chapters.length){ toast('The writing is empty'); return; }
@@ -3749,12 +3951,26 @@ async function bspaceSaveEdit(){
       }catch(_){}
     }
   }
-  const btn = $('bspaceEditSave');
+  const btn = inline ? $('bspaceInlineSave') : $('bspaceEditSave');
   if(btn) btn.disabled = true;
   try{
+    if(inline && bspacePendingCover){
+      toast('Uploading photo…');
+      let coverUrl = '';
+      if(typeof uploadPhotoToR2 === 'function') coverUrl = await uploadPhotoToR2(bspacePendingCover);
+      else if(typeof uploadBroadcastFile === 'function') coverUrl = await uploadBroadcastFile(bspacePendingCover, null, (bspacePendingCover.type && bspacePendingCover.type.indexOf('image/') === 0) ? bspacePendingCover.type : 'image/jpeg');
+      if(!coverUrl) throw new Error('Could not upload the photo');
+      patch.thumbUrl = coverUrl;
+      patch.mediaUrl = coverUrl;
+    }
     await fbDb.collection('broadcasts').doc(activeBroadcastId).update(patch);
     activeBroadcastMeta.title = patch.title;
     activeBroadcastMeta.description = description;
+    if(patch.thumbUrl){
+      activeBroadcastMeta.thumbUrl = patch.thumbUrl;
+      activeBroadcastMeta.mediaUrl = patch.mediaUrl;
+      if(activeBroadcastMeta.segment) activeBroadcastMeta.segment.thumbUrl = patch.thumbUrl;
+    }
     if(patch.chapters){
       activeBroadcastMeta.chapters = patch.chapters;
       activeBroadcastMeta.body = patch.body;
@@ -3762,12 +3978,11 @@ async function bspaceSaveEdit(){
         activeBroadcastMeta.segment.chapters = patch.chapters;
         activeBroadcastMeta.segment.text = patch.body;
       }
-      try{ renderBspaceMedia(activeBroadcastMeta.segment); }catch(_){}
     }
     if(patch.originCredit) activeBroadcastMeta.originCredit = patch.originCredit;
-    $('bspaceTitle').textContent = patch.title;
-    $('bspaceDesc').textContent = description;
+    bspacePendingCover = null;
     bspaceCloseEdit();
+    toast('Saved');
   }catch(e){
     toast((e && e.message) || 'Could not save');
   }finally{
