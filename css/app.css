@@ -3390,3 +3390,27 @@ html[data-atmosphere="buzzing"] .naluno-aurora{
   border-radius:12px; border:1px solid var(--line);
   background:#12151c; color:var(--text); padding:10px 12px; font:inherit;
 }
+
+.bspace-enter-sum{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.bspace-enter-views{ display:inline-flex; align-items:center; gap:6px; color:var(--mint); font-family:var(--font-mono); font-size:12px; }
+#bspaceViewsInfo{
+  width:18px; height:18px; border-radius:50%; border:1px solid var(--mint);
+  background:transparent; color:var(--mint); font-size:11px; line-height:16px; padding:0;
+}
+.bspace-room-sheet{
+  display:none; position:fixed; inset:0; z-index:90;
+  background:rgba(0,0,0,.45); align-items:flex-end; justify-content:center;
+}
+.bspace-room-sheet.active{ display:flex; }
+.bspace-room-card{
+  width:100%; max-height:78vh; overflow:auto;
+  background:#12151c; border-radius:18px 18px 0 0;
+  padding:8px 16px calc(env(safe-area-inset-bottom, 0px) + 16px);
+}
+.bspace-room-head{ display:flex; align-items:center; justify-content:space-between; padding:8px 0 10px; }
+.bspace-room-head button{ border:none; background:transparent; color:var(--text-dim); font-size:13px; }
+#bspaceImpactGrid button.bspace-card{
+  border:1px solid var(--line); background:var(--surface); color:inherit;
+  font:inherit; cursor:pointer; flex:0 0 auto; min-width:112px;
+}
+#bspaceRoomHome[hidden]{ display:none !important; }
