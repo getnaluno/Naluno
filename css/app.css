@@ -3382,13 +3382,17 @@ html[data-atmosphere="buzzing"] .naluno-aurora{
   border:1.5px solid var(--mint); border-top-color:transparent;
   transform:rotate(-24deg);
 }
-.known-block{ margin:14px 20px 0; text-align:left; }
+.known-block{ margin:0; text-align:left; }
 .known-block[hidden]{ display:none !important; }
-.known-copy{ color:var(--text-dim); font-size:13px; line-height:1.45; margin:0 0 10px; }
-#knownNote{
-  width:100%; box-sizing:border-box; margin:0 0 10px;
+.known-fold[hidden]{ display:none !important; }
+.known-copy{ color:var(--text-dim); font-size:13px; line-height:1.4; margin:10px 20px 0; }
+.known-note{
+  display:block; width:calc(100% - 40px); margin:8px 20px 0; box-sizing:border-box;
   border-radius:12px; border:1px solid var(--line);
-  background:#12151c; color:var(--text); padding:10px 12px; font:inherit;
+  background:#12151c; color:var(--text); padding:10px 12px; font:inherit; resize:vertical;
+}
+.known-count{
+  margin:6px 20px 0; font-family:var(--font-mono); font-size:11px; color:var(--text-dim);
 }
 
 .bspace-enter-sum{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
