@@ -48,7 +48,8 @@ assert.strictEqual(applyCheckoutEvent({ type: "other" }), null);
 
 assert.strictEqual(validateCheckout({ kind: "support", amount_minor: 100, currency: "AED", creator_user_id: "b" }, "a").error, "That amount cannot be charged");
 assert.strictEqual(validateCheckout({ kind: "support", amount_minor: 500, currency: "AED", creator_user_id: "a" }, "a").error, "Pick a creator");
-assert.strictEqual(validateCheckout({ kind: "ad", amount_minor: 500, currency: "AED" }, "a").error, "This ad is not saved yet");
+assert.strictEqual(validateCheckout({ kind: "known", amount_minor: 4900, currency: "AED" }, "a").kind, "known");
+assert.strictEqual(validateCheckout({ kind: "known", amount_minor: 1000, currency: "AED" }, "a").error, "That is not the monthly amount");
 assert.strictEqual(aedMajorToMinor(12.5), 1250);
 assert.deepStrictEqual(
   mediaKeysForUser(["https://x/o/u/abc/file.mp4", "u/abc/other.jpg", "u/zzz/nope.mp4"], "abc"),

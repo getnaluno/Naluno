@@ -52,6 +52,7 @@ import {
   validateCheckout,
   verifyStripeSignature,
   applyCheckoutEvent,
+  KNOWN_MONTH_MINOR,
 } from "./pay.mjs";
 import {
   billingSnapshot,
@@ -2442,6 +2443,13 @@ async function payCheckout(env, user, saToken, body) {
     expected = aedMajorToMinor(doc.paidAed);
     if (expected < 200) return json({ ok: false, error: "There is no amount to pay. Nothing was charged." }, 400);
   }
+  if (check.kind === "known") {
+    const app = await fsGetDoc(env, saToken, "/knownApps/" + encodeURIComponent(user.uid));
+    if (!app || (app.status !== "accepted" && app.status !== "known" && app.status !== "lapsed")) {
+      return json({ ok: false, error: "This has not been accepted yet. Nothing was charged." }, 403);
+    }
+    expected = KNOWN_MONTH_MINOR;
+  }
   const supportId = check.kind === "support"
     ? String(body.idempotency_key || body.support_id || ("sup_" + user.uid + "_" + Date.now())).slice(0, 120)
     : "";
@@ -2458,7 +2466,7 @@ async function payCheckout(env, user, saToken, body) {
     broadcastId: String(body.broadcast_id || ""),
     supportId: supportId,
     ref: ref,
-    name: check.kind === "ad" ? "Naluno advertisement" : "Support a creator",
+    name: check.kind === "ad" ? "Naluno advertisement" : (check.kind === "known" ? "Naluno Known, one month" : "Support a creator"),
     successUrl: origin + "/app/?pay=return",
     cancelUrl: origin + "/app/?pay=cancel",
   });
@@ -2526,6 +2534,24 @@ async function markPaid(env, saToken, pay) {
           stripeSession: pay.id,
         });
       }
+    }
+  }
+  if (pay.kind === "known" && pay.payer_uid && pay.amount_minor === KNOWN_MONTH_MINOR) {
+    const app = await fsGetDoc(env, saToken, "/knownApps/" + encodeURIComponent(pay.payer_uid));
+    if (app && (app.status === "accepted" || app.status === "known" || app.status === "lapsed")) {
+      const carry = (app.status === "known" && Number(app.paidUntil) > now) ? Number(app.paidUntil) : now;
+      const until = carry + (30 * 24 * 60 * 60 * 1000);
+      await fsPutDoc(env, saToken, "/knownApps/" + encodeURIComponent(pay.payer_uid), {
+        status: "known",
+        paidAt: now,
+        paidUntil: until,
+        payRef: pay.id,
+        updatedAt: now,
+      });
+      await fsPutDoc(env, saToken, "/users/" + encodeURIComponent(pay.payer_uid), {
+        known: true,
+        knownUntil: until,
+      });
     }
   }
   if (pay.kind === "support" && pay.support_id && pay.creator_user_id && pay.payer_uid !== pay.creator_user_id) {

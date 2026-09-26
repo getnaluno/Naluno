@@ -36,12 +36,18 @@ export function checkoutForm(fields) {
   return p.toString();
 }
 
+export const KNOWN_MONTH_MINOR = 4900;
+
 export function validateCheckout(body, payerUid) {
   const kind = String((body && body.kind) || "");
   const amount = Math.round(Number(body && body.amount_minor) || 0);
   const currency = String((body && body.currency) || "AED").toLowerCase();
-  if (kind !== "support" && kind !== "ad") return { error: "Unknown payment" };
+  if (kind !== "support" && kind !== "ad" && kind !== "known") return { error: "Unknown payment" };
   if (!/^[a-z]{3}$/.test(currency)) return { error: "Unknown currency" };
+  if (kind === "known") {
+    if (amount !== KNOWN_MONTH_MINOR) return { error: "That is not the monthly amount" };
+    return { kind, amount, currency };
+  }
   if (amount < 200 || amount > 100000000) return { error: "That amount cannot be charged" };
   if (kind === "support") {
     const creator = String((body && body.creator_user_id) || "");
@@ -107,7 +113,7 @@ export function applyCheckoutEvent(event) {
   if (s.payment_status !== "paid" || !s.id) return null;
   const meta = s.metadata || {};
   const kind = String(meta.kind || "");
-  if (kind !== "support" && kind !== "ad") return null;
+  if (kind !== "support" && kind !== "ad" && kind !== "known") return null;
   return {
     id: String(s.id),
     status: "paid",
