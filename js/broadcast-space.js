@@ -84,12 +84,54 @@ async function ensureBroadcastFirestore(meta){
 }
 
 let bspaceSpeakToken = 0;
+let bspaceSpeakAudio = null;
 function bspaceStopSpeak(){
   bspaceSpeakToken += 1;
   try{ if(window.speechSynthesis) window.speechSynthesis.cancel(); }catch(_){}
+  try{ if(bspaceSpeakAudio){ bspaceSpeakAudio.pause(); bspaceSpeakAudio.src = ''; bspaceSpeakAudio = null; } }catch(_){}
+}
+function bspacePlayUrl(url, token){
+  return new Promise(function(resolve){
+    if(token !== bspaceSpeakToken){ resolve(false); return; }
+    const audio = new Audio();
+    bspaceSpeakAudio = audio;
+    let done = false;
+    function finish(ok){
+      if(done) return;
+      done = true;
+      if(bspaceSpeakAudio === audio) bspaceSpeakAudio = null;
+      resolve(!!ok && token === bspaceSpeakToken);
+    }
+    audio.onended = function(){ finish(true); };
+    audio.onerror = function(){ finish(false); };
+    const giveUp = setTimeout(function(){ finish(false); }, 8000);
+    audio.onplaying = function(){ clearTimeout(giveUp); };
+    audio.src = url;
+    const started = audio.play();
+    if(started && started.catch) started.catch(function(){ finish(false); });
+  });
+}
+async function bspacePlayNativeLg(text, token){
+  const src = String(text || '').trim();
+  if(!src) return false;
+  const bits = [];
+  const sentences = src.split(/(?<=[.!?])\s+/);
+  sentences.forEach(function(sentence){
+    const s = sentence.trim();
+    if(!s) return;
+    for(let i = 0; i < s.length; i += 180) bits.push(s.slice(i, i + 180));
+  });
+  if(!bits.length) return false;
+  for(let i = 0; i < bits.length; i++){
+    if(token !== bspaceSpeakToken) return false;
+    const url = 'https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl=lg&q=' + encodeURIComponent(bits[i]);
+    const ok = await bspacePlayUrl(url, token);
+    if(!ok) return false;
+  }
+  return token === bspaceSpeakToken;
 }
 async function bspaceSpeakWriting(text, lang, btn){
-  const src = String(text || '').replace(/\s+/g, ' ').trim();
+  const src = String(text || '').replace(/\s+/g, ' ').replace(/\bSee more\b|\bSee less\b/g, '').trim();
   if(!src){ toast('Nothing to read'); return; }
   if(btn && btn.getAttribute('data-on') === '1'){
     btn.removeAttribute('data-on');
@@ -100,23 +142,36 @@ async function bspaceSpeakWriting(text, lang, btn){
   const token = bspaceSpeakToken + 1;
   bspaceSpeakToken = token;
   if(btn){ btn.setAttribute('data-on', '1'); btn.textContent = 'Stop'; }
+  if(lang === 'lg'){
+    try{
+      const played = await bspacePlayNativeLg(src, token);
+      if(token !== bspaceSpeakToken) return;
+      if(played){
+        if(btn){ btn.removeAttribute('data-on'); btn.textContent = 'Listen'; }
+        return;
+      }
+    }catch(_){}
+  }
   if(token !== bspaceSpeakToken) return;
   if(!window.speechSynthesis){
     toast('This phone cannot read aloud');
     if(btn){ btn.removeAttribute('data-on'); btn.textContent = 'Listen'; }
     return;
   }
-  const voice = bspacePickVoice(lang || ((typeof sparkGuessLang === 'function') ? sparkGuessLang() : 'en'));
-  const rec = (typeof SPARK_LANGS !== 'undefined' && SPARK_LANGS.find(function(l){ return l.id === lang; }));
+  const spoken = (lang === 'lg' && window.NalunoLgSpeak && typeof NalunoLgSpeak.speak === 'function')
+    ? NalunoLgSpeak.speak(src)
+    : src;
+  const voiceLang = lang === 'lg' ? 'lg' : (lang || ((typeof sparkGuessLang === 'function') ? sparkGuessLang() : 'en'));
+  const voice = bspacePickVoice(voiceLang);
+  const rec = (typeof SPARK_LANGS !== 'undefined' && SPARK_LANGS.find(function(l){ return l.id === (lang || voiceLang); }));
   window.speechSynthesis.cancel();
   const chunks = [];
-  const spoken = src;
   for(let i = 0; i < spoken.length; i += 1500) chunks.push(spoken.slice(i, i + 1500));
   chunks.forEach(function(chunk, idx){
     const u = new SpeechSynthesisUtterance(chunk);
-    u.lang = (voice && voice.lang) || (rec && rec.rec) || 'en-US';
+    u.lang = (voice && voice.lang) || (lang === 'lg' ? 'sw-KE' : ((rec && rec.rec) || 'en-US'));
     if(voice) u.voice = voice;
-    u.rate = 0.92;
+    u.rate = lang === 'lg' ? 1 : 0.98;
     u.pitch = 1;
     if(idx === chunks.length - 1){
       u.onend = function(){
@@ -139,9 +194,13 @@ function bspacePickVoice(lang){
     const name = String(v.name || '').toLowerCase();
     const vl = String(v.lang || '').toLowerCase();
     let s = 0;
-    if(vl.indexOf(want) === 0) s += 5;
-    if(/natural|neural|premium|enhanced|wavenet|studio/.test(name)) s += 8;
-    if(/google/.test(name)) s += 3;
+    if(want === 'lg'){
+      if(vl.indexOf('lg') === 0) s += 12;
+      else if(vl.indexOf('sw') === 0) s += 7;
+      else if(vl.indexOf('en-ug') === 0 || vl.indexOf('en_ug') === 0) s += 5;
+    } else if(vl.indexOf(want) === 0) s += 5;
+    if(/natural|neural|premium|enhanced|wavenet|studio/.test(name)) s += 4;
+    if(/google/.test(name) && want !== 'lg') s += 2;
     if(/compact|espeak/.test(name)) s -= 4;
     if(s > bestScore){ bestScore = s; best = v; }
   });
@@ -272,8 +331,8 @@ function bspacePaintWriting(seg){
     const shownTitle = c.title || '';
     return '<article data-write-body="' + i + '" style="' + (i ? 'display:none;' : '') + '">'
       + '<h2 data-write-title="1" data-orig="' + bspaceEscape(shownTitle) + '" style="margin:0 0 10px;font-family:var(--font-futuristic);font-size:22px;line-height:1.2;' + (shownTitle ? '' : 'display:none;') + '">' + bspaceEscape(shownTitle) + '</h2>'
-      + '<div class="bspace-read-clamp" data-clamp="' + (long ? '1' : '0') + '" style="font-size:16px;line-height:1.55;white-space:pre-wrap;">' + bspaceEscape(text) + '</div>'
-      + (long ? '<button type="button" class="bspace-mini" data-write-more="' + i + '" style="margin-top:8px;">See more</button>' : '')
+      + '<div class="bspace-read-clamp" data-clamp="' + (long ? '1' : '0') + '" style="font-size:16px;line-height:1.55;">' + bspaceEscape(text) + '</div>'
+      + (long ? '<button type="button" class="bspace-mini" data-write-more="' + i + '">See more</button>' : '')
       + '</article>';
   }).join('');
   if(listen) listen.hidden = false;
@@ -355,7 +414,11 @@ function bspaceClearWriting(){
         if(!shown && el.style.display !== 'none') shown = el;
       });
     }
-    const text = shown ? shown.innerText : ((activeBroadcastMeta && (activeBroadcastMeta.body || (activeBroadcastMeta.segment && activeBroadcastMeta.segment.text))) || '');
+    const text = shown ? (function(){
+      const head = shown.querySelector('[data-write-title]');
+      const clamp = shown.querySelector('.bspace-read-clamp');
+      return ((head && head.textContent) ? head.textContent + '. ' : '') + ((clamp && clamp.textContent) || '');
+    })() : ((activeBroadcastMeta && (activeBroadcastMeta.body || (activeBroadcastMeta.segment && activeBroadcastMeta.segment.text))) || '');
     bspaceSpeakWriting(text, hear ? hear.value : '', btn);
   };
 })();
