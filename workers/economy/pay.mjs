@@ -29,6 +29,7 @@ export function checkoutForm(fields) {
   p.set("metadata[mail_id]", fields.mailId || "");
   p.set("metadata[broadcast_id]", fields.broadcastId || "");
   p.set("metadata[support_id]", fields.supportId || "");
+  p.set("metadata[book_minor]", fields.bookMinor ? String(fields.bookMinor) : "");
   p.set("line_items[0][quantity]", "1");
   p.set("line_items[0][price_data][currency]", cur);
   p.set("line_items[0][price_data][unit_amount]", String(fields.amountMinor));
@@ -45,8 +46,13 @@ export function validateCheckout(body, payerUid) {
   if (kind !== "support" && kind !== "ad" && kind !== "known") return { error: "Unknown payment" };
   if (!/^[a-z]{3}$/.test(currency)) return { error: "Unknown currency" };
   if (kind === "known") {
-    if (amount !== KNOWN_MONTH_MINOR) return { error: "That is not the monthly amount" };
-    return { kind, amount, currency };
+    const book = Math.round(Number(body && body.book_minor) || 0);
+    if (currency === "aed") {
+      if (amount !== KNOWN_MONTH_MINOR) return { error: "That is not the monthly amount" };
+      return { kind, amount, currency, bookMinor: KNOWN_MONTH_MINOR };
+    }
+    if (book !== KNOWN_MONTH_MINOR || amount < 50) return { error: "That is not the monthly amount" };
+    return { kind, amount, currency, bookMinor: KNOWN_MONTH_MINOR };
   }
   if (amount < 200 || amount > 100000000) return { error: "That amount cannot be charged" };
   if (kind === "support") {
@@ -126,6 +132,7 @@ export function applyCheckoutEvent(event) {
     mail_id: String(meta.mail_id || ""),
     broadcast_id: String(meta.broadcast_id || ""),
     support_id: String(meta.support_id || ""),
+    book_minor: Math.round(Number(meta.book_minor) || 0),
   };
 }
 

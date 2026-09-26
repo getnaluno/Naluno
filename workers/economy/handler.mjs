@@ -2448,7 +2448,7 @@ async function payCheckout(env, user, saToken, body) {
     if (!app || (app.status !== "accepted" && app.status !== "known" && app.status !== "lapsed")) {
       return json({ ok: false, error: "This has not been accepted yet. Nothing was charged." }, 403);
     }
-    expected = KNOWN_MONTH_MINOR;
+    expected = check.amount;
   }
   const supportId = check.kind === "support"
     ? String(body.idempotency_key || body.support_id || ("sup_" + user.uid + "_" + Date.now())).slice(0, 120)
@@ -2467,6 +2467,7 @@ async function payCheckout(env, user, saToken, body) {
     supportId: supportId,
     ref: ref,
     name: check.kind === "ad" ? "Naluno advertisement" : (check.kind === "known" ? "Naluno Known, one month" : "Support a creator"),
+    bookMinor: check.bookMinor || 0,
     successUrl: origin + "/app/?pay=return",
     cancelUrl: origin + "/app/?pay=cancel",
   });
@@ -2536,7 +2537,7 @@ async function markPaid(env, saToken, pay) {
       }
     }
   }
-  if (pay.kind === "known" && pay.payer_uid && pay.amount_minor === KNOWN_MONTH_MINOR) {
+  if (pay.kind === "known" && pay.payer_uid && (Number(pay.book_minor) === KNOWN_MONTH_MINOR || (String(pay.currency || "").toLowerCase() === "aed" && pay.amount_minor === KNOWN_MONTH_MINOR))) {
     const app = await fsGetDoc(env, saToken, "/knownApps/" + encodeURIComponent(pay.payer_uid));
     if (app && (app.status === "accepted" || app.status === "known" || app.status === "lapsed")) {
       const carry = (app.status === "known" && Number(app.paidUntil) > now) ? Number(app.paidUntil) : now;
