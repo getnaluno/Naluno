@@ -597,6 +597,9 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
           if(!coverUrl) throw new Error('Could not upload the photo');
         }
         const words = snapBody.split(/\s+/).filter(Boolean).length;
+        if(window.NalunoPass && NalunoPass.looksLikeShell && NalunoPass.looksLikeShell(snapBody)){
+          throw new Error('That text is not the writing');
+        }
         let credit = null;
         try{
           if(typeof broadcastWritingCredit === 'function') credit = await broadcastWritingCredit(snapBody);

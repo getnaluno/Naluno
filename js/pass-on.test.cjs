@@ -53,4 +53,12 @@ assert.strictEqual(Pass.coverUrl({ mediaType: 'writing', thumbUrl: 'https://uplo
 assert.strictEqual(Pass.coverUrl({ mediaType: 'writing', mediaUrl: 'https://upload.example/o/b/clip.mp4' }), '');
 assert.strictEqual(Pass.coverUrl({ mediaType: 'video', thumbUrl: 'https://upload.example/o/b/photo-1' }), '');
 
+const shell = 'Search frequencies Open channels Your frequencies Steady Frequency Wireline Band Callsign Spark Connect and the rest of the product surface rather than a piece of writing';
+assert.strictEqual(Pass.looksLikeShell(shell), true);
+assert.strictEqual(Pass.isWordCopy(shell, shell), true);
+assert.strictEqual(Pass.findCredit(shell, [
+  { id: 'shell', creatorUid: 'magambo', creatorName: 'Magambo', createdAt: 1, body: shell },
+], 'aster'), null);
+assert.strictEqual(Pass.looksLikeShell('This is the beginning. Nothing more, nothing less. Naluno is a room we kept.'), false);
+
 console.log('pass-on tests passed');

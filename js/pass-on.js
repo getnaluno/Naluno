@@ -25,6 +25,15 @@
     return out;
   }
 
+  function looksLikeShell(text) {
+    const n = norm(text);
+    if (!n) return false;
+    const marks = ['search frequencies', 'open channels', 'your frequencies', 'steady frequency', 'continue the conversation'];
+    let hits = 0;
+    marks.forEach(function (m) { if (n.indexOf(m) !== -1) hits += 1; });
+    return hits >= 2;
+  }
+
   function isWordCopy(a, b) {
     const x = norm(a);
     const y = norm(b);
@@ -55,6 +64,7 @@
     (rows || []).forEach(function (row) {
       if (!row || !row.creatorUid || row.creatorUid === selfUid) return;
       const body = row.body || '';
+      if (looksLikeShell(body) || looksLikeShell(text)) return;
       if (!isWordCopy(text, body)) return;
       if (!best || (Number(row.createdAt) || 0) < (Number(best.createdAt) || 0)) best = row;
     });
@@ -107,6 +117,7 @@
     norm: norm,
     textKey: textKey,
     isWordCopy: isWordCopy,
+    looksLikeShell: looksLikeShell,
     findCredit: findCredit,
     lockedCredit: lockedCredit,
     creditForShare: creditForShare,
