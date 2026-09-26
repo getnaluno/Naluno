@@ -2153,11 +2153,11 @@
     const vendors = (costs && costs.vendors) || [];
     vendors.forEach(function (v) {
       const amount = Number(v.amount_aed) || 0;
-      add(stamp, v.vendor + ' — ' + v.service, v.note || v.service, amount, '', v.status || '', v.key || '', v.status === 'invoiced' ? 'Invoice.' : 'Updates from live usage. Not a bank charge until status is invoiced.');
+      add(stamp, v.vendor + ' — ' + v.service, v.service, amount, '', v.status || '', v.key || '', v.note || '');
       if (amount > 0) add(stamp, 'Accounts payable — ' + v.vendor, v.service, '', amount, v.status || '', v.key || '', 'Opposite entry.');
     });
     if (!vendors.length && invoice > 0) {
-      add(stamp, 'Hosting and delivery', costs.headline || 'Estimated platform cost', invoice, '', 'estimate', 'costs', 'List-price estimate until an invoice is recorded.');
+      add(stamp, 'Hosting and delivery', 'Model past caps', invoice, '', 'model', 'costs', 'Model. Not an invoice.');
       add(stamp, 'Accounts payable — hosting', 'Estimated platform cost', '', invoice, 'estimate', 'costs', 'Opposite entry. Not an invoice.');
     }
     const trial = {};
@@ -2444,10 +2444,10 @@
             ['Live rooms past 12', (d.worker && d.worker.liveRooms) ? 'connected' : '12 people, direct']])
           + gap(g.payments || ''))
         + card('What each person costs',
-          kpis([['Invoiced this month', aedUsd((d.costs && d.costs.invoice_aed) || 0)],
-            ['List-price usage', aedUsd((d.costs && d.costs.metered_aed) || 0)],
-            ['After free tier', aedUsd((d.costs && d.costs.billable_aed) || 0)],
-            ['Per person active this month', aedUsd((d.costs && d.costs.per_mau_aed) || 0)]])
+          kpis([['Bills on file', aedUsd((d.costs && d.costs.billed_aed) || 0)],
+            ['Modelled list price', aedUsd((d.costs && d.costs.metered_aed) || 0)],
+            ['Model past caps', aedUsd((d.costs && d.costs.billable_aed) || 0)],
+            ['Per person (model)', aedUsd((d.costs && d.costs.per_mau_aed) || 0)]])
           + gap((d.costs && d.costs.headline) || g.unit_econ || '')
           + '<div class="row"><button type="button" class="ghost ccGo" data-go="money">Open Money</button></div>')
         + card('On record',
@@ -2458,10 +2458,12 @@
           + kpis([['Play Store', 'not listed'],
             ['What it cost to get them', 'not known'],
             ['Payouts', 'locked'],
-            ['First bill', (d.costs && d.costs.first_gate && d.costs.first_gate.mau_display)
+            ['First modelled charge', (d.costs && d.costs.billed_n)
+              ? (d.costs.billed_n + ' bill' + (d.costs.billed_n === 1 ? '' : 's') + ' already on file')
+              : ((d.costs && d.costs.first_gate && d.costs.first_gate.mau_display)
               ? ('around ' + Number(d.costs.first_gate.mau_display).toLocaleString('en-GB') + ' people active in a month')
-              : 'still free']])
-          + gap('These are registered accounts, not store downloads. Cost-to-serve is on Money. We do not guess what it costs to acquire a person, or what they are worth over a lifetime.'))
+              : 'model still inside caps')]])
+          + gap('Registered accounts, not store downloads. Cost figures on Money are a model unless a bill is on file. We do not guess what it costs to acquire a person.'))
         + card('The public website',
           kpis([['On the site now', (d.site && d.site.live) || 0],
             ['Visits today', (d.site && d.site.today) || 0],
@@ -3197,6 +3199,17 @@
       const costs = (Data && Data.estimateCosts)
         ? Data.estimateCosts(Object.assign({}, raw, { now: d.now, zone: d.zone, costInputs: inputs }))
         : (d.costs || {});
+      const vendorsHere = (Data && Data.vendorBooks)
+        ? Data.vendorBooks(costs, raw.vendorInvoices || [], raw.payments || [])
+        : (costs.vendors || []);
+      let billedAed = 0;
+      let billedN = 0;
+      vendorsHere.forEach(function (v) {
+        if (!v || v.status !== 'invoiced') return;
+        billedN += 1;
+        billedAed += Number(v.amount_aed) || 0;
+      });
+      const cfOn = !!(d.worker && d.worker.billing && d.worker.billing.connected);
       const lines = costs.lines || [];
       const top = costs.top || [];
       const scale = costs.scale || [];
@@ -3223,38 +3236,43 @@
           + kpis([['Views', adRev.impressions || 0],
             ['Taps', adRev.clicks || 0],
             ['Completed watches', adRev.viewCompletes || 0],
-            ['After free-tier cost', aedUsd(costs.billable_aed || 0)]])
+            ['Model past caps', aedUsd(costs.billable_aed || 0)]])
           + gap((g.ad_revenue || 'Booked ad revenue is rate-card maths × observed events. Cash has not moved.')
-            + ' Booked minus cost is not profit. Cost is list-price maths until an invoice is recorded.')
+            + ' Booked minus the model is not profit. The model is not an invoice.')
           + '<div class="row"><button type="button" class="ghost ccGo" data-go="ads">Open Ads</button></div>')
         + card('What does each person cost Naluno?',
-          '<p class="sub">' + escapeHtml((costs.headline) || 'List prices × usage on this console.') + '</p>'
-          + kpis([['Invoiced (recorded)', aedUsd(costs.invoice_aed || 0)],
-            ['List-price usage', aedUsd(costs.metered_aed || 0)],
-            ['After free tier', aedUsd(costs.billable_aed || 0)],
-            ['Serving with', costs.invoice_aed ? 'invoice' : (costs.on_free_tier ? 'free hosting plan' : 'paid hosting plan')]])
-          + kpis([['Per registered account', aedUsd(costs.per_registered_aed || 0)],
-            ['Per person active this month', aedUsd(costs.per_mau_aed || 0)],
-            ['Per person active today', aedUsd(costs.per_dau_aed || 0)],
-            ['Files stored', (costs.storage && costs.storage.r2_gb != null) ? Number(costs.storage.r2_gb).toFixed(3) + ' GB' : '—']])
-          + gap(g.unit_econ || ''))
-        + card('Free-tier limits',
+          '<p class="sub">' + escapeHtml(billedN
+            ? (billedN + (billedN === 1 ? ' bill is on file. Every other figure is a model.' : ' bills are on file. Every other figure is a model.'))
+            : ((costs.headline) || 'Model only. Not a bill from Cloudflare or Firebase.')) + '</p>'
+          + kpis([['Bills on file', aedUsd(billedAed)],
+            ['Typed on this browser', aedUsd(costs.invoice_aed || 0)],
+            ['Modelled list price', aedUsd(costs.metered_aed || 0)],
+            ['Model past caps', aedUsd(costs.billable_aed || 0)]])
+          + kpis([['Per registered (model)', aedUsd(costs.per_registered_aed || 0)],
+            ['Per person this month (model)', aedUsd(costs.per_mau_aed || 0)],
+            ['Per person today (model)', aedUsd(costs.per_dau_aed || 0)],
+            ['Files (estimate)', (costs.storage && costs.storage.r2_gb != null) ? Number(costs.storage.r2_gb).toFixed(3) + ' GB' : '—']])
+          + gap((cfOn
+            ? 'Cloudflare billing history is connected. Only a charge already billed replaces a line. Remaining free quota is not read. Firebase is not read.'
+            : 'No vendor meter is connected. Cloudflare billing history is off, and Firebase is not read.')
+            + ' ' + (g.unit_econ || '')))
+        + card('Published caps used by the model',
           (costs.gates && costs.gates.length
-            ? plainRows(['Cap', 'Free allowance', 'Around people in a month', 'Status'],
+            ? plainRows(['Cap', 'Published allowance', 'Around people in a month', 'Model'],
               costs.gates.map(function (gate) {
-                const mau = gate.mau_display == null ? 'needs usage' : ('~' + Number(gate.mau_display).toLocaleString('en-GB'));
-                return [gate.label, gate.free, mau, gate.already ? 'past free' : 'still free'];
+                const mau = gate.mau_display == null ? 'no files to scale' : ('~' + Number(gate.mau_display).toLocaleString('en-GB'));
+                return [gate.label, gate.free, mau, gate.already ? 'past cap' : 'inside cap'];
               }))
-            : '<p class="sub">Free-tier limits appear once usage is on file.</p>')
-          + gap('Database reads usually go first. Model: 150 reads per person active this month, per day. The free hosting plan allows 50,000 reads per day, about 330 people active in a month. File downloads are not billed. Push notifications are not billed.'))
-        + card('Bills and extras (this browser)',
-          '<label>Invoiced this month (' + escapeHtml(moneyLabel()) + ')</label><input id="costInvoice" inputmode="decimal" placeholder="0" />'
+            : '<p class="sub">Caps appear once there is something on file to scale.</p>')
+          + gap('Not a live reading. Reads are assumed at 150 a day per person active this month. The published cap is 50,000 reads a day. Downloads and push are not priced.'))
+        + card('Typed on this browser',
+          '<label>Amount you already paid (' + escapeHtml(moneyLabel()) + ')</label><input id="costInvoice" inputmode="decimal" placeholder="0" />'
           + '<label>Fixed monthly — domain, store, tools (' + escapeHtml(opCode()) + ')</label><input id="costFixed" inputmode="decimal" placeholder="0" />'
-          + '<label>Call minutes this month (TURN)</label><input id="costTurn" inputmode="decimal" placeholder="0" />'
+          + '<label>Call minutes this month (typed, not fetched)</label><input id="costTurn" inputmode="decimal" placeholder="0" />'
           + '<label>Compass / AI this month (' + escapeHtml(opCode()) + ')</label><input id="costCompass" inputmode="decimal" placeholder="0" />'
-          + '<div class="row"><button type="button" class="primary" id="costBtn">Recalculate cost</button></div>'
-          + '<p class="sub" id="costHint">Invoiced spend is the amount recorded here. Until an invoice is recorded, that figure is ' + escapeHtml(aed(0)) + '.</p>')
-        + card('Where the list-price goes',
+          + '<div class="row"><button type="button" class="primary" id="costBtn">Recalculate model</button></div>'
+          + '<p class="sub" id="costHint">Saved on this browser only. Not read from Cloudflare or Firebase.</p>')
+        + card('Model, line by line',
           plainRows(['Line', 'Quantity', moneyLabel()],
             lines.map(function (L) {
               const qty = L.unit === 'GB-month' || L.unit === 'GB'
@@ -3262,8 +3280,8 @@
                 : (Math.round(Number(L.qty) || 0) + (L.unit ? ' ' + L.unit : ''));
               return [L.label, qty, aedUsd(L.aed)];
             }))
-          + gap('Broadcast is the expensive part — it remains on storage. Signals fall off after 25 hours.'))
-        + card('People, most expensive first',
+          + gap('In this model, a Broadcast stays on storage. A Signal falls off after 25 hours. A file with no stored size is guessed.'))
+        + card('Largest share of the model',
           top.length
             ? plainRows(['Person', 'Active this month', 'Media', 'Uploads', 'Variable', 'Share', 'This month'],
               top.map(function (p) {
@@ -3279,11 +3297,11 @@
               }))
             : '<p class="sub">No people on file yet. The math still works at zero.</p>')
         + card('Mix projection',
-          plainRows(['People in a month', 'List-price / month', 'After free tier', 'Per person'],
+          plainRows(['People in a month', 'Modelled list price', 'Model past caps', 'Per person'],
             scale.map(function (row) {
               return [row.n.toLocaleString('en-GB'), aedUsd(row.gross_aed), aedUsd(row.billable_aed), aedUsd(row.per_mau_aed)];
             }))
-          + gap('This is a mix projection, not a forecast. With no usage on file, only the recorded fixed bill remains.'))
+          + gap('Same model, scaled up. Not a forecast and not a bill.'))
         + card('Runway',
           '<label>Cash on hand (' + escapeHtml(moneyLabel()) + ')</label><input id="runCash" inputmode="decimal" placeholder="e.g. 80000" />'
           + '<label>Monthly burn (' + escapeHtml(opCode()) + ')</label><input id="runBurn" inputmode="decimal" placeholder="e.g. 12000" />'
@@ -3312,7 +3330,7 @@
         if (d.costs && Data && Data.estimateCosts) {
           d.costs = Data.estimateCosts(Object.assign({}, d._raw || {}, { now: d.now, zone: d.zone, costInputs: next }));
         }
-        toast('Cost recalculated in ' + opCode());
+        toast('Model recalculated in ' + opCode());
         renderTab('money', d);
       };
       if ($('runBtn')) $('runBtn').onclick = function () {
@@ -3802,9 +3820,13 @@
     if (tab === 'books') {
       if (!canDeskTab('books')) { el.innerHTML = '<p class="sub">This login cannot open the books.</p>'; return; }
       const pack = booksLines(d);
+      const cfOn = !!(d.worker && d.worker.billing && d.worker.billing.connected);
       el.innerHTML =
         card('Books for the accountant',
-          '<p class="sub">Every service that can later charge Naluno is a line: Cloudflare, Firebase, Stripe, and the rest. While the free allowance covers it, the line is zero. When usage passes that allowance, the same line shows the list price on its own. When a real invoice is connected, that invoice replaces the estimate. Nothing here is a bank balance.</p>'
+          '<p class="sub">' + (cfOn
+            ? 'Receipts are real records. A vendor line is a real bill only when the status is invoiced. Cloudflare billing history is connected, and it only replaces a line after a charge is billed. Firebase is not read. Every other line is a model.'
+            : 'Receipts are real records. A vendor line is a real bill only when the status is invoiced. No vendor meter is connected, so the other lines are a model from published prices. Zero is not a vendor confirming the bill is zero.')
+          + '</p>'
           + kpis([
             ['Ad revenue booked', aed(pack.adsBooked)],
             ['Support intents', pack.supportN],
@@ -3823,6 +3845,7 @@
             (pack.vendors || []).map(function (v) {
               return [v.vendor, v.service, Number(v.amount_aed || 0).toFixed(2), v.status];
             })))
+          + gap('invoiced = a bill was received. model = a published price times assumed use. not measured = nothing on file. not priced = left at zero on purpose. not typed = waiting for a figure on this browser.')
         + card('Trial balance', plainRows(pack.trial[0], pack.trial.slice(1, 18).map(function (r) { return r; })));
       const base = 'naluno-books-' + pack.stamp;
       const csvBtn = $('booksCsv');
@@ -3847,7 +3870,7 @@
       if (jsonBtn) jsonBtn.onclick = function () {
         downloadText(base + '.json', 'application/json', JSON.stringify({
           asOf: pack.stamp,
-          note: 'Booked, intent, and estimate only. Not cash.',
+          note: 'Receipts are records. A vendor line is a model unless its status is invoiced. Not a bank balance.',
           trial: pack.trial,
           journal: pack.journal,
         }, null, 2));

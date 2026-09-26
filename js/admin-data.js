@@ -257,9 +257,8 @@
     return (num(minor) / 100).toFixed(2) + (ccy ? ' ' + ccy : '');
   }
 
-  /* Published list prices, September 2026. AED is pegged to USD.
-     Spark + Cloudflare free currently invoice nothing. This is the
-     math for when usage (or a typed bill) starts to cost Naluno. */
+  /* Published list prices, September 2026. A model only.
+     Not a live meter from Cloudflare or Firebase. */
   const COST_RATES = {
     as_of: '2026-09',
     currency: 'AED',
@@ -661,17 +660,17 @@
       };
     }
     const lines = [
-      line('r2_storage', 'R2 media (Broadcast stays, Signal 25h)', r2StorageUsd, r2Gb, 'GB-month'),
-      line('r2_class_a', 'R2 uploads', r2ClassAUsd, classA, 'objects'),
-      line('fs_storage', 'Firestore documents', fsStorageUsd, firestoreBytes / 1e9, 'GB'),
-      line('fs_reads', 'Firestore reads (model)', fsReadUsd, readsMonth, 'reads/mo'),
-      line('fs_writes', 'Firestore writes (model)', fsWriteUsd, writesMonth, 'writes/mo'),
-      line('workers', 'Workers requests (model)', workersUsd, workerReqs, 'reqs/mo'),
-      line('turn', 'Call relay', turnUsd, turnMinutes, 'minutes'),
-      line('r2_egress', 'File downloads (not billed)', 0, viewsStored, 'stored views'),
-      line('fcm', 'Push notifications (not billed)', 0, dauN, 'people today'),
-      line('compass', 'Compass help (recorded bill)', 0, compassAed, 'AED', compassAed),
-      line('fixed', 'Fixed (domain, store, typed)', 0, fixedAed, 'AED', fixedAed),
+      line('r2_storage', 'Media storage (from files on record)', r2StorageUsd, r2Gb, 'GB-month'),
+      line('r2_class_a', 'Uploads (from files on record)', r2ClassAUsd, classA, 'objects'),
+      line('fs_storage', 'Documents (size estimated)', fsStorageUsd, firestoreBytes / 1e9, 'GB'),
+      line('fs_reads', 'Reads (assumed, not metered)', fsReadUsd, readsMonth, 'reads/mo'),
+      line('fs_writes', 'Writes (assumed, not metered)', fsWriteUsd, writesMonth, 'writes/mo'),
+      line('workers', 'Requests (assumed, not metered)', workersUsd, workerReqs, 'reqs/mo'),
+      line('turn', 'Call relay (minutes typed here)', turnUsd, turnMinutes, 'minutes'),
+      line('r2_egress', 'Downloads (not priced)', 0, viewsStored, 'stored views'),
+      line('fcm', 'Push (not priced)', 0, dauN, 'people today'),
+      line('compass', 'Compass (typed here)', 0, compassAed, 'AED', compassAed),
+      line('fixed', 'Fixed costs (typed here)', 0, fixedAed, 'AED', fixedAed),
     ];
     const meteredAed = lines.reduce(function (a, L) { return a + L.aed; }, 0);
 
@@ -845,15 +844,15 @@
     });
     const firstGate = gates.filter(function (g) { return g.mau != null; })[0] || null;
     const alreadyOver = gates.filter(function (g) { return g.already; });
-    let headline = 'Usage is within free allowances. The free hosting plan and Cloudflare currently invoice ' + formatAed(0) + '.';
+    let headline = 'Model only. Not a bill from Cloudflare or Firebase. Still inside the published free caps.';
     if (invoiceAed > 0) {
-      headline = 'Serving from the recorded invoice: ' + moneyPair(invoiceAed) + '.';
+      headline = 'An amount typed on this browser: ' + moneyPair(invoiceAed) + '. Other lines stay a model until each one has a bill.';
     } else if (alreadyOver.length) {
-      headline = 'Usage is past a free allowance on '
+      headline = 'The model is past a published free cap on '
         + alreadyOver.map(function (g) { return g.label; }).join(', ')
-        + '. After-free-tier estimate is ' + moneyPair(billableAed) + '.';
+        + '. Estimate past those caps: ' + moneyPair(billableAed) + '. Not an invoice.';
     } else if (firstGate && firstGate.mau_display) {
-      headline = 'Usage is within free allowances. At the current mix, the first list-price bill is '
+      headline = 'Model only. Not a bill. At this mix the first modelled charge would be '
         + firstGate.label + ' around ' + firstGate.mau_display.toLocaleString('en-GB')
         + ' people active in a month.';
     }
@@ -892,14 +891,14 @@
       first_gate: firstGate,
       headline: headline,
       assumptions: [
-        'Broadcast files stay in storage for a full month. Signals last 25 hours, then they fall off.',
-        'Watching a Broadcast does not bill download bandwidth.',
-        'When a file has no stored size, video is counted at about 1 Mbps, a photo at 400 KB, unknown video at 8 MB.',
-        'Database reads and writes are a model (150 reads and 24 writes per person active this month, per day), not an invoice.',
-        'The free hosting plan and Cloudflare currently bill ' + formatAed(0) + ' on usage. Invoiced spend is the amount recorded under Bills.',
-        'Call relay is zero until minutes are recorded. Compass help is zero until that bill is recorded. Push notifications are not billed.',
-        'Shared cost (presence, background jobs, domain) is split across people active this month, not dormant accounts.',
-        'The first bill is the first free allowance that usage exceeds. Database reads usually go first (about 330 people active in a month at 150 reads per person per day).',
+        'Not a vendor bill. Firebase meters are not read. A Cloudflare charge replaces a line only after it has already been billed.',
+        'People, Broadcasts, and Signals are counted from Naluno records.',
+        'A file with no stored size is guessed: about 1 Mbps for timed video, 400 KB for a photo, 8 MB if the size is unknown.',
+        'Reads, writes, and requests are assumed: 150 reads and 24 writes per person active this month per day, and 20 requests per person active today. They are not counters.',
+        'Free caps in the model are the published ones: 50,000 reads and 20,000 writes a day, 1 GB of documents, 10 GB of media, 100,000 requests a day.',
+        'Call minutes, Compass, and the fixed bill are whatever was typed on this browser. They are not fetched.',
+        'Push is not priced. Download bandwidth is not priced. Stripe fees stay at zero until a Stripe bill arrives.',
+        'A zero is not a vendor confirming that nothing is owed.',
       ],
     };
   }
@@ -1472,6 +1471,19 @@
     const receipts = raw.pushReceipts || [];
     const payments = raw.payments || [];
     costs.vendors = vendorBooks(costs, raw.vendorInvoices || [], payments);
+    let billedAed = 0;
+    let billedN = 0;
+    (costs.vendors || []).forEach(function (v) {
+      if (!v || v.status !== 'invoiced') return;
+      billedN += 1;
+      billedAed += num(v.amount_aed);
+    });
+    costs.billed_aed = billedAed;
+    costs.billed_n = billedN;
+    if (billedN) {
+      costs.headline = billedN + (billedN === 1 ? ' bill is on file (' : ' bills are on file (')
+        + moneyPair(billedAed) + '). Every other line is still a model, not a meter.';
+    }
 
     return {
       now: now,
@@ -1640,7 +1652,7 @@
         payments: 'A payment is paid only after the signed payment notice says so. Until that notice is connected, nothing is marked paid.',
         content_hub: 'Sports, movies and channels are not in the product yet.',
         cpu_memory: 'Hosting does not show processor or memory use on this console.',
-        unit_econ: 'No invoice is connected. The figures are list-price maths from usage. The free hosting plan and Cloudflare currently invoice ' + formatAed(0) + ' until usage goes over those allowances or an invoice is recorded.',
+        unit_econ: 'No vendor meter is connected for these figures. They are a model from Naluno records and published prices. A zero is not a bill of zero.',
         retention: 'Came back after 1 day / 7 days counts a person who opened Naluno on that exact later day. Still-here is the wider window.',
         cac: 'We do not guess what it costs to acquire a person, or what they are worth over a lifetime.',
         ad_revenue: 'Booked ad revenue is rate-card maths × observed events. Cash has not moved. There is no outside auction.',
@@ -1698,17 +1710,30 @@
       const inv = byKey[c[0]];
       const metered = num(L.aed);
       const amount = inv ? inv.amount : metered;
-      let status = 'within free allowance';
-      if (inv) status = 'invoiced';
-      else if (metered > 0.004) status = 'list-price';
-      let note = 'No charge yet. This line changes on its own when usage passes the free allowance.';
-      if (inv) note = inv.note || 'A real invoice replaced the estimate.';
-      else if (status === 'list-price') note = 'List price of usage already in these records. A connected invoice replaces this number.';
-      if (c[0] === 'stripe' && !inv) {
-        note = 'Fees are not guessed. Paid volume so far is ' + (paidMinor / 100).toFixed(2) + ' AED. This stays at zero until a Stripe invoice arrives.';
-      }
-      if (c[0] === 'auth' && !inv) {
-        note = 'Sign-in stays inside the free Firebase allowance until an invoice says otherwise.';
+      const qty = num(L.qty);
+      let status = 'model';
+      let note = 'Published price times use estimated from Naluno records. Not a vendor meter.';
+      if (inv) {
+        status = 'invoiced';
+        note = inv.note || 'Taken from a bill.';
+      } else if (c[0] === 'r2_egress' || c[0] === 'fcm') {
+        status = 'not priced';
+        note = 'Left at zero on purpose. Not a reading from the vendor.';
+      } else if (c[0] === 'stripe') {
+        status = 'not measured';
+        note = 'Fees are not guessed. Paid volume so far is ' + (paidMinor / 100).toFixed(2) + ' AED. Stays at zero until a Stripe bill arrives.';
+      } else if (c[0] === 'auth') {
+        status = 'not measured';
+        note = 'Sign-in is not read from Firebase. Stays at zero until a bill arrives.';
+      } else if (c[0] === 'turn' && !(metered > 0.004)) {
+        status = 'not measured';
+        note = 'Call minutes are typed on this browser. Nothing is fetched from call relay.';
+      } else if ((c[0] === 'compass' || c[0] === 'fixed') && !(metered > 0.004)) {
+        status = 'not typed';
+        note = 'Typed on this browser. Not fetched.';
+      } else if (!(metered > 0.004) && !(qty > 0)) {
+        status = 'not measured';
+        note = 'Nothing on file for this line. Not a confirmation that the bill is zero.';
       }
       return {
         key: c[0],
