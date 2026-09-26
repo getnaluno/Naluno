@@ -1471,6 +1471,7 @@
     const receipts = raw.pushReceipts || [];
     const payments = raw.payments || [];
     costs.vendors = vendorBooks(costs, raw.vendorInvoices || [], payments);
+    applyVendorMeters(costs, raw.worker && raw.worker.billing);
     let billedAed = 0;
     let billedN = 0;
     (costs.vendors || []).forEach(function (v) {
@@ -1483,6 +1484,9 @@
     if (billedN) {
       costs.headline = billedN + (billedN === 1 ? ' bill is on file (' : ' bills are on file (')
         + moneyPair(billedAed) + '). Every other line is still a model, not a meter.';
+    } else if (costs.meter_n) {
+      costs.headline = costs.meter_n + (costs.meter_n === 1 ? ' line is a vendor number. ' : ' lines are vendor numbers. ')
+        + 'Anything without the status metered is still a model.';
     }
 
     return {
@@ -1664,6 +1668,55 @@
     };
   }
 
+  function applyVendorMeters(costs, billing) {
+    costs = costs || {};
+    const usage = billing && billing.usage;
+    const lines = [];
+    if (usage && usage.cloudflare && usage.cloudflare.lines) lines.push.apply(lines, usage.cloudflare.lines);
+    if (usage && usage.firebase && usage.firebase.lines) lines.push.apply(lines, usage.firebase.lines);
+    const byKey = {};
+    lines.forEach(function (row) {
+      if (!row || !row.key) return;
+      byKey[String(row.key)] = row;
+    });
+    let meterN = 0;
+    let meterAed = 0;
+    (costs.vendors || []).forEach(function (v) {
+      if (!v || v.status === 'invoiced') return;
+      const m = byKey[v.key];
+      if (!m) return;
+      v.status = 'metered';
+      v.qty = m.qty;
+      v.unit = m.unit || v.unit || '';
+      if (m.amount_aed != null && isFinite(Number(m.amount_aed))) v.amount_aed = Number(m.amount_aed);
+      v.note = m.note || 'Reported by the vendor. Not a typed estimate.';
+      v.source = m.source || 'meter';
+      meterN += 1;
+      meterAed += num(v.amount_aed);
+    });
+    Object.keys(byKey).forEach(function (key) {
+      if ((costs.vendors || []).some(function (v) { return v.key === key; })) return;
+      const m = byKey[key];
+      costs.vendors.push({
+        key: key,
+        vendor: m.source === 'monitoring' ? 'Firebase' : 'Cloudflare',
+        service: m.service || key,
+        amount_aed: num(m.amount_aed),
+        metered_aed: num(m.amount_aed),
+        status: 'metered',
+        qty: m.qty,
+        unit: m.unit || '',
+        note: m.note || 'Reported by the vendor.',
+      });
+      meterN += 1;
+      meterAed += num(m.amount_aed);
+    });
+    costs.meter_n = meterN;
+    costs.meter_aed = meterAed;
+    costs.usage = usage || null;
+    return costs;
+  }
+
   function vendorBooks(costs, invoices, payments) {
     costs = costs || {};
     const lines = costs.lines || [];
@@ -1688,12 +1741,14 @@
     const catalog = [
       ['r2_storage', 'Cloudflare', 'R2 storage'],
       ['r2_class_a', 'Cloudflare', 'R2 uploads'],
+      ['r2_class_b', 'Cloudflare', 'R2 reads'],
       ['r2_egress', 'Cloudflare', 'R2 downloads'],
       ['workers', 'Cloudflare', 'Workers'],
       ['turn', 'Cloudflare', 'Calls relay'],
       ['fs_storage', 'Firebase', 'Firestore storage'],
       ['fs_reads', 'Firebase', 'Firestore reads'],
       ['fs_writes', 'Firebase', 'Firestore writes'],
+      ['fs_deletes', 'Firebase', 'Firestore deletes'],
       ['fcm', 'Firebase', 'Cloud Messaging'],
       ['compass', 'Other', 'Compass help'],
       ['fixed', 'Other', 'Domain, store, typed costs'],
@@ -1787,6 +1842,7 @@
     COST_RATES: COST_RATES,
     estimateCosts: estimateCosts,
     vendorBooks: vendorBooks,
+    applyVendorMeters: applyVendorMeters,
     estimateAdRevenue: estimateAdRevenue,
     adUnitStats: adUnitStats,
     DEFAULT_AD_RATES: DEFAULT_AD_RATES,

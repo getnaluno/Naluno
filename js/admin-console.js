@@ -1496,6 +1496,27 @@
   function money(minor, ccy) {
     return Data ? Data.money(minor, ccy) : ((Number(minor) || 0) / 100).toFixed(2);
   }
+  function vendorService(v) {
+    if (!v || v.qty == null || v.qty === '') return (v && v.service) || '';
+    const n = Number(v.qty);
+    const q = isFinite(n) ? (Math.abs(n) >= 100 ? Math.round(n).toLocaleString('en-GB') : String(Math.round(n * 1000) / 1000)) : String(v.qty);
+    return v.service + ' · ' + q + (v.unit ? ' ' + v.unit : '');
+  }
+  function meterSentence(d) {
+    const b = d && d.worker && d.worker.billing;
+    const u = b && b.usage;
+    if (!u) {
+      return (b && b.connected)
+        ? 'Cloudflare billing history is connected. Usage figures have not arrived yet.'
+        : 'No vendor meter is connected. Cloudflare billing history is off, and Firebase is not read.';
+    }
+    const bits = [];
+    if (u.cloudflare && u.cloudflare.ok) bits.push('Cloudflare answered. Its cost is updated daily, not live.');
+    else bits.push((u.cloudflare && u.cloudflare.error) || 'Cloudflare billing is not connected.');
+    if (u.firebase && u.firebase.ok) bits.push('Firebase counts are from Cloud Monitoring, for today.');
+    else bits.push((u.firebase && u.firebase.error) || 'Firebase counts are not connected.');
+    return bits.join(' ');
+  }
   function readCostInputs() {
     try {
       return {
@@ -3202,14 +3223,15 @@
       const vendorsHere = (Data && Data.vendorBooks)
         ? Data.vendorBooks(costs, raw.vendorInvoices || [], raw.payments || [])
         : (costs.vendors || []);
+      costs.vendors = vendorsHere;
+      if (Data && Data.applyVendorMeters) Data.applyVendorMeters(costs, d.worker && d.worker.billing);
       let billedAed = 0;
       let billedN = 0;
-      vendorsHere.forEach(function (v) {
+      (costs.vendors || []).forEach(function (v) {
         if (!v || v.status !== 'invoiced') return;
         billedN += 1;
         billedAed += Number(v.amount_aed) || 0;
       });
-      const cfOn = !!(d.worker && d.worker.billing && d.worker.billing.connected);
       const lines = costs.lines || [];
       const top = costs.top || [];
       const scale = costs.scale || [];
@@ -3242,20 +3264,19 @@
           + '<div class="row"><button type="button" class="ghost ccGo" data-go="ads">Open Ads</button></div>')
         + card('What does each person cost Naluno?',
           '<p class="sub">' + escapeHtml(billedN
-            ? (billedN + (billedN === 1 ? ' bill is on file. Every other figure is a model.' : ' bills are on file. Every other figure is a model.'))
-            : ((costs.headline) || 'Model only. Not a bill from Cloudflare or Firebase.')) + '</p>'
+            ? (billedN + (billedN === 1 ? ' bill is on file. Every unmarked line is still a model.' : ' bills are on file. Every unmarked line is still a model.'))
+            : (costs.meter_n
+              ? (costs.meter_n + (costs.meter_n === 1 ? ' line is a vendor number. Anything else is still a model.' : ' lines are vendor numbers. Anything else is still a model.'))
+              : ((costs.headline) || 'Model only. Not a bill from Cloudflare or Firebase.'))) + '</p>'
           + kpis([['Bills on file', aedUsd(billedAed)],
-            ['Typed on this browser', aedUsd(costs.invoice_aed || 0)],
+            ['Vendor reported', aedUsd(costs.meter_aed || 0)],
             ['Modelled list price', aedUsd(costs.metered_aed || 0)],
             ['Model past caps', aedUsd(costs.billable_aed || 0)]])
-          + kpis([['Per registered (model)', aedUsd(costs.per_registered_aed || 0)],
+          + kpis([['Typed on this browser', aedUsd(costs.invoice_aed || 0)],
+            ['Per registered (model)', aedUsd(costs.per_registered_aed || 0)],
             ['Per person this month (model)', aedUsd(costs.per_mau_aed || 0)],
-            ['Per person today (model)', aedUsd(costs.per_dau_aed || 0)],
             ['Files (estimate)', (costs.storage && costs.storage.r2_gb != null) ? Number(costs.storage.r2_gb).toFixed(3) + ' GB' : '—']])
-          + gap((cfOn
-            ? 'Cloudflare billing history is connected. Only a charge already billed replaces a line. Remaining free quota is not read. Firebase is not read.'
-            : 'No vendor meter is connected. Cloudflare billing history is off, and Firebase is not read.')
-            + ' ' + (g.unit_econ || '')))
+          + gap(meterSentence(d) + ' ' + (g.unit_econ || '')))
         + card('Published caps used by the model',
           (costs.gates && costs.gates.length
             ? plainRows(['Cap', 'Published allowance', 'Around people in a month', 'Model'],
@@ -3264,7 +3285,7 @@
                 return [gate.label, gate.free, mau, gate.already ? 'past cap' : 'inside cap'];
               }))
             : '<p class="sub">Caps appear once there is something on file to scale.</p>')
-          + gap('Not a live reading. Reads are assumed at 150 a day per person active this month. The published cap is 50,000 reads a day. Downloads and push are not priced.'))
+          + gap('This table is the model. A line marked metered in Books is the vendor\'s own count.'))
         + card('Typed on this browser',
           '<label>Amount you already paid (' + escapeHtml(moneyLabel()) + ')</label><input id="costInvoice" inputmode="decimal" placeholder="0" />'
           + '<label>Fixed monthly — domain, store, tools (' + escapeHtml(opCode()) + ')</label><input id="costFixed" inputmode="decimal" placeholder="0" />'
@@ -3820,13 +3841,9 @@
     if (tab === 'books') {
       if (!canDeskTab('books')) { el.innerHTML = '<p class="sub">This login cannot open the books.</p>'; return; }
       const pack = booksLines(d);
-      const cfOn = !!(d.worker && d.worker.billing && d.worker.billing.connected);
       el.innerHTML =
         card('Books for the accountant',
-          '<p class="sub">' + (cfOn
-            ? 'Receipts are real records. A vendor line is a real bill only when the status is invoiced. Cloudflare billing history is connected, and it only replaces a line after a charge is billed. Firebase is not read. Every other line is a model.'
-            : 'Receipts are real records. A vendor line is a real bill only when the status is invoiced. No vendor meter is connected, so the other lines are a model from published prices. Zero is not a vendor confirming the bill is zero.')
-          + '</p>'
+          '<p class="sub">' + escapeHtml(meterSentence(d)) + ' A vendor line is a real bill only when the status is invoiced. metered means the vendor reported that number. Anything else is still a model. Zero is not a vendor confirming the bill is zero unless the status is metered.</p>'
           + kpis([
             ['Ad revenue booked', aed(pack.adsBooked)],
             ['Support intents', pack.supportN],
@@ -3843,9 +3860,9 @@
         + card('What can charge Naluno', plainRows(
             ['Vendor', 'Service', 'AED', 'Status'],
             (pack.vendors || []).map(function (v) {
-              return [v.vendor, v.service, Number(v.amount_aed || 0).toFixed(2), v.status];
+              return [v.vendor, vendorService(v), Number(v.amount_aed || 0).toFixed(2), v.status];
             })))
-          + gap('invoiced = a bill was received. model = a published price times assumed use. not measured = nothing on file. not priced = left at zero on purpose. not typed = waiting for a figure on this browser.')
+          + gap('invoiced = a bill was received. metered = the vendor reported this number. model = a published price times assumed use. not measured = nothing on file. not priced = left at zero on purpose. not typed = waiting for a figure on this browser.')
         + card('Trial balance', plainRows(pack.trial[0], pack.trial.slice(1, 18).map(function (r) { return r; })));
       const base = 'naluno-books-' + pack.stamp;
       const csvBtn = $('booksCsv');
