@@ -2181,12 +2181,26 @@
       else otherIn += op;
     });
     (d.knownApps || []).forEach(function (k) {
-      if (!k || !k.paidAt) return;
+      if (!k || !k.paidAt || k.voidedAt) return;
       if (k.payRef && seen[k.payRef]) return;
       const bit = paidMajor(k);
       if (!(bit.major > 0)) return;
       knownIn += toOp(bit.major, bit.code || 'AED');
     });
+    const grantRows = [];
+    let grantAed = 0;
+    let grantN = 0;
+    (d.knownApps || []).forEach(function (k) {
+      if (!k || !k.grant || k.voidedAt || k.paidAt) return;
+      const months = Number(k.grantMonths) || 0;
+      const minor = Number(k.list_minor) || 0;
+      if ((months !== 6 && months !== 12) || !(minor > 0)) return;
+      const aed = (minor / 100) * months;
+      grantAed += aed;
+      grantN += 1;
+      grantRows.push([k.name || k.uid || '', String(months), moneyNow(aed), moneyNow(0)]);
+    });
+    if (grantN) grantRows.push(['All grants', String(grantN), moneyNow(grantAed), moneyNow(0)]);
     const adsBooked = toOp(Number(ads.bookedAed) || 0, 'AED');
     const cameIn = adsIn + knownIn + otherIn;
     const written = adsBooked;
@@ -2231,6 +2245,8 @@
       dueLabel: due.length ? ('To pay ' + showOp(dueOp)) : 'Nothing to pay. No bill has asked for money.',
       counted: counted,
       estimated: estimated,
+      grantRows: grantRows,
+      grantN: grantN,
     };
   }
   function plainMoneyHtml(d) {
@@ -2246,7 +2262,12 @@
       : '';
     return card('Money in',
         plainRows(['Where it comes from', 'Came in', 'On the rate card, not received'], m.inRows)
-        + '<p class="sub">Came in is a payment that was recorded. The rate card is what ads are priced at. It is not cash in hand. Known is a paid month. Other services stays at zero until another paid service exists.</p>')
+        + '<p class="sub">Came in is a payment that was recorded. The rate card is what ads are priced at. It is not cash in hand. Known is a paid month. A grant is not in this table.</p>')
+      + card('Known grants',
+        (m.grantN
+          ? plainRows(['Who', 'Months', 'List price waived', 'Cash'], m.grantRows)
+          : '<p class="sub">None.</p>')
+        + '<p class="sub">Waived is the list price for one month, times the months. Cash is zero. It is not income and not a bill.</p>')
       + card('Money out',
         '<p class="sub">' + escapeHtml(m.due.length ? m.dueLabel : 'Nothing to pay.') + '</p>'
         + dueTable
@@ -2312,7 +2333,7 @@
       add(day, 'Cash', account, major, '', 'paid', id, 'Opposite entry.', p.currency || 'AED');
     });
     (d.knownApps || []).forEach(function (k) {
-      if (!k || !k.paidAt) return;
+      if (!k || !k.paidAt || k.voidedAt) return;
       if (k.payRef && seenPay[k.payRef]) return;
       if (!(Number(k.amount_minor) > 0)) return;
       const major = Number(k.amount_minor) / 100;
@@ -2320,6 +2341,18 @@
       const who = k.name || k.uid || '';
       add(day, 'Known subscriptions', who, '', major, 'paid', k.payRef || k.uid || '', 'A Known month. Cash is recorded when this row is paid.', k.currency || 'AED');
       add(day, 'Cash', 'Known subscriptions', major, '', 'paid', k.payRef || k.uid || '', 'Opposite entry.', k.currency || 'AED');
+    });
+    (d.knownApps || []).forEach(function (k) {
+      if (!k || !k.grant || k.voidedAt || k.paidAt) return;
+      const months = Number(k.grantMonths) || 0;
+      const minor = Number(k.list_minor) || 0;
+      if ((months !== 6 && months !== 12) || !(minor > 0)) return;
+      const waived = (minor / 100) * months;
+      const day = k.grantedAt ? new Date(Number(k.grantedAt)).toISOString().slice(0, 10) : stamp;
+      const who = (k.name || k.uid || '') + ' · ' + months + ' months';
+      const note = 'List price for one month × ' + months + '. No cash. Not income.';
+      add(day, 'Known grants waived', who, waived, '', 'grant', k.uid || '', note);
+      add(day, 'Known subscriptions', who, '', waived, 'grant', k.uid || '', 'Opposite entry. The waiver cancels it. Nothing was paid.');
     });
     const invoice = Number(costs.invoice_aed || costs.billable_aed || 0);
     const vendors = (costs && costs.vendors) || [];
@@ -2501,14 +2534,25 @@
     }
     host.innerHTML = rows.map(function (row) {
       const until = row.paidUntil ? new Date(row.paidUntil).toLocaleDateString() : '—';
+      const activeGrant = !!(row.grant && !row.paidAt);
+      const months = Number(row.grantMonths) || 0;
+      const waived = activeGrant && (months === 6 || months === 12) && Number(row.list_minor) > 0
+        ? moneyNow((Number(row.list_minor) / 100) * months) : '';
+      const canGrant = row.status === 'accepted' && !row.grant && !row.paidAt;
       return '<div class="card" data-known="' + escapeHtml(row.uid) + '">'
-        + '<div class="who">' + escapeHtml(row.name || row.uid) + ' · ' + escapeHtml(row.status || '') + '</div>'
+        + '<div class="who">' + escapeHtml(row.name || row.uid) + ' · ' + escapeHtml(row.status || '') + (activeGrant ? ' · grant' : '') + '</div>'
         + '<p class="sub">' + escapeHtml(row.note || '') + '</p>'
-        + '<p class="sub">Paid through ' + escapeHtml(until) + (row.payRef ? ' · ' + escapeHtml(row.payRef) : '') + '</p>'
+        + '<p class="sub">' + (activeGrant
+          ? ('Granted ' + months + ' months, until ' + escapeHtml(until) + '. Waived ' + escapeHtml(waived) + '. Cash 0.')
+          : ('Through ' + escapeHtml(until) + (row.payRef ? ' · ' + escapeHtml(row.payRef) : ''))) + '</p>'
         + '<div class="row">'
         + '<button type="button" class="ghost known-act" data-uid="' + escapeHtml(row.uid) + '" data-a="accept">Accept</button>'
         + '<button type="button" class="ghost known-act" data-uid="' + escapeHtml(row.uid) + '" data-a="decline">Decline</button>'
-        + '<button type="button" class="primary known-act" data-uid="' + escapeHtml(row.uid) + '" data-a="pay">Record this month as paid</button>'
+        + (canGrant ? '<button type="button" class="primary known-act" data-uid="' + escapeHtml(row.uid) + '" data-a="grant6">Grant 6 months</button>' : '')
+        + (canGrant ? '<button type="button" class="primary known-act" data-uid="' + escapeHtml(row.uid) + '" data-a="grant12">Grant 12 months</button>' : '')
+        + (canGrant ? '<button type="button" class="ghost known-act" data-uid="' + escapeHtml(row.uid) + '" data-a="pay">Record this month as paid</button>' : '')
+        + (row.paidAt ? '<button type="button" class="danger known-act" data-uid="' + escapeHtml(row.uid) + '" data-a="void">Void this payment</button>' : '')
+        + (activeGrant ? '<button type="button" class="danger known-act" data-uid="' + escapeHtml(row.uid) + '" data-a="void-grant">Void this grant</button>' : '')
         + '<button type="button" class="danger known-act" data-uid="' + escapeHtml(row.uid) + '" data-a="revoke">Revoke</button>'
         + '</div></div>';
     }).join('');
@@ -2529,6 +2573,45 @@
             await ref.set(next, { merge: true });
             await db.collection('users').doc(uid).set({ known: true, knownUntil: next.paidUntil }, { merge: true });
             toast('This month is recorded. They are Known.');
+          } else if (action === 'void') {
+            if (!K) throw new Error('Known is not loaded');
+            next = K.voidPayment(app, now);
+            if (!next) throw new Error('There is no payment on this one');
+            const del = firebase.firestore.FieldValue.delete();
+            await ref.set(Object.assign({}, next, {
+              paidAt: del,
+              paidUntil: del,
+              amount_minor: del,
+              payRef: del,
+            }), { merge: true });
+            await db.collection('users').doc(uid).set({ known: false, knownUntil: now }, { merge: true });
+            try { await writeAudit('known-void', uid, 'Voided. No cash moved.'); } catch (_) {}
+            toast('Taken out. No cash moved.');
+          } else if (action === 'grant6' || action === 'grant12') {
+            if (!K || !K.grantKnown) throw new Error('Known is not loaded');
+            const months = action === 'grant6' ? 6 : 12;
+            next = K.grantKnown(app, now, months);
+            if (!next) throw new Error('Accept it before granting');
+            await ref.set(next, { merge: true });
+            await db.collection('users').doc(uid).set({ known: true, knownUntil: next.paidUntil, grant: true }, { merge: true });
+            try { await writeAudit('known-grant', uid, months + ' months. List price waived. Cash 0.'); } catch (_) {}
+            toast('Granted for ' + months + ' months. No cash.');
+          } else if (action === 'void-grant') {
+            if (!K || !K.voidGrant) throw new Error('Known is not loaded');
+            next = K.voidGrant(app, now);
+            if (!next) throw new Error('There is no grant on this one');
+            const del = firebase.firestore.FieldValue.delete();
+            await ref.set(Object.assign({}, next, {
+              grantedAt: del,
+              grantMonths: del,
+              paidUntil: del,
+              list_minor: del,
+              amount_minor: del,
+              payRef: del,
+            }), { merge: true });
+            await db.collection('users').doc(uid).set({ known: false, knownUntil: now, grant: false }, { merge: true });
+            try { await writeAudit('known-grant-void', uid, 'Grant voided. No cash moved.'); } catch (_) {}
+            toast('Grant taken out. No cash moved.');
           } else {
             if (!K) throw new Error('Known is not loaded');
             next = K.review(app, action, now);
@@ -4053,7 +4136,7 @@
 
     if (tab === 'known') {
       el.innerHTML = card('Known',
-        '<p class="sub">Applications arrive here. Accept or decline first. The mark goes on a name only after this month is paid. Recording the month here is for while card payments are not connected. It is a real record, not a preview.</p>'
+        '<p class="sub">Accept an application first. Grant 6 or 12 months if you are giving the mark. That writes no cash. Record a month as paid only when money actually arrives.</p>'
         + '<div id="knownDesk"><p class="sub">Loading…</p></div>');
       loadKnownDesk();
       return;

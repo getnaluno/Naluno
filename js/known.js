@@ -1,5 +1,5 @@
-/* Known: a reviewed name, then a paid month. The mark is not a copied badge.
-   Nothing here can mark a person Known without a payment time. */
+/* Known: a reviewed name, then either a paid month or a grant.
+   A grant puts the mark on with no cash. A payment is the only cash. */
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
@@ -56,6 +56,52 @@
       payRef: String(ref || '').slice(0, 120),
       updatedAt: at,
     });
+  }
+
+  function voidPayment(app, now) {
+    if (!app || !app.uid) return null;
+    if (!app.paidAt && !(Number(app.amount_minor) > 0)) return null;
+    const at = Number(now) || Date.now();
+    const status = (app.status === 'revoked' || app.status === 'declined') ? app.status : 'accepted';
+    const next = Object.assign({}, app, { status: status, updatedAt: at, voidedAt: at });
+    delete next.paidAt;
+    delete next.paidUntil;
+    delete next.amount_minor;
+    delete next.payRef;
+    return next;
+  }
+
+  function grantKnown(app, now, months) {
+    if (!app || !app.uid) return null;
+    const span = Number(months);
+    if (span !== 6 && span !== 12) return null;
+    if (app.status !== 'accepted') return null;
+    if (app.paidAt || app.grant) return null;
+    const at = Number(now) || Date.now();
+    return Object.assign({}, app, {
+      status: 'known',
+      grant: true,
+      grantMonths: span,
+      grantedAt: at,
+      paidUntil: at + span * MONTH_MS,
+      amount_minor: 0,
+      list_minor: MONTH_MINOR,
+      payRef: '',
+      updatedAt: at,
+    });
+  }
+
+  function voidGrant(app, now) {
+    if (!app || !app.uid || !app.grant || app.paidAt) return null;
+    const at = Number(now) || Date.now();
+    const next = Object.assign({}, app, { status: 'accepted', grant: false, updatedAt: at, voidedAt: at });
+    delete next.grantedAt;
+    delete next.grantMonths;
+    delete next.paidUntil;
+    delete next.list_minor;
+    delete next.amount_minor;
+    delete next.payRef;
+    return next;
   }
 
   function isKnown(row, now) {
@@ -150,6 +196,9 @@
       body = '<p class="known-copy">Accepted<span class="known-fee">' + (fee ? (' · ' + fee) : '') + '</span>. Pay, then the mark appears.</p>'
         + '<button type="button" class="save-btn" id="knownPay">Pay</button>'
         + '<p class="known-copy" id="knownPayMsg"></p>';
+    } else if (app && app.grant && isKnown(app) && !app.paidAt) {
+      button = 'Known';
+      body = '<p class="known-copy">Granted until ' + new Date(Number(app.paidUntil)).toLocaleDateString() + '. No charge for this period.</p>';
     } else if (app && isKnown(app)) {
       button = 'Known';
       body = '<p class="known-copy">Until ' + new Date(app.paidUntil).toLocaleDateString() + '.</p>'
@@ -379,6 +428,9 @@
     freshApply: freshApply,
     review: review,
     recordPayment: recordPayment,
+    grantKnown: grantKnown,
+    voidGrant: voidGrant,
+    voidPayment: voidPayment,
     isKnown: isKnown,
     stampView: stampView,
     markHtml: markHtml,
