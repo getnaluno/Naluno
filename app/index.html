@@ -131,9 +131,9 @@
 })();
 </script>
 <link rel="apple-touch-startup-image" href="/splash-empty.png">
-<link rel="stylesheet" href="/css/app.css?v=20260926g" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/css/app.css?v=20260926h" media="print" onload="this.media='all'">
 <script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="/css/app.css?v=20260926g"></noscript>
+<noscript><link rel="stylesheet" href="/css/app.css?v=20260926h"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -1481,7 +1481,13 @@ window.__nalunoEntryT0 = Date.now();
           <button type="button" id="bspaceKeepLine">Keep a line</button>
         </div>
         <details class="bspace-quiet" id="bspaceQuiet">
-          <summary>Enter Room</summary>
+          <summary class="bspace-enter-sum">
+            <span>Enter Room</span>
+            <span class="bspace-enter-views">
+              <button type="button" id="bspaceViewsInfo" aria-label="Views on this Broadcast">i</button>
+              <span id="bspaceEnterCount"></span>
+            </span>
+          </summary>
         <div id="bspaceViewRow" class="bspace-view-row" style="display:none;"></div>
         <div id="bspaceSupportSlot" class="bspace-support-slot">
           <div class="bspace-support-panel">
@@ -1509,13 +1515,15 @@ window.__nalunoEntryT0 = Date.now();
         </details>
 
         <div class="bspace-tabs" id="bspaceTabs">
-          <button type="button" class="bspace-tab on" data-bspan="conversation">Conversation</button>
+          <button type="button" class="bspace-tab" data-bspan="conversation">Conversation</button>
           <button type="button" class="bspace-tab" data-bspan="questions">Questions</button>
           <button type="button" class="bspace-tab" data-bspan="results">Results</button>
           <button type="button" class="bspace-tab" data-bspan="resources">Resources</button>
           <button type="button" class="bspace-tab" data-bspan="journey">Journey</button>
           <button type="button" class="bspace-tab" data-bspan="updates" id="bspaceUpdatesTab" style="display:none;">Updates</button>
         </div>
+
+        <div id="bspaceRoomHome" hidden>
 
         <div class="bspace-panel" id="bspan-conversation">
           <div class="bspace-section">
@@ -1581,6 +1589,7 @@ window.__nalunoEntryT0 = Date.now();
             <div class="bspace-journey" id="bspaceJourney"></div>
           </div>
         </div>
+        </div>
 
         
         <div class="bspace-section" id="bspaceDashboard" style="display:none;">
@@ -1621,6 +1630,7 @@ window.__nalunoEntryT0 = Date.now();
         </div>
         <div class="bspace-sheet-kicker">This room</div>
         <div class="bspace-sheet-grid">
+          <button type="button" class="bspace-mini" id="bspaceKnownBtn">Ask to be Known</button>
           <button type="button" class="bspace-mini" id="bspaceWhyBtn">Why this</button>
           <button type="button" class="bspace-mini" id="bspaceSaveOfflineBtn">Save</button>
           <button type="button" class="bspace-mini" id="bspaceAdvertiseBtn" style="display:none;">Advertise</button>
@@ -1751,9 +1761,9 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/discover.js?v=20260926d"></script>
 <script src="/js/signal-ui.js?v=20260925d"></script>
 <script src="/js/compat-lock.js?v=20260908d"></script>
-<script src="/js/known.js?v=20260926g"></script>
-<script src="/js/lg-speak.js?v=20260926f"></script>
-<script src="/js/broadcast-space.js?v=20260926g"></script>
+<script src="/js/known.js?v=20260926h"></script>
+<script src="/js/lg-speak.js?v=20260926h"></script>
+<script src="/js/broadcast-space.js?v=20260926h"></script>
 <script src="/js/ads.js?v=20260925c"></script>
 <script src="/js/media-vault.js?v=20260908d"></script>
 <script src="/js/wireline.js?v=20260924f"></script>
@@ -1780,7 +1790,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/sfu-live.js?v=20260925c"></script>
 <script src="/js/broadcast-live.js?v=20260925c"></script>
 <script src="/js/band-room.js?v=20260924f"></script>
-<script src="/js/pwa.js?v=20260926f"></script>
+<script src="/js/pwa.js?v=20260926h"></script>
 <script src="/js/spark-engine.js?v=20260926c"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>
 <script src="/js/spark-lg.js?v=20260908d"></script>
