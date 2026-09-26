@@ -1010,7 +1010,7 @@ function bspaceRenderTalk(el, docs, col, emptyText, extraHtml){
       }).join('');
     const extra = extraHtml ? extraHtml(m, row.id) : '';
     const label = n ? (n + (n === 1 ? ' reply' : ' replies')) : 'Reply';
-    return '<div class="bspace-card" data-post="' + bspaceEscape(row.id) + '">'
+    return '<div class="bspace-card bspace-talk-plate" data-post="' + bspaceEscape(row.id) + '">'
       + '<div class="who">' + who + bspaceDeleteBtnHtml(col, row.id, m.from) + '</div>'
       + '<div class="body">' + bspaceTalkBody(col, m) + '</div>'
       + extra
@@ -1771,9 +1771,25 @@ document.querySelectorAll('#bspaceTabs .bspace-tab').forEach(tab=>{
   };
 })();
 if($('bspaceKnownBtn')){
-  $('bspaceKnownBtn').onclick = function(){
-    try{ if($('bspaceMoreMenu')) $('bspaceMoreMenu').hidden = true; }catch(_){}
-    if(window.NalunoKnown && typeof NalunoKnown.openSheet === 'function') NalunoKnown.openSheet();
+  $('bspaceKnownBtn').onclick = function(e){
+    if(e){ e.preventDefault(); e.stopPropagation(); }
+    const home = $('bspaceMenuHome');
+    const card = $('bspaceKnownCard');
+    const host = $('bspaceKnownHost');
+    const menu = $('bspaceMoreMenu');
+    if(menu) menu.hidden = false;
+    if(home) home.hidden = true;
+    if(card) card.hidden = false;
+    if(window.NalunoKnown && typeof NalunoKnown.openInto === 'function') NalunoKnown.openInto(host);
+  };
+}
+if($('bspaceKnownBack')){
+  $('bspaceKnownBack').onclick = function(e){
+    if(e){ e.preventDefault(); e.stopPropagation(); }
+    const home = $('bspaceMenuHome');
+    const card = $('bspaceKnownCard');
+    if(card) card.hidden = true;
+    if(home) home.hidden = false;
   };
 }
 
@@ -2920,6 +2936,10 @@ if($('bspaceAdvertiseBtn')){
   function shut(){
     menu.setAttribute('hidden', '');
     btn.setAttribute('aria-expanded', 'false');
+    const home = $('bspaceMenuHome');
+    const card = $('bspaceKnownCard');
+    if(card) card.hidden = true;
+    if(home) home.hidden = false;
   }
   btn.onclick = function(e){
     if(e){ e.preventDefault(); e.stopPropagation(); }
@@ -2929,7 +2949,10 @@ if($('bspaceAdvertiseBtn')){
       btn.setAttribute('aria-expanded', 'true');
     } else shut();
   };
-  menu.addEventListener('click', function(){ shut(); });
+  menu.addEventListener('click', function(e){
+    if(e.target && e.target.closest && (e.target.closest('#bspaceKnownCard') || e.target.closest('#bspaceKnownBtn'))) return;
+    shut();
+  });
   document.addEventListener('click', function(e){
     if(menu.hasAttribute('hidden')) return;
     if(btn.contains(e.target) || menu.contains(e.target)) return;

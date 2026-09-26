@@ -828,6 +828,7 @@ function bindAuthListeners(){
   // wiping lastUid / forcing the gate on that first null is why sign-in felt like
   // "tap twice". Only treat null as signed-out after a short settle, or on explicit sign-out.
   let nullAuthTimer = null;
+  let sessionHadUser = false;
   function showSignedOutGate(){
     authStatus('');
     nalunoShowSignIn();
@@ -854,8 +855,22 @@ function bindAuthListeners(){
     clearTimeout(authTimeout);
     if(nullAuthTimer){ clearTimeout(nullAuthTimer); nullAuthTimer = null; }
     authResolved = true;
+    if(!user && sessionHadUser && !window.__nalunoSigningOut){
+      if(nullAuthTimer){ clearTimeout(nullAuthTimer); nullAuthTimer = null; }
+      nullAuthTimer = setTimeout(function(){
+        if(fbAuth && fbAuth.currentUser){
+          currentUser = fbAuth.currentUser;
+          return;
+        }
+        currentUser = null;
+        clearSessionListeners();
+        showSignedOutGate();
+      }, 8000);
+      return;
+    }
     currentUser = user;
     if(user){
+      sessionHadUser = true;
       try{ localStorage.setItem('nalunoLastUid', user.uid); }catch(_){}
       authStatus('');
       nalunoEnterApp();
@@ -940,12 +955,8 @@ function bindAuthListeners(){
         showSignedOutGate();
         return;
       }
-      // First null is often "session still restoring". Keep any cached UI; only
-      // open the gate if still null after settle.
       nullAuthTimer = setTimeout(function(){
-        if(currentUser) return;
-        // Confirmed signed out
-        try{ localStorage.removeItem('nalunoLastUid'); }catch(_){}
+        if(currentUser || (fbAuth && fbAuth.currentUser)) return;
         clearSessionListeners();
         if(lastUid){
           const cached = nalunoReadCachedProfile(lastUid);
@@ -955,7 +966,7 @@ function bindAuthListeners(){
           }
         }
         showSignedOutGate();
-      }, 1400);
+      }, 2500);
     }
   });
 }

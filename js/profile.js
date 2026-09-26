@@ -525,3 +525,117 @@ const DEFAULT_PROFILE = { name:'You', tagline:'On air, mostly reachable.', numbe
 let currentProfile = { ...DEFAULT_PROFILE };
 const storageAvailable = typeof window.storage !== 'undefined' && window.storage !== null;
 
+
+(function wireCallsignDial(){
+  const dial = document.getElementById('callsignDial');
+  const rotor = document.getElementById('callsignRotor');
+  const hub = document.getElementById('callsignDialHub');
+  const nameEl = document.getElementById('callsignDialName');
+  const plate = document.getElementById('callsignDialPlate');
+  const plateBody = document.getElementById('callsignDialPlateBody');
+  const plateTitle = document.getElementById('callsignDialPlateTitle');
+  const dock = document.getElementById('callsignDialDock');
+  if(!dial || !rotor || !hub || dial.dataset.wired === '1') return;
+  dial.dataset.wired = '1';
+  const stations = [
+    { id:'greenroom', short:'Greenroom', angle:0 },
+    { id:'find', short:'Find', angle:90 },
+    { id:'calls', short:'Calls', angle:180 },
+    { id:'tone', short:'Tone', angle:270 },
+  ];
+  let rot = 0;
+  let drag = null;
+  stations.forEach(function(s){
+    const node = dock && dock.querySelector('[data-dial="' + s.id + '"]');
+    s.name = (node && node.getAttribute('data-dial-name')) || s.short;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'cdial-station';
+    btn.textContent = s.short;
+    rotor.appendChild(btn);
+    s.el = btn;
+    btn.addEventListener('click', function(e){
+      if(e) e.stopPropagation();
+      if(drag && drag.moved) return;
+      const cur = current();
+      if(cur && cur.id === s.id) openPlate(s);
+      else { spinTo(s); openPlate(s); }
+    });
+  });
+  function norm(n){ return ((n % 360) + 360) % 360; }
+  function dist(n){ const a = norm(n); return a > 180 ? 360 - a : a; }
+  function current(){
+    let best = stations[0], bestD = 999;
+    stations.forEach(function(s){
+      const d = dist(s.angle + rot);
+      if(d < bestD){ bestD = d; best = s; }
+    });
+    return best;
+  }
+  function applyRot(animate){
+    rotor.style.transition = animate ? 'transform .45s cubic-bezier(.2,.8,.2,1)' : 'none';
+    rotor.style.transform = 'rotate(' + rot + 'deg)';
+    const cur = current();
+    stations.forEach(function(s){
+      s.el.style.transform = 'rotate(' + s.angle + 'deg) translateY(-108px) rotate(' + (-(s.angle + rot)) + 'deg)';
+      s.el.classList.toggle('on', cur && cur.id === s.id);
+    });
+    if(nameEl && cur) nameEl.textContent = cur.name;
+  }
+  function spinTo(s){
+    let delta = norm((-s.angle) - rot);
+    if(delta > 180) delta -= 360;
+    rot += delta;
+    applyRot(true);
+  }
+  function openPlate(s){
+    if(!plate || !plateBody || !dock) return;
+    const node = dock.querySelector('[data-dial="' + s.id + '"]') || plateBody.querySelector('[data-dial="' + s.id + '"]');
+    if(!node) return;
+    const prev = plateBody.querySelector('[data-dial]');
+    if(prev && prev !== node) dock.appendChild(prev);
+    plateBody.appendChild(node);
+    if(plateTitle) plateTitle.textContent = s.name;
+    plate.hidden = false;
+  }
+  function closePlate(){
+    if(!plate || !plateBody || !dock) return;
+    const prev = plateBody.querySelector('[data-dial]');
+    if(prev) dock.appendChild(prev);
+    plate.hidden = true;
+  }
+  const closeBtn = document.getElementById('callsignDialClose');
+  if(closeBtn) closeBtn.onclick = function(){ closePlate(); };
+  hub.onclick = function(){ const cur = current(); if(cur) openPlate(cur); };
+  dial.addEventListener('pointerdown', function(e){
+    if(e.target.closest && (e.target.closest('.cdial-hub') || e.target.closest('.cdial-station'))) return;
+    const box = dial.getBoundingClientRect();
+    drag = {
+      cx: box.left + box.width / 2,
+      cy: box.top + box.height / 2,
+      last: Math.atan2(e.clientY - (box.top + box.height / 2), e.clientX - (box.left + box.width / 2)),
+      moved: false,
+    };
+    try{ dial.setPointerCapture(e.pointerId); }catch(_){}
+  });
+  dial.addEventListener('pointermove', function(e){
+    if(!drag) return;
+    const ang = Math.atan2(e.clientY - drag.cy, e.clientX - drag.cx);
+    let delta = (ang - drag.last) * 180 / Math.PI;
+    if(delta > 180) delta -= 360;
+    if(delta < -180) delta += 360;
+    if(Math.abs(delta) > 0.4) drag.moved = true;
+    drag.last = ang;
+    rot += delta;
+    applyRot(false);
+  });
+  function endDrag(){
+    if(!drag) return;
+    drag = null;
+    const cur = current();
+    if(cur) spinTo(cur);
+  }
+  dial.addEventListener('pointerup', endDrag);
+  dial.addEventListener('pointercancel', endDrag);
+  applyRot(false);
+})();

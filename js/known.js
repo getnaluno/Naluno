@@ -69,7 +69,7 @@
   }
 
   function markHtml() {
-    return '<span class="naluno-known" title="Known">' + LABEL + '</span>';
+    return '<span class="naluno-known" title="Known"><span>' + LABEL + '</span></span>';
   }
 
   function paintBeside(el, uid) {
@@ -96,10 +96,10 @@
   }
 
   function formHtml(fee) {
-    const price = fee ? ('<p class="known-copy known-price">One month · ' + fee + '</p>') : '<p class="known-copy known-price"></p>';
-    return price
+    const price = fee ? (' · ' + fee) : '';
+    return '<p class="known-copy">A reviewed name on your Callsign<span class="known-fee">' + price + '</span>. The mark shows only after it is paid.</p>'
       + '<textarea class="known-note" maxlength="' + NOTE_MAX + '" rows="4" placeholder="Who you are"></textarea>'
-      + '<p class="known-count">0 / ' + NOTE_MAX + ' · at least ' + NOTE_MIN + '</p>'
+      + '<p class="known-count">0 / ' + NOTE_MAX + ' characters · at least ' + NOTE_MIN + '</p>'
       + '<button type="button" class="save-btn" id="knownApply">Send</button>';
   }
 
@@ -110,7 +110,7 @@
     note.dataset.counted = '1';
     const tick = function () {
       const n = cleanNote(note.value).length;
-      count.textContent = n + ' / ' + NOTE_MAX + (n < NOTE_MIN ? (' · at least ' + NOTE_MIN) : '');
+      count.textContent = n + ' / ' + NOTE_MAX + ' characters' + (n < NOTE_MIN ? (' · at least ' + NOTE_MIN) : '');
     };
     note.addEventListener('input', tick);
     tick();
@@ -122,8 +122,8 @@
     const fee = feeLabel();
     const stamp = app && app.status ? app.status : 'fresh';
     if (!bare && block.dataset.status === stamp && block.dataset.painted === '1') {
-      const price = block.querySelector('.known-price');
-      if (price) price.textContent = fee ? ('One month · ' + fee) : '';
+      const feeEl = block.querySelector('.known-fee');
+      if (feeEl) feeEl.textContent = fee ? (' · ' + fee) : '';
       return;
     }
     const wasOpen = block.dataset.open === '1';
@@ -137,7 +137,7 @@
       body = formHtml(fee);
     } else if (app && (app.status === 'accepted' || app.status === 'lapsed')) {
       button = 'Pay';
-      body = '<p class="known-copy known-price">' + (fee ? ('One month · ' + fee) : '') + '</p>'
+      body = '<p class="known-copy">Accepted<span class="known-fee">' + (fee ? (' · ' + fee) : '') + '</span>. Pay, then the mark appears.</p>'
         + '<button type="button" class="save-btn" id="knownPay">Pay</button>'
         + '<p class="known-copy" id="knownPayMsg"></p>';
     } else if (app && isKnown(app)) {
@@ -147,7 +147,7 @@
         + '<p class="known-copy" id="knownPayMsg"></p>';
     } else if (app) {
       button = 'Pay';
-      body = '<p class="known-copy known-price">' + (fee ? ('One month · ' + fee) : '') + '</p>'
+      body = '<p class="known-copy">The month ended<span class="known-fee">' + (fee ? (' · ' + fee) : '') + '</span>.</p>'
         + '<button type="button" class="save-btn" id="knownPay">Pay</button>'
         + '<p class="known-copy" id="knownPayMsg"></p>';
     }
@@ -232,6 +232,34 @@
     return sheet;
   }
 
+  async function openInto(host) {
+    if (!host) return;
+    if (host.dataset.wired !== '1') {
+      host.dataset.wired = '1';
+      host.addEventListener('click', function (e) {
+        const t = e.target && e.target.closest ? e.target.closest('button') : null;
+        if (!t || !t.id) return;
+        if (t.id === 'knownApply') submitApply(host);
+        if (t.id === 'knownPay') startPay(host);
+      });
+    }
+    host.dataset.painted = '';
+    host.dataset.status = '';
+    if (typeof currentUser === 'undefined' || !currentUser || typeof fbDb === 'undefined' || !fbDb) {
+      paintMine(host, null, { bare: true });
+      return;
+    }
+    try {
+      const snap = await fbDb.collection('knownApps').doc(currentUser.uid).get();
+      host.dataset.painted = '';
+      host.dataset.status = '';
+      paintMine(host, snap.exists ? snap.data() : null, { bare: true });
+    } catch (_) {
+      host.dataset.painted = '';
+      paintMine(host, null, { bare: true });
+    }
+  }
+
   async function openSheet() {
     const sheet = ensureSheet();
     const body = document.getElementById('knownSheetBody');
@@ -254,7 +282,7 @@
     const note = cleanNote(box && box.value);
     const count = host && host.querySelector ? host.querySelector('.known-count') : null;
     if (note.length < NOTE_MIN) {
-      if (count) count.textContent = note.length + ' / ' + NOTE_MAX + ' · at least ' + NOTE_MIN;
+      if (count) count.textContent = note.length + ' / ' + NOTE_MAX + ' characters · at least ' + NOTE_MIN;
       return;
     }
     if (typeof currentUser === 'undefined' || !currentUser || typeof fbDb === 'undefined' || !fbDb) {
@@ -321,8 +349,8 @@
     } catch (_) {}
     document.addEventListener('naluno-currency', function () {
       const fee = feeLabel();
-      document.querySelectorAll('.known-price').forEach(function (el) {
-        el.textContent = fee ? ('One month · ' + fee) : '';
+      document.querySelectorAll('.known-fee').forEach(function (el) {
+        el.textContent = fee ? (' · ' + fee) : '';
       });
     });
   }
@@ -339,5 +367,6 @@
     paintMine: paintMine,
     refreshMine: refreshMine,
     openSheet: openSheet,
+    openInto: openInto,
   };
 });
