@@ -1780,7 +1780,7 @@
         note = 'Left at zero on purpose. Not a reading from the vendor.';
       } else if (c[0] === 'stripe') {
         status = 'not measured';
-        note = 'Fees are not guessed. Paid volume so far is ' + (paidMinor / 100).toFixed(2) + ' AED. Stays at zero until a Stripe bill arrives.';
+        note = 'Fees are not guessed. Paid volume so far is ' + moneyPair(paidMinor / 100) + '. Stays at zero until a Stripe bill arrives.';
       } else if (c[0] === 'auth') {
         status = 'not measured';
         note = 'Sign-in is not read from Firebase. Stays at zero until a bill arrives.';
@@ -1802,7 +1802,7 @@
         metered_aed: metered,
         status: status,
         qty: c[0] === 'stripe' ? (paidMinor / 100) : L.qty,
-        unit: c[0] === 'stripe' ? 'AED paid through' : (L.unit || ''),
+        unit: c[0] === 'stripe' ? 'paid through' : (L.unit || ''),
         note: note,
       };
     });

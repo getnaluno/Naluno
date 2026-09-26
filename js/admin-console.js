@@ -2110,6 +2110,150 @@
   function csvTable(rows) {
     return rows.map(function (r) { return r.map(csvCell).join(','); }).join('\r\n') + '\r\n';
   }
+  function toOp(amount, fromCode) {
+    const C = Ccy();
+    const n = Number(amount) || 0;
+    if (C && C.convert) return C.convert(n, fromCode || 'AED', opCode());
+    return n;
+  }
+  function moneyNow(aedAmount) {
+    return aedUsd(aedAmount);
+  }
+  function plainService(v) {
+    const key = String((v && v.key) || '');
+    const names = {
+      workers: 'Worker requests',
+      r2_storage: 'Stored files',
+      r2_class_a: 'File uploads',
+      r2_class_b: 'File reads',
+      r2_egress: 'File downloads',
+      turn: 'Live calls',
+      fs_reads: 'Database reads',
+      fs_writes: 'Database writes',
+      fs_deletes: 'Database deletes',
+      fs_storage: 'Database storage',
+      fcm: 'Phone alerts',
+      auth: 'Sign-in',
+      compass: 'Compass',
+      fixed: 'Domain and tools',
+      stripe: 'Card fees',
+      cloudflare: 'Cloudflare bill',
+    };
+    return names[key] || (v && v.service) || key || 'Charge';
+  }
+  function chargeWords(v) {
+    const amt = Number(v && v.amount_aed) || 0;
+    const status = v && v.status;
+    if (status === 'invoiced' && amt > 0.004) return 'To pay. A bill has arrived.';
+    if (status === 'invoiced') return 'A bill is on file.';
+    if (status === 'metered' && amt > 0.004) return 'Counted, and past what is included. Not a bill sent to us.';
+    if (status === 'metered') return 'Counted. Still included. Not a bill.';
+    if (status === 'model' && amt > 0.004) return 'Our estimate. Not a bill.';
+    if (status === 'model') return 'Estimate only. Not a bill.';
+    if (status === 'not measured') return 'Not counted yet.';
+    if (status === 'not priced') return 'Not priced.';
+    if (status === 'not typed') return 'Nothing entered here.';
+    return status || '';
+  }
+  function paidMajor(row) {
+    if (!row) return { major: 0, code: 'AED' };
+    const code = String(row.currency || 'AED');
+    const digits = (Ccy() && Ccy().digits) ? Ccy().digits(code) : 2;
+    const minor = Number(row.amount_minor != null ? row.amount_minor : row.amountMinor) || 0;
+    return { major: minor / Math.pow(10, digits), code: code };
+  }
+  function plainMoney(d) {
+    d = d || {};
+    const ads = (d.ads && d.ads.revenue) || {};
+    const seen = {};
+    let adsIn = 0;
+    let knownIn = 0;
+    let otherIn = 0;
+    (d.payments || []).forEach(function (p) {
+      if (!p || !(p.status === 'paid' || p.paymentStatus === 'paid')) return;
+      const id = String(p.id || p.stripeSession || '');
+      if (id) seen[id] = 1;
+      const bit = paidMajor(p);
+      const op = toOp(bit.major, bit.code);
+      const kind = String(p.kind || '');
+      if (kind === 'ad') adsIn += op;
+      else if (kind === 'known') knownIn += op;
+      else otherIn += op;
+    });
+    (d.knownApps || []).forEach(function (k) {
+      if (!k || !k.paidAt) return;
+      if (k.payRef && seen[k.payRef]) return;
+      const bit = paidMajor(k);
+      if (!(bit.major > 0)) return;
+      knownIn += toOp(bit.major, bit.code || 'AED');
+    });
+    const adsBooked = toOp(Number(ads.bookedAed) || 0, 'AED');
+    const cameIn = adsIn + knownIn + otherIn;
+    const written = adsBooked;
+    function showOp(n) {
+      const C = Ccy();
+      if (C && C.formatMajor) return C.formatMajor(n, opCode());
+      return opCode() + ' ' + (Number(n) || 0).toFixed(2);
+    }
+    const vendors = (d.costs && d.costs.vendors) || [];
+    const due = [];
+    const counted = [];
+    const estimated = [];
+    let dueOp = 0;
+    vendors.forEach(function (v) {
+      if (!v) return;
+      const amt = Number(v.amount_aed) || 0;
+      const who = (v.vendor === 'Invoice' || v.vendor === 'cloudflare') ? 'Cloudflare' : v.vendor;
+      const what = plainService(v);
+      if (v.status === 'invoiced' && amt > 0.004) {
+        dueOp += toOp(amt, 'AED');
+        due.push([who, what, moneyNow(amt), 'To pay']);
+      } else if (v.status === 'metered') {
+        const qty = (v.qty != null && v.qty !== '') ? (String(v.qty) + (v.unit ? ' ' + v.unit : '')) : '—';
+        counted.push([who, what, qty, amt > 0.004 ? moneyNow(amt) : 'Still included', chargeWords(v)]);
+      } else if (v.status === 'model' && amt > 0.004) {
+        estimated.push([who, what, moneyNow(amt), 'Not a bill']);
+      }
+    });
+    const fb = d.worker && d.worker.billing && d.worker.billing.usage && d.worker.billing.usage.firebase;
+    if (fb && !fb.ok) {
+      counted.push(['Firebase', 'Database', '—', 'Not counted', 'Firebase has not reported. The worker has no service account yet.']);
+    }
+    return {
+      showOp: showOp,
+      inRows: [
+        ['Ads', showOp(adsIn), showOp(adsBooked)],
+        ['Known', showOp(knownIn), showOp(0)],
+        ['Other services', showOp(otherIn), showOp(0)],
+        ['Total', showOp(cameIn), showOp(written)],
+      ],
+      due: due,
+      dueLabel: due.length ? ('To pay ' + showOp(dueOp)) : 'Nothing to pay. No bill has asked for money.',
+      counted: counted,
+      estimated: estimated,
+    };
+  }
+  function plainMoneyHtml(d) {
+    const m = plainMoney(d);
+    const dueTable = m.due.length
+      ? plainRows(['Who', 'What', opCode(), ''], m.due)
+      : '<p class="sub">' + escapeHtml(m.dueLabel) + '</p>';
+    const countedTable = m.counted.length
+      ? plainRows(['Who', 'What', 'What they counted', opCode(), ''], m.counted)
+      : '<p class="sub">No vendor count has arrived.</p>';
+    const estimateTable = m.estimated.length
+      ? plainRows(['Who', 'What', opCode(), ''], m.estimated)
+      : '';
+    return card('Money in',
+        plainRows(['Where it comes from', 'Came in', 'On the rate card, not received'], m.inRows)
+        + '<p class="sub">Came in is a payment that was recorded. The rate card is what ads are priced at. It is not cash in hand. Known is a paid month. Other services stays at zero until another paid service exists.</p>')
+      + card('Money out',
+        '<p class="sub">' + escapeHtml(m.due.length ? m.dueLabel : 'Nothing to pay.') + '</p>'
+        + dueTable
+        + '<p class="sub">Counted, and still not a bill</p>'
+        + countedTable
+        + (estimateTable ? '<p class="sub">Our estimate only. Nobody has billed this.</p>' + estimateTable : ''));
+  }
   function booksLines(d) {
     const ads = (d.ads && d.ads.revenue) || {};
     const list = (d.ads && d.ads.list) || [];
@@ -2117,12 +2261,13 @@
     const support = (d.economy && d.economy.support_list) || [];
     const costs = d.costs || {};
     const stamp = new Date().toISOString().slice(0, 10);
-    const journal = [['Date', 'Account', 'Description', 'Debit AED', 'Credit AED', 'Status', 'Source', 'Note']];
-    function add(date, account, desc, debit, credit, status, source, note) {
+    const code = opCode();
+    const journal = [['Date', 'Account', 'Description', 'Debit ' + code, 'Credit ' + code, 'Status', 'Source', 'Note']];
+    function add(date, account, desc, debit, credit, status, source, note, fromCode) {
       journal.push([
         date || stamp, account, desc,
-        debit ? Number(debit).toFixed(2) : '',
-        credit ? Number(credit).toFixed(2) : '',
+        debit ? toOp(debit, fromCode || 'AED').toFixed(2) : '',
+        credit ? toOp(credit, fromCode || 'AED').toFixed(2) : '',
         status || '', source || '', note || '',
       ]);
     }
@@ -2144,7 +2289,7 @@
     support.forEach(function (r) {
       const major = (Number(r.amount_minor) || 0) / 100;
       const day = (r.created_at || r.createdAt) ? new Date(Number(r.created_at || r.createdAt)).toISOString().slice(0, 10) : stamp;
-      add(day, 'Creator support intent', (r.currency || 'AED') + ' intent', '', major, r.status || 'intent', r.id || '', 'Not a charge. No payment has moved.');
+      add(day, 'Creator support intent', (r.currency || 'AED') + ' intent', '', major, r.status || 'intent', r.id || '', 'Not a charge. No payment has moved.', r.currency || 'AED');
     });
     ledger.forEach(function (r) {
       const day = r.created_at ? new Date(Number(r.created_at)).toISOString().slice(0, 10) : stamp;
@@ -2163,17 +2308,18 @@
         : (kind === 'support' ? 'Support received' : (kind === 'ad' ? 'Advertising receipts' : 'Receipts'));
       const when = p.paidAt || p.createdAt;
       const day = when ? new Date(Number(when)).toISOString().slice(0, 10) : stamp;
-      add(day, account, kind, '', major, 'paid', id, 'Recorded when the payment was confirmed.');
-      add(day, 'Cash', account, major, '', 'paid', id, 'Opposite entry.');
+      add(day, account, kind, '', major, 'paid', id, 'Recorded when the payment was confirmed.', p.currency || 'AED');
+      add(day, 'Cash', account, major, '', 'paid', id, 'Opposite entry.', p.currency || 'AED');
     });
     (d.knownApps || []).forEach(function (k) {
       if (!k || !k.paidAt) return;
       if (k.payRef && seenPay[k.payRef]) return;
-      const major = (Number(k.amount_minor) || 4900) / 100;
+      if (!(Number(k.amount_minor) > 0)) return;
+      const major = Number(k.amount_minor) / 100;
       const day = new Date(Number(k.paidAt)).toISOString().slice(0, 10);
       const who = k.name || k.uid || '';
-      add(day, 'Known subscriptions', who, '', major, 'paid', k.payRef || k.uid || '', 'A Known month. Cash is recorded when this row is paid.');
-      add(day, 'Cash', 'Known subscriptions', major, '', 'paid', k.payRef || k.uid || '', 'Opposite entry.');
+      add(day, 'Known subscriptions', who, '', major, 'paid', k.payRef || k.uid || '', 'A Known month. Cash is recorded when this row is paid.', k.currency || 'AED');
+      add(day, 'Cash', 'Known subscriptions', major, '', 'paid', k.payRef || k.uid || '', 'Opposite entry.', k.currency || 'AED');
     });
     const invoice = Number(costs.invoice_aed || costs.billable_aed || 0);
     const vendors = (costs && costs.vendors) || [];
@@ -2193,12 +2339,12 @@
       trial[acct].debit += Number(row[3] || 0);
       trial[acct].credit += Number(row[4] || 0);
     });
-    const trialRows = [['Account', 'Debit AED', 'Credit AED', 'Note']];
+    const trialRows = [['Account', 'Debit ' + code, 'Credit ' + code, 'Note']];
     Object.keys(trial).sort().forEach(function (k) {
       trialRows.push([k, trial[k].debit.toFixed(2), trial[k].credit.toFixed(2), 'Booked, intent, or estimate. Not a bank balance.']);
     });
-    trialRows.push(['Ad revenue booked (summary)', '', Number(ads.bookedAed || 0).toFixed(2), 'From the rate card.']);
-    trialRows.push(['Prepaid noted on ads', '', Number(ads.paidAed || 0).toFixed(2), 'Not collected.']);
+    trialRows.push(['Ad revenue booked (summary)', '', toOp(Number(ads.bookedAed || 0), 'AED').toFixed(2), 'From the rate card.']);
+    trialRows.push(['Prepaid noted on ads', '', toOp(Number(ads.paidAed || 0), 'AED').toFixed(2), 'Not collected.']);
     return { stamp: stamp, journal: journal, trial: trialRows, adsBooked: Number(ads.bookedAed || 0), supportN: support.length, ledgerN: ledger.length, vendors: vendors };
   }
   function booksPdf(lines) {
@@ -3267,6 +3413,7 @@
           + gap((g.ad_revenue || 'Booked ad revenue is rate-card maths × observed events. Cash has not moved.')
             + ' Booked minus the model is not profit. The model is not an invoice.')
           + '<div class="row"><button type="button" class="ghost ccGo" data-go="ads">Open Ads</button></div>')
+        + plainMoneyHtml(d)
         + card('What does each person cost Naluno?',
           '<p class="sub">' + escapeHtml(meterSentence(d) || (billedN
             ? (billedN + (billedN === 1 ? ' bill is on file.' : ' bills are on file.'))
@@ -3847,10 +3994,11 @@
       if (!canDeskTab('books')) { el.innerHTML = '<p class="sub">This login cannot open the books.</p>'; return; }
       const pack = booksLines(d);
       el.innerHTML =
-        card('Books for the accountant',
+        plainMoneyHtml(d)
+        + card('Books for the accountant',
           (meterSentence(d) ? '<p class="sub">' + escapeHtml(meterSentence(d)) + '</p>' : '')
           + kpis([
-            ['Ad revenue booked', aed(pack.adsBooked)],
+            ['Ad revenue booked', aedUsd(pack.adsBooked)],
             ['Support intents', pack.supportN],
             ['Ledger rows', pack.ledgerN],
             ['As of', pack.stamp],
@@ -3861,13 +4009,16 @@
           + '<button type="button" class="primary" id="booksPdf">PDF</button>'
           + '<button type="button" class="ghost" id="booksJson">JSON</button>'
           + '</div>'
-          + gap('CSV and Excel are the journal plus a trial balance. PDF is the same statements, page by page. JSON is the same rows for a system that does not want a spreadsheet. Points are labelled as points, not dirhams.'))
+          + '<p class="sub">These files are the working papers, in ' + escapeHtml(opCode()) + '. The cards above are the same money in plain words.</p>')
         + card('What can charge Naluno', plainRows(
-            ['Vendor', 'Service', 'AED', 'Status'],
-            (pack.vendors || []).map(function (v) {
-              return [v.vendor, vendorService(v), Number(v.amount_aed || 0).toFixed(2), v.status];
+            ['Who', 'What', opCode(), ''],
+            (pack.vendors || []).filter(function (v) {
+              if (!v) return false;
+              return v.status === 'invoiced' || v.status === 'metered' || ((Number(v.amount_aed) || 0) > 0.004);
+            }).map(function (v) {
+              const who = (v.vendor === 'Invoice' || v.vendor === 'cloudflare') ? 'Cloudflare' : v.vendor;
+              return [who, plainService(v), moneyNow(v.amount_aed), chargeWords(v)];
             })))
-          + gap('invoiced = a bill was received. metered = the vendor reported this number. model = a published price times assumed use. not measured = nothing on file. not priced = left at zero on purpose. not typed = waiting for a figure on this browser.')
         + card('Trial balance', plainRows(pack.trial[0], pack.trial.slice(1, 18).map(function (r) { return r; })));
       const base = 'naluno-books-' + pack.stamp;
       const csvBtn = $('booksCsv');
