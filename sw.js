@@ -70,8 +70,8 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v224';
-const APP_BUILD = '20260926k';
+const CACHE_NAME = 'naluno-shell-v225';
+const APP_BUILD = '20260926n';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -194,11 +194,15 @@ async function handleEconomyFetch(request){
     return econJson({
       ok: true,
       service: 'naluno-economy',
-      version: NALUNO_ECON_VER,
+      version: (remote && remote.version) || NALUNO_ECON_VER,
       adminAuth: 'password',
       hasServiceAccount: !!(remote && remote.hasServiceAccount),
       hasWebApiKey: true,
-      persist: 'user-token',
+      persist: (remote && remote.persist) || 'user-token',
+      saError: (remote && remote.saError) || '',
+      payments: !!(remote && remote.payments),
+      liveRooms: !!(remote && remote.liveRooms),
+      billing: (remote && remote.billing) || null,
     });
   }
 
