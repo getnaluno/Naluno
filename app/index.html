@@ -131,9 +131,9 @@
 })();
 </script>
 <link rel="apple-touch-startup-image" href="/splash-empty.png">
-<link rel="stylesheet" href="/css/app.css?v=20260926i" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/css/app.css?v=20260926j" media="print" onload="this.media='all'">
 <script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="/css/app.css?v=20260926i"></noscript>
+<noscript><link rel="stylesheet" href="/css/app.css?v=20260926j"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -527,6 +527,15 @@ window.__nalunoEntryT0 = Date.now();
         </div>
         <button class="save-btn" id="editCallsignBtn" style="background:var(--surface-2); color:var(--text); border:1px solid var(--line);">Edit callsign</button>
         <div id="knownBlock" class="known-block" hidden></div>
+        <div class="cdial" id="callsignDial">
+          <div class="cdial-rotor" id="callsignRotor"></div>
+          <div class="cdial-needle" aria-hidden="true"></div>
+          <button type="button" class="cdial-hub" id="callsignDialHub"><span id="callsignDialName">Greenroom</span><small>Open</small></button>
+        </div>
+        <div id="callsignDialPlate" class="cdial-plate" hidden>
+          <div class="cdial-plate-head"><b id="callsignDialPlateTitle">Greenroom</b><button type="button" id="callsignDialClose">Close</button></div>
+          <div id="callsignDialPlateBody"></div>
+        </div>
       </div>
 
       <!-- EDIT MODE: the editable form -->
@@ -553,8 +562,8 @@ window.__nalunoEntryT0 = Date.now();
         </div>
       </div>
 
-      <div class="greenroom-setting">
-        <div class="greenroom-setting-head"><span class="dot"></span><span class="greenroom-setting-title">Greenroom</span></div>
+      <div id="callsignDialDock" hidden>
+      <div class="greenroom-setting" data-dial="greenroom" data-dial-name="Greenroom">
         <div class="greenroom-setting-sub">Filters and live backgrounds on your call. The other person sees what you pick. Off sends your camera as it is.</div>
         <div class="toggle-row">
           <span style="font-size:13px;">Use filters on calls</span>
@@ -566,8 +575,7 @@ window.__nalunoEntryT0 = Date.now();
         </div>
       </div>
 
-      <div class="greenroom-setting">
-        <div class="greenroom-setting-head"><span class="dot"></span><span class="greenroom-setting-title">Find Naluno</span></div>
+      <div class="greenroom-setting" data-dial="find" data-dial-name="Find Naluno">
         <div class="greenroom-setting-sub" id="findNalunoStatus">Turn this on before the phone is taken. Sign in on another device to see the last place. The Android app keeps reporting while the phone is on and online, even if Naluno is closed. A phone that is off can only show its last ping.</div>
         <div class="toggle-row">
           <span style="font-size:13px;">Report this phone</span>
@@ -576,16 +584,14 @@ window.__nalunoEntryT0 = Date.now();
         <div class="greenroom-setting-sub" style="margin-top:10px;">To see the map, unlock Compass and tap the radar.</div>
       </div>
 
-      <div class="greenroom-setting">
-        <div class="greenroom-setting-head"><span class="dot"></span><span class="greenroom-setting-title">Call notifications</span></div>
+      <div class="greenroom-setting" data-dial="calls" data-dial-name="Call notification">
         <div class="greenroom-setting-sub" id="callNotifStatus">Get notified of an incoming call even when Naluno isn't open. Needs your permission once.</div>
         <button class="save-btn" id="enableCallNotifsBtn" style="margin:14px 0 0; background:var(--surface-2); color:var(--text); border:1px solid var(--line);">Enable call notifications</button>
         <a class="save-btn" id="downloadAndroidAppBtn" href="#" style="display:none; margin:10px 0 0; background:var(--mint); color:#0D0F17; border:none; text-align:center; text-decoration:none;">Download Android app</a>
         <div class="greenroom-setting-sub" id="androidAppHint" style="display:none; margin-top:8px;">Android: the full app for calls when Naluno is closed. Home Screen install is the browser app.</div>
       </div>
 
-      <div class="greenroom-setting">
-        <div class="greenroom-setting-head"><span class="dot"></span><span class="greenroom-setting-title">Ringtone</span></div>
+      <div class="greenroom-setting" data-dial="tone" data-dial-name="Ringtone">
         <div class="greenroom-setting-sub" id="ringtoneStatus">Using the built-in tone. Any music file on this phone — this device only.</div>
         <div style="display:flex; gap:10px; margin-top:14px;">
           <span class="naluno-pick-wrap" style="position:relative;flex:1;display:inline-flex;overflow:hidden;">
@@ -594,6 +600,7 @@ window.__nalunoEntryT0 = Date.now();
           </span>
           <button class="save-btn" id="resetRingtoneBtn" style="flex:1; margin:0; background:none; color:var(--text-dim); border:1px solid var(--line); display:none;">Use built-in</button>
         </div>
+      </div>
       </div>
 
       <button class="save-btn" id="myContributionBtn" style="margin:18px 20px 0; background:none; color:var(--mint); border:1px solid rgba(124,255,178,.35);">My Contribution</button>
@@ -1620,7 +1627,7 @@ window.__nalunoEntryT0 = Date.now();
       </div>
     </div>
     <div class="bspace-more-menu" id="bspaceMoreMenu" hidden>
-      <div class="bspace-sheet-card">
+      <div class="bspace-sheet-card" id="bspaceMenuHome">
         <div class="bspace-sheet-kicker">Pass it on</div>
         <div class="bspace-sheet-grid">
           <button type="button" class="bspace-mini" id="bspaceShareBtn">Share</button>
@@ -1639,6 +1646,10 @@ window.__nalunoEntryT0 = Date.now();
           <button type="button" class="bspace-mini" id="bspaceDeleteBtn" style="display:none;color:#ff8a8a;">Delete</button>
           <button type="button" class="bspace-mini" id="bspaceGoLive" style="display:none;">Go live</button>
         </div>
+      </div>
+      <div class="bspace-sheet-card" id="bspaceKnownCard" hidden>
+        <div class="bspace-room-head"><b>Known</b><button type="button" id="bspaceKnownBack">Menu</button></div>
+        <div id="bspaceKnownHost" class="known-block"></div>
       </div>
     </div>
   </div>
@@ -1761,9 +1772,9 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/discover.js?v=20260926d"></script>
 <script src="/js/signal-ui.js?v=20260925d"></script>
 <script src="/js/compat-lock.js?v=20260908d"></script>
-<script src="/js/known.js?v=20260926i"></script>
+<script src="/js/known.js?v=20260926j"></script>
 <script src="/js/lg-speak.js?v=20260926i"></script>
-<script src="/js/broadcast-space.js?v=20260926i"></script>
+<script src="/js/broadcast-space.js?v=20260926j"></script>
 <script src="/js/ads.js?v=20260925c"></script>
 <script src="/js/media-vault.js?v=20260908d"></script>
 <script src="/js/wireline.js?v=20260924f"></script>
@@ -1777,10 +1788,10 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/lifeline-wire.js?v=20260924e"></script>
 <!-- Wireline translation reuses Spark's engine and language list. -->
 <script src="/js/wireline-translate.js?v=20260922a"></script>
-<script src="/js/profile.js?v=20260925e"></script>
+<script src="/js/profile.js?v=20260926j"></script>
 <script src="/js/onboard.js?v=20260922a"></script>
 <script src="/js/handle-guard.js?v=20260921c"></script>
-<script src="/js/auth.js?v=20260925c"></script>
+<script src="/js/auth.js?v=20260926j"></script>
 <script src="/js/notifications.js?v=20260919g"></script>
 <script src="/js/ice-core.js?v=20260908d"></script>
 <script src="/js/camera.js?v=20260908d"></script>
