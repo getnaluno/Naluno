@@ -66,7 +66,7 @@ import {
   cfCalls,
 } from "./live.mjs";
 
-export const VERSION = "2.6.11-invite";
+export const VERSION = "2.6.12-usage";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -2680,11 +2680,19 @@ export async function handleRequest(request, env = {}, ctx = {}) {
     if (path === "/health") {
       const configured = hasSaConfigured(env);
       const saToken = configured ? await saAccessToken(env) : "";
-      let billing = { connected: false, invoices: [] };
+      let billing = { connected: false, invoices: [], usage: null };
       try {
+        const monToken = configured
+          ? saAccessTokenScoped(env, "https://www.googleapis.com/auth/monitoring.read")
+          : Promise.resolve("");
         billing = await Promise.race([
-          billingSnapshot(env),
-          new Promise(function (ok) { setTimeout(function () { ok({ connected: false, invoices: [] }); }, 1500); }),
+          billingSnapshot(env, {
+            projectId: projectId(env),
+            getMonitoringToken: function () { return monToken; },
+          }),
+          new Promise(function (ok) {
+            setTimeout(function () { ok({ connected: false, invoices: [], usage: null }); }, 6000);
+          }),
         ]);
       } catch (_) {}
       return json({

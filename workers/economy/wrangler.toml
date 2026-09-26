@@ -1,0 +1,16 @@
+name = "naluno-economy"
+main = "index.mjs"
+compatibility_date = "2026-01-01"
+
+# GOOGLE_SERVICE_ACCOUNT is a Wrangler secret (the Firebase service-account JSON).
+# Put it with: npx wrangler secret put GOOGLE_SERVICE_ACCOUNT
+# Never commit the JSON.
+#
+# INBOX_TO is the operator mailbox for /v1/mail (contact form + Compass
+# delete/write). Put it with: npx wrangler secret put INBOX_TO
+# Never put that address in the website, the PWA, or this file.
+
+[vars]
+FIREBASE_PROJECT_ID = "naluno-28a00"
+FIREBASE_WEB_API_KEY = "AIzaSyD0j1W7-gFJqbMd6rz4kMhQd5AiB8B2ox0"
+OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93"
