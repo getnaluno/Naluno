@@ -219,7 +219,7 @@ async function readJson(ask, url, opts) {
 function cfNote(line, fetchedAt) {
   const when = new Date(fetchedAt).toISOString().slice(0, 16).replace("T", " ") + " UTC";
   if (line.source === "analytics") {
-    return "Cloudflare analytics counted " + line.qty + " " + (line.unit || "") + " today. This is not the bill. Fetched " + when + ".";
+    return "Cloudflare counted " + line.qty + " " + (line.unit || "") + ". Not the bill. Fetched " + when + ".";
   }
   return "Cloudflare billable usage: " + line.qty + " " + (line.unit || "") + ", " + line.amount_usd + " USD. Updated daily, not live. Fetched " + when + ".";
 }
@@ -395,11 +395,11 @@ async function pullAnalytics(ask, token, account, now) {
 
 async function pullFirebase(ask, project, getToken, now) {
   if (!project || typeof getToken !== "function") {
-    return { ok: false, error: "Firebase counts need the service account.", lines: [] };
+    return { ok: false, error: "Firebase is not counted. The worker has no service account.", lines: [] };
   }
   let token = "";
   try { token = await getToken(); } catch (_) { token = ""; }
-  if (!token) return { ok: false, error: "Firebase counts need the service account.", lines: [] };
+  if (!token) return { ok: false, error: "Firebase is not counted. The worker has no service account.", lines: [] };
   const start = pacificMidnightIso(now);
   const end = new Date(now).toISOString();
   const filter = [
