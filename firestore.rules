@@ -57,7 +57,7 @@ service cloud.firestore {
        suspension or restriction the desk put on them. */
     function ownerKeepsModeration() {
       return !request.resource.data.diff(resource.data).affectedKeys()
-        .hasAny(['suspended', 'suspendedReason', 'suspendedAt', 'restricted', 'restrictedReason', 'restrictedAt', 'trustedPublisher', 'sexualReports', 'known', 'knownUntil']);
+        .hasAny(['suspended', 'suspendedReason', 'suspendedAt', 'restricted', 'restrictedReason', 'restrictedAt', 'trustedPublisher', 'sexualReports', 'known', 'knownUntil', 'grant']);
     }
     /* Creators may edit their Broadcast. They may not list, unhide, or
        clear a hold the desk put on it. */
@@ -572,6 +572,16 @@ service cloud.firestore {
             && request.resource.data.paidAt > 0
             && request.resource.data.paidUntil is int
             && request.resource.data.paidUntil > request.resource.data.paidAt
+          )
+          || (
+            request.resource.data.grant == true
+            && request.resource.data.grantMonths in [6, 12]
+            && request.resource.data.grantedAt is int
+            && request.resource.data.grantedAt > 0
+            && request.resource.data.paidUntil is int
+            && request.resource.data.paidUntil > request.resource.data.grantedAt
+            && request.resource.data.amount_minor == 0
+            && !('paidAt' in request.resource.data)
           )
         ) || (
           isOwner(uid)
