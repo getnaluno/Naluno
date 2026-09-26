@@ -39,30 +39,35 @@ function persistWireRow(contactId, msg, otherUid){
     else list.push(msg);
     list.sort(function(a,b){ return (a.ts||0) - (b.ts||0); });
   }
+  let stored = Promise.resolve();
   try{
     if(typeof NalunoChatStore !== 'undefined' && NalunoChatStore.putMessage){
       const tid = (otherUid && typeof currentUser !== 'undefined' && currentUser && typeof realThreadId === 'function')
         ? realThreadId(otherUid)
         : ('local:' + contactId);
-      NalunoChatStore.putMessage(Object.assign({}, msg, {
+      stored = Promise.resolve(NalunoChatStore.putMessage(Object.assign({}, msg, {
         threadId: tid,
         otherUid: otherUid || '',
         contactId: contactId
-      }));
-      const preview = (msg && msg.text) ? String(msg.text).slice(0, 80) : wireKindLabel(msg && msg.type);
-      NalunoChatStore.putThread({
-        threadId: tid,
-        otherUid: otherUid || '',
-        contactId: contactId,
-        text: preview,
-        lastKind: (msg && msg.type) || 'text',
-        ts: (msg && msg.ts) || Date.now(),
-        fromMe: !!(msg && msg.from === 'me'),
-        unread: !!(msg && msg.from === 'them' && !msg.read)
+      }))).then(function(){
+        const preview = (msg && msg.text) ? String(msg.text).slice(0, 80) : wireKindLabel(msg && msg.type);
+        return NalunoChatStore.putThread({
+          threadId: tid,
+          otherUid: otherUid || '',
+          contactId: contactId,
+          text: preview,
+          lastKind: (msg && msg.type) || 'text',
+          ts: (msg && msg.ts) || Date.now(),
+          fromMe: !!(msg && msg.from === 'me'),
+          unread: !!(msg && msg.from === 'them' && !msg.read)
+        });
       });
     }
-  }catch(_){}
+  }catch(err){
+    return Promise.reject(err);
+  }
   try{ saveWireline(); }catch(_){}
+  return stored;
 }
 function applyLocalReaction(otherUid, cmid, reaction){
   const match = function(row){

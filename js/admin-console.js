@@ -68,7 +68,7 @@
     ['support', 'Support'], ['money', 'Money'], ['content', 'Content Hub'], ['visitors', 'Visitors'],
     ['reach', 'Reach'], ['quality', 'Quality'], ['analytics', 'Analytics'], ['notifications', 'Notify'],
     ['search', 'Search'], ['flags', 'Flags'], ['audit', 'Audit'], ['books', 'Books'],
-    ['discovery', 'Discovery'],
+    ['discovery', 'Discovery'], ['known', 'Known'],
   ];
   let __needsSetup = false;
   let __tabCache = {};
@@ -2280,6 +2280,74 @@
     await writeAudit(patch.revoked ? 'admin-revoke' : 'admin-update', uid, (patch.roles || []).join(','));
   }
 
+  async function loadKnownDesk() {
+    const host = $('knownDesk');
+    const db = adminDb();
+    if (!host || !db) return;
+    const K = (typeof NalunoKnown !== 'undefined') ? NalunoKnown : null;
+    let rows = [];
+    try {
+      const snap = await db.collection('knownApps').limit(80).get();
+      snap.forEach(function (doc) {
+        rows.push(Object.assign({ uid: doc.id }, doc.data() || {}));
+      });
+    } catch (err) {
+      host.innerHTML = '<p class="sub">' + escapeHtml((err && err.message) || 'Could not load applications') + '</p>';
+      return;
+    }
+    rows.sort(function (a, b) { return (b.updatedAt || 0) - (a.updatedAt || 0); });
+    if (!rows.length) {
+      host.innerHTML = '<p class="sub">No applications yet.</p>';
+      return;
+    }
+    host.innerHTML = rows.map(function (row) {
+      const until = row.paidUntil ? new Date(row.paidUntil).toLocaleDateString() : '—';
+      return '<div class="card" data-known="' + escapeHtml(row.uid) + '">'
+        + '<div class="who">' + escapeHtml(row.name || row.uid) + ' · ' + escapeHtml(row.status || '') + '</div>'
+        + '<p class="sub">' + escapeHtml(row.note || '') + '</p>'
+        + '<p class="sub">Paid through ' + escapeHtml(until) + (row.payRef ? ' · ' + escapeHtml(row.payRef) : '') + '</p>'
+        + '<div class="row">'
+        + '<button type="button" class="ghost known-act" data-uid="' + escapeHtml(row.uid) + '" data-a="accept">Accept</button>'
+        + '<button type="button" class="ghost known-act" data-uid="' + escapeHtml(row.uid) + '" data-a="decline">Decline</button>'
+        + '<button type="button" class="primary known-act" data-uid="' + escapeHtml(row.uid) + '" data-a="pay">Record this month as paid</button>'
+        + '<button type="button" class="danger known-act" data-uid="' + escapeHtml(row.uid) + '" data-a="revoke">Revoke</button>'
+        + '</div></div>';
+    }).join('');
+    host.querySelectorAll('.known-act').forEach(function (btn) {
+      btn.onclick = async function () {
+        const uid = btn.getAttribute('data-uid');
+        const action = btn.getAttribute('data-a');
+        const ref = db.collection('knownApps').doc(uid);
+        try {
+          const snap = await ref.get();
+          const app = Object.assign({ uid: uid }, snap.exists ? (snap.data() || {}) : {});
+          const now = Date.now();
+          let next = null;
+          if (action === 'pay') {
+            if (!K) throw new Error('Known is not loaded');
+            next = K.recordPayment(app, now, 'desk');
+            if (!next) throw new Error('Accept it before recording a payment');
+            await ref.set(next, { merge: true });
+            await db.collection('users').doc(uid).set({ known: true, knownUntil: next.paidUntil }, { merge: true });
+            toast('This month is recorded. They are Known.');
+          } else {
+            if (!K) throw new Error('Known is not loaded');
+            next = K.review(app, action, now);
+            if (!next) throw new Error('That step does not apply');
+            await ref.set(next, { merge: true });
+            if (action === 'revoke') {
+              await db.collection('users').doc(uid).set({ known: false, knownUntil: now }, { merge: true });
+            }
+            toast(action === 'accept' ? 'Accepted. The mark waits for payment.' : 'Saved');
+          }
+          loadKnownDesk();
+        } catch (err) {
+          toast((err && err.message) || 'Could not save');
+        }
+      };
+    });
+  }
+
   function renderTab(tab, d) {
     const el = $('adminBody');
     if (!el) return;
@@ -3757,6 +3825,14 @@
           journal: pack.journal,
         }, null, 2));
       };
+      return;
+    }
+
+    if (tab === 'known') {
+      el.innerHTML = card('Known',
+        '<p class="sub">Applications arrive here. Accept or decline first. The mark goes on a name only after this month is paid. Recording the month here is for while card payments are not connected. It is a real record, not a preview.</p>'
+        + '<div id="knownDesk"><p class="sub">Loading…</p></div>');
+      loadKnownDesk();
       return;
     }
 

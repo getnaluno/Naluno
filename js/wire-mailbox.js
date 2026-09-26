@@ -32,8 +32,11 @@
   }
   function persistRow(contactId, msg, otherUid) {
     try {
-      if (typeof persistWireRow === 'function') persistWireRow(contactId, msg, otherUid);
-    } catch (_) {}
+      if (typeof persistWireRow === 'function') return Promise.resolve(persistWireRow(contactId, msg, otherUid));
+    } catch (err) {
+      return Promise.reject(err);
+    }
+    return Promise.resolve();
   }
 
   function dropBody(otherUid, tid, cmid, wire, kind) {
@@ -174,7 +177,10 @@
         doc.ref.delete().catch(function () {});
         return;
       }
-      if (contactId != null) persistRow(contactId, row, fromUid);
+      if (contactId != null) {
+        try { await persistRow(contactId, row, fromUid); }
+        catch (err) { return; }
+      }
       if (fromUid && typeof realThreadPreviews !== 'undefined') {
         realThreadPreviews[fromUid] = {
           text: row.text ? String(row.text).slice(0, 80) : kindLabel(row.type),

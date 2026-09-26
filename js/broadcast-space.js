@@ -1018,10 +1018,11 @@ function bspaceWireTalk(el, col){
       const input = card && card.querySelector('[data-reply-input]');
       const text = ((input && input.value) || '').trim();
       if(!text) return;
-      if(input) input.value = '';
       bspaceTalkOpen[col + ':' + id] = true;
       const payload = { type: 'text', text: text, parent_id: id };
-      bspacePost(col, payload);
+      bspacePost(col, payload).then(function(ok){
+        if(ok && input) input.value = '';
+      });
     }
   };
 }
@@ -1252,14 +1253,34 @@ function renderBspaceRelated(){
 
 function listenBspaceCollection(colName, renderFn, orderField){
   if(!fbDb || !activeBroadcastId) return;
-  const q = fbDb.collection('broadcasts').doc(activeBroadcastId).collection(colName).orderBy(orderField || 'ts', 'desc').limit(80);
-  const unsub = q.onSnapshot(function(snap){
-    const docs = snap.docs.slice().reverse();
-    bspaceDocCache[colName] = docs;
-    renderFn(docs);
-    scheduleBspaceLivePaint();
-  }, function(){ renderFn([]); });
-  bspaceUnsubs.push(unsub);
+  const col = fbDb.collection('broadcasts').doc(activeBroadcastId).collection(colName);
+  const hold = { unsub: null, triedPlain: false };
+  function arm(ordered){
+    const q = ordered
+      ? col.orderBy(orderField || 'ts', 'desc').limit(80)
+      : col.limit(80);
+    hold.unsub = q.onSnapshot(function(snap){
+      let docs = snap.docs.slice();
+      if(ordered) docs.reverse();
+      else docs.sort(function(a, b){
+        const ta = (a.data && a.data() && a.data().ts) || 0;
+        const tb = (b.data && b.data() && b.data().ts) || 0;
+        return ta - tb;
+      });
+      bspaceDocCache[colName] = docs;
+      try{ renderFn(docs); }catch(err){ console.warn('[bspace] paint', colName, err); }
+      scheduleBspaceLivePaint();
+    }, function(err){
+      console.warn('[bspace] listen', colName, err && err.code, err && err.message);
+      try{ if(hold.unsub) hold.unsub(); }catch(_){}
+      if(ordered && !hold.triedPlain){
+        hold.triedPlain = true;
+        arm(false);
+      }
+    });
+  }
+  arm(true);
+  bspaceUnsubs.push(function(){ try{ if(hold.unsub) hold.unsub(); }catch(_){} });
 }
 let bspaceLivePaintTimer = null;
 function scheduleBspaceLivePaint(){
@@ -1306,6 +1327,9 @@ async function openBroadcastSpace(meta){
   const desc = meta.description || seg.caption || (seg.type === 'text' ? '' : 'Watch, join the conversation, and explore questions and resources.');
 
   $('bspaceCreatorName').textContent = meta.creatorName || 'Someone';
+  if(window.NalunoKnown && typeof NalunoKnown.paintBeside === 'function'){
+    NalunoKnown.paintBeside($('bspaceCreatorName'), meta.creatorUid);
+  }
   $('bspaceCreatorMeta').textContent = meta.isMine ? 'Your Broadcast' : 'Creator Circle';
   $('bspaceTitle').textContent = title;
   $('bspaceDesc').textContent = bspaceShownAbout(desc);
@@ -1550,7 +1574,7 @@ async function bspaceRequireMember(){
 }
 
 async function bspacePost(col, payload){
-  if(!(await bspaceRequireMember())) return;
+  if(!(await bspaceRequireMember())) return false;
   const publicTalk = (col === 'conversation' || col === 'questions') && payload && payload.text && payload.type !== 'system';
   if(publicTalk && window.NalunoSafety && typeof window.NalunoSafety.scorePublicText === 'function'){
     let scored = null;
@@ -1571,50 +1595,54 @@ async function bspacePost(col, payload){
           if(caseId && typeof openSafetyAppeal === 'function') openSafetyAppeal(caseId, body.result.statement || '');
         }
       }catch(_){}
-      return;
+      return false;
     }
   }
+  const body = { from: currentUser.uid, ts: Date.now() };
+  Object.keys(payload || {}).forEach(function(k){
+    if(payload[k] !== undefined) body[k] = payload[k];
+  });
+  if((body.type === 'voice' || body.type === 'photo' || body.type === 'image') && !body.mediaUrl){
+    toast('That did not upload, so it was not posted');
+    return false;
+  }
   try{
-    await fbDb.collection('broadcasts').doc(activeBroadcastId).collection(col).add(Object.assign({
-      from: currentUser.uid,
-      ts: Date.now(),
-    }, payload));
+    const ref = await fbDb.collection('broadcasts').doc(activeBroadcastId).collection(col).add(body);
+    bspaceRememberPost(col, ref.id, body);
     const parentPatch = { updatedAt: Date.now() };
-    const talk = col === 'conversation' && payload && payload.type !== 'system';
+    const talk = col === 'conversation' && body.type !== 'system';
     if (talk) {
-      if (payload && payload.parent_id) parentPatch.replies = firebase.firestore.FieldValue.increment(1);
+      if (body.parent_id) parentPatch.replies = firebase.firestore.FieldValue.increment(1);
       else parentPatch.comments = firebase.firestore.FieldValue.increment(1);
     }
-    if (payload && payload.parent_id && !talk) {
+    if (body.parent_id && !talk) {
       parentPatch.replies = firebase.firestore.FieldValue.increment(1);
     }
     if (col === 'questions') {
       parentPatch.comments = firebase.firestore.FieldValue.increment(1);
     }
-    await fbDb.collection('broadcasts').doc(activeBroadcastId).set(parentPatch, { merge:true });
+    try{
+      await fbDb.collection('broadcasts').doc(activeBroadcastId).set(parentPatch, { merge:true });
+    }catch(err){
+      console.warn('[bspace] count', err);
+    }
     try{
       const creator = activeBroadcastMeta && activeBroadcastMeta.creatorUid;
-      const talk = col === 'conversation' && payload && payload.type !== 'system';
       if(talk && creator && currentUser && creator !== currentUser.uid && typeof bumpTogaMonth === 'function'){
         bumpTogaMonth(creator, { engageMonthDelta: 1, featuredBroadcastId: activeBroadcastId });
       }
-      // Community Economy (spec §5): report the ACTION only. The Worker
-      // decides whether it is meaningful contribution and what it is worth —
-      // nothing here computes or sends a value. Fire-and-forget by design:
-      // the post above has already succeeded and must not be affected by
-      // anything the economy service does or fails to do (spec §48).
-      if ((col === 'conversation' || col === 'questions' || col === 'results') && payload && payload.type !== 'system' && window.NalunoDiscover && typeof NalunoDiscover.note === 'function') {
-        const kind = payload.parent_id ? 'answer' : (col === 'questions' ? 'question' : 'meaningful_comment');
+      if ((col === 'conversation' || col === 'questions' || col === 'results') && body.type !== 'system' && window.NalunoDiscover && typeof NalunoDiscover.note === 'function') {
+        const kind = body.parent_id ? 'answer' : (col === 'questions' ? 'question' : 'meaningful_comment');
         NalunoDiscover.note(kind, activeBroadcastId);
       }
       if(talk && typeof nalunoTrack === 'function'){
-        const isReply = !!(payload && payload.parent_id);
+        const isReply = !!body.parent_id;
         nalunoTrack(isReply ? 'COMMENT_REPLY' : 'BROADCAST_COMMENT', {
           broadcast_id: activeBroadcastId,
           target_type: 'conversation',
           creator_uid: creator || '',
-          parent_event_id: (payload && payload.parent_id) || null,
-          text: (payload && payload.text) || '',
+          parent_event_id: body.parent_id || null,
+          text: body.text || '',
         });
       }
       if(col === 'questions' && typeof nalunoTrack === 'function'){
@@ -1622,14 +1650,31 @@ async function bspacePost(col, payload){
           broadcast_id: activeBroadcastId,
           target_type: 'question',
           creator_uid: creator || '',
-          text: (payload && payload.text) || '',
+          text: body.text || '',
         });
       }
     }catch(_){}
+    return true;
   }catch(e){
     console.warn('[bspace] post failed', e);
     toast(e.message || 'Couldn’t post');
+    return false;
   }
+}
+function bspaceRememberPost(col, id, data){
+  const row = { id: id, data: function(){ return data; } };
+  const cur = (bspaceDocCache[col] || []).filter(function(d){ return d.id !== id; });
+  cur.push(row);
+  bspaceDocCache[col] = cur;
+  const paint = {
+    conversation: renderBspaceConversation,
+    questions: renderBspaceQuestions,
+    results: renderBspaceResults,
+    resources: renderBspaceResources,
+    journey: renderBspaceJourney,
+    updates: renderBspaceUpdates,
+  }[col];
+  if(paint){ try{ paint(cur); }catch(_){} }
 }
 
 $('bspaceBack').onclick = closeBroadcastSpace;
@@ -1744,10 +1789,13 @@ if($('bspaceStrandSave')){
 }
 
 $('bspaceConvSend').onclick = async ()=>{
-  const text = ($('bspaceConvInput').value || '').trim();
-  if(!text) return;
-  $('bspaceConvInput').value = '';
-  await bspacePost('conversation', { type:'text', text });
+  const input = $('bspaceConvInput');
+  const text = ((input && input.value) || '').trim();
+  if(!text || (input && input.dataset.sending === '1')) return;
+  if(input) input.dataset.sending = '1';
+  const ok = await bspacePost('conversation', { type:'text', text });
+  if(input) input.dataset.sending = '0';
+  if(ok && input) input.value = '';
 };
 $('bspaceConvInput').addEventListener('keydown', e=>{
   if(e.key === 'Enter'){ e.preventDefault(); $('bspaceConvSend').onclick(); }
@@ -1798,8 +1846,8 @@ async function bspaceVoiceStopAndSend(){
     } else {
       throw new Error('Uploader not loaded');
     }
-    await bspacePost('conversation', { type:'voice', mediaUrl:url, text:'', duration: Math.round((Date.now()-bspaceVoiceStart)/1000) });
-    toast('Voice added');
+    const posted = await bspacePost('conversation', { type:'voice', mediaUrl:url, text:'', duration: Math.round((Date.now()-bspaceVoiceStart)/1000) });
+    if(posted) toast('Voice added');
     try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Broadcast voice ok'); }catch(_){}
   }catch(e){
     try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Broadcast voice FAIL', e && e.message); }catch(_){}
@@ -1843,10 +1891,12 @@ $('bspaceConvVoice').onclick = async ()=>{
 };
 
 $('bspaceQSend').onclick = async ()=>{
-  const text = ($('bspaceQInput').value || '').trim();
+  const input = $('bspaceQInput');
+  const text = ((input && input.value) || '').trim();
   if(!text) return;
-  $('bspaceQInput').value = '';
-  await bspacePost('questions', { type:'question', text, answers:[], bestAnswer:null });
+  const ok = await bspacePost('questions', { type:'question', text, answers:[], bestAnswer:null });
+  if(!ok) return;
+  if(input) input.value = '';
   await bspacePost('journey', { type:'question', text: 'New question: ' + text.slice(0, 80) });
 };
 
@@ -1867,10 +1917,12 @@ async function bspaceAnswerQuestion(qid){
 }
 
 $('bspaceResultSend').onclick = async ()=>{
-  const text = ($('bspaceResultInput').value || '').trim();
+  const input = $('bspaceResultInput');
+  const text = ((input && input.value) || '').trim();
   if(!text) return;
-  $('bspaceResultInput').value = '';
-  await bspacePost('results', { type:'result', text });
+  const ok = await bspacePost('results', { type:'result', text });
+  if(!ok) return;
+  if(input) input.value = '';
   await bspacePost('journey', { type:'result', text: 'Result shared: ' + text.slice(0, 80) });
 };
 
@@ -2263,8 +2315,8 @@ if($('bspaceConvPhotoInput')){
         : (typeof uploadBroadcastFile === 'function')
           ? await uploadBroadcastFile(file, null, (file.type && file.type.indexOf('image/')===0) ? file.type : 'image/jpeg')
           : await uploadVideoToR2(file);
-      await bspacePost('conversation', { type:'photo', mediaUrl: url, text: '' });
-      toast('Photo shared');
+      const posted = await bspacePost('conversation', { type:'photo', mediaUrl: url, text: '' });
+      if(posted) toast('Photo shared');
       try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Broadcast photo ok'); }catch(_){}
     }catch(e){
       try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Broadcast photo FAIL', e && e.message); }catch(_){}
