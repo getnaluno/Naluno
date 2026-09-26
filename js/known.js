@@ -84,42 +84,86 @@
     }).catch(function () {});
   }
 
-  function paintMine(block, app) {
+  const NOTE_MIN = 12;
+  const NOTE_MAX = 500;
+
+  function feeLabel() {
+    try {
+      const C = typeof window !== 'undefined' ? window.NalunoCurrency : null;
+      if (C && typeof C.formatMinor === 'function') return C.formatMinor(MONTH_MINOR, 'AED');
+    } catch (_) {}
+    return '';
+  }
+
+  function formHtml(fee) {
+    const price = fee ? ('<p class="known-copy known-price">One month · ' + fee + '</p>') : '<p class="known-copy known-price"></p>';
+    return price
+      + '<textarea class="known-note" maxlength="' + NOTE_MAX + '" rows="4" placeholder="Who you are"></textarea>'
+      + '<p class="known-count">0 / ' + NOTE_MAX + ' · at least ' + NOTE_MIN + '</p>'
+      + '<button type="button" class="save-btn" id="knownApply">Send</button>';
+  }
+
+  function wireCount(block) {
+    const note = block.querySelector('textarea');
+    const count = block.querySelector('.known-count');
+    if (!note || !count || note.dataset.counted === '1') return;
+    note.dataset.counted = '1';
+    const tick = function () {
+      const n = cleanNote(note.value).length;
+      count.textContent = n + ' / ' + NOTE_MAX + (n < NOTE_MIN ? (' · at least ' + NOTE_MIN) : '');
+    };
+    note.addEventListener('input', tick);
+    tick();
+  }
+
+  function paintMine(block, app, opts) {
     if (!block) return;
-    const fee = (MONTH_MINOR / 100).toFixed(0) + ' AED';
-    if (!app) {
-      block.hidden = false;
-      block.innerHTML = '<p class="known-copy">Ask to be Known. Naluno looks at the note. If it is accepted, one month is ' + fee + '. The mark appears only after that payment.</p>'
-        + '<textarea id="knownNote" maxlength="500" rows="3" placeholder="Who you are, in a few sentences"></textarea>'
-        + '<button type="button" class="save-btn" id="knownApply">Ask to be Known</button>';
+    const bare = !!(opts && opts.bare);
+    const fee = feeLabel();
+    const stamp = app && app.status ? app.status : 'fresh';
+    if (!bare && block.dataset.status === stamp && block.dataset.painted === '1') {
+      const price = block.querySelector('.known-price');
+      if (price) price.textContent = fee ? ('One month · ' + fee) : '';
       return;
+    }
+    const wasOpen = block.dataset.open === '1';
+    let button = 'Ask to be Known';
+    let body = formHtml(fee);
+    if (app && app.status === 'applied') {
+      button = 'Asked';
+      body = '<p class="known-copy">Your note is in.</p>';
+    } else if (app && (app.status === 'declined' || app.status === 'revoked')) {
+      button = 'Ask again';
+      body = formHtml(fee);
+    } else if (app && (app.status === 'accepted' || app.status === 'lapsed')) {
+      button = 'Pay';
+      body = '<p class="known-copy known-price">' + (fee ? ('One month · ' + fee) : '') + '</p>'
+        + '<button type="button" class="save-btn" id="knownPay">Pay</button>'
+        + '<p class="known-copy" id="knownPayMsg"></p>';
+    } else if (app && isKnown(app)) {
+      button = 'Known';
+      body = '<p class="known-copy">Until ' + new Date(app.paidUntil).toLocaleDateString() + '.</p>'
+        + '<button type="button" class="save-btn" id="knownPay">Next month</button>'
+        + '<p class="known-copy" id="knownPayMsg"></p>';
+    } else if (app) {
+      button = 'Pay';
+      body = '<p class="known-copy known-price">' + (fee ? ('One month · ' + fee) : '') + '</p>'
+        + '<button type="button" class="save-btn" id="knownPay">Pay</button>'
+        + '<p class="known-copy" id="knownPayMsg"></p>';
     }
     block.hidden = false;
-    if (app.status === 'applied') {
-      block.innerHTML = '<p class="known-copy">Naluno has your note. The mark is not on your name yet.</p>';
+    block.dataset.status = stamp;
+    block.dataset.painted = '1';
+    if (bare) {
+      block.dataset.open = '1';
+      block.innerHTML = body;
+      wireCount(block);
       return;
     }
-    if (app.status === 'declined' || app.status === 'revoked') {
-      block.innerHTML = '<p class="known-copy">This was not accepted. You can write again.</p>'
-        + '<textarea id="knownNote" maxlength="500" rows="3" placeholder="Who you are, in a few sentences"></textarea>'
-        + '<button type="button" class="save-btn" id="knownApply">Ask again</button>';
-      return;
-    }
-    if (app.status === 'accepted' || app.status === 'lapsed') {
-      block.innerHTML = '<p class="known-copy">Accepted. Pay ' + fee + ' for this month. The mark appears when the payment is confirmed. Nothing is marked before that.</p>'
-        + '<button type="button" class="save-btn" id="knownPay">Pay for this month</button>'
-        + '<p class="known-copy" id="knownPayMsg"></p>';
-      return;
-    }
-    if (isKnown(app)) {
-      block.innerHTML = '<p class="known-copy"><span class="naluno-known">Known</span> This month is paid. It ends ' + new Date(app.paidUntil).toLocaleDateString() + '.</p>'
-        + '<button type="button" class="save-btn" id="knownPay">Pay the next month</button>'
-        + '<p class="known-copy" id="knownPayMsg"></p>';
-      return;
-    }
-    block.innerHTML = '<p class="known-copy">The month has ended. Pay again for the mark to return.</p>'
-      + '<button type="button" class="save-btn" id="knownPay">Pay for this month</button>'
-      + '<p class="known-copy" id="knownPayMsg"></p>';
+    block.dataset.open = wasOpen ? '1' : '';
+    block.innerHTML = '<button type="button" class="save-btn known-open" id="knownOpen">' + button + '</button>'
+      + '<div class="known-fold"' + (wasOpen ? '' : ' hidden') + '>' + body + '</div>';
+    wireCount(block);
   }
 
   function wireMine() {
@@ -128,10 +172,17 @@
     if (block.dataset.wired !== '1') {
       block.dataset.wired = '1';
       block.addEventListener('click', function (e) {
-        const t = e.target;
+        const t = e.target && e.target.closest ? e.target.closest('button') : e.target;
         if (!t || !t.id) return;
-        if (t.id === 'knownApply') submitApply();
-        if (t.id === 'knownPay') startPay();
+        if (t.id === 'knownOpen') {
+          const open = block.dataset.open === '1';
+          block.dataset.open = open ? '' : '1';
+          const fold = block.querySelector('.known-fold');
+          if (fold) fold.hidden = open;
+          return;
+        }
+        if (t.id === 'knownApply') submitApply(block);
+        if (t.id === 'knownPay') startPay(block);
       });
     }
     refreshMine();
@@ -173,10 +224,10 @@
     if (close) close.onclick = function () { sheet.classList.remove('active'); };
     const body = document.getElementById('knownSheetBody');
     if (body) body.addEventListener('click', function (e) {
-      const t = e.target;
+      const t = e.target && e.target.closest ? e.target.closest('button') : e.target;
       if (!t || !t.id) return;
-      if (t.id === 'knownApply') submitApply();
-      if (t.id === 'knownPay') startPay();
+      if (t.id === 'knownApply') submitApply(body);
+      if (t.id === 'knownPay') startPay(body);
     });
     return sheet;
   }
@@ -187,24 +238,23 @@
     sheet.classList.add('active');
     if (!body) return;
     if (typeof currentUser === 'undefined' || !currentUser || typeof fbDb === 'undefined' || !fbDb) {
-      paintMine(body, null);
+      paintMine(body, null, { bare: true });
       return;
     }
     try {
       const snap = await fbDb.collection('knownApps').doc(currentUser.uid).get();
-      paintMine(body, snap.exists ? snap.data() : null);
+      paintMine(body, snap.exists ? snap.data() : null, { bare: true });
     } catch (_) {
-      paintMine(body, null);
+      paintMine(body, null, { bare: true });
     }
   }
 
-  async function submitApply() {
-    const sheet = document.getElementById('knownSheet');
-    const root = (sheet && sheet.classList.contains('active')) ? sheet : document;
-    const box = root.querySelector('textarea');
+  async function submitApply(host) {
+    const box = host && host.querySelector ? host.querySelector('textarea') : null;
     const note = cleanNote(box && box.value);
-    if (note.length < 12) {
-      if (typeof toast === 'function') toast('Write a little more about who you are');
+    const count = host && host.querySelector ? host.querySelector('.known-count') : null;
+    if (note.length < NOTE_MIN) {
+      if (count) count.textContent = note.length + ' / ' + NOTE_MAX + ' · at least ' + NOTE_MIN;
       return;
     }
     if (typeof currentUser === 'undefined' || !currentUser || typeof fbDb === 'undefined' || !fbDb) {
@@ -216,24 +266,33 @@
     if (!row) return;
     try {
       await fbDb.collection('knownApps').doc(currentUser.uid).set(row);
-      if (typeof toast === 'function') toast('Sent. Naluno will look at it.');
-      const callsign = document.getElementById('knownBlock');
-      if (callsign) paintMine(callsign, row);
-      const sheetBody = document.getElementById('knownSheetBody');
-      if (sheetBody) paintMine(sheetBody, row);
+      if (typeof toast === 'function') toast('Sent');
+      const bare = host && host.id === 'knownSheetBody';
+      if (host) {
+        host.dataset.painted = '';
+        paintMine(host, row, bare ? { bare: true } : null);
+      }
     } catch (err) {
       if (typeof toast === 'function') toast((err && err.message) || 'Could not send that');
     }
   }
 
-  async function startPay() {
-    const msg = document.querySelector('#knownSheet.active #knownPayMsg') || document.getElementById('knownPayMsg');
+  async function startPay(host) {
+    const msg = (host && host.querySelector && host.querySelector('#knownPayMsg')) || document.getElementById('knownPayMsg');
     if (typeof currentUser === 'undefined' || !currentUser) return;
+    let code = 'AED';
+    let minor = MONTH_MINOR;
+    try {
+      const C = window.NalunoCurrency;
+      if (C && typeof C.code === 'function' && C.code()) code = C.code();
+      if (C && typeof C.convertMinor === 'function') minor = C.convertMinor(MONTH_MINOR, 'AED', code);
+    } catch (_) {}
     try {
       const body = {
         kind: 'known',
-        amount_minor: MONTH_MINOR,
-        currency: 'AED',
+        amount_minor: minor,
+        currency: code,
+        book_minor: MONTH_MINOR,
         idempotency_key: 'known_' + currentUser.uid + '_' + new Date().toISOString().slice(0, 7),
       };
       let url = '';
@@ -260,6 +319,12 @@
     try {
       if (window.firebase && firebase.auth) firebase.auth().onAuthStateChanged(function () { wireMine(); });
     } catch (_) {}
+    document.addEventListener('naluno-currency', function () {
+      const fee = feeLabel();
+      document.querySelectorAll('.known-price').forEach(function (el) {
+        el.textContent = fee ? ('One month · ' + fee) : '';
+      });
+    });
   }
 
   return {
