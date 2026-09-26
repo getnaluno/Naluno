@@ -1481,7 +1481,11 @@
     });
     costs.billed_aed = billedAed;
     costs.billed_n = billedN;
-    if (billedN) {
+    if (billedN && costs.meter_n) {
+      costs.headline = billedN + (billedN === 1 ? ' bill is on file. ' : ' bills are on file. ')
+        + costs.meter_n + (costs.meter_n === 1 ? ' line is a vendor count.' : ' lines are vendor counts.')
+        + ' The rest are a model.';
+    } else if (billedN) {
       costs.headline = billedN + (billedN === 1 ? ' bill is on file (' : ' bills are on file (')
         + moneyPair(billedAed) + '). Every other line is still a model, not a meter.';
     } else if (costs.meter_n) {
@@ -1656,7 +1660,7 @@
         payments: 'A payment is paid only after the signed payment notice says so. Until that notice is connected, nothing is marked paid.',
         content_hub: 'Sports, movies and channels are not in the product yet.',
         cpu_memory: 'Hosting does not show processor or memory use on this console.',
-        unit_econ: 'No vendor meter is connected for these figures. They are a model from Naluno records and published prices. A zero is not a bill of zero.',
+        unit_econ: 'A line is a bill only when it is invoiced, and a vendor count only when it is metered. Anything else is a model.',
         retention: 'Came back after 1 day / 7 days counts a person who opened Naluno on that exact later day. Still-here is the wider window.',
         cac: 'We do not guess what it costs to acquire a person, or what they are worth over a lifetime.',
         ad_revenue: 'Booked ad revenue is rate-card maths × observed events. Cash has not moved. There is no outside auction.',

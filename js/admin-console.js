@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260924e';
+  const BUILD = '20260926n';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -938,9 +938,8 @@
   }
   async function pingWorker() {
     const out = { ok: false, degraded: false, ms: 0, version: '', error: '', persist: '' };
-    const bases = [];
+    const bases = [WORKER];
     try { bases.push(location.origin + '/__naluno-economy'); } catch (_) {}
-    bases.push(WORKER);
     for (let i = 0; i < bases.length; i++) {
       const base = bases[i];
       try {
@@ -1380,6 +1379,12 @@
         scheduleLive();
       }).catch(function () {});
     }, 20000);
+    pingWorker().then(function (w) {
+      if (!__livePack) return;
+      __livePack.worker = w || {};
+      if (w && w.billing && w.billing.invoices) __livePack._workerBilling = w.billing.invoices;
+      scheduleLive();
+    }).catch(function () {});
   }
 
   async function loadSnapshot(force) {
@@ -1505,17 +1510,17 @@
   function meterSentence(d) {
     const b = d && d.worker && d.worker.billing;
     const u = b && b.usage;
-    if (!u) {
-      return (b && b.connected)
-        ? 'Cloudflare billing history is connected. Usage figures have not arrived yet.'
-        : 'No vendor meter is connected. Cloudflare billing history is off, and Firebase is not read.';
-    }
-    const bits = [];
-    if (u.cloudflare && u.cloudflare.ok) bits.push('Cloudflare answered. Its cost is updated daily, not live.');
-    else bits.push((u.cloudflare && u.cloudflare.error) || 'Cloudflare billing is not connected.');
-    if (u.firebase && u.firebase.ok) bits.push('Firebase counts are from Cloud Monitoring, for today.');
-    else bits.push((u.firebase && u.firebase.error) || 'Firebase counts are not connected.');
-    return bits.join(' ');
+    if (!u) return '';
+    const parts = [];
+    const cf = u.cloudflare || {};
+    const fb = u.firebase || {};
+    if (cf.ok) parts.push('Cloudflare answered.');
+    else if (cf.error) parts.push(cf.error);
+    const bills = (b.invoices && b.invoices.length) || (d.costs && d.costs.billed_n) || 0;
+    if (bills) parts.push(bills + (bills === 1 ? ' bill is on file.' : ' bills are on file.'));
+    if (fb.ok) parts.push('Firebase answered.');
+    else if (fb.error) parts.push(fb.error);
+    return parts.join(' ');
   }
   function readCostInputs() {
     try {
@@ -2484,7 +2489,7 @@
               : ((d.costs && d.costs.first_gate && d.costs.first_gate.mau_display)
               ? ('around ' + Number(d.costs.first_gate.mau_display).toLocaleString('en-GB') + ' people active in a month')
               : 'model still inside caps')]])
-          + gap('Registered accounts, not store downloads. Cost figures on Money are a model unless a bill is on file. We do not guess what it costs to acquire a person.'))
+          + gap('Registered accounts, not store downloads. A bill or a vendor count is marked on Money and Books. Anything else is a model. We do not guess what it costs to acquire a person.'))
         + card('The public website',
           kpis([['On the site now', (d.site && d.site.live) || 0],
             ['Visits today', (d.site && d.site.today) || 0],
@@ -3263,11 +3268,11 @@
             + ' Booked minus the model is not profit. The model is not an invoice.')
           + '<div class="row"><button type="button" class="ghost ccGo" data-go="ads">Open Ads</button></div>')
         + card('What does each person cost Naluno?',
-          '<p class="sub">' + escapeHtml(billedN
-            ? (billedN + (billedN === 1 ? ' bill is on file. Every unmarked line is still a model.' : ' bills are on file. Every unmarked line is still a model.'))
+          '<p class="sub">' + escapeHtml(meterSentence(d) || (billedN
+            ? (billedN + (billedN === 1 ? ' bill is on file.' : ' bills are on file.'))
             : (costs.meter_n
-              ? (costs.meter_n + (costs.meter_n === 1 ? ' line is a vendor number. Anything else is still a model.' : ' lines are vendor numbers. Anything else is still a model.'))
-              : ((costs.headline) || 'Model only. Not a bill from Cloudflare or Firebase.'))) + '</p>'
+              ? (costs.meter_n + (costs.meter_n === 1 ? ' line is a vendor count.' : ' lines are vendor counts.'))
+              : ((costs.headline) || '')))) + '</p>'
           + kpis([['Bills on file', aedUsd(billedAed)],
             ['Vendor reported', aedUsd(costs.meter_aed || 0)],
             ['Modelled list price', aedUsd(costs.metered_aed || 0)],
@@ -3276,7 +3281,7 @@
             ['Per registered (model)', aedUsd(costs.per_registered_aed || 0)],
             ['Per person this month (model)', aedUsd(costs.per_mau_aed || 0)],
             ['Files (estimate)', (costs.storage && costs.storage.r2_gb != null) ? Number(costs.storage.r2_gb).toFixed(3) + ' GB' : '—']])
-          + gap(meterSentence(d) + ' ' + (g.unit_econ || '')))
+          + (meterSentence(d) ? gap(meterSentence(d)) : ''))
         + card('Published caps used by the model',
           (costs.gates && costs.gates.length
             ? plainRows(['Cap', 'Published allowance', 'Around people in a month', 'Model'],
@@ -3843,7 +3848,7 @@
       const pack = booksLines(d);
       el.innerHTML =
         card('Books for the accountant',
-          '<p class="sub">' + escapeHtml(meterSentence(d)) + ' A vendor line is a real bill only when the status is invoiced. metered means the vendor reported that number. Anything else is still a model. Zero is not a vendor confirming the bill is zero unless the status is metered.</p>'
+          (meterSentence(d) ? '<p class="sub">' + escapeHtml(meterSentence(d)) + '</p>' : '')
           + kpis([
             ['Ad revenue booked', aed(pack.adsBooked)],
             ['Support intents', pack.supportN],
