@@ -152,6 +152,52 @@ function formatClockTime(ts){
   return h+':'+String(m).padStart(2,'0')+' '+ampm;
 }
 
+function wireSeenMap(){
+  try{ return JSON.parse(localStorage.getItem('naluno:wireSeen:v1') || '{}') || {}; }catch(_){ return {}; }
+}
+function wireSeenAt(uid){
+  if(!uid) return 0;
+  const n = Number(wireSeenMap()[uid] || 0);
+  return isFinite(n) ? n : 0;
+}
+function wireMarkSeen(uid, ts){
+  if(!uid) return 0;
+  const m = wireSeenMap();
+  const next = Math.max(Number(m[uid] || 0) || 0, Number(ts) || Date.now());
+  m[uid] = next;
+  try{ localStorage.setItem('naluno:wireSeen:v1', JSON.stringify(m)); }catch(_){}
+  return next;
+}
+function wireSeenKey(c){
+  if(!c) return '';
+  if(c.firebaseUid) return c.firebaseUid;
+  if(c.id != null) return 'local:' + c.id;
+  return '';
+}
+function wireRowUnread(fromThem, ts, uid){
+  if(!fromThem) return false;
+  const seen = wireSeenAt(uid);
+  const when = Number(ts) || 0;
+  if(seen && when && when <= seen) return false;
+  return true;
+}
+function wireLinkify(text){
+  const esc = escapeHtml(String(text == null ? '' : text));
+  return esc.replace(/((?:https?:\/\/|www\.)[^\s<]+)/gi, function(url){
+    let show = url;
+    let extra = '';
+    const tail = show.match(/[),.;:!?]+$/);
+    if(tail){
+      extra = tail[0];
+      show = show.slice(0, -extra.length);
+    }
+    let href = show;
+    if(/^www\./i.test(href)) href = 'https://' + href;
+    if(!/^https?:\/\//i.test(href)) return url;
+    return '<a class="wire-link" href="' + href + '" target="_blank" rel="noopener noreferrer">' + show + '</a>' + extra;
+  });
+}
+
 function renderWirelineList(){
   const rows = contacts.map(c=>{
     const queuedHere = (typeof localQueuedMessages !== 'undefined' && localQueuedMessages[c.id]) || [];
@@ -197,7 +243,7 @@ function renderWirelineList(){
     const preview = lastQueued && (!last || lastQueued.queuedAt >= (last.ts || 0))
       ? queuedPreview
       : (last ? ((last.from==='me' ? 'You: ' : '') + lastText) : 'No messages yet — say hello');
-    const unread = !!(last && last.from==='them' && !last.read);
+    const unread = wireRowUnread(!!(last && last.from==='them'), last && last.ts, wireSeenKey(c));
     const lastStamp = lastQueued && (!last || lastQueued.queuedAt >= (last.ts || 0))
       ? { ts: lastQueued.queuedAt }
       : last;
@@ -486,11 +532,12 @@ function startThreadsListListener(){
         }
         const local = realThreadPreviews[otherUid];
         const kindText = (typeof wireKindLabel === 'function') ? wireKindLabel(d.lastKind || 'text') : 'Message';
+        const fromThem = d.lastMessageFrom && d.lastMessageFrom !== currentUser.uid && d.lastMessageFrom !== 'system';
         realThreadPreviews[otherUid] = {
           text: (local && local.text) || kindText,
           ts: previewTs,
           fromMe: d.lastMessageFrom === currentUser.uid,
-          unread: d.lastMessageFrom !== currentUser.uid && !(d.readBy||[]).includes(currentUser.uid),
+          unread: wireRowUnread(!!fromThem, previewTs, otherUid),
         };
       });
       try{ nalunoCacheWrite('threadPreviews', realThreadPreviews); }catch(_){}
@@ -805,10 +852,20 @@ function openThread(contactId){
       }
     });
     if(realThreadPreviews[c.firebaseUid]) realThreadPreviews[c.firebaseUid].unread = false;
+    const seenTs = (realThreadPreviews[c.firebaseUid] && realThreadPreviews[c.firebaseUid].ts) || Date.now();
+    wireMarkSeen(c.firebaseUid, seenTs);
+    try{
+      fbDb.collection('threads').doc(realThreadId(c.firebaseUid)).set({
+        readBy: firebase.firestore.FieldValue.arrayUnion(currentUser.uid),
+      }, { merge: true }).catch(function(){});
+    }catch(_){}
     try{ renderThreadMessages(); }catch(_){}
     try{ renderWirelineList(); }catch(_){}
   } else {
     (wirelineThreads[contactId] || []).forEach(m=>{ if(m.from==='them') m.read = true; });
+    const localRows = wirelineThreads[contactId] || [];
+    const localLast = localRows[localRows.length - 1];
+    wireMarkSeen('local:' + contactId, (localLast && localLast.ts) || Date.now());
     renderThreadMessages();
     saveWireline();
     renderWirelineList();
@@ -1037,7 +1094,7 @@ function renderThreadMessages(){
     else {
       // Translation, when this thread has it on, is appended UNDER the original
       // so the person's own words are never replaced by a machine's.
-      bubbleInner = escapeHtml(m.text || '')
+      bubbleInner = wireLinkify(m.text || '')
         + ((typeof wireTranslationHtml === 'function') ? wireTranslationHtml(m) : '');
     }
     const receipt = m.from==='me' ? receiptTickHtml(m.status || 'sent') : '';
@@ -1051,6 +1108,9 @@ function renderThreadMessages(){
       ${reactionBadgeHtml(m)}
     </div>`;
   }).join('');
+  document.querySelectorAll('#threadMessages a.wire-link').forEach(function(a){
+    a.onclick = function(e){ if(e) e.stopPropagation(); };
+  });
   document.querySelectorAll('[data-voice]').forEach(el=>{
     el.onclick = ()=> toggleVoicePlay(el.dataset.voice);
   });

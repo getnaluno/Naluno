@@ -186,7 +186,7 @@
           text: row.text ? String(row.text).slice(0, 80) : kindLabel(row.type),
           ts: row.ts,
           fromMe: false,
-          unread: !open,
+          unread: (typeof wireRowUnread === 'function') ? wireRowUnread(!open, row.ts, fromUid) : !open,
         };
       }
       try { if (typeof renderThreadMessages === 'function' && open) renderThreadMessages(); } catch (_) {}

@@ -421,6 +421,7 @@ function applyProfileToUI(profile){
   });
 
   $('viewName').textContent = profile.name;
+  try{ if(window.NalunoKnown && typeof NalunoKnown.stampView === 'function') NalunoKnown.stampView(); }catch(_){}
   $('viewTagline').textContent = profile.tagline;
   $('viewNumber').textContent = profile.number;
   applyAvatarVisual($('viewAvatar'), profile);
@@ -538,10 +539,12 @@ const storageAvailable = typeof window.storage !== 'undefined' && window.storage
   if(!dial || !rotor || !hub || dial.dataset.wired === '1') return;
   dial.dataset.wired = '1';
   const stations = [
-    { id:'greenroom', short:'Greenroom', angle:0 },
-    { id:'find', short:'Find', angle:90 },
-    { id:'calls', short:'Calls', angle:180 },
-    { id:'tone', short:'Tone', angle:270 },
+    { id:'greenroom', short:'Room', angle:0 },
+    { id:'find', short:'Find', angle:60 },
+    { id:'calls', short:'Calls', angle:120 },
+    { id:'tone', short:'Tone', angle:180 },
+    { id:'mine', short:'Mine', angle:240 },
+    { id:'close', short:'Close', angle:300 },
   ];
   let rot = 0;
   let drag = null;
@@ -580,7 +583,7 @@ const storageAvailable = typeof window.storage !== 'undefined' && window.storage
       s.el.style.transform = 'rotate(' + s.angle + 'deg) translateY(-108px) rotate(' + (-(s.angle + rot)) + 'deg)';
       s.el.classList.toggle('on', cur && cur.id === s.id);
     });
-    if(nameEl && cur) nameEl.textContent = cur.name;
+    if(nameEl && cur) nameEl.textContent = cur.short;
   }
   function spinTo(s){
     let delta = norm((-s.angle) - rot);

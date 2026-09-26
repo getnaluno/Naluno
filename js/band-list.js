@@ -139,12 +139,46 @@ async function publishMyPublicBands(){
     await fbDb.collection('users').doc(currentUser.uid).set({ publicBands: mine }, { merge:true });
   }catch(e){ /* visibility is best-effort */ }
 }
+function bandInviteSeen(uid){
+  try{ return JSON.parse(localStorage.getItem('naluno:bandSeen:' + uid) || '{}') || {}; }catch(_){ return {}; }
+}
+function bandInviteRemember(uid, id){
+  if(!uid || !id) return;
+  const m = bandInviteSeen(uid);
+  if(m[id]) return;
+  m[id] = Date.now();
+  try{ localStorage.setItem('naluno:bandSeen:' + uid, JSON.stringify(m)); }catch(_){}
+}
+function bandInviteForget(uid, id){
+  if(!uid || !id) return;
+  const m = bandInviteSeen(uid);
+  if(!m[id]) return;
+  delete m[id];
+  try{ localStorage.setItem('naluno:bandSeen:' + uid, JSON.stringify(m)); }catch(_){}
+}
+function bandInviteHasBook(uid){
+  try{ return localStorage.getItem('naluno:bandSeen:' + uid) != null; }catch(_){ return false; }
+}
+function bandInviteClaim(uid, id){
+  const book = bandInviteClaim.once || (bandInviteClaim.once = {});
+  const k = String(uid || '') + ':' + String(id || '');
+  if(book[k]) return false;
+  book[k] = 1;
+  return true;
+}
+function bandInviteShouldToast(info){
+  if(!info || info.first || info.mine || info.seen) return false;
+  return true;
+}
 let bandsMembershipUnsub = null;
 async function loadRealBands(uid){
   if(!fbDb) return;
   if(bandsMembershipUnsub){ bandsMembershipUnsub(); bandsMembershipUnsub = null; }
   // Live membership: invites that arrayUnion you show up without restarting the app.
+  let primed = false;
   bandsMembershipUnsub = fbDb.collection('bands').where('memberUids','array-contains',uid).onSnapshot(snap=>{
+    const first = !primed;
+    primed = true;
     snap.docChanges().forEach(change=>{
       const doc = change.doc;
       const d = doc.data();
@@ -164,12 +198,15 @@ async function loadRealBands(uid){
       if(change.type === 'removed'){
         const idx = bands.findIndex(b=>b.firestoreId===doc.id);
         if(idx>=0) bands.splice(idx,1);
+        bandInviteForget(uid, doc.id);
       } else {
         const row = addRealBandToLocalList(doc.id, d.name, d.vibe, memberInfo, d.createdBy, { lastEmptiedAt, memberUids: d.memberUids || [], messageEpoch });
-        if(change.type === 'added' && d.createdBy !== uid){
-          // Invited into a square that already existed
+        const seen = !!bandInviteSeen(uid)[doc.id];
+        const learned = bandInviteHasBook(uid);
+        if(change.type === 'added' && bandInviteShouldToast({ first: first && !learned, mine: d.createdBy === uid, seen: seen }) && bandInviteClaim(uid, doc.id)){
           toast('You were invited to · ' + (d.name || 'a Band'));
         }
+        if(d.createdBy !== uid) bandInviteRemember(uid, doc.id);
         // App open is enough — do not wait for someone to sit in the empty square.
         if(row && lastEmptiedAt && (Date.now() - lastEmptiedAt) >= BAND_SETTLE_MS && typeof pruneSettledBandMessages === 'function'){
           pruneSettledBandMessages(fbDb.collection('bands').doc(doc.id), row);

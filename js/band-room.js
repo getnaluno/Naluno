@@ -1216,27 +1216,37 @@ function startBandInviteListener(){
   if(!fbDb || !currentUser) return;
   if(bandNotifUnsub){ bandNotifUnsub(); bandNotifUnsub = null; }
   // No type filter: band_invite and broadcast_live both land here (bug 1.5).
+  let notifPrimed = false;
   bandNotifUnsub = fbDb.collection('users').doc(currentUser.uid).collection('notifications')
     .orderBy('ts','desc')
     .limit(20)
     .onSnapshot(snap=>{
+      const first = !notifPrimed;
+      notifPrimed = true;
       snap.docChanges().forEach(ch=>{
         if(ch.type !== 'added') return;
         const n = ch.doc.data();
         if(n.read) return;
-        const ts = n.ts && n.ts.toMillis ? n.ts.toMillis() : 0;
-        if(ts && Date.now() - ts > 3600000) return; // ignore older than 1h on first paint
+        const ts = n.ts && n.ts.toMillis ? n.ts.toMillis() : (Number(n.ts) || 0);
         if(n.type === 'broadcast_live'){
+          if(first){ ch.doc.ref.update({ read: true }).catch(function(){}); return; }
+          if(ts && Date.now() - ts > 3600000) return;
           if(typeof handleBroadcastLiveNotification === 'function') handleBroadcastLiveNotification(n);
           else toast((n.fromName || 'Someone') + ' is live');
           ch.doc.ref.update({ read: true }).catch(()=>{});
           return;
         }
         if(n.type !== 'band_invite') return;
-        toast((n.fromName || 'Someone') + ' invited you to · ' + (n.bandName || 'a Band'));
+        const member = !!(n.bandId && typeof bands !== 'undefined' && bands.some(function(b){ return b.firestoreId === n.bandId; }));
+        const seen = !!(n.bandId && typeof bandInviteSeen === 'function' && bandInviteSeen(currentUser.uid)[n.bandId]);
+        const decide = (typeof bandInviteShouldToast === 'function') ? bandInviteShouldToast : function(info){ return !(info && (info.first || info.mine || info.seen)); };
+        const learned = typeof bandInviteHasBook === 'function' && bandInviteHasBook(currentUser.uid);
+        const show = decide({ first: first && !learned, mine: n.fromUid === currentUser.uid, seen: seen || member })
+          && (typeof bandInviteClaim !== 'function' || bandInviteClaim(currentUser.uid, n.bandId || n.fromUid));
+        if(show) toast((n.fromName || 'Someone') + ' invited you to · ' + (n.bandName || 'a Band'));
+        if(n.bandId && typeof bandInviteRemember === 'function') bandInviteRemember(currentUser.uid, n.bandId);
         ch.doc.ref.update({ read: true }).catch(()=>{});
-        // Ensure the band appears in the local list
-        if(n.bandId && !bands.some(b=>b.firestoreId===n.bandId)){
+        if(show && n.bandId && !bands.some(b=>b.firestoreId===n.bandId)){
           addRealBandToLocalList(n.bandId, n.bandName || 'Band', 'aurora', [], n.fromUid, { memberUids: [currentUser.uid] });
           renderBandList();
         }

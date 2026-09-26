@@ -427,7 +427,13 @@ function renderBspaceMedia(seg){
   const host = $('bspaceMedia');
   const hero = $('bspaceHero');
   const writing = !!(seg && seg.type === 'writing');
-  const photo = writing && seg.thumbUrl && !/\.(mp4|webm|mov|m4v|m3u8)(\?|$)/i.test(seg.thumbUrl) ? seg.thumbUrl : '';
+  let photo = '';
+  if(writing && seg){
+    const url = seg.thumbUrl || seg.mediaUrl || seg.photoUrl || '';
+    if(url && !/\.(mp4|webm|mov|m4v|m3u8)(\?|$)/i.test(url)){
+      photo = (typeof resolveMediaUrl === 'function') ? (resolveMediaUrl(url) || url) : url;
+    }
+  }
   if(hero){
     hero.classList.toggle('is-read', writing && !photo);
     hero.classList.toggle('is-plain', writing && !photo);
@@ -735,6 +741,18 @@ function openRoomSheet(name){
   document.querySelectorAll('#bspaceTabs .bspace-tab').forEach(function(t){
     t.classList.toggle('on', t.dataset.bspan === name);
   });
+  try{
+    const cached = bspaceDocCache[name];
+    const again = {
+      conversation: renderBspaceConversation,
+      questions: renderBspaceQuestions,
+      results: renderBspaceResults,
+      resources: renderBspaceResources,
+      journey: renderBspaceJourney,
+      updates: renderBspaceUpdates,
+    }[name];
+    if(cached && again) again(cached);
+  }catch(_){}
 }
 function setBspaceTab(name){
   openRoomSheet(name);
@@ -942,6 +960,54 @@ if($('bspaceUp')) $('bspaceUp').onclick = function(){ bspaceVote('up'); };
 if($('bspaceDown')) $('bspaceDown').onclick = function(){ bspaceVote('down'); };
 if($('bspaceKeepLine')) $('bspaceKeepLine').onclick = function(){ bspaceOpenLine(); };
 
+function bspaceDeleteBtnHtml(col, docId, fromUid){
+  if(!docId) return '';
+  const mine = !!(currentUser && fromUid === currentUser.uid);
+  const amCreator = !!(activeBroadcastMeta && (activeBroadcastMeta.isMine ||
+    (currentUser && activeBroadcastMeta.creatorUid === currentUser.uid)));
+  if(!mine && !amCreator) return '';
+  return '<button type="button" class="bspace-del" data-del-col="' + bspaceEscape(col) + '" data-del-id="' + bspaceEscape(docId) + '" data-del-mine="' + (mine ? '1' : '0') + '" aria-label="Delete this">Delete</button>';
+}
+function bspaceWireDeleteButtons(root){
+  if(!root) return;
+  root.querySelectorAll('[data-del-id]').forEach(function(btn){
+    btn.onclick = function(e){
+      if(e){ e.preventDefault(); e.stopPropagation(); }
+      bspaceDeletePostedDoc(
+        btn.getAttribute('data-del-col'),
+        btn.getAttribute('data-del-id'),
+        btn.getAttribute('data-del-mine') === '1'
+      );
+    };
+  });
+}
+async function bspaceDeletePostedDoc(col, docId, mine){
+  if(!col || !docId || !fbDb || !activeBroadcastId) return;
+  const msg = mine
+    ? 'Delete this? It can\u2019t be undone.'
+    : 'Remove this from your Broadcast? It can\u2019t be undone.';
+  let ok = true;
+  try{ ok = window.confirm(msg); }catch(_){ ok = true; }
+  if(!ok) return;
+  try{
+    await fbDb.collection('broadcasts').doc(activeBroadcastId).collection(col).doc(docId).delete();
+    const cur = (bspaceDocCache[col] || []).filter(function(d){ return d.id !== docId; });
+    bspaceDocCache[col] = cur;
+    const paint = {
+      conversation: renderBspaceConversation,
+      questions: renderBspaceQuestions,
+      results: renderBspaceResults,
+      resources: renderBspaceResources,
+    }[col];
+    if(paint){ try{ paint(cur); }catch(_){} }
+    toast(mine ? 'Deleted' : 'Removed');
+    try{ if(typeof renderBspaceImpact === 'function') renderBspaceImpact(); }catch(_){}
+  }catch(e){
+    console.warn('[bspace] delete ' + col, e);
+    toast('Couldn\u2019t delete that');
+  }
+}
+
 function bspaceTalkBody(col, m){
   if(col === 'resources'){
     if(m.url){
@@ -950,7 +1016,11 @@ function bspaceTalkBody(col, m){
     return bspaceEscape(m.title || m.text || 'Resource');
   }
   if(col !== 'conversation') return bspaceEscape(m.text || '');
-  const media = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(m.mediaUrl) : (m.mediaUrl || '');
+  let media = '';
+  try{
+    const raw = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(m.mediaUrl) : (m.mediaUrl || '');
+    media = (typeof raw === 'string') ? raw : '';
+  }catch(_){ media = ''; }
   const isVoice = media && (m.type === 'voice' || m.type === 'audio');
   const isPhoto = media && (m.type === 'photo' || m.type === 'image');
   if(isVoice){
@@ -985,11 +1055,12 @@ function bspaceRenderTalk(el, docs, col, emptyText, extraHtml){
   const grouped = Threads ? Threads.group(docs) : { tops: (docs || []).map(function(d){ return { id: d.id, m: d.data ? d.data() : d }; }), replies: {} };
   if(!grouped.tops.length){
     el.innerHTML = emptyText
-      ? '<div class="bspace-card"><div class="body" style="color:var(--text-dim);">' + emptyText + '</div></div>'
+      ? '<div class="bspace-card bspace-talk-plate"><div class="body" style="color:var(--text-dim);">' + emptyText + '</div></div>'
       : '';
     return;
   }
   el.innerHTML = grouped.tops.map(function(row){
+    try{
     const m = row.m || {};
     const kids = (grouped.replies && grouped.replies[row.id]) || [];
     const embedded = (col === 'questions' && Array.isArray(m.answers)) ? m.answers : [];
@@ -1024,6 +1095,9 @@ function bspaceRenderTalk(el, docs, col, emptyText, extraHtml){
       + '<div class="bspace-composer"><input data-reply-input="' + bspaceEscape(row.id) + '" maxlength="800" placeholder="Reply…" />'
       + '<button type="button" class="bspace-mini primary" data-reply-send="' + bspaceEscape(row.id) + '">Reply</button></div>'
       + '</div></div>';
+    }catch(_){
+      return '<div class="bspace-card bspace-talk-plate"><div class="body">Message</div></div>';
+    }
   }).join('');
   bspaceWireDeleteButtons(el);
   bspaceWireTalk(el, col);
@@ -1150,7 +1224,7 @@ function renderBspaceConversation(docs){
     pin.style.display = 'none';
     pin.innerHTML = '';
   }
-  bspaceRenderTalk(el, rest, 'conversation', '');
+  bspaceRenderTalk(el, rest, 'conversation', 'Nothing yet.');
 }
 
 function renderBspaceQuestions(docs){
@@ -2051,6 +2125,14 @@ function renderBspaceImpact(){
       const t = d.data().type;
       return t !== 'system' && t !== 'live';
     }).length;
+    bspaceDocCache.conversation = conv.docs;
+    bspaceDocCache.questions = qs.docs;
+    bspaceDocCache.results = res.docs;
+    bspaceDocCache.resources = resources.docs;
+    try{ renderBspaceConversation(conv.docs); }catch(_){}
+    try{ renderBspaceQuestions(qs.docs); }catch(_){}
+    try{ renderBspaceResults(res.docs); }catch(_){}
+    try{ renderBspaceResources(resources.docs); }catch(_){}
     const cells = [
       ['Community', communityN, 'community'],
       ['Conversations', realConvCount, 'conversation'],

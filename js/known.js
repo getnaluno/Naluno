@@ -103,6 +103,16 @@
       + '<button type="button" class="save-btn" id="knownApply">Send</button>';
   }
 
+  let mineRow = null;
+  function stampView() {
+    if (typeof document === 'undefined') return;
+    const view = document.getElementById('viewName');
+    if (!view) return;
+    const badge = view.querySelector('.naluno-known');
+    if (badge) badge.remove();
+    if (isKnown(mineRow)) view.insertAdjacentHTML('beforeend', markHtml());
+  }
+
   function wireCount(block) {
     const note = block.querySelector('textarea');
     const count = block.querySelector('.known-count');
@@ -192,18 +202,26 @@
     const block = document.getElementById('knownBlock');
     if (!block) return;
     if (typeof currentUser === 'undefined' || !currentUser || typeof fbDb === 'undefined' || !fbDb) {
+      mineRow = null;
       paintMine(block, null);
+      stampView();
       return;
     }
     try {
       const snap = await fbDb.collection('knownApps').doc(currentUser.uid).get();
-      paintMine(block, snap.exists ? snap.data() : null);
-      const view = document.getElementById('viewName');
-      if (view && snap.exists && isKnown(snap.data())) {
-        if (!view.querySelector('.naluno-known')) view.insertAdjacentHTML('beforeend', markHtml());
+      mineRow = snap.exists ? snap.data() : null;
+      if (!snap.exists) {
+        try {
+          const user = await fbDb.collection('users').doc(currentUser.uid).get();
+          if (user.exists && isKnown(user.data())) mineRow = user.data();
+        } catch (_) {}
       }
+      paintMine(block, mineRow);
+      stampView();
     } catch (_) {
+      mineRow = null;
       paintMine(block, null);
+      stampView();
     }
   }
 
@@ -362,6 +380,7 @@
     review: review,
     recordPayment: recordPayment,
     isKnown: isKnown,
+    stampView: stampView,
     markHtml: markHtml,
     paintBeside: paintBeside,
     paintMine: paintMine,
