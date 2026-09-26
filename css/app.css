@@ -3368,3 +3368,25 @@ html[data-atmosphere="buzzing"] .naluno-aurora{
   }
   .discover-note{ color:var(--text-dim, rgba(255,255,255,.62)); font-size:12px; line-height:1.45; margin:12px 0 0; }
 
+
+.naluno-known{
+  display:inline-flex; align-items:center; gap:4px;
+  margin-left:6px; padding:1px 7px 1px 5px;
+  border:1px solid rgba(124,255,178,.75);
+  border-radius:999px; color:var(--mint);
+  font-family:var(--font-mono); font-size:9px; letter-spacing:.14em;
+  text-transform:uppercase; vertical-align:middle;
+}
+.naluno-known:before{
+  content:''; width:7px; height:7px; border-radius:50%;
+  border:1.5px solid var(--mint); border-top-color:transparent;
+  transform:rotate(-24deg);
+}
+.known-block{ margin:14px 20px 0; text-align:left; }
+.known-block[hidden]{ display:none !important; }
+.known-copy{ color:var(--text-dim); font-size:13px; line-height:1.45; margin:0 0 10px; }
+#knownNote{
+  width:100%; box-sizing:border-box; margin:0 0 10px;
+  border-radius:12px; border:1px solid var(--line);
+  background:#12151c; color:var(--text); padding:10px 12px; font:inherit;
+}
