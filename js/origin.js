@@ -876,20 +876,152 @@
     return '';
   }
 
+  function audioLooksLooped(hash){
+    const chroma = String(hash || '').split('#')[0];
+    if(chroma.length < 24) return false;
+    const mid = Math.floor(chroma.length / 2);
+    const a = chroma.slice(0, mid);
+    const b = chroma.slice(mid, mid + a.length);
+    if(a.length < 12) return false;
+    let same = 0;
+    for(let i = 0; i < a.length; i++) if(a[i] === b[i]) same++;
+    return (same / a.length) >= 0.9;
+  }
+  function unfinishedReport(title, why){
+    return {
+      status: 'unverified',
+      score: 0,
+      matches: [],
+      hold: false,
+      timedOut: why === 'timeout',
+      failed: why !== 'timeout',
+      title: title || '',
+      kind: '',
+      hasAudio: true,
+      channels: {},
+      rightsStatus: 'UNVERIFIED',
+      rightsNote: 'Origin did not finish. This does not confirm that the content is copyright-free.',
+    };
+  }
+  function applyRights(report, catalogHit, external){
+    report = report || {};
+    if(report.timedOut || report.failed){
+      report.status = 'unverified';
+      report.rightsStatus = 'UNVERIFIED';
+      report.rightsNote = 'Origin did not finish. This does not confirm that the content is copyright-free.';
+      report.identified = false;
+      report.permitted = false;
+      return report;
+    }
+    const hasAudio = report.kind === 'audio' || report.kind === 'video' || !!report.audioHash;
+    report.hasAudio = report.kind === 'audio' || report.kind === 'video';
+    report.audioLoop = audioLooksLooped(report.audioHash);
+    let status = hasAudio ? 'UNVERIFIED' : 'NONE';
+    let note = hasAudio
+      ? 'No matching work was identified by Origin. This does not confirm that the content is copyright-free.'
+      : '';
+    let identified = false;
+    let permitted = false;
+    if(catalogHit && catalogHit.row){
+      identified = true;
+      report.identifiedTitle = catalogHit.row.recordingTitle || catalogHit.row.workTitle || '';
+      if(catalogHit.permitted){
+        status = 'CLEARED';
+        permitted = true;
+        note = 'Rights verified for Naluno use.';
+      } else if(catalogHit.restricted){
+        status = 'RESTRICTED';
+        note = 'This recording is restricted on Naluno.';
+      } else if(hasAudio){
+        status = 'REVIEW';
+        note = 'Origin identified this work. Identification is not permission to use it.';
+      }
+    }
+    if(external && external.identified && !permitted){
+      identified = true;
+      report.identifiedTitle = external.title || report.identifiedTitle || '';
+      if(external.restricted){
+        status = 'RESTRICTED';
+        note = 'A rights source marked this recording as restricted.';
+      } else if(external.permitted){
+        status = 'CLEARED';
+        permitted = true;
+        note = 'Rights verified for Naluno use.';
+      } else if(hasAudio){
+        status = 'REVIEW';
+        note = 'Origin identified possible third-party material. That is not permission, and it is not proof of infringement.';
+      }
+    }
+    const sound = report.channels && Number(report.channels.sound) || 0;
+    const risky = report.status === 'match' || report.status === 'review' || report.hold || sound >= 70;
+    if(risky && status !== 'CLEARED' && status !== 'RESTRICTED' && status !== 'NONE'){
+      status = 'REVIEW';
+      note = sound >= 70
+        ? 'Possible third-party audio. A sound score is a signal, not proof. Review the rights before publishing.'
+        : 'Origin identified possible third-party material. Review the rights before publishing.';
+    }
+    if(!hasAudio && status === 'UNVERIFIED') status = 'NONE';
+    report.rightsStatus = status;
+    report.rightsNote = note;
+    report.identified = identified;
+    report.permitted = permitted;
+    return report;
+  }
+  async function loadRightsCatalog(){
+    if(typeof fbDb === 'undefined' || !fbDb) return [];
+    try{
+      const snap = await fbDb.collection('rightsCatalog').limit(80).get();
+      const rows = [];
+      snap.forEach(function(d){ rows.push(Object.assign({ id: d.id }, d.data() || {})); });
+      return rows;
+    }catch(_){ return []; }
+  }
+  function scoreRightsCatalog(mark, rows){
+    let best = null;
+    (rows || []).forEach(function(row){
+      if(!row) return;
+      const titleS = Math.max(
+        trigramScore(mark.title, row.workTitle || ''),
+        trigramScore(mark.title, row.recordingTitle || '')
+      );
+      let sound = 0;
+      if(mark.audioHash && row.fingerprint && typeof audioLikeness === 'function'){
+        sound = audioLikeness(mark.audioHash, row.fingerprint);
+      }
+      const score = Math.max(Math.round(titleS * 100), sound);
+      if(score < 72) return;
+      const hit = {
+        score: score,
+        row: row,
+        permitted: row.status === 'cleared' && score >= 80,
+        restricted: row.status === 'restricted' && score >= 72,
+      };
+      if(!best || hit.score > best.score) best = hit;
+    });
+    return best;
+  }
+  async function askExternalRights(mark){
+    const fn = window.NalunoRightsProvider;
+    if(typeof fn !== 'function') return null;
+    try{
+      const out = await fn({
+        title: mark.title || '',
+        audioHash: mark.audioHash || '',
+        duration: mark.duration || 0,
+        identity: mark.identity || '',
+      });
+      return out || null;
+    }catch(_){ return null; }
+  }
   async function runOriginScan(file, title, description, durationHint){
     const work = runOriginScanInner(file, title, description, durationHint);
     const fallback = new Promise(function(resolve){
-      setTimeout(function(){
-        resolve({
-          status: 'clear', score: 0, matches: [], hold: false,
-          timedOut: true, title: title || '', kind: '',
-        });
-      }, 8000);
+      setTimeout(function(){ resolve(unfinishedReport(title, 'timeout')); }, 8000);
     });
     try{
       return await Promise.race([work, fallback]);
     }catch(_){
-      return { status: 'clear', score: 0, matches: [], hold: false, title: title || '' };
+      return unfinishedReport(title, 'failed');
     }
   }
   async function runOriginScanInner(file, title, description, durationHint){
@@ -911,6 +1043,10 @@
     };
     mark.dna = makeDna(mark);
     const catalogHits = scoreCatalog(mark, catalog);
+    const rightsRows = await loadRightsCatalog();
+    const rightsHit = scoreRightsCatalog(mark, rightsRows);
+    let external = null;
+    try{ external = await askExternalRights(mark); }catch(_){ external = null; }
     const strongMedia = catalogHits[0] && catalogHits[0].score >= 80 && catalogHits[0].source === 'naluno';
     let web = [];
     let known = [];
@@ -936,6 +1072,7 @@
     if(report.matchCreatorUid){
       try{ report.matchCreatorName = await resolveMatchCreatorName(report.matchCreatorUid); }catch(_){ report.matchCreatorName = ''; }
     }
+    applyRights(report, rightsHit, external);
     try{
       report.screen = (frames.stills && frames.stills.length)
         ? scoreStills(frames.stills, title || '')
@@ -959,6 +1096,7 @@
         dna: report.dna || '',
         kind: report.kind || '',
         status: report.status,
+        rightsStatus: report.rightsStatus || '',
         score: report.score || 0,
         createdAt: Date.now(),
       });
@@ -973,7 +1111,85 @@
     });
     return !!hit;
   }
+  const RIGHTS_DECL_VERSION = '2026-09-27';
+  async function saveRightsDeclaration(broadcastId, report, declared){
+    if(!fbDb || !currentUser || !broadcastId || !declared) return;
+    const r = report || {};
+    try{
+      await fbDb.collection('rightsDeclarations').add({
+        uid: currentUser.uid,
+        broadcastId: String(broadcastId),
+        at: Date.now(),
+        version: RIGHTS_DECL_VERSION,
+        audioHash: r.audioHash || '',
+        identity: r.identity || '',
+        rightsStatus: r.rightsStatus || 'UNVERIFIED',
+        originStatus: r.status || '',
+        score: r.score || 0,
+        note: 'Uploader confirmed they have rights. Naluno has not verified that claim.',
+      });
+    }catch(e){ console.warn('[origin] declaration', e); }
+  }
+  function openRightsReport(detail){
+    const d = detail || {};
+    if(typeof currentUser === 'undefined' || !currentUser){
+      if(typeof toast === 'function') toast('Sign in first');
+      return;
+    }
+    let sheet = document.getElementById('rightsReportSheet');
+    if(!sheet){
+      sheet = document.createElement('div');
+      sheet.id = 'rightsReportSheet';
+      sheet.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,.72);display:flex;align-items:flex-end;justify-content:center;';
+      sheet.innerHTML = '<form id="rightsReportForm" style="width:min(520px,100%);background:#121816;color:#e8efe9;padding:18px 16px 22px;border-radius:16px 16px 0 0;font:15px/1.4 sans-serif;">'
+        + '<div style="font-size:16px;margin-bottom:8px;">Rights claim</div>'
+        + '<input name="name" required maxlength="80" placeholder="Your name" style="width:100%;margin:4px 0;padding:8px;" />'
+        + '<input name="org" maxlength="80" placeholder="Organisation, if any" style="width:100%;margin:4px 0;padding:8px;" />'
+        + '<input name="contact" required maxlength="120" placeholder="Email or phone" style="width:100%;margin:4px 0;padding:8px;" />'
+        + '<input name="work" required maxlength="140" placeholder="Work or recording" style="width:100%;margin:4px 0;padding:8px;" />'
+        + '<textarea name="claim" required maxlength="800" placeholder="What right you hold, and what is wrong" style="width:100%;margin:4px 0;padding:8px;min-height:72px;"></textarea>'
+        + '<input name="evidence" maxlength="240" placeholder="Link to proof, if you have one" style="width:100%;margin:4px 0;padding:8px;" />'
+        + '<label style="display:flex;gap:8px;margin:8px 0;"><input type="checkbox" name="authority" /> I am the rights holder or I am authorised to speak for them.</label>'
+        + '<div style="display:flex;gap:8px;margin-top:8px;"><button type="submit">Send</button><button type="button" id="rightsReportClose">Close</button></div>'
+        + '<p id="rightsReportMsg" style="min-height:1.2em;color:#9fb8a8;"></p>'
+        + '</form>';
+      document.body.appendChild(sheet);
+      sheet.querySelector('#rightsReportClose').onclick = function(){ sheet.remove(); };
+      sheet.querySelector('#rightsReportForm').onsubmit = async function(ev){
+        ev.preventDefault();
+        const f = ev.target;
+        const msg = document.getElementById('rightsReportMsg');
+        if(!f.authority.checked){ if(msg) msg.textContent = 'Confirm you are allowed to make this claim.'; return; }
+        if(msg) msg.textContent = 'Sending…';
+        try{
+          const ref = await fbDb.collection('rightsCases').add({
+            uid: currentUser.uid,
+            name: String(f.name.value || '').trim().slice(0, 80),
+            org: String(f.org.value || '').trim().slice(0, 80),
+            contact: String(f.contact.value || '').trim().slice(0, 120),
+            work: String(f.work.value || '').trim().slice(0, 140),
+            broadcastId: String(sheet.dataset.broadcastId || ''),
+            claim: String(f.claim.value || '').trim().slice(0, 800),
+            evidence: String(f.evidence.value || '').trim().slice(0, 240),
+            authority: true,
+            status: 'open',
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          });
+          if(msg) msg.textContent = 'Case ' + ref.id;
+          if(typeof toast === 'function') toast('Rights claim received. Case ' + ref.id);
+          setTimeout(function(){ try{ sheet.remove(); }catch(_){} }, 900);
+        }catch(err){
+          if(msg) msg.textContent = (err && err.message) || 'Could not send that.';
+        }
+      };
+    }
+    sheet.dataset.broadcastId = d.broadcastId || d.broadcast_id || '';
+    sheet.style.display = 'flex';
+  }
   window.runOriginScan = runOriginScan;
+  window.saveRightsDeclaration = saveRightsDeclaration;
+  window.openRightsReport = openRightsReport;
   window.originNeedsAck = originNeedsAck;
   window.saveOriginMark = saveOriginMark;
   window.resolveMatchCreatorName = resolveMatchCreatorName;

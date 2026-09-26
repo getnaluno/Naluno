@@ -68,7 +68,7 @@
     ['support', 'Support'], ['money', 'Money'], ['content', 'Content Hub'], ['visitors', 'Visitors'],
     ['reach', 'Reach'], ['quality', 'Quality'], ['analytics', 'Analytics'], ['notifications', 'Notify'],
     ['search', 'Search'], ['flags', 'Flags'], ['audit', 'Audit'], ['books', 'Books'],
-    ['discovery', 'Discovery'], ['known', 'Known'],
+    ['discovery', 'Discovery'], ['known', 'Known'], ['rights', 'Rights'],
   ];
   let __needsSetup = false;
   let __tabCache = {};
@@ -2630,6 +2630,119 @@
     });
   }
 
+  async function loadRightsDesk() {
+    const host = $('rightsDesk');
+    const db = adminDb();
+    if (!host || !db) return;
+    let marks = [];
+    let catalog = [];
+    let cases = [];
+    try {
+      const [m, c, k] = await Promise.all([
+        db.collection('originMarks').limit(80).get(),
+        db.collection('rightsCatalog').limit(40).get(),
+        db.collection('rightsCases').limit(40).get(),
+      ]);
+      m.forEach(function (d) { marks.push(Object.assign({ id: d.id }, d.data() || {})); });
+      c.forEach(function (d) { catalog.push(Object.assign({ id: d.id }, d.data() || {})); });
+      k.forEach(function (d) { cases.push(Object.assign({ id: d.id }, d.data() || {})); });
+    } catch (err) {
+      host.innerHTML = '<p class="sub">' + escapeHtml((err && err.message) || 'Could not read rights') + '</p>';
+      return;
+    }
+    marks.sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
+    cases.sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
+    const review = marks.filter(function (row) {
+      return row.rightsStatus === 'REVIEW' || row.status === 'review' || row.status === 'match';
+    }).slice(0, 12);
+    const unver = marks.filter(function (row) { return row.rightsStatus === 'UNVERIFIED' || row.status === 'unverified'; }).slice(0, 12);
+    function lines(rows, empty) {
+      if (!rows.length) return '<p class="sub">' + empty + '</p>';
+      return rows.map(function (row) {
+        return '<p class="sub">' + escapeHtml(row.title || row.work || row.workTitle || row.id)
+          + ' · ' + escapeHtml(row.rightsStatus || row.status || '') + '</p>';
+      }).join('');
+    }
+    host.innerHTML =
+      card('Review', lines(review, 'Nothing waiting.'))
+      + card('Unverified audio', lines(unver, 'None on file.'))
+      + card('Complaints', cases.length ? cases.map(function (row) {
+        return '<div class="card" data-case="' + escapeHtml(row.id) + '">'
+          + '<div class="who">' + escapeHtml(row.work || 'Claim') + ' · ' + escapeHtml(row.status || 'open') + '</div>'
+          + '<p class="sub">' + escapeHtml(row.name || '') + (row.org ? ' · ' + escapeHtml(row.org) : '') + '</p>'
+          + '<p class="sub">' + escapeHtml(row.claim || '') + '</p>'
+          + '<p class="sub">Case ' + escapeHtml(row.id) + (row.broadcastId ? ' · ' + escapeHtml(row.broadcastId) : '') + '</p>'
+          + '<div class="row">'
+          + '<button type="button" class="ghost rights-act" data-id="' + escapeHtml(row.id) + '" data-bid="' + escapeHtml(row.broadcastId || '') + '" data-a="restrict">Restrict</button>'
+          + '<button type="button" class="ghost rights-act" data-id="' + escapeHtml(row.id) + '" data-bid="' + escapeHtml(row.broadcastId || '') + '" data-a="restore">Restore</button>'
+          + '<button type="button" class="ghost rights-act" data-id="' + escapeHtml(row.id) + '" data-bid="' + escapeHtml(row.broadcastId || '') + '" data-a="reject">Reject</button>'
+          + '</div></div>';
+      }).join('') : '<p class="sub">No claims.</p>')
+      + card('Cleared catalogue',
+        (catalog.length ? lines(catalog, '') : '<p class="sub">Nothing licensed yet.</p>')
+        + '<label>Work title</label><input id="rightsWork" maxlength="140" />'
+        + '<label>Recording</label><input id="rightsRecording" maxlength="140" />'
+        + '<label>Artist</label><input id="rightsArtist" maxlength="80" />'
+        + '<label>Status</label><select id="rightsStatus"><option value="cleared">Cleared for Naluno</option><option value="restricted">Restricted</option><option value="reference">Identified only</option></select>'
+        + '<div class="row"><button type="button" class="primary" id="rightsAdd">Add to catalogue</button></div>'
+        + '<p class="sub">Identified only means the work exists. It is not permission.</p>');
+    const add = $('rightsAdd');
+    if (add) add.onclick = async function () {
+      const work = ($('rightsWork') && $('rightsWork').value || '').trim();
+      if (!work) { toast('Add a work title'); return; }
+      try {
+        await db.collection('rightsCatalog').add({
+          workTitle: work,
+          recordingTitle: ($('rightsRecording') && $('rightsRecording').value || '').trim(),
+          artist: ($('rightsArtist') && $('rightsArtist').value || '').trim(),
+          status: ($('rightsStatus') && $('rightsStatus').value) || 'reference',
+          permittedUse: ($('rightsStatus') && $('rightsStatus').value) === 'cleared' ? 'naluno' : '',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          verifiedBy: (currentUser && currentUser.uid) || '',
+        });
+        toast('Saved to the catalogue');
+        loadRightsDesk();
+      } catch (err) {
+        toast((err && err.message) || 'Could not save');
+      }
+    };
+    host.querySelectorAll('.rights-act').forEach(function (btn) {
+      btn.onclick = async function () {
+        const id = btn.getAttribute('data-id');
+        const bid = btn.getAttribute('data-bid') || '';
+        const action = btn.getAttribute('data-a');
+        const status = action === 'restrict' ? 'restricted' : (action === 'restore' ? 'restored' : 'rejected');
+        try {
+          await db.collection('rightsCases').doc(id).set({
+            status: status,
+            restricted: action === 'restrict',
+            updatedAt: Date.now(),
+            deskNote: action,
+          }, { merge: true });
+          if (bid && action === 'restrict') {
+            await db.collection('broadcasts').doc(bid).set({ held: true, heldReason: 'rights', updatedAt: Date.now() }, { merge: true });
+            const bsnap = await db.collection('broadcasts').doc(bid).get();
+            const creator = bsnap.exists ? ((bsnap.data() || {}).creatorUid || '') : '';
+            if (creator) {
+              const us = await db.collection('users').doc(creator).get();
+              const n = Number((us.exists && us.data() && us.data().rightsStrikes) || 0) + 1;
+              await db.collection('users').doc(creator).set({ rightsStrikes: n }, { merge: true });
+            }
+          }
+          if (bid && action === 'restore') {
+            await db.collection('broadcasts').doc(bid).set({ held: false, heldReason: '', updatedAt: Date.now() }, { merge: true });
+          }
+          try { await writeAudit('rights-' + action, id, status); } catch (_) {}
+          toast('Saved');
+          loadRightsDesk();
+        } catch (err) {
+          toast((err && err.message) || 'Could not save');
+        }
+      };
+    });
+  }
+
   function renderTab(tab, d) {
     const el = $('adminBody');
     if (!el) return;
@@ -4131,6 +4244,14 @@
           journal: pack.journal,
         }, null, 2));
       };
+      return;
+    }
+
+    if (tab === 'rights') {
+      el.innerHTML = card('Rights',
+        '<p class="sub">A match is a signal, not proof. Unverified does not mean copyright-free. Cleared means Naluno has a record of permission.</p>'
+        + '<div id="rightsDesk"><p class="sub">Loading…</p></div>');
+      loadRightsDesk();
       return;
     }
 

@@ -410,11 +410,12 @@ async function bcompKickOriginScan(){
       : Promise.resolve(null);
     try{
       window._bcompOriginAck = false;
+      window._bcompRightsAck = false;
       window._bcompOrigin = await runOriginScan(bcompFile, titleNow, desc, bcompDuration || 0);
       bcompPaintOrigin(window._bcompOrigin);
     }catch(e){
-      if(box) box.innerHTML = '<div style="font-size:12.5px;color:var(--text-dim);">OriginID could not finish. You can still publish.</div>';
-      window._bcompOrigin = { status: 'clear', score: 0, matches: [], hold: false, skipped: true };
+      if(box) box.innerHTML = '<div style="font-size:12.5px;color:var(--text-dim);">Origin did not finish. This does not confirm that the content is copyright-free.</div>';
+      window._bcompOrigin = { status: 'unverified', rightsStatus: 'UNVERIFIED', score: 0, matches: [], hold: false, failed: true, hasAudio: true, rightsNote: 'Origin did not finish. This does not confirm that the content is copyright-free.' };
     }
     try{
       /* The detector's verdict comes first. OriginID runs its own screen, but
@@ -527,7 +528,20 @@ async function bcompPublish(){
 
   // OriginID is advisory only — never stall Publish waiting for it.
   if(!window._bcompOrigin){
-    window._bcompOrigin = { status: 'clear', score: 0, matches: [], hold: false, skipped: true };
+    window._bcompOrigin = { status: 'unverified', rightsStatus: 'UNVERIFIED', score: 0, matches: [], hold: false, skipped: true, hasAudio: bcompKind === 'video', rightsNote: 'Origin did not finish. This does not confirm that the content is copyright-free.' };
+  }
+  if(window._bcompOrigin.rightsStatus === 'RESTRICTED'){
+    bcompPublishing = false;
+    bcompPaintOrigin(window._bcompOrigin);
+    toast('This recording is restricted on Naluno.');
+    return;
+  }
+  const needsRights = bcompKind === 'video' || (window._bcompOrigin && window._bcompOrigin.hasAudio);
+  if(needsRights && !window._bcompRightsAck){
+    bcompPublishing = false;
+    bcompPaintOrigin(window._bcompOrigin);
+    toast('Confirm you have the rights to the sound in this upload.');
+    return;
   }
   const needsAck = (typeof originNeedsAck === 'function')
     ? originNeedsAck(window._bcompOrigin)
@@ -710,6 +724,11 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
       else if(typeof toast === 'function') toast('Broadcast published');
       try{ if(typeof trackMetric === 'function') trackMetric('upload_publish_ok', { kind: 'broadcast' }); }catch(_){}
       if(typeof openBroadcastById === 'function') openBroadcastById(b.id);
+      try{
+        if(b && b.id && window._bcompRightsAck && typeof saveRightsDeclaration === 'function'){
+          await saveRightsDeclaration(b.id, snapOrigin, true);
+        }
+      }catch(_){}
     },
   };
   if(typeof enqueuePublishJob === 'function') enqueuePublishJob(job);
@@ -957,22 +976,19 @@ function bcompPaintOrigin(report){
   if(!box || !report) return;
   box.style.display = 'block';
   const needsAck = (typeof originNeedsAck === 'function') ? originNeedsAck(report) : !!(report.hold || report.status === 'match');
-  const label = report.status === 'match' ? 'OriginID match' : (report.status === 'review' ? 'OriginID review' : 'OriginID clear');
-  // FIX ("mention the original creator, advise checking before publishing"):
-  // this used to only ever say a generic "another creator already published a
-  // close match" — never who, never what, and never gave any way to actually
-  // go look at it. When the hold is against real Naluno content (not just an
-  // open-web catalog hit), name the creator and the work by name, and give a
-  // real, clickable way to check it before deciding whether to proceed.
+  const rights = report.rightsStatus || '';
+  const label = rights === 'CLEARED' ? 'Rights verified'
+    : (rights === 'RESTRICTED' ? 'Restricted'
+    : (rights === 'REVIEW' || report.status === 'match' || report.status === 'review' ? 'Origin review'
+    : (report.status === 'unverified' ? 'Origin unfinished' : 'Origin')));
   const isNalunoHold = needsAck && report.matchBroadcastId && report.matchTitle;
   const who = report.matchCreatorName ? (' by ' + escapeHtml(report.matchCreatorName)) : '';
-  const action = isNalunoHold
-    ? 'This looks very close to “' + escapeHtml(report.matchTitle) + '”' + who + '. Please check it out before publishing — if this is your own work, a licensed use, or a clearly marked cover, tick the box below and Naluno will still publish it, with the OriginID mark attached.'
-    : needsAck
-      ? 'Held. Another creator already published a close picture, clip, or sound. Tick the box only if this is yours, licensed, or a clearly marked cover. OriginID will stay on the Broadcast.'
+  const action = report.rightsNote
+    || (isNalunoHold
+      ? 'This looks very close to “' + escapeHtml(report.matchTitle) + '”' + who + '. That is a signal, not proof. Check it before publishing.'
       : (report.status === 'clear'
-        ? 'No close match in Naluno or the open web. OriginID still stores a fingerprint so later copies can be held.'
-        : 'Close, but not enough to hold. OriginID will keep watching.');
+        ? 'No matching work was identified by Origin. This does not confirm that the content is copyright-free.'
+        : 'Origin identified possible third-party material. Review the rights before publishing.'));
   const viewOriginalBtn = isNalunoHold
     ? '<button type="button" id="bcompViewOriginalBtn" style="margin-top:8px;padding:8px 14px;border-radius:999px;border:1px solid rgba(124,255,178,.4);background:transparent;color:var(--mint);font-family:var(--font-mono);font-size:11.5px;cursor:pointer;">View the original first</button>'
     : '';
@@ -990,13 +1006,21 @@ function bcompPaintOrigin(report){
     return '<div style="font-family:var(--font-mono);font-size:11px;color:var(--mint);margin-top:4px;">' +
       escapeHtml(m.source) + (m.channel ? ' · ' + escapeHtml(m.channel) : '') + ' · ' + escapeHtml(m.title) + (m.detail ? ' — ' + escapeHtml(m.detail) : '') + '</div>';
   }).join('');
-  const ack = needsAck
+  const ack = (needsAck
     ? '<label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-size:13px;line-height:1.4;"><input type="checkbox" id="bcompOriginAck" /> This is my work, a licensed use, or a clearly marked cover.</label>'
-    : '';
+    : '')
+    + ((report.hasAudio || report.kind === 'video' || report.kind === 'audio')
+      ? '<label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-size:13px;line-height:1.4;"><input type="checkbox" id="bcompRightsAck" /> I have the rights or permission for the music and other material in this upload. This does not mean Naluno has checked that claim.</label>'
+      : '');
   box.innerHTML = '<div style="font-family:var(--font-futuristic);font-size:13px;margin-bottom:4px;">' + label +
     ' · ' + (report.score || 0) + '</div><div style="font-size:12.5px;color:var(--text-dim);line-height:1.45;">' + action + '</div>' + viewOriginalBtn + meters + hits + ack;
   const cb = $('bcompOriginAck');
   if(cb) cb.onchange = function(){ window._bcompOriginAck = !!cb.checked; };
+  const rightsCb = $('bcompRightsAck');
+  if(rightsCb){
+    rightsCb.checked = !!window._bcompRightsAck;
+    rightsCb.onchange = function(){ window._bcompRightsAck = !!rightsCb.checked; };
+  }
   const viewBtn = $('bcompViewOriginalBtn');
   if(viewBtn) viewBtn.onclick = function(e){
     if(e){ e.preventDefault(); e.stopPropagation(); }

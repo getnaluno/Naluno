@@ -77,6 +77,19 @@ function openReportSheet(detail){
 
   const who = document.getElementById('reportWho');
   if(who) who.textContent = d.name ? ('Reporting ' + d.name) : 'Report this';
+  if(d.target_type === 'broadcast' && who && who.parentElement && !document.getElementById('reportRightsBtn')){
+    const rightsBtn = document.createElement('button');
+    rightsBtn.id = 'reportRightsBtn';
+    rightsBtn.type = 'button';
+    rightsBtn.textContent = 'This is a copyright or rights claim';
+    rightsBtn.style.cssText = 'margin-top:8px;';
+    rightsBtn.onclick = function(){
+      const bid = sheet.dataset.broadcastId || '';
+      closeReportSheet();
+      if(typeof openRightsReport === 'function') openRightsReport({ broadcastId: bid });
+    };
+    who.parentElement.appendChild(rightsBtn);
+  }
   const sel = document.getElementById('reportReasonCode');
   if(sel){
     sel.innerHTML = '';
