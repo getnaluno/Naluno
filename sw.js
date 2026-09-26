@@ -70,8 +70,8 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v217';
-const APP_BUILD = '20260926d';
+const CACHE_NAME = 'naluno-shell-v216';
+const APP_BUILD = '20260926c';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -421,6 +421,23 @@ self.addEventListener('fetch', event=>{
     const cached = await caches.match(event.request)
       || await caches.match(new Request(bare))
       || (isAppNav ? await caches.match(appShellReq) : null);
+
+    /* SPEED: serve the app from cache FIRST, then refresh it in the
+       background (stale-while-revalidate).
+
+       This used to go to the network first and only fall back to the cache,
+       waiting up to 8s for the page and 2.5s for every file. When a phone is
+       offline it is rarely cleanly offline — it is on Wi-Fi with no internet,
+       or on a dead mobile connection — and those requests do not fail, they
+       HANG until the timeout. Opening the app meant sitting through them one
+       layer at a time, which is why it took five seconds or more when
+       WhatsApp opens instantly: WhatsApp reads its own storage first and
+       talks to the network afterwards.
+
+       Now the app paints from cache immediately and the newer copy is
+       fetched behind it, so the next open has it. The service worker still
+       calls skipWaiting/clients.claim, so a new version never takes more
+       than one extra open to appear. */
     if(cached && isSameOrigin && (isAppCode || isAppNav)){
       event.waitUntil((async ()=>{
         try{
