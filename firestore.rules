@@ -57,7 +57,7 @@ service cloud.firestore {
        suspension or restriction the desk put on them. */
     function ownerKeepsModeration() {
       return !request.resource.data.diff(resource.data).affectedKeys()
-        .hasAny(['suspended', 'suspendedReason', 'suspendedAt', 'restricted', 'restrictedReason', 'restrictedAt', 'trustedPublisher', 'sexualReports', 'known', 'knownUntil', 'grant']);
+        .hasAny(['suspended', 'suspendedReason', 'suspendedAt', 'restricted', 'restrictedReason', 'restrictedAt', 'trustedPublisher', 'sexualReports', 'known', 'knownUntil', 'grant', 'rightsStrikes']);
     }
     /* Creators may edit their Broadcast. They may not list, unhide, or
        clear a hold the desk put on it. */
@@ -603,6 +603,43 @@ service cloud.firestore {
       allow create: if isSignedIn()
         && request.resource.data.creatorUid == request.auth.uid
         && request.resource.data.keys().size() < 24;
+    }
+
+    match /rightsDeclarations/{id} {
+      allow read: if isOperator() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.broadcastId is string
+        && request.resource.data.broadcastId.size() > 0
+        && request.resource.data.version is string
+        && request.resource.data.rightsStatus is string
+        && request.resource.data.keys().size() < 16;
+    }
+
+    match /rightsCatalog/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isOperator()
+        && request.resource.data.workTitle is string
+        && request.resource.data.status in ['cleared', 'restricted', 'reference']
+        && request.resource.data.keys().size() < 24;
+      allow delete: if isOperator();
+    }
+
+    match /rightsCases/{id} {
+      allow read: if isOperator() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.status == 'open'
+        && request.resource.data.authority == true
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 1
+        && request.resource.data.contact is string
+        && request.resource.data.work is string
+        && request.resource.data.claim is string
+        && request.resource.data.claim.size() > 8
+        && request.resource.data.keys().hasOnly(['uid','name','org','contact','work','broadcastId','claim','evidence','authority','status','createdAt','updatedAt']);
+      allow update: if isOperator()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','updatedAt','deskNote','restricted']);
     }
 
     match /toga/{uid} {
