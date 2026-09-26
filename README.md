@@ -1,9 +1,9 @@
-Naluno 2026.09.26j
+Naluno 2026.09.26k
 
 Upload into the same folders. Do not replace the website index.html.
 
-Writing with a photo keeps the words on their own plate.
-Conversation messages sit on a plate.
-Known stays in the broadcast menu. The mark cycles colour.
-Callsign tools sit on a dial you can turn.
-A signed-in session is not cleared by a brief drop.
+Conversation messages sit on a plate, including the ones already counted.
+A written Broadcast with a photo shows that photo again.
+Known sits on the Callsign name.
+Wireline highlights a message once, until it is opened. A link in Wireline can be tapped.
+A Band you already belong to does not announce itself again on refresh.
