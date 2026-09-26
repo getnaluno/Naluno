@@ -2545,6 +2545,7 @@ async function markPaid(env, saToken, pay) {
         status: "known",
         paidAt: now,
         paidUntil: until,
+        amount_minor: KNOWN_MONTH_MINOR,
         payRef: pay.id,
         updatedAt: now,
       });
