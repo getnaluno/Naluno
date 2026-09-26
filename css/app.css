@@ -792,7 +792,7 @@
   position:relative;
   inset:auto;
   height:auto;
-  min-height:280px;
+  min-height:0;
 }
 .bspace-expand-btn{ display:none !important;
   position:absolute; right:12px; bottom:12px; z-index:5;
@@ -3176,9 +3176,16 @@ html[data-atmosphere="buzzing"] .naluno-aurora{
     height:34px; padding:0 12px; border-radius:999px; border:1px solid var(--line);
     background:#12151c; color:var(--text); font-size:12px; max-width:160px;
   }
-  .bspace-read-clamp{ white-space:pre-wrap; }
-  .bspace-read-clamp[data-clamp="1"]{ max-height:6.2em; overflow:hidden; }
-  .bspace-read-clamp[data-clamp="0"]{ max-height:none; overflow:visible; }
+  .bspace-read-clamp{ white-space:pre-wrap; margin:0; }
+  .bspace-read-clamp[data-clamp="1"]{
+    display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:4; line-clamp:4;
+    overflow:hidden; white-space:normal; max-height:calc(1.55em * 4);
+  }
+  .bspace-read-clamp[data-clamp="0"]{ max-height:none; overflow:visible; white-space:pre-wrap; }
+  #bspaceWriting article{ margin:0; }
+  #bspaceWriting [data-write-more]{ margin:2px 0 0; }
+  #bspaceWriting{ margin:0 0 4px; }
+  #bspaceWriting + #bspaceDesc{ margin-top:2px; }
   .bspace-impact{
     display:flex; flex-wrap:nowrap; gap:8px;
     overflow-x:auto; overflow-y:hidden;
@@ -3204,7 +3211,7 @@ html[data-atmosphere="buzzing"] .naluno-aurora{
   .bspace-hero.is-photo img.bspace-cover{
     position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
   }
-  #bspaceWriting{ margin:0 0 12px; }
+  #bspaceWriting{ margin:0 0 4px; }
   #bspaceWriting[hidden]{ display:none !important; }
   #bspaceWriting.is-editing .bspace-inline-title,
   #bspaceWriting.is-editing .bspace-inline-body,
