@@ -57,7 +57,7 @@ service cloud.firestore {
        suspension or restriction the desk put on them. */
     function ownerKeepsModeration() {
       return !request.resource.data.diff(resource.data).affectedKeys()
-        .hasAny(['suspended', 'suspendedReason', 'suspendedAt', 'restricted', 'restrictedReason', 'restrictedAt', 'trustedPublisher', 'sexualReports']);
+        .hasAny(['suspended', 'suspendedReason', 'suspendedAt', 'restricted', 'restrictedReason', 'restrictedAt', 'trustedPublisher', 'sexualReports', 'known', 'knownUntil']);
     }
     /* Creators may edit their Broadcast. They may not list, unhide, or
        clear a hold the desk put on it. */
@@ -103,7 +103,8 @@ service cloud.firestore {
          tokens. */
       allow get: if isSignedIn();
       allow list: if isOperator();
-      allow create: if isOwner(uid);
+      allow create: if isOwner(uid)
+        && (!('known' in request.resource.data) || request.resource.data.known == false);
       allow delete: if isSuper();
       // Owner may update while the Callsign is open, including closing it.
       // Once closed, only the Control Centre operator may write (restore).
@@ -552,6 +553,39 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && request.resource.data.creatorUid == request.auth.uid;
       allow update: if isSignedIn() && resource.data.creatorUid == request.auth.uid;
+    }
+
+    match /knownApps/{uid} {
+      allow read: if isOwner(uid) || isOperator();
+      allow create: if isOwner(uid)
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.status == 'applied'
+        && request.resource.data.note is string
+        && request.resource.data.note.size() >= 12
+        && request.resource.data.note.size() <= 500
+        && !('paidAt' in request.resource.data)
+        && !('paidUntil' in request.resource.data);
+      allow update: if isOperator() && (
+          request.resource.data.status != 'known'
+          || (
+            request.resource.data.paidAt is int
+            && request.resource.data.paidAt > 0
+            && request.resource.data.paidUntil is int
+            && request.resource.data.paidUntil > request.resource.data.paidAt
+          )
+        ) || (
+          isOwner(uid)
+          && resource.data.status == 'applied'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['note', 'updatedAt'])
+          && request.resource.data.status == 'applied'
+        ) || (
+          isOwner(uid)
+          && (resource.data.status == 'declined' || resource.data.status == 'revoked')
+          && request.resource.data.status == 'applied'
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.note is string
+          && request.resource.data.note.size() >= 12
+        );
     }
 
     match /originMarks/{id} {
