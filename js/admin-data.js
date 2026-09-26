@@ -1632,6 +1632,8 @@
         paid: payments.filter(function (p) { return p.status === 'paid'; }).length,
         payments: payments.length,
       },
+      payments: payments,
+      knownApps: raw.knownApps || [],
       gaps: {
         notifications: 'Handed means the alert was given to the push service. Arrived means a phone showed it. Opened means it was tapped. A phone that was force-stopped cannot report arrival until Naluno is opened again.',
         search: 'Find a Callsign, email, name or account id. Looks up the live handle map, not only the first loaded page of accounts.',

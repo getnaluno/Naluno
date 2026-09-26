@@ -1337,6 +1337,7 @@
     listenCol('pushPings', 200, 'pushPings');
     listenCol('pushReceipts', 200, 'pushReceipts');
     listenCol('payments', 200, 'payments');
+    listenCol('knownApps', 80, 'knownApps');
     listenCol('vendorInvoices', 80, 'vendorInvoicesFs');
     listenCol('toga', 80, 'toga');
     listenCol('strands', 200, 'strands');
@@ -1392,7 +1393,7 @@
       zone: Data ? (Data.adminZone ? Data.adminZone() : Data.localZone()) : undefined,
       beacons: [], originMarks: [], deskMail: [], deskAds: [],
       siteSessions: [], siteDays: [],
-      presenceDays: [], pushPings: [], pushReceipts: [], payments: [],
+      presenceDays: [], pushPings: [], pushReceipts: [], payments: [], knownApps: [],
       reservedHandles: [], handleFlags: [],
       adRates: {},
       currency: {},
@@ -1410,6 +1411,7 @@
       colDocs('pushPings', 200).then(function (r) { pack.pushPings = r; }),
       colDocs('pushReceipts', 200).then(function (r) { pack.pushReceipts = r; }),
       colDocs('payments', 200).then(function (r) { pack.payments = r; }),
+      colDocs('knownApps', 80).then(function (r) { pack.knownApps = r; }),
       colDocs('reservedHandles', 400).then(function (r) { pack.reservedHandles = r; }),
       colDocs('handleFlags', 200).then(function (r) { pack.handleFlags = r; }),
     ];
@@ -2121,6 +2123,31 @@
     ledger.forEach(function (r) {
       const day = r.created_at ? new Date(Number(r.created_at)).toISOString().slice(0, 10) : stamp;
       add(day, 'Contribution points', r.event_type || 'event', '', '', r.status || '', r.user_id || '', 'Points are not money. ' + (r.points || 0) + ' points, eligible ' + (r.eligible_points || 0));
+    });
+    const seenPay = {};
+    (d.payments || []).forEach(function (p) {
+      const paid = p && (p.status === 'paid' || p.paymentStatus === 'paid');
+      if (!paid) return;
+      const major = (Number(p.amount_minor || p.amountMinor) || 0) / 100;
+      if (!(major > 0)) return;
+      const id = String(p.id || p.stripeSession || '');
+      if (id) seenPay[id] = 1;
+      const kind = String(p.kind || 'payment');
+      const account = kind === 'known' ? 'Known subscriptions'
+        : (kind === 'support' ? 'Support received' : (kind === 'ad' ? 'Advertising receipts' : 'Receipts'));
+      const when = p.paidAt || p.createdAt;
+      const day = when ? new Date(Number(when)).toISOString().slice(0, 10) : stamp;
+      add(day, account, kind, '', major, 'paid', id, 'Recorded when the payment was confirmed.');
+      add(day, 'Cash', account, major, '', 'paid', id, 'Opposite entry.');
+    });
+    (d.knownApps || []).forEach(function (k) {
+      if (!k || !k.paidAt) return;
+      if (k.payRef && seenPay[k.payRef]) return;
+      const major = (Number(k.amount_minor) || 4900) / 100;
+      const day = new Date(Number(k.paidAt)).toISOString().slice(0, 10);
+      const who = k.name || k.uid || '';
+      add(day, 'Known subscriptions', who, '', major, 'paid', k.payRef || k.uid || '', 'A Known month. Cash is recorded when this row is paid.');
+      add(day, 'Cash', 'Known subscriptions', major, '', 'paid', k.payRef || k.uid || '', 'Opposite entry.');
     });
     const invoice = Number(costs.invoice_aed || costs.billable_aed || 0);
     const vendors = (costs && costs.vendors) || [];

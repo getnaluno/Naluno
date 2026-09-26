@@ -674,14 +674,70 @@ function renderBspaceMedia(seg){
   host.innerHTML = `<img src="${bspaceEscape(photoSrc)}" alt="" style="filter:${seg.filterCss || ''}" />`;
 }
 
-function setBspaceTab(name){
-  document.querySelectorAll('#bspaceTabs .bspace-tab').forEach(t=>{
+let bspaceRoomOpen = '';
+const BSPACE_ROOM_TITLES = {
+  conversation: 'Conversation',
+  questions: 'Questions',
+  results: 'Results',
+  resources: 'Resources',
+  journey: 'Journey',
+  updates: 'Updates',
+};
+function bspaceEnsureRoomSheet(){
+  let sheet = $('bspaceRoomSheet');
+  if(sheet) return sheet;
+  sheet = document.createElement('div');
+  sheet.id = 'bspaceRoomSheet';
+  sheet.className = 'bspace-room-sheet';
+  sheet.innerHTML = '<div class="bspace-room-card" role="dialog">'
+    + '<div class="bspace-room-head"><b id="bspaceRoomTitle">Conversation</b>'
+    + '<button type="button" id="bspaceRoomClose">Close</button></div>'
+    + '<div id="bspaceRoomHost"></div></div>';
+  const room = $('bspace');
+  if(room) room.appendChild(sheet);
+  sheet.addEventListener('click', function(e){
+    if(e.target === sheet) closeRoomSheet();
+  });
+  const close = $('bspaceRoomClose');
+  if(close) close.onclick = function(){ closeRoomSheet(); };
+  return sheet;
+}
+function closeRoomSheet(){
+  const sheet = $('bspaceRoomSheet');
+  const home = $('bspaceRoomHome');
+  if(bspaceRoomOpen){
+    const panel = $('bspan-' + bspaceRoomOpen);
+    if(panel){
+      panel.style.display = 'none';
+      if(home) home.appendChild(panel);
+    }
+  }
+  bspaceRoomOpen = '';
+  if(sheet) sheet.classList.remove('active');
+  document.querySelectorAll('#bspaceTabs .bspace-tab').forEach(function(t){ t.classList.remove('on'); });
+}
+function openRoomSheet(name){
+  const panel = $('bspan-' + name);
+  if(!panel) return;
+  if(bspaceRoomOpen === name){
+    closeRoomSheet();
+    return;
+  }
+  if(bspaceRoomOpen) closeRoomSheet();
+  const sheet = bspaceEnsureRoomSheet();
+  const host = $('bspaceRoomHost');
+  const title = $('bspaceRoomTitle');
+  if(title) title.textContent = BSPACE_ROOM_TITLES[name] || 'Room';
+  if(host) host.appendChild(panel);
+  panel.style.display = 'block';
+  if(sheet) sheet.classList.add('active');
+  bspaceRoomOpen = name;
+  document.querySelectorAll('#bspaceTabs .bspace-tab').forEach(function(t){
     t.classList.toggle('on', t.dataset.bspan === name);
   });
-  ['conversation','questions','results','resources','journey','updates'].forEach(n=>{
-    const p = $('bspan-' + n);
-    if(p) p.style.display = n === name ? 'block' : 'none';
-  });
+}
+function setBspaceTab(name){
+  openRoomSheet(name);
 }
 
 let bspaceDocCache = {};
@@ -1182,6 +1238,8 @@ async function paintBspaceViews(meta){
   const fmt = (typeof formatNalunoViews === 'function') ? formatNalunoViews : String;
   const strand = (activeBroadcastMeta && activeBroadcastMeta.strandName) || '';
   row.style.display = 'grid';
+  const enterCount = $('bspaceEnterCount');
+  if(enterCount) enterCount.textContent = fmt(views);
   let html = ''
     + '<div class="bspace-stat-card">'
     +   '<div class="bspace-stat-k">This Broadcast</div>'
@@ -1361,7 +1419,7 @@ async function openBroadcastSpace(meta){
   const tags = meta.tags && meta.tags.length ? meta.tags : (seg.type ? [seg.type] : ['idea']);
   $('bspaceTags').innerHTML = tags.map(t => `<span class="bspace-tag">${bspaceEscape(t)}</span>`).join('');
   renderBspaceMedia(seg);
-  setBspaceTab('conversation');
+  closeRoomSheet();
   renderBspaceRelated();
 
   const isCreator = !!(meta.isMine || (currentUser && meta.creatorUid === currentUser.uid));
@@ -1520,6 +1578,7 @@ function closeBroadcastSpace(){
   if(typeof bLiveOnSpaceClosed === 'function') bLiveOnSpaceClosed();
   bspaceStopLive();
   bspaceStopSpeak();
+  closeRoomSheet();
   bspaceClearListeners();
   activeBroadcastId = null;
   activeBroadcastMeta = null;
@@ -1701,6 +1760,22 @@ $('bspaceBack').onclick = closeBroadcastSpace;
 document.querySelectorAll('#bspaceTabs .bspace-tab').forEach(tab=>{
   tab.onclick = ()=> setBspaceTab(tab.dataset.bspan);
 });
+(function wireEnterViews(){
+  const info = $('bspaceViewsInfo');
+  if(!info || info.__wired) return;
+  info.__wired = true;
+  info.onclick = function(e){
+    if(e){ e.preventDefault(); e.stopPropagation(); }
+    const n = ($('bspaceEnterCount') && $('bspaceEnterCount').textContent) || '0';
+    toast(n + ' views on this Broadcast');
+  };
+})();
+if($('bspaceKnownBtn')){
+  $('bspaceKnownBtn').onclick = function(){
+    try{ if($('bspaceMoreMenu')) $('bspaceMoreMenu').hidden = true; }catch(_){}
+    if(window.NalunoKnown && typeof NalunoKnown.openSheet === 'function') NalunoKnown.openSheet();
+  };
+}
 
 $('bspaceJoinBtn').onclick = async ()=>{
   if(!currentUser || !fbDb || !activeBroadcastId){ toast('Sign in to join'); return; }
@@ -1961,35 +2036,33 @@ function renderBspaceImpact(){
       return t !== 'system' && t !== 'live';
     }).length;
     const cells = [
-      ['Community', communityN],
-      ['Conversations', realConvCount],
-      ['Questions', qs.size],
-      ['Answered', answered],
-      ['Results', res.size],
-      ['Resources', resources.size],
+      ['Community', communityN, 'community'],
+      ['Conversations', realConvCount, 'conversation'],
+      ['Questions', qs.size, 'questions'],
+      ['Answered', answered, 'questions'],
+      ['Results', res.size, 'results'],
+      ['Resources', resources.size, 'resources'],
     ];
-    grid.innerHTML = cells.map(([label, n]) =>
-      `<div class="bspace-card${label === 'Community' ? ' bspace-stat-tappable' : ''}" ${label === 'Community' ? 'id="bspaceCommunityCell" role="button" tabindex="0"' : ''} style="margin:0;text-align:center;padding:14px 8px;">
-        <div style="font-family:var(--font-futuristic);font-size:22px;color:var(--mint);">${n}</div>
-        <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);margin-top:4px;">${label}${label === 'Community' ? ' \u00b7 tap' : ''}</div>
-      </div>`
-    ).join('');
-    // Community is the only tappable cell: it opens the list of people who
-    // actually joined this creator's Circle. Deliberately lazy — the member
-    // list is NOT fetched as part of this dashboard render (which runs on
-    // every Broadcast open); it's only loaded when someone actually taps,
-    // so the common case costs nothing extra.
-    const cell = $('bspaceCommunityCell');
-    if(cell){
-      const open = function(){
-        const creatorUid = (activeBroadcastMeta && activeBroadcastMeta.creatorUid) || '';
-        if(typeof openCircleMembers === 'function') openCircleMembers(creatorUid, members);
+    grid.innerHTML = cells.map(function(cell){
+      const label = cell[0];
+      const n = cell[1];
+      const open = cell[2];
+      return '<button type="button" class="bspace-card bspace-stat-tappable" data-impact="' + open + '" style="margin:0;text-align:center;padding:14px 8px;">'
+        + '<div style="font-family:var(--font-futuristic);font-size:22px;color:var(--mint);">' + n + '</div>'
+        + '<div style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);margin-top:4px;">' + label + '</div>'
+        + '</button>';
+    }).join('');
+    grid.querySelectorAll('[data-impact]').forEach(function(cell){
+      cell.onclick = function(){
+        const which = cell.getAttribute('data-impact');
+        if(which === 'community'){
+          const creatorUid = (activeBroadcastMeta && activeBroadcastMeta.creatorUid) || '';
+          if(typeof openCircleMembers === 'function') openCircleMembers(creatorUid, members);
+          return;
+        }
+        openRoomSheet(which);
       };
-      cell.onclick = open;
-      cell.onkeydown = function(e){
-        if(e && (e.key === 'Enter' || e.key === ' ')){ e.preventDefault(); open(); }
-      };
-    }
+    });
   }).catch(()=>{ grid.innerHTML = ''; });
 }
 

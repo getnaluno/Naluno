@@ -478,6 +478,7 @@ function updateSignatureGlow(){
 function showCallsignView(){
   $('callsignView').style.display = 'block';
   $('callsignEdit').style.display = 'none';
+  try{ if(window.NalunoKnown && typeof NalunoKnown.refreshMine === 'function') NalunoKnown.refreshMine(); }catch(_){}
 }
 function showCallsignEdit(){
   draftPhoto = currentProfile.photo ? { ...currentProfile.photo } : null;

@@ -52,6 +52,7 @@
       status: 'known',
       paidAt: at,
       paidUntil: carry + MONTH_MS,
+      amount_minor: MONTH_MINOR,
       payRef: String(ref || '').slice(0, 120),
       updatedAt: at,
     });
@@ -123,20 +124,26 @@
 
   function wireMine() {
     const block = document.getElementById('knownBlock');
-    if (!block || block.dataset.wired === '1') return;
-    block.dataset.wired = '1';
-    block.addEventListener('click', function (e) {
-      const t = e.target;
-      if (!t || !t.id) return;
-      if (t.id === 'knownApply') submitApply();
-      if (t.id === 'knownPay') startPay();
-    });
+    if (!block) return;
+    if (block.dataset.wired !== '1') {
+      block.dataset.wired = '1';
+      block.addEventListener('click', function (e) {
+        const t = e.target;
+        if (!t || !t.id) return;
+        if (t.id === 'knownApply') submitApply();
+        if (t.id === 'knownPay') startPay();
+      });
+    }
     refreshMine();
   }
 
   async function refreshMine() {
     const block = document.getElementById('knownBlock');
-    if (!block || typeof currentUser === 'undefined' || !currentUser || typeof fbDb === 'undefined' || !fbDb) return;
+    if (!block) return;
+    if (typeof currentUser === 'undefined' || !currentUser || typeof fbDb === 'undefined' || !fbDb) {
+      paintMine(block, null);
+      return;
+    }
     try {
       const snap = await fbDb.collection('knownApps').doc(currentUser.uid).get();
       paintMine(block, snap.exists ? snap.data() : null);
@@ -144,11 +151,57 @@
       if (view && snap.exists && isKnown(snap.data())) {
         if (!view.querySelector('.naluno-known')) view.insertAdjacentHTML('beforeend', markHtml());
       }
-    } catch (_) {}
+    } catch (_) {
+      paintMine(block, null);
+    }
+  }
+
+  function ensureSheet() {
+    let sheet = document.getElementById('knownSheet');
+    if (sheet) return sheet;
+    sheet = document.createElement('div');
+    sheet.id = 'knownSheet';
+    sheet.className = 'bspace-room-sheet';
+    sheet.innerHTML = '<div class="bspace-room-card" role="dialog">'
+      + '<div class="bspace-room-head"><b>Known</b><button type="button" id="knownSheetClose">Close</button></div>'
+      + '<div id="knownSheetBody" class="known-block"></div></div>';
+    document.body.appendChild(sheet);
+    sheet.addEventListener('click', function (e) {
+      if (e.target === sheet) sheet.classList.remove('active');
+    });
+    const close = document.getElementById('knownSheetClose');
+    if (close) close.onclick = function () { sheet.classList.remove('active'); };
+    const body = document.getElementById('knownSheetBody');
+    if (body) body.addEventListener('click', function (e) {
+      const t = e.target;
+      if (!t || !t.id) return;
+      if (t.id === 'knownApply') submitApply();
+      if (t.id === 'knownPay') startPay();
+    });
+    return sheet;
+  }
+
+  async function openSheet() {
+    const sheet = ensureSheet();
+    const body = document.getElementById('knownSheetBody');
+    sheet.classList.add('active');
+    if (!body) return;
+    if (typeof currentUser === 'undefined' || !currentUser || typeof fbDb === 'undefined' || !fbDb) {
+      paintMine(body, null);
+      return;
+    }
+    try {
+      const snap = await fbDb.collection('knownApps').doc(currentUser.uid).get();
+      paintMine(body, snap.exists ? snap.data() : null);
+    } catch (_) {
+      paintMine(body, null);
+    }
   }
 
   async function submitApply() {
-    const box = document.getElementById('knownNote');
+    const sheet = document.getElementById('knownSheet');
+    const root = (sheet && sheet.classList.contains('active')) ? sheet : document;
+    const box = root.querySelector('textarea');
     const note = cleanNote(box && box.value);
     if (note.length < 12) {
       if (typeof toast === 'function') toast('Write a little more about who you are');
@@ -164,14 +217,17 @@
     try {
       await fbDb.collection('knownApps').doc(currentUser.uid).set(row);
       if (typeof toast === 'function') toast('Sent. Naluno will look at it.');
-      refreshMine();
+      const callsign = document.getElementById('knownBlock');
+      if (callsign) paintMine(callsign, row);
+      const sheetBody = document.getElementById('knownSheetBody');
+      if (sheetBody) paintMine(sheetBody, row);
     } catch (err) {
       if (typeof toast === 'function') toast((err && err.message) || 'Could not send that');
     }
   }
 
   async function startPay() {
-    const msg = document.getElementById('knownPayMsg');
+    const msg = document.querySelector('#knownSheet.active #knownPayMsg') || document.getElementById('knownPayMsg');
     if (typeof currentUser === 'undefined' || !currentUser) return;
     try {
       const body = {
@@ -192,8 +248,18 @@
   }
 
   if (typeof document !== 'undefined') {
-    document.addEventListener('DOMContentLoaded', wireMine);
-    setTimeout(wireMine, 1200);
+    let knownBoots = 0;
+    function bootKnown() {
+      wireMine();
+      knownBoots += 1;
+      const ready = typeof currentUser !== 'undefined' && currentUser;
+      if (!ready && knownBoots < 24) setTimeout(bootKnown, 700);
+    }
+    document.addEventListener('DOMContentLoaded', bootKnown);
+    setTimeout(bootKnown, 400);
+    try {
+      if (window.firebase && firebase.auth) firebase.auth().onAuthStateChanged(function () { wireMine(); });
+    } catch (_) {}
   }
 
   return {
@@ -207,5 +273,6 @@
     paintBeside: paintBeside,
     paintMine: paintMine,
     refreshMine: refreshMine,
+    openSheet: openSheet,
   };
 });
