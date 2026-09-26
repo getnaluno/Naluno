@@ -131,9 +131,9 @@
 })();
 </script>
 <link rel="apple-touch-startup-image" href="/splash-empty.png">
-<link rel="stylesheet" href="/css/app.css?v=20260926j" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/css/app.css?v=20260926k" media="print" onload="this.media='all'">
 <script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="/css/app.css?v=20260926j"></noscript>
+<noscript><link rel="stylesheet" href="/css/app.css?v=20260926k"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -601,12 +601,13 @@ window.__nalunoEntryT0 = Date.now();
           <button class="save-btn" id="resetRingtoneBtn" style="flex:1; margin:0; background:none; color:var(--text-dim); border:1px solid var(--line); display:none;">Use built-in</button>
         </div>
       </div>
+
+      <div class="greenroom-setting" data-dial="mine" data-dial-name="My Contribution">
+        <div class="greenroom-setting-sub">What you have added to the community.</div>
+        <button class="save-btn" id="myContributionBtn" style="margin:14px 0 0; background:none; color:var(--mint); border:1px solid rgba(124,255,178,.35);">Open</button>
       </div>
 
-      <button class="save-btn" id="myContributionBtn" style="margin:18px 20px 0; background:none; color:var(--mint); border:1px solid rgba(124,255,178,.35);">My Contribution</button>
-
-      <div class="greenroom-setting" id="closeCallsignBox">
-        <div class="greenroom-setting-head"><span class="dot" style="background:var(--red);"></span><span class="greenroom-setting-title">Close this Callsign</span></div>
+      <div class="greenroom-setting" id="closeCallsignBox" data-dial="close" data-dial-name="Close Callsign">
         <div class="greenroom-setting-sub">This deletes the Callsign, your Broadcasts and Signals, and this login. It cannot be restored.</div>
         <button type="button" class="save-btn" id="closeCallsignBtn" style="margin:14px 0 0; background:none; color:var(--red); border:1px solid var(--line);">Close Callsign</button>
         <div id="closeCallsignForm" style="display:none; margin-top:14px;">
@@ -621,6 +622,7 @@ window.__nalunoEntryT0 = Date.now();
             <button type="button" class="save-btn" id="closeCallsignConfirm" style="flex:1; background:none; color:var(--red); border:1px solid var(--red);">Close it</button>
           </div>
         </div>
+      </div>
       </div>
 
       <button class="save-btn" id="signOutBtn" style="margin:14px 20px 0; background:none; color:var(--red); border:1px solid var(--line);">Sign out</button>
@@ -1738,9 +1740,9 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/data.js?v=20260908d"></script>
 <script src="/js/crypto.js?v=20260919d"></script>
 <script src="/js/chat-store.js?v=20260915b"></script>
-<script src="/js/wire-mailbox.js?v=20260924f"></script>
+<script src="/js/wire-mailbox.js?v=20260926k"></script>
 <script src="/js/atmosphere.js?v=20260908d"></script>
-<script src="/js/band-list.js?v=20260918i"></script>
+<script src="/js/band-list.js?v=20260926k"></script>
 <script type="module" src="/workers/economy/safety-boot.mjs?v=20260923c"></script>
 <script src="/js/signal-core.js?v=20260924a"></script>
 <script src="/js/broadcast-core.js?v=20260926a"></script>
@@ -1772,12 +1774,12 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/discover.js?v=20260926d"></script>
 <script src="/js/signal-ui.js?v=20260925d"></script>
 <script src="/js/compat-lock.js?v=20260908d"></script>
-<script src="/js/known.js?v=20260926j"></script>
+<script src="/js/known.js?v=20260926k"></script>
 <script src="/js/lg-speak.js?v=20260926i"></script>
-<script src="/js/broadcast-space.js?v=20260926j"></script>
+<script src="/js/broadcast-space.js?v=20260926k"></script>
 <script src="/js/ads.js?v=20260925c"></script>
 <script src="/js/media-vault.js?v=20260908d"></script>
-<script src="/js/wireline.js?v=20260924f"></script>
+<script src="/js/wireline.js?v=20260926k"></script>
 <!-- Lifeline: Wireline when the internet is blocked or cut. Loads after
      crypto.js (keys) and wireline.js (thread insertion). -->
 <script src="/js/notices.js?v=20260923n"></script>
@@ -1788,7 +1790,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/lifeline-wire.js?v=20260924e"></script>
 <!-- Wireline translation reuses Spark's engine and language list. -->
 <script src="/js/wireline-translate.js?v=20260922a"></script>
-<script src="/js/profile.js?v=20260926j"></script>
+<script src="/js/profile.js?v=20260926k"></script>
 <script src="/js/onboard.js?v=20260922a"></script>
 <script src="/js/handle-guard.js?v=20260921c"></script>
 <script src="/js/auth.js?v=20260926j"></script>
@@ -1800,8 +1802,8 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/calls.js?v=20260924f"></script>
 <script src="/js/sfu-live.js?v=20260925c"></script>
 <script src="/js/broadcast-live.js?v=20260925c"></script>
-<script src="/js/band-room.js?v=20260924f"></script>
-<script src="/js/pwa.js?v=20260926i"></script>
+<script src="/js/band-room.js?v=20260926k"></script>
+<script src="/js/pwa.js?v=20260926k"></script>
 <script src="/js/spark-engine.js?v=20260926c"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>
 <script src="/js/spark-lg.js?v=20260908d"></script>
