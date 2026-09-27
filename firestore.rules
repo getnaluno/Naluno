@@ -598,6 +598,18 @@ service cloud.firestore {
         );
     }
 
+    match /knownPublic/{uid} {
+      allow read: if isSignedIn();
+      allow create, update: if isOperator()
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() < 81
+        && request.resource.data.note is string
+        && request.resource.data.note.size() < 501
+        && request.resource.data.keys().hasOnly(['name', 'note', 'nameKey', 'until', 'updatedAt']);
+      allow delete: if isOperator();
+    }
+
     match /originMarks/{id} {
       allow read: if isSignedIn();
       allow create: if isSignedIn()
