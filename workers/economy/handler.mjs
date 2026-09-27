@@ -57,6 +57,7 @@ import {
 import {
   billingSnapshot,
 } from "./books.mjs";
+import { lookQuery } from "./look.mjs";
 import {
   callsReady,
   rememberRoom,
@@ -66,7 +67,7 @@ import {
   cfCalls,
 } from "./live.mjs";
 
-export const VERSION = "2.6.12-usage";
+export const VERSION = "2.6.13-look";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -2836,6 +2837,16 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         });
       }
       return json({ ok: true, packets: out.slice(0, 200) });
+    }
+
+    if (path === "/v1/look" && request.method === "GET") {
+      const token = bearer(request);
+      const user = token ? await verifyIdToken(env, token) : null;
+      if (!user) return json({ ok: false, error: "sign in" }, 401);
+      const ip = request.headers.get("CF-Connecting-IP") || "?";
+      if (!lifelineRate(ip, 20)) return json({ ok: false, error: "slow down" }, 429);
+      const hits = await lookQuery(url.searchParams.get("q") || "");
+      return json({ ok: true, hits });
     }
 
     if (path === "/v1/flags") {
