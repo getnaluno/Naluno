@@ -390,14 +390,23 @@ function loadCompassMessages(){
       try{ if(typeof nalunoCacheWrite === 'function') nalunoCacheWrite('compassMessages', compassMessages); }catch(_){}
     }, ()=>{ /* Compass history just won't load this session */ });
 }
+let compassTopic = '';
 function compassNameKey(s){
   return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
+function compassCleanName(s){
+  return String(s || '')
+    .replace(/[?.!,]+/g, ' ')
+    .replace(/\b(again|please|right now|for me|on the web|outside naluno|outside|online)\b/ig, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
+}
 function compassAskedName(text){
   const t = String(text || '').replace(/\s+/g, ' ').trim();
-  const m = t.match(/^(?:who is|who'?s|tell me about|look up|search for|what do you know about|what about|find)\s+(.+?)[?.!]*$/i);
+  const m = t.match(/^(?:who(?:\s+is|'s)?|tell me about|look up|search for|what do you know about|what about|find)\s+(.+)$/i);
   if(!m) return '';
-  return m[1].replace(/\b(outside|on the web|online|naluno|the web)\b/ig, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+  return compassCleanName(m[1]);
 }
 function compassNameHit(query, name){
   const q = compassNameKey(query);
@@ -406,21 +415,28 @@ function compassNameHit(query, name){
   if(n === q || n.indexOf(q) >= 0 || q.indexOf(n) >= 0) return true;
   const words = String(query || '').toLowerCase().split(/[^a-z0-9]+/).filter(function(w){ return w.length >= 4; });
   const blob = String(name || '').toLowerCase();
-  return words.some(function(w){ return blob.indexOf(w) >= 0; });
+  return words.length > 0 && words.every(function(w){ return blob.indexOf(w) >= 0; });
 }
-function compassLastName(text){
-  const direct = compassAskedName(text);
-  if(direct && direct.length >= 3 && !/^(outside|online|web)$/i.test(direct)) return direct;
-  const prev = (typeof compassMessages !== 'undefined' ? compassMessages : []).slice().reverse();
-  for(let i = 0; i < prev.length; i++){
-    if(prev[i].from !== 'user') continue;
-    const n = compassAskedName(prev[i].text);
-    if(n && n.length >= 3) return n;
+function compassTurn(text){
+  const raw = String(text || '').replace(/\s+/g, ' ').trim();
+  const correction = /\b(not a name|only part of|throw(?:ing)? links|good search|summarise what|summarize what)\b/i.test(raw);
+  let name = compassAskedName(raw);
+  if(!name){
+    const inside = raw.match(/\babout\s+([A-Za-z][A-Za-z.'’-]{1,}(?:\s+[A-Za-z][A-Za-z.'’-]{1,}){0,3})/);
+    if(inside) name = compassCleanName(inside[1]);
   }
-  return direct || '';
+  if(!name){
+    const bare = compassCleanName(raw);
+    const words = bare.split(' ').filter(Boolean);
+    const verb = words.some(function(w){ return /^(is|are|was|were|do|does|did|can|what|who|why|how|the|not|only|part|search|links)$/i.test(w); });
+    if(!verb && words.length >= 2 && words.length <= 4) name = bare;
+  }
+  if(name && !correction && compassNameKey(name).length >= 4) compassTopic = name;
+  const subject = compassCleanName(correction ? compassTopic : (name || ''));
+  return { subject: subject, aboutPerson: !!(subject && (name || correction)) };
 }
-async function compassKnownBrief(name){
-  if(!name || typeof fbDb === 'undefined' || !fbDb) return '';
+async function compassKnownHit(name){
+  if(!name || typeof fbDb === 'undefined' || !fbDb) return null;
   const rows = [];
   const seen = {};
   function add(id, row){
@@ -444,63 +460,119 @@ async function compassKnownBrief(name){
     });
   }catch(_){}
   try{
-    if(currentUser){
+    if(typeof currentUser !== 'undefined' && currentUser){
       const own = await fbDb.collection('knownApps').doc(currentUser.uid).get();
       if(own.exists) add(own.id, own.data() || {});
     }
   }catch(_){}
-  const hit = rows.find(function(row){ return compassNameHit(name, row.name); });
-  if(!hit) return 'On Naluno, nobody Known matches ' + name + '.';
-  return 'On Naluno, ' + (hit.name || name) + ' is Known.'
-    + (hit.note ? '\nThey wrote: ' + hit.note : '');
+  return rows.find(function(row){ return compassNameHit(name, row.name); }) || null;
 }
-async function compassWebBrief(name){
-  if(!name) return '';
-  const q = encodeURIComponent(name);
-  const lines = [];
-  const words = String(name).toLowerCase().split(/[^a-z0-9]+/).filter(function(w){ return w.length >= 4; });
-  function related(text){
-    const blob = String(text || '').toLowerCase();
-    if(!words.length) return true;
-    return words.every(function(w){ return blob.indexOf(w) >= 0; });
-  }
+function compassSamePerson(query, label){
+  const words = String(query || '').toLowerCase().split(/[^a-z0-9]+/).filter(function(w){ return w.length >= 2; });
+  const blob = String(label || '').toLowerCase();
+  if(!words.length) return false;
+  return words.every(function(w){ return blob.indexOf(w) >= 0; });
+}
+async function compassClosePages(name){
+  const pages = [];
   try{
     const res = await fetch('https://en.wikipedia.org/w/api.php?origin=*&action=query&list=search&srsearch='
-      + q + '&utf8=&format=json&srlimit=3');
+      + encodeURIComponent(name) + '&utf8=&format=json&srlimit=4');
     const data = await res.json();
-    ((data && data.query && data.query.search) || []).forEach(function(h){
-      const title = h.title || '';
-      const plain = String(h.snippet || '').replace(/<[^>]+>/g, '');
-      if(!title || !related(title + ' ' + plain)) return;
-      lines.push('Wikipedia — ' + title + (plain ? '\n' + plain : '')
-        + '\nhttps://en.wikipedia.org/wiki/' + encodeURIComponent(title.replace(/ /g, '_')));
+    const hit = ((data && data.query && data.query.search) || []).find(function(h){
+      return h && h.title && compassSamePerson(name, h.title);
     });
+    if(hit){
+      let summary = String(hit.snippet || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+      try{
+        const er = await fetch('https://en.wikipedia.org/w/api.php?origin=*&action=query&prop=extracts&exintro=1&explaintext=1&titles='
+          + encodeURIComponent(hit.title) + '&format=json');
+        const ed = await er.json();
+        const bag = ed && ed.query && ed.query.pages;
+        const page = bag && bag[Object.keys(bag)[0]];
+        if(page && page.extract) summary = String(page.extract).replace(/\s+/g, ' ').trim().slice(0, 420);
+      }catch(_){}
+      pages.push({
+        title: hit.title,
+        summary: summary,
+        url: 'https://en.wikipedia.org/wiki/' + encodeURIComponent(hit.title.replace(/ /g, '_')),
+      });
+    }
   }catch(_){}
   try{
-    const res = await fetch('https://openlibrary.org/search.json?q=' + q + '&limit=5');
+    const res = await fetch('https://openlibrary.org/search.json?q=' + encodeURIComponent(name) + '&limit=5');
     const data = await res.json();
-    (data.docs || []).slice(0, 5).forEach(function(doc){
-      const title = doc.title || '';
-      const who = (doc.author_name || []).slice(0, 2).join(', ');
-      if(!title || !related(title + ' ' + who)) return;
-      const path = doc.key || '';
-      lines.push('Open Library — ' + title + (who ? ' — ' + who : '')
-        + (path ? '\nhttps://openlibrary.org' + path : ''));
+    const doc = (data.docs || []).find(function(row){
+      const who = (row.author_name || []).join(' ');
+      return compassSamePerson(name, who) || compassSamePerson(name, row.title || '');
     });
+    if(doc && doc.title){
+      const who = (doc.author_name || []).slice(0, 2).join(', ');
+      pages.push({
+        title: doc.title,
+        summary: doc.title + (who ? ' — ' + who : '') + (doc.first_publish_year ? ', ' + doc.first_publish_year : ''),
+        url: doc.key ? ('https://openlibrary.org' + doc.key) : '',
+      });
+    }
   }catch(_){}
-  lines.push('Search the web\nhttps://duckduckgo.com/?q=' + q);
-  lines.push('Wikipedia search\nhttps://en.wikipedia.org/w/index.php?search=' + q);
-  lines.push('Open Library search\nhttps://openlibrary.org/search?q=' + q);
-  return 'Public pages for ' + name + '. A link is not proof it is the same person.\n' + lines.join('\n');
+  return pages.slice(0, 2);
 }
-async function compassFacts(text){
-  const name = compassLastName(text);
-  if(!name) return '';
-  const known = await compassKnownBrief(name);
-  const web = await compassWebBrief(name);
-  return [known, web].filter(Boolean).join('\n\n');
+function compassSpeakPerson(name, hit, pages){
+  const who = (hit && hit.name) || name;
+  let text = '';
+  if(hit){
+    const note = String(hit.note || '').trim();
+    text = who + ' is Known on Naluno.';
+    if(note) text += ' ' + note;
+  } else {
+    text = 'I don’t have a Known record for ' + who + ' on Naluno.';
+  }
+  if(pages && pages.length){
+    pages.forEach(function(p){
+      if(!p || !p.summary) return;
+      text += '\n\n' + p.summary;
+      if(p.url) text += '\n' + p.url;
+    });
+  } else if(!hit){
+    text += ' I also didn’t find a public page that is clearly the same person.';
+  }
+  return text;
+}
+async function compassPersonAnswer(text){
+  const turn = compassTurn(text);
+  if(!turn.aboutPerson || !turn.subject) return '';
+  const hit = await compassKnownHit(turn.subject);
+  const pages = await compassClosePages(turn.subject);
+  return compassSpeakPerson(turn.subject, hit, pages);
 }
 
+function compassReplyWeak(reply){
+  return /i don't have access|i do not have access|only provide information|based on what we|no information about|don't have any more information/i.test(String(reply || ''));
+}
+async function compassWorldNote(text){
+  if(!/\b(who|what|where|when|why|how|which)\b/i.test(text)) return '';
+  const q = String(text || '')
+    .replace(/\b(who|what|where|when|why|how|which|is|are|was|were|the|a|an|of|about|please|again|tell|me|do|you|know|can|could|naluno)\b/ig, ' ')
+    .replace(/[?.!]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if(q.length < 3) return '';
+  try{
+    const res = await fetch('https://en.wikipedia.org/w/api.php?origin=*&action=query&list=search&srsearch='
+      + encodeURIComponent(q) + '&utf8=&format=json&srlimit=1');
+    const data = await res.json();
+    const hit = data && data.query && data.query.search && data.query.search[0];
+    if(!hit || !hit.title) return '';
+    const er = await fetch('https://en.wikipedia.org/w/api.php?origin=*&action=query&prop=extracts&exintro=1&explaintext=1&titles='
+      + encodeURIComponent(hit.title) + '&format=json');
+    const ed = await er.json();
+    const bag = ed && ed.query && ed.query.pages;
+    const page = bag && bag[Object.keys(bag)[0]];
+    const summary = page && page.extract ? String(page.extract).replace(/\s+/g, ' ').trim().slice(0, 480) : '';
+    if(!summary) return '';
+    return summary;
+  }catch(_){ return ''; }
+}
 async function sendCompassMessage(){
   const input = $('compassInput');
   const text = input.value.trim();
@@ -576,7 +648,7 @@ async function sendCompassMessage(){
   compassMessages.push(thinkingMsg);
   renderCompassMessages();
   let facts = '';
-  try{ facts = await compassFacts(text); }catch(_){}
+  try{ facts = await compassPersonAnswer(text); }catch(_){}
   if(facts){
     compassMessages = compassMessages.filter(m => m !== thinkingMsg);
     compassMessages.push({ from:'compass', text: facts, ts: Date.now() });
@@ -595,14 +667,16 @@ async function sendCompassMessage(){
     }catch(_){}
     const messages = recentHistory.slice();
     let weatherHint = '';
+    let worldNote = '';
     try{
       if(typeof weatherSystemHint === 'function') weatherHint = await weatherSystemHint();
       else if(typeof formatWeatherReply === 'function') weatherHint = await formatWeatherReply(text);
     }catch(_){}
+    try{ worldNote = await compassWorldNote(text); }catch(_){}
     // Ground the model: this thread is remembered; use weather/find hints; give reasoned guesses.
     messages.unshift({
       role: 'system',
-      content: 'You are Compass inside Naluno. You DO remember this conversation — the last turns are in the message list. Never claim you have no memory of this chat. When the user asks about weather or rain tonight, use the live weather data below and give a clear estimated answer (low/moderate/high chance with a percent when available). Prefer short, useful replies. Never send the user to another app.',
+      content: 'You are Compass inside Naluno. You remember this conversation. Words such as again, that, they, and him refer to what was just said. They are not part of a name. Answer in a few plain sentences. Do not dump headings or a list of links. If a note is included below, use it, and do not say you have no access to the world. Never invent a book, a post, or a Known mark that is not in the notes.',
     });
     if(findHint){
       messages.unshift({
@@ -614,6 +688,12 @@ async function sendCompassMessage(){
       messages.unshift({
         role: 'system',
         content: 'Live weather + short forecast (Open-Meteo, free). Use this for any rain/tonight/tomorrow question. Never say you only have current conditions. Data: ' + weatherHint,
+      });
+    }
+    if(worldNote){
+      messages.unshift({
+        role: 'system',
+        content: 'A public note you may use, in your own sentences. Do not pretend you have no access to it. Do not paste a list of links.\n' + worldNote,
       });
     }
     const res = await fetch(COMPASS_WORKER_URL, {
@@ -637,10 +717,12 @@ async function sendCompassMessage(){
       renderCompassMessages();
       return;
     }
-    compassMessages.push({ from:'compass', text: data.reply, ts: Date.now() });
+    let reply = data.reply;
+    if(worldNote && compassReplyWeak(reply)) reply = worldNote;
+    compassMessages.push({ from:'compass', text: reply, ts: Date.now() });
     renderCompassMessages();
     fbDb.collection('users').doc(currentUser.uid).collection('compassMessages').add({
-      from:'compass', text: data.reply, ts: firebase.firestore.FieldValue.serverTimestamp(),
+      from:'compass', text: reply, ts: firebase.firestore.FieldValue.serverTimestamp(),
     }).catch(()=>{});
   }catch(e){
     compassMessages = compassMessages.filter(m => m !== thinkingMsg);
