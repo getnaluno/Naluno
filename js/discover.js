@@ -209,7 +209,7 @@
       if (type === 'comment_react') f.commentReacts = (Number(f.commentReacts) || 0) + 1;
       FEATURES[id] = f;
     }
-    if (type === 'not_interested' || type === 'hide_creator' || type === 'hide_topic' || type === 'reset') {
+    if (type === 'open' || type === 'not_interested' || type === 'hide_creator' || type === 'hide_topic' || type === 'reset' || type === 'like' || type === 'dislike' || type === 'more' || type === 'less') {
       try { if (typeof renderBroadcastTab === 'function') renderBroadcastTab(); } catch (_) {}
     }
   }
@@ -347,6 +347,11 @@
       whyBtn._nalunoDiscover = 1;
       whyBtn.onclick = function (e) {
         if (e) { e.preventDefault(); e.stopPropagation(); }
+        const why = whyForPlaying();
+        if (typeof bspaceShowAction === 'function') {
+          bspaceShowAction('Why this', '<p class="hint" style="margin:8px 0 0;">' + String(why || '').replace(/[&<>]/g, function(c){ return ({'&':'&','<':'<','>':'>'}[c]); }) + '</p>');
+          return;
+        }
         const menu = document.getElementById('bspaceMoreMenu');
         if (menu) menu.hidden = true;
         open();
@@ -399,5 +404,5 @@
     };
   }
 
-  window.NalunoDiscover = { order: order, note: note, open: open, close: close, profile: function () { return profile; } };
+  window.NalunoDiscover = { order: order, note: note, open: open, close: close, whyNow: whyForPlaying, profile: function () { return profile; } };
 })();

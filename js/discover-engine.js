@@ -466,6 +466,7 @@
       topics.forEach(function (t) { bump(v.topics, t, n); });
       if (uid) bump(v.creators, uid, n);
     }
+    if (type === 'open') lift(0.8);
     if (type === 'watch_50_percent' || type === 'watch_75_percent' || type === 'watch_90_percent' || type === 'watch_completed') lift(1);
     if (type === 'save' || type === 'share' || type === 'returned_later') lift(1.5);
     if (type === 'meaningful_comment' || type === 'question' || type === 'answer') lift(1.2);

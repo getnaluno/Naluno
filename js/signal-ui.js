@@ -1147,22 +1147,25 @@ function signalPlaySrc(seg){
 /* Paint the social row for the segment on screen: reactions for someone
    else's Signal, "Seen by" for your own, and the Broadcast button when the
    Signal was made from one. Called each time a segment is shown. */
+let signalPaintGen = 0;
+let signalViewersWarm = null;
 async function signalPaintSocial(ownerUid, seg){
   const row = document.getElementById('bviewerSocial');
   const S = window.NalunoSignalSocial;
   if(!row || !S || !seg) return;
-  /* The Firestore document id, not a field that happened to be named id.
-     A missing id is why a view or a reaction had nowhere to land. */
+  const gen = ++signalPaintGen;
   const segId = String(seg.id || seg.segmentId || seg.docId || '');
   const mine = !!(currentUser && ownerUid === currentUser.uid);
   row.innerHTML = S.linkedBroadcastHtml(seg);
   if(!segId){ S.wireLinkedBroadcast(row); return; }
   try{ if(typeof S.watchSegment === 'function') S.watchSegment(ownerUid, segId); }catch(_){}
+  const viewersP = (mine && signalViewersWarm && signalViewersWarm.id === segId)
+    ? signalViewersWarm.p
+    : (mine && typeof S.viewersOf === 'function' ? S.viewersOf(segId) : null);
+  if(mine && !signalViewersWarm) signalViewersWarm = { id: segId, p: viewersP };
   if(mine){
     const btn = document.createElement('button');
     btn.type = 'button'; btn.className = 'sig-seen'; btn.textContent = 'Seen by';
-    /* pointerdown, not click: a story tap-zone and the 300ms click delay
-       both made this feel dead. The sheet opens in this same turn. */
     const open = function(e){
       if(e){ e.preventDefault(); e.stopPropagation(); }
       S.openViewers(segId);
@@ -1171,7 +1174,8 @@ async function signalPaintSocial(ownerUid, seg){
     btn.onclick = open;
     row.appendChild(btn);
     try{
-      const rows = await S.viewersOf(segId);
+      const rows = viewersP ? await viewersP : [];
+      if(gen !== signalPaintGen) return;
       btn.textContent = rows.length ? ('Seen by ' + rows.length) : 'Seen by';
       const sum = S.summarise(rows);
       if(sum.length) btn.textContent += '  ' + sum.map(function(x){ return x.emoji + x.n; }).join(' ');
@@ -1222,11 +1226,13 @@ async function signalPaintSocial(ownerUid, seg){
     try{
       if(typeof S.myReaction === 'function'){
         const mineReact = await S.myReaction(ownerUid, segId);
+        if(gen !== signalPaintGen) return;
         if(mineReact) paintOn(mineReact);
       }
       if(typeof S.reactionCounts === 'function'){
         const counts = await S.reactionCounts(ownerUid, segId);
-        if(counts && counts.length){
+        if(gen !== signalPaintGen) return;
+        if(counts && counts.length && !row.querySelector('.sig-react-sum')){
           const chip = document.createElement('div');
           chip.className = 'sig-react-sum';
           chip.textContent = counts.map(function(x){ return x.emoji + x.n; }).join('  ');
@@ -1853,6 +1859,10 @@ function openMySignalStory(){
   try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
   if(typeof renderBars === 'function') renderBars(currentSegments.length);
   currentSegments.forEach(function(seg){ signalPlaySrc(seg); });
+  const firstMine = currentSegments[0];
+  if(firstMine && window.NalunoSignalSocial && typeof NalunoSignalSocial.viewersOf === 'function'){
+    signalViewersWarm = { id: String(firstMine.id || ''), p: NalunoSignalSocial.viewersOf(firstMine.id) };
+  }
   signalRememberView('me', currentSegments);
   if(typeof playSegment === 'function') playSegment(0);
   mySignalSeen = true;
@@ -1864,34 +1874,43 @@ async function openContactSignalStory(contactId){
   viewingMine = false;
   const entry = (connectionsSignals||[]).find(x => x.contact && x.contact.id === contactId);
   if(!entry){ toast('No Signal'); return; }
-  // Load full signal list for contact
-  let segments = [entry.latest];
-  if(fbDb && entry.contact.firebaseUid){
-    try{
-      const snap = await fbDb.collection('users').doc(entry.contact.firebaseUid).collection('signal').orderBy('createdAt','asc').get();
-      segments = sortSignalSegments(snap.docs.map(function(d){ return (typeof signalRowFromDoc === 'function') ? signalRowFromDoc(d) : ({ id:d.id, ...d.data() }); }).filter(s => Date.now() < s.expiresAt && !s.held && !s.hidden));
-    }catch(_){}
-  }
-  if(!segments.length){
-    const cached = nalunoCacheRead('signalView:' + (entry.contact.firebaseUid || contactId));
-    // The cache may predate a hold, so it gets the same rule.
-    if(cached && cached.length) segments = cached.filter(function(x){ return x && !x.held && !x.hidden; });
-  }
+  let segments = entry.latest ? [entry.latest] : [];
+  const cached = nalunoCacheRead('signalView:' + (entry.contact.firebaseUid || contactId));
+  if(cached && cached.length) segments = cached.filter(function(x){ return x && !x.held && !x.hidden; });
   if(!segments.length){ toast('Signal expired'); return; }
-  currentSegments = segments;
-  currentSegments.forEach(function(seg){ signalPlaySrc(seg); });
-  currentStoryOwnerUid = entry.contact.firebaseUid || '';
-  signalRememberView(entry.contact.firebaseUid || contactId, currentSegments);
-  currentSegmentIndex = 0;
-  $('bviewerName').textContent = entry.contact.name || 'Signal';
-  if(typeof applyContactAvatarToEl === 'function') applyContactAvatarToEl($('bviewerAvatar'), entry.contact);
-  else {
-    $('bviewerAvatar').textContent = entry.contact.initials || '?';
-    $('bviewerAvatar').style.background = entry.contact.color || '#7CFFB2';
+  function show(list){
+    currentSegments = list;
+    currentSegments.forEach(function(seg){ signalPlaySrc(seg); });
+    currentStoryOwnerUid = entry.contact.firebaseUid || '';
+    signalRememberView(entry.contact.firebaseUid || contactId, currentSegments);
+    currentSegmentIndex = 0;
+    $('bviewerName').textContent = entry.contact.name || 'Signal';
+    if(typeof applyContactAvatarToEl === 'function') applyContactAvatarToEl($('bviewerAvatar'), entry.contact);
+    else {
+      $('bviewerAvatar').textContent = entry.contact.initials || '?';
+      $('bviewerAvatar').style.background = entry.contact.color || '#7CFFB2';
+    }
+    if(!$('bviewer').classList.contains('active')){
+      $('bviewer').classList.add('active');
+      try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
+    }
+    if(typeof renderBars === 'function') renderBars(currentSegments.length);
+    playSegment(0);
   }
-  $('bviewer').classList.add('active');
-  try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
-  playSegment(0);
+  show(segments);
+  if(fbDb && entry.contact.firebaseUid){
+    const owner = entry.contact.firebaseUid;
+    fbDb.collection('users').doc(owner).collection('signal').orderBy('createdAt','asc').get().then(function(snap){
+      if(currentStoryOwnerUid !== owner) return;
+      const full = sortSignalSegments(snap.docs.map(function(d){
+        return (typeof signalRowFromDoc === 'function') ? signalRowFromDoc(d) : ({ id:d.id, ...d.data() });
+      }).filter(function(s){ return Date.now() < s.expiresAt && !s.held && !s.hidden; }));
+      if(!full.length || full.length === currentSegments.length) return;
+      currentSegments = full;
+      signalRememberView(owner, full);
+      if(typeof renderBars === 'function') renderBars(full.length);
+    }).catch(function(){});
+  }
 }
 
 // Keep legacy names pointing at Signal story for any old callers

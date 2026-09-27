@@ -28,6 +28,12 @@ function bcompClearCover(){
   if(clr) clr.style.display = 'none';
   const input = $('bcompCoverInput');
   if(input) input.value = '';
+  const wimg = $('bwriteCoverPreview');
+  if(wimg){ wimg.removeAttribute('src'); wimg.style.display = 'none'; }
+  const wclr = $('bwriteCoverClear');
+  if(wclr) wclr.style.display = 'none';
+  const winput = $('bwriteCover');
+  if(winput) winput.value = '';
 }
 let bcompPublishing = false;
 
@@ -783,7 +789,67 @@ if(document.readyState === 'loading'){
 if($('bcompWriteBtn')){
   $('bcompWriteBtn').onclick = function(e){
     if(e){ e.preventDefault(); e.stopPropagation(); }
+    openWriteEntry();
+  };
+}
+function openWriteEntry(){
+  const box = $('bwriteSetup');
+  if(!box){ bcompStartWriting(); return; }
+  box.classList.add('active');
+  try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
+  const body = $('bwriteBody');
+  if(body){ try{ body.focus(); }catch(_){} }
+}
+function closeWriteEntry(){
+  const box = $('bwriteSetup');
+  if(box) box.classList.remove('active');
+  try{ if(window.nalunoBack) window.nalunoBack.drop('bwriteSetup'); }catch(_){}
+}
+if($('bwriteSetupClose')) $('bwriteSetupClose').onclick = closeWriteEntry;
+if($('broadcastWriteBtn')) $('broadcastWriteBtn').onclick = function(){ openWriteEntry(); };
+function bwriteTakePhoto(file){
+  if(!file) return false;
+  const image = (file.type || '').indexOf('image/') === 0 || /\.(jpe?g|png|webp|gif)$/i.test(file.name || '');
+  if(!image) return false;
+  bcompClearCover();
+  bcompCoverFile = file;
+  try{ bcompCoverUrl = URL.createObjectURL(file); }catch(_){ bcompCoverUrl = ''; }
+  const img = $('bwriteCoverPreview');
+  if(img && bcompCoverUrl){ img.src = bcompCoverUrl; img.style.display = 'block'; }
+  const clr = $('bwriteCoverClear');
+  if(clr) clr.style.display = 'inline';
+  return true;
+}
+if($('bwriteCover')){
+  $('bwriteCover').onchange = function(){
+    const file = $('bwriteCover').files && $('bwriteCover').files[0];
+    if(!file) return;
+    if(!bwriteTakePhoto(file)) toast('Choose a photo');
+  };
+}
+if($('bwriteCoverClear')) $('bwriteCoverClear').onclick = function(){ bcompClearCover(); };
+if($('bwritePublish')){
+  $('bwritePublish').onclick = function(){
+    const title = (($('bwriteTitle') && $('bwriteTitle').value) || '').trim();
+    const text = (($('bwriteBody') && $('bwriteBody').value) || '').trim();
+    const tags = (($('bwriteTags') && $('bwriteTags').value) || '').trim();
+    if(!title){ toast('Add a title'); return; }
+    if(!text){ toast('Write the piece first'); return; }
     bcompStartWriting();
+    const host = $('bcompChapters');
+    const block = host && host.querySelector('.bcomp-chapter');
+    if(block){
+      const inputs = block.querySelectorAll('input, textarea');
+      if(inputs[0]) inputs[0].value = title;
+      if(inputs[1]) inputs[1].value = text;
+    }
+    if($('bcompTitle')) $('bcompTitle').value = title;
+    if($('bcompTags')) $('bcompTags').value = tags;
+    if($('bcompDesc')) $('bcompDesc').value = '';
+    const composer = $('bcomposer');
+    if(composer) composer.classList.remove('active');
+    closeWriteEntry();
+    bcompPublish();
   };
 }
 if($('bcompCoverInput')){

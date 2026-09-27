@@ -582,31 +582,159 @@ async function compassPersonAnswer(text){
 }
 
 function compassReplyWeak(reply){
-  return /i don't have access|i do not have access|only provide information|based on what we|no information about|don't have any more information/i.test(String(reply || ''));
+  return /i don't have access|i do not have access|only provide information|based on what we|no information about|don't have any more information|don't have the capability|do not have the capability|cannot share links|can't share links|not able to|i'm unable|i am unable|as an ai|language model|i can try searching|i cannot|i can't browse|no browsing/i.test(String(reply || ''));
 }
-async function compassWorldNote(text){
-  if(!/\b(who|what|where|when|why|how|which)\b/i.test(text)) return '';
+function compassShouldLook(text){
+  const t = String(text || '').trim();
+  if(t.length < 2) return false;
+  if(/^(hi|hey|hello|thanks|thank you|ok|okay|yes|no|cool|great)\b/i.test(t) && t.length < 28) return false;
+  return true;
+}
+function compassWantsSource(text){
+  const t = String(text || '');
+  if(/\b(link|links|url|source|buy|book|books|available|website|page)\b/i.test(t)) return true;
+  if(/\bwhere\b/i.test(t)) return true;
+  if(/\b(who is|who's|what is|what's)\b/i.test(t)) return true;
+  return false;
+}
+function compassStripForeign(reply, allowed){
+  const set = {};
+  (allowed || []).forEach(function(u){ if(u) set[String(u)] = 1; });
+  return String(reply || '')
+    .replace(/\b(?:javascript|data):[^\s)]+/gi, '')
+    .replace(/https?:\/\/[^\s)]+/g, function(raw){
+      const u = raw.replace(/[.,;:!?]+$/, '');
+      return set[u] ? raw : '';
+    })
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+function compassFromBrief(text, brief){
+  const bits = [];
+  if(brief && brief.personLine) bits.push(brief.personLine);
+  if(brief && brief.wiki) bits.push(brief.wiki);
+  (brief && brief.snippets || []).forEach(function(s){
+    if(s && bits.join(' ').indexOf(String(s).slice(0, 48)) < 0) bits.push(s);
+  });
+  let line = bits.filter(Boolean).slice(0, 3).join(' ');
+  if(!line) return '';
+  const links = (brief && brief.links || []).slice(0, 2);
+  if(links.length && compassWantsSource(text)){
+    line += '\n\n' + links.map(function(h){ return (h.title ? h.title + '\n' : '') + h.url; }).join('\n\n');
+  }
+  return line;
+}
+function compassFinishReply(text, reply, brief){
+  const allowed = [];
+  (brief && brief.links || []).forEach(function(h){ if(h && h.url) allowed.push(h.url); });
+  if(brief && brief.wikiUrl) allowed.push(brief.wikiUrl);
+  let out = compassStripForeign(reply, allowed);
+  if(!out || compassReplyWeak(out)){
+    const grounded = compassFromBrief(text, brief);
+    if(grounded) return grounded;
+    return out;
+  }
+  if(compassWantsSource(text) && !/https?:\/\//.test(out)){
+    const links = (brief && brief.links || []).slice(0, 2);
+    if(links.length){
+      out += '\n\n' + links.map(function(h){ return (h.title ? h.title + '\n' : '') + h.url; }).join('\n\n');
+    }
+  }
+  return out;
+}
+function compassRememberedName(){
+  if(typeof compassTopic !== 'undefined' && compassTopic) return compassTopic;
+  const prev = (typeof compassMessages !== 'undefined' ? compassMessages : []).slice().reverse();
+  for(let i = 0; i < prev.length; i++){
+    if(!prev[i] || prev[i].from !== 'user') continue;
+    const n = compassAskedName(prev[i].text);
+    if(n && compassNameKey(n).length >= 4) return n;
+  }
+  return '';
+}
+async function compassGather(text){
+  const brief = { personLine: '', wiki: '', wikiUrl: '', snippets: [], links: [] };
+  if(!compassShouldLook(text)) return brief;
+  const turn = compassTurn(text);
+  const q = (turn && turn.subject) || compassRememberedName() || String(text || '').slice(0, 120);
+  const jobs = [];
+  if(turn && turn.aboutPerson && turn.subject){
+    jobs.push(compassKnownHit(turn.subject).then(function(hit){
+      if(!hit) return;
+      const who = hit.name || turn.subject;
+      const note = hit.note ? String(hit.note).trim() : '';
+      brief.personLine = who + (note ? '. ' + note : ' is Known on Naluno.');
+    }).catch(function(){}));
+    jobs.push(compassPublicHits(turn.subject).then(function(hits){
+      const line = compassWorldLine(turn.subject, hits || []);
+      if(line) brief.snippets.unshift(line);
+      (hits || []).forEach(function(h){
+        if(!h || !h.url || !/^https:\/\//.test(h.url)) return;
+        if(brief.links.length < 4) brief.links.push({ title: h.title || '', url: h.url });
+        if(h.snippet && brief.snippets.length < 4) brief.snippets.push(String(h.snippet).replace(/\s+/g, ' ').trim());
+      });
+    }).catch(function(){}));
+  }
+  jobs.push(compassWiki(text).then(function(page){
+    if(!page) return;
+    brief.wiki = page.summary || '';
+    brief.wikiUrl = page.url || '';
+    if(page.url && brief.links.length < 4) brief.links.push({ title: page.title || 'Wikipedia', url: page.url });
+  }).catch(function(){}));
+  if(!(turn && turn.aboutPerson)){
+    jobs.push(compassPublicHits(q).then(function(hits){
+      (hits || []).forEach(function(h){
+        if(!h || !h.url || !/^https:\/\//.test(h.url)) return;
+        if(brief.links.some(function(x){ return x.url === h.url; })) return;
+        if(brief.links.length < 4) brief.links.push({ title: h.title || '', url: h.url });
+        if(h.snippet && brief.snippets.length < 4) brief.snippets.push(String(h.snippet).replace(/\s+/g, ' ').trim());
+      });
+    }).catch(function(){}));
+  }
+  await Promise.all(jobs);
+  return brief;
+}
+function compassBriefText(brief){
+  const parts = [];
+  if(brief && brief.personLine) parts.push(brief.personLine);
+  if(brief && brief.wiki) parts.push(brief.wiki);
+  (brief && brief.snippets || []).slice(0, 3).forEach(function(s){ if(s) parts.push(s); });
+  (brief && brief.links || []).slice(0, 3).forEach(function(h){
+    parts.push((h.title ? h.title + ' — ' : '') + h.url);
+  });
+  return parts.join('\n');
+}
+async function compassWiki(text){
   const q = String(text || '')
     .replace(/\b(who|what|where|when|why|how|which|is|are|was|were|the|a|an|of|about|please|again|tell|me|do|you|know|can|could|naluno)\b/ig, ' ')
     .replace(/[?.!]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  if(q.length < 3) return '';
+  if(q.length < 3) return null;
   try{
     const res = await fetch('https://en.wikipedia.org/w/api.php?origin=*&action=query&list=search&srsearch='
       + encodeURIComponent(q) + '&utf8=&format=json&srlimit=1');
     const data = await res.json();
     const hit = data && data.query && data.query.search && data.query.search[0];
-    if(!hit || !hit.title) return '';
+    if(!hit || !hit.title) return null;
     const er = await fetch('https://en.wikipedia.org/w/api.php?origin=*&action=query&prop=extracts&exintro=1&explaintext=1&titles='
       + encodeURIComponent(hit.title) + '&format=json');
     const ed = await er.json();
     const bag = ed && ed.query && ed.query.pages;
     const page = bag && bag[Object.keys(bag)[0]];
     const summary = page && page.extract ? String(page.extract).replace(/\s+/g, ' ').trim().slice(0, 480) : '';
-    if(!summary) return '';
-    return summary;
-  }catch(_){ return ''; }
+    if(!summary) return null;
+    return {
+      title: hit.title,
+      summary: summary,
+      url: 'https://en.wikipedia.org/wiki/' + encodeURIComponent(String(hit.title).replace(/ /g, '_')),
+    };
+  }catch(_){ return null; }
+}
+async function compassWorldNote(text){
+  const page = await compassWiki(text);
+  return page && page.summary ? page.summary : '';
 }
 async function sendCompassMessage(){
   const input = $('compassInput');
@@ -682,17 +810,9 @@ async function sendCompassMessage(){
   const thinkingMsg = { from:'compass', text: '\u2026', ts: Date.now(), thinking:true };
   compassMessages.push(thinkingMsg);
   renderCompassMessages();
-  let facts = '';
-  try{ facts = await compassPersonAnswer(text); }catch(_){}
-  if(facts){
-    compassMessages = compassMessages.filter(m => m !== thinkingMsg);
-    compassMessages.push({ from:'compass', text: facts, ts: Date.now() });
-    renderCompassMessages();
-    fbDb.collection('users').doc(currentUser.uid).collection('compassMessages').add({
-      from:'compass', text: facts, ts: firebase.firestore.FieldValue.serverTimestamp(),
-    }).catch(function(){});
-    return;
-  }
+  let brief = { personLine: '', wiki: '', wikiUrl: '', snippets: [], links: [] };
+  try{ brief = await compassGather(text); }catch(_){}
+  const facts = compassBriefText(brief);
 
   try{
     const idToken = await currentUser.getIdToken();
@@ -702,16 +822,13 @@ async function sendCompassMessage(){
     }catch(_){}
     const messages = recentHistory.slice();
     let weatherHint = '';
-    let worldNote = '';
     try{
       if(typeof weatherSystemHint === 'function') weatherHint = await weatherSystemHint();
       else if(typeof formatWeatherReply === 'function') weatherHint = await formatWeatherReply(text);
     }catch(_){}
-    try{ worldNote = await compassWorldNote(text); }catch(_){}
-    // Ground the model: this thread is remembered; use weather/find hints; give reasoned guesses.
     messages.unshift({
       role: 'system',
-      content: 'You are Compass inside Naluno. You remember this conversation. Words such as again, that, they, and him refer to what was just said. They are not part of a name. Answer in a few plain sentences. Do not dump headings or a list of links. If a note is included below, use it, and do not say you have no access to the world. Never invent a book, a post, or a Known mark that is not in the notes.',
+      content: 'You are Compass inside Naluno. Answer any question as well as you can, in a few plain sentences. Use the notes when they are present. Include a link only when it helps, and only if that exact link is in the notes. Never invent a URL. Never say you cannot search, cannot share a link, or lack a capability. Words such as again, that, they, and him refer to what was just said.',
     });
     if(findHint){
       messages.unshift({
@@ -725,10 +842,10 @@ async function sendCompassMessage(){
         content: 'Live weather + short forecast (Open-Meteo, free). Use this for any rain/tonight/tomorrow question. Never say you only have current conditions. Data: ' + weatherHint,
       });
     }
-    if(worldNote){
+    if(facts){
       messages.unshift({
         role: 'system',
-        content: 'A public note you may use, in your own sentences. Do not pretend you have no access to it. Do not paste a list of links.\n' + worldNote,
+        content: 'Notes you may use. A link below is real. Do not add any other link.\n' + facts,
       });
     }
     const res = await fetch(COMPASS_WORKER_URL, {
@@ -739,11 +856,12 @@ async function sendCompassMessage(){
     const data = await res.json();
     compassMessages = compassMessages.filter(m => m !== thinkingMsg);
     if(!res.ok || !data.reply){
-      if(facts){
-        compassMessages.push({ from:'compass', text: facts, ts: Date.now() });
+      const grounded = compassFromBrief(text, brief);
+      if(grounded){
+        compassMessages.push({ from:'compass', text: grounded, ts: Date.now() });
         renderCompassMessages();
         fbDb.collection('users').doc(currentUser.uid).collection('compassMessages').add({
-          from:'compass', text: facts, ts: firebase.firestore.FieldValue.serverTimestamp(),
+          from:'compass', text: grounded, ts: firebase.firestore.FieldValue.serverTimestamp(),
         }).catch(function(){});
         return;
       }
@@ -752,8 +870,7 @@ async function sendCompassMessage(){
       renderCompassMessages();
       return;
     }
-    let reply = data.reply;
-    if(worldNote && compassReplyWeak(reply)) reply = worldNote;
+    const reply = compassFinishReply(text, data.reply, brief);
     compassMessages.push({ from:'compass', text: reply, ts: Date.now() });
     renderCompassMessages();
     fbDb.collection('users').doc(currentUser.uid).collection('compassMessages').add({
@@ -762,8 +879,9 @@ async function sendCompassMessage(){
   }catch(e){
     compassMessages = compassMessages.filter(m => m !== thinkingMsg);
     renderCompassMessages();
-    if(facts){
-      compassMessages.push({ from:'compass', text: facts, ts: Date.now() });
+    const grounded = compassFromBrief(text, brief);
+    if(grounded){
+      compassMessages.push({ from:'compass', text: grounded, ts: Date.now() });
       renderCompassMessages();
       return;
     }

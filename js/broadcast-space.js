@@ -525,6 +525,7 @@ function renderBspaceMedia(seg){
     }catch(e){ console.warn('[bspace] seek dock', e); }
     if(!canReuse){
       try{ wireBspaceSeekAndAutoplay(vel); }catch(e){ console.warn('[bspace] seek wire', e); }
+      try{ bspaceWarmNext(activeBroadcastId); }catch(_){}
     }
     if(seg.thumbDataUrl && typeof nalunoProbePosterAR === 'function') nalunoProbePosterAR(seg.thumbDataUrl);
     if(vel && !canReuse){
@@ -1368,7 +1369,15 @@ function renderBspaceRelated(){
       </button>`;
     }).join('') + '</div>';
     el.querySelectorAll('[data-rel-id]').forEach(function(node){
+      let sx = 0, sy = 0, moved = false;
+      node.addEventListener('pointerdown', function(e){
+        sx = e.clientX; sy = e.clientY; moved = false;
+      });
+      node.addEventListener('pointermove', function(e){
+        if(Math.abs(e.clientX - sx) > 14 || Math.abs(e.clientY - sy) > 14) moved = true;
+      });
       node.onclick = function(){
+        if(moved) return;
         const id = node.getAttribute('data-rel-id');
         if(typeof openBroadcastById === 'function') openBroadcastById(id);
       };
@@ -1425,30 +1434,30 @@ function scheduleBspaceLivePaint(){
 }
 
 async function openBroadcastSpace(meta){
-  // Carry chapter architecture for player + future ads
   if(meta.chapters) meta.chapters = meta.chapters;
   if(meta.breathers) meta.breathers = meta.breathers;
-
-  // meta: { isMine, contactId?, segment, creatorUid, creatorName, title?, description?, tags? }
-  if(meta && meta.broadcastId && typeof fbDb !== 'undefined' && fbDb){
-    try{
-      const snap = await fbDb.collection('broadcasts').doc(meta.broadcastId).get();
-      if(snap.exists){
-        const data = snap.data() || {};
-        const uid = (typeof currentUser !== 'undefined' && currentUser) ? currentUser.uid : '';
-        if(typeof broadcastVisibleTo === 'function' && !broadcastVisibleTo(data, uid)){
-          toast('This Broadcast isn’t available.');
-          return;
-        }
-        meta.held = !!data.held;
-        meta.hidden = !!data.hidden;
-      }
-    }catch(_){}
-  }
-
-  // meta: { isMine, contactId?, segment, creatorUid, creatorName, title?, description?, tags? }
   activeBroadcastMeta = meta;
   if(meta.broadcastId) activeBroadcastId = meta.broadcastId;
+  if(meta && meta.broadcastId && typeof fbDb !== 'undefined' && fbDb){
+    fbDb.collection('broadcasts').doc(meta.broadcastId).get().then(function(snap){
+      if(!snap || !snap.exists) return;
+      if(activeBroadcastId !== meta.broadcastId) return;
+      const data = snap.data() || {};
+      const uid = (typeof currentUser !== 'undefined' && currentUser) ? currentUser.uid : '';
+      if(typeof broadcastVisibleTo === 'function' && !broadcastVisibleTo(data, uid)){
+        toast('This Broadcast isn’t available.');
+        if(typeof closeBroadcastSpace === 'function') closeBroadcastSpace();
+        return;
+      }
+      meta.held = !!data.held;
+      meta.hidden = !!data.hidden;
+    }).catch(function(){});
+  }
+  try{
+    if(window.NalunoDiscover && typeof NalunoDiscover.note === 'function' && meta.broadcastId){
+      NalunoDiscover.note('open', meta.broadcastId);
+    }
+  }catch(_){}
   if(!activeBroadcastMeta.chapters && meta.segment && meta.segment.chapters){
     activeBroadcastMeta.chapters = meta.segment.chapters;
   }
@@ -1853,6 +1862,8 @@ if($('bspaceKnownBtn')){
     const menu = $('bspaceMoreMenu');
     if(menu) menu.hidden = false;
     if(home) home.hidden = true;
+    const action = $('bspaceActionCard');
+    if(action) action.hidden = true;
     if(card) card.hidden = false;
     if(window.NalunoKnown && typeof NalunoKnown.openInto === 'function') NalunoKnown.openInto(host);
   };
@@ -1860,10 +1871,13 @@ if($('bspaceKnownBtn')){
 if($('bspaceKnownBack')){
   $('bspaceKnownBack').onclick = function(e){
     if(e){ e.preventDefault(); e.stopPropagation(); }
-    const home = $('bspaceMenuHome');
-    const card = $('bspaceKnownCard');
-    if(card) card.hidden = true;
-    if(home) home.hidden = false;
+    bspaceBackMenu();
+  };
+}
+if($('bspaceActionBack')){
+  $('bspaceActionBack').onclick = function(e){
+    if(e){ e.preventDefault(); e.stopPropagation(); }
+    bspaceBackMenu();
   };
 }
 
@@ -2784,9 +2798,7 @@ if($('bspaceSaveOfflineBtn')){
 if($('bspaceShareSignalBtn')){
   $('bspaceShareSignalBtn').onclick = function(e){
     try{ e.stopPropagation(); }catch(_){}
-    if(!activeBroadcastId){ return; }
-    if(typeof openSignalLinkedTo === 'function') openSignalLinkedTo(activeBroadcastId);
-    else toast('Signals are not available right now');
+    bspaceOpenSignalPlate();
   };
 }
 async function bspacePassOn(){
@@ -2828,22 +2840,21 @@ function bspaceCloseSend(){
 }
 function bspaceOpenSend(){
   if(!activeBroadcastId) return;
-  const sheet = $('bspaceSendSheet');
-  const list = $('bspaceSendList');
-  if(!sheet || !list) return;
   const people = (typeof contacts !== 'undefined' && contacts ? contacts : []).filter(function(c){
     return c && c.isReal && c.firebaseUid && (!currentUser || c.firebaseUid !== currentUser.uid);
   });
   if(!people.length){
-    toast('Add someone in Wireline first');
+    bspaceShowAction('Send in Naluno', '<p class="hint">Add someone in Wireline first.</p>');
     return;
   }
-  list.innerHTML = people.map(function(c){
+  const body = bspaceShowAction('Send in Naluno', people.map(function(c){
     const name = c.name || c.number || 'Someone';
-    return '<button type="button" data-send-uid="' + bspaceEscape(c.firebaseUid) + '" style="display:block;width:100%;text-align:left;margin:0 0 8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:transparent;color:var(--text);font-size:14px;">' + bspaceEscape(name) + '</button>';
-  }).join('');
-  list.querySelectorAll('[data-send-uid]').forEach(function(btn){
-    btn.onclick = async function(){
+    return '<button type="button" data-send-uid="' + bspaceEscape(c.firebaseUid) + '" class="bspace-mini" style="display:block;width:100%;text-align:left;margin:0 0 8px;">' + bspaceEscape(name) + '</button>';
+  }).join(''));
+  if(!body) return;
+  body.querySelectorAll('[data-send-uid]').forEach(function(btn){
+    btn.onclick = async function(e){
+      if(e) e.stopPropagation();
       const uid = btn.getAttribute('data-send-uid');
       const person = people.find(function(c){ return c.firebaseUid === uid; });
       if(!person || typeof sendRealMessage !== 'function'){ toast('Could not send'); return; }
@@ -2853,22 +2864,77 @@ function bspaceOpenSend(){
         : ('https://getnaluno.com/app/?broadcast=' + encodeURIComponent(activeBroadcastId));
       try{
         await sendRealMessage(person, { type: 'text', text: title + '\n' + link }, title);
-        bspaceCloseSend();
+        bspaceBackMenu();
         toast('Sent in Naluno');
-      }catch(e){
-        toast((e && e.message) || 'Could not send');
+      }catch(err){
+        toast((err && err.message) || 'Could not send');
       }
     };
   });
-  sheet.hidden = false;
 }
-if($('bspacePassBtn')) $('bspacePassBtn').onclick = function(e){ try{ if(e) e.stopPropagation(); }catch(_){} bspacePassOn(); };
+function bspaceShotUrl(){
+  const v = $('bspaceVideoEl');
+  try{
+    if(v && v.videoWidth){
+      const c = document.createElement('canvas');
+      const w = 640, h = Math.max(360, Math.round(640 * v.videoHeight / v.videoWidth));
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(v, 0, 0, w, h);
+      return c.toDataURL('image/jpeg', 0.72);
+    }
+  }catch(_){}
+  const meta = activeBroadcastMeta || {};
+  const seg = meta.segment || {};
+  return meta.thumbUrl || seg.thumbUrl || seg.thumbDataUrl || seg.photoUrl || '';
+}
+function bspaceOpenSignalPlate(){
+  if(!activeBroadcastId) return;
+  const shot = bspaceShotUrl();
+  const img = shot ? ('<img alt="" src="' + bspaceEscape(shot) + '" style="width:100%;max-height:220px;object-fit:cover;border-radius:14px;margin:0 0 10px;background:#000;" />') : '';
+  const body = bspaceShowAction('To Signal', img
+    + '<textarea id="bspaceSignalCaption" maxlength="280" rows="3" placeholder="Caption" style="width:100%;margin:0 0 10px;padding:12px;border-radius:12px;border:1px solid var(--line);background:transparent;color:var(--text);font:inherit;"></textarea>'
+    + '<button type="button" class="bspace-mini primary" id="bspaceSignalSend">Send to Signal</button>');
+  const go = body && body.querySelector('#bspaceSignalSend');
+  if(!go) return;
+  go.onclick = async function(e){
+    if(e) e.stopPropagation();
+    if(typeof saveSignalSegment !== 'function'){ toast('Signals are not available right now'); return; }
+    const caption = ((body.querySelector('#bspaceSignalCaption') || {}).value || '').trim();
+    const now = Date.now();
+    try{
+      const id = await saveSignalSegment({
+        type: 'photo',
+        mediaType: 'photo',
+        photoUrl: shot || '',
+        thumbDataUrl: (shot && shot.indexOf('data:') === 0) ? shot : '',
+        caption: caption,
+        createdAt: now,
+        expiresAt: now + 24 * 60 * 60 * 1000,
+        linkedBroadcastId: activeBroadcastId,
+        groupId: 'bcast-' + activeBroadcastId + '-' + now,
+        order: 0,
+      });
+      if(!id){ toast('Could not send that Signal'); return; }
+      bspaceBackMenu();
+      toast('On your Signal');
+    }catch(err){
+      toast((err && err.message) || 'Could not send that Signal');
+    }
+  };
+}
+if($('bspacePassBtn')) $('bspacePassBtn').onclick = function(e){
+  try{ if(e) e.stopPropagation(); }catch(_){}
+  const body = bspaceShowAction('Pass on', '<p class="hint">This goes out as your Broadcast, with the original creator kept on it.</p><button type="button" class="bspace-mini primary" id="bspacePassGo">Pass it on</button>');
+  const go = body && body.querySelector('#bspacePassGo');
+  if(go) go.onclick = function(ev){ if(ev) ev.stopPropagation(); bspacePassOn(); bspaceBackMenu(); };
+};
 if($('bspaceSendBtn')) $('bspaceSendBtn').onclick = function(e){ try{ if(e) e.stopPropagation(); }catch(_){} bspaceOpenSend(); };
-if($('bspaceSendClose')) $('bspaceSendClose').onclick = function(){ bspaceCloseSend(); };
 if($('bspaceReportBtn')){
   $('bspaceReportBtn').onclick = function(e){
     if(e){ e.preventDefault(); e.stopPropagation(); }
-    bspaceOpenReport();
+    const body = bspaceShowAction('Report', '<p class="hint">Tell Naluno what is wrong with this Broadcast. You stay in the room.</p><button type="button" class="bspace-mini primary" id="bspaceReportGo">Open the report</button>');
+    const go = body && body.querySelector('#bspaceReportGo');
+    if(go) go.onclick = function(ev){ if(ev) ev.stopPropagation(); bspaceOpenReport(); };
   };
 }
 
@@ -3020,7 +3086,9 @@ if($('bspaceAdvertiseBtn')){
     btn.setAttribute('aria-expanded', 'false');
     const home = $('bspaceMenuHome');
     const card = $('bspaceKnownCard');
+    const action = $('bspaceActionCard');
     if(card) card.hidden = true;
+    if(action) action.hidden = true;
     if(home) home.hidden = false;
   }
   btn.onclick = function(e){
@@ -3032,7 +3100,7 @@ if($('bspaceAdvertiseBtn')){
     } else shut();
   };
   menu.addEventListener('click', function(e){
-    if(e.target && e.target.closest && (e.target.closest('#bspaceKnownCard') || e.target.closest('#bspaceKnownBtn'))) return;
+    if(e.target && e.target.closest && e.target.closest('#bspaceKnownCard, #bspaceActionCard, #bspaceMenuHome')) return;
     shut();
   });
   document.addEventListener('click', function(e){
@@ -3136,10 +3204,10 @@ function wireBspaceSeekAndAutoplay(v){
       });
     }
   };
-  if(v.readyState >= 2) tryPlay();
+  if(v.readyState >= 1) tryPlay();
   else v.addEventListener('loadeddata', tryPlay, { once: true });
-  // Second chance after src bind settles
-  setTimeout(tryPlay, 400);
+  v.addEventListener('loadedmetadata', tryPlay);
+  tryPlay();
   v.addEventListener('ended', function(){
     if(typeof nalunoResumeIfTruncated === 'function'){
       const recovered = nalunoResumeIfTruncated(v, function(){ syncPlayBtn(); });
@@ -3165,7 +3233,7 @@ function wireBspaceSeekAndAutoplay(v){
  *  a frozen last frame with nothing for the person to do. */
 function bspaceOnPlaybackEnded(){
   try{
-    if(bspaceOnPlaybackEnded._lock && (Date.now() - bspaceOnPlaybackEnded._lock) < 2800) return;
+    if(bspaceOnPlaybackEnded._lock && (Date.now() - bspaceOnPlaybackEnded._lock) < 700) return;
     bspaceOnPlaybackEnded._lock = Date.now();
   }catch(_){}
   try{ if(window.__bspaceNextTimer){ clearTimeout(window.__bspaceNextTimer); window.__bspaceNextTimer = null; } }catch(_){}
@@ -3179,14 +3247,11 @@ function bspaceOnPlaybackEnded(){
   }
   function scheduleOpen(id, label, delayMs){
     if(!id || id === curId) return false;
-    try{
-      toast((label || 'Next') + ' in a moment…');
-    }catch(_){}
     window.__bspaceNextTimer = setTimeout(function(){
       window.__bspaceNextTimer = null;
-      if(activeBroadcastId !== curId) return; // user navigated away
+      if(activeBroadcastId !== curId) return;
       if(typeof openBroadcastById === 'function') openBroadcastById(id);
-    }, delayMs || 4500);
+    }, delayMs == null ? 180 : delayMs);
     return true;
   }
   // 1) Next episode in this Strand, in upload order.
@@ -3218,7 +3283,7 @@ function bspaceOnPlaybackEnded(){
     // episode (or curId isn't found), there is no "next" — fall to nearby.
     if(idx < 0 || idx + 1 >= siblings.length) return false;
     const next = siblings[idx + 1];
-    return scheduleOpen(next.id, 'Next in ' + (meta.strandName || 'Strand') + ' · ' + (next.title || 'Broadcast'), 4500);
+    return scheduleOpen(next.id, '', 180);
   };
   // 2) Strand finished (or no Strand) → a nearby Broadcast from someone else.
   const tryNearby = function(){
@@ -3233,7 +3298,7 @@ function bspaceOnPlaybackEnded(){
       return (Number(b.createdAt)||0) - (Number(a.createdAt)||0);
     });
     const next = candidates[0];
-    return scheduleOpen(next.id, 'Up next · ' + (next.title || 'Broadcast'), 4500);
+    return scheduleOpen(next.id, '', 180);
   };
   const did = tryStrand();
   if(!did){
@@ -3804,6 +3869,50 @@ function adaptBspaceHeroToVideo(){
   }catch(_){}
 }
 
+function bspaceWarmNext(id){
+  try{
+    const pack = (typeof nalunoStrandSiblingsFor === 'function') ? nalunoStrandSiblingsFor(id) : null;
+    const next = pack && pack.items && pack.index >= 0 ? pack.items[pack.index + 1] : null;
+    const raw = next && (next.mediaUrl || next.videoUrl || (next.segment && (next.segment.videoUrl || next.segment.mediaUrl)));
+    if(!raw) return;
+    const url = (typeof resolveMediaUrl === 'function') ? (resolveMediaUrl(raw) || raw) : raw;
+    let el = document.getElementById('bspacePreload');
+    if(!el){
+      el = document.createElement('video');
+      el.id = 'bspacePreload';
+      el.preload = 'auto';
+      el.muted = true;
+      el.playsInline = true;
+      el.setAttribute('playsinline', '');
+      el.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;';
+      document.body.appendChild(el);
+    }
+    if(el.getAttribute('src') !== url) el.src = url;
+  }catch(_){}
+}
+function bspaceShowAction(title, html){
+  const menu = $('bspaceMoreMenu');
+  const home = $('bspaceMenuHome');
+  const known = $('bspaceKnownCard');
+  const card = $('bspaceActionCard');
+  if(menu) menu.hidden = false;
+  if(home) home.hidden = true;
+  if(known) known.hidden = true;
+  if(card) card.hidden = false;
+  const h = $('bspaceActionTitle');
+  const body = $('bspaceActionBody');
+  if(h) h.textContent = title || '';
+  if(body) body.innerHTML = html || '';
+  return body;
+}
+function bspaceBackMenu(){
+  const home = $('bspaceMenuHome');
+  const known = $('bspaceKnownCard');
+  const card = $('bspaceActionCard');
+  if(known) known.hidden = true;
+  if(card) card.hidden = true;
+  if(home) home.hidden = false;
+}
 function nalunoStrandSiblingsFor(id){
   const lists = [];
   try{ if(typeof feedBroadcasts !== 'undefined' && feedBroadcasts) lists.push(feedBroadcasts); }catch(_){}
