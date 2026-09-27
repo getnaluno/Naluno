@@ -556,7 +556,8 @@ service cloud.firestore {
     }
 
     match /knownApps/{uid} {
-      allow read: if isOwner(uid) || isOperator();
+      allow read: if isOwner(uid) || isOperator()
+        || (isSignedIn() && resource.data.status == 'known');
       allow create: if isOwner(uid)
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.status == 'applied'
