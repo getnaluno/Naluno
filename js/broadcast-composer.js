@@ -520,7 +520,9 @@ async function bcompPublish(){
       }
     }catch(_){}
     const stopped = !!(hold && typeof nalunoSafetyStopped === 'function' && nalunoSafetyStopped(hold));
-    screen = { decision: stopped ? 'block' : 'allow', engine: 'text', reason: hold && hold.decision || '' };
+    const photoDecision = (window._bwriteScreen && window._bwriteScreen.decision) || '';
+    const decision = (stopped || photoDecision === 'block') ? 'block' : (photoDecision === 'hold' ? 'hold' : 'allow');
+    screen = { decision: decision, engine: photoDecision && photoDecision !== 'allow' ? 'photo' : 'text', reason: hold && hold.decision || '' };
     window._bcompScreen = screen;
   }
   if(screen && screen.decision === 'block'){
@@ -633,7 +635,7 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
           durationSec: Math.max(30, Math.round(words / 3.3)),
           chapters: snapChapters,
           strandId: snapStrandId, strandName: snapStrandName,
-          origin: { status: 'clear', score: 0, hold: false, skipped: true },
+          origin: (snapOrigin && snapOrigin.status) ? snapOrigin : { status: 'unverified', rightsStatus: 'UNVERIFIED', score: 0, hold: false, skipped: !snapCover, hasAudio: false },
           originCredit: credit,
           screen: snapScreen || { decision: 'allow', engine: 'text' },
         });
@@ -807,34 +809,130 @@ function closeWriteEntry(){
 }
 if($('bwriteSetupClose')) $('bwriteSetupClose').onclick = closeWriteEntry;
 if($('broadcastWriteBtn')) $('broadcastWriteBtn').onclick = function(){ openWriteEntry(); };
+function bwriteFitPhoto(){
+  const img = $('bwriteCoverPreview');
+  if(!img || !bcompCoverUrl) return;
+  const probe = new Image();
+  probe.onload = function(){
+    const w = probe.naturalWidth || 1;
+    const h = probe.naturalHeight || 1;
+    img.style.display = 'block';
+    img.style.width = '100%';
+    img.style.height = 'auto';
+    img.style.objectFit = 'contain';
+    img.style.aspectRatio = w + ' / ' + h;
+    img.style.maxHeight = (h > w) ? '46vh' : '34vh';
+  };
+  probe.src = bcompCoverUrl;
+}
+function bwritePaintChecks(text){
+  const box = $('bwriteChecks');
+  if(!box) return;
+  box.style.display = text ? 'block' : 'none';
+  box.textContent = text || '';
+}
+function bwriteScanCover(file){
+  window._bwriteScanP = (async function(){
+    bwritePaintChecks('Origin and Screen are reading this photo.');
+    let origin = null;
+    let screen = null;
+    try{
+      if(typeof runOriginScan === 'function'){
+        origin = await runOriginScan(file, (($('bwriteTitle') && $('bwriteTitle').value) || ''), '', 0);
+      }
+    }catch(_){
+      origin = { status: 'unverified', rightsStatus: 'UNVERIFIED', score: 0, hold: false, failed: true, hasAudio: false };
+    }
+    try{
+      if(typeof runNalunoScreen === 'function') screen = await runNalunoScreen(file, (($('bwriteTitle') && $('bwriteTitle').value) || ''), 0);
+    }catch(_){}
+    window._bcompOrigin = origin || { status: 'unverified', rightsStatus: 'UNVERIFIED', score: 0, hold: false, hasAudio: false };
+    window._bcompOriginAck = false;
+    window._bcompRightsAck = false;
+    window._bwriteScreen = screen;
+    const held = origin && (origin.hold || origin.status === 'match' || origin.rightsStatus === 'RESTRICTED');
+    const row = $('bwriteOriginAckRow');
+    if(row) row.style.display = (origin && (origin.hold || origin.status === 'match') && origin.rightsStatus !== 'RESTRICTED') ? 'flex' : 'none';
+    bwritePaintChecks(screen && screen.decision === 'block'
+      ? 'Screen stopped this photo.'
+      : (origin && origin.rightsStatus === 'RESTRICTED'
+        ? 'This photo is restricted.'
+        : (held ? 'Origin held this photo. Confirm it below if it is yours.' : 'Photo checked. It keeps its own shape.')));
+  })();
+  return window._bwriteScanP;
+}
 function bwriteTakePhoto(file){
   if(!file) return false;
   const image = (file.type || '').indexOf('image/') === 0 || /\.(jpe?g|png|webp|gif)$/i.test(file.name || '');
   if(!image) return false;
+  const cap = (typeof PHOTO_MAX_BYTES === 'number') ? PHOTO_MAX_BYTES : (25 * 1024 * 1024);
+  if(file.size > cap) return false;
   bcompClearCover();
   bcompCoverFile = file;
   try{ bcompCoverUrl = URL.createObjectURL(file); }catch(_){ bcompCoverUrl = ''; }
   const img = $('bwriteCoverPreview');
   if(img && bcompCoverUrl){ img.src = bcompCoverUrl; img.style.display = 'block'; }
+  bwriteFitPhoto();
   const clr = $('bwriteCoverClear');
   if(clr) clr.style.display = 'inline';
+  bwriteScanCover(file);
   return true;
 }
 if($('bwriteCover')){
   $('bwriteCover').onchange = function(){
     const file = $('bwriteCover').files && $('bwriteCover').files[0];
     if(!file) return;
-    if(!bwriteTakePhoto(file)) toast('Choose a photo');
+    if(!bwriteTakePhoto(file)) toast('Choose a photo under 25 MB');
   };
 }
-if($('bwriteCoverClear')) $('bwriteCoverClear').onclick = function(){ bcompClearCover(); };
+if($('bwriteCoverClear')) $('bwriteCoverClear').onclick = function(){
+  bcompClearCover();
+  window._bwriteScreen = null;
+  window._bcompOrigin = null;
+  bwritePaintChecks('');
+};
+if($('bwriteLater')){
+  $('bwriteLater').onchange = function(){
+    const at = $('bwriteAt');
+    if(at) at.style.display = $('bwriteLater').checked ? 'block' : 'none';
+  };
+}
 if($('bwritePublish')){
-  $('bwritePublish').onclick = function(){
+  $('bwritePublish').onclick = async function(){
     const title = (($('bwriteTitle') && $('bwriteTitle').value) || '').trim();
     const text = (($('bwriteBody') && $('bwriteBody').value) || '').trim();
     const tags = (($('bwriteTags') && $('bwriteTags').value) || '').trim();
     if(!title){ toast('Add a title'); return; }
     if(!text){ toast('Write the piece first'); return; }
+    if(bcompCoverFile && window._bwriteScanP){
+      try{
+        await Promise.race([
+          window._bwriteScanP,
+          new Promise(function(ok){ setTimeout(ok, 8000); }),
+        ]);
+      }catch(_){}
+    }
+    if(window._bwriteScreen && window._bwriteScreen.decision === 'block'){
+      toast('This photo cannot go out.');
+      return;
+    }
+    const origin = window._bcompOrigin;
+    if(origin && origin.rightsStatus === 'RESTRICTED'){
+      toast('This photo is restricted.');
+      return;
+    }
+    const copied = origin && origin.matchCreatorUid && typeof currentUser !== 'undefined' && currentUser && origin.matchCreatorUid !== currentUser.uid;
+    const needsAck = origin && (origin.hold || origin.status === 'match') && !copied;
+    if(needsAck && !($('bwriteOriginAck') && $('bwriteOriginAck').checked)){
+      const row = $('bwriteOriginAckRow');
+      if(row) row.style.display = 'flex';
+      toast('Confirm the photo below if it is yours.');
+      return;
+    }
+    if($('bwriteOriginAck') && $('bwriteOriginAck').checked) window._bcompOriginAck = true;
+    if($('bcompPrivate')) $('bcompPrivate').checked = !!($('bwritePrivate') && $('bwritePrivate').checked);
+    if($('bcompSchedule')) $('bcompSchedule').checked = !!($('bwriteLater') && $('bwriteLater').checked);
+    if($('bcompPublishAt') && $('bwriteAt')) $('bcompPublishAt').value = $('bwriteAt').value || '';
     bcompStartWriting();
     const host = $('bcompChapters');
     const block = host && host.querySelector('.bcomp-chapter');

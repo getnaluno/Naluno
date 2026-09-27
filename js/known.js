@@ -118,16 +118,51 @@
     return '<span class="naluno-known" title="Known"><span>' + LABEL + '</span></span>';
   }
 
+  const knownCache = {};
+  function publicKnown(row) {
+    if (!row) return false;
+    if (isKnown(row)) return true;
+    const until = Number(row.until || row.paidUntil || row.knownUntil || 0);
+    if (!(until > Date.now())) return false;
+    if (row.status && row.status !== 'known') return false;
+    return true;
+  }
   function paintBeside(el, uid) {
     if (!el) return;
     const existing = el.querySelector && el.querySelector('.naluno-known');
     if (existing) existing.remove();
     if (!uid || typeof fbDb === 'undefined' || !fbDb) return;
-    fbDb.collection('users').doc(String(uid)).get().then(function (snap) {
-      const data = snap && snap.exists ? (snap.data() || {}) : null;
-      if (!isKnown(data)) return;
+    const key = String(uid);
+    const put = function (on) {
+      if (!el.isConnected || !on) return;
       if (!el.querySelector('.naluno-known')) el.insertAdjacentHTML('beforeend', markHtml());
+    };
+    if (Object.prototype.hasOwnProperty.call(knownCache, key)) {
+      put(knownCache[key]);
+      return;
+    }
+    fbDb.collection('knownPublic').doc(key).get().then(function (snap) {
+      if (snap && snap.exists && publicKnown(snap.data() || {})) {
+        knownCache[key] = true;
+        put(true);
+        return null;
+      }
+      return fbDb.collection('knownApps').doc(key).get();
+    }).catch(function () {
+      return fbDb.collection('knownApps').doc(key).get();
+    }).then(function (snap) {
+      if (!snap) return;
+      const on = !!(snap.exists && isKnown(snap.data() || {}));
+      knownCache[key] = on;
+      put(on);
     }).catch(function () {});
+  }
+  function paintAll(root) {
+    const scope = root && root.querySelectorAll ? root : (typeof document !== 'undefined' ? document : null);
+    if (!scope || !scope.querySelectorAll) return;
+    scope.querySelectorAll('[data-known-uid]').forEach(function (node) {
+      paintBeside(node, node.getAttribute('data-known-uid'));
+    });
   }
 
   const NOTE_MIN = 12;
@@ -435,6 +470,7 @@
     stampView: stampView,
     markHtml: markHtml,
     paintBeside: paintBeside,
+    paintAll: paintAll,
     paintMine: paintMine,
     refreshMine: refreshMine,
     openSheet: openSheet,

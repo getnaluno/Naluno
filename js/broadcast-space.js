@@ -1467,9 +1467,14 @@ async function openBroadcastSpace(meta){
   const title = meta.title || (seg.type === 'text' ? (seg.text || 'Broadcast').slice(0, 60) : (seg.caption || 'Broadcast'));
   const desc = meta.description || seg.caption || (seg.type === 'text' ? '' : 'Watch, join the conversation, and explore questions and resources.');
 
-  $('bspaceCreatorName').textContent = meta.creatorName || 'Someone';
-  if(window.NalunoKnown && typeof NalunoKnown.paintBeside === 'function'){
-    NalunoKnown.paintBeside($('bspaceCreatorName'), meta.creatorUid);
+  const nameEl = $('bspaceCreatorName');
+  if(nameEl){
+    nameEl.innerHTML = '<span class="who-name"></span>';
+    const who = nameEl.querySelector('.who-name');
+    if(who) who.textContent = meta.creatorName || 'Someone';
+  }
+  if(window.NalunoKnown && typeof NalunoKnown.paintBeside === 'function' && nameEl){
+    NalunoKnown.paintBeside(nameEl, meta.creatorUid);
   }
   $('bspaceCreatorMeta').textContent = meta.isMine ? 'Your Broadcast' : 'Creator Circle';
   $('bspaceTitle').textContent = title;
@@ -2900,25 +2905,45 @@ function bspaceOpenSignalPlate(){
     if(e) e.stopPropagation();
     if(typeof saveSignalSegment !== 'function'){ toast('Signals are not available right now'); return; }
     const caption = ((body.querySelector('#bspaceSignalCaption') || {}).value || '').trim();
-    const now = Date.now();
+    go.disabled = true;
     try{
-      const id = await saveSignalSegment({
+      let photoUrl = '';
+      if(shot && String(shot).indexOf('data:') === 0){
+        const blob = await (await fetch(shot)).blob();
+        if(!blob || !blob.size) throw new Error('Could not take a picture of this Broadcast');
+        if(typeof uploadPhotoToR2 !== 'function') throw new Error('Could not send that Signal');
+        photoUrl = await uploadPhotoToR2(blob);
+      } else if(shot && /^https?:/i.test(shot)){
+        photoUrl = shot;
+      }
+      if(!photoUrl || String(photoUrl).indexOf('data:') === 0) throw new Error('Could not send that Signal');
+      const now = Date.now();
+      const seg = {
         type: 'photo',
         mediaType: 'photo',
-        photoUrl: shot || '',
-        thumbDataUrl: (shot && shot.indexOf('data:') === 0) ? shot : '',
+        photoUrl: photoUrl,
+        thumbDataUrl: photoUrl,
         caption: caption,
         createdAt: now,
         expiresAt: now + 24 * 60 * 60 * 1000,
         linkedBroadcastId: activeBroadcastId,
         groupId: 'bcast-' + activeBroadcastId + '-' + now,
         order: 0,
-      });
+      };
+      const id = await saveSignalSegment(seg);
       if(!id){ toast('Could not send that Signal'); return; }
+      try{
+        if(typeof mySignal !== 'undefined' && Array.isArray(mySignal)){
+          mySignal.push(Object.assign({ id: id }, seg));
+        }
+        if(typeof renderBroadcasts === 'function') renderBroadcasts();
+      }catch(_){}
       bspaceBackMenu();
       toast('On your Signal');
     }catch(err){
       toast((err && err.message) || 'Could not send that Signal');
+    }finally{
+      go.disabled = false;
     }
   };
 }

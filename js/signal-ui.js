@@ -443,6 +443,7 @@ function renderBroadcastTab(){
         };
       });
       try{ nalunoRevealBroadcastPlates(grid); }catch(_){}
+      try{ if(window.NalunoKnown && NalunoKnown.paintAll) NalunoKnown.paintAll(grid); }catch(_){}
     }
   }
   try{ renderScheduledDock(); }catch(_){}

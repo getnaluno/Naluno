@@ -148,7 +148,7 @@ function broadcastThumbHtml(b){
     <div class="bcast-plate-meta">
       <div class="bcast-plate-title">${title}</div>
       ${metaExcerpt}
-      <div class="bcast-plate-sub">${creator}${mins && cover ? ' · ' + mins + ' min' : ''}${b.strandName ? ' · ' + escapeHtml(b.strandName) : (b.tags && b.tags[0] ? ' · ' + escapeHtml(b.tags[0]) : '')}</div>
+      <div class="bcast-plate-sub"><span class="bcast-plate-who" data-known-uid="${escapeHtml(b.creatorUid || '')}">${creator}</span>${mins && cover ? ' · ' + mins + ' min' : ''}${b.strandName ? ' · ' + escapeHtml(b.strandName) : (b.tags && b.tags[0] ? ' · ' + escapeHtml(b.tags[0]) : '')}</div>
       ${byline}
     </div>
   </article>`;

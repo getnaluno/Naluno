@@ -138,6 +138,7 @@
         if(ts >= f.latestAt){
           f.latestAt = ts;
           f.creatorName = b.creatorName || f.creatorName;
+          if(b.creatorUid) f.creatorUid = b.creatorUid;
         }
         if(b.live) f.live = true;
       } else {
@@ -285,7 +286,7 @@
       + '</div>'
       + '<div class="bcast-plate-meta">'
       +   '<div class="bcast-plate-title">' + name + '</div>'
-      +   '<div class="bcast-plate-sub">' + creator + ' · first episode preview</div>'
+      +   '<div class="bcast-plate-sub"><span class="bcast-plate-who" data-known-uid="' + escapeHtml(String(f.creatorUid || '')) + '">' + creator + '</span> · first episode preview</div>'
       + '</div>'
       + '</article>';
   }
@@ -448,6 +449,7 @@
         try{ if(typeof nalunoRevealBroadcastPlates === 'function') nalunoRevealBroadcastPlates(grid); }catch(_){}
         try{ armStrandPreviews(grid); }catch(_){}
         try{ armStrandThumbs(grid); }catch(_){}
+        try{ if(window.NalunoKnown && NalunoKnown.paintAll) NalunoKnown.paintAll(grid); }catch(_){}
         return;
       }
       openStrandFolderId = null;
@@ -495,6 +497,7 @@
     try{ if(typeof nalunoRevealBroadcastPlates === 'function') nalunoRevealBroadcastPlates(grid); }catch(_){}
     try{ armStrandPreviews(grid); }catch(_){}
     try{ armStrandThumbs(grid); }catch(_){}
+    try{ if(window.NalunoKnown && NalunoKnown.paintAll) NalunoKnown.paintAll(grid); }catch(_){}
   }
 
   function openStrandFolder(id){
