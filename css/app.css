@@ -813,8 +813,12 @@
 }
 .bspace-creator-id{ flex:1; min-width:0; }
 .bspace-creator-id #bspaceCreatorName{
+  display:flex; align-items:center; gap:6px;
   font-size:14px; font-weight:700; letter-spacing:.04em; text-transform:uppercase;
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  overflow:visible; white-space:nowrap;
+}
+.bspace-creator-id #bspaceCreatorName .who-name{
+  min-width:0; overflow:hidden; text-overflow:ellipsis;
 }
 .bspace-creator-id #bspaceCreatorMeta{
   font-size:11px; font-family:var(--font-mono); color:var(--text-dim); margin-top:2px;
@@ -3160,16 +3164,27 @@ html[data-atmosphere="buzzing"] .naluno-aurora{
   .bspace-more-wrap{ position:relative; flex-shrink:0; margin-left:4px; }
   .bspace-more{ min-width:40px; font-size:18px; line-height:1; padding:6px 10px; letter-spacing:.12em; }
   .bspace-more-menu{
-    position:fixed; inset:0; z-index:120;
-    display:flex; align-items:flex-end;
+    position:absolute; inset:0; z-index:120;
+    display:flex; align-items:flex-end; justify-content:center;
     background:rgba(7,8,12,.5);
-    padding:0; border:0; box-shadow:none; border-radius:0;
+    padding:16px 14px calc(22px + env(safe-area-inset-bottom, 0px));
+    box-sizing:border-box;
+    border:0; box-shadow:none; border-radius:0;
   }
   .bspace-more-menu[hidden]{ display:none !important; }
+  .bspace-sheet-card[hidden]{ display:none !important; }
   .bspace-sheet-card{
-    width:100%; max-height:72vh; overflow:auto;
-    background:#12151c; border-radius:18px 18px 0 0;
-    padding:8px 16px calc(env(safe-area-inset-bottom,0px) + 18px);
+    width:100%; max-width:440px;
+    max-height:min(52vh, 420px);
+    overflow:auto;
+    display:flex; flex-direction:column;
+    background:#12151c; border-radius:18px;
+    padding:8px 16px 14px;
+    box-sizing:border-box;
+  }
+  #bspaceActionBody{
+    overflow:auto; min-height:0; flex:1 1 auto;
+    -webkit-overflow-scrolling:touch;
   }
   .bspace-sheet-kicker{
     margin:12px 2px 8px; font-size:11px; letter-spacing:.08em;
@@ -3420,15 +3435,22 @@ html[data-atmosphere="buzzing"] .naluno-aurora{
   width:18px; height:18px; border-radius:50%; border:1px solid var(--mint);
   background:transparent; color:var(--mint); font-size:11px; line-height:16px; padding:0;
 }
+.bcast-plate-who{ display:inline-flex; align-items:center; gap:4px; max-width:100%; }
+.bcast-plate-who .naluno-known{ flex:none; font-size:8px; margin-left:0; }
 .bspace-room-sheet{
   display:none; position:fixed; inset:0; z-index:90;
   background:rgba(0,0,0,.45); align-items:flex-end; justify-content:center;
+  padding:16px 14px calc(22px + env(safe-area-inset-bottom, 0px));
+  box-sizing:border-box;
 }
+#bspace > .bspace-room-sheet{ position:absolute; }
 .bspace-room-sheet.active{ display:flex; }
 .bspace-room-card{
-  width:100%; max-height:78vh; overflow:auto;
-  background:#12151c; border-radius:18px 18px 0 0;
-  padding:8px 16px calc(env(safe-area-inset-bottom, 0px) + 16px);
+  width:100%; max-width:440px;
+  max-height:min(58vh, 480px); overflow:auto;
+  background:#12151c; border-radius:18px;
+  padding:8px 16px 14px;
+  box-sizing:border-box;
 }
 .bspace-room-head{ display:flex; align-items:center; justify-content:space-between; padding:8px 0 10px; }
 .bspace-room-head button{ border:none; background:transparent; color:var(--text-dim); font-size:13px; }
