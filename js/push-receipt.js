@@ -10,13 +10,17 @@ function nalunoNotePush(info) {
   if (typeof currentUser === 'undefined' || !currentUser) return;
   if (!info || !info.pingId) return;
   const http = Number(info.httpStatus) || 0;
-  const status = http >= 200 && http < 300 ? 'handed' : 'failed';
+  const refused = info.sent === false || !(http >= 200 && http < 300);
+  const status = refused ? 'failed' : 'handed';
+  let reason = String(info.reason || '').slice(0, 80);
+  if (!reason) reason = http === 0 ? 'no-reach' : (refused ? ('http-' + http) : 'ok');
   fbDb.collection('pushPings').doc(String(info.pingId)).set({
     fromUid: currentUser.uid,
     toUid: String(info.toUid || ''),
     type: String(info.type || '').slice(0, 40),
     pingId: String(info.pingId),
     status: status,
+    reason: reason,
     httpStatus: http,
     sentAt: Date.now(),
   }).catch(function () {});

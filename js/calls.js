@@ -1788,7 +1788,10 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
       });
       const data = await res.json().catch(()=>({}));
       if(pingId && typeof nalunoNotePush === 'function' && firstAttempt){
-        nalunoNotePush({ pingId: pingId, toUid: calleeUid, type: 'incoming_call', httpStatus: res.status });
+        nalunoNotePush({
+          pingId: pingId, toUid: calleeUid, type: 'incoming_call',
+          httpStatus: res.status, sent: data.sent, reason: data.reason || data.error || '',
+        });
       }
       if(firstAttempt) console.log('[call] push response', res.status, data);
       const detail = String((data && (data.detail || data.error || data.message || JSON.stringify(data))) || '');

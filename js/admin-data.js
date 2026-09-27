@@ -1649,13 +1649,22 @@
         failed: pings.filter(function (p) { return p.status === 'failed'; }).length,
         arrived: receipts.filter(function (r) { return Number(r.arrivedAt) > 0; }).length,
         opened: receipts.filter(function (r) { return Number(r.openedAt) > 0; }).length,
+        failed_why: (function () {
+          const bag = {};
+          pings.forEach(function (p) {
+            if (!p || p.status !== 'failed') return;
+            const k = String(p.reason || 'not recorded');
+            bag[k] = (bag[k] || 0) + 1;
+          });
+          return Object.keys(bag).map(function (k) { return k + ' · ' + bag[k]; });
+        })(),
         paid: payments.filter(function (p) { return p.status === 'paid'; }).length,
         payments: payments.length,
       },
       payments: payments,
       knownApps: raw.knownApps || [],
       gaps: {
-        notifications: 'Handed means the alert was given to the push service. Arrived means a phone showed it. Opened means it was tapped. A phone that was force-stopped cannot report arrival until Naluno is opened again.',
+        notifications: 'Handed means the push service accepted the alert. Failed means it refused, the phone had no token, or the request never arrived. The reason is kept on each failure. A live start used to stop after 24 alerts in 10 minutes, so the rest of a circle were counted here. That cap is now 120.',
         search: 'Find a Callsign, email, name or account id. Looks up the live handle map, not only the first loaded page of accounts.',
         payments: 'A payment is paid only after the signed payment notice says so. Until that notice is connected, nothing is marked paid.',
         content_hub: 'Sports, movies and channels are not in the product yet.',

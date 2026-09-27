@@ -702,8 +702,13 @@ async function sendPushToContact(contactOrUid, msg){
       },
       body: JSON.stringify(body),
     }).catch(function(){ return null; });
+    let data = {};
+    try { if (res) data = await res.json(); } catch (_) {}
     if(pingId && typeof nalunoNotePush === 'function'){
-      nalunoNotePush({ pingId: pingId, toUid: uid, type: 'broadcast_live', httpStatus: res ? res.status : 0 });
+      nalunoNotePush({
+        pingId: pingId, toUid: uid, type: 'broadcast_live',
+        httpStatus: res ? res.status : 0, sent: data.sent, reason: data.reason || data.error || '',
+      });
     }
   }catch(e){ console.warn('[live] push', e); }
 }

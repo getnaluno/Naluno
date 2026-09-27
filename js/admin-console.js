@@ -2512,6 +2512,23 @@
     await writeAudit(patch.revoked ? 'admin-revoke' : 'admin-update', uid, (patch.roles || []).join(','));
   }
 
+  async function publishKnownCard(db, uid, row, on) {
+    const ref = db.collection('knownPublic').doc(uid);
+    if (!on) {
+      try { await ref.delete(); } catch (_) {}
+      return;
+    }
+    const name = String((row && row.name) || '').trim().slice(0, 80);
+    const note = String((row && row.note) || '').trim().slice(0, 500);
+    await ref.set({
+      name: name,
+      note: note,
+      nameKey: name.toLowerCase().replace(/[^a-z0-9]+/g, ''),
+      until: Number(row && row.paidUntil) || 0,
+      updatedAt: Date.now(),
+    });
+  }
+
   async function loadKnownDesk() {
     const host = $('knownDesk');
     const db = adminDb();
@@ -2572,6 +2589,7 @@
             if (!next) throw new Error('Accept it before recording a payment');
             await ref.set(next, { merge: true });
             await db.collection('users').doc(uid).set({ known: true, knownUntil: next.paidUntil }, { merge: true });
+            await publishKnownCard(db, uid, next, true);
             toast('This month is recorded. They are Known.');
           } else if (action === 'void') {
             if (!K) throw new Error('Known is not loaded');
@@ -2585,6 +2603,7 @@
               payRef: del,
             }), { merge: true });
             await db.collection('users').doc(uid).set({ known: false, knownUntil: now }, { merge: true });
+            await publishKnownCard(db, uid, next, false);
             try { await writeAudit('known-void', uid, 'Voided. No cash moved.'); } catch (_) {}
             toast('Taken out. No cash moved.');
           } else if (action === 'grant6' || action === 'grant12') {
@@ -2594,6 +2613,7 @@
             if (!next) throw new Error('Accept it before granting');
             await ref.set(next, { merge: true });
             await db.collection('users').doc(uid).set({ known: true, knownUntil: next.paidUntil, grant: true }, { merge: true });
+            await publishKnownCard(db, uid, next, true);
             try { await writeAudit('known-grant', uid, months + ' months. List price waived. Cash 0.'); } catch (_) {}
             toast('Granted for ' + months + ' months. No cash.');
           } else if (action === 'void-grant') {
@@ -2610,6 +2630,7 @@
               payRef: del,
             }), { merge: true });
             await db.collection('users').doc(uid).set({ known: false, knownUntil: now, grant: false }, { merge: true });
+            await publishKnownCard(db, uid, next, false);
             try { await writeAudit('known-grant-void', uid, 'Grant voided. No cash moved.'); } catch (_) {}
             toast('Grant taken out. No cash moved.');
           } else {
@@ -2619,6 +2640,7 @@
             await ref.set(next, { merge: true });
             if (action === 'revoke') {
               await db.collection('users').doc(uid).set({ known: false, knownUntil: now }, { merge: true });
+              await publishKnownCard(db, uid, next, false);
             }
             toast(action === 'accept' ? 'Accepted. The mark waits for payment.' : 'Saved');
           }
@@ -2805,6 +2827,8 @@
             ['Failed to hand off', (d.proof && d.proof.failed) || 0],
             ['Shown on a phone', (d.proof && d.proof.arrived) || 0],
             ['Tapped', (d.proof && d.proof.opened) || 0]])
+          + ((d.proof && d.proof.failed_why && d.proof.failed_why.length)
+            ? '<p class="sub">' + escapeHtml(d.proof.failed_why.join(' · ')) + '</p>' : '')
           + gap(g.notifications || ''))
         + card('Payments confirmed',
           kpis([['Paid notices', (d.proof && d.proof.paid) || 0],
@@ -4257,9 +4281,29 @@
 
     if (tab === 'known') {
       el.innerHTML = card('Known',
-        '<p class="sub">Accept an application first. Grant 6 or 12 months if you are giving the mark. That writes no cash. Record a month as paid only when money actually arrives.</p>'
+        '<p class="sub">Accept an application first. Grant 6 or 12 months if you are giving the mark. That writes no cash. Record a month as paid only when money actually arrives. A Known name is what Compass can answer.</p>'
+        + '<div class="row"><button type="button" class="primary" id="knownPublishCompass">Send Known names to Compass</button></div>'
         + '<div id="knownDesk"><p class="sub">Loading…</p></div>');
       loadKnownDesk();
+      const sync = $('knownPublishCompass');
+      if (sync) sync.onclick = async function () {
+        const db = adminDb();
+        if (!db) return;
+        try {
+          const snap = await db.collection('knownApps').limit(80).get();
+          let n = 0;
+          const jobs = [];
+          snap.forEach(function (d) {
+            const row = d.data() || {};
+            const on = row.status === 'known' && !row.voidedAt && Number(row.paidUntil) > Date.now();
+            jobs.push(publishKnownCard(db, d.id, row, on).then(function () { if (on) n += 1; }));
+          });
+          await Promise.all(jobs);
+          toast(n ? (n + ' Known name' + (n === 1 ? '' : 's') + ' sent to Compass') : 'No Known names to send');
+        } catch (err) {
+          toast((err && err.message) || 'Could not send them');
+        }
+      };
       return;
     }
 

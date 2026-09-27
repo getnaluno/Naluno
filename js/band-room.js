@@ -1167,6 +1167,17 @@ async function inviteToBand(contactId, mode, btn){
     try{
       const idToken = await currentUser.getIdToken();
       const pingId = (typeof nalunoPushId === 'function') ? nalunoPushId() : '';
+      let tokens = { android: null, web: null, primary: null, platform: null };
+      try{
+        const snap = await fbDb.collection('users').doc(c.firebaseUid).get();
+        if(snap.exists){
+          const d = snap.data() || {};
+          tokens.android = d.fcmTokenAndroid || null;
+          tokens.web = d.fcmTokenWeb || null;
+          tokens.primary = d.fcmToken || null;
+          tokens.platform = d.fcmTokenPlatform || null;
+        }
+      }catch(_){}
       fetch(CALL_NOTIFY_WORKER_URL, {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
@@ -1178,14 +1189,23 @@ async function inviteToBand(contactId, mode, btn){
           body: b.name + ' · open Band to tune in',
           bandId: b.firestoreId,
           pingId: pingId,
+          fcmTokenAndroid: tokens.android,
+          fcmTokenWeb: tokens.web,
+          fcmToken: tokens.primary,
+          fcmTokenPlatform: tokens.platform,
         }),
       }).then(function(res){
-        if(pingId && typeof nalunoNotePush === 'function'){
-          nalunoNotePush({ pingId: pingId, toUid: c.firebaseUid, type: 'band_invite', httpStatus: res ? res.status : 0 });
-        }
+        return res.json().catch(function(){ return {}; }).then(function(data){
+          if(pingId && typeof nalunoNotePush === 'function'){
+            nalunoNotePush({
+              pingId: pingId, toUid: c.firebaseUid, type: 'band_invite',
+              httpStatus: res ? res.status : 0, sent: data.sent, reason: data.reason || data.error || '',
+            });
+          }
+        });
       }).catch(function(){
         if(pingId && typeof nalunoNotePush === 'function'){
-          nalunoNotePush({ pingId: pingId, toUid: c.firebaseUid, type: 'band_invite', httpStatus: 0 });
+          nalunoNotePush({ pingId: pingId, toUid: c.firebaseUid, type: 'band_invite', httpStatus: 0, sent: false, reason: 'no-reach' });
         }
       });
     }catch(e){}

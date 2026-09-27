@@ -384,6 +384,68 @@ function loadCompassMessages(){
       try{ if(typeof nalunoCacheWrite === 'function') nalunoCacheWrite('compassMessages', compassMessages); }catch(_){}
     }, ()=>{ /* Compass history just won't load this session */ });
 }
+function compassNameKey(s){
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+function compassAskedName(text){
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  const m = t.match(/^(?:who is|who'?s|tell me about|look up|search for|what do you know about)\s+(.+?)[?.!]*$/i);
+  if(!m) return '';
+  return m[1].trim().slice(0, 80);
+}
+async function compassKnownBrief(name){
+  if(!name || typeof fbDb === 'undefined' || !fbDb) return '';
+  const key = compassNameKey(name);
+  if(key.length < 3) return '';
+  try{
+    const snap = await fbDb.collection('knownPublic').limit(80).get();
+    let hit = null;
+    snap.forEach(function(d){
+      if(hit) return;
+      const row = d.data() || {};
+      const k = row.nameKey || compassNameKey(row.name);
+      if(k && (k === key || (k.length > 4 && (k.indexOf(key) >= 0 || key.indexOf(k) >= 0)))) hit = row;
+    });
+    if(!hit) return 'On Naluno, nobody Known matches ' + name + '.';
+    const ended = Number(hit.until) > 0 && Number(hit.until) <= Date.now();
+    return 'On Naluno, ' + (hit.name || name) + ' is Known.'
+      + (hit.note ? ' They wrote: ' + hit.note : '')
+      + (ended ? ' The Known period on file has ended.' : '');
+  }catch(_){ return ''; }
+}
+async function compassWebBrief(name){
+  if(!name) return '';
+  const bits = [];
+  try{
+    const res = await fetch('https://en.wikipedia.org/w/api.php?origin=*&action=query&list=search&srsearch='
+      + encodeURIComponent(name) + '&utf8=&format=json&srlimit=2');
+    const data = await res.json();
+    const hits = (data && data.query && data.query.search) || [];
+    hits.forEach(function(h){
+      const plain = String(h.snippet || '').replace(/<[^>]+>/g, '');
+      if(h.title) bits.push('Wikipedia: ' + h.title + (plain ? '. ' + plain : ''));
+    });
+  }catch(_){}
+  try{
+    const res = await fetch('https://openlibrary.org/search.json?q=' + encodeURIComponent(name) + '&limit=3');
+    const data = await res.json();
+    (data.docs || []).slice(0, 3).forEach(function(doc){
+      const title = doc.title || '';
+      const who = (doc.author_name || []).slice(0, 2).join(', ');
+      if(title) bits.push('Open Library: ' + title + (who ? ' — ' + who : ''));
+    });
+  }catch(_){}
+  if(!bits.length) return '';
+  return 'Public web, not checked by Naluno:\n' + bits.join('\n');
+}
+async function compassFacts(text){
+  const name = compassAskedName(text);
+  if(!name) return '';
+  const known = await compassKnownBrief(name);
+  const web = await compassWebBrief(name);
+  return [known, web].filter(Boolean).join('\n');
+}
+
 async function sendCompassMessage(){
   const input = $('compassInput');
   const text = input.value.trim();
@@ -458,6 +520,7 @@ async function sendCompassMessage(){
   const thinkingMsg = { from:'compass', text: '\u2026', ts: Date.now(), thinking:true };
   compassMessages.push(thinkingMsg);
   renderCompassMessages();
+  let facts = '';
 
   try{
     const idToken = await currentUser.getIdToken();
@@ -488,6 +551,13 @@ async function sendCompassMessage(){
         content: 'Live weather + short forecast (Open-Meteo, free). Use this for any rain/tonight/tomorrow question. Never say you only have current conditions. Data: ' + weatherHint,
       });
     }
+    try{ facts = await compassFacts(text); }catch(_){}
+    if(facts){
+      messages.unshift({
+        role: 'system',
+        content: 'Use these notes when the person asks who someone is. The Naluno line is our record. The web lines are public pages, not a Naluno check. Do not invent books, posts, or a Known mark that is not written here. If a line is missing, say you do not have it.\n' + facts,
+      });
+    }
     const res = await fetch(COMPASS_WORKER_URL, {
       method: 'POST',
       headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
@@ -496,6 +566,14 @@ async function sendCompassMessage(){
     const data = await res.json();
     compassMessages = compassMessages.filter(m => m !== thinkingMsg);
     if(!res.ok || !data.reply){
+      if(facts){
+        compassMessages.push({ from:'compass', text: facts, ts: Date.now() });
+        renderCompassMessages();
+        fbDb.collection('users').doc(currentUser.uid).collection('compassMessages').add({
+          from:'compass', text: facts, ts: firebase.firestore.FieldValue.serverTimestamp(),
+        }).catch(function(){});
+        return;
+      }
       toast('Compass couldn\u2019t respond \u2014 try again');
       console.error('Compass request failed:', data);
       renderCompassMessages();
@@ -509,6 +587,11 @@ async function sendCompassMessage(){
   }catch(e){
     compassMessages = compassMessages.filter(m => m !== thinkingMsg);
     renderCompassMessages();
+    if(facts){
+      compassMessages.push({ from:'compass', text: facts, ts: Date.now() });
+      renderCompassMessages();
+      return;
+    }
     toast('Compass couldn\u2019t respond \u2014 check your connection');
   }
 }
