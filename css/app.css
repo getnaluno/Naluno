@@ -2318,22 +2318,25 @@ body.naluno-feed-landscape #tab-broadcast.tabscreen{ bottom:0; }
 #bspaceFitToggle:active{ transform:scale(.97); }
 
 .nearby-strip{
-  display:flex;
+  display:grid;
+  grid-auto-flow:column;
+  grid-template-rows:repeat(2, auto);
+  grid-auto-columns:46%;
   gap:12px;
-  overflow-x:auto;
+  overflow:auto;
   -webkit-overflow-scrolling:touch;
-  touch-action:pan-x;
+  touch-action:pan-x pan-y;
+  max-height:78vh;
   padding:2px 0 16px;
-  scroll-snap-type:x mandatory;
+  scroll-snap-type:both proximity;
 }
 .nearby-tile{
-  flex:0 0 72%;
-  max-width:320px;
   border:none;
   background:transparent;
   padding:0;
   cursor:pointer;
   scroll-snap-align:start;
+  min-width:0;
 }
 .nearby-frame{
   position:relative;
