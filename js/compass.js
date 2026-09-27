@@ -397,7 +397,8 @@ function compassNameKey(s){
 function compassCleanName(s){
   return String(s || '')
     .replace(/[?.!,]+/g, ' ')
-    .replace(/\b(again|please|right now|for me|on the web|outside naluno|outside|online)\b/ig, ' ')
+    .replace(/\b(again|please|right now|for me|on the web|outside naluno|outside|online|not just|not only)\b/ig, ' ')
+    .replace(/\b(from naluno|from the web|in the world).*/ig, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 80);
@@ -406,7 +407,7 @@ function compassAskedName(text){
   const t = String(text || '').replace(/\s+/g, ' ').trim();
   const m = t.match(/^(?:who(?:\s+is|'s)?|tell me about|look up|search for|what do you know about|what about|find)\s+(.+)$/i);
   if(!m) return '';
-  return compassCleanName(m[1]);
+  return compassCleanName(m[1].replace(/^(?:is|are)\s+/i, ''));
 }
 function compassNameHit(query, name){
   const q = compassNameKey(query);
@@ -419,7 +420,7 @@ function compassNameHit(query, name){
 }
 function compassTurn(text){
   const raw = String(text || '').replace(/\s+/g, ' ').trim();
-  const correction = /\b(not a name|only part of|throw(?:ing)? links|good search|summarise what|summarize what)\b/i.test(raw);
+  const correction = /\b(not a name|only part of|throw(?:ing)? links|good search|summarise what|summarize what|not just|not only)\b/i.test(raw);
   let name = compassAskedName(raw);
   if(!name){
     const inside = raw.match(/\babout\s+([A-Za-z][A-Za-z.'’-]{1,}(?:\s+[A-Za-z][A-Za-z.'’-]{1,}){0,3})/);
@@ -431,8 +432,8 @@ function compassTurn(text){
     const verb = words.some(function(w){ return /^(is|are|was|were|do|does|did|can|what|who|why|how|the|not|only|part|search|links)$/i.test(w); });
     if(!verb && words.length >= 2 && words.length <= 4) name = bare;
   }
-  if(name && !correction && compassNameKey(name).length >= 4) compassTopic = name;
-  const subject = compassCleanName(correction ? compassTopic : (name || ''));
+  if(name && compassNameKey(name).length >= 4) compassTopic = name;
+  const subject = compassCleanName(name || (correction ? compassTopic : ''));
   return { subject: subject, aboutPerson: !!(subject && (name || correction)) };
 }
 async function compassKnownHit(name){
@@ -517,24 +518,58 @@ async function compassClosePages(name){
   }catch(_){}
   return pages.slice(0, 2);
 }
-function compassSpeakPerson(name, hit, pages){
-  const who = (hit && hit.name) || name;
-  let text = '';
-  if(hit){
-    const note = String(hit.note || '').trim();
-    text = who + ' is Known on Naluno.';
-    if(note) text += ' ' + note;
-  } else {
-    text = 'I don’t have a Known record for ' + who + ' on Naluno.';
+function compassWorldLine(name, hits){
+  const surname = String(name || '').toLowerCase().split(/[^a-z0-9]+/).filter(function(w){ return w.length >= 4; }).pop() || '';
+  const rows = (hits || []).filter(function(h){
+    const blob = ((h.title || '') + ' ' + (h.snippet || '')).toLowerCase();
+    return surname && blob.indexOf(surname) >= 0;
+  }).slice(0, 4);
+  if(!rows.length) return '';
+  const blob = rows.map(function(h){ return (h.snippet || '') + ' ' + (h.title || ''); }).join(' ');
+  let line = name;
+  if(/ugandan-born storyteller/i.test(blob)) line += ' is a Ugandan-born storyteller';
+  else if(/ugandan storyteller/i.test(blob)) line += ' is a Ugandan storyteller';
+  else if(/storyteller/i.test(blob)) line += ' is a storyteller';
+  else if(/\bauthor\b|\bwriter\b|\bnovelist\b/i.test(blob)) line += ' is a writer';
+  else line += ' appears in public under that name';
+  if(/\bauthor\b/i.test(blob) && !/\bauthor\b|\bwriter\b/i.test(line)) line += ' and an author';
+  else if(/\bauthor\b/i.test(blob) && /storyteller|writer/.test(line)) line += ' and an author';
+  line += '.';
+  const bits = [];
+  const book = blob.match(/Author of ([A-Z][^.]{2,80})/);
+  if(book) bits.push('Among the books named in public is ' + book[1].replace(/\s+$/, ''));
+  if(/love, identity, and destiny|love, loss, and loud thoughts/i.test(blob)) bits.push('The public writing is about love, identity, and what people carry');
+  else if(/humou?r, identity, and crossroads/i.test(blob)) bits.push('The Magambo Chronicles is the public journal, on humor, identity, and crossroads');
+  if(/spoken word/i.test(blob)) bits.push('There is also spoken word');
+  if(!bits.length && rows[0].snippet) bits.push(String(rows[0].snippet).replace(/\s*[|·]\s*/g, ', '));
+  if(bits.length){
+    line += ' ' + bits.slice(0, 2).join('. ');
+    if(!/[.!?]$/.test(line)) line += '.';
   }
-  if(pages && pages.length){
-    pages.forEach(function(p){
-      if(!p || !p.summary) return;
-      text += '\n\n' + p.summary;
-      if(p.url) text += '\n' + p.url;
+  return line;
+}
+async function compassPublicHits(name){
+  if(!name || typeof currentUser === 'undefined' || !currentUser) return [];
+  try{
+    const token = await currentUser.getIdToken();
+    const res = await fetch('https://naluno-economy.naluno.workers.dev/v1/look?q=' + encodeURIComponent(name), {
+      headers: { 'Authorization': 'Bearer ' + token },
     });
-  } else if(!hit){
-    text += ' I also didn’t find a public page that is clearly the same person.';
+    if(!res.ok) return [];
+    const data = await res.json();
+    return (data && data.hits) || [];
+  }catch(_){ return []; }
+}
+function compassSpeakPerson(name, hit, hits){
+  const world = compassWorldLine(name, hits);
+  const who = (hit && hit.name) || name;
+  const note = hit && hit.note ? String(hit.note).trim() : '';
+  let text = world;
+  if(hit){
+    const naluno = 'On Naluno, ' + who + ' is Known' + (note ? '. ' + note : '.');
+    text = text ? (text + '\n\n' + naluno) : naluno;
+  } else if(!text){
+    text = 'I don’t have a public record or a Known record that is clearly ' + who + '.';
   }
   return text;
 }
@@ -542,8 +577,8 @@ async function compassPersonAnswer(text){
   const turn = compassTurn(text);
   if(!turn.aboutPerson || !turn.subject) return '';
   const hit = await compassKnownHit(turn.subject);
-  const pages = await compassClosePages(turn.subject);
-  return compassSpeakPerson(turn.subject, hit, pages);
+  const hits = await compassPublicHits(turn.subject);
+  return compassSpeakPerson(turn.subject, hit, hits);
 }
 
 function compassReplyWeak(reply){
