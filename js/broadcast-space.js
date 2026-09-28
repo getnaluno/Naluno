@@ -434,6 +434,26 @@ function renderBspaceMedia(seg){
   const host = $('bspaceMedia');
   const hero = $('bspaceHero');
   const writing = !!(seg && seg.type === 'writing');
+  /* Video chapter chips (Ch 1 · Ad · Replace …) belong to the video that
+     drew them. Only the video path redraws them, so a writing, photo or
+     text Broadcast opened next kept the previous video's chips. */
+  if(!seg || seg.type !== 'video'){
+    const chipHost = document.getElementById('bspaceChapterHost');
+    if(chipHost) chipHost.innerHTML = '';
+    try{ bspaceChapterList = []; bspaceBreatherList = []; bspaceChapterIndex = 0; }catch(_){}
+    /* The same for the video's Fill / Fit buttons and the black video-sized
+       stage it left on the hero (a writing without a photo showed an empty
+       black box with "Fill screen"). The video path rebuilds them. */
+    ['bspaceFitToggle', 'bspaceOrientToggle'].forEach(function(id){
+      const el = document.getElementById(id);
+      if(el) el.remove();
+    });
+    if(hero){
+      ['width', 'background', 'aspectRatio', 'height', 'maxHeight', 'borderRadius'].forEach(function(k){
+        try{ hero.style[k] = ''; }catch(_){}
+      });
+    }
+  }
   let photo = '';
   if(writing && seg){
     const url = seg.thumbUrl || seg.mediaUrl || seg.photoUrl || '';

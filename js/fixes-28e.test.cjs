@@ -26,7 +26,12 @@ assert.ok(comp.includes('window.__bcompChaptered = true;'), 'full composer keeps
 assert.ok(space.includes('const dup = single && (!raw || norm(raw) === pageTitle'), 'older pieces stop printing the title twice');
 assert.ok(space.includes("(root.length > 1 ? ('Chapter ' + (i + 1)) : '')"), 'editing a single piece does not add a chapter heading');
 
-['css/app.css', 'js/broadcast-space.js', 'js/broadcast-composer.js', 'js/ads.js'].forEach((f) => assert.ok(html.includes('/' + f + '?v=20260928e'), 'stamp ' + f));
-assert.ok(sw.includes("'naluno-shell-v233'") && sw.includes("'20260928e'"), 'service worker cache bumped');
-assert.ok(html.includes('<meta name="app-version" content="2026.09.28e">'), 'update banner can see the new build');
+['css/app.css', 'js/broadcast-space.js', 'js/broadcast-composer.js', 'js/ads.js'].forEach((f) => assert.ok(new RegExp('/' + f.replace('.', '\\.') + '\\?v=20260928[e-z]').test(html), 'stamp ' + f));
+assert.ok(/'naluno-shell-v23[3-9]'/.test(sw) && /'20260928[e-z]'/.test(sw), 'service worker cache bumped');
+assert.ok(/<meta name="app-version" content="2026\.09\.28[e-z]">/.test(html), 'update banner can see the new build');
+/* 28f */
+assert.ok(space.includes("if(!seg || seg.type !== 'video'){") && space.includes("const chipHost = document.getElementById('bspaceChapterHost');"), 'video chapter chips do not follow into a writing');
+assert.ok(space.includes("['bspaceFitToggle', 'bspaceOrientToggle'].forEach"), 'video Fill/Fit buttons do not follow into a writing');
+assert.ok(css.includes('#bspaceListenWrap #bspaceListenBtn{') && css.includes('height:24px;'), 'Listen row is smaller than the title');
+assert.ok(html.includes('/js/broadcast-space.js?v=20260928f') && sw.includes("'naluno-shell-v234'"), '28f stamps');
 console.log('fixes-28e tests passed');
