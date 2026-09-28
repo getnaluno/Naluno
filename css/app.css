@@ -3526,3 +3526,104 @@ html[data-atmosphere="buzzing"] .naluno-aurora{
 .cdial-plate-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
 .cdial-plate-head button{ border:none; background:transparent; color:var(--text-dim); font-size:13px; }
 .cdial-plate .greenroom-setting{ margin:0; border:none; background:transparent; padding:0; }
+
+/* Held Signals: visible to the poster, with a plain note. */
+.signal-held-chip{position:absolute;right:6px;top:6px;z-index:3;padding:2px 7px;border-radius:999px;font-size:9.5px;letter-spacing:.03em;background:rgba(255,184,107,.92);color:#0D0F17;font-weight:700;}
+.signal-held-note{position:absolute;left:14px;right:14px;top:56px;z-index:4;padding:8px 12px;border-radius:12px;background:rgba(13,15,23,.82);border:1px solid rgba(255,184,107,.55);color:#FFD8A8;font-size:12.5px;text-align:center;}
+
+/* The install banner used to sit on top of every tab's header, so the
+   buttons under it (Spark, menus, For You / My Broadcasts / Toga / Search,
+   Compass tools) could not be tapped until it was dismissed. While it
+   shows, the screens start below it. */
+.app.install-on .tabscreen{ top: var(--install-h, 52px); }
+/* Signal tiles: the caption belongs at the bottom. The tile was laid out as
+   a row, so the caption stretched over the whole tile — the name landed on
+   top of the age label and the dark gradient hid the preview. */
+.signal-tile .signal-window > .signal-window-in{ flex-direction:column; justify-content:flex-end; align-items:stretch; }
+.signal-tile .signal-window > .signal-window-in > .signal-tile-cap{ margin-top:auto; flex:0 0 auto; }
+.signal-tile .signal-window > .signal-window-in > .avatar{ border-radius:0; }
+/* Full-width buttons inside sheets (Support, Report, Appeal) ran off the
+   right edge: the button's own side margins were added to its full width. */
+#supportSheetSend, #reportSendBtn, #appealSendBtn{ margin-left:0; margin-right:0; box-sizing:border-box; }
+/* Sheet headers sat under the phone's status bar and the content started
+   right under the title. */
+.call-overlay > .topbar[style*="padding-top:18px"]{
+  padding-top: calc(env(safe-area-inset-top, 0px) + 18px) !important;
+  padding-bottom: 12px;
+}
+/* My Broadcasts has a second row (Offline watch / Private) in the sticky
+   bar, which covered the plate's rotate button. Move the plate's buttons
+   down by that row. */
+body.naluno-bcast-mine .bcast-plate .feed-orient-btn{ transform: translateY(52px); }
+/* The bottom bar hides whenever a sheet is open, but these screens kept a
+   bar-sized gap at the bottom, and whatever tab was underneath showed
+   through it (very visible in landscape). Fill the screen instead. */
+body:has(.call-overlay.active) #wirelineThread.active,
+body:has(.call-overlay.active) #bandRoom.active,
+body:has(.call-overlay.active) #findNalunoPanel.active,
+body:has(.call-overlay.active) #sparkPage.active,
+body:has(.call-overlay.active) #wireBackupScreen.active,
+body:has(.call-overlay.active) #wireHistoryScreen.active{
+  bottom: 0;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* ============ Swipe gestures (js/gestures.js) ============ */
+.naluno-gesture-hint{
+  position:fixed; left:50%; bottom:calc(env(safe-area-inset-bottom,0px) + 96px); transform:translateX(-50%);
+  z-index:100000; max-width:calc(100vw - 48px); padding:10px 16px; border-radius:14px;
+  background:rgba(13,15,23,.88); color:#fff; font-size:12.5px; line-height:1.4; text-align:center;
+  border:1px solid rgba(255,255,255,.14); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+  pointer-events:none; transition:opacity .5s ease; opacity:1;
+}
+.naluno-gesture-hint.out{ opacity:0; }
+#nalunoPull{
+  position:fixed; left:50%; top:calc(env(safe-area-inset-top,0px) + 8px); transform:translate(-50%,-60px);
+  z-index:9000; display:flex; align-items:center; gap:8px; padding:8px 14px; border-radius:999px;
+  background:var(--surface,#171A26); color:var(--text,#fff); border:1px solid var(--line,#2A2E42);
+  font-size:12.5px; box-shadow:0 8px 24px rgba(0,0,0,.35); opacity:0; pointer-events:none;
+  transition:opacity .15s ease, transform .2s ease;
+}
+#nalunoPull.on{ opacity:1; transition:opacity .15s ease; }
+#nalunoPull.ready{ border-color:var(--mint,#7CFFB2); }
+#nalunoPull.busy{ transition:opacity .2s ease, transform .2s ease; }
+.naluno-pull-dot{ width:12px; height:12px; border-radius:50%; border:2px solid var(--line,#2A2E42); border-top-color:var(--mint,#7CFFB2); flex-shrink:0; }
+#nalunoPull.busy .naluno-pull-dot{ animation:nalunoPullSpin .8s linear infinite; }
+@keyframes nalunoPullSpin{ to{ transform:rotate(360deg); } }
+#tab-frequencies .tab-scroll, #tab-wireline .tab-scroll, #broadcastTabScroll{ overscroll-behavior-y:contain; }
+
+#wireReplyBar{
+  display:flex; align-items:center; gap:10px; margin:0 0 8px; padding:7px 8px 7px 12px;
+  border-left:3px solid var(--mint,#7CFFB2); border-radius:10px; background:var(--surface,#171A26);
+}
+#wireReplyBar[hidden]{ display:none; }
+#wireReplyBar .wire-reply-in{ flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; font-size:12.5px; }
+#wireReplyWho{ color:var(--mint,#7CFFB2); font-weight:600; }
+#wireReplyText{ color:var(--text-dim,#9aa0b4); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#wireReplyClose{
+  flex-shrink:0; width:30px; height:30px; border-radius:50%; border:1px solid var(--line,#2A2E42);
+  background:transparent; color:var(--text,#fff); font-size:18px; line-height:1; cursor:pointer;
+}
+.msg-quote{
+  margin:0 0 6px; padding:4px 8px; border-left:3px solid currentColor; border-radius:6px;
+  background:rgba(0,0,0,.14); font-size:12.5px; opacity:.85;
+  overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+}
+.msg-row.them .msg-quote{ background:rgba(255,255,255,.06); }
+.msg-row.reply-armed .msg-bubble{ box-shadow:0 0 0 2px var(--mint,#7CFFB2); }
+.msg-row.reply-armed::before{ content:'↩'; align-self:center; color:var(--mint,#7CFFB2); font-size:16px; margin-right:6px; }
+
+#wirelineList .contact-row{ position:relative; overflow:hidden; }
+.wire-swipe-tray{
+  position:absolute; top:0; right:0; bottom:0; display:flex; transform:translateX(100%);
+  transition:transform .2s ease; z-index:2;
+}
+.contact-row.swiped .wire-swipe-tray{ transform:translateX(0); }
+.wire-swipe-tray button{
+  border:0; min-width:64px; padding:0 10px; font-size:12.5px; font-weight:600; color:#0D0F17; cursor:pointer;
+  font-family:inherit;
+}
+.wire-swipe-tray button[data-act="read"]{ background:#9fb7ff; }
+.wire-swipe-tray button[data-act="call"]{ background:var(--mint,#7CFFB2); }
+.wire-swipe-tray button[data-act="clear"]{ background:var(--red,#ff6b6b); color:#fff; }
+#bviewer.story-held .bviewer-head, #bviewer.story-held #bviewerSocial{ opacity:.35; transition:opacity .2s ease; }
