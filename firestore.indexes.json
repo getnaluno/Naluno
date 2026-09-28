@@ -35,6 +35,9 @@
         { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" },
         { "order": "DESCENDING", "queryScope": "COLLECTION_GROUP" }
       ]
-    }
+    },
+    { "collectionGroup": "calls", "fieldPath": "createdAt", "indexes": [] },
+    { "collectionGroup": "calls", "fieldPath": "acceptedAt", "indexes": [] },
+    { "collectionGroup": "calls", "fieldPath": "endedAt", "indexes": [] }
   ]
 }

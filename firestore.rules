@@ -371,10 +371,25 @@ service cloud.firestore {
     match /calls/{callId} {
       allow read: if isSignedIn() && (request.auth.uid == resource.data.callerUid || request.auth.uid == resource.data.calleeUid);
       allow create: if isSignedIn() && request.auth.uid == request.resource.data.callerUid;
+      // A call's status only moves forward: ringing -> accepted / declined /
+      // missed / busy / ended, and accepted -> ended. Other fields (the SDP
+      // answer, timestamps) may change while the status stays. Blind writes
+      // used to let an Answer revive a call the caller had already ended.
+      // Only the callee answers, declines or reports busy.
       allow update: if isSignedIn()
         && (request.auth.uid == resource.data.callerUid || request.auth.uid == resource.data.calleeUid)
         && request.resource.data.callerUid == resource.data.callerUid
-        && request.resource.data.calleeUid == resource.data.calleeUid;
+        && request.resource.data.calleeUid == resource.data.calleeUid
+        && (
+          request.resource.data.get('status', '') == resource.data.get('status', '')
+          || (resource.data.get('status', '') == 'ringing'
+              && request.resource.data.status in ['missed', 'ended'])
+          || (resource.data.get('status', '') == 'ringing'
+              && request.resource.data.status in ['accepted', 'declined', 'busy']
+              && request.auth.uid == resource.data.calleeUid)
+          || (resource.data.get('status', '') == 'accepted'
+              && request.resource.data.status == 'ended')
+        );
 
       match /callerCandidates/{candId} {
         allow read, create: if isSignedIn() && (
