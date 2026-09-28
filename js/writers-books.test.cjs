@@ -21,7 +21,8 @@ const cloud = D.vendorBooks(costs, [{ key: 'cloudflare', amount_aed: 9, source: 
 assert.ok(cloud.some(function (r) { return r.key === 'cloudflare' && r.status === 'invoiced' && r.amount_aed === 9; }));
 
 const html = fs.readFileSync(__dirname + '/../app/index.html', 'utf8');
-assert.ok(html.indexOf('id="bcompWriteBtn"') > 0);
+/* Write moved out of the video composer onto the Broadcast tab. */
+assert.ok(html.indexOf('id="broadcastWriteBtn"') > 0);
 assert.ok(html.indexOf('id="bcompGoLiveBtn"') < 0);
 assert.ok(html.indexOf('id="broadcastGoLiveBtn"') > 0);
 const composer = fs.readFileSync(__dirname + '/broadcast-composer.js', 'utf8');

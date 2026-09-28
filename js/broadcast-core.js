@@ -484,7 +484,36 @@ function broadcastStableMediaId(b){
   }catch(_){ return ''; }
 }
 
+/* A scheduled Broadcast's document does not change when its time comes,
+   so nothing re-ran this and it stayed off the feed until something else
+   happened to change. Remember the latest snapshot and run again when the
+   next scheduled one is due. */
+let __feedLastDocs = null;
+let __feedDueTimer = null;
+function feedActivityAt(b){
+  return Math.max(Number(b.updatedAt) || 0, Number(b.createdAt) || 0, Number(b.publishAt) || 0);
+}
+function armScheduledFeedTimer(docs){
+  try{
+    if(__feedDueTimer){ clearTimeout(__feedDueTimer); __feedDueTimer = null; }
+    const now = Date.now();
+    let next = 0;
+    (docs || []).forEach(function(d){
+      const data = (d && typeof d.data === 'function') ? (d.data() || {}) : {};
+      const at = Number(data.publishAt) || 0;
+      if(at > now && !data.deleted && (!next || at < next)) next = at;
+    });
+    if(!next) return;
+    const wait = Math.min(Math.max(next - now + 1000, 1000), 6 * 60 * 60 * 1000);
+    __feedDueTimer = setTimeout(function(){
+      __feedDueTimer = null;
+      if(__feedLastDocs) applyBroadcastDocsToFeed(__feedLastDocs);
+    }, wait);
+  }catch(_){}
+}
 function applyBroadcastDocsToFeed(docs){
+  __feedLastDocs = docs;
+  armScheduledFeedTimer(docs);
   // Merge by stable Firestore doc id — never replace identity from array order.
   // Strand folders still rebuild from the merged list (plates are thumbs, not players).
   const prevById = {};
@@ -499,7 +528,7 @@ function applyBroadcastDocsToFeed(docs){
     list.push(row);
   });
   list.sort(function(a,b){
-    return (b.live ? 1 : 0) - (a.live ? 1 : 0) || (b.updatedAt||b.createdAt||0) - (a.updatedAt||a.createdAt||0);
+    return (b.live ? 1 : 0) - (a.live ? 1 : 0) || feedActivityAt(b) - feedActivityAt(a);
   });
   feedBroadcasts = list.slice(0, 80);
   try{ nalunoCacheWrite('feedBroadcasts', feedBroadcasts.map(nalunoSlimMedia)); }catch(_){}

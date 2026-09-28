@@ -197,8 +197,12 @@ function closeCallOverlay(){
   try{ window.__nalunoCallHist = false; }catch(_){}
   if(hadHist){
     try{
-      window.__nalunoCallPop = true;
-      if(history.state && history.state.nalunoCall) history.back();
+      /* Only mark a pop as ours when we actually go back. Setting it and
+         not going back swallowed the next Back press after a call. */
+      if(history.state && history.state.nalunoCall){
+        window.__nalunoCallPop = true;
+        history.back();
+      }
     }catch(_){}
   }
 }

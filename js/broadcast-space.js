@@ -2843,6 +2843,8 @@ function bspaceCloseSend(){
   const sheet = $('bspaceSendSheet');
   if(sheet) sheet.hidden = true;
 }
+/* Its Close button was never wired. */
+try{ if($('bspaceSendClose')) $('bspaceSendClose').onclick = bspaceCloseSend; }catch(_){}
 function bspaceOpenSend(){
   if(!activeBroadcastId) return;
   const people = (typeof contacts !== 'undefined' && contacts ? contacts : []).filter(function(c){
@@ -3116,6 +3118,7 @@ if($('bspaceAdvertiseBtn')){
     if(action) action.hidden = true;
     if(home) home.hidden = false;
   }
+  window.bspaceCloseMoreMenu = shut;
   btn.onclick = function(e){
     if(e){ e.preventDefault(); e.stopPropagation(); }
     const opening = menu.hasAttribute('hidden');

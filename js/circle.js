@@ -417,6 +417,9 @@
           const score = viewsM + circleM * 12 + engageM * 3;
           return Object.assign(r, { _score: score, _viewsM: viewsM, _circleM: circleM, _engageM: engageM });
         })
+        /* A Wall of Fame of zeros is not a Wall of Fame: only people with
+           something this month are listed. */
+        .filter(function(r){ return (r._score || 0) > 0; })
         .sort(function(a,b){ return (b._score||0) - (a._score||0); })
         .slice(0, 10);
       await attachTogaPhotos(rows);

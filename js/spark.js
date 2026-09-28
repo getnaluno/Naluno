@@ -46,7 +46,20 @@ async function openSparkSheet(){
   if($('sparkCode')) $('sparkCode').textContent = code;
   const url = sparkLink(code);
   if($('sparkQr')){
-    $('sparkQr').src = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(url);
+    /* Drawn on the phone. It used to come from an outside website, which
+       broke with no connection and handed that site the pulse link. The
+       website stays only as a fallback if the drawing fails. */
+    let drawn = false;
+    try{
+      if(typeof qrcode === 'function'){
+        const qr = qrcode(0, 'M');
+        qr.addData(url);
+        qr.make();
+        $('sparkQr').src = qr.createDataURL(8, 16);
+        drawn = true;
+      }
+    }catch(_){ drawn = false; }
+    if(!drawn) $('sparkQr').src = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(url);
   }
   sparkStatus('Valid for 3 minutes');
   watchSparkGuest(code);

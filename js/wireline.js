@@ -181,6 +181,16 @@ function wireRowUnread(fromThem, ts, uid){
   if(seen && when && when <= seen) return false;
   return true;
 }
+/* A reply made by swiping a message: first line "› Name: words" shows as
+   a quote above the reply. Anything else is plain linkified text. */
+function wireQuoteHtml(text){
+  const t = String(text == null ? '' : text);
+  const nl = t.indexOf('\n');
+  if(t.slice(0, 2) === '\u203a ' && nl > 2 && nl < 160 && nl < t.length - 1){
+    return '<div class="msg-quote">' + escapeHtml(t.slice(2, nl)) + '</div>' + wireLinkify(t.slice(nl + 1));
+  }
+  return wireLinkify(t);
+}
 function wireLinkify(text){
   const esc = escapeHtml(String(text == null ? '' : text));
   return esc.replace(/((?:https?:\/\/|www\.)[^\s<]+)/gi, function(url){
@@ -806,6 +816,7 @@ try{ bindWireMenu(); }catch(_){}
 function openThread(contactId){
   const c = contacts.find(x=>x.id===contactId); if(!c) return;
   try{ closeWireSetScreens(); }catch(_){}
+  try{ if(activeThreadContactId !== contactId && typeof nalunoReplyClear === 'function') nalunoReplyClear(); }catch(_){}
   activeThreadContactId = contactId;
   applyContactAvatarToEl($('threadAvatar'), c);
   $('threadName').textContent = c.name;
@@ -1094,7 +1105,7 @@ function renderThreadMessages(){
     else {
       // Translation, when this thread has it on, is appended UNDER the original
       // so the person's own words are never replaced by a machine's.
-      bubbleInner = wireLinkify(m.text || '')
+      bubbleInner = wireQuoteHtml(m.text || '')
         + ((typeof wireTranslationHtml === 'function') ? wireTranslationHtml(m) : '');
     }
     const receipt = m.from==='me' ? receiptTickHtml(m.status || 'sent') : '';
@@ -1564,13 +1575,17 @@ function sendThreadMessage(){
   updateComposerButtons();
   sendThreadMessage._lock = true;
   setTimeout(function(){ sendThreadMessage._lock = false; }, 450);
+  // A swiped-to-reply quote goes on the first line ("› Name: words").
+  let quote = '';
+  try{ if(typeof nalunoReplyTake === 'function') quote = nalunoReplyTake() || ''; }catch(_){ quote = ''; }
+  const full = quote ? quote + '\n' + text : text;
   if(c.isReal && c.firebaseUid){
-    sendRealMessage(c, { type:'text', text }, text);
+    sendRealMessage(c, { type:'text', text: full }, text);
     return;
   }
   const id = activeThreadContactId;
   if(!wirelineThreads[id]) wirelineThreads[id] = [];
-  const msg = { id: Date.now()+Math.random(), from:'me', type:'text', text, ts: Date.now(), status:'sent' };
+  const msg = { id: Date.now()+Math.random(), from:'me', type:'text', text: full, ts: Date.now(), status:'sent' };
   wirelineThreads[id].push(msg);
   $('threadInput').value = '';
   autoSizeThreadInput();

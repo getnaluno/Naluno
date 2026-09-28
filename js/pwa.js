@@ -6,19 +6,44 @@
    ============================================================ */
 /* ---------------- PWA INSTALL + CALL NOTIFICATION DEEP-LINK ---------------- */
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js?v=20260928c', { scope: '/', updateViaCache: 'none' })
+  navigator.serviceWorker.register('/sw.js?v=20260928d', { scope: '/', updateViaCache: 'none' })
     .then(function(reg){ try{ reg.update(); }catch(_){} })
     .catch(function(e){ console.warn('[sw]', e); });
   // One automatic reload when a new SW takes control (clears stuck "sign-in not ready"
   // from an older worker that timed out Firebase CDN scripts).
+  /* Never in the middle of something. The reload used to fire the moment
+     a new version took over — during a call, an upload or a first visit. */
   try{
+    const hadController = !!navigator.serviceWorker.controller;
     let reloaded = false;
-    navigator.serviceWorker.addEventListener('controllerchange', function(){
+    const busyNow = function(){
+      try{
+        if(typeof activeCallId !== 'undefined' && activeCallId) return true;
+        if(typeof publishBusy !== 'undefined' && publishBusy) return true;
+        if(typeof publishQueue !== 'undefined' && publishQueue && publishQueue.length) return true;
+        if(typeof postInProgress !== 'undefined' && postInProgress) return true;
+        if(typeof bcompPublishing !== 'undefined' && bcompPublishing) return true;
+        if(typeof bspaceLiveStream !== 'undefined' && bspaceLiveStream) return true;
+        const open = function(id){ const el = document.getElementById(id); return !!(el && el.classList.contains('active')); };
+        if(open('callOverlay') || open('incall') || open('composer') || open('bcomposer')) return true;
+        const f = document.activeElement;
+        if(f && (f.tagName === 'TEXTAREA' || f.tagName === 'INPUT') && String(f.value || '').length) return true;
+      }catch(_){}
+      return false;
+    };
+    const reloadWhenFree = function(){
       if(reloaded) return;
-      try{ if(sessionStorage.getItem('nalunoSwReload') === '20260926k') return; }catch(_){}
+      if(busyNow()){ setTimeout(reloadWhenFree, 4000); return; }
       reloaded = true;
       try{ sessionStorage.setItem('nalunoSwReload', '20260926k'); }catch(_){}
       location.reload();
+    };
+    navigator.serviceWorker.addEventListener('controllerchange', function(){
+      if(reloaded) return;
+      /* First visit: nothing old is on screen, so there is nothing to swap. */
+      if(!hadController) return;
+      try{ if(sessionStorage.getItem('nalunoSwReload') === '20260926k') return; }catch(_){}
+      reloadWhenFree();
     });
   }catch(_){}
 
@@ -474,7 +499,7 @@ window.addEventListener('offline', updateOfflineBadge);
 
   document.addEventListener('touchmove', function(e){
     if(!pulling || !e.touches || !e.touches[0]) return;
-    if(scrollableAncestorScrolled(e.target)){
+    if(window.__nalunoGestureTouch || scrollableAncestorScrolled(e.target)){
       pulling = false;
       const ind = document.getElementById('ptrIndicator');
       if(ind) ind.style.display = 'none';
@@ -503,6 +528,13 @@ window.addEventListener('offline', updateOfflineBadge);
   document.addEventListener('touchend', function(e){
     if(!pulling) return;
     pulling = false;
+    // js/gestures.js took this touch (a sheet pulled closed, or a list
+    // refreshed in place): do not also reload the whole app.
+    if(window.__nalunoGestureTouch){
+      const ind0 = document.getElementById('ptrIndicator');
+      if(ind0) ind0.style.display = 'none';
+      return;
+    }
     const ind = document.getElementById('ptrIndicator');
     if(ind) ind.style.display = 'none';
     const touch = (e.changedTouches && e.changedTouches[0]) || null;
@@ -601,3 +633,30 @@ function showInstallPromptSoon(){
   }catch(_){}
 }
 window.showInstallPromptSoon = showInstallPromptSoon;
+
+/* Keep the screens clear of the install banner while it is showing. */
+(function nalunoInstallSpace(){
+  function sync(){
+    try{
+      const ban = document.getElementById('installBanner');
+      const app = document.getElementById('app');
+      if(!ban || !app) return;
+      const on = ban.style.display && ban.style.display !== 'none';
+      if(on){
+        app.style.setProperty('--install-h', (ban.offsetHeight || 52) + 'px');
+        app.classList.add('install-on');
+      } else {
+        app.classList.remove('install-on');
+      }
+    }catch(_){}
+  }
+  function boot(){
+    const ban = document.getElementById('installBanner');
+    if(!ban) return;
+    try{ new MutationObserver(sync).observe(ban, { attributes: true, attributeFilter: ['style'] }); }catch(_){}
+    window.addEventListener('resize', sync);
+    sync();
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+})();

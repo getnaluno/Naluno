@@ -490,19 +490,66 @@
     return bits.join(' · ');
   }
 
-  /* Support presets were designed as AED 5 / 10 / 25. Convert those
-     dirham amounts into the operating currency so the sheet stays fair. */
-  const SUPPORT_AED_MAJOR = [5, 10, 25];
+  /* ---------------- Price book ----------------
+     Every price lives in economyConfig/prices, set by the operator in the
+     Control Centre. Nothing here carries an amount of its own:
+       knownMonthly:   { amount: <major>, currency: 'XXX' }
+       supportPresets: { amounts: [<major>, ...], currency: 'XXX' }
+     Shown in the operating currency at the running rate. The worker
+     re-prices every charge itself; these are for display. */
+  const PRICE_KEY = 'nalunoPrices:v1';
+  let __prices = null;
+  try { __prices = JSON.parse(localStorage.getItem(PRICE_KEY) || 'null'); } catch (_) { __prices = null; }
+  function applyPrices(d) {
+    __prices = d && typeof d === 'object' ? d : null;
+    try { localStorage.setItem(PRICE_KEY, JSON.stringify(__prices)); } catch (_) {}
+    emit();
+  }
+  function priceBook() { return __prices; }
+  function readPrice(entry) {
+    if (!entry || typeof entry !== 'object') return null;
+    const amount = Number(entry.amount);
+    const cur = norm(entry.currency);
+    if (!(amount > 0) || !cur) return null;
+    return { amount: amount, currency: cur };
+  }
+  function knownPrice() {
+    return readPrice(__prices && __prices.knownMonthly);
+  }
+  /** Known monthly price in the currency the member pays in. Mirrors the
+   *  worker's rounding so the number on screen is the number charged. */
+  function knownIn(payCode) {
+    const p = knownPrice();
+    if (!p) return null;
+    const to = norm(payCode) || __code;
+    if (to !== p.currency && (!(rateOf(to) > 0) || !(rateOf(p.currency) > 0))) return null;
+    const raw = convert(p.amount, p.currency, to);
+    const major = digits(to) === 0 ? Math.round(raw) : Math.round(raw * 100) / 100;
+    return { major: major, currency: to, label: formatMajor(major, to), book: p };
+  }
   function supportPresets() {
-    return SUPPORT_AED_MAJOR.map(function (aed) {
-      const major = prettyMajor(convert(aed, 'AED', __code), __code);
+    const e = __prices && __prices.supportPresets;
+    const cur = norm(e && e.currency);
+    const list = (e && Array.isArray(e.amounts)) ? e.amounts.map(Number).filter(function (n) { return n > 0; }) : [];
+    if (!cur || !list.length) return [];
+    return list.slice(0, 6).map(function (amt) {
+      const major = prettyMajor(convert(amt, cur, __code), __code);
       return {
-        aed: aed,
+        book: amt,
         major: major,
         minor: toMinor(major, __code),
         currency: __code,
         label: formatMajor(major, __code),
       };
+    });
+  }
+  function savePrices(passedDb, uid, patch) {
+    const db = dbOf(passedDb);
+    if (!db) return Promise.reject(new Error('Not signed in'));
+    const doc = Object.assign({}, patch || {}, { updatedAt: Date.now(), updatedBy: uid || '' });
+    return db.collection('economyConfig').doc('prices').set(doc, { merge: true }).then(function () {
+      applyPrices(Object.assign({}, __prices || {}, doc));
+      return __prices;
     });
   }
 
@@ -540,6 +587,11 @@
         if (d.code) setCode(d.code);
         if (d.rates) applyRates(d.rates, { source: d.source || 'desk', fetchedAt: d.fetchedAt || Date.now() });
       }, function () { __unsub = null; });
+    } catch (_) {}
+    try {
+      db.collection('economyConfig').doc('prices').onSnapshot(function (snap) {
+        applyPrices(snap && snap.exists ? (snap.data() || {}) : null);
+      }, function () {});
     } catch (_) {}
     try {
       db.collection('economyConfig').doc('fxRates').onSnapshot(function (snap) {
@@ -620,6 +672,11 @@
     selectHtml: selectHtml,
     quoteLine: quoteLine,
     supportPresets: supportPresets,
+    priceBook: priceBook,
+    knownPrice: knownPrice,
+    knownIn: knownIn,
+    savePrices: savePrices,
+    applyPrices: applyPrices,
     fetchLive: fetchLive,
     applyRates: applyRates,
     listen: listen,

@@ -5,7 +5,9 @@
   if (typeof module === 'object' && module.exports) module.exports = api;
   root.NalunoKnown = api;
 })(typeof window !== 'undefined' ? window : globalThis, function () {
-  const MONTH_MINOR = 4900;
+  /* No price lives here. The monthly price is the operator's, in
+     economyConfig/prices (Control Centre → Money → Prices), read through
+     NalunoCurrency. */
   const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
   const LABEL = 'Known';
 
@@ -42,20 +44,42 @@
     return null;
   }
 
-  function recordPayment(app, paidAt, ref) {
+  function currentPrice() {
+    try {
+      const C = typeof window !== 'undefined' ? window.NalunoCurrency : (typeof globalThis !== 'undefined' ? globalThis.NalunoCurrency : null);
+      if (C && typeof C.knownPrice === 'function') return C.knownPrice();
+    } catch (_) {}
+    return null;
+  }
+  function isoMinor(amount, currency) {
+    try {
+      const C = typeof window !== 'undefined' ? window.NalunoCurrency : null;
+      if (C && typeof C.toMinor === 'function') return C.toMinor(amount, currency);
+    } catch (_) {}
+    return Math.round(Number(amount) * 100);
+  }
+  /* price: { amount, currency } from the price book. The desk passes the
+     book at the moment it records the month. */
+  function recordPayment(app, paidAt, ref, price) {
     if (!app) return null;
     const at = Number(paidAt);
     if (!(at > 0)) return null;
     if (app.status !== 'accepted' && app.status !== 'known' && app.status !== 'lapsed') return null;
     const carry = (app.status === 'known' && Number(app.paidUntil) > at) ? Number(app.paidUntil) : at;
-    return Object.assign({}, app, {
+    const p = price || currentPrice();
+    const row = Object.assign({}, app, {
       status: 'known',
       paidAt: at,
       paidUntil: carry + MONTH_MS,
-      amount_minor: MONTH_MINOR,
       payRef: String(ref || '').slice(0, 120),
       updatedAt: at,
     });
+    if (p && Number(p.amount) > 0) {
+      row.amount_major = Number(p.amount);
+      row.currency = String(p.currency || '').toUpperCase();
+      row.amount_minor = isoMinor(p.amount, row.currency);
+    }
+    return row;
   }
 
   function voidPayment(app, now) {
@@ -71,7 +95,7 @@
     return next;
   }
 
-  function grantKnown(app, now, months) {
+  function grantKnown(app, now, months, price) {
     if (!app || !app.uid) return null;
     const span = Number(months);
     if (span !== 6 && span !== 12) return null;
@@ -85,10 +109,14 @@
       grantedAt: at,
       paidUntil: at + span * MONTH_MS,
       amount_minor: 0,
-      list_minor: MONTH_MINOR,
       payRef: '',
       updatedAt: at,
-    });
+    }, (function () {
+      const p = price || currentPrice();
+      if (!p || !(Number(p.amount) > 0)) return {};
+      const cur = String(p.currency || '').toUpperCase();
+      return { list_amount: Number(p.amount), list_currency: cur, list_minor: isoMinor(p.amount, cur) };
+    })());
   }
 
   function voidGrant(app, now) {
@@ -99,6 +127,8 @@
     delete next.grantMonths;
     delete next.paidUntil;
     delete next.list_minor;
+    delete next.list_amount;
+    delete next.list_currency;
     delete next.amount_minor;
     delete next.payRef;
     return next;
@@ -168,12 +198,16 @@
   const NOTE_MIN = 12;
   const NOTE_MAX = 500;
 
-  function feeLabel() {
+  function payQuote() {
     try {
       const C = typeof window !== 'undefined' ? window.NalunoCurrency : null;
-      if (C && typeof C.formatMinor === 'function') return C.formatMinor(MONTH_MINOR, 'AED');
+      if (C && typeof C.knownIn === 'function') return C.knownIn(C.code && C.code());
     } catch (_) {}
-    return '';
+    return null;
+  }
+  function feeLabel() {
+    const q = payQuote();
+    return q ? (q.label + ' a month') : '';
   }
 
   function formHtml(fee) {
@@ -227,7 +261,9 @@
       button = 'Ask again';
       body = formHtml(fee);
     } else if (app && (app.status === 'accepted' || app.status === 'lapsed')) {
-      button = 'Pay';
+      /* The fold opens onto its own Pay button; two "Pay" buttons on top
+         of each other read as a glitch. */
+      button = 'Known · accepted';
       body = '<p class="known-copy">Accepted<span class="known-fee">' + (fee ? (' · ' + fee) : '') + '</span>. Pay, then the mark appears.</p>'
         + '<button type="button" class="save-btn" id="knownPay">Pay</button>'
         + '<p class="known-copy" id="knownPayMsg"></p>';
@@ -240,7 +276,7 @@
         + '<button type="button" class="save-btn" id="knownPay">Next month</button>'
         + '<p class="known-copy" id="knownPayMsg"></p>';
     } else if (app) {
-      button = 'Pay';
+      button = 'Known · renew';
       body = '<p class="known-copy">The month ended<span class="known-fee">' + (fee ? (' · ' + fee) : '') + '</span>.</p>'
         + '<button type="button" class="save-btn" id="knownPay">Pay</button>'
         + '<p class="known-copy" id="knownPayMsg"></p>';
@@ -410,19 +446,25 @@
   async function startPay(host) {
     const msg = (host && host.querySelector && host.querySelector('#knownPayMsg')) || document.getElementById('knownPayMsg');
     if (typeof currentUser === 'undefined' || !currentUser) return;
-    let code = 'AED';
-    let minor = MONTH_MINOR;
+    let q = payQuote();
+    /* After the worker said the price moved, use its number (10 minutes). */
+    const srv = startPay.__server;
+    if (srv && q && srv.currency === q.currency && Date.now() - srv.at < 10 * 60 * 1000) {
+      q = Object.assign({}, q, { major: srv.major });
+    }
+    if (!q) {
+      const text = 'The Known price is not set yet. Nothing was charged.';
+      if (msg) msg.textContent = text;
+      if (typeof toast === 'function') toast(text);
+      return;
+    }
     try {
-      const C = window.NalunoCurrency;
-      if (C && typeof C.code === 'function' && C.code()) code = C.code();
-      if (C && typeof C.convertMinor === 'function') minor = C.convertMinor(MONTH_MINOR, 'AED', code);
-    } catch (_) {}
-    try {
+      /* The worker prices this itself at the running rate. amount_major is
+         what this screen showed, so a big gap is caught, not charged. */
       const body = {
         kind: 'known',
-        amount_minor: minor,
-        currency: code,
-        book_minor: MONTH_MINOR,
+        amount_major: q.major,
+        currency: q.currency,
         idempotency_key: 'known_' + currentUser.uid + '_' + new Date().toISOString().slice(0, 7),
       };
       let url = '';
@@ -430,7 +472,17 @@
       else throw new Error('Payments aren’t available yet. Nothing was charged.');
       window.location.href = url;
     } catch (err) {
-      const text = (err && err.message) || 'Payments aren’t available yet. Nothing was charged.';
+      let text = (err && err.message) || 'Payments aren’t available yet. Nothing was charged.';
+      const d = err && err.data;
+      if (d && d.code === 'price_changed' && d.amount_major > 0) {
+        try {
+          const C = window.NalunoCurrency;
+          const now = (C && C.formatMajor) ? C.formatMajor(d.amount_major, d.currency) : (d.currency + ' ' + d.amount_major);
+          startPay.__server = { major: Number(d.amount_major), currency: String(d.currency || ''), at: Date.now() };
+          text = 'The price is now ' + now + ' a month. Tap Pay again to continue. Nothing was charged.';
+          if (host && host.querySelectorAll) host.querySelectorAll('.known-fee').forEach(function (el) { el.textContent = ' · ' + now + ' a month'; });
+        } catch (_) {}
+      }
       if (msg) msg.textContent = text;
       if (typeof toast === 'function') toast(text);
     }
@@ -458,7 +510,6 @@
   }
 
   return {
-    MONTH_MINOR: MONTH_MINOR,
     MONTH_MS: MONTH_MS,
     freshApply: freshApply,
     review: review,

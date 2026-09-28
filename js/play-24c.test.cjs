@@ -42,8 +42,9 @@ assert.ok(beacon.includes('if(place) block += place'), 'the place leads the repl
 assert.ok(html.includes('id="bcastOfflineWatch"'), 'Offline watch is inside My Broadcasts');
 assert.ok(html.includes('id="bcastPrivateWatch"'), 'Private broadcasts is inside My Broadcasts');
 assert.ok(!html.includes('id="openDownloadsBtn"'), 'saved broadcasts are not under Callsign');
-assert.ok(/2026\.09\.2[4-9]/.test(html), 'member build stamp');
-assert.ok(/naluno-shell-v20[3-9]/.test(sw), 'the shell cache moves');
-assert.ok(/APP_BUILD = '2026092[4-9]/.test(sw), 'service worker build');
+assert.ok(/naluno-build" content="\d{4}\.\d{2}\.\d{2}[a-z]?"/.test(html), 'member build stamp');
+/* Was a regex that stopped matching at v210. The cache must only move forward. */
+assert.ok(Number((sw.match(/naluno-shell-v(\d+)/) || [])[1]) >= 203, 'the shell cache moves');
+assert.ok(/APP_BUILD = '\d{8}[a-z]?'/.test(sw), 'service worker build');
 
 console.log('play-24c tests passed');

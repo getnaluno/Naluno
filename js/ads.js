@@ -1070,8 +1070,11 @@
             ad_id: adId,
             mail_id: (sheet && sheet.dataset.mailId) || '',
             broadcast_id: bid,
-            amount_minor: Math.round(paidAed * 100),
-            currency: 'AED',
+            /* Paid in the running currency. The worker converts the AED
+               book at the running rate and charges that — this number is
+               only what the screen showed. */
+            amount_major: Math.round(adFromAed(paidAed) * 100) / 100,
+            currency: adMoneyCode(),
             idempotency_key: 'ad_' + (adId || (sheet && sheet.dataset.mailId) || bid) + '_' + Date.now(),
           });
           window.location.href = url;

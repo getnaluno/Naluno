@@ -30,16 +30,14 @@ function supportCcy(){
   return 'AED';
 }
 function supportPresets(){
+  /* Amounts come from the operator's price book, converted to the running
+     currency. No amount lives in this file. */
   try{
     if(typeof NalunoCurrency !== 'undefined' && NalunoCurrency && NalunoCurrency.supportPresets){
-      return NalunoCurrency.supportPresets();
+      return NalunoCurrency.supportPresets() || [];
     }
   }catch(_){}
-  return [
-    { major: 5, minor: 500, currency: 'AED', label: 'AED 5' },
-    { major: 10, minor: 1000, currency: 'AED', label: 'AED 10' },
-    { major: 25, minor: 2500, currency: 'AED', label: 'AED 25' },
-  ];
+  return [];
 }
 
 function supportIsOn(){
@@ -375,7 +373,7 @@ function openSupportSheet(creatorUid, creatorName, broadcastId){
     uid: creatorUid,
     name: creatorName || 'this creator',
     broadcastId: broadcastId || '',
-    amount: presets[1] ? presets[1].minor : (presets[0] && presets[0].minor) || 0,
+    amount: presets[1] ? presets[1].major : (presets[0] && presets[0].major) || 0,
     currency: supportCcy(),
   };
   const panel = $('supportSheet');
@@ -384,15 +382,28 @@ function openSupportSheet(creatorUid, creatorName, broadcastId){
   if(who) who.textContent = 'Support ' + String(__supportSheet.name).split(' ')[0];
   if(hint) hint.textContent = 'Voluntary. Separate from anything you earn. You will be taken to pay. Nothing is marked paid until the payment is confirmed. Amounts are in ' + supportCcy() + '.';
   const row = $('supportAmountRow');
+  const other = $('supportAmountOther');
+  if(other){
+    other.value = '';
+    other.placeholder = 'Other amount (' + supportCcy() + ')';
+    other.oninput = function(){
+      const n = Number(String(other.value || '').replace(/,/g, ''));
+      if(n > 0){
+        __supportSheet.amount = n;
+        if(row) row.querySelectorAll('.support-amt').forEach(function(x){ x.classList.remove('on'); });
+      }
+    };
+  }
   if(row){
     row.innerHTML = presets.map(function(p, i){
-      const on = p.minor === __supportSheet.amount || (!__supportSheet.amount && i === 1);
-      if(on) __supportSheet.amount = p.minor;
-      return '<button type="button" class="support-amt' + (on ? ' on' : '') + '" data-minor="' + p.minor + '">' + supportEsc(p.label) + '</button>';
+      const on = p.major === __supportSheet.amount;
+      return '<button type="button" class="support-amt' + (on ? ' on' : '') + '" data-major="' + supportEsc(p.major) + '">' + supportEsc(p.label) + '</button>';
     }).join('');
+    row.hidden = !presets.length;
     row.querySelectorAll('.support-amt').forEach(function(b){
       b.onclick = function(){
-        __supportSheet.amount = Number(b.getAttribute('data-minor')) || 0;
+        __supportSheet.amount = Number(b.getAttribute('data-major')) || 0;
+        if(other) other.value = '';
         row.querySelectorAll('.support-amt').forEach(function(x){
           x.classList.toggle('on', x === b);
         });
@@ -415,7 +426,10 @@ async function nalunoCheckout(body){
   });
   const data = await res.json().catch(function(){ return {}; });
   if(!res.ok || !data.ok || !data.url){
-    throw new Error(data.error || 'Payments aren’t available yet. Nothing was charged.');
+    const err = new Error(data.error || 'Payments aren’t available yet. Nothing was charged.');
+    err.data = data;
+    err.status = res.status;
+    throw err;
   }
   return data.url;
 }
@@ -427,8 +441,8 @@ async function submitSupportIntent(){
   }
   if(typeof currentUser === 'undefined' || !currentUser){ toast('Sign in first'); return; }
   const uid = __supportSheet.uid;
-  const amountMinor = Number(__supportSheet.amount) || 0;
-  if(!uid || !(amountMinor > 0)){ toast('Pick an amount'); return; }
+  const amountMajor = Number(__supportSheet.amount) || 0;
+  if(!uid || !(amountMajor > 0)){ toast('Pick an amount'); return; }
   const sendBtn = $('supportSheetSend');
   if(sendBtn){ sendBtn.disabled = true; sendBtn.textContent = 'Opening…'; }
   const msg = $('supportSheetMsg');
@@ -437,7 +451,7 @@ async function submitSupportIntent(){
       kind: 'support',
       creator_user_id: uid,
       broadcast_id: __supportSheet.broadcastId || '',
-      amount_minor: amountMinor,
+      amount_major: amountMajor,
       currency: __supportSheet.currency || supportCcy(),
       idempotency_key: 'sup_' + (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '' + Math.random())),
     });
@@ -454,14 +468,6 @@ async function submitSupportIntent(){
 function wireSupportSheet(){
   const close = $('supportSheetClose');
   if(close) close.onclick = closeSupportSheet;
-  document.querySelectorAll('#supportAmountRow .support-amt').forEach(function(b){
-    b.onclick = function(){
-      __supportSheet.amount = Number(b.getAttribute('data-minor')) || 1000;
-      document.querySelectorAll('#supportAmountRow .support-amt').forEach(function(x){
-        x.classList.toggle('on', x === b);
-      });
-    };
-  });
   const send = $('supportSheetSend');
   if(send) send.onclick = submitSupportIntent;
 }

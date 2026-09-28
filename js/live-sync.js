@@ -33,8 +33,16 @@
       }
     } catch (_) {}
   });
-  try {
-    const obs = new MutationObserver(tick);
-    obs.observe(document.documentElement, { attributes: true, subtree: true, attributeFilter: ['class'] });
-  } catch (_) {}
+  /* Only the story viewer matters here. Watching every class change on
+     the whole page ran this on every animation frame of every screen. */
+  function watchViewer() {
+    const el = document.getElementById('bviewer');
+    if (!el) { setTimeout(watchViewer, 1000); return; }
+    try {
+      const obs = new MutationObserver(tick);
+      obs.observe(el, { attributes: true, attributeFilter: ['class'] });
+    } catch (_) {}
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watchViewer);
+  else watchViewer();
 })();

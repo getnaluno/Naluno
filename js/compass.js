@@ -928,7 +928,7 @@ function openComposer(mode){
     }
   } else {
     if(label) label.textContent = 'New Signal';
-    if(hint) hint.textContent = 'Ephemeral · choose 24h / 3 days / 7 days';
+    if(hint) hint.textContent = 'Ephemeral · lives 24 hours · not a Broadcast';
     if(ttlRow) ttlRow.style.display = 'block';
     if(fields) fields.style.display = 'none';
     if(linkRow) linkRow.style.display = 'block';
@@ -1731,6 +1731,19 @@ async function nalunoScreenSignalSegments(segs){
   return { blocked: null };
 }
 
+/* A held Signal used to look posted to its owner while no connection
+   could see it. Say so, plainly, once the post is done. */
+function nalunoNoteHeldSignals(segs){
+  try{
+    const n = (segs || []).filter(function(x){ return x && x.held; }).length;
+    if(!n) return;
+    setTimeout(function(){
+      toast(n === (segs || []).length
+        ? 'Posted. Only you can see it until it is checked.'
+        : 'Posted. ' + n + ' part' + (n === 1 ? '' : 's') + ' stay private until checked.');
+    }, 1800);
+  }catch(_){}
+}
 async function postSegmentsNow(newSegments){
   try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('postSegmentsNow', (newSegments && newSegments.length) || 0); }catch(_){}
   const screened = await nalunoScreenSignalSegments(newSegments);
@@ -2042,11 +2055,13 @@ $('postBroadcastBtn').onclick = async ()=>{
       run: async (progress)=>{
         if(progress) progress(postedCount>1 ? ('Uploading Signals…') : 'Uploading Signal…');
         await postSegmentsNow(newSegments);
+        nalunoNoteHeldSignals(newSegments);
       },
     });
   } else {
     await postSegmentsNow(newSegments);
     toast(postedCount>1 ? `Posted ${postedCount} Signals` : 'Posted Signal');
+    nalunoNoteHeldSignals(newSegments);
   }
 };
 

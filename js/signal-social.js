@@ -153,6 +153,45 @@
     return next;
   }
 
+  /* Pulses land in the owner's notifications, which any signed-in person
+     can write to. Only people who are actually connections count, and
+     their name comes from the owner's own contact list, not from the
+     pulse. */
+  function connectionName(uid) {
+    try {
+      const list = (typeof contacts !== 'undefined' && contacts) ? contacts : [];
+      const c = list.find(function (x) { return x && x.firebaseUid === uid; });
+      return c ? (c.name || 'Someone') : null;
+    } catch (_) { return null; }
+  }
+  /* Same query, narrowed to one Signal. Falls back to the wide read if the
+     narrow one is refused. */
+  function pulseQuery(ownerUid, segId, limit) {
+    const col = db().collection('users').doc(ownerUid).collection('notifications');
+    return col.where('kind', '==', 'signal-pulse').where('segId', '==', String(segId)).limit(limit).get()
+      .catch(function () {
+        return col.where('kind', '==', 'signal-pulse').limit(300).get();
+      });
+  }
+  /* Pulses never used to be removed. Old ones are cleared when the owner
+     looks, a few at a time. */
+  let lastSweep = 0;
+  function sweepOldPulses(ownerUid) {
+    if (Date.now() - lastSweep < 10 * 60 * 1000) return;
+    lastSweep = Date.now();
+    try {
+      const cutoff = Date.now() - 3 * 24 * 60 * 60 * 1000;
+      db().collection('users').doc(ownerUid).collection('notifications')
+        .where('kind', '==', 'signal-pulse').limit(120).get().then(function (snap) {
+          let n = 0;
+          snap.forEach(function (d) {
+            const at = Number((d.data() || {}).at) || 0;
+            if (at && at < cutoff && n < 60) { n++; d.ref.delete().catch(function () {}); }
+          });
+        }).catch(function () {});
+    } catch (_) {}
+  }
+
   function mergePulse(rows, segId, pulses) {
     const have = {};
     rows.forEach(function (r) { if (r && r.uid) have[r.uid] = r; });
@@ -161,6 +200,7 @@
       if (!r || String(r.segId || '') !== String(segId)) return;
       const who = r.from || r.fromUid;
       if (!who) return;
+      if (connectionName(who) === null) return;
       const prev = best[who];
       if (!prev || (Number(r.at) || 0) >= (Number(prev.at) || 0)) best[who] = r;
     });
@@ -168,7 +208,7 @@
       const r = best[who];
       const row = {
         uid: who,
-        name: r.name || 'Someone',
+        name: connectionName(who) || 'Someone',
         viewedAt: r.viewedAt || r.at || 0,
         reaction: r.reaction || '',
       };
@@ -204,8 +244,8 @@
       try { console.warn('[signal] viewers', err); } catch (_) {}
     }
     try {
-      const snap = await db().collection('users').doc(uid)
-        .collection('notifications').where('kind', '==', 'signal-pulse').limit(300).get();
+      const snap = await pulseQuery(uid, segId, 200);
+      sweepOldPulses(uid);
       const pulses = [];
       snap.forEach(function (d) { pulses.push(d.data() || {}); });
       mergePulse(rows, segId, pulses);
@@ -234,14 +274,13 @@
     const uid = me();
     if (uid && uid === ownerUid) {
       try {
-        const snap = await db().collection('users').doc(uid)
-          .collection('notifications').where('kind', '==', 'signal-pulse').limit(300).get();
+        const snap = await pulseQuery(uid, segId, 200);
         const best = {};
         snap.forEach(function (d) {
           const r = d.data() || {};
           if (String(r.segId || '') !== String(segId)) return;
           const who = r.from || r.fromUid;
-          if (!who) return;
+          if (!who || connectionName(who) === null) return;
           const prev = best[who];
           if (!prev || (Number(r.at) || 0) >= (Number(prev.at) || 0)) best[who] = r;
         });
@@ -385,7 +424,7 @@
     if (uid && uid === ownerUid) {
       try {
         watchUnsubs.push(database.collection('users').doc(uid)
-          .collection('notifications').where('kind', '==', 'signal-pulse').limit(80)
+          .collection('notifications').where('kind', '==', 'signal-pulse').where('segId', '==', String(segId)).limit(80)
           .onSnapshot(refreshViewers, function () {}));
       } catch (_) {}
     } else {

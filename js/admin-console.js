@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260926n';
+  const BUILD = '20260928d';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -1592,6 +1592,87 @@
       + C.selectHtml('opCurrency', opCode())
       + '<p class="gap-note" style="margin-top:8px;" id="opFxLine">' + escapeHtml(C.quoteLine()) + '</p>');
   }
+  /* ---------------- Prices ----------------
+     The only place a price is set. Stored in economyConfig/prices, in the
+     currency it was typed in; the app shows it in the running currency at
+     the running rate and the worker charges exactly that, converted
+     server-side. */
+  function priceBookNow() {
+    const C = Ccy();
+    return (C && C.priceBook) ? (C.priceBook() || null) : null;
+  }
+  function pricesCard() {
+    const C = Ccy();
+    if (!C || !C.savePrices) return '';
+    const code = opCode();
+    const book = priceBookNow() || {};
+    const k = book.knownMonthly && Number(book.knownMonthly.amount) > 0 ? book.knownMonthly : null;
+    const sp = book.supportPresets && Array.isArray(book.supportPresets.amounts) ? book.supportPresets : null;
+    const kShown = k ? C.prettyMajor(C.convert(Number(k.amount), k.currency, code), code) : '';
+    const sShown = sp ? sp.amounts.map(function (a) { return C.prettyMajor(C.convert(Number(a), sp.currency, code), code); }).join(', ') : '';
+    const kNote = k ? ('Stored as ' + C.formatMajor(Number(k.amount), k.currency) + (k.currency !== code ? (' · shown now as ' + C.formatMajor(Number(kShown), code)) : '')) : 'Not set — Known payments are paused until it is.';
+    return card('Prices',
+      '<p class="sub">Typed in ' + escapeHtml(code) + '. Members see them in the running currency at the running rate. The worker charges the same amount, converted on the server.</p>'
+      + '<label for="priceKnown">Known, one month (' + escapeHtml(code) + ')</label>'
+      + '<input id="priceKnown" inputmode="decimal" value="' + escapeHtml(String(kShown)) + '" />'
+      + '<p class="gap-note" style="margin-top:4px;">' + escapeHtml(kNote) + '</p>'
+      + '<label for="priceSupport" style="margin-top:10px;">Creator Support buttons (' + escapeHtml(code) + ', comma separated)</label>'
+      + '<input id="priceSupport" inputmode="decimal" value="' + escapeHtml(sShown) + '" />'
+      + '<p class="gap-note" style="margin-top:4px;">' + escapeHtml(sp ? ('Stored in ' + sp.currency + '.') : 'Not set — the sheet shows only “Other amount”.') + '</p>'
+      + '<button type="button" class="btn" id="priceSave" style="margin-top:10px;">Save prices</button>'
+      + '<p class="gap-note" id="priceMsg"></p>');
+  }
+  function wirePricesCard() {
+    const btn = $('priceSave');
+    if (!btn) return;
+    btn.onclick = async function () {
+      const C = Ccy();
+      const code = opCode();
+      const kRaw = String(($('priceKnown') && $('priceKnown').value) || '').replace(/,/g, '').trim();
+      const sRaw = String(($('priceSupport') && $('priceSupport').value) || '').trim();
+      const k = Number(kRaw);
+      const list = sRaw ? sRaw.split(/[,\s]+/).map(function (x) { return Number(x); }).filter(function (n) { return n > 0; }) : [];
+      if (kRaw && !(k > 0)) { setMsg('priceMsg', 'The Known price must be a number above zero.'); return; }
+      const patch = {};
+      if (k > 0) patch.knownMonthly = { amount: k, currency: code };
+      patch.supportPresets = list.length ? { amounts: list.slice(0, 6), currency: code } : { amounts: [], currency: code };
+      btn.disabled = true;
+      try {
+        await C.savePrices(adminDb(), currentUser && currentUser.uid, patch);
+        try { await writeAudit('prices', code, JSON.stringify(patch).slice(0, 300)); } catch (_) {}
+        setMsg('priceMsg', 'Saved. Members see the new prices now.', true);
+      } catch (e) {
+        setMsg('priceMsg', (e && e.message) || 'Could not save the prices.');
+      } finally {
+        btn.disabled = false;
+      }
+    };
+  }
+  /* One-time carry-over. Until this build the Known month and the support
+     buttons were written into the app itself. The first time the desk
+     opens with no price book on file, those same values are written into
+     the book once — so nothing that worked yesterday stops today — and
+     from then on the book is the only source and the operator edits it. */
+  async function seedPriceBookOnce() {
+    const db = adminDb();
+    const C = Ccy();
+    if (!db || !C || !C.applyPrices) return;
+    try {
+      const ref = db.collection('economyConfig').doc('prices');
+      const snap = await ref.get();
+      if (snap.exists) { C.applyPrices(snap.data() || {}); return; }
+      const carried = {
+        knownMonthly: { amount: 49, currency: 'AED' },
+        supportPresets: { amounts: [5, 10, 25], currency: 'AED' },
+        carriedFromBuild: true,
+        updatedAt: Date.now(),
+        updatedBy: (currentUser && currentUser.uid) || '',
+      };
+      await ref.set(carried, { merge: true });
+      C.applyPrices(carried);
+      try { await writeAudit('prices-carried', 'economyConfig/prices', 'Carried the old built-in prices into the book once.'); } catch (_) {}
+    } catch (_) {}
+  }
   function bytesLabel(n) {
     return Data && Data.formatBytes ? Data.formatBytes(n) : String(n || 0);
   }
@@ -2193,9 +2274,15 @@
     (d.knownApps || []).forEach(function (k) {
       if (!k || !k.grant || k.voidedAt || k.paidAt) return;
       const months = Number(k.grantMonths) || 0;
-      const minor = Number(k.list_minor) || 0;
-      if ((months !== 6 && months !== 12) || !(minor > 0)) return;
-      const aed = (minor / 100) * months;
+      /* Newer grants carry the list price and its currency. Older ones
+         only have list_minor, which was always in AED. */
+      const listCur = String(k.list_currency || 'AED');
+      const listMajor = Number(k.list_amount) > 0
+        ? Number(k.list_amount)
+        : (Number(k.list_minor) || 0) / Math.pow(10, (Ccy() && Ccy().digits) ? Ccy().digits(listCur) : 2);
+      if ((months !== 6 && months !== 12) || !(listMajor > 0)) return;
+      const C2 = Ccy();
+      const aed = (C2 && C2.convert) ? C2.convert(listMajor * months, listCur, 'AED') : listMajor * months;
       grantAed += aed;
       grantN += 1;
       grantRows.push([k.name || k.uid || '', String(months), moneyNow(aed), moneyNow(0)]);
@@ -2585,7 +2672,7 @@
           let next = null;
           if (action === 'pay') {
             if (!K) throw new Error('Known is not loaded');
-            next = K.recordPayment(app, now, 'desk');
+            next = K.recordPayment(app, now, 'desk', (Ccy() && Ccy().knownPrice) ? Ccy().knownPrice() : null);
             if (!next) throw new Error('Accept it before recording a payment');
             await ref.set(next, { merge: true });
             await db.collection('users').doc(uid).set({ known: true, knownUntil: next.paidUntil }, { merge: true });
@@ -2609,7 +2696,7 @@
           } else if (action === 'grant6' || action === 'grant12') {
             if (!K || !K.grantKnown) throw new Error('Known is not loaded');
             const months = action === 'grant6' ? 6 : 12;
-            next = K.grantKnown(app, now, months);
+            next = K.grantKnown(app, now, months, (Ccy() && Ccy().knownPrice) ? Ccy().knownPrice() : null);
             if (!next) throw new Error('Accept it before granting');
             await ref.set(next, { merge: true });
             await db.collection('users').doc(uid).set({ known: true, knownUntil: next.paidUntil, grant: true }, { merge: true });
@@ -3422,8 +3509,38 @@
 
     if (tab === 'signals') {
       const list = s.list || [];
+      /* Held Signals: the poster sees them, connections do not, until the
+         desk releases or removes them. Before this list existed nobody
+         could release one. */
+      const nowTs = Date.now();
+      const heldSeen = {};
+      const held = list.filter(function (row) {
+        if (!row || !row.held || row.hidden || row.reviewedAt) return false;
+        if (row.expiresAt && Number(row.expiresAt) <= nowTs) return false;
+        const k = String(row.uid || '') + ':' + String(row.id || '');
+        if (heldSeen[k]) return false;
+        heldSeen[k] = 1;
+        return !!(row.uid && row.id);
+      }).slice(0, 40);
+      const heldCard = held.length
+        ? card('Held for a check (' + held.length + ')',
+          '<p class="sub">The person who posted these can see them. Their connections cannot until you release them.</p>'
+          + held.map(function (row) {
+            const media = row.photoUrl
+              ? '<img alt="" src="' + escapeHtml(String(row.photoUrl)) + '" style="max-width:120px;max-height:120px;border-radius:10px;display:block;margin:6px 0;">'
+              : (row.videoUrl ? '<video controls preload="metadata" src="' + escapeHtml(String(row.videoUrl)) + '" style="max-width:200px;max-height:200px;border-radius:10px;display:block;margin:6px 0;"></video>' : '');
+            return '<div class="flag-row" style="flex-wrap:wrap;gap:8px;align-items:flex-start;">'
+              + '<div style="flex:1;min-width:180px;"><b>' + escapeHtml(row.name || String(row.uid).slice(0, 12)) + '</b> · '
+              + escapeHtml(row.mediaType || row.type || 'signal') + ' · ' + escapeHtml(row.heldReason || 'check')
+              + '<div class="sub">' + escapeHtml(String(row.caption || row.text || '').slice(0, 120)) + '</div>' + media + '</div>'
+              + '<button type="button" class="btn sig-held-act" data-a="release" data-uid="' + escapeHtml(row.uid) + '" data-id="' + escapeHtml(row.id) + '">Release</button>'
+              + '<button type="button" class="btn sig-held-act" data-a="remove" data-uid="' + escapeHtml(row.uid) + '" data-id="' + escapeHtml(row.id) + '">Remove</button>'
+              + '</div>';
+          }).join(''))
+        : '';
       el.innerHTML =
-        kpis([['Signals', s.total || 0], ['Still active', s.active || 0],
+        heldCard
+        + kpis([['Signals', s.total || 0], ['Still active', s.active || 0],
           ['Expired', s.expired || 0], ['Today', s.today || 0]])
         + gap('Signals are the short clips on each account. Who watched, and the reaction on a clip, stay on that Signal — Seen by — and are not copied into a public counter. The desk does not open Wireline or Band.')
         + card('Recent Signals', table(['Owner', 'Kind', 'Caption', 'When'],
@@ -3436,6 +3553,32 @@
               escapeHtml(when(row.createdAt || row.ts)),
             ];
           })));
+      el.querySelectorAll('.sig-held-act').forEach(function (btn) {
+        btn.onclick = async function () {
+          const db = adminDb();
+          if (!db) return;
+          const uid = btn.getAttribute('data-uid');
+          const id = btn.getAttribute('data-id');
+          const release = btn.getAttribute('data-a') === 'release';
+          btn.disabled = true;
+          const patch = release
+            ? { held: false, heldReason: '', reviewedAt: Date.now(), reviewedBy: (currentUser && currentUser.uid) || '' }
+            : { hidden: true, held: false, reviewedAt: Date.now(), reviewedBy: (currentUser && currentUser.uid) || '' };
+          try {
+            await db.collection('users').doc(uid).collection('signal').doc(id).set(patch, { merge: true });
+            try { await db.collection('signals').doc(id).set(patch, { merge: true }); } catch (_) {}
+            try { await writeAudit(release ? 'signal-release' : 'signal-remove', uid + '/' + id, release ? 'Released after a check' : 'Removed after a check'); } catch (_) {}
+            toast(release ? 'Released. Their connections can see it now.' : 'Removed from their connections.');
+            const rowEl = btn.closest('.flag-row');
+            if (rowEl) rowEl.remove();
+          } catch (e) {
+            btn.disabled = false;
+            toast((e && e.code === 'permission-denied')
+              ? 'Rules not published yet — publish firestore.rules, then try again.'
+              : ((e && e.message) || 'Could not save that.'));
+          }
+        };
+      });
       return;
     }
 
@@ -3619,6 +3762,7 @@
       }
       el.innerHTML =
         currencyCard()
+        + pricesCard()
         + inactiveNote('Real payouts are disabled. No money has moved.')
         + card('Booked ad revenue',
           '<p class="sub">Booked ad revenue is rate-card maths × observed events. Cash has not moved until an advertiser pays. There is no outside auction.</p>'
@@ -3711,6 +3855,7 @@
         $('runBurn').value = runBurnAed ? String(fromAedField(runBurnAed)) : '';
       } catch (_) {}
       wireCurrencySelect('opCurrency');
+      wirePricesCard();
       if ($('costBtn')) $('costBtn').onclick = function () {
         const next = {
           invoiceAed: toAedField(($('costInvoice') && $('costInvoice').value) || 0),
@@ -4185,20 +4330,48 @@
         if (!db || !Engine) { if (out) out.textContent = 'Not ready.'; return; }
         if (out) out.textContent = 'Reading events…';
         try {
-          let snap;
+          /* Each compile reads only the events since the last one and adds
+             them on. It used to rebuild every Broadcast from the latest 800
+             events, so older watching fell out of the record. */
+          const markRef = db.collection('discoveryConfig').doc('compile');
+          let since = 0;
+          try { const m = await markRef.get(); since = (m.exists && Number((m.data() || {}).lastEventAt)) || 0; } catch (_) {}
+          /* First run under this scheme (no mark yet): rebuild from every
+             event, so nothing is counted twice. After that: only new ones.
+             Read in pages of 800, up to 24 pages per press. */
+          const firstRun = since === 0;
+          let events = [];
           try {
-            snap = await db.collection('recommendationEvents').orderBy('at', 'desc').limit(800).get();
+            let cursor = since;
+            for (let page = 0; page < 24; page++) {
+              const snap = await db.collection('recommendationEvents').where('at', '>', cursor).orderBy('at', 'asc').limit(800).get();
+              const rows = (snap.docs || []).map(function (d) { return d.data() || {}; });
+              events = events.concat(rows);
+              if (rows.length < 800) break;
+              cursor = Number(rows[rows.length - 1].at) || cursor;
+              if (out) out.textContent = 'Reading events… ' + events.length;
+            }
           } catch (_) {
-            snap = await db.collection('recommendationEvents').limit(800).get();
+            const snap = await db.collection('recommendationEvents').orderBy('at', 'desc').limit(800).get();
+            events = (snap.docs || []).map(function (d) { return d.data() || {}; });
+            since = -1;
           }
-          const events = (snap.docs || []).map(function (d) { return d.data() || {}; });
           const rolled = Engine.rollup(events);
           const ids = Object.keys(rolled.features || {});
           for (let i = 0; i < ids.length; i++) {
-            const feat = rolled.features[ids[i]];
+            const ref = db.collection('broadcastFeatures').doc(ids[i]);
+            let prev = null;
+            try { const ps = await ref.get(); prev = ps.exists ? ps.data() : null; } catch (_) {}
+            /* A fallback read (no time filter) cannot tell old from new, so it
+               replaces rather than adds, as before. */
+            const feat = (since > 0 && !firstRun && Engine.mergeFeatures) ? Engine.mergeFeatures(prev, rolled.features[ids[i]]) : rolled.features[ids[i]];
             feat.updatedAt = Date.now();
             feat.compiledBy = 'desk';
-            await db.collection('broadcastFeatures').doc(ids[i]).set(feat, { merge: true });
+            await ref.set(feat, { merge: true });
+          }
+          const lastAt = events.reduce(function (m, e) { return Math.max(m, Number(e.at) || 0); }, since > 0 ? since : 0);
+          if (since >= 0 && lastAt > 0) {
+            try { await markRef.set({ lastEventAt: lastAt, updatedAt: Date.now() }, { merge: true }); } catch (_) {}
           }
           if (out) out.textContent = ids.length
             ? ('Wrote features for ' + ids.length + ' Broadcast' + (ids.length === 1 ? '' : 's') + ' from ' + events.length + ' events.')
@@ -5523,6 +5696,7 @@
       const C = Ccy();
       if (C) {
         C.listen(adminDb());
+        seedPriceBookOnce();
         C.fetchLive(false).then(function () { try { C.publishRates(adminDb()); } catch (_) {} });
       }
     } catch (_) {}

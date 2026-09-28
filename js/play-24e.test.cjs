@@ -27,7 +27,8 @@ assert.ok(wire.includes('Waiting in Naluno'), 'a queued message shows inside Wir
 assert.ok(wire.includes('class="wire-wait"'), 'the conversation list shows waiting');
 assert.ok(life.includes('id="llTryNow"'), 'try again stays inside the chat');
 assert.ok(!life.includes('Send by SMS'), 'sending does not leave Naluno');
-assert.ok(/naluno-shell-v20[4-9]/.test(sw), 'shell cache');
-assert.ok(/2026\.09\.2[4-9]/.test(app), 'member build stamp');
+/* Was a regex that stopped matching at v210. The cache must only move forward. */
+assert.ok(Number((sw.match(/naluno-shell-v(\d+)/) || [])[1]) >= 204, 'shell cache');
+assert.ok(/naluno-build" content="\d{4}\.\d{2}\.\d{2}[a-z]?"/.test(app), 'member build stamp');
 
 console.log('play-24e tests passed');

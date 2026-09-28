@@ -47,7 +47,8 @@ assert.ok(admin.includes('id="booksJson"'), 'books download as JSON');
 assert.ok(rules.includes('function isSuper()'), 'rules know the superadmin');
 assert.ok(rules.includes('deskOperators'), 'admin roster is stored');
 assert.ok(rules.includes("uid != 'ibMOMY6Q3sVTCxIrwO2FGk43zw93'"), 'rules refuse to overwrite the superadmin');
-assert.ok(/naluno-shell-v20[3-9]/.test(sw), 'shell cache');
-assert.ok(/2026\.09\.2[4-9]/.test(html), 'build stamp');
+/* Was a regex that stopped matching at v210. The cache must only move forward. */
+assert.ok(Number((sw.match(/naluno-shell-v(\d+)/) || [])[1]) >= 203, 'shell cache');
+assert.ok(/naluno-build" content="\d{4}\.\d{2}\.\d{2}[a-z]?"/.test(html), 'build stamp');
 
 console.log('play-24d tests passed');

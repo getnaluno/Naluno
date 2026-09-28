@@ -1311,10 +1311,14 @@ async function saveSignalSegment(segment){
       if(k === 'localPlayUrl') return;
       clean[k] = v;
     });
+    /* A cut-off data URL is a broken image. Too big: leave the thumb out. */
     if(clean.thumbDataUrl && String(clean.thumbDataUrl).length > 350000){
-      clean.thumbDataUrl = String(clean.thumbDataUrl).slice(0, 350000);
+      delete clean.thumbDataUrl;
     }
-    const ref = await fbDb.collection('users').doc(currentUser.uid).collection('signal').add(clean);
+    /* The safety checks run BEFORE the Signal is saved. They used to run
+       after, so a Signal "held for review" was already on every
+       connection's strip. */
+    const ref = fbDb.collection('users').doc(currentUser.uid).collection('signal').doc();
     const publicText = String(clean.caption || clean.text || '').trim();
     let safetyResult = null;
     let hashMatched = false;
@@ -1326,7 +1330,11 @@ async function saveSignalSegment(segment){
       });
       if(blobs[0] && typeof nalunoSafetySha256 === 'function' && typeof nalunoSafetyCheckHash === 'function'){
         const hex = await nalunoSafetySha256(await blobs[0].arrayBuffer());
-        const hit = await nalunoSafetyCheckHash(hex, ref.id, 'signal');
+        /* Bounded: a hung network must not hold the post up for long. */
+        const hit = await Promise.race([
+          nalunoSafetyCheckHash(hex, ref.id, 'signal'),
+          new Promise(function(ok){ setTimeout(function(){ ok(null); }, 6000); }),
+        ]);
         hashMatched = !!(hit && hit.matched);
       }
     }catch(_){}
@@ -1334,18 +1342,27 @@ async function saveSignalSegment(segment){
       try{ safetyResult = window.NalunoSafety.scorePublicText(publicText, { surface: 'signal' }); }catch(_){}
     }
     const held = hashMatched || (safetyResult && typeof nalunoSafetyStopped === 'function' && nalunoSafetyStopped(safetyResult));
+    if(held){
+      clean.held = true;
+      clean.heldReason = hashMatched ? 'known-file' : 'text-safety';
+    }
+    await ref.set(clean);
+    /* The desk's list of Signals. Held ones are listed too, marked, so the
+       Control Centre can release or remove them. */
     try{
-      if(!held){
-        const mirror = {
-          uid: currentUser.uid,
-          name: clean.name || (currentUser.displayName || ''),
-          createdAt: clean.createdAt || Date.now(),
-          expiresAt: clean.expiresAt || null,
-          mediaType: clean.mediaType || clean.type || 'signal',
-          caption: publicText.slice(0, 140),
-        };
-        fbDb.collection('signals').doc(ref.id).set(mirror, { merge: true }).catch(function(){});
-      }
+      const mirror = {
+        uid: currentUser.uid,
+        name: clean.name || (currentUser.displayName || ''),
+        createdAt: clean.createdAt || Date.now(),
+        expiresAt: clean.expiresAt || null,
+        mediaType: clean.mediaType || clean.type || 'signal',
+        caption: publicText.slice(0, 140),
+        held: !!clean.held,
+        heldReason: clean.heldReason || '',
+      };
+      if(clean.photoUrl) mirror.photoUrl = String(clean.photoUrl).slice(0, 600);
+      if(clean.videoUrl || clean.mediaUrl) mirror.videoUrl = String(clean.videoUrl || clean.mediaUrl).slice(0, 600);
+      fbDb.collection('signals').doc(ref.id).set(mirror, { merge: true }).catch(function(){});
     }catch(_){}
     if(held){
       try{
@@ -1496,7 +1513,13 @@ async function loadConnectionsSignalsNow(){
       if(!visible.length) return null;
       const latest = visible[0];
       return { contactId: c.id, contact: c, latest };
-    }catch(e){ return null; }
+    }catch(e){
+      /* A failed read is not "no Signal". Keep what was on screen for this
+         person (if it has not expired) instead of blanking the strip. */
+      const prev = (connectionsSignals || []).find(function(x){ return x && x.contact && x.contact.firebaseUid === c.firebaseUid; });
+      if(prev && prev.latest && Date.now() < prev.latest.expiresAt) return Object.assign({}, prev, { contactId: c.id, contact: c });
+      return null;
+    }
   }));
   connectionsSignals = results.filter(Boolean);
   try{ prefetchSignalsForOffline(connectionsSignals.map(function(row){ return row.latest; })); }catch(_){}
@@ -1517,6 +1540,41 @@ async function loadConnectionsSignalsNow(){
   }catch(_){}
   renderBroadcasts();
 }
+
+/* Connections' Signals used to be read only when the contact list
+   changed. A Signal posted after the app opened never showed up until a
+   restart. Now it is re-read when the app comes back to the front, when
+   the Broadcast tab is opened, and every 90 seconds while it is on screen.
+   One read at a time, and not more than once every 20 seconds. */
+let __connSigFlight = null;
+let __connSigAt = 0;
+function refreshConnectionsSignals(force){
+  if(__connSigFlight) return __connSigFlight;
+  if(!force && Date.now() - __connSigAt < 20000) return Promise.resolve();
+  if(typeof currentUser === 'undefined' || !currentUser || typeof fbDb === 'undefined' || !fbDb) return Promise.resolve();
+  if(typeof navigator !== 'undefined' && navigator.onLine === false) return Promise.resolve();
+  __connSigAt = Date.now();
+  __connSigFlight = Promise.resolve().then(loadConnectionsSignalsNow).catch(function(){}).then(function(){ __connSigFlight = null; });
+  return __connSigFlight;
+}
+window.refreshConnectionsSignals = refreshConnectionsSignals;
+function nalunoBroadcastTabOnScreen(){
+  const tab = document.getElementById('tab-broadcast');
+  return !!(tab && tab.classList.contains('active') && !document.hidden);
+}
+try{
+  document.addEventListener('visibilitychange', function(){
+    if(!document.hidden) refreshConnectionsSignals(false);
+  });
+  window.addEventListener('online', function(){ refreshConnectionsSignals(true); });
+  document.addEventListener('click', function(e){
+    const nav = e.target && e.target.closest ? e.target.closest('.navbtn[data-tab="broadcast"]') : null;
+    if(nav) setTimeout(function(){ refreshConnectionsSignals(false); }, 50);
+  }, true);
+  setInterval(function(){
+    if(nalunoBroadcastTabOnScreen()) refreshConnectionsSignals(false);
+  }, 90000);
+}catch(_){}
 
 /* Legacy local-only fallback (no Firebase configured) — same as before. */
 async function saveSignalToStorage(){

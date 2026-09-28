@@ -18,8 +18,25 @@ function captureNavState(){
       navTab: nav,
       wirelineOpen: !!( $('wirelineThread') && $('wirelineThread').classList.contains('active') ),
       threadContactId: (typeof activeThreadContactId !== 'undefined') ? activeThreadContactId : null,
+      /* Local ids are handed out per launch in whatever order people load,
+         so after a reopen the same number can be someone else. Remember
+         the permanent id too, and restore by that. */
+      threadUid: (function(){
+        try{
+          const id = (typeof activeThreadContactId !== 'undefined') ? activeThreadContactId : null;
+          const c = (id != null && typeof contacts !== 'undefined') ? contacts.find(function(x){ return x.id === id; }) : null;
+          return c && c.firebaseUid ? c.firebaseUid : null;
+        }catch(_){ return null; }
+      })(),
       bandOpen: !!( $('bandRoom') && $('bandRoom').classList.contains('active') ),
       bandId: (typeof activeBandId !== 'undefined') ? activeBandId : null,
+      bandFirestoreId: (function(){
+        try{
+          const id = (typeof activeBandId !== 'undefined') ? activeBandId : null;
+          const b = (id != null && typeof bands !== 'undefined') ? bands.find(function(x){ return x.id === id; }) : null;
+          return b && b.firestoreId ? b.firestoreId : null;
+        }catch(_){ return null; }
+      })(),
       bspaceOpen: !!( $('bspace') && $('bspace').classList.contains('active') ),
       broadcastId: (typeof activeBroadcastId !== 'undefined') ? activeBroadcastId : null,
       ts: Date.now(),
@@ -43,13 +60,34 @@ function applyNavState(state){
     if(state.navTab === 'frequencies' && typeof clearMissedCallBadge === 'function') clearMissedCallBadge();
     if(state.navTab === 'compass' && typeof showCompassLockScreenIfNeeded === 'function') showCompassLockScreenIfNeeded();
   }catch(_){}
-  // Defer overlays until modules/auth are ready
+  // Defer overlays until modules/auth are ready. People and rooms arrive
+  // from the network, so look them up by permanent id and wait for them.
+  if(state.wirelineOpen && state.threadUid){
+    let tries = 0;
+    (function openWhenLoaded(){
+      const c = (typeof contacts !== 'undefined') ? contacts.find(function(x){ return x.firebaseUid === state.threadUid; }) : null;
+      if(c && typeof openThread === 'function'){ try{ openThread(c.id); }catch(e){ console.warn('[nav] restore thread', e); } return; }
+      if(++tries < 20) setTimeout(openWhenLoaded, 400);
+    })();
+    return;
+  }
+  if(state.bandOpen && state.bandFirestoreId){
+    let tries = 0;
+    (function openWhenLoaded(){
+      const b = (typeof bands !== 'undefined') ? bands.find(function(x){ return x.firestoreId === state.bandFirestoreId; }) : null;
+      if(b && typeof openBandRoom === 'function'){ try{ openBandRoom(b.id); }catch(e){ console.warn('[nav] restore band', e); } return; }
+      if(++tries < 20) setTimeout(openWhenLoaded, 400);
+    })();
+    return;
+  }
   setTimeout(function(){
     try{
-      if(state.wirelineOpen && state.threadContactId != null && typeof openThread === 'function'){
-        openThread(state.threadContactId);
-      } else if(state.bandOpen && state.bandId && typeof openBandRoom === 'function'){
-        openBandRoom(state.bandId);
+      if(state.wirelineOpen && state.threadContactId != null && !state.threadUid && typeof openThread === 'function'){
+        /* Saved by an older build without the permanent id: skip rather
+           than risk opening someone else's chat. */
+      } else if(state.bandOpen && state.bandId && !state.bandFirestoreId && typeof openBandRoom === 'function'){
+        const b = (typeof bands !== 'undefined') ? bands.find(function(x){ return x.id === state.bandId && !x.isReal; }) : null;
+        if(b) openBandRoom(state.bandId);
       } else if(state.bspaceOpen && state.broadcastId && typeof openBroadcastSpaceById === 'function'){
         openBroadcastSpaceById(state.broadcastId);
       } else if(state.bspaceOpen && state.broadcastId && typeof openBroadcastSpace === 'function'){
@@ -105,8 +143,41 @@ function nalunoCurrentTab(){
    stack is what we apply if that pop arrives without our state object.
    A call keeps its own history in calls.js. */
 window.nalunoBack = (function(){
-  const ORDER = ['bspaceLineSheet','bwriteSetup','bliveSetup','discoverSheet','appealSheet','contributionPanel','supportSheet','findNalunoPanel','wireBackupScreen','wireHistoryScreen','signalViewers','reportSheet','bcastAdSheet','downloadsPanel','bcomposer','composer','bviewer','bspace','bandRoom','wirelineThread'];
+  /* Sheets that open without the 'active' class, or were never known to
+     Back. Without them, Back skipped the sheet and closed what was under
+     it — the room's ⋯ menu, Spark, Connect, trim, Band compose and more. */
+  const EXTRA = {
+    rightsReportSheet: { open: function(el){ return el.style.display !== 'none'; }, close: function(){ const e = document.getElementById('rightsReportSheet'); if(e) e.remove(); } },
+    knownSheet: { open: function(el){ return el.classList.contains('active'); }, close: function(){ const e = document.getElementById('knownSheet'); if(e) e.classList.remove('active'); } },
+    sparkSheet: { open: function(el){ return el.style.display && el.style.display !== 'none'; }, close: function(){ try{ if(typeof closeSparkSheet === 'function') closeSparkSheet(); }catch(_){} } },
+    sparkPage: { open: function(el){ return el.classList.contains('active'); }, close: function(){ try{ if(typeof closeSparkPage === 'function') closeSparkPage(); }catch(_){} } },
+    adjustOverlay: { open: function(el){ return el.classList.contains('active'); }, close: function(){ const b = document.getElementById('adjustCancel'); if(b) b.click(); } },
+    trimOverlay: { open: function(el){ return el.classList.contains('active'); }, close: function(){ const b = document.getElementById('trimCancel'); if(b) b.click(); } },
+    bandInviteSheet: { open: function(el){ return el.classList.contains('active'); }, close: function(){ const e = document.getElementById('bandInviteSheet'); if(e) e.classList.remove('active'); } },
+    bandComposer: { open: function(el){ return el.classList.contains('active'); }, close: function(){ try{ if(typeof closeBandComposer === 'function') closeBandComposer(); }catch(_){} } },
+    findPeopleOverlay: { open: function(el){ return el.classList.contains('active'); }, close: function(){ try{ if(typeof closeFindPeople === 'function') closeFindPeople(); }catch(_){} } },
+    bspaceRoomSheet: { open: function(el){ return el.classList.contains('active'); }, close: function(){ try{ if(typeof closeRoomSheet === 'function') closeRoomSheet(); }catch(_){} } },
+    bspaceMoreMenu: { open: function(el){ return !el.hasAttribute('hidden'); }, close: function(){ try{ if(typeof window.bspaceCloseMoreMenu === 'function') window.bspaceCloseMoreMenu(); }catch(_){} } },
+  };
+  const ORDER = Object.keys(EXTRA).concat(['bspaceLineSheet','bwriteSetup','bliveSetup','discoverSheet','appealSheet','contributionPanel','supportSheet','findNalunoPanel','wireBackupScreen','wireHistoryScreen','signalViewers','reportSheet','bcastAdSheet','downloadsPanel','bcomposer','composer','bviewer','bspace','bandRoom','wirelineThread']);
+  function isOpen(id){
+    const el = document.getElementById(id);
+    if(!el) return false;
+    if(EXTRA[id]) return !!EXTRA[id].open(el);
+    return el.classList.contains('active');
+  }
   const CLOSE = {
+    rightsReportSheet: EXTRA.rightsReportSheet.close,
+    knownSheet: EXTRA.knownSheet.close,
+    sparkSheet: EXTRA.sparkSheet.close,
+    sparkPage: EXTRA.sparkPage.close,
+    adjustOverlay: EXTRA.adjustOverlay.close,
+    trimOverlay: EXTRA.trimOverlay.close,
+    bandInviteSheet: EXTRA.bandInviteSheet.close,
+    bandComposer: EXTRA.bandComposer.close,
+    findPeopleOverlay: EXTRA.findPeopleOverlay.close,
+    bspaceRoomSheet: EXTRA.bspaceRoomSheet.close,
+    bspaceMoreMenu: EXTRA.bspaceMoreMenu.close,
     bspaceLineSheet: function(){ try{ if(typeof bspaceCloseLine === 'function') bspaceCloseLine(); }catch(_){} },
     bliveSetup: function(){ try{ if(typeof bliveClose === 'function') bliveClose(); }catch(_){} },
     bwriteSetup: function(){ try{ if(typeof closeWriteEntry === 'function') closeWriteEntry(); }catch(_){} },
@@ -135,8 +206,7 @@ window.nalunoBack = (function(){
   let poppedAt = 0;
   function topOverlay(){
     for(let i = 0; i < ORDER.length; i++){
-      const el = document.getElementById(ORDER[i]);
-      if(el && el.classList.contains('active')) return ORDER[i];
+      if(isOpen(ORDER[i])) return ORDER[i];
     }
     return null;
   }
@@ -186,8 +256,7 @@ window.nalunoBack = (function(){
       if(st.tab && st.tab !== nalunoCurrentTab()) nalunoShowTab(st.tab);
       ORDER.forEach(function(id){
         if(id === st.overlay) return;
-        const el = document.getElementById(id);
-        if(el && el.classList.contains('active') && CLOSE[id]) CLOSE[id]();
+        if(isOpen(id) && CLOSE[id]) CLOSE[id]();
       });
       if(st.tab) syncStack(st.tab);
     }catch(_){}
@@ -323,7 +392,56 @@ window.nalunoBack = (function(){
     }
   }
   bindNative();
-  return { push: push, drop: drop, apply: apply, top: topOverlay, seed: seed, closeTop: closeTop };
+  /* The extra sheets open from many places. Rather than touch each opener,
+     watch them: opening adds a Back step, closing by hand removes it. */
+  const wasOpen = {};
+  const watched = new WeakSet();
+  function onChange(id){
+    const now = isOpen(id);
+    if(now === !!wasOpen[id]) return;
+    wasOpen[id] = now;
+    if(lock || window.__nalunoBackHold) return;
+    try{ if(now) push(); else drop(id); }catch(_){}
+  }
+  function watch(el){
+    if(!el || !el.id || !EXTRA[el.id] || watched.has(el)) return;
+    watched.add(el);
+    wasOpen[el.id] = isOpen(el.id);
+    try{
+      new MutationObserver(function(){ onChange(el.id); })
+        .observe(el, { attributes: true, attributeFilter: ['class', 'style', 'hidden'] });
+    }catch(_){}
+  }
+  function watchAll(){
+    Object.keys(EXTRA).forEach(function(id){ watch(document.getElementById(id)); });
+  }
+  function bootWatch(){
+    watchAll();
+    try{
+      new MutationObserver(function(list){
+        for(let i = 0; i < list.length; i++){
+          const added = list[i].addedNodes;
+          for(let j = 0; j < added.length; j++){
+            const n = added[j];
+            if(n && n.id && EXTRA[n.id]){ watch(n); onChange(n.id); }
+          }
+          const removed = list[i].removedNodes;
+          for(let j = 0; j < removed.length; j++){
+            const n = removed[j];
+            if(n && n.id && EXTRA[n.id] && wasOpen[n.id]){ wasOpen[n.id] = false; if(!lock) { try{ drop(n.id); }catch(_){} } }
+          }
+        }
+      }).observe(document.body, { childList: true, subtree: true });
+    }catch(_){}
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bootWatch);
+  else bootWatch();
+  /* Close one named overlay the same way Back would (used by the
+     pull-down-to-close gesture when no history entry is on top). */
+  function closeById(id) {
+    try { if (CLOSE[id] && isOpen(id)) { CLOSE[id](); drop(id); } } catch (_) {}
+  }
+  return { push: push, drop: drop, apply: apply, top: topOverlay, seed: seed, closeTop: closeTop, closeById: closeById };
 })();
 
 document.querySelectorAll('.navbtn').forEach(btn=>{

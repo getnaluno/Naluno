@@ -96,6 +96,25 @@
     }).catch(function () {});
   }
 
+  /* How many times a drop that could not be opened has been tried. */
+  const SEAL_TRIES_KEY = 'nalunoSealTries:v1';
+  function sealRetryWanted(id, ts) {
+    try {
+      const all = JSON.parse(localStorage.getItem(SEAL_TRIES_KEY) || '{}');
+      const n = (Number(all[id]) || 0) + 1;
+      all[id] = n;
+      const keys = Object.keys(all);
+      if (keys.length > 300) keys.slice(0, keys.length - 300).forEach(function (k) { delete all[k]; });
+      localStorage.setItem(SEAL_TRIES_KEY, JSON.stringify(all));
+      const young = Date.now() - (Number(ts) || Date.now()) < 3 * 24 * 60 * 60 * 1000;
+      if (n <= 8 && young) {
+        setTimeout(function () { try { retryPendingDrops(); } catch (_) {} }, Math.min(60000, 5000 * n));
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
   async function takeDrop(doc) {
     if (!doc || !currentUser) return;
     const id = doc.id;
@@ -133,11 +152,17 @@
           const decrypted = await opener(m, c);
           if (decrypted != null) text = decrypted;
           else if (!text) {
+            /* Keys are often not ready yet right after a reinstall or on a
+               new phone. Deleting the drop here lost the message for good.
+               Leave it and try again later; give up only when it is old. */
+            if (sealRetryWanted(doc.id, ts)) return;
             text = (typeof NALUNO_SEAL_FAIL === 'string')
               ? NALUNO_SEAL_FAIL
               : 'Couldn\u2019t read this on this phone. Ask them to send it again.';
           }
-        } catch (_) {}
+        } catch (_) {
+          if (sealRetryWanted(doc.id, ts)) return;
+        }
       }
       const cmid = m.clientMsgId || doc.id;
       const isSys = m.type === 'missed_call' || m.type === 'system' || m.system === true;

@@ -599,6 +599,8 @@
         negativeEvents: f.negativeEvents,
         reports: f.reports,
         avgWatchSec: f.watchSamples ? Math.round(f.watchSecSum / f.watchSamples) : 0,
+        watchSecSum: f.watchSecSum,
+        watchSamples: f.watchSamples,
         durationSec: f.durationSec,
         completionRate: f.impressions ? Math.min(1, f.completions / f.impressions) : 0,
         returnRate: f.impressions ? Math.min(1, f.returns / f.impressions) : 0,
@@ -608,6 +610,35 @@
       };
     });
     return { features: features };
+  }
+
+  /* Adds a new batch of events onto what was already compiled, so each
+     compile extends the record instead of replacing it with only the most
+     recent events. Rates are recomputed from the added-up counts. */
+  const SUMMED = ['impressions', 'meaningfulWatches', 'completions', 'shares', 'saves', 'returns', 'follows',
+    'meaningfulComments', 'questions', 'answers', 'comments', 'likes', 'dislikes', 'keptLines', 'commentReacts',
+    'negativeEvents', 'reports', 'contributionPoints', 'watchSecSum', 'watchSamples'];
+  function mergeFeatures(prev, add) {
+    const a = prev || {};
+    const b = add || {};
+    const out = Object.assign({}, a, b);
+    SUMMED.forEach(function (k) {
+      out[k] = Math.max(0, (Number(a[k]) || 0) + (Number(b[k]) || 0));
+    });
+    out.durationSec = Math.max(Number(a.durationSec) || 0, Number(b.durationSec) || 0);
+    if (!out.watchSamples && (Number(a.avgWatchSec) || Number(b.avgWatchSec))) {
+      out.avgWatchSec = Number(b.avgWatchSec) || Number(a.avgWatchSec) || 0;
+    } else {
+      out.avgWatchSec = out.watchSamples ? Math.round(out.watchSecSum / out.watchSamples) : 0;
+    }
+    out.completionRate = out.impressions ? Math.min(1, out.completions / out.impressions) : 0;
+    out.returnRate = out.impressions ? Math.min(1, out.returns / out.impressions) : 0;
+    const pockets = Object.assign({}, a.pockets || {});
+    Object.keys(b.pockets || {}).forEach(function (t) {
+      pockets[t] = Math.max(Number(pockets[t]) || 0, Number(b.pockets[t]) || 0);
+    });
+    out.pockets = pockets;
+    return out;
   }
 
   return {
@@ -623,6 +654,7 @@
     run: run,
     applyTaste: applyTaste,
     rollup: rollup,
+    mergeFeatures: mergeFeatures,
     scoreOne: scoreOne,
   };
 });

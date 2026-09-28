@@ -121,6 +121,28 @@ function signalAgeChip(ts){
   if(s < 86400) return Math.max(1, Math.round(s / 3600)) + 'h';
   return Math.max(1, Math.round(s / 86400)) + 'd';
 }
+/* Anything another person wrote goes through these before it reaches the
+   page. A Signal document or a contact colour is written by the other
+   person, so it must never be able to close an attribute and add code. */
+function signalSafeSrc(u){
+  const s = String(u || '').trim();
+  if(!s) return '';
+  if(/^(https?:|blob:|data:image\/)/i.test(s)) return escapeHtml(s);
+  return '';
+}
+function signalSafeFilter(f){
+  const s = String(f || '');
+  return /^[a-z0-9().,%\s-]*$/i.test(s) ? s : '';
+}
+function signalSafeColor(c, fallback){
+  const s = String(c || '');
+  return /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(s) ? s : (fallback || '#7CFFB2');
+}
+function signalSafeStyle(st){
+  /* Text card styles are built from our own gradient/colour lists; strip
+     anything that could break out of the attribute. */
+  return String(st || '').replace(/["<>]/g, '');
+}
 function signalTileCaption(name, sub){
   return '<div class="signal-tile-cap"><strong>'+escapeHtml(name||'')+'</strong><em>'+escapeHtml(sub||'Short clip')+'</em></div>';
 }
@@ -186,7 +208,7 @@ function renderScheduledDock(){
   dock.innerHTML = '<div class="section-label signal-head-label">Before it goes out <span>scheduled and private · not on the public feed</span></div>'
     + rows.map(function(b){
       const when = (typeof broadcastIsScheduled === 'function' && broadcastIsScheduled(b))
-        ? new Date(Number(b.publishAt)).toLocaleString()
+        ? new Date(Number(b.publishAt)).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
         : '';
       const kind = (b.visibility === 'private') ? 'Private' : 'Scheduled';
       const local = b.publishAt ? toDatetimeLocal(Number(b.publishAt)) : '';
@@ -281,17 +303,17 @@ function renderBroadcastTab(){
       try{
         if(latest.type==='text'){
           const st = (typeof signalTextCardStyle === 'function') ? signalTextCardStyle(latest) : ('background:'+(latest.bg||'#333')+';');
-          thumb = '<div class="avatar" style="width:100%;height:100%;'+st+'font-size:9px;padding:4px;text-align:center;line-height:1.15;">'+escapeHtml(String(latest.text||'').slice(0,26))+'</div>';
+          thumb = '<div class="avatar" style="width:100%;height:100%;'+signalSafeStyle(st)+'font-size:9px;padding:4px;text-align:center;line-height:1.15;">'+escapeHtml(String(latest.text||'').slice(0,26))+'</div>';
         } else if(latest.type==='video'){
-          const src = latest.thumbDataUrl || '';
+          const src = signalSafeSrc(latest.thumbDataUrl);
           thumb = src
-            ? '<img src="'+src+'" class="mysignal-thumb" style="filter:'+(latest.filterCss||'')+'" />'
+            ? '<img src="'+src+'" class="mysignal-thumb" style="filter:'+signalSafeFilter(latest.filterCss)+'" />'
             : '<div class="avatar" style="width:100%;height:100%;background:#1F2333;font-size:11px;color:#7CFFB2;">▶</div>';
         } else {
           // photoUrl first: photos are uploaded to R2 now rather than being
           // embedded as base64, so dataUrl is only present on a just-posted
           // local row that has not been re-read from Firestore yet.
-          thumb = '<img src="'+(latest.thumbDataUrl || latest.photoUrl || latest.dataUrl || '')+'" class="mysignal-thumb" style="filter:'+(latest.filterCss||'')+'" />';
+          thumb = '<img src="'+signalSafeSrc(latest.thumbDataUrl || latest.photoUrl || latest.dataUrl || '')+'" class="mysignal-thumb" style="filter:'+signalSafeFilter(latest.filterCss)+'" />';
         }
       }catch(_){ thumb = ''; }
       const seen = (typeof mySignalSeen !== 'undefined' && mySignalSeen) ? ' seen' : '';
@@ -302,11 +324,16 @@ function renderBroadcastTab(){
         + '<div class="signal-window-in">'
         + thumb
         + (age ? '<span class="signal-age">'+age+'</span>' : '')
+        + (latest.held ? '<span class="signal-held-chip">Checking</span>' : '')
         + '<span class="signal-play">▶</span>'
-        + signalTileCaption(youLabel, 'Your signal')
+        + signalTileCaption(youLabel, latest.held ? 'Only you see it' : 'Your signal')
         + '</div></div></div>';
     }
-    const conn = (typeof connectionsSignals !== 'undefined' && connectionsSignals) ? connectionsSignals : [];
+    /* An expired Signal leaves the strip as soon as it expires, not at the
+       next reload. */
+    const nowTs = Date.now();
+    const conn = ((typeof connectionsSignals !== 'undefined' && connectionsSignals) ? connectionsSignals : [])
+      .filter(function(row){ return row && row.latest && !(Number(row.latest.expiresAt) <= nowTs) && !row.latest.held && !row.latest.hidden; });
     let others = '';
     let staggerIndex = 0;
     const nextStripIds = new Set();
@@ -321,20 +348,20 @@ function renderBroadcastTab(){
       let thumbInner = '';
       try{
         if(latest && latest.type === 'text'){
-          const st = (typeof signalTextCardStyle === 'function') ? signalTextCardStyle(latest) : ('background:'+(latest.bg||c.color||'#333')+';color:#fff;');
-          thumbInner = '<div class="avatar" style="width:100%;height:100%;'+st+'font-size:9px;padding:4px;text-align:center;line-height:1.15;">'+escapeHtml(String(latest.text||'').slice(0,26))+'</div>';
+          const st = (typeof signalTextCardStyle === 'function') ? signalTextCardStyle(latest) : ('background:'+signalSafeColor(c.color,'#333')+';color:#fff;');
+          thumbInner = '<div class="avatar" style="width:100%;height:100%;'+signalSafeStyle(st)+'font-size:9px;padding:4px;text-align:center;line-height:1.15;">'+escapeHtml(String(latest.text||'').slice(0,26))+'</div>';
         } else if(latest && latest.type === 'video'){
-          const src = latest.thumbDataUrl || '';
+          const src = signalSafeSrc(latest.thumbDataUrl);
           thumbInner = src
-            ? '<img src="'+src+'" class="mysignal-thumb" style="filter:'+(latest.filterCss||'')+'" alt="" />'
+            ? '<img src="'+src+'" class="mysignal-thumb" style="filter:'+signalSafeFilter(latest.filterCss)+'" alt="" />'
             : '<div class="avatar" style="width:100%;height:100%;background:#1F2333;font-size:11px;color:#7CFFB2;">▶</div>';
         } else if(latest && (latest.type === 'photo' || latest.photoUrl || latest.dataUrl)){
-          thumbInner = '<img src="'+(latest.thumbDataUrl || latest.photoUrl || latest.dataUrl || '')+'" class="mysignal-thumb" style="filter:'+(latest.filterCss||'')+'" alt="" />';
+          thumbInner = '<img src="'+signalSafeSrc(latest.thumbDataUrl || latest.photoUrl || latest.dataUrl || '')+'" class="mysignal-thumb" style="filter:'+signalSafeFilter(latest.filterCss)+'" alt="" />';
         } else {
-          thumbInner = '<div class="avatar" style="width:100%;height:100%;background:'+(c.color||'#7CFFB2')+';color:#0D0F17;font-weight:700;">'+(c.initials||'?')+'</div>';
+          thumbInner = '<div class="avatar" style="width:100%;height:100%;background:'+signalSafeColor(c.color)+';color:#0D0F17;font-weight:700;">'+escapeHtml(c.initials||'?')+'</div>';
         }
       }catch(_){
-        thumbInner = '<div class="avatar" style="width:100%;height:100%;background:'+(c.color||'#7CFFB2')+';color:#0D0F17;font-weight:700;">'+(c.initials||'?')+'</div>';
+        thumbInner = '<div class="avatar" style="width:100%;height:100%;background:'+signalSafeColor(c.color)+';color:#0D0F17;font-weight:700;">'+escapeHtml(c.initials||'?')+'</div>';
       }
       const age = signalAgeChip(latest && latest.createdAt);
       others += '<div class="bcast-item signal-tile'+(isNewThisRender?' bcast-item-enter':'')+'" style="'+(isNewThisRender?('animation-delay:'+Math.min(staggerIndex*60,300)+'ms;'):'')+'" data-signal="'+c.id+'"><div class="signal-window'+(isNewThisRender?' signal-new':'')+'">'
@@ -1359,26 +1386,29 @@ function playSegment(idx, direction=1){
   const cropT = cropTransform(seg.crop);
   let bodyHtml, durationMs;
   if(seg.type==='avatar'){
-    bodyHtml = `<div class="avatar ${animClass}" style="width:140px;height:140px;font-size:44px;background:${seg.color};">${seg.initials}</div>`;
+    bodyHtml = `<div class="avatar ${animClass}" style="width:140px;height:140px;font-size:44px;background:${signalSafeColor(seg.color)};">${escapeHtml(seg.initials||'')}</div>`;
     durationMs = 4000;
   } else if(seg.type==='text'){
     const st = (typeof signalTextCardStyle === 'function') ? signalTextCardStyle(seg) : ('background:'+(seg.bg||'#333')+';');
-    bodyHtml = `<div class="bviewer-text-card ${animClass}" style="${st} border-radius:20px; width:100%; height:100%;">${escapeHtml(seg.text)}</div>`;
+    bodyHtml = `<div class="bviewer-text-card ${animClass}" style="${signalSafeStyle(st)} border-radius:20px; width:100%; height:100%;">${escapeHtml(seg.text)}</div>`;
     durationMs = 4000;
   } else if(seg.type==='video' || isVideoSeg){
     const videoSrc = signalPlaySrc(seg);
     const safeSrc = String(videoSrc || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
     const posterAttr = seg.thumbDataUrl
-      ? ` poster="${String(seg.thumbDataUrl).replace(/"/g,'&quot;')}"`
+      ? ` poster="${signalSafeSrc(seg.thumbDataUrl)}"`
       : '';
     // relative (not absolute) so flex parent keeps real height; contain so landscape is full frame
-    bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" preload="auto" playsinline webkit-playsinline muted${posterAttr} style="filter:${seg.filterCss || ''}; display:block; width:100%; height:100%; object-fit:cover; background:#000; border-radius:12px;"></video>${captionHtml}<div class="cam-expand-btn" id="bviewerMuteToggle" style="right:auto; left:14px; top:14px; z-index:3;" role="button" aria-label="Toggle sound"></div><button type="button" id="bviewerPlayKick" style="display:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;width:64px;height:64px;border-radius:50%;border:none;background:rgba(124,255,178,.92);color:#0D0F17;font-size:22px;box-shadow:0 8px 28px rgba(0,0,0,.45);cursor:pointer;" aria-label="Play">▶</button>`;
+    bodyHtml = `<video id="bviewerActiveVideo" class="${animClass}" preload="auto" playsinline webkit-playsinline muted${posterAttr} style="filter:${signalSafeFilter(seg.filterCss)}; display:block; width:100%; height:100%; object-fit:cover; background:#000; border-radius:12px;"></video>${captionHtml}<div class="cam-expand-btn" id="bviewerMuteToggle" style="right:auto; left:14px; top:14px; z-index:3;" role="button" aria-label="Toggle sound"></div><button type="button" id="bviewerPlayKick" style="display:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;width:64px;height:64px;border-radius:50%;border:none;background:rgba(124,255,178,.92);color:#0D0F17;font-size:22px;box-shadow:0 8px 28px rgba(0,0,0,.45);cursor:pointer;" aria-label="Play">▶</button>`;
     durationMs = Math.round((isFinite(seg.duration) && seg.duration > 0 ? seg.duration : 15) * 1000);
   } else {
     const imgSrc = signalPlaySrc(seg);
     const safeImg = String(imgSrc || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
-    bodyHtml = `<img class="${animClass}" src="${safeImg}" style="filter:${seg.filterCss || ''}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; transform:${cropT || 'translate(-50%,-50%)'}; border-radius:16px;" />${captionHtml}`;
+    bodyHtml = `<img class="${animClass}" src="${safeImg}" style="filter:${signalSafeFilter(seg.filterCss)}; position:absolute; top:50%; left:50%; width:100%; height:100%; object-fit:cover; transform:${signalSafeStyle(cropT) || 'translate(-50%,-50%)'}; border-radius:16px;" />${captionHtml}`;
     durationMs = 4000;
+  }
+  if(typeof viewingMine !== 'undefined' && viewingMine && seg && seg.held){
+    bodyHtml += '<div class="signal-held-note">Only you can see this. It is being checked.</div>';
   }
   $('bviewerBody').innerHTML = bodyHtml;
   updateBars(idx, durationMs);
@@ -1649,6 +1679,11 @@ function goToSegment(idx){
   clearSegTimer();
   if(idx < 0){ playSegment(0, 1); return; }
   if(idx >= currentSegments.length){
+    // Like other story apps: finishing one person's Signals moves on to
+    // the next person's, and closes after the last.
+    if(!viewingMine && typeof nalunoStoryPerson === 'function'){
+      try{ if(nalunoStoryPerson(1)) return; }catch(_){}
+    }
     if(viewingMine) mySignalSeen = true;
     closeBroadcast();
     renderBroadcasts();
@@ -1877,7 +1912,11 @@ async function openContactSignalStory(contactId){
   if(!entry){ toast('No Signal'); return; }
   let segments = entry.latest ? [entry.latest] : [];
   const cached = nalunoCacheRead('signalView:' + (entry.contact.firebaseUid || contactId));
-  if(cached && cached.length) segments = cached.filter(function(x){ return x && !x.held && !x.hidden; });
+  if(cached && cached.length){
+    const fromCache = cached.filter(function(x){ return x && !x.held && !x.hidden && !(Number(x.expiresAt) <= Date.now()); });
+    if(fromCache.length) segments = fromCache;
+  }
+  segments = segments.filter(function(x){ return x && !(Number(x.expiresAt) <= Date.now()); });
   if(!segments.length){ toast('Signal expired'); return; }
   function show(list){
     currentSegments = list;
@@ -1906,10 +1945,22 @@ async function openContactSignalStory(contactId){
       const full = sortSignalSegments(snap.docs.map(function(d){
         return (typeof signalRowFromDoc === 'function') ? signalRowFromDoc(d) : ({ id:d.id, ...d.data() });
       }).filter(function(s){ return Date.now() < s.expiresAt && !s.held && !s.hidden; }));
-      if(!full.length || full.length === currentSegments.length) return;
+      const same = full.length === currentSegments.length && full.every(function(x, i){ return currentSegments[i] && String(currentSegments[i].id) === String(x.id); });
+      if(!full.length || same) return;
+      /* Keep the segment that is playing where it is in the new list. */
+      const onScreen = currentSegments[currentSegmentIndex];
+      const at = onScreen ? full.findIndex(function(x){ return String(x.id) === String(onScreen.id); }) : -1;
+      full.forEach(function(seg){ try{ signalPlaySrc(seg); }catch(_){} });
       currentSegments = full;
+      if(at >= 0) currentSegmentIndex = at;
       signalRememberView(owner, full);
       if(typeof renderBars === 'function') renderBars(full.length);
+      try{
+        document.querySelectorAll('#bviewerBars .bar i').forEach(function(el, bi){
+          el.style.transition = 'none';
+          el.style.width = bi <= currentSegmentIndex ? '100%' : '0%';
+        });
+      }catch(_){}
     }).catch(function(){});
   }
 }

@@ -1325,11 +1325,22 @@ async function eraseOwnFiles(){
   const uid = currentUser.uid;
   let broadcasts = 0;
   let signals = 0;
+  const mediaLeft = [];
   if(fbDb){
     try{
       const found = await fbDb.collection('broadcasts').where('creatorUid', '==', uid).limit(200).get();
       for(let i = 0; i < found.docs.length; i++){
         const row = found.docs[i];
+        try{
+          const d = row.data() || {};
+          [d.mediaUrl, d.videoUrl, d.thumbUrl, d.coverUrl].forEach(function(u){
+            if(u && /^https?:/i.test(String(u)) && mediaLeft.indexOf(String(u)) < 0) mediaLeft.push(String(u));
+          });
+          (Array.isArray(d.chapters) ? d.chapters : []).forEach(function(ch){
+            const u = ch && (ch.mediaUrl || ch.url);
+            if(u && /^https?:/i.test(String(u)) && mediaLeft.indexOf(String(u)) < 0) mediaLeft.push(String(u));
+          });
+        }catch(_){}
         await row.ref.set({ deleted: true, deletedAt: Date.now(), live: false }, { merge: true });
         broadcasts++;
       }
@@ -1354,6 +1365,7 @@ async function eraseOwnFiles(){
   try{ if(typeof BROADCAST_UPLOAD_WORKER_URL === 'string') bases.push(BROADCAST_UPLOAD_WORKER_URL); }catch(_){}
   let files = 0;
   let fileError = false;
+  let mediaPending = false;
   const token = await currentUser.getIdToken(false);
   for(let i = 0; i < bases.length; i++){
     try{
@@ -1363,13 +1375,30 @@ async function eraseOwnFiles(){
       });
       const body = await res.json().catch(function(){ return {}; });
       if(res.ok) files += Number(body.deleted) || 0;
-      else if(res.status !== 404 && res.status !== 405) fileError = true;
+      else if(res.status === 404 || res.status === 405){
+        /* This upload service cannot delete files yet. Do not pretend it
+           did: hand the list to the desk to remove. */
+        if(String(bases[i]).indexOf('broadcast') >= 0) mediaPending = true;
+      }
+      else fileError = true;
     }catch(_){ fileError = true; }
+  }
+  if(mediaPending && mediaLeft.length && fbDb){
+    try{
+      await fbDb.collection('deskMail').add({
+        source: 'callsign',
+        kind: 'erase-media',
+        uid: uid,
+        text: ('Closed Callsign. Remove these Broadcast files from storage:\n' + mediaLeft.join('\n')).slice(0, 5900),
+        ts: Date.now(),
+        status: 'new',
+      });
+    }catch(_){}
   }
   try{
     if(typeof chatStoreClearAll === 'function') await chatStoreClearAll();
   }catch(_){}
-  return { ok: !fileError, broadcasts: broadcasts, signals: signals, files: files };
+  return { ok: !fileError, broadcasts: broadcasts, signals: signals, files: files, mediaPending: mediaPending && mediaLeft.length > 0 };
 }
 
 async function closeOwnCallsign(reason){
@@ -1415,7 +1444,9 @@ async function closeOwnCallsign(reason){
   }
   try{
     await currentUser.delete();
-    toast('Callsign closed. This login is deleted.');
+    toast(erased.mediaPending
+      ? 'Callsign closed. This login is deleted. Your Broadcast video files are queued for removal by Naluno.'
+      : 'Callsign closed. This login is deleted.');
   }catch(e){
     const code = e && (e.code || e.message) || '';
     if(String(code).indexOf('requires-recent-login') >= 0){
@@ -1471,21 +1502,36 @@ function bindCallsignCloseForm(){
 if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bindCallsignCloseForm);
 else bindCallsignCloseForm();
 
+/* Sign-in can finish before every script on the page has loaded (a cached
+   session resolves in a few milliseconds). Calling a function from a file
+   that has not loaded yet threw, and everything after it in this list —
+   Signals, the feed, the message queue, keys, call push — never started.
+   Now it waits for the page's scripts, and one failing step cannot stop
+   the others. */
 function startSignedInListeners(user){
-  loadRealConnections(user.uid);
-  startThreadsListListener();
-  loadRealBands(user.uid);
-  startIncomingCallListener();
-  try{ if(typeof prewarmIceServers === 'function') prewarmIceServers(); }catch(_){}
-  startMissedCallListener();
-  startBandInviteListener();
-  loadMySignal(); if(typeof loadFeedBroadcasts==='function') loadFeedBroadcasts(); try{ if(typeof startFeedBroadcastsListener==='function') startFeedBroadcastsListener(); }catch(_){};
-  maybeRefreshCallNotifToken();
-  try{ if(typeof ensureCallPushReady === 'function') ensureCallPushReady(); }catch(_){}
-  flushMessageQueue();
-  ensureMyKeyPair();
-  try{ if(typeof publishMyPublicKey === 'function') publishMyPublicKey(); }catch(_){}
-  checkForPendingVideoJob();
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', function(){ startSignedInListeners(user); }, { once: true });
+    return;
+  }
+  const step = function(name, fn){
+    try{ fn(); }catch(e){ console.warn('[signin] ' + name, e && e.message); }
+  };
+  step('connections', function(){ loadRealConnections(user.uid); });
+  step('threads', function(){ startThreadsListListener(); });
+  step('bands', function(){ loadRealBands(user.uid); });
+  step('incoming calls', function(){ startIncomingCallListener(); });
+  step('ice', function(){ if(typeof prewarmIceServers === 'function') prewarmIceServers(); });
+  step('missed calls', function(){ startMissedCallListener(); });
+  step('band invites', function(){ if(typeof startBandInviteListener === 'function') startBandInviteListener(); });
+  step('my signal', function(){ loadMySignal(); });
+  step('feed', function(){ if(typeof loadFeedBroadcasts==='function') loadFeedBroadcasts(); });
+  step('feed listener', function(){ if(typeof startFeedBroadcastsListener==='function') startFeedBroadcastsListener(); });
+  step('call token', function(){ maybeRefreshCallNotifToken(); });
+  step('call push', function(){ if(typeof ensureCallPushReady === 'function') ensureCallPushReady(); });
+  step('message queue', function(){ flushMessageQueue(); });
+  step('keys', function(){ ensureMyKeyPair(); });
+  step('public key', function(){ if(typeof publishMyPublicKey === 'function') publishMyPublicKey(); });
+  step('video job', function(){ checkForPendingVideoJob(); });
 }
 
 function loadRealProfile(user){
