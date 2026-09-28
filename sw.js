@@ -57,6 +57,7 @@
 // v102: 28l landscape expand + rail glow + signal session lock.
 // v101: 28k flip flicker — keep decoder, stable stage, no video Ken Burns.
 // v100: 28j living shell — aurora, nav glow, atmosphere-tied tint. Architecture untouched.
+// v232: 28d console-safe worker gate, price book at running rate, Signals refresh/holds/escape, fast versioned open, truthful economy proxy.
 // v99: 28i Search lives in sticky For You / My Broadcasts bar.
 // v98: 28h Toga always open, names slide, swipe-up cue.
 // v97: 28g landscape toggle on feed + bspace 16:9.
@@ -70,14 +71,14 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v231';
-const APP_BUILD = '20260928c';
+const CACHE_NAME = 'naluno-shell-v232';
+const APP_BUILD = '20260928d';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
   '/js/ads.js',
   '/js/core.js', '/js/vault.js', '/js/metrics.js', '/js/data.js', '/js/crypto.js', '/js/atmosphere.js',
-  '/js/pwa.js', '/js/auth.js', '/js/camera.js', '/js/call-filters.js', '/js/calls.js', '/js/media-vault.js', '/js/chat-store.js', '/js/wire-mailbox.js', '/js/wireline.js',
+  '/js/pwa.js', '/js/gestures.js', '/js/auth.js', '/js/qrcode.js', '/js/spark.js', '/js/camera.js', '/js/call-filters.js', '/js/calls.js', '/js/media-vault.js', '/js/chat-store.js', '/js/wire-mailbox.js', '/js/wireline.js',
   '/js/lifeline.js', '/js/lifeline-wire.js',
   '/js/band-room.js', '/js/band-list.js', '/js/broadcast-core.js', '/js/broadcast-space.js',
   '/js/broadcast-live.js', '/js/broadcast-composer.js', '/js/broadcast-upload.js',
@@ -186,53 +187,62 @@ async function handleEconomyFetch(request){
   if(request.method === 'OPTIONS') return new Response(null, { status: 204, headers: econCorsHeaders() });
 
   if(path === '/health'){
-    let remote = null;
+    /* The real worker's answer, unchanged. When it cannot be reached, say
+       so — this used to report values it had not checked. */
     try{
       const r = await fetch('https://naluno-economy.naluno.workers.dev/health', { cache: 'no-store' });
-      remote = await r.json().catch(function(){ return null; });
+      const body = await r.json().catch(function(){ return null; });
+      if(body) return econJson(Object.assign({ via: 'naluno-sw' }, body), r.status);
     }catch(_){}
-    return econJson({
-      ok: true,
-      service: 'naluno-economy',
-      version: (remote && remote.version) || NALUNO_ECON_VER,
-      adminAuth: 'password',
-      hasServiceAccount: !!(remote && remote.hasServiceAccount),
-      hasWebApiKey: true,
-      persist: (remote && remote.persist) || 'user-token',
-      saError: (remote && remote.saError) || '',
-      payments: !!(remote && remote.payments),
-      liveRooms: !!(remote && remote.liveRooms),
-      billing: (remote && remote.billing) || null,
-    });
+    return econJson({ ok: false, service: 'naluno-economy', error: 'unreachable', via: 'naluno-sw' }, 503);
   }
 
   if(path === '/v1/flags'){
     let flags = Object.assign({}, NALUNO_ECON_FLAGS);
+    let degraded = true;
     try{
       const r = await fetch('https://naluno-economy.naluno.workers.dev/v1/flags', { cache: 'no-store' });
       const b = await r.json().catch(function(){ return {}; });
-      if(b && b.flags) flags = Object.assign(flags, b.flags);
+      if(b && b.flags){ flags = Object.assign(flags, b.flags); degraded = false; }
     }catch(_){}
-    return econJson({ ok: true, flags: flags, degraded: false, persist: 'user-token', source: 'naluno-sw' });
+    return econJson({ ok: true, flags: flags, degraded: degraded, persist: 'user-token', source: 'naluno-sw' });
   }
 
   if(path === '/v1/events' && request.method === 'POST'){
+    /* Pass the event to the worker and return ITS answer. This used to say
+       "COUNTED" before the worker had replied, so a rejected or lost event
+       was never retried by the app's queue. */
+    const forward = request.clone();
     const token = econBearer(request);
     const body = await request.clone().json().catch(function(){ return {}; });
-    const uid = await econLookupUid(token);
-    if(!uid) return econJson({ ok: false, error: 'Missing auth token' }, 401);
-    let persist = 'memory';
     try{
-      if(await econWriteMetric(token, uid, body)) persist = 'user-token';
+      econLookupUid(token).then(function(uid){
+        if(uid) return econWriteMetric(token, uid, body);
+      }).catch(function(){});
     }catch(_){}
     try{
-      fetch(request.clone()).catch(function(){});
-    }catch(_){}
-    return econJson({ ok: true, event_id: body.event_id || '', persist: persist, status: 'COUNTED' });
+      const ctl = new AbortController();
+      const t = setTimeout(function(){ ctl.abort(); }, 10000);
+      const r = await fetch(forward, { signal: ctl.signal }).finally(function(){ clearTimeout(t); });
+      const out = new Headers(r.headers);
+      out.set('Access-Control-Allow-Origin', '*');
+      return new Response(r.body, { status: r.status, statusText: r.statusText, headers: out });
+    }catch(_){
+      return econJson({ ok: false, error: 'Could not reach the economy service. It will be retried.' }, 503);
+    }
   }
 
   if(path === '/v1/presence' && request.method === 'POST'){
-    return econJson({ ok: true });
+    /* Forwarded now (the worker names its fields, so it can no longer
+       overwrite a profile). Presence is best-effort: a failure is quiet. */
+    try{
+      const r = await fetch(request.clone());
+      const out = new Headers(r.headers);
+      out.set('Access-Control-Allow-Origin', '*');
+      return new Response(r.body, { status: r.status, statusText: r.statusText, headers: out });
+    }catch(_){
+      return econJson({ ok: false, error: 'unreachable' }, 503);
+    }
   }
 
   if(path === '/v1/report' && request.method === 'POST'){
@@ -266,8 +276,8 @@ async function handleEconomyFetch(request){
     out.set('Access-Control-Allow-Origin', '*');
     return new Response(r.body, { status: r.status, statusText: r.statusText, headers: out });
   }catch(_){
-    if(path === '/v1/me') return econJson({ ok: true, contribution_points: 0, eligible_contribution: 0, contribution_trust: 'NEW' });
-    return econJson({ ok: false, error: 'Missing auth token' }, 401);
+    /* Offline: say so. A made-up zero looks like a real number. */
+    return econJson({ ok: false, error: 'unreachable' }, 503);
   }
 }
 
@@ -402,6 +412,19 @@ self.addEventListener('fetch', event=>{
   // uploader kept running. Network-first, match the exact ?v= URL only.
   if(isAppCode){
     event.respondWith((async ()=>{
+      /* SPEED: a versioned file (?v=…) that is already on the phone is
+         served from the phone at once and refreshed behind it. Waiting on
+         the network first is why opening took 5+ seconds on a weak or
+         dead connection. Unversioned files still go to the network first. */
+      if(/[?&]v=/.test(url.search)){
+        const have = await caches.match(event.request);
+        if(have && isShellResponse(have, path)){
+          event.waitUntil(netTimeout(event.request, 12000).then(function(fresh){
+            if(fresh && fresh.ok && isShellResponse(fresh, path)) putBare(fresh);
+          }).catch(function(){}));
+          return have;
+        }
+      }
       try{
         const response = await netTimeout(event.request, 8000);
         if(response && response.ok && isShellResponse(response, path)){
@@ -425,7 +448,10 @@ self.addEventListener('fetch', event=>{
     const cached = await caches.match(event.request)
       || await caches.match(new Request(bare))
       || (isAppNav ? await caches.match(appShellReq) : null);
-    if(cached && isSameOrigin && (isAppCode || isAppNav)){
+    /* Icons, images and the manifest that are already on the phone are used
+       at once too, instead of waiting up to 2.5s on a dead connection. */
+    const isStaticAsset = /\.(png|jpe?g|webp|gif|svg|ico|json|woff2?)$/i.test(path);
+    if(cached && isSameOrigin && (isAppCode || isAppNav || isStaticAsset)){
       event.waitUntil((async ()=>{
         try{
           const fresh = await netTimeout(event.request, 12000);

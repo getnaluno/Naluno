@@ -53,6 +53,78 @@ service cloud.firestore {
       let newV = numOf(request.resource.data, field);
       return newV >= oldV && (newV - oldV) <= maxDelta;
     }
+    /* Up by at most one, or down (the creator's own delete adjustment). */
+    function upByAtMostOne(field) {
+      return numOf(request.resource.data, field) <= numOf(resource.data, field) + 1;
+    }
+    function createdAtMostOne(field) {
+      return numOf(request.resource.data, field) <= 1;
+    }
+    /* The month keys Toga counts under: this month (UTC), and the ones
+       either side, so a phone whose clock is a few minutes off still fits. */
+    function monthKeyOf(y, m) {
+      return string(y) + '-' + (m < 10 ? '0' + string(m) : string(m));
+    }
+    function togaKeyNow() { return monthKeyOf(request.time.year(), request.time.month()); }
+    function togaKeyPrev() {
+      return request.time.month() == 1
+        ? monthKeyOf(request.time.year() - 1, 12)
+        : monthKeyOf(request.time.year(), request.time.month() - 1);
+    }
+    function togaKeyNext() {
+      return request.time.month() == 12
+        ? monthKeyOf(request.time.year() + 1, 1)
+        : monthKeyOf(request.time.year(), request.time.month() + 1);
+    }
+    /* A creator may change their own Toga settings, but may not write their
+       own numbers up. They could set any score before. */
+    function ownerTogaHonest() {
+      return upByAtMostOne('viewsTotal') && upByAtMostOne('viewsMonth')
+        && upByAtMostOne('circleMonth') && upByAtMostOne('engageMonth') && upByAtMostOne('scoreMonth')
+        && upByAtMostOne('mv_' + togaKeyNow()) && upByAtMostOne('mc_' + togaKeyNow()) && upByAtMostOne('me_' + togaKeyNow())
+        && upByAtMostOne('mv_' + togaKeyPrev()) && upByAtMostOne('mc_' + togaKeyPrev()) && upByAtMostOne('me_' + togaKeyPrev())
+        && upByAtMostOne('mv_' + togaKeyNext()) && upByAtMostOne('mc_' + togaKeyNext()) && upByAtMostOne('me_' + togaKeyNext());
+    }
+    function ownerTogaCreateHonest() {
+      return createdAtMostOne('viewsTotal') && createdAtMostOne('viewsMonth')
+        && createdAtMostOne('circleMonth') && createdAtMostOne('engageMonth') && createdAtMostOne('scoreMonth')
+        && createdAtMostOne('mv_' + togaKeyNow()) && createdAtMostOne('mc_' + togaKeyNow()) && createdAtMostOne('me_' + togaKeyNow())
+        && createdAtMostOne('mv_' + togaKeyPrev()) && createdAtMostOne('mc_' + togaKeyPrev()) && createdAtMostOne('me_' + togaKeyPrev())
+        && createdAtMostOne('mv_' + togaKeyNext()) && createdAtMostOne('mc_' + togaKeyNext()) && createdAtMostOne('me_' + togaKeyNext());
+    }
+    /* Someone joining or leaving a Circle changes only their own uid. */
+    function memberChangeIsSelf() {
+      let before = ('memberUids' in resource.data && resource.data.memberUids is list) ? resource.data.memberUids : [];
+      let after = ('memberUids' in request.resource.data && request.resource.data.memberUids is list) ? request.resource.data.memberUids : [];
+      return after.toSet().difference(before.toSet()).hasOnly([request.auth.uid])
+        && before.toSet().difference(after.toSet()).hasOnly([request.auth.uid]);
+    }
+    /* Counters a viewer may move: up by one per write, never down. */
+    function engagementBumpsHonest() {
+      return bumpedAtMost('views', 1) && bumpedAtMost('uniqueViews', 1)
+        && bumpedAtMost('comments', 1) && bumpedAtMost('replies', 1) && bumpedAtMost('shares', 1)
+        && bumpedAtMost('commentCount', 1) && bumpedAtMost('replyCount', 1) && bumpedAtMost('shareCount', 1)
+        && memberChangeIsSelf();
+    }
+    /* A private or scheduled Broadcast keeps its comments, questions and
+       chapters private too. A missing parent reads as before. */
+    function parentBroadcastVisible(bid) {
+      let path = /databases/$(database)/documents/broadcasts/$(bid);
+      let b = exists(path) ? get(path).data : {};
+      return b.size() == 0
+        || b.get('creatorUid', '') == request.auth.uid
+        || isOperator()
+        || (b.get('visibility', '') != 'private' && b.get('publishAt', 0) <= request.time.toMillis());
+    }
+    /* A connection entry someone writes into another person's list. */
+    function connectionEntryClean() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['name', 'handle', 'color', 'photo', 'photoUrl', 'connectedAt'])
+        && (!('name' in d) || d.name == null || (d.name is string && d.name.size() <= 80))
+        && (!('handle' in d) || d.handle == null || (d.handle is string && d.handle.size() <= 40))
+        && (!('color' in d) || d.color == null || (d.color is string && d.color.matches('^#[0-9A-Fa-f]{3,8}$')))
+        && (!('photoUrl' in d) || d.photoUrl == null || (d.photoUrl is string && d.photoUrl.matches('^https?://[^"<>]*$')));
+    }
     /* A member may close their own Callsign. They may not lift a
        suspension or restriction the desk put on them. */
     function ownerKeepsModeration() {
@@ -213,6 +285,14 @@ service cloud.firestore {
         || isOwner(uid)
         || (isSignedIn() && signalConnected(uid));
       allow create, delete: if isOwner(uid);
+      /* The desk releases or removes a held Signal. Nothing else. */
+      allow update: if isOperator()
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['held', 'heldReason', 'hidden', 'reviewedAt', 'reviewedBy']);
+    }
+    /* The desk's list of Signals across accounts. */
+    match /{path=**}/signal/{segId} {
+      allow read: if isOperator();
     }
 
     // Compass conversations are entirely private — no connection-visibility rule
@@ -229,7 +309,9 @@ service cloud.firestore {
     // else's list, never edit anything else about their account.
     match /users/{uid}/connections/{otherUid} {
       allow read: if isOwner(uid);
-      allow write: if isSignedIn() && (isOwner(uid) || otherUid == request.auth.uid);
+      allow delete: if isSignedIn() && (isOwner(uid) || otherUid == request.auth.uid);
+      allow create, update: if isOwner(uid)
+        || (isSignedIn() && otherUid == request.auth.uid && connectionEntryClean());
     }
 
     // ---- Wireline (1:1 threads) ----
@@ -504,9 +586,10 @@ service cloud.firestore {
             && creatorMayTightenListing())
         || (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['views', 'uniqueViews', 'updatedAt', 'live', 'liveAt', 'liveBy', 'memberUids',
-                      'comments', 'replies', 'shares', 'commentCount', 'replyCount', 'shareCount']));
+                      'comments', 'replies', 'shares', 'commentCount', 'replyCount', 'shareCount'])
+            && engagementBumpsHonest());
       match /{col}/{docId} {
-        allow read: if isSignedIn();
+        allow read: if isSignedIn() && parentBroadcastVisible(id);
         allow create: if isSignedIn()
           && request.resource.data.keys().size() < 40
           && stampedAsSelf();
@@ -661,7 +744,7 @@ service cloud.firestore {
       // may not rename the row. First write from a viewer is a create of
       // those same small numbers.
       allow create: if isSignedIn() && (
-        request.auth.uid == uid
+        (request.auth.uid == uid && ownerTogaCreateHonest())
         || (
           request.resource.data.keys().hasOnly(['viewsMonth', 'circleMonth', 'engageMonth', 'scoreMonth', 'viewsTotal',
                       'monthKey', 'featuredBroadcastId', 'updatedAt',
@@ -679,7 +762,7 @@ service cloud.firestore {
         )
       );
       allow update: if isSignedIn() && (
-        request.auth.uid == uid
+        (request.auth.uid == uid && ownerTogaHonest())
         || (
           request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['viewsMonth', 'circleMonth', 'engageMonth', 'scoreMonth', 'viewsTotal',
