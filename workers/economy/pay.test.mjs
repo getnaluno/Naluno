@@ -46,10 +46,12 @@ assert.strictEqual(paid.amount_minor, 1000);
 assert.strictEqual(applyCheckoutEvent({ type: "checkout.session.completed", data: { object: { id: "x", payment_status: "unpaid", metadata: { kind: "ad" } } } }), null);
 assert.strictEqual(applyCheckoutEvent({ type: "other" }), null);
 
-assert.strictEqual(validateCheckout({ kind: "support", amount_minor: 100, currency: "AED", creator_user_id: "b" }, "a").error, "That amount cannot be charged");
+assert.strictEqual(validateCheckout({ kind: "support", amount_major: 0, currency: "AED", creator_user_id: "b" }, "a").error, "That amount cannot be charged");
 assert.strictEqual(validateCheckout({ kind: "support", amount_minor: 500, currency: "AED", creator_user_id: "a" }, "a").error, "Pick a creator");
+/* Known: the phone's amount is not checked here any more — the server
+   prices it from the book (money.test.mjs). */
 assert.strictEqual(validateCheckout({ kind: "known", amount_minor: 4900, currency: "AED" }, "a").kind, "known");
-assert.strictEqual(validateCheckout({ kind: "known", amount_minor: 1000, currency: "AED" }, "a").error, "That is not the monthly amount");
+assert.strictEqual(validateCheckout({ kind: "known", currency: "A1" }, "a").error, "Unknown currency");
 assert.strictEqual(aedMajorToMinor(12.5), 1250);
 assert.deepStrictEqual(
   mediaKeysForUser(["https://x/o/u/abc/file.mp4", "u/abc/other.jpg", "u/zzz/nope.mp4"], "abc"),

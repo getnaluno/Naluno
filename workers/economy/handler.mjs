@@ -47,17 +47,27 @@ import {
 } from "./safety.mjs";
 import {
   paymentsReady,
-  aedMajorToMinor,
   checkoutForm,
   validateCheckout,
   verifyStripeSignature,
   applyCheckoutEvent,
-  KNOWN_MONTH_MINOR,
 } from "./pay.mjs";
+import {
+  normCode,
+  convertMajor,
+  majorToStripe,
+  majorToIso,
+  priceIn,
+  readPrice,
+  readSupportPresets,
+  roundForCharge,
+  closeEnough,
+} from "./money.mjs";
 import {
   billingSnapshot,
 } from "./books.mjs";
 import { lookQuery } from "./look.mjs";
+import { pbkdf2Sha256Js, WORKER_PBKDF2_MAX } from "./pbkdf2.mjs";
 import {
   callsReady,
   rememberRoom,
@@ -67,7 +77,7 @@ import {
   cfCalls,
 } from "./live.mjs";
 
-export const VERSION = "2.6.13-look";
+export const VERSION = "2.7.0-pricebook";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -1298,11 +1308,15 @@ function timingEq(a, b) {
   for (let i = 0; i < x.length; i++) d |= x.charCodeAt(i) ^ y.charCodeAt(i);
   return d === 0;
 }
-const PBKDF2_ITERS = 150000;
+/* New copies are made at Cloudflare's ceiling so the worker can check them
+   natively. Older copies at 120k/150k are still checked, by pbkdf2.mjs. */
+const PBKDF2_ITERS = WORKER_PBKDF2_MAX;
 async function pbkdf2Bytes(password, saltBytes, iters) {
+  const n = Number(iters) || PBKDF2_ITERS;
+  if (n > WORKER_PBKDF2_MAX) return pbkdf2Sha256Js(String(password), saltBytes, n, 32);
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(String(password)), "PBKDF2", false, ["deriveBits"]);
   const bits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", hash: "SHA-256", salt: saltBytes, iterations: iters || PBKDF2_ITERS },
+    { name: "PBKDF2", hash: "SHA-256", salt: saltBytes, iterations: n },
     key,
     256,
   );
@@ -1320,19 +1334,24 @@ async function hashPasswordV2(password) {
     updated_at: Date.now(),
   };
 }
-async function passwordMatches(stored, uid, password) {
+/* cheapOnly: skip the checks that need the slow JS PBKDF2, so a copy that
+   can be checked quickly always gets its chance first. */
+async function passwordMatches(stored, uid, password, cheapOnly) {
   if (!stored || !password) return false;
   if (typeof stored === "string") {
     const sha = await sha256Hex(uid + ":" + password);
     if (timingEq(sha, stored)) return true;
+    if (cheapOnly) return false;
     const legacy = await pbkdf2Bytes(password, new TextEncoder().encode("naluno-admin-v1|" + uid), 120000);
     return timingEq(bytesToB64(legacy), stored);
   }
   if (stored && stored.v === 2 && stored.salt && stored.hash) {
-    const got = await pbkdf2Bytes(password, b64ToBytes(stored.salt), Number(stored.iters) || PBKDF2_ITERS);
+    const iters = Number(stored.iters) || 150000;
+    if (cheapOnly && iters > WORKER_PBKDF2_MAX) return false;
+    const got = await pbkdf2Bytes(password, b64ToBytes(stored.salt), iters);
     return timingEq(bytesToHex(got), stored.hash);
   }
-  if (stored && stored.hash) return passwordMatches(stored.hash, uid, password);
+  if (stored && stored.hash) return passwordMatches(stored.hash, uid, password, cheapOnly);
   return false;
 }
 function recordFromDoc(doc) {
@@ -1382,13 +1401,29 @@ async function collectPasswordRecords(env, uid, saToken, userToken) {
   }
   return out;
 }
+/* A match is remembered for this isolate, keyed by the record and a hash
+   of the typed password, so the slow check runs at most once. */
+const passwordMatchCache = new Map();
 async function matchPasswordRecord(recs, uid, password) {
   if (!password) return null;
+  let pk = "";
+  try { pk = await sha256Hex("gate:" + uid + ":" + password); } catch { pk = ""; }
   for (let i = 0; i < recs.length; i++) {
-    try {
-      if (await passwordMatches(recs[i], uid, password)) return recs[i];
-    } catch {
-      /* try next copy */
+    if (pk && passwordMatchCache.get(pk) === recKey(recs[i])) return recs[i];
+  }
+  for (let pass = 0; pass < 2; pass++) {
+    for (let i = 0; i < recs.length; i++) {
+      try {
+        if (await passwordMatches(recs[i], uid, password, pass === 0)) {
+          if (pk) {
+            if (passwordMatchCache.size > 200) passwordMatchCache.clear();
+            passwordMatchCache.set(pk, recKey(recs[i]));
+          }
+          return recs[i];
+        }
+      } catch {
+        /* try next copy */
+      }
     }
   }
   return null;
@@ -1708,7 +1743,9 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
       patch.restrictedReason = "";
     }
     const token = saToken || userToken;
-    await fsFetch(env, token, "PATCH", "/users/" + encodeURIComponent(target), toFsFields(patch));
+    /* fsPutDoc names the fields. A bare PATCH replaced the whole profile
+       with just these few fields — suspending someone erased them. */
+    await fsPutDoc(env, token, "/users/" + encodeURIComponent(target), patch);
     memory.audit.unshift({ action, target, reason, actor: user.uid, ts: Date.now() });
     if (userToken) {
       await fsFetch(env, userToken, "POST", "/adminAudit", toFsFields({
@@ -2000,14 +2037,14 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
         action: (lower && !force) ? "skipped-would-lower" : (apply ? "written" : "would-write"),
       };
       if (apply && !(lower && !force)) {
-        await fsFetch(env, saToken, "PATCH", "/contributionProfiles/" + encodeURIComponent(uid), toFsFields({
+        await fsPutDoc(env, saToken, "/contributionProfiles/" + encodeURIComponent(uid), {
           user_id: uid,
           total_points: t.total_points,
           eligible_points: t.eligible_points,
           events: t.events,
           updated_at: Date.now(),
           repaired_at: Date.now(),
-        }));
+        });
         memory.profiles.set(uid, Object.assign({ user_id: uid, updated_at: Date.now() }, t));
       }
       changes.push(entry);
@@ -2421,6 +2458,45 @@ function payOrigin(env) {
   return "https://getnaluno.com";
 }
 
+/* ---- Money: the operator's price book and the running rate ---- */
+let _ratesCache = null;
+let _pricesCache = null;
+const RATES_FRESH_MS = 36 * 60 * 60 * 1000;
+async function loadRates(env, saToken) {
+  const now = Date.now();
+  if (_ratesCache && now - _ratesCache.at < 30 * 60 * 1000) return _ratesCache.rates;
+  let rates = null;
+  let fetchedAt = 0;
+  if (saToken) {
+    const doc = await fsGetDoc(env, saToken, "/economyConfig/fxRates");
+    if (doc && doc.rates && typeof doc.rates === "object") {
+      rates = doc.rates;
+      fetchedAt = Number(doc.fetchedAt) || 0;
+    }
+  }
+  if (!rates || now - fetchedAt > RATES_FRESH_MS) {
+    try {
+      const r = await _fetch("https://open.er-api.com/v6/latest/USD");
+      const b = await r.json().catch(() => null);
+      if (r.ok && b && b.result === "success" && b.rates) { rates = b.rates; fetchedAt = now; }
+    } catch { /* keep the stored book */ }
+  }
+  if (rates) _ratesCache = { at: now, rates: Object.assign({ USD: 1 }, rates), fetchedAt };
+  return _ratesCache ? _ratesCache.rates : null;
+}
+async function loadPriceBook(env, saToken) {
+  const now = Date.now();
+  if (_pricesCache && now - _pricesCache.at < 60 * 1000) return _pricesCache.book;
+  const doc = saToken ? await fsGetDoc(env, saToken, "/economyConfig/prices") : null;
+  const book = {
+    known: readPrice(doc && doc.knownMonthly),
+    support: readSupportPresets(doc && doc.supportPresets),
+  };
+  _pricesCache = { at: now, book };
+  return book;
+}
+export function _resetMoneyCaches() { _ratesCache = null; _pricesCache = null; }
+
 async function payCheckout(env, user, saToken, body) {
   if (!paymentsReady(env) || !saToken) return json({ ok: false, code: "not_connected", error: PAY_OFF }, 503);
   const check = validateCheckout(body, user.uid);
@@ -2431,7 +2507,16 @@ async function payCheckout(env, user, saToken, body) {
       return json({ ok: false, error: "Creator Support is off. Nothing was charged." }, 403);
     }
   }
-  let expected = check.amount;
+  const payCur = normCode(check.currency);
+  const rates = await loadRates(env, saToken);
+  /* charge = { major, currency, stripe } decided here, never by the phone. */
+  let charge = null;
+  let bookAmount = null;
+  let bookCurrency = "";
+  if (check.kind === "support") {
+    const major = roundForCharge(check.amountMajor, payCur);
+    charge = { major, currency: payCur, stripe: majorToStripe(major, payCur) };
+  }
   if (check.kind === "ad") {
     const adId = String(body.ad_id || "");
     const mailId = String(body.mail_id || "");
@@ -2441,25 +2526,49 @@ async function payCheckout(env, user, saToken, body) {
     if (!doc) return json({ ok: false, error: "This ad is not on file. Nothing was charged." }, 404);
     const owner = String(doc.creatorUid || doc.uid || "");
     if (owner && owner !== user.uid) return json({ ok: false, error: "This ad is not yours." }, 403);
-    expected = aedMajorToMinor(doc.paidAed);
-    if (expected < 200) return json({ ok: false, error: "There is no amount to pay. Nothing was charged." }, 400);
+    /* The ad book is kept in AED (paidAed). Converted at the running rate
+       into the currency the person pays in. */
+    const booked = Number(doc.paidAed) || 0;
+    if (!(booked > 0)) return json({ ok: false, error: "There is no amount to pay. Nothing was charged." }, 400);
+    const got = priceIn({ amount: booked, currency: "AED" }, payCur, rates);
+    if (got.error) return json({ ok: false, error: "Exchange rates are not available right now. Nothing was charged." }, 503);
+    charge = got;
+    bookAmount = booked;
+    bookCurrency = "AED";
   }
   if (check.kind === "known") {
     const app = await fsGetDoc(env, saToken, "/knownApps/" + encodeURIComponent(user.uid));
     if (!app || (app.status !== "accepted" && app.status !== "known" && app.status !== "lapsed")) {
       return json({ ok: false, error: "This has not been accepted yet. Nothing was charged." }, 403);
     }
-    expected = check.amount;
+    const book = await loadPriceBook(env, saToken);
+    if (!book.known) return json({ ok: false, error: "The Known price is not set yet. Nothing was charged." }, 503);
+    const got = priceIn(book.known, payCur, rates);
+    if (got.error) return json({ ok: false, error: "Exchange rates are not available right now. Nothing was charged." }, 503);
+    /* The phone shows a price from its own rate book. If that is far from
+       the running rate, say so rather than charge a surprise amount. */
+    const shown = Number(body.amount_major);
+    if (shown > 0 && !closeEnough(shown, got.major, 0.05)) {
+      return json({ ok: false, code: "price_changed", amount_major: got.major, currency: got.currency,
+        error: "The price was updated. Check it and tap again. Nothing was charged." }, 409);
+    }
+    charge = got;
+    bookAmount = book.known.amount;
+    bookCurrency = book.known.currency;
   }
+  if (!charge || !(charge.stripe > 0)) return json({ ok: false, error: "That amount cannot be charged" }, 400);
   const supportId = check.kind === "support"
     ? String(body.idempotency_key || body.support_id || ("sup_" + user.uid + "_" + Date.now())).slice(0, 120)
     : "";
-  const ref = String(body.idempotency_key || supportId || ("pay_" + user.uid + "_" + Date.now())).slice(0, 180);
+  /* The amount is part of the key: if the price or rate moved, this is a
+     new checkout, not a replay of an old one with different numbers. */
+  const baseRef = String(body.idempotency_key || supportId || ("pay_" + user.uid + "_" + Date.now())).slice(0, 150);
+  const ref = baseRef + ":" + charge.currency + charge.stripe;
   const origin = payOrigin(env);
   const form = checkoutForm({
     kind: check.kind,
-    amountMinor: expected,
-    currency: check.currency,
+    amountMinor: charge.stripe,
+    currency: charge.currency,
     payerUid: user.uid,
     creatorUid: String(body.creator_user_id || ""),
     adId: String(body.ad_id || ""),
@@ -2468,7 +2577,8 @@ async function payCheckout(env, user, saToken, body) {
     supportId: supportId,
     ref: ref,
     name: check.kind === "ad" ? "Naluno advertisement" : (check.kind === "known" ? "Naluno Known, one month" : "Support a creator"),
-    bookMinor: check.bookMinor || 0,
+    bookAmount: bookAmount,
+    bookCurrency: bookCurrency,
     successUrl: origin + "/app/?pay=return",
     cancelUrl: origin + "/app/?pay=cancel",
   });
@@ -2483,9 +2593,25 @@ async function payCheckout(env, user, saToken, body) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.url) {
-    return json({ ok: false, error: "The payment step did not start. Nothing was charged." }, 502);
+    const why = data && data.error && data.error.message ? (" " + String(data.error.message).slice(0, 160)) : "";
+    return json({ ok: false, error: "The payment step did not start." + why + " Nothing was charged." }, 502);
   }
-  return json({ ok: true, url: data.url });
+  return json({ ok: true, url: data.url, amount_major: charge.major, currency: charge.currency });
+}
+
+/* Did Stripe take what the server asked for, in that currency? */
+function paidAsExpected(pay) {
+  if (!pay) return false;
+  if (!pay.expected_currency && !(pay.expected_amount > 0)) {
+    /* Opened before this worker: the amount was set by the server then. */
+    if (pay.kind === "known") return pay.legacy_book_minor > 0 && pay.stripe_amount > 0;
+    if (pay.kind === "ad") return String(pay.currency).toUpperCase() === "AED" && pay.stripe_amount > 0;
+    if (pay.kind === "support") return pay.stripe_amount > 0;
+    return false;
+  }
+  if (!pay.expected_currency || !(pay.expected_amount > 0)) return false;
+  if (String(pay.currency).toUpperCase() !== String(pay.expected_currency).toUpperCase()) return false;
+  return Number(pay.stripe_amount) >= Number(pay.expected_amount);
 }
 
 async function markPaid(env, saToken, pay) {
@@ -2493,11 +2619,21 @@ async function markPaid(env, saToken, pay) {
   const existing = await fsGetDoc(env, saToken, "/payments/" + encodeURIComponent(pay.id));
   if (existing && existing.status === "paid") return;
   const now = Date.now();
+  const matched = paidAsExpected(pay);
+  const legacy = !pay.expected_currency && !(pay.expected_amount > 0);
+  /* Old AED-only ad sessions: the paid amount must still cover the ad. */
+  const coversAd = function (ad) {
+    return !legacy || (ad && pay.amount_minor >= Math.round((Number(ad.paidAed) || 0) * 100));
+  };
   await fsPutDoc(env, saToken, "/payments/" + encodeURIComponent(pay.id), {
     status: "paid",
     kind: pay.kind,
     amount_minor: pay.amount_minor,
+    amount_major: pay.amount_major,
     currency: pay.currency,
+    book_amount: pay.book_amount || 0,
+    book_currency: pay.book_currency || "",
+    matched_expected: matched,
     payer_uid: pay.payer_uid,
     creator_user_id: pay.creator_user_id,
     ad_id: pay.ad_id,
@@ -2507,10 +2643,9 @@ async function markPaid(env, saToken, pay) {
     provider: "stripe",
     paidAt: now,
   });
-  if (pay.kind === "ad" && pay.ad_id) {
+  if (pay.kind === "ad" && pay.ad_id && matched) {
     const ad = await fsGetDoc(env, saToken, "/deskAds/" + encodeURIComponent(pay.ad_id));
-    const need = aedMajorToMinor(ad && ad.paidAed);
-    if (ad && pay.amount_minor >= need && need >= 200) {
+    if (ad && coversAd(ad)) {
       await fsPutDoc(env, saToken, "/deskAds/" + encodeURIComponent(pay.ad_id), {
         paymentStatus: "paid",
         paidAt: now,
@@ -2518,7 +2653,7 @@ async function markPaid(env, saToken, pay) {
       });
     }
   }
-  if (pay.kind === "ad" && pay.mail_id) {
+  if (pay.kind === "ad" && pay.mail_id && matched) {
     const mail = await fsGetDoc(env, saToken, "/deskMail/" + encodeURIComponent(pay.mail_id));
     await fsPutDoc(env, saToken, "/deskMail/" + encodeURIComponent(pay.mail_id), {
       paymentStatus: "paid",
@@ -2528,8 +2663,7 @@ async function markPaid(env, saToken, pay) {
     const promoted = mail && mail.promotedAdId;
     if (promoted && !pay.ad_id) {
       const ad = await fsGetDoc(env, saToken, "/deskAds/" + encodeURIComponent(promoted));
-      const need = aedMajorToMinor(ad && ad.paidAed);
-      if (ad && pay.amount_minor >= need && need >= 200) {
+      if (ad && coversAd(ad)) {
         await fsPutDoc(env, saToken, "/deskAds/" + encodeURIComponent(promoted), {
           paymentStatus: "paid",
           paidAt: now,
@@ -2538,7 +2672,7 @@ async function markPaid(env, saToken, pay) {
       }
     }
   }
-  if (pay.kind === "known" && pay.payer_uid && (Number(pay.book_minor) === KNOWN_MONTH_MINOR || (String(pay.currency || "").toLowerCase() === "aed" && pay.amount_minor === KNOWN_MONTH_MINOR))) {
+  if (pay.kind === "known" && pay.payer_uid && matched) {
     const app = await fsGetDoc(env, saToken, "/knownApps/" + encodeURIComponent(pay.payer_uid));
     if (app && (app.status === "accepted" || app.status === "known" || app.status === "lapsed")) {
       const carry = (app.status === "known" && Number(app.paidUntil) > now) ? Number(app.paidUntil) : now;
@@ -2547,7 +2681,11 @@ async function markPaid(env, saToken, pay) {
         status: "known",
         paidAt: now,
         paidUntil: until,
-        amount_minor: KNOWN_MONTH_MINOR,
+        amount_minor: pay.amount_minor,
+        amount_major: pay.amount_major,
+        currency: pay.currency,
+        book_amount: pay.book_amount || 0,
+        book_currency: pay.book_currency || "",
         payRef: pay.id,
         updatedAt: now,
       });
@@ -2565,7 +2703,8 @@ async function markPaid(env, saToken, pay) {
       creator_user_id: pay.creator_user_id,
       broadcast_id: pay.broadcast_id || "",
       amount_minor: pay.amount_minor,
-      currency: (pay.currency || "aed").toUpperCase(),
+      amount_major: pay.amount_major,
+      currency: (pay.currency || "").toUpperCase(),
       stripeSession: pay.id,
       paidAt: now,
     });
@@ -2966,12 +3105,13 @@ export async function handleRequest(request, env = {}, ctx = {}) {
       const now = Date.now();
       memory.presence.set(user.uid, { uid: user.uid, at: now, platform: body.platform || "", reason: body.reason || "" });
       if (userToken) {
-        await fsFetch(env, userToken, "PATCH", "/users/" + encodeURIComponent(user.uid), toFsFields({
+        /* Named fields only: a bare PATCH replaced the whole profile. */
+        await fsPutDoc(env, userToken, "/users/" + encodeURIComponent(user.uid), {
           lastSeen: now,
-          lastPlatform: body.platform || "",
-          lastAppVersion: body.app_version || "",
-          lastPresenceReason: body.reason || "beat",
-        }));
+          lastPlatform: String(body.platform || "").slice(0, 40),
+          lastAppVersion: String(body.app_version || "").slice(0, 40),
+          lastPresenceReason: String(body.reason || "beat").slice(0, 20),
+        });
       }
       if (saToken) {
         await fsFetch(env, saToken, "PATCH", "/presence/" + encodeURIComponent(user.uid), toFsFields({
