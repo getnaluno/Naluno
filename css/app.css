@@ -3653,3 +3653,16 @@ body:has(.call-overlay.active) #wireHistoryScreen.active{
    class set display:flex, which beat the hidden attribute, so the note and
    Done sat on top of the form before anything was saved. */
 #bcastAdSheet .tab-scroll[hidden], .tab-scroll[hidden]{ display:none !important; }
+
+/* Listen / As written: a quiet tool row under the title, not a second
+   headline competing with the title and chapter headings. */
+#bspaceListenWrap.bspace-listen-inline{ gap:6px; margin:2px 0 10px; opacity:.9; }
+#bspaceListenWrap #bspaceListenBtn{
+  height:24px; padding:0 10px; font-size:10.5px; letter-spacing:.04em;
+  background:transparent; border-color:rgba(124,255,178,.35);
+}
+#bspaceListenWrap #bspaceListenBtn[data-on="1"]{ background:var(--mint); color:#0D0F17; border-color:var(--mint); }
+#bspaceListenWrap select{
+  height:24px; max-width:128px; padding:0 22px 0 10px; font-size:10.5px;
+  color:var(--text-dim); background-color:transparent; background-position:right 8px center;
+}
