@@ -1045,7 +1045,8 @@
     const form = document.getElementById('bcastAdForm');
     const pay = document.getElementById('bcastAdPay');
     if (form) form.hidden = true;
-    if (pay) pay.hidden = false;
+    if (pay) { pay.hidden = false; try { pay.scrollTop = 0; } catch (_) {} }
+    if (typeof toast === 'function') toast('Ad saved');
     const shown = adFromAed(paidAed);
     const pretty = (Math.round(shown * 100) / 100).toFixed(2);
     const line = document.getElementById('crAdPayAmount');

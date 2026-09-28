@@ -597,6 +597,7 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
   const snapDesc = desc;
   const snapTags = tags.slice();
   const snapChapters = bcompKind === 'writing' ? bcompCollectChapters() : null;
+  window.__bcompChaptered = true;
   const snapBody = snapChapters ? snapChapters.map(function(c){ return (c.title ? c.title + '\n' : '') + c.text; }).join('\n\n') : '';
   const snapCover = bcompKind === 'writing' ? bcompCoverFile : null;
   const snapStrandId = strandId;
@@ -802,6 +803,28 @@ function openWriteEntry(){
   const body = $('bwriteBody');
   if(body){ try{ body.focus(); }catch(_){} }
 }
+function bwriteShowChapters(){
+  const on = !!($('bwriteChaptered') && $('bwriteChaptered').checked);
+  if($('bwriteChTitle')) $('bwriteChTitle').hidden = !on;
+  if($('bwriteChapters')) $('bwriteChapters').hidden = !on;
+  const body = $('bwriteBody');
+  if(body) body.placeholder = on ? 'Write chapter 1' : 'Write the piece';
+}
+function bwriteAddChapterBlock(){
+  const host = $('bwriteMoreChapters');
+  if(!host) return;
+  const n = host.querySelectorAll('.bwrite-ch').length + 2;
+  if(n > 24){ toast('24 chapters is the limit'); return; }
+  const block = document.createElement('div');
+  block.className = 'bwrite-ch';
+  const st = 'width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-family:inherit;';
+  block.innerHTML = '<input maxlength="80" placeholder="Chapter ' + n + ' title" style="' + st + 'font-size:14px;" />'
+    + '<textarea maxlength="20000" rows="8" placeholder="Write chapter ' + n + '" style="' + st + 'font-size:15px;line-height:1.45;resize:vertical;"></textarea>';
+  host.appendChild(block);
+  try{ block.querySelector('textarea').focus(); }catch(_){}
+}
+if($('bwriteChaptered')) $('bwriteChaptered').onchange = bwriteShowChapters;
+if($('bwriteAddChapter')) $('bwriteAddChapter').onclick = bwriteAddChapterBlock;
 function closeWriteEntry(){
   const box = $('bwriteSetup');
   if(box) box.classList.remove('active');
@@ -933,14 +956,22 @@ if($('bwritePublish')){
     if($('bcompPrivate')) $('bcompPrivate').checked = !!($('bwritePrivate') && $('bwritePrivate').checked);
     if($('bcompSchedule')) $('bcompSchedule').checked = !!($('bwriteLater') && $('bwriteLater').checked);
     if($('bcompPublishAt') && $('bwriteAt')) $('bcompPublishAt').value = $('bwriteAt').value || '';
-    bcompStartWriting();
-    const host = $('bcompChapters');
-    const block = host && host.querySelector('.bcomp-chapter');
-    if(block){
-      const inputs = block.querySelectorAll('input, textarea');
-      if(inputs[0]) inputs[0].value = title;
-      if(inputs[1]) inputs[1].value = text;
+    const chaptered = !!($('bwriteChaptered') && $('bwriteChaptered').checked);
+    const parts = [{ title: chaptered ? ((($('bwriteChTitle') && $('bwriteChTitle').value) || '').trim() || 'Chapter 1') : '', text: text }];
+    if(chaptered){
+      document.querySelectorAll('#bwriteMoreChapters .bwrite-ch').forEach(function(block, i){
+        const t = block.querySelector('input'), b = block.querySelector('textarea');
+        const body = ((b && b.value) || '').trim();
+        if(!body) return;
+        parts.push({ title: ((t && t.value) || '').trim() || ('Chapter ' + (parts.length + 1)), text: body });
+      });
     }
+    window.__bcompChaptered = chaptered;
+    const host = $('bcompChapters');
+    if(host) host.innerHTML = '';
+    bcompStartWriting();
+    if(host) host.innerHTML = '';
+    parts.forEach(function(p){ bcompAddChapter(p.title, p.text); });
     if($('bcompTitle')) $('bcompTitle').value = title;
     if($('bcompTags')) $('bcompTags').value = tags;
     if($('bcompDesc')) $('bcompDesc').value = '';
@@ -999,6 +1030,12 @@ function bcompAddChapter(title, text){
   if(inputs[1] && text) inputs[1].value = text;
   if(inputs[1]){ try{ inputs[1].focus(); }catch(_){} }
 }
+/* Chapters are a choice. The full composer always writes in chapters; the
+   quick Write screen asks (bwriteChaptered). */
+function bcompChaptered(){
+  if(window.__bcompChaptered === false) return false;
+  return true;
+}
 function bcompCollectChapters(){
   const host = $('bcompChapters');
   if(!host) return [];
@@ -1010,7 +1047,9 @@ function bcompCollectChapters(){
     if(!text) return;
     out.push({
       index: out.length,
-      title: ((titleEl && titleEl.value) || '').trim().slice(0, 80) || ('Chapter ' + (i + 1)),
+      /* A piece written without chapters keeps no chapter heading: the
+         Broadcast title is its only title. */
+      title: ((titleEl && titleEl.value) || '').trim().slice(0, 80) || (bcompChaptered() ? ('Chapter ' + (i + 1)) : ''),
       text: text.slice(0, 20000),
     });
   });

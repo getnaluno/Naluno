@@ -324,11 +324,18 @@ function bspacePaintWriting(seg){
         return '<button type="button" data-write-ch="' + i + '" style="flex:0 0 auto;border-radius:999px;border:1px solid var(--line);background:' + (i === 0 ? 'rgba(124,255,178,.16)' : 'transparent') + ';color:var(--text);padding:6px 10px;font-size:12px;">' + bspaceEscape(label) + '</button>';
       }).join('') + '</div>'
     : '';
+  /* A piece in one part has no chapter heading. Older pieces saved their
+     title as "chapter 1", which printed the title twice. */
+  const norm = function(s){ return String(s || '').trim().replace(/\s+/g, ' ').toLowerCase(); };
+  const pageTitle = norm((typeof activeBroadcastMeta !== 'undefined' && activeBroadcastMeta && activeBroadcastMeta.title) || (seg && seg.title) || '');
+  const single = use.length === 1;
   box.hidden = false;
   box.innerHTML = nav + use.map(function(c, i){
     const text = String(c.text || '');
     const long = text.length > 180;
-    const shownTitle = c.title || '';
+    const raw = c.title || '';
+    const dup = single && (!raw || norm(raw) === pageTitle || /^chapter 1$/i.test(String(raw).trim()));
+    const shownTitle = dup ? '' : raw;
     return '<article data-write-body="' + i + '" style="' + (i ? 'display:none;' : '') + '">'
       + '<h2 data-write-title="1" data-orig="' + bspaceEscape(shownTitle) + '" style="margin:0 0 10px;font-family:var(--font-futuristic);font-size:22px;line-height:1.2;' + (shownTitle ? '' : 'display:none;') + '">' + bspaceEscape(shownTitle) + '</h2>'
       + '<div class="bspace-read-clamp" data-clamp="' + (long ? '1' : '0') + '" style="font-size:16px;line-height:1.55;">' + bspaceEscape(text) + '</div>'
@@ -2854,11 +2861,18 @@ function bspaceOpenSend(){
     bspaceShowAction('Send in Naluno', '<p class="hint">Add someone in Wireline first.</p>');
     return;
   }
+  /* People who never set a name are called "You" by default, which read as
+     yourself three times over. Show their Callsign number instead. */
+  const label = function(c){
+    const n = String(c.name || '').trim();
+    return (n && n.toLowerCase() !== 'you') ? n : (c.number || c.handle || 'Someone');
+  };
   const body = bspaceShowAction('Send in Naluno', people.map(function(c){
-    const name = c.name || c.number || 'Someone';
-    return '<button type="button" data-send-uid="' + bspaceEscape(c.firebaseUid) + '" class="bspace-mini" style="display:block;width:100%;text-align:left;margin:0 0 8px;">' + bspaceEscape(name) + '</button>';
+    return '<button type="button" data-send-uid="' + bspaceEscape(c.firebaseUid) + '" class="bspace-mini bspace-send-person">' + bspaceEscape(label(c)) + '</button>';
   }).join(''));
   if(!body) return;
+  /* Half the screen, on the left, so the Broadcast keeps playing beside it. */
+  try{ $('bspaceMoreMenu').classList.add('bspace-menu-side'); }catch(_){}
   body.querySelectorAll('[data-send-uid]').forEach(function(btn){
     btn.onclick = async function(e){
       if(e) e.stopPropagation();
@@ -3110,6 +3124,7 @@ if($('bspaceAdvertiseBtn')){
   btn.__wired = true;
   function shut(){
     menu.setAttribute('hidden', '');
+    menu.classList.remove('bspace-menu-side');
     btn.setAttribute('aria-expanded', 'false');
     const home = $('bspaceMenuHome');
     const card = $('bspaceKnownCard');
@@ -3923,7 +3938,7 @@ function bspaceShowAction(title, html){
   const home = $('bspaceMenuHome');
   const known = $('bspaceKnownCard');
   const card = $('bspaceActionCard');
-  if(menu) menu.hidden = false;
+  if(menu){ menu.hidden = false; menu.classList.remove('bspace-menu-side'); }
   if(home) home.hidden = true;
   if(known) known.hidden = true;
   if(card) card.hidden = false;
@@ -3934,6 +3949,7 @@ function bspaceShowAction(title, html){
   return body;
 }
 function bspaceBackMenu(){
+  try{ $('bspaceMoreMenu').classList.remove('bspace-menu-side'); }catch(_){}
   const home = $('bspaceMenuHome');
   const known = $('bspaceKnownCard');
   const card = $('bspaceActionCard');
@@ -4373,7 +4389,7 @@ async function bspaceSaveEdit(){
       const text = ((textEl && (textEl.value != null ? textEl.value : textEl.textContent)) || '').trim();
       if(!text) return;
       if(window.NalunoPass && NalunoPass.looksLikeShell && NalunoPass.looksLikeShell(text)) return;
-      const chTitle = ((titleEl && (titleEl.value != null ? titleEl.value : titleEl.textContent)) || '').trim().slice(0, 80) || ('Chapter ' + (i + 1));
+      const chTitle = ((titleEl && (titleEl.value != null ? titleEl.value : titleEl.textContent)) || '').trim().slice(0, 80) || (root.length > 1 ? ('Chapter ' + (i + 1)) : '');
       chapters.push({ index: chapters.length, title: chTitle, text: text.slice(0, 20000) });
     });
     if(!chapters.length){ toast('The writing is empty'); return; }

@@ -195,9 +195,13 @@
       if (!s) return;
       const p = point(e);
       s.dx = p.x - s.x; s.dy = p.y - s.y;
-      if (!s.axis && Math.max(Math.abs(s.dx), Math.abs(s.dy)) > 12) {
+      const far = Math.max(Math.abs(s.dx), Math.abs(s.dy));
+      /* A slow phone can deliver the first move after the hold timer: a
+         clear swipe still wins over "hold to pause". */
+      if (s.held && !s.axis && far > 30) { s.held = false; storyResume(); }
+      if (!s.held && !s.axis && far > 12) {
         s.axis = Math.abs(s.dx) > Math.abs(s.dy) * 1.2 ? 'x' : 'y';
-        if (!s.held) clearTimeout(s.timer);
+        clearTimeout(s.timer);
       }
       if (s.axis === 'y' && s.dy > 0 && body) {
         body.style.transition = 'none';
