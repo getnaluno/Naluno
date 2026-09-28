@@ -346,15 +346,19 @@ service cloud.firestore {
       allow read: if isOwner(uid);
       match /inbox/{id} {
         allow read, delete: if isOwner(uid);
+        // The drop's id is shown in the other person's chat, so it may only
+        // hold the characters the app itself uses (c123-abc, rx-…, miss-…).
         allow create: if isSignedIn()
           && request.resource.data.from == request.auth.uid
-          && request.resource.data.to == uid;
+          && request.resource.data.to == uid
+          && id.matches('^[A-Za-z0-9_.:-]{1,200}$');
         allow update: if false;
       }
       match /receipts/{id} {
         allow read, delete: if isOwner(uid);
         allow create, update: if isSignedIn()
-          && request.resource.data.from == request.auth.uid;
+          && request.resource.data.from == request.auth.uid
+          && id.matches('^[A-Za-z0-9_.:-]{1,200}$');
       }
     }
 
