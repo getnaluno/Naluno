@@ -3627,3 +3627,29 @@ body:has(.call-overlay.active) #wireHistoryScreen.active{
 .wire-swipe-tray button[data-act="call"]{ background:var(--mint,#7CFFB2); }
 .wire-swipe-tray button[data-act="clear"]{ background:var(--red,#ff6b6b); color:#fff; }
 #bviewer.story-held .bviewer-head, #bviewer.story-held #bviewerSocial{ opacity:.35; transition:opacity .2s ease; }
+
+/* ============ Send in Naluno: a half-width panel on the left ============ */
+/* The Broadcast keeps playing, visible on the right; tapping it closes the list. */
+.bspace-more-menu.bspace-menu-side{
+  justify-content:flex-start; align-items:flex-end;
+  background:linear-gradient(90deg, rgba(7,8,12,.55) 0%, rgba(7,8,12,.15) 55%, rgba(7,8,12,0) 70%);
+  padding-left:max(10px, env(safe-area-inset-left, 0px)); padding-right:0;
+}
+.bspace-more-menu.bspace-menu-side #bspaceActionCard{
+  width:50%; min-width:176px; max-width:300px;
+  max-height:min(60vh, 560px);
+  padding:6px 10px 10px;
+  background:rgba(18,21,28,.94);
+  box-shadow:0 10px 30px rgba(0,0,0,.45);
+}
+.bspace-more-menu.bspace-menu-side .bspace-room-head b{ font-size:15px; }
+.bspace-send-person{
+  display:block; width:100%; text-align:left; margin:0 0 8px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.bspace-menu-side .bspace-send-person{ margin:0 0 6px; padding-top:9px; padding-bottom:9px; font-size:13px; }
+
+/* The ad's "awaits a review" note is shown only after Save: the tab-scroll
+   class set display:flex, which beat the hidden attribute, so the note and
+   Done sat on top of the form before anything was saved. */
+#bcastAdSheet .tab-scroll[hidden], .tab-scroll[hidden]{ display:none !important; }
