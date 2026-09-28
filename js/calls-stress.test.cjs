@@ -22,8 +22,22 @@ function makeDb() {
   const tick = () => new Promise((r) => setImmediate(r));
   const db = {
     docs,
-    collection: () => ({ doc: (id) => ({ id }) }),
+    failTx: false,
+    collection: () => ({ doc: (id) => ({
+      id,
+      get: async () => { await tick(); const d = docs.get(id); return { exists: !!d, data: () => Object.assign({}, d) }; },
+      update: async (patch) => {
+        await tick();
+        // firestore.rules: a status only moves forward (or stays).
+        const before = (docs.get(id) || {}).status;
+        const NEXT = { ringing: ['accepted', 'declined', 'missed', 'busy', 'ended'], accepted: ['ended'] };
+        if (patch.status && patch.status !== before && !(NEXT[before] || []).includes(patch.status)) { const e = new Error('denied'); e.code = 'permission-denied'; throw e; }
+        docs.set(id, Object.assign({}, docs.get(id), patch));
+        if (patch.status && db.log) db.log.push([id, before, patch.status]);
+      },
+    }) }),
     runTransaction(fn) {
+      if (db.failTx) return Promise.reject(Object.assign(new Error('unavailable'), { code: 'unavailable' }));
       // Firestore runs competing transactions one after another (retrying the loser).
       const run = lock.then(async () => {
         for (let k = 0; k < Math.floor(rnd() * 3); k++) await tick();
@@ -44,9 +58,10 @@ vm.createContext(ctx);
 vm.runInContext(src.slice(a, b) + '\nthis.move = nalunoCallMove; this.NEXT = NALUNO_CALL_NEXT;', ctx);
 const ORDER = { ringing: 0, accepted: 1, declined: 2, missed: 2, busy: 2, ended: 2 };
 (async () => {
-  let races = 0, revived = 0, doubleAnswer = 0;
-  for (let round = 0; round < 2000; round++) {
-    const db = makeDb(); ctx.fbDb = db; db.log = [];
+  let races = 0, revived = 0, doubleAnswer = 0, fbRaces = 0, fbRevived = 0;
+  for (let round = 0; round < 2400; round++) {
+    const fallback = round >= 2000; // the last 400 rounds: every transaction fails, the plain write takes over
+    const db = makeDb(); ctx.fbDb = db; db.log = []; db.failTx = fallback;
     const ids = [];
     for (let i = 0; i < 100; i++) { const id = 'c' + i; ids.push(id); db.docs.set(id, { status: 'ringing' }); }
     const history = new Map(ids.map((id) => [id, ['ringing']]));
@@ -57,19 +72,24 @@ const ORDER = { ringing: 0, accepted: 1, declined: 2, missed: 2, busy: 2, ended:
       for (const to of acts) ops.push(ctx.move(id, to).then((ok) => [id, to, ok]));
     }
     const results = await Promise.all(ops);
-    races += results.length;
+    if (fallback) fbRaces += results.length; else races += results.length;
     for (const [id, from, to] of db.log) history.get(id).push(to);
-    for (const [, from, to] of db.log) if (ORDER[from] === 2 || ORDER[to] < ORDER[from] || (from === to)) revived++;
+    for (const [, from, to] of db.log) {
+      const back = (ORDER[from] === 2 && from !== to) || ORDER[to] < ORDER[from];
+      if (fallback) { if (back) fbRevived++; } else if (back || from === to) revived++;
+    }
     for (const id of ids) {
       const h = history.get(id);
-      if (h.filter((x) => x === 'accepted').length > 1) doubleAnswer++;
+      if (!fallback && h.filter((x) => x === 'accepted').length > 1) doubleAnswer++;
       const final = db.docs.get(id).status;
       assert.ok(['accepted', 'declined', 'missed', 'busy', 'ended'].includes(final), 'every call left ringing got a final state: ' + final);
     }
   }
   assert.strictEqual(revived, 0, 'a finished call was never revived');
   assert.strictEqual(doubleAnswer, 0, 'a call was never answered twice');
+  assert.strictEqual(fbRevived, 0, 'with transactions failing, the checked write still never moves a call backwards');
   console.log('calls-stress: ' + races + ' competing status changes on 200,000 calls: none went backwards, none answered twice');
+  console.log('calls-stress: ' + fbRaces + ' more on 40,000 calls with every transaction failing: none went backwards');
 
   /* 2. The same table in firestore.rules. */
   assert.ok(rules.includes("request.resource.data.get('status', '') == resource.data.get('status', '')"), 'rules: other fields may change');
@@ -86,7 +106,7 @@ const ORDER = { ringing: 0, accepted: 1, declined: 2, missed: 2, busy: 2, ended:
   }
   /* Every place the app writes a call's status fits the rule. */
   assert.ok(!/update\(\{ status:\s*'accepted'/.test(src) && !/update\(\{ status:'declined' \}\)/.test(src) && !/update\(\{ status:'missed' \}\)/.test(src), 'answer / decline / missed go through the checked move');
-  assert.ok(src.includes("nalunoCallMove(activeCallId, 'accepted'") && src.includes("nalunoCallMove(id, 'declined')") && src.includes("nalunoCallMove(activeCallId, 'missed')"), 'checked moves used');
+  assert.ok(src.includes("nalunoCallMove(acceptingId, 'accepted'") && src.includes("nalunoCallMove(id, 'declined')") && src.includes("nalunoCallMove(activeCallId, 'missed')"), 'checked moves used');
 
   /* 3. The behaviours the simulation asked for. */
   assert.ok(src.includes("nalunoCallMove(callId, 'busy');"), 'busy is answered');
@@ -100,6 +120,12 @@ const ORDER = { ringing: 0, accepted: 1, declined: 2, missed: 2, busy: 2, ended:
   assert.ok(src.includes('let nalunoDialing = null;') && src.includes("try{ nalunoCancelDial(); }catch(_){}") && (src.match(/if\(gone\(\)\)/g) || []).length >= 6, 'a dial cancelled or replaced while the camera opens stops before its record rings');
   assert.ok(src.includes('} else if(activeCallId || dialingOut){') && src.includes("nalunoCancelDial('crossed')"), 'a call arriving while dialing is busy, or the crossed call is answered');
   assert.ok(cam.includes('if(got && stream && stream !== got && mediaStreamIsLive(stream)){'), 'overlapping camera requests do not leave a camera on');
+  assert.ok(src.includes('nalunoIncomingFrom.uid === data.callerUid') && src.includes("nalunoCallMove(callId, 'missed');   // an older ring of theirs"), 'a newer ring from the same person replaces the one on screen; an older one is dropped');
+  assert.ok(src.includes("nalunoWatchBackup(callId, 'incoming', onRingDoc);") && src.includes("nalunoWatchBackup(myCallId, 'ringing', onMyCallDoc);"), 'both phones double-check the call while it rings');
+  assert.ok(src.includes("try{ nalunoEndMyOldRings(callRef.id); }catch(_){}") && src.includes("where('callerUid', '==', currentUser.uid).where('status', '==', 'ringing')"), 'a new call finishes the caller\'s own leftover rings');
+  assert.ok(src.includes("endReason: 'nooffer'"), 'answering a leftover ring finishes it');
+  const bl = fs.readFileSync(path.join(__dirname, 'band-list.js'), 'utf8');
+  assert.ok(bl.includes('id: nalunoFreeBandId()') && bl.includes("JSON.stringify(bands.filter(function(b){ return !b.isReal; }))") && bl.includes('const local = saved.filter(b=>b && !b.isReal);'), 'Band rows get unique ids; saved lists never replace real Bands');
   const calls = idx.fieldOverrides.filter((o) => o.collectionGroup === 'calls');
   ['createdAt', 'acceptedAt', 'endedAt'].forEach((f) => assert.ok(calls.some((o) => o.fieldPath === f && Array.isArray(o.indexes) && o.indexes.length === 0), 'calls.' + f + ' exempt from the single-field index'));
   console.log('calls-stress tests passed');

@@ -242,19 +242,49 @@ function closeCallOverlay(opts){
    back into 'accepted' and left the answering phone alone in a dead call.
    Now the move is checked inside a transaction (and by firestore.rules). */
 const NALUNO_CALL_NEXT = { ringing: ['accepted', 'declined', 'missed', 'busy', 'ended'], accepted: ['ended'] };
+function nalunoCallMoveOk(from, to){
+  if(from === to) return to === 'ended' ? 'same' : false;
+  return (NALUNO_CALL_NEXT[from] || []).indexOf(to) >= 0;
+}
 function nalunoCallMove(callId, to, extra){
-  if(!callId || typeof fbDb === 'undefined' || !fbDb || typeof fbDb.runTransaction !== 'function') return Promise.resolve(false);
+  if(!callId || typeof fbDb === 'undefined' || !fbDb) return Promise.resolve(false);
   const ref = fbDb.collection('calls').doc(callId);
+  const patch = Object.assign({ status: to }, extra || {});
+  /* Fallback: a plain read-then-write. firestore.rules is what really holds
+     the line (a status only moves forward there), so if the call moved on in
+     the meantime the write is refused and this answers false. */
+  const plain = function(){
+    return ref.get().then(function(snap){
+      if(!snap || !snap.exists) return false;
+      const ok = nalunoCallMoveOk((snap.data() || {}).status || '', to);
+      if(ok === 'same') return true;
+      if(!ok) return false;
+      return ref.update(patch).then(function(){ return true; }, function(e){ return !(e && e.code === 'permission-denied'); });
+    }, function(){
+      // Could not even read it (offline): write anyway; the rules still refuse a backwards move.
+      return ref.update(patch).then(function(){ return true; }, function(e){ return !(e && e.code === 'permission-denied'); });
+    });
+  };
+  if(typeof fbDb.runTransaction !== 'function') return plain();
+  /* The transaction stops two of the same person's phones from both
+     answering. It used to be the only path: when the transaction itself
+     failed on a phone (a flaky connection, the SDK giving up after retries),
+     that looked exactly like "the call is gone", and the caller never heard
+     the answer or the decline. A failed transaction now falls back to the
+     plain checked write; a clear "no, it already moved on" does not. */
   return fbDb.runTransaction(function(tx){
     return tx.get(ref).then(function(snap){
       if(!snap || !snap.exists) return false;
-      const from = (snap.data() || {}).status || '';
-      if(from === to) return to === 'ended';
-      if((NALUNO_CALL_NEXT[from] || []).indexOf(to) < 0) return false;
-      tx.update(ref, Object.assign({ status: to }, extra || {}));
+      const ok = nalunoCallMoveOk((snap.data() || {}).status || '', to);
+      if(ok === 'same') return true;
+      if(!ok) return false;
+      tx.update(ref, patch);
       return true;
     });
-  }).catch(function(){ return false; });
+  }).catch(function(e){
+    if(e && e.code === 'permission-denied') return false;
+    return plain();
+  });
 }
 window.nalunoCallMove = nalunoCallMove;
 /* Server time, from the web server's own Date header (one tiny request), so
@@ -1413,6 +1443,7 @@ function nalunoCancelDial(reason){
 }
 function teardownCallConnection(){
   try{ nalunoCancelDial(); }catch(_){}
+  try{ clearInterval(window.__nalunoWatchBackup); window.__nalunoWatchBackup = null; }catch(_){}
   try{ stopRemotePlayWatch(); }catch(_){}
   try{ resetCallFilterState(); }catch(_){}
   if(activeCallDocUnsub){ activeCallDocUnsub(); activeCallDocUnsub = null; }
@@ -1695,10 +1726,45 @@ function scheduleIncomingListenerRetry(){
     }, 15000);
   }catch(_){}
 })();
+/* Who the ring on screen (or the call this phone answered) is from, so a
+   second ring from the same person is recognised. */
+let nalunoIncomingFrom = null;
+function nalunoRingMs(data){
+  try{
+    const c = data && data.createdAt;
+    if(!c) return 0;
+    return typeof c.toMillis === 'function' ? c.toMillis() : (c.seconds ? c.seconds * 1000 : Number(c) || 0);
+  }catch(_){ return 0; }
+}
 function handleIncomingCall(callId, data){
   data = data || {};
   if(nalunoRingIsStale(data)){ nalunoCallMove(callId, 'missed'); return; }
   let autoAccept = false;
+  /* The same person ringing twice: they hung up and called again, or an
+     older ring of theirs was left behind in the database. The newer ring is
+     the live one. Keeping the older one on screen (and telling the new call
+     "busy") answered a call nobody was on while the caller kept ringing. */
+  if($('callOverlay').classList.contains('active') && nalunoIncomingFrom && activeCallId === nalunoIncomingFrom.id
+     && activeCallId !== callId && !iAmCaller && data.callerUid && nalunoIncomingFrom.uid === data.callerUid){
+    const theirMs = nalunoRingMs(data);
+    if(theirMs && nalunoIncomingFrom.ms && theirMs < nalunoIncomingFrom.ms){
+      nalunoCallMove(callId, 'missed');   // an older ring of theirs: not the live one
+      return;
+    }
+    const old = activeCallId;
+    const wasInCall = !!($('incall') && $('incall').classList.contains('active'));
+    const wasAnswering = !!callActionInProgress;
+    if(wasInCall || wasAnswering){
+      try{ fbDb.collection('calls').doc(old).update({ status: 'ended', endReason: 'recalled' }).catch(function(){}); }catch(_){}
+      // They had already picked up (or were talking): take the new call from the same person straight away.
+      autoAccept = true;
+    } else {
+      nalunoCallMove(old, 'missed');
+    }
+    try{ stopRingtone(); }catch(_){}
+    teardownCallConnection();
+    try{ closeCallOverlay({ keepHistory: true }); }catch(_){}
+  }
   /* Replacing another call screen (the lobby, "No answer yet", crossed
      calls): keep the snapshot of where the person was before that screen,
      or they would come back to the tab instead of the chat or room. */
@@ -1746,6 +1812,7 @@ function handleIncomingCall(callId, data){
 
   activeCallId = callId;
   iAmCaller = false;
+  nalunoIncomingFrom = { id: callId, uid: data.callerUid || null, ms: nalunoRingMs(data) };
   remoteDescriptionSet = false;
   pendingRemoteCandidates = [];
   callActionInProgress = false;
@@ -1803,8 +1870,9 @@ function handleIncomingCall(callId, data){
   }, 80000);
 
   // Watches for the caller hanging up before this side answers.
-  activeCallDocUnsub = fbDb.collection('calls').doc(callId).onSnapshot(snap=>{
-    const d = snap.data();
+  const onRingDoc = snap=>{
+    if(activeCallId !== callId) return;
+    const d = snap && snap.data && snap.data();
     if(!d) return;
     const otherDeviceAnswered = d.status === 'accepted' && !callActionInProgress && $('incoming') && $('incoming').classList.contains('active');
     if(otherDeviceAnswered || ((d.status === 'ended' || d.status === 'missed' || d.status === 'declined' || d.status === 'busy') && $('callOverlay').classList.contains('active') && !$('incall').classList.contains('active'))){
@@ -1819,7 +1887,29 @@ function handleIncomingCall(callId, data){
       callActionInProgress = false;
       try{ restoreUiAfterCall(); }catch(_){}
     }
-  });
+  };
+  activeCallDocUnsub = fbDb.collection('calls').doc(callId).onSnapshot(onRingDoc, function(err){ console.warn('[call] ring watch', err && err.message); });
+  nalunoWatchBackup(callId, 'incoming', onRingDoc);
+}
+
+/* A second, slow check beside the live listener while a ring is on screen.
+   If a phone's listener stalls (a flaky connection, the app coming back
+   from the background), the ring used to carry on after the other side had
+   answered, declined or hung up. One small read every 3 seconds, only while
+   the ring shows. */
+function nalunoWatchBackup(callId, screenId, onDoc){
+  try{ clearInterval(window.__nalunoWatchBackup); }catch(_){}
+  window.__nalunoWatchBackup = setInterval(function(){
+    try{
+      const scr = $(screenId);
+      if(activeCallId !== callId || !scr || !scr.classList.contains('active') || !$('callOverlay').classList.contains('active')){
+        clearInterval(window.__nalunoWatchBackup); window.__nalunoWatchBackup = null; return;
+      }
+      fbDb.collection('calls').doc(callId).get().then(function(snap){
+        if(activeCallId === callId && scr.classList.contains('active')) onDoc(snap);
+      }).catch(function(){});
+    }catch(_){}
+  }, 3000);
 }
 
 function startOutgoingCall(contactId){
@@ -2002,6 +2092,19 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
 
 
 let nalunoLastDial = null;
+/* Rings this phone started earlier and never finished (the app was closed
+   mid-ring, the network dropped as it hung up, an older version of the app)
+   stay 'ringing' in the database, and the other phone shows them as a ghost
+   ring that nobody is on. Each new call finishes them first. */
+function nalunoEndMyOldRings(keepId){
+  if(!fbDb || !currentUser) return;
+  fbDb.collection('calls').where('callerUid', '==', currentUser.uid).where('status', '==', 'ringing').get().then(function(snap){
+    snap.docs.forEach(function(doc){
+      if(doc.id === keepId) return;
+      doc.ref.update({ status: 'ended', endReason: 'stale' }).catch(function(){});
+    });
+  }).catch(function(){});
+}
 async function startRealCall(c){
   try{ return await startRealCallInner(c); }
   catch(e){ if(nalunoLastDial && nalunoLastDial.cancelled) return false; throw e; }
@@ -2105,10 +2208,14 @@ async function startRealCallInner(c){
     return false;
   }
   nalunoDialing = null;
+  nalunoIncomingFrom = null;
+  try{ nalunoEndMyOldRings(callRef.id); }catch(_){}
   notifyCalleeOfIncomingCall(c.firebaseUid, currentProfile ? currentProfile.name : null, callRef.id);
 
-  activeCallDocUnsub = callRef.onSnapshot(snap=>{
-    const d = snap.data();
+  const myCallId = callRef.id;
+  const onMyCallDoc = snap=>{
+    if(activeCallId !== myCallId) return;
+    const d = snap && snap.data && snap.data();
     if(!d) return;
 
     // Stop ringing the instant the other side taps Answer (status becomes
@@ -2167,7 +2274,9 @@ async function startRealCallInner(c){
       toast('Call ended');
       try{ restoreUiAfterCall(); }catch(_){}
     }
-  });
+  };
+  activeCallDocUnsub = callRef.onSnapshot(onMyCallDoc, function(err){ console.warn('[call] call watch', err && err.message); });
+  nalunoWatchBackup(myCallId, 'ringing', onMyCallDoc);
 
   calleeCandidatesUnsub = callRef.collection('calleeCandidates').onSnapshot(snap=>{
     snap.docChanges().forEach(change=>{
@@ -2337,7 +2446,13 @@ $('acceptIncoming').onclick = async ()=>{
   stopRingtone();
   if(!activeCallId || !fbDb){ toast('That call is no longer available'); closeCallOverlayAndStopCamera(); return; }
   callActionInProgress = true;
-  const callRef = fbDb.collection('calls').doc(activeCallId);
+  const acceptingId = activeCallId;
+  const callRef = fbDb.collection('calls').doc(acceptingId);
+  /* The ring on screen can be replaced while this runs (the same person
+     called again). The rest of this answer then belongs to a call that is
+     gone, and must not touch the new one. */
+  const NOT_MINE = new Error('replaced');
+  const guard = function(){ if(activeCallId !== acceptingId) throw NOT_MINE; };
 
   // CRITICAL: signal "accepted" to the caller IMMEDIATELY so their ring stops
   // before any camera / WebRTC / TURN work. Previously the caller kept ringing
@@ -2345,7 +2460,11 @@ $('acceptIncoming').onclick = async ()=>{
   try{
     /* Only a ringing call can be answered: if the caller already hung up,
        or another device answered, this fails instead of reviving it. */
-    const moved = await nalunoCallMove(activeCallId, 'accepted', { acceptedAt: firebase.firestore.FieldValue.serverTimestamp() });
+    const moved = await nalunoCallMove(acceptingId, 'accepted', { acceptedAt: firebase.firestore.FieldValue.serverTimestamp() });
+    if(activeCallId !== acceptingId){
+      if(moved){ try{ callRef.update({ status: 'ended', endReason: 'recalled' }).catch(function(){}); }catch(_){} }
+      return;
+    }
     if(!moved) throw new Error('gone');
   }catch(e){
     toast('That call is no longer available');
@@ -2362,6 +2481,7 @@ $('acceptIncoming').onclick = async ()=>{
     // Parallel: media ready. TURN is prewarmed; iceNow() is 0ms.
     if(typeof prewarmIceServers === 'function') prewarmIceServers();
     const mediaOk = await ensureCallMediaReady();
+    guard();
     if(!mediaOk) throw new Error('Camera/mic unavailable — allow access, then try answering again');
 
     if(peerConnection){
@@ -2375,25 +2495,36 @@ $('acceptIncoming').onclick = async ()=>{
     let offer = pendingIncomingOffer;
     if(!offer){
       const doc = await callRef.get();
+      guard();
       const data = doc.data();
       offer = data && data.offer;
     }
-    if(!offer){ toast('That call is no longer available'); closeCallOverlayAndStopCamera(); return; }
+    if(!offer){
+      // A ring with nothing to connect to (left behind by the other phone): finish it.
+      try{ callRef.update({ status: 'ended', endReason: 'nooffer' }).catch(function(){}); }catch(_){}
+      toast('That call is no longer available'); closeCallOverlayAndStopCamera(); return;
+    }
 
-    peerConnection = await createPeerConnection();
+    const answerPc = await createPeerConnection();
+    if(activeCallId !== acceptingId){ try{ answerPc.close(); }catch(_){} throw NOT_MINE; }
+    peerConnection = answerPc;
     peerConnection.onicecandidate = e=>{
       if(e.candidate) callRef.collection('calleeCandidates').add(e.candidate.toJSON()).catch(()=>{});
     };
 
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+    await answerPc.setRemoteDescription(new RTCSessionDescription(offer));
+    guard();
     remoteDescriptionSet = true;
     if(peerConnection) pendingRemoteCandidates.forEach(cand => { try{ peerConnection.addIceCandidate(new RTCIceCandidate(cand)).catch(()=>{}); }catch(_){} });
     pendingRemoteCandidates = [];
 
-    const answer = await peerConnection.createAnswer();
+    const answer = await answerPc.createAnswer();
+    guard();
     // setLocalDescription without waiting for full ICE gather — trickle candidates via onicecandidate
-    await peerConnection.setLocalDescription(answer);
+    await answerPc.setLocalDescription(answer);
+    guard();
     await callRef.update({ answer: { type: answer.type, sdp: answer.sdp } });
+    guard();
     pendingIncomingOffer = null;
     // Nudge remote media as soon as ICE may complete
     try{ if(typeof startCamView === 'function') startCamView('pip'); }catch(_){}
@@ -2427,6 +2558,11 @@ $('acceptIncoming').onclick = async ()=>{
       }
     });
   }catch(e){
+    if(e === NOT_MINE){
+      // Replaced by a newer ring: that one owns the screen now. Just finish this record.
+      try{ callRef.update({ status: 'ended', endReason: 'recalled' }).catch(function(){}); }catch(_){}
+      return;
+    }
     toast(e.message || 'Couldn\u2019t answer the call');
     // Mark ended so the caller does not hang in a half-connected state.
     try{ await callRef.update({ status: 'ended' }); }catch(_){}
@@ -2436,7 +2572,7 @@ $('acceptIncoming').onclick = async ()=>{
     currentCallContactId = null;
     callActionInProgress = false;
   }finally{
-    callActionInProgress = false;
+    if(activeCallId === acceptingId || !activeCallId) callActionInProgress = false;
   }
 };
 

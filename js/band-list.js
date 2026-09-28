@@ -75,6 +75,21 @@ function bandCardFaces(b){
   return faces;
 }
 function renderBandList(){
+  /* Rows restored from the phone's cache keep their old ids; if two Bands
+     ever share one, give the later one a free id before drawing the cards. */
+  try{
+    const seen = new Set();
+    bands.forEach(function(b){
+      if(seen.has(b.id)){
+        if(b.id === activeBandId) return; // never move the room that is open
+        let n = nextRealBandLocalId;
+        while(seen.has(n) || bands.some(function(x){ return x.id === n; })) n++;
+        nextRealBandLocalId = n + 1;
+        b.id = n;
+      }
+      seen.add(b.id);
+    });
+  }catch(_){}
   const label = $('bandSectionLabel');
   if(!bands.length){
     if(label) label.hidden = true;
@@ -126,16 +141,28 @@ renderBandList();
    signal-strength guess), and messages are real too — no simulated banter here, ever. */
 const BAND_SETTLE_MS = 2 * 60 * 60 * 1000; // chatter clears 2h after the square empties
 
+/* Every Band row needs its own id: the card, the room and Back all find a
+   Band by it. Bands restored from the phone's cache keep the ids they had
+   last time, while this counter started again from 2000000 on every open,
+   so a new Band could get the same id as a cached one. Tapping it then
+   opened the other Band, with that Band's vibe, and which one you got
+   depended on each phone's cache: the same Band showed different vibes on
+   different phones. */
+function nalunoFreeBandId(){
+  const used = new Set(bands.map(function(b){ return b.id; }));
+  while(used.has(nextRealBandLocalId)) nextRealBandLocalId++;
+  return nextRealBandLocalId++;
+}
 function addRealBandToLocalList(firestoreId, name, vibe, memberInfo, createdBy, extra){
   const existing = bands.find(b=>b.firestoreId===firestoreId);
   if(existing){
     existing.name = name;
-    existing.vibe = vibe;
+    if(vibe) existing.vibe = vibe;
     existing.memberInfo = memberInfo;
     if(extra) Object.assign(existing, extra);
     return existing;
   }
-  const row = { id: nextRealBandLocalId++, firestoreId, name, vibe, createdBy, isReal:true, memberInfo, ...(extra||{}) };
+  const row = { id: nalunoFreeBandId(), firestoreId, name, vibe, createdBy, isReal:true, memberInfo, ...(extra||{}) };
   bands.push(row);
   return row;
 }
@@ -238,7 +265,7 @@ async function loadRealBands(uid){
 
 async function saveBands(){
   if(!storageAvailable) return;
-  try{ await window.storage.set('bands:list', JSON.stringify(bands)); }catch(e){ /* best-effort */ }
+  try{ await window.storage.set('bands:list', JSON.stringify(bands.filter(function(b){ return !b.isReal; }))); }catch(e){ /* best-effort */ }
 }
 async function loadBands(){
   if(storageAvailable){
@@ -246,7 +273,14 @@ async function loadBands(){
       const res = await window.storage.get('bands:list');
       if(res && res.value){
         const saved = JSON.parse(res.value);
-        if(Array.isArray(saved) && saved.length){ bands.length = 0; saved.forEach(b=>bands.push(b)); }
+        /* Only this phone's own (non-real) Bands come from here. Real Bands
+           saved in this list kept an old copy of the vibe and could replace
+           the live rows; they are loaded from the database instead. */
+        if(Array.isArray(saved) && saved.length){
+          const local = saved.filter(b=>b && !b.isReal);
+          for(let i = bands.length - 1; i >= 0; i--){ if(!bands[i].isReal) bands.splice(i, 1); }
+          local.forEach(b=>{ if(bands.some(x=>x.id === b.id)) b.id = nalunoFreeBandId(); bands.push(b); });
+        }
       }
     }catch(e){ /* nothing saved yet — seed bands stand */ }
   }

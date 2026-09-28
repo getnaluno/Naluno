@@ -3,6 +3,10 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const assert = require('assert');
+const nalunoAtLeast = (v, min) => (v || '') >= min;
+const swBuild = (s) => (s.match(/APP_BUILD = '(\d{8}[a-z])'/) || [])[1];
+const swCache = (s) => Number((s.match(/'naluno-shell-v(\d+)'/) || [])[1] || 0);
+const appVer = (h) => (h.match(/<meta name="app-version" content="(\d{4}\.\d{2}\.\d{2}[a-z])">/) || [])[1];
 const read = (f) => fs.readFileSync(path.join(__dirname, f), 'utf8');
 const html = fs.readFileSync(path.join(__dirname, '../app/index.html'), 'utf8');
 const css = fs.readFileSync(path.join(__dirname, '../css/app.css'), 'utf8');
@@ -77,8 +81,8 @@ assert.ok(read('compass.js').includes("$('filmstrip').querySelectorAll('[data-re
 const admin = read('admin-console.js');
 assert.ok(admin.includes(".replace(/&lt;/g, '<')") && !admin.includes(".replace(/&/g, '&')"), 'console cell text decodes entities');
 
-['css/app.css', 'js/band-list.js', 'js/band-room.js', 'js/wireline.js', 'js/wire-mailbox.js', 'js/gestures.js', 'js/signal-ui.js', 'js/discover.js', 'js/compass.js'].forEach((f) => assert.ok(new RegExp('/' + f.replace(/\./g, '\\.') + '\\?v=20260928[g-z]').test(html), 'stamp ' + f));
-assert.ok(/'naluno-shell-v23[5-9]'/.test(sw) && /'20260928[g-z]'/.test(sw) && /content="2026\.09\.28[g-z]"/.test(html), 'cache and update banner bumped');
+['css/app.css', 'js/band-list.js', 'js/band-room.js', 'js/wireline.js', 'js/wire-mailbox.js', 'js/gestures.js', 'js/signal-ui.js', 'js/discover.js', 'js/compass.js'].forEach((f) => assert.ok(((html.match(new RegExp('/' + f.replace(/\./g, '\\.') + '\\?v=(\\d{8}[a-z])')) || [])[1] || '') >= '20260928g', 'stamp ' + f));
+assert.ok(swCache(sw) >= 235 && nalunoAtLeast(swBuild(sw), '20260928g') && nalunoAtLeast(appVer(html), '2026.09.28g'), 'cache and update banner bumped');
 console.log('fixes-28g tests passed');
 /* Message ids from the database are escaped in the chat, and the rules only
    accept the id shapes the app writes. */
