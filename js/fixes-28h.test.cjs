@@ -1,0 +1,21 @@
+/* 2026-09-28h: the screen after a call. */
+const fs = require('fs');
+const path = require('path');
+const assert = require('assert');
+const read = (f) => fs.readFileSync(path.join(__dirname, f), 'utf8');
+const calls = read('calls.js');
+const prof = read('profile.js');
+const space = read('broadcast-space.js');
+const html = fs.readFileSync(path.join(__dirname, '../app/index.html'), 'utf8');
+const sw = fs.readFileSync(path.join(__dirname, '../sw.js'), 'utf8');
+assert.ok(!/\$\('bspace'\)\.style\.display = 'flex'/.test(calls), 'no inline display:flex left on the Broadcast room after a call');
+assert.ok(calls.includes("$('bspace').style.display = '';"), 'room restored without inline display');
+assert.ok(space.includes("try{ if($('bspace')){ $('bspace').style.display = ''; $('bspace').style.zIndex = ''; } }catch(_){}"), 'closing a Broadcast clears leftovers');
+assert.ok(calls.includes('nalunoShowTab(key)') && !calls.includes("document.querySelectorAll('.tabscreen').forEach(t=>t.classList.remove('active'));\n        if($('tab-frequencies'))"), 'tabs restored through the app switch');
+assert.ok(calls.includes('window.__nalunoCallPop = Date.now();') && calls.includes('  window.__nalunoCallPop = false;\n  try{'), 'the phone Back during a call does not leave a stale mark');
+assert.ok(prof.includes('if(mark === true || Date.now() - Number(mark) < 1500) return;'), 'the mark only swallows the pop it was set for');
+['calls', 'profile', 'broadcast-space'].forEach((f) => assert.ok(html.includes('/js/' + f + '.js?v=20260928h'), 'stamp ' + f));
+assert.ok(sw.includes("'naluno-shell-v236'") && sw.includes("'20260928h'") && html.includes('content="2026.09.28h"'), 'cache and update banner bumped');
+console.log('fixes-28h tests passed');
+assert.ok(html.includes('/js/camera.js?v=20260928h'), 'stamp camera');
+console.log('fixes-28h camera stamp passed');

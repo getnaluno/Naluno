@@ -28,7 +28,18 @@ function cameraIsHeldBy(owner){
   return cameraHoldOwner === owner;
 }
 
+/* Every stop bumps this. A camera start that was still waiting for the
+   camera when the call ended (declined a second after it rang) used to
+   switch the camera on AFTER the stop, and leave it on. Such a late start
+   now sees the change and releases the camera it just got. */
+let nalunoCamGen = 0;
+function nalunoCamLate(gen, got){
+  if(gen === nalunoCamGen) return false;
+  try{ if(got) got.getTracks().forEach(function(t){ t.stop(); }); }catch(_){}
+  return true;
+}
 function stopCameraStream(){
+  nalunoCamGen++;
   // Never touch Band / Broadcast private streams — only shared call/greenroom stream
   if(stream){
     try{ stream.getTracks().forEach(t=>t.stop()); }catch(_){}
@@ -1224,6 +1235,7 @@ window.prewarmCameraForCall = prewarmCameraForCall;
 
 async function enableCameraForCall(){
   try{ cameraAcquire('call'); }catch(_){}
+  const camGen = nalunoCamGen;
   function hideCamFallback(){
     try{
       if($('camFallback')) $('camFallback').style.display = 'none';
@@ -1263,13 +1275,24 @@ async function enableCameraForCall(){
     { video: true, audio: true },
   ];
   let lastErr;
+  let got = null;
   for(const c of attempts){
     try{
-      stream = await navigator.mediaDevices.getUserMedia(c);
+      got = await navigator.mediaDevices.getUserMedia(c);
       lastErr = null;
       break;
     }catch(e){ lastErr = e; }
+    if(nalunoCamGen !== camGen) break;
   }
+  if(nalunoCamLate(camGen, got)) return;
+  /* Two requests overlapped (an incoming call's pre-warm and a dial, say):
+     keep the stream that is already live, or the other one's camera light
+     stays on after the call because nothing holds it any more. */
+  if(got && stream && stream !== got && mediaStreamIsLive(stream)){
+    try{ got.getTracks().forEach(t => t.stop()); }catch(_){}
+    return;
+  }
+  stream = got;
   if(!stream) throw lastErr || new Error('Camera unavailable');
   try{
     stream.getAudioTracks().forEach(t => { t.enabled = true; });
@@ -1340,9 +1363,12 @@ async function enableCamera(){
     try{ stream.getTracks().forEach(t=>t.stop()); }catch(_){}
     stream = null;
   }
+  const camGen = nalunoCamGen;
   cameraRequestPending = requestHighQualityStream();
   try{
-    stream = await cameraRequestPending;
+    const gotCam = await cameraRequestPending;
+    if(nalunoCamLate(camGen, gotCam)) return;
+    stream = gotCam;
     syncFacingModeFromTrack();
     const inv = $('incomingSelfVideo');
     if(inv){

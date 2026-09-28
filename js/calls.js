@@ -14,6 +14,19 @@
 /* ---------------- CALL FLOW ---------------- */
 
 function pauseBackgroundMediaForCall(){
+  /* A Signal open behind the call screen kept its timer running: it moved
+     on to the next person or closed itself during the call, leaving a stale
+     Back step, so after the call Back did nothing or left the app. It now
+     waits, and carries on from the same Signal when the call is over. */
+  try{
+    const bv = document.getElementById('bviewer');
+    if(bv && bv.classList.contains('active') && !window.__nalunoStoryHeldForCall){
+      window.__nalunoStoryHeldForCall = true;
+      if(typeof clearSegTimer === 'function') clearSegTimer();
+      const bar = document.querySelectorAll('#bviewerBars .bar i')[typeof currentSegmentIndex !== 'undefined' ? currentSegmentIndex : 0];
+      if(bar){ const w = bar.getBoundingClientRect().width, pw = (bar.parentElement.getBoundingClientRect().width || 1); bar.style.transition = 'none'; bar.style.width = Math.round(100 * w / pw) + '%'; }
+    }
+  }catch(_){}
   try{
     document.querySelectorAll('video, audio').forEach(function(el){
       try{
@@ -29,6 +42,15 @@ function pauseBackgroundMediaForCall(){
   }catch(_){}
 }
 function resumeBackgroundMediaAfterCall(){
+  try{
+    if(window.__nalunoStoryHeldForCall){
+      window.__nalunoStoryHeldForCall = false;
+      const bv = document.getElementById('bviewer');
+      if(bv && bv.classList.contains('active') && typeof playSegment === 'function' && typeof currentSegmentIndex !== 'undefined'){
+        setTimeout(function(){ try{ if(bv.classList.contains('active') && !document.getElementById('callOverlay').classList.contains('active')) playSegment(currentSegmentIndex, 1); }catch(_){} }, 60);
+      }
+    }
+  }catch(_){}
   try{
     document.querySelectorAll('video, audio').forEach(function(el){
       try{
@@ -163,7 +185,8 @@ function nalunoDismissCallNotifications(callId){
     }).catch(function(){});
   }catch(_){}
 }
-function closeCallOverlay(){
+function closeCallOverlay(opts){
+  const keepHistory = !!(opts && opts.keepHistory);
   try{ stopCallerTone(); }catch(_){}
   try{ stopRingtone(); }catch(_){}
   try{
@@ -193,6 +216,11 @@ function closeCallOverlay(){
     }
     if($('bspaceLiveBanner')) $('bspaceLiveBanner').style.pointerEvents = '';
   }catch(_){}
+  /* keepHistory: another call screen is about to open in its place (an
+     incoming call replacing the lobby). Going Back here landed AFTER the new
+     screen pushed its own entry, so the Back handler ended the new call the
+     moment it appeared. The existing call entry is simply reused. */
+  if(keepHistory) return;
   const hadHist = !!window.__nalunoCallHist;
   try{ window.__nalunoCallHist = false; }catch(_){}
   if(hadHist){
@@ -200,12 +228,62 @@ function closeCallOverlay(){
       /* Only mark a pop as ours when we actually go back. Setting it and
          not going back swallowed the next Back press after a call. */
       if(history.state && history.state.nalunoCall){
-        window.__nalunoCallPop = true;
+        window.__nalunoCallPop = Date.now();
         history.back();
       }
     }catch(_){}
   }
 }
+
+/* ---- A call's status only moves forward ----
+   ringing -> accepted / declined / missed / busy / ended, accepted -> ended.
+   Each phone used to overwrite the status blindly, so whoever wrote last
+   won: an Answer landing just after the caller hung up turned an ended call
+   back into 'accepted' and left the answering phone alone in a dead call.
+   Now the move is checked inside a transaction (and by firestore.rules). */
+const NALUNO_CALL_NEXT = { ringing: ['accepted', 'declined', 'missed', 'busy', 'ended'], accepted: ['ended'] };
+function nalunoCallMove(callId, to, extra){
+  if(!callId || typeof fbDb === 'undefined' || !fbDb || typeof fbDb.runTransaction !== 'function') return Promise.resolve(false);
+  const ref = fbDb.collection('calls').doc(callId);
+  return fbDb.runTransaction(function(tx){
+    return tx.get(ref).then(function(snap){
+      if(!snap || !snap.exists) return false;
+      const from = (snap.data() || {}).status || '';
+      if(from === to) return to === 'ended';
+      if((NALUNO_CALL_NEXT[from] || []).indexOf(to) < 0) return false;
+      tx.update(ref, Object.assign({ status: to }, extra || {}));
+      return true;
+    });
+  }).catch(function(){ return false; });
+}
+window.nalunoCallMove = nalunoCallMove;
+/* Server time, from the web server's own Date header (one tiny request), so
+   a phone whose clock is wrong can still tell an old ring from a new one. */
+let nalunoServerSkew = null;
+function nalunoMeasureSkew(){
+  try{
+    fetch('/manifest.json?skew=' + Date.now(), { method: 'HEAD', cache: 'no-store' }).then(function(r){
+      const d = r && r.headers && r.headers.get('Date');
+      const t = d ? Date.parse(d) : NaN;
+      if(isFinite(t)) nalunoServerSkew = t - Date.now();
+    }).catch(function(){});
+  }catch(_){}
+}
+try{ nalunoMeasureSkew(); }catch(_){}
+/* A ring whose caller's phone died is left 'ringing' in the database. The
+   incoming-call listener delivers every ringing call when it (re)attaches,
+   so it rang again hours later with nobody there. */
+function nalunoRingIsStale(data){
+  try{
+    const c = data && data.createdAt;
+    const ms = !c ? 0 : (typeof c.toMillis === 'function' ? c.toMillis() : (c.seconds ? c.seconds * 1000 : Number(c)));
+    if(!ms) return false;
+    const serverNow = Date.now() + (nalunoServerSkew || 0);
+    const limit = (nalunoServerSkew == null) ? 10 * 60000 : 100000;
+    return serverNow - ms > limit;
+  }catch(_){ return false; }
+}
+window.nalunoRingIsStale = nalunoRingIsStale;
 
 window.addEventListener('popstate', function(){
   if(window.__nalunoCallPop && !window.__nalunoCallHist){
@@ -213,7 +291,10 @@ window.addEventListener('popstate', function(){
   }
   if(!window.__nalunoCallHist) return;
   window.__nalunoCallHist = false;
-  window.__nalunoCallPop = true;
+  /* This pop was the phone's Back, already seen by the Back handler in
+     profile.js. Marking it "ours" here left the mark standing, and it
+     swallowed the next real Back press after the call. */
+  window.__nalunoCallPop = false;
   try{
     if($('callOverlay') && $('callOverlay').classList.contains('active')){
       if(typeof endActiveCall === 'function') endActiveCall('back');
@@ -257,21 +338,31 @@ function restoreUiAfterCall(){
       ov.style.pointerEvents = '';
     }
     document.querySelectorAll('.callscreen').forEach(sc=>sc.classList.remove('active'));
+    /* Tabs change through the app's own switch, so the tab bar and the Back
+       history stay in step (setting classes by hand left them out of sync). */
+    const showTab = function(id){
+      const key = String(id || '').replace(/^tab-/, '');
+      if(!key) return;
+      try{ if(typeof nalunoShowTab === 'function'){ nalunoShowTab(key); return; } }catch(_){}
+      document.querySelectorAll('.tabscreen').forEach(t=>t.classList.remove('active'));
+      if($('tab-' + key)) $('tab-' + key).classList.add('active');
+    };
     if(!s){
-      // Default home: frequencies tab
-      try{
-        document.querySelectorAll('.tabscreen').forEach(t=>t.classList.remove('active'));
-        if($('tab-frequencies')) $('tab-frequencies').classList.add('active');
-      }catch(_){}
+      // No snapshot: keep the current tab; only fall back if none is showing.
+      if(!document.querySelector('.tabscreen.active')) showTab('frequencies');
       return;
     }
     if(s.bandRoom && $('bandRoom')){
       $('bandRoom').classList.add('active');
       $('bandRoom').style.zIndex = '';
     } else if(s.bspace && $('bspace')){
+      /* No inline display here. `display:flex` set inline outlived the room:
+         after Back removed .active the Broadcast stayed drawn over the whole
+         app, so its back button, the phone's Back and the page below all
+         stopped responding (only the tab bar showed above it). */
       $('bspace').classList.add('active');
       $('bspace').style.zIndex = '';
-      $('bspace').style.display = 'flex';
+      $('bspace').style.display = '';
     } else if(s.wireline && typeof openThread === 'function'){
       const id = (typeof activeThreadContactId !== 'undefined' && activeThreadContactId)
         || s.threadContactId
@@ -279,15 +370,12 @@ function restoreUiAfterCall(){
       if(id){
         try{ openThread(id); }catch(_){}
       } else {
-        document.querySelectorAll('.tabscreen').forEach(t=>t.classList.remove('active'));
-        if($('tab-wireline')) $('tab-wireline').classList.add('active');
+        showTab('wireline');
       }
     } else if(s.activeTab && $(s.activeTab)){
-      document.querySelectorAll('.tabscreen').forEach(t=>t.classList.remove('active'));
-      $(s.activeTab).classList.add('active');
-    } else {
-      document.querySelectorAll('.tabscreen').forEach(t=>t.classList.remove('active'));
-      if($('tab-frequencies')) $('tab-frequencies').classList.add('active');
+      if(!$(s.activeTab).classList.contains('active')) showTab(s.activeTab);
+    } else if(!document.querySelector('.tabscreen.active')){
+      showTab('frequencies');
     }
   }catch(e){ console.warn('[call] restore', e); }
 }
@@ -1313,7 +1401,18 @@ function resetCallFilterState(){
   _callFilterUpgraded = false;
 }
 
+/* An outgoing call is "dialing" from the tap on Join until its record is
+   written (the camera alone can take seconds on a phone). In that window
+   there is no activeCallId yet, so an incoming call took the screen and the
+   dial then carried on underneath it, and Cancel could not reach a record
+   that did not exist yet: the other phone rang with nobody on this end. */
+let nalunoDialing = null;
+function nalunoCancelDial(reason){
+  if(nalunoDialing){ nalunoDialing.cancelled = true; nalunoDialing.reason = reason || nalunoDialing.reason || 'cancel'; }
+  nalunoDialing = null;
+}
 function teardownCallConnection(){
+  try{ nalunoCancelDial(); }catch(_){}
   try{ stopRemotePlayWatch(); }catch(_){}
   try{ resetCallFilterState(); }catch(_){}
   if(activeCallDocUnsub){ activeCallDocUnsub(); activeCallDocUnsub = null; }
@@ -1410,6 +1509,7 @@ function attachConnectionWatchdogs(pc){
     const s = pc.connectionState;
     console.log('[call] connection state:', s);
     if(s === 'connected'){
+      try{ window.__nalunoConnectedCall = activeCallId; }catch(_){}
       try{ if(typeof trackMetric === 'function') trackMetric('call_connected', {}); }catch(_){}
       try{
         pc.getSenders().forEach(snd=>{
@@ -1435,6 +1535,7 @@ function attachConnectionWatchdogs(pc){
     const s = pc.iceConnectionState;
     console.log('[call] ICE connection state:', s);
     if(s === 'connected' || s === 'completed'){
+      try{ window.__nalunoConnectedCall = activeCallId; }catch(_){}
       try{ ensureRemoteVideoPlaying(); }catch(_){}
       try{ scheduleFilteredUpgrade(pc); }catch(_){}
     }
@@ -1595,16 +1696,46 @@ function scheduleIncomingListenerRetry(){
   }catch(_){}
 })();
 function handleIncomingCall(callId, data){
+  data = data || {};
+  if(nalunoRingIsStale(data)){ nalunoCallMove(callId, 'missed'); return; }
+  let autoAccept = false;
+  /* Replacing another call screen (the lobby, "No answer yet", crossed
+     calls): keep the snapshot of where the person was before that screen,
+     or they would come back to the tab instead of the chat or room. */
+  const replacingCallScreen = $('callOverlay').classList.contains('active') && !!_callUiSnapshot;
+  if($('callOverlay').classList.contains('active')){
+    if(activeCallId === callId) return;
+    const dialingOut = !!(nalunoDialing && !nalunoDialing.cancelled);
+    const ringingOut = dialingOut || !!(iAmCaller && activeCallId && $('ringing') && $('ringing').classList.contains('active'));
+    const calling = (typeof contacts !== 'undefined' && contacts) ? contacts.find(function(x){ return x.id === currentCallContactId; }) : null;
+    const outUid = dialingOut ? nalunoDialing.uid : (calling && calling.firebaseUid);
+    if(ringingOut && outUid && outUid === data.callerUid && currentUser){
+      /* Two people called each other at the same moment. Each app used to
+         ignore the other's ring, so both rang out and neither connected.
+         The lower uid gives up its own call and answers theirs; the other
+         side simply keeps ringing and gets answered. */
+      if(currentUser.uid > data.callerUid) return;
+      const mine = activeCallId;
+      try{ nalunoCancelDial('crossed'); }catch(_){}
+      if(mine){ try{ fbDb.collection('calls').doc(mine).update({ status: 'ended', endReason: 'crossed' }).catch(function(){}); }catch(_){} }
+      try{ clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null; }catch(_){}
+      try{ stopCallerTone(); }catch(_){}
+      teardownCallConnection();
+      try{ closeCallOverlay({ keepHistory: true }); }catch(_){}
+      autoAccept = true;
+    } else if(activeCallId || dialingOut){
+      /* Busy: in a call, ringing someone, or already ringing with another
+         call. The ring used to be ignored silently (the caller rang for a
+         minute) or it replaced the first ring without telling its caller. */
+      nalunoCallMove(callId, 'busy');
+      return;
+    } else {
+      // The lobby or the "No answer yet" screen: the incoming call takes over.
+      try{ closeCallOverlay({ keepHistory: true }); }catch(e){}
+    }
+  }
   // Calls always win over live / band / lobby camera preview.
   callActionInProgress = false;
-  if($('callOverlay').classList.contains('active')){
-    if(activeCallId && activeCallId !== callId && peerConnection){
-      // Truly in another live call — ignore competing ring
-      return;
-    }
-    if(activeCallId === callId) return;
-    try{ closeCallOverlay(); }catch(e){}
-  }
   // Drop leftover peer from last session (do NOT stop user camera yet — reuse)
   if(peerConnection){
     try{ peerConnection.close(); }catch(e){}
@@ -1639,7 +1770,7 @@ function handleIncomingCall(callId, data){
   }
   $('incomingSceneNote').style.display = 'none';
   $('incomingSelfTag').textContent = 'prepping…';
-  snapshotUiBeforeCall();
+  if(!replacingCallScreen) snapshotUiBeforeCall();
   showCallScreen('incoming');
   startRingtone();
   try{ startIncomingKeepAlive(); }catch(_){}
@@ -1653,11 +1784,32 @@ function handleIncomingCall(callId, data){
   const camFn = (typeof enableCameraForCall === 'function') ? enableCameraForCall : enableCamera;
   camFn().then(()=> setTimeout(showReady, 150)).catch(()=> showReady());
 
+  if(autoAccept) setTimeout(function(){ try{ if(activeCallId === callId && $('acceptIncoming').onclick) $('acceptIncoming').onclick(); }catch(_){} }, 80);
+  /* Backstop: a caller whose phone died cannot say so. Stop ringing after
+     80s (the caller's own ring gives up at 60–75s). */
+  try{ clearTimeout(window.__nalunoRingBackstop); }catch(_){}
+  window.__nalunoRingBackstop = setTimeout(function(){
+    try{
+      if(activeCallId !== callId || !$('incoming') || !$('incoming').classList.contains('active')) return;
+      nalunoCallMove(callId, 'missed');
+      stopRingtone();
+      teardownCallConnection();
+      closeCallOverlay();
+      stopCameraStream();
+      currentCallContactId = null;
+      callActionInProgress = false;
+      try{ restoreUiAfterCall(); }catch(_){}
+    }catch(_){}
+  }, 80000);
+
   // Watches for the caller hanging up before this side answers.
   activeCallDocUnsub = fbDb.collection('calls').doc(callId).onSnapshot(snap=>{
     const d = snap.data();
     if(!d) return;
-    if((d.status === 'ended' || d.status === 'missed' || d.status === 'declined') && $('callOverlay').classList.contains('active') && !$('incall').classList.contains('active')){
+    const otherDeviceAnswered = d.status === 'accepted' && !callActionInProgress && $('incoming') && $('incoming').classList.contains('active');
+    if(otherDeviceAnswered || ((d.status === 'ended' || d.status === 'missed' || d.status === 'declined' || d.status === 'busy') && $('callOverlay').classList.contains('active') && !$('incall').classList.contains('active'))){
+      if(otherDeviceAnswered){ toast('Answered on another device'); }
+      else
       toast(d.status === 'missed' ? ('Missed call from ' + name) : 'Call ended');
       stopRingtone();
       teardownCallConnection();
@@ -1849,7 +2001,12 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
 }
 
 
+let nalunoLastDial = null;
 async function startRealCall(c){
+  try{ return await startRealCallInner(c); }
+  catch(e){ if(nalunoLastDial && nalunoLastDial.cancelled) return false; throw e; }
+}
+async function startRealCallInner(c){
   // Kick camera early if a prior prewarm already has a live stream (0ms path).
   try{ if(typeof prewarmCameraForCall === 'function') prewarmCameraForCall(); }catch(_){}
   // Definitive reset before every outbound call — long calls leave dead tracks,
@@ -1864,6 +2021,8 @@ async function startRealCall(c){
   remoteDescriptionSet = false;
   pendingRemoteCandidates = [];
   iAmCaller = true;
+  const dial = nalunoDialing = nalunoLastDial = { uid: c.firebaseUid, cancelled: false, reason: null };
+  const gone = () => dial.cancelled || nalunoDialing !== dial;
 
   // Kick TURN in the background. Camera is the only await before the offer.
   if(typeof prewarmIceServers === 'function') prewarmIceServers();
@@ -1872,6 +2031,7 @@ async function startRealCall(c){
     : Promise.resolve(null);
   if(typeof enableCameraForCall === 'function') await enableCameraForCall();
   else await enableCamera();
+  if(gone()) return false;
   if(!mediaStreamIsLive(stream)){
     throw new Error('Camera/mic unavailable \u2014 fix that first, then try calling again');
   }
@@ -1881,6 +2041,7 @@ async function startRealCall(c){
       const a = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:true, noiseSuppression:true }, video: false });
       a.getAudioTracks().forEach(t => stream.addTrack(t));
     }catch(e){ console.warn('[call] could not add audio track', e); }
+    if(gone()) return false;
   }
   // Do not await icePromise — createPeerConnection uses iceNow() (0ms).
   icePromise.catch(function(){});
@@ -1903,13 +2064,18 @@ async function startRealCall(c){
 
   // Do NOT await a 900ms canvas prime. Draw one frame if the lobby already has video.
   try{ if(typeof drawSendCanvas === 'function') drawSendCanvas(); }catch(_){}
-  peerConnection = await createPeerConnection();
+  const pc = await createPeerConnection();
+  const dropPc = () => { try{ pc.ontrack = null; pc.onicecandidate = null; pc.onconnectionstatechange = null; pc.oniceconnectionstatechange = null; pc.close(); }catch(_){} };
+  if(gone()){ dropPc(); return false; }
+  peerConnection = pc;
   peerConnection.onicecandidate = e=>{
     if(e.candidate) callRef.collection('callerCandidates').add(e.candidate.toJSON()).catch(()=>{});
   };
 
-  const offer = await peerConnection.createOffer();
-  await peerConnection.setLocalDescription(offer);
+  const offer = await pc.createOffer();
+  if(gone()){ dropPc(); return false; }
+  await pc.setLocalDescription(offer);
+  if(gone()){ dropPc(); return false; }
 
   await callRef.set({
     callerUid: currentUser.uid,
@@ -1931,6 +2097,14 @@ async function startRealCall(c){
       return (currentProfile && currentProfile.photoUrl) || null;
     })(),
   });
+  if(gone()){
+    // Cancelled (or replaced by an incoming call) while the record was being
+    // written: finish it at once so the other phone stops ringing.
+    callRef.update({ status: 'ended', endedAt: firebase.firestore.FieldValue.serverTimestamp(), endReason: dial.reason || 'cancel' }).catch(()=>{});
+    dropPc();
+    return false;
+  }
+  nalunoDialing = null;
   notifyCalleeOfIncomingCall(c.firebaseUid, currentProfile ? currentProfile.name : null, callRef.id);
 
   activeCallDocUnsub = callRef.onSnapshot(snap=>{
@@ -1961,8 +2135,8 @@ async function startRealCall(c){
       }).catch(err => console.log('[call] setRemoteDescription(answer) failed:', err));
     }
 
-    if(d.status === 'declined'){
-      toast(c.name.split(' ')[0] + ' declined');
+    if(d.status === 'busy' || d.status === 'declined'){
+      toast(c.name.split(' ')[0] + (d.status === 'busy' ? ' is on another call' : ' declined'));
       clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
       if(notifyRepeatInterval){ try{ clearInterval(notifyRepeatInterval); }catch(_){} try{ clearTimeout(notifyRepeatInterval); }catch(_){} notifyRepeatInterval = null; }
       stopCallerTone();
@@ -1973,6 +2147,11 @@ async function startRealCall(c){
       currentCallContactId = null;
       callActionInProgress = false;
       try{ restoreUiAfterCall(); }catch(_){}
+    }
+    // The other phone stopped ringing on its own (its 80s backstop): same as no answer.
+    if(d.status === 'missed' && $('ringing') && $('ringing').classList.contains('active') && currentCallContactId){
+      showAsyncFallback(currentCallContactId, 'timeout');
+      return;
     }
     // React to remote hangup even if we're mid-transition (not only when incall is active).
     if(d.status === 'ended' && $('callOverlay').classList.contains('active')){
@@ -2047,7 +2226,7 @@ function showAsyncFallback(contactId, reason){
   // A real call attempt may already be in flight — mark it missed so it stops
   // ringing on their side too, rather than leaving a dangling "ringing" document.
   if(activeCallId && fbDb){
-    fbDb.collection('calls').doc(activeCallId).update({ status:'missed' }).catch(()=>{});
+    nalunoCallMove(activeCallId, 'missed');
   }
   try{
     if(typeof recordMissedCallInWireline === 'function' && contactId){
@@ -2082,9 +2261,10 @@ $('asyncKeepRingingBtn').onclick = async ()=>{
   callActionInProgress = true;
   showCallScreen('ringing');
   if(!stream) await (typeof enableCameraForCall === 'function' ? enableCameraForCall() : enableCamera());
-  try{ await startRealCall(c); startCallerTone(); }
+  let placed = true;
+  try{ placed = (await startRealCall(c)) !== false; if(placed) startCallerTone(); }
   catch(e){ toast(e.message || 'Couldn\u2019t retry the call'); closeCallOverlayAndStopCamera(); }
-  finally{ callActionInProgress = false; }
+  finally{ if(placed) callActionInProgress = false; }
 };
 $('asyncCancelBtn').onclick = closeCallOverlayAndStopCamera;
 
@@ -2119,9 +2299,10 @@ $('joinBtn').onclick = async ()=>{
   callActionInProgress = true;
   showCallScreen('ringing');
   try{ startCallerTone(); }catch(_){}
-  try{ await startRealCall(c); }
+  let placed = true;
+  try{ placed = (await startRealCall(c)) !== false; }
   catch(e){ toast(e.message || 'Couldn\u2019t start the call'); closeCallOverlayAndStopCamera(); }
-  finally{ callActionInProgress = false; }
+  finally{ if(placed) callActionInProgress = false; }
 };
 $('cancelCall').onclick = ()=>{
   // Caller hanging up while still ringing — let the callee's side know it's over.
@@ -2137,7 +2318,7 @@ function declineIncomingCall(callId){
   const id = callId || activeCallId;
   try{ nalunoTellSwCallHandled(id); }catch(_){}
   if(id && typeof fbDb !== 'undefined' && fbDb){
-    fbDb.collection('calls').doc(id).update({ status:'declined' }).catch(()=>{});
+    nalunoCallMove(id, 'declined');
   }
   if(id && activeCallId && id !== activeCallId) return;
   const overlayOpen = $('callOverlay') && $('callOverlay').classList.contains('active');
@@ -2162,7 +2343,10 @@ $('acceptIncoming').onclick = async ()=>{
   // before any camera / WebRTC / TURN work. Previously the caller kept ringing
   // for 10–20s while the receiver was still preparing media.
   try{
-    await callRef.update({ status: 'accepted', acceptedAt: firebase.firestore.FieldValue.serverTimestamp() });
+    /* Only a ringing call can be answered: if the caller already hung up,
+       or another device answered, this fails instead of reviving it. */
+    const moved = await nalunoCallMove(activeCallId, 'accepted', { acceptedAt: firebase.firestore.FieldValue.serverTimestamp() });
+    if(!moved) throw new Error('gone');
   }catch(e){
     toast('That call is no longer available');
     closeCallOverlayAndStopCamera();
@@ -2297,6 +2481,23 @@ function startInCall(){
   setTimeout(function(){ try{ renderRemoteMediaStage(); }catch(_){} }, 50);
   setTimeout(function(){ try{ renderRemoteMediaStage(); }catch(_){} }, 300);
   setTimeout(function(){ try{ renderRemoteMediaStage(); }catch(_){} }, 900);
+  /* A call answered on one side whose other side never arrives (its phone
+     died, or it hung up in the same instant) used to sit on "connecting"
+     until someone gave up. If it has never connected after 40s, end it. */
+  try{ clearTimeout(window.__nalunoConnectWatch); }catch(_){}
+  const watchId = activeCallId;
+  window.__nalunoConnectWatch = setTimeout(function(){
+    try{
+      if(!watchId || activeCallId !== watchId) return;
+      if(!$('incall') || !$('incall').classList.contains('active')) return;
+      if(window.__nalunoConnectedCall === watchId) return;
+      const st = peerConnection ? peerConnection.connectionState : '';
+      const ice = peerConnection ? peerConnection.iceConnectionState : '';
+      if(st === 'connected' || ice === 'connected' || ice === 'completed') return;
+      endActiveCall('noconnect');
+      toast('The call could not connect');
+    }catch(_){}
+  }, 40000);
 }
 /* Cycles: normal (remote full + small local PiP) → large local PiP → swap (you full, them small) → normal */
 let incallViewMode = 0;

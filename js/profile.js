@@ -370,7 +370,12 @@ window.nalunoBack = (function(){
   }
   window.addEventListener('popstate', function(){
     poppedAt = Date.now();
-    if(window.__nalunoCallPop){ window.__nalunoCallPop = false; return; }
+    if(window.__nalunoCallPop){
+      /* Only the pop the call screen itself asked for, moments ago. */
+      const mark = window.__nalunoCallPop;
+      window.__nalunoCallPop = false;
+      if(mark === true || Date.now() - Number(mark) < 1500) return;
+    }
     if(window.__nalunoCallHist) return;
     if(lock){ lock = false; return; }
     const st = history.state;

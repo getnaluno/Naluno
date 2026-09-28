@@ -52,7 +52,7 @@ assert.ok(mail.includes('function sealRetryWanted(') && mail.includes('if (sealR
 const live = read('live-sync.js');
 assert.ok(!live.includes('obs.observe(document.documentElement'));
 const calls = read('calls.js');
-assert.ok(/if\(history\.state && history\.state\.nalunoCall\)\{\s*window\.__nalunoCallPop = true;\s*history\.back\(\);/.test(calls));
+assert.ok(/if\(history\.state && history\.state\.nalunoCall\)\{\s*window\.__nalunoCallPop = (?:true|Date\.now\(\));\s*history\.back\(\);/.test(calls));
 const auth = read('auth.js');
 assert.ok(auth.includes("kind: 'erase-media'"), 'files the app cannot delete go to the desk');
 const bc = read('broadcast-core.js');

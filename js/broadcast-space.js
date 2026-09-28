@@ -1682,6 +1682,10 @@ async function openBroadcastSpace(meta){
 
 function closeBroadcastSpace(){
   const was = $('bspace') && $('bspace').classList.contains('active');
+  /* Nothing may keep the room drawn once it is closed: an inline display or
+     z-index left by an earlier screen (a call) kept a dead copy of it over
+     the whole app. */
+  try{ if($('bspace')){ $('bspace').style.display = ''; $('bspace').style.zIndex = ''; } }catch(_){}
   bspaceForceLandscape = false;
   try{
     document.body.classList.remove('naluno-landscape-media', 'naluno-bspace-land-css', 'naluno-bspace-idle');

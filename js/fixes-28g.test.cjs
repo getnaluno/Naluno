@@ -77,8 +77,8 @@ assert.ok(read('compass.js').includes("$('filmstrip').querySelectorAll('[data-re
 const admin = read('admin-console.js');
 assert.ok(admin.includes(".replace(/&lt;/g, '<')") && !admin.includes(".replace(/&/g, '&')"), 'console cell text decodes entities');
 
-['css/app.css', 'js/band-list.js', 'js/band-room.js', 'js/wireline.js', 'js/wire-mailbox.js', 'js/gestures.js', 'js/signal-ui.js', 'js/discover.js', 'js/compass.js'].forEach((f) => assert.ok(html.includes('/' + f + '?v=20260928g'), 'stamp ' + f));
-assert.ok(sw.includes("'naluno-shell-v235'") && sw.includes("'20260928g'") && html.includes('content="2026.09.28g"'), 'cache and update banner bumped');
+['css/app.css', 'js/band-list.js', 'js/band-room.js', 'js/wireline.js', 'js/wire-mailbox.js', 'js/gestures.js', 'js/signal-ui.js', 'js/discover.js', 'js/compass.js'].forEach((f) => assert.ok(new RegExp('/' + f.replace(/\./g, '\\.') + '\\?v=20260928[g-z]').test(html), 'stamp ' + f));
+assert.ok(/'naluno-shell-v23[5-9]'/.test(sw) && /'20260928[g-z]'/.test(sw) && /content="2026\.09\.28[g-z]"/.test(html), 'cache and update banner bumped');
 console.log('fixes-28g tests passed');
 /* Message ids from the database are escaped in the chat, and the rules only
    accept the id shapes the app writes. */
