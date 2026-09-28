@@ -758,7 +758,15 @@ function openBandRoom(id){
       if(!doc.exists) return;
       const d = doc.data();
       b.name = d.name || b.name;
+      /* If the room opened before the Band's own record arrived (a link, an
+         invite, reopening the app), it drew the default. Repaint with the
+         vibe the creator chose as soon as it is known. */
+      const vibeBefore = b.vibe;
       b.vibe = d.vibe || b.vibe;
+      if(b.vibe && b.vibe !== vibeBefore){
+        try{ if(activeBand() === b) startBandAmbientAnim(b.vibe); }catch(_){}
+        try{ if(typeof renderBandList === 'function') renderBandList(); }catch(_){}
+      }
       b.memberUids = d.memberUids || [];
       b.lastEmptiedAt = d.lastEmptiedAt && d.lastEmptiedAt.toMillis ? d.lastEmptiedAt.toMillis() : (d.lastEmptiedAt || null);
       b.messageEpoch = d.messageEpoch || b.messageEpoch || 0;

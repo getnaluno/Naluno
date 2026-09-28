@@ -33,5 +33,5 @@ assert.ok(/<meta name="app-version" content="2026\.09\.28[e-z]">/.test(html), 'u
 assert.ok(space.includes("if(!seg || seg.type !== 'video'){") && space.includes("const chipHost = document.getElementById('bspaceChapterHost');"), 'video chapter chips do not follow into a writing');
 assert.ok(space.includes("['bspaceFitToggle', 'bspaceOrientToggle'].forEach"), 'video Fill/Fit buttons do not follow into a writing');
 assert.ok(css.includes('#bspaceListenWrap #bspaceListenBtn{') && css.includes('height:24px;'), 'Listen row is smaller than the title');
-assert.ok(html.includes('/js/broadcast-space.js?v=20260928f') && sw.includes("'naluno-shell-v234'"), '28f stamps');
+assert.ok(/\/js\/broadcast-space\.js\?v=20260928[f-z]/.test(html) && /'naluno-shell-v23[4-9]'/.test(sw), '28f stamps');
 console.log('fixes-28e tests passed');

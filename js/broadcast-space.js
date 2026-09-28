@@ -3620,6 +3620,8 @@ function showBreatherAdSlot(breather, onDone){
     if(breather) breather.adSlot = ad;
   }
   el.style.display = 'flex';
+  /* While the ad plays, the Broadcast's own Fill / Fit buttons step aside. */
+  try{ const hero = $('bspaceHero'); if(hero) hero.classList.add('naluno-ad-on'); }catch(_){}
   try{
     const kick = $('bspacePlayKick');
     if(kick){ kick.style.display = 'none'; kick.dataset.adHidden = '1'; }
@@ -3724,6 +3726,7 @@ function resumeBspaceAfterAd(){
 
 function hideBreatherAdSlot(){
   try{ if(typeof NalunoAds !== 'undefined' && NalunoAds.disarmViewComplete) NalunoAds.disarmViewComplete(); }catch(_){}
+  try{ const hero = $('bspaceHero'); if(hero) hero.classList.remove('naluno-ad-on'); }catch(_){}
   const el = $('bspaceBreather');
   if(el){
     try{

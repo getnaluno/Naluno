@@ -219,8 +219,11 @@
       + '.naluno-ad-plate .bcast-plate-sub{color:#7CFFB2;}'
       + '#nalunoAdViewer{position:fixed;inset:0;z-index:260 !important;background:#07080D;display:flex;flex-direction:column;}'
       + '#nalunoAdViewer.hidden{display:none !important;}'
-      + '#nalunoAdViewer .ad-stage{flex:1;position:relative;background:#000;display:flex;align-items:center;justify-content:center;}'
-      + '#nalunoAdViewer video,#nalunoAdViewer img{width:100%;height:100%;object-fit:contain;background:#000;}'
+      /* min-height:0 + absolute media: a portrait ad on a phone held sideways
+         used to grow the stage to its own height (1500px on a 390px screen),
+         so most of it sat below the edge. Now it always fits, both ways. */
+      + '#nalunoAdViewer .ad-stage{flex:1 1 auto;min-height:0;position:relative;overflow:hidden;background:#000;display:flex;align-items:center;justify-content:center;}'
+      + '#nalunoAdViewer video,#nalunoAdViewer img{position:absolute;inset:0;width:100%;height:100%;max-width:100%;max-height:100%;object-fit:contain !important;background:#000;}'
       + '#nalunoAdViewer .ad-chrome{position:absolute;left:0;right:0;top:0;padding:14px 16px;display:flex;align-items:center;gap:10px;'
       + 'background:linear-gradient(180deg,rgba(0,0,0,.55),transparent);z-index:2;}'
       + '#nalunoAdViewer .ad-cta{position:absolute;left:16px;right:16px;bottom:28px;z-index:2;display:flex;gap:10px;}'

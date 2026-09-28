@@ -60,7 +60,7 @@
     } else if (wire.text) {
       body.text = wire.text;
     }
-    ['mediaUrl', 'mime', 'fileName', 'duration', 'waveform', 'mood', 'callId', 'callerUid', 'calleeUid', 'targetClientMsgId', 'reaction'].forEach(function (k) {
+    ['mediaUrl', 'mime', 'fileName', 'duration', 'waveform', 'mood', 'moodNote', 'callId', 'callerUid', 'calleeUid', 'targetClientMsgId', 'reaction'].forEach(function (k) {
       if (wire[k] != null) body[k] = wire[k];
     });
     if (wire.system) body.system = true;
@@ -183,6 +183,7 @@
         type: m.type || 'text',
         text: text,
         mood: m.mood,
+        moodNote: (m.moodNote != null ? m.moodNote : null),
         waveform: m.waveform,
         duration: m.duration,
         mediaUrl: m.mediaUrl || null,
@@ -319,6 +320,7 @@
           type: m.type || 'text',
           text: text,
           mood: m.mood,
+          moodNote: (m.moodNote != null ? m.moodNote : null),
           waveform: m.waveform,
           duration: m.duration,
           mediaUrl: m.mediaUrl || null,

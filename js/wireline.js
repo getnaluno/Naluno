@@ -952,18 +952,134 @@ function voiceBubbleHtml(m){
     ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="4" width="5" height="16" rx="1"/><rect x="14" y="4" width="5" height="16" rx="1"/></svg>`
     : `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4z"/></svg>`;
   return `<div class="voice-bubble">
-      <div class="voice-play-btn" data-voice="${m.id}">${icon}</div>
+      <div class="voice-play-btn" data-voice="${escapeHtml(String(m.id))}">${icon}</div>
       <div class="voice-wave">${bars}</div>
       <div class="voice-duration">${formatDuration(m.duration||0)}</div>
     </div>`;
 }
+/* ---- Hidden notes inside a vibe ----
+   Every feeling has 365 short notes (js/mood-notes.json), one written for
+   each day of the year. A vibe carries only the NUMBER of its note
+   (moodNote), never the words: both phones hold the same list, so nothing
+   new travels unencrypted, and the note stays hidden until it is tapped.
+
+   The sender's phone starts from today's note and never sends the same
+   note of a feeling twice until all 365 of that feeling have been used;
+   then the cycle starts again. Vibes sent before this (no moodNote) show
+   the note for the day they were sent. */
+const MOOD_NOTE_DAYS = 365;
+let moodNotesData = null;
+let moodNotesLoading = null;
+function moodNotesLoad(){
+  if(moodNotesData) return Promise.resolve(moodNotesData);
+  if(moodNotesLoading) return moodNotesLoading;
+  moodNotesLoading = fetch('/js/mood-notes.json?v=20260928g')
+    .then(function(r){ if(!r.ok) throw new Error('notes ' + r.status); return r.json(); })
+    .then(function(d){
+      if(!d || !d.notes) throw new Error('notes empty');
+      moodNotesData = d.notes;
+      return moodNotesData;
+    })
+    .catch(function(e){ moodNotesLoading = null; throw e; });
+  return moodNotesLoading;
+}
+function moodDayIndex(ts){
+  const d = new Date(Number(ts) || Date.now());
+  const start = new Date(d.getFullYear(), 0, 1);
+  const n = Math.floor((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - start) / 864e5);
+  return Math.max(0, Math.min(MOOD_NOTE_DAYS - 1, n));
+}
+function moodNoteIndexOf(m){
+  const raw = m ? m.moodNote : null;
+  const n = (raw == null || raw === '') ? NaN : Number(raw);
+  if(Number.isInteger(n) && n >= 0 && n < MOOD_NOTE_DAYS) return n;
+  return moodDayIndex(m && m.ts);
+}
+function moodNoteBookKey(){
+  const uid = (typeof currentUser !== 'undefined' && currentUser && currentUser.uid) ? currentUser.uid : 'local';
+  return 'naluno:moodNotes:' + uid;
+}
+/** The next note of this feeling for the sender: today's if it is still
+    unused in this cycle, otherwise the next unused one after it. */
+function moodNotePick(moodKey, now){
+  const day = moodDayIndex(now || Date.now());
+  let book = {};
+  try{ book = JSON.parse(localStorage.getItem(moodNoteBookKey()) || '{}') || {}; }catch(_){ book = {}; }
+  let used = Array.isArray(book[moodKey]) ? book[moodKey].filter(function(i){ return Number.isInteger(i) && i >= 0 && i < MOOD_NOTE_DAYS; }) : [];
+  if(new Set(used).size >= MOOD_NOTE_DAYS) used = [];
+  const seen = new Set(used);
+  let pick = day;
+  for(let k = 0; k < MOOD_NOTE_DAYS; k++){
+    const i = (day + k) % MOOD_NOTE_DAYS;
+    if(!seen.has(i)){ pick = i; break; }
+  }
+  used.push(pick);
+  book[moodKey] = used;
+  try{ localStorage.setItem(moodNoteBookKey(), JSON.stringify(book)); }catch(_){}
+  return pick;
+}
+function moodNoteRevealKey(m){ return String((m && (m.clientMsgId || m.id)) || ''); }
+function moodNoteRevealed(){
+  try{ return new Set(JSON.parse(localStorage.getItem('naluno:moodRevealed') || '[]')); }catch(_){ return new Set(); }
+}
+function moodNoteMarkRevealed(key){
+  if(!key) return;
+  try{
+    const list = Array.from(moodNoteRevealed());
+    if(list.indexOf(key) < 0) list.push(key);
+    localStorage.setItem('naluno:moodRevealed', JSON.stringify(list.slice(-800)));
+  }catch(_){}
+}
+function moodNoteText(moodKey, idx){
+  const list = moodNotesData && moodNotesData[moodKey];
+  return (list && list[idx]) || '';
+}
 function moodBubbleHtml(m){
   const mood = MOODS.find(x=>x.key===m.mood) || MOODS[0];
-  return `<div class="mood-orb mood-orb-bubble" data-mood="${mood.key}">
+  const key = moodNoteRevealKey(m);
+  const idx = moodNoteIndexOf(m);
+  const open = key && moodNoteRevealed().has(key);
+  const text = open ? moodNoteText(mood.key, idx) : '';
+  if(open && !text){
+    /* Revealed earlier, list not loaded yet on this open: fetch it and redraw. */
+    moodNotesLoad().then(function(){ try{ renderThreadMessages(); }catch(_){} }).catch(function(){});
+  }
+  const note = open
+    ? `<div class="mood-note" data-mood-note="${escapeHtml(key)}">${text ? escapeHtml(text) : '…'}</div>`
+    : `<button type="button" class="mood-note-btn" data-mood-reveal="${escapeHtml(key)}" aria-label="Reveal the hidden note">Tap to reveal</button>`;
+  return `<div class="mood-msg"><div class="mood-orb mood-orb-bubble" data-mood="${mood.key}">
     <canvas class="mood-canvas" data-mood="${mood.key}" data-vibe="${mood.vibe}" width="220" height="132"></canvas>
     <div class="mood-orb-label">${escapeHtml(mood.label)}</div>
-  </div>`;
+  </div>${note}</div>`;
 }
+/* One listener for every vibe in the chat: tapping the button (or the vibe
+   itself) reveals its note. */
+(function wireMoodReveal(){
+  const box = document.getElementById('threadMessages');
+  if(!box || box.__moodReveal) return;
+  box.__moodReveal = true;
+  box.addEventListener('click', function(e){
+    const t = e.target;
+    const btn = t && t.closest && (t.closest('[data-mood-reveal]') || (function(){
+      const orb = t.closest('.mood-msg .mood-orb-bubble');
+      return orb ? orb.parentElement.querySelector('[data-mood-reveal]') : null;
+    })());
+    if(!btn) return;
+    e.stopPropagation();
+    const key = btn.getAttribute('data-mood-reveal');
+    btn.disabled = true;
+    btn.textContent = 'Opening…';
+    moodNotesLoad().then(function(){
+      moodNoteMarkRevealed(key);
+      try{ if(typeof nalunoBuzz === 'function') nalunoBuzz(8); }catch(_){}
+      try{ renderThreadMessages(); }catch(_){}
+    }).catch(function(){
+      btn.disabled = false;
+      btn.textContent = 'Tap to reveal';
+      if(typeof toast === 'function') toast('Could not open the note. Check your connection.');
+    });
+  });
+})();
 /* Reactions replace 👍❤️😂 with something that actually tells the sender what landed —
    eight words instead of three cartoons. Works on any message type, since it's just
    metadata attached to whatever was sent, not a property of text specifically. */
@@ -1093,7 +1209,7 @@ function renderThreadMessages(){
       const label = m.type === 'missed_call'
         ? missedCallLabelForViewer(m)
         : (m.text || 'System');
-      return dayHtml + `<div class="msg-row system" data-msgid="${m.id}" style="justify-content:center;margin:6px 0;">
+      return dayHtml + `<div class="msg-row system" data-msgid="${escapeHtml(String(m.id))}" style="justify-content:center;margin:6px 0;">
         <div style="font-size:12px;color:var(--text-dim);font-family:var(--font-mono);padding:6px 12px;border-radius:999px;background:rgba(255,84,112,.12);border:1px solid rgba(255,84,112,.25);">📞 ${escapeHtml(label)} · ${formatClockTime(m.ts)}</div>
       </div>`;
     }
@@ -1111,8 +1227,8 @@ function renderThreadMessages(){
     const receipt = m.from==='me' ? receiptTickHtml(m.status || 'sent') : '';
     const waitNote = (m.from==='me' && m.status==='queued')
       ? '<div class="msg-wait">Waiting in Naluno</div>' : '';
-    const deleteBtn = m.from==='me' ? `<span class="msg-delete-btn" data-delmsg="${m.id}" title="Delete" aria-label="Delete message"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2m2 0v13a2 2 0 01-2 2H9a2 2 0 01-2-2V7h10z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>` : '';
-    return dayHtml + `<div class="msg-row ${m.from}" data-msgid="${m.id}">
+    const deleteBtn = m.from==='me' ? `<span class="msg-delete-btn" data-delmsg="${escapeHtml(String(m.id))}" title="Delete" aria-label="Delete message"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2m2 0v13a2 2 0 01-2 2H9a2 2 0 01-2-2V7h10z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>` : '';
+    return dayHtml + `<div class="msg-row ${m.from === 'me' ? 'me' : (m.from === 'system' ? 'system' : 'them')}" data-msgid="${escapeHtml(String(m.id))}">
       <div class="${bubbleClass}">${bubbleInner}</div>
       <div class="msg-time">${formatClockTime(m.ts)}${receipt}${deleteBtn}</div>
       ${waitNote}
@@ -1778,6 +1894,7 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
             mediaUrl: payload.mediaUrl || null,
             duration: payload.duration || null,
             mood: payload.mood || null,
+            moodNote: (payload.moodNote != null ? payload.moodNote : null),
           });
         }
         if(activeThreadContactId === cid) renderThreadMessages();
@@ -1844,6 +1961,7 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
           mediaUrl: payload.mediaUrl || null,
           duration: payload.duration || null,
           mood: payload.mood || null,
+          moodNote: (payload.moodNote != null ? payload.moodNote : null),
           pending: false
         }, c.firebaseUid);
       }
@@ -2271,11 +2389,11 @@ function sendMoodMessage(moodKey){
   $('threadComposerNormal').style.display = 'flex';
   if(c && c.isReal && c.firebaseUid){
     const label = (MOODS.find(m=>m.key===moodKey)||{}).label || 'A feeling';
-    sendRealMessage(c, { type:'mood', mood: moodKey }, '◐ ' + label);
+    sendRealMessage(c, { type:'mood', mood: moodKey, moodNote: moodNotePick(moodKey) }, '◐ ' + label);
     return;
   }
   if(!wirelineThreads[id]) wirelineThreads[id] = [];
-  const msg = { id: Date.now()+Math.random(), from:'me', type:'mood', mood:moodKey, ts: Date.now(), status:'sent' };
+  const msg = { id: Date.now()+Math.random(), from:'me', type:'mood', mood:moodKey, moodNote: moodNotePick(moodKey), ts: Date.now(), status:'sent' };
   wirelineThreads[id].push(msg);
   renderThreadMessages();
   renderWirelineList();

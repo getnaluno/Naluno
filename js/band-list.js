@@ -21,7 +21,18 @@ const bandVibePreviewGradient = {
   studio: 'linear-gradient(160deg,#FFB86B,#FF7676)',
   rain:   'linear-gradient(160deg,#0A0D16,#171A26)',
   stars:  'linear-gradient(160deg,#05060C,#171A26)',
+  /* These three are real Band vibes too (every canvas scene in camera.js is
+     one). Without a card colour they showed as Aurora on every member's list. */
+  desert:    'linear-gradient(160deg,#1B1440,#4A2545 55%,#7A3420)',
+  waterfall: 'linear-gradient(160deg,#04141A,#0E2A2E 55%,#2E6F78)',
+  forest:    'linear-gradient(160deg,#0B1F13,#173620 55%,#3E6B2E)',
 };
+/* A card colour for any vibe, including one added later that this list
+   does not know yet. */
+function bandVibeGradient(vibe){
+  if(bandVibePreviewGradient[vibe]) return bandVibePreviewGradient[vibe];
+  return bandVibePreviewGradient.aurora;
+}
 function liveBandMembers(band){
   return band.memberIds
     .map(id => contacts.find(c=>c.id===id))
@@ -74,7 +85,7 @@ function renderBandList(){
   }
   if(label) label.hidden = false;
   $('bandList').innerHTML = bands.map(b=>{
-    const grad = bandVibePreviewGradient[b.vibe] || bandVibePreviewGradient.aurora;
+    const grad = bandVibeGradient(b.vibe);
     if(b.isReal){
       const avatars = bandCardFaces(b).slice(0,4).map(m=> (typeof contactAvatarHtml==='function' ? contactAvatarHtml(m, 28) : `<div class="avatar" style="width:28px;height:28px;font-size:10px;background:${m.color||'#7CFFB2'};">${m.initials||''}</div>`)).join('');
       return `<div class="band-card" data-band="${b.id}">
@@ -269,7 +280,9 @@ function renderBandVibeChips(){
     const name = (backgroundPresets[key] && backgroundPresets[key].name) || key;
     return `<div class="filter-chip ${bandComposerVibe===key?'active':''}" data-vibe="${key}">${name}</div>`;
   }).join('');
-  document.querySelectorAll('[data-vibe]').forEach(el=>{
+  /* Only this row's chips. The page-wide [data-vibe] also caught the
+     Wireline mood tiles and overwrote their taps. */
+  $('bandVibeChipRow').querySelectorAll('[data-vibe]').forEach(el=>{
     el.onclick = ()=>{ bandComposerVibe = el.dataset.vibe; renderBandVibeChips(); };
   });
 }

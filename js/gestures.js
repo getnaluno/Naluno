@@ -384,6 +384,7 @@
       const c = (contacts || []).find(function (x) { return x.id === activeThreadContactId; });
       const author = m.from === 'me' ? 'You' : String((c && c.name) || 'Them').split(' ')[0];
       let text = m.text || '';
+      if (!text && m.type === 'mood') text = ((typeof MOODS !== 'undefined' && MOODS.find(function (x) { return x.key === m.mood; })) || {}).label || 'A feeling';
       if (!text) text = m.type === 'voice' ? 'Voice note' : (m.type === 'photo' ? 'Photo' : (m.type === 'video' ? 'Video' : (m.type === 'document' ? (m.fileName || 'Document') : 'Message')));
       /* Quoting a reply quotes its own words, not the quote above them. */
       if (/^› /.test(text) && text.indexOf('\n') > 0) text = text.slice(text.indexOf('\n') + 1);
@@ -446,6 +447,7 @@
       return null;
     } },
     { sel: '#broadcastTabScroll', tab: 'tab-broadcast', run: function () {
+      try { if (typeof nalunoReshuffleFeed === 'function') { nalunoReshuffleFeed(); if (typeof renderBroadcastTab === 'function') renderBroadcastTab(); } } catch (_) {}
       const a = typeof refreshConnectionsSignals === 'function' ? refreshConnectionsSignals(true) : null;
       try { if (typeof loadFeedBroadcasts === 'function') loadFeedBroadcasts(); } catch (_) {}
       try { if (typeof renderTogaBoard === 'function' && typeof bcastActiveView !== 'undefined' && bcastActiveView === 'toga') renderTogaBoard(); } catch (_) {}

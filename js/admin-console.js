@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260928d';
+  const BUILD = '20260928g';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -1721,11 +1721,13 @@
     return String(html == null ? '' : html)
       .replace(/<[^>]*>/g, ' ')
       .replace(/&nbsp;/g, ' ')
-      .replace(/&/g, '&')
-      .replace(/</g, '<')
-      .replace(/>/g, '>')
+      /* Decode entities back to text (these lines were no-ops, so exports
+         showed "&amp;" etc.). &amp; goes last so "&amp;lt;" stays "&lt;". */
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
       .replace(/&#39;/g, "'")
-      .replace(/"/g, '"')
+      .replace(/&quot;/g, '"')
+      .replace(/&amp;/g, '&')
       .replace(/\s+/g, ' ')
       .trim();
   }

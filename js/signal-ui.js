@@ -439,15 +439,20 @@ function renderBroadcastTab(){
   if(grid){
     const feedList = (typeof feedBroadcasts !== 'undefined' && feedBroadcasts) ? feedBroadcasts : [];
     const mineList = (typeof myBroadcasts !== 'undefined' && myBroadcasts) ? myBroadcasts : [];
-    const list = (bcastActiveView === 'mine' ? mineList : feedList).slice().filter(function(b){
+    let list = (bcastActiveView === 'mine' ? mineList : feedList).slice().filter(function(b){
       /* Scheduled and private live in the dock above the swipe, not in the
          public plates. Held and taken-down still show on My Broadcasts. */
       if(typeof broadcastIsScheduled === 'function' && broadcastIsScheduled(b)) return false;
       if(typeof broadcastIsPrivate === 'function' && broadcastIsPrivate(b)) return false;
       return true;
     });
+    /* This was `const list` above, so the reassignment threw and the catch
+       hid it: the ranking never ran and the feed was always newest-first. */
     if(bcastActiveView !== 'mine' && window.NalunoDiscover && typeof NalunoDiscover.order === 'function'){
       try{ list = NalunoDiscover.order(list); }catch(_){}
+    }
+    if(bcastActiveView !== 'mine'){
+      try{ list = nalunoFeedShuffle(list); }catch(_){}
     }
     if(typeof renderBroadcastEntryGrid === 'function'){
       renderBroadcastEntryGrid(grid, empty, list);
@@ -865,6 +870,99 @@ function nalunoSetBcastView(view, viaSwipe){
 }
 window.nalunoSetBcastView = nalunoSetBcastView;
 
+/* ---- A fresh order each time someone comes back to Broadcasts ----
+   A weighted shuffle on top of the ranking: better matches still tend to be
+   near the top, but the order changes on every visit (app start, coming back
+   to the Broadcast tab, reopening the app after a minute away, pull to
+   refresh). Within one visit the order holds still, so plates never jump
+   while someone is scrolling; new arrivals slot in without moving the rest.
+   Live Broadcasts stay first. My Broadcasts keep their own order. */
+let nalunoFeedSeed = ((Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0) || 1;
+let nalunoFeedMemo = { seed: 0, ids: [] };
+function nalunoFeedHash(seed, id){
+  let h = (seed ^ 0x9e3779b9) >>> 0;
+  const s = String(id || '');
+  for(let i = 0; i < s.length; i++){
+    h = Math.imul(h ^ s.charCodeAt(i), 0x85ebca6b) >>> 0;
+    h = (h ^ (h >>> 13)) >>> 0;
+  }
+  h = Math.imul(h ^ (h >>> 16), 0xc2b2ae35) >>> 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+function nalunoReshuffleFeed(){
+  nalunoFeedSeed = ((nalunoFeedSeed * 1103515245 + 12345 + Date.now()) >>> 0) || 1;
+}
+window.nalunoReshuffleFeed = nalunoReshuffleFeed;
+function nalunoFeedShuffle(list){
+  const rows = (list || []).filter(Boolean);
+  if(rows.length < 2) return rows;
+  const live = rows.filter(function(b){ return b.live; });
+  const rest = rows.filter(function(b){ return !b.live; });
+  /* Weighted random order (Efraimidis–Spirakis): key = u^(1/w), with the
+     weight falling gently down the ranking. */
+  const keyed = rest.map(function(b, i){
+    const w = 1 / (1 + i * 0.3);
+    const u = Math.max(1e-9, nalunoFeedHash(nalunoFeedSeed, b.id));
+    return { b: b, k: Math.pow(u, 1 / w) };
+  });
+  keyed.sort(function(a, b){ return b.k - a.k; });
+  let order = keyed.map(function(x){ return x.b; });
+  /* Same visit: Broadcasts already on screen keep their places. */
+  if(nalunoFeedMemo.seed === nalunoFeedSeed && nalunoFeedMemo.ids.length){
+    const at = {};
+    nalunoFeedMemo.ids.forEach(function(id, i){ at[id] = i; });
+    const slots = [];
+    const known = [];
+    order.forEach(function(b, i){ if(at[b.id] != null){ slots.push(i); known.push(b); } });
+    known.sort(function(a, b){ return at[a.id] - at[b.id]; });
+    slots.forEach(function(slot, j){ order[slot] = known[j]; });
+  } else {
+    /* A new visit: do not open on the same Broadcast as last time. */
+    let lastFirst = '';
+    try{ lastFirst = localStorage.getItem('naluno:feedFirst') || ''; }catch(_){}
+    if(order.length > 1 && order[0].id === lastFirst){
+      const t = order[0]; order[0] = order[1]; order[1] = t;
+    }
+    try{ if(order[0]) localStorage.setItem('naluno:feedFirst', order[0].id); }catch(_){}
+  }
+  /* The grid (strand.js) sorts by _nalunoPlace, so the new order is written
+     there, on copies: the same objects also back My Broadcasts. */
+  const out = live.concat(order).map(function(b, i){ return Object.assign({}, b, { _nalunoPlace: i }); });
+  nalunoFeedMemo = { seed: nalunoFeedSeed, ids: out.map(function(b){ return b.id; }) };
+  return out;
+}
+window.nalunoFeedShuffle = nalunoFeedShuffle;
+(function nalunoFeedReshuffleTriggers(){
+  /* Coming back to the Broadcast tab from another tab. */
+  const tab = document.getElementById('tab-broadcast');
+  if(tab){
+    let wasActive = tab.classList.contains('active');
+    try{
+      new MutationObserver(function(){
+        const on = tab.classList.contains('active');
+        if(on && !wasActive){
+          nalunoReshuffleFeed();
+          try{ if(typeof renderBroadcastTab === 'function') renderBroadcastTab(); }catch(_){}
+          try{ const sc = document.getElementById('broadcastTabScroll'); if(sc) sc.scrollTop = 0; }catch(_){}
+        }
+        wasActive = on;
+      }).observe(tab, { attributes: true, attributeFilter: ['class'] });
+    }catch(_){}
+  }
+  /* Reopening the app after at least a minute away. Not while a Broadcast is
+     open: coming back to the room should not reorder the list behind it. */
+  let hiddenAt = 0;
+  document.addEventListener('visibilitychange', function(){
+    if(document.hidden){ hiddenAt = Date.now(); return; }
+    if(!hiddenAt || Date.now() - hiddenAt < 60000) return;
+    hiddenAt = 0;
+    const room = document.getElementById('bspace');
+    if(room && room.classList.contains('active')) return;
+    nalunoReshuffleFeed();
+    try{ if(tab && tab.classList.contains('active') && typeof renderBroadcastTab === 'function') renderBroadcastTab(); }catch(_){}
+  });
+})();
+
 function nalunoRenderPrivateDrawer(){
   const box = document.getElementById('bcastPrivateDrawer');
   const btn = document.getElementById('bcastPrivateWatch');
@@ -884,8 +982,32 @@ function nalunoRenderPrivateDrawer(){
     box.innerHTML = '<p class="lobby-sub" style="margin:8px 0 4px;text-align:left;max-width:none;">Nothing is private. Mark one before it goes out, and it stays off the public feed.</p>';
     return;
   }
+  /* A small preview, like Saved Broadcasts. This drawer is built only from
+     your own Broadcasts (myBroadcasts), so only you ever see it. */
+  const res = function(u){ try{ return (u && typeof resolveMediaUrl === 'function') ? (resolveMediaUrl(u) || u) : (u || ''); }catch(_){ return u || ''; } };
+  const isVid = function(u){ return /\.(mp4|webm|mov|m4v|m3u8)(\?|$)/i.test(String(u || '')); };
+  const when = function(b){
+    const t = Number(b.publishAt) > Date.now() ? Number(b.publishAt) : Number(b.createdAt && b.createdAt.toMillis ? b.createdAt.toMillis() : b.createdAt);
+    if(!t) return '';
+    try{ return new Date(t).toLocaleDateString(undefined, { day:'numeric', month:'short' }); }catch(_){ return ''; }
+  };
   box.innerHTML = rows.map(function(b){
-    return '<button type="button" class="bcast-private-row" data-private="'+esc(b.id)+'"><b>'+esc(b.title || 'Broadcast')+'</b><span>Only you</span></button>';
+    const writing = (typeof broadcastIsWriting === 'function') ? broadcastIsWriting(b) : (b.mediaType === 'writing');
+    let img = '';
+    if(writing) img = (typeof broadcastCoverUrl === 'function') ? broadcastCoverUrl(b) : '';
+    else if(b.thumbUrl && !isVid(b.thumbUrl) && !(typeof nalunoThumbLooksDead === 'function' && nalunoThumbLooksDead(b.thumbUrl))) img = b.thumbUrl;
+    else if(b.mediaType === 'photo' && b.mediaUrl && !isVid(b.mediaUrl)) img = b.mediaUrl;
+    const kind = writing ? 'Writing' : (b.mediaType === 'photo' ? 'Photo' : (b.live ? 'Live' : 'Video'));
+    let thumb;
+    const glyph = kind === 'Video' ? '&#9654;' : esc(kind.slice(0,1));
+    if(img) thumb = '<img class="dl-thumb" src="'+esc(res(img))+'" alt="" loading="lazy" onerror="this.outerHTML=\'<div class=&quot;dl-thumb bcast-private-tile&quot;>'+glyph.replace(/&/g,'&amp;')+'</div>\'" />';
+    else if(writing){
+      const words = String(b.body || b.description || b.title || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+      thumb = '<div class="dl-thumb bcast-private-tile is-text">'+esc(words || 'Aa')+'</div>';
+    } else thumb = '<div class="dl-thumb bcast-private-tile">'+(kind === 'Video' ? '&#9654;' : esc(kind.slice(0,1)))+'</div>';
+    const bits = [kind, when(b), 'Only you'].filter(Boolean).join(' · ');
+    return '<button type="button" class="bcast-private-row dl-row" data-private="'+esc(b.id)+'">'+thumb
+      +'<span class="dl-info"><span class="dl-title">'+esc(b.title || 'Broadcast')+'</span><span class="dl-meta">'+esc(bits)+'</span></span></button>';
   }).join('');
   box.querySelectorAll('[data-private]').forEach(function(row){
     row.onclick = function(){

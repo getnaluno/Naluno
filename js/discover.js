@@ -70,7 +70,8 @@
       if (FEATURES[copy.id]) copy.features = FEATURES[copy.id];
       return copy;
     });
-    const result = Engine.run(rows, viewerNow(), modelForViewer(), Date.now());
+    const viewer = viewerNow();
+    const result = Engine.run(rows, viewer, modelForViewer(), Date.now());
     const out = result.feed.map(function (item) {
       const b = item.broadcast;
       b._nalunoPlace = item.place;
@@ -78,6 +79,26 @@
       WHY[b.id] = { why: item.why, model: result.model, sources: item.sources };
       return b;
     });
+    /* The ranking decides ORDER. The feed already decided what may be
+       shown, so anything the engine left out for any other reason than the
+       viewer's own choice (hid the creator or topic, not interested, blocked)
+       still appears, at the end. Nothing that shows today disappears. */
+    try {
+      const have = {};
+      out.forEach(function (b) { if (b && b.id) have[b.id] = 1; });
+      const v = viewer || {};
+      rows.forEach(function (b) {
+        if (!b || !b.id || have[b.id]) return;
+        const uid = b.creatorUid || '';
+        if (uid && ((v.blocked && v.blocked[uid]) || (v.hiddenCreators && v.hiddenCreators[uid]))) return;
+        if (v.notInterested && v.notInterested[b.id]) return;
+        const topics = (Engine.topicsOf && Engine.topicsOf(b)) || [];
+        const ht = v.hiddenTopics || {};
+        for (let i = 0; i < topics.length; i++) { if (ht[topics[i]]) return; }
+        have[b.id] = 1;
+        out.push(b);
+      });
+    } catch (_) {}
     try { hydrate(rows); } catch (_) {}
     try { seen(out.slice(0, 12)); } catch (_) {}
     return out;
@@ -349,7 +370,10 @@
         if (e) { e.preventDefault(); e.stopPropagation(); }
         const why = whyForPlaying();
         if (typeof bspaceShowAction === 'function') {
-          bspaceShowAction('Why this', '<p class="hint" style="margin:8px 0 0;">' + String(why || '').replace(/[&<>]/g, function(c){ return ({'&':'&','<':'<','>':'>'}[c]); }) + '</p>');
+          /* The old map turned '<' into '<' (a no-op), so the reason was not
+             escaped at all. Escape it properly before it goes into HTML. */
+          const safe = String(why || '').replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]); });
+          bspaceShowAction('Why this', '<p class="hint bspace-why-text" style="margin:8px 0 0;">' + safe + '</p>');
           return;
         }
         const menu = document.getElementById('bspaceMoreMenu');
