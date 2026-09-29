@@ -3783,3 +3783,29 @@ body .naluno-break-wrap img{
 }
 /* The two call buttons on a contact row and in a chat header. */
 .call-btn-pair { display: flex; gap: 6px; align-items: center; }
+
+/* 29g — the Known mark beside every name: keep it small where the name is small. */
+.signal-tile-cap .naluno-known, .sv-name .naluno-known, .band-room .naluno-known, #bandMessages .naluno-known, #bandRoster .naluno-known{ font-size:7px; padding:1px 5px; margin-left:4px; letter-spacing:.1em; }
+.contact-name .naluno-known, .wire-hist-name .naluno-known, .circle-member-name .naluno-known, .who-name .naluno-known{ font-size:8px; padding:1px 6px; }
+.contact-name{ min-width:0; }
+/* 29g — Toga numbers say what they are. */
+.toga-card-unit{ font-style:normal; font-family:var(--font-mono); font-size:10px; letter-spacing:.06em; color:var(--mint); opacity:.85; }
+.toga-key{ font-size:11.5px; line-height:1.45; color:var(--text-dim); margin:0 0 10px; text-align:left; }
+.toga-key strong{ color:var(--mint); font-weight:600; }
+/* 29g — live plates show the live picture. */
+.bcast-plate img.bcast-live-frame{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; z-index:1; display:block; background:#07080c; }
+.bcast-plate.has-live-frame .bcast-plate-fallback, .bcast-plate.has-live-frame .bcast-live-wait{ display:none; }
+.bcast-plate-live{ display:inline-flex; align-items:center; gap:5px; }
+.bcast-live-dot{ width:6px; height:6px; border-radius:50%; background:#fff; display:inline-block; animation: liveDotBlink 1.2s steps(2, start) infinite; }
+@keyframes liveDotBlink{ to{ visibility:hidden; } }
+.bcast-live-wait{ position:absolute; left:50%; top:42%; transform:translate(-50%,-50%); z-index:2; font-family:var(--font-mono); font-size:11px; letter-spacing:.04em; color:#fff; background:rgba(255,84,112,.22); border:1px solid rgba(255,84,112,.5); padding:6px 12px; border-radius:999px; white-space:nowrap; }
+/* 29g — payment result and payouts */
+.pay-result-mark{ width:64px; height:64px; border-radius:50%; margin:18px 0 12px; display:flex; align-items:center; justify-content:center; font-size:28px; border:1px solid var(--line); color:var(--text-dim); }
+.pay-result-mark.ok{ border-color:rgba(124,255,178,.6); color:var(--mint); background:rgba(124,255,178,.08); }
+.pay-result-mark.off{ border-color:rgba(255,84,112,.5); color:#ff8a9a; }
+.payout-block{ margin:12px 0 14px; padding:12px; border:1px solid var(--line); border-radius:14px; background:rgba(124,255,178,.04); }
+.payout-btn{ width:100%; padding:12px; border-radius:12px; border:1px solid rgba(124,255,178,.5); background:rgba(124,255,178,.12); color:var(--mint); font-size:13px; cursor:pointer; }
+.payout-btn[hidden]{ display:none; }
+.has-known{ display:inline-flex !important; align-items:center; max-width:100%; min-width:0; vertical-align:middle; }
+.has-known > .known-text{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.has-known > .naluno-known{ flex:none; }
