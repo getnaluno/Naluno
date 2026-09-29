@@ -1341,7 +1341,7 @@ async function enableCameraForCall(){
           climb();
         });
       };
-      setTimeout(climb, 400);
+      setTimeout(climb, 5000);
     }
   }catch(_){}
   try{ updateCameraQualityBadge && updateCameraQualityBadge(); }catch(_){}

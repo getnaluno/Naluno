@@ -1153,6 +1153,38 @@ async function ensureCallMediaReady(){
             stream.getVideoTracks().some(t => t.readyState === 'live'));
 }
 
+function nalunoCfgHasTurn(cfg){
+  try{
+    return !!((cfg && cfg.iceServers) || []).some(function(s){
+      const u = (s && (s.urls || s.url)) || '';
+      if(Array.isArray(u)) return u.some(function(x){ return /^turns?:/i.test(String(x)); });
+      return /^turns?:/i.test(String(u));
+    });
+  }catch(_){ return false; }
+}
+/* Wait until cached TURN is actually there, or give up at maxMs.
+   getIceServers() returns STUN at 250ms while the worker is still going, and
+   getIceServersPatient() then waits another 1.2s. Neither belongs on the
+   path after Answer: a cold cache used to eat the whole 2 seconds before
+   any SDP existed. Callers wait a short beat BEFORE the offer (the other
+   phone is not ringing yet). The answer is built during the ring. */
+function nalunoWaitForTurn(maxMs){
+  try{ if(typeof prewarmIceServers === 'function') prewarmIceServers(); }catch(_){}
+  const cap = (typeof maxMs === 'number' && maxMs >= 0) ? maxMs : 600;
+  return new Promise(function(resolve){
+    const t0 = Date.now();
+    const tick = function(){
+      let cfg = null;
+      try{ if(typeof IceCore !== 'undefined' && IceCore.now) cfg = IceCore.now(); }catch(_){}
+      if(nalunoCfgHasTurn(cfg) || (Date.now() - t0) >= cap){ resolve(cfg); return; }
+      setTimeout(tick, 40);
+    };
+    tick();
+  });
+}
+window.nalunoCfgHasTurn = nalunoCfgHasTurn;
+window.nalunoWaitForTurn = nalunoWaitForTurn;
+
 async function createPeerConnection(){
   try{
     if(typeof metricStart === 'function') window._callMediaMetric = metricStart('call_time_to_media');
@@ -1187,11 +1219,11 @@ async function createPeerConnection(){
      STUN-only. So the recovery path was re-trying the exact thing that had
      just failed.
 
-     This upgrades the live connection the moment real TURN credentials
-     arrive — setConfiguration() then restartIce() — but ONLY while the call
-     is still trying to connect. Once connected, nothing is touched, so a
-     working call is never disturbed. Entirely non-blocking: the offer is
-     still sent immediately with whatever was available. */
+     This applies TURN with setConfiguration() the moment credentials
+     arrive, but ONLY before any offer or answer exists. After the SDP is
+     built, restartIce() would change the ufrag and the other phone would
+     keep the old one. The short nalunoWaitForTurn() before the SDP is what
+     gets TURN onto the connection in time. */
   try{
     if(typeof getIceServers === 'function'){
       getIceServers().then(function(fresh){
@@ -1201,19 +1233,18 @@ async function createPeerConnection(){
           const st = pc.connectionState;
           if(st === 'connected' || st === 'completed' || st === 'closed') return;
           // Only worth doing if we actually gained a TURN server we lacked.
-          const hadTurn = (ice.iceServers || []).some(function(s2){
-            return /^turns?:/i.test(String((s2 && s2.urls) || ''));
-          });
-          const hasTurn = fresh.iceServers.some(function(s2){
-            const u = (s2 && s2.urls) || '';
-            return Array.isArray(u) ? u.some(function(x){ return /^turns?:/i.test(String(x)); })
-                                    : /^turns?:/i.test(String(u));
-          });
+          // Array urls (Cloudflare returns stun+turn together) must count.
+          const hadTurn = nalunoCfgHasTurn(ice);
+          const hasTurn = nalunoCfgHasTurn(fresh);
           if(hadTurn || !hasTurn) return;
           if(typeof pc.setConfiguration !== 'function') return;
-          console.log('[call] TURN arrived after offer — upgrading ICE config and restarting');
+          /* Gathering starts at setLocalDescription. Changing ICE after that
+             (or while createOffer is already running) needs a new offer the
+             other phone never gets, so the call pairs with the wrong ufrag.
+             Before any SDP, setConfiguration is enough — restartIce is not. */
+          if(pc._nalunoIceFrozen || pc.localDescription) return;
+          console.log('[call] TURN arrived before the SDP — upgrading ICE config');
           pc.setConfiguration(fresh);
-          if(typeof pc.restartIce === 'function') pc.restartIce();
         }catch(e){ console.warn('[call] ICE upgrade skipped', e && e.message); }
       }).catch(function(){});
     }
@@ -2210,6 +2241,10 @@ async function startRealCallInner(c){
 
   // Do NOT await a 900ms canvas prime. Draw one frame if the lobby already has video.
   try{ if(typeof drawSendCanvas === 'function') drawSendCanvas(); }catch(_){}
+  // TURN into the offer when it is already on the way. The other phone is
+  // not ringing yet, so this does not come out of the 2 seconds after Answer.
+  try{ await nalunoWaitForTurn(600); }catch(_){}
+  if(gone()) return false;
   const pc = await createPeerConnection();
   const dropPc = () => { try{ pc.ontrack = null; pc.onicecandidate = null; pc.onconnectionstatechange = null; pc.oniceconnectionstatechange = null; pc.close(); }catch(_){} };
   if(gone()){ dropPc(); return false; }
@@ -2228,6 +2263,7 @@ async function startRealCallInner(c){
     if(recordIn) sendCand(json); else heldCands.push(json);
   };
 
+  pc._nalunoIceFrozen = true;
   const offer = await pc.createOffer();
   if(gone()){ dropPc(); return false; }
   await pc.setLocalDescription(offer);
@@ -2546,14 +2582,15 @@ async function nalunoPrepareAnswer(callId, offer, camReady){
   nalunoPrepared = prep;
   const still = function(){ return nalunoPrepared === prep && activeCallId === callId && $('incoming') && $('incoming').classList.contains('active'); };
   try{
-    // TURN first, so the connection is built with it (no ICE restart later).
-    try{
-      if(typeof getIceServersPatient === 'function') await getIceServersPatient(2500);
-      else if(typeof getIceServers === 'function') await Promise.race([getIceServers(), new Promise(function(r){ setTimeout(r, 2500); })]);
-    }catch(_){}
-    try{ await camReady; }catch(_){}
-    if(!still()) return;
-    if(!mediaStreamIsLive(stream)) return; // no camera/mic yet: Answer takes the normal path
+    // Camera and TURN at the same time. Patient ICE waits up to 3.7s and
+    // was still running when people tapped Answer, so the prepared answer
+    // was thrown away and built again from nothing.
+    await Promise.all([
+      Promise.resolve(camReady).catch(function(){}),
+      nalunoWaitForTurn(800),
+    ]);
+    if(!still()){ nalunoDropPrepared(); return; }
+    if(!mediaStreamIsLive(stream)){ nalunoDropPrepared(); return; } // no camera/mic yet: Answer takes the normal path
     const pc = await createPeerConnection();
     prep.pc = pc;
     if(!still()){ nalunoDropPrepared(); return; }
@@ -2563,6 +2600,7 @@ async function nalunoPrepareAnswer(callId, offer, camReady){
       if(prep.used) fbDb.collection('calls').doc(callId).collection('calleeCandidates').add(json).catch(function(){});
       else prep.held.push(json);
     };
+    pc._nalunoIceFrozen = true;
     await pc.setRemoteDescription(new RTCSessionDescription(offer));
     if(!still()){ nalunoDropPrepared(); return; }
     // The caller's candidates, so the connection can be checked the moment Answer is tapped.
@@ -2606,7 +2644,19 @@ $('acceptIncoming').onclick = async ()=>{
   const NOT_MINE = new Error('replaced');
   const guard = function(){ if(activeCallId !== acceptingId) throw NOT_MINE; };
 
-  const prep = nalunoPreparedFor(acceptingId);
+  let prep = nalunoPreparedFor(acceptingId);
+  /* Answer tapped while the answer is still being built (camera or TURN
+     not finished). Waiting out the rest is faster than dropping it and
+     starting over, and it is capped so a stuck prepare cannot hold the tap. */
+  if(!prep && nalunoPrepared && nalunoPrepared.callId === acceptingId && !nalunoPrepared.ready){
+    const deadline = Date.now() + 1000;
+    while(activeCallId === acceptingId && Date.now() < deadline){
+      await new Promise(function(r){ setTimeout(r, 40); });
+      prep = nalunoPreparedFor(acceptingId);
+      if(prep) break;
+      if(!nalunoPrepared || nalunoPrepared.callId !== acceptingId) break;
+    }
+  }
   if(prep){
     prep.used = true;   // from here the held candidates go straight out
     try{
@@ -2672,11 +2722,15 @@ $('acceptIncoming').onclick = async ()=>{
   if($('incomingSelfTag')) $('incomingSelfTag').textContent = 'connecting…';
 
   try{
-    // Parallel: media ready. TURN is prewarmed; iceNow() is 0ms.
+    // Parallel: media ready and a short TURN wait. iceNow() is 0ms once
+    // that wait lands, so the answer is not built STUN-only on a cold cache.
     if(typeof prewarmIceServers === 'function') prewarmIceServers();
+    const turnWait = nalunoWaitForTurn(800);
     const mediaOk = await ensureCallMediaReady();
     guard();
     if(!mediaOk) throw new Error('Camera/mic unavailable — allow access, then try answering again');
+    try{ await turnWait; }catch(_){}
+    guard();
 
     if(peerConnection){
       try{ peerConnection.close(); }catch(e){}
@@ -2706,6 +2760,7 @@ $('acceptIncoming').onclick = async ()=>{
       if(e.candidate) callRef.collection('calleeCandidates').add(e.candidate.toJSON()).catch(()=>{});
     };
 
+    answerPc._nalunoIceFrozen = true;
     await answerPc.setRemoteDescription(new RTCSessionDescription(offer));
     guard();
     remoteDescriptionSet = true;
