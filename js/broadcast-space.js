@@ -88,51 +88,18 @@ async function ensureBroadcastFirestore(meta){
 }
 
 let bspaceSpeakToken = 0;
-let bspaceSpeakAudio = null;
 function bspaceStopSpeak(){
   bspaceSpeakToken += 1;
+  try{ if(window.NalunoVoices && NalunoVoices.stop) NalunoVoices.stop(); }catch(_){}
   try{ if(window.speechSynthesis) window.speechSynthesis.cancel(); }catch(_){}
-  try{ if(bspaceSpeakAudio){ bspaceSpeakAudio.pause(); bspaceSpeakAudio.src = ''; bspaceSpeakAudio = null; } }catch(_){}
 }
-function bspacePlayUrl(url, token){
-  return new Promise(function(resolve){
-    if(token !== bspaceSpeakToken){ resolve(false); return; }
-    const audio = new Audio();
-    bspaceSpeakAudio = audio;
-    let done = false;
-    function finish(ok){
-      if(done) return;
-      done = true;
-      if(bspaceSpeakAudio === audio) bspaceSpeakAudio = null;
-      resolve(!!ok && token === bspaceSpeakToken);
-    }
-    audio.onended = function(){ finish(true); };
-    audio.onerror = function(){ finish(false); };
-    const giveUp = setTimeout(function(){ finish(false); }, 8000);
-    audio.onplaying = function(){ clearTimeout(giveUp); };
-    audio.src = url;
-    const started = audio.play();
-    if(started && started.catch) started.catch(function(){ finish(false); });
-  });
-}
-async function bspacePlayNativeLg(text, token){
-  const src = String(text || '').trim();
-  if(!src) return false;
-  const bits = [];
-  const sentences = src.split(/(?<=[.!?])\s+/);
-  sentences.forEach(function(sentence){
-    const s = sentence.trim();
-    if(!s) return;
-    for(let i = 0; i < s.length; i += 180) bits.push(s.slice(i, i + 180));
-  });
-  if(!bits.length) return false;
-  for(let i = 0; i < bits.length; i++){
-    if(token !== bspaceSpeakToken) return false;
-    const url = 'https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl=lg&q=' + encodeURIComponent(bits[i]);
-    const ok = await bspacePlayUrl(url, token);
-    if(!ok) return false;
-  }
-  return token === bspaceSpeakToken;
+function bspaceListenVoice(){
+  try{
+    const el = $('bspaceVoice');
+    const saved = localStorage.getItem('nalunoListenVoice');
+    const v = (el && el.value) || saved || 'female';
+    return v === 'male' ? 'male' : 'female';
+  }catch(_){ return 'female'; }
 }
 async function bspaceSpeakWriting(text, lang, btn){
   const src = String(text || '').replace(/\s+/g, ' ').replace(/\bSee more\b|\bSee less\b/g, '').trim();
@@ -145,37 +112,48 @@ async function bspaceSpeakWriting(text, lang, btn){
   }
   const token = bspaceSpeakToken + 1;
   bspaceSpeakToken = token;
-  if(btn){ btn.setAttribute('data-on', '1'); btn.textContent = 'Stop'; }
-  if(lang === 'lg'){
-    try{
-      const played = await bspacePlayNativeLg(src, token);
-      if(token !== bspaceSpeakToken) return;
-      if(played){
-        if(btn){ btn.removeAttribute('data-on'); btn.textContent = 'Listen'; }
-        return;
-      }
-    }catch(_){}
-  }
-  if(token !== bspaceSpeakToken) return;
-  if(!window.speechSynthesis){
-    toast('This phone cannot read aloud');
-    if(btn){ btn.removeAttribute('data-on'); btn.textContent = 'Listen'; }
-    return;
-  }
+  if(btn){ btn.setAttribute('data-on', '1'); btn.textContent = 'Preparing'; }
   const spoken = (lang === 'lg' && window.NalunoLgSpeak && typeof NalunoLgSpeak.speak === 'function')
     ? NalunoLgSpeak.speak(src)
     : src;
+  const alive = function(){ return token === bspaceSpeakToken; };
+  if(window.NalunoVoices && typeof NalunoVoices.speak === 'function'){
+    try{ NalunoVoices.prime(); }catch(_){}
+    let played = false;
+    try{
+      played = await NalunoVoices.speak(spoken, {
+        voice: bspaceListenVoice(),
+        speed: 1.05,
+        alive: alive,
+        onready: function(){
+          if(alive() && btn) btn.textContent = 'Stop';
+        },
+      });
+    }catch(_){ played = false; }
+    if(!alive()) return;
+    if(played){
+      if(btn){ btn.removeAttribute('data-on'); btn.textContent = 'Listen'; }
+      return;
+    }
+  }
+  if(!alive()) return;
+  if(!window.speechSynthesis){
+    toast('This phone cannot read aloud yet');
+    if(btn){ btn.removeAttribute('data-on'); btn.textContent = 'Listen'; }
+    return;
+  }
   const voiceLang = lang === 'lg' ? 'lg' : (lang || ((typeof sparkGuessLang === 'function') ? sparkGuessLang() : 'en'));
   const voice = bspacePickVoice(voiceLang);
   const rec = (typeof SPARK_LANGS !== 'undefined' && SPARK_LANGS.find(function(l){ return l.id === (lang || voiceLang); }));
   window.speechSynthesis.cancel();
+  if(btn) btn.textContent = 'Stop';
   const chunks = [];
   for(let i = 0; i < spoken.length; i += 1500) chunks.push(spoken.slice(i, i + 1500));
   chunks.forEach(function(chunk, idx){
     const u = new SpeechSynthesisUtterance(chunk);
     u.lang = (voice && voice.lang) || (lang === 'lg' ? 'sw-KE' : ((rec && rec.rec) || 'en-US'));
     if(voice) u.voice = voice;
-    u.rate = lang === 'lg' ? 1 : 0.98;
+    u.rate = lang === 'lg' ? 0.92 : 0.96;
     u.pitch = 1;
     if(idx === chunks.length - 1){
       u.onend = function(){
@@ -391,6 +369,17 @@ function bspaceClearWriting(){
   const hear = $('bspaceHear');
   if(!btn || btn.__wired) return;
   btn.__wired = true;
+  try{
+    const voice = $('bspaceVoice');
+    if(voice && !voice.__wired){
+      voice.__wired = true;
+      const saved = localStorage.getItem('nalunoListenVoice');
+      if(saved === 'male' || saved === 'female') voice.value = saved;
+      voice.onchange = function(){
+        try{ localStorage.setItem('nalunoListenVoice', voice.value === 'male' ? 'male' : 'female'); }catch(_){}
+      };
+    }
+  }catch(_){}
   function fillHear(){
     if(!hear || hear.dataset.ready === '1' || typeof SPARK_LANGS === 'undefined') return;
     hear.dataset.ready = '1';

@@ -58,9 +58,37 @@
   }
 
   /* Called by wireline.js whenever a TEXT message falls back to the queue. */
+  async function pushRelay(entry) {
+    if (!entry || (entry.routes && entry.routes.relay)) return true;
+    try {
+      await L.relayDrop(L.unb64u(entry.p));
+      entry.routes = entry.routes || {};
+      entry.routes.relay = Date.now();
+      return true;
+    } catch (_) { return false; }
+  }
+  async function retryWaiting() {
+    var list = outbox();
+    var changed = false;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].routes && list[i].routes.relay) continue;
+      if (await pushRelay(list[i])) changed = true;
+    }
+    if (changed) saveOutbox(list);
+    try { pollRelay(); } catch (_) {}
+    return changed;
+  }
   async function handoff(contact, payload, clientMsgId) {
     if (!contact || !contact.firebaseUid || !payload || payload.type !== 'text' || !payload.text) return;
-    if (outbox().some(function (x) { return x.cmid === clientMsgId; })) return;
+    var list = outbox();
+    var existing = null;
+    for (var i = 0; i < list.length; i++) if (list[i].cmid === clientMsgId) existing = list[i];
+    if (existing) {
+      /* Try now, and a later queue flush, must not give up on the relay
+         just because the first drop failed while Google was blocked. */
+      if (await pushRelay(existing)) saveOutbox(list);
+      return;
+    }
     var s = await L.seal(contact.firebaseUid, payload.text, clientMsgId, Date.now());
     if (!s.ok) {
       /* Refuse rather than send readable text through strangers or SMS. */
@@ -69,12 +97,9 @@
       return;
     }
     var entry = { cmid: clientMsgId, uid: contact.firebaseUid, p: L.b64u(s.bytes), at: Date.now(), routes: {} };
-    try {
-      await L.relayDrop(s.bytes);
-      entry.routes.relay = Date.now();
-    } catch (_) { /* no internet at all: mesh and SMS still work */ }
+    await pushRelay(entry);
     if (mesh.router) { mesh.router.accept(s.bytes, 8); entry.routes.mesh = Date.now(); meshKick(); }
-    var list = outbox(); list.push(entry); saveOutbox(list);
+    list = outbox(); list.push(entry); saveOutbox(list);
     T(entry.routes.relay ? 'Sent inside Naluno' : 'Held in Naluno — it sends when you are back online');
   }
 
@@ -217,14 +242,42 @@
     } catch (_) {}
     if (!n && c) n = outbox().filter(function (x) { return x.uid === c.firebaseUid; }).length;
     if (!n) { bar.style.display = 'none'; return; }
+    var unsent = 0;
+    if (c) unsent = outbox().filter(function (x) { return x.uid === c.firebaseUid && !(x.routes && x.routes.relay); }).length;
     bar.style.display = 'flex';
     bar.innerHTML = '<span class="ll-text">' + n + (n === 1 ? ' message is' : ' messages are')
       + ' waiting in Naluno. It stays in this chat and sends when this phone is back online.</span>'
+      + (unsent ? '<button type="button" class="ll-btn" id="llCopyText">Copy text</button>' : '')
       + '<button type="button" class="ll-btn" id="llTryNow">Try now</button>';
+    var copy = bar.querySelector('#llCopyText');
+    if (copy && c) copy.onclick = function () {
+      var body = smsBodyFor(c.firebaseUid);
+      if (!body) return;
+      var done = function () { T('Copied. Paste it into a text message — it opens in Naluno.'); };
+      try {
+        if (root.navigator.clipboard && root.navigator.clipboard.writeText) {
+          root.navigator.clipboard.writeText(body).then(done, function () { fallbackCopy(body, done); });
+          return;
+        }
+      } catch (_) {}
+      fallbackCopy(body, done);
+    };
     var go = bar.querySelector('#llTryNow');
     if (go) go.onclick = function () {
       try { if (typeof root.flushMessageQueue === 'function') root.flushMessageQueue(); } catch (_) {}
+      try { retryWaiting(); } catch (_) {}
     };
+  }
+  function fallbackCopy(body, done) {
+    try {
+      var ta = root.document.createElement('textarea');
+      ta.value = body;
+      root.document.body.appendChild(ta);
+      ta.select();
+      root.document.execCommand('copy');
+      ta.remove();
+      done();
+    } catch (_) { T('Could not copy that text'); }
   }
 
   /* ---------------- wiring ---------------- */
@@ -245,7 +298,7 @@
       }
     } catch (_) {}
     setInterval(function () { seedKeyring(); if (!root.document.hidden) pollRelay(); }, 90000);
-    root.addEventListener('online', function () { setTimeout(pollRelay, 1500); });
+    root.addEventListener('online', function () { setTimeout(function () { retryWaiting(); }, 1500); });
     root.document.addEventListener('visibilitychange', function () { if (!root.document.hidden) pollRelay(); });
     setTimeout(pollRelay, 8000);
     setTimeout(startMesh, 4000);
@@ -259,6 +312,7 @@
   root.nalunoLifelineImportSms = importSmsText;
   root.nalunoLifelineRenderBar = renderBar;
   root.nalunoLifelinePoll = pollRelay;
+  root.nalunoLifelineRetry = retryWaiting;
   root.nalunoLifelineStartMesh = startMesh;
   root.__lifelineWire = { receive: receive, extractAll: extractAll, smsHref: smsHref, outbox: outbox, myIndex: myIndex, mesh: mesh };
 })(typeof window !== 'undefined' ? window : globalThis);
