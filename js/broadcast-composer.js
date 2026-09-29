@@ -486,31 +486,29 @@ async function bcompPublish(){
   // Detector verdict (set above) first; never fall back to a raw heuristic
   // verdict that could still carry a "block".
   let screen = window._bcompScreen || null;
-  if(!screen && bcompFile && typeof runNalunoScreen === 'function'){
-    try{
-      const titleNow = title;
-      screen = await Promise.race([
-        runNalunoScreen(bcompFile, titleNow, bcompDuration || 0),
-        new Promise(function(ok){ setTimeout(function(){ ok(null); }, 6000); }),
-      ]);
-      window._bcompScreen = screen;
-      bcompPaintScreen(screen);
-    }catch(_){}
+  if(bcompFile && bcompKind !== 'writing' && (!screen || screen.decision === 'unread')){
+    const titleNow = title;
+    const again = (window._bcompScreenP && !screen)
+      ? window._bcompScreenP
+      : (typeof runNalunoScreen === 'function' ? runNalunoScreen(bcompFile, titleNow, bcompDuration || 0) : null);
+    screen = await nalunoStrictVerdict(again, function(t){ toast(t); });
+    window._bcompScreen = screen;
+    bcompPaintScreen(screen);
   }
+  let coverScreen = null;
   if(bcompKind === 'writing'){
-    if(bcompCoverFile && typeof runNalunoScreen === 'function'){
-      try{
-        const imgScreen = await Promise.race([
-          runNalunoScreen(bcompCoverFile, title, 0),
-          new Promise(function(ok){ setTimeout(function(){ ok(null); }, 6000); }),
-        ]);
-        if(imgScreen && imgScreen.decision === 'block'){
-          bcompPublishing = false;
-          bcompPaintScreen(imgScreen);
-          toast('This photo cannot go out.');
-          return;
-        }
-      }catch(_){}
+    if(bcompCoverFile){
+      const have = window._bwriteScreen;
+      coverScreen = (have && have.decision && have.decision !== 'unread')
+        ? have
+        : await nalunoStrictVerdict(typeof runNalunoScreen === 'function' ? runNalunoScreen(bcompCoverFile, title, 0) : null, function(t){ toast(t); });
+      window._bwriteScreen = coverScreen;
+      if(coverScreen.decision === 'block'){
+        bcompPublishing = false;
+        bcompPaintScreen(coverScreen);
+        toast('This photo cannot go out.');
+        return;
+      }
     }
     const piece = [title, desc].concat(bcompCollectChapters().map(function(c){ return c.title + '\n' + c.text; })).join('\n');
     let hold = null;
@@ -520,9 +518,16 @@ async function bcompPublish(){
       }
     }catch(_){}
     const stopped = !!(hold && typeof nalunoSafetyStopped === 'function' && nalunoSafetyStopped(hold));
-    const photoDecision = (window._bwriteScreen && window._bwriteScreen.decision) || '';
+    const photoDecision = (coverScreen && coverScreen.decision) || '';
     const decision = (stopped || photoDecision === 'block') ? 'block' : (photoDecision === 'hold' ? 'hold' : 'allow');
-    screen = { decision: decision, engine: photoDecision && photoDecision !== 'allow' ? 'photo' : 'text', reason: hold && hold.decision || '' };
+    /* The photo's own report travels with the post (packed detector
+       findings), so the server judges a Writing photo the same way it judges
+       a video. It used to send only a word, and the server never saw it. */
+    screen = Object.assign({}, coverScreen || {}, {
+      decision: decision,
+      engine: coverScreen ? (coverScreen.engine || 'photo') : 'text',
+      reason: (coverScreen && coverScreen.reason) || (hold && hold.decision) || '',
+    });
     window._bcompScreen = screen;
   }
   if(screen && screen.decision === 'block'){
@@ -603,7 +608,9 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
   const snapStrandId = strandId;
   const snapStrandName = strandName;
   const snapOrigin = window._bcompOrigin || null;
-  const snapScreen = window._bcompScreen || (snapOrigin && snapOrigin.screen) || window._nalunoLastScreen || null;
+  /* Only this post's own verdict. The "last screen run anywhere" fallback
+     could hand a clean verdict from a different file to this post. */
+  const snapScreen = window._bcompScreen || null;
   bcompPublishing = false;
   bcompClose();
 
@@ -848,6 +855,37 @@ function bwriteFitPhoto(){
   };
   probe.src = bcompCoverUrl;
 }
+/* 29h — one rule for every picture that goes out, in a video, a photo post
+   or a Writing photo: Publish waits for Screen's verdict. It used to wait
+   8 s (Writing) or 10 s (video/photo), then a 6 s second try, and if the
+   detector was still loading the post went out UNSCREENED. A trusted
+   account with no verdict was then listed straight away. That is how an
+   explicit photo in a Writing post passed while the same picture as a video
+   was stopped. Now:
+   - Publish waits for the verdict (up to NALUNO_SCREEN_WAIT_MS).
+   - No verdict at all ("unread"): the post is HELD for a person, never
+     published unseen.
+   - The verdict, with the detector's findings, goes to the server with the
+     post, so the server judges the Writing photo exactly like a video. */
+const NALUNO_SCREEN_WAIT_MS = 60000;
+async function nalunoStrictVerdict(p, say){
+  let v = null;
+  let waiting = null;
+  try{
+    if(say) waiting = setTimeout(function(){ try{ say('Screen is still reading this. It finishes before anything goes out.'); }catch(_){} }, 2500);
+    v = await Promise.race([
+      Promise.resolve(p).catch(function(){ return null; }),
+      new Promise(function(ok){ setTimeout(function(){ ok(null); }, NALUNO_SCREEN_WAIT_MS); }),
+    ]);
+  }catch(_){ v = null; }
+  if(waiting) clearTimeout(waiting);
+  if(!v || !v.decision || v.decision === 'unread'){
+    return Object.assign({}, v || {}, { decision: 'hold', reason: 'unread', reasonText: 'a picture Screen could not read', engine: (v && v.engine) || 'none' });
+  }
+  return v;
+}
+window.nalunoStrictVerdict = nalunoStrictVerdict;
+
 function bwritePaintChecks(text){
   const box = $('bwriteChecks');
   if(!box) return;
@@ -878,6 +916,10 @@ function bwriteScanCover(file){
     if(row) row.style.display = (origin && (origin.hold || origin.status === 'match') && origin.rightsStatus !== 'RESTRICTED') ? 'flex' : 'none';
     bwritePaintChecks(screen && screen.decision === 'block'
       ? 'Screen stopped this photo.'
+      : (!screen || screen.decision === 'unread')
+        ? 'Screen could not read this photo. It waits for a person before anyone else sees it.'
+      : screen.decision === 'hold'
+        ? 'A person will look at this photo before it goes out' + (screen.reasonText ? ' (Screen saw ' + screen.reasonText + ')' : '') + '.'
       : (origin && origin.rightsStatus === 'RESTRICTED'
         ? 'This photo is restricted.'
         : (held ? 'Origin held this photo. Confirm it below if it is yours.' : 'Photo checked. It keeps its own shape.')));
@@ -927,15 +969,19 @@ if($('bwritePublish')){
     const tags = (($('bwriteTags') && $('bwriteTags').value) || '').trim();
     if(!title){ toast('Add a title'); return; }
     if(!text){ toast('Write the piece first'); return; }
-    if(bcompCoverFile && window._bwriteScanP){
+    if(bcompCoverFile){
+      const btn = $('bwritePublish');
+      if(btn){ btn.disabled = true; btn.textContent = 'Screen is reading the photo…'; }
       try{
-        await Promise.race([
-          window._bwriteScanP,
-          new Promise(function(ok){ setTimeout(ok, 8000); }),
-        ]);
-      }catch(_){}
+        if(!window._bwriteScanP) bwriteScanCover(bcompCoverFile);
+        await nalunoStrictVerdict(window._bwriteScanP, bwritePaintChecks);
+        window._bwriteScreen = await nalunoStrictVerdict(window._bwriteScreen);
+      }finally{
+        if(btn){ btn.disabled = false; btn.textContent = 'Publish writing'; }
+      }
     }
     if(window._bwriteScreen && window._bwriteScreen.decision === 'block'){
+      bwritePaintChecks('Screen stopped this photo' + (window._bwriteScreen.reasonText ? ': it shows ' + window._bwriteScreen.reasonText : '') + '. Naluno does not allow exposed genitals, exposed female breasts, nudity or sexual acts.');
       toast('This photo cannot go out.');
       return;
     }

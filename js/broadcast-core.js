@@ -161,8 +161,12 @@ function nalunoPublisherTrusted(){
     return !!p.trustedPublisher;
   }catch(_){ return false; }
 }
-function nalunoBroadcastListingFields(screen){
-  const decision = (screen && screen.decision) || '';
+function nalunoBroadcastListingFields(screen, opts){
+  opts = opts || {};
+  let decision = (screen && screen.decision) || '';
+  /* 29h: a picture that was never read by Screen is not published unseen,
+     whoever posts it. (A Pass-on of a public Broadcast inherits its check.) */
+  if(opts.hasPicture && !opts.inherited && (!decision || decision === 'unread')) decision = 'hold';
   if(decision === 'block'){
     return { listed: false, held: true, heldReason: 'screen', hidden: false };
   }
@@ -278,7 +282,10 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
   // breathers: [{ afterChapterIndex, durationMs, adSlot: { enabled, inventoryId, status } }]
   const chapterList = Array.isArray(chapters) ? chapters : null;
   const primaryUrl = mediaUrl || (chapterList && chapterList[0] && chapterList[0].mediaUrl) || null;
-  const screenReport = screen || (origin && origin.screen) || (typeof window !== 'undefined' ? window._nalunoLastScreen : null) || null;
+  /* 29h: only this post's own verdict counts. A post with a picture and no
+     verdict waits for a person (see nalunoBroadcastListingFields). */
+  const screenReport = screen || null;
+  const hasPicture = !!(mediaUrl || thumbUrl || (chapterList && chapterList.some(function(c){ return c && c.mediaUrl; })));
   const doc = {
     creatorUid: currentUser.uid,
     creatorName: (currentProfile && currentProfile.name) || currentUser.displayName || 'Someone',
@@ -348,7 +355,7 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
     }
   }catch(_){}
   const safetyStop = !!(safetyHold && typeof nalunoSafetyStopped === 'function' && nalunoSafetyStopped(safetyHold));
-  Object.assign(doc, nalunoBroadcastListingFields(screenReport));
+  Object.assign(doc, nalunoBroadcastListingFields(screenReport, { hasPicture: hasPicture, inherited: !!repostOf && screenReport && screenReport.decision === 'allow' }));
   if(safetyStop){
     doc.listed = false;
     doc.held = true;
@@ -369,7 +376,7 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
   }catch(_){}
   let placed = null;
   try{ placed = await nalunoPlaceBroadcast(ref.id, screenReport); }catch(_){ placed = null; }
-  if(placed && (placed.heldReason === 'safety-review' || placed.heldReason === 'safety-urgent' || placed.heldReason === 'age-review')){
+  if(placed && (placed.heldReason === 'safety-review' || placed.heldReason === 'safety-urgent' || placed.heldReason === 'age-review' || placed.heldReason === 'screen' || placed.heldReason === 'unscreened')){
     doc.listed = false;
     doc.held = true;
     doc.hidden = false;

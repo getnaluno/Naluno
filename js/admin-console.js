@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260929g';
+  const BUILD = '20260929h';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -1061,8 +1061,34 @@
         const el = fields[i];
         if (el.getAttribute('data-keep')) continue;
         if (el.type === 'file' || el.type === 'button' || el.type === 'hidden') continue;
+        /* A <select> has no defaultValue: compare against the option the page
+           was drawn with, or every tab with a menu counted as "being typed in"
+           and never refreshed. */
+        if (String(el.tagName).toLowerCase() === 'select') {
+          let changed = false;
+          for (let k = 0; k < el.options.length; k++) { if (el.options[k].selected !== el.options[k].defaultSelected) { changed = true; break; } }
+          if (changed && el.options.length) {
+            const anyDefault = Array.prototype.some.call(el.options, function (o) { return o.defaultSelected; });
+            if (anyDefault || el.selectedIndex !== 0) return true;
+          }
+          continue;
+        }
+        if (el.type === 'checkbox' || el.type === 'radio') { if (el.checked !== el.defaultChecked) return true; continue; }
         if (String(el.value || '') !== String(el.defaultValue || '')) return true;
       }
+    } catch (_) {}
+    return false;
+  }
+  function deskHasOpen() {
+    try {
+      const body = document.getElementById('adminBody');
+      if (!body) return false;
+      if (body.querySelector('details[open]:not(.rulebook)')) return true;
+      const detail = document.getElementById('admUserDetail');
+      if (detail && detail.innerHTML.trim()) return true;
+      if (body.querySelector('.modal.active, [data-open="1"]')) return true;
+      if (__activeTab === 'safety' && __tabCache.safetyQuery) return true;
+      if (__activeTab === 'ads' && (__tabCache.adsEditId || __tabCache.adsViewId)) return true;
     } catch (_) {}
     return false;
   }
@@ -1073,6 +1099,12 @@
       if (__pendingSnap) applyLivePack();
     }, 1800);
   }
+  function detailsKey(d) {
+    const k = d.getAttribute('data-key');
+    if (k) return k;
+    const sum = d.querySelector('summary');
+    return 'sum:' + String((sum && sum.textContent) || '').trim().slice(0, 80);
+  }
   function captureDeskState() {
     const body = document.getElementById('adminBody');
     const state = { scroll: 0, open: [], fields: {} };
@@ -1080,8 +1112,8 @@
     try {
       const sc = body.closest('.tab-scroll') || document.scrollingElement || body;
       state.scroll = sc.scrollTop || 0;
-      body.querySelectorAll('details.desk-row[open][data-key]').forEach(function (d) {
-        state.open.push(d.getAttribute('data-key'));
+      body.querySelectorAll('details[open]').forEach(function (d, i) {
+        state.open.push(detailsKey(d));
       });
       body.querySelectorAll('[data-keep]').forEach(function (el) {
         state.fields[el.getAttribute('data-keep')] = el.value;
@@ -1095,9 +1127,9 @@
     try {
       (state.open || []).forEach(function (k) {
         if (!k) return;
-        const list = body.querySelectorAll('details.desk-row[data-key]');
+        const list = body.querySelectorAll('details');
         for (let i = 0; i < list.length; i++) {
-          if (list[i].getAttribute('data-key') === k) { list[i].open = true; break; }
+          if (detailsKey(list[i]) === k) { list[i].open = true; break; }
         }
       });
       Object.keys(state.fields || {}).forEach(function (k) {
@@ -1150,7 +1182,11 @@
     const snap = commitPack(__livePack);
     try { maybePauseSpentAds(snap); } catch (_) {}
     try { renderStrip(snap); } catch (_) {}
-    if (deskDrafting()) {
+    /* 29h: anything the operator opened stays open. While a row, a section,
+       a person or a search is open (or a field is being typed in), the new
+       numbers wait and go in the moment it is closed. The top strip still
+       refreshes silently. */
+    if (deskDrafting() || deskHasOpen()) {
       __pendingSnap = snap;
       scheduleSilentRetry();
       return;
@@ -1360,7 +1396,7 @@
     listenCol('deskMail', 80, 'deskMail');
     listenCol('deskAds', 400, 'deskAds');
     listenCol('siteSessions', 800, 'siteSessions', 'startedAt');
-    listenCol('siteDays', 180, 'siteDays');
+    listenCol('siteDays', 180, 'siteDays', 'updatedAt');
     listenCol('presenceDays', 2000, 'presenceDays');
     listenCol('pushPings', 200, 'pushPings');
     listenCol('pushReceipts', 200, 'pushReceipts');
@@ -1381,6 +1417,7 @@
     listenCol('handleFlags', 200, 'handleFlags');
     listenDoc('economyConfig', 'flags', 'flags');
     listenDoc('economyConfig', 'adRates', 'adRates');
+    listenDoc('economyConfig', 'costRates', 'costRates');
     listenDoc('economyConfig', 'currency', 'currency', function (data) {
       __livePack.currency = data;
       const C = Ccy();
@@ -1440,7 +1477,7 @@
       colDocs('deskMail', 80).then(function (r) { pack.deskMail = r; }),
       colDocs('deskAds', 400).then(function (r) { pack.deskAds = r; }),
       colDocsOrder('siteSessions', 'startedAt', 800).then(function (r) { pack.siteSessions = r; }),
-      colDocs('siteDays', 180).then(function (r) { pack.siteDays = r; }),
+      colDocsOrder('siteDays', 'updatedAt', 180).then(function (r) { pack.siteDays = r; }),
       colDocs('presenceDays', 2000).then(function (r) { pack.presenceDays = r; }),
       colDocs('pushPings', 200).then(function (r) { pack.pushPings = r; }),
       colDocs('pushReceipts', 200).then(function (r) { pack.pushReceipts = r; }),
@@ -1455,6 +1492,9 @@
       }).catch(function () {}));
       core.push(db.collection('economyConfig').doc('adRates').get().then(function (s) {
         if (s && s.exists) pack.adRates = s.data() || {};
+      }).catch(function () {}));
+      core.push(db.collection('economyConfig').doc('costRates').get().then(function (s) {
+        if (s && s.exists) pack.costRates = s.data() || {};
       }).catch(function () {}));
       core.push(db.collection('economyConfig').doc('currency').get().then(function (s) {
         if (s && s.exists) pack.currency = s.data() || {};
@@ -1476,6 +1516,7 @@
     }
     const first = finish(pack);
     try { armLiveListeners(); } catch (_) {}
+    try { maybeTidySiteDaily(); } catch (_) {}
     Promise.all([
       colDocs('toga', 80).then(function (r) { pack.toga = r; }),
       colDocs('strands', 200).then(function (r) { pack.strands = r; }),
@@ -1689,17 +1730,10 @@
     try {
       const ref = db.collection('economyConfig').doc('prices');
       const snap = await ref.get();
-      if (snap.exists) { C.applyPrices(snap.data() || {}); return; }
-      const carried = {
-        knownMonthly: { amount: 49, currency: 'AED' },
-        supportPresets: { amounts: [5, 10, 25], currency: 'AED' },
-        carriedFromBuild: true,
-        updatedAt: Date.now(),
-        updatedBy: (currentUser && currentUser.uid) || '',
-      };
-      await ref.set(carried, { merge: true });
-      C.applyPrices(carried);
-      try { await writeAudit('prices-carried', 'economyConfig/prices', 'Carried the old built-in prices into the book once.'); } catch (_) {}
+      /* 29h: no prices are written by the code. If the book is empty, the
+         Prices card says "not set" and nothing can be charged until the
+         operator types the prices, in the operating currency. */
+      if (snap.exists) C.applyPrices(snap.data() || {});
     } catch (_) {}
   }
   function bytesLabel(n) {
@@ -1802,6 +1836,10 @@
     'single-frame': 'one frame that may be explicit',
     'video-player-screenshot': 'a screenshot of a video player',
     'revealing-allowed': 'revealing but allowed',
+    'possible-nudity': 'a possibly naked body',
+    'possible-sexual-act': 'a possible sexual act',
+    'unscreened': 'a picture that reached the server without a Screen verdict',
+    'unread': 'a picture Screen could not read',
   };
   function screenWhy(b) {
     const r = String((b && b.screenReason) || '');
@@ -1822,7 +1860,10 @@
       + '<p><strong>Reject</strong> anything that shows, of any person, in any setting:</p><ul>'
       + '<li>Exposed genitals</li><li>Exposed anus</li>'
       + '<li>An exposed female nipple — topless, <em>including breastfeeding</em> (for now)</li>'
-      + '<li>Sexual acts — intercourse, oral sex, masturbation, sexual touching — <em>even when the genitals are hidden</em></li></ul>'
+      + '<li>Sexual acts — intercourse, oral sex, masturbation, sexual touching — <em>even when the genitals are hidden</em></li>'
+      + '<li>Nudity — a naked body (genitals, bottom and breasts uncovered together), even if the angle hides the genitals</li>'
+      + '<li>Genitals in any form: penis, testicles, vulva or the pubic area with genitals visible — whole or partial, close-up or background, blurred, through sheer or wet clothing, or drawn, cartoon or 3D</li>'
+      + '<li>Disguises: a porn video still under a play button, a collage, a photo of a screen, or stickers/emojis placed over genitals or nipples on a naked body</li></ul>'
       + '<p><strong>Accept</strong>, however sensual or revealing:</p><ul>'
       + '<li>Bikinis, swimwear, lingerie, underwear, bodysuits — nipples and genitals covered</li>'
       + '<li>Thongs: exposed buttocks are fine (the anus is not)</li>'
@@ -2222,6 +2263,18 @@
   function csvTable(rows) {
     return rows.map(function (r) { return r.map(csvCell).join(','); }).join('\r\n') + '\r\n';
   }
+  /* 29h: money in a row's own decimal places. "/ 100" made UGX (no decimal
+     places) show 100 times too small in the books. */
+  function minorToMajor(minor, ccy) {
+    const C = Ccy();
+    const d = (C && C.digits) ? C.digits(String(ccy || opCode()).toUpperCase()) : 2;
+    return (Number(minor) || 0) / Math.pow(10, d);
+  }
+  function opFixed(n) {
+    const C = Ccy();
+    const d = (C && C.digits) ? C.digits(opCode()) : 2;
+    return (Number(n) || 0).toFixed(d);
+  }
   function toOp(amount, fromCode) {
     const C = Ccy();
     const n = Number(amount) || 0;
@@ -2230,6 +2283,13 @@
   }
   function moneyNow(aedAmount) {
     return aedUsd(aedAmount);
+  }
+  /* An amount in its own currency, shown in the operating currency. */
+  function moneyIn(amount, ccy) {
+    const C = Ccy();
+    const code = String(ccy || opCode()).toUpperCase();
+    if (C && C.formatFrom) return C.formatFrom(Number(amount) || 0, code);
+    return code + ' ' + (Number(amount) || 0);
   }
   function plainService(v) {
     const key = String((v && v.key) || '');
@@ -2405,8 +2465,8 @@
     function add(date, account, desc, debit, credit, status, source, note, fromCode) {
       journal.push([
         date || stamp, account, desc,
-        debit ? toOp(debit, fromCode || 'AED').toFixed(2) : '',
-        credit ? toOp(credit, fromCode || 'AED').toFixed(2) : '',
+        debit ? opFixed(toOp(debit, fromCode || 'AED')) : '',
+        credit ? opFixed(toOp(credit, fromCode || 'AED')) : '',
         status || '', source || '', note || '',
       ]);
     }
@@ -2426,7 +2486,7 @@
       }
     });
     support.forEach(function (r) {
-      const major = (Number(r.amount_minor) || 0) / 100;
+      const major = minorToMajor(r.amount_minor, r.currency);
       const day = (r.created_at || r.createdAt) ? new Date(Number(r.created_at || r.createdAt)).toISOString().slice(0, 10) : stamp;
       add(day, 'Creator support intent', (r.currency || 'AED') + ' intent', '', major, r.status || 'intent', r.id || '', 'Not a charge. No payment has moved.', r.currency || 'AED');
     });
@@ -2438,7 +2498,7 @@
     (d.payments || []).forEach(function (p) {
       const paid = p && (p.status === 'paid' || p.paymentStatus === 'paid');
       if (!paid) return;
-      const major = (Number(p.amount_minor || p.amountMinor) || 0) / 100;
+      const major = minorToMajor(p.amount_minor || p.amountMinor, p.currency);
       if (!(major > 0)) return;
       const id = String(p.id || p.stripeSession || '');
       if (id) seenPay[id] = 1;
@@ -2454,7 +2514,7 @@
       if (!k || !k.paidAt || k.voidedAt) return;
       if (k.payRef && seenPay[k.payRef]) return;
       if (!(Number(k.amount_minor) > 0)) return;
-      const major = Number(k.amount_minor) / 100;
+      const major = minorToMajor(k.amount_minor, k.currency);
       const day = new Date(Number(k.paidAt)).toISOString().slice(0, 10);
       const who = k.name || k.uid || '';
       add(day, 'Known subscriptions', who, '', major, 'paid', k.payRef || k.uid || '', 'A Known month. Cash is recorded when this row is paid.', k.currency || 'AED');
@@ -2465,12 +2525,12 @@
       const months = Number(k.grantMonths) || 0;
       const minor = Number(k.list_minor) || 0;
       if ((months !== 6 && months !== 12) || !(minor > 0)) return;
-      const waived = (minor / 100) * months;
+      const waived = minorToMajor(minor, k.list_currency) * months;
       const day = k.grantedAt ? new Date(Number(k.grantedAt)).toISOString().slice(0, 10) : stamp;
       const who = (k.name || k.uid || '') + ' · ' + months + ' months';
       const note = 'List price for one month × ' + months + '. No cash. Not income.';
-      add(day, 'Known grants waived', who, waived, '', 'grant', k.uid || '', note);
-      add(day, 'Known subscriptions', who, '', waived, 'grant', k.uid || '', 'Opposite entry. The waiver cancels it. Nothing was paid.');
+      add(day, 'Known grants waived', who, waived, '', 'grant', k.uid || '', note, k.list_currency || opCode());
+      add(day, 'Known subscriptions', who, '', waived, 'grant', k.uid || '', 'Opposite entry. The waiver cancels it. Nothing was paid.', k.list_currency || opCode());
     });
     const invoice = Number(costs.invoice_aed || costs.billable_aed || 0);
     const vendors = (costs && costs.vendors) || [];
@@ -2672,7 +2732,7 @@
       const activeGrant = !!(row.grant && !row.paidAt);
       const months = Number(row.grantMonths) || 0;
       const waived = activeGrant && (months === 6 || months === 12) && Number(row.list_minor) > 0
-        ? moneyNow((Number(row.list_minor) / 100) * months) : '';
+        ? moneyIn(minorToMajor(row.list_minor, row.list_currency) * months, row.list_currency || opCode()) : '';
       const canGrant = row.status === 'accepted' && !row.grant && !row.paidAt;
       return '<div class="card" data-known="' + escapeHtml(row.uid) + '">'
         + '<div class="who">' + escapeHtml(row.name || row.uid) + ' · ' + escapeHtml(row.status || '') + (activeGrant ? ' · grant' : '') + '</div>'
@@ -3681,8 +3741,13 @@
     }
 
     if (tab === 'safety') {
-      el.innerHTML = '<p class="sub">Loading the safety queue…</p>';
-      loadSafetyCentre(el);
+      /* 29h: a live refresh used to blank this to "Loading…", refetch, and
+         drop the search, the filters and your place. Now the page stays as
+         it is while the new queue loads, the search is kept, and the queue
+         is fetched at most every 20 seconds unless you ask. */
+      if (!el.querySelector('#safeQ')) el.innerHTML = '<p class="sub">Loading the safety queue…</p>';
+      const fresh = !__tabCache.safetyAt || (Date.now() - __tabCache.safetyAt > 20000);
+      if (fresh || !el.querySelector('#safeQ')) loadSafetyCentre(el, __tabCache.safetyQuery || '');
       return;
     }
 
@@ -3776,6 +3841,7 @@
     if (tab === 'money') {
       const inputs = readCostInputs();
       const raw = d._raw || {};
+      try { if (Data && Data.applyCostRates) Data.applyCostRates(raw.costRates && raw.costRates.rates); } catch (_) {}
       const costs = (Data && Data.estimateCosts)
         ? Data.estimateCosts(Object.assign({}, raw, { now: d.now, zone: d.zone, costInputs: inputs }))
         : (d.costs || {});
@@ -3901,6 +3967,7 @@
       } catch (_) {}
       wireCurrencySelect('opCurrency');
       wirePricesCard();
+      try { el.insertAdjacentHTML('beforeend', costModelCardHtml(raw)); wireCostModel(d); } catch (_) {}
       if ($('costBtn')) $('costBtn').onclick = function () {
         const next = {
           invoiceAed: toAedField(($('costInvoice') && $('costInvoice').value) || 0),
@@ -3962,7 +4029,8 @@
         }));
       if (tab === 'visitors') {
         el.innerHTML =
-          card('Which page did they land on?',
+          sitePeriodCardHtml()
+          + card('Which page did they land on?',
             kpis([['Visits today', site.today || 0], ['On the site now', site.live || 0], ['Unique today', site.uniques_today || 0]])
             + bars(site.land || site.paths, 12))
           + card('Where did they come from?',
@@ -3973,6 +4041,7 @@
           + card('What pages before leaving?',
             bars(site.journeys, 12) + bars(site.exit, 8))
           + card('Latest visits', recentTable);
+        wireSitePeriod(el);
         return;
       }
       if (tab === 'reach') {
@@ -4035,7 +4104,11 @@
             (site.days || []).slice(0, 31).map(function (row) {
               return [row.id || '', Number(row.visits) || 0, Number(row.appOpens || row.openApp) || 0, dur(row.ms || 0)];
             })))
-        + card('Latest visits', recentTable);
+        + card('Latest visits', recentTable)
+        + sitePeriodCardHtml()
+        + siteKeepCardHtml();
+      wireSitePeriod(el);
+      wireSiteKeep(el);
       return;
     }
 
@@ -4792,6 +4865,188 @@
     });
   }
 
+  /* ---------------- 29h: website history ----------------
+     Look back at any day, month, year or span. Totals come from the daily
+     roll-ups (siteDays, one small document a day); unique visitors come from
+     the visits themselves (siteSessions). Website data is kept for the time
+     set below (2 years unless you change it); older visits are tidied away. */
+  function ymdOf(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function sitePeriodRange(spec) {
+    const now = new Date();
+    let a, b;
+    if (spec.mode === 'day' && spec.day) { a = new Date(spec.day + 'T00:00:00'); b = new Date(a.getTime()); }
+    else if (spec.mode === 'month' && spec.month) { const p = spec.month.split('-'); a = new Date(+p[0], +p[1] - 1, 1); b = new Date(+p[0], +p[1], 0); }
+    else if (spec.mode === 'year' && spec.year) { a = new Date(+spec.year, 0, 1); b = new Date(+spec.year, 11, 31); }
+    else if (spec.mode === 'span' && spec.from && spec.to) { a = new Date(spec.from + 'T00:00:00'); b = new Date(spec.to + 'T00:00:00'); }
+    else if (spec.mode === 'back' && spec.back) { const n = Math.max(1, Math.min(24, Number(spec.back) || 1)); a = new Date(now.getFullYear(), now.getMonth() - n, 1); b = new Date(now.getFullYear(), now.getMonth() - n + 1, 0); }
+    if (!a || !b || isNaN(a) || isNaN(b)) return null;
+    if (b < a) { const t = a; a = b; b = t; }
+    return { from: ymdOf(a), to: ymdOf(b), ms0: a.getTime(), ms1: b.getTime() + 86400000 };
+  }
+  function sitePeriodCardHtml() {
+    const sp = __tabCache.sitePeriod || { mode: 'month' };
+    const now = new Date();
+    const years = [];
+    for (let y = now.getFullYear(); y >= now.getFullYear() - 2; y--) years.push(y);
+    const opt = function (v, t) { return '<option value="' + v + '"' + (sp.mode === v ? ' selected' : '') + '>' + t + '</option>'; };
+    return '<div class="card" id="sitePeriodCard"><div class="who">Look back</div>'
+      + '<p class="sub">Pick a day, a month, a year, a span of dates, or “months ago”. Visitors from two months ago: choose Months ago → 2.</p>'
+      + '<div class="row" style="flex-wrap:wrap;gap:8px;">'
+      + '<select id="spMode">' + opt('day', 'A day') + opt('month', 'A month') + opt('year', 'A year') + opt('span', 'From – to') + opt('back', 'Months ago') + '</select>'
+      + '<input id="spDay" type="date" value="' + escapeHtml(sp.day || ymdOf(now)) + '" />'
+      + '<input id="spMonth" type="month" value="' + escapeHtml(sp.month || ymdOf(now).slice(0, 7)) + '" />'
+      + '<select id="spYear">' + years.map(function (y) { return '<option' + (String(sp.year) === String(y) ? ' selected' : '') + '>' + y + '</option>'; }).join('') + '</select>'
+      + '<input id="spFrom" type="date" value="' + escapeHtml(sp.from || '') + '" /><input id="spTo" type="date" value="' + escapeHtml(sp.to || '') + '" />'
+      + '<input id="spBack" type="number" min="1" max="24" value="' + escapeHtml(String(sp.back || 2)) + '" style="width:80px;" />'
+      + '<button type="button" class="primary" id="spGo">Show</button></div>'
+      + '<div id="sitePeriodOut">' + (__tabCache.sitePeriodHtml || '') + '</div></div>';
+  }
+  function sitePeriodShowInputs(el) {
+    const mode = (el.querySelector('#spMode') || {}).value || 'month';
+    const show = { spDay: mode === 'day', spMonth: mode === 'month', spYear: mode === 'year', spFrom: mode === 'span', spTo: mode === 'span', spBack: mode === 'back' };
+    Object.keys(show).forEach(function (id) { const x = el.querySelector('#' + id); if (x) x.style.display = show[id] ? '' : 'none'; });
+  }
+  function wireSitePeriod(el) {
+    const mode = el.querySelector('#spMode');
+    if (!mode) return;
+    sitePeriodShowInputs(el);
+    mode.onchange = function () { sitePeriodShowInputs(el); };
+    const go = el.querySelector('#spGo');
+    if (go) go.onclick = function () {
+      const v = function (id) { const x = el.querySelector('#' + id); return x ? x.value : ''; };
+      const spec = { mode: v('spMode'), day: v('spDay'), month: v('spMonth'), year: v('spYear'), from: v('spFrom'), to: v('spTo'), back: v('spBack') };
+      __tabCache.sitePeriod = spec;
+      runSitePeriod(spec, el);
+    };
+  }
+  async function runSitePeriod(spec, el) {
+    const out = el.querySelector('#sitePeriodOut');
+    const r = sitePeriodRange(spec);
+    if (!out) return;
+    if (!r) { out.innerHTML = '<p class="sub">Pick the dates first.</p>'; return; }
+    out.innerHTML = '<p class="sub">Reading ' + escapeHtml(r.from) + (r.to !== r.from ? ' to ' + escapeHtml(r.to) : '') + '…</p>';
+    const db = adminDb();
+    if (!db) { out.innerHTML = '<p class="sub">Database is not ready.</p>'; return; }
+    const days = [];
+    const sessions = [];
+    let capped = false;
+    try {
+      const FP = firebase.firestore.FieldPath.documentId();
+      const ds = await db.collection('siteDays').where(FP, '>=', r.from).where(FP, '<=', r.to).get();
+      ds.forEach(function (d) { days.push(Object.assign({ id: d.id }, d.data() || {})); });
+    } catch (e) { out.innerHTML = '<p class="sub">' + escapeHtml((e && e.message) || 'Could not read the daily totals') + '</p>'; return; }
+    try {
+      const ss = await db.collection('siteSessions').where('startedAt', '>=', r.ms0).where('startedAt', '<', r.ms1).orderBy('startedAt').limit(5000).get();
+      ss.forEach(function (d) { sessions.push(d.data() || {}); });
+      capped = sessions.length >= 5000;
+    } catch (_) {}
+    const n = function (x) { return Number(x) || 0; };
+    const sum = function (k) { return days.reduce(function (a, d) { return a + n(d[k]); }, 0); };
+    const merge = function (k) {
+      const m = {};
+      days.forEach(function (d) { const o = d[k] || {}; Object.keys(o).forEach(function (x) { m[x] = (m[x] || 0) + n(o[x]); }); });
+      return Object.keys(m).map(function (x) { return { label: x.replace(/_/g, '.'), n: m[x] }; }).sort(function (a, b) { return b.n - a.n; });
+    };
+    const web = sessions.filter(function (x) { return String(x.kind || 'web') !== 'app' && !x.bot && !x.self; });
+    const uniq = {};
+    web.forEach(function (x) { if (x.vid) uniq[x.vid] = 1; });
+    const span = Math.round((r.ms1 - r.ms0) / 86400000);
+    const byDay = {};
+    days.forEach(function (d) { const key = span > 62 ? String(d.id).slice(0, 7) : String(d.id); byDay[key] = (byDay[key] || 0) + n(d.visits); });
+    const trend = Object.keys(byDay).sort().map(function (k) { return { label: k, n: byDay[k] }; });
+    const html = '<p class="sub"><strong>' + escapeHtml(r.from) + (r.to !== r.from ? ' to ' + escapeHtml(r.to) : '') + '</strong></p>'
+      + kpis([['Visits', sum('visits')], ['New visitors', sum('uniques')], ['Unique visitors', Object.keys(uniq).length + (capped ? '+' : '')],
+        ['App opens', sum('appOpens') + sum('openApp')], ['Time on site', dur(sum('ms'))], ['Days with visits', days.filter(function (d) { return n(d.visits) > 0; }).length]])
+      + (days.length ? '' : '<p class="sub">No website data for these dates.</p>')
+      + '<div class="who" style="margin-top:10px;">' + (span > 62 ? 'Visits by month' : 'Visits by day') + '</div>' + bars(trend, 62)
+      + '<div class="who" style="margin-top:10px;">Countries</div>' + bars(merge('countries'), 12)
+      + '<div class="who" style="margin-top:10px;">Where they came from</div>' + bars(merge('sources'), 10)
+      + '<div class="who" style="margin-top:10px;">Pages they landed on</div>' + bars(merge('paths'), 10)
+      + '<div class="who" style="margin-top:10px;">Devices</div>' + bars(merge('devices'), 6)
+      + (capped ? '<p class="sub">Unique visitors counted from the first 5,000 visits in this span.</p>' : '');
+    __tabCache.sitePeriodHtml = html;
+    out.innerHTML = html;
+  }
+  /* How long website data is kept: economyConfig/siteRetention.months, 24 unless changed. */
+  function siteKeepCardHtml() {
+    return card('How long website data is kept',
+      '<p class="sub">Visits and daily totals are kept for this many months, then tidied away. The console tidies once a day when it is open.</p>'
+      + '<label for="siteKeepMonths">Keep website data for (months)</label>'
+      + '<input id="siteKeepMonths" type="number" min="1" max="120" placeholder="24" />'
+      + '<div class="row"><button type="button" class="primary" id="siteKeepSave">Save</button> <button type="button" class="ghost" id="siteKeepTidy">Tidy now</button></div>'
+      + '<p class="sub" id="siteKeepNow"></p>');
+  }
+  async function siteKeepMonths() {
+    const db = adminDb();
+    try {
+      const s = db ? await db.collection('economyConfig').doc('siteRetention').get() : null;
+      const m = s && s.exists ? Number((s.data() || {}).months) : NaN;
+      return isFinite(m) && m >= 1 ? Math.min(120, Math.round(m)) : 24;
+    } catch (_) { return 24; }
+  }
+  async function tidySiteData(say) {
+    const db = adminDb();
+    if (!db) return 0;
+    const months = await siteKeepMonths();
+    const cut = new Date(); cut.setMonth(cut.getMonth() - months);
+    const cutMs = cut.getTime(), cutYmd = ymdOf(cut);
+    let removed = 0;
+    for (let round = 0; round < 10; round++) {
+      const old = await db.collection('siteSessions').where('startedAt', '<', cutMs).limit(400).get().catch(function () { return null; });
+      if (!old || old.empty) break;
+      const batch = db.batch();
+      old.forEach(function (d) { batch.delete(d.ref); });
+      await batch.commit();
+      removed += old.size;
+    }
+    try {
+      const FP = firebase.firestore.FieldPath.documentId();
+      const oldDays = await db.collection('siteDays').where(FP, '<', cutYmd).limit(400).get();
+      if (!oldDays.empty) {
+        const batch = db.batch();
+        oldDays.forEach(function (d) { batch.delete(d.ref); });
+        await batch.commit();
+        removed += oldDays.size;
+      }
+    } catch (_) {}
+    try { localStorage.setItem('nalunoSiteTidyDay', ymdOf(new Date())); } catch (_) {}
+    if (say) say('Kept ' + months + ' months. Removed ' + removed + ' older record' + (removed === 1 ? '' : 's') + '.');
+    return removed;
+  }
+  function wireSiteKeep(el) {
+    const box = el.querySelector('#siteKeepMonths');
+    const now = el.querySelector('#siteKeepNow');
+    if (!box) return;
+    siteKeepMonths().then(function (m) { if (document.activeElement !== box) { box.value = String(m); box.defaultValue = String(m); } if (now && !now.textContent) now.textContent = 'Now: ' + m + ' months.'; });
+    const save = el.querySelector('#siteKeepSave');
+    if (save) save.onclick = async function () {
+      let m = Math.round(Number(box.value));
+      if (!isFinite(m) || m < 1) m = 24;
+      m = Math.min(120, m);
+      const db = adminDb();
+      if (!db) return;
+      try {
+        await db.collection('economyConfig').doc('siteRetention').set({ months: m, updatedAt: Date.now(), updatedBy: currentUser && currentUser.uid }, { merge: true });
+        await writeAudit('site-retention', 'siteRetention', m + ' months');
+        box.value = String(m);
+        box.defaultValue = String(m);
+        if (now) now.textContent = 'Now: ' + m + ' months.';
+        toast('Saved');
+      } catch (e) { toast((e && e.message) || 'Could not save'); }
+    };
+    const tidy = el.querySelector('#siteKeepTidy');
+    if (tidy) tidy.onclick = function () {
+      tidy.disabled = true;
+      tidySiteData(function (t) { if (now) now.textContent = t; }).catch(function (e) { toast((e && e.message) || 'Could not tidy'); }).then(function () { tidy.disabled = false; });
+    };
+  }
+  function maybeTidySiteDaily() {
+    try { if (localStorage.getItem('nalunoSiteTidyDay') === ymdOf(new Date())) return; } catch (_) {}
+    setTimeout(function () { tidySiteData(null).catch(function () {}); }, 20000);
+  }
+
   /* 29g: Naluno's share of Support paid straight to a creator. Unset = none. */
   function wireSupportFee() {
     const db = adminDb();
@@ -4818,6 +5073,52 @@
         toast((e && e.message) || 'Could not save');
       }
     };
+  }
+
+  /* 29h: every figure the cost model uses is shown here and can be changed.
+     Vendor prices are in US dollars because that is what the vendors bill;
+     the model converts them to the operating currency at the running rate. */
+  function costModelCardHtml(raw) {
+    if (!Data || !Data.COST_EDITABLE) return '';
+    const saved = (raw && raw.costRates && raw.costRates.rates) || {};
+    const rows = Data.COST_EDITABLE.map(function (r) {
+      const key = r[0];
+      const cur = Data.COST_RATES[key];
+      const isSet = saved[key] != null && isFinite(Number(saved[key]));
+      return '<label for="cm_' + key + '">' + escapeHtml(r[1]) + (isSet ? '' : ' <span class="sub">(list price, not yet set by you)</span>') + '</label>'
+        + '<input id="cm_' + key + '" data-cm="' + key + '" inputmode="decimal" value="' + escapeHtml(String(cur)) + '" />';
+    }).join('');
+    return card('Cost model — the figures it uses (editable)',
+      '<p class="sub">The monthly cost estimate above is worked out from these. Change any of them to match your real bills. Money figures are what the vendor charges, in US dollars, converted to ' + escapeHtml(opCode()) + ' at today’s rate.</p>'
+      + rows
+      + '<div class="row"><button type="button" class="primary" id="cmSave">Save the cost figures</button> <button type="button" class="ghost" id="cmReset">Back to list prices</button></div>'
+      + '<p class="sub" id="cmMsg"></p>');
+  }
+  function wireCostModel(d) {
+    const db = adminDb();
+    const save = $('cmSave');
+    const reset = $('cmReset');
+    const msg = $('cmMsg');
+    const write = async function (rates) {
+      if (!db) return;
+      try {
+        await db.collection('economyConfig').doc('costRates').set({ rates: rates, updatedAt: Date.now(), updatedBy: currentUser && currentUser.uid });
+        await writeAudit('cost-rates', 'costRates', Object.keys(rates).length + ' figures');
+        if (d && d._raw) d._raw.costRates = { rates: rates };
+        if (msg) msg.textContent = 'Saved. The estimate uses these now.';
+        toast('Saved');
+        renderTab('money', d);
+      } catch (e) { toast((e && e.message) || 'Could not save'); }
+    };
+    if (save) save.onclick = function () {
+      const rates = {};
+      document.querySelectorAll('[data-cm]').forEach(function (inp) {
+        const v = Number(String(inp.value || '').replace(/,/g, ''));
+        if (isFinite(v) && v >= 0) rates[inp.getAttribute('data-cm')] = v;
+      });
+      write(rates);
+    };
+    if (reset) reset.onclick = function () { write({}); };
   }
 
   /* 29g: the view rule lives in economyConfig/viewRules; the worker reads it. */
@@ -5182,7 +5483,7 @@
     }
     try {
       await db.collection('deskAds').doc(id).set(patch, { merge: true });
-      await writeAudit('ad-paid', id, String(Math.round(paidAed * 100) / 100) + ' AED');
+      await writeAudit('ad-paid', id, opFixed(toOp(paidAed, 'AED')) + ' ' + opCode());
       toast(spent ? 'Prepaid saved. Used up — paused.' : 'Prepaid saved');
       try { if (inp) inp.blur(); } catch (_) {}
       loadTab('ads', false);
@@ -5450,6 +5751,7 @@
     };
   }
   async function loadSafetyCentre(el, query) {
+    __tabCache.safetyAt = Date.now();
     const rank = { URGENT: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
     let cases = [];
     let audit = [];
@@ -5533,11 +5835,12 @@
       + (workerNote ? '<p class="sub">' + escapeHtml(workerNote) + '</p>' : '')
       + '<div class="card"><div class="who">Find a case</div>'
       + '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">'
-      + '<input id="safeQ" placeholder="Case, content, account, or report id" style="flex:1;min-width:180px;padding:8px 10px;">'
+      + '<input id="safeQ" data-keep="safeQ" placeholder="Case, content, account, or report id" style="flex:1;min-width:180px;padding:8px 10px;">'
       + '<select id="safeStatus" style="padding:8px;"><option value="">Any status</option><option value="open">Open</option><option value="review">Appeal / review</option><option value="decided">Decided</option></select>'
       + '<select id="safePriority" style="padding:8px;"><option value="">Any priority</option><option>URGENT</option><option>HIGH</option><option>MEDIUM</option><option>LOW</option></select>'
       + '<button type="button" class="ghost" id="safeSearch">Search</button>'
-      + '</div></div>'
+      + (query ? '<button type="button" class="ghost" id="safeClear">Show everything</button>' : '')
+      + '</div>' + (query ? '<p class="sub">Showing your search. It stays until you tap Show everything.</p>' : '') + '</div>'
       + kpis([
         ['Reports today', overview.reports_today],
         ['Open', overview.open_cases],
@@ -5582,6 +5885,18 @@
           return [when(a.when), String(a.who || '').slice(0, 10), a.what || '', String(a.why || '').slice(0, 60), a.human_reviewed ? 'yes' : 'no'];
         }))
         : '<p class="sub">No audit rows yet.</p>');
+    try {
+      const f = __tabCache.safetyFields || {};
+      if (el.querySelector('#safeQ')) el.querySelector('#safeQ').value = f.q || '';
+      if (el.querySelector('#safeStatus')) el.querySelector('#safeStatus').value = f.status || '';
+      if (el.querySelector('#safePriority')) el.querySelector('#safePriority').value = f.priority || '';
+    } catch (_) {}
+    const clearBtn = el.querySelector('#safeClear');
+    if (clearBtn) clearBtn.onclick = function () {
+      __tabCache.safetyQuery = '';
+      __tabCache.safetyFields = {};
+      loadSafetyCentre(el, '');
+    };
     const searchBtn = el.querySelector('#safeSearch');
     if (searchBtn) searchBtn.onclick = function () {
       const q = (el.querySelector('#safeQ').value || '').trim();
@@ -5591,7 +5906,9 @@
       if (q) parts.push('q=' + encodeURIComponent(q));
       if (status) parts.push('status=' + encodeURIComponent(status));
       if (priority) parts.push('priority=' + encodeURIComponent(priority));
-      loadSafetyCentre(el, parts.join('&'));
+      __tabCache.safetyQuery = parts.join('&');
+      __tabCache.safetyFields = { q: q, status: status, priority: priority };
+      loadSafetyCentre(el, __tabCache.safetyQuery);
     };
     el.querySelectorAll('.admSafe').forEach(function (btn) {
       btn.onclick = function () { decideSafetyCase(btn.getAttribute('data-id'), btn.getAttribute('data-a'), el); };
@@ -5802,7 +6119,7 @@
       if (C) {
         C.listen(adminDb());
         seedPriceBookOnce();
-        C.fetchLive(false).then(function () { try { C.publishRates(adminDb()); } catch (_) {} });
+        C.fetchLive(true).then(function () { try { C.publishRates(adminDb()); } catch (_) {} });
       }
     } catch (_) {}
     const nav = $('adminTabs');

@@ -179,9 +179,12 @@
         profile = Object.assign(Engine.blankViewer(), snap.data() || {});
         saveLocal();
       }).catch(function () {});
-      fbDb.collection('discoveryConfig').doc('live').get().then(function (snap) {
-        if (snap && snap.exists) config = Object.assign(config, snap.data() || {});
-      }).catch(function () {});
+      /* 29h: follows the console live instead of one read per session. */
+      if (!pullProfile._cfg) {
+        pullProfile._cfg = fbDb.collection('discoveryConfig').doc('live').onSnapshot(function (snap) {
+          if (snap && snap.exists) config = Object.assign(config, snap.data() || {});
+        }, function () { pullProfile._cfg = null; setTimeout(pullProfile, 5000); });
+      }
     } catch (_) {}
   }
 
@@ -411,13 +414,23 @@
       noteWatch(id, v.currentTime || 0, v.duration);
     } catch (_) {}
   }, 2000);
+  /* It used to read once, 1.5 s after load, and skip for the whole session
+     if sign-in was not ready by then. */
+  function pullWhenSignedIn() {
+    let n = 0;
+    const t = setInterval(function () {
+      n++;
+      if (typeof currentUser !== 'undefined' && currentUser && typeof fbDb !== 'undefined' && fbDb) { clearInterval(t); pullProfile(); }
+      else if (n > 600) clearInterval(t);
+    }, 1000);
+  }
   document.addEventListener('DOMContentLoaded', function () {
     bind();
-    setTimeout(pullProfile, 1500);
+    pullWhenSignedIn();
   });
   if (document.readyState !== 'loading') {
     bind();
-    setTimeout(pullProfile, 1500);
+    pullWhenSignedIn();
   }
 
   const prevOpen = window.openBroadcastById;

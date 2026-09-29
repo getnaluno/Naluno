@@ -279,17 +279,23 @@
     __viewCompleteSec = clampViewSec(n);
     return __viewCompleteSec;
   }
+  /* 29h: the rate card follows the console live (it was read once at
+     sign-in, so a change waited for a reload). */
+  let __ratesUnsub = null;
   function loadAdRates() {
     const db = (typeof fbDb !== 'undefined' && fbDb) ? fbDb : null;
-    if (!db) return;
+    if (!db || __ratesUnsub) return;
     try {
-      db.collection('economyConfig').doc('adRates').get().then(function (s) {
+      __ratesUnsub = db.collection('economyConfig').doc('adRates').onSnapshot(function (s) {
         if (!s || !s.exists) return;
         const d = s.data() || {};
         __viewCompleteSec = clampViewSec(d.viewCompleteSec);
         try { window.nalunoAdRates = d; } catch (_) {}
-      }).catch(function () {});
-    } catch (_) {}
+      }, function () {
+        __ratesUnsub = null;
+        setTimeout(loadAdRates, 5000);
+      });
+    } catch (_) { __ratesUnsub = null; }
   }
   function disarmViewComplete() {
     if (__viewTimer) {
@@ -765,7 +771,11 @@
           const rows = [];
           snap.forEach(function (d) { rows.push(Object.assign({ id: d.id }, d.data() || {})); });
           applyDocs(rows);
-        }, function () {});
+        }, function () {
+          /* 29h: a listener that failed once stayed dead; subscribe again. */
+          __unsub = null;
+          setTimeout(listen, 5000);
+        });
     } catch (_) {}
   }
 
@@ -1051,9 +1061,11 @@
     if (pay) { pay.hidden = false; try { pay.scrollTop = 0; } catch (_) {} }
     if (typeof toast === 'function') toast('Ad saved');
     const shown = adFromAed(paidAed);
-    const pretty = (Math.round(shown * 100) / 100).toFixed(2);
+    /* 29h: shown in the running currency's own decimal places (UGX has none). */
+    const C = (typeof NalunoCurrency !== 'undefined') ? NalunoCurrency : null;
+    const pretty = (C && C.formatMajor) ? C.formatMajor(shown, adMoneyCode()) : (shown + ' ' + adMoneyCode());
     const line = document.getElementById('crAdPayAmount');
-    if (line) line.textContent = paidAed > 0 ? (pretty + ' ' + adMoneyCode()) : '';
+    if (line) line.textContent = paidAed > 0 ? pretty : '';
     const note = document.getElementById('crAdPayNote');
     if (note) note.textContent = 'Your ad awaits a review. Once confirmed it will go live.';
     const payNow = document.getElementById('crAdPayNow');
@@ -1083,7 +1095,7 @@
             /* Paid in the running currency. The worker converts the AED
                book at the running rate and charges that — this number is
                only what the screen showed. */
-            amount_major: Math.round(adFromAed(paidAed) * 100) / 100,
+            amount_major: (function () { const d = (C && C.digits) ? C.digits(adMoneyCode()) : 2; const f = Math.pow(10, d); return Math.round(adFromAed(paidAed) * f) / f; })(),
             currency: adMoneyCode(),
             idempotency_key: 'ad_' + (adId || (sheet && sheet.dataset.mailId) || bid) + '_' + Date.now(),
           });

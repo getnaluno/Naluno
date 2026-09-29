@@ -411,8 +411,13 @@
     return out;
   }
 
+  /* 29h: when the Control Centre has published rates (economyConfig/fxRates,
+     the same rates the payment worker charges with), the app shows those and
+     does not overwrite them with its own fetch every 10 minutes. */
+  let __publishedAt = 0;
   function fetchLive(force) {
     if (__fetching) return Promise.resolve(__rates);
+    if (!force && __publishedAt && (Date.now() - __publishedAt < 36 * 60 * 60 * 1000)) return Promise.resolve(__rates);
     if (!force && __fetchedAt && (Date.now() - __fetchedAt < FX_TTL_MS) && __source === 'live') {
       return Promise.resolve(__rates);
     }
@@ -597,7 +602,10 @@
       db.collection('economyConfig').doc('fxRates').onSnapshot(function (snap) {
         if (!snap || !snap.exists) return;
         const d = snap.data() || {};
-        if (d.rates) applyRates(d.rates, { source: 'live', fetchedAt: d.fetchedAt || Date.now() });
+        if (d.rates) {
+          __publishedAt = Number(d.fetchedAt) || Date.now();
+          applyRates(d.rates, { source: 'live', fetchedAt: d.fetchedAt || Date.now() });
+        }
       }, function () {});
     } catch (_) {}
   }

@@ -1731,6 +1731,12 @@ async function nalunoScreenSignalSegments(segs){
       seen.set(file, verdict || { decision: 'unread' });
       verdict = seen.get(file);
     }
+    /* 29h: a picture Screen could not read stays private until checked. */
+    if(!verdict.decision || verdict.decision === 'unread'){
+      seg.held = true;
+      seg.heldReason = 'unread';
+      continue;
+    }
     if(verdict.decision === 'block') return { blocked: verdict };
     if(verdict.decision === 'hold'){
       seg.held = true;
@@ -2001,12 +2007,23 @@ $('postBroadcastBtn').onclick = async ()=>{
       doneMsg: 'Broadcast published',
       run: async (progress)=>{
         let mediaType = 'text', mediaUrl = null, thumbUrl = null, filterCss = '';
+        let screenRep = null;
         if(snapType === 'text'){
           mediaType = 'text';
         } else if(snapItems.length){
           const item = snapItems[0];
           mediaType = item.kind;
           filterCss = item.filterCss || '';
+          /* 29h: this route published photos and videos without Screen at
+             all. Same check as every other way a picture goes out. */
+          {
+            const f = item.sourceFile || item.videoBlob || (item.dataUrl ? await (await fetch(item.dataUrl)).blob() : null);
+            if(progress) progress('Screen is reading this…');
+            screenRep = await nalunoStrictVerdict(f && typeof runNalunoScreen === 'function' ? runNalunoScreen(f, finalTitle, item.duration || 0) : null);
+            if(screenRep.decision === 'block'){
+              throw new Error('Not posted.' + (screenRep.reasonText ? ' It shows ' + screenRep.reasonText + '.' : '') + ' Swimwear, lingerie and shirtless photos are fine \u2014 exposed genitals, exposed female breasts, nudity and sexual acts are not.');
+            }
+          }
           if(progress) progress('Uploading…');
           if(item.kind === 'video'){
             const blob = item.videoBlob || item.sourceFile || (item.dataUrl ? await (await fetch(item.dataUrl)).blob() : null);
@@ -2024,6 +2041,7 @@ $('postBroadcastBtn').onclick = async ()=>{
         if(progress) progress('Saving Broadcast…');
         const b = await createPermanentBroadcast({
           title: finalTitle, description: desc, tags, mediaType, mediaUrl, thumbUrl, filterCss,
+          screen: screenRep || (mediaType === 'text' ? { decision: 'allow', engine: 'text' } : null),
         });
         if(typeof loadFeedBroadcasts === 'function') await loadFeedBroadcasts();
         if(typeof openBroadcastById === 'function') openBroadcastById(b.id);

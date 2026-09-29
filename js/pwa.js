@@ -35,14 +35,17 @@ if('serviceWorker' in navigator){
       if(reloaded) return;
       if(busyNow()){ setTimeout(reloadWhenFree, 4000); return; }
       reloaded = true;
-      try{ sessionStorage.setItem('nalunoSwReload', '20260926k'); }catch(_){}
-      location.reload();
+      /* 29h: one shared reload (core.js). The Update banner may already be
+         reloading for this same update; this must not add a second one. */
+      if(typeof nalunoReloadOnce === 'function') nalunoReloadOnce();
+      else location.reload();
     };
     navigator.serviceWorker.addEventListener('controllerchange', function(){
       if(reloaded) return;
       /* First visit: nothing old is on screen, so there is nothing to swap. */
       if(!hadController) return;
-      try{ if(sessionStorage.getItem('nalunoSwReload') === '20260926k') return; }catch(_){}
+      /* The banner handles its own update (it waits for this takeover). */
+      try{ const b = document.getElementById('updateBannerBtn'); if(b && b.disabled) return; }catch(_){}
       reloadWhenFree();
     });
   }catch(_){}

@@ -3381,3 +3381,38 @@ pip.addEventListener('pointercancel', endPipDrag); // otherwise a hijacked gestu
   else bind();
   setTimeout(bind, 2000);
 })();
+
+/* 29h — the other person looked zoomed in ("too close to the screen").
+   Measured: the call screen fills the phone with object-fit: cover. A camera
+   frame that is wider than the screen is cut down to fit: a portrait phone
+   frame (9:16) on a 9:19.5 screen keeps 82% of its width, but a landscape
+   frame (16:9, which is what the call asks the camera for) keeps only 26% —
+   a face-filling close-up. Now the picture fills the screen only while at
+   least NALUNO_REMOTE_MIN_SHOWN of it stays visible; otherwise the whole
+   frame is shown (fit), on the dark call background. */
+const NALUNO_REMOTE_MIN_SHOWN = 0.75;
+function nalunoFitRemoteVideo(){
+  const v = document.getElementById('remoteVideo');
+  if(!v || !v.videoWidth || !v.videoHeight) return;
+  const r = v.getBoundingClientRect();
+  if(r.width < 2 || r.height < 2) return;
+  const s = Math.max(r.width / v.videoWidth, r.height / v.videoHeight);
+  const shown = Math.min(r.width / (v.videoWidth * s), r.height / (v.videoHeight * s));
+  const fit = shown < NALUNO_REMOTE_MIN_SHOWN ? 'contain' : 'cover';
+  if(v.style.objectFit !== fit) v.style.setProperty('object-fit', fit, 'important');
+  v.dataset.nalunoFit = fit;
+}
+(function wireRemoteFit(){
+  function bind(){
+    const v = document.getElementById('remoteVideo');
+    if(!v || v.dataset.nalunoFitWired) return;
+    v.dataset.nalunoFitWired = '1';
+    ['loadedmetadata', 'resize', 'playing'].forEach(function(ev){ v.addEventListener(ev, nalunoFitRemoteVideo); });
+    window.addEventListener('resize', nalunoFitRemoteVideo);
+    window.addEventListener('orientationchange', function(){ setTimeout(nalunoFitRemoteVideo, 300); });
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
+  else bind();
+  setTimeout(bind, 2000);
+})();
+window.nalunoFitRemoteVideo = nalunoFitRemoteVideo;

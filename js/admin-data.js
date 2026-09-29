@@ -301,8 +301,47 @@
     const C = fx();
     return (C && C.code && C.code()) || COST_RATES.currency || 'AED';
   }
+  /* 29h: the running rate, not a number in the code (3.6725 stays only as
+     the last resort when no rate is loaded at all). */
   function usdAed(usd) {
+    const C = fx();
+    if (C && C.convert) {
+      const v = C.convert(num(usd), 'USD', 'AED');
+      if (isFinite(v)) return v;
+    }
     return num(usd) * COST_RATES.usd_to_aed;
+  }
+  /* The cost model's vendor prices and assumptions, editable in the Control
+     Centre (Money → Cost model), saved in economyConfig/costRates.rates. */
+  const COST_DEFAULTS = Object.assign({}, COST_RATES);
+  const COST_EDITABLE = [
+    ['r2_storage_gb_month_usd', 'R2 storage, per GB-month (USD)', true],
+    ['r2_class_a_million_usd', 'R2 writes (class A), per million (USD)', true],
+    ['r2_class_b_million_usd', 'R2 reads (class B), per million (USD)', true],
+    ['firestore_storage_gb_month_usd', 'Firestore storage, per GB-month (USD)', true],
+    ['firestore_read_100k_usd', 'Firestore reads, per 100,000 (USD)', true],
+    ['firestore_write_100k_usd', 'Firestore writes, per 100,000 (USD)', true],
+    ['workers_million_usd', 'Worker requests, per million (USD)', true],
+    ['turn_gb_usd', 'Call relay (TURN), per GB (USD)', true],
+    ['spark_reads_per_day', 'Firestore free reads per day', false],
+    ['spark_writes_per_day', 'Firestore free writes per day', false],
+    ['spark_firestore_storage_gb', 'Firestore free storage (GB)', false],
+    ['r2_free_storage_gb', 'R2 free storage (GB)', false],
+    ['r2_free_class_a', 'R2 free writes per month', false],
+    ['workers_free_per_day', 'Worker free requests per day', false],
+    ['video_bytes_per_sec', 'Video size, bytes per second', false],
+    ['photo_bytes', 'Photo size, bytes', false],
+    ['mau_reads_per_day', 'Reads per active person per day', false],
+    ['mau_writes_per_day', 'Writes per active person per day', false],
+  ];
+  function applyCostRates(overrides) {
+    Object.keys(COST_DEFAULTS).forEach(function (k) { COST_RATES[k] = COST_DEFAULTS[k]; });
+    if (!overrides || typeof overrides !== 'object') return COST_RATES;
+    COST_EDITABLE.forEach(function (row) {
+      const v = Number(overrides[row[0]]);
+      if (isFinite(v) && v >= 0) COST_RATES[row[0]] = v;
+    });
+    return COST_RATES;
   }
   function usdToOperating(usd) {
     const C = fx();
@@ -1853,6 +1892,9 @@
     reportTargetBroadcastId: reportTargetBroadcastId,
     money: money,
     COST_RATES: COST_RATES,
+    COST_DEFAULTS: COST_DEFAULTS,
+    COST_EDITABLE: COST_EDITABLE,
+    applyCostRates: applyCostRates,
     estimateCosts: estimateCosts,
     vendorBooks: vendorBooks,
     applyVendorMeters: applyVendorMeters,

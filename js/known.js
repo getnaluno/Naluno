@@ -251,6 +251,37 @@
       paintBeside(node, node.getAttribute('data-known-uid'));
     });
   }
+  /* 29h: the console's Known list is followed live, so a grant, a paid month
+     or a revoke shows on every name within seconds instead of after the
+     ten-minute cache. */
+  let liveUnsub = null;
+  function repaintUid(uid, on) {
+    try {
+      document.querySelectorAll('[data-known-uid]').forEach(function (el) {
+        if (String(el.getAttribute('data-known-uid')) === uid) put(el, uid, on);
+      });
+    } catch (_) {}
+  }
+  function followKnownLive() {
+    if (liveUnsub || typeof fbDb === 'undefined' || !fbDb || typeof currentUser === 'undefined' || !currentUser) return;
+    try {
+      liveUnsub = fbDb.collection('knownPublic').limit(1000).onSnapshot(function (snap) {
+        snap.docChanges().forEach(function (ch) {
+          const uid = ch.doc.id;
+          const d = ch.doc.data() || {};
+          const on = ch.type !== 'removed' && publicKnown(d);
+          remember(uid, on, d.until || d.paidUntil);
+          repaintUid(uid, on);
+        });
+      }, function () { liveUnsub = null; setTimeout(followKnownLive, 5000); });
+    } catch (_) { liveUnsub = null; }
+  }
+  if (typeof document !== 'undefined') {
+    const kick = setInterval(function () {
+      if (liveUnsub) { clearInterval(kick); return; }
+      followKnownLive();
+    }, 2000);
+  }
   /* A name element that was redrawn (or newly added) gets its mark back. */
   function watchNames() {
     if (typeof MutationObserver === 'undefined' || typeof document === 'undefined' || !document.body) return;

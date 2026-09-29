@@ -113,7 +113,8 @@
     const t = setInterval(function () {
       tries++;
       if (root.currentUser && root.fbDb) { clearInterval(t); start(); return; }
-      if (tries > 60) clearInterval(t);
+      /* 29h: kept trying for a minute, then never again that session. */
+      if (tries > 1800) clearInterval(t);
     }, 1000);
   })();
 

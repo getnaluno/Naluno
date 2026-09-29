@@ -264,12 +264,63 @@ async function checkForUpdate(){
     }
   }catch(e){ /* offline or blocked — just try again on the next interval */ }
 }
-$('updateBannerBtn').onclick = ()=>{
-  if('serviceWorker' in navigator){
-    navigator.serviceWorker.getRegistrations().then(regs => regs.forEach(r=>r.update())).catch(()=>{});
-  }
+/* 29h — one reload per update. The banner reloaded straight away, before
+   the new version had taken over; when it did take over a moment later,
+   pwa.js reloaded a second time. And a reload that came before the new
+   version was ready could bring the old page back, with the banner. Now
+   there is one reload, shared by both paths:
+   - the banner asks for the update and waits (up to 8 s) for the new
+     version to take over; that takeover is the one reload;
+   - the page on the phone is refreshed first, so even if the takeover never
+     comes the reload shows the new version;
+   - nalunoReloadOnce() refuses a second reload within 30 s. */
+function nalunoReloadOnce(force){
+  try{
+    const last = Number(sessionStorage.getItem('nalunoReloadAt') || 0);
+    if(!force && last && Date.now() - last < 30000) return false;
+    sessionStorage.setItem('nalunoReloadAt', String(Date.now()));
+  }catch(_){}
   location.reload();
-};
+  return true;
+}
+async function nalunoFreshShell(){
+  try{
+    if(typeof caches === 'undefined') return;
+    const names = (await caches.keys()).filter(function(n){ return n.indexOf('naluno-shell-') === 0; });
+    if(!names.length) return;
+    const res = await fetch('/app/index.html', { cache: 'reload' });
+    if(!res || !res.ok) return;
+    for(const n of names){
+      const c = await caches.open(n);
+      await c.put(new Request(location.origin + '/app/index.html'), res.clone());
+      await c.put(new Request(location.origin + '/app/'), res.clone());
+    }
+  }catch(_){}
+}
+async function nalunoUpdateNow(){
+  const btn = $('updateBannerBtn');
+  if(btn){ btn.disabled = true; btn.textContent = 'Updating…'; }
+  let tookOver = false;
+  try{
+    if('serviceWorker' in navigator){
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await new Promise(function(done){
+        let finished = false;
+        const end = function(){ if(!finished){ finished = true; done(); } };
+        navigator.serviceWorker.addEventListener('controllerchange', function(){ tookOver = true; end(); }, { once: true });
+        Promise.all(regs.map(function(r){ return r.update().catch(function(){}); })).then(function(){
+          const pending = regs.some(function(r){ return r.installing || r.waiting; });
+          if(!pending) end();
+        });
+        setTimeout(end, 8000);
+      });
+    }
+  }catch(_){}
+  await nalunoFreshShell();
+  nalunoReloadOnce(true);
+}
+window.nalunoReloadOnce = nalunoReloadOnce;
+$('updateBannerBtn').onclick = function(){ nalunoUpdateNow(); };
 setInterval(checkForUpdate, 3*60*1000);
 document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) checkForUpdate(); });
 setTimeout(checkForUpdate, 4000); // small delay so this isn't competing with the initial page load

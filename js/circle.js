@@ -190,8 +190,19 @@
      itself, after the same console-set seconds. */
   const VIEW_WORKER = 'https://naluno-economy.naluno.workers.dev';
   let viewSecCache = null;
+  /* 29h: follows the console setting live. */
+  let viewRulesUnsub = null;
   function consoleViewSec(){
-    if(viewSecCache && Date.now() - viewSecCache.at < 300000) return Promise.resolve(viewSecCache.sec);
+    if(!viewRulesUnsub && fbDb){
+      try{
+        viewRulesUnsub = fbDb.collection('economyConfig').doc('viewRules').onSnapshot(function(d){
+          let n = Math.round(Number(d && d.exists ? (d.data() || {}).countAfterSec : 0));
+          if(!isFinite(n) || n < 1) n = 4;
+          viewSecCache = { at: Date.now(), sec: Math.min(120, n) };
+        }, function(){ viewRulesUnsub = null; });
+      }catch(_){ viewRulesUnsub = null; }
+    }
+    if(viewSecCache) return Promise.resolve(viewSecCache.sec);
     if(!fbDb) return Promise.resolve(4);
     return fbDb.collection('economyConfig').doc('viewRules').get().then(function(d){
       let n = Math.round(Number(d && d.exists ? (d.data() || {}).countAfterSec : 0));
