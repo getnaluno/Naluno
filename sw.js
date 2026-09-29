@@ -71,8 +71,8 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v245';
-const APP_BUILD = '20260930a';
+const CACHE_NAME = 'naluno-shell-v246';
+const APP_BUILD = '20260930b';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -83,7 +83,7 @@ const CORE_ASSETS = [
   '/js/band-room.js', '/js/band-list.js', '/js/broadcast-core.js', '/js/broadcast-space.js',
   '/js/broadcast-live.js', '/js/live-preview.js', '/js/broadcast-composer.js', '/js/broadcast-upload.js',
   '/js/screen.js', '/js/origin.js', '/js/strand.js', '/js/circle.js',
-  '/js/discover-engine.js', '/js/discover.js', '/js/room-threads.js', '/js/pass-on.js', '/js/lg-speak.js', '/js/known.js',
+  '/js/discover-engine.js', '/js/discover.js', '/js/room-threads.js', '/js/pass-on.js', '/js/lg-speak.js', '/js/naluno-voices.js', '/js/naluno-voice-worker.js', '/js/naluno-voice-engine.js', '/js/known.js',
   '/js/signal-core.js', '/js/signal-ui.js', '/js/signal-social.js', '/js/live-sync.js', '/js/broadcast-offline.js',
   '/js/sfu-live.js', '/js/compass-brain.js', '/js/compass.js', '/js/linkify.js', '/js/weather.js', '/js/beacon.js', '/js/find.js', '/js/profile.js', '/js/notifications.js',
   '/js/ice-core.js', '/js/compat-lock.js', '/js/keep-alive.js', '/js/media-contain.js',
@@ -106,7 +106,7 @@ self.addEventListener('activate', event=>{
   self.clients.claim();
   event.waitUntil(
     caches.keys().then(names => Promise.all(
-      names.filter(n => n !== CACHE_NAME).map(n => caches.delete(n))
+      names.filter(n => n !== CACHE_NAME && n !== 'naluno-voices').map(n => caches.delete(n))
     ))
   );
 });
@@ -312,6 +312,11 @@ self.addEventListener('fetch', event=>{
      heuristic. Passed straight to the network; the browser's HTTP cache still
      keeps it, so it downloads once. */
   if(url.pathname.indexOf('/models/') === 0) return;
+  /* The on-device voices are ~40 MB (weights + wasm). The short timeout
+     below is for small app files and would cut the first download off.
+     The browser keeps them, and the page also stores a copy in the
+     naluno-voices cache, which activate does not delete. */
+  if(url.pathname.indexOf('/voices/') === 0) return;
 
   const path = url.pathname || '';
   const isAppCode = path.includes('/js/') || path.endsWith('.js') ||
