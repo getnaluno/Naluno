@@ -579,7 +579,8 @@ function renderBackgroundChips(){
 function chooseFilter(id, manual){
   if(!nalunoFilters[id]) return;
   selectedFilterId = id;
-  try{ if(typeof applyCallFilterNow === 'function') applyCallFilterNow(); }catch(_){}
+  // Picked by hand during a call: the other person sees the new look now.
+  try{ if(typeof applyCallFilterNow === 'function') applyCallFilterNow(manual ? { manual: true } : undefined); }catch(_){}
   try{ if(typeof refreshOutboundFilterIfInCall === 'function') refreshOutboundFilterIfInCall(); }catch(_){}
   selectedBackgroundId = id === 'original' ? 'none' : id; // keep legacy field roughly in sync
   if(manual){ userPickedFilter = true; userPickedBackground = true; }
@@ -885,16 +886,29 @@ let sendAnimStart = performance.now();
    other person's view shouldn't blink out just because you're looking at your own
    lobby preview versus the in-call pip. Capped at 960px on the long edge — no point
    encoding and transmitting at full 4K for something only ever watched at a small size. */
-function drawSendCanvas(){
+let sendCanvasLastDraw = 0;
+function drawSendCanvas(force){
   const canvas = $('sendCanvas'), video = $('sendRawVideo');
   if(!canvas || !video) return;
+  // The call track is captured at 30 fps; drawing it at the screen's 60+ was
+  // twice the work on the phone for frames nobody receives.
+  const nowMs = performance.now();
+  if(!force && nowMs - sendCanvasLastDraw < 30) return;
+  sendCanvasLastDraw = nowMs;
   const vw = video.videoWidth, vh = video.videoHeight;
   if(!vw || !vh) return;
   const maxDim = 960;
   const scale = Math.min(1, maxDim / Math.max(vw, vh));
   const tw = Math.max(2, Math.round(vw*scale)), th = Math.max(2, Math.round(vh*scale));
   if(canvas.width !== tw || canvas.height !== th){ canvas.width = tw; canvas.height = th; }
+  const c0 = performance.now();
   compositeFrame(canvas, video, sendAnimStart);
+  try{
+    const dt = performance.now() - c0;
+    const st = window.__nalunoSendCanvasCost || (window.__nalunoSendCanvasCost = { n: 0, avg: 0 });
+    st.avg = st.n ? (st.avg * 0.8 + dt * 0.2) : dt;
+    st.n++;
+  }catch(_){}
 }
 function stageLoopTick(){
   requestAnimationFrame(stageLoopTick);
@@ -904,7 +918,12 @@ function stageLoopTick(){
      on; otherwise the raw camera track goes out and this full-size
      composite, redrawn every frame for nothing, was the biggest drain on
      the phone during a call (and slowed the first video frames). */
-  if(stream && window.__nalunoFxDraw && (typeof callOutboundWantsFilter !== 'function' || callOutboundWantsFilter())) drawSendCanvas();
+  /* With a filter on, the send canvas is kept drawing while a call screen is
+     up (lobby, ringing, incoming, in call), so the call can start on the
+     filtered picture instead of switching to it mid-call. */
+  if(stream && (window.__nalunoFxDraw || ($('callOverlay') && $('callOverlay').classList.contains('active')
+       && (typeof nalunoSendCanvasAffordable !== 'function' || nalunoSendCanvasAffordable())))
+     && (typeof callOutboundWantsFilter !== 'function' || callOutboundWantsFilter())) drawSendCanvas();
 }
 requestAnimationFrame(stageLoopTick);
 function startCamView(target){
@@ -1341,7 +1360,12 @@ async function enableCameraForCall(){
           climb();
         });
       };
-      setTimeout(climb, 5000);
+      /* Not during a call. Asking a live camera for 4K / 1440 / 1080 makes
+         it switch modes: the picture stops for a moment, the other phone's
+         video mutes and comes back, and the encoder starts over — a visible
+         freeze and flash seconds into every call, for nothing (a call is
+         sent at 2.5 Mbps, far below what 720p already fills). */
+      void climb;
     }
   }catch(_){}
   try{ updateCameraQualityBadge && updateCameraQualityBadge(); }catch(_){}

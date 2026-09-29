@@ -779,38 +779,115 @@ function getRemoteMediaState(){
   };
 }
 
-function showRemoteAvatar(){
+/* ---- What the screen shows for the other person (29d) ----
+   It used to switch between the avatar, a black box and the video several
+   times while a call connected: the video element was shown the moment it
+   was "playing" (before any picture had arrived), hidden again whenever a
+   check found it paused, and every 3.5 s without a picture the watcher tore
+   the stream off the element and put it back (srcObject = null), which
+   restarted the decoder and started the whole cycle again.
+
+   Now: the element is kept on screen but fully transparent (so the phone
+   keeps decoding it and never draws its play logo), the avatar stays in
+   front until the first real frame has been painted, and then the video
+   stays. It only goes back to the avatar when the other camera is really
+   gone (track ended, or switched off / silent for more than 2.5 s). */
+let remoteFirstFrame = false;
+let nalunoCallLive = false;
+function nalunoMarkCallLive(){
+  if(nalunoCallLive) return;
+  nalunoCallLive = true;
+  try{ const eb = document.querySelector('#incall .call-info-pill .eyebrow'); if(eb) eb.textContent = 'Connected'; }catch(_){}
+  callSeconds = 0;
+  try{ $('callTimer').textContent = '00:00'; }catch(_){}
+  clearInterval(callInterval);
+  callInterval = setInterval(function(){
+    callSeconds++;
+    const m = String(Math.floor(callSeconds/60)).padStart(2,'0');
+    const sec = String(callSeconds%60).padStart(2,'0');
+    $('callTimer').textContent = m+':'+sec;
+  }, 1000);
+}
+let remoteVideoGoneSince = 0;
+function nalunoRemoteFrameArrived(){
+  if(remoteFirstFrame) return;
+  remoteFirstFrame = true;
+  try{ nalunoMarkCallLive(); }catch(_){}
+  showRemoteVideo();
+}
+function nalunoWatchFirstFrame(videoEl){
+  if(!videoEl || remoteFirstFrame || videoEl._nalunoFrameWatch) return;
+  videoEl._nalunoFrameWatch = true;
+  const done = function(){ videoEl._nalunoFrameWatch = false; nalunoRemoteFrameArrived(); };
+  try{
+    if(typeof videoEl.requestVideoFrameCallback === 'function'){
+      videoEl.requestVideoFrameCallback(function(){ done(); });
+      return;
+    }
+  }catch(_){}
+  // No frame callback: first decoded frame shows up as a size, with time moving.
+  const t0 = videoEl.currentTime;
+  const poll = function(){
+    if(remoteFirstFrame){ videoEl._nalunoFrameWatch = false; return; }
+    if(videoEl.videoWidth > 0 && videoEl.currentTime > t0){ done(); return; }
+    remoteFrameRaf = requestAnimationFrame(poll);
+  };
+  remoteFrameRaf = requestAnimationFrame(poll);
+}
+function nalunoRemoteVideoAlive(){
+  const t = remoteCombinedStream && remoteCombinedStream.getVideoTracks().find(function(x){ return x.readyState === 'live'; });
+  if(!t || t.enabled === false){ return false; }
+  if(t.muted){
+    if(!remoteVideoGoneSince) remoteVideoGoneSince = Date.now();
+    return (Date.now() - remoteVideoGoneSince) < 2500;
+  }
+  remoteVideoGoneSince = 0;
+  return true;
+}
+function nalunoSetRemoteLayers(showVideo){
   const videoEl = document.getElementById('remoteVideo');
   const ph = document.getElementById('remotePlaceholder');
   if(videoEl){
-    videoEl.style.display = 'none';
-    try{ videoEl.removeAttribute('data-has-frames'); }catch(_){}
+    if(videoEl.srcObject) videoEl.style.display = 'block';
+    videoEl.style.opacity = showVideo ? '1' : '0';
+    try{
+      if(showVideo) videoEl.setAttribute('data-has-frames', '1');
+      else videoEl.removeAttribute('data-has-frames');
+    }catch(_){}
   }
   if(ph){
-    ph.style.display = 'flex';
+    ph.style.display = showVideo ? 'none' : 'flex';
     ph.style.visibility = 'visible';
     ph.style.opacity = '1';
   }
 }
+function showRemoteAvatar(){
+  // Once the picture is up, a passing hiccup (a paused tick, a short mute)
+  // does not take it down again; only a camera that is really gone does.
+  if(remoteFirstFrame && nalunoRemoteVideoAlive()){
+    const v = document.getElementById('remoteVideo');
+    if(v && v.paused){ try{ const pr = v.play(); if(pr && pr.catch) pr.catch(function(){}); }catch(_){} }
+    return;
+  }
+  nalunoSetRemoteLayers(false);
+  const v = document.getElementById('remoteVideo');
+  if(v && v.srcObject) nalunoWatchFirstFrame(v);
+}
 
 function showRemoteVideo(){
   const videoEl = document.getElementById('remoteVideo');
-  const ph = document.getElementById('remotePlaceholder');
   if(!videoEl) return;
-  // Never show a paused video (Android play-logo). Frames optional for first paint —
-  // waiting on videoWidth caused 10–12s blank/avatar while CONNECTED.
-  if(videoEl.paused){
-    showRemoteAvatar();
+  if(!videoEl.srcObject){ nalunoSetRemoteLayers(false); return; }
+  videoEl.style.display = 'block';
+  try{ videoEl.volume = 1; if(!videoEl.paused) videoEl.muted = false; }catch(_){}
+  if(!remoteFirstFrame){
+    // Playing is not a picture: keep the avatar in front until a frame is painted.
+    nalunoSetRemoteLayers(false);
+    nalunoWatchFirstFrame(videoEl);
     return;
   }
-  try{
-    videoEl.muted = false;
-    videoEl.volume = 1;
-    videoEl.style.display = 'block';
-    if(videoEl.videoWidth > 0) videoEl.setAttribute('data-has-frames', '1');
-    else videoEl.removeAttribute('data-has-frames');
-  }catch(_){}
-  if(ph) ph.style.display = 'none';
+  if(!nalunoRemoteVideoAlive()){ nalunoSetRemoteLayers(false); return; }
+  nalunoSetRemoteLayers(true);
 }
 
 function bindRemoteVideoElement(stream, forceRebind){
@@ -835,8 +912,8 @@ function bindRemoteVideoElement(stream, forceRebind){
       console.warn('[call] srcObject failed', e);
       return;
     }
-  } else if(forceRebind){
-    // Same MediaStream, new track — rebind without prolonged null if possible
+  } else if(forceRebind && !remoteFirstFrame){
+    // Same MediaStream, new track, and no picture yet — rebind once.
     try{
       const wasPlaying = !videoEl.paused;
       videoEl.srcObject = null;
@@ -850,11 +927,9 @@ function bindRemoteVideoElement(stream, forceRebind){
     }
   }
 
-  // Never hide after srcObject is set — hiding while paused left both
-  // people looking at avatars instead of each other.
-  if(!videoEl.srcObject){
-    videoEl.style.display = 'none';
-  }
+  // The element stays on screen (transparent until the first frame) so the
+  // phone keeps decoding it; the avatar sits in front until then.
+  if(videoEl.srcObject){ videoEl.style.display = 'block'; nalunoWatchFirstFrame(videoEl); }
 
   const promoteIfReady = function(){
     try{
@@ -907,9 +982,6 @@ function bindRemoteVideoElement(stream, forceRebind){
   }catch(_){
     showRemoteAvatar();
   }
-  setTimeout(function(){
-    try{ if(videoEl && videoEl.srcObject) showRemoteVideo(); }catch(_){}
-  }, 700);
 }
 
 function ingestRemoteTrack(track, streams){
@@ -938,11 +1010,13 @@ function ingestRemoteTrack(track, streams){
     return t.readyState === 'live';
   }).length;
   // New video track on an already-bound stream must rebind srcObject (Samsung/Chrome WebView)
-  const forceRebind = (track.kind === 'video') || (liveVideoAfter > liveVideoBefore);
+  const forceRebind = liveVideoAfter > liveVideoBefore && liveVideoBefore === 0 && !!(document.getElementById('remoteVideo') || {}).srcObject;
 
   try{
-    track.onmute = function(){ renderRemoteMediaStage(); };
-    track.onunmute = function(){ renderRemoteMediaStage(); };
+    // A short mute (bandwidth dip, the other side switching camera or filter)
+    // is checked again after the grace period instead of flipping the screen.
+    track.onmute = function(){ renderRemoteMediaStage(); setTimeout(renderRemoteMediaStage, 2600); };
+    track.onunmute = function(){ remoteVideoGoneSince = 0; renderRemoteMediaStage(); };
     track.onended = function(){ renderRemoteMediaStage(); };
   }catch(_){}
 
@@ -1009,6 +1083,21 @@ function startRemotePlayWatch(){
   stopRemotePlayWatch();
   let ticks = 0;
   let lastRebind = 0;
+  let rebinds = 0;
+  /* A rebind (srcObject off and on) restarts the decoder. It is the last
+     resort, only when the connection is up, the other video is really
+     arriving (track not muted), and still no picture after 5 s; at most
+     twice. It used to fire every 3.5 s while a slow call was still
+     connecting, which is what made the screen flash. */
+  const mayRebind = function(){
+    if(remoteFirstFrame || rebinds >= 2 || ticks - lastRebind <= 10) return false;
+    const pc = peerConnection;
+    if(!pc || pc.connectionState !== 'connected') return false;
+    const vt = remoteCombinedStream && remoteCombinedStream.getVideoTracks().find(function(t){ return t.readyState === 'live'; });
+    if(!vt || vt.muted) return false;
+    rebinds++;
+    return true;
+  };
   remotePlayWatch = setInterval(function(){
     try{
       if(!activeCallId){ stopRemotePlayWatch(); return; }
@@ -1038,8 +1127,8 @@ function startRemotePlayWatch(){
       const state = getRemoteMediaState();
       if(state.hasVideo && !el.paused){
         showRemoteVideo();
-        // Playing but zero frames for a while → force rebind (Samsung WebView)
-        if(!state.hasFrames && ticks - lastRebind > 6){
+        // Playing but zero frames for a long while → one careful rebind (Samsung WebView)
+        if(!state.hasFrames && mayRebind()){
           lastRebind = ticks;
           try{ bindRemoteVideoElement(remoteCombinedStream, true); }catch(_){}
         }
@@ -1052,7 +1141,7 @@ function startRemotePlayWatch(){
             showRemoteVideo();
           }).catch(function(){
             // Force srcObject rebind once then retry play
-            if(ticks - lastRebind > 4){
+            if(mayRebind()){
               lastRebind = ticks;
               try{ bindRemoteVideoElement(remoteCombinedStream, true); }catch(_){}
             }
@@ -1250,6 +1339,9 @@ async function createPeerConnection(){
     }
   }catch(_){}
   remoteCombinedStream = new MediaStream();
+  remoteFirstFrame = false;
+  remoteVideoGoneSince = 0;
+  nalunoCallLive = false;
 
   pc.ontrack = function(e){
     console.log('[call] ontrack', e.track && e.track.kind, e.track && e.track.readyState,
@@ -1313,8 +1405,17 @@ async function attachLocalTracksToPc(pc){
 
   _callRawVideoTrack = videoTracks[0] || _callRawVideoTrack;
   if(!hasKind('video')){
-    // Always the raw camera to connect; a filter goes on once the call is up.
+    /* The picture the call starts with is the one it keeps: the filtered
+       canvas if a filter is on and the canvas is already drawing a real
+       frame, otherwise the raw camera. Switching mid-connect restarted the
+       other person's video. */
     let out = _callRawVideoTrack;
+    try{
+      if(typeof getCallOutboundVideoTrackSync === 'function'){
+        const got = getCallOutboundVideoTrackSync();
+        if(got && got !== out){ out = got; window.__nalunoFxDraw = true; }
+      }
+    }catch(_){}
     if(out){
       try{ out.enabled = true; out.contentHint = 'motion'; }catch(_){}
       const sender = pc.addTrack(out, stream);
@@ -1503,6 +1604,9 @@ function teardownCallConnection(){
     if(rp) rp.style.display = 'flex';
   }catch(e){}
   remoteCombinedStream = null;
+  remoteFirstFrame = false;
+  remoteVideoGoneSince = 0;
+  nalunoCallLive = false;
   clearInterval(callInterval); callInterval = null;
   callActionInProgress = false;
 }
@@ -1573,6 +1677,9 @@ function attachConnectionWatchdogs(pc){
     console.log('[call] connection state:', s);
     if(s === 'connected'){
       try{ window.__nalunoConnectedCall = activeCallId; }catch(_){}
+      // Their camera is off (or video is slow): voice is flowing, so the call is live.
+      setTimeout(function(){ try{ if(peerConnection === pc && !nalunoCallLive && (remoteFirstFrame || !nalunoRemoteVideoAlive())) nalunoMarkCallLive(); }catch(_){} }, 900);
+      setTimeout(function(){ try{ if(peerConnection === pc && !nalunoCallLive) nalunoMarkCallLive(); }catch(_){} }, 4000);
       try{ if(peerConnection === pc && !window.__nalunoConnectedAt) window.__nalunoConnectedAt = Date.now(); }catch(_){}
       try{ if(typeof trackMetric === 'function') trackMetric('call_connected', {}); }catch(_){}
       try{
@@ -2198,6 +2305,10 @@ async function startRealCallInner(c){
   pendingRemoteCandidates = [];
   iAmCaller = true;
   const dial = nalunoDialing = nalunoLastDial = { uid: c.firebaseUid, cancelled: false, reason: null };
+  // Clear this phone's own leftover rings now, not only once the new record
+  // is written: a call cancelled while the camera opened left the old ghost
+  // ring showing on the other phone.
+  try{ nalunoEndMyOldRings(null); }catch(_){}
   const gone = () => dial.cancelled || nalunoDialing !== dial;
 
   // Kick TURN in the background. Camera is the only await before the offer.
@@ -2591,6 +2702,19 @@ async function nalunoPrepareAnswer(callId, offer, camReady){
     ]);
     if(!still()){ nalunoDropPrepared(); return; }
     if(!mediaStreamIsLive(stream)){ nalunoDropPrepared(); return; } // no camera/mic yet: Answer takes the normal path
+    // With a filter on, give the filtered picture a moment to be ready so the
+    // call starts on it (switching to it after connecting made the video jump).
+    try{
+      if(typeof callOutboundWantsFilter === 'function' && callOutboundWantsFilter() && typeof callCanvasReady === 'function'
+         && (typeof nalunoSendCanvasAffordable !== 'function' || nalunoSendCanvasAffordable())){
+        const until = Date.now() + 600;
+        while(!callCanvasReady() && Date.now() < until && still()){
+          try{ if(typeof primeSendPreview === 'function') await primeSendPreview(); }catch(_){}
+          if(!callCanvasReady()) await new Promise(function(r){ setTimeout(r, 40); });
+        }
+      }
+    }catch(_){}
+    if(!still()){ nalunoDropPrepared(); return; }
     const pc = await createPeerConnection();
     prep.pc = pc;
     if(!still()){ nalunoDropPrepared(); return; }
@@ -2825,14 +2949,14 @@ function startInCall(){
     if(typeof renderBackgroundChips === 'function') renderBackgroundChips();
   }catch(_){}
   try{ if(typeof applyCallFilterNow === 'function') applyCallFilterNow(); }catch(_){}
+  /* "Connected" and the timer wait for the call to really be up (the other
+     person's picture, or their voice when their camera is off). Showing
+     "Connected" at 00:00 while the screen was still waiting read as a call
+     that kept dropping. */
   callSeconds = 0; $('callTimer').textContent = '00:00';
-  clearInterval(callInterval);
-  callInterval = setInterval(function(){
-    callSeconds++;
-    const m = String(Math.floor(callSeconds/60)).padStart(2,'0');
-    const s = String(callSeconds%60).padStart(2,'0');
-    $('callTimer').textContent = m+':'+s;
-  }, 1000);
+  clearInterval(callInterval); callInterval = null;
+  try{ const eb = document.querySelector('#incall .call-info-pill .eyebrow'); if(eb) eb.textContent = nalunoCallLive ? 'Connected' : 'Connecting…'; }catch(_){}
+  if(nalunoCallLive){ nalunoCallLive = false; nalunoMarkCallLive(); }
   if(currentCallContactId) bumpContactActivity(currentCallContactId);
   bumpTodayActivity();
   // Avatar until frames; never flash play-button

@@ -21,7 +21,7 @@ assert.ok((calls.match(/_nalunoIceFrozen = true/g) || []).length >= 3, 'offer an
 assert.ok(calls.includes('if(!still()){ nalunoDropPrepared(); return; }'), 'a prepare that gives up does not make Answer wait on it');
 assert.ok(calls.includes('const deadline = Date.now() + 1000;'), 'Answer waits for an in-flight prepare instead of throwing it away');
 assert.ok(calls.includes('await nalunoWaitForTurn(600);'), 'the offer waits briefly for TURN before the other phone rings');
-assert.ok(camera.includes('setTimeout(climb, 5000);'), 'the 4K climb does not run during the connect window');
+assert.ok(!/setTimeout\(climb,/.test(camera), 'the 4K climb does not run during a call at all (29d)');
 assert.ok(!camera.includes('setTimeout(climb, 400);'), 'the old 400ms climb is gone');
 
 const a = calls.indexOf('function nalunoCfgHasTurn');

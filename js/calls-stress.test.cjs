@@ -134,10 +134,17 @@ const ORDER = { ringing: 0, accepted: 1, declined: 2, missed: 2, busy: 2, ended:
   assert.ok(src.includes('nalunoPrepareAnswer(callId, data.offer, camReady)') && src.includes("answer: prep.answer"), 'the answer is prepared while ringing and sent with "accepted"');
   assert.ok(src.includes('if(!prep.used){ prep.remoteHeld.push(cand); return; }'), 'no connectivity checks while still ringing');
   assert.ok(src.includes('if(peerConnection !== pc) return;'), 'watchdogs only act on the live connection');
-  assert.ok(src.includes("// Always the raw camera to connect; a filter goes on once the call is up.") && !src.includes('getCallOutboundVideoTrackSync();\n        if(got) out = got;'), 'calls connect on the raw camera');
+  // 29d: the picture is decided before connecting and never switched automatically
+  assert.ok(src.includes("const got = getCallOutboundVideoTrackSync();") && src.includes("window.__nalunoFxDraw = true; }"), 'the call starts on the picture it keeps');
   const cf = fs.readFileSync(path.join(__dirname, 'call-filters.js'), 'utf8');
-  assert.ok(cf.includes('const FX_AFTER_CONNECT_MS = 1500;') && cf.includes('window.__nalunoFxDraw = true;'), 'the filter goes on after connecting');
-  assert.ok(cam.includes('if(stream && window.__nalunoFxDraw &&'), 'the send canvas is only drawn when it is being sent');
+  assert.ok(cf.includes('if(onRaw || !wantsFx) return;') && cf.includes('function nalunoSendCanvasAffordable()'), 'no automatic mid-call switch; slow phones send the raw camera');
+  assert.ok(cam.includes("applyCallFilterNow(manual ? { manual: true } : undefined)"), 'a filter picked by hand during the call still switches');
+  assert.ok(cam.includes('if(!force && nowMs - sendCanvasLastDraw < 30) return;'), 'the send canvas is drawn at 30 fps');
+  // 29d: no flashing
+  assert.ok(src.includes('function nalunoWatchFirstFrame(') && src.includes('if(remoteFirstFrame && nalunoRemoteVideoAlive()){'), 'avatar until the first painted frame, then no flip back on a hiccup');
+  assert.ok(src.includes('if(remoteFirstFrame || rebinds >= 2 || ticks - lastRebind <= 10) return false;'), 'the stream is not torn off the video every 3.5 s while connecting');
+  assert.ok(!src.includes("}, 700);\n}\n\nfunction ingestRemoteTrack"), 'no timed show of an empty video');
+  assert.ok(src.includes('function nalunoMarkCallLive(') && src.includes("eb.textContent = nalunoCallLive ? 'Connected' : 'Connecting…';"), '"Connected" and the timer wait for the call to be up');
   const calls = idx.fieldOverrides.filter((o) => o.collectionGroup === 'calls');
   ['createdAt', 'acceptedAt', 'endedAt'].forEach((f) => assert.ok(calls.some((o) => o.fieldPath === f && Array.isArray(o.indexes) && o.indexes.length === 0), 'calls.' + f + ' exempt from the single-field index'));
   console.log('calls-stress tests passed');

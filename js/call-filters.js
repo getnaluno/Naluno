@@ -53,7 +53,7 @@ async function primeSendPreview(){
   if(video.srcObject !== stream) video.srcObject = stream;
   try{ await video.play(); }catch(_){}
   if(!video.videoWidth) await waitForVideoFrame(video, 80);
-  try{ if(typeof drawSendCanvas === 'function') drawSendCanvas(); }catch(_){}
+  try{ if(typeof drawSendCanvas === 'function') drawSendCanvas(true); }catch(_){}
   return callCanvasReady();
 }
 
@@ -80,7 +80,7 @@ function getCallOutboundVideoTrackSync(){
     ? stream.getVideoTracks().find(function(t){ return t.readyState === 'live'; })
     : null;
   if(!raw) return null;
-  if(!callOutboundWantsFilter()) return raw;
+  if(!callOutboundWantsFilter() || !nalunoSendCanvasAffordable()) return raw;
   const fx = getOrCreateFxTrack();
   return fx || raw;
 }
@@ -98,41 +98,48 @@ async function getCallOutboundVideoTrack(){
   return fx || raw;
 }
 
-/* A call connects on the raw camera. Switching to the filter canvas while
-   the connection is still being set up (it used to happen within 400 ms)
-   restarts the video the other person is waiting for, and the canvas
-   costs the phone a full redraw every frame; together they pushed the
-   first picture back by seconds. The filter now goes on once the call has
-   been connected for a moment. Turning a filter off is always immediate. */
-const FX_AFTER_CONNECT_MS = 1500;
-let _fxDeferTimer = null;
-async function applyCallFilterNow(){
+/* Which picture a call sends (29d).
+   The filter is decided before the call connects and then kept. The call
+   starts on the filtered canvas when a filter is on, the canvas is already
+   drawing, and this phone can draw it quickly enough; otherwise it starts on
+   the raw camera and stays there. Switching from one to the other a moment
+   after connecting (as before) made the other person's video jump: a new
+   picture size, a fresh keyframe, a short freeze, a sudden change of look.
+   Only a filter picked by hand during the call switches it. */
+async function applyCallFilterNow(opts){
+  const manual = !!(opts && opts.manual);
   if(typeof peerConnection === 'undefined' || !peerConnection) return;
   const sender = peerConnection.getSenders().find(function(s){
     return s.track && s.track.kind === 'video';
   });
   if(!sender) return;
-  if(callOutboundWantsFilter()){
-    const at = window.__nalunoConnectedAt || 0;
-    const wait = at ? (at + FX_AFTER_CONNECT_MS - Date.now()) : -1;
-    if(!at || wait > 0){
-      if(!_fxDeferTimer){
-        _fxDeferTimer = setTimeout(function(){ _fxDeferTimer = null; applyCallFilterNow().catch(function(){}); }, at ? wait + 20 : 700);
-      }
-      return;
-    }
-    window.__nalunoFxDraw = true;
-  } else {
-    window.__nalunoFxDraw = false;
+  const raw = (typeof stream !== 'undefined' && stream && stream.getVideoTracks) ? stream.getVideoTracks().find(function(t){ return t.readyState === 'live'; }) : null;
+  const onRaw = !!(raw && sender.track === raw);
+  const wantsFx = callOutboundWantsFilter() && nalunoSendCanvasAffordable();
+  if(!manual){
+    // Automatic calls (the call screen opening, the connection coming up)
+    // never change the picture that is already being sent.
+    if(onRaw || !wantsFx) return;
   }
-  const next = await getCallOutboundVideoTrack();
+  window.__nalunoFxDraw = wantsFx;
+  const next = wantsFx ? await getCallOutboundVideoTrack() : raw;
   if(!next || sender.track === next) return;
   // Never replace with a 2px / dead canvas — that is what hid remote video.
-  if(next !== (typeof stream !== 'undefined' && stream && stream.getVideoTracks && stream.getVideoTracks()[0])
-     && !callCanvasReady()) return;
+  if(next !== raw && !callCanvasReady()) return;
   try{ await sender.replaceTrack(next); }catch(e){
     console.warn('[call-filters] mid-call replace', e);
   }
+}
+
+/* The send canvas is redrawn for every frame the other person receives. On
+   a phone that draws it slowly (no graphics acceleration, an old device)
+   that is a choppy, late picture for them; the raw camera is sent instead. */
+function nalunoSendCanvasAffordable(){
+  try{
+    const st = window.__nalunoSendCanvasCost;
+    if(!st || st.n < 5) return true;   // not measured yet: assume a normal phone
+    return st.avg <= 14;
+  }catch(_){ return true; }
 }
 
 window.callOutboundWantsFilter = callOutboundWantsFilter;
@@ -140,5 +147,6 @@ window.callCanvasReady = callCanvasReady;
 window.getCallOutboundVideoTrack = getCallOutboundVideoTrack;
 window.getCallOutboundVideoTrackSync = getCallOutboundVideoTrackSync;
 window.applyCallFilterNow = applyCallFilterNow;
+window.nalunoSendCanvasAffordable = nalunoSendCanvasAffordable;
 window.primeSendPreview = primeSendPreview;
 window.getOrCreateFxTrack = getOrCreateFxTrack;
