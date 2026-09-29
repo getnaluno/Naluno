@@ -384,11 +384,18 @@ function loadCompassMessages(){
   compassUnsub = fbDb.collection('users').doc(currentUser.uid).collection('compassMessages')
     .orderBy('ts','asc').limitToLast(50)
     .onSnapshot(snap=>{
+      try{ nalunoListenOk('compass'); }catch(_){}
       compassMessages = snap.docs.map(d=>({ id:d.id, ...d.data() }));
       renderCompassMessages();
       // Instant paint next time this tab opens, same pattern used elsewhere.
       try{ if(typeof nalunoCacheWrite === 'function') nalunoCacheWrite('compassMessages', compassMessages); }catch(_){}
-    }, ()=>{ /* Compass history just won't load this session */ });
+    }, function(err){
+      // Used to stop Compass history for the rest of the session.
+      console.warn('[compass] history listener error, subscribing again', err && err.message);
+      compassUnsub = null;
+      compassLoaded = false;
+      try{ nalunoRelisten('compass', loadCompassMessages); }catch(_){}
+    });
 }
 let compassTopic = '';
 function compassNameKey(s){

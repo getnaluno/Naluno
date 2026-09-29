@@ -21,5 +21,5 @@ assert.ok(prof.includes('if(mark === true || Date.now() - Number(mark) < 1500) r
 ['calls', 'profile', 'broadcast-space'].forEach((f) => assert.ok(((html.match(new RegExp('/js/' + f + '\\.js\\?v=(\\d{8}[a-z])')) || [])[1] || '') >= '20260928h', 'stamp ' + f));
 assert.ok(swCache(sw) >= 236 && nalunoAtLeast(swBuild(sw), '20260928h') && nalunoAtLeast(appVer(html), '2026.09.28h'), 'cache and update banner bumped');
 console.log('fixes-28h tests passed');
-assert.ok(html.includes('/js/camera.js?v=20260928h'), 'stamp camera');
+assert.ok(((html.match(/\/js\/camera\.js\?v=(\d{8}[a-z])/) || [])[1] || '') >= '20260928h', 'stamp camera');
 console.log('fixes-28h camera stamp passed');

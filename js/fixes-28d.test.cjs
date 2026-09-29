@@ -109,5 +109,5 @@ assert.ok(wire2.includes('bubbleInner = wireQuoteHtml(') && wire2.includes("'<di
 ['.naluno-gesture-hint', '#nalunoPull', '#wireReplyBar', '.msg-quote', '.wire-swipe-tray', '#bviewer.story-held'].forEach((c) => assert.ok(css.includes(c), 'css ' + c));
 console.log('fixes-28d gesture tests passed');
 assert.ok(pwa.includes('if(window.__nalunoGestureTouch){') && gest.includes('window.__nalunoGestureTouch = true;'), 'a pulled sheet or list does not also reload the app');
-assert.ok(/\/js\/wireline\.js\?v=20260928[d-z]/.test(html), 'changed wireline.js gets a new stamp');
+assert.ok(((html.match(/\/js\/wireline\.js\?v=(\d{8}[a-z])/) || [])[1] || '') >= '20260928d', 'changed wireline.js gets a new stamp');
 console.log('fixes-28d gesture tests 2 passed');

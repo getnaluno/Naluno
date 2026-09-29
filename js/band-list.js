@@ -215,6 +215,7 @@ async function loadRealBands(uid){
   // Live membership: invites that arrayUnion you show up without restarting the app.
   let primed = false;
   bandsMembershipUnsub = fbDb.collection('bands').where('memberUids','array-contains',uid).onSnapshot(snap=>{
+    try{ nalunoListenOk('bandList'); }catch(_){}
     const first = !primed;
     primed = true;
     snap.docChanges().forEach(change=>{
@@ -260,7 +261,12 @@ async function loadRealBands(uid){
         nalunoCacheWrite('realBands', bands.filter(function(b){ return b.isReal && b.firestoreId; }));
       }
     }catch(_){}
-  }, ()=>{ /* real bands just won't live-update this session */ });
+  }, function(err){
+    // Used to freeze the Band list until the app was restarted.
+    console.warn('[band] list listener error, subscribing again', err && err.message);
+    bandsMembershipUnsub = null;
+    try{ nalunoRelisten('bandList', function(){ if(currentUser && currentUser.uid === uid) loadRealBands(uid); }); }catch(_){}
+  });
 }
 
 async function saveBands(){

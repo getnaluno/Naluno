@@ -126,6 +126,18 @@ const ORDER = { ringing: 0, accepted: 1, declined: 2, missed: 2, busy: 2, ended:
   assert.ok(src.includes("endReason: 'nooffer'"), 'answering a leftover ring finishes it');
   const bl = fs.readFileSync(path.join(__dirname, 'band-list.js'), 'utf8');
   assert.ok(bl.includes('id: nalunoFreeBandId()') && bl.includes("JSON.stringify(bands.filter(function(b){ return !b.isReal; }))") && bl.includes('const local = saved.filter(b=>b && !b.isReal);'), 'Band rows get unique ids; saved lists never replace real Bands');
+  /* 29b */
+  assert.ok(src.includes('if(recordIn) sendCand(json); else heldCands.push(json);') && src.includes('heldCands.splice(0).forEach(sendCand);'), 'the caller holds its first ICE candidates until the call record exists');
+  assert.ok(src.includes("const finished = d.status === 'ended' || d.status === 'missed' || d.status === 'declined' || d.status === 'busy';") && src.includes('if(!finished && (d.status === \'accepted\' || d.answer))') && src.includes('if(!finished && d.answer && !remoteDescriptionSet'), 'an answer on a finished call is not a live answer');
+  assert.ok(src.includes('function nalunoWatchCandidates(') && (src.match(/nalunoWatchCandidates\(/g) || []).length >= 4, 'candidate listeners subscribe again');
+  assert.ok(src.includes("nalunoRelisten('missedCalls', startMissedCallListener)"), 'missed-call badge subscribes again');
+  assert.ok(src.includes('nalunoPrepareAnswer(callId, data.offer, camReady)') && src.includes("answer: prep.answer"), 'the answer is prepared while ringing and sent with "accepted"');
+  assert.ok(src.includes('if(!prep.used){ prep.remoteHeld.push(cand); return; }'), 'no connectivity checks while still ringing');
+  assert.ok(src.includes('if(peerConnection !== pc) return;'), 'watchdogs only act on the live connection');
+  assert.ok(src.includes("// Always the raw camera to connect; a filter goes on once the call is up.") && !src.includes('getCallOutboundVideoTrackSync();\n        if(got) out = got;'), 'calls connect on the raw camera');
+  const cf = fs.readFileSync(path.join(__dirname, 'call-filters.js'), 'utf8');
+  assert.ok(cf.includes('const FX_AFTER_CONNECT_MS = 1500;') && cf.includes('window.__nalunoFxDraw = true;'), 'the filter goes on after connecting');
+  assert.ok(cam.includes('if(stream && window.__nalunoFxDraw &&'), 'the send canvas is only drawn when it is being sent');
   const calls = idx.fieldOverrides.filter((o) => o.collectionGroup === 'calls');
   ['createdAt', 'acceptedAt', 'endedAt'].forEach((f) => assert.ok(calls.some((o) => o.fieldPath === f && Array.isArray(o.indexes) && o.indexes.length === 0), 'calls.' + f + ' exempt from the single-field index'));
   console.log('calls-stress tests passed');

@@ -296,6 +296,7 @@ function loadRealConnections(uid){
   // fixes contacts taking a few seconds to appear, and it also means a newly-added real
   // connection shows up live without needing to reopen the app.
   connectionsUnsub = fbDb.collection('users').doc(uid).collection('connections').onSnapshot(snap=>{
+    try{ nalunoListenOk('contacts'); }catch(_){}
     snap.forEach(doc=>{
       const d = doc.data();
       const row = addRealContactToLocalList(doc.id, d.name || 'Unknown', d.color, d.handle, d.photo);
@@ -339,7 +340,12 @@ function loadRealConnections(uid){
       contacts.filter(c=>c.isReal && c.firebaseUid).forEach(c=> refreshContactLiveProfile(c.firebaseUid));
       loadConnectionsSignalsNow();
     }, 800);
-  }, ()=>{ /* connections just won't be live this session */ });
+  }, function(err){
+    // Used to stop contacts updating until the app was restarted.
+    console.warn('[contacts] listener error, subscribing again', err && err.message);
+    connectionsUnsub = null;
+    try{ nalunoRelisten('contacts', function(){ if(currentUser && currentUser.uid === uid) loadRealConnections(uid); }); }catch(_){}
+  });
 }
 /* The connection doc is a snapshot taken at connect time — someone who added a photo
    afterward, or connected before photo support existed at all, never gets that reflected

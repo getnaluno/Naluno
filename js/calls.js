@@ -1100,10 +1100,20 @@ async function ensureCallMediaReady(){
     }catch(_){}
     return true;
   }
+  /* If the call ends (the camera is stopped) while this is still opening
+     it, whatever arrives late is switched straight off: the fallbacks below
+     used to put a camera and mic back on after a quick hang-up. */
+  const camGen = (typeof nalunoCamGen !== 'undefined') ? nalunoCamGen : 0;
+  const late = function(got){
+    if(typeof nalunoCamGen === 'undefined' || nalunoCamGen === camGen) return false;
+    try{ got && got.getTracks().forEach(function(t){ t.stop(); }); }catch(_){}
+    return true;
+  };
   try{
     if(typeof enableCameraForCall === 'function') await enableCameraForCall();
     else if(typeof enableCamera === 'function') await enableCamera();
   }catch(e){ console.warn('[call] enable camera', e); }
+  if(late(null)) return false;
   let okA = stream && stream.getAudioTracks().some(t => t.readyState === 'live');
   let okV = stream && stream.getVideoTracks().some(t => t.readyState === 'live');
   if(!okA){
@@ -1112,6 +1122,7 @@ async function ensureCallMediaReady(){
         audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true },
         video: false
       });
+      if(late(a)) return false;
       if(!stream) stream = a;
       else a.getAudioTracks().forEach(t => stream.addTrack(t));
       okA = true;
@@ -1128,6 +1139,7 @@ async function ensureCallMediaReady(){
         },
         audio: false
       });
+      if(late(v)) return false;
       if(!stream) stream = v;
       else v.getVideoTracks().forEach(t => stream.addTrack(t));
       okV = true;
@@ -1270,15 +1282,8 @@ async function attachLocalTracksToPc(pc){
 
   _callRawVideoTrack = videoTracks[0] || _callRawVideoTrack;
   if(!hasKind('video')){
+    // Always the raw camera to connect; a filter goes on once the call is up.
     let out = _callRawVideoTrack;
-    // Use the filtered canvas ONLY if it is already drawing (≥160px).
-    // Never await a 900ms prime here — that is what made connect feel slow.
-    try{
-      if(typeof getCallOutboundVideoTrackSync === 'function'){
-        const got = getCallOutboundVideoTrackSync();
-        if(got) out = got;
-      }
-    }catch(_){}
     if(out){
       try{ out.enabled = true; out.contentHint = 'motion'; }catch(_){}
       const sender = pc.addTrack(out, stream);
@@ -1289,12 +1294,6 @@ async function attachLocalTracksToPc(pc){
   if(!audioTracks[0]) console.warn('[call] no local audio track');
   if(!videoTracks[0]) console.warn('[call] no local video track');
   try{ preferFastVideoCodecs(pc); }catch(_){}
-  try{
-    if(typeof applyCallFilterNow === 'function'){
-      queueMicrotask(function(){ applyCallFilterNow().catch(function(){}); });
-      setTimeout(function(){ applyCallFilterNow().catch(function(){}); }, 400);
-    }
-  }catch(_){}
 }
 
 /* ---- Outbound filters (safe): raw A/V first, then sendCanvas replaceTrack ---- */
@@ -1443,6 +1442,8 @@ function nalunoCancelDial(reason){
 }
 function teardownCallConnection(){
   try{ nalunoCancelDial(); }catch(_){}
+  try{ window.__nalunoConnectedAt = 0; window.__nalunoFxDraw = false; }catch(_){}
+  try{ if(typeof nalunoDropPrepared === 'function') nalunoDropPrepared(); }catch(_){}
   try{ clearInterval(window.__nalunoWatchBackup); window.__nalunoWatchBackup = null; }catch(_){}
   try{ stopRemotePlayWatch(); }catch(_){}
   try{ resetCallFilterState(); }catch(_){}
@@ -1541,6 +1542,7 @@ function attachConnectionWatchdogs(pc){
     console.log('[call] connection state:', s);
     if(s === 'connected'){
       try{ window.__nalunoConnectedCall = activeCallId; }catch(_){}
+      try{ if(peerConnection === pc && !window.__nalunoConnectedAt) window.__nalunoConnectedAt = Date.now(); }catch(_){}
       try{ if(typeof trackMetric === 'function') trackMetric('call_connected', {}); }catch(_){}
       try{
         pc.getSenders().forEach(snd=>{
@@ -1554,6 +1556,7 @@ function attachConnectionWatchdogs(pc){
     if(s === 'failed'){
       try{ pc.restartIce(); }catch(_){}
       setTimeout(function(){
+        if(peerConnection !== pc) return;
         if(!pc || pc.connectionState === 'failed'){
           if($('callOverlay') && $('callOverlay').classList.contains('active')){
             endActiveCall('remote');
@@ -1567,12 +1570,14 @@ function attachConnectionWatchdogs(pc){
     console.log('[call] ICE connection state:', s);
     if(s === 'connected' || s === 'completed'){
       try{ window.__nalunoConnectedCall = activeCallId; }catch(_){}
+      try{ if(peerConnection === pc && !window.__nalunoConnectedAt) window.__nalunoConnectedAt = Date.now(); }catch(_){}
       try{ ensureRemoteVideoPlaying(); }catch(_){}
       try{ scheduleFilteredUpgrade(pc); }catch(_){}
     }
     if(s === 'failed'){
       try{ pc.restartIce(); }catch(_){}
       setTimeout(function(){
+        if(peerConnection !== pc) return;
         if(!pc || pc.iceConnectionState === 'failed'){
           if($('callOverlay') && $('callOverlay').classList.contains('active')){
             endActiveCall('remote');
@@ -1597,6 +1602,7 @@ function startMissedCallListener(){
     .where('calleeUid','==',currentUser.uid)
     .where('status','==','missed')
     .onSnapshot(snap=>{
+      try{ nalunoListenOk('missedCalls'); }catch(_){}
       const unseen = snap.docs.filter(d => !d.data().seenByCallee);
       updateMissedCallBadge(unseen.length);
       // Only toast for calls that arrive while this listener is already running —
@@ -1624,7 +1630,12 @@ function startMissedCallListener(){
         });
       }
       missedCallListenerInitialized = true;
-    }, ()=>{ /* missed call badge just won't update this session */ });
+    }, function(err){
+      // Used to stop the missed-call badge until the app was restarted.
+      console.warn('[call] missed-call listener error, subscribing again', err && err.message);
+      missedCallUnsub = null;
+      try{ nalunoRelisten('missedCalls', startMissedCallListener); }catch(_){}
+    });
 }
 function updateMissedCallBadge(count){
   const badge = $('missedCallBadge');
@@ -1849,7 +1860,9 @@ function handleIncomingCall(callId, data){
   prewarmIceServers();
   const showReady = ()=>{ $('incomingSceneNote').style.display = 'inline-flex'; $('incomingSelfTag').textContent = 'scene ready'; };
   const camFn = (typeof enableCameraForCall === 'function') ? enableCameraForCall : enableCamera;
-  camFn().then(()=> setTimeout(showReady, 150)).catch(()=> showReady());
+  const camReady = camFn();
+  camReady.then(()=> setTimeout(showReady, 150)).catch(()=> showReady());
+  if(!autoAccept && data.offer){ try{ nalunoPrepareAnswer(callId, data.offer, camReady); }catch(_){} }
 
   if(autoAccept) setTimeout(function(){ try{ if(activeCallId === callId && $('acceptIncoming').onclick) $('acceptIncoming').onclick(); }catch(_){} }, 80);
   /* Backstop: a caller whose phone died cannot say so. Stop ringing after
@@ -1910,6 +1923,35 @@ function nalunoWatchBackup(callId, screenId, onDoc){
       }).catch(function(){});
     }catch(_){}
   }, 3000);
+}
+
+/* The other phone's ICE candidates. A listener that errors (a network blip,
+   the app coming back from the background) used to die for good, leaving
+   both people on "connecting". It subscribes again, a little later each
+   time, for as long as this call is still the one on screen. A fresh
+   subscription replays every candidate, so ones already used are skipped. */
+function nalunoWatchCandidates(callRef, sub, callId, onCand, setUnsub){
+  const seen = new Set();
+  let tries = 0;
+  const attach = function(){
+    if(activeCallId !== callId) return;
+    const unsub = callRef.collection(sub).onSnapshot(function(snap){
+      tries = 0;
+      snap.docChanges().forEach(function(change){
+        if(change.type !== 'added' || seen.has(change.doc.id)) return;
+        seen.add(change.doc.id);
+        try{ onCand(change.doc.data()); }catch(_){}
+      });
+    }, function(err){
+      console.warn('[call] ' + sub + ' listener error, subscribing again', err && err.message);
+      setUnsub(null);
+      if(activeCallId !== callId) return;
+      const wait = Math.min(8000, 500 * Math.pow(2, tries++));
+      setTimeout(attach, wait);
+    });
+    setUnsub(unsub);
+  };
+  attach();
 }
 
 function startOutgoingCall(contactId){
@@ -2142,6 +2184,7 @@ async function startRealCallInner(c){
   if(!stream.getAudioTracks().some(t => t.readyState === 'live')){
     try{
       const a = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:true, noiseSuppression:true }, video: false });
+      if(gone() || !stream){ try{ a.getTracks().forEach(t => t.stop()); }catch(_){} return false; }
       a.getAudioTracks().forEach(t => stream.addTrack(t));
     }catch(e){ console.warn('[call] could not add audio track', e); }
     if(gone()) return false;
@@ -2171,8 +2214,18 @@ async function startRealCallInner(c){
   const dropPc = () => { try{ pc.ontrack = null; pc.onicecandidate = null; pc.onconnectionstatechange = null; pc.oniceconnectionstatechange = null; pc.close(); }catch(_){} };
   if(gone()){ dropPc(); return false; }
   peerConnection = pc;
+  /* ICE starts gathering at setLocalDescription, before the call record
+     below is written. firestore.rules only lets a candidate in once the call
+     exists, so those first candidates were refused and lost; a call could
+     finish signalling and still carry no audio or video. They wait here
+     until the record is in, then go. */
+  let recordIn = false;
+  const heldCands = [];
+  const sendCand = function(json){ callRef.collection('callerCandidates').add(json).catch(()=>{}); };
   peerConnection.onicecandidate = e=>{
-    if(e.candidate) callRef.collection('callerCandidates').add(e.candidate.toJSON()).catch(()=>{});
+    if(!e.candidate) return;
+    const json = e.candidate.toJSON();
+    if(recordIn) sendCand(json); else heldCands.push(json);
   };
 
   const offer = await pc.createOffer();
@@ -2207,6 +2260,8 @@ async function startRealCallInner(c){
     dropPc();
     return false;
   }
+  recordIn = true;
+  heldCands.splice(0).forEach(sendCand);
   nalunoDialing = null;
   nalunoIncomingFrom = null;
   try{ nalunoEndMyOldRings(callRef.id); }catch(_){}
@@ -2221,7 +2276,10 @@ async function startRealCallInner(c){
     // Stop ringing the instant the other side taps Answer (status becomes
     // 'accepted'), even if their SDP answer is still being prepared.
     // Previously we only reacted to d.answer, which arrived 10–20s later.
-    if(d.status === 'accepted' || d.answer){
+    /* An answer left on a call that has already finished (ended, missed,
+       declined, busy) is history, not a live answer. */
+    const finished = d.status === 'ended' || d.status === 'missed' || d.status === 'declined' || d.status === 'busy';
+    if(!finished && (d.status === 'accepted' || d.answer)){
       const onRing = $('ringing') && $('ringing').classList.contains('active');
       const onLobby = $('lobby') && $('lobby').classList.contains('active');
       const notInCall = !$('incall') || !$('incall').classList.contains('active');
@@ -2234,7 +2292,7 @@ async function startRealCallInner(c){
       }
     }
 
-    if(d.answer && !remoteDescriptionSet && peerConnection){
+    if(!finished && d.answer && !remoteDescriptionSet && peerConnection){
       remoteDescriptionSet = true;
       peerConnection.setRemoteDescription(new RTCSessionDescription(d.answer)).then(()=>{
         if(peerConnection) pendingRemoteCandidates.forEach(cand => { try{ peerConnection.addIceCandidate(new RTCIceCandidate(cand)).catch(()=>{}); }catch(_){} });
@@ -2278,10 +2336,7 @@ async function startRealCallInner(c){
   activeCallDocUnsub = callRef.onSnapshot(onMyCallDoc, function(err){ console.warn('[call] call watch', err && err.message); });
   nalunoWatchBackup(myCallId, 'ringing', onMyCallDoc);
 
-  calleeCandidatesUnsub = callRef.collection('calleeCandidates').onSnapshot(snap=>{
-    snap.docChanges().forEach(change=>{
-      if(change.type!=='added') return;
-      const cand = change.doc.data();
+  nalunoWatchCandidates(callRef, 'calleeCandidates', myCallId, function(cand){
       // Null guard: these snapshot callbacks can still fire after the call has
       // been torn down (Firestore delivers a final batch as listeners detach),
       // and `peerConnection` is set to null on teardown. Calling
@@ -2293,8 +2348,7 @@ async function startRealCallInner(c){
       } else if(!remoteDescriptionSet){
         pendingRemoteCandidates.push(cand);
       }
-    });
-  });
+  }, function(u){ calleeCandidatesUnsub = u; });
 
   armRingTimeout(currentCallContactId);
 }
@@ -2441,6 +2495,104 @@ function declineIncomingCall(callId){
   try{ restoreUiAfterCall(); }catch(_){}
 }
 window.declineIncomingCall = declineIncomingCall;
+/* Watches an answered call (this phone answered) for the other side hanging up. */
+function nalunoWatchAnsweredCall(callRef, callId){
+  if(activeCallDocUnsub){ try{ activeCallDocUnsub(); }catch(_){} }
+  activeCallDocUnsub = callRef.onSnapshot(snap=>{
+    if(activeCallId !== callId) return;
+    const d = snap.data();
+    if(d && d.status === 'ended' && $('callOverlay').classList.contains('active')){
+      clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
+      if(notifyRepeatInterval){ try{ clearInterval(notifyRepeatInterval); }catch(_){} try{ clearTimeout(notifyRepeatInterval); }catch(_){} notifyRepeatInterval = null; }
+      stopCallerTone();
+      stopRingtone();
+      teardownCallConnection();
+      closeCallOverlay();
+      stopCameraStream();
+      currentCallContactId = null;
+      callActionInProgress = false;
+      toast('Call ended');
+      try{ restoreUiAfterCall(); }catch(_){}
+    }
+  }, function(err){ console.warn('[call] answered-call watch', err && err.message); });
+}
+
+/* ---- The answer is ready before Answer is tapped ----
+   Answering used to start from nothing: mark the call accepted (a round
+   trip), open the camera, build the connection, read the offer, make the
+   answer, write it (another round trip), and only then could the caller
+   even start connecting. On a phone that is seconds of "connecting".
+   While the phone rings (the camera is already warming for the preview),
+   the connection and the answer are now built in the background and held
+   here. Tapping Answer sends "accepted" and the answer in ONE write and
+   releases the held candidates, so both phones start connecting at once.
+   Nothing is sent before the tap; a decline, a missed ring or a replaced
+   ring just closes it. */
+let nalunoPrepared = null;
+function nalunoDropPrepared(){
+  const p = nalunoPrepared;
+  nalunoPrepared = null;
+  if(!p) return;
+  try{ if(p.candUnsub) p.candUnsub(); }catch(_){}
+  if(!p.used && p.pc){
+    try{ p.pc.ontrack = null; p.pc.onicecandidate = null; p.pc.onconnectionstatechange = null; p.pc.oniceconnectionstatechange = null; p.pc.close(); }catch(_){}
+  }
+}
+async function nalunoPrepareAnswer(callId, offer, camReady){
+  if(!offer || !fbDb) return;
+  if(nalunoPrepared && nalunoPrepared.callId === callId) return;
+  nalunoDropPrepared();
+  const prep = { callId, pc: null, answer: null, held: [], remoteHeld: [], ready: false, used: false, candUnsub: null };
+  nalunoPrepared = prep;
+  const still = function(){ return nalunoPrepared === prep && activeCallId === callId && $('incoming') && $('incoming').classList.contains('active'); };
+  try{
+    // TURN first, so the connection is built with it (no ICE restart later).
+    try{
+      if(typeof getIceServersPatient === 'function') await getIceServersPatient(2500);
+      else if(typeof getIceServers === 'function') await Promise.race([getIceServers(), new Promise(function(r){ setTimeout(r, 2500); })]);
+    }catch(_){}
+    try{ await camReady; }catch(_){}
+    if(!still()) return;
+    if(!mediaStreamIsLive(stream)) return; // no camera/mic yet: Answer takes the normal path
+    const pc = await createPeerConnection();
+    prep.pc = pc;
+    if(!still()){ nalunoDropPrepared(); return; }
+    pc.onicecandidate = function(e){
+      if(!e.candidate) return;
+      const json = e.candidate.toJSON();
+      if(prep.used) fbDb.collection('calls').doc(callId).collection('calleeCandidates').add(json).catch(function(){});
+      else prep.held.push(json);
+    };
+    await pc.setRemoteDescription(new RTCSessionDescription(offer));
+    if(!still()){ nalunoDropPrepared(); return; }
+    // The caller's candidates, so the connection can be checked the moment Answer is tapped.
+    // Collected now, used only once Answer is tapped: connectivity checks must
+    // not start (or fail) while the phone is still ringing.
+    nalunoWatchCandidates(fbDb.collection('calls').doc(callId), 'callerCandidates', callId, function(cand){
+      if(!prep.used){ prep.remoteHeld.push(cand); return; }
+      if(prep.pc && prep.pc.signalingState !== 'closed'){ try{ prep.pc.addIceCandidate(new RTCIceCandidate(cand)).catch(function(){}); }catch(_){} }
+    }, function(u){ prep.candUnsub = u; if(prep.used) callerCandidatesUnsub = u; });
+    const answer = await pc.createAnswer();
+    if(!still()){ nalunoDropPrepared(); return; }
+    await pc.setLocalDescription(answer);
+    if(!still()){ nalunoDropPrepared(); return; }
+    prep.answer = { type: answer.type, sdp: answer.sdp };
+    prep.ready = true;
+  }catch(e){
+    console.warn('[call] answer could not be prepared early; Answer will build it', e && e.message);
+    if(nalunoPrepared === prep) nalunoDropPrepared();
+  }
+}
+function nalunoPreparedFor(callId){
+  const p = nalunoPrepared;
+  if(!p || !p.ready || p.used || p.callId !== callId || !p.pc) return null;
+  if(p.pc.signalingState !== 'stable' || p.pc.connectionState === 'closed' || p.pc.connectionState === 'failed') return null;
+  // The tracks it was built with must still be the live camera and mic.
+  const live = p.pc.getSenders().filter(function(sn){ return sn.track && sn.track.readyState === 'live'; });
+  if(live.length < 1 || !mediaStreamIsLive(stream)) return null;
+  return p;
+}
+
 $('acceptIncoming').onclick = async ()=>{
   if(callActionInProgress) return;
   stopRingtone();
@@ -2453,6 +2605,48 @@ $('acceptIncoming').onclick = async ()=>{
      gone, and must not touch the new one. */
   const NOT_MINE = new Error('replaced');
   const guard = function(){ if(activeCallId !== acceptingId) throw NOT_MINE; };
+
+  const prep = nalunoPreparedFor(acceptingId);
+  if(prep){
+    prep.used = true;   // from here the held candidates go straight out
+    try{
+      const moved = await nalunoCallMove(acceptingId, 'accepted', { acceptedAt: firebase.firestore.FieldValue.serverTimestamp(), answer: prep.answer });
+      if(activeCallId !== acceptingId){
+        if(moved){ try{ callRef.update({ status: 'ended', endReason: 'recalled' }).catch(function(){}); }catch(_){} }
+        return;
+      }
+      if(!moved) throw new Error('gone');
+    }catch(e){
+      nalunoPrepared = prep; prep.used = false; nalunoDropPrepared();
+      toast('That call is no longer available');
+      closeCallOverlayAndStopCamera();
+      callActionInProgress = false;
+      return;
+    }
+    try{
+      if(peerConnection && peerConnection !== prep.pc){ try{ peerConnection.close(); }catch(_){} }
+      peerConnection = prep.pc;
+      remoteDescriptionSet = true;
+      pendingRemoteCandidates = [];
+      pendingIncomingOffer = null;
+      callerCandidatesUnsub = prep.candUnsub;
+      nalunoPrepared = null;
+      prep.held.splice(0).forEach(function(json){ callRef.collection('calleeCandidates').add(json).catch(function(){}); });
+      prep.remoteHeld.splice(0).forEach(function(cand){ try{ prep.pc.addIceCandidate(new RTCIceCandidate(cand)).catch(function(){}); }catch(_){} });
+      startInCall();
+      nalunoWatchAnsweredCall(callRef, acceptingId);
+      try{ if(typeof startCamView === 'function') startCamView('pip'); }catch(_){}
+      try{ scheduleFilteredUpgrade(peerConnection); }catch(_){}
+      try{ ensureRemoteVideoPlaying(); }catch(_){}
+      setTimeout(()=> ensureRemoteVideoPlaying(), 300);
+      setTimeout(()=> ensureRemoteVideoPlaying(), 1200);
+      setTimeout(()=> ensureRemoteVideoPlaying(), 3000);
+    }finally{
+      if(activeCallId === acceptingId || !activeCallId) callActionInProgress = false;
+    }
+    return;
+  }
+  nalunoDropPrepared();
 
   // CRITICAL: signal "accepted" to the caller IMMEDIATELY so their ring stops
   // before any camera / WebRTC / TURN work. Previously the caller kept ringing
@@ -2517,6 +2711,13 @@ $('acceptIncoming').onclick = async ()=>{
     remoteDescriptionSet = true;
     if(peerConnection) pendingRemoteCandidates.forEach(cand => { try{ peerConnection.addIceCandidate(new RTCIceCandidate(cand)).catch(()=>{}); }catch(_){} });
     pendingRemoteCandidates = [];
+    /* The caller's candidates, from the moment their offer is set (not after
+       our answer is written, a round trip later), and subscribed again if
+       the listener drops mid-call. */
+    if(callerCandidatesUnsub){ try{ callerCandidatesUnsub(); }catch(_){} callerCandidatesUnsub = null; }
+    nalunoWatchCandidates(callRef, 'callerCandidates', acceptingId, function(cand){
+      if(peerConnection === answerPc){ try{ answerPc.addIceCandidate(new RTCIceCandidate(cand)).catch(()=>{}); }catch(_){} }
+    }, function(u){ callerCandidatesUnsub = u; });
 
     const answer = await answerPc.createAnswer();
     guard();
@@ -2533,30 +2734,8 @@ $('acceptIncoming').onclick = async ()=>{
     setTimeout(()=> ensureRemoteVideoPlaying(), 1200);
     setTimeout(()=> ensureRemoteVideoPlaying(), 3000);
 
-    if(callerCandidatesUnsub) callerCandidatesUnsub();
-    callerCandidatesUnsub = callRef.collection('callerCandidates').onSnapshot(snap=>{
-      snap.docChanges().forEach(change=>{
-        if(change.type==='added' && peerConnection){ try{ peerConnection.addIceCandidate(new RTCIceCandidate(change.doc.data())).catch(()=>{}); }catch(_){} }
-      });
-    });
 
-    if(activeCallDocUnsub) activeCallDocUnsub();
-    activeCallDocUnsub = callRef.onSnapshot(snap=>{
-      const d = snap.data();
-      if(d && d.status === 'ended' && $('callOverlay').classList.contains('active')){
-        clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
-        if(notifyRepeatInterval){ try{ clearInterval(notifyRepeatInterval); }catch(_){} try{ clearTimeout(notifyRepeatInterval); }catch(_){} notifyRepeatInterval = null; }
-        stopCallerTone();
-        stopRingtone();
-        teardownCallConnection();
-        closeCallOverlay();
-        stopCameraStream();
-        currentCallContactId = null;
-        callActionInProgress = false;
-        toast('Call ended');
-        try{ restoreUiAfterCall(); }catch(_){}
-      }
-    });
+    nalunoWatchAnsweredCall(callRef, acceptingId);
   }catch(e){
     if(e === NOT_MINE){
       // Replaced by a newer ring: that one owns the screen now. Just finish this record.

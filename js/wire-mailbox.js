@@ -273,19 +273,47 @@
     try { if (typeof hydrateWirelineFromStore === 'function') hydrateWirelineFromStore(); } catch (_) {}
     if (inboxUnsub) { try { inboxUnsub(); } catch (_) {} inboxUnsub = null; }
     if (receiptUnsub) { try { receiptUnsub(); } catch (_) {} receiptUnsub = null; }
+    attachInbox();
+    attachReceipts();
+  }
+  /* Each listener used to stop for good on its first error, and nothing new
+     arrived until the app was restarted. They subscribe again with a
+     backoff (a fresh subscription replays what is waiting; drops and
+     receipts are taken once). */
+  function relisten(key, fn) {
+    try { if (typeof nalunoRelisten === 'function') nalunoRelisten(key, fn); } catch (_) {}
+  }
+  function attachInbox() {
+    if (!fbDb || !currentUser) return;
+    if (inboxUnsub) { try { inboxUnsub(); } catch (_) {} inboxUnsub = null; }
     const box = fbDb.collection('wireDrop').doc(currentUser.uid);
     inboxUnsub = box.collection('inbox').onSnapshot(function (snap) {
+      try { nalunoListenOk('mailbox-inbox'); } catch (_) {}
       snap.docChanges().forEach(function (ch) {
         if (ch.type === 'removed') return;
         takeDrop(ch.doc).catch(function () {});
       });
-    }, function () {});
+    }, function (err) {
+      console.warn('[mailbox] inbox listener error, subscribing again', err && err.message);
+      inboxUnsub = null;
+      relisten('mailbox-inbox', attachInbox);
+    });
+  }
+  function attachReceipts() {
+    if (!fbDb || !currentUser) return;
+    if (receiptUnsub) { try { receiptUnsub(); } catch (_) {} receiptUnsub = null; }
+    const box = fbDb.collection('wireDrop').doc(currentUser.uid);
     receiptUnsub = box.collection('receipts').onSnapshot(function (snap) {
+      try { nalunoListenOk('mailbox-receipts'); } catch (_) {}
       snap.docChanges().forEach(function (ch) {
         if (ch.type === 'removed') return;
         takeReceipt(ch.doc).catch(function () {});
       });
-    }, function () {});
+    }, function (err) {
+      console.warn('[mailbox] receipts listener error, subscribing again', err && err.message);
+      receiptUnsub = null;
+      relisten('mailbox-receipts', attachReceipts);
+    });
   }
 
   async function importLegacyOnce(contactId, otherUid) {

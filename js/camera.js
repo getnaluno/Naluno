@@ -900,7 +900,11 @@ function stageLoopTick(){
   requestAnimationFrame(stageLoopTick);
   if($('lobby').classList.contains('active')) drawStage('camStageCanvas', 'camRawVideo', camAnimStart);
   if($('incall').classList.contains('active')) drawStage('pipStageCanvas', 'pipRawVideo', pipAnimStart);
-  if(stream) drawSendCanvas();
+  /* The send canvas is only what the other person sees when a filter is
+     on; otherwise the raw camera track goes out and this full-size
+     composite, redrawn every frame for nothing, was the biggest drain on
+     the phone during a call (and slowed the first video frames). */
+  if(stream && window.__nalunoFxDraw && (typeof callOutboundWantsFilter !== 'function' || callOutboundWantsFilter())) drawSendCanvas();
 }
 requestAnimationFrame(stageLoopTick);
 function startCamView(target){

@@ -526,10 +526,15 @@ function startThreadsListListener(){
   syncWirelineClearsFromCloud();
   syncWirelineHiddenFromCloud();
   try{ if(typeof NalunoWireMailbox !== 'undefined') NalunoWireMailbox.startMailbox(); }catch(_){}
-  if(threadsListUnsubscribe) threadsListUnsubscribe();
+  attachThreadsListListener();
+}
+function attachThreadsListListener(){
+  if(!fbDb || !currentUser) return;
+  if(threadsListUnsubscribe){ try{ threadsListUnsubscribe(); }catch(_){} threadsListUnsubscribe = null; }
   threadsListUnsubscribe = fbDb.collection('threads')
     .where('participants', 'array-contains', currentUser.uid)
     .onSnapshot(snap=>{
+      try{ nalunoListenOk('threads'); }catch(_){}
       snap.forEach(doc=>{
         const d = doc.data();
         const otherUid = (d.participants||[]).find(u=>u!==currentUser.uid);
@@ -552,7 +557,12 @@ function startThreadsListListener(){
       });
       try{ nalunoCacheWrite('threadPreviews', realThreadPreviews); }catch(_){}
       renderWirelineList();
-    }, ()=>{ /* preview list just won't populate this session */ });
+    }, function(err){
+      // Used to freeze the chat list for the rest of the session.
+      console.warn('[wireline] thread list listener error, subscribing again', err && err.message);
+      threadsListUnsubscribe = null;
+      try{ nalunoRelisten('threads', attachThreadsListListener); }catch(_){}
+    });
 }
 
 function openWirelineFromFrequencies(id){
@@ -1179,13 +1189,19 @@ function renderThreadMessages(){
     const ic = document.getElementById('incall');
     if(ic && ic.classList.contains('wire-open') && typeof renderIncallWire === 'function') renderIncallWire();
   }catch(_){}
-  const queued = (localQueuedMessages[activeThreadContactId] || []).map(q => ({
+  const queuedItems = localQueuedMessages[activeThreadContactId] || [];
+  const queued = queuedItems.map(q => ({
     id: q.queueId, from:'me', ts: q.queuedAt, status:'queued',
     ...q.payload,
+    clientMsgId: q.clientMsgId || null,
   }));
+  /* A message waiting in the queue also has the bubble drawn when it was
+     first sent. A retry drew it a second time; the queued copy stands for it. */
+  const queuedCmids = new Set(queuedItems.map(q => q.clientMsgId).filter(Boolean));
+  const liveRows = (wirelineThreads[activeThreadContactId] || []).filter(m => !(m && m.clientMsgId && queuedCmids.has(m.clientMsgId) && m.from === 'me' && String(m.id).indexOf('local-') === 0));
   const cActive = contacts.find(x=>x.id===activeThreadContactId);
   const cut = clearedAtForContact(cActive);
-  const msgs = collapseDuplicateTexts(collapseMissedCallRows([...(wirelineThreads[activeThreadContactId] || []), ...queued]
+  const msgs = collapseDuplicateTexts(collapseMissedCallRows([...liveRows, ...queued]
     .filter(m => msgTs(m) > cut)
     .filter(m => !isWireMessageHidden(m))
     .sort((a,b)=>a.ts-b.ts)));
@@ -1770,7 +1786,7 @@ async function flushMessageQueue(){
   for(const item of queue){
     try{
       let payload = Object.assign({}, item.payload);
-      const needsUpload = (payload.type === 'photo' || payload.type === 'video' || payload.type === 'document');
+      const needsUpload = (payload.type === 'photo' || payload.type === 'video' || payload.type === 'document' || payload.type === 'voice');
       if(needsUpload && !payload.mediaUrl && payload.vaultKey){
         const rec = (typeof vaultGet === 'function') ? await vaultGet(payload.vaultKey) : null;
         if(!rec || !rec.blob) throw new Error('file still on this phone only');
@@ -1784,7 +1800,11 @@ async function flushMessageQueue(){
         // guess to work from.
         const named = rec.blob;
         try{ if(payload.fileName && !named.name) Object.defineProperty(named, 'name', { value: payload.fileName, configurable: true }); }catch(_){}
-        if(payload.type === 'document' && typeof uploadDocumentToR2 === 'function'){
+        if(payload.type === 'voice'){
+          payload.mediaUrl = await nalunoUploadVoiceBlob(named);
+          try{ if(payload.mediaUrl && typeof vaultPut === 'function' && typeof vaultKeyForUrl === 'function') await vaultPut(vaultKeyForUrl(payload.mediaUrl), named, { name: 'voice.webm' }); }catch(_){}
+          try{ if(payload.mediaUrl && voiceAudioCache[item.queueId]) voiceAudioCache[payload.mediaUrl] = voiceAudioCache[item.queueId]; }catch(_){}
+        } else if(payload.type === 'document' && typeof uploadDocumentToR2 === 'function'){
           payload.mediaUrl = await uploadDocumentToR2(named);
         } else if(payload.type === 'photo' && typeof uploadPhotoToR2 === 'function'){
           payload.mediaUrl = await uploadPhotoToR2(named);
@@ -1893,6 +1913,7 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
             pending: true,
             mediaUrl: payload.mediaUrl || null,
             duration: payload.duration || null,
+            waveform: payload.waveform || null,
             mood: payload.mood || null,
             moodNote: (payload.moodNote != null ? payload.moodNote : null),
           });
@@ -1960,6 +1981,7 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
           clientMsgId: cmid,
           mediaUrl: payload.mediaUrl || null,
           duration: payload.duration || null,
+          waveform: payload.waveform || null,
           mood: payload.mood || null,
           moodNote: (payload.moodNote != null ? payload.moodNote : null),
           pending: false
@@ -2125,6 +2147,21 @@ async function saveVoiceAudio(msgId, dataUrl){
 }
 async function getVoiceAudio(msgId){
   if(voiceAudioCache[msgId]) return voiceAudioCache[msgId];
+  /* Until the file is up (or while it uploads), play the copy on this phone. */
+  try{
+    const liveList = wirelineThreads[activeThreadContactId] || [];
+    const row = liveList.find(m=>String(m.id)===String(msgId));
+    if(row && row.clientMsgId && voiceAudioCache['local-' + row.clientMsgId]) return voiceAudioCache['local-' + row.clientMsgId];
+    if(row && row.mediaUrl && voiceAudioCache[row.mediaUrl]) return voiceAudioCache[row.mediaUrl];
+    const q = (typeof getMessageQueue === 'function' ? getMessageQueue() : []).find(x=>x.queueId === String(msgId));
+    if(q && q.clientMsgId && voiceAudioCache['local-' + q.clientMsgId]) return voiceAudioCache['local-' + q.clientMsgId];
+    if(q && q.payload && q.payload.mediaUrl && voiceAudioCache[q.payload.mediaUrl]) return voiceAudioCache[q.payload.mediaUrl];
+    if(q && q.payload && q.payload.vaultKey && typeof vaultGet === 'function'){
+      const rec = await vaultGet(q.payload.vaultKey);
+      if(rec && rec.blob){ const u = URL.createObjectURL(rec.blob); voiceAudioCache[msgId] = u; return u; }
+    }
+    if(q && q.payload && q.payload.mediaUrl) return q.payload.mediaUrl;
+  }catch(_){}
   // Real messages already carry dataUrl straight from Firestore (no separate storage
   // hop needed) — check the currently loaded thread before falling back to local cache.
   const liveMsgs = wirelineThreads[activeThreadContactId] || [];
@@ -2295,17 +2332,44 @@ function pushVoiceMessage(contactId, dataUrl, durationSecs, waveform){
   if(!contactId) return;
   const c = contacts.find(x=>x.id===contactId);
   if(c && c.isReal && c.firebaseUid){
+    /* A voice note that failed to upload, or was recorded with no
+       connection, used to be marked "waiting" and then never sent (the
+       queue only re-uploaded photos, videos and documents). The recording
+       is now kept on this phone and goes out, waveform and all, when the
+       connection is back. It plays from the local copy until then. */
     (async function(){
-      try{
-        const blob = await (await fetch(dataUrl)).blob();
-        const ct = blob.type || 'audio/webm';
-        const url = (typeof uploadBroadcastFile === 'function')
-          ? await uploadBroadcastFile(blob, null, ct)
-          : await uploadVideoToR2(blob);
-        await sendRealMessage(c, { type:'voice', mediaUrl: url, duration: durationSecs, waveform }, '🎙 Voice note');
-      }catch(e){
-        toast((e && e.message) || 'Voice failed');
+      const cmid = 'c' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+      const vaultKey = 'voice-' + cmid;
+      let blob = null;
+      try{ blob = await (await fetch(dataUrl)).blob(); }catch(_){}
+      try{ if(blob && typeof vaultPut === 'function') await vaultPut(vaultKey, blob, { name: 'voice.webm' }); }catch(_){}
+      voiceAudioCache['local-' + cmid] = dataUrl;
+      const keepForLater = function(){
+        const qid = queueMessageForLater(c.id, c.firebaseUid, { type:'voice', pendingUpload:true, mediaUrl:'', duration: durationSecs, waveform, vaultKey }, '🎙 Voice note', cmid);
+        saveVoiceAudio(qid, dataUrl);
+        if(activeThreadContactId === c.id) renderThreadMessages();
+        renderWirelineList();
+      };
+      const online = (typeof nalunoIsOnline === 'function') ? nalunoIsOnline() : navigator.onLine;
+      if(!online || !blob){
+        keepForLater();
+        toast('No connection — voice note saved here, will send when you are back');
+        return;
       }
+      let url = '';
+      try{
+        url = await nalunoUploadVoiceBlob(blob);
+      }catch(_){ url = ''; }
+      if(!url){
+        keepForLater();
+        toast('Voice note saved here — it will send once the connection is steady');
+        return;
+      }
+      try{ if(typeof vaultPut === 'function' && typeof vaultKeyForUrl === 'function') await vaultPut(vaultKeyForUrl(url), blob, { name: 'voice.webm' }); }catch(_){}
+      voiceAudioCache[url] = dataUrl;
+      try{
+        await sendRealMessage(c, { type:'voice', mediaUrl: url, duration: durationSecs, waveform }, '🎙 Voice note', undefined, cmid);
+      }catch(_){ /* sendRealMessage already queued it with the uploaded file */ }
     })();
     return;
   }
@@ -2318,6 +2382,13 @@ function pushVoiceMessage(contactId, dataUrl, durationSecs, waveform){
   saveVoiceAudio(msg.id, dataUrl); // audio written to its own key, separately
   advanceReceipt(contactId, msg);
   maybeSimulateReply(contactId);
+}
+
+async function nalunoUploadVoiceBlob(blob){
+  const ct = (blob && blob.type) || 'audio/webm';
+  if(typeof uploadBroadcastFile === 'function') return await uploadBroadcastFile(blob, null, ct);
+  if(typeof uploadVideoToR2 === 'function') return await uploadVideoToR2(blob);
+  throw new Error('Upload is not available');
 }
 
 async function toggleVoicePlay(msgId){

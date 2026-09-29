@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260928g';
+  const BUILD = '20260929b';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -1175,6 +1175,10 @@
     });
     __liveUnsubs = [];
     __liveArmed = false;
+    try {
+      Object.keys(__relistenTimers).forEach(function (k) { if (__relistenTimers[k]) clearTimeout(__relistenTimers[k]); __relistenTimers[k] = null; });
+      Object.keys(__relistenTries).forEach(function (k) { __relistenTries[k] = 0; });
+    } catch (_) {}
     if (__liveTimer) {
       try { clearTimeout(__liveTimer); } catch (_) {}
       __liveTimer = null;
@@ -1184,6 +1188,23 @@
       __workerTimer = null;
     }
   }
+  /* A live list that hit one error stayed frozen until the console was
+     reloaded. It subscribes again after 1s, 2s, 4s … and stops after six
+     failures in a row, so a hard failure (rules, a missing index) cannot pile
+     up listeners. Disarming the console cancels any pending retry. */
+  const __relistenTries = {};
+  const __relistenTimers = {};
+  function relistenAdmin(key, fn) {
+    if (!__liveArmed || __relistenTimers[key]) return;
+    const n = __relistenTries[key] || 0;
+    if (n >= 6) { try { console.warn('[console] live list ' + key + ': stopped after 6 failed tries'); } catch (_) {} return; }
+    __relistenTries[key] = n + 1;
+    __relistenTimers[key] = setTimeout(function () {
+      __relistenTimers[key] = null;
+      if (__liveArmed) { try { fn(); } catch (_) {} }
+    }, Math.min(30000, 1000 * Math.pow(2, n)));
+  }
+  function relistenOk(key) { __relistenTries[key] = 0; }
   function listenCol(name, limit, key, orderField) {
     const db = adminDb();
     if (!db) return;
@@ -1192,11 +1213,13 @@
       if (orderField) q = q.orderBy(orderField, 'desc');
       q = q.limit(limit || 400);
       const unsub = q.onSnapshot(function (s) {
+        relistenOk('col:' + key);
         if (!__livePack) return;
         __livePack[key] = snapRows(s);
         scheduleLive();
       }, function () {
         if (orderField) listenCol(name, limit, key);
+        else relistenAdmin('col:' + key, function () { listenCol(name, limit, key); });
       });
       __liveUnsubs.push(unsub);
     } catch (_) {
@@ -1210,12 +1233,15 @@
     if (!db) return;
     try {
       const unsub = db.collection(col).doc(id).onSnapshot(function (s) {
+        relistenOk('doc:' + col + '/' + id);
         if (!__livePack) return;
         const data = (s && s.exists) ? (s.data() || {}) : {};
         if (typeof applyFn === 'function') applyFn(data);
         else __livePack[key] = data;
         scheduleLive();
-      }, function () {});
+      }, function () {
+        relistenAdmin('doc:' + col + '/' + id, function () { listenDoc(col, id, key, applyFn); });
+      });
       __liveUnsubs.push(unsub);
     } catch (_) {}
   }
@@ -1224,10 +1250,13 @@
     if (!db) return;
     try {
       const unsub = db.collectionGroup(name).limit(limit || 400).onSnapshot(function (s) {
+        relistenOk('group:' + name);
         if (!__livePack) return;
         onRows(groupRows(s));
         scheduleLive();
-      }, function () {});
+      }, function () {
+        relistenAdmin('group:' + name, function () { listenGroup(name, limit, onRows); });
+      });
       __liveUnsubs.push(unsub);
     } catch (_) {}
   }

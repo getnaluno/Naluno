@@ -98,12 +98,33 @@ async function getCallOutboundVideoTrack(){
   return fx || raw;
 }
 
+/* A call connects on the raw camera. Switching to the filter canvas while
+   the connection is still being set up (it used to happen within 400 ms)
+   restarts the video the other person is waiting for, and the canvas
+   costs the phone a full redraw every frame; together they pushed the
+   first picture back by seconds. The filter now goes on once the call has
+   been connected for a moment. Turning a filter off is always immediate. */
+const FX_AFTER_CONNECT_MS = 1500;
+let _fxDeferTimer = null;
 async function applyCallFilterNow(){
   if(typeof peerConnection === 'undefined' || !peerConnection) return;
   const sender = peerConnection.getSenders().find(function(s){
     return s.track && s.track.kind === 'video';
   });
   if(!sender) return;
+  if(callOutboundWantsFilter()){
+    const at = window.__nalunoConnectedAt || 0;
+    const wait = at ? (at + FX_AFTER_CONNECT_MS - Date.now()) : -1;
+    if(!at || wait > 0){
+      if(!_fxDeferTimer){
+        _fxDeferTimer = setTimeout(function(){ _fxDeferTimer = null; applyCallFilterNow().catch(function(){}); }, at ? wait + 20 : 700);
+      }
+      return;
+    }
+    window.__nalunoFxDraw = true;
+  } else {
+    window.__nalunoFxDraw = false;
+  }
   const next = await getCallOutboundVideoTrack();
   if(!next || sender.track === next) return;
   // Never replace with a 2px / dead canvas — that is what hid remote video.

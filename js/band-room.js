@@ -671,6 +671,7 @@ function attachBandMessagesListener(bandRef, b){
   b._msgCut = cut;
   const id = b.id;
   bandMessagesUnsub = bandMessagesQuery(bandRef, b).onSnapshot(function(snap){
+    try{ nalunoListenOk('bandMessages'); }catch(_){}
     const uid = currentUser && currentUser.uid;
     const rows = snap.docs.slice().reverse().map(function(d){
       return mapBandMessageDoc(d, uid);
@@ -687,7 +688,11 @@ function attachBandMessagesListener(bandRef, b){
       if(!bandMessages[lockedId]) return;
       renderBandMessages();
     }).catch(function(){});
-  }, function(){ /* messages just won't sync this session */ });
+  }, function(err){
+    console.warn('[band] messages listener error, subscribing again', err && err.message);
+    bandMessagesUnsub = null;
+    try{ nalunoRelisten('bandMessages', function(){ if(activeBandId === id) attachBandMessagesListener(bandRef, b); }); }catch(_){}
+  });
 }
 
 function bandNewestMessageMs(b){
@@ -754,7 +759,9 @@ function openBandRoom(id){
     renderBandMessages();
     const bandRef = fbDb.collection('bands').doc(b.firestoreId);
 
-    bandMetaUnsub = bandRef.onSnapshot(doc=>{
+    const metaBandId = b.id;
+    const onMeta = doc=>{
+      try{ nalunoListenOk('bandMeta'); }catch(_){}
       if(!doc.exists) return;
       const d = doc.data();
       b.name = d.name || b.name;
@@ -786,9 +793,20 @@ function openBandRoom(id){
       const nextCut = bandWipeCut(b);
       if(nextCut !== b._msgCut) attachBandMessagesListener(bandRef, b);
       renderBandMessages();
-    }, ()=>{});
+    };
+    const attachMeta = function(){
+      if(activeBandId !== metaBandId) return;
+      if(bandMetaUnsub){ try{ bandMetaUnsub(); }catch(_){} bandMetaUnsub = null; }
+      bandMetaUnsub = bandRef.onSnapshot(onMeta, function(err){
+        console.warn('[band] room listener error, subscribing again', err && err.message);
+        bandMetaUnsub = null;
+        try{ nalunoRelisten('bandMeta', attachMeta); }catch(_){}
+      });
+    };
+    attachMeta();
 
-    bandPresenceUnsub = bandRef.collection('presence').onSnapshot(snap=>{
+    const onPresence = snap=>{
+      try{ nalunoListenOk('bandPresence'); }catch(_){}
       // Stale presence: if someone force-quit without deleting their doc, drop them after 90s.
       const PRESENCE_FRESH_MS = 90 * 1000;
       const now = Date.now();
@@ -859,7 +877,21 @@ function openBandRoom(id){
         b._liveKey = liveKey;
         renderBandLiveGrid();
       }
-    }, ()=>{ /* presence just won't update this session */ });
+    };
+    /* Presence and messages used to stop for good on their first error:
+       nobody seemed tuned in and nothing new arrived until the app was
+       restarted. They subscribe again while this Band is open. */
+    const presenceBandId = b.id;
+    const attachPresence = function(){
+      if(activeBandId !== presenceBandId) return;
+      if(bandPresenceUnsub){ try{ bandPresenceUnsub(); }catch(_){} bandPresenceUnsub = null; }
+      bandPresenceUnsub = bandRef.collection('presence').onSnapshot(onPresence, function(err){
+        console.warn('[band] presence listener error, subscribing again', err && err.message);
+        bandPresenceUnsub = null;
+        try{ nalunoRelisten('bandPresence', attachPresence); }catch(_){}
+      });
+    };
+    attachPresence();
 
     attachBandMessagesListener(bandRef, b);
 

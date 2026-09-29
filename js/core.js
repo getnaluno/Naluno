@@ -356,6 +356,38 @@ function nalunoCacheKey(kind){
     return uid ? ('nalunoCache:' + kind + ':' + uid) : '';
   }catch(_){ return ''; }
 }
+/* Live listeners that hit one error (a network blip, a token refresh, the
+   app coming back from the background) used to stop for the rest of the
+   session: the list froze until the app was restarted. nalunoRelisten()
+   subscribes again after 1s, 2s, 4s … up to 30s; nalunoListenOk() resets
+   the wait once a snapshot arrives. `max` stops after that many failures in
+   a row, so a hard failure (rules, sign-out) cannot pile up listeners. */
+const nalunoRelistenState = {};
+function nalunoRelisten(key, start, max){
+  const st = nalunoRelistenState[key] || (nalunoRelistenState[key] = { tries: 0, timer: null });
+  if(st.timer) return false;
+  if(max && st.tries >= max){ try{ console.warn('[listen] ' + key + ': giving up after ' + st.tries + ' tries'); }catch(_){} return false; }
+  const wait = Math.min(30000, 1000 * Math.pow(2, st.tries));
+  st.tries++;
+  st.timer = setTimeout(function(){
+    st.timer = null;
+    try{ if(typeof currentUser !== 'undefined' && !currentUser) return; }catch(_){}
+    try{ start(); }catch(e){ try{ console.warn('[listen] ' + key, e && e.message); }catch(_){} }
+  }, wait);
+  return true;
+}
+function nalunoListenOk(key){
+  const st = nalunoRelistenState[key];
+  if(st) st.tries = 0;
+}
+function nalunoRelistenStop(key){
+  const st = nalunoRelistenState[key];
+  if(st && st.timer){ clearTimeout(st.timer); st.timer = null; }
+  if(st) st.tries = 0;
+}
+window.nalunoRelisten = nalunoRelisten;
+window.nalunoListenOk = nalunoListenOk;
+window.nalunoRelistenStop = nalunoRelistenStop;
 function nalunoCacheWrite(kind, value){
   const k = nalunoCacheKey(kind);
   if(!k) return;
