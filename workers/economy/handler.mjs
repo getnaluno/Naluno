@@ -51,6 +51,11 @@ import {
   validateCheckout,
   verifyStripeSignature,
   applyCheckoutEvent,
+  connectAccountForm,
+  accountLinkForm,
+  payoutState,
+  supportFeeMinor,
+  payReturnUrl,
 } from "./pay.mjs";
 import {
   normCode,
@@ -67,6 +72,13 @@ import {
   billingSnapshot,
 } from "./books.mjs";
 import { lookQuery } from "./look.mjs";
+import {
+  clampViewSec,
+  viewDecision,
+  viewWrites,
+  viewOpenId,
+  cleanBroadcastId,
+} from "./views.mjs";
 import { pbkdf2Sha256Js, WORKER_PBKDF2_MAX } from "./pbkdf2.mjs";
 import {
   callsReady,
@@ -2497,12 +2509,71 @@ async function loadPriceBook(env, saToken) {
 }
 export function _resetMoneyCaches() { _ratesCache = null; _pricesCache = null; }
 
+/* ---- Broadcast views: the server decides what counts (29g) ---- */
+let _viewRulesCache = null;
+async function loadViewSec(env, saToken) {
+  if (_viewRulesCache && Date.now() - _viewRulesCache.at < 60000) return _viewRulesCache.sec;
+  const doc = saToken ? await fsGetDoc(env, saToken, "/economyConfig/viewRules") : null;
+  const sec = clampViewSec(doc && doc.countAfterSec);
+  _viewRulesCache = { at: Date.now(), sec };
+  return sec;
+}
+async function viewOpen(env, user, saToken, body) {
+  if (!saToken) return json({ ok: false, code: "not_connected", error: "Views are not being counted right now." }, 503);
+  const bid = cleanBroadcastId(body.broadcast_id);
+  if (!bid) return json({ ok: false, error: "Unknown Broadcast" }, 400);
+  const sec = await loadViewSec(env, saToken);
+  await fsPutDoc(env, saToken, "/viewOpens/" + viewOpenId(user.uid, bid), {
+    uid: user.uid,
+    broadcastId: bid,
+    openedAt: Date.now(),
+  });
+  return json({ ok: true, count_after_sec: sec });
+}
+async function viewCount(env, user, saToken, body) {
+  if (!saToken) return json({ ok: false, code: "not_connected", error: "Views are not being counted right now." }, 503);
+  const bid = cleanBroadcastId(body.broadcast_id);
+  if (!bid) return json({ ok: false, error: "Unknown Broadcast" }, 400);
+  const [open, broadcast, sec] = await Promise.all([
+    fsGetDoc(env, saToken, "/viewOpens/" + viewOpenId(user.uid, bid)),
+    fsGetDoc(env, saToken, "/broadcasts/" + encodeURIComponent(bid)),
+    loadViewSec(env, saToken),
+  ]);
+  const now = Date.now();
+  const d = viewDecision({ now, needSec: sec, uid: user.uid, broadcast: broadcast, openedAt: open && open.uid === user.uid ? open.openedAt : 0 });
+  if (d.error) return json({ ok: false, code: d.error, count_after_sec: sec }, d.error === "not_found" ? 404 : 409);
+  if (d.wait_ms) return json({ ok: false, code: "wait", wait_ms: d.wait_ms, count_after_sec: sec }, 202);
+  const docRoot = fsRoot(env).replace("https://firestore.googleapis.com/v1/", "");
+  const writes = viewWrites(docRoot, {
+    broadcastId: bid,
+    uid: user.uid,
+    creatorUid: String((broadcast && broadcast.creatorUid) || ""),
+    now,
+    dwellMs: d.dwell_ms,
+  });
+  const res = await _fetch(fsRoot(env) + ":commit", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + saToken, "Content-Type": "application/json" },
+    body: JSON.stringify({ writes }),
+  });
+  if (!res.ok) {
+    /* The viewer document already exists: this person was counted before. */
+    if (res.status === 409 || res.status === 400 || res.status === 412) {
+      return json({ ok: true, counted: false, already: true, views: Number(broadcast && broadcast.views) || 0 });
+    }
+    return json({ ok: false, error: "The view could not be saved." }, 502);
+  }
+  return json({ ok: true, counted: true, views: (Number(broadcast && broadcast.views) || 0) + 1, count_after_sec: sec });
+}
+
 async function payCheckout(env, user, saToken, body) {
   if (!paymentsReady(env) || !saToken) return json({ ok: false, code: "not_connected", error: PAY_OFF }, 503);
   const check = validateCheckout(body, user.uid);
   if (check.error) return json({ ok: false, error: check.error }, 400);
+  let payoutsOn = false;
   if (check.kind === "support") {
     const flags = await readFlags(env, saToken, null);
+    payoutsOn = !!flags.flags.real_payouts_enabled;
     if (!flags.flags.creator_support_enabled) {
       return json({ ok: false, error: "Creator Support is off. Nothing was charged." }, 403);
     }
@@ -2565,6 +2636,23 @@ async function payCheckout(env, user, saToken, body) {
   const baseRef = String(body.idempotency_key || supportId || ("pay_" + user.uid + "_" + Date.now())).slice(0, 150);
   const ref = baseRef + ":" + charge.currency + charge.stripe;
   const origin = payOrigin(env);
+  /* 29g: a creator with payouts set up is paid directly; Naluno keeps the
+     share set in the Control Centre (economyConfig/payouts), none if unset. */
+  let destination = "";
+  let feeMinor = 0;
+  if (check.kind === "support" && payoutsOn) {
+    const pay = await creatorPayout(env, saToken, String(body.creator_user_id || ""));
+    if (pay && pay.ready && pay.account) {
+      destination = pay.account;
+      const cfg = await fsGetDoc(env, saToken, "/economyConfig/payouts");
+      feeMinor = supportFeeMinor(charge.stripe, cfg && cfg.supportFeePct);
+    }
+  }
+  const back = {
+    kind: check.kind,
+    broadcastId: String(body.broadcast_id || ""),
+    ref: check.kind === "support" ? supportId : String(body.ad_id || body.mail_id || ""),
+  };
   const form = checkoutForm({
     kind: check.kind,
     amountMinor: charge.stripe,
@@ -2579,8 +2667,12 @@ async function payCheckout(env, user, saToken, body) {
     name: check.kind === "ad" ? "Naluno advertisement" : (check.kind === "known" ? "Naluno Known, one month" : "Support a creator"),
     bookAmount: bookAmount,
     bookCurrency: bookCurrency,
-    successUrl: origin + "/app/?pay=return",
-    cancelUrl: origin + "/app/?pay=cancel",
+    successUrl: payReturnUrl(origin, Object.assign({ outcome: "return" }, back)),
+    cancelUrl: payReturnUrl(origin, Object.assign({ outcome: "cancel" }, back)),
+    collectPhone: true,
+    customerEmail: user.email || "",
+    destination: destination,
+    feeMinor: feeMinor,
   });
   const res = await _fetch("https://api.stripe.com/v1/checkout/sessions", {
     method: "POST",
@@ -2596,7 +2688,67 @@ async function payCheckout(env, user, saToken, body) {
     const why = data && data.error && data.error.message ? (" " + String(data.error.message).slice(0, 160)) : "";
     return json({ ok: false, error: "The payment step did not start." + why + " Nothing was charged." }, 502);
   }
-  return json({ ok: true, url: data.url, amount_major: charge.major, currency: charge.currency });
+  return json({ ok: true, url: data.url, amount_major: charge.major, currency: charge.currency, direct_to_creator: !!destination });
+}
+
+/* ---- Creator payouts: Stripe Connect (29g) ---- */
+async function stripeCall(env, method, path, form, idem) {
+  const headers = { Authorization: "Bearer " + env.STRIPE_SECRET_KEY };
+  if (form != null) headers["Content-Type"] = "application/x-www-form-urlencoded";
+  if (idem) headers["Idempotency-Key"] = idem;
+  const res = await _fetch("https://api.stripe.com/v1" + path, { method, headers, body: form == null ? undefined : form });
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, data };
+}
+/** { account, ready } for a creator, checked with Stripe (cached 10 min). */
+async function creatorPayout(env, saToken, uid) {
+  if (!uid || !saToken || !paymentsReady(env)) return null;
+  const row = await fsGetDoc(env, saToken, "/payoutAccounts/" + encodeURIComponent(uid));
+  if (!row || !row.account) return null;
+  if (row.checkedAt && Date.now() - Number(row.checkedAt) < 10 * 60 * 1000) {
+    return { account: row.account, ready: !!row.ready };
+  }
+  const r = await stripeCall(env, "GET", "/accounts/" + encodeURIComponent(row.account));
+  if (!r.ok) return { account: row.account, ready: false };
+  const st = payoutState(r.data);
+  await fsPutDoc(env, saToken, "/payoutAccounts/" + encodeURIComponent(uid), {
+    ready: st.ready, detailsSubmitted: st.details_submitted, needs: st.needs, checkedAt: Date.now(),
+  });
+  return { account: row.account, ready: st.ready };
+}
+async function payConnect(env, user, saToken) {
+  if (!paymentsReady(env) || !saToken) return json({ ok: false, code: "not_connected", error: PAY_OFF }, 503);
+  const path = "/payoutAccounts/" + encodeURIComponent(user.uid);
+  let row = await fsGetDoc(env, saToken, path);
+  let account = row && row.account;
+  if (!account) {
+    const made = await stripeCall(env, "POST", "/accounts", connectAccountForm({ email: user.email, uid: user.uid }), "acct_" + user.uid);
+    if (!made.ok || !made.data.id) {
+      const why = made.data && made.data.error && made.data.error.message ? (" " + String(made.data.error.message).slice(0, 160)) : "";
+      return json({ ok: false, error: "Payouts could not be set up." + why }, 502);
+    }
+    account = made.data.id;
+    await fsPutDoc(env, saToken, path, { uid: user.uid, account, ready: false, createdAt: Date.now(), checkedAt: 0 });
+  }
+  const origin = payOrigin(env);
+  const link = await stripeCall(env, "POST", "/account_links", accountLinkForm({
+    account,
+    refreshUrl: origin + "/app/?payout=refresh",
+    returnUrl: origin + "/app/?payout=return",
+  }));
+  if (!link.ok || !link.data.url) return json({ ok: false, error: "The Stripe page did not open. Try again." }, 502);
+  return json({ ok: true, url: link.data.url });
+}
+async function payConnectStatus(env, user, saToken) {
+  if (!paymentsReady(env) || !saToken) return json({ ok: false, code: "not_connected", error: PAY_OFF }, 503);
+  const path = "/payoutAccounts/" + encodeURIComponent(user.uid);
+  const row = await fsGetDoc(env, saToken, path);
+  if (!row || !row.account) return json({ ok: true, connected: false, ready: false });
+  const r = await stripeCall(env, "GET", "/accounts/" + encodeURIComponent(row.account));
+  if (!r.ok) return json({ ok: true, connected: true, ready: false, needs: 0, unknown: true });
+  const st = payoutState(r.data);
+  await fsPutDoc(env, saToken, path, { ready: st.ready, detailsSubmitted: st.details_submitted, needs: st.needs, checkedAt: Date.now() });
+  return json(Object.assign({ ok: true }, st));
 }
 
 /* Did Stripe take what the server asked for, in that currency? */
@@ -3573,6 +3725,22 @@ export async function handleRequest(request, env = {}, ctx = {}) {
     if (path === "/v1/support/intent" && request.method === "POST") {
       const body = await request.json().catch(() => ({}));
       return payCheckout(env, user, saToken, Object.assign({ kind: "support" }, body || {}));
+    }
+
+    if (path === "/v1/view/open" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      return viewOpen(env, user, saToken, body || {});
+    }
+    if (path === "/v1/view/count" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      return viewCount(env, user, saToken, body || {});
+    }
+
+    if (path === "/v1/pay/connect" && request.method === "POST") {
+      return payConnect(env, user, saToken);
+    }
+    if (path === "/v1/pay/connect/status" && (request.method === "GET" || request.method === "POST")) {
+      return payConnectStatus(env, user, saToken);
     }
 
     if (path === "/v1/pay/checkout" && request.method === "POST") {

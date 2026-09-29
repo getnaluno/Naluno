@@ -37,6 +37,16 @@ export function checkoutForm(fields) {
   p.set("metadata[expected_currency]", cur);
   p.set("metadata[book_amount]", fields.bookAmount != null ? String(fields.bookAmount) : "");
   p.set("metadata[book_currency]", fields.bookCurrency ? String(fields.bookCurrency).toUpperCase() : "");
+  /* 29g: Stripe asks for a phone number on the pay page, the email is
+     filled in from the sign-in, and a creator who has set up payouts is
+     paid straight to their Stripe account. */
+  if (fields.collectPhone) p.set("phone_number_collection[enabled]", "true");
+  if (fields.customerEmail) p.set("customer_email", String(fields.customerEmail).slice(0, 200));
+  if (fields.destination) {
+    p.set("payment_intent_data[transfer_data][destination]", fields.destination);
+    if (fields.feeMinor > 0) p.set("payment_intent_data[application_fee_amount]", String(fields.feeMinor));
+    p.set("metadata[destination]", fields.destination);
+  }
   p.set("line_items[0][quantity]", "1");
   p.set("line_items[0][price_data][currency]", cur);
   p.set("line_items[0][price_data][unit_amount]", String(fields.amountMinor));
@@ -158,4 +168,55 @@ export function mediaKeysForUser(urls, uid) {
     if (key.indexOf(prefix) === 0 && out.indexOf(key) < 0) out.push(key);
   });
   return out;
+}
+
+/* ---- Creator payouts (Stripe Connect, Express accounts) ---- */
+export function connectAccountForm(o) {
+  const p = new URLSearchParams();
+  p.set("type", "express");
+  if (o && o.email) p.set("email", String(o.email).slice(0, 200));
+  p.set("capabilities[transfers][requested]", "true");
+  p.set("business_type", "individual");
+  p.set("metadata[uid]", String((o && o.uid) || ""));
+  return p.toString();
+}
+export function accountLinkForm(o) {
+  const p = new URLSearchParams();
+  p.set("account", o.account);
+  p.set("refresh_url", o.refreshUrl);
+  p.set("return_url", o.returnUrl);
+  p.set("type", "account_onboarding");
+  return p.toString();
+}
+/** What a creator's Stripe account can do right now. */
+export function payoutState(acct) {
+  if (!acct || !acct.id) return { connected: false, ready: false };
+  const caps = acct.capabilities || {};
+  const due = (acct.requirements && acct.requirements.currently_due) || [];
+  const ready = !!(acct.charges_enabled && acct.payouts_enabled && caps.transfers === "active");
+  return {
+    connected: true,
+    ready,
+    details_submitted: !!acct.details_submitted,
+    needs: Array.isArray(due) ? due.length : 0,
+  };
+}
+/** The platform's share, from the console setting (percent, 0 when unset). */
+export function supportFeeMinor(amountMinor, pct) {
+  const a = Math.round(Number(amountMinor) || 0);
+  let p = Number(pct);
+  if (!isFinite(p) || p <= 0) return 0;
+  if (p > 50) p = 50;
+  return Math.max(0, Math.min(a - 1, Math.floor(a * p / 100)));
+}
+/** Where Stripe sends the person back: the Broadcast they paid from. */
+export function payReturnUrl(origin, o) {
+  const q = new URLSearchParams();
+  q.set("pay", o.outcome === "cancel" ? "cancel" : "return");
+  q.set("k", String(o.kind || ""));
+  if (o.broadcastId && /^[A-Za-z0-9_-]{4,120}$/.test(o.broadcastId)) q.set("b", o.broadcastId);
+  if (o.ref && /^[A-Za-z0-9_:.-]{1,150}$/.test(o.ref)) q.set("r", o.ref);
+  let url = origin + "/app/?" + q.toString();
+  if (o.outcome !== "cancel") url += "&s={CHECKOUT_SESSION_ID}";
+  return url;
 }
