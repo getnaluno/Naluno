@@ -3809,3 +3809,19 @@ body .naluno-break-wrap img{
 .has-known{ display:inline-flex !important; align-items:center; max-width:100%; min-width:0; vertical-align:middle; }
 .has-known > .known-text{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
 .has-known > .naluno-known{ flex:none; }
+
+/* 30a — Compass action buttons, links in Writing and comments, the link sheet */
+.compass-open{ display:inline-flex; align-items:center; margin-top:4px; padding:7px 14px; border-radius:999px; border:1px solid rgba(124,255,178,.5); background:rgba(124,255,178,.12); color:var(--mint); font-size:12.5px; font-family:inherit; cursor:pointer; }
+.msg-bubble a{ color:var(--mint); word-break:break-word; }
+a.naluno-link{ color:var(--mint); text-decoration:underline; text-underline-offset:2px; word-break:break-word; }
+.link-attach-btn{ flex:none; }
+.link-attach-write{ margin:0 0 10px !important; background:transparent !important; color:var(--text) !important; border:1px solid var(--line) !important; }
+.link-attach-sheet{ position:fixed; inset:0; z-index:2147483000; background:rgba(0,0,0,.55); display:none; align-items:flex-end; justify-content:center; }
+.link-attach-sheet.open{ display:flex; }
+.link-attach-card{ width:100%; max-width:480px; box-sizing:border-box; background:#12151f; border:1px solid var(--line); border-radius:18px 18px 0 0; padding:18px 18px calc(18px + env(safe-area-inset-bottom, 0px)); display:flex; flex-direction:column; gap:10px; }
+.link-attach-title{ font-family:var(--font-futuristic); font-size:15px; }
+.link-attach-card input{ width:100%; box-sizing:border-box; padding:12px 14px; border-radius:12px; border:1px solid var(--line); background:rgba(23,26,38,.9); color:var(--text); font-size:15px; font-family:inherit; }
+.link-attach-msg{ margin:0; min-height:16px; font-size:12px; color:#ffc266; }
+.link-attach-row{ display:flex; gap:10px; }
+.link-attach-row button{ flex:1; padding:12px; border-radius:12px; border:1px solid var(--line); background:transparent; color:var(--text); font-size:14px; }
+.link-attach-row button.primary{ background:var(--mint); color:#0D0F17; border:none; }
