@@ -71,8 +71,8 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v243';
-const APP_BUILD = '20260929g';
+const CACHE_NAME = 'naluno-shell-v244';
+const APP_BUILD = '20260929h';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -94,7 +94,10 @@ self.addEventListener('install', event=>{
   self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME).then(cache =>
-      Promise.all(CORE_ASSETS.map(u => cache.add(u).catch(()=>{})))
+      /* 29h: fetch past the browser's own cache, so a new version never
+         stores an old copy of the app page (which brought the old page, and
+         the update banner, back after the update). */
+      Promise.all(CORE_ASSETS.map(u => cache.add(new Request(u, { cache: 'reload' })).catch(()=>{})))
     )
   );
 });
