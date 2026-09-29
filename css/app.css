@@ -3763,3 +3763,23 @@ body .naluno-break-wrap img{
 @media (orientation: landscape) and (max-height: 520px){
   #nalunoAdViewer .ad-stage .ad-cta{ left:auto; right:16px; width:min(34%, 300px); bottom:16px; flex-direction:column; }
 }
+
+/* Voice calls (29f): no camera anywhere on the call screens. */
+#callOverlay.voice-call #incomingSelf,
+#callOverlay.voice-call #incomingSceneNote,
+#callOverlay.voice-call #sceneReadyNote,
+#callOverlay.voice-call #localPip,
+#callOverlay.voice-call #viewToggleBtn,
+#callOverlay.voice-call #bgPickerBtn,
+#callOverlay.voice-call #switchCam,
+#callOverlay.voice-call #camBtn,
+#callOverlay.voice-call #incallBgChipRow { display: none !important; }
+#callOverlay.voice-call #remoteVideo { opacity: 0 !important; }
+#callOverlay.voice-call #remotePlaceholder { display: flex !important; }
+#callOverlay.voice-call #remotePlaceholder::after {
+  content: 'Voice call';
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: .08em;
+  color: var(--text-dim); margin-top: 2px;
+}
+/* The two call buttons on a contact row and in a chat header. */
+.call-btn-pair { display: flex; gap: 6px; align-items: center; }
