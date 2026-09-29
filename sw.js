@@ -71,8 +71,8 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v242';
-const APP_BUILD = '20260929f';
+const CACHE_NAME = 'naluno-shell-v243';
+const APP_BUILD = '20260929g';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -81,7 +81,7 @@ const CORE_ASSETS = [
   '/js/pwa.js', '/js/gestures.js', '/js/mood-notes.json', '/js/auth.js', '/js/qrcode.js', '/js/spark.js', '/js/camera.js', '/js/call-filters.js', '/js/calls.js', '/js/media-vault.js', '/js/chat-store.js', '/js/wire-mailbox.js', '/js/wireline.js',
   '/js/lifeline.js', '/js/lifeline-wire.js',
   '/js/band-room.js', '/js/band-list.js', '/js/broadcast-core.js', '/js/broadcast-space.js',
-  '/js/broadcast-live.js', '/js/broadcast-composer.js', '/js/broadcast-upload.js',
+  '/js/broadcast-live.js', '/js/live-preview.js', '/js/broadcast-composer.js', '/js/broadcast-upload.js',
   '/js/screen.js', '/js/origin.js', '/js/strand.js', '/js/circle.js',
   '/js/discover-engine.js', '/js/discover.js', '/js/room-threads.js', '/js/pass-on.js', '/js/lg-speak.js', '/js/known.js',
   '/js/signal-core.js', '/js/signal-ui.js', '/js/signal-social.js', '/js/live-sync.js', '/js/broadcast-offline.js',
