@@ -1757,6 +1757,11 @@ async function bspaceRequireMember(){
 
 async function bspacePost(col, payload){
   if(!(await bspaceRequireMember())) return false;
+  /* 30a: links are welcome and become tappable; adult and gambling sites are not shared. */
+  if(payload && payload.text && window.NalunoLinks && NalunoLinks.hasBlockedLink(payload.text)){
+    toast('That link cannot be shared on Naluno.');
+    return false;
+  }
   const publicTalk = (col === 'conversation' || col === 'questions') && payload && payload.text && payload.type !== 'system';
   if(publicTalk && window.NalunoSafety && typeof window.NalunoSafety.scorePublicText === 'function'){
     let scored = null;

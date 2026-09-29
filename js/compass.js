@@ -349,21 +349,62 @@ async function writeToNaluno(preset){
    raw AI output directly. This is what actually fixes numbered points and bold text
    showing as one flat run-on paragraph with literal asterisks. */
 function formatCompassText(text){
-  let t = escapeHtml(text);
+  /* 30a: [label](https://…) becomes a link with its label, and
+     [[open:broadcast]] becomes a button that opens that part of Naluno.
+     Links are made after escaping, from https addresses only. */
+  const B = (typeof window !== 'undefined') ? window.NalunoCompassBrain : null;
+  const holds = [];
+  const hold = function(html){ holds.push(html); return '\u0000' + (holds.length - 1) + '\u0000'; };
+  let src = String(text || '');
+  src = src.replace(/\[\[open:([a-z]+)\]\]/g, function(m, key){
+    const a = B && B.ACTIONS && Object.prototype.hasOwnProperty.call(B.ACTIONS, key) && B.ACTIONS[key];
+    return a ? hold('<button type="button" class="compass-open" data-compass-open="' + key + '">' + escapeHtml(a.label) + '</button>') : '';
+  });
+  src = src.replace(/\[([^\]\n]{1,90})\]\((https:\/\/[^\s)"<>]+)\)/g, function(m, label, url){
+    return hold('<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(label) + '</a>');
+  });
+  let t = escapeHtml(src);
   t = t.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   // Breaks onto a new line before "2. ", "3. " etc when a numbered point starts
   // mid-paragraph — the model often runs list items together without real newlines.
   t = t.replace(/(\S)\s(\d+)\.\s/g, '$1<br><br>$2. ');
   t = t.replace(/\n/g, '<br>');
-  t = t.replace(/(https?:\/\/[^\s<]+)/g, function(url){
+  t = t.replace(/(https?:\/\/(?:(?!&quot;|&lt;|&gt;|&#39;|&amp;quot;)[^\s<])+)/g, function(url){
     const clean = url.replace(/[),.;]+$/, '');
     const tail = url.slice(clean.length);
     const map = /google\.[^/]+\/maps|maps\.google|openstreetmap/i.test(clean);
     const label = map ? 'Map' : clean.replace(/^https?:\/\//, '');
     return '<a href="' + clean + '" target="_blank" rel="noopener">' + label + '</a>' + tail;
   });
+  t = t.replace(/\u0000(\d+)\u0000/g, function(m, i){ return holds[Number(i)] || ''; });
   return t.trim();
 }
+/* The buttons Compass puts under an answer open that part of Naluno. */
+(function wireCompassActions(){
+  function bind(){
+    const box = document.getElementById('compassMessages');
+    if(!box || box.__actions) return;
+    box.__actions = true;
+    box.addEventListener('click', function(e){
+      const b = e.target && e.target.closest && e.target.closest('[data-compass-open]');
+      if(!b) return;
+      e.preventDefault();
+      const B = window.NalunoCompassBrain;
+      const k = b.getAttribute('data-compass-open');
+      const a = B && B.ACTIONS && Object.prototype.hasOwnProperty.call(B.ACTIONS, k) && B.ACTIONS[k];
+      if(!a) return;
+      try{ if(a.tab && typeof nalunoShowTab === 'function') nalunoShowTab(a.tab); }catch(_){}
+      setTimeout(function(){
+        try{
+          if(a.click){ const el = document.getElementById(a.click); if(el) el.click(); }
+          else if(a.fn && typeof window[a.fn] === 'function') window[a.fn]();
+        }catch(_){}
+      }, 350);
+    });
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
+  else bind();
+})();
 function renderCompassMessages(){
   const container = $('compassMessages');
   if(compassMessages.length === 0){
@@ -608,11 +649,14 @@ function compassStripForeign(reply, allowed){
   const set = {};
   (allowed || []).forEach(function(u){ if(u) set[String(u)] = 1; });
   return String(reply || '')
+    .replace(/\[([^\]\n]{1,90})\]\((https?:\/\/[^)\s]+)\)/g, function(m, label, u){ return set[u] ? m : label; })
     .replace(/\b(?:javascript|data):[^\s)]+/gi, '')
-    .replace(/https?:\/\/[^\s)]+/g, function(raw){
+    .replace(/(^|[^(])(https?:\/\/[^\s)]+)/g, function(all, lead, raw){
       const u = raw.replace(/[.,;:!?]+$/, '');
-      return set[u] ? raw : '';
+      return lead + (set[u] ? raw : '');
     })
+    /* A sentence left pointing at a removed link ("Also see") is tidied. */
+    .replace(/[ \t]*\b(?:also see|see|visit|check out|go to|here)\s*:?[ \t]*(?=\n|$)/gi, '')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
@@ -642,13 +686,38 @@ function compassFinishReply(text, reply, brief){
     if(grounded) return grounded;
     return out;
   }
-  if(compassWantsSource(text) && !/https?:\/\//.test(out)){
-    const links = (brief && brief.links || []).slice(0, 2);
+  const Bf = window.NalunoCompassBrain;
+  const named = /\b(who is|who was|who's|what is|what's)\b/i.test(text) && /[A-Z][a-z]/.test(String(text).replace(/^\s*\S+/, ''));
+  const want = Bf ? (Bf.wantsLinks(text) || named) : compassWantsSource(text);
+  if(want && !/https?:\/\//.test(out)){
+    const links = (brief && brief.links || []).filter(function(h){ return !Bf || h.score == null || h.score >= (Bf.wantsLinks(text) ? 0.5 : 0.75); }).slice(0, Bf && Bf.wantsLinks(text) ? 2 : 1);
     if(links.length){
-      out += '\n\n' + links.map(function(h){ return (h.title ? h.title + '\n' : '') + h.url; }).join('\n\n');
+      out += '\n\n' + links.map(function(h){ return '[' + String(h.title || h.url).replace(/[\[\]]/g, '').slice(0, 80) + '](' + h.url + ')'; }).join('\n');
     }
   }
   return out;
+}
+/* 30a: the finishing touches on an answer.
+   - Nothing about how Naluno is built leaves Compass.
+   - A Naluno answer gets a button that opens that part of the app, and the
+     Naluno web page when it is the right place (privacy, terms, invest).
+   - Web links only when they were judged relevant, and only when the person
+     wants a source or asked about a named person or thing. */
+function compassDecorate(text, reply, guide, onNaluno, brief){
+  const B = window.NalunoCompassBrain;
+  if(!B) return reply;
+  /* Only a Naluno conversation is scrubbed: "what is GitHub?" still gets a real answer. */
+  const aboutUs = onNaluno || /naluno|this app|your app|compass/i.test(String(text || '') + ' ' + String(reply || ''));
+  let out = aboutUs ? B.scrubInternals(reply || '') : String(reply || '');
+  if(onNaluno && guide && guide.length){
+    const top = guide[0];
+    if(top.url && out.indexOf(top.url) < 0 && (B.wantsLinks(text) || /privacy|terms|invest|contact/.test(top.id))){
+      out += '\n\n[' + top.title + '](' + top.url + ')';
+    }
+    const act = B.actionFor(guide);
+    if(act && out.indexOf('[[open:') < 0 && !/\b(not sure|don.t know|i.m unsure)\b/i.test(out.slice(0, 80))) out += '\n\n[[open:' + act + ']]';
+  }
+  return out.trim();
 }
 function compassRememberedName(){
   if(typeof compassTopic !== 'undefined' && compassTopic) return compassTopic;
@@ -660,11 +729,11 @@ function compassRememberedName(){
   }
   return '';
 }
-async function compassGather(text){
+async function compassGather(text, query){
   const brief = { personLine: '', wiki: '', wikiUrl: '', snippets: [], links: [] };
   if(!compassShouldLook(text)) return brief;
   const turn = compassTurn(text);
-  const q = (turn && turn.subject) || compassRememberedName() || String(text || '').slice(0, 120);
+  const q = query || (turn && turn.subject) || compassRememberedName() || String(text || '').slice(0, 120);
   const jobs = [];
   if(turn && turn.aboutPerson && turn.subject){
     jobs.push(compassKnownHit(turn.subject).then(function(hit){
@@ -683,8 +752,11 @@ async function compassGather(text){
       });
     }).catch(function(){}));
   }
-  jobs.push(compassWiki(text).then(function(page){
+  jobs.push(compassWiki(query || text).then(function(page){
     if(!page) return;
+    /* 30a: the top encyclopedia hit is only used when it is about what was asked. */
+    const Bw = window.NalunoCompassBrain;
+    if(Bw && Bw.relevance(text + ' ' + (query || ''), { title: page.title, url: page.url, snippet: page.summary }) < 0.5) return;
     brief.wiki = page.summary || '';
     brief.wikiUrl = page.url || '';
     if(page.url && brief.links.length < 4) brief.links.push({ title: page.title || 'Wikipedia', url: page.url });
@@ -700,6 +772,17 @@ async function compassGather(text){
     }).catch(function(){}));
   }
   await Promise.all(jobs);
+  /* 30a: every link is judged against the question; loosely related pages
+     (a different person with the same surname, an unrelated product) are
+     dropped, and so are the snippets that came with them. */
+  const Bg = window.NalunoCompassBrain;
+  if(Bg){
+    const judged = Bg.pickLinks(text + ' ' + (query || ''), brief.links, 3, 0.45);
+    const keep = {};
+    judged.forEach(function(h){ keep[h.url] = 1; });
+    brief.links = judged;
+    if(!judged.length && !brief.wiki) brief.snippets = brief.snippets.slice(0, 1);
+  }
   return brief;
 }
 function compassBriefText(brief){
@@ -817,8 +900,19 @@ async function sendCompassMessage(){
   const thinkingMsg = { from:'compass', text: '\u2026', ts: Date.now(), thinking:true };
   compassMessages.push(thinkingMsg);
   renderCompassMessages();
+  /* 30a: what Compass knows about Naluno, matched to this question, and a
+     tighter web query (with the subject of the last question for follow-ups). */
+  const Brain = window.NalunoCompassBrain || null;
+  const prevUser = (function(){
+    for(let i = compassMessages.length - 2; i >= 0; i--){ const m = compassMessages[i]; if(m && m.from === 'user' && m !== userMsg) return m.text; }
+    return '';
+  })();
+  const guide = Brain ? Brain.kbMatch(text, prevUser) : [];
+  const onNaluno = Brain ? Brain.aboutNaluno(text, guide) : false;
   let brief = { personLine: '', wiki: '', wikiUrl: '', snippets: [], links: [] };
-  try{ brief = await compassGather(text); }catch(_){}
+  if(!onNaluno){
+    try{ brief = await compassGather(text, Brain ? Brain.searchQuery(text, prevUser) : ''); }catch(_){}
+  }
   const facts = compassBriefText(brief);
 
   try{
@@ -833,9 +927,18 @@ async function sendCompassMessage(){
       if(typeof weatherSystemHint === 'function') weatherHint = await weatherSystemHint();
       else if(typeof formatWeatherReply === 'function') weatherHint = await formatWeatherReply(text);
     }catch(_){}
+    if(guide.length && Brain){
+      messages.unshift({
+        role: 'system',
+        content: (onNaluno ? 'The question is about Naluno. ' : 'If the question is about Naluno, use this. ') + 'Naluno guide:\n' + Brain.kbNotes(guide),
+      });
+    }
     messages.unshift({
       role: 'system',
-      content: 'You are Compass inside Naluno. Answer any question as well as you can, in a few plain sentences. Use the notes when they are present. Include a link only when it helps, and only if that exact link is in the notes. Never invent a URL. Never say you cannot search, cannot share a link, or lack a capability. Words such as again, that, they, and him refer to what was just said.',
+      content: Brain ? Brain.systemPrompt({
+        name: (function(){ try{ return String((currentProfile && currentProfile.name) || '').split(' ')[0]; }catch(_){ return ''; } })(),
+        today: new Date().toDateString(),
+      }) : 'You are Compass inside Naluno. Answer any question as well as you can, in a few plain sentences. Use the notes when they are present. Include a link only when it helps, and only if that exact link is in the notes. Never invent a URL. Never say you cannot search, cannot share a link, or lack a capability. Words such as again, that, they, and him refer to what was just said.',
     });
     if(findHint){
       messages.unshift({
@@ -863,7 +966,7 @@ async function sendCompassMessage(){
     const data = await res.json();
     compassMessages = compassMessages.filter(m => m !== thinkingMsg);
     if(!res.ok || !data.reply){
-      const grounded = compassFromBrief(text, brief);
+      const grounded = (onNaluno && Brain && guide.length) ? compassDecorate(text, Brain.kbAnswer(guide), guide, onNaluno, brief) : compassFromBrief(text, brief);
       if(grounded){
         compassMessages.push({ from:'compass', text: grounded, ts: Date.now() });
         renderCompassMessages();
@@ -877,7 +980,7 @@ async function sendCompassMessage(){
       renderCompassMessages();
       return;
     }
-    const reply = compassFinishReply(text, data.reply, brief);
+    const reply = compassDecorate(text, compassFinishReply(text, data.reply, brief), guide, onNaluno, brief);
     compassMessages.push({ from:'compass', text: reply, ts: Date.now() });
     renderCompassMessages();
     fbDb.collection('users').doc(currentUser.uid).collection('compassMessages').add({
@@ -886,7 +989,7 @@ async function sendCompassMessage(){
   }catch(e){
     compassMessages = compassMessages.filter(m => m !== thinkingMsg);
     renderCompassMessages();
-    const grounded = compassFromBrief(text, brief);
+    const grounded = (onNaluno && Brain && guide.length) ? compassDecorate(text, Brain.kbAnswer(guide), guide, onNaluno, brief) : compassFromBrief(text, brief);
     if(grounded){
       compassMessages.push({ from:'compass', text: grounded, ts: Date.now() });
       renderCompassMessages();

@@ -969,6 +969,10 @@ if($('bwritePublish')){
     const tags = (($('bwriteTags') && $('bwriteTags').value) || '').trim();
     if(!title){ toast('Add a title'); return; }
     if(!text){ toast('Write the piece first'); return; }
+    if(window.NalunoLinks){
+      const all = [title, text].concat(Array.prototype.map.call(document.querySelectorAll('#bwriteMoreChapters textarea'), function(t){ return t.value || ''; })).join('\n');
+      if(NalunoLinks.hasBlockedLink(all)){ toast('That link cannot be shared on Naluno.'); return; }
+    }
     if(bcompCoverFile){
       const btn = $('bwritePublish');
       if(btn){ btn.disabled = true; btn.textContent = 'Screen is reading the photo…'; }

@@ -137,6 +137,7 @@ function extractFn(src, name){
     const m = html.match(new RegExp('/js/' + f.replace('.', '\\.') + '\\?v=(\\d{8}[a-z])'));
     assert.ok(m && m[1] >= '20260929h', f + ' stamp bumped');
   });
-  assert.ok(sw.includes("APP_BUILD = '20260929h'"));
+  const build = (sw.match(/APP_BUILD = '(\d{8}[a-z])'/) || [])[1];
+  assert.ok(build && build >= '20260929h', 'sw build at least 29h');
   console.log('fixes-29h tests passed');
 })().catch((e) => { console.error(e); process.exit(1); });
