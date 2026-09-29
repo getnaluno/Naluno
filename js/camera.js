@@ -1238,8 +1238,10 @@ async function flipCamera(){
  *  Safe to call from Frequencies / call lobby — never blocks the UI. */
 function prewarmCameraForCall(){
   try{
+    if(typeof nalunoIsVoiceCall === 'function' && nalunoIsVoiceCall()) return; // voice call: never the camera
     if(typeof mediaStreamIsLive === 'function' && mediaStreamIsLive(stream)
-      && stream.getAudioTracks().some(function(t){ return t.readyState === 'live'; })){
+      && stream.getAudioTracks().some(function(t){ return t.readyState === 'live'; })
+      && stream.getVideoTracks().some(function(t){ return t.readyState === 'live'; })){
       return;
     }
   }catch(_){}
@@ -1264,7 +1266,11 @@ async function enableCameraForCall(){
       if($('camFallback')) $('camFallback').style.display = 'none';
     }catch(_){}
   }
-  if(mediaStreamIsLive(stream) && stream.getAudioTracks().some(t => t.readyState === 'live')){
+  // Reuse only a stream that has BOTH a live camera and a live mic: after a
+  // voice call the stream is microphone-only, and reusing it made the next
+  // video call go out with no picture.
+  if(mediaStreamIsLive(stream) && stream.getAudioTracks().some(t => t.readyState === 'live')
+     && stream.getVideoTracks().some(t => t.readyState === 'live')){
     try{
       stream.getAudioTracks().forEach(t => { t.enabled = true; });
       stream.getVideoTracks().forEach(t => { t.enabled = camOn; });

@@ -1973,11 +1973,15 @@ function renderContacts(){
     return `<div class="contact-row" data-id="${c.id}">
       ${typeof contactAvatarHtml === 'function' ? contactAvatarHtml(c, 46, signalBarsHtml(c)) : ('<div class="avatar" style="width:46px;height:46px;background:'+(c.color||'#7CFFB2')+';">'+c.initials+'</div>')}
       <div class="contact-meta"><div class="contact-name">${escapeHtml(c.name)}</div><div class="contact-sub">${signalSubText(c)}</div>${bandBits}</div>
-      <div class="call-icon-btn" data-call="${c.id}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.3 1.8.6 2.7a2 2 0 01-.4 2.1L8 9.9a16 16 0 006 6l1.4-1.3a2 2 0 012.1-.4c.9.3 1.8.5 2.7.6a2 2 0 011.8 2.1z" stroke="currentColor" stroke-width="1.8"/></svg></div>
+      <div class="call-btn-pair"><div class="call-icon-btn" data-video-call="${c.id}" role="button" aria-label="Video call"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 8L21 5V19L15 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><rect x="3" y="6" width="12" height="12" rx="2" stroke="currentColor" stroke-width="2"/></svg></div><div class="call-icon-btn" data-call="${c.id}" role="button" aria-label="Voice call"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.3 1.8.6 2.7a2 2 0 01-.4 2.1L8 9.9a16 16 0 006 6l1.4-1.3a2 2 0 012.1-.4c.9.3 1.8.5 2.7.6a2 2 0 011.8 2.1z" stroke="currentColor" stroke-width="1.8"/></svg></div></div>
     </div>`;
   }
+  // Phone: a voice call, straight to ringing. Camera: the video lobby.
   document.querySelectorAll('[data-call]').forEach(el=>{
-    el.onclick = (e)=>{ e.stopPropagation(); startOutgoingCall(parseInt(el.dataset.call)); };
+    el.onclick = (e)=>{ e.stopPropagation(); (typeof startAudioCall === 'function' ? startAudioCall : startOutgoingCall)(parseInt(el.dataset.call)); };
+  });
+  document.querySelectorAll('[data-video-call]').forEach(el=>{
+    el.onclick = (e)=>{ e.stopPropagation(); startOutgoingCall(parseInt(el.dataset.videoCall)); };
   });
   document.querySelectorAll('.contact-row').forEach(el=>{
     el.onclick = ()=> openWirelineFromFrequencies(parseInt(el.dataset.id));

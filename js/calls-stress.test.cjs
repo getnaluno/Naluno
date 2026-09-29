@@ -145,6 +145,19 @@ const ORDER = { ringing: 0, accepted: 1, declined: 2, missed: 2, busy: 2, ended:
   assert.ok(src.includes('if(remoteFirstFrame || rebinds >= 2 || ticks - lastRebind <= 10) return false;'), 'the stream is not torn off the video every 3.5 s while connecting');
   assert.ok(!src.includes("}, 700);\n}\n\nfunction ingestRemoteTrack"), 'no timed show of an empty video');
   assert.ok(src.includes('function nalunoMarkCallLive(') && src.includes("eb.textContent = nalunoCallLive ? 'Connected' : 'Connecting…';"), '"Connected" and the timer wait for the call to be up');
+  // 29e: clearing old rings never ends the call being placed
+  { const i = src.indexOf('function nalunoEndMyOldRings('); const body = src.slice(i, src.indexOf('\n}\n', i));
+    assert.ok(body.includes('doc.id === activeCallId') && body.includes('if(!ms || ms > cutoff) return;'), 'old-ring cleanup leaves the new call and anything recent alone'); }
+  // 29f: voice calls
+  assert.ok(src.includes('function startAudioCall(') && src.includes("kind: voice ? 'audio' : 'video',"), 'a voice call is its own kind on the record');
+  assert.ok(src.includes("nalunoSetCallKind(data.kind === 'audio' ? 'audio' : 'video');"), 'the receiving phone follows the kind (no kind = video, as before)');
+  assert.ok(src.includes("const camFn = nalunoIsVoiceCall() ? nalunoOpenMic :") && src.includes("if(nalunoIsVoiceCall()){\n      try{ await nalunoOpenMic(); }catch(_){}"), 'a voice call opens only the microphone, ringing and answering');
+  assert.ok(src.includes("arguments[0] !== 'incall' && nalunoCallKind !== 'audio') prewarmCameraForCall();"), 'no camera warm-up on a voice call screen');
+  assert.ok(cam.includes('&& stream.getVideoTracks().some(t => t.readyState === \'live\')){'), 'a video call after a voice call opens the camera again');
+  const su = fs.readFileSync(path.join(__dirname, 'signal-ui.js'), 'utf8');
+  assert.ok(su.includes('data-video-call="${c.id}"') && su.includes("(typeof startAudioCall === 'function' ? startAudioCall : startOutgoingCall)(parseInt(el.dataset.call))"), 'contact rows: phone = voice, camera = video');
+  const wl = fs.readFileSync(path.join(__dirname, 'wireline.js'), 'utf8');
+  assert.ok(wl.includes("wirelineStartCallFromThread('audio')") && wl.includes("wirelineStartCallFromThread('video')"), 'chat header: voice and video buttons');
   const calls = idx.fieldOverrides.filter((o) => o.collectionGroup === 'calls');
   ['createdAt', 'acceptedAt', 'endedAt'].forEach((f) => assert.ok(calls.some((o) => o.fieldPath === f && Array.isArray(o.indexes) && o.indexes.length === 0), 'calls.' + f + ' exempt from the single-field index'));
   console.log('calls-stress tests passed');

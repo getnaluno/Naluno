@@ -552,7 +552,9 @@
         try { renderWirelineList(); } catch (_) {}
         if (typeof toast === 'function') toast('Marked as read');
       } else if (act === 'call') {
-        if (typeof startOutgoingCall === 'function') startOutgoingCall(id);
+        // The tray's Call is a voice call (phone icon); video is from the chat or the contact row.
+        if (typeof startAudioCall === 'function') startAudioCall(id);
+        else if (typeof startOutgoingCall === 'function') startOutgoingCall(id);
       } else if (act === 'clear') {
         let ok = true;
         try { ok = window.confirm('Clear this conversation on your side? It can’t be undone.'); } catch (_) {}

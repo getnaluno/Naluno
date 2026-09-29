@@ -900,7 +900,7 @@ function closeThread(){
   try{ if(window.nalunoBack) window.nalunoBack.drop('wirelineThread'); }catch(_){}
 }
 $('threadBack').onclick = closeThread;
-function wirelineStartCallFromThread(){
+function wirelineStartCallFromThread(kind){
   // Capture contact BEFORE any UI close (closeThread clears activeThreadContactId)
   const id = activeThreadContactId;
   if(!id){ toast('No conversation selected'); return; }
@@ -909,13 +909,16 @@ function wirelineStartCallFromThread(){
   if(!c) c = list.find(x => x.firebaseUid === id);
   if(!c){ toast('Contact missing'); return; }
   if(!c.isReal || !c.firebaseUid){ toast('Calls need a real connection'); return; }
-  if(typeof startOutgoingCall !== 'function'){ toast('Calls still loading — try again'); return; }
+  const voice = kind === 'audio';
+  const starter = voice ? (typeof startAudioCall === 'function' ? startAudioCall : null) : (typeof startOutgoingCall === 'function' ? startOutgoingCall : null);
+  if(!starter){ toast('Calls still loading — try again'); return; }
   // Keep thread id available for hangup restore
   try{
     if(typeof window !== 'undefined') window.__wirelineCallContactId = c.id;
   }catch(_){}
-  // Open lobby first so Wireline never covers it; close thread after lobby is visible
-  try{ startOutgoingCall(c.id); }
+  // Open the call screen first so Wireline never covers it; close the thread after.
+  // Phone button: a voice call, straight to ringing. Camera button: the video lobby.
+  try{ starter(c.id); }
   catch(e){ console.error('[wireline] call', e); toast(e.message || 'Could not start call'); return; }
   setTimeout(function(){
     try{
@@ -926,7 +929,13 @@ function wirelineStartCallFromThread(){
 if($('threadCallBtn')){
   $('threadCallBtn').onclick = function(e){
     if(e){ e.preventDefault(); e.stopPropagation(); }
-    wirelineStartCallFromThread();
+    wirelineStartCallFromThread('audio');
+  };
+}
+if($('threadVideoBtn')){
+  $('threadVideoBtn').onclick = function(e){
+    if(e){ e.preventDefault(); e.stopPropagation(); }
+    wirelineStartCallFromThread('video');
   };
 }
 

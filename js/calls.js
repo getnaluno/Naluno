@@ -65,7 +65,7 @@ function resumeBackgroundMediaAfterCall(){
 }
 
 function showCallScreen(id){
-  try{ if(typeof prewarmCameraForCall === 'function' && arguments[0] !== 'incall') prewarmCameraForCall(); }catch(_){}
+  try{ if(typeof prewarmCameraForCall === 'function' && arguments[0] !== 'incall' && nalunoCallKind !== 'audio') prewarmCameraForCall(); }catch(_){}
 
   document.querySelectorAll('.callscreen').forEach(s=>s.classList.remove('active'));
   const screen = $(id);
@@ -1961,6 +1961,7 @@ function handleIncomingCall(callId, data){
 
   activeCallId = callId;
   iAmCaller = false;
+  nalunoSetCallKind(data.kind === 'audio' ? 'audio' : 'video');
   nalunoIncomingFrom = { id: callId, uid: data.callerUid || null, ms: nalunoRingMs(data) };
   remoteDescriptionSet = false;
   pendingRemoteCandidates = [];
@@ -1994,10 +1995,10 @@ function handleIncomingCall(callId, data){
     if(typeof document !== 'undefined' && document.hidden) nalunoStartBackgroundRing(callId, name);
     else nalunoShowCallNotice(callId, name);
   }catch(_){}
-  // Pre-warm camera + TURN so Answer is nearly instant.
+  // Pre-warm camera (or only the mic, for a voice call) + TURN so Answer is nearly instant.
   prewarmIceServers();
-  const showReady = ()=>{ $('incomingSceneNote').style.display = 'inline-flex'; $('incomingSelfTag').textContent = 'scene ready'; };
-  const camFn = (typeof enableCameraForCall === 'function') ? enableCameraForCall : enableCamera;
+  const showReady = ()=>{ $('incomingSceneNote').style.display = nalunoIsVoiceCall() ? 'none' : 'inline-flex'; $('incomingSelfTag').textContent = 'scene ready'; };
+  const camFn = nalunoIsVoiceCall() ? nalunoOpenMic : ((typeof enableCameraForCall === 'function') ? enableCameraForCall : enableCamera);
   const camReady = camFn();
   camReady.then(()=> setTimeout(showReady, 150)).catch(()=> showReady());
   if(!autoAccept && data.offer){ try{ nalunoPrepareAnswer(callId, data.offer, camReady); }catch(_){} }
@@ -2092,6 +2093,78 @@ function nalunoWatchCandidates(callRef, sub, callId, onCand, setUnsub){
   attach();
 }
 
+/* ---- Voice calls and video calls (29f) ----
+   Every call used to be a video call: the camera opened for the lobby, for
+   an incoming ring, and on answer. Someone who only wanted to talk had no
+   way to keep their camera off. A voice call now goes straight to ringing
+   (no lobby), opens only the microphone on both phones, and carries only
+   audio. The call record says which kind it is (kind: 'audio' | 'video');
+   a record without it is a video call, as before. */
+let nalunoCallKind = 'video';
+function nalunoSetCallKind(kind){
+  nalunoCallKind = (kind === 'audio') ? 'audio' : 'video';
+  try{
+    const ov = $('callOverlay');
+    if(ov) ov.classList.toggle('voice-call', nalunoCallKind === 'audio');
+    const label = nalunoCallKind === 'audio' ? 'Voice call' : 'Video call';
+    const r = document.querySelector('#ringing .topbar .eyebrow'); if(r) r.textContent = 'Outgoing · ' + label.toLowerCase();
+    const i = document.querySelector('#incoming .topbar .eyebrow'); if(i) i.textContent = 'Incoming ' + label.toLowerCase();
+    const st = document.querySelector('#incoming .ring-status'); if(st) st.textContent = nalunoCallKind === 'audio' ? 'voice call…' : 'video call…';
+  }catch(_){}
+  return nalunoCallKind;
+}
+window.nalunoSetCallKind = nalunoSetCallKind;
+function nalunoIsVoiceCall(){ return nalunoCallKind === 'audio'; }
+window.nalunoIsVoiceCall = nalunoIsVoiceCall;
+/* The microphone alone. A camera left open from an earlier screen is closed
+   first, so a voice call never shows or sends a picture. */
+async function nalunoOpenMic(){
+  const live = function(t){ return t.readyState === 'live'; };
+  if(stream && stream.getAudioTracks().some(live) && !stream.getVideoTracks().some(live)){
+    stream.getAudioTracks().forEach(function(t){ t.enabled = true; });
+    return;
+  }
+  const gen = (typeof nalunoCamGen !== 'undefined') ? nalunoCamGen : 0;
+  if(stream){ try{ stream.getTracks().forEach(function(t){ t.stop(); }); }catch(_){} stream = null; }
+  const got = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    video: false,
+  });
+  if(typeof nalunoCamGen !== 'undefined' && nalunoCamGen !== gen){
+    try{ got.getTracks().forEach(function(t){ t.stop(); }); }catch(_){}
+    return;
+  }
+  stream = got;
+}
+window.nalunoOpenMic = nalunoOpenMic;
+
+/* Voice call: no lobby, no camera. Straight to ringing. */
+function startAudioCall(contactId){
+  const c = contacts.find(x=>x.id===contactId);
+  if(!c){ toast('Contact not found'); return; }
+  if(!c.isReal || !c.firebaseUid){ toast('Real calls only work with real connections right now'); return; }
+  if(!currentUser || !fbDb){ toast('Sign in required for calls'); return; }
+  if(callActionInProgress || ($('callOverlay') && $('callOverlay').classList.contains('active'))){ toast('Already on a call'); return; }
+  currentCallContactId = contactId;
+  nalunoSetCallKind('audio');
+  const sig = computeSignal(c);
+  $('ringName').textContent = c.name;
+  $('remoteName').textContent = c.name;
+  if(typeof applyContactAvatarToEl === 'function'){
+    applyContactAvatarToEl($('ringAvatar'), c);
+    applyContactAvatarToEl($('remoteAvatar'), c);
+  } else {
+    $('ringAvatar').style.background = c.color; $('ringAvatar').textContent = c.initials;
+    $('remoteAvatar').style.background = c.color; $('remoteAvatar').textContent = c.initials;
+  }
+  $('sceneReadyNote').style.display = 'none';
+  $('ringFallbackHint').style.display = (sig.tier === 'fading' || sig.tier === 'off') ? 'flex' : 'none';
+  snapshotUiBeforeCall();
+  try{ if($('wirelineThread')) $('wirelineThread').classList.remove('active'); }catch(_){}
+  nalunoPlaceCall(c);
+}
+window.startAudioCall = startAudioCall;
+
 function startOutgoingCall(contactId){
   const c = contacts.find(x=>x.id===contactId);
   if(!c){ toast('Contact not found'); return; }
@@ -2101,6 +2174,7 @@ function startOutgoingCall(contactId){
     return;
   }
   if(!currentUser || !fbDb){ toast('Sign in required for calls'); return; }
+  nalunoSetCallKind('video');
   // Always open the lobby. Off-grid used to skip straight to the fallback,
   // so tapping Call never showed camera/Greenroom — lastActivityTs is a
   // local last-exchange guess, not live presence, so looking "off the grid"
@@ -2186,8 +2260,9 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
         callerName: callerName || (currentProfile && currentProfile.name) || 'Someone',
         callId: callId || activeCallId || null,
         type: 'incoming_call',
-        title: (callerName || (currentProfile && currentProfile.name) || 'Someone') + ' is calling',
-        body: 'Tap to answer on Naluno',
+        title: (callerName || (currentProfile && currentProfile.name) || 'Someone') + (nalunoIsVoiceCall() ? ' · voice call' : ' is calling'),
+        body: nalunoIsVoiceCall() ? 'Voice call — tap to answer on Naluno' : 'Tap to answer on Naluno',
+        callKind: nalunoIsVoiceCall() ? 'audio' : 'video',
         preferPlatform: 'both',
         pingId: pingId,
         // Explicit tokens — worker uses these first
@@ -2278,9 +2353,17 @@ let nalunoLastDial = null;
    ring that nobody is on. Each new call finishes them first. */
 function nalunoEndMyOldRings(keepId){
   if(!fbDb || !currentUser) return;
+  /* Only rings that were already there when this was asked. The answer can
+     come back after the new call has been written (a slow network), and 29d
+     then ended the new call too: the ring stopped a few seconds after it
+     started. Anything newer than a few seconds, the call on screen, or a
+     record whose time is not stamped yet is left alone. */
+  const cutoff = Date.now() + (typeof nalunoServerSkew === 'number' && nalunoServerSkew ? nalunoServerSkew : 0) - 5000;
   fbDb.collection('calls').where('callerUid', '==', currentUser.uid).where('status', '==', 'ringing').get().then(function(snap){
     snap.docs.forEach(function(doc){
-      if(doc.id === keepId) return;
+      if(doc.id === keepId || doc.id === activeCallId) return;
+      const ms = nalunoRingMs(doc.data() || {});
+      if(!ms || ms > cutoff) return;
       doc.ref.update({ status: 'ended', endReason: 'stale' }).catch(function(){});
     });
   }).catch(function(){});
@@ -2316,7 +2399,13 @@ async function startRealCallInner(c){
   const icePromise = (typeof getIceServers === 'function')
     ? getIceServers().catch(()=> (typeof RTC_CONFIG !== 'undefined' ? RTC_CONFIG : { iceServers:[{urls:'stun:stun.l.google.com:19302'}] }))
     : Promise.resolve(null);
-  if(typeof enableCameraForCall === 'function') await enableCameraForCall();
+  const voice = nalunoIsVoiceCall();
+  if(voice){
+    try{ await nalunoOpenMic(); }catch(e){
+      if(gone()) return false;
+      throw new Error((e && e.name === 'NotAllowedError') ? 'Microphone access was denied \u2014 allow it, then try again' : 'Microphone unavailable \u2014 fix that first, then try calling again');
+    }
+  } else if(typeof enableCameraForCall === 'function') await enableCameraForCall();
   else await enableCamera();
   if(gone()) return false;
   if(!mediaStreamIsLive(stream)){
@@ -2384,6 +2473,7 @@ async function startRealCallInner(c){
     callerUid: currentUser.uid,
     calleeUid: c.firebaseUid,
     status: 'ringing',
+    kind: voice ? 'audio' : 'video',
     offer: { type: offer.type, sdp: offer.sdp },
     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
     callerName: (currentProfile && currentProfile.name) || 'Someone',
@@ -2570,7 +2660,10 @@ $('asyncKeepRingingBtn').onclick = async ()=>{
   const c = contacts.find(x=>x.id===currentCallContactId); if(!c) return;
   callActionInProgress = true;
   showCallScreen('ringing');
-  if(!stream) await (typeof enableCameraForCall === 'function' ? enableCameraForCall() : enableCamera());
+  if(!stream){
+    if(nalunoIsVoiceCall()){ try{ await nalunoOpenMic(); }catch(_){} }
+    else await (typeof enableCameraForCall === 'function' ? enableCameraForCall() : enableCamera());
+  }
   let placed = true;
   try{ placed = (await startRealCall(c)) !== false; if(placed) startCallerTone(); }
   catch(e){ toast(e.message || 'Couldn\u2019t retry the call'); closeCallOverlayAndStopCamera(); }
@@ -2599,9 +2692,8 @@ function closeCallOverlayAndStopCamera(){
   try{ restoreUiAfterCall(); }catch(_){}
 }
 $('lobbyBack').onclick = closeCallOverlayAndStopCamera;
-$('joinBtn').onclick = async ()=>{
+async function nalunoPlaceCall(c){
   if(callActionInProgress) return;
-  const c = contacts.find(x=>x.id===currentCallContactId);
   if(!c || !c.isReal || !c.firebaseUid || !fbDb || !currentUser){
     toast('Can\u2019t place a real call right now');
     return;
@@ -2613,6 +2705,10 @@ $('joinBtn').onclick = async ()=>{
   try{ placed = (await startRealCall(c)) !== false; }
   catch(e){ toast(e.message || 'Couldn\u2019t start the call'); closeCallOverlayAndStopCamera(); }
   finally{ if(placed) callActionInProgress = false; }
+}
+$('joinBtn').onclick = function(){
+  nalunoSetCallKind('video');
+  return nalunoPlaceCall(contacts.find(x=>x.id===currentCallContactId));
 };
 $('cancelCall').onclick = ()=>{
   // Caller hanging up while still ringing — let the callee's side know it's over.
@@ -2705,7 +2801,7 @@ async function nalunoPrepareAnswer(callId, offer, camReady){
     // With a filter on, give the filtered picture a moment to be ready so the
     // call starts on it (switching to it after connecting made the video jump).
     try{
-      if(typeof callOutboundWantsFilter === 'function' && callOutboundWantsFilter() && typeof callCanvasReady === 'function'
+      if(!nalunoIsVoiceCall() && typeof callOutboundWantsFilter === 'function' && callOutboundWantsFilter() && typeof callCanvasReady === 'function'
          && (typeof nalunoSendCanvasAffordable !== 'function' || nalunoSendCanvasAffordable())){
         const until = Date.now() + 600;
         while(!callCanvasReady() && Date.now() < until && still()){
@@ -2850,7 +2946,14 @@ $('acceptIncoming').onclick = async ()=>{
     // that wait lands, so the answer is not built STUN-only on a cold cache.
     if(typeof prewarmIceServers === 'function') prewarmIceServers();
     const turnWait = nalunoWaitForTurn(800);
-    const mediaOk = await ensureCallMediaReady();
+    let mediaOk;
+    if(nalunoIsVoiceCall()){
+      try{ await nalunoOpenMic(); }catch(_){}
+      mediaOk = !!(stream && stream.getAudioTracks().some(function(t){ return t.readyState === 'live'; }));
+      if(!mediaOk){ guard(); throw new Error('Microphone unavailable — allow access, then try answering again'); }
+    } else {
+      mediaOk = await ensureCallMediaReady();
+    }
     guard();
     if(!mediaOk) throw new Error('Camera/mic unavailable — allow access, then try answering again');
     try{ await turnWait; }catch(_){}
@@ -2942,7 +3045,7 @@ function startInCall(){
   $('incall').classList.remove('swap-focus');
   if($('localPip')) $('localPip').classList.remove('large');
   if(typeof resetPipLayoutStyles === 'function') resetPipLayoutStyles();
-  if(stream) startCamView('pip');
+  if(stream && !nalunoIsVoiceCall()) startCamView('pip');
   try{
     const row = $('incallBgChipRow');
     if(row) row.style.display = 'flex';
@@ -2962,7 +3065,7 @@ function startInCall(){
   // Avatar until frames; never flash play-button
   try{ showRemoteAvatar(); }catch(_){}
   try{
-    if(typeof camOn !== 'undefined' && !camOn && typeof setCam === 'function') setCam(true);
+    if(!nalunoIsVoiceCall() && typeof camOn !== 'undefined' && !camOn && typeof setCam === 'function') setCam(true);
     if(typeof micOn !== 'undefined' && !micOn && typeof setMic === 'function') setMic(true);
   }catch(_){}
   try{

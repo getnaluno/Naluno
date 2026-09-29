@@ -30,7 +30,7 @@ assert.ok(comp.includes('window.__bcompChaptered = true;'), 'full composer keeps
 assert.ok(space.includes('const dup = single && (!raw || norm(raw) === pageTitle'), 'older pieces stop printing the title twice');
 assert.ok(space.includes("(root.length > 1 ? ('Chapter ' + (i + 1)) : '')"), 'editing a single piece does not add a chapter heading');
 
-['css/app.css', 'js/broadcast-space.js', 'js/broadcast-composer.js', 'js/ads.js'].forEach((f) => assert.ok(new RegExp('/' + f.replace('.', '\\.') + '\\?v=20260928[e-z]').test(html), 'stamp ' + f));
+['css/app.css', 'js/broadcast-space.js', 'js/broadcast-composer.js', 'js/ads.js'].forEach((f) => assert.ok(((html.match(new RegExp('/' + f.replace('.', '\\.') + '\\?v=(\\d{8}[a-z])')) || [])[1] || '') >= '20260928e', 'stamp ' + f));
 assert.ok(Number((sw.match(/'naluno-shell-v(\d+)'/) || [])[1]) >= 233 && ((sw.match(/APP_BUILD = '(\d{8}[a-z])'/) || [])[1] || '') >= '20260928e', 'service worker cache bumped');
 assert.ok(nalunoAtLeast(appVer(html), '2026.09.28e'), 'update banner can see the new build');
 /* 28f */
