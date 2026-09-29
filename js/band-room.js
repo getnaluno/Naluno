@@ -278,7 +278,8 @@ function bandMessageHtml(m){
   }
   const av = (typeof contactAvatarHtml === 'function') ? contactAvatarHtml(face, 28) : '';
   const rowClass = m.fromMe ? 'msg-row me' : 'msg-row them';
-  const nameHtml = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">${av}<span style="font-size:10.5px; color:${m.fromMe ? 'var(--mint)' : 'var(--text-dim)'};">${escapeHtml(name)}</span></div>`;
+  const knownUid = m.fromMe ? ((typeof currentUser !== 'undefined' && currentUser && currentUser.uid) || '') : (m.fromUid || (face && (face.uid || face.firebaseUid)) || '');
+  const nameHtml = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">${av}<span data-known-uid="${escapeHtml(String(knownUid))}" style="font-size:10.5px; color:${m.fromMe ? 'var(--mint)' : 'var(--text-dim)'};">${escapeHtml(name)}</span></div>`;
   const dur = m.duration ? Math.round(m.duration) + 's' : '';
   const src = bandMediaSrc(m);
   const sending = !!m.pending && (!m.mediaUrl || String(m.mediaUrl).indexOf('blob:') === 0);
@@ -379,6 +380,45 @@ function updateBandSettleNote(){
   }
   el.textContent = 'Band · messages clear 2h after the last person leaves';
 }
+function bandNobodyHere(b){
+  if(!b || !b.isReal) return false;
+  if(!b._presenceSeen) return true;
+  return ((realBandLiveMembers.length || 0) + (amTunedIn ? 1 : 0)) === 0;
+}
+function bandConversationExpired(b, rows){
+  if(!b || !b.isReal || !bandNobodyHere(b)) return false;
+  let newest = 0;
+  (rows || []).forEach(function(m){ const t = bandMsgTs(m); if(t > newest) newest = t; });
+  const settle = (typeof BAND_SETTLE_MS === 'number') ? BAND_SETTLE_MS : (2 * 60 * 60 * 1000);
+  return !!newest && (Date.now() - newest) >= settle;
+}
+/* Nobody here and the newest message is past the 2 h window: stamp the
+   leave just after that message and wipe. The stamp used to be the
+   message's own time, and the wipe keeps anything at or after the stamp,
+   so the newest message was never deleted from the database. */
+function bandWipeIfStale(ref, cur){
+  if(!ref || !cur || !cur.isReal) return false;
+  const present = (realBandLiveMembers.length || 0) + (amTunedIn ? 1 : 0);
+  if(present) return false;
+  const msgAt = bandNewestMessageMs(cur);
+  const settle = (typeof BAND_SETTLE_MS === 'number') ? BAND_SETTLE_MS : (2 * 60 * 60 * 1000);
+  if(!msgAt || (Date.now() - msgAt) < settle) return false;
+  const have = bandEmptiedMs(cur);
+  if(!have || have > msgAt + 1500){ stampBandEmpty(ref, cur, msgAt + 1); return true; }
+  if(have <= msgAt){
+    /* A message landed after the recorded leave (sent from an outbox, say).
+       The wipe must cover it, so the leave moves just past it. */
+    cur.lastEmptiedAt = msgAt + 1;
+    let value = msgAt + 1;
+    try{ if(firebase.firestore.Timestamp.fromMillis) value = firebase.firestore.Timestamp.fromMillis(msgAt + 1); }catch(_){}
+    ref.set({ lastEmptiedAt: value }, { merge:true }).catch(function(){}).then(function(){
+      if(bandSettleElapsed(cur)) pruneSettledBandMessages(ref, cur);
+    });
+    return true;
+  }
+  if(bandIsSettled(cur)) pruneSettledBandMessages(ref, cur);
+  return true;
+}
 function renderBandMessages(preserveScroll){
   const b = activeBand();
   // LOCK (bug 1.8): older pages loaded via loadOlderBandMessages() live in their
@@ -401,6 +441,12 @@ function renderBandMessages(preserveScroll){
   }
   // Drop empty text bubbles (failed decrypt / pruned payload shells)
   msgs = msgs.filter(m => !bandMessageIsEmpty(m));
+  /* 29g: nobody here and the last message is over 2 h old: the clock has
+     run out even if no phone stamped the leave yet. Opening such a Band
+     used to show the old conversation for about 15 s, until the settle
+     timer caught up and wiped it. */
+  if(b) b._staleHidden = bandConversationExpired(b, msgs);
+  if(b && b._staleHidden) msgs = [];
   const el = $('bandMessages');
   if(msgs.length===0){
     el.innerHTML = `<div class="msg-empty"><span style="font-family:var(--font-futuristic); font-size:14px; color:#fff;">Quiet on this Band</span><span style="font-size:12.5px; color:rgba(255,255,255,.6);">Tune in and say something — it clears 2h after the last person leaves.</span></div>`;
@@ -427,7 +473,7 @@ function renderBandRoster(){
     return `<div style="display:flex; flex-direction:column; align-items:center; gap:5px; flex-shrink:0;">
       <div style="display:flex; flex-direction:column; align-items:center; gap:5px; flex-shrink:0;">
       ${typeof contactAvatarHtml==='function' ? contactAvatarHtml(c, 44, b.isReal ? '' : signalBarsHtml(c)) : ('<div class="avatar" style="width:44px;height:44px;background:'+(c.color||'#7CFFB2')+';">'+c.initials+'</div>')}
-      <span style="font-size:10.5px; color:rgba(255,255,255,.75); font-family:var(--font-mono);">${escapeHtml((c.name||'').split(' ')[0])}</span>
+      <span data-known-uid="${escapeHtml(String(c.uid || c.firebaseUid || ''))}" style="font-size:10.5px; color:rgba(255,255,255,.75); font-family:var(--font-mono);">${escapeHtml((c.name||'').split(' ')[0])}</span>
     </div>`;
   }).join('');
   if(amTunedIn){
@@ -678,6 +724,7 @@ function attachBandMessagesListener(bandRef, b){
     }).filter(function(row){ return !cut || bandMsgTs(row) > cut; });
     bandMessages[id] = mergeBandLiveRows(id, rows);
     renderBandMessages();
+    try{ if(b._presenceSeen) bandWipeIfStale(bandRef, b); }catch(_){}
     const lockedId = id;
     Promise.all(rows.map(async function(row){
       if(row.type === 'system' || row.type === 'invite' || row.type === 'audio' || row.type === 'video') return;
@@ -755,6 +802,7 @@ function openBandRoom(id){
 
   if(b.isReal && b.firestoreId && fbDb && currentUser){
     realBandLiveMembers = [];
+    b._presenceSeen = false;
     renderBandRoster();
     renderBandMessages();
     const bandRef = fbDb.collection('bands').doc(b.firestoreId);
@@ -842,6 +890,9 @@ function openBandRoom(id){
         });
       });
       const totalPresent = others.length + (amTunedIn ? 1 : 0);
+      b._presenceSeen = true;
+      if(totalPresent === 0) bandWipeIfStale(bandRef, b);
+      if(bandConversationExpired(b, bandMessages[b.id] || []) !== !!b._staleHidden) renderBandMessages();
       if(totalPresent === 0){
         let latestBeat = 0;
         snap.docs.forEach(function(d){
@@ -901,16 +952,7 @@ function openBandRoom(id){
       if(!cur || !cur.isReal || !cur.firestoreId || !fbDb) return;
       const ref = fbDb.collection('bands').doc(cur.firestoreId);
       const present = (realBandLiveMembers.length || 0) + (amTunedIn ? 1 : 0);
-      if(!present){
-        const msgAt = bandNewestMessageMs(cur);
-        const settle = (typeof BAND_SETTLE_MS === 'number') ? BAND_SETTLE_MS : (2 * 60 * 60 * 1000);
-        if(msgAt && (Date.now() - msgAt) >= settle){
-          const have = bandEmptiedMs(cur);
-          if(!have || have > msgAt + 1500) stampBandEmpty(ref, cur, msgAt);
-          else if(bandIsSettled(cur)) pruneSettledBandMessages(ref, cur);
-          return;
-        }
-      }
+      if(!present && cur._presenceSeen && bandWipeIfStale(ref, cur)) return;
       if(bandIsSettled(cur)) pruneSettledBandMessages(ref, cur);
     }, 15000);
   } else {
@@ -1114,7 +1156,7 @@ function openBandInviteSheet(){
     $('bandInvitePicker').innerHTML = candidates.map(c=>`
       <div class="contact-row" style="cursor:default;">
         ${typeof contactAvatarHtml==='function' ? contactAvatarHtml(c, 40) : ''}
-        <div class="contact-meta"><div class="contact-name">${escapeHtml(c.name)}</div><div class="contact-sub">${escapeHtml(c.handle||'')}</div></div>
+        <div class="contact-meta"><div class="contact-name" data-known-uid="${escapeHtml(String(c.firebaseUid||''))}">${escapeHtml(c.name)}</div><div class="contact-sub">${escapeHtml(c.handle||'')}</div></div>
         <button type="button" class="band-inv-btn ghost" data-inv-text="${c.id}">Text</button>
         <button type="button" class="band-inv-btn mint" data-inv-video="${c.id}">Video</button>
       </div>`).join('');

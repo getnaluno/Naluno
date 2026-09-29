@@ -141,6 +141,7 @@ function supportPanelHtml(){
     + '<div class="support-body" id="bspaceSupportBody" hidden>'
     + '<div class="support-banner" id="supportBanner"></div>'
     + nalunoSupportButtonHtml()
+    + '<div id="bspacePayoutSlot"></div>'
     + '<div id="supportMine"></div></div></div>';
 }
 
@@ -314,7 +315,7 @@ function renderSupportTab(){
           + '" data-bid="' + supportEsc(c.broadcastId) + '">'
           + '<span class="support-row-av">' + supportEsc(String(c.name || '?').slice(0, 1).toUpperCase()) + '</span>'
           + '<span class="support-row-body">'
-          + '<span class="support-row-name">' + supportEsc(c.name.split(' ')[0])
+          + '<span class="support-row-name"><span data-known-uid="' + supportEsc(c.uid || '') + '">' + supportEsc(c.name.split(' ')[0]) + '</span>'
           + (c.live ? ' <em>LIVE</em>' : '') + '</span>'
           + '<span class="support-row-meta">' + supportEsc(views) + ' views</span>'
           + '</span>'
@@ -330,6 +331,12 @@ function renderSupportTab(){
   }
   if(mineEl){
     mineEl.innerHTML = '<div class="lobby-sub" style="text-align:left;max-width:none;">Your support history loads when you are signed in.</div>';
+    try{
+      const pay = $('bspacePayoutSlot');
+      const mine = !!(typeof activeBroadcastMeta !== 'undefined' && activeBroadcastMeta && typeof currentUser !== 'undefined' && currentUser && activeBroadcastMeta.creatorUid === currentUser.uid);
+      if(pay && mine) paintPayoutBlock(pay);
+      else if(pay) pay.innerHTML = '';
+    }catch(_){}
     loadMySupportRows().then(function(rows){
       if(!mineEl) return;
       const given = rows.given || [];
@@ -379,7 +386,7 @@ function openSupportSheet(creatorUid, creatorName, broadcastId){
   const panel = $('supportSheet');
   const who = $('supportSheetWho');
   const hint = $('supportSheetHint');
-  if(who) who.textContent = 'Support ' + String(__supportSheet.name).split(' ')[0];
+  if(who){ who.setAttribute('data-known-uid', creatorUid || ''); who.textContent = 'Support ' + String(__supportSheet.name).split(' ')[0]; }
   if(hint) hint.textContent = 'Voluntary. Separate from anything you earn. You will be taken to pay. Nothing is marked paid until the payment is confirmed. Amounts are in ' + supportCcy() + '.';
   const row = $('supportAmountRow');
   const other = $('supportAmountOther');
@@ -412,18 +419,43 @@ function openSupportSheet(creatorUid, creatorName, broadcastId){
   }
   const msg = $('supportSheetMsg');
   if(msg) msg.textContent = '';
+  if(other && !other.__enter){
+    other.__enter = true;
+    other.addEventListener('keydown', function(e){ if(e.key === 'Enter'){ e.preventDefault(); submitSupportIntent(); } });
+    other.addEventListener('input', supportSendLabel);
+  }
+  if(row) row.addEventListener('click', function(){ setTimeout(supportSendLabel, 0); });
+  supportSendLabel();
   if(panel) panel.classList.add('active');
   try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
+}
+
+/* 29g: the button says what happens next and for how much. */
+function supportSendLabel(){
+  const b = $('supportSheetSend');
+  if(!b || b.disabled) return;
+  const amt = Number(__supportSheet.amount) || 0;
+  let shown = '';
+  try{
+    if(amt > 0 && typeof NalunoCurrency !== 'undefined' && NalunoCurrency && NalunoCurrency.formatMajor) shown = NalunoCurrency.formatMajor(amt, __supportSheet.currency || supportCcy());
+  }catch(_){}
+  if(!shown && amt > 0) shown = (__supportSheet.currency || supportCcy()) + ' ' + amt.toLocaleString();
+  b.textContent = amt > 0 ? ('Continue to pay ' + shown) : 'Continue to pay';
 }
 
 async function nalunoCheckout(body){
   if(typeof currentUser === 'undefined' || !currentUser) throw new Error('Sign in first');
   const idToken = await currentUser.getIdToken(false);
-  const res = await fetch(ECONOMY_UI_WORKER + '/v1/pay/checkout', {
-    method: 'POST',
-    headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {}),
-  });
+  let res;
+  try{
+    res = await fetch(ECONOMY_UI_WORKER + '/v1/pay/checkout', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    });
+  }catch(_){
+    throw new Error('Could not reach the payment service. Check your connection and try again. Nothing was charged.');
+  }
   const data = await res.json().catch(function(){ return {}; });
   if(!res.ok || !data.ok || !data.url){
     const err = new Error(data.error || 'Payments aren’t available yet. Nothing was charged.');
@@ -442,26 +474,29 @@ async function submitSupportIntent(){
   if(typeof currentUser === 'undefined' || !currentUser){ toast('Sign in first'); return; }
   const uid = __supportSheet.uid;
   const amountMajor = Number(__supportSheet.amount) || 0;
-  if(!uid || !(amountMajor > 0)){ toast('Pick an amount'); return; }
-  const sendBtn = $('supportSheetSend');
-  if(sendBtn){ sendBtn.disabled = true; sendBtn.textContent = 'Opening…'; }
   const msg = $('supportSheetMsg');
+  if(!uid || !(amountMajor > 0)){ if(msg) msg.textContent = 'Pick an amount, or type one.'; toast('Pick an amount'); return; }
+  const sendBtn = $('supportSheetSend');
+  if(sendBtn){ sendBtn.disabled = true; sendBtn.textContent = 'Opening Stripe…'; }
+  if(msg) msg.textContent = 'Taking you to Stripe’s secure page. You pay there by card, Apple Pay or Google Pay, and Stripe asks for your phone number. You come back here after.';
   try{
+    const ikey = 'sup_' + (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '' + Math.random()).replace('.', ''));
     const url = await nalunoCheckout({
       kind: 'support',
       creator_user_id: uid,
       broadcast_id: __supportSheet.broadcastId || '',
       amount_major: amountMajor,
       currency: __supportSheet.currency || supportCcy(),
-      idempotency_key: 'sup_' + (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '' + Math.random())),
+      idempotency_key: ikey,
     });
+    nalunoPayRemember({ k: 'support', b: __supportSheet.broadcastId || '', r: ikey, name: __supportSheet.name || '' });
     window.location.href = url;
   }catch(e){
     const text = (e && e.message) || 'Payments aren’t available yet. Nothing was charged.';
     if(msg) msg.textContent = text;
     toast(text);
   }finally{
-    if(sendBtn){ sendBtn.disabled = false; sendBtn.textContent = 'Continue to pay'; }
+    if(sendBtn){ sendBtn.disabled = false; supportSendLabel(); }
   }
 }
 
@@ -500,7 +535,179 @@ function wireSupportSheet(){
   else bind();
 })();
 
+/* ---------------- 29g: coming back from Stripe ----------------
+   Stripe sends the person back to /app/?pay=return&k=…&b=<Broadcast>&r=<ref>.
+   The app reopens that Broadcast and shows the result on top of it, and
+   checks until the payment is confirmed (the webhook marks it paid). */
+function nalunoPayRemember(o){
+  try{ sessionStorage.setItem('nalunoPayPending', JSON.stringify(Object.assign({ at: Date.now() }, o || {}))); }catch(_){}
+}
+function nalunoPaySheet(){
+  let el = $('payResultSheet');
+  if(el) return el;
+  el = document.createElement('div');
+  el.className = 'call-overlay';
+  el.id = 'payResultSheet';
+  el.innerHTML = '<div class="topbar" style="padding-top:18px;"><div class="back-btn" id="payResultClose" role="button" aria-label="Back">'
+    + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>'
+    + '<div style="flex:1;font-family:var(--font-futuristic);font-weight:700;font-size:16px;" id="payResultTitle">Payment</div></div>'
+    + '<div class="tab-scroll" style="padding:8px 18px 24px;"><div class="pay-result-mark" id="payResultMark">…</div>'
+    + '<p class="lobby-sub" id="payResultText" style="text-align:left;max-width:none;font-size:13px;line-height:1.5;"></p>'
+    + '<button type="button" class="save-btn" id="payResultDone" style="width:100%;margin-top:16px;">Back to the Broadcast</button></div>';
+  document.body.appendChild(el);
+  const close = function(){ el.classList.remove('active'); };
+  el.querySelector('#payResultClose').onclick = close;
+  el.querySelector('#payResultDone').onclick = close;
+  return el;
+}
+function nalunoPayShow(title, mark, text, doneLabel){
+  const el = nalunoPaySheet();
+  $('payResultTitle').textContent = title;
+  $('payResultMark').textContent = mark;
+  $('payResultMark').className = 'pay-result-mark' + (mark === '✓' ? ' ok' : (mark === '×' ? ' off' : ''));
+  $('payResultText').textContent = text;
+  if(doneLabel) $('payResultDone').textContent = doneLabel;
+  el.classList.add('active');
+}
+async function nalunoPayConfirmed(k, ref){
+  if(typeof fbDb === 'undefined' || !fbDb || !ref || typeof currentUser === 'undefined' || !currentUser) return null;
+  try{
+    if(k === 'support'){
+      const d = await fbDb.collection('creatorSupport').doc(ref).get();
+      return d.exists && (d.data() || {}).status === 'succeeded' ? (d.data() || {}) : null;
+    }
+    if(k === 'ad'){
+      const d = await fbDb.collection('deskAds').doc(ref).get();
+      return d.exists && (d.data() || {}).paymentStatus === 'paid' ? (d.data() || {}) : null;
+    }
+    if(k === 'known'){
+      const d = await fbDb.collection('knownApps').doc(currentUser.uid).get();
+      return d.exists && (d.data() || {}).status === 'known' ? (d.data() || {}) : null;
+    }
+  }catch(_){}
+  return null;
+}
+function nalunoPayWhat(k){
+  return k === 'ad' ? 'Your ad' : (k === 'known' ? 'Known' : 'Your support');
+}
+async function nalunoHandlePayReturn(){
+  let q;
+  try{ q = new URLSearchParams(location.search); }catch(_){ return; }
+  const pay = q.get('pay');
+  const payout = q.get('payout');
+  if(!pay && !payout) return;
+  let pending = null;
+  try{ pending = JSON.parse(sessionStorage.getItem('nalunoPayPending') || 'null'); sessionStorage.removeItem('nalunoPayPending'); }catch(_){}
+  const k = q.get('k') || (pending && pending.k) || 'support';
+  const bid = q.get('b') || (pending && pending.b) || '';
+  const ref = q.get('r') || (pending && pending.r) || '';
+  try{ history.replaceState(null, '', location.pathname + location.hash); }catch(_){}
+  // Wait for sign-in (the app restores it on load).
+  for(let i = 0; i < 60 && (typeof currentUser === 'undefined' || !currentUser || typeof fbDb === 'undefined' || !fbDb); i++){
+    await new Promise(function(r){ setTimeout(r, 500); });
+  }
+  if(payout){
+    if(payout === 'refresh'){ nalunoStartPayouts(); return; }
+    nalunoPayShow('Payouts', '…', 'Checking your Stripe account…', 'Done');
+    const st = await nalunoPayoutStatus(true);
+    if(st && st.ready) nalunoPayShow('Payouts', '✓', 'Payouts are on. Support sent to you now goes straight to your Stripe account, and Stripe pays it out to your bank or card.', 'Done');
+    else if(st && st.connected) nalunoPayShow('Payouts', '…', 'Stripe still needs a few details before it can pay you. Open Support in any Broadcast and tap “Finish setting up on Stripe”.', 'Done');
+    else nalunoPayShow('Payouts', '×', 'Payouts are not set up yet.', 'Done');
+    return;
+  }
+  if(bid && typeof openBroadcastById === 'function'){
+    try{ if(typeof nalunoShowTab === 'function') nalunoShowTab('broadcast'); }catch(_){}
+    try{ openBroadcastById(bid); }catch(_){}
+    await new Promise(function(r){ setTimeout(r, 900); });
+  }
+  const what = nalunoPayWhat(k);
+  if(pay === 'cancel'){
+    nalunoPayShow('Payment', '×', 'You left the payment page. Nothing was charged.', bid ? 'Back to the Broadcast' : 'Done');
+    return;
+  }
+  nalunoPayShow('Payment', '…', 'Stripe took you back here. Confirming the payment…', bid ? 'Back to the Broadcast' : 'Done');
+  for(let i = 0; i < 20; i++){
+    const done = await nalunoPayConfirmed(k, ref);
+    if(done){
+      let amount = '';
+      try{ if(done.amount_minor && done.currency) amount = formatSupportMoney(done.amount_minor, done.currency) + ' '; }catch(_){}
+      const tail = k === 'support' ? ('reached ' + ((pending && pending.name) ? String(pending.name).split(' ')[0] : 'the creator') + '. Thank you.')
+        : (k === 'ad' ? 'is paid. It goes live once it is reviewed.' : 'is on your Callsign.');
+      nalunoPayShow('Paid', '✓', what + ' ' + (amount ? '(' + amount.trim() + ') ' : '') + tail, bid ? 'Back to the Broadcast' : 'Done');
+      try{ renderSupportTab(); }catch(_){}
+      return;
+    }
+    await new Promise(function(r){ setTimeout(r, 2000); });
+  }
+  nalunoPayShow('Payment', '…', 'No confirmation from Stripe yet. If you paid, it can take a minute; it shows under Support as “succeeded” once Stripe confirms it. Paying again would charge you again.', bid ? 'Back to the Broadcast' : 'Done');
+}
+
+/* ---------------- 29g: creators get paid (Stripe Connect) ---------------- */
+let __payoutCache = null;
+async function nalunoPayoutCall(path, method){
+  if(typeof currentUser === 'undefined' || !currentUser) throw new Error('Sign in first');
+  const idToken = await currentUser.getIdToken(false);
+  const res = await fetch(ECONOMY_UI_WORKER + path, { method: method || 'POST', headers: { 'Authorization': 'Bearer ' + idToken } });
+  const data = await res.json().catch(function(){ return {}; });
+  if(!res.ok || !data.ok){ const e = new Error(data.error || 'Payouts aren’t available right now.'); e.data = data; throw e; }
+  return data;
+}
+async function nalunoPayoutStatus(force){
+  if(!force && __payoutCache && Date.now() - __payoutCache.at < 60000) return __payoutCache.st;
+  try{
+    const st = await nalunoPayoutCall('/v1/pay/connect/status', 'GET');
+    __payoutCache = { at: Date.now(), st: st };
+    return st;
+  }catch(_){ return null; }
+}
+async function nalunoStartPayouts(){
+  const b = $('payoutStartBtn');
+  if(b){ b.disabled = true; b.textContent = 'Opening Stripe…'; }
+  try{
+    const d = await nalunoPayoutCall('/v1/pay/connect', 'POST');
+    window.location.href = d.url;
+  }catch(e){
+    if(b){ b.disabled = false; b.textContent = 'Set up payouts with Stripe'; }
+    const msg = $('payoutMsg');
+    const text = (e && e.message) || 'Payouts aren’t available right now.';
+    if(msg) msg.textContent = text;
+    toast(text);
+  }
+}
+function paintPayoutBlock(host){
+  if(!host || typeof currentUser === 'undefined' || !currentUser) return;
+  let box = host.querySelector('.payout-block');
+  if(!box){
+    box = document.createElement('div');
+    box.className = 'payout-block';
+    host.insertBefore(box, host.firstChild);
+  }
+  box.innerHTML = '<div class="section-label" style="padding:0 4px;">Get paid</div>'
+    + '<p class="lobby-sub" id="payoutLine" style="text-align:left;max-width:none;font-size:11.5px;margin:4px 0 8px;">Checking…</p>'
+    + '<button type="button" class="support-row-cta payout-btn" id="payoutStartBtn" hidden>Set up payouts with Stripe</button>'
+    + '<p class="lobby-sub" id="payoutMsg" style="text-align:left;max-width:none;font-size:11.5px;margin:6px 0 0;"></p>';
+  const btn = box.querySelector('#payoutStartBtn');
+  btn.onclick = nalunoStartPayouts;
+  nalunoPayoutStatus(false).then(function(st){
+    const line = box.querySelector('#payoutLine');
+    if(!line) return;
+    if(!st){ line.textContent = 'Payouts need the payment service. Support sent to you is still recorded.'; return; }
+    if(st.ready){ line.textContent = 'Payouts are on. Support goes straight to your Stripe account.'; btn.hidden = true; return; }
+    if(st.connected){ line.textContent = 'Stripe needs a few more details before it can pay you.'; btn.textContent = 'Finish setting up on Stripe'; btn.hidden = false; return; }
+    line.textContent = 'To receive Support, connect a Stripe account. Stripe asks for your name, phone number and where to send the money.';
+    btn.hidden = false;
+  });
+}
+
+(function(){
+  function go(){ try{ nalunoHandlePayReturn(); }catch(_){} }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go);
+  else setTimeout(go, 0);
+})();
+
 window.openContributionPanel = openContributionPanel;
+window.nalunoHandlePayReturn = nalunoHandlePayReturn;
+window.nalunoPayRemember = nalunoPayRemember;
 window.openSupportSheet = openSupportSheet;
 window.closeSupportSheet = closeSupportSheet;
 window.nalunoSupportButtonHtml = nalunoSupportButtonHtml;

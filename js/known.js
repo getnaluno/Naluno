@@ -148,7 +148,16 @@
     return '<span class="naluno-known" title="Known"><span>' + LABEL + '</span></span>';
   }
 
+  /* 29g — the Known mark shows wherever a name is drawn.
+     Before, it was painted once, on Broadcast plates and the Broadcast
+     header only, and any redraw of a name (textContent) wiped it for good.
+     Now every element carrying data-known-uid is painted, and painted again
+     whenever its text is redrawn. Lookups are cached for ten minutes,
+     including "not Known" and refused reads, so a list of names does not
+     become a list of reads. */
   const knownCache = {};
+  const knownWait = {};
+  const CACHE_MS = 10 * 60 * 1000;
   function publicKnown(row) {
     if (!row) return false;
     if (isKnown(row)) return true;
@@ -157,42 +166,131 @@
     if (row.status && row.status !== 'known') return false;
     return true;
   }
+  function cached(key) {
+    const c = knownCache[key];
+    if (!c) return null;
+    if (Date.now() - c.at > (c.on ? CACHE_MS : CACHE_MS / 3)) return null;
+    if (c.on && c.until && c.until <= Date.now()) return false;
+    return c.on;
+  }
+  function remember(key, on, until) {
+    knownCache[key] = { on: !!on, at: Date.now(), until: Number(until) || 0 };
+    return !!on;
+  }
+  function lookup(uid) {
+    const key = String(uid);
+    const hit = cached(key);
+    if (hit !== null) return Promise.resolve(hit);
+    if (knownWait[key]) return knownWait[key];
+    if (typeof fbDb === 'undefined' || !fbDb) return Promise.resolve(false);
+    const done = function (v) { delete knownWait[key]; return v; };
+    knownWait[key] = fbDb.collection('knownPublic').doc(key).get().then(function (snap) {
+      if (snap && snap.exists) {
+        const d = snap.data() || {};
+        if (publicKnown(d)) return remember(key, true, d.until || d.paidUntil);
+      }
+      /* A paid month is written to knownApps (readable by anyone signed in
+         once it is Known). Anything else is refused, which means not Known. */
+      return fbDb.collection('knownApps').doc(key).get().then(function (s2) {
+        const d2 = (s2 && s2.exists) ? (s2.data() || {}) : null;
+        return remember(key, !!(d2 && isKnown(d2)), d2 && d2.paidUntil);
+      }, function () { return remember(key, false); });
+    }, function () {
+      return fbDb.collection('knownApps').doc(key).get().then(function (s2) {
+        const d2 = (s2 && s2.exists) ? (s2.data() || {}) : null;
+        return remember(key, !!(d2 && isKnown(d2)), d2 && d2.paidUntil);
+      }, function () { return false; });
+    }).then(done, function () { return done(false); });
+    return knownWait[key];
+  }
+  function forget(uid) {
+    if (uid) delete knownCache[String(uid)];
+    else Object.keys(knownCache).forEach(function (k) { delete knownCache[k]; });
+  }
+  function ownMark(el) {
+    if (!el || !el.children) return null;
+    for (let i = 0; i < el.children.length; i++) {
+      if (el.children[i].classList && el.children[i].classList.contains('naluno-known')) return el.children[i];
+    }
+    return null;
+  }
+  function put(el, key, on) {
+    if (!el || !el.isConnected) return;
+    if (String(el.getAttribute('data-known-uid') || key) !== key) return;
+    const have = ownMark(el);
+    if (!on) { if (have) have.remove(); return; }
+    if (have && have.getAttribute('data-for') === key) return;
+    if (have) have.remove();
+    /* The name keeps its own ellipsis and the mark never gets cut off. */
+    try {
+      const loose = [];
+      el.childNodes.forEach(function (n) { if (n.nodeType === 3 && n.nodeValue.trim()) loose.push(n); });
+      if (loose.length && el.children.length === 0) {
+        const wrap = document.createElement('span');
+        wrap.className = 'known-text';
+        loose.forEach(function (n) { wrap.appendChild(n); });
+        el.insertBefore(wrap, el.firstChild);
+      }
+      el.classList.add('has-known');
+    } catch (_) {}
+    el.insertAdjacentHTML('beforeend', markHtml().replace('<span class="naluno-known"', '<span class="naluno-known" data-for="' + key.replace(/[^A-Za-z0-9_-]/g, '') + '"'));
+  }
   function paintBeside(el, uid) {
     if (!el) return;
-    const existing = el.querySelector && el.querySelector('.naluno-known');
-    if (existing) existing.remove();
-    if (!uid || typeof fbDb === 'undefined' || !fbDb) return;
+    if (!uid) { const m = ownMark(el); if (m) m.remove(); return; }
     const key = String(uid);
-    const put = function (on) {
-      if (!el.isConnected || !on) return;
-      if (!el.querySelector('.naluno-known')) el.insertAdjacentHTML('beforeend', markHtml());
-    };
-    if (Object.prototype.hasOwnProperty.call(knownCache, key)) {
-      put(knownCache[key]);
-      return;
-    }
-    fbDb.collection('knownPublic').doc(key).get().then(function (snap) {
-      if (snap && snap.exists && publicKnown(snap.data() || {})) {
-        knownCache[key] = true;
-        put(true);
-        return null;
-      }
-      return fbDb.collection('knownApps').doc(key).get();
-    }).catch(function () {
-      return fbDb.collection('knownApps').doc(key).get();
-    }).then(function (snap) {
-      if (!snap) return;
-      const on = !!(snap.exists && isKnown(snap.data() || {}));
-      knownCache[key] = on;
-      put(on);
-    }).catch(function () {});
+    const hit = cached(key);
+    if (hit !== null) { put(el, key, hit); return; }
+    lookup(key).then(function (on) { put(el, key, on); });
   }
   function paintAll(root) {
     const scope = root && root.querySelectorAll ? root : (typeof document !== 'undefined' ? document : null);
     if (!scope || !scope.querySelectorAll) return;
+    if (scope.getAttribute && scope.getAttribute('data-known-uid') != null) paintBeside(scope, scope.getAttribute('data-known-uid'));
     scope.querySelectorAll('[data-known-uid]').forEach(function (node) {
       paintBeside(node, node.getAttribute('data-known-uid'));
     });
+  }
+  /* A name element that was redrawn (or newly added) gets its mark back. */
+  function watchNames() {
+    if (typeof MutationObserver === 'undefined' || typeof document === 'undefined' || !document.body) return;
+    let queued = [];
+    let timer = null;
+    const flush = function () {
+      timer = null;
+      const list = queued; queued = [];
+      const seen = new Set();
+      list.forEach(function (n) {
+        if (!n || seen.has(n) || !n.isConnected) return;
+        seen.add(n);
+        paintAll(n);
+      });
+    };
+    const mo = new MutationObserver(function (muts) {
+      muts.forEach(function (m) {
+        let t = m.target;
+        if (t && t.nodeType === 3) t = t.parentNode;
+        if (!t || t.nodeType !== 1) return;
+        const host = t.closest ? t.closest('[data-known-uid]') : null;
+        if (host) {
+          const uid = host.getAttribute('data-known-uid');
+          const mark = ownMark(host);
+          if (!uid && !mark) return;
+          if (mark && mark.getAttribute('data-for') === uid) return;
+          queued.push(host);
+        } else if (m.type === 'attributes') {
+          queued.push(t);
+        }
+        if (m.addedNodes) m.addedNodes.forEach(function (n) { if (n.nodeType === 1 && !(n.classList && n.classList.contains('naluno-known'))) queued.push(n); });
+      });
+      if (queued.length && !timer) timer = setTimeout(flush, 60);
+    });
+    mo.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['data-known-uid'] });
+    paintAll(document);
+  }
+  if (typeof document !== 'undefined') {
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watchNames);
+    else setTimeout(watchNames, 0);
   }
 
   const NOTE_MIN = 12;
@@ -470,6 +568,7 @@
       let url = '';
       if (typeof nalunoCheckout === 'function') url = await nalunoCheckout(body);
       else throw new Error('Payments aren’t available yet. Nothing was charged.');
+      try { if (typeof nalunoPayRemember === 'function') nalunoPayRemember({ k: 'known' }); } catch (_) {}
       window.location.href = url;
     } catch (err) {
       let text = (err && err.message) || 'Payments aren’t available yet. Nothing was charged.';
@@ -522,6 +621,8 @@
     markHtml: markHtml,
     paintBeside: paintBeside,
     paintAll: paintAll,
+    lookup: lookup,
+    forget: forget,
     paintMine: paintMine,
     refreshMine: refreshMine,
     openSheet: openSheet,

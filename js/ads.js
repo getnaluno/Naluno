@@ -1061,13 +1061,19 @@
       payNow.hidden = !(paidAed > 0);
       payNow.disabled = false;
       payNow.textContent = 'Pay the prepaid amount';
+      /* 29g: the pay panel says what is happening. Messages used to go to
+         the form's line, which is hidden once the ad is saved, so a failed
+         or slow payment step looked like nothing happened. */
+      const payMsg = function (t) { const el = document.getElementById('crAdPayMsg'); if (el) el.textContent = t || ''; };
+      payMsg(paidAed > 0 ? 'Next: Stripe’s secure page, where you pay by card, Apple Pay or Google Pay. Stripe asks for your phone number. You come back here after.' : '');
       payNow.onclick = async function () {
         if (typeof nalunoCheckout !== 'function') {
-          say('Payments aren’t available yet. Nothing was charged.');
+          payMsg('Payments aren’t available yet. Nothing was charged.');
           return;
         }
         payNow.disabled = true;
-        payNow.textContent = 'Opening…';
+        payNow.textContent = 'Opening Stripe…';
+        payMsg('Opening Stripe…');
         try {
           const url = await nalunoCheckout({
             kind: 'ad',
@@ -1081,11 +1087,14 @@
             currency: adMoneyCode(),
             idempotency_key: 'ad_' + (adId || (sheet && sheet.dataset.mailId) || bid) + '_' + Date.now(),
           });
+          try { if (typeof nalunoPayRemember === 'function') nalunoPayRemember({ k: 'ad', b: bid, r: adId || (sheet && sheet.dataset.mailId) || '' }); } catch (_) {}
           window.location.href = url;
         } catch (err) {
           payNow.disabled = false;
           payNow.textContent = 'Pay the prepaid amount';
-          say((err && err.message) || 'Payments aren’t available yet. Nothing was charged.');
+          const text = (err && err.message) || 'Payments aren’t available yet. Nothing was charged.';
+          payMsg(text);
+          if (typeof toast === 'function') toast(text);
         }
       };
     }

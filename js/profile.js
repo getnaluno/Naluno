@@ -544,6 +544,7 @@ function applyProfileToUI(profile){
     s.classList.toggle('selected', s.dataset.c === profile.color);
   });
 
+  try{ $('viewName').setAttribute('data-known-uid', (typeof currentUser !== 'undefined' && currentUser && currentUser.uid) || ''); }catch(_){}
   $('viewName').textContent = profile.name;
   try{ if(window.NalunoKnown && typeof NalunoKnown.stampView === 'function') NalunoKnown.stampView(); }catch(_){}
   $('viewTagline').textContent = profile.tagline;

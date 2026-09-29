@@ -122,7 +122,7 @@ function broadcastThumbHtml(b){
   } else {
     inner = `<div class="bcast-plate-fallback">${escapeHtml((b.creatorName || '?').slice(0,1).toUpperCase())}</div>`;
   }
-  const live = b.live ? `<span class="bcast-plate-live">LIVE</span>` : '';
+  const live = b.live ? `<span class="bcast-plate-live"><i class="bcast-live-dot"></i>LIVE</span>${photo ? '' : '<span class="bcast-live-wait">Live now · tap to join</span>'}` : '';
   const writeMark = writing && cover && !b.live ? `<span class="bcast-plate-live" style="background:rgba(124,255,178,.16);color:var(--mint);border-color:rgba(124,255,178,.4);">Writing</span>` : '';
   const hold = (!b.live && b.held) ? `<span class="bcast-plate-live" style="background:rgba(255,194,102,.2);color:#ffc266;border-color:rgba(255,194,102,.4);">Waiting</span>` : '';
   const down = (!b.live && b.hidden) ? `<span class="bcast-plate-live" style="background:rgba(255,84,112,.18);color:#ff8a9a;border-color:rgba(255,84,112,.4);">Taken down</span>` : '';
@@ -135,7 +135,7 @@ function broadcastThumbHtml(b){
   const credit = (window.NalunoPass && typeof NalunoPass.lockedCredit === 'function') ? NalunoPass.lockedCredit(b) : null;
   const byline = (credit && window.NalunoPass.byline) ? `<div class="bcast-plate-by">${escapeHtml(NalunoPass.byline(credit))}</div>` : '';
   const metaExcerpt = writing ? writingBand : excerptHtml;
-  return `<article class="bcast-plate${writing ? ' is-writing' : ''}${writing && cover ? ' has-photo' : ''}" data-broadcast-id="${escapeHtml(b.id)}" role="button" tabindex="0">
+  return `<article class="bcast-plate${writing ? ' is-writing' : ''}${writing && cover ? ' has-photo' : ''}${b.live ? ' is-live' : ''}" data-broadcast-id="${escapeHtml(b.id)}"${b.live ? ` data-live="1" data-creator-uid="${escapeHtml(b.creatorUid || '')}"` : ''} role="button" tabindex="0">
     <div class="bcast-plate-frame">
       ${inner}
       ${live}

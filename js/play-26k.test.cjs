@@ -43,7 +43,7 @@ function load(file, names, extra){
 
 const Threads = require('./room-threads.js');
 const space = load('broadcast-space.js', [
-  'bspaceEscape', 'bspaceWhoLabel', 'bspaceDeleteBtnHtml', 'bspaceTalkBody',
+  'bspaceEscape', 'bspaceWhoLabel', 'bspaceWhoHtml', 'bspaceDeleteBtnHtml', 'bspaceTalkBody',
   'bspaceReactRowsFor', 'bspaceMyReact', 'bspaceReactSummary', 'bspaceThreadCard',
   'bspaceWireDeleteButtons', 'bspaceWireTalk', 'bspaceRenderTalk', 'renderBspaceConversation',
 ], {

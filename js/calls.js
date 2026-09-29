@@ -1973,6 +1973,7 @@ function handleIncomingCall(callId, data){
   const color = (c ? c.color : null) || data.callerColor || '#8B90A8';
   const initials = (c ? c.initials : null) || data.callerInitials || (name[0] || '?');
   currentCallContactId = c ? c.id : null;
+  ['incomingName', 'remoteName'].forEach(function(k){ try{ $(k).setAttribute('data-known-uid', data.callerUid || (c && c.firebaseUid) || ''); }catch(_){} });
   $('incomingName').textContent = name;
   $('remoteName').textContent = name;
   const callerPic = data.callerPhotoUrl || data.callerPhoto || null;
@@ -2148,6 +2149,7 @@ function startAudioCall(contactId){
   currentCallContactId = contactId;
   nalunoSetCallKind('audio');
   const sig = computeSignal(c);
+  ['ringName', 'remoteName'].forEach(function(k){ try{ $(k).setAttribute('data-known-uid', c.firebaseUid || ''); }catch(_){} });
   $('ringName').textContent = c.name;
   $('remoteName').textContent = c.name;
   if(typeof applyContactAvatarToEl === 'function'){
@@ -2181,6 +2183,7 @@ function startOutgoingCall(contactId){
   // must not block the lobby.
   const sig = computeSignal(c);
   $('lobbyContactName').textContent = 'Call ' + c.name.split(' ')[0] + '?';
+  ['ringName', 'remoteName'].forEach(function(k){ try{ $(k).setAttribute('data-known-uid', c.firebaseUid || ''); }catch(_){} });
   $('ringName').textContent = c.name;
   $('remoteName').textContent = c.name;
   if(typeof applyContactAvatarToEl === 'function'){
@@ -2612,6 +2615,7 @@ function showAsyncFallback(contactId, reason){
   currentCallContactId = contactId;
   $('asyncAvatar').style.background = c.color; $('asyncAvatar').textContent = c.initials;
   if(typeof applyContactAvatarToEl === 'function') applyContactAvatarToEl($('asyncAvatar'), c);
+  $('asyncName').setAttribute('data-known-uid', c.firebaseUid || '');
   $('asyncName').textContent = c.name;
   const first = c.name.split(' ')[0];
   if(reason === 'off'){

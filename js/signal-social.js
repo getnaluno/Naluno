@@ -376,7 +376,7 @@
         }).join('') + '</div>' : '')
       + '<div class="sv-list">' + rows.map(function (r) {
           const when = r.viewedAt ? new Date(Number(r.viewedAt)).toLocaleString() : '';
-          return '<div class="sv-row"><span class="sv-name">' + esc(r.name || 'Someone') + '</span>'
+          return '<div class="sv-row"><span class="sv-name" data-known-uid="' + esc(r.uid || '') + '">' + esc(r.name || 'Someone') + '</span>'
             + '<span class="sv-react">' + (r.reaction ? esc(r.reaction) : '') + '</span>'
             + '<span class="sv-when">' + esc(when) + '</span></div>';
         }).join('') + '</div>';

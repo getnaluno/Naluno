@@ -413,3 +413,64 @@ function nalunoSlimMedia(row){
   }
   return copy;
 }
+
+/* 29g — a sheet opens over the screen it was opened from.
+   Every sheet shares `.call-overlay.active{ z-index:120 !important }`, which is
+   lower than the Broadcast screen (180), Spark (230) and the composers (280).
+   "Support this creator" (and the other sheets opened from inside those
+   screens) became active BEHIND them, so nothing seemed to happen, and the
+   sheet only showed once you left the broadcast. When a sheet opens it is now
+   lifted one step above whatever is open, and goes back to its own level when
+   it closes. The call screen and the sign-in gate keep their own levels. */
+const NALUNO_LAYER_SKIP = { callOverlay: 1, authGate: 1, wirelineThread: 1, bandRoom: 1 };
+const NALUNO_LAYER_OPEN = '.call-overlay.active, #bspace.active, #sparkPage.active, #findNalunoOverlay.active, #nalunoAdViewer';
+function nalunoLayerTop(except){
+  let top = 0;
+  try{
+    document.querySelectorAll(NALUNO_LAYER_OPEN).forEach(function(el){
+      if(el === except || el.id === 'callOverlay' || el.id === 'authGate') return;
+      const cs = getComputedStyle(el);
+      if(cs.display === 'none' || cs.visibility === 'hidden') return;
+      const z = parseInt(cs.zIndex, 10);
+      if(z > top) top = z;
+    });
+  }catch(_){}
+  return top;
+}
+function nalunoLiftSheet(el){
+  if(!el || NALUNO_LAYER_SKIP[el.id]) return;
+  const on = el.classList.contains('active');
+  if(!on){
+    if(el.dataset.nalunoLifted){ el.style.removeProperty('z-index'); delete el.dataset.nalunoLifted; }
+    return;
+  }
+  if(el.dataset.nalunoLifted) return;
+  const own = parseInt(getComputedStyle(el).zIndex, 10) || 0;
+  const top = nalunoLayerTop(el);
+  if(top >= own){
+    // stays under the call screen (300) so an incoming call still covers it
+    el.style.setProperty('z-index', String(Math.min(top + 1, 299)), 'important');
+    el.dataset.nalunoLifted = '1';
+  }
+}
+function nalunoWatchSheets(){
+  if(typeof MutationObserver === 'undefined') return;
+  const seen = new WeakSet();
+  const mo = new MutationObserver(function(list){
+    list.forEach(function(m){ try{ nalunoLiftSheet(m.target); }catch(_){} });
+  });
+  function scan(){
+    document.querySelectorAll('.call-overlay').forEach(function(el){
+      if(seen.has(el) || NALUNO_LAYER_SKIP[el.id]) return;
+      seen.add(el);
+      mo.observe(el, { attributes: true, attributeFilter: ['class'] });
+      if(el.classList.contains('active')) nalunoLiftSheet(el);
+    });
+  }
+  scan();
+  // sheets drawn later by script (none today, but cheap to cover)
+  try{ new MutationObserver(scan).observe(document.body, { childList: true }); }catch(_){}
+}
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', nalunoWatchSheets);
+else nalunoWatchSheets();
+window.nalunoLiftSheet = nalunoLiftSheet;

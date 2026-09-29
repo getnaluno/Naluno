@@ -34,6 +34,10 @@ function bspaceWhoLabel(uid){
   }
   return 'Member';
 }
+/* The name in its own span so the Known mark sits right after it. */
+function bspaceWhoHtml(uid){
+  return '<span class="who-name" data-known-uid="' + bspaceEscape(uid || '') + '">' + bspaceEscape(bspaceWhoLabel(uid)) + '</span>';
+}
 
 function ensureBroadcastDocId(meta){
   if(meta.broadcastId) return meta.broadcastId;
@@ -1070,7 +1074,7 @@ function bspaceThreadCard(col, row){
     return '<button type="button" class="bspace-emoji' + (mine === e ? ' on' : '') + '" data-emoji="' + e + '" data-target="' + bspaceEscape(row.id) + '">' + e + '</button>';
   }).join('');
   return '<div class="bspace-reply">'
-    + '<div class="who">' + bspaceEscape(bspaceWhoLabel(m.from)) + ' · ' + timeAgo(m.ts || Date.now()) + bspaceDeleteBtnHtml(col, row.id, m.from) + '</div>'
+    + '<div class="who">' + bspaceWhoHtml(m.from) + ' · ' + timeAgo(m.ts || Date.now()) + bspaceDeleteBtnHtml(col, row.id, m.from) + '</div>'
     + '<div class="body">' + bspaceTalkBody(col, m) + '</div>'
     + '<div class="bspace-post-tools"><button type="button" data-react-open="' + bspaceEscape(row.id) + '">React</button>'
     + (sum ? '<span class="bspace-react-sum">' + sum + '</span>' : '') + '</div>'
@@ -1101,11 +1105,11 @@ function bspaceRenderTalk(el, docs, col, emptyText, extraHtml){
       return '<button type="button" class="bspace-emoji' + (mine === e ? ' on' : '') + '" data-emoji="' + e + '" data-target="' + bspaceEscape(row.id) + '">' + e + '</button>';
     }).join('');
     const who = col === 'questions'
-      ? (bspaceEscape(bspaceWhoLabel(m.from)) + ' asks · ' + timeAgo(m.ts || Date.now()))
-      : (bspaceEscape(bspaceWhoLabel(m.from)) + ' · ' + timeAgo(m.ts || Date.now()));
+      ? (bspaceWhoHtml(m.from) + ' asks · ' + timeAgo(m.ts || Date.now()))
+      : (bspaceWhoHtml(m.from) + ' · ' + timeAgo(m.ts || Date.now()));
     const threadBits = kids.map(function(k){ return bspaceThreadCard(col, k); }).join('')
       + embedded.map(function(a){
-        return '<div class="bspace-reply"><div class="who">' + bspaceEscape(bspaceWhoLabel(a.from)) + '</div><div class="body">' + bspaceEscape(a.text || '') + '</div></div>';
+        return '<div class="bspace-reply"><div class="who">' + bspaceWhoHtml(a.from) + '</div><div class="body">' + bspaceEscape(a.text || '') + '</div></div>';
       }).join('');
     const extra = extraHtml ? extraHtml(m, row.id) : '';
     const label = n ? (n + (n === 1 ? ' reply' : ' replies')) : 'Reply';
@@ -1352,7 +1356,7 @@ async function paintBspaceViews(meta){
     html += ''
       + '<div class="bspace-stat-card bspace-stat-card--mine">'
       +   '<div class="bspace-stat-k">All of yours</div>'
-      +   '<div class="bspace-stat-v">' + fmt(total) + '</div>'
+      +   '<div class="bspace-stat-v" data-n="' + (Number(total) || 0) + '">' + fmt(total) + '</div>'
       +   '<div class="bspace-stat-h">' + (strand ? ('Every Broadcast · ' + bspaceEscape(strand) + ' + rest') : 'Every Broadcast you have published') + '</div>'
       + '</div>';
   }
@@ -2557,6 +2561,25 @@ function formatLiveDuration(ms){
 }
 window.formatLiveDuration = formatLiveDuration;
 
+/* 29g: a view counted by anyone shows here straight away. */
+function bspaceShowViewsNow(views, delta){
+  const fmt = (typeof formatNalunoViews === 'function') ? formatNalunoViews : String;
+  const enter = $('bspaceEnterCount');
+  if(enter) enter.textContent = fmt(views);
+  const row = $('bspaceViewRow');
+  if(!row) return;
+  const cards = row.querySelectorAll('.bspace-stat-card');
+  if(cards[0]){ const v = cards[0].querySelector('.bspace-stat-v'); if(v) v.textContent = fmt(views); }
+  const mine = row.querySelector('.bspace-stat-card--mine .bspace-stat-v');
+  if(mine && delta){
+    if(mine.dataset.n == null) return;
+    const was = Number(mine.dataset.n) || 0;
+    const n = Math.max(0, was + delta);
+    mine.dataset.n = String(n);
+    mine.textContent = fmt(n);
+  }
+}
+
 // Watch live flag when viewing someone else's broadcast
 function bspaceWatchLiveState(){
   if(!fbDb || !activeBroadcastId) return;
@@ -2566,7 +2589,9 @@ function bspaceWatchLiveState(){
     try{
       if(activeBroadcastMeta){
         activeBroadcastMeta.live = !!d.live;
+        const before = Number(activeBroadcastMeta.views) || 0;
         activeBroadcastMeta.views = typeof d.views === 'number' ? d.views : (activeBroadcastMeta.views || 0);
+        if(activeBroadcastMeta.views !== before) bspaceShowViewsNow(activeBroadcastMeta.views, activeBroadcastMeta.views - before);
         activeBroadcastMeta.lastLiveStartedAt = d.lastLiveStartedAt || null;
         activeBroadcastMeta.lastLiveEndedAt = d.lastLiveEndedAt || null;
         activeBroadcastMeta.lastLiveDurationMs = (d.lastLiveDurationMs != null) ? d.lastLiveDurationMs : null;
@@ -3437,7 +3462,10 @@ function wireBroadcastChapterPlayer(chapters, breathers, opts){
       if(m._fired) return;
       if(t >= m.atSec && t < m.atSec + 1.5){
         m._fired = true;
-        showBreatherAdSlot(m, ()=>{});
+        /* 29g: no callback here. An empty one counted as "the caller
+           restarts the video", so a mid-roll with no ad to show paused the
+           Broadcast and never started it again. */
+        showBreatherAdSlot(m, null);
       }
     });
   };

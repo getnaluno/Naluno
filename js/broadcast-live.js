@@ -685,6 +685,7 @@ function bLiveShowJoinUi(show){
 /* Hooks used by broadcast-space.js */
 async function bLiveOnHostStarted(stream){
   await bLiveStartHost(stream);
+  try{ if(typeof nalunoLivePreviewStart === 'function' && activeBroadcastId) nalunoLivePreviewStart(activeBroadcastId, stream); }catch(_){}
   bLiveShowJoinUi(false); // host doesn't join as viewer
   bLiveEnsureReactionBar();
   const bar = $('bspaceReactionBar');
@@ -696,6 +697,7 @@ async function bLiveOnHostStarted(stream){
 }
 
 async function bLiveOnHostStopped(){
+  try{ if(typeof nalunoLivePreviewStop === 'function') nalunoLivePreviewStop(); }catch(_){}
   await bLiveStopHost();
   bLiveShowJoinUi(false);
 }
@@ -707,7 +709,10 @@ function bLiveOnSpaceOpened(isLive, isCreator){
     bLiveShowJoinUi(true);
     if(activeBroadcastId) bLiveWatchViewerCount(activeBroadcastId);
     const badge = $('bspaceLiveBadge');
-    if(badge){ badge.style.display = 'block'; badge.textContent = 'Live now — joining'; }
+    // 29g: the Broadcast repaints while the live is already on screen; it
+    // used to put "joining" back over a picture that was playing.
+    const watching = !!(bLiveViewerPc || window.__nalunoSfuLiveHandle);
+    if(badge){ badge.style.display = 'block'; badge.textContent = watching ? 'Live now' : 'Live now — joining'; }
     if(!bLiveViewerPc && !window.__nalunoSfuLiveHandle){
       setTimeout(function(){
         try{

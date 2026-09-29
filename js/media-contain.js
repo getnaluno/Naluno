@@ -126,6 +126,16 @@ function nalunoMediaMayKeepAlive(el){
     if(el.dataset && el.dataset.nalunoWantPlay === '0') return false;
     if(el.dataset && el.dataset.nalunoUserPaused === '1') return false;
     if(nalunoActiveViewerContains(el)) return true;
+    /* 29g: an ad on screen may keep playing. The full-screen ad sits outside
+       the Broadcast and the story viewer, so this watchdog used to pause it
+       about a second in (every 2 s tick), with the ad fully buffered: the
+       "ad stops while playing" report. */
+    if(nalunoAdSurface(el)){
+      const host = el.closest && el.closest('#nalunoAdViewer, #bspaceBreather');
+      if(!host || !el.isConnected) return false;
+      if(host.classList && host.classList.contains('hidden')) return false;
+      return getComputedStyle(host).display !== 'none';
+    }
     if(el.dataset && el.dataset.nalunoPreview === '1'){
       const tab = document.getElementById('tab-broadcast');
       if(tab && tab.classList.contains('active') && el.__nalunoOn) return true;

@@ -131,7 +131,7 @@ async function openSparkPage(otherUid, otherName){
   sparkRoomId = await ensureSparkRoom(otherUid, sparkOtherName);
   const page = $('sparkPage');
   if(!page) return;
-  if($('sparkPageName')) $('sparkPageName').textContent = sparkOtherName;
+  if($('sparkPageName')){ $('sparkPageName').setAttribute('data-known-uid', otherUid || ''); $('sparkPageName').textContent = sparkOtherName; }
   fillSparkLangSelects();
   page.classList.add('active');
   listenSparkRoom();

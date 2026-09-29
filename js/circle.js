@@ -181,15 +181,89 @@
     }catch(e){ console.warn('[circle] view', e); }
   }
 
+  /* 29g: what counts as a view is decided by the economy worker. The
+     phone says "opened" when the Broadcast opens and "count it" once it has
+     played for the console's number of seconds (economyConfig/viewRules);
+     the worker checks that time on its own clock and counts at most one view
+     per person. Only if the worker does not have the view route yet (an
+     older deploy answers 404) does the phone fall back to writing the view
+     itself, after the same console-set seconds. */
+  const VIEW_WORKER = 'https://naluno-economy.naluno.workers.dev';
+  let viewSecCache = null;
+  function consoleViewSec(){
+    if(viewSecCache && Date.now() - viewSecCache.at < 300000) return Promise.resolve(viewSecCache.sec);
+    if(!fbDb) return Promise.resolve(4);
+    return fbDb.collection('economyConfig').doc('viewRules').get().then(function(d){
+      let n = Math.round(Number(d && d.exists ? (d.data() || {}).countAfterSec : 0));
+      if(!isFinite(n) || n < 1) n = 4;
+      n = Math.min(120, n);
+      viewSecCache = { at: Date.now(), sec: n };
+      return n;
+    }).catch(function(){ return 4; });
+  }
+  async function viewCall(route, broadcastId){
+    if(!currentUser) return { status: 0, data: {} };
+    const token = await currentUser.getIdToken(false);
+    const res = await fetch(VIEW_WORKER + '/v1/view/' + route, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ broadcast_id: broadcastId }),
+    });
+    const data = await res.json().catch(function(){ return {}; });
+    return { status: res.status, data: data || {} };
+  }
+  function viewCounted(broadcastId, creatorUid, views){
+    try{
+      if(typeof nalunoTrack === 'function'){
+        nalunoTrack('WATCH_COMPLETION', { broadcast_id: broadcastId, target_type: 'broadcast', creator_uid: creatorUid || '' });
+      }
+    }catch(_){}
+    try{
+      const m = window.activeBroadcastMeta;
+      if(m && typeof views === 'number' && (typeof activeBroadcastId === 'undefined' || activeBroadcastId === broadcastId)) m.views = Math.max(m.views || 0, views);
+      if(typeof paintBspaceViews === 'function') paintBspaceViews(m || { creatorUid: creatorUid, views: views || 0 });
+    }catch(_){}
+  }
+  async function serverCountView(broadcastId, creatorUid, tries){
+    let r;
+    try{ r = await viewCall('count', broadcastId); }catch(_){ return; }
+    const d = r.data || {};
+    if(d.code === 'wait' && (tries || 0) < 3){
+      setTimeout(function(){ serverCountView(broadcastId, creatorUid, (tries || 0) + 1); }, Math.min(30000, (Number(d.wait_ms) || 1000) + 250));
+      return;
+    }
+    if(d.ok && d.counted) viewCounted(broadcastId, creatorUid, d.views);
+  }
+
   let viewWatchTimer = null;
+  let viewWatchSeq = 0;
   function armBroadcastViewWatch(broadcastId, creatorUid, isMine){
     if(viewWatchTimer){ clearInterval(viewWatchTimer); viewWatchTimer = null; }
-    if(isMine || !broadcastId) return;
+    const seq = ++viewWatchSeq;
+    if(isMine || !broadcastId || !currentUser) return;
+    if(currentUser && creatorUid && currentUser.uid === creatorUid) return;
+    const key = broadcastId + ':' + currentUser.uid;
+    if(viewedLocal[key]) return;
+    let need = null;       // seconds, from the worker (or the console setting on fallback)
+    let mode = null;       // 'server' | 'legacy' | 'off'
+    viewCall('open', broadcastId).then(function(r){
+      if(seq !== viewWatchSeq) return;
+      if(r.data && r.data.ok){ mode = 'server'; need = Number(r.data.count_after_sec) || 4; return; }
+      // Refused (bad sign-in, bad id): not a view. Anything else means the
+      // worker cannot count right now (an older deploy, not configured, down).
+      if(r.status === 400 || r.status === 401 || r.status === 403){ mode = 'off'; return; }
+      mode = 'legacy';
+      return consoleViewSec().then(function(n){ need = n; });
+    }).catch(function(){
+      if(seq !== viewWatchSeq) return;
+      mode = 'legacy';
+      return consoleViewSec().then(function(n){ need = n; });
+    });
     let seconds = 0;
     viewWatchTimer = setInterval(function(){
       try{
         const space = document.getElementById('bspace');
-        if(!space || !space.classList.contains('active')){
+        if(!space || !space.classList.contains('active') || seq !== viewWatchSeq){
           clearInterval(viewWatchTimer); viewWatchTimer = null; return;
         }
         const v = document.getElementById('bspaceVideoEl');
@@ -197,35 +271,15 @@
           ? (!v.paused && (v.currentTime || 0) > 0.25)
           : true; // text/photo rooms: overlay open counts as watching
         if(watching) seconds += 1;
-        if(seconds >= 4){
-          clearInterval(viewWatchTimer); viewWatchTimer = null;
-          // FIX ("This Broadcast" not reflecting a view that "All of yours"
-          // seemed to): recordBroadcastView() was fired without awaiting it,
-          // with the repaint called on the very next line — a real race.
-          // recordBroadcastView does several chained Firestore writes
-          // (checking/creating a viewers doc, then incrementing views,
-          // then the toga totals) that take real network time; the repaint
-          // was reading the broadcast and toga docs back before any of that
-          // had actually landed, so it always showed the count from
-          // *before* this view, on both stats equally — not a difference
-          // between them, just neither one reflecting the view that had
-          // only just been kicked off. Awaiting it first means the repaint
-          // reads the real, post-increment numbers.
-          // Community Economy (spec §5): reuse the SAME already-verified
-          // 4-seconds-of-real-playback threshold rather than inventing a
-          // second definition of "a view" that could disagree with the one
-          // the dashboard shows. Reported as an action only.
-          try{
-            if(typeof nalunoTrack === 'function'){
-              nalunoTrack('WATCH_COMPLETION', {
-                broadcast_id: broadcastId,
-                target_type: 'broadcast',
-                creator_uid: creatorUid || '',
-              });
-            }
-          }catch(_){}
+        if(mode === 'off'){ clearInterval(viewWatchTimer); viewWatchTimer = null; return; }
+        if(mode === null || need === null || seconds < need) return;
+        clearInterval(viewWatchTimer); viewWatchTimer = null;
+        if(mode === 'server'){
+          viewedLocal[key] = true;
+          serverCountView(broadcastId, creatorUid, 0);
+        } else {
           recordBroadcastView(broadcastId, creatorUid).then(function(){
-            try{ if(typeof paintBspaceViews === 'function') paintBspaceViews(window.activeBroadcastMeta || { creatorUid: creatorUid, views: 0 }); }catch(_){}
+            viewCounted(broadcastId, creatorUid);
           }).catch(function(){});
         }
       }catch(_){}
@@ -264,6 +318,12 @@
       const raw = (typeof nalunoCacheRead === 'function') ? nalunoCacheRead('togaRanks:' + monthKey) : null;
       if(raw && typeof raw === 'object') prev = raw;
     }catch(_){}
+    /* The board now redraws on every live change. Comparing against the
+       previous redraw would wipe the arrows a second later, so the ranks
+       compared against are kept for six hours. */
+    let keptAt = 0;
+    if(prev && prev.__ranks && typeof prev.__ranks === 'object'){ keptAt = Number(prev.__at) || 0; prev = prev.__ranks; }
+    const keep = keptAt && (Date.now() - keptAt) < 6 * 60 * 60 * 1000;
     const deltas = {};
     Object.keys(currentRanksByUid).forEach(function(uid){
       const now = currentRanksByUid[uid];
@@ -274,7 +334,7 @@
       else deltas[uid] = { kind: 'down', by: now - before };
     });
     try{
-      if(typeof nalunoCacheWrite === 'function') nalunoCacheWrite('togaRanks:' + monthKey, currentRanksByUid);
+      if(!keep && typeof nalunoCacheWrite === 'function') nalunoCacheWrite('togaRanks:' + monthKey, { __at: Date.now(), __ranks: currentRanksByUid });
     }catch(_){}
     return deltas;
   }
@@ -354,14 +414,39 @@
     await renderTogaBoard();
   }
 
+  /* 29g: the board follows the numbers live. The listener used to be set
+     up only if the database was ready when the page loaded (it usually is
+     not, before sign-in), and it died on its first error, so the board
+     showed whatever it read once. It now starts with the first render after
+     sign-in, subscribes again after an error, and each change redraws from
+     the snapshot it already has instead of reading the collection again. */
+  let togaLiveUnsub = null;
+  let togaLiveSnap = null;
+  let togaLiveTimer = null;
+  function watchTogaLive(){
+    if(togaLiveUnsub || !fbDb || typeof currentUser === 'undefined' || !currentUser) return;
+    try{
+      togaLiveUnsub = fbDb.collection('toga').limit(80).onSnapshot(function(snap){
+        togaLiveSnap = snap;
+        try{ if(typeof nalunoListenOk === 'function') nalunoListenOk('toga'); }catch(_){}
+        if(togaLiveTimer) return;
+        togaLiveTimer = setTimeout(function(){ togaLiveTimer = null; renderTogaBoard(); }, 600);
+      }, function(err){
+        togaLiveUnsub = null;
+        togaLiveSnap = null;
+        try{ if(typeof nalunoRelisten === 'function') nalunoRelisten('toga', watchTogaLive); }catch(_){}
+      });
+    }catch(_){ togaLiveUnsub = null; }
+  }
   async function renderTogaBoard(){
     const el = $('togaBoard');
     if(!el || !fbDb) return;
+    watchTogaLive();
     const monthKey = nalunoMonthKey();
     const monthEl = $('togaMonthLabel');
     if(monthEl) monthEl.textContent = nalunoMonthLabel();
     try{
-      const snap = await fbDb.collection('toga').limit(80).get();
+      const snap = togaLiveSnap || await fbDb.collection('toga').limit(80).get();
       const byId = {};
       snap.docs.forEach(function(d){
         byId[d.id] = Object.assign({ id: d.id }, d.data() || {});
@@ -434,7 +519,8 @@
       const ranksByUid = {};
       rows.forEach(function(r, i){ ranksByUid[r.id] = i + 1; });
       const deltas = nalunoTogaRankDelta(monthKey, ranksByUid);
-      el.innerHTML = '<div class="toga-strip-hint">Slide names →</div><ol class="toga-list">' + rows.map(function(r, i){
+      el.innerHTML = '<div class="toga-key">The big number is <strong>Toga points</strong>: 1 for each view, 12 for each Circle join and 3 for each talk message, this month. The line under it shows those counts.</div>'
+        + '<div class="toga-strip-hint">Slide names →</div><ol class="toga-list">' + rows.map(function(r, i){
         const openId = r.featuredBroadcastId || '';
         const rank = i + 1;
         const d = deltas[r.id] || { kind: 'same' };
@@ -447,15 +533,15 @@
           + togaFaceHtml(r, rank)
           + '<span class="toga-rank">#' + rank + '</span>'
           + '<span class="toga-name-block">'
-          +   '<span class="toga-card-name">' + escapeHtml(r.name || 'Creator') + badge + '</span>'
-          +   '<span class="toga-card-v">' + formatNalunoViews(r._score || 0) + '</span>'
-          +   '<span class="toga-card-h">' + formatNalunoViews(r._viewsM) + ' views this month · '
-          +     formatNalunoViews(r._circleM || 0) + ' Circle · '
+          +   '<span class="toga-card-name"><span data-known-uid="' + escapeHtml(r.id || '') + '">' + escapeHtml(r.name || 'Creator') + '</span>' + badge + '</span>'
+          +   '<span class="toga-card-v">' + formatNalunoViews(r._score || 0) + ' <em class="toga-card-unit">Toga points</em></span>'
+          +   '<span class="toga-card-h">This month: ' + formatNalunoViews(r._viewsM) + (r._viewsM === 1 ? ' view' : ' views') + ' · '
+          +     formatNalunoViews(r._circleM || 0) + ' Circle ' + ((r._circleM || 0) === 1 ? 'join' : 'joins') + ' · '
           +     formatNalunoViews(r._engageM || 0) + ' talk</span>'
           + '</span>'
           + '</button></li>';
       }).join('') + '</ol>'
-      + '<div class="toga-period-note">' + nalunoMonthLabel() + ' · ' + nalunoDaysRemainingInPeriod() + ' days remaining in this Wall of Fame</div>';
+      + '<div class="toga-period-note">' + nalunoMonthLabel() + ' · ' + (function(n){ return n + (n === 1 ? ' day' : ' days'); })(nalunoDaysRemainingInPeriod()) + ' remaining in this Wall of Fame</div>';
       el.querySelectorAll('[data-toga-uid]').forEach(function(card){
         card.onclick = function(e){
           if(e){ e.preventDefault(); e.stopPropagation(); }
@@ -571,16 +657,7 @@
     const monthEl = $('togaMonthLabel');
     if(monthEl) monthEl.textContent = nalunoMonthLabel();
     try{ renderTogaBoard(); }catch(_){}
-    if(fbDb && !wireToga._live){
-      wireToga._live = true;
-      try{
-        fbDb.collection('toga').limit(80).onSnapshot(function(){
-          const board = $('togaBoard');
-          if(!board) return;
-          renderTogaBoard();
-        }, function(){});
-      }catch(_){}
-    }
+    watchTogaLive();
     function setTogaOpen(open){
       if(!body) return;
       body.style.display = 'block';
@@ -663,7 +740,7 @@
         : '<span class="circle-member-face circle-member-initial" style="background:' + escapeHtml(r.color || '#2A2F45') + ';">' + initial + '</span>';
       return '<button type="button" class="circle-member-row" data-member-uid="' + escapeHtml(r.uid) + '" data-member-name="' + escapeHtml(r.name || 'them') + '">'
         + avatar
-        + '<span class="circle-member-name">' + escapeHtml(r.name || 'Someone') + '</span>'
+        + '<span class="circle-member-name" data-known-uid="' + escapeHtml(r.uid || '') + '">' + escapeHtml(r.name || 'Someone') + '</span>'
         + '<span class="circle-member-go">\u203a</span>'
         + '</button>';
     }).join('');

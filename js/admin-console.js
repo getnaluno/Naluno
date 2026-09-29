@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260929b';
+  const BUILD = '20260929g';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -3646,7 +3646,14 @@
                   t.scoreMonth || t.score || 0, t.viewsMonth || t.viewsTotal || 0];
               }))
             : '<p class="sub">No Toga scores stored this month.</p>')
-        + gap('Admin can see why a rank exists: score is views + circle + engagement for the month. The formula is not shown to members.');
+        + gap('Admin can see why a rank exists: score is views + circle + engagement for the month. The formula is not shown to members.')
+        + card('What counts as a view',
+          '<p class="sub">The economy service counts one view per person per Broadcast, only after they have spent this many seconds on it, timed on the server. The app cannot count a view by itself.</p>'
+          + '<label for="viewCountSec">Seconds on a Broadcast before it counts as a view</label>'
+          + '<input id="viewCountSec" type="number" min="1" max="120" value="" placeholder="4" />'
+          + '<div class="row"><button type="button" class="primary" id="viewCountSave">Save</button></div>'
+          + '<p class="sub" id="viewCountNow"></p>');
+      wireViewRules();
       return;
     }
 
@@ -3755,7 +3762,14 @@
                 r.status || 'intent'];
             })))
           : gap('No support intents on file. Turning the flag on does not move money — it only makes the Broadcast panel active.'))
+        + card('Paying creators (Stripe)',
+          '<p class="sub">A creator connects a Stripe account from the Support panel in their own Broadcast. While <strong>Real payouts</strong> (Flags) is on, Support to a creator whose Stripe account is ready goes straight to them, less the share below. While it is off, or before they connect, Support is paid to Naluno’s Stripe and recorded for them.</p>'
+          + '<label for="supportFeePct">Naluno’s share of each Support (%)</label>'
+          + '<input id="supportFeePct" type="number" min="0" max="50" step="0.5" value="" placeholder="0" />'
+          + '<div class="row"><button type="button" class="primary" id="supportFeeSave">Save</button></div>'
+          + '<p class="sub" id="supportFeeNow"></p>')
         + gap(g.payments || '');
+      wireSupportFee();
       return;
     }
 
@@ -4776,6 +4790,66 @@
       s.onerror = function () { reject(new Error('Upload helper did not load')); };
       document.head.appendChild(s);
     });
+  }
+
+  /* 29g: Naluno's share of Support paid straight to a creator. Unset = none. */
+  function wireSupportFee() {
+    const db = adminDb();
+    const box = $('supportFeePct');
+    const now = $('supportFeeNow');
+    if (!db || !box) return;
+    db.collection('economyConfig').doc('payouts').get().then(function (s) {
+      const n = s && s.exists ? Number((s.data() || {}).supportFeePct) : NaN;
+      box.value = isFinite(n) ? String(n) : '';
+      if (now) now.textContent = isFinite(n) ? ('Now: ' + n + '%.') : 'Not set: Naluno keeps nothing from Support paid to a creator.';
+    }).catch(function () {});
+    const save = $('supportFeeSave');
+    if (save) save.onclick = async function () {
+      let n = Number(box.value);
+      if (!isFinite(n) || n < 0) n = 0;
+      if (n > 50) n = 50;
+      try {
+        await db.collection('economyConfig').doc('payouts').set({ supportFeePct: n, updatedAt: Date.now(), updatedBy: currentUser && currentUser.uid }, { merge: true });
+        await writeAudit('support-fee', 'payouts', n + '%');
+        box.value = String(n);
+        if (now) now.textContent = 'Now: ' + n + '%.';
+        toast('Saved');
+      } catch (e) {
+        toast((e && e.message) || 'Could not save');
+      }
+    };
+  }
+
+  /* 29g: the view rule lives in economyConfig/viewRules; the worker reads it. */
+  function wireViewRules() {
+    const db = adminDb();
+    const box = $('viewCountSec');
+    const now = $('viewCountNow');
+    if (!db || !box) return;
+    db.collection('economyConfig').doc('viewRules').get().then(function (s) {
+      const n = s && s.exists ? Number((s.data() || {}).countAfterSec) : 0;
+      box.value = n > 0 ? String(n) : '4';
+      if (now) now.textContent = n > 0 ? ('Now: ' + n + ' seconds.') : 'Now: 4 seconds (the default, never saved).';
+    }).catch(function () { box.value = '4'; });
+    const save = $('viewCountSave');
+    if (save) save.onclick = async function () {
+      let n = parseInt(box.value || '4', 10);
+      if (!isFinite(n) || n < 1) n = 1;
+      if (n > 120) n = 120;
+      try {
+        await db.collection('economyConfig').doc('viewRules').set({
+          countAfterSec: n,
+          updatedAt: Date.now(),
+          updatedBy: currentUser && currentUser.uid,
+        }, { merge: true });
+        await writeAudit('view-rules', 'viewRules', 'view after ' + n + 's');
+        box.value = String(n);
+        if (now) now.textContent = 'Now: ' + n + ' seconds. The service picks it up within a minute.';
+        toast('Saved');
+      } catch (e) {
+        toast((e && e.message) || 'Could not save');
+      }
+    };
   }
 
   async function saveAdRates() {

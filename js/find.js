@@ -443,7 +443,7 @@ async function searchHandle(){
     $('findPeopleResult').innerHTML = `
       <div class="contact-row" style="cursor:default;">
         ${typeof contactAvatarHtml === 'function' ? contactAvatarHtml(face, 46) : ('<div class="avatar" style="width:46px;height:46px;font-size:15px;background:'+(face.color)+';">'+escapeHtml(face.initials)+'</div>')}
-        <div class="contact-meta"><div class="contact-name">${escapeHtml(data.name||'Unknown')}</div><div class="contact-sub">${escapeHtml(data.number||('@'+handle))}</div></div>
+        <div class="contact-meta"><div class="contact-name" data-known-uid="${escapeHtml(String(theirUid||''))}">${escapeHtml(data.name||'Unknown')}</div><div class="contact-sub">${escapeHtml(data.number||('@'+handle))}</div></div>
       </div>
       <button class="join-btn" id="connectResultBtn" style="margin-top:14px;" ${already?'disabled':''}>${already?'Already connected':'Connect'}</button>`;
     if(!already){

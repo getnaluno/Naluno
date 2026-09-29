@@ -289,7 +289,7 @@ function renderWirelineList(){
   $('wirelineList').innerHTML = rows.map(r=>`
     <div class="contact-row" data-thread="${r.c.id}">
       ${typeof contactAvatarHtml === 'function' ? contactAvatarHtml(r.c, 46) : ('<div class="avatar" style="width:46px;height:46px;font-size:15px;background:'+((r.c.color)||'#7CFFB2')+';">'+escapeHtml(r.c.initials||'')+'</div>')}
-      <div class="contact-meta"><div class="contact-name">${escapeHtml(r.c.name||'')}</div><div class="contact-sub" style="${r.unread?'color:var(--text);font-weight:600;':''}">${escapeHtml(r.preview)}</div></div>
+      <div class="contact-meta"><div class="contact-name" data-known-uid="${escapeHtml(String(r.c.firebaseUid||''))}">${escapeHtml(r.c.name||'')}</div><div class="contact-sub" style="${r.unread?'color:var(--text);font-weight:600;':''}">${escapeHtml(r.preview)}</div></div>
       <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px; flex-shrink:0;">
         <span class="bcast-time">${r.last ? timeAgo(r.last.ts) : ''}</span>
         ${r.waiting ? '<span class="wire-wait">Waiting</span>' : ''}
@@ -687,7 +687,7 @@ function fillHistoryScreen(){
       : ('<div class="avatar" style="width:40px;height:40px;font-size:13px;background:'+((r.c.color)||'#7CFFB2')+';">'+escapeHtml(r.c.initials||'')+'</div>');
     return '<div class="wire-hist-row">'
       + av
-      + '<div class="wire-hist-meta"><div class="wire-hist-name">'+escapeHtml(r.c.name||'')+'</div>'
+      + '<div class="wire-hist-meta"><div class="wire-hist-name" data-known-uid="'+escapeHtml(String(r.c.firebaseUid||''))+'">'+escapeHtml(r.c.name||'')+'</div>'
       + '<div class="wire-hist-sub">'+escapeHtml(countLabel + (ago ? ' · ' + ago : ''))+'</div></div>'
       + '<button type="button" class="wire-hist-clear" data-hist-clear="'+escapeHtml(String(r.c.id))+'">Clear</button>'
       + '</div>';
@@ -829,6 +829,7 @@ function openThread(contactId){
   try{ if(activeThreadContactId !== contactId && typeof nalunoReplyClear === 'function') nalunoReplyClear(); }catch(_){}
   activeThreadContactId = contactId;
   applyContactAvatarToEl($('threadAvatar'), c);
+  $('threadName').setAttribute('data-known-uid', c.firebaseUid || '');
   $('threadName').textContent = c.name;
   updateThreadStatusLabel();
   $('threadInput').value = '';

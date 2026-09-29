@@ -143,8 +143,8 @@ function signalSafeStyle(st){
      anything that could break out of the attribute. */
   return String(st || '').replace(/["<>]/g, '');
 }
-function signalTileCaption(name, sub){
-  return '<div class="signal-tile-cap"><strong>'+escapeHtml(name||'')+'</strong><em>'+escapeHtml(sub||'Short clip')+'</em></div>';
+function signalTileCaption(name, sub, uid){
+  return '<div class="signal-tile-cap"><strong'+(uid ? ' data-known-uid="'+escapeHtml(String(uid))+'"' : '')+'>'+escapeHtml(name||'')+'</strong><em>'+escapeHtml(sub||'Short clip')+'</em></div>';
 }
 function signalEdgeHtml(){
   return '<span class="signal-edge" aria-hidden="true"></span>';
@@ -370,7 +370,7 @@ function renderBroadcastTab(){
         + thumbInner
         + (age ? '<span class="signal-age">'+age+'</span>' : '')
         + '<span class="signal-play">▶</span>'
-        + signalTileCaption(name, 'Short clip')
+        + signalTileCaption(name, 'Short clip', c.firebaseUid)
         + '</div></div></div>';
       staggerIndex++;
     });
@@ -476,6 +476,7 @@ function renderBroadcastTab(){
       });
       try{ nalunoRevealBroadcastPlates(grid); }catch(_){}
       try{ if(window.NalunoKnown && NalunoKnown.paintAll) NalunoKnown.paintAll(grid); }catch(_){}
+      try{ if(typeof nalunoLivePreviewScan === 'function') nalunoLivePreviewScan(); }catch(_){}
     }
   }
   try{ renderScheduledDock(); }catch(_){}
@@ -1825,6 +1826,7 @@ async function openBroadcast(contactId){
     if(segments.length===0){ toast(c.name.split(' ')[0] + '\u2019s signal has faded'); return; }
     viewingMine = false;
     currentSegments = segments;
+    $('bviewerName').setAttribute('data-known-uid', c.firebaseUid || '');
     $('bviewerName').textContent = c.name;
     if(typeof applyContactAvatarToEl === 'function') applyContactAvatarToEl($('bviewerAvatar'), c);
     else { $('bviewerAvatar').style.background = c.color; $('bviewerAvatar').textContent = c.initials; }
@@ -1972,7 +1974,7 @@ function renderContacts(){
       : '';
     return `<div class="contact-row" data-id="${c.id}">
       ${typeof contactAvatarHtml === 'function' ? contactAvatarHtml(c, 46, signalBarsHtml(c)) : ('<div class="avatar" style="width:46px;height:46px;background:'+(c.color||'#7CFFB2')+';">'+c.initials+'</div>')}
-      <div class="contact-meta"><div class="contact-name">${escapeHtml(c.name)}</div><div class="contact-sub">${signalSubText(c)}</div>${bandBits}</div>
+      <div class="contact-meta"><div class="contact-name" data-known-uid="${escapeHtml(String(c.firebaseUid||''))}">${escapeHtml(c.name)}</div><div class="contact-sub">${signalSubText(c)}</div>${bandBits}</div>
       <div class="call-btn-pair"><div class="call-icon-btn" data-video-call="${c.id}" role="button" aria-label="Video call"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 8L21 5V19L15 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><rect x="3" y="6" width="12" height="12" rx="2" stroke="currentColor" stroke-width="2"/></svg></div><div class="call-icon-btn" data-call="${c.id}" role="button" aria-label="Voice call"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.3 1.8.6 2.7a2 2 0 01-.4 2.1L8 9.9a16 16 0 006 6l1.4-1.3a2 2 0 012.1-.4c.9.3 1.8.5 2.7.6a2 2 0 011.8 2.1z" stroke="currentColor" stroke-width="1.8"/></svg></div></div>
     </div>`;
   }
@@ -2003,7 +2005,7 @@ function openMySignalStory(){
   viewingMine = true;
   currentSegments = typeof sortSignalSegments === 'function' ? sortSignalSegments(mySignal.slice()) : mySignal.slice();
   currentSegmentIndex = 0;
-  if($('bviewerName')) $('bviewerName').textContent = (currentProfile && currentProfile.name) || 'You';
+  if($('bviewerName')){ $('bviewerName').setAttribute('data-known-uid', (currentUser && currentUser.uid) || ''); $('bviewerName').textContent = (currentProfile && currentProfile.name) || 'You'; }
   if($('bviewerAvatar') && typeof applyContactAvatarToEl === 'function'){
     applyContactAvatarToEl($('bviewerAvatar'), (typeof nalunoLiveFace === 'function' && currentUser)
       ? nalunoLiveFace(currentUser.uid, currentProfile)
@@ -2050,6 +2052,7 @@ async function openContactSignalStory(contactId){
     currentStoryOwnerUid = entry.contact.firebaseUid || '';
     signalRememberView(entry.contact.firebaseUid || contactId, currentSegments);
     currentSegmentIndex = 0;
+    $('bviewerName').setAttribute('data-known-uid', entry.contact.firebaseUid || '');
     $('bviewerName').textContent = entry.contact.name || 'Signal';
     if(typeof applyContactAvatarToEl === 'function') applyContactAvatarToEl($('bviewerAvatar'), entry.contact);
     else {
