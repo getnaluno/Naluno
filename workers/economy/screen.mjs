@@ -400,6 +400,47 @@ export function bytesFromB64(s) {
      The test is WHAT IS EXPOSED, never how much skin shows or how provocative it looks.
 
      ------------------------------------------------------------------------------------
+     WHAT AN EXPLICIT PICTURE LOOKS LIKE — in words, for people and for this code (29h)
+     ------------------------------------------------------------------------------------
+     Naluno is not for pornography, sexual content or nudity of any kind. A picture
+     (a photo, a video frame, a Writing photo, a Signal) is explicit when a viewer can
+     see any of these:
+
+       GENITALS  The penis, testicles or scrotum; the vulva, labia or vaginal opening;
+                 the pubic area with the genitals visible. Erect or not, whole or in
+                 part, close up or in the background, in focus or partly blurred, seen
+                 through sheer or wet clothing, or shown in a drawing, cartoon, 3D render
+                 or "art" image. A picture of genitals is explicit on its own.
+       ANUS      The anus exposed, including between spread buttocks.
+       BREASTS   A woman's bare nipple or areola.
+       NUDITY    A naked body: no clothing over the genitals, buttocks and breasts
+                 together, even if the pose or angle happens to hide the genitals.
+       SEX       Two or more people in intercourse (penetration), oral sex, anal sex;
+                 one person masturbating; a hand, mouth or object on another person's
+                 genitals; bodies pressed together naked in a sexual position (one on top
+                 of another, from behind, kneeling at the groin). This is explicit even
+                 when the genitals themselves are out of frame or hidden.
+       DISGUISES A still of a porn video (a player's play button or progress bar over a
+                 naked or sexual scene), porn inside a collage, a screenshot or a phone
+                 photo of a screen, emojis or stickers placed over genitals or nipples on
+                 an otherwise naked body — all explicit.
+
+     NOT explicit (allowed): bikinis, swimwear, lingerie and underwear that cover the
+     nipples and genitals; shirtless men; bare backs, legs, bellies and cleavage; thongs
+     from behind; dancing, modelling, fitness and beach photos; kissing between clothed
+     people. What decides is what is exposed, not how much skin shows.
+
+     How the code applies it: the detector finds exposed genitals, anus and female
+     breasts (rules 1–4). For what it cannot see directly it is deliberately KEEN and
+     sends the picture to a person rather than letting it out:
+       - a weak sign of genitals or anus (from 0.25) is held;
+       - an exposed bottom together with another weak intimate sign is held (a naked body);
+       - two or more people with any exposed intimate sign or an exposed bottom is held
+         (a possible sexual act);
+       - a video-player screenshot is held.
+     A picture Screen could not read at all is also held, never published unseen.
+
+     ------------------------------------------------------------------------------------
      HOW THE MACHINE APPLIES THIS — and where it stops
      ------------------------------------------------------------------------------------
      The detector (NudeNet) reports body parts with a confidence 0-1. It reliably sees
@@ -412,7 +453,9 @@ export function bytesFromB64(s) {
      and bikini tops are its most common misread.
 
                                   REJECT      HOLD (a person looks)
-       genitals / anus            >= 0.50     0.30 - 0.50
+       genitals / anus            >= 0.50     0.25 - 0.50
+       exposed bottom + a weak intimate sign (>= 0.25)          hold
+       2+ people + exposed bottom or a weak intimate sign        hold
        female breast (topless)    >= 0.55     0.35 - 0.55
        two intimate parts         each >= 0.40
        video-player screenshot                >= 0.85
@@ -433,7 +476,7 @@ export function bytesFromB64(s) {
   var MOD_INTIMATE = { FEMALE_GENITALIA_EXPOSED: 1, MALE_GENITALIA_EXPOSED: 1, ANUS_EXPOSED: 1, FEMALE_BREAST_EXPOSED: 1 };
   var MOD_REVEALING = { MALE_BREAST_EXPOSED: 1, BUTTOCKS_EXPOSED: 1, BELLY_EXPOSED: 1 };
   var MOD_T = {
-    anatomyReject: 0.50, anatomyHold: 0.30,
+    anatomyReject: 0.50, anatomyHold: 0.25, weak: 0.25, face: 0.40, bottom: 0.45,
     breastReject: 0.55,  breastHold: 0.35,
     pair: 0.40, certain: 0.80, player: 0.85,
   };
@@ -446,6 +489,8 @@ export function bytesFromB64(s) {
     "possible-genitals": "possible exposed genitals",
     "possible-anus": "possible exposed anus",
     "possible-topless": "a possibly exposed female breast",
+    "possible-nudity": "a possibly naked body",
+    "possible-sexual-act": "a possible sexual act",
     "single-frame": "one frame that may be explicit",
     "video-player-screenshot": "a screenshot of a video player",
     "revealing-allowed": "revealing but allowed",
@@ -472,6 +517,15 @@ export function bytesFromB64(s) {
     }
     var breast = best.FEMALE_BREAST_EXPOSED || 0;
     var player = Number(frame && frame.p) || 0;
+    /* People in the picture, and weak intimate signs (29h, see WHAT AN EXPLICIT
+       PICTURE LOOKS LIKE above). Hold only — a person decides. */
+    var faces = 0, weak = 0;
+    for (i = 0; i < d.length; i++) {
+      cls = MOD_LABELS[d[i][0]]; sc = Number(d[i][1]) || 0;
+      if ((cls === "FACE_FEMALE" || cls === "FACE_MALE") && sc >= MOD_T.face) faces++;
+    }
+    for (cls in best) { if (MOD_INTIMATE[cls] && best[cls] >= MOD_T.weak) weak++; }
+    var bottom = (best.BUTTOCKS_EXPOSED || 0) >= MOD_T.bottom;
     var top = Math.max(anatomy, breast);
     if (anatomy >= MOD_T.certain) return { level: "certain", reason: modAnatomyReason(anatomyCls), score: anatomy };
     if (breast  >= MOD_T.certain) return { level: "certain", reason: "topless", score: breast };
@@ -480,6 +534,8 @@ export function bytesFromB64(s) {
     if (intimate >= 2)                  return { level: "reject", reason: "nudity", score: top };
     if (anatomy >= MOD_T.anatomyHold)   return { level: "hold", reason: modAnatomyReason(anatomyCls, true), score: anatomy };
     if (breast  >= MOD_T.breastHold)    return { level: "hold", reason: "possible-topless", score: breast };
+    if (bottom && weak >= 1)            return { level: "hold", reason: "possible-nudity", score: Math.max(top, best.BUTTOCKS_EXPOSED || 0) };
+    if (faces >= 2 && (weak >= 1 || bottom)) return { level: "hold", reason: "possible-sexual-act", score: Math.max(top, best.BUTTOCKS_EXPOSED || 0) };
     if (player  >= MOD_T.player)        return { level: "hold", reason: "video-player-screenshot", score: player };
     return { level: "allow", reason: revealing ? "revealing-allowed" : "", score: top };
   }

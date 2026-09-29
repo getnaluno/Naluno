@@ -4,7 +4,17 @@
    Firebase Cloud Monitoring is today's Firestore counts.
    None of these are a bank charge. A charge still comes from billing history. */
 
-const USD_AED = 3.6725;
+/* 29h: the running rate, set from the worker's rate book (economyConfig/fxRates
+   or the live feed) before each snapshot. The number below is only the last
+   resort when no rate book could be read at all. */
+let USD_AED = 3.6725;
+let RATES = null;
+export function setBookRates(rates) {
+  if (!rates || typeof rates !== "object") return;
+  const aed = Number(rates.AED);
+  if (isFinite(aed) && aed > 0) USD_AED = aed;
+  RATES = rates;
+}
 const CACHE_MS = 3 * 60 * 1000;
 const cache = { at: 0, value: null };
 let inflight = null;
@@ -302,7 +312,8 @@ async function pullHistory(ask, token, account, now) {
       const raw = Number(row.amount != null ? row.amount : row.total);
       if (!isFinite(raw) || raw === 0) return;
       const currency = String(row.currency || "USD").toUpperCase();
-      const aed = currency === "AED" ? raw : raw * USD_AED;
+      const per = RATES && Number(RATES[currency]) > 0 ? Number(RATES[currency]) : (currency === "USD" ? 1 : 0);
+      const aed = currency === "AED" ? raw : (per ? (raw / per) * USD_AED : raw * USD_AED);
       const when = Date.parse(row.occurred_at || row.created_on || row.period || "") || now;
       invoices.push({
         key: "cloudflare",

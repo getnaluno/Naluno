@@ -70,6 +70,7 @@ import {
 } from "./money.mjs";
 import {
   billingSnapshot,
+  setBookRates,
 } from "./books.mjs";
 import { lookQuery } from "./look.mjs";
 import {
@@ -877,8 +878,24 @@ async function loadReservedFromFs(env, token) {
   const r = t
     ? await fsFetch(env, t, "GET", "/reservedHandles?pageSize=400")
     : await fsFetchPublic(env, "GET", "/reservedHandles?pageSize=400");
-  if (r.ok && r.data && r.data.documents) {
-    r.data.documents.forEach((doc) => rememberReserved(fromFsDoc(doc)));
+  if (r.ok && r.data) {
+    const seen = new Set();
+    (r.data.documents || []).forEach((doc) => {
+      const row = fromFsDoc(doc);
+      if (!row || !row.handle) return;
+      row._fs = true;
+      seen.add(row.handle);
+      rememberReserved(row);
+    });
+    /* 29h: a handle the console released was still refused by every warm
+       copy of the worker that had loaded it earlier. Drop database entries
+       that are no longer in the database (built-in seeds stay). */
+    if (!r.data.nextPageToken) {
+      Array.from(memory.reserved.keys()).forEach((h) => {
+        const row = memory.reserved.get(h);
+        if (row && row._fs && !seen.has(h)) memory.reserved.delete(h);
+      });
+    }
   }
   return reservedList();
 }
@@ -1181,7 +1198,22 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
   const trusted = !!(profile && profile.trustedPublisher)
     && !(profile && profile.restricted)
     && !(profile && profile.suspended);
-  const judged = judgeScreenPayload(body && body.screen, { title: row.title || "" });
+  let judged = judgeScreenPayload(body && body.screen, { title: row.title || "" });
+  /* 29h: a Broadcast with a picture (photo, video, or a Writing photo) and
+     no readable Screen verdict is HELD for a person, trusted or not. Writing
+     photos used to arrive with no verdict at all, and a trusted account was
+     then listed unseen. A Pass-on of a public Broadcast inherits that
+     Broadcast's check. */
+  const hasPicture = !!(row.mediaUrl || row.thumbUrl
+    || (Array.isArray(row.chapters) && row.chapters.some((c) => c && c.mediaUrl)));
+  if (hasPicture && !judged.hasScreen) {
+    let inherited = false;
+    if (row.repostOf) {
+      const orig = await fsGetDoc(env, token, "/broadcasts/" + encodeURIComponent(String(row.repostOf).slice(0, 80)));
+      inherited = !!(orig && orig.listed !== false && !orig.held && !orig.hidden && orig.screenDecision !== "block" && orig.screenDecision !== "hold");
+    }
+    if (!inherited) judged = { decision: "hold", score: 0, hasScreen: true, reason: "unscreened", frames: 0 };
+  }
   const safety = scorePublicText(
     [row.title, row.caption, body && body.caption, body && body.title].filter(Boolean).join(" \n "),
     { surface: "broadcast" },
@@ -2476,7 +2508,7 @@ let _pricesCache = null;
 const RATES_FRESH_MS = 36 * 60 * 60 * 1000;
 async function loadRates(env, saToken) {
   const now = Date.now();
-  if (_ratesCache && now - _ratesCache.at < 30 * 60 * 1000) return _ratesCache.rates;
+  if (_ratesCache && now - _ratesCache.at < 60 * 1000) return _ratesCache.rates;
   let rates = null;
   let fetchedAt = 0;
   if (saToken) {
@@ -2498,7 +2530,7 @@ async function loadRates(env, saToken) {
 }
 async function loadPriceBook(env, saToken) {
   const now = Date.now();
-  if (_pricesCache && now - _pricesCache.at < 60 * 1000) return _pricesCache.book;
+  if (_pricesCache && now - _pricesCache.at < 15 * 1000) return _pricesCache.book;
   const doc = saToken ? await fsGetDoc(env, saToken, "/economyConfig/prices") : null;
   const book = {
     known: readPrice(doc && doc.knownMonthly),
@@ -2512,7 +2544,7 @@ export function _resetMoneyCaches() { _ratesCache = null; _pricesCache = null; }
 /* ---- Broadcast views: the server decides what counts (29g) ---- */
 let _viewRulesCache = null;
 async function loadViewSec(env, saToken) {
-  if (_viewRulesCache && Date.now() - _viewRulesCache.at < 60000) return _viewRulesCache.sec;
+  if (_viewRulesCache && Date.now() - _viewRulesCache.at < 15000) return _viewRulesCache.sec;
   const doc = saToken ? await fsGetDoc(env, saToken, "/economyConfig/viewRules") : null;
   const sec = clampViewSec(doc && doc.countAfterSec);
   _viewRulesCache = { at: Date.now(), sec };
@@ -2845,6 +2877,16 @@ async function markPaid(env, saToken, pay) {
         known: true,
         knownUntil: until,
       });
+      /* 29h: the public card every phone listens to (a paid month used to be
+         visible only to phones that looked the person up again later). */
+      const pubName = String(app.name || "").trim().slice(0, 80) || "Known";
+      await fsPutDoc(env, saToken, "/knownPublic/" + encodeURIComponent(pay.payer_uid), {
+        name: pubName,
+        note: String(app.note || "").trim().slice(0, 500),
+        nameKey: pubName.toLowerCase().replace(/[^a-z0-9]+/g, ""),
+        until: until,
+        updatedAt: now,
+      });
     }
   }
   if (pay.kind === "support" && pay.support_id && pay.creator_user_id && pay.payer_uid !== pay.creator_user_id) {
@@ -2977,6 +3019,7 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         const monToken = configured
           ? saAccessTokenScoped(env, "https://www.googleapis.com/auth/monitoring.read")
           : Promise.resolve("");
+        try { setBookRates(await loadRates(env, saToken)); } catch (_) {}
         billing = await Promise.race([
           billingSnapshot(env, {
             projectId: projectId(env),
