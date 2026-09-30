@@ -72,8 +72,9 @@
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
 // v247: 09.30c Listen uses Naluno's own single-thread voice, never the phone voice.
-const CACHE_NAME = 'naluno-shell-v247';
-const APP_BUILD = '20260930c';
+// v248: 09.30d calls connect sooner (TURN kept ready); Writing voices at a normal pace with short pauses.
+const CACHE_NAME = 'naluno-shell-v248';
+const APP_BUILD = '20260930d';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
