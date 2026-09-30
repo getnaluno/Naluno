@@ -137,33 +137,8 @@ async function bspaceSpeakWriting(text, lang, btn){
     }
   }
   if(!alive()) return;
-  if(!window.speechSynthesis){
-    toast('This phone cannot read aloud yet');
-    if(btn){ btn.removeAttribute('data-on'); btn.textContent = 'Listen'; }
-    return;
-  }
-  const voiceLang = lang === 'lg' ? 'lg' : (lang || ((typeof sparkGuessLang === 'function') ? sparkGuessLang() : 'en'));
-  const voice = bspacePickVoice(voiceLang);
-  const rec = (typeof SPARK_LANGS !== 'undefined' && SPARK_LANGS.find(function(l){ return l.id === (lang || voiceLang); }));
-  window.speechSynthesis.cancel();
-  if(btn) btn.textContent = 'Stop';
-  const chunks = [];
-  for(let i = 0; i < spoken.length; i += 1500) chunks.push(spoken.slice(i, i + 1500));
-  chunks.forEach(function(chunk, idx){
-    const u = new SpeechSynthesisUtterance(chunk);
-    u.lang = (voice && voice.lang) || (lang === 'lg' ? 'sw-KE' : ((rec && rec.rec) || 'en-US'));
-    if(voice) u.voice = voice;
-    u.rate = lang === 'lg' ? 0.92 : 0.96;
-    u.pitch = 1;
-    if(idx === chunks.length - 1){
-      u.onend = function(){
-        if(token !== bspaceSpeakToken || !btn) return;
-        btn.removeAttribute('data-on');
-        btn.textContent = 'Listen';
-      };
-    }
-    window.speechSynthesis.speak(u);
-  });
+  toast("Naluno's voice could not start. Stay on this page while it finishes downloading, then tap Listen again.");
+  if(btn){ btn.removeAttribute('data-on'); btn.textContent = 'Listen'; }
 }
 
 function bspacePickVoice(lang){

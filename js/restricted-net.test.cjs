@@ -198,15 +198,22 @@ async function person() {
   const life = read('js/lifeline-wire.js');
   assert.ok(!space.includes('translate.googleapis.com/translate_tts'), 'Listen does not call Google to read');
   const speakFn = space.slice(space.indexOf('async function bspaceSpeakWriting'), space.indexOf('function bspacePickVoice'));
-  assert.ok(speakFn.indexOf('NalunoVoices.speak') >= 0 && speakFn.indexOf('NalunoVoices.speak') < speakFn.indexOf('speechSynthesis'), 'Naluno speaks before any system voice');
+  assert.ok(speakFn.includes('NalunoVoices.speak'), 'Listen uses Naluno');
+  assert.ok(!speakFn.includes('speechSynthesis.speak'), 'Listen does not fall back to the phone voice');
   assert.ok(html.includes('id="bspaceVoice"') && html.includes('>Female<') && html.includes('>Male<'), 'female and male voices');
   assert.ok(sw.includes("pathname.indexOf('/voices/') === 0") && sw.includes("n !== 'naluno-voices'"), 'voices survive a blocked network and an update');
   assert.ok(life.includes('nalunoLifelineRetry') && life.includes('id="llCopyText"') && !life.includes('Send by SMS'), 'relay retry and copy stay inside Naluno');
   const model = fs.statSync(path.join(root, 'voices/kitten/model.onnx')).size;
-  const wasm = fs.statSync(path.join(root, 'voices/ort/ort-wasm-simd-threaded.wasm')).size;
+  const wasm = fs.statSync(path.join(root, 'voices/ort/ort-wasm-simd.wasm')).size;
   assert.ok(model > 20_000_000 && wasm > 5_000_000, 'the voice weights are on the phone, not fetched from Google');
+  assert.ok(!fs.existsSync(path.join(root, 'voices/ort/ort-wasm-simd-threaded.wasm')), 'the threaded wasm that needs cross-origin isolation is not shipped');
+  const engine = read('js/naluno-voice-engine.js');
+  assert.ok(engine.includes('ort-wasm-simd.wasm') && !engine.includes('jsep.wasm'), 'the engine loads the single-thread wasm');
+  assert.ok(engine.includes('numThreads = 1'), 'one thread, so GitHub Pages can start it');
   assert.ok(read('js/naluno-voices.js').includes("female: 'Bella'") && read('js/naluno-voices.js').includes("male: 'Jasper'"), 'two distinct voices');
-  assert.ok(read('js/naluno-voice-worker.js').includes('/voices/kitten/') && !read('js/naluno-voice-worker.js').includes('huggingface'), 'the worker reads the local weights');
+  assert.ok(read('js/naluno-voices.js').includes('naluno-voice-worker.js?v=20260930c'), 'phones drop the broken voice worker');
+  const worker = read('js/naluno-voice-worker.js');
+  assert.ok(worker.includes('/voices/kitten/') && worker.includes('naluno-voice-engine.js?v=20260930c') && !worker.includes('huggingface'), 'the worker reads the local weights');
 
   console.log('restricted-net tests passed');
 })().catch(function (e) {

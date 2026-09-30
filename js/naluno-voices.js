@@ -29,9 +29,9 @@
   function boot() {
     if (booting) return booting;
     booting = new Promise(function (resolve, reject) {
-      var workerUrl = '/js/naluno-voice-worker.js?v=20260930b';
+      var workerUrl = '/js/naluno-voice-worker.js?v=20260930c';
       try {
-        worker = new Worker(workerUrl, { type: 'module' });
+        worker = new Worker(workerUrl);
       } catch (e) {
         booting = null;
         reject(e);
@@ -124,10 +124,20 @@
       if (typeof opts.onready === 'function') opts.onready();
       var next = say(bits[0], voice, speed, myJob);
       var i = 0;
+      var heard = false;
       function step() {
         return next.then(function (audio) {
           if (!alive() || myJob !== job) return true;
-          if (!audio) return true;
+          var samples = audio && audio.samples;
+          if (!samples || !samples.length) {
+            if (i + 1 < bits.length) {
+              i += 1;
+              next = say(bits[i], voice, speed, myJob);
+              return step();
+            }
+            return heard;
+          }
+          heard = true;
           next = (i + 1 < bits.length) ? say(bits[i + 1], voice, speed, myJob) : null;
           i += 1;
           return play(audio, function () { return alive() && myJob === job; }).then(function () {

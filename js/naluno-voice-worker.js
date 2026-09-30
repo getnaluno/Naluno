@@ -1,7 +1,13 @@
 /* On-device Broadcast voices. Weights and wasm are same-origin files,
    so a phone that has already opened Naluno can read aloud with Google
    and the wider internet blocked. */
-import { createFromBuffers, say } from './naluno-voice-engine.js';
+/* Classic worker, not a module. ONNX Runtime only fetches its wasm when
+   the page has window or the worker has importScripts. A module worker
+   has neither, so the voice never started and Listen used the phone. */
+importScripts('/js/naluno-voice-engine.js?v=20260930c');
+
+var createFromBuffers = self.NalunoVoiceEngine.createFromBuffers;
+var say = self.NalunoVoiceEngine.say;
 
 let tts = null;
 let job = 0;
