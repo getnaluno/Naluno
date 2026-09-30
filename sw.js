@@ -71,8 +71,9 @@
 // v83: Strand folders at Broadcast entry.
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
-const CACHE_NAME = 'naluno-shell-v246';
-const APP_BUILD = '20260930b';
+// v247: 09.30c Listen uses Naluno's own single-thread voice, never the phone voice.
+const CACHE_NAME = 'naluno-shell-v247';
+const APP_BUILD = '20260930c';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -427,14 +428,14 @@ self.addEventListener('fetch', event=>{
       if(/[?&]v=/.test(url.search)){
         const have = await caches.match(event.request);
         if(have && isShellResponse(have, path)){
-          event.waitUntil(netTimeout(event.request, 12000).then(function(fresh){
+          event.waitUntil(netTimeout(event.request, path.indexOf('naluno-voice-engine.js') >= 0 ? 120000 : 12000).then(function(fresh){
             if(fresh && fresh.ok && isShellResponse(fresh, path)) putBare(fresh);
           }).catch(function(){}));
           return have;
         }
       }
       try{
-        const response = await netTimeout(event.request, 8000);
+        const response = await netTimeout(event.request, path.indexOf('naluno-voice-engine.js') >= 0 ? 120000 : 8000);
         if(response && response.ok && isShellResponse(response, path)){
           putBare(response);
           return response;
