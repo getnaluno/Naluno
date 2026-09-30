@@ -22,9 +22,49 @@ const CALL_ICE_BUDGET_MS = 250;
 let cachedIceServers = null;
 let cachedIceServersAt = 0;
 let inflightIce = null;
+let cachedIceUid = '';
+
+/* 30d: TURN is kept ready, so a call never waits for it and never starts
+   without it.
+   - The credentials are kept for this signed-in person across an app
+     restart (a call answered from a notification starts a fresh app), for
+     20 minutes, inside the 25 minutes they are trusted for.
+   - They are fetched again before they run out while Naluno is open, and
+     when Naluno comes back to the screen or back online.
+   A call on a phone without TURN could not connect on most mobile
+   networks, and waited up to 0.6-0.8 s for it before ringing or answering. */
+const ICE_STORE_KEY = 'nalunoIceCache';
+const ICE_STORE_TTL_MS = 20 * 60 * 1000;
+const ICE_REFRESH_AFTER_MS = 18 * 60 * 1000;
+function iceUid(){
+  try{ return (typeof currentUser !== 'undefined' && currentUser && currentUser.uid) || ''; }catch(_){ return ''; }
+}
+function iceSave(){
+  try{
+    if(!cachedIceServers || !cachedIceUid) return;
+    localStorage.setItem(ICE_STORE_KEY, JSON.stringify({ uid: cachedIceUid, at: cachedIceServersAt, cfg: cachedIceServers }));
+  }catch(_){}
+}
+function iceLoad(){
+  try{
+    const raw = localStorage.getItem(ICE_STORE_KEY);
+    if(!raw) return;
+    const d = JSON.parse(raw);
+    if(!d || !d.cfg || !d.cfg.iceServers || !d.uid || typeof d.at !== 'number') return;
+    if(Date.now() - d.at >= ICE_STORE_TTL_MS || d.at > Date.now() + 60000){ localStorage.removeItem(ICE_STORE_KEY); return; }
+    cachedIceServers = d.cfg;
+    cachedIceServersAt = d.at;
+    cachedIceUid = d.uid;
+  }catch(_){}
+}
+iceLoad();
+let lastIceFailAt = 0;
 
 function iceFromCache(){
   if(cachedIceServers && (Date.now() - cachedIceServersAt) < ICE_CACHE_TTL_MS){
+    /* Only this person's credentials. */
+    const uid = iceUid();
+    if(cachedIceUid && uid && cachedIceUid !== uid) return null;
     return cachedIceServers;
   }
   return null;
@@ -35,12 +75,12 @@ function iceNow(){
   return iceFromCache() || RTC_CONFIG;
 }
 
-async function fetchTurnServers(){
+async function fetchTurnServers(force){
   try{
     if(typeof currentUser === 'undefined' || !currentUser) return RTC_CONFIG;
   }catch(_){ return RTC_CONFIG; }
 
-  const hit = iceFromCache();
+  const hit = force ? null : iceFromCache();
   if(hit) return hit;
 
   if(inflightIce) return inflightIce;
@@ -59,11 +99,13 @@ async function fetchTurnServers(){
       if(kill) clearTimeout(kill);
       if(!res.ok){
         console.log('[ice] TURN HTTP', res.status, '— STUN only');
+        lastIceFailAt = Date.now();
         return RTC_CONFIG;
       }
       const data = await res.json();
       if(!data.iceServers || !data.iceServers.length){
         console.log('[ice] TURN response empty — STUN only');
+        lastIceFailAt = Date.now();
         return RTC_CONFIG;
       }
       cachedIceServers = {
@@ -73,10 +115,13 @@ async function fetchTurnServers(){
         rtcpMuxPolicy: 'require',
       };
       cachedIceServersAt = Date.now();
+      cachedIceUid = iceUid();
+      iceSave();
       console.log('[ice] TURN ok —', data.iceServers.length, 'server(s)');
       return cachedIceServers;
     }catch(e){
       console.log('[ice] TURN failed — STUN only', e && e.message);
+      lastIceFailAt = Date.now();
       return RTC_CONFIG;
     }finally{
       inflightIce = null;
@@ -163,6 +208,27 @@ function prewarmIceServers(){
   fetchTurnServers().catch(function(){});
 }
 
+/* Fetch again before the credentials run out, while Naluno is open. */
+function iceKeepWarm(){
+  try{
+    if(typeof document !== 'undefined' && document.hidden) return;
+    if(!iceUid()) return;
+    const fresh = iceFromCache() && (Date.now() - cachedIceServersAt) < ICE_REFRESH_AFTER_MS;
+    if(fresh || inflightIce) return;
+    if(lastIceFailAt && Date.now() - lastIceFailAt < 30000) return;
+    /* Still usable ones stay in place until the new ones arrive. */
+    fetchTurnServers(true).catch(function(){});
+    return;
+  }catch(_){}
+}
+if(typeof window !== 'undefined' && window.addEventListener){
+  try{
+    setInterval(iceKeepWarm, 60 * 1000);
+    window.addEventListener('online', function(){ lastIceFailAt = 0; setTimeout(iceKeepWarm, 800); });
+    if(typeof document !== 'undefined') document.addEventListener('visibilitychange', function(){ if(!document.hidden) setTimeout(iceKeepWarm, 300); });
+  }catch(_){}
+}
+
 const IceCore = {
   get: getIceServers,
   getPatient: getIceServersPatient,
@@ -170,5 +236,8 @@ const IceCore = {
   prewarm: prewarmIceServers,
   stunOnly: function(){ return RTC_CONFIG; },
   cached: iceFromCache,
-  invalidate: function(){ cachedIceServers = null; cachedIceServersAt = 0; },
+  invalidate: function(){ cachedIceServers = null; cachedIceServersAt = 0; try{ localStorage.removeItem(ICE_STORE_KEY); }catch(_){} },
+  /* True while a TURN fetch is still on its way. */
+  pending: function(){ return !!inflightIce; },
+  keepWarm: iceKeepWarm,
 };

@@ -102,7 +102,9 @@ function bspaceListenVoice(){
   }catch(_){ return 'female'; }
 }
 async function bspaceSpeakWriting(text, lang, btn){
-  const src = String(text || '').replace(/\s+/g, ' ').replace(/\bSee more\b|\bSee less\b/g, '').trim();
+  /* 30d: paragraph breaks are kept, so the voice pauses a little longer there. */
+  const src = String(text || '').replace(/\bSee more\b|\bSee less\b/g, '')
+    .replace(/\r/g, '').replace(/[ \t\f\v]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   if(!src){ toast('Nothing to read'); return; }
   if(btn && btn.getAttribute('data-on') === '1'){
     btn.removeAttribute('data-on');
@@ -123,7 +125,6 @@ async function bspaceSpeakWriting(text, lang, btn){
     try{
       played = await NalunoVoices.speak(spoken, {
         voice: bspaceListenVoice(),
-        speed: 1.05,
         alive: alive,
         onready: function(){
           if(alive() && btn) btn.textContent = 'Stop';
@@ -392,7 +393,8 @@ function bspaceClearWriting(){
     const text = shown ? (function(){
       const head = shown.querySelector('[data-write-title]');
       const clamp = shown.querySelector('.bspace-read-clamp');
-      return ((head && head.textContent) ? head.textContent + '. ' : '') + ((clamp && clamp.textContent) || '');
+      const title = (head && head.textContent) ? head.textContent.trim() : '';
+      return (title ? title + (/[.!?…]$/.test(title) ? '' : '.') + '\n\n' : '') + ((clamp && clamp.textContent) || '');
     })() : ((activeBroadcastMeta && (activeBroadcastMeta.body || (activeBroadcastMeta.segment && activeBroadcastMeta.segment.text))) || '');
     bspaceSpeakWriting(text, hear ? hear.value : '', btn);
   };

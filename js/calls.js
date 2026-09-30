@@ -1265,7 +1265,12 @@ function nalunoWaitForTurn(maxMs){
     const tick = function(){
       let cfg = null;
       try{ if(typeof IceCore !== 'undefined' && IceCore.now) cfg = IceCore.now(); }catch(_){}
-      if(nalunoCfgHasTurn(cfg) || (Date.now() - t0) >= cap){ resolve(cfg); return; }
+      /* 30d: once the TURN fetch has come back without TURN (service down,
+         offline), there is nothing to wait for: waiting out the cap only
+         delayed the ring or the answer. */
+      let gaveUp = false;
+      try{ gaveUp = (Date.now() - t0) >= 80 && typeof IceCore !== 'undefined' && IceCore.pending && !IceCore.pending(); }catch(_){}
+      if(nalunoCfgHasTurn(cfg) || gaveUp || (Date.now() - t0) >= cap){ resolve(cfg); return; }
       setTimeout(tick, 40);
     };
     tick();
@@ -1677,6 +1682,9 @@ function attachConnectionWatchdogs(pc){
     console.log('[call] connection state:', s);
     if(s === 'connected'){
       try{ window.__nalunoConnectedCall = activeCallId; }catch(_){}
+      /* 30d: a voice call has no picture to wait for; it is connected the
+         moment the connection is (it used to show "Connecting…" 0.9 s longer). */
+      try{ if(peerConnection === pc && !nalunoCallLive && nalunoIsVoiceCall()) nalunoMarkCallLive(); }catch(_){}
       // Their camera is off (or video is slow): voice is flowing, so the call is live.
       setTimeout(function(){ try{ if(peerConnection === pc && !nalunoCallLive && (remoteFirstFrame || !nalunoRemoteVideoAlive())) nalunoMarkCallLive(); }catch(_){} }, 900);
       setTimeout(function(){ try{ if(peerConnection === pc && !nalunoCallLive) nalunoMarkCallLive(); }catch(_){} }, 4000);
@@ -2403,6 +2411,9 @@ async function startRealCallInner(c){
     ? getIceServers().catch(()=> (typeof RTC_CONFIG !== 'undefined' ? RTC_CONFIG : { iceServers:[{urls:'stun:stun.l.google.com:19302'}] }))
     : Promise.resolve(null);
   const voice = nalunoIsVoiceCall();
+  /* 30d: TURN is waited for while the microphone/camera opens, not after it.
+     With TURN already kept ready this is instant. */
+  const turnReady = nalunoWaitForTurn(1000);
   if(voice){
     try{ await nalunoOpenMic(); }catch(e){
       if(gone()) return false;
@@ -2446,7 +2457,7 @@ async function startRealCallInner(c){
   try{ if(typeof drawSendCanvas === 'function') drawSendCanvas(); }catch(_){}
   // TURN into the offer when it is already on the way. The other phone is
   // not ringing yet, so this does not come out of the 2 seconds after Answer.
-  try{ await nalunoWaitForTurn(600); }catch(_){}
+  try{ await turnReady; }catch(_){}
   if(gone()) return false;
   const pc = await createPeerConnection();
   const dropPc = () => { try{ pc.ontrack = null; pc.onicecandidate = null; pc.onconnectionstatechange = null; pc.oniceconnectionstatechange = null; pc.close(); }catch(_){} };
