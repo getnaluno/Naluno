@@ -906,6 +906,131 @@ function openBroadcastById(id){
   }catch(_){}
 })();
 
+function broadcastChannelUrl(handle){
+  const h = String(handle || '').replace(/^@+/, '').trim();
+  return 'https://getnaluno.com/app/?air=' + encodeURIComponent(h || 'broadcast');
+}
+function airHandle(){
+  const n = (typeof currentProfile !== 'undefined' && currentProfile && currentProfile.number) || '';
+  return String(n).replace(/^@+/, '').trim();
+}
+async function airShare(handle, title){
+  const link = broadcastChannelUrl(handle);
+  const text = (title || 'Naluno Broadcast') + '\n' + link;
+  try{
+    if(navigator.share) await navigator.share({ title: title || 'Naluno Broadcast', text: text, url: link });
+    else if(navigator.clipboard && navigator.clipboard.writeText){
+      await navigator.clipboard.writeText(text);
+      if(typeof toast === 'function') toast('Broadcast link copied');
+    } else if(typeof toast === 'function') toast(link);
+  }catch(e){
+    if(e && e.name === 'AbortError') return;
+    try{
+      if(navigator.clipboard) await navigator.clipboard.writeText(link);
+      if(typeof toast === 'function') toast('Broadcast link copied');
+    }catch(_){ if(typeof toast === 'function') toast(link); }
+  }
+}
+function airPaintMine(){
+  const box = document.getElementById('airAbout');
+  if(!box || box.dataset.touched === '1') return;
+  const about = (typeof currentProfile !== 'undefined' && currentProfile && currentProfile.broadcastAbout) || '';
+  if(document.activeElement !== box) box.value = about;
+}
+async function openBroadcastChannel(key){
+  const raw = String(key || '').replace(/^@+/, '').trim();
+  if(!raw || typeof fbDb === 'undefined' || !fbDb) return;
+  const home = document.getElementById('airHome');
+  const title = document.getElementById('airHomeTitle');
+  const aboutEl = document.getElementById('airHomeAbout');
+  if(home) home.hidden = false;
+  if(title) title.textContent = 'Broadcast';
+  if(aboutEl) aboutEl.textContent = '';
+  let uid = raw;
+  try{
+    if(!/^[A-Za-z0-9]{20,}$/.test(raw)){
+      const h = await fbDb.collection('handles').doc(raw.toLowerCase()).get();
+      if(!h.exists){ if(typeof toast === 'function') toast('No Broadcast by that name'); return; }
+      uid = (h.data() && h.data().uid) || '';
+    }
+    if(!uid) return;
+    const user = await fbDb.collection('users').doc(uid).get();
+    const data = user.exists ? (user.data() || {}) : {};
+    const name = data.name || ('@' + raw);
+    const handle = String(data.number || raw).replace(/^@+/, '');
+    if(title) title.textContent = name + ' · Broadcast';
+    if(aboutEl) aboutEl.textContent = data.broadcastAbout || 'No description yet.';
+    const share = document.getElementById('airHomeShare');
+    if(share) share.onclick = function(){ airShare(handle, name + ' on Naluno'); };
+    try{
+      const snap = await fbDb.collection('broadcasts').where('creatorUid', '==', uid).limit(40).get();
+      snap.docs.forEach(function(doc){
+        const row = Object.assign({ id: doc.id }, doc.data());
+        if(typeof feedBroadcasts !== 'undefined' && feedBroadcasts && !feedBroadcasts.some(function(b){ return b.id === row.id; })){
+          feedBroadcasts.push(row);
+        }
+      });
+    }catch(_){}
+    if(typeof renderBroadcastFeed === 'function'){ try{ renderBroadcastFeed(); }catch(_){} }
+  }catch(_){
+    if(typeof toast === 'function') toast('Could not open that Broadcast');
+  }
+}
+(function airWire(){
+  function go(){
+    const save = document.getElementById('airSaveBtn');
+    const share = document.getElementById('airShareBtn');
+    const box = document.getElementById('airAbout');
+    if(box && !box.dataset.wired){
+      box.dataset.wired = '1';
+      box.addEventListener('input', function(){ box.dataset.touched = '1'; });
+    }
+    if(save && !save.dataset.wired){
+      save.dataset.wired = '1';
+      save.onclick = async function(){
+        if(typeof currentUser === 'undefined' || !currentUser || typeof fbDb === 'undefined' || !fbDb){
+          if(typeof toast === 'function') toast('Sign in first');
+          return;
+        }
+        const text = String((box && box.value) || '').trim().slice(0, 600);
+        try{
+          await fbDb.collection('users').doc(currentUser.uid).set({ broadcastAbout: text }, { merge: true });
+          if(typeof currentProfile !== 'undefined' && currentProfile) currentProfile.broadcastAbout = text;
+          if(box) box.dataset.touched = '0';
+          if(typeof toast === 'function') toast('Broadcast description saved');
+        }catch(_){ if(typeof toast === 'function') toast('Could not save that'); }
+      };
+    }
+    if(share && !share.dataset.wired){
+      share.dataset.wired = '1';
+      share.onclick = function(){
+        const handle = airHandle();
+        if(!handle){ if(typeof toast === 'function') toast('Save your callsign first'); return; }
+        const name = (typeof currentProfile !== 'undefined' && currentProfile && currentProfile.name) || handle;
+        airShare(handle, name + ' on Naluno');
+      };
+    }
+    airPaintMine();
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go);
+  else go();
+  try{
+    const params = new URLSearchParams(location.search || '');
+    const air = params.get('air');
+    if(!air) return;
+    let n = 0;
+    const iv = setInterval(function(){
+      n++;
+      if(typeof currentUser !== 'undefined' && currentUser && typeof fbDb !== 'undefined' && fbDb){
+        clearInterval(iv);
+        const nav = document.querySelector('.navbtn[data-tab="broadcast"]');
+        if(nav) nav.click();
+        openBroadcastChannel(air);
+      }
+      if(n > 50) clearInterval(iv);
+    }, 200);
+  }catch(_){}
+})();
 
 /** Plan chapter breaks.
  * Visible chapters ONLY when duration > 4 minutes (product rule).

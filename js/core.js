@@ -337,6 +337,28 @@ window.addEventListener('unhandledrejection', function(ev){
 console.log('[naluno] build 2026.09.18b');
 
 
+function nalunoFitImageDataUrl(dataUrl, maxEdge, quality){
+  return new Promise(function(resolve){
+    if(!dataUrl || String(dataUrl).indexOf('data:image') !== 0){ resolve(dataUrl); return; }
+    const img = new Image();
+    img.onload = function(){
+      try{
+        const edge = maxEdge || 2400;
+        const q = quality || 0.9;
+        const w = img.width || 1, h = img.height || 1;
+        const s = Math.min(1, edge / Math.max(w, h));
+        if(s >= 1){ resolve(dataUrl); return; }
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(w * s));
+        c.height = Math.max(1, Math.round(h * s));
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        resolve(c.toDataURL('image/jpeg', q));
+      }catch(_){ resolve(dataUrl); }
+    };
+    img.onerror = function(){ resolve(dataUrl); };
+    img.src = dataUrl;
+  });
+}
 function nalunoShrinkImageDataUrl(dataUrl, maxEdge, quality){
   return new Promise(function(resolve){
     if(!dataUrl || String(dataUrl).indexOf('data:image') !== 0){ resolve(dataUrl); return; }

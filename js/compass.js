@@ -903,6 +903,19 @@ async function sendCompassMessage(){
   /* 30a: what Compass knows about Naluno, matched to this question, and a
      tighter web query (with the subject of the last question for follow-ups). */
   const Brain = window.NalunoCompassBrain || null;
+  const bookLine = (window.NalunoLgBooks && typeof NalunoLgBooks.answer === 'function')
+    ? NalunoLgBooks.answer(text) : '';
+  if(bookLine){
+    compassMessages = compassMessages.filter(m => m !== thinkingMsg);
+    compassMessages.push({ from:'compass', text: bookLine, ts: Date.now() });
+    renderCompassMessages();
+    try{
+      fbDb.collection('users').doc(currentUser.uid).collection('compassMessages').add({
+        from:'compass', text: bookLine, ts: firebase.firestore.FieldValue.serverTimestamp(),
+      }).catch(function(){});
+    }catch(_){}
+    return;
+  }
   const prevUser = (function(){
     for(let i = compassMessages.length - 2; i >= 0; i--){ const m = compassMessages[i]; if(m && m.from === 'user' && m !== userMsg) return m.text; }
     return '';
@@ -956,6 +969,12 @@ async function sendCompassMessage(){
       messages.unshift({
         role: 'system',
         content: 'Notes you may use. A link below is real. Do not add any other link.\n' + facts,
+      });
+    }
+    if(window.NalunoLgBooks && /luganda|pronounc|affix/i.test(text)){
+      messages.unshift({
+        role: 'system',
+        content: 'Luganda you may quote, from Pilkington (public domain) and Kiingi. Do not invent a Luganda word that is not here.\n' + String(NalunoLgBooks.pron || '').slice(0, 700),
       });
     }
     const res = await fetch(COMPASS_WORKER_URL, {

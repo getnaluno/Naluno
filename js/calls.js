@@ -1336,7 +1336,16 @@ async function createPeerConnection(){
              (or while createOffer is already running) needs a new offer the
              other phone never gets, so the call pairs with the wrong ufrag.
              Before any SDP, setConfiguration is enough — restartIce is not. */
-          if(pc._nalunoIceFrozen || pc.localDescription) return;
+          if(pc._nalunoIceFrozen || pc.localDescription){
+            if(nalunoCallMediaUp(pc) || pc._nalunoFarRelay) return;
+            pc._nalunoFarRelay = setTimeout(function(){
+              if(!nalunoCallStillThis(pc) || nalunoCallMediaUp(pc)) return;
+              pc._nalunoRelayTried = true;
+              try{ pc.setConfiguration(fresh); }catch(_){}
+              try{ pc.restartIce(); }catch(_){}
+            }, 3200);
+            return;
+          }
           console.log('[call] TURN arrived before the SDP — upgrading ICE config');
           pc.setConfiguration(fresh);
         }catch(e){ console.warn('[call] ICE upgrade skipped', e && e.message); }
@@ -1638,6 +1647,24 @@ function endActiveCall(reason){
       endReason: reason || 'hangup',
     }).catch(()=>{});
   }
+  try{
+    const meta = window.__nalunoCallPeers || {};
+    const connected = !!(window.__nalunoConnectedAt && window.__nalunoConnectedCall === callId);
+    const seconds = connected ? Math.max(0, Math.round((Date.now() - window.__nalunoConnectedAt) / 1000)) : 0;
+    if(iAmCaller && callId && typeof nalunoNoteTraffic === 'function'){
+      nalunoNoteTraffic({
+        kind: 'call',
+        ok: connected,
+        actorUid: currentUser ? currentUser.uid : '',
+        peerUid: meta.peerUid || '',
+        actorName: (meta.actorName || (currentProfile && currentProfile.name) || ''),
+        peerName: meta.peerName || '',
+        seconds: seconds,
+        status: connected ? 'connected' : (reason || 'failed'),
+      });
+    }
+  }catch(_){}
+  try{ window.__nalunoConnectedAt = 0; }catch(_){}
   teardownCallConnection();
   closeCallOverlay();
   stopCameraStream();
@@ -1673,8 +1700,55 @@ function endActiveCall(reason){
   }catch(_){}
 }
 
-/* When the other side hangs up (or the network drops), close our UI even if the
-   Firestore snapshot is slow or missed. */
+/* A far call (another city, another country) often needs the relay.
+   A call that is already connected is left alone. A first failure gets
+   one relay restart and a longer wait before the call is given up. */
+function nalunoCallStillThis(pc){
+  return !!(pc && peerConnection === pc && pc.signalingState !== 'closed' && pc.connectionState !== 'closed');
+}
+function nalunoCallMediaUp(pc){
+  if(!pc) return false;
+  const ice = pc.iceConnectionState;
+  const st = pc.connectionState;
+  return ice === 'connected' || ice === 'completed' || st === 'connected';
+}
+function nalunoTryRelay(pc){
+  try{
+    const apply = function(fresh){
+      if(!nalunoCallStillThis(pc) || nalunoCallMediaUp(pc)) return;
+      if(fresh && nalunoCfgHasTurn(fresh) && typeof pc.setConfiguration === 'function'){
+        try{ pc.setConfiguration(fresh); }catch(_){}
+      }
+      try{ pc.restartIce(); }catch(_){}
+    };
+    if(typeof getIceServers === 'function'){
+      getIceServers().then(apply).catch(function(){ apply(null); });
+    } else {
+      apply(null);
+    }
+  }catch(_){}
+}
+function nalunoScheduleCallFail(pc){
+  if(!pc || pc._nalunoFailTimer) return;
+  const wait = pc._nalunoRelayTried ? 8000 : 3200;
+  pc._nalunoFailTimer = setTimeout(function(){
+    pc._nalunoFailTimer = null;
+    if(!nalunoCallStillThis(pc) || nalunoCallMediaUp(pc)) return;
+    if(!pc._nalunoRelayTried){
+      pc._nalunoRelayTried = true;
+      nalunoTryRelay(pc);
+      nalunoScheduleCallFail(pc);
+      return;
+    }
+    const ice = pc.iceConnectionState;
+    const st = pc.connectionState;
+    if(ice === 'failed' || st === 'failed'){
+      if($('callOverlay') && $('callOverlay').classList.contains('active')){
+        endActiveCall('remote');
+      }
+    }
+  }, wait);
+}
 function attachConnectionWatchdogs(pc){
   if(!pc) return;
   pc.onconnectionstatechange = ()=>{
@@ -1700,15 +1774,7 @@ function attachConnectionWatchdogs(pc){
       try{ scheduleFilteredUpgrade(pc); }catch(_){}
     }
     if(s === 'failed'){
-      try{ pc.restartIce(); }catch(_){}
-      setTimeout(function(){
-        if(peerConnection !== pc) return;
-        if(!pc || pc.connectionState === 'failed'){
-          if($('callOverlay') && $('callOverlay').classList.contains('active')){
-            endActiveCall('remote');
-          }
-        }
-      }, 1400);
+      nalunoScheduleCallFail(pc);
     }
   };
   pc.oniceconnectionstatechange = ()=>{
@@ -1720,16 +1786,9 @@ function attachConnectionWatchdogs(pc){
       try{ ensureRemoteVideoPlaying(); }catch(_){}
       try{ scheduleFilteredUpgrade(pc); }catch(_){}
     }
-    if(s === 'failed'){
-      try{ pc.restartIce(); }catch(_){}
-      setTimeout(function(){
-        if(peerConnection !== pc) return;
-        if(!pc || pc.iceConnectionState === 'failed'){
-          if($('callOverlay') && $('callOverlay').classList.contains('active')){
-            endActiveCall('remote');
-          }
-        }
-      }, 1400);
+    if(s === 'failed' || s === 'disconnected'){
+      if(s === 'disconnected' && nalunoCallMediaUp(pc)) return;
+      nalunoScheduleCallFail(pc);
     }
   };
 }
@@ -1969,6 +2028,13 @@ function handleIncomingCall(callId, data){
 
   activeCallId = callId;
   iAmCaller = false;
+  try{
+    window.__nalunoCallPeers = {
+      peerUid: data.callerUid || '',
+      peerName: (data.callerName || ''),
+      actorName: (currentProfile && currentProfile.name) || '',
+    };
+  }catch(_){}
   nalunoSetCallKind(data.kind === 'audio' ? 'audio' : 'video');
   nalunoIncomingFrom = { id: callId, uid: data.callerUid || null, ms: nalunoRingMs(data) };
   remoteDescriptionSet = false;
@@ -2398,6 +2464,14 @@ async function startRealCallInner(c){
   remoteDescriptionSet = false;
   pendingRemoteCandidates = [];
   iAmCaller = true;
+  try{
+    window.__nalunoCallPeers = {
+      peerUid: (c && c.firebaseUid) || '',
+      peerName: (c && c.name) || '',
+      actorName: (currentProfile && currentProfile.name) || '',
+    };
+    window.__nalunoConnectedAt = 0;
+  }catch(_){}
   const dial = nalunoDialing = nalunoLastDial = { uid: c.firebaseUid, cancelled: false, reason: null };
   // Clear this phone's own leftover rings now, not only once the new record
   // is written: a call cancelled while the camera opened left the old ghost

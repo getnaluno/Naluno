@@ -551,6 +551,7 @@ function applyProfileToUI(profile){
   $('viewNumber').textContent = profile.number;
   applyAvatarVisual($('viewAvatar'), profile);
   renderMySignalStatus();
+  try{ if(typeof airPaintMine === 'function') airPaintMine(); }catch(_){}
 }
 
 /* Your own presence in Callsign runs through the identical model as everyone else's in
@@ -631,10 +632,21 @@ $('avatarFileInput').onchange = async (e)=>{
   const file = e.target.files[0];
   e.target.value = '';
   if(!file) return;
+  const named = String(file.name || '').toLowerCase();
+  const typed = String(file.type || '').toLowerCase();
+  const imageLike = typed.indexOf('image/') === 0 || /\.(jpe?g|png|webp|gif|bmp|heic|heif|avif|tiff?|jfif|ico)$/.test(named);
+  if(!imageLike){
+    if(typeof toast === 'function') toast('Choose a picture');
+    return;
+  }
   const dataUrl = await readFileAsDataUrl(file);
-  const startingCrop = draftPhoto ? draftPhoto.crop : { scale:1, xPct:0, yPct:0 };
+  if(!dataUrl || String(dataUrl).indexOf('data:image') !== 0 && String(dataUrl).indexOf('data:application') !== 0){
+    if(typeof toast === 'function') toast('That picture could not be read');
+    return;
+  }
+  const startingCrop = draftPhoto ? (draftPhoto.crop || { scale:1, xPct:0, yPct:0 }) : { scale:1, xPct:0, yPct:0 };
   openAvatarAdjust(dataUrl, startingCrop, (result)=>{
-    draftPhoto = result;
+    draftPhoto = Object.assign({}, result, { file: file });
     const selectedSwatch = document.querySelector('#swatchRow .swatch.selected');
     applyAvatarVisual($('profileAvatarBig'), { name:$('nameInput').value, color: selectedSwatch ? selectedSwatch.dataset.c : swatches[0], photo: draftPhoto });
     $('avatarRemoveLink').style.display = 'block';

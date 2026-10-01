@@ -184,8 +184,14 @@ function sparkSpeak(text, lang){
   if(!text || !window.speechSynthesis) return;
   try{
     window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = sparkRecLang(lang || sparkMyLang);
+    const code = lang || sparkMyLang;
+    let line = text;
+    if(code === 'lg' && window.NalunoLgSpeak && typeof NalunoLgSpeak.speak === 'function'){
+      line = NalunoLgSpeak.speak(text);
+    }
+    const u = new SpeechSynthesisUtterance(line);
+    u.lang = code === 'lg' ? 'en-UG' : sparkRecLang(code);
+    u.rate = code === 'lg' ? 0.92 : 1;
     window.speechSynthesis.speak(u);
   }catch(_){}
 }

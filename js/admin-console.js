@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20260929h';
+  const BUILD = '20261001a';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -1011,17 +1011,23 @@
      tab's body only re-renders when the person is not in the middle of
      something. If it wants to refresh while they are, it waits and offers a
      button instead. */
-  let __pendingSnap = null, __lastTouch = 0, __silentRetry = null;
+  let __pendingSnap = null, __lastTouch = 0, __silentRetry = null, __lastPress = 0;
   function markTouch() { __lastTouch = Date.now(); }
   (function watchTouches() {
     try {
-      ['pointerdown', 'keydown', 'scroll', 'click'].forEach(function (ev) {
+      ['pointerdown', 'keydown'].forEach(function (ev) {
         document.addEventListener(ev, function (e) {
-          try { if (e.target && e.target.closest && e.target.closest('#adminBody')) markTouch(); } catch (_) {}
+          try {
+            if (e.target && e.target.closest && e.target.closest('#adminBody, #adminTabs')) {
+              markTouch();
+              __lastPress = Date.now();
+            }
+          } catch (_) {}
         }, true);
       });
     } catch (_) {}
   })();
+  function pressQuiet() { return Date.now() - __lastPress > 700; }
   function somethingIsOpen() {
     try {
       const body = document.getElementById('adminBody');
@@ -1118,6 +1124,13 @@
       body.querySelectorAll('[data-keep]').forEach(function (el) {
         state.fields[el.getAttribute('data-keep')] = el.value;
       });
+      const nav = document.getElementById('adminTabs');
+      state.navScroll = nav ? nav.scrollLeft : 0;
+      state.tab = __activeTab;
+      const a = document.activeElement;
+      if (a && a.id) state.focusId = a.id;
+      const detail = document.getElementById('admUserDetail');
+      if (detail && detail.getAttribute('data-uid')) state.user = detail.getAttribute('data-uid');
     } catch (_) {}
     return state;
   }
@@ -1142,6 +1155,22 @@
       });
       const sc = body.closest('.tab-scroll') || document.scrollingElement;
       if (sc) sc.scrollTop = state.scroll || 0;
+      const nav = document.getElementById('adminTabs');
+      if (nav) {
+        nav.scrollLeft = state.navScroll || 0;
+        nav.querySelectorAll('.atab').forEach(function (b) {
+          b.classList.toggle('on', b.getAttribute('data-tab') === (state.tab || __activeTab));
+        });
+      }
+      if (state.focusId) {
+        const el = document.getElementById(state.focusId);
+        if (el && el.focus) { try { el.focus({ preventScroll: true }); } catch (_) {} }
+      }
+      if (state.user) {
+        const detail = document.getElementById('admUserDetail');
+        if (detail) detail.setAttribute('data-uid', state.user);
+        try { openUser(state.user, __snap); } catch (_) {}
+      }
     } catch (_) {}
   }
   /* Switching tab is a fresh start: nothing is half-read any more. */
@@ -1186,7 +1215,11 @@
        a person or a search is open (or a field is being typed in), the new
        numbers wait and go in the moment it is closed. The top strip still
        refreshes silently. */
-    if (deskDrafting() || deskHasOpen()) {
+    /* The open tab refreshes in place. A button that was just pressed is
+       left alone until the press finishes, then the same tab is drawn
+       again with the same scroll and the same open row. Typing is not
+       wiped. The tab button you are on stays the selected one. */
+    if (deskDrafting() || !pressQuiet()) {
       __pendingSnap = snap;
       scheduleSilentRetry();
       return;
@@ -2019,6 +2052,25 @@
       place: row.lastPlace || row.placeName || row.place || '',
       at: row.lastLocationAt || row.ts,
     };
+  }
+  function joinedOf(row) {
+    const ms = Number(row && (row.createdAt || row.created_at)) || 0;
+    return ms ? when(ms) : '—';
+  }
+  function attentionText(row) {
+    const visits = Number(row && row.visits) || 0;
+    const opens = Number(row && (row.appOpens || row.openApp)) || 0;
+    const cont = Number(row && row.continuations) || 0;
+    const orphan = Number(row && row.orphanMs) || 0;
+    const sourced = visits > 0 || opens > 0 || cont > 0;
+    const ms = row && row.attentionMs != null ? Number(row.attentionMs) : (sourced ? Number(row.ms) || 0 : 0);
+    if (!sourced && (orphan > 0 || (Number(row && row.ms) || 0) > 0)) {
+      return '0 · unattributed ' + dur(orphan || row.ms || 0);
+    }
+    let label = dur(ms);
+    if (cont > 0 && !visits && !opens) label += ' · continued';
+    else if (cont > 0) label += ' · continued';
+    return label;
   }
   function when(ms) {
     if (!ms) return '—';
@@ -3517,16 +3569,20 @@
           ['Per monthly active', aedUsd((d.costs && d.costs.per_mau_aed) || 0)]])
         + card('By platform', plainRows(['Platform', 'People'],
           Object.keys(u.by_platform || {}).map(function (k) { return [k, u.by_platform[k]]; })))
-        + card('People', table(['Name', 'Handle', 'Last seen', 'Place', 'Cost / mo', 'State', ''],
+        + card('People', table(['Name', 'Handle', 'Joined', 'Last seen', 'Place', 'Cost / mo', 'State', ''],
           list.slice(0, 80).map(function (row) {
             const state = (row.accountState === 'closed' || row.deleted) ? 'CLOSED' : (row.suspended ? 'SUSPENDED' : (row.restricted ? 'restricted' : 'ok'));
             const pin = coordsOf(row);
             const pc = personCost(d, row.id);
+            const place = pin
+              ? pinHtml(pin.lat, pin.lng, pin.accuracy, pin.place)
+              : (row.findNalunoEnabled ? 'Find on · no fix yet' : '—');
             return [
               escapeHtml(userName(row)),
               escapeHtml(personHandle(row) || row.handle || row.number || ''),
+              escapeHtml(joinedOf(row)),
               escapeHtml(row.lastSeen ? when(row.lastSeen) : 'never'),
-              pin ? pinHtml(pin.lat, pin.lng, pin.accuracy, pin.place) : '—',
+              place,
               escapeHtml(pc ? aed(pc.monthly_aed) : '—'),
               escapeHtml(state),
               '<button type="button" class="ghost admUserOpen" data-uid="' + escapeHtml(row.id) + '">Open</button>',
@@ -4009,7 +4065,6 @@
       const recent = site.recent || [];
       const fiveYes = (site.five_marked || 0) > 0 || (site.engaged_today || 0) > 0;
       const fiveLabel = !site.today ? '—' : (fiveYes ? 'Yes' : 'No');
-      const botsIn = (site.bots_today || 0) > 0 || (site.bots || 0) > 0 ? 'No' : 'No';
       const selfIn = 'No';
       const recentTable = table(['When', 'Landed', 'From', 'Device', 'Pages', 'Time', 'App'],
         recent.slice(0, 40).map(function (s) {
@@ -4066,9 +4121,15 @@
               ['Left before 5s', site.bounce_n || 0],
               ['Bounce', (site.bounce || 0) + '%']]))
           + card('Are bots and crawlers included?',
-            kpis([['Included', botsIn],
+            kpis([['Included', 'No'],
               ['Excluded today', site.bots_today || 0],
-              ['Excluded (on file)', site.bots || 0]]))
+              ['Excluded (on file)', site.bots || 0]])
+            + ((site.bot_names && site.bot_names.length)
+              ? plainRows(['Name', 'Sessions on file'], site.bot_names.map(function (b) {
+                return [b.label, b.n];
+              }))
+              : '<p class="sub">No bot names are on file in the sessions loaded here.</p>')
+            + '<p class="sub">Names come from the sessions already loaded (the latest few hundred). Nothing is blocked. Use this list when you decide.</p>')
           + card('Are your own visits counted?',
             kpis([['Included', selfIn],
               ['Excluded today', site.self_today || 0],
@@ -4099,11 +4160,15 @@
           kpis([['Visits (30d)', site.day_visits || 0],
             ['App opens (30d)', site.day_app || 0],
             ['Attention (30d)', dur(site.day_ms || 0)],
+            ['Unattributed', dur(site.day_orphan_ms || 0)],
             ['Days on file', (site.days || []).length]])
           + plainRows(['Day', 'Visits', 'App opens', 'Attention'],
             (site.days || []).slice(0, 31).map(function (row) {
-              return [row.id || '', Number(row.visits) || 0, Number(row.appOpens || row.openApp) || 0, dur(row.ms || 0)];
-            })))
+              return [row.id || '', Number(row.visits) || 0, Number(row.appOpens || row.openApp) || 0, attentionText(row)];
+            }))
+          + ((site.day_orphan_ms > 0)
+            ? '<p class="sub">Unattributed time is on a day with no visit, no app open, and no continued session. It is not counted as attention. That pattern was a session heartbeating after midnight.</p>'
+            : '<p class="sub">Attention is time from a visit, an app open, or a session that was already open and continued past midnight. A continued session is not a new visit.</p>'))
         + card('Latest visits', recentTable)
         + sitePeriodCardHtml()
         + siteKeepCardHtml();
@@ -4690,12 +4755,78 @@
       return;
     }
 
+    if (tab === 'records') {
+      const today = new Date();
+      const isoDefault = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+      const iso = window.__recDate || isoDefault;
+      el.innerHTML = card('Records',
+        '<p class="sub">Calls, videos and messages that went out. Who reached whom, and whether it connected. No message text.</p>'
+        + '<div class="row" style="flex-wrap:wrap;gap:8px;align-items:center;">'
+        + '<input type="date" id="recDate" value="' + iso + '" style="background:#12141c;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;" />'
+        + '<button type="button" class="ghost rec-span" data-span="day">Day</button>'
+        + '<button type="button" class="ghost rec-span" data-span="week">Week</button>'
+        + '<button type="button" class="ghost rec-span" data-span="month">Month</button>'
+        + '<button type="button" class="ghost rec-span" data-span="year">Year</button>'
+        + '</div><div id="recOut"><p class="sub">Loading…</p></div>');
+      let span = window.__recSpan || 'day';
+      function paint(rows) {
+        const out = $('recOut');
+        if (!out || !window.NalunoTraffic) return;
+        const picked = $('recDate') && $('recDate').value;
+        const anchor = picked ? new Date(picked + 'T12:00:00') : new Date();
+        const range = NalunoTraffic.rangeFor(span, anchor.getTime());
+        const sum = NalunoTraffic.summarize(rows, range.from, range.to);
+        const hours = sum.talkHours;
+        const who = (sum.pairs || []).slice(0, 40).map(function (p) {
+          const mins = Math.round((p.seconds || 0) / 60);
+          return '<div class="flag-row"><span>' + escapeHtml(p.who) + '</span><span>' + p.ok + '/' + p.n + ' connected · ' + mins + ' min</span></div>';
+        }).join('') || '<p class="sub">No calls in this range.</p>';
+        out.innerHTML = kpis([
+          ['Calls', sum.calls],
+          ['Connected', sum.callsOk],
+          ['Did not connect', sum.callsFail],
+          ['Talk hours', hours],
+          ['Videos sent', sum.videos],
+          ['Videos failed', sum.videosFail],
+          ['Messages sent', sum.messagesOk],
+          ['Messages failed', sum.messagesFail],
+        ]) + '<h3 style="margin:14px 0 6px;font-size:14px;">Who called whom</h3>' + who
+          + '<p class="sub">Records only. The words of a message are not stored here.</p>';
+      }
+      const db = adminDb();
+      let cached = [];
+      function loadRec() {
+        if (!db) { const o = $('recOut'); if (o) o.innerHTML = '<p class="sub">Database is not ready.</p>'; return; }
+        db.collection('traffic').orderBy('at', 'desc').limit(800).get().then(function (snap) {
+          cached = snap.docs.map(function (doc) { return doc.data() || {}; });
+          paint(cached);
+        }).catch(function (e) {
+          const o = $('recOut');
+          if (o) o.innerHTML = '<p class="sub">Could not read records. Publish firestore.rules so the desk can read traffic. ' + escapeHtml((e && e.message) || '') + '</p>';
+        });
+      }
+      el.querySelectorAll('.rec-span').forEach(function (b) {
+        if (b.getAttribute('data-span') === span) b.classList.add('on');
+        b.onclick = function () {
+          span = b.getAttribute('data-span') || 'day';
+          window.__recSpan = span;
+          el.querySelectorAll('.rec-span').forEach(function (x) { x.classList.toggle('on', x === b); });
+          paint(cached);
+        };
+      });
+      const date = $('recDate');
+      if (date) date.onchange = function () { window.__recDate = date.value; paint(cached); };
+      loadRec();
+      return;
+    }
+
     el.innerHTML = '<p class="sub">Unknown section.</p>';
   }
 
   async function openUser(uid, d) {
     const out = $('admUserDetail');
     if (!out) return;
+    try { out.setAttribute('data-uid', uid || ''); } catch (_) {}
     const row = ((d.users && d.users.list) || []).filter(function (u) { return u.id === uid; })[0] || { id: uid };
     const bcasts = ((d.content && d.content.broadcasts) || []).filter(function (b) { return b.creatorUid === uid; });
     const pin = coordsOf(row);
@@ -4706,7 +4837,8 @@
       card('User · ' + escapeHtml(userName(row)),
         '<p class="sub">' + escapeHtml(row.handle || '') + ' ' + escapeHtml(row.email || '')
         + ' · uid ' + escapeHtml(uid) + '</p>'
-        + kpis([['Last seen', row.lastSeen ? when(row.lastSeen) : 'never'],
+        + kpis([['Joined', joinedOf(row)],
+          ['Last seen', row.lastSeen ? when(row.lastSeen) : 'never'],
           ['Platform', row.lastPlatform || '—'],
           ['State', (row.accountState === 'closed' || row.deleted) ? 'CLOSED' : (row.suspended ? 'SUSPENDED' : (row.restricted ? 'restricted' : 'ok'))],
           ['Broadcasts', bcasts.length],
@@ -4733,7 +4865,9 @@
             + '<iframe title="Last pin" style="width:100%;height:220px;border:1px solid var(--line);border-radius:10px;margin:8px 0 12px;" src="https://www.openstreetmap.org/export/embed.html?bbox='
             + (pin.lng - 0.012) + '%2C' + (pin.lat - 0.008) + '%2C' + (pin.lng + 0.012) + '%2C' + (pin.lat + 0.008)
             + '&layer=mapnik&marker=' + pin.lat + '%2C' + pin.lng + '"></iframe>'
-          : '<p class="sub">No GPS pin yet. Turn Find Naluno on under Callsign on that phone.</p>')
+          : (row.findNalunoEnabled
+            ? '<p class="sub">Find Naluno is on, but this phone has not saved a fix yet.</p>'
+            : '<p class="sub">No GPS pin yet. Turn Find Naluno on under Callsign on that phone.</p>'))
         + (row.suspended ? '<p class="sub">Suspended: ' + escapeHtml(row.suspendedReason || '—') + '</p>' : '')
         + (row.accountState === 'closed' || row.deleted
           ? '<p class="sub">Closed ' + escapeHtml(when(row.closedAt || row.deletedAt)) + ' · '

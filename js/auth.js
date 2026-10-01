@@ -1534,6 +1534,26 @@ function startSignedInListeners(user){
   step('video job', function(){ checkForPendingVideoJob(); });
 }
 
+function nalunoEnsureJoined(user, data){
+  try{
+    if(!user || !user.uid || !fbDb) return;
+    if(data && (data.createdAt || data.created_at)) return;
+    if(!nalunoEnsureJoined._done) nalunoEnsureJoined._done = {};
+    if(nalunoEnsureJoined._done[user.uid]) return;
+    nalunoEnsureJoined._done[user.uid] = 1;
+    var ms = 0;
+    try{
+      var raw = user.metadata && user.metadata.creationTime;
+      var parsed = raw ? Date.parse(raw) : NaN;
+      if(isFinite(parsed) && parsed > 0 && parsed < Date.now() + 86400000) ms = parsed;
+    }catch(_){}
+    if(!ms) ms = Date.now();
+    fbDb.collection('users').doc(user.uid).set({ createdAt: ms }, { merge: true }).catch(function(){
+      try{ delete nalunoEnsureJoined._done[user.uid]; }catch(_){}
+    });
+  }catch(_){}
+}
+
 function loadRealProfile(user){
   if(profileUnsub) profileUnsub();
   hideClosedCallsignGate();
@@ -1576,6 +1596,7 @@ function loadRealProfile(user){
     profileUnsub = fbDb.collection('users').doc(user.uid).onSnapshot(doc=>{
       listenRetry = 0;
       if(doc.exists){
+        nalunoEnsureJoined(user, doc.data());
         const previous = currentProfile;
         const incoming = nalunoMergeUserDoc(previous, doc.data());
         currentProfile = incoming;
@@ -1615,6 +1636,7 @@ function loadRealProfile(user){
           if(!gotFirstSnapshot) showCallsignView();
         }
       } else if(!gotFirstSnapshot){
+        nalunoEnsureJoined(user, null);
         const cached = nalunoReadCachedProfile(user.uid);
         if(nalunoProfileHasIdentity(cached) || (cached && (cached.name || cached.number))){
           currentProfile = nalunoMergeUserDoc(cached, {});
@@ -1715,22 +1737,22 @@ $('saveProfileBtn').onclick = async ()=>{
     btn.style.opacity = '0.7';
   }
   let photoOut = draftPhoto;
-  if(photoOut && photoOut.dataUrl && typeof nalunoShrinkImageDataUrl === 'function'){
+  if(photoOut && photoOut.file && photoOut.dataUrl && String(photoOut.dataUrl).indexOf('data:image') === 0
+      && typeof nalunoFitImageDataUrl === 'function' && photoOut.file.size > 8 * 1024 * 1024){
     try{
-      const slim = await nalunoShrinkImageDataUrl(photoOut.dataUrl, 720, 0.82);
+      const slim = await nalunoFitImageDataUrl(photoOut.dataUrl, 2400, 0.9);
       photoOut = Object.assign({}, photoOut, { dataUrl: slim });
-    }catch(_){}
-  }
-  if(photoOut && photoOut.dataUrl && typeof nalunoBakeCroppedImage === 'function'){
-    try{
-      const baked = await nalunoBakeCroppedImage(photoOut.dataUrl, photoOut.crop || { scale:1, xPct:0, yPct:0 }, 480);
-      photoOut = { dataUrl: baked, crop: { scale:1, xPct:0, yPct:0 } };
     }catch(_){}
   }
   let photoUrlOut = null;
   try{
     if(photoOut && photoOut.dataUrl && /^https?:/i.test(photoOut.dataUrl)){
       photoUrlOut = photoOut.dataUrl;
+    } else if(photoOut && photoOut.file && typeof uploadPhotoToR2 === 'function'){
+      photoUrlOut = await uploadPhotoToR2(photoOut.file);
+      if(photoUrlOut){
+        photoOut = { dataUrl: photoUrlOut, crop: photoOut.crop || { scale:1, xPct:0, yPct:0 } };
+      }
     } else if(photoOut && photoOut.dataUrl && String(photoOut.dataUrl).indexOf('data:image') === 0 && typeof uploadPhotoToR2 === 'function'){
       const file = (typeof nalunoDataUrlToFile === 'function')
         ? await nalunoDataUrlToFile(photoOut.dataUrl, 'avatar.jpg')
@@ -1744,6 +1766,9 @@ $('saveProfileBtn').onclick = async ()=>{
     }
   }catch(upErr){
     console.warn('[profile] avatar upload', upErr && upErr.message);
+  }
+  if(photoOut && photoOut.file){
+    photoOut = { dataUrl: photoOut.dataUrl, crop: photoOut.crop || { scale:1, xPct:0, yPct:0 } };
   }
   const nextProfile = {
     name: finalName,

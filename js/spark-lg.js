@@ -179,6 +179,9 @@ function sparkLgPairs(){
   if(typeof SPARK_LG_WIKT === 'object' && SPARK_LG_WIKT){
     Object.keys(SPARK_LG_WIKT).forEach(function(k){ add(k, SPARK_LG_WIKT[k]); });
   }
+  if(typeof NalunoLgBooks !== 'undefined' && NalunoLgBooks && typeof NalunoLgBooks.pairs === 'function'){
+    NalunoLgBooks.pairs().forEach(function(p){ add(p[0], p[1]); });
+  }
   out.sort(function(a,b){ return b.src.length - a.src.length; });
   return out;
 }

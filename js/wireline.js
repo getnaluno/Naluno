@@ -2054,6 +2054,18 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
     }
     markMyActivity();
     bumpTodayActivity();
+    try{
+      if(typeof nalunoNoteTraffic === 'function' && currentUser){
+        nalunoNoteTraffic({
+          kind: 'message', ok: true,
+          actorUid: currentUser.uid,
+          peerUid: c.firebaseUid || '',
+          actorName: (currentProfile && currentProfile.name) || '',
+          peerName: (c && c.name) || '',
+          status: 'sent',
+        });
+      }
+    }catch(_){}
   }catch(e){
     if(!queueId){
       // Not already queued — this is a fresh send that failed for some OTHER reason
@@ -2073,6 +2085,18 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
       }
     }
     toast(e.message || 'Couldn\u2019t send — try again');
+    try{
+      if(typeof nalunoNoteTraffic === 'function' && currentUser){
+        nalunoNoteTraffic({
+          kind: 'message', ok: false,
+          actorUid: currentUser.uid,
+          peerUid: (c && c.firebaseUid) || '',
+          actorName: (currentProfile && currentProfile.name) || '',
+          peerName: (c && c.name) || '',
+          status: 'failed',
+        });
+      }
+    }catch(_){}
     throw e; // let flushMessageQueue know this retry attempt still failed
   }
 }
