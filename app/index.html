@@ -131,9 +131,9 @@
 })();
 </script>
 <link rel="apple-touch-startup-image" href="/splash-empty.png">
-<link rel="stylesheet" href="/css/app.css?v=20261001e" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/css/app.css?v=20261001f" media="print" onload="this.media='all'">
 <script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="/css/app.css?v=20261001e"></noscript>
+<noscript><link rel="stylesheet" href="/css/app.css?v=20261001f"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -432,8 +432,8 @@ window.__nalunoEntryT0 = Date.now();
       <div class="section-label signal-head-label air-word" style="margin-top:18px;">Broadcast <span>stays until you delete it</span></div>
       <div class="air-make">
         <button type="button" id="newBroadcastBtn" class="join-btn air-make-main">Video</button>
-        <button type="button" id="broadcastGoLiveBtn" class="join-btn air-make-side">Go live</button>
-        <button type="button" id="broadcastWriteBtn" class="join-btn air-make-side">Write</button>
+        <button type="button" id="broadcastGoLiveBtn" class="join-btn air-make-live">Go live</button>
+        <button type="button" id="broadcastWriteBtn" class="join-btn air-make-write">Write</button>
       </div>
       <div id="airMine" class="air-mine">
         <p id="airShown" class="air-shown" hidden></p>
@@ -1802,9 +1802,9 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/band-list.js?v=20260929b"></script>
 <script type="module" src="/workers/economy/safety-boot.mjs?v=20260923c"></script>
 <script src="/js/signal-core.js?v=20260928d"></script>
-<script src="/js/broadcast-core.js?v=20261001e"></script>
+<script src="/js/broadcast-core.js?v=20261001f"></script>
 <script src="/js/broadcast-upload.js?v=20260908d"></script>
-<script src="/js/broadcast-composer.js?v=20261001e"></script>
+<script src="/js/broadcast-composer.js?v=20261001f"></script>
 <script src="/js/screen.js?v=20260921k"></script>
 <!-- nudenet.js MUST load after screen.js: it upgrades runNalunoScreen() in place
      and keeps the heuristic as a hold-only fallback. Replaces nsfw-model.js. -->
@@ -1831,12 +1831,14 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/room-threads.js?v=20260925g"></script>
 <script src="/js/discover-engine.js?v=20260928d"></script>
 <script src="/js/discover.js?v=20260929h"></script>
-<script src="/js/signal-ui.js?v=20261001e"></script>
+<script src="/js/signal-ui.js?v=20261001f"></script>
 <script src="/js/compat-lock.js?v=20260908d"></script>
 <script src="/js/known.js?v=20260929h"></script>
-<script src="/js/lg-speak.js?v=20261001e"></script>
-<script src="/js/naluno-voices.js?v=20261001e"></script>
-<script src="/js/broadcast-space.js?v=20261001e"></script>
+<script src="/js/lg-speak.js?v=20261001f"></script>
+<script src="/js/naluno-voice-master.js?v=20261001f"></script>
+<script src="/js/lg-ear.js?v=20261001f"></script>
+<script src="/js/naluno-voices.js?v=20261001f"></script>
+<script src="/js/broadcast-space.js?v=20261001f"></script>
 <script src="/js/linkify.js?v=20260930a"></script>
 <script src="/js/ads.js?v=20260929h"></script>
 <script src="/js/media-vault.js?v=20260908d"></script>
@@ -1860,18 +1862,18 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/camera.js?v=20260929f"></script>
 <script src="/js/call-filters.js?v=20260929d"></script>
 <script src="/js/push-receipt.js?v=20260927d"></script>
-<script src="/js/calls.js?v=20261001e"></script>
+<script src="/js/calls.js?v=20261001f"></script>
 <script src="/js/sfu-live.js?v=20260925c"></script>
 <script src="/js/broadcast-live.js?v=20260929g"></script>
 <script src="/js/live-preview.js?v=20260929g"></script>
 <script src="/js/band-room.js?v=20260929g"></script>
 <script src="/js/traffic.js?v=20261001b"></script>
-<script src="/js/pwa.js?v=20261001e"></script>
+<script src="/js/pwa.js?v=20261001f"></script>
 <script src="/js/gestures.js?v=20260929f"></script>
 <script src="/js/spark-engine.js?v=20260926c"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>
 <script src="/js/spark-lg.js?v=20261001b"></script>
-<script src="/js/spark-page.js?v=20261001e"></script>
+<script src="/js/spark-page.js?v=20261001f"></script>
 <script src="/js/qrcode.js?v=20260928d"></script>
 <script src="/js/spark.js?v=20260928d"></script>
 <!-- /NALUNO_MODULES -->
