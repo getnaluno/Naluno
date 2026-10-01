@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.09.30d" />
+  <meta name="naluno-build" content="2026.10.01a" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.09.30d">
+<meta name="app-version" content="2026.10.01a">
 <meta name="description" content="Naluno brings private communication, communities and creator-led content into one place. A Callsign instead of a phone number.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="Private communication, communities and creator-led content. A Callsign — not a phone number.">
@@ -435,6 +435,18 @@ window.__nalunoEntryT0 = Date.now();
         <button type="button" id="broadcastGoLiveBtn" class="join-btn" style="margin:0; flex:1; min-width:100px; padding:12px 14px; font-size:12px; letter-spacing:.04em; background:rgba(255,84,112,.12); color:#ff8a9a; border:1px solid rgba(255,84,112,.4);">Go live</button>
         <button type="button" id="broadcastWriteBtn" class="join-btn" style="margin:0; flex:1; min-width:100px; padding:12px 14px; font-size:12px; letter-spacing:.04em; background:rgba(124,255,178,.12); color:var(--mint); border:1px solid rgba(124,255,178,.4);">Write</button>
       </div>
+      <div id="airMine" style="margin:0 0 12px;">
+        <textarea id="airAbout" maxlength="600" rows="3" placeholder="What this Broadcast is, as a whole — not one video. This is what people read on your Broadcast link." style="width:100%;box-sizing:border-box;padding:12px 14px;border-radius:14px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:14px;line-height:1.45;font-family:inherit;resize:vertical;"></textarea>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button type="button" id="airSaveBtn" class="join-btn" style="margin:0;flex:1;padding:12px 10px;font-size:12px;">Save description</button>
+          <button type="button" id="airShareBtn" class="join-btn" style="margin:0;flex:1;padding:12px 10px;font-size:12px;background:rgba(124,255,178,.15);color:var(--mint);border:1px solid rgba(124,255,178,.35);">Share Broadcast</button>
+        </div>
+      </div>
+      <div id="airHome" hidden style="margin:0 0 14px;padding:12px 14px;border:1px solid var(--line);border-radius:16px;background:var(--surface);">
+        <div id="airHomeTitle" style="font-weight:700;"></div>
+        <div id="airHomeAbout" style="color:var(--text-dim);font-size:13.5px;line-height:1.45;margin:6px 0 10px;white-space:pre-wrap;"></div>
+        <button type="button" id="airHomeShare" class="join-btn" style="margin:0;">Share this Broadcast</button>
+      </div>
       <div id="bcastScheduleDock" class="bcast-schedule-dock" hidden></div>
       <button type="button" class="bcast-scroll-cue" id="bcastScrollCue">
         <span class="bcast-scroll-cue-kicker">Swipe up</span>
@@ -546,7 +558,7 @@ window.__nalunoEntryT0 = Date.now();
             <div class="avatar profile-avatar" id="profileAvatarBig" style="background:#7CFFB2;">YO</div>
             <div class="avatar-edit naluno-pick-wrap" id="avatarEditBtn" role="button" aria-label="Edit profile photo" style="position:relative;overflow:hidden;">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="pointer-events:none;"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z" stroke="#0D0F17" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              <input type="file" id="avatarFileInput" accept="image/jpeg,image/png,image/webp,image/*,.jpg,.jpeg,.png,.webp" style="position:absolute;inset:0;width:100%;height:100%;opacity:0.01;font-size:16px;cursor:pointer;z-index:2;" />
+              <input type="file" id="avatarFileInput" accept="image/*,.heic,.heif,.jpg,.jpeg,.png,.webp,.gif,.bmp,.tif,.tiff,.avif,.jfif,.ico" style="position:absolute;inset:0;width:100%;height:100%;opacity:0.01;font-size:16px;cursor:pointer;z-index:2;" />
             </div>
           </div>
           <div id="avatarRemoveLink" style="display:none; font-family:var(--font-mono); font-size:11px; color:var(--text-dim); cursor:pointer; text-decoration:underline;">Remove photo</div>
@@ -1024,6 +1036,10 @@ window.__nalunoEntryT0 = Date.now();
       <input id="bwriteTitle" maxlength="120" placeholder="Title" style="width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:14px;font-family:inherit;" />
       <input id="bwriteChTitle" maxlength="80" placeholder="Chapter 1 title" hidden style="width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:14px;font-family:inherit;" />
       <textarea id="bwriteBody" maxlength="20000" rows="10" placeholder="Write the piece" style="width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:15px;line-height:1.45;font-family:inherit;resize:vertical;"></textarea>
+      <div style="display:flex;gap:8px;margin:0 0 10px;">
+        <button type="button" id="bwriteToLg" class="join-btn" style="margin:0;flex:1;background:transparent;color:var(--text);border:1px solid var(--line);">Write in Luganda</button>
+        <button type="button" id="bwriteSpeak" class="join-btn" style="margin:0;flex:1;background:transparent;color:var(--text);border:1px solid var(--line);">Hear it</button>
+      </div>
       <div id="bwriteChapters" hidden>
         <div id="bwriteMoreChapters"></div>
         <button type="button" id="bwriteAddChapter" class="join-btn" style="margin:0 0 10px;background:transparent;color:var(--text);border:1px solid var(--line);">Add a chapter</button>
@@ -1760,9 +1776,9 @@ window.__nalunoEntryT0 = Date.now();
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
 <script src="/firebase-config.js?v=20260908d"></script>
-<script src="/js/site-pulse.js?v=20260921a"></script>
+<script src="/js/site-pulse.js?v=20261001a"></script>
 <!-- NALUNO_MODULES -->
-<script src="/js/core.js?v=20260929h"></script>
+<script src="/js/core.js?v=20261001b"></script>
 <script src="/js/vault.js?v=20260928d"></script>
 <!-- Loaded right after core.js so its global error handlers are installed
      before the rest of the app runs and can capture anything they throw. -->
@@ -1783,9 +1799,9 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/band-list.js?v=20260929b"></script>
 <script type="module" src="/workers/economy/safety-boot.mjs?v=20260923c"></script>
 <script src="/js/signal-core.js?v=20260928d"></script>
-<script src="/js/broadcast-core.js?v=20260929h"></script>
+<script src="/js/broadcast-core.js?v=20261001b"></script>
 <script src="/js/broadcast-upload.js?v=20260908d"></script>
-<script src="/js/broadcast-composer.js?v=20260930a"></script>
+<script src="/js/broadcast-composer.js?v=20261001b"></script>
 <script src="/js/screen.js?v=20260921k"></script>
 <!-- nudenet.js MUST load after screen.js: it upgrades runNalunoScreen() in place
      and keeps the heuristic as a hold-only fallback. Replaces nsfw-model.js. -->
@@ -1797,16 +1813,17 @@ window.__nalunoEntryT0 = Date.now();
      server-side by the naluno-economy Worker. Loaded AFTER circle.js so
      currentUser exists, and deliberately non-blocking — if this file failed
      to load entirely, Broadcast would behave exactly as it does today. -->
-<script src="/js/presence.js?v=20260928d"></script>
+<script src="/js/presence.js?v=20261001a"></script>
 <script src="/js/session-log.js?v=20260925c"></script>
 <script src="/js/report.js?v=20260927c"></script>
 <script src="/js/currency.js?v=20260929h"></script>
 <script src="/js/economy.js?v=20260914c"></script>
 <script src="/js/economy-ui.js?v=20260929g"></script>
 <script src="/js/weather.js?v=20260928d"></script>
-<script src="/js/beacon.js?v=20260928d"></script>
+<script src="/js/beacon.js?v=20261001a"></script>
+<script src="/js/lg-books.js?v=20261001b"></script>
 <script src="/js/compass-brain.js?v=20260930a"></script>
-<script src="/js/compass.js?v=20260930a"></script>
+<script src="/js/compass.js?v=20261001b"></script>
 <script src="/js/pass-on.js?v=20260926a"></script>
 <script src="/js/room-threads.js?v=20260925g"></script>
 <script src="/js/discover-engine.js?v=20260928d"></script>
@@ -1814,13 +1831,13 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/signal-ui.js?v=20260929g"></script>
 <script src="/js/compat-lock.js?v=20260908d"></script>
 <script src="/js/known.js?v=20260929h"></script>
-<script src="/js/lg-speak.js?v=20260926i"></script>
-<script src="/js/naluno-voices.js?v=20260930d"></script>
-<script src="/js/broadcast-space.js?v=20260930d"></script>
+<script src="/js/lg-speak.js?v=20261001b"></script>
+<script src="/js/naluno-voices.js?v=20260930c"></script>
+<script src="/js/broadcast-space.js?v=20260930c"></script>
 <script src="/js/linkify.js?v=20260930a"></script>
 <script src="/js/ads.js?v=20260929h"></script>
 <script src="/js/media-vault.js?v=20260908d"></script>
-<script src="/js/wireline.js?v=20260929g"></script>
+<script src="/js/wireline.js?v=20261001b"></script>
 <!-- Lifeline: Wireline when the internet is blocked or cut. Loads after
      crypto.js (keys) and wireline.js (thread insertion). -->
 <script src="/js/notices.js?v=20260929h"></script>
@@ -1831,26 +1848,27 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/lifeline-wire.js?v=20260930b"></script>
 <!-- Wireline translation reuses Spark's engine and language list. -->
 <script src="/js/wireline-translate.js?v=20260928d"></script>
-<script src="/js/profile.js?v=20260929g"></script>
+<script src="/js/profile.js?v=20261001b"></script>
 <script src="/js/onboard.js?v=20260928d"></script>
 <script src="/js/handle-guard.js?v=20260921c"></script>
-<script src="/js/auth.js?v=20260928d"></script>
+<script src="/js/auth.js?v=20261001b"></script>
 <script src="/js/notifications.js?v=20260928d"></script>
-<script src="/js/ice-core.js?v=20260930d"></script>
+<script src="/js/ice-core.js?v=20260908d"></script>
 <script src="/js/camera.js?v=20260929f"></script>
 <script src="/js/call-filters.js?v=20260929d"></script>
 <script src="/js/push-receipt.js?v=20260927d"></script>
-<script src="/js/calls.js?v=20260930d"></script>
+<script src="/js/calls.js?v=20261001b"></script>
 <script src="/js/sfu-live.js?v=20260925c"></script>
 <script src="/js/broadcast-live.js?v=20260929g"></script>
 <script src="/js/live-preview.js?v=20260929g"></script>
 <script src="/js/band-room.js?v=20260929g"></script>
-<script src="/js/pwa.js?v=20260930c"></script>
+<script src="/js/traffic.js?v=20261001b"></script>
+<script src="/js/pwa.js?v=20261001b"></script>
 <script src="/js/gestures.js?v=20260929f"></script>
 <script src="/js/spark-engine.js?v=20260926c"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>
-<script src="/js/spark-lg.js?v=20260928d"></script>
-<script src="/js/spark-page.js?v=20260929g"></script>
+<script src="/js/spark-lg.js?v=20261001b"></script>
+<script src="/js/spark-page.js?v=20261001b"></script>
 <script src="/js/qrcode.js?v=20260928d"></script>
 <script src="/js/spark.js?v=20260928d"></script>
 <!-- /NALUNO_MODULES -->
