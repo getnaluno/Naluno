@@ -90,6 +90,7 @@ async function ensureBroadcastFirestore(meta){
 let bspaceSpeakToken = 0;
 function bspaceStopSpeak(){
   bspaceSpeakToken += 1;
+  try{ if(window.NalunoLgEar && NalunoLgEar.stop) NalunoLgEar.stop(); }catch(_){}
   try{ if(window.NalunoVoices && NalunoVoices.stop) NalunoVoices.stop(); }catch(_){}
   try{ if(window.speechSynthesis) window.speechSynthesis.cancel(); }catch(_){}
 }
@@ -121,7 +122,8 @@ async function bspaceSpeakWriting(text, lang, btn){
     : null;
   const alive = function(){ return token === bspaceSpeakToken; };
   if(luganda && window.NalunoLgEar && typeof NalunoLgEar.plan === 'function'){
-    const ready = NalunoLgEar.plan(src);
+    try{ if(NalunoLgEar.ready) await NalunoLgEar.ready(); }catch(_){}
+    const ready = alive() ? NalunoLgEar.plan(src) : null;
     if(ready){
       if(btn) btn.textContent = 'Stop';
       let played = false;
@@ -131,6 +133,9 @@ async function bspaceSpeakWriting(text, lang, btn){
         if(btn){ btn.removeAttribute('data-on'); btn.textContent = 'Listen'; }
         return;
       }
+      toast('The Luganda recording could not play. It is the clip from the console, not another voice.');
+      if(btn){ btn.removeAttribute('data-on'); btn.textContent = 'Listen'; }
+      return;
     }
   }
   if(window.NalunoVoices && typeof NalunoVoices.speak === 'function'){

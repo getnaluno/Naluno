@@ -116,13 +116,16 @@
     opts = opts || {};
     var alive = opts.alive || function () { return true; };
     var male = opts.voice === 'male';
-    /* Jasper is not used. The male voice is the clean female take,
-       lowered four semitones and warmed, so the length stays the same. */
-    var voice = 'Bella';
+    /* Female stays Bella. Male is Hugo, a male model, not a pitched
+       female. Words run at the model's natural rate. A fifth of a
+       second sits between sentences so the line is measured and
+       articulate, without dragging the words. This is Naluno's own
+       low voice, not a copy of any person. */
+    var voice = male ? 'Hugo' : 'Bella';
     var toPhones = typeof opts.phonemes === 'function' ? opts.phonemes : null;
-    /* voices/kitten/config.json multiplies this by 0.8.
-       1.25 lands at 1.0: not the 0.7 crawl, and not a rushed read. */
-    var speed = typeof opts.speed === 'number' ? opts.speed : 1.25;
+    /* config.json multiplies Bella by 0.8 and Hugo by 0.9.
+       1.25 and 1.12 both land near 1.0. */
+    var speed = typeof opts.speed === 'number' ? opts.speed : (male ? 1.12 : 1.25);
     var bits = sentences(text);
     if (!bits.length) return Promise.resolve(false);
     prime();
@@ -157,7 +160,11 @@
           return play(audio, function () { return alive() && myJob === job; }, male).then(function () {
             if (!alive() || myJob !== job) return true;
             if (!next) return true;
-            return step();
+            if (!male) return step();
+            return new Promise(function (r) { setTimeout(r, 200); }).then(function () {
+              if (!alive() || myJob !== job) return true;
+              return step();
+            });
           });
         });
       }
@@ -170,6 +177,6 @@
     stop: stop,
     prime: prime,
     female: 'Bella',
-    male: 'Jasper',
+    male: 'Hugo',
   };
 })(typeof window !== 'undefined' ? window : globalThis);

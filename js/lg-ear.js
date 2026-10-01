@@ -58,66 +58,60 @@
     return { lines: Object.keys(lines).length, words: Object.keys(words).length };
   }
 
-  function decodeUrl(ctx, url) {
-    return fetch(url).then(function (res) { return res.arrayBuffer(); }).then(function (buf) {
-      return ctx.decodeAudioData(buf);
+  let current = null;
+  let loaded = false;
+  let readyWait = [];
+
+  function markLoaded() {
+    loaded = true;
+    const wait = readyWait;
+    readyWait = [];
+    wait.forEach(function (fn) { try { fn(); } catch (_) {} });
+  }
+
+  function ready() {
+    if (loaded) return Promise.resolve();
+    return new Promise(function (resolve) {
+      readyWait.push(resolve);
+      setTimeout(function () { resolve(); }, 4000);
     });
   }
 
-  function play(ready, alive) {
-    if (!ready || !ready.clips || !ready.clips.length || typeof AudioContext === 'undefined') {
+  function stop() {
+    if (!current) return;
+    try { current.pause(); } catch (_) {}
+    try { current.src = ''; } catch (_) {}
+    current = null;
+  }
+
+  /* The same player the console uses. Do not decode and rebuild the
+     clip — that is a different sound from the one that was saved. */
+  function play(readyPlan, alive) {
+    if (!readyPlan || !readyPlan.clips || !readyPlan.clips.length || typeof Audio === 'undefined') {
       return Promise.resolve(false);
     }
-    const ctx = new AudioContext();
-    if (ctx.state === 'suspended') { try { ctx.resume(); } catch (_) {} }
-    return Promise.all(ready.clips.map(function (url) { return decodeUrl(ctx, url); })).then(function (buffers) {
-      if (alive && !alive()) { try { ctx.close(); } catch (_) {} return false; }
-      const rate = buffers[0].sampleRate || 24000;
-      const overlap = Math.round(rate * 0.02);
-      let total = 0;
-      buffers.forEach(function (b, idx) {
-        total += b.length;
-        if (idx) total -= overlap;
-      });
-      if (total < 1) return false;
-      const mixed = ctx.createBuffer(1, total, rate);
-      const out = mixed.getChannelData(0);
-      let at = 0;
-      buffers.forEach(function (b, idx) {
-        const src = b.getChannelData(0);
-        const start = idx ? at - overlap : 0;
-        for (let i = 0; i < src.length; i++) {
-          const o = start + i;
-          if (o < 0 || o >= out.length) continue;
-          let w = 1;
-          if (idx && i < overlap) w = i / overlap;
-          if (idx < buffers.length - 1 && i > src.length - overlap) {
-            w = Math.min(w, (src.length - i) / overlap);
-          }
-          out[o] += src[i] * w;
-        }
-        at = start + src.length;
-      });
-      return new Promise(function (resolve) {
-        const node = ctx.createBufferSource();
-        node.buffer = mixed;
-        node.connect(ctx.destination);
-        const timer = setInterval(function () {
-          if (alive && !alive()) {
-            clearInterval(timer);
-            try { node.stop(); } catch (_) {}
-            try { ctx.close(); } catch (_) {}
-            resolve(true);
-          }
-        }, 80);
-        node.onended = function () {
-          clearInterval(timer);
-          try { ctx.close(); } catch (_) {}
-          resolve(true);
+    stop();
+    const clips = readyPlan.clips.slice();
+    let i = 0;
+    return new Promise(function (resolve) {
+      function next() {
+        if (alive && !alive()) { stop(); resolve(true); return; }
+        if (i >= clips.length) { current = null; resolve(true); return; }
+        const audio = new Audio(clips[i]);
+        current = audio;
+        i += 1;
+        audio.onended = function () {
+          if (current === audio) current = null;
+          next();
         };
-        node.start();
-      });
-    }).catch(function () { return false; });
+        audio.onerror = function () { stop(); resolve(false); };
+        const started = audio.play();
+        if (started && typeof started.catch === 'function') {
+          started.catch(function () { stop(); resolve(false); });
+        }
+      }
+      next();
+    });
   }
 
   function boot() {
@@ -127,6 +121,7 @@
       if (!db || !db.collection) {
         tries += 1;
         if (tries < 20) setTimeout(tick, 500);
+        else markLoaded();
         return;
       }
       try {
@@ -137,13 +132,14 @@
             rows.push({ text: d.text, norm: d.norm, audio: d.audio });
           });
           ingest(rows);
-        }, function () {});
-      } catch (_) {}
+          markLoaded();
+        }, function () { markLoaded(); });
+      } catch (_) { markLoaded(); }
     }
     tick();
   }
 
   if (typeof window !== 'undefined') boot();
 
-  return { norm: norm, ingest: ingest, plan: plan, play: play, counts: counts };
+  return { norm: norm, ingest: ingest, plan: plan, play: play, stop: stop, ready: ready, counts: counts };
 });

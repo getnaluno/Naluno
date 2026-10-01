@@ -41,9 +41,10 @@ assert.strictEqual(Ear.plan('Katonda'), null);
 
 const fs = require('fs');
 const voices = fs.readFileSync(__dirname + '/naluno-voices.js', 'utf8');
-assert.ok(voices.indexOf('var speed = typeof opts.speed === \'number\' ? opts.speed : 1.25;') > 0);
-assert.ok(voices.indexOf("var voice = 'Bella';") > 0);
-assert.ok(voices.indexOf('0.88') < 0);
+assert.ok(voices.indexOf("var voice = male ? 'Hugo' : 'Bella';") > 0);
+assert.ok(voices.indexOf('male ? 1.12 : 1.25') > 0);
+assert.ok(voices.indexOf('setTimeout(r, 200)') > 0);
+assert.ok(voices.indexOf('lower(samples') < 0);
 const css = fs.readFileSync(__dirname + '/../css/app.css', 'utf8');
 assert.ok(css.indexOf('.air-make-live') > 0);
 assert.ok(css.indexOf('font-size: 14.5px') > 0);

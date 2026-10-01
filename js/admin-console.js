@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261001f';
+  const BUILD = '20261001g';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -60,6 +60,9 @@
   let __deskOperator = null;
   let __deskRoles = [];
   const SUPER_UID = 'ibMOMY6Q3sVTCxIrwO2FGk43zw93';
+  /* Every console section lives in this one list. The Admins
+     checkboxes and the Export tab both read it, so a new section
+     is added here and nowhere else. */
   const DESK_TAB_ROLES = [
     ['overview', 'Overview'], ['health', 'Health'], ['alerts', 'Alerts'], ['mail', 'Mail'],
     ['ads', 'Ads'], ['users', 'Users'], ['identity', 'Identity'], ['broadcast', 'Broadcast'],
@@ -70,10 +73,12 @@
     ['search', 'Search'], ['flags', 'Flags'], ['audit', 'Audit'], ['books', 'Books'],
     ['discovery', 'Discovery'], ['known', 'Known'], ['rights', 'Rights'],
     ['luganda', 'Luganda'],
+    ['export', 'Export'],
   ];
   let __needsSetup = false;
   let __tabCache = {};
   let __activeTab = 'overview';
+  let __exportOpen = false;
   let __snap = null;
   let __livePack = null;
   let __liveUnsubs = [];
@@ -4763,6 +4768,183 @@
         }).catch(function () {
           list.innerHTML = '<p class="sub">Could not read the admin list. Publish firestore.rules so this desk can store admins.</p>';
         });
+      }
+      return;
+    }
+
+    if (tab === 'export') {
+      if (!canDeskTab('export')) { el.innerHTML = '<p class="sub">This login cannot open Export.</p>'; return; }
+      const Exp = (typeof NalunoExport !== 'undefined') ? NalunoExport : null;
+      const superOn = isSuperAdmin(currentUser);
+      if (!__exportOpen) {
+        el.innerHTML = card('Export',
+          '<p class="sub">' + (superOn
+            ? 'This tab stays locked until the password is entered. You are the only one who can change it, and you do that after you are inside.'
+            : 'Enter the password the superadmin assigned to you. You cannot change it.') + '</p>'
+          + '<label for="exportPass">Password</label><input id="exportPass" type="password" autocomplete="off" />'
+          + '<div class="row"><button type="button" class="primary" id="exportUnlock">Open</button></div>'
+          + (superOn ? '<div class="row"><button type="button" class="ghost" id="exportSetFirst">Set the password</button></div>' : '')
+          + '<p class="msg" id="exportMsg"></p>');
+        const msg = $('exportMsg');
+        async function gateHash(id, pass) {
+          return hashLocal(id, pass);
+        }
+        const openBtn = $('exportUnlock');
+        if (openBtn) openBtn.onclick = async function () {
+          const pass = ($('exportPass') && $('exportPass').value) || '';
+          if (!pass) { if (msg) msg.textContent = 'Enter the password.'; return; }
+          const db = adminDb();
+          if (!db) { if (msg) msg.textContent = 'Database is not ready.'; return; }
+          try {
+            if (superOn) {
+              const snap = await db.collection('deskExport').doc('gate').get();
+              const hash = snap.exists && snap.data() && snap.data().hash;
+              if (!hash) { if (msg) msg.textContent = 'No password yet. Set one first.'; return; }
+              if (hash !== await gateHash('export-tab', pass)) { if (msg) msg.textContent = 'That password is not the one for this tab.'; return; }
+            } else {
+              const snap = await db.collection('deskExportPasses').doc(currentUser.uid).get();
+              const hash = snap.exists && snap.data() && snap.data().hash;
+              if (!hash) { if (msg) msg.textContent = 'The superadmin has not assigned you a password.'; return; }
+              if (hash !== await gateHash('export-admin-' + currentUser.uid, pass)) { if (msg) msg.textContent = 'That password is not yours for this tab.'; return; }
+            }
+            __exportOpen = true;
+            renderTab('export', __snap || d);
+          } catch (e) { if (msg) msg.textContent = (e && e.message) || 'Could not open.'; }
+        };
+        const setFirst = $('exportSetFirst');
+        if (setFirst) setFirst.onclick = async function () {
+          const pass = ($('exportPass') && $('exportPass').value) || '';
+          if (pass.length < 8) { if (msg) msg.textContent = 'Use at least 8 characters.'; return; }
+          const db = adminDb();
+          if (!db) return;
+          try {
+            const snap = await db.collection('deskExport').doc('gate').get();
+            if (snap.exists && snap.data() && snap.data().hash) { if (msg) msg.textContent = 'A password already exists. Open the tab, then change it.'; return; }
+            await db.collection('deskExport').doc('gate').set({ hash: await gateHash('export-tab', pass), at: Date.now(), by: currentUser.uid });
+            __exportOpen = true;
+            renderTab('export', __snap || d);
+          } catch (e) { if (msg) msg.textContent = (e && e.message) || 'Could not set it.'; }
+        };
+        return;
+      }
+      const today = new Date();
+      const iso = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+      const week = new Date(today.getTime() - 6 * 86400000);
+      const isoFrom = week.getFullYear() + '-' + String(week.getMonth() + 1).padStart(2, '0') + '-' + String(week.getDate()).padStart(2, '0');
+      const rows = Exp ? Exp.sections(DESK_TAB_ROLES) : [];
+      const list = rows.map(function (pair) {
+        return '<div class="flag-row" style="align-items:center;">'
+          + '<span style="flex:1;">' + escapeHtml(pair[1]) + '</span>'
+          + '<button type="button" class="ghost export-one" data-tab="' + escapeHtml(pair[0]) + '" data-name="' + escapeHtml(pair[1]) + '">Download</button>'
+          + '</div>';
+      }).join('');
+      const audits = ((d && d.audit) || []).filter(function (row) { return row && row.action === 'export-download'; }).slice(0, 12);
+      el.innerHTML = card('Export',
+        '<p class="sub">Every section of this desk. Pick the period, then download a PDF. Each download is written to Audit.</p>'
+        + list
+        + '<div id="exportPick" data-open="0" style="display:none;margin-top:12px;">'
+        + '<p class="sub" id="exportPickName"></p>'
+        + '<label for="exportFrom">From</label><input id="exportFrom" type="date" value="' + isoFrom + '" />'
+        + '<label for="exportTo">To</label><input id="exportTo" type="date" value="' + iso + '" />'
+        + '<div class="row"><button type="button" class="primary" id="exportGo">Download PDF</button></div>'
+        + '<p class="msg" id="exportMsg"></p>'
+        + '</div>')
+        + (superOn ? card('Tab password',
+          '<p class="sub">Only you can change the password that opens this tab. Other admins use the password you assign them. They cannot change either.</p>'
+          + '<label for="exportNew">New tab password</label><input id="exportNew" type="password" autocomplete="off" />'
+          + '<div class="row"><button type="button" class="primary" id="exportChange">Change the tab password</button></div>'
+          + '<div id="exportAdmins"><p class="sub">Loading admins…</p></div>'
+          + '<p class="msg" id="exportAdminMsg"></p>') : '')
+        + card('Downloads',
+          audits.length
+            ? plainRows(['When', 'Who', 'Section', 'Period'], audits.map(function (row) {
+              return [when(row.created_at), row.actorEmail || '', row.target || '', row.reason || ''];
+            }))
+            : '<p class="sub">No downloads yet. They also appear under Audit.</p>');
+      let picked = '';
+      let pickedName = '';
+      el.querySelectorAll('.export-one').forEach(function (btn) {
+        btn.onclick = function () {
+          picked = btn.getAttribute('data-tab');
+          pickedName = btn.getAttribute('data-name') || picked;
+          const box = $('exportPick');
+          if (box) { box.style.display = 'block'; box.setAttribute('data-open', '1'); }
+          const name = $('exportPickName');
+          if (name) name.textContent = pickedName;
+        };
+      });
+      const go = $('exportGo');
+      if (go) go.onclick = async function () {
+        const msg = $('exportMsg');
+        if (!picked || !Exp) { if (msg) msg.textContent = 'Choose a section.'; return; }
+        const fromVal = ($('exportFrom') && $('exportFrom').value) || '';
+        const toVal = ($('exportTo') && $('exportTo').value) || '';
+        const from = Date.parse(fromVal + 'T00:00:00');
+        const to = Date.parse(toVal + 'T23:59:59');
+        if (!isFinite(from) || !isFinite(to) || to < from) { if (msg) msg.textContent = 'Choose a from date and a to date.'; return; }
+        const lines = Exp.linesFor(picked, d || {}, from, to);
+        const file = Exp.pdf(pickedName, lines);
+        downloadText('naluno-' + picked + '-' + fromVal + '-to-' + toVal + '.pdf', 'application/pdf', file);
+        try { await writeAudit('export-download', pickedName, fromVal + ' to ' + toVal); } catch (_) {}
+        if (msg) msg.textContent = 'Downloaded. Audit has the record.';
+      };
+      const change = $('exportChange');
+      if (change) change.onclick = async function () {
+        const pass = ($('exportNew') && $('exportNew').value) || '';
+        const msg = $('exportAdminMsg');
+        if (pass.length < 8) { if (msg) msg.textContent = 'Use at least 8 characters.'; return; }
+        const db = adminDb();
+        if (!db) return;
+        try {
+          await db.collection('deskExport').doc('gate').set({ hash: await hashLocal('export-tab', pass), at: Date.now(), by: currentUser.uid });
+          if ($('exportNew')) $('exportNew').value = '';
+          if (msg) msg.textContent = 'Tab password changed.';
+          writeAudit('export-password', 'tab', 'changed');
+        } catch (e) { if (msg) msg.textContent = (e && e.message) || 'Could not change it.'; }
+      };
+      if (superOn) {
+        const db = adminDb();
+        const host = $('exportAdmins');
+        if (db && host) {
+          db.collection('deskOperators').limit(40).get().then(function (snap) {
+            const people = [];
+            snap.forEach(function (doc) {
+              const row = doc.data() || {};
+              if (row.revoked) return;
+              people.push({ uid: doc.id, email: row.email || doc.id });
+            });
+            if (!people.length) { host.innerHTML = '<p class="sub">No other admins yet. Issue them under Admins, and tick Export.</p>'; return; }
+            host.innerHTML = '<p class="sub">Assign a password. Tick Export under Admins as well, or they will not see the tab.</p>'
+              + people.map(function (p) {
+                return '<div class="flag-row" style="align-items:center;flex-wrap:wrap;">'
+                  + '<span style="flex:1;">' + escapeHtml(p.email) + '</span>'
+                  + '<input class="export-assign" data-uid="' + escapeHtml(p.uid) + '" type="password" autocomplete="off" placeholder="Assigned password" />'
+                  + '<button type="button" class="ghost export-assign-go" data-uid="' + escapeHtml(p.uid) + '">Assign</button>'
+                  + '</div>';
+              }).join('');
+            host.querySelectorAll('.export-assign-go').forEach(function (btn) {
+              btn.onclick = async function () {
+                const uid = btn.getAttribute('data-uid');
+                const input = host.querySelector('.export-assign[data-uid="' + uid + '"]');
+                const pass = (input && input.value) || '';
+                const msg = $('exportAdminMsg');
+                if (pass.length < 8) { if (msg) msg.textContent = 'Use at least 8 characters.'; return; }
+                try {
+                  await db.collection('deskExportPasses').doc(uid).set({
+                    hash: await hashLocal('export-admin-' + uid, pass),
+                    at: Date.now(),
+                    by: currentUser.uid,
+                  });
+                  if (input) input.value = '';
+                  if (msg) msg.textContent = 'Assigned. They use that password. They cannot change it.';
+                  writeAudit('export-password', uid, 'assigned');
+                } catch (e) { if (msg) msg.textContent = (e && e.message) || 'Could not assign.'; }
+              };
+            });
+          }).catch(function () {
+            host.innerHTML = '<p class="sub">Could not read admins. Publish firestore.rules.</p>';
+          });
+        }
       }
       return;
     }

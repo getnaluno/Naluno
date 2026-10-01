@@ -486,10 +486,14 @@ function renderBroadcastTab(){
 }
 
 function nalunoSizeBroadcastStage(){
-  const h = window.innerHeight || 800;
+  const scroller = document.getElementById('broadcastTabScroll');
+  const h = (scroller && scroller.clientHeight) || window.innerHeight || 800;
   document.documentElement.style.setProperty('--bcast-stage-h', h + 'px');
   return h;
 }
+try{
+  window.addEventListener('resize', nalunoSizeBroadcastStage);
+}catch(_){}
 
 function nalunoArmFlipFeed(grid){
   const scroller = document.getElementById('broadcastTabScroll');

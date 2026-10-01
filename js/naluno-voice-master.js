@@ -93,12 +93,12 @@
   function master(input, rate, male) {
     const samples = new Float32Array(input || []);
     if (!samples.length) return samples;
-    const shifted = male ? lower(samples, -4) : samples;
-    const peak = dropDc(shifted);
-    holdLevel(shifted, peak);
-    if (male) warm(shifted);
-    fadeEnds(shifted, rate || 24000);
-    return shifted;
+    const peak = dropDc(samples);
+    holdLevel(samples, peak);
+    /* Warmth only. A pitch warp of the female voice was the broken male. */
+    if (male) warm(samples);
+    fadeEnds(samples, rate || 24000);
+    return samples;
   }
 
   return { master: master, lower: lower };
