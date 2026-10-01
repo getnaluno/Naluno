@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261001e';
+  const BUILD = '20261001f';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -69,6 +69,7 @@
     ['reach', 'Reach'], ['quality', 'Quality'], ['analytics', 'Analytics'], ['notifications', 'Notify'],
     ['search', 'Search'], ['flags', 'Flags'], ['audit', 'Audit'], ['books', 'Books'],
     ['discovery', 'Discovery'], ['known', 'Known'], ['rights', 'Rights'],
+    ['luganda', 'Luganda'],
   ];
   let __needsSetup = false;
   let __tabCache = {};
@@ -4763,6 +4764,157 @@
           list.innerHTML = '<p class="sub">Could not read the admin list. Publish firestore.rules so this desk can store admins.</p>';
         });
       }
+      return;
+    }
+
+    if (tab === 'luganda') {
+      if (!canDeskTab('luganda')) { el.innerHTML = '<p class="sub">This login cannot feed Luganda.</p>'; return; }
+      el.innerHTML = card('Luganda voices',
+        '<p class="sub">Say the line, or choose a recording, and write the exact Luganda. Listen uses that recording when the words match. A whole line wins. Single words are joined. The phone voice is only used for words you have not given it.</p>'
+        + '<label for="lgVoiceText">The Luganda, exactly as spoken</label>'
+        + '<textarea id="lgVoiceText" rows="3" maxlength="380" style="width:100%;box-sizing:border-box;"></textarea>'
+        + '<div class="row" style="margin-top:8px;">'
+        + '<button type="button" class="ghost" id="lgVoiceRec">Record</button>'
+        + '<label class="ghost" style="display:inline-flex;align-items:center;cursor:pointer;">Choose audio<input id="lgVoiceFile" type="file" accept="audio/*,.mp3,.m4a,.wav,.ogg,.webm" style="display:none;" /></label>'
+        + '<button type="button" class="primary" id="lgVoiceSave">Save into Luganda</button>'
+        + '</div>'
+        + '<p class="msg" id="lgVoiceMsg"></p>'
+        + '<div id="lgVoiceList"><p class="sub">Loading…</p></div>');
+      const db = adminDb();
+      let pending = '';
+      let recording = null;
+      function setVoiceMsg(text, ok) {
+        const m = $('lgVoiceMsg');
+        if (!m) return;
+        m.textContent = text || '';
+        m.className = 'msg' + (ok ? ' ok' : '');
+      }
+      function readFile(file) {
+        return new Promise(function (resolve, reject) {
+          const reader = new FileReader();
+          reader.onload = function () { resolve(String(reader.result || '')); };
+          reader.onerror = function () { reject(new Error('Could not read that audio')); };
+          reader.readAsDataURL(file);
+        });
+      }
+      const file = $('lgVoiceFile');
+      if (file) file.onchange = async function () {
+        const f = file.files && file.files[0];
+        if (!f) return;
+        if (f.size > 480000) { setVoiceMsg('Keep a clip under about 20 seconds.'); return; }
+        try {
+          pending = await readFile(f);
+          setVoiceMsg('Audio ready. Save it with the Luganda text.', true);
+        } catch (e) { setVoiceMsg((e && e.message) || 'Could not read that audio'); }
+      };
+      const rec = $('lgVoiceRec');
+      if (rec) rec.onclick = async function () {
+        if (recording) {
+          try { recording.stop(); } catch (_) {}
+          return;
+        }
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          setVoiceMsg('This browser cannot record. Choose an audio file instead.');
+          return;
+        }
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const mime = (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported('audio/webm')) ? 'audio/webm' : '';
+          const mr = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+          const bits = [];
+          mr.ondataavailable = function (ev) { if (ev.data && ev.data.size) bits.push(ev.data); };
+          mr.onstop = async function () {
+            stream.getTracks().forEach(function (t) { try { t.stop(); } catch (_) {} });
+            recording = null;
+            rec.textContent = 'Record';
+            const blob = new Blob(bits, { type: mr.mimeType || 'audio/webm' });
+            if (blob.size < 800) { setVoiceMsg('That recording was empty.'); return; }
+            if (blob.size > 480000) { setVoiceMsg('Keep a clip under about 20 seconds.'); return; }
+            try {
+              pending = await readFile(blob);
+              setVoiceMsg('Recorded. Save it with the Luganda text.', true);
+            } catch (e) { setVoiceMsg((e && e.message) || 'Could not keep that recording'); }
+          };
+          recording = mr;
+          mr.start();
+          rec.textContent = 'Stop';
+          setVoiceMsg('Recording. Tap Stop when the line is finished.');
+          setTimeout(function () { if (recording === mr && mr.state === 'recording') mr.stop(); }, 20000);
+        } catch (_) { setVoiceMsg('The microphone was not allowed.'); }
+      };
+      function paint(rows) {
+        const list = $('lgVoiceList');
+        if (!list) return;
+        if (!rows.length) {
+          list.innerHTML = '<p class="sub">No Luganda yet. The first recording you save is the one Listen will prefer.</p>';
+          return;
+        }
+        list.innerHTML = '<p class="sub">' + rows.length + ' recording' + (rows.length === 1 ? '' : 's') + ' wired into Listen.</p>'
+          + rows.map(function (row) {
+            return '<div class="flag-row" style="align-items:center;">'
+              + '<span style="flex:1;">' + escapeHtml(row.text) + '</span>'
+              + '<button type="button" class="ghost lg-voice-play" data-id="' + escapeHtml(row.id) + '">Play</button>'
+              + '<button type="button" class="ghost lg-voice-del" data-id="' + escapeHtml(row.id) + '">Remove</button>'
+              + '</div>';
+          }).join('');
+        list.querySelectorAll('.lg-voice-play').forEach(function (btn) {
+          btn.onclick = function () {
+            const row = rows.filter(function (r) { return r.id === btn.getAttribute('data-id'); })[0];
+            if (!row || !row.audio) return;
+            const audio = new Audio(row.audio);
+            audio.play().catch(function () { setVoiceMsg('Could not play that clip.'); });
+          };
+        });
+        list.querySelectorAll('.lg-voice-del').forEach(function (btn) {
+          btn.onclick = async function () {
+            if (!db) return;
+            try {
+              await db.collection('lgVoice').doc(btn.getAttribute('data-id')).delete();
+              toast('Removed');
+              load();
+            } catch (e) { setVoiceMsg((e && e.message) || 'Could not remove it'); }
+          };
+        });
+      }
+      async function load() {
+        if (!db) { paint([]); return; }
+        try {
+          const snap = await db.collection('lgVoice').limit(400).get();
+          const rows = [];
+          snap.forEach(function (doc) {
+            const d = doc.data() || {};
+            rows.push({ id: doc.id, text: d.text || '', audio: d.audio || '' });
+          });
+          rows.sort(function (a, b) { return String(a.text).localeCompare(String(b.text)); });
+          paint(rows);
+        } catch (e) {
+          const list = $('lgVoiceList');
+          if (list) list.innerHTML = '<p class="sub">Could not read the recordings. Publish firestore.rules so this desk can store Luganda.</p>';
+        }
+      }
+      const save = $('lgVoiceSave');
+      if (save) save.onclick = async function () {
+        const text = (($('lgVoiceText') && $('lgVoiceText').value) || '').trim();
+        if (!text) { setVoiceMsg('Write the Luganda that was spoken.'); return; }
+        if (!pending) { setVoiceMsg('Record or choose the audio first.'); return; }
+        if (!db || !currentUser) { setVoiceMsg('Sign in on this desk first.'); return; }
+        const norm = text.toLowerCase().replace(/[^a-z'\s]/g, ' ').replace(/\s+/g, ' ').trim();
+        try {
+          await db.collection('lgVoice').add({
+            text: text,
+            norm: norm,
+            audio: pending,
+            at: Date.now(),
+            by: currentUser.uid,
+          });
+          pending = '';
+          if ($('lgVoiceText')) $('lgVoiceText').value = '';
+          if (file) file.value = '';
+          setVoiceMsg('Saved. Listen will use it.', true);
+          load();
+        } catch (e) { setVoiceMsg((e && e.message) || 'Could not save. Publish firestore.rules.'); }
+      };
+      load();
       return;
     }
 

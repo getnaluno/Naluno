@@ -85,13 +85,17 @@
     return out;
   }
 
-  function play(audio, alive) {
+  function play(audio, alive, male) {
     return new Promise(function (resolve) {
       var samples = audio && audio.samples;
       if (!samples || !samples.length) { resolve(); return; }
       var context = ac();
-      var buf = context.createBuffer(1, samples.length, audio.rate || 24000);
+      var rate = audio.rate || 24000;
       var mono = samples instanceof Float32Array ? samples : new Float32Array(samples);
+      if (root.NalunoVoiceMaster && typeof NalunoVoiceMaster.master === 'function') {
+        mono = NalunoVoiceMaster.master(mono, rate, !!male);
+      }
+      var buf = context.createBuffer(1, mono.length, rate);
       buf.copyToChannel(mono, 0);
       var src = context.createBufferSource();
       src.buffer = buf;
@@ -111,9 +115,14 @@
   function speak(text, opts) {
     opts = opts || {};
     var alive = opts.alive || function () { return true; };
-    var voice = VOICE[opts.voice] || VOICE.female;
+    var male = opts.voice === 'male';
+    /* Jasper is not used. The male voice is the clean female take,
+       lowered four semitones and warmed, so the length stays the same. */
+    var voice = 'Bella';
     var toPhones = typeof opts.phonemes === 'function' ? opts.phonemes : null;
-    var speed = typeof opts.speed === 'number' ? opts.speed : (toPhones ? 0.88 : 1.05);
+    /* voices/kitten/config.json multiplies this by 0.8.
+       1.25 lands at 1.0: not the 0.7 crawl, and not a rushed read. */
+    var speed = typeof opts.speed === 'number' ? opts.speed : 1.25;
     var bits = sentences(text);
     if (!bits.length) return Promise.resolve(false);
     prime();
@@ -145,7 +154,7 @@
           heard = true;
           next = (i + 1 < bits.length) ? say(bits[i + 1], voice, speed, myJob, phonesFor(bits[i + 1])) : null;
           i += 1;
-          return play(audio, function () { return alive() && myJob === job; }).then(function () {
+          return play(audio, function () { return alive() && myJob === job; }, male).then(function () {
             if (!alive() || myJob !== job) return true;
             if (!next) return true;
             return step();

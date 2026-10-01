@@ -120,13 +120,25 @@ async function bspaceSpeakWriting(text, lang, btn){
     ? ((typeof NalunoLgSpeak.phones === 'function') ? NalunoLgSpeak.phones : NalunoLgSpeak.ipa)
     : null;
   const alive = function(){ return token === bspaceSpeakToken; };
+  if(luganda && window.NalunoLgEar && typeof NalunoLgEar.plan === 'function'){
+    const ready = NalunoLgEar.plan(src);
+    if(ready){
+      if(btn) btn.textContent = 'Stop';
+      let played = false;
+      try{ played = await NalunoLgEar.play(ready, alive); }catch(_){ played = false; }
+      if(!alive()) return;
+      if(played){
+        if(btn){ btn.removeAttribute('data-on'); btn.textContent = 'Listen'; }
+        return;
+      }
+    }
+  }
   if(window.NalunoVoices && typeof NalunoVoices.speak === 'function'){
     try{ NalunoVoices.prime(); }catch(_){}
     let played = false;
     try{
       played = await NalunoVoices.speak(src, {
         voice: bspaceListenVoice(),
-        speed: luganda ? 0.88 : undefined,
         phonemes: toPhones ? function(bit){ return toPhones(bit); } : undefined,
         alive: alive,
         onready: function(){
