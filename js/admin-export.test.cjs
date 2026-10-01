@@ -1,26 +1,25 @@
 const assert = require('assert');
 const Exp = require('./admin-export.js');
 
-const roles = [['overview', 'Overview'], ['ads', 'Ads'], ['export', 'Export'], ['luganda', 'Luganda']];
-const list = Exp.sections(roles);
-assert.strictEqual(list.length, 3);
-assert.ok(list.every(function (p) { return p[0] !== 'export'; }));
+const roles = [['overview', 'Overview'], ['ads', 'Ads'], ['export', 'Export']];
+assert.strictEqual(Exp.sections(roles).length, 2);
 
 const from = Date.parse('2026-10-01T00:00:00Z');
 const to = Date.parse('2026-10-02T23:59:59Z');
-const lines = Exp.linesFor('ads', {
+const tables = Exp.tablesFor('ads', {
   ads: { list: [
-    { name: 'Keep', createdAt: Date.parse('2026-10-01T12:00:00Z'), status: 'live' },
-    { name: 'Drop', createdAt: Date.parse('2026-01-01T12:00:00Z'), status: 'old' },
+    { name: 'Keep', status: 'live', impressions: 3, clicks: 1, createdAt: Date.parse('2026-10-01T12:00:00Z'), fcmToken: 'secret', crv: 'P-256' },
+    { name: 'Drop', status: 'old', createdAt: Date.parse('2026-01-01T12:00:00Z') },
   ] },
 }, from, to);
-assert.ok(lines.some(function (l) { return l.indexOf('Keep') >= 0; }));
-assert.ok(!lines.some(function (l) { return l.indexOf('Drop') >= 0; }));
-assert.ok(lines[0].indexOf('Naluno') >= 0);
-
-const file = Exp.pdf('Ads', lines);
+assert.strictEqual(tables[0].headers.join('|'), 'Name|Status|Impressions|Clicks');
+assert.strictEqual(tables[0].rows.length, 1);
+assert.strictEqual(tables[0].rows[0][0], 'Keep');
+const file = Exp.pdf('Ads', tables, '2026-10-01 to 2026-10-02');
 assert.ok(file.indexOf('%PDF-1.4') === 0);
 assert.ok(file.indexOf('NALUNO') > 0);
-assert.ok(file.indexOf('%%EOF') > 0);
-
+assert.ok(file.indexOf('Keep') > 0);
+assert.ok(file.indexOf('Drop') < 0);
+assert.ok(file.indexOf('secret') < 0);
+assert.ok(file.indexOf('P-256') < 0);
 console.log('admin export ok');

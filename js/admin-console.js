@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261001g';
+  const BUILD = '20261001h';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -4882,8 +4882,9 @@
         const from = Date.parse(fromVal + 'T00:00:00');
         const to = Date.parse(toVal + 'T23:59:59');
         if (!isFinite(from) || !isFinite(to) || to < from) { if (msg) msg.textContent = 'Choose a from date and a to date.'; return; }
-        const lines = Exp.linesFor(picked, d || {}, from, to);
-        const file = Exp.pdf(pickedName, lines);
+        const tables = Exp.tablesFor(picked, d || {}, from, to);
+        const period = fromVal + ' to ' + toVal;
+        const file = Exp.pdf(pickedName, tables, period);
         downloadText('naluno-' + picked + '-' + fromVal + '-to-' + toVal + '.pdf', 'application/pdf', file);
         try { await writeAudit('export-download', pickedName, fromVal + ' to ' + toVal); } catch (_) {}
         if (msg) msg.textContent = 'Downloaded. Audit has the record.';

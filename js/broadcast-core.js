@@ -979,6 +979,9 @@ async function openBroadcastChannel(key){
     const handle = String(data.number || raw).replace(/^@+/, '');
     if(title) title.textContent = name + ' · Broadcast';
     if(aboutEl) aboutEl.textContent = data.broadcastAbout || 'No description yet.';
+    const mine = document.getElementById('airMine');
+    if(mine) mine.hidden = true;
+    if(home) home.hidden = false;
     const share = document.getElementById('airHomeShare');
     if(share) share.onclick = function(){ airShare(handle, name + ' on Naluno'); };
     window.__airChannelUid = uid;
@@ -1053,7 +1056,9 @@ async function openBroadcastChannel(key){
     leave.onclick = function(){
       window.__airChannelUid = '';
       const home = document.getElementById('airHome');
+      const mine = document.getElementById('airMine');
       if(home) home.hidden = true;
+      if(mine) mine.hidden = false;
       if(typeof renderBroadcastTab === 'function'){ try{ renderBroadcastTab(); }catch(_){} }
     };
   }
