@@ -53,6 +53,22 @@ service cloud.firestore {
       let newV = numOf(request.resource.data, field);
       return newV >= oldV && (newV - oldV) <= maxDelta;
     }
+    /* Attention on a day must come from a visit, an app open, or a
+       continuation of a session that already started. Milliseconds alone
+       are not a source. */
+    function dayHasAttentionSource() {
+      return numOf(request.resource.data, 'visits') > 0
+        || numOf(request.resource.data, 'appOpens') > 0
+        || numOf(request.resource.data, 'openApp') > 0
+        || numOf(request.resource.data, 'continuations') > 0;
+    }
+    function contIdsOk(maxGrow) {
+      return !('contIds' in request.resource.data)
+        || (request.resource.data.contIds is list
+            && request.resource.data.contIds.size() > 0
+            && request.resource.data.contIds.size() < 500
+            && request.resource.data.contIds.size() <= maxGrow);
+    }
     /* Up by at most one, or down (the creator's own delete adjustment). */
     function upByAtMostOne(field) {
       return numOf(request.resource.data, field) <= numOf(resource.data, field) + 1;
@@ -1190,7 +1206,7 @@ service cloud.firestore {
     match /siteDays/{day} {
       allow read: if isOperator();
       allow create: if day.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
-        && request.resource.data.keys().hasOnly(['updatedAt', 'visits', 'uniques', 'ms', 'openApp', 'appOpens', 'contact', 'tune', 'invest', 'engaged', 'bots', 'selfs', 'countries', 'devices', 'refs', 'paths', 'sources'])
+        && request.resource.data.keys().hasOnly(['updatedAt', 'visits', 'uniques', 'ms', 'openApp', 'appOpens', 'contact', 'tune', 'invest', 'engaged', 'continuations', 'contIds', 'bots', 'selfs', 'countries', 'devices', 'refs', 'paths', 'sources'])
         && numOf(request.resource.data, 'visits') <= 1
         && numOf(request.resource.data, 'uniques') <= 1
         && numOf(request.resource.data, 'openApp') <= 1
@@ -1198,7 +1214,10 @@ service cloud.firestore {
         && numOf(request.resource.data, 'contact') <= 1
         && numOf(request.resource.data, 'tune') <= 1
         && numOf(request.resource.data, 'invest') <= 1
-        && numOf(request.resource.data, 'engaged') <= 1;
+        && numOf(request.resource.data, 'engaged') <= 1
+        && numOf(request.resource.data, 'continuations') <= 1
+        && contIdsOk(1)
+        && (numOf(request.resource.data, 'ms') == 0 || dayHasAttentionSource());
       allow update: if day.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
         && request.resource.data.keys().size() < 80
         && bumpedAtMost('visits', 1)
@@ -1209,7 +1228,10 @@ service cloud.firestore {
         && bumpedAtMost('tune', 1)
         && bumpedAtMost('invest', 1)
         && bumpedAtMost('engaged', 1)
-        && numOf(request.resource.data, 'ms') >= numOf(resource.data, 'ms');
+        && bumpedAtMost('continuations', 1)
+        && contIdsOk((('contIds' in resource.data && resource.data.contIds is list) ? resource.data.contIds.size() : 0) + 1)
+        && numOf(request.resource.data, 'ms') >= numOf(resource.data, 'ms')
+        && (numOf(request.resource.data, 'ms') == numOf(resource.data, 'ms') || dayHasAttentionSource());
       allow delete: if isOperator();
     }
 
@@ -1242,6 +1264,24 @@ service cloud.firestore {
             && request.resource.data.reason is string
             && request.resource.data.reason.size() > 7
             && request.resource.data.reason.size() < 2001);
+      allow update, delete: if false;
+    }
+
+    /* Counts and names only. A message body is not a field that can be written. */
+    match /traffic/{id} {
+      allow create: if isSignedIn()
+        && request.resource.data.actorUid == request.auth.uid
+        && request.resource.data.kind in ['call', 'video', 'message']
+        && request.resource.data.keys().hasOnly(['kind', 'ok', 'actorUid', 'peerUid', 'actorName', 'peerName', 'seconds', 'at', 'status', 'title'])
+        && request.resource.data.actorName is string
+        && request.resource.data.actorName.size() < 80
+        && request.resource.data.at is number;
+      allow read: if isOperator() || (
+        isSignedIn() && (
+          resource.data.actorUid == request.auth.uid
+          || resource.data.peerUid == request.auth.uid
+        )
+      );
       allow update, delete: if false;
     }
 
