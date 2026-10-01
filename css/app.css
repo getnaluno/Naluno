@@ -1021,7 +1021,7 @@ body.naluno-strand-open .bcast-sticky{
   max-height: var(--bcast-stage-h, 100svh);
   min-height: 0;
   overflow: hidden;
-  padding: 8px 14px calc(18px + 66px);
+  padding: 4px 14px 6px;
   scroll-snap-align: start;
   scroll-snap-stop: always;
   box-sizing: border-box;
@@ -1035,10 +1035,28 @@ body.naluno-strand-open .bcast-sticky{
   min-height: 0;
   overflow: hidden;
 }
+#bcastForYouHome > .signal-head,
+#bcastForYouHome > .air-word,
+#bcastForYouHome > .air-make,
+#bcastForYouHome > #bcastScrollCue{
+  flex: 0 0 auto;
+}
 #bcastForYouHome > .bcast-strip{
-  flex: 1 1 120px;
-  min-height: 88px;
-  overflow: hidden;
+  flex: 0 0 auto;
+  min-height: 0;
+  padding-bottom: 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+#bcastForYouHome > #airMine,
+#bcastForYouHome > #airHome,
+#bcastForYouHome > #bcastScheduleDock{
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+#bcastForYouHome > #bcastScrollCue{
+  margin-top: auto;
 }
 body.naluno-bcast-mine #bcastForYouHome{ display:none !important; }
 body.naluno-bcast-mine .bcast-feed-head{
@@ -1100,7 +1118,7 @@ body.naluno-bcast-toga .toga-strip-hint{ display:none; }
   font-size:28px;
   letter-spacing:.02em;
   line-height:1;
-  margin:10px 0 8px;
+  margin:2px 0 8px;
   flex: 0 0 auto;
 }
 .air-word span{
@@ -1181,8 +1199,8 @@ body.naluno-bcast-toga .toga-strip-hint{ display:none; }
 .air-desc-btn:active, .air-share-btn:active{ border-color:var(--mint); color:var(--mint); }
 .bcast-scroll-cue{
   flex: 0 0 auto;
-  width:100%; margin:0; padding:4px 8px 0;
-  min-height:0;
+  width:100%; margin:0; padding:2px 8px 0;
+  min-height:52px;
   border:none;
   background:transparent;
   color:var(--text);
