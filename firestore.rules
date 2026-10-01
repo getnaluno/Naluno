@@ -1285,6 +1285,27 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    /* Luganda recordings the operator feeds. Listen uses these
+       instead of the English phone voice when the line is covered.
+       The clip is short. The text is the words that were spoken. */
+    match /lgVoice/{id} {
+      allow read: if isSignedIn();
+      allow create: if isOperator()
+        && request.resource.data.text is string
+        && request.resource.data.text.size() > 0
+        && request.resource.data.text.size() < 400
+        && request.resource.data.norm is string
+        && request.resource.data.norm.size() < 400
+        && request.resource.data.audio is string
+        && request.resource.data.audio.size() > 32
+        && request.resource.data.audio.size() < 700000
+        && request.resource.data.at is number
+        && request.resource.data.by == request.auth.uid
+        && request.resource.data.keys().hasOnly(['text', 'norm', 'audio', 'at', 'by']);
+      allow delete: if isOperator();
+      allow update: if false;
+    }
+
     /* One row per person per day. The owner writes only their own day.
        The desk reads the set to see who came back. */
     match /presenceDays/{id} {
