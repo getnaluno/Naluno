@@ -131,9 +131,9 @@
 })();
 </script>
 <link rel="apple-touch-startup-image" href="/splash-empty.png">
-<link rel="stylesheet" href="/css/app.css?v=20260930a" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/css/app.css?v=20261001e" media="print" onload="this.media='all'">
 <script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="/css/app.css?v=20260930a"></noscript>
+<noscript><link rel="stylesheet" href="/css/app.css?v=20261001e"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -429,28 +429,35 @@ window.__nalunoEntryT0 = Date.now();
       <div class="bcast-strip" id="myBcastStrip"></div>
 
       <!-- BROADCAST: permanent -->
-      <div class="section-label signal-head-label" style="margin-top:18px;">Broadcast <span>stays until you delete it</span></div>
-      <div style="display:flex; gap:8px; margin:0 0 10px; align-items:center; flex-wrap:wrap;">
-        <button type="button" id="newBroadcastBtn" class="join-btn" style="margin:0; flex:1; min-width:120px; padding:12px 14px; font-size:12px; letter-spacing:.04em; background:rgba(124,255,178,.15); color:var(--mint); border:1px solid rgba(124,255,178,.35);">Video</button>
-        <button type="button" id="broadcastGoLiveBtn" class="join-btn" style="margin:0; flex:1; min-width:100px; padding:12px 14px; font-size:12px; letter-spacing:.04em; background:rgba(255,84,112,.12); color:#ff8a9a; border:1px solid rgba(255,84,112,.4);">Go live</button>
-        <button type="button" id="broadcastWriteBtn" class="join-btn" style="margin:0; flex:1; min-width:100px; padding:12px 14px; font-size:12px; letter-spacing:.04em; background:rgba(124,255,178,.12); color:var(--mint); border:1px solid rgba(124,255,178,.4);">Write</button>
+      <div class="section-label signal-head-label air-word" style="margin-top:18px;">Broadcast <span>stays until you delete it</span></div>
+      <div class="air-make">
+        <button type="button" id="newBroadcastBtn" class="join-btn air-make-main">Video</button>
+        <button type="button" id="broadcastGoLiveBtn" class="join-btn air-make-side">Go live</button>
+        <button type="button" id="broadcastWriteBtn" class="join-btn air-make-side">Write</button>
       </div>
-      <div id="airMine" style="margin:0 0 12px;">
-        <textarea id="airAbout" maxlength="600" rows="3" placeholder="What this Broadcast is, as a whole — not one video. This is what people read on your Broadcast link." style="width:100%;box-sizing:border-box;padding:12px 14px;border-radius:14px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:14px;line-height:1.45;font-family:inherit;resize:vertical;"></textarea>
-        <div style="display:flex;gap:8px;margin-top:8px;">
-          <button type="button" id="airSaveBtn" class="join-btn" style="margin:0;flex:1;padding:12px 10px;font-size:12px;">Save description</button>
-          <button type="button" id="airShareBtn" class="join-btn" style="margin:0;flex:1;padding:12px 10px;font-size:12px;background:rgba(124,255,178,.15);color:var(--mint);border:1px solid rgba(124,255,178,.35);">Share Broadcast</button>
+      <div id="airMine" class="air-mine">
+        <p id="airShown" class="air-shown" hidden></p>
+        <div id="airEditor" class="air-editor" hidden>
+          <textarea id="airAbout" maxlength="600" rows="3" placeholder="What this Broadcast is, as a whole — not one video. This is what people read on your Broadcast link."></textarea>
+          <button type="button" id="airSaveBtn" class="join-btn air-save-btn">Save</button>
+        </div>
+        <div class="air-actions">
+          <button type="button" id="airEditBtn" class="air-desc-btn" aria-expanded="false">Broadcast description</button>
+          <button type="button" id="airShareBtn" class="air-share-btn">Share Broadcast</button>
         </div>
       </div>
       <div id="airHome" hidden style="margin:0 0 14px;padding:12px 14px;border:1px solid var(--line);border-radius:16px;background:var(--surface);">
         <div id="airHomeTitle" style="font-weight:700;"></div>
         <div id="airHomeAbout" style="color:var(--text-dim);font-size:13.5px;line-height:1.45;margin:6px 0 10px;white-space:pre-wrap;"></div>
-        <button type="button" id="airHomeShare" class="join-btn" style="margin:0;">Share this Broadcast</button>
+        <div style="display:flex;gap:8px;">
+          <button type="button" id="airHomeShare" class="join-btn" style="margin:0;flex:1;">Share this Broadcast</button>
+          <button type="button" id="airHomeLeave" class="join-btn" style="margin:0;flex:1;background:transparent;color:var(--text);border:1px solid var(--line);">For You</button>
+        </div>
       </div>
       <div id="bcastScheduleDock" class="bcast-schedule-dock" hidden></div>
       <button type="button" class="bcast-scroll-cue" id="bcastScrollCue">
-        <span class="bcast-scroll-cue-kicker">Swipe up</span>
-        <span class="bcast-scroll-cue-copy">Broadcasts play full screen below</span>
+        <span class="bcast-scroll-cue-kicker">Under this</span>
+        <span class="bcast-scroll-cue-copy">Swipe up</span>
         <span class="bcast-scroll-cue-chevron" aria-hidden="true">▾</span>
       </button>
       </div>
@@ -1036,10 +1043,6 @@ window.__nalunoEntryT0 = Date.now();
       <input id="bwriteTitle" maxlength="120" placeholder="Title" style="width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:14px;font-family:inherit;" />
       <input id="bwriteChTitle" maxlength="80" placeholder="Chapter 1 title" hidden style="width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:14px;font-family:inherit;" />
       <textarea id="bwriteBody" maxlength="20000" rows="10" placeholder="Write the piece" style="width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:15px;line-height:1.45;font-family:inherit;resize:vertical;"></textarea>
-      <div style="display:flex;gap:8px;margin:0 0 10px;">
-        <button type="button" id="bwriteToLg" class="join-btn" style="margin:0;flex:1;background:transparent;color:var(--text);border:1px solid var(--line);">Write in Luganda</button>
-        <button type="button" id="bwriteSpeak" class="join-btn" style="margin:0;flex:1;background:transparent;color:var(--text);border:1px solid var(--line);">Hear it</button>
-      </div>
       <div id="bwriteChapters" hidden>
         <div id="bwriteMoreChapters"></div>
         <button type="button" id="bwriteAddChapter" class="join-btn" style="margin:0 0 10px;background:transparent;color:var(--text);border:1px solid var(--line);">Add a chapter</button>
@@ -1799,9 +1802,9 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/band-list.js?v=20260929b"></script>
 <script type="module" src="/workers/economy/safety-boot.mjs?v=20260923c"></script>
 <script src="/js/signal-core.js?v=20260928d"></script>
-<script src="/js/broadcast-core.js?v=20261001b"></script>
+<script src="/js/broadcast-core.js?v=20261001e"></script>
 <script src="/js/broadcast-upload.js?v=20260908d"></script>
-<script src="/js/broadcast-composer.js?v=20261001b"></script>
+<script src="/js/broadcast-composer.js?v=20261001e"></script>
 <script src="/js/screen.js?v=20260921k"></script>
 <!-- nudenet.js MUST load after screen.js: it upgrades runNalunoScreen() in place
      and keeps the heuristic as a hold-only fallback. Replaces nsfw-model.js. -->
@@ -1828,12 +1831,12 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/room-threads.js?v=20260925g"></script>
 <script src="/js/discover-engine.js?v=20260928d"></script>
 <script src="/js/discover.js?v=20260929h"></script>
-<script src="/js/signal-ui.js?v=20260929g"></script>
+<script src="/js/signal-ui.js?v=20261001e"></script>
 <script src="/js/compat-lock.js?v=20260908d"></script>
 <script src="/js/known.js?v=20260929h"></script>
-<script src="/js/lg-speak.js?v=20261001b"></script>
-<script src="/js/naluno-voices.js?v=20260930c"></script>
-<script src="/js/broadcast-space.js?v=20260930c"></script>
+<script src="/js/lg-speak.js?v=20261001e"></script>
+<script src="/js/naluno-voices.js?v=20261001e"></script>
+<script src="/js/broadcast-space.js?v=20261001e"></script>
 <script src="/js/linkify.js?v=20260930a"></script>
 <script src="/js/ads.js?v=20260929h"></script>
 <script src="/js/media-vault.js?v=20260908d"></script>
@@ -1857,18 +1860,18 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/camera.js?v=20260929f"></script>
 <script src="/js/call-filters.js?v=20260929d"></script>
 <script src="/js/push-receipt.js?v=20260927d"></script>
-<script src="/js/calls.js?v=20261001b"></script>
+<script src="/js/calls.js?v=20261001e"></script>
 <script src="/js/sfu-live.js?v=20260925c"></script>
 <script src="/js/broadcast-live.js?v=20260929g"></script>
 <script src="/js/live-preview.js?v=20260929g"></script>
 <script src="/js/band-room.js?v=20260929g"></script>
 <script src="/js/traffic.js?v=20261001b"></script>
-<script src="/js/pwa.js?v=20261001b"></script>
+<script src="/js/pwa.js?v=20261001e"></script>
 <script src="/js/gestures.js?v=20260929f"></script>
 <script src="/js/spark-engine.js?v=20260926c"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>
 <script src="/js/spark-lg.js?v=20261001b"></script>
-<script src="/js/spark-page.js?v=20261001b"></script>
+<script src="/js/spark-page.js?v=20261001e"></script>
 <script src="/js/qrcode.js?v=20260928d"></script>
 <script src="/js/spark.js?v=20260928d"></script>
 <!-- /NALUNO_MODULES -->
