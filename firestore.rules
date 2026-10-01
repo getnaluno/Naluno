@@ -1306,6 +1306,19 @@ service cloud.firestore {
       allow update: if false;
     }
 
+    /* The export gate. The superadmin writes the tab password and
+       each selected admin's own password. An admin can read only
+       their own password record, to check what they typed. */
+    match /deskExport/{id} {
+      allow read: if isOperator();
+      allow create, update, delete: if isSuper();
+    }
+    match /deskExportPasses/{uid} {
+      allow get: if isSuper() || (isSignedIn() && request.auth.uid == uid);
+      allow list: if isSuper();
+      allow create, update, delete: if isSuper();
+    }
+
     /* One row per person per day. The owner writes only their own day.
        The desk reads the set to see who came back. */
     match /presenceDays/{id} {
