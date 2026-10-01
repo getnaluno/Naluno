@@ -1017,11 +1017,11 @@ body.naluno-strand-open .bcast-sticky{
   touch-action: pan-x pan-y;
 }
 .bcast-feed-head{
-  height: var(--bcast-stage-h, 100svh);
-  max-height: var(--bcast-stage-h, 100svh);
+  height: 100%;
+  max-height: 100%;
   min-height: 0;
   overflow: hidden;
-  padding: 4px 14px 6px;
+  padding: 4px 14px 4px;
   scroll-snap-align: start;
   scroll-snap-stop: always;
   box-sizing: border-box;
@@ -1056,7 +1056,10 @@ body.naluno-strand-open .bcast-sticky{
   overflow: auto;
 }
 #bcastForYouHome > #bcastScrollCue{
-  margin-top: auto;
+  margin-top: 0;
+  flex: 1 1 auto;
+  min-height: 84px;
+  justify-content: center;
 }
 body.naluno-bcast-mine #bcastForYouHome{ display:none !important; }
 body.naluno-bcast-mine .bcast-feed-head{
@@ -1149,6 +1152,10 @@ body.naluno-bcast-toga .toga-strip-hint{ display:none; }
   text-transform:uppercase; background:rgba(124,255,178,.12); color:var(--mint);
   border:1px solid rgba(124,255,178,.4);
 }
+.air-channel{ flex: 0 0 auto; margin: 0 0 8px; }
+.air-channel[hidden]{ display: none !important; }
+.air-channel-title{ font-weight: 700; margin: 0 0 4px; }
+#airMine[hidden]{ display: none !important; }
 .air-mine{
   margin:0;
   flex: 0 1 auto;
@@ -1212,10 +1219,10 @@ body.naluno-bcast-toga .toga-strip-hint{ display:none; }
   text-transform:uppercase; color:var(--mint);
 }
 .bcast-scroll-cue-copy{
-  font-family:var(--font-futuristic); font-size:22px; letter-spacing:.06em; color:var(--text);
+  font-family:var(--font-futuristic); font-size:26px; letter-spacing:.06em; color:var(--text);
 }
 .bcast-scroll-cue-chevron{
-  font-size:28px; color:var(--mint); line-height:1;
+  font-size:34px; color:var(--mint); line-height:1;
   animation: cueBounce 1.6s ease-in-out infinite;
 }
 @keyframes cueBounce{
