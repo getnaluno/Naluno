@@ -933,9 +933,28 @@ async function airShare(handle, title){
 }
 function airPaintMine(){
   const box = document.getElementById('airAbout');
-  if(!box || box.dataset.touched === '1') return;
+  const shown = document.getElementById('airShown');
+  const editor = document.getElementById('airEditor');
   const about = (typeof currentProfile !== 'undefined' && currentProfile && currentProfile.broadcastAbout) || '';
-  if(document.activeElement !== box) box.value = about;
+  const editing = !!(editor && !editor.hidden);
+  if(box && box.dataset.touched !== '1' && document.activeElement !== box) box.value = about;
+  if(shown){
+    const text = String(about || '').trim();
+    shown.textContent = text;
+    shown.hidden = editing || !text;
+  }
+}
+function airEditorOpen(open){
+  const editor = document.getElementById('airEditor');
+  const edit = document.getElementById('airEditBtn');
+  const shown = document.getElementById('airShown');
+  if(editor) editor.hidden = !open;
+  if(edit){
+    edit.hidden = !!open;
+    edit.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+  if(open && shown) shown.hidden = true;
+  if(!open) airPaintMine();
 }
 async function openBroadcastChannel(key){
   const raw = String(key || '').replace(/^@+/, '').trim();
@@ -962,6 +981,7 @@ async function openBroadcastChannel(key){
     if(aboutEl) aboutEl.textContent = data.broadcastAbout || 'No description yet.';
     const share = document.getElementById('airHomeShare');
     if(share) share.onclick = function(){ airShare(handle, name + ' on Naluno'); };
+    window.__airChannelUid = uid;
     try{
       const snap = await fbDb.collection('broadcasts').where('creatorUid', '==', uid).limit(40).get();
       snap.docs.forEach(function(doc){
@@ -971,7 +991,8 @@ async function openBroadcastChannel(key){
         }
       });
     }catch(_){}
-    if(typeof renderBroadcastFeed === 'function'){ try{ renderBroadcastFeed(); }catch(_){} }
+    if(typeof renderBroadcastTab === 'function'){ try{ renderBroadcastTab(); }catch(_){} }
+    else if(typeof renderBroadcastFeed === 'function'){ try{ renderBroadcastFeed(); }catch(_){} }
   }catch(_){
     if(typeof toast === 'function') toast('Could not open that Broadcast');
   }
@@ -980,10 +1001,22 @@ async function openBroadcastChannel(key){
   function go(){
     const save = document.getElementById('airSaveBtn');
     const share = document.getElementById('airShareBtn');
+    const edit = document.getElementById('airEditBtn');
     const box = document.getElementById('airAbout');
     if(box && !box.dataset.wired){
       box.dataset.wired = '1';
       box.addEventListener('input', function(){ box.dataset.touched = '1'; });
+    }
+    if(edit && !edit.dataset.wired){
+      edit.dataset.wired = '1';
+      edit.onclick = function(){
+        const editor = document.getElementById('airEditor');
+        const opening = !editor || editor.hidden;
+        if(!opening && box) box.dataset.touched = '0';
+        airPaintMine();
+        airEditorOpen(opening);
+        if(opening && box){ try{ box.focus(); }catch(_){} }
+      };
     }
     if(save && !save.dataset.wired){
       save.dataset.wired = '1';
@@ -997,6 +1030,8 @@ async function openBroadcastChannel(key){
           await fbDb.collection('users').doc(currentUser.uid).set({ broadcastAbout: text }, { merge: true });
           if(typeof currentProfile !== 'undefined' && currentProfile) currentProfile.broadcastAbout = text;
           if(box) box.dataset.touched = '0';
+          airEditorOpen(false);
+          airPaintMine();
           if(typeof toast === 'function') toast('Broadcast description saved');
         }catch(_){ if(typeof toast === 'function') toast('Could not save that'); }
       };
@@ -1011,6 +1046,16 @@ async function openBroadcastChannel(key){
       };
     }
     airPaintMine();
+  }
+  const leave = document.getElementById('airHomeLeave');
+  if(leave && !leave.dataset.wired){
+    leave.dataset.wired = '1';
+    leave.onclick = function(){
+      window.__airChannelUid = '';
+      const home = document.getElementById('airHome');
+      if(home) home.hidden = true;
+      if(typeof renderBroadcastTab === 'function'){ try{ renderBroadcastTab(); }catch(_){} }
+    };
   }
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go);
   else go();

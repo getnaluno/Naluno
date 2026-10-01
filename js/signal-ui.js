@@ -446,12 +446,15 @@ function renderBroadcastTab(){
       if(typeof broadcastIsPrivate === 'function' && broadcastIsPrivate(b)) return false;
       return true;
     });
+    if(window.__airChannelUid && bcastActiveView !== 'mine'){
+      list = list.filter(function(b){ return b && b.creatorUid === window.__airChannelUid; });
+    }
     /* This was `const list` above, so the reassignment threw and the catch
        hid it: the ranking never ran and the feed was always newest-first. */
-    if(bcastActiveView !== 'mine' && window.NalunoDiscover && typeof NalunoDiscover.order === 'function'){
+    if(bcastActiveView !== 'mine' && !window.__airChannelUid && window.NalunoDiscover && typeof NalunoDiscover.order === 'function'){
       try{ list = NalunoDiscover.order(list); }catch(_){}
     }
-    if(bcastActiveView !== 'mine'){
+    if(bcastActiveView !== 'mine' && !window.__airChannelUid){
       try{ list = nalunoFeedShuffle(list); }catch(_){}
     }
     if(typeof renderBroadcastEntryGrid === 'function'){

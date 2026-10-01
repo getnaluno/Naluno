@@ -972,41 +972,6 @@ if($('bwriteLater')){
     if(at) at.style.display = $('bwriteLater').checked ? 'block' : 'none';
   };
 }
-if($('bwriteToLg')){
-  $('bwriteToLg').onclick = async function(){
-    const body = $('bwriteBody');
-    const src = body ? String(body.value || '').trim() : '';
-    if(!src){ toast('Write the piece first'); return; }
-    const btn = $('bwriteToLg');
-    if(btn) btn.disabled = true;
-    try{
-      let out = '';
-      if(typeof sparkEngineTranslate === 'function') out = await sparkEngineTranslate(src, 'en', 'lg');
-      if(!out && window.NalunoLgBooks && typeof NalunoLgBooks.translate === 'function') out = NalunoLgBooks.translate(src, 'en', 'lg');
-      if(!out){ toast('No Luganda line for that yet — the book only replaces what it knows'); return; }
-      body.value = out;
-      toast('Written in Luganda');
-    }catch(_){
-      toast('Could not translate that');
-    }finally{
-      if(btn) btn.disabled = false;
-    }
-  };
-}
-if($('bwriteSpeak')){
-  $('bwriteSpeak').onclick = function(){
-    const src = ($('bwriteBody') && $('bwriteBody').value) || '';
-    if(!src.trim()){ toast('Nothing to hear'); return; }
-    if(typeof sparkSpeak === 'function'){ sparkSpeak(src, 'lg'); return; }
-    if(window.NalunoLgSpeak && window.speechSynthesis){
-      const u = new SpeechSynthesisUtterance(NalunoLgSpeak.speak(src));
-      u.lang = 'en-UG';
-      u.rate = 0.92;
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(u);
-    }
-  };
-}
 if($('bwritePublish')){
   $('bwritePublish').onclick = async function(){
     const title = (($('bwriteTitle') && $('bwriteTitle').value) || '').trim();

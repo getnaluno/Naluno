@@ -115,16 +115,19 @@ async function bspaceSpeakWriting(text, lang, btn){
   const token = bspaceSpeakToken + 1;
   bspaceSpeakToken = token;
   if(btn){ btn.setAttribute('data-on', '1'); btn.textContent = 'Preparing'; }
-  const spoken = (lang === 'lg' && window.NalunoLgSpeak && typeof NalunoLgSpeak.speak === 'function')
-    ? NalunoLgSpeak.speak(src)
-    : src;
+  const luganda = lang === 'lg' && window.NalunoLgSpeak && (typeof NalunoLgSpeak.phones === 'function' || typeof NalunoLgSpeak.ipa === 'function');
+  const toPhones = luganda
+    ? ((typeof NalunoLgSpeak.phones === 'function') ? NalunoLgSpeak.phones : NalunoLgSpeak.ipa)
+    : null;
   const alive = function(){ return token === bspaceSpeakToken; };
   if(window.NalunoVoices && typeof NalunoVoices.speak === 'function'){
     try{ NalunoVoices.prime(); }catch(_){}
     let played = false;
     try{
-      played = await NalunoVoices.speak(spoken, {
+      played = await NalunoVoices.speak(src, {
         voice: bspaceListenVoice(),
+        speed: luganda ? 0.88 : undefined,
+        phonemes: toPhones ? function(bit){ return toPhones(bit); } : undefined,
         alive: alive,
         onready: function(){
           if(alive() && btn) btn.textContent = 'Stop';

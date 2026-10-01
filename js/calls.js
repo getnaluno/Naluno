@@ -1343,7 +1343,7 @@ async function createPeerConnection(){
               pc._nalunoRelayTried = true;
               try{ pc.setConfiguration(fresh); }catch(_){}
               try{ pc.restartIce(); }catch(_){}
-            }, 3200);
+            }, 9000);
             return;
           }
           console.log('[call] TURN arrived before the SDP — upgrading ICE config');
@@ -1786,8 +1786,7 @@ function attachConnectionWatchdogs(pc){
       try{ ensureRemoteVideoPlaying(); }catch(_){}
       try{ scheduleFilteredUpgrade(pc); }catch(_){}
     }
-    if(s === 'failed' || s === 'disconnected'){
-      if(s === 'disconnected' && nalunoCallMediaUp(pc)) return;
+    if(s === 'failed'){
       nalunoScheduleCallFail(pc);
     }
   };

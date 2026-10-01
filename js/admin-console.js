@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261001a';
+  const BUILD = '20261001e';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -1225,6 +1225,16 @@
       return;
     }
     __pendingSnap = null;
+    /* Records keeps its date and the Day/Week button. New rows only
+       replace the numbers, as soon as the app writes them. */
+    if (__activeTab === 'records') {
+      try {
+        if (typeof window.__nalunoPaintRecords === 'function') {
+          window.__nalunoPaintRecords((__livePack && __livePack.traffic) || []);
+        }
+      } catch (_) {}
+      return;
+    }
     const kept = captureDeskState();
     try { renderTab(__activeTab, snap); } catch (_) {}
     restoreDeskState(kept);
@@ -1448,6 +1458,7 @@
     listenCol('signals', 400, '_signalsTop');
     listenCol('reservedHandles', 400, 'reservedHandles');
     listenCol('handleFlags', 200, 'handleFlags');
+    listenCol('traffic', 800, 'traffic', 'at');
     listenDoc('economyConfig', 'flags', 'flags');
     listenDoc('economyConfig', 'adRates', 'adRates');
     listenDoc('economyConfig', 'costRates', 'costRates');
@@ -4793,6 +4804,10 @@
         ]) + '<h3 style="margin:14px 0 6px;font-size:14px;">Who called whom</h3>' + who
           + '<p class="sub">Records only. The words of a message are not stored here.</p>';
       }
+      window.__nalunoPaintRecords = function (rows) {
+        if (Array.isArray(rows) && rows.length) cached = rows;
+        paint(cached);
+      };
       const db = adminDb();
       let cached = [];
       function loadRec() {
@@ -4816,6 +4831,8 @@
       });
       const date = $('recDate');
       if (date) date.onchange = function () { window.__recDate = date.value; paint(cached); };
+      const live = (typeof __livePack !== 'undefined' && __livePack && __livePack.traffic) || [];
+      if (live.length) { cached = live; paint(cached); }
       loadRec();
       return;
     }

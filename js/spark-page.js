@@ -181,17 +181,24 @@ function listenSparkRoom(){
 }
 
 function sparkSpeak(text, lang){
-  if(!text || !window.speechSynthesis) return;
+  if(!text) return;
+  try{ if(window.speechSynthesis) window.speechSynthesis.cancel(); }catch(_){}
+  const code = lang || sparkMyLang;
+  if(code === 'lg' && window.NalunoVoices && typeof NalunoVoices.speak === 'function' && window.NalunoLgSpeak){
+    try{ NalunoVoices.stop(); }catch(_){}
+    const toPhones = (typeof NalunoLgSpeak.phones === 'function') ? NalunoLgSpeak.phones : NalunoLgSpeak.ipa;
+    if(typeof toPhones !== 'function') return;
+    NalunoVoices.speak(text, {
+      speed: 0.88,
+      phonemes: function(bit){ return toPhones(bit); }
+    });
+    return;
+  }
+  if(code === 'lg' || !window.speechSynthesis) return;
   try{
-    window.speechSynthesis.cancel();
-    const code = lang || sparkMyLang;
-    let line = text;
-    if(code === 'lg' && window.NalunoLgSpeak && typeof NalunoLgSpeak.speak === 'function'){
-      line = NalunoLgSpeak.speak(text);
-    }
-    const u = new SpeechSynthesisUtterance(line);
-    u.lang = code === 'lg' ? 'en-UG' : sparkRecLang(code);
-    u.rate = code === 'lg' ? 0.92 : 1;
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = sparkRecLang(code);
+    u.rate = 1;
     window.speechSynthesis.speak(u);
   }catch(_){}
 }
