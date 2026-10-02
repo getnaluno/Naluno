@@ -9,6 +9,7 @@ import android.content.Intent;
 import android.media.AudioAttributes;
 import android.media.RingtoneManager;
 import android.net.Uri;
+import android.net.Uri;
 import android.os.Build;
 import android.os.PowerManager;
 
@@ -26,6 +27,20 @@ public class CallMessagingService extends FirebaseMessagingService {
   public static final String CHANNEL_ID = "naluno_incoming_calls";
   public static final int NOTIFICATION_ID = 44001;
   private static final String WAKE_LOCK_TAG = "naluno:incoming_call";
+
+  /** One shade entry per call. A constant id replaced the previous ring,
+   *  so a second call never sounded. */
+  public static int notificationIdFor(String callId) {
+    if (callId == null || callId.trim().isEmpty()) return NOTIFICATION_ID;
+    int h = 0;
+    String id = callId.trim();
+    for (int i = 0; i < id.length(); i++) {
+      h = 31 * h + id.charAt(i);
+    }
+    int n = 45000 + ((h & 0x7fffffff) % 10000);
+    if (n == NOTIFICATION_ID) n += 1;
+    return n;
+  }
 
   @Override
   public void onMessageReceived(RemoteMessage message) {
@@ -58,6 +73,9 @@ public class CallMessagingService extends FirebaseMessagingService {
       Intent activityIntent = new Intent(this, IncomingCallActivity.class);
       activityIntent.putExtra(IncomingCallActivity.EXTRA_CALL_ID, callId);
       activityIntent.putExtra(IncomingCallActivity.EXTRA_CALLER_NAME, callerName);
+      if (callId != null && !callId.isEmpty()) {
+        activityIntent.setData(Uri.parse("naluno://call/" + Uri.encode(callId)));
+      }
       activityIntent.addFlags(
         Intent.FLAG_ACTIVITY_NEW_TASK
           | Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -148,7 +166,10 @@ public class CallMessagingService extends FirebaseMessagingService {
     Intent fullScreen = new Intent(this, IncomingCallActivity.class);
     fullScreen.putExtra(IncomingCallActivity.EXTRA_CALL_ID, callId);
     fullScreen.putExtra(IncomingCallActivity.EXTRA_CALLER_NAME, callerName);
-    fullScreen.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+    if (callId != null && !callId.isEmpty()) {
+      fullScreen.setData(Uri.parse("naluno://call/" + Uri.encode(callId)));
+    }
+    fullScreen.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
 
     int flags = PendingIntent.FLAG_UPDATE_CURRENT;
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -173,6 +194,7 @@ public class CallMessagingService extends FirebaseMessagingService {
       .setCategory(Notification.CATEGORY_CALL)
       .setOngoing(true)
       .setAutoCancel(true)
+      .setOnlyAlertOnce(false)
       .setContentIntent(contentPi)
       .setFullScreenIntent(fullScreenPi, true);
 
@@ -182,7 +204,7 @@ public class CallMessagingService extends FirebaseMessagingService {
 
     NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
     if (nm != null) {
-      nm.notify(NOTIFICATION_ID, builder.build());
+      nm.notify(notificationIdFor(callId), builder.build());
     }
   }
 

@@ -67,9 +67,22 @@ public class IncomingCallActivity extends Activity {
     }
 
     setContentView(buildLayout());
+    bindCall(getIntent());
+  }
 
-    final String callId = getIntent().getStringExtra(EXTRA_CALL_ID);
-    final String callerName = getIntent().getStringExtra(EXTRA_CALLER_NAME);
+  @Override
+  protected void onNewIntent(Intent intent) {
+    super.onNewIntent(intent);
+    setIntent(intent);
+    bindCall(intent);
+  }
+
+  /** Answer and decline must use THIS call. A second ring reuses this
+   *  activity, and the old listeners would answer the first call. */
+  private void bindCall(Intent intent) {
+    final String callId = intent != null ? intent.getStringExtra(EXTRA_CALL_ID) : null;
+    final String callerName = intent != null ? intent.getStringExtra(EXTRA_CALLER_NAME) : null;
+    final int noticeId = CallMessagingService.notificationIdFor(callId);
 
     TextView nameView = findViewById(1001);
     if (nameView != null) {
@@ -94,12 +107,12 @@ public class IncomingCallActivity extends Activity {
           );
           if (callId != null && !callId.isEmpty()) {
             launch.putExtra("callId", callId);
-            launch.setData(Uri.parse("https://getnaluno.com/?call=" + callId));
+            launch.setData(Uri.parse("https://getnaluno.com/?call=" + Uri.encode(callId)));
           }
           startActivity(launch);
 
           NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-          if (nm != null) nm.cancel(CallMessagingService.NOTIFICATION_ID);
+          if (nm != null) nm.cancel(noticeId);
           finish();
         }
       });
@@ -110,7 +123,7 @@ public class IncomingCallActivity extends Activity {
         @Override
         public void onClick(View v) {
           NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-          if (nm != null) nm.cancel(CallMessagingService.NOTIFICATION_ID);
+          if (nm != null) nm.cancel(noticeId);
           finish();
         }
       });
