@@ -72,8 +72,8 @@
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
 // v248: attention is only kept when a visit, an app open, or a continued session owns it. Join date and Find pin stay on the person.
-const CACHE_NAME = 'naluno-shell-v259';
-const APP_BUILD = '20261002d';
+const CACHE_NAME = 'naluno-shell-v261';
+const APP_BUILD = '20261002f';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -89,6 +89,7 @@ const CORE_ASSETS = [
   '/js/sfu-live.js', '/js/compass-brain.js', '/js/compass.js', '/js/linkify.js', '/js/weather.js', '/js/beacon.js', '/js/find.js', '/js/profile.js', '/js/notifications.js',
   '/js/ice-core.js', '/js/compat-lock.js', '/js/keep-alive.js', '/js/media-contain.js',
   '/js/diagnostics.js', '/js/currency.js', '/js/economy.js', '/js/economy-ui.js', '/js/onboard.js', '/js/presence.js', '/js/session-log.js', '/js/push-receipt.js', '/js/handle-guard.js',
+  '/js/trust-legal.js', '/js/security-events.js',
 ];
 
 self.addEventListener('install', event=>{

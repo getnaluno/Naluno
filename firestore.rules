@@ -22,6 +22,14 @@ service cloud.firestore {
         || isActiveDesk()
       );
     }
+    /* Trust & Legal files must not carry a private conversation,
+       a password, or a private key. */
+    function noPrivateLegal() {
+      return !request.resource.data.keys().hasAny([
+        'body', 'message', 'ciphertext', 'plaintext', 'wire_text', 'transcript',
+        'chat', 'password', 'privateJwk', 'wireBody', 'recoveryEmail', 'messageBody'
+      ]);
+    }
     function answerGrewByOne() {
       let oldN = ('answers' in resource.data && resource.data.answers is list)
         ? resource.data.answers.size() : 0;
@@ -1304,6 +1312,97 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(['text', 'norm', 'audio', 'at', 'by']);
       allow delete: if isOperator();
       allow update: if false;
+    }
+
+    /* Sign-in history written by the signed-in person about themselves.
+       A rejected password before a session cannot be stored here.
+       Nobody, including the desk, can edit or delete a row. */
+    match /securityEvents/{id} {
+      allow read: if isOperator();
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.kind in ['login', 'logout', 'new_device', 'session_start', 'session_end', 'password_reset', 'recovery']
+        && request.resource.data.at is number
+        && request.resource.data.ok is bool
+        && request.resource.data.deviceKey is string
+        && request.resource.data.deviceKey.size() > 0
+        && request.resource.data.deviceKey.size() < 80
+        && request.resource.data.deviceLabel is string
+        && request.resource.data.deviceLabel.size() < 80
+        && request.resource.data.sessionKey is string
+        && request.resource.data.sessionKey.size() < 48
+        && request.resource.data.detail is string
+        && request.resource.data.detail.size() < 140
+        && request.resource.data.keys().hasOnly(['uid', 'kind', 'at', 'deviceKey', 'deviceLabel', 'sessionKey', 'ok', 'detail', 'retainUntil'])
+        && noPrivateLegal();
+      allow update, delete: if false;
+    }
+
+    /* Incident, legal, emergency, security, evidence, disclosure.
+       The desk writes them. Nobody can delete them. */
+    match /complianceSeq/{id} {
+      allow read: if isOperator();
+      allow create, update: if isOperator()
+        && request.resource.data.n is int
+        && request.resource.data.n > 0
+        && request.resource.data.n < 10000000;
+      allow delete: if false;
+    }
+    match /incidents/{id} {
+      allow read: if isOperator();
+      allow create, update: if isOperator() && noPrivateLegal();
+      allow delete: if false;
+    }
+    match /incidentNotes/{id} {
+      allow read: if isOperator();
+      allow create: if isOperator()
+        && request.resource.data.incidentId is string
+        && request.resource.data.text is string
+        && request.resource.data.text.size() > 0
+        && request.resource.data.text.size() < 600
+        && request.resource.data.by == request.auth.uid;
+      allow update, delete: if false;
+    }
+    match /legalRequests/{id} {
+      allow read: if isOperator();
+      allow create, update: if isOperator() && noPrivateLegal();
+      allow delete: if false;
+    }
+    match /emergencyCases/{id} {
+      allow read: if isOperator();
+      allow create, update: if isOperator() && noPrivateLegal();
+      allow delete: if false;
+    }
+    match /securityIncidents/{id} {
+      allow read: if isOperator();
+      allow create, update: if isOperator() && noPrivateLegal();
+      allow delete: if false;
+    }
+    match /evidenceHolds/{id} {
+      allow read: if isOperator();
+      allow create: if isOperator() && noPrivateLegal()
+        && request.resource.data.hash is string
+        && request.resource.data.hash.size() >= 8
+        && request.resource.data.originalPath is string;
+      allow update: if isOperator()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['releasedAt', 'releasedBy', 'releaseNote', 'status']);
+      allow delete: if false;
+    }
+    match /evidenceAccess/{id} {
+      allow read: if isOperator();
+      allow create: if isOperator()
+        && request.resource.data.holdId is string
+        && request.resource.data.by == request.auth.uid
+        && request.resource.data.why is string
+        && request.resource.data.why.size() < 80;
+      allow update, delete: if false;
+    }
+    match /disclosures/{id} {
+      allow read: if isOperator();
+      allow create: if isOperator() && noPrivateLegal()
+        && request.resource.data.hash is string
+        && request.resource.data.by == request.auth.uid;
+      allow update, delete: if false;
     }
 
     /* The export gate. The superadmin writes the tab password and
