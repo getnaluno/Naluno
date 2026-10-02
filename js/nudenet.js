@@ -110,8 +110,9 @@
      sends the picture to a person rather than letting it out:
        - a weak sign of genitals or anus (from 0.25) is held;
        - an exposed bottom together with another weak intimate sign is held (a naked body);
-       - two or more people with any exposed intimate sign or an exposed bottom is held
-         (a possible sexual act);
+       - two or more people with a clearly exposed bottom (from 0.60) is held
+         (a possible sexual act). A faint breast score under the topless-hold
+         bar, or a weak bottom on a clothed group, is not a sexual act;
        - a video-player screenshot is held.
      A picture Screen could not read at all is also held, never published unseen.
 
@@ -130,7 +131,7 @@
                                   REJECT      HOLD (a person looks)
        genitals / anus            >= 0.50     0.25 - 0.50
        exposed bottom + a weak intimate sign (>= 0.25)          hold
-       2+ people + exposed bottom or a weak intimate sign        hold
+       2+ people + a clear exposed bottom (>= 0.60)           hold
        female breast (topless)    >= 0.55     0.35 - 0.55
        two intimate parts         each >= 0.40
        video-player screenshot                >= 0.85
@@ -210,7 +211,13 @@
     if (anatomy >= MOD_T.anatomyHold)   return { level: "hold", reason: modAnatomyReason(anatomyCls, true), score: anatomy };
     if (breast  >= MOD_T.breastHold)    return { level: "hold", reason: "possible-topless", score: breast };
     if (bottom && weak >= 1)            return { level: "hold", reason: "possible-nudity", score: Math.max(top, best.BUTTOCKS_EXPOSED || 0) };
-    if (faces >= 2 && (weak >= 1 || bottom)) return { level: "hold", reason: "possible-sexual-act", score: Math.max(top, best.BUTTOCKS_EXPOSED || 0) };
+    /* Two faces plus a flicker is not a sexual act. NudeNet reads a shirt,
+       a lap or a seated dress as a breast or a bottom, and every frame of a
+       normal group (a mother and child, two people on a call) has two faces.
+       A breast under the topless-hold bar is ignored here. A bottom has to
+       be clear (0.60) before two people are held for a person to look. */
+    var actBottom = (best.BUTTOCKS_EXPOSED || 0) >= 0.60;
+    if (faces >= 2 && actBottom) return { level: "hold", reason: "possible-sexual-act", score: Math.max(top, best.BUTTOCKS_EXPOSED || 0) };
     if (player  >= MOD_T.player)        return { level: "hold", reason: "video-player-screenshot", score: player };
     return { level: "allow", reason: revealing ? "revealing-allowed" : "", score: top };
   }
