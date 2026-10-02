@@ -1418,6 +1418,19 @@ service cloud.firestore {
       allow create, update, delete: if isSuper();
     }
 
+    /* Legal uses the same lock as Export. The superadmin writes the tab
+       password and each admin's own password. An admin can read only
+       their own password record. Nobody else can open the tab. */
+    match /deskLegal/{id} {
+      allow read: if isOperator();
+      allow create, update, delete: if isSuper();
+    }
+    match /deskLegalPasses/{uid} {
+      allow get: if isSuper() || (isSignedIn() && request.auth.uid == uid);
+      allow list: if isSuper();
+      allow create, update, delete: if isSuper();
+    }
+
     /* One row per person per day. The owner writes only their own day.
        The desk reads the set to see who came back. */
     match /presenceDays/{id} {
