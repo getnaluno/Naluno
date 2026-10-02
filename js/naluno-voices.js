@@ -18,6 +18,7 @@
   }
 
   function prime() { try { ac(); } catch (_) {} }
+  function resume() { try { ac(); } catch (_) {} }
 
   function stop() {
     job += 1;
@@ -176,6 +177,7 @@
     speak: speak,
     stop: stop,
     prime: prime,
+    resume: resume,
     female: 'Bella',
     male: 'Hugo',
   };

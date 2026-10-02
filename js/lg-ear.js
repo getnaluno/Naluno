@@ -77,6 +77,15 @@
     });
   }
 
+  function resume() {
+    if (!current || current.ended) return;
+    if (!current.paused) return;
+    try {
+      const started = current.play();
+      if (started && typeof started.catch === 'function') started.catch(function () {});
+    } catch (_) {}
+  }
+
   function stop() {
     if (!current) return;
     try { current.pause(); } catch (_) {}
@@ -141,5 +150,5 @@
 
   if (typeof window !== 'undefined') boot();
 
-  return { norm: norm, ingest: ingest, plan: plan, play: play, stop: stop, ready: ready, counts: counts };
+  return { norm: norm, ingest: ingest, plan: plan, play: play, stop: stop, resume: resume, ready: ready, counts: counts };
 });

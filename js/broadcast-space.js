@@ -90,6 +90,7 @@ async function ensureBroadcastFirestore(meta){
 let bspaceSpeakToken = 0;
 function bspaceStopSpeak(){
   bspaceSpeakToken += 1;
+  try{ if(typeof nalunoSessionRelease === 'function') nalunoSessionRelease('listen'); }catch(_){}
   try{ if(window.NalunoLgEar && NalunoLgEar.stop) NalunoLgEar.stop(); }catch(_){}
   try{ if(window.NalunoVoices && NalunoVoices.stop) NalunoVoices.stop(); }catch(_){}
   try{ if(window.speechSynthesis) window.speechSynthesis.cancel(); }catch(_){}
@@ -115,6 +116,14 @@ async function bspaceSpeakWriting(text, lang, btn){
   }
   const token = bspaceSpeakToken + 1;
   bspaceSpeakToken = token;
+  try{ if(typeof nalunoSessionHold === 'function') nalunoSessionHold('listen'); }catch(_){}
+  try{
+    await bspaceSpeakBody(src, lang, btn, token);
+  }finally{
+    if(token === bspaceSpeakToken){ try{ if(typeof nalunoSessionRelease === 'function') nalunoSessionRelease('listen'); }catch(_){} }
+  }
+}
+async function bspaceSpeakBody(src, lang, btn, token){
   if(btn){ btn.setAttribute('data-on', '1'); btn.textContent = 'Preparing'; }
   const luganda = lang === 'lg' && window.NalunoLgSpeak && (typeof NalunoLgSpeak.phones === 'function' || typeof NalunoLgSpeak.ipa === 'function');
   const toPhones = luganda

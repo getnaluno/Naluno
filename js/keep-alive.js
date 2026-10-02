@@ -54,25 +54,105 @@ async function nalunoKeepAliveStart(reason){
   }catch(_){}
   try{
     if(window.NalunoNative && typeof window.NalunoNative.startUploadKeepAlive === 'function'){
-      window.NalunoNative.startUploadKeepAlive(String(reason || 'upload'));
+      nalunoPushHold();
     }
   }catch(_){}
 }
+
+let nalunoHoldCall = '';
+let nalunoHoldListen = false;
+
+function nalunoHoldKind(){
+  if(nalunoHoldCall === 'video' || nalunoHoldCall === 'voice') return nalunoHoldCall;
+  if(nalunoHoldListen) return 'listen';
+  if(nalunoKeepAliveDepth > 0) return 'upload';
+  return '';
+}
+
+function nalunoPushHold(){
+  const kind = nalunoHoldKind();
+  try{ window.__nalunoSessionKind = kind; }catch(_){}
+  try{
+    if(!kind){
+      if(window.NalunoNative && typeof window.NalunoNative.stopSessionKeepAlive === 'function'){
+        window.NalunoNative.stopSessionKeepAlive();
+      } else if(window.NalunoNative && typeof window.NalunoNative.stopUploadKeepAlive === 'function'){
+        window.NalunoNative.stopUploadKeepAlive();
+      }
+      return;
+    }
+    const title = kind === 'video' ? 'Video call' : kind === 'voice' ? 'Voice call' : kind === 'listen' ? 'Reading' : 'Uploading…';
+    if(window.NalunoNative && typeof window.NalunoNative.startSessionKeepAlive === 'function'){
+      window.NalunoNative.startSessionKeepAlive(kind);
+    } else if(window.NalunoNative && typeof window.NalunoNative.startUploadKeepAlive === 'function'){
+      window.NalunoNative.startUploadKeepAlive(title);
+    }
+  }catch(_){}
+  nalunoResumeHeldAudio();
+}
+
+function nalunoSessionHold(kind){
+  if(kind === 'listen') nalunoHoldListen = true;
+  else if(kind === 'video' || kind === 'voice') nalunoHoldCall = kind;
+  nalunoPushHold();
+}
+
+function nalunoSessionRelease(kind){
+  if(kind === 'listen') nalunoHoldListen = false;
+  else nalunoHoldCall = '';
+  nalunoPushHold();
+}
+
+function nalunoResumeHeldAudio(){
+  if(!nalunoHoldKind()) return;
+  try{
+    if(typeof sharedAudioCtx !== 'undefined' && sharedAudioCtx && sharedAudioCtx.state === 'suspended'){
+      sharedAudioCtx.resume().catch(function(){});
+    }
+  }catch(_){}
+  try{ if(window.NalunoVoices && typeof NalunoVoices.resume === 'function') NalunoVoices.resume(); }catch(_){}
+  try{ if(window.NalunoLgEar && typeof NalunoLgEar.resume === 'function') NalunoLgEar.resume(); }catch(_){}
+  try{ if(window.speechSynthesis && window.speechSynthesis.paused && window.speechSynthesis.resume) window.speechSynthesis.resume(); }catch(_){}
+  try{
+    ['remoteVideo','camRawVideo','pipRawVideo','sendRawVideo'].forEach(function(id){
+      const el = document.getElementById(id);
+      if(!el || !el.srcObject) return;
+      if(!el.paused) return;
+      const p = el.play();
+      if(p && p.catch) p.catch(function(){});
+    });
+  }catch(_){}
+  try{
+    if(typeof stream !== 'undefined' && stream){
+      stream.getAudioTracks().forEach(function(t){
+        if(t.readyState === 'live' && typeof micOn !== 'undefined' && micOn) t.enabled = true;
+      });
+      if(nalunoHoldCall === 'video'){
+        stream.getVideoTracks().forEach(function(t){
+          if(t.readyState === 'live' && typeof camOn !== 'undefined' && camOn) t.enabled = true;
+        });
+      }
+    }
+  }catch(_){}
+}
+
+window.nalunoSessionHold = nalunoSessionHold;
+window.nalunoSessionRelease = nalunoSessionRelease;
+window.nalunoResumeHeldAudio = nalunoResumeHeldAudio;
 
 function nalunoKeepAliveStop(){
   nalunoKeepAliveDepth = Math.max(0, nalunoKeepAliveDepth - 1);
   try{ window.__nalunoUploadActive = nalunoKeepAliveDepth > 0; }catch(_){}
   if(nalunoKeepAliveDepth > 0) return;
   try{ if(nalunoWakeLock){ nalunoWakeLock.release(); nalunoWakeLock = null; } }catch(_){}
-  try{
-    if(window.NalunoNative && typeof window.NalunoNative.stopUploadKeepAlive === 'function'){
-      window.NalunoNative.stopUploadKeepAlive();
-    }
-  }catch(_){}
+  nalunoPushHold();
 }
 
 document.addEventListener('visibilitychange', function(){
-  if(document.hidden) return;
+  if(document.hidden){
+    nalunoResumeHeldAudio();
+    return;
+  }
   // Wake locks are released by the OS whenever the tab is hidden, so an upload/call
   // still in progress needs a fresh request on return. nalunoKeepAliveStart() already
   // increments the depth counter itself; the decrement here is deliberate — it nets
@@ -111,3 +191,7 @@ window.addEventListener('offline', function(){
   nalunoMarkOffline();
   try{ if(typeof updateOfflineBadge === 'function') updateOfflineBadge(); }catch(_){}
 });
+
+setInterval(function(){
+  if(document.hidden) nalunoResumeHeldAudio();
+}, 1200);

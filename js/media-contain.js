@@ -417,6 +417,9 @@ window.nalunoExclusiveMedia = nalunoExclusiveMedia;
 let nalunoPauseHideTimer = null;
 
 function pauseAppMediaForBackground(){
+  /* A call, or a piece being read aloud, must keep going when the
+     screen sleeps or Naluno is behind another app. */
+  if(window.__nalunoSessionKind) return;
   if(nalunoCallUiOpen()) return;
   if(nalunoPauseHideTimer){ try{ clearTimeout(nalunoPauseHideTimer); }catch(_){} }
   nalunoPauseHideTimer = setTimeout(function(){

@@ -797,6 +797,10 @@ let nalunoCallLive = false;
 function nalunoMarkCallLive(){
   if(nalunoCallLive) return;
   nalunoCallLive = true;
+  try{
+    if(typeof nalunoSessionHold === 'function') nalunoSessionHold(nalunoIsVoiceCall() ? 'voice' : 'video');
+  }catch(_){}
+  if(nalunoIsVoiceCall()){ try{ nalunoApplyEarpiece(); }catch(_){} }
   try{ const eb = document.querySelector('#incall .call-info-pill .eyebrow'); if(eb) eb.textContent = 'Connected'; }catch(_){}
   callSeconds = 0;
   try{ $('callTimer').textContent = '00:00'; }catch(_){}
@@ -1668,6 +1672,8 @@ function endActiveCall(reason){
   teardownCallConnection();
   closeCallOverlay();
   stopCameraStream();
+  try{ if(typeof nalunoSessionRelease === 'function') nalunoSessionRelease('call'); }catch(_){}
+  try{ nalunoClearEarpiece(); }catch(_){}
   try{ if(typeof cameraRelease === 'function') cameraRelease('call'); }catch(_){}
   currentCallContactId = null;
   callActionInProgress = false;
@@ -2190,9 +2196,54 @@ function nalunoSetCallKind(kind){
 window.nalunoSetCallKind = nalunoSetCallKind;
 function nalunoIsVoiceCall(){ return nalunoCallKind === 'audio'; }
 window.nalunoIsVoiceCall = nalunoIsVoiceCall;
+let nalunoEarpiece = false;
+function nalunoApplyEarpiece(){
+  const btn = $('earBtn');
+  if(btn){
+    btn.classList.toggle('active', nalunoEarpiece);
+    btn.title = nalunoEarpiece ? 'Earpiece' : 'Loudspeaker';
+    btn.setAttribute('aria-label', nalunoEarpiece ? 'Listening on the earpiece' : 'Listening on the loudspeaker');
+  }
+  const route = nalunoEarpiece ? 'ear' : 'speaker';
+  try{
+    if(window.NalunoNative && typeof window.NalunoNative.setCallAudioRoute === 'function'){
+      window.NalunoNative.setCallAudioRoute(route);
+      return;
+    }
+  }catch(_){}
+}
+function nalunoClearEarpiece(){
+  nalunoEarpiece = false;
+  try{
+    if(window.NalunoNative && typeof window.NalunoNative.clearCallAudioRoute === 'function'){
+      window.NalunoNative.clearCallAudioRoute();
+    }
+  }catch(_){}
+  const btn = $('earBtn');
+  if(btn){ btn.classList.remove('active'); btn.title = 'Loudspeaker'; }
+}
+function nalunoWireEarpiece(){
+  const btn = $('earBtn');
+  if(!btn || btn.dataset.wired) return;
+  btn.dataset.wired = '1';
+  btn.onclick = function(){
+    nalunoEarpiece = !nalunoEarpiece;
+    nalunoApplyEarpiece();
+    if(!(window.NalunoNative && typeof window.NalunoNative.setCallAudioRoute === 'function')){
+      toast(nalunoEarpiece ? 'Earpiece needs the latest Naluno app' : 'Loudspeaker');
+      nalunoEarpiece = false;
+      nalunoApplyEarpiece();
+      return;
+    }
+    toast(nalunoEarpiece ? 'Earpiece' : 'Loudspeaker');
+  };
+}
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', nalunoWireEarpiece);
+else nalunoWireEarpiece();
 /* The microphone alone. A camera left open from an earlier screen is closed
    first, so a voice call never shows or sends a picture. */
 async function nalunoOpenMic(){
+  try{ if(typeof nalunoSessionHold === 'function') nalunoSessionHold('voice'); }catch(_){}
   const live = function(t){ return t.readyState === 'live'; };
   if(stream && stream.getAudioTracks().some(live) && !stream.getVideoTracks().some(live)){
     stream.getAudioTracks().forEach(function(t){ t.enabled = true; });
@@ -2768,6 +2819,8 @@ function closeCallOverlayAndStopCamera(){
   teardownCallConnection();
   closeCallOverlay();
   stopCameraStream();
+  try{ if(typeof nalunoSessionRelease === 'function') nalunoSessionRelease('call'); }catch(_){}
+  try{ nalunoClearEarpiece(); }catch(_){}
   try{ if(typeof cameraRelease === 'function') cameraRelease('call'); }catch(_){}
   currentCallContactId = null;
   callActionInProgress = false;
@@ -2820,6 +2873,8 @@ function declineIncomingCall(callId){
   teardownCallConnection();
   closeCallOverlay();
   stopCameraStream();
+  try{ if(typeof nalunoSessionRelease === 'function') nalunoSessionRelease('call'); }catch(_){}
+  try{ nalunoClearEarpiece(); }catch(_){}
   try{ if(typeof cameraRelease === 'function') cameraRelease('call'); }catch(_){}
   currentCallContactId = null;
   callActionInProgress = false;

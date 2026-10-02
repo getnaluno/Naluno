@@ -180,18 +180,33 @@ function listenSparkRoom(){
   }, function(){});
 }
 
+let sparkSpeakHold = 0;
 function sparkSpeak(text, lang){
   if(!text) return;
   try{ if(window.speechSynthesis) window.speechSynthesis.cancel(); }catch(_){}
+  const mine = ++sparkSpeakHold;
+  const hold = function(){ try{ if(typeof nalunoSessionHold === 'function') nalunoSessionHold('listen'); }catch(_){} };
+  const drop = function(){
+    if(mine !== sparkSpeakHold) return;
+    try{ if(typeof nalunoSessionRelease === 'function') nalunoSessionRelease('listen'); }catch(_){}
+  };
   const code = lang || sparkMyLang;
+  if(code === 'lg' && window.NalunoLgEar && typeof NalunoLgEar.plan === 'function' && typeof NalunoLgEar.play === 'function'){
+    const ready = NalunoLgEar.plan(text);
+    if(ready){
+      hold();
+      Promise.resolve(NalunoLgEar.play(ready, function(){ return mine === sparkSpeakHold; })).then(drop, drop);
+      return;
+    }
+  }
   if(code === 'lg' && window.NalunoVoices && typeof NalunoVoices.speak === 'function' && window.NalunoLgSpeak){
     try{ NalunoVoices.stop(); }catch(_){}
     const toPhones = (typeof NalunoLgSpeak.phones === 'function') ? NalunoLgSpeak.phones : NalunoLgSpeak.ipa;
     if(typeof toPhones !== 'function') return;
-    NalunoVoices.speak(text, {
-      speed: 0.88,
+    hold();
+    Promise.resolve(NalunoVoices.speak(text, {
       phonemes: function(bit){ return toPhones(bit); }
-    });
+    })).then(drop, drop);
     return;
   }
   if(code === 'lg' || !window.speechSynthesis) return;
@@ -199,8 +214,11 @@ function sparkSpeak(text, lang){
     const u = new SpeechSynthesisUtterance(text);
     u.lang = sparkRecLang(code);
     u.rate = 1;
+    u.onend = drop;
+    u.onerror = drop;
+    hold();
     window.speechSynthesis.speak(u);
-  }catch(_){}
+  }catch(_){ drop(); }
 }
 
 function renderSparkMessages(rows){

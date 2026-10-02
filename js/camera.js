@@ -750,15 +750,25 @@ async function tickSegmentation(video){
   }
 }
 function drawVideoCover(ctx, video, w, h, mirror){
+  drawVideoFit(ctx, video, w, h, mirror, 'cover');
+}
+/* The call preview used to cover-crop every frame into the stage. A wide
+   camera in that tall window became a zoomed face, and the back camera
+   lost everything outside the square. Contain shows the whole frame. */
+function drawVideoFit(ctx, video, w, h, mirror, fit){
   if(!video || video.readyState < 2 || !video.videoWidth){
     ctx.fillStyle = '#171A26';
     ctx.fillRect(0,0,w,h);
     return;
   }
   ctx.save();
+  if(fit === 'contain'){
+    ctx.fillStyle = '#0B0D14';
+    ctx.fillRect(0,0,w,h);
+  }
   if(mirror){ ctx.translate(w,0); ctx.scale(-1,1); }
   const vw = video.videoWidth, vh = video.videoHeight;
-  const scale = Math.max(w/vw, h/vh);
+  const scale = fit === 'contain' ? Math.min(w/vw, h/vh) : Math.max(w/vw, h/vh);
   const dw = vw*scale, dh = vh*scale;
   ctx.drawImage(video, (w-dw)/2, (h-dh)/2, dw, dh);
   ctx.restore();
@@ -856,14 +866,14 @@ function compositeFrame(canvas, video, animStart){
     const pctx = pc.getContext('2d');
     pctx.clearRect(0,0,pw,ph);
     if(filt.css && filt.css !== 'none') pctx.filter = filt.css;
-    drawVideoCover(pctx, video, pw, ph, mirror);
+    drawVideoFit(pctx, video, pw, ph, mirror, 'contain');
     pctx.filter = 'none';
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(pc, 0, 0, w, h);
     ctx.imageSmoothingEnabled = true;
   } else {
     if(filt.css && filt.css !== 'none') ctx.filter = filt.css;
-    drawVideoCover(ctx, video, w, h, mirror);
+    drawVideoFit(ctx, video, w, h, mirror, 'contain');
     ctx.filter = 'none';
   }
 
@@ -912,8 +922,11 @@ function drawSendCanvas(force){
 }
 function stageLoopTick(){
   requestAnimationFrame(stageLoopTick);
-  if($('lobby').classList.contains('active')) drawStage('camStageCanvas', 'camRawVideo', camAnimStart);
-  if($('incall').classList.contains('active')) drawStage('pipStageCanvas', 'pipRawVideo', pipAnimStart);
+    if($('lobby').classList.contains('active')) drawStage('camStageCanvas', 'camRawVideo', camAnimStart);
+  if($('incall').classList.contains('active')){
+    drawStage('pipStageCanvas', 'pipRawVideo', pipAnimStart);
+    try{ nalunoFitLocalPip($('pipRawVideo')); }catch(_){}
+  }
   /* The send canvas is only what the other person sees when a filter is
      on; otherwise the raw camera track goes out and this full-size
      composite, redrawn every frame for nothing, was the biggest drain on
@@ -993,6 +1006,95 @@ function buildVideoConstraints(tier){
   if(preferredVideoDeviceId) base.deviceId = { exact: preferredVideoDeviceId };
   else base.facingMode = { ideal: cameraFacingMode };
   return base;
+}
+/* A call used to ask for a tall 9:16 or a 16:9 frame. The phone then
+   cropped the sensor to that shape: the back camera collapsed to the
+   preview box, and coming back to the front zoomed the face. Ask for
+   the sensor's own frame. No aspect, no width-and-height pair. */
+function nalunoLensConstraint(facing){
+  return {
+    facingMode: { ideal: facing || cameraFacingMode || 'user' },
+    frameRate: { ideal: 30, max: 30 },
+    resizeMode: 'none',
+  };
+}
+function nalunoAspectOf(track){
+  try{
+    const s = track && track.getSettings ? track.getSettings() : {};
+    if(!s.width || !s.height) return 0;
+    return s.width / s.height;
+  }catch(_){ return 0; }
+}
+function nalunoUnzoom(track){
+  if(!track || !track.getCapabilities || !track.applyConstraints) return Promise.resolve();
+  let caps = {};
+  try{ caps = track.getCapabilities() || {}; }catch(_){ return Promise.resolve(); }
+  const base = {};
+  if(caps.zoom && isFinite(caps.zoom.min)) base.zoom = caps.zoom.min;
+  if(caps.resizeMode && caps.resizeMode.indexOf && caps.resizeMode.indexOf('none') >= 0) base.resizeMode = 'none';
+  const apply = function(c){
+    const clean = {};
+    Object.keys(c).forEach(function(k){ if(c[k] != null) clean[k] = c[k]; });
+    if(!Object.keys(clean).length) return Promise.resolve();
+    return track.applyConstraints(clean).catch(function(){});
+  };
+  return apply(base).then(function(){
+    const a = nalunoAspectOf(track);
+    /* Square, 16:9 and 9:16 are crops of a 4:3 phone sensor. A square is
+       what the other person was receiving. 16:9 / 9:16 is the zoomed face. */
+    const cropped = !a || (a > 0.82 && a < 1.22) || a >= 1.6 || a <= 0.625;
+    if(!cropped) return;
+    const maxW = (caps.width && caps.width.max) ? Math.min(1920, caps.width.max) : 1440;
+    const wider = Object.assign({}, base, {
+      width: { ideal: maxW },
+      aspectRatio: { ideal: 4/3 },
+      resizeMode: 'none',
+    });
+    return apply(wider).then(function(){
+      const b = nalunoAspectOf(track);
+      if(b && !(b > 0.82 && b < 1.22)) return;
+      return apply(Object.assign({}, base, {
+        width: { ideal: maxW },
+        resizeMode: 'none',
+      }));
+    });
+  });
+}
+/* The preview box is a tall rounded rectangle. Drawing the camera into
+   that box used to cut a wide lens down to it. Follow the real frame
+   so the back camera stays wide and the front camera is not a close-up. */
+function nalunoFitLocalPip(video){
+  const pip = $('localPip');
+  if(!pip || !video || !video.videoWidth || !video.videoHeight) return;
+  const incall = $('incall');
+  if(pip.classList.contains('large') || (incall && incall.classList.contains('swap-focus'))){
+    if(pip.dataset.nalunoSized){
+      pip.style.width = '';
+      pip.style.height = '';
+      delete pip.dataset.nalunoSized;
+      delete pip.dataset.nalunoAspect;
+    }
+    return;
+  }
+  const a = video.videoWidth / video.videoHeight;
+  const key = a.toFixed(3);
+  if(pip.dataset.nalunoAspect === key) return;
+  pip.dataset.nalunoAspect = key;
+  pip.dataset.nalunoSized = '1';
+  const shortSide = 120;
+  let w, h;
+  if(a >= 1){ h = shortSide; w = Math.min(220, Math.round(shortSide * a)); }
+  else { w = shortSide; h = Math.min(240, Math.round(shortSide / a)); }
+  pip.style.width = w + 'px';
+  pip.style.height = h + 'px';
+}
+function nalunoHoldCallCamera(){
+  try{
+    const ov = $('callOverlay');
+    if(!ov || !ov.classList.contains('active')) return;
+    if(typeof nalunoIsVoiceCall === 'function' && nalunoIsVoiceCall()) return;
+    if(typeof nalunoSessionHold === 'function') nalunoSessionHold('video');
+  }catch(_){}
 }
 async function requestHighQualityStream(opts={}){
   const wantVideo = opts.video !== false;
@@ -1123,18 +1225,16 @@ async function flipCamera(){
     const videoAttempts = [];
 
     const deviceId = await resolveCameraDeviceId(next).catch(()=>null);
-    // Same portrait-aware fix as buildVideoConstraints() — flipping the
-    // camera used to always re-request landscape shape regardless of how
-    // the phone is actually held.
-    const portraitFlip = nalunoIsPortraitDevice();
-    const flipDims = portraitFlip
-      ? { width:{ideal:1440}, height:{ideal:2560}, aspectRatio:{ideal:9/16} }
-      : { width:{ideal:2560}, height:{ideal:1440}, aspectRatio:{ideal:16/9} };
+    const lens = nalunoLensConstraint(next, false);
     if(deviceId){
-      videoAttempts.push(Object.assign({ deviceId: { exact: deviceId }, frameRate:{ideal:30, max:60} }, flipDims));
+      const exact = Object.assign({}, lens);
+      delete exact.facingMode;
+      exact.deviceId = { exact: deviceId };
+      videoAttempts.push(exact);
     }
-    videoAttempts.push(Object.assign({ facingMode: { exact: next }, frameRate:{ideal:30, max:60} }, flipDims));
-    videoAttempts.push(Object.assign({ facingMode: { ideal: next }, frameRate:{ideal:30, max:60} }, flipDims));
+    videoAttempts.push(Object.assign({}, nalunoLensConstraint(next, false), { facingMode: { exact: next } }));
+    videoAttempts.push(lens);
+    videoAttempts.push({ facingMode: { ideal: next }, resizeMode: 'none' });
     videoAttempts.push({ facingMode: next });
 
     for(const video of videoAttempts){
@@ -1152,6 +1252,8 @@ async function flipCamera(){
       cameraFacingMode = next;
       try{
         await enableCamera();
+        try{ await nalunoUnzoom(stream && stream.getVideoTracks()[0]); }catch(_){}
+        try{ nalunoFitLocalPip($('pipRawVideo') || $('sendRawVideo')); }catch(_){}
         toast(cameraFacingMode === 'environment' ? 'Rear camera' : 'Front camera');
       }catch(e){
         toast('Couldn\u2019t switch camera on this device');
@@ -1165,6 +1267,8 @@ async function flipCamera(){
     }
 
     stream = newStream;
+    try{ await nalunoUnzoom(stream.getVideoTracks()[0]); }catch(_){}
+    try{ nalunoFitLocalPip($('pipRawVideo') || $('sendRawVideo')); }catch(_){}
     cameraFacingMode = next;
     try{
       const fm = stream.getVideoTracks()[0] && stream.getVideoTracks()[0].getSettings
@@ -1227,7 +1331,10 @@ async function flipCamera(){
   }catch(e){
     console.error('[camera] flip failed', e);
     toast('Couldn\u2019t switch camera on this device');
-    try{ await enableCamera(); }catch(_){}
+    try{
+      await enableCamera();
+      try{ await nalunoUnzoom(stream && stream.getVideoTracks()[0]); }catch(_){}
+    }catch(_){}
   }finally{
     window.__flipBusy = false;
   }
@@ -1280,6 +1387,9 @@ async function enableCameraForCall(){
       if(el){ el.srcObject = stream; el.play && el.play().catch(()=>{}); }
     });
     hideCamFallback();
+    try{ await nalunoUnzoom(stream.getVideoTracks()[0]); }catch(_){}
+    try{ nalunoHoldCallCamera(); }catch(_){}
+    try{ nalunoFitLocalPip($('pipRawVideo') || $('sendRawVideo')); }catch(_){}
     if(typeof startCamView === 'function'){
       startCamView(($('incall') && $('incall').classList.contains('active')) ? 'pip' : 'lobby');
     }
@@ -1292,14 +1402,12 @@ async function enableCameraForCall(){
     stream = null;
   }
   const audioConstraints = { echoCancellation: { ideal: true }, noiseSuppression: { ideal: true }, autoGainControl: { ideal: true } };
-  // LOCK (call connect): open 720p FIRST. 1080-first cost 3–7s on many Androids
-  // before the offer could even be written. Climb to sensor max after tracks are live.
-  // Deliberately NOT touched by the "camera defaults to 16:9" fix elsewhere in this
-  // file — this path is specifically tuned for call-connect timing, and every report
-  // of the orientation issue was about Broadcast, not calls. Left exactly as-is.
+  // Open the sensor's own frame. A 16:9 or 9:16 request is what cropped the
+  // back camera to a square and zoomed the face on the way back to the front.
   const attempts = [
-    { video: { facingMode: { ideal: cameraFacingMode }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 60 } }, audio: audioConstraints },
-    { video: { facingMode: { ideal: cameraFacingMode }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 60 } }, audio: audioConstraints },
+    { video: nalunoLensConstraint(cameraFacingMode), audio: audioConstraints },
+    { video: { facingMode: { exact: cameraFacingMode }, resizeMode: 'none' }, audio: audioConstraints },
+    { video: { facingMode: { ideal: cameraFacingMode }, resizeMode: 'none' }, audio: audioConstraints },
     { video: { facingMode: { ideal: cameraFacingMode } }, audio: audioConstraints },
     { video: true, audio: true },
   ];
@@ -1323,6 +1431,9 @@ async function enableCameraForCall(){
   }
   stream = got;
   if(!stream) throw lastErr || new Error('Camera unavailable');
+  try{ await nalunoUnzoom(stream.getVideoTracks()[0]); }catch(_){}
+  try{ nalunoHoldCallCamera(); }catch(_){}
+  try{ nalunoFitLocalPip($('pipRawVideo') || $('sendRawVideo')); }catch(_){}
   try{
     stream.getAudioTracks().forEach(t => { t.enabled = true; });
     stream.getVideoTracks().forEach(t => { t.enabled = camOn; });
