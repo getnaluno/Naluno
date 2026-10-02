@@ -6,6 +6,7 @@ import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
@@ -41,8 +42,73 @@ public class UploadKeepAliveService extends Service {
   @Override
   public int onStartCommand(Intent intent, int flags, int startId) {
     running = true;
+    String kind = intent != null ? intent.getStringExtra("kind") : null;
+    if (kind == null || kind.isEmpty()) kind = "upload";
     String title = intent != null ? intent.getStringExtra("title") : null;
-    if (title == null || title.isEmpty()) title = "Uploading…";
+    if (title == null || title.isEmpty()) {
+      if ("video".equals(kind)) title = "Video call";
+      else if ("voice".equals(kind)) title = "Voice call";
+      else if ("listen".equals(kind)) title = "Reading";
+      else title = "Uploading…";
+    }
+    holdPartial(kind);
+    Notification n = buildNotification(title);
+    int type = foregroundType(kind);
+    try {
+      if (Build.VERSION.SDK_INT >= 29 && type != 0) {
+        startForeground(NOTIFICATION_ID, n, type);
+      } else {
+        startForeground(NOTIFICATION_ID, n);
+      }
+    } catch (Exception first) {
+      try {
+        if (Build.VERSION.SDK_INT >= 29) {
+          startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+        } else {
+          startForeground(NOTIFICATION_ID, n);
+        }
+      } catch (Exception second) {
+        try { startForeground(NOTIFICATION_ID, n); } catch (Exception ignored) {}
+      }
+    }
+    return START_STICKY;
+  }
+
+  /** CPU only. A screen lock would keep the display lit; a call and a
+   *  reading must continue on a black screen, including against the ear. */
+  private void holdPartial(String kind) {
+    try {
+      if (wakeLock == null) {
+        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        if (pm == null) return;
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "naluno:session");
+        wakeLock.setReferenceCounted(false);
+      }
+      if (wakeLock.isHeld()) wakeLock.release();
+      long ms = ("video".equals(kind) || "voice".equals(kind) || "listen".equals(kind))
+        ? 6L * 60L * 60L * 1000L
+        : 30L * 60L * 1000L;
+      wakeLock.acquire(ms);
+    } catch (Exception e) {
+      // best-effort
+    }
+  }
+
+  private int foregroundType(String kind) {
+    if (Build.VERSION.SDK_INT < 29) return 0;
+    if (Build.VERSION.SDK_INT >= 30 && "video".equals(kind)) {
+      return ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+        | ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
+    }
+    if (Build.VERSION.SDK_INT >= 30 && "voice".equals(kind)) {
+      return ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        | ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK;
+    }
+    if ("listen".equals(kind)) return ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK;
+    return ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
+  }
+
+  private Notification buildNotification(String title) {
     Notification.Builder b;
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
       b = new Notification.Builder(this, CHANNEL_ID);
@@ -54,8 +120,7 @@ public class UploadKeepAliveService extends Service {
       .setContentText(title)
       .setSmallIcon(android.R.drawable.stat_sys_upload)
       .setOngoing(true);
-    startForeground(NOTIFICATION_ID, b.build());
-    return START_STICKY;
+    return b.build();
   }
 
   @Override

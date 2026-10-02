@@ -1,5 +1,7 @@
 package com.naluno.app;
 
+import android.media.AudioDeviceInfo;
+import android.media.AudioManager;
 import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -12,6 +14,7 @@ import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
+import java.util.List;
 
 /**
  * Capacitor entry activity.
@@ -130,6 +133,41 @@ public class MainActivity extends BridgeActivity {
     }
   }
 
+  /** Loudspeaker is the default. Earpiece is only when the person asks,
+   *  so the phone can sit against the ear with the screen black. */
+  private void applyCallAudioRoute(String route) {
+    try {
+      AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
+      if (am == null) return;
+      if ("clear".equals(route)) {
+        if (Build.VERSION.SDK_INT >= 31) {
+          try { am.clearCommunicationDevice(); } catch (Exception e) {}
+        }
+        try { am.setSpeakerphoneOn(false); } catch (Exception e) {}
+        try { am.setMode(AudioManager.MODE_NORMAL); } catch (Exception e) {}
+        return;
+      }
+      boolean ear = "ear".equals(route);
+      try { am.setMode(AudioManager.MODE_IN_COMMUNICATION); } catch (Exception e) {}
+      if (Build.VERSION.SDK_INT >= 31) {
+        int want = ear ? AudioDeviceInfo.TYPE_BUILTIN_EARPIECE : AudioDeviceInfo.TYPE_BUILTIN_SPEAKER;
+        List<AudioDeviceInfo> devices = am.getAvailableCommunicationDevices();
+        if (devices != null) {
+          for (int i = 0; i < devices.size(); i++) {
+            AudioDeviceInfo d = devices.get(i);
+            if (d != null && d.getType() == want) {
+              try { am.setCommunicationDevice(d); } catch (Exception e) {}
+              break;
+            }
+          }
+        }
+      }
+      try { am.setSpeakerphoneOn(!ear); } catch (Exception e) {}
+    } catch (Exception e) {
+      // best-effort
+    }
+  }
+
   private void injectKeepAliveBridge() {
     getWindow().getDecorView().postDelayed(new Runnable() {
       @Override
@@ -170,6 +208,47 @@ public class MainActivity extends BridgeActivity {
       } catch (Exception e) {
         // best-effort
       }
+    }
+
+    @JavascriptInterface
+    public void startSessionKeepAlive(String kind) {
+      try {
+        String k = kind != null ? kind : "upload";
+        Intent i = new Intent(MainActivity.this, UploadKeepAliveService.class);
+        i.putExtra("kind", k);
+        String title = "Uploading…";
+        if ("video".equals(k)) title = "Video call";
+        else if ("voice".equals(k)) title = "Voice call";
+        else if ("listen".equals(k)) title = "Reading";
+        i.putExtra("title", title);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+          startForegroundService(i);
+        } else {
+          startService(i);
+        }
+      } catch (Exception e) {
+        // best-effort
+      }
+    }
+
+    @JavascriptInterface
+    public void stopSessionKeepAlive() {
+      stopUploadKeepAlive();
+    }
+
+    @JavascriptInterface
+    public void setCallAudioRoute(String route) {
+      final String want = route != null ? route : "speaker";
+      runOnUiThread(new Runnable() {
+        @Override public void run() { applyCallAudioRoute(want); }
+      });
+    }
+
+    @JavascriptInterface
+    public void clearCallAudioRoute() {
+      runOnUiThread(new Runnable() {
+        @Override public void run() { applyCallAudioRoute("clear"); }
+      });
     }
 
     @JavascriptInterface
