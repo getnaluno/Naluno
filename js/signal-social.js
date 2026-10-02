@@ -478,8 +478,32 @@
     const id = seg && (seg.linkedBroadcastId || seg.broadcastId);
     if (!id) return '';
     const title = (seg.broadcastTitle || 'the Broadcast');
-    return '<button type="button" class="sig-bcast" data-bcast="' + esc(id) + '">'
+    const sig = seg.id || seg.segmentId || seg.docId || '';
+    return '<button type="button" class="sig-bcast" data-bcast="' + esc(id) + '" data-sig="' + esc(sig) + '">'
       + '\u25b6 Watch ' + esc(String(title).slice(0, 40)) + '</button>';
+  }
+  /* One stored tap per Signal → Broadcast per tab. Not a guess, and not
+     the caption. recommendationEvents already accepts this shape. */
+  function noteSignalBroadcast(signalId, broadcastId) {
+    const id = String(broadcastId || '');
+    if (!id) return;
+    const uid = me();
+    const store = db();
+    if (!uid || !store) return;
+    const sig = String(signalId || '').slice(0, 80);
+    const key = 'nalunoSigOpen:' + sig + ':' + id;
+    try {
+      if (sessionStorage.getItem(key)) return;
+      sessionStorage.setItem(key, '1');
+    } catch (_) {}
+    const body = {
+      uid: uid,
+      type: 'signal_broadcast',
+      at: Date.now(),
+      broadcastId: id.slice(0, 120),
+    };
+    if (sig) body.signalId = sig;
+    store.collection('recommendationEvents').add(body).catch(function () {});
   }
   function releaseSignalPlayer() {
     /* Hold history. The story entry stays underneath so the system back
@@ -512,6 +536,7 @@
         const id = b.getAttribute('data-bcast');
         if (!id) return;
         b.__nalunoOpening = true;
+        noteSignalBroadcast(b.getAttribute('data-sig'), id);
         /* One press. The story player is released in this same turn so the
            Broadcast does not wait on a second tap or a decoder gap. */
         releaseSignalPlayer();

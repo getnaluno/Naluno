@@ -189,6 +189,20 @@
         return [row.text || row];
       })));
     }
+    if (tab === 'records') {
+      out.push(table('Records', ['Note'], [['Open Records in the console for calls, videos and messages in a period. This file does not copy message text.']]));
+    }
+    if (tab === 'legal') {
+      const legalAudits = audits.filter(function (row) {
+        const a = String(row.action || '');
+        return a.indexOf('incident-') === 0 || a.indexOf('legal-') === 0 || a.indexOf('emergency-') === 0
+          || a.indexOf('security-') === 0 || a.indexOf('evidence-') === 0 || a.indexOf('disclosure-') === 0
+          || a === 'console-open' || a === 'console-sign-out' || a === 'legal-lookup';
+      });
+      out.push(table('Trust, Safety and Legal', ['When', 'Who', 'Action', 'Target'], legalAudits.slice(0, 40).map(function (row) {
+        return [day(row.created_at), who(row), row.action || '', row.target || ''];
+      })));
+    }
     if (!out.length) out.push(table(tab || 'Section', ['Note'], [['Nothing in this section for that period.']]));
     return out;
   }

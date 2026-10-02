@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261001h';
+  const BUILD = '20261002f';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -67,9 +67,9 @@
     ['overview', 'Overview'], ['health', 'Health'], ['alerts', 'Alerts'], ['mail', 'Mail'],
     ['ads', 'Ads'], ['users', 'Users'], ['identity', 'Identity'], ['broadcast', 'Broadcast'],
     ['signals', 'Signals'], ['journey', 'Journey'], ['creators', 'Creators'], ['toga', 'Toga'],
-    ['community', 'Community'], ['trust', 'Trust'], ['safety', 'Safety'], ['economy', 'Economy'],
+    ['community', 'Community'], ['trust', 'Trust'], ['safety', 'Safety'], ['legal', 'Legal'], ['economy', 'Economy'],
     ['support', 'Support'], ['money', 'Money'], ['content', 'Content Hub'], ['visitors', 'Visitors'],
-    ['reach', 'Reach'], ['quality', 'Quality'], ['analytics', 'Analytics'], ['notifications', 'Notify'],
+    ['reach', 'Reach'], ['quality', 'Quality'], ['analytics', 'Analytics'], ['records', 'Records'], ['notifications', 'Notify'],
     ['search', 'Search'], ['flags', 'Flags'], ['audit', 'Audit'], ['books', 'Books'],
     ['discovery', 'Discovery'], ['known', 'Known'], ['rights', 'Rights'],
     ['luganda', 'Luganda'],
@@ -323,7 +323,12 @@
     if (!currentUser) return false;
     if (tab === 'admins') return isSuperAdmin(currentUser);
     if (isSuperAdmin(currentUser)) return true;
-    if (__deskOperator) return (__deskRoles || []).indexOf(tab) >= 0;
+    if (__deskOperator) {
+      if ((__deskRoles || []).indexOf(tab) >= 0) return true;
+      /* Safety files the decision. Legal is the case file around it. */
+      if (tab === 'legal' && (__deskRoles || []).indexOf('safety') >= 0) return true;
+      return false;
+    }
     return true;
   }
   function applyDeskTabs() {
@@ -1225,7 +1230,12 @@
        left alone until the press finishes, then the same tab is drawn
        again with the same scroll and the same open row. Typing is not
        wiped. The tab button you are on stays the selected one. */
-    if (deskDrafting() || !pressQuiet()) {
+    if (!pressQuiet()) {
+      __pendingSnap = snap;
+      scheduleSilentRetry();
+      return;
+    }
+    if (deskDrafting() || deskHasOpen()) {
       __pendingSnap = snap;
       scheduleSilentRetry();
       return;
@@ -1933,10 +1943,41 @@
      it. For a sexual or terrorism report that delay is the whole problem.
      This puts the same player the held/taken-down lists use next to the
      report, with the reason, who reported it, and the decisions. */
+  function findSignalRow(id) {
+    try {
+      const list = (__snap && __snap.signals && __snap.signals.list) || [];
+      return list.find(function (s) { return s && String(s.id) === String(id); }) || null;
+    } catch (_) { return null; }
+  }
   function reportReviewCard(r) {
+    const urgent = URGENT_REPORT_CODES[r.reason_code] ? true : false;
+    if (String(r.target_type || '') === 'signal' && !r.broadcast_id) {
+      const sid = String(r.target_id || '');
+      const sig = sid ? findSignalRow(sid) : null;
+      const uid = String((sig && sig.uid) || r.target_user_id || '');
+      let frame = '<div class="review-missing">This Signal is not in the console\u2019s current list</div>';
+      if (sig && sig.photoUrl) frame = '<img class="review-media" alt="" src="' + escapeHtml(String(sig.photoUrl)) + '" />';
+      else if (sig && sig.videoUrl) frame = '<video class="review-media" playsinline webkit-playsinline controls preload="none" src="' + escapeHtml(String(sig.videoUrl)) + '"></video>';
+      const state = sig ? (sig.hidden ? 'removed' : (sig.held ? 'held' : 'still up')) : '';
+      const id = escapeHtml(r.id || r.report_id || '');
+      const actions = '<button type="button" class="ghost admRpt" data-id="' + id + '" data-d="ACTIONED">Action</button> '
+        + '<button type="button" class="ghost admRpt" data-id="' + id + '" data-d="DISMISSED">Dismiss</button>'
+        + (uid ? ' <button type="button" class="ghost admGoUser" data-uid="' + escapeHtml(uid) + '">Person</button>' : '')
+        + (sid ? ' <button type="button" class="ghost admGoLegal" data-q="' + escapeHtml(sid) + '">Legal</button>' : '')
+        + (sig && uid && sid && !sig.hidden ? ' <button type="button" class="danger admSig" data-uid="' + escapeHtml(uid) + '" data-id="' + escapeHtml(sid) + '">Remove</button>' : '');
+      return '<div class="review-card' + (urgent ? ' review-urgent' : '') + '">'
+        + '<div class="review-frame">' + frame + '</div>'
+        + '<div class="review-meta">'
+        + '<div class="review-title">Signal</div>'
+        + '<div class="sub">' + (urgent ? '<strong>URGENT</strong> \u00b7 ' : '')
+        + escapeHtml(r.reason_code || '') + (state ? (' \u00b7 ' + escapeHtml(state)) : '')
+        + '</div>'
+        + (r.reason ? '<div class="sub" style="margin-top:4px;">\u201c' + escapeHtml(String(r.reason).slice(0, 220)) + '\u201d</div>' : '')
+        + '<div class="row" style="margin-top:10px;">' + actions + '</div>'
+        + '</div></div>';
+    }
     const bid = r.broadcast_id || (r.target_type === 'broadcast' ? r.target_id : '');
     const b = bid ? findBroadcast(bid) : null;
-    const urgent = URGENT_REPORT_CODES[r.reason_code] ? true : false;
     let frame = '<div class="review-missing">' + (bid ? 'This Broadcast is not in the console\u2019s current list' : 'Not about a Broadcast') + '</div>';
     if (b) {
       const media = bcastMediaUrl(b);
@@ -1952,7 +1993,9 @@
     const actions = '<button type="button" class="ghost admRpt" data-id="' + id + '" data-d="ACTIONED">Action</button> '
       + '<button type="button" class="ghost admRpt" data-id="' + id + '" data-d="DISMISSED">Dismiss</button>'
       + (bid && b && !b.hidden ? ' <button type="button" class="danger admBmod" data-id="' + escapeHtml(bid) + '" data-a="take-down">Take down</button>' : '')
-      + (bid && b && (b.hidden || b.held) ? ' <button type="button" class="ghost admBmod" data-id="' + escapeHtml(bid) + '" data-a="' + (b.hidden ? 'restore' : 'let-out') + '">Put back</button>' : '');
+      + (bid && b && (b.hidden || b.held) ? ' <button type="button" class="ghost admBmod" data-id="' + escapeHtml(bid) + '" data-a="' + (b.hidden ? 'restore' : 'let-out') + '">Put back</button>' : '')
+      + (r.target_user_id ? ' <button type="button" class="ghost admGoUser" data-uid="' + escapeHtml(r.target_user_id) + '">Person</button>' : '')
+      + ' <button type="button" class="ghost admGoLegal" data-q="' + escapeHtml(bid || r.id || r.report_id || '') + '">Legal</button>';
     return '<div class="review-card' + (urgent ? ' review-urgent' : '') + '">'
       + '<div class="review-frame">' + frame + '</div>'
       + '<div class="review-meta">'
@@ -2008,6 +2051,8 @@
       : ('<button type="button" class="primary admBmod" data-id="' + id + '" data-a="let-out">Let out</button> '
         + '<button type="button" class="ghost admBmod" data-id="' + id + '" data-a="take-down">Take down</button> '
         + '<button type="button" class="ghost admBmod" data-id="' + id + '" data-uid="' + uid + '" data-a="trust-publisher">Trust publisher</button>');
+    const jump = (uid ? ' <button type="button" class="ghost admGoUser" data-uid="' + uid + '">Person</button>' : '')
+      + (id ? ' <button type="button" class="ghost admGoLegal" data-q="' + id + '">Legal</button>' : '');
     return '<div class="review-card">'
       + '<div class="review-frame">' + frame + '</div>'
       + '<div class="review-meta">'
@@ -2016,7 +2061,7 @@
       + ' · ' + escapeHtml(why)
       + (screenBit ? ' · ' + escapeHtml(screenBit) : '')
       + '</div>'
-      + '<div class="row" style="margin-top:10px;">' + actions + '</div>'
+      + '<div class="row" style="margin-top:10px;">' + actions + jump + '</div>'
       + '</div></div>';
   }
   function wireTrustMedia(root) {
@@ -3012,6 +3057,89 @@
     });
   }
 
+  function goDeskTab(tab) {
+    const nav = $('adminTabs');
+    const target = nav && nav.querySelector('[data-tab="' + tab + '"]');
+    if (target && !target.disabled && target.style.display !== 'none') target.click();
+    else toast('That section is not on this login');
+  }
+  function openPerson(uid) {
+    uid = String(uid || '');
+    if (!uid) return;
+    __tabCache.pendingUser = uid;
+    if (__activeTab === 'users') {
+      openUser(uid, __snap || {});
+      return;
+    }
+    goDeskTab('users');
+  }
+  function openLegalFor(q) {
+    q = String(q || '').trim();
+    if (!q) return;
+    __tabCache.legalPrefill = q;
+    if (__activeTab === 'legal') {
+      const input = $('legalQ');
+      const go = $('legalGo');
+      if (input) input.value = q;
+      __tabCache.legalPrefill = '';
+      if (go) go.click();
+      return;
+    }
+    goDeskTab('legal');
+  }
+  function bcastActHtml(b) {
+    if (!b || !b.id) return '';
+    const id = escapeHtml(b.id);
+    const uid = escapeHtml(b.creatorUid || '');
+    const bits = [];
+    if (b.creatorUid) bits.push('<button type="button" class="ghost admGoUser" data-uid="' + uid + '">Person</button>');
+    bits.push('<button type="button" class="ghost admGoLegal" data-q="' + id + '">Legal</button>');
+    if (!b.hidden && !b.held) bits.push('<button type="button" class="ghost admBcast" data-id="' + id + '" data-a="hold" data-uid="' + uid + '">Hold</button>');
+    if (b.held && !b.hidden) bits.push('<button type="button" class="primary admBcast" data-id="' + id + '" data-a="let-out" data-uid="' + uid + '">Let out</button>');
+    if (!b.hidden) bits.push('<button type="button" class="danger admBcast" data-id="' + id + '" data-a="take-down" data-uid="' + uid + '">Take down</button>');
+    if (b.hidden) bits.push('<button type="button" class="ghost admBcast" data-id="' + id + '" data-a="restore" data-uid="' + uid + '">Restore</button>');
+    return bits.join(' ');
+  }
+  function wireDeskJumps(root) {
+    if (!root) return;
+    root.querySelectorAll('.admGoUser').forEach(function (btn) {
+      if (btn.__wired) return;
+      btn.__wired = true;
+      btn.onclick = function (ev) {
+        if (ev) ev.stopPropagation();
+        openPerson(btn.getAttribute('data-uid'));
+      };
+    });
+    root.querySelectorAll('.admGoLegal').forEach(function (btn) {
+      if (btn.__wired) return;
+      btn.__wired = true;
+      btn.onclick = function (ev) {
+        if (ev) ev.stopPropagation();
+        openLegalFor(btn.getAttribute('data-q'));
+      };
+    });
+    root.querySelectorAll('.admBcast').forEach(function (btn) {
+      if (btn.__wired) return;
+      btn.__wired = true;
+      btn.onclick = function (ev) {
+        if (ev) ev.stopPropagation();
+        modBroadcast(btn.getAttribute('data-id'), btn.getAttribute('data-a'), btn.getAttribute('data-uid') || '');
+      };
+    });
+  }
+  async function actSignal(uid, id, release) {
+    const db = adminDb();
+    if (!db || !uid || !id) throw new Error('Database is not ready');
+    const patch = release
+      ? { held: false, heldReason: '', reviewedAt: Date.now(), reviewedBy: (currentUser && currentUser.uid) || '' }
+      : { hidden: true, held: false, reviewedAt: Date.now(), reviewedBy: (currentUser && currentUser.uid) || '' };
+    await db.collection('users').doc(uid).collection('signal').doc(id).set(patch, { merge: true });
+    try { await db.collection('signals').doc(id).set(patch, { merge: true }); } catch (_) {}
+    try {
+      await writeAudit(release ? 'signal-release' : 'signal-remove', uid + '/' + id, release ? 'Released after a check' : 'Removed after a check');
+    } catch (_) {}
+  }
+
   function renderTab(tab, d) {
     const el = $('adminBody');
     if (!el) return;
@@ -3215,6 +3343,8 @@
               + '<div style="white-space:pre-wrap;font-size:14px;line-height:1.45;">' + escapeHtml(m.text || '') + '</div>'
               + '<div class="row" style="margin-top:10px;">'
               + reply + tel
+              + (m.uid ? '<button type="button" class="ghost admGoUser" data-uid="' + escapeHtml(m.uid) + '">Open account</button> ' : '')
+              + ((m.uid || m.handle) ? '<button type="button" class="ghost admGoLegal" data-q="' + escapeHtml(m.uid || String(m.handle || '').replace(/^@/, '')) + '">Legal</button> ' : '')
               + (st !== 'read' && st !== 'done' ? '<button type="button" class="ghost admMail" data-id="' + escapeHtml(m.id) + '" data-st="read">Mark read</button> ' : '')
               + (st !== 'done' ? '<button type="button" class="ghost admMail" data-id="' + escapeHtml(m.id) + '" data-st="done">Done</button>' : '')
               + '</div></div>';
@@ -3229,6 +3359,7 @@
       el.querySelectorAll('.admMail').forEach(function (btn) {
         btn.onclick = function () { actMail(btn.getAttribute('data-id'), btn.getAttribute('data-st')); };
       });
+      wireDeskJumps(el);
       return;
     }
 
@@ -3630,8 +3761,12 @@
         if (ev.key === 'Enter') { ev.preventDefault(); run(); }
       });
       el.querySelectorAll('.admUserOpen').forEach(function (btn) {
-        btn.onclick = function () { openUser(btn.getAttribute('data-uid'), __snap || d); };
+        btn.onclick = function () {
+          __tabCache.pendingUser = btn.getAttribute('data-uid');
+          openUser(btn.getAttribute('data-uid'), __snap || d);
+        };
       });
+      if (__tabCache.pendingUser) openUser(__tabCache.pendingUser, __snap || d);
       return;
     }
 
@@ -3655,19 +3790,32 @@
           ['Scheduled / private', waiting.length], ['Today', c.broadcasts_today || 0], ['Deleted', c.broadcasts_deleted || 0],
           ['Views', c.views || 0], ['Creators', cr.total || 0]])
         + card('Not on the public feed yet', waiting.length
-          ? plainRows(['Title', 'Creator', 'State', 'Goes out'], waiting.slice(0, 30).map(function (b) {
+          ? table(['Title', 'Creator', 'State', 'Goes out', ''], waiting.slice(0, 30).map(function (b) {
             const at = Number(b.publishAt);
-            return [b.title || '(untitled)', b.creatorName || String(b.creatorUid || '').slice(0, 10),
-              bState(b), at > nowMs ? when(at) : '—'];
+            return [
+              escapeHtml(b.title || '(untitled)'),
+              escapeHtml(b.creatorName || String(b.creatorUid || '').slice(0, 10)),
+              escapeHtml(bState(b)),
+              escapeHtml(at > nowMs ? when(at) : '—'),
+              bcastActHtml(b),
+            ];
           }))
           : '<p class="sub">Nothing scheduled or private.</p>')
         + card('Creators by views', plainRows(['Creator', 'Broadcasts', 'Views', 'Live'],
           (cr.top || []).map(function (x) { return [x.name || x.uid.slice(0, 10), x.broadcasts, x.views, x.live]; })))
-        + card('Recent', plainRows(['Title', 'Creator', 'State', 'Views', 'When'],
+        + card('Recent', table(['Title', 'Creator', 'State', 'Views', 'When', ''],
           (c.recent || []).slice(0, 30).map(function (b) {
-            return [b.title || '(untitled)', b.creatorName || String(b.creatorUid || '').slice(0, 10),
-              bState(b), b.views || 0, when(b.createdAt)];
-          })));
+            return [
+              escapeHtml(b.title || '(untitled)'),
+              escapeHtml(b.creatorName || String(b.creatorUid || '').slice(0, 10)),
+              escapeHtml(bState(b)),
+              escapeHtml(String(b.views || 0)),
+              escapeHtml(when(b.createdAt)),
+              bcastActHtml(b),
+            ];
+          })))
+        + '<p class="sub">Hold takes a public Broadcast off the feed until you let it out. Take down removes it. The reason is saved on the Broadcast and in the audit.</p>';
+      wireDeskJumps(el);
       return;
     }
 
@@ -3707,14 +3855,21 @@
         + kpis([['Signals', s.total || 0], ['Still active', s.active || 0],
           ['Expired', s.expired || 0], ['Today', s.today || 0]])
         + gap('Signals are the short clips on each account. Who watched, and the reaction on a clip, stay on that Signal — Seen by — and are not copied into a public counter. The desk does not open Wireline or Band.')
-        + card('Recent Signals', table(['Owner', 'Kind', 'Caption', 'When'],
+        + card('Recent Signals', table(['Owner', 'Kind', 'Caption', 'State', 'When', ''],
           list.slice(0, 60).map(function (row) {
             const owner = row.name || String(row.uid || '').slice(0, 12);
+            const state = row.hidden ? 'Removed' : (row.held ? 'Held' : 'Up');
+            const uid = row.uid || '';
+            const id = row.id || '';
             return [
               escapeHtml(owner),
               escapeHtml(row.mediaType || row.type || 'signal'),
               escapeHtml(String(row.caption || row.text || '').slice(0, 48) || '—'),
+              escapeHtml(state),
               escapeHtml(when(row.createdAt || row.ts)),
+              (uid ? '<button type="button" class="ghost admGoUser" data-uid="' + escapeHtml(uid) + '">Person</button> ' : '')
+              + (id ? '<button type="button" class="ghost admGoLegal" data-q="' + escapeHtml(id) + '">Legal</button> ' : '')
+              + (uid && id && !row.hidden ? '<button type="button" class="danger sig-held-act" data-a="remove" data-uid="' + escapeHtml(uid) + '" data-id="' + escapeHtml(id) + '">Remove</button>' : ''),
             ];
           })));
       el.querySelectorAll('.sig-held-act').forEach(function (btn) {
@@ -3725,16 +3880,10 @@
           const id = btn.getAttribute('data-id');
           const release = btn.getAttribute('data-a') === 'release';
           btn.disabled = true;
-          const patch = release
-            ? { held: false, heldReason: '', reviewedAt: Date.now(), reviewedBy: (currentUser && currentUser.uid) || '' }
-            : { hidden: true, held: false, reviewedAt: Date.now(), reviewedBy: (currentUser && currentUser.uid) || '' };
           try {
-            await db.collection('users').doc(uid).collection('signal').doc(id).set(patch, { merge: true });
-            try { await db.collection('signals').doc(id).set(patch, { merge: true }); } catch (_) {}
-            try { await writeAudit(release ? 'signal-release' : 'signal-remove', uid + '/' + id, release ? 'Released after a check' : 'Removed after a check'); } catch (_) {}
+            await actSignal(uid, id, release);
             toast(release ? 'Released. Their connections can see it now.' : 'Removed from their connections.');
-            const rowEl = btn.closest('.flag-row');
-            if (rowEl) rowEl.remove();
+            await loadTab('signals', true);
           } catch (e) {
             btn.disabled = false;
             toast((e && e.code === 'permission-denied')
@@ -3743,28 +3892,69 @@
           }
         };
       });
+      wireDeskJumps(el);
       return;
     }
 
     if (tab === 'journey') {
-      const impressions = s.total || 0;
-      const bOpens = c.broadcasts_total || 0;
-      const rate = impressions ? Math.round((Math.min(bOpens, impressions) / impressions) * 1000) / 10 : 0;
       el.innerHTML =
         card('Do Signals bring people into Broadcast?',
-          kpis([['Signals stored', impressions], ['Broadcasts stored', bOpens],
-            ['Rough conversion', rate + '%']])
-          + gap('A Signal → Broadcast funnel needs per-open events. Those are not stored yet, so this is a stock count, not a conversion rate.'));
+          '<div id="journeyLive"><p class="sub">Reading stored taps…</p></div>'
+          + kpis([['Signals stored', s.total || 0], ['Broadcasts stored', c.broadcasts_total || 0]])
+          + '<p class="sub">Stored means how many exist. It is not how many people moved from a Signal into a Broadcast.</p>');
+      const live = $('journeyLive');
+      const db = adminDb();
+      function paintJourney(rows, note) {
+        const box = $('journeyLive');
+        if (!box) return;
+        if (note) { box.innerHTML = '<p class="sub">' + escapeHtml(note) + '</p>'; return; }
+        rows = rows || [];
+        const people = {};
+        const casts = {};
+        const week = Date.now() - 7 * 86400000;
+        let weekN = 0;
+        rows.forEach(function (r) {
+          if (r && r.uid) people[r.uid] = 1;
+          if (r && r.broadcastId) casts[r.broadcastId] = 1;
+          if (r && Number(r.at) >= week) weekN += 1;
+        });
+        const cap = rows.length >= 300;
+        box.innerHTML = (rows.length
+          ? kpis([
+            ['Taps stored', cap ? '300+' : String(rows.length)],
+            ['People', Object.keys(people).length],
+            ['Broadcasts opened this way', Object.keys(casts).length],
+            ['Taps in 7 days', weekN],
+          ])
+          : '<p class="sub">No one has pressed Watch the Broadcast on a Signal yet. This stays at zero until that happens. It is not estimated.</p>')
+          + '<p class="sub">A tap is one person opening the Broadcast linked from a Signal, once per tab. A rate is not shown: Naluno does not store how often that button was on screen.</p>';
+      }
+      if (!db) { if (live) live.innerHTML = '<p class="sub">Database is not ready.</p>'; return; }
+      db.collection('recommendationEvents').where('type', '==', 'signal_broadcast').limit(300).get().then(function (snap) {
+        const rows = [];
+        snap.forEach(function (doc) { rows.push(doc.data() || {}); });
+        paintJourney(rows);
+      }).catch(function (e) {
+        paintJourney(null, 'Could not read those taps. ' + ((e && e.message) || ''));
+      });
       return;
     }
 
     if (tab === 'creators') {
       el.innerHTML =
         kpis([['Creators', cr.total || 0], ['With a Broadcast', cr.active_30d || 0]])
-        + card('Top creators', plainRows(['Creator', 'Broadcasts', 'Signals', 'Views', 'Live'],
+        + card('Top creators', table(['Creator', 'Broadcasts', 'Signals', 'Views', 'Live', ''],
           (cr.list || []).slice(0, 30).map(function (x) {
-            return [x.name || x.uid.slice(0, 12), x.broadcasts, x.signals, x.views, x.live];
+            return [
+              escapeHtml(x.name || String(x.uid || '').slice(0, 12)),
+              escapeHtml(String(x.broadcasts || 0)),
+              escapeHtml(String(x.signals || 0)),
+              escapeHtml(String(x.views || 0)),
+              escapeHtml(String(x.live || 0)),
+              x.uid ? '<button type="button" class="ghost admGoUser" data-uid="' + escapeHtml(x.uid) + '">Open</button>' : '',
+            ];
           })));
+      wireDeskJumps(el);
       return;
     }
 
@@ -3813,6 +4003,32 @@
       return;
     }
 
+    if (tab === 'legal') {
+      if (typeof NalunoTrustDesk !== 'undefined' && NalunoTrustDesk.mount) {
+        NalunoTrustDesk.mount(el, {
+          db: adminDb(),
+          audit: writeAudit,
+          uid: currentUser && currentUser.uid,
+          email: (currentUser && currentUser.email) || '',
+          escapeHtml: escapeHtml,
+          when: when,
+          toast: toast,
+          drafting: deskDrafting,
+        });
+        const pre = __tabCache.legalPrefill || '';
+        if (pre) {
+          __tabCache.legalPrefill = '';
+          const q = el.querySelector('#legalQ');
+          const go = el.querySelector('#legalGo');
+          if (q) q.value = pre;
+          if (go) go.click();
+        }
+      } else {
+        el.innerHTML = '<p class="sub">The legal desk did not load.</p>';
+      }
+      return;
+    }
+
     if (tab === 'safety') {
       /* 29h: a live refresh used to blank this to "Loading…", refetch, and
          drop the search, the filters and your place. Now the page stays as
@@ -3856,7 +4072,21 @@
           modBroadcast(btn.getAttribute('data-id'), btn.getAttribute('data-a'), btn.getAttribute('data-uid') || '');
         };
       });
+      el.querySelectorAll('.admSig').forEach(function (btn) {
+        btn.onclick = async function () {
+          btn.disabled = true;
+          try {
+            await actSignal(btn.getAttribute('data-uid'), btn.getAttribute('data-id'), false);
+            toast('Removed from their connections.');
+            await loadTab('trust', true);
+          } catch (e) {
+            btn.disabled = false;
+            toast((e && e.message) || 'Could not remove that Signal.');
+          }
+        };
+      });
       wireTrustMedia(el);
+      wireDeskJumps(el);
       return;
     }
 
@@ -4073,7 +4303,8 @@
     }
 
     if (tab === 'content') {
-      el.innerHTML = '';
+      el.innerHTML = card('Content Hub',
+        '<p class="sub">Sports, movies and channels are not in the product. This page stays without numbers until they exist. Nothing here is estimated.</p>');
       return;
     }
 
@@ -4354,8 +4585,9 @@
                   escapeHtml(f.status || 'open'),
                   (f.status === 'open' || f.status === 'new')
                     ? ('<button type="button" class="ghost idFlag" data-id="' + escapeHtml(f.id) + '" data-s="reviewed">Reviewed</button> '
-                      + '<button type="button" class="ghost idFlag" data-id="' + escapeHtml(f.id) + '" data-s="dismissed">Dismiss</button>')
-                    : '',
+                      + '<button type="button" class="ghost idFlag" data-id="' + escapeHtml(f.id) + '" data-s="dismissed">Dismiss</button>'
+                      + (f.uid ? ' <button type="button" class="ghost admGoUser" data-uid="' + escapeHtml(f.uid) + '">Person</button>' : ''))
+                    : (f.uid ? '<button type="button" class="ghost admGoUser" data-uid="' + escapeHtml(f.uid) + '">Person</button>' : ''),
                 ];
               }))
             : '<p class="sub">No similar handles have been flagged.</p>'));
@@ -4430,6 +4662,7 @@
           if (ok) loadTab('identity', true);
         });
       };
+      wireDeskJumps(el);
       return;
     }
 
@@ -5226,6 +5459,7 @@
             + escapeHtml(row.closedKind || 'self') + ' · ' + escapeHtml(row.closedReason || row.deletedReason || '—') + '</p>'
           : '')
         + '<div class="row">'
+        + '<button type="button" class="ghost admGoLegal" data-q="' + escapeHtml(uid) + '">Open in Legal</button>'
         + (row.accountState === 'closed' || row.deleted
           ? '<button type="button" class="primary admAct" data-act="restore">Restore Callsign</button>'
           : '<button type="button" class="danger admAct" data-act="close">Close for violation</button>')
@@ -5248,11 +5482,34 @@
             ];
           })))
         : '')
-      + card('Their Broadcasts', plainRows(['Title', 'Views', 'Live'],
-        bcasts.map(function (b) { return [b.title || '', b.views || 0, b.live ? 'LIVE' : '']; })));
+      + card('Reports about this account', (function () {
+          const reps = ((d.safety && d.safety.reports) || []).filter(function (r) {
+            return r && String(r.target_user_id || '') === String(uid);
+          }).slice(0, 12);
+          if (!reps.length) return '<p class="sub">No stored report names this account.</p>';
+          return table(['When', 'Why', 'Status', ''], reps.map(function (r) {
+            const rid = r.id || r.report_id || '';
+            return [
+              escapeHtml(when(r.ts || r.created_at || r.createdAt)),
+              escapeHtml(r.reason_code || ''),
+              escapeHtml(String(r.status || '')),
+              rid ? '<button type="button" class="ghost admGoLegal" data-q="' + escapeHtml(rid) + '">Legal</button>' : '',
+            ];
+          }));
+        })())
+      + card('Their Broadcasts', table(['Title', 'Views', 'Live', ''],
+        bcasts.slice(0, 20).map(function (b) {
+          return [
+            escapeHtml(b.title || '(untitled)'),
+            escapeHtml(String(b.views || 0)),
+            b.live ? 'LIVE' : '',
+            bcastActHtml(b),
+          ];
+        })));
     out.querySelectorAll('.admAct').forEach(function (btn) {
       btn.onclick = function () { actUser(uid, btn.getAttribute('data-act')); };
     });
+    wireDeskJumps(out);
   }
 
   async function actUser(uid, action) {
@@ -6294,13 +6551,15 @@
         const risk = c.automated_risk_result || {};
         const openRow = c.review_status !== 'decided';
         const account = c.content_type === 'account' || c.surface === 'behaviour';
+        const legalQ = c.reported_user_id || c.content_id || '';
         const buttons = '<button type="button" class="ghost admSafe" data-id="' + escapeHtml(c.case_id) + '" data-a="REMOVE">Remove</button> '
           + '<button type="button" class="ghost admSafe" data-id="' + escapeHtml(c.case_id) + '" data-a="AGE_RESTRICT">Age</button> '
           + '<button type="button" class="ghost admSafe" data-id="' + escapeHtml(c.case_id) + '" data-a="DISMISS">Dismiss</button> '
           + '<button type="button" class="ghost admSafe" data-id="' + escapeHtml(c.case_id) + '" data-a="ESCALATE">Escalate</button> '
           + (account
             ? '<button type="button" class="ghost admSafe" data-id="' + escapeHtml(c.case_id) + '" data-a="SUSPEND">Suspend</button>'
-            : '<button type="button" class="ghost admSafe" data-id="' + escapeHtml(c.case_id) + '" data-a="RESTORE">Restore</button>');
+            : '<button type="button" class="ghost admSafe" data-id="' + escapeHtml(c.case_id) + '" data-a="RESTORE">Restore</button>')
+          + (legalQ ? ' <button type="button" class="ghost admGoLegal" data-q="' + escapeHtml(legalQ) + '">Legal</button>' : '');
         return [
           escapeHtml(c.priority || ''),
           escapeHtml(c.case_id || ''),
@@ -6318,6 +6577,7 @@
     const repeat = overview.repeat || [];
     el.innerHTML =
       '<div class="alert">Private Wireline and Band conversations are not opened here. There is no control that reads messages. Public Broadcasts and Signals are scored. A machine cannot ban someone. A suspension is a human decision and can be appealed.</div>'
+      + '<p class="sub"><button type="button" class="ghost" id="openLegalDesk">Trust, Safety and Legal</button> Incidents, legal requests, emergencies and preserved evidence are filed there. Decisions stay on this page.</p>'
       + (workerNote ? '<p class="sub">' + escapeHtml(workerNote) + '</p>' : '')
       + '<div class="card"><div class="who">Find a case</div>'
       + '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">'
@@ -6383,6 +6643,12 @@
       __tabCache.safetyFields = {};
       loadSafetyCentre(el, '');
     };
+    const legalBtn = el.querySelector('#openLegalDesk');
+    if (legalBtn) legalBtn.onclick = function () {
+      const nav = $('adminTabs');
+      const target = nav && nav.querySelector('[data-tab="legal"]');
+      if (target) target.click();
+    };
     const searchBtn = el.querySelector('#safeSearch');
     if (searchBtn) searchBtn.onclick = function () {
       const q = (el.querySelector('#safeQ').value || '').trim();
@@ -6399,6 +6665,7 @@
     el.querySelectorAll('.admSafe').forEach(function (btn) {
       btn.onclick = function () { decideSafetyCase(btn.getAttribute('data-id'), btn.getAttribute('data-a'), el); };
     });
+    wireDeskJumps(el);
   }
   async function decideSafetyCase(caseId, action, el) {
     if (!caseId || !action) return;
@@ -6537,6 +6804,15 @@
           listed: true, held: false, heldReason: '', hidden: false, updatedAt: now,
         }, { merge: true });
         toast('That Broadcast is on the public feed');
+      } else if (action === 'hold') {
+        const why = window.prompt('Why is this held off the feed?', 'review');
+        if (why === null) return;
+        await db.collection('broadcasts').doc(id).set({
+          listed: false, held: true, hidden: false, live: false,
+          heldReason: String(why || 'review').slice(0, 80),
+          heldAt: now, heldBy: currentUser.uid, updatedAt: now,
+        }, { merge: true });
+        toast('Held. It stays off the public feed until you let it out.');
       } else if (action === 'take-down') {
         const why = window.prompt('Why is this coming down?', 'sexual');
         if (why === null) return;
@@ -6565,7 +6841,7 @@
         });
       } catch (_) {}
       await writeAudit('broadcast-' + action, id, uid || '');
-      await loadTab('trust', true);
+      await loadTab(__activeTab || 'trust', true);
     } catch (e) {
       toast((e && e.message) || 'Could not update that Broadcast.');
     }
@@ -6592,6 +6868,12 @@
 
   function openConsole() {
     try { localStorage.setItem('naluno:pulse:staff', '1'); } catch (_) {}
+    try {
+      if (!sessionStorage.getItem('nalunoDeskOpened')) {
+        sessionStorage.setItem('nalunoDeskOpened', '1');
+        writeAudit('console-open', currentUser && currentUser.uid, 'opened the desk');
+      }
+    } catch (_) {}
     setStage('console');
     __healedReports = false;
     resolveDeskPlace();
@@ -6830,6 +7112,7 @@
     }
   }
   function signOut() {
+    try { writeAudit('console-sign-out', currentUser && currentUser.uid, 'left the desk'); } catch (_) {}
     __adminPass = '';
     currentUser = null;
     try { window.currentUser = null; } catch (_) {}

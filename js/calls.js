@@ -674,9 +674,10 @@ $('signOutBtn').onclick = ()=>{
   if(!fbAuth){ toast('Not signed in'); return; }
   window.__nalunoSigningOut = true;
   try{ localStorage.removeItem('nalunoLastUid'); }catch(_){}
-  fbAuth.signOut().catch(e=> toast(e.message || 'Couldn\u2019t sign out'));
-  // onAuthStateChanged's signed-out branch handles showing the sign-in screen and
-  // tearing down every live listener — nothing else needed here.
+  const go = function(){ fbAuth.signOut().catch(e=> toast(e.message || 'Couldn\u2019t sign out')); };
+  if(window.NalunoSecurity && NalunoSecurity.note){
+    NalunoSecurity.note('logout').then(go, go);
+  } else go();
 };
 (function loadCustomRingtone(){
   ringtoneDbGet().then(function(rec){

@@ -720,6 +720,11 @@ async function nalunoForgotPassword(){
   authStatus('Sending reset email…');
   try{
     await fbAuth.sendPasswordResetEmail(target);
+    try{
+      if(typeof currentUser !== 'undefined' && currentUser && window.NalunoSecurity && NalunoSecurity.note){
+        NalunoSecurity.note('password_reset');
+      }
+    }catch(_){}
     authStatus('If that email is on the account, a reset link is on its way. Check inbox and spam.');
   }catch(e){
     if(e.code === 'auth/user-not-found'){
@@ -1545,7 +1550,11 @@ function bindCallsignCloseForm(){
   if(leave){
     leave.onclick = function(){
       hideClosedCallsignGate();
-      if(typeof fbAuth !== 'undefined' && fbAuth) fbAuth.signOut().catch(function(){});
+      if(typeof fbAuth !== 'undefined' && fbAuth){
+        const go = function(){ fbAuth.signOut().catch(function(){}); };
+        if(window.NalunoSecurity && NalunoSecurity.note) NalunoSecurity.note('logout').then(go, go);
+        else go();
+      }
     };
   }
 }

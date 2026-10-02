@@ -1339,6 +1339,24 @@ async function signalPaintSocial(ownerUid, seg){
       if(sum.length) btn.textContent += '  ' + sum.map(function(x){ return x.emoji + x.n; }).join(' ');
     }catch(_){}
   } else {
+    const rep = document.createElement('button');
+    rep.type = 'button';
+    rep.className = 'sig-seen';
+    rep.textContent = 'Report';
+    rep.addEventListener('pointerdown', function (e) {
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+    });
+    rep.addEventListener('pointerup', function (e) {
+      if (e) { e.preventDefault(); e.stopPropagation(); }
+      if (typeof openReportSheet !== 'function') return;
+      openReportSheet({
+        target_type: 'signal',
+        target_id: segId,
+        target_user_id: ownerUid,
+        name: 'this Signal',
+      });
+    });
+    row.appendChild(rep);
     S.markViewed(ownerUid, segId);
     const bar = document.createElement('div');
     bar.innerHTML = S.reactionBarHtml('');
