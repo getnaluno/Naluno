@@ -1134,6 +1134,31 @@ async function hideBroadcastSexual(env, saToken, userToken, broadcastId) {
   return { ok: true, id, restricted };
 }
 
+async function hideSignalReported(env, saToken, uid, signalId, mode, code) {
+  const id = String(signalId || "").slice(0, 120);
+  const who = String(uid || "").slice(0, 128);
+  if (!saToken || !id || !who) return false;
+  const now = Date.now();
+  const patch = mode === "hidden"
+    ? { hidden: true, held: false, reviewedAt: now, reviewedBy: "report" }
+    : { held: true, heldReason: ("reported-" + String(code || "urgent")).slice(0, 80), hidden: false, reviewedAt: now, reviewedBy: "report" };
+  const wrote = await fsPutDoc(env, saToken, "/users/" + encodeURIComponent(who) + "/signal/" + encodeURIComponent(id), patch);
+  if (!wrote || !wrote.ok) throw new Error("signal not updated");
+  await fsPutDoc(env, saToken, "/signals/" + encodeURIComponent(id), patch);
+  if (mode === "hidden") {
+    const profile = await fsGetDoc(env, saToken, "/users/" + encodeURIComponent(who));
+    const n = Number((profile && profile.sexualReports) || 0) + 1;
+    const extra = { sexualReports: n, updatedAt: now };
+    if (n >= 3) {
+      extra.restricted = true;
+      extra.restrictedReason = "Repeated sexual-content reports";
+      extra.restrictedAt = now;
+    }
+    await fsPutDoc(env, saToken, "/users/" + encodeURIComponent(who), extra);
+  }
+  return true;
+}
+
 function hashList(env) {
   const raw = env && (env.SAFETY_HASHES || env.SAFETY_HASH_LIST) || "";
   if (!raw) return [];
@@ -3656,6 +3681,21 @@ export async function handleRequest(request, env = {}, ctx = {}) {
               });
               autoHeld = true;
             }
+          } catch (e) {
+            autoError = (e && e.message) ? String(e.message).slice(0, 120) : "hide failed";
+          }
+        }
+      }
+      if (String(body.target_type || "") === "signal" && (code === "sexual" || URGENT_HOLD[code])) {
+        const sigId = String(body.target_id || "");
+        const sigUid = String(body.target_user_id || "");
+        if (!saToken) {
+          if (!autoError) autoError = "no-service-account";
+        } else if (sigId && sigUid) {
+          try {
+            await hideSignalReported(env, saToken, sigUid, sigId, code === "sexual" ? "hidden" : "held", code);
+            if (code === "sexual") autoHidden = true;
+            else autoHeld = true;
           } catch (e) {
             autoError = (e && e.message) ? String(e.message).slice(0, 120) : "hide failed";
           }
