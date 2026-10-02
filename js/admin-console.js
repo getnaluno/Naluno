@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261002f';
+  const BUILD = '20261003a';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -79,6 +79,7 @@
   let __tabCache = {};
   let __activeTab = 'overview';
   let __exportOpen = false;
+  let __legalOpen = false;
   let __snap = null;
   let __livePack = null;
   let __liveUnsubs = [];
@@ -323,12 +324,7 @@
     if (!currentUser) return false;
     if (tab === 'admins') return isSuperAdmin(currentUser);
     if (isSuperAdmin(currentUser)) return true;
-    if (__deskOperator) {
-      if ((__deskRoles || []).indexOf(tab) >= 0) return true;
-      /* Safety files the decision. Legal is the case file around it. */
-      if (tab === 'legal' && (__deskRoles || []).indexOf('safety') >= 0) return true;
-      return false;
-    }
+    if (__deskOperator) return (__deskRoles || []).indexOf(tab) >= 0;
     return true;
   }
   function applyDeskTabs() {
@@ -3077,7 +3073,7 @@
     q = String(q || '').trim();
     if (!q) return;
     __tabCache.legalPrefill = q;
-    if (__activeTab === 'legal') {
+    if (__activeTab === 'legal' && __legalOpen) {
       const input = $('legalQ');
       const go = $('legalGo');
       if (input) input.value = q;
@@ -4004,6 +4000,57 @@
     }
 
     if (tab === 'legal') {
+      if (!canDeskTab('legal')) { el.innerHTML = '<p class="sub">This login cannot open Legal.</p>'; return; }
+      const superOn = isSuperAdmin(currentUser);
+      if (!__legalOpen) {
+        el.innerHTML = card('Legal',
+          '<p class="sub">' + (superOn
+            ? 'This tab stays locked until the password is entered. Only you can set it, change it, and give another admin a password. You do that after you are inside.'
+            : 'Enter the password the superadmin assigned to you. You cannot change it.') + '</p>'
+          + '<label for="legalPass">Password</label><input id="legalPass" type="password" autocomplete="off" />'
+          + '<div class="row"><button type="button" class="primary" id="legalUnlock">Open</button></div>'
+          + (superOn ? '<div class="row"><button type="button" class="ghost" id="legalSetFirst">Set the password</button></div>' : '')
+          + '<p class="msg" id="legalMsg"></p>');
+        const msg = $('legalMsg');
+        const openBtn = $('legalUnlock');
+        if (openBtn) openBtn.onclick = async function () {
+          const pass = ($('legalPass') && $('legalPass').value) || '';
+          if (!pass) { if (msg) msg.textContent = 'Enter the password.'; return; }
+          const db = adminDb();
+          if (!db) { if (msg) msg.textContent = 'Database is not ready.'; return; }
+          try {
+            if (superOn) {
+              const snap = await db.collection('deskLegal').doc('gate').get();
+              const hash = snap.exists && snap.data() && snap.data().hash;
+              if (!hash) { if (msg) msg.textContent = 'No password yet. Set one first.'; return; }
+              if (hash !== await hashLocal('legal-tab', pass)) { if (msg) msg.textContent = 'That password is not the one for this tab.'; return; }
+            } else {
+              const snap = await db.collection('deskLegalPasses').doc(currentUser.uid).get();
+              const hash = snap.exists && snap.data() && snap.data().hash;
+              if (!hash) { if (msg) msg.textContent = 'The superadmin has not assigned you a password.'; return; }
+              if (hash !== await hashLocal('legal-admin-' + currentUser.uid, pass)) { if (msg) msg.textContent = 'That password is not yours for this tab.'; return; }
+            }
+            __legalOpen = true;
+            renderTab('legal', __snap || d);
+          } catch (e) { if (msg) msg.textContent = (e && e.message) || 'Could not open.'; }
+        };
+        const setFirst = $('legalSetFirst');
+        if (setFirst) setFirst.onclick = async function () {
+          const pass = ($('legalPass') && $('legalPass').value) || '';
+          if (pass.length < 8) { if (msg) msg.textContent = 'Use at least 8 characters.'; return; }
+          const db = adminDb();
+          if (!db) return;
+          try {
+            const snap = await db.collection('deskLegal').doc('gate').get();
+            if (snap.exists && snap.data() && snap.data().hash) { if (msg) msg.textContent = 'A password already exists. Open the tab, then change it.'; return; }
+            await db.collection('deskLegal').doc('gate').set({ hash: await hashLocal('legal-tab', pass), at: Date.now(), by: currentUser.uid });
+            __legalOpen = true;
+            try { await writeAudit('legal-password', 'tab', 'set'); } catch (_) {}
+            renderTab('legal', __snap || d);
+          } catch (e) { if (msg) msg.textContent = (e && e.message) || 'Could not set it.'; }
+        };
+        return;
+      }
       if (typeof NalunoTrustDesk !== 'undefined' && NalunoTrustDesk.mount) {
         NalunoTrustDesk.mount(el, {
           db: adminDb(),
@@ -4025,6 +4072,71 @@
         }
       } else {
         el.innerHTML = '<p class="sub">The legal desk did not load.</p>';
+      }
+      if (superOn && el && !el.querySelector('#legalPassCard')) {
+        el.insertAdjacentHTML('afterbegin', card('Tab password',
+          '<div id="legalPassCard"></div>'
+          + '<p class="sub">Only you can change the password that opens Legal. Other admins use the password you assign them. They cannot change either.</p>'
+          + '<label for="legalNew">New tab password</label><input id="legalNew" type="password" autocomplete="off" />'
+          + '<div class="row"><button type="button" class="primary" id="legalChange">Change the tab password</button></div>'
+          + '<div id="legalAdmins"><p class="sub">Loading admins…</p></div>'
+          + '<p class="msg" id="legalAdminMsg"></p>'));
+        const change = $('legalChange');
+        if (change) change.onclick = async function () {
+          const pass = ($('legalNew') && $('legalNew').value) || '';
+          const msg = $('legalAdminMsg');
+          if (pass.length < 8) { if (msg) msg.textContent = 'Use at least 8 characters.'; return; }
+          const db = adminDb();
+          if (!db) return;
+          try {
+            await db.collection('deskLegal').doc('gate').set({ hash: await hashLocal('legal-tab', pass), at: Date.now(), by: currentUser.uid });
+            if ($('legalNew')) $('legalNew').value = '';
+            if (msg) msg.textContent = 'Tab password changed.';
+            writeAudit('legal-password', 'tab', 'changed');
+          } catch (e) { if (msg) msg.textContent = (e && e.message) || 'Could not change it.'; }
+        };
+        const db = adminDb();
+        const host = $('legalAdmins');
+        if (db && host) {
+          db.collection('deskOperators').limit(40).get().then(function (snap) {
+            const people = [];
+            snap.forEach(function (doc) {
+              const row = doc.data() || {};
+              if (row.revoked) return;
+              people.push({ uid: doc.id, email: row.email || doc.id });
+            });
+            if (!people.length) { host.innerHTML = '<p class="sub">No other admins yet. Issue them under Admins, and tick Legal.</p>'; return; }
+            host.innerHTML = '<p class="sub">Assign a password. Tick Legal under Admins as well, or they will not see the tab.</p>'
+              + people.map(function (p) {
+                return '<div class="flag-row" style="align-items:center;flex-wrap:wrap;">'
+                  + '<span style="flex:1;">' + escapeHtml(p.email) + '</span>'
+                  + '<input class="legal-assign" data-uid="' + escapeHtml(p.uid) + '" type="password" autocomplete="off" placeholder="Assigned password" />'
+                  + '<button type="button" class="ghost legal-assign-go" data-uid="' + escapeHtml(p.uid) + '">Assign</button>'
+                  + '</div>';
+              }).join('');
+            host.querySelectorAll('.legal-assign-go').forEach(function (btn) {
+              btn.onclick = async function () {
+                const uid = btn.getAttribute('data-uid');
+                const input = host.querySelector('.legal-assign[data-uid="' + uid + '"]');
+                const pass = (input && input.value) || '';
+                const msg = $('legalAdminMsg');
+                if (pass.length < 8) { if (msg) msg.textContent = 'Use at least 8 characters.'; return; }
+                try {
+                  await db.collection('deskLegalPasses').doc(uid).set({
+                    hash: await hashLocal('legal-admin-' + uid, pass),
+                    at: Date.now(),
+                    by: currentUser.uid,
+                  });
+                  if (input) input.value = '';
+                  if (msg) msg.textContent = 'Assigned. They use that password. They cannot change it.';
+                  writeAudit('legal-password', uid, 'assigned');
+                } catch (e) { if (msg) msg.textContent = (e && e.message) || 'Could not assign.'; }
+              };
+            });
+          }).catch(function () {
+            host.innerHTML = '<p class="sub">Could not read admins. Publish firestore.rules.</p>';
+          });
+        }
       }
       return;
     }
