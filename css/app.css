@@ -3906,6 +3906,9 @@ body .naluno-break-wrap img{
 #callOverlay.voice-call #switchCam,
 #callOverlay.voice-call #camBtn,
 #callOverlay.voice-call #incallBgChipRow { display: none !important; }
+#earBtn{ display:none; }
+#callOverlay.voice-call #earBtn{ display:flex; }
+#callOverlay.voice-call #earBtn.active{ background:var(--text); color:#0D0F17; }
 #callOverlay.voice-call #remoteVideo { opacity: 0 !important; }
 #callOverlay.voice-call #remotePlaceholder { display: flex !important; }
 #callOverlay.voice-call #remotePlaceholder::after {
