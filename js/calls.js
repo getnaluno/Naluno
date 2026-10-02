@@ -1760,6 +1760,16 @@ function nalunoScheduleCallFail(pc){
     }
   }, wait);
 }
+function nalunoMarkIfMediaUp(pc){
+  try{
+    if(!pc || peerConnection !== pc || nalunoCallLive) return;
+    if(!nalunoCallMediaUp(pc)) return;
+    /* The link is up. Waiting out a painted video frame kept the screen
+       on "Connecting…" for several seconds after the call had already
+       connected. The picture still appears on its first frame. */
+    nalunoMarkCallLive();
+  }catch(_){}
+}
 function attachConnectionWatchdogs(pc){
   if(!pc) return;
   pc.onconnectionstatechange = ()=>{
@@ -1767,12 +1777,7 @@ function attachConnectionWatchdogs(pc){
     console.log('[call] connection state:', s);
     if(s === 'connected'){
       try{ window.__nalunoConnectedCall = activeCallId; }catch(_){}
-      /* 30d: a voice call has no picture to wait for; it is connected the
-         moment the connection is (it used to show "Connecting…" 0.9 s longer). */
-      try{ if(peerConnection === pc && !nalunoCallLive && nalunoIsVoiceCall()) nalunoMarkCallLive(); }catch(_){}
-      // Their camera is off (or video is slow): voice is flowing, so the call is live.
-      setTimeout(function(){ try{ if(peerConnection === pc && !nalunoCallLive && (remoteFirstFrame || !nalunoRemoteVideoAlive())) nalunoMarkCallLive(); }catch(_){} }, 900);
-      setTimeout(function(){ try{ if(peerConnection === pc && !nalunoCallLive) nalunoMarkCallLive(); }catch(_){} }, 4000);
+      try{ nalunoMarkIfMediaUp(pc); }catch(_){}
       try{ if(peerConnection === pc && !window.__nalunoConnectedAt) window.__nalunoConnectedAt = Date.now(); }catch(_){}
       try{ if(typeof trackMetric === 'function') trackMetric('call_connected', {}); }catch(_){}
       try{
@@ -1793,6 +1798,7 @@ function attachConnectionWatchdogs(pc){
     console.log('[call] ICE connection state:', s);
     if(s === 'connected' || s === 'completed'){
       try{ window.__nalunoConnectedCall = activeCallId; }catch(_){}
+      try{ nalunoMarkIfMediaUp(pc); }catch(_){}
       try{ if(peerConnection === pc && !window.__nalunoConnectedAt) window.__nalunoConnectedAt = Date.now(); }catch(_){}
       try{ ensureRemoteVideoPlaying(); }catch(_){}
       try{ scheduleFilteredUpgrade(pc); }catch(_){}
@@ -3289,6 +3295,10 @@ if($('viewToggleBtn')){
     resetPipLayoutStyles();
     if(incallViewMode === 1 && pip) pip.classList.add('large');
     if(incallViewMode === 2) incall.classList.add('swap-focus');
+    try{
+      const stage = $('pipStageCanvas');
+      if(stage) stage._lastSizeCheck = 0;
+    }catch(_){}
   };
 }
 $('endBtn').onclick = ()=>{

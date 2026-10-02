@@ -846,6 +846,25 @@ function shouldMirrorCamera(){
   }catch(e){}
   return cameraFacingMode !== 'environment';
 }
+function nalunoCompositeFit(vw, vh, w, h){
+  if(!(vw > 0 && vh > 0 && w > 0 && h > 0)) return 'contain';
+  const src = vw / vh;
+  const box = w / h;
+  /* Wider than the window: cover, so the picture fills it. That is the
+     caller's own camera gone full screen (a 3:4 frame on a tall phone)
+     and a flipped lens that is still square or landscape. Cover trims
+     the sides. It does not pull the face closer: a frame that is already
+     as tall as the window is left contained, so nothing is cropped again
+     into a 9:16 close-up. Contain is what painted the black bands. */
+  if(src > box * 1.02) return 'cover';
+  return 'contain';
+}
+/* Square and landscape are wider than the upright phone sensor (~3:4).
+   Those go out and show up as 3:4, not as a square crop. A frame that is
+   already 3:4 (or taller) is left alone so the face is not cropped closer. */
+function nalunoAspectNeedsPortrait(aspect){
+  return aspect > 0.88;
+}
 function compositeFrame(canvas, video, animStart){
   const w = canvas.width, h = canvas.height;
   const ctx = canvas.getContext('2d');
@@ -855,14 +874,12 @@ function compositeFrame(canvas, video, animStart){
   const mirror = shouldMirrorCamera();
   const filterId = (greenroomEnabled && selectedFilterId) ? selectedFilterId : 'original';
   const filt = nalunoFilters[filterId] || nalunoFilters.original;
-  /* A landscape camera in a portrait frame: keep the full height and trim
-     the unused sides. Contain would put the black bars back. A portrait
-     camera stays contain so the face is not cropped closer. */
+  /* Fill the window the same way the other person's video does.
+     A landscape or square lens in a tall window used to be contained,
+     which put the bands back, or drawn as a tight square. */
   const vw = video && video.videoWidth ? video.videoWidth : 0;
   const vh = video && video.videoHeight ? video.videoHeight : 0;
-  const srcWide = vw > 0 && vh > 0 && (vw / vh) > 1.05;
-  const boxTall = w > 0 && h > 0 && (w / h) < 0.95;
-  const fit = (srcWide && boxTall) ? 'cover' : 'contain';
+  const fit = nalunoCompositeFit(vw, vh, w, h);
 
   if(filt.grade === 'pixel'){
     // Pixel look: draw small, scale up with nearest-neighbor
@@ -916,7 +933,7 @@ function drawSendCanvas(force){
   const vw = video.videoWidth, vh = video.videoHeight;
   if(!vw || !vh) return;
   const maxDim = 960;
-  const wide = vw / vh > 1.05;
+  const wide = nalunoAspectNeedsPortrait(vw / vh);
   let tw, th;
   if(wide){
     /* Phone sensor handed us a landscape strip. Send the center as 3:4
@@ -1069,13 +1086,33 @@ function nalunoUnzoom(track){
     const upright = a > 0.68 && a < 0.88;
     if(upright) return;
     const maxH = (caps.height && caps.height.max) ? Math.min(1920, caps.height.max) : 1440;
+    /* resizeMode 'none' keeps a 9:16 close-up from being cropped tighter
+       while we ask for 3:4. A square or landscape lens is the opposite
+       problem: 'none' freezes that wide shape, so those use crop-and-scale
+       and become the same upright 3:4 the front camera already is. */
     const portrait = Object.assign({}, base, {
       width: { ideal: Math.round(maxH * 3 / 4) },
       height: { ideal: maxH },
       aspectRatio: { ideal: 3/4 },
-      resizeMode: 'none',
     });
-    return apply(portrait);
+    if(a > 0.88 && caps.resizeMode && caps.resizeMode.indexOf && caps.resizeMode.indexOf('crop-and-scale') >= 0){
+      portrait.resizeMode = 'crop-and-scale';
+    } else if(a > 0.88){
+      delete portrait.resizeMode;
+    }
+    return apply(portrait).then(function(){
+      const b = nalunoAspectOf(track);
+      if(!(b > 0.88)) return;
+      const again = {
+        width: { ideal: 720 },
+        height: { ideal: 960 },
+        aspectRatio: 0.75,
+      };
+      if(caps.resizeMode && caps.resizeMode.indexOf && caps.resizeMode.indexOf('crop-and-scale') >= 0){
+        again.resizeMode = 'crop-and-scale';
+      }
+      return apply(again);
+    });
   });
 }
 /* The preview box is a tall rounded rectangle. Drawing the camera into
@@ -1095,9 +1132,9 @@ function nalunoFitLocalPip(video){
     return;
   }
   const raw = video.videoWidth / video.videoHeight;
-  /* A landscape lens is sent as 3:4. The small window matches that,
-     instead of becoming a wide strip with the person in the middle. */
-  const a = raw > 1.05 ? (3 / 4) : raw;
+  /* A wide or square lens is shown as 3:4, the same shape as the front
+     camera, instead of a square crop or a landscape strip. */
+  const a = nalunoAspectNeedsPortrait(raw) ? (3 / 4) : raw;
   const key = a.toFixed(3);
   if(pip.dataset.nalunoAspect === key) return;
   pip.dataset.nalunoAspect = key;
@@ -1324,22 +1361,27 @@ async function flipCamera(){
         const senders = peerConnection.getSenders();
         const newVid = stream.getVideoTracks()[0];
         const newAud = stream.getAudioTracks()[0];
+        const sendPortrait = typeof nalunoOutboundPortrait === 'function' && nalunoOutboundPortrait();
         senders.forEach(sender=>{
           if(!sender.track) return;
           if(sender.track.kind === 'audio' && newAud){
             sender.replaceTrack(newAud).catch(e=>console.warn('[camera] audio replace', e));
           }
           if(sender.track.kind === 'video' && newVid){
-            // Only replace if the sender is NOT a canvas track (canvas has no 'facingMode' usually)
             const settings = sender.track.getSettings ? sender.track.getSettings() : {};
             const isCanvas = !settings.facingMode && (settings.displaySurface || sender.track.label === 'canvas' || (sender.track.label||'').includes('Canvas'));
-            if(!isCanvas && sender.track.readyState !== 'live'){
-              sender.replaceTrack(newVid).catch(e=>console.warn('[camera] video replace', e));
-            } else if(!isCanvas && sender.track.readyState === 'live' && settings.deviceId){
-              // Raw camera sender — swap to new lens
+            // A square or landscape lens is sent as the upright canvas.
+            // kickPortrait does that swap. Doing it here as well raced and
+            // put the raw crop back. A lens that is already 3:4 goes raw,
+            // including when the previous lens was on the canvas.
+            if(isCanvas){
+              if(!sendPortrait) sender.replaceTrack(newVid).catch(e=>console.warn('[camera] video replace', e));
+              return;
+            }
+            if(sendPortrait) return;
+            if(sender.track.readyState !== 'live' || settings.deviceId){
               sender.replaceTrack(newVid).catch(e=>console.warn('[camera] video replace', e));
             }
-            // Canvas sender: leave it — frames update via sendRawVideo
           }
         });
       }catch(e){ console.warn('[camera] PC replace', e); }
@@ -1348,6 +1390,24 @@ async function flipCamera(){
     updateCameraQualityBadge && updateCameraQualityBadge();
     updateSignatureGlow && updateSignatureGlow();
     if(typeof runGreenroom === 'function') runGreenroom();
+    try{
+      const stage = $('pipStageCanvas');
+      if(stage) stage._lastSizeCheck = 0;
+    }catch(_){}
+    const kickPortrait = function(){
+      try{
+        const stage = $('pipStageCanvas');
+        if(stage) stage._lastSizeCheck = 0;
+        nalunoFitLocalPip($('pipRawVideo') || $('sendRawVideo'));
+        if(typeof applyCallFilterNow === 'function') applyCallFilterNow({ manual: true });
+      }catch(_){}
+    };
+    kickPortrait();
+    try{
+      const pv = $('sendRawVideo') || $('pipRawVideo');
+      if(pv) pv.addEventListener('loadedmetadata', kickPortrait, { once: true });
+    }catch(_){}
+    setTimeout(kickPortrait, 350);
     toast(cameraFacingMode === 'environment' ? 'Rear camera' : 'Front camera');
   }catch(e){
     console.error('[camera] flip failed', e);

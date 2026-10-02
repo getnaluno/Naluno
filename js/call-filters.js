@@ -19,21 +19,26 @@ function callOutboundWantsFilter(){
   }catch(_){ return false; }
 }
 
-/* A landscape camera is the thin strip on the other phone. Send the
-   upright canvas instead, even when no colour filter is on. */
+/* A square or landscape camera is the crop / thin strip on the other
+   phone. Send the upright 3:4 canvas instead, even with no colour filter.
+   A frame that is already 3:4 or taller is left raw so the face is not
+   cropped closer. */
 function nalunoOutboundPortrait(){
   try{
-    const video = typeof $ === 'function' ? $('sendRawVideo') : document.getElementById('sendRawVideo');
-    if(video && video.videoWidth && video.videoHeight){
-      return (video.videoWidth / video.videoHeight) > 1.05;
-    }
+    const needs = function(a){
+      if(!(a > 0)) return false;
+      if(typeof nalunoAspectNeedsPortrait === 'function') return nalunoAspectNeedsPortrait(a);
+      return a > 0.88;
+    };
     const raw = (typeof stream !== 'undefined' && stream && stream.getVideoTracks)
       ? stream.getVideoTracks().find(function(t){ return t.readyState === 'live'; })
       : null;
     if(raw && raw.getSettings){
       const s = raw.getSettings();
-      if(s.width && s.height) return (s.width / s.height) > 1.05;
+      if(s.width && s.height) return needs(s.width / s.height);
     }
+    const video = typeof $ === 'function' ? $('sendRawVideo') : document.getElementById('sendRawVideo');
+    if(video && video.videoWidth && video.videoHeight) return needs(video.videoWidth / video.videoHeight);
   }catch(_){}
   return false;
 }
