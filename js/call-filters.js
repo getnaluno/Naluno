@@ -19,6 +19,25 @@ function callOutboundWantsFilter(){
   }catch(_){ return false; }
 }
 
+/* A landscape camera is the thin strip on the other phone. Send the
+   upright canvas instead, even when no colour filter is on. */
+function nalunoOutboundPortrait(){
+  try{
+    const video = typeof $ === 'function' ? $('sendRawVideo') : document.getElementById('sendRawVideo');
+    if(video && video.videoWidth && video.videoHeight){
+      return (video.videoWidth / video.videoHeight) > 1.05;
+    }
+    const raw = (typeof stream !== 'undefined' && stream && stream.getVideoTracks)
+      ? stream.getVideoTracks().find(function(t){ return t.readyState === 'live'; })
+      : null;
+    if(raw && raw.getSettings){
+      const s = raw.getSettings();
+      if(s.width && s.height) return (s.width / s.height) > 1.05;
+    }
+  }catch(_){}
+  return false;
+}
+
 function callCanvasReady(){
   const canvas = typeof $ === 'function' ? $('sendCanvas') : document.getElementById('sendCanvas');
   const video = typeof $ === 'function' ? $('sendRawVideo') : document.getElementById('sendRawVideo');
@@ -80,7 +99,10 @@ function getCallOutboundVideoTrackSync(){
     ? stream.getVideoTracks().find(function(t){ return t.readyState === 'live'; })
     : null;
   if(!raw) return null;
-  if(!callOutboundWantsFilter() || !nalunoSendCanvasAffordable()) return raw;
+  const wantsFx = callOutboundWantsFilter();
+  const wantsPortrait = nalunoOutboundPortrait();
+  if((!wantsFx && !wantsPortrait) || (wantsFx && !nalunoSendCanvasAffordable() && !wantsPortrait)) return raw;
+  try{ if(typeof drawSendCanvas === 'function') drawSendCanvas(true); }catch(_){}
   const fx = getOrCreateFxTrack();
   return fx || raw;
 }
@@ -90,7 +112,7 @@ async function getCallOutboundVideoTrack(){
     ? stream.getVideoTracks().find(function(t){ return t.readyState === 'live'; })
     : null;
   if(!raw) return null;
-  if(!callOutboundWantsFilter()) return raw;
+  if(!callOutboundWantsFilter() && !nalunoOutboundPortrait()) return raw;
   if(!callCanvasReady()){
     try{ await primeSendPreview(); }catch(_){}
   }
@@ -115,7 +137,7 @@ async function applyCallFilterNow(opts){
   if(!sender) return;
   const raw = (typeof stream !== 'undefined' && stream && stream.getVideoTracks) ? stream.getVideoTracks().find(function(t){ return t.readyState === 'live'; }) : null;
   const onRaw = !!(raw && sender.track === raw);
-  const wantsFx = callOutboundWantsFilter() && nalunoSendCanvasAffordable();
+  const wantsFx = (callOutboundWantsFilter() && nalunoSendCanvasAffordable()) || nalunoOutboundPortrait();
   if(!manual){
     // Automatic calls (the call screen opening, the connection coming up)
     // never change the picture that is already being sent.
@@ -143,6 +165,7 @@ function nalunoSendCanvasAffordable(){
 }
 
 window.callOutboundWantsFilter = callOutboundWantsFilter;
+window.nalunoOutboundPortrait = nalunoOutboundPortrait;
 window.callCanvasReady = callCanvasReady;
 window.getCallOutboundVideoTrack = getCallOutboundVideoTrack;
 window.getCallOutboundVideoTrackSync = getCallOutboundVideoTrackSync;

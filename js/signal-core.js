@@ -560,12 +560,17 @@ function nalunoProbeDuration(file, timeoutMs){
     v.preload = 'metadata';
     v.muted = true;
     v.playsInline = true;
+    v.setAttribute('playsinline', '');
+    v.setAttribute('webkit-playsinline', '');
+    v.style.cssText = 'position:fixed;left:-9999px;width:4px;height:4px;opacity:0;pointer-events:none;';
+    try{ document.body.appendChild(v); }catch(_){}
     const url = URL.createObjectURL(file);
     let done = false;
     const finish = function(d){
       if(done) return;
       done = true;
       try{ URL.revokeObjectURL(url); }catch(_){}
+      try{ if(v.parentNode) v.parentNode.removeChild(v); }catch(_){}
       try{ v.removeAttribute('src'); v.load(); }catch(_){}
       resolve(nalunoFiniteDuration(d) ? d : null);
     };

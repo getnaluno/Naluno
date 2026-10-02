@@ -60,15 +60,40 @@ function bcompOpen(){
   }catch(_){}
 }
 
-function bcompClose(){
+function bcompClose(opts){
   if(bcompPublishing) return;
-  bcompReset();
+  bcompReset(opts);
   const el = $('bcomposer');
   if(el) el.classList.remove('active');
   try{ if(window.nalunoBack) window.nalunoBack.drop('bcomposer'); }catch(_){}
 }
 
-function bcompReset(){
+/* iPhone throws away the picked video the moment the file input is cleared.
+   Copy the bytes into a File we own before that happens. */
+async function bcompOwnFile(file){
+  if(!file) return null;
+  const type = file.type || 'application/octet-stream';
+  const name = file.name || 'upload';
+  const size = file.size || 0;
+  try{
+    if(size > 0 && size <= 64 * 1024 * 1024 && typeof file.arrayBuffer === 'function'){
+      const buf = await file.arrayBuffer();
+      if(buf && buf.byteLength) return new File([buf], name, { type: type, lastModified: Date.now() });
+    }
+  }catch(_){}
+  try{
+    if(typeof file.slice === 'function'){
+      const blob = file.slice(0, size || undefined, type);
+      if(blob && blob.size) return new File([blob], name, { type: type, lastModified: Date.now() });
+    }
+  }catch(_){}
+  return file;
+}
+function bcompIsApple(){
+  try{ return /iPhone|iPad|iPod/i.test(navigator.userAgent || ''); }catch(_){ return false; }
+}
+
+function bcompReset(opts){
   bcompFile = null;
   bcompCompressedBlob = null;
   bcompDuration = 0;
@@ -123,7 +148,7 @@ function bcompReset(){
     pub.textContent = 'Publish Broadcast';
   }
   const fileIn = $('bcompFileInput');
-  if(fileIn) fileIn.value = '';
+  if(fileIn && !(opts && opts.keepPicker)) fileIn.value = '';
   const prog = $('bcompProgress');
   if(prog){ prog.style.display = 'none'; prog.textContent = ''; }
 }
@@ -584,8 +609,13 @@ async function bcompPublish(){
 
   // Snapshot + close immediately — compress/upload continues in background
   const snapKind = bcompKind;
-  const snapFile = bcompFile;
-  const snapBlob = bcompCompressedBlob || bcompFile;
+  const snapFileRaw = bcompFile;
+  const snapBlobRaw = bcompCompressedBlob || bcompFile;
+  const snapCoverRaw = bcompKind === 'writing' ? bcompCoverFile : null;
+  const snapFile = await bcompOwnFile(snapFileRaw);
+  const snapBlob = snapBlobRaw && snapBlobRaw !== snapFileRaw ? await bcompOwnFile(snapBlobRaw) : (snapFile || snapBlobRaw);
+  const snapCover = snapCoverRaw ? await bcompOwnFile(snapCoverRaw) : null;
+  const snapKeptPicker = (snapFileRaw && snapFile === snapFileRaw) || (snapCoverRaw && snapCover === snapCoverRaw);
   const snapDuration = bcompDuration || 0;
   /* Read the publish options at the moment Publish is pressed, with the rest
    of the snapshot — not later, when the sheet may already be closed. */
@@ -604,7 +634,6 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
   const snapChapters = bcompKind === 'writing' ? bcompCollectChapters() : null;
   window.__bcompChaptered = true;
   const snapBody = snapChapters ? snapChapters.map(function(c){ return (c.title ? c.title + '\n' : '') + c.text; }).join('\n\n') : '';
-  const snapCover = bcompKind === 'writing' ? bcompCoverFile : null;
   const snapStrandId = strandId;
   const snapStrandName = strandName;
   const snapOrigin = window._bcompOrigin || null;
@@ -612,7 +641,7 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
      could hand a clean verdict from a different file to this post. */
   const snapScreen = window._bcompScreen || null;
   bcompPublishing = false;
-  bcompClose();
+  bcompClose(snapKeptPicker ? { keepPicker: true } : undefined);
 
   const job = {
     label: snapPublishAt ? 'Scheduling Broadcast…' : 'Publishing Broadcast…',
@@ -683,10 +712,11 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
         }catch(_){}
         if(typeof uploadBroadcastFile !== 'function') throw new Error('Broadcast uploader not loaded');
         let uploadFile = file;
-        // Short Samsung HEVC → convert so every browser can play. Long HEVC stays original
-        // (chunked); player uses blob fallback for those.
+        // iPhone camera videos are HEVC in a .mov. Converting them on the
+        // phone fails or hangs, and the upload never starts. Send the
+        // original. Short Samsung HEVC still converts so other browsers can play it.
         try{
-          const isHevc = (typeof nalunoSniffIsHevc === 'function') ? await nalunoSniffIsHevc(file) : false;
+          const isHevc = bcompIsApple() ? false : ((typeof nalunoSniffIsHevc === 'function') ? await nalunoSniffIsHevc(file) : false);
           if(isHevc && (duration || 0) > 0 && duration <= 360 && typeof nalunoTranscodeToWeb === 'function'){
             if(progress) progress('Converting Samsung video for playback…');
             uploadFile = await nalunoTranscodeToWeb(file, function(p){
@@ -757,6 +787,15 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
       }catch(_){}
     },
   };
+  if(snapKeptPicker){
+    const runOwned = job.run;
+    job.run = async function(progress){
+      try{ return await runOwned(progress); }
+      finally {
+        try{ const fileIn = $('bcompFileInput'); if(fileIn) fileIn.value = ''; }catch(_){}
+      }
+    };
+  }
   if(typeof enqueuePublishJob === 'function') enqueuePublishJob(job);
   else {
     job.run(()=>{}).then(()=> toast('Broadcast published')).catch(e=> toast(e.message || 'Publish failed'));

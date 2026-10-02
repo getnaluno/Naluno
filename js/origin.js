@@ -1013,24 +1013,68 @@
       return out || null;
     }catch(_){ return null; }
   }
-  async function runOriginScan(file, title, description, durationHint){
-    const work = runOriginScanInner(file, title, description, durationHint);
-    const fallback = new Promise(function(resolve){
-      setTimeout(function(){ resolve(unfinishedReport(title, 'timeout')); }, 8000);
+  function originWithin(p, ms, fallback){
+    return new Promise(function(resolve){
+      let done = false;
+      const timer = setTimeout(function(){
+        if(done) return;
+        done = true;
+        resolve(fallback);
+      }, ms);
+      Promise.resolve(p).then(function(v){
+        if(done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve(v);
+      }, function(){
+        if(done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve(fallback);
+      });
     });
+  }
+  async function runOriginScan(file, title, description, durationHint){
     try{
-      return await Promise.race([work, fallback]);
+      return await runOriginScanInner(file, title, description, durationHint);
     }catch(_){
+      try{
+        const web = titleIsGeneric(title) ? [] : await originWithin(scanOpenWeb(title, description || ''), 7000, []);
+        const known = titleIsGeneric(title) ? [] : scoreKnown(title);
+        if((web && web.length) || (known && known.length)){
+          const report = assemble({
+            identity: '',
+            duration: durationHint || 0,
+            frameHashes: [],
+            photoHash: '',
+            audioHash: '',
+            dna: '',
+            kind: looksVideo(file) ? 'video' : (looksImage(file) ? 'photo' : ''),
+            catalog: [],
+            web: web,
+            known: known,
+          });
+          return applyRights(report, null, null);
+        }
+      }catch(_2){}
       return unfinishedReport(title, 'failed');
     }
   }
   async function runOriginScanInner(file, title, description, durationHint){
-    const identityP = fileIdentity(file);
-    const mediaP = sampleFrameHashes(file, durationHint || 0);
-    const catalogP = loadCatalogMarks();
-    const identity = await identityP;
-    const frames = await mediaP;
-    const catalog = await catalogP;
+    const generic = titleIsGeneric(title);
+    const emptyFrames = { duration: durationHint || 0, hashes: [], photoHash: '', audioHash: '', kind: '', stills: [], screen: null };
+    const identityP = originWithin(fileIdentity(file), 5000, '');
+    const mediaP = originWithin(sampleFrameHashes(file, durationHint || 0), 12000, emptyFrames);
+    const catalogP = originWithin(loadCatalogMarks(), 7000, []);
+    const rightsP = originWithin(loadRightsCatalog(), 6000, []);
+    const webP = generic ? Promise.resolve([]) : originWithin(scanOpenWeb(title, description || ''), 8000, []);
+    const known = generic ? [] : scoreKnown(title);
+    const packed = await Promise.all([identityP, mediaP, catalogP, rightsP, webP]);
+    const identity = packed[0] || '';
+    const frames = packed[1] || emptyFrames;
+    const catalog = packed[2] || [];
+    const rightsRows = packed[3] || [];
+    const web = packed[4] || [];
     const mark = {
       identity: identity,
       duration: frames.duration,
@@ -1043,17 +1087,10 @@
     };
     mark.dna = makeDna(mark);
     const catalogHits = scoreCatalog(mark, catalog);
-    const rightsRows = await loadRightsCatalog();
     const rightsHit = scoreRightsCatalog(mark, rightsRows);
     let external = null;
-    try{ external = await askExternalRights(mark); }catch(_){ external = null; }
+    try{ external = await originWithin(askExternalRights(mark), 5000, null); }catch(_){ external = null; }
     const strongMedia = catalogHits[0] && catalogHits[0].score >= 80 && catalogHits[0].source === 'naluno';
-    let web = [];
-    let known = [];
-    if(!strongMedia && !titleIsGeneric(title)){
-      web = await scanOpenWeb(title, description || '');
-      known = scoreKnown(title);
-    }
     const report = assemble({
       identity: identity,
       duration: frames.duration,
@@ -1061,10 +1098,10 @@
       photoHash: mark.photoHash,
       audioHash: mark.audioHash,
       dna: mark.dna,
-      kind: frames.kind,
+      kind: frames.kind || (looksVideo(file) ? 'video' : (looksImage(file) ? 'photo' : '')),
       catalog: catalogHits,
-      web: web,
-      known: known,
+      web: strongMedia ? [] : web,
+      known: strongMedia ? [] : known,
     });
     // Resolve the matched creator's real name for a genuine hold/match — this
     // is what turns "close to a Naluno title" into "close to X by [name],

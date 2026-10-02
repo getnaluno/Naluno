@@ -1429,6 +1429,11 @@ async function attachLocalTracksToPc(pc){
        other person's video. */
     let out = _callRawVideoTrack;
     try{
+      const needsFrame = (typeof nalunoOutboundPortrait === 'function' && nalunoOutboundPortrait())
+        || (typeof callOutboundWantsFilter === 'function' && callOutboundWantsFilter());
+      if(needsFrame && typeof primeSendPreview === 'function'){
+        await primeSendPreview();
+      }
       if(typeof getCallOutboundVideoTrackSync === 'function'){
         const got = getCallOutboundVideoTrackSync();
         if(got && got !== out){ out = got; window.__nalunoFxDraw = true; }
@@ -2263,12 +2268,23 @@ async function nalunoOpenMic(){
 }
 window.nalunoOpenMic = nalunoOpenMic;
 
+function nalunoEnsureCallAuth(){
+  try{
+    if((typeof currentUser === 'undefined' || !currentUser) && typeof fbAuth !== 'undefined' && fbAuth && fbAuth.currentUser){
+      currentUser = fbAuth.currentUser;
+    }
+  }catch(_){}
+  try{
+    if((typeof fbDb === 'undefined' || !fbDb) && typeof initFirebaseApp === 'function') initFirebaseApp();
+  }catch(_){}
+  return !!(currentUser && fbDb);
+}
 /* Voice call: no lobby, no camera. Straight to ringing. */
 function startAudioCall(contactId){
   const c = contacts.find(x=>x.id===contactId);
   if(!c){ toast('Contact not found'); return; }
   if(!c.isReal || !c.firebaseUid){ toast('Real calls only work with real connections right now'); return; }
-  if(!currentUser || !fbDb){ toast('Sign in required for calls'); return; }
+  if(!nalunoEnsureCallAuth()){ toast('Sign in required for calls'); return; }
   if(callActionInProgress || ($('callOverlay') && $('callOverlay').classList.contains('active'))){ toast('Already on a call'); return; }
   currentCallContactId = contactId;
   nalunoSetCallKind('audio');
@@ -2299,7 +2315,7 @@ function startOutgoingCall(contactId){
     toast('Real calls only work with real connections right now');
     return;
   }
-  if(!currentUser || !fbDb){ toast('Sign in required for calls'); return; }
+  if(!nalunoEnsureCallAuth()){ toast('Sign in required for calls'); return; }
   nalunoSetCallKind('video');
   // Always open the lobby. Off-grid used to skip straight to the fallback,
   // so tapping Call never showed camera/Greenroom — lastActivityTs is a
@@ -2434,20 +2450,17 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
         stopRepeats = true;
       } else if(!res.ok){
         if(firstAttempt) console.warn('[call] push wake failed', res.status, data);
-        if(firstAttempt) toast('Push wake failed (' + res.status + ') — open app still rings');
       } else if(data.sent === false){
         if(firstAttempt && (data.reason === 'no_token' || data.reason === 'missing_token')){
-          toast('They need to open Naluno once so calls can reach them');
           stopRepeats = true;
-        } else if(firstAttempt && data.error){
-          toast('Push error: ' + String(data.error).slice(0, 70));
-        } else if(firstAttempt && data.reason === 'all_failed'){
-          toast('Call alert did not go through. Ask them to open Naluno.');
+        } else if(firstAttempt){
+          console.warn('[call] push not sent', data.reason || data.error || '');
         }
       }
     }catch(e){
+      /* A wake that cannot leave is not "no network". The call is already
+         connecting. Saying the connection is gone made people hang up. */
       if(firstAttempt) console.warn('[call] push wake request failed', e);
-      if(firstAttempt) toast('Push wake failed — ' + String((e && e.message) || e).slice(0, 60));
     }
     firstAttempt = false;
   };
@@ -2944,8 +2957,11 @@ async function nalunoPrepareAnswer(callId, offer, camReady){
     // With a filter on, give the filtered picture a moment to be ready so the
     // call starts on it (switching to it after connecting made the video jump).
     try{
-      if(!nalunoIsVoiceCall() && typeof callOutboundWantsFilter === 'function' && callOutboundWantsFilter() && typeof callCanvasReady === 'function'
-         && (typeof nalunoSendCanvasAffordable !== 'function' || nalunoSendCanvasAffordable())){
+      if(!nalunoIsVoiceCall() && typeof primeSendPreview === 'function'
+         && ((typeof callOutboundWantsFilter === 'function' && callOutboundWantsFilter())
+          || (typeof nalunoOutboundPortrait === 'function' && nalunoOutboundPortrait()))
+         && (typeof nalunoSendCanvasAffordable !== 'function' || nalunoSendCanvasAffordable()
+          || (typeof nalunoOutboundPortrait === 'function' && nalunoOutboundPortrait()))){
         const until = Date.now() + 600;
         while(!callCanvasReady() && Date.now() < until && still()){
           try{ if(typeof primeSendPreview === 'function') await primeSendPreview(); }catch(_){}

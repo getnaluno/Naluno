@@ -428,6 +428,32 @@ async function nativeGoogleSignIn(){
   return result;
 }
 
+function nalunoPreferRedirectSignIn(){
+  try{
+    const ua = navigator.userAgent || '';
+    if(/iPhone|iPad|iPod|Android/i.test(ua)) return true;
+    if(window.matchMedia && window.matchMedia('(pointer: coarse)').matches) return true;
+  }catch(_){}
+  return false;
+}
+function nalunoSetAuthBusy(on){
+  window.__nalunoAuthBusy = !!on;
+  try{
+    if(on) sessionStorage.setItem('nalunoAuthBusy', String(Date.now()));
+    else sessionStorage.removeItem('nalunoAuthBusy');
+  }catch(_){}
+}
+function nalunoAuthBusy(){
+  if(window.__nalunoAuthBusy) return true;
+  try{
+    const t = Number(sessionStorage.getItem('nalunoAuthBusy') || 0);
+    if(t && Date.now() - t < 120000) return true;
+  }catch(_){}
+  return false;
+}
+window.nalunoAuthBusy = nalunoAuthBusy;
+window.nalunoSetAuthBusy = nalunoSetAuthBusy;
+
 $('googleSignInBtn').onclick = async ()=>{
   if(!fbAuth){ try{ ensureFirebaseConfig(); }catch(_){} try{ injectFirebaseScripts(); }catch(_){} initFirebaseApp(); }
   if(!fbAuth){ authStatus('Connecting to sign-in… tap again in a moment.', true); return; }
@@ -435,11 +461,13 @@ $('googleSignInBtn').onclick = async ()=>{
 
   // Capacitor: use native Google Sign-In → Firebase credential (no Chrome redirect).
   if(isNativeShell()){
+    nalunoSetAuthBusy(true);
     authStatus('Opening Google sign-in…');
     try{
       const result = await nativeGoogleSignIn();
       authStatus('Signed in as ' + (result.user.displayName || result.user.email));
     }catch(e){
+      nalunoSetAuthBusy(false);
       const msg = (e && (e.message || e.errorMessage || e.code)) || String(e);
       if(/cancel|12501|popup_closed/i.test(msg)){
         authStatus('Google sign-in was cancelled — try again, or use email + password.', true);
@@ -455,18 +483,30 @@ $('googleSignInBtn').onclick = async ()=>{
   }
 
   const provider = new firebase.auth.GoogleAuthProvider();
+  nalunoSetAuthBusy(true);
+  if(nalunoPreferRedirectSignIn()){
+    authStatus('Opening Google sign-in…');
+    fbAuth.signInWithRedirect(provider).catch(function(e2){
+      nalunoSetAuthBusy(false);
+      authStatus((e2 && e2.code ? e2.code + ': ' : '') + ((e2 && e2.message) || 'Could not open sign-in'), true);
+    });
+    return;
+  }
   authStatus('Trying popup sign-in…');
-  // Browser/PWA: popup is the reliable path (no cross-domain redirect handoff).
   fbAuth.signInWithPopup(provider).then(result=>{
+    nalunoSetAuthBusy(false);
     authStatus('Popup sign-in completed — signed in as ' + (result.user.displayName || result.user.email));
   }).catch(e=>{
     const popupCantOpen = e.code === 'auth/popup-blocked' || e.code === 'auth/operation-not-supported-in-this-environment';
-    if(popupCantOpen){
-      authStatus('Popup blocked — falling back to redirect…');
-      fbAuth.signInWithRedirect(provider).catch(e2=>{ authStatus(e2.code + ': ' + e2.message, true); });
-    } else if(e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request'){
-      authStatus('Sign-in window was closed before finishing — tap the button to try again.', true);
+    const closedEarly = e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request';
+    if(popupCantOpen || closedEarly){
+      authStatus('Continuing sign-in…');
+      fbAuth.signInWithRedirect(provider).catch(function(e2){
+        nalunoSetAuthBusy(false);
+        authStatus((e2 && e2.code ? e2.code + ': ' : '') + ((e2 && e2.message) || 'Could not open sign-in'), true);
+      });
     } else {
+      nalunoSetAuthBusy(false);
       authStatus(e.code + ': ' + e.message, true);
     }
   });
@@ -806,6 +846,7 @@ function bindAuthListeners(){
       nalunoEnterApp();
       return;
     }
+    if(nalunoAuthBusy()) return;
     authStatus('Please sign in.');
     nalunoShowSignIn();
   }, 2500);
@@ -817,11 +858,15 @@ function bindAuthListeners(){
   // which made it impossible to tell "nothing happened yet" apart from "it's stuck."
   fbAuth.getRedirectResult().then(result=>{
     if(result && result.user){
+      nalunoSetAuthBusy(false);
       authStatus('Signed in.');
-    } else {
-      authStatus('');
+      return;
     }
+    /* Google sent us back with nobody, or this is a normal open.
+       A leftover busy flag must not hide the sign-in gate. */
+    if(!fbAuth.currentUser) nalunoSetAuthBusy(false);
   }).catch(e=>{
+    nalunoSetAuthBusy(false);
     authStatus('Could not finish sign-in. Try again.', true);
   });
   // Wire once. Firebase often emits null BEFORE restoring the local session —
@@ -830,6 +875,7 @@ function bindAuthListeners(){
   let nullAuthTimer = null;
   let sessionHadUser = false;
   function showSignedOutGate(){
+    if(nalunoAuthBusy()) return;
     authStatus('');
     nalunoShowSignIn();
   }
@@ -858,6 +904,7 @@ function bindAuthListeners(){
     if(!user && sessionHadUser && !window.__nalunoSigningOut){
       if(nullAuthTimer){ clearTimeout(nullAuthTimer); nullAuthTimer = null; }
       nullAuthTimer = setTimeout(function(){
+        if(nalunoAuthBusy()) return;
         if(fbAuth && fbAuth.currentUser){
           currentUser = fbAuth.currentUser;
           return;
@@ -870,6 +917,7 @@ function bindAuthListeners(){
     }
     currentUser = user;
     if(user){
+      nalunoSetAuthBusy(false);
       sessionHadUser = true;
       try{ localStorage.setItem('nalunoLastUid', user.uid); }catch(_){}
       authStatus('');
@@ -949,6 +997,7 @@ function bindAuthListeners(){
     } else {
       // Explicit sign-out → gate immediately and clear remembered uid.
       if(window.__nalunoSigningOut){
+        nalunoSetAuthBusy(false);
         try{ localStorage.removeItem('nalunoLastUid'); }catch(_){}
         window.__nalunoSigningOut = false;
         clearSessionListeners();
@@ -956,6 +1005,7 @@ function bindAuthListeners(){
         return;
       }
       nullAuthTimer = setTimeout(function(){
+        if(nalunoAuthBusy()) return;
         if(currentUser || (fbAuth && fbAuth.currentUser)) return;
         clearSessionListeners();
         if(lastUid){

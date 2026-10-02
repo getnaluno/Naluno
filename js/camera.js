@@ -855,6 +855,14 @@ function compositeFrame(canvas, video, animStart){
   const mirror = shouldMirrorCamera();
   const filterId = (greenroomEnabled && selectedFilterId) ? selectedFilterId : 'original';
   const filt = nalunoFilters[filterId] || nalunoFilters.original;
+  /* A landscape camera in a portrait frame: keep the full height and trim
+     the unused sides. Contain would put the black bars back. A portrait
+     camera stays contain so the face is not cropped closer. */
+  const vw = video && video.videoWidth ? video.videoWidth : 0;
+  const vh = video && video.videoHeight ? video.videoHeight : 0;
+  const srcWide = vw > 0 && vh > 0 && (vw / vh) > 1.05;
+  const boxTall = w > 0 && h > 0 && (w / h) < 0.95;
+  const fit = (srcWide && boxTall) ? 'cover' : 'contain';
 
   if(filt.grade === 'pixel'){
     // Pixel look: draw small, scale up with nearest-neighbor
@@ -866,14 +874,14 @@ function compositeFrame(canvas, video, animStart){
     const pctx = pc.getContext('2d');
     pctx.clearRect(0,0,pw,ph);
     if(filt.css && filt.css !== 'none') pctx.filter = filt.css;
-    drawVideoFit(pctx, video, pw, ph, mirror, 'contain');
+    drawVideoFit(pctx, video, pw, ph, mirror, fit);
     pctx.filter = 'none';
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(pc, 0, 0, w, h);
     ctx.imageSmoothingEnabled = true;
   } else {
     if(filt.css && filt.css !== 'none') ctx.filter = filt.css;
-    drawVideoFit(ctx, video, w, h, mirror, 'contain');
+    drawVideoFit(ctx, video, w, h, mirror, fit);
     ctx.filter = 'none';
   }
 
@@ -908,8 +916,18 @@ function drawSendCanvas(force){
   const vw = video.videoWidth, vh = video.videoHeight;
   if(!vw || !vh) return;
   const maxDim = 960;
-  const scale = Math.min(1, maxDim / Math.max(vw, vh));
-  const tw = Math.max(2, Math.round(vw*scale)), th = Math.max(2, Math.round(vh*scale));
+  const wide = vw / vh > 1.05;
+  let tw, th;
+  if(wide){
+    /* Phone sensor handed us a landscape strip. Send the center as 3:4
+       at the same height — sides of the room go, the face does not get closer. */
+    th = Math.max(2, Math.min(vh, maxDim));
+    tw = Math.max(2, Math.round(th * 3 / 4));
+  } else {
+    const scale = Math.min(1, maxDim / Math.max(vw, vh));
+    tw = Math.max(2, Math.round(vw * scale));
+    th = Math.max(2, Math.round(vh * scale));
+  }
   if(canvas.width !== tw || canvas.height !== th){ canvas.width = tw; canvas.height = th; }
   const c0 = performance.now();
   compositeFrame(canvas, video, sendAnimStart);
@@ -934,9 +952,11 @@ function stageLoopTick(){
   /* With a filter on, the send canvas is kept drawing while a call screen is
      up (lobby, ringing, incoming, in call), so the call can start on the
      filtered picture instead of switching to it mid-call. */
+  const wantsDraw = (typeof callOutboundWantsFilter !== 'function' || callOutboundWantsFilter())
+    || (typeof nalunoOutboundPortrait === 'function' && nalunoOutboundPortrait());
   if(stream && (window.__nalunoFxDraw || ($('callOverlay') && $('callOverlay').classList.contains('active')
        && (typeof nalunoSendCanvasAffordable !== 'function' || nalunoSendCanvasAffordable())))
-     && (typeof callOutboundWantsFilter !== 'function' || callOutboundWantsFilter())) drawSendCanvas();
+     && wantsDraw) drawSendCanvas();
 }
 requestAnimationFrame(stageLoopTick);
 function startCamView(target){
@@ -1007,14 +1027,17 @@ function buildVideoConstraints(tier){
   else base.facingMode = { ideal: cameraFacingMode };
   return base;
 }
-/* A call used to ask for a tall 9:16 or a 16:9 frame. The phone then
-   cropped the sensor to that shape: the back camera collapsed to the
-   preview box, and coming back to the front zoomed the face. Ask for
-   the sensor's own frame. No aspect, no width-and-height pair. */
+/* A call is watched on a phone held upright. A landscape 4:3 or 16:9
+   frame becomes a thin strip with black above and below. A 9:16 request
+   crops the sensor and zooms the face. 3:4 is the phone sensor itself,
+   upright, so the picture fills the screen without a close-up. */
 function nalunoLensConstraint(facing){
   return {
     facingMode: { ideal: facing || cameraFacingMode || 'user' },
-    frameRate: { ideal: 30, max: 30 },
+    width: { ideal: 1080 },
+    height: { ideal: 1440 },
+    aspectRatio: { ideal: 3/4 },
+    frameRate: { ideal: 24, max: 30 },
     resizeMode: 'none',
   };
 }
@@ -1040,24 +1063,19 @@ function nalunoUnzoom(track){
   };
   return apply(base).then(function(){
     const a = nalunoAspectOf(track);
-    /* Square, 16:9 and 9:16 are crops of a 4:3 phone sensor. A square is
-       what the other person was receiving. 16:9 / 9:16 is the zoomed face. */
-    const cropped = !a || (a > 0.82 && a < 1.22) || a >= 1.6 || a <= 0.625;
-    if(!cropped) return;
-    const maxW = (caps.width && caps.width.max) ? Math.min(1920, caps.width.max) : 1440;
-    const wider = Object.assign({}, base, {
-      width: { ideal: maxW },
-      aspectRatio: { ideal: 4/3 },
+    /* 3:4 upright (about 0.75) is the full sensor on a phone. Leave it.
+       Landscape (the thin strip), a square, and 9:16 (the zoomed face)
+       are asked to become that same 3:4, widest zoom, no extra crop. */
+    const upright = a > 0.68 && a < 0.88;
+    if(upright) return;
+    const maxH = (caps.height && caps.height.max) ? Math.min(1920, caps.height.max) : 1440;
+    const portrait = Object.assign({}, base, {
+      width: { ideal: Math.round(maxH * 3 / 4) },
+      height: { ideal: maxH },
+      aspectRatio: { ideal: 3/4 },
       resizeMode: 'none',
     });
-    return apply(wider).then(function(){
-      const b = nalunoAspectOf(track);
-      if(b && !(b > 0.82 && b < 1.22)) return;
-      return apply(Object.assign({}, base, {
-        width: { ideal: maxW },
-        resizeMode: 'none',
-      }));
-    });
+    return apply(portrait);
   });
 }
 /* The preview box is a tall rounded rectangle. Drawing the camera into
@@ -1076,7 +1094,10 @@ function nalunoFitLocalPip(video){
     }
     return;
   }
-  const a = video.videoWidth / video.videoHeight;
+  const raw = video.videoWidth / video.videoHeight;
+  /* A landscape lens is sent as 3:4. The small window matches that,
+     instead of becoming a wide strip with the person in the middle. */
+  const a = raw > 1.05 ? (3 / 4) : raw;
   const key = a.toFixed(3);
   if(pip.dataset.nalunoAspect === key) return;
   pip.dataset.nalunoAspect = key;
