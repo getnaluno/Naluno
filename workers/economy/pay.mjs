@@ -220,3 +220,58 @@ export function payReturnUrl(origin, o) {
   if (o.outcome !== "cancel") url += "&s={CHECKOUT_SESSION_ID}";
   return url;
 }
+
+/* Uganda mobile money (MTN / Airtel). The phone never decides that cash
+   moved. A request is pending until a signed notice matches this intent. */
+export function momoPhone(raw) {
+  let d = String(raw || "").replace(/\D/g, "");
+  if (d.startsWith("0") && d.length === 10) d = "256" + d.slice(1);
+  else if (d.length === 9 && d.charAt(0) === "7") d = "256" + d;
+  if (!/^2567\d{8}$/.test(d)) return "";
+  return d;
+}
+export function momoNetworkOf(phone) {
+  const p = momoPhone(phone);
+  if (!p) return "";
+  const pre = p.slice(3, 5);
+  if (pre === "76" || pre === "77" || pre === "78" || pre === "79") return "mtn";
+  if (pre === "70" || pre === "74" || pre === "75") return "airtel";
+  return "";
+}
+/** { phone, network, tail } or { error }. Never a paid flag. */
+export function momoPayer(body) {
+  const phone = momoPhone(body && body.phone);
+  if (!phone) return { error: "Enter a Uganda mobile-money number. Nothing was charged." };
+  const picked = String((body && body.network) || "").toLowerCase();
+  const guessed = momoNetworkOf(phone);
+  const network = picked === "mtn" || picked === "airtel" ? picked : guessed;
+  if (network !== "mtn" && network !== "airtel") return { error: "Choose MTN or Airtel. Nothing was charged." };
+  if (guessed && guessed !== network) return { error: "That number is not on the network you chose. Nothing was charged." };
+  return { phone, network, tail: phone.slice(-4) };
+}
+export function momoCollectBody(intent) {
+  return {
+    amount: String(intent.amount_major),
+    currency: String(intent.currency || "UGX"),
+    externalId: String(intent.id),
+    payer: { partyIdType: "MSISDN", partyId: String(intent.phone) },
+    payerMessage: "Naluno",
+    payeeNote: String(intent.kind || "naluno"),
+  };
+}
+/** True only when the signature matches and the money matches the stored intent. */
+export async function momoNoticeValid(raw, signature, secret, intent) {
+  if (!raw || !signature || !secret || !intent || !intent.id) return false;
+  const expect = await hmacHex(secret, raw);
+  if (!safeEqual(String(signature).trim(), expect)) return false;
+  let body;
+  try { body = JSON.parse(raw); } catch (_) { return false; }
+  if (!body || String(body.intent_id) !== String(intent.id)) return false;
+  const st = String(body.status || "").toLowerCase();
+  if (st !== "successful" && st !== "paid") return false;
+  if (String(body.currency || "").toUpperCase() !== String(intent.currency || "").toUpperCase()) return false;
+  const got = Number(body.amount_major);
+  const want = Number(intent.amount_major);
+  if (!(want > 0) || got !== want) return false;
+  return true;
+}

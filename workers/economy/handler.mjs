@@ -56,7 +56,11 @@ import {
   payoutState,
   supportFeeMinor,
   payReturnUrl,
+  momoPayer,
+  momoCollectBody,
+  momoNoticeValid,
 } from "./pay.mjs";
+import { createMomoRail } from "./momo-rail.mjs";
 import {
   normCode,
   convertMajor,
@@ -2849,35 +2853,32 @@ async function markPaid(env, saToken, pay) {
     mail_id: pay.mail_id,
     broadcast_id: pay.broadcast_id,
     support_id: pay.support_id,
-    provider: "stripe",
+    provider: pay.provider || "stripe",
     paidAt: now,
   });
   if (pay.kind === "ad" && pay.ad_id && matched) {
     const ad = await fsGetDoc(env, saToken, "/deskAds/" + encodeURIComponent(pay.ad_id));
     if (ad && coversAd(ad)) {
-      await fsPutDoc(env, saToken, "/deskAds/" + encodeURIComponent(pay.ad_id), {
+      await fsPutDoc(env, saToken, "/deskAds/" + encodeURIComponent(pay.ad_id), Object.assign({
         paymentStatus: "paid",
         paidAt: now,
-        stripeSession: pay.id,
-      });
+      }, pay.provider === "momo" ? { momoRef: pay.id } : { stripeSession: pay.id }));
     }
   }
   if (pay.kind === "ad" && pay.mail_id && matched) {
     const mail = await fsGetDoc(env, saToken, "/deskMail/" + encodeURIComponent(pay.mail_id));
-    await fsPutDoc(env, saToken, "/deskMail/" + encodeURIComponent(pay.mail_id), {
+    await fsPutDoc(env, saToken, "/deskMail/" + encodeURIComponent(pay.mail_id), Object.assign({
       paymentStatus: "paid",
       paidAt: now,
-      stripeSession: pay.id,
-    });
+    }, pay.provider === "momo" ? { momoRef: pay.id } : { stripeSession: pay.id }));
     const promoted = mail && mail.promotedAdId;
     if (promoted && !pay.ad_id) {
       const ad = await fsGetDoc(env, saToken, "/deskAds/" + encodeURIComponent(promoted));
       if (ad && coversAd(ad)) {
-        await fsPutDoc(env, saToken, "/deskAds/" + encodeURIComponent(promoted), {
+        await fsPutDoc(env, saToken, "/deskAds/" + encodeURIComponent(promoted), Object.assign({
           paymentStatus: "paid",
           paidAt: now,
-          stripeSession: pay.id,
-        });
+        }, pay.provider === "momo" ? { momoRef: pay.id } : { stripeSession: pay.id }));
       }
     }
   }
@@ -2917,17 +2918,41 @@ async function markPaid(env, saToken, pay) {
   if (pay.kind === "support" && pay.support_id && pay.creator_user_id && pay.payer_uid !== pay.creator_user_id) {
     await fsPutDoc(env, saToken, "/creatorSupport/" + encodeURIComponent(pay.support_id), {
       status: "succeeded",
-      provider: "stripe",
+      provider: pay.provider || "stripe",
+      held_by: pay.provider === "momo" ? "naluno" : "",
       supporter_user_id: pay.payer_uid,
       creator_user_id: pay.creator_user_id,
       broadcast_id: pay.broadcast_id || "",
       amount_minor: pay.amount_minor,
       amount_major: pay.amount_major,
       currency: (pay.currency || "").toUpperCase(),
-      stripeSession: pay.id,
+      stripeSession: pay.provider === "momo" ? "" : pay.id,
+      momoRef: pay.provider === "momo" ? pay.id : "",
       paidAt: now,
     });
   }
+}
+
+function momoRail() {
+  return createMomoRail({
+    json: json,
+    fsGetDoc: fsGetDoc,
+    fsPutDoc: fsPutDoc,
+    fetchImpl: function (url, init) { return _fetch(url, init); },
+    validateCheckout: validateCheckout,
+    momoPayer: momoPayer,
+    momoCollectBody: momoCollectBody,
+    momoNoticeValid: momoNoticeValid,
+    normCode: normCode,
+    priceIn: priceIn,
+    roundForCharge: roundForCharge,
+    majorToStripe: majorToStripe,
+    closeEnough: closeEnough,
+    loadRates: loadRates,
+    loadPriceBook: loadPriceBook,
+    readFlags: readFlags,
+    markPaid: markPaid,
+  });
 }
 
 async function payWebhook(env, request, saToken) {
@@ -3238,6 +3263,9 @@ export async function handleRequest(request, env = {}, ctx = {}) {
 
     if (path === "/v1/pay/webhook" && request.method === "POST") {
       return payWebhook(env, request, saToken);
+    }
+    if (path === "/v1/pay/momo/notice" && request.method === "POST") {
+      return momoRail().payMomoNotice(env, request, saToken);
     }
 
     if (path === "/v1/handle/check" && request.method === "GET") {
@@ -3829,6 +3857,10 @@ export async function handleRequest(request, env = {}, ctx = {}) {
     if (path === "/v1/pay/checkout" && request.method === "POST") {
       const body = await request.json().catch(() => ({}));
       return payCheckout(env, user, saToken, body || {});
+    }
+    if (path === "/v1/pay/momo" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      return momoRail().payMomo(env, user, saToken, body || {});
     }
 
     if (path === "/v1/live/host" && request.method === "POST") {
