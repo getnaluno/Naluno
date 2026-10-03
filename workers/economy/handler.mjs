@@ -539,6 +539,85 @@ function scoreEvent(eventType, text) {
   return { points: spec.points, eligible: spec.eligible, status: "COUNTED", reason: "ok" };
 }
 
+function trustLabelFor(events) {
+  const n = Number(events) || 0;
+  if (n >= 20) return "HIGH";
+  if (n >= 5) return "MEDIUM";
+  if (n >= 1) return "LOW";
+  return "NEW";
+}
+
+/* One counted row. The id is how a row already in this isolate's memory is
+   not added again when Firestore returns the same ledger document. A row
+   that is not this person's is ignored — a query cannot be trusted to have
+   filtered, and another person's points must never land here. */
+function addContributionRow(bag, seen, row, uid) {
+  if (!row || String(row.user_id || "") !== uid) return;
+  const id = String(row.ledger_id || row.event_id || row.id || "");
+  if (id && seen.has(id)) return;
+  if (id) seen.add(id);
+  bag.points += Number(row.points) || 0;
+  bag.eligible += Number(row.eligible_points) || 0;
+  bag.events += 1;
+}
+
+/* The number My Contribution shows. Memory alone is whatever this isolate
+   has scored since it started, which is why the phone read 0 while the desk
+   (which adds up contributionLedger) showed the points. The ledger is the
+   source of truth. The profile is a rollup and is used only when it is
+   higher, so a capped query cannot hide a repaired total. Nothing in the
+   request body is read. */
+async function readContribution(env, saToken, uid) {
+  const bag = { points: 0, eligible: 0, events: 0 };
+  const seen = new Set();
+  for (const row of memory.ledger.values()) {
+    addContributionRow(bag, seen, row, uid);
+  }
+  let profilePoints = 0;
+  let profileEligible = 0;
+  let profileEvents = 0;
+  let profileRead = false;
+  if (saToken && uid) {
+    try {
+      const cur = await fsFetch(env, saToken, "GET", "/contributionProfiles/" + encodeURIComponent(uid));
+      if (cur.ok && cur.data) {
+        const d = fromFsDoc(cur.data) || {};
+        if (!d.user_id || String(d.user_id) === uid) {
+          profilePoints = Number(d.total_points) || 0;
+          profileEligible = Number(d.eligible_points) || 0;
+          profileEvents = Number(d.events) || 0;
+          profileRead = true;
+        }
+      }
+    } catch { /* an unreadable profile is not a zero */ }
+    try {
+      const r = await fsFetch(env, saToken, "POST", ":runQuery", {
+        structuredQuery: {
+          from: [{ collectionId: "contributionLedger" }],
+          where: {
+            fieldFilter: {
+              field: { fieldPath: "user_id" },
+              op: "EQUAL",
+              value: { stringValue: uid },
+            },
+          },
+          limit: 500,
+        },
+      });
+      const rows = (Array.isArray(r.data) ? r.data : []).filter((x) => x && x.document);
+      rows.forEach((x) => {
+        addContributionRow(bag, seen, fromFsDoc(x.document) || {}, uid);
+      });
+    } catch { /* a missed ledger must not wipe what we already have */ }
+  }
+  if (profileRead) {
+    if (profilePoints > bag.points) bag.points = profilePoints;
+    if (profileEligible > bag.eligible) bag.eligible = profileEligible;
+    if (profileEvents > bag.events) bag.events = profileEvents;
+  }
+  return bag;
+}
+
 function profileOf(uid) {
   if (!memory.profiles.has(uid)) {
     memory.profiles.set(uid, {
@@ -3334,16 +3413,12 @@ export async function handleRequest(request, env = {}, ctx = {}) {
     }
 
     if (path === "/v1/me" && request.method === "GET") {
-      const p = profileOf(user.uid);
-      let trust = "NEW";
-      if (p.events >= 20) trust = "HIGH";
-      else if (p.events >= 5) trust = "MEDIUM";
-      else if (p.events >= 1) trust = "LOW";
+      const p = await readContribution(env, saToken, user.uid);
       return json({
         ok: true,
-        contribution_points: p.total_points,
-        eligible_contribution: p.eligible_points,
-        contribution_trust: trust,
+        contribution_points: p.points,
+        eligible_contribution: p.eligible,
+        contribution_trust: trustLabelFor(p.events),
         persist: saToken ? "firestore-sa" : "user-token",
       });
     }
