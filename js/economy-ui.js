@@ -51,6 +51,33 @@ function supportEsc(s){
     .replace(/"/g, '&' + 'quot;');
 }
 
+function contribEventName(type){
+  const map = {
+    SIGNAL_POST: 'Signal',
+    BROADCAST_COMMENT: 'Comment',
+    COMMENT_REPLY: 'Reply',
+    CREATOR_FOLLOW: 'Follow',
+    WATCH_COMPLETION: 'Watched through',
+    BROADCAST_SHARE: 'Share',
+  };
+  return map[type] || 'Activity';
+}
+function contribRecentHtml(rows){
+  if(!rows || !rows.length) return '';
+  const lines = rows.slice(0, 8).map(function(r){
+    const waiting = String(r.status || '').toUpperCase() === 'PENDING_REVIEW';
+    const name = contribEventName(r.event_type) + (waiting ? ' · waiting' : '');
+    return '<div style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid var(--line);">'
+      + '<span>' + supportEsc(name) + '</span>'
+      + '<span style="color:var(--mint);">' + supportEsc(String(Number(r.points) || 0)) + '</span>'
+      + '</div>';
+  }).join('');
+  return '<div class="bspace-card" style="margin-bottom:10px;">'
+    + '<div class="who">Counted</div>'
+    + lines
+    + '</div>';
+}
+
 /* ---------------- My Contribution (§36) ---------------- */
 
 function openContributionPanel(){
@@ -90,17 +117,23 @@ async function renderContributionPanel(quiet){
     return;
   }
   const trustLabel = { HIGH:'High', MEDIUM:'Building', LOW:'Limited', NEW:'New account' }[me.contribution_trust] || '—';
+  const recent = contribRecentHtml(me.recent);
+  const fromPhone = me.from_phone
+    ? '<div class="lobby-sub" style="text-align:left;max-width:none;font-size:11.5px;margin-top:8px;">Last count saved on this phone. It will refresh when the network is back.</div>'
+    : '';
   el.innerHTML =
     '<div class="bspace-card" style="margin-bottom:10px;">'
     + '<div class="who">Contribution Points</div>'
     + '<div style="font-family:var(--font-futuristic);font-size:26px;color:var(--mint);">' + supportEsc(String(me.contribution_points)) + '</div>'
-    + '<div class="lobby-sub" style="text-align:left;max-width:none;font-size:11.5px;margin-top:4px;">A measure of what you have added — not money, and not a promise of money.</div>'
+    + '<div class="lobby-sub" style="text-align:left;max-width:none;font-size:11.5px;margin-top:4px;">The same points Economy on the desk adds up. A Signal, a comment, a reply, a follow, a full watch, a share. Not money, and not a promise of money.</div>'
+    + fromPhone
     + '</div>'
     + '<div class="bspace-card" style="margin-bottom:10px;">'
     + '<div class="who">Eligible Contribution</div>'
     + '<div style="font-family:var(--font-futuristic);font-size:22px;">' + supportEsc(String(me.eligible_contribution)) + '</div>'
     + '<div class="lobby-sub" style="text-align:left;max-width:none;font-size:11.5px;margin-top:4px;">The part that would count toward any future community rewards.</div>'
     + '</div>'
+    + recent
     + '<div class="bspace-card">'
     + '<div class="who">Contribution Trust</div>'
     + '<div style="font-family:var(--font-futuristic);font-size:18px;">' + supportEsc(trustLabel) + '</div>'

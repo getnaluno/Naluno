@@ -233,18 +233,141 @@ function nalunoEconomySessionId(){
   return __econSessionId;
 }
 
-/** This user's own contribution summary, for the dashboard (spec §36).
- *  Read-only, server-computed, and safe to fail — callers render nothing
- *  rather than a wrong number. */
+/** This user's own contribution, for My Contribution.
+ *  The desk adds up contributionLedger. The worker's /v1/me used to answer
+ *  from one server's short memory, so the phone showed nothing while the
+ *  desk showed the points. Read the same ledger here. Points are whatever
+ *  the worker already wrote — this does not score an event, and a row that
+ *  is not this person's is ignored. A failed read is not zero. */
+function econDb(){
+  if(typeof fbDb !== 'undefined' && fbDb) return fbDb;
+  try{
+    if(typeof firebase !== 'undefined' && firebase.firestore) return firebase.firestore();
+  }catch(_){}
+  return null;
+}
+function contribTrust(events){
+  const n = Number(events) || 0;
+  if(n >= 20) return 'HIGH';
+  if(n >= 5) return 'MEDIUM';
+  if(n >= 1) return 'LOW';
+  return 'NEW';
+}
+function contribRemember(uid, me){
+  try{
+    const bag = JSON.parse(localStorage.getItem('nalunoContribSeen') || '{}') || {};
+    bag[uid] = {
+      contribution_points: Number(me.contribution_points) || 0,
+      eligible_contribution: Number(me.eligible_contribution) || 0,
+      contribution_trust: me.contribution_trust || 'NEW',
+      recent: Array.isArray(me.recent) ? me.recent.slice(0, 8) : [],
+      at: Date.now(),
+    };
+    localStorage.setItem('nalunoContribSeen', JSON.stringify(bag));
+  }catch(_){}
+}
+function contribRecall(uid){
+  try{
+    const bag = JSON.parse(localStorage.getItem('nalunoContribSeen') || '{}') || {};
+    const row = bag[uid];
+    if(!row || typeof row !== 'object') return null;
+    return {
+      ok: true,
+      contribution_points: Number(row.contribution_points) || 0,
+      eligible_contribution: Number(row.eligible_contribution) || 0,
+      contribution_trust: row.contribution_trust || 'NEW',
+      recent: Array.isArray(row.recent) ? row.recent : [],
+      from_phone: true,
+    };
+  }catch(_){ return null; }
+}
+function addOwnLedgerRow(bag, seen, row, uid){
+  if(!row || String(row.user_id || '') !== uid) return;
+  const id = String(row.ledger_id || row.event_id || row.id || '');
+  if(id && seen.has(id)) return;
+  if(id) seen.add(id);
+  bag.points += Number(row.points) || 0;
+  bag.eligible += Number(row.eligible_points) || 0;
+  bag.events += 1;
+  bag.rows.push(row);
+}
+async function contributionFromStore(uid){
+  const db = econDb();
+  if(!db || !db.collection) return null;
+  let prof = null;
+  let profileRead = false;
+  try{
+    const snap = await db.collection('contributionProfiles').doc(uid).get();
+    profileRead = true;
+    prof = (snap && snap.exists && snap.data) ? (snap.data() || {}) : {};
+    if(prof.user_id && String(prof.user_id) !== uid) prof = {};
+  }catch(_){
+    prof = null;
+  }
+  let queried = null;
+  try{
+    const q = await db.collection('contributionLedger').where('user_id', '==', uid).limit(500).get();
+    queried = [];
+    q.forEach(function(doc){
+      const data = (doc && doc.data) ? (doc.data() || {}) : {};
+      data.id = doc.id;
+      queried.push(data);
+    });
+  }catch(_){
+    queried = null;
+  }
+  if(!profileRead && queried === null) return null;
+  const bag = { points: 0, eligible: 0, events: 0, rows: [] };
+  const seen = new Set();
+  (queried || []).forEach(function(row){ addOwnLedgerRow(bag, seen, row, uid); });
+  const profilePoints = prof ? (Number(prof.total_points) || 0) : 0;
+  const profileEligible = prof ? (Number(prof.eligible_points) || 0) : 0;
+  const profileEvents = prof ? (Number(prof.events) || 0) : 0;
+  if(profilePoints > bag.points) bag.points = profilePoints;
+  if(profileEligible > bag.eligible) bag.eligible = profileEligible;
+  if(profileEvents > bag.events) bag.events = profileEvents;
+  /* Ledger unreadable and the rollup is empty: that is not "you have 0". */
+  if(queried === null && profilePoints <= 0 && profileEligible <= 0) return null;
+  bag.rows.sort(function(a, b){ return (Number(b.ts) || 0) - (Number(a.ts) || 0); });
+  return {
+    ok: true,
+    contribution_points: bag.points,
+    eligible_contribution: bag.eligible,
+    contribution_trust: contribTrust(bag.events),
+    recent: bag.rows.slice(0, 8).map(function(r){
+      return {
+        event_type: String(r.event_type || ''),
+        points: Number(r.points) || 0,
+        status: String(r.status || ''),
+      };
+    }),
+  };
+}
 async function fetchMyContribution(){
   try{
     if(typeof currentUser === 'undefined' || !currentUser) return null;
-    const idToken = await currentUser.getIdToken(false);
-    const res = await fetch(ECONOMY_WORKER_URL + '/v1/me', {
-      headers: { 'Authorization': 'Bearer ' + idToken },
-    });
-    if(!res.ok) return null;
-    return await res.json();
+    const uid = currentUser.uid;
+    const stored = await contributionFromStore(uid);
+    if(stored && stored.ok){
+      contribRemember(uid, stored);
+      return stored;
+    }
+    let live = null;
+    try{
+      const idToken = await currentUser.getIdToken(false);
+      const res = await fetch(ECONOMY_WORKER_URL + '/v1/me', {
+        headers: { 'Authorization': 'Bearer ' + idToken },
+      });
+      if(res.ok) live = await res.json();
+    }catch(_){ live = null; }
+    if(live && live.ok && (Number(live.contribution_points) > 0 || Number(live.eligible_contribution) > 0)){
+      contribRemember(uid, live);
+      return live;
+    }
+    const cached = contribRecall(uid);
+    if(cached) return cached;
+    if(live && live.ok) return live;
+    return null;
   }catch(_){ return null; }
 }
 
