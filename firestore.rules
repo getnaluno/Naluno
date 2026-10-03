@@ -1266,6 +1266,28 @@ service cloud.firestore {
       allow delete: if isSuper() && uid != 'ibMOMY6Q3sVTCxIrwO2FGk43zw93';
     }
 
+    /* Money typed in the console, with what it went to. Operators only. */
+    match /deskSpend/{id} {
+      allow read: if isOperator();
+      allow create: if isOperator()
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0
+        && request.resource.data.amount < 100000000
+        && request.resource.data.purpose is string
+        && request.resource.data.purpose.size() >= 2
+        && request.resource.data.purpose.size() < 201
+        && request.resource.data.at is number
+        && request.resource.data.by == request.auth.uid;
+      allow update: if false;
+      allow delete: if isOperator();
+    }
+
+    /* Stripe Connect readiness. Written by the economy worker. The desk only reads it. */
+    match /payoutAccounts/{uid} {
+      allow read: if isOperator();
+      allow write: if false;
+    }
+
     match /adminAudit/{id} {
       allow read, create: if isOperator();
       allow update, delete: if false;
