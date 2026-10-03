@@ -1018,6 +1018,13 @@ service cloud.firestore {
       allow create, delete: if false;
     }
 
+    /* Mobile-money status. The worker writes it. A phone can read its own
+       and cannot mark itself paid. */
+    match /users/{uid}/payStatus/{id} {
+      allow read: if isOwner(uid);
+      allow write: if false;
+    }
+
     match /reports/{reportId} {
       allow read: if isOperator();
       allow create: if isSignedIn()
