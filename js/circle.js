@@ -323,30 +323,44 @@
    *  it naturally resets when a new Toga period begins, exactly like the
    *  real ranking does. Never read by anything that decides who's actually
    *  in the list or in what order. */
+  /* The board redraws on every live change. The comparison baseline is the
+     ranks frozen at the start of this visit (or the last visit, if that
+     freeze is still inside six hours). Writing the ranks we just painted
+     and then reading them back on the next redraw turned every NEW into
+     "same" before anyone could see it. A person who was not in that
+     freeze stays NEW for this visit. */
+  const __togaRankSession = { key: '', base: null };
   function nalunoTogaRankDelta(monthKey, currentRanksByUid){
-    let prev = {};
-    try{
-      const raw = (typeof nalunoCacheRead === 'function') ? nalunoCacheRead('togaRanks:' + monthKey) : null;
-      if(raw && typeof raw === 'object') prev = raw;
-    }catch(_){}
-    /* The board now redraws on every live change. Comparing against the
-       previous redraw would wipe the arrows a second later, so the ranks
-       compared against are kept for six hours. */
-    let keptAt = 0;
-    if(prev && prev.__ranks && typeof prev.__ranks === 'object'){ keptAt = Number(prev.__at) || 0; prev = prev.__ranks; }
-    const keep = keptAt && (Date.now() - keptAt) < 6 * 60 * 60 * 1000;
+    const key = 'togaRanks:' + monthKey;
+    if (__togaRankSession.key !== key || __togaRankSession.base == null) {
+      let stored = null;
+      let keptAt = 0;
+      try {
+        const raw = (typeof nalunoCacheRead === 'function') ? nalunoCacheRead(key) : null;
+        if (raw && raw.__ranks && typeof raw.__ranks === 'object') {
+          stored = raw.__ranks;
+          keptAt = Number(raw.__at) || 0;
+        }
+      } catch (_) {}
+      const fresh = !!(stored && keptAt && (Date.now() - keptAt) < 6 * 60 * 60 * 1000);
+      __togaRankSession.key = key;
+      __togaRankSession.base = fresh ? stored : {};
+      try {
+        if (!fresh && typeof nalunoCacheWrite === 'function') {
+          nalunoCacheWrite(key, { __at: Date.now(), __ranks: currentRanksByUid });
+        }
+      } catch (_) {}
+    }
+    const prev = __togaRankSession.base || {};
     const deltas = {};
-    Object.keys(currentRanksByUid).forEach(function(uid){
-      const now = currentRanksByUid[uid];
+    Object.keys(currentRanksByUid || {}).forEach(function (uid) {
+      const nowRank = currentRanksByUid[uid];
       const before = prev[uid];
-      if(before == null) deltas[uid] = { kind: 'new' };
-      else if(before === now) deltas[uid] = { kind: 'same' };
-      else if(before > now) deltas[uid] = { kind: 'up', by: before - now };
-      else deltas[uid] = { kind: 'down', by: now - before };
+      if (before == null) deltas[uid] = { kind: 'new' };
+      else if (before === nowRank) deltas[uid] = { kind: 'same' };
+      else if (before > nowRank) deltas[uid] = { kind: 'up', by: before - nowRank };
+      else deltas[uid] = { kind: 'down', by: nowRank - before };
     });
-    try{
-      if(!keep && typeof nalunoCacheWrite === 'function') nalunoCacheWrite('togaRanks:' + monthKey, { __at: Date.now(), __ranks: currentRanksByUid });
-    }catch(_){}
     return deltas;
   }
 
@@ -822,6 +836,7 @@
   window.loadMyTogaSettings = loadMyTogaSettings;
   window.setMyToga = setMyToga;
   window.renderTogaBoard = renderTogaBoard;
+  window.nalunoTogaRankDelta = nalunoTogaRankDelta;
   window.creatorShareViews = creatorShareViews;
   window.bumpTogaMonth = bumpTogaMonth;
 })();

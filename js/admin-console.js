@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261003e';
+  const BUILD = '20261004b';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -501,7 +501,13 @@
       actorEmail: currentUser.email || '',
       created_at: Date.now(),
     };
-    try { await db.collection('adminAudit').add(row); } catch (_) {}
+    try {
+      await db.collection('adminAudit').add(row);
+      return true;
+    } catch (e) {
+      try { console.warn('[audit]', (e && e.message) || e); } catch (_) {}
+      return false;
+    }
   }
 
   function handleGuard() {
@@ -1464,8 +1470,11 @@
     listenCol('contributionLedger', 2000, 'ledger');
     listenCol('economyInbox', 200, '_inbox');
     listenCol('creatorSupport', 80, 'creatorSupport');
+    listenCol('payoutAccounts', 80, 'payoutAccounts');
+    listenCol('deskSpend', 200, 'deskSpend');
+    listenCol('deskOperators', 40, 'deskOperators');
     listenCol('metrics', 80, 'metrics');
-    listenCol('adminAudit', 80, 'audit');
+    listenCol('adminAudit', 200, 'audit', 'created_at');
     listenCol('originMarks', 200, 'originMarks');
     listenCol('signals', 400, '_signalsTop');
     listenCol('reservedHandles', 400, 'reservedHandles');
@@ -1475,6 +1484,7 @@
     listenDoc('economyConfig', 'flags', 'flags');
     listenDoc('economyConfig', 'adRates', 'adRates');
     listenDoc('economyConfig', 'costRates', 'costRates');
+    listenDoc('economyConfig', 'payouts', 'payoutCfg');
     listenDoc('economyConfig', 'currency', 'currency', function (data) {
       __livePack.currency = data;
       const C = Ccy();
@@ -1550,6 +1560,9 @@
       core.push(db.collection('economyConfig').doc('adRates').get().then(function (s) {
         if (s && s.exists) pack.adRates = s.data() || {};
       }).catch(function () {}));
+      core.push(db.collection('economyConfig').doc('payouts').get().then(function (s) {
+        if (s && s.exists) pack.payoutCfg = s.data() || {};
+      }).catch(function () {}));
       core.push(db.collection('economyConfig').doc('costRates').get().then(function (s) {
         if (s && s.exists) pack.costRates = s.data() || {};
       }).catch(function () {}));
@@ -1581,8 +1594,10 @@
       colDocs('contributionLedger', 2000).then(function (r) { pack.ledger = r; }),
       colDocs('economyInbox', 200).then(function (r) { pack._inbox = r; }),
       colDocs('creatorSupport', 80).then(function (r) { pack.creatorSupport = r; }),
+      colDocs('payoutAccounts', 80).then(function (r) { pack.payoutAccounts = r; }),
+      colDocs('deskSpend', 200).then(function (r) { pack.deskSpend = r; }),
       colDocs('metrics', 80).then(function (r) { pack.metrics = r; }),
-      colDocs('adminAudit', 80).then(function (r) {
+      colDocsOrder('adminAudit', 'created_at', 200).then(function (r) {
         pack.audit = r.sort(function (a, b) { return (b.created_at || 0) - (a.created_at || 0); });
       }),
       pingWorker().then(function (w) { pack.worker = w; }),
@@ -2598,8 +2613,31 @@
     });
     support.forEach(function (r) {
       const major = minorToMajor(r.amount_minor, r.currency);
-      const day = (r.created_at || r.createdAt) ? new Date(Number(r.created_at || r.createdAt)).toISOString().slice(0, 10) : stamp;
-      add(day, 'Creator support intent', (r.currency || 'AED') + ' intent', '', major, r.status || 'intent', r.id || '', 'Not a charge. No payment has moved.', r.currency || 'AED');
+      const day = (r.paidAt || r.created_at || r.createdAt) ? new Date(Number(r.paidAt || r.created_at || r.createdAt)).toISOString().slice(0, 10) : stamp;
+      const st = String(r.status || '').toLowerCase();
+      const paid = st === 'succeeded' || st === 'paid' || st === 'complete';
+      const who = String(r.creator_user_id || r.id || 'creator');
+      if (!paid) {
+        add(day, 'Creator support intent', (r.currency || 'AED') + ' intent · ' + who, '', major, r.status || 'intent', r.id || '', 'Not a charge. No payment has moved.', r.currency || 'AED');
+        return;
+      }
+      const split = (d.economy && d.economy.support_split) || {};
+      const line = (split.lines || []).filter(function (x) { return x && x.id && x.id === r.id; })[0];
+      const route = (line && line.route) || (r.payout_to === 'creator' ? 'creator' : 'naluno');
+      const feePart = line ? Number(line.fee) || 0 : 0;
+      const creatorPart = line ? Number(line.creator) || 0 : (route === 'creator' ? major : 0);
+      const holdPart = line ? Number(line.held) || 0 : (route === 'naluno' ? major : 0);
+      if (route === 'creator') {
+        add(day, 'Support paid to creator', who, '', creatorPart, 'paid', r.id || '', 'Sent to the creator’s payment account.', r.currency || 'AED');
+        if (feePart > 0) add(day, 'Naluno support share', who, '', feePart, 'paid', r.id || '', 'Naluno’s share of Support paid to a creator.', r.currency || 'AED');
+        add(day, 'Cash', 'Support paid to creator', major, '', 'paid', r.id || '', 'Opposite entry.', r.currency || 'AED');
+      } else {
+        add(day, 'Support held by Naluno', who, '', holdPart || major, 'held', r.id || '', 'Collected by Naluno. The creator has no payment account on this row, or real payouts were off.', r.currency || 'AED');
+        add(day, 'Cash', 'Support held by Naluno', holdPart || major, '', 'held', r.id || '', 'Opposite entry. Held for the creator. Not sent from this desk.', r.currency || 'AED');
+      }
+    });
+    (Data && Data.journalSpend ? Data.journalSpend((d.deskSpend || (d._raw && d._raw.deskSpend) || [])) : []).forEach(function (row) {
+      add(row.day || stamp, row.account, row.desc, row.debit, row.credit, row.status, row.source, row.note);
     });
     ledger.forEach(function (r) {
       const day = r.created_at ? new Date(Number(r.created_at)).toISOString().slice(0, 10) : stamp;
@@ -3344,6 +3382,9 @@
               + '<div class="row" style="margin-top:10px;">'
               + reply + tel
               + (m.uid ? '<button type="button" class="ghost admGoUser" data-uid="' + escapeHtml(m.uid) + '">Open account</button> ' : '')
+              + ((kind === 'delete-account' && m.uid && st !== 'done')
+                ? '<button type="button" class="danger admDeleteAsk" data-uid="' + escapeHtml(m.uid) + '" data-mail="' + escapeHtml(m.id || '') + '">Delete this account</button> '
+                : '')
               + ((m.uid || m.handle) ? '<button type="button" class="ghost admGoLegal" data-q="' + escapeHtml(m.uid || String(m.handle || '').replace(/^@/, '')) + '">Legal</button> ' : '')
               + (st !== 'read' && st !== 'done' ? '<button type="button" class="ghost admMail" data-id="' + escapeHtml(m.id) + '" data-st="read">Mark read</button> ' : '')
               + (st !== 'done' ? '<button type="button" class="ghost admMail" data-id="' + escapeHtml(m.id) + '" data-st="done">Done</button>' : '')
@@ -3358,6 +3399,17 @@
       });
       el.querySelectorAll('.admMail').forEach(function (btn) {
         btn.onclick = function () { actMail(btn.getAttribute('data-id'), btn.getAttribute('data-st')); };
+      });
+      el.querySelectorAll('.admDeleteAsk').forEach(function (btn) {
+        btn.onclick = async function () {
+          const uid = btn.getAttribute('data-uid');
+          const mailId = btn.getAttribute('data-mail');
+          const row = filtered.filter(function (m) { return m && m.id === mailId; })[0] || {};
+          const ok = await actUser(uid, 'delete-request', String(row.text || '').trim());
+          if (ok && mailId) {
+            try { await actMail(mailId, 'done'); } catch (_) {}
+          }
+        };
       });
       wireDeskJumps(el);
       return;
@@ -3401,6 +3453,8 @@
           : [String((a && a.placement) || 'both')];
         const feed = p.indexOf('in-feed') >= 0 || p.indexOf('watch-break') >= 0;
         const br = p.indexOf('broadcast-break') >= 0;
+        const bucket = p.indexOf('ad-bucket') >= 0;
+        if (bucket && !feed && !br) return 'ad-bucket';
         if (p.indexOf('both') >= 0 || (feed && br)) return 'both';
         if (br) return 'broadcast-break';
         if (feed) return 'in-feed';
@@ -3497,6 +3551,7 @@
           + '<option value="both"' + selected(placeNow, 'both') + '>Watch-time break and Broadcast chapter break</option>'
           + '<option value="in-feed"' + selected(placeNow, 'in-feed') + '>Watch-time break only</option>'
           + '<option value="broadcast-break"' + selected(placeNow, 'broadcast-break') + '>Broadcast chapter break only</option>'
+          + '<option value="ad-bucket"' + selected(placeNow, 'ad-bucket') + '>Ad bucket only</option>'
           + '</select>'
           + '<label for="adBill">Billing model</label>'
           + '<select id="adBill">'
@@ -3569,6 +3624,7 @@
             const places = (Array.isArray(a.placements) ? a.placements : [a.placement || '']).map(function (p) {
               if (p === 'in-feed') return 'watch-time';
               if (p === 'broadcast-break') return 'Broadcast chapter';
+              if (p === 'ad-bucket') return 'Ad bucket';
               return p;
             }).filter(Boolean).join(', ');
             const u = unitById[a.id] || {};
@@ -3959,17 +4015,32 @@
     }
 
     if (tab === 'toga') {
-      const top = d.toga && d.toga.top || [];
+      const top = (d.toga && (d.toga.top && d.toga.top.length ? d.toga.top : d.toga.list)) || [];
+      function togaWho(t) {
+        const handle = String(t.handle || '').replace(/^@/, '');
+        const name = String(t.name || '').trim();
+        const bits = [];
+        if (handle) bits.push('@' + handle);
+        if (name) bits.push(name);
+        return bits.join(' · ') || String(t.id || '').slice(0, 12);
+      }
       el.innerHTML =
         card('Toga — this month',
-          top.length
-            ? plainRows(['#', 'Creator', 'Score', 'Views'],
-              top.map(function (t, i) {
-                return [i + 1, t.name || String(t.id || '').slice(0, 12),
-                  t.scoreMonth || t.score || 0, t.viewsMonth || t.viewsTotal || 0];
+          '<p class="sub">Same figures as the app. 1 point per view, 12 per Circle join, 3 per talk, this UTC month. NEW means nothing was counted for them last month.</p>'
+          + (top.length
+            ? table(['#', 'Creator', 'Points', 'Views', 'Circle', 'Talk', ''],
+              top.slice(0, 10).map(function (t, i) {
+                return [
+                  escapeHtml(String(i + 1)),
+                  escapeHtml(togaWho(t) + (t.fresh ? '  NEW' : '')),
+                  escapeHtml(String(t.scoreMonth || t.score || 0)),
+                  escapeHtml(String(t.viewsMonth || 0)),
+                  escapeHtml(String(t.circleMonth || 0)),
+                  escapeHtml(String(t.engageMonth || 0)),
+                  t.id ? '<button type="button" class="ghost admGoUser" data-uid="' + escapeHtml(t.id) + '">Open</button>' : '',
+                ];
               }))
-            : '<p class="sub">No Toga scores stored this month.</p>')
-        + gap('Admin can see why a rank exists: score is views + circle + engagement for the month. The formula is not shown to members.')
+            : '<p class="sub">No one has points this month. The app’s Wall of Fame is empty for the same reason.</p>'))
         + card('What counts as a view',
           '<p class="sub">The economy service counts one view per person per Broadcast, only after they have spent this many seconds on it, timed on the server. The app cannot count a view by itself.</p>'
           + '<label for="viewCountSec">Seconds on a Broadcast before it counts as a view</label>'
@@ -3977,6 +4048,7 @@
           + '<div class="row"><button type="button" class="primary" id="viewCountSave">Save</button></div>'
           + '<p class="sub" id="viewCountNow"></p>');
       wireViewRules();
+      wireDeskJumps(el);
       return;
     }
 
@@ -4224,36 +4296,78 @@
 
     if (tab === 'support') {
       const on = !!d.flags.creator_support_enabled;
+      const payoutsOn = !!d.flags.real_payouts_enabled;
       const txs = (d.economy && d.economy.support_list) || [];
+      const split = (d.economy && d.economy.support_split) || { lines: [], creators: [], toCreator: 0, held: 0, fee: 0, possible: 0, feePct: 0, count: 0 };
+      function whoOf(uid) {
+        const row = ((d.users && d.users.list) || []).filter(function (u) { return u && u.id === uid; })[0] || {};
+        const handle = String(row.handle || '').replace(/^@/, '');
+        const name = row.name || row.displayName || '';
+        const bits = [];
+        if (handle) bits.push('@' + handle);
+        if (name) bits.push(name);
+        return bits.join(' · ') || String(uid || '').slice(0, 12);
+      }
+      function moneyOf(major, ccy) {
+        const C = Ccy();
+        const code = ccy || 'AED';
+        return C && C.formatFrom ? C.formatFrom(Number(major) || 0, code) : ((Number(major) || 0).toFixed(2) + ' ' + code);
+      }
+      const codes = {};
+      (split.lines || []).forEach(function (r) { if (r && r.currency) codes[String(r.currency).toUpperCase()] = 1; });
+      const codeList = Object.keys(codes);
+      const sumCode = codeList.length === 1 ? codeList[0] : 'AED';
       el.innerHTML =
         (on
           ? '<div class="alert ok">Creator Support is ON. It lives inside Broadcast, below Circle. A person is taken to pay. Nothing is marked paid until the payment notice confirms it.</div>'
           : inactiveNote('Creator Support is off. The panel still sits under Circle in Broadcast, inactive. Nothing can be charged.'))
         + kpis([['Place', 'Broadcast · below Circle'], ['State', on ? 'active' : 'inactive'],
-          ['Intents on file', txs.length || (d.economy && d.economy.support_transactions) || 0],
-          ['Real payouts', d.flags.real_payouts_enabled ? 'on' : 'locked']])
+          ['Paid on file', split.count || 0],
+          ['Real payouts', payoutsOn ? 'on' : 'off']])
+        + kpis([
+          ['Paid to creators', moneyOf(split.toCreator, sumCode)],
+          ['Naluno holds', moneyOf(split.held, sumCode)],
+          ['Naluno share taken', moneyOf(split.fee, sumCode)],
+          ['Held, account ready', moneyOf(split.possible, sumCode)],
+        ])
+        + (codeList.length > 1 ? '<p class="sub">More than one currency is on file. Those totals add the recorded amounts. They are not an exchange.</p>' : '')
+        + card('Each creator',
+          (split.creators && split.creators.length)
+            ? table(['Creator', 'Paid to them', 'Naluno holds', 'Naluno share', 'Account', 'Possible'],
+              split.creators.map(function (c) {
+                return [
+                  escapeHtml(whoOf(c.uid)),
+                  escapeHtml(moneyOf(c.toCreator, sumCode)),
+                  escapeHtml(moneyOf(c.held, sumCode)),
+                  escapeHtml(moneyOf(c.fee, sumCode)),
+                  c.ready ? 'Stripe ready' : 'No payment account',
+                  escapeHtml(moneyOf(c.possible, sumCode)),
+                ];
+              }))
+            : '<p class="sub">No paid Support yet. An intent is not money.</p>'
+          + '<p class="sub">Paid to them is a payment stamped as sent to their Stripe account. Naluno holds is money collected because real payouts were off, or they had no payment account. Possible is held money for someone whose account is ready now. This desk does not send that held money. New payments follow the Real payouts switch.</p>')
         + (txs.length
-          ? card('Recorded intents', plainRows(['When', 'From', 'To', 'Amount', 'Status'],
-            txs.slice(0, 30).map(function (r) {
-              const C = Ccy();
-              const ccy = r.currency || 'AED';
-              const major = (Number(r.amount_minor) || 0) / ((C && C.digits) ? Math.pow(10, C.digits(ccy)) : 100);
-              const shown = C && C.formatFrom ? C.formatFrom(major, ccy) : (major.toFixed(2) + ' ' + ccy);
-              return [when(r.created_at || r.createdAt),
-                String(r.supporter_user_id || '').slice(0, 10),
-                String(r.creator_user_id || '').slice(0, 10),
-                shown,
-                r.status || 'intent'];
+          ? card('Each payment', table(['When', 'From', 'Creator', 'Amount', 'Where it went'],
+            (split.lines && split.lines.length ? split.lines : txs).slice(0, 40).map(function (r) {
+              const route = r.route === 'creator' ? 'Paid to creator' : (r.route === 'naluno' ? 'Naluno holds' : (r.status || 'intent'));
+              return [
+                escapeHtml(when(r.at || r.paidAt || r.created_at || r.createdAt)),
+                escapeHtml(whoOf(r.from || r.supporter_user_id)),
+                escapeHtml(whoOf(r.to || r.creator_user_id)),
+                escapeHtml(moneyOf(r.major != null ? r.major : ((Number(r.amount_minor) || 0) / 100), r.currency)),
+                escapeHtml(route),
+              ];
             })))
-          : gap('No support intents on file. Turning the flag on does not move money — it only makes the Broadcast panel active.'))
+          : '<p class="sub">No support payments on file. Turning the flag on does not move money.</p>')
         + card('Paying creators (Stripe)',
-          '<p class="sub">A creator connects a Stripe account from the Support panel in their own Broadcast. While <strong>Real payouts</strong> (Flags) is on, Support to a creator whose Stripe account is ready goes straight to them, less the share below. While it is off, or before they connect, Support is paid to Naluno’s Stripe and recorded for them.</p>'
-          + '<label for="supportFeePct">Naluno’s share of each Support (%)</label>'
+          '<p class="sub">A creator connects a Stripe account from the Support panel in their own Broadcast. While <strong>Real payouts</strong> is on, a new Support payment to a creator whose Stripe account is ready goes to them, less the share below. While it is off, or before they connect, Support is paid to Naluno and held here. The switch is under Flags. It does not move money already collected.</p>'
+          + '<label for="supportFeePct">Naluno’s share of each Support paid to a creator (%)</label>'
           + '<input id="supportFeePct" type="number" min="0" max="50" step="0.5" value="" placeholder="0" />'
           + '<div class="row"><button type="button" class="primary" id="supportFeeSave">Save</button></div>'
           + '<p class="sub" id="supportFeeNow"></p>')
         + gap(g.payments || '');
       wireSupportFee();
+      wireDeskJumps(el);
       return;
     }
 
@@ -4290,10 +4404,25 @@
         if (C && C.convert) return C.convert(Number(opVal) || 0, opCode(), 'AED');
         return Number(opVal) || 0;
       }
+      const split = (d.economy && d.economy.support_split) || {};
+      const payoutsOn = !!d.flags.real_payouts_enabled;
+      const spends = d.deskSpend || [];
       el.innerHTML =
         currencyCard()
         + pricesCard()
-        + inactiveNote('Real payouts are disabled. No money has moved.')
+        + card('Actual payouts',
+          '<p class="sub">' + (payoutsOn
+            ? 'Real payouts are ON. A new Support payment to a creator with a ready Stripe account is sent to them at checkout, less Naluno’s share. Money already collected stays where it was.'
+            : 'Real payouts are OFF. New Support is collected by Naluno and held for the creator. No money is sent to a creator, and nothing already collected is moved.') + '</p>'
+          + kpis([
+            ['Switch', payoutsOn ? 'ON' : 'OFF'],
+            ['Paid to creators', aedUsd(split.toCreator || 0)],
+            ['Naluno holds', aedUsd(split.held || 0)],
+            ['Naluno share', aedUsd(split.fee || 0)],
+          ])
+          + '<p class="sub">Turn the switch under Flags. This page does not transfer held money.</p>'
+          + '<div class="row"><button type="button" class="ghost ccGo" data-go="support">Open Support</button>'
+          + '<button type="button" class="ghost ccGo" data-go="flags">Open Flags</button></div>')
         + card('Booked ad revenue',
           '<p class="sub">Booked ad revenue is rate-card maths × observed events. Cash has not moved until an advertiser pays. There is no outside auction.</p>'
           + kpis([['Booked ads', aedUsd(adRev.bookedAed || 0)],
@@ -4338,7 +4467,24 @@
           + '<label>Call minutes this month (typed, not fetched)</label><input id="costTurn" inputmode="decimal" placeholder="0" />'
           + '<label>Compass / AI this month (' + escapeHtml(opCode()) + ')</label><input id="costCompass" inputmode="decimal" placeholder="0" />'
           + '<div class="row"><button type="button" class="primary" id="costBtn">Recalculate model</button></div>'
-          + '<p class="sub" id="costHint">Saved on this browser only. Not read from Cloudflare or Firebase.</p>')
+          + '<p class="sub" id="costHint">These four numbers stay on this browser. They are the model, not the accountant’s books. Money you have spent is entered below, with what it went to.</p>')
+        + card('Money spent',
+          '<p class="sub">Every amount here is written into the books, with what it went to. It is not a model and it is not a vendor bill.</p>'
+          + '<label for="spendAmount">Amount (' + escapeHtml(opCode()) + ')</label><input id="spendAmount" inputmode="decimal" placeholder="0" />'
+          + '<label for="spendPurpose">What it went to</label><input id="spendPurpose" maxlength="200" placeholder="Domain, a tool, a store fee…" />'
+          + '<div class="row"><button type="button" class="primary" id="spendSave">Add to the books</button></div>'
+          + '<p class="msg" id="spendMsg"></p>'
+          + (spends.length
+            ? table(['When', 'What it went to', opCode(), ''],
+              spends.slice(0, 40).map(function (r) {
+                return [
+                  escapeHtml(when(r.at)),
+                  escapeHtml(r.purpose || ''),
+                  escapeHtml(aedUsd(r.amount || 0)),
+                  r.id ? '<button type="button" class="ghost admSpendDel" data-id="' + escapeHtml(r.id) + '">Remove</button>' : '',
+                ];
+              }))
+            : '<p class="sub">Nothing spent has been entered yet.</p>'))
         + card('Model, line by line',
           plainRows(['Line', 'Quantity', moneyLabel()],
             lines.map(function (L) {
@@ -4402,6 +4548,48 @@
         toast('Model recalculated in ' + opCode());
         renderTab('money', d);
       };
+      const spendSave = $('spendSave');
+      if (spendSave) spendSave.onclick = async function () {
+        const msg = $('spendMsg');
+        const purpose = String(($('spendPurpose') && $('spendPurpose').value) || '').replace(/\s+/g, ' ').trim();
+        const amount = parsePaidAed(($('spendAmount') && $('spendAmount').value) || '');
+        if (!(amount > 0)) { if (msg) msg.textContent = 'Enter an amount.'; return; }
+        if (purpose.length < 2) { if (msg) msg.textContent = 'Say what it went to.'; return; }
+        const db = adminDb();
+        if (!db || !currentUser) { if (msg) msg.textContent = 'Database is not ready.'; return; }
+        try {
+          const ref = await db.collection('deskSpend').add({
+            amount: amount,
+            currency: 'AED',
+            purpose: purpose.slice(0, 200),
+            at: Date.now(),
+            by: currentUser.uid,
+            byEmail: String(currentUser.email || '').slice(0, 120),
+          });
+          const noted = await writeAudit('spend-add', ref.id, purpose.slice(0, 180) + ' · ' + amount);
+          if (msg) msg.textContent = noted ? 'Added to the books.' : 'Added. The audit row did not save. Publish firestore.rules.';
+          toast('Spend recorded');
+        } catch (e) {
+          if (msg) msg.textContent = (e && e.message) || 'Could not save that spend. Publish firestore.rules.';
+        }
+      };
+      el.querySelectorAll('.admSpendDel').forEach(function (btn) {
+        btn.onclick = async function () {
+          const id = btn.getAttribute('data-id');
+          if (!id) return;
+          const reason = window.prompt('Remove this spend from the books. Reason:', '');
+          if (reason === null || !String(reason).trim()) return;
+          const db = adminDb();
+          if (!db) return;
+          try {
+            await db.collection('deskSpend').doc(id).delete();
+            await writeAudit('spend-remove', id, reason.trim());
+            toast('Removed');
+          } catch (e) {
+            toast((e && e.message) || 'Could not remove it.');
+          }
+        };
+      });
       if ($('runBtn')) $('runBtn').onclick = function () {
         const cash = toAedField(($('runCash') && $('runCash').value) || 0);
         const burn = toAedField(($('runBurn') && $('runBurn').value) || 0);
@@ -4489,8 +4677,8 @@
               ['Excluded today', site.bots_today || 0],
               ['Excluded (on file)', site.bots || 0]])
             + ((site.bot_names && site.bot_names.length)
-              ? plainRows(['Name', 'Sessions on file'], site.bot_names.map(function (b) {
-                return [b.label, b.n];
+              ? plainRows(['Name', 'Website', 'Sessions on file'], site.bot_names.map(function (b) {
+                return [b.label, b.site || '—', b.n];
               }))
               : '<p class="sub">No bot names are on file in the sessions loaded here.</p>')
             + '<p class="sub">Names come from the sessions already loaded (the latest few hundred). Nothing is blocked. Use this list when you decide.</p>')
@@ -4792,13 +4980,12 @@
         card('Feature flags', keys.map(function (k) {
           const on = !!d.flags[k];
           const m = meta[k] || { label: k };
-          const locked = k === 'real_payouts_enabled';
           return '<div class="flag-row">'
-            + '<span style="flex:1;"><strong>' + escapeHtml(m.label || k) + '</strong></span>'
+            + '<span style="flex:1;"><strong>' + escapeHtml(m.label || k) + '</strong>'
+            + (k === 'real_payouts_enabled' && m.note ? '<div class="sub">' + escapeHtml(m.note) + '</div>' : '')
+            + '</span>'
             + '<span style="color:' + (on ? 'var(--mint)' : 'var(--ink-dim)') + ';">' + (on ? 'ON' : 'OFF') + '</span>'
-            + (locked
-              ? '<span style="font-size:10px;color:var(--ink-dim);">locked</span>'
-              : '<button type="button" class="ghost admin-flag" data-flag="' + escapeHtml(k) + '" data-next="' + (on ? '0' : '1') + '">' + (on ? 'Turn off' : 'Turn on') + '</button>')
+            + '<button type="button" class="ghost admin-flag" data-flag="' + escapeHtml(k) + '" data-next="' + (on ? '0' : '1') + '">' + (on ? 'Turn off' : 'Turn on') + '</button>'
             + '</div>';
         }).join(''));
       el.querySelectorAll('.admin-flag').forEach(function (btn) {
@@ -4811,7 +4998,7 @@
       el.innerHTML =
         card('Everything important an administrator does',
           plainRows(['When', 'Who', 'Action', 'Target', 'Reason'],
-            (d.audit || []).slice(0, 40).map(function (row) {
+            (d.audit || []).slice(0, 80).map(function (row) {
               return [when(row.created_at), row.actorEmail || String(row.actor || '').slice(0, 8),
                 row.action || '', row.target || '', row.reason || ''];
             })));
@@ -4964,31 +5151,40 @@
         + card('Trial balance', plainRows(pack.trial[0], pack.trial.slice(1, 18).map(function (r) { return r; })));
       const base = 'naluno-books-' + pack.stamp;
       const csvBtn = $('booksCsv');
-      if (csvBtn) csvBtn.onclick = function () {
+      if (csvBtn) csvBtn.onclick = async function () {
         downloadText(base + '.csv', 'text/csv;charset=utf-8',
           '\uFEFF' + csvTable([['Naluno books', pack.stamp]]) + '\r\n' + csvTable(pack.trial) + '\r\n' + csvTable(pack.journal));
+        const ok = await writeAudit('export-download', 'Books CSV', pack.stamp);
+        if (!ok) toast('Downloaded. Audit did not save.');
       };
       const xlsBtn = $('booksXls');
-      if (xlsBtn) xlsBtn.onclick = function () {
+      if (xlsBtn) xlsBtn.onclick = async function () {
         downloadText(base + '.xls', 'application/vnd.ms-excel', booksWorkbook(pack));
+        const ok = await writeAudit('export-download', 'Books Excel', pack.stamp);
+        if (!ok) toast('Downloaded. Audit did not save.');
       };
       const pdfBtn = $('booksPdf');
-      if (pdfBtn) pdfBtn.onclick = function () {
-        const lines = ['Naluno books  ' + pack.stamp, 'Working papers. Not a bank statement. Cash has not moved.', ''];
-        pack.trial.forEach(function (r) { lines.push(r.join('  |  ')); });
-        lines.push('');
-        lines.push('Journal');
-        pack.journal.forEach(function (r) { lines.push(r.join('  |  ')); });
-        downloadText(base + '.pdf', 'application/pdf', booksPdf(lines));
+      if (pdfBtn) pdfBtn.onclick = async function () {
+        const Exp = (typeof NalunoExport !== 'undefined') ? NalunoExport : null;
+        const tables = [
+          { name: 'Trial balance', headers: pack.trial[0], rows: pack.trial.slice(1) },
+          { name: 'Journal', headers: pack.journal[0], rows: pack.journal.slice(1) },
+        ];
+        const file = Exp ? Exp.pdf('Books', tables, pack.stamp) : booksPdf(['Naluno books ' + pack.stamp].concat(pack.journal.map(function (r) { return r.join(' | '); })));
+        downloadText(base + '.pdf', 'application/pdf', file);
+        const ok = await writeAudit('export-download', 'Books PDF', pack.stamp);
+        if (!ok) toast('Downloaded. Audit did not save.');
       };
       const jsonBtn = $('booksJson');
-      if (jsonBtn) jsonBtn.onclick = function () {
+      if (jsonBtn) jsonBtn.onclick = async function () {
         downloadText(base + '.json', 'application/json', JSON.stringify({
           asOf: pack.stamp,
           note: 'Receipts are records. A vendor line is a model unless its status is invoiced. Not a bank balance.',
           trial: pack.trial,
           journal: pack.journal,
         }, null, 2));
+        const ok = await writeAudit('export-download', 'Books JSON', pack.stamp);
+        if (!ok) toast('Downloaded. Audit did not save.');
       };
       return;
     }
@@ -5235,8 +5431,8 @@
         const period = fromVal + ' to ' + toVal;
         const file = Exp.pdf(pickedName, tables, period);
         downloadText('naluno-' + picked + '-' + fromVal + '-to-' + toVal + '.pdf', 'application/pdf', file);
-        try { await writeAudit('export-download', pickedName, fromVal + ' to ' + toVal); } catch (_) {}
-        if (msg) msg.textContent = 'Downloaded. Audit has the record.';
+        const noted = await writeAudit('export-download', pickedName, fromVal + ' to ' + toVal);
+        if (msg) msg.textContent = noted ? 'Downloaded. Audit has the record.' : 'Downloaded. Audit did not save. Publish firestore.rules, then download again.';
       };
       const change = $('exportChange');
       if (change) change.onclick = async function () {
@@ -5669,32 +5865,45 @@
     wireDeskJumps(out);
   }
 
-  async function actUser(uid, action) {
+  async function actUser(uid, action, presetReason) {
     if (uid === SUPER_UID || OPERATOR_UIDS[uid]) {
       toast('That account cannot be changed from here');
-      return;
+      return false;
     }
-    if (!canDeskTab('users') && !canDeskTab('identity')) {
+    if (!canDeskTab('users') && !canDeskTab('identity') && action !== 'delete-request') {
       toast('That section is not on this login');
-      return;
+      return false;
     }
-    const reason = window.prompt('Reason for "' + action + '" (saved in the audit log):', '');
-    if (reason === null) return;
-    if (!String(reason).trim()) { toast('A reason is required'); return; }
+    if (action === 'delete-request' && !canDeskTab('users') && !canDeskTab('mail') && !canDeskTab('identity')) {
+      toast('That section is not on this login');
+      return false;
+    }
+    let reason = presetReason == null ? null : String(presetReason);
+    if (action === 'delete-request') {
+      const typed = window.prompt('Delete this account. The reason is saved. At least 8 characters:', reason || '');
+      if (typed === null) return false;
+      reason = typed;
+      if (String(reason).trim().length < 8) { toast('A reason of at least 8 characters is required'); return false; }
+    } else {
+      const typed = window.prompt('Reason for "' + action + '" (saved in the audit log):', '');
+      if (typed === null) return false;
+      reason = typed;
+      if (!String(reason).trim()) { toast('A reason is required'); return false; }
+    }
     const db = adminDb();
-    if (!db) { toast('Database is not ready'); return; }
+    if (!db) { toast('Database is not ready'); return false; }
     const patch = { moderationAt: Date.now(), moderationBy: currentUser.uid };
     if (action === 'suspend') { patch.suspended = true; patch.suspendedReason = reason.trim(); patch.suspendedAt = Date.now(); }
     if (action === 'unsuspend') { patch.suspended = false; patch.suspendedReason = ''; }
     if (action === 'restrict') { patch.restricted = true; patch.restrictedReason = reason.trim(); }
     if (action === 'unrestrict') { patch.restricted = false; patch.restrictedReason = ''; }
-    if (action === 'close') {
+    if (action === 'close' || action === 'delete-request') {
       patch.accountState = 'closed';
       patch.closedAt = Date.now();
       patch.closedBy = currentUser.uid;
-      patch.closedKind = 'violation';
+      patch.closedKind = action === 'delete-request' ? 'requested' : 'violation';
       patch.closedReason = reason.trim();
-      patch.closedPublic = 'Closed by Naluno';
+      patch.closedPublic = action === 'delete-request' ? 'Closed at their request' : 'Closed by Naluno';
       patch.deleted = true;
       patch.deletedAt = Date.now();
     }
@@ -5709,13 +5918,13 @@
     }
     try {
       await db.collection('users').doc(uid).set(patch, { merge: true });
-      if (action === 'close' || action === 'restore') {
+      if (action === 'close' || action === 'restore' || action === 'delete-request') {
         const person = (__snap && __snap.users && (__snap.users.list || []).find(function (u) { return u.id === uid; })) || {};
         const handle = String(person.handle || person.number || '').replace(/^@/, '').toLowerCase();
         if (handle) {
           try {
             const href = db.collection('handles').doc(handle);
-            if (action === 'close') await href.set({ uid: uid, closed: true, closedAt: Date.now() }, { merge: true });
+            if (action === 'close' || action === 'delete-request') await href.set({ uid: uid, closed: true, closedAt: Date.now() }, { merge: true });
             else await href.set({ uid: uid, closed: false }, { merge: true });
           } catch (_) {}
         }
@@ -5723,7 +5932,7 @@
           await db.collection('accountEvents').add({
             uid: uid,
             action: action,
-            kind: action === 'close' ? 'violation' : 'restore',
+            kind: action === 'close' ? 'violation' : (action === 'delete-request' ? 'requested' : 'restore'),
             reason: reason.trim(),
             by: currentUser.uid,
             handle: handle || '',
@@ -5733,11 +5942,13 @@
         try {
           await db.collection('deskMail').add({
             source: 'console',
-            kind: action === 'close' ? 'violation-close' : 'restore',
+            kind: action === 'delete-request' ? 'delete-account' : (action === 'close' ? 'violation-close' : 'restore'),
             uid: uid,
             handle: handle || '',
             name: '',
-            text: (action === 'close' ? 'Closed for a violation. ' : 'Callsign restored. ') + reason.trim(),
+            text: (action === 'delete-request'
+              ? 'Deleted at their request. '
+              : (action === 'close' ? 'Closed for a violation. ' : 'Callsign restored. ')) + reason.trim(),
             ts: Date.now(),
             status: 'new',
             by: currentUser.uid,
@@ -5747,8 +5958,10 @@
       await writeAudit(action, uid, reason.trim());
       toast('Done — logged');
       await loadTab('users', true);
+      return true;
     } catch (e) {
       toast((e && e.message) || 'Could not update that account.');
+      return false;
     }
   }
 
@@ -5832,6 +6045,7 @@
     const days = [];
     const sessions = [];
     let capped = false;
+    let sessionErr = '';
     try {
       const FP = firebase.firestore.FieldPath.documentId();
       const ds = await db.collection('siteDays').where(FP, '>=', r.from).where(FP, '<=', r.to).get();
@@ -5841,13 +6055,27 @@
       const ss = await db.collection('siteSessions').where('startedAt', '>=', r.ms0).where('startedAt', '<', r.ms1).orderBy('startedAt').limit(5000).get();
       ss.forEach(function (d) { sessions.push(d.data() || {}); });
       capped = sessions.length >= 5000;
-    } catch (_) {}
+    } catch (e) { sessionErr = (e && e.message) || 'Could not read the visits themselves'; }
     const n = function (x) { return Number(x) || 0; };
     const sum = function (k) { return days.reduce(function (a, d) { return a + n(d[k]); }, 0); };
-    const merge = function (k) {
+    const asBars = function (rows) {
+      return (rows || []).filter(function (r) { return r && r.label && n(r.n); });
+    };
+    const fromDays = function (k) {
+      return (Data && Data.foldDayPrefix) ? asBars(Data.foldDayPrefix(days, k)) : [];
+    };
+    const tally = function (rows, fn) {
       const m = {};
-      days.forEach(function (d) { const o = d[k] || {}; Object.keys(o).forEach(function (x) { m[x] = (m[x] || 0) + n(o[x]); }); });
-      return Object.keys(m).map(function (x) { return { label: x.replace(/_/g, '.'), n: m[x] }; }).sort(function (a, b) { return b.n - a.n; });
+      (rows || []).forEach(function (s) {
+        const label = fn(s);
+        if (!label) return;
+        m[label] = (m[label] || 0) + 1;
+      });
+      return Object.keys(m).map(function (k) { return { label: k, n: m[k] }; }).sort(function (a, b) { return b.n - a.n; });
+    };
+    const pickBars = function (key, sessionRows) {
+      const folded = fromDays(key);
+      return folded.length ? folded : sessionRows;
     };
     const web = sessions.filter(function (x) { return String(x.kind || 'web') !== 'app' && !x.bot && !x.self; });
     const uniq = {};
@@ -5856,15 +6084,31 @@
     const byDay = {};
     days.forEach(function (d) { const key = span > 62 ? String(d.id).slice(0, 7) : String(d.id); byDay[key] = (byDay[key] || 0) + n(d.visits); });
     const trend = Object.keys(byDay).sort().map(function (k) { return { label: k, n: byDay[k] }; });
+    const pageOf = function (label) {
+      const raw = String(label || '');
+      const path = raw.charAt(0) === '.' ? ('/' + raw.slice(1).replace(/\./g, '/')) : ('/' + raw.replace(/\./g, '/'));
+      const clean = path === '/' ? '/' : path.replace(/\/+/g, '/');
+      return (Data && Data.pageLabel) ? Data.pageLabel(clean) : clean;
+    };
+    const countries = pickBars('countries', tally(web, function (s) { return s.country || ''; }));
+    const sources = pickBars('sources', tally(web, function (s) { return s.source || 'Direct'; }));
+    const devices = pickBars('devices', tally(web, function (s) { return s.device || ''; }));
+    const paths = pickBars('paths', tally(web, function (s) {
+      return (Data && Data.pageLabel) ? Data.pageLabel(s.land || s.path || '/') : (s.land || s.path || '/');
+    })).map(function (row) {
+      if (sessions.length && !fromDays('paths').length) return row;
+      return { label: pageOf(row.label), n: row.n };
+    });
     const html = '<p class="sub"><strong>' + escapeHtml(r.from) + (r.to !== r.from ? ' to ' + escapeHtml(r.to) : '') + '</strong></p>'
       + kpis([['Visits', sum('visits')], ['New visitors', sum('uniques')], ['Unique visitors', Object.keys(uniq).length + (capped ? '+' : '')],
         ['App opens', sum('appOpens') + sum('openApp')], ['Time on site', dur(sum('ms'))], ['Days with visits', days.filter(function (d) { return n(d.visits) > 0; }).length]])
       + (days.length ? '' : '<p class="sub">No website data for these dates.</p>')
+      + (sessionErr ? '<p class="sub">Visits in this span could not be read, so the breakdown uses the daily totals only. ' + escapeHtml(sessionErr) + '</p>' : '')
       + '<div class="who" style="margin-top:10px;">' + (span > 62 ? 'Visits by month' : 'Visits by day') + '</div>' + bars(trend, 62)
-      + '<div class="who" style="margin-top:10px;">Countries</div>' + bars(merge('countries'), 12)
-      + '<div class="who" style="margin-top:10px;">Where they came from</div>' + bars(merge('sources'), 10)
-      + '<div class="who" style="margin-top:10px;">Pages they landed on</div>' + bars(merge('paths'), 10)
-      + '<div class="who" style="margin-top:10px;">Devices</div>' + bars(merge('devices'), 6)
+      + '<div class="who" style="margin-top:10px;">Countries</div>' + bars(countries, 12)
+      + '<div class="who" style="margin-top:10px;">Where they came from</div>' + bars(sources, 10)
+      + '<div class="who" style="margin-top:10px;">Pages they landed on</div>' + bars(paths, 10)
+      + '<div class="who" style="margin-top:10px;">Devices</div>' + bars(devices, 6)
       + (capped ? '<p class="sub">Unique visitors counted from the first 5,000 visits in this span.</p>' : '');
     __tabCache.sitePeriodHtml = html;
     out.innerHTML = html;
@@ -6122,6 +6366,7 @@
     const v = String(val || 'both');
     if (v === 'in-feed') return ['in-feed'];
     if (v === 'broadcast-break') return ['broadcast-break'];
+    if (v === 'ad-bucket') return ['ad-bucket'];
     return ['in-feed', 'broadcast-break'];
   }
   function httpsOnly(raw) {

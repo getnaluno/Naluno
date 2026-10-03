@@ -158,12 +158,28 @@
     __sessionHits[k] = (__sessionHits[k] || 0) + 1;
   }
 
-  function liveFor(place) {
+  function adsForPlace(live, place) {
     const want = String(place || '');
-    return __live.filter(function (ad) {
-      if (!isLive(ad)) return false;
-      if (want && placementsOf(ad).indexOf(want) < 0) return false;
-      return underCap(ad, want);
+    const ready = (live || []).filter(function (ad) { return isLive(ad); });
+    if (want === 'ad-bucket') {
+      const dedicated = ready.filter(function (ad) {
+        return placementsOf(ad).indexOf('ad-bucket') >= 0;
+      });
+      if (dedicated.length) return dedicated;
+      return ready.filter(function (ad) {
+        const p = placementsOf(ad);
+        return p.indexOf('broadcast-break') >= 0;
+      });
+    }
+    return ready.filter(function (ad) {
+      if (!want) return true;
+      return placementsOf(ad).indexOf(want) >= 0;
+    });
+  }
+
+  function liveFor(place) {
+    return adsForPlace(__live, place).filter(function (ad) {
+      return underCap(ad, place);
     });
   }
 
@@ -535,7 +551,7 @@
     const ctaUrl = httpsUrl(ad.ctaUrl);
     const ctaLabel = (ad.ctaLabel || 'Open').slice(0, 24);
     const media = isVideo
-      ? '<video id="nalunoAdVideo" playsinline webkit-playsinline autoplay></video>'
+      ? '<video id="nalunoAdVideo" playsinline webkit-playsinline preload="auto" src="' + escapeHtml(src) + '"></video>'
       : '<img src="' + escapeHtml(src) + '" alt="" />';
     host.classList.remove('hidden');
     host.innerHTML =
@@ -560,10 +576,13 @@
 
     const v = document.getElementById('nalunoAdVideo');
     if (v && src) {
-      playAdWithSound(v);
-      v.src = src;
+      try { v.preload = 'auto'; } catch (_) {}
+      if (!v.getAttribute('src')) v.src = src;
       try { v.load(); } catch (_) {}
-      playAdWithSound(v);
+      const kick = function () { playAdWithSound(v); };
+      if (v.readyState >= 2) kick();
+      else v.addEventListener('loadeddata', kick, { once: true });
+      kick();
       v.onended = function () { finish(); };
       v.onerror = function () {
         if (!skipAt) finish();
@@ -641,17 +660,18 @@
   }
 
   function breatherSlot(place) {
-    const ad = pick(place || 'broadcast-break');
+    const slot = String(place || 'broadcast-break');
+    const ad = pick(slot);
     if (!ad) {
-      return { enabled: true, status: 'reserved' };
+      return { enabled: true, status: 'reserved', place: slot };
     }
-    markShown(ad, 'broadcast-break');
+    markShown(ad, slot);
     const skip = skipAfterOf(ad);
     const src = mediaUrlOf(ad);
     const isVideo = String(ad.mediaType || '').indexOf('image') !== 0;
     const ctaUrl = httpsUrl(ad.ctaUrl);
     const media = isVideo
-      ? '<video class="naluno-break-ad" playsinline webkit-playsinline autoplay src="' + escapeHtml(src) + '" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;"></video>'
+      ? '<video class="naluno-break-ad" playsinline webkit-playsinline preload="auto" src="' + escapeHtml(src) + '" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;"></video>'
       : '<img src="' + escapeHtml(src) + '" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;" />';
     const html = '<div class="naluno-break-wrap" data-ad-id="' + escapeHtml(ad.id) + '" style="position:absolute;inset:0;">'
       + media
@@ -1213,6 +1233,7 @@
     httpsUrl: httpsUrl,
     skipAfterOf: skipAfterOf,
     placementsOf: placementsOf,
+    adsForPlace: adsForPlace,
     mediaUrlOf: mediaUrlOf,
     openFromBroadcast: openFromBroadcast,
     closeFromBroadcast: closeFromBroadcast,

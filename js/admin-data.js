@@ -28,7 +28,7 @@
     community_value_enabled: { label: 'Community value', group: 'Community', note: 'A measurement, never money.' },
     creator_support_enabled: { label: 'Creator Support', group: 'Money', note: 'Donate to a creator. Lives inside Broadcast, below Circle — not as a nav tab. Off = the payment step is hidden. On = a person can be taken to pay. Nothing is marked paid until the payment is confirmed. Contribution points stay separate from this.' },
     community_rewards_enabled: { label: 'Community Rewards', group: 'Money', note: 'Pool split. Off until switched on.' },
-    real_payouts_enabled: { label: 'Real payouts', group: 'Money', note: 'Locked. Requires a signed off-console decision.' },
+    real_payouts_enabled: { label: 'Real payouts', group: 'Money', note: 'Off: Support is collected by Naluno and held for the creator. On: a new Support payment goes to a creator whose Stripe account is ready, less Naluno’s share. Nothing already collected is moved from this switch.' },
     content_hub_enabled: { label: 'Content Hub', group: 'Hub', note: 'Sports / movies / channels. Not built yet.' },
     sports_enabled: { label: 'Sports', group: 'Hub', note: 'Requires Content Hub.' },
     movies_enabled: { label: 'Movies', group: 'Hub', note: 'Requires Content Hub.' },
@@ -1052,6 +1052,216 @@
     if (s && s.bot === true) return short ? ('Unrecognised · ' + short) : 'Unrecognised, no user agent';
     return short ? short.slice(0, 40) : 'Unrecognised, no user agent';
   }
+  const BOT_SITES = {
+    'AdsBot-Google': 'google.com',
+    'Googlebot': 'google.com',
+    'Google Inspection Tool': 'google.com',
+    'Google StoreBot': 'google.com',
+    'BingPreview': 'bing.com',
+    'Bingbot': 'bing.com',
+    'DuckDuckBot': 'duckduckgo.com',
+    'Baiduspider': 'baidu.com',
+    'YandexBot': 'yandex.com',
+    'FacebookExternalHit': 'facebook.com',
+    'Facebot': 'facebook.com',
+    'Twitterbot': 'x.com',
+    'LinkedInBot': 'linkedin.com',
+    'Bytespider': 'bytedance.com',
+    'Semrush': 'semrush.com',
+    'AhrefsBot': 'ahrefs.com',
+    'PetalBot': 'petalsearch.com',
+    'GPTBot': 'openai.com',
+    'ChatGPT-User': 'openai.com',
+    'ClaudeBot': 'anthropic.com',
+    'PerplexityBot': 'perplexity.ai',
+    'CCBot': 'commoncrawl.org',
+    'Amazonbot': 'amazon.com',
+    'Applebot': 'apple.com',
+    'Yahoo Slurp': 'yahoo.com',
+    'WhatsApp': 'whatsapp.com',
+  };
+  function botRefHost(s) {
+    const ref = String((s && (s.ref || s.referrer)) || '').trim();
+    if (!ref || /^direct$/i.test(ref)) return '';
+    try {
+      if (/^https?:/i.test(ref)) return new URL(ref).hostname.replace(/^www\./i, '').slice(0, 80);
+    } catch (_) {}
+    const host = ref.replace(/^https?:\/\//i, '').split('/')[0].replace(/^www\./i, '');
+    if (host && host.indexOf('.') > 0 && host.length < 80) return host;
+    return '';
+  }
+  function botWebsite(label, s) {
+    const known = BOT_SITES[label] || '';
+    const from = botRefHost(s);
+    if (known && from && from !== known) return known;
+    return known || from || '';
+  }
+  function togaMonthKeyOf(now) {
+    const d = new Date(num(now) || Date.now());
+    return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
+  }
+  function togaPrevMonthKey(key) {
+    const p = String(key || '').split('-');
+    let y = Number(p[0]);
+    let m = Number(p[1]);
+    if (!y || !m) return '';
+    m -= 1;
+    if (m < 1) { m = 12; y -= 1; }
+    return y + '-' + String(m).padStart(2, '0');
+  }
+  /* Same monthly read as the app: mv_/mc_/me_ for this UTC month,
+     or the older monthKey fields when this month was written that way.
+     Score is 1 per view, 12 per Circle join, 3 per talk. */
+  function togaMonthParts(row, monthKey) {
+    row = row || {};
+    const viewsK = 'mv_' + monthKey;
+    const circleK = 'mc_' + monthKey;
+    const engageK = 'me_' + monthKey;
+    const hasNew = row[viewsK] != null || row[circleK] != null || row[engageK] != null;
+    const legacySame = row.monthKey === monthKey;
+    const views = hasNew ? num(row[viewsK]) : (legacySame ? num(row.viewsMonth) : 0);
+    const circle = hasNew ? num(row[circleK]) : (legacySame ? num(row.circleMonth) : 0);
+    const engage = hasNew ? num(row[engageK]) : (legacySame ? num(row.engageMonth) : 0);
+    const has = hasNew || legacySame;
+    return { views: views, circle: circle, engage: engage, has: has, score: views + circle * 12 + engage * 3 };
+  }
+  function scoreTogaRows(toga, users, now) {
+    const monthKey = togaMonthKeyOf(now);
+    const prevKey = togaPrevMonthKey(monthKey);
+    const byId = {};
+    (users || []).forEach(function (u) { if (u && u.id) byId[u.id] = u; });
+    return (toga || []).map(function (t) {
+      const id = String((t && (t.id || t.uid)) || '');
+      const u = byId[id] || {};
+      const parts = togaMonthParts(t, monthKey);
+      const prev = togaMonthParts(t, prevKey);
+      const handle = String(t.handle || u.handle || u.number || '').replace(/^@/, '');
+      const name = t.name || u.displayName || u.name || u.callsign || u.fullName || '';
+      return Object.assign({}, t, {
+        id: id,
+        name: name,
+        handle: handle,
+        score: parts.score,
+        scoreMonth: parts.score,
+        viewsMonth: parts.views,
+        circleMonth: parts.circle,
+        engageMonth: parts.engage,
+        monthKey: monthKey,
+        fresh: parts.score > 0 && !prev.has && !(prev.score > 0),
+      });
+    }).filter(function (t) {
+      return t.shareViews !== false && num(t.score) > 0;
+    }).sort(function (a, b) {
+      return num(b.score) - num(a.score);
+    });
+  }
+  function foldDayPrefix(days, prefix) {
+    const m = {};
+    (days || []).forEach(function (d) {
+      if (!d) return;
+      const head = prefix + '.';
+      let sawDot = false;
+      const dotted = {};
+      Object.keys(d).forEach(function (k) {
+        if (k.indexOf(head) !== 0) return;
+        sawDot = true;
+        const label = k.slice(head.length).replace(/_/g, '.');
+        dotted[label] = (dotted[label] || 0) + num(d[k]);
+      });
+      if (sawDot) {
+        Object.keys(dotted).forEach(function (k) { m[k] = (m[k] || 0) + dotted[k]; });
+        return;
+      }
+      const nested = d[prefix];
+      if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+        Object.keys(nested).forEach(function (k) {
+          m[k] = (m[k] || 0) + num(nested[k]);
+        });
+      }
+    });
+    return Object.keys(m).map(function (k) { return { label: k, n: m[k] }; }).sort(function (a, b) { return b.n - a.n; });
+  }
+  function supportSplit(rows, accounts, feePct, payoutsOn) {
+    const pct = Math.min(50, Math.max(0, Number(feePct) || 0));
+    const byAcct = {};
+    (accounts || []).forEach(function (a) {
+      const id = String((a && (a.id || a.uid)) || '');
+      if (id) byAcct[id] = a;
+    });
+    const creators = {};
+    let toCreator = 0;
+    let held = 0;
+    let fee = 0;
+    const lines = [];
+    (rows || []).forEach(function (r) {
+      if (!r) return;
+      const st = String(r.status || '').toLowerCase();
+      const paid = st === 'succeeded' || st === 'paid' || st === 'complete';
+      const minor = num(r.amount_minor);
+      const major = num(r.amount_major) > 0 ? num(r.amount_major) : (minor / 100);
+      if (!paid || !(major > 0)) return;
+      const uid = String(r.creator_user_id || '');
+      const acct = byAcct[uid] || {};
+      const ready = !!(acct.ready && acct.account);
+      let route = 'naluno';
+      if (r.payout_to === 'creator') route = 'creator';
+      else if (r.payout_to === 'naluno' || r.held_by === 'naluno' || String(r.provider || '') === 'momo') route = 'naluno';
+      const feePart = route === 'creator' ? (major * pct / 100) : 0;
+      const creatorPart = route === 'creator' ? (major - feePart) : 0;
+      const holdPart = route === 'naluno' ? major : 0;
+      toCreator += creatorPart;
+      held += holdPart;
+      fee += feePart;
+      if (!creators[uid]) creators[uid] = { uid: uid, ready: ready, toCreator: 0, held: 0, fee: 0, n: 0, possible: 0 };
+      const c = creators[uid];
+      c.ready = ready;
+      c.n += 1;
+      c.toCreator += creatorPart;
+      c.held += holdPart;
+      c.fee += feePart;
+      if (holdPart > 0 && ready) c.possible += holdPart;
+      lines.push({
+        id: r.id || '',
+        at: r.paidAt || r.created_at || r.createdAt || 0,
+        from: r.supporter_user_id || '',
+        to: uid,
+        major: major,
+        currency: r.currency || '',
+        route: route,
+        fee: feePart,
+        creator: creatorPart,
+        held: holdPart,
+        ready: ready,
+        status: st,
+      });
+    });
+    const list = Object.keys(creators).map(function (k) { return creators[k]; });
+    list.sort(function (a, b) { return (b.held + b.toCreator) - (a.held + a.toCreator); });
+    return {
+      payoutsOn: !!payoutsOn,
+      feePct: pct,
+      count: lines.length,
+      toCreator: toCreator,
+      held: held,
+      fee: fee,
+      possible: list.reduce(function (a, c) { return a + c.possible; }, 0),
+      creators: list,
+      lines: lines,
+    };
+  }
+  function journalSpend(rows) {
+    const out = [];
+    (rows || []).forEach(function (r) {
+      const amount = num(r && r.amount);
+      const purpose = String((r && r.purpose) || '').replace(/\s+/g, ' ').trim();
+      if (!(amount > 0) || purpose.length < 2) return;
+      const day = r.at ? new Date(num(r.at)).toISOString().slice(0, 10) : '';
+      const note = 'Typed in the console. What it went to: ' + purpose;
+      out.push({ day: day, account: 'Operating spend', desc: purpose, debit: amount, credit: 0, status: 'spent', source: r.id || '', note: note });
+      out.push({ day: day, account: 'Cash', desc: purpose, debit: 0, credit: amount, status: 'spent', source: r.id || '', note: 'Opposite entry.' });
+    });
+    return out;
+  }
   function annotateAttention(d) {
     const visits = num(d.visits);
     const opens = num(d.appOpens || d.openApp);
@@ -1075,13 +1285,17 @@
     const bots = webAll.filter(function (s) { return sessionLooksBot(s); });
     const botSeen = sessions.filter(function (s) { return sessionLooksBot(s); });
     const botNameCounts = {};
+    const botSiteOf = {};
     botSeen.forEach(function (s) {
       const label = botNameOf(s);
       if (!label) return;
-      botNameCounts[label] = (botNameCounts[label] || 0) + 1;
+      const site = botWebsite(label, s);
+      const key = label + '\n' + site;
+      botNameCounts[key] = (botNameCounts[key] || 0) + 1;
+      botSiteOf[key] = { label: label, site: site };
     });
-    const botNames = Object.keys(botNameCounts).map(function (label) {
-      return { label: label, n: botNameCounts[label] };
+    const botNames = Object.keys(botNameCounts).map(function (key) {
+      return { label: botSiteOf[key].label, site: botSiteOf[key].site, n: botNameCounts[key] };
     }).sort(function (a, b) { return b.n - a.n || a.label.localeCompare(b.label); });
     const selfs = webAll.filter(function (s) { return !!s.self && !sessionLooksBot(s); });
     const web = webAll.filter(function (s) { return !sessionLooksBot(s) && !s.self; });
@@ -1128,10 +1342,7 @@
     const dayMs = days30.reduce(function (a, d) { return a + num(d.attentionMs); }, 0);
     const dayOrphan = days30.reduce(function (a, d) { return a + num(d.orphanMs); }, 0);
     const countryFromDays = {};
-    days30.forEach(function (d) {
-      const c = d.countries || {};
-      Object.keys(c).forEach(function (k) { countryFromDays[k] = (countryFromDays[k] || 0) + num(c[k]); });
-    });
+    foldDayPrefix(days30, 'countries').forEach(function (row) { countryFromDays[row.label] = row.n; });
     const countriesLive = tallyMap(today, function (s) { return s.country || '??'; });
     const countriesAll = Object.keys(countryFromDays).length
       ? Object.keys(countryFromDays).map(function (k) { return { label: k, n: countryFromDays[k] }; }).sort(function (a, b) { return b.n - a.n; })
@@ -1440,9 +1651,7 @@
     const sigExpired = signals.length - sigActive.length;
     const sigToday = signals.filter(function (s) { return num(s.createdAt) >= day0; });
 
-    const togaSorted = toga.slice().sort(function (a, b) {
-      return num(b.scoreMonth || b.score || 0) - num(a.scoreMonth || a.score || 0);
-    });
+    const togaSorted = scoreTogaRows(toga, users, now);
 
     const openReports = reports.filter(function (r) {
       return reportIsOpen(r, broadcasts);
@@ -1744,6 +1953,12 @@
         reward_liability_minor: 0,
         support_transactions: (raw.creatorSupport || []).length,
         support_list: raw.creatorSupport || [],
+        support_split: supportSplit(
+          raw.creatorSupport || [],
+          raw.payoutAccounts || [],
+          raw.payoutCfg && raw.payoutCfg.supportFeePct,
+          !!(raw.flags && raw.flags.real_payouts_enabled)
+        ),
         ledger: ledger,
         pending_review: ledgerPending,
       },
@@ -1755,7 +1970,8 @@
       site: deriveSitePulse(siteSessions, siteDays, now, zone),
       identity: identity,
       costs: costs,
-      audit: audit,
+      audit: (audit || []).slice().sort(function (a, b) { return num(b.created_at || b.createdAt) - num(a.created_at || a.createdAt); }),
+      deskSpend: (raw.deskSpend || []).slice().sort(function (a, b) { return num(b.at) - num(a.at); }),
       proof: (function () {
         function pingAt(p) { return num(p && (p.sentAt || p.at || p.createdAt)); }
         function plainWhy(raw) {
@@ -1980,6 +2196,14 @@
     formatAdminClock: formatAdminClock,
     startOfLocalDay: startOfLocalDay,
     deriveSnapshot: deriveSnapshot,
+    scoreTogaRows: scoreTogaRows,
+    togaMonthParts: togaMonthParts,
+    togaMonthKeyOf: togaMonthKeyOf,
+    foldDayPrefix: foldDayPrefix,
+    supportSplit: supportSplit,
+    journalSpend: journalSpend,
+    botNameOf: botNameOf,
+    botWebsite: botWebsite,
     cohortReturn: cohortReturn,
     deriveIdentity: deriveIdentity,
     reportIsOpen: reportIsOpen,

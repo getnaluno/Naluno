@@ -36,7 +36,12 @@
   }
 
   function cell(v) {
-    return String(v == null ? '' : v).replace(/[^\x20-\x7E]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 28);
+    return String(v == null ? '' : v).replace(/[^\x20-\x7E]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 42);
+  }
+  function money2(n) {
+    const x = Number(n);
+    if (!isFinite(x)) return '0.00';
+    return (Math.round(x * 100) / 100).toFixed(2);
   }
 
   function keep(row, from, to) {
@@ -120,29 +125,65 @@
         return [day(row.createdAt || row.at), row.status || '', row.reason || row.note || ''];
       })));
     }
-    if (tab === 'economy' || tab === 'money' || tab === 'support' || tab === 'books') {
+    if (tab === 'economy') {
       const ledger = ((data.economy && data.economy.ledger) || []).filter(function (row) { return keep(row, from, to); });
       out.push(table('Ledger', ['When', 'Event', 'Points', 'Status'], ledger.slice(0, 40).map(function (row) {
-        return [day(row.createdAt || row.at), row.type || row.event || '', row.points || 0, row.status || ''];
+        return [day(row.created_at || row.createdAt || row.at), row.event_type || row.type || row.event || '', row.points || 0, row.status || ''];
       })));
     }
-    if (tab === 'creators' || tab === 'toga') {
-      const list = ((data.creators && data.creators.list) || (data.toga && data.toga.list) || []);
+    if (tab === 'money' || tab === 'support' || tab === 'books') {
+      const split = (data.economy && data.economy.support_split) || {};
+      out.push(table('Support paid out', ['Paid to creators', 'Held by Naluno', 'Naluno share', 'Real payouts'], [[
+        money2(split.toCreator), money2(split.held), money2(split.fee), split.payoutsOn ? 'On' : 'Off',
+      ]]));
+      out.push(table('Each creator', ['Creator', 'Paid to them', 'Held', 'Share', 'Account'], (split.creators || []).slice(0, 40).map(function (c) {
+        return [c.uid || '', money2(c.toCreator), money2(c.held), money2(c.fee), c.ready ? 'Ready' : 'None'];
+      })));
+      const spend = data.deskSpend || [];
+      out.push(table('Money spent', ['When', 'What it went to', 'Amount', 'Who'], spend.slice(0, 40).map(function (row) {
+        return [day(row.at), row.purpose || '', money2(row.amount), row.byEmail || ''];
+      })));
+    }
+    if (tab === 'creators') {
+      const list = (data.creators && data.creators.list) || [];
       out.push(table('Creators', ['Creator', 'Broadcasts', 'Views'], list.slice(0, 40).map(function (row) {
         return [who(row), row.broadcasts || 0, row.views || row.score || 0];
       })));
     }
-    if (tab === 'health' || tab === 'quality' || tab === 'analytics') {
+    if (tab === 'toga') {
+      const list = (data.toga && (data.toga.top || data.toga.list)) || [];
+      out.push(table('Toga this month', ['Rank', 'Handle', 'Name', 'Points', 'Views', 'Circle', 'Talk', 'New'], list.slice(0, 10).map(function (row, i) {
+        return [i + 1, row.handle ? ('@' + String(row.handle).replace(/^@/, '')) : '', row.name || '', row.score || row.scoreMonth || 0, row.viewsMonth || 0, row.circleMonth || 0, row.engageMonth || 0, row.fresh ? 'NEW' : ''];
+      })));
+    }
+    if (tab === 'health') {
       const list = ((data.metrics && data.metrics.list) || []).filter(function (row) { return keep(row, from, to); });
       out.push(table('What the app reported', ['Name', 'When'], list.slice(0, 40).map(function (row) {
         return [row.name || '', day(row.createdAt)];
       })));
     }
-    if (tab === 'visitors' || tab === 'reach') {
-      const days = (data.site && data.site.days) || [];
-      out.push(table('Visits', ['Day', 'Visits', 'App opens'], days.slice(0, 40).map(function (row) {
-        return [row.day || day(row.at), row.visits || row.sessions || 0, row.opens || 0];
+    if (tab === 'analytics' || tab === 'visitors' || tab === 'quality' || tab === 'reach') {
+      const site = data.site || {};
+      out.push(table('Visits', ['Today', 'On the site now', 'Unique today', 'New today', 'Returning today', 'Week', '30 days'], [[
+        site.today || 0, site.live || 0, site.uniques_today || 0, site.new_today || 0, site.returning_today || 0, site.week || 0, site.month || 0,
+      ]]));
+      function bars(name, rows) {
+        out.push(table(name, ['Name', 'Count'], (rows || []).slice(0, 16).map(function (row) {
+          return [row.label || '', row.n || 0];
+        })));
+      }
+      bars('Countries', site.countries);
+      bars('Where they came from', site.sources);
+      bars('Landing pages', site.land || site.paths);
+      bars('Devices', site.devices);
+      out.push(table('Days', ['Day', 'Visits', 'App opens', 'Attention ms'], (site.days || []).slice(0, 31).map(function (row) {
+        return [row.id || row.day || '', row.visits || 0, row.appOpens || row.openApp || 0, row.attentionMs || row.ms || 0];
       })));
+      if (tab === 'quality') {
+        out.push(table('Bots and crawlers', ['Name', 'Website', 'Sessions'], (site.bot_names || []).slice(0, 40).map(function (b) {
+          return [b.label || '', b.site || '', b.n || 0];
+        })));
+      }
     }
     if (tab === 'notifications') {
       out.push(table('Alerts', ['Handed', 'Failed', 'Arrived', 'Opened'], [[
@@ -226,27 +267,52 @@
   }
 
   function pdf(title, tables, period) {
-    const body = pageLines(title, period, tables);
     const pages = [];
+    function pushPage(rows) { if (rows.length) pages.push(rows); }
     let cur = [];
-    body.forEach(function (line) {
-      if (cur.length >= 40) { pages.push(cur); cur = []; }
-      cur.push(String(line));
+    function addRow(kind, cells) {
+      if (cur.length >= 24) { pushPage(cur); cur = []; }
+      cur.push({ kind: kind, cells: cells });
+    }
+    addRow('title', [title || 'Export']);
+    addRow('sub', [period || '']);
+    (tables || []).forEach(function (t) {
+      addRow('name', [t.name || '']);
+      const headers = t.headers || [];
+      const rows = t.rows && t.rows.length ? t.rows : [['Nothing in this period.']];
+      addRow('head', headers.length ? headers : ['']);
+      rows.forEach(function (row) { addRow('row', row || []); });
     });
-    if (cur.length) pages.push(cur);
+    pushPage(cur);
+    if (!pages.length) pages.push([{ kind: 'title', cells: ['Naluno'] }]);
     const objects = [];
     function add(obj) { objects.push(obj); return objects.length; }
     const font = add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
     const pageIds = [];
-    pages.forEach(function (linesOn) {
-      let stream = 'q 0.84 g BT /F1 52 Tf 0.707 0.707 -0.707 0.707 78 240 Tm (NALUNO) Tj ET Q\n';
-      stream += 'BT /F1 9 Tf 40 800 Td 14 TL\n';
-      linesOn.forEach(function (line, i) {
-        stream += (i === 0 ? '' : 'T*\n') + '(' + pdfEscape(line) + ') Tj\n';
+    const pageW = 842;
+    const pageH = 595;
+    pages.forEach(function (rowsOn) {
+      let stream = 'q 0.92 g BT /F1 9 Tf 0.707 0.707 -0.707 0.707 280 70 Tm (Naluno) Tj ET Q\n';
+      stream += 'BT /F1 8 Tf\n';
+      let y = pageH - 36;
+      rowsOn.forEach(function (row) {
+        const cells = row.cells || [];
+        const n = Math.max(1, cells.length);
+        const left = 28;
+        const width = pageW - 56;
+        const col = width / n;
+        const size = row.kind === 'title' ? 14 : (row.kind === 'name' ? 11 : 8);
+        stream += '/F1 ' + size + ' Tf\n';
+        cells.forEach(function (c, i) {
+          const text = cell(c).slice(0, Math.max(8, Math.floor(col / 4.6)));
+          const x = left + i * col;
+          stream += '1 0 0 1 ' + x.toFixed(1) + ' ' + y.toFixed(1) + ' Tm (' + pdfEscape(text) + ') Tj\n';
+        });
+        y -= row.kind === 'title' ? 20 : 14;
       });
-      stream += 'ET\nBT /F1 8 Tf 40 36 Td (Naluno) Tj ET';
+      stream += 'ET\nBT /F1 8 Tf 1 0 0 1 28 18 Tm (Naluno) Tj ET';
       const contents = add('<< /Length ' + stream.length + ' >>\nstream\n' + stream + '\nendstream');
-      const page = add('<< /Type /Page /Parent PAGES /MediaBox [0 0 595 842] /Contents ' + contents + ' 0 R /Resources << /Font << /F1 ' + font + ' 0 R >> >> >>');
+      const page = add('<< /Type /Page /Parent PAGES /MediaBox [0 0 ' + pageW + ' ' + pageH + '] /Contents ' + contents + ' 0 R /Resources << /Font << /F1 ' + font + ' 0 R >> >> >>');
       pageIds.push(page);
     });
     const kids = pageIds.map(function (id) { return id + ' 0 R'; }).join(' ');

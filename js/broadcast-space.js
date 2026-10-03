@@ -3747,8 +3747,9 @@ function showBreatherAdSlot(breather, onDone){
     }
   }catch(_){}
   let ad = breather && breather.adSlot;
+  const place = (breather && breather.place) || ((ad && ad.kind === 'bucket') ? 'ad-bucket' : 'broadcast-break');
   if((!ad || ad.status !== 'ready') && typeof NalunoAds !== 'undefined' && NalunoAds.breatherSlot){
-    try{ ad = NalunoAds.breatherSlot('broadcast-break'); }catch(_){}
+    try{ ad = NalunoAds.breatherSlot(place); }catch(_){}
     if(breather) breather.adSlot = ad;
   }
   el.style.display = 'flex';
@@ -3830,7 +3831,7 @@ function showBreatherAdSlot(breather, onDone){
     return;
   }
   if(skipBtn) skipBtn.style.display = 'none';
-  const wait = Math.max(400, Math.min((breather && breather.durationMs) || 1200, 2500));
+  const wait = Math.max(280, Math.min((breather && breather.durationMs) || 600, 900));
   bspaceBreatherTimer = setTimeout(function(){
     hideBreatherAdSlot();
     if(onDone) onDone();
@@ -4231,9 +4232,10 @@ window.nalunoBspaceStep = nalunoBspaceStep;
 function showChapterAdBucket(index, onDone){
   const mine = !!(activeBroadcastMeta && activeBroadcastMeta.isMine);
   const breather = {
-    durationMs: mine ? 2200 : 1400,
+    durationMs: 600,
     label: mine ? 'Ad bucket' : 'Next',
-    adSlot: { enabled: true, status: 'reserved' },
+    place: 'ad-bucket',
+    adSlot: { enabled: true, status: 'reserved', kind: 'bucket' },
   };
   const el = $('bspaceBreather');
   const btn = $('bspaceReplaceChBtn');
