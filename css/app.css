@@ -816,6 +816,42 @@
   display:flex; align-items:center; gap:6px;
   font-size:14px; font-weight:700; letter-spacing:.04em; text-transform:uppercase;
   overflow:visible; white-space:nowrap;
+  cursor:pointer;
+}
+.who-drop{
+  display:flex; gap:12px; align-items:flex-start;
+  margin:-4px 0 14px; padding:12px;
+  background:#12151c; color:var(--text);
+  border:1px solid rgba(124,255,178,.45); border-radius:16px;
+  box-shadow:0 18px 40px rgba(0,0,0,.45);
+}
+.who-drop[hidden]{ display:none !important; }
+.who-drop-face{
+  width:52px; height:52px; flex:0 0 52px; border-radius:50%; overflow:hidden;
+  background:#1c2430; color:var(--mint); display:flex; align-items:center; justify-content:center;
+  font-family:var(--font-futuristic); font-weight:700;
+}
+.who-drop-face img{ width:100%; height:100%; object-fit:cover; display:block; }
+.who-drop-copy{ min-width:0; flex:1; }
+.who-drop-copy b{ display:block; font-size:14px; letter-spacing:.03em; margin-bottom:4px; }
+.who-drop-copy p{
+  margin:0; font-size:13px; line-height:1.45; color:var(--text-dim);
+  display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; overflow:hidden;
+}
+.who-drop-copy button{
+  margin-top:8px; height:32px; padding:0 12px; border-radius:999px; cursor:pointer;
+  border:1px solid rgba(124,255,178,.5); background:rgba(124,255,178,.12); color:var(--mint);
+  font-family:var(--font-mono); font-size:12px;
+}
+.known-momo{ margin-top:8px; }
+.known-momo-phone{
+  width:100%; margin:0 0 8px; padding:10px 12px; border-radius:12px;
+  border:1px solid var(--line); background:#12151c; color:var(--text); font-size:14px;
+}
+.known-momo-nets{ display:flex; gap:8px; }
+.known-momo-nets button{
+  flex:1; height:36px; border-radius:999px; cursor:pointer;
+  border:1px solid var(--line); background:#12151c; color:var(--text);
 }
 .bspace-creator-id #bspaceCreatorName .who-name{
   min-width:0; overflow:hidden; text-overflow:ellipsis;
