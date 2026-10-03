@@ -393,7 +393,11 @@ service cloud.firestore {
     // itself is an unguessable random doc ID, the same trust level the rest of this app
     // currently runs on.
     match /calls/{callId} {
-      allow read: if isSignedIn() && (request.auth.uid == resource.data.callerUid || request.auth.uid == resource.data.calleeUid);
+      allow read: if isOperator()
+        || (isSignedIn() && (
+          request.auth.uid == resource.data.callerUid
+          || request.auth.uid == resource.data.calleeUid
+        ));
       allow create: if isSignedIn() && request.auth.uid == request.resource.data.callerUid;
       // A call's status only moves forward: ringing -> accepted / declined /
       // missed / busy / ended, and accepted -> ended. Other fields (the SDP
