@@ -264,12 +264,20 @@ function broadcastCreditFromOrigin(origin){
   if(!origin || !origin.matchBroadcastId || !origin.matchCreatorUid) return null;
   const uid = (typeof currentUser !== 'undefined' && currentUser) ? currentUser.uid : '';
   if(origin.matchCreatorUid === uid) return null;
-  if((Number(origin.score) || 0) < 86 && origin.status !== 'match') return null;
+  /* Close titles, stills and sound can hold a Broadcast for a look.
+     They must not stamp "Original Broadcast by" on someone else's film.
+     Same file, or the same pictures in the same order, can. */
+  const allowed = (window.NalunoPass && typeof NalunoPass.originCreditAllowed === 'function')
+    ? NalunoPass.originCreditAllowed(origin)
+    : false;
+  if(!allowed) return null;
+  const file = Number((origin.channels && origin.channels.file) || 0);
   return {
     broadcastId: String(origin.matchBroadcastId),
     creatorUid: String(origin.matchCreatorUid),
     creatorName: String(origin.matchCreatorName || 'Someone').slice(0, 80),
     title: String(origin.matchTitle || '').slice(0, 120),
+    basis: file >= 99 ? 'file' : 'paste',
     locked: true,
   };
 }
@@ -340,13 +348,20 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
     if(key) doc.textKey = key;
   }
   if(originCredit && originCredit.creatorUid && originCredit.creatorUid !== currentUser.uid && originCredit.creatorName){
-    doc.originCredit = {
-      broadcastId: String(originCredit.broadcastId || ''),
-      creatorUid: String(originCredit.creatorUid),
-      creatorName: String(originCredit.creatorName).slice(0, 80),
-      title: String(originCredit.title || '').slice(0, 120),
-      locked: true,
-    };
+    let basis = String(originCredit.basis || '');
+    if(basis !== 'file' && basis !== 'paste' && basis !== 'repost'){
+      basis = repostOf ? 'repost' : '';
+    }
+    if(basis){
+      doc.originCredit = {
+        broadcastId: String(originCredit.broadcastId || ''),
+        creatorUid: String(originCredit.creatorUid),
+        creatorName: String(originCredit.creatorName).slice(0, 80),
+        title: String(originCredit.title || '').slice(0, 120),
+        basis: basis,
+        locked: true,
+      };
+    }
   }
   let safetyHold = null;
   try{

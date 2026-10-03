@@ -173,8 +173,21 @@
     if (c.on && c.until && c.until <= Date.now()) return false;
     return c.on;
   }
+  function localOn(key) {
+    try {
+      const all = JSON.parse(localStorage.getItem('nalunoKnownOn') || '{}');
+      const row = all[String(key)];
+      return !!(row && Number(row.until) > Date.now());
+    } catch (_) { return false; }
+  }
   function remember(key, on, until) {
     knownCache[key] = { on: !!on, at: Date.now(), until: Number(until) || 0 };
+    try {
+      const all = JSON.parse(localStorage.getItem('nalunoKnownOn') || '{}');
+      if (on && Number(until) > Date.now()) all[key] = { until: Number(until) };
+      else delete all[key];
+      localStorage.setItem('nalunoKnownOn', JSON.stringify(all));
+    } catch (_) {}
     return !!on;
   }
   function lookup(uid) {
@@ -182,7 +195,7 @@
     const hit = cached(key);
     if (hit !== null) return Promise.resolve(hit);
     if (knownWait[key]) return knownWait[key];
-    if (typeof fbDb === 'undefined' || !fbDb) return Promise.resolve(false);
+    if (typeof fbDb === 'undefined' || !fbDb) return Promise.resolve(localOn(key));
     const done = function (v) { delete knownWait[key]; return v; };
     knownWait[key] = fbDb.collection('knownPublic').doc(key).get().then(function (snap) {
       if (snap && snap.exists) {
@@ -194,13 +207,13 @@
       return fbDb.collection('knownApps').doc(key).get().then(function (s2) {
         const d2 = (s2 && s2.exists) ? (s2.data() || {}) : null;
         return remember(key, !!(d2 && isKnown(d2)), d2 && d2.paidUntil);
-      }, function () { return remember(key, false); });
+      }, function () { return localOn(key); });
     }, function () {
       return fbDb.collection('knownApps').doc(key).get().then(function (s2) {
         const d2 = (s2 && s2.exists) ? (s2.data() || {}) : null;
         return remember(key, !!(d2 && isKnown(d2)), d2 && d2.paidUntil);
-      }, function () { return false; });
-    }).then(done, function () { return done(false); });
+      }, function () { return localOn(key); });
+    }).then(done, function () { return done(localOn(key)); });
     return knownWait[key];
   }
   function forget(uid) {
@@ -237,10 +250,16 @@
   }
   function paintBeside(el, uid) {
     if (!el) return;
-    if (!uid) { const m = ownMark(el); if (m) m.remove(); return; }
+    if (!uid) {
+      try { el.removeAttribute('data-known-uid'); } catch (_) {}
+      const m = ownMark(el); if (m) m.remove();
+      return;
+    }
     const key = String(uid);
+    try { if (el.getAttribute('data-known-uid') !== key) el.setAttribute('data-known-uid', key); } catch (_) {}
     const hit = cached(key);
     if (hit !== null) { put(el, key, hit); return; }
+    if (localOn(key)) put(el, key, true);
     lookup(key).then(function (on) { put(el, key, on); });
   }
   function paintAll(root) {
@@ -394,7 +413,8 @@
          of each other read as a glitch. */
       button = 'Known · accepted';
       body = '<p class="known-copy">Accepted<span class="known-fee">' + (fee ? (' · ' + fee) : '') + '</span>. Pay, then the mark appears.</p>'
-        + '<button type="button" class="save-btn" id="knownPay">Pay</button>'
+        + '<button type="button" class="save-btn" id="knownPay">Pay by card</button>'
+        + '<button type="button" class="save-btn" id="knownPayMomo">Mobile money</button>'
         + '<p class="known-copy" id="knownPayMsg"></p>';
     } else if (app && app.grant && isKnown(app) && !app.paidAt) {
       button = 'Known';
@@ -402,12 +422,14 @@
     } else if (app && isKnown(app)) {
       button = 'Known';
       body = '<p class="known-copy">Until ' + new Date(app.paidUntil).toLocaleDateString() + '.</p>'
-        + '<button type="button" class="save-btn" id="knownPay">Next month</button>'
+        + '<button type="button" class="save-btn" id="knownPay">Pay by card</button>'
+        + '<button type="button" class="save-btn" id="knownPayMomo">Mobile money</button>'
         + '<p class="known-copy" id="knownPayMsg"></p>';
     } else if (app) {
       button = 'Known · renew';
       body = '<p class="known-copy">The month ended<span class="known-fee">' + (fee ? (' · ' + fee) : '') + '</span>.</p>'
-        + '<button type="button" class="save-btn" id="knownPay">Pay</button>'
+        + '<button type="button" class="save-btn" id="knownPay">Pay by card</button>'
+        + '<button type="button" class="save-btn" id="knownPayMomo">Mobile money</button>'
         + '<p class="known-copy" id="knownPayMsg"></p>';
     }
     block.hidden = false;
@@ -442,6 +464,8 @@
         }
         if (t.id === 'knownApply') submitApply(block);
         if (t.id === 'knownPay') startPay(block);
+        if (t.id === 'knownPayMomo') showMomo(block);
+        if (t.id === 'knownMomoMtn' || t.id === 'knownMomoAirtel') sendMomo(block, t.id === 'knownMomoMtn' ? 'mtn' : 'airtel');
       });
     }
     refreshMine();
@@ -495,6 +519,8 @@
       if (!t || !t.id) return;
       if (t.id === 'knownApply') submitApply(body);
       if (t.id === 'knownPay') startPay(body);
+      if (t.id === 'knownPayMomo') showMomo(body);
+      if (t.id === 'knownMomoMtn' || t.id === 'knownMomoAirtel') sendMomo(body, t.id === 'knownMomoMtn' ? 'mtn' : 'airtel');
     });
     return sheet;
   }
@@ -508,6 +534,8 @@
         if (!t || !t.id) return;
         if (t.id === 'knownApply') submitApply(host);
         if (t.id === 'knownPay') startPay(host);
+        if (t.id === 'knownPayMomo') showMomo(host);
+        if (t.id === 'knownMomoMtn' || t.id === 'knownMomoAirtel') sendMomo(host, t.id === 'knownMomoMtn' ? 'mtn' : 'airtel');
       });
     }
     host.dataset.painted = '';
@@ -615,6 +643,58 @@
       }
       if (msg) msg.textContent = text;
       if (typeof toast === 'function') toast(text);
+    }
+  }
+
+  function showMomo(host) {
+    if (!host) return;
+    let box = host.querySelector('.known-momo');
+    if (box) { box.hidden = false; return; }
+    box = document.createElement('div');
+    box.className = 'known-momo';
+    box.innerHTML = '<input class="known-momo-phone" inputmode="tel" autocomplete="tel" maxlength="16" placeholder="07… Uganda number" />'
+      + '<div class="known-momo-nets"><button type="button" id="knownMomoMtn">MTN</button><button type="button" id="knownMomoAirtel">Airtel</button></div>'
+      + '<p class="known-copy">Collected by Naluno in Uganda shillings. The mark appears only after MTN or Airtel confirms.</p>';
+    const msg = host.querySelector('#knownPayMsg');
+    if (msg && msg.parentNode) msg.parentNode.insertBefore(box, msg);
+    else host.appendChild(box);
+  }
+  async function sendMomo(host, network) {
+    const msg = (host && host.querySelector && host.querySelector('#knownPayMsg')) || document.getElementById('knownPayMsg');
+    const phone = host && host.querySelector ? (host.querySelector('.known-momo-phone') || {}).value : '';
+    if (typeof nalunoMomo !== 'function') {
+      const text = 'Mobile money is not available yet. Nothing was charged.';
+      if (msg) msg.textContent = text;
+      return;
+    }
+    let q = payQuote();
+    const srv = startPay.__server;
+    if (srv && q && srv.currency === q.currency && Date.now() - srv.at < 10 * 60 * 1000) {
+      q = Object.assign({}, q, { major: srv.major });
+    }
+    if (!q) {
+      if (msg) msg.textContent = 'The Known price is not set yet. Nothing was charged.';
+      return;
+    }
+    if (msg) msg.textContent = 'Asking ' + (network === 'airtel' ? 'Airtel' : 'MTN') + '… Nothing is marked paid until they confirm.';
+    try {
+      const data = await nalunoMomo({
+        kind: 'known',
+        amount_major: q.major,
+        currency: q.currency,
+        phone: phone,
+        network: network,
+        idempotency_key: 'known_momo_' + currentUser.uid + '_' + new Date().toISOString().slice(0, 10),
+      });
+      if (msg) msg.textContent = (data && data.message) || 'Request recorded. Nothing is marked paid until the payment is confirmed.';
+    } catch (err) {
+      let text = (err && err.message) || 'Nothing was charged.';
+      const d = err && err.data;
+      if (d && d.code === 'price_changed' && d.amount_major > 0) {
+        startPay.__server = { major: Number(d.amount_major), currency: String(d.currency || ''), at: Date.now() };
+        text = 'The price changed. Tap again. Nothing was charged.';
+      }
+      if (msg) msg.textContent = text;
     }
   }
 

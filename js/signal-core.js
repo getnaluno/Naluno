@@ -626,6 +626,11 @@ function attachPlaybackGuard(el, url, guardOpts){
   const recover = function(reason){
     if(recovering || !el) return;
     if(el.dataset.nalunoUserPaused === '1') return;
+    const localPlay = el.dataset.nalunoLocal === '1' || /^blob:/i.test(String(el.currentSrc || el.src || ''));
+    if(localPlay){
+      if(el.paused && !el.ended && el.readyState >= 2) nalunoPlayIgnoreAbort(el.play());
+      return;
+    }
     const d = el.duration;
     const t = el.currentTime || 0;
     if(el.ended && nalunoFiniteDuration(d) && t >= d - 0.4) return;
@@ -647,6 +652,11 @@ function attachPlaybackGuard(el, url, guardOpts){
     }catch(_){}
   };
   el.addEventListener('waiting', function(){
+    const localPlay = el.dataset.nalunoLocal === '1' || /^blob:/i.test(String(el.currentSrc || el.src || ''));
+    if(localPlay){
+      if(el.paused && el.dataset.nalunoUserPaused !== '1' && el.readyState >= 2) nalunoPlayIgnoreAbort(el.play());
+      return;
+    }
     waitHits++;
     const t0 = el.currentTime || 0;
     lastWaitTime = t0;
@@ -729,6 +739,10 @@ function bindMediaElement(el, rawUrl, opts){
   if(typeof containMediaElement === 'function') containMediaElement(el);
 
   // Do not reset src if this element is already playing the same asset.
+  if(el.dataset.nalunoLocal === '1' && /^blob:/i.test(String(el.currentSrc || el.src || ''))){
+    attachPlaybackGuard(el, url, { kind: bucket || (isBroadcast ? 'broadcast' : '') });
+    return;
+  }
   const current = (el.currentSrc || el.getAttribute('src') || '').split('?')[0];
   const nextBare = String(url).split('?')[0];
   const sameAsset = !!(current && nextBare && (
@@ -752,7 +766,13 @@ function bindMediaElement(el, rawUrl, opts){
     // LOCK (20260825b brief): Broadcast points straight at the Worker URL — never a vault blob.
     // Vault remains for Signals only (short clips, offline-friendly).
     if(isBroadcast){
-      el.src = url;
+      const local = opts && opts.localSrc;
+      if(local && /^blob:/i.test(String(local))){
+        el.src = local;
+        el.dataset.nalunoLocal = '1';
+      } else {
+        el.src = url;
+      }
     } else {
       const key = (typeof vaultKeyForUrl === 'function') ? vaultKeyForUrl(url) : '';
       const cached = (key && typeof vaultSyncSrc === 'function') ? vaultSyncSrc(key) : '';

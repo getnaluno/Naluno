@@ -1072,12 +1072,20 @@
     if (payNow) {
       payNow.hidden = !(paidAed > 0);
       payNow.disabled = false;
-      payNow.textContent = 'Pay the prepaid amount';
+      payNow.textContent = 'Pay by card';
+      const momoBtn = document.getElementById('crAdPayMomo');
+      const momoBox = document.getElementById('crAdMomo');
+      if (momoBtn) {
+        momoBtn.hidden = !(paidAed > 0);
+        momoBtn.disabled = false;
+        momoBtn.textContent = 'Pay with mobile money';
+      }
+      if (momoBox) momoBox.hidden = true;
       /* 29g: the pay panel says what is happening. Messages used to go to
          the form's line, which is hidden once the ad is saved, so a failed
          or slow payment step looked like nothing happened. */
       const payMsg = function (t) { const el = document.getElementById('crAdPayMsg'); if (el) el.textContent = t || ''; };
-      payMsg(paidAed > 0 ? 'Next: Stripe’s secure page, where you pay by card, Apple Pay or Google Pay. Stripe asks for your phone number. You come back here after.' : '');
+      payMsg(paidAed > 0 ? 'Card opens Stripe. Mobile money is collected by Naluno in Uganda shillings and stays unpaid until MTN or Airtel confirms.' : '');
       payNow.onclick = async function () {
         if (typeof nalunoCheckout !== 'function') {
           payMsg('Payments aren’t available yet. Nothing was charged.');
@@ -1103,12 +1111,48 @@
           window.location.href = url;
         } catch (err) {
           payNow.disabled = false;
-          payNow.textContent = 'Pay the prepaid amount';
+          payNow.textContent = 'Pay by card';
           const text = (err && err.message) || 'Payments aren’t available yet. Nothing was charged.';
           payMsg(text);
           if (typeof toast === 'function') toast(text);
         }
       };
+      if (momoBtn) {
+        const sendAdMomo = async function (network) {
+          if (typeof nalunoMomo !== 'function') {
+            payMsg('Mobile money is not available yet. Nothing was charged.');
+            return;
+          }
+          const phoneEl = document.getElementById('crAdMomoPhone');
+          momoBtn.disabled = true;
+          payMsg('Requesting mobile money. Nothing is marked paid until it is confirmed.');
+          try {
+            const data = await nalunoMomo({
+              kind: 'ad',
+              ad_id: adId,
+              mail_id: (sheet && sheet.dataset.mailId) || '',
+              broadcast_id: bid,
+              amount_major: (function () { const d = (C && C.digits) ? C.digits(adMoneyCode()) : 2; const f = Math.pow(10, d); return Math.round(adFromAed(paidAed) * f) / f; })(),
+              currency: adMoneyCode(),
+              phone: phoneEl ? phoneEl.value : '',
+              network: network,
+              idempotency_key: 'ad_momo_' + (adId || bid) + '_' + Date.now(),
+            });
+            payMsg((data && data.message) || 'Request recorded. Nothing is marked paid until the payment is confirmed.');
+          } catch (err) {
+            payMsg((err && err.message) || 'Nothing was charged.');
+          } finally {
+            momoBtn.disabled = false;
+          }
+        };
+        momoBtn.onclick = function () {
+          if (momoBox) momoBox.hidden = false;
+        };
+        const mtn = document.getElementById('crAdMomoMtn');
+        const air = document.getElementById('crAdMomoAirtel');
+        if (mtn) mtn.onclick = function () { sendAdMomo('mtn'); };
+        if (air) air.onclick = function () { sendAdMomo('airtel'); };
+      }
     }
     say('');
   }

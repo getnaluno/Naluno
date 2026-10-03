@@ -166,9 +166,27 @@
       if (!bytes) return { ok: false, error: 'empty download' };
       const fit = await evictFor(bytes);
       if (!fit) return { ok: false, error: 'not enough space — free up some saves' };
+      const groups = {};
       for (let i = 0; i < unique.length; i++) {
         const url = unique[i];
-        await cache.put(url, resp.clone());
+        let key = url;
+        try {
+          if (typeof resolveMediaUrl === 'function') key = resolveMediaUrl(url) || url;
+        } catch (_) {}
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(url);
+      }
+      const keys = Object.keys(groups);
+      for (let g = 0; g < keys.length; g++) {
+        const urls = groups[keys[g]];
+        let body = (g === 0) ? resp : null;
+        if (!body) {
+          try { body = await fetchOne(urls[0]); } catch (_) { body = null; }
+        }
+        if (!body) continue;
+        for (let i = 0; i < urls.length; i++) {
+          await cache.put(urls[i], body.clone());
+        }
       }
       let thumbSaved = false;
       if (b.thumbUrl && /^https?:/i.test(b.thumbUrl)) {
@@ -182,6 +200,9 @@
         url: unique[0], urls: unique, thumbUrl: thumbSaved ? b.thumbUrl : '',
         title: String(b.title || 'Broadcast').slice(0, 120),
         creatorName: String(b.creatorName || '').slice(0, 60),
+        creatorUid: String(b.creatorUid || '').slice(0, 128),
+        creatorPhoto: String(b.creatorPhoto || '').slice(0, 500),
+        description: String(b.description || '').slice(0, 2000),
         bytes: bytes, savedAt: Date.now(), lastWatchedAt: Date.now(),
         takenDownSincePinned: false,
       };
@@ -206,33 +227,47 @@
     save(idx);
   }
 
+  const playSessions = {};
+  /** A blob URL for a saved file, reused so the phone does not copy the
+   *  video into memory again on every open. Empty when nothing is saved. */
+  async function playableUrl(url, broadcastId) {
+    const idx = load();
+    let entry = (broadcastId && idx[broadcastId]) || null;
+    if (!entry && url) {
+      const id = Object.keys(idx).find(function (k) {
+        const e = idx[k];
+        if (!e) return false;
+        if (e.url === url) return true;
+        return (e.urls || []).indexOf(url) >= 0;
+      });
+      entry = id ? idx[id] : null;
+    }
+    if (!entry) return '';
+    const key = entry.url || url || broadcastId;
+    if (playSessions[key]) return playSessions[key];
+    try {
+      const cache = await openCache();
+      const tries = [entry.url].concat(entry.urls || []).concat(url ? [url] : []);
+      let hit = null;
+      for (let i = 0; i < tries.length && !hit; i++) {
+        if (tries[i]) hit = await cache.match(tries[i]);
+      }
+      if (!hit) return '';
+      const raw = await hit.blob();
+      if (!raw || !raw.size) return '';
+      const headerType = hit.headers.get('Content-Type') || '';
+      const typed = (raw.type && raw.type.indexOf('video/') === 0) ? raw
+        : new Blob([raw], { type: (headerType.indexOf('video/') === 0 ? headerType : 'video/mp4') });
+      const obj = URL.createObjectURL(typed);
+      playSessions[key] = obj;
+      return obj;
+    } catch (_) { return ''; }
+  }
+
   /** A cached copy of this URL, if one exists — used by the player as a
    *  fallback when the network copy cannot be reached. */
   async function cachedUrlFor(url) {
-    if (!url) return null;
-    try {
-      const cache = await openCache();
-      const aliases = [url];
-      try {
-        if (typeof resolveMediaUrl === 'function') {
-          const r = resolveMediaUrl(url);
-          if (r && aliases.indexOf(r) < 0) aliases.push(r);
-        }
-      } catch (_) {}
-      const idx = load();
-      Object.keys(idx).forEach(function (id) {
-        const e = idx[id];
-        const all = [e && e.url].concat((e && e.urls) || []);
-        if (all.indexOf(url) >= 0) all.forEach(function (u) { if (u && aliases.indexOf(u) < 0) aliases.push(u); });
-      });
-      let hit = null;
-      for (let i = 0; i < aliases.length && !hit; i++) {
-        hit = await cache.match(aliases[i]);
-      }
-      if (!hit) return null;
-      const blob = await hit.blob();
-      return URL.createObjectURL(blob);
-    } catch (_) { return null; }
+    return playableUrl(url, '');
   }
 
   function markWatched(broadcastId) {
@@ -300,25 +335,29 @@
     root.__nalunoBackHold = true;
     try { closeDownloads(); } catch (_) {}
     root.__nalunoBackHold = prevHold;
-    const online = typeof navigator === 'undefined' || navigator.onLine !== false;
-    if (online && typeof fbDb !== 'undefined' && fbDb && broadcastId && typeof openBroadcastById === 'function') {
-      openBroadcastById(broadcastId);
-      return;
-    }
-    const play = row && (await cachedUrlFor(row.url || ''));
+    const play = row && (await playableUrl(row.url || '', broadcastId));
     if (play && typeof root.openBroadcastSpace === 'function') {
       root.openBroadcastSpace({
         isMine: false,
         broadcastId: broadcastId,
         title: row.title || 'Broadcast',
+        description: row.description || '',
         creatorName: row.creatorName || '',
+        creatorUid: row.creatorUid || '',
+        creatorPhoto: row.creatorPhoto || '',
         segment: {
           type: 'video',
           mediaUrl: play,
           videoUrl: play,
+          caption: row.description || '',
           thumbDataUrl: row.thumbUrl || '',
         },
       });
+      return;
+    }
+    const online = typeof navigator === 'undefined' || navigator.onLine !== false;
+    if (online && typeof fbDb !== 'undefined' && fbDb && broadcastId && typeof openBroadcastById === 'function') {
+      openBroadcastById(broadcastId);
       return;
     }
     try { root.toast('Couldn’t open that Broadcast'); } catch (_) {}
@@ -352,7 +391,7 @@
   })();
 
   root.NalunoOfflineBroadcast = {
-    saveBroadcast, removeSaved, isSaved, savedList, cachedUrlFor, markWatched, markTakenDown,
+    saveBroadcast, removeSaved, isSaved, savedList, cachedUrlFor, playableUrl, markWatched, markTakenDown,
     usedBytes, budgetBytes, setBudgetMB, evictFor, renderDownloads, openDownloads, closeDownloads,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

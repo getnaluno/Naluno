@@ -55,6 +55,7 @@
       creatorUid: String(row.creatorUid || ''),
       creatorName: String(row.creatorName || 'Someone').slice(0, 80),
       title: String(row.title || '').slice(0, 120),
+      basis: 'paste',
       locked: true,
     };
   }
@@ -71,10 +72,35 @@
     return packCredit(best);
   }
 
+  /* A resemblance (close title, a similar still, nearby sound) is not a copy.
+     The line "Original Broadcast by …" is only for the same file, a
+     frame-for-frame paste, a word-for-word paste, or an explicit pass-on. */
+  function originCreditAllowed(origin) {
+    if (!origin) return false;
+    const ch = origin.channels || {};
+    const file = Number(ch.file) || 0;
+    const picture = Number(ch.picture) || 0;
+    const motion = Number(ch.motion) || 0;
+    if (file >= 99) return true;
+    if (picture >= 94 && motion >= 94) return true;
+    return false;
+  }
+
+  function creditBasis(b, credit) {
+    const basis = String((credit && credit.basis) || '');
+    if (basis === 'file' || basis === 'paste' || basis === 'repost') return basis;
+    if (b && b.repostOf) return 'repost';
+    if (b && Number(b.originScore) === 100) return 'file';
+    const kind = String((b && (b.mediaType || b.kind)) || '');
+    if (kind === 'writing' || (b && b.body)) return 'paste';
+    return '';
+  }
+
   function lockedCredit(b) {
     const c = b && b.originCredit;
     if (!c || !c.creatorName || !c.creatorUid) return null;
     if (b.creatorUid && c.creatorUid === b.creatorUid) return null;
+    if (!creditBasis(b, c)) return null;
     return c;
   }
 
@@ -86,6 +112,7 @@
         creatorUid: String(locked.creatorUid),
         creatorName: String(locked.creatorName).slice(0, 80),
         title: String(locked.title || b.title || '').slice(0, 120),
+        basis: creditBasis(b, locked) || 'repost',
         locked: true,
       };
     }
@@ -95,6 +122,7 @@
       creatorUid: String(b.creatorUid),
       creatorName: String(b.creatorName || 'Someone').slice(0, 80),
       title: String(b.title || '').slice(0, 120),
+      basis: 'repost',
       locked: true,
     };
   }
@@ -120,6 +148,8 @@
     looksLikeShell: looksLikeShell,
     findCredit: findCredit,
     lockedCredit: lockedCredit,
+    originCreditAllowed: originCreditAllowed,
+    creditBasis: creditBasis,
     creditForShare: creditForShare,
     byline: byline,
     coverUrl: coverUrl,

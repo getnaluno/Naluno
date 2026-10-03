@@ -39,6 +39,60 @@ function bspaceWhoHtml(uid){
   return '<span class="who-name" data-known-uid="' + bspaceEscape(uid || '') + '">' + bspaceEscape(bspaceWhoLabel(uid)) + '</span>';
 }
 
+function bspaceCloseWhoDrop(){
+  const drop = $('bspaceWhoDrop');
+  if(!drop) return;
+  drop.hidden = true;
+  drop.innerHTML = '';
+}
+function bspaceToggleWhoDrop(){
+  const drop = $('bspaceWhoDrop');
+  const meta = activeBroadcastMeta;
+  if(!drop || !meta) return;
+  if(!drop.hidden){ bspaceCloseWhoDrop(); return; }
+  const name = meta.creatorName || 'Someone';
+  const desc = String(meta.description || (meta.segment && (meta.segment.caption || meta.segment.text)) || '').trim();
+  const initial = bspaceEscape((name || 'N').slice(0, 1).toUpperCase());
+  const photo = meta.creatorPhoto || '';
+  drop.dataset.for = meta.broadcastId || '';
+  drop.hidden = false;
+  drop.innerHTML = '<div class="who-drop-face">' + (photo
+      ? '<img alt="" src="' + bspaceEscape(photo) + '" />'
+      : '<span>' + initial + '</span>')
+    + '</div><div class="who-drop-copy"><b>' + bspaceEscape(name) + '</b>'
+    + '<p>' + bspaceEscape(desc || 'No description on this Broadcast.') + '</p>'
+    + '<button type="button" id="bspaceWhoShare">Share broadcast</button></div>';
+  const img = drop.querySelector('img');
+  if(img) img.onerror = function(){ img.replaceWith(Object.assign(document.createElement('span'), { textContent: (name || 'N').slice(0, 1).toUpperCase() })); };
+  const share = $('bspaceWhoShare');
+  if(share) share.onclick = function(e){
+    try{ if(e) e.stopPropagation(); }catch(_){}
+    const btn = $('bspaceShareBtn');
+    if(btn) btn.click();
+  };
+  const uid = meta.creatorUid || '';
+  if(!photo && uid && typeof fbDb !== 'undefined' && fbDb){
+    fbDb.collection('users').doc(uid).get().then(function(snap){
+      if(!snap || !snap.exists || drop.hidden || drop.dataset.for !== (meta.broadcastId || '')) return;
+      const d = snap.data() || {};
+      const url = d.photoUrl || (d.photo && d.photo.dataUrl) || '';
+      if(!url) return;
+      meta.creatorPhoto = url;
+      const face = drop.querySelector('.who-drop-face');
+      if(face) face.innerHTML = '<img alt="" src="' + bspaceEscape(url) + '" />';
+    }).catch(function(){});
+  }
+}
+if(typeof document !== 'undefined'){
+  document.addEventListener('click', function(e){
+    const drop = document.getElementById('bspaceWhoDrop');
+    if(!drop || drop.hidden) return;
+    const name = document.getElementById('bspaceCreatorName');
+    if(drop.contains(e.target) || (name && name.contains(e.target))) return;
+    bspaceCloseWhoDrop();
+  });
+}
+
 function ensureBroadcastDocId(meta){
   if(meta.broadcastId) return meta.broadcastId;
   // Legacy fallback for old signal-linked spaces
@@ -518,8 +572,40 @@ function renderBspaceMedia(seg){
       </div>
       `;
     vel = $('bspaceVideoEl');
-    if(vel && typeof bindMediaElement === 'function') bindMediaElement(vel, rawSrc, { broadcastId: bcastId, kind: 'broadcast' });
+    const armLocal = function(local){
+      if(!vel || !vel.isConnected) return;
+      if(typeof bindMediaElement === 'function'){
+        bindMediaElement(vel, rawSrc, { broadcastId: bcastId, kind: 'broadcast', localSrc: local || '' });
+      } else {
+        vel.preload = 'auto';
+        vel.src = local || rawSrc;
+      }
+      if(local){
+        vel.dataset.nalunoLocal = '1';
+        const chip = $('bspaceOfflineChip');
+        if(chip){ chip.textContent = 'Playing your saved copy'; chip.style.display = 'block'; }
+        try{ if(window.NalunoOfflineBroadcast) window.NalunoOfflineBroadcast.markWatched(bcastId); }catch(_){}
+      }
+    };
+    const savedHere = !!(bcastId && window.NalunoOfflineBroadcast && NalunoOfflineBroadcast.isSaved && NalunoOfflineBroadcast.isSaved(bcastId) && !/^blob:/i.test(String(rawSrc || '')));
+    if(vel && savedHere && NalunoOfflineBroadcast.playableUrl){
+      vel.dataset.nalunoLocal = 'pending';
+      NalunoOfflineBroadcast.playableUrl(rawSrc, bcastId).then(function(local){
+        if(vel.dataset.nalunoLocal === 'pending') delete vel.dataset.nalunoLocal;
+        armLocal(local || '');
+        try{ if(typeof vel._nalunoArm === 'function') vel._nalunoArm(); }catch(_){}
+      }).catch(function(){
+        if(vel.dataset.nalunoLocal === 'pending') delete vel.dataset.nalunoLocal;
+        armLocal('');
+        try{ if(typeof vel._nalunoArm === 'function') vel._nalunoArm(); }catch(_){}
+      });
+    } else if(vel && typeof bindMediaElement === 'function') bindMediaElement(vel, rawSrc, { broadcastId: bcastId, kind: 'broadcast' });
     else if(vel){ vel.preload = 'auto'; vel.src = rawSrc; }
+    if(vel && /^blob:/i.test(String(vel.src || rawSrc || ''))){
+      vel.dataset.nalunoLocal = '1';
+      const chip = $('bspaceOfflineChip');
+      if(chip){ chip.textContent = 'Playing your saved copy'; chip.style.display = 'block'; }
+    }
     if(vel && mediaId) vel.dataset.mediaId = mediaId;
     if(vel && bcastId) vel.dataset.broadcastId = bcastId;
     } else {
@@ -578,6 +664,7 @@ function renderBspaceMedia(seg){
         }
       };
       if(kick) kick.onclick = function(e){ e.preventDefault(); e.stopPropagation(); tryPlay(); };
+      vel._nalunoArm = tryPlay;
       vel.addEventListener('click', function(e){
         e.preventDefault();
         e.stopPropagation();
@@ -651,9 +738,13 @@ function renderBspaceMedia(seg){
         vel.dataset.nalunoWantPlay = '1';
         vel.dataset.nalunoKeepAlive = '1';
       }catch(_){}
-      setTimeout(function(){ if(vel.paused && vel.dataset.nalunoUserPaused !== '1') tryPlay(); }, 120);
+      setTimeout(function(){
+        if(vel.dataset.nalunoLocal === 'pending') return;
+        if(vel.paused && vel.dataset.nalunoUserPaused !== '1') tryPlay();
+      }, 120);
       // Soft network nudge only — do not full-fetch Broadcast into a blob.
       setTimeout(function(){
+        if(vel.dataset.nalunoLocal === 'pending' || vel.dataset.nalunoLocal === '1') return;
         if(vel.paused && vel.dataset.nalunoUserPaused !== '1' && rawSrc && !/^blob:/i.test(String(vel.src||''))){
           try{
             const fixed = (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(rawSrc) : rawSrc;
@@ -1495,12 +1586,18 @@ async function openBroadcastSpace(meta){
 
   const nameEl = $('bspaceCreatorName');
   if(nameEl){
-    nameEl.innerHTML = '<span class="who-name"></span>';
+    const uid = meta.creatorUid || '';
+    nameEl.innerHTML = '<span class="who-name" data-known-uid="' + bspaceEscape(uid) + '"></span>';
     const who = nameEl.querySelector('.who-name');
     if(who) who.textContent = meta.creatorName || 'Someone';
+    nameEl.onclick = function(e){
+      try{ if(e) e.stopPropagation(); }catch(_){}
+      bspaceToggleWhoDrop();
+    };
   }
-  if(window.NalunoKnown && typeof NalunoKnown.paintBeside === 'function' && nameEl){
-    NalunoKnown.paintBeside(nameEl, meta.creatorUid);
+  try{ bspaceCloseWhoDrop(); }catch(_){}
+  if(window.NalunoKnown && typeof NalunoKnown.paintAll === 'function' && nameEl){
+    NalunoKnown.paintAll(nameEl);
   }
   $('bspaceCreatorMeta').textContent = meta.isMine ? 'Your Broadcast' : 'Creator Circle';
   $('bspaceTitle').textContent = title;
@@ -2827,7 +2924,10 @@ function bspaceOfflinePayload(){
     mediaUrls: playable,
     thumbUrl: meta.thumbUrl || seg.thumbDataUrl || seg.thumbUrl || '',
     title: meta.title || '',
+    description: meta.description || '',
     creatorName: meta.creatorName || '',
+    creatorUid: meta.creatorUid || '',
+    creatorPhoto: meta.creatorPhoto || '',
   };
 }
 

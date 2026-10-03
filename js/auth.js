@@ -754,6 +754,18 @@ async function nalunoForgotPassword(){
   }
 })();
 
+function nalunoOfflineSession(){
+  if(window.__nalunoSigningOut) return false;
+  let id = '';
+  try{ id = localStorage.getItem('nalunoLastUid') || ''; }catch(_){}
+  if(!id) return false;
+  try{
+    if(typeof nalunoIsOnline === 'function' && !nalunoIsOnline()) return true;
+  }catch(_){}
+  if(typeof navigator !== 'undefined' && navigator.onLine === false) return true;
+  return false;
+}
+
 function bindAuthListeners(){
   if(authListenersBound || !fbAuth) return;
   authListenersBound = true;
@@ -881,6 +893,11 @@ function bindAuthListeners(){
   let sessionHadUser = false;
   function showSignedOutGate(){
     if(nalunoAuthBusy()) return;
+    if(nalunoOfflineSession()){
+      authStatus('');
+      nalunoEnterApp();
+      return;
+    }
     authStatus('');
     nalunoShowSignIn();
   }
@@ -912,6 +929,10 @@ function bindAuthListeners(){
         if(nalunoAuthBusy()) return;
         if(fbAuth && fbAuth.currentUser){
           currentUser = fbAuth.currentUser;
+          return;
+        }
+        if(nalunoOfflineSession()){
+          nalunoEnterApp();
           return;
         }
         currentUser = null;
@@ -1012,6 +1033,10 @@ function bindAuthListeners(){
       nullAuthTimer = setTimeout(function(){
         if(nalunoAuthBusy()) return;
         if(currentUser || (fbAuth && fbAuth.currentUser)) return;
+        if(nalunoOfflineSession()){
+          nalunoEnterApp();
+          return;
+        }
         clearSessionListeners();
         if(lastUid){
           const cached = nalunoReadCachedProfile(lastUid);
@@ -1043,6 +1068,12 @@ function bindAuthListeners(){
 (function nalunoGateWatchdog(){
   setTimeout(function(){
     try{
+      let rememberedOffline = false;
+      try{ rememberedOffline = typeof nalunoOfflineSession === 'function' && nalunoOfflineSession(); }catch(_){}
+      if(rememberedOffline){
+        if(typeof nalunoEnterApp === 'function') nalunoEnterApp();
+        return;
+      }
       const gate = document.getElementById('authGate');
       if(!gate || !gate.classList.contains('active')) return;   // already lifted
       if(window.__nalunoOnboardActive) return;                 // welcome / tour is the gate
@@ -1084,6 +1115,12 @@ function bindAuthListeners(){
 (function nalunoGateWatchdog(){
   setTimeout(function(){
     try{
+      let rememberedOffline = false;
+      try{ rememberedOffline = typeof nalunoOfflineSession === 'function' && nalunoOfflineSession(); }catch(_){}
+      if(rememberedOffline){
+        if(typeof nalunoEnterApp === 'function') nalunoEnterApp();
+        return;
+      }
       const gate = document.getElementById('authGate');
       if(!gate || !gate.classList.contains('active')) return;   // already lifted
       if(window.__nalunoOnboardActive) return;                 // welcome / tour is the gate
@@ -1115,7 +1152,8 @@ if(fbAuth){
   // /app/firebase-config.js (which does not exist). Reload config from
   // the site root and retry — do NOT full-page reload.
   try{
-    nalunoShowSignIn();
+    if(typeof nalunoOfflineSession === 'function' && nalunoOfflineSession()) nalunoEnterApp();
+    else nalunoShowSignIn();
   }catch(_){}
   authStatus('Loading sign-in…', false);
   let authTries = 0;

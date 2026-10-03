@@ -440,7 +440,7 @@ function supportSendLabel(){
     if(amt > 0 && typeof NalunoCurrency !== 'undefined' && NalunoCurrency && NalunoCurrency.formatMajor) shown = NalunoCurrency.formatMajor(amt, __supportSheet.currency || supportCcy());
   }catch(_){}
   if(!shown && amt > 0) shown = (__supportSheet.currency || supportCcy()) + ' ' + amt.toLocaleString();
-  b.textContent = amt > 0 ? ('Continue to pay ' + shown) : 'Continue to pay';
+  b.textContent = amt > 0 ? ((__supportRail === 'momo' ? 'Request ' : 'Continue to pay ') + shown) : (__supportRail === 'momo' ? 'Request mobile money' : 'Continue to pay');
 }
 
 async function nalunoCheckout(body){
@@ -466,6 +466,47 @@ async function nalunoCheckout(body){
   return data.url;
 }
 
+async function nalunoMomo(body){
+  if(typeof currentUser === 'undefined' || !currentUser) throw new Error('Sign in first');
+  const idToken = await currentUser.getIdToken(false);
+  let res;
+  try{
+    res = await fetch(ECONOMY_UI_WORKER + '/v1/pay/momo', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    });
+  }catch(_){
+    throw new Error('Could not reach the payment service. Check your connection and try again. Nothing was charged.');
+  }
+  const data = await res.json().catch(function(){ return {}; });
+  if(!res.ok || !data.ok || data.status === 'paid' || data.paid === true){
+    const err = new Error((data && data.error) || 'Mobile money did not start. Nothing was charged.');
+    err.data = data;
+    err.status = res.status;
+    throw err;
+  }
+  if(data.status && data.status !== 'pending'){
+    const err = new Error('That payment was not recorded. Nothing was charged.');
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+window.nalunoMomo = nalunoMomo;
+
+let __supportRail = 'stripe';
+let __supportNet = 'mtn';
+function supportRailUi(){
+  const momo = $('supportMomo');
+  if(momo) momo.hidden = __supportRail !== 'momo';
+  const card = $('supportRailCard');
+  const mm = $('supportRailMomo');
+  if(card) card.classList.toggle('on', __supportRail === 'stripe');
+  if(mm) mm.classList.toggle('on', __supportRail === 'momo');
+  supportSendLabel();
+}
+
 async function submitSupportIntent(){
   if(!supportIsOn()){
     toast('Creator Support is off. Nothing was charged.');
@@ -477,10 +518,27 @@ async function submitSupportIntent(){
   const msg = $('supportSheetMsg');
   if(!uid || !(amountMajor > 0)){ if(msg) msg.textContent = 'Pick an amount, or type one.'; toast('Pick an amount'); return; }
   const sendBtn = $('supportSheetSend');
-  if(sendBtn){ sendBtn.disabled = true; sendBtn.textContent = 'Opening Stripe…'; }
-  if(msg) msg.textContent = 'Taking you to Stripe’s secure page. You pay there by card, Apple Pay or Google Pay, and Stripe asks for your phone number. You come back here after.';
+  const momo = __supportRail === 'momo';
+  if(sendBtn){ sendBtn.disabled = true; sendBtn.textContent = momo ? 'Requesting…' : 'Opening Stripe…'; }
+  if(msg) msg.textContent = momo
+    ? 'Requesting mobile money. Nothing is marked paid until MTN or Airtel confirms.'
+    : 'Taking you to Stripe’s secure page. You pay there by card, Apple Pay or Google Pay, and Stripe asks for your phone number. You come back here after.';
   try{
     const ikey = 'sup_' + (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '' + Math.random()).replace('.', ''));
+    if(momo){
+      const data = await nalunoMomo({
+        kind: 'support',
+        creator_user_id: uid,
+        broadcast_id: __supportSheet.broadcastId || '',
+        amount_major: amountMajor,
+        currency: __supportSheet.currency || supportCcy(),
+        phone: ($('supportMomoPhone') && $('supportMomoPhone').value) || '',
+        network: __supportNet,
+        idempotency_key: ikey,
+      });
+      if(msg) msg.textContent = (data && data.message) || 'Request recorded. Nothing is marked paid until the payment is confirmed.';
+      return;
+    }
     const url = await nalunoCheckout({
       kind: 'support',
       creator_user_id: uid,
@@ -505,6 +563,18 @@ function wireSupportSheet(){
   if(close) close.onclick = closeSupportSheet;
   const send = $('supportSheetSend');
   if(send) send.onclick = submitSupportIntent;
+  const card = $('supportRailCard');
+  const mm = $('supportRailMomo');
+  if(card) card.onclick = function(){ __supportRail = 'stripe'; supportRailUi(); };
+  if(mm) mm.onclick = function(){ __supportRail = 'momo'; supportRailUi(); };
+  const nets = $('supportMomoNet');
+  if(nets) nets.onclick = function(e){
+    const b = e.target && e.target.closest ? e.target.closest('[data-net]') : null;
+    if(!b) return;
+    __supportNet = b.getAttribute('data-net') || 'mtn';
+    nets.querySelectorAll('[data-net]').forEach(function(x){ x.classList.toggle('on', x === b); });
+  };
+  supportRailUi();
 }
 
 /* Operator Control Centre lives at /admin/. This file used to wire a
