@@ -7,6 +7,29 @@ import { isoToMajor, majorToIso, stripeToMajor } from "./money.mjs";
  * checks out and Stripe says the session is paid.
  */
 
+/** A Stripe page the operator can open when Checkout itself will not start.
+ *  Only dashboard.stripe.com and connect.stripe.com. Anything else is dropped,
+ *  including a lookalike host. */
+export function stripeSetupUrl(message) {
+  const msg = String(message || "");
+  const found = msg.match(/https:\/\/[^\s)'"<>]+/i);
+  if (found) {
+    const url = found[0].replace(/[.,)]$/, "");
+    try {
+      const u = new URL(url);
+      if (u.protocol !== "https:") return "";
+      if (u.hostname !== "dashboard.stripe.com" && u.hostname !== "connect.stripe.com") return "";
+      return u.origin + u.pathname + u.search;
+    } catch {
+      return "";
+    }
+  }
+  if (/activat|onboard|complete your account|signed up for Stripe Connect|live charges/i.test(msg)) {
+    return "https://dashboard.stripe.com/account/onboarding";
+  }
+  return "";
+}
+
 export function paymentsReady(env) {
   return !!(env && env.STRIPE_SECRET_KEY && env.STRIPE_WEBHOOK_SECRET);
 }

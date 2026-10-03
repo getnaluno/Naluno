@@ -56,6 +56,7 @@ import {
   payoutState,
   supportFeeMinor,
   payReturnUrl,
+  stripeSetupUrl,
   momoPayer,
   momoCollectBody,
   momoNoticeValid,
@@ -2825,8 +2826,13 @@ async function payCheckout(env, user, saToken, body) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.url) {
-    const why = data && data.error && data.error.message ? (" " + String(data.error.message).slice(0, 160)) : "";
-    return json({ ok: false, error: "The payment step did not start." + why + " Nothing was charged." }, 502);
+    const why = data && data.error && data.error.message ? (" " + String(data.error.message).slice(0, 240)) : "";
+    const registerUrl = stripeSetupUrl(why);
+    return json({
+      ok: false,
+      error: "The card page did not open." + why + " Nothing was charged.",
+      register_url: registerUrl || undefined,
+    }, 502);
   }
   return json({ ok: true, url: data.url, amount_major: charge.major, currency: charge.currency, direct_to_creator: !!destination });
 }
@@ -2864,8 +2870,9 @@ async function payConnect(env, user, saToken) {
   if (!account) {
     const made = await stripeCall(env, "POST", "/accounts", connectAccountForm({ email: user.email, uid: user.uid }), "acct_" + user.uid);
     if (!made.ok || !made.data.id) {
-      const why = made.data && made.data.error && made.data.error.message ? (" " + String(made.data.error.message).slice(0, 160)) : "";
-      return json({ ok: false, error: "Payouts could not be set up." + why }, 502);
+      const why = made.data && made.data.error && made.data.error.message ? (" " + String(made.data.error.message).slice(0, 240)) : "";
+      const registerUrl = stripeSetupUrl(why);
+      return json({ ok: false, error: "Payouts could not be set up." + why, register_url: registerUrl || undefined }, 502);
     }
     account = made.data.id;
     await fsPutDoc(env, saToken, path, { uid: user.uid, account, ready: false, createdAt: Date.now(), checkedAt: 0 });
