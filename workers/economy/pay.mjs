@@ -69,6 +69,11 @@ export function checkoutForm(fields) {
     p.set("payment_intent_data[transfer_data][destination]", fields.destination);
     if (fields.feeMinor > 0) p.set("payment_intent_data[application_fee_amount]", String(fields.feeMinor));
     p.set("metadata[destination]", fields.destination);
+    p.set("metadata[payout_to]", "creator");
+    p.set("metadata[fee_minor]", String(fields.feeMinor || 0));
+  } else if (fields.kind === "support") {
+    p.set("metadata[payout_to]", "naluno");
+    p.set("metadata[fee_minor]", "0");
   }
   p.set("line_items[0][quantity]", "1");
   p.set("line_items[0][price_data][currency]", cur);
@@ -178,6 +183,8 @@ export function applyCheckoutEvent(event) {
     mail_id: String(meta.mail_id || ""),
     broadcast_id: String(meta.broadcast_id || ""),
     support_id: String(meta.support_id || ""),
+    payout_to: String(meta.payout_to || (meta.destination ? "creator" : "")),
+    fee_minor: Number(meta.fee_minor) || 0,
   };
 }
 

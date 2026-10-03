@@ -1786,7 +1786,6 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
     Object.keys(DEFAULT_FLAGS).forEach((k) => {
       if (k in body) next[k] = !!body[k];
     });
-    next.real_payouts_enabled = false;
     const where = await writeFlags(env, saToken, userToken, next);
     memory.audit.unshift({ action: "flags", actor: user.uid, ts: Date.now(), extra: next });
     return json({ ok: true, flags: next, persist: where });
@@ -3005,7 +3004,9 @@ async function markPaid(env, saToken, pay) {
     await fsPutDoc(env, saToken, "/creatorSupport/" + encodeURIComponent(pay.support_id), {
       status: "succeeded",
       provider: pay.provider || "stripe",
-      held_by: pay.provider === "momo" ? "naluno" : "",
+      payout_to: pay.payout_to === "creator" ? "creator" : "naluno",
+      held_by: pay.payout_to === "creator" ? "" : "naluno",
+      fee_minor: Number(pay.fee_minor) || 0,
       supporter_user_id: pay.payer_uid,
       creator_user_id: pay.creator_user_id,
       broadcast_id: pay.broadcast_id || "",
