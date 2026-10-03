@@ -499,6 +499,44 @@ async function nalunoCheckout(body){
   return data.url;
 }
 
+/** Stripe's own page, only. A lookalike host is not opened. */
+function nalunoStripeSetupUrl(err){
+  const data = err && err.data;
+  const raw = String((data && data.register_url) || (err && err.message) || '');
+  const found = raw.match(/https:\/\/[^\s)'"<>]+/i);
+  if(found){
+    const url = found[0].replace(/[.,)]$/, '');
+    try{
+      const u = new URL(url);
+      if(u.protocol !== 'https:') return '';
+      if(u.hostname !== 'dashboard.stripe.com' && u.hostname !== 'connect.stripe.com') return '';
+      return u.origin + u.pathname + u.search;
+    }catch(_){ return ''; }
+  }
+  if(/activat|onboard|complete your account|signed up for Stripe Connect|live charges/i.test(raw)){
+    return 'https://dashboard.stripe.com/account/onboarding';
+  }
+  return '';
+}
+function nalunoShowStripeSetup(anchor, err){
+  if(!anchor || !anchor.parentNode) return;
+  const url = err ? nalunoStripeSetupUrl(err) : '';
+  let btn = anchor.parentNode.querySelector('.naluno-stripe-setup');
+  if(!url){
+    if(btn) btn.remove();
+    return;
+  }
+  if(!btn){
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'naluno-stripe-setup';
+    btn.textContent = 'Open Stripe';
+    anchor.insertAdjacentElement('afterend', btn);
+  }
+  btn.onclick = function(){ window.location.href = url; };
+}
+window.nalunoShowStripeSetup = nalunoShowStripeSetup;
+
 async function nalunoMomo(body){
   if(typeof currentUser === 'undefined' || !currentUser) throw new Error('Sign in first');
   const idToken = await currentUser.getIdToken(false);
@@ -556,6 +594,7 @@ async function submitSupportIntent(){
   if(msg) msg.textContent = momo
     ? 'Requesting mobile money. Nothing is marked paid until MTN or Airtel confirms.'
     : 'Taking you to Stripe’s secure page. You pay there by card, Apple Pay or Google Pay, and Stripe asks for your phone number. You come back here after.';
+  nalunoShowStripeSetup(msg, null);
   try{
     const ikey = 'sup_' + (crypto.randomUUID ? crypto.randomUUID() : (Date.now() + '' + Math.random()).replace('.', ''));
     if(momo){
@@ -585,6 +624,7 @@ async function submitSupportIntent(){
   }catch(e){
     const text = (e && e.message) || 'Payments aren’t available yet. Nothing was charged.';
     if(msg) msg.textContent = text;
+    nalunoShowStripeSetup(msg, e);
     toast(text);
   }finally{
     if(sendBtn){ sendBtn.disabled = false; supportSendLabel(); }
@@ -771,6 +811,8 @@ async function nalunoStartPayouts(){
     window.location.href = d.url;
   }catch(e){
     if(b){ b.disabled = false; b.textContent = 'Set up payouts with Stripe'; }
+    const line = $('payoutLine');
+    nalunoShowStripeSetup(line || b, e);
     const msg = $('payoutMsg');
     const text = (e && e.message) || 'Payouts aren’t available right now.';
     if(msg) msg.textContent = text;

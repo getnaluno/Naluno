@@ -642,6 +642,7 @@
         } catch (_) {}
       }
       if (msg) msg.textContent = text;
+      if (typeof nalunoShowStripeSetup === 'function') nalunoShowStripeSetup(msg, (d && d.code === 'price_changed') ? null : err);
       if (typeof toast === 'function') toast(text);
     }
   }

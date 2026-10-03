@@ -3797,12 +3797,12 @@ function showBreatherAdSlot(breather, onDone){
       skipBtn = document.createElement('button');
       skipBtn.type = 'button';
       skipBtn.id = 'bspaceAdSkip';
-      skipBtn.style.cssText = 'position:absolute;left:16px;right:16px;bottom:28px;z-index:4;padding:14px 16px;border-radius:12px;border:1px solid rgba(124,255,178,.4);background:rgba(13,15,23,.78);color:#E8ECF5;font-size:13px;cursor:pointer;';
+      skipBtn.style.cssText = 'position:absolute;left:auto;right:16px;top:calc(env(safe-area-inset-top, 0px) + 64px);bottom:auto;z-index:14;width:auto;padding:3px 8px;border-radius:999px;border:1px solid rgba(232,236,245,.35);background:rgba(13,15,23,.78);color:#E8ECF5;font-family:var(--font-mono, ui-monospace, monospace);font-size:10px;letter-spacing:.12em;text-transform:uppercase;line-height:1.2;cursor:pointer;';
       el.appendChild(skipBtn);
     }
     skipBtn.style.display = 'inline-flex';
     skipBtn.disabled = skip > 0;
-    skipBtn.textContent = skip > 0 ? ('Skip in ' + skip + 's') : 'Skip';
+    skipBtn.textContent = skip > 0 ? (skip + 's') : 'Skip';
     let left = skip;
     skipBtn.onclick = function(){
       if(skipBtn.disabled) return;
@@ -3823,7 +3823,7 @@ function showBreatherAdSlot(breather, onDone){
           try{ clearInterval(bspaceBreatherTimer); }catch(_){}
           bspaceBreatherTimer = null;
         } else {
-          skipBtn.textContent = 'Skip in ' + left + 's';
+          skipBtn.textContent = left + 's';
         }
       }, 1000);
     }

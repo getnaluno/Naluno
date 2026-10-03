@@ -225,13 +225,14 @@
       + '#nalunoAdViewer .ad-stage{flex:1 1 auto;min-height:0;position:relative;overflow:hidden;background:#000;display:flex;align-items:center;justify-content:center;}'
       + '#nalunoAdViewer video,#nalunoAdViewer img{position:absolute;inset:0;width:100%;height:100%;max-width:100%;max-height:100%;object-fit:contain !important;background:#000;}'
       + '#nalunoAdViewer .ad-chrome{position:absolute;left:0;right:0;top:0;padding:14px 16px;display:flex;align-items:center;gap:10px;'
-      + 'background:linear-gradient(180deg,rgba(0,0,0,.55),transparent);z-index:2;}'
-      + '#nalunoAdViewer .ad-cta{position:absolute;left:16px;right:16px;bottom:28px;z-index:2;display:flex;gap:10px;}'
-      + '#nalunoAdViewer .ad-cta button,#nalunoAdViewer .ad-skip{'
-      + 'flex:1;padding:14px 16px;border-radius:12px;border:1px solid rgba(124,255,178,.4);'
-      + 'font-family:var(--font-mono, ui-monospace, monospace);font-size:13px;letter-spacing:.04em;cursor:pointer;}'
-      + '#nalunoAdViewer .ad-cta .go{background:#7CFFB2;color:#07080D;border:none;}'
-      + '#nalunoAdViewer .ad-cta .skip,#nalunoAdViewer .ad-skip{background:rgba(13,15,23,.7);color:#E8ECF5;}'
+      + 'background:linear-gradient(180deg,rgba(0,0,0,.55),transparent);z-index:3;}'
+      + '#nalunoAdViewer .ad-chrome .ad-who{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#E8ECF5;font-size:14px;}'
+      + '#nalunoAdViewer .ad-skip{flex:none;margin-left:auto;padding:3px 8px;border-radius:999px;'
+      + 'background:rgba(13,15,23,.78);border:1px solid rgba(232,236,245,.35);color:#E8ECF5;'
+      + 'font-family:var(--font-mono, ui-monospace, monospace);font-size:10px;letter-spacing:.12em;text-transform:uppercase;line-height:1.2;cursor:pointer;}'
+      + '#nalunoAdViewer .ad-cta{position:absolute;left:16px;right:16px;bottom:28px;z-index:2;display:block;}'
+      + '#nalunoAdViewer .ad-cta .go{display:block;width:100%;box-sizing:border-box;padding:14px 16px;border-radius:12px;border:none;'
+      + 'background:#7CFFB2;color:#07080D;font-family:var(--font-mono, ui-monospace, monospace);font-size:13px;letter-spacing:.04em;cursor:pointer;}'
       + '#nalunoAdViewer .ad-skip[disabled]{opacity:.55;cursor:default;}';
     document.head.appendChild(css);
   }
@@ -542,11 +543,11 @@
       + media
       + '<div class="ad-chrome">'
       + '<span class="naluno-ad-kicker">Ad</span>'
-      + '<span style="color:#E8ECF5;font-size:14px;">' + escapeHtml((ad.advertiser || ad.headline || 'Sponsored').slice(0, 48)) + '</span>'
+      + '<span class="ad-who">' + escapeHtml((ad.advertiser || ad.headline || 'Sponsored').slice(0, 48)) + '</span>'
+      + '<button type="button" class="ad-skip" id="nalunoAdSkip"' + (skipAt > 0 ? ' disabled' : '') + '>' + (skipAt > 0 ? (skipAt + 's') : 'Skip') + '</button>'
       + '</div>'
       + '<div class="ad-cta">'
       + (ctaUrl ? '<button type="button" class="go" id="nalunoAdCta">' + escapeHtml(ctaLabel) + '</button>' : '')
-      + '<button type="button" class="skip" id="nalunoAdSkip" disabled>Skip in ' + skipAt + 's</button>'
       + '</div>'
       + '</div>';
     track(ad, 'impression');
@@ -612,7 +613,7 @@
           skipBtn.textContent = 'Skip';
         }
       } else if (skipBtn) {
-        skipBtn.textContent = 'Skip in ' + left + 's';
+        skipBtn.textContent = left + 's';
       }
     }, 1000);
     if (skipAt <= 0 && skipBtn) {
@@ -1094,6 +1095,7 @@
         payNow.disabled = true;
         payNow.textContent = 'Opening Stripe…';
         payMsg('Opening Stripe…');
+        if (typeof nalunoShowStripeSetup === 'function') nalunoShowStripeSetup(document.getElementById('crAdPayMsg'), null);
         try {
           const url = await nalunoCheckout({
             kind: 'ad',
@@ -1114,6 +1116,7 @@
           payNow.textContent = 'Pay by card';
           const text = (err && err.message) || 'Payments aren’t available yet. Nothing was charged.';
           payMsg(text);
+          if (typeof nalunoShowStripeSetup === 'function') nalunoShowStripeSetup(document.getElementById('crAdPayMsg'), err);
           if (typeof toast === 'function') toast(text);
         }
       };
