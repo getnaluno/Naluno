@@ -3913,23 +3913,33 @@ body .naluno-break-wrap img{
 /* Sideways: headline and button move to the side of the picture instead of over its middle. */
 @media (orientation: landscape) and (max-height: 520px){
   #bspaceBreather .naluno-break-wrap > div{ left:auto !important; right:16px !important; width:min(38%, 300px); text-align:left !important; }
-  #bspaceBreather .naluno-break-wrap .naluno-break-cta{ left:auto !important; right:16px !important; width:min(38%, 300px); }
-  #nalunoAdViewer .ad-cta{ left:auto; right:16px; width:min(44%, 360px); bottom:16px; }
+  #bspaceBreather .naluno-break-wrap .naluno-break-cta{ left:16px !important; right:16px !important; width:auto !important; bottom:16px !important; }
+  #nalunoAdViewer .ad-cta{ left:16px; right:16px; width:auto; bottom:16px; }
 }
-/* Ad break controls: Skip was a full-width bar lying on top of the ad's own
-   Open button, and the AD tag sat under the back button. */
+/* Ad break controls: Skip sits opposite the word Ad, the same small chip.
+   Join (the green button) is its own full line along the bottom. */
 #bspaceHero.naluno-ad-on #bspaceFitToggle,
 #bspaceHero.naluno-ad-on #bspaceOrientToggle,
 #bspaceHero.naluno-ad-on #bspacePlayKick{ display:none !important; }
 #bspaceBreather #bspaceAdSkip{
-  left:auto !important; right:16px !important; top:calc(env(safe-area-inset-top, 0px) + 60px) !important; bottom:auto !important;
-  width:auto !important; padding:8px 14px !important; border-radius:999px !important; font-size:12.5px !important; z-index:14 !important;
+  left:auto !important; right:16px !important; top:calc(env(safe-area-inset-top, 0px) + 64px) !important; bottom:auto !important;
+  width:auto !important; padding:3px 8px !important; border-radius:999px !important; font-size:10px !important;
+  letter-spacing:.12em !important; text-transform:uppercase !important; line-height:1.2 !important;
+  font-family:var(--font-mono, ui-monospace, monospace) !important; z-index:14 !important;
 }
 #bspaceBreather .naluno-break-wrap .naluno-ad-kicker{ top:calc(env(safe-area-inset-top, 0px) + 64px) !important; left:16px !important; }
+#bspaceBreather .naluno-break-wrap .naluno-break-cta{
+  left:16px !important; right:16px !important; width:auto !important; bottom:16px !important; box-sizing:border-box;
+}
+.naluno-stripe-setup{
+  display:block; width:100%; margin-top:8px; padding:12px 14px; border-radius:12px;
+  border:1px solid rgba(124,255,178,.5); background:rgba(124,255,178,.12); color:var(--mint,#7CFFB2);
+  font-size:13px; cursor:pointer;
+}
 /* Full-screen ad: the AD tag no longer covers the advertiser's name. */
 #nalunoAdViewer .ad-chrome .naluno-ad-kicker{ position:static !important; }
 @media (orientation: landscape) and (max-height: 520px){
-  #nalunoAdViewer .ad-stage .ad-cta{ left:auto; right:16px; width:min(34%, 300px); bottom:16px; flex-direction:column; }
+  #nalunoAdViewer .ad-stage .ad-cta{ left:16px; right:16px; width:auto; bottom:16px; }
 }
 
 /* Voice calls (29f): no camera anywhere on the call screens. */
