@@ -88,15 +88,82 @@
     }
     return { from: from, to: to };
   }
+  function msOf(v) {
+    if (v == null || v === '') return 0;
+    if (typeof v === 'number' && isFinite(v)) return v > 0 && v < 1e11 ? Math.round(v * 1000) : v;
+    if (typeof v.toMillis === 'function') {
+      try { return v.toMillis(); } catch (_) { return 0; }
+    }
+    if (typeof v.seconds === 'number') return Math.round(v.seconds * 1000 + (v.nanoseconds || 0) / 1e6);
+    return 0;
+  }
+  /* The call document is the record. Records used to read only the optional
+     traffic note, and that note was skipped when the other person hung up. */
+  function rowFromCall(doc) {
+    if (!doc) return null;
+    var status = String(doc.status || '');
+    var terminal = status === 'ended' || status === 'missed' || status === 'declined' || status === 'busy';
+    if (!terminal) return null;
+    var created = msOf(doc.createdAt);
+    var ended = msOf(doc.endedAt);
+    var connected = msOf(doc.connectedAt);
+    var seconds = Math.max(0, Math.round(Number(doc.durationSec) || 0));
+    if (!seconds && connected && ended >= connected) seconds = Math.round((ended - connected) / 1000);
+    if (!seconds && status === 'ended' && created && ended > created) seconds = Math.round((ended - created) / 1000);
+    var at = ended || created;
+    if (!at) return null;
+    var caller = clip(doc.callerUid, 128);
+    if (!caller) return null;
+    return {
+      kind: 'call',
+      ok: status === 'ended' && seconds >= 1,
+      actorUid: caller,
+      peerUid: clip(doc.calleeUid, 128),
+      actorName: clip(doc.callerName, 60),
+      peerName: clip(doc.calleeName, 60),
+      seconds: seconds,
+      at: at,
+      status: clip(status, 24),
+    };
+  }
+  function samePeople(a, b) {
+    return (a.actorUid === b.actorUid && a.peerUid === b.peerUid)
+      || (a.actorUid === b.peerUid && a.peerUid === b.actorUid);
+  }
+  function mergeCalls(trafficRows, callDocs) {
+    var rows = (trafficRows || []).slice();
+    (callDocs || []).forEach(function (doc) {
+      var row = rowFromCall(doc);
+      if (!row) return;
+      var dup = rows.some(function (t) {
+        if (!t || t.kind !== 'call') return false;
+        if (!samePeople(t, row)) return false;
+        return Math.abs((t.at || 0) - row.at) < 3 * 60 * 1000;
+      });
+      if (!dup) rows.push(row);
+    });
+    return rows;
+  }
   function note(input) {
     var row = record(input);
     if (!row) return null;
     try {
       if (typeof fbDb !== 'undefined' && fbDb && typeof currentUser !== 'undefined' && currentUser) {
-        fbDb.collection('traffic').add(row).catch(function () {});
+        var callId = input && input.callId ? String(input.callId).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 100) : '';
+        if (row.kind === 'call' && callId) {
+          /* One row per call. The other phone's write hits the same id and
+             is refused (traffic rows are create-only), so the minutes are
+             not counted twice. */
+          fbDb.collection('traffic').doc('call_' + callId).set(row).catch(function () {});
+        } else {
+          fbDb.collection('traffic').add(row).catch(function () {});
+        }
       }
     } catch (_) {}
     return row;
   }
-  return { record: record, summarize: summarize, rangeFor: rangeFor, note: note, inRange: inRange };
+  return {
+    record: record, summarize: summarize, rangeFor: rangeFor, note: note, inRange: inRange,
+    msOf: msOf, rowFromCall: rowFromCall, mergeCalls: mergeCalls,
+  };
 });

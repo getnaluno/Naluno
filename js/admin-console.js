@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261003a';
+  const BUILD = '20261003e';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -1453,7 +1453,7 @@
     listenCol('siteSessions', 800, 'siteSessions', 'startedAt');
     listenCol('siteDays', 180, 'siteDays', 'updatedAt');
     listenCol('presenceDays', 2000, 'presenceDays');
-    listenCol('pushPings', 200, 'pushPings');
+    listenCol('pushPings', 200, 'pushPings', 'sentAt');
     listenCol('pushReceipts', 200, 'pushReceipts');
     listenCol('payments', 200, 'payments');
     listenCol('knownApps', 80, 'knownApps');
@@ -1471,6 +1471,7 @@
     listenCol('reservedHandles', 400, 'reservedHandles');
     listenCol('handleFlags', 200, 'handleFlags');
     listenCol('traffic', 800, 'traffic', 'at');
+    listenCol('calls', 80, 'calls', 'createdAt');
     listenDoc('economyConfig', 'flags', 'flags');
     listenDoc('economyConfig', 'adRates', 'adRates');
     listenDoc('economyConfig', 'costRates', 'costRates');
@@ -3195,11 +3196,14 @@
           + gap('A person counts only if they opened Naluno on that later day. A dash means nobody is old enough to measure yet.'))
         + card('Did the alert arrive?',
           kpis([['Handed to the push service', (d.proof && d.proof.handed) || 0],
-            ['Failed to hand off', (d.proof && d.proof.failed) || 0],
+            ['Failed to hand off today', (d.proof && d.proof.failed_today) || 0],
             ['Shown on a phone', (d.proof && d.proof.arrived) || 0],
             ['Tapped', (d.proof && d.proof.opened) || 0]])
           + ((d.proof && d.proof.failed_why && d.proof.failed_why.length)
             ? '<p class="sub">' + escapeHtml(d.proof.failed_why.join(' · ')) + '</p>' : '')
+          + ((d.proof && (d.proof.failed || 0) > (d.proof.failed_today || 0))
+            ? '<p class="sub">' + ((d.proof.failed || 0) - (d.proof.failed_today || 0))
+              + ' older failures are still in the loaded history. They are not this call.</p>' : '')
           + gap(g.notifications || ''))
         + card('Payments confirmed',
           kpis([['Paid notices', (d.proof && d.proof.paid) || 0],
@@ -5467,7 +5471,8 @@
         const anchor = picked ? new Date(picked + 'T12:00:00') : new Date();
         const range = NalunoTraffic.rangeFor(span, anchor.getTime());
         const sum = NalunoTraffic.summarize(rows, range.from, range.to);
-        const hours = sum.talkHours;
+        const talkMin = Math.round((sum.talkSeconds || 0) / 60);
+        const hours = talkMin >= 60 ? (sum.talkHours + ' h') : (talkMin + ' min');
         const who = (sum.pairs || []).slice(0, 40).map(function (p) {
           const mins = Math.round((p.seconds || 0) / 60);
           return '<div class="flag-row"><span>' + escapeHtml(p.who) + '</span><span>' + p.ok + '/' + p.n + ' connected · ' + mins + ' min</span></div>';
@@ -5476,7 +5481,7 @@
           ['Calls', sum.calls],
           ['Connected', sum.callsOk],
           ['Did not connect', sum.callsFail],
-          ['Talk hours', hours],
+          ['Talk', hours],
           ['Videos sent', sum.videos],
           ['Videos failed', sum.videosFail],
           ['Messages sent', sum.messagesOk],
@@ -5490,11 +5495,45 @@
       };
       const db = adminDb();
       let cached = [];
+      let callsUnreadable = false;
+      function nameFor(uid) {
+        uid = String(uid || '');
+        if (!uid) return '';
+        const list = (typeof __livePack !== 'undefined' && __livePack && __livePack.users) || [];
+        const u = list.filter(function (x) { return x && (x.id === uid || x.uid === uid); })[0];
+        return (u && (u.name || u.handle)) || '';
+      }
+      function callRowsFrom(docs) {
+        return (docs || []).map(function (doc) {
+          const row = Object.assign({}, doc);
+          if (!row.callerName) row.callerName = nameFor(row.callerUid);
+          if (!row.calleeName) row.calleeName = nameFor(row.calleeUid);
+          return row;
+        });
+      }
       function loadRec() {
         if (!db) { const o = $('recOut'); if (o) o.innerHTML = '<p class="sub">Database is not ready.</p>'; return; }
-        db.collection('traffic').orderBy('at', 'desc').limit(800).get().then(function (snap) {
-          cached = snap.docs.map(function (doc) { return doc.data() || {}; });
+        const trafficP = db.collection('traffic').orderBy('at', 'desc').limit(800).get();
+        const callsP = db.collection('calls').orderBy('createdAt', 'desc').limit(80).get().then(function (snap) {
+          callsUnreadable = false;
+          return snap;
+        }).catch(function () {
+          callsUnreadable = true;
+          return null;
+        });
+        Promise.all([trafficP, callsP]).then(function (both) {
+          const traffic = both[0].docs.map(function (doc) { return doc.data() || {}; });
+          const calls = both[1] && both[1].docs ? both[1].docs.map(function (doc) {
+            return Object.assign({ id: doc.id }, doc.data() || {});
+          }) : [];
+          cached = (window.NalunoTraffic && NalunoTraffic.mergeCalls)
+            ? NalunoTraffic.mergeCalls(traffic, callRowsFrom(calls))
+            : traffic;
           paint(cached);
+          if (callsUnreadable) {
+            const o = $('recOut');
+            if (o) o.insertAdjacentHTML('beforeend', '<p class="sub">This desk cannot read the call documents yet. Publish firestore.rules. Until then, a call is missing here if the other person hung up.</p>');
+          }
         }).catch(function (e) {
           const o = $('recOut');
           if (o) o.innerHTML = '<p class="sub">Could not read records. Publish firestore.rules so the desk can read traffic. ' + escapeHtml((e && e.message) || '') + '</p>';
@@ -5511,8 +5550,14 @@
       });
       const date = $('recDate');
       if (date) date.onchange = function () { window.__recDate = date.value; paint(cached); };
-      const live = (typeof __livePack !== 'undefined' && __livePack && __livePack.traffic) || [];
-      if (live.length) { cached = live; paint(cached); }
+      const liveT = (typeof __livePack !== 'undefined' && __livePack && __livePack.traffic) || [];
+      const liveC = (typeof __livePack !== 'undefined' && __livePack && __livePack.calls) || [];
+      if (liveT.length || liveC.length) {
+        cached = (window.NalunoTraffic && NalunoTraffic.mergeCalls)
+          ? NalunoTraffic.mergeCalls(liveT, callRowsFrom(liveC))
+          : liveT;
+        paint(cached);
+      }
       loadRec();
       return;
     }

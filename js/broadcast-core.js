@@ -829,7 +829,7 @@ async function notifyFrequenciesLive(broadcastId, title){
     }
   }catch(_){}
   uids.delete(currentUser.uid);
-  const list = Array.from(uids).slice(0, 60);
+  const list = Array.from(uids).slice(0, 120);
   await Promise.all(list.map(function(uid){
     return fbDb.collection('users').doc(uid).collection('notifications').add(payload).catch(function(){});
   }));

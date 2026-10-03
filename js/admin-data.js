@@ -1009,6 +1009,59 @@
     return /bot|crawl|spider|slurp|bingpreview|facebookexternalhit|headless|lighthouse|gtmetrix|pingdom|bytespider|semrush|ahrefs/i.test(ua)
       || (/whatsapp/i.test(ua) && !/mozilla/i.test(ua));
   }
+  function botNameOf(s) {
+    const ua = String((s && s.ua) || '');
+    const named = [
+      [/adsbot-google/i, 'AdsBot-Google'],
+      [/googlebot/i, 'Googlebot'],
+      [/google-inspectiontool/i, 'Google Inspection Tool'],
+      [/storebot-google/i, 'Google StoreBot'],
+      [/bingpreview/i, 'BingPreview'],
+      [/bingbot/i, 'Bingbot'],
+      [/duckduckbot/i, 'DuckDuckBot'],
+      [/baiduspider/i, 'Baiduspider'],
+      [/yandexbot/i, 'YandexBot'],
+      [/facebookexternalhit/i, 'FacebookExternalHit'],
+      [/facebot/i, 'Facebot'],
+      [/twitterbot/i, 'Twitterbot'],
+      [/linkedinbot/i, 'LinkedInBot'],
+      [/bytespider/i, 'Bytespider'],
+      [/semrush/i, 'Semrush'],
+      [/ahrefs/i, 'AhrefsBot'],
+      [/petalbot/i, 'PetalBot'],
+      [/gptbot/i, 'GPTBot'],
+      [/chatgpt-user/i, 'ChatGPT-User'],
+      [/claudebot|anthropic-ai/i, 'ClaudeBot'],
+      [/perplexitybot/i, 'PerplexityBot'],
+      [/ccbot/i, 'CCBot'],
+      [/amazonbot/i, 'Amazonbot'],
+      [/applebot/i, 'Applebot'],
+      [/slurp/i, 'Yahoo Slurp'],
+      [/lighthouse/i, 'Lighthouse'],
+      [/gtmetrix/i, 'GTmetrix'],
+      [/pingdom/i, 'Pingdom'],
+      [/headless/i, 'Headless'],
+      [/spider/i, 'Spider'],
+      [/crawler|crawl/i, 'Crawler'],
+    ];
+    for (let i = 0; i < named.length; i++) {
+      if (named[i][0].test(ua)) return named[i][1];
+    }
+    if (/whatsapp/i.test(ua) && !/mozilla/i.test(ua)) return 'WhatsApp';
+    const short = ua.replace(/\s+/g, ' ').trim().slice(0, 72);
+    if (s && s.bot === true) return short ? ('Unrecognised · ' + short) : 'Unrecognised, no user agent';
+    return short ? short.slice(0, 40) : 'Unrecognised, no user agent';
+  }
+  function annotateAttention(d) {
+    const visits = num(d.visits);
+    const opens = num(d.appOpens || d.openApp);
+    const cont = num(d.continuations);
+    const ms = num(d.ms);
+    const sourced = visits > 0 || opens > 0 || cont > 0;
+    d.attentionMs = sourced ? ms : 0;
+    d.orphanMs = sourced ? 0 : ms;
+    return d;
+  }
   function deriveSitePulse(sessions, days, now, zone) {
     sessions = sessions || [];
     days = days || [];
@@ -1020,6 +1073,16 @@
     function tsOf(s) { return num(s.startedAt || s.createdAt || s.lastAt); }
     const webAll = sessions.filter(function (s) { return String(s.kind || 'web') !== 'app'; });
     const bots = webAll.filter(function (s) { return sessionLooksBot(s); });
+    const botSeen = sessions.filter(function (s) { return sessionLooksBot(s); });
+    const botNameCounts = {};
+    botSeen.forEach(function (s) {
+      const label = botNameOf(s);
+      if (!label) return;
+      botNameCounts[label] = (botNameCounts[label] || 0) + 1;
+    });
+    const botNames = Object.keys(botNameCounts).map(function (label) {
+      return { label: label, n: botNameCounts[label] };
+    }).sort(function (a, b) { return b.n - a.n || a.label.localeCompare(b.label); });
     const selfs = webAll.filter(function (s) { return !!s.self && !sessionLooksBot(s); });
     const web = webAll.filter(function (s) { return !sessionLooksBot(s) && !s.self; });
     const appOnly = sessions.filter(function (s) { return String(s.kind || '') === 'app' && !sessionLooksBot(s) && !s.self; });
@@ -1058,10 +1121,12 @@
       if (h >= 0 && h < 24) hours[h].n += 1;
     });
     const dayRows = days.slice().sort(function (a, b) { return String(b.id || '').localeCompare(String(a.id || '')); });
+    dayRows.forEach(annotateAttention);
     const days30 = dayRows.filter(function (d) { return String(d.id || '') >= ymd30; });
     const dayVisits = days30.reduce(function (a, d) { return a + num(d.visits); }, 0);
     const dayApp = days30.reduce(function (a, d) { return a + num(d.appOpens || d.openApp); }, 0);
-    const dayMs = days30.reduce(function (a, d) { return a + num(d.ms); }, 0);
+    const dayMs = days30.reduce(function (a, d) { return a + num(d.attentionMs); }, 0);
+    const dayOrphan = days30.reduce(function (a, d) { return a + num(d.orphanMs); }, 0);
     const countryFromDays = {};
     days30.forEach(function (d) {
       const c = d.countries || {};
@@ -1104,6 +1169,7 @@
       tune_today: today.reduce(function (a, s) { return a + num(s.tune); }, 0),
       bots_today: bots.filter(function (s) { return tsOf(s) >= day0; }).length,
       bots: bots.length,
+      bot_names: botNames,
       self_today: selfs.filter(function (s) { return tsOf(s) >= day0; }).length,
       self: selfs.length,
       countries: countriesLive,
@@ -1129,6 +1195,7 @@
       day_visits: dayVisits,
       day_app: dayApp,
       day_ms: dayMs,
+      day_orphan_ms: dayOrphan,
       recent: web.slice().sort(function (a, b) { return num(b.lastAt || b.startedAt) - num(a.lastAt || a.startedAt); }).slice(0, 40),
     };
   }
@@ -1269,22 +1336,28 @@
     });
     users.forEach(function (u) {
       const lat = u.lastLat != null ? Number(u.lastLat) : (u.lat != null ? Number(u.lat) : NaN);
-      const lng = u.lastLng != null ? Number(u.lastLng) : Number(u.lastLng === 0 ? 0 : (u.lng != null ? u.lng : u.lon));
-      if (isFinite(lat) && isFinite(lng) && !(lat === 0 && lng === 0)) {
-        u.lastLat = lat;
-        u.lastLng = lng;
+      const lng = u.lastLng != null ? Number(u.lastLng) : (u.lng != null ? Number(u.lng) : (u.lon != null ? Number(u.lon) : NaN));
+      const hasUser = isFinite(lat) && isFinite(lng) && !(lat === 0 && lng === 0);
+      const b = beaconByUid[u.id];
+      const bLat = b && b.lat != null ? Number(b.lat) : NaN;
+      const bLng = b ? Number(b.lng != null ? b.lng : b.lon) : NaN;
+      const hasB = !!(b && isFinite(bLat) && isFinite(bLng) && !(bLat === 0 && bLng === 0));
+      const bNewer = hasB && num(b.ts) > num(u.lastLocationAt || 0);
+      if (hasB && (!hasUser || bNewer)) {
+        u.lastLat = bLat;
+        u.lastLng = bLng;
+        if (b.accuracy != null) u.lastAccuracy = b.accuracy;
+        if (b.placeName || b.place) u.lastPlace = b.placeName || b.place;
+        u.lastLocationAt = num(b.ts) || u.lastLocationAt;
+        u.lastLocationSource = b.source || u.lastLocationSource || 'beacon';
+        if (b.deviceId || b.id) u.lastDeviceId = b.deviceId || b.id;
+        if (b.label) u.lastDeviceLabel = b.label;
         return;
       }
-      const b = beaconByUid[u.id];
-      if (!b || b.lat == null || (b.lng == null && b.lon == null)) return;
-      u.lastLat = Number(b.lat);
-      u.lastLng = Number(b.lng != null ? b.lng : b.lon);
-      u.lastAccuracy = b.accuracy;
-      u.lastPlace = b.placeName || b.place || u.lastPlace || '';
-      u.lastLocationAt = num(b.ts);
-      u.lastLocationSource = b.source || 'beacon';
-      u.lastDeviceId = b.deviceId || b.id || '';
-      u.lastDeviceLabel = b.label || '';
+      if (!hasUser) return;
+      u.lastLat = lat;
+      u.lastLng = lng;
+      if (!u.lastPlace && hasB && (b.placeName || b.place)) u.lastPlace = b.placeName || b.place;
     });
 
     const liveUsers = users.filter(function (u) { return seenOf(u) >= activeCut; });
@@ -1683,27 +1756,48 @@
       identity: identity,
       costs: costs,
       audit: audit,
-      proof: {
-        handed: pings.filter(function (p) { return p.status === 'handed'; }).length,
-        failed: pings.filter(function (p) { return p.status === 'failed'; }).length,
-        arrived: receipts.filter(function (r) { return Number(r.arrivedAt) > 0; }).length,
-        opened: receipts.filter(function (r) { return Number(r.openedAt) > 0; }).length,
-        failed_why: (function () {
-          const bag = {};
-          pings.forEach(function (p) {
-            if (!p || p.status !== 'failed') return;
-            const k = String(p.reason || 'not recorded');
-            bag[k] = (bag[k] || 0) + 1;
-          });
-          return Object.keys(bag).map(function (k) { return k + ' · ' + bag[k]; });
-        })(),
-        paid: payments.filter(function (p) { return p.status === 'paid'; }).length,
-        payments: payments.length,
-      },
+      proof: (function () {
+        function pingAt(p) { return num(p && (p.sentAt || p.at || p.createdAt)); }
+        function plainWhy(raw) {
+          const k = String(raw || '').toLowerCase();
+          if (k === 'rate' || k === 'http-429') return 'too many at once (burst cap)';
+          if (k === 'no_token' || k === 'missing_token' || k === 'no-token') return 'phone has no push token';
+          if (k.indexOf('unregistered') >= 0 || k.indexOf('notregistered') >= 0 || k.indexOf('not_found') >= 0 || k.indexOf('not found') >= 0) return 'phone token expired';
+          if (k === 'no-reach' || k === 'http-0') return 'request never left the phone';
+          if (k === 'no-fcm-auth') return 'push service is not signed in';
+          if (!k || k === 'not recorded') return 'reason was not stored';
+          return String(raw).slice(0, 80);
+        }
+        function kindWord(t) {
+          const k = String(t || '');
+          if (k === 'broadcast_live') return 'live alert';
+          if (k === 'incoming_call') return 'call';
+          if (k === 'band_invite') return 'band invite';
+          return k || 'alert';
+        }
+        const failedAll = pings.filter(function (p) { return p && p.status === 'failed'; });
+        const failedToday = failedAll.filter(function (p) { return pingAt(p) >= day0; });
+        const whySource = failedToday.length ? failedToday : failedAll;
+        const bag = {};
+        whySource.forEach(function (p) {
+          const k = kindWord(p.type) + ' · ' + plainWhy(p.reason);
+          bag[k] = (bag[k] || 0) + 1;
+        });
+        return {
+          handed: pings.filter(function (p) { return p.status === 'handed'; }).length,
+          failed: failedAll.length,
+          failed_today: failedToday.length,
+          arrived: receipts.filter(function (r) { return Number(r.arrivedAt) > 0; }).length,
+          opened: receipts.filter(function (r) { return Number(r.openedAt) > 0; }).length,
+          failed_why: Object.keys(bag).map(function (k) { return k + ' · ' + bag[k]; }),
+          paid: payments.filter(function (p) { return p.status === 'paid'; }).length,
+          payments: payments.length,
+        };
+      })(),
       payments: payments,
       knownApps: raw.knownApps || [],
       gaps: {
-        notifications: 'Handed means the push service accepted the alert. Failed means it refused, the phone had no token, or the request never arrived. The reason is kept on each failure. A live start used to stop after 24 alerts in 10 minutes, so the rest of a circle were counted here. That cap is now 120.',
+        notifications: 'Failed to hand off is today only, on this phone’s clock. The line under it says why, and names the kind (call, live alert, band). “Too many at once” means the burst cap refused them. It does not mean the push service is down. Older failures stay in the loaded history and are not this call. A live start and a call no longer share one cap. A repeat ring of the same call is one alert, not four.',
         search: 'Find a Callsign, email, name or account id. Looks up the live handle map, not only the first loaded page of accounts.',
         payments: 'A payment is paid only after the signed payment notice says so. Until that notice is connected, nothing is marked paid.',
         content_hub: 'Sports, movies and channels are not in the product yet.',

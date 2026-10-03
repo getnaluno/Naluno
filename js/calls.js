@@ -1635,6 +1635,61 @@ function teardownCallConnection(){
   callActionInProgress = false;
 }
 
+function nalunoTalkSeconds(){
+  let fromClock = 0;
+  try{
+    const at = window.__nalunoConnectedAt || 0;
+    if(at > 0) fromClock = Math.max(0, Math.round((Date.now() - at) / 1000));
+  }catch(_){}
+  const fromTimer = Math.max(0, Math.round(Number(callSeconds) || 0));
+  return Math.max(fromClock, fromTimer);
+}
+/* Written once, from whichever phone still has the clock, before teardown
+   wipes it. The caller used to be the only writer, and a hangup from the
+   other phone never called this at all, so a finished call was invisible
+   in Records. */
+function nalunoRememberCall(reason){
+  const callId = activeCallId;
+  if(!callId || window.__nalunoNotedCall === callId) return;
+  const seconds = nalunoTalkSeconds();
+  const ok = seconds >= 1;
+  window.__nalunoNotedCall = callId;
+  const meta = window.__nalunoCallPeers || {};
+  try{
+    if(typeof nalunoNoteTraffic === 'function' && typeof currentUser !== 'undefined' && currentUser){
+      nalunoNoteTraffic({
+        kind: 'call',
+        ok: ok,
+        callId: callId,
+        actorUid: currentUser.uid,
+        peerUid: meta.peerUid || '',
+        actorName: meta.actorName || (currentProfile && currentProfile.name) || '',
+        peerName: meta.peerName || '',
+        seconds: seconds,
+        status: ok ? 'connected' : (reason || 'ended'),
+      });
+    }
+  }catch(_){}
+  try{
+    if(fbDb && seconds > 0){
+      fbDb.collection('calls').doc(callId).update({
+        durationSec: seconds,
+        connectedAt: window.__nalunoConnectedAt || (Date.now() - seconds * 1000),
+      }).catch(function(){});
+    }
+  }catch(_){}
+}
+function nalunoStampCallConnected(){
+  try{
+    if(!activeCallId || !fbDb || window.__nalunoStampedCall === activeCallId) return;
+    if(!window.__nalunoConnectedAt) window.__nalunoConnectedAt = Date.now();
+    window.__nalunoConnectedCall = activeCallId;
+    window.__nalunoStampedCall = activeCallId;
+    fbDb.collection('calls').doc(activeCallId).update({
+      connectedAt: window.__nalunoConnectedAt,
+    }).catch(function(){});
+  }catch(_){}
+}
 /* Single path for ending a live call from either side.
    Captures callId BEFORE teardown nulls it, writes status, then fully closes UI. */
 function endActiveCall(reason){
@@ -1650,30 +1705,17 @@ function endActiveCall(reason){
   stopCallerTone();
   stopRingtone();
   if(callId && fbDb){
+    const talk = nalunoTalkSeconds();
     fbDb.collection('calls').doc(callId).update({
       status: 'ended',
       endedAt: firebase.firestore.FieldValue.serverTimestamp(),
       endedBy: currentUser ? currentUser.uid : null,
       endReason: reason || 'hangup',
+      durationSec: talk,
+      connectedAt: (window.__nalunoConnectedAt || (talk ? Date.now() - talk * 1000 : 0)) || 0,
     }).catch(()=>{});
   }
-  try{
-    const meta = window.__nalunoCallPeers || {};
-    const connected = !!(window.__nalunoConnectedAt && window.__nalunoConnectedCall === callId);
-    const seconds = connected ? Math.max(0, Math.round((Date.now() - window.__nalunoConnectedAt) / 1000)) : 0;
-    if(iAmCaller && callId && typeof nalunoNoteTraffic === 'function'){
-      nalunoNoteTraffic({
-        kind: 'call',
-        ok: connected,
-        actorUid: currentUser ? currentUser.uid : '',
-        peerUid: meta.peerUid || '',
-        actorName: (meta.actorName || (currentProfile && currentProfile.name) || ''),
-        peerName: meta.peerName || '',
-        seconds: seconds,
-        status: connected ? 'connected' : (reason || 'failed'),
-      });
-    }
-  }catch(_){}
+  try{ nalunoRememberCall(reason || 'hangup'); }catch(_){}
   try{ window.__nalunoConnectedAt = 0; }catch(_){}
   teardownCallConnection();
   closeCallOverlay();
@@ -1778,8 +1820,9 @@ function attachConnectionWatchdogs(pc){
     console.log('[call] connection state:', s);
     if(s === 'connected'){
       try{ window.__nalunoConnectedCall = activeCallId; }catch(_){}
-      try{ nalunoMarkIfMediaUp(pc); }catch(_){}
       try{ if(peerConnection === pc && !window.__nalunoConnectedAt) window.__nalunoConnectedAt = Date.now(); }catch(_){}
+      try{ nalunoStampCallConnected(); }catch(_){}
+      try{ nalunoMarkIfMediaUp(pc); }catch(_){}
       try{ if(typeof trackMetric === 'function') trackMetric('call_connected', {}); }catch(_){}
       try{
         pc.getSenders().forEach(snd=>{
@@ -1799,8 +1842,9 @@ function attachConnectionWatchdogs(pc){
     console.log('[call] ICE connection state:', s);
     if(s === 'connected' || s === 'completed'){
       try{ window.__nalunoConnectedCall = activeCallId; }catch(_){}
-      try{ nalunoMarkIfMediaUp(pc); }catch(_){}
       try{ if(peerConnection === pc && !window.__nalunoConnectedAt) window.__nalunoConnectedAt = Date.now(); }catch(_){}
+      try{ nalunoStampCallConnected(); }catch(_){}
+      try{ nalunoMarkIfMediaUp(pc); }catch(_){}
       try{ ensureRemoteVideoPlaying(); }catch(_){}
       try{ scheduleFilteredUpgrade(pc); }catch(_){}
     }
@@ -2715,6 +2759,7 @@ async function startRealCallInner(c){
     }
     // React to remote hangup even if we're mid-transition (not only when incall is active).
     if(d.status === 'ended' && $('callOverlay').classList.contains('active')){
+      try{ nalunoRememberCall('remote'); }catch(_){}
       clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
       if(notifyRepeatInterval){ try{ clearInterval(notifyRepeatInterval); }catch(_){} try{ clearTimeout(notifyRepeatInterval); }catch(_){} notifyRepeatInterval = null; }
       stopCallerTone();
@@ -2908,6 +2953,7 @@ function nalunoWatchAnsweredCall(callRef, callId){
     if(activeCallId !== callId) return;
     const d = snap.data();
     if(d && d.status === 'ended' && $('callOverlay').classList.contains('active')){
+      try{ nalunoRememberCall('remote'); }catch(_){}
       clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
       if(notifyRepeatInterval){ try{ clearInterval(notifyRepeatInterval); }catch(_){} try{ clearTimeout(notifyRepeatInterval); }catch(_){} notifyRepeatInterval = null; }
       stopCallerTone();
