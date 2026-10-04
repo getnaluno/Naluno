@@ -30,7 +30,7 @@
     creator_support_enabled: { label: 'Creator Support', group: 'Money', note: 'Donate to a creator. Lives inside Broadcast, below Circle — not as a nav tab. Off = the payment step is hidden. On = a person can be taken to pay. Nothing is marked paid until the payment is confirmed. Contribution points stay separate from this.' },
     community_rewards_enabled: { label: 'Community Rewards', group: 'Money', note: 'Pool split. Off until switched on.' },
     real_payouts_enabled: { label: 'Real payouts', group: 'Money', note: 'Creator Support only. Off: Support is collected by Naluno and held for the creator. On: a new Support payment goes to a creator whose Stripe account is ready, less Naluno’s share. Nothing already collected is moved. This does not pay the monetisation list.' },
-    monetisation_phase_enabled: { label: 'Monetisation phase', group: 'Money', note: 'Separate from Creator Support and from Real payouts. Off: Naluno can still spot creators who clear the partner bar and tell them. On: those creators are who Naluno will pay. Turning it on does not move money. The bar is a living Circle: 400 joins, that Circle watches and talks over 12 months, 12 original Broadcasts, half a year on Naluno. Not YouTube’s hour count, not a Toga score, and not Creator Support.' },
+    monetisation_phase_enabled: { label: 'Monetisation phase', group: 'Money', note: 'Separate from Creator Support and from Real payouts. Off: Naluno can still spot creators who clear the partner bar and tell them. On: those creators are who Naluno will pay. Turning it on does not move money. The bar is 400 Circle joins, 8,000 Broadcast views and 200 talks over 12 months, 12 original Broadcasts, and 120 days on Naluno. Not a Toga score and not Creator Support.' },
     content_hub_enabled: { label: 'Content Hub', group: 'Hub', note: 'Sports / movies / channels. Not built yet.' },
     sports_enabled: { label: 'Sports', group: 'Hub', note: 'Requires Content Hub.' },
     movies_enabled: { label: 'Movies', group: 'Hub', note: 'Requires Content Hub.' },
@@ -1157,39 +1157,20 @@
       return num(b.score) - num(a.score);
     });
   }
-  /* Partner bar. Creator Support is already open, so this is not the
-     early door, and it is not YouTube’s door either.
-     YouTube pays 1,000 subscribers and thousands of watch hours.
-     A creator who can win that has no reason to build it here.
-     Naluno pays a smaller Circle that comes back and talks, on a shelf
-     of original Broadcasts, after half a year on Naluno.
-     Views alone never clear it. A day of invites never clears it.
-     A bigger Circle owes more watches and more talk, so an audience
-     imported from somewhere else still has to live here.
-     Signals, reposts, and anything under a minute do not count.
-     Uganda is in. There is no score dial. */
+  /* Who Naluno will pay. Creator Support is already open.
+     Flat gates, no dial. Signals, reposts, and anything under a minute
+     do not count. A day of invites does not clear it. */
   const MONETISE = {
     circle: 400,
     views12: 8000,
-    viewsPerCircle: 12,
     talk12: 200,
-    circlePerTalk: 2,
     originals: 12,
     recentOriginals: 6,
     recentMs: 90 * 86400000,
-    accountMs: 180 * 86400000,
+    accountMs: 120 * 86400000,
     minDurationSec: 60,
     months: 12,
   };
-  function needViews(circle) {
-    const depth = circle * MONETISE.viewsPerCircle;
-    return depth > MONETISE.views12 ? depth : MONETISE.views12;
-  }
-  function needTalk(circle) {
-    const per = MONETISE.circlePerTalk || 2;
-    const depth = Math.ceil(circle / per);
-    return depth > MONETISE.talk12 ? depth : MONETISE.talk12;
-  }
   function sumMonthPrefix(row, prefix) {
     let n = 0;
     const re = new RegExp('^' + prefix + '\\d{4}-\\d{2}$');
@@ -1285,15 +1266,13 @@
       else if (suspended) why = 'suspended';
       else if (hiddenViews) why = 'not sharing views';
       else if (struck[id]) why = 'open report';
-      else if (created > 0 && (now - created) < MONETISE.accountMs) why = 'account under 180 days';
+      else if (created > 0 && (now - created) < MONETISE.accountMs) why = 'account under 120 days';
       else {
         if (w.originals < MONETISE.originals) misses.push('Broadcasts ' + w.originals + '/' + MONETISE.originals);
         if (w.recent < MONETISE.recentOriginals) misses.push('Recent ' + w.recent + '/' + MONETISE.recentOriginals);
         if (circle < MONETISE.circle) misses.push('Circle ' + circle + '/' + MONETISE.circle);
-        const viewLine = needViews(circle);
-        const talkLine = needTalk(circle);
-        if (views12 < viewLine) misses.push('Views ' + views12 + '/' + viewLine);
-        if (talk12 < talkLine) misses.push('Talk ' + talk12 + '/' + talkLine);
+        if (views12 < MONETISE.views12) misses.push('Views ' + views12 + '/' + MONETISE.views12);
+        if (talk12 < MONETISE.talk12) misses.push('Talk ' + talk12 + '/' + MONETISE.talk12);
         why = misses[0] || '';
       }
       const eligible = !why;

@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261004f';
+  const BUILD = '20261004h';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -4523,9 +4523,8 @@
           ['Views in 12 months', bar.views12 || 8000],
         ])
         + card('Who is eligible',
-          '<p class="sub">This is not Creator Support and not Real payouts. Creator Support is open from the start, inside a Broadcast. YouTube does not do that. This list is who Naluno will pay for a living Circle, and only after the phase is on.</p>'
-          + '<p class="sub">YouTube pays 1,000 subscribers and thousands of watch hours. That is YouTube’s game. A creator who can win it has no reason to build it here. Naluno pays a smaller Circle that comes back and talks, on original Broadcasts, after half a year here. Views alone do not clear it. A day of invites does not clear it. A bigger Circle owes more watches and more talk, so an audience brought in from somewhere else still has to live on Naluno.</p>'
-          + '<p class="sub">All of these, together. ' + (bar.circle || 400) + ' Circle joins on record. In the last 12 months, ' + (bar.views12 || 8000) + ' Broadcast views, and at least ' + (bar.viewsPerCircle || 12) + ' views for every Circle join. ' + (bar.talk12 || 200) + ' talks from other people, and at least one talk for every ' + (bar.circlePerTalk || 2) + ' joins. ' + (bar.originals || 12) + ' original Broadcasts still up, ' + (bar.recentOriginals || 6) + ' of them from the last 90 days. A repost does not count. A recorded length under a minute does not count. Signals do not count. The account is at least 180 days old, sharing views, not suspended, not closed, and has no open report. One Wireline note, labelled Naluno, goes out the first time they clear it. Turning the phase on does not move money.</p>'
+          '<p class="sub">This is not Creator Support and not Real payouts. Creator Support is open from the start, inside a Broadcast. This list is who Naluno will pay, and only after the phase is on.</p>'
+          + '<p class="sub">All of these, together. ' + (bar.circle || 400) + ' Circle joins on record. ' + (bar.views12 || 8000) + ' Broadcast views in the last 12 months. ' + (bar.talk12 || 200) + ' talks from other people in those 12 months. ' + (bar.originals || 12) + ' original Broadcasts still up, ' + (bar.recentOriginals || 6) + ' of them from the last 90 days. A repost does not count. A recorded length under a minute does not count. Signals do not count. The account has lived for 120 days, is sharing views, is not suspended, is not closed, and has no open report. One Wireline note, labelled Naluno, goes out the first time they clear it. Turning the phase on does not move money.</p>'
           + '<div class="row"><button type="button" class="ghost ccGo" data-go="flags">Open Flags</button></div>'
           + (cards || '<p class="sub">No creator is on this list yet.</p>'))
         + card('Uganda mobile money',

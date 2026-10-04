@@ -1968,11 +1968,24 @@ $('bspaceBack').onclick = closeBroadcastSpace;
   const strandBody = $('bspaceStrandBody');
   if(strandBtn && strandBody && !strandBtn.__tidy){
     strandBtn.__tidy = true;
-    strandBtn.onclick = function(){
+    strandBtn.onclick = function(e){
+      if(e){ e.preventDefault(); e.stopPropagation(); }
       const open = strandBody.hasAttribute('hidden');
       if(open) strandBody.removeAttribute('hidden');
       else strandBody.setAttribute('hidden', '');
       strandBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+  }
+  const moneyBtn = $('bspaceMonetiseToggle');
+  const moneyBody = $('bspaceMonetiseBody');
+  if(moneyBtn && moneyBody && !moneyBtn.__tidy){
+    moneyBtn.__tidy = true;
+    moneyBtn.onclick = function(e){
+      if(e){ e.preventDefault(); e.stopPropagation(); }
+      const open = moneyBody.hasAttribute('hidden');
+      if(open) moneyBody.removeAttribute('hidden');
+      else moneyBody.setAttribute('hidden', '');
+      moneyBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
     };
   }
 })();
