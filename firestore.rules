@@ -41,12 +41,11 @@ service cloud.firestore {
         && request.resource.data.answers[request.resource.data.answers.size() - 1].text.size() > 0
         && request.resource.data.answers[request.resource.data.answers.size() - 1].text.size() < 500;
     }
-    /* Either direction of a connection. A one-sided write used to let someone
-       watch a Signal (their own list had the other person) while the view
-       write looked only at the owner's list and was denied. */
+    /* Both sides. Writing yourself onto someone else's list is not enough
+       to read their Signals. Connect writes your own entry first. */
     function signalConnected(ownerUid) {
       return exists(/databases/$(database)/documents/users/$(ownerUid)/connections/$(request.auth.uid))
-        || exists(/databases/$(database)/documents/users/$(request.auth.uid)/connections/$(ownerUid));
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid)/connections/$(ownerUid));
     }
     /* Numeric bump from a member: never decrease, never jump more than 1
        in a single write. FieldValue.increment(1) passes. A rewritten
@@ -100,28 +99,45 @@ service cloud.firestore {
         ? monthKeyOf(request.time.year() + 1, 1)
         : monthKeyOf(request.time.year(), request.time.month() + 1);
     }
-    /* A creator may change their own Toga settings, but may not write their
-       own numbers up. They could set any score before. */
+    /* A creator may change their own Toga settings and may lower a total
+       when they delete a Broadcast. They may not write their own numbers up. */
+    function notUp(field) {
+      return numOf(request.resource.data, field) <= numOf(resource.data, field);
+    }
     function ownerTogaHonest() {
-      return upByAtMostOne('viewsTotal') && upByAtMostOne('viewsMonth')
-        && upByAtMostOne('circleMonth') && upByAtMostOne('engageMonth') && upByAtMostOne('scoreMonth')
-        && upByAtMostOne('mv_' + togaKeyNow()) && upByAtMostOne('mc_' + togaKeyNow()) && upByAtMostOne('me_' + togaKeyNow())
-        && upByAtMostOne('mv_' + togaKeyPrev()) && upByAtMostOne('mc_' + togaKeyPrev()) && upByAtMostOne('me_' + togaKeyPrev())
-        && upByAtMostOne('mv_' + togaKeyNext()) && upByAtMostOne('mc_' + togaKeyNext()) && upByAtMostOne('me_' + togaKeyNext());
+      return notUp('viewsTotal') && notUp('viewsMonth')
+        && notUp('circleMonth') && notUp('engageMonth') && notUp('scoreMonth')
+        && notUp('mv_' + togaKeyNow()) && notUp('mc_' + togaKeyNow()) && notUp('me_' + togaKeyNow())
+        && notUp('mv_' + togaKeyPrev()) && notUp('mc_' + togaKeyPrev()) && notUp('me_' + togaKeyPrev())
+        && notUp('mv_' + togaKeyNext()) && notUp('mc_' + togaKeyNext()) && notUp('me_' + togaKeyNext());
     }
     function ownerTogaCreateHonest() {
-      return createdAtMostOne('viewsTotal') && createdAtMostOne('viewsMonth')
-        && createdAtMostOne('circleMonth') && createdAtMostOne('engageMonth') && createdAtMostOne('scoreMonth')
-        && createdAtMostOne('mv_' + togaKeyNow()) && createdAtMostOne('mc_' + togaKeyNow()) && createdAtMostOne('me_' + togaKeyNow())
-        && createdAtMostOne('mv_' + togaKeyPrev()) && createdAtMostOne('mc_' + togaKeyPrev()) && createdAtMostOne('me_' + togaKeyPrev())
-        && createdAtMostOne('mv_' + togaKeyNext()) && createdAtMostOne('mc_' + togaKeyNext()) && createdAtMostOne('me_' + togaKeyNext());
+      return numOf(request.resource.data, 'viewsTotal') == 0 && numOf(request.resource.data, 'viewsMonth') == 0
+        && numOf(request.resource.data, 'circleMonth') == 0 && numOf(request.resource.data, 'engageMonth') == 0
+        && numOf(request.resource.data, 'scoreMonth') == 0
+        && numOf(request.resource.data, 'mv_' + togaKeyNow()) == 0 && numOf(request.resource.data, 'mc_' + togaKeyNow()) == 0 && numOf(request.resource.data, 'me_' + togaKeyNow()) == 0
+        && numOf(request.resource.data, 'mv_' + togaKeyPrev()) == 0 && numOf(request.resource.data, 'mc_' + togaKeyPrev()) == 0 && numOf(request.resource.data, 'me_' + togaKeyPrev()) == 0
+        && numOf(request.resource.data, 'mv_' + togaKeyNext()) == 0 && numOf(request.resource.data, 'mc_' + togaKeyNext()) == 0 && numOf(request.resource.data, 'me_' + togaKeyNext()) == 0;
     }
-    /* Someone joining or leaving a Circle changes only their own uid. */
+    /* Someone joining or leaving changes only their own uid.
+       A member inviting adds people and removes nobody. */
     function memberChangeIsSelf() {
       let before = ('memberUids' in resource.data && resource.data.memberUids is list) ? resource.data.memberUids : [];
       let after = ('memberUids' in request.resource.data && request.resource.data.memberUids is list) ? request.resource.data.memberUids : [];
       return after.toSet().difference(before.toSet()).hasOnly([request.auth.uid])
         && before.toSet().difference(after.toSet()).hasOnly([request.auth.uid]);
+    }
+    function memberAddsOnly() {
+      let before = ('memberUids' in resource.data && resource.data.memberUids is list) ? resource.data.memberUids : [];
+      let after = ('memberUids' in request.resource.data && request.resource.data.memberUids is list) ? request.resource.data.memberUids : [];
+      return before.toSet().difference(after.toSet()).size() == 0
+        && after.toSet().difference(before.toSet()).size() > 0
+        && after.toSet().difference(before.toSet()).size() <= 8
+        && after.size() <= 80;
+    }
+    function inThisBand() {
+      return ('memberUids' in resource.data && resource.data.memberUids is list && request.auth.uid in resource.data.memberUids)
+        || resource.data.createdBy == request.auth.uid;
     }
     /* Counters a viewer may move: up by one per write, never down. */
     function engagementBumpsHonest() {
@@ -149,11 +165,27 @@ service cloud.firestore {
         && (!('color' in d) || d.color == null || (d.color is string && d.color.matches('^#[0-9A-Fa-f]{3,8}$')))
         && (!('photoUrl' in d) || d.photoUrl == null || (d.photoUrl is string && d.photoUrl.matches('^https?://[^"<>]*$')));
     }
+    function connectionRequestClean() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['name', 'handle', 'color', 'photo', 'photoUrl', 'at'])
+        && d.name is string && d.name.size() > 0 && d.name.size() <= 80
+        && (!('handle' in d) || d.handle == null || (d.handle is string && d.handle.size() <= 40))
+        && (!('color' in d) || d.color == null || (d.color is string && d.color.matches('^#[0-9A-Fa-f]{3,8}$')))
+        && (!('photoUrl' in d) || d.photoUrl == null || (d.photoUrl is string && d.photoUrl.matches('^https?://[^"<>]*$')))
+        && d.at is int
+        && request.resource.size < 120000;
+    }
     /* A member may close their own Callsign. They may not lift a
        suspension or restriction the desk put on them. */
     function ownerKeepsModeration() {
       return !request.resource.data.diff(resource.data).affectedKeys()
         .hasAny(['suspended', 'suspendedReason', 'suspendedAt', 'restricted', 'restrictedReason', 'restrictedAt', 'trustedPublisher', 'sexualReports', 'known', 'knownUntil', 'grant', 'rightsStrikes']);
+    }
+    /* The day the account was created stays. A later profile save may
+       not move it. The first write, when the field is still absent, may set it. */
+    function keepsJoinedAt() {
+      return !('createdAt' in resource.data)
+        || request.resource.data.createdAt == resource.data.createdAt;
     }
     /* Creators may edit their Broadcast. They may not list, unhide, or
        clear a hold the desk put on it. */
@@ -209,7 +241,7 @@ service cloud.firestore {
       ) || (
         isOwner(uid) && (
           !('accountState' in resource.data) || resource.data.accountState != 'closed'
-        ) && ownerKeepsModeration()
+        ) && ownerKeepsModeration() && keepsJoinedAt()
       );
       /* Private vault: recovery email, Compass lock, E2E backup, desk
          password hash. Owner + operator. Call wake tokens stay on the
@@ -327,15 +359,27 @@ service cloud.firestore {
 
     // ---- Real connections (replacing hardcoded demo contacts) ----
     // A connection doc at users/{uid}/connections/{otherUid} means "otherUid appears in
-    // uid's Frequencies list." Connecting is mutual and instant in Phase 1 (no request/
-    // accept flow yet) — writing the *other* person's mirror entry is only allowed when
-    // that entry's id is literally you, so you can only ever add yourself to someone
-    // else's list, never edit anything else about their account.
+    // uid's Frequencies list." A search Connect is a request the other person accepts.
+    // Spark, in person, still writes both sides. The mirror write is only your own
+    // uid, and only after your side already exists.
     match /users/{uid}/connections/{otherUid} {
       allow read: if isOwner(uid);
       allow delete: if isSignedIn() && (isOwner(uid) || otherUid == request.auth.uid);
       allow create, update: if isOwner(uid)
-        || (isSignedIn() && otherUid == request.auth.uid && connectionEntryClean());
+        || (isSignedIn() && otherUid == request.auth.uid && connectionEntryClean()
+            && exists(/databases/$(database)/documents/users/$(request.auth.uid)/connections/$(uid)));
+    }
+    /* A Connect request. The sender creates it on the other person's list.
+       Either person may remove it (accept already copied it, or it was declined). */
+    match /users/{uid}/connectionRequests/{fromUid} {
+      allow get: if isOwner(uid) || (isSignedIn() && fromUid == request.auth.uid);
+      allow list: if isOwner(uid);
+      allow create: if isSignedIn()
+        && fromUid == request.auth.uid
+        && uid != request.auth.uid
+        && connectionRequestClean();
+      allow update: if false;
+      allow delete: if isOwner(uid) || (isSignedIn() && fromUid == request.auth.uid);
     }
 
     // ---- Wireline (1:1 threads) ----
@@ -375,7 +419,10 @@ service cloud.firestore {
         allow create: if isSignedIn()
           && request.resource.data.from == request.auth.uid
           && request.resource.data.to == uid
-          && id.matches('^[A-Za-z0-9_.:-]{1,200}$');
+          && id.matches('^[A-Za-z0-9_.:-]{1,200}$')
+          && request.resource.size < 200000
+          && (!('naluno' in request.resource.data) || request.resource.data.naluno == false || isSuper())
+          && (!('text' in request.resource.data) || (request.resource.data.text is string && request.resource.data.text.size() < 4000));
         allow update: if false;
       }
       match /receipts/{id} {
@@ -444,8 +491,27 @@ service cloud.firestore {
       // and band-list.js so no existing write path breaks.
       allow update: if isSignedIn() && (
         resource.data.createdBy == request.auth.uid
-        || request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['memberUids', 'lastEmptiedAt', 'messageEpoch', 'bellAt', 'bellBy'])
+        || (
+          inThisBand()
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['memberUids', 'lastEmptiedAt', 'messageEpoch', 'bellAt', 'bellBy'])
+          && (
+            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['memberUids'])
+            || memberChangeIsSelf()
+            || memberAddsOnly()
+          )
+          && (
+            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['bellBy'])
+            || request.resource.data.bellBy == request.auth.uid
+          )
+        )
+        || (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberUids'])
+          && memberChangeIsSelf()
+          && ('memberUids' in request.resource.data)
+          && request.resource.data.memberUids is list
+          && request.auth.uid in request.resource.data.memberUids
+        )
       );
 
       match /presence/{uid} {
@@ -793,7 +859,8 @@ service cloud.firestore {
       allow create: if isSignedIn() && (
         (request.auth.uid == uid && ownerTogaCreateHonest())
         || (
-          request.resource.data.keys().hasOnly(['viewsMonth', 'circleMonth', 'engageMonth', 'scoreMonth', 'viewsTotal',
+          request.auth.uid != uid
+          && request.resource.data.keys().hasOnly(['viewsMonth', 'circleMonth', 'engageMonth', 'scoreMonth', 'viewsTotal',
                       'monthKey', 'featuredBroadcastId', 'updatedAt',
                       'mv_' + request.resource.data.monthKey,
                       'mc_' + request.resource.data.monthKey,
@@ -811,7 +878,8 @@ service cloud.firestore {
       allow update: if isSignedIn() && (
         (request.auth.uid == uid && ownerTogaHonest())
         || (
-          request.resource.data.diff(resource.data).affectedKeys()
+          request.auth.uid != uid
+          && request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['viewsMonth', 'circleMonth', 'engageMonth', 'scoreMonth', 'viewsTotal',
                       'monthKey', 'featuredBroadcastId', 'updatedAt',
                       'mv_' + request.resource.data.monthKey,
@@ -1229,6 +1297,7 @@ service cloud.firestore {
         && request.resource.data.kind in ['web', 'app']
         && request.resource.data.startedAt is int
         && request.resource.data.ms is int
+        && request.resource.size < 4096
         && request.resource.data.keys().hasOnly(['vid', 'kind', 'path', 'land', 'trail', 'exit', 'source', 'hash', 'ref', 'utm', 'country', 'region', 'city', 'tz', 'lang', 'device', 'os', 'browser', 'screen', 'startedAt', 'lastAt', 'ms', 'openApp', 'contact', 'tune', 'invest', 'scroll', 'ua', 'standalone', 'conn', 'fresh', 'engaged', 'five', 'bot', 'self']);
       allow update: if request.resource.data.vid == resource.data.vid
         && request.resource.data.kind == resource.data.kind
@@ -1236,6 +1305,7 @@ service cloud.firestore {
         && request.resource.data.ms is int
         && request.resource.data.ms >= resource.data.ms
         && request.resource.data.ms < 172800000
+        && request.resource.size < 4096
         && request.resource.data.keys().hasOnly(['vid', 'kind', 'path', 'land', 'trail', 'exit', 'source', 'hash', 'ref', 'utm', 'country', 'region', 'city', 'tz', 'lang', 'device', 'os', 'browser', 'screen', 'startedAt', 'lastAt', 'ms', 'openApp', 'contact', 'tune', 'invest', 'scroll', 'ua', 'standalone', 'conn', 'fresh', 'engaged', 'five', 'bot', 'self']);
       allow delete: if isOperator();
     }
@@ -1253,9 +1323,11 @@ service cloud.firestore {
         && numOf(request.resource.data, 'engaged') <= 1
         && numOf(request.resource.data, 'continuations') <= 1
         && contIdsOk(1)
-        && (numOf(request.resource.data, 'ms') == 0 || dayHasAttentionSource());
+        && (numOf(request.resource.data, 'ms') == 0 || dayHasAttentionSource())
+        && request.resource.size < 65536;
       allow update: if day.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
         && request.resource.data.keys().size() < 80
+        && request.resource.size < 65536
         && bumpedAtMost('visits', 1)
         && bumpedAtMost('uniques', 1)
         && bumpedAtMost('openApp', 1)
