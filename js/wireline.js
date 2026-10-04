@@ -11,6 +11,25 @@
    'me' messages carry status: 'sent' | 'delivered' | 'read' — driven by the recipient's
    signal strength, same way replies are: off-the-grid contacts never advance past 'sent'. */
 let wirelineThreads = {}; // { [contactId]: [{ id, from, type:'text'|'voice', text?, dataUrl?, duration?, waveform?, ts, read?, status? }] }
+const NALUNO_WIRE_ID = 900000001;
+function ensureNalunoWireContact(){
+  if(typeof contacts === 'undefined' || !contacts || !contacts.find) return null;
+  let c = contacts.find(function(x){ return x && (x.naluno || x.id === NALUNO_WIRE_ID); });
+  if(!c){
+    c = {
+      id: NALUNO_WIRE_ID,
+      name: 'Naluno',
+      initials: 'N',
+      color: '#143D2A',
+      isReal: false,
+      naluno: true,
+      firebaseUid: '',
+    };
+    contacts.push(c);
+  }
+  return c;
+}
+try{ window.ensureNalunoWireContact = ensureNalunoWireContact; }catch(_){}
 let activeThreadContactId = null;
 // Empty now — real threads load live from Firestore per-contact when opened (see
 // openThread), and demo contacts that used to seed this no longer exist.
@@ -97,6 +116,9 @@ async function hydrateWirelineFromStore(){
   try{
     if(typeof NalunoChatStore === 'undefined') return;
     const msgs = await NalunoChatStore.listAllMessages();
+    if(msgs.some(function(m){ return m && (m.naluno || m.contactId === NALUNO_WIRE_ID); })){
+      try{ ensureNalunoWireContact(); }catch(_){}
+    }
     msgs.forEach(function(m){
       let cid = m.contactId;
       if(cid == null && m.otherUid){
@@ -831,6 +853,11 @@ function openThread(contactId){
   applyContactAvatarToEl($('threadAvatar'), c);
   $('threadName').setAttribute('data-known-uid', c.firebaseUid || '');
   $('threadName').textContent = c.name;
+  const input = $('threadInput');
+  if(input){
+    input.disabled = !!c.naluno;
+    input.placeholder = c.naluno ? 'A note from Naluno' : 'Send a signal…';
+  }
   updateThreadStatusLabel();
   $('threadInput').value = '';
   updateComposerButtons();
@@ -1550,6 +1577,7 @@ function slipBubbleHtml(m){
 async function sendSlipFile(file){
   const c = contacts.find(x=>x.id===activeThreadContactId);
   if(!c || !file) return;
+  if(c.naluno){ toast('This note is from Naluno. It isn’t a conversation you reply to.'); return; }
   const isVideo = (file.type || '').indexOf('video') === 0 || /\.(mp4|webm|mov|m4v)$/i.test(file.name || '');
   const kind = isVideo ? 'video' : 'photo';
   const vaultKey = 'slip-' + Date.now() + '-' + Math.random().toString(36).slice(2);
@@ -1623,6 +1651,7 @@ async function sendSlipFile(file){
 async function sendDocumentFile(file){
   const c = contacts.find(x=>x.id===activeThreadContactId);
   if(!c || !file) return;
+  if(c.naluno){ toast('This note is from Naluno. It isn’t a conversation you reply to.'); return; }
   const name = (file.name || 'document').slice(0, 120);
   const vaultKey = 'doc-' + Date.now() + '-' + Math.random().toString(36).slice(2);
   if(typeof vaultIngestFile === 'function'){
@@ -1710,6 +1739,10 @@ function sendThreadMessage(){
   if(sendThreadMessage._lock) return;
   const c = contacts.find(x=>x.id===activeThreadContactId);
   if(!c) return;
+  if(c.naluno){
+    toast('This note is from Naluno. It isn’t a conversation you reply to.');
+    return;
+  }
   // Clear the composer FIRST. Waiting on Firestore/encrypt was why the
   // text sat in the box for seconds and people tapped Send again.
   $('threadInput').value = '';

@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261004b';
+  const BUILD = '20261004f';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -68,7 +68,7 @@
     ['ads', 'Ads'], ['users', 'Users'], ['identity', 'Identity'], ['broadcast', 'Broadcast'],
     ['signals', 'Signals'], ['journey', 'Journey'], ['creators', 'Creators'], ['toga', 'Toga'],
     ['community', 'Community'], ['trust', 'Trust'], ['safety', 'Safety'], ['legal', 'Legal'], ['economy', 'Economy'],
-    ['support', 'Support'], ['money', 'Money'], ['content', 'Content Hub'], ['visitors', 'Visitors'],
+    ['support', 'Support'], ['monetisation', 'Monetisation'], ['money', 'Money'], ['content', 'Content Hub'], ['visitors', 'Visitors'],
     ['reach', 'Reach'], ['quality', 'Quality'], ['analytics', 'Analytics'], ['records', 'Records'], ['notifications', 'Notify'],
     ['search', 'Search'], ['flags', 'Flags'], ['audit', 'Audit'], ['books', 'Books'],
     ['discovery', 'Discovery'], ['known', 'Known'], ['rights', 'Rights'],
@@ -87,6 +87,8 @@
   let __liveTimer = null;
   let __workerTimer = null;
   let __spentLatch = {};
+  const __monetiseFlight = {};
+  let __monetiseWarned = false;
   let __swInfo = { connected: false, cache: '', version: '' };
   const Data = (typeof NalunoAdminData !== 'undefined') ? NalunoAdminData : null;
 
@@ -1471,6 +1473,8 @@
     listenCol('economyInbox', 200, '_inbox');
     listenCol('creatorSupport', 80, 'creatorSupport');
     listenCol('payoutAccounts', 80, 'payoutAccounts');
+    listenCol('creatorMonetisation', 200, 'creatorMonetisation');
+    listenCol('creatorPayoutMethods', 200, 'creatorPayoutMethods');
     listenCol('deskSpend', 200, 'deskSpend');
     listenCol('deskOperators', 40, 'deskOperators');
     listenCol('metrics', 80, 'metrics');
@@ -1485,6 +1489,7 @@
     listenDoc('economyConfig', 'adRates', 'adRates');
     listenDoc('economyConfig', 'costRates', 'costRates');
     listenDoc('economyConfig', 'payouts', 'payoutCfg');
+    listenDoc('economyConfig', 'monetisation', 'monetisationCfg');
     listenDoc('economyConfig', 'currency', 'currency', function (data) {
       __livePack.currency = data;
       const C = Ccy();
@@ -1563,6 +1568,9 @@
       core.push(db.collection('economyConfig').doc('payouts').get().then(function (s) {
         if (s && s.exists) pack.payoutCfg = s.data() || {};
       }).catch(function () {}));
+      core.push(db.collection('economyConfig').doc('monetisation').get().then(function (s) {
+        if (s && s.exists) pack.monetisationCfg = s.data() || {};
+      }).catch(function () {}));
       core.push(db.collection('economyConfig').doc('costRates').get().then(function (s) {
         if (s && s.exists) pack.costRates = s.data() || {};
       }).catch(function () {}));
@@ -1595,6 +1603,8 @@
       colDocs('economyInbox', 200).then(function (r) { pack._inbox = r; }),
       colDocs('creatorSupport', 80).then(function (r) { pack.creatorSupport = r; }),
       colDocs('payoutAccounts', 80).then(function (r) { pack.payoutAccounts = r; }),
+      colDocs('creatorMonetisation', 200).then(function (r) { pack.creatorMonetisation = r; }),
+      colDocs('creatorPayoutMethods', 200).then(function (r) { pack.creatorPayoutMethods = r; }),
       colDocs('deskSpend', 200).then(function (r) { pack.deskSpend = r; }),
       colDocs('metrics', 80).then(function (r) { pack.metrics = r; }),
       colDocsOrder('adminAudit', 'created_at', 200).then(function (r) {
@@ -3175,6 +3185,106 @@
     } catch (_) {}
   }
 
+  const MONETISE_NOTE = 'Naluno: you are eligible for monetisation. When Naluno turns the monetisation phase on, you are on the list Naluno will pay. This is not Creator Support. Nothing has been paid.';
+  function monetiseMonth(row) {
+    const m = String((row && row.monthKey) || '');
+    if (/^\d{4}-\d{2}$/.test(m)) return m;
+    try {
+      if (Data && Data.togaMonthKeyOf) return Data.togaMonthKeyOf(Date.now());
+    } catch (_) {}
+    const d = new Date();
+    return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
+  }
+  async function sendMonetiseNote(db, row) {
+    const uid = String(row.uid || '');
+    if (!/^[A-Za-z0-9]{6,40}$/.test(uid) || !currentUser) return;
+    const month = monetiseMonth(row);
+    const nid = 'monetise_' + uid;
+    const now = Date.now();
+    const notice = {
+      kind: 'monetisation_eligible',
+      body: MONETISE_NOTE,
+      ts: now,
+      at: now,
+      by: currentUser.uid,
+      month: month,
+      appealable: false,
+      notice_id: nid,
+    };
+    const drop = {
+      from: currentUser.uid,
+      to: uid,
+      clientMsgId: nid,
+      ts: now,
+      expiresAt: now + (7 * 24 * 60 * 60 * 1000),
+      type: 'text',
+      encrypted: false,
+      naluno: true,
+      text: MONETISE_NOTE,
+    };
+    let noticeOk = false;
+    try {
+      await db.collection('users').doc(uid).collection('notices').doc(nid).set(notice);
+      noticeOk = true;
+    } catch (_) {}
+    if (!noticeOk) {
+      if (!__monetiseWarned) {
+        __monetiseWarned = true;
+        toast('Could not send the congratulations. Publish firestore.rules, then open Monetisation again.');
+      }
+      __monetiseFlight[uid] = 0;
+      return;
+    }
+    try {
+      await db.collection('wireDrop').doc(uid).collection('inbox').doc(nid).set(drop);
+    } catch (_) {}
+    await db.collection('creatorMonetisation').doc(uid).set({
+      uid: uid,
+      eligible: true,
+      score: Number(row.score) || 0,
+      monthKey: month,
+      congratulatedAt: now,
+      congratulatedBy: currentUser.uid,
+      handle: String(row.handle || '').replace(/^@/, '').slice(0, 40),
+      name: String(row.name || '').slice(0, 80),
+      broadcasts: Number(row.broadcasts) || 0,
+    });
+    try { await writeAudit('monetisation-eligible', uid, 'congratulated · not a payment'); } catch (_) {}
+  }
+  async function reflectMonetise(db, row) {
+    const uid = String(row.uid || '');
+    if (!/^[A-Za-z0-9]{6,40}$/.test(uid) || !currentUser) return;
+    if (!row.congratulatedAt) return;
+    await db.collection('creatorMonetisation').doc(uid).set({
+      uid: uid,
+      eligible: !!row.eligible,
+      score: Number(row.score) || 0,
+      monthKey: monetiseMonth(row),
+      congratulatedAt: Number(row.congratulatedAt),
+      congratulatedBy: String(row.congratulatedBy || currentUser.uid),
+      handle: String(row.handle || '').replace(/^@/, '').slice(0, 40),
+      name: String(row.name || '').slice(0, 80),
+      broadcasts: Number(row.broadcasts) || 0,
+    }, { merge: true });
+  }
+  function congratulateEligible(rows) {
+    const db = adminDb();
+    if (!db || !currentUser) return;
+    (rows || []).forEach(function (r) {
+      if (r.eligible && !r.congratulatedAt) {
+        if (__monetiseFlight[r.uid]) return;
+        __monetiseFlight[r.uid] = Date.now();
+        sendMonetiseNote(db, r).catch(function () { __monetiseFlight[r.uid] = 0; });
+        return;
+      }
+      if (!r.congratulatedAt) return;
+      const stamp = r.uid + ':' + (r.eligible ? '1' : '0');
+      if (__monetiseFlight[stamp]) return;
+      __monetiseFlight[stamp] = Date.now();
+      reflectMonetise(db, r).catch(function () {});
+    });
+  }
+
   function renderTab(tab, d) {
     const el = $('adminBody');
     if (!el) return;
@@ -4345,7 +4455,7 @@
                 ];
               }))
             : '<p class="sub">No paid Support yet. An intent is not money.</p>'
-          + '<p class="sub">Paid to them is a payment stamped as sent to their Stripe account. Naluno holds is money collected because real payouts were off, or they had no payment account. Possible is held money for someone whose account is ready now. This desk does not send that held money. New payments follow the Real payouts switch.</p>')
+          + '<p class="sub">Paid to them is a payment stamped as sent to their Stripe account. Naluno holds is money collected because real payouts were off, or they had no payment account. Possible is held money for someone whose account is ready now. This page does not send that held money. New Support payments follow the Real payouts switch. Monetisation is a different list.</p>')
         + (txs.length
           ? card('Each payment', table(['When', 'From', 'Creator', 'Amount', 'Where it went'],
             (split.lines && split.lines.length ? split.lines : txs).slice(0, 40).map(function (r) {
@@ -4368,6 +4478,60 @@
         + gap(g.payments || '');
       wireSupportFee();
       wireDeskJumps(el);
+      return;
+    }
+
+    if (tab === 'monetisation') {
+      const board = (d.monetisation) || { rows: [], eligible: [], payable: [], phaseOn: false, monthKey: '' };
+      const phaseOn = !!(d.flags && d.flags.monetisation_phase_enabled);
+      const bar = board.bar || {};
+      function whoMon(r) {
+        const bits = [];
+        if (r.handle) bits.push('@' + String(r.handle).replace(/^@/, ''));
+        if (r.name) bits.push(r.name);
+        return bits.join(' · ') || String(r.uid || '').slice(0, 12);
+      }
+      const cards = (board.rows || []).map(function (r) {
+        const momo = r.momo
+          ? (String(r.momo.network || '').toUpperCase() + (r.momo.tail ? ' ···' + r.momo.tail : ''))
+          : 'No mobile money number yet';
+        const state = r.eligible
+          ? (phaseOn ? 'On the pay list' : 'Eligible · phase is off')
+          : (r.why || 'Not eligible');
+        const told = r.congratulatedAt ? ('Told ' + when(r.congratulatedAt)) : (r.eligible ? 'Sending the note' : 'Not told');
+        return '<div style="border:1px solid ' + (r.eligible ? 'var(--mint)' : 'var(--line)') + ';border-radius:12px;padding:12px 14px;margin:0 0 8px;' + (r.eligible ? 'background:rgba(124,255,178,.08);' : '') + '">'
+          + '<div><strong>' + escapeHtml(whoMon(r)) + '</strong>'
+          + (r.eligible ? ' <span style="color:var(--mint);">Eligible</span>' : '')
+          + '</div>'
+          + '<div class="sub">' + escapeHtml(state)
+          + ' · Circle ' + escapeHtml(String(r.circle || 0))
+          + ' · Views ' + escapeHtml(String(r.views12 || 0))
+          + ' · Talk ' + escapeHtml(String(r.talk12 || 0))
+          + ' · Broadcasts ' + escapeHtml(String(r.originals || 0))
+          + ' · Recent ' + escapeHtml(String(r.recent || 0))
+          + '</div>'
+          + '<div class="sub">' + escapeHtml(told) + ' · ' + escapeHtml(momo) + '</div></div>';
+      }).join('');
+      el.innerHTML =
+        (phaseOn
+          ? '<div class="alert ok">Monetisation phase is ON. The highlighted creators cleared the partner bar. Nothing on this page sends money.</div>'
+          : inactiveNote('Monetisation phase is off. Creators who clear the bar are still spotted and told. Nobody is paid from this list until the phase is on.'))
+        + kpis([
+          ['Eligible', (board.eligible || []).length],
+          ['Would be paid', phaseOn ? (board.payable || []).length : 0],
+          ['Circle', bar.circle || 400],
+          ['Views in 12 months', bar.views12 || 8000],
+        ])
+        + card('Who is eligible',
+          '<p class="sub">This is not Creator Support and not Real payouts. Creator Support is open from the start, inside a Broadcast. YouTube does not do that. This list is who Naluno will pay for a living Circle, and only after the phase is on.</p>'
+          + '<p class="sub">YouTube pays 1,000 subscribers and thousands of watch hours. That is YouTube’s game. A creator who can win it has no reason to build it here. Naluno pays a smaller Circle that comes back and talks, on original Broadcasts, after half a year here. Views alone do not clear it. A day of invites does not clear it. A bigger Circle owes more watches and more talk, so an audience brought in from somewhere else still has to live on Naluno.</p>'
+          + '<p class="sub">All of these, together. ' + (bar.circle || 400) + ' Circle joins on record. In the last 12 months, ' + (bar.views12 || 8000) + ' Broadcast views, and at least ' + (bar.viewsPerCircle || 12) + ' views for every Circle join. ' + (bar.talk12 || 200) + ' talks from other people, and at least one talk for every ' + (bar.circlePerTalk || 2) + ' joins. ' + (bar.originals || 12) + ' original Broadcasts still up, ' + (bar.recentOriginals || 6) + ' of them from the last 90 days. A repost does not count. A recorded length under a minute does not count. Signals do not count. The account is at least 180 days old, sharing views, not suspended, not closed, and has no open report. One Wireline note, labelled Naluno, goes out the first time they clear it. Turning the phase on does not move money.</p>'
+          + '<div class="row"><button type="button" class="ghost ccGo" data-go="flags">Open Flags</button></div>'
+          + (cards || '<p class="sub">No creator is on this list yet.</p>'))
+        + card('Uganda mobile money',
+          '<p class="sub">A creator can save an MTN or Airtel number in their own Broadcast, under how Naluno pays them. That number is for monetisation. Stripe on the Support panel is only for Creator Support. Paying out stays unpaid until a mobile-money disbursement line is connected. This page never marks a payout paid.</p>');
+      wireDeskJumps(el);
+      congratulateEligible(board.rows || []);
       return;
     }
 
@@ -4420,7 +4584,7 @@
             ['Naluno holds', aedUsd(split.held || 0)],
             ['Naluno share', aedUsd(split.fee || 0)],
           ])
-          + '<p class="sub">Turn the switch under Flags. This page does not transfer held money.</p>'
+          + '<p class="sub">Turn the switch under Flags. This page does not transfer held Support. Monetisation is not this switch. Open Monetisation for the creators Naluno will pay when that phase is on.</p>'
           + '<div class="row"><button type="button" class="ghost ccGo" data-go="support">Open Support</button>'
           + '<button type="button" class="ghost ccGo" data-go="flags">Open Flags</button></div>')
         + card('Booked ad revenue',
@@ -4982,7 +5146,7 @@
           const m = meta[k] || { label: k };
           return '<div class="flag-row">'
             + '<span style="flex:1;"><strong>' + escapeHtml(m.label || k) + '</strong>'
-            + (k === 'real_payouts_enabled' && m.note ? '<div class="sub">' + escapeHtml(m.note) + '</div>' : '')
+            + (k === 'real_payouts_enabled' || k === 'monetisation_phase_enabled' ? '<div class="sub">' + escapeHtml(m.note || '') + '</div>' : '')
             + '</span>'
             + '<span style="color:' + (on ? 'var(--mint)' : 'var(--ink-dim)') + ';">' + (on ? 'ON' : 'OFF') + '</span>'
             + '<button type="button" class="ghost admin-flag" data-flag="' + escapeHtml(k) + '" data-next="' + (on ? '0' : '1') + '">' + (on ? 'Turn off' : 'Turn on') + '</button>'

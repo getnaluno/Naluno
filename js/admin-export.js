@@ -220,6 +220,28 @@
         return [row.title || who(row), day(row.createdAt), row.status || ''];
       })));
     }
+    if (tab === 'monetisation') {
+      const board = data.monetisation || { rows: [] };
+      out.push(table('Monetisation', ['Creator', 'Circle', 'Views 12mo', 'Talk 12mo', 'Broadcasts', 'Recent', 'Eligible', 'Payable', 'Told', 'Short'],
+        (board.rows || []).map(function (r) {
+          const whoBits = [];
+          if (r.handle) whoBits.push('@' + String(r.handle).replace(/^@/, ''));
+          if (r.name) whoBits.push(r.name);
+          const momo = r.momo ? (String(r.momo.network || '').toUpperCase() + (r.momo.tail ? ' ' + r.momo.tail : '')) : '';
+          return [
+            whoBits.join(' · ') || who(r),
+            r.circle || 0,
+            r.views12 || 0,
+            r.talk12 || 0,
+            r.originals || 0,
+            r.recent || 0,
+            r.eligible ? 'yes' : 'no',
+            r.payable ? 'yes' : 'no',
+            r.congratulatedAt ? 'yes' : 'no',
+            r.eligible ? momo : (r.why || ''),
+          ];
+        })));
+    }
     if (tab === 'admins') {
       out.push(table('Admins', ['Email'], (data.admins || []).map(function (row) {
         return [row.email || who(row)];

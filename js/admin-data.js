@@ -15,6 +15,7 @@
     creator_support_enabled: false,
     community_rewards_enabled: false,
     real_payouts_enabled: false,
+    monetisation_phase_enabled: false,
     content_hub_enabled: false,
     sports_enabled: false,
     movies_enabled: false,
@@ -28,7 +29,8 @@
     community_value_enabled: { label: 'Community value', group: 'Community', note: 'A measurement, never money.' },
     creator_support_enabled: { label: 'Creator Support', group: 'Money', note: 'Donate to a creator. Lives inside Broadcast, below Circle — not as a nav tab. Off = the payment step is hidden. On = a person can be taken to pay. Nothing is marked paid until the payment is confirmed. Contribution points stay separate from this.' },
     community_rewards_enabled: { label: 'Community Rewards', group: 'Money', note: 'Pool split. Off until switched on.' },
-    real_payouts_enabled: { label: 'Real payouts', group: 'Money', note: 'Off: Support is collected by Naluno and held for the creator. On: a new Support payment goes to a creator whose Stripe account is ready, less Naluno’s share. Nothing already collected is moved from this switch.' },
+    real_payouts_enabled: { label: 'Real payouts', group: 'Money', note: 'Creator Support only. Off: Support is collected by Naluno and held for the creator. On: a new Support payment goes to a creator whose Stripe account is ready, less Naluno’s share. Nothing already collected is moved. This does not pay the monetisation list.' },
+    monetisation_phase_enabled: { label: 'Monetisation phase', group: 'Money', note: 'Separate from Creator Support and from Real payouts. Off: Naluno can still spot creators who clear the partner bar and tell them. On: those creators are who Naluno will pay. Turning it on does not move money. The bar is a living Circle: 400 joins, that Circle watches and talks over 12 months, 12 original Broadcasts, half a year on Naluno. Not YouTube’s hour count, not a Toga score, and not Creator Support.' },
     content_hub_enabled: { label: 'Content Hub', group: 'Hub', note: 'Sports / movies / channels. Not built yet.' },
     sports_enabled: { label: 'Sports', group: 'Hub', note: 'Requires Content Hub.' },
     movies_enabled: { label: 'Movies', group: 'Hub', note: 'Requires Content Hub.' },
@@ -1155,6 +1157,184 @@
       return num(b.score) - num(a.score);
     });
   }
+  /* Partner bar. Creator Support is already open, so this is not the
+     early door, and it is not YouTube’s door either.
+     YouTube pays 1,000 subscribers and thousands of watch hours.
+     A creator who can win that has no reason to build it here.
+     Naluno pays a smaller Circle that comes back and talks, on a shelf
+     of original Broadcasts, after half a year on Naluno.
+     Views alone never clear it. A day of invites never clears it.
+     A bigger Circle owes more watches and more talk, so an audience
+     imported from somewhere else still has to live here.
+     Signals, reposts, and anything under a minute do not count.
+     Uganda is in. There is no score dial. */
+  const MONETISE = {
+    circle: 400,
+    views12: 8000,
+    viewsPerCircle: 12,
+    talk12: 200,
+    circlePerTalk: 2,
+    originals: 12,
+    recentOriginals: 6,
+    recentMs: 90 * 86400000,
+    accountMs: 180 * 86400000,
+    minDurationSec: 60,
+    months: 12,
+  };
+  function needViews(circle) {
+    const depth = circle * MONETISE.viewsPerCircle;
+    return depth > MONETISE.views12 ? depth : MONETISE.views12;
+  }
+  function needTalk(circle) {
+    const per = MONETISE.circlePerTalk || 2;
+    const depth = Math.ceil(circle / per);
+    return depth > MONETISE.talk12 ? depth : MONETISE.talk12;
+  }
+  function sumMonthPrefix(row, prefix) {
+    let n = 0;
+    const re = new RegExp('^' + prefix + '\\d{4}-\\d{2}$');
+    Object.keys(row || {}).forEach(function (k) {
+      if (re.test(k)) n += num(row[k]);
+    });
+    return n;
+  }
+  function trailingToga(row, monthKey, months) {
+    let views = 0;
+    let engage = 0;
+    let key = String(monthKey || '');
+    const n = months || MONETISE.months;
+    for (let i = 0; i < n && key; i++) {
+      const p = togaMonthParts(row, key);
+      views += p.views;
+      engage += p.engage;
+      key = togaPrevMonthKey(key);
+    }
+    return { views: views, engage: engage };
+  }
+  function broadcastIsOriginal(b) {
+    if (!b || b.deleted || b.hidden || b.held) return false;
+    if (b.repostOf) return false;
+    const basis = b.originCredit && b.originCredit.basis;
+    if (basis === 'repost') return false;
+    const dur = Number(b.durationSec);
+    if (dur > 0 && dur < MONETISE.minDurationSec) return false;
+    return true;
+  }
+  /* Monetisation is not Creator Support and not contribution points.
+     Eligible only when every partner gate is met. The phase flag only
+     names who would be paid. It does not move money. */
+  function monetisationBoard(users, broadcasts, togaRows, marks, opts) {
+    opts = opts || {};
+    const phaseOn = !!opts.phaseOn;
+    const now = num(opts.now) || Date.now();
+    const monthKey = String(opts.monthKey || togaMonthKeyOf(now));
+    const methods = {};
+    (opts.methods || []).forEach(function (m) {
+      const id = String((m && (m.id || m.uid)) || '');
+      if (id) methods[id] = m;
+    });
+    const markBy = {};
+    (marks || []).forEach(function (m) {
+      const id = String((m && (m.id || m.uid)) || '');
+      if (id) markBy[id] = m;
+    });
+    const userBy = {};
+    (users || []).forEach(function (u) { if (u && u.id) userBy[u.id] = u; });
+    const struck = {};
+    (opts.reports || []).forEach(function (r) {
+      if (!reportIsOpen(r)) return;
+      const who = String((r && (r.target_user_id || r.reported_user_id)) || '');
+      if (who) struck[who] = 1;
+    });
+    const work = {};
+    (broadcasts || []).forEach(function (b) {
+      if (!broadcastIsOriginal(b)) return;
+      const id = String(b.creatorUid || b.creator_uid || '');
+      if (!id) return;
+      if (!work[id]) work[id] = { originals: 0, recent: 0 };
+      work[id].originals += 1;
+      const at = num(b.createdAt || b.created_at);
+      if (at > 0 && (now - at) <= MONETISE.recentMs && (now - at) >= 0) work[id].recent += 1;
+    });
+    const togaBy = {};
+    (togaRows || []).forEach(function (t) {
+      const id = String((t && (t.id || t.uid)) || '');
+      if (id) togaBy[id] = t;
+    });
+    const ids = {};
+    Object.keys(work).forEach(function (id) { ids[id] = 1; });
+    Object.keys(togaBy).forEach(function (id) { ids[id] = 1; });
+    Object.keys(markBy).forEach(function (id) { ids[id] = 1; });
+    const rows = Object.keys(ids).map(function (id) {
+      const u = userBy[id] || {};
+      const t = togaBy[id] || {};
+      const mark = markBy[id] || {};
+      const method = methods[id] || {};
+      const w = work[id] || { originals: 0, recent: 0 };
+      const trail = trailingToga(t, monthKey, MONETISE.months);
+      const circle = sumMonthPrefix(t, 'mc_');
+      const views12 = trail.views;
+      const talk12 = trail.engage;
+      const created = num(u.createdAt || u.created_at);
+      const closed = u.accountState === 'closed' || u.deleted === true;
+      const suspended = !!(u.suspended || u.status === 'SUSPENDED');
+      const hiddenViews = u.shareViews === false || t.shareViews === false;
+      const misses = [];
+      let why = '';
+      if (closed) why = 'account closed';
+      else if (suspended) why = 'suspended';
+      else if (hiddenViews) why = 'not sharing views';
+      else if (struck[id]) why = 'open report';
+      else if (created > 0 && (now - created) < MONETISE.accountMs) why = 'account under 180 days';
+      else {
+        if (w.originals < MONETISE.originals) misses.push('Broadcasts ' + w.originals + '/' + MONETISE.originals);
+        if (w.recent < MONETISE.recentOriginals) misses.push('Recent ' + w.recent + '/' + MONETISE.recentOriginals);
+        if (circle < MONETISE.circle) misses.push('Circle ' + circle + '/' + MONETISE.circle);
+        const viewLine = needViews(circle);
+        const talkLine = needTalk(circle);
+        if (views12 < viewLine) misses.push('Views ' + views12 + '/' + viewLine);
+        if (talk12 < talkLine) misses.push('Talk ' + talk12 + '/' + talkLine);
+        why = misses[0] || '';
+      }
+      const eligible = !why;
+      const handle = String(t.handle || u.handle || mark.handle || '').replace(/^@/, '');
+      const name = t.name || u.displayName || u.name || u.callsign || mark.name || '';
+      const network = method.network === 'mtn' || method.network === 'airtel' ? method.network : '';
+      const tail = String(method.phone_tail || '').replace(/\D/g, '').slice(-4);
+      return {
+        uid: id,
+        handle: handle,
+        name: name,
+        circle: circle,
+        views12: views12,
+        talk12: talk12,
+        originals: w.originals,
+        recent: w.recent,
+        score: views12,
+        monthKey: monthKey,
+        broadcasts: w.originals,
+        eligible: eligible,
+        why: why,
+        misses: why && !misses.length ? [why] : misses,
+        congratulatedAt: num(mark.congratulatedAt),
+        phaseOn: phaseOn,
+        payable: eligible && phaseOn,
+        momo: network ? { network: network, tail: tail } : null,
+      };
+    });
+    rows.sort(function (a, b) {
+      if (a.eligible !== b.eligible) return a.eligible ? -1 : 1;
+      return b.views12 - a.views12 || b.circle - a.circle;
+    });
+    return {
+      bar: MONETISE,
+      phaseOn: phaseOn,
+      monthKey: monthKey,
+      rows: rows,
+      eligible: rows.filter(function (r) { return r.eligible; }),
+      payable: rows.filter(function (r) { return r.payable; }),
+    };
+  }
   function foldDayPrefix(days, prefix) {
     const m = {};
     (days || []).forEach(function (d) {
@@ -1652,6 +1832,13 @@
     const sigToday = signals.filter(function (s) { return num(s.createdAt) >= day0; });
 
     const togaSorted = scoreTogaRows(toga, users, now);
+    const monetisation = monetisationBoard(users, broadcasts, toga, raw.creatorMonetisation || [], {
+      phaseOn: !!(raw.flags && raw.flags.monetisation_phase_enabled),
+      monthKey: togaMonthKeyOf(now),
+      now: now,
+      methods: raw.creatorPayoutMethods || [],
+      reports: reports,
+    });
 
     const openReports = reports.filter(function (r) {
       return reportIsOpen(r, broadcasts);
@@ -1911,6 +2098,7 @@
         list: togaSorted,
         top: togaSorted.slice(0, 10),
       },
+      monetisation: monetisation,
       safety: {
         open_reports: openReports.length,
         reports: reports,
@@ -2197,6 +2385,8 @@
     startOfLocalDay: startOfLocalDay,
     deriveSnapshot: deriveSnapshot,
     scoreTogaRows: scoreTogaRows,
+    monetisationBoard: monetisationBoard,
+    MONETISE: MONETISE,
     togaMonthParts: togaMonthParts,
     togaMonthKeyOf: togaMonthKeyOf,
     foldDayPrefix: foldDayPrefix,

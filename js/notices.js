@@ -35,6 +35,9 @@
   };
 
   function noticeText(n) {
+    if (n && n.kind === 'monetisation_eligible') {
+      return n.body || 'Naluno: you are eligible for monetisation. When that phase is turned on, you are on the list Naluno will pay. This is not Creator Support, and nothing has been paid.';
+    }
     const why = WHY[n.reason_code] || 'a report';
     return n.kind === 'broadcast_hidden'
       ? 'One of your Broadcasts has been taken off Naluno after a report about ' + why

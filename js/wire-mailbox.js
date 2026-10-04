@@ -135,6 +135,34 @@
         return;
       }
       const fromUid = m.from;
+      if (m.naluno === true && m.encrypted !== true) {
+        let contactId = null;
+        try {
+          if (typeof ensureNalunoWireContact === 'function') {
+            const c = ensureNalunoWireContact();
+            contactId = c ? c.id : null;
+          }
+        } catch (_) { contactId = null; }
+        const text = String(m.text || '').slice(0, 500);
+        if (contactId == null || !text) return;
+        const cmid = m.clientMsgId || doc.id;
+        const row = {
+          id: doc.id,
+          from: 'them',
+          type: 'text',
+          text: text,
+          naluno: true,
+          clientMsgId: cmid,
+          ts: ts,
+          status: 'delivered',
+          read: false,
+        };
+        try { await persistRow(contactId, row, ''); }
+        catch (err) { return; }
+        try { if (typeof renderWirelineList === 'function') renderWirelineList(); } catch (_) {}
+        doc.ref.delete().catch(function () {});
+        return;
+      }
       const contactId = contactIdForUid(fromUid);
       if (contactId == null) {
         /* Contacts often arrive after the mailbox listener. Saving under the

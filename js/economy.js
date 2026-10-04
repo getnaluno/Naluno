@@ -234,9 +234,9 @@ function nalunoEconomySessionId(){
 }
 
 /** This user's own contribution, for My Contribution.
- *  The desk adds up contributionLedger. The worker's /v1/me used to answer
- *  from one server's short memory, so the phone showed nothing while the
- *  desk showed the points. Read the same ledger here. Points are whatever
+ *  Naluno adds up contributionLedger. The worker's /v1/me used to answer
+ *  from one server's short memory, so the phone showed nothing while
+ *  Naluno's own ledger had the points. Read the same ledger here. Points are whatever
  *  the worker already wrote — this does not score an event, and a row that
  *  is not this person's is ignored. A failed read is not zero. */
 function econDb(){

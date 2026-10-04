@@ -1968,9 +1968,10 @@ if($('bviewerRemove')){
 
 function renderContacts(){
   const query = ($('frequencySearchInput').value || '').trim().toLowerCase();
+  const pool = contacts.filter(function(c){ return !(c && c.naluno); });
   const visible = query
-    ? contacts.filter(c => c.name.toLowerCase().includes(query) || (c.handle||'').toLowerCase().includes(query))
-    : contacts;
+    ? pool.filter(c => c.name.toLowerCase().includes(query) || (c.handle||'').toLowerCase().includes(query))
+    : pool;
   const groups = { strong: [], fading: [], off: [] };
   visible.forEach(c => groups[computeSignal(c).tier].push(c));
 

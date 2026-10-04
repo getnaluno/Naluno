@@ -403,40 +403,46 @@
     }
     __adFinish = null;
   }
-  function playAdWithSound(v) {
+  function primeAdVideo(v) {
     if (!v) return;
     try {
-      v.defaultMuted = false;
-      v.muted = false;
+      v.defaultMuted = true;
+      v.muted = true;
       v.volume = 1;
       v.loop = false;
-      v.dataset.nalunoWantPlay = '1';
-      v.dataset.nalunoUserPaused = '0';
-      v.removeAttribute('muted');
-    } catch (_) {}
-    const go = function () {
-      const p = v.play();
-      if (p && p.catch) {
-        p.catch(function () {
-          try {
-            v.muted = false;
-            v.volume = 1;
-            const p2 = v.play();
-            if (p2 && p2.catch) {
-              p2.catch(function () {
-                try {
-                  v.muted = true;
-                  v.play().then(function () {
-                    try { v.muted = false; v.volume = 1; } catch (_) {}
-                  }).catch(function () {});
-                } catch (_) {}
-              });
-            }
-          } catch (_) {}
-        });
+      v.playsInline = true;
+      if (v.setAttribute) {
+        v.setAttribute('muted', '');
+        v.setAttribute('playsinline', '');
       }
-    };
-    go();
+      if (v.dataset) {
+        v.dataset.nalunoWantPlay = '1';
+        v.dataset.nalunoUserPaused = '0';
+      }
+    } catch (_) {}
+    let opened = false;
+    function unmute() {
+      if (opened) return;
+      opened = true;
+      try {
+        v.muted = false;
+        v.volume = 1;
+        if (v.removeAttribute) v.removeAttribute('muted');
+      } catch (_) {}
+    }
+    try {
+      v.addEventListener('playing', function onPlay() {
+        try { v.removeEventListener('playing', onPlay); } catch (_) {}
+        unmute();
+      });
+    } catch (_) {}
+    try {
+      const p = v.play();
+      if (p && p.catch) p.catch(function () {});
+    } catch (_) {}
+  }
+  function playAdWithSound(v) {
+    primeAdVideo(v);
   }
   function resumeAfterAd() {
     const snap = __pausedForAd;
@@ -551,7 +557,7 @@
     const ctaUrl = httpsUrl(ad.ctaUrl);
     const ctaLabel = (ad.ctaLabel || 'Open').slice(0, 24);
     const media = isVideo
-      ? '<video id="nalunoAdVideo" playsinline webkit-playsinline preload="auto" src="' + escapeHtml(src) + '"></video>'
+      ? '<video id="nalunoAdVideo" playsinline webkit-playsinline muted preload="auto" src="' + escapeHtml(src) + '"></video>'
       : '<img src="' + escapeHtml(src) + '" alt="" />';
     host.classList.remove('hidden');
     host.innerHTML =
@@ -576,13 +582,9 @@
 
     const v = document.getElementById('nalunoAdVideo');
     if (v && src) {
-      try { v.preload = 'auto'; } catch (_) {}
+      try { v.preload = 'auto'; v.muted = true; v.defaultMuted = true; } catch (_) {}
       if (!v.getAttribute('src')) v.src = src;
-      try { v.load(); } catch (_) {}
-      const kick = function () { playAdWithSound(v); };
-      if (v.readyState >= 2) kick();
-      else v.addEventListener('loadeddata', kick, { once: true });
-      kick();
+      primeAdVideo(v);
       v.onended = function () { finish(); };
       v.onerror = function () {
         if (!skipAt) finish();
@@ -671,7 +673,7 @@
     const isVideo = String(ad.mediaType || '').indexOf('image') !== 0;
     const ctaUrl = httpsUrl(ad.ctaUrl);
     const media = isVideo
-      ? '<video class="naluno-break-ad" playsinline webkit-playsinline preload="auto" src="' + escapeHtml(src) + '" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;"></video>'
+      ? '<video class="naluno-break-ad" playsinline webkit-playsinline muted preload="auto" src="' + escapeHtml(src) + '" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;"></video>'
       : '<img src="' + escapeHtml(src) + '" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;" />';
     const html = '<div class="naluno-break-wrap" data-ad-id="' + escapeHtml(ad.id) + '" style="position:absolute;inset:0;">'
       + media
@@ -698,7 +700,7 @@
     try {
       const v = host.querySelector('video.naluno-break-ad');
       if (v) {
-        playAdWithSound(v);
+        primeAdVideo(v);
         v.onended = function () { if (typeof onEnded === 'function') onEnded(); };
         v.onerror = function () { if (typeof onEnded === 'function') onEnded(); };
         armViewComplete(ad, v);
@@ -761,9 +763,35 @@
     };
   }
 
+  const __warmed = {};
+  function prefetchLive() {
+    if (typeof document === 'undefined' || !document.createElement || !document.body) return;
+    ['ad-bucket', 'broadcast-break'].forEach(function (place) {
+      const list = adsForPlace(__live, place);
+      const ad = list && list[0];
+      if (!ad) return;
+      const src = mediaUrlOf(ad);
+      if (!src || __warmed[src]) return;
+      if (String(ad.mediaType || '').indexOf('image') === 0) return;
+      __warmed[src] = 1;
+      try {
+        const v = document.createElement('video');
+        v.preload = 'auto';
+        v.muted = true;
+        v.playsInline = true;
+        v.setAttribute('muted', '');
+        v.setAttribute('aria-hidden', 'true');
+        v.style.cssText = 'position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;left:-9999px;';
+        v.src = src;
+        document.body.appendChild(v);
+      } catch (_) {}
+    });
+  }
+
   function applyDocs(docs) {
     __live = (docs || []).map(normalize).filter(function (a) { return a && isLive(a); });
     __loadedAt = Date.now();
+    try { prefetchLive(); } catch (_) {}
     return __live;
   }
 
@@ -1234,6 +1262,7 @@
     skipAfterOf: skipAfterOf,
     placementsOf: placementsOf,
     adsForPlace: adsForPlace,
+    primeAdVideo: primeAdVideo,
     mediaUrlOf: mediaUrlOf,
     openFromBroadcast: openFromBroadcast,
     closeFromBroadcast: closeFromBroadcast,

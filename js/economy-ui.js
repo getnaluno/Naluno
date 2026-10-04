@@ -125,22 +125,22 @@ async function renderContributionPanel(quiet){
     '<div class="bspace-card" style="margin-bottom:10px;">'
     + '<div class="who">Contribution Points</div>'
     + '<div style="font-family:var(--font-futuristic);font-size:26px;color:var(--mint);">' + supportEsc(String(me.contribution_points)) + '</div>'
-    + '<div class="lobby-sub" style="text-align:left;max-width:none;font-size:11.5px;margin-top:4px;">The same points Economy on the desk adds up. A Signal, a comment, a reply, a follow, a full watch, a share. Not money, and not a promise of money.</div>'
+    + '<div class="lobby-sub" style="text-align:left;max-width:none;font-size:11.5px;margin-top:4px;">Naluno counts a Signal as 1, a comment as 3, a reply as 2, a follow as 1, a watch through as 2, and a share as 2. A comment or reply shorter than 8 characters waits and counts as 0. These points are not money, and they are not a promise of money.</div>'
     + fromPhone
     + '</div>'
     + '<div class="bspace-card" style="margin-bottom:10px;">'
     + '<div class="who">Eligible Contribution</div>'
     + '<div style="font-family:var(--font-futuristic);font-size:22px;">' + supportEsc(String(me.eligible_contribution)) + '</div>'
-    + '<div class="lobby-sub" style="text-align:left;max-width:none;font-size:11.5px;margin-top:4px;">The part that would count toward any future community rewards.</div>'
+    + '<div class="lobby-sub" style="text-align:left;max-width:none;font-size:11.5px;margin-top:4px;">The points Naluno has accepted. Community rewards are off, so this is not an amount anyone owes.</div>'
     + '</div>'
     + recent
     + '<div class="bspace-card">'
     + '<div class="who">Contribution Trust</div>'
     + '<div style="font-family:var(--font-futuristic);font-size:18px;">' + supportEsc(trustLabel) + '</div>'
-    + '<div class="lobby-sub" style="text-align:left;max-width:none;font-size:11.5px;margin-top:4px;">Grows as your account establishes a normal, genuine history.</div>'
+    + '<div class="lobby-sub" style="text-align:left;max-width:none;font-size:11.5px;margin-top:4px;">New account before the first counted activity. Limited from 1, Building from 5, High from 20. This is not a payment rank, and it is not monetisation.</div>'
     + '</div>'
     + '<div class="lobby-sub" style="text-align:left;max-width:none;margin-top:14px;font-size:11.5px;">'
-    + 'Community rewards are not active. Nothing here is currency, and no payment is owed to or by anyone.'
+    + 'Community rewards are not active. Nothing here is currency. Monetisation, if Naluno turns it on, is a separate decision about a creator’s Broadcasts. It is not these points, and no payment is owed.'
     + '</div>';
 }
 
@@ -367,7 +367,7 @@ function renderSupportTab(){
     try{
       const pay = $('bspacePayoutSlot');
       const mine = !!(typeof activeBroadcastMeta !== 'undefined' && activeBroadcastMeta && typeof currentUser !== 'undefined' && currentUser && activeBroadcastMeta.creatorUid === currentUser.uid);
-      if(pay && mine) paintPayoutBlock(pay);
+      if(pay && mine){ paintPayoutBlock(pay); paintMomoReceive(pay); }
       else if(pay) pay.innerHTML = '';
     }catch(_){}
     loadMySupportRows().then(function(rows){
@@ -827,21 +827,83 @@ function paintPayoutBlock(host){
     box.className = 'payout-block';
     host.insertBefore(box, host.firstChild);
   }
-  box.innerHTML = '<div class="section-label" style="padding:0 4px;">Get paid</div>'
+  box.innerHTML = '<div class="section-label" style="padding:0 4px;">Creator Support · Stripe</div>'
     + '<p class="lobby-sub" id="payoutLine" style="text-align:left;max-width:none;font-size:11.5px;margin:4px 0 8px;">Checking…</p>'
     + '<button type="button" class="support-row-cta payout-btn" id="payoutStartBtn" hidden>Set up payouts with Stripe</button>'
-    + '<p class="lobby-sub" id="payoutMsg" style="text-align:left;max-width:none;font-size:11.5px;margin:6px 0 0;"></p>';
+    + '<p class="lobby-sub" id="payoutMsg" style="text-align:left;max-width:none;font-size:11.5px;margin:6px 0 0;">Stripe here is only for Creator Support. It is not monetisation.</p>';
   const btn = box.querySelector('#payoutStartBtn');
   btn.onclick = nalunoStartPayouts;
   nalunoPayoutStatus(false).then(function(st){
     const line = box.querySelector('#payoutLine');
     if(!line) return;
-    if(!st){ line.textContent = 'Payouts need the payment service. Support sent to you is still recorded.'; return; }
-    if(st.ready){ line.textContent = 'Payouts are on. Support goes straight to your Stripe account.'; btn.hidden = true; return; }
+    if(!st){ line.textContent = 'Creator Support payouts need the payment service. Support sent to you is still recorded. This is not monetisation.'; return; }
+    if(st.ready){ line.textContent = 'Creator Support can go to your Stripe account. That is separate from monetisation.'; btn.hidden = true; return; }
     if(st.connected){ line.textContent = 'Stripe needs a few more details before it can pay you.'; btn.textContent = 'Finish setting up on Stripe'; btn.hidden = false; return; }
-    line.textContent = 'To receive Support, connect a Stripe account. Stripe asks for your name, phone number and where to send the money.';
+    line.textContent = 'To receive Creator Support, connect a Stripe account. This is not how monetisation is paid.';
     btn.hidden = false;
   });
+}
+function canonUgandaMomo(raw, network){
+  let d = String(raw || '').replace(/\D/g, '');
+  if(d.indexOf('0') === 0 && d.length === 10) d = '256' + d.slice(1);
+  else if(d.length === 9 && d.charAt(0) === '7') d = '256' + d;
+  if(!/^2567\d{8}$/.test(d)) return { error: 'Enter a Uganda mobile-money number. Nothing was saved.' };
+  const pre = d.slice(3, 5);
+  let guess = '';
+  if(pre === '76' || pre === '77' || pre === '78' || pre === '79') guess = 'mtn';
+  else if(pre === '70' || pre === '74' || pre === '75') guess = 'airtel';
+  const net = network === 'mtn' || network === 'airtel' ? network : guess;
+  if(net !== 'mtn' && net !== 'airtel') return { error: 'Choose MTN or Airtel. Nothing was saved.' };
+  if(guess && guess !== net) return { error: 'That number is not on the network you chose. Nothing was saved.' };
+  return { phone: d, network: net, phone_tail: d.slice(-4) };
+}
+function paintMomoReceive(host){
+  if(!host || typeof currentUser === 'undefined' || !currentUser) return;
+  let box = host.querySelector('.momo-receive');
+  if(!box){
+    box = document.createElement('div');
+    box.className = 'momo-receive';
+    box.style.marginTop = '14px';
+    host.appendChild(box);
+  }
+  box.innerHTML = '<div class="section-label" style="padding:0 4px;">Monetisation · mobile money</div>'
+    + '<p class="lobby-sub" style="text-align:left;max-width:none;font-size:11.5px;margin:4px 0 8px;">Uganda first. Save MTN or Airtel if you want Naluno to be able to pay you when the monetisation phase is on. Saving a number does not pay you. This is not Creator Support.</p>'
+    + '<select id="momoNet" style="width:100%;margin:0 0 8px;padding:10px;border-radius:10px;background:var(--surface);color:var(--text);border:1px solid var(--line);">'
+    + '<option value="mtn">MTN</option><option value="airtel">Airtel</option></select>'
+    + '<input id="momoPhone" type="tel" inputmode="tel" autocomplete="off" placeholder="07… mobile money number" style="width:100%;margin:0 0 8px;padding:10px;border-radius:10px;background:var(--surface);color:var(--text);border:1px solid var(--line);" />'
+    + '<button type="button" class="support-row-cta" id="momoSaveBtn">Save number</button>'
+    + '<p class="lobby-sub" id="momoLine" style="text-align:left;max-width:none;font-size:11.5px;margin:8px 0 0;"></p>';
+  const line = box.querySelector('#momoLine');
+  const net = box.querySelector('#momoNet');
+  const phone = box.querySelector('#momoPhone');
+  const btn = box.querySelector('#momoSaveBtn');
+  function say(t){ if(line) line.textContent = t; }
+  if(typeof fbDb !== 'undefined' && fbDb){
+    fbDb.collection('creatorPayoutMethods').doc(currentUser.uid).get().then(function(snap){
+      const d = snap && snap.exists && snap.data ? (snap.data() || {}) : {};
+      if(d.network && net) net.value = d.network;
+      if(d.network && d.phone_tail) say(String(d.network).toUpperCase() + ' ending ' + d.phone_tail + ' is saved. Nothing has been paid.');
+    }).catch(function(){});
+  }
+  if(btn) btn.onclick = async function(){
+    const got = canonUgandaMomo(phone && phone.value, net && net.value);
+    if(got.error){ say(got.error); return; }
+    if(typeof fbDb === 'undefined' || !fbDb){ say('Sign in again, then save. Nothing was saved.'); return; }
+    btn.disabled = true;
+    try{
+      await fbDb.collection('creatorPayoutMethods').doc(currentUser.uid).set({
+        phone: got.phone,
+        network: got.network,
+        phone_tail: got.phone_tail,
+        updatedAt: Date.now(),
+      });
+      if(phone) phone.value = '';
+      say(got.network.toUpperCase() + ' ending ' + got.phone_tail + ' is saved. Nothing has been paid.');
+    }catch(e){
+      say((e && e.message) || 'Could not save that number. Nothing was paid.');
+    }
+    btn.disabled = false;
+  };
 }
 
 (function(){
@@ -859,3 +921,4 @@ window.nalunoSupportButtonHtml = nalunoSupportButtonHtml;
 window.paintBspaceSupportButton = paintBspaceSupportButton;
 window.renderSupportTab = renderSupportTab;
 window.stripSupportNavTab = stripSupportNavTab;
+window.canonUgandaMomo = canonUgandaMomo;
