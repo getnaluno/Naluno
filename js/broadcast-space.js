@@ -45,13 +45,42 @@ function bspaceCloseWhoDrop(){
   drop.hidden = true;
   drop.innerHTML = '';
 }
+function bspaceTopicList(text){
+  const s = String(text || '').trim();
+  if(!s || s.length > 120 || /[.!?]/.test(s)) return null;
+  const parts = s.split(',').map(function(p){ return p.trim(); }).filter(Boolean);
+  if(parts.length < 2 || parts.length > 12) return null;
+  const ok = parts.every(function(p){ return p.length > 0 && p.length <= 32 && p.split(/\s+/).length <= 4; });
+  return ok ? parts : null;
+}
+function bspaceWritingText(meta){
+  if(!meta) return '';
+  const seg = meta.segment || {};
+  if(seg.type !== 'writing' && !meta.body) return '';
+  return String(meta.body || seg.text || '').replace(/\s+/g, ' ').trim();
+}
+/* The Broadcast description is the piece, or a real about line.
+   A comma list saved in the description field is topics, not the description. */
+function bspaceAboutText(meta){
+  const stored = String((meta && meta.description) || '').trim();
+  const piece = bspaceWritingText(meta);
+  const filler = !stored || stored === 'Live Broadcast' || stored === 'Watch, join the conversation, and explore questions and resources.';
+  if(piece && (filler || bspaceTopicList(stored))) return piece;
+  return stored;
+}
 function bspaceToggleWhoDrop(){
   const drop = $('bspaceWhoDrop');
   const meta = activeBroadcastMeta;
   if(!drop || !meta) return;
   if(!drop.hidden){ bspaceCloseWhoDrop(); return; }
   const name = meta.creatorName || 'Someone';
-  const desc = String(meta.description || (meta.segment && (meta.segment.caption || meta.segment.text)) || '').trim();
+  const mine = typeof currentUser !== 'undefined' && currentUser && meta.creatorUid === currentUser.uid && typeof currentProfile !== 'undefined' && currentProfile;
+  const known = (meta.channelAbout != null)
+    ? String(meta.channelAbout || '').trim()
+    : (mine && currentProfile.broadcastAbout != null
+      ? String(currentProfile.broadcastAbout || '').trim()
+      : null);
+  const desc = known == null ? '' : (known || 'No Broadcast description yet.');
   const initial = bspaceEscape((name || 'N').slice(0, 1).toUpperCase());
   const photo = meta.creatorPhoto || '';
   drop.dataset.for = meta.broadcastId || '';
@@ -60,7 +89,7 @@ function bspaceToggleWhoDrop(){
       ? '<img alt="" src="' + bspaceEscape(photo) + '" />'
       : '<span>' + initial + '</span>')
     + '</div><div class="who-drop-copy"><b>' + bspaceEscape(name) + '</b>'
-    + '<p>' + bspaceEscape(desc || 'No description on this Broadcast.') + '</p>'
+    + '<p data-channel-about>' + bspaceEscape(desc) + '</p>'
     + '<button type="button" id="bspaceWhoShare">Share broadcast</button></div>';
   const img = drop.querySelector('img');
   if(img) img.onerror = function(){ img.replaceWith(Object.assign(document.createElement('span'), { textContent: (name || 'N').slice(0, 1).toUpperCase() })); };
@@ -71,10 +100,18 @@ function bspaceToggleWhoDrop(){
     if(btn) btn.click();
   };
   const uid = meta.creatorUid || '';
-  if(!photo && uid && typeof fbDb !== 'undefined' && fbDb){
+  const aboutP = drop.querySelector('[data-channel-about]');
+  if(uid && typeof fbDb !== 'undefined' && fbDb){
     fbDb.collection('users').doc(uid).get().then(function(snap){
-      if(!snap || !snap.exists || drop.hidden || drop.dataset.for !== (meta.broadcastId || '')) return;
-      const d = snap.data() || {};
+      if(!snap || drop.hidden || drop.dataset.for !== (meta.broadcastId || '')) return;
+      const d = (snap.exists && snap.data()) || {};
+      const about = String(d.broadcastAbout || '').trim();
+      meta.channelAbout = about;
+      if(typeof currentUser !== 'undefined' && currentUser && uid === currentUser.uid && typeof currentProfile !== 'undefined' && currentProfile){
+        currentProfile.broadcastAbout = about;
+      }
+      if(aboutP) aboutP.textContent = about || 'No Broadcast description yet.';
+      if(photo) return;
       const url = d.photoUrl || (d.photo && d.photo.dataUrl) || '';
       if(!url) return;
       meta.creatorPhoto = url;
@@ -1582,7 +1619,9 @@ async function openBroadcastSpace(meta){
 
   const seg = meta.segment || {};
   const title = meta.title || (seg.type === 'text' ? (seg.text || 'Broadcast').slice(0, 60) : (seg.caption || 'Broadcast'));
-  const desc = meta.description || seg.caption || (seg.type === 'text' ? '' : 'Watch, join the conversation, and explore questions and resources.');
+  const about = bspaceAboutText(meta);
+  const piece = bspaceWritingText(meta);
+  const desc = (piece && about === piece) ? '' : about;
 
   const nameEl = $('bspaceCreatorName');
   if(nameEl){
@@ -1601,7 +1640,11 @@ async function openBroadcastSpace(meta){
   }
   $('bspaceCreatorMeta').textContent = meta.isMine ? 'Your Broadcast' : 'Creator Circle';
   $('bspaceTitle').textContent = title;
-  $('bspaceDesc').textContent = bspaceShownAbout(desc);
+  const descEl = $('bspaceDesc');
+  if(descEl){
+    descEl.textContent = bspaceShownAbout(desc);
+    descEl.style.display = descEl.textContent ? '' : 'none';
+  }
   const by = $('bspaceByline');
   if(by){
     const credit = (window.NalunoPass && typeof NalunoPass.lockedCredit === 'function') ? NalunoPass.lockedCredit(meta) : null;
@@ -1627,7 +1670,15 @@ async function openBroadcastSpace(meta){
       }
     }
   }catch(_){}
-  const tags = meta.tags && meta.tags.length ? meta.tags : (seg.type ? [seg.type] : ['idea']);
+  const topicish = bspaceTopicList(meta.description);
+  let tags = (meta.tags && meta.tags.length) ? meta.tags.slice() : [];
+  if(topicish){
+    topicish.forEach(function(t){
+      const low = String(t).toLowerCase();
+      if(!tags.some(function(have){ return String(have).toLowerCase() === low; })) tags.push(t);
+    });
+  }
+  if(!tags.length) tags = seg.type ? [seg.type] : ['idea'];
   $('bspaceTags').innerHTML = tags.map(t => `<span class="bspace-tag">${bspaceEscape(t)}</span>`).join('');
   renderBspaceMedia(seg);
   closeRoomSheet();
