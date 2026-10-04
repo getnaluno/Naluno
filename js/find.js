@@ -329,6 +329,22 @@ function freqFace(data, handle){
     at: Date.now(),
   };
 }
+function freqRequestBody(profile){
+  const face = freqFace(profile || {}, '');
+  const body = {
+    name: face.name,
+    handle: String(face.handle || '').slice(0, 40),
+    color: face.color,
+    at: Math.round(Number(face.at) || Date.now()),
+  };
+  if(face.photoUrl && /^https?:\/\//i.test(String(face.photoUrl))) body.photoUrl = String(face.photoUrl).slice(0, 500);
+  return body;
+}
+function freqFailText(e){
+  const m = (e && (e.message || e.code)) || '';
+  if(/permission|insufficient/i.test(String(m))) return 'The request was not saved. Publish the latest rules, then try Connect again.';
+  return m || 'Could not send the request.';
+}
 function listenFrequencyRequests(uid){
   if(!fbDb || !uid) return;
   if(freqReqUnsub){ try{ freqReqUnsub(); }catch(_){} freqReqUnsub = null; }
@@ -370,16 +386,10 @@ function paintFreqRequests(){
       return '<div style="display:flex;align-items:center;gap:10px;padding:10px;">'
         + (typeof contactAvatarHtml === 'function' ? contactAvatarHtml(face, 46) : '')
         + '<div class="contact-meta"><div class="contact-name">' + escapeHtml(r.name) + '</div><div class="contact-sub">' + escapeHtml(r.handle || 'Wants to connect') + '</div></div>'
-        + '<button type="button" data-freq-accept="' + escapeHtml(r.uid) + '" style="background:#7CFFB2;color:#0D0F17;border:none;border-radius:999px;padding:8px 12px;font-size:12.5px;font-weight:650;">Accept</button>'
-        + '<button type="button" data-freq-decline="' + escapeHtml(r.uid) + '" style="background:transparent;color:var(--text-dim);border:1px solid var(--line);border-radius:999px;padding:8px 12px;font-size:12.5px;">Not now</button>'
+        + '<button type="button" data-freq-act="accept" data-uid="' + escapeHtml(r.uid) + '" style="background:#7CFFB2;color:#0D0F17;border:none;border-radius:999px;padding:8px 12px;font-size:12.5px;font-weight:650;">Accept</button>'
+        + '<button type="button" data-freq-act="decline" data-uid="' + escapeHtml(r.uid) + '" style="background:transparent;color:var(--text);border:1px solid var(--line);border-radius:999px;padding:8px 12px;font-size:12.5px;">Not now</button>'
         + '</div>';
     }).join('');
-    list.querySelectorAll('[data-freq-accept]').forEach(function(el){
-      el.onclick = function(e){ if(e) e.stopPropagation(); acceptFrequency(el.getAttribute('data-freq-accept')); };
-    });
-    list.querySelectorAll('[data-freq-decline]').forEach(function(el){
-      el.onclick = function(e){ if(e) e.stopPropagation(); declineFrequency(el.getAttribute('data-freq-decline')); };
-    });
   }
   const waiting = readOutgoing().filter(function(r){
     return r && r.uid && !contacts.some(function(c){ return c.firebaseUid === r.uid; });
@@ -388,33 +398,53 @@ function paintFreqRequests(){
     wlabel.style.display = waiting.length ? 'block' : 'none';
     wlist.innerHTML = waiting.map(function(r){
       return '<div style="display:flex;align-items:center;gap:10px;padding:10px;">'
-        + '<div class="contact-meta"><div class="contact-name">' + escapeHtml(r.name || 'Someone') + '</div><div class="contact-sub">Waiting for them to accept</div></div>'
-        + '<button type="button" data-freq-cancel="' + escapeHtml(r.uid) + '" style="background:transparent;color:var(--text-dim);border:1px solid var(--line);border-radius:999px;padding:8px 12px;font-size:12.5px;">Cancel</button>'
+        + '<div class="contact-meta"><div class="contact-name">' + escapeHtml(r.name || 'Someone') + '</div><div class="contact-sub">Request sent. Waiting for them to accept.</div></div>'
+        + '<button type="button" data-freq-act="cancel" data-uid="' + escapeHtml(r.uid) + '" style="background:transparent;color:var(--text);border:1px solid var(--line);border-radius:999px;padding:8px 12px;font-size:12.5px;">Cancel</button>'
         + '</div>';
     }).join('');
-    wlist.querySelectorAll('[data-freq-cancel]').forEach(function(el){
-      el.onclick = function(){ cancelFrequency(el.getAttribute('data-freq-cancel')); };
-    });
   }
 }
 window.paintFreqRequests = paintFreqRequests;
 
+let __freqSending = false;
+let __freqPick = null;
 async function requestFrequency(theirUid, theirData, handle){
-  if(!currentUser || !fbDb || !theirUid) return;
-  const face = freqFace(theirData, handle);
-  const mine = freqFace(currentProfile || {}, '');
-  await fbDb.collection('users').doc(theirUid).collection('connectionRequests').doc(currentUser.uid).set({
-    name: mine.name,
-    handle: mine.handle,
-    color: mine.color,
-    photo: mine.photo,
-    photoUrl: mine.photoUrl,
-    at: face.at,
-  });
-  rememberOutgoing(theirUid, { name: face.name, handle: face.handle, color: face.color, at: face.at });
-  toast('Request sent. They accept it on Frequencies.');
-  closeFindPeople();
-  paintFreqRequests();
+  if(__freqSending) return;
+  if(!currentUser || !fbDb || !theirUid){ toast('Sign in first'); return; }
+  const btn = $('connectResultBtn');
+  const noteId = 'freqSentNote';
+  __freqSending = true;
+  if(btn){ btn.disabled = true; btn.textContent = 'Sending…'; }
+  try{
+    const body = freqRequestBody(currentProfile || {});
+    await fbDb.collection('users').doc(theirUid).collection('connectionRequests').doc(currentUser.uid).set(body);
+    const them = freqFace(theirData || {}, handle);
+    rememberOutgoing(theirUid, { name: them.name, handle: them.handle, color: them.color, at: body.at });
+    if(btn){ btn.disabled = true; btn.textContent = 'Request sent'; }
+    let note = document.getElementById(noteId);
+    if(!note && $('findPeopleResult')){
+      note = document.createElement('p');
+      note.id = noteId;
+      note.style.cssText = 'margin:12px 0 0;font-size:13px;line-height:1.45;color:var(--mint);';
+      $('findPeopleResult').appendChild(note);
+    }
+    if(note) note.textContent = 'Request sent. They can Accept it, or choose Not now, on Frequencies.';
+    toast('Request sent');
+    paintFreqRequests();
+  }catch(e){
+    if(btn){ btn.disabled = false; btn.textContent = 'Connect'; }
+    const text = freqFailText(e);
+    let note = document.getElementById(noteId);
+    if(!note && $('findPeopleResult')){
+      note = document.createElement('p');
+      note.id = noteId;
+      note.style.cssText = 'margin:12px 0 0;font-size:13px;line-height:1.45;color:var(--red);';
+      $('findPeopleResult').appendChild(note);
+    }
+    if(note){ note.style.color = 'var(--red)'; note.textContent = text; }
+    toast(text);
+  }
+  __freqSending = false;
 }
 async function acceptFrequency(theirUid){
   if(!currentUser || !fbDb || !theirUid) return;
@@ -459,6 +489,7 @@ async function declineFrequency(theirUid){
   }
   freqIncoming = freqIncoming.filter(function(r){ return r.uid !== theirUid; });
   paintFreqRequests();
+  toast('Not now');
 }
 async function cancelFrequency(theirUid){
   if(!theirUid) return;
@@ -610,11 +641,41 @@ function openFindPeople(){
   if(!currentUser){ toast('Sign in first to find people'); return; }
   $('findHandleInput').value = '';
   $('findPeopleResult').innerHTML = '';
+  __freqPick = null;
   $('findPeopleOverlay').classList.add('active');
 }
 function closeFindPeople(){ $('findPeopleOverlay').classList.remove('active'); }
-$('findPeopleBtn').onclick = openFindPeople;
-$('findPeopleClose').onclick = closeFindPeople;
+function wireFindClicks(){
+  if(wireFindClicks.done) return;
+  wireFindClicks.done = true;
+  document.addEventListener('click', function(e){
+    const el = e.target && e.target.closest ? e.target.closest('#findPeopleBtn, [data-freq-act]') : null;
+    if(!el) return;
+    const act = el.id === 'findPeopleBtn' ? 'open' : (el.getAttribute('data-freq-act') || '');
+    if(!act) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if(act === 'open'){ openFindPeople(); return; }
+    const uid = el.getAttribute('data-uid') || '';
+    if(act === 'accept'){ acceptFrequency(uid); return; }
+    if(act === 'decline'){ declineFrequency(uid); return; }
+    if(act === 'cancel'){
+      cancelFrequency(uid);
+      if(el.id === 'connectResultBtn'){
+        el.disabled = false;
+        el.textContent = 'Connect';
+        el.setAttribute('data-freq-act', 'request');
+        const note = document.getElementById('freqSentNote');
+        if(note && note.parentNode) note.parentNode.removeChild(note);
+      }
+      return;
+    }
+    if(act === 'request'){ requestFrequency(uid, (__freqPick && __freqPick.uid === uid && __freqPick.data) || {}, el.getAttribute('data-handle') || ''); return; }
+    if(act === 'accept-found'){ acceptFrequency(uid); return; }
+  }, true);
+}
+wireFindClicks();
+if($('findPeopleClose')) $('findPeopleClose').onclick = closeFindPeople;
 
 async function searchHandle(){
   const handle = $('findHandleInput').value.trim().replace(/^@/,'').toLowerCase();
@@ -656,23 +717,24 @@ async function searchHandle(){
       photoUrl: data.photoUrl || null,
     };
     let action = 'Connect';
-    if(already) action = 'Already connected';
-    else if(incoming) action = 'Accept';
-    else if(waiting) action = 'Cancel request';
+    let act = 'request';
+    if(already){ action = 'Already connected'; act = ''; }
+    else if(incoming){ action = 'Accept'; act = 'accept-found'; }
+    else if(waiting){ action = 'Cancel request'; act = 'cancel'; }
+    __freqPick = { uid: theirUid, data: data, handle: handle };
     $('findPeopleResult').innerHTML = `
       <div class="contact-row" style="cursor:default;">
         ${typeof contactAvatarHtml === 'function' ? contactAvatarHtml(face, 46) : ('<div class="avatar" style="width:46px;height:46px;font-size:15px;background:'+(face.color)+';">'+escapeHtml(face.initials)+'</div>')}
         <div class="contact-meta"><div class="contact-name" data-known-uid="${escapeHtml(String(theirUid||''))}">${escapeHtml(data.name||'Unknown')}</div><div class="contact-sub">${escapeHtml(data.number||('@'+handle))}</div></div>
       </div>
-      <button class="join-btn" id="connectResultBtn" style="margin-top:14px;" ${already?'disabled':''}>${action}</button>`;
-    if(already) return;
-    $('connectResultBtn').onclick = function(){
-      if(incoming) acceptFrequency(theirUid);
-      else if(waiting) cancelFrequency(theirUid).then(function(){ closeFindPeople(); });
-      else requestFrequency(theirUid, data, handle).catch(function(e){
-        toast((e && e.message) || 'Could not send the request');
-      });
-    };
+      <button type="button" class="join-btn" id="connectResultBtn" data-freq-act="${act}" data-uid="${escapeHtml(String(theirUid||''))}" data-handle="${escapeHtml(String(handle||''))}" style="margin-top:14px;" ${already?'disabled':''}>${action}</button>`;
+    if(waiting){
+      const note = document.createElement('p');
+      note.id = 'freqSentNote';
+      note.style.cssText = 'margin:12px 0 0;font-size:13px;line-height:1.45;color:var(--mint);';
+      note.textContent = 'Request sent. They can Accept it, or choose Not now, on Frequencies.';
+      $('findPeopleResult').appendChild(note);
+    }
   }catch(e){
     $('findPeopleResult').innerHTML = `<div style="color:var(--red); font-size:13px;">${escapeHtml((typeof nalunoFriendlyError === 'function' ? nalunoFriendlyError(e.message) : e.message)||'Search failed')}</div>`;
   }

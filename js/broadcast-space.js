@@ -1986,6 +1986,7 @@ $('bspaceBack').onclick = closeBroadcastSpace;
       if(open) moneyBody.removeAttribute('hidden');
       else moneyBody.setAttribute('hidden', '');
       moneyBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if(open && typeof paintMonetiseJourney === 'function') paintMonetiseJourney();
     };
   }
 })();

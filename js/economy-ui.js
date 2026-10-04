@@ -808,13 +808,16 @@ async function nalunoStartPayouts(){
   if(b){ b.disabled = true; b.textContent = 'Opening Stripe…'; }
   try{
     const d = await nalunoPayoutCall('/v1/pay/connect', 'POST');
-    window.location.href = d.url;
+    if(d && d.url){ window.location.href = d.url; return; }
+    throw new Error('The Stripe page did not open.');
   }catch(e){
+    const url = nalunoStripeSetupUrl(e);
+    if(url){ window.location.href = url; return; }
     if(b){ b.disabled = false; b.textContent = 'Set up payouts with Stripe'; }
-    const line = $('payoutLine');
-    nalunoShowStripeSetup(line || b, e);
-    const msg = $('payoutMsg');
     const text = (e && e.message) || 'Payouts aren’t available right now.';
+    const line = $('payoutLine');
+    if(line) line.textContent = text;
+    const msg = $('payoutMsg');
     if(msg) msg.textContent = text;
     toast(text);
   }
@@ -827,19 +830,19 @@ function paintPayoutBlock(host){
     box.className = 'payout-block';
     host.insertBefore(box, host.firstChild);
   }
-  box.innerHTML = '<div class="section-label" style="padding:0 4px;">Creator Support · Stripe</div>'
+  box.innerHTML = '<div class="section-label" style="padding:0 4px;">Stripe · cards</div>'
     + '<p class="lobby-sub" id="payoutLine" style="text-align:left;max-width:none;font-size:11.5px;margin:4px 0 8px;">Checking…</p>'
-    + '<button type="button" class="support-row-cta payout-btn" id="payoutStartBtn" hidden>Set up payouts with Stripe</button>'
-    + '<p class="lobby-sub" id="payoutMsg" style="text-align:left;max-width:none;font-size:11.5px;margin:6px 0 0;">Stripe here is only for Creator Support. It is not monetisation.</p>';
+    + '<button type="button" class="save-btn" id="payoutStartBtn" hidden style="margin:0;width:100%;">Set up payouts with Stripe</button>'
+    + '<p class="lobby-sub" id="payoutMsg" style="text-align:left;max-width:none;font-size:11.5px;margin:6px 0 0;">Stripe takes card payments. If payouts are on and this account is ready, a card payment can go to your Stripe account and then to your bank. If payouts are off, Naluno holds it. Opening Stripe does not pay you. Stripe does not collect MTN or Airtel.</p>';
   const btn = box.querySelector('#payoutStartBtn');
   btn.onclick = nalunoStartPayouts;
   nalunoPayoutStatus(false).then(function(st){
     const line = box.querySelector('#payoutLine');
     if(!line) return;
-    if(!st){ line.textContent = 'Creator Support payouts need the payment service. Support sent to you is still recorded. This is not monetisation.'; return; }
-    if(st.ready){ line.textContent = 'Creator Support can go to your Stripe account. That is separate from monetisation.'; btn.hidden = true; return; }
-    if(st.connected){ line.textContent = 'Stripe needs a few more details before it can pay you.'; btn.textContent = 'Finish setting up on Stripe'; btn.hidden = false; return; }
-    line.textContent = 'To receive Creator Support, connect a Stripe account. This is not how monetisation is paid.';
+    if(!st){ line.textContent = 'Stripe is not connected yet. Card support is still recorded. Nothing was paid.'; return; }
+    if(st.ready){ line.textContent = 'Card support can go to this Stripe account when payouts are on. Nothing was paid by opening this.'; btn.hidden = true; return; }
+    if(st.connected){ line.textContent = 'Stripe needs a few more details before it can pay a card payment to you.'; btn.textContent = 'Finish on Stripe'; btn.hidden = false; return; }
+    line.textContent = 'Set up Stripe so card support can reach your bank. This does not collect mobile money.';
     btn.hidden = false;
   });
 }
@@ -857,6 +860,127 @@ function canonUgandaMomo(raw, network){
   if(guess && guess !== net) return { error: 'That number is not on the network you chose. Nothing was saved.' };
   return { phone: d, network: net, phone_tail: d.slice(-4) };
 }
+function nalunoMonetiseMs(v){
+  if(v == null || v === '') return 0;
+  if(typeof v === 'number') return v;
+  if(typeof v.toMillis === 'function') return v.toMillis();
+  if(typeof v.seconds === 'number') return v.seconds * 1000;
+  const n = Number(v);
+  return n > 0 ? n : 0;
+}
+function nalunoMonetiseMonthKey(now){
+  const d = new Date(now);
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
+}
+function nalunoMonetisePrevMonth(key){
+  const p = String(key || '').split('-');
+  let y = Number(p[0]);
+  let m = Number(p[1]);
+  if(!y || !m) return '';
+  m -= 1;
+  if(m < 1){ m = 12; y -= 1; }
+  return y + '-' + String(m).padStart(2, '0');
+}
+function nalunoMonetiseOriginal(b, now){
+  if(!b || b.deleted || b.hidden || b.held) return false;
+  if(b.repostOf) return false;
+  const basis = b.originCredit && b.originCredit.basis;
+  if(basis === 'repost') return false;
+  const dur = Number(b.durationSec);
+  if(dur > 0 && dur < 60) return false;
+  return true;
+}
+/* Six gates, same numbers as the desk. Percent is the average of the six,
+   each one capped at full. Nothing here pays anyone. */
+function nalunoMonetiseProgress(src){
+  src = src || {};
+  const now = nalunoMonetiseMs(src.now) || Date.now();
+  const toga = src.toga || {};
+  const broadcasts = src.broadcasts || [];
+  let circle = 0;
+  Object.keys(toga).forEach(function(k){
+    if(/^mc_\d{4}-\d{2}$/.test(k)) circle += Number(toga[k]) || 0;
+  });
+  let key = nalunoMonetiseMonthKey(now);
+  let views = 0;
+  let talk = 0;
+  for(let i = 0; i < 12 && key; i++){
+    const viewsK = 'mv_' + key;
+    const engageK = 'me_' + key;
+    const hasNew = toga[viewsK] != null || toga['mc_' + key] != null || toga[engageK] != null;
+    const legacy = toga.monthKey === key;
+    views += hasNew ? (Number(toga[viewsK]) || 0) : (legacy ? (Number(toga.viewsMonth) || 0) : 0);
+    talk += hasNew ? (Number(toga[engageK]) || 0) : (legacy ? (Number(toga.engageMonth) || 0) : 0);
+    key = nalunoMonetisePrevMonth(key);
+  }
+  let originals = 0;
+  let recent = 0;
+  broadcasts.forEach(function(b){
+    if(!nalunoMonetiseOriginal(b, now)) return;
+    originals += 1;
+    const at = nalunoMonetiseMs(b.createdAt || b.created_at);
+    if(at > 0 && (now - at) <= 90 * 86400000 && (now - at) >= 0) recent += 1;
+  });
+  const created = nalunoMonetiseMs(src.createdAt);
+  const days = created > 0 ? Math.floor((now - created) / 86400000) : 0;
+  const gates = [
+    { label: 'Circle', have: circle, need: 400 },
+    { label: 'Views in 12 months', have: views, need: 8000 },
+    { label: 'Talks in 12 months', have: talk, need: 200 },
+    { label: 'Original Broadcasts', have: originals, need: 12 },
+    { label: 'Originals in 90 days', have: recent, need: 6 },
+    { label: 'Days on Naluno', have: Math.max(0, days), need: 120 },
+  ];
+  let sum = 0;
+  gates.forEach(function(g){
+    g.have = Math.max(0, Math.round(g.have));
+    g.pct = Math.max(0, Math.min(100, Math.round(100 * g.have / g.need)));
+    sum += Math.min(1, g.have / g.need);
+  });
+  const pct = Math.round(100 * sum / gates.length);
+  return { pct: pct, gates: gates, eligible: gates.every(function(g){ return g.have >= g.need; }) };
+}
+function paintMonetiseJourney(){
+  const host = $('bspaceMonetiseTrack');
+  if(!host) return;
+  if(typeof currentUser === 'undefined' || !currentUser || typeof fbDb === 'undefined' || !fbDb){
+    host.innerHTML = '<p style="margin:0;font-size:12.5px;color:var(--text-dim);">Sign in to see where you are. Nothing is paid from this.</p>';
+    return;
+  }
+  host.innerHTML = '<p style="margin:0;font-size:12.5px;color:var(--text-dim);">Checking where you are…</p>';
+  Promise.all([
+    fbDb.collection('toga').doc(currentUser.uid).get(),
+    fbDb.collection('users').doc(currentUser.uid).get(),
+  ]).then(function(snaps){
+    const toga = snaps[0] && snaps[0].exists ? (snaps[0].data() || {}) : {};
+    const user = snaps[1] && snaps[1].exists ? (snaps[1].data() || {}) : {};
+    const list = (typeof myBroadcasts !== 'undefined' && myBroadcasts) ? myBroadcasts : [];
+    const prog = nalunoMonetiseProgress({
+      now: Date.now(),
+      toga: toga,
+      createdAt: user.createdAt || user.created_at || 0,
+      broadcasts: list,
+    });
+    const rows = prog.gates.map(function(g){
+      return '<div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;margin-top:4px;">'
+        + '<span>' + g.label + '</span><span>' + g.have + ' / ' + g.need + '</span></div>'
+        + '<div style="height:6px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:3px;">'
+        + '<div style="height:100%;width:' + g.pct + '%;background:#7CFFB2;"></div></div>';
+    }).join('');
+    host.innerHTML = '<div style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px;">'
+      + '<span>Where you are</span><span>' + prog.pct + '%</span></div>'
+      + '<div style="height:8px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden;margin:6px 0 8px;">'
+      + '<div style="height:100%;width:' + prog.pct + '%;background:#7CFFB2;"></div></div>'
+      + rows
+      + '<p style="margin:8px 0 0;font-size:12px;color:var(--text-dim);">'
+      + (prog.eligible ? 'Every gate is met. Nothing has been paid.' : 'Each line is what you have now, against the gate. Nothing here pays you.')
+      + '</p>';
+  }).catch(function(){
+    host.innerHTML = '<p style="margin:0;font-size:12.5px;color:var(--text-dim);">Could not read where you are. Nothing was paid.</p>';
+  });
+}
+window.nalunoMonetiseProgress = nalunoMonetiseProgress;
+window.paintMonetiseJourney = paintMonetiseJourney;
 function paintMomoReceive(host){
   if(!host || typeof currentUser === 'undefined' || !currentUser) return;
   let box = host.querySelector('.momo-receive');
@@ -866,12 +990,12 @@ function paintMomoReceive(host){
     box.style.marginTop = '14px';
     host.appendChild(box);
   }
-  box.innerHTML = '<div class="section-label" style="padding:0 4px;">Receive on MTN or Airtel</div>'
-    + '<p class="lobby-sub" style="text-align:left;max-width:none;font-size:11.5px;margin:4px 0 8px;">This is your number, for Creator Support people send you. Uganda only. Saving it does not pay you, and it does not turn monetisation on. If monetisation is turned on later, Naluno can use this same number.</p>'
+  box.innerHTML = '<div class="section-label" style="padding:0 4px;">Your MTN or Airtel number</div>'
+    + '<p class="lobby-sub" style="text-align:left;max-width:none;font-size:11.5px;margin:4px 0 8px;">This is your payout number. The number someone types when they send support is theirs, and Naluno uses it only to collect from them. Saving yours does not pay you, and it does not turn monetisation on. If monetisation is turned on later, Naluno can send to this same number.</p>'
     + '<select id="momoNet" style="width:100%;margin:0 0 8px;padding:10px;border-radius:10px;background:var(--surface);color:var(--text);border:1px solid var(--line);">'
     + '<option value="mtn">MTN</option><option value="airtel">Airtel</option></select>'
     + '<input id="momoPhone" type="tel" inputmode="tel" autocomplete="off" placeholder="07… mobile money number" style="width:100%;margin:0 0 8px;padding:10px;border-radius:10px;background:var(--surface);color:var(--text);border:1px solid var(--line);" />'
-    + '<button type="button" class="support-row-cta" id="momoSaveBtn">Save number</button>'
+    + '<button type="button" class="save-btn" id="momoSaveBtn" style="margin:0;width:100%;">Save number</button>'
     + '<p class="lobby-sub" id="momoLine" style="text-align:left;max-width:none;font-size:11.5px;margin:8px 0 0;"></p>';
   const line = box.querySelector('#momoLine');
   const net = box.querySelector('#momoNet');
