@@ -836,7 +836,7 @@
 .who-drop-copy b{ display:block; font-size:14px; letter-spacing:.03em; margin-bottom:4px; }
 .who-drop-copy p{
   margin:0; font-size:13px; line-height:1.45; color:var(--text-dim);
-  display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; overflow:hidden;
+  white-space:pre-wrap; overflow:visible;
 }
 .who-drop-copy button{
   margin-top:8px; height:32px; padding:0 12px; border-radius:999px; cursor:pointer;
