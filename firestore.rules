@@ -1011,15 +1011,32 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    /* Notices from Naluno (a Broadcast taken off the feed, and the appeal).
-       Written by the economy Worker's service account, which bypasses rules.
-       The owner may read their own and mark one appealed — nothing else. */
+    /* Notices from Naluno (a Broadcast taken off the feed, the appeal,
+       and a one-time monetisation congratulations).
+       The economy Worker writes with its service account, which bypasses
+       rules. The signed-in operator may create only the monetisation
+       notice, with a fixed shape. The owner may read their own and mark
+       a safety notice appealed — nothing else. */
     match /users/{uid}/notices/{noticeId} {
       allow read: if isOwner(uid);
       allow update: if isOwner(uid)
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['appealed', 'appealedAt']);
-      allow create, delete: if false;
+      allow create: if isOperator()
+        && noticeId.matches('^monetise_[A-Za-z0-9]{6,40}$')
+        && request.resource.data.keys().hasOnly(['kind', 'body', 'ts', 'at', 'by', 'month', 'appealable', 'notice_id'])
+        && request.resource.data.kind == 'monetisation_eligible'
+        && request.resource.data.body is string
+        && request.resource.data.body.size() > 20
+        && request.resource.data.body.size() < 500
+        && request.resource.data.by == request.auth.uid
+        && request.resource.data.ts is number
+        && request.resource.data.at is number
+        && request.resource.data.month is string
+        && request.resource.data.month.size() == 7
+        && request.resource.data.appealable == false
+        && request.resource.data.notice_id == noticeId;
+      allow delete: if false;
     }
 
     /* Mobile-money status. The worker writes it. A phone can read its own
@@ -1282,10 +1299,45 @@ service cloud.firestore {
       allow delete: if isOperator();
     }
 
-    /* Stripe Connect readiness. Written by the economy worker. The desk only reads it. */
+    /* Stripe Connect readiness. Written by the economy worker. The console only reads it. */
     match /payoutAccounts/{uid} {
       allow read: if isOperator();
       allow write: if false;
+    }
+
+    /* How Naluno can pay a creator over Uganda mobile money.
+       The owner may save a number. They cannot mark themselves paid. */
+    match /creatorPayoutMethods/{uid} {
+      allow read: if isOwner(uid) || isOperator();
+      allow create, update: if isOwner(uid)
+        && request.resource.data.keys().hasOnly(['phone', 'network', 'phone_tail', 'updatedAt'])
+        && request.resource.data.phone is string
+        && request.resource.data.phone.matches('^2567[0-9]{8}$')
+        && request.resource.data.network in ['mtn', 'airtel']
+        && request.resource.data.phone_tail is string
+        && request.resource.data.phone_tail.size() == 4
+        && request.resource.data.updatedAt is number;
+      allow delete: if isOwner(uid);
+    }
+
+    /* Who Naluno will pay when the monetisation phase is on.
+       The operator records eligibility and that the note was sent.
+       Nobody writes an amount or a paid flag here. */
+    match /creatorMonetisation/{uid} {
+      allow read: if isOwner(uid) || isOperator();
+      allow create, update: if isOperator()
+        && request.resource.data.keys().hasOnly(['uid', 'eligible', 'score', 'monthKey', 'congratulatedAt', 'congratulatedBy', 'handle', 'name', 'broadcasts'])
+        && request.resource.data.uid == uid
+        && request.resource.data.eligible is bool
+        && request.resource.data.score is number
+        && request.resource.data.monthKey is string
+        && request.resource.data.monthKey.size() == 7
+        && request.resource.data.congratulatedAt is number
+        && request.resource.data.congratulatedBy is string
+        && request.resource.data.congratulatedBy.size() > 5
+        && request.resource.data.congratulatedBy.size() < 60
+        && request.resource.data.broadcasts is number;
+      allow delete: if false;
     }
 
     match /adminAudit/{id} {
