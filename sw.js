@@ -72,8 +72,8 @@
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
 // v248: attention is only kept when a visit, an app open, or a continued session owns it. Join date and Find pin stay on the person.
-const CACHE_NAME = 'naluno-shell-v275';
-const APP_BUILD = '20261004k';
+const CACHE_NAME = 'naluno-shell-v277';
+const APP_BUILD = '20261004n';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
