@@ -96,7 +96,7 @@ import {
   cfCalls,
 } from "./live.mjs";
 
-export const VERSION = "2.8.0-monetise";
+export const VERSION = "2.9.0-lock";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -1632,7 +1632,14 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
   };
 
   if (path === "/v1/admin/status" && request.method === "GET") {
-    const stamped = await stampOperatorClaim(env, user.uid);
+    /* The claim is what Firestore treats as the desk. It is stamped only
+       after the console password already on this account matches. A signed-in
+       operator with no password typed is not given the claim, and an existing
+       claim is never cleared here. */
+    let stamped = false;
+    if (adminPass && (await matchPasswordRecord(recs, user.uid, adminPass))) {
+      stamped = await stampOperatorClaim(env, user.uid);
+    }
     return json({
       ok: true,
       operator: true,
@@ -1642,6 +1649,12 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
       version: VERSION,
       claim: stamped ? "operator" : "",
     });
+  }
+
+  if (path === "/v1/admin/billing" && request.method === "GET") {
+    if (!stored) return json({ ok: false, error: "console password required" }, 401);
+    const billing = await loadBilling(env, saToken);
+    return json({ ok: true, billing: billing });
   }
 
   if (path === "/v1/admin/safety" && request.method === "GET") {
@@ -2587,10 +2600,18 @@ const _lifelineHits = new Map();
 /** Best-effort per-IP rate limit (per isolate). Stops casual abuse of the
  *  dead drop as free storage; not a security boundary. */
 function lifelineRate(ip, perMinute) {
-  const now = Date.now(), k = ip + "|" + Math.floor(now / 60000);
+  const now = Date.now();
+  const minute = Math.floor(now / 60000);
+  const k = ip + "|" + minute;
   const n = (_lifelineHits.get(k) || 0) + 1;
+  if (_lifelineHits.size > 4000) {
+    for (const key of _lifelineHits.keys()) {
+      const slot = Number(String(key).split("|").pop());
+      if (!(slot >= minute - 1)) _lifelineHits.delete(key);
+    }
+  }
+  if (_lifelineHits.size > 8000) return false;
   _lifelineHits.set(k, n);
-  if (_lifelineHits.size > 5000) _lifelineHits.clear();
   return n <= perMinute;
 }
 function lifelineB64u(str) {
@@ -3145,6 +3166,27 @@ async function liveEnd(env, user, saToken, body) {
   return json({ ok: true });
 }
 
+async function loadBilling(env, saToken) {
+  const configured = hasSaConfigured(env);
+  let billing = { connected: false, invoices: [], usage: null };
+  try {
+    const monToken = configured
+      ? saAccessTokenScoped(env, "https://www.googleapis.com/auth/monitoring.read")
+      : Promise.resolve("");
+    try { setBookRates(await loadRates(env, saToken)); } catch (_) {}
+    billing = await Promise.race([
+      billingSnapshot(env, {
+        projectId: projectId(env),
+        getMonitoringToken: function () { return monToken; },
+      }),
+      new Promise(function (ok) {
+        setTimeout(function () { ok({ connected: false, invoices: [], usage: null }); }, 6000);
+      }),
+    ]);
+  } catch (_) {}
+  return billing;
+}
+
 export async function handleRequest(request, env = {}, ctx = {}) {
   if (request.method === "OPTIONS") return corsPreflight();
   const url = new URL(request.url);
@@ -3154,22 +3196,6 @@ export async function handleRequest(request, env = {}, ctx = {}) {
     if (path === "/health") {
       const configured = hasSaConfigured(env);
       const saToken = configured ? await saAccessToken(env) : "";
-      let billing = { connected: false, invoices: [], usage: null };
-      try {
-        const monToken = configured
-          ? saAccessTokenScoped(env, "https://www.googleapis.com/auth/monitoring.read")
-          : Promise.resolve("");
-        try { setBookRates(await loadRates(env, saToken)); } catch (_) {}
-        billing = await Promise.race([
-          billingSnapshot(env, {
-            projectId: projectId(env),
-            getMonitoringToken: function () { return monToken; },
-          }),
-          new Promise(function (ok) {
-            setTimeout(function () { ok({ connected: false, invoices: [], usage: null }); }, 6000);
-          }),
-        ]);
-      } catch (_) {}
       return json({
         ok: true,
         service: "naluno-economy",
@@ -3179,10 +3205,8 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         hasWebApiKey: !!apiKey(env),
         hasInbox: !!(mailInbox(env) && looksLikeEmail(mailInbox(env))),
         persist: saToken ? "firestore-sa" : "user-token",
-        saError: saToken ? "" : saCache.err || "",
         payments: paymentsReady(env) && !!saToken,
         liveRooms: callsReady(env) && !!saToken,
-        billing: billing,
       });
     }
 
@@ -3273,7 +3297,7 @@ export async function handleRequest(request, env = {}, ctx = {}) {
     if (path === "/v1/lifeline/drop" && request.method === "POST") {
       if (!saToken) return json({ ok: false, error: "relay storage not configured" }, 503);
       const ip = request.headers.get("CF-Connecting-IP") || "?";
-      if (!lifelineRate(ip, 60)) return json({ ok: false, error: "slow down" }, 429);
+      if (!lifelineRate(ip, 20)) return json({ ok: false, error: "slow down" }, 429);
       const body = await request.json().catch(() => ({}));
       const p = String(body.p || "");
       if (!/^[A-Za-z0-9_-]{60,5600}$/.test(p)) return json({ ok: false, error: "bad packet" }, 400);
@@ -3290,7 +3314,7 @@ export async function handleRequest(request, env = {}, ctx = {}) {
     if (path === "/v1/lifeline/pick" && request.method === "POST") {
       if (!saToken) return json({ ok: false, error: "relay storage not configured" }, 503);
       const ip = request.headers.get("CF-Connecting-IP") || "?";
-      if (!lifelineRate(ip, 120)) return json({ ok: false, error: "slow down" }, 429);
+      if (!lifelineRate(ip, 40)) return json({ ok: false, error: "slow down" }, 429);
       const body = await request.json().catch(() => ({}));
       const tags = (Array.isArray(body.tags) ? body.tags : [])
         .filter((t) => typeof t === "string" && /^[0-9a-f]{24}$/.test(t)).slice(0, 300);
