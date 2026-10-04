@@ -305,3 +305,29 @@ export async function momoNoticeValid(raw, signature, secret, intent) {
   if (!(want > 0) || got !== want) return false;
   return true;
 }
+/** Readiness for a creator payout over MTN or Airtel.
+ *  Never reports paid. A missing provider URL stays not_connected.
+ *  This is monetisation, not Creator Support. */
+export function momoDisburseDecision(input) {
+  const phaseOn = !!(input && input.phaseOn);
+  const eligible = !!(input && input.eligible);
+  const method = (input && input.method) || null;
+  const phone = method ? momoPhone(method.phone) : "";
+  const picked = method && (method.network === "mtn" || method.network === "airtel") ? method.network : "";
+  const guessed = phone ? momoNetworkOf(phone) : "";
+  const network = picked && (!guessed || guessed === picked) ? picked : "";
+  const url = !!(input && input.disburseUrl);
+  let code = "ready";
+  if (!phaseOn) code = "phase_off";
+  else if (!eligible) code = "not_eligible";
+  else if (!phone || !network) code = "no_method";
+  else if (!url) code = "not_connected";
+  return {
+    ok: code === "ready",
+    paid: false,
+    status: "unpaid",
+    code,
+    network,
+    phone_tail: phone ? phone.slice(-4) : "",
+  };
+}

@@ -7,6 +7,7 @@ export function createMomoRail(d) {
   const {
     json, fsGetDoc, fsPutDoc, fetchImpl, validateCheckout, momoPayer, momoCollectBody, momoNoticeValid,
     normCode, priceIn, roundForCharge, majorToStripe, closeEnough, loadRates, loadPriceBook, readFlags, markPaid,
+    momoDisburseDecision,
   } = d;
 
   async function quoteForMomo(env, user, saToken, body, check) {
@@ -211,5 +212,88 @@ export function createMomoRail(d) {
     return json({ ok: true, status: "paid" });
   }
 
-  return { payMomo, payMomoNotice };
+  function disburseError(code) {
+    if (code === "phase_off") return "Monetisation is not on. Nothing was sent.";
+    if (code === "not_eligible") return "This account is not on the monetisation list. Nothing was sent.";
+    if (code === "no_method") return "Save an MTN or Airtel number first. Nothing was sent.";
+    return "Mobile money payouts are not connected yet. Nothing was sent.";
+  }
+
+  /* Creator receive rail. Uganda MTN / Airtel. Never marks paid.
+     Separate from Creator Support collections. */
+  async function disburseMomo(env, user, saToken) {
+    if (!user || !user.uid) {
+      return json({ ok: false, paid: false, status: "unpaid", code: "sign_in", error: "Sign in. Nothing was sent." }, 401);
+    }
+    if (!saToken) {
+      return json({
+        ok: false, paid: false, status: "unpaid", code: "not_connected", rail: "momo", kind: "monetisation",
+        error: "Mobile money payouts are not connected yet. Nothing was sent.",
+      }, 503);
+    }
+    const flags = await readFlags(env, saToken, null);
+    const phaseOn = !!(flags && flags.flags && flags.flags.monetisation_phase_enabled);
+    const mark = await fsGetDoc(env, saToken, "/creatorMonetisation/" + encodeURIComponent(user.uid));
+    const method = await fsGetDoc(env, saToken, "/creatorPayoutMethods/" + encodeURIComponent(user.uid));
+    const decision = (typeof momoDisburseDecision === "function" ? momoDisburseDecision : function () {
+      return { ok: false, paid: false, status: "unpaid", code: "not_connected" };
+    })({
+      phaseOn: phaseOn,
+      eligible: !!(mark && mark.eligible === true),
+      method: method,
+      disburseUrl: env && env.MOMO_DISBURSE_URL,
+    });
+    if (decision.paid) decision.paid = false;
+    if (!decision.ok) {
+      return json({
+        ok: false,
+        paid: false,
+        status: "unpaid",
+        code: decision.code || "not_connected",
+        rail: "momo",
+        kind: "monetisation",
+        error: disburseError(decision.code),
+      }, decision.code === "not_connected" ? 503 : 403);
+    }
+    let submitted = false;
+    try {
+      const res = await fetchImpl(String(env.MOMO_DISBURSE_URL), {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + String(env.MOMO_DISBURSE_KEY || ""),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          phone: method.phone,
+          network: decision.network,
+          currency: "UGX",
+          externalId: "mn" + String(user.uid).slice(0, 40),
+          kind: "monetisation",
+        }),
+      });
+      submitted = !!(res && res.ok);
+    } catch (_) { submitted = false; }
+    await fsPutDoc(env, saToken, "/users/" + encodeURIComponent(user.uid) + "/payStatus/monetise", {
+      status: submitted ? "submitted" : "unpaid",
+      paid: false,
+      kind: "monetisation",
+      rail: "momo",
+      network: decision.network || "",
+      phone_tail: decision.phone_tail || "",
+      at: Date.now(),
+    });
+    return json({
+      ok: submitted,
+      paid: false,
+      status: submitted ? "submitted" : "unpaid",
+      code: submitted ? "submitted" : "not_connected",
+      rail: "momo",
+      kind: "monetisation",
+      message: submitted
+        ? "The mobile-money line accepted a request. It is not marked paid until MTN or Airtel confirms."
+        : "The mobile-money line did not accept it. Nothing was marked paid.",
+    }, submitted ? 200 : 503);
+  }
+
+  return { payMomo, payMomoNotice, disburseMomo };
 }

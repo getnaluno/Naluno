@@ -60,6 +60,7 @@ import {
   momoPayer,
   momoCollectBody,
   momoNoticeValid,
+  momoDisburseDecision,
 } from "./pay.mjs";
 import { createMomoRail } from "./momo-rail.mjs";
 import {
@@ -95,7 +96,7 @@ import {
   cfCalls,
 } from "./live.mjs";
 
-export const VERSION = "2.7.0-pricebook";
+export const VERSION = "2.8.0-monetise";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -108,6 +109,7 @@ export const DEFAULT_FLAGS = {
   creator_support_enabled: false,
   community_rewards_enabled: false,
   real_payouts_enabled: false,
+  monetisation_phase_enabled: false,
   content_hub_enabled: false,
   sports_enabled: false,
   movies_enabled: false,
@@ -563,8 +565,8 @@ function addContributionRow(bag, seen, row, uid) {
 }
 
 /* The number My Contribution shows. Memory alone is whatever this isolate
-   has scored since it started, which is why the phone read 0 while the desk
-   (which adds up contributionLedger) showed the points. The ledger is the
+   has scored since it started, which is why the phone read 0 while Naluno's
+   ledger (contributionLedger) had the points. The ledger is the
    source of truth. The profile is a rollup and is used only when it is
    higher, so a capped query cannot hide a repaired total. Nothing in the
    request body is read. */
@@ -3030,6 +3032,7 @@ function momoRail() {
     momoPayer: momoPayer,
     momoCollectBody: momoCollectBody,
     momoNoticeValid: momoNoticeValid,
+    momoDisburseDecision: momoDisburseDecision,
     normCode: normCode,
     priceIn: priceIn,
     roundForCharge: roundForCharge,
@@ -3944,6 +3947,9 @@ export async function handleRequest(request, env = {}, ctx = {}) {
     if (path === "/v1/pay/momo" && request.method === "POST") {
       const body = await request.json().catch(() => ({}));
       return momoRail().payMomo(env, user, saToken, body || {});
+    }
+    if (path === "/v1/pay/momo/disburse" && request.method === "POST") {
+      return momoRail().disburseMomo(env, user, saToken);
     }
 
     if (path === "/v1/live/host" && request.method === "POST") {
