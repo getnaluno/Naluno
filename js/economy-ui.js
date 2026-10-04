@@ -866,8 +866,8 @@ function paintMomoReceive(host){
     box.style.marginTop = '14px';
     host.appendChild(box);
   }
-  box.innerHTML = '<div class="section-label" style="padding:0 4px;">Monetisation · mobile money</div>'
-    + '<p class="lobby-sub" style="text-align:left;max-width:none;font-size:11.5px;margin:4px 0 8px;">Uganda first. Save MTN or Airtel if you want Naluno to be able to pay you when the monetisation phase is on. Saving a number does not pay you. This is not Creator Support.</p>'
+  box.innerHTML = '<div class="section-label" style="padding:0 4px;">Receive on MTN or Airtel</div>'
+    + '<p class="lobby-sub" style="text-align:left;max-width:none;font-size:11.5px;margin:4px 0 8px;">This is your number, for Creator Support people send you. Uganda only. Saving it does not pay you, and it does not turn monetisation on. If monetisation is turned on later, Naluno can use this same number.</p>'
     + '<select id="momoNet" style="width:100%;margin:0 0 8px;padding:10px;border-radius:10px;background:var(--surface);color:var(--text);border:1px solid var(--line);">'
     + '<option value="mtn">MTN</option><option value="airtel">Airtel</option></select>'
     + '<input id="momoPhone" type="tel" inputmode="tel" autocomplete="off" placeholder="07… mobile money number" style="width:100%;margin:0 0 8px;padding:10px;border-radius:10px;background:var(--surface);color:var(--text);border:1px solid var(--line);" />'

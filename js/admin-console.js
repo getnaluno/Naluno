@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261004h';
+  const BUILD = '20261004i';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -969,6 +969,13 @@
         out.payments = !!b.payments;
         out.liveRooms = !!b.liveRooms;
         out.billing = b.billing || null;
+        if (!out.billing && __adminPass) {
+          try {
+            const st = await adminWorker('/v1/admin/billing', { method: 'GET' });
+            const sb = st ? await st.json().catch(function () { return {}; }) : {};
+            if (st && st.ok && sb && sb.billing) out.billing = sb.billing;
+          } catch (_) {}
+        }
         try {
           const f = await fetch(base + '/v1/flags', { cache: 'no-store' });
           const fb = await f.json().catch(function () { return {}; });

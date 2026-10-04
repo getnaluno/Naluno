@@ -288,6 +288,209 @@ function slimCloudPhoto(photo, photoUrl){
 
 let connectionsUnsub = null;
 let connectionsRefreshDebounce = null;
+let freqReqUnsub = null;
+let freqIncoming = [];
+
+function freqOutKey(){
+  const uid = (typeof currentUser !== 'undefined' && currentUser && currentUser.uid) || '';
+  return 'nalunoFreqOut:' + uid;
+}
+function readOutgoing(){
+  try{
+    const list = JSON.parse(localStorage.getItem(freqOutKey()) || '[]');
+    return Array.isArray(list) ? list : [];
+  }catch(_){ return []; }
+}
+function writeOutgoing(list){
+  try{ localStorage.setItem(freqOutKey(), JSON.stringify((list || []).slice(0, 40))); }catch(_){}
+}
+function rememberOutgoing(uid, face){
+  const list = readOutgoing().filter(function(x){ return x && x.uid !== uid; });
+  list.unshift({ uid: uid, name: face.name, handle: face.handle || '', color: face.color || '#7CFFB2', at: face.at || Date.now() });
+  writeOutgoing(list);
+}
+function forgetOutgoing(uid){
+  writeOutgoing(readOutgoing().filter(function(x){ return x && x.uid !== uid; }));
+}
+function freqFace(data, handle){
+  const src = data || {};
+  const photo = (typeof slimCloudPhoto === 'function')
+    ? slimCloudPhoto(src.photo, src.photoUrl)
+    : { photo: src.photo || null, photoUrl: src.photoUrl || null };
+  const color = (src.color && /^#[0-9A-Fa-f]{3,8}$/.test(src.color)) ? src.color : '#7CFFB2';
+  let handleStr = src.number || src.handle || (handle ? ('@' + String(handle).replace(/^@/, '')) : '');
+  handleStr = String(handleStr || '').slice(0, 40);
+  return {
+    name: String(src.name || 'Someone').slice(0, 80),
+    handle: handleStr,
+    color: color,
+    photo: photo.photo || null,
+    photoUrl: photo.photoUrl || null,
+    at: Date.now(),
+  };
+}
+function listenFrequencyRequests(uid){
+  if(!fbDb || !uid) return;
+  if(freqReqUnsub){ try{ freqReqUnsub(); }catch(_){} freqReqUnsub = null; }
+  freqReqUnsub = fbDb.collection('users').doc(uid).collection('connectionRequests').onSnapshot(function(snap){
+    freqIncoming = [];
+    snap.forEach(function(doc){
+      const d = doc.data() || {};
+      freqIncoming.push({
+        uid: doc.id,
+        name: d.name || 'Someone',
+        handle: d.handle || '',
+        color: d.color || '#7CFFB2',
+        photo: d.photo || null,
+        photoUrl: d.photoUrl || null,
+        at: d.at || 0,
+      });
+    });
+    paintFreqRequests();
+  }, function(err){
+    console.warn('[contacts] requests', err && err.message);
+  });
+}
+function paintFreqRequests(){
+  const label = $('freqRequestLabel');
+  const list = $('freqRequestList');
+  const wlabel = $('freqWaitingLabel');
+  const wlist = $('freqWaitingList');
+  const badge = $('freqRequestBadge');
+  if(badge){
+    if(freqIncoming.length){
+      badge.style.display = '';
+      badge.textContent = String(freqIncoming.length);
+    }else badge.style.display = 'none';
+  }
+  if(label && list){
+    label.style.display = freqIncoming.length ? 'block' : 'none';
+    list.innerHTML = freqIncoming.map(function(r){
+      const face = { name: r.name, initials: initialsFor(r.name), color: r.color, photo: r.photo, photoUrl: r.photoUrl };
+      return '<div style="display:flex;align-items:center;gap:10px;padding:10px;">'
+        + (typeof contactAvatarHtml === 'function' ? contactAvatarHtml(face, 46) : '')
+        + '<div class="contact-meta"><div class="contact-name">' + escapeHtml(r.name) + '</div><div class="contact-sub">' + escapeHtml(r.handle || 'Wants to connect') + '</div></div>'
+        + '<button type="button" data-freq-accept="' + escapeHtml(r.uid) + '" style="background:#7CFFB2;color:#0D0F17;border:none;border-radius:999px;padding:8px 12px;font-size:12.5px;font-weight:650;">Accept</button>'
+        + '<button type="button" data-freq-decline="' + escapeHtml(r.uid) + '" style="background:transparent;color:var(--text-dim);border:1px solid var(--line);border-radius:999px;padding:8px 12px;font-size:12.5px;">Not now</button>'
+        + '</div>';
+    }).join('');
+    list.querySelectorAll('[data-freq-accept]').forEach(function(el){
+      el.onclick = function(e){ if(e) e.stopPropagation(); acceptFrequency(el.getAttribute('data-freq-accept')); };
+    });
+    list.querySelectorAll('[data-freq-decline]').forEach(function(el){
+      el.onclick = function(e){ if(e) e.stopPropagation(); declineFrequency(el.getAttribute('data-freq-decline')); };
+    });
+  }
+  const waiting = readOutgoing().filter(function(r){
+    return r && r.uid && !contacts.some(function(c){ return c.firebaseUid === r.uid; });
+  });
+  if(wlabel && wlist){
+    wlabel.style.display = waiting.length ? 'block' : 'none';
+    wlist.innerHTML = waiting.map(function(r){
+      return '<div style="display:flex;align-items:center;gap:10px;padding:10px;">'
+        + '<div class="contact-meta"><div class="contact-name">' + escapeHtml(r.name || 'Someone') + '</div><div class="contact-sub">Waiting for them to accept</div></div>'
+        + '<button type="button" data-freq-cancel="' + escapeHtml(r.uid) + '" style="background:transparent;color:var(--text-dim);border:1px solid var(--line);border-radius:999px;padding:8px 12px;font-size:12.5px;">Cancel</button>'
+        + '</div>';
+    }).join('');
+    wlist.querySelectorAll('[data-freq-cancel]').forEach(function(el){
+      el.onclick = function(){ cancelFrequency(el.getAttribute('data-freq-cancel')); };
+    });
+  }
+}
+window.paintFreqRequests = paintFreqRequests;
+
+async function requestFrequency(theirUid, theirData, handle){
+  if(!currentUser || !fbDb || !theirUid) return;
+  const face = freqFace(theirData, handle);
+  const mine = freqFace(currentProfile || {}, '');
+  await fbDb.collection('users').doc(theirUid).collection('connectionRequests').doc(currentUser.uid).set({
+    name: mine.name,
+    handle: mine.handle,
+    color: mine.color,
+    photo: mine.photo,
+    photoUrl: mine.photoUrl,
+    at: face.at,
+  });
+  rememberOutgoing(theirUid, { name: face.name, handle: face.handle, color: face.color, at: face.at });
+  toast('Request sent. They accept it on Frequencies.');
+  closeFindPeople();
+  paintFreqRequests();
+}
+async function acceptFrequency(theirUid){
+  if(!currentUser || !fbDb || !theirUid) return;
+  const row = freqIncoming.find(function(r){ return r.uid === theirUid; }) || { uid: theirUid, name: 'Someone' };
+  const mine = freqFace(currentProfile || {}, '');
+  const theirs = freqFace(row, '');
+  const myRef = fbDb.collection('users').doc(currentUser.uid).collection('connections').doc(theirUid);
+  const theirRef = fbDb.collection('users').doc(theirUid).collection('connections').doc(currentUser.uid);
+  try{
+    await myRef.set({
+      name: theirs.name, handle: theirs.handle, color: theirs.color,
+      photo: theirs.photo, photoUrl: theirs.photoUrl,
+      connectedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    await theirRef.set({
+      name: mine.name, handle: mine.handle, color: mine.color,
+      photo: mine.photo, photoUrl: mine.photoUrl,
+      connectedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    await fbDb.collection('users').doc(currentUser.uid).collection('connectionRequests').doc(theirUid).delete().catch(function(){});
+  }catch(e){
+    try{ await myRef.delete(); }catch(_){}
+    toast((e && e.message) || 'Could not accept just now');
+    return;
+  }
+  forgetOutgoing(theirUid);
+  addRealContactToLocalList(theirUid, theirs.name, theirs.color, theirs.handle, theirs.photo);
+  const added = contacts.find(function(x){ return x.firebaseUid === theirUid; });
+  if(added && theirs.photoUrl) mergeContactPhoto(added, theirs.photoUrl);
+  freqIncoming = freqIncoming.filter(function(r){ return r.uid !== theirUid; });
+  toast('Connected with ' + theirs.name);
+  try{ renderContacts(); }catch(_){}
+  paintFreqRequests();
+}
+async function declineFrequency(theirUid){
+  if(!currentUser || !fbDb || !theirUid) return;
+  try{
+    await fbDb.collection('users').doc(currentUser.uid).collection('connectionRequests').doc(theirUid).delete();
+  }catch(e){
+    toast('Could not decline just now');
+    return;
+  }
+  freqIncoming = freqIncoming.filter(function(r){ return r.uid !== theirUid; });
+  paintFreqRequests();
+}
+async function cancelFrequency(theirUid){
+  if(!theirUid) return;
+  forgetOutgoing(theirUid);
+  paintFreqRequests();
+  if(!currentUser || !fbDb) return;
+  try{
+    await fbDb.collection('users').doc(theirUid).collection('connectionRequests').doc(currentUser.uid).delete();
+  }catch(_){}
+}
+async function dropFrequency(localId){
+  const c = contacts.find(function(x){ return x && x.id === localId; });
+  if(!c || !c.firebaseUid || !currentUser || !fbDb) return;
+  const name = c.name || 'them';
+  if(!window.confirm('Drop ' + name + ' from your frequencies?')) return;
+  try{
+    await fbDb.collection('users').doc(currentUser.uid).collection('connections').doc(c.firebaseUid).delete();
+    try{ await fbDb.collection('users').doc(c.firebaseUid).collection('connections').doc(currentUser.uid).delete(); }catch(_){}
+  }catch(e){
+    toast('Could not drop them just now');
+    return;
+  }
+  for(let i = contacts.length - 1; i >= 0; i--){
+    if(contacts[i] && contacts[i].firebaseUid === c.firebaseUid) contacts.splice(i, 1);
+  }
+  toast('Dropped ' + name);
+  try{ renderContacts(); }catch(_){}
+  try{ if(typeof renderWirelineList === 'function') renderWirelineList(); }catch(_){}
+}
+window.dropFrequency = dropFrequency;
+window.acceptFrequency = acceptFrequency;
+
 function loadRealConnections(uid){
   if(!fbDb) return;
   if(connectionsUnsub) connectionsUnsub();
@@ -297,7 +500,9 @@ function loadRealConnections(uid){
   // connection shows up live without needing to reopen the app.
   connectionsUnsub = fbDb.collection('users').doc(uid).collection('connections').onSnapshot(snap=>{
     try{ nalunoListenOk('contacts'); }catch(_){}
+    const seen = {};
     snap.forEach(doc=>{
+      seen[doc.id] = 1;
       const d = doc.data();
       const row = addRealContactToLocalList(doc.id, d.name || 'Unknown', d.color, d.handle, d.photo);
       if(row && d.photoUrl){
@@ -305,9 +510,16 @@ function loadRealConnections(uid){
         mergeContactPhoto(row, d.photoUrl);
       }
     });
+    for(let i = contacts.length - 1; i >= 0; i--){
+      const c = contacts[i];
+      if(c && c.isReal && c.firebaseUid && !seen[c.firebaseUid]) contacts.splice(i, 1);
+    }
+    const stillOut = readOutgoing().filter(function(r){ return r && !seen[r.uid]; });
+    if(stillOut.length !== readOutgoing().length) writeOutgoing(stillOut);
     renderContacts();
     renderBandList();
     applyAtmosphere();
+    try{ paintFreqRequests(); }catch(_){}
     try{ if(window.NalunoWireMailbox && window.NalunoWireMailbox.retryPendingDrops) window.NalunoWireMailbox.retryPendingDrops(); }catch(_){}
     try{
       nalunoCacheWrite('contacts', contacts.filter(function(c){ return c.isReal; }).map(function(c){
@@ -346,6 +558,7 @@ function loadRealConnections(uid){
     connectionsUnsub = null;
     try{ nalunoRelisten('contacts', function(){ if(currentUser && currentUser.uid === uid) loadRealConnections(uid); }); }catch(_){}
   });
+  listenFrequencyRequests(uid);
 }
 /* The connection doc is a snapshot taken at connect time — someone who added a photo
    afterward, or connected before photo support existed at all, never gets that reflected
@@ -433,6 +646,8 @@ async function searchHandle(){
       return;
     }
     const already = contacts.some(c => c.firebaseUid === theirUid);
+    const incoming = freqIncoming.some(function(r){ return r.uid === theirUid; });
+    const waiting = readOutgoing().some(function(r){ return r.uid === theirUid; });
     const face = {
       name: data.name || 'Unknown',
       initials: initialsFor(data.name || '?'),
@@ -440,15 +655,24 @@ async function searchHandle(){
       photo: data.photo || null,
       photoUrl: data.photoUrl || null,
     };
+    let action = 'Connect';
+    if(already) action = 'Already connected';
+    else if(incoming) action = 'Accept';
+    else if(waiting) action = 'Cancel request';
     $('findPeopleResult').innerHTML = `
       <div class="contact-row" style="cursor:default;">
         ${typeof contactAvatarHtml === 'function' ? contactAvatarHtml(face, 46) : ('<div class="avatar" style="width:46px;height:46px;font-size:15px;background:'+(face.color)+';">'+escapeHtml(face.initials)+'</div>')}
         <div class="contact-meta"><div class="contact-name" data-known-uid="${escapeHtml(String(theirUid||''))}">${escapeHtml(data.name||'Unknown')}</div><div class="contact-sub">${escapeHtml(data.number||('@'+handle))}</div></div>
       </div>
-      <button class="join-btn" id="connectResultBtn" style="margin-top:14px;" ${already?'disabled':''}>${already?'Already connected':'Connect'}</button>`;
-    if(!already){
-      $('connectResultBtn').onclick = ()=> connectWithUser(theirUid, data, handle);
-    }
+      <button class="join-btn" id="connectResultBtn" style="margin-top:14px;" ${already?'disabled':''}>${action}</button>`;
+    if(already) return;
+    $('connectResultBtn').onclick = function(){
+      if(incoming) acceptFrequency(theirUid);
+      else if(waiting) cancelFrequency(theirUid).then(function(){ closeFindPeople(); });
+      else requestFrequency(theirUid, data, handle).catch(function(e){
+        toast((e && e.message) || 'Could not send the request');
+      });
+    };
   }catch(e){
     $('findPeopleResult').innerHTML = `<div style="color:var(--red); font-size:13px;">${escapeHtml((typeof nalunoFriendlyError === 'function' ? nalunoFriendlyError(e.message) : e.message)||'Search failed')}</div>`;
   }
@@ -457,19 +681,21 @@ $('findHandleBtn').onclick = searchHandle;
 $('findHandleInput').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); searchHandle(); } });
 
 async function connectWithUser(theirUid, theirData, handle){
+  /* Spark, in person. Both people already chose to stand together, so this
+     still connects at once. A search on Frequencies sends a request instead. */
   try{
     const myConnRef = fbDb.collection('users').doc(currentUser.uid).collection('connections').doc(theirUid);
     const theirConnRef = fbDb.collection('users').doc(theirUid).collection('connections').doc(currentUser.uid);
-    const batch = fbDb.batch();
     const myPhoto = (typeof slimCloudPhoto === 'function')
       ? slimCloudPhoto(currentProfile.photo, currentProfile.photoUrl)
       : { photo: currentProfile.photo || null, photoUrl: currentProfile.photoUrl || null };
     const theirPhoto = (typeof slimCloudPhoto === 'function')
       ? slimCloudPhoto(theirData.photo, theirData.photoUrl)
       : { photo: theirData.photo || null, photoUrl: theirData.photoUrl || null };
-    batch.set(myConnRef, { name: theirData.name||'Unknown', handle: theirData.number || ('@'+handle), color: theirData.color||'#7CFFB2', photo: theirPhoto.photo, photoUrl: theirPhoto.photoUrl, connectedAt: firebase.firestore.FieldValue.serverTimestamp() });
-    batch.set(theirConnRef, { name: currentProfile.name, handle: currentProfile.number, color: currentProfile.color, photo: myPhoto.photo, photoUrl: myPhoto.photoUrl, connectedAt: firebase.firestore.FieldValue.serverTimestamp() });
-    await batch.commit();
+    /* Yours first. Their mirror is allowed only once yours exists, so the
+       two writes are not one batch. */
+    await myConnRef.set({ name: theirData.name||'Unknown', handle: theirData.number || ('@'+handle), color: theirData.color||'#7CFFB2', photo: theirPhoto.photo, photoUrl: theirPhoto.photoUrl, connectedAt: firebase.firestore.FieldValue.serverTimestamp() });
+    await theirConnRef.set({ name: currentProfile.name, handle: currentProfile.number, color: currentProfile.color, photo: myPhoto.photo, photoUrl: myPhoto.photoUrl, connectedAt: firebase.firestore.FieldValue.serverTimestamp() });
     addRealContactToLocalList(theirUid, theirData.name||'Unknown', theirData.color, theirData.number||('@'+handle), theirData.photo);
     const row = contacts.find(x=>x.firebaseUid===theirUid);
     if(row && theirData.photoUrl) mergeContactPhoto(row, theirData.photoUrl);

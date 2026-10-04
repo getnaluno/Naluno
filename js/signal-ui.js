@@ -1990,7 +1990,7 @@ function renderContacts(){
   } else if(!query && visible.length===0){
     $('strongLabel').style.display = 'none';
     $('strongList').innerHTML = (typeof emptyStateHtml === 'function')
-      ? emptyStateHtml('No frequencies yet', 'Connect someone — search a handle, or Spark in person.', 'people')
+      ? emptyStateHtml('No frequencies yet', 'Connect someone — they accept on Frequencies — or Spark in person.', 'people')
       : '<div class="empty-state"><p class="empty-state-copy">No frequencies yet.</p></div>';
   }
 
@@ -1998,9 +1998,13 @@ function renderContacts(){
     const bandBits = (c.publicBands && c.publicBands.length)
       ? `<div style="font-family:var(--font-mono); font-size:10.5px; color:var(--mint); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(c.publicBands.slice(0,3).map(b=>b.name).join(' · '))}${c.publicBands.length>3?'…':''}</div>`
       : '';
+    const dropBtn = (c.isReal && c.firebaseUid)
+      ? `<button type="button" data-drop-freq="${c.id}" aria-label="Drop ${escapeHtml(c.name)}" style="border:none;background:transparent;color:var(--text-dim);font-size:11px;padding:8px 2px;">Drop</button>`
+      : '';
     return `<div class="contact-row" data-id="${c.id}">
       ${typeof contactAvatarHtml === 'function' ? contactAvatarHtml(c, 46, signalBarsHtml(c)) : ('<div class="avatar" style="width:46px;height:46px;background:'+(c.color||'#7CFFB2')+';">'+c.initials+'</div>')}
       <div class="contact-meta"><div class="contact-name" data-known-uid="${escapeHtml(String(c.firebaseUid||''))}">${escapeHtml(c.name)}</div><div class="contact-sub">${signalSubText(c)}</div>${bandBits}</div>
+      ${dropBtn}
       <div class="call-btn-pair"><div class="call-icon-btn" data-video-call="${c.id}" role="button" aria-label="Video call"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 8L21 5V19L15 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><rect x="3" y="6" width="12" height="12" rx="2" stroke="currentColor" stroke-width="2"/></svg></div><div class="call-icon-btn" data-call="${c.id}" role="button" aria-label="Voice call"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1.9.3 1.8.6 2.7a2 2 0 01-.4 2.1L8 9.9a16 16 0 006 6l1.4-1.3a2 2 0 012.1-.4c.9.3 1.8.5 2.7.6a2 2 0 011.8 2.1z" stroke="currentColor" stroke-width="1.8"/></svg></div></div>
     </div>`;
   }
@@ -2011,9 +2015,13 @@ function renderContacts(){
   document.querySelectorAll('[data-video-call]').forEach(el=>{
     el.onclick = (e)=>{ e.stopPropagation(); startOutgoingCall(parseInt(el.dataset.videoCall)); };
   });
-  document.querySelectorAll('.contact-row').forEach(el=>{
+  document.querySelectorAll('#strongList [data-drop-freq], #fadingList [data-drop-freq], #offList [data-drop-freq]').forEach(el=>{
+    el.onclick = (e)=>{ e.stopPropagation(); if(typeof dropFrequency === 'function') dropFrequency(parseInt(el.getAttribute('data-drop-freq'), 10)); };
+  });
+  document.querySelectorAll('#strongList .contact-row, #fadingList .contact-row, #offList .contact-row').forEach(el=>{
     el.onclick = ()=> openWirelineFromFrequencies(parseInt(el.dataset.id));
   });
+  try{ if(typeof paintFreqRequests === 'function') paintFreqRequests(); }catch(_){}
 }
 renderContacts();
 $('frequencySearchInput').addEventListener('input', renderContacts);
