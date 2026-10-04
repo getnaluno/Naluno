@@ -281,7 +281,7 @@
       +   (rail ? '<div class="strand-rail" aria-hidden="true">' + rail + '</div>' : '')
       +   '<span class="strand-kicker">Strand · ' + count + '</span>'
       +   live
-      +   '<span class="strand-playhint" aria-hidden="true">▶</span>'
+      +   (preview ? '<span class="bcast-tap-play" aria-hidden="true">tap to play</span>' : '<span class="strand-playhint" aria-hidden="true">▶</span>')
       +   '<div class="bcast-plate-scan"></div>'
       + '</div>'
       + '<div class="bcast-plate-meta">'
@@ -500,6 +500,21 @@
     try{ if(window.NalunoKnown && NalunoKnown.paintAll) NalunoKnown.paintAll(grid); }catch(_){}
   }
 
+  function nalunoReturnToFeed(attr, id){
+    if(!id) return;
+    const scroller = document.getElementById('broadcastTabScroll');
+    if(!scroller) return;
+    const safe = (window.CSS && CSS.escape) ? CSS.escape(String(id)) : String(id).replace(/"/g, '');
+    const el = scroller.querySelector('[' + attr + '="' + safe + '"]');
+    if(!el) return;
+    const place = function(){
+      const top = scroller.scrollTop + (el.getBoundingClientRect().top - scroller.getBoundingClientRect().top);
+      scroller.scrollTop = Math.max(0, Math.round(top));
+    };
+    place();
+    try{ requestAnimationFrame(place); }catch(_){}
+    setTimeout(place, 80);
+  }
   function openStrandFolder(id){
     pauseAllStrandPreviews();
     openStrandFolderId = id || null;
@@ -511,9 +526,11 @@
     }catch(_){}
   }
   function closeStrandFolder(){
+    const backTo = openStrandFolderId;
     openStrandFolderId = null;
     try{ document.body.classList.remove('naluno-strand-open'); }catch(_){}
     if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
+    nalunoReturnToFeed('data-strand-id', backTo);
   }
   /** State-only reset, deliberately WITHOUT the re-render closeStrandFolder()
    *  does — for callers (like the For You / My Broadcasts view switch in
@@ -573,4 +590,5 @@
   window.clearStrandFolderState = clearStrandFolderState;
   window.pauseAllStrandPreviews = pauseAllStrandPreviews;
   window.getOpenStrandFolderId = function(){ return openStrandFolderId; };
+  window.nalunoReturnToFeed = nalunoReturnToFeed;
 })();

@@ -1828,6 +1828,7 @@ async function openBroadcastSpace(meta){
 }
 
 function closeBroadcastSpace(){
+  const returnId = activeBroadcastId;
   const was = $('bspace') && $('bspace').classList.contains('active');
   /* Nothing may keep the room drawn once it is closed: an inline display or
      z-index left by an earlier screen (a call) kept a dead copy of it over
@@ -1885,11 +1886,10 @@ function closeBroadcastSpace(){
   }catch(_){}
   try{ if(typeof nalunoPauseDetachedMedia === 'function') nalunoPauseDetachedMedia(); }catch(_){}
   try{ document.body.classList.remove('naluno-bspace-open', 'naluno-bcast-watch', 'naluno-feed-landscape'); }catch(_){}
-  try{
-    const scroller = document.getElementById('broadcastTabScroll');
-    if(scroller) scroller.scrollTop = 0;
-  }catch(_){}
   $('bspace').classList.remove('active');
+  try{
+    if(returnId && typeof nalunoReturnToFeed === 'function') nalunoReturnToFeed('data-broadcast-id', returnId);
+  }catch(_){}
   if(was){ try{ if(window.nalunoBack) window.nalunoBack.drop('bspace'); }catch(_){} }
 }
 

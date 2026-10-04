@@ -143,6 +143,7 @@ function broadcastThumbHtml(b){
       ${hold}
       ${down}
       ${viewsBit}
+      ${preview && !b.live ? '<span class="bcast-tap-play" aria-hidden="true">tap to play</span>' : ''}
       <div class="bcast-plate-scan"></div>
     </div>
     <div class="bcast-plate-meta">
