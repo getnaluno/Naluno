@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Luganda Voice Review</title>
+<meta name="robots" content="noindex">
+<style>
+  :root { --bg:#ffffff; --card:#f5f6f8; --text:#14161c; --muted:#5b6170; --line:#dfe2e8; --accent:#0a7d4f; --bad:#b3261e; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0d0f17; --card:#171a24; --text:#e8ecf5; --muted:#9aa3b5; --line:#2a2f3d; --accent:#7cffb2; --bad:#ff8a80; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:20px 16px 60px; }
+  h1 { font-size:1.4rem; margin:0 0 6px; }
+  h2 { font-size:1.05rem; margin:28px 0 8px; }
+  p.lead { color:var(--muted); margin:0 0 14px; }
+  .bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px; }
+  .bar label { font-size:.9rem; color:var(--muted); }
+  select, input[type=text], textarea { font:inherit; color:var(--text); background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:6px 8px; max-width:100%; }
+  textarea { width:100%; min-height:64px; }
+  button { font:inherit; border:1px solid var(--line); background:var(--bg); color:var(--text); border-radius:8px; padding:6px 10px; cursor:pointer; }
+  button.play { border-color:var(--accent); }
+  button[aria-pressed=true].ok { background:var(--accent); color:var(--bg); }
+  button[aria-pressed=true].no { background:var(--bad); color:var(--bg); }
+  .item { border:1px solid var(--line); border-radius:12px; padding:10px 12px; margin:8px 0; background:var(--card); }
+  .item .t { font-weight:600; font-size:1.05rem; }
+  .item .s { color:var(--muted); font-size:.9rem; overflow-wrap:anywhere; }
+  .row { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; align-items:center; }
+  .row input[type=text] { flex:1 1 180px; }
+  #status { color:var(--muted); font-size:.9rem; min-height:1.3em; margin:8px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Luganda voice review</h1>
+  <p class="lead">For native Luganda speakers. Play each word, name, sentence and number in Naluno's African voice (and, to compare, the others), mark it right or wrong, add how it should sound, then tap <strong>Copy report</strong> and send it to Naluno. Every change to Naluno's voice is tested against this list.</p>
+  <div class="bar">
+    <label for="speaker">Sunbird voice</label>
+    <select id="speaker">
+      <option value="">Naluno default</option>
+      <option>salt_lug_0001</option><option>waxal_lug_0002</option><option>waxal_lug_0003</option><option>waxal_lug_0004</option>
+      <option>waxal_lug_0005</option><option>waxal_lug_0006</option><option>waxal_lug_0007</option><option>waxal_lug_0008</option>
+    </select>
+    <label for="who">Phone voice</label>
+    <select id="who"><option value="female">Female</option><option value="male">Male</option></select>
+    <button id="copy" type="button">Copy report</button>
+  </div>
+  <div id="status"></div>
+  <h2>Try any Luganda</h2>
+  <textarea id="free" aria-label="Luganda text">Weebale nnyo okuwandiika ku Naluno. Katonda akuwe emirembe.</textarea>
+  <div class="row"><button class="play" type="button" id="freeOwn">African voice</button><button class="play" type="button" id="freeNative">Sunbird voice</button><button class="play" type="button" id="freePhone">Phone voice (rules)</button></div>
+  <div id="list"></div>
+</main>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+<script src="/firebase-config.js?v=20260908d"></script>
+<script src="/js/lg-speak.js?v=20261005i"></script>
+<script src="/js/lg-voice.js?v=20261005i"></script>
+<script src="/js/naluno-voice-master.js?v=20261005i"></script>
+<script src="/js/naluno-voices.js?v=20261005i"></script>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var say = function (t) { $('status').textContent = t; };
+  try { if (!firebase.apps.length) firebase.initializeApp(firebaseConfig); } catch (_) {}
+  var marks = {};
+  var ctx = null;
+  function play(samples, rate) {
+    ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+    var b = ctx.createBuffer(1, samples.length, rate);
+    b.copyToChannel(samples, 0);
+    var s = ctx.createBufferSource(); s.buffer = b; s.connect(ctx.destination); s.start();
+  }
+  function native(text) {
+    NalunoVoices.prime();
+    say('Asking the Luganda voice…');
+    var u = firebase.auth().currentUser;
+    if (!u) { say('Sign in to Naluno in this browser first (the Luganda voice is for signed-in people).'); return; }
+    NalunoLgVoice._native.state = 'unknown';
+    NalunoLgVoice.nativeBytes(NalunoLgVoice.expand(text), $('who').value, $('speaker').value).then(function (buf) {
+      if (!buf) { say('The Sunbird voice is not set up (it needs a paid key), or could not be reached.'); return; }
+      return NalunoVoices.decode(buf).then(function (a) { if (a) { play(a.samples, a.rate); say(''); } else say('That audio could not be played.'); });
+    });
+  }
+  function ownVoice(text) {
+    NalunoVoices.prime();
+    say('Checking the African voice\u2026');
+    fetch('/voices/af/sw.json', { cache: 'no-cache' }).then(function (r) {
+      if (!r.ok) { say('The African voice files are not on the site yet (voices/af/).'); return; }
+      say('Making it on this phone (the first time downloads the voice, about 19 MB)\u2026');
+      NalunoVoices.stop();
+      return NalunoVoices.speak(text, { voice: $('who').value, plan: NalunoLgVoice.planner(text, { lang: 'lg', native: false }), onready: function () {} })
+        .then(function (ok) { say(ok && NalunoVoices._own.state === 'ok' ? '' : 'The African voice could not start on this phone.'); });
+    }, function () { say('Could not reach the site.'); });
+  }
+  function phone(text) {
+    NalunoVoices.prime();
+    say('Making it on this phone…');
+    NalunoVoices.stop();
+    NalunoVoices.speak(text, { voice: $('who').value, plan: NalunoLgVoice.planner(text, { lang: 'lg', native: false, own: false }), onready: function () { say(''); } })
+      .then(function (ok) { if (!ok) say('The phone voice could not start. Wait for it to download, then try again.'); });
+  }
+  $('freeOwn').onclick = function () { ownVoice($('free').value); };
+  $('freeNative').onclick = function () { native($('free').value); };
+  $('freePhone').onclick = function () { phone($('free').value); };
+  function card(group, e) {
+    var text = e.text != null ? e.text : String(e.n);
+    var spoken = e.words ? e.words : text;
+    var id = group + ':' + text;
+    var d = document.createElement('div'); d.className = 'item';
+    var t = document.createElement('div'); t.className = 't'; t.textContent = e.words ? text + ' — ' + e.words : text;
+    var s = document.createElement('div'); s.className = 's';
+    s.textContent = (e.syllables ? e.syllables + '  ·  ' : '') + '/' + e.phones + '/' + (e.check ? '  ·  waiting for review' : '  ·  reviewed');
+    var r = document.createElement('div'); r.className = 'row';
+    var b0 = document.createElement('button'); b0.className = 'play'; b0.type = 'button'; b0.textContent = 'African voice'; b0.onclick = function () { ownVoice(spoken); };
+    var b1 = document.createElement('button'); b1.className = 'play'; b1.type = 'button'; b1.textContent = 'Sunbird'; b1.onclick = function () { native(spoken); };
+    var b2 = document.createElement('button'); b2.className = 'play'; b2.type = 'button'; b2.textContent = 'Phone voice'; b2.onclick = function () { phone(spoken); };
+    var ok = document.createElement('button'); ok.className = 'ok'; ok.type = 'button'; ok.textContent = 'Right'; ok.setAttribute('aria-pressed', 'false');
+    var no = document.createElement('button'); no.className = 'no'; no.type = 'button'; no.textContent = 'Wrong'; no.setAttribute('aria-pressed', 'false');
+    var note = document.createElement('input'); note.type = 'text'; note.placeholder = 'How should it sound?';
+    function mark(v) {
+      marks[id] = { group: group, text: text, verdict: v, note: note.value, phones: e.phones };
+      ok.setAttribute('aria-pressed', String(v === 'right')); no.setAttribute('aria-pressed', String(v === 'wrong'));
+    }
+    ok.onclick = function () { mark('right'); };
+    no.onclick = function () { mark('wrong'); };
+    note.oninput = function () { if (marks[id]) marks[id].note = note.value; else mark('wrong'); };
+    [b0, b1, b2, ok, no, note].forEach(function (x) { r.appendChild(x); });
+    d.appendChild(t); d.appendChild(s); d.appendChild(r);
+    return d;
+  }
+  fetch('/js/lg-suite.json?v=20261005i').then(function (r) { return r.json(); }).then(function (suite) {
+    var list = $('list');
+    [['words', 'Words'], ['names', 'Names and places'], ['sentences', 'Sentences'], ['numbers', 'Numbers']].forEach(function (g) {
+      var h = document.createElement('h2'); h.textContent = g[1]; list.appendChild(h);
+      (suite[g[0]] || []).forEach(function (e) { list.appendChild(card(g[0], e)); });
+    });
+  }, function () { say('The list could not be loaded.'); });
+  $('copy').onclick = function () {
+    var rows = Object.keys(marks).map(function (k) { return marks[k]; });
+    if (!rows.length) { say('Mark at least one item first.'); return; }
+    var text = 'Luganda voice review — ' + new Date().toISOString().slice(0, 10) + '\n'
+      + 'Sunbird voice: ' + ($('speaker').value || 'default') + '\n\n'
+      + rows.map(function (m) { return '[' + m.verdict.toUpperCase() + '] ' + m.group + ': ' + m.text + '  /' + m.phones + '/' + (m.note ? '\n    should be: ' + m.note : ''); }).join('\n');
+    var done = function () { say('Report copied. Paste it into a message to Naluno.'); };
+    try { navigator.clipboard.writeText(text).then(done, function () { window.prompt('Copy this report:', text); }); }
+    catch (_) { window.prompt('Copy this report:', text); }
+  };
+})();
+</script>
+</body>
+</html>
