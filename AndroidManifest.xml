@@ -54,6 +54,8 @@
             android:label="@string/title_activity_main"
             android:theme="@style/AppTheme.NoActionBarLaunch"
             android:launchMode="singleTask"
+            android:supportsPictureInPicture="true"
+            android:resizeableActivity="true"
             android:exported="true"
             android:showWhenLocked="true"
             android:turnScreenOn="true">
@@ -64,6 +66,10 @@
             </intent-filter>
 
         </activity>
+
+        <receiver
+            android:name=".CallPipReceiver"
+            android:exported="false" />
 
         <activity
             android:name=".IncomingCallActivity"

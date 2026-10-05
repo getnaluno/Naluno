@@ -3,6 +3,7 @@ package com.naluno.app;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
@@ -52,7 +53,7 @@ public class UploadKeepAliveService extends Service {
       else title = "Uploading…";
     }
     holdPartial(kind);
-    Notification n = buildNotification(title);
+    Notification n = buildNotification(title, kind);
     int type = foregroundType(kind);
     try {
       if (Build.VERSION.SDK_INT >= 29 && type != 0) {
@@ -108,18 +109,29 @@ public class UploadKeepAliveService extends Service {
     return ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
   }
 
-  private Notification buildNotification(String title) {
+  private Notification buildNotification(String title, String kind) {
+    boolean call = "video".equals(kind) || "voice".equals(kind);
+    String channel = call ? "naluno_calls" : CHANNEL_ID;
+    if (call) ensureCallChannel();
     Notification.Builder b;
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      b = new Notification.Builder(this, CHANNEL_ID);
+      b = new Notification.Builder(this, channel);
     } else {
       b = new Notification.Builder(this);
       b.setPriority(Notification.PRIORITY_LOW);
     }
     b.setContentTitle("Naluno")
       .setContentText(title)
-      .setSmallIcon(android.R.drawable.stat_sys_upload)
+      .setSmallIcon(call ? android.R.drawable.ic_menu_call : android.R.drawable.stat_sys_upload)
       .setOngoing(true);
+    if (call) b.setCategory(Notification.CATEGORY_CALL);
+    try {
+      Intent open = new Intent(this, MainActivity.class);
+      open.setFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+      int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+      if (Build.VERSION.SDK_INT >= 23) flags |= PendingIntent.FLAG_IMMUTABLE;
+      b.setContentIntent(PendingIntent.getActivity(this, 44, open, flags));
+    } catch (Exception ignored) {}
     return b.build();
   }
 
@@ -145,6 +157,18 @@ public class UploadKeepAliveService extends Service {
       CHANNEL_ID, "Uploads", NotificationManager.IMPORTANCE_LOW
     );
     ch.setDescription("Keeps a Broadcast upload running when the screen is off");
+    nm.createNotificationChannel(ch);
+  }
+
+  private void ensureCallChannel() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+    NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+    if (nm == null || nm.getNotificationChannel("naluno_calls") != null) return;
+    NotificationChannel ch = new NotificationChannel(
+      "naluno_calls", "Calls", NotificationManager.IMPORTANCE_LOW
+    );
+    ch.setDescription("Keeps a Naluno call connected in the background");
+    ch.setSound(null, null);
     nm.createNotificationChannel(ch);
   }
 }
