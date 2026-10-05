@@ -96,37 +96,51 @@ export async function handleWireNotify(body, sender, deps) {
     deps.getDoc("/users/" + to + "/vault/main"),
   ]);
   const name = String((profile && profile.name) || "").trim().slice(0, 60) || "Naluno";
+  const tokens = tokensOf(vault, them);
+  if (!tokens.length) return { status: 200, body: { ok: true, sent: 0, reason: "no_token" } };
+  const link = "/app/?wire=" + encodeURIComponent(sender.uid);
+  const out = await sendAll(tokens, {
+    type: "wireline",
+    fromUid: sender.uid,
+    senderName: name,
+    title: name,
+    body: wireKindLabel(type),
+    clientMsgId: mid,
+    url: link,
+  }, link, deps, now);
+  return out;
+}
+
+function tokensOf() {
   const tokens = [];
-  [vault, them].forEach(function (d) {
+  const kinds = [];
+  Array.prototype.slice.call(arguments).forEach(function (d) {
     if (!d) return;
     ["fcmTokenAndroid", "fcmTokenWeb", "fcmToken"].forEach(function (k) {
       const v = d[k];
-      if (typeof v === "string" && v.length > 20 && v.length < 4096 && tokens.indexOf(v) < 0) tokens.push(v);
+      if (typeof v === "string" && v.length > 20 && v.length < 4096 && tokens.indexOf(v) < 0) {
+        tokens.push(v);
+        kinds.push(k === "fcmTokenAndroid" ? "android" : (k === "fcmTokenWeb" ? "web" : (String(d.fcmTokenPlatform || "") || "web")));
+      }
     });
   });
-  if (!tokens.length) return { status: 200, body: { ok: true, sent: 0, reason: "no_token" } };
+  tokens.kinds = kinds;
+  return tokens;
+}
 
+async function sendAll(tokens, data, link, deps, now) {
   let bearer = fcmToken.value && fcmToken.until > now ? fcmToken.value : "";
   if (!bearer) {
     bearer = await deps.accessToken(WIRE_FCM_SCOPE);
     if (!bearer) return { status: 503, body: { ok: false, sent: 0, error: "push not configured" } };
     fcmToken = { value: bearer, until: now + 50 * 60 * 1000 };
   }
-  const label = wireKindLabel(type);
-  const link = "/app/?wire=" + encodeURIComponent(sender.uid);
-  const data = {
-    type: "wireline",
-    fromUid: sender.uid,
-    senderName: name,
-    title: name,
-    body: label,
-    clientMsgId: mid,
-    url: link,
-  };
   const endpoint = "https://fcm.googleapis.com/v1/projects/" + deps.projectId + "/messages:send";
   let sent = 0;
   const failures = [];
-  await Promise.all(tokens.map(async function (token) {
+  const results = [];
+  await Promise.all(tokens.map(async function (token, n) {
+    const kind = (tokens.kinds && tokens.kinds[n]) || "";
     try {
       const res = await deps.fetch(endpoint, {
         method: "POST",
@@ -136,18 +150,50 @@ export async function handleWireNotify(body, sender, deps) {
             token: token,
             data: data,
             android: { priority: "HIGH", ttl: "86400s" },
-            webpush: { headers: { Urgency: "high", TTL: "86400" }, fcm_options: { link: link } },
+            /* No fcm_options.link: FCM refuses a link that is not a full
+               https address (400), which made every web alert fail in 05f.
+               The service worker opens the chat from data.url. */
+            webpush: { headers: { Urgency: "high", TTL: "86400" } },
             apns: { headers: { "apns-priority": "10" } },
           },
         }),
       });
-      if (res.ok) { sent++; return; }
+      if (res.ok) { sent++; results.push({ phone: kind, ok: true }); return; }
       const t = await res.text().catch(() => "");
       if (res.status === 401 || res.status === 403) fcmToken = { value: "", until: 0 };
-      failures.push(/UNREGISTERED|NOT_FOUND/.test(t) ? "unregistered" : ("http_" + res.status));
+      const why = /UNREGISTERED|NOT_FOUND/.test(t) ? "unregistered" : ("http_" + res.status);
+      failures.push(why);
+      results.push({ phone: kind, ok: false, why: why });
     } catch (_) {
       failures.push("network");
+      results.push({ phone: kind, ok: false, why: "network" });
     }
   }));
-  return { status: 200, body: { ok: true, sent: sent, tokens: tokens.length, failures: failures } };
+  return { status: 200, body: { ok: true, sent: sent, tokens: tokens.length, failures: failures, phones: results } };
+}
+
+/* POST /v1/push/test { delay } — a Wireline-style alert to your OWN phones,
+   after a short delay so you can leave Naluno first. The answer says what
+   happened for each phone, in words the app can show. */
+export async function handlePushTest(body, user, deps) {
+  const now = deps.now ? deps.now() : Date.now();
+  if (!user || !user.uid) return { status: 401, body: { ok: false, error: "sign in" } };
+  if (!rateOk("test:" + user.uid, now, 4)) return { status: 429, body: { ok: false, error: "slow down" } };
+  const [me, vault] = await Promise.all([
+    deps.getDoc("/users/" + user.uid),
+    deps.getDoc("/users/" + user.uid + "/vault/main"),
+  ]);
+  const tokens = tokensOf(vault, me);
+  if (!tokens.length) return { status: 200, body: { ok: true, sent: 0, reason: "no_token" } };
+  const wait = Math.max(0, Math.min(8000, Number((body && body.delay) || 0) || 0));
+  if (wait && deps.sleep) await deps.sleep(wait);
+  return sendAll(tokens, {
+    type: "wireline",
+    fromUid: user.uid,
+    senderName: "Naluno",
+    title: "Naluno",
+    body: "Test alert: Wireline notifications reach this phone.",
+    clientMsgId: "test-" + now,
+    url: "/app/",
+  }, "/app/", deps, deps.now ? deps.now() : Date.now());
 }

@@ -435,10 +435,39 @@ export function bytesFromB64(s) {
      sends the picture to a person rather than letting it out:
        - a weak sign of genitals or anus (from 0.25) is held;
        - an exposed bottom together with another weak intimate sign is held (a naked body);
-       - two or more people with any exposed intimate sign or an exposed bottom is held
-         (a possible sexual act);
+       - two or more people with a clearly exposed bottom (from 0.60) is held
+         (a possible sexual act). A faint breast score under the topless-hold
+         bar, or a weak bottom on a clothed group, is not a sexual act;
        - a video-player screenshot is held.
      A picture Screen could not read at all is also held, never published unseen.
+
+     ------------------------------------------------------------------------------------
+     WHAT A CLOTHED PICTURE LOOKS LIKE — how the machine is kept from misreading it (05h)
+     ------------------------------------------------------------------------------------
+     On 02 Oct a photo of two fully clothed people in bright clothes was flagged. The
+     detector only knows shapes: a bright shirt over a chest, a dress over a lap, two
+     people hugging, look to it like a breast or a bottom. A person tells the
+     difference at once, because an exposed part is SKIN and clothing is FABRIC.
+     So every exposed-part finding now carries what the phone saw inside its box:
+
+       SKIN      Skin of every shade, from very light to very dark: warm hues (red,
+                 orange, brown, beige, pink) in any brightness, including deep brown
+                 and dark shadow. Pixels too dark to tell count AS skin (never in the
+                 uploader's favour), and so does a black-and-white picture, where
+                 nothing can be told: those get no allowance at all.
+       FABRIC    Clearly not skin: white, grey or pale clothing (no colour, bright);
+                 blue, green, purple or yellow; vivid saturated reds and oranges like
+                 dyed cloth, never seen on skin.
+
+     If less than a fifth of an "exposed" box is skin, that finding is fabric misread
+     as a body part. Its score is halved:
+       - a breast or a bottom on fabric falls below the hold bars (a shirt, a dress);
+       - genitals or anus on fabric are never let out on this alone: the finding is
+         still held for a person (never below the 0.25 hold bar), only not rejected;
+       - a near-certain finding (0.80 and above) is never reduced.
+     Everything else is unchanged: real skin is judged exactly as before, whatever its
+     colour. One rule on the phone and on the server; a phone too old to report skin
+     gets no allowance.
 
      ------------------------------------------------------------------------------------
      HOW THE MACHINE APPLIES THIS — and where it stops
@@ -455,7 +484,7 @@ export function bytesFromB64(s) {
                                   REJECT      HOLD (a person looks)
        genitals / anus            >= 0.50     0.25 - 0.50
        exposed bottom + a weak intimate sign (>= 0.25)          hold
-       2+ people + exposed bottom or a weak intimate sign        hold
+       2+ people + a clear exposed bottom (>= 0.60)           hold
        female breast (topless)    >= 0.55     0.35 - 0.55
        two intimate parts         each >= 0.40
        video-player screenshot                >= 0.85
@@ -478,8 +507,20 @@ export function bytesFromB64(s) {
   var MOD_T = {
     anatomyReject: 0.50, anatomyHold: 0.25, weak: 0.25, face: 0.40, bottom: 0.45,
     breastReject: 0.55,  breastHold: 0.35,
-    pair: 0.40, certain: 0.80, player: 0.85,
+    pair: 0.40, certain: 0.80, player: 0.85, act: 0.60,
+    fabric: 0.20, fabricCut: 0.5,
   };
+  /* A finding's score once what it lies on is known (see WHAT A CLOTHED PICTURE
+     LOOKS LIKE). row: [classIndex, score, skinShare?]. No skin share: unchanged. */
+  function modScore(row) {
+    var cls = MOD_LABELS[row[0]], sc = Number(row[1]) || 0;
+    if (row.length < 3 || row[2] == null) return sc;
+    var skin = Number(row[2]);
+    if (!(skin >= 0 && skin <= 1) || skin >= MOD_T.fabric || sc >= MOD_T.certain) return sc;
+    if (cls === "BUTTOCKS_EXPOSED" || cls === "FEMALE_BREAST_EXPOSED") return sc * MOD_T.fabricCut;
+    if (MOD_ANATOMY[cls]) return Math.max(sc * MOD_T.fabricCut, Math.min(sc, MOD_T.anatomyHold));
+    return sc;
+  }
   /* Plain-language reasons, shown to uploaders and reviewers. */
   var MOD_REASON_TEXT = {
     "genitals": "exposed genitals",
@@ -501,12 +542,12 @@ export function bytesFromB64(s) {
   }
 
   /* One frame -> { level: "certain"|"reject"|"hold"|"allow", reason, score }.
-     frame: { d: [[classIndex, score], ...], p: playerScore } */
+     frame: { d: [[classIndex, score, skinShare?], ...], p: playerScore } */
   function modAssessFrame(frame) {
     var best = {}, i, cls, sc;
     var d = (frame && frame.d) || [];
     for (i = 0; i < d.length; i++) {
-      cls = MOD_LABELS[d[i][0]]; sc = Number(d[i][1]) || 0;
+      cls = MOD_LABELS[d[i][0]]; sc = modScore(d[i]);
       if (cls && (!(cls in best) || sc > best[cls])) best[cls] = sc;
     }
     var anatomy = 0, anatomyCls = "", intimate = 0, revealing = 0;
@@ -535,7 +576,13 @@ export function bytesFromB64(s) {
     if (anatomy >= MOD_T.anatomyHold)   return { level: "hold", reason: modAnatomyReason(anatomyCls, true), score: anatomy };
     if (breast  >= MOD_T.breastHold)    return { level: "hold", reason: "possible-topless", score: breast };
     if (bottom && weak >= 1)            return { level: "hold", reason: "possible-nudity", score: Math.max(top, best.BUTTOCKS_EXPOSED || 0) };
-    if (faces >= 2 && (weak >= 1 || bottom)) return { level: "hold", reason: "possible-sexual-act", score: Math.max(top, best.BUTTOCKS_EXPOSED || 0) };
+    /* Two faces plus a flicker is not a sexual act. NudeNet reads a shirt,
+       a lap or a seated dress as a breast or a bottom, and every frame of a
+       normal group (a mother and child, two people on a call) has two faces.
+       A breast under the topless-hold bar is ignored here. A bottom has to
+       be clear (0.60) before two people are held for a person to look. */
+    var actBottom = (best.BUTTOCKS_EXPOSED || 0) >= MOD_T.act;
+    if (faces >= 2 && actBottom) return { level: "hold", reason: "possible-sexual-act", score: Math.max(top, best.BUTTOCKS_EXPOSED || 0) };
     if (player  >= MOD_T.player)        return { level: "hold", reason: "video-player-screenshot", score: player };
     return { level: "allow", reason: revealing ? "revealing-allowed" : "", score: top };
   }
@@ -587,11 +634,16 @@ function validNudenetFrames(nn) {
     if (!f || typeof f !== "object" || !Array.isArray(f.d) || f.d.length > 60) return null;
     const d = [];
     for (const row of f.d) {
-      if (!Array.isArray(row) || row.length !== 2) return null;
+      /* [class, score] or, from 05h phones, [class, score, skinShare]. */
+      if (!Array.isArray(row) || row.length < 2 || row.length > 3) return null;
       const c = Number(row[0]), sc = Number(row[1]);
       if (!Number.isInteger(c) || c < 0 || c >= MOD_LABELS.length) return null;
       if (!Number.isFinite(sc) || sc < 0 || sc > 1) return null;
-      d.push([c, sc]);
+      if (row.length === 3 && row[2] != null) {
+        const sk = Number(row[2]);
+        if (typeof row[2] !== "number" || !Number.isFinite(sk) || sk < 0 || sk > 1) return null;
+        d.push([c, sc, sk]);
+      } else d.push([c, sc]);
     }
     const pl = f.p == null ? 0 : Number(f.p);
     if (!Number.isFinite(pl) || pl < 0 || pl > 1) return null;

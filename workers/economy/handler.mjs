@@ -87,7 +87,8 @@ import {
   cleanBroadcastId,
 } from "./views.mjs";
 import { pbkdf2Sha256Js, WORKER_PBKDF2_MAX } from "./pbkdf2.mjs";
-import { handleWireNotify } from "./wire-notify.mjs";
+import { handleWireNotify, handlePushTest } from "./wire-notify.mjs";
+import { handleLgVoice } from "./lg-voice.mjs";
 import {
   callsReady,
   rememberRoom,
@@ -97,7 +98,7 @@ import {
   cfCalls,
 } from "./live.mjs";
 
-export const VERSION = "2.9.0-lock";
+export const VERSION = "2.11.0-lg";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -3456,6 +3457,32 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         accessToken: (scope) => saAccessTokenScoped(env, scope),
         fetch: (u, o) => _fetch(u, o),
         projectId: projectId(env),
+      });
+      return json(out.body, out.status);
+    }
+
+    if (path === "/v1/voice/lg" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      let cache = null;
+      try { if (typeof caches !== "undefined" && caches.default) cache = caches.default; } catch (_) {}
+      const out = await handleLgVoice(body, user, { env, fetch: (u, o) => _fetch(u, o), cache });
+      if (!out.bytes) return json(out.json, out.status);
+      return new Response(out.bytes, { status: 200, headers: {
+        ...corsHeaders(), "Content-Type": out.type, "Cache-Control": "private, max-age=86400",
+        "X-Naluno-Voice": out.speaker + (out.cached ? "; cached" : ""),
+        "Access-Control-Expose-Headers": "X-Naluno-Voice",
+      } });
+    }
+
+    if (path === "/v1/push/test" && request.method === "POST") {
+      if (!saToken) return json({ ok: false, sent: 0, error: "push not configured" }, 503);
+      const body = await request.json().catch(() => ({}));
+      const out = await handlePushTest(body, user, {
+        getDoc: (p) => fsGetDoc(env, saToken, p),
+        accessToken: (scope) => saAccessTokenScoped(env, scope),
+        fetch: (u, o) => _fetch(u, o),
+        projectId: projectId(env),
+        sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       });
       return json(out.body, out.status);
     }

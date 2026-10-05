@@ -92,6 +92,7 @@ test("a real message alerts every phone of the other person, with no message tex
     assert.equal(m.data.fromUid, "alice");
     assert.equal(m.android.priority, "HIGH");
     assert.equal(m.webpush.headers.Urgency, "high");
+    assert.ok(!m.webpush.fcm_options, "no relative link (FCM refuses one that is not https)");
     assert.ok(!m.notification, "data-only: the phone's own code shows it");
     const all = JSON.stringify(m);
     assert.ok(!all.includes("do not forward") && !all.includes("SECRETCIPHER"), "no words, no ciphertext");
@@ -171,4 +172,31 @@ test("a dead token is reported, the live one still gets it; the push token is re
   assert.equal(none.body.reason, "no_token");
   assert.equal(wireKindLabel("voice"), "Voice message");
   assert.equal(wireKindLabel("anything"), "New message");
+});
+
+test("the self-test alerts your own phones after the delay and says what happened", async () => {
+  resetWireNotify();
+  const { handlePushTest } = await import("./wire-notify.mjs");
+  const now = Date.now();
+  const docs = world(now);
+  const sent = [];
+  let slept = 0;
+  const deps = {
+    getDoc: async (p) => docs[p.replace(/^\//, "")] || null,
+    accessToken: async () => "fcm-bearer",
+    fetch: fake(docs, sent, { unregistered: "web-token-bob-0123456789abcdef" }),
+    projectId: "naluno-28a00",
+    sleep: async (ms) => { slept = ms; },
+    now: () => now,
+  };
+  const r = await handlePushTest({ delay: 60000 }, { uid: "bob" }, deps);
+  assert.equal(slept, 8000, "at most 8 seconds");
+  assert.equal(r.body.sent, 1);
+  assert.deepEqual(r.body.phones.map((x) => x.phone + ":" + x.ok).sort(), ["android:true", "web:false"]);
+  assert.ok(sent.every((m) => m.data.type === "wireline" && m.data.fromUid === "bob"), "goes through the real Wireline path");
+  const none = await handlePushTest({}, { uid: "mallory" }, deps);
+  assert.equal(none.body.reason, "no_token");
+  let limited = false;
+  for (let i = 0; i < 6; i++) { const x = await handlePushTest({}, { uid: "bob" }, deps); if (x.status === 429) limited = true; }
+  assert.ok(limited, "not a push cannon");
 });
