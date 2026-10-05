@@ -77,9 +77,18 @@ function nalunoClipElement(el){
   return false;
 }
 
+function nalunoSplitPipEl(el){
+  try{
+    if(!el) return false;
+    if(el.id === 'nalunoSplitPip') return true;
+    if(el.dataset && el.dataset.nalunoCallPip === '1') return true;
+  }catch(_){}
+  return false;
+}
 function containMediaElement(el){
   if(!el) return;
   if(nalunoClipElement(el)) return;
+  if(nalunoSplitPipEl(el)) return;
   try{ el.disableRemotePlayback = true; }catch(_){}
   try{ el.disablePictureInPicture = true; }catch(_){}
   try{ el.setAttribute('disablepictureinpicture', ''); }catch(_){}
@@ -216,6 +225,7 @@ function nalunoMarkUserPaused(el){
   }catch(_){}
 }
 function nalunoPauseAllForUser(){
+  if(nalunoCallUiOpen()) return;
   try{
     document.querySelectorAll('video, audio').forEach(function(el){
       try{
@@ -238,6 +248,10 @@ function nalunoPauseAllForUser(){
 window.nalunoPauseAllForUser = nalunoPauseAllForUser;
 function lockOutChromeMediaSession(){
   if(!navigator.mediaSession) return;
+  /* A live call registers enterpictureinpicture and keeps playbackState
+     playing. Wiping that every two seconds is why the floating window
+     never opened on its own. Broadcasts still get locked out below. */
+  try{ if(nalunoCallUiOpen()) return; }catch(_){}
   try{ navigator.mediaSession.metadata = null; }catch(_){}
   try{
     if(typeof MediaMetadata !== 'undefined'){
@@ -485,6 +499,7 @@ document.addEventListener('play', function(e){
   const el = e.target;
   if(!el || (el.tagName !== 'VIDEO' && el.tagName !== 'AUDIO')) return;
   if(el.closest && el.closest('#callOverlay')) return;
+  if(nalunoSplitPipEl(el)) return;
   containMediaElement(el);
   lockOutChromeMediaSession();
   setTimeout(lockOutChromeMediaSession, 30);
@@ -497,6 +512,7 @@ document.addEventListener('playing', function(e){
   const el = e.target;
   if(!el || (el.tagName !== 'VIDEO' && el.tagName !== 'AUDIO')) return;
   if(el.closest && el.closest('#callOverlay')) return;
+  if(nalunoSplitPipEl(el)) return;
   containMediaElement(el);
   lockOutChromeMediaSession();
 }, true);
@@ -505,6 +521,7 @@ document.addEventListener('pause', function(e){
   const el = e.target;
   if(!el || (el.tagName !== 'VIDEO' && el.tagName !== 'AUDIO')) return;
   if(el.closest && el.closest('#callOverlay')) return;
+  if(nalunoSplitPipEl(el)) return;
   nalunoMarkUserPaused(el);
   lockOutChromeMediaSession();
   setTimeout(lockOutChromeMediaSession, 40);

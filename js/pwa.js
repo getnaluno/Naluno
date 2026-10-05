@@ -6,7 +6,7 @@
    ============================================================ */
 /* ---------------- PWA INSTALL + CALL NOTIFICATION DEEP-LINK ---------------- */
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js?v=20261005d', { scope: '/', updateViaCache: 'none' })
+  navigator.serviceWorker.register('/sw.js?v=20261005e', { scope: '/', updateViaCache: 'none' })
     .then(function(reg){ try{ reg.update(); }catch(_){} })
     .catch(function(e){ console.warn('[sw]', e); });
   // One automatic reload when a new SW takes control (clears stuck "sign-in not ready"
@@ -55,6 +55,14 @@ if('serviceWorker' in navigator){
   // even when the app was backgrounded or just cold-started from the push.
   navigator.serviceWorker.addEventListener('message', event=>{
     const msg = event.data || {};
+    if(msg.type === 'naluno-open-wire'){
+      const uid = msg.fromUid || '';
+      const kick = ()=>{
+        if(typeof nalunoOpenWireFromPush === 'function') nalunoOpenWireFromPush(uid);
+        else setTimeout(kick, 400);
+      };
+      kick();
+    }
     if(msg.type === 'naluno-incoming-call'){
       const id = msg.callId || null;
       const kick = ()=>{
@@ -101,6 +109,28 @@ if('serviceWorker' in navigator){
       setTimeout(tryOpen, 400);
     };
     setTimeout(tryOpen, 600);
+  }catch(e){}
+})();
+
+(function consumeWireDeepLink(){
+  try{
+    const params = new URLSearchParams(location.search);
+    const uid = params.get('wire');
+    if(!uid) return;
+    if(history.replaceState){
+      const rest = new URLSearchParams(location.search);
+      rest.delete('wire');
+      const q = rest.toString();
+      history.replaceState(null, '', location.pathname + (q ? ('?' + q) : '') + (location.hash || ''));
+    }
+    const tryOpen = ()=>{
+      if(typeof nalunoOpenWireFromPush === 'function'){
+        nalunoOpenWireFromPush(uid);
+        return;
+      }
+      setTimeout(tryOpen, 400);
+    };
+    setTimeout(tryOpen, 700);
   }catch(e){}
 })();
 
@@ -249,6 +279,10 @@ async function setupCapacitorPush(){
             return;
           }
           const callId = data.callId || data.call_id || null;
+          if(data.type === 'wireline' && data.fromUid && typeof nalunoOpenWireFromPush === 'function'){
+            nalunoOpenWireFromPush(data.fromUid);
+            return;
+          }
           if(callId){ handleIncomingCallFromPush(callId); return; }
         }catch(e){}
       });
@@ -321,6 +355,21 @@ if(typeof firebase !== 'undefined' && firebase.messaging){
         return;
       }
       const callId = data.callId || data.call_id || null;
+      if(data.type === 'wireline'){
+        let inThisChat = false;
+        try{
+          const from = data.fromUid || '';
+          const c = (typeof contacts !== 'undefined' && contacts && contacts.find)
+            ? contacts.find(function(x){ return x && x.firebaseUid === from; })
+            : null;
+          const thread = document.getElementById('wirelineThread');
+          inThisChat = !!(c && typeof activeThreadContactId !== 'undefined' && activeThreadContactId === c.id && thread && thread.classList.contains('active') && !document.hidden);
+        }catch(_){}
+        if(!inThisChat && (data.title || data.body)){
+          toast((data.title || 'Wireline') + (data.body ? (' — ' + data.body) : ''));
+        }
+        return;
+      }
       if(callId){
         const who = data.callerName || String(data.title || '').replace(/\s+is calling$/i, '') || 'Someone';
         const hidden = (typeof document !== 'undefined' && (document.hidden || document.visibilityState !== 'visible'));

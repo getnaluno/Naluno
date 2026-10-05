@@ -1893,6 +1893,83 @@ function nalunoRaceTimeout(promise, ms){
   ]);
 }
 
+function wirePreviewForPush(payload, previewText){
+  const t = (payload && payload.type) || 'text';
+  if(t === 'voice' || t === 'audio') return 'Voice message';
+  if(t === 'photo' || t === 'image') return 'Photo';
+  if(t === 'video') return 'Video';
+  if(t === 'text'){
+    const s = String((payload && payload.text) || previewText || '').replace(/\s+/g, ' ').trim();
+    return s ? s.slice(0, 140) : 'New message';
+  }
+  return 'New message';
+}
+function notifyWirelinePush(c, payload, previewText, clientMsgId){
+  try{
+    if(!c || !c.firebaseUid || typeof currentUser === 'undefined' || !currentUser) return;
+    const calleeUid = c.firebaseUid;
+    const name = (typeof currentProfile !== 'undefined' && currentProfile && currentProfile.name) || 'Someone';
+    const body = wirePreviewForPush(payload, previewText);
+    const url = (typeof CALL_NOTIFY_WORKER_URL === 'string' && CALL_NOTIFY_WORKER_URL) || 'https://naluno-call-notify.naluno.workers.dev';
+    (async function(){
+      try{
+        const idToken = await currentUser.getIdToken();
+        const tokens = { android: null, web: null, primary: null, platform: null };
+        try{
+          if(fbDb){
+            const snap = await fbDb.collection('users').doc(calleeUid).get();
+            const d = snap.exists ? (snap.data() || {}) : {};
+            tokens.android = d.fcmTokenAndroid || null;
+            tokens.web = d.fcmTokenWeb || null;
+            tokens.primary = d.fcmToken || null;
+            tokens.platform = d.fcmTokenPlatform || null;
+          }
+        }catch(_){}
+        await fetch(url, {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            calleeUid: calleeUid,
+            type: 'wireline',
+            title: name,
+            body: body,
+            fromUid: currentUser.uid,
+            senderName: name,
+            clientMsgId: clientMsgId || '',
+            fcmTokenAndroid: tokens.android,
+            fcmTokenWeb: tokens.web,
+            fcmToken: tokens.primary,
+            fcmTokenPlatform: tokens.platform
+          })
+        });
+      }catch(_){}
+    })();
+  }catch(_){}
+}
+function nalunoOpenWireFromPush(uid){
+  const id = String(uid || '').trim();
+  if(!id) return;
+  const openNow = function(){
+    try{
+      const list = (typeof contacts !== 'undefined' && contacts) ? contacts : [];
+      const c = list.find(function(x){ return x && x.firebaseUid === id; });
+      if(c && typeof openWirelineFromFrequencies === 'function'){
+        openWirelineFromFrequencies(c.id);
+        return true;
+      }
+      if(typeof nalunoShowTab === 'function') nalunoShowTab('wireline');
+    }catch(_){}
+    return false;
+  };
+  if(openNow()) return;
+  let n = 0;
+  const timer = setInterval(function(){
+    n += 1;
+    if(openNow() || n > 25) clearInterval(timer);
+  }, 400);
+}
+try{ window.nalunoOpenWireFromPush = nalunoOpenWireFromPush; }catch(_){}
+
 async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
   if(!fbDb || !currentUser) return;
   // Checked BEFORE ever touching Firestore, not after waiting for a failure that was
@@ -2099,6 +2176,7 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
         });
       }
     }catch(_){}
+    try{ notifyWirelinePush(c, payload, previewText, cmid); }catch(_){}
   }catch(e){
     if(!queueId){
       // Not already queued — this is a fresh send that failed for some OTHER reason
