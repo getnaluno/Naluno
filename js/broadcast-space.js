@@ -96,8 +96,7 @@ function bspaceToggleWhoDrop(){
   const share = $('bspaceWhoShare');
   if(share) share.onclick = function(e){
     try{ if(e) e.stopPropagation(); }catch(_){}
-    const btn = $('bspaceShareBtn');
-    if(btn) btn.click();
+    bspaceShareNow();
   };
   const uid = meta.creatorUid || '';
   const aboutP = drop.querySelector('[data-channel-about]');
@@ -3240,70 +3239,53 @@ async function bspaceShareCard(title, creator, thumbUrl){
   return blob && blob.size ? blob : null;
 }
 
-if($('bspaceShareBtn')){
-  $('bspaceShareBtn').onclick = async ()=>{
-    if(!activeBroadcastId) return;
-    const title = (activeBroadcastMeta && activeBroadcastMeta.title) || 'Naluno Broadcast';
-    const creator = (activeBroadcastMeta && activeBroadcastMeta.creatorName) || '';
-    const link = typeof broadcastShareUrl === 'function'
-      ? broadcastShareUrl(activeBroadcastId, title)
-      : ('https://getnaluno.com/app/?broadcast=' + encodeURIComponent(activeBroadcastId));
-    if(/workers\.dev/i.test(link)){
-      toast('Share link was refused — it pointed at a worker');
+function bspaceShareNow(){
+  if(!activeBroadcastId) return;
+  const title = (activeBroadcastMeta && activeBroadcastMeta.title) || 'Naluno Broadcast';
+  const creator = (activeBroadcastMeta && activeBroadcastMeta.creatorName) || '';
+  const link = typeof broadcastShareUrl === 'function'
+    ? broadcastShareUrl(activeBroadcastId, title)
+    : ('https://getnaluno.com/app/?broadcast=' + encodeURIComponent(activeBroadcastId));
+  if(/workers\.dev/i.test(link)){
+    toast('Share link was refused — it pointed at a worker');
+    return;
+  }
+  const text = title + (creator ? (' — ' + creator) : '') + '\n' + link;
+  const finish = function(){
+    try{
+      if(typeof nalunoTrack === 'function'){
+        nalunoTrack('BROADCAST_SHARE', {
+          target_type: 'broadcast',
+          target_id: activeBroadcastId,
+          broadcast_id: activeBroadcastId,
+          creator_uid: (activeBroadcastMeta && activeBroadcastMeta.creatorUid) || '',
+        });
+      }
+    }catch(_){}
+  };
+  try{
+    if(navigator.share){
+      navigator.share({ title: title, text: text, url: link }).then(finish).catch(function(e){
+        if(e && e.name === 'AbortError') return;
+        if(navigator.clipboard && navigator.clipboard.writeText){
+          navigator.clipboard.writeText(text).then(function(){ toast('Link copied'); }).catch(function(){ toast(link); });
+          return;
+        }
+        toast(link);
+      });
       return;
     }
-    const thumb = (activeBroadcastMeta && (activeBroadcastMeta.thumbUrl || (activeBroadcastMeta.segment && activeBroadcastMeta.segment.thumbDataUrl))) || '';
-    let files;
-    try{
-      const card = await bspaceShareCard(title, creator, thumb);
-      if(card) files = [new File([card], 'naluno-broadcast.jpg', { type: 'image/jpeg' })];
-    }catch(_){}
-    const text = title + (creator ? (' — ' + creator) : '') + '\n' + link;
-    try{
-      const withFile = files && navigator.canShare && navigator.canShare({ files: files });
-      if(navigator.share){
-        const payload = { title: title, text: text, url: link };
-        if(withFile) payload.files = files;
-        await navigator.share(payload);
-      } else if(withFile && navigator.share){
-        await navigator.share({ title: title, text: text, files: files });
-      } else if(navigator.clipboard && navigator.clipboard.writeText){
-        await navigator.clipboard.writeText(text);
-        toast('Link copied');
-      } else {
-        toast(link);
-      }
-      try{
-        if(typeof nalunoTrack === 'function'){
-          nalunoTrack('BROADCAST_SHARE', {
-            target_type: 'broadcast',
-            target_id: activeBroadcastId,
-            broadcast_id: activeBroadcastId,
-            creator_uid: (activeBroadcastMeta && activeBroadcastMeta.creatorUid) || '',
-          });
-        }
-      }catch(_){}
-    }catch(e){
-      if(e && e.name === 'AbortError') return;
-      /* A phone that rejects the picture still gets the clean link. */
-      try{
-        if(navigator.share){
-          await navigator.share({ title: title, text: text, url: link });
-          return;
-        }
-      }catch(e2){
-        if(e2 && e2.name === 'AbortError') return;
-      }
-      try{
-        if(navigator.clipboard && navigator.clipboard.writeText){
-          await navigator.clipboard.writeText(text);
-          toast('Link copied');
-          return;
-        }
-      }catch(_){}
-      toast(link);
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(function(){ toast('Link copied'); finish(); }).catch(function(){ toast(link); });
+      return;
     }
-  };
+    toast(link);
+  }catch(_){
+    toast(link);
+  }
+}
+if($('bspaceShareBtn')){
+  $('bspaceShareBtn').onclick = function(){ bspaceShareNow(); };
 }
 if($('bspaceDeleteBtn')){
   $('bspaceDeleteBtn').onclick = async ()=>{

@@ -204,6 +204,7 @@ window.nalunoBack = (function(){
   let seeded = false;
   let seq = 1;
   let poppedAt = 0;
+  let closedSurfaceAt = 0;
   function topOverlay(){
     for(let i = 0; i < ORDER.length; i++){
       if(isOpen(ORDER[i])) return ORDER[i];
@@ -335,7 +336,28 @@ window.nalunoBack = (function(){
       try{ history.back(); }catch(_){}
       return;
     }
+    /* The WebView can pop history and also deliver this key. The pop
+       already closed the room. A second history.back() would leave Broadcasts. */
+    if(Date.now() - closedSurfaceAt < 500) return;
     const top = topOverlay();
+    if(top && CLOSE[top]){
+      closeTop();
+      if(top === 'bspace'){
+        closedSurfaceAt = Date.now();
+        lock = true;
+        setTimeout(function(){ if(lock) lock = false; }, 500);
+      }
+      return;
+    }
+    try{
+      if(typeof getOpenStrandFolderId === 'function' && getOpenStrandFolderId() && typeof closeStrandFolder === 'function'){
+        closeStrandFolder();
+        closedSurfaceAt = Date.now();
+        lock = true;
+        setTimeout(function(){ if(lock) lock = false; }, 500);
+        return;
+      }
+    }catch(_){}
     const tabs = readStack();
     if(!top && tabs.length < 2){
       try{
@@ -378,6 +400,21 @@ window.nalunoBack = (function(){
     }
     if(window.__nalunoCallHist) return;
     if(lock){ lock = false; return; }
+    const roomOpen = isOpen('bspace');
+    let strandOpen = false;
+    try{ strandOpen = typeof getOpenStrandFolderId === 'function' && !!getOpenStrandFolderId(); }catch(_){}
+    if(roomOpen || strandOpen){
+      if(roomOpen) closeTop();
+      else { try{ closeStrandFolder(); }catch(_){} }
+      closedSurfaceAt = Date.now();
+      try{
+        const cur = { naluno: 1, tab: 'broadcast', overlay: null, i: seq, seq: ++seq };
+        history.pushState(cur, '', urlFor(cur));
+      }catch(_){}
+      lock = true;
+      setTimeout(function(){ if(lock) lock = false; }, 500);
+      return;
+    }
     const st = history.state;
     if(st && st.naluno){ apply(st); return; }
     /* The WebView popped an entry that was never ours. Still step the tab

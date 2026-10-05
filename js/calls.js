@@ -801,6 +801,9 @@ function nalunoMarkCallLive(){
   try{
     if(typeof nalunoSessionHold === 'function') nalunoSessionHold(nalunoIsVoiceCall() ? 'voice' : 'video');
   }catch(_){}
+  try{ if(window.nalunoPip && nalunoPip.arm) nalunoPip.arm(); }catch(_){}
+  try{ nalunoApplyEarpiece(); }catch(_){}
+  try{ nalunoBoostRemoteAudio(remoteCombinedStream); }catch(_){}
   if(nalunoIsVoiceCall()){ try{ nalunoApplyEarpiece(); }catch(_){} }
   try{ const eb = document.querySelector('#incall .call-info-pill .eyebrow'); if(eb) eb.textContent = 'Connected'; }catch(_){}
   callSeconds = 0;
@@ -884,7 +887,7 @@ function showRemoteVideo(){
   if(!videoEl) return;
   if(!videoEl.srcObject){ nalunoSetRemoteLayers(false); return; }
   videoEl.style.display = 'block';
-  try{ videoEl.volume = 1; if(!videoEl.paused) videoEl.muted = false; }catch(_){}
+  nalunoHearRemote(videoEl);
   if(!remoteFirstFrame){
     // Playing is not a picture: keep the avatar in front until a frame is painted.
     nalunoSetRemoteLayers(false);
@@ -895,6 +898,77 @@ function showRemoteVideo(){
   nalunoSetRemoteLayers(true);
 }
 
+let nalunoRemoteBoost = null;
+function nalunoDropRemoteBoost(){
+  window.__nalunoRemoteBoosted = false;
+  const b = nalunoRemoteBoost;
+  nalunoRemoteBoost = null;
+  if(!b) return;
+  try{ b.src.disconnect(); }catch(_){}
+  try{ b.gain.disconnect(); }catch(_){}
+  try{ if(b.comp) b.comp.disconnect(); }catch(_){}
+}
+function nalunoBoostRemoteAudio(stream){
+  const srcStream = stream || (typeof remoteCombinedStream !== 'undefined' ? remoteCombinedStream : null);
+  if(!srcStream || !srcStream.getAudioTracks || !srcStream.getAudioTracks().length) return false;
+  if(typeof nalunoEarpiece !== 'undefined' && nalunoEarpiece) return false;
+  const ctx = (typeof ensureAudioContext === 'function') ? ensureAudioContext() : null;
+  if(!ctx) return false;
+  try{ if(ctx.state === 'suspended') ctx.resume(); }catch(_){}
+  try{
+    if(nalunoRemoteBoost && nalunoRemoteBoost.stream === srcStream){
+      window.__nalunoRemoteBoosted = true;
+      return true;
+    }
+    nalunoDropRemoteBoost();
+    const src = ctx.createMediaStreamSource(srcStream);
+    const gain = ctx.createGain();
+    /* The element volume cannot go past 1, and a phone call is still quiet
+       there. This is the extra level, with a limiter so it does not crackle. */
+    gain.gain.value = 2.8;
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -16;
+    comp.knee.value = 8;
+    comp.ratio.value = 4;
+    comp.attack.value = 0.003;
+    comp.release.value = 0.16;
+    src.connect(gain);
+    gain.connect(comp);
+    comp.connect(ctx.destination);
+    nalunoRemoteBoost = { src: src, gain: gain, comp: comp, stream: srcStream };
+    window.__nalunoRemoteBoosted = true;
+    return true;
+  }catch(_){
+    window.__nalunoRemoteBoosted = false;
+    return false;
+  }
+}
+function nalunoHearRemote(videoEl){
+  if(!videoEl) return;
+  try{ videoEl.volume = 1; }catch(_){}
+  /* Earpiece uses the call stream itself. The boost plays through the media
+     stream, which would stay on the loudspeaker. */
+  if(typeof nalunoEarpiece !== 'undefined' && nalunoEarpiece){
+    nalunoDropRemoteBoost();
+    try{ videoEl.muted = false; }catch(_){}
+    return;
+  }
+  const boosted = nalunoBoostRemoteAudio(videoEl.srcObject);
+  const ctx = (typeof sharedAudioCtx !== 'undefined') ? sharedAudioCtx : null;
+  const running = !!(ctx && ctx.state === 'running');
+  try{ videoEl.muted = !!(boosted && running); }catch(_){}
+  if(boosted && ctx && !running && !videoEl._nalunoBoostWait){
+    videoEl._nalunoBoostWait = true;
+    const on = function(){
+      if(ctx.state !== 'running') return;
+      videoEl._nalunoBoostWait = false;
+      try{ ctx.removeEventListener('statechange', on); }catch(_){}
+      if(typeof nalunoEarpiece !== 'undefined' && nalunoEarpiece) return;
+      try{ videoEl.muted = true; }catch(_){}
+    };
+    try{ ctx.addEventListener('statechange', on); }catch(_){}
+  }
+}
 function bindRemoteVideoElement(stream, forceRebind){
   const videoEl = document.getElementById('remoteVideo');
   if(!videoEl || !stream) return;
@@ -958,7 +1032,7 @@ function bindRemoteVideoElement(stream, forceRebind){
     const p = videoEl.play();
     if(p && p.then){
       p.then(function(){
-        try{ videoEl.muted = false; }catch(_){}
+        nalunoHearRemote(videoEl);
         promoteIfReady();
         // requestVideoFrameCallback when available
         try{
@@ -977,7 +1051,7 @@ function bindRemoteVideoElement(stream, forceRebind){
           videoEl.muted = true;
           videoEl.play().then(function(){
             setTimeout(function(){
-              try{ videoEl.muted = false; }catch(_){}
+              nalunoHearRemote(videoEl);
               promoteIfReady();
             }, 200);
           }).catch(function(){ showRemoteAvatar(); });
@@ -1051,8 +1125,8 @@ function renderRemoteMediaStage(){
   if(!state.hasVideo){
     showRemoteAvatar();
     if(state.hasAudio){
+      nalunoHearRemote(videoEl);
       try{
-        videoEl.muted = false;
         const p = videoEl.play();
         if(p && p.catch) p.catch(function(){});
       }catch(_){}
@@ -1073,7 +1147,7 @@ function renderRemoteMediaStage(){
     const p = videoEl.play();
     if(p && p.then){
       p.then(function(){
-        try{ videoEl.muted = false; }catch(_){}
+        nalunoHearRemote(videoEl);
         showRemoteVideo();
       }).catch(function(){});
     }
@@ -1142,7 +1216,7 @@ function startRemotePlayWatch(){
         try{
           el.muted = true;
           el.play().then(function(){
-            try{ el.muted = false; }catch(_){}
+            nalunoHearRemote(el);
             showRemoteVideo();
           }).catch(function(){
             // Force srcObject rebind once then retry play
@@ -1155,10 +1229,8 @@ function startRemotePlayWatch(){
       } else if(!state.hasVideo){
         showRemoteAvatar();
         if(state.hasAudio && el.paused){
-          try{
-            el.muted = false;
-            el.play().catch(function(){});
-          }catch(_){}
+          nalunoHearRemote(el);
+          try{ el.play().catch(function(){}); }catch(_){}
         }
         // Pull receivers if ontrack never fired tracks into our combined stream
         try{
@@ -1623,7 +1695,8 @@ function teardownCallConnection(){
   iAmCaller = false;
   try{
     const rv = $('remoteVideo');
-    if(rv){ rv.srcObject = null; rv.style.display = 'none'; }
+    if(rv){ rv.srcObject = null; rv.style.display = 'none'; rv.muted = true; }
+    nalunoDropRemoteBoost();
     const rp = $('remotePlaceholder');
     if(rp) rp.style.display = 'flex';
   }catch(e){}
@@ -1700,6 +1773,7 @@ function endActiveCall(reason){
   if(!callId && !wasInCall && !wasRinging && !wasIncoming && !$('callOverlay').classList.contains('active')){
     return; // nothing to end
   }
+  try{ if(window.nalunoPip && nalunoPip.disarm) nalunoPip.disarm(); }catch(_){}
   clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
   if(notifyRepeatInterval){ try{ clearInterval(notifyRepeatInterval); }catch(_){} try{ clearTimeout(notifyRepeatInterval); }catch(_){} notifyRepeatInterval = null; }
   stopCallerTone();
@@ -1784,7 +1858,10 @@ function nalunoTryRelay(pc){
 }
 function nalunoScheduleCallFail(pc){
   if(!pc || pc._nalunoFailTimer) return;
-  const wait = pc._nalunoRelayTried ? 8000 : 3200;
+  const awayNow = function(){
+    try{ return !!(window.nalunoPip && nalunoPip.backgrounded && nalunoPip.backgrounded()); }catch(_){ return false; }
+  };
+  const wait = pc._nalunoRelayTried ? (awayNow() ? 20000 : 8000) : 3200;
   pc._nalunoFailTimer = setTimeout(function(){
     pc._nalunoFailTimer = null;
     if(!nalunoCallStillThis(pc) || nalunoCallMediaUp(pc)) return;
@@ -1797,6 +1874,12 @@ function nalunoScheduleCallFail(pc){
     const ice = pc.iceConnectionState;
     const st = pc.connectionState;
     if(ice === 'failed' || st === 'failed'){
+      if(awayNow() && !pc._nalunoBgRetry){
+        pc._nalunoBgRetry = true;
+        nalunoTryRelay(pc);
+        nalunoScheduleCallFail(pc);
+        return;
+      }
       if($('callOverlay') && $('callOverlay').classList.contains('active')){
         endActiveCall('remote');
       }
@@ -2253,6 +2336,14 @@ window.nalunoSetCallKind = nalunoSetCallKind;
 function nalunoIsVoiceCall(){ return nalunoCallKind === 'audio'; }
 window.nalunoIsVoiceCall = nalunoIsVoiceCall;
 let nalunoEarpiece = false;
+function nalunoNativeRoute(route){
+  try{
+    const n = window.NalunoNative;
+    if(!n) return false;
+    n.setCallAudioRoute(route);
+    return true;
+  }catch(_){ return false; }
+}
 function nalunoApplyEarpiece(){
   const btn = $('earBtn');
   if(btn){
@@ -2260,12 +2351,10 @@ function nalunoApplyEarpiece(){
     btn.title = nalunoEarpiece ? 'Earpiece' : 'Loudspeaker';
     btn.setAttribute('aria-label', nalunoEarpiece ? 'Listening on the earpiece' : 'Listening on the loudspeaker');
   }
-  const route = nalunoEarpiece ? 'ear' : 'speaker';
+  nalunoNativeRoute(nalunoEarpiece ? 'ear' : 'speaker');
   try{
-    if(window.NalunoNative && typeof window.NalunoNative.setCallAudioRoute === 'function'){
-      window.NalunoNative.setCallAudioRoute(route);
-      return;
-    }
+    const v = document.getElementById('remoteVideo');
+    if(v && v.srcObject) nalunoHearRemote(v);
   }catch(_){}
 }
 function nalunoClearEarpiece(){
@@ -2283,14 +2372,15 @@ function nalunoWireEarpiece(){
   if(!btn || btn.dataset.wired) return;
   btn.dataset.wired = '1';
   btn.onclick = function(){
-    nalunoEarpiece = !nalunoEarpiece;
-    nalunoApplyEarpiece();
-    if(!(window.NalunoNative && typeof window.NalunoNative.setCallAudioRoute === 'function')){
-      toast(nalunoEarpiece ? 'Earpiece needs the latest Naluno app' : 'Loudspeaker');
+    const wantEar = !nalunoEarpiece;
+    if(wantEar && !nalunoNativeRoute('ear')){
       nalunoEarpiece = false;
       nalunoApplyEarpiece();
+      toast('Loudspeaker');
       return;
     }
+    nalunoEarpiece = wantEar;
+    nalunoApplyEarpiece();
     toast(nalunoEarpiece ? 'Earpiece' : 'Loudspeaker');
   };
 }
@@ -3066,6 +3156,10 @@ function nalunoPreparedFor(callId){
 $('acceptIncoming').onclick = async ()=>{
   if(callActionInProgress) return;
   stopRingtone();
+  try{
+    const st = document.querySelector('#incoming .ring-status');
+    if(st) st.textContent = 'Answering…';
+  }catch(_){}
   if(!activeCallId || !fbDb){ toast('That call is no longer available'); closeCallOverlayAndStopCamera(); return; }
   callActionInProgress = true;
   const acceptingId = activeCallId;
@@ -3248,6 +3342,27 @@ $('acceptIncoming').onclick = async ()=>{
     if(activeCallId === acceptingId || !activeCallId) callActionInProgress = false;
   }
 };
+
+(function nalunoWireAnswer(){
+  function wire(){
+    const btn = $('acceptIncoming');
+    if(!btn || btn.dataset.answerWired) return;
+    btn.dataset.answerWired = '1';
+    btn.style.touchAction = 'manipulation';
+    const go = function(e){
+      /* Touch pointerup often reports button -1. Treating that as "not the
+         left button" dropped the first tap, so Answer needed a second one. */
+      if(e && e.pointerType === 'mouse' && e.button != null && e.button > 0) return;
+      if(btn._nalunoAnswerAt && Date.now() - btn._nalunoAnswerAt < 700) return;
+      btn._nalunoAnswerAt = Date.now();
+      if(typeof btn.onclick === 'function') btn.onclick(e);
+    };
+    btn.addEventListener('pointerup', go);
+    btn.addEventListener('touchend', go, { passive: true });
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire);
+  wire();
+})();
 
 let callSeconds = 0, callInterval = null;
 function startInCall(){
