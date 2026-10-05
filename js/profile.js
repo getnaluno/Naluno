@@ -204,7 +204,6 @@ window.nalunoBack = (function(){
   let seeded = false;
   let seq = 1;
   let poppedAt = 0;
-  let closedSurfaceAt = 0;
   function topOverlay(){
     for(let i = 0; i < ORDER.length; i++){
       if(isOpen(ORDER[i])) return ORDER[i];
@@ -331,48 +330,79 @@ window.nalunoBack = (function(){
     }
     return false;
   }
+  function navIsShowing(){
+    if(topOverlay()) return false;
+    try{ if(typeof getOpenStrandFolderId === 'function' && getOpenStrandFolderId()) return false; }catch(_){}
+    const b = document.body;
+    if(!b) return true;
+    if(b.classList.contains('naluno-bspace-open')) return false;
+    if(b.classList.contains('naluno-strand-open')) return false;
+    if(b.classList.contains('naluno-bcast-watch')) return false;
+    if(b.classList.contains('naluno-feed-landscape')) return false;
+    if(b.classList.contains('naluno-landscape-media')) return false;
+    return true;
+  }
+  function revealNavTab(){
+    try{ if(typeof nalunoExitFeedLandscape === 'function') nalunoExitFeedLandscape(); }catch(_){}
+    try{
+      document.body.classList.remove('naluno-bcast-watch', 'naluno-feed-landscape', 'naluno-feed-landscape-css', 'naluno-feed-landscape-native', 'naluno-landscape-media');
+    }catch(_){}
+    try{
+      const scroller = document.getElementById('broadcastTabScroll');
+      if(scroller) scroller.scrollTop = 0;
+    }catch(_){}
+    try{ if(typeof window.__nalunoFlipPaint === 'function') window.__nalunoFlipPaint(); }catch(_){}
+  }
+  function stepTabBack(){
+    const tabs = readStack();
+    if(tabs.length < 2) return false;
+    const nextTabs = tabs.slice(0, -1);
+    writeStack(nextTabs);
+    const tab = nextTabs[nextTabs.length - 1];
+    apply({ tab: tab, overlay: null });
+    try{
+      const cur = { naluno: 1, tab: tab, overlay: null, i: seq, seq: ++seq };
+      history.replaceState(cur, '', urlFor(cur));
+    }catch(_){}
+    return true;
+  }
   function onNativeBack(){
     if(window.__nalunoCallHist){
       try{ history.back(); }catch(_){}
       return;
     }
-    /* The WebView can pop history and also deliver this key. The pop
-       already closed the room. A second history.back() would leave Broadcasts. */
-    if(Date.now() - closedSurfaceAt < 500) return;
     const top = topOverlay();
     if(top && CLOSE[top]){
       closeTop();
-      if(top === 'bspace'){
-        closedSurfaceAt = Date.now();
-        lock = true;
-        setTimeout(function(){ if(lock) lock = false; }, 500);
-      }
+      lock = true;
+      setTimeout(function(){ if(lock) lock = false; }, 350);
       return;
     }
     try{
       if(typeof getOpenStrandFolderId === 'function' && getOpenStrandFolderId() && typeof closeStrandFolder === 'function'){
         closeStrandFolder();
-        closedSurfaceAt = Date.now();
         lock = true;
-        setTimeout(function(){ if(lock) lock = false; }, 500);
+        setTimeout(function(){ if(lock) lock = false; }, 350);
         return;
       }
     }catch(_){}
-    const tabs = readStack();
-    if(!top && tabs.length < 2){
-      try{
-        const App = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
-        if(App && App.exitApp) App.exitApp();
-      }catch(_){}
+    /* Watching a video hides the tab bar. First Back shows it.
+       The next Back, on that tab, leaves to the phone's home. */
+    if(!navIsShowing()){
+      revealNavTab();
+      lock = true;
+      setTimeout(function(){ if(lock) lock = false; }, 350);
       return;
     }
-    const before = history.state && history.state.seq;
-    try{ history.back(); }catch(_){}
-    setTimeout(function(){
-      if(Date.now() - poppedAt < 500) return;
-      const after = history.state && history.state.seq;
-      if(before != null && after === before) fallbackUndo();
-    }, 280);
+    if(stepTabBack()){
+      lock = true;
+      setTimeout(function(){ if(lock) lock = false; }, 350);
+      return;
+    }
+    try{
+      const App = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+      if(App && App.exitApp) App.exitApp();
+    }catch(_){}
   }
   function bindNative(){
     let tries = 0;
@@ -406,7 +436,6 @@ window.nalunoBack = (function(){
     if(roomOpen || strandOpen){
       if(roomOpen) closeTop();
       else { try{ closeStrandFolder(); }catch(_){} }
-      closedSurfaceAt = Date.now();
       try{
         const cur = { naluno: 1, tab: 'broadcast', overlay: null, i: seq, seq: ++seq };
         history.pushState(cur, '', urlFor(cur));

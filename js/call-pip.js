@@ -37,6 +37,7 @@ function nalunoPipAction(name, api){
 
 const nalunoPip = (function(){
   let armed = false;
+  let nativeArmed = false;
   let webWin = null;
   let closing = false;
   let remoteWasMuted = false;
@@ -54,9 +55,11 @@ const nalunoPip = (function(){
   function tellNative(on){
     try{
       const n = native();
-      if(!n) return;
+      if(!n) return false;
       n.armCallPip(on ? 'true' : 'false');
-    }catch(_){}
+      nativeArmed = !!on;
+      return true;
+    }catch(_){ return false; }
   }
   function syncNative(){
     try{
@@ -109,6 +112,11 @@ const nalunoPip = (function(){
       if(p && p.catch) p.catch(function(){});
     }
     try{ if(typeof nalunoHearRemote === 'function') nalunoHearRemote(v); }catch(_){}
+    try{
+      if(!(document.body && document.body.classList.contains('naluno-os-pip')) && typeof nalunoHoldOutbound === 'function'){
+        nalunoHoldOutbound(false);
+      }
+    }catch(_){}
   }
   function closeWeb(){
     const w = webWin;
@@ -156,6 +164,7 @@ const nalunoPip = (function(){
     if(src && src.srcObject){
       remoteWasMuted = !!src.muted;
       try{ if(typeof nalunoDropRemoteBoost === 'function') nalunoDropRemoteBoost(); }catch(_){}
+      try{ if(typeof nalunoHoldOutbound === 'function') nalunoHoldOutbound(true); }catch(_){}
       try{ src.muted = true; }catch(_){}
       rv.srcObject = src.srcObject;
       rv.muted = false;
@@ -255,6 +264,7 @@ const nalunoPip = (function(){
   }
   function onOs(on){
     try{ document.body.classList.toggle('naluno-os-pip', !!on); }catch(_){}
+    try{ if(typeof nalunoHoldOutbound === 'function') nalunoHoldOutbound(!!on); }catch(_){}
     if(on){
       try{ if(typeof resetPipLayoutStyles === 'function') resetPipLayoutStyles(); }catch(_){}
       const v = remoteEl();
@@ -262,6 +272,13 @@ const nalunoPip = (function(){
         const p = v.play();
         if(p && p.catch) p.catch(function(){});
       }
+      try{
+        const self = document.getElementById('pipRawVideo');
+        if(self){
+          const p = self.play();
+          if(p && p.catch) p.catch(function(){});
+        }
+      }catch(_){}
     }
   }
   function onFocus(has){
@@ -307,7 +324,8 @@ const nalunoPip = (function(){
     open: open,
     backgrounded: backgrounded,
     sync: syncNative,
-    bind: bindSession
+    bind: bindSession,
+    retryArm: function(){ if(nalunoPipLive() && !nativeArmed) arm(); }
   };
 })();
 window.nalunoPip = nalunoPip;
@@ -336,7 +354,22 @@ if(typeof document !== 'undefined' && document.addEventListener){
   }
   setInterval(function(){
     if(!nalunoPipLive()) return;
+    try{ nalunoPip.retryArm(); }catch(_){}
     try{ nalunoPip.sync(); }catch(_){}
     try{ nalunoPip.bind(); }catch(_){}
   }, 1500);
+  document.addEventListener('visibilitychange', function(){
+    if(!nalunoPipLive()) return;
+    if(document.hidden){
+      try{ if(typeof nalunoHoldOutbound === 'function') nalunoHoldOutbound(true); }catch(_){}
+      try{
+        const n = window.NalunoNative;
+        if(n) n.enterCallPipNow();
+      }catch(_){}
+      return;
+    }
+    if(!(document.body && document.body.classList.contains('naluno-os-pip'))){
+      try{ if(typeof nalunoHoldOutbound === 'function') nalunoHoldOutbound(false); }catch(_){}
+    }
+  });
 }

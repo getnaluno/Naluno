@@ -1578,6 +1578,48 @@ function scheduleFilteredUpgrade(pc){
   }
 }
 
+/* The picture the other person sees is drawn on a canvas. That canvas
+   stops the moment this page is covered, so they get a frozen frame.
+   While the call is in the background or the system window, send the
+   camera itself — it keeps moving without being drawn. */
+let nalunoOutboundHeld = false;
+function nalunoHoldOutbound(hold){
+  if(typeof peerConnection === 'undefined' || !peerConnection) return;
+  let sender = null;
+  try{
+    sender = peerConnection.getSenders().find(function(s){ return s.track && s.track.kind === 'video'; });
+  }catch(_){}
+  if(!sender) return;
+  const raw = (typeof stream !== 'undefined' && stream && stream.getVideoTracks)
+    ? stream.getVideoTracks().find(function(t){ return t.readyState === 'live'; })
+    : null;
+  if(hold){
+    if(!raw || (typeof camOn !== 'undefined' && camOn === false)) return;
+    if(sender.track !== raw){
+      nalunoOutboundHeld = true;
+      sender.replaceTrack(raw).catch(function(){});
+    }
+    try{ raw.enabled = true; }catch(_){}
+    ['pipRawVideo','sendRawVideo'].forEach(function(id){
+      const v = document.getElementById(id);
+      if(!v) return;
+      try{
+        if(v.srcObject !== stream) v.srcObject = stream;
+        const p = v.play();
+        if(p && p.catch) p.catch(function(){});
+      }catch(_){}
+    });
+    return;
+  }
+  if(!nalunoOutboundHeld) return;
+  nalunoOutboundHeld = false;
+  try{
+    const fx = (typeof getCallOutboundVideoTrackSync === 'function') ? getCallOutboundVideoTrackSync() : null;
+    if(fx && sender.track !== fx) sender.replaceTrack(fx).catch(function(){});
+  }catch(_){}
+}
+window.nalunoHoldOutbound = nalunoHoldOutbound;
+
 async function upgradeCallVideoToFiltered(){
   if(_callFilterUpgraded) return;
   const pc = _callFilterPc || peerConnection;

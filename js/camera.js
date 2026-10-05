@@ -976,6 +976,27 @@ function stageLoopTick(){
      && wantsDraw) drawSendCanvas();
 }
 requestAnimationFrame(stageLoopTick);
+/* rAF stops when the phone covers Naluno. The camera element and the
+   send canvas still need frames, or the other person sees a freeze. */
+setInterval(function(){
+  try{
+    if(typeof stream === 'undefined' || !stream) return;
+    const hidden = document.hidden || (document.body && document.body.classList.contains('naluno-os-pip'));
+    if(!hidden) return;
+    const ov = document.getElementById('callOverlay');
+    if(!ov || !ov.classList.contains('active')) return;
+    ['pipRawVideo','sendRawVideo'].forEach(function(id){
+      const v = document.getElementById(id);
+      if(!v) return;
+      if(v.srcObject !== stream) v.srcObject = stream;
+      if(v.paused){
+        const p = v.play();
+        if(p && p.catch) p.catch(function(){});
+      }
+    });
+    drawSendCanvas(true);
+  }catch(_){}
+}, 200);
 function startCamView(target){
   if(target==='lobby'){ camAnimStart = performance.now(); const v = $('camRawVideo'); if(v) v.srcObject = stream; }
   else { pipAnimStart = performance.now(); const v = $('pipRawVideo'); if(v) v.srcObject = stream; }
