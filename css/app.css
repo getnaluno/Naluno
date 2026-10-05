@@ -1791,6 +1791,17 @@ body.naluno-os-pip #incall .incall-top,
 body.naluno-os-pip #incall .filter-chip-row,
 body.naluno-os-pip #incall .waveform,
 body.naluno-os-pip #incallWire{ display:none !important; }
+body.naluno-os-pip #incall .local-pip #pipRawVideo{
+  display:block !important;
+  position:absolute !important;
+  inset:0 !important;
+  width:100% !important;
+  height:100% !important;
+  object-fit:cover !important;
+  opacity:1 !important;
+  transform:scaleX(-1);
+}
+body.naluno-os-pip #pipStageCanvas{ display:none !important; }
 
 #incall .remote-stage video {
   object-fit: cover;
