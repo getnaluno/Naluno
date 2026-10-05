@@ -41,9 +41,11 @@ assert.strictEqual(Ear.plan('Katonda'), null);
 
 const fs = require('fs');
 const voices = fs.readFileSync(__dirname + '/naluno-voices.js', 'utf8');
-assert.ok(voices.indexOf("var voice = male ? 'Hugo' : 'Bella';") > 0);
-assert.ok(voices.indexOf('male ? 1.12 : 1.25') > 0);
-assert.ok(voices.indexOf('setTimeout(r, 200)') > 0);
+/* 05 Oct (g): Hugo and Bella stay; the pace is set for about 160 words a
+   minute each, and the pauses are scheduled, not slept. */
+assert.ok(voices.indexOf("var VOICE = { female: 'Bella', male: 'Hugo' };") > 0);
+assert.ok(/var PACE = \{ Bella: 1\.\d+, Hugo: 0\.\d+ \};/.test(voices));
+assert.ok(voices.indexOf('NalunoVoiceMaster.master(mono, rate, male)') > 0, 'the mastering still runs');
 assert.ok(voices.indexOf('lower(samples') < 0);
 const css = fs.readFileSync(__dirname + '/../css/app.css', 'utf8');
 assert.ok(css.indexOf('.air-make-live') > 0);

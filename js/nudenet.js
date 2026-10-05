@@ -117,6 +117,34 @@
      A picture Screen could not read at all is also held, never published unseen.
 
      ------------------------------------------------------------------------------------
+     WHAT A CLOTHED PICTURE LOOKS LIKE — how the machine is kept from misreading it (05h)
+     ------------------------------------------------------------------------------------
+     On 02 Oct a photo of two fully clothed people in bright clothes was flagged. The
+     detector only knows shapes: a bright shirt over a chest, a dress over a lap, two
+     people hugging, look to it like a breast or a bottom. A person tells the
+     difference at once, because an exposed part is SKIN and clothing is FABRIC.
+     So every exposed-part finding now carries what the phone saw inside its box:
+
+       SKIN      Skin of every shade, from very light to very dark: warm hues (red,
+                 orange, brown, beige, pink) in any brightness, including deep brown
+                 and dark shadow. Pixels too dark to tell count AS skin (never in the
+                 uploader's favour), and so does a black-and-white picture, where
+                 nothing can be told: those get no allowance at all.
+       FABRIC    Clearly not skin: white, grey or pale clothing (no colour, bright);
+                 blue, green, purple or yellow; vivid saturated reds and oranges like
+                 dyed cloth, never seen on skin.
+
+     If less than a fifth of an "exposed" box is skin, that finding is fabric misread
+     as a body part. Its score is halved:
+       - a breast or a bottom on fabric falls below the hold bars (a shirt, a dress);
+       - genitals or anus on fabric are never let out on this alone: the finding is
+         still held for a person (never below the 0.25 hold bar), only not rejected;
+       - a near-certain finding (0.80 and above) is never reduced.
+     Everything else is unchanged: real skin is judged exactly as before, whatever its
+     colour. One rule on the phone and on the server; a phone too old to report skin
+     gets no allowance.
+
+     ------------------------------------------------------------------------------------
      HOW THE MACHINE APPLIES THIS — and where it stops
      ------------------------------------------------------------------------------------
      The detector (NudeNet) reports body parts with a confidence 0-1. It reliably sees
@@ -154,8 +182,20 @@
   var MOD_T = {
     anatomyReject: 0.50, anatomyHold: 0.25, weak: 0.25, face: 0.40, bottom: 0.45,
     breastReject: 0.55,  breastHold: 0.35,
-    pair: 0.40, certain: 0.80, player: 0.85,
+    pair: 0.40, certain: 0.80, player: 0.85, act: 0.60,
+    fabric: 0.20, fabricCut: 0.5,
   };
+  /* A finding's score once what it lies on is known (see WHAT A CLOTHED PICTURE
+     LOOKS LIKE). row: [classIndex, score, skinShare?]. No skin share: unchanged. */
+  function modScore(row) {
+    var cls = MOD_LABELS[row[0]], sc = Number(row[1]) || 0;
+    if (row.length < 3 || row[2] == null) return sc;
+    var skin = Number(row[2]);
+    if (!(skin >= 0 && skin <= 1) || skin >= MOD_T.fabric || sc >= MOD_T.certain) return sc;
+    if (cls === "BUTTOCKS_EXPOSED" || cls === "FEMALE_BREAST_EXPOSED") return sc * MOD_T.fabricCut;
+    if (MOD_ANATOMY[cls]) return Math.max(sc * MOD_T.fabricCut, Math.min(sc, MOD_T.anatomyHold));
+    return sc;
+  }
   /* Plain-language reasons, shown to uploaders and reviewers. */
   var MOD_REASON_TEXT = {
     "genitals": "exposed genitals",
@@ -177,12 +217,12 @@
   }
 
   /* One frame -> { level: "certain"|"reject"|"hold"|"allow", reason, score }.
-     frame: { d: [[classIndex, score], ...], p: playerScore } */
+     frame: { d: [[classIndex, score, skinShare?], ...], p: playerScore } */
   function modAssessFrame(frame) {
     var best = {}, i, cls, sc;
     var d = (frame && frame.d) || [];
     for (i = 0; i < d.length; i++) {
-      cls = MOD_LABELS[d[i][0]]; sc = Number(d[i][1]) || 0;
+      cls = MOD_LABELS[d[i][0]]; sc = modScore(d[i]);
       if (cls && (!(cls in best) || sc > best[cls])) best[cls] = sc;
     }
     var anatomy = 0, anatomyCls = "", intimate = 0, revealing = 0;
@@ -216,7 +256,7 @@
        normal group (a mother and child, two people on a call) has two faces.
        A breast under the topless-hold bar is ignored here. A bottom has to
        be clear (0.60) before two people are held for a person to look. */
-    var actBottom = (best.BUTTOCKS_EXPOSED || 0) >= 0.60;
+    var actBottom = (best.BUTTOCKS_EXPOSED || 0) >= MOD_T.act;
     if (faces >= 2 && actBottom) return { level: "hold", reason: "possible-sexual-act", score: Math.max(top, best.BUTTOCKS_EXPOSED || 0) };
     if (player  >= MOD_T.player)        return { level: "hold", reason: "video-player-screenshot", score: player };
     return { level: "allow", reason: revealing ? "revealing-allowed" : "", score: top };
@@ -307,7 +347,49 @@
     var inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
     return inter / ((a[2] * a[3] + b[2] * b[3] - inter) || 1);
   }
-  function decodeDetections(data, dims) {
+  /* What an "exposed" box lies on (see WHAT A CLOTHED PICTURE LOOKS LIKE in the
+     rulebook): the share of its pixels that could be skin, of any shade. Only
+     clear fabric counts against: no-colour bright (white, grey), cool hues,
+     yellow, and vivid dyed reds/oranges. Too dark to tell = skin. */
+  var EXPOSED_IDX = { 2: 1, 3: 1, 4: 1, 6: 1, 14: 1 };
+  function pixelCouldBeSkin(r, g, b) {
+    var mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    if (mx < 0.14) return true;
+    var s = (mx - mn) / mx;
+    if (s < 0.05) return mx < 0.3;
+    var h;
+    if (mx === r) h = 60 * (((g - b) / (mx - mn)) % 6);
+    else if (mx === g) h = 60 * ((b - r) / (mx - mn) + 2);
+    else h = 60 * ((r - g) / (mx - mn) + 4);
+    if (h < 0) h += 360;
+    if (!(h <= 50 || h >= 330)) return false;
+    return s <= 0.82;
+  }
+  function pictureHasColour(inp) {
+    var n = S * S, step = 7, coloured = 0, seen = 0;
+    for (var i = 0; i < n; i += step) {
+      var r = inp[i], g = inp[n + i], b = inp[2 * n + i], mx = Math.max(r, g, b);
+      if (mx < 0.14) continue;
+      seen++;
+      if ((mx - Math.min(r, g, b)) / mx >= 0.05) coloured++;
+    }
+    return seen > 0 && coloured / seen >= 0.05;
+  }
+  function skinShare(inp, box) {
+    var n = S * S;
+    var x0 = Math.max(0, Math.floor(box[0])), y0 = Math.max(0, Math.floor(box[1]));
+    var x1 = Math.min(S, Math.ceil(box[0] + box[2])), y1 = Math.min(S, Math.ceil(box[1] + box[3]));
+    if (x1 - x0 < 2 || y1 - y0 < 2) return null;
+    var step = Math.max(1, Math.floor(Math.sqrt((x1 - x0) * (y1 - y0) / 900)));
+    var skin = 0, all = 0;
+    for (var y = y0; y < y1; y += step) for (var x = x0; x < x1; x += step) {
+      var i = y * S + x;
+      all++;
+      if (pixelCouldBeSkin(inp[i], inp[n + i], inp[2 * n + i])) skin++;
+    }
+    return all ? Math.round(skin / all * 1000) / 1000 : null;
+  }
+  function decodeDetections(data, dims, inp) {
     var ch = dims[1], n = dims[2], rows = [];
     for (var i = 0; i < n; i++) {
       var best = 0, cls = -1;
@@ -319,7 +401,15 @@
     rows.sort(function (a, b) { return b.score - a.score; });
     var keep = [];
     rows.forEach(function (r) { if (keep.every(function (k) { return iou(k.box, r.box) <= 0.45; })) keep.push(r); });
-    return keep.map(function (r) { return [r.cls, Math.round(r.score * 1000) / 1000]; });
+    var colour = !!inp && inp.length === 3 * S * S && pictureHasColour(inp);
+    return keep.map(function (r) {
+      var row = [r.cls, Math.round(r.score * 1000) / 1000];
+      if (colour && EXPOSED_IDX[r.cls]) {
+        var sk = skinShare(inp, r.box);
+        if (sk != null) row.push(sk);
+      }
+      return row;
+    });
   }
 
   /* ---------------- video-player screenshot detector ----------------
@@ -450,10 +540,11 @@
       var out = [];
       for (var i = 0; i < fs.frames.length; i++) {
         var fr = fs.frames[i];
-        var feeds = {}; feeds[sess.inputNames[0]] = new root.ort.Tensor('float32', tensorFromSource(fr.src, fr.w, fr.h), [1, 3, S, S]);
+        var inp = tensorFromSource(fr.src, fr.w, fr.h);
+        var feeds = {}; feeds[sess.inputNames[0]] = new root.ort.Tensor('float32', inp, [1, 3, S, S]);
         var res = await sess.run(feeds), o = res[sess.outputNames[0]];
         var rg = rgbaOf(fr.src, fr.w, fr.h);
-        out.push({ d: decodeDetections(o.data, o.dims), p: playerScore(rg.data, rg.w, rg.h) });
+        out.push({ d: decodeDetections(o.data, o.dims, inp), p: playerScore(rg.data, rg.w, rg.h) });
       }
       return { frames: out, result: modDecide(out) };
     } finally {
@@ -509,5 +600,8 @@
   root.nalunoModThresholds = MOD_T;
   root.nalunoModerateFile = moderateFile;
   root.nalunoPlayerScore = playerScore;
+  root.nalunoSkinShare = skinShare;
+  root.nalunoPixelCouldBeSkin = pixelCouldBeSkin;
+  root.nalunoDecodeDetections = decodeDetections;
   root.nalunoModPreload = function () { return loadSession().then(function () { return true; }, function () { return false; }); };
 })(typeof window !== 'undefined' ? window : globalThis);

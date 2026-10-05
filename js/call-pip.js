@@ -123,58 +123,8 @@ const nalunoPip = (function(){
   function lockRemotePip(){
     const v = remoteEl();
     if(!v) return;
-    /* On Android Chrome the other person's picture is what Android floats
-       when you leave the app (see androidWeb below), so it must stay
-       allowed there. */
-    if(androidWeb() && armed){
-      try{ v.removeAttribute('disablePictureInPicture'); }catch(_){}
-      try{ v.disablePictureInPicture = false; }catch(_){}
-      return;
-    }
     try{ v.setAttribute('disablePictureInPicture', ''); }catch(_){}
     try{ v.disablePictureInPicture = true; }catch(_){}
-  }
-  /* ---- Android Chrome (browser or installed web app) ----
-     Chrome on Android floats a video by itself when you leave the app, but
-     only a video that fills the screen while the page is in full screen.
-     The media-session route below is desktop Chrome only, and a web page
-     cannot open a floating window without a tap. So a video call made or
-     answered on Android Chrome goes full screen at that tap (it must be a
-     tap), and the other person's picture fills it; leaving the app then
-     floats it. A tap on the call puts it back in full screen after the
-     back gesture has taken it out. Voice calls, iPhone and the Naluno
-     Android app are not touched. */
-  let fsByUs = false;
-  function androidWeb(){
-    try{
-      if(hasNative()) return false;
-      const ua = String((navigator && navigator.userAgent) || '');
-      if(!/Android/i.test(ua) || /iPhone|iPad|iPod/i.test(ua)) return false;
-      return !!(document.documentElement && document.documentElement.requestFullscreen);
-    }catch(_){ return false; }
-  }
-  function videoCall(){
-    try{ return !(typeof nalunoIsVoiceCall === 'function' && nalunoIsVoiceCall()); }catch(_){ return true; }
-  }
-  function goFullscreen(){
-    if(!androidWeb() || !videoCall()) return false;
-    if(document.fullscreenElement) return true;
-    try{
-      const p = document.documentElement.requestFullscreen({ navigationUI: 'hide' });
-      fsByUs = true;
-      if(p && p.catch) p.catch(function(){ fsByUs = false; });
-      return true;
-    }catch(_){ fsByUs = false; return false; }
-  }
-  function leaveFullscreen(){
-    if(!fsByUs) return;
-    fsByUs = false;
-    try{
-      if(document.fullscreenElement && document.exitFullscreen){
-        const p = document.exitFullscreen();
-        if(p && p.catch) p.catch(function(){});
-      }
-    }catch(_){}
   }
   function remoteEl(){
     return document.getElementById('remoteVideo');
@@ -532,7 +482,6 @@ const nalunoPip = (function(){
   function disarm(){
     armed = false;
     closing = true;
-    leaveFullscreen();
     tellNative(false);
     closeWeb();
     stopSplit();
@@ -608,37 +557,12 @@ const nalunoPip = (function(){
     backgrounded: backgrounded,
     sync: syncNative,
     bind: bindSession,
-    retryArm: function(){ if(nalunoPipLive() && !nativeArmed) arm(); },
-    fullscreen: goFullscreen,
-    leaveFullscreen: leaveFullscreen,
-    androidWeb: androidWeb
+    retryArm: function(){ if(nalunoPipLive() && !nativeArmed) arm(); }
   };
 })();
 window.nalunoPip = nalunoPip;
 
 if(typeof document !== 'undefined' && document.addEventListener){
-  /* Any way the call screen closes (declined, busy, no answer) leaves full screen. */
-  (function watchOverlay(){
-    const ov = document.getElementById('callOverlay');
-    if(!ov || typeof MutationObserver === 'undefined'){
-      if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watchOverlay);
-      return;
-    }
-    new MutationObserver(function(){
-      if(!ov.classList.contains('active')){ try{ nalunoPip.leaveFullscreen(); }catch(_){} }
-    }).observe(ov, { attributes: true, attributeFilter: ['class'] });
-  })();
-  /* Capture phase, so the full-screen request is still inside the tap. */
-  document.addEventListener('click', function(e){
-    try{
-      if(!nalunoPip.androidWeb()) return;
-      const t = e.target;
-      if(!t || !t.closest) return;
-      if(t.closest('#joinBtn, #acceptIncoming')){ nalunoPip.fullscreen(); return; }
-      if(t.closest('#endBtn, #cancelCall, #declineIncoming, #callFloatBtn')) return;
-      if(t.closest('#incall') && nalunoPipLive() && !document.fullscreenElement) nalunoPip.fullscreen();
-    }catch(_){}
-  }, true);
   document.addEventListener('click', function(e){
     const btn = e.target && e.target.closest && e.target.closest('#callFloatBtn');
     if(!btn) return;

@@ -1725,17 +1725,57 @@ function ensurePublishChip(){
   document.body.appendChild(chip);
   return chip;
 }
-function showPublishChip(text){
-  if(typeof nalunoProgressAllowed === 'function' && !nalunoProgressAllowed()){
+/* 05i: a Broadcast upload shows its percentage again, in a bar, after the
+   composer closes (it used to show only while the composer was open, so
+   the % disappeared on Publish). Not on Wireline, as before. */
+let publishBarPct = -1;
+function showPublishChip(text, opts){
+  const bar = !!(opts && opts.bar);
+  const onWire = (typeof nalunoOnWireline === 'function') && nalunoOnWireline();
+  if(bar ? onWire : (typeof nalunoProgressAllowed === 'function' && !nalunoProgressAllowed())){
     try{ if(typeof nalunoHideProgressChrome === 'function') nalunoHideProgressChrome(); }catch(_){}
     return;
   }
   const chip = ensurePublishChip();
   chip.style.display = 'block';
-  chip.textContent = text;
+  if(!bar){ chip.removeAttribute('data-bar'); chip.textContent = text; return; }
+  chip.setAttribute('data-bar', '1');
+  const m = /(\d{1,3})\s*%/.exec(String(text || ''));
+  if(m) publishBarPct = Math.max(0, Math.min(100, Number(m[1])));
+  else if(/^Uploaded|Saving|Finishing/i.test(String(text || '')) && publishBarPct >= 0) publishBarPct = Math.max(publishBarPct, /^Uploaded|Saving/i.test(String(text)) ? 100 : 97);
+  let label = chip.querySelector('.pub-bar-label');
+  let fill = chip.querySelector('.pub-bar-fill');
+  let pct = chip.querySelector('.pub-bar-pct');
+  if(!label || !fill || !pct){
+    chip.textContent = '';
+    const top = document.createElement('div');
+    top.style.cssText = 'display:flex;justify-content:space-between;gap:10px;align-items:baseline;';
+    label = document.createElement('span'); label.className = 'pub-bar-label';
+    label.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    pct = document.createElement('strong'); pct.className = 'pub-bar-pct';
+    pct.style.cssText = 'color:#7CFFB2;font-size:14px;';
+    top.appendChild(label); top.appendChild(pct);
+    const track = document.createElement('div');
+    track.setAttribute('role', 'progressbar');
+    track.setAttribute('aria-valuemin', '0'); track.setAttribute('aria-valuemax', '100');
+    track.className = 'pub-bar-track';
+    track.style.cssText = 'margin-top:8px;height:6px;border-radius:99px;background:rgba(255,255,255,.12);overflow:hidden;';
+    fill = document.createElement('div'); fill.className = 'pub-bar-fill';
+    fill.style.cssText = 'height:100%;width:0%;background:#7CFFB2;border-radius:99px;transition:width .25s ease;';
+    track.appendChild(fill);
+    chip.appendChild(top); chip.appendChild(track);
+  }
+  label.textContent = String(text || '').replace(/\s*\d{1,3}\s*%/, '').replace(/…\s*\(/, '… (');
+  const shown = publishBarPct >= 0 ? publishBarPct : 0;
+  pct.textContent = publishBarPct >= 0 ? (shown + '%') : '';
+  fill.style.width = shown + '%';
+  const tr = chip.querySelector('.pub-bar-track');
+  if(tr) tr.setAttribute('aria-valuenow', String(shown));
 }
 function hidePublishChip(){
+  publishBarPct = -1;
   const chip = document.getElementById('publishBgChip');
+  if(chip) chip.removeAttribute('data-bar');
   if(chip) chip.style.display = 'none';
 }
 
@@ -1769,8 +1809,10 @@ async function drainPublishQueue(){
     while(publishQueue.length){
       const job = publishQueue.shift();
       try{
-        showPublishChip(job.label || 'Working…');
-        const runP = job.run(function(msg){ showPublishChip(msg || job.label || 'Working…'); });
+        const chipOpts = job.progressBar ? { bar: true } : undefined;
+        publishBarPct = job.progressBar ? 0 : -1;
+        showPublishChip(job.label || 'Working…', chipOpts);
+        const runP = job.run(function(msg){ showPublishChip(msg || job.label || 'Working…', chipOpts); });
         const timeoutP = new Promise(function(_, rej){
           setTimeout(function(){ rej(new Error('Upload timed out — check your connection and try again')); }, 6 * 60 * 1000);
         });

@@ -2412,7 +2412,8 @@ var NalunoVoiceEngine = (() => {
   var entry_exports = {};
   __export(entry_exports, {
     createFromBuffers: () => createFromBuffers,
-    say: () => say
+    say: () => say,
+    ort: () => runtime(ort_wasm_min_exports)
   });
 
   // ../ort18/package/dist/esm/ort.wasm.min.js
@@ -5092,19 +5093,27 @@ var NalunoVoiceEngine = (() => {
   var _RE_HTML = /<[^>]+>/g;
   var _RE_PUNCT = /[^\p{L}\p{M}\p{N}\s.,?!;:\-\u2014\u2013\u2026]/gu;
   var _RE_SPACES = /\s+/g;
-  var _RE_NUMBER = /(?<![a-zA-Z])-?[\d,]+(?:\.\d+)?/g;
+  /* 05 Oct (g): look-behind regexes are built at run time, so phones
+     without look-behind (iPhone before iOS 16.4) can still load the voice:
+     they get the same pattern without the look-behind part. */
+  function _lbRx(src, flags) {
+    try { return new RegExp(src, flags); } catch (_e) {
+      return new RegExp(src.replace(/\(\?<[=!](?:[^()\\]|\\.|\([^()]*\))*\)/g, ""), flags);
+    }
+  }
+  var _RE_NUMBER = _lbRx("(?<![a-zA-Z])-?[\\d,]+(?:\\.\\d+)?", "g");
   var _RE_ORDINAL = /\b(\d+)(st|nd|rd|th)\b/gi;
   var _RE_PERCENT = /(-?[\d,]+(?:\.\d+)?)\s*%/g;
   var _RE_CURRENCY = /([$€£¥₹₩₿])\s*([\d,]+(?:\.\d+)?)\s*([KMBT])?(?![a-zA-Z\d])/g;
   var _RE_TIME = /\b(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?\b/gi;
-  var _RE_RANGE = /(?<!\w)(\d+)-(\d+)(?!\w)/g;
+  var _RE_RANGE = _lbRx("(?<!\\w)(\\d+)-(\\d+)(?!\\w)", "g");
   var _RE_MODEL_VER = /\b([a-zA-Z][a-zA-Z0-9]*)-(\d[\d.]*)(?=[^\d.]|$)/g;
   var _RE_UNIT = /(\d+(?:\.\d+)?)\s*(km|kg|mg|ml|gb|mb|kb|tb|hz|khz|mhz|ghz|mph|kph|°[cCfF]|[cCfF]°|ms|ns|µs)\b/gi;
-  var _RE_SCALE = /(?<![a-zA-Z])(\d+(?:\.\d+)?)\s*([KMBT])(?![a-zA-Z\d])/g;
-  var _RE_SCI = /(?<![a-zA-Z\d])(-?\d+(?:\.\d+)?)[eE]([+-]?\d+)(?![a-zA-Z\d])/g;
+  var _RE_SCALE = _lbRx("(?<![a-zA-Z])(\\d+(?:\\.\\d+)?)\\s*([KMBT])(?![a-zA-Z\\d])", "g");
+  var _RE_SCI = _lbRx("(?<![a-zA-Z\\d])(-?\\d+(?:\\.\\d+)?)[eE]([+-]?\\d+)(?![a-zA-Z\\d])", "g");
   var _RE_FRACTION = /\b(\d+)\s*\/\s*(\d+)\b/g;
   var _RE_DECADE = /\b(\d{1,3})0s\b/gi;
-  var _RE_LEAD_DEC = /(?<!\d)\.([\d])/g;
+  var _RE_LEAD_DEC = _lbRx("(?<!\\d)\\.([\\d])", "g");
   function _ordinal_suffix(n2) {
     const word = number_to_words(n2);
     let prefix = "", last = word, joiner = "";
@@ -5202,7 +5211,7 @@ var NalunoVoiceEngine = (() => {
         });
       }
       if (cfg.normalize_leading_decimals) {
-        t2 = t2.replace(/(?<!\d)(-)\.([\d])/g, "$10.$2");
+        t2 = t2.replace(_lbRx("(?<!\\d)(-)\\.([\\d])", "g"), "$10.$2");
         t2 = t2.replace(_RE_LEAD_DEC, "0.$1");
       }
       if (cfg.expand_currency) {
@@ -5299,9 +5308,9 @@ var NalunoVoiceEngine = (() => {
       if (cfg.expand_phone_numbers) {
         const dmap = { "0": "zero", "1": "one", "2": "two", "3": "three", "4": "four", "5": "five", "6": "six", "7": "seven", "8": "eight", "9": "nine" };
         const _d = (s2) => s2.split("").map((c2) => dmap[c2]).join(" ");
-        t2 = t2.replace(/(?<!\d-)(?<!\d)\b(\d{1,2})-(\d{3})-(\d{3})-(\d{4})\b(?!-\d)/g, (_2, a2, b2, c2, d2) => [_d(a2), _d(b2), _d(c2), _d(d2)].join(" "));
-        t2 = t2.replace(/(?<!\d-)(?<!\d)\b(\d{3})-(\d{3})-(\d{4})\b(?!-\d)/g, (_2, a2, b2, c2) => [_d(a2), _d(b2), _d(c2)].join(" "));
-        t2 = t2.replace(/(?<!\d-)\b(\d{3})-(\d{4})\b(?!-\d)/g, (_2, a2, b2) => [_d(a2), _d(b2)].join(" "));
+        t2 = t2.replace(_lbRx("(?<!\\d-)(?<!\\d)\\b(\\d{1,2})-(\\d{3})-(\\d{3})-(\\d{4})\\b(?!-\\d)", "g"), (_2, a2, b2, c2, d2) => [_d(a2), _d(b2), _d(c2), _d(d2)].join(" "));
+        t2 = t2.replace(_lbRx("(?<!\\d-)(?<!\\d)\\b(\\d{3})-(\\d{3})-(\\d{4})\\b(?!-\\d)", "g"), (_2, a2, b2, c2) => [_d(a2), _d(b2), _d(c2)].join(" "));
+        t2 = t2.replace(_lbRx("(?<!\\d-)\\b(\\d{3})-(\\d{4})\\b(?!-\\d)", "g"), (_2, a2, b2) => [_d(a2), _d(b2)].join(" "));
       }
       if (cfg.replace_numbers) {
         t2 = t2.replace(_RE_NUMBER, (m2) => {
@@ -23910,7 +23919,54 @@ var NalunoVoiceEngine = (() => {
     const voices = await loadNpz(voicesBuffer);
     return new KittenTTS(session, voices, config);
   }
-  async function say(tts, text, voice, speed) {
+  /* Phones given directly (Luganda): they go to the model as they are,
+     never through the English phonemizer. Split at sentence punctuation so
+     each run stays short; the model's own trim applies to each. */
+  async function sayPhones(tts, phones, voice, speed) {
+    let name = voice;
+    if (tts.voiceAliases[name]) name = tts.voiceAliases[name];
+    const entry = tts._voices[name];
+    if (!entry) throw new Error("Voice '" + voice + "' not found");
+    let sp = typeof speed === "number" ? speed : 1;
+    if (tts.speedPriors[name]) sp = sp * tts.speedPriors[name];
+    const runs = (String(phones).match(/[^.!?;]+[.!?;]*/g) || []).map((r2) => r2.trim()).filter(Boolean);
+    const parts = [];
+    for (const run of runs) {
+      let p2 = basic_english_tokenize(run).join(" ");
+      if (!/[.!?,;:]$/.test(p2)) p2 += " ,";
+      const ids = tts._cleaner.clean(p2);
+      if (ids.length <= 4) continue;
+      const [numStyles, styleDim] = entry.shape;
+      const refId = Math.min(ids.length, numStyles - 1);
+      const style = entry.data.slice(refId * styleDim, (refId + 1) * styleDim);
+      parts.push(await tts._runInference({ input_ids: ids, style, styleDim, speed: sp }));
+    }
+    const total = parts.reduce((n2, a2) => n2 + a2.length, 0);
+    const out = new Float32Array(total);
+    let at = 0;
+    for (const a2 of parts) { out.set(a2, at); at += a2.length; }
+    return { rate: tts.sampleRate || SAMPLE_RATE, samples: out };
+  }
+  /* 05h: English with Luganda names. segments: [{en: text} | {lg: phones}].
+     The English parts go through the English phonemizer, the Luganda
+     names keep their own sounds, and the whole sentence is one run. */
+  async function sayMixed(tts, segs, voice, speed) {
+    let out = "";
+    for (const sg of segs) {
+      if (!sg) continue;
+      if (typeof sg.lg === "string" && sg.lg.trim()) out += " " + sg.lg.trim() + " ";
+      else if (typeof sg.en === "string" && sg.en.trim()) {
+        const lead = /^\s*[,.;:!?]/.test(sg.en) ? "" : " ";
+        const pre = tts._preprocessor ? tts._preprocessor.process(sg.en) : sg.en;
+        out += lead + await phonemize(pre) + " ";
+      }
+    }
+    out = out.replace(/\s+([,.;:!?])/g, "$1").replace(/\s+/g, " ").trim();
+    return sayPhones(tts, out, voice, speed);
+  }
+  async function say(tts, text, voice, speed, phones) {
+    if (Array.isArray(phones) && phones.length) return sayMixed(tts, phones, voice, speed);
+    if (phones && !Array.isArray(phones) && String(phones).trim()) return sayPhones(tts, phones, voice, speed);
     const audio = await tts.generate(text, { voice, speed, clean: true });
     return { rate: audio.sampling_rate, samples: audio.data };
   }

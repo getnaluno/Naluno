@@ -86,7 +86,8 @@ function nalunoProgressAllowed(){
 function nalunoHideProgressChrome(){
   try{
     const chip = document.getElementById('publishBgChip');
-    if(chip) chip.style.display = 'none';
+    /* A Broadcast upload's % bar stays up (except on Wireline). */
+    if(chip && !(chip.getAttribute('data-bar') === '1' && !nalunoOnWireline())) chip.style.display = 'none';
     const ban = document.getElementById('bgProcessBanner');
     if(ban && !nalunoProgressAllowed()) ban.style.display = 'none';
     const tr = document.getElementById('nalunoUploadTrace');

@@ -25,82 +25,15 @@ const flush = () => new Promise((r) => setImmediate(r));
     assert.ok(/supportsPictureInPicture="true"/.test(manifest), 'the activity may float');
   }
 
-  /* ---------- 2. Web: Android Chrome goes full screen on the call tap ---------- */
-  const pipSrc = read('js/call-pip.js');
-  function pipBox(ua, opts = {}) {
-    const listeners = {};
-    const els = {};
-    function el(id) {
-      if (!els[id]) {
-        const attrs = {};
-        els[id] = {
-          id, srcObject: opts.remote ? {} : null, disablePictureInPicture: false, muted: false, classList: { contains: () => !!opts.live, toggle() {}, remove() {}, add() {} },
-          setAttribute(k, v) { attrs[k] = v; }, removeAttribute(k) { delete attrs[k]; }, attrs,
-          play() { return Promise.resolve(); }, addEventListener() {}, getBoundingClientRect: () => ({ width: 50, height: 50 }),
-        };
-      }
-      return els[id];
-    }
-    const doc = {
-      fullscreenElement: null, hidden: false, readyState: 'complete', body: { classList: { contains: () => false, toggle() {}, remove() {} }, appendChild() {} },
-      documentElement: opts.noFullscreen ? {} : { requestFullscreen(o) { doc.fullscreenElement = doc.documentElement; doc.fsOpts = o; return Promise.resolve(); } },
-      exitFullscreen() { doc.fullscreenElement = null; return Promise.resolve(); },
-      getElementById: el,
-      addEventListener(k, fn, cap) { (listeners[k] = listeners[k] || []).push(fn); },
-      createElement: () => ({ style: {}, setAttribute() {}, addEventListener() {}, getContext: () => null, play: () => Promise.resolve() }),
-    };
-    const box = {
-      document: doc, navigator: { userAgent: ua, mediaSession: null, mediaDevices: null }, console,
-      setInterval() { return 0; }, clearInterval() {}, setTimeout, MutationObserver: undefined,
-      incallIsLive: () => !!opts.live, nalunoIsVoiceCall: () => !!opts.voice,
-      addEventListener() {},
-    };
-    box.window = box;
-    if (opts.native) box.NalunoNative = { armCallPip() {}, enterCallPipNow() {}, updateCallPip() {} };
-    vm.createContext(box);
-    vm.runInContext(pipSrc, box);
-    box.listeners = listeners; box.el = el;
-    box.tap = (id) => { const target = { closest: (sel) => (sel.split(',').map((x) => x.trim().replace('#', '')).indexOf(id) >= 0 ? el(id) : null) }; (listeners.click || []).forEach((fn) => fn({ target, preventDefault() {} })); };
-    return box;
-  }
-  const ANDROID = 'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Mobile Safari/537.36';
-  const IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
-  const DESKTOP = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36';
+  /* ---------- 2. Web: the call screen is never forced into full screen ----------
+     (05 Oct g) Android Chrome does not float a call's live video when you
+     leave, even in full screen; the full-screen attempt is removed. Float
+     (a tap) still floats both of you; iPhone gets Apple's own call too. */
   {
-    const a = pipBox(ANDROID, { live: true, remote: true });
-    assert.strictEqual(a.nalunoPip.androidWeb(), true);
-    a.tap('acceptIncoming');
-    assert.ok(a.document.fullscreenElement, 'Answer on Android Chrome goes full screen');
-    assert.strictEqual(JSON.stringify(a.document.fsOpts), JSON.stringify({ navigationUI: 'hide' }));
-    a.nalunoPip.arm();
-    assert.strictEqual(a.el('remoteVideo').disablePictureInPicture, false, 'the other person\'s picture may float on Android');
-    a.nalunoPip.disarm();
-    await flush();
-    assert.strictEqual(a.document.fullscreenElement, null, 'the end of the call leaves full screen');
-    assert.strictEqual(a.el('remoteVideo').disablePictureInPicture, true, 'and locks the picture again');
-    a.tap('joinBtn');
-    assert.ok(a.document.fullscreenElement, 'calling from the lobby too');
-    a.nalunoPip.disarm(); await flush();
-    a.tap('endBtn');
-    assert.strictEqual(a.document.fullscreenElement, null, 'End never goes full screen');
-  }
-  {
-    const v = pipBox(ANDROID, { live: true, voice: true });
-    v.tap('acceptIncoming');
-    assert.strictEqual(v.document.fullscreenElement, null, 'a voice call stays as it is');
-    const i = pipBox(IPHONE, { live: true });
-    assert.strictEqual(i.nalunoPip.androidWeb(), false);
-    i.tap('acceptIncoming');
-    assert.strictEqual(i.document.fullscreenElement, null, 'iPhone untouched');
-    const d = pipBox(DESKTOP, { live: true });
-    d.tap('acceptIncoming');
-    assert.strictEqual(d.document.fullscreenElement, null, 'desktop untouched (it has its own automatic route)');
-    const n = pipBox(ANDROID, { live: true, native: true });
-    n.tap('acceptIncoming');
-    assert.strictEqual(n.document.fullscreenElement, null, 'the Android app uses the system window, not full screen');
-    const old = pipBox(ANDROID, { live: true, noFullscreen: true });
-    old.tap('acceptIncoming');
-    assert.strictEqual(old.nalunoPip.androidWeb(), false, 'no Fullscreen API: nothing');
+    const pipSrc = read('js/call-pip.js');
+    assert.ok(!/requestFullscreen/.test(pipSrc), 'no full screen on Answer or Call');
+    assert.ok(/webkitSetPresentationMode\('picture-in-picture'\)/.test(pipSrc), 'Float works on iPhones without the standard call');
+    assert.ok(/setActionHandler\('enterpictureinpicture'/.test(pipSrc), 'desktop automatic float unchanged');
   }
 
   /* ---------- 3. Calls ---------- */
@@ -173,7 +106,7 @@ const flush = () => new Promise((r) => setImmediate(r));
       const m = html.match(new RegExp('/js/' + f.replace(/[.-]/g, '\\$&') + '\\?v=(\\d{8}[a-z])'));
       assert.ok(m && m[1] >= '20261005f', f + ' stamp');
     });
-    assert.ok(/APP_BUILD = '20261005f'/.test(read('sw.js')));
+    assert.ok((read('sw.js').match(/APP_BUILD = '(\d{8}[a-z])'/) || [])[1] >= '20261005f');
   }
   console.log('fixes-1005f tests passed');
 })().catch((e) => { console.error(e); process.exit(1); });

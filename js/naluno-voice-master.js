@@ -90,9 +90,35 @@
     }
   }
 
+  /* 05i: less breath. The voice's breathiness is noise above the voice's
+     own harmonics (about 5 kHz and up). A gentle high shelf (−6 dB from
+     5 kHz) takes most of the hiss off; the consonants (s, f, t) stay clear. */
+  function deBreath(samples, rate, db, freq) {
+    const fs = rate || 24000;
+    const A = Math.pow(10, (db || -6) / 40);
+    const w0 = 2 * Math.PI * (freq || 5000) / fs;
+    const cos = Math.cos(w0), sin = Math.sin(w0);
+    const alpha = sin / 2 * Math.SQRT2 * 0.5;
+    const sq = 2 * Math.sqrt(A) * alpha;
+    const b0 = A * ((A + 1) + (A - 1) * cos + sq);
+    const b1 = -2 * A * ((A - 1) + (A + 1) * cos);
+    const b2 = A * ((A + 1) + (A - 1) * cos - sq);
+    const a0 = (A + 1) - (A - 1) * cos + sq;
+    const a1 = 2 * ((A - 1) - (A + 1) * cos);
+    const a2 = (A + 1) - (A - 1) * cos - sq;
+    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    for (let i = 0; i < samples.length; i++) {
+      const x = samples[i];
+      const y = (b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2) / a0;
+      x2 = x1; x1 = x; y2 = y1; y1 = y;
+      samples[i] = y;
+    }
+  }
+
   function master(input, rate, male) {
     const samples = new Float32Array(input || []);
     if (!samples.length) return samples;
+    deBreath(samples, rate);
     const peak = dropDc(samples);
     holdLevel(samples, peak);
     /* Warmth only. A pitch warp of the female voice was the broken male. */
@@ -101,5 +127,5 @@
     return samples;
   }
 
-  return { master: master, lower: lower };
+  return { master: master, lower: lower, deBreath: deBreath };
 });

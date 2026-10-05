@@ -190,6 +190,15 @@
     } catch (_) {}
     return !!on;
   }
+  /* 05 Oct (g): a refused read means "not Known" (the rules only let
+     anyone read a Known record). It is remembered like any other answer;
+     before, nothing was kept, so every name on screen read the database
+     twice each time it was drawn. A local paid month still shows. */
+  function refused(key) {
+    const on = localOn(key);
+    knownCache[key] = { on: on, at: Date.now(), until: 0 };
+    return on;
+  }
   function lookup(uid) {
     const key = String(uid);
     const hit = cached(key);
@@ -207,12 +216,12 @@
       return fbDb.collection('knownApps').doc(key).get().then(function (s2) {
         const d2 = (s2 && s2.exists) ? (s2.data() || {}) : null;
         return remember(key, !!(d2 && isKnown(d2)), d2 && d2.paidUntil);
-      }, function () { return localOn(key); });
+      }, function () { return refused(key); });
     }, function () {
       return fbDb.collection('knownApps').doc(key).get().then(function (s2) {
         const d2 = (s2 && s2.exists) ? (s2.data() || {}) : null;
         return remember(key, !!(d2 && isKnown(d2)), d2 && d2.paidUntil);
-      }, function () { return localOn(key); });
+      }, function () { return refused(key); });
     }).then(done, function () { return done(localOn(key)); });
     return knownWait[key];
   }

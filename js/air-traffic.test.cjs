@@ -84,7 +84,7 @@ assert.ok(desk.indexOf('No message text') > 0);
 const speak = fs.readFileSync(path.join(__dirname, 'lg-speak.js'), 'utf8');
 assert.ok(speak.indexOf('function phones') > 0);
 const space = fs.readFileSync(path.join(__dirname, 'broadcast-space.js'), 'utf8');
-assert.ok(space.indexOf('NalunoLgSpeak.phones') > 0);
+assert.ok(space.indexOf('Lg.voice') > 0 || space.indexOf('NalunoLgSpeak.phones') > 0, 'Luganda is read from Luganda phones');
 const composer = fs.readFileSync(path.join(__dirname, 'broadcast-composer.js'), 'utf8');
 assert.ok(composer.indexOf('bwriteToLg') < 0);
 

@@ -3416,6 +3416,17 @@ $('acceptIncoming').onclick = async (ev)=>{
     };
     btn.addEventListener('pointerup', go);
     btn.addEventListener('touchend', go, { passive: true });
+    /* The click that follows the answering touch lands wherever the finger
+       is, and by then the call screen may already be showing there (End sits
+       where Answer was). That click is swallowed. */
+    document.addEventListener('click', function(e){
+      try{
+        if(!btn._nalunoAnswerAt || Date.now() - btn._nalunoAnswerAt > 700) return;
+        if(e.target && btn.contains(e.target)) return;
+        e.stopPropagation();
+        e.preventDefault();
+      }catch(_){}
+    }, true);
   }
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire);
   wire();

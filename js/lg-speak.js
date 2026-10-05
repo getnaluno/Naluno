@@ -229,5 +229,111 @@
     });
   }
 
-  return { palatal: palatal, syllables: syllables, speakWord: speakWord, speak: speak, ipa: ipa, phones: phones };
+  /* ---------------- 05 Oct (g): Luganda as it is spoken ----------------
+     Built from the published description of Luganda sounds (Wikipedia,
+     "Luganda", Phonology), not from English spelling:
+     - Five pure vowels a e i o u. Length is real: a doubled vowel is long.
+       A vowel is also long before a nasal + consonant (mb, nd, ng, nj, nz,
+       nt, nk, nc, ns, mp, mv, nf…) and after a consonant + w/y (kw, bw,
+       gw, ky, gy, by, ly…). A vowel before a doubled consonant is short.
+     - c is "ch" [tʃ], j is [dʒ]; k before i or y is [tʃ], g before i or y
+       is [dʒ] (ekitabo ≈ "echitabo", ky ≈ "ch").
+     - ny is one sound [ɲ]; ŋ / ng' is [ŋ]; ng without the apostrophe is
+       [ŋg].
+     - l and r are one sound: a tap [ɾ] after e or i, [l] elsewhere.
+     - Doubled consonants are long, also at the start of a word (bbiri,
+       kkumi); a doubled l is [d].
+     - No English stress pattern is added; Luganda is a tone language and
+       its tones are not written, so none are invented.
+     These phones go straight to the voice model; the English phonemizer
+     never sees Luganda. */
+  const LG_V = { a: 'a', e: 'e', i: 'i', o: 'o', u: 'u' };
+  const LG_C = { b: 'b', c: 'tʃ', d: 'd', f: 'f', g: 'ɡ', h: 'h', j: 'dʒ', k: 'k', m: 'm', n: 'n', p: 'p', s: 's', t: 't', v: 'v', w: 'w', y: 'j', z: 'z', x: 'ks', q: 'k' };
+  const NASAL_NEXT = /[bpfvdtszjckgy]/;
+  function isV(ch) { return !!LG_V[ch]; }
+  function liquid(prevVowel) { return (prevVowel === 'e' || prevVowel === 'i') ? 'ɾ' : 'l'; }
+  function cons(ch, next) {
+    if ((ch === 'k' || ch === 'g') && (next === 'i' || next === 'y')) return ch === 'k' ? 'tʃ' : 'dʒ';
+    return LG_C[ch] || '';
+  }
+  function lgWord(raw) {
+    let w = String(raw || '').toLowerCase().replace(/ng'/g, 'ŋ').replace(/['’]/g, '');
+    w = w.replace(/[^a-zŋ]/g, '');
+    if (!w) return '';
+    let out = '';
+    let lastV = '';
+    let i = 0;
+    while (i < w.length) {
+      const ch = w[i];
+      const nx = w[i + 1] || '';
+      if (isV(ch)) {
+        let long = false;
+        let step = 1;
+        if (nx === ch) { long = true; step = 2; }
+        const after = w.slice(i + step);
+        const before = w.slice(Math.max(0, i - 2), i);
+        const geminateNext = after.length >= 2 && !isV(after[0]) && after[0] === after[1];
+        const prenasal = /^(nn?y|ŋ|[mn][bpfvdtszjckgy])/.test(after) && !/^nn/.test(after);
+        const glideBefore = before.length === 2 && !isV(before[0]) && before !== 'ny' && (before[1] === 'w' || before[1] === 'y');
+        if (!geminateNext && (prenasal && !/^nny/.test(after) && !/^ny/.test(after) || glideBefore)) long = true;
+        if (geminateNext) long = false;
+        /* "At the end of a word, all vowels are pronounced short." */
+        if (i + step >= w.length) long = false;
+        out += LG_V[ch] + (long ? 'ː' : '');
+        lastV = ch;
+        i += step;
+        continue;
+      }
+      if (ch === 'c' && nx === 'h') { out += 'tʃ'; i += 2; continue; }
+      if (ch === 's' && nx === 'h') { out += 'ʃ'; i += 2; continue; }
+      if (ch === 'ŋ') { out += (nx === 'ŋ') ? 'ŋː' : 'ŋ'; i += (nx === 'ŋ') ? 2 : 1; continue; }
+      if (ch === 'n' && nx === 'n' && w[i + 2] === 'y') { out += 'ɲː'; i += 3; continue; }
+      if (ch === 'n' && nx === 'y') { out += 'ɲ'; i += 2; continue; }
+      if (ch === 'n' && nx === 'g') {
+        const soft = (w[i + 2] === 'i' || w[i + 2] === 'y');
+        out += (soft ? 'ɲ' : 'ŋ') + cons('g', w[i + 2] || '');
+        i += (w[i + 2] === 'y') ? 3 : 2;
+        continue;
+      }
+      if (ch === 'n' && nx === 'k') { out += 'ŋ'; i += 1; continue; }
+      if (ch === 'l' || ch === 'r') {
+        if (nx === 'l' || nx === 'r') { out += 'dː'; i += 2; continue; }
+        out += liquid(lastV); i += 1; continue;
+      }
+      if (nx === ch && LG_C[ch]) {
+        out += cons(ch, w[i + 2] || '') + 'ː';
+        i += 2;
+        continue;
+      }
+      if ((ch === 'k' || ch === 'g') && nx === 'y') { out += cons(ch, 'y'); i += 2; continue; }
+      out += cons(ch, nx);
+      i += 1;
+    }
+    return out;
+  }
+  /* Text to phones, word by word, punctuation kept as the pause marks. */
+  function voice(text) {
+    return String(text || '')
+      .replace(/[A-Za-zŊŋ'’]+/g, function (word) { return lgWord(word); })
+      .replace(/[ \t]+/g, ' ')
+      .trim();
+  }
+  /* Does this text read as Luganda? Luganda words end in a vowel and use
+     its own little words; English mostly does not. */
+  const LG_COMMON = { ne: 1, mu: 1, ku: 1, era: 1, nti: 1, oba: 1, naye: 1, bwe: 1, kye: 1, nga: 1, ye: 1, nnyo: 1, abantu: 1, ate: 1, kubanga: 1, olw: 1, nnyini: 1, buli: 1, kati: 1, tewali: 1, wano: 1, eri: 1, bino: 1, ebyo: 1, kino: 1, ekyo: 1, oluvannyuma: 1, webale: 1, weebale: 1, gyebale: 1, mwattu: 1, ssebo: 1, nnyabo: 1, katonda: 1 };
+  function looksLuganda(text) {
+    const words = (String(text || '').toLowerCase().match(/[a-zŋ']+/g) || []).filter(function (x) { return x.length > 1; });
+    if (words.length < 4) return false;
+    let vowelEnd = 0, marks = 0, lgShape = 0, english = 0;
+    words.forEach(function (x) {
+      if (/[aeiou]$/.test(x)) vowelEnd++;
+      if (LG_COMMON[x]) marks++;
+      if (/^(omu|aba|eki|ebi|oku|olu|aka|obu|ama|en|em|ab|eb|ok|ol)/.test(x) || /ny|ng'|ŋ|aa|ee|ii|oo|uu|bb|kk|ss|tt|gg|mm|nn|ll/.test(x)) lgShape++;
+      if (/^(the|and|of|to|is|in|that|it|for|was|with|you|this|are|have|be|on|not|they|we|he|she|but|at|from|by|or|what|all|were|when|there|can|an|your|which|their|if|do|will|my|has|our|its)$/.test(x)) english++;
+    });
+    const n = words.length;
+    return vowelEnd / n >= 0.8 && english / n < 0.08 && (marks + lgShape) / n >= 0.25;
+  }
+
+  return { palatal: palatal, syllables: syllables, speakWord: speakWord, speak: speak, ipa: ipa, phones: phones, voice: voice, word: lgWord, looksLuganda: looksLuganda };
 });

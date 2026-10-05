@@ -201,10 +201,16 @@ function sparkSpeak(text, lang){
   }
   if(code === 'lg' && window.NalunoVoices && typeof NalunoVoices.speak === 'function' && window.NalunoLgSpeak){
     try{ NalunoVoices.stop(); }catch(_){}
-    const toPhones = (typeof NalunoLgSpeak.phones === 'function') ? NalunoLgSpeak.phones : NalunoLgSpeak.ipa;
+    const toPhones = (typeof NalunoLgSpeak.voice === 'function') ? NalunoLgSpeak.voice : ((typeof NalunoLgSpeak.phones === 'function') ? NalunoLgSpeak.phones : NalunoLgSpeak.ipa);
     if(typeof toPhones !== 'function') return;
     hold();
+    /* 05h: Luganda-trained voice first, then Luganda sounds (NalunoLgVoice). */
+    const LV = window.NalunoLgVoice || null;
+    const plan = (LV && typeof LV.planner === 'function')
+      ? LV.planner(text, { lang: 'lg', decode: NalunoVoices.decode })
+      : undefined;
     Promise.resolve(NalunoVoices.speak(text, {
+      plan: plan,
       phonemes: function(bit){ return toPhones(bit); }
     })).then(drop, drop);
     return;

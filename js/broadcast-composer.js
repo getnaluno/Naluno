@@ -645,6 +645,8 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
 
   const job = {
     label: snapPublishAt ? 'Scheduling Broadcast…' : 'Publishing Broadcast…',
+    /* 05i: the upload percentage shows in a bar until it is published. */
+    progressBar: true,
     doneMsg: snapPublishAt ? 'Scheduled — it stays off the public feed until then' : (snapVisibility === 'private' ? 'Saved as private' : 'Broadcast published'),
     run: async (progress)=>{
       if(snapKind === 'writing'){

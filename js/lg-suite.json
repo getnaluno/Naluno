@@ -1,0 +1,734 @@
+{
+ "about": "Permanent Luganda pronunciation suite. Every change to the voice system must pass js/lg-suite.test.cjs. 'phones' is what Naluno's on-device voice receives when the Luganda-trained voice is not available. 'check': waiting for a native speaker's review (voices/lg-review.html plays each item); when a native speaker corrects one, change the lexicon in js/lg-voice.js AND the phones here, and set check to false.",
+ "words": [
+  {
+   "text": "chatandika",
+   "syllables": "cha-tan-di-ka",
+   "phones": "tʃataːndika",
+   "check": true
+  },
+  {
+   "text": "katonda",
+   "syllables": "ka-ton-da",
+   "phones": "katoːnda",
+   "check": true
+  },
+  {
+   "text": "ebigambo",
+   "syllables": "e-bi-gam-bo",
+   "phones": "ebiɡaːmbo",
+   "check": true
+  },
+  {
+   "text": "weebale",
+   "syllables": "wee-ba-le",
+   "phones": "weːbale",
+   "check": true
+  },
+  {
+   "text": "nnyo",
+   "syllables": "nnyo",
+   "phones": "ɲːo",
+   "check": true
+  },
+  {
+   "text": "ssebo",
+   "syllables": "sse-bo",
+   "phones": "sːebo",
+   "check": true
+  },
+  {
+   "text": "nnyabo",
+   "syllables": "nnya-bo",
+   "phones": "ɲːabo",
+   "check": true
+  },
+  {
+   "text": "gyebale",
+   "syllables": "gye-ba-le",
+   "phones": "dʒeːbale",
+   "check": true
+  },
+  {
+   "text": "otya",
+   "syllables": "o-tya",
+   "phones": "otja",
+   "check": true
+  },
+  {
+   "text": "mwattu",
+   "syllables": "mwa-ttu",
+   "phones": "mwatːu",
+   "check": true
+  },
+  {
+   "text": "bulungi",
+   "syllables": "bu-lu-ngi",
+   "phones": "buluːɲdʒi",
+   "check": true
+  },
+  {
+   "text": "nedda",
+   "syllables": "ne-dda",
+   "phones": "nedːa",
+   "check": true
+  },
+  {
+   "text": "mukwano",
+   "syllables": "mu-kwa-no",
+   "phones": "mukwaːno",
+   "check": true
+  },
+  {
+   "text": "ekitabo",
+   "syllables": "e-ki-ta-bo",
+   "phones": "etʃitabo",
+   "check": true
+  },
+  {
+   "text": "kyalo",
+   "syllables": "kya-lo",
+   "phones": "tʃaːlo",
+   "check": true
+  },
+  {
+   "text": "nyumba",
+   "syllables": "nyu-mba",
+   "phones": "ɲuːmba",
+   "check": true
+  },
+  {
+   "text": "ng'ombe",
+   "syllables": "ng'o-mbe",
+   "phones": "ŋoːmbe",
+   "check": true
+  },
+  {
+   "text": "engoma",
+   "syllables": "e-ngo-ma",
+   "phones": "eːŋɡoma",
+   "check": true
+  },
+  {
+   "text": "bbiri",
+   "syllables": "bbi-ri",
+   "phones": "bːiɾi",
+   "check": true
+  },
+  {
+   "text": "ekkomo",
+   "syllables": "e-kko-mo",
+   "phones": "ekːomo",
+   "check": true
+  },
+  {
+   "text": "ebirungi",
+   "syllables": "e-bi-ru-ngi",
+   "phones": "ebiɾuːɲdʒi",
+   "check": true
+  },
+  {
+   "text": "okwagala",
+   "syllables": "o-kwa-ga-la",
+   "phones": "okwaːɡala",
+   "check": true
+  },
+  {
+   "text": "omulimu",
+   "syllables": "o-mu-li-mu",
+   "phones": "omulimu",
+   "check": true
+  },
+  {
+   "text": "abantu",
+   "syllables": "a-ba-ntu",
+   "phones": "abaːntu",
+   "check": true
+  },
+  {
+   "text": "abaana",
+   "syllables": "a-baa-na",
+   "phones": "abaːna",
+   "check": true
+  },
+  {
+   "text": "omwana",
+   "syllables": "o-mwa-na",
+   "phones": "omwaːna",
+   "check": true
+  },
+  {
+   "text": "amazzi",
+   "syllables": "a-ma-zzi",
+   "phones": "amazːi",
+   "check": true
+  },
+  {
+   "text": "emmere",
+   "syllables": "e-mme-re",
+   "phones": "emːeɾe",
+   "check": true
+  },
+  {
+   "text": "ennyumba",
+   "syllables": "e-nnyu-mba",
+   "phones": "eɲːuːmba",
+   "check": true
+  },
+  {
+   "text": "jjajja",
+   "syllables": "jja-jja",
+   "phones": "dʒːadʒːa",
+   "check": true
+  },
+  {
+   "text": "essomero",
+   "syllables": "e-sso-me-ro",
+   "phones": "esːomeɾo",
+   "check": true
+  },
+  {
+   "text": "eggwanga",
+   "syllables": "e-ggwa-nga",
+   "phones": "eɡːwaːŋɡa",
+   "check": true
+  },
+  {
+   "text": "olunaku",
+   "syllables": "o-lu-na-ku",
+   "phones": "olunaku",
+   "check": true
+  },
+  {
+   "text": "leero",
+   "syllables": "lee-ro",
+   "phones": "leːɾo",
+   "check": true
+  },
+  {
+   "text": "emirembe",
+   "syllables": "e-mi-re-mbe",
+   "phones": "emiɾeːmbe",
+   "check": true
+  },
+  {
+   "text": "amaanyi",
+   "syllables": "a-maa-nyi",
+   "phones": "amaːɲi",
+   "check": true
+  },
+  {
+   "text": "oluganda",
+   "syllables": "o-lu-ga-nda",
+   "phones": "oluɡaːnda",
+   "check": true
+  },
+  {
+   "text": "naluno",
+   "syllables": "na-lu-no",
+   "phones": "naluno",
+   "check": true
+  },
+  {
+   "text": "ssanyu",
+   "syllables": "ssa-nyu",
+   "phones": "sːaɲu",
+   "check": true
+  },
+  {
+   "text": "okuwandiika",
+   "syllables": "o-ku-wa-ndii-ka",
+   "phones": "okuwaːndiːka",
+   "check": true
+  },
+  {
+   "text": "okusoma",
+   "syllables": "o-ku-so-ma",
+   "phones": "okusoma",
+   "check": true
+  },
+  {
+   "text": "amawulire",
+   "syllables": "a-ma-wu-li-re",
+   "phones": "amawuliɾe",
+   "check": true
+  },
+  {
+   "text": "ekibuga",
+   "syllables": "e-ki-bu-ga",
+   "phones": "etʃibuɡa",
+   "check": true
+  },
+  {
+   "text": "omupiira",
+   "syllables": "o-mu-pii-ra",
+   "phones": "omupiːɾa",
+   "check": true
+  }
+ ],
+ "names": [
+  {
+   "text": "Kampala",
+   "syllables": "ka-mpa-la",
+   "phones": "kaːmpala",
+   "check": true
+  },
+  {
+   "text": "Buganda",
+   "syllables": "bu-ga-nda",
+   "phones": "buɡaːnda",
+   "check": true
+  },
+  {
+   "text": "Uganda",
+   "syllables": "u-ga-nda",
+   "phones": "uɡaːnda",
+   "check": true
+  },
+  {
+   "text": "Kabaka",
+   "syllables": "ka-ba-ka",
+   "phones": "kabaka",
+   "check": true
+  },
+  {
+   "text": "Mukono",
+   "syllables": "mu-ko-no",
+   "phones": "mukono",
+   "check": true
+  },
+  {
+   "text": "Entebbe",
+   "syllables": "e-nte-bbe",
+   "phones": "eːntebːe",
+   "check": true
+  },
+  {
+   "text": "Jinja",
+   "syllables": "ji-nja",
+   "phones": "dʒiːndʒa",
+   "check": true
+  },
+  {
+   "text": "Masaka",
+   "syllables": "ma-sa-ka",
+   "phones": "masaka",
+   "check": true
+  },
+  {
+   "text": "Wakiso",
+   "syllables": "wa-ki-so",
+   "phones": "watʃiso",
+   "check": true
+  },
+  {
+   "text": "Mbarara",
+   "syllables": "mba-ra-ra",
+   "phones": "mbaɾaɾa",
+   "check": true
+  },
+  {
+   "text": "Makerere",
+   "syllables": "ma-ke-re-re",
+   "phones": "makeɾeɾe",
+   "check": true
+  },
+  {
+   "text": "Namirembe",
+   "syllables": "na-mi-re-mbe",
+   "phones": "namiɾeːmbe",
+   "check": true
+  },
+  {
+   "text": "Nakato",
+   "syllables": "na-ka-to",
+   "phones": "nakato",
+   "check": true
+  },
+  {
+   "text": "Babirye",
+   "syllables": "ba-bi-rye",
+   "phones": "babiɾje",
+   "check": true
+  },
+  {
+   "text": "Wasswa",
+   "syllables": "wa-sswa",
+   "phones": "wasːwa",
+   "check": true
+  },
+  {
+   "text": "Kato",
+   "syllables": "ka-to",
+   "phones": "kato",
+   "check": true
+  },
+  {
+   "text": "Mukasa",
+   "syllables": "mu-ka-sa",
+   "phones": "mukasa",
+   "check": true
+  },
+  {
+   "text": "Kiwanuka",
+   "syllables": "ki-wa-nu-ka",
+   "phones": "tʃiwanuka",
+   "check": true
+  },
+  {
+   "text": "Ssekandi",
+   "syllables": "sse-ka-ndi",
+   "phones": "sːekaːndi",
+   "check": true
+  },
+  {
+   "text": "Muwanga",
+   "syllables": "mu-wa-nga",
+   "phones": "muwaːŋɡa",
+   "check": true
+  },
+  {
+   "text": "Nnalubaale",
+   "syllables": "nna-lu-baa-le",
+   "phones": "nːalubaːle",
+   "check": true
+  },
+  {
+   "text": "Nalubega",
+   "syllables": "na-lu-be-ga",
+   "phones": "nalubeɡa",
+   "check": true
+  },
+  {
+   "text": "Kizza",
+   "syllables": "ki-zza",
+   "phones": "tʃizːa",
+   "check": true
+  },
+  {
+   "text": "Kintu",
+   "syllables": "ki-ntu",
+   "phones": "tʃiːntu",
+   "check": true
+  },
+  {
+   "text": "Nambi",
+   "syllables": "na-mbi",
+   "phones": "naːmbi",
+   "check": true
+  },
+  {
+   "text": "Bbalaza",
+   "syllables": "bba-la-za",
+   "phones": "bːalaza",
+   "check": true
+  },
+  {
+   "text": "Ssabbiiti",
+   "syllables": "ssa-bbii-ti",
+   "phones": "sːabːiːti",
+   "check": true
+  },
+  {
+   "text": "Okitobba",
+   "syllables": "o-ki-to-bba",
+   "phones": "otʃitobːa",
+   "check": true
+  }
+ ],
+ "sentences": [
+  {
+   "text": "Weebale nnyo, ssebo!",
+   "phones": "weːbale ɲːo, sːebo!",
+   "lang": "lg",
+   "check": true
+  },
+  {
+   "text": "Oli otya, mukwano gwange?",
+   "phones": "oli otja, mukwaːno ɡwaːŋɡe?",
+   "lang": "lg",
+   "check": true
+  },
+  {
+   "text": "Tusanyuse okukulaba.",
+   "phones": "tusaɲuse okukulaba.",
+   "lang": "lg",
+   "check": true
+  },
+  {
+   "text": "Katonda akuwe emirembe.",
+   "phones": "katoːnda akuwe emiɾeːmbe.",
+   "lang": "lg",
+   "check": true
+  },
+  {
+   "text": "Kampala kibuga kinene mu Uganda.",
+   "phones": "kaːmpala tʃibuɡa tʃinene mu uɡaːnda.",
+   "lang": "lg",
+   "check": true
+  },
+  {
+   "text": "Leero lwa Bbalaza.",
+   "phones": "leːɾo lwa bːalaza.",
+   "lang": "lg",
+   "check": true
+  },
+  {
+   "text": "Abantu bangi baagenda mu kibuga okulaba omupiira.",
+   "phones": "abaːntu baːɲdʒi baːɡeːnda mu tʃibuɡa okulaba omupiːɾa.",
+   "lang": "lg",
+   "check": true
+  },
+  {
+   "text": "Ebigambo bino bya Luganda.",
+   "phones": "ebiɡaːmbo bino bja luɡaːnda.",
+   "lang": "lg",
+   "check": true
+  },
+  {
+   "text": "Eno y'entandikwa.",
+   "phones": "eno jeːntaːndikwa.",
+   "lang": "lg",
+   "check": true
+  },
+  {
+   "text": "Mwebale nnyo abantu bonna.",
+   "phones": "mweːbale ɲːo abaːntu bonːa.",
+   "lang": "lg",
+   "check": true
+  },
+  {
+   "text": "Webale okuwandiika ku Naluno.",
+   "phones": "webale okuwaːndiːka ku naluno.",
+   "lang": "lg",
+   "check": true
+  },
+  {
+   "text": "Nnina abaana 3 n'emmere ennyingi.",
+   "phones": "nːina abaːna sːatu nemːeɾe eɲːiːɲdʒi.",
+   "lang": "lg",
+   "check": true
+  }
+ ],
+ "numbers": [
+  {
+   "n": 1,
+   "words": "emu",
+   "phones": "emu",
+   "check": true
+  },
+  {
+   "n": 2,
+   "words": "bbiri",
+   "phones": "bːiɾi",
+   "check": true
+  },
+  {
+   "n": 3,
+   "words": "ssatu",
+   "phones": "sːatu",
+   "check": true
+  },
+  {
+   "n": 4,
+   "words": "nnya",
+   "phones": "ɲːa",
+   "check": true
+  },
+  {
+   "n": 5,
+   "words": "ttaano",
+   "phones": "tːaːno",
+   "check": true
+  },
+  {
+   "n": 6,
+   "words": "mukaaga",
+   "phones": "mukaːɡa",
+   "check": true
+  },
+  {
+   "n": 7,
+   "words": "musanvu",
+   "phones": "musaːnvu",
+   "check": true
+  },
+  {
+   "n": 8,
+   "words": "munaana",
+   "phones": "munaːna",
+   "check": true
+  },
+  {
+   "n": 9,
+   "words": "mwenda",
+   "phones": "mweːnda",
+   "check": true
+  },
+  {
+   "n": 10,
+   "words": "kkumi",
+   "phones": "kːumi",
+   "check": true
+  },
+  {
+   "n": 11,
+   "words": "kkumi n'emu",
+   "phones": "kːumi nemu",
+   "check": true
+  },
+  {
+   "n": 12,
+   "words": "kkumi na bbiri",
+   "phones": "kːumi na bːiɾi",
+   "check": true
+  },
+  {
+   "n": 15,
+   "words": "kkumi na ttaano",
+   "phones": "kːumi na tːaːno",
+   "check": true
+  },
+  {
+   "n": 20,
+   "words": "amakumi abiri",
+   "phones": "amakumi abiɾi",
+   "check": true
+  },
+  {
+   "n": 21,
+   "words": "amakumi abiri mu emu",
+   "phones": "amakumi abiɾi mu emu",
+   "check": true
+  },
+  {
+   "n": 22,
+   "words": "amakumi abiri mu bbiri",
+   "phones": "amakumi abiɾi mu bːiɾi",
+   "check": true
+  },
+  {
+   "n": 30,
+   "words": "amakumi asatu",
+   "phones": "amakumi asatu",
+   "check": true
+  },
+  {
+   "n": 45,
+   "words": "amakumi ana mu ttaano",
+   "phones": "amakumi ana mu tːaːno",
+   "check": true
+  },
+  {
+   "n": 60,
+   "words": "nkaaga",
+   "phones": "ŋkaːɡa",
+   "check": true
+  },
+  {
+   "n": 70,
+   "words": "nsanvu",
+   "phones": "nsaːnvu",
+   "check": true
+  },
+  {
+   "n": 80,
+   "words": "kinaana",
+   "phones": "tʃinaːna",
+   "check": true
+  },
+  {
+   "n": 90,
+   "words": "kyenda",
+   "phones": "tʃeːnda",
+   "check": true
+  },
+  {
+   "n": 99,
+   "words": "kyenda mu mwenda",
+   "phones": "tʃeːnda mu mweːnda",
+   "check": true
+  },
+  {
+   "n": 100,
+   "words": "kikumi",
+   "phones": "tʃikumi",
+   "check": true
+  },
+  {
+   "n": 105,
+   "words": "kikumi mu ttaano",
+   "phones": "tʃikumi mu tːaːno",
+   "check": true
+  },
+  {
+   "n": 250,
+   "words": "bibiri mu amakumi ataano",
+   "phones": "bibiɾi mu amakumi ataːno",
+   "check": true
+  },
+  {
+   "n": 600,
+   "words": "lukaaga",
+   "phones": "lukaːɡa",
+   "check": true
+  },
+  {
+   "n": 1000,
+   "words": "lukumi",
+   "phones": "lukumi",
+   "check": true
+  },
+  {
+   "n": 2026,
+   "words": "enkumi bbiri mu amakumi abiri mu mukaaga",
+   "phones": "eːŋkumi bːiɾi mu amakumi abiɾi mu mukaːɡa",
+   "check": true
+  },
+  {
+   "n": 10000,
+   "words": "omutwalo",
+   "phones": "omutwaːlo",
+   "check": true
+  },
+  {
+   "n": 50000,
+   "words": "emitwalo etaano",
+   "phones": "emitwaːlo etaːno",
+   "check": true
+  }
+ ],
+ "english": [
+  {
+   "text": "I love living in Kampala with Nakato.",
+   "lang": "en",
+   "names": [
+    "Kampala",
+    "Nakato"
+   ]
+  },
+  {
+   "text": "Every morning the riders gather near the old taxi park.",
+   "lang": "en",
+   "names": []
+  },
+  {
+   "text": "Thank you for reading my story today.",
+   "lang": "en",
+   "names": []
+  },
+  {
+   "text": "Please call Moore and Coffee Lee tomorrow.",
+   "lang": "en",
+   "names": []
+  },
+  {
+   "text": "Ssali met Nnabakooza at the market.",
+   "lang": "en",
+   "names": [
+    "Ssali",
+    "Nnabakooza"
+   ]
+  }
+ ]
+}

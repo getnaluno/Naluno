@@ -215,9 +215,20 @@ async function bspaceSpeakWriting(text, lang, btn){
 }
 async function bspaceSpeakBody(src, lang, btn, token){
   if(btn){ btn.setAttribute('data-on', '1'); btn.textContent = 'Preparing'; }
-  const luganda = lang === 'lg' && window.NalunoLgSpeak && (typeof NalunoLgSpeak.phones === 'function' || typeof NalunoLgSpeak.ipa === 'function');
+  /* 05 Oct (g): a piece written in Luganda and read "As written" is read
+     as Luganda too (it was read by the English voice rules). The phones
+     come from NalunoLgSpeak.voice, built from how Luganda is spoken. */
+  const Lg = window.NalunoLgSpeak || null;
+  /* 05h: NalunoLgVoice decides sentence by sentence (Luganda, English, or
+     English with Luganda names) and sends Luganda to the Luganda-trained
+     voice first, then to Naluno's voice as Luganda sounds. */
+  const LV = window.NalunoLgVoice || null;
+  const lgText = lang === 'lg' || (!lang && !!(
+    (LV && typeof LV.looksLuganda === 'function' && LV.looksLuganda(src))
+    || (Lg && typeof Lg.looksLuganda === 'function' && Lg.looksLuganda(src))));
+  const luganda = lgText && !!Lg && (typeof Lg.voice === 'function' || typeof Lg.phones === 'function' || typeof Lg.ipa === 'function');
   const toPhones = luganda
-    ? ((typeof NalunoLgSpeak.phones === 'function') ? NalunoLgSpeak.phones : NalunoLgSpeak.ipa)
+    ? ((typeof Lg.voice === 'function') ? Lg.voice : ((typeof Lg.phones === 'function') ? Lg.phones : Lg.ipa))
     : null;
   const alive = function(){ return token === bspaceSpeakToken; };
   if(luganda && window.NalunoLgEar && typeof NalunoLgEar.plan === 'function'){
@@ -241,8 +252,12 @@ async function bspaceSpeakBody(src, lang, btn, token){
     try{ NalunoVoices.prime(); }catch(_){}
     let played = false;
     try{
+      const plan = (LV && typeof LV.planner === 'function' && (!lang || lang === 'en' || lang === 'lg'))
+        ? LV.planner(src, { lang: lgText ? 'lg' : (lang || ''), voice: bspaceListenVoice(), decode: NalunoVoices.decode })
+        : undefined;
       played = await NalunoVoices.speak(src, {
         voice: bspaceListenVoice(),
+        plan: plan,
         phonemes: toPhones ? function(bit){ return toPhones(bit); } : undefined,
         alive: alive,
         onready: function(){

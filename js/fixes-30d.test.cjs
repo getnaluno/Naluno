@@ -104,16 +104,17 @@ const flush = () => new Promise((r) => setImmediate(r));
     assert.ok(body.indexOf('await turnReady') > mic && body.indexOf('await turnReady') < body.indexOf('createPeerConnection()'), 'and before the offer is built');
     assert.ok(!body.includes('await nalunoWaitForTurn(600)'), 'no second wait after the camera');
     const wd = calls.slice(calls.indexOf('function attachConnectionWatchdogs'), calls.indexOf('pc.oniceconnectionstatechange'));
-    assert.ok(/if\(s === 'connected'\)\{[\s\S]{0,400}nalunoIsVoiceCall\(\)\) nalunoMarkCallLive\(\)/.test(wd), 'a voice call shows Connected the moment it connects');
+    /* 10.02: "Connected" now follows the media itself (nalunoMarkIfMediaUp), voice included. */
+    assert.ok(/if\(s === 'connected'\)\{[\s\S]{0,400}nalunoMarkIfMediaUp\(pc\)/.test(wd), 'Connected follows the media the moment the call connects');
   }
 
   /* ---------- 3. Writing voices: pace and pauses ---------- */
   const V = require('./naluno-voices.js');
   const src = read('naluno-voices.js');
   assert.ok(!/\(\?<[=!]/.test(src), 'no look-behind (older iPhones cannot run it)');
-  assert.ok(src.includes('naluno-voice-worker.js?v=20260930c'));
-  assert.strictEqual(V.PACE.Bella, 1.3, 'female: normal reading pace (was 1.05, about 135 words a minute)');
-  assert.strictEqual(V.PACE.Jasper, 0.95, 'male: normal reading pace (was 1.05, about 190 words a minute)');
+  assert.ok(/naluno-voice-worker\.js\?v=\d{8}[a-z]/.test(src));
+  assert.strictEqual(V.PACE.Bella, 1.42, 'female: about 168 words a minute (05 Oct i, a little faster)');
+  assert.strictEqual(V.PACE.Hugo, 0.89, 'male: about 168 words a minute (05 Oct i, a little faster)');
   {
     const p = V._pieces('Boda boda diaries\n\nIt was raining. See https://www.bbc.com/news for more! "Are you sure?" she asked.\nNext line here.');
     assert.deepStrictEqual(p.map((x) => x.text), ['Boda boda diaries', 'It was raining.', 'See bbc.com for more!', '"Are you sure?" she asked.', 'Next line here.']);
@@ -170,7 +171,7 @@ const flush = () => new Promise((r) => setImmediate(r));
     assert.strictEqual(starts.length, 4, 'four pieces played');
     const gaps = starts.slice(1).map((s, i) => +(s.at - (starts[i].at + starts[i].dur)).toFixed(2));
     assert.deepStrictEqual(gaps, [V.GAP.paragraph, V.GAP.sentence, V.GAP.paragraph], 'planned pauses only: ' + gaps);
-    assert.strictEqual(g.NalunoVoices._makers(), 2, 'two voice makers on an 8-core phone');
+    assert.strictEqual(g.NalunoVoices._makers(), 3, 'three voice makers on an 8-core phone');
   }
 
   /* ---------- 4. Listen keeps paragraphs ---------- */
@@ -189,7 +190,7 @@ const flush = () => new Promise((r) => setImmediate(r));
       assert.ok(m && m[1] >= '20260930d', f + ' stamp bumped');
     });
     const sw = read('../sw.js');
-    assert.ok(/APP_BUILD = '20260930d'/.test(sw));
+    assert.ok((sw.match(/APP_BUILD = '(\d{8}[a-z])'/) || [])[1] >= '20260930d');
   }
   console.log('fixes-30d tests passed');
 })().catch((e) => { console.error(e); process.exit(1); });
