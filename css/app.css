@@ -513,7 +513,7 @@
   .ring-status{ color:var(--text-dim); font-size:13.5px; font-family:var(--font-mono); margin-top:4px; }
   .scene-ready-note{ margin-top:16px; display:flex; align-items:center; gap:7px; font-family:var(--font-mono); font-size:11px; color:var(--mint); background:rgba(124,255,178,.08); border:1px solid rgba(124,255,178,.25); padding:7px 13px; border-radius:999px; }
   .ring-actions{ display:flex; gap:44px; padding-bottom:40px; justify-content:center; }
-  .round-btn{ width:60px; height:60px; border-radius:50%; border:none; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+  .round-btn{ width:68px; height:68px; border-radius:50%; border:none; display:flex; align-items:center; justify-content:center; cursor:pointer; touch-action:manipulation; }
   .round-btn.decline{ background:var(--red); }
   .round-btn.accept{ background:var(--mint); }
   .incoming-self{ position:absolute; right:18px; top:64px; width:64px; height:88px; border-radius:14px; overflow:hidden; border:1.5px solid rgba(237,239,247,.15); z-index:4; }
@@ -1766,6 +1766,32 @@ body.naluno-strand-open .bcast-strand-bar[style*="flex"]{
   width: 0 !important;
   height: 0 !important;
 }
+body.naluno-os-pip .navbar,
+body.naluno-os-pip .tabscreen,
+body.naluno-os-pip #weatherStrip{ display:none !important; }
+body.naluno-os-pip #callOverlay{
+  position:fixed; inset:0; opacity:1; background:#000; z-index:400 !important;
+}
+body.naluno-os-pip #incall{
+  display:flex !important; flex-direction:column; height:100%; min-height:100%;
+}
+body.naluno-os-pip #incall .remote-stage{
+  position:relative !important; inset:auto !important;
+  flex:1.2; width:100% !important; height:auto !important; min-height:0;
+  border-radius:0 !important; border:none !important; box-shadow:none !important;
+}
+body.naluno-os-pip #incall .local-pip{
+  position:relative !important; left:auto !important; top:auto !important;
+  right:auto !important; bottom:auto !important;
+  width:100% !important; height:auto !important; flex:0.8; min-height:0;
+  border-radius:0 !important; border:none !important; box-shadow:none !important;
+}
+body.naluno-os-pip #incall .controls-bar,
+body.naluno-os-pip #incall .incall-top,
+body.naluno-os-pip #incall .filter-chip-row,
+body.naluno-os-pip #incall .waveform,
+body.naluno-os-pip #incallWire{ display:none !important; }
+
 #incall .remote-stage video {
   object-fit: cover;
 }
