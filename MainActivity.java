@@ -56,6 +56,12 @@ public class MainActivity extends BridgeActivity {
     handleCallIntent(getIntent());
     handleWireIntent(getIntent());
     injectNativeFcmToken();
+    /* 05 Oct: the bridge must be in place before the first page commits.
+       addJavascriptInterface only reaches pages loaded AFTER the call; the
+       400 ms delayed one below was usually too late for the bundled page, so
+       window.NalunoNative was missing and the call never armed the system
+       Picture-in-Picture (nor keep-alive, Find, the call audio route). */
+    addNativeBridgeNow();
     injectKeepAliveBridge();
     enableWebViewGeolocation();
     resumeFindNalunoService();
@@ -288,7 +294,21 @@ public class MainActivity extends BridgeActivity {
     } catch (Exception ignored) {}
   }
 
+  private boolean nativeBridgeAdded = false;
+
+  private void addNativeBridgeNow() {
+    if (nativeBridgeAdded) return;
+    try {
+      if (getBridge() == null || getBridge().getWebView() == null) return;
+      getBridge().getWebView().addJavascriptInterface(new KeepAliveBridge(), "NalunoNative");
+      nativeBridgeAdded = true;
+    } catch (Exception e) {
+      // best-effort; the delayed path below tries again
+    }
+  }
+
   private void injectKeepAliveBridge() {
+    if (nativeBridgeAdded) return;
     getWindow().getDecorView().postDelayed(new Runnable() {
       @Override
       public void run() {
@@ -608,7 +628,13 @@ public class MainActivity extends BridgeActivity {
     if (on) requestCallFocus();
     else abandonCallFocus();
     publishPipParams(false, on);
-    if (!on && inPip()) leavePip();
+    /* 05 Oct: the call ended while it was floating (the other person hung
+       up). Close the window and leave the person where they are, instead of
+       pulling Naluno over the app they are using. The End button in the
+       window still opens Naluno (onPipAction). */
+    if (!on && inPip()) {
+      try { moveTaskToBack(true); } catch (Exception e) { leavePip(); }
+    }
   }
 
   private void requestCallFocus() {
