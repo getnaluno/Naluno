@@ -131,6 +131,25 @@ public class MainActivity extends BridgeActivity {
     injectKeepAliveBridge();
     enableWebViewGeolocation();
     resumeFindNalunoService();
+    /* Coming back from the launcher must open the full call, not leave it
+       in the floating window. Auto-enter is turned off for this moment so
+       Android does not put the call straight back into that window. */
+    if (callArmed || inPip()) {
+      publishPipParams(false, false);
+      keepWebViewRunning();
+      try{
+        getWindow().getDecorView().postDelayed(new Runnable() {
+          @Override public void run() { if (callArmed || inPip()) keepWebViewRunning(); }
+        }, 280);
+      }catch(Exception ignored){}
+      try{
+        getWindow().getDecorView().postDelayed(new Runnable() {
+          @Override public void run() {
+            if (callArmed && !inPip() && !isFinishing()) publishPipParams(false, true);
+          }
+        }, 900);
+      }catch(Exception ignored){}
+    }
   }
 
   @Override
@@ -140,6 +159,13 @@ public class MainActivity extends BridgeActivity {
     // already in the system Picture-in-Picture window, must keep running.
     if (callArmed || UploadKeepAliveService.running || inPip()) {
       keepWebViewRunning();
+      try{
+        getWindow().getDecorView().postDelayed(new Runnable() {
+          @Override public void run() {
+            if (callArmed || inPip()) keepWebViewRunning();
+          }
+        }, 200);
+      }catch(Exception ignored){}
     }
   }
 
@@ -158,14 +184,18 @@ public class MainActivity extends BridgeActivity {
 
   @Override
   public void onUserLeaveHint() {
+    if (callArmed && !isFinishing()) enterCallPip();
     super.onUserLeaveHint();
-    if (callArmed) enterCallPip();
   }
 
   @Override
   public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode, android.content.res.Configuration newConfig) {
     super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
-    if (isInPictureInPictureMode) keepWebViewRunning();
+    keepWebViewRunning();
+    /* Already in the window, or just back from it: leave auto-enter off
+       so opening Naluno shows the full call. onResume turns it on again
+       once that return has stuck. */
+    publishPipParams(false, false);
     evalJs("window.nalunoPip&&window.nalunoPip.onOs(" + (isInPictureInPictureMode ? "true" : "false") + ")");
   }
 
@@ -398,7 +428,7 @@ public class MainActivity extends BridgeActivity {
       pipMicOn = !"false".equals(mic);
       pipCamOn = !"false".equals(cam);
       runOnUiThread(new Runnable() {
-        @Override public void run() { publishPipParams(false); }
+        @Override public void run() { publishPipParams(false, callArmed); }
       });
     }
 
@@ -553,7 +583,7 @@ public class MainActivity extends BridgeActivity {
     callArmed = on;
     if (on) requestCallFocus();
     else abandonCallFocus();
-    publishPipParams(false);
+    publishPipParams(false, on);
     if (!on && inPip()) leavePip();
   }
 
@@ -604,7 +634,7 @@ public class MainActivity extends BridgeActivity {
     );
   }
 
-  private void publishPipParams(boolean enter) {
+  private void publishPipParams(boolean enter, boolean autoEnter) {
     if (Build.VERSION.SDK_INT < 26) return;
     try {
       PictureInPictureParams.Builder b = new PictureInPictureParams.Builder();
@@ -630,7 +660,10 @@ public class MainActivity extends BridgeActivity {
       ));
       b.setActions(actions);
       if (Build.VERSION.SDK_INT >= 31) {
-        b.setAutoEnterEnabled(callArmed);
+        /* On while the call is up, so leaving the app opens the window
+           without a tap. Off for a moment when coming back, or Android
+           puts the call straight back into the window. */
+        b.setAutoEnterEnabled(autoEnter && callArmed);
         b.setSeamlessResizeEnabled(true);
       }
       PictureInPictureParams params = b.build();
@@ -641,7 +674,7 @@ public class MainActivity extends BridgeActivity {
 
   private void enterCallPip() {
     if (!callArmed || Build.VERSION.SDK_INT < 26 || inPip()) return;
-    publishPipParams(true);
+    publishPipParams(true, true);
   }
 
   private void leavePip() {
