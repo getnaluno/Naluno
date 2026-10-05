@@ -36,6 +36,7 @@ import java.util.List;
 public class MainActivity extends BridgeActivity {
 
   static volatile WeakReference<MainActivity> live;
+  private static volatile boolean resumed;
   private boolean callArmed = false;
   private boolean pipMicOn = true;
   private boolean pipCamOn = true;
@@ -51,7 +52,9 @@ public class MainActivity extends BridgeActivity {
     super.onCreate(savedInstanceState);
     live = new WeakReference<MainActivity>(this);
     paintLaunchBackground();
+    try { CallMessagingService.ensureWireChannel(this); } catch (Exception ignored) {}
     handleCallIntent(getIntent());
+    handleWireIntent(getIntent());
     injectNativeFcmToken();
     injectKeepAliveBridge();
     enableWebViewGeolocation();
@@ -125,6 +128,7 @@ public class MainActivity extends BridgeActivity {
 
   @Override
   public void onResume() {
+    resumed = true;
     super.onResume();
     paintLaunchBackground();
     injectNativeFcmToken();
@@ -154,6 +158,7 @@ public class MainActivity extends BridgeActivity {
 
   @Override
   public void onPause() {
+    resumed = false;
     super.onPause();
     // Capacitor pauses WebView timers here. A live call, including one
     // already in the system Picture-in-Picture window, must keep running.
@@ -528,7 +533,26 @@ public class MainActivity extends BridgeActivity {
     if (intent != null) {
       setIntent(intent);
       handleCallIntent(intent);
+      handleWireIntent(intent);
     }
+  }
+
+  public static boolean isInForeground() {
+    return resumed;
+  }
+
+  private void handleWireIntent(Intent intent) {
+    if (intent == null) return;
+    String type = intent.getStringExtra("type");
+    String fromUid = intent.getStringExtra("fromUid");
+    if (!"wireline".equals(type) || fromUid == null || fromUid.trim().isEmpty()) return;
+    final String safe = fromUid.replace("\\", "").replace("'", "").replace("\"", "");
+    getWindow().getDecorView().postDelayed(new Runnable() {
+      @Override
+      public void run() {
+        evalJs("window.nalunoOpenWireFromPush&&window.nalunoOpenWireFromPush('" + safe + "')");
+      }
+    }, 900);
   }
 
   private void handleCallIntent(Intent intent) {

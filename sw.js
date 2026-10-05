@@ -72,8 +72,8 @@
 // v79: same-origin only (never gstatic); full latest shell.
 // v73: same-origin only; video/* pick; call camera max climb.
 // v248: attention is only kept when a visit, an app open, or a continued session owns it. Join date and Find pin stay on the person.
-const CACHE_NAME = 'naluno-shell-v282';
-const APP_BUILD = '20261005d';
+const CACHE_NAME = 'naluno-shell-v283';
+const APP_BUILD = '20261005e';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -573,6 +573,34 @@ function startRingLoop(callId, title, body, loop, pingId){
   if(callId) ringLoopTimers[callId] = setTimeout(tick, 2200);
 }
 
+const wireShown = {};
+function showWireNotification(data){
+  data = data || {};
+  const from = String(data.fromUid || '');
+  const mid = String(data.clientMsgId || '');
+  const key = from + '|' + mid;
+  const now = Date.now();
+  if(mid && wireShown[key] && now - wireShown[key] < 8000) return Promise.resolve();
+  if(mid) wireShown[key] = now;
+  const title = data.title || data.senderName || 'Wireline';
+  const body = data.body || 'New message';
+  const url = data.url || (from ? ('/app/?wire=' + encodeURIComponent(from)) : '/app/');
+  return self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(list){
+    const looking = (list || []).some(function(c){ return c.visibilityState === 'visible' && c.focused; });
+    if(looking) return;
+    return self.registration.showNotification(title, {
+      body: body,
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      tag: 'naluno-wire:' + (from || 'msg') + ':' + (mid || now),
+      renotify: true,
+      silent: false,
+      vibrate: [180, 80, 180],
+      data: { type: 'wireline', fromUid: from, url: url, pingId: data.pingId || '', clientMsgId: mid }
+    });
+  });
+}
+
 /* FCM web encrypts the payload. Without firebase.messaging() in THIS worker,
    a backgrounded (not killed) PWA never decrypts the call wake — onMessage
    on the frozen page also never runs. This is what actually rings a web
@@ -600,6 +628,10 @@ try{
         }
       }catch(_){}
       const callId = data.callId || data.call_id || '';
+      if(data.type === 'wireline'){
+        notePushArrival(data);
+        return showWireNotification(data);
+      }
       const isCall = data.type === 'incoming_call' || !!callId;
       if(!isCall) return;
       if(callId && isCallHandled(callId)) return;
@@ -675,7 +707,14 @@ self.addEventListener('push', event=>{
     }
   }catch(_){}
   const callId = data.callId || data.call_id || data.tag || '';
-  const isCall = data.type === 'incoming_call' || (!data.type && !!callId);
+  const isCall = data.type === 'incoming_call' || (!data.type && !!callId && data.type !== 'wireline');
+  if(data.type === 'wireline'){
+    event.waitUntil((async ()=>{
+      notePushArrival(data);
+      await showWireNotification(data);
+    })());
+    return;
+  }
   if(isCall){
     if(callId && isCallHandled(callId)) return;
     const title = data.title || 'Incoming call — Naluno';
@@ -718,6 +757,22 @@ self.addEventListener('notificationclick', event=>{
       });
     });
   }catch(_){}
+  if(data.type === 'wireline'){
+    const fromUid = data.fromUid || '';
+    const target = data.url || (fromUid ? ('/app/?wire=' + encodeURIComponent(fromUid)) : '/app/');
+    event.waitUntil(
+      self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList){
+        for(const client of clientList){
+          if('focus' in client){
+            try{ client.postMessage({ type: 'naluno-open-wire', fromUid: fromUid }); }catch(_){}
+            return client.focus();
+          }
+        }
+        if(self.clients.openWindow) return self.clients.openWindow(target);
+      })
+    );
+    return;
+  }
   if(data.type && data.type !== 'incoming_call'){
     // Non-call notification: just open/focus the app at the right place —
     // never post a fake "incoming call" message for something that isn't one.

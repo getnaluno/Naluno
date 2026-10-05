@@ -9,7 +9,6 @@ import android.content.Intent;
 import android.media.AudioAttributes;
 import android.media.RingtoneManager;
 import android.net.Uri;
-import android.net.Uri;
 import android.os.Build;
 import android.os.PowerManager;
 
@@ -25,6 +24,7 @@ import java.util.Map;
 public class CallMessagingService extends FirebaseMessagingService {
 
   public static final String CHANNEL_ID = "naluno_incoming_calls";
+  public static final String WIRE_CHANNEL_ID = "naluno_wireline";
   public static final int NOTIFICATION_ID = 44001;
   private static final String WAKE_LOCK_TAG = "naluno:incoming_call";
 
@@ -48,6 +48,21 @@ public class CallMessagingService extends FirebaseMessagingService {
     if (data == null || data.isEmpty()) return;
 
     String type = data.get("type");
+    if ("wireline".equals(type)) {
+      ensureWireChannel(this);
+      if (message.getNotification() != null) {
+        /* The system tray already shows this when Naluno is closed.
+           In front, the open chat is the alert. */
+        return;
+      }
+      if (MainActivity.isInForeground()) return;
+      String fromUid = firstNonEmpty(data.get("fromUid"), "");
+      String title = firstNonEmpty(data.get("title"), data.get("senderName"), "Naluno");
+      String body = firstNonEmpty(data.get("body"), "New message");
+      String msgId = firstNonEmpty(data.get("clientMsgId"), "");
+      showWireNotification(fromUid, title, body, msgId);
+      return;
+    }
     if ("broadcast_live".equals(type)) return;
     boolean isCall = "incoming_call".equals(type)
       || "call".equals(type)
@@ -130,6 +145,83 @@ public class CallMessagingService extends FirebaseMessagingService {
     } catch (Exception e) {
       // Best-effort.
     }
+  }
+
+  /** High-importance Wireline channel with the phone's notification sound.
+   *  Created before the first closed-app message so that sound exists. */
+  public static void ensureWireChannel(Context ctx) {
+    if (ctx == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+    NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+    if (nm == null) return;
+    if (nm.getNotificationChannel(WIRE_CHANNEL_ID) != null) return;
+    NotificationChannel channel = new NotificationChannel(
+      WIRE_CHANNEL_ID,
+      "Wireline",
+      NotificationManager.IMPORTANCE_HIGH
+    );
+    channel.setDescription("New Wireline messages");
+    channel.enableVibration(true);
+    channel.setVibrationPattern(new long[]{0, 180, 120, 180});
+    channel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+    try {
+      Uri sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+      AudioAttributes audioAttrs = new AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+        .build();
+      channel.setSound(sound, audioAttrs);
+    } catch (Exception e) {
+      // Best-effort sound.
+    }
+    nm.createNotificationChannel(channel);
+  }
+
+  private void showWireNotification(String fromUid, String title, String body, String msgId) {
+    Intent open = new Intent(this, MainActivity.class);
+    open.putExtra("type", "wireline");
+    open.putExtra("fromUid", fromUid == null ? "" : fromUid);
+    open.addFlags(
+      Intent.FLAG_ACTIVITY_NEW_TASK
+        | Intent.FLAG_ACTIVITY_CLEAR_TOP
+        | Intent.FLAG_ACTIVITY_SINGLE_TOP
+    );
+    int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      flags |= PendingIntent.FLAG_IMMUTABLE;
+    }
+    int req = wireNotificationId(fromUid, msgId);
+    PendingIntent contentPi = PendingIntent.getActivity(this, req, open, flags);
+
+    Notification.Builder builder;
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      builder = new Notification.Builder(this, WIRE_CHANNEL_ID);
+    } else {
+      builder = new Notification.Builder(this);
+      builder.setPriority(Notification.PRIORITY_HIGH);
+      builder.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION));
+      builder.setDefaults(Notification.DEFAULT_SOUND | Notification.DEFAULT_VIBRATE);
+    }
+    builder
+      .setSmallIcon(android.R.drawable.stat_notify_chat)
+      .setContentTitle(title == null || title.isEmpty() ? "Naluno" : title)
+      .setContentText(body == null || body.isEmpty() ? "New message" : body)
+      .setCategory(Notification.CATEGORY_MESSAGE)
+      .setAutoCancel(true)
+      .setOnlyAlertOnce(false)
+      .setContentIntent(contentPi);
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+      builder.setVisibility(Notification.VISIBILITY_PUBLIC);
+    }
+    NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+    if (nm != null) nm.notify(req, builder.build());
+  }
+
+  public static int wireNotificationId(String fromUid, String msgId) {
+    String key = (fromUid == null ? "" : fromUid) + "|" + (msgId == null ? "" : msgId);
+    if (key.equals("|")) return 47001;
+    int h = 0;
+    for (int i = 0; i < key.length(); i++) h = 31 * h + key.charAt(i);
+    return 47000 + ((h & 0x7fffffff) % 2000);
   }
 
   private void ensureChannel() {
