@@ -126,7 +126,7 @@
   function boot() {
     let tries = 0;
     function tick() {
-      const db = (typeof fbDb !== 'undefined' && fbDb) || (root.fbDb || null);
+      const db = (typeof fbDb !== 'undefined' && fbDb) || ((typeof window !== 'undefined' && window.fbDb) || null);
       if (!db || !db.collection) {
         tries += 1;
         if (tries < 20) setTimeout(tick, 500);

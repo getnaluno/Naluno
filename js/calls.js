@@ -1711,6 +1711,10 @@ function nalunoCancelDial(reason){
   nalunoDialing = null;
 }
 function teardownCallConnection(){
+  /* 05 Oct: every way a call ends stands the floating window down. Only the
+     local hang-up did; when the other person hung up, the Android app stayed
+     armed and later floated an empty Naluno whenever you left it. */
+  try{ if(window.nalunoPip && nalunoPip.disarm) nalunoPip.disarm(); }catch(_){}
   try{ nalunoCancelDial(); }catch(_){}
   try{ window.__nalunoConnectedAt = 0; window.__nalunoFxDraw = false; }catch(_){}
   try{ if(typeof nalunoDropPrepared === 'function') nalunoDropPrepared(); }catch(_){}
@@ -3195,8 +3199,18 @@ function nalunoPreparedFor(callId){
   return p;
 }
 
-$('acceptIncoming').onclick = async ()=>{
+let nalunoAnsweredId = null;
+$('acceptIncoming').onclick = async (ev)=>{
   if(callActionInProgress) return;
+  /* 05 Oct: one tap is a pointerup (or touchend), which answers, and then a
+     click a moment later. Once the first had finished, the click answered a
+     second time, found the call already answered, said "That call is no
+     longer available" and closed it. The same call is answered once. */
+  try{
+    const b = $('acceptIncoming');
+    if(ev && ev.type === 'click' && b && b._nalunoAnswerAt && Date.now() - b._nalunoAnswerAt < 1500) return;
+  }catch(_){}
+  if(activeCallId && nalunoAnsweredId === activeCallId) return;
   stopRingtone();
   try{
     const st = document.querySelector('#incoming .ring-status');
@@ -3205,6 +3219,7 @@ $('acceptIncoming').onclick = async ()=>{
   if(!activeCallId || !fbDb){ toast('That call is no longer available'); closeCallOverlayAndStopCamera(); return; }
   callActionInProgress = true;
   const acceptingId = activeCallId;
+  nalunoAnsweredId = acceptingId;
   const callRef = fbDb.collection('calls').doc(acceptingId);
   /* The ring on screen can be replaced while this runs (the same person
      called again). The rest of this answer then belongs to a call that is

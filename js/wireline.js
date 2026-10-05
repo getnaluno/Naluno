@@ -1893,27 +1893,46 @@ function nalunoRaceTimeout(promise, ms){
   ]);
 }
 
-function wirePreviewForPush(payload, previewText){
+/* 05 Oct: the alert says who and what kind ("Voice message", "Photo"),
+   never the words. Wireline is end-to-end; the text must not travel through
+   the push service. */
+function wirePreviewForPush(payload){
   const t = (payload && payload.type) || 'text';
   if(t === 'voice' || t === 'audio') return 'Voice message';
   if(t === 'photo' || t === 'image') return 'Photo';
   if(t === 'video') return 'Video';
-  if(t === 'text'){
-    const s = String((payload && payload.text) || previewText || '').replace(/\s+/g, ' ').trim();
-    return s ? s.slice(0, 140) : 'New message';
-  }
+  if(t === 'file') return 'File';
   return 'New message';
 }
+const WIRE_NOTIFY_URL = 'https://naluno-economy.naluno.workers.dev/v1/wire/notify';
+/* The alert to the other phone. First Naluno's own worker (it checks the
+   message is real, reads the other person's phones itself and sends the
+   push); if that is not available yet, the call-notify worker as before.
+   The result is kept in nalunoWireAlertLast for checking. */
 function notifyWirelinePush(c, payload, previewText, clientMsgId){
   try{
     if(!c || !c.firebaseUid || typeof currentUser === 'undefined' || !currentUser) return;
+    if(payload && (payload.type === 'reaction' || payload.system)) return;
     const calleeUid = c.firebaseUid;
     const name = (typeof currentProfile !== 'undefined' && currentProfile && currentProfile.name) || 'Someone';
-    const body = wirePreviewForPush(payload, previewText);
-    const url = (typeof CALL_NOTIFY_WORKER_URL === 'string' && CALL_NOTIFY_WORKER_URL) || 'https://naluno-call-notify.naluno.workers.dev';
+    const body = wirePreviewForPush(payload);
+    const note = function(route, info){ try{ window.nalunoWireAlertLast = { at: Date.now(), to: calleeUid, route: route, info: info }; }catch(_){} };
     (async function(){
+      let idToken = '';
+      try{ idToken = await currentUser.getIdToken(); }catch(_){ return; }
       try{
-        const idToken = await currentUser.getIdToken();
+        const res = await fetch(WIRE_NOTIFY_URL, {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to: calleeUid, clientMsgId: String(clientMsgId || '') }),
+        });
+        const data = await res.json().catch(function(){ return {}; });
+        note('naluno', { status: res.status, sent: data.sent, reason: data.reason || data.error || '', failures: data.failures || [] });
+        /* Sent, or nothing to send to: done. Anything else falls back. */
+        if(res.ok && (data.sent > 0 || data.reason === 'no_token' || data.reason === 'silent')) return;
+        if(res.status === 403 || res.status === 429) return;
+      }catch(e){ note('naluno', { error: String((e && e.message) || e).slice(0, 80) }); }
+      try{
         const tokens = { android: null, web: null, primary: null, platform: null };
         try{
           if(fbDb){
@@ -1925,7 +1944,8 @@ function notifyWirelinePush(c, payload, previewText, clientMsgId){
             tokens.platform = d.fcmTokenPlatform || null;
           }
         }catch(_){}
-        await fetch(url, {
+        const url = (typeof CALL_NOTIFY_WORKER_URL === 'string' && CALL_NOTIFY_WORKER_URL) || 'https://naluno-call-notify.naluno.workers.dev';
+        const res2 = await fetch(url, {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1942,7 +1962,10 @@ function notifyWirelinePush(c, payload, previewText, clientMsgId){
             fcmTokenPlatform: tokens.platform
           })
         });
-      }catch(_){}
+        const d2 = await res2.json().catch(function(){ return {}; });
+        note('call-notify', { status: res2.status, sent: d2.sent, reason: d2.reason || d2.error || '' });
+        if(!res2.ok) console.warn('[wire] alert did not go out', res2.status, d2);
+      }catch(e){ note('call-notify', { error: String((e && e.message) || e).slice(0, 80) }); }
     })();
   }catch(_){}
 }
