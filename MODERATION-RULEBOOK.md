@@ -42,13 +42,37 @@ set so that **a wrong guess goes to a person, not straight to rejection**:
 
 | | reject | hold for a person |
 |---|---|---|
-| genitals / anus | ≥ 0.50 | 0.30 – 0.50 |
+| genitals / anus | ≥ 0.50 | 0.25 – 0.50 |
 | female breast (topless) | ≥ 0.55 | 0.35 – 0.55 |
 | two intimate parts | each ≥ 0.40 | |
+| exposed bottom + a weak intimate sign (≥ 0.25) | | held |
+| two or more people + a clearly exposed bottom (≥ 0.60) | | held |
 | video-player screenshot | | ≥ 0.85 |
 
 The breast line is higher than the genital line because cleavage and bikini
-tops are its most common misread.
+tops are its most common misread. **One rule:** the phone and the server use
+the same code, word for word (a test checks it).
+
+### Clothes are not skin (05 Oct)
+
+On 02 Oct a photo of two fully clothed people in bright clothes was flagged.
+The detector knows shapes only: a bright shirt over a chest or a dress over a
+lap can look to it like a breast or a bottom. A person tells them apart at
+once, because an exposed part is **skin** and clothing is **fabric**. So the
+phone now measures what lies inside every "exposed" box:
+
+- **Skin** of every shade, very light to very dark, in any light. Pixels too
+  dark to tell count as skin. A black-and-white picture gets no allowance.
+- **Fabric**: white, grey and pale clothes; blue, green, purple, yellow; vivid
+  dyed reds and oranges.
+
+When less than a fifth of an "exposed" box is skin, the finding is halved:
+
+- a breast or bottom on fabric drops below the hold bars (a shirt, a dress);
+- genitals or anus on fabric are **still held for a person**, never let out on
+  this alone;
+- a near-certain finding (≥ 0.80) is never reduced;
+- real skin, of any colour, is judged exactly as before.
 
 ### Videos
 
