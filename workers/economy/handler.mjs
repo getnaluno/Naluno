@@ -87,6 +87,7 @@ import {
   cleanBroadcastId,
 } from "./views.mjs";
 import { pbkdf2Sha256Js, WORKER_PBKDF2_MAX } from "./pbkdf2.mjs";
+import { handleWireNotify } from "./wire-notify.mjs";
 import {
   callsReady,
   rememberRoom,
@@ -3445,6 +3446,18 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         status: scored.status,
         persist: persistMode(!!saToken, paths),
       });
+    }
+
+    if (path === "/v1/wire/notify" && request.method === "POST") {
+      if (!saToken) return json({ ok: false, sent: 0, error: "push not configured" }, 503);
+      const body = await request.json().catch(() => ({}));
+      const out = await handleWireNotify(body, user, {
+        getDoc: (p) => fsGetDoc(env, saToken, p),
+        accessToken: (scope) => saAccessTokenScoped(env, scope),
+        fetch: (u, o) => _fetch(u, o),
+        projectId: projectId(env),
+      });
+      return json(out.body, out.status);
     }
 
     if (path === "/v1/me" && request.method === "GET") {
