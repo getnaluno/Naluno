@@ -651,10 +651,31 @@ service cloud.firestore {
     /* Slim mirror of users/{uid}/signal so the Control Centre can list
        Signals without a collection-group index. Owner writes; operator reads. */
     match /signals/{id} {
+      /* 07c: Signals for everyone. A Signal its creator made public is
+         readable by anyone signed in only while it is public, not held for
+         review, not taken down (the desk sets hidden) and not past its 24
+         hours. The app's query asks for exactly that. */
       allow read: if isOperator()
-        || (isSignedIn() && resource.data.uid == request.auth.uid);
-      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
-      allow update, delete: if isSignedIn() && (
+        || (isSignedIn() && resource.data.uid == request.auth.uid)
+        || (isSignedIn() && resource.data.public == true
+            && resource.data.hidden == false && resource.data.held == false
+            && resource.data.expiresAt is number
+            && resource.data.expiresAt > request.time.toMillis());
+      /* A public copy must be unheld, not taken down, and live at most 25
+         hours. */
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid
+        && (request.resource.data.get('public', false) != true || (
+             request.resource.data.get('held', false) == false
+             && request.resource.data.get('hidden', false) == false
+             && request.resource.data.expiresAt is number
+             && request.resource.data.expiresAt <= request.time.toMillis() + 90000000));
+      /* The desk changes anything. The creator may only take their own
+         Signal out of the public list (never back in, never undo the desk). */
+      allow update: if isOperator()
+        || (isSignedIn() && resource.data.uid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['public'])
+            && request.resource.data.public == false);
+      allow delete: if isSignedIn() && (
         isOperator() || resource.data.uid == request.auth.uid
       );
     }
