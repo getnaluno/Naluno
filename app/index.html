@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.10.07b" />
+  <meta name="naluno-build" content="2026.10.07c" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.10.07b">
+<meta name="app-version" content="2026.10.07c">
 <meta name="description" content="Naluno brings private communication, communities and creator-led content into one place. A Callsign instead of a phone number.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="Private communication, communities and creator-led content. A Callsign — not a phone number.">
@@ -131,9 +131,9 @@
 })();
 </script>
 <link rel="apple-touch-startup-image" href="/splash-empty.png">
-<link rel="stylesheet" href="/css/app.css?v=20261007b" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/css/app.css?v=20261007c" media="print" onload="this.media='all'">
 <script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="/css/app.css?v=20261007b"></noscript>
+<noscript><link rel="stylesheet" href="/css/app.css?v=20261007c"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -402,6 +402,8 @@ window.__nalunoEntryT0 = Date.now();
         <button type="button" class="bcast-ghost-tool" id="bcastPrivateWatch" aria-expanded="false" aria-controls="bcastPrivateDrawer">Private broadcasts</button>
       </div>
       <div class="bcast-private-drawer" id="bcastPrivateDrawer" hidden></div>
+      <!-- 07c: scheduled and private, with Edit / Publish now, under Private broadcasts -->
+      <div id="bcastScheduleDock" class="bcast-schedule-dock" hidden></div>
       <div class="bcast-search-row" id="bcastSearchRow" hidden>
         <input type="text" inputmode="search" enterkeyhint="search" id="bcastSearchInput" placeholder="Search Broadcasts — topic, person, idea…" autocomplete="off" autocorrect="off" spellcheck="false" />
       </div>
@@ -460,7 +462,6 @@ window.__nalunoEntryT0 = Date.now();
           <button type="button" id="airHomeLeave" class="air-desc-btn">For You</button>
         </div>
       </div>
-      <div id="bcastScheduleDock" class="bcast-schedule-dock" hidden></div>
       <button type="button" class="bcast-scroll-cue" id="bcastScrollCue">
         <span class="bcast-scroll-cue-kicker">Under this</span>
         <span class="bcast-scroll-cue-copy">Swipe up</span>
@@ -1078,7 +1079,10 @@ window.__nalunoEntryT0 = Date.now();
       <button type="button" id="bwriteCoverClear" style="display:none;margin:0 0 10px;background:transparent;border:0;color:var(--text-dim);font-size:12px;cursor:pointer;">Remove photo</button>
       <div id="bwriteChecks" style="display:none;margin:0 0 10px;font-size:12.5px;line-height:1.4;color:var(--text-dim);"></div>
       <label id="bwriteOriginAckRow" class="bcomp-opt" style="display:none;margin:0 0 10px;"><input type="checkbox" id="bwriteOriginAck" /> <span>This photo is mine, licensed, or a cover</span></label>
+      <div class="bwrite-opt-pair">
       <label class="bcomp-opt" id="bwriteChapteredRow" style="margin:0 0 10px;"><input type="checkbox" id="bwriteChaptered" /> <span>Write in chapters — for longer pieces. Leave off for a single piece.</span></label>
+      <label class="bcomp-opt bwrite-lg-opt" id="bwriteLugandaRow" style="margin:0 0 10px;"><input type="checkbox" id="bwriteLuganda" /> <span><b>Luganda</b> — shows under Luganda and is read in the Luganda voice</span></label>
+      </div>
       <input id="bwriteTags" maxlength="120" placeholder="Topics (comma separated)" style="width:100%;margin-bottom:10px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:13px;font-family:inherit;" />
       <div class="bcomp-opts">
         <label class="bcomp-opt"><input type="checkbox" id="bwritePrivate" /> <span>Private — only you can see it</span></label>
@@ -1163,6 +1167,13 @@ window.__nalunoEntryT0 = Date.now();
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button type="button" class="ttl-chip on" data-ttl="24">24 hours</button>
         </div>
+        <!-- 07c: Signals for everyone (like reels), as well as your connections -->
+        <div class="section-label" style="padding-left:2px;margin-top:12px;">Who sees it</div>
+        <div class="signal-aud-row" id="signalAudRow" role="radiogroup" aria-label="Who sees this Signal">
+          <button type="button" class="ttl-chip" data-aud="public" role="radio">Everyone on Naluno</button>
+          <button type="button" class="ttl-chip" data-aud="connections" role="radio">My connections</button>
+        </div>
+        <div class="signal-aud-note" id="signalAudNote"></div>
       </div>
       <div id="broadcastFields" style="display:none;margin-top:14px;">
         <input id="bcastTitleInput" maxlength="120" placeholder="Broadcast title" style="width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:14px;font-family:inherit;" />
@@ -1728,6 +1739,12 @@ window.__nalunoEntryT0 = Date.now();
           <p class="hint">A strip from this Strand first — tap a title to walk in.</p>
           <div id="bspaceRelated" class="bspace-nearby-strip"></div>
         </div>
+        <!-- 07c: past Nearby Broadcasts, swipe up straight into the next one -->
+        <button type="button" class="bspace-next-cue" id="bspaceNextCue">
+          <span class="bspace-next-chevron" aria-hidden="true">︿</span>
+          <span class="bspace-next-copy">Swipe up for the next Broadcast</span>
+          <span class="bspace-next-title" id="bspaceNextTitle"></span>
+        </button>
       </div>
     </div>
     <div class="bspace-more-menu" id="bspaceMoreMenu" hidden>
@@ -1850,10 +1867,10 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/atmosphere.js?v=20260908d"></script>
 <script src="/js/band-list.js?v=20260929b"></script>
 <script type="module" src="/workers/economy/safety-boot.mjs?v=20260923c"></script>
-<script src="/js/signal-core.js?v=20261005i"></script>
-<script src="/js/broadcast-core.js?v=20261007b"></script>
+<script src="/js/signal-core.js?v=20261007c"></script>
+<script src="/js/broadcast-core.js?v=20261007c"></script>
 <script src="/js/broadcast-upload.js?v=20260908d"></script>
-<script src="/js/broadcast-composer.js?v=20261005i"></script>
+<script src="/js/broadcast-composer.js?v=20261007c"></script>
 <script src="/js/screen.js?v=20261006b"></script>
 <!-- nudenet.js MUST load after screen.js: it upgrades runNalunoScreen() in place
      and keeps the heuristic as a hold-only fallback. Replaces nsfw-model.js. -->
@@ -1875,12 +1892,12 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/beacon.js?v=20261001a"></script>
 <script src="/js/lg-books.js?v=20261001b"></script>
 <script src="/js/compass-brain.js?v=20261004k"></script>
-<script src="/js/compass.js?v=20261001b"></script>
+<script src="/js/compass.js?v=20261007c"></script>
 <script src="/js/pass-on.js?v=20261003b"></script>
 <script src="/js/room-threads.js?v=20260925g"></script>
 <script src="/js/discover-engine.js?v=20260928d"></script>
 <script src="/js/discover.js?v=20260929h"></script>
-<script src="/js/signal-ui.js?v=20261007b"></script>
+<script src="/js/signal-ui.js?v=20261007c"></script>
 <script src="/js/compat-lock.js?v=20260908d"></script>
 <script src="/js/known.js?v=20261005g"></script>
 <script src="/js/lg-speak.js?v=20261005h"></script>
@@ -1888,12 +1905,13 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/naluno-voice-master.js?v=20261007a"></script>
 <script src="/js/lg-ear.js?v=20261005f"></script>
 <script src="/js/naluno-voices.js?v=20261007a"></script>
-<script src="/js/broadcast-glance.js?v=20261007b"></script>
-<script src="/js/broadcast-space.js?v=20261005h"></script>
+<script src="/js/broadcast-glance.js?v=20261007c"></script>
+<script src="/js/signal-public.js?v=20261007c"></script>
+<script src="/js/broadcast-space.js?v=20261007c"></script>
 <script src="/js/linkify.js?v=20260930a"></script>
 <script src="/js/ads.js?v=20261004c"></script>
 <script src="/js/media-vault.js?v=20260908d"></script>
-<script src="/js/wireline.js?v=20261005f"></script>
+<script src="/js/wireline.js?v=20261007c"></script>
 <!-- Lifeline: Wireline when the internet is blocked or cut. Loads after
      crypto.js (keys) and wireline.js (thread insertion). -->
 <script src="/js/notices.js?v=20261004c"></script>
@@ -1907,7 +1925,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/profile.js?v=20261005d"></script>
 <script src="/js/onboard.js?v=20260928d"></script>
 <script src="/js/handle-guard.js?v=20261006b"></script>
-<script src="/js/auth.js?v=20261006f"></script>
+<script src="/js/auth.js?v=20261007c"></script>
 <script src="/js/trust-legal.js?v=20261002e"></script>
 <script src="/js/security-events.js?v=20261002e"></script>
 <script src="/js/notifications.js?v=20260928d"></script>
@@ -1922,8 +1940,8 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/live-preview.js?v=20260929g"></script>
 <script src="/js/band-room.js?v=20261006a"></script>
 <script src="/js/traffic.js?v=20261003e"></script>
-<script src="/js/pwa.js?v=20261007b"></script>
-<script src="/js/gestures.js?v=20260929f"></script>
+<script src="/js/pwa.js?v=20261007c"></script>
+<script src="/js/gestures.js?v=20261007c"></script>
 <script src="/js/spark-engine.js?v=20261005g"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>
 <script src="/js/spark-lg.js?v=20261001b"></script>
