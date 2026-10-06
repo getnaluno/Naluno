@@ -1,0 +1,1678 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(uid) { return isSignedIn() && request.auth.uid == uid; }
+    /* The Control Centre operator. Used so the desk can read platform
+       collections even while the economy Worker's service account is
+       rejected by Google — the signed-in operator is the authority. */
+    function isSuper() {
+      return isSignedIn() && request.auth.uid == 'ibMOMY6Q3sVTCxIrwO2FGk43zw93';
+    }
+    function isActiveDesk() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/deskOperators/$(request.auth.uid))
+        && get(/databases/$(database)/documents/deskOperators/$(request.auth.uid)).data.revoked != true;
+    }
+    function isOperator() {
+      return isSignedIn() && (
+        request.auth.token.operator == true
+        || request.auth.uid == 'ibMOMY6Q3sVTCxIrwO2FGk43zw93'
+        || isActiveDesk()
+      );
+    }
+    /* Trust & Legal files must not carry a private conversation,
+       a password, or a private key. */
+    function noPrivateLegal() {
+      return !request.resource.data.keys().hasAny([
+        'body', 'message', 'ciphertext', 'plaintext', 'wire_text', 'transcript',
+        'chat', 'password', 'privateJwk', 'wireBody', 'recoveryEmail', 'messageBody'
+      ]);
+    }
+    function answerGrewByOne() {
+      let oldN = ('answers' in resource.data && resource.data.answers is list)
+        ? resource.data.answers.size() : 0;
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['answers'])
+        && request.resource.data.answers is list
+        && request.resource.data.answers.size() == oldN + 1
+        && request.resource.data.answers[request.resource.data.answers.size() - 1].from == request.auth.uid
+        && request.resource.data.answers[request.resource.data.answers.size() - 1].text is string
+        && request.resource.data.answers[request.resource.data.answers.size() - 1].text.size() > 0
+        && request.resource.data.answers[request.resource.data.answers.size() - 1].text.size() < 500;
+    }
+    /* Both sides. Writing yourself onto someone else's list is not enough
+       to read their Signals. Connect writes your own entry first. */
+    function signalConnected(ownerUid) {
+      return exists(/databases/$(database)/documents/users/$(ownerUid)/connections/$(request.auth.uid))
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid)/connections/$(ownerUid));
+    }
+    /* Numeric bump from a member: never decrease, never jump more than 1
+       in a single write. FieldValue.increment(1) passes. A rewritten
+       client setting impressions: 999999 does not. */
+    function numOf(data, field) {
+      return field in data && data[field] is int ? int(data[field])
+           : (field in data && data[field] is float ? data[field]
+           : 0);
+    }
+    function bumpedAtMost(field, maxDelta) {
+      let oldV = numOf(resource.data, field);
+      let newV = numOf(request.resource.data, field);
+      return newV >= oldV && (newV - oldV) <= maxDelta;
+    }
+    /* Attention on a day must come from a visit, an app open, or a
+       continuation of a session that already started. Milliseconds alone
+       are not a source. */
+    function dayHasAttentionSource() {
+      return numOf(request.resource.data, 'visits') > 0
+        || numOf(request.resource.data, 'appOpens') > 0
+        || numOf(request.resource.data, 'openApp') > 0
+        || numOf(request.resource.data, 'continuations') > 0;
+    }
+    function contIdsOk(maxGrow) {
+      return !('contIds' in request.resource.data)
+        || (request.resource.data.contIds is list
+            && request.resource.data.contIds.size() > 0
+            && request.resource.data.contIds.size() < 500
+            && request.resource.data.contIds.size() <= maxGrow);
+    }
+    /* Up by at most one, or down (the creator's own delete adjustment). */
+    function upByAtMostOne(field) {
+      return numOf(request.resource.data, field) <= numOf(resource.data, field) + 1;
+    }
+    function createdAtMostOne(field) {
+      return numOf(request.resource.data, field) <= 1;
+    }
+    /* The month keys Toga counts under: this month (UTC), and the ones
+       either side, so a phone whose clock is a few minutes off still fits. */
+    function monthKeyOf(y, m) {
+      return string(y) + '-' + (m < 10 ? '0' + string(m) : string(m));
+    }
+    function togaKeyNow() { return monthKeyOf(request.time.year(), request.time.month()); }
+    function togaKeyPrev() {
+      return request.time.month() == 1
+        ? monthKeyOf(request.time.year() - 1, 12)
+        : monthKeyOf(request.time.year(), request.time.month() - 1);
+    }
+    function togaKeyNext() {
+      return request.time.month() == 12
+        ? monthKeyOf(request.time.year() + 1, 1)
+        : monthKeyOf(request.time.year(), request.time.month() + 1);
+    }
+    /* A creator may change their own Toga settings and may lower a total
+       when they delete a Broadcast. They may not write their own numbers up. */
+    function notUp(field) {
+      return numOf(request.resource.data, field) <= numOf(resource.data, field);
+    }
+    function ownerTogaHonest() {
+      return notUp('viewsTotal') && notUp('viewsMonth')
+        && notUp('circleMonth') && notUp('engageMonth') && notUp('scoreMonth')
+        && notUp('mv_' + togaKeyNow()) && notUp('mc_' + togaKeyNow()) && notUp('me_' + togaKeyNow())
+        && notUp('mv_' + togaKeyPrev()) && notUp('mc_' + togaKeyPrev()) && notUp('me_' + togaKeyPrev())
+        && notUp('mv_' + togaKeyNext()) && notUp('mc_' + togaKeyNext()) && notUp('me_' + togaKeyNext());
+    }
+    function ownerTogaCreateHonest() {
+      return numOf(request.resource.data, 'viewsTotal') == 0 && numOf(request.resource.data, 'viewsMonth') == 0
+        && numOf(request.resource.data, 'circleMonth') == 0 && numOf(request.resource.data, 'engageMonth') == 0
+        && numOf(request.resource.data, 'scoreMonth') == 0
+        && numOf(request.resource.data, 'mv_' + togaKeyNow()) == 0 && numOf(request.resource.data, 'mc_' + togaKeyNow()) == 0 && numOf(request.resource.data, 'me_' + togaKeyNow()) == 0
+        && numOf(request.resource.data, 'mv_' + togaKeyPrev()) == 0 && numOf(request.resource.data, 'mc_' + togaKeyPrev()) == 0 && numOf(request.resource.data, 'me_' + togaKeyPrev()) == 0
+        && numOf(request.resource.data, 'mv_' + togaKeyNext()) == 0 && numOf(request.resource.data, 'mc_' + togaKeyNext()) == 0 && numOf(request.resource.data, 'me_' + togaKeyNext()) == 0;
+    }
+    /* Someone joining or leaving changes only their own uid.
+       A member inviting adds people and removes nobody. */
+    function memberChangeIsSelf() {
+      let before = ('memberUids' in resource.data && resource.data.memberUids is list) ? resource.data.memberUids : [];
+      let after = ('memberUids' in request.resource.data && request.resource.data.memberUids is list) ? request.resource.data.memberUids : [];
+      return after.toSet().difference(before.toSet()).hasOnly([request.auth.uid])
+        && before.toSet().difference(after.toSet()).hasOnly([request.auth.uid]);
+    }
+    function memberAddsOnly() {
+      let before = ('memberUids' in resource.data && resource.data.memberUids is list) ? resource.data.memberUids : [];
+      let after = ('memberUids' in request.resource.data && request.resource.data.memberUids is list) ? request.resource.data.memberUids : [];
+      return before.toSet().difference(after.toSet()).size() == 0
+        && after.toSet().difference(before.toSet()).size() > 0
+        && after.toSet().difference(before.toSet()).size() <= 8
+        && after.size() <= 80;
+    }
+    function inThisBand() {
+      return ('memberUids' in resource.data && resource.data.memberUids is list && request.auth.uid in resource.data.memberUids)
+        || resource.data.createdBy == request.auth.uid;
+    }
+    /* Counters a viewer may move: up by one per write, never down. */
+    function engagementBumpsHonest() {
+      return bumpedAtMost('views', 1) && bumpedAtMost('uniqueViews', 1)
+        && bumpedAtMost('comments', 1) && bumpedAtMost('replies', 1) && bumpedAtMost('shares', 1)
+        && bumpedAtMost('commentCount', 1) && bumpedAtMost('replyCount', 1) && bumpedAtMost('shareCount', 1)
+        && memberChangeIsSelf();
+    }
+    /* A private or scheduled Broadcast keeps its comments, questions and
+       chapters private too. A missing parent reads as before. */
+    function parentBroadcastVisible(bid) {
+      let path = /databases/$(database)/documents/broadcasts/$(bid);
+      let b = exists(path) ? get(path).data : {};
+      return b.size() == 0
+        || b.get('creatorUid', '') == request.auth.uid
+        || isOperator()
+        || (b.get('visibility', '') != 'private' && b.get('publishAt', 0) <= request.time.toMillis());
+    }
+    /* A connection entry someone writes into another person's list. */
+    function connectionEntryClean() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['name', 'handle', 'color', 'photo', 'photoUrl', 'connectedAt'])
+        && (!('name' in d) || d.name == null || (d.name is string && d.name.size() <= 80))
+        && (!('handle' in d) || d.handle == null || (d.handle is string && d.handle.size() <= 40))
+        && (!('color' in d) || d.color == null || (d.color is string && d.color.matches('^#[0-9A-Fa-f]{3,8}$')))
+        && (!('photoUrl' in d) || d.photoUrl == null || (d.photoUrl is string && d.photoUrl.matches('^https?://[^"<>]*$')));
+    }
+    function connectionRequestClean() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['name', 'handle', 'color', 'photo', 'photoUrl', 'at'])
+        && d.name is string && d.name.size() > 0 && d.name.size() <= 80
+        && (!('handle' in d) || d.handle == null || (d.handle is string && d.handle.size() <= 40))
+        && (!('color' in d) || d.color == null || (d.color is string && d.color.matches('^#[0-9A-Fa-f]{3,8}$')))
+        && (!('photoUrl' in d) || d.photoUrl == null || (d.photoUrl is string && d.photoUrl.size() < 2000))
+        && d.at is number
+        && d.at > 0;
+    }
+    /* A member may close their own Callsign. They may not lift a
+       suspension or restriction the desk put on them. */
+    function ownerKeepsModeration() {
+      return !request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(['suspended', 'suspendedReason', 'suspendedAt', 'restricted', 'restrictedReason', 'restrictedAt', 'trustedPublisher', 'sexualReports', 'known', 'knownUntil', 'grant', 'rightsStrikes']);
+    }
+    /* The day the account was created stays. A later profile save may
+       not move it. The first write, when the field is still absent, may set it. */
+    function keepsJoinedAt() {
+      return !('createdAt' in resource.data)
+        || request.resource.data.createdAt == resource.data.createdAt;
+    }
+    /* Creators may edit their Broadcast. They may not list, unhide, or
+       clear a hold the desk put on it. */
+    function keepsOriginCredit() {
+      return !('originCredit' in resource.data)
+        || request.resource.data.originCredit == resource.data.originCredit;
+    }
+    function keepsBroadcastListing() {
+      return !request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(['listed', 'hidden', 'held', 'hiddenReason', 'hiddenAt', 'hiddenBy', 'heldReason',
+                 'screenDecision', 'screenScore', 'screenReason', 'screenVersion', 'screenFrames']);
+    }
+    function isTrustedPublisher() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.trustedPublisher == true
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.restricted != true
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.suspended != true;
+    }
+    /* Creator (or the worker using their token) may hide. They may not list
+       or unhide. Listing is decided at create; the desk lifts a hold. */
+    function creatorMayTightenListing() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['listed', 'hidden', 'held', 'hiddenReason', 'hiddenAt', 'hiddenBy', 'heldReason',
+                  'screenDecision', 'screenScore', 'screenReason', 'screenVersion', 'screenFrames', 'updatedAt'])
+        && request.resource.data.hidden == true
+        && request.resource.data.listed == false
+        && request.resource.data.held == false
+        && resource.data.hidden != true;
+    }
+    function stampedAsSelf() {
+      return (!('from' in request.resource.data) || request.resource.data.from == request.auth.uid)
+        && (!('fromUid' in request.resource.data) || request.resource.data.fromUid == request.auth.uid)
+        && (!('uid' in request.resource.data) || request.resource.data.uid == request.auth.uid)
+        && (!('creatorUid' in request.resource.data) || request.resource.data.creatorUid == request.auth.uid)
+        && (!('by' in request.resource.data) || request.resource.data.by == request.auth.uid);
+    }
+
+    // ---- Identity ----
+    match /users/{uid} {
+      /* Get a known uid (Frequencies, Spark, Toga names). Listing the
+         whole collection is desk-only — that is the dump of emails and
+         tokens. */
+      allow get: if isSignedIn();
+      allow list: if isOperator();
+      allow create: if isOwner(uid)
+        && (!('known' in request.resource.data) || request.resource.data.known == false);
+      allow delete: if isSuper();
+      // Owner may update while the Callsign is open, including closing it.
+      // Once closed, only the Control Centre operator may write (restore).
+      allow update: if isSuper() || (
+        isOperator() && uid != 'ibMOMY6Q3sVTCxIrwO2FGk43zw93'
+      ) || (
+        isOwner(uid) && (
+          !('accountState' in resource.data) || resource.data.accountState != 'closed'
+        ) && ownerKeepsModeration() && keepsJoinedAt()
+      );
+      /* Private vault: recovery email, Compass lock, E2E backup, desk
+         password hash. Owner + operator. Call wake tokens stay on the
+         public profile so existing call-notify keeps working. */
+      match /vault/{id} {
+        allow read: if isOwner(uid) || isOperator();
+        allow write: if isOwner(uid) || isSuper();
+      }
+    }
+
+    // handles/{handle} maps a claimed handle -> uid. Enforces uniqueness: Firestore
+    // rejects a second create() at the same document path, so two people racing to
+    // claim "@nova" can't both succeed. Reserved identities live in reservedHandles
+    // (and reservedCores) and cannot be claimed unless the signer is the bound
+    // official holder (so the existing @naluno account keeps it).
+    match /handles/{handle} {
+      allow get: if true; // handle lookup needs to work before sign-in resolves
+      allow list: if isOperator();
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && handle.matches('^[a-z0-9_]{3,24}$')
+        && (
+          !exists(/databases/$(database)/documents/reservedHandles/$(handle))
+          || get(/databases/$(database)/documents/reservedHandles/$(handle)).data.holderUid == request.auth.uid
+        )
+        && (
+          !exists(/databases/$(database)/documents/reservedCores/$(handle))
+          || get(/databases/$(database)/documents/reservedCores/$(handle)).data.holderUid == request.auth.uid
+        );
+      // Only the current owner can re-write their own handle doc (e.g. a redundant
+      // re-save) — this must NEVER let someone else's uid overwrite an existing claim.
+      allow update: if isOperator()
+        || (isSignedIn()
+            && resource.data.uid == request.auth.uid
+            && request.resource.data.uid == request.auth.uid);
+      allow delete: if isOperator();
+    }
+
+    /* Protected Callsigns. Members may get a known id so sign-up can refuse
+       it. The full list is desk-only. Writes are desk-only. */
+    match /reservedHandles/{handle} {
+      allow get: if true;
+      allow list: if isOperator();
+      allow create, update, delete: if isOperator();
+    }
+    match /reservedCores/{core} {
+      allow get: if true;
+      allow list: if isOperator();
+      allow create, update, delete: if isOperator();
+    }
+    match /handleFlags/{id} {
+      allow read: if isOperator();
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.handle is string
+        && request.resource.data.handle.size() >= 3
+        && request.resource.data.handle.size() < 32;
+      allow update, delete: if isOperator();
+    }
+
+    // ---- Broadcast (your signal) ----
+    // A segment at users/{uid}/signal/{segId} is one posted photo/video/text. Only the
+    // owner can post or remove their own; a real connection of theirs can read it —
+    // this is what makes Frequencies and Broadcast the same set of real people instead
+    // of two disconnected screens. This whole subcollection was missing from the rules
+    // entirely, which is why every post silently failed permission checks.
+    /* Who watched a Signal segment, and how they reacted.
+       A viewer may write ONLY their own row and cannot read anyone else's —
+       the list of who watched belongs to the person whose Signal it is.
+       Writing is limited to people already connected to them, so a stranger
+       cannot appear in that list. */
+    match /users/{uid}/signal/{segId}/viewers/{viewerUid} {
+      allow read: if isOwner(uid) || isOperator();
+      allow get: if isSignedIn() && request.auth.uid == viewerUid;
+      allow create, update: if isSignedIn()
+        && request.auth.uid == viewerUid
+        && request.resource.data.uid == viewerUid
+        && (isOwner(uid) || signalConnected(uid))
+        && request.resource.data.keys().hasOnly(['uid','name','viewedAt','reaction','reactedAt']);
+      allow delete: if isOwner(uid) || (isSignedIn() && request.auth.uid == viewerUid);
+    }
+    /* Emoji only — no name. Connections can count reactions. Who watched
+       stays on viewers, which they cannot list. */
+    match /users/{uid}/signal/{segId}/reacts/{viewerUid} {
+      allow read: if isOwner(uid) || isOperator() || (isSignedIn() && signalConnected(uid));
+      allow create, update: if isSignedIn()
+        && request.auth.uid == viewerUid
+        && (isOwner(uid) || signalConnected(uid))
+        && request.resource.data.keys().hasOnly(['emoji','at'])
+        && request.resource.data.emoji is string
+        && request.resource.data.emoji.size() <= 8;
+      allow delete: if isSignedIn() && (request.auth.uid == viewerUid || isOwner(uid));
+    }
+
+    match /users/{uid}/signal/{segId} {
+      allow read: if isOperator()
+        || isOwner(uid)
+        || (isSignedIn() && signalConnected(uid));
+      allow create, delete: if isOwner(uid);
+      /* The desk releases or removes a held Signal. Nothing else. */
+      allow update: if isOperator()
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['held', 'heldReason', 'hidden', 'reviewedAt', 'reviewedBy']);
+    }
+    /* The desk's list of Signals across accounts. */
+    match /{path=**}/signal/{segId} {
+      allow read: if isOperator();
+    }
+
+    // Compass conversations are entirely private — no connection-visibility rule
+    // like signal has, since this isn't something meant to ever be shared.
+    match /users/{uid}/compassMessages/{msgId} {
+      allow read, create, delete: if isOwner(uid);
+    }
+
+    // ---- Real connections (replacing hardcoded demo contacts) ----
+    // A connection doc at users/{uid}/connections/{otherUid} means "otherUid appears in
+    // uid's Frequencies list." A search Connect is a request the other person accepts.
+    // Spark, in person, still writes both sides. The mirror write is only your own
+    // uid, and only after your side already exists.
+    match /users/{uid}/connections/{otherUid} {
+      allow read: if isOwner(uid);
+      allow delete: if isSignedIn() && (isOwner(uid) || otherUid == request.auth.uid);
+      allow create, update: if isOwner(uid)
+        || (isSignedIn() && otherUid == request.auth.uid && connectionEntryClean()
+            && exists(/databases/$(database)/documents/users/$(request.auth.uid)/connections/$(uid)));
+    }
+    /* A Connect request. The sender creates it on the other person's list.
+       Either person may remove it (accept already copied it, or it was declined). */
+    match /users/{uid}/connectionRequests/{fromUid} {
+      allow get: if isOwner(uid) || (isSignedIn() && fromUid == request.auth.uid);
+      allow list: if isOwner(uid);
+      allow create, update: if isSignedIn()
+        && fromUid == request.auth.uid
+        && uid != request.auth.uid
+        && connectionRequestClean();
+      allow delete: if isOwner(uid) || (isSignedIn() && fromUid == request.auth.uid);
+    }
+
+    // ---- Wireline (1:1 threads) ----
+    // threadId convention: the two participant uids sorted and joined with "_".
+    // History lives on the phone. This doc is a routing stub (who, when, kind),
+    // not the transcript. Encrypted drops sit in /wireDrop until taken.
+    match /threads/{threadId} {
+      allow read, update: if isSignedIn() && request.auth.uid in resource.data.participants;
+      allow create: if isSignedIn() && request.auth.uid in request.resource.data.participants;
+
+      match /messages/{messageId} {
+        allow read: if isSignedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants;
+        allow create: if isSignedIn()
+          && request.resource.data.from == request.auth.uid
+          && request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants;
+        allow update: if isSignedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants
+          && (
+            resource.data.from == request.auth.uid
+            || request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['read', 'readAt', 'delivered', 'taken', 'status'])
+          );
+        allow delete: if isSignedIn() && resource.data.from == request.auth.uid;
+      }
+    }
+
+    // Encrypted mailbox. Recipient owns inbox (read + delete after copy).
+    // Sender may create a drop addressed to that person. Receipts are written
+    // by the other phone into the sender's receipts box, then deleted there.
+    match /wireDrop/{uid} {
+      allow read: if isOwner(uid);
+      match /inbox/{id} {
+        allow read, delete: if isOwner(uid);
+        // The drop's id is shown in the other person's chat, so it may only
+        // hold the characters the app itself uses (c123-abc, rx-…, miss-…).
+        allow create: if isSignedIn()
+          && request.resource.data.from == request.auth.uid
+          && request.resource.data.to == uid
+          && id.matches('^[A-Za-z0-9_.:-]{1,200}$')
+          && request.resource.data.keys().size() < 24
+          && (!('naluno' in request.resource.data) || request.resource.data.naluno == false || isSuper())
+          && (!('text' in request.resource.data) || (request.resource.data.text is string && request.resource.data.text.size() < 4000));
+        allow update: if false;
+      }
+      match /receipts/{id} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isSignedIn()
+          && request.resource.data.from == request.auth.uid
+          && id.matches('^[A-Za-z0-9_.:-]{1,200}$');
+      }
+    }
+
+    // ---- Real calls (WebRTC signaling via Firestore) ----
+    // Each call is its own document — unlike threads, calls aren't a persistent channel;
+    // every attempt is a fresh doc. Candidate subcollections stay permissive (any signed-in
+    // user) rather than doing an extra get() lookup per ICE candidate write; the callId
+    // itself is an unguessable random doc ID, the same trust level the rest of this app
+    // currently runs on.
+    match /calls/{callId} {
+      allow read: if isOperator()
+        || (isSignedIn() && (
+          request.auth.uid == resource.data.callerUid
+          || request.auth.uid == resource.data.calleeUid
+        ));
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.callerUid;
+      // A call's status only moves forward: ringing -> accepted / declined /
+      // missed / busy / ended, and accepted -> ended. Other fields (the SDP
+      // answer, timestamps) may change while the status stays. Blind writes
+      // used to let an Answer revive a call the caller had already ended.
+      // Only the callee answers, declines or reports busy.
+      allow update: if isSignedIn()
+        && (request.auth.uid == resource.data.callerUid || request.auth.uid == resource.data.calleeUid)
+        && request.resource.data.callerUid == resource.data.callerUid
+        && request.resource.data.calleeUid == resource.data.calleeUid
+        && (
+          request.resource.data.get('status', '') == resource.data.get('status', '')
+          || (resource.data.get('status', '') == 'ringing'
+              && request.resource.data.status in ['missed', 'ended'])
+          || (resource.data.get('status', '') == 'ringing'
+              && request.resource.data.status in ['accepted', 'declined', 'busy']
+              && request.auth.uid == resource.data.calleeUid)
+          || (resource.data.get('status', '') == 'accepted'
+              && request.resource.data.status == 'ended')
+        );
+
+      match /callerCandidates/{candId} {
+        allow read, create: if isSignedIn() && (
+          request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.callerUid
+          || request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.calleeUid
+        );
+      }
+      match /calleeCandidates/{candId} {
+        allow read, create: if isSignedIn() && (
+          request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.callerUid
+          || request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.calleeUid
+        );
+      }
+    }
+
+    // ---- Band (live shared frequency) ----
+    match /bands/{bandId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid;
+      // FIX (20260826): was allow update: if isSignedIn() — any signed-in user could
+      // rewrite name/vibe/createdBy on someone else's Band. Scoped to the creator, or
+      // to the specific fields real membership actions (join/leave/settle/bell) touch —
+      // verified against every bands/{id}.update()/.set() call site in band-room.js
+      // and band-list.js so no existing write path breaks.
+      allow update: if isSignedIn() && (
+        resource.data.createdBy == request.auth.uid
+        || (
+          inThisBand()
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['memberUids', 'lastEmptiedAt', 'messageEpoch', 'bellAt', 'bellBy'])
+          && (
+            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['memberUids'])
+            || memberChangeIsSelf()
+            || memberAddsOnly()
+          )
+          && (
+            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['bellBy'])
+            || request.resource.data.bellBy == request.auth.uid
+          )
+        )
+        || (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberUids'])
+          && memberChangeIsSelf()
+          && ('memberUids' in request.resource.data)
+          && request.resource.data.memberUids is list
+          && request.auth.uid in request.resource.data.memberUids
+        )
+      );
+
+      match /presence/{uid} {
+        allow read: if isSignedIn();
+        allow write: if isOwner(uid); // you can only mark *yourself* as tuned in
+      }
+      match /messages/{messageId} {
+        function bandData() {
+          return get(/databases/$(database)/documents/bands/$(bandId)).data;
+        }
+        function epochMs() {
+          return bandData().messageEpoch is number ? int(bandData().messageEpoch) : 0;
+        }
+        function msgMs() {
+          return resource.data.ts is timestamp ? resource.data.ts.toMillis()
+            : (resource.data.ts is number ? int(resource.data.ts) : 0);
+        }
+        // After messageEpoch is stamped, the previous session is unreadable.
+        // That is the "cannot be retrieved" line — hide is not enough.
+        allow read: if isSignedIn() && (epochMs() == 0 || msgMs() >= epochMs());
+        allow create: if isSignedIn()
+          && request.resource.data.from == request.auth.uid
+          && (
+            request.auth.uid in bandData().memberUids
+            || bandData().createdBy == request.auth.uid
+          );
+        // Author may fill in mediaUrl after the bubble is already in the square
+        // (live chat posts the row first, then the file). Nobody else can edit.
+        allow update: if isSignedIn()
+          && resource.data.from == request.auth.uid
+          && request.resource.data.from == resource.data.from
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['mediaUrl', 'thumb', 'pending', 'duration']);
+        allow delete: if isSignedIn() && (
+          resource.data.from == request.auth.uid
+          || (
+            (
+              request.auth.uid in bandData().memberUids
+              || bandData().createdBy == request.auth.uid
+            )
+            && (bandData().lastEmptiedAt != null || bandData().messageEpoch != null)
+          )
+        );
+      }
+      match /wipe/{messageId} {
+        // Ids queued at empty-time so prune can delete without re-reading
+        // message text after the epoch cutoff. Contains no conversation body.
+        allow read, write: if isSignedIn() && (
+          request.auth.uid in get(/databases/$(database)/documents/bands/$(bandId)).data.memberUids
+          || get(/databases/$(database)/documents/bands/$(bandId)).data.createdBy == request.auth.uid
+        );
+      }
+      match /invites/{inviteId} {
+        allow read, write: if isSignedIn() && (
+          request.auth.uid in get(/databases/$(database)/documents/bands/$(bandId)).data.memberUids
+          || get(/databases/$(database)/documents/bands/$(bandId)).data.createdBy == request.auth.uid
+        );
+      }
+      match /mesh/{pairId} {
+        allow read, write: if isSignedIn() && (
+          request.auth.uid in get(/databases/$(database)/documents/bands/$(bandId)).data.memberUids
+          || get(/databases/$(database)/documents/bands/$(bandId)).data.createdBy == request.auth.uid
+        );
+        match /{iceCol}/{iceId} {
+          allow read, write: if isSignedIn() && (
+            request.auth.uid in get(/databases/$(database)/documents/bands/$(bandId)).data.memberUids
+            || get(/databases/$(database)/documents/bands/$(bandId)).data.createdBy == request.auth.uid
+          );
+        }
+      }
+    }
+
+    match /sparks/{code} {
+      allow get: if isSignedIn();
+      allow list: if isOperator();
+      allow create: if isSignedIn() && request.resource.data.hostUid == request.auth.uid;
+      // FIX (found reading spark.js against these rules — the core "two
+      // phones swap Callsigns in person" feature was silently broken): the
+      // update rule only ever allowed the HOST to write to this document.
+      // But claiming a Spark is a GUEST action — joinSparkCode() has the
+      // person who scanned/entered the code update the doc with their own
+      // guestUid, which this rule always rejected, since a guest's uid can
+      // never equal hostUid. That failure was caught by an empty
+      // try/catch in spark.js, so the guest saw "Spark complete" and moved
+      // on while the host's own listener (watching for guestUid to appear)
+      // never fired at all — the host was left stuck on their pulse screen
+      // indefinitely with no indication anything had gone wrong. Now also
+      // allows a guest to claim an unclaimed spark by setting guestUid to
+      // their own uid, while still blocking them from touching hostUid or
+      // re-claiming a spark someone else already joined.
+      // ADVERSARIAL-PASS FIX: the version above checked the VALUES of
+      // guestUid/hostUid correctly, but never restricted which FIELDS a
+      // guest-claim update could touch — a claiming guest could smuggle
+      // changes to hostName, hostColor, or expiresAt into the same write.
+      // Scoped to exactly the fields joinSparkCode() actually sends
+      // (guestUid, guestName, joinedAt, roomId), the same
+      // affectedKeys().hasOnly() pattern already used for /bands/{bandId}
+      // above, verified against the real call site in spark.js.
+      allow update: if isSignedIn() && (
+        resource.data.hostUid == request.auth.uid ||
+        (
+          !('guestUid' in resource.data) &&
+          request.resource.data.guestUid == request.auth.uid &&
+          request.resource.data.hostUid == resource.data.hostUid &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['guestUid', 'guestName', 'joinedAt', 'roomId'])
+        )
+      );
+      allow delete: if isSignedIn() && resource.data.hostUid == request.auth.uid;
+    }
+
+    match /sparkRooms/{roomId} {
+      allow read: if isSignedIn() && request.auth.uid in resource.data.participants;
+      allow create: if isSignedIn() && request.auth.uid in request.resource.data.participants;
+      allow update: if isSignedIn() && request.auth.uid in resource.data.participants;
+      match /messages/{messageId} {
+        allow read: if isSignedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/sparkRooms/$(roomId)).data.participants;
+        allow create: if isSignedIn()
+          && request.resource.data.from == request.auth.uid
+          && request.auth.uid in get(/databases/$(database)/documents/sparkRooms/$(roomId)).data.participants;
+      }
+    }
+
+    match /users/{uid}/notifications/{nid} {
+      allow read: if isOwner(uid);
+      allow create: if isSignedIn()
+        && request.resource.data.keys().size() < 24
+        && stampedAsSelf();
+      allow update, delete: if isOwner(uid);
+    }
+
+    match /users/{uid}/beacons/{id} {
+      allow read: if isOwner(uid) || isOperator();
+      allow write: if isOwner(uid);
+    }
+
+    /* Slim mirror of users/{uid}/signal so the Control Centre can list
+       Signals without a collection-group index. Owner writes; operator reads. */
+    match /signals/{id} {
+      /* 07c: Signals for everyone. A Signal its creator made public is
+         readable by anyone signed in only while it is public, not held for
+         review, not taken down (the desk sets hidden) and not past its 24
+         hours. The app's query asks for exactly that. */
+      allow read: if isOperator()
+        || (isSignedIn() && resource.data.uid == request.auth.uid)
+        || (isSignedIn() && resource.data.public == true
+            && resource.data.hidden == false && resource.data.held == false
+            && resource.data.expiresAt is number
+            && resource.data.expiresAt > request.time.toMillis());
+      /* A public copy must be unheld, not taken down, and live at most 25
+         hours. */
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid
+        && (request.resource.data.get('public', false) != true || (
+             request.resource.data.get('held', false) == false
+             && request.resource.data.get('hidden', false) == false
+             && request.resource.data.expiresAt is number
+             && request.resource.data.expiresAt <= request.time.toMillis() + 90000000));
+      /* The desk changes anything. The creator may only take their own
+         Signal out of the public list (never back in, never undo the desk). */
+      allow update: if isOperator()
+        || (isSignedIn() && resource.data.uid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['public'])
+            && request.resource.data.public == false);
+      allow delete: if isSignedIn() && (
+        isOperator() || resource.data.uid == request.auth.uid
+      );
+    }
+
+    match /users/{uid}/wirelineClears/{id} {
+      allow read, write: if isOwner(uid);
+    }
+
+    match /users/{uid}/wirelineHidden/{id} {
+      allow read, write: if isOwner(uid);
+    }
+
+    match /broadcasts/{id} {
+      /* Private and scheduled Broadcasts are enforced HERE, not only in the app.
+         Hiding something in the interface is not privacy: anyone could read the
+         document directly. A Broadcast marked private, or whose publishAt is
+         still in the future, is readable only by the person who made it (and
+         by an operator, for moderation). Documents without these fields are
+         unaffected. */
+      allow read: if isSignedIn() && (
+        resource.data.creatorUid == request.auth.uid
+        || isOperator()
+        || (
+          (!('visibility' in resource.data) || resource.data.visibility != 'private')
+          && (!('publishAt' in resource.data) || resource.data.publishAt <= request.time.toMillis())
+        )
+      );
+      allow create: if isSignedIn()
+        && request.resource.data.creatorUid == request.auth.uid
+        && request.resource.data.listed is bool
+        && (!('hidden' in request.resource.data) || request.resource.data.hidden == false);
+      // Creator may rewrite; others may only touch engagement/live/membership fields.
+      // listed / hidden / held are desk + worker. Creator may only tighten to hidden.
+      allow update: if isOperator()
+        || (isSignedIn()
+            && resource.data.creatorUid == request.auth.uid
+            && keepsBroadcastListing()
+            && keepsOriginCredit())
+        || (isSignedIn()
+            && resource.data.creatorUid == request.auth.uid
+            && creatorMayTightenListing())
+        || (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['views', 'uniqueViews', 'updatedAt', 'live', 'liveAt', 'liveBy', 'memberUids',
+                      'comments', 'replies', 'shares', 'commentCount', 'replyCount', 'shareCount'])
+            && engagementBumpsHonest());
+      match /{col}/{docId} {
+        allow read: if isSignedIn() && parentBroadcastVisible(id);
+        allow create: if isSignedIn()
+          && request.resource.data.keys().size() < 40
+          && stampedAsSelf();
+        // Author or broadcast creator may edit/delete subdocs (journey, conversation, etc.).
+        allow update: if isSignedIn() && (
+          resource.data.from == request.auth.uid
+          || get(/databases/$(database)/documents/broadcasts/$(id)).data.creatorUid == request.auth.uid
+          || answerGrewByOne()
+        );
+        allow delete: if isSignedIn() && (
+          resource.data.from == request.auth.uid
+          || get(/databases/$(database)/documents/broadcasts/$(id)).data.creatorUid == request.auth.uid
+        );
+      }
+      // FIX (found while investigating "live video never comes through"):
+      // liveSessions/{viewerUid} itself was covered by the /{col}/{docId}
+      // wildcard above, but that wildcard only reaches ONE level of
+      // subcollection — Firestore rules are not recursive. viewerIce and
+      // hostIce live ONE LEVEL DEEPER (liveSessions/{viewerUid}/viewerIce/...),
+      // so every read and write to them was silently denied by Firestore's
+      // default-deny, the entire time this feature existed. The SDP
+      // offer/answer exchange (one level deep) worked fine, making signaling
+      // look like it was progressing — but ICE candidates, required for any
+      // real-world NAT traversal, could never actually reach either peer.
+      // That is a far more fundamental explanation for "connects, but no
+      // video" than anything in the client code, and no client-side fix
+      // could ever have solved it. Mirrors the same pattern calls.js already
+      // uses correctly for callerCandidates/calleeCandidates above.
+      match /liveSessions/{viewerUid}/viewerIce/{candId} {
+        allow read, create: if isSignedIn() && (
+          request.auth.uid == viewerUid
+          || get(/databases/$(database)/documents/broadcasts/$(id)).data.creatorUid == request.auth.uid
+        );
+      }
+      match /liveSessions/{viewerUid}/hostIce/{candId} {
+        allow read, create: if isSignedIn() && (
+          request.auth.uid == viewerUid
+          || get(/databases/$(database)/documents/broadcasts/$(id)).data.creatorUid == request.auth.uid
+        );
+      }
+    }
+
+    match /strands/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.creatorUid == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.creatorUid == request.auth.uid;
+    }
+
+    match /knownApps/{uid} {
+      allow read: if isOwner(uid) || isOperator()
+        || (isSignedIn() && resource.data.status == 'known');
+      allow create: if isOwner(uid)
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.status == 'applied'
+        && request.resource.data.note is string
+        && request.resource.data.note.size() >= 12
+        && request.resource.data.note.size() <= 500
+        && !('paidAt' in request.resource.data)
+        && !('paidUntil' in request.resource.data);
+      allow update: if isOperator() && (
+          request.resource.data.status != 'known'
+          || (
+            request.resource.data.paidAt is int
+            && request.resource.data.paidAt > 0
+            && request.resource.data.paidUntil is int
+            && request.resource.data.paidUntil > request.resource.data.paidAt
+          )
+          || (
+            request.resource.data.grant == true
+            && request.resource.data.grantMonths in [6, 12]
+            && request.resource.data.grantedAt is int
+            && request.resource.data.grantedAt > 0
+            && request.resource.data.paidUntil is int
+            && request.resource.data.paidUntil > request.resource.data.grantedAt
+            && request.resource.data.amount_minor == 0
+            && !('paidAt' in request.resource.data)
+          )
+        ) || (
+          isOwner(uid)
+          && resource.data.status == 'applied'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['note', 'updatedAt'])
+          && request.resource.data.status == 'applied'
+        ) || (
+          isOwner(uid)
+          && (resource.data.status == 'declined' || resource.data.status == 'revoked')
+          && request.resource.data.status == 'applied'
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.note is string
+          && request.resource.data.note.size() >= 12
+        );
+    }
+
+    match /knownPublic/{uid} {
+      allow read: if isSignedIn();
+      allow create, update: if isOperator()
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() < 81
+        && request.resource.data.note is string
+        && request.resource.data.note.size() < 501
+        && request.resource.data.keys().hasOnly(['name', 'note', 'nameKey', 'until', 'updatedAt']);
+      allow delete: if isOperator();
+    }
+
+    match /originMarks/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn()
+        && request.resource.data.creatorUid == request.auth.uid
+        && request.resource.data.keys().size() < 24;
+    }
+
+    match /rightsDeclarations/{id} {
+      allow read: if isOperator() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.broadcastId is string
+        && request.resource.data.broadcastId.size() > 0
+        && request.resource.data.version is string
+        && request.resource.data.rightsStatus is string
+        && request.resource.data.keys().size() < 16;
+    }
+
+    match /rightsCatalog/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isOperator()
+        && request.resource.data.workTitle is string
+        && request.resource.data.status in ['cleared', 'restricted', 'reference']
+        && request.resource.data.keys().size() < 24;
+      allow delete: if isOperator();
+    }
+
+    match /rightsCases/{id} {
+      allow read: if isOperator() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.status == 'open'
+        && request.resource.data.authority == true
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 1
+        && request.resource.data.contact is string
+        && request.resource.data.work is string
+        && request.resource.data.claim is string
+        && request.resource.data.claim.size() > 8
+        && request.resource.data.keys().hasOnly(['uid','name','org','contact','work','broadcastId','claim','evidence','authority','status','createdAt','updatedAt']);
+      allow update: if isOperator()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','updatedAt','deskNote','restricted']);
+    }
+
+    match /toga/{uid} {
+      allow read: if isSignedIn();
+      // Own doc can be rewritten. Others may only bump counters by 1 and
+      // may not rename the row. First write from a viewer is a create of
+      // those same small numbers.
+      allow create: if isSignedIn() && (
+        (request.auth.uid == uid && ownerTogaCreateHonest())
+        || (
+          request.auth.uid != uid
+          && request.resource.data.keys().hasOnly(['viewsMonth', 'circleMonth', 'engageMonth', 'scoreMonth', 'viewsTotal',
+                      'monthKey', 'featuredBroadcastId', 'updatedAt',
+                      'mv_' + request.resource.data.monthKey,
+                      'mc_' + request.resource.data.monthKey,
+                      'me_' + request.resource.data.monthKey])
+          && numOf(request.resource.data, 'viewsMonth') <= 1
+          && numOf(request.resource.data, 'circleMonth') <= 1
+          && numOf(request.resource.data, 'engageMonth') <= 1
+          && numOf(request.resource.data, 'scoreMonth') <= 1
+          && numOf(request.resource.data, 'viewsTotal') <= 1
+          && numOf(request.resource.data, 'mv_' + request.resource.data.monthKey) <= 1
+          && numOf(request.resource.data, 'mc_' + request.resource.data.monthKey) <= 1
+          && numOf(request.resource.data, 'me_' + request.resource.data.monthKey) <= 1
+        )
+      );
+      allow update: if isSignedIn() && (
+        (request.auth.uid == uid && ownerTogaHonest())
+        || (
+          request.auth.uid != uid
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['viewsMonth', 'circleMonth', 'engageMonth', 'scoreMonth', 'viewsTotal',
+                      'monthKey', 'featuredBroadcastId', 'updatedAt',
+                      'mv_' + request.resource.data.monthKey,
+                      'mc_' + request.resource.data.monthKey,
+                      'me_' + request.resource.data.monthKey])
+          && bumpedAtMost('viewsMonth', 1)
+          && bumpedAtMost('circleMonth', 1)
+          && bumpedAtMost('engageMonth', 1)
+          && bumpedAtMost('scoreMonth', 1)
+          && bumpedAtMost('viewsTotal', 1)
+          && bumpedAtMost('mv_' + request.resource.data.monthKey, 1)
+          && bumpedAtMost('mc_' + request.resource.data.monthKey, 1)
+          && bumpedAtMost('me_' + request.resource.data.monthKey, 1)
+        )
+      );
+    }
+
+    /* ============================================================
+       COMMUNITY ECONOMY (spec §3, §45, §52, §62)
+
+       These collections are written ONLY by the naluno-economy Worker, using
+       a service account. A service account bypasses these rules entirely, so
+       denying all client writes here costs the backend nothing and is what
+       actually enforces "the frontend can never control economic values".
+
+       This is the difference between a system that SAYS it is
+       server-authoritative and one that IS. A fully compromised client — one
+       that has been rewritten to POST whatever it likes — still cannot mint
+       a contribution point, raise its own trust tier, or alter a balance.
+       The most it can do is ask the Worker for something, and the Worker
+       decides.
+
+       Reads are allowed where the data is legitimately the user's own or is
+       already public (spec §46: never expose another user's financial detail
+       or any fraud signal).
+       ============================================================ */
+
+    // Immutable engagement events. Readable by their actor for traceability
+    // (spec §6: "why did this user receive these points?"), never writable.
+    match /engagementEvents/{eventId} {
+      allow read: if isOperator() || (isSignedIn() && resource.data.actor_user_id == request.auth.uid);
+      allow write: if false;
+    }
+
+    // The contribution ledger IS the source of truth (spec §11). A user can
+    // audit their own rows; nobody can write one from a client.
+    match /contributionLedger/{ledgerId} {
+      allow read: if isOperator() || (isSignedIn() && resource.data.user_id == request.auth.uid);
+      allow write: if false;
+    }
+
+    // Cached rollup — rebuildable from the ledger, so a client read is
+    // convenience only and still never authoritative.
+    match /contributionProfiles/{uid} {
+      allow read: if isOperator() || (isSignedIn() && isOwner(uid));
+      /* The desk repairs totals from the ledger when the economy worker
+         cannot be reached. Members still cannot write a profile. */
+      allow write: if isOperator();
+    }
+
+    // Trust profiles hold fraud signals. Spec §13/§46 is explicit that the
+    // formula and its inputs must not be exposed — so clients cannot read
+    // these AT ALL. The coarse tier reaches the user only via the Worker's
+    // /v1/me response, which returns a label and nothing else.
+    match /trustProfiles/{uid} {
+      allow read: if isOperator();
+      allow write: if false;
+    }
+
+    // Community Value is a public, analytical, NON-monetary metric (§15/§16).
+    match /communityValue/{broadcastId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // Feature flags and economic rules are readable so the UI can hide
+    // unfinished features, but only an admin (via the Worker) may change them.
+    match /economyConfig/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isOperator();
+    }
+
+    /* Inbox the economy worker (or the signed-in person, via the worker
+       holding their ID token) uses when the Google service account cannot
+       write the authoritative ledger. No points/amount fields are allowed,
+       so a rewritten client cannot mint value here. */
+    match /economyInbox/{eventId} {
+      allow read: if isOperator() || (isSignedIn() && resource.data.actor_user_id == request.auth.uid);
+      allow create: if isSignedIn()
+        && request.resource.data.actor_user_id == request.auth.uid
+        && !('points' in request.resource.data)
+        && !('amount' in request.resource.data)
+        && !('eligible_points' in request.resource.data)
+        && !('contribution_points' in request.resource.data);
+      allow update, delete: if false;
+    }
+
+    /* Money-adjacent ledgers. Kept SEPARATE from each other by design
+       (spec §24, §25, §52 — never one merged wallet). Defined now so the
+       shape is fixed and auditable; all of it stays behind feature flags
+       with no real money until payment/KYC/AML is settled (spec §28). */
+    match /creatorSupport/{txId} {
+      allow read: if isOperator() || (isSignedIn() && (
+        resource.data.supporter_user_id == request.auth.uid ||
+        resource.data.creator_user_id == request.auth.uid
+      ));
+      allow write: if false;
+    }
+    match /creatorEarnings/{entryId} {
+      allow read: if isOperator() || (isSignedIn() && resource.data.creator_user_id == request.auth.uid);
+      allow write: if false;
+    }
+    match /communityRewards/{rewardId} {
+      allow read: if isOperator() || (isSignedIn() && resource.data.user_id == request.auth.uid);
+      allow write: if false;
+    }
+    match /rewardPools/{periodId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // Admin audit log (spec §33) — no silent financial modifications, and no
+    // client visibility into moderation/fraud decisions.
+    /* Admin password hashes. Written ONLY by the economy Worker via its
+       service account, which bypasses these rules. No client may read or
+       write them under any circumstance — not even the admin whose hash it
+       is. Reading is pointless (it is a PBKDF2 hash, not the password) and
+       writing would let a compromised browser set its own credential.
+
+       Recovery is deliberate and manual: delete adminCredentials/{uid} from
+       the Firestore console and the next visit offers to set a new password.
+       That requires project access, which is the right bar for a reset. */
+    /* Console password hashes. Written ONLY by the economy Worker via its
+       service account (bypasses these rules). No browser may read or write
+       them — not even the operator. Reset is: delete adminCredentials/{uid}
+       in the Firebase console, then set a new password on next visit. */
+    match /adminConsole/{uid} {
+      allow read, write: if false;
+    }
+    match /users/{uid}/consoleGate/{docId} {
+      allow read, write: if false;
+    }
+
+    /* Reports. Written ONLY by the economy Worker's service account, which
+       bypasses these rules — so the reason requirement cannot be sidestepped
+       by writing straight to Firestore from a rewritten client.
+
+       No client may read them at all. A reporter must not be able to check
+       whether their report was acted on (that invites retaliation), and a
+       reported person must never see who reported them. */
+    /* Session heartbeats. Written only by the Worker's service account.
+       No client reads them: presence reveals when a person is online, which
+       is exactly the kind of thing that should not be queryable by anyone
+       else in the app. */
+    /* Discovery. A person writes only their own taste and their own events.
+       Broadcast-wide features and the live model are compiled by the desk.
+       Follower count is not a field the ranker reads. */
+    match /recommendationEvents/{eventId} {
+      allow read: if isOperator() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.type is string
+        && request.resource.data.type.size() < 40
+        && request.resource.data.keys().size() < 16
+        && !request.resource.data.keys().hasAny(['body', 'text', 'message', 'ciphertext', 'plaintext']);
+      allow update, delete: if false;
+    }
+    match /userInterestProfile/{uid} {
+      allow read: if isOwner(uid) || isOperator();
+      allow create, update: if isOwner(uid)
+        && request.resource.data.keys().size() < 16;
+      allow delete: if isOwner(uid);
+    }
+    match /users/{uid}/lines/{lineId} {
+      allow read, delete: if isOwner(uid);
+      allow create, update: if isOwner(uid)
+        && request.resource.data.keys().size() < 12
+        && request.resource.data.text is string
+        && request.resource.data.text.size() > 0
+        && request.resource.data.text.size() < 280
+        && request.resource.data.broadcastId is string;
+    }
+    match /broadcastFeatures/{broadcastId} {
+      allow read: if isSignedIn();
+      allow write: if isOperator();
+    }
+    match /discoveryConfig/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isOperator();
+    }
+    match /recommendationExperiments/{expId} {
+      allow read, write: if isOperator();
+    }
+
+    match /presence/{docId} {
+      allow read: if isOperator();
+      allow write: if false;
+    }
+
+    /* Notices from Naluno (a Broadcast taken off the feed, the appeal,
+       and a one-time monetisation congratulations).
+       The economy Worker writes with its service account, which bypasses
+       rules. The signed-in operator may create only the monetisation
+       notice, with a fixed shape. The owner may read their own and mark
+       a safety notice appealed — nothing else. */
+    match /users/{uid}/notices/{noticeId} {
+      allow read: if isOwner(uid);
+      allow update: if isOwner(uid)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['appealed', 'appealedAt']);
+      allow create: if isOperator()
+        && noticeId.matches('^monetise_[A-Za-z0-9]{6,40}$')
+        && request.resource.data.keys().hasOnly(['kind', 'body', 'ts', 'at', 'by', 'month', 'appealable', 'notice_id'])
+        && request.resource.data.kind == 'monetisation_eligible'
+        && request.resource.data.body is string
+        && request.resource.data.body.size() > 20
+        && request.resource.data.body.size() < 500
+        && request.resource.data.by == request.auth.uid
+        && request.resource.data.ts is number
+        && request.resource.data.at is number
+        && request.resource.data.month is string
+        && request.resource.data.month.size() == 7
+        && request.resource.data.appealable == false
+        && request.resource.data.notice_id == noticeId;
+      allow delete: if false;
+    }
+
+    /* Mobile-money status. The worker writes it. A phone can read its own
+       and cannot mark itself paid. */
+    match /users/{uid}/payStatus/{id} {
+      allow read: if isOwner(uid);
+      allow write: if false;
+    }
+
+    match /reports/{reportId} {
+      allow read: if isOperator();
+      allow create: if isSignedIn()
+        && request.resource.data.reporter_uid == request.auth.uid
+        && request.resource.data.keys().size() < 20
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() > 9
+        && request.resource.data.reason.size() < 4001;
+      allow update: if isOperator();
+      allow delete: if false;
+    }
+
+    /* Trust & Safety. Public cases and an append-only audit.
+       Private Wireline / Band bodies are not a field here.
+       Nobody can delete the audit, including the operator. */
+    match /safetyCases/{caseId} {
+      allow read: if isOperator();
+      allow create: if isOperator()
+        || (isSignedIn()
+            && request.resource.data.contents_collected == false
+            && request.resource.data.auto_ban == false
+            && !request.resource.data.keys().hasAny(['body', 'message', 'ciphertext', 'plaintext', 'wire_text', 'transcript', 'chat', 'public_text']));
+      allow update: if isOperator()
+        && request.resource.data.auto_ban == false;
+      allow delete: if false;
+    }
+    match /safetyAudit/{auditId} {
+      allow read: if isOperator();
+      allow create: if isOperator()
+        || (isSignedIn() && request.resource.data.who == request.auth.uid);
+      allow update, delete: if false;
+    }
+    match /safetyAppeals/{appealId} {
+      allow read: if isOperator()
+        || (isSignedIn() && resource.data.appellant_uid == request.auth.uid);
+      allow create: if isSignedIn()
+        && request.resource.data.appellant_uid == request.auth.uid
+        && request.resource.data.note is string
+        && request.resource.data.note.size() > 9
+        && request.resource.data.note.size() < 2001;
+      allow update: if isOperator();
+      allow delete: if false;
+    }
+    match /safetyLedgers/{uid} {
+      allow read: if isOperator();
+      allow write: if false;
+    }
+    match /safetyClusters/{id} {
+      allow read: if isOperator();
+      allow write: if false;
+    }
+
+    /* Operator inbox. Public contact is written only by the economy
+       worker's service account (bypasses these rules), so a rewritten
+       page cannot dump spam here. A signed-in person may create their
+       own Compass request (delete-account / write-to-Naluno) as a
+       fallback when the worker cannot. Compass notebooks stay private
+       — this collection is not a dump of AI chat. */
+    match /deskMail/{id} {
+      allow read: if isOperator();
+      allow create: if isOperator()
+        || (isSignedIn()
+            && request.resource.data.uid == request.auth.uid
+            && request.resource.data.text is string
+            && request.resource.data.text.size() > 1
+            && request.resource.data.text.size() < 6001
+            && request.resource.data.status == 'new');
+      allow update: if isOperator();
+      allow delete: if false;
+    }
+
+    /* First-party ad inventory. The operator writes any unit. A creator may
+       create one paused unit from their own Broadcast (source broadcast,
+       counters at zero, unpaid). They cannot publish it or edit anyone
+       else's. Signed-in members read live units and may increment
+       impression, click, skip and completed-view counters only.
+       viewCompletes may be missing on older rows; it is not required to
+       already be a number. */
+    match /deskAds/{id} {
+      allow read: if isOperator()
+        || (isSignedIn() && resource.data.status == 'live')
+        || (isSignedIn() && resource.data.creatorUid == request.auth.uid);
+      allow create: if isOperator()
+        && request.resource.data.status in ['live', 'paused']
+        && request.resource.data.mediaUrl is string
+        && request.resource.data.mediaUrl.size() > 8
+        || (isSignedIn()
+            && request.resource.data.creatorUid == request.auth.uid
+            && request.resource.data.source == 'broadcast'
+            && request.resource.data.status == 'paused'
+            && request.resource.data.paymentStatus == 'unpaid'
+            && request.resource.data.spent == false
+            && request.resource.data.mediaUrl is string
+            && request.resource.data.mediaUrl.size() > 8
+            && request.resource.data.mediaUrl.size() < 2000
+            && request.resource.data.broadcastId is string
+            && request.resource.data.broadcastId.size() > 4
+            && request.resource.data.broadcastId.size() < 80
+            && request.resource.data.headline is string
+            && request.resource.data.headline.size() < 81
+            && request.resource.data.impressions == 0
+            && request.resource.data.clicks == 0
+            && request.resource.data.skips == 0
+            && request.resource.data.viewCompletes == 0
+            && request.resource.data.paidAed is number
+            && request.resource.data.paidAed >= 0
+            && request.resource.data.paidAed <= 1000000);
+      allow update: if isOperator()
+        || (isSignedIn()
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['impressions', 'clicks', 'skips', 'viewCompletes', 'updatedAt'])
+            && request.resource.data.status == resource.data.status
+            && request.resource.data.mediaUrl == resource.data.mediaUrl
+            && bumpedAtMost('impressions', 1)
+            && bumpedAtMost('clicks', 1)
+            && bumpedAtMost('skips', 1)
+            && bumpedAtMost('viewCompletes', 1));
+      allow delete: if isOperator();
+    }
+
+    match /adminCredentials/{uid} {
+      allow read, write: if false;
+    }
+    match /deskRate/{id} {
+      allow read, write: if false;
+    }
+
+    /* ============================================================
+       SPARK-LG SHARED LUGANDA BOOK
+
+       Found during an audit: this collection had NO rule at all, so every
+       cloud write was denied and the Luganda book has only ever existed
+       locally, per device. The app has been honestly saying so ("Cloud book
+       needs rules published") — that message was correct, it just never got
+       resolved. Teaching a word on one phone never reached anyone else and
+       did not survive a reinstall.
+
+       Honest limitation: SPARK_LG_GATE is a client-side passphrase, so rules
+       cannot verify it — anything shipped to a browser is readable by the
+       person holding it. These rules therefore enforce what they actually
+       can: you must be signed in, an entry must be stamped with your own
+       uid, and you may only remove your own entries. The gate remains a
+       deliberate speed bump in the UI, not a security boundary, and calling
+       it one would be misleading.
+       ============================================================ */
+    match /lexicon/{lang} {
+      allow read: if isSignedIn();
+      allow write: if false;   // the language doc itself is fixed
+      match /entries/{entryId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.by == request.auth.uid;
+        // Entries are append-only. Correcting one means adding a newer entry,
+        // which keeps the teaching history intact rather than letting it be
+        // silently rewritten.
+        allow update: if false;
+        allow delete: if isSignedIn() && resource.data.by == request.auth.uid;
+      }
+    }
+
+    /* Internal telemetry (metrics.js). Also had no rule, so every sampled
+       event was silently dropped — the .catch() there swallowed the denial,
+       which is why nothing ever surfaced. Write-only by design: a client has
+       no reason to read the telemetry stream back, and it must not become a
+       way to enumerate other people's activity. */
+    match /metrics/{entryId} {
+      allow read: if isOperator();
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    /* Public website + app-open pulse. No auth. No Callsign. Operator reads.
+       A session id is a random client token; updates must keep the same vid.
+       Daily rollups are increment-only counters. These numbers are
+       client-reported — treat them as traffic, not identity. */
+    match /siteSessions/{id} {
+      allow read: if isOperator();
+      allow create: if id.size() > 8 && id.size() < 90
+        && request.resource.data.vid is string
+        && request.resource.data.vid.size() > 8
+        && request.resource.data.vid.size() < 90
+        && request.resource.data.kind in ['web', 'app']
+        && request.resource.data.startedAt is int
+        && request.resource.data.ms is int
+        && request.resource.data.keys().size() < 40
+        && request.resource.data.keys().hasOnly(['vid', 'kind', 'path', 'land', 'trail', 'exit', 'source', 'hash', 'ref', 'utm', 'country', 'region', 'city', 'tz', 'lang', 'device', 'os', 'browser', 'screen', 'startedAt', 'lastAt', 'ms', 'openApp', 'contact', 'tune', 'invest', 'scroll', 'ua', 'standalone', 'conn', 'fresh', 'engaged', 'five', 'bot', 'self']);
+      allow update: if request.resource.data.vid == resource.data.vid
+        && request.resource.data.kind == resource.data.kind
+        && request.resource.data.startedAt == resource.data.startedAt
+        && request.resource.data.ms is int
+        && request.resource.data.ms >= resource.data.ms
+        && request.resource.data.ms < 172800000
+        && request.resource.data.keys().size() < 40
+        && request.resource.data.keys().hasOnly(['vid', 'kind', 'path', 'land', 'trail', 'exit', 'source', 'hash', 'ref', 'utm', 'country', 'region', 'city', 'tz', 'lang', 'device', 'os', 'browser', 'screen', 'startedAt', 'lastAt', 'ms', 'openApp', 'contact', 'tune', 'invest', 'scroll', 'ua', 'standalone', 'conn', 'fresh', 'engaged', 'five', 'bot', 'self']);
+      allow delete: if isOperator();
+    }
+    match /siteDays/{day} {
+      allow read: if isOperator();
+      allow create: if day.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && request.resource.data.keys().hasOnly(['updatedAt', 'visits', 'uniques', 'ms', 'openApp', 'appOpens', 'contact', 'tune', 'invest', 'engaged', 'continuations', 'contIds', 'bots', 'selfs', 'countries', 'devices', 'refs', 'paths', 'sources'])
+        && numOf(request.resource.data, 'visits') <= 1
+        && numOf(request.resource.data, 'uniques') <= 1
+        && numOf(request.resource.data, 'openApp') <= 1
+        && numOf(request.resource.data, 'appOpens') <= 1
+        && numOf(request.resource.data, 'contact') <= 1
+        && numOf(request.resource.data, 'tune') <= 1
+        && numOf(request.resource.data, 'invest') <= 1
+        && numOf(request.resource.data, 'engaged') <= 1
+        && numOf(request.resource.data, 'continuations') <= 1
+        && contIdsOk(1)
+        && (numOf(request.resource.data, 'ms') == 0 || dayHasAttentionSource())
+        && request.resource.data.keys().size() < 40;
+      allow update: if day.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && request.resource.data.keys().size() < 80
+        && bumpedAtMost('visits', 1)
+        && bumpedAtMost('uniques', 1)
+        && bumpedAtMost('openApp', 1)
+        && bumpedAtMost('appOpens', 1)
+        && bumpedAtMost('contact', 1)
+        && bumpedAtMost('tune', 1)
+        && bumpedAtMost('invest', 1)
+        && bumpedAtMost('engaged', 1)
+        && bumpedAtMost('continuations', 1)
+        && contIdsOk((('contIds' in resource.data && resource.data.contIds is list) ? resource.data.contIds.size() : 0) + 1)
+        && numOf(request.resource.data, 'ms') >= numOf(resource.data, 'ms')
+        && (numOf(request.resource.data, 'ms') == numOf(resource.data, 'ms') || dayHasAttentionSource());
+      allow delete: if isOperator();
+    }
+
+    match /deskOperators/{uid} {
+      allow get: if isSuper() || (isSignedIn() && request.auth.uid == uid);
+      allow list: if isSuper();
+      allow create, update: if isSuper()
+        && uid != 'ibMOMY6Q3sVTCxIrwO2FGk43zw93'
+        && request.resource.data.email is string
+        && request.resource.data.roles is list
+        && request.resource.data.roles.size() < 40
+        && request.resource.data.revoked is bool;
+      allow delete: if isSuper() && uid != 'ibMOMY6Q3sVTCxIrwO2FGk43zw93';
+    }
+
+    /* Money typed in the console, with what it went to. Operators only. */
+    match /deskSpend/{id} {
+      allow read: if isOperator();
+      allow create: if isOperator()
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0
+        && request.resource.data.amount < 100000000
+        && request.resource.data.purpose is string
+        && request.resource.data.purpose.size() >= 2
+        && request.resource.data.purpose.size() < 201
+        && request.resource.data.at is number
+        && request.resource.data.by == request.auth.uid;
+      allow update: if false;
+      allow delete: if isOperator();
+    }
+
+    /* Stripe Connect readiness. Written by the economy worker. The console only reads it. */
+    match /payoutAccounts/{uid} {
+      allow read: if isOperator();
+      allow write: if false;
+    }
+
+    /* How Naluno can pay a creator over Uganda mobile money.
+       The owner may save a number. They cannot mark themselves paid. */
+    match /creatorPayoutMethods/{uid} {
+      allow read: if isOwner(uid) || isOperator();
+      allow create, update: if isOwner(uid)
+        && request.resource.data.keys().hasOnly(['phone', 'network', 'phone_tail', 'updatedAt'])
+        && request.resource.data.phone is string
+        && request.resource.data.phone.matches('^2567[0-9]{8}$')
+        && request.resource.data.network in ['mtn', 'airtel']
+        && request.resource.data.phone_tail is string
+        && request.resource.data.phone_tail.size() == 4
+        && request.resource.data.updatedAt is number;
+      allow delete: if isOwner(uid);
+    }
+
+    /* Who Naluno will pay when the monetisation phase is on.
+       The operator records eligibility and that the note was sent.
+       Nobody writes an amount or a paid flag here. */
+    match /creatorMonetisation/{uid} {
+      allow read: if isOwner(uid) || isOperator();
+      allow create, update: if isOperator()
+        && request.resource.data.keys().hasOnly(['uid', 'eligible', 'score', 'monthKey', 'congratulatedAt', 'congratulatedBy', 'handle', 'name', 'broadcasts'])
+        && request.resource.data.uid == uid
+        && request.resource.data.eligible is bool
+        && request.resource.data.score is number
+        && request.resource.data.monthKey is string
+        && request.resource.data.monthKey.size() == 7
+        && request.resource.data.congratulatedAt is number
+        && request.resource.data.congratulatedBy is string
+        && request.resource.data.congratulatedBy.size() > 5
+        && request.resource.data.congratulatedBy.size() < 60
+        && request.resource.data.broadcasts is number;
+      allow delete: if false;
+    }
+
+    match /adminAudit/{id} {
+      allow read, create: if isOperator();
+      allow update, delete: if false;
+    }
+
+    /* Close / restore history. Operator reads. The owner may record their
+       own close. Restore is operator-only. */
+    match /accountEvents/{id} {
+      allow read: if isOperator();
+      allow create: if isOperator()
+        || (isSignedIn()
+            && request.resource.data.uid == request.auth.uid
+            && request.resource.data.action == 'close'
+            && request.resource.data.kind == 'self'
+            && request.resource.data.reason is string
+            && request.resource.data.reason.size() > 7
+            && request.resource.data.reason.size() < 2001);
+      allow update, delete: if false;
+    }
+
+    /* Counts and names only. A message body is not a field that can be written. */
+    match /traffic/{id} {
+      allow create: if isSignedIn()
+        && request.resource.data.actorUid == request.auth.uid
+        && request.resource.data.kind in ['call', 'video', 'message']
+        && request.resource.data.keys().hasOnly(['kind', 'ok', 'actorUid', 'peerUid', 'actorName', 'peerName', 'seconds', 'at', 'status', 'title'])
+        && request.resource.data.actorName is string
+        && request.resource.data.actorName.size() < 80
+        && request.resource.data.at is number;
+      allow read: if isOperator() || (
+        isSignedIn() && (
+          resource.data.actorUid == request.auth.uid
+          || resource.data.peerUid == request.auth.uid
+        )
+      );
+      allow update, delete: if false;
+    }
+
+    /* Luganda recordings the operator feeds. Listen uses these
+       instead of the English phone voice when the line is covered.
+       The clip is short. The text is the words that were spoken. */
+    match /lgVoice/{id} {
+      allow read: if isSignedIn();
+      allow create: if isOperator()
+        && request.resource.data.text is string
+        && request.resource.data.text.size() > 0
+        && request.resource.data.text.size() < 400
+        && request.resource.data.norm is string
+        && request.resource.data.norm.size() < 400
+        && request.resource.data.audio is string
+        && request.resource.data.audio.size() > 32
+        && request.resource.data.audio.size() < 700000
+        && request.resource.data.at is number
+        && request.resource.data.by == request.auth.uid
+        && request.resource.data.keys().hasOnly(['text', 'norm', 'audio', 'at', 'by']);
+      allow delete: if isOperator();
+      allow update: if false;
+    }
+
+    /* Sign-in history written by the signed-in person about themselves.
+       A rejected password before a session cannot be stored here.
+       Nobody, including the desk, can edit or delete a row. */
+    match /securityEvents/{id} {
+      allow read: if isOperator();
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.kind in ['login', 'logout', 'new_device', 'session_start', 'session_end', 'password_reset', 'recovery']
+        && request.resource.data.at is number
+        && request.resource.data.ok is bool
+        && request.resource.data.deviceKey is string
+        && request.resource.data.deviceKey.size() > 0
+        && request.resource.data.deviceKey.size() < 80
+        && request.resource.data.deviceLabel is string
+        && request.resource.data.deviceLabel.size() < 80
+        && request.resource.data.sessionKey is string
+        && request.resource.data.sessionKey.size() < 48
+        && request.resource.data.detail is string
+        && request.resource.data.detail.size() < 140
+        && request.resource.data.keys().hasOnly(['uid', 'kind', 'at', 'deviceKey', 'deviceLabel', 'sessionKey', 'ok', 'detail', 'retainUntil'])
+        && noPrivateLegal();
+      allow update, delete: if false;
+    }
+
+    /* Incident, legal, emergency, security, evidence, disclosure.
+       The desk writes them. Nobody can delete them. */
+    match /complianceSeq/{id} {
+      allow read: if isOperator();
+      allow create, update: if isOperator()
+        && request.resource.data.n is int
+        && request.resource.data.n > 0
+        && request.resource.data.n < 10000000;
+      allow delete: if false;
+    }
+    match /incidents/{id} {
+      allow read: if isOperator();
+      allow create, update: if isOperator() && noPrivateLegal();
+      allow delete: if false;
+    }
+    match /incidentNotes/{id} {
+      allow read: if isOperator();
+      allow create: if isOperator()
+        && request.resource.data.incidentId is string
+        && request.resource.data.text is string
+        && request.resource.data.text.size() > 0
+        && request.resource.data.text.size() < 600
+        && request.resource.data.by == request.auth.uid;
+      allow update, delete: if false;
+    }
+    match /legalRequests/{id} {
+      allow read: if isOperator();
+      allow create, update: if isOperator() && noPrivateLegal();
+      allow delete: if false;
+    }
+    match /emergencyCases/{id} {
+      allow read: if isOperator();
+      allow create, update: if isOperator() && noPrivateLegal();
+      allow delete: if false;
+    }
+    match /securityIncidents/{id} {
+      allow read: if isOperator();
+      allow create, update: if isOperator() && noPrivateLegal();
+      allow delete: if false;
+    }
+    match /evidenceHolds/{id} {
+      allow read: if isOperator();
+      allow create: if isOperator() && noPrivateLegal()
+        && request.resource.data.hash is string
+        && request.resource.data.hash.size() >= 8
+        && request.resource.data.originalPath is string;
+      allow update: if isOperator()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['releasedAt', 'releasedBy', 'releaseNote', 'status']);
+      allow delete: if false;
+    }
+    match /evidenceAccess/{id} {
+      allow read: if isOperator();
+      allow create: if isOperator()
+        && request.resource.data.holdId is string
+        && request.resource.data.by == request.auth.uid
+        && request.resource.data.why is string
+        && request.resource.data.why.size() < 80;
+      allow update, delete: if false;
+    }
+    match /disclosures/{id} {
+      allow read: if isOperator();
+      allow create: if isOperator() && noPrivateLegal()
+        && request.resource.data.hash is string
+        && request.resource.data.by == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    /* The export gate. The superadmin writes the tab password and
+       each selected admin's own password. An admin can read only
+       their own password record, to check what they typed. */
+    match /deskExport/{id} {
+      allow read: if isOperator();
+      allow create, update, delete: if isSuper();
+    }
+    match /deskExportPasses/{uid} {
+      allow get: if isSuper() || (isSignedIn() && request.auth.uid == uid);
+      allow list: if isSuper();
+      allow create, update, delete: if isSuper();
+    }
+
+    /* Legal uses the same lock as Export. The superadmin writes the tab
+       password and each admin's own password. An admin can read only
+       their own password record. Nobody else can open the tab. */
+    match /deskLegal/{id} {
+      allow read: if isOperator();
+      allow create, update, delete: if isSuper();
+    }
+    match /deskLegalPasses/{uid} {
+      allow get: if isSuper() || (isSignedIn() && request.auth.uid == uid);
+      allow list: if isSuper();
+      allow create, update, delete: if isSuper();
+    }
+
+    /* One row per person per day. The owner writes only their own day.
+       The desk reads the set to see who came back. */
+    match /presenceDays/{id} {
+      allow read: if isOperator();
+      allow create, update: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.day is string
+        && request.resource.data.day.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && id == request.auth.uid + '_' + request.resource.data.day
+        && request.resource.data.lastAt is number;
+      allow delete: if false;
+    }
+
+    /* The sender records that an alert was handed to the push service.
+       The phone that received it records arrival and a tap.
+       Neither side can write the other's row. */
+    match /pushPings/{id} {
+      allow read: if isOperator();
+      allow create: if isSignedIn()
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.toUid is string
+        && request.resource.data.pingId == id
+        && request.resource.data.status in ['handed', 'failed']
+        && request.resource.data.sentAt is number;
+      allow update, delete: if false;
+    }
+    match /pushReceipts/{id} {
+      allow read: if isOperator();
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.arrivedAt is number
+        && request.resource.data.pingId is string;
+      allow update: if isSignedIn()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['openedAt', 'arrivedAt', 'pingId', 'type']);
+      allow delete: if false;
+    }
+
+    /* Paid only by the service account, after a signed payment notice.
+       A phone cannot mark itself paid. */
+    match /payments/{id} {
+      allow read: if isOperator();
+      allow write: if false;
+    }
+    match /liveRooms/{id} {
+      allow read: if isOperator();
+      allow write: if false;
+    }
+    /* A real invoice from Cloudflare, Firebase, Stripe, or a typed bill.
+       The phone cannot invent one. The desk can record one. The service
+       account can write one when a billing token is connected. */
+    match /vendorInvoices/{id} {
+      allow read: if isOperator();
+      allow write: if isOperator();
+    }
+
+    match /users/{uid}/circle/{memberUid} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && (isOwner(uid) || memberUid == request.auth.uid);
+    }
+
+    /* Collection-group read of vaults is desk-only (search by recovery email).
+       The owner still uses users/{uid}/vault/{id} above. */
+    match /{path=**}/vault/{id} {
+      allow read: if isOperator();
+    }
+  }
+}

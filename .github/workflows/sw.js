@@ -1,0 +1,821 @@
+// Naluno service worker — offline shell + background call push.
+// v190: 09.21k Screen stops indoor sex-with-faces; Report sheet sits above Broadcast.
+// v189: 09.21j Broadcast publish: Screen-allow lists at create; economy proxy reaches the worker.
+// v188: 09.21g Screen: beach bikini goes out; explicit close-up is stopped; videos sample later stills.
+// v187: 09.21f Naluno Screen — first-party stills at upload (allow / hold / block).
+// v185: 09.21c reserved handles / protected identity.
+// v180: 09.18j ads prepaid/used/left + pause when spent; console live; bspace closes feed under-layer; no Sound on chip.
+// v179: 09.18i Toga tab paints; Band invite toggles; Wireline closed invites stay gone.
+// v178: 09.18h first-run: nav taglines, Toga as a Broadcast header, weather opt-in, Spark on Frequencies.
+// v177: 09.18f ringtone picker: every music file (no format filter).
+// v176: 09.18e full-song ringtone (IndexedDB + Files picker, not the 4MB sound sheet).
+// v175: 09.18d one missed-call chip per call; FCM onBackgroundMessage so a backgrounded web app still rings.
+// v173: 09.18a close Callsign, restore, violation close, friendly permissions.
+// v172: 09.15d Band vibe wrap, smooth tune-in switch, invite press, Signal text styles.
+// v171: 09.15c empty states centered; desk reads live app build.
+// v170: 09.15b Wireline kebab → Chat backup / Chat history (on-phone copy, no Drive).
+// v169: 09.15a Wireline IndexedDB store + mailbox drops.
+// v168: 09.14c Strand chrome stays with the Strand; was-live pin expires at 24h.
+// v167: 09.14b Creator Support is Broadcast-only (below Circle). Nav tab gone.
+// v166: 09.13s Creator Support tab always in the app; flag makes it active/inactive.
+
+// v160: 09.11d pitch surface — landing proof, OG, public privacy/terms.
+// v159: 09.11c Band audio/video drop in immediately (placeholder + client ts).
+// v158: 09.11b desk clock follows this device; GPS weather; Signals + Find pins reported.
+// v157: 09.11a economy worker intercept — flags are never "degraded" when served.
+// v156: 09.10c Control Centre talks to this worker; admin clock is local, never Z.
+// v155: 09.10a Control Centre talks to this worker; flags on Firestore; local admin clock.
+// v154: 09.08d Spark Wiktionary Luganda + more languages, same live engines.
+// v153: 09.08c console password on the account (Firestore), not this phone.
+// v152: 09.08b admin worker errors shown honestly.
+// v151: 09.08a admin desk actually changes window (local password + cache bust).
+// v150: 09.07a Control Centre at /admin/, never cached, gone from the member app.
+// v149: 09.06b /app/ firebase-config path + living site. App shell is /app/.
+// v148: site at / , app at /app/.
+// v147: 09.06a background ring while the web app is open but unused.
+// v146: 09.05b shell (GitHub).
+// v145: 09.05b Wireline E2E (WhatsApp fan-out + HKDF + live public keys), 3D vibes, no onboard flash.
+// v144: 09.05a first-run welcome, real Privacy/Terms, Next/Skip how-it-works tour.
+// v143: 09.04f diagnostics in admin, weather follows Find Naluno live coords.
+// v142: 09.04e Band 2h wipe is a hard delete + unreadability cutoff, not a hide.
+// v141: 09.04d crop bake, band wipe, wireline envelopes, live auto-join, community count.
+// v140: 09.04c avatars via https+img overlay; call Decline is Decline; stop ringing after hangup; profile photoUrl.
+// v139: 09.04b lobby always opens; sticky column (search/strand); band wipe sticks; avatars; swipe pauses media.
+// v138: 09.04a Signal playback no dual-load (AbortError 20 stutter); all video types on pickers.
+// v137: 09.03e Samsung overlay pickers, live WebRTC order, live push not a call, SW ?v= fallback.
+// v136: 09.03d Signal videos use the working Broadcast upload pipe (Signal /b/init 401).
+// v133: 09.03a upload unblock — wake-lock cannot stall publish; swipe cannot steal New Broadcast; Signal composer skipped by exclusive play.
+// v115: 28y Toga name/score no overlap, Delete centered, Signal exclusive skip + preview pause.
+// v114: 28x Toga names slide without view-switch, Toga photos, swipe-left wraps to Toga home, Was live stays on real lives.
+// v113: 28w launcher icon restored, bspace tabs don't steal swipe, share copy off WhatsApp, live camera skipped by exclusive play.
+// v111: 28u web splash is a dark field — Chrome must not paint icon-192.png first.
+// v110: 28t For You-only home, sticky persist, fill-screen chrome idle, exclusive play, strand back stays.
+// v106: 28p swipe L/R switches For You and My Broadcasts.
+// v105: 28o no PNG splash — drawing logo is first paint.
+// v104: 28n drawing logo replaces PNG splash, 3s then enter.
+// v103: 28m entry logo sonar animation.
+// v102: 28l landscape expand + rail glow + signal session lock.
+// v101: 28k flip flicker — keep decoder, stable stage, no video Ken Burns.
+// v100: 28j living shell — aurora, nav glow, atmosphere-tied tint. Architecture untouched.
+// v232: 28d console-safe worker gate, price book at running rate, Signals refresh/holds/escape, fast versioned open, truthful economy proxy.
+// v99: 28i Search lives in sticky For You / My Broadcasts bar.
+// v98: 28h Toga always open, names slide, swipe-up cue.
+// v97: 28g landscape toggle on feed + bspace 16:9.
+// v96: 28f entry page then full-phone video; flip unchanged.
+// v95: 28e full-screen snap flip feed, S23 enforced.
+// v94: 28d S23 motion fallback — pulse survives Remove animations, previews no longer gated.
+// v93: 28c one-column strand preview feed + visible signal edge pulse.
+// v92: 28b signal edge pulse + broadcast scroll reveal.
+// v91: 28a Broadcast living-room visual refresh (Signal create tile, Toga banner).
+// v89: 25c media-session lock + signal thumbs + live video/push + strand next + end restart. v88: 25b Broadcast off vault + Worker edge cache + onerror off-by-one. v87: 24c + vault in-use LRU + shared Signal upload + rules + storage shim + live notif + toga txn + ice unsub + cam climb gen. 23q folders + Toga wall of fame + 23n play, plus media identity on 23q.
+// v83: Strand folders at Broadcast entry.
+// v79: same-origin only (never gstatic); full latest shell.
+// v73: same-origin only; video/* pick; call camera max climb.
+// v248: attention is only kept when a visit, an app open, or a continued session owns it. Join date and Find pin stay on the person.
+// v284: 10.05f Android floats a video call on leaving; Wireline alerts through Naluno's worker; a call answers once per tap.
+// v285: 10.05g voices keep reading (several makers, scheduled, trimmed), Luganda spoken from its own sounds, test alert, stale stamps.
+const CACHE_NAME = 'naluno-shell-v296';
+const APP_BUILD = '20261007c';
+const CORE_ASSETS = [
+  '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
+  '/firebase-config.js', '/css/app.css',
+  '/js/ads.js',
+  '/js/core.js', '/js/vault.js', '/js/metrics.js', '/js/data.js', '/js/crypto.js', '/js/atmosphere.js',
+  '/js/pwa.js', '/js/gestures.js', '/js/mood-notes.json', '/js/auth.js', '/js/qrcode.js', '/js/spark.js', '/js/camera.js', '/js/call-filters.js', '/js/calls.js', '/js/call-pip.js', '/js/media-vault.js', '/js/chat-store.js', '/js/wire-mailbox.js', '/js/wireline.js',
+  '/js/lifeline.js', '/js/lifeline-wire.js',
+  '/js/band-room.js', '/js/band-list.js', '/js/broadcast-core.js', '/js/broadcast-space.js',
+  '/js/broadcast-live.js', '/js/live-preview.js', '/js/broadcast-composer.js', '/js/broadcast-upload.js',
+  '/js/screen.js', '/js/origin.js', '/js/strand.js', '/js/circle.js',
+  '/js/discover-engine.js', '/js/discover.js', '/js/room-threads.js', '/js/pass-on.js', '/js/lg-books.js', '/js/lg-speak.js', '/js/lg-voice.js', '/js/traffic.js', '/js/naluno-voices.js', '/js/naluno-voice-worker.js', '/js/naluno-voice-engine.js', '/js/naluno-af-engine.js', '/js/known.js',
+  '/js/signal-core.js', '/js/signal-ui.js', '/js/broadcast-glance.js', '/js/signal-public.js', '/js/signal-social.js', '/js/live-sync.js', '/js/broadcast-offline.js',
+  '/js/sfu-live.js', '/js/compass-brain.js', '/js/compass.js', '/js/linkify.js', '/js/weather.js', '/js/beacon.js', '/js/find.js', '/js/profile.js', '/js/notifications.js',
+  '/js/ice-core.js', '/js/compat-lock.js', '/js/keep-alive.js', '/js/media-contain.js',
+  '/js/diagnostics.js', '/js/currency.js', '/js/economy.js', '/js/economy-ui.js', '/js/onboard.js', '/js/presence.js', '/js/session-log.js', '/js/push-receipt.js', '/js/handle-guard.js',
+  '/js/trust-legal.js', '/js/security-events.js',
+];
+
+self.addEventListener('install', event=>{
+  self.skipWaiting();
+  event.waitUntil(
+    caches.open(CACHE_NAME).then(cache =>
+      /* 29h: fetch past the browser's own cache, so a new version never
+         stores an old copy of the app page (which brought the old page, and
+         the update banner, back after the update). */
+      Promise.all(CORE_ASSETS.map(u => cache.add(new Request(u, { cache: 'reload' })).catch(()=>{})))
+    )
+  );
+});
+
+self.addEventListener('activate', event=>{
+  self.clients.claim();
+  event.waitUntil(
+    caches.keys().then(names => Promise.all(
+      names.filter(function (n) {
+        return n !== CACHE_NAME && n !== 'naluno-voices' && n.indexOf('naluno-offline-broadcasts') !== 0;
+      }).map(n => caches.delete(n))
+    ))
+  );
+});
+
+const NALUNO_ECON_VER = '2.2.0-mail';
+const NALUNO_ECON_FLAGS = {
+  broadcast_enabled: true,
+  signals_enabled: true,
+  toga_enabled: true,
+  contribution_enabled: true,
+  community_value_enabled: true,
+  creator_support_enabled: false,
+  community_rewards_enabled: false,
+  real_payouts_enabled: false,
+  content_hub_enabled: false,
+  sports_enabled: false,
+  movies_enabled: false,
+};
+const NALUNO_FB_KEY = 'AIzaSyD0j1W7-gFJqbMd6rz4kMhQd5AiB8B2ox0';
+const NALUNO_FB_PROJECT = 'naluno-28a00';
+
+function econCorsHeaders(){
+  return {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Naluno-Admin',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Max-Age': '86400',
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-store',
+  };
+}
+function econJson(body, status){
+  return new Response(JSON.stringify(body), { status: status || 200, headers: econCorsHeaders() });
+}
+
+async function econLookupUid(idToken){
+  if(!idToken) return null;
+  try{
+    const res = await fetch('https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=' + encodeURIComponent(NALUNO_FB_KEY), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken: idToken }),
+    });
+    if(!res.ok) return null;
+    const data = await res.json();
+    return data.users && data.users[0] && data.users[0].localId || null;
+  }catch(_){ return null; }
+}
+
+function econBearer(request){
+  const h = request.headers.get('Authorization') || '';
+  const m = /^Bearer\s+(.+)$/i.exec(h.trim());
+  return m ? m[1].trim() : '';
+}
+
+async function econWriteMetric(idToken, uid, payload){
+  const id = String(payload.event_id || ('evt_' + Date.now())).slice(0, 80);
+  const url = 'https://firestore.googleapis.com/v1/projects/' + NALUNO_FB_PROJECT
+    + '/databases/(default)/documents/metrics/' + encodeURIComponent(id);
+  const fields = {
+    uid: { stringValue: uid },
+    name: { stringValue: 'economy.' + String(payload.event_type || '') },
+    event_type: { stringValue: String(payload.event_type || '') },
+    event_id: { stringValue: id },
+    target_id: { stringValue: String(payload.target_id || '') },
+    broadcast_id: { stringValue: String(payload.broadcast_id || '') },
+    at: { integerValue: String(Date.now()) },
+  };
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: { Authorization: 'Bearer ' + idToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields: fields }),
+  });
+  return res.ok;
+}
+
+async function handleEconomyFetch(request){
+  const url = new URL(request.url);
+  let path = url.pathname || '/';
+  if(path.indexOf('/__naluno-economy') === 0) path = path.slice('/__naluno-economy'.length) || '/';
+  if(request.method === 'OPTIONS') return new Response(null, { status: 204, headers: econCorsHeaders() });
+
+  if(path === '/health'){
+    /* The real worker's answer, unchanged. When it cannot be reached, say
+       so — this used to report values it had not checked. */
+    try{
+      const r = await fetch('https://naluno-economy.naluno.workers.dev/health', { cache: 'no-store' });
+      const body = await r.json().catch(function(){ return null; });
+      if(body) return econJson(Object.assign({ via: 'naluno-sw' }, body), r.status);
+    }catch(_){}
+    return econJson({ ok: false, service: 'naluno-economy', error: 'unreachable', via: 'naluno-sw' }, 503);
+  }
+
+  if(path === '/v1/flags'){
+    let flags = Object.assign({}, NALUNO_ECON_FLAGS);
+    let degraded = true;
+    try{
+      const r = await fetch('https://naluno-economy.naluno.workers.dev/v1/flags', { cache: 'no-store' });
+      const b = await r.json().catch(function(){ return {}; });
+      if(b && b.flags){ flags = Object.assign(flags, b.flags); degraded = false; }
+    }catch(_){}
+    return econJson({ ok: true, flags: flags, degraded: degraded, persist: 'user-token', source: 'naluno-sw' });
+  }
+
+  if(path === '/v1/events' && request.method === 'POST'){
+    /* Pass the event to the worker and return ITS answer. This used to say
+       "COUNTED" before the worker had replied, so a rejected or lost event
+       was never retried by the app's queue. */
+    const forward = request.clone();
+    const token = econBearer(request);
+    const body = await request.clone().json().catch(function(){ return {}; });
+    try{
+      econLookupUid(token).then(function(uid){
+        if(uid) return econWriteMetric(token, uid, body);
+      }).catch(function(){});
+    }catch(_){}
+    try{
+      const ctl = new AbortController();
+      const t = setTimeout(function(){ ctl.abort(); }, 10000);
+      const r = await fetch(forward, { signal: ctl.signal }).finally(function(){ clearTimeout(t); });
+      const out = new Headers(r.headers);
+      out.set('Access-Control-Allow-Origin', '*');
+      return new Response(r.body, { status: r.status, statusText: r.statusText, headers: out });
+    }catch(_){
+      return econJson({ ok: false, error: 'Could not reach the economy service. It will be retried.' }, 503);
+    }
+  }
+
+  if(path === '/v1/presence' && request.method === 'POST'){
+    /* Forwarded now (the worker names its fields, so it can no longer
+       overwrite a profile). Presence is best-effort: a failure is quiet. */
+    try{
+      const r = await fetch(request.clone());
+      const out = new Headers(r.headers);
+      out.set('Access-Control-Allow-Origin', '*');
+      return new Response(r.body, { status: r.status, statusText: r.statusText, headers: out });
+    }catch(_){
+      return econJson({ ok: false, error: 'unreachable' }, 503);
+    }
+  }
+
+  if(path === '/v1/report' && request.method === 'POST'){
+    try{
+      const r = await fetch(request);
+      return r;
+    }catch(_){
+      return econJson({ ok: false, error: 'Could not send that report.' }, 502);
+    }
+  }
+
+  if(path === '/v1/mail' && request.method === 'POST'){
+    try{
+      const r = await fetch(request);
+      return r;
+    }catch(_){
+      return econJson({ ok: false, error: 'Could not send just now. Try again in a minute.' }, 502);
+    }
+  }
+
+  try{
+    const dest = 'https://naluno-economy.naluno.workers.dev' + path + (url.search || '');
+    const hdrs = new Headers(request.headers);
+    try{ hdrs.delete('host'); }catch(_){}
+    const init = { method: request.method, headers: hdrs };
+    if(request.method !== 'GET' && request.method !== 'HEAD'){
+      init.body = await request.arrayBuffer();
+    }
+    const r = await fetch(dest, init);
+    const out = new Headers(r.headers);
+    out.set('Access-Control-Allow-Origin', '*');
+    return new Response(r.body, { status: r.status, statusText: r.statusText, headers: out });
+  }catch(_){
+    /* Offline: say so. A made-up zero looks like a real number. */
+    return econJson({ ok: false, error: 'unreachable' }, 503);
+  }
+}
+
+self.addEventListener('fetch', event=>{
+  const econUrl = (function(){
+    try { return new URL(event.request.url); } catch(_){ return null; }
+  })();
+  if(econUrl && (
+    econUrl.hostname === 'naluno-economy.naluno.workers.dev' ||
+    econUrl.pathname.indexOf('/__naluno-economy') === 0
+  )){
+    event.respondWith(handleEconomyFetch(event.request));
+    return;
+  }
+  if(event.request.method !== 'GET') return;
+  // Version checks and hard reloads must hit the network, not the SW cache.
+  if(event.request.cache === 'no-store' || event.request.cache === 'reload') return;
+  const url = new URL(event.request.url);
+  const isSameOrigin = url.origin === self.location.origin;
+  // NEVER intercept Firebase CDN (gstatic). A 2.5s timeout on large SDK scripts
+  // leaves firebase undefined on mobile → "Sign-in is not ready yet."
+  // Sign-in needs the network anyway; let the browser load CDN scripts normally.
+  if(!isSameOrigin) return;
+  /* 06f: Google's sign-in hand-back pages (/__/auth/, /__/firebase/) are
+     always fetched fresh and never answered with the app shell. */
+  if(url.pathname.indexOf('/__/') === 0) return;
+  /* The on-device explicit-content model (/models/nsfw/) is a 2.6 MB binary
+     shard plus its manifest. It must not go through the shell-cache path
+     below: that path wraps fetches in a short network timeout meant for small
+     app files, and a large first download would be cut off — the model would
+     fail to load and every upload would silently fall back to the weaker
+     heuristic. Passed straight to the network; the browser's HTTP cache still
+     keeps it, so it downloads once. */
+  if(url.pathname.indexOf('/models/') === 0) return;
+  /* The on-device voices are ~40 MB (weights + wasm). The short timeout
+     below is for small app files and would cut the first download off.
+     The browser keeps them, and the page also stores a copy in the
+     naluno-voices cache, which activate does not delete. */
+  if(url.pathname.indexOf('/voices/') === 0) return;
+
+  const path = url.pathname || '';
+  const isAppCode = path.includes('/js/') || path.endsWith('.js') ||
+    path.includes('/css/') || path.endsWith('.css') || path.endsWith('firebase-config.js');
+  const isNav = event.request.mode === 'navigate' || path.endsWith('.html') || path.endsWith('/');
+  const bare = url.origin + url.pathname;
+
+  /* The marketing site now lives at "/" and the app at "/app/".
+     This service worker was registered at scope "/" long before that, and its
+     navigation handling is cache-first — so on every device that already has
+     Naluno installed it would happily serve the CACHED APP SHELL at the new
+     website address. The site would look like it had never been deployed, and
+     no amount of re-uploading would change it.
+
+     The root document is therefore always network-first and is never served
+     from, or written to, the shell cache. Everything under /app/ keeps the
+     existing cache-first behaviour untouched, which is what makes the app
+     open instantly and work offline. */
+  const isSiteRoot = url.origin === self.location.origin &&
+    (path === '/' || path === '/index.html');
+  const isAdminNav = url.origin === self.location.origin &&
+    (path === '/admin' || path === '/admin/' || path.indexOf('/admin/') === 0);
+  /* Control Centre: network-first, then the last good copy. Never fall
+     back to the member-app shell, and never invent a 404 when the
+     operator is briefly offline — this worker is supposed to stay
+     connected to the desk. */
+  if(isAdminNav){
+    event.respondWith((async ()=>{
+      try{
+        const fresh = await fetch(event.request, { cache: 'no-store' });
+        if(fresh && fresh.ok){
+          try{
+            const copy = fresh.clone();
+            const cache = await caches.open(CACHE_NAME);
+            cache.put(new Request(self.location.origin + '/admin/'), copy.clone()).catch(function(){});
+            cache.put(event.request, copy).catch(function(){});
+          }catch(_){}
+          return fresh;
+        }
+      }catch(_){}
+      const cached = await caches.match(event.request)
+        || await caches.match(new Request(self.location.origin + '/admin/'))
+        || await caches.match(new Request(self.location.origin + '/admin/index.html'));
+      if(cached) return cached;
+      return new Response(
+        '<!doctype html><meta charset=utf-8><title>Naluno</title>'
+        + '<body style="background:#07080D;color:#E8ECF5;font-family:system-ui;padding:32px">'
+        + '<p>Control Centre is offline on this device.</p>',
+        { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Robots-Tag': 'noindex, nofollow' } }
+      );
+    })());
+    return;
+  }
+  if(isSiteRoot && isNav){
+    event.respondWith((async ()=>{
+      try{
+        const fresh = await fetch(event.request, { cache: 'no-store' });
+        if(fresh && fresh.ok) return fresh;
+      }catch(_){}
+      // Offline on the landing page: send them to the app, which IS cached.
+      const appShell = await caches.match(new Request(self.location.origin + '/app/'))
+        || await caches.match(new Request(self.location.origin + '/'));
+      if(appShell) return appShell;
+      return new Response(
+        '<!doctype html><meta charset=utf-8><title>Naluno</title>'
+        + '<body style="background:#0A0C12;color:#E8ECF5;font-family:system-ui;'
+        + 'display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center">'
+        + '<div><p>You are offline.</p><p><a style="color:#7CFFB2" href="/app/">Open Naluno</a></p></div>',
+        { status: 200, headers: { 'Content-Type': 'text/html' } });
+    })());
+    return;
+  }
+
+  function netTimeout(req, ms){
+    const ctl = new AbortController();
+    const t = setTimeout(function(){ ctl.abort(); }, ms);
+    return fetch(req, { signal: ctl.signal }).finally(function(){ clearTimeout(t); });
+  }
+  function isShellResponse(r, p){
+    if(!r || !r.ok) return false;
+    const ct = (r.headers.get('content-type') || '').toLowerCase();
+    if(p.endsWith('.js') || p.includes('/js/') || p.includes('firebasejs')){
+      return ct.indexOf('javascript') >= 0 || ct.indexOf('ecmascript') >= 0 || ct.indexOf('text/plain') >= 0 || !ct;
+    }
+    if(p.endsWith('.css')) return ct.indexOf('css') >= 0 || !ct;
+    if(p.endsWith('.html') || p.endsWith('/')) return ct.indexOf('html') >= 0 || !ct;
+    return true;
+  }
+  function putBare(r){
+    if(!r || !r.ok) return;
+    if(!isShellResponse(r, path) && isAppCode) return;
+    const copy = r.clone();
+    caches.open(CACHE_NAME).then(function(cache){
+      cache.put(event.request, copy.clone()).catch(function(){});
+      if(!isAppCode) cache.put(new Request(bare), copy).catch(function(){});
+    }).catch(function(){});
+  }
+
+  // App JS/CSS must not be served from a query-stripped cache. ignoreSearch
+  // is why GitHub updates looked like "nothing changed" — yesterday's
+  // uploader kept running. Network-first, match the exact ?v= URL only.
+  if(isAppCode){
+    event.respondWith((async ()=>{
+      /* SPEED: a versioned file (?v=…) that is already on the phone is
+         served from the phone at once and refreshed behind it. Waiting on
+         the network first is why opening took 5+ seconds on a weak or
+         dead connection. Unversioned files still go to the network first. */
+      if(/[?&]v=/.test(url.search)){
+        const have = await caches.match(event.request);
+        if(have && isShellResponse(have, path)){
+          event.waitUntil(netTimeout(event.request, path.indexOf('naluno-voice-engine.js') >= 0 ? 120000 : 12000).then(function(fresh){
+            if(fresh && fresh.ok && isShellResponse(fresh, path)) putBare(fresh);
+          }).catch(function(){}));
+          return have;
+        }
+      }
+      try{
+        const response = await netTimeout(event.request, path.indexOf('naluno-voice-engine.js') >= 0 ? 120000 : 8000);
+        if(response && response.ok && isShellResponse(response, path)){
+          putBare(response);
+          return response;
+        }
+      }catch(_){}
+      const exact = await caches.match(event.request);
+      if(exact && isShellResponse(exact, path)) return exact;
+      const bareHit = await caches.match(new Request(bare));
+      if(bareHit && isShellResponse(bareHit, path)) return bareHit;
+      try{ return await fetch(event.request); }catch(_){}
+      return new Response('/* naluno: js miss */', { status: 503, headers: { 'Content-Type': 'application/javascript' } });
+    })());
+    return;
+  }
+
+  event.respondWith((async ()=>{
+    const appShellReq = new Request(self.location.origin + '/app/index.html');
+    const isAppNav = isNav && (path === '/app' || path === '/app/' || path.indexOf('/app/') === 0);
+    const cached = await caches.match(event.request)
+      || await caches.match(new Request(bare))
+      || (isAppNav ? await caches.match(appShellReq) : null);
+    /* Icons, images and the manifest that are already on the phone are used
+       at once too, instead of waiting up to 2.5s on a dead connection. */
+    const isStaticAsset = /\.(png|jpe?g|webp|gif|svg|ico|json|woff2?)$/i.test(path);
+    if(cached && isSameOrigin && (isAppCode || isAppNav || isStaticAsset)){
+      event.waitUntil((async ()=>{
+        try{
+          const fresh = await netTimeout(event.request, 12000);
+          if(fresh && fresh.ok) putBare(fresh);
+        }catch(_){ /* offline: keep what we have */ }
+      })());
+      return cached;
+    }
+    try{
+      const response = await netTimeout(event.request, isAppNav ? 8000 : 2500);
+      if(response && response.ok){
+        if(isSameOrigin) putBare(response);
+        return response;
+      }
+    }catch(_){}
+    if(cached) return cached;
+    if(isAppNav){
+      const html = await caches.match(appShellReq) || await caches.match(new Request(self.location.origin + '/app/'));
+      if(html) return html;
+    }
+    return new Response('', { status: 503 });
+  })());
+});
+
+const handledCallIds = {};
+const ringLoopTimers = {};
+function markCallHandled(callId){
+  if(callId) handledCallIds[callId] = Date.now();
+  const cutoff = Date.now() - 10 * 60 * 1000;
+  Object.keys(handledCallIds).forEach(function(k){
+    if(handledCallIds[k] < cutoff) delete handledCallIds[k];
+  });
+}
+function isCallHandled(callId){
+  return !!(callId && handledCallIds[callId]);
+}
+function stopRingLoop(callId){
+  if(callId){
+    if(ringLoopTimers[callId]){
+      try{ clearTimeout(ringLoopTimers[callId]); }catch(_){}
+      delete ringLoopTimers[callId];
+    }
+    return;
+  }
+  Object.keys(ringLoopTimers).forEach(function(k){
+    try{ clearTimeout(ringLoopTimers[k]); }catch(_){}
+    delete ringLoopTimers[k];
+  });
+}
+async function closeCallNotifications(callId){
+  try{
+    const list = await self.registration.getNotifications();
+    (list || []).forEach(function(n){
+      const d = n.data || {};
+      if(d.type === 'incoming_call' && (!callId || !d.callId || d.callId === callId)){
+        try{ n.close(); }catch(_){}
+      }
+    });
+  }catch(_){}
+}
+function callNotifyOpts(callId, body, pingId){
+  const appUrl = callId
+    ? ('/app/?call=' + encodeURIComponent(callId))
+    : '/app/';
+  return {
+    body: body || 'Tap to answer',
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    tag: callId ? ('naluno-call:' + callId) : 'naluno-call',
+    renotify: true,
+    requireInteraction: true,
+    silent: false,
+    vibrate: [500, 200, 500, 200, 500, 200, 500],
+    data: { callId: callId || '', type: 'incoming_call', url: appUrl, pingId: pingId || '' },
+    actions: [
+      { action: 'answer', title: 'Answer' },
+      { action: 'decline', title: 'Decline' },
+    ],
+  };
+}
+/** Keep the OS sounding while the call is still ringing. Chrome will not
+ *  play in-page audio in a hidden PWA; repeating a noisy notification is
+ *  how a backgrounded web app actually rings. Stops the instant the page
+ *  says the call was handled. */
+function startRingLoop(callId, title, body, loop, pingId){
+  if(callId && isCallHandled(callId)) return;
+  const t = title || 'Incoming call — Naluno';
+  const b = body || 'Tap to answer';
+  const already = !!(callId && ringLoopTimers[callId]);
+  if(!already){
+    self.registration.showNotification(t, callNotifyOpts(callId, b, pingId)).catch(function(){});
+  }
+  if(loop === false) return;
+  if(already) return;
+  let n = 1;
+  const max = 16;
+  function tick(){
+    if((callId && isCallHandled(callId)) || n >= max){
+      stopRingLoop(callId);
+      if(callId && isCallHandled(callId)) closeCallNotifications(callId);
+      return;
+    }
+    n++;
+    self.registration.showNotification(t, callNotifyOpts(callId, b, pingId)).catch(function(){});
+    if(callId) ringLoopTimers[callId] = setTimeout(tick, 2200);
+  }
+  if(callId) ringLoopTimers[callId] = setTimeout(tick, 2200);
+}
+
+const wireShown = {};
+function showWireNotification(data){
+  data = data || {};
+  const from = String(data.fromUid || '');
+  const mid = String(data.clientMsgId || '');
+  const key = from + '|' + mid;
+  const now = Date.now();
+  if(mid && wireShown[key] && now - wireShown[key] < 8000) return Promise.resolve();
+  if(mid) wireShown[key] = now;
+  const title = data.title || data.senderName || 'Wireline';
+  const body = data.body || 'New message';
+  const url = data.url || (from ? ('/app/?wire=' + encodeURIComponent(from)) : '/app/');
+  return self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(list){
+    const looking = (list || []).some(function(c){ return c.visibilityState === 'visible' && c.focused; });
+    if(looking) return;
+    return self.registration.showNotification(title, {
+      body: body,
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      tag: 'naluno-wire:' + (from || 'msg') + ':' + (mid || now),
+      renotify: true,
+      silent: false,
+      vibrate: [180, 80, 180],
+      data: { type: 'wireline', fromUid: from, url: url, pingId: data.pingId || '', clientMsgId: mid }
+    });
+  });
+}
+
+/* FCM web encrypts the payload. Without firebase.messaging() in THIS worker,
+   a backgrounded (not killed) PWA never decrypts the call wake — onMessage
+   on the frozen page also never runs. This is what actually rings a web
+   app that is open but unused. */
+try{
+  importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js');
+  importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js');
+  if(typeof firebase !== 'undefined' && firebase.apps && !firebase.apps.length){
+    firebase.initializeApp({
+      apiKey: 'AIzaSyD0j1W7-gFJqbMd6rz4kMhQd5AiB8B2ox0',
+      authDomain: 'naluno-28a00.firebaseapp.com',
+      projectId: 'naluno-28a00',
+      storageBucket: 'naluno-28a00.firebasestorage.app',
+      messagingSenderId: '183354363901',
+      appId: '1:183354363901:web:e1a4c4eb30ad5937d39394'
+    });
+  }
+  if(typeof firebase !== 'undefined' && firebase.messaging){
+    firebase.messaging().onBackgroundMessage(function(payload){
+      const data = Object.assign({}, (payload && payload.data) || {});
+      try{
+        if(payload && payload.notification){
+          if(!data.title && payload.notification.title) data.title = payload.notification.title;
+          if(!data.body && payload.notification.body) data.body = payload.notification.body;
+        }
+      }catch(_){}
+      const callId = data.callId || data.call_id || '';
+      if(data.type === 'wireline'){
+        notePushArrival(data);
+        return showWireNotification(data);
+      }
+      const isCall = data.type === 'incoming_call' || !!callId;
+      if(!isCall) return;
+      if(callId && isCallHandled(callId)) return;
+      const who = data.callerName || (data.title || '').replace(/\s+is calling$/i, '') || 'Someone';
+      startRingLoop(callId, who + ' is calling', data.body || 'Tap to answer on Naluno', undefined, data.pingId || '');
+      notePushArrival(data);
+    });
+  }
+}catch(e){}
+
+self.addEventListener('message', event=>{
+  const msg = (event && event.data) || {};
+  if(msg.type === 'naluno-console-hello'){
+    const pong = {
+      type: 'naluno-sw-pong',
+      cache: CACHE_NAME,
+      version: (typeof APP_BUILD === 'string' && APP_BUILD) ? APP_BUILD : String(CACHE_NAME).replace(/^naluno-shell-/, ''),
+      at: Date.now(),
+    };
+    const src = event.source;
+    if(src && src.postMessage) src.postMessage(pong);
+    if(event.ports && event.ports[0]) event.ports[0].postMessage(pong);
+    return;
+  }
+  if(msg.type === 'naluno-call-handled' || msg.type === 'naluno-decline-call'){
+    markCallHandled(msg.callId);
+    stopRingLoop(msg.callId);
+    event.waitUntil(closeCallNotifications(msg.callId));
+    return;
+  }
+  if(msg.type === 'naluno-start-ring'){
+    startRingLoop(msg.callId, msg.title, msg.body, msg.loop !== false);
+    return;
+  }
+  if(msg.type === 'naluno-stop-ring-loop'){
+    stopRingLoop(msg.callId);
+  }
+});
+
+function notePushArrival(data){
+  data = data || {};
+  const row = {
+    id: String(data.pingId || data.callId || data.broadcastId || Date.now()),
+    pingId: String(data.pingId || ''),
+    type: String(data.type || (data.callId ? 'incoming_call' : '')),
+    arrivedAt: Date.now(),
+    openedAt: 0,
+  };
+  return self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(list){
+    if(list && list.length){
+      list.forEach(function(client){
+        try{ client.postMessage({ type: 'naluno-push-arrived', row: row }); }catch(_){}
+      });
+      return;
+    }
+    return caches.open('naluno-push-receipts').then(function(cache){
+      const url = 'https://naluno.local/push/' + row.arrivedAt + '/' + encodeURIComponent(row.id);
+      return cache.put(new Request(url), new Response(JSON.stringify(row), { headers: { 'Content-Type': 'application/json' } }));
+    });
+  }).catch(function(){});
+}
+
+self.addEventListener('push', event=>{
+  let data = {};
+  try{ data = event.data ? event.data.json() : {}; }catch(e){ try{ data = { body: event.data.text() }; }catch(_){} }
+  try{
+    if(data.data && typeof data.data === 'object'){
+      data = Object.assign({}, data, data.data);
+    }
+    if(data.notification && typeof data.notification === 'object'){
+      if(!data.title && data.notification.title) data.title = data.notification.title;
+      if(!data.body && data.notification.body) data.body = data.notification.body;
+    }
+  }catch(_){}
+  const callId = data.callId || data.call_id || data.tag || '';
+  const isCall = data.type === 'incoming_call' || (!data.type && !!callId && data.type !== 'wireline');
+  if(data.type === 'wireline'){
+    event.waitUntil((async ()=>{
+      notePushArrival(data);
+      await showWireNotification(data);
+    })());
+    return;
+  }
+  if(isCall){
+    if(callId && isCallHandled(callId)) return;
+    const title = data.title || 'Incoming call — Naluno';
+    const body = data.body || 'Tap to answer';
+    event.waitUntil((async ()=>{
+      startRingLoop(callId, title, body, undefined, data.pingId || '');
+      notePushArrival(data);
+      const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      for(const client of clientList){
+        try{ client.postMessage({ type: 'naluno-incoming-call', callId }); }catch(_){}
+      }
+    })());
+    return;
+  }
+  // Non-call push (e.g. "X is live") — a normal, single, tap-to-open alert.
+  const title = data.title || 'Naluno';
+  const body = data.body || '';
+  const broadcastId = data.broadcastId || '';
+  event.waitUntil((async ()=>{
+    notePushArrival(data);
+    await self.registration.showNotification(title, {
+      body, icon: './icon-192.png', badge: './icon-192.png',
+      tag: (data.type || 'naluno') + ':' + (broadcastId || Date.now()),
+      renotify: false,
+      requireInteraction: false,
+      silent: false,
+      data: { type: data.type || 'general', broadcastId, pingId: data.pingId || '', url: broadcastId ? ('./?broadcast=' + encodeURIComponent(broadcastId)) : './' },
+    });
+  })());
+});
+
+self.addEventListener('notificationclick', event=>{
+  event.notification.close();
+  const data = event.notification.data || {};
+  try{
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(list){
+      const row = { pingId: data.pingId || '', id: data.pingId || data.callId || data.broadcastId || '', type: data.type || '' };
+      list.forEach(function(client){
+        try{ client.postMessage({ type: 'naluno-push-opened', row: row }); }catch(_){}
+      });
+    });
+  }catch(_){}
+  if(data.type === 'wireline'){
+    const fromUid = data.fromUid || '';
+    const target = data.url || (fromUid ? ('/app/?wire=' + encodeURIComponent(fromUid)) : '/app/');
+    event.waitUntil(
+      self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList){
+        for(const client of clientList){
+          if('focus' in client){
+            try{ client.postMessage({ type: 'naluno-open-wire', fromUid: fromUid }); }catch(_){}
+            return client.focus();
+          }
+        }
+        if(self.clients.openWindow) return self.clients.openWindow(target);
+      })
+    );
+    return;
+  }
+  if(data.type && data.type !== 'incoming_call'){
+    // Non-call notification: just open/focus the app at the right place —
+    // never post a fake "incoming call" message for something that isn't one.
+    const target = data.url || './';
+    event.waitUntil(
+      self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList=>{
+        for(const client of clientList){
+          if('focus' in client) return client.focus();
+        }
+        if(self.clients.openWindow) return self.clients.openWindow(target);
+      })
+    );
+    return;
+  }
+  const callId = data.callId || '';
+  const action = event.action || '';
+  if(action === 'decline'){
+    markCallHandled(callId);
+    stopRingLoop(callId);
+    event.waitUntil((async ()=>{
+      await closeCallNotifications(callId);
+      const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      for(const client of clientList){
+        try{ client.postMessage({ type: 'naluno-decline-call', callId }); }catch(_){}
+      }
+    })());
+    return;
+  }
+  const target = callId ? ('/app/?call=' + encodeURIComponent(callId)) : (data.url || '/app/');
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList=>{
+      for(const client of clientList){
+        if('focus' in client){
+          client.postMessage({ type: 'naluno-incoming-call', callId });
+          return client.focus();
+        }
+      }
+      if(self.clients.openWindow) return self.clients.openWindow(target);
+    })
+  );
+});
