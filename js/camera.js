@@ -962,9 +962,28 @@ function drawSendCanvas(force){
     st.n++;
   }catch(_){}
 }
+/* 06c: the call screens fill the phone with the camera (as WhatsApp does).
+   data-cam="1" on the overlay while your camera is live and on; the
+   screens then show the picture full screen instead of the avatar. */
+function nalunoMarkCamLive(){
+  const ov = $('callOverlay');
+  if(!ov) return;
+  let live = false;
+  try{
+    live = !!(stream && stream.getVideoTracks && stream.getVideoTracks().some(function(t){ return t.readyState === 'live' && t.enabled; }));
+  }catch(_){}
+  const want = live ? '1' : '0';
+  if(ov.getAttribute('data-cam') !== want) ov.setAttribute('data-cam', want);
+}
 function stageLoopTick(){
   requestAnimationFrame(stageLoopTick);
+  try{ nalunoMarkCamLive(); }catch(_){}
     if($('lobby').classList.contains('active')) drawStage('camStageCanvas', 'camRawVideo', camAnimStart);
+  if($('ringing') && $('ringing').classList.contains('active') && !($('callOverlay') && $('callOverlay').classList.contains('voice-call'))){
+    const rv = $('camRawVideo');
+    if(rv && stream && rv.srcObject !== stream){ rv.srcObject = stream; try{ const p = rv.play(); if(p && p.catch) p.catch(function(){}); }catch(_){} }
+    drawStage('ringStageCanvas', 'camRawVideo', camAnimStart);
+  }
   if($('incall').classList.contains('active')){
     drawStage('pipStageCanvas', 'pipRawVideo', pipAnimStart);
     try{ nalunoFitLocalPip($('pipRawVideo')); }catch(_){}
@@ -1008,7 +1027,7 @@ function startCamView(target){
   if(target==='lobby'){ camAnimStart = performance.now(); const v = $('camRawVideo'); if(v) v.srcObject = stream; }
   else { pipAnimStart = performance.now(); const v = $('pipRawVideo'); if(v) v.srcObject = stream; }
   const srv = $('sendRawVideo');
-  if(srv && stream){ srv.srcObject = stream; try{ srv.play(); }catch(_){}}
+  if(srv && stream){ srv.srcObject = stream; try{ const p = srv.play(); if(p && p.catch) p.catch(function(){}); }catch(_){}}
 }
 
 /* ---------------- CAMERA QUALITY ----------------

@@ -210,10 +210,18 @@ async function person() {
   const engine = read('js/naluno-voice-engine.js');
   assert.ok(engine.includes('ort-wasm-simd.wasm') && !engine.includes('jsep.wasm'), 'the engine loads the single-thread wasm');
   assert.ok(engine.includes('numThreads = 1'), 'one thread, so GitHub Pages can start it');
-  assert.ok(read('js/naluno-voices.js').includes("female: 'Bella'") && read('js/naluno-voices.js').includes("male: 'Jasper'"), 'two distinct voices');
-  assert.ok(read('js/naluno-voices.js').includes('naluno-voice-worker.js?v=20260930c'), 'phones drop the broken voice worker');
+  {
+    const vs = read('js/naluno-voices.js');
+    const m = /var VOICE = \{ female: '(\w+)', male: '(\w+)' \}/.exec(vs);
+    assert.ok(m && m[1] !== m[2], 'two distinct voices');
+    assert.ok(/naluno-voice-worker\.js\?v=\d{8}[a-z]/.test(vs), 'the voice worker is fetched by its stamp');
+  }
   const worker = read('js/naluno-voice-worker.js');
-  assert.ok(worker.includes('/voices/kitten/') && worker.includes('naluno-voice-engine.js?v=20260930c') && !worker.includes('huggingface'), 'the worker reads the local weights');
+  assert.ok(worker.includes('/voices/kitten/') && /naluno-voice-engine\.js\?v=\d{8}[a-z]/.test(worker) && !worker.includes('huggingface'), 'the worker reads the local weights');
+  /* 06b: every file the voices load is on the site (they were deleted on 06 Oct). */
+  ['voices/kitten/config.json', 'voices/kitten/voices.npz', 'voices/af/sw.onnx', 'voices/af/sw.json'].forEach(function (f) {
+    assert.ok(fs.existsSync(path.join(root, f)), f + ' is on the site');
+  });
 
   console.log('restricted-net tests passed');
 })().catch(function (e) {

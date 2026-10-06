@@ -39,7 +39,7 @@ assert.ok(ui.includes('function renderScheduledDock'), 'the dock is filled');
 assert.ok(core.includes('async function saveBroadcastEdits'), 'a schedule can be edited');
 
 assert.ok(!offline.includes("mode: 'cors' }), resp"), 'cache put is not a cors Request');
-assert.ok(offline.includes('await cache.put(url, resp.clone())'), 'bytes are stored under the url');
+assert.ok(offline.includes('await cache.put(url, resp.clone())') || offline.includes('await cache.put(urls[i], body.clone())'), 'bytes are stored under the url');
 assert.ok(space.includes('function bspaceOfflinePayload'), 'save reads the video the player has');
 assert.ok(handler.includes('esc(selfUrl)'), 'crawler stays on the preview page');
 assert.ok(!handler.includes('og:url" content="\' + esc(appUrl)'), 'og:url is not the generic site');

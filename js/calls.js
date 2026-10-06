@@ -70,6 +70,10 @@ function showCallScreen(id){
   document.querySelectorAll('.callscreen').forEach(s=>s.classList.remove('active'));
   const screen = $(id);
   if(screen) screen.classList.add('active');
+  /* 06c: the other person's name at the top of the call, as on WhatsApp. */
+  if(id === 'incall'){
+    try{ if($('incallHeadName') && $('remoteName')) $('incallHeadName').textContent = $('remoteName').textContent || ''; }catch(_){}
+  }
   if(id !== 'incall'){
     try{ closeIncallWire(); }catch(_){}
   }
@@ -3433,8 +3437,10 @@ function startInCall(){
   if(typeof resetPipLayoutStyles === 'function') resetPipLayoutStyles();
   if(stream && !nalunoIsVoiceCall()) startCamView('pip');
   try{
+    /* 06c: the background chips open from the palette button, so the
+       picture stays clear (they covered the bottom of the video). */
     const row = $('incallBgChipRow');
-    if(row) row.style.display = 'flex';
+    if(row) row.style.display = 'none';
     if(typeof renderBackgroundChips === 'function') renderBackgroundChips();
   }catch(_){}
   try{ if(typeof applyCallFilterNow === 'function') applyCallFilterNow(); }catch(_){}
@@ -3768,23 +3774,29 @@ pip.addEventListener('pointercancel', endPipDrag); // otherwise a hijacked gestu
   setTimeout(bind, 2000);
 })();
 
-/* Cover fills the phone when the picture is already close to that shape.
-   A wide frame on a tall phone used to be covered down to about a quarter
-   of itself. That one is shown whole. */
-const NALUNO_REMOTE_MIN_SHOWN = 0.75;
+/* 06b: the other person's picture fills the screen, on both phones, the
+   same way the caller's own picture does (nalunoCompositeFit in camera.js).
+   - A frame of the same shape family as the screen (an upright phone camera,
+     3:4, on an upright phone) is covered: it fills the screen and only its
+     sides are trimmed. 06a left it whole with black bands above and below.
+   - A frame of the other shape (a landscape camera on an upright phone, or
+     the reverse) would have to be enlarged about three times to fill the
+     screen, which pulls the face closer. That one is still shown whole. */
+const NALUNO_REMOTE_MIN_SHOWN = 0.5;
+function nalunoRemoteFit(vw, vh, bw, bh){
+  if(!(vw > 0 && vh > 0 && bw > 0 && bh > 0)) return 'cover';
+  const src = vw / vh;
+  const box = bw / bh;
+  const shown = src > box ? (box / src) : (src / box);
+  return shown >= NALUNO_REMOTE_MIN_SHOWN ? 'cover' : 'contain';
+}
 function nalunoFitRemoteVideo(){
   const v = document.getElementById('remoteVideo');
   if(!v) return;
   let fit = 'cover';
   try{
-    const vw = v.videoWidth, vh = v.videoHeight;
     const r = v.getBoundingClientRect();
-    if(vw > 0 && vh > 0 && r.width > 0 && r.height > 0){
-      const src = vw / vh;
-      const box = r.width / r.height;
-      const shown = src > box ? (box / src) : (src / box);
-      if(shown < NALUNO_REMOTE_MIN_SHOWN) fit = 'contain';
-    }
+    fit = nalunoRemoteFit(v.videoWidth, v.videoHeight, r.width, r.height);
   }catch(_){}
   v.style.setProperty('object-fit', fit, 'important');
   try{ v.style.objectPosition = 'center center'; }catch(_){}
@@ -3804,3 +3816,4 @@ function nalunoFitRemoteVideo(){
   setTimeout(bind, 2000);
 })();
 window.nalunoFitRemoteVideo = nalunoFitRemoteVideo;
+window.nalunoRemoteFit = nalunoRemoteFit;

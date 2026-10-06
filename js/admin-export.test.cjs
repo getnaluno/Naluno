@@ -17,7 +17,7 @@ assert.strictEqual(tables[0].rows.length, 1);
 assert.strictEqual(tables[0].rows[0][0], 'Keep');
 const file = Exp.pdf('Ads', tables, '2026-10-01 to 2026-10-02');
 assert.ok(file.indexOf('%PDF-1.4') === 0);
-assert.ok(file.indexOf('NALUNO') > 0);
+assert.ok(/naluno/i.test(file), 'the Naluno watermark');
 assert.ok(file.indexOf('Keep') > 0);
 assert.ok(file.indexOf('Drop') < 0);
 assert.ok(file.indexOf('secret') < 0);

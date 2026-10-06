@@ -59,11 +59,20 @@ function extractFn(src, name){
     const v = { videoWidth: 1280, videoHeight: 720, style: { objectFit: '', setProperty(k, val){ this.objectFit = val; } }, dataset: {}, getBoundingClientRect: () => ({ width: 390, height: 844 }) };
     const ctx = { document: { getElementById: () => v }, Math };
     vm.createContext(ctx);
-    vm.runInContext('const NALUNO_REMOTE_MIN_SHOWN = 0.75;\n' + extractFn(calls, 'nalunoFitRemoteVideo') + '\nthis.fit = nalunoFitRemoteVideo;', ctx);
+    const min = /const NALUNO_REMOTE_MIN_SHOWN = ([0-9.]+);/.exec(calls)[1];
+    vm.runInContext('const NALUNO_REMOTE_MIN_SHOWN = ' + min + ';\n' + extractFn(calls, 'nalunoRemoteFit') + extractFn(calls, 'nalunoFitRemoteVideo') + '\nthis.fit = nalunoFitRemoteVideo;', ctx);
     ctx.fit();
     assert.strictEqual(v.style.objectFit, 'contain', 'a landscape frame on a portrait phone is shown whole (was 26% of it)');
     v.videoWidth = 720; v.videoHeight = 1280; ctx.fit();
     assert.strictEqual(v.style.objectFit, 'cover', 'a portrait frame still fills the screen');
+    /* 06b: the upright phone camera (3:4) fills the screen too, on any
+       phone shape, with no black bands. */
+    [[390, 844], [360, 800], [412, 915], [375, 667]].forEach(function(sz){
+      v.videoWidth = 1440; v.videoHeight = 1920;
+      v.getBoundingClientRect = () => ({ width: sz[0], height: sz[1] });
+      ctx.fit();
+      assert.strictEqual(v.style.objectFit, 'cover', '3:4 on ' + sz.join('x') + ' fills the screen');
+    });
   }
 
   /* 3. The console keeps what you opened. */
