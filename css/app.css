@@ -3287,7 +3287,9 @@ html[data-atmosphere="buzzing"] .naluno-aurora{
     transform:translateY(102%); opacity:0; pointer-events:none;
     transition:transform .22s ease, opacity .18s ease;
   }
-  #incall.wire-open .incall-wire{ transform:translateY(0); opacity:1; pointer-events:auto; }
+  #incall.wire-open .incall-wire{ transform:translateY(0); opacity:1; }
+  /* 07c: takes taps only while a call is on screen. */
+  #callOverlay.active #incall.active.wire-open .incall-wire{ pointer-events:auto; }
   /* The self-view moves out of the sheet's way instead of being hidden. */
   #incall.wire-open .local-pip{ bottom:calc(54% + 8px); transition:bottom .22s ease; }
   #incall.wire-open .call-controls{ opacity:0; pointer-events:none; transition:opacity .15s ease; }
@@ -4176,7 +4178,9 @@ body:not(.naluno-os-pip) #callOverlay[data-cam="1"]:not(.voice-call) #incoming .
 
 /* ---------- In call: the other person fills the screen ---------- */
 body:not(.naluno-os-pip) #callOverlay #incall .incall-top{ position:absolute; top:0; left:0; right:0; padding:var(--wa-top) 14px 0; z-index:7; display:block; pointer-events:none; }
-body:not(.naluno-os-pip) #callOverlay #incall .incall-top > *{ pointer-events:auto; }
+/* 07c: only while a call is on screen. Unscoped, these invisible buttons
+   caught taps over the Broadcast tab (and the whole app) with no call. */
+body:not(.naluno-os-pip) #callOverlay.active #incall.active .incall-top > *{ pointer-events:auto; }
 body:not(.naluno-os-pip) #callOverlay #incall .call-info-pill{
   background:none; border:none; backdrop-filter:none; padding:6px 0 0; margin:0 auto; display:flex; flex-direction:row; flex-wrap:wrap; justify-content:center; align-items:baseline; column-gap:8px; row-gap:4px; max-width:calc(100vw - 150px);
 }
@@ -4309,8 +4313,6 @@ body.naluno-bcast-foryou:not(.naluno-bcast-watch):not(.naluno-strand-open):not(.
   bottom:calc(18px + var(--naluno-nav-h, 0px));
 }
 .bcast-glance-more:active{ transform:scale(.92); }
-/* The preview is moving: no "tap to play". */
-.bcast-plate.is-moving .bcast-tap-play{ opacity:0; transition:opacity .25s; }
 /* Saying no: the Broadcast folds away. */
 .bcast-plate.is-folding{ transition:transform .26s ease, opacity .26s ease; transform:scale(.94) !important; opacity:0 !important; }
 
@@ -4434,7 +4436,7 @@ body.naluno-bcast-watch .bcast-read-card{ padding-bottom:150px !important; }
 .bcast-plate.has-glance .bcast-plate-meta .bcast-plate-more{ display:none; }
 /* Narrow phones: the tabs, Search and "+" stay on one line. */
 .bcast-view-tab, .bcast-search-tab{ white-space:nowrap; }
-@media (max-width: 400px){
+@media (max-width: 480px){
   .bcast-view-tabs{ gap:14px; }
   .bcast-view-tab{ font-size:13px; }
   .bcast-search-tab{
@@ -4468,3 +4470,54 @@ body.naluno-bcast-watch .bcast-read-card{ padding-bottom:150px !important; }
 #bcastSearchResults .bcast-read-card .bcast-plate-excerpt{ font-size:13px !important; -webkit-line-clamp:4 !important; }
 /* Landscape on the first Broadcast: the Signals row steps aside. */
 body.naluno-bcast-headless .bcast-feed-head{ display:none !important; }
+
+/* ===================== 07c =====================
+   1. "+" is always whole on screen: the tabs may scroll under it, it never
+      leaves the edge. */
+.bcast-view-tabs{ overflow-x:auto; overflow-y:hidden; scrollbar-width:none; -webkit-overflow-scrolling:touch; }
+.bcast-view-tabs::-webkit-scrollbar{ display:none; }
+.bcast-make-btn{
+  position:sticky; right:0; margin-left:auto; margin-right:2px;
+  box-shadow:0 0 0 1px rgba(124,255,178,.35), 0 6px 18px rgba(124,255,178,.22), -14px 0 14px -6px var(--bg, #0D0F17);
+}
+.bcast-search-tab{ margin-left:auto; }
+.bcast-search-tab + .bcast-make-btn{ margin-left:10px; }
+@media (max-width: 480px){
+  .bcast-view-tab{ font-size:13px; }
+}
+/* 2. "Before it goes out" lives under My Broadcasts → Private broadcasts. */
+body:not(.naluno-bcast-mine) #bcastScheduleDock,
+#bcastPrivateDrawer[hidden] ~ #bcastScheduleDock{ display:none !important; }
+#bcastScheduleDock{ width:100%; box-sizing:border-box; padding:4px 0 6px; max-height:46vh; overflow:auto; }
+#bcastScheduleDock .sched-title{ cursor:pointer; }
+/* 3. A smaller Signal tile on For You, so the first Broadcast gets the room. */
+body.naluno-bcast-foryou #myBcastStrip.bcast-strip{ padding:6px 8px 10px; gap:8px; }
+body.naluno-bcast-foryou #myBcastStrip .signal-tile .signal-window{ width:78px; height:104px; border-radius:18px; padding:2.5px; }
+body.naluno-bcast-foryou #myBcastStrip .signal-tile .signal-window > .signal-window-in{ border-radius:16px; }
+body.naluno-bcast-foryou #myBcastStrip .signal-tile-cap{ font-size:10.5px; padding:5px 6px; }
+body.naluno-bcast-foryou #myBcastStrip .signal-tile-cap strong{ font-size:11.5px; }
+body.naluno-bcast-foryou #myBcastStrip .signal-create-mark{ transform:scale(.72); }
+body.naluno-bcast-foryou #bcastForYouHome > .signal-head{ margin-bottom:0; }
+/* Past Nearby Broadcasts: the way on to the next one. */
+.bspace-next-cue{
+  display:flex; flex-direction:column; align-items:center; gap:2px; width:100%;
+  margin:18px 0 6px; padding:16px 12px 22px; cursor:pointer;
+  background:none; border:none; border-top:1px solid var(--line); color:var(--text);
+}
+.bspace-next-chevron{ color:var(--mint); font-size:22px; line-height:1; animation:nextCueUp 1.6s ease-in-out infinite; }
+.bspace-next-copy{ font-family:var(--font-mono); font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--mint); }
+.bspace-next-title{ margin-top:4px; font-size:14px; font-weight:600; color:rgba(255,255,255,.86); max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+@keyframes nextCueUp{ 0%,100%{ transform:translateY(3px); opacity:.6; } 50%{ transform:translateY(-3px); opacity:1; } }
+@media (prefers-reduced-motion: reduce){ .bspace-next-chevron{ animation:none; } }
+/* Write: chapters and Luganda side by side. */
+.bwrite-opt-pair{ display:flex; flex-wrap:wrap; gap:0 14px; }
+.bwrite-opt-pair > .bcomp-opt{ flex:1 1 220px; }
+.bwrite-lg-opt b{ color:var(--mint); }
+/* Signals for everyone */
+.signal-public-tag{
+  position:absolute; top:6px; left:6px; z-index:4; padding:1px 6px; border-radius:999px;
+  font-family:var(--font-mono); font-size:8.5px; letter-spacing:.06em; text-transform:uppercase;
+  color:#07080c; background:var(--mint);
+}
+.signal-aud-row{ display:flex; gap:8px; flex-wrap:wrap; }
+.signal-aud-note{ margin-top:6px; font-size:11.5px; line-height:1.4; color:var(--text-dim); }
