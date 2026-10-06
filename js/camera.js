@@ -1327,6 +1327,22 @@ async function resolveCameraDeviceId(wantFacing){
   }
   return devices[0].deviceId || null;
 }
+/* 06d: the camera a call opens is the one the flip button opens. Asking
+   only for "the front camera" let some phones (Samsung) pick a second,
+   cropped front lens: the face came out close and soft until a flip and a
+   flip back, which picks the camera by name. Only a camera whose name says
+   which way it faces is chosen here; anything else keeps the old way. */
+async function nalunoLensDeviceId(facing){
+  const want = facing || cameraFacingMode || 'user';
+  try{
+    const devices = await listVideoInputDevices();
+    const hit = devices.find(function(d){ return d.deviceId && classifyCameraDevice(d) === want; });
+    return hit ? hit.deviceId : null;
+  }catch(_){ return null; }
+}
+function nalunoTrackDeviceId(track){
+  try{ return (track && track.getSettings && track.getSettings().deviceId) || ''; }catch(_){ return ''; }
+}
 async function flipCamera(){
   /* Definitive flip:
      1) Stop current VIDEO tracks (Android needs this)
@@ -1524,10 +1540,22 @@ async function enableCameraForCall(){
       if($('camFallback')) $('camFallback').style.display = 'none';
     }catch(_){}
   }
+  /* 06d: before the call is up, a live stream on a different lens than the
+     one the flip button would pick is reopened on the right one. During a
+     call the stream is never swapped from here. */
+  let lensId = null;
+  const inCallNow = !!($('incall') && $('incall').classList.contains('active'))
+    || (typeof peerConnection !== 'undefined' && !!peerConnection);
+  if(!inCallNow){
+    lensId = await nalunoLensDeviceId(cameraFacingMode);
+    if(nalunoCamGen !== camGen) return;
+  }
+  const liveLens = (mediaStreamIsLive(stream) && stream.getVideoTracks()[0]) ? nalunoTrackDeviceId(stream.getVideoTracks()[0]) : '';
+  const wrongLens = !!(lensId && liveLens && liveLens !== lensId);
   // Reuse only a stream that has BOTH a live camera and a live mic: after a
   // voice call the stream is microphone-only, and reusing it made the next
   // video call go out with no picture.
-  if(mediaStreamIsLive(stream) && stream.getAudioTracks().some(t => t.readyState === 'live')
+  if(!wrongLens && mediaStreamIsLive(stream) && stream.getAudioTracks().some(t => t.readyState === 'live')
      && stream.getVideoTracks().some(t => t.readyState === 'live')){
     try{
       stream.getAudioTracks().forEach(t => { t.enabled = true; });
@@ -1557,25 +1585,62 @@ async function enableCameraForCall(){
   const hdSoft = Object.assign({}, hd);
   delete hdSoft.resizeMode;
   const mid = nalunoHdVideo('1080', cameraFacingMode);
-  const attempts = [
+  const attempts = [];
+  if(lensId){
+    const exact = Object.assign({}, hd);
+    delete exact.facingMode;
+    exact.deviceId = { exact: lensId };
+    attempts.push({ video: exact, audio: audioConstraints });
+  }
+  attempts.push(
     { video: hd, audio: audioConstraints },
     { video: hdSoft, audio: audioConstraints },
     { video: mid, audio: audioConstraints },
     { video: { facingMode: { ideal: cameraFacingMode }, width: { ideal: mid.width.ideal }, height: { ideal: mid.height.ideal }, frameRate: { ideal: 30, max: 30 } }, audio: audioConstraints },
     { video: { facingMode: { ideal: cameraFacingMode } }, audio: audioConstraints },
-    { video: true, audio: true },
-  ];
+    { video: true, audio: true }
+  );
   let lastErr;
   let got = null;
   for(const c of attempts){
     try{
       got = await navigator.mediaDevices.getUserMedia(c);
       lastErr = null;
+      if(c.video && c.video.deviceId && c.video.deviceId.exact) preferredVideoDeviceId = c.video.deviceId.exact;
       break;
     }catch(e){ lastErr = e; }
     if(nalunoCamGen !== camGen) break;
   }
   if(nalunoCamLate(camGen, got)) return;
+  /* The very first time, camera names are hidden until permission is given,
+     so the lens could not be chosen by name. Now that it is given, move to
+     the named lens once if this one is a different one. */
+  if(got && !lensId && !inCallNow){
+    try{
+      const named = await nalunoLensDeviceId(cameraFacingMode);
+      const opened = nalunoTrackDeviceId(got.getVideoTracks()[0]);
+      if(named && opened && named !== opened && nalunoCamGen === camGen){
+        got.getVideoTracks().forEach(function(t){ try{ t.stop(); }catch(_){} });
+        const exact = Object.assign({}, hd);
+        delete exact.facingMode;
+        exact.deviceId = { exact: named };
+        try{
+          const v = await navigator.mediaDevices.getUserMedia({ video: exact, audio: false });
+          if(nalunoCamLate(camGen, v)){ try{ got.getTracks().forEach(function(t){ t.stop(); }); }catch(_){} return; }
+          got.getVideoTracks().forEach(function(t){ got.removeTrack(t); });
+          v.getVideoTracks().forEach(function(t){ got.addTrack(t); });
+          preferredVideoDeviceId = named;
+        }catch(_){
+          /* That lens would not open: put the first one back. */
+          try{
+            const back = await navigator.mediaDevices.getUserMedia({ video: hd, audio: false });
+            got.getVideoTracks().forEach(function(t){ got.removeTrack(t); });
+            back.getVideoTracks().forEach(function(t){ got.addTrack(t); });
+          }catch(_){}
+        }
+      }
+    }catch(_){}
+  }
   /* Two requests overlapped (an incoming call's pre-warm and a dial, say):
      keep the stream that is already live, or the other one's camera light
      stays on after the call because nothing holds it any more. */

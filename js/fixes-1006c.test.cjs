@@ -46,7 +46,7 @@ assert.ok(block.includes('#incall.wire-open .controls-bar'), 'the in-call chat s
 
 /* In call: the other person's name at the top; chips open from the palette. */
 assert.ok(html.includes('<span class="call-head-name" id="incallHeadName"></span>'), 'name slot at the top');
-assert.ok(calls.includes("$('incallHeadName').textContent = $('remoteName').textContent"), 'filled from the existing name');
+assert.ok(calls.includes('function nalunoSetIncallHeadName()') && /if\(id === 'incall'\)[\s\S]{0,80}nalunoSetIncallHeadName\(\)/.test(calls), 'filled from the existing name');
 assert.ok(/const row = \$\('incallBgChipRow'\);\s*if\(row\) row\.style\.display = 'none';/.test(calls), 'chips start closed');
 assert.ok(cam.includes("row.style.display = row.style.display === 'none' ? 'flex' : 'none';"), 'the palette button still opens them');
 
@@ -55,6 +55,6 @@ assert.ok(/const NALUNO_REMOTE_MIN_SHOWN = 0\.5;/.test(calls) && calls.includes(
 assert.ok(!/9\/16/.test(cam.slice(cam.indexOf('function nalunoCameraBox'), cam.indexOf('function nalunoHdVideo'))), 'the camera is not asked for a 9:16 crop');
 
 /* Stamps */
-['calls.js', 'camera.js', 'pwa.js'].forEach((f) => assert.ok(new RegExp('/js/' + f.replace('.', '\\.') + '\\?v=20261006c').test(html), f + ' stamp'));
-assert.ok(/\/css\/app\.css\?v=20261006c/.test(html), 'app.css stamp');
+['calls.js', 'camera.js', 'pwa.js'].forEach((f) => assert.ok(new RegExp('/js/' + f.replace('.', '\\.') + '\\?v=20261006[c-z]').test(html), f + ' stamp'));
+assert.ok(/\/css\/app\.css\?v=20261006[c-z]/.test(html), 'app.css stamp');
 console.log('fixes-1006c tests passed');

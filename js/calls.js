@@ -64,6 +64,33 @@ function resumeBackgroundMediaAfterCall(){
   }catch(_){}
 }
 
+/* 06d: the name at the top of the call is the name only, and the Known
+   mark is painted on it in its own colours (it used to copy the mark's
+   word "Known" into the name as plain text: "Aster WynterKnown"). */
+function nalunoSetIncallHeadName(){
+  const head = $('incallHeadName'), src = $('remoteName');
+  if(!head || !src) return;
+  let name = '';
+  const inner = src.querySelector && src.querySelector('.known-text');
+  if(inner) name = inner.textContent || '';
+  else {
+    src.childNodes.forEach(function(n){ if(n.nodeType === 3) name += n.nodeValue; });
+    if(!name.trim()){
+      const copy = src.cloneNode(true);
+      copy.querySelectorAll('.naluno-known').forEach(function(m){ m.remove(); });
+      name = copy.textContent || '';
+    }
+  }
+  head.textContent = name.trim();
+  head.classList.remove('has-known');
+  const uid = src.getAttribute('data-known-uid') || '';
+  if(uid){
+    head.setAttribute('data-known-uid', uid);
+    try{ if(window.NalunoKnown && typeof NalunoKnown.paintBeside === 'function') NalunoKnown.paintBeside(head, uid); }catch(_){}
+  } else {
+    head.removeAttribute('data-known-uid');
+  }
+}
 function showCallScreen(id){
   try{ if(typeof prewarmCameraForCall === 'function' && arguments[0] !== 'incall' && nalunoCallKind !== 'audio') prewarmCameraForCall(); }catch(_){}
 
@@ -72,7 +99,7 @@ function showCallScreen(id){
   if(screen) screen.classList.add('active');
   /* 06c: the other person's name at the top of the call, as on WhatsApp. */
   if(id === 'incall'){
-    try{ if($('incallHeadName') && $('remoteName')) $('incallHeadName').textContent = $('remoteName').textContent || ''; }catch(_){}
+    try{ nalunoSetIncallHeadName(); }catch(_){}
   }
   if(id !== 'incall'){
     try{ closeIncallWire(); }catch(_){}

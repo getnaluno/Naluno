@@ -116,7 +116,7 @@ const ORDER = { ringing: 0, accepted: 1, declined: 2, missed: 2, busy: 2, ended:
   assert.ok(src.includes('closeCallOverlay({ keepHistory: true })') && src.includes('if(keepHistory) return;'), 'an incoming call replacing the lobby is not ended by Back');
   assert.ok(src.includes('if(!replacingCallScreen) snapshotUiBeforeCall();'), 'the return point survives a replaced call screen');
   assert.ok(src.includes("d.status === 'busy' || d.status === 'declined'") && src.includes("otherDeviceAnswered"), 'caller hears busy; other device answering stops the ring');
-  assert.ok(cam.includes('nalunoCamGen++;') && (cam.match(/nalunoCamLate\(camGen,/g) || []).length === 2, 'a camera that starts after the call ended is switched off');
+  assert.ok(cam.includes('nalunoCamGen++;') && (cam.match(/nalunoCamLate\(camGen,/g) || []).length >= 2, 'a camera that starts after the call ended is switched off');
   assert.ok(src.includes('let nalunoDialing = null;') && src.includes("try{ nalunoCancelDial(); }catch(_){}") && (src.match(/if\(gone\(\)\)/g) || []).length >= 6, 'a dial cancelled or replaced while the camera opens stops before its record rings');
   assert.ok(src.includes('} else if(activeCallId || dialingOut){') && src.includes("nalunoCancelDial('crossed')"), 'a call arriving while dialing is busy, or the crossed call is answered');
   assert.ok(cam.includes('if(got && stream && stream !== got && mediaStreamIsLive(stream)){'), 'overlapping camera requests do not leave a camera on');
