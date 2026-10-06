@@ -56,6 +56,7 @@
      (titles and pieces are often mixed with English). */
   function hasLuganda(b) {
     if (!b) return false;
+    if (b.lang === 'lg') return true; /* 07c: marked Luganda by its writer */
     var key = (b.id || '') + ':' + (b.updatedAt || b.createdAt || '');
     if (key in lgCache) return lgCache[key];
     var LV = window.NalunoLgVoice, Lg = window.NalunoLgSpeak;
@@ -428,7 +429,7 @@
       try { state.io && state.io.disconnect(); } catch (_) {}
       if (listening === state) listening = null;
     };
-    Promise.resolve(bspaceSpeakWriting(text, '', label)).then(done, done);
+    Promise.resolve(bspaceSpeakWriting(text, b.lang === 'lg' ? 'lg' : '', label)).then(done, done);
   }
 
   /* One listener for every card, before the card's own "open" tap. */

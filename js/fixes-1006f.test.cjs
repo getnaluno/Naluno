@@ -37,7 +37,7 @@ const wf = read('.github/workflows/firebase-auth-helper.yml');
   const probe = auth.slice(auth.indexOf('function nalunoProbeOwnAuth'), auth.indexOf('window.nalunoOwnAuthOn'));
   assert.ok(probe.includes("page('/__/auth/handler'), page('/__/auth/iframe'), file('/__/auth/handler.js'), file('/__/auth/iframe.js'), config"), 'all five checked');
   assert.ok(/text\\\/html/.test(probe), 'the pages must come back as HTML, not a download');
-  assert.ok(probe.includes('j.projectId === firebaseConfig.projectId'), 'init.json must be this project');
+  assert.ok(probe.includes('j.projectId === firebaseConfig.projectId') && probe.includes(': true; }, function(){ return true; });'), 'init.json, when served, must be this project; not needed');
   assert.ok(probe.includes("if(ok) localStorage.setItem('nalunoOwnAuth', '1');") && probe.includes("else localStorage.removeItem('nalunoOwnAuth');"), 'and switches back if they go missing');
   assert.ok(auth.includes('setTimeout(nalunoProbeOwnAuth, 4000)'), 'checked after start-up, never blocking it');
 }
@@ -46,8 +46,11 @@ const wf = read('.github/workflows/firebase-auth-helper.yml');
 assert.ok(/if\(!isSameOrigin\) return;\s*\/\*[\s\S]*?\*\/\s*if\(url\.pathname\.indexOf\('\/__\/'\) === 0\) return;/.test(sw), 'sign-in pages bypass the service worker');
 
 /* 4. The workflow fetches every file Firebase lists, as HTML pages where needed. */
-['handler" ', 'handler.js', 'experiments.js', 'iframe" ', 'iframe.js', 'links" ', 'links.js', 'init.json'].forEach((f) => assert.ok(wf.includes('/__/' + (f === 'init.json' ? 'firebase/' : 'auth/') + f.trim()), f));
-['__/auth/handler.html', '__/auth/iframe.html', '__/auth/links.html', 'touch .nojekyll', '"projectId": *"naluno-28a00"', "cron: '17 3 * * 1'", 'workflow_dispatch'].forEach((s) => assert.ok(wf.includes(s), 'workflow: ' + s));
+/* 07c: the four the sign-in needs are required; the rest are fetched when
+   Google serves them (init.json is not served for this project: run #3). */
+['handler"', 'handler.js"', 'iframe"', 'iframe.js"'].forEach((f) => assert.ok(wf.includes('"$base/__/auth/' + f), 'required: ' + f));
+['__/auth/experiments.js', '__/auth/links ', '__/auth/links.js', '__/firebase/init.json'].forEach((f) => assert.ok(wf.includes('optional ' + f), 'optional: ' + f));
+['__/auth/handler.html', '__/auth/iframe.html', '__/auth/links.html', 'touch .nojekyll', '"projectId": *"naluno-28a00"', "cron: '17 3 * * 1'", 'workflow_dispatch', 'actions/checkout@v5'].forEach((s) => assert.ok(wf.includes(s), 'workflow: ' + s));
 assert.ok(!/secrets\./.test(wf), 'needs no secrets');
 
 /* 5. Stamps */

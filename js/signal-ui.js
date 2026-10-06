@@ -228,6 +228,14 @@ function renderScheduledDock(){
     }).join('');
   dock.querySelectorAll('.sched-row').forEach(function(row){
     const id = row.getAttribute('data-sched');
+    const titleEl = row.querySelector('.sched-title');
+    if(titleEl){
+      titleEl.setAttribute('role', 'button');
+      titleEl.onclick = function(e){
+        if(e) e.stopPropagation();
+        if(id && typeof openBroadcastById === 'function') openBroadcastById(id);
+      };
+    }
     const edit = row.querySelector('.sched-edit');
     const form = row.querySelector('.sched-form');
     if(edit && form){
@@ -293,6 +301,7 @@ function renderBroadcastTab(){
   const grid = document.getElementById('bcastPlateGrid');
   const empty = document.getElementById('bcastPlateEmpty');
 
+  try{ if(window.NalunoPublicSignals && typeof NalunoPublicSignals.load === 'function') NalunoPublicSignals.load(false); }catch(_){}
   // ---- Signal rings (rounded squares). First tile is always New Signal.
   // Create path is still #newSignalBtn → openComposer('signal'). ----
   if(stripEl){
@@ -393,7 +402,10 @@ function renderBroadcastTab(){
     const myRenderGen = ++__nalunoSignalStripRenderGen;
     const doRebuild = function(){
       if(myRenderGen !== __nalunoSignalStripRenderGen) return; // superseded by a newer render
-      stripEl.innerHTML = signalCreateTileHtml() + myTile + others;
+      /* 07c: then Signals for everyone (signal-public.js). */
+      const publicTiles = (window.NalunoPublicSignals && typeof NalunoPublicSignals.tilesHtml === 'function') ? NalunoPublicSignals.tilesHtml() : '';
+      stripEl.innerHTML = signalCreateTileHtml() + myTile + others + publicTiles;
+      try{ if(publicTiles) NalunoPublicSignals.bind(stripEl); }catch(_){}
       const createTile = document.getElementById('newSignalItem');
       if(createTile){
         createTile.onclick = function(e){
@@ -1015,6 +1027,15 @@ function nalunoRenderPrivateDrawer(){
     btn.setAttribute('aria-expanded', open ? 'true' : 'false');
   }
   if(!open){ box.innerHTML = ''; return; }
+  /* 07c: the "Before it goes out" list (scheduled and private, with Edit,
+     Save and Publish now) is shown here, under Private broadcasts, instead
+     of on For You. */
+  try{ renderScheduledDock(); }catch(_){}
+  const dockEl = document.getElementById('bcastScheduleDock');
+  if(dockEl && !dockEl.hidden){
+    box.innerHTML = '<p class="lobby-sub" style="margin:8px 0 2px;text-align:left;max-width:none;">Only you see these. Tap a title to open it, or Edit to schedule or publish.</p>';
+    return;
+  }
   const mine = (typeof myBroadcasts !== 'undefined' && myBroadcasts) ? myBroadcasts : [];
   const rows = mine.filter(function(b){
     return b && !b.deleted && typeof broadcastIsPrivate === 'function' && broadcastIsPrivate(b);

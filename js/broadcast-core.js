@@ -299,7 +299,7 @@ function broadcastCreditFromOrigin(origin){
   };
 }
 
-async function createPermanentBroadcast({ title, description, tags, mediaType, mediaUrl, thumbUrl, filterCss, chapters, breathers, strandId, strandName, origin, screen, publishAt, visibility, body, words, durationSec, originCredit, repostOf }){
+async function createPermanentBroadcast({ title, description, tags, mediaType, mediaUrl, thumbUrl, filterCss, chapters, breathers, strandId, strandName, origin, screen, publishAt, visibility, body, words, durationSec, originCredit, repostOf, lang }){
   if(!currentUser || !fbDb) throw new Error('Sign in required');
   const now = Date.now();
   const ref = fbDb.collection('broadcasts').doc();
@@ -322,6 +322,9 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
     body: mediaType === 'writing' ? String(body || '').slice(0, 80000) : null,
     words: mediaType === 'writing' ? (Number(words) || 0) : null,
     durationSec: mediaType === 'writing' ? (Number(durationSec) || 0) : null,
+    /* 07c: the writer said it is Luganda (Write → Luganda): it shows under
+       Luganda and Listen reads it in the Luganda voice. */
+    lang: lang === 'lg' ? 'lg' : null,
     kind: mediaType === 'writing' ? 'writing' : (mediaType || 'photo'),
     mediaId: (typeof nalunoMediaIdFromUrl === 'function' ? nalunoMediaIdFromUrl(primaryUrl) : null) || null,
     thumbUrl: thumbUrl || null,

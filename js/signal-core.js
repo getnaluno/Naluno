@@ -1377,7 +1377,8 @@ async function saveSignalSegment(segment){
     try{
       const mirror = {
         uid: currentUser.uid,
-        name: clean.name || (currentUser.displayName || ''),
+        /* 07c: the Naluno name, not the Google account's. */
+        name: clean.name || ((typeof currentProfile !== 'undefined' && currentProfile && currentProfile.name) ? String(currentProfile.name).slice(0, 80) : (currentUser.displayName || '')),
         createdAt: clean.createdAt || Date.now(),
         expiresAt: clean.expiresAt || null,
         mediaType: clean.mediaType || clean.type || 'signal',
@@ -1387,6 +1388,20 @@ async function saveSignalSegment(segment){
       };
       if(clean.photoUrl) mirror.photoUrl = String(clean.photoUrl).slice(0, 600);
       if(clean.videoUrl || clean.mediaUrl) mirror.videoUrl = String(clean.videoUrl || clean.mediaUrl).slice(0, 600);
+      /* 07c: Signals for everyone. The public list reads this copy (the
+         rules let anyone signed in read it only while public, not held and
+         not taken down), so it carries what the viewer needs to play it. */
+      mirror.public = !!(clean.public && !clean.held);
+      mirror.hidden = false;
+      mirror.publicDay = new Date(Number(mirror.createdAt) || Date.now()).toISOString().slice(0, 10);
+      mirror.type = String(clean.type || clean.mediaType || 'photo').slice(0, 20);
+      if(clean.type === 'text'){
+        mirror.text = String(clean.text || '').slice(0, 500);
+        ['bg', 'textColor', 'fontKey', 'fontSize'].forEach(function(k){ if(clean[k] != null) mirror[k] = String(clean[k]).slice(0, 300); });
+      }
+      ['filterCss'].forEach(function(k){ if(clean[k]) mirror[k] = String(clean[k]).slice(0, 300); });
+      ['duration', 'trimStart', 'trimEnd'].forEach(function(k){ if(isFinite(Number(clean[k]))) mirror[k] = Number(clean[k]); });
+      if(clean.thumbDataUrl && String(clean.thumbDataUrl).length <= 90000) mirror.thumbDataUrl = String(clean.thumbDataUrl);
       fbDb.collection('signals').doc(ref.id).set(mirror, { merge: true }).catch(function(){});
     }catch(_){}
     if(held){

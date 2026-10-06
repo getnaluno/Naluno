@@ -1039,6 +1039,8 @@ function openComposer(mode){
   try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('open composer', mode || 'signal'); }catch(_){}
   composerMode = mode === 'broadcast' ? 'broadcast' : 'signal';
   resetComposer();
+  /* 07c: the Signal maker shows who will see it. */
+  if(composerMode === 'signal'){ try{ nalunoPaintSignalAudience(true); }catch(_){} }
   const label = $('composerModeLabel');
   const hint = $('composerModeHint');
   const ttlRow = $('signalTtlRow');
@@ -1881,8 +1883,53 @@ function nalunoNoteHeldSignals(segs){
     }, 1800);
   }catch(_){}
 }
+/* 07c: who sees a Signal. "Everyone on Naluno" (the default) puts it in
+   Signals for everyone as well as in front of your connections; "My
+   connections" keeps it to them. Remembered on this phone. */
+function nalunoSignalAudience(){
+  /* Public only once the person has seen the choice (the Signal maker
+     shows it, with Everyone selected). A Signal posted from a screen that
+     does not show it, on a phone that never has, stays with connections. */
+  try{
+    const v = localStorage.getItem('nalunoSignalAudience');
+    return v === 'public' ? 'public' : 'connections';
+  }catch(_){ return 'connections'; }
+}
+window.nalunoSignalAudience = nalunoSignalAudience;
+function nalunoPaintSignalAudience(seen){
+  const row = document.getElementById('signalAudRow');
+  if(!row) return;
+  /* First time the maker is opened: Everyone, shown selected. */
+  if(seen){ try{ if(!localStorage.getItem('nalunoSignalAudience')) localStorage.setItem('nalunoSignalAudience', 'public'); }catch(_){} }
+  const aud = nalunoSignalAudience();
+  row.querySelectorAll('[data-aud]').forEach(function(b){
+    const on = b.getAttribute('data-aud') === aud;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-checked', on ? 'true' : 'false');
+  });
+  const note = document.getElementById('signalAudNote');
+  if(note) note.textContent = aud === 'public'
+    ? 'Anyone on Naluno can watch it in Signals for 24 hours, after Naluno’s safety check. Your connections see it as always.'
+    : 'Only your connections see it.';
+  if(!row.__wired){
+    row.__wired = true;
+    row.addEventListener('click', function(e){
+      const b = e.target && e.target.closest ? e.target.closest('[data-aud]') : null;
+      if(!b) return;
+      try{ localStorage.setItem('nalunoSignalAudience', b.getAttribute('data-aud') === 'connections' ? 'connections' : 'public'); }catch(_){}
+      nalunoPaintSignalAudience();
+    });
+  }
+}
+window.nalunoPaintSignalAudience = nalunoPaintSignalAudience;
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function(){ nalunoPaintSignalAudience(false); });
+else nalunoPaintSignalAudience(false);
+
 async function postSegmentsNow(newSegments){
   try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('postSegmentsNow', (newSegments && newSegments.length) || 0); }catch(_){}
+  const wantPublic = nalunoSignalAudience() === 'public';
+  /* No picture check on this phone: pictures stay with connections. */
+  const canScreen = typeof runNalunoScreen === 'function';
   const screened = await nalunoScreenSignalSegments(newSegments);
   if(screened.blocked){
     // Thrown, not toasted-and-returned: the publish queue reports a thrown
@@ -1983,6 +2030,9 @@ async function postSegmentsNow(newSegments){
           // large ones will now fail loudly rather than silently.
         }
       }
+      /* Public only when chosen and Screen passed it (a held part stays
+         with you until it is checked). */
+      if(segToSave) segToSave = Object.assign({}, segToSave, { public: !!(wantPublic && !segToSave.held && (segToSave.type === 'text' || canScreen)) });
       const id = await saveSignalSegment(segToSave);
       if(id) mySignal.push(Object.assign({}, segToSave, { id: id }));
       else saveFailed++;

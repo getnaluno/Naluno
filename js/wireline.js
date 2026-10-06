@@ -213,22 +213,94 @@ function wireQuoteHtml(text){
   }
   return wireLinkify(t);
 }
+/* 07c: links in Wireline are links people can open, not text.
+   - https://…, www.… and plain addresses such as getnaluno.com/… or
+     youtube.com/watch?… all become links (a common ending is required, so
+     "file.txt" stays text).
+   - Built from escaped text, so only a link can ever come out of it.
+   - Naluno's own links (a Broadcast, a Strand) open inside Naluno; anything
+     else opens in the phone's browser, also from the Android app, where a
+     plain new-window link is ignored. Adult and gambling sites stay text. */
 function wireLinkify(text){
+  const WIRE_LINK_BAD = /(porn|xxx|xvideo|xnxx|xhamster|redtube|youporn|onlyfans|fansly|chaturbate|stripchat|camsoda|nsfw|hentai|bet365|1xbet|casino)/i;
+  const WIRE_LINK_RE = /((?:https?:\/\/|www\.)[^\s<]+|\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|org|net|ug|co|io|app|me|tv|africa|news|info|gov|edu|uk|ke|tz|rw|ng|za|gh|ly|link|site|online|store|shop|dev|ai)(?![a-z0-9@-])(?:\/[^\s<]*)?)/gi;
   const esc = escapeHtml(String(text == null ? '' : text));
-  return esc.replace(/((?:https?:\/\/|www\.)[^\s<]+)/gi, function(url){
+  return esc.replace(WIRE_LINK_RE, function(url, _m, offset, whole){
+    /* Not inside an e-mail address (name@site.com). */
+    if(offset > 0 && whole.charAt(offset - 1) === '@') return url;
     let show = url;
     let extra = '';
-    const tail = show.match(/[),.;:!?]+$/);
+    /* Punctuation (and a closing quote or bracket) after a link is not
+       part of it. */
+    const tail = show.match(/(?:[),.;:!?]|&quot;|&#39;|&gt;)+$/);
     if(tail){
       extra = tail[0];
       show = show.slice(0, -extra.length);
     }
-    let href = show;
-    if(/^www\./i.test(href)) href = 'https://' + href;
-    if(!/^https?:\/\//i.test(href)) return url;
-    return '<a class="wire-link" href="' + href + '" target="_blank" rel="noopener noreferrer">' + show + '</a>' + extra;
+    if(!show) return url;
+    /* Back to the real characters, then escaped once for the attribute
+       (so O'Brien stays O'Brien, not O&#39;Brien). */
+    let href = show.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    if(!/^https?:\/\//i.test(href)) href = 'https://' + href;
+    const host = href.replace(/^https?:\/\//i, '').split(/[\/?#:]/)[0].toLowerCase();
+    if(!host || !/^[a-z0-9.-]+$/.test(host)) return url;
+    if(WIRE_LINK_BAD.test(host)) return url;
+    const naluno = /(^|\.)getnaluno\.com$/.test(host) ? ' data-naluno-link="1"' : '';
+    return '<a class="wire-link" href="' + escapeHtml(href) + '"' + naluno + ' target="_blank" rel="noopener noreferrer nofollow">' + show + '</a>' + extra;
   });
 }
+/* Open a link from a message: Naluno's own inside Naluno, the rest outside. */
+function nalunoOpenWireLink(href){
+  let u = null;
+  try{ u = new URL(href, location.href); }catch(_){ return false; }
+  if(/(^|\.)getnaluno\.com$/i.test(u.hostname) || u.origin === location.origin){
+    const b = u.searchParams.get('broadcast') || u.searchParams.get('b');
+    const st = u.searchParams.get('strand');
+    if(b && typeof openBroadcastById === 'function'){
+      try{ if(typeof closeThread === 'function') closeThread(); }catch(_){}
+      openBroadcastById(b);
+      return true;
+    }
+    if(st){
+      try{ const nav = document.querySelector('.navbtn[data-tab="broadcast"]'); if(nav) nav.click(); }catch(_){}
+      if(typeof openStrandFolder === 'function'){ setTimeout(function(){ openStrandFolder(st); }, 120); return true; }
+    }
+  }
+  const native = (function(){
+    try{
+      return !!(window.Capacitor && ((typeof Capacitor.isNativePlatform === 'function' && Capacitor.isNativePlatform()) || Capacitor.platform === 'android' || Capacitor.platform === 'ios'));
+    }catch(_){ return false; }
+  })();
+  if(native){
+    try{
+      const B = window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.Browser;
+      if(B && typeof B.open === 'function'){ B.open({ url: u.href }); return true; }
+    }catch(_){}
+    try{ if(window.open(u.href, '_system')) return true; }catch(_){}
+    try{ location.href = u.href; return true; }catch(_){}
+    return false;
+  }
+  /* No 'noopener' feature here: with it window.open always answers null,
+     and the link would open twice. The new page is cut off instead. */
+  let w = null;
+  try{ w = window.open(u.href, '_blank'); }catch(_){}
+  if(w){ try{ w.opener = null; }catch(_){} }
+  /* A home-screen app that cannot open a window: open it here (Back
+     returns to Naluno). */
+  if(!w){
+    try{ if(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches){ location.href = u.href; return true; } }catch(_){}
+    return false;
+  }
+  return true;
+}
+window.nalunoOpenWireLink = nalunoOpenWireLink;
+document.addEventListener('click', function(e){
+  const a = e.target && e.target.closest ? e.target.closest('#threadMessages a.wire-link, #threadMessages a.naluno-link') : null;
+  if(!a) return;
+  e.stopPropagation();
+  const href = a.getAttribute('href') || '';
+  if(nalunoOpenWireLink(href)) e.preventDefault();
+}, true);
 
 function renderWirelineList(){
   const rows = contacts.map(c=>{

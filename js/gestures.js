@@ -39,7 +39,8 @@
   function nearEdge(p) { return p.x < EDGE || p.x > window.innerWidth - EDGE; }
   function isOpen(el) { return !!(el && el.classList && el.classList.contains('active')); }
   function interactive(t) {
-    return !!(t && t.closest && t.closest('input, textarea, select, [contenteditable="true"], input[type="range"], .no-swipe'));
+    /* 07c: a link in a message is for tapping, not for swipe-to-reply. */
+    return !!(t && t.closest && t.closest('input, textarea, select, [contenteditable="true"], input[type="range"], .no-swipe, a.wire-link, a.naluno-link'));
   }
   /* After a swipe, the click the browser sends at touchend must not also
      tap a button or a story tap-zone. */

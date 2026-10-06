@@ -530,7 +530,10 @@ function bspaceClearWriting(){
       const title = (head && head.textContent) ? head.textContent.trim() : '';
       return (title ? title + (/[.!?…]$/.test(title) ? '' : '.') + '\n\n' : '') + ((clamp && clamp.textContent) || '');
     })() : ((activeBroadcastMeta && (activeBroadcastMeta.body || (activeBroadcastMeta.segment && activeBroadcastMeta.segment.text))) || '');
-    bspaceSpeakWriting(text, hear ? hear.value : '', btn);
+    /* 07c: a piece marked Luganda by its writer is read as Luganda when
+       "As written" is chosen. */
+    const marked = (activeBroadcastMeta && activeBroadcastMeta.lang === 'lg') ? 'lg' : '';
+    bspaceSpeakWriting(text, (hear && hear.value) ? hear.value : marked, btn);
   };
 })();
 
@@ -2849,6 +2852,7 @@ function bspaceMetaFromRecord(id, d){
       tags: d.tags || [],
       chapters: chapters,
       body: text,
+      lang: d.lang === 'lg' ? 'lg' : '',
       originCredit: d.originCredit || null,
       repostOf: d.repostOf || null,
       live: false,
@@ -4251,6 +4255,125 @@ window.nalunoBspaceStep = nalunoBspaceStep;
   root.addEventListener('pointerdown', showChrome);
   root.addEventListener('touchstart', showChrome, { passive: true });
   window.nalunoBspaceShowChrome = showChrome;
+})();
+
+/* 07c: the next Broadcast in the feed, in the order the feed shows them
+   (the next part of a Strand first). Past Nearby Broadcasts, a swipe up
+   goes straight there, without going back up to the tab. */
+function nalunoFeedNextId(curId){
+  try{
+    const pack = (typeof nalunoStrandSiblingsFor === 'function') ? nalunoStrandSiblingsFor(curId) : null;
+    if(pack && pack.index >= 0 && pack.index < pack.items.length - 1 && pack.items[pack.index + 1]) return pack.items[pack.index + 1].id;
+  }catch(_){}
+  const pool = [];
+  try{
+    if(typeof feedBroadcasts !== 'undefined' && feedBroadcasts) pool.push.apply(pool, feedBroadcasts);
+    if(typeof myBroadcasts !== 'undefined' && myBroadcasts) pool.push.apply(pool, myBroadcasts);
+  }catch(_){}
+  const byId = {};
+  pool.forEach(function(b){ if(b && b.id) byId[b.id] = b; });
+  const cur = byId[curId] || null;
+  /* The feed's own order: each card is a Broadcast or a Strand. */
+  const order = [];
+  const grid = document.getElementById('bcastPlateGrid');
+  if(grid){
+    Array.prototype.forEach.call(grid.children, function(el){
+      const bid = el.getAttribute('data-broadcast-id');
+      const sid = el.getAttribute('data-strand-id');
+      if(bid) order.push({ id: bid });
+      else if(sid){
+        const parts = pool.filter(function(b){ return b && b.strandId === sid && !b.deleted; })
+          .sort(function(a, b){ return (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0); });
+        if(parts[0]) order.push({ id: parts[0].id, strand: sid });
+      }
+    });
+  }
+  let at = -1;
+  for(let i = 0; i < order.length; i++){
+    if(order[i].id === curId || (cur && cur.strandId && order[i].strand === cur.strandId)){ at = i; break; }
+  }
+  /* After this one; or, if it is not in the feed, the feed from the top. */
+  for(let j = at + 1; j < order.length; j++){
+    if(order[j].id !== curId && !(cur && cur.strandId && order[j].strand === cur.strandId)) return order[j].id;
+  }
+  /* Not in the feed (opened from a link or search): the newest other one. */
+  const other = pool.filter(function(b){ return b && b.id !== curId && !b.deleted && (!cur || !cur.strandId || b.strandId !== cur.strandId); })
+    .filter(function(b){ return !(typeof broadcastIsPrivate === 'function' && broadcastIsPrivate(b)) && !(typeof broadcastIsScheduled === 'function' && broadcastIsScheduled(b)); })
+    .sort(function(a, b){ return (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0); });
+  return other[0] ? other[0].id : '';
+}
+window.nalunoFeedNextId = nalunoFeedNextId;
+function nalunoBspaceNext(){
+  const id = (typeof activeBroadcastId !== 'undefined') ? activeBroadcastId : null;
+  const next = id ? nalunoFeedNextId(id) : '';
+  if(!next){
+    try{ toast('That’s the last one — back to Broadcasts'); }catch(_){}
+    try{ closeBroadcastSpace(); }catch(_){}
+    return;
+  }
+  try{
+    const v = document.getElementById('bspaceVideoEl');
+    if(v){ v.dataset.nalunoUserPaused = '1'; v.dataset.nalunoWantPlay = '0'; try{ v.pause(); }catch(_){} }
+  }catch(_){}
+  try{ if(typeof nalunoPauseLeavingMedia === 'function') nalunoPauseLeavingMedia(); }catch(_){}
+  if(typeof openBroadcastById === 'function') openBroadcastById(next);
+  try{ const sc = document.getElementById('bspaceScroll'); if(sc) sc.scrollTop = 0; }catch(_){}
+}
+window.nalunoBspaceNext = nalunoBspaceNext;
+function nalunoPaintNextCue(){
+  const cue = document.getElementById('bspaceNextCue');
+  if(!cue) return;
+  const id = (typeof activeBroadcastId !== 'undefined') ? activeBroadcastId : null;
+  const next = id ? nalunoFeedNextId(id) : '';
+  let title = '';
+  try{
+    const pool = [].concat((typeof feedBroadcasts !== 'undefined' && feedBroadcasts) || [], (typeof myBroadcasts !== 'undefined' && myBroadcasts) || []);
+    const b = pool.find(function(x){ return x && x.id === next; });
+    title = b ? String(b.title || 'Broadcast').slice(0, 60) : '';
+  }catch(_){}
+  const t = document.getElementById('bspaceNextTitle');
+  if(t) t.textContent = next ? ('Next: ' + title) : 'Back to Broadcasts';
+}
+window.nalunoPaintNextCue = nalunoPaintNextCue;
+(function bindBspaceSwipeOn(){
+  const sc = document.getElementById('bspaceScroll');
+  const cue = document.getElementById('bspaceNextCue');
+  if(cue && !cue.__wired){
+    cue.__wired = true;
+    cue.onclick = function(e){ if(e) e.stopPropagation(); nalunoBspaceNext(); };
+  }
+  if(!sc || sc.__nalunoNextBound) return;
+  sc.__nalunoNextBound = true;
+  let sy = 0, sx = 0, atEnd = false, t0 = 0;
+  /* At the end (phones stop a little short of the last pixel). */
+  function bottom(){ return sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 28; }
+  sc.addEventListener('touchstart', function(e){
+    const t = e.touches && e.touches[0];
+    if(!t) return;
+    sy = t.clientY; sx = t.clientX; t0 = Date.now();
+    atEnd = bottom();
+    if(atEnd) nalunoPaintNextCue();
+  }, { passive: true });
+  sc.addEventListener('touchend', function(e){
+    const t = e.changedTouches && e.changedTouches[0];
+    if(!t || !atEnd) return;
+    atEnd = false;
+    if(e.target && e.target.closest && e.target.closest('input, textarea, select, form, [contenteditable="true"], .nearby-strip, .bspace-nearby-strip, .bspace-edit, #bspaceEditor')) return;
+    try{ const a = document.activeElement; if(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return; }catch(_){}
+    const dy = t.clientY - sy, dx = t.clientX - sx;
+    /* A clear upward swipe that started at the very bottom. */
+    if(dy < -70 && Math.abs(dy) > Math.abs(dx) * 1.4 && Date.now() - t0 < 1200 && bottom()) nalunoBspaceNext();
+  }, { passive: true });
+  /* A mouse wheel past the end does the same on a computer. */
+  let wheelAt = 0, wheelSum = 0;
+  sc.addEventListener('wheel', function(e){
+    if(!bottom() || e.deltaY <= 0){ wheelSum = 0; return; }
+    const now = Date.now();
+    if(now - wheelAt > 600) wheelSum = 0;
+    wheelAt = now; wheelSum += e.deltaY;
+    if(wheelSum > 900){ wheelSum = 0; nalunoBspaceNext(); }
+  }, { passive: true });
+  sc.addEventListener('scroll', function(){ if(bottom()) nalunoPaintNextCue(); }, { passive: true });
 })();
 
 (function bindBspaceSwipe(){

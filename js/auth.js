@@ -179,9 +179,10 @@ function nalunoProbeOwnAuth(){
   const file = function(p){
     return fetch(p, { cache: 'no-store', credentials: 'omit' }).then(function(r){ return !!(r && r.ok); });
   };
+  /* 07c: /__/firebase/init.json is not needed (and is not served for this
+     project); it is checked only if present. */
   const config = fetch('/__/firebase/init.json', { cache: 'no-store', credentials: 'omit' })
-    .then(function(r){ return r.ok ? r.json() : null; })
-    .then(function(j){ return !!(j && j.projectId === firebaseConfig.projectId); });
+    .then(function(r){ return r.ok ? r.json().then(function(j){ return !!(j && j.projectId === firebaseConfig.projectId); }, function(){ return false; }) : true; }, function(){ return true; });
   Promise.all([page('/__/auth/handler'), page('/__/auth/iframe'), file('/__/auth/handler.js'), file('/__/auth/iframe.js'), config])
     .then(function(all){
       const ok = all.every(Boolean);

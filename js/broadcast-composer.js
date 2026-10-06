@@ -632,6 +632,8 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
   const snapDesc = desc;
   const snapTags = tags.slice();
   const snapChapters = bcompKind === 'writing' ? bcompCollectChapters() : null;
+  const snapLuganda = bcompKind === 'writing' && !!window.__bcompLuganda;
+  window.__bcompLuganda = false;
   window.__bcompChaptered = true;
   const snapBody = snapChapters ? snapChapters.map(function(c){ return (c.title ? c.title + '\n' : '') + c.text; }).join('\n\n') : '';
   const snapStrandId = strandId;
@@ -670,6 +672,7 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
           publishAt: snapPublishAt, visibility: snapVisibility,
           mediaType: 'writing', mediaUrl: coverUrl, thumbUrl: coverUrl,
           body: snapBody,
+          lang: snapLuganda ? 'lg' : null,
           words: words,
           durationSec: Math.max(30, Math.round(words / 3.3)),
           chapters: snapChapters,
@@ -1068,6 +1071,8 @@ if($('bwritePublish')){
       });
     }
     window.__bcompChaptered = chaptered;
+    /* 07c: Luganda, chosen on the Write screen (closeWriteEntry clears it). */
+    window.__bcompLuganda = !!($('bwriteLuganda') && $('bwriteLuganda').checked);
     const host = $('bcompChapters');
     if(host) host.innerHTML = '';
     bcompStartWriting();
@@ -1334,3 +1339,30 @@ function bcompPaintOrigin(report){
 }
 
 if($('broadcastGoLiveBtn')) $('broadcastGoLiveBtn').onclick = ()=>{ if(typeof openGoLiveFromSignal==='function') openGoLiveFromSignal(); else if(typeof bcompStartGoLive==='function') bcompStartGoLive(); };
+
+/* 07c: the Luganda box ticks itself when the piece reads as Luganda, until
+   the writer sets it themselves. */
+(function wireWriteLuganda(){
+  const box = $('bwriteLuganda');
+  const body = $('bwriteBody');
+  if(!box || !body || box.__wired) return;
+  box.__wired = true;
+  box.addEventListener('change', function(){ box.dataset.touched = '1'; });
+  let t = null;
+  body.addEventListener('input', function(){
+    if(!String(body.value || '').trim()){ box.checked = false; delete box.dataset.touched; return; }
+    if(box.dataset.touched === '1') return;
+    clearTimeout(t);
+    t = setTimeout(function(){
+      try{
+        const LV = window.NalunoLgVoice;
+        const text = String(body.value || '');
+        if(!LV || typeof LV.looksLuganda !== 'function' || text.trim().split(/\s+/).length < 4) return;
+        const parts = text.split(/[.!?…]+\s+|\n+/).filter(function(x){ return x.trim().split(/\s+/).length >= 2; }).slice(0, 8);
+        let lg = 0;
+        parts.forEach(function(x){ try{ if(LV.looksLuganda(x)) lg++; }catch(_){} });
+        box.checked = parts.length > 0 && lg * 2 >= parts.length;
+      }catch(_){}
+    }, 500);
+  });
+})();
