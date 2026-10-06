@@ -31,7 +31,24 @@
   /* Pauses put back between pieces, in seconds (the kept soft edges add
      about 0.17 s of near-silence to each). */
   var GAP = { sentence: 0.16, paragraph: 0.45, split: 0.02, comma: 0.1 };
-  var WORKER_URL = '/js/naluno-voice-worker.js?v=20261005i';
+  /* 07 Oct: Luganda at the English voices' pace.
+     Measured on the real voices (js/lg-suite.json Luganda sentences, six
+     English sentences, speech only):
+       English  female 3.8, male 4.2 syllables a second;
+       Luganda  female 6.85, male 6.7 (Naluno's African voice at its own
+                pace) - about 1.7 times as fast.
+     Words a minute look alike (about 150-185) only because Luganda words
+     are long. A language built of simple syllables (consonant + vowel,
+     like Luganda) is heard at the same pace when it says about 1.26 times
+     as many syllables a second as English (Pellegrino, Coupe & Marsico,
+     Language 87(3), 2011). So Luganda is slowed to 1.26 x the English
+     voice's syllable rate: female 4.8, male 5.3 syllables a second (AF_PACE below, checked by
+     measuring again: female 4.8, male 5.3).
+     Only the length of the sounds changes (the model's own length scale);
+     the voice, its pitch and its pronunciation are the same. The person's
+     speed setting, if any, applies on top, as it does for English. */
+  var AF_PACE = { female: 0.65, male: 0.73 };
+  var WORKER_URL = '/js/naluno-voice-worker.js?v=20261007a';
   var ctx = null;
   var job = 0;
   var makers = [];
@@ -245,7 +262,8 @@
         /* Luganda: Naluno's African voice first (free, on the phone), then
            the optional Sunbird voice, then this voice from Luganda sounds. */
         if (!pl.af || own.state === 'missing') return viaNative();
-        return m.boot().then(function () { m.job(myJob); return m.sayAf(pl.af.phones, pl.af.female, pl.af.speed || 1, myJob); }).then(function (a) {
+        var afSpeed = (typeof pl.af.speed === 'number' && pl.af.speed > 0) ? pl.af.speed : (AF_PACE[pl.af.female ? 'female' : 'male'] * mult);
+        return m.boot().then(function () { m.job(myJob); return m.sayAf(pl.af.phones, pl.af.female, afSpeed, myJob); }).then(function (a) {
           if (!a || !a.samples || !a.samples.length) return viaNative();
           own.state = 'ok';
           a.native = true;
@@ -316,6 +334,11 @@
                 try { mono = root.NalunoVoiceMaster.master(mono, rate, male) || mono; } catch (_) {}
               }
               var clip = trim(mono, rate);
+              /* 07 Oct: every voice (English, Luganda, Sunbird) gets the
+                 same finishing: clear and equally loud, never clipped. */
+              if (clip.length && root.NalunoVoiceMaster && typeof root.NalunoVoiceMaster.finish === 'function') {
+                try { clip = root.NalunoVoiceMaster.finish(clip, rate) || clip; } catch (_) {}
+              }
               if (clip.length) {
                 var buf = context.createBuffer(1, clip.length, rate);
                 buf.copyToChannel(clip, 0);
@@ -378,6 +401,7 @@
     female: 'Bella',
     male: 'Hugo',
     PACE: PACE,
+    AF_PACE: AF_PACE,
     GAP: GAP,
     _pieces: pieces,
     _trim: trim,

@@ -52,6 +52,6 @@ assert.ok(!/secrets\./.test(wf), 'needs no secrets');
 
 /* 5. Stamps */
 const html = read('app/index.html');
-assert.ok(/\/js\/auth\.js\?v=20261006[f-z]/.test(html), 'auth.js stamp');
-assert.ok(/APP_BUILD = '20261006[f-z]'/.test(sw) && /register\('\/sw\.js\?v=20261006[f-z]'/.test(read('js/pwa.js')), 'service worker stamp');
+assert.ok(/\/js\/auth\.js\?v=(?:20261006[f-z]|2026100[7-9][a-z]|202610[1-3][0-9][a-z])/.test(html), 'auth.js stamp');
+assert.ok(/APP_BUILD = '(?:20261006[f-z]|2026100[7-9][a-z]|202610[1-3][0-9][a-z])'/.test(sw) && /register\('\/sw\.js\?v=(?:20261006[f-z]|2026100[7-9][a-z]|202610[1-3][0-9][a-z])'/.test(read('js/pwa.js')), 'service worker stamp');
 console.log('fixes-1006f tests passed');

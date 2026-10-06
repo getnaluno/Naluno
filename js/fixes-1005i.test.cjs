@@ -44,8 +44,8 @@ const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
   assert.ok(!fs.existsSync(path.join(root, '.github/workflows/lg-voice.yml')), 'nothing to download or run on GitHub');
   const html = read('app/index.html');
   ['core.js', 'signal-core.js', 'broadcast-composer.js', 'naluno-voice-master.js', 'naluno-voices.js', 'lg-voice.js'].forEach((f) => {
-    assert.ok(new RegExp('/js/' + f.replace('.', '\\.') + '\\?v=20261005i').test(html), f + ' stamp');
+    assert.ok(new RegExp('/js/' + f.replace('.', '\\.') + '\\?v=(?:20261005i|2026100[6-9][a-z]|202610[1-3][0-9][a-z])').test(html), f + ' stamp');
   });
-  assert.ok(/naluno-af-engine\.js\?v=20261005i/.test(read('js/naluno-voice-worker.js')));
+  assert.ok(/naluno-af-engine\.js\?v=(?:20261005i|2026100[6-9][a-z]|202610[1-3][0-9][a-z])/.test(read('js/naluno-voice-worker.js')));
 }
 console.log('fixes-1005i tests passed');

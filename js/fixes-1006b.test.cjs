@@ -50,7 +50,7 @@ const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 {
   const app = read('app/index.html');
   ['calls.js', 'camera.js', 'screen.js', 'handle-guard.js', 'pwa.js'].forEach((f) => {
-    assert.ok(new RegExp('/js/' + f.replace(/[.-]/g, '\\$&') + '\\?v=20261006[b-z]').test(app), f + ' stamp');
+    assert.ok(new RegExp('/js/' + f.replace(/[.-]/g, '\\$&') + '\\?v=(?:20261006[b-z]|2026100[7-9][a-z]|202610[1-3][0-9][a-z])').test(app), f + ' stamp');
   });
   const admin = read('admin/index.html');
   assert.ok(/handle-guard\.js\?v=20261006b/.test(admin) && /known\.js\?v=20261006b/.test(admin), 'the console fetches the current handle guard and Known');

@@ -5,7 +5,7 @@
    the page has window or the worker has importScripts. A module worker
    has neither, so the voice never started and Listen used the phone. */
 importScripts('/js/naluno-voice-engine.js?v=20261005i');
-importScripts('/js/naluno-af-engine.js?v=20261005i');
+importScripts('/js/naluno-af-engine.js?v=20261007a');
 
 var createFromBuffers = self.NalunoVoiceEngine.createFromBuffers;
 var say = self.NalunoVoiceEngine.say;

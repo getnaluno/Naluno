@@ -48,7 +48,7 @@ const html = read('app/index.html');
   assert.ok(auth.includes('fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)'), 'staying signed in is unchanged');
   assert.ok(auth.includes('if(isNativeShell()){') && auth.includes('nativeGoogleSignIn()'), 'the Android app keeps its native Google sign-in');
   assert.ok(!read('admin/index.html').includes('js/auth.js'), 'the console does not load the app sign-in');
-  assert.ok(/\/js\/auth\.js\?v=20261006[e-z]/.test(html), 'auth.js stamp');
-  assert.ok(/APP_BUILD = '20261006[e-z]'/.test(read('sw.js')) && /register\('\/sw\.js\?v=20261006[e-z]'/.test(read('js/pwa.js')), 'service worker');
+  assert.ok(/\/js\/auth\.js\?v=(?:20261006[e-z]|2026100[7-9][a-z]|202610[1-3][0-9][a-z])/.test(html), 'auth.js stamp');
+  assert.ok(/APP_BUILD = '(?:20261006[e-z]|2026100[7-9][a-z]|202610[1-3][0-9][a-z])'/.test(read('sw.js')) && /register\('\/sw\.js\?v=(?:20261006[e-z]|2026100[7-9][a-z]|202610[1-3][0-9][a-z])'/.test(read('js/pwa.js')), 'service worker');
 }
 console.log('fixes-1006e tests passed');

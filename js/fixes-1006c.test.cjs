@@ -55,6 +55,6 @@ assert.ok(/const NALUNO_REMOTE_MIN_SHOWN = 0\.5;/.test(calls) && calls.includes(
 assert.ok(!/9\/16/.test(cam.slice(cam.indexOf('function nalunoCameraBox'), cam.indexOf('function nalunoHdVideo'))), 'the camera is not asked for a 9:16 crop');
 
 /* Stamps */
-['calls.js', 'camera.js', 'pwa.js'].forEach((f) => assert.ok(new RegExp('/js/' + f.replace('.', '\\.') + '\\?v=20261006[c-z]').test(html), f + ' stamp'));
-assert.ok(/\/css\/app\.css\?v=20261006[c-z]/.test(html), 'app.css stamp');
+['calls.js', 'camera.js', 'pwa.js'].forEach((f) => assert.ok(new RegExp('/js/' + f.replace('.', '\\.') + '\\?v=(?:20261006[c-z]|2026100[7-9][a-z]|202610[1-3][0-9][a-z])').test(html), f + ' stamp'));
+assert.ok(/\/css\/app\.css\?v=(?:20261006[c-z]|2026100[7-9][a-z]|202610[1-3][0-9][a-z])/.test(html), 'app.css stamp');
 console.log('fixes-1006c tests passed');

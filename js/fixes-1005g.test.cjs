@@ -140,8 +140,8 @@ const flush = () => new Promise((r) => setImmediate(r));
       const m = html.match(new RegExp('/js/' + f.replace(/[.-]/g, '\\$&') + '\\?v=(\\d{8}[a-z])'));
       assert.ok(m && m[1] >= '20261005g', f + ' stamp');
     });
-    assert.ok(/naluno-voice-worker\.js\?v=20261005[g-z]/.test(read('js/naluno-voices.js')));
-    assert.ok(/naluno-voice-engine\.js\?v=20261005[g-z]/.test(read('js/naluno-voice-worker.js')));
+    assert.ok(/naluno-voice-worker\.js\?v=(?:20261005[g-z]|2026100[6-9][a-z]|202610[1-3][0-9][a-z])/.test(read('js/naluno-voices.js')));
+    assert.ok(/naluno-voice-engine\.js\?v=(?:20261005[g-z]|2026100[6-9][a-z]|202610[1-3][0-9][a-z])/.test(read('js/naluno-voice-worker.js')));
     assert.ok(!/requestFullscreen/.test(read('js/call-pip.js')), 'no forced full screen in calls');
   }
   console.log('fixes-1005g tests passed');

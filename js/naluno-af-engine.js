@@ -172,7 +172,9 @@
     var big = new BigInt64Array(ids.length);
     for (var i = 0; i < ids.length; i++) big[i] = BigInt(ids[i]);
     var sc = cfg.scales || {};
-    var speed = typeof opts.speed === 'number' && opts.speed > 0.6 && opts.speed < 1.6 ? opts.speed : 1;
+    /* 07 Oct: the Luganda pace (0.65 / 0.73) times a slower speed setting
+       may go below 0.6; that used to snap back to full speed. */
+    var speed = typeof opts.speed === 'number' && opts.speed > 0.35 && opts.speed < 1.6 ? opts.speed : 1;
     var r = await S.s.run({
       input: new ort.Tensor('int64', big, [1, ids.length]),
       input_lengths: new ort.Tensor('int64', BigInt64Array.from([BigInt(ids.length)]), [1]),
