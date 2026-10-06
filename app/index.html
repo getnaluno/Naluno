@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.10.06f" />
+  <meta name="naluno-build" content="2026.10.07b" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.10.06f">
+<meta name="app-version" content="2026.10.07b">
 <meta name="description" content="Naluno brings private communication, communities and creator-led content into one place. A Callsign instead of a phone number.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="Private communication, communities and creator-led content. A Callsign — not a phone number.">
@@ -131,9 +131,9 @@
 })();
 </script>
 <link rel="apple-touch-startup-image" href="/splash-empty.png">
-<link rel="stylesheet" href="/css/app.css?v=20261006d" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/css/app.css?v=20261007b" media="print" onload="this.media='all'">
 <script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="/css/app.css?v=20261006d"></noscript>
+<noscript><link rel="stylesheet" href="/css/app.css?v=20261007b"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -394,7 +394,9 @@ window.__nalunoEntryT0 = Date.now();
         <button type="button" class="bcast-view-tab" data-bcast-view="mine">My Broadcasts</button>
         <button type="button" class="bcast-view-tab" data-bcast-view="toga">Toga</button>
         <button type="button" class="bcast-search-tab" id="bcastSearchTab" aria-expanded="false" aria-controls="bcastSearchRow">Search</button>
+        <button type="button" class="bcast-make-btn" id="bcastMakeBtn" aria-label="Go on air: make a Broadcast or a Signal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></button>
       </div>
+      <div class="bcast-tune" id="bcastTune" role="tablist" aria-label="Show"></div>
       <div class="bcast-mine-tools" id="bcastMineTools" hidden>
         <button type="button" class="bcast-ghost-tool" id="bcastOfflineWatch">Offline watch</button>
         <button type="button" class="bcast-ghost-tool" id="bcastPrivateWatch" aria-expanded="false" aria-controls="bcastPrivateDrawer">Private broadcasts</button>
@@ -1849,7 +1851,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/band-list.js?v=20260929b"></script>
 <script type="module" src="/workers/economy/safety-boot.mjs?v=20260923c"></script>
 <script src="/js/signal-core.js?v=20261005i"></script>
-<script src="/js/broadcast-core.js?v=20261004o"></script>
+<script src="/js/broadcast-core.js?v=20261007b"></script>
 <script src="/js/broadcast-upload.js?v=20260908d"></script>
 <script src="/js/broadcast-composer.js?v=20261005i"></script>
 <script src="/js/screen.js?v=20261006b"></script>
@@ -1857,7 +1859,7 @@ window.__nalunoEntryT0 = Date.now();
      and keeps the heuristic as a hold-only fallback. Replaces nsfw-model.js. -->
 <script src="/js/nudenet.js?v=20261005h"></script>
 <script src="/js/origin.js?v=20261002b"></script>
-<script src="/js/strand.js?v=20261004o"></script>
+<script src="/js/strand.js?v=20261007b"></script>
 <script src="/js/circle.js?v=20261004b"></script>
 <!-- Community Economy: reports actions only; all economic value is computed
      server-side by the naluno-economy Worker. Loaded AFTER circle.js so
@@ -1878,14 +1880,15 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/room-threads.js?v=20260925g"></script>
 <script src="/js/discover-engine.js?v=20260928d"></script>
 <script src="/js/discover.js?v=20260929h"></script>
-<script src="/js/signal-ui.js?v=20261004j"></script>
+<script src="/js/signal-ui.js?v=20261007b"></script>
 <script src="/js/compat-lock.js?v=20260908d"></script>
 <script src="/js/known.js?v=20261005g"></script>
 <script src="/js/lg-speak.js?v=20261005h"></script>
 <script src="/js/lg-voice.js?v=20261005i"></script>
-<script src="/js/naluno-voice-master.js?v=20261005i"></script>
+<script src="/js/naluno-voice-master.js?v=20261007a"></script>
 <script src="/js/lg-ear.js?v=20261005f"></script>
-<script src="/js/naluno-voices.js?v=20261005i"></script>
+<script src="/js/naluno-voices.js?v=20261007a"></script>
+<script src="/js/broadcast-glance.js?v=20261007b"></script>
 <script src="/js/broadcast-space.js?v=20261005h"></script>
 <script src="/js/linkify.js?v=20260930a"></script>
 <script src="/js/ads.js?v=20261004c"></script>
@@ -1919,7 +1922,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/live-preview.js?v=20260929g"></script>
 <script src="/js/band-room.js?v=20261006a"></script>
 <script src="/js/traffic.js?v=20261003e"></script>
-<script src="/js/pwa.js?v=20261006f"></script>
+<script src="/js/pwa.js?v=20261007b"></script>
 <script src="/js/gestures.js?v=20260929f"></script>
 <script src="/js/spark-engine.js?v=20261005g"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>
