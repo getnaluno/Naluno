@@ -74,8 +74,8 @@
 // v248: attention is only kept when a visit, an app open, or a continued session owns it. Join date and Find pin stay on the person.
 // v284: 10.05f Android floats a video call on leaving; Wireline alerts through Naluno's worker; a call answers once per tap.
 // v285: 10.05g voices keep reading (several makers, scheduled, trimmed), Luganda spoken from its own sounds, test alert, stale stamps.
-const CACHE_NAME = 'naluno-shell-v295';
-const APP_BUILD = '20261007b';
+const CACHE_NAME = 'naluno-shell-v296';
+const APP_BUILD = '20261007c';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -87,7 +87,7 @@ const CORE_ASSETS = [
   '/js/broadcast-live.js', '/js/live-preview.js', '/js/broadcast-composer.js', '/js/broadcast-upload.js',
   '/js/screen.js', '/js/origin.js', '/js/strand.js', '/js/circle.js',
   '/js/discover-engine.js', '/js/discover.js', '/js/room-threads.js', '/js/pass-on.js', '/js/lg-books.js', '/js/lg-speak.js', '/js/lg-voice.js', '/js/traffic.js', '/js/naluno-voices.js', '/js/naluno-voice-worker.js', '/js/naluno-voice-engine.js', '/js/naluno-af-engine.js', '/js/known.js',
-  '/js/signal-core.js', '/js/signal-ui.js', '/js/broadcast-glance.js', '/js/signal-social.js', '/js/live-sync.js', '/js/broadcast-offline.js',
+  '/js/signal-core.js', '/js/signal-ui.js', '/js/broadcast-glance.js', '/js/signal-public.js', '/js/signal-social.js', '/js/live-sync.js', '/js/broadcast-offline.js',
   '/js/sfu-live.js', '/js/compass-brain.js', '/js/compass.js', '/js/linkify.js', '/js/weather.js', '/js/beacon.js', '/js/find.js', '/js/profile.js', '/js/notifications.js',
   '/js/ice-core.js', '/js/compat-lock.js', '/js/keep-alive.js', '/js/media-contain.js',
   '/js/diagnostics.js', '/js/currency.js', '/js/economy.js', '/js/economy-ui.js', '/js/onboard.js', '/js/presence.js', '/js/session-log.js', '/js/push-receipt.js', '/js/handle-guard.js',
