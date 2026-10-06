@@ -74,8 +74,8 @@
 // v248: attention is only kept when a visit, an app open, or a continued session owns it. Join date and Find pin stay on the person.
 // v284: 10.05f Android floats a video call on leaving; Wireline alerts through Naluno's worker; a call answers once per tap.
 // v285: 10.05g voices keep reading (several makers, scheduled, trimmed), Luganda spoken from its own sounds, test alert, stale stamps.
-const CACHE_NAME = 'naluno-shell-v291';
-const APP_BUILD = '20261006d';
+const CACHE_NAME = 'naluno-shell-v293';
+const APP_BUILD = '20261006f';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -310,6 +310,9 @@ self.addEventListener('fetch', event=>{
   // leaves firebase undefined on mobile → "Sign-in is not ready yet."
   // Sign-in needs the network anyway; let the browser load CDN scripts normally.
   if(!isSameOrigin) return;
+  /* 06f: Google's sign-in hand-back pages (/__/auth/, /__/firebase/) are
+     always fetched fresh and never answered with the app shell. */
+  if(url.pathname.indexOf('/__/') === 0) return;
   /* The on-device explicit-content model (/models/nsfw/) is a 2.6 MB binary
      shard plus its manifest. It must not go through the shell-cache path
      below: that path wraps fetches in a short network timeout meant for small
