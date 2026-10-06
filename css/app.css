@@ -4198,3 +4198,273 @@ body:not(.naluno-os-pip) #callOverlay #incall.wire-open .local-pip{ right:auto; 
 body:not(.naluno-os-pip) #callOverlay #incall.wire-open .controls-bar,
 body:not(.naluno-os-pip) #callOverlay #incall.wire-open #incallBgChipRow{ opacity:0; pointer-events:none; }
 body:not(.naluno-os-pip) #callOverlay #incall.swap-focus .remote-stage{ bottom:calc(var(--wa-bottom) + 96px); right:14px; }
+
+/* ===================== 07b: Broadcast at first sight =====================
+   (js/broadcast-glance.js) The tab opens on what people made; each
+   Broadcast says what it is before a tap; written Broadcasts can be heard
+   from the feed; one "+" for making. Naluno's own look: the dark stage,
+   mint, mono labels and the signal bars. */
+
+/* "+" — Go on air */
+.bcast-make-btn{
+  flex:none; align-self:center; margin:0 0 8px 12px;
+  width:34px; height:34px; border-radius:12px; border:none; cursor:pointer;
+  display:inline-flex; align-items:center; justify-content:center;
+  color:#07080c; background:var(--mint);
+  box-shadow:0 0 0 1px rgba(124,255,178,.35), 0 6px 18px rgba(124,255,178,.22);
+  position:relative; z-index:2;
+}
+.bcast-make-btn:active{ transform:scale(.94); }
+body.naluno-strand-open .bcast-make-btn{ display:none; }
+
+/* The tuner: All · Watch · Read · Live · Luganda (For You only) */
+.bcast-tune{
+  display:none; gap:6px; padding:9px 0 3px; overflow-x:auto; scrollbar-width:none;
+  width:100%; flex:none; -webkit-overflow-scrolling:touch;
+}
+.bcast-tune::-webkit-scrollbar{ display:none; }
+body.naluno-bcast-foryou:not(.naluno-strand-open):not(.naluno-bcast-channel) .bcast-tune{ display:flex; }
+.bcast-tune-btn{
+  flex:none; cursor:pointer; padding:6px 12px; border-radius:999px;
+  border:1px solid var(--line); background:rgba(255,255,255,.02);
+  color:var(--text-dim); font-family:var(--font-mono); font-size:11.5px; letter-spacing:.04em;
+}
+.bcast-tune-btn.on{
+  color:#07080c; background:var(--mint); border-color:var(--mint); font-weight:600;
+}
+.bcast-tune-btn[data-kind="live"]:not(.on){ color:#ff8a9a; border-color:rgba(255,84,112,.35); }
+.bcast-tune-btn[data-kind="lg"]:not(.on){ color:var(--mint); border-color:rgba(124,255,178,.35); }
+
+/* For You opens on content: the making panel goes behind "+", the
+   Signals row stays, and the first Broadcast fills the rest of the screen. */
+body.naluno-bcast-foryou:not(.naluno-strand-open) .bcast-feed-head{
+  height:auto; max-height:none; overflow:visible; padding-bottom:8px;
+}
+body.naluno-bcast-foryou:not(.naluno-strand-open) #bcastForYouHome{ overflow:visible; flex:0 0 auto; }
+body.naluno-bcast-foryou #bcastForYouHome > .air-word,
+body.naluno-bcast-foryou #bcastForYouHome > .air-make,
+body.naluno-bcast-foryou #bcastForYouHome > #bcastScrollCue,
+body.naluno-bcast-foryou:not(.naluno-air-about) #bcastForYouHome > #airMine{ display:none !important; }
+body.naluno-bcast-foryou.naluno-air-about #bcastForYouHome > #airMine:not([hidden]){ display:block; margin-top:10px; }
+body.naluno-bcast-foryou:not(.naluno-strand-open):not(.naluno-bcast-headless) #bcastPlateGrid > .bcast-plate:first-child{
+  height:calc(var(--bcast-stage-h, 100svh) - var(--bcast-head-h, 0px));
+  min-height:calc(var(--bcast-stage-h, 100svh) - var(--bcast-head-h, 0px));
+  scroll-snap-align:none;
+  border-radius:18px 18px 0 0;
+}
+/* While the bottom bar is showing, the first Broadcast's words sit above it. */
+body.naluno-bcast-foryou:not(.naluno-bcast-watch):not(.naluno-strand-open):not(.naluno-bcast-headless) #bcastPlateGrid > .bcast-plate:first-child .bcast-plate-meta{
+  padding-bottom:calc(14px + var(--naluno-nav-h, 0px));
+}
+
+/* What it is, at a glance */
+#bcastPlateGrid .bcast-plate.has-glance .bcast-plate-meta{ padding:64px 16px 18px; }
+.bcast-glance-kind{
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0 0 8px;
+  font-family:var(--font-mono); font-size:11px; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--mint);
+}
+.bcast-glance-kind[data-kind="live"]{ color:#ff8a9a; }
+.bcast-glance-kind > span:first-of-type{ font-weight:600; }
+.bcast-glance-dot{ color:rgba(255,255,255,.72); letter-spacing:.06em; }
+.bcast-glance-dot::before{ content:'·'; margin-right:8px; color:rgba(255,255,255,.4); }
+.bcast-glance-lg{
+  padding:2px 8px; border-radius:999px; letter-spacing:.06em;
+  color:#07080c; background:var(--mint); font-weight:600;
+}
+.bcast-glance-bars{ display:inline-flex; align-items:flex-end; gap:2px; height:11px; }
+.bcast-glance-bars b{ display:block; width:3px; border-radius:1px; background:currentColor; }
+.bcast-glance-bars b:nth-child(1){ height:4px; }
+.bcast-glance-bars b:nth-child(2){ height:7px; }
+.bcast-glance-bars b:nth-child(3){ height:11px; }
+.bcast-plate.in-view .bcast-glance-kind[data-kind="live"] .bcast-glance-bars b{ animation:glanceBar 1.1s ease-in-out infinite; }
+.bcast-plate.in-view .bcast-glance-kind[data-kind="live"] .bcast-glance-bars b:nth-child(2){ animation-delay:.15s; }
+.bcast-plate.in-view .bcast-glance-kind[data-kind="live"] .bcast-glance-bars b:nth-child(3){ animation-delay:.3s; }
+@keyframes glanceBar{ 0%,100%{ transform:scaleY(.55); } 50%{ transform:scaleY(1); } }
+.bcast-glance-bars b{ transform-origin:bottom; }
+.bcast-plate.has-glance .bcast-plate-title{
+  font-family:var(--font-body); font-size:19px; font-weight:700; line-height:1.22; letter-spacing:-.005em;
+  -webkit-line-clamp:2; padding-right:44px; text-shadow:0 1px 10px rgba(0,0,0,.45);
+}
+.bcast-plate.has-glance .bcast-plate-meta:has(.bcast-plate-excerpt) .bcast-plate-title{ -webkit-line-clamp:2; }
+.bcast-plate.has-glance .bcast-plate-excerpt{ font-size:14px; -webkit-line-clamp:2; color:rgba(255,255,255,.86); }
+.bcast-plate.has-glance.is-writing.has-photo .bcast-plate-excerpt{ -webkit-line-clamp:3; }
+.bcast-plate.has-glance .bcast-plate-sub{
+  margin-top:10px; font-size:14px; font-weight:600; color:#fff;
+  display:flex; align-items:center; flex-wrap:wrap; gap:0 6px;
+}
+.bcast-glance-stats{
+  display:flex; flex-wrap:wrap; gap:0 10px; margin-top:3px;
+  font-size:12.5px; color:rgba(255,255,255,.66);
+}
+.bcast-glance-stats span + span::before{ content:'·'; margin-right:10px; color:rgba(255,255,255,.38); }
+.bcast-glance-more{
+  position:absolute; right:10px; bottom:18px; z-index:6;
+  width:36px; height:36px; border-radius:50%; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  color:#fff; background:rgba(13,15,23,.55); border:1px solid rgba(255,255,255,.18);
+  -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);
+}
+body.naluno-bcast-foryou:not(.naluno-bcast-watch):not(.naluno-strand-open):not(.naluno-bcast-headless) #bcastPlateGrid > .bcast-plate:first-child .bcast-glance-more{
+  bottom:calc(18px + var(--naluno-nav-h, 0px));
+}
+.bcast-glance-more:active{ transform:scale(.92); }
+/* The preview is moving: no "tap to play". */
+.bcast-plate.is-moving .bcast-tap-play{ opacity:0; transition:opacity .25s; }
+/* Saying no: the Broadcast folds away. */
+.bcast-plate.is-folding{ transition:transform .26s ease, opacity .26s ease; transform:scale(.94) !important; opacity:0 !important; }
+
+/* A written Broadcast is a page of words */
+.bcast-plate.is-read-card .bcast-plate-frame{ background:#0c0f16; }
+.bcast-read-card{
+  justify-content:center !important; gap:14px;
+  padding:22px 22px calc(150px + var(--naluno-nav-h, 0px)) !important;
+  background:
+    radial-gradient(120% 70% at 0% 0%, rgba(124,255,178,.13), transparent 55%),
+    radial-gradient(90% 60% at 100% 100%, rgba(124,77,255,.12), transparent 60%),
+    #0c0f16 !important;
+}
+.bcast-plate:not(:first-child) .bcast-read-card,
+body.naluno-bcast-watch .bcast-read-card{ padding-bottom:150px !important; }
+.bcast-read-card::before{
+  content:''; display:block; width:44px; height:3px; border-radius:3px;
+  background:var(--signal-gradient); background-size:300% 100%;
+}
+.bcast-read-title{
+  font-family:var(--font-body); font-weight:800; font-size:clamp(24px, 7.2vw, 34px);
+  line-height:1.12; letter-spacing:-.015em; color:#fff;
+  display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; overflow:hidden;
+}
+.bcast-read-card .bcast-plate-excerpt{
+  margin:0 !important; font-size:17px !important; line-height:1.5 !important; font-weight:450 !important;
+  color:rgba(255,255,255,.82); -webkit-line-clamp:7 !important;
+}
+.bcast-plate.is-read-card .bcast-plate-meta{ background:linear-gradient(180deg, transparent, rgba(12,15,22,.96) 40%); }
+
+/* Listen, on the card */
+.bcast-glance-listen{
+  display:inline-flex; align-items:center; gap:10px; margin:12px 0 2px;
+  padding:9px 16px 9px 12px; border-radius:999px; cursor:pointer;
+  color:#07080c; background:var(--mint); border:none;
+  font-family:var(--font-body); font-size:14px; font-weight:700;
+  box-shadow:0 6px 20px rgba(124,255,178,.22);
+}
+.bcast-glance-listen:active{ transform:scale(.97); }
+.bcast-glance-listen-lang{
+  font-family:var(--font-mono); font-size:10.5px; font-weight:600; letter-spacing:.06em; text-transform:uppercase;
+  padding:2px 7px; border-radius:999px; background:rgba(7,8,12,.14);
+}
+.bcast-glance-wave{ display:inline-flex; align-items:center; gap:2px; height:16px; }
+.bcast-glance-wave i{ display:block; width:3px; height:6px; border-radius:2px; background:currentColor; }
+.bcast-glance-wave i:nth-child(2){ height:11px; }
+.bcast-glance-wave i:nth-child(3){ height:16px; }
+.bcast-glance-wave i:nth-child(4){ height:9px; }
+.bcast-glance-wave i:nth-child(5){ height:5px; }
+.bcast-glance-listen.is-on{ background:#fff; }
+.bcast-glance-listen.is-on .bcast-glance-wave i{ animation:glanceWave .9s ease-in-out infinite; }
+.bcast-glance-listen.is-on .bcast-glance-wave i:nth-child(2){ animation-delay:.12s; }
+.bcast-glance-listen.is-on .bcast-glance-wave i:nth-child(3){ animation-delay:.24s; }
+.bcast-glance-listen.is-on .bcast-glance-wave i:nth-child(4){ animation-delay:.36s; }
+.bcast-glance-listen.is-on .bcast-glance-wave i:nth-child(5){ animation-delay:.48s; }
+@keyframes glanceWave{ 0%,100%{ transform:scaleY(.45); } 50%{ transform:scaleY(1.15); } }
+@media (prefers-reduced-motion: reduce){
+  .bcast-glance-listen.is-on .bcast-glance-wave i,
+  .bcast-plate.in-view .bcast-glance-kind[data-kind="live"] .bcast-glance-bars b{ animation:none; }
+}
+
+/* Sheets: Go on air, and Why you see this */
+.bcast-sheet{
+  /* Above the feed and its bar, below a composer (280), calls (300),
+     toasts (400) and the sign-in gate (500). */
+  position:fixed; inset:0; z-index:270; display:flex; align-items:flex-end; justify-content:center;
+  background:rgba(4,5,9,0); transition:background .18s ease;
+}
+.bcast-sheet[hidden]{ display:none; }
+.bcast-sheet.open{ background:rgba(4,5,9,.62); }
+.bcast-sheet-card{
+  width:100%; max-width:520px; box-sizing:border-box;
+  padding:18px 16px calc(18px + env(safe-area-inset-bottom, 0px));
+  background:#11141d; border:1px solid var(--line); border-bottom:none;
+  border-radius:22px 22px 0 0;
+  transform:translateY(102%); transition:transform .22s cubic-bezier(.2,.85,.2,1);
+  max-height:86vh; overflow:auto;
+}
+.bcast-sheet.open .bcast-sheet-card{ transform:none; }
+.bcast-sheet-top{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:14px; }
+.bcast-sheet-kicker{
+  display:flex; align-items:center; gap:8px; color:var(--mint);
+  font-family:var(--font-mono); font-size:11px; letter-spacing:.14em; text-transform:uppercase;
+}
+.bcast-sheet-title{ margin-top:6px; font-family:var(--font-body); font-size:20px; font-weight:700; color:#fff; line-height:1.25; }
+.bcast-sheet-x{
+  flex:none; width:34px; height:34px; border-radius:50%; cursor:pointer;
+  border:1px solid var(--line); background:transparent; color:var(--text-dim); font-size:14px;
+}
+.bcast-make-list{ display:flex; flex-direction:column; gap:8px; }
+.bcast-make-row{
+  display:flex; align-items:center; gap:14px; width:100%; text-align:left; cursor:pointer;
+  padding:13px 14px; border-radius:16px; border:1px solid var(--line); background:rgba(255,255,255,.02); color:#fff;
+}
+.bcast-make-row:active{ border-color:var(--mint); }
+.bcast-make-ico{
+  flex:none; width:42px; height:42px; border-radius:13px;
+  display:flex; align-items:center; justify-content:center;
+  color:var(--mint); background:rgba(124,255,178,.1); border:1px solid rgba(124,255,178,.28);
+}
+.bcast-make-row[data-tone="live"] .bcast-make-ico{ color:#ff8a9a; background:rgba(255,84,112,.1); border-color:rgba(255,84,112,.3); }
+.bcast-make-row[data-tone="signal"] .bcast-make-ico{ color:#9fd8ff; background:rgba(0,229,255,.08); border-color:rgba(0,229,255,.26); }
+.bcast-make-copy{ flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.bcast-make-copy b{ font-family:var(--font-body); font-size:16px; font-weight:700; }
+.bcast-make-copy small{ font-size:13px; color:var(--text-dim); line-height:1.35; }
+.bcast-make-go{ flex:none; color:var(--text-dim); font-size:22px; }
+.bcast-sheet-foot{ display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; padding-top:12px; border-top:1px solid var(--line); }
+.bcast-sheet-link{
+  cursor:pointer; padding:8px 12px; border-radius:999px; border:1px solid var(--line); background:transparent;
+  color:var(--text); font-family:var(--font-mono); font-size:11.5px; letter-spacing:.03em;
+}
+.bcast-sheet-why{ margin:0 0 14px; font-size:14px; line-height:1.5; color:rgba(255,255,255,.82); }
+.bcast-more-list{ display:flex; flex-direction:column; gap:8px; }
+.bcast-more-row{
+  width:100%; text-align:left; cursor:pointer; padding:13px 14px; border-radius:14px;
+  border:1px solid var(--line); background:rgba(255,255,255,.02); color:#fff;
+  font-family:var(--font-body); font-size:15px; font-weight:600;
+}
+.bcast-more-row.is-quiet{ color:#ff8a9a; }
+/* The whole card opens the Broadcast; "See more" is not needed on it. */
+.bcast-plate.has-glance .bcast-plate-meta .bcast-plate-more{ display:none; }
+/* Narrow phones: the tabs, Search and "+" stay on one line. */
+.bcast-view-tab, .bcast-search-tab{ white-space:nowrap; }
+@media (max-width: 400px){
+  .bcast-view-tabs{ gap:14px; }
+  .bcast-view-tab{ font-size:13px; }
+  .bcast-search-tab{
+    font-size:0; letter-spacing:0; width:30px; height:28px; padding:0 0 10px;
+    background:none;
+  }
+  .bcast-search-tab::before{
+    content:''; display:block; width:18px; height:18px; margin:0 auto;
+    background:currentColor;
+    -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='10.5' cy='10.5' r='6.5'/%3E%3Cpath d='M15.5 15.5L20 20'/%3E%3C/svg%3E") center/contain no-repeat;
+            mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='10.5' cy='10.5' r='6.5'/%3E%3Cpath d='M15.5 15.5L20 20'/%3E%3C/svg%3E") center/contain no-repeat;
+  }
+  .bcast-make-btn{ width:32px; height:32px; margin-left:10px; border-radius:11px; }
+}
+
+/* Search results are small two-across cards: the same facts, compact. */
+#bcastSearchResults .bcast-plate.has-glance .bcast-plate-meta{ padding:10px 10px 10px; }
+#bcastSearchResults .bcast-plate.has-glance .bcast-plate-title{ font-size:13.5px; padding-right:0; }
+#bcastSearchResults .bcast-plate.has-glance .bcast-plate-excerpt,
+#bcastSearchResults .bcast-glance-stats span + span,
+#bcastSearchResults .bcast-glance-listen-lang,
+#bcastSearchResults .bcast-glance-more{ display:none; }
+#bcastSearchResults .bcast-glance-kind{ font-size:9.5px; margin-bottom:4px; gap:6px; }
+#bcastSearchResults .bcast-glance-lg{ padding:1px 6px; }
+#bcastSearchResults .bcast-plate.has-glance .bcast-plate-sub{ font-size:12px; margin-top:4px; }
+#bcastSearchResults .bcast-glance-stats{ font-size:11px; }
+#bcastSearchResults .bcast-glance-listen{ margin:6px 0 0; padding:6px 11px 6px 9px; font-size:12.5px; gap:7px; }
+#bcastSearchResults .bcast-read-card{ padding:14px 12px !important; gap:8px; }
+#bcastSearchResults .bcast-read-card::before{ width:28px; }
+#bcastSearchResults .bcast-read-title{ font-size:16px; -webkit-line-clamp:3; }
+#bcastSearchResults .bcast-read-card .bcast-plate-excerpt{ font-size:13px !important; -webkit-line-clamp:4 !important; }
+/* Landscape on the first Broadcast: the Signals row steps aside. */
+body.naluno-bcast-headless .bcast-feed-head{ display:none !important; }
