@@ -144,6 +144,54 @@ function ensureFirebaseConfig(done){
   }
   tryUrl(0);
 }
+/* 06f: Google sign-in is handed back on getnaluno.com itself, not on
+   naluno-28a00.firebaseapp.com. Browsers that block the hand-back between
+   two sites (Chrome 115+, Safari 16.1+, Firefox 109+) then have nothing to
+   block, so the redirect way works too (in-app browsers, a blocked window).
+   Google's hand-back files are kept in /__/auth/ by the "Firebase sign-in
+   helper" GitHub workflow. The app only switches once it has seen those
+   files served on this site, and switches back by itself if they go
+   missing, so Google sign-in can never point at a page that isn't there.
+   firebase-config.js is unchanged, so the console and the website are not
+   affected. Who is signed in does not depend on this setting. */
+const NALUNO_OWN_AUTH_HOST = 'getnaluno.com';
+function nalunoOwnAuthOn(){
+  try{
+    return location.hostname === NALUNO_OWN_AUTH_HOST && localStorage.getItem('nalunoOwnAuth') === '1';
+  }catch(_){ return false; }
+}
+function nalunoAuthConfig(){
+  const cfg = Object.assign({}, firebaseConfig);
+  if(nalunoOwnAuthOn()) cfg.authDomain = NALUNO_OWN_AUTH_HOST;
+  return cfg;
+}
+function nalunoProbeOwnAuth(){
+  try{
+    if(location.hostname !== NALUNO_OWN_AUTH_HOST || typeof fetch !== 'function') return;
+    if(sessionStorage.getItem('nalunoOwnAuthProbed')) return;
+    sessionStorage.setItem('nalunoOwnAuthProbed', '1');
+  }catch(_){ return; }
+  const page = function(p){
+    return fetch(p, { cache: 'no-store', credentials: 'omit' }).then(function(r){
+      return !!(r && r.ok && /text\/html/i.test(r.headers.get('content-type') || ''));
+    });
+  };
+  const file = function(p){
+    return fetch(p, { cache: 'no-store', credentials: 'omit' }).then(function(r){ return !!(r && r.ok); });
+  };
+  const config = fetch('/__/firebase/init.json', { cache: 'no-store', credentials: 'omit' })
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(j){ return !!(j && j.projectId === firebaseConfig.projectId); });
+  Promise.all([page('/__/auth/handler'), page('/__/auth/iframe'), file('/__/auth/handler.js'), file('/__/auth/iframe.js'), config])
+    .then(function(all){
+      const ok = all.every(Boolean);
+      try{
+        if(ok) localStorage.setItem('nalunoOwnAuth', '1');
+        else localStorage.removeItem('nalunoOwnAuth');
+      }catch(_){}
+    }, function(){ /* offline: keep what was known */ });
+}
+window.nalunoOwnAuthOn = nalunoOwnAuthOn;
 function initFirebaseApp(){
   if(fbAuth) return true;
   if(!firebaseReady()) return false;
@@ -151,9 +199,10 @@ function initFirebaseApp(){
     if(firebase.apps && firebase.apps.length){
       fbApp = firebase.app();
     } else {
-      fbApp = firebase.initializeApp(firebaseConfig);
+      fbApp = firebase.initializeApp(nalunoAuthConfig());
     }
     fbAuth = firebase.auth();
+    try{ setTimeout(nalunoProbeOwnAuth, 4000); }catch(_){}
     // Explicitly request durable local persistence so a successful sign-in survives
     // page reloads, browser restarts, and the service-worker shell. Without this some
     // environments (storage partitioning, certain mobile browsers, or when IndexedDB
@@ -428,13 +477,34 @@ async function nativeGoogleSignIn(){
   return result;
 }
 
+/* 06e: Google sign-in opens in a small window (popup) on every device,
+   phones included. From 02 Oct phones used the full-page "redirect" way
+   instead. The site is getnaluno.com but Google hands the sign-in back
+   through naluno-28a00.firebaseapp.com, and current Chrome (115+), Safari
+   (16.1+) and Firefox (109+) block that hand-back between two different
+   sites. The person came back from Google signed out, to the sign-in gate,
+   every time. The popup hands the sign-in back directly and is not
+   affected. Redirect is kept only for in-app browsers (Facebook,
+   Instagram, an Android WebView), which cannot open a window at all, and
+   as the last resort when a window is blocked. */
 function nalunoPreferRedirectSignIn(){
   try{
     const ua = navigator.userAgent || '';
-    if(/iPhone|iPad|iPod|Android/i.test(ua)) return true;
-    if(window.matchMedia && window.matchMedia('(pointer: coarse)').matches) return true;
+    if(/FBAN|FBAV|FB_IAB|Instagram|Line\/|; wv\)/i.test(ua)) return true;
   }catch(_){}
   return false;
+}
+function nalunoMarkRedirect(on){
+  try{
+    if(on) sessionStorage.setItem('nalunoAuthRedirect', String(Date.now()));
+    else sessionStorage.removeItem('nalunoAuthRedirect');
+  }catch(_){}
+}
+function nalunoCameBackFromRedirect(){
+  try{
+    const t = Number(sessionStorage.getItem('nalunoAuthRedirect') || 0);
+    return !!(t && Date.now() - t < 600000);
+  }catch(_){ return false; }
 }
 function nalunoSetAuthBusy(on){
   window.__nalunoAuthBusy = !!on;
@@ -486,7 +556,9 @@ $('googleSignInBtn').onclick = async ()=>{
   nalunoSetAuthBusy(true);
   if(nalunoPreferRedirectSignIn()){
     authStatus('Opening Google sign-in…');
+    nalunoMarkRedirect(true);
     fbAuth.signInWithRedirect(provider).catch(function(e2){
+      nalunoMarkRedirect(false);
       nalunoSetAuthBusy(false);
       authStatus((e2 && e2.code ? e2.code + ': ' : '') + ((e2 && e2.message) || 'Could not open sign-in'), true);
     });
@@ -499,12 +571,18 @@ $('googleSignInBtn').onclick = async ()=>{
   }).catch(e=>{
     const popupCantOpen = e.code === 'auth/popup-blocked' || e.code === 'auth/operation-not-supported-in-this-environment';
     const closedEarly = e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request';
-    if(popupCantOpen || closedEarly){
+    if(popupCantOpen){
       authStatus('Continuing sign-in…');
+      nalunoMarkRedirect(true);
       fbAuth.signInWithRedirect(provider).catch(function(e2){
+        nalunoMarkRedirect(false);
         nalunoSetAuthBusy(false);
         authStatus((e2 && e2.code ? e2.code + ': ' : '') + ((e2 && e2.message) || 'Could not open sign-in'), true);
       });
+    } else if(closedEarly){
+      /* Not a redirect: that would come back signed out (see above). */
+      nalunoSetAuthBusy(false);
+      authStatus('The Google window closed before sign-in finished. Tap Sign in with Google again, or use your handle and password.', true);
     } else {
       nalunoSetAuthBusy(false);
       authStatus(e.code + ': ' + e.message, true);
@@ -873,6 +951,9 @@ function bindAuthListeners(){
   // never fire, leaving someone stuck looking at the sign-in screen with no explanation.
   // Also explicitly reports "no redirect pending" — previously this case was silent,
   // which made it impossible to tell "nothing happened yet" apart from "it's stuck."
+  const cameBack = nalunoCameBackFromRedirect();
+  let redirectLostNote = '';
+  nalunoMarkRedirect(false);
   fbAuth.getRedirectResult().then(result=>{
     if(result && result.user){
       nalunoSetAuthBusy(false);
@@ -881,7 +962,16 @@ function bindAuthListeners(){
     }
     /* Google sent us back with nobody, or this is a normal open.
        A leftover busy flag must not hide the sign-in gate. */
-    if(!fbAuth.currentUser) nalunoSetAuthBusy(false);
+    if(!fbAuth.currentUser){
+      nalunoSetAuthBusy(false);
+      /* 06e: say so instead of a silent return to the gate. */
+      if(cameBack){
+        redirectLostNote = nalunoPreferRedirectSignIn()
+          ? 'Google sign-in can\u2019t finish inside this app\u2019s browser. Open getnaluno.com in Chrome or Safari, or use your handle and password.'
+          : 'This browser blocked Google from finishing the sign-in. Tap Sign in with Google again (it opens a small window), or use your handle and password.';
+        authStatus(redirectLostNote, true);
+      }
+    }
   }).catch(e=>{
     nalunoSetAuthBusy(false);
     authStatus('Could not finish sign-in. Try again.', true);
@@ -898,7 +988,9 @@ function bindAuthListeners(){
       nalunoEnterApp();
       return;
     }
-    authStatus('');
+    /* Keep the reason a Google sign-in did not finish on screen. */
+    if(redirectLostNote) authStatus(redirectLostNote, true);
+    else authStatus('');
     nalunoShowSignIn();
   }
   function clearSessionListeners(){

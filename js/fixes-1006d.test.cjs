@@ -86,6 +86,6 @@ const html = read('app/index.html');
 }
 
 /* 4. Stamps */
-['calls.js', 'camera.js', 'pwa.js'].forEach((f) => assert.ok(new RegExp('/js/' + f.replace('.', '\\.') + '\\?v=20261006d').test(html), f + ' stamp'));
+['calls.js', 'camera.js', 'pwa.js'].forEach((f) => assert.ok(new RegExp('/js/' + f.replace('.', '\\.') + '\\?v=20261006[d-z]').test(html), f + ' stamp'));
 assert.ok(/\/css\/app\.css\?v=20261006d/.test(html), 'app.css stamp');
-assert.ok(/APP_BUILD = '20261006d'/.test(read('sw.js')) && /register\('\/sw\.js\?v=20261006d'/.test(read('js/pwa.js')), 'service worker');
+assert.ok(/APP_BUILD = '20261006[d-z]'/.test(read('sw.js')) && /register\('\/sw\.js\?v=20261006[d-z]'/.test(read('js/pwa.js')), 'service worker');
