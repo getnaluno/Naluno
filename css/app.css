@@ -4187,6 +4187,9 @@ body:not(.naluno-os-pip) #callOverlay #incall .call-info-pill .eyebrow{
 body:not(.naluno-os-pip) #callOverlay #incall .call-info-pill .eyebrow::before{ display:none; }
 body:not(.naluno-os-pip) #callOverlay #incall .call-info-pill .timer{ font-family:var(--font-body); font-size:16px; letter-spacing:0; color:rgba(255,255,255,.9); text-shadow:0 1px 6px rgba(0,0,0,.55); }
 body:not(.naluno-os-pip) #callOverlay #incall .call-head-name:empty{ display:none; }
+/* 06d: a Known person's name carries the real coloured mark, centered. */
+body:not(.naluno-os-pip) #callOverlay #incall .call-head-name.has-known{ justify-content:center; }
+body:not(.naluno-os-pip) #callOverlay #incall .call-head-name .naluno-known{ font-size:9px; margin-left:8px; }
 body:not(.naluno-os-pip) #callOverlay:not(.voice-call) #incall .waveform{ display:none; }
 body:not(.naluno-os-pip) #callOverlay #incall .controls-bar{ position:absolute; left:0; right:0; bottom:var(--wa-bottom); width:max-content; }
 body:not(.naluno-os-pip) #callOverlay #incall #incallBgChipRow{ bottom:calc(var(--wa-bottom) + 90px) !important; z-index:7 !important; }
