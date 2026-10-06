@@ -1413,16 +1413,7 @@ async function createPeerConnection(){
              (or while createOffer is already running) needs a new offer the
              other phone never gets, so the call pairs with the wrong ufrag.
              Before any SDP, setConfiguration is enough — restartIce is not. */
-          if(pc._nalunoIceFrozen || pc.localDescription){
-            if(nalunoCallMediaUp(pc) || pc._nalunoFarRelay) return;
-            pc._nalunoFarRelay = setTimeout(function(){
-              if(!nalunoCallStillThis(pc) || nalunoCallMediaUp(pc)) return;
-              pc._nalunoRelayTried = true;
-              try{ pc.setConfiguration(fresh); }catch(_){}
-              try{ pc.restartIce(); }catch(_){}
-            }, 9000);
-            return;
-          }
+          if(pc._nalunoIceFrozen || pc.localDescription) return;
           console.log('[call] TURN arrived before the SDP — upgrading ICE config');
           pc.setConfiguration(fresh);
         }catch(e){ console.warn('[call] ICE upgrade skipped', e && e.message); }
@@ -3777,16 +3768,27 @@ pip.addEventListener('pointercancel', endPipDrag); // otherwise a hijacked gestu
   setTimeout(bind, 2000);
 })();
 
-/* The call picture fills the phone, the same way a normal video call does.
-   Fitting the whole frame used to leave black bands above and below. Cover
-   fills those bands. The camera is still the sensor's own view, so this
-   trims the sides of a normal picture instead of zooming the face. */
+/* Cover fills the phone when the picture is already close to that shape.
+   A wide frame on a tall phone used to be covered down to about a quarter
+   of itself. That one is shown whole. */
+const NALUNO_REMOTE_MIN_SHOWN = 0.75;
 function nalunoFitRemoteVideo(){
   const v = document.getElementById('remoteVideo');
   if(!v) return;
-  v.style.setProperty('object-fit', 'cover', 'important');
+  let fit = 'cover';
+  try{
+    const vw = v.videoWidth, vh = v.videoHeight;
+    const r = v.getBoundingClientRect();
+    if(vw > 0 && vh > 0 && r.width > 0 && r.height > 0){
+      const src = vw / vh;
+      const box = r.width / r.height;
+      const shown = src > box ? (box / src) : (src / box);
+      if(shown < NALUNO_REMOTE_MIN_SHOWN) fit = 'contain';
+    }
+  }catch(_){}
+  v.style.setProperty('object-fit', fit, 'important');
   try{ v.style.objectPosition = 'center center'; }catch(_){}
-  v.dataset.nalunoFit = 'cover';
+  v.dataset.nalunoFit = fit;
 }
 (function wireRemoteFit(){
   function bind(){

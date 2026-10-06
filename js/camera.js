@@ -817,15 +817,19 @@ function ensureCanvasSize(canvas){
   canvas._lastSizeCheck = now;
   const r = canvas.getBoundingClientRect();
   // The actual cause of the severe blur: this never accounted for the screen's real
-  // device pixel ratio, only CSS pixel size. On any modern phone (routinely 2.5-4x),
-  // that meant the canvas's internal buffer held far fewer pixels than the screen
-  // needed, and the browser stretched it to fill the display — real blur, regardless
-  // of how sharp the underlying captured video actually was. Capped at 2x rather than
-  // the full device value as a deliberate balance: still a dramatic sharpness fix,
-  // without fully reintroducing the per-frame compositing cost that caused the
-  // earlier lag by matching the highest device ratios exactly.
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+  // device pixel ratio, only CSS pixel size. Cap at 3x and Full HD on the long
+  // side: sharp on a 3.5x phone, without a 4K buffer every frame.
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  let w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+  /* A 3.5x phone was still drawing the face at 2x, so an HD camera looked
+     soft. Cap the long side at Full HD so a tall stage does not allocate
+     a 4K buffer on every frame. */
+  const long = Math.max(w, h);
+  if(long > 1920){
+    const s = 1920 / long;
+    w = Math.max(1, Math.round(w * s));
+    h = Math.max(1, Math.round(h * s));
+  }
   if(canvas.width!==w || canvas.height!==h){ canvas.width=w; canvas.height=h; }
 }
 /* ---------------- CAMERA COMPOSITE + NALUNO FILTERS ----------------
@@ -932,7 +936,10 @@ function drawSendCanvas(force){
   sendCanvasLastDraw = nowMs;
   const vw = video.videoWidth, vh = video.videoHeight;
   if(!vw || !vh) return;
-  const maxDim = 960;
+  const srcLong = Math.max(vw, vh);
+  /* HD out when the camera actually has it. A small sensor stays at 960
+     so a slow phone is not asked to paint a frame larger than it captured. */
+  const maxDim = srcLong >= 1280 ? 1280 : 960;
   const wide = nalunoAspectNeedsPortrait(vw / vh);
   let tw, th;
   if(wide){
@@ -1005,22 +1012,14 @@ function startCamView(target){
 }
 
 /* ---------------- CAMERA QUALITY ----------------
-   One constraint-and-fallback strategy used everywhere the app opens a camera (calls,
-   incoming-call simulation, Band Live). Asks for the best the device can actually give —
-   up to 1080p/30fps with clean audio — and steps down through two more permissive attempts
-   rather than failing outright if the browser or hardware can't meet the ideal. */
+   Upright 3:4 on a portrait phone (the sensor — 9:16 zooms the face,
+   16:9 is a landscape strip). Full HD on that shape, at 30fps. A max of
+   60 makes Chrome pick a small mode that can do 60 and skip HD. The size
+   is asked for on the first open. Nothing retunes the camera after a
+   call is already up. */
 let cameraFacingMode = 'user';
 let preferredVideoDeviceId = null;
 
-/** FIX ("camera defaulted to 16:9, hard to stay on position on phone"): every
- *  quality tier below requested width > height unconditionally — landscape
- *  shape — regardless of how the phone is actually being held. Naluno's own
- *  design is portrait-first everywhere else (the 9:16 stage used across
- *  Broadcast/Signal), so a portrait-held phone getting a landscape-shaped
- *  capture request is exactly backwards, and is why holding the phone
- *  normally never lined up with what the camera actually framed. This reads
- *  the device's real current orientation and swaps the tier's dimensions to
- *  match it — landscape only if the device genuinely is in landscape. */
 function nalunoIsPortraitDevice(){
   try{
     if(screen && screen.orientation && typeof screen.orientation.type === 'string'){
@@ -1033,51 +1032,80 @@ function nalunoIsPortraitDevice(){
     }
   }catch(_){}
   try{ return window.innerHeight >= window.innerWidth; }catch(_){}
-  return true; // phones default to portrait far more often than not
+  return true;
 }
 
-function buildVideoConstraints(tier){
-  // Prefer 4K; browser/device will only grant what the sensor can do ("ideal", not "exact").
-  // tier: '4k' | '1440' | '1080' | '720' | 'basic'
-  const tiers = {
-    '4k':   { width:{ ideal:3840 }, height:{ ideal:2160 }, frameRate:{ ideal:30, max:60 } },
-    '1440': { width:{ ideal:2560 }, height:{ ideal:1440 }, frameRate:{ ideal:30, max:60 } },
-    '1080': { width:{ ideal:1920 }, height:{ ideal:1080 }, frameRate:{ ideal:30, max:60 } },
-    '720':  { width:{ ideal:1280 }, height:{ ideal:720 },  frameRate:{ ideal:30, max:60 } },
-    'basic':{ width:{ ideal:640 },  height:{ ideal:480 },  frameRate:{ ideal:24, max:30 } },
-  };
-  const base = Object.assign({}, tiers[tier] || tiers['4k']);
+function nalunoCameraBox(tier){
   const portrait = nalunoIsPortraitDevice();
-  if(portrait){
-    // Swap so the SHORTER dimension is requested as height — matches how
-    // the device is actually being held instead of always assuming landscape.
-    const w = base.width, h = base.height;
-    base.width = h;
-    base.height = w;
-  }
-  // "Enforce" the shape (not just a size hint): aspectRatio is its own
-  // constraint independent of the exact pixel counts above, so even when the
-  // sensor's native modes don't land exactly on the ideal width/height, the
-  // requested SHAPE stays correct rather than silently drifting back to
-  // whatever the sensor's default (often landscape) happens to be.
-  base.aspectRatio = { ideal: portrait ? 9/16 : 16/9 };
-  if(preferredVideoDeviceId) base.deviceId = { exact: preferredVideoDeviceId };
-  else base.facingMode = { ideal: cameraFacingMode };
-  return base;
-}
-/* A call is watched on a phone held upright. A landscape 4:3 or 16:9
-   frame becomes a thin strip with black above and below. A 9:16 request
-   crops the sensor and zooms the face. 3:4 is the phone sensor itself,
-   upright, so the picture fills the screen without a close-up. */
-function nalunoLensConstraint(facing){
-  return {
-    facingMode: { ideal: facing || cameraFacingMode || 'user' },
-    width: { ideal: 1080 },
-    height: { ideal: 1440 },
-    aspectRatio: { ideal: 3/4 },
-    frameRate: { ideal: 24, max: 30 },
-    resizeMode: 'none',
+  const steps = portrait ? {
+    '4k':   [2160, 2880, 3/4],
+    '1440': [1440, 1920, 3/4],
+    '1080': [1080, 1440, 3/4],
+    '720':  [720, 960, 3/4],
+    'basic':[480, 640, 3/4],
+  } : {
+    '4k':   [3840, 2160, 16/9],
+    '1440': [2560, 1440, 16/9],
+    '1080': [1920, 1080, 16/9],
+    '720':  [1280, 720, 16/9],
+    'basic':[640, 480, 4/3],
   };
+  const row = steps[tier] || steps['1440'];
+  return { width: row[0], height: row[1], aspect: row[2], portrait: portrait };
+}
+function nalunoHdVideo(tier, facing){
+  const box = nalunoCameraBox(tier || '1440');
+  const video = {
+    width: { ideal: box.width },
+    height: { ideal: box.height },
+    aspectRatio: { ideal: box.aspect },
+    frameRate: { ideal: 30, max: 30 },
+  };
+  if(preferredVideoDeviceId) video.deviceId = { exact: preferredVideoDeviceId };
+  else video.facingMode = { ideal: facing || cameraFacingMode || 'user' };
+  return video;
+}
+function buildVideoConstraints(tier){
+  return nalunoHdVideo(tier || '1440', cameraFacingMode);
+}
+function nalunoLensConstraint(facing){
+  const video = nalunoHdVideo('1440', facing || cameraFacingMode);
+  video.resizeMode = 'none';
+  return video;
+}
+function nalunoTrackLong(track){
+  try{
+    const s = track && track.getSettings ? track.getSettings() : {};
+    return Math.max(s.width || 0, s.height || 0);
+  }catch(_){ return 0; }
+}
+/* One upgrade, before the picture is sent. Not a timer during the call.
+   deviceId is left alone — applyConstraints cannot switch cameras. */
+async function nalunoRaiseToHd(track){
+  if(!track || typeof track.applyConstraints !== 'function') return;
+  if(nalunoTrackLong(track) >= 1280) return;
+  const apply = async function(tier){
+    const box = nalunoCameraBox(tier);
+    try{
+      await track.applyConstraints({
+        width: { ideal: box.width },
+        height: { ideal: box.height },
+        aspectRatio: { ideal: box.aspect },
+        frameRate: { ideal: 30, max: 30 },
+      });
+    }catch(_){}
+  };
+  await apply('1440');
+  if(nalunoTrackLong(track) >= 1280) return;
+  await apply('1080');
+}
+function nalunoHdLabel(w, h){
+  const long = Math.max(w || 0, h || 0);
+  const short = Math.min(w || 0, h || 0);
+  if(long >= 3000 || short >= 1600) return '4K';
+  if(long >= 1800 || short >= 1080) return 'Full HD';
+  if(long >= 1200 || short >= 720) return 'HD';
+  return '';
 }
 function nalunoAspectOf(track){
   try{
@@ -1182,10 +1210,10 @@ async function requestHighQualityStream(opts={}){
   // Cascade: 4K → 1440 → 1080 → 720 → facing-only → boolean video
   const attempts = [];
   if(wantVideo){
-    ['4k','1440','1080','720','basic'].forEach(function(tier){
+    ['1440','1080','720','basic'].forEach(function(tier){
       attempts.push({ video: buildVideoConstraints(tier), audio: audioConstraints });
     });
-    attempts.push({ video: { facingMode:{ ideal:cameraFacingMode } }, audio: audioConstraints });
+    attempts.push({ video: { facingMode:{ ideal:cameraFacingMode }, frameRate:{ ideal:30, max:30 } }, audio: audioConstraints });
     attempts.push({ video: true, audio: audioConstraints });
   } else {
     attempts.push({ video: false, audio: audioConstraints });
@@ -1200,6 +1228,7 @@ async function requestHighQualityStream(opts={}){
         if(typeof trackMetric === 'function'){
           trackMetric('camera_open', { w: set.width||0, h: set.height||0, fps: set.frameRate||0 });
         }
+        try{ await nalunoRaiseToHd(t); }catch(_){}
       }catch(_){}
       return s;
     }catch(e){ lastErr = e; }
@@ -1214,8 +1243,8 @@ function updateCameraQualityBadge(){
   const s = track.getSettings ? track.getSettings() : {};
   if(!s.width || !s.height){ badge.style.display = 'none'; return; }
   let label = s.width + '×' + s.height;
-  if(s.height >= 2160) label += ' · 4K';
-  else if(s.height >= 1080) label += ' · HD';
+  const hd = nalunoHdLabel(s.width, s.height);
+  if(hd) label += ' · ' + hd;
   if(s.frameRate) label += ' · ' + Math.round(s.frameRate) + 'fps';
   badge.textContent = label;
   badge.style.display = 'block';
@@ -1346,6 +1375,7 @@ async function flipCamera(){
     }
 
     stream = newStream;
+    try{ await nalunoRaiseToHd(stream.getVideoTracks()[0]); }catch(_){}
     try{ await nalunoUnzoom(stream.getVideoTracks()[0]); }catch(_){}
     try{ nalunoFitLocalPip($('pipRawVideo') || $('sendRawVideo')); }catch(_){}
     cameraFacingMode = next;
@@ -1504,12 +1534,15 @@ async function enableCameraForCall(){
     stream = null;
   }
   const audioConstraints = { echoCancellation: { ideal: true }, noiseSuppression: { ideal: true }, autoGainControl: { ideal: true } };
-  // Open the sensor's own frame. A 16:9 or 9:16 request is what cropped the
-  // back camera to a square and zoomed the face on the way back to the front.
+  const hd = nalunoLensConstraint(cameraFacingMode);
+  const hdSoft = Object.assign({}, hd);
+  delete hdSoft.resizeMode;
+  const mid = nalunoHdVideo('1080', cameraFacingMode);
   const attempts = [
-    { video: nalunoLensConstraint(cameraFacingMode), audio: audioConstraints },
-    { video: { facingMode: { exact: cameraFacingMode }, resizeMode: 'none' }, audio: audioConstraints },
-    { video: { facingMode: { ideal: cameraFacingMode }, resizeMode: 'none' }, audio: audioConstraints },
+    { video: hd, audio: audioConstraints },
+    { video: hdSoft, audio: audioConstraints },
+    { video: mid, audio: audioConstraints },
+    { video: { facingMode: { ideal: cameraFacingMode }, width: { ideal: mid.width.ideal }, height: { ideal: mid.height.ideal }, frameRate: { ideal: 30, max: 30 } }, audio: audioConstraints },
     { video: { facingMode: { ideal: cameraFacingMode } }, audio: audioConstraints },
     { video: true, audio: true },
   ];
@@ -1533,6 +1566,7 @@ async function enableCameraForCall(){
   }
   stream = got;
   if(!stream) throw lastErr || new Error('Camera unavailable');
+  try{ await nalunoRaiseToHd(stream.getVideoTracks()[0]); }catch(_){}
   try{ await nalunoUnzoom(stream.getVideoTracks()[0]); }catch(_){}
   try{ nalunoHoldCallCamera(); }catch(_){}
   try{ nalunoFitLocalPip($('pipRawVideo') || $('sendRawVideo')); }catch(_){}
@@ -1549,44 +1583,6 @@ async function enableCameraForCall(){
     startCamView(($('incall') && $('incall').classList.contains('active')) ? 'pip' : 'lobby');
   }
   try{ runGreenroom(); }catch(_){}
-  // Climb toward the sensor's best (4K → 1440 → 1080). ideal never fails the call —
-  // the device simply keeps the highest mode it can sustain.
-  try{
-    const vt = stream.getVideoTracks()[0];
-    if(vt && vt.applyConstraints){
-      // LOCK (bug 1.7): single sequential climb with generation token — dual timers
-      // previously shared si and could apply 1440p after 4K had already succeeded.
-      const steps = [
-        { width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: 30, max: 60 } },
-        { width: { ideal: 2560 }, height: { ideal: 1440 }, frameRate: { ideal: 30, max: 60 } },
-        { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 60 } },
-      ];
-      const gen = (window._nalunoCamClimbGen = (window._nalunoCamClimbGen || 0) + 1);
-      let si = 0;
-      const climb = function(){
-        if(gen !== window._nalunoCamClimbGen) return;
-        if(si >= steps.length) {
-          try{ updateCameraQualityBadge && updateCameraQualityBadge(); }catch(_){}
-          return;
-        }
-        const step = steps[si++];
-        vt.applyConstraints(step).then(function(){
-          if(gen !== window._nalunoCamClimbGen) return;
-          try{ updateCameraQualityBadge && updateCameraQualityBadge(); }catch(_){}
-          // Success: stop climbing further (do not downgrade).
-        }).catch(function(){
-          if(gen !== window._nalunoCamClimbGen) return;
-          climb();
-        });
-      };
-      /* Not during a call. Asking a live camera for 4K / 1440 / 1080 makes
-         it switch modes: the picture stops for a moment, the other phone's
-         video mutes and comes back, and the encoder starts over — a visible
-         freeze and flash seconds into every call, for nothing (a call is
-         sent at 2.5 Mbps, far below what 720p already fills). */
-      void climb;
-    }
-  }catch(_){}
   try{ updateCameraQualityBadge && updateCameraQualityBadge(); }catch(_){}
 }
 async function enableCamera(){

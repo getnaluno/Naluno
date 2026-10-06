@@ -1667,9 +1667,17 @@ async function startBandRecording(mode){
   const wantVideo = mode === 'video';
   bandRecStartInFlight = true;
   try{
+    let recVideo = { facingMode: { ideal: 'user' }, width: { ideal: 1440 }, height: { ideal: 1920 }, aspectRatio: { ideal: 3/4 }, frameRate: { ideal: 30, max: 30 } };
+    try{
+      if(typeof nalunoHdVideo === 'function'){
+        recVideo = nalunoHdVideo('1440', 'user');
+        delete recVideo.deviceId;
+        recVideo.facingMode = { ideal: 'user' };
+      }
+    }catch(_){}
     bandRecStream = await navigator.mediaDevices.getUserMedia(
       wantVideo
-        ? { video: { facingMode: 'user', width: { ideal: 720 }, height: { ideal: 1280 }, aspectRatio: { ideal: 9/16 } }, audio: { echoCancellation:true, noiseSuppression:true } }
+        ? { video: recVideo, audio: { echoCancellation:true, noiseSuppression:true } }
         : { audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true }, video: false }
     );
   }catch(e){
@@ -1994,8 +2002,16 @@ function renderBandLiveGrid(){
 function enableBandLiveCamera(){
   if(bandLiveLocalStream){ stopBandLiveCamera(); return; }
   if(!amTunedIn){ toast('Tune in first'); return; }
+  let liveVideo = { facingMode: { ideal: 'user' }, width: { ideal: 1440 }, height: { ideal: 1920 }, aspectRatio: { ideal: 3/4 }, frameRate: { ideal: 30, max: 30 } };
+  try{
+    if(typeof nalunoHdVideo === 'function'){
+      liveVideo = nalunoHdVideo('1440', 'user');
+      delete liveVideo.deviceId;
+      liveVideo.facingMode = { ideal: 'user' };
+    }
+  }catch(_){}
   const liveConstraints = {
-    video: { facingMode: 'user', width: { ideal: 720 }, height: { ideal: 1280 }, aspectRatio: { ideal: 9/16 } },
+    video: liveVideo,
     audio: {
       echoCancellation: true,
       noiseSuppression: true,
