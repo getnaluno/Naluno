@@ -457,6 +457,23 @@ function renderBroadcastTab(){
     if(bcastActiveView !== 'mine' && !window.__airChannelUid){
       try{ list = nalunoFeedShuffle(list); }catch(_){}
     }
+    /* 07b: the tuner (All · Watch · Read · Live · Luganda). */
+    let kindNote = '';
+    if(typeof window.nalunoBcastKindFilter === 'function'){
+      try{
+        const before = list.length;
+        list = window.nalunoBcastKindFilter(list);
+        if(before && !list.length && typeof window.nalunoBcastKindEmpty === 'function') kindNote = window.nalunoBcastKindEmpty();
+      }catch(_){}
+    }
+    if(empty){
+      const copy = empty.querySelector('.empty-state-copy');
+      if(copy){
+        if(!copy.__nalunoDefault) copy.__nalunoDefault = copy.innerHTML;
+        if(kindNote) copy.textContent = kindNote;
+        else copy.innerHTML = copy.__nalunoDefault;
+      }
+    }
     if(typeof renderBroadcastEntryGrid === 'function'){
       renderBroadcastEntryGrid(grid, empty, list);
       try{ nalunoRevealBroadcastPlates(grid); }catch(_){}
@@ -535,6 +552,14 @@ function nalunoArmFlipFeed(grid){
     const h = window.innerHeight || 800;
     const origin = scroller.getBoundingClientRect().top;
     let plateOwnsScreen = false;
+    /* 07b: on For You the first Broadcast shares the first screen with the
+       Signals row; it rests flat there, not tilted as if half-way in. */
+    let firstRest = 0;
+    const compactHead = document.body.classList.contains('naluno-bcast-foryou') && !document.body.classList.contains('naluno-strand-open');
+    if(compactHead){
+      const fh = document.getElementById('bcastFeedHead');
+      firstRest = fh ? Math.round(fh.getBoundingClientRect().height) : 0;
+    }
     plates.forEach(function(p){
       if(p.classList.contains('is-landscaped')){
         p.style.transform = 'none';
@@ -543,7 +568,8 @@ function nalunoArmFlipFeed(grid){
         plateOwnsScreen = true;
         return;
       }
-      const delta = p.getBoundingClientRect().top - origin;
+      let delta = p.getBoundingClientRect().top - origin;
+      if(firstRest && p === host.firstElementChild) delta = Math.min(delta, Math.max(0, delta - firstRest));
       const t = Math.max(-1, Math.min(1, delta / h));
       if(t < -0.01){
         const a = Math.min(1, -t);
@@ -566,7 +592,11 @@ function nalunoArmFlipFeed(grid){
     const head = document.getElementById('bcastFeedHead');
     let pastEntry = plateOwnsScreen;
     if(head){
-      pastEntry = (head.getBoundingClientRect().bottom - origin) < (h * 0.55);
+      /* 07b: with the short Signals row, watching starts once that row has
+         scrolled away (the bottom bar stays for the first screen). */
+      pastEntry = compactHead
+        ? (head.getBoundingClientRect().bottom - origin) < 8
+        : (head.getBoundingClientRect().bottom - origin) < (h * 0.55);
     }
     document.body.classList.toggle('naluno-bcast-watch', !!(onBroadcast && pastEntry));
     const land = host.querySelector('.bcast-plate.is-landscaped');
@@ -807,7 +837,11 @@ function nalunoPaintBcastChrome(view){
   try{
     document.body.classList.toggle('naluno-bcast-mine', view === 'mine');
     document.body.classList.toggle('naluno-bcast-toga', togaOn);
+    /* 07b: For You opens on what people made (broadcast-glance.js). */
+    document.body.classList.toggle('naluno-bcast-foryou', view !== 'mine' && !togaOn);
+    if(view !== 'foryou') document.body.classList.remove('naluno-air-about');
   }catch(_){}
+  try{ if(typeof window.nalunoMeasureBcastHead === 'function') window.nalunoMeasureBcastHead(); }catch(_){}
 }
 
 function nalunoSetBcastView(view, viaSwipe){
@@ -1214,6 +1248,8 @@ try{ renderBroadcasts(); }catch(e){ console.warn(e); }
     }catch(_){}
     const grid = document.getElementById('bcastPlateGrid');
     if(!grid) return;
+    /* 07b: when the phone asks to save data, previews wait (a tap opens). */
+    if(typeof window.nalunoPreviewsAllowed === 'function' && !window.nalunoPreviewsAllowed()) return;
     const vids = grid.querySelectorAll('video[data-naluno-preview="1"]');
     let pick = null;
     vids.forEach(function(v){

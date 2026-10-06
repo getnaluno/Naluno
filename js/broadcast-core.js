@@ -123,10 +123,10 @@ function broadcastThumbHtml(b){
     inner = `<div class="bcast-plate-fallback">${escapeHtml((b.creatorName || '?').slice(0,1).toUpperCase())}</div>`;
   }
   const live = b.live ? `<span class="bcast-plate-live"><i class="bcast-live-dot"></i>LIVE</span>${photo ? '' : '<span class="bcast-live-wait">Live now · tap to join</span>'}` : '';
-  const writeMark = writing && cover && !b.live ? `<span class="bcast-plate-live" style="background:rgba(124,255,178,.16);color:var(--mint);border-color:rgba(124,255,178,.4);">Writing</span>` : '';
+  const writeMark = writing && cover && !b.live && typeof nalunoPlateGlance !== 'function' ? `<span class="bcast-plate-live" style="background:rgba(124,255,178,.16);color:var(--mint);border-color:rgba(124,255,178,.4);">Writing</span>` : '';
   const hold = (!b.live && b.held) ? `<span class="bcast-plate-live" style="background:rgba(255,194,102,.2);color:#ffc266;border-color:rgba(255,194,102,.4);">Waiting</span>` : '';
   const down = (!b.live && b.hidden) ? `<span class="bcast-plate-live" style="background:rgba(255,84,112,.18);color:#ff8a9a;border-color:rgba(255,84,112,.4);">Taken down</span>` : '';
-  const viewsBit = (typeof formatNalunoViews === 'function' && (b.shareViews !== false))
+  const viewsBit = (typeof formatNalunoViews === 'function' && (b.shareViews !== false) && typeof nalunoPlateGlance !== 'function')
     ? `<span class="bcast-plate-views">${escapeHtml(formatNalunoViews(b.views || 0))}</span>`
     : '';
   const writingBand = (writing && cover && excerptHtml)
@@ -135,7 +135,19 @@ function broadcastThumbHtml(b){
   const credit = (window.NalunoPass && typeof NalunoPass.lockedCredit === 'function') ? NalunoPass.lockedCredit(b) : null;
   const byline = (credit && window.NalunoPass.byline) ? `<div class="bcast-plate-by">${escapeHtml(NalunoPass.byline(credit))}</div>` : '';
   const metaExcerpt = writing ? writingBand : excerptHtml;
-  return `<article class="bcast-plate${writing ? ' is-writing' : ''}${writing && cover ? ' has-photo' : ''}${b.live ? ' is-live' : ''}" data-broadcast-id="${escapeHtml(b.id)}"${b.live ? ` data-live="1" data-creator-uid="${escapeHtml(b.creatorUid || '')}"` : ''} role="button" tabindex="0">
+  /* 07b: readable at first sight. What it is (Watch / Read / Live, and
+     Luganda), who made it, how many have seen it and when — before anyone
+     taps. A written Broadcast can be heard from the feed (Listen). */
+  const glance = (typeof nalunoPlateGlance === 'function') ? nalunoPlateGlance(b, { writing: writing, mins: mins, cover: cover }) : null;
+  const metaTop = glance ? glance.kicker : '';
+  const metaStats = glance ? glance.stats : '';
+  const metaListen = glance ? glance.listen : '';
+  const metaMore = glance ? glance.more : '';
+  const bareRead = writing && !cover && !b.live;
+  if(glance && bareRead){
+    inner = `<div class="bcast-plate-read bcast-read-card"><div class="bcast-read-title">${title}</div>${copy.text ? `<p class="bcast-plate-excerpt">${escapeHtml(copy.text)}</p>` : ''}</div>`;
+  }
+  return `<article class="bcast-plate${writing ? ' is-writing' : ''}${writing && cover ? ' has-photo' : ''}${b.live ? ' is-live' : ''}${glance ? ' has-glance' : ''}${bareRead && glance ? ' is-read-card' : ''}" data-broadcast-id="${escapeHtml(b.id)}"${glance ? ` data-kind="${glance.kind}"${glance.lg ? ' data-lg="1"' : ''}` : ''}${b.live ? ` data-live="1" data-creator-uid="${escapeHtml(b.creatorUid || '')}"` : ''} role="button" tabindex="0">
     <div class="bcast-plate-frame">
       ${inner}
       ${live}
@@ -147,10 +159,14 @@ function broadcastThumbHtml(b){
       <div class="bcast-plate-scan"></div>
     </div>
     <div class="bcast-plate-meta">
-      <div class="bcast-plate-title">${title}</div>
-      ${metaExcerpt}
-      <div class="bcast-plate-sub"><span class="bcast-plate-who" data-known-uid="${escapeHtml(b.creatorUid || '')}">${creator}</span>${mins && cover ? ' · ' + mins + ' min' : ''}${b.strandName ? ' · ' + escapeHtml(b.strandName) : (b.tags && b.tags[0] ? ' · ' + escapeHtml(b.tags[0]) : '')}</div>
+      ${metaTop}
+      ${bareRead && glance ? '' : `<div class="bcast-plate-title">${title}</div>`}
+      ${glance ? (writing && cover ? excerptHtml : (writing ? '' : excerptHtml)) : metaExcerpt}
+      ${metaListen}
+      <div class="bcast-plate-sub"><span class="bcast-plate-who" data-known-uid="${escapeHtml(b.creatorUid || '')}">${creator}</span>${glance ? '' : (mins && cover ? ' · ' + mins + ' min' : '')}${b.strandName ? ' · ' + escapeHtml(b.strandName) : (b.tags && b.tags[0] ? ' · ' + escapeHtml(b.tags[0]) : '')}</div>
+      ${metaStats}
       ${byline}
+      ${metaMore}
     </div>
   </article>`;
 }

@@ -331,6 +331,9 @@
     }catch(_){}
     const src = video.getAttribute('data-preview-src') || '';
     if(!src) return;
+    /* 07b: a phone saving data (Data Saver, or a slow 2G/3G line) does not
+       download previews by itself; the poster and "tap to play" stay. */
+    if(typeof window.nalunoPreviewsAllowed === 'function' && !window.nalunoPreviewsAllowed()) return;
     if(__strandPreviewActive && __strandPreviewActive !== video){
       pauseStrandPreview(__strandPreviewActive);
     }

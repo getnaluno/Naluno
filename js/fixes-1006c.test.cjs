@@ -30,7 +30,9 @@ assert.ok(cam.includes("closest('#lobbySwitchCam, #switchCam, [data-action=\"fli
 /* The full-screen layout applies only while the camera is live and on, and
    never to voice calls or the floating window. */
 assert.ok(cam.includes('function nalunoMarkCamLive()') && cam.includes("ov.setAttribute('data-cam', want)"), 'the overlay knows when the camera is live');
-const block = css.slice(css.indexOf('06c: call screens laid out like WhatsApp'));
+const block06c = css.slice(css.indexOf('06c: call screens laid out like WhatsApp'));
+/* The 06c block ends where the next dated block starts. */
+const block = block06c.indexOf('07b: Broadcast at first sight') > 0 ? block06c.slice(0, block06c.indexOf('/* ===================== 07b')) : block06c;
 assert.ok(block.length > 1000, 'the layout block exists');
 block.split('\n').filter((l) => /^[a-z#.]/i.test(l) && l.includes('{')).forEach((l) => {
   assert.ok(l.startsWith('body:not(.naluno-os-pip)'), 'scoped away from the floating window: ' + l.slice(0, 80));
