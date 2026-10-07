@@ -14,3 +14,12 @@ compatibility_date = "2026-01-01"
 FIREBASE_PROJECT_ID = "naluno-28a00"
 FIREBASE_WEB_API_KEY = "AIzaSyD0j1W7-gFJqbMd6rz4kMhQd5AiB8B2ox0"
 OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93"
+
+# THE RULE OF BANDS (07 Oct d): delete Band conversations two hours after
+# the last person leaves, even if no phone is open.
+[triggers]
+crons = ["*/10 * * * *"]
+
+# SWEEP_KEY (a long random string, the same in the media worker) lets the
+# sweep remove Band clip files too. Put it with:
+#   npx wrangler secret put SWEEP_KEY

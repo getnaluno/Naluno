@@ -20,6 +20,7 @@
  *      key rotation hiccuped.
  */
 
+import { sweepBand, sweepAllBands } from "./band-sweep.mjs";
 import {
   judgeScreenPayload,
   listingFromScreen,
@@ -98,7 +99,7 @@ import {
   cfCalls,
 } from "./live.mjs";
 
-export const VERSION = "2.11.0-lg";
+export const VERSION = "2.12.0-bands";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -3189,6 +3190,77 @@ async function loadBilling(env, saToken) {
   return billing;
 }
 
+/* ---- THE RULE OF BANDS: server-side deletion (07 Oct d) ---- */
+/* Band clips are uploaded to either media worker (same code, two hosts). */
+const MEDIA_BASES_DEFAULT = ["https://naluno-broadcast-upload.naluno.workers.dev", "https://naluno-signal-upload.naluno.workers.dev"];
+const bandSweepSeen = new Map();
+function bandSweepIo(env, token) {
+  const docRoot = fsRoot(env).replace("https://firestore.googleapis.com/v1/", "");
+  const mediaBases = (env.MEDIA_WORKER_URLS ? String(env.MEDIA_WORKER_URLS).split(",") : MEDIA_BASES_DEFAULT)
+    .map((x) => String(x).trim().replace(/\/+$/, "")).filter(Boolean);
+  return {
+    mediaBases,
+    docName: (path) => docRoot + path,
+    async getDoc(path) {
+      const r = await fsFetch(env, token, "GET", path);
+      if (!r.ok || !r.data || !r.data.fields) return null;
+      return { data: fromFsDoc(r.data), updateTime: r.data.updateTime || "" };
+    },
+    async listDocs(path, fields, max) {
+      const out = [];
+      let pageToken = "";
+      const cap = Number(max) || 500;
+      const mask = (fields && fields.length ? fields : ["queuedAt"])
+        .map((f) => "mask.fieldPaths=" + encodeURIComponent(f)).join("&");
+      for (let i = 0; i < 40 && out.length < cap; i++) {
+        const q = "?pageSize=300&" + mask + (pageToken ? "&pageToken=" + encodeURIComponent(pageToken) : "");
+        const r = await fsFetch(env, token, "GET", path + q);
+        if (!r.ok || !r.data) break;
+        (r.data.documents || []).forEach((d) => { const v = fromFsDoc(d); out.push({ id: v.id, data: v }); });
+        pageToken = r.data.nextPageToken || "";
+        if (!pageToken) break;
+      }
+      return out.slice(0, cap);
+    },
+    async commit(writes) {
+      if (!writes || !writes.length) return true;
+      const r = await fsFetch(env, token, "POST", ":commit", { writes });
+      return !!r.ok;
+    },
+    async dropMedia(items) {
+      const secret = env.SWEEP_KEY || "";
+      if (!secret || !items || !items.length) return 0;
+      const byBase = {};
+      items.forEach((it) => { (byBase[it.base] = byBase[it.base] || []).push(it.key); });
+      let n = 0;
+      for (const base of Object.keys(byBase)) {
+        const keys = byBase[base];
+        for (let i = 0; i < keys.length; i += 100) {
+          try {
+            const res = await _fetch(base + "/b/drop", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "X-Naluno-Sweep": secret },
+              body: JSON.stringify({ keys: keys.slice(i, i + 100) }),
+            });
+            const body = await res.json().catch(() => ({}));
+            n += Number(body && body.deleted) || 0;
+          } catch { /* the next round tries again */ }
+        }
+      }
+      return n;
+    },
+  };
+}
+export async function runBandSweep(env, bandId) {
+  if (!hasSaConfigured(env)) return { ok: false, error: "no-service-account" };
+  const token = await saAccessToken(env);
+  if (!token) return { ok: false, error: "no-token" };
+  const io = bandSweepIo(env, token);
+  const now = Date.now();
+  if (bandId) return sweepBand(io, bandId, now, { mediaBases: io.mediaBases });
+  return sweepAllBands(io, now, { mediaBases: io.mediaBases });
+}
+
 export async function handleRequest(request, env = {}, ctx = {}) {
   if (request.method === "OPTIONS") return corsPreflight();
   const url = new URL(request.url);
@@ -3209,6 +3281,8 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         persist: saToken ? "firestore-sa" : "user-token",
         payments: paymentsReady(env) && !!saToken,
         liveRooms: callsReady(env) && !!saToken,
+        bandSweep: true,
+        mediaSweep: !!env.SWEEP_KEY,
       });
     }
 
@@ -3294,6 +3368,26 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         "Cache-Control": "public, max-age=300",
         "Access-Control-Allow-Origin": "*",
       } });
+    }
+
+    /* THE RULE OF BANDS. A phone that sees a Band whose two hours ran out
+       asks the server to delete it now. Signed-in people only; it can only
+       delete what the database rules already make unreadable. One ask per
+       Band per minute. */
+    if (path === "/v1/bands/sweep" && request.method === "POST") {
+      const sweepToken = bearer(request);
+      const sweepUser = sweepToken ? await verifyIdToken(env, sweepToken) : null;
+      if (!sweepUser) return json({ ok: false, error: "sign in" }, 401);
+      let body = {};
+      try { body = await request.json(); } catch { body = {}; }
+      const bandId = String((body && body.bandId) || "");
+      if (!/^[A-Za-z0-9_-]{4,128}$/.test(bandId)) return json({ ok: false, error: "bad_band" }, 400);
+      const last = bandSweepSeen.get(bandId) || 0;
+      if (Date.now() - last < 60000) return json({ ok: true, queued: false, recent: true });
+      bandSweepSeen.set(bandId, Date.now());
+      if (bandSweepSeen.size > 5000) bandSweepSeen.clear();
+      const r = await runBandSweep(env, bandId);
+      return json({ ok: !!r.ok, dead: !!r.dead, deleted: r.deleted || 0, error: r.error || undefined }, r.ok ? 200 : 503);
     }
 
     if (path === "/v1/lifeline/drop" && request.method === "POST") {
