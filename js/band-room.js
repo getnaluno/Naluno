@@ -343,6 +343,96 @@ function bandEpochMs(b){
   }catch(_){}
   return 0;
 }
+/* THE RULE OF BANDS (07 Oct d): aliveAt is the last moment someone was in
+   the Band, on the server's clock. Two hours after it, the conversation is
+   gone: the database refuses to show it to anyone and the Naluno worker
+   deletes it. Waking the Band after that starts a fresh page. */
+function bandAliveMs(b){
+  if(!b || b.aliveAt == null || b.aliveAt === false) return 0;
+  try{
+    const v = b.aliveAt;
+    if(typeof v.toMillis === 'function') return v.toMillis();
+    if(typeof v === 'number' && isFinite(v)) return v;
+    if(v && typeof v.seconds === 'number') return (v.seconds * 1000) + Math.floor((v.nanoseconds || 0) / 1e6);
+  }catch(_){}
+  return 0;
+}
+function bandDead(b){
+  const alive = bandAliveMs(b);
+  if(!alive) return false;
+  const settle = (typeof BAND_SETTLE_MS === 'number') ? BAND_SETTLE_MS : (2 * 60 * 60 * 1000);
+  return (Date.now() - alive) > settle;
+}
+/* Would writing "someone is here" now wake a finished conversation? Then
+   the same write draws a new line under it (the rules insist). */
+function bandNeedsFreshPage(b){
+  if(!b) return false;
+  if(bandAliveMs(b)) return bandDead(b);
+  return !!(bandSettleElapsed(b) || b._staleHidden);
+}
+const BAND_ALIVE_EVERY_MS = 4 * 60 * 1000;
+function bandMarkAlive(bandRef, b, force){
+  if(!bandRef || !b || !b.isReal || typeof firebase === 'undefined' || !firebase.firestore) return Promise.resolve(false);
+  const now = Date.now();
+  if(!force && b._aliveWroteAt && (now - b._aliveWroteAt) < BAND_ALIVE_EVERY_MS && !bandNeedsFreshPage(b)) return Promise.resolve(true);
+  if(b._aliveWriting) return b._aliveWriting;
+  const stamp = function(){ return firebase.firestore.FieldValue.serverTimestamp(); };
+  const freshPage = function(){
+    return bandRef.set({ aliveAt: stamp(), messageEpoch: stamp(), lastEmptiedAt: null }, { merge:true })
+      .then(function(){
+        /* The server drew the line: start the page here too. */
+        const cut = Date.now();
+        b.messageEpoch = cut;
+        b.aliveAt = cut;
+        b.lastEmptiedAt = null;
+        b._staleHidden = false;
+        wipeLocalBandSession(b, cut);
+        try{ if(activeBandId && b.id === activeBandId){ renderBandMessages(); attachBandMessagesListener(bandRef, b); } }catch(_){}
+        /* Delete what is left of the old conversation: ids queued when the
+           Band emptied, and the server sweep for the rest. */
+        try{ deleteBandWipeBatch(bandRef, cut).catch(function(){}); }catch(_){}
+        b._aliveWroteAt = Date.now();
+        bandSweepAsked[b.firestoreId] = 0;
+        bandAskServerSweep(b);
+      });
+  };
+  const run = (bandNeedsFreshPage(b) ? freshPage() : bandRef.set({ aliveAt: stamp() }, { merge:true })
+    .catch(function(e){
+      /* The server's clock says the two hours ran out (this phone's clock is
+         behind): start a fresh page. Any other refusal (not a member, say):
+         stop asking for a while. */
+      const denied = e && (e.code === 'permission-denied' || /permission/i.test(String(e.message || '')));
+      const settle = (typeof BAND_SETTLE_MS === 'number') ? BAND_SETTLE_MS : 7200000;
+      const nearEnd = !bandAliveMs(b) || (Date.now() - bandAliveMs(b)) > settle - 15 * 60 * 1000;
+      if(denied && nearEnd && !b._freshTried){ b._freshTried = Date.now(); return freshPage(); }
+      b._aliveWroteAt = Date.now();
+      throw e;
+    }))
+    .then(function(){ b._aliveWroteAt = Date.now(); b._freshTried = 0; if(!bandAliveMs(b)) b.aliveAt = Date.now(); return true; })
+    .catch(function(e){ try{ console.warn('[band] alive', e && (e.code || e.message)); }catch(_){} return false; })
+    .then(function(ok){ b._aliveWriting = null; return ok; });
+  b._aliveWriting = run;
+  return run;
+}
+/* Ask the Naluno worker to delete a finished conversation now, instead of
+   waiting for its next scheduled round. Once a minute per Band at most. */
+const bandSweepAsked = {};
+function bandAskServerSweep(b){
+  try{
+    if(!b || !b.isReal || !b.firestoreId) return;
+    const id = b.firestoreId;
+    if(bandSweepAsked[id] && (Date.now() - bandSweepAsked[id]) < 10 * 60 * 1000) return;
+    if(typeof currentUser === 'undefined' || !currentUser || typeof currentUser.getIdToken !== 'function') return;
+    bandSweepAsked[id] = Date.now();
+    currentUser.getIdToken(false).then(function(token){
+      return fetch('https://naluno-economy.naluno.workers.dev/v1/bands/sweep', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        body: JSON.stringify({ bandId: id }), keepalive: true,
+      });
+    }).catch(function(){});
+  }catch(_){}
+}
+window.nalunoBandAskServerSweep = bandAskServerSweep;
 function bandSettleElapsed(b){
   const emptied = bandEmptiedMs(b);
   if(!emptied) return false;
@@ -360,7 +450,19 @@ function updateBandSettleNote(){
   if(!b){ el.textContent = 'Band'; return; }
   const liveCount = (b.isReal ? realBandLiveMembers.length : 0) + (amTunedIn ? 1 : 0);
   if(liveCount > 0){
-    el.textContent = 'People here · messages stay until everyone leaves';
+    el.textContent = 'People here · deleted 2h after everyone leaves';
+    return;
+  }
+  if(bandAliveMs(b)){
+    const left = BAND_SETTLE_MS - (Date.now() - bandAliveMs(b));
+    if(left <= 0){ el.textContent = 'Deleted · the last conversation is gone for good'; return; }
+    const mins = Math.ceil(left / 60000);
+    if(mins >= 60){
+      const h = Math.floor(mins/60), m = mins % 60;
+      el.textContent = 'Deleted in ' + h + 'h' + (m ? (' ' + m + 'm') : '');
+    } else {
+      el.textContent = 'Deleted in ' + mins + 'm';
+    }
     return;
   }
   if(b.lastEmptiedAt){
@@ -378,7 +480,7 @@ function updateBandSettleNote(){
     }
     return;
   }
-  el.textContent = 'Band · messages clear 2h after the last person leaves';
+  el.textContent = 'Band · deleted for good 2h after the last person leaves';
 }
 function bandNobodyHere(b){
   if(!b || !b.isReal) return false;
@@ -447,9 +549,12 @@ function renderBandMessages(preserveScroll){
      timer caught up and wiped it. */
   if(b) b._staleHidden = bandConversationExpired(b, msgs);
   if(b && b._staleHidden) msgs = [];
+  /* THE RULE OF BANDS: two hours after the last person left, nothing of
+     that conversation is shown, even from this phone's memory. */
+  if(b && b.isReal && bandDead(b)) msgs = msgs.filter(m => bandMsgTs(m) > bandAliveMs(b) + BAND_SETTLE_MS);
   const el = $('bandMessages');
   if(msgs.length===0){
-    el.innerHTML = `<div class="msg-empty"><span style="font-family:var(--font-futuristic); font-size:14px; color:#fff;">Quiet on this Band</span><span style="font-size:12.5px; color:rgba(255,255,255,.6);">Tune in and say something — it clears 2h after the last person leaves.</span></div>`;
+    el.innerHTML = `<div class="msg-empty"><span style="font-family:var(--font-futuristic); font-size:14px; color:#fff;">Quiet on this Band</span><span style="font-size:12.5px; color:rgba(255,255,255,.6);">Tune in and say something. It is deleted for good 2h after the last person leaves.</span></div>`;
     updateBandSettleNote();
     return;
   }
@@ -716,6 +821,17 @@ function attachBandMessagesListener(bandRef, b){
   const cut = bandWipeCut(b);
   b._msgCut = cut;
   const id = b.id;
+  /* A finished conversation cannot be read (the rules refuse it) and is
+     being deleted. Do not ask for it; show the empty Band. Waking the Band
+     (tuning in) starts a fresh page and listens again. */
+  b._msgDead = bandDead(b);
+  if(b._msgDead){
+    bandMessages[id] = [];
+    delete bandOlderMessages[id];
+    try{ renderBandMessages(); }catch(_){}
+    bandAskServerSweep(b);
+    return;
+  }
   bandMessagesUnsub = bandMessagesQuery(bandRef, b).onSnapshot(function(snap){
     try{ nalunoListenOk('bandMessages'); }catch(_){}
     const uid = currentUser && currentUser.uid;
@@ -738,6 +854,7 @@ function attachBandMessagesListener(bandRef, b){
   }, function(err){
     console.warn('[band] messages listener error, subscribing again', err && err.message);
     bandMessagesUnsub = null;
+    if(bandDead(b)){ bandMessages[id] = []; try{ renderBandMessages(); }catch(_){} return; }
     try{ nalunoRelisten('bandMessages', function(){ if(activeBandId === id) attachBandMessagesListener(bandRef, b); }); }catch(_){}
   });
 }
@@ -811,7 +928,8 @@ function openBandRoom(id){
     const onMeta = doc=>{
       try{ nalunoListenOk('bandMeta'); }catch(_){}
       if(!doc.exists) return;
-      const d = doc.data();
+      let d;
+      try{ d = doc.data({ serverTimestamps: 'estimate' }) || {}; }catch(_){ d = doc.data() || {}; }
       b.name = d.name || b.name;
       /* If the room opened before the Band's own record arrived (a link, an
          invite, reopening the app), it drew the default. Repaint with the
@@ -825,6 +943,7 @@ function openBandRoom(id){
       b.memberUids = d.memberUids || [];
       b.lastEmptiedAt = d.lastEmptiedAt && d.lastEmptiedAt.toMillis ? d.lastEmptiedAt.toMillis() : (d.lastEmptiedAt || null);
       b.messageEpoch = d.messageEpoch || b.messageEpoch || 0;
+      if(d.aliveAt) b.aliveAt = d.aliveAt;
       $('bandRoomName').textContent = b.name;
       // Square Bell — someone rang while you're looking at the room
       if(d.bellAt && d.bellBy && d.bellBy !== currentUser.uid){
@@ -839,7 +958,8 @@ function openBandRoom(id){
       updateBandSettleNote();
       if(bandIsSettled(b)) pruneSettledBandMessages(bandRef, b);
       const nextCut = bandWipeCut(b);
-      if(nextCut !== b._msgCut) attachBandMessagesListener(bandRef, b);
+      if(nextCut !== b._msgCut || bandDead(b) !== !!b._msgDead) attachBandMessagesListener(bandRef, b);
+      if(bandDead(b)) bandAskServerSweep(b);
       renderBandMessages();
     };
     const attachMeta = function(){
@@ -952,6 +1072,7 @@ function openBandRoom(id){
       if(!cur || !cur.isReal || !cur.firestoreId || !fbDb) return;
       const ref = fbDb.collection('bands').doc(cur.firestoreId);
       const present = (realBandLiveMembers.length || 0) + (amTunedIn ? 1 : 0);
+      if(bandDead(cur) !== !!cur._msgDead){ attachBandMessagesListener(ref, cur); renderBandMessages(); }
       if(!present && cur._presenceSeen && bandWipeIfStale(ref, cur)) return;
       if(bandIsSettled(cur)) pruneSettledBandMessages(ref, cur);
     }, 15000);
@@ -1020,6 +1141,8 @@ function startBandPresenceHeartbeat(){
     fbDb.collection('bands').doc(b.firestoreId).collection('presence').doc(currentUser.uid).set({
       tunedInAt: firebase.firestore.FieldValue.serverTimestamp(),
     }, { merge:true }).catch(()=>{});
+    // Someone is here: keep the Band's clock current (every few minutes).
+    bandMarkAlive(fbDb.collection('bands').doc(b.firestoreId), b, false);
   };
   beat();
   bandPresenceHeartbeat = setInterval(beat, 25000);
@@ -1029,6 +1152,8 @@ function clearMyBandPresence(){
   const b = activeBand();
   if(b && b.isReal && b.firestoreId && fbDb && currentUser){
     const bandRef = fbDb.collection('bands').doc(b.firestoreId);
+    // Leaving: the two hours count from now.
+    bandMarkAlive(bandRef, b, true);
     bandRef.collection('presence').doc(currentUser.uid).delete()
       .then(function(){ markBandEmptyIfLast(bandRef, b); })
       .catch(function(){ markBandEmptyIfLast(bandRef, b); });
@@ -1076,6 +1201,8 @@ $('bandTuneBtn').onclick = ()=>{
   if(b && b.isReal && b.firestoreId && fbDb && currentUser){
     const presenceRef = fbDb.collection('bands').doc(b.firestoreId).collection('presence').doc(currentUser.uid);
     if(amTunedIn){
+      // Waking the Band: a finished conversation stays gone (fresh page).
+      bandMarkAlive(fbDb.collection('bands').doc(b.firestoreId), b, true);
       startBandPresenceHeartbeat();
       bumpTodayActivity();
       if(b.lastEmptiedAt && !bandSettleElapsed(b)){
@@ -1891,6 +2018,7 @@ async function sendBandMessage(){
       envelopes: envelopes || null,
       text: envelopes ? null : text, // plaintext omitted once truly sealed for everyone
     };
+    bandMarkAlive(fbDb.collection('bands').doc(b.firestoreId), b, false);
     col.doc(docId).set(payload)
       .catch(function(){
         queueBandMessage(b.firestoreId, payload, text, docId);

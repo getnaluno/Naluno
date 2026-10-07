@@ -155,8 +155,9 @@ function signalCreateTileHtml(){
     + signalEdgeHtml()
     + '<div class="signal-window-in">'
     + '<div class="signal-create-mark" aria-hidden="true"><span>+</span></div>'
+    + '</div></div>'
     + signalTileCaption('New Signal', 'Tap to create')
-    + '</div></div></div>';
+    + '</div>';
 }
 function openNewSignalComposer(){
   const legacy = document.getElementById('newSignalBtn');
@@ -335,8 +336,9 @@ function renderBroadcastTab(){
         + (age ? '<span class="signal-age">'+age+'</span>' : '')
         + (latest.held ? '<span class="signal-held-chip">Checking</span>' : '')
         + '<span class="signal-play">▶</span>'
+        + '</div></div>'
         + signalTileCaption(youLabel, latest.held ? 'Only you see it' : 'Your signal')
-        + '</div></div></div>';
+        + '</div>';
     }
     /* An expired Signal leaves the strip as soon as it expires, not at the
        next reload. */
@@ -379,8 +381,9 @@ function renderBroadcastTab(){
         + thumbInner
         + (age ? '<span class="signal-age">'+age+'</span>' : '')
         + '<span class="signal-play">▶</span>'
+        + '</div></div>'
         + signalTileCaption(name, 'Short clip', c.firebaseUid)
-        + '</div></div></div>';
+        + '</div>';
       staggerIndex++;
     });
     // Presentation-only "leaving naturally" for a Signal that's no longer in

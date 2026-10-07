@@ -369,6 +369,8 @@ async function writeBeaconPing(pos, opts){
     findNalunoDevices = [localRow].concat(others);
     try{ renderFindNalunoPanel(); }catch(_){}
     await ref.set(payload, { merge: true });
+    // Find Naluno history: a trail point when it has moved, or now and then.
+    try{ if(typeof nalunoTrailNote === 'function') nalunoTrailNote(payload); }catch(_){}
     try{
       await fbDb.collection('users').doc(currentUser.uid).set({
         lastLat: lat,
@@ -599,6 +601,9 @@ function listenFindNalunoDevices(){
             if(ts > findNalunoLastWrite) findNalunoLastWrite = ts;
             publishBeaconLocal(mine.lat, mine.lng, mine.accuracy || null, mine.placeName || '', ts, 'beacon-snap');
           }
+          // The Android service's pings join the history too (same point id,
+          // so a point it already saved is not doubled).
+          try{ if(typeof nalunoTrailNote === 'function') nalunoTrailNote(mine); }catch(_){}
         }
       }catch(_){}
       renderFindNalunoPanel();

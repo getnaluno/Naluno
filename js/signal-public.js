@@ -145,8 +145,9 @@
         + '<div class="signal-window-in">' + inner
         + '<span class="signal-public-tag">Everyone</span>'
         + '<span class="signal-play">▶</span>'
+        + '</div></div>'
         + ((typeof signalTileCaption === 'function') ? signalTileCaption(first, 'Public', r.uid) : '<div class="signal-tile-cap"><strong>' + esc(first) + '</strong></div>')
-        + '</div></div></div>';
+        + '</div>';
     }).join('');
   }
   function bind(strip) {

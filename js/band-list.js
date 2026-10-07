@@ -94,7 +94,7 @@ function renderBandList(){
   if(!bands.length){
     if(label) label.hidden = true;
     $('bandList').innerHTML = (typeof emptyStateHtml === 'function')
-      ? emptyStateHtml('No squares yet', 'Start a Band with your connections. No one owns it — messages clear 2 hours after the last person leaves.', 'rooms')
+      ? emptyStateHtml('No squares yet', 'Start a Band with your connections. No one owns it. Two hours after the last person leaves, the conversation is deleted for good.', 'rooms')
       : '<div class="empty-state"><p class="empty-state-copy">No squares yet.</p></div>';
     return;
   }
@@ -234,12 +234,13 @@ async function loadRealBands(uid){
       });
       const lastEmptiedAt = d.lastEmptiedAt && d.lastEmptiedAt.toMillis ? d.lastEmptiedAt.toMillis() : (d.lastEmptiedAt || null);
       const messageEpoch = d.messageEpoch || 0;
+      const aliveAt = d.aliveAt && d.aliveAt.toMillis ? d.aliveAt.toMillis() : (d.aliveAt || null);
       if(change.type === 'removed'){
         const idx = bands.findIndex(b=>b.firestoreId===doc.id);
         if(idx>=0) bands.splice(idx,1);
         bandInviteForget(uid, doc.id);
       } else {
-        const row = addRealBandToLocalList(doc.id, d.name, d.vibe, memberInfo, d.createdBy, { lastEmptiedAt, memberUids: d.memberUids || [], messageEpoch });
+        const row = addRealBandToLocalList(doc.id, d.name, d.vibe, memberInfo, d.createdBy, { lastEmptiedAt, memberUids: d.memberUids || [], messageEpoch, aliveAt });
         const seen = !!bandInviteSeen(uid)[doc.id];
         const learned = bandInviteHasBook(uid);
         if(change.type === 'added' && bandInviteShouldToast({ first: first && !learned, mine: d.createdBy === uid, seen: seen }) && bandInviteClaim(uid, doc.id)){
@@ -249,6 +250,16 @@ async function loadRealBands(uid){
         // App open is enough — do not wait for someone to sit in the empty square.
         if(row && lastEmptiedAt && (Date.now() - lastEmptiedAt) >= BAND_SETTLE_MS && typeof pruneSettledBandMessages === 'function'){
           pruneSettledBandMessages(fbDb.collection('bands').doc(doc.id), row);
+        }
+        /* THE RULE OF BANDS: a Band whose two hours ran out is deleted by the
+           server now, not when someone happens to open it. Older Bands with
+           no clock yet are checked by the server the same way. */
+        if(row && typeof nalunoBandAskServerSweep === 'function'){
+          const settle = (typeof BAND_SETTLE_MS === 'number') ? BAND_SETTLE_MS : 7200000;
+          const deadNow = aliveAt ? (Date.now() - aliveAt) > settle : !!(lastEmptiedAt && (Date.now() - lastEmptiedAt) >= settle);
+          const checkedAt = d.checkedAt && d.checkedAt.toMillis ? d.checkedAt.toMillis() : 0;
+          const recentlyChecked = checkedAt && (Date.now() - checkedAt) < 3 * 60 * 60 * 1000;
+          if(deadNow || (!aliveAt && !recentlyChecked)) nalunoBandAskServerSweep(row);
         }
       }
     });

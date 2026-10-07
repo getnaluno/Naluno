@@ -146,7 +146,7 @@ const html = read('app/index.html');
 
 /* 8. Stamps */
 ['signal-ui.js', 'broadcast-space.js', 'broadcast-core.js', 'broadcast-composer.js', 'wireline.js', 'gestures.js', 'compass.js', 'signal-core.js', 'auth.js', 'pwa.js', 'broadcast-glance.js', 'signal-public.js'].forEach((f) => {
-  assert.ok(new RegExp('/js/' + f.replace(/[.-]/g, '\\$&') + '\\?v=20261007c').test(html), f + ' stamp');
+  assert.ok(new RegExp('/js/' + f.replace(/[.-]/g, '\\$&') + '\\?v=20261007[c-z]').test(html), f + ' stamp (07c or later)');
 });
-assert.ok(/\/css\/app\.css\?v=20261007c/.test(html) && /APP_BUILD = '20261007c'/.test(read('sw.js')), 'css and service worker');
+assert.ok(/\/css\/app\.css\?v=20261007[c-z]/.test(html) && /APP_BUILD = '20261007[c-z]'/.test(read('sw.js')), 'css and service worker');
 console.log('fixes-1007c tests passed');
