@@ -168,7 +168,7 @@ export default {
     }
 
     if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
-      return json({ ok: true, service: 'naluno-signal-upload', routes: ['POST /', 'POST /b/init', 'PUT /b/part', 'POST /b/complete', 'POST /b/purge', 'GET /o/**'] }, 200, origin);
+      return json({ ok: true, service: 'naluno-signal-upload', routes: ['POST /', 'POST /b/init', 'PUT /b/part', 'POST /b/complete', 'POST /b/purge', 'POST /b/drop', 'GET /o/**'] }, 200, origin);
     }
 
     if ((request.method === 'GET' || request.method === 'HEAD') && url.pathname.startsWith('/o/')) {
@@ -188,6 +188,37 @@ export default {
     }
     if (!isChunkRoute && request.method !== 'POST') {
       return json({ error: 'Method not allowed' }, 405, origin);
+    }
+
+    /* THE RULE OF BANDS (07 Oct d): the Naluno economy worker deletes a
+       Band's clip files once its conversation is deleted. Only with the
+       shared SWEEP_KEY secret, and only files under u/<uid>/ (the sweep
+       checks each file belongs to the person who sent it). */
+    if (url.pathname === '/b/drop' && request.method === 'POST') {
+      const given = request.headers.get('X-Naluno-Sweep') || '';
+      const want = env.SWEEP_KEY || '';
+      let same = !!want && given.length === want.length;
+      if (same) {
+        let diff = 0;
+        for (let i = 0; i < want.length; i++) diff |= want.charCodeAt(i) ^ given.charCodeAt(i);
+        same = diff === 0;
+      }
+      if (!same) return json({ error: 'Forbidden' }, 403, origin);
+      if (!env.SIGNAL_BUCKET) return json({ error: 'R2 binding missing (SIGNAL_BUCKET)' }, 500, origin);
+      let body = {};
+      try { body = await request.json(); } catch (_) {}
+      const keys = Array.isArray(body.keys) ? body.keys.slice(0, 100) : [];
+      let deleted = 0;
+      for (let i = 0; i < keys.length; i++) {
+        const key = String(keys[i] || '');
+        if (!/^u\/[A-Za-z0-9_-]{6,128}\/[A-Za-z0-9._-]{1,120}$/.test(key) || key.indexOf('..') >= 0) continue;
+        try {
+          await env.SIGNAL_BUCKET.delete(key);
+          deleted++;
+          try { await caches.default.delete(new Request(url.origin + '/o/' + key, { method: 'GET' })); } catch (_) {}
+        } catch (_) {}
+      }
+      return json({ ok: true, deleted: deleted }, 200, origin);
     }
 
     const authHeader = request.headers.get('Authorization') || '';

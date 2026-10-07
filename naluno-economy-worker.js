@@ -1,4 +1,219 @@
-// ../../home/claude/N/workers/economy/screen.mjs
+// band-sweep.mjs
+var BAND_SETTLE_MS = 2 * 60 * 60 * 1e3;
+var PRESENCE_FRESH_MS = 90 * 1e3;
+var PRESENCE_STALE_MS = 5 * 60 * 1e3;
+var MAX_MESSAGES_PER_BAND = 4e3;
+var MAX_BANDS_PER_RUN = 1500;
+var MAX_SWEEPS_PER_RUN = 150;
+var FUTURE_SLACK_MS = 15 * 60 * 1e3;
+var LEGACY_RECHECK_MS = 3 * 60 * 60 * 1e3;
+function num(v) {
+  const n = Number(v);
+  return isFinite(n) && n > 0 ? n : 0;
+}
+function bandSweepPlan({ band, presence, newestMsgMs, now }) {
+  const b = band || {};
+  const t = num(now) || Date.now();
+  const beats = (presence || []).map((p) => num(p && p.tunedInAt));
+  const freshHere = beats.some((ts) => ts && t - ts < PRESENCE_FRESH_MS);
+  const aliveAt = num(b.aliveAt);
+  const epoch = num(b.messageEpoch);
+  const plan = {
+    dead: false,
+    deleteUpTo: 0,
+    // delete messages with ts <= this (ms)
+    deleteBefore: epoch,
+    // and every message with ts < the epoch line
+    stampAliveAt: 0,
+    // older Band: set aliveAt to this (ms)
+    revive: null,
+    // people on an older app are here: { aliveAt, epoch }
+    futureAfter: 0,
+    // delete messages dated after this (ms)
+    dropStalePresence: beats.filter((ts) => !ts || t - ts > PRESENCE_STALE_MS).length > 0
+  };
+  if (aliveAt) {
+    const deadline = aliveAt + BAND_SETTLE_MS;
+    if (t > deadline) {
+      plan.deleteUpTo = deadline;
+      plan.futureAfter = t + FUTURE_SLACK_MS;
+      if (freshHere) {
+        plan.revive = { aliveAt: t, epoch: Math.max(deadline, epoch) };
+        plan.deleteBefore = Math.max(epoch, deadline);
+      } else {
+        plan.dead = true;
+      }
+    }
+    return plan;
+  }
+  if (freshHere) return plan;
+  const lastSeen = Math.max(num(newestMsgMs), num(b.lastEmptiedAt), ...beats, 0);
+  if (lastSeen && t - lastSeen >= BAND_SETTLE_MS) {
+    plan.dead = true;
+    plan.deleteUpTo = lastSeen + BAND_SETTLE_MS;
+    plan.futureAfter = t + FUTURE_SLACK_MS;
+    plan.stampAliveAt = lastSeen;
+  }
+  return plan;
+}
+function messageGoes(plan, msgTs) {
+  const ts = num(msgTs);
+  if (plan.deleteBefore && ts < plan.deleteBefore) return true;
+  if ((plan.dead || plan.revive) && plan.deleteUpTo && ts <= plan.deleteUpTo) return true;
+  if (plan.futureAfter && ts > plan.futureAfter) return true;
+  return false;
+}
+function mediaKeyFor(url, fromUid, mediaBase) {
+  if (Array.isArray(mediaBase)) {
+    for (const base2 of mediaBase) {
+      const k = mediaKeyFor(url, fromUid, base2);
+      if (k) return { key: k, base: base2 };
+    }
+    return "";
+  }
+  const u = String(url || "");
+  const from = String(fromUid || "");
+  if (!u || !from || !/^[A-Za-z0-9_-]{6,128}$/.test(from)) return "";
+  let parsed;
+  try {
+    parsed = new URL(u);
+  } catch {
+    return "";
+  }
+  let base;
+  try {
+    base = new URL(mediaBase);
+  } catch {
+    return "";
+  }
+  if (parsed.protocol !== "https:" || parsed.host !== base.host) return "";
+  const m = parsed.pathname.match(/^\/o\/(u\/([A-Za-z0-9_-]{6,128})\/[A-Za-z0-9._-]{1,120})$/);
+  if (!m || m[2] !== from) return "";
+  return m[1];
+}
+async function sweepBand(io, bandId, now, opts = {}) {
+  const id = String(bandId || "");
+  if (!/^[A-Za-z0-9_-]{4,128}$/.test(id)) return { ok: false, error: "bad_band" };
+  const t = num(now) || Date.now();
+  const base = "/bands/" + id;
+  const got = await io.getDoc(base);
+  if (!got || !got.data) return { ok: false, error: "not_found" };
+  const band = got.data;
+  const presence = await io.listDocs(base + "/presence", ["tunedInAt"]);
+  const aliveAt = num(band.aliveAt);
+  const epoch = num(band.messageEpoch);
+  if (aliveAt && t <= aliveAt + BAND_SETTLE_MS && !epoch) {
+    return { ok: true, dead: false, deleted: 0 };
+  }
+  const messages = await io.listDocs(base + "/messages", ["ts", "mediaUrl", "from"], MAX_MESSAGES_PER_BAND);
+  let newest = 0;
+  messages.forEach((m) => {
+    const ts = num(m.data && m.data.ts);
+    if (ts > newest) newest = ts;
+  });
+  const plan = bandSweepPlan({ band, presence: presence.map((p) => p.data || {}), newestMsgMs: newest, now: t });
+  const writes = [];
+  const keys = [];
+  const gone = [];
+  messages.forEach((m) => {
+    const d = m.data || {};
+    if (!messageGoes(plan, d.ts)) return;
+    gone.push(m.id);
+    writes.push({ delete: io.docName(base + "/messages/" + m.id) });
+    const bases = opts.mediaBases || (opts.mediaBase ? [opts.mediaBase] : []);
+    const k = bases.length ? mediaKeyFor(d.mediaUrl, d.from, bases) : "";
+    if (k) keys.push(k);
+  });
+  if (plan.dead) {
+    const wipe = await io.listDocs(base + "/wipe", []);
+    wipe.forEach((w) => writes.push({ delete: io.docName(base + "/wipe/" + w.id) }));
+  }
+  if (plan.dropStalePresence) {
+    presence.forEach((p) => {
+      const ts = num(p.data && p.data.tunedInAt);
+      if (!ts || t - ts > PRESENCE_STALE_MS) writes.push({ delete: io.docName(base + "/presence/" + p.id) });
+    });
+  }
+  const complete = messages.length < MAX_MESSAGES_PER_BAND;
+  const bandFields = {};
+  if (plan.stampAliveAt) bandFields.aliveAt = { timestampValue: new Date(plan.stampAliveAt).toISOString() };
+  if (plan.revive) {
+    bandFields.aliveAt = { timestampValue: new Date(plan.revive.aliveAt).toISOString() };
+    bandFields.messageEpoch = { timestampValue: new Date(plan.revive.epoch).toISOString() };
+  }
+  if (!aliveAt && !plan.dead) bandFields.checkedAt = { timestampValue: new Date(t).toISOString() };
+  const bandWrite = Object.keys(bandFields).length ? {
+    update: { name: io.docName(base), fields: bandFields },
+    updateMask: { fieldPaths: Object.keys(bandFields) },
+    /* If someone woke the Band while this ran, leave the Band record as
+       they wrote it. */
+    currentDocument: got.updateTime ? { updateTime: got.updateTime } : { exists: true }
+  } : null;
+  let ok = true;
+  for (let i = 0; i < writes.length; i += 450) {
+    const r = await io.commit(writes.slice(i, i + 450));
+    if (!r) ok = false;
+  }
+  if (plan.dead && ok && complete) {
+    bandFields.sweptAt = { timestampValue: new Date(t).toISOString() };
+    if (bandWrite) {
+      bandWrite.update.fields = bandFields;
+      bandWrite.updateMask.fieldPaths = Object.keys(bandFields);
+    }
+  }
+  const finalWrite = bandWrite || (bandFields.sweptAt ? {
+    update: { name: io.docName(base), fields: bandFields },
+    updateMask: { fieldPaths: Object.keys(bandFields) },
+    currentDocument: got.updateTime ? { updateTime: got.updateTime } : { exists: true }
+  } : null);
+  if (finalWrite) {
+    try {
+      await io.commit([finalWrite]);
+    } catch {
+    }
+  }
+  let dropped = 0;
+  if (keys.length && io.dropMedia) {
+    try {
+      dropped = await io.dropMedia(keys);
+    } catch {
+      dropped = 0;
+    }
+  }
+  return { ok, dead: plan.dead, revived: !!plan.revive, complete, deleted: gone.length, files: dropped };
+}
+function bandNeedsSweep(band, now) {
+  const b = band || {};
+  const t = num(now) || Date.now();
+  const aliveAt = num(b.aliveAt);
+  const swept = num(b.sweptAt);
+  if (aliveAt) {
+    const deadline = aliveAt + BAND_SETTLE_MS;
+    if (t <= deadline) return false;
+    return !(swept && swept > deadline);
+  }
+  const checked = num(b.checkedAt);
+  return !(checked && t - checked < LEGACY_RECHECK_MS);
+}
+async function sweepAllBands(io, now, opts = {}) {
+  const t = num(now) || Date.now();
+  const bands = await io.listDocs("/bands", ["aliveAt", "sweptAt", "checkedAt"], MAX_BANDS_PER_RUN);
+  let looked = 0, deleted = 0, dead = 0, files = 0;
+  const due = bands.filter((b) => bandNeedsSweep(b.data, t)).sort((a, b) => (num(a.data.aliveAt) ? 0 : 1) - (num(b.data.aliveAt) ? 0 : 1)).slice(0, MAX_SWEEPS_PER_RUN);
+  for (const b of due) {
+    looked++;
+    try {
+      const r = await sweepBand(io, b.id, t, opts);
+      deleted += r.deleted || 0;
+      files += r.files || 0;
+      if (r.dead) dead++;
+    } catch {
+    }
+  }
+  return { ok: true, bands: bands.length, looked, dead, deleted, files };
+}
+
+// screen.mjs
 var SCREEN_MAX_FRAMES = 8;
 var SEX_WORDS = /\b(porn|porno|xxx|nsfw|onlyfans|nudes?|naked|hentai|cumshot|sex\s*tape)\b/i;
 function clamp01(x) {
@@ -551,7 +766,7 @@ function listingFromScreen(opts) {
   return { listed: false, held: true, hidden: false, heldReason: "new-publisher" };
 }
 
-// ../../home/claude/N/workers/economy/safety.mjs
+// safety.mjs
 var SAFETY_VERSION = "1.1.0";
 var PRIVATE_SURFACES = ["wireline", "band", "call", "secret", "dm"];
 var PUBLIC_SURFACES = ["broadcast", "signal", "profile", "comment", "public"];
@@ -1258,7 +1473,7 @@ function scrubCase(row) {
   return out;
 }
 
-// ../../home/claude/N/workers/economy/money.mjs
+// money.mjs
 var ISO_ZERO = ["BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG", "RWF", "UGX", "VND", "VUV", "XAF", "XOF", "XPF"];
 var ISO_THREE = ["BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"];
 var STRIPE_ZERO = ["BIF", "CLP", "DJF", "GNF", "JPY", "KMF", "KRW", "MGA", "PYG", "RWF", "VND", "VUV", "XAF", "XOF", "XPF"];
@@ -1344,7 +1559,7 @@ function closeEnough(a, b, pct) {
   return Math.abs(x - y) / y <= (pct || 0.05);
 }
 
-// ../../home/claude/N/workers/economy/pay.mjs
+// pay.mjs
 function stripeSetupUrl(message) {
   const msg = String(message || "");
   const found = msg.match(/https:\/\/[^\s)'"<>]+/i);
@@ -1627,7 +1842,7 @@ function momoDisburseDecision(input) {
   };
 }
 
-// ../../home/claude/N/workers/economy/momo-rail.mjs
+// momo-rail.mjs
 function createMomoRail(d) {
   const {
     json: json2,
@@ -1940,7 +2155,7 @@ function createMomoRail(d) {
   return { payMomo, payMomoNotice, disburseMomo };
 }
 
-// ../../home/claude/N/workers/economy/books.mjs
+// books.mjs
 var USD_AED = 3.6725;
 var RATES = null;
 function setBookRates(rates) {
@@ -1990,15 +2205,15 @@ var CLASS_B = {
   getbucketlifecycleconfiguration: 1,
   classb: 1
 };
-function num(v) {
+function num2(v) {
   const n = Number(v);
   return isFinite(n) ? n : 0;
 }
 function round2(n) {
-  return Math.round(num(n) * 100) / 100;
+  return Math.round(num2(n) * 100) / 100;
 }
 function usdToAed(usd) {
-  return round2(num(usd) * USD_AED);
+  return round2(num2(usd) * USD_AED);
 }
 function clip(s, n) {
   s = String(s || "").replace(/\s+/g, " ").trim();
@@ -2022,8 +2237,8 @@ function mapBillableRows(rows) {
     const name = row.ServiceName || row.serviceName || "";
     const key = classifyCloudflareService(family, name);
     if (!key) return;
-    const qty = num(row.ConsumedQuantity != null ? row.ConsumedQuantity : row.PricingQuantity);
-    const cost = num(row.ContractedCost != null ? row.ContractedCost : row.contractedCost);
+    const qty = num2(row.ConsumedQuantity != null ? row.ConsumedQuantity : row.PricingQuantity);
+    const cost = num2(row.ContractedCost != null ? row.ContractedCost : row.contractedCost);
     const unit = String(row.ConsumedUnit || row.consumedUnit || "");
     if (!grouped[key]) grouped[key] = { key, qty: 0, cost: 0, unit, service: String(name || family || key) };
     grouped[key].qty += qty;
@@ -2049,7 +2264,7 @@ function mapR2Ops(groups) {
   (Array.isArray(groups) ? groups : []).forEach(function(g) {
     if (!g) return;
     const action = String(g.dimensions && g.dimensions.actionType || "").toLowerCase();
-    const requests = num(g.sum && g.sum.requests);
+    const requests = num2(g.sum && g.sum.requests);
     if (CLASS_A[action]) classA += requests;
     else if (CLASS_B[action]) classB += requests;
   });
@@ -2060,7 +2275,7 @@ function sumSeries(seriesList) {
   (Array.isArray(seriesList) ? seriesList : []).forEach(function(s) {
     (s && s.points || []).forEach(function(p) {
       const v = p && p.value || {};
-      const x = v.int64Value != null ? num(v.int64Value) : num(v.doubleValue);
+      const x = v.int64Value != null ? num2(v.int64Value) : num2(v.doubleValue);
       n += x;
     });
   });
@@ -2075,7 +2290,7 @@ function latestGauge(seriesList) {
       if (t < bestT) return;
       const v = p.value || {};
       bestT = t;
-      best = v.int64Value != null ? num(v.int64Value) : num(v.doubleValue);
+      best = v.int64Value != null ? num2(v.int64Value) : num2(v.doubleValue);
     });
   });
   return best;
@@ -2100,15 +2315,15 @@ function splitSeries(seriesList) {
   return { ops, gauge };
 }
 function overage(qty, cap, usdEach) {
-  const extra = Math.max(0, num(qty) - cap);
+  const extra = Math.max(0, num2(qty) - cap);
   return usdToAed(extra * usdEach);
 }
 function firebaseLines(counts) {
   counts = counts || {};
-  const reads = num(counts.reads);
-  const writes = num(counts.writes);
-  const deletes = num(counts.deletes);
-  const gb = num(counts.storageGb);
+  const reads = num2(counts.reads);
+  const writes = num2(counts.writes);
+  const deletes = num2(counts.deletes);
+  const gb = num2(counts.storageGb);
   function line(key, service, qty, unit, cap, amount) {
     const over = qty > cap;
     return {
@@ -2304,7 +2519,7 @@ async function pullAnalytics(ask, token, account, now) {
     const lines = [];
     let requests = 0;
     (box.workersInvocationsAdaptive || []).forEach(function(g) {
-      requests += num(g.sum && g.sum.requests);
+      requests += num2(g.sum && g.sum.requests);
     });
     if (requests > 0) {
       lines.push({
@@ -2345,7 +2560,7 @@ async function pullAnalytics(ask, token, account, now) {
     }
     let bytes = 0;
     (box.r2StorageAdaptiveGroups || []).forEach(function(g) {
-      bytes = Math.max(bytes, num(g.max && g.max.payloadSize));
+      bytes = Math.max(bytes, num2(g.max && g.max.payloadSize));
     });
     if (bytes > 0) {
       const gb = Math.round(bytes / 1e9 * 1e3) / 1e3;
@@ -2413,7 +2628,7 @@ async function pullFirebase(ask, project, getToken, now) {
   }
 }
 
-// ../../home/claude/N/workers/economy/look.mjs
+// look.mjs
 function decode(s) {
   return String(s || "").replace(/&/g, "&").replace(/"/g, '"').replace(/&#x27;|&#39;/g, "'").replace(/</g, "<").replace(/>/g, ">");
 }
@@ -2452,7 +2667,7 @@ async function lookQuery(q) {
   return parseLookHtml(await res.text());
 }
 
-// ../../home/claude/N/workers/economy/views.mjs
+// views.mjs
 var VIEW_SEC_DEFAULT = 4;
 var VIEW_SEC_MIN = 1;
 var VIEW_SEC_MAX = 120;
@@ -2526,7 +2741,7 @@ function viewWrites(docRoot, v) {
   return writes;
 }
 
-// ../../home/claude/N/workers/economy/pbkdf2.mjs
+// pbkdf2.mjs
 var K = new Uint32Array([
   1116352408,
   1899447441,
@@ -2740,7 +2955,7 @@ function pbkdf2Sha256Js(password, salt, iterations, dkLen) {
 }
 var WORKER_PBKDF2_MAX = 1e5;
 
-// ../../home/claude/N/workers/economy/wire-notify.mjs
+// wire-notify.mjs
 var WIRE_FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging";
 var WINDOW_MS = 10 * 60 * 1e3;
 var PER_MINUTE = 40;
@@ -2904,7 +3119,7 @@ async function handlePushTest(body, user, deps) {
   }, "/app/", deps, deps.now ? deps.now() : Date.now());
 }
 
-// ../../home/claude/N/workers/economy/lg-voice.mjs
+// lg-voice.mjs
 var LG_TTS_URL = "https://api.sunbird.ai/tasks/audio/speech";
 var PER_MINUTE2 = 40;
 var MAX_TEXT = 600;
@@ -3007,7 +3222,7 @@ async function handleLgVoice(body, user, deps) {
   return { status: 200, bytes, type, cached: false, speaker };
 }
 
-// ../../home/claude/N/workers/economy/live.mjs
+// live.mjs
 var rooms = /* @__PURE__ */ new Map();
 function callsReady(env) {
   return !!(env && env.CF_CALLS_APP_ID && env.CF_CALLS_APP_SECRET);
@@ -3061,8 +3276,8 @@ async function cfCalls(env, fetchImpl, path, method, body) {
   return { ok: res.ok, status: res.status, data: data || {} };
 }
 
-// ../../home/claude/N/workers/economy/handler.mjs
-var VERSION = "2.11.0-lg";
+// handler.mjs
+var VERSION = "2.12.0-bands";
 var PROJECT_ID = "naluno-28a00";
 var OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 var DEFAULT_FLAGS = {
@@ -5934,6 +6149,78 @@ async function loadBilling(env, saToken) {
   }
   return billing;
 }
+var MEDIA_BASES_DEFAULT = ["https://naluno-broadcast-upload.naluno.workers.dev", "https://naluno-signal-upload.naluno.workers.dev"];
+var bandSweepSeen = /* @__PURE__ */ new Map();
+function bandSweepIo(env, token) {
+  const docRoot = fsRoot(env).replace("https://firestore.googleapis.com/v1/", "");
+  const mediaBases = (env.MEDIA_WORKER_URLS ? String(env.MEDIA_WORKER_URLS).split(",") : MEDIA_BASES_DEFAULT).map((x) => String(x).trim().replace(/\/+$/, "")).filter(Boolean);
+  return {
+    mediaBases,
+    docName: (path) => docRoot + path,
+    async getDoc(path) {
+      const r = await fsFetch(env, token, "GET", path);
+      if (!r.ok || !r.data || !r.data.fields) return null;
+      return { data: fromFsDoc(r.data), updateTime: r.data.updateTime || "" };
+    },
+    async listDocs(path, fields, max) {
+      const out = [];
+      let pageToken = "";
+      const cap = Number(max) || 500;
+      const mask = (fields && fields.length ? fields : ["queuedAt"]).map((f) => "mask.fieldPaths=" + encodeURIComponent(f)).join("&");
+      for (let i = 0; i < 40 && out.length < cap; i++) {
+        const q = "?pageSize=300&" + mask + (pageToken ? "&pageToken=" + encodeURIComponent(pageToken) : "");
+        const r = await fsFetch(env, token, "GET", path + q);
+        if (!r.ok || !r.data) break;
+        (r.data.documents || []).forEach((d) => {
+          const v = fromFsDoc(d);
+          out.push({ id: v.id, data: v });
+        });
+        pageToken = r.data.nextPageToken || "";
+        if (!pageToken) break;
+      }
+      return out.slice(0, cap);
+    },
+    async commit(writes) {
+      if (!writes || !writes.length) return true;
+      const r = await fsFetch(env, token, "POST", ":commit", { writes });
+      return !!r.ok;
+    },
+    async dropMedia(items) {
+      const secret = env.SWEEP_KEY || "";
+      if (!secret || !items || !items.length) return 0;
+      const byBase = {};
+      items.forEach((it) => {
+        (byBase[it.base] = byBase[it.base] || []).push(it.key);
+      });
+      let n = 0;
+      for (const base of Object.keys(byBase)) {
+        const keys = byBase[base];
+        for (let i = 0; i < keys.length; i += 100) {
+          try {
+            const res = await _fetch(base + "/b/drop", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "X-Naluno-Sweep": secret },
+              body: JSON.stringify({ keys: keys.slice(i, i + 100) })
+            });
+            const body = await res.json().catch(() => ({}));
+            n += Number(body && body.deleted) || 0;
+          } catch {
+          }
+        }
+      }
+      return n;
+    }
+  };
+}
+async function runBandSweep(env, bandId) {
+  if (!hasSaConfigured(env)) return { ok: false, error: "no-service-account" };
+  const token = await saAccessToken(env);
+  if (!token) return { ok: false, error: "no-token" };
+  const io = bandSweepIo(env, token);
+  const now = Date.now();
+  if (bandId) return sweepBand(io, bandId, now, { mediaBases: io.mediaBases });
+  return sweepAllBands(io, now, { mediaBases: io.mediaBases });
+}
 async function handleRequest(request, env = {}, ctx = {}) {
   if (request.method === "OPTIONS") return corsPreflight();
   const url = new URL(request.url);
@@ -5952,7 +6239,9 @@ async function handleRequest(request, env = {}, ctx = {}) {
         hasInbox: !!(mailInbox(env) && looksLikeEmail(mailInbox(env))),
         persist: saToken2 ? "firestore-sa" : "user-token",
         payments: paymentsReady(env) && !!saToken2,
-        liveRooms: callsReady(env) && !!saToken2
+        liveRooms: callsReady(env) && !!saToken2,
+        bandSweep: true,
+        mediaSweep: !!env.SWEEP_KEY
       });
     }
     const saToken = hasSaConfigured(env) ? await saAccessToken(env) : "";
@@ -5990,6 +6279,25 @@ async function handleRequest(request, env = {}, ctx = {}) {
         "Cache-Control": "public, max-age=300",
         "Access-Control-Allow-Origin": "*"
       } });
+    }
+    if (path === "/v1/bands/sweep" && request.method === "POST") {
+      const sweepToken = bearer(request);
+      const sweepUser = sweepToken ? await verifyIdToken(env, sweepToken) : null;
+      if (!sweepUser) return json({ ok: false, error: "sign in" }, 401);
+      let body = {};
+      try {
+        body = await request.json();
+      } catch {
+        body = {};
+      }
+      const bandId = String(body && body.bandId || "");
+      if (!/^[A-Za-z0-9_-]{4,128}$/.test(bandId)) return json({ ok: false, error: "bad_band" }, 400);
+      const last = bandSweepSeen.get(bandId) || 0;
+      if (Date.now() - last < 6e4) return json({ ok: true, queued: false, recent: true });
+      bandSweepSeen.set(bandId, Date.now());
+      if (bandSweepSeen.size > 5e3) bandSweepSeen.clear();
+      const r = await runBandSweep(env, bandId);
+      return json({ ok: !!r.ok, dead: !!r.dead, deleted: r.deleted || 0, error: r.error || void 0 }, r.ok ? 200 : 503);
     }
     if (path === "/v1/lifeline/drop" && request.method === "POST") {
       if (!saToken) return json({ ok: false, error: "relay storage not configured" }, 503);
@@ -6715,10 +7023,17 @@ async function handleRequest(request, env = {}, ctx = {}) {
   }
 }
 
-// ../../home/claude/N/workers/economy/index.mjs
+// index.mjs
 var index_default = {
   async fetch(request, env, ctx) {
     return handleRequest(request, env, ctx);
+  },
+  /* THE RULE OF BANDS: every 10 minutes, delete the conversation of every
+     Band whose two hours after the last person left have run out. */
+  async scheduled(event, env, ctx) {
+    const job = runBandSweep(env).catch(() => null);
+    if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(job);
+    else await job;
   }
 };
 export {

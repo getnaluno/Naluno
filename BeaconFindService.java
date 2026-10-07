@@ -338,8 +338,38 @@ public class BeaconFindService extends Service implements LocationListener {
           + "\"lastDeviceLabel\":{\"stringValue\":" + jsonStr(label) + "}"
           + "}}";
       patchFirestore(idToken, userPath, userBody);
+
+      // Find Naluno history (07 Oct d): a trail point when the phone has
+      // moved about 100 m, or every half hour when it stays put. Same point
+      // id as the app (deviceId_time), so nothing is doubled. Only the
+      // owner can read it (database rules).
+      double lat = loc.getLatitude(), lng = loc.getLongitude();
+      boolean moved = Double.isNaN(trailLat) || (Math.abs(lat - trailLat) + Math.abs(lng - trailLng)) >= 0.0009;
+      if (moved || (when - trailTs) >= 30 * 60 * 1000L) {
+        String trailPath = "https://firestore.googleapis.com/v1/projects/" + projectId
+            + "/databases/(default)/documents/users/" + enc(uid) + "/beaconTrail/"
+            + enc(deviceId.replaceAll("[^A-Za-z0-9_-]", "") + "_" + when)
+            + "?currentDocument.exists=false";
+        String trailBody = "{"
+            + "\"fields\":{"
+            + "\"lat\":{\"doubleValue\":" + lat + "},"
+            + "\"lng\":{\"doubleValue\":" + lng + "},"
+            + "\"accuracy\":{\"doubleValue\":" + loc.getAccuracy() + "},"
+            + "\"ts\":{\"integerValue\":\"" + when + "\"},"
+            + "\"label\":{\"stringValue\":" + jsonStr(label) + "},"
+            + "\"deviceId\":{\"stringValue\":" + jsonStr(deviceId.replaceAll("[^A-Za-z0-9_-]", "")) + "},"
+            + "\"source\":{\"stringValue\":\"native\"}"
+            + "}}";
+        patchFirestore(idToken, trailPath, trailBody);
+        trailLat = lat;
+        trailLng = lng;
+        trailTs = when;
+      }
     } catch (Exception ignored) {}
   }
+  private double trailLat = Double.NaN;
+  private double trailLng = Double.NaN;
+  private long trailTs = 0L;
 
   private void patchFirestore(String idToken, String path, String body) {
     HttpURLConnection c = null;

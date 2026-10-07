@@ -480,20 +480,77 @@ service cloud.firestore {
     }
 
     // ---- Band (live shared frequency) ----
+    /* THE RULE OF BANDS (07 Oct d)
+       A Band conversation lives only while people are there. Two hours
+       after the last person leaves, it is DELETED: not archived, not
+       hidden for later, not kept anywhere. Nobody can get it back: not
+       the members, not whoever opened the Band, not Naluno.
+
+       How the rules hold that line, even if no phone is open:
+       - aliveAt is the last moment someone was in the Band (stamped by
+         the server clock while people are tuned in or talking, and when
+         the last person steps out).
+       - From aliveAt + 2 hours, no message in that Band can be read by
+         anyone (see messages below). That is enforced here, by the
+         database itself, on the server's own clock.
+       - aliveAt can only be stamped with "now". Waking a Band whose two
+         hours ran out must, in the same write, draw a new line
+         (messageEpoch) at "now", so the old conversation stays gone.
+       - messageEpoch only ever moves forward. Nothing written before it
+         can be read again.
+       - The Naluno worker deletes every message (and its file) of a Band
+         whose two hours ran out; any member's phone may also delete them.
+         Members may delete; nobody may un-delete. */
     match /bands/{bandId} {
+      function bandAliveDeadline(d) {
+        return d.aliveAt + duration.value(2, 'h');
+      }
+      function bandHasClock(d) {
+        return ('aliveAt' in d) && d.aliveAt is timestamp;
+      }
+      function bandIsDead(d) {
+        return bandHasClock(d) && request.time > bandAliveDeadline(d);
+      }
+      function bandEpochOf(d) {
+        return !('messageEpoch' in d) ? 0
+          : (d.messageEpoch is timestamp ? d.messageEpoch.toMillis()
+          : (d.messageEpoch is number ? int(d.messageEpoch) : 0));
+      }
+      function bandClockHonest() {
+        let keys = request.resource.data.diff(resource.data).affectedKeys();
+        return (
+            // aliveAt is only ever "now", and once a Band has it, it keeps it.
+            !keys.hasAny(['aliveAt'])
+            || (request.resource.data.aliveAt is timestamp && request.resource.data.aliveAt == request.time)
+          )
+          && (
+            // The line under old conversations only moves forward, and never
+            // past now (a phone clock may be up to 10 minutes fast).
+            !keys.hasAny(['messageEpoch'])
+            || (bandEpochOf(request.resource.data) >= bandEpochOf(resource.data)
+                && bandEpochOf(request.resource.data) <= request.time.toMillis() + 600000)
+          )
+          && (
+            // Waking a Band whose two hours ran out draws the line at now.
+            !keys.hasAny(['aliveAt'])
+            || !bandIsDead(resource.data)
+            || (request.resource.data.messageEpoch is timestamp && request.resource.data.messageEpoch == request.time)
+          );
+      }
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid
+        && (!('aliveAt' in request.resource.data) || request.resource.data.aliveAt == request.time);
       // FIX (20260826): was allow update: if isSignedIn() — any signed-in user could
       // rewrite name/vibe/createdBy on someone else's Band. Scoped to the creator, or
       // to the specific fields real membership actions (join/leave/settle/bell) touch —
       // verified against every bands/{id}.update()/.set() call site in band-room.js
       // and band-list.js so no existing write path breaks.
-      allow update: if isSignedIn() && (
+      allow update: if isSignedIn() && bandClockHonest() && (
         resource.data.createdBy == request.auth.uid
         || (
           inThisBand()
           && request.resource.data.diff(resource.data).affectedKeys()
-              .hasOnly(['memberUids', 'lastEmptiedAt', 'messageEpoch', 'bellAt', 'bellBy'])
+              .hasOnly(['memberUids', 'lastEmptiedAt', 'messageEpoch', 'aliveAt', 'bellAt', 'bellBy'])
           && (
             !request.resource.data.diff(resource.data).affectedKeys().hasAny(['memberUids'])
             || memberChangeIsSelf()
@@ -515,27 +572,45 @@ service cloud.firestore {
 
       match /presence/{uid} {
         allow read: if isSignedIn();
-        allow write: if isOwner(uid); // you can only mark *yourself* as tuned in
+        // You can only mark *yourself* as tuned in, and only as of now.
+        allow write: if isOwner(uid) && (
+          request.resource == null
+          || !('tunedInAt' in request.resource.data)
+          || request.resource.data.tunedInAt == request.time
+          || (resource != null && 'tunedInAt' in resource.data && request.resource.data.tunedInAt == resource.data.tunedInAt)
+        );
       }
       match /messages/{messageId} {
         function bandData() {
           return get(/databases/$(database)/documents/bands/$(bandId)).data;
         }
         function epochMs() {
-          return bandData().messageEpoch is number ? int(bandData().messageEpoch) : 0;
+          return bandEpochOf(bandData());
+        }
+        // The two hours after the last person left have not run out.
+        function bandOpenNow() {
+          return !bandIsDead(bandData());
         }
         function msgMs() {
           return resource.data.ts is timestamp ? resource.data.ts.toMillis()
             : (resource.data.ts is number ? int(resource.data.ts) : 0);
         }
-        // After messageEpoch is stamped, the previous session is unreadable.
-        // That is the "cannot be retrieved" line — hide is not enough.
-        allow read: if isSignedIn() && (epochMs() == 0 || msgMs() >= epochMs());
+        // THE RULE OF BANDS: two hours after the last person left, nobody
+        // can read the conversation, and anything before messageEpoch is
+        // gone for good. The worker then deletes it.
+        allow read: if isSignedIn() && bandOpenNow() && (epochMs() == 0 || msgMs() >= epochMs());
         allow create: if isSignedIn()
           && request.resource.data.from == request.auth.uid
           && (
             request.auth.uid in bandData().memberUids
             || bandData().createdBy == request.auth.uid
+          )
+          // No message dated in the future (10 minutes of phone-clock slack):
+          // it would outlive the rule of Bands.
+          && (
+            !('ts' in request.resource.data)
+            || (request.resource.data.ts is timestamp && request.resource.data.ts <= request.time + duration.value(10, 'm'))
+            || (request.resource.data.ts is number && request.resource.data.ts <= request.time.toMillis() + 600000)
           );
         // Author may fill in mediaUrl after the bubble is already in the square
         // (live chat posts the row first, then the file). Nobody else can edit.
@@ -551,7 +626,7 @@ service cloud.firestore {
               request.auth.uid in bandData().memberUids
               || bandData().createdBy == request.auth.uid
             )
-            && (bandData().lastEmptiedAt != null || bandData().messageEpoch != null)
+            && (bandData().lastEmptiedAt != null || bandData().messageEpoch != null || bandIsDead(bandData()))
           )
         );
       }
@@ -646,6 +721,21 @@ service cloud.firestore {
     match /users/{uid}/beacons/{id} {
       allow read: if isOwner(uid) || isOperator();
       allow write: if isOwner(uid);
+    }
+
+    /* Find Naluno history (07 Oct d): where your own phones have been, so
+       you can look back at a day, a month or a year. Only you can read or
+       delete it. Not the Naluno desk, not anyone else. Points are added,
+       never edited. */
+    match /users/{uid}/beaconTrail/{id} {
+      allow read, delete: if isOwner(uid);
+      allow create: if isOwner(uid)
+        && request.resource.data.keys().hasOnly(['deviceId', 'label', 'lat', 'lng', 'accuracy', 'ts', 'placeName', 'source'])
+        && request.resource.data.lat is number && request.resource.data.lat >= -90 && request.resource.data.lat <= 90
+        && request.resource.data.lng is number && request.resource.data.lng >= -180 && request.resource.data.lng <= 180
+        && request.resource.data.ts is number
+        && request.resource.data.deviceId is string && request.resource.data.deviceId.size() <= 80;
+      allow update: if false;
     }
 
     /* Slim mirror of users/{uid}/signal so the Control Centre can list
