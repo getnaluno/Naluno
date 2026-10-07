@@ -1777,6 +1777,10 @@ async function openBroadcastSpace(meta){
     toast('Couldn’t open community data');
     activeBroadcastId = ensureBroadcastDocId(meta);
   }
+  /* 08 Oct: the next-Broadcast cue and its preview are filled as the
+     Broadcast opens, so the page does not grow under someone's thumb when
+     they reach the end. */
+  try{ if(typeof nalunoPaintNextCue === 'function') nalunoPaintNextCue(); }catch(_){}
 
   // Membership button — join the creator's Circle, not the live stream.
   // FIX: this rendered as "Join [Name]" — visually indistinguishable from a
@@ -4326,14 +4330,56 @@ function nalunoPaintNextCue(){
   const id = (typeof activeBroadcastId !== 'undefined') ? activeBroadcastId : null;
   const next = id ? nalunoFeedNextId(id) : '';
   let title = '';
+  let nb = null;
   try{
     const pool = [].concat((typeof feedBroadcasts !== 'undefined' && feedBroadcasts) || [], (typeof myBroadcasts !== 'undefined' && myBroadcasts) || []);
-    const b = pool.find(function(x){ return x && x.id === next; });
-    title = b ? String(b.title || 'Broadcast').slice(0, 60) : '';
+    nb = pool.find(function(x){ return x && x.id === next; }) || null;
+    title = nb ? String(nb.title || 'Broadcast').slice(0, 60) : '';
   }catch(_){}
   const t = document.getElementById('bspaceNextTitle');
   if(t) t.textContent = next ? ('Next: ' + title) : 'Back to Broadcasts';
+  /* 08 Oct: a look at what comes next, before the swipe. */
+  const card = document.getElementById('bspaceNextCard');
+  if(card){
+    const html = nb ? nalunoNextPreviewHtml(nb) : '';
+    if(card.__for !== next || card.innerHTML !== html){ card.__for = next; card.innerHTML = html; }
+    card.hidden = !html;
+  }
 }
+/* The next Broadcast in small: its picture (or the opening of a written
+   one), what it is, who made it, and a line of what it says. Pictures
+   only, never a playing video, so the cue costs no data. */
+function nalunoNextPreviewHtml(b){
+  if(!b) return '';
+  const esc = function(v){ return (typeof escapeHtml === 'function') ? escapeHtml(String(v == null ? '' : v)) : String(v == null ? '' : v).replace(/[&<>"']/g, function(c){ return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]; }); };
+  const safe = function(u){ u = String(u || ''); return /^(https:|data:image\/)/i.test(u) ? u : ''; };
+  let writing = false;
+  try{ writing = (typeof broadcastIsWriting === 'function') ? broadcastIsWriting(b) : b.mediaType === 'writing'; }catch(_){}
+  let cover = '';
+  try{ cover = (typeof broadcastCoverUrl === 'function') ? broadcastCoverUrl(b) : ''; }catch(_){}
+  const thumbOk = b.thumbUrl && !(typeof nalunoThumbLooksDead === 'function' && nalunoThumbLooksDead(b.thumbUrl));
+  const pic = safe(writing ? cover : (thumbOk ? b.thumbUrl : (b.mediaType === 'photo' ? b.mediaUrl : '')));
+  const raw = String((writing ? (b.body || b.description) : b.description) || '').replace(/\s+/g, ' ').trim();
+  const kind = b.live ? 'Live' : (writing ? 'Read' : (b.mediaType === 'photo' ? 'Photo' : 'Watch'));
+  const lang = (b.lang === 'lg') ? ' · Luganda' : '';
+  const who = String(b.creatorName || '').split(' ')[0];
+  let visual;
+  if(pic){
+    visual = '<span class="bnc-pic"><img src="' + esc(pic) + '" alt="" loading="lazy" decoding="async" onerror="this.parentNode.classList.add(\'bnc-nopic\');this.remove();">' + (kind === 'Watch' || kind === 'Live' ? '<i class="bnc-play" aria-hidden="true">▶</i>' : '') + '</span>';
+  } else if(writing && raw){
+    visual = '<span class="bnc-pic bnc-words"><span>' + esc(raw.slice(0, 90)) + '</span></span>';
+  } else {
+    visual = '<span class="bnc-pic bnc-nopic"><b>' + esc((who || '?').slice(0, 1).toUpperCase()) + '</b></span>';
+  }
+  return visual
+    + '<span class="bnc-text">'
+    + '<span class="bnc-kind' + (b.live ? ' bnc-live' : '') + '">' + esc(kind + lang) + '</span>'
+    + '<span class="bnc-title">' + esc(String(b.title || 'Broadcast').slice(0, 80)) + '</span>'
+    + (who ? '<span class="bnc-who">by ' + esc(who) + '</span>' : '')
+    + (raw ? '<span class="bnc-line">' + esc(raw.slice(0, 140)) + '</span>' : '')
+    + '</span>';
+}
+window.nalunoNextPreviewHtml = nalunoNextPreviewHtml;
 window.nalunoPaintNextCue = nalunoPaintNextCue;
 (function bindBspaceSwipeOn(){
   const sc = document.getElementById('bspaceScroll');
@@ -4373,7 +4419,8 @@ window.nalunoPaintNextCue = nalunoPaintNextCue;
     wheelAt = now; wheelSum += e.deltaY;
     if(wheelSum > 900){ wheelSum = 0; nalunoBspaceNext(); }
   }, { passive: true });
-  sc.addEventListener('scroll', function(){ if(bottom()) nalunoPaintNextCue(); }, { passive: true });
+  /* Painted a little before the end, so the preview is there when it comes into view. */
+  sc.addEventListener('scroll', function(){ if(sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 700) nalunoPaintNextCue(); }, { passive: true });
 })();
 
 (function bindBspaceSwipe(){

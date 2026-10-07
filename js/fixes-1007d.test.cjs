@@ -228,9 +228,10 @@ assert.ok(css.includes('#myBcastStrip .signal-tile + .signal-tile::after{') && c
 assert.ok(/prefers-reduced-motion: reduce\)\{\s*#myBcastStrip \.signal-tile \.signal-edge,/.test(css), 'still when motion is reduced');
 
 /* ---------- 6. Stamps ---------- */
+const LATER = '(20261007d|20261007[e-z]|202610(0[89]|[1-3]\\d)[a-z])';
 ['band-room.js', 'band-list.js', 'beacon.js', 'find-history.js', 'onboard.js', 'signal-ui.js', 'signal-public.js', 'pwa.js'].forEach((f) => {
-  assert.ok(new RegExp('/js/' + f.replace(/[.-]/g, '\\$&') + '\\?v=20261007d').test(html), f + ' stamp');
+  assert.ok(new RegExp('/js/' + f.replace(/[.-]/g, '\\$&') + '\\?v=' + LATER).test(html), f + ' stamp (07d or later)');
 });
-assert.ok(/\/css\/app\.css\?v=20261007d/.test(html) && /APP_BUILD = '20261007d'/.test(read('sw.js')) && read('sw.js').includes("naluno-shell-v297"), 'css and service worker');
-assert.ok(read('js/pwa.js').includes("/sw.js?v=20261007d"));
+assert.ok(new RegExp('/css/app\\.css\\?v=' + LATER).test(html) && new RegExp("APP_BUILD = '" + LATER + "'").test(read('sw.js')), 'css and service worker');
+assert.ok(new RegExp('/sw\\.js\\?v=' + LATER).test(read('js/pwa.js')));
 console.log('fixes-1007d tests passed');

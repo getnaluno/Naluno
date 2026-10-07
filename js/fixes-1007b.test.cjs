@@ -115,7 +115,7 @@ assert.ok(ui.includes('compactHead') && ui.includes('(head.getBoundingClientRect
 assert.ok(src.includes("bspaceSpeakWriting(text, b.lang === 'lg' ? 'lg' : '', label)"), 'Listen on the card is the same Listen as in the room');
 assert.ok(src.includes("NalunoDiscover.note(act, id)"), '⋯ tells the existing ranking');
 assert.ok(html.includes('id="bcastMakeBtn"') && html.includes('id="bcastTune"'), '+ and the tuner are in the page');
-assert.ok(/\/js\/broadcast-glance\.js\?v=2026100[7-9][b-z]/.test(html) && read('sw.js').includes("'/js/broadcast-glance.js'"), 'loaded, and kept for offline');
+assert.ok(/\/js\/broadcast-glance\.js\?v=(20261007[b-z]|202610(0[89]|[1-3][0-9])[a-z])/.test(html) && read('sw.js').includes("'/js/broadcast-glance.js'"), 'loaded, and kept for offline');
 
 /* 3. Looks: only for For You, never the floating window or other views */
 const blk = css.slice(css.indexOf('07b: Broadcast at first sight'));
@@ -125,9 +125,9 @@ assert.ok(blk.includes('calc(var(--bcast-stage-h, 100svh) - var(--bcast-head-h, 
 assert.ok(blk.includes('@media (max-width: 480px)'), 'narrow phones keep one line of tabs');
 
 /* 4. Stamps */
-['broadcast-core.js', 'strand.js', 'signal-ui.js'].forEach((f) => assert.ok(new RegExp('/js/' + f.replace('.', '\\.') + '\\?v=2026100[7-9][b-z]').test(html), f + ' stamp'));
-assert.ok(/\/css\/app\.css\?v=2026100[7-9][b-z]/.test(html), 'app.css stamp');
-assert.ok(/APP_BUILD = '2026100[7-9][b-z]'/.test(read('sw.js')) && /register\('\/sw\.js\?v=2026100[7-9][b-z]'/.test(read('js/pwa.js')), 'service worker');
+['broadcast-core.js', 'strand.js', 'signal-ui.js'].forEach((f) => assert.ok(new RegExp('/js/' + f.replace('.', '\\.') + '\\?v=(20261007[b-z]|202610(0[89]|[1-3][0-9])[a-z])').test(html), f + ' stamp'));
+assert.ok(/\/css\/app\.css\?v=(20261007[b-z]|202610(0[89]|[1-3][0-9])[a-z])/.test(html), 'app.css stamp');
+assert.ok(/APP_BUILD = '(20261007[b-z]|202610(0[89]|[1-3][0-9])[a-z])'/.test(read('sw.js')) && /register\('\/sw\.js\?v=(20261007[b-z]|202610(0[89]|[1-3][0-9])[a-z])'/.test(read('js/pwa.js')), 'service worker');
 
 /* 5. From the independent review */
 assert.ok(src.includes('resetButton(state.btn, state.label);'), 'a card always goes back to Listen when the voice ends or another takes over');
