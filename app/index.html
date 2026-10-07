@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.10.07c" />
+  <meta name="naluno-build" content="2026.10.07d" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.10.07c">
+<meta name="app-version" content="2026.10.07d">
 <meta name="description" content="Naluno brings private communication, communities and creator-led content into one place. A Callsign instead of a phone number.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="Private communication, communities and creator-led content. A Callsign — not a phone number.">
@@ -131,9 +131,9 @@
 })();
 </script>
 <link rel="apple-touch-startup-image" href="/splash-empty.png">
-<link rel="stylesheet" href="/css/app.css?v=20261007c" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/css/app.css?v=20261007d" media="print" onload="this.media='all'">
 <script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="/css/app.css?v=20261007c"></noscript>
+<noscript><link rel="stylesheet" href="/css/app.css?v=20261007d"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -1353,7 +1353,7 @@ window.__nalunoEntryT0 = Date.now();
       <div id="bandLiveFloat" class="band-live-float" style="display:none; right:16px; bottom:160px;"><div class="grip"></div><video id="bandLiveFloatVideo" autoplay playsinline muted></video><div class="live-tag">LIVE</div></div>
       <div id="bandLiveStage" style="display:none; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; padding:6px 12px 8px; max-height:42vh; overflow-y:auto; flex-shrink:0;"></div>
       <div style="padding:4px 16px 6px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; flex-shrink:0;">
-        <span id="bandSettleNote" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(124,255,178,.75); flex:1; min-width:140px;">Band · messages clear 2h after the last person leaves</span>
+        <span id="bandSettleNote" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(124,255,178,.75); flex:1; min-width:140px;">Band · deleted for good 2h after the last person leaves</span>
         <span id="bandCopyLinkBtn" role="button" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(255,255,255,.55); cursor:pointer; text-decoration:underline; text-underline-offset:2px; white-space:nowrap;">Copy link</span>
         <span id="bandInviteBtn" class="band-room-action" role="button" style="font-family:var(--font-mono); font-size:10.5px; color:var(--mint); cursor:pointer; text-decoration:underline; text-underline-offset:2px; white-space:nowrap;">Invite</span>
         <span id="bandBellBtn" role="button" style="font-family:var(--font-mono); font-size:10.5px; color:rgba(255,255,255,.55); cursor:pointer; text-decoration:underline; text-underline-offset:2px; white-space:nowrap;">Ring</span>
@@ -1391,7 +1391,7 @@ window.__nalunoEntryT0 = Date.now();
       <span style="width:36px;"></span>
     </div>
     <div class="tab-scroll" style="padding:16px 20px 24px;">
-      <div style="font-size:12.5px; color:var(--text-dim); margin:0 0 14px; line-height:1.45;">A Band has no owner — even you can’t delete it. Messages clear 2 hours after the last person leaves.</div>
+      <div style="font-size:12.5px; color:var(--text-dim); margin:0 0 14px; line-height:1.45;"><strong style="color:var(--text);">The rule of Bands:</strong> a Band has no owner, not even you. Two hours after the last person leaves, the conversation is deleted. Not archived, not stored: nobody can get it back, not even Naluno.</div>
       <div class="field" style="padding:0 0 16px;"><label>Name</label><input id="bandNameInput" placeholder="Name this Band" /></div>
       <div class="section-label" style="padding:0 0 8px;">Vibe</div>
       <div class="filter-chip-row" id="bandVibeChipRow" style="padding:0 0 16px;"></div>
@@ -1865,7 +1865,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/chat-store.js?v=20260928d"></script>
 <script src="/js/wire-mailbox.js?v=20261004c"></script>
 <script src="/js/atmosphere.js?v=20260908d"></script>
-<script src="/js/band-list.js?v=20260929b"></script>
+<script src="/js/band-list.js?v=20261007d"></script>
 <script type="module" src="/workers/economy/safety-boot.mjs?v=20260923c"></script>
 <script src="/js/signal-core.js?v=20261007c"></script>
 <script src="/js/broadcast-core.js?v=20261007c"></script>
@@ -1889,7 +1889,8 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/economy.js?v=20261004c"></script>
 <script src="/js/economy-ui.js?v=20261004k"></script>
 <script src="/js/weather.js?v=20260928d"></script>
-<script src="/js/beacon.js?v=20261001a"></script>
+<script src="/js/beacon.js?v=20261007d"></script>
+<script src="/js/find-history.js?v=20261007d"></script>
 <script src="/js/lg-books.js?v=20261001b"></script>
 <script src="/js/compass-brain.js?v=20261004k"></script>
 <script src="/js/compass.js?v=20261007c"></script>
@@ -1897,7 +1898,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/room-threads.js?v=20260925g"></script>
 <script src="/js/discover-engine.js?v=20260928d"></script>
 <script src="/js/discover.js?v=20260929h"></script>
-<script src="/js/signal-ui.js?v=20261007c"></script>
+<script src="/js/signal-ui.js?v=20261007d"></script>
 <script src="/js/compat-lock.js?v=20260908d"></script>
 <script src="/js/known.js?v=20261005g"></script>
 <script src="/js/lg-speak.js?v=20261005h"></script>
@@ -1906,7 +1907,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/lg-ear.js?v=20261005f"></script>
 <script src="/js/naluno-voices.js?v=20261007a"></script>
 <script src="/js/broadcast-glance.js?v=20261007c"></script>
-<script src="/js/signal-public.js?v=20261007c"></script>
+<script src="/js/signal-public.js?v=20261007d"></script>
 <script src="/js/broadcast-space.js?v=20261007c"></script>
 <script src="/js/linkify.js?v=20260930a"></script>
 <script src="/js/ads.js?v=20261004c"></script>
@@ -1923,7 +1924,7 @@ window.__nalunoEntryT0 = Date.now();
 <!-- Wireline translation reuses Spark's engine and language list. -->
 <script src="/js/wireline-translate.js?v=20260928d"></script>
 <script src="/js/profile.js?v=20261005d"></script>
-<script src="/js/onboard.js?v=20260928d"></script>
+<script src="/js/onboard.js?v=20261007d"></script>
 <script src="/js/handle-guard.js?v=20261006b"></script>
 <script src="/js/auth.js?v=20261007c"></script>
 <script src="/js/trust-legal.js?v=20261002e"></script>
@@ -1938,9 +1939,9 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/sfu-live.js?v=20260925c"></script>
 <script src="/js/broadcast-live.js?v=20260929g"></script>
 <script src="/js/live-preview.js?v=20260929g"></script>
-<script src="/js/band-room.js?v=20261006a"></script>
+<script src="/js/band-room.js?v=20261007d"></script>
 <script src="/js/traffic.js?v=20261003e"></script>
-<script src="/js/pwa.js?v=20261007c"></script>
+<script src="/js/pwa.js?v=20261007d"></script>
 <script src="/js/gestures.js?v=20261007c"></script>
 <script src="/js/spark-engine.js?v=20261005g"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>
