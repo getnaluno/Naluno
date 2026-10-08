@@ -38,6 +38,7 @@ assert.ok(css.includes('.bspace-next-card{') && css.includes('.bspace-next-card[
 assert.ok(css.includes('left:50%; top:69%; right:auto; bottom:auto; transform:translate(-50%,-50%);\n  width:18px; height:18px;'), 'play inside the circle (circle runs 17% to 83%)');
 
 // 3. Stamps
-['broadcast-space.js', 'pwa.js'].forEach((f) => assert.ok(html.includes('/js/' + f + '?v=20261008a'), f + ' stamp'));
-assert.ok(html.includes('/css/app.css?v=20261008a') && read('sw.js').includes("APP_BUILD = '20261008a'") && read('sw.js').includes('naluno-shell-v298') && read('js/pwa.js').includes('/sw.js?v=20261008a'));
+const LATER = '(20261008[a-z]|202610(09|[1-3][0-9])[a-z])';
+['broadcast-space.js', 'pwa.js'].forEach((f) => assert.ok(new RegExp('/js/' + f.replace(/[.-]/g, '\\$&') + '\\?v=' + LATER).test(html), f + ' stamp (08a or later)'));
+assert.ok(new RegExp('/css/app\\.css\\?v=' + LATER).test(html) && new RegExp("APP_BUILD = '" + LATER + "'").test(read('sw.js')) && new RegExp('/sw\\.js\\?v=' + LATER).test(read('js/pwa.js')));
 console.log('fixes-1008a tests passed');

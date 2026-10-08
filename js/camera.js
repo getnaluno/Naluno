@@ -1054,8 +1054,27 @@ function nalunoIsPortraitDevice(){
   return true;
 }
 
+/* 08b: which shape to ask the camera for. On a phone, upright if EITHER
+   the window or the orientation report says upright. The report alone
+   could say "landscape" for a moment (an app opened from landscape, some
+   phone browsers): the camera was then asked for 16:9, the phone gave its
+   cropped 16:9 mode turned upright (9:16) and the call started zoomed in
+   until a flip asked again. The window alone can look wide while the
+   keyboard is up. Only when both say landscape is the phone held sideways.
+   A computer keeps the old test. */
+function nalunoTouchDevice(){
+  try{ if(navigator.maxTouchPoints > 0) return true; }catch(_){}
+  try{ if(window.matchMedia && window.matchMedia('(pointer: coarse)').matches) return true; }catch(_){}
+  return false;
+}
+function nalunoCameraPortrait(){
+  if(!nalunoTouchDevice()) return nalunoIsPortraitDevice();
+  let byWindow = false;
+  try{ byWindow = window.innerHeight >= window.innerWidth; }catch(_){}
+  return byWindow || nalunoIsPortraitDevice();
+}
 function nalunoCameraBox(tier){
-  const portrait = nalunoIsPortraitDevice();
+  const portrait = nalunoCameraPortrait();
   const steps = portrait ? {
     '4k':   [2160, 2880, 3/4],
     '1440': [1440, 1920, 3/4],
@@ -1343,7 +1362,42 @@ async function nalunoLensDeviceId(facing){
 function nalunoTrackDeviceId(track){
   try{ return (track && track.getSettings && track.getSettings().deviceId) || ''; }catch(_){ return ''; }
 }
+/* ============================================================
+   CAMERA LOCK (08 Oct a). Owner's rule: the call camera starts the right
+   size and stays that way, on both phones, full screen like WhatsApp.
+   Every way a call camera is opened goes through nalunoSwitchLens (the
+   flip) or nalunoLensAttempts (the same list), and is settled the same
+   way. The shape and size code is fingerprinted by
+   js/camera-lock.test.cjs: changing it fails the tests until the owner
+   agrees and CAMERA-LOCK.md is updated. Do not "tidy" it.
+   ============================================================ */
 async function flipCamera(){
+  const next = (cameraFacingMode === 'user') ? 'environment' : 'user';
+  return nalunoSwitchLens(next, { toast: true });
+}
+/* The lenses to try, best first: the named lens on its full sensor, then
+   the facing alone. The flip and the first open use this same list. */
+function nalunoLensAttempts(next, deviceId){
+  const videoAttempts = [];
+  const lens = nalunoLensConstraint(next, false);
+  if(deviceId){
+    const exact = Object.assign({}, lens);
+    delete exact.facingMode;
+    exact.deviceId = { exact: deviceId };
+    videoAttempts.push(exact);
+  }
+  videoAttempts.push(Object.assign({}, nalunoLensConstraint(next, false), { facingMode: { exact: next } }));
+  videoAttempts.push(lens);
+  videoAttempts.push({ facingMode: { ideal: next }, resizeMode: 'none' });
+  videoAttempts.push({ facingMode: next });
+  return videoAttempts;
+}
+/* Opens a lens exactly the way the flip button does. With next the same
+   as now, it reopens the same camera: that is what fixed a zoomed first
+   picture by hand (flip, flip back), done once, automatically. */
+async function nalunoSwitchLens(next, opts){
+  opts = opts || {};
+  const switchGen = nalunoCamGen;
   /* Definitive flip:
      1) Stop current VIDEO tracks (Android needs this)
      2) Open the other camera
@@ -1353,7 +1407,7 @@ async function flipCamera(){
   */
   if(window.__flipBusy) return;
   window.__flipBusy = true;
-  const next = (cameraFacingMode === 'user') ? 'environment' : 'user';
+  const say = function(t){ if(opts.toast) toast(t); };
   preferredVideoDeviceId = null;
 
   try{
@@ -1365,20 +1419,8 @@ async function flipCamera(){
 
     let newStream = null;
     const audioConstraint = { echoCancellation:true, noiseSuppression:true, autoGainControl:true };
-    const videoAttempts = [];
-
     const deviceId = await resolveCameraDeviceId(next).catch(()=>null);
-    const lens = nalunoLensConstraint(next, false);
-    if(deviceId){
-      const exact = Object.assign({}, lens);
-      delete exact.facingMode;
-      exact.deviceId = { exact: deviceId };
-      videoAttempts.push(exact);
-    }
-    videoAttempts.push(Object.assign({}, nalunoLensConstraint(next, false), { facingMode: { exact: next } }));
-    videoAttempts.push(lens);
-    videoAttempts.push({ facingMode: { ideal: next }, resizeMode: 'none' });
-    videoAttempts.push({ facingMode: next });
+    const videoAttempts = nalunoLensAttempts(next, deviceId);
 
     for(const video of videoAttempts){
       if(newStream) break;
@@ -1397,9 +1439,9 @@ async function flipCamera(){
         await enableCamera();
         try{ await nalunoUnzoom(stream && stream.getVideoTracks()[0]); }catch(_){}
         try{ nalunoFitLocalPip($('pipRawVideo') || $('sendRawVideo')); }catch(_){}
-        toast(cameraFacingMode === 'environment' ? 'Rear camera' : 'Front camera');
+        say(cameraFacingMode === 'environment' ? 'Rear camera' : 'Front camera');
       }catch(e){
-        toast('Couldn\u2019t switch camera on this device');
+        say('Couldn\u2019t switch camera on this device');
       }
       return;
     }
@@ -1409,7 +1451,19 @@ async function flipCamera(){
       oldStream.getTracks().forEach(t=>{ try{ t.stop(); }catch(_){} });
     }
 
+    /* The call ended (or the camera was handed back) while the lens was
+       opening: let it go, so the camera light does not stay on. */
+    if(switchGen !== nalunoCamGen){
+      try{ newStream.getTracks().forEach(function(t){ t.stop(); }); }catch(_){}
+      return;
+    }
     stream = newStream;
+    /* Keep the mic and camera buttons true: a muted mic stays muted. */
+    try{
+      stream.getAudioTracks().forEach(function(t){ t.enabled = micOn; });
+      stream.getVideoTracks().forEach(function(t){ t.enabled = camOn; });
+    }catch(_){}
+    try{ nalunoMarkLensTrack(stream.getVideoTracks()[0], opts.reshape); }catch(_){}
     try{ await nalunoRaiseToHd(stream.getVideoTracks()[0]); }catch(_){}
     try{ await nalunoUnzoom(stream.getVideoTracks()[0]); }catch(_){}
     try{ nalunoFitLocalPip($('pipRawVideo') || $('sendRawVideo')); }catch(_){}
@@ -1494,10 +1548,11 @@ async function flipCamera(){
       if(pv) pv.addEventListener('loadedmetadata', kickPortrait, { once: true });
     }catch(_){}
     setTimeout(kickPortrait, 350);
-    toast(cameraFacingMode === 'environment' ? 'Rear camera' : 'Front camera');
+    if(!opts.reshape) nalunoWatchLensShape();
+    say(cameraFacingMode === 'environment' ? 'Rear camera' : 'Front camera');
   }catch(e){
     console.error('[camera] flip failed', e);
-    toast('Couldn\u2019t switch camera on this device');
+    say('Couldn\u2019t switch camera on this device');
     try{
       await enableCamera();
       try{ await nalunoUnzoom(stream && stream.getVideoTracks()[0]); }catch(_){}
@@ -1507,6 +1562,94 @@ async function flipCamera(){
   }
 }
 
+
+
+/* A track opened the locked way is marked, so a warm stream opened any
+   other way (the lobby preview, an older path) is reopened before a call. */
+function nalunoMarkLensTrack(track, reshaped){
+  if(!track) return;
+  try{ track.__nalunoLens = cameraFacingMode || 'user'; }catch(_){}
+  if(reshaped){ try{ track.__nalunoReshaped = true; }catch(_){} }
+}
+/* Upright phone, upright camera: about 3:4 (0.68 to 0.88). A 9:16 frame is
+   the zoomed-in face; a landscape or square front frame is the strip the
+   other phone crops into a close-up. */
+function nalunoLensShapeOk(aspect, facing){
+  if(!(aspect > 0)) return true;
+  if(aspect < 0.68) return false;
+  if(aspect > 0.88 && facing !== 'environment') return false;
+  return true;
+}
+/* After the camera has real frames, check its shape. If it came up wrong,
+   ask it again for the full sensor; if it is still wrong, reopen the same
+   lens the way the flip does (once per camera). */
+let nalunoShapeTimer = null;
+const nalunoReshapeUseless = {};
+function nalunoWatchLensShape(){
+  if(nalunoShapeTimer){ clearTimeout(nalunoShapeTimer); nalunoShapeTimer = null; }
+  const gen = nalunoCamGen;
+  const check = async function(round){
+    nalunoShapeTimer = null;
+    try{
+      if(gen !== nalunoCamGen || window.__flipBusy) return;
+      if(typeof nalunoIsVoiceCall === 'function' && nalunoIsVoiceCall()) return;
+      if(!nalunoTouchDevice() || !nalunoCameraPortrait()) return;
+      const track = stream && stream.getVideoTracks && stream.getVideoTracks()[0];
+      if(!track || track.readyState !== 'live' || !track.enabled) return;
+      const v = $('sendRawVideo') || $('camRawVideo') || $('pipRawVideo');
+      const vw = v && v.videoWidth, vh = v && v.videoHeight;
+      if(!vw || !vh){
+        if(round < 8) nalunoShapeTimer = setTimeout(function(){ check(round + 1); }, 400);
+        return;
+      }
+      const facing = (track.getSettings && track.getSettings().facingMode) || cameraFacingMode;
+      if(nalunoLensShapeOk(vw / vh, facing)) return;
+      if(!track.__nalunoUnzoomTried){
+        track.__nalunoUnzoomTried = true;
+        try{ await nalunoUnzoom(track); }catch(_){}
+        nalunoShapeTimer = setTimeout(function(){ check(9); }, 600);
+        return;
+      }
+      if(track.__nalunoReshaped) return;
+      const lensKey = nalunoTrackDeviceId(track) || facing || 'cam';
+      /* A camera that only has the 9:16 mode is not reopened again and
+         again for nothing. */
+      if(nalunoReshapeUseless[lensKey]) return;
+      try{ track.__nalunoReshaped = true; }catch(_){}
+      await nalunoSwitchLens(cameraFacingMode, { reshape: true });
+      setTimeout(function(){
+        try{
+          const v2 = $('sendRawVideo') || $('camRawVideo') || $('pipRawVideo');
+          if(v2 && v2.videoWidth && !nalunoLensShapeOk(v2.videoWidth / v2.videoHeight, facing)) nalunoReshapeUseless[lensKey] = 1;
+        }catch(_){}
+      }, 1500);
+    }catch(e){ try{ console.warn('[camera] shape', e && e.message); }catch(_){} }
+  };
+  nalunoShapeTimer = setTimeout(function(){ check(0); }, 500);
+}
+/* The same settling the flip does after it opens a lens: fresh canvas
+   size, the preview box follows the real frame, the picture sent follows
+   the lens, then the shape check. */
+function nalunoSettleCallCamera(){
+  const kick = function(){
+    try{
+      ['pipStageCanvas', 'camStageCanvas', 'ringStageCanvas'].forEach(function(id){ const c = $(id); if(c) c._lastSizeCheck = 0; });
+      nalunoFitLocalPip($('pipRawVideo') || $('sendRawVideo'));
+      /* Automatic: never swaps the picture already being sent (only a
+         filter picked by hand, or the flip, does that). */
+      if(typeof peerConnection !== 'undefined' && peerConnection && typeof applyCallFilterNow === 'function') applyCallFilterNow();
+    }catch(_){}
+  };
+  kick();
+  try{
+    const pv = $('sendRawVideo') || $('pipRawVideo');
+    if(pv) pv.addEventListener('loadedmetadata', kick, { once: true });
+  }catch(_){}
+  setTimeout(kick, 350);
+  nalunoWatchLensShape();
+}
+window.nalunoSwitchLens = nalunoSwitchLens;
+window.nalunoSettleCallCamera = nalunoSettleCallCamera;
 
 /** Background warm-up so the next dial does not wait on getUserMedia.
  *  Safe to call from Frequencies / call lobby — never blocks the UI. */
@@ -1551,7 +1694,11 @@ async function enableCameraForCall(){
     if(nalunoCamGen !== camGen) return;
   }
   const liveLens = (mediaStreamIsLive(stream) && stream.getVideoTracks()[0]) ? nalunoTrackDeviceId(stream.getVideoTracks()[0]) : '';
-  const wrongLens = !!(lensId && liveLens && liveLens !== lensId);
+  const liveTrack = mediaStreamIsLive(stream) ? stream.getVideoTracks()[0] : null;
+  /* 08a: before the call is up, a warm camera opened any other way than
+     the flip's way is reopened the flip's way. */
+  const notLocked = !!(!inCallNow && liveTrack && !liveTrack.__nalunoLens);
+  const wrongLens = !!(lensId && liveLens && liveLens !== lensId) || notLocked;
   // Reuse only a stream that has BOTH a live camera and a live mic: after a
   // voice call the stream is microphone-only, and reusing it made the next
   // video call go out with no picture.
@@ -1574,6 +1721,7 @@ async function enableCameraForCall(){
     }
     runGreenroom();
     try{ updateCameraQualityBadge && updateCameraQualityBadge(); }catch(_){}
+    try{ nalunoSettleCallCamera(); }catch(_){}
     return;
   }
   if(stream){
@@ -1592,6 +1740,15 @@ async function enableCameraForCall(){
     exact.deviceId = { exact: lensId };
     attempts.push({ video: exact, audio: audioConstraints });
   }
+  /* 08a: then exactly what the flip opens, picked by the flip's own lens
+     finder. The older attempts below stay as the fallback. */
+  try{
+    const flipId = inCallNow ? null : await resolveCameraDeviceId(cameraFacingMode).catch(function(){ return null; });
+    if(nalunoCamGen !== camGen) return;
+    nalunoLensAttempts(cameraFacingMode, (flipId && flipId !== lensId) ? flipId : null).forEach(function(v){
+      attempts.push({ video: v, audio: audioConstraints });
+    });
+  }catch(_){}
   attempts.push(
     { video: hd, audio: audioConstraints },
     { video: hdSoft, audio: audioConstraints },
@@ -1650,6 +1807,7 @@ async function enableCameraForCall(){
   }
   stream = got;
   if(!stream) throw lastErr || new Error('Camera unavailable');
+  try{ nalunoMarkLensTrack(stream.getVideoTracks()[0]); }catch(_){}
   try{ await nalunoRaiseToHd(stream.getVideoTracks()[0]); }catch(_){}
   try{ await nalunoUnzoom(stream.getVideoTracks()[0]); }catch(_){}
   try{ nalunoHoldCallCamera(); }catch(_){}
@@ -1668,6 +1826,7 @@ async function enableCameraForCall(){
   }
   try{ runGreenroom(); }catch(_){}
   try{ updateCameraQualityBadge && updateCameraQualityBadge(); }catch(_){}
+  try{ nalunoSettleCallCamera(); }catch(_){}
 }
 async function enableCamera(){
   // If a request is already in flight, reuse it instead of a second getUserMedia prompt.
