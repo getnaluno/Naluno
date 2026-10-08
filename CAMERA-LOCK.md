@@ -11,6 +11,7 @@ No new work may change the call camera's size or shape without the owner's expli
 - **What is asked of the camera:** the upright 3:4 full sensor, with no extra crop (`nalunoCameraPortrait`, `nalunoTouchDevice`, `nalunoIsPortraitDevice`, `nalunoCameraBox`, `nalunoHdVideo`, `nalunoLensConstraint`, `nalunoRaiseToHd`, `nalunoUnzoom`).
 - **How a lens is opened and settled:** one path, the flip's path, for both the first open and every flip (`flipCamera`, `nalunoSwitchLens`, `nalunoLensAttempts`, `nalunoSettleCallCamera`, `nalunoWatchLensShape`, `enableCameraForCall`, `resolveCameraDeviceId` and `nalunoLensDeviceId`).
 - **How your own picture is drawn and sent** (`drawVideoFit`, `nalunoCompositeFit`, `compositeFrame`, `drawSendCanvas`, `nalunoFitLocalPip`, `ensureCanvasSize`).
+- **The callee's camera when answering** (`ensureCallMediaReady` in calls.js).
 - **How the other person fills the screen** (`nalunoRemoteFit`, `nalunoFitRemoteVideo`).
 - **Which picture is sent** (`nalunoOutboundPortrait`).
 - **The CSS of the call screens' video boxes:** every rule whose selector names `#remoteVideo`, `remote-stage`, `local-pip`, `#localPip`, `pipStageCanvas`, `camStageCanvas`, `ringStageCanvas`, `pipRawVideo`, `incomingSelfVideo` or `data-cam`. A new rule anywhere in `app.css` that touches these is caught too, including rules inside `@media` blocks and selectors that span several lines.
@@ -28,6 +29,13 @@ If any of these change, the test fails with "CAMERA LOCK". Do not just update th
 
 Now, on a phone, the camera is asked for upright 3:4 if either the window or the orientation report says upright. Only when both say sideways is the phone treated as held sideways. Computers keep the old test. The first open also uses exactly the flip's lens path. A warm camera opened any other way is reopened that way before a call. Once the camera has real frames, its shape is checked: if it is still 9:16 (or a landscape strip from the front camera), it is asked again, then reopened once the flip's way, automatically. A reopen never outlives the call. A muted mic stays muted. A camera that only has the 9:16 mode is not reopened again and again.
 
+## The callee (fixed in 08c)
+
+The callee's camera usually opens while Naluno is still in the background, woken by the ring. A hidden page gets no camera frames, so the shape check gave up before anyone looked. Answering then went straight on with that camera, without checking it, so the callee stayed zoomed in.
+
+Now the check waits until Naluno is on screen. Answering settles and checks the callee's camera exactly as the caller's is checked. A lost camera is reopened the flip's way (upright 3:4), never at 720x1280.
+
 ## Approved changes
 
 - 08 Oct 2026 (08b): lock created, owner's request.
+- 08 Oct 2026 (08c): callee's camera made the same as the caller's, owner's request; the callee's answer path added to the lock.
