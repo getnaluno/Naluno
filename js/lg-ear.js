@@ -19,10 +19,17 @@
       .trim();
   }
 
+  /* 09 Oct: the two masters in voices/lg (the console plays them). Once
+     their exact words are written in voices/lg/masters.json, Listen plays
+     them for those words like any saved line. A console recording of the
+     same words still comes first. */
+  let masterRows = [];
+  let lastRows = [];
   function ingest(rows) {
+    lastRows = rows || [];
     Object.keys(lines).forEach(function (k) { delete lines[k]; });
     Object.keys(words).forEach(function (k) { delete words[k]; });
-    (rows || []).forEach(function (row) {
+    masterRows.concat(lastRows).forEach(function (row) {
       if (!row || !row.audio) return;
       const key = norm(row.norm || row.text);
       if (!key) return;
@@ -148,7 +155,20 @@
     tick();
   }
 
-  if (typeof window !== 'undefined') boot();
+  function loadMasters() {
+    try {
+      if (typeof fetch !== 'function') return;
+      fetch('/voices/lg/masters.json', { cache: 'no-cache' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+        const list = (j && Array.isArray(j.masters)) ? j.masters : [];
+        masterRows = list.filter(function (m) {
+          return m && typeof m.file === 'string' && /^[a-z0-9._-]+$/i.test(m.file) && String(m.text || '').trim();
+        }).map(function (m) { return { text: String(m.text), audio: '/voices/lg/' + m.file }; });
+        if (masterRows.length) ingest(lastRows);
+      }).catch(function () {});
+    } catch (_) {}
+  }
+
+  if (typeof window !== 'undefined') { boot(); loadMasters(); }
 
   return { norm: norm, ingest: ingest, plan: plan, play: play, stop: stop, resume: resume, ready: ready, counts: counts };
 });

@@ -166,15 +166,23 @@
       });
       if (out.length) out[out.length - 1].gap = GAP.paragraph;
     });
-    /* A long opening sentence is read in two parts (split at a comma), so
-       the first sound comes sooner. */
-    for (var k = 0; k < Math.min(2, out.length); k++) {
-      var t = out[k].text;
-      if (t.length <= 90) continue;
-      var c = t.indexOf(', ', 25);
-      if (c < 0 || c > 110 || t.length - c < 25) continue;
-      out.splice(k, 1, { text: t.slice(0, c + 1), gap: GAP.comma }, { text: t.slice(c + 2), gap: out[k].gap });
-      break;
+    /* 09 Oct: the first sound comes sooner. The voice makes a whole piece
+       before any of it is heard, so the opening piece is kept short: the
+       first sentence is cut at its first comma, or else after about eight
+       words, when it is longer than that. The voice and its speed are the
+       same; only where the first breath falls changes. */
+    if (out.length) {
+      var t0 = out[0].text;
+      if (t0.length > 60) {
+        var cut = -1, gap = GAP.comma;
+        var c = t0.indexOf(', ', 18);
+        if (c > 0 && c <= 70 && t0.length - c >= 18) cut = c + 1;
+        else {
+          var words = t0.split(' ');
+          if (words.length >= 12) { cut = words.slice(0, 8).join(' ').length; gap = GAP.split; }
+        }
+        if (cut > 0) out.splice(0, 1, { text: t0.slice(0, cut).trim(), gap: gap }, { text: t0.slice(cut).trim(), gap: out[0].gap });
+      }
     }
     return out;
   }
@@ -275,18 +283,23 @@
         });
       }
 
+      /* 09 Oct: until the first sound is out, everything goes to the voice
+         that is already loaded. Starting the other makers at the same
+         moment (each loads its own copy of the voice) slowed the first
+         sound; they start once it is playing. */
       function feed(upto) {
         while (sent < list.length && sent <= upto) {
-          results[sent] = sayOn(team[sent % team.length], list[sent]);
+          var m = heard ? team[sent % team.length] : first;
+          results[sent] = sayOn(m, list[sent]);
           sent += 1;
         }
       }
       if (typeof opts.onready === 'function') opts.onready();
-      feed(LOOK);
+      var heard = false;
+      feed(1);
       var context = ac();
       var nextAt = 0;
       var sources = [];
-      var heard = false;
       var i = 0;
       var startAt = 0;
       var gated = false;
@@ -314,18 +327,19 @@
           if (idx === 0 && list.length > 1) {
             gate = results[0].then(function (a0) {
               var secs = (a0 && a0.samples) ? a0.samples.length / (a0.rate || 24000) : 0;
-              if (secs >= 3.5) return a0;
+              /* 09 Oct: only a very short title waits, and not for long. */
+              if (secs >= 1.6) return a0;
               gated = true;
               return Promise.race([
                 results[1].then(function () { return a0; }, function () { return a0; }),
-                new Promise(function (r) { setTimeout(function () { r(a0); }, 10000); }),
+                new Promise(function (r) { setTimeout(function () { r(a0); }, 2500); }),
               ]);
             });
           }
           gate.then(function (audio) {
             if (!live()) return finish();
             i += 1;
-            feed(i + LOOK);
+            feed(heard ? i + LOOK : i + 1);
             var samples = audio && audio.samples;
             if (samples && samples.length) {
               var rate = audio.rate || 24000;
@@ -354,7 +368,7 @@
                   var deficit = slow > 1.05 ? (slow - 1) * restChars * secPerChar : 0;
                   /* At most a few seconds; less when the next sentence is
                      already waiting (a short title waited for it). */
-                  startAt = context.currentTime + Math.min(gated ? 0.02 : 5, Math.max(0.02, deficit));
+                  startAt = context.currentTime + Math.min(gated ? 0.02 : 1.5, Math.max(0.02, deficit));
                 }
                 var src = context.createBufferSource();
                 src.buffer = buf;
@@ -363,14 +377,17 @@
                 try { src.start(at); } catch (_) { src.start(); }
                 sources.push(src);
                 src.onended = function () { var q = sources.indexOf(src); if (q >= 0) sources.splice(q, 1); };
+                var wasHeard = heard;
                 heard = true;
                 nextAt = at + buf.duration + list[idx].gap;
+                /* The first sound is out: now the rest of the team helps. */
+                if (!wasHeard) feed(i + LOOK);
               }
             }
             step();
           }, function () {
             i += 1;
-            feed(i + LOOK);
+            feed(heard ? i + LOOK : i + 1);
             step();
           });
         }
@@ -392,8 +409,29 @@
     });
   }
 
+  /* 09 Oct: get the voice ready before Listen is tapped (a written
+     Broadcast is open, a finger is on Listen). Only when its files are
+     already on the phone, or the person is looking at something to read,
+     so nobody downloads a voice they will not use. */
+  var warming = null;
+  function warm(force) {
+    if (warming) return warming;
+    var go = function () {
+      warming = maker(0).boot().catch(function () { warming = null; return false; });
+      return warming;
+    };
+    if (force) return go();
+    try {
+      if (!root.caches || !root.caches.open) return Promise.resolve(false);
+      return root.caches.open('naluno-voices').then(function (c) {
+        return c.match(new URL('/voices/kitten/model.onnx', root.location.origin).href);
+      }).then(function (hit) { return hit ? go() : false; }, function () { return false; });
+    } catch (_) { return Promise.resolve(false); }
+  }
+
   root.NalunoVoices = {
     speak: speak,
+    warm: warm,
     decode: decode,
     stop: stop,
     prime: prime,

@@ -1062,10 +1062,21 @@ function nalunoIsPortraitDevice(){
    until a flip asked again. The window alone can look wide while the
    keyboard is up. Only when both say landscape is the phone held sideways.
    A computer keeps the old test. */
+/* A phone or tablet: a phone camera, read in the sensor's terms. 08d: a
+   touch laptop or Chromebook (it also has a mouse or trackpad) keeps the
+   computer rules: its webcam is a 16:9 camera. */
 function nalunoTouchDevice(){
-  try{ if(navigator.maxTouchPoints > 0) return true; }catch(_){}
-  try{ if(window.matchMedia && window.matchMedia('(pointer: coarse)').matches) return true; }catch(_){}
-  return false;
+  try{
+    const ua = String(navigator.userAgent || '');
+    if(/Android|iPhone|iPad|iPod|Mobile/i.test(ua)) return true;
+    /* An iPad says "Macintosh" but has a touch screen. */
+    if(/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1) return true;
+  }catch(_){}
+  let touch = false, fine = false;
+  try{ touch = navigator.maxTouchPoints > 0; }catch(_){}
+  try{ if(window.matchMedia && window.matchMedia('(pointer: coarse)').matches) touch = true; }catch(_){}
+  try{ fine = !!(window.matchMedia && window.matchMedia('(any-pointer: fine)').matches); }catch(_){}
+  return touch && !fine;
 }
 function nalunoCameraPortrait(){
   if(!nalunoTouchDevice()) return nalunoIsPortraitDevice();
@@ -1073,14 +1084,24 @@ function nalunoCameraPortrait(){
   try{ byWindow = window.innerHeight >= window.innerWidth; }catch(_){}
   return byWindow || nalunoIsPortraitDevice();
 }
+/* 08d, THE UNIFORM RULE: a phone browser reads a size request in the
+   camera sensor's own terms, which are landscape, and only turns the
+   picture upright afterwards. Asking an upright phone for "1440 wide,
+   1920 tall" therefore asked the sensor for a tall slice of itself: the
+   phone cropped it (zoomed in), and which slice it cut depended on the
+   picture modes that phone happens to have. So some phones were zoomed
+   and others were not. A phone is now always asked for the sensor's own
+   shape, 4:3 in its landscape terms, which comes out upright 3:4 with
+   nothing cut off on every phone. */
 function nalunoCameraBox(tier){
   const portrait = nalunoCameraPortrait();
-  const steps = portrait ? {
-    '4k':   [2160, 2880, 3/4],
-    '1440': [1440, 1920, 3/4],
-    '1080': [1080, 1440, 3/4],
-    '720':  [720, 960, 3/4],
-    'basic':[480, 640, 3/4],
+  const phone = nalunoTouchDevice();
+  const steps = phone ? {
+    '4k':   [1920, 1440, 4/3],
+    '1440': [1440, 1080, 4/3],
+    '1080': [1440, 1080, 4/3],
+    '720':  [960, 720, 4/3],
+    'basic':[640, 480, 4/3],
   } : {
     '4k':   [3840, 2160, 16/9],
     '1440': [2560, 1440, 16/9],
@@ -1099,6 +1120,8 @@ function nalunoHdVideo(tier, facing){
     aspectRatio: { ideal: box.aspect },
     frameRate: { ideal: 30, max: 30 },
   };
+  /* 08d: a phone prefers one of its own picture modes to a cut-down one. */
+  if(nalunoTouchDevice()) video.resizeMode = 'none';
   if(preferredVideoDeviceId) video.deviceId = { exact: preferredVideoDeviceId };
   else video.facingMode = { ideal: facing || cameraFacingMode || 'user' };
   return video;
@@ -1106,9 +1129,37 @@ function nalunoHdVideo(tier, facing){
 function buildVideoConstraints(tier){
   return nalunoHdVideo(tier || '1440', cameraFacingMode);
 }
+/* A camera with no 4:3 mode of its own (a 16:9 sensor) is remembered, so it
+   is not asked for one again on every open. */
+const nalunoNo43 = {};
+function nalunoNote43Refused(video, e){
+  try{
+    const which = e && (e.constraint || e.constraintName || '');
+    if(video && video.aspectRatio && Math.abs((video.aspectRatio.exact || 0) - 4 / 3) < 0.001
+       && e && e.name === 'OverconstrainedError' && (which === 'aspectRatio' || which === 'resizeMode')){
+      const f = (video.facingMode && (video.facingMode.exact || video.facingMode.ideal || video.facingMode)) || cameraFacingMode || 'user';
+      nalunoNo43[f === 'environment' ? 'environment' : 'user'] = true;
+    }
+  }catch(_){}
+}
 function nalunoLensConstraint(facing){
   const video = nalunoHdVideo('1440', facing || cameraFacingMode);
   video.resizeMode = 'none';
+  /* 08d: on a phone the 4:3 shape is required, not just preferred. As a
+     mere preference, a phone without a 1440x1080 mode took its 16:9 mode
+     (closer in size) and turned it upright: the tall, zoomed picture. The
+     fallbacks after this one still accept anything. */
+  /* Also only the phone's own picture modes, never one cut down from
+     another: cutting 4:3 out of the 16:9 mode would be a zoom as well, and
+     its shape would look right. Every 4:3 mode of a camera holds the whole
+     sensor. */
+  if(nalunoTouchDevice() && !nalunoNo43[facing || cameraFacingMode || 'user']){
+    video.aspectRatio = { exact: 4 / 3 };
+    video.resizeMode = { exact: 'none' };
+    /* Not the full photo size (12 MP at 30 frames a second runs hot). */
+    video.width = { ideal: video.width.ideal, max: 2048 };
+    video.height = { ideal: video.height.ideal, max: 2048 };
+  }
   return video;
 }
 function nalunoTrackLong(track){
@@ -1122,6 +1173,20 @@ function nalunoTrackLong(track){
 async function nalunoRaiseToHd(track){
   if(!track || typeof track.applyConstraints !== 'function') return;
   if(nalunoTrackLong(track) >= 1280) return;
+  /* 08d: on a camera that says its sensor size, more pixels are asked for
+     in exactly the sensor's shape, so the picture gets sharper, never
+     closer. */
+  const phone = nalunoTouchDevice();
+  const sensor = phone ? (nalunoSensorTarget(track) || (nalunoNo43[cameraFacingMode] ? null : { ratio: 4 / 3, width: 1440, height: 1080, caps: { resizeMode: ['none'] } })) : null;
+  /* A phone is never sharpened by cutting a bigger mode down: that is a
+     zoom too. Only its own modes in the whole-sensor shape are asked for. */
+  if(phone && !sensor) return;
+  if(sensor){
+    try{ await track.applyConstraints(nalunoSensorConstraint(sensor, true)); }catch(_){
+      try{ await track.applyConstraints(nalunoSensorConstraint(sensor, false)); }catch(_){}
+    }
+    return;
+  }
   const apply = async function(tier){
     const box = nalunoCameraBox(tier);
     try{
@@ -1152,53 +1217,86 @@ function nalunoAspectOf(track){
     return s.width / s.height;
   }catch(_){ return 0; }
 }
+/* 08d: the sensor's own size, from the camera itself. getCapabilities()
+   gives the largest width and height the camera can deliver, in the same
+   terms the browser reads constraints in (landscape on phones, upright on
+   a browser that reads them upright). Their ratio is the whole sensor.
+   Asking for exactly that ratio, at a sensible size, gets every part of
+   the sensor on any phone and any browser: no guessing which way round. */
+function nalunoSensorTarget(track){
+  let caps = {};
+  try{ caps = (track && track.getCapabilities) ? (track.getCapabilities() || {}) : {}; }catch(_){ caps = {}; }
+  const W = caps.width && caps.width.max, H = caps.height && caps.height.max;
+  if(!(W > 0 && H > 0) || W > 20000 || H > 20000) return null;
+  /* The largest width and the largest height can come from two different
+     modes (a 4:3 photo mode and a 16:9 4K mode report 3840 x 2448, a shape
+     no mode has). So the ratio is taken only when it is clearly one of the
+     shapes cameras actually have; otherwise nothing is asked from it. */
+  const raw = W / H;
+  let ratio = 0;
+  /* A phone's camera sensor is 4:3. A phone reporting a 16:9 maximum (its
+     4K video mode is wider than its 4:3 modes go) is not taken at its
+     word: asking for 16:9 would cut its sensor down. */
+  const shapes = nalunoTouchDevice() ? [4 / 3, 0.75] : [4 / 3, 0.75, 16 / 9, 0.5625, 1];
+  shapes.forEach(function(r){ if(Math.abs(raw - r) / r < 0.03) ratio = r; });
+  if(!ratio) return null;
+  const long = Math.min(1440, Math.max(W, H));
+  const w = ratio >= 1 ? long : Math.round(long * ratio);
+  const h = ratio >= 1 ? Math.round(long / ratio) : long;
+  return { ratio: ratio, width: w, height: h, caps: caps };
+}
+function nalunoSensorConstraint(t, exact){
+  const c = {
+    width: { ideal: t.width },
+    height: { ideal: t.height },
+    aspectRatio: exact ? { exact: t.ratio } : { ideal: t.ratio },
+    frameRate: { ideal: 30, max: 30 },
+  };
+  /* Exact: only the camera's own modes in that shape (each holds the whole
+     sensor). Not exact: its own modes preferred. */
+  if(t.caps && t.caps.resizeMode && t.caps.resizeMode.indexOf && t.caps.resizeMode.indexOf('none') >= 0){
+    c.resizeMode = exact ? { exact: 'none' } : 'none';
+  }
+  return c;
+}
+/* Long side over short side: the same number whichever way round the
+   camera or the browser reports it. */
+function nalunoShapeRatio(w, h){
+  if(!(w > 0 && h > 0)) return 0;
+  return Math.max(w, h) / Math.min(w, h);
+}
+/* Does this picture already hold the whole sensor? */
+function nalunoHoldsSensor(w, h, sensorRatio){
+  const r = nalunoShapeRatio(w, h);
+  const s = sensorRatio >= 1 ? sensorRatio : (1 / sensorRatio);
+  if(!(r > 0 && s > 0)) return true;
+  return Math.abs(r - s) / s < 0.04;
+}
+/* The camera's widest view: zoom all the way out, then the whole sensor in
+   its own shape. Nothing here crops a picture into another shape any
+   more: cutting a square or landscape frame down to 3:4 was itself a
+   zoom-in on the phones that delivered those frames. */
 function nalunoUnzoom(track){
   if(!track || !track.getCapabilities || !track.applyConstraints) return Promise.resolve();
   let caps = {};
   try{ caps = track.getCapabilities() || {}; }catch(_){ return Promise.resolve(); }
   const base = {};
   if(caps.zoom && isFinite(caps.zoom.min)) base.zoom = caps.zoom.min;
-  if(caps.resizeMode && caps.resizeMode.indexOf && caps.resizeMode.indexOf('none') >= 0) base.resizeMode = 'none';
   const apply = function(c){
     const clean = {};
     Object.keys(c).forEach(function(k){ if(c[k] != null) clean[k] = c[k]; });
-    if(!Object.keys(clean).length) return Promise.resolve();
-    return track.applyConstraints(clean).catch(function(){});
+    if(!Object.keys(clean).length) return Promise.resolve(true);
+    return track.applyConstraints(clean).then(function(){ return true; }, function(){ return false; });
   };
   return apply(base).then(function(){
-    const a = nalunoAspectOf(track);
-    /* 3:4 upright (about 0.75) is the full sensor on a phone. Leave it.
-       Landscape (the thin strip), a square, and 9:16 (the zoomed face)
-       are asked to become that same 3:4, widest zoom, no extra crop. */
-    const upright = a > 0.68 && a < 0.88;
-    if(upright) return;
-    const maxH = (caps.height && caps.height.max) ? Math.min(1920, caps.height.max) : 1440;
-    /* resizeMode 'none' keeps a 9:16 close-up from being cropped tighter
-       while we ask for 3:4. A square or landscape lens is the opposite
-       problem: 'none' freezes that wide shape, so those use crop-and-scale
-       and become the same upright 3:4 the front camera already is. */
-    const portrait = Object.assign({}, base, {
-      width: { ideal: Math.round(maxH * 3 / 4) },
-      height: { ideal: maxH },
-      aspectRatio: { ideal: 3/4 },
-    });
-    if(a > 0.88 && caps.resizeMode && caps.resizeMode.indexOf && caps.resizeMode.indexOf('crop-and-scale') >= 0){
-      portrait.resizeMode = 'crop-and-scale';
-    } else if(a > 0.88){
-      delete portrait.resizeMode;
-    }
-    return apply(portrait).then(function(){
-      const b = nalunoAspectOf(track);
-      if(!(b > 0.88)) return;
-      const again = {
-        width: { ideal: 720 },
-        height: { ideal: 960 },
-        aspectRatio: 0.75,
-      };
-      if(caps.resizeMode && caps.resizeMode.indexOf && caps.resizeMode.indexOf('crop-and-scale') >= 0){
-        again.resizeMode = 'crop-and-scale';
-      }
-      return apply(again);
+    const t = nalunoSensorTarget(track);
+    if(!t) return;
+    let s = {};
+    try{ s = track.getSettings ? (track.getSettings() || {}) : {}; }catch(_){}
+    if(nalunoHoldsSensor(s.width, s.height, t.ratio)) return;
+    return apply(nalunoSensorConstraint(t, true)).then(function(ok){
+      if(ok) return;
+      return apply(nalunoSensorConstraint(t, false));
     });
   });
 }
@@ -1421,6 +1519,18 @@ async function nalunoSwitchLens(next, opts){
     const audioConstraint = { echoCancellation:true, noiseSuppression:true, autoGainControl:true };
     const deviceId = await resolveCameraDeviceId(next).catch(()=>null);
     const videoAttempts = nalunoLensAttempts(next, deviceId);
+    /* 08d: reopening because the picture came out cut down: ask first for
+       exactly the whole sensor (its reported shape, or 4:3 in the
+       sensor's terms when the camera does not say). */
+    if(opts.reshape){
+      const memo = nalunoSensorMemo[next === 'environment' ? 'environment' : 'user'];
+      const whole = memo ? nalunoSensorConstraint(memo, true)
+        : { width: { ideal: 1440 }, height: { ideal: 1080 }, aspectRatio: { exact: 4/3 }, frameRate: { ideal: 30, max: 30 } };
+      const first = Object.assign({}, whole);
+      if(deviceId) first.deviceId = { exact: deviceId };
+      else first.facingMode = { exact: next };
+      videoAttempts.unshift(first);
+    }
 
     for(const video of videoAttempts){
       if(newStream) break;
@@ -1428,6 +1538,7 @@ async function nalunoSwitchLens(next, opts){
         newStream = await navigator.mediaDevices.getUserMedia({ video, audio: audioConstraint });
         if(video.deviceId && video.deviceId.exact) preferredVideoDeviceId = video.deviceId.exact;
       }catch(e){
+        nalunoNote43Refused(Object.assign({ facingMode: next }, video), e);
         console.warn('[camera] flip attempt failed', video, e && e.name);
       }
     }
@@ -1584,6 +1695,8 @@ function nalunoLensShapeOk(aspect, facing){
    ask it again for the full sensor; if it is still wrong, reopen the same
    lens the way the flip does (once per camera). */
 let nalunoShapeTimer = null;
+/* The sensor shape each camera reported, so a reopen asks for it directly. */
+const nalunoSensorMemo = {};
 let nalunoShapeVisHandler = null;
 const nalunoReshapeUseless = {};
 function nalunoWatchLensShape(){
@@ -1623,7 +1736,16 @@ function nalunoWatchLensShape(){
         return;
       }
       const facing = (track.getSettings && track.getSettings().facingMode) || cameraFacingMode;
-      if(nalunoLensShapeOk(vw / vh, facing)) return;
+      /* 08d: a camera that says its sensor size is checked against that:
+         the picture must hold the whole sensor. Others keep the 3:4 test. */
+      const sensorT = nalunoSensorTarget(track);
+      if(sensorT) nalunoSensorMemo[facing === 'environment' ? 'environment' : 'user'] = sensorT;
+      /* An upright phone never wants a sideways picture, whatever its ratio. */
+      const sideways = vw > vh * 1.02;
+      /* A camera that refused 4:3 has no 4:3 mode: its own 16:9 mode,
+         upright, is its whole picture. */
+      const no43Whole = !sensorT && nalunoNo43[facing === 'environment' ? 'environment' : 'user'] && (vw / vh) > 0.5 && (vw / vh) < 0.6;
+      if(!sideways && (no43Whole || (sensorT ? nalunoHoldsSensor(vw, vh, sensorT.ratio) : nalunoLensShapeOk(vw / vh, facing)))) return;
       if(!track.__nalunoUnzoomTried){
         track.__nalunoUnzoomTried = true;
         try{ await nalunoUnzoom(track); }catch(_){}
@@ -1646,7 +1768,11 @@ function nalunoWatchLensShape(){
       setTimeout(function(){
         try{
           const v2 = $('sendRawVideo') || $('camRawVideo') || $('pipRawVideo');
-          if(v2 && v2.videoWidth && !nalunoLensShapeOk(v2.videoWidth / v2.videoHeight, facing)) nalunoReshapeUseless[lensKey] = 1;
+          const t2 = stream && stream.getVideoTracks && stream.getVideoTracks()[0];
+          const st2 = t2 ? nalunoSensorTarget(t2) : null;
+          const w2 = v2 && v2.videoWidth, h2 = v2 && v2.videoHeight;
+          const ok2 = !!w2 && !(w2 > h2 * 1.02) && (st2 ? nalunoHoldsSensor(w2, h2, st2.ratio) : nalunoLensShapeOk(w2 / h2, facing));
+          if(w2 && !ok2) nalunoReshapeUseless[lensKey] = 1;
         }catch(_){}
       }, 1500);
     }catch(e){ try{ console.warn('[camera] shape', e && e.message); }catch(_){} }
@@ -1777,6 +1903,15 @@ async function enableCameraForCall(){
   const hd = nalunoLensConstraint(cameraFacingMode);
   const hdSoft = Object.assign({}, hd);
   delete hdSoft.resizeMode;
+  /* 08d: soft means soft. No required shape, and the phone's own modes
+     preferred: a camera without a 4:3 mode then gives its own 16:9 mode
+     whole, instead of a 4:3 cut out of it. */
+  if(hdSoft.aspectRatio && hdSoft.aspectRatio.exact){
+    delete hdSoft.aspectRatio;
+    hdSoft.resizeMode = 'none';
+    hdSoft.width = { ideal: hd.width.ideal };
+    hdSoft.height = { ideal: hd.height.ideal };
+  }
   const mid = nalunoHdVideo('1080', cameraFacingMode);
   const attempts = [];
   if(lensId){
@@ -1810,7 +1945,10 @@ async function enableCameraForCall(){
       lastErr = null;
       if(c.video && c.video.deviceId && c.video.deviceId.exact) preferredVideoDeviceId = c.video.deviceId.exact;
       break;
-    }catch(e){ lastErr = e; }
+    }catch(e){
+      lastErr = e;
+      try{ nalunoNote43Refused(Object.assign({ facingMode: cameraFacingMode }, c.video || {}), e); }catch(_){}
+    }
     if(nalunoCamGen !== camGen) break;
   }
   if(nalunoCamLate(camGen, got)) return;
@@ -1826,8 +1964,20 @@ async function enableCameraForCall(){
         const exact = Object.assign({}, hd);
         delete exact.facingMode;
         exact.deviceId = { exact: named };
+        /* 08d: the exact 4:3 ask may be refused by a camera with no 4:3 mode
+           of its own: then the same lens, as it comes. */
+        const openNamed = async function(){
+          try{ return await navigator.mediaDevices.getUserMedia({ video: exact, audio: false }); }
+          catch(e){
+            nalunoNote43Refused(Object.assign({ facingMode: cameraFacingMode }, exact), e);
+            const soft = Object.assign({}, exact);
+            delete soft.aspectRatio;
+            soft.resizeMode = 'none';
+            return navigator.mediaDevices.getUserMedia({ video: soft, audio: false });
+          }
+        };
         try{
-          const v = await navigator.mediaDevices.getUserMedia({ video: exact, audio: false });
+          const v = await openNamed();
           if(nalunoCamLate(camGen, v)){ try{ got.getTracks().forEach(function(t){ t.stop(); }); }catch(_){} return; }
           got.getVideoTracks().forEach(function(t){ got.removeTrack(t); });
           v.getVideoTracks().forEach(function(t){ got.addTrack(t); });
@@ -1835,7 +1985,11 @@ async function enableCameraForCall(){
         }catch(_){
           /* That lens would not open: put the first one back. */
           try{
-            const back = await navigator.mediaDevices.getUserMedia({ video: hd, audio: false });
+            let back = null;
+            for(const vv of [hd, mid, { facingMode: { ideal: cameraFacingMode } }, true]){
+              try{ back = await navigator.mediaDevices.getUserMedia({ video: vv, audio: false }); break; }catch(_){}
+            }
+            if(!back) throw new Error('no camera');
             got.getVideoTracks().forEach(function(t){ got.removeTrack(t); });
             back.getVideoTracks().forEach(function(t){ got.addTrack(t); });
           }catch(_){}

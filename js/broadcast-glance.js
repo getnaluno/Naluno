@@ -433,6 +433,11 @@
   }
 
   /* One listener for every card, before the card's own "open" tap. */
+  /* 09 Oct: a finger on a card's Listen starts the voice loading. */
+  document.addEventListener('pointerdown', function (e) {
+    var t = e.target && e.target.closest ? e.target.closest('[data-glance-act="listen"]') : null;
+    if (t) { try { if (window.NalunoVoices && NalunoVoices.warm) NalunoVoices.warm(true); } catch (_) {} }
+  }, { passive: true, capture: true });
   document.addEventListener('click', function (e) {
     var t = e.target && e.target.closest ? e.target.closest('[data-glance-act]') : null;
     if (!t) return;

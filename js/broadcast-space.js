@@ -396,6 +396,9 @@ function bspacePaintWriting(seg){
   const box = $('bspaceWriting');
   const listen = $('bspaceListenWrap');
   if(!box) return;
+  /* 09 Oct: something to read is open: get the voice ready (only if it is
+     already on the phone), so Listen starts sooner. */
+  try{ if(window.NalunoVoices && NalunoVoices.warm) NalunoVoices.warm(false); }catch(_){}
   const chapters = (seg && seg.chapters && seg.chapters.length) ? seg.chapters : [{ title: '', text: (seg && seg.text) || '' }];
   const use = chapters.filter(function(c){
     const t = String((c && c.text) || '').trim();
@@ -479,6 +482,8 @@ function bspaceClearWriting(){
   const hear = $('bspaceHear');
   if(!btn || btn.__wired) return;
   btn.__wired = true;
+  /* 09 Oct: a finger on Listen starts the voice loading before the tap ends. */
+  try{ btn.addEventListener('pointerdown', function(){ try{ if(window.NalunoVoices && NalunoVoices.warm) NalunoVoices.warm(true); }catch(_){} }, { passive: true }); }catch(_){}
   try{
     const voice = $('bspaceVoice');
     if(voice && !voice.__wired){
