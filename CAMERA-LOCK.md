@@ -35,7 +35,24 @@ The callee's camera usually opens while Naluno is still in the background, woken
 
 Now the check waits until Naluno is on screen. Answering settles and checks the callee's camera exactly as the caller's is checked. A lost camera is reopened the flip's way (upright 3:4), never at 720x1280.
 
+## The real root cause, and the uniform rule (09a)
+
+Phone browsers (Chrome on Android, and Safari on iPhone too) read a camera size request in the sensor's own terms, which are landscape, and turn the picture upright afterwards ([Chromium issue](https://issues.chromium.org/issues/40519078)).
+
+Naluno asked upright phones for "1440 wide, 1920 tall". To the sensor, that is a tall slice of itself. Each phone produced that slice with whichever of its own picture modes came closest: a 16:9 mode or a square mode turned upright, or a cut-down 4:3. All of these are zoomed in. Which one happened depended on the modes that particular phone has, which is why some phones were zoomed and others were not. Naluno's "upgrade to HD" and "make it upright" steps then cut it down again.
+
+The rule now, the same on every phone:
+
+1. **Ask in the sensor's terms.** 4:3, and only from the phone's own modes, never a mode cut down from another. Every 4:3 mode of a camera holds the whole sensor. Capped at 2048 so it never runs at the full photo size.
+2. **Measure the sensor.** Read its size from the camera itself (`getCapabilities`), in the same terms the browser reads requests. On a phone, only a 4:3 report is believed: a 16:9 maximum is just the phone's 4K video mode. If the picture does not hold the whole sensor, ask for exactly that shape from the camera's own modes.
+3. **Never crop.** Nothing cuts a picture into another shape. A phone is never sharpened by cutting a bigger mode down.
+4. **Phones without a 4:3 mode.** A camera that refuses 4:3 is remembered, and its own 16:9 mode is taken whole.
+5. **Phones only.** Touch laptops and Chromebooks keep the computer rules, because their webcams are 16:9. An iPad counts as a phone.
+
+`js/camera-lock.test.cjs` proves this on a catalogue of phone cameras, using the browsers' own way of choosing a picture mode, including its tie-break. The phones have different modes, square modes, 16:9 sensors, mixed maximums, and a browser that reads requests upright. The first request, or the measured one, must show 100% of the sensor on every phone. The test also confirms that the old request zoomed.
+
 ## Approved changes
 
 - 08 Oct 2026 (08b): lock created, owner's request.
 - 08 Oct 2026 (08c): callee's camera made the same as the caller's, owner's request; the callee's answer path added to the lock.
+- 09 Oct 2026 (09a): the uniform rule above, owner's request ("uniform and permanent across all devices").
