@@ -554,15 +554,16 @@ function callNotifyOpts(callId, body, pingId){
  *  how a backgrounded web app actually rings. Stops the instant the page
  *  says the call was handled. */
 function startRingLoop(callId, title, body, loop, pingId){
-  if(callId && isCallHandled(callId)) return;
+  if(callId && isCallHandled(callId)) return Promise.resolve();
   const t = title || 'Incoming call — Naluno';
   const b = body || 'Tap to answer';
   const already = !!(callId && ringLoopTimers[callId]);
+  let shown = Promise.resolve();
   if(!already){
-    self.registration.showNotification(t, callNotifyOpts(callId, b, pingId)).catch(function(){});
+    shown = self.registration.showNotification(t, callNotifyOpts(callId, b, pingId)).catch(function(){});
   }
-  if(loop === false) return;
-  if(already) return;
+  if(loop === false) return shown;
+  if(already) return shown;
   let n = 1;
   const max = 16;
   function tick(){
@@ -576,10 +577,11 @@ function startRingLoop(callId, title, body, loop, pingId){
     if(callId) ringLoopTimers[callId] = setTimeout(tick, 2200);
   }
   if(callId) ringLoopTimers[callId] = setTimeout(tick, 2200);
+  return shown;
 }
 
 const wireShown = {};
-function showWireNotification(data){
+function showWireNotification(data, force){
   data = data || {};
   const from = String(data.fromUid || '');
   const mid = String(data.clientMsgId || '');
@@ -591,8 +593,13 @@ function showWireNotification(data){
   const body = data.body || 'New message';
   const url = data.url || (from ? ('/app/?wire=' + encodeURIComponent(from)) : '/app/');
   return self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(list){
-    const looking = (list || []).some(function(c){ return c.visibilityState === 'visible' && c.focused; });
-    if(looking) return;
+    /* A locked phone can still look "focused" to the service worker.
+       The lock screen never sees an in-app toast, so the alert is shown
+       anyway unless someone is actually looking at an open window. */
+    if(!force){
+      const looking = (list || []).some(function(c){ return c.visibilityState === 'visible' && c.focused; });
+      if(looking) return;
+    }
     return self.registration.showNotification(title, {
       body: body,
       icon: '/icon-192.png',
@@ -603,6 +610,24 @@ function showWireNotification(data){
       vibrate: [180, 80, 180],
       data: { type: 'wireline', fromUid: from, url: url, pingId: data.pingId || '', clientMsgId: mid }
     });
+  });
+}
+
+function showLiveNotification(data){
+  data = data || {};
+  const broadcastId = String(data.broadcastId || '');
+  const title = data.title || 'Live on Naluno';
+  const body = data.body || 'Someone is live';
+  const url = data.url || (broadcastId ? ('/app/?broadcast=' + encodeURIComponent(broadcastId)) : '/app/');
+  return self.registration.showNotification(title, {
+    body: body,
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    tag: 'naluno-live:' + (broadcastId || 'now'),
+    renotify: true,
+    silent: false,
+    vibrate: [200, 80, 200],
+    data: { type: 'broadcast_live', broadcastId: broadcastId, url: url, pingId: data.pingId || '' }
   });
 }
 
@@ -635,14 +660,20 @@ try{
       const callId = data.callId || data.call_id || '';
       if(data.type === 'wireline'){
         notePushArrival(data);
-        return showWireNotification(data);
+        return showWireNotification(data, true);
+      }
+      if(data.type === 'broadcast_live' || (data.broadcastId && data.type !== 'incoming_call')){
+        notePushArrival(data);
+        return showLiveNotification(data);
       }
       const isCall = data.type === 'incoming_call' || !!callId;
-      if(!isCall) return;
-      if(callId && isCallHandled(callId)) return;
-      const who = data.callerName || (data.title || '').replace(/\s+is calling$/i, '') || 'Someone';
-      startRingLoop(callId, who + ' is calling', data.body || 'Tap to answer on Naluno', undefined, data.pingId || '');
+      if(!isCall) return Promise.resolve();
+      if(callId && isCallHandled(callId)) return Promise.resolve();
+      const who = data.callerName || (data.title || '').replace(/\s*(is calling|· voice call).*$/i, '') || 'Someone';
+      const title = data.title || (who + ' is calling');
+      const body = data.body || 'Tap to answer on Naluno';
       notePushArrival(data);
+      return startRingLoop(callId, title, body, undefined, data.pingId || '');
     });
   }
 }catch(e){}
@@ -673,6 +704,19 @@ self.addEventListener('message', event=>{
   }
   if(msg.type === 'naluno-stop-ring-loop'){
     stopRingLoop(msg.callId);
+    return;
+  }
+  if(msg.type === 'naluno-lock-notify'){
+    const note = msg.note || {};
+    const work = (function(){
+      if(note.type === 'wireline') return showWireNotification(note, true);
+      if(note.type === 'broadcast_live' || note.broadcastId) return showLiveNotification(note);
+      if(note.type === 'incoming_call' || note.callId){
+        return startRingLoop(note.callId || '', note.title || 'Incoming call — Naluno', note.body || 'Tap to answer', true, note.pingId || '');
+      }
+      return Promise.resolve();
+    })();
+    if(event.waitUntil) event.waitUntil(Promise.resolve(work));
   }
 });
 
@@ -700,8 +744,13 @@ function notePushArrival(data){
 }
 
 self.addEventListener('push', event=>{
-  let data = {};
-  try{ data = event.data ? event.data.json() : {}; }catch(e){ try{ data = { body: event.data.text() }; }catch(_){} }
+  let data = null;
+  try{ data = event.data ? event.data.json() : null; }catch(e){ data = null; }
+  /* FCM web push is encrypted. Firebase already showed a notification
+     payload, or handed a data message to onBackgroundMessage. Reading a
+     failed decode used to paint a blank "Naluno" alert and hide the real
+     one, which is what a locked phone was left with. */
+  if(!data || typeof data !== 'object') return;
   try{
     if(data.data && typeof data.data === 'object'){
       data = Object.assign({}, data, data.data);
@@ -711,12 +760,13 @@ self.addEventListener('push', event=>{
       if(!data.body && data.notification.body) data.body = data.notification.body;
     }
   }catch(_){}
-  const callId = data.callId || data.call_id || data.tag || '';
+  const callId = data.callId || data.call_id || '';
+  if(!data.type && !callId && !data.broadcastId) return;
   const isCall = data.type === 'incoming_call' || (!data.type && !!callId && data.type !== 'wireline');
   if(data.type === 'wireline'){
     event.waitUntil((async ()=>{
       notePushArrival(data);
-      await showWireNotification(data);
+      await showWireNotification(data, true);
     })());
     return;
   }
@@ -725,7 +775,7 @@ self.addEventListener('push', event=>{
     const title = data.title || 'Incoming call — Naluno';
     const body = data.body || 'Tap to answer';
     event.waitUntil((async ()=>{
-      startRingLoop(callId, title, body, undefined, data.pingId || '');
+      await startRingLoop(callId, title, body, undefined, data.pingId || '');
       notePushArrival(data);
       const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
       for(const client of clientList){
@@ -734,7 +784,13 @@ self.addEventListener('push', event=>{
     })());
     return;
   }
-  // Non-call push (e.g. "X is live") — a normal, single, tap-to-open alert.
+  if(data.type === 'broadcast_live' || data.broadcastId){
+    event.waitUntil((async ()=>{
+      notePushArrival(data);
+      await showLiveNotification(data);
+    })());
+    return;
+  }
   const title = data.title || 'Naluno';
   const body = data.body || '';
   const broadcastId = data.broadcastId || '';
@@ -779,13 +835,18 @@ self.addEventListener('notificationclick', event=>{
     return;
   }
   if(data.type && data.type !== 'incoming_call'){
-    // Non-call notification: just open/focus the app at the right place —
-    // never post a fake "incoming call" message for something that isn't one.
-    const target = data.url || './';
+    const target = data.url || '/app/';
     event.waitUntil(
       self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList=>{
         for(const client of clientList){
-          if('focus' in client) return client.focus();
+          if('focus' in client){
+            try{
+              if(data.type === 'broadcast_live' || data.broadcastId){
+                client.postMessage({ type: 'naluno-open-live', broadcastId: data.broadcastId || '' });
+              }
+            }catch(_){}
+            return client.focus();
+          }
         }
         if(self.clients.openWindow) return self.clients.openWindow(target);
       })

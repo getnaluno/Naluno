@@ -3070,11 +3070,34 @@ async function sendAll(tokens, data, link, deps, now) {
           message: {
             token,
             data,
-            android: { priority: "HIGH", ttl: "86400s" },
-            /* No fcm_options.link: FCM refuses a link that is not a full
-               https address (400), which made every web alert fail in 05f.
-               The service worker opens the chat from data.url. */
-            webpush: { headers: { Urgency: "high", TTL: "86400" } },
+            android: kind === "android"
+              ? {
+                  priority: "HIGH",
+                  ttl: "86400s",
+                  notification: {
+                    title: String(data.title || "Wireline").slice(0, 80),
+                    body: String(data.body || "New message").slice(0, 140),
+                    channel_id: "naluno_wireline",
+                    sound: "default",
+                    tag: "naluno-wire:" + String(data.fromUid || "").slice(0, 40),
+                    notification_priority: "PRIORITY_HIGH",
+                    visibility: "PUBLIC"
+                  }
+                }
+              : { priority: "HIGH", ttl: "86400s" },
+            webpush: kind === "web"
+              ? {
+                  headers: { Urgency: "high", TTL: "86400" },
+                  notification: {
+                    title: String(data.title || "Wireline").slice(0, 80),
+                    body: String(data.body || "New message").slice(0, 140),
+                    icon: "https://getnaluno.com/icon-192.png",
+                    tag: "naluno-wire:" + String(data.fromUid || "msg").slice(0, 40) + ":" + String(data.clientMsgId || "").slice(0, 48),
+                    renotify: true,
+                    silent: false
+                  }
+                }
+              : { headers: { Urgency: "high", TTL: "86400" } },
             apns: { headers: { "apns-priority": "10" } }
           }
         })
