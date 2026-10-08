@@ -5668,7 +5668,10 @@
     if (tab === 'luganda') {
       if (!canDeskTab('luganda')) { el.innerHTML = '<p class="sub">This login cannot feed Luganda.</p>'; return; }
       el.innerHTML = card('Luganda voices',
-        '<p class="sub">Say the line, or choose a recording, and write the exact Luganda. Listen uses that recording when the words match. A whole line wins. Single words are joined. The phone voice is only used for words you have not given it.</p>'
+        '<p class="sub">The two masters, as recorded. Speed is not changed.</p>'
+        + '<p class="sub">Male</p><audio controls preload="none" src="/voices/lg/male.mp3" style="width:100%;"></audio>'
+        + '<p class="sub">Female</p><audio controls preload="none" src="/voices/lg/female.wav" style="width:100%;"></audio>'
+        + '<p class="sub">Say the line, or choose a recording, and write the exact Luganda. Listen uses that recording when the words match. A whole line wins. Single words are joined. The phone voice is only used for words you have not given it.</p>'
         + '<label for="lgVoiceText">The Luganda, exactly as spoken</label>'
         + '<textarea id="lgVoiceText" rows="3" maxlength="380" style="width:100%;box-sizing:border-box;"></textarea>'
         + '<div class="row" style="margin-top:8px;">'

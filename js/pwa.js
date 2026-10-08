@@ -63,6 +63,14 @@ if('serviceWorker' in navigator){
       };
       kick();
     }
+    if(msg.type === 'naluno-open-live'){
+      const id = msg.broadcastId || '';
+      const kick = ()=>{
+        if(id && typeof openBroadcastById === 'function') openBroadcastById(id);
+        else if(id) setTimeout(kick, 400);
+      };
+      kick();
+    }
     if(msg.type === 'naluno-incoming-call'){
       const id = msg.callId || null;
       const kick = ()=>{
@@ -321,6 +329,20 @@ async function setupCapacitorPush(){
   }
 }
 
+/* The screen is off but this page is still the "open" tab, so Firebase
+   delivers here instead of the service worker. A toast is invisible on
+   the lock screen. The worker paints the real alert. */
+function nalunoPageNotify(note){
+  try{
+    if(!navigator.serviceWorker) return;
+    const msg = { type: 'naluno-lock-notify', note: note || {} };
+    if(navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage(msg);
+    navigator.serviceWorker.ready.then(function(reg){
+      try{ if(reg.active) reg.active.postMessage(msg); }catch(_){}
+    }).catch(function(){});
+  }catch(_){}
+}
+
 // Foreground FCM (app open, tab focused) — still show a toast + open incoming UI.
 if(typeof firebase !== 'undefined' && firebase.messaging){
   try{
@@ -342,6 +364,18 @@ if(typeof firebase !== 'undefined' && firebase.messaging){
         });
       }
       if(data.type === 'broadcast_live' || data.broadcastId){
+        const hidden = (typeof document !== 'undefined' && (document.hidden || document.visibilityState !== 'visible'));
+        if(hidden){
+          nalunoPageNotify({
+            type: 'broadcast_live',
+            title: data.title || 'Live on Naluno',
+            body: data.body || ((data.fromName || data.callerName || 'Someone') + ' is live'),
+            broadcastId: data.broadcastId || '',
+            pingId: data.pingId || '',
+            url: data.broadcastId ? ('/app/?broadcast=' + encodeURIComponent(data.broadcastId)) : '/app/',
+          });
+          return;
+        }
         if(typeof handleBroadcastLiveNotification === 'function'){
           handleBroadcastLiveNotification({
             type: 'broadcast_live',
@@ -356,6 +390,19 @@ if(typeof firebase !== 'undefined' && firebase.messaging){
       }
       const callId = data.callId || data.call_id || null;
       if(data.type === 'wireline'){
+        const hidden = (typeof document !== 'undefined' && (document.hidden || document.visibilityState !== 'visible'));
+        if(hidden){
+          nalunoPageNotify({
+            type: 'wireline',
+            title: data.title || data.senderName || 'Wireline',
+            body: data.body || 'New message',
+            fromUid: data.fromUid || '',
+            clientMsgId: data.clientMsgId || '',
+            pingId: data.pingId || '',
+            url: data.url || (data.fromUid ? ('/app/?wire=' + encodeURIComponent(data.fromUid)) : '/app/'),
+          });
+          return;
+        }
         let inThisChat = false;
         try{
           const from = data.fromUid || '';
