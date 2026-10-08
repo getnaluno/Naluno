@@ -1584,9 +1584,12 @@ function nalunoLensShapeOk(aspect, facing){
    ask it again for the full sensor; if it is still wrong, reopen the same
    lens the way the flip does (once per camera). */
 let nalunoShapeTimer = null;
+let nalunoShapeVisHandler = null;
 const nalunoReshapeUseless = {};
 function nalunoWatchLensShape(){
   if(nalunoShapeTimer){ clearTimeout(nalunoShapeTimer); nalunoShapeTimer = null; }
+  /* One waiting check at a time: a new watch replaces the old one. */
+  if(nalunoShapeVisHandler){ document.removeEventListener('visibilitychange', nalunoShapeVisHandler); nalunoShapeVisHandler = null; }
   const gen = nalunoCamGen;
   const check = async function(round){
     nalunoShapeTimer = null;
@@ -1599,7 +1602,24 @@ function nalunoWatchLensShape(){
       const v = $('sendRawVideo') || $('camRawVideo') || $('pipRawVideo');
       const vw = v && v.videoWidth, vh = v && v.videoHeight;
       if(!vw || !vh){
-        if(round < 8) nalunoShapeTimer = setTimeout(function(){ check(round + 1); }, 400);
+        /* 08c: the callee's camera often opens while Naluno is still in
+           the background (woken by the ring). A hidden page gets no
+           frames, so the check used to give up before anyone looked, and
+           the callee stayed zoomed in. Wait until Naluno is on screen. */
+        if(document.hidden){
+          if(nalunoShapeVisHandler) document.removeEventListener('visibilitychange', nalunoShapeVisHandler);
+          const back = function(){
+            if(document.hidden) return;
+            document.removeEventListener('visibilitychange', back);
+            if(nalunoShapeVisHandler === back) nalunoShapeVisHandler = null;
+            if(nalunoShapeTimer){ clearTimeout(nalunoShapeTimer); nalunoShapeTimer = null; }
+            if(gen === nalunoCamGen) nalunoShapeTimer = setTimeout(function(){ check(0); }, 400);
+          };
+          nalunoShapeVisHandler = back;
+          document.addEventListener('visibilitychange', back);
+          return;
+        }
+        if(round < 25) nalunoShapeTimer = setTimeout(function(){ check(round + 1); }, 400);
         return;
       }
       const facing = (track.getSettings && track.getSettings().facingMode) || cameraFacingMode;
@@ -1611,6 +1631,12 @@ function nalunoWatchLensShape(){
         return;
       }
       if(track.__nalunoReshaped) return;
+      /* Never in the middle of placing or answering a call: the connection
+         is being built from these very tracks. Wait until it is up. */
+      if(typeof callActionInProgress !== 'undefined' && callActionInProgress){
+        if(round < 60) nalunoShapeTimer = setTimeout(function(){ check(Math.max(round, 10) + 1); }, 500);
+        return;
+      }
       const lensKey = nalunoTrackDeviceId(track) || facing || 'cam';
       /* A camera that only has the 9:16 mode is not reopened again and
          again for nothing. */
@@ -1648,8 +1674,27 @@ function nalunoSettleCallCamera(){
   setTimeout(kick, 350);
   nalunoWatchLensShape();
 }
+/* 08c: a camera on its own (no mic), opened the flip's way. For the
+   answer path when the call has a mic but lost its camera; it used to ask
+   for 720x1280 (9:16), which is the zoomed-in face. */
+async function nalunoOpenLensVideoOnly(facing){
+  const want = facing || cameraFacingMode || 'user';
+  const deviceId = await resolveCameraDeviceId(want).catch(function(){ return null; });
+  const list = nalunoLensAttempts(want, deviceId);
+  let lastErr = null;
+  for(const video of list){
+    try{
+      const got = await navigator.mediaDevices.getUserMedia({ video: video, audio: false });
+      if(video.deviceId && video.deviceId.exact) preferredVideoDeviceId = video.deviceId.exact;
+      try{ nalunoMarkLensTrack(got.getVideoTracks()[0]); }catch(_){}
+      return got;
+    }catch(e){ lastErr = e; }
+  }
+  throw lastErr || new Error('Camera unavailable');
+}
 window.nalunoSwitchLens = nalunoSwitchLens;
 window.nalunoSettleCallCamera = nalunoSettleCallCamera;
+window.nalunoOpenLensVideoOnly = nalunoOpenLensVideoOnly;
 
 /** Background warm-up so the next dial does not wait on getUserMedia.
  *  Safe to call from Frequencies / call lobby — never blocks the UI. */

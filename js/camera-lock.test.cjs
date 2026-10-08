@@ -65,10 +65,11 @@ const css = read('css/app.css');
 const LOCKED = {
   'camera: what is asked of the camera': ['nalunoIsPortraitDevice', 'nalunoTouchDevice', 'nalunoCameraPortrait', 'nalunoCameraBox', 'nalunoHdVideo', 'buildVideoConstraints', 'nalunoLensConstraint', 'nalunoRaiseToHd', 'nalunoUnzoom']
     .map((n) => fnSource(cam, n, 'camera.js')).join('\n'),
-  'camera: how a lens is opened and settled': ['resolveCameraDeviceId', 'nalunoLensDeviceId', 'flipCamera', 'nalunoLensAttempts', 'nalunoSwitchLens', 'nalunoMarkLensTrack', 'nalunoLensShapeOk', 'nalunoWatchLensShape', 'nalunoSettleCallCamera', 'enableCameraForCall']
+  'camera: how a lens is opened and settled': ['nalunoOpenLensVideoOnly', 'resolveCameraDeviceId', 'nalunoLensDeviceId', 'flipCamera', 'nalunoLensAttempts', 'nalunoSwitchLens', 'nalunoMarkLensTrack', 'nalunoLensShapeOk', 'nalunoWatchLensShape', 'nalunoSettleCallCamera', 'enableCameraForCall']
     .map((n) => fnSource(cam, n, 'camera.js')).join('\n'),
   'camera: how your own picture is drawn and sent': ['drawVideoFit', 'ensureCanvasSize', 'nalunoCompositeFit', 'nalunoAspectNeedsPortrait', 'compositeFrame', 'drawSendCanvas', 'nalunoFitLocalPip']
     .map((n) => fnSource(cam, n, 'camera.js')).join('\n'),
+  'calls: the callee\'s camera when answering': fnSource(calls, 'ensureCallMediaReady', 'calls.js'),
   'calls: the other person full screen': (calls.match(/const NALUNO_REMOTE_MIN_SHOWN = [^;]+;/) || [''])[0] + '\n'
     + ['nalunoRemoteFit', 'nalunoFitRemoteVideo'].map((n) => fnSource(calls, n, 'calls.js')).join('\n'),
   'call-filters: which picture is sent': ['nalunoOutboundPortrait'].map((n) => fnSource(filters, n, 'call-filters.js')).join('\n'),
@@ -79,8 +80,9 @@ const LOCKED = {
    (see CAMERA-LOCK.md). */
 const APPROVED = {
   'camera: what is asked of the camera': 'b953139962dce09d',
-  'camera: how a lens is opened and settled': 'cd1ddd2942c27409',
+  'camera: how a lens is opened and settled': 'c052afb4c4e4aa16',
   'camera: how your own picture is drawn and sent': 'e4da395a687a323f',
+  'calls: the callee\'s camera when answering': '3292560e2d07fe76',
   'calls: the other person full screen': '36dd629ead2d348f',
   'call-filters: which picture is sent': '1810339c30833026',
   'css: the call screens\' video boxes': '3abe95f60d635d27',
@@ -122,4 +124,12 @@ assert.strictEqual(ok(1920 / 1440, 'environment'), true, 'a wide back lens is le
 const fit = new Function(fnSource(calls, 'nalunoRemoteFit', 'calls.js').replace('NALUNO_REMOTE_MIN_SHOWN', '0.5') + '; return nalunoRemoteFit;')();
 assert.strictEqual(fit(1440, 1920, 393, 852), 'cover', 'the other person fills the screen');
 assert.ok(css.includes('#incall .remote-stage video {\n  object-fit: cover;\n}'), 'full screen by default');
+/* 08c: the callee's camera, the same as the caller's. */
+const answer = fnSource(calls, 'ensureCallMediaReady', 'calls.js');
+assert.ok(answer.includes("if(typeof nalunoSettleCallCamera === 'function') nalunoSettleCallCamera();"), 'answering settles and checks the callee\'s camera like the caller\'s');
+assert.ok(answer.includes('await nalunoOpenLensVideoOnly(') && !/height: \{ ideal: 1280 \}/.test(answer), 'a lost camera is reopened the flip\'s way, never 720x1280 (9:16)');
+const watch = fnSource(cam, 'nalunoWatchLensShape', 'camera.js');
+assert.ok(watch.includes("if(document.hidden){") && watch.includes("document.addEventListener('visibilitychange', back);"), 'a camera opened while Naluno was in the background is checked once Naluno is on screen');
+assert.ok(watch.includes("if(nalunoShapeVisHandler) document.removeEventListener('visibilitychange', nalunoShapeVisHandler);"), 'one waiting check at a time');
+assert.ok(watch.includes("if(typeof callActionInProgress !== 'undefined' && callActionInProgress){"), 'never reopened while a call is being placed or answered');
 console.log('camera-lock tests passed');

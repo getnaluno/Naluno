@@ -1295,6 +1295,10 @@ async function ensureCallMediaReady(){
         t.enabled = (typeof camOn === 'undefined') ? true : !!camOn;
       });
     }catch(_){}
+    /* 08c: the callee answers on the camera opened while it rang (often
+       while Naluno was in the background). Settle and check it the same
+       way as the caller's camera, now that the screen is up. */
+    try{ if(typeof nalunoSettleCallCamera === 'function') nalunoSettleCallCamera(); }catch(_){}
     return true;
   }
   /* If the call ends (the camera is stopped) while this is still opening
@@ -1327,23 +1331,24 @@ async function ensureCallMediaReady(){
   }
   if(!okV){
     try{
-      const v = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: (typeof cameraFacingMode !== 'undefined' ? cameraFacingMode : 'user') },
-          width: { ideal: 720 },
-          height: { ideal: 1280 },
-          frameRate: { ideal: 24, max: 30 }
-        },
-        audio: false
-      });
+      /* 08c: the camera the flip's way (upright 3:4), not 720x1280 (9:16,
+         the zoomed-in face). */
+      const v = (typeof nalunoOpenLensVideoOnly === 'function')
+        ? await nalunoOpenLensVideoOnly(typeof cameraFacingMode !== 'undefined' ? cameraFacingMode : 'user')
+        : await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'user' } }, audio: false });
       if(late(v)) return false;
       if(!stream) stream = v;
-      else v.getVideoTracks().forEach(t => stream.addTrack(t));
+      else {
+        /* The ended camera goes, so the new one is the call's camera. */
+        stream.getVideoTracks().forEach(function(t){ if(t.readyState !== 'live'){ try{ stream.removeTrack(t); }catch(_){} } });
+        v.getVideoTracks().forEach(t => stream.addTrack(t));
+      }
       okV = true;
       ['camRawVideo','pipRawVideo','sendRawVideo','incomingSelfVideo'].forEach(function(id){
         const el = $(id);
         if(el && stream){ el.srcObject = stream; if(el.play) el.play().catch(function(){}); }
       });
+      try{ if(typeof nalunoSettleCallCamera === 'function') nalunoSettleCallCamera(); }catch(_){}
     }catch(e){ console.warn('[call] video reopen failed', e); }
   }
   return !!(stream && stream.getAudioTracks().some(t => t.readyState === 'live') &&
