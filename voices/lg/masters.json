@@ -1,0 +1,7 @@
+{
+  "about": "Write the exact Luganda spoken in each master between the quotes of \"text\". Listen then plays that master whenever a Broadcast or Spark says exactly those words. Leave text empty and the master is not used by Listen (the console still plays it).",
+  "masters": [
+    { "file": "male.mp3", "voice": "male", "text": "" },
+    { "file": "female.wav", "voice": "female", "text": "" }
+  ]
+}
