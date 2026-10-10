@@ -3921,6 +3921,17 @@ body:has(.call-overlay.active) #wireHistoryScreen.active{
   align-items:flex-start; justify-content:flex-start; padding:5px 6px; text-align:left;
   font-size:7.5px; line-height:1.25; font-weight:400; color:var(--text-dim); word-break:break-word;
 }
+.sched-row.bcast-private-row{
+  justify-content:flex-start; width:auto; padding:10px 12px;
+  border:1px solid var(--line); border-radius:14px;
+  background:rgba(23,26,38,.9); cursor:default;
+}
+.sched-row.bcast-private-row .sched-title{ cursor:pointer; }
+.sched-row.bcast-private-row span.bcast-badge{
+  font-family:inherit; font-size:10.5px; letter-spacing:.04em; text-transform:none;
+}
+.sched-row.bcast-private-row span.bcast-badge.private{ color:#b9a3ff; }
+.sched-row.bcast-private-row span.bcast-badge.scheduled{ color:#ffc266; }
 
 /* The ⋯ menu in a Broadcast: on a phone turned sideways the card was taller
    than the screen, so Save / Advertise / Edit / Delete / Go live sat below
