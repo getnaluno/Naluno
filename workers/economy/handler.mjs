@@ -1526,7 +1526,8 @@ async function claimReach(env, user, saToken, body) {
   if (!bumped.ok) return json({ ok: false, error: "Could not check Reach. Try again." }, 503);
   const after = await fsGetDoc(env, saToken, dayPath);
   const n = Number(after && after.n) || 0;
-  if (!(n > 0) || n > lim.perDay) {
+  if (!(n > 0)) return json({ ok: false, error: "Could not check Reach. Try again." }, 503);
+  if (n > lim.perDay) {
     const error = tier === "full"
       ? "That's 12 videos today. Tomorrow the count starts again."
       : "That's 3 videos today. Tomorrow the count starts again.";

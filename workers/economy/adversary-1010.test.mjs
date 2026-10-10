@@ -295,7 +295,7 @@ test("upload worker refuses active content and will not run it on download", asy
     const saved = await ok.json();
     const got = await worker.fetch(new Request("https://upload.test/o/" + saved.key), env);
     assert.equal(got.headers.get("X-Content-Type-Options"), "nosniff");
-    assert.ok(String(got.headers.get("Content-Security-Policy") || "").includes("script-src 'none'"));
+    assert.equal(got.headers.get("Content-Security-Policy"), null);
     assert.equal(got.headers.get("Content-Type"), "image/jpeg");
 
     const large = await worker.fetch(new Request("https://upload.test/b/complete", {
@@ -327,6 +327,79 @@ test("upload worker refuses active content and will not run it on download", asy
       body: JSON.stringify({ contentType: "video/mp4", bytes: (8 * 1024 * 1024 * 1024) + 1 }),
     }), env);
     assert.equal(over.status, 413);
+
+    const phone = await worker.fetch(new Request("https://upload.test/b/init", {
+      method: "POST",
+      headers: { Authorization: "Bearer t", "Content-Type": "application/json" },
+      body: JSON.stringify({ contentType: "video/3gpp", bytes: 800 * 1024 * 1024 }),
+    }), env);
+    assert.equal(phone.status, 200, "a phone gallery video is a video");
+    const phoneBody = await phone.json();
+    assert.ok(String(phoneBody.key || "").startsWith("u/attacker/"), phoneBody.key);
+    assert.ok(String(phoneBody.key || "").endsWith(".3gp"), phoneBody.key);
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+test("broadcast bucket accepts a gallery video and plays it without a sandbox", async () => {
+  const src = fs.readFileSync(path.join(root, "signal-worker-index.js"), "utf8");
+  const mod = await import("data:text/javascript," + encodeURIComponent(src + "\n//" + Date.now()));
+  const worker = mod.default;
+  const stored = new Map();
+  const env = {
+    FIREBASE_WEB_API_KEY: "k",
+    BROADCAST_BUCKET: {
+      put: async (key, buf, meta) => { stored.set(key, { buf, meta, size: buf.byteLength }); },
+      get: async (key, opts) => {
+        const row = stored.get(key);
+        if (!row) return null;
+        const body = row.buf;
+        if (opts && opts.range) {
+          const offset = opts.range.offset || 0;
+          const length = opts.range.length || (body.byteLength - offset);
+          return { body: body.slice(offset, offset + length), size: length, range: { offset, length }, httpMetadata: row.meta.httpMetadata };
+        }
+        return { body, size: row.size, httpMetadata: row.meta.httpMetadata };
+      },
+      head: async (key) => {
+        const row = stored.get(key);
+        return row ? { size: row.size, httpMetadata: row.meta.httpMetadata } : null;
+      },
+      createMultipartUpload: async (key, meta) => {
+        stored.set(key, { buf: new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112]), meta, size: 8 });
+        return { uploadId: "upb", key, meta };
+      },
+      resumeMultipartUpload: () => ({
+        uploadPart: async () => ({ etag: "e" }),
+        complete: async () => {},
+      }),
+    },
+  };
+  const orig = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("accounts:lookup")) {
+      return new Response(JSON.stringify({ users: [{ localId: "u1" }] }), { status: 200 });
+    }
+    return new Response("{}", { status: 404 });
+  };
+  try {
+    const init = await worker.fetch(new Request("https://bcast.test/b/init", {
+      method: "POST",
+      headers: { Authorization: "Bearer t", "Content-Type": "application/json" },
+      body: JSON.stringify({ contentType: "video/3gpp", bytes: 12 * 1024 * 1024 }),
+    }), env);
+    assert.equal(init.status, 200);
+    const body = await init.json();
+    assert.ok(String(body.key).startsWith("b/u1/"), body.key);
+    assert.ok(String(body.key).endsWith(".3gp"), body.key);
+    const play = await worker.fetch(new Request("https://bcast.test/o/" + body.key, {
+      headers: { Range: "bytes=0-3" },
+    }), env);
+    assert.equal(play.status, 206);
+    assert.equal(play.headers.get("Content-Type"), "video/3gpp");
+    assert.equal(play.headers.get("Content-Security-Policy"), null);
+    assert.equal(play.headers.get("X-Content-Type-Options"), "nosniff");
   } finally {
     globalThis.fetch = orig;
   }
