@@ -226,3 +226,75 @@ export async function handlePushTest(body, user, deps) {
     url: "/app/",
   }, "/app/", deps, deps.now ? deps.now() : Date.now());
 }
+
+/* POST /v1/push/lock — the alert a locked web app can show.
+   The call itself is unchanged. This only paints the notification, and
+   only after the database says the call is still ringing or the Broadcast
+   is actually live. The words come from the profile, not from the phone. */
+export async function handleLockPush(body, user, deps) {
+  const now = deps.now ? deps.now() : Date.now();
+  if (!user || !user.uid) return { status: 401, body: { ok: false, error: "sign in" } };
+  if (!rateOk("lock:" + user.uid, now, 30)) return { status: 429, body: { ok: false, error: "slow down" } };
+  const to = String((body && body.to) || "").replace(/[^A-Za-z0-9_-]/g, "");
+  const type = String((body && body.type) || "");
+  if (!to || to === user.uid) return { status: 400, body: { ok: false, error: "to" } };
+  const profile = await deps.getDoc("/users/" + user.uid);
+  const name = String((profile && profile.name) || "").trim().slice(0, 60) || "Someone";
+  let data = null;
+  if (type === "incoming_call") {
+    const callId = String((body && body.callId) || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 120);
+    if (!callId) return { status: 400, body: { ok: false, error: "call" } };
+    const call = await deps.getDoc("/calls/" + callId);
+    if (!call || String(call.callerUid || "") !== user.uid || String(call.calleeUid || "") !== to) {
+      return { status: 403, body: { ok: false, error: "not your call" } };
+    }
+    if (String(call.status || "") !== "ringing") return { status: 200, body: { ok: true, sent: 0, reason: "not ringing" } };
+    const voice = String(call.kind || call.callKind || "") === "audio";
+    data = {
+      type: "incoming_call",
+      callId: callId,
+      callerName: name,
+      title: name + (voice ? " · voice call" : " is calling"),
+      body: voice ? "Voice call — tap to answer on Naluno" : "Tap to answer on Naluno",
+      url: "/app/",
+    };
+  } else if (type === "broadcast_live") {
+    const broadcastId = String((body && body.broadcastId) || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 120);
+    if (!broadcastId) return { status: 400, body: { ok: false, error: "broadcast" } };
+    const row = await deps.getDoc("/broadcasts/" + broadcastId);
+    if (!row || String(row.creatorUid || "") !== user.uid || row.live !== true) {
+      return { status: 403, body: { ok: false, error: "not live" } };
+    }
+    const circle = await deps.getDoc("/users/" + user.uid + "/circle/" + to);
+    const conn = await deps.getDoc("/users/" + user.uid + "/connections/" + to);
+    if (!circle && !conn) return { status: 403, body: { ok: false, error: "not connected" } };
+    const title = String(row.title || "Broadcast").slice(0, 80);
+    data = {
+      type: "broadcast_live",
+      broadcastId: broadcastId,
+      fromUid: user.uid,
+      fromName: name,
+      title: name + " is live",
+      body: title,
+      url: "/app/?broadcast=" + encodeURIComponent(broadcastId),
+    };
+  } else {
+    return { status: 400, body: { ok: false, error: "type" } };
+  }
+  const [them, vault] = await Promise.all([
+    deps.getDoc("/users/" + to),
+    deps.getDoc("/users/" + to + "/vault/main"),
+  ]);
+  const all = tokensOf(vault, them);
+  const tokens = [];
+  const kinds = [];
+  all.forEach(function (token, n) {
+    if ((all.kinds && all.kinds[n]) === "web") {
+      tokens.push(token);
+      kinds.push("web");
+    }
+  });
+  tokens.kinds = kinds;
+  if (!tokens.length) return { status: 200, body: { ok: true, sent: 0, reason: "no_web_token" } };
+  return sendAll(tokens, data, data.url, deps, now);
+}

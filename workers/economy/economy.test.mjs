@@ -125,10 +125,28 @@ test("events without a token are 401", async () => {
 
 test("a signed-in comment is stored and /v1/me reflects points", async () => {
   resetMemory();
-  setFetchImpl(async (url, opts) => {
+  const sa = await genSa();
+  const env = {
+    ...ENV,
+    GOOGLE_SERVICE_ACCOUNT: JSON.stringify({
+      client_email: sa.client_email,
+      private_key: sa.private_key,
+      project_id: "naluno-28a00",
+      token_uri: "https://oauth2.googleapis.com/token",
+    }),
+  };
+  setFetchImpl(async (url) => {
     const u = String(url);
     if (u.includes("accounts:lookup")) {
       return new Response(JSON.stringify({ users: [{ localId: "user_a", email: "a@x.com" }] }), { status: 200 });
+    }
+    if (u.includes("oauth2.googleapis.com/token")) {
+      return new Response(JSON.stringify({ access_token: "sa", expires_in: 3600 }), { status: 200 });
+    }
+    if (u.includes("/broadcasts/bcast1/conversation/cmt1")) {
+      return new Response(JSON.stringify({
+        fields: { from: { stringValue: "user_a" } },
+      }), { status: 200 });
     }
     if (u.includes("firestore.googleapis.com")) {
       return new Response(JSON.stringify({ error: { status: "PERMISSION_DENIED" } }), { status: 403 });
@@ -143,14 +161,17 @@ test("a signed-in comment is stored and /v1/me reflects points", async () => {
         event_id: "evt_test_1",
         event_type: "BROADCAST_COMMENT",
         text: "This is a real comment on the show.",
-        broadcast_id: "b1",
+        broadcast_id: "bcast1",
+        target_type: "conversation",
+        target_id: "cmt1",
       }),
     }),
-    ENV,
+    env,
   );
   assert.equal(ev.status, 200);
   const posted = await ev.json();
   assert.equal(posted.ok, true);
+  assert.equal(posted.status, "COUNTED");
   assert.equal(posted.degraded, undefined);
 
   const me = await handleRequest(
@@ -161,6 +182,37 @@ test("a signed-in comment is stored and /v1/me reflects points", async () => {
   assert.equal(body.ok, true);
   assert.equal(body.contribution_points, 3);
   assert.equal(body.eligible_contribution, 3);
+  setFetchImpl(null);
+});
+
+test("a comment with no proof mints nothing", async () => {
+  resetMemory();
+  setFetchImpl(async (url) => {
+    const u = String(url);
+    if (u.includes("accounts:lookup")) {
+      return new Response(JSON.stringify({ users: [{ localId: "user_a" }] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ error: { status: "PERMISSION_DENIED" } }), { status: 403 });
+  });
+  const ev = await handleRequest(
+    req("/v1/events", {
+      method: "POST",
+      headers: { Authorization: "Bearer tok", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event_id: "evt_bare",
+        event_type: "BROADCAST_COMMENT",
+        text: "This is a real comment on the show.",
+        broadcast_id: "bcast1",
+      }),
+    }),
+    ENV,
+  );
+  const posted = await ev.json();
+  assert.equal(posted.ok, true);
+  assert.equal(posted.status, "IGNORED");
+  const me = await handleRequest(req("/v1/me", { headers: { Authorization: "Bearer tok" } }), ENV);
+  const body = await me.json();
+  assert.equal(body.contribution_points, 0);
   setFetchImpl(null);
 });
 

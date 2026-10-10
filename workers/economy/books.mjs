@@ -4,16 +4,35 @@
    Firebase Cloud Monitoring is today's Firestore counts.
    None of these are a bank charge. A charge still comes from billing history. */
 
-/* 29h: the running rate, set from the worker's rate book (economyConfig/fxRates
-   or the live feed) before each snapshot. The number below is only the last
-   resort when no rate book could be read at all. */
-let USD_AED = 3.6725;
+/* 29h: the running rate, set from economyConfig/fxRates or the live feed.
+   Vendor unit prices come from economyConfig/costRates. If neither is
+   loaded, amounts stay empty. Nothing here invents a rate. */
+let USD_AED = 0;
 let RATES = null;
+let READ_USD = null;
+let WRITE_USD = null;
+let DELETE_USD = null;
+let STORAGE_USD = null;
 export function setBookRates(rates) {
   if (!rates || typeof rates !== "object") return;
   const aed = Number(rates.AED);
   if (isFinite(aed) && aed > 0) USD_AED = aed;
   RATES = rates;
+}
+export function setVendorPrices(rates) {
+  if (!rates || typeof rates !== "object") return;
+  function pick(key) {
+    const n = Number(rates[key]);
+    return isFinite(n) && n >= 0 ? n : null;
+  }
+  const read = pick("firestore_read_100k_usd");
+  const write = pick("firestore_write_100k_usd");
+  const del = pick("firestore_delete_100k_usd");
+  const storage = pick("firestore_storage_gb_month_usd");
+  if (read != null) READ_USD = read / 100000;
+  if (write != null) WRITE_USD = write / 100000;
+  if (del != null) DELETE_USD = del / 100000;
+  if (storage != null) STORAGE_USD = storage;
 }
 const CACHE_MS = 3 * 60 * 1000;
 const cache = { at: 0, value: null };
@@ -23,10 +42,6 @@ const READ_CAP = 50000;
 const WRITE_CAP = 20000;
 const DELETE_CAP = 20000;
 const STORAGE_CAP_GB = 1;
-const READ_USD = 0.06 / 100000;
-const WRITE_USD = 0.18 / 100000;
-const DELETE_USD = 0.02 / 100000;
-const STORAGE_USD = 0.18;
 
 const CLASS_A = {
   listbuckets: 1, putbucket: 1, listobjects: 1, listobjectsv2: 1, putobject: 1,
@@ -49,7 +64,10 @@ function round2(n) {
   return Math.round(num(n) * 100) / 100;
 }
 export function usdToAed(usd) {
-  return round2(num(usd) * USD_AED);
+  if (!(USD_AED > 0)) return null;
+  const n = num(usd);
+  if (!isFinite(n)) return null;
+  return round2(n * USD_AED);
 }
 function clip(s, n) {
   s = String(s || "").replace(/\s+/g, " ").trim();
@@ -157,6 +175,7 @@ export function splitSeries(seriesList) {
 }
 
 function overage(qty, cap, usdEach) {
+  if (usdEach == null || !(USD_AED > 0)) return null;
   const extra = Math.max(0, num(qty) - cap);
   return usdToAed(extra * usdEach);
 }
@@ -313,12 +332,14 @@ async function pullHistory(ask, token, account, now) {
       if (!isFinite(raw) || raw === 0) return;
       const currency = String(row.currency || "USD").toUpperCase();
       const per = RATES && Number(RATES[currency]) > 0 ? Number(RATES[currency]) : (currency === "USD" ? 1 : 0);
-      const aed = currency === "AED" ? raw : (per ? (raw / per) * USD_AED : raw * USD_AED);
+      let aed = null;
+      if (currency === "AED") aed = raw;
+      else if (per > 0 && USD_AED > 0) aed = (raw / per) * USD_AED;
       const when = Date.parse(row.occurred_at || row.created_on || row.period || "") || now;
       invoices.push({
         key: "cloudflare",
         vendor: "Cloudflare",
-        amount_aed: round2(aed),
+        amount_aed: aed == null ? null : round2(aed),
         status: "invoiced",
         source: "cloudflare",
         note: row.type || row.action || row.description || "Cloudflare billing history",

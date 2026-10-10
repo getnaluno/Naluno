@@ -25,6 +25,7 @@ import {
   judgeScreenPayload,
   listingFromScreen,
 } from "./screen.mjs";
+import { reachTier, reachLimits, reachDayKey } from "./reach.mjs";
 import {
   scorePublicText,
   scoreBehaviour,
@@ -78,6 +79,7 @@ import {
 import {
   billingSnapshot,
   setBookRates,
+  setVendorPrices,
 } from "./books.mjs";
 import { lookQuery } from "./look.mjs";
 import {
@@ -88,7 +90,7 @@ import {
   cleanBroadcastId,
 } from "./views.mjs";
 import { pbkdf2Sha256Js, WORKER_PBKDF2_MAX } from "./pbkdf2.mjs";
-import { handleWireNotify, handlePushTest } from "./wire-notify.mjs";
+import { handleWireNotify, handlePushTest, handleLockPush } from "./wire-notify.mjs";
 import { handleLgVoice } from "./lg-voice.mjs";
 import {
   callsReady,
@@ -99,7 +101,7 @@ import {
   cfCalls,
 } from "./live.mjs";
 
-export const VERSION = "2.12.0-bands";
+export const VERSION = "2.15.0-reach";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -543,6 +545,95 @@ function scoreEvent(eventType, text) {
     return { points: 0, eligible: 0, status: "PENDING_REVIEW", reason: "short text" };
   }
   return { points: spec.points, eligible: spec.eligible, status: "COUNTED", reason: "ok" };
+}
+
+/* A phone can ask for points. It cannot invent them. The action has to
+   already be in the database, written as that person. */
+function eventDocId(raw) {
+  const id = String(raw || "").replace(/[^A-Za-z0-9_-]/g, "");
+  if (id.length < 4 || id.length > 128) return "";
+  return id;
+}
+async function eventIsReal(env, saToken, user, body) {
+  if (!saToken || !user) return false;
+  const uid = user.uid;
+  const type = String(body.event_type || "");
+  const bid = eventDocId(body.broadcast_id);
+  const tid = eventDocId(body.target_id);
+  if (type === "BROADCAST_COMMENT" || type === "COMMENT_REPLY") {
+    if (!bid || !tid) return false;
+    const col = body.target_type === "question" ? "questions" : "conversation";
+    const doc = await fsGetDoc(env, saToken, "/broadcasts/" + bid + "/" + col + "/" + tid);
+    return !!(doc && String(doc.from || "") === uid);
+  }
+  if (type === "WATCH_COMPLETION") {
+    if (!bid) return false;
+    const doc = await fsGetDoc(env, saToken, "/broadcasts/" + bid + "/viewers/" + uid);
+    return !!(doc && doc.countedBy === "server");
+  }
+  if (type === "CREATOR_FOLLOW") {
+    const creator = eventDocId(body.creator_uid || body.target_id);
+    if (!creator || creator === uid) return false;
+    const doc = await fsGetDoc(env, saToken, "/users/" + creator + "/circle/" + uid);
+    return !!doc;
+  }
+  if (type === "SIGNAL_POST") {
+    if (!tid) return false;
+    const doc = await fsGetDoc(env, saToken, "/signals/" + tid);
+    return !!(doc && String(doc.uid || "") === uid && doc.hidden !== true && doc.held !== true);
+  }
+  if (type === "BROADCAST_SHARE") {
+    if (!bid) return false;
+    const doc = await fsGetDoc(env, saToken, "/broadcasts/" + bid + "/shares/" + uid);
+    return !!(doc && String(doc.from || "") === uid);
+  }
+  return false;
+}
+/* One real action, one score. A new event id must not mint the same
+   comment, view, follow, signal or share again. */
+function proofKey(user, body) {
+  const type = String(body.event_type || "");
+  const uid = String(user && user.uid || "").replace(/[^A-Za-z0-9_-]/g, "");
+  const bid = eventDocId(body.broadcast_id) || "none";
+  const tid = eventDocId(body.target_id) || "none";
+  const creator = eventDocId(body.creator_uid) || "none";
+  let raw = "";
+  if (type === "BROADCAST_COMMENT" || type === "COMMENT_REPLY") raw = type + "_" + uid + "_" + bid + "_" + tid;
+  else if (type === "WATCH_COMPLETION") raw = type + "_" + uid + "_" + bid;
+  else if (type === "CREATOR_FOLLOW") raw = type + "_" + uid + "_" + creator;
+  else if (type === "SIGNAL_POST") raw = type + "_" + uid + "_" + tid;
+  else if (type === "BROADCAST_SHARE") raw = type + "_" + uid + "_" + bid;
+  return raw.slice(0, 700);
+}
+async function claimProof(env, saToken, key) {
+  if (!saToken || !key) return { first: false, known: false };
+  const claim = await fsFetch(
+    env, saToken, "PATCH",
+    "/scoreProof/" + encodeURIComponent(key) + "?currentDocument.exists=false",
+    toFsFields({ key: key, at: Date.now() }),
+  );
+  if (claim.ok) return { first: true, known: false };
+  if (claim.status === 409 || claim.status === 400) return { first: false, known: true };
+  return { first: false, known: false };
+}
+function togaMonthKey(now) {
+  const d = new Date(Number(now) || Date.now());
+  return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
+}
+async function noteToga(env, saToken, row) {
+  if (!saToken || !row || row.status !== "COUNTED") return;
+  const creator = eventDocId(row.creator_uid);
+  if (!creator || creator === row.user_id) return;
+  const month = togaMonthKey(row.ts);
+  const fields = {};
+  if (row.event_type === "CREATOR_FOLLOW") {
+    fields.circleMonth = 1;
+    fields["mc_" + month] = 1;
+  } else if (row.event_type === "BROADCAST_COMMENT" || row.event_type === "COMMENT_REPLY") {
+    fields.engageMonth = 1;
+    fields["me_" + month] = 1;
+  } else return;
+  await fsIncrement(env, saToken, "/toga/" + creator, fields, { monthKey: month, updatedAt: row.ts });
 }
 
 function trustLabelFor(events) {
@@ -1375,9 +1466,20 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
     patch.hidden = true;
   }
   const writeTok = saToken || ((patch.hidden || judged.decision === "block") ? userToken : "");
-  if (writeTok) await fsPutDoc(env, writeTok, "/broadcasts/" + encodeURIComponent(id), patch);
+  let wrote = false;
+  if (writeTok) {
+    const put = await fsPutDoc(env, writeTok, "/broadcasts/" + encodeURIComponent(id), patch);
+    wrote = !!(put && put.ok);
+  }
+  if (wrote && saToken && patch.listed && !row.reachCounted && !row.repostOf && row.mediaUrl && (row.mediaType === "video" || row.kind === "video")) {
+    try {
+      await fsIncrement(env, saToken, "/users/" + encodeURIComponent(row.creatorUid || user.uid), { reachPlaced: 1 }, { updatedAt: Date.now() });
+      await fsPutDoc(env, saToken, "/broadcasts/" + encodeURIComponent(id), { reachCounted: true });
+    } catch (_) {}
+  }
   return json({
     ok: true,
+    wrote: wrote,
     listed: !!patch.listed,
     held: !!patch.held,
     hidden: !!patch.hidden,
@@ -1390,6 +1492,52 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
     safety_case: safetyCase,
     statement: statementFor(safety),
   });
+}
+
+async function claimReach(env, user, saToken, body) {
+  if (!saToken) return json({ ok: false, error: "Reach is not connected yet." }, 503);
+  const profile = await fsGetDoc(env, saToken, "/users/" + encodeURIComponent(user.uid));
+  if (profile && (profile.suspended || profile.restricted)) {
+    return json({ ok: false, error: "This Callsign cannot publish right now." }, 403);
+  }
+  const seconds = Math.round(Number(body && body.seconds) || 0);
+  if (!(seconds > 0)) return json({ ok: false, error: "Could not read the length of that video." }, 400);
+  const now = Date.now();
+  const tier = reachTier(profile, now);
+  const lim = reachLimits(tier);
+  if (seconds > lim.maxSec + 1) {
+    const error = tier === "open"
+      ? "A new Callsign can post a video up to 40 minutes, 3 a day. Four Broadcasts that go out, over two weeks, open the 3-hour room."
+      : "That video is longer than 3 hours";
+    return json({ ok: false, tier, maxSec: lim.maxSec, error }, 403);
+  }
+  const day = reachDayKey(now);
+  const dayPath = "/users/" + encodeURIComponent(user.uid) + "/reachDays/" + day;
+  const name = fsRoot(env).replace("https://firestore.googleapis.com/v1/", "") + dayPath;
+  /* Create the day's counter only if it is missing. A later write must not
+     reset it, or two claims at once could each think they were first. */
+  await fsFetch(env, saToken, "POST", ":commit", {
+    writes: [{
+      update: { name, fields: toFsFields({ n: 0, day, updatedAt: now }).fields },
+      currentDocument: { exists: false },
+    }],
+  });
+  const bumped = await fsIncrement(env, saToken, dayPath, { n: 1 }, { day, updatedAt: now });
+  if (!bumped.ok) return json({ ok: false, error: "Could not check Reach. Try again." }, 503);
+  const after = await fsGetDoc(env, saToken, dayPath);
+  const n = Number(after && after.n) || 0;
+  if (!(n > 0) || n > lim.perDay) {
+    const error = tier === "full"
+      ? "That's 12 videos today. Tomorrow the count starts again."
+      : "That's 3 videos today. Tomorrow the count starts again.";
+    return json({ ok: false, tier, error }, 403);
+  }
+  const passId = day.replace(/-/g, "") + "-" + crypto.randomUUID().slice(0, 8);
+  const put = await fsPutDoc(env, saToken, "/users/" + encodeURIComponent(user.uid) + "/reachPasses/" + passId, {
+    day, seconds, n, tier, at: now, used: false,
+  });
+  if (!put.ok) return json({ ok: false, error: "Could not check Reach. Try again." }, 503);
+  return json({ ok: true, tier, maxSec: lim.maxSec, perDay: lim.perDay, used: n, passId });
 }
 
 async function saAccessTokenScoped(env, scope) {
@@ -3177,6 +3325,10 @@ async function loadBilling(env, saToken) {
       ? saAccessTokenScoped(env, "https://www.googleapis.com/auth/monitoring.read")
       : Promise.resolve("");
     try { setBookRates(await loadRates(env, saToken)); } catch (_) {}
+    try {
+      const costDoc = saToken ? await fsGetDoc(env, saToken, "/economyConfig/costRates") : null;
+      if (costDoc && costDoc.rates) setVendorPrices(costDoc.rates);
+    } catch (_) {}
     billing = await Promise.race([
       billingSnapshot(env, {
         projectId: projectId(env),
@@ -3514,7 +3666,16 @@ export async function handleRequest(request, env = {}, ctx = {}) {
           return json({ ok: true, duplicate: true, event_id: eventId, persist: persistMode(true, ["firestore"]) });
         }
       }
-      const scored = scoreEvent(eventType, body.text);
+      const scored0 = scoreEvent(eventType, body.text);
+      let scored = scored0;
+      if (scored0.status === "COUNTED") {
+        const real = await eventIsReal(env, saToken, user, body);
+        if (!real) scored = { points: 0, eligible: 0, status: "IGNORED", reason: "unproven" };
+        else {
+          const proof = await claimProof(env, saToken, proofKey(user, body));
+          if (proof.known) scored = { points: 0, eligible: 0, status: "IGNORED", reason: "already" };
+        }
+      }
       const row = {
         event_id: eventId,
         ledger_id: "led_" + eventId.replace(/^evt_/, ""),
@@ -3535,6 +3696,7 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         reason: scored.reason,
       };
       const paths = await persistEvent(env, userToken, saToken, row);
+      try { await noteToga(env, saToken, row); } catch (_) {}
       return json({
         ok: true,
         event_id: eventId,
@@ -3566,6 +3728,18 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         "X-Naluno-Voice": out.speaker + (out.cached ? "; cached" : ""),
         "Access-Control-Expose-Headers": "X-Naluno-Voice",
       } });
+    }
+
+    if (path === "/v1/push/lock" && request.method === "POST") {
+      if (!saToken) return json({ ok: false, sent: 0, error: "push not configured" }, 503);
+      const body = await request.json().catch(() => ({}));
+      const out = await handleLockPush(body, user, {
+        getDoc: (p) => fsGetDoc(env, saToken, p),
+        accessToken: (scope) => saAccessTokenScoped(env, scope),
+        fetch: (u, o) => _fetch(u, o),
+        projectId: projectId(env),
+      });
+      return json(out.body, out.status);
     }
 
     if (path === "/v1/push/test" && request.method === "POST") {
@@ -4125,6 +4299,11 @@ export async function handleRequest(request, env = {}, ctx = {}) {
     if (path === "/v1/live/end" && request.method === "POST") {
       const body = await request.json().catch(() => ({}));
       return liveEnd(env, user, saToken, body || {});
+    }
+
+    if (path === "/v1/reach/claim" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      return claimReach(env, user, saToken, body || {});
     }
 
     if (path === "/v1/broadcast/place" && request.method === "POST") {
