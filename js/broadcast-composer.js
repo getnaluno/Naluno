@@ -8,7 +8,7 @@
    ============================================================ */
 
 const BCAST_MAX_SECONDS = 3 * 60 * 60; // 3 hours — one file, chapters are seek marks only
-const BCAST_MAX_OBJECT_BYTES = 8 * 1024 * 1024 * 1024;
+var BCAST_MAX_OBJECT_BYTES = 8 * 1024 * 1024 * 1024; // var: broadcast-upload.js declares it too (see there)
 const BCAST_TARGET_HEIGHT = 1080; // phone-sharp; long clips still scale bitrate down
 
 let bcompFile = null;       // original File

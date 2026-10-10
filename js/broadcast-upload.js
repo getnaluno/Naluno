@@ -5,7 +5,7 @@
    ============================================================ */
 const BROADCAST_UPLOAD_WORKER_URL = 'https://naluno-broadcast-upload.naluno.workers.dev';
 const BCAST_CHUNK_BYTES = 8 * 1024 * 1024; // 8 MiB parts (R2 min 5 MiB except last)
-const BCAST_MAX_OBJECT_BYTES = 8 * 1024 * 1024 * 1024; // joined file, not one request
+var BCAST_MAX_OBJECT_BYTES = 8 * 1024 * 1024 * 1024; // joined file, not one request. var, not const: broadcast-composer.js declares the same limit, and two consts of one name stop the second file loading (Video, Write and Go live then do nothing).
 
 /* FIX (20260826 / bug: "Broadcast videos die after ~a day"):
    Broadcast must NEVER fall back to the Signal upload worker. That worker
