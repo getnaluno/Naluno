@@ -216,11 +216,11 @@ async function nalunoReachClaim(seconds){
     return { blocked: true, error: 'Could not check Reach. Try again when you have a connection.' };
   }
   const data = await r.json().catch(function(){ return {}; });
-  if(r.status === 404 || (r.status === 401 && data && data.error === 'Missing auth token')){
-    return { blocked: true, error: 'Reach is not on the server yet. Publish after the economy worker is updated.' };
+  if(r.status === 403){
+    return { blocked: true, limit: true, error: (data && data.error) || 'This video is past your Reach.' };
   }
   if(!r.ok || !data.ok || !data.passId){
-    return { blocked: true, error: (data && data.error) || 'This video is past your Reach.' };
+    return { blocked: false, passId: '' };
   }
   return { blocked: false, passId: data.passId, tier: data.tier };
 }

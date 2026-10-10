@@ -233,7 +233,17 @@
   /* "+": Go on air. Each choice presses the existing button. */
   function press(id) {
     var el = document.getElementById(id);
-    if (el && typeof el.click === 'function') { el.click(); return true; }
+    if (!el) return false;
+    /* These buttons sit in a hidden row. A synthetic click on a
+       display:none control does nothing on the phone, which is why
+       Video, Write and Go live never opened. Call the handler itself. */
+    try {
+      if (typeof el.onclick === 'function') {
+        el.onclick.call(el, { preventDefault: function () {}, stopPropagation: function () {}, target: el, currentTarget: el });
+        return true;
+      }
+    } catch (_) {}
+    try { if (typeof el.click === 'function') { el.click(); return true; } } catch (_) {}
     return false;
   }
   function openMake() {
@@ -256,7 +266,8 @@
       b.onclick = function () {
         var what = b.getAttribute('data-make');
         closeSheet(el);
-        setTimeout(function () { makeAct(what); }, 60);
+        try { el.setAttribute('hidden', ''); } catch (_) {}
+        makeAct(what);
       };
     });
   }
@@ -273,9 +284,19 @@
       + '<span class="bcast-make-go" aria-hidden="true">›</span></button>';
   }
   function makeAct(what) {
-    if (what === 'video') return press('newBroadcastBtn');
-    if (what === 'write') return press('broadcastWriteBtn');
-    if (what === 'live') return press('broadcastGoLiveBtn');
+    if (what === 'video') {
+      if (typeof bcompOpen === 'function') { try { bcompOpen(); return true; } catch (_) {} }
+      return press('newBroadcastBtn');
+    }
+    if (what === 'write') {
+      if (typeof openWriteEntry === 'function') { try { openWriteEntry(); return true; } catch (_) {} }
+      return press('broadcastWriteBtn');
+    }
+    if (what === 'live') {
+      if (typeof bliveOpen === 'function') { try { bliveOpen(); return true; } catch (_) {} }
+      if (typeof openGoLiveFromSignal === 'function') { try { openGoLiveFromSignal(); return true; } catch (_) {} }
+      return press('broadcastGoLiveBtn');
+    }
     if (what === 'signal') {
       if (typeof openNewSignalComposer === 'function') { try { openNewSignalComposer(); return true; } catch (_) {} }
       return press('newSignalItem') || press('newSignalBtn');

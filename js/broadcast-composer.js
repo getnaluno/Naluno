@@ -89,6 +89,19 @@ async function bcompOwnFile(file){
   }catch(_){}
   return file;
 }
+function bcompShowRights(on){
+  const row = $('bcompRightsRow');
+  const cb = $('bcompRightsAck');
+  if(row) row.style.display = on ? 'flex' : 'none';
+  if(cb && !cb.__wired){
+    cb.__wired = true;
+    cb.onchange = function(){ window._bcompRightsAck = !!cb.checked; };
+  }
+  if(!on){
+    window._bcompRightsAck = false;
+    if(cb) cb.checked = false;
+  }
+}
 function bcompIsApple(){
   try{ return /iPhone|iPad|iPod/i.test(navigator.userAgent || ''); }catch(_){ return false; }
 }
@@ -124,6 +137,7 @@ function bcompReset(opts){
   bcompClearCover();
   window._bcompOrigin = null;
   window._bcompOriginAck = false;
+  window._bcompRightsAck = false;
   window._bcompScreen = null;
   window._bcompScreenP = null;
   /* Show the date box only when "Publish later" is ticked, and default it to
@@ -149,6 +163,10 @@ function bcompReset(opts){
   }
   const fileIn = $('bcompFileInput');
   if(fileIn && !(opts && opts.keepPicker)) fileIn.value = '';
+  const rightsRow = $('bcompRightsRow');
+  if(rightsRow) rightsRow.style.display = 'none';
+  const rightsCb = $('bcompRightsAck');
+  if(rightsCb) rightsCb.checked = false;
   const prog = $('bcompProgress');
   if(prog){ prog.style.display = 'none'; prog.textContent = ''; }
 }
@@ -375,6 +393,7 @@ async function bcompOnFileChosen(file){
   if(isImage){
     bcompKind = 'photo';
     bcompDuration = 0;
+    bcompShowRights(false);
     if(prev) prev.innerHTML = `<img src="${bcompPreviewUrl}" alt="" style="width:100%;max-height:42vh;object-fit:contain;border-radius:14px;background:#000;" />`;
     if(status) status.textContent = 'Photo ready — add a title and publish';
     if(pub){ pub.removeAttribute('disabled'); pub.setAttribute('aria-disabled', 'false'); pub.style.opacity = '1'; pub.textContent = 'Publish Broadcast'; }
@@ -383,6 +402,10 @@ async function bcompOnFileChosen(file){
   }
 
   bcompKind = 'video';
+  window._bcompRightsAck = false;
+  const rightsCbNow = $('bcompRightsAck');
+  if(rightsCbNow) rightsCbNow.checked = false;
+  bcompShowRights(true);
   if(prev){
     prev.innerHTML = `<video src="${bcompPreviewUrl}" controls playsinline style="width:100%;max-height:42vh;border-radius:14px;background:#000;"></video>`;
   }
@@ -456,7 +479,6 @@ async function bcompKickOriginScan(){
       : Promise.resolve(null);
     try{
       window._bcompOriginAck = false;
-      window._bcompRightsAck = false;
       window._bcompOrigin = await runOriginScan(bcompFile, titleNow, desc, bcompDuration || 0);
       bcompPaintOrigin(window._bcompOrigin);
     }catch(e){
@@ -591,9 +613,11 @@ async function bcompPublish(){
   }
   const needsRights = bcompKind === 'video' || (window._bcompOrigin && window._bcompOrigin.hasAudio);
   if(needsRights && !window._bcompRightsAck){
+    bcompShowRights(true);
     bcompPublishing = false;
-    bcompPaintOrigin(window._bcompOrigin);
-    toast('Confirm you have the rights to the sound in this upload.');
+    const row = $('bcompRightsRow');
+    try{ if(row && row.scrollIntoView) row.scrollIntoView({ block: 'center' }); }catch(_){}
+    toast('Tick the rights box under the video. It stays on this sheet — Origin does not have to finish first.');
     return;
   }
   const needsAck = (typeof originNeedsAck === 'function')
@@ -661,8 +685,8 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
   let snapReachSeconds = 0;
   if(snapKind === 'video'){
     snapReachSeconds = Math.max(1, Math.round(snapDuration || 0));
-    const claim = (typeof nalunoReachClaim === 'function') ? await nalunoReachClaim(snapReachSeconds) : { blocked: true, error: 'Reach is not loaded' };
-    if(!claim || claim.blocked){
+    const claim = (typeof nalunoReachClaim === 'function') ? await nalunoReachClaim(snapReachSeconds) : { blocked: false, passId: '' };
+    if(claim && claim.blocked && claim.limit){
       bcompPublishing = false;
       toast((claim && claim.error) || 'This video is past your Reach.');
       return;
@@ -1346,10 +1370,7 @@ function bcompPaintOrigin(report){
   }).join('');
   const ack = (needsAck
     ? '<label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-size:13px;line-height:1.4;"><input type="checkbox" id="bcompOriginAck" /> This is my work, a licensed use, or a clearly marked cover.</label>'
-    : '')
-    + ((report.hasAudio || report.kind === 'video' || report.kind === 'audio')
-      ? '<label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-size:13px;line-height:1.4;"><input type="checkbox" id="bcompRightsAck" /> I have the rights or permission for the music and other material in this upload. This does not mean Naluno has checked that claim.</label>'
-      : '');
+    : '');
   box.innerHTML = '<div style="font-family:var(--font-futuristic);font-size:13px;margin-bottom:4px;">' + label +
     ' · ' + (report.score || 0) + '</div><div style="font-size:12.5px;color:var(--text-dim);line-height:1.45;">' + action + '</div>' + viewOriginalBtn + meters + hits + ack;
   const cb = $('bcompOriginAck');

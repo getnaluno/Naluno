@@ -32,4 +32,10 @@ assert.ok(up.includes('const MAX_BYTES = 95 * 1024 * 1024'), 'one request stays 
 assert.ok(read('js/broadcast-composer.js').includes('That video is larger than 8 GB') && read('js/broadcast-composer.js').includes('3 * 60 * 60'), 'Broadcast refuses over 8 GB or 3 hours');
 assert.ok(rules.includes('function reachPassOk(broadcastId)') && rules.includes('reachPasses'), 'a stored video needs a Reach pass');
 assert.ok(read('workers/economy/handler.mjs').includes('"/v1/reach/claim"'), 'the economy worker issues the pass');
+const composer = read('js/broadcast-composer.js');
+assert.ok(composer.includes('bcompRightsRow') && composer.includes('bcompShowRights(true)'), 'the rights box is on the video sheet, not only after Origin');
+assert.ok(composer.includes('claim.blocked && claim.limit'), 'Reach blocks a video only when the desk or the daily cap says no');
+const core = read('js/broadcast-core.js');
+assert.ok(core.includes('if(r.status === 403)') && core.includes("return { blocked: false, passId: '' }"), 'a missed Reach check does not stop the upload');
+assert.ok(read('app/index.html').includes('id="bcompRightsRow"') && read('app/index.html').includes('id="bcompPrivate"'), 'rights and private are both on the sheet');
 console.log('fixes-1010a tests passed');

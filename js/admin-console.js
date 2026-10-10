@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261010c';
+  const BUILD = '20261010d';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -6146,7 +6146,7 @@
     if (typeof uploadBroadcastFile === 'function') return Promise.resolve();
     return new Promise(function (resolve, reject) {
       const s = document.createElement('script');
-      s.src = '/js/broadcast-upload.js?v=20261010b';
+      s.src = '/js/broadcast-upload.js?v=20261010d';
       s.onload = function () { resolve(); };
       s.onerror = function () { reject(new Error('Upload helper did not load')); };
       document.head.appendChild(s);
