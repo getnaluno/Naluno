@@ -834,7 +834,11 @@ function nalunoMarkCallLive(){
   }catch(_){}
   try{ if(window.nalunoPip && nalunoPip.arm) nalunoPip.arm(); }catch(_){}
   try{ nalunoApplyEarpiece(); }catch(_){}
-  try{ nalunoBoostRemoteAudio(remoteCombinedStream); }catch(_){}
+  try{
+    const v = document.getElementById('remoteVideo');
+    if(v) nalunoHearRemote(v);
+  }catch(_){}
+  try{ nalunoTuneCallAudio(typeof peerConnection !== 'undefined' ? peerConnection : null); }catch(_){}
   if(nalunoIsVoiceCall()){ try{ nalunoApplyEarpiece(); }catch(_){} }
   try{ const eb = document.querySelector('#incall .call-info-pill .eyebrow'); if(eb) eb.textContent = 'Connected'; }catch(_){}
   callSeconds = 0;
@@ -939,66 +943,25 @@ function nalunoDropRemoteBoost(){
   try{ b.gain.disconnect(); }catch(_){}
   try{ if(b.comp) b.comp.disconnect(); }catch(_){}
 }
-function nalunoBoostRemoteAudio(stream){
-  const srcStream = stream || (typeof remoteCombinedStream !== 'undefined' ? remoteCombinedStream : null);
-  if(!srcStream || !srcStream.getAudioTracks || !srcStream.getAudioTracks().length) return false;
-  if(typeof nalunoEarpiece !== 'undefined' && nalunoEarpiece) return false;
-  const ctx = (typeof ensureAudioContext === 'function') ? ensureAudioContext() : null;
-  if(!ctx) return false;
-  try{ if(ctx.state === 'suspended') ctx.resume(); }catch(_){}
-  try{
-    if(nalunoRemoteBoost && nalunoRemoteBoost.stream === srcStream){
-      window.__nalunoRemoteBoosted = true;
-      return true;
-    }
-    nalunoDropRemoteBoost();
-    const src = ctx.createMediaStreamSource(srcStream);
-    const gain = ctx.createGain();
-    /* The element volume cannot go past 1, and a phone call is still quiet
-       there. This is the extra level, with a limiter so it does not crackle. */
-    gain.gain.value = 2.8;
-    const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -16;
-    comp.knee.value = 8;
-    comp.ratio.value = 4;
-    comp.attack.value = 0.003;
-    comp.release.value = 0.16;
-    src.connect(gain);
-    gain.connect(comp);
-    comp.connect(ctx.destination);
-    nalunoRemoteBoost = { src: src, gain: gain, comp: comp, stream: srcStream };
-    window.__nalunoRemoteBoosted = true;
-    return true;
-  }catch(_){
-    window.__nalunoRemoteBoosted = false;
-    return false;
-  }
+function nalunoBoostRemoteAudio(){
+  /* One voice only. A second copy through Web Audio arrived a split
+     second later and was what the call sounded like twice. The element
+     plays the received voice; the phone's own echo control can hear it. */
+  try{ nalunoDropRemoteBoost(); }catch(_){}
+  window.__nalunoRemoteBoosted = false;
+  return false;
 }
 function nalunoHearRemote(videoEl){
   if(!videoEl) return;
+  try{ nalunoDropRemoteBoost(); }catch(_){}
   try{ videoEl.volume = 1; }catch(_){}
-  /* Earpiece uses the call stream itself. The boost plays through the media
-     stream, which would stay on the loudspeaker. */
-  if(typeof nalunoEarpiece !== 'undefined' && nalunoEarpiece){
-    nalunoDropRemoteBoost();
-    try{ videoEl.muted = false; }catch(_){}
-    return;
-  }
-  const boosted = nalunoBoostRemoteAudio(videoEl.srcObject);
-  const ctx = (typeof sharedAudioCtx !== 'undefined') ? sharedAudioCtx : null;
-  const running = !!(ctx && ctx.state === 'running');
-  try{ videoEl.muted = !!(boosted && running); }catch(_){}
-  if(boosted && ctx && !running && !videoEl._nalunoBoostWait){
-    videoEl._nalunoBoostWait = true;
-    const on = function(){
-      if(ctx.state !== 'running') return;
-      videoEl._nalunoBoostWait = false;
-      try{ ctx.removeEventListener('statechange', on); }catch(_){}
-      if(typeof nalunoEarpiece !== 'undefined' && nalunoEarpiece) return;
-      try{ videoEl.muted = true; }catch(_){}
-    };
-    try{ ctx.addEventListener('statechange', on); }catch(_){}
-  }
+  const unmute = function(){ try{ videoEl.muted = false; }catch(_){} };
+  if(!videoEl.paused){ unmute(); return; }
+  try{ videoEl.muted = true; }catch(_){}
+  let p = null;
+  try{ p = videoEl.play(); }catch(_){}
+  if(p && p.then) p.then(unmute).catch(function(){});
+  else unmute();
 }
 function bindRemoteVideoElement(stream, forceRebind){
   const videoEl = document.getElementById('remoteVideo');
@@ -1105,14 +1068,21 @@ function ingestRemoteTrack(track, streams){
     return t.readyState === 'live';
   }).length;
 
+  const extraVoice = function(t){
+    if(!t || t.kind !== 'audio') return false;
+    if(remoteCombinedStream.getTracks().indexOf(t) !== -1) return false;
+    return remoteCombinedStream.getAudioTracks().some(function(a){ return a !== t && a.readyState === 'live'; });
+  };
+
   // Prefer whole remote stream when browser supplies it
   if(streams && streams[0]){
     streams[0].getTracks().forEach(function(t){
+      if(extraVoice(t)) return;
       if(remoteCombinedStream.getTracks().indexOf(t) === -1){
         remoteCombinedStream.addTrack(t);
       }
     });
-  } else if(remoteCombinedStream.getTracks().indexOf(track) === -1){
+  } else if(!extraVoice(track) && remoteCombinedStream.getTracks().indexOf(track) === -1){
     remoteCombinedStream.addTrack(track);
   }
 
@@ -1320,7 +1290,7 @@ async function ensureCallMediaReady(){
   if(!okA){
     try{
       const a = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true },
+        audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount: 1, latency: { ideal: 0 } },
         video: false
       });
       if(late(a)) return false;
@@ -1391,6 +1361,54 @@ function nalunoWaitForTurn(maxMs){
 }
 window.nalunoCfgHasTurn = nalunoCfgHasTurn;
 window.nalunoWaitForTurn = nalunoWaitForTurn;
+
+/* The offer used to be written the instant setLocalDescription returned,
+   which is often only the phone's own address. The other phone then sat
+   on Connecting until a later candidate arrived. Wait a short beat for a
+   real network path, and send that. */
+async function nalunoSdpReady(pc, maxMs){
+  const cap = (typeof maxMs === 'number' && maxMs >= 0) ? maxMs : 450;
+  const t0 = Date.now();
+  try{
+    while(pc && pc.signalingState !== 'closed' && pc.iceGatheringState !== 'complete' && (Date.now() - t0) < cap){
+      const sdp = (pc.localDescription && pc.localDescription.sdp) || '';
+      if(/typ srflx|typ relay/.test(sdp)) break;
+      await new Promise(function(r){ setTimeout(r, 40); });
+    }
+  }catch(_){}
+  try{
+    const d = pc && pc.localDescription;
+    if(d && d.type && d.sdp) return { type: d.type, sdp: d.sdp };
+  }catch(_){}
+  return null;
+}
+function nalunoTuneCallAudio(pc){
+  if(!pc || typeof pc.getSenders !== 'function') return;
+  try{
+    pc.getSenders().forEach(function(sender){
+      if(!sender || !sender.track || sender.track.kind !== 'audio' || typeof sender.getParameters !== 'function') return;
+      let params = {};
+      try{ params = sender.getParameters() || {}; }catch(_){ return; }
+      if(!params.encodings || !params.encodings.length) params.encodings = [{}];
+      params.encodings[0].priority = 'high';
+      params.encodings[0].networkPriority = 'high';
+      params.encodings[0].maxBitrate = 48000;
+      try{
+        const done = sender.setParameters(params);
+        if(done && done.catch) done.catch(function(){});
+      }catch(_){}
+    });
+  }catch(_){}
+  try{
+    (pc.getReceivers() || []).forEach(function(rx){
+      if(!rx || !rx.track || rx.track.kind !== 'audio') return;
+      try{ rx.playoutDelayHint = 0; }catch(_){}
+      try{ rx.jitterBufferTarget = 0; }catch(_){}
+    });
+  }catch(_){}
+}
+window.nalunoSdpReady = nalunoSdpReady;
+window.nalunoTuneCallAudio = nalunoTuneCallAudio;
 
 async function createPeerConnection(){
   try{
@@ -1472,6 +1490,7 @@ async function createPeerConnection(){
       if(typeof trackMetric === 'function') trackMetric('call_ontrack', { kind: e.track && e.track.kind });
     }catch(_){}
     ingestRemoteTrack(e.track, e.streams);
+    if(e.track && e.track.kind === 'audio'){ try{ nalunoTuneCallAudio(pc); }catch(_){} }
   };
 
   pc.onicegatheringstatechange = function(){
@@ -1515,10 +1534,13 @@ async function attachLocalTracksToPc(pc){
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
+          channelCount: 1,
+          latency: { ideal: 0 },
         }).catch(function(){});
       }
     }catch(_){}
     pc.addTrack(t, stream);
+    try{ nalunoTuneCallAudio(pc); }catch(_){}
   }
 
   _callRawVideoTrack = videoTracks[0] || _callRawVideoTrack;
@@ -2471,7 +2493,7 @@ async function nalunoOpenMic(){
   const gen = (typeof nalunoCamGen !== 'undefined') ? nalunoCamGen : 0;
   if(stream){ try{ stream.getTracks().forEach(function(t){ t.stop(); }); }catch(_){} stream = null; }
   const got = await navigator.mediaDevices.getUserMedia({
-    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1, latency: { ideal: 0 } },
     video: false,
   });
   if(typeof nalunoCamGen !== 'undefined' && nalunoCamGen !== gen){
@@ -2789,7 +2811,7 @@ async function startRealCallInner(c){
   // If mic was denied or missing, try a quick audio-only reopen so remote isn't silent
   if(!stream.getAudioTracks().some(t => t.readyState === 'live')){
     try{
-      const a = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:true, noiseSuppression:true }, video: false });
+      const a = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount: 1, latency: { ideal: 0 } }, video: false });
       if(gone() || !stream){ try{ a.getTracks().forEach(t => t.stop()); }catch(_){} return false; }
       a.getAudioTracks().forEach(t => stream.addTrack(t));
     }catch(e){ console.warn('[call] could not add audio track', e); }
@@ -2843,13 +2865,15 @@ async function startRealCallInner(c){
   if(gone()){ dropPc(); return false; }
   await pc.setLocalDescription(offer);
   if(gone()){ dropPc(); return false; }
+  const offerSdp = await nalunoSdpReady(pc, 450) || { type: offer.type, sdp: offer.sdp };
+  if(gone()){ dropPc(); return false; }
 
   await callRef.set({
     callerUid: currentUser.uid,
     calleeUid: c.firebaseUid,
     status: 'ringing',
     kind: voice ? 'audio' : 'video',
-    offer: { type: offer.type, sdp: offer.sdp },
+    offer: offerSdp,
     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
     callerName: (currentProfile && currentProfile.name) || 'Someone',
     callerColor: (currentProfile && currentProfile.color) || '#7CFFB2',
@@ -3219,7 +3243,9 @@ async function nalunoPrepareAnswer(callId, offer, camReady){
     if(!still()){ nalunoDropPrepared(); return; }
     await pc.setLocalDescription(answer);
     if(!still()){ nalunoDropPrepared(); return; }
-    prep.answer = { type: answer.type, sdp: answer.sdp };
+    const answerNow = await nalunoSdpReady(pc, 450) || { type: answer.type, sdp: answer.sdp };
+    if(!still()){ nalunoDropPrepared(); return; }
+    prep.answer = answerNow;
     prep.ready = true;
   }catch(e){
     console.warn('[call] answer could not be prepared early; Answer will build it', e && e.message);
@@ -3406,7 +3432,9 @@ $('acceptIncoming').onclick = async (ev)=>{
     // setLocalDescription without waiting for full ICE gather — trickle candidates via onicecandidate
     await answerPc.setLocalDescription(answer);
     guard();
-    await callRef.update({ answer: { type: answer.type, sdp: answer.sdp } });
+    const answerSdp = await nalunoSdpReady(answerPc, 450) || { type: answer.type, sdp: answer.sdp };
+    guard();
+    await callRef.update({ answer: answerSdp });
     guard();
     pendingIncomingOffer = null;
     // Nudge remote media as soon as ICE may complete

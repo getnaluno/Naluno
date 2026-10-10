@@ -6,7 +6,7 @@
    ============================================================ */
 /* ---------------- PWA INSTALL + CALL NOTIFICATION DEEP-LINK ---------------- */
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js?v=20261010d', { scope: '/', updateViaCache: 'none' })
+  navigator.serviceWorker.register('/sw.js?v=20261010f', { scope: '/', updateViaCache: 'none' })
     .then(function(reg){ try{ reg.update(); }catch(_){} })
     .catch(function(e){ console.warn('[sw]', e); });
   // One automatic reload when a new SW takes control (clears stuck "sign-in not ready"
@@ -47,6 +47,11 @@ if('serviceWorker' in navigator){
       if(!hadController) return;
       /* The banner handles its own update (it waits for this takeover). */
       try{ const b = document.getElementById('updateBannerBtn'); if(b && b.disabled) return; }catch(_){}
+      try{
+        if(typeof nalunoShowUpdateBanner === 'function'){ nalunoShowUpdateBanner(); return; }
+        const el = document.getElementById('updateBanner');
+        if(el){ el.style.display = 'flex'; return; }
+      }catch(_){}
       reloadWhenFree();
     });
   }catch(_){}

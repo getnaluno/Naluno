@@ -255,14 +255,55 @@ function nalunoApplyOrientationClass(){
    has shipped, and it surfaces an unmissable banner rather than trying to be invisible
    about it — the person taps it whenever's actually convenient for them. */
 const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || '';
+const NALUNO_BUILD = (document.querySelector('meta[name="naluno-build"]') || {}).content || '';
+function nalunoStampKey(v){
+  const s = String(v || '').trim();
+  const dotted = s.match(/^(\d{4})\.(\d{2})\.(\d{2})([a-z])$/);
+  if(dotted) return dotted[1] + dotted[2] + dotted[3] + dotted[4];
+  const compact = s.match(/^(\d{8}[a-z])$/);
+  return compact ? compact[1] : s;
+}
+function nalunoReadAppVersion(html){
+  const clean = String(html || '').replace(/<!--[\s\S]*?-->/g, '');
+  const m = clean.match(/<meta name="app-version" content="([^"]+)">/);
+  return m ? m[1] : '';
+}
+function nalunoReadBuild(swText){
+  const m = String(swText || '').match(/^const APP_BUILD = '(\d{8}[a-z])'/m);
+  return m ? m[1] : '';
+}
+function nalunoUpdateDue(running, live){
+  running = running || {};
+  live = live || {};
+  const app = nalunoStampKey(running.app);
+  const build = nalunoStampKey(running.build);
+  const liveApp = nalunoStampKey(live.app);
+  const liveBuild = nalunoStampKey(live.build);
+  if(liveApp && app && liveApp !== app) return true;
+  if(liveBuild && build && liveBuild !== build) return true;
+  if(liveBuild && !build) return true;
+  return false;
+}
+function nalunoShowUpdateBanner(){
+  try{
+    const el = document.getElementById('updateBanner');
+    if(el) el.style.display = 'flex';
+  }catch(_){}
+}
 async function checkForUpdate(){
   try{
-    const res = await fetch('./index.html?_=' + Date.now(), { cache:'no-store' });
-    const html = await res.text();
-    const match = html.match(/<meta name="app-version" content="([^"]+)">/);
-    if(match && APP_VERSION && match[1] !== APP_VERSION){
-      $('updateBanner').style.display = 'flex';
-    }
+    const running = { app: APP_VERSION, build: NALUNO_BUILD };
+    let liveApp = '';
+    let liveBuild = '';
+    try{
+      const res = await fetch('./index.html?_=' + Date.now(), { cache:'no-store' });
+      if(res && res.ok) liveApp = nalunoReadAppVersion(await res.text());
+    }catch(_){}
+    try{
+      const res = await fetch('/sw.js?_=' + Date.now(), { cache:'no-store' });
+      if(res && res.ok) liveBuild = nalunoReadBuild(await res.text());
+    }catch(_){}
+    if(nalunoUpdateDue(running, { app: liveApp, build: liveBuild })) nalunoShowUpdateBanner();
   }catch(e){ /* offline or blocked — just try again on the next interval */ }
 }
 /* 29h — one reload per update. The banner reloaded straight away, before
@@ -321,6 +362,8 @@ async function nalunoUpdateNow(){
   nalunoReloadOnce(true);
 }
 window.nalunoReloadOnce = nalunoReloadOnce;
+window.nalunoShowUpdateBanner = nalunoShowUpdateBanner;
+window.nalunoUpdateDue = nalunoUpdateDue;
 $('updateBannerBtn').onclick = function(){ nalunoUpdateNow(); };
 setInterval(checkForUpdate, 3*60*1000);
 document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) checkForUpdate(); });
