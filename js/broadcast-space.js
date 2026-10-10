@@ -2362,26 +2362,41 @@ function renderBspaceImpact(){
       circleSnap.forEach(function(d){ circleRows.push(d.id); });
     }
     const communityN = circleRows.length || members.length;
-    const answered = qs.docs.filter(d => (d.data().answers && d.data().answers.length) || d.data().bestAnswer).length;
-    const realConvCount = conv.docs.filter(d => {
+    const convDocs = bspaceDocCache.conversation || conv.docs;
+    const qsDocs = bspaceDocCache.questions || qs.docs;
+    const resDocs = bspaceDocCache.results || res.docs;
+    const resourceDocs = bspaceDocCache.resources || resources.docs;
+    const answered = qsDocs.filter(d => (d.data().answers && d.data().answers.length) || d.data().bestAnswer).length;
+    const realConvCount = convDocs.filter(d => {
       const t = d.data().type;
       return t !== 'system' && t !== 'live';
     }).length;
-    bspaceDocCache.conversation = conv.docs;
-    bspaceDocCache.questions = qs.docs;
-    bspaceDocCache.results = res.docs;
-    bspaceDocCache.resources = resources.docs;
-    try{ renderBspaceConversation(conv.docs); }catch(_){}
-    try{ renderBspaceQuestions(qs.docs); }catch(_){}
-    try{ renderBspaceResults(res.docs); }catch(_){}
-    try{ renderBspaceResources(resources.docs); }catch(_){}
+    /* The live listeners already paint conversation, questions, results and
+       resources. A slower one-shot read must not replace that list — that
+       was a comment appearing and then vanishing. */
+    if(!bspaceDocCache.conversation){
+      bspaceDocCache.conversation = conv.docs;
+      try{ renderBspaceConversation(conv.docs); }catch(_){}
+    }
+    if(!bspaceDocCache.questions){
+      bspaceDocCache.questions = qs.docs;
+      try{ renderBspaceQuestions(qs.docs); }catch(_){}
+    }
+    if(!bspaceDocCache.results){
+      bspaceDocCache.results = res.docs;
+      try{ renderBspaceResults(res.docs); }catch(_){}
+    }
+    if(!bspaceDocCache.resources){
+      bspaceDocCache.resources = resources.docs;
+      try{ renderBspaceResources(resources.docs); }catch(_){}
+    }
     const cells = [
       ['Community', communityN, 'community'],
       ['Conversations', realConvCount, 'conversation'],
-      ['Questions', qs.size, 'questions'],
+      ['Questions', qsDocs.length, 'questions'],
       ['Answered', answered, 'questions'],
-      ['Results', res.size, 'results'],
-      ['Resources', resources.size, 'resources'],
+      ['Results', resDocs.length, 'results'],
+      ['Resources', resourceDocs.length, 'resources'],
     ];
     grid.innerHTML = cells.map(function(cell){
       const label = cell[0];

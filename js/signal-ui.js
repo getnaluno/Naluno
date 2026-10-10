@@ -190,8 +190,15 @@ function rankBroadcastEntries(entries){
 let bcastActiveView = 'foryou';
 
 function renderScheduledDock(){
-  const dock = document.getElementById('bcastScheduleDock');
-  if(!dock) return;
+  const external = document.getElementById('bcastScheduleDock');
+  const drawer = document.getElementById('bcastPrivateDrawer');
+  const open = !!(drawer && !drawer.hasAttribute('hidden'));
+  if(external){
+    external.hidden = true;
+    external.innerHTML = '';
+  }
+  if(!open || !drawer) return;
+  const dock = drawer;
   const mine = (typeof myBroadcasts !== 'undefined' && myBroadcasts) ? myBroadcasts : [];
   const rows = mine.filter(function(b){
     if(!b || b.deleted) return false;
@@ -200,11 +207,9 @@ function renderScheduledDock(){
     return scheduled || priv;
   });
   if(!rows.length){
-    dock.hidden = true;
-    dock.innerHTML = '';
+    dock.innerHTML = '<p class="lobby-sub" style="margin:8px 0 4px;text-align:left;max-width:none;">Nothing is private. Mark one before it goes out, and it stays off the public feed.</p>';
     return;
   }
-  dock.hidden = false;
   const esc = typeof escapeHtml === 'function' ? escapeHtml : function(s){ return String(s == null ? '' : s); };
   dock.innerHTML = '<div class="section-label signal-head-label">Before it goes out <span>scheduled and private · not on the public feed</span></div>'
     + rows.map(function(b){
@@ -455,8 +460,11 @@ function renderBroadcastTab(){
     const feedList = (typeof feedBroadcasts !== 'undefined' && feedBroadcasts) ? feedBroadcasts : [];
     const mineList = (typeof myBroadcasts !== 'undefined' && myBroadcasts) ? myBroadcasts : [];
     let list = (bcastActiveView === 'mine' ? mineList : feedList).slice().filter(function(b){
-      /* Scheduled and private live in the dock above the swipe, not in the
-         public plates. Held and taken-down still show on My Broadcasts. */
+      if(!b || b.deleted) return false;
+      /* My Broadcasts keeps private and scheduled. They used to be removed
+         from this grid and only drawn in a dock the next paint hid, so a
+         private Broadcast appeared and then was gone. For You stays public. */
+      if(bcastActiveView === 'mine') return true;
       if(typeof broadcastIsScheduled === 'function' && broadcastIsScheduled(b)) return false;
       if(typeof broadcastIsPrivate === 'function' && broadcastIsPrivate(b)) return false;
       return true;
@@ -1030,57 +1038,7 @@ function nalunoRenderPrivateDrawer(){
     btn.setAttribute('aria-expanded', open ? 'true' : 'false');
   }
   if(!open){ box.innerHTML = ''; return; }
-  /* 07c: the "Before it goes out" list (scheduled and private, with Edit,
-     Save and Publish now) is shown here, under Private broadcasts, instead
-     of on For You. */
   try{ renderScheduledDock(); }catch(_){}
-  const dockEl = document.getElementById('bcastScheduleDock');
-  if(dockEl && !dockEl.hidden){
-    box.innerHTML = '<p class="lobby-sub" style="margin:8px 0 2px;text-align:left;max-width:none;">Only you see these. Tap a title to open it, or Edit to schedule or publish.</p>';
-    return;
-  }
-  const mine = (typeof myBroadcasts !== 'undefined' && myBroadcasts) ? myBroadcasts : [];
-  const rows = mine.filter(function(b){
-    return b && !b.deleted && typeof broadcastIsPrivate === 'function' && broadcastIsPrivate(b);
-  });
-  const esc = typeof escapeHtml === 'function' ? escapeHtml : function(s){ return String(s == null ? '' : s); };
-  if(!rows.length){
-    box.innerHTML = '<p class="lobby-sub" style="margin:8px 0 4px;text-align:left;max-width:none;">Nothing is private. Mark one before it goes out, and it stays off the public feed.</p>';
-    return;
-  }
-  /* A small preview, like Saved Broadcasts. This drawer is built only from
-     your own Broadcasts (myBroadcasts), so only you ever see it. */
-  const res = function(u){ try{ return (u && typeof resolveMediaUrl === 'function') ? (resolveMediaUrl(u) || u) : (u || ''); }catch(_){ return u || ''; } };
-  const isVid = function(u){ return /\.(mp4|webm|mov|m4v|m3u8)(\?|$)/i.test(String(u || '')); };
-  const when = function(b){
-    const t = Number(b.publishAt) > Date.now() ? Number(b.publishAt) : Number(b.createdAt && b.createdAt.toMillis ? b.createdAt.toMillis() : b.createdAt);
-    if(!t) return '';
-    try{ return new Date(t).toLocaleDateString(undefined, { day:'numeric', month:'short' }); }catch(_){ return ''; }
-  };
-  box.innerHTML = rows.map(function(b){
-    const writing = (typeof broadcastIsWriting === 'function') ? broadcastIsWriting(b) : (b.mediaType === 'writing');
-    let img = '';
-    if(writing) img = (typeof broadcastCoverUrl === 'function') ? broadcastCoverUrl(b) : '';
-    else if(b.thumbUrl && !isVid(b.thumbUrl) && !(typeof nalunoThumbLooksDead === 'function' && nalunoThumbLooksDead(b.thumbUrl))) img = b.thumbUrl;
-    else if(b.mediaType === 'photo' && b.mediaUrl && !isVid(b.mediaUrl)) img = b.mediaUrl;
-    const kind = writing ? 'Writing' : (b.mediaType === 'photo' ? 'Photo' : (b.live ? 'Live' : 'Video'));
-    let thumb;
-    const glyph = kind === 'Video' ? '&#9654;' : esc(kind.slice(0,1));
-    if(img) thumb = '<img class="dl-thumb" src="'+esc(res(img))+'" alt="" loading="lazy" onerror="this.outerHTML=\'<div class=&quot;dl-thumb bcast-private-tile&quot;>'+glyph.replace(/&/g,'&amp;')+'</div>\'" />';
-    else if(writing){
-      const words = String(b.body || b.description || b.title || '').replace(/\s+/g, ' ').trim().slice(0, 60);
-      thumb = '<div class="dl-thumb bcast-private-tile is-text">'+esc(words || 'Aa')+'</div>';
-    } else thumb = '<div class="dl-thumb bcast-private-tile">'+(kind === 'Video' ? '&#9654;' : esc(kind.slice(0,1)))+'</div>';
-    const bits = [kind, when(b), 'Only you'].filter(Boolean).join(' · ');
-    return '<button type="button" class="bcast-private-row dl-row" data-private="'+esc(b.id)+'">'+thumb
-      +'<span class="dl-info"><span class="dl-title">'+esc(b.title || 'Broadcast')+'</span><span class="dl-meta">'+esc(bits)+'</span></span></button>';
-  }).join('');
-  box.querySelectorAll('[data-private]').forEach(function(row){
-    row.onclick = function(){
-      const id = row.getAttribute('data-private');
-      if(id && typeof openBroadcastById === 'function') openBroadcastById(id);
-    };
-  });
 }
 function nalunoTogglePrivateDrawer(){
   const box = document.getElementById('bcastPrivateDrawer');

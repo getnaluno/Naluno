@@ -123,6 +123,12 @@ function broadcastThumbHtml(b){
     inner = `<div class="bcast-plate-fallback">${escapeHtml((b.creatorName || '?').slice(0,1).toUpperCase())}</div>`;
   }
   const live = b.live ? `<span class="bcast-plate-live"><i class="bcast-live-dot"></i>LIVE</span>${photo ? '' : '<span class="bcast-live-wait">Live now · tap to join</span>'}` : '';
+  const privMark = (b.visibility === 'private')
+    ? '<span class="bcast-plate-priv" style="position:absolute;top:8px;right:8px;z-index:3;font-family:var(--font-mono);font-size:9px;letter-spacing:.06em;background:rgba(124,77,255,.22);color:#d7ccff;padding:3px 8px;border-radius:999px;">Private</span>'
+    : '';
+  const schedMark = (!privMark && typeof broadcastIsScheduled === 'function' && broadcastIsScheduled(b))
+    ? '<span class="bcast-plate-priv" style="position:absolute;top:8px;right:8px;z-index:3;font-family:var(--font-mono);font-size:9px;letter-spacing:.06em;background:rgba(255,194,102,.2);color:#ffc266;padding:3px 8px;border-radius:999px;">Scheduled</span>'
+    : '';
   const writeMark = writing && cover && !b.live && typeof nalunoPlateGlance !== 'function' ? `<span class="bcast-plate-live" style="background:rgba(124,255,178,.16);color:var(--mint);border-color:rgba(124,255,178,.4);">Writing</span>` : '';
   const hold = (!b.live && b.held) ? `<span class="bcast-plate-live" style="background:rgba(255,194,102,.2);color:#ffc266;border-color:rgba(255,194,102,.4);">Waiting</span>` : '';
   const down = (!b.live && b.hidden) ? `<span class="bcast-plate-live" style="background:rgba(255,84,112,.18);color:#ff8a9a;border-color:rgba(255,84,112,.4);">Taken down</span>` : '';
@@ -151,6 +157,8 @@ function broadcastThumbHtml(b){
     <div class="bcast-plate-frame">
       ${inner}
       ${live}
+      ${privMark}
+      ${schedMark}
       ${writeMark}
       ${hold}
       ${down}
@@ -505,6 +513,14 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
   if(broadcastIsPublic(full)){
     feedBroadcasts = [full, ...feedBroadcasts.filter(x => x.id !== ref.id)].slice(0, 80);
   }
+  if((full.visibility === 'private') || (typeof broadcastIsScheduled === 'function' && broadcastIsScheduled(full))){
+    try{
+      if(typeof nalunoSetBcastView === 'function') nalunoSetBcastView('mine', false);
+      const box = document.getElementById('bcastPrivateDrawer');
+      if(box && box.hasAttribute('hidden')) box.removeAttribute('hidden');
+      if(typeof nalunoRenderPrivateDrawer === 'function') nalunoRenderPrivateDrawer();
+    }catch(_){}
+  }
   if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
   if(full.hidden && placed && placed.screen === 'block'){
     try{ toast('This cannot go out.'); }catch(_){}
@@ -746,9 +762,20 @@ function startMyBroadcastsListener(){
     myBroadcastsUnsub = fbDb.collection('broadcasts')
       .where('creatorUid', '==', currentUser.uid)
       .onSnapshot(snap => {
-        myBroadcasts = snap.docs
+        const incoming = snap.docs
           .map(d => ({ id: d.id, ...d.data() }))
-          .filter(b => !b.deleted)
+          .filter(b => !b.deleted);
+        const byId = {};
+        incoming.forEach(function(b){ if(b && b.id) byId[b.id] = b; });
+        /* A private Broadcast just saved on this phone can be missing from
+           the first cached snapshot. Keep it until the server copy arrives
+           instead of letting the list blink it away. */
+        (myBroadcasts || []).forEach(function(b){
+          if(!b || !b.id || byId[b.id]) return;
+          const at = Number(b.createdAt) || 0;
+          if(at && (Date.now() - at) < 25000) byId[b.id] = b;
+        });
+        myBroadcasts = Object.keys(byId).map(function(k){ return byId[k]; })
           .sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
         if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
       }, err => console.warn('[bcast] my listener', err));
@@ -1139,6 +1166,8 @@ async function openBroadcastChannel(key){
       const snap = await fbDb.collection('broadcasts').where('creatorUid', '==', uid).limit(40).get();
       snap.docs.forEach(function(doc){
         const row = Object.assign({ id: doc.id }, doc.data());
+        if(row.deleted) return;
+        if(typeof broadcastIsPublic === 'function' && !broadcastIsPublic(row)) return;
         if(typeof feedBroadcasts !== 'undefined' && feedBroadcasts && !feedBroadcasts.some(function(b){ return b.id === row.id; })){
           feedBroadcasts.push(row);
         }

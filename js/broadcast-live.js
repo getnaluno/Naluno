@@ -27,6 +27,15 @@ let bLiveViewerCountUnsub = null;
 let bLiveReactionUnsub = null;
 let bLivePendingHostIce = [];
 let bLiveViewerRemoteSet = false;
+let bLiveHostPreview = {};
+let bLiveFlashed = {};
+let bLiveFeedPc = null;
+let bLiveFeedBid = '';
+let bLiveFeedUnsubs = [];
+let bLiveFeedStream = null;
+let bLiveFeedGen = 0;
+let bLiveFeedTimer = null;
+let bLiveFeedStarting = null;
 
 function bLiveSessionRef(bcastId, viewerUid){
   return fbDb.collection('broadcasts').doc(bcastId).collection('liveSessions').doc(viewerUid);
@@ -49,6 +58,8 @@ function bLiveCleanupHost(){
   bLiveHostUnsubs.forEach(u=>{ try{ u(); }catch(_){} });
   bLiveHostUnsubs = [];
   bLiveHost = false;
+  bLiveHostPreview = {};
+  bLiveFlashed = {};
   bLiveUpdateViewerChrome(0);
 }
 
@@ -86,34 +97,27 @@ function bLiveUpdateViewerChrome(n){
 }
 
 async function bLiveEnsureIce(){
-  // FIX: IceCore.now() never attempts a network fetch — it only returns real
-  // TURN servers if one was already cached from an earlier, separate call,
-  // which prewarmIceServers() (fired-and-forgotten immediately before this)
-  // has no realistic time to complete before this runs. That silently meant
-  // STUN-only almost every time, which fails outright on most real mobile
-  // networks. This actually waits (with a real but bounded budget) for TURN
-  // credentials before building the peer connection.
+  // Cached TURN if this phone already has it (calls keep it warm). Never
+  // block the offer on a fresh credential fetch — that wait is what made a
+  // viewer sit on "Connecting…" while the host had not sent an answer yet.
+  try{ if(typeof prewarmIceServers === 'function') prewarmIceServers(); }catch(_){}
   try{
-    if(typeof IceCore !== 'undefined' && IceCore.getPatient) return await IceCore.getPatient();
+    if(typeof IceCore !== 'undefined' && IceCore.now) return IceCore.now();
   }catch(_){}
-  if(typeof getIceServers === 'function') return getIceServers();
-  return { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+  return { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }], iceCandidatePoolSize: 4, bundlePolicy: 'max-bundle', rtcpMuxPolicy: 'require' };
+}
+
+function bLiveRoomCount(){
+  return Object.keys(bLiveHostPcs).filter(function(uid){ return !bLiveHostPreview[uid]; }).length;
 }
 
 /* ---------------- HOST: accept viewer offers ---------------- */
 async function bLiveStartHost(stream){
   if(!fbDb || !currentUser || !activeBroadcastId || !stream) return;
   bLiveCleanupHost();
-  if(typeof sfuPublishLive === 'function'){
-    try{
-      const handle = await sfuPublishLive({ stream: stream, broadcastId: activeBroadcastId });
-      if(handle){
-        window.__nalunoSfuLiveHandle = handle;
-        bLiveHost = true;
-        return;
-      }
-    }catch(_){}
-  }
+  // Mesh starts immediately. A larger room that is not connected must not
+  // sit in front of this — viewers were waiting on that round trip before
+  // the host even listened for them.
   bLiveHost = true;
   if(typeof prewarmIceServers === 'function') prewarmIceServers();
 
@@ -147,43 +151,70 @@ async function bLiveStartHost(stream){
       if(n) await batch.commit().catch(function(){});
     }catch(_){}
   })();
-  const unsub = col.onSnapshot(async snap => {
-    for(const change of snap.docChanges()){
+  const unsub = col.onSnapshot(function(snap){
+    snap.docChanges().forEach(function(change){
       if(change.type === 'removed'){
         const uid = change.doc.id;
         if(bLiveHostPcs[uid]){
           try{ bLiveHostPcs[uid].close(); }catch(_){}
           delete bLiveHostPcs[uid];
         }
-        bLiveUpdateViewerChrome(Object.keys(bLiveHostPcs).length);
-        continue;
+        delete bLiveHostPreview[uid];
+        delete bLiveFlashed[uid];
+        bLiveUpdateViewerChrome(bLiveRoomCount());
+        return;
       }
-      if(change.type !== 'added' && change.type !== 'modified') continue;
+      if(change.type !== 'added' && change.type !== 'modified') return;
       const uid = change.doc.id;
-      if(uid === currentUser.uid) continue;
+      if(uid === currentUser.uid) return;
       const data = change.doc.data() || {};
-      if(!data.offer || data.answer) continue; // wait for offer; skip if already answered
-      if(data.ts && (Date.now() - data.ts) > 180000) continue;
+      if(data.preview) bLiveHostPreview[uid] = 1;
+      else delete bLiveHostPreview[uid];
+      const entering = !data.preview && data.offer && !bLiveFlashed[uid];
+      function flashJoin(){
+        if(!entering) return;
+        bLiveFlashed[uid] = 1;
+        bLiveFlashJoinName(data.name || 'Someone');
+        try{ toast((data.name || 'Someone') + ' joined live'); }catch(_){}
+      }
+      // Already answered: this is someone stepping in from the silent feed,
+      // or a second write. Flash them. Do not negotiate again.
+      if(!data.offer || data.answer){
+        flashJoin();
+        return;
+      }
+      if(data.ts && (Date.now() - data.ts) > 180000) return;
       if(bLiveHostPcs[uid]){
         const st = bLiveHostPcs[uid].connectionState;
-        if(st && st !== 'failed' && st !== 'closed' && st !== 'disconnected') continue;
+        if(st && st !== 'failed' && st !== 'closed' && st !== 'disconnected') return;
         try{ bLiveHostPcs[uid].close(); }catch(_){}
         delete bLiveHostPcs[uid];
       }
       if(Object.keys(bLiveHostPcs).length >= bLiveEffectiveMaxViewers()){
-        change.doc.ref.set({ rejected: true, reason: 'full' }, { merge: true }).catch(()=>{});
-        continue;
+        if(!data.preview){
+          const victim = Object.keys(bLiveHostPreview).find(function(id){ return bLiveHostPcs[id]; });
+          if(victim){
+            try{ bLiveHostPcs[victim].close(); }catch(_){}
+            delete bLiveHostPcs[victim];
+            delete bLiveHostPreview[victim];
+            try{ change.doc.ref.parent.doc(victim).set({ rejected: true, reason: 'full' }, { merge: true }).catch(function(){}); }catch(_){}
+          }
+        }
+        if(Object.keys(bLiveHostPcs).length >= bLiveEffectiveMaxViewers()){
+          change.doc.ref.set({ rejected: true, reason: 'full' }, { merge: true }).catch(function(){});
+          return;
+        }
       }
-      try{
-        await bLiveHostAcceptViewer(uid, data, stream);
-      }catch(e){
+      flashJoin();
+      bLiveHostPcs[uid] = { connectionState: 'new', close: function(){} };
+      bLiveHostAcceptViewer(uid, data, stream).catch(function(e){
         console.warn('[bcast-live] host accept failed', e);
         try{
           if(bLiveHostPcs[uid]){ bLiveHostPcs[uid].close(); delete bLiveHostPcs[uid]; }
         }catch(_){}
-      }
-    }
-    bLiveUpdateViewerChrome(Object.keys(bLiveHostPcs).length);
+      });
+    });
+    bLiveUpdateViewerChrome(bLiveRoomCount());
   }, err => console.warn('[bcast-live] host listen', err));
   bLiveHostUnsubs.push(unsub);
 
@@ -216,7 +247,12 @@ function bLiveFlashJoinName(name){
 }
 
 async function bLiveHostAcceptViewer(viewerUid, data, stream){
-  const pc = new RTCPeerConnection(await bLiveEnsureIce());
+  const cfg = await bLiveEnsureIce();
+  if(!bLiveHost){
+    if(bLiveHostPcs[viewerUid] && !bLiveHostPcs[viewerUid].setRemoteDescription) delete bLiveHostPcs[viewerUid];
+    return;
+  }
+  const pc = new RTCPeerConnection(cfg);
   bLiveHostPcs[viewerUid] = pc;
 
   const ref = bLiveSessionRef(activeBroadcastId, viewerUid);
@@ -229,14 +265,14 @@ async function bLiveHostAcceptViewer(viewerUid, data, stream){
   pc.onconnectionstatechange = () => {
     if(pc.connectionState === 'failed' || pc.connectionState === 'closed'){
       try{ pc.close(); }catch(_){}
-      delete bLiveHostPcs[viewerUid];
+      if(bLiveHostPcs[viewerUid] === pc) delete bLiveHostPcs[viewerUid];
       // LOCK (bug 3.3): drop this viewer's ICE listener on disconnect so multi-hour
       // hosts do not accumulate one permanent onSnapshot per departed viewer.
       if(iceUnsub){
         try{ iceUnsub(); }catch(_){}
         iceUnsub = null;
       }
-      bLiveUpdateViewerChrome(Object.keys(bLiveHostPcs).length);
+      bLiveUpdateViewerChrome(bLiveRoomCount());
     }
   };
 
@@ -287,13 +323,6 @@ async function bLiveHostAcceptViewer(viewerUid, data, stream){
     answeredAt: Date.now(),
   }, { merge: true });
 
-  // Name flash for a few seconds when someone joins
-  try{
-    const who = (data && data.name) || 'Someone';
-    bLiveFlashJoinName(who);
-    toast(who + ' joined live');
-  }catch(_){}
-
   // Pull viewer ICE
   iceUnsub = ref.collection('viewerIce').onSnapshot(snap => {
     snap.docChanges().forEach(ch => {
@@ -321,32 +350,15 @@ async function bLiveStopHost(){
 async function bLiveJoinAsViewer(){
   if(!fbDb || !currentUser || !activeBroadcastId){ toast('Open a live Broadcast first'); return; }
   if(bLiveHost){ toast('You’re already the host'); return; }
-  if(bLiveViewerPc || window.__nalunoSfuLiveHandle) return;
-
-  if(typeof sfuJoinLive === 'function'){
-    const host = $('bspaceMedia');
-    if(host && !$('bspaceViewerLiveVideo')){
-      host.innerHTML = '<video id="bspaceViewerLiveVideo" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;background:#000;"></video>';
-    }
-    try{
-      const handle = await sfuJoinLive({
-        broadcastId: activeBroadcastId,
-        videoEl: $('bspaceViewerLiveVideo'),
-      });
-      if(handle){
-        window.__nalunoSfuLiveHandle = handle;
-        try{
-          await bLiveSessionRef(activeBroadcastId, currentUser.uid).set({
-            from: currentUser.uid,
-            sfu: true,
-            at: Date.now(),
-          }, { merge: true });
-        }catch(_){}
-        toast('You’re in the live room');
-        return;
-      }
-    }catch(_){}
+  if(bLiveFeedStarting && bLiveFeedBid === activeBroadcastId){
+    try{ await bLiveFeedStarting; }catch(_){}
   }
+  if(bLiveFeedPc && bLiveFeedBid === activeBroadcastId){
+    bLiveAdoptFeed();
+    return;
+  }
+  if(bLiveFeedPc || bLiveFeedBid) bLiveStopFeed();
+  if(bLiveViewerPc || window.__nalunoSfuLiveHandle) return;
 
   if(typeof prewarmIceServers === 'function') prewarmIceServers();
   toast('Joining live…');
@@ -555,15 +567,262 @@ async function bLiveLeaveViewer(){
 
 function bLiveWatchViewerCount(bcastId){
   if(bLiveViewerCountUnsub){ try{ bLiveViewerCountUnsub(); }catch(_){} }
+  let primed = false;
   bLiveViewerCountUnsub = fbDb.collection('broadcasts').doc(bcastId).collection('liveSessions')
     .onSnapshot(snap => {
-      bLiveUpdateViewerChrome(snap.size);
+      let n = 0;
+      snap.docs.forEach(function(d){
+        const data = d.data() || {};
+        if(!data.preview) n++;
+      });
+      bLiveUpdateViewerChrome(n);
+      if(!primed){
+        primed = true;
+        snap.docs.forEach(function(d){
+          if(!(d.data() || {}).preview) bLiveFlashed[d.id] = 1;
+        });
+        return;
+      }
+      snap.docChanges().forEach(function(ch){
+        if(ch.type === 'removed'){
+          delete bLiveFlashed[ch.doc.id];
+          return;
+        }
+        const data = ch.doc.data() || {};
+        const uid = ch.doc.id;
+        if(data.preview || bLiveFlashed[uid]) return;
+        if(currentUser && uid === currentUser.uid) return;
+        bLiveFlashed[uid] = 1;
+        bLiveFlashJoinName(data.name || 'Someone');
+      });
     }, ()=>{});
+}
+
+function bLiveFeedAllowed(){
+  if(typeof document === 'undefined' || document.hidden) return false;
+  const tab = document.getElementById('tab-broadcast');
+  if(!tab || !tab.classList.contains('active')) return false;
+  const space = document.getElementById('bspace');
+  if(space && space.classList.contains('active')) return false;
+  if(bLiveViewerPc || bLiveHost) return false;
+  return true;
+}
+function bLiveFeedOnScreen(plate){
+  if(!plate || !plate.isConnected) return false;
+  const r = plate.getBoundingClientRect();
+  const h = window.innerHeight || 800;
+  const w = window.innerWidth || 400;
+  return r.width > 2 && r.height > 2 && r.bottom > h * 0.08 && r.top < h * 0.92 && r.right > 0 && r.left < w;
+}
+function bLiveFeedMount(plate){
+  const frame = plate && plate.querySelector('.bcast-plate-frame');
+  if(!frame) return;
+  let v = frame.querySelector('video.bcast-live-silent');
+  if(!v){
+    v = document.createElement('video');
+    v.className = 'bcast-live-silent';
+    v.muted = true;
+    v.autoplay = true;
+    v.playsInline = true;
+    v.setAttribute('playsinline', '');
+    v.setAttribute('muted', '');
+    frame.appendChild(v);
+  }
+  v.muted = true;
+  try{ v.volume = 0; }catch(_){}
+  const ready = bLiveFeedStream && bLiveFeedStream.getVideoTracks && bLiveFeedStream.getVideoTracks().some(function(t){ return t && t.readyState !== 'ended'; });
+  if(!ready){
+    v.style.opacity = '0';
+    return;
+  }
+  v.style.opacity = '1';
+  try{ v.srcObject = bLiveFeedStream; }catch(_){}
+  try{ v.play().catch(function(){}); }catch(_){}
+}
+function bLiveStopFeed(){
+  bLiveFeedGen++;
+  bLiveFeedStarting = null;
+  bLiveFeedUnsubs.forEach(function(u){ try{ u(); }catch(_){} });
+  bLiveFeedUnsubs = [];
+  if(bLiveFeedPc){ try{ bLiveFeedPc.close(); }catch(_){} bLiveFeedPc = null; }
+  const bid = bLiveFeedBid;
+  bLiveFeedBid = '';
+  bLiveFeedStream = null;
+  if(bid && fbDb && currentUser && !bLiveViewerPc){
+    try{ bLiveSessionRef(bid, currentUser.uid).delete().catch(function(){}); }catch(_){}
+  }
+}
+function bLiveAdoptFeed(){
+  if(!bLiveFeedPc || !activeBroadcastId || bLiveFeedBid !== activeBroadcastId) return false;
+  const pc = bLiveFeedPc;
+  const remote = bLiveFeedStream || new MediaStream();
+  bLiveViewerPc = pc;
+  bLiveViewerUnsubs = bLiveFeedUnsubs;
+  bLiveFeedPc = null;
+  bLiveFeedUnsubs = [];
+  bLiveFeedBid = '';
+  bLiveFeedStream = null;
+  bLiveFeedStarting = null;
+  const host = $('bspaceMedia');
+  if(host){
+    host.innerHTML = '';
+    try{ if(getComputedStyle(host).position === 'static') host.style.position = 'relative'; }catch(_){}
+    const v = document.createElement('video');
+    v.id = 'bspaceViewerLiveVideo';
+    v.autoplay = true;
+    v.playsInline = true;
+    v.muted = true;
+    v.setAttribute('playsinline', '');
+    v.style.cssText = 'width:100%;height:100%;object-fit:cover;background:#000;';
+    host.appendChild(v);
+    try{ v.srcObject = remote; }catch(_){}
+    const unmute = function(){ try{ v.muted = false; }catch(_){} };
+    try{
+      const p = v.play();
+      if(p && p.then) p.then(function(){ setTimeout(unmute, 300); }).catch(function(){ try{ v.muted = true; v.play().catch(function(){}); }catch(_){} });
+      else setTimeout(unmute, 300);
+    }catch(_){ setTimeout(unmute, 300); }
+    v.onclick = function(){ try{ v.play().then(unmute).catch(function(){}); }catch(_){} };
+  }
+  try{
+    bLiveSessionRef(activeBroadcastId, currentUser.uid).set({ preview: false }, { merge: true }).catch(function(){});
+  }catch(_){}
+  bLiveWatchReactions(activeBroadcastId);
+  bLiveWatchViewerCount(activeBroadcastId);
+  const leaveBtn = $('bspaceJoinLiveBtn');
+  if(leaveBtn){
+    leaveBtn.textContent = 'Leave live';
+    leaveBtn.onclick = function(){ bLiveLeaveViewer(); };
+  }
+  const hint = $('bspaceReactionJoinHint');
+  if(hint){ hint.textContent = 'Leave live'; hint.onclick = function(){ bLiveLeaveViewer(); }; }
+  const badge = $('bspaceLiveBadge');
+  if(badge){ badge.style.display = 'block'; badge.textContent = 'Live now'; }
+  try{
+    const connecting = document.getElementById('bspaceLiveConnecting');
+    if(connecting) connecting.remove();
+  }catch(_){}
+  return true;
+}
+function bLiveStartFeed(bid, plate){
+  if(!bid || !plate || !fbDb || !currentUser) return;
+  if(!bLiveFeedAllowed()) return;
+  if(plate.getAttribute('data-creator-uid') === currentUser.uid) return;
+  if(bLiveFeedPc && bLiveFeedBid === bid){
+    bLiveFeedMount(plate);
+    return;
+  }
+  bLiveStopFeed();
+  const gen = bLiveFeedGen;
+  bLiveFeedBid = bid;
+  bLiveFeedMount(plate);
+  const run = (async function(){
+    if(typeof prewarmIceServers === 'function') prewarmIceServers();
+    const pc = new RTCPeerConnection(await bLiveEnsureIce());
+    if(gen !== bLiveFeedGen){ try{ pc.close(); }catch(_){} return; }
+    bLiveFeedPc = pc;
+    const remote = new MediaStream();
+    bLiveFeedStream = remote;
+    pc.ontrack = function(e){
+      try{
+        if(e.streams && e.streams[0]){
+          e.streams[0].getTracks().forEach(function(t){
+            if(!remote.getTracks().some(function(x){ return x.id === t.id; })) remote.addTrack(t);
+          });
+        } else if(e.track && !remote.getTracks().some(function(x){ return x.id === e.track.id; })){
+          remote.addTrack(e.track);
+        }
+      }catch(_){}
+      const again = document.querySelector('#tab-broadcast .bcast-plate[data-live="1"][data-broadcast-id="' + bid + '"]');
+      if(again) bLiveFeedMount(again);
+    };
+    try{
+      pc.addTransceiver('video', { direction: 'recvonly' });
+      pc.addTransceiver('audio', { direction: 'recvonly' });
+    }catch(_){}
+    const ref = bLiveSessionRef(bid, currentUser.uid);
+    pc.onicecandidate = function(e){
+      if(!e.candidate) return;
+      ref.collection('viewerIce').add(e.candidate.toJSON()).catch(function(){});
+    };
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    if(gen !== bLiveFeedGen || bLiveViewerPc){
+      try{ pc.close(); }catch(_){}
+      if(bLiveFeedPc === pc) bLiveFeedPc = null;
+      return;
+    }
+    await ref.set({
+      offer: { type: offer.type, sdp: offer.sdp },
+      from: currentUser.uid,
+      name: (currentProfile && currentProfile.name) || 'Viewer',
+      preview: true,
+      ts: Date.now(),
+    });
+    let remoteSet = false;
+    const pending = [];
+    const unsub = ref.onSnapshot(async function(snap){
+      if(!snap.exists || gen !== bLiveFeedGen) return;
+      const d = snap.data() || {};
+      if(d.rejected){ bLiveStopFeed(); return; }
+      if(d.answer && !remoteSet){
+        try{
+          await pc.setRemoteDescription(new RTCSessionDescription(d.answer));
+          remoteSet = true;
+          pending.forEach(function(cand){ pc.addIceCandidate(new RTCIceCandidate(cand)).catch(function(){}); });
+          pending.length = 0;
+        }catch(_){}
+      }
+    });
+    const iceUnsub = ref.collection('hostIce').onSnapshot(function(snap){
+      snap.docChanges().forEach(function(ch){
+        if(ch.type !== 'added') return;
+        const cand = ch.doc.data();
+        if(remoteSet) pc.addIceCandidate(new RTCIceCandidate(cand)).catch(function(){});
+        else pending.push(cand);
+      });
+    });
+    bLiveFeedUnsubs.push(unsub, iceUnsub);
+  })();
+  bLiveFeedStarting = run.catch(function(){
+    if(gen === bLiveFeedGen) bLiveStopFeed();
+  });
+}
+function bLiveSyncFeedNow(){
+  if(!bLiveFeedAllowed()){
+    if(bLiveFeedPc || bLiveFeedBid) bLiveStopFeed();
+    return;
+  }
+  let best = null;
+  let bestTop = 1e9;
+  document.querySelectorAll('#tab-broadcast .bcast-plate[data-live="1"]').forEach(function(p){
+    if(!bLiveFeedOnScreen(p)) return;
+    if(currentUser && p.getAttribute('data-creator-uid') === currentUser.uid) return;
+    const top = Math.abs(p.getBoundingClientRect().top);
+    if(top < bestTop){ best = p; bestTop = top; }
+  });
+  if(!best){
+    if(bLiveFeedPc || bLiveFeedBid) bLiveStopFeed();
+    return;
+  }
+  bLiveStartFeed(best.getAttribute('data-broadcast-id'), best);
+}
+function bLiveSyncFeed(){
+  if(bLiveFeedPc && bLiveFeedBid && bLiveFeedAllowed()){
+    const plate = document.querySelector('#tab-broadcast .bcast-plate[data-live="1"][data-broadcast-id="' + bLiveFeedBid + '"]');
+    if(plate && bLiveFeedOnScreen(plate)){
+      bLiveFeedMount(plate);
+      return;
+    }
+  }
+  if(bLiveFeedTimer) clearTimeout(bLiveFeedTimer);
+  bLiveFeedTimer = setTimeout(function(){ bLiveFeedTimer = null; bLiveSyncFeedNow(); }, 280);
 }
 
 /* ---------------- Reactions (wow) ---------------- */
 function bLiveWatchReactions(bcastId){
-  if(bLiveReactionUnsub){ try{ bLiveReactionUnsub(); }catch(_){} }
+  if(!bcastId || !fbDb) return;
+  if(bLiveReactionUnsub){ try{ bLiveReactionUnsub(); }catch(_){} bLiveReactionUnsub = null; }
   const layer = $('bspaceReactionLayer') || (function(){
     const hero = $('bspaceHero');
     if(!hero) return null;
@@ -573,16 +832,26 @@ function bLiveWatchReactions(bcastId){
     hero.appendChild(d);
     return d;
   })();
-
-  bLiveReactionUnsub = fbDb.collection('broadcasts').doc(bcastId).collection('liveReactions')
-    .orderBy('ts', 'desc').limit(15)
-    .onSnapshot(snap => {
+  let triedPlain = false;
+  function arm(ordered){
+    const col = fbDb.collection('broadcasts').doc(bcastId).collection('liveReactions');
+    const q = ordered ? col.orderBy('ts', 'desc').limit(15) : col.limit(15);
+    bLiveReactionUnsub = q.onSnapshot(snap => {
       snap.docChanges().forEach(ch => {
         if(ch.type !== 'added') return;
         const emoji = (ch.doc.data() || {}).emoji || '✨';
         bLiveSpawnReaction(emoji);
       });
-    }, ()=>{});
+    }, function(){
+      try{ if(bLiveReactionUnsub) bLiveReactionUnsub(); }catch(_){}
+      bLiveReactionUnsub = null;
+      if(ordered && !triedPlain){
+        triedPlain = true;
+        arm(false);
+      }
+    });
+  }
+  arm(true);
 }
 
 function bLiveSpawnReaction(emoji){
@@ -705,15 +974,18 @@ async function bLiveOnHostStopped(){
 function bLiveOnSpaceOpened(isLive, isCreator){
   bLiveEnsureReactionBar();
   bLiveEnsureJoinBanner();
+  if(isLive && activeBroadcastId){
+    try{ bLiveWatchReactions(activeBroadcastId); }catch(_){}
+  }
   if(isLive && !isCreator){
     bLiveShowJoinUi(true);
     if(activeBroadcastId) bLiveWatchViewerCount(activeBroadcastId);
     const badge = $('bspaceLiveBadge');
-    // 29g: the Broadcast repaints while the live is already on screen; it
-    // used to put "joining" back over a picture that was playing.
     const watching = !!(bLiveViewerPc || window.__nalunoSfuLiveHandle);
     if(badge){ badge.style.display = 'block'; badge.textContent = watching ? 'Live now' : 'Live now — joining'; }
-    if(!bLiveViewerPc && !window.__nalunoSfuLiveHandle){
+    if(bLiveFeedPc && bLiveFeedBid === activeBroadcastId){
+      bLiveAdoptFeed();
+    } else if(!bLiveViewerPc && !window.__nalunoSfuLiveHandle){
       setTimeout(function(){
         try{
           if(activeBroadcastId && !bLiveViewerPc && !window.__nalunoSfuLiveHandle && !bLiveHost) bLiveJoinAsViewer();
@@ -734,6 +1006,7 @@ function bLiveOnSpaceOpened(isLive, isCreator){
 function bLiveOnSpaceClosed(){
   if(bLiveHost) bLiveStopHost();
   bLiveLeaveViewer();
+  bLiveFlashed = {};
   if(bLiveViewerCountUnsub){ try{ bLiveViewerCountUnsub(); }catch(_){} bLiveViewerCountUnsub = null; }
   if(bLiveReactionUnsub){ try{ bLiveReactionUnsub(); }catch(_){} bLiveReactionUnsub = null; }
   const bar = $('bspaceReactionBar');
@@ -745,6 +1018,7 @@ function bLiveOnSpaceClosed(){
   if(document.getElementById('bLiveStyle')) return;
   const s = document.createElement('style');
   s.id = 'bLiveStyle';
-  s.textContent = `@keyframes bLiveFloat{0%{transform:translateY(0) scale(1);opacity:0}15%{opacity:1}100%{transform:translateY(-120px) scale(1.3);opacity:0}}`;
+  s.textContent = `@keyframes bLiveFloat{0%{transform:translateY(0) scale(1);opacity:0}15%{opacity:1}100%{transform:translateY(-120px) scale(1.3);opacity:0}}
+video.bcast-live-silent{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:2;background:transparent;pointer-events:none;}`;
   document.head.appendChild(s);
 })();

@@ -124,6 +124,7 @@
       const p = follow[bid].plate;
       if (!p.isConnected || !feedShowing() || !onScreen(p)) unwatch(bid);
     });
+    try{ if (typeof bLiveSyncFeed === 'function') bLiveSyncFeed(); }catch (_){}
     if (!feedShowing()) return;
     document.querySelectorAll('#tab-broadcast .bcast-plate[data-live="1"]').forEach(function (p) {
       if (onScreen(p)) watch(p);

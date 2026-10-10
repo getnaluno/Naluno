@@ -59,9 +59,10 @@ assert.ok(fs.existsSync(path.join(root, 'voices/lg/male.mp3')) && fs.existsSync(
 
   /* 5. Stamps */
   const html = read('app/index.html');
-  ['lg-ear.js', 'naluno-voices.js', 'broadcast-space.js', 'camera.js'].forEach((f) => assert.ok(html.includes('/js/' + f + '?v=20261010a'), f + ' stamp'));
+  ['lg-ear.js', 'naluno-voices.js', 'camera.js'].forEach((f) => assert.ok(html.includes('/js/' + f + '?v=20261010a'), f + ' stamp'));
+  assert.ok(html.includes('/js/broadcast-space.js?v=20261010g'), 'broadcast-space stamp');
   assert.ok(html.includes('/js/broadcast-glance.js?v=20261010d'), 'glance stamp');
-  assert.ok(html.includes('/js/pwa.js?v=20261010f'), 'pwa.js stamp');
-  assert.ok(read('sw.js').includes("APP_BUILD = '20261010f'") && read('js/pwa.js').includes('/sw.js?v=20261010f'));
+  assert.ok(html.includes('/js/pwa.js?v=20261010g'), 'pwa.js stamp');
+  assert.ok(read('sw.js').includes("APP_BUILD = '20261010g'") && read('js/pwa.js').includes('/sw.js?v=20261010g'));
   console.log('fixes-1009b tests passed');
 })().catch((e) => { console.error(e); process.exit(1); });
