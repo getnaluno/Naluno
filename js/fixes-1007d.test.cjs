@@ -17,8 +17,9 @@ assert.ok(rules.includes('THE RULE OF BANDS'), 'the rule is written down where i
 assert.ok(rules.includes('it is DELETED: not archived, not\n       hidden for later, not kept anywhere.'), 'deleted, not archived');
 assert.ok(rules.includes('function bandClockHonest()'), 'clock rule exists');
 assert.ok(rules.includes("allow update: if isSignedIn() && bandClockHonest() && ("), 'every Band update, the creator\'s too, keeps the clock honest');
-assert.ok(rules.includes(".hasOnly(['memberUids', 'lastEmptiedAt', 'messageEpoch', 'aliveAt', 'bellAt', 'bellBy'])"), 'members may stamp aliveAt');
-assert.ok(rules.includes('allow read: if isSignedIn() && bandOpenNow() && (epochMs() == 0 || msgMs() >= epochMs());'), 'messages unreadable once the two hours ran out');
+assert.ok(rules.includes(".hasOnly(['memberUids', 'lastEmptiedAt', 'messageEpoch', 'aliveAt', 'bellAt', 'bellBy', 'linkJoin'])"), 'members may stamp aliveAt');
+assert.ok(rules.includes('allow read: if isSignedIn() && bandOpenNow() && (epochMs() == 0 || msgMs() >= epochMs())'), 'messages unreadable once the two hours ran out');
+assert.ok(rules.includes('request.auth.uid in bandData().memberUids'), 'Band messages are members only');
 assert.ok(rules.includes("request.time > bandAliveDeadline(d)") && rules.includes("d.aliveAt + duration.value(2, 'h')"), 'two hours, on the server clock');
 assert.ok(rules.includes("|| bandIsDead(bandData())))") || rules.includes('|| bandIsDead(bandData()))'), 'members may delete a finished conversation');
 assert.ok(rules.includes("(!('aliveAt' in request.resource.data) || request.resource.data.aliveAt == request.time)"), 'a new Band cannot start with a clock in the future');
@@ -139,7 +140,8 @@ assert.ok(sw.indexOf("url.pathname === '/b/drop'") < sw.indexOf("const authHeade
 assert.ok(/if \(!same\) return json\(\{ error: 'Forbidden' \}, 403, origin\);/.test(sw), 'no key, no delete');
 assert.ok(sw.includes("!/^u\\/[A-Za-z0-9_-]{6,128}\\/[A-Za-z0-9._-]{1,120}$/.test(key)"), 'only per-person upload keys');
 const bundle = read('naluno-economy-worker.js');
-assert.ok(bundle.includes('var VERSION = "2.12.0-bands";') && bundle.includes('async scheduled(event, env, ctx)') && bundle.includes('"/v1/bands/sweep"'), 'the one-file worker carries the sweep');
+const workerVer = (read('workers/economy/handler.mjs').match(/export const VERSION = "([^"]+)"/) || [])[1];
+assert.ok(workerVer && bundle.includes('var VERSION = "' + workerVer + '";') && bundle.includes('async scheduled(event, env, ctx)') && bundle.includes('"/v1/bands/sweep"'), 'the one-file worker carries the sweep');
 assert.ok(read('workers/economy/wrangler.toml').includes('crons = ["*/10 * * * *"]'), 'every 10 minutes');
 
 /* ---------- 4. Find Naluno: Where was I? ---------- */

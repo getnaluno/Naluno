@@ -133,52 +133,12 @@
     return out;
   }
 
-  function bumpTogaMonth(creatorUid, patch){
-    if(!fbDb || !creatorUid) return Promise.resolve();
-    return fbDb.collection('toga').doc(creatorUid)
-      .set(togaMonthIncrements(patch || {}), { merge: true })
-      .catch(function(){});
+  function bumpTogaMonth(){
+    return Promise.resolve();
   }
 
-  async function recordBroadcastView(broadcastId, creatorUid){
-    if(!fbDb || !broadcastId) return;
-    if(currentUser && creatorUid && currentUser.uid === creatorUid) return;
-    const key = broadcastId + ':' + ((currentUser && currentUser.uid) || 'anon');
-    if(viewedLocal[key]) return;
-    viewedLocal[key] = true;
-    if(!currentUser) return;
-    try{
-      const viewerRef = fbDb.collection('broadcasts').doc(broadcastId).collection('viewers').doc(currentUser.uid);
-      const snap = await viewerRef.get();
-      if(snap.exists) return;
-      await viewerRef.set({ ts: Date.now() });
-      // FIX (data-integrity risk found while investigating the view-count
-      // mismatch report): "This Broadcast" (broadcasts/{id}.views) and "All
-      // of yours" (toga/{creator}.viewsTotal) used to be written as two
-      // separate, non-atomic Firestore calls, with a whole extra async step
-      // (bumpTogaMonth's own transaction) in between them. Anything
-      // interrupting execution between those two writes — navigating away,
-      // losing connection, the tab closing — could leave one incremented
-      // and the other not, a real, permanent mismatch between the two
-      // numbers, not just a display timing issue. Batched so both the
-      // broadcast's own view count and the creator's aggregate total commit
-      // together or not at all.
-      const batch = fbDb.batch();
-      batch.set(fbDb.collection('broadcasts').doc(broadcastId), {
-        views: firebase.firestore.FieldValue.increment(1),
-        uniqueViews: firebase.firestore.FieldValue.increment(1),
-      }, { merge: true });
-      if(creatorUid){
-        // The monthly counters fold into this SAME write now that they're
-        // plain increments rather than a transaction — one write to the toga
-        // doc per view instead of two, which halves the pressure on it and
-        // removes the retry-and-fail path entirely.
-        batch.set(fbDb.collection('toga').doc(creatorUid), Object.assign({
-          viewsTotal: firebase.firestore.FieldValue.increment(1),
-        }, togaMonthIncrements({ viewsMonthDelta: 1, featuredBroadcastId: broadcastId })), { merge: true });
-      }
-      await batch.commit();
-    }catch(e){ console.warn('[circle] view', e); }
+  async function recordBroadcastView(){
+    return;
   }
 
   /* 29g: what counts as a view is decided by the economy worker. The
@@ -260,15 +220,11 @@
     viewCall('open', broadcastId).then(function(r){
       if(seq !== viewWatchSeq) return;
       if(r.data && r.data.ok){ mode = 'server'; need = Number(r.data.count_after_sec) || 4; return; }
-      // Refused (bad sign-in, bad id): not a view. Anything else means the
-      // worker cannot count right now (an older deploy, not configured, down).
       if(r.status === 400 || r.status === 401 || r.status === 403){ mode = 'off'; return; }
-      mode = 'legacy';
-      return consoleViewSec().then(function(n){ need = n; });
+      mode = 'off';
     }).catch(function(){
       if(seq !== viewWatchSeq) return;
-      mode = 'legacy';
-      return consoleViewSec().then(function(n){ need = n; });
+      mode = 'off';
     });
     let seconds = 0;
     viewWatchTimer = setInterval(function(){
@@ -289,9 +245,7 @@
           viewedLocal[key] = true;
           serverCountView(broadcastId, creatorUid, 0);
         } else {
-          recordBroadcastView(broadcastId, creatorUid).then(function(){
-            viewCounted(broadcastId, creatorUid);
-          }).catch(function(){});
+          clearInterval(viewWatchTimer); viewWatchTimer = null;
         }
       }catch(_){}
     }, 1000);

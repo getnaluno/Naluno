@@ -147,9 +147,7 @@ async function ensureBroadcastFirestore(meta){
   if(meta.broadcastId && snap.exists) return id;
   if(!snap.exists){
     const seg = meta.segment || {};
-    const listing = (typeof nalunoBroadcastListingFields === 'function')
-      ? nalunoBroadcastListingFields()
-      : { listed: false, held: true, heldReason: 'new-publisher', hidden: false };
+    const listing = { listed: false, held: true, heldReason: 'review', hidden: false };
     await ref.set(Object.assign({
       creatorUid: meta.creatorUid || currentUser.uid,
       creatorName: meta.creatorName || (currentProfile && currentProfile.name) || 'Someone',
@@ -1996,6 +1994,7 @@ async function bspacePost(col, payload){
         nalunoTrack(isReply ? 'COMMENT_REPLY' : 'BROADCAST_COMMENT', {
           broadcast_id: activeBroadcastId,
           target_type: 'conversation',
+          target_id: ref.id,
           creator_uid: creator || '',
           parent_event_id: body.parent_id || null,
           text: body.text || '',
@@ -2005,6 +2004,7 @@ async function bspacePost(col, payload){
         nalunoTrack('BROADCAST_COMMENT', {
           broadcast_id: activeBroadcastId,
           target_type: 'question',
+          target_id: ref.id,
           creator_uid: creator || '',
           text: body.text || '',
         });
@@ -3280,16 +3280,28 @@ function bspaceShareNow(){
   }
   const text = title + (creator ? (' — ' + creator) : '') + '\n' + link;
   const finish = function(){
+    const go = function(){
+      try{
+        if(typeof nalunoTrack === 'function'){
+          nalunoTrack('BROADCAST_SHARE', {
+            target_type: 'broadcast',
+            target_id: activeBroadcastId,
+            broadcast_id: activeBroadcastId,
+            creator_uid: (activeBroadcastMeta && activeBroadcastMeta.creatorUid) || '',
+          });
+        }
+      }catch(_){}
+    };
     try{
-      if(typeof nalunoTrack === 'function'){
-        nalunoTrack('BROADCAST_SHARE', {
-          target_type: 'broadcast',
-          target_id: activeBroadcastId,
-          broadcast_id: activeBroadcastId,
-          creator_uid: (activeBroadcastMeta && activeBroadcastMeta.creatorUid) || '',
-        });
+      if(fbDb && currentUser && activeBroadcastId){
+        fbDb.collection('broadcasts').doc(activeBroadcastId).collection('shares').doc(currentUser.uid).set({
+          from: currentUser.uid,
+          ts: Date.now(),
+        }, { merge: true }).then(go).catch(go);
+        return;
       }
     }catch(_){}
+    go();
   };
   try{
     if(navigator.share){

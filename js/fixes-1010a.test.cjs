@@ -1,0 +1,35 @@
+/* 10 Oct a: the app and the console share one service-worker stamp,
+   and the audit locks from this pass stay in the source. */
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const root = path.join(__dirname, '..');
+const read = (f) => fs.readFileSync(path.join(root, f), 'utf8');
+const sw = read('sw.js');
+const pwa = read('js/pwa.js');
+const admin = read('js/admin-console.js');
+const adminHtml = read('admin/index.html');
+const app = (sw.match(/APP_BUILD = '([^']+)'/) || [])[1];
+const reg = (pwa.match(/register\('\/sw\.js\?v=([^']+)'/) || [])[1];
+const build = (admin.match(/const BUILD = '([^']+)'/) || [])[1];
+const htmlQ = (adminHtml.match(/admin-console\.js\?v=([^"']+)/) || [])[1];
+assert.ok(app && app === reg && app === build && app === htmlQ, 'app and console service worker stamps are the same: ' + [app, reg, build, htmlQ].join(' / '));
+const cur = read('js/currency.js');
+assert.ok(!cur.includes('FALLBACK_USD') && !cur.includes('UGX: 3650') && !cur.includes('KES: 129'), 'no invented exchange rates');
+assert.ok(!read('js/admin-data.js').includes('3.6725'), 'console does not peg AED');
+assert.ok(!read('workers/economy/books.mjs').includes('3.6725'), 'books do not peg AED');
+assert.ok(!read('js/beacon.js').includes('lastLat: lat'), 'location is not written onto the public profile');
+assert.ok(read('js/beacon.js').includes('function nalunoStripPublicLocation'), 'a signed-in session removes the old public copy');
+const rules = read('firestore.rules');
+assert.ok(rules.includes('request.auth.uid in bandData().memberUids'), 'Band messages require membership');
+assert.ok(rules.includes('request.resource.data.listed == false'), 'a new Broadcast cannot list itself');
+assert.ok(!/listed == false\s+\|\|\s+isTrustedPublisher/.test(rules), 'a hold is not lifted by a trusted-publisher or');
+assert.ok(rules.includes(".hasOnly(['updatedAt', 'live', 'liveAt', 'liveBy', 'memberUids',\n                      'comments', 'replies', 'shares', 'commentCount', 'replyCount', 'shareCount'])"), 'view counters are not a client write');
+const up = read('signal-worker-index.js');
+assert.ok(up.includes('That file type is not allowed') && up.includes('nosniff') && up.includes("head.startsWith('<html')"), 'uploads refuse active content');
+assert.ok(up.includes('const MAX_OBJECT_BYTES = 8 * 1024 * 1024 * 1024'), 'a finished file may be 8 GB');
+assert.ok(up.includes('const MAX_BYTES = 95 * 1024 * 1024'), 'one request stays 95 MB');
+assert.ok(read('js/broadcast-composer.js').includes('That video is larger than 8 GB') && read('js/broadcast-composer.js').includes('3 * 60 * 60'), 'Broadcast refuses over 8 GB or 3 hours');
+assert.ok(rules.includes('function reachPassOk(broadcastId)') && rules.includes('reachPasses'), 'a stored video needs a Reach pass');
+assert.ok(read('workers/economy/handler.mjs').includes('"/v1/reach/claim"'), 'the economy worker issues the pass');
+console.log('fixes-1010a tests passed');

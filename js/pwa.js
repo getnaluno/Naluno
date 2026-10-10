@@ -6,7 +6,7 @@
    ============================================================ */
 /* ---------------- PWA INSTALL + CALL NOTIFICATION DEEP-LINK ---------------- */
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js?v=20261009b', { scope: '/', updateViaCache: 'none' })
+  navigator.serviceWorker.register('/sw.js?v=20261010c', { scope: '/', updateViaCache: 'none' })
     .then(function(reg){ try{ reg.update(); }catch(_){} })
     .catch(function(e){ console.warn('[sw]', e); });
   // One automatic reload when a new SW takes control (clears stuck "sign-in not ready"
@@ -342,6 +342,40 @@ function nalunoPageNotify(note){
     }).catch(function(){});
   }catch(_){}
 }
+
+/* Locked Chrome does not wake on a data-only push. The economy worker
+   checks the call or the live Broadcast, then sends a real notification
+   to web tokens only. Android stays on the call-notify worker. */
+function nalunoLockPush(opts){
+  opts = opts || {};
+  if(!currentUser || !currentUser.getIdToken) return;
+  currentUser.getIdToken(false).then(function(tok){
+    return fetch('https://naluno-economy.naluno.workers.dev/v1/push/lock', {
+      method:'POST',
+      headers:{ Authorization:'Bearer '+tok, 'Content-Type':'application/json' },
+      body: JSON.stringify({
+        to: opts.to, type: opts.type, callId: opts.callId || '',
+        broadcastId: opts.broadcastId || '', voice: !!opts.voice
+      })
+    });
+  }).catch(function(){});
+}
+window.nalunoLockPush = nalunoLockPush;
+
+(function nalunoStripLocationWhenSignedIn(){
+  let n = 0;
+  const iv = setInterval(function(){
+    n += 1;
+    try{
+      if(typeof nalunoStripPublicLocation === 'function' && typeof currentUser !== 'undefined' && currentUser && typeof fbDb !== 'undefined' && fbDb){
+        clearInterval(iv);
+        nalunoStripPublicLocation();
+        return;
+      }
+    }catch(_){}
+    if(n > 40) clearInterval(iv);
+  }, 500);
+})();
 
 // Foreground FCM (app open, tab focused) — still show a toast + open incoming UI.
 if(typeof firebase !== 'undefined' && firebase.messaging){

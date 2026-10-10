@@ -214,6 +214,20 @@
     const n = Number(v);
     return isFinite(n) ? n : 0;
   }
+  function priced(qty, rate) {
+    const q = Number(qty);
+    const r = Number(rate);
+    if (!isFinite(q) || !isFinite(r)) return null;
+    return q * r;
+  }
+  function sumPrices(parts) {
+    let s = 0;
+    for (let i = 0; i < parts.length; i++) {
+      if (parts[i] == null || !isFinite(parts[i])) return null;
+      s += parts[i];
+    }
+    return s;
+  }
   function seenOf(u) {
     return num(u && (u.lastSeen || u.lastActive || u.lastPresence || 0));
   }
@@ -259,20 +273,20 @@
     return (num(minor) / 100).toFixed(2) + (ccy ? ' ' + ccy : '');
   }
 
-  /* Published list prices, September 2026. A model only.
-     Not a live meter from Cloudflare or Firebase. */
+  /* Vendor prices are empty until Money → Cost model saves them.
+     Byte and hour assumptions below are not money. */
   const COST_RATES = {
-    as_of: '2026-09',
+    as_of: null,
     currency: 'AED',
-    usd_to_aed: 3.6725,
-    r2_storage_gb_month_usd: 0.015,
-    r2_class_a_million_usd: 4.50,
-    r2_class_b_million_usd: 0.36,
-    firestore_storage_gb_month_usd: 0.18,
-    firestore_read_100k_usd: 0.06,
-    firestore_write_100k_usd: 0.18,
-    workers_million_usd: 0.30,
-    turn_gb_usd: 0.05,
+    usd_to_aed: null,
+    r2_storage_gb_month_usd: null,
+    r2_class_a_million_usd: null,
+    r2_class_b_million_usd: null,
+    firestore_storage_gb_month_usd: null,
+    firestore_read_100k_usd: null,
+    firestore_write_100k_usd: null,
+    workers_million_usd: null,
+    turn_gb_usd: null,
     signal_hours: 25,
     hours_month: 720,
     spark_firestore_storage_gb: 1,
@@ -303,15 +317,17 @@
     const C = fx();
     return (C && C.code && C.code()) || COST_RATES.currency || 'AED';
   }
-  /* 29h: the running rate, not a number in the code (3.6725 stays only as
-     the last resort when no rate is loaded at all). */
+  /* The running rate, when one is loaded. No peg is invented here. */
   function usdAed(usd) {
+    if (usd == null || !isFinite(Number(usd))) return null;
     const C = fx();
     if (C && C.convert) {
-      const v = C.convert(num(usd), 'USD', 'AED');
-      if (isFinite(v)) return v;
+      const v = C.convert(Number(usd), 'USD', 'AED');
+      if (v != null && isFinite(v)) return v;
     }
-    return num(usd) * COST_RATES.usd_to_aed;
+    const peg = Number(COST_RATES.usd_to_aed);
+    if (isFinite(peg) && peg > 0) return Number(usd) * peg;
+    return null;
   }
   /* The cost model's vendor prices and assumptions, editable in the Control
      Centre (Money → Cost model), saved in economyConfig/costRates.rates. */
@@ -391,7 +407,9 @@
     const C = fx();
     if (C && C.pairFrom) return C.pairFrom(aedVal, 'AED');
     const a = num(aedVal);
-    return formatAed(a) + ' · ' + formatUsd(a / COST_RATES.usd_to_aed);
+    const peg = Number(COST_RATES.usd_to_aed);
+    if (!(peg > 0)) return formatAed(a);
+    return formatAed(a) + ' · ' + formatUsd(a / peg);
   }
 
 
@@ -682,20 +700,26 @@
     const workerReqs = dauN * COST_RATES.dau_worker_reqs * 30;
     const turnGb = turnMinutes * 0.002;
 
-    const r2StorageUsd = r2Gb * COST_RATES.r2_storage_gb_month_usd;
-    const r2ClassAUsd = (classA / 1e6) * COST_RATES.r2_class_a_million_usd;
-    const fsStorageUsd = (firestoreBytes / 1e9) * COST_RATES.firestore_storage_gb_month_usd;
-    const fsReadUsd = (readsMonth / 1e5) * COST_RATES.firestore_read_100k_usd;
-    const fsWriteUsd = (writesMonth / 1e5) * COST_RATES.firestore_write_100k_usd;
-    const workersUsd = (workerReqs / 1e6) * COST_RATES.workers_million_usd;
-    const turnUsd = turnGb * COST_RATES.turn_gb_usd;
+    const r2StorageUsd = priced(r2Gb, COST_RATES.r2_storage_gb_month_usd);
+    const r2ClassAUsd = priced(classA / 1e6, COST_RATES.r2_class_a_million_usd);
+    const fsStorageUsd = priced(firestoreBytes / 1e9, COST_RATES.firestore_storage_gb_month_usd);
+    const fsReadUsd = priced(readsMonth / 1e5, COST_RATES.firestore_read_100k_usd);
+    const fsWriteUsd = priced(writesMonth / 1e5, COST_RATES.firestore_write_100k_usd);
+    const workersUsd = priced(workerReqs / 1e6, COST_RATES.workers_million_usd);
+    const turnUsd = priced(turnGb, COST_RATES.turn_gb_usd);
 
     function line(key, label, usd, qty, unit, aedExtra) {
+      const conv = (usd == null) ? null : usdAed(usd);
+      const extra = num(aedExtra);
+      let aed = null;
+      if (conv != null && isFinite(conv)) aed = conv + extra;
+      else if (extra) aed = extra;
+      else if (usd === 0) aed = 0;
       return {
         key: key,
         label: label,
         usd: usd,
-        aed: usdAed(usd) + num(aedExtra),
+        aed: aed,
         qty: qty,
         unit: unit || '',
       };
@@ -713,7 +737,9 @@
       line('compass', 'Compass (typed here)', 0, compassAed, 'AED', compassAed),
       line('fixed', 'Fixed costs (typed here)', 0, fixedAed, 'AED', fixedAed),
     ];
-    const meteredAed = lines.reduce(function (a, L) { return a + L.aed; }, 0);
+    const meteredAed = lines.reduce(function (a, L) {
+      return a + ((L.aed == null || !isFinite(L.aed)) ? 0 : L.aed);
+    }, 0);
 
     const r2BillGb = Math.max(0, r2Gb - COST_RATES.r2_free_storage_gb);
     const classABill = Math.max(0, classA - COST_RATES.r2_free_class_a);
@@ -724,23 +750,26 @@
     const fsReadBill = Math.max(0, readsDay - COST_RATES.spark_reads_per_day) * 30;
     const fsWriteBill = Math.max(0, writesDay - COST_RATES.spark_writes_per_day) * 30;
     const workerBill = Math.max(0, workerDay - COST_RATES.workers_free_per_day) * 30;
-    const billableUsd =
-      r2BillGb * COST_RATES.r2_storage_gb_month_usd
-      + (classABill / 1e6) * COST_RATES.r2_class_a_million_usd
-      + fsStorBillGb * COST_RATES.firestore_storage_gb_month_usd
-      + (fsReadBill / 1e5) * COST_RATES.firestore_read_100k_usd
-      + (fsWriteBill / 1e5) * COST_RATES.firestore_write_100k_usd
-      + (workerBill / 1e6) * COST_RATES.workers_million_usd
-      + turnUsd;
-    const billableAed = usdAed(billableUsd) + compassAed + (turnMinutes ? 0 : 0) + fixedAed;
+    const billableUsd = sumPrices([
+      priced(r2BillGb, COST_RATES.r2_storage_gb_month_usd),
+      priced(classABill / 1e6, COST_RATES.r2_class_a_million_usd),
+      priced(fsStorBillGb, COST_RATES.firestore_storage_gb_month_usd),
+      priced(fsReadBill / 1e5, COST_RATES.firestore_read_100k_usd),
+      priced(fsWriteBill / 1e5, COST_RATES.firestore_write_100k_usd),
+      priced(workerBill / 1e6, COST_RATES.workers_million_usd),
+      turnUsd,
+    ]);
+    const billableConv = billableUsd == null ? null : usdAed(billableUsd);
+    const billableAed = (billableConv == null ? 0 : billableConv) + compassAed + fixedAed;
     /* Fixed and Compass are always cash, even on Spark. TURN is list-priced (no free tier here). */
 
     Object.keys(byUid).forEach(function (k) {
       const s = byUid[k];
-      s.variable_aed = usdAed(
-        s.r2_gb_month * COST_RATES.r2_storage_gb_month_usd
-        + (s.uploads / 1e6) * COST_RATES.r2_class_a_million_usd
-      );
+      s.variable_aed = usdAed(sumPrices([
+        priced(s.r2_gb_month, COST_RATES.r2_storage_gb_month_usd),
+        priced(s.uploads / 1e6, COST_RATES.r2_class_a_million_usd),
+      ]));
+      if (s.variable_aed == null) s.variable_aed = 0;
     });
     const variableTotal = Object.keys(byUid).reduce(function (a, k) { return a + byUid[k].variable_aed; }, 0);
     const unattributed = Math.max(0, meteredAed - variableTotal);
@@ -795,33 +824,37 @@
       const pWorkers = workerReqs * f;
       const pTurn = turnMinutes * f;
       const pTurnGb = pTurn * 0.002;
-      const grossUsd =
-        pR2 * COST_RATES.r2_storage_gb_month_usd
-        + (pClassA / 1e6) * COST_RATES.r2_class_a_million_usd
-        + (pFsBytes / 1e9) * COST_RATES.firestore_storage_gb_month_usd
-        + (pReads / 1e5) * COST_RATES.firestore_read_100k_usd
-        + (pWrites / 1e5) * COST_RATES.firestore_write_100k_usd
-        + (pWorkers / 1e6) * COST_RATES.workers_million_usd
-        + pTurnGb * COST_RATES.turn_gb_usd;
+      const grossUsd = sumPrices([
+        priced(pR2, COST_RATES.r2_storage_gb_month_usd),
+        priced(pClassA / 1e6, COST_RATES.r2_class_a_million_usd),
+        priced(pFsBytes / 1e9, COST_RATES.firestore_storage_gb_month_usd),
+        priced(pReads / 1e5, COST_RATES.firestore_read_100k_usd),
+        priced(pWrites / 1e5, COST_RATES.firestore_write_100k_usd),
+        priced(pWorkers / 1e6, COST_RATES.workers_million_usd),
+        priced(pTurnGb, COST_RATES.turn_gb_usd),
+      ]);
       const pR2Bill = Math.max(0, pR2 - COST_RATES.r2_free_storage_gb);
       const pClassBill = Math.max(0, pClassA - COST_RATES.r2_free_class_a);
       const pFsStorBill = Math.max(0, pFsBytes / 1e9 - COST_RATES.spark_firestore_storage_gb);
       const pReadBill = Math.max(0, pReads / 30 - COST_RATES.spark_reads_per_day) * 30;
       const pWriteBill = Math.max(0, pWrites / 30 - COST_RATES.spark_writes_per_day) * 30;
       const pWorkerBill = Math.max(0, pWorkers / 30 - COST_RATES.workers_free_per_day) * 30;
-      const billUsd =
-        pR2Bill * COST_RATES.r2_storage_gb_month_usd
-        + (pClassBill / 1e6) * COST_RATES.r2_class_a_million_usd
-        + pFsStorBill * COST_RATES.firestore_storage_gb_month_usd
-        + (pReadBill / 1e5) * COST_RATES.firestore_read_100k_usd
-        + (pWriteBill / 1e5) * COST_RATES.firestore_write_100k_usd
-        + (pWorkerBill / 1e6) * COST_RATES.workers_million_usd
-        + pTurnGb * COST_RATES.turn_gb_usd;
+      const billUsd = sumPrices([
+        priced(pR2Bill, COST_RATES.r2_storage_gb_month_usd),
+        priced(pClassBill / 1e6, COST_RATES.r2_class_a_million_usd),
+        priced(pFsStorBill, COST_RATES.firestore_storage_gb_month_usd),
+        priced(pReadBill / 1e5, COST_RATES.firestore_read_100k_usd),
+        priced(pWriteBill / 1e5, COST_RATES.firestore_write_100k_usd),
+        priced(pWorkerBill / 1e6, COST_RATES.workers_million_usd),
+        priced(pTurnGb, COST_RATES.turn_gb_usd),
+      ]);
+      const grossAed = (grossUsd == null ? 0 : (usdAed(grossUsd) || 0)) + fixedAed + compassAed;
+      const billAed = (billUsd == null ? 0 : (usdAed(billUsd) || 0)) + fixedAed + compassAed;
       return {
         n: nMau,
-        gross_aed: usdAed(grossUsd) + fixedAed + compassAed,
-        billable_aed: usdAed(billUsd) + fixedAed + compassAed,
-        per_mau_aed: nMau ? (usdAed(grossUsd) + fixedAed + compassAed) / nMau : 0,
+        gross_aed: grossAed,
+        billable_aed: billAed,
+        per_mau_aed: nMau ? grossAed / nMau : 0,
       };
     }
 
@@ -897,6 +930,17 @@
         + firstGate.label + ' around ' + firstGate.mau_display.toLocaleString('en-GB')
         + ' people active in a month.';
     }
+    const pricesMissing = COST_RATES.r2_storage_gb_month_usd == null
+      || COST_RATES.firestore_read_100k_usd == null
+      || COST_RATES.workers_million_usd == null;
+    if (pricesMissing && !(invoiceAed > 0)) {
+      headline = 'No vendor prices are loaded. Set them under Money → Cost model. Nothing here is a guessed rate.';
+    }
+    function aedAsUsd(aed) {
+      const peg = Number(COST_RATES.usd_to_aed);
+      if (!(peg > 0) || aed == null || !isFinite(Number(aed))) return null;
+      return Number(aed) / peg;
+    }
 
     return {
       rates: COST_RATES,
@@ -907,15 +951,15 @@
       metered_aed: meteredAed,
       billable_aed: billableAed,
       serving_aed: serving,
-      on_free_tier: billableAed - fixedAed - compassAed <= 0.0001 && invoiceAed === 0,
+      on_free_tier: !pricesMissing && billableAed - fixedAed - compassAed <= 0.0001 && invoiceAed === 0,
       per_registered_aed: perRegistered,
       per_mau_aed: perMau,
       per_dau_aed: perDau,
       serve_per_mau_aed: servePerMau,
       serve_per_registered_aed: servePerReg,
-      metered_usd: meteredAed / COST_RATES.usd_to_aed,
-      billable_usd: billableAed / COST_RATES.usd_to_aed,
-      per_mau_usd: perMau / COST_RATES.usd_to_aed,
+      metered_usd: aedAsUsd(meteredAed),
+      billable_usd: aedAsUsd(billableAed),
+      per_mau_usd: aedAsUsd(perMau),
       people: people,
       top: people.slice(0, 20),
       lines: lines,

@@ -2180,6 +2180,8 @@ $('postBroadcastBtn').onclick = async ()=>{
       run: async (progress)=>{
         let mediaType = 'text', mediaUrl = null, thumbUrl = null, filterCss = '';
         let screenRep = null;
+        let reachPass = '';
+        let reachSeconds = 0;
         if(snapType === 'text'){
           mediaType = 'text';
         } else if(snapItems.length){
@@ -2198,6 +2200,10 @@ $('postBroadcastBtn').onclick = async ()=>{
           }
           if(progress) progress('Uploading…');
           if(item.kind === 'video'){
+            reachSeconds = Math.max(1, Math.round(Number(item.duration) || 0));
+            const claim = (typeof nalunoReachClaim === 'function') ? await nalunoReachClaim(reachSeconds) : { blocked: true, error: 'Reach is not loaded' };
+            if(!claim || claim.blocked) throw new Error((claim && claim.error) || 'This video is past your Reach.');
+            reachPass = claim.passId;
             const blob = item.videoBlob || item.sourceFile || (item.dataUrl ? await (await fetch(item.dataUrl)).blob() : null);
             if(!blob) throw new Error('Missing video');
             mediaUrl = (typeof uploadBroadcastFile === 'function')
@@ -2214,6 +2220,8 @@ $('postBroadcastBtn').onclick = async ()=>{
         const b = await createPermanentBroadcast({
           title: finalTitle, description: desc, tags, mediaType, mediaUrl, thumbUrl, filterCss,
           screen: screenRep || (mediaType === 'text' ? { decision: 'allow', engine: 'text' } : null),
+          durationSec: mediaType === 'video' ? reachSeconds : undefined,
+          reachPass: mediaType === 'video' ? reachPass : '',
         });
         if(typeof loadFeedBroadcasts === 'function') await loadFeedBroadcasts();
         if(typeof openBroadcastById === 'function') openBroadcastById(b.id);

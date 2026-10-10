@@ -2272,6 +2272,10 @@ if($('bandCopyLinkBtn')){
         const ta = document.createElement('textarea');
         ta.value = link; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
       }
+      const b = activeBand();
+      if(b && b.firestoreId && fbDb){
+        fbDb.collection('bands').doc(b.firestoreId).update({ linkJoin: true }).catch(function(){});
+      }
       toast('Invite link copied');
     }catch(e){
       toast(link);
@@ -2293,9 +2297,17 @@ if($('bandCopyLinkBtn')){
       fbDb.collection('bands').doc(bandId).get().then(doc=>{
         if(!doc.exists){ toast('Band not found'); return; }
         const d = doc.data();
-        fbDb.collection('bands').doc(bandId).update({
-          memberUids: firebase.firestore.FieldValue.arrayUnion(currentUser.uid)
-        }).catch(()=>{});
+        const uids = (d.memberUids && d.memberUids.length) ? d.memberUids : [];
+        const already = uids.indexOf(currentUser.uid) >= 0 || d.createdBy === currentUser.uid;
+        if(!already && d.linkJoin !== true){
+          toast('This Band is not open to a link');
+          return;
+        }
+        if(!already){
+          fbDb.collection('bands').doc(bandId).update({
+            memberUids: firebase.firestore.FieldValue.arrayUnion(currentUser.uid)
+          }).catch(function(){});
+        }
         if(typeof addRealBandToLocalList === 'function'){
           addRealBandToLocalList(bandId, d.name || 'Band', d.vibe || 'aurora', [], d.createdBy, d);
         } else {

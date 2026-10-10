@@ -5,6 +5,7 @@
    ============================================================ */
 const BROADCAST_UPLOAD_WORKER_URL = 'https://naluno-broadcast-upload.naluno.workers.dev';
 const BCAST_CHUNK_BYTES = 8 * 1024 * 1024; // 8 MiB parts (R2 min 5 MiB except last)
+const BCAST_MAX_OBJECT_BYTES = 8 * 1024 * 1024 * 1024; // joined file, not one request
 
 /* FIX (20260826 / bug: "Broadcast videos die after ~a day"):
    Broadcast must NEVER fall back to the Signal upload worker. That worker
@@ -97,6 +98,7 @@ async function uploadBroadcastFileInner(blob, onProgress, contentTypeOverride){
 
 async function uploadBroadcastFileTo(base, blob, contentType, onProgress){
   const size = blob.size;
+  if(size > BCAST_MAX_OBJECT_BYTES) throw new Error('That file is larger than 8 GB');
   const auth = await bcastAuthHeader(false);
   const initRes = await (typeof nalunoFetch === 'function' ? nalunoFetch : fetch)(base + '/b/init', {
     method: 'POST',

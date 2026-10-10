@@ -166,27 +166,6 @@
     ['ZWG', 'Zimbabwe gold', 2, 'ZiG'],
   ];
 
-  /* Offline book, USD = 1. Pegs and widely-used rates so conversion still
-     works if the live feed is unreachable. Live fetch overwrites these. */
-  const FALLBACK_USD = {
-    USD: 1, AED: 3.6725, EUR: 0.86, GBP: 0.74, UGX: 3650, KES: 129, TZS: 2500,
-    RWF: 1420, NGN: 1480, INR: 83.5, SAR: 3.75, QAR: 3.64, EGP: 48.5, ZAR: 18.2,
-    CAD: 1.37, AUD: 1.52, CHF: 0.80, JPY: 149, CNY: 7.12, HKD: 7.78, SGD: 1.29,
-    TRY: 41.2, BRL: 5.45, MXN: 19.1, PKR: 278, BDT: 122, IDR: 16200, PHP: 58.2,
-    THB: 33.4, VND: 25400, KRW: 1380, TWD: 32.2, PLN: 3.65, CZK: 21.4, SEK: 9.55,
-    NOK: 10.1, DKK: 6.42, HUF: 355, RON: 4.38, ILS: 3.32, MAD: 9.15, DZD: 133,
-    TND: 2.95, JOD: 0.709, BHD: 0.376, KWD: 0.307, OMR: 0.3845, LBP: 89500,
-    IQD: 1310, ETB: 128, GHS: 12.1, XOF: 564, XAF: 564, CDF: 2850, MZN: 63.9,
-    AOA: 912, ZMW: 24.5, MWK: 1740, MGA: 4500, MUR: 45.8, SCR: 14.4, LKR: 300,
-    NPR: 133.6, MMK: 2100, KHR: 4100, LAK: 21600, MNT: 3390, UZS: 12800,
-    KZT: 512, GEL: 2.72, AMD: 387, AZN: 1.70, BYN: 3.28, UAH: 41.4, RUB: 84,
-    ARS: 1430, CLP: 940, COP: 4120, PEN: 3.72, UYU: 40.4, BOB: 6.91, PYG: 7900,
-    CRC: 505, GTQ: 7.72, HNL: 26.2, NIO: 36.7, PAB: 1, DOP: 60.2, JMD: 157,
-    TTD: 6.78, BBD: 2, BSD: 1, BMD: 1, KYD: 0.833, XCD: 2.70, FJD: 2.25,
-    PGK: 4.05, WST: 2.75, TOP: 2.38, VUV: 122, NZD: 1.66, ISK: 127, RSD: 101,
-    MKD: 53, ALL: 85, BAM: 1.68, BGN: 1.68, HRK: 6.48, MDL: 17.2, GEL: 2.72,
-  };
-
   const BY_CODE = {};
   const LIST = ROWS.map(function (r) {
     const row = { code: r[0], name: r[1], digits: r[2] == null ? 2 : r[2], symbol: r[3] || r[0] };
@@ -198,10 +177,12 @@
   const FX_TTL_MS = 10 * 60 * 1000;
   const CACHE_KEY = 'nalunoCurrency:v1';
 
+  /* Rates come from the live book or the Control Centre. Nothing here
+     invents a price when those are missing. */
   let __code = DEFAULT_CODE;
-  let __rates = Object.assign({ USD: 1 }, FALLBACK_USD);
+  let __rates = { USD: 1 };
   let __fetchedAt = 0;
-  let __source = 'fallback';
+  let __source = 'none';
   let __unsub = null;
   let __timer = null;
   let __fetching = false;
@@ -235,8 +216,7 @@
     if (c === 'USD') return 1;
     const n = Number(__rates[c]);
     if (isFinite(n) && n > 0) return n;
-    const fb = Number(FALLBACK_USD[c]);
-    return (isFinite(fb) && fb > 0) ? fb : 0;
+    return 0;
   }
 
   function convert(amount, from, to) {
@@ -247,7 +227,7 @@
     if (a === b) return n;
     const ra = rateOf(a);
     const rb = rateOf(b);
-    if (!(ra > 0) || !(rb > 0)) return n;
+    if (!(ra > 0) || !(rb > 0)) return null;
     return n * (rb / ra);
   }
 
@@ -265,7 +245,9 @@
   }
   function convertMinor(minor, from, to) {
     const major = fromMinor(minor, from);
-    return toMinor(convert(major, from, to), to);
+    const next = convert(major, from, to);
+    if (next == null || !isFinite(next)) return null;
+    return toMinor(next, to);
   }
 
   function prettyMajor(major, ccy) {
@@ -355,6 +337,7 @@
       const raw = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
       if (!raw) return;
       if (raw.code && BY_CODE[raw.code]) __code = raw.code;
+      if (raw.source === 'fallback') return;
       if (raw.rates && typeof raw.rates === 'object') {
         Object.keys(raw.rates).forEach(function (k) {
           const n = Number(raw.rates[k]);
@@ -483,14 +466,16 @@
 
   function quoteLine() {
     const usd = rateOf(__code);
+    if (!(usd > 0)) return 'No exchange rate yet';
     const aed = convert(1, 'AED', __code);
+    const ugx = convert(1, 'UGX', __code);
     const when = __fetchedAt
       ? new Date(__fetchedAt).toLocaleString('en-GB', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' })
-      : 'offline book';
+      : 'not loaded';
     const bits = [];
     bits.push('1 USD = ' + formatMajor(usd, __code));
-    if (__code !== 'AED') bits.push('1 AED = ' + formatMajor(aed, __code));
-    if (__code !== 'UGX') bits.push('1 UGX = ' + formatMajor(convert(1, 'UGX', __code), __code));
+    if (__code !== 'AED' && aed != null && isFinite(aed)) bits.push('1 AED = ' + formatMajor(aed, __code));
+    if (__code !== 'UGX' && ugx != null && isFinite(ugx)) bits.push('1 UGX = ' + formatMajor(ugx, __code));
     bits.push((__source === 'live' ? 'live' : 'stored') + ' · ' + when);
     return bits.join(' · ');
   }
@@ -529,6 +514,7 @@
     const to = norm(payCode) || __code;
     if (to !== p.currency && (!(rateOf(to) > 0) || !(rateOf(p.currency) > 0))) return null;
     const raw = convert(p.amount, p.currency, to);
+    if (raw == null || !isFinite(raw)) return null;
     const major = digits(to) === 0 ? Math.round(raw) : Math.round(raw * 100) / 100;
     return { major: major, currency: to, label: formatMajor(major, to), book: p };
   }
@@ -538,7 +524,9 @@
     const list = (e && Array.isArray(e.amounts)) ? e.amounts.map(Number).filter(function (n) { return n > 0; }) : [];
     if (!cur || !list.length) return [];
     return list.slice(0, 6).map(function (amt) {
-      const major = prettyMajor(convert(amt, cur, __code), __code);
+      const raw = convert(amt, cur, __code);
+      if (raw == null || !isFinite(raw)) return null;
+      const major = prettyMajor(raw, __code);
       return {
         book: amt,
         major: major,
@@ -546,7 +534,7 @@
         currency: __code,
         label: formatMajor(major, __code),
       };
-    });
+    }).filter(Boolean);
   }
   function savePrices(passedDb, uid, patch) {
     const db = dbOf(passedDb);
@@ -655,7 +643,6 @@
     LIST: LIST,
     POPULAR: POPULAR,
     DEFAULT_CODE: DEFAULT_CODE,
-    FALLBACK_USD: FALLBACK_USD,
     find: find,
     list: list,
     norm: norm,

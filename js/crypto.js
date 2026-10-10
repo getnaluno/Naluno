@@ -558,15 +558,14 @@ async function decryptMessageText(theirUid, theirPublicKeyJwk, ciphertextB64, iv
   return null;
 }
 
-/** WhatsApp / Signal rule: encrypt on this phone, for each recipient's current
- *  public key (client fanout). We also seal a copy to ourselves so this thread
- *  still opens here. If the other person has no published key yet, send
- *  readable text — never a blob they cannot open. */
+/** Seal on this phone for the other person's published key, and keep a
+ *  copy this phone can still open. If they have no key, nothing is returned
+ *  that can be written in the clear. */
 async function nalunoSealText(plaintext, peerUid){
   if(plaintext == null) plaintext = '';
   const mine = await ensureMyKeyPair();
   if(!mine || !mine.publicJwk || typeof currentUser === 'undefined' || !currentUser){
-    return { encrypted: false, text: plaintext };
+    return { encrypted: false, reason: 'no-key' };
   }
   const peerJwk = peerUid ? await fetchUserPublicKey(peerUid, true) : null;
   const senderPub = publicJwkCompact(mine.publicJwk);
@@ -584,7 +583,7 @@ async function nalunoSealText(plaintext, peerUid){
     envelopes[currentUser.uid] = forMe;
   }
   if(!peerUid || !envelopes[peerUid]){
-    return { encrypted: false, text: plaintext };
+    return { encrypted: false, reason: 'no-key' };
   }
   return {
     encrypted: true,

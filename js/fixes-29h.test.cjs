@@ -137,7 +137,7 @@ function extractFn(src, name){
       D.applyCostRates({ turn_gb_usd: 0.09 });
       assert.strictEqual(D.COST_RATES.turn_gb_usd, 0.09);
       D.applyCostRates(null);
-      assert.strictEqual(D.COST_RATES.turn_gb_usd, 0.05, 'back to list price');
+      assert.strictEqual(D.COST_RATES.turn_gb_usd, null, 'no invented list price');
     }
   }
   const sw = read('../sw.js');

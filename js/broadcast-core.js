@@ -178,6 +178,55 @@ function nalunoPublisherTrusted(){
     return !!p.trustedPublisher;
   }catch(_){ return false; }
 }
+
+/** Reach: how long a video Broadcast may be, and how many in a day.
+ *  A new Callsign is short. Work that stays up opens the length.
+ *  The desk can open the full room. This is not a phone check. */
+function nalunoReachTier(profile, now){
+  const p = profile || {};
+  const set = String(p.reach || '');
+  if(set === 'full' || set === 'kept' || set === 'open') return set;
+  const at = Number(now) || Date.now();
+  const created = Number(p.createdAt) || at;
+  const age = Math.max(0, at - created);
+  const placed = Number(p.reachPlaced) || 0;
+  const day = 24 * 60 * 60 * 1000;
+  if(age >= 60 * day && placed >= 10) return 'full';
+  if(age >= 14 * day && placed >= 4) return 'kept';
+  return 'open';
+}
+function nalunoReachMaxSec(profile, now){
+  return nalunoReachTier(profile, now) === 'open' ? 40 * 60 : 3 * 60 * 60;
+}
+async function nalunoReachClaim(seconds){
+  const user = (typeof currentUser !== 'undefined') ? currentUser : null;
+  const tok = user && user.getIdToken ? await user.getIdToken() : '';
+  if(!tok) return { blocked: true, error: 'Sign in first' };
+  const base = (typeof nalunoEconomyUrlBroadcast === 'function')
+    ? nalunoEconomyUrlBroadcast()
+    : 'https://naluno-economy.naluno.workers.dev';
+  let r;
+  try{
+    r = await fetch(base + '/v1/reach/claim', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ seconds: Math.max(1, Math.round(Number(seconds) || 0)) }),
+    });
+  }catch(_){
+    return { blocked: true, error: 'Could not check Reach. Try again when you have a connection.' };
+  }
+  const data = await r.json().catch(function(){ return {}; });
+  if(r.status === 404 || (r.status === 401 && data && data.error === 'Missing auth token')){
+    return { blocked: true, error: 'Reach is not on the server yet. Publish after the economy worker is updated.' };
+  }
+  if(!r.ok || !data.ok || !data.passId){
+    return { blocked: true, error: (data && data.error) || 'This video is past your Reach.' };
+  }
+  return { blocked: false, passId: data.passId, tier: data.tier };
+}
+window.nalunoReachTier = nalunoReachTier;
+window.nalunoReachMaxSec = nalunoReachMaxSec;
+window.nalunoReachClaim = nalunoReachClaim;
 function nalunoBroadcastListingFields(screen, opts){
   opts = opts || {};
   let decision = (screen && screen.decision) || '';
@@ -271,7 +320,14 @@ async function broadcastWritingCredit(text){
       }
     }catch(_){}
     try{
-      const snap = await fbDb.collection('broadcasts').orderBy('createdAt', 'desc').limit(80).get();
+      const snap = await fbDb.collection('broadcasts')
+        .where('listed', '==', true)
+        .where('hidden', '==', false)
+        .where('held', '==', false)
+        .where('visibility', '==', 'public')
+        .where('publishAt', '<=', Date.now())
+        .orderBy('publishAt', 'desc')
+        .limit(80).get();
       snap.docs.forEach(function(d){ add(Object.assign({ id: d.id }, d.data() || {})); });
     }catch(_){}
   }
@@ -299,7 +355,7 @@ function broadcastCreditFromOrigin(origin){
   };
 }
 
-async function createPermanentBroadcast({ title, description, tags, mediaType, mediaUrl, thumbUrl, filterCss, chapters, breathers, strandId, strandName, origin, screen, publishAt, visibility, body, words, durationSec, originCredit, repostOf, lang }){
+async function createPermanentBroadcast({ title, description, tags, mediaType, mediaUrl, thumbUrl, filterCss, chapters, breathers, strandId, strandName, origin, screen, publishAt, visibility, body, words, durationSec, originCredit, repostOf, lang, reachPass }){
   if(!currentUser || !fbDb) throw new Error('Sign in required');
   const now = Date.now();
   const ref = fbDb.collection('broadcasts').doc();
@@ -321,7 +377,7 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
     mediaUrl: primaryUrl,
     body: mediaType === 'writing' ? String(body || '').slice(0, 80000) : null,
     words: mediaType === 'writing' ? (Number(words) || 0) : null,
-    durationSec: mediaType === 'writing' ? (Number(durationSec) || 0) : null,
+    durationSec: mediaType === 'writing' ? (Number(durationSec) || 0) : (mediaType === 'video' && Number(durationSec) > 0 ? Math.round(Number(durationSec)) : null),
     /* 07c: the writer said it is Luganda (Write → Luganda): it shows under
        Luganda and Listen reads it in the Luganda voice. */
     lang: lang === 'lg' ? 'lg' : null,
@@ -351,6 +407,7 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
     originMatchTitle: (origin && origin.matchTitle) || '',
     originHold: !!(origin && origin.hold),
     repostOf: repostOf ? String(repostOf) : null,
+    reachPass: (mediaType === 'video' && reachPass) ? String(reachPass).slice(0, 48) : null,
     memberUids: [currentUser.uid],
     live: false,
     liveAt: null,
@@ -391,11 +448,23 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
   }catch(_){}
   const safetyStop = !!(safetyHold && typeof nalunoSafetyStopped === 'function' && nalunoSafetyStopped(safetyHold));
   Object.assign(doc, nalunoBroadcastListingFields(screenReport, { hasPicture: hasPicture, inherited: !!repostOf && screenReport && screenReport.decision === 'allow' }));
+  /* The phone may not list itself. The economy worker, which holds the
+     service account, is what puts a Broadcast on the feed after Screen. */
+  doc.listed = false;
+  doc.held = true;
+  doc.hidden = false;
+  if(!doc.heldReason) doc.heldReason = 'review';
   if(safetyStop){
     doc.listed = false;
     doc.held = true;
     doc.hidden = false;
     doc.heldReason = safetyHold.decision === 'AGE_RESTRICT' ? 'age-review' : (safetyHold.urgent ? 'safety-urgent' : 'safety-review');
+  }
+  if(doc.reachPass && doc.mediaUrl){
+    await fbDb.collection('users').doc(currentUser.uid).collection('reachPasses').doc(doc.reachPass).update({
+      used: true,
+      broadcastId: ref.id,
+    });
   }
   await ref.set(doc);
   try{
@@ -411,13 +480,18 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
   }catch(_){}
   let placed = null;
   try{ placed = await nalunoPlaceBroadcast(ref.id, screenReport); }catch(_){ placed = null; }
-  if(placed && (placed.heldReason === 'safety-review' || placed.heldReason === 'safety-urgent' || placed.heldReason === 'age-review' || placed.heldReason === 'screen' || placed.heldReason === 'unscreened')){
+  if(placed && placed.wrote){
+    doc.listed = !!placed.listed;
+    doc.held = !!placed.held;
+    doc.hidden = !!placed.hidden;
+    doc.heldReason = placed.heldReason || '';
+    if(placed.hidden) doc.hiddenReason = 'screen';
+  } else if(placed && (placed.heldReason === 'safety-review' || placed.heldReason === 'safety-urgent' || placed.heldReason === 'age-review' || placed.heldReason === 'screen' || placed.heldReason === 'unscreened')){
     doc.listed = false;
     doc.held = true;
     doc.hidden = false;
     doc.heldReason = placed.heldReason;
   }
-  // Place cannot lift a hold without a service account. Only apply a hide.
   if(placed && (placed.hidden || placed.screen === 'block')){
     doc.listed = false;
     doc.held = false;
@@ -623,7 +697,15 @@ function startFeedBroadcastsListener(){
         if(!startFeedBroadcastsListener._fellBack){
           startFeedBroadcastsListener._fellBack = true;
           try{
-            feedBroadcastsUnsub = attach(fbDb.collection('broadcasts').limit(80));
+            feedBroadcastsUnsub = attach(
+              fbDb.collection('broadcasts')
+                .where('listed', '==', true)
+                .where('hidden', '==', false)
+                .where('held', '==', false)
+                .where('visibility', '==', 'public')
+                .where('publishAt', '<=', Date.now())
+                .limit(80)
+            );
           }catch(e2){ console.warn('[bcast] feed fallback failed', e2); }
         }
       }
@@ -631,13 +713,28 @@ function startFeedBroadcastsListener(){
   }
   try{
     feedBroadcastsUnsub = attach(
-      fbDb.collection('broadcasts').orderBy('createdAt', 'desc').limit(80)
+      fbDb.collection('broadcasts')
+        .where('listed', '==', true)
+        .where('hidden', '==', false)
+        .where('held', '==', false)
+        .where('visibility', '==', 'public')
+        .where('publishAt', '<=', Date.now())
+        .orderBy('publishAt', 'desc')
+        .limit(80)
     );
   }catch(e){
     console.warn('[bcast] start feed listener', e);
     try{
       startFeedBroadcastsListener._fellBack = true;
-      feedBroadcastsUnsub = attach(fbDb.collection('broadcasts').limit(80));
+      feedBroadcastsUnsub = attach(
+        fbDb.collection('broadcasts')
+          .where('listed', '==', true)
+          .where('hidden', '==', false)
+          .where('held', '==', false)
+          .where('visibility', '==', 'public')
+          .where('publishAt', '<=', Date.now())
+          .limit(80)
+      );
     }catch(_){}
   }
 }
@@ -700,7 +797,14 @@ async function searchBroadcasts(query){
   }catch(_){}
   try{
     if(fbDb){
-      const snap = await fbDb.collection('broadcasts').orderBy('createdAt', 'desc').limit(80).get();
+      const snap = await fbDb.collection('broadcasts')
+        .where('listed', '==', true)
+        .where('hidden', '==', false)
+        .where('held', '==', false)
+        .where('visibility', '==', 'public')
+        .where('publishAt', '<=', Date.now())
+        .orderBy('publishAt', 'desc')
+        .limit(80).get();
       snap.docs.forEach(d => {
         const data = d.data();
         if(data.deleted) return;
@@ -749,9 +853,20 @@ async function sendPushToContact(contactOrUid, msg){
         tokens.platform = d.fcmTokenPlatform || null;
       }
     }catch(_){}
-    if(!tokens.android && !tokens.web && !tokens.primary) return;
+    if(!tokens.android && !tokens.web && !tokens.primary){
+      if(typeof nalunoLockPush === 'function' && msg && msg.broadcastId){
+        nalunoLockPush({ to: uid, type: 'broadcast_live', broadcastId: msg.broadcastId });
+      }
+      return;
+    }
     const idToken = await currentUser.getIdToken(false);
     const pingId = (typeof nalunoPushId === 'function') ? nalunoPushId() : '';
+    const webTok = tokens.web || ((tokens.platform === 'web') ? tokens.primary : null);
+    const primaryTok = (tokens.primary && tokens.primary !== webTok) ? tokens.primary : null;
+    if(typeof nalunoLockPush === 'function' && msg && msg.broadcastId){
+      nalunoLockPush({ to: uid, type: 'broadcast_live', broadcastId: msg.broadcastId });
+    }
+    if(!tokens.android && !primaryTok) return;
     const body = {
       calleeUid: uid,
       callerName: (msg && msg.fromName) || (currentProfile && currentProfile.name) || 'Someone',
@@ -761,9 +876,9 @@ async function sendPushToContact(contactOrUid, msg){
       broadcastId: (msg && msg.broadcastId) || null,
       pingId: pingId,
       fcmTokenAndroid: tokens.android,
-      fcmTokenWeb: tokens.web,
-      fcmToken: tokens.primary,
-      fcmTokenPlatform: tokens.platform,
+      fcmTokenWeb: null,
+      fcmToken: primaryTok,
+      fcmTokenPlatform: tokens.platform === 'web' ? (tokens.android ? 'android' : null) : tokens.platform,
     };
     const res = await fetch(workerUrl, {
       method: 'POST',

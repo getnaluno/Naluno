@@ -2612,6 +2612,8 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
       const idToken = await currentUser.getIdToken(firstAttempt ? false : true);
       const tokens = await loadCalleePushTokens();
       const pingId = (typeof nalunoPushId === 'function') ? nalunoPushId() : '';
+      const webTok = tokens.web || ((tokens.platform === 'web') ? tokens.primary : null);
+      const primaryTok = (tokens.primary && tokens.primary !== webTok) ? tokens.primary : null;
       const payload = {
         calleeUid,
         callerName: callerName || (currentProfile && currentProfile.name) || 'Someone',
@@ -2622,12 +2624,20 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
         callKind: nalunoIsVoiceCall() ? 'audio' : 'video',
         preferPlatform: 'both',
         pingId: pingId,
-        // Explicit tokens — worker uses these first
+        // Web tokens go to the economy worker, which can show a lock-screen alert.
         fcmTokenAndroid: tokens.android,
-        fcmTokenWeb: tokens.web,
-        fcmToken: tokens.primary,
-        fcmTokenPlatform: tokens.platform,
+        fcmTokenWeb: null,
+        fcmToken: primaryTok,
+        fcmTokenPlatform: tokens.platform === 'web' ? (tokens.android ? 'android' : null) : tokens.platform,
       };
+      if(typeof nalunoLockPush === 'function'){
+        nalunoLockPush({
+          to: calleeUid,
+          type: 'incoming_call',
+          callId: callId || activeCallId || '',
+          voice: (typeof nalunoIsVoiceCall === 'function') && nalunoIsVoiceCall(),
+        });
+      }
       if(firstAttempt){
         console.log('[call] push tokens for callee', {
           hasAndroid: !!tokens.android,

@@ -861,19 +861,23 @@
     const code = adMoneyCode();
     try {
       if (typeof NalunoCurrency !== 'undefined' && NalunoCurrency && NalunoCurrency.convert) {
-        return NalunoCurrency.convert(n, code, 'AED');
+        const v = NalunoCurrency.convert(n, code, 'AED');
+        if (v != null && isFinite(v)) return v;
+        return null;
       }
     } catch (_) {}
-    return n;
+    return null;
   }
   function adFromAed(n) {
     const code = adMoneyCode();
     try {
       if (typeof NalunoCurrency !== 'undefined' && NalunoCurrency && NalunoCurrency.convert) {
-        return NalunoCurrency.convert(n, 'AED', code);
+        const v = NalunoCurrency.convert(n, 'AED', code);
+        if (v != null && isFinite(v)) return v;
+        return null;
       }
     } catch (_) {}
-    return n;
+    return null;
   }
   function broadcastMediaUrl(meta) {
     const seg = (meta && meta.segment) || {};
@@ -967,7 +971,12 @@
     ctaUrl = httpsUrl(ctaUrl);
     let paidTyped = Number(val('crAdPaid') || '0');
     if (!isFinite(paidTyped) || paidTyped < 0) paidTyped = 0;
-    const paidAed = Math.min(1000000, Math.max(0, Number(adToAed(paidTyped)) || 0));
+    const converted = adToAed(paidTyped);
+    if (paidTyped > 0 && (converted == null || !isFinite(Number(converted)))) {
+      say('No exchange rate yet. Nothing was saved as a price.');
+      return;
+    }
+    const paidAed = Math.min(1000000, Math.max(0, Number(converted) || 0));
     let bill = val('crAdBill').toLowerCase();
     if (bill !== 'cpc' && bill !== 'cpv') bill = 'cpm';
     let skip = parseInt(val('crAdSkip') || '5', 10);

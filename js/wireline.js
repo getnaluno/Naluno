@@ -2159,7 +2159,12 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
           kdf: sealed.kdf || 'hkdf',
         };
       } else {
-        finalPayload = { type:'text', text: payload.text, encrypted:false };
+        const c2 = contacts.find(x=>x.firebaseUid===c.firebaseUid);
+        if(c2){
+          queueMessageForLater(c2.id, c.firebaseUid, payload, previewText, cmid);
+          toast('Waiting for their key — this stays on your phone');
+        }
+        return;
       }
       finalPreview = previewText;
     }

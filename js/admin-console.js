@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261004i';
+  const BUILD = '20261010c';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -2079,7 +2079,9 @@
       ? '<button type="button" class="ghost admBmod" data-id="' + id + '" data-a="restore">Restore</button>'
       : ('<button type="button" class="primary admBmod" data-id="' + id + '" data-a="let-out">Let out</button> '
         + '<button type="button" class="ghost admBmod" data-id="' + id + '" data-a="take-down">Take down</button> '
-        + '<button type="button" class="ghost admBmod" data-id="' + id + '" data-uid="' + uid + '" data-a="trust-publisher">Trust publisher</button>');
+        + '<button type="button" class="ghost admBmod" data-id="' + id + '" data-uid="' + uid + '" data-a="trust-publisher">Trust publisher</button> '
+        + '<button type="button" class="ghost admBmod" data-id="' + id + '" data-uid="' + uid + '" data-a="reach-full">Full Reach</button> '
+        + '<button type="button" class="ghost admBmod" data-id="' + id + '" data-uid="' + uid + '" data-a="reach-open">Short Reach</button>');
     const jump = (uid ? ' <button type="button" class="ghost admGoUser" data-uid="' + uid + '">Person</button>' : '')
       + (id ? ' <button type="button" class="ghost admGoLegal" data-q="' + id + '">Legal</button>' : '');
     return '<div class="review-card">'
@@ -6144,7 +6146,7 @@
     if (typeof uploadBroadcastFile === 'function') return Promise.resolve();
     return new Promise(function (resolve, reject) {
       const s = document.createElement('script');
-      s.src = '/js/broadcast-upload.js?v=20260913a';
+      s.src = '/js/broadcast-upload.js?v=20261010b';
       s.onload = function () { resolve(); };
       s.onerror = function () { reject(new Error('Upload helper did not load')); };
       document.head.appendChild(s);
@@ -7408,6 +7410,12 @@
         if (!who) { toast('Missing account'); return; }
         await db.collection('users').doc(who).set({ trustedPublisher: true, updatedAt: now }, { merge: true });
         toast('Their next Broadcasts go out live');
+      } else if (action === 'reach-full' || action === 'reach-open') {
+        const who = uid || '';
+        if (!who) { toast('Missing account'); return; }
+        const reach = action === 'reach-full' ? 'full' : 'open';
+        await db.collection('users').doc(who).set({ reach: reach, updatedAt: now }, { merge: true });
+        toast(reach === 'full' ? 'Full Reach: 3 hours, 12 videos a day' : 'Short Reach: 40 minutes, 3 videos a day');
       }
       try {
         await adminWorker('/v1/admin/broadcast-moderation', {

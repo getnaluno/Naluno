@@ -1217,6 +1217,7 @@ async function uploadSignalChunked(blob, contentType){
   const base = SIGNAL_UPLOAD_WORKER_URL.replace(/\/+$/, '');
   const size = blob.size || 0;
   if(size < 1) throw new Error('Empty video');
+  if(size > 8 * 1024 * 1024 * 1024) throw new Error('That file is larger than 8 GB');
   const CHUNK = 8 * 1024 * 1024;
   const authH = async function(force){
     const token = await currentUser.getIdToken(!!force);

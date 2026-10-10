@@ -77,7 +77,7 @@ assert.ok(/"scales": \{"noise": 0\.6, "length": 1\.05, "noise_w": 0\.7\}|"length
 
 /* 6. Stamps, so phones get the new files. */
 const html = read('app/index.html');
-assert.ok(/naluno-voice-master\.js\?v=2026100[7-9][a-z]/.test(html) && /naluno-voices\.js\?v=2026100[7-9][a-z]/.test(html), 'app stamps');
+assert.ok(/naluno-voice-master\.js\?v=(?:2026100[7-9][a-z]|202610[1-3][0-9][a-z])/.test(html) && /naluno-voices\.js\?v=(?:2026100[7-9][a-z]|202610[1-3][0-9][a-z])/.test(html), 'app stamps');
 assert.ok(/naluno-voice-worker\.js\?v=20261007a/.test(voices) && /naluno-af-engine\.js\?v=20261007a/.test(read('js/naluno-voice-worker.js')), 'worker stamps');
 assert.ok(/APP_BUILD = '(?:20261007[a-z]|2026100[89][a-z]|202610[1-3][0-9][a-z])'/.test(read('sw.js')), 'service worker');
 console.log('fixes-1007a tests passed');

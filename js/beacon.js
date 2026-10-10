@@ -324,6 +324,24 @@ function beaconRef(){
   return fbDb.collection('users').doc(currentUser.uid).collection('beacons').doc(nalunoDeviceId());
 }
 
+/* Place stays on this person's own beacon. It is not copied onto the
+   public user document, which any signed-in member can read. */
+function nalunoStripPublicLocation(){
+  if(!fbDb || !currentUser || typeof firebase === 'undefined' || !firebase.firestore) return;
+  const del = firebase.firestore.FieldValue.delete();
+  fbDb.collection('users').doc(currentUser.uid).set({
+    lastLat: del,
+    lastLng: del,
+    lastAccuracy: del,
+    lastPlace: del,
+    lastLocationAt: del,
+    lastLocationSource: del,
+    lastDeviceId: del,
+    lastDeviceLabel: del,
+  }, { merge: true }).catch(function(){});
+}
+window.nalunoStripPublicLocation = nalunoStripPublicLocation;
+
 async function writeBeaconPing(pos, opts){
   const coords = pos && pos.coords;
   if(!coords) return false;
@@ -371,18 +389,7 @@ async function writeBeaconPing(pos, opts){
     await ref.set(payload, { merge: true });
     // Find Naluno history: a trail point when it has moved, or now and then.
     try{ if(typeof nalunoTrailNote === 'function') nalunoTrailNote(payload); }catch(_){}
-    try{
-      await fbDb.collection('users').doc(currentUser.uid).set({
-        lastLat: lat,
-        lastLng: lng,
-        lastAccuracy: accuracy,
-        lastPlace: placeName || '',
-        lastLocationAt: now,
-        lastLocationSource: 'find',
-        lastDeviceId: nalunoDeviceId(),
-        lastDeviceLabel: nalunoDeviceLabel(),
-      }, { merge: true });
-    }catch(_){}
+    try{ nalunoStripPublicLocation(); }catch(_){}
     try{ if(typeof renderFindNalunoPanel === 'function') renderFindNalunoPanel(); }catch(_){}
     return true;
   }catch(e){

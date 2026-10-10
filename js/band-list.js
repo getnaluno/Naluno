@@ -448,6 +448,7 @@ async function createRealBand(name, vibe, memberContacts){
       createdBy: currentUser.uid,
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       lastEmptiedAt: null,
+      linkJoin: true,
       // Market square: no owner privileges — createdBy is history only.
     });
     const memberInfo = (typeof nalunoLiveFace === 'function')

@@ -8,7 +8,7 @@
    ============================================================ */
 
 const BCAST_MAX_SECONDS = 3 * 60 * 60; // 3 hours — one file, chapters are seek marks only
-const BCAST_MAX_UPLOAD_BYTES = (typeof UPLOAD_MAX_BYTES === "number" ? UPLOAD_MAX_BYTES : 150 * 1024 * 1024);
+const BCAST_MAX_OBJECT_BYTES = 8 * 1024 * 1024 * 1024;
 const BCAST_TARGET_HEIGHT = 1080; // phone-sharp; long clips still scale bitrate down
 
 let bcompFile = null;       // original File
@@ -399,21 +399,36 @@ async function bcompOnFileChosen(file){
     bcompReset();
     return;
   }
+  if(file.size > BCAST_MAX_OBJECT_BYTES){
+    toast('That video is larger than 8 GB');
+    bcompReset();
+    return;
+  }
+  const reachCap = (typeof nalunoReachMaxSec === 'function')
+    ? nalunoReachMaxSec((typeof currentProfile !== 'undefined') ? currentProfile : null, Date.now())
+    : BCAST_MAX_SECONDS;
+  if(duration > reachCap + 1){
+    toast('A new Callsign can post a video up to 40 minutes. Keep publishing and the longer room opens.');
+    bcompReset();
+    return;
+  }
 
   const mins = Math.floor((duration || 0) / 60);
   const secs = Math.round((duration || 0) % 60);
-  const mb = Math.round(file.size/1024/1024);
+  const sizeLabel = file.size >= 1024 * 1024 * 1024
+    ? (file.size / (1024 * 1024 * 1024)).toFixed(1) + ' GB'
+    : Math.round(file.size / 1024 / 1024) + ' MB';
   if(file.size > 95 * 1024 * 1024){
-    toast('Large video (' + Math.round(file.size/1024/1024) + ' MB) — will upload in pieces (no compress)');
+    toast('Large video (' + sizeLabel + ') — uploading the original in pieces');
   }
   bcompCompressedBlob = file;
   if(status){
     if(!duration){
-      status.textContent = `Ready · ${mb} MB · original kept (length read on play)`;
+      status.textContent = `Ready · ${sizeLabel} · original kept (length read on play)`;
     } else if(duration > 4 * 60){
-      status.textContent = `Ready · ${mins}:${String(secs).padStart(2,'0')} · ${mb} MB · will publish as chapters (~4 min)`;
+      status.textContent = `Ready · ${mins}:${String(secs).padStart(2,'0')} · ${sizeLabel} · one file, marks every 4 min`;
     } else {
-      status.textContent = `Ready · ${mins}:${String(secs).padStart(2,'0')} · ${mb} MB · original kept`;
+      status.textContent = `Ready · ${mins}:${String(secs).padStart(2,'0')} · ${sizeLabel} · original kept`;
     }
   }
   if(pub){ pub.removeAttribute('disabled'); pub.setAttribute('aria-disabled', 'false'); pub.style.opacity = '1'; pub.textContent = 'Publish Broadcast'; }
@@ -642,6 +657,18 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
   /* Only this post's own verdict. The "last screen run anywhere" fallback
      could hand a clean verdict from a different file to this post. */
   const snapScreen = window._bcompScreen || null;
+  let snapReachPass = '';
+  let snapReachSeconds = 0;
+  if(snapKind === 'video'){
+    snapReachSeconds = Math.max(1, Math.round(snapDuration || 0));
+    const claim = (typeof nalunoReachClaim === 'function') ? await nalunoReachClaim(snapReachSeconds) : { blocked: true, error: 'Reach is not loaded' };
+    if(!claim || claim.blocked){
+      bcompPublishing = false;
+      toast((claim && claim.error) || 'This video is past your Reach.');
+      return;
+    }
+    snapReachPass = claim.passId;
+  }
   bcompPublishing = false;
   bcompClose(snapKeptPicker ? { keepPicker: true } : undefined);
 
@@ -774,6 +801,8 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
         strandId: snapStrandId, strandName: snapStrandName, origin: snapOrigin,
         originCredit: (typeof broadcastCreditFromOrigin === 'function') ? broadcastCreditFromOrigin(snapOrigin) : null,
         screen: snapScreen,
+        durationSec: snapKind === 'video' ? snapReachSeconds : undefined,
+        reachPass: snapKind === 'video' ? snapReachPass : '',
       });
       if(typeof loadFeedBroadcasts === 'function') await loadFeedBroadcasts();
       if(typeof notifyPublishResult === 'function') notifyPublishResult(true, snapTitle);

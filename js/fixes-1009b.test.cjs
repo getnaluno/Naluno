@@ -59,7 +59,7 @@ assert.ok(fs.existsSync(path.join(root, 'voices/lg/male.mp3')) && fs.existsSync(
 
   /* 5. Stamps */
   const html = read('app/index.html');
-  ['lg-ear.js', 'naluno-voices.js', 'broadcast-glance.js', 'broadcast-space.js', 'camera.js', 'pwa.js'].forEach((f) => assert.ok(html.includes('/js/' + f + '?v=20261009b'), f + ' stamp'));
-  assert.ok(read('sw.js').includes("APP_BUILD = '20261009b'") && read('js/pwa.js').includes('/sw.js?v=20261009b'));
+  ['lg-ear.js', 'naluno-voices.js', 'broadcast-glance.js', 'broadcast-space.js', 'camera.js', 'pwa.js'].forEach((f) => assert.ok(html.includes('/js/' + f + '?v=20261010a'), f + ' stamp'));
+  assert.ok(read('sw.js').includes("APP_BUILD = '20261010c'") && read('js/pwa.js').includes('/sw.js?v=20261010c'));
   console.log('fixes-1009b tests passed');
 })().catch((e) => { console.error(e); process.exit(1); });
