@@ -1566,6 +1566,52 @@ function renderBspaceRelated(){
   }
 }
 
+let bspaceLiveTalkSeen = {};
+let bspaceLiveTalkPrimed = false;
+function bspaceFlashLine(text){
+  try{
+    const line = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 90);
+    if(!line) return;
+    let el = document.getElementById('bspaceTalkFlash');
+    if(!el){
+      el = document.createElement('div');
+      el.id = 'bspaceTalkFlash';
+      document.body.appendChild(el);
+    } else if(el.parentNode !== document.body){
+      document.body.appendChild(el);
+    }
+    el.style.cssText = 'position:fixed;left:50%;bottom:18%;transform:translateX(-50%);z-index:250;max-width:86vw;padding:10px 16px;border-radius:16px;background:rgba(13,15,23,.9);border:1px solid rgba(255,255,255,.18);color:#fff;font-family:var(--font-mono);font-size:13px;line-height:1.35;text-align:center;pointer-events:none;opacity:0;transition:opacity .25s ease;';
+    el.textContent = line;
+    el.style.opacity = '1';
+    clearTimeout(el._hideT);
+    el._hideT = setTimeout(function(){ el.style.opacity = '0'; }, 3600);
+  }catch(_){}
+}
+function bspaceNoteLiveTalk(docs){
+  const fresh = [];
+  (docs || []).forEach(function(d){
+    if(!d || !d.id || bspaceLiveTalkSeen[d.id]) return;
+    bspaceLiveTalkSeen[d.id] = 1;
+    if(!bspaceLiveTalkPrimed) return;
+    const m = (typeof d.data === 'function') ? (d.data() || {}) : {};
+    if(!m || m.type === 'system' || m.type === 'live') return;
+    const text = String(m.text || '').trim();
+    if(text) fresh.push(text);
+  });
+  const was = bspaceLiveTalkPrimed;
+  bspaceLiveTalkPrimed = true;
+  if(!was) return;
+  fresh.slice(-3).forEach(bspaceFlashLine);
+}
+function bspaceResetLiveTalk(){
+  bspaceLiveTalkSeen = {};
+  bspaceLiveTalkPrimed = false;
+  try{
+    const el = document.getElementById('bspaceTalkFlash');
+    if(el && el.parentNode) el.parentNode.removeChild(el);
+  }catch(_){}
+}
+
 function listenBspaceCollection(colName, renderFn, orderField){
   if(!fbDb || !activeBroadcastId) return;
   const col = fbDb.collection('broadcasts').doc(activeBroadcastId).collection(colName);
@@ -1584,6 +1630,7 @@ function listenBspaceCollection(colName, renderFn, orderField){
       });
       bspaceDocCache[colName] = docs;
       try{ renderFn(docs); }catch(err){ console.warn('[bspace] paint', colName, err); }
+      if(colName === 'conversation'){ try{ bspaceNoteLiveTalk(docs); }catch(_){} }
       scheduleBspaceLivePaint();
     }, function(err){
       console.warn('[bspace] listen', colName, err && err.code, err && err.message);
@@ -1867,6 +1914,7 @@ function closeBroadcastSpace(){
   }catch(_){}
   try{ if(window.__bspaceNextTimer){ clearTimeout(window.__bspaceNextTimer); window.__bspaceNextTimer = null; } }catch(_){}
   if(typeof bLiveOnSpaceClosed === 'function') bLiveOnSpaceClosed();
+  try{ bspaceResetLiveTalk(); }catch(_){}
   bspaceStopLive();
   bspaceStopSpeak();
   closeRoomSheet();
@@ -2022,6 +2070,9 @@ function bspaceRememberPost(col, id, data){
   const cur = (bspaceDocCache[col] || []).filter(function(d){ return d.id !== id; });
   cur.push(row);
   bspaceDocCache[col] = cur;
+  if(col === 'conversation' && data && data.text && data.type !== 'system' && data.type !== 'live'){
+    try{ bspaceLiveTalkSeen[id] = 1; bspaceFlashLine(data.text); }catch(_){}
+  }
   const paint = {
     conversation: renderBspaceConversation,
     questions: renderBspaceQuestions,
@@ -2362,34 +2413,17 @@ function renderBspaceImpact(){
       circleSnap.forEach(function(d){ circleRows.push(d.id); });
     }
     const communityN = circleRows.length || members.length;
-    const convDocs = bspaceDocCache.conversation || conv.docs;
-    const qsDocs = bspaceDocCache.questions || qs.docs;
-    const resDocs = bspaceDocCache.results || res.docs;
-    const resourceDocs = bspaceDocCache.resources || resources.docs;
+    const convDocs = bspaceDocCache.conversation || conv.docs || [];
+    const qsDocs = bspaceDocCache.questions || qs.docs || [];
+    const resDocs = bspaceDocCache.results || res.docs || [];
+    const resourceDocs = bspaceDocCache.resources || resources.docs || [];
     const answered = qsDocs.filter(d => (d.data().answers && d.data().answers.length) || d.data().bestAnswer).length;
     const realConvCount = convDocs.filter(d => {
       const t = d.data().type;
       return t !== 'system' && t !== 'live';
     }).length;
-    /* The live listeners already paint conversation, questions, results and
-       resources. A slower one-shot read must not replace that list — that
-       was a comment appearing and then vanishing. */
-    if(!bspaceDocCache.conversation){
-      bspaceDocCache.conversation = conv.docs;
-      try{ renderBspaceConversation(conv.docs); }catch(_){}
-    }
-    if(!bspaceDocCache.questions){
-      bspaceDocCache.questions = qs.docs;
-      try{ renderBspaceQuestions(qs.docs); }catch(_){}
-    }
-    if(!bspaceDocCache.results){
-      bspaceDocCache.results = res.docs;
-      try{ renderBspaceResults(res.docs); }catch(_){}
-    }
-    if(!bspaceDocCache.resources){
-      bspaceDocCache.resources = resources.docs;
-      try{ renderBspaceResources(resources.docs); }catch(_){}
-    }
+    /* Counts only. This read used to paint the conversation and a slower
+       empty result wiped a comment that the live listener had just shown. */
     const cells = [
       ['Community', communityN, 'community'],
       ['Conversations', realConvCount, 'conversation'],
@@ -2792,6 +2826,7 @@ function bspaceWatchLiveState(){
     try{
       if(activeBroadcastMeta){
         activeBroadcastMeta.live = !!d.live;
+        if(d.liveRoom === true || d.liveRoom === false) activeBroadcastMeta.liveRoom = d.liveRoom;
         const before = Number(activeBroadcastMeta.views) || 0;
         activeBroadcastMeta.views = typeof d.views === 'number' ? d.views : (activeBroadcastMeta.views || 0);
         if(activeBroadcastMeta.views !== before) bspaceShowViewsNow(activeBroadcastMeta.views, activeBroadcastMeta.views - before);

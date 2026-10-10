@@ -153,7 +153,7 @@ function broadcastThumbHtml(b){
   if(glance && bareRead){
     inner = `<div class="bcast-plate-read bcast-read-card"><div class="bcast-read-title">${title}</div>${copy.text ? `<p class="bcast-plate-excerpt">${escapeHtml(copy.text)}</p>` : ''}</div>`;
   }
-  return `<article class="bcast-plate${writing ? ' is-writing' : ''}${writing && cover ? ' has-photo' : ''}${b.live ? ' is-live' : ''}${glance ? ' has-glance' : ''}${bareRead && glance ? ' is-read-card' : ''}" data-broadcast-id="${escapeHtml(b.id)}"${glance ? ` data-kind="${glance.kind}"${glance.lg ? ' data-lg="1"' : ''}` : ''}${b.live ? ` data-live="1" data-creator-uid="${escapeHtml(b.creatorUid || '')}"` : ''} role="button" tabindex="0">
+  return `<article class="bcast-plate${writing ? ' is-writing' : ''}${writing && cover ? ' has-photo' : ''}${b.live ? ' is-live' : ''}${glance ? ' has-glance' : ''}${bareRead && glance ? ' is-read-card' : ''}" data-broadcast-id="${escapeHtml(b.id)}"${glance ? ` data-kind="${glance.kind}"${glance.lg ? ' data-lg="1"' : ''}` : ''}${b.live ? ` data-live="1" data-creator-uid="${escapeHtml(b.creatorUid || '')}" data-live-room="${b.liveRoom === true ? '1' : (b.liveRoom === false ? '0' : '')}"` : ''} role="button" tabindex="0">
     <div class="bcast-plate-frame">
       ${inner}
       ${live}
@@ -475,6 +475,19 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
     });
   }
   await ref.set(doc);
+  /* Pin a private or scheduled Broadcast before any later wait. A snapshot
+     that arrives while Screen is still placing it must not be able to drop
+     it, and a later public-feed snapshot must not be able to either. */
+  try{
+    const early = { id: ref.id };
+    Object.keys(doc).forEach(function(k){ early[k] = doc[k]; });
+    if(early.visibility === 'private' || (Number(early.publishAt) > Date.now())){
+      const pins = nalunoPrivatePinRead().filter(function(b){ return b && b.id !== early.id; });
+      pins.unshift(early);
+      nalunoPrivatePinWrite(pins);
+      myBroadcasts = [early, ...myBroadcasts.filter(function(x){ return x.id !== early.id; })];
+    }
+  }catch(_){}
   try{
     await ref.collection('journey').add({
       type: 'created',
@@ -574,6 +587,9 @@ async function deletePermanentBroadcast(id){
   }catch(e){ console.warn('[broadcast] toga total adjust on delete', e); }
   myBroadcasts = myBroadcasts.filter(b => b.id !== id);
   feedBroadcasts = feedBroadcasts.filter(b => b.id !== id);
+  try{
+    nalunoPrivatePinWrite(nalunoPrivatePinRead().filter(function(b){ return b && b.id !== id; }));
+  }catch(_){}
 }
 
 async function loadMyBroadcasts(){
@@ -691,10 +707,88 @@ async function saveBroadcastEdits(id, patch){
   };
   try{ apply(typeof myBroadcasts !== 'undefined' ? myBroadcasts : null); }catch(_){}
   try{ apply(typeof feedBroadcasts !== 'undefined' ? feedBroadcasts : null); }catch(_){}
+  try{
+    const row = (typeof myBroadcasts !== 'undefined' && myBroadcasts) ? myBroadcasts.find(function(b){ return b && b.id === id; }) : null;
+    const merged = Object.assign({}, row || {}, next, { id: id });
+    const keep = merged.visibility === 'private' || (Number(merged.publishAt) > Date.now());
+    const pins = nalunoPrivatePinRead().filter(function(b){ return b && b.id !== id; });
+    if(keep && !merged.deleted){
+      pins.unshift(merged);
+    }
+    nalunoPrivatePinWrite(pins);
+    if(!keep && typeof feedBroadcasts !== 'undefined' && feedBroadcasts){
+      feedBroadcasts = feedBroadcasts.filter(function(b){ return !b || b.id !== id || (typeof broadcastIsPublic === 'function' && broadcastIsPublic(b)); });
+    }
+  }catch(_){}
   return next;
 }
 window.saveBroadcastEdits = saveBroadcastEdits;
 
+/* Owner-only pin. A public-feed snapshot cannot delete these, and a My
+   Broadcasts snapshot that simply omits one cannot either. A pin leaves
+   only when this phone deletes it, or the server copy is present and is
+   no longer private or scheduled. */
+function nalunoPrivatePinKey(){
+  try{
+    const uid = (typeof currentUser !== 'undefined' && currentUser && currentUser.uid) || '';
+    return uid ? ('nalunoPrivatePins:' + uid) : '';
+  }catch(_){ return ''; }
+}
+function nalunoPrivatePinRead(){
+  const k = nalunoPrivatePinKey();
+  if(!k) return [];
+  try{
+    const raw = localStorage.getItem(k);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.filter(function(b){ return b && b.id; }) : [];
+  }catch(_){ return []; }
+}
+function nalunoPrivatePinWrite(rows){
+  const k = nalunoPrivatePinKey();
+  if(!k) return;
+  try{
+    const slim = (rows || []).slice(0, 40).map(function(b){
+      return (typeof nalunoSlimMedia === 'function') ? nalunoSlimMedia(b) : b;
+    });
+    localStorage.setItem(k, JSON.stringify(slim));
+  }catch(_){}
+}
+function nalunoMergeOwnerBroadcasts(serverRows, pins, now, deletedIds, uid){
+  const nowMs = now || Date.now();
+  const gone = {};
+  (deletedIds || []).forEach(function(id){ if(id) gone[id] = 1; });
+  const byId = {};
+  (serverRows || []).forEach(function(b){
+    if(!b || !b.id) return;
+    if(b.deleted){ gone[b.id] = 1; return; }
+    byId[b.id] = b;
+  });
+  const nextPins = [];
+  (pins || []).forEach(function(b){
+    if(!b || !b.id || gone[b.id] || b.deleted) return;
+    if(uid && b.creatorUid && b.creatorUid !== uid) return;
+    const server = byId[b.id];
+    if(server){
+      const still = server.visibility === 'private' || (Number(server.publishAt) > nowMs);
+      if(still){
+        const kept = Object.assign({}, b, server);
+        nextPins.push(kept);
+        byId[b.id] = kept;
+      }
+      return;
+    }
+    if(b.visibility === 'private' || (Number(b.publishAt) > nowMs)){
+      byId[b.id] = b;
+      nextPins.push(b);
+    }
+  });
+  const list = Object.keys(byId).map(function(k){ return byId[k]; })
+    .sort(function(a, b){ return (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0); });
+  return { list: list, pins: nextPins };
+}
+window.nalunoPrivatePinRead = nalunoPrivatePinRead;
+window.nalunoPrivatePinWrite = nalunoPrivatePinWrite;
+window.nalunoMergeOwnerBroadcasts = nalunoMergeOwnerBroadcasts;
 
 /** Realtime plate list — no refresh required for new Broadcasts. */
 function startFeedBroadcastsListener(){
@@ -762,23 +856,24 @@ function startMyBroadcastsListener(){
     myBroadcastsUnsub = fbDb.collection('broadcasts')
       .where('creatorUid', '==', currentUser.uid)
       .onSnapshot(snap => {
-        const incoming = snap.docs
-          .map(d => ({ id: d.id, ...d.data() }))
-          .filter(b => !b.deleted);
-        const byId = {};
-        incoming.forEach(function(b){ if(b && b.id) byId[b.id] = b; });
-        /* A private Broadcast just saved on this phone can be missing from
-           the first cached snapshot. Keep it until the server copy arrives
-           instead of letting the list blink it away. */
-        (myBroadcasts || []).forEach(function(b){
-          if(!b || !b.id || byId[b.id]) return;
-          const at = Number(b.createdAt) || 0;
-          if(at && (Date.now() - at) < 25000) byId[b.id] = b;
-        });
-        myBroadcasts = Object.keys(byId).map(function(k){ return byId[k]; })
-          .sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
+        const raw = snap.docs.map(function(d){ return { id: d.id, ...(d.data() || {}) }; });
+        const incoming = raw.filter(function(b){ return b && !b.deleted; });
+        const deletedIds = raw.filter(function(b){ return b && b.deleted; }).map(function(b){ return b.id; });
+        const uid = currentUser && currentUser.uid;
+        const merged = nalunoMergeOwnerBroadcasts(incoming, nalunoPrivatePinRead(), Date.now(), deletedIds, uid);
+        myBroadcasts = merged.list;
+        nalunoPrivatePinWrite(merged.pins);
+        try{ nalunoCacheWrite('myBroadcasts', (myBroadcasts || []).map(nalunoSlimMedia)); }catch(_){}
+        try{ if(typeof nalunoListenOk === 'function') nalunoListenOk('myBroadcasts'); }catch(_){}
         if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
-      }, err => console.warn('[bcast] my listener', err));
+      }, err => {
+        console.warn('[bcast] my listener', err && err.message);
+        try{ if(myBroadcastsUnsub) myBroadcastsUnsub(); }catch(_){}
+        myBroadcastsUnsub = null;
+        try{
+          if(typeof nalunoRelisten === 'function') nalunoRelisten('myBroadcasts', startMyBroadcastsListener, 8);
+        }catch(_){}
+      });
   }catch(e){ console.warn('[bcast] my listener start', e); }
 }
 
@@ -807,6 +902,7 @@ async function loadFeedBroadcasts(){
   (feedBroadcasts || []).forEach(b => { byId[b.id] = b; });
   list.forEach(b => { byId[b.id] = b; });
   feedBroadcasts = Object.keys(byId).map(k => byId[k])
+    .filter(function(b){ return typeof broadcastIsPublic !== 'function' || broadcastIsPublic(b); })
     .sort((a,b) => (b.live ? 1 : 0) - (a.live ? 1 : 0) || (b.updatedAt||b.createdAt||0) - (a.updatedAt||a.createdAt||0))
     .slice(0, 80);
   if(typeof renderBroadcastTab === 'function') renderBroadcastTab();

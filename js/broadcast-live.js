@@ -35,7 +35,10 @@ let bLiveFeedUnsubs = [];
 let bLiveFeedStream = null;
 let bLiveFeedGen = 0;
 let bLiveFeedTimer = null;
+let bLiveFeedAwayAt = 0;
 let bLiveFeedStarting = null;
+let bLiveFeedRoom = null;
+let bLiveRoomOff = false;
 
 function bLiveSessionRef(bcastId, viewerUid){
   return fbDb.collection('broadcasts').doc(bcastId).collection('liveSessions').doc(viewerUid);
@@ -97,18 +100,103 @@ function bLiveUpdateViewerChrome(n){
 }
 
 async function bLiveEnsureIce(){
-  // Cached TURN if this phone already has it (calls keep it warm). Never
-  // block the offer on a fresh credential fetch — that wait is what made a
-  // viewer sit on "Connecting…" while the host had not sent an answer yet.
+  // Cached TURN if this phone already has it. Otherwise give the warm-up
+  // one second, then go with whatever is ready. Never the multi-second
+  // patient fetch — that is what left a viewer sitting on Connecting.
   try{ if(typeof prewarmIceServers === 'function') prewarmIceServers(); }catch(_){}
+  function cached(){
+    try{
+      if(typeof IceCore !== 'undefined' && typeof IceCore.cached === 'function') return IceCore.cached();
+    }catch(_){}
+    return null;
+  }
+  const hit = cached();
+  if(hit) return hit;
+  const t0 = Date.now();
+  while(Date.now() - t0 < 1000){
+    await new Promise(function(r){ setTimeout(r, 50); });
+    const again = cached();
+    if(again) return again;
+  }
   try{
     if(typeof IceCore !== 'undefined' && IceCore.now) return IceCore.now();
   }catch(_){}
   return { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }], iceCandidatePoolSize: 4, bundlePolicy: 'max-bundle', rtcpMuxPolicy: 'require' };
 }
 
+/* Write the offer or answer only after a real network path is in it, or
+   after a short cap. Host-only candidates are why the other phone sat
+   there until trickle caught up — and trickle through Firestore is slow. */
+async function bLiveDescribeWhenReady(pc, capMs){
+  const cap = (typeof capMs === 'number' && capMs >= 0) ? capMs : 800;
+  const t0 = Date.now();
+  try{
+    while(pc && pc.signalingState !== 'closed' && pc.iceGatheringState !== 'complete' && (Date.now() - t0) < cap){
+      const sdp = (pc.localDescription && pc.localDescription.sdp) || '';
+      if(/typ srflx|typ relay/.test(sdp)) break;
+      await new Promise(function(r){ setTimeout(r, 40); });
+    }
+  }catch(_){}
+  try{
+    const d = pc && pc.localDescription;
+    if(d && d.type && d.sdp) return { type: d.type, sdp: d.sdp };
+  }catch(_){}
+  return null;
+}
+function bLiveFeedKeep(awayAt, now, visible){
+  if(visible) return true;
+  if(!awayAt) return true;
+  return (now - awayAt) < 2000;
+}
+
 function bLiveRoomCount(){
   return Object.keys(bLiveHostPcs).filter(function(uid){ return !bLiveHostPreview[uid]; }).length;
+}
+
+/* TikTok and YouTube do not open a connection per viewer.
+   The host uploads once. A room fans that out. Direct links are only the
+   fallback when that room is not connected. 'mesh' means do not wait. */
+function bLiveWatchPath(liveRoom, roomOff){
+  if(roomOff || liveRoom === false) return 'mesh';
+  if(liveRoom === true) return 'room';
+  return 'try';
+}
+function bLiveHostShouldMesh(data){
+  if(!data || !data.offer || data.answer) return false;
+  if(data.room && !data.offer) return false;
+  return true;
+}
+function bLiveRoomPresence(uid, name, preview){
+  return {
+    from: uid,
+    name: String(name || 'Someone').slice(0, 40),
+    ts: Date.now(),
+    preview: !!preview,
+    room: true,
+  };
+}
+function bLiveMarkRoom(id, on){
+  if(on) bLiveRoomOff = false;
+  try{
+    if(fbDb && id) fbDb.collection('broadcasts').doc(id).set({ liveRoom: !!on }, { merge: true }).catch(function(){});
+  }catch(_){}
+}
+function bLiveOpenRoom(stream, broadcastId){
+  if(!stream || !broadcastId || typeof sfuPublishLive !== 'function') return;
+  sfuPublishLive({ stream: stream, broadcastId: broadcastId }).then(function(handle){
+    if(!handle || !bLiveHost || activeBroadcastId !== broadcastId){
+      if(handle && handle.leave){ try{ handle.leave(); }catch(_){} }
+      if(bLiveHost && activeBroadcastId === broadcastId){
+        if(window.__nalunoSfuCode === 'not_connected') bLiveRoomOff = true;
+        bLiveMarkRoom(broadcastId, false);
+      }
+      return;
+    }
+    try{ window.__nalunoSfuLiveHandle = handle; }catch(_){}
+    bLiveMarkRoom(broadcastId, true);
+  }).catch(function(){
+    if(bLiveHost && activeBroadcastId === broadcastId) bLiveMarkRoom(broadcastId, false);
+  });
 }
 
 /* ---------------- HOST: accept viewer offers ---------------- */
@@ -170,7 +258,7 @@ async function bLiveStartHost(stream){
       const data = change.doc.data() || {};
       if(data.preview) bLiveHostPreview[uid] = 1;
       else delete bLiveHostPreview[uid];
-      const entering = !data.preview && data.offer && !bLiveFlashed[uid];
+      const entering = !data.preview && !bLiveFlashed[uid] && (data.offer || data.room);
       function flashJoin(){
         if(!entering) return;
         bLiveFlashed[uid] = 1;
@@ -179,7 +267,7 @@ async function bLiveStartHost(stream){
       }
       // Already answered: this is someone stepping in from the silent feed,
       // or a second write. Flash them. Do not negotiate again.
-      if(!data.offer || data.answer){
+      if(!bLiveHostShouldMesh(data)){
         flashJoin();
         return;
       }
@@ -214,9 +302,15 @@ async function bLiveStartHost(stream){
         }catch(_){}
       });
     });
-    bLiveUpdateViewerChrome(bLiveRoomCount());
+    let watchers = 0;
+    snap.docs.forEach(function(d){
+      const row = d.data() || {};
+      if(!row.preview && d.id !== currentUser.uid) watchers++;
+    });
+    bLiveUpdateViewerChrome(watchers);
   }, err => console.warn('[bcast-live] host listen', err));
   bLiveHostUnsubs.push(unsub);
+  bLiveOpenRoom(stream, activeBroadcastId);
 
   // Live reactions feed
   bLiveWatchReactions(activeBroadcastId);
@@ -230,15 +324,11 @@ function bLiveFlashJoinName(name){
     if(!el){
       el = document.createElement('div');
       el.id = 'bspaceJoinFlash';
-      el.style.cssText = 'position:absolute;left:50%;top:18%;transform:translateX(-50%);z-index:12;padding:10px 18px;border-radius:999px;background:rgba(13,15,23,.88);border:1px solid rgba(124,255,178,.5);color:#7CFFB2;font-family:var(--font-mono);font-size:13px;letter-spacing:.03em;pointer-events:none;opacity:0;transition:opacity .25s ease;';
-      const host = document.getElementById('bspaceMedia') || document.getElementById('bspace');
-      if(host){
-        try{ if(getComputedStyle(host).position === 'static') host.style.position = 'relative'; }catch(_){}
-        host.appendChild(el);
-      } else {
-        document.body.appendChild(el);
-      }
+      document.body.appendChild(el);
+    } else if(el.parentNode !== document.body){
+      document.body.appendChild(el);
     }
+    el.style.cssText = 'position:fixed;left:50%;top:18%;transform:translateX(-50%);z-index:250;padding:10px 18px;border-radius:999px;background:rgba(13,15,23,.88);border:1px solid rgba(124,255,178,.5);color:#7CFFB2;font-family:var(--font-mono);font-size:13px;letter-spacing:.03em;pointer-events:none;opacity:0;transition:opacity .25s ease;';
     el.textContent = label + ' joined';
     el.style.opacity = '1';
     clearTimeout(el._hideT);
@@ -317,8 +407,13 @@ async function bLiveHostAcceptViewer(viewerUid, data, stream){
 
   const answer = await pc.createAnswer();
   await pc.setLocalDescription(answer);
+  let desc = { type: answer.type, sdp: answer.sdp };
+  try{
+    const ready = await bLiveDescribeWhenReady(pc, 800);
+    if(ready && ready.sdp) desc = ready;
+  }catch(_){}
   await ref.set({
-    answer: { type: answer.type, sdp: answer.sdp },
+    answer: { type: desc.type, sdp: desc.sdp },
     hostUid: currentUser.uid,
     answeredAt: Date.now(),
   }, { merge: true });
@@ -343,22 +438,133 @@ async function bLiveStopHost(){
     }catch(_){}
   }
   bLiveCleanupHost();
+  try{ if(activeBroadcastId) bLiveMarkRoom(activeBroadcastId, false); }catch(_){}
   if(bLiveReactionUnsub){ try{ bLiveReactionUnsub(); }catch(_){} bLiveReactionUnsub = null; }
+}
+
+function bLiveShowConnecting(){
+  const host = $('bspaceMedia');
+  if(!host || document.getElementById('bspaceViewerLiveVideo')) return;
+  host.innerHTML = `<video id="bspaceViewerLiveVideo" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;background:#000;"></video>
+      <div id="bspaceLiveConnecting" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.7);font-family:var(--font-mono,monospace);font-size:13px;letter-spacing:.03em;pointer-events:none;">Connecting to live…</div>`;
+  try{ if(getComputedStyle(host).position === 'static') host.style.position = 'relative'; }catch(_){}
+}
+async function bLiveJoinRoom(preview){
+  if(bLiveRoomOff || typeof sfuJoinLive !== 'function' || !activeBroadcastId || !currentUser) return false;
+  const video = preview ? null : document.getElementById('bspaceViewerLiveVideo');
+  const handle = await sfuJoinLive({
+    broadcastId: activeBroadcastId,
+    videoEl: video,
+    budgetMs: (activeBroadcastMeta && activeBroadcastMeta.liveRoom === true) ? 1600 : 1000,
+    muted: true,
+    onStream: function(stream){
+      const v = document.getElementById('bspaceViewerLiveVideo');
+      if(!v) return;
+      try{ v.srcObject = stream; }catch(_){}
+      const play = function(){
+        v.play().then(function(){
+          if(!preview) setTimeout(function(){ try{ v.muted = false; }catch(_){} }, 300);
+        }).catch(function(){});
+      };
+      play();
+      try{
+        const connecting = document.getElementById('bspaceLiveConnecting');
+        if(connecting) connecting.remove();
+      }catch(_){}
+    },
+  });
+  if(!handle){
+    if(window.__nalunoSfuCode === 'not_connected') bLiveRoomOff = true;
+    return false;
+  }
+  try{ window.__nalunoSfuLiveHandle = handle; }catch(_){}
+  try{
+    const body = bLiveRoomPresence(currentUser.uid, (currentProfile && currentProfile.name) || 'Someone', !!preview);
+    await bLiveSessionRef(activeBroadcastId, currentUser.uid).set(body, { merge: true });
+  }catch(_){}
+  bLiveWatchReactions(activeBroadcastId);
+  bLiveWatchViewerCount(activeBroadcastId);
+  const leaveBtn = $('bspaceJoinLiveBtn');
+  if(leaveBtn){
+    leaveBtn.textContent = 'Leave live';
+    leaveBtn.onclick = function(){ bLiveLeaveViewer(); };
+  }
+  const hint = $('bspaceReactionJoinHint');
+  if(hint){ hint.textContent = 'Leave live'; hint.onclick = function(){ bLiveLeaveViewer(); }; }
+  const badge = $('bspaceLiveBadge');
+  if(badge){ badge.style.display = 'block'; badge.textContent = 'Live now'; }
+  try{ toast('You’re in the live room'); }catch(_){}
+  return true;
+}
+function bLiveAdoptFeedRoom(){
+  if(!bLiveFeedRoom || !activeBroadcastId || bLiveFeedBid !== activeBroadcastId) return false;
+  const handle = bLiveFeedRoom;
+  const remote = bLiveFeedStream || new MediaStream();
+  bLiveFeedRoom = null;
+  bLiveFeedBid = '';
+  bLiveFeedStream = null;
+  bLiveFeedStarting = null;
+  try{ window.__nalunoSfuLiveHandle = handle; }catch(_){}
+  const host = $('bspaceMedia');
+  if(host){
+    host.innerHTML = '';
+    try{ if(getComputedStyle(host).position === 'static') host.style.position = 'relative'; }catch(_){}
+    const v = document.createElement('video');
+    v.id = 'bspaceViewerLiveVideo';
+    v.autoplay = true;
+    v.playsInline = true;
+    v.muted = true;
+    v.setAttribute('playsinline', '');
+    v.style.cssText = 'width:100%;height:100%;object-fit:cover;background:#000;';
+    host.appendChild(v);
+    try{ v.srcObject = remote; }catch(_){}
+    const unmute = function(){ try{ v.muted = false; }catch(_){} };
+    try{
+      const p = v.play();
+      if(p && p.then) p.then(function(){ setTimeout(unmute, 300); }).catch(function(){});
+      else setTimeout(unmute, 300);
+    }catch(_){ setTimeout(unmute, 300); }
+  }
+  try{
+    bLiveSessionRef(activeBroadcastId, currentUser.uid).set({ preview: false }, { merge: true }).catch(function(){});
+  }catch(_){}
+  bLiveWatchReactions(activeBroadcastId);
+  bLiveWatchViewerCount(activeBroadcastId);
+  const leaveBtn = $('bspaceJoinLiveBtn');
+  if(leaveBtn){
+    leaveBtn.textContent = 'Leave live';
+    leaveBtn.onclick = function(){ bLiveLeaveViewer(); };
+  }
+  const badge = $('bspaceLiveBadge');
+  if(badge){ badge.style.display = 'block'; badge.textContent = 'Live now'; }
+  return true;
 }
 
 /* ---------------- VIEWER: offer and receive tracks ---------------- */
 async function bLiveJoinAsViewer(){
   if(!fbDb || !currentUser || !activeBroadcastId){ toast('Open a live Broadcast first'); return; }
   if(bLiveHost){ toast('You’re already the host'); return; }
-  if(bLiveFeedStarting && bLiveFeedBid === activeBroadcastId){
-    try{ await bLiveFeedStarting; }catch(_){}
-  }
-  if(bLiveFeedPc && bLiveFeedBid === activeBroadcastId){
-    bLiveAdoptFeed();
+  if(bLiveFeedRoom && bLiveFeedBid === activeBroadcastId){
+    bLiveAdoptFeedRoom();
     return;
   }
-  if(bLiveFeedPc || bLiveFeedBid) bLiveStopFeed();
+  if(bLiveFeedPc && bLiveFeedBid === activeBroadcastId){
+    const st = bLiveFeedPc.connectionState;
+    if(st !== 'failed' && st !== 'closed'){
+      bLiveAdoptFeed();
+      return;
+    }
+  }
+  if(bLiveFeedPc || bLiveFeedBid || bLiveFeedStarting) bLiveStopFeed();
   if(bLiveViewerPc || window.__nalunoSfuLiveHandle) return;
+
+  const watchPath = bLiveWatchPath(activeBroadcastMeta && activeBroadcastMeta.liveRoom, bLiveRoomOff);
+  if(watchPath !== 'mesh'){
+    bLiveShowConnecting();
+    toast('Joining live…');
+    const tookRoom = await bLiveJoinRoom(false);
+    if(tookRoom) return;
+  }
 
   if(typeof prewarmIceServers === 'function') prewarmIceServers();
   toast('Joining live…');
@@ -483,8 +689,13 @@ async function bLiveJoinAsViewer(){
 
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
+  let offerDesc = { type: offer.type, sdp: offer.sdp };
+  try{
+    const ready = await bLiveDescribeWhenReady(pc, 800);
+    if(ready && ready.sdp) offerDesc = ready;
+  }catch(_){}
   await ref.set({
-    offer: { type: offer.type, sdp: offer.sdp },
+    offer: { type: offerDesc.type, sdp: offerDesc.sdp },
     from: currentUser.uid,
     name: (currentProfile && currentProfile.name) || 'Viewer',
     ts: Date.now(),
@@ -578,8 +789,18 @@ function bLiveWatchViewerCount(bcastId){
       bLiveUpdateViewerChrome(n);
       if(!primed){
         primed = true;
+        const now = Date.now();
         snap.docs.forEach(function(d){
-          if(!(d.data() || {}).preview) bLiveFlashed[d.id] = 1;
+          const data = d.data() || {};
+          if(data.preview) return;
+          if(currentUser && d.id === currentUser.uid){ bLiveFlashed[d.id] = 1; return; }
+          const ts = Number(data.ts) || 0;
+          if(ts && (now - ts) < 8000 && !bLiveFlashed[d.id]){
+            bLiveFlashed[d.id] = 1;
+            bLiveFlashJoinName(data.name || 'Someone');
+          } else {
+            bLiveFlashed[d.id] = 1;
+          }
         });
         return;
       }
@@ -612,7 +833,7 @@ function bLiveFeedOnScreen(plate){
   const r = plate.getBoundingClientRect();
   const h = window.innerHeight || 800;
   const w = window.innerWidth || 400;
-  return r.width > 2 && r.height > 2 && r.bottom > h * 0.08 && r.top < h * 0.92 && r.right > 0 && r.left < w;
+  return r.width > 2 && r.height > 2 && r.bottom > 0 && r.top < h && r.right > 0 && r.left < w;
 }
 function bLiveFeedMount(plate){
   const frame = plate && plate.querySelector('.bcast-plate-frame');
@@ -645,6 +866,10 @@ function bLiveStopFeed(){
   bLiveFeedUnsubs.forEach(function(u){ try{ u(); }catch(_){} });
   bLiveFeedUnsubs = [];
   if(bLiveFeedPc){ try{ bLiveFeedPc.close(); }catch(_){} bLiveFeedPc = null; }
+  if(bLiveFeedRoom && bLiveFeedRoom.leave){
+    try{ bLiveFeedRoom.leave(); }catch(_){}
+  }
+  bLiveFeedRoom = null;
   const bid = bLiveFeedBid;
   bLiveFeedBid = '';
   bLiveFeedStream = null;
@@ -712,11 +937,43 @@ function bLiveStartFeed(bid, plate){
     bLiveFeedMount(plate);
     return;
   }
+  if(bLiveFeedRoom && bLiveFeedBid === bid){
+    bLiveFeedMount(plate);
+    return;
+  }
   bLiveStopFeed();
   const gen = bLiveFeedGen;
   bLiveFeedBid = bid;
   bLiveFeedMount(plate);
   const run = (async function(){
+    const roomFlag = plate.getAttribute('data-live-room');
+    const known = roomFlag === '1' ? true : (roomFlag === '0' ? false : undefined);
+    const path = bLiveWatchPath(known, bLiveRoomOff);
+    if(path !== 'mesh' && typeof sfuJoinLive === 'function'){
+      const silent = plate.querySelector('video.bcast-live-silent');
+      const handle = await sfuJoinLive({
+        broadcastId: bid,
+        videoEl: silent,
+        budgetMs: path === 'room' ? 1600 : 900,
+        muted: true,
+        onStream: function(stream){
+          if(gen !== bLiveFeedGen) return;
+          bLiveFeedStream = stream;
+          const again = document.querySelector('#tab-broadcast .bcast-plate[data-live="1"][data-broadcast-id="' + bid + '"]');
+          if(again) bLiveFeedMount(again);
+        },
+      });
+      if(handle && gen === bLiveFeedGen && !bLiveViewerPc){
+        bLiveFeedRoom = handle;
+        try{
+          await bLiveSessionRef(bid, currentUser.uid).set(bLiveRoomPresence(currentUser.uid, (currentProfile && currentProfile.name) || 'Someone', true), { merge: true });
+        }catch(_){}
+        return;
+      }
+      if(handle && handle.leave){ try{ handle.leave(); }catch(_){} }
+      if(window.__nalunoSfuCode === 'not_connected') bLiveRoomOff = true;
+    }
+    if(gen !== bLiveFeedGen || bLiveViewerPc) return;
     if(typeof prewarmIceServers === 'function') prewarmIceServers();
     const pc = new RTCPeerConnection(await bLiveEnsureIce());
     if(gen !== bLiveFeedGen){ try{ pc.close(); }catch(_){} return; }
@@ -752,8 +1009,18 @@ function bLiveStartFeed(bid, plate){
       if(bLiveFeedPc === pc) bLiveFeedPc = null;
       return;
     }
+    let feedDesc = { type: offer.type, sdp: offer.sdp };
+    try{
+      const ready = await bLiveDescribeWhenReady(pc, 800);
+      if(ready && ready.sdp) feedDesc = ready;
+    }catch(_){}
+    if(gen !== bLiveFeedGen || bLiveViewerPc){
+      try{ pc.close(); }catch(_){}
+      if(bLiveFeedPc === pc) bLiveFeedPc = null;
+      return;
+    }
     await ref.set({
-      offer: { type: offer.type, sdp: offer.sdp },
+      offer: { type: feedDesc.type, sdp: feedDesc.sdp },
       from: currentUser.uid,
       name: (currentProfile && currentProfile.name) || 'Viewer',
       preview: true,
@@ -789,28 +1056,35 @@ function bLiveStartFeed(bid, plate){
   });
 }
 function bLiveSyncFeedNow(){
-  if(!bLiveFeedAllowed()){
-    if(bLiveFeedPc || bLiveFeedBid) bLiveStopFeed();
-    return;
-  }
+  const allowed = bLiveFeedAllowed();
   let best = null;
   let bestTop = 1e9;
-  document.querySelectorAll('#tab-broadcast .bcast-plate[data-live="1"]').forEach(function(p){
-    if(!bLiveFeedOnScreen(p)) return;
-    if(currentUser && p.getAttribute('data-creator-uid') === currentUser.uid) return;
-    const top = Math.abs(p.getBoundingClientRect().top);
-    if(top < bestTop){ best = p; bestTop = top; }
-  });
-  if(!best){
+  if(allowed){
+    document.querySelectorAll('#tab-broadcast .bcast-plate[data-live="1"]').forEach(function(p){
+      if(!bLiveFeedOnScreen(p)) return;
+      if(currentUser && p.getAttribute('data-creator-uid') === currentUser.uid) return;
+      const top = Math.abs(p.getBoundingClientRect().top);
+      if(top < bestTop){ best = p; bestTop = top; }
+    });
+  }
+  const visible = !!(allowed && best);
+  if(!bLiveFeedKeep(bLiveFeedAwayAt, Date.now(), visible)){
+    bLiveFeedAwayAt = 0;
     if(bLiveFeedPc || bLiveFeedBid) bLiveStopFeed();
     return;
   }
+  if(!visible){
+    if((bLiveFeedPc || bLiveFeedBid) && !bLiveFeedAwayAt) bLiveFeedAwayAt = Date.now();
+    return;
+  }
+  bLiveFeedAwayAt = 0;
   bLiveStartFeed(best.getAttribute('data-broadcast-id'), best);
 }
 function bLiveSyncFeed(){
   if(bLiveFeedPc && bLiveFeedBid && bLiveFeedAllowed()){
     const plate = document.querySelector('#tab-broadcast .bcast-plate[data-live="1"][data-broadcast-id="' + bLiveFeedBid + '"]');
     if(plate && bLiveFeedOnScreen(plate)){
+      bLiveFeedAwayAt = 0;
       bLiveFeedMount(plate);
       return;
     }
@@ -820,23 +1094,33 @@ function bLiveSyncFeed(){
 }
 
 /* ---------------- Reactions (wow) ---------------- */
+function bLiveEnsureReactionLayer(){
+  let layer = document.getElementById('bspaceReactionLayer');
+  if(!layer){
+    layer = document.createElement('div');
+    layer.id = 'bspaceReactionLayer';
+    document.body.appendChild(layer);
+  } else if(layer.parentNode !== document.body){
+    document.body.appendChild(layer);
+  }
+  layer.style.cssText = 'pointer-events:none;position:fixed;inset:0;z-index:250;overflow:hidden;';
+  return layer;
+}
 function bLiveWatchReactions(bcastId){
   if(!bcastId || !fbDb) return;
   if(bLiveReactionUnsub){ try{ bLiveReactionUnsub(); }catch(_){} bLiveReactionUnsub = null; }
-  const layer = $('bspaceReactionLayer') || (function(){
-    const hero = $('bspaceHero');
-    if(!hero) return null;
-    const d = document.createElement('div');
-    d.id = 'bspaceReactionLayer';
-    d.style.cssText = 'pointer-events:none;position:absolute;inset:0;z-index:4;overflow:hidden;';
-    hero.appendChild(d);
-    return d;
-  })();
+  bLiveEnsureReactionLayer();
   let triedPlain = false;
+  let primed = false;
   function arm(ordered){
     const col = fbDb.collection('broadcasts').doc(bcastId).collection('liveReactions');
     const q = ordered ? col.orderBy('ts', 'desc').limit(15) : col.limit(15);
     bLiveReactionUnsub = q.onSnapshot(snap => {
+      if(!primed){
+        primed = true;
+        snap.docs.forEach(function(d){ /* already on the screen; do not replay them */ });
+        return;
+      }
       snap.docChanges().forEach(ch => {
         if(ch.type !== 'added') return;
         const emoji = (ch.doc.data() || {}).emoji || '✨';
@@ -847,6 +1131,7 @@ function bLiveWatchReactions(bcastId){
       bLiveReactionUnsub = null;
       if(ordered && !triedPlain){
         triedPlain = true;
+        primed = false;
         arm(false);
       }
     });
@@ -855,7 +1140,7 @@ function bLiveWatchReactions(bcastId){
 }
 
 function bLiveSpawnReaction(emoji){
-  const layer = $('bspaceReactionLayer');
+  const layer = bLiveEnsureReactionLayer();
   if(!layer) return;
   const span = document.createElement('span');
   span.textContent = emoji;

@@ -188,6 +188,10 @@ function rankBroadcastEntries(entries){
    currently feeds the grid below. Nothing about how either array is loaded,
    filtered, or ordered changes — this only decides which one is shown. */
 let bcastActiveView = 'foryou';
+try{
+  const savedView = localStorage.getItem('nalunoBcastView');
+  if(savedView === 'mine' || savedView === 'toga') bcastActiveView = savedView;
+}catch(_){}
 
 function renderScheduledDock(){
   const external = document.getElementById('bcastScheduleDock');
@@ -458,7 +462,13 @@ function renderBroadcastTab(){
   // Stranded videos sit in a folder at entry. Only unattached ones stay free.
   if(grid){
     const feedList = (typeof feedBroadcasts !== 'undefined' && feedBroadcasts) ? feedBroadcasts : [];
-    const mineList = (typeof myBroadcasts !== 'undefined' && myBroadcasts) ? myBroadcasts : [];
+    let mineList = (typeof myBroadcasts !== 'undefined' && myBroadcasts) ? myBroadcasts.slice() : [];
+    try{
+      if(typeof nalunoMergeOwnerBroadcasts === 'function' && typeof nalunoPrivatePinRead === 'function'){
+        const uid = (typeof currentUser !== 'undefined' && currentUser) ? currentUser.uid : '';
+        mineList = nalunoMergeOwnerBroadcasts(mineList, nalunoPrivatePinRead(), Date.now(), [], uid).list;
+      }
+    }catch(_){}
     let list = (bcastActiveView === 'mine' ? mineList : feedList).slice().filter(function(b){
       if(!b || b.deleted) return false;
       /* My Broadcasts keeps private and scheduled. They used to be removed
@@ -881,6 +891,7 @@ function nalunoSetBcastView(view, viaSwipe){
   const order = { foryou: 0, mine: 1, toga: 2 };
   const dir = (order[next] || 0) > (order[bcastActiveView] || 0) ? 'left' : 'right';
   bcastActiveView = next;
+  try{ localStorage.setItem('nalunoBcastView', next); }catch(_){}
   // FIX ("the strand share bar leaks back into the Toga page when swiping
   // back from Broadcasts"): this function resets the scroll position and
   // tears down the search UI when switching views, but never cleared the
