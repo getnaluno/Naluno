@@ -202,7 +202,18 @@ function renderScheduledDock(){
     external.innerHTML = '';
   }
   if(!open || !drawer) return;
-  const dock = drawer;
+  const box = drawer;
+  try{
+    if(typeof myBroadcasts !== 'undefined' && Array.isArray(myBroadcasts) && typeof nalunoMergeOwnerBroadcasts === 'function' && typeof nalunoPrivatePinRead === 'function'){
+      const uid = (typeof currentUser !== 'undefined' && currentUser) ? currentUser.uid : '';
+      const merged = nalunoMergeOwnerBroadcasts(myBroadcasts.slice(), nalunoPrivatePinRead(), Date.now(), [], uid).list || [];
+      const have = {};
+      myBroadcasts.forEach(function(b){ if(b && b.id) have[b.id] = 1; });
+      merged.forEach(function(b){
+        if(b && b.id && !have[b.id]){ myBroadcasts.push(b); have[b.id] = 1; }
+      });
+    }
+  }catch(_){}
   const mine = (typeof myBroadcasts !== 'undefined' && myBroadcasts) ? myBroadcasts : [];
   const rows = mine.filter(function(b){
     if(!b || b.deleted) return false;
@@ -211,18 +222,36 @@ function renderScheduledDock(){
     return scheduled || priv;
   });
   if(!rows.length){
-    dock.innerHTML = '<p class="lobby-sub" style="margin:8px 0 4px;text-align:left;max-width:none;">Nothing is private. Mark one before it goes out, and it stays off the public feed.</p>';
+    box.innerHTML = '<p class="lobby-sub" style="margin:8px 0 4px;text-align:left;max-width:none;">Nothing is private. Mark one before it goes out, and it stays off the public feed.</p>';
     return;
   }
   const esc = typeof escapeHtml === 'function' ? escapeHtml : function(s){ return String(s == null ? '' : s); };
-  dock.innerHTML = '<div class="section-label signal-head-label">Before it goes out <span>scheduled and private · not on the public feed</span></div>'
+  const res = function(u){ try{ return (u && typeof resolveMediaUrl === 'function') ? (resolveMediaUrl(u) || u) : (u || ''); }catch(_){ return u || ''; } };
+  const isVid = function(u){ return /\.(mp4|webm|mov|m4v|m3u8)(\?|$)/i.test(String(u || '')); };
+  function privateThumb(b){
+    const writing = (typeof broadcastIsWriting === 'function') ? broadcastIsWriting(b) : (b.mediaType === 'writing');
+    let img = '';
+    if(writing) img = (typeof broadcastCoverUrl === 'function') ? broadcastCoverUrl(b) : '';
+    else if(b.thumbUrl && !isVid(b.thumbUrl) && !(typeof nalunoThumbLooksDead === 'function' && nalunoThumbLooksDead(b.thumbUrl))) img = b.thumbUrl;
+    else if(b.mediaType === 'photo' && b.mediaUrl && !isVid(b.mediaUrl)) img = b.mediaUrl;
+    const kind = writing ? 'Writing' : (b.mediaType === 'photo' ? 'Photo' : (b.live ? 'Live' : 'Video'));
+    const glyph = kind === 'Video' ? '&#9654;' : esc(kind.slice(0, 1));
+    if(img) return '<img class="dl-thumb bcast-private-tile" src="'+esc(res(img))+'" alt="" loading="lazy" onerror="this.outerHTML=\'<div class=&quot;dl-thumb bcast-private-tile&quot;>'+glyph.replace(/&/g,'&amp;')+'</div>\'" />';
+    if(writing){
+      const words = String(b.body || b.description || b.title || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+      return '<div class="dl-thumb bcast-private-tile is-text">'+esc(words || 'Aa')+'</div>';
+    }
+    return '<div class="dl-thumb bcast-private-tile">'+(kind === 'Video' ? '&#9654;' : esc(kind.slice(0, 1)))+'</div>';
+  }
+  box.innerHTML = '<div class="section-label signal-head-label">Before it goes out <span>scheduled and private · not on the public feed</span></div>'
     + rows.map(function(b){
       const when = (typeof broadcastIsScheduled === 'function' && broadcastIsScheduled(b))
         ? new Date(Number(b.publishAt)).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
         : '';
       const kind = (b.visibility === 'private') ? 'Private' : 'Scheduled';
       const local = b.publishAt ? toDatetimeLocal(Number(b.publishAt)) : '';
-      return '<div class="sched-row" data-sched="'+esc(b.id)+'">'
+      return '<div class="bcast-private-row dl-row"' + ' sched-row" data-sched="'+esc(b.id)+'">'
+        + privateThumb(b)
         + '<div class="sched-main"><div class="sched-title">'+esc(b.title || 'Broadcast')+'</div>'
         + '<div class="sched-meta"><span class="bcast-badge '+(kind === 'Private' ? 'private' : 'scheduled')+'">'+kind+'</span>'
         + (when ? ' Goes out '+esc(when) : ' Only you')+'</div></div>'
@@ -236,7 +265,7 @@ function renderScheduledDock(){
         + '<button type="button" class="bspace-mini sched-now">Publish now</button>'
         + '</div></form></div>';
     }).join('');
-  dock.querySelectorAll('.sched-row').forEach(function(row){
+  box.querySelectorAll('.sched-row').forEach(function(row){
     const id = row.getAttribute('data-sched');
     const titleEl = row.querySelector('.sched-title');
     if(titleEl){

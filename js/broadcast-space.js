@@ -1568,6 +1568,7 @@ function renderBspaceRelated(){
 
 let bspaceLiveTalkSeen = {};
 let bspaceLiveTalkPrimed = false;
+let bspaceLiveTalkSince = 0;
 function bspaceFlashLine(text){
   try{
     const line = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 90);
@@ -1588,24 +1589,34 @@ function bspaceFlashLine(text){
   }catch(_){}
 }
 function bspaceNoteLiveTalk(docs){
+  /* The first snapshot is history (often an empty cache, then the server
+     copy). Flashing those lines made old comments pop up as if they had
+     just been written. Only a line from after this room was opened counts. */
+  if(!bspaceLiveTalkPrimed){
+    (docs || []).forEach(function(d){
+      if(d && d.id) bspaceLiveTalkSeen[d.id] = 1;
+    });
+    bspaceLiveTalkPrimed = true;
+    bspaceLiveTalkSince = Date.now();
+    return;
+  }
   const fresh = [];
   (docs || []).forEach(function(d){
     if(!d || !d.id || bspaceLiveTalkSeen[d.id]) return;
     bspaceLiveTalkSeen[d.id] = 1;
-    if(!bspaceLiveTalkPrimed) return;
     const m = (typeof d.data === 'function') ? (d.data() || {}) : {};
     if(!m || m.type === 'system' || m.type === 'live') return;
+    const ts = Number(m.ts) || 0;
+    if(ts && ts < bspaceLiveTalkSince - 15000) return;
     const text = String(m.text || '').trim();
     if(text) fresh.push(text);
   });
-  const was = bspaceLiveTalkPrimed;
-  bspaceLiveTalkPrimed = true;
-  if(!was) return;
   fresh.slice(-3).forEach(bspaceFlashLine);
 }
 function bspaceResetLiveTalk(){
   bspaceLiveTalkSeen = {};
   bspaceLiveTalkPrimed = false;
+  bspaceLiveTalkSince = 0;
   try{
     const el = document.getElementById('bspaceTalkFlash');
     if(el && el.parentNode) el.parentNode.removeChild(el);
