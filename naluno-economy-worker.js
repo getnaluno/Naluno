@@ -1,4 +1,4 @@
-// band-sweep.mjs
+// workers/economy/band-sweep.mjs
 var BAND_SETTLE_MS = 2 * 60 * 60 * 1e3;
 var PRESENCE_FRESH_MS = 90 * 1e3;
 var PRESENCE_STALE_MS = 5 * 60 * 1e3;
@@ -213,7 +213,7 @@ async function sweepAllBands(io, now, opts = {}) {
   return { ok: true, bands: bands.length, looked, dead, deleted, files };
 }
 
-// screen.mjs
+// workers/economy/screen.mjs
 var SCREEN_MAX_FRAMES = 8;
 var SEX_WORDS = /\b(porn|porno|xxx|nsfw|onlyfans|nudes?|naked|hentai|cumshot|sex\s*tape)\b/i;
 function clamp01(x) {
@@ -766,7 +766,32 @@ function listingFromScreen(opts) {
   return { listed: false, held: true, hidden: false, heldReason: "new-publisher" };
 }
 
-// safety.mjs
+// workers/economy/reach.mjs
+var DAY = 24 * 60 * 60 * 1e3;
+var REACH_LIMITS = {
+  open: { maxSec: 40 * 60, perDay: 3 },
+  kept: { maxSec: 3 * 60 * 60, perDay: 3 },
+  full: { maxSec: 3 * 60 * 60, perDay: 12 }
+};
+function reachTier(profile, now) {
+  const p = profile || {};
+  const set = String(p.reach || "");
+  if (set === "full" || set === "kept" || set === "open") return set;
+  const created = Number(p.createdAt) || now;
+  const age = Math.max(0, now - created);
+  const placed = Number(p.reachPlaced) || 0;
+  if (age >= 60 * DAY && placed >= 10) return "full";
+  if (age >= 14 * DAY && placed >= 4) return "kept";
+  return "open";
+}
+function reachLimits(tier) {
+  return REACH_LIMITS[tier] || REACH_LIMITS.open;
+}
+function reachDayKey(now) {
+  return new Date(now).toISOString().slice(0, 10);
+}
+
+// workers/economy/safety.mjs
 var SAFETY_VERSION = "1.1.0";
 var PRIVATE_SURFACES = ["wireline", "band", "call", "secret", "dm"];
 var PUBLIC_SURFACES = ["broadcast", "signal", "profile", "comment", "public"];
@@ -1473,7 +1498,7 @@ function scrubCase(row) {
   return out;
 }
 
-// money.mjs
+// workers/economy/money.mjs
 var ISO_ZERO = ["BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG", "RWF", "UGX", "VND", "VUV", "XAF", "XOF", "XPF"];
 var ISO_THREE = ["BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"];
 var STRIPE_ZERO = ["BIF", "CLP", "DJF", "GNF", "JPY", "KMF", "KRW", "MGA", "PYG", "RWF", "VND", "VUV", "XAF", "XOF", "XPF"];
@@ -1559,7 +1584,7 @@ function closeEnough(a, b, pct) {
   return Math.abs(x - y) / y <= (pct || 0.05);
 }
 
-// pay.mjs
+// workers/economy/pay.mjs
 function stripeSetupUrl(message) {
   const msg = String(message || "");
   const found = msg.match(/https:\/\/[^\s)'"<>]+/i);
@@ -1842,7 +1867,7 @@ function momoDisburseDecision(input) {
   };
 }
 
-// momo-rail.mjs
+// workers/economy/momo-rail.mjs
 function createMomoRail(d) {
   const {
     json: json2,
@@ -2155,14 +2180,33 @@ function createMomoRail(d) {
   return { payMomo, payMomoNotice, disburseMomo };
 }
 
-// books.mjs
-var USD_AED = 3.6725;
+// workers/economy/books.mjs
+var USD_AED = 0;
 var RATES = null;
+var READ_USD = null;
+var WRITE_USD = null;
+var DELETE_USD = null;
+var STORAGE_USD = null;
 function setBookRates(rates) {
   if (!rates || typeof rates !== "object") return;
   const aed = Number(rates.AED);
   if (isFinite(aed) && aed > 0) USD_AED = aed;
   RATES = rates;
+}
+function setVendorPrices(rates) {
+  if (!rates || typeof rates !== "object") return;
+  function pick(key) {
+    const n = Number(rates[key]);
+    return isFinite(n) && n >= 0 ? n : null;
+  }
+  const read = pick("firestore_read_100k_usd");
+  const write = pick("firestore_write_100k_usd");
+  const del = pick("firestore_delete_100k_usd");
+  const storage = pick("firestore_storage_gb_month_usd");
+  if (read != null) READ_USD = read / 1e5;
+  if (write != null) WRITE_USD = write / 1e5;
+  if (del != null) DELETE_USD = del / 1e5;
+  if (storage != null) STORAGE_USD = storage;
 }
 var CACHE_MS = 3 * 60 * 1e3;
 var cache = { at: 0, value: null };
@@ -2171,10 +2215,6 @@ var READ_CAP = 5e4;
 var WRITE_CAP = 2e4;
 var DELETE_CAP = 2e4;
 var STORAGE_CAP_GB = 1;
-var READ_USD = 0.06 / 1e5;
-var WRITE_USD = 0.18 / 1e5;
-var DELETE_USD = 0.02 / 1e5;
-var STORAGE_USD = 0.18;
 var CLASS_A = {
   listbuckets: 1,
   putbucket: 1,
@@ -2213,7 +2253,10 @@ function round2(n) {
   return Math.round(num2(n) * 100) / 100;
 }
 function usdToAed(usd) {
-  return round2(num2(usd) * USD_AED);
+  if (!(USD_AED > 0)) return null;
+  const n = num2(usd);
+  if (!isFinite(n)) return null;
+  return round2(n * USD_AED);
 }
 function clip(s, n) {
   s = String(s || "").replace(/\s+/g, " ").trim();
@@ -2315,6 +2358,7 @@ function splitSeries(seriesList) {
   return { ops, gauge };
 }
 function overage(qty, cap, usdEach) {
+  if (usdEach == null || !(USD_AED > 0)) return null;
   const extra = Math.max(0, num2(qty) - cap);
   return usdToAed(extra * usdEach);
 }
@@ -2465,12 +2509,14 @@ async function pullHistory(ask, token, account, now) {
       if (!isFinite(raw) || raw === 0) return;
       const currency = String(row.currency || "USD").toUpperCase();
       const per = RATES && Number(RATES[currency]) > 0 ? Number(RATES[currency]) : currency === "USD" ? 1 : 0;
-      const aed = currency === "AED" ? raw : per ? raw / per * USD_AED : raw * USD_AED;
+      let aed = null;
+      if (currency === "AED") aed = raw;
+      else if (per > 0 && USD_AED > 0) aed = raw / per * USD_AED;
       const when = Date.parse(row.occurred_at || row.created_on || row.period || "") || now;
       invoices.push({
         key: "cloudflare",
         vendor: "Cloudflare",
-        amount_aed: round2(aed),
+        amount_aed: aed == null ? null : round2(aed),
         status: "invoiced",
         source: "cloudflare",
         note: row.type || row.action || row.description || "Cloudflare billing history",
@@ -2628,7 +2674,7 @@ async function pullFirebase(ask, project, getToken, now) {
   }
 }
 
-// look.mjs
+// workers/economy/look.mjs
 function decode(s) {
   return String(s || "").replace(/&/g, "&").replace(/"/g, '"').replace(/&#x27;|&#39;/g, "'").replace(/</g, "<").replace(/>/g, ">");
 }
@@ -2667,7 +2713,7 @@ async function lookQuery(q) {
   return parseLookHtml(await res.text());
 }
 
-// views.mjs
+// workers/economy/views.mjs
 var VIEW_SEC_DEFAULT = 4;
 var VIEW_SEC_MIN = 1;
 var VIEW_SEC_MAX = 120;
@@ -2741,7 +2787,7 @@ function viewWrites(docRoot, v) {
   return writes;
 }
 
-// pbkdf2.mjs
+// workers/economy/pbkdf2.mjs
 var K = new Uint32Array([
   1116352408,
   1899447441,
@@ -2955,7 +3001,7 @@ function pbkdf2Sha256Js(password, salt, iterations, dkLen) {
 }
 var WORKER_PBKDF2_MAX = 1e5;
 
-// wire-notify.mjs
+// workers/economy/wire-notify.mjs
 var WIRE_FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging";
 var WINDOW_MS = 10 * 60 * 1e3;
 var PER_MINUTE = 40;
@@ -3070,34 +3116,36 @@ async function sendAll(tokens, data, link, deps, now) {
           message: {
             token,
             data,
-            android: kind === "android"
-              ? {
-                  priority: "HIGH",
-                  ttl: "86400s",
-                  notification: {
-                    title: String(data.title || "Wireline").slice(0, 80),
-                    body: String(data.body || "New message").slice(0, 140),
-                    channel_id: "naluno_wireline",
-                    sound: "default",
-                    tag: "naluno-wire:" + String(data.fromUid || "").slice(0, 40),
-                    notification_priority: "PRIORITY_HIGH",
-                    visibility: "PUBLIC"
-                  }
-                }
-              : { priority: "HIGH", ttl: "86400s" },
-            webpush: kind === "web"
-              ? {
-                  headers: { Urgency: "high", TTL: "86400" },
-                  notification: {
-                    title: String(data.title || "Wireline").slice(0, 80),
-                    body: String(data.body || "New message").slice(0, 140),
-                    icon: "https://getnaluno.com/icon-192.png",
-                    tag: "naluno-wire:" + String(data.fromUid || "msg").slice(0, 40) + ":" + String(data.clientMsgId || "").slice(0, 48),
-                    renotify: true,
-                    silent: false
-                  }
-                }
-              : { headers: { Urgency: "high", TTL: "86400" } },
+            android: kind === "android" ? {
+              priority: "HIGH",
+              ttl: "86400s",
+              notification: {
+                title: String(data.title || "Wireline").slice(0, 80),
+                body: String(data.body || "New message").slice(0, 140),
+                channel_id: "naluno_wireline",
+                sound: "default",
+                tag: "naluno-wire:" + String(data.fromUid || "").slice(0, 40),
+                notification_priority: "PRIORITY_HIGH",
+                visibility: "PUBLIC"
+              }
+            } : { priority: "HIGH", ttl: "86400s" },
+            /* Web: a notification payload is what the lock screen shows when
+               Chrome will not start the service worker (screen off). No
+               fcm_options.link — a link that is not https is refused, and
+               the service worker opens the chat from data.url.
+               Android stays a data message plus the wireline channel, so
+               the app can still build the tray item itself. */
+            webpush: kind === "web" ? {
+              headers: { Urgency: "high", TTL: "86400" },
+              notification: {
+                title: String(data.title || "Wireline").slice(0, 80),
+                body: String(data.body || "New message").slice(0, 140),
+                icon: "https://getnaluno.com/icon-192.png",
+                tag: "naluno-wire:" + String(data.fromUid || "msg").slice(0, 40) + ":" + String(data.clientMsgId || "").slice(0, 48),
+                renotify: true,
+                silent: false
+              }
+            } : { headers: { Urgency: "high", TTL: "86400" } },
             apns: { headers: { "apns-priority": "10" } }
           }
         })
@@ -3141,8 +3189,75 @@ async function handlePushTest(body, user, deps) {
     url: "/app/"
   }, "/app/", deps, deps.now ? deps.now() : Date.now());
 }
+async function handleLockPush(body, user, deps) {
+  const now = deps.now ? deps.now() : Date.now();
+  if (!user || !user.uid) return { status: 401, body: { ok: false, error: "sign in" } };
+  if (!rateOk("lock:" + user.uid, now, 30)) return { status: 429, body: { ok: false, error: "slow down" } };
+  const to = String(body && body.to || "").replace(/[^A-Za-z0-9_-]/g, "");
+  const type = String(body && body.type || "");
+  if (!to || to === user.uid) return { status: 400, body: { ok: false, error: "to" } };
+  const profile = await deps.getDoc("/users/" + user.uid);
+  const name = String(profile && profile.name || "").trim().slice(0, 60) || "Someone";
+  let data = null;
+  if (type === "incoming_call") {
+    const callId = String(body && body.callId || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 120);
+    if (!callId) return { status: 400, body: { ok: false, error: "call" } };
+    const call = await deps.getDoc("/calls/" + callId);
+    if (!call || String(call.callerUid || "") !== user.uid || String(call.calleeUid || "") !== to) {
+      return { status: 403, body: { ok: false, error: "not your call" } };
+    }
+    if (String(call.status || "") !== "ringing") return { status: 200, body: { ok: true, sent: 0, reason: "not ringing" } };
+    const voice = String(call.kind || call.callKind || "") === "audio";
+    data = {
+      type: "incoming_call",
+      callId,
+      callerName: name,
+      title: name + (voice ? " \xB7 voice call" : " is calling"),
+      body: voice ? "Voice call \u2014 tap to answer on Naluno" : "Tap to answer on Naluno",
+      url: "/app/"
+    };
+  } else if (type === "broadcast_live") {
+    const broadcastId = String(body && body.broadcastId || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 120);
+    if (!broadcastId) return { status: 400, body: { ok: false, error: "broadcast" } };
+    const row = await deps.getDoc("/broadcasts/" + broadcastId);
+    if (!row || String(row.creatorUid || "") !== user.uid || row.live !== true) {
+      return { status: 403, body: { ok: false, error: "not live" } };
+    }
+    const circle = await deps.getDoc("/users/" + user.uid + "/circle/" + to);
+    const conn = await deps.getDoc("/users/" + user.uid + "/connections/" + to);
+    if (!circle && !conn) return { status: 403, body: { ok: false, error: "not connected" } };
+    const title = String(row.title || "Broadcast").slice(0, 80);
+    data = {
+      type: "broadcast_live",
+      broadcastId,
+      fromUid: user.uid,
+      fromName: name,
+      title: name + " is live",
+      body: title,
+      url: "/app/?broadcast=" + encodeURIComponent(broadcastId)
+    };
+  } else {
+    return { status: 400, body: { ok: false, error: "type" } };
+  }
+  const [them, vault] = await Promise.all([
+    deps.getDoc("/users/" + to),
+    deps.getDoc("/users/" + to + "/vault/main")
+  ]);
+  const all = tokensOf(vault, them);
+  const tokens = [];
+  const kinds = [];
+  all.forEach(function(token, n) {
+    if ((all.kinds && all.kinds[n]) === "web") {
+      tokens.push(token);
+      kinds.push("web");
+    }
+  });
+  tokens.kinds = kinds;
+  if (!tokens.length) return { status: 200, body: { ok: true, sent: 0, reason: "no_web_token" } };
+  return sendAll(tokens, data, data.url, deps, now);
+}
 
-// lg-voice.mjs
+// workers/economy/lg-voice.mjs
 var LG_TTS_URL = "https://api.sunbird.ai/tasks/audio/speech";
 var PER_MINUTE2 = 40;
 var MAX_TEXT = 600;
@@ -3245,7 +3360,7 @@ async function handleLgVoice(body, user, deps) {
   return { status: 200, bytes, type, cached: false, speaker };
 }
 
-// live.mjs
+// workers/economy/live.mjs
 var rooms = /* @__PURE__ */ new Map();
 function callsReady(env) {
   return !!(env && env.CF_CALLS_APP_ID && env.CF_CALLS_APP_SECRET);
@@ -3299,8 +3414,8 @@ async function cfCalls(env, fetchImpl, path, method, body) {
   return { ok: res.ok, status: res.status, data: data || {} };
 }
 
-// handler.mjs
-var VERSION = "2.12.0-bands";
+// workers/economy/handler.mjs
+var VERSION = "2.15.0-reach";
 var PROJECT_ID = "naluno-28a00";
 var OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 var DEFAULT_FLAGS = {
@@ -3682,6 +3797,92 @@ function scoreEvent(eventType, text) {
     return { points: 0, eligible: 0, status: "PENDING_REVIEW", reason: "short text" };
   }
   return { points: spec.points, eligible: spec.eligible, status: "COUNTED", reason: "ok" };
+}
+function eventDocId(raw) {
+  const id = String(raw || "").replace(/[^A-Za-z0-9_-]/g, "");
+  if (id.length < 4 || id.length > 128) return "";
+  return id;
+}
+async function eventIsReal(env, saToken, user, body) {
+  if (!saToken || !user) return false;
+  const uid = user.uid;
+  const type = String(body.event_type || "");
+  const bid = eventDocId(body.broadcast_id);
+  const tid = eventDocId(body.target_id);
+  if (type === "BROADCAST_COMMENT" || type === "COMMENT_REPLY") {
+    if (!bid || !tid) return false;
+    const col = body.target_type === "question" ? "questions" : "conversation";
+    const doc = await fsGetDoc(env, saToken, "/broadcasts/" + bid + "/" + col + "/" + tid);
+    return !!(doc && String(doc.from || "") === uid);
+  }
+  if (type === "WATCH_COMPLETION") {
+    if (!bid) return false;
+    const doc = await fsGetDoc(env, saToken, "/broadcasts/" + bid + "/viewers/" + uid);
+    return !!(doc && doc.countedBy === "server");
+  }
+  if (type === "CREATOR_FOLLOW") {
+    const creator = eventDocId(body.creator_uid || body.target_id);
+    if (!creator || creator === uid) return false;
+    const doc = await fsGetDoc(env, saToken, "/users/" + creator + "/circle/" + uid);
+    return !!doc;
+  }
+  if (type === "SIGNAL_POST") {
+    if (!tid) return false;
+    const doc = await fsGetDoc(env, saToken, "/signals/" + tid);
+    return !!(doc && String(doc.uid || "") === uid && doc.hidden !== true && doc.held !== true);
+  }
+  if (type === "BROADCAST_SHARE") {
+    if (!bid) return false;
+    const doc = await fsGetDoc(env, saToken, "/broadcasts/" + bid + "/shares/" + uid);
+    return !!(doc && String(doc.from || "") === uid);
+  }
+  return false;
+}
+function proofKey(user, body) {
+  const type = String(body.event_type || "");
+  const uid = String(user && user.uid || "").replace(/[^A-Za-z0-9_-]/g, "");
+  const bid = eventDocId(body.broadcast_id) || "none";
+  const tid = eventDocId(body.target_id) || "none";
+  const creator = eventDocId(body.creator_uid) || "none";
+  let raw = "";
+  if (type === "BROADCAST_COMMENT" || type === "COMMENT_REPLY") raw = type + "_" + uid + "_" + bid + "_" + tid;
+  else if (type === "WATCH_COMPLETION") raw = type + "_" + uid + "_" + bid;
+  else if (type === "CREATOR_FOLLOW") raw = type + "_" + uid + "_" + creator;
+  else if (type === "SIGNAL_POST") raw = type + "_" + uid + "_" + tid;
+  else if (type === "BROADCAST_SHARE") raw = type + "_" + uid + "_" + bid;
+  return raw.slice(0, 700);
+}
+async function claimProof(env, saToken, key) {
+  if (!saToken || !key) return { first: false, known: false };
+  const claim = await fsFetch(
+    env,
+    saToken,
+    "PATCH",
+    "/scoreProof/" + encodeURIComponent(key) + "?currentDocument.exists=false",
+    toFsFields({ key, at: Date.now() })
+  );
+  if (claim.ok) return { first: true, known: false };
+  if (claim.status === 409 || claim.status === 400) return { first: false, known: true };
+  return { first: false, known: false };
+}
+function togaMonthKey(now) {
+  const d = new Date(Number(now) || Date.now());
+  return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
+}
+async function noteToga(env, saToken, row) {
+  if (!saToken || !row || row.status !== "COUNTED") return;
+  const creator = eventDocId(row.creator_uid);
+  if (!creator || creator === row.user_id) return;
+  const month = togaMonthKey(row.ts);
+  const fields = {};
+  if (row.event_type === "CREATOR_FOLLOW") {
+    fields.circleMonth = 1;
+    fields["mc_" + month] = 1;
+  } else if (row.event_type === "BROADCAST_COMMENT" || row.event_type === "COMMENT_REPLY") {
+    fields.engageMonth = 1;
+    fields["me_" + month] = 1;
+  } else return;
+  await fsIncrement(env, saToken, "/toga/" + creator, fields, { monthKey: month, updatedAt: row.ts });
 }
 function trustLabelFor(events) {
   const n = Number(events) || 0;
@@ -4447,9 +4648,21 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
     patch.hidden = true;
   }
   const writeTok = saToken || (patch.hidden || judged.decision === "block" ? userToken : "");
-  if (writeTok) await fsPutDoc(env, writeTok, "/broadcasts/" + encodeURIComponent(id), patch);
+  let wrote = false;
+  if (writeTok) {
+    const put = await fsPutDoc(env, writeTok, "/broadcasts/" + encodeURIComponent(id), patch);
+    wrote = !!(put && put.ok);
+  }
+  if (wrote && saToken && patch.listed && !row.reachCounted && !row.repostOf && row.mediaUrl && (row.mediaType === "video" || row.kind === "video")) {
+    try {
+      await fsIncrement(env, saToken, "/users/" + encodeURIComponent(row.creatorUid || user.uid), { reachPlaced: 1 }, { updatedAt: Date.now() });
+      await fsPutDoc(env, saToken, "/broadcasts/" + encodeURIComponent(id), { reachCounted: true });
+    } catch (_) {
+    }
+  }
   return json({
     ok: true,
+    wrote,
     listed: !!patch.listed,
     held: !!patch.held,
     hidden: !!patch.hidden,
@@ -4462,6 +4675,50 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
     safety_case: safetyCase,
     statement: statementFor(safety)
   });
+}
+async function claimReach(env, user, saToken, body) {
+  if (!saToken) return json({ ok: false, error: "Reach is not connected yet." }, 503);
+  const profile = await fsGetDoc(env, saToken, "/users/" + encodeURIComponent(user.uid));
+  if (profile && (profile.suspended || profile.restricted)) {
+    return json({ ok: false, error: "This Callsign cannot publish right now." }, 403);
+  }
+  const seconds = Math.round(Number(body && body.seconds) || 0);
+  if (!(seconds > 0)) return json({ ok: false, error: "Could not read the length of that video." }, 400);
+  const now = Date.now();
+  const tier = reachTier(profile, now);
+  const lim = reachLimits(tier);
+  if (seconds > lim.maxSec + 1) {
+    const error = tier === "open" ? "A new Callsign can post a video up to 40 minutes, 3 a day. Four Broadcasts that go out, over two weeks, open the 3-hour room." : "That video is longer than 3 hours";
+    return json({ ok: false, tier, maxSec: lim.maxSec, error }, 403);
+  }
+  const day = reachDayKey(now);
+  const dayPath = "/users/" + encodeURIComponent(user.uid) + "/reachDays/" + day;
+  const name = fsRoot(env).replace("https://firestore.googleapis.com/v1/", "") + dayPath;
+  await fsFetch(env, saToken, "POST", ":commit", {
+    writes: [{
+      update: { name, fields: toFsFields({ n: 0, day, updatedAt: now }).fields },
+      currentDocument: { exists: false }
+    }]
+  });
+  const bumped = await fsIncrement(env, saToken, dayPath, { n: 1 }, { day, updatedAt: now });
+  if (!bumped.ok) return json({ ok: false, error: "Could not check Reach. Try again." }, 503);
+  const after = await fsGetDoc(env, saToken, dayPath);
+  const n = Number(after && after.n) || 0;
+  if (!(n > 0) || n > lim.perDay) {
+    const error = tier === "full" ? "That's 12 videos today. Tomorrow the count starts again." : "That's 3 videos today. Tomorrow the count starts again.";
+    return json({ ok: false, tier, error }, 403);
+  }
+  const passId = day.replace(/-/g, "") + "-" + crypto.randomUUID().slice(0, 8);
+  const put = await fsPutDoc(env, saToken, "/users/" + encodeURIComponent(user.uid) + "/reachPasses/" + passId, {
+    day,
+    seconds,
+    n,
+    tier,
+    at: now,
+    used: false
+  });
+  if (!put.ok) return json({ ok: false, error: "Could not check Reach. Try again." }, 503);
+  return json({ ok: true, tier, maxSec: lim.maxSec, perDay: lim.perDay, used: n, passId });
 }
 async function saAccessTokenScoped(env, scope) {
   const sa = parseServiceAccount(
@@ -6155,6 +6412,11 @@ async function loadBilling(env, saToken) {
       setBookRates(await loadRates(env, saToken));
     } catch (_) {
     }
+    try {
+      const costDoc = saToken ? await fsGetDoc(env, saToken, "/economyConfig/costRates") : null;
+      if (costDoc && costDoc.rates) setVendorPrices(costDoc.rates);
+    } catch (_) {
+    }
     billing = await Promise.race([
       billingSnapshot(env, {
         projectId: projectId(env),
@@ -6294,7 +6556,7 @@ async function handleRequest(request, env = {}, ctx = {}) {
         }
       } catch {
       }
-      const html = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + esc(title) + '</title><meta property="og:type" content="video.other"><meta property="og:site_name" content="Naluno"><meta property="og:title" content="' + esc(title) + '"><meta property="og:description" content="' + esc(desc) + '"><meta property="og:url" content="' + esc(selfUrl) + '">' + (image ? '<meta property="og:image" content="' + esc(image) + '">' : "") + (image ? '<meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">' : "") + '<meta name="twitter:card" content="' + (image ? "summary_large_image" : "summary") + '"><meta name="twitter:title" content="' + esc(title) + '"><meta name="twitter:description" content="' + esc(desc) + '">' + (image ? '<meta name="twitter:image" content="' + esc(image) + '">' : "") + '<link rel="canonical" href="' + esc(appUrl) + '"><meta http-equiv="refresh" content="0;url=' + esc(appUrl) + '"></head><body style="background:#0D0F17;color:#E8ECF5;font-family:system-ui;text-align:center;padding:48px 20px;"><p>Opening Naluno\u2026</p><p><a style="color:#7CFFB2" href="' + esc(appUrl) + '">Open this Broadcast</a></p><script>location.replace(' + JSON.stringify(appUrl) + ");</script></body></html>";
+      const html = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + esc(title) + '</title><meta property="og:type" content="video.other"><meta property="og:site_name" content="Naluno"><meta property="og:title" content="' + esc(title) + '"><meta property="og:description" content="' + esc(desc) + '"><meta property="og:url" content="' + esc(selfUrl) + '">' + (image ? '<meta property="og:image" content="' + esc(image) + '">' : "") + (image ? '<meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">' : "") + '<meta name="twitter:card" content="' + (image ? "summary_large_image" : "summary") + '"><meta name="twitter:title" content="' + esc(title) + '"><meta name="twitter:description" content="' + esc(desc) + '">' + (image ? '<meta name="twitter:image" content="' + esc(image) + '">' : "") + '<link rel="canonical" href="' + esc(appUrl) + '"><meta http-equiv="refresh" content="0;url=' + esc(appUrl) + '"></head><body style="background:#0D0F17;color:#E8ECF5;font-family:system-ui;text-align:center;padding:48px 20px;"><p>Opening Naluno\u2026</p><p><a style="color:#7CFFB2" href="' + esc(appUrl) + '">Open this Broadcast</a></p><script>location.replace(' + JSON.stringify(appUrl) + ");<\/script></body></html>";
       return new Response(html, { status: 200, headers: {
         "Content-Type": "text/html; charset=utf-8",
         // Crawlers re-fetch often; a short cache keeps a taken-down Broadcast
@@ -6441,7 +6703,16 @@ async function handleRequest(request, env = {}, ctx = {}) {
           return json({ ok: true, duplicate: true, event_id: eventId, persist: persistMode(true, ["firestore"]) });
         }
       }
-      const scored = scoreEvent(eventType, body.text);
+      const scored0 = scoreEvent(eventType, body.text);
+      let scored = scored0;
+      if (scored0.status === "COUNTED") {
+        const real = await eventIsReal(env, saToken, user, body);
+        if (!real) scored = { points: 0, eligible: 0, status: "IGNORED", reason: "unproven" };
+        else {
+          const proof = await claimProof(env, saToken, proofKey(user, body));
+          if (proof.known) scored = { points: 0, eligible: 0, status: "IGNORED", reason: "already" };
+        }
+      }
       const row = {
         event_id: eventId,
         ledger_id: "led_" + eventId.replace(/^evt_/, ""),
@@ -6462,6 +6733,10 @@ async function handleRequest(request, env = {}, ctx = {}) {
         reason: scored.reason
       };
       const paths = await persistEvent(env, userToken, saToken, row);
+      try {
+        await noteToga(env, saToken, row);
+      } catch (_) {
+      }
       return json({
         ok: true,
         event_id: eventId,
@@ -6496,6 +6771,17 @@ async function handleRequest(request, env = {}, ctx = {}) {
         "X-Naluno-Voice": out.speaker + (out.cached ? "; cached" : ""),
         "Access-Control-Expose-Headers": "X-Naluno-Voice"
       } });
+    }
+    if (path === "/v1/push/lock" && request.method === "POST") {
+      if (!saToken) return json({ ok: false, sent: 0, error: "push not configured" }, 503);
+      const body = await request.json().catch(() => ({}));
+      const out = await handleLockPush(body, user, {
+        getDoc: (p) => fsGetDoc(env, saToken, p),
+        accessToken: (scope) => saAccessTokenScoped(env, scope),
+        fetch: (u, o) => _fetch(u, o),
+        projectId: projectId(env)
+      });
+      return json(out.body, out.status);
     }
     if (path === "/v1/push/test" && request.method === "POST") {
       if (!saToken) return json({ ok: false, sent: 0, error: "push not configured" }, 503);
@@ -7029,6 +7315,10 @@ async function handleRequest(request, env = {}, ctx = {}) {
       const body = await request.json().catch(() => ({}));
       return liveEnd(env, user, saToken, body || {});
     }
+    if (path === "/v1/reach/claim" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      return claimReach(env, user, saToken, body || {});
+    }
     if (path === "/v1/broadcast/place" && request.method === "POST") {
       const body = await request.json().catch(() => ({}));
       return placeBroadcast(env, user, userToken, saToken, body);
@@ -7046,7 +7336,7 @@ async function handleRequest(request, env = {}, ctx = {}) {
   }
 }
 
-// index.mjs
+// workers/economy/index.mjs
 var index_default = {
   async fetch(request, env, ctx) {
     return handleRequest(request, env, ctx);

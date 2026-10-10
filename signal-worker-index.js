@@ -3,7 +3,48 @@
  * POST /          — auth required, body = media bytes, max 95 MiB
  * GET|HEAD /o/**  — public stream with proper Range support (required for mobile video)
  */
-const MAX_BYTES = 95 * 1024 * 1024; // aligned with client UPLOAD_MAX_BYTES
+const MAX_BYTES = 95 * 1024 * 1024; // one Worker request: a simple POST or a single part
+const MAX_OBJECT_BYTES = 8 * 1024 * 1024 * 1024; // finished file after the parts are joined
+
+const SAFE_TYPES = {
+  'video/mp4': 'mp4',
+  'video/webm': 'webm',
+  'video/quicktime': 'mov',
+  'audio/webm': 'webm',
+  'audio/mp4': 'm4a',
+  'audio/mpeg': 'mp3',
+  'audio/ogg': 'ogg',
+  'audio/wav': 'wav',
+  'audio/aac': 'aac',
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'application/pdf': 'pdf',
+  'application/octet-stream': 'bin',
+};
+function cleanType(raw) {
+  return String(raw || '').split(';')[0].trim().toLowerCase();
+}
+function allowedType(raw) {
+  const t = cleanType(raw);
+  return SAFE_TYPES[t] ? t : '';
+}
+function looksActive(buf) {
+  const u = new Uint8Array(buf.slice(0, Math.min(64, buf.byteLength)));
+  let s = '';
+  for (let i = 0; i < u.length; i++) s += String.fromCharCode(u[i]);
+  const head = s.replace(/^\uFEFF/, '').trim().slice(0, 24).toLowerCase();
+  return head.startsWith('<html') || head.startsWith('<svg') || head.startsWith('<!doctype') || head.startsWith('<script');
+}
+function sniffHeaders(contentType, extra) {
+  const ct = allowedType(contentType) || 'application/octet-stream';
+  return Object.assign({
+    'Content-Type': ct,
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Security-Policy': "sandbox; default-src 'none'; media-src 'self'; img-src 'self'; style-src 'none'; script-src 'none'",
+  }, extra || {});
+}
 
 async function verifyFirebaseIdToken(idToken, env) {
   const apiKey = env.FIREBASE_WEB_API_KEY;
@@ -87,6 +128,8 @@ async function serveObject(request, env, origin) {
         const headers = new Headers(hit.headers);
         const cors = corsHeaders(origin);
         Object.keys(cors).forEach(function (k) { headers.set(k, cors[k]); });
+        headers.set('X-Content-Type-Options', 'nosniff');
+        headers.set('Content-Security-Policy', "sandbox; default-src 'none'; media-src 'self'; img-src 'self'; style-src 'none'; script-src 'none'");
         return new Response(hit.body, { status: hit.status, statusText: hit.statusText, headers });
       }
     } catch (_) {}
@@ -117,13 +160,12 @@ async function serveObject(request, env, origin) {
     }
     const offset = obj.range ? obj.range.offset : (r2range.offset || 0);
     const length = obj.range ? obj.range.length : (r2range.length || (total - offset));
-    const headers = corsHeaders(origin, {
-      'Content-Type': (obj.httpMetadata && obj.httpMetadata.contentType) || head.httpMetadata?.contentType || 'application/octet-stream',
+    const headers = corsHeaders(origin, sniffHeaders((obj.httpMetadata && obj.httpMetadata.contentType) || head.httpMetadata?.contentType, {
       'Accept-Ranges': 'bytes',
       'Content-Length': String(length),
       'Content-Range': `bytes ${offset}-${offset + length - 1}/${total}`,
       'Cache-Control': 'public, max-age=3600',
-    });
+    }));
     if (request.method === 'HEAD') {
       return new Response(null, { status: 206, headers });
     }
@@ -134,11 +176,10 @@ async function serveObject(request, env, origin) {
   if (!obj) {
     return new Response('Not found', { status: 404, headers: corsHeaders(origin) });
   }
-  const headers = corsHeaders(origin, {
-    'Content-Type': (obj.httpMetadata && obj.httpMetadata.contentType) || 'application/octet-stream',
+  const headers = corsHeaders(origin, sniffHeaders((obj.httpMetadata && obj.httpMetadata.contentType), {
     'Accept-Ranges': 'bytes',
     'Cache-Control': 'public, max-age=31536000, immutable',
-  });
+  }));
   if (url.searchParams.get('dl') === '1') {
     const fn = (url.searchParams.get('fn') || key.split('/').pop() || 'slip').replace(/[^\w.\-]+/g, '_');
     headers['Content-Disposition'] = 'attachment; filename="' + fn + '"';
@@ -262,13 +303,12 @@ export default {
     if (url.pathname === '/b/init' && request.method === 'POST') {
       let body = {};
       try { body = await request.json(); } catch (_) {}
-      const ct = ((body.contentType || 'application/octet-stream').split(';')[0] || '').trim();
-      const ext =
-        ct.includes('mp4') ? 'mp4' :
-        ct.includes('webm') ? 'webm' :
-        ct.includes('quicktime') ? 'mov' :
-        ct.includes('jpeg') || ct.includes('jpg') ? 'jpg' :
-        ct.includes('png') ? 'png' : 'bin';
+      const ct = allowedType(body.contentType || 'application/octet-stream');
+      if (!ct) return json({ error: 'That file type is not allowed' }, 415, origin);
+      if (Number(body.bytes) > MAX_OBJECT_BYTES) {
+        return json({ error: 'File too large (max 8 GB)' }, 413, origin);
+      }
+      const ext = SAFE_TYPES[ct] || 'bin';
       const key = `u/${uid}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
       try {
         const mpu = await env.SIGNAL_BUCKET.createMultipartUpload(key, {
@@ -288,6 +328,7 @@ export default {
       if (!uploadId || part < 1) return json({ error: 'Missing uploadId or part' }, 400, origin);
       const buf = await request.arrayBuffer();
       if (buf.byteLength < 1) return json({ error: 'Empty part' }, 400, origin);
+      if (buf.byteLength > MAX_BYTES) return json({ error: `Part too large (max ${MAX_BYTES / (1024 * 1024)} MB)` }, 413, origin);
       try {
         const mpu = env.SIGNAL_BUCKET.resumeMultipartUpload(key, uploadId);
         const uploaded = await mpu.uploadPart(part, buf);
@@ -306,8 +347,18 @@ export default {
       if (!uploadId || !parts.length) return json({ error: 'Missing parts' }, 400, origin);
       try {
         const mpu = env.SIGNAL_BUCKET.resumeMultipartUpload(key, uploadId);
+        if (Number(body.bytes) > MAX_OBJECT_BYTES) {
+          try { if (typeof mpu.abort === 'function') await mpu.abort(); } catch (_) {}
+          return json({ error: 'File too large (max 8 GB)' }, 413, origin);
+        }
         await mpu.complete(parts.map(p => ({ partNumber: p.part || p.partNumber, etag: p.etag })));
-        return json({ url: `${url.origin}/o/${key}`, key, bytes: body.bytes || null }, 200, origin);
+        const head = await env.SIGNAL_BUCKET.head(key);
+        const size = head && head.size != null ? head.size : 0;
+        if (size > MAX_OBJECT_BYTES) {
+          try { await env.SIGNAL_BUCKET.delete(key); } catch (_) {}
+          return json({ error: 'File too large (max 8 GB)' }, 413, origin);
+        }
+        return json({ url: `${url.origin}/o/${key}`, key, bytes: size || body.bytes || null }, 200, origin);
       } catch (e) {
         return json({ error: e.message || 'Complete failed' }, 500, origin);
       }
@@ -317,7 +368,8 @@ export default {
       return json({ error: 'Method not allowed' }, 405, origin);
     }
 
-    const contentType = request.headers.get('Content-Type') || 'application/octet-stream';
+    const contentType = allowedType(request.headers.get('Content-Type') || 'application/octet-stream');
+    if (!contentType) return json({ error: 'That file type is not allowed' }, 415, origin);
     const lenHeader = request.headers.get('Content-Length');
     if (lenHeader && parseInt(lenHeader, 10) > MAX_BYTES) {
       return json({ error: `File too large (max ${MAX_BYTES / (1024 * 1024)} MB)` }, 413, origin);
@@ -330,14 +382,11 @@ export default {
     if (buf.byteLength < 1) {
       return json({ error: 'Empty body' }, 400, origin);
     }
+    if (looksActive(buf)) {
+      return json({ error: 'That file is not allowed' }, 415, origin);
+    }
 
-    const ext =
-      contentType.includes('mp4') ? 'mp4' :
-      contentType.includes('webm') ? 'webm' :
-      contentType.includes('quicktime') ? 'mov' :
-      contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg' :
-      contentType.includes('png') ? 'png' :
-      contentType.includes('audio') ? 'webm' : 'bin';
+    const ext = SAFE_TYPES[contentType] || 'bin';
 
     const key = `u/${uid}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
 

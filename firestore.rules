@@ -154,7 +154,13 @@ service cloud.firestore {
       return b.size() == 0
         || b.get('creatorUid', '') == request.auth.uid
         || isOperator()
-        || (b.get('visibility', '') != 'private' && b.get('publishAt', 0) <= request.time.toMillis());
+        || (
+          b.get('visibility', '') != 'private'
+          && b.get('publishAt', 0) <= request.time.toMillis()
+          && b.get('hidden', false) != true
+          && b.get('held', false) != true
+          && b.get('listed', true) != false
+        );
     }
     /* A connection entry someone writes into another person's list. */
     function connectionEntryClean() {
@@ -179,7 +185,7 @@ service cloud.firestore {
        suspension or restriction the desk put on them. */
     function ownerKeepsModeration() {
       return !request.resource.data.diff(resource.data).affectedKeys()
-        .hasAny(['suspended', 'suspendedReason', 'suspendedAt', 'restricted', 'restrictedReason', 'restrictedAt', 'trustedPublisher', 'sexualReports', 'known', 'knownUntil', 'grant', 'rightsStrikes']);
+        .hasAny(['suspended', 'suspendedReason', 'suspendedAt', 'restricted', 'restrictedReason', 'restrictedAt', 'trustedPublisher', 'sexualReports', 'known', 'knownUntil', 'grant', 'rightsStrikes', 'reach', 'reachPlaced']);
     }
     /* The day the account was created stays. A later profile save may
        not move it. The first write, when the field is still absent, may set it. */
@@ -197,6 +203,30 @@ service cloud.firestore {
       return !request.resource.data.diff(resource.data).affectedKeys()
         .hasAny(['listed', 'hidden', 'held', 'hiddenReason', 'hiddenAt', 'hiddenBy', 'heldReason',
                  'screenDecision', 'screenScore', 'screenReason', 'screenVersion', 'screenFrames']);
+    }
+    /* A stored video file needs a Reach pass the worker just issued.
+       A live room has no file. A pass-on is not a new upload. */
+    function isOriginalVideoFile() {
+      let repost = request.resource.data.get('repostOf', '');
+      return request.resource.data.get('mediaType', '') == 'video'
+        && request.resource.data.get('mediaUrl', '') is string
+        && request.resource.data.mediaUrl.size() > 8
+        && (repost == null || repost == '');
+    }
+    function reachPassOk(broadcastId) {
+      return !isOriginalVideoFile()
+        || (
+          request.resource.data.reachPass is string
+          && request.resource.data.reachPass.size() >= 8
+          && request.resource.data.reachPass.size() <= 48
+          && request.resource.data.durationSec is number
+          && request.resource.data.durationSec > 0
+          && request.resource.data.durationSec <= 10801
+          && exists(/databases/$(database)/documents/users/$(request.auth.uid)/reachPasses/$(request.resource.data.reachPass))
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)/reachPasses/$(request.resource.data.reachPass)).data.used == true
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)/reachPasses/$(request.resource.data.reachPass)).data.broadcastId == broadcastId
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)/reachPasses/$(request.resource.data.reachPass)).data.seconds >= request.resource.data.durationSec
+        );
     }
     function isTrustedPublisher() {
       return isSignedIn()
@@ -249,6 +279,22 @@ service cloud.firestore {
       match /vault/{id} {
         allow read: if isOwner(uid) || isOperator();
         allow write: if isOwner(uid) || isSuper();
+      }
+      /* Reach is how long a video may be, and how many in a day.
+         The worker writes the pass. The phone may only mark the one
+         it was given as used, once, for one Broadcast. */
+      match /reachDays/{day} {
+        allow read: if isOwner(uid) || isOperator();
+      }
+      match /reachPasses/{passId} {
+        allow read: if isOwner(uid) || isOperator();
+        allow update: if isOwner(uid)
+          && resource.data.used == false
+          && request.resource.data.used == true
+          && request.resource.data.broadcastId is string
+          && request.resource.data.broadcastId.size() > 8
+          && request.resource.data.broadcastId.size() < 80
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'broadcastId']);
       }
     }
 
@@ -421,7 +467,9 @@ service cloud.firestore {
           && id.matches('^[A-Za-z0-9_.:-]{1,200}$')
           && request.resource.data.keys().size() < 24
           && (!('naluno' in request.resource.data) || request.resource.data.naluno == false || isSuper())
-          && (!('text' in request.resource.data) || (request.resource.data.text is string && request.resource.data.text.size() < 4000));
+          && (!('text' in request.resource.data) || (request.resource.data.text is string && request.resource.data.text.size() < 4000))
+          && (!('text' in request.resource.data) || (request.resource.data.type == 'missed_call' && request.resource.data.text == 'Missed call'))
+          && (request.resource.data.type != 'text' || (request.resource.data.encrypted == true && !('text' in request.resource.data)));
         allow update: if false;
       }
       match /receipts/{id} {
@@ -537,7 +585,11 @@ service cloud.firestore {
             || (request.resource.data.messageEpoch is timestamp && request.resource.data.messageEpoch == request.time)
           );
       }
-      allow read: if isSignedIn();
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && (
+        ('memberUids' in resource.data && resource.data.memberUids is list && request.auth.uid in resource.data.memberUids)
+        || resource.data.createdBy == request.auth.uid
+      );
       allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid
         && (!('aliveAt' in request.resource.data) || request.resource.data.aliveAt == request.time);
       // FIX (20260826): was allow update: if isSignedIn() — any signed-in user could
@@ -550,7 +602,7 @@ service cloud.firestore {
         || (
           inThisBand()
           && request.resource.data.diff(resource.data).affectedKeys()
-              .hasOnly(['memberUids', 'lastEmptiedAt', 'messageEpoch', 'aliveAt', 'bellAt', 'bellBy'])
+              .hasOnly(['memberUids', 'lastEmptiedAt', 'messageEpoch', 'aliveAt', 'bellAt', 'bellBy', 'linkJoin'])
           && (
             !request.resource.data.diff(resource.data).affectedKeys().hasAny(['memberUids'])
             || memberChangeIsSelf()
@@ -562,7 +614,8 @@ service cloud.firestore {
           )
         )
         || (
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberUids'])
+          resource.data.linkJoin == true
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberUids'])
           && memberChangeIsSelf()
           && ('memberUids' in request.resource.data)
           && request.resource.data.memberUids is list
@@ -571,7 +624,14 @@ service cloud.firestore {
       );
 
       match /presence/{uid} {
-        allow read: if isSignedIn();
+        allow read: if isSignedIn() && (
+          isOwner(uid)
+          || get(/databases/$(database)/documents/bands/$(bandId)).data.createdBy == request.auth.uid
+          || (
+            get(/databases/$(database)/documents/bands/$(bandId)).data.memberUids is list
+            && request.auth.uid in get(/databases/$(database)/documents/bands/$(bandId)).data.memberUids
+          )
+        );
         // You can only mark *yourself* as tuned in, and only as of now.
         allow write: if isOwner(uid) && (
           request.resource == null
@@ -598,7 +658,11 @@ service cloud.firestore {
         // THE RULE OF BANDS: two hours after the last person left, nobody
         // can read the conversation, and anything before messageEpoch is
         // gone for good. The worker then deletes it.
-        allow read: if isSignedIn() && bandOpenNow() && (epochMs() == 0 || msgMs() >= epochMs());
+        allow read: if isSignedIn() && bandOpenNow() && (epochMs() == 0 || msgMs() >= epochMs())
+          && (
+            request.auth.uid in bandData().memberUids
+            || bandData().createdBy == request.auth.uid
+          );
         allow create: if isSignedIn()
           && request.resource.data.from == request.auth.uid
           && (
@@ -722,6 +786,12 @@ service cloud.firestore {
       allow read: if isOwner(uid) || isOperator();
       allow write: if isOwner(uid);
     }
+    /* The desk map lists every phone. A collection-group query is denied
+       unless a recursive rule allows it. Members still cannot list anyone
+       else's phones; the path above is the only member read. */
+    match /{path=**}/beacons/{beaconId} {
+      allow read: if isOperator();
+    }
 
     /* Find Naluno history (07 Oct d): where your own phones have been, so
        you can look back at a day, a month or a year. Only you can read or
@@ -785,18 +855,35 @@ service cloud.firestore {
          still in the future, is readable only by the person who made it (and
          by an operator, for moderation). Documents without these fields are
          unaffected. */
-      allow read: if isSignedIn() && (
+      allow get: if isSignedIn() && (
         resource.data.creatorUid == request.auth.uid
         || isOperator()
         || (
-          (!('visibility' in resource.data) || resource.data.visibility != 'private')
+          resource.data.listed == true
+          && resource.data.hidden == false
+          && resource.data.held == false
+          && resource.data.visibility == 'public'
           && (!('publishAt' in resource.data) || resource.data.publishAt <= request.time.toMillis())
+        )
+      );
+      allow list: if isSignedIn() && (
+        resource.data.creatorUid == request.auth.uid
+        || isOperator()
+        || (
+          resource.data.listed == true
+          && resource.data.hidden == false
+          && resource.data.held == false
+          && resource.data.visibility == 'public'
+          && resource.data.publishAt <= request.time.toMillis()
         )
       );
       allow create: if isSignedIn()
         && request.resource.data.creatorUid == request.auth.uid
         && request.resource.data.listed is bool
-        && (!('hidden' in request.resource.data) || request.resource.data.hidden == false);
+        && request.resource.data.listed == false
+        && request.resource.data.held == true
+        && request.resource.data.hidden == false
+        && reachPassOk(id);
       // Creator may rewrite; others may only touch engagement/live/membership fields.
       // listed / hidden / held are desk + worker. Creator may only tighten to hidden.
       allow update: if isOperator()
@@ -808,7 +895,7 @@ service cloud.firestore {
             && resource.data.creatorUid == request.auth.uid
             && creatorMayTightenListing())
         || (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['views', 'uniqueViews', 'updatedAt', 'live', 'liveAt', 'liveBy', 'memberUids',
+            .hasOnly(['updatedAt', 'live', 'liveAt', 'liveBy', 'memberUids',
                       'comments', 'replies', 'shares', 'commentCount', 'replyCount', 'shareCount'])
             && engagementBumpsHonest());
       match /{col}/{docId} {
@@ -963,48 +1050,9 @@ service cloud.firestore {
 
     match /toga/{uid} {
       allow read: if isSignedIn();
-      // Own doc can be rewritten. Others may only bump counters by 1 and
-      // may not rename the row. First write from a viewer is a create of
-      // those same small numbers.
-      allow create: if isSignedIn() && (
-        (request.auth.uid == uid && ownerTogaCreateHonest())
-        || (
-          request.auth.uid != uid
-          && request.resource.data.keys().hasOnly(['viewsMonth', 'circleMonth', 'engageMonth', 'scoreMonth', 'viewsTotal',
-                      'monthKey', 'featuredBroadcastId', 'updatedAt',
-                      'mv_' + request.resource.data.monthKey,
-                      'mc_' + request.resource.data.monthKey,
-                      'me_' + request.resource.data.monthKey])
-          && numOf(request.resource.data, 'viewsMonth') <= 1
-          && numOf(request.resource.data, 'circleMonth') <= 1
-          && numOf(request.resource.data, 'engageMonth') <= 1
-          && numOf(request.resource.data, 'scoreMonth') <= 1
-          && numOf(request.resource.data, 'viewsTotal') <= 1
-          && numOf(request.resource.data, 'mv_' + request.resource.data.monthKey) <= 1
-          && numOf(request.resource.data, 'mc_' + request.resource.data.monthKey) <= 1
-          && numOf(request.resource.data, 'me_' + request.resource.data.monthKey) <= 1
-        )
-      );
-      allow update: if isSignedIn() && (
-        (request.auth.uid == uid && ownerTogaHonest())
-        || (
-          request.auth.uid != uid
-          && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['viewsMonth', 'circleMonth', 'engageMonth', 'scoreMonth', 'viewsTotal',
-                      'monthKey', 'featuredBroadcastId', 'updatedAt',
-                      'mv_' + request.resource.data.monthKey,
-                      'mc_' + request.resource.data.monthKey,
-                      'me_' + request.resource.data.monthKey])
-          && bumpedAtMost('viewsMonth', 1)
-          && bumpedAtMost('circleMonth', 1)
-          && bumpedAtMost('engageMonth', 1)
-          && bumpedAtMost('scoreMonth', 1)
-          && bumpedAtMost('viewsTotal', 1)
-          && bumpedAtMost('mv_' + request.resource.data.monthKey, 1)
-          && bumpedAtMost('mc_' + request.resource.data.monthKey, 1)
-          && bumpedAtMost('me_' + request.resource.data.monthKey, 1)
-        )
-      );
+      // Only the owner writes this doc. Counters move on the economy worker.
+      allow create: if isSignedIn() && request.auth.uid == uid && ownerTogaCreateHonest();
+      allow update: if isSignedIn() && (request.auth.uid == uid && ownerTogaHonest());
     }
 
     /* ============================================================
