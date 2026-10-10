@@ -1037,6 +1037,7 @@ window.__nalunoEntryT0 = Date.now();
       <input id="bcompTags" maxlength="120" placeholder="Topics (comma separated)" style="width:100%;margin-bottom:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:13px;font-family:inherit;" />
       <textarea id="bcompDesc" maxlength="2000" rows="3" placeholder="What is this Broadcast about? (optional)" style="width:100%;margin-bottom:14px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(23,26,38,.9);color:var(--text);font-size:13px;font-family:inherit;resize:vertical;"></textarea>
       <div class="bcomp-opts">
+        <label class="bcomp-opt" id="bcompRightsRow" style="display:none;"><input type="checkbox" id="bcompRightsAck" /> <span>I have the rights or permission for the music and other material in this video. Naluno has not checked that claim.</span></label>
         <label class="bcomp-opt"><input type="checkbox" id="bcompPrivate" /> <span>Private &mdash; only you can see it</span></label>
         <label class="bcomp-opt"><input type="checkbox" id="bcompSchedule" /> <span>Publish later</span></label>
         <input type="datetime-local" id="bcompPublishAt" style="display:none;" />
@@ -1868,10 +1869,10 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/atmosphere.js?v=20260908d"></script>
 <script src="/js/band-list.js?v=20261010a"></script>
 <script type="module" src="/workers/economy/safety-boot.mjs?v=20260923c"></script>
-<script src="/js/signal-core.js?v=20261010b"></script>
-<script src="/js/broadcast-core.js?v=20261010c"></script>
-<script src="/js/broadcast-upload.js?v=20261010b"></script>
-<script src="/js/broadcast-composer.js?v=20261010c"></script>
+<script src="/js/signal-core.js?v=20261010d"></script>
+<script src="/js/broadcast-core.js?v=20261010d"></script>
+<script src="/js/broadcast-upload.js?v=20261010d"></script>
+<script src="/js/broadcast-composer.js?v=20261010d"></script>
 <script src="/js/screen.js?v=20261006b"></script>
 <!-- nudenet.js MUST load after screen.js: it upgrades runNalunoScreen() in place
      and keeps the heuristic as a hold-only fallback. Replaces nsfw-model.js. -->
@@ -1893,8 +1894,8 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/beacon.js?v=20261010a"></script>
 <script src="/js/find-history.js?v=20261007d"></script>
 <script src="/js/lg-books.js?v=20261001b"></script>
-<script src="/js/compass-brain.js?v=20261010c"></script>
-<script src="/js/compass.js?v=20261010c"></script>
+<script src="/js/compass-brain.js?v=20261010d"></script>
+<script src="/js/compass.js?v=20261010d"></script>
 <script src="/js/pass-on.js?v=20261003b"></script>
 <script src="/js/room-threads.js?v=20260925g"></script>
 <script src="/js/discover-engine.js?v=20260928d"></script>
@@ -1907,7 +1908,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/naluno-voice-master.js?v=20261007a"></script>
 <script src="/js/lg-ear.js?v=20261010a"></script>
 <script src="/js/naluno-voices.js?v=20261010a"></script>
-<script src="/js/broadcast-glance.js?v=20261010a"></script>
+<script src="/js/broadcast-glance.js?v=20261010d"></script>
 <script src="/js/signal-public.js?v=20261007d"></script>
 <script src="/js/broadcast-space.js?v=20261010a"></script>
 <script src="/js/linkify.js?v=20260930a"></script>
@@ -1942,7 +1943,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/live-preview.js?v=20260929g"></script>
 <script src="/js/band-room.js?v=20261010a"></script>
 <script src="/js/traffic.js?v=20261003e"></script>
-<script src="/js/pwa.js?v=20261010a"></script>
+<script src="/js/pwa.js?v=20261010d"></script>
 <script src="/js/gestures.js?v=20261007c"></script>
 <script src="/js/spark-engine.js?v=20261005g"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>
