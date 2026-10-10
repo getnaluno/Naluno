@@ -10,6 +10,11 @@ const SAFE_TYPES = {
   'video/mp4': 'mp4',
   'video/webm': 'webm',
   'video/quicktime': 'mov',
+  'video/3gpp': '3gp',
+  'video/3gpp2': '3g2',
+  'video/x-m4v': 'm4v',
+  'video/mpeg': 'mpg',
+  'video/ogg': 'ogv',
   'audio/webm': 'webm',
   'audio/mp4': 'm4a',
   'audio/mpeg': 'mp3',
@@ -28,7 +33,19 @@ function cleanType(raw) {
 }
 function allowedType(raw) {
   const t = cleanType(raw);
-  return SAFE_TYPES[t] ? t : '';
+  if (!t) return '';
+  if (SAFE_TYPES[t]) return t;
+  if (t === 'image/svg+xml' || t === 'text/html' || t === 'application/xhtml+xml' || t.indexOf('javascript') >= 0 || t === 'text/xml') return '';
+  if (t.indexOf('video/') === 0 || t.indexOf('audio/') === 0 || t.indexOf('image/') === 0) return t;
+  return '';
+}
+function extFor(ct) {
+  if (SAFE_TYPES[ct]) return SAFE_TYPES[ct];
+  const sub = String(ct.split('/')[1] || 'bin').replace(/[^a-z0-9]/g, '').slice(0, 8);
+  return sub || 'bin';
+}
+function ownsKey(key, uid) {
+  return key.startsWith('u/' + uid + '/') || key.startsWith('b/' + uid + '/');
 }
 function looksActive(buf) {
   const u = new Uint8Array(buf.slice(0, Math.min(64, buf.byteLength)));
@@ -37,13 +54,33 @@ function looksActive(buf) {
   const head = s.replace(/^\uFEFF/, '').trim().slice(0, 24).toLowerCase();
   return head.startsWith('<html') || head.startsWith('<svg') || head.startsWith('<!doctype') || head.startsWith('<script');
 }
-function sniffHeaders(contentType, extra) {
-  const ct = allowedType(contentType) || 'application/octet-stream';
+function typeFromName(key) {
+  const name = String(key || '').toLowerCase();
+  if (/\.(mp4|m4v|hevc|h265)$/.test(name)) return 'video/mp4';
+  if (/\.webm$/.test(name)) return 'video/webm';
+  if (/\.(mov|qt)$/.test(name)) return 'video/quicktime';
+  if (/\.3gp$/.test(name)) return 'video/3gpp';
+  if (/\.3g2$/.test(name)) return 'video/3gpp2';
+  if (/\.mkv$/.test(name)) return 'video/x-matroska';
+  if (/\.(jpe?g)$/.test(name)) return 'image/jpeg';
+  if (/\.png$/.test(name)) return 'image/png';
+  if (/\.webp$/.test(name)) return 'image/webp';
+  if (/\.gif$/.test(name)) return 'image/gif';
+  if (/\.pdf$/.test(name)) return 'application/pdf';
+  return '';
+}
+function sniffHeaders(contentType, extra, key) {
+  let ct = allowedType(contentType);
+  if (!ct || ct === 'application/octet-stream') {
+    ct = typeFromName(key) || ct || cleanType(contentType) || 'application/octet-stream';
+  }
   return Object.assign({
     'Content-Type': ct,
     'X-Content-Type-Options': 'nosniff',
-    'Content-Security-Policy': "sandbox; default-src 'none'; media-src 'self'; img-src 'self'; style-src 'none'; script-src 'none'",
   }, extra || {});
+}
+function bucketOf(env) {
+  return (env && (env.SIGNAL_BUCKET || env.BROADCAST_BUCKET)) || null;
 }
 
 async function verifyFirebaseIdToken(idToken, env) {
@@ -129,7 +166,7 @@ async function serveObject(request, env, origin) {
         const cors = corsHeaders(origin);
         Object.keys(cors).forEach(function (k) { headers.set(k, cors[k]); });
         headers.set('X-Content-Type-Options', 'nosniff');
-        headers.set('Content-Security-Policy', "sandbox; default-src 'none'; media-src 'self'; img-src 'self'; style-src 'none'; script-src 'none'");
+        headers.delete('Content-Security-Policy');
         return new Response(hit.body, { status: hit.status, statusText: hit.statusText, headers });
       }
     } catch (_) {}
@@ -138,7 +175,7 @@ async function serveObject(request, env, origin) {
   // Always try full metadata first when range is present so we can compute length
   let obj;
   if (rangeHeader) {
-    const head = await env.SIGNAL_BUCKET.head(key);
+    const head = await bucketOf(env).head(key);
     if (!head) {
       return new Response('Not found', { status: 404, headers: corsHeaders(origin) });
     }
@@ -154,7 +191,7 @@ async function serveObject(request, env, origin) {
         }),
       });
     }
-    obj = await env.SIGNAL_BUCKET.get(key, { range: r2range });
+    obj = await bucketOf(env).get(key, { range: r2range });
     if (!obj) {
       return new Response('Not found', { status: 404, headers: corsHeaders(origin) });
     }
@@ -165,21 +202,21 @@ async function serveObject(request, env, origin) {
       'Content-Length': String(length),
       'Content-Range': `bytes ${offset}-${offset + length - 1}/${total}`,
       'Cache-Control': 'public, max-age=3600',
-    }));
+    }, key));
     if (request.method === 'HEAD') {
       return new Response(null, { status: 206, headers });
     }
     return new Response(obj.body, { status: 206, headers });
   }
 
-  obj = await env.SIGNAL_BUCKET.get(key);
+  obj = await bucketOf(env).get(key);
   if (!obj) {
     return new Response('Not found', { status: 404, headers: corsHeaders(origin) });
   }
   const headers = corsHeaders(origin, sniffHeaders((obj.httpMetadata && obj.httpMetadata.contentType), {
     'Accept-Ranges': 'bytes',
     'Cache-Control': 'public, max-age=31536000, immutable',
-  }));
+  }, key));
   if (url.searchParams.get('dl') === '1') {
     const fn = (url.searchParams.get('fn') || key.split('/').pop() || 'slip').replace(/[^\w.\-]+/g, '_');
     headers['Content-Disposition'] = 'attachment; filename="' + fn + '"';
@@ -201,6 +238,10 @@ async function serveObject(request, env, origin) {
 
 export default {
   async fetch(request, env) {
+    const broadcastWorker = !!(env && env.BROADCAST_BUCKET && !env.SIGNAL_BUCKET);
+    if (broadcastWorker) {
+      env = Object.assign({}, env, { SIGNAL_BUCKET: env.BROADCAST_BUCKET, _nalunoBroadcast: true });
+    }
     const origin = request.headers.get('Origin');
     const url = new URL(request.url);
 
@@ -213,7 +254,7 @@ export default {
     }
 
     if ((request.method === 'GET' || request.method === 'HEAD') && url.pathname.startsWith('/o/')) {
-      if (!env.SIGNAL_BUCKET) {
+      if (!bucketOf(env)) {
         return json({ error: 'R2 binding missing' }, 500, origin);
       }
       try {
@@ -275,23 +316,26 @@ export default {
 
     /* Delete only this person's own files. The prefix is the signed-in uid. */
     if (url.pathname === '/b/purge' && request.method === 'POST') {
-      const prefix = 'u/' + uid + '/';
-      let cursor = undefined;
+      const prefixes = env._nalunoBroadcast ? ['b/' + uid + '/', 'u/' + uid + '/'] : ['u/' + uid + '/'];
       let deleted = 0;
-      let pages = 0;
       try {
-        while (pages < 20) {
-          pages++;
-          const listed = await env.SIGNAL_BUCKET.list({ prefix: prefix, cursor: cursor, limit: 500 });
-          const objs = (listed && listed.objects) || [];
-          for (let i = 0; i < objs.length; i++) {
-            const key = String(objs[i].key || '');
-            if (key.indexOf(prefix) !== 0) continue;
-            await env.SIGNAL_BUCKET.delete(key);
-            deleted++;
+        for (let p = 0; p < prefixes.length; p++) {
+          const prefix = prefixes[p];
+          let cursor = undefined;
+          let pages = 0;
+          while (pages < 20) {
+            pages++;
+            const listed = await env.SIGNAL_BUCKET.list({ prefix: prefix, cursor: cursor, limit: 500 });
+            const objs = (listed && listed.objects) || [];
+            for (let i = 0; i < objs.length; i++) {
+              const key = String(objs[i].key || '');
+              if (key.indexOf(prefix) !== 0) continue;
+              await env.SIGNAL_BUCKET.delete(key);
+              deleted++;
+            }
+            if (!listed || !listed.truncated) break;
+            cursor = listed.cursor;
           }
-          if (!listed || !listed.truncated) break;
-          cursor = listed.cursor;
         }
         return json({ ok: true, deleted: deleted }, 200, origin);
       } catch (e) {
@@ -308,8 +352,9 @@ export default {
       if (Number(body.bytes) > MAX_OBJECT_BYTES) {
         return json({ error: 'File too large (max 8 GB)' }, 413, origin);
       }
-      const ext = SAFE_TYPES[ct] || 'bin';
-      const key = `u/${uid}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+      const ext = extFor(ct);
+      const prefix = env._nalunoBroadcast ? 'b' : 'u';
+      const key = prefix + '/' + uid + '/' + Date.now() + '-' + crypto.randomUUID().slice(0, 8) + '.' + ext;
       try {
         const mpu = await env.SIGNAL_BUCKET.createMultipartUpload(key, {
           httpMetadata: { contentType: ct },
@@ -324,7 +369,7 @@ export default {
       const key = url.searchParams.get('key') || '';
       const uploadId = url.searchParams.get('uploadId') || '';
       const part = parseInt(url.searchParams.get('part') || '0', 10);
-      if (!key.startsWith('u/' + uid + '/')) return json({ error: 'Forbidden' }, 403, origin);
+      if (!ownsKey(key, uid)) return json({ error: 'Forbidden' }, 403, origin);
       if (!uploadId || part < 1) return json({ error: 'Missing uploadId or part' }, 400, origin);
       const buf = await request.arrayBuffer();
       if (buf.byteLength < 1) return json({ error: 'Empty part' }, 400, origin);
@@ -343,7 +388,7 @@ export default {
       const key = body.key || '';
       const uploadId = body.uploadId || '';
       const parts = Array.isArray(body.parts) ? body.parts : [];
-      if (!key.startsWith('u/' + uid + '/')) return json({ error: 'Forbidden' }, 403, origin);
+      if (!ownsKey(key, uid)) return json({ error: 'Forbidden' }, 403, origin);
       if (!uploadId || !parts.length) return json({ error: 'Missing parts' }, 400, origin);
       try {
         const mpu = env.SIGNAL_BUCKET.resumeMultipartUpload(key, uploadId);
@@ -386,7 +431,7 @@ export default {
       return json({ error: 'That file is not allowed' }, 415, origin);
     }
 
-    const ext = SAFE_TYPES[contentType] || 'bin';
+    const ext = extFor(contentType);
 
     const key = `u/${uid}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
 

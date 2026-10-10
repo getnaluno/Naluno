@@ -214,8 +214,8 @@ service cloud.firestore {
         && (repost == null || repost == '');
     }
     function reachPassOk(broadcastId) {
-      return !isOriginalVideoFile()
-        || (
+      let pass = request.resource.data.get('reachPass', '');
+      return pass == null || pass == '' || (
           request.resource.data.reachPass is string
           && request.resource.data.reachPass.size() >= 8
           && request.resource.data.reachPass.size() <= 48
