@@ -42,6 +42,53 @@ public class CallMessagingService extends FirebaseMessagingService {
     return n;
   }
 
+  public static final String HANDLED_PREFS = "naluno_call_handled";
+
+  /** Answered, declined or ended. A late push for this call must not ring again. */
+  public static boolean isCallHandled(Context ctx, String callId) {
+    if (ctx == null || callId == null || callId.trim().isEmpty()) return false;
+    try {
+      long at = ctx.getSharedPreferences(HANDLED_PREFS, Context.MODE_PRIVATE).getLong(callId.trim(), 0L);
+      return at > 0 && System.currentTimeMillis() - at < 30L * 60L * 1000L;
+    } catch (Exception e) {
+      return false;
+    }
+  }
+
+  public static void markCallHandled(Context ctx, String callId) {
+    if (ctx == null || callId == null || callId.trim().isEmpty()) return;
+    try {
+      ctx.getSharedPreferences(HANDLED_PREFS, Context.MODE_PRIVATE)
+        .edit()
+        .putLong(callId.trim(), System.currentTimeMillis())
+        .apply();
+    } catch (Exception e) {
+      // best-effort
+    }
+  }
+
+  /** Cancel this call's shade entry and ignore later pushes for it. */
+  public static void dismissIncoming(Context ctx, String callId) {
+    if (ctx == null) return;
+    markCallHandled(ctx, callId);
+    try {
+      NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+      if (nm != null && callId != null && !callId.trim().isEmpty()) {
+        nm.cancel(notificationIdFor(callId));
+      }
+    } catch (Exception e) {
+      // best-effort
+    }
+    try {
+      Intent done = new Intent("com.naluno.app.CALL_HANDLED");
+      done.setPackage(ctx.getPackageName());
+      done.putExtra("callId", callId == null ? "" : callId);
+      ctx.sendBroadcast(done);
+    } catch (Exception e) {
+      // best-effort
+    }
+  }
+
   @Override
   public void onMessageReceived(RemoteMessage message) {
     Map<String, String> data = message.getData();
@@ -79,6 +126,8 @@ public class CallMessagingService extends FirebaseMessagingService {
       data.get("body")
     );
     if (callerName == null || callerName.isEmpty()) callerName = "Incoming call";
+
+    if (isCallHandled(this, callId)) return;
 
     wakeScreen();
     ensureChannel();

@@ -74,8 +74,8 @@
 // v248: attention is only kept when a visit, an app open, or a continued session owns it. Join date and Find pin stay on the person.
 // v284: 10.05f Android floats a video call on leaving; Wireline alerts through Naluno's worker; a call answers once per tap.
 // v285: 10.05g voices keep reading (several makers, scheduled, trimmed), Luganda spoken from its own sounds, test alert, stale stamps.
-const CACHE_NAME = 'naluno-shell-v311';
-const APP_BUILD = '20261011a';
+const CACHE_NAME = 'naluno-shell-v313';
+const APP_BUILD = '20261011c';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -501,9 +501,26 @@ function markCallHandled(callId){
   Object.keys(handledCallIds).forEach(function(k){
     if(handledCallIds[k] < cutoff) delete handledCallIds[k];
   });
+  if(callId){
+    caches.open('naluno-call-handled').then(function(cache){
+      const url = 'https://naluno.local/handled/' + encodeURIComponent(callId);
+      return cache.put(new Request(url), new Response(String(Date.now())));
+    }).catch(function(){});
+  }
 }
 function isCallHandled(callId){
   return !!(callId && handledCallIds[callId]);
+}
+function handledBefore(callId){
+  if(!callId) return Promise.resolve(false);
+  if(isCallHandled(callId)) return Promise.resolve(true);
+  return caches.open('naluno-call-handled').then(function(cache){
+    return cache.match('https://naluno.local/handled/' + encodeURIComponent(callId));
+  }).then(function(hit){
+    if(!hit) return false;
+    markCallHandled(callId);
+    return true;
+  }).catch(function(){ return false; });
 }
 function stopRingLoop(callId){
   if(callId){
@@ -523,7 +540,12 @@ async function closeCallNotifications(callId){
     const list = await self.registration.getNotifications();
     (list || []).forEach(function(n){
       const d = n.data || {};
-      if(d.type === 'incoming_call' && (!callId || !d.callId || d.callId === callId)){
+      const tag = String(n.tag || '');
+      const id = d.callId || '';
+      const callish = d.type === 'incoming_call' || tag.indexOf('naluno-call') === 0;
+      if(!callish) return;
+      if(!callId){ try{ n.close(); }catch(_){} return; }
+      if(id === callId || tag === ('naluno-call:' + callId)){
         try{ n.close(); }catch(_){}
       }
     });
@@ -554,13 +576,24 @@ function callNotifyOpts(callId, body, pingId){
  *  how a backgrounded web app actually rings. Stops the instant the page
  *  says the call was handled. */
 function startRingLoop(callId, title, body, loop, pingId){
+  /* Every entry (push, lock screen, in-app) consults the durable handled
+     set first. A service worker that just woke up has an empty memory map,
+     and a late push would otherwise ring a call that was already answered. */
+  return handledBefore(callId || '').then(function(done){
+    if(done) return closeCallNotifications(callId);
+    return beginRingLoop(callId, title, body, loop, pingId);
+  });
+}
+function beginRingLoop(callId, title, body, loop, pingId){
   if(callId && isCallHandled(callId)) return Promise.resolve();
   const t = title || 'Incoming call — Naluno';
   const b = body || 'Tap to answer';
   const already = !!(callId && ringLoopTimers[callId]);
   let shown = Promise.resolve();
   if(!already){
-    shown = self.registration.showNotification(t, callNotifyOpts(callId, b, pingId)).catch(function(){});
+    shown = self.registration.showNotification(t, callNotifyOpts(callId, b, pingId)).then(function(){
+      if(callId && isCallHandled(callId)) return closeCallNotifications(callId);
+    }).catch(function(){});
   }
   if(loop === false) return shown;
   if(already) return shown;
@@ -573,7 +606,14 @@ function startRingLoop(callId, title, body, loop, pingId){
       return;
     }
     n++;
-    self.registration.showNotification(t, callNotifyOpts(callId, b, pingId)).catch(function(){});
+    if(callId && isCallHandled(callId)){
+      stopRingLoop(callId);
+      closeCallNotifications(callId);
+      return;
+    }
+    self.registration.showNotification(t, callNotifyOpts(callId, b, pingId)).then(function(){
+      if(callId && isCallHandled(callId)) return closeCallNotifications(callId);
+    }).catch(function(){});
     if(callId) ringLoopTimers[callId] = setTimeout(tick, 2200);
   }
   if(callId) ringLoopTimers[callId] = setTimeout(tick, 2200);
@@ -668,12 +708,15 @@ try{
       }
       const isCall = data.type === 'incoming_call' || !!callId;
       if(!isCall) return Promise.resolve();
-      if(callId && isCallHandled(callId)) return Promise.resolve();
+      if(callId && isCallHandled(callId)) return closeCallNotifications(callId);
       const who = data.callerName || (data.title || '').replace(/\s*(is calling|· voice call).*$/i, '') || 'Someone';
       const title = data.title || (who + ' is calling');
       const body = data.body || 'Tap to answer on Naluno';
       notePushArrival(data);
-      return startRingLoop(callId, title, body, undefined, data.pingId || '');
+      return handledBefore(callId).then(function(done){
+        if(done) return closeCallNotifications(callId);
+        return startRingLoop(callId, title, body, undefined, data.pingId || '');
+      });
     });
   }
 }catch(e){}
@@ -712,6 +755,7 @@ self.addEventListener('message', event=>{
       if(note.type === 'wireline') return showWireNotification(note, true);
       if(note.type === 'broadcast_live' || note.broadcastId) return showLiveNotification(note);
       if(note.type === 'incoming_call' || note.callId){
+        if(note.callId && isCallHandled(note.callId)) return closeCallNotifications(note.callId);
         return startRingLoop(note.callId || '', note.title || 'Incoming call — Naluno', note.body || 'Tap to answer', true, note.pingId || '');
       }
       return Promise.resolve();
@@ -771,10 +815,13 @@ self.addEventListener('push', event=>{
     return;
   }
   if(isCall){
-    if(callId && isCallHandled(callId)) return;
     const title = data.title || 'Incoming call — Naluno';
     const body = data.body || 'Tap to answer';
     event.waitUntil((async ()=>{
+      if(await handledBefore(callId)){
+        await closeCallNotifications(callId);
+        return;
+      }
       await startRingLoop(callId, title, body, undefined, data.pingId || '');
       notePushArrival(data);
       const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });

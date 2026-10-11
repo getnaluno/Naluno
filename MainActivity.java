@@ -458,6 +458,16 @@ public class MainActivity extends BridgeActivity {
     }
 
     @JavascriptInterface
+    public void dismissIncomingCall(String callId) {
+      final String id = callId != null ? callId : "";
+      runOnUiThread(new Runnable() {
+        @Override public void run() {
+          CallMessagingService.dismissIncoming(MainActivity.this, id);
+        }
+      });
+    }
+
+    @JavascriptInterface
     public void enterCallPipNow() {
       runOnUiThread(new Runnable() {
         @Override public void run() {

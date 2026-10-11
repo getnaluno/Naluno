@@ -3,8 +3,10 @@ package com.naluno.app;
 import android.app.Activity;
 import android.app.KeyguardManager;
 import android.app.NotificationManager;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -25,6 +27,7 @@ public class IncomingCallActivity extends Activity {
 
   public static final String EXTRA_CALL_ID = "callId";
   public static final String EXTRA_CALLER_NAME = "callerName";
+  private BroadcastReceiver handledReceiver;
 
   @Override
   protected void onCreate(Bundle savedInstanceState) {
@@ -68,6 +71,41 @@ public class IncomingCallActivity extends Activity {
 
     setContentView(buildLayout());
     bindCall(getIntent());
+    registerHandled();
+  }
+
+  @Override
+  protected void onDestroy() {
+    if (handledReceiver != null) {
+      try { unregisterReceiver(handledReceiver); } catch (Exception e) {}
+      handledReceiver = null;
+    }
+    super.onDestroy();
+  }
+
+  /** Answer in the app must take this screen down, not leave it over the call. */
+  private void registerHandled() {
+    handledReceiver = new BroadcastReceiver() {
+      @Override
+      public void onReceive(Context context, Intent intent) {
+        String done = intent != null ? intent.getStringExtra("callId") : "";
+        String mine = getIntent() != null ? getIntent().getStringExtra(EXTRA_CALL_ID) : "";
+        if (done == null) done = "";
+        if (mine == null) mine = "";
+        if (!mine.isEmpty() && !done.isEmpty() && !mine.equals(done)) return;
+        finish();
+      }
+    };
+    IntentFilter filter = new IntentFilter("com.naluno.app.CALL_HANDLED");
+    try {
+      if (Build.VERSION.SDK_INT >= 33) {
+        registerReceiver(handledReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+      } else {
+        registerReceiver(handledReceiver, filter);
+      }
+    } catch (Exception e) {
+      handledReceiver = null;
+    }
   }
 
   @Override
@@ -83,6 +121,12 @@ public class IncomingCallActivity extends Activity {
     final String callId = intent != null ? intent.getStringExtra(EXTRA_CALL_ID) : null;
     final String callerName = intent != null ? intent.getStringExtra(EXTRA_CALLER_NAME) : null;
     final int noticeId = CallMessagingService.notificationIdFor(callId);
+    if (CallMessagingService.isCallHandled(this, callId)) {
+      NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+      if (nm != null) nm.cancel(noticeId);
+      finish();
+      return;
+    }
 
     TextView nameView = findViewById(1001);
     if (nameView != null) {
@@ -96,6 +140,9 @@ public class IncomingCallActivity extends Activity {
       answer.setOnClickListener(new View.OnClickListener() {
         @Override
         public void onClick(View v) {
+          if (callId != null && !callId.isEmpty()) {
+            CallMessagingService.markCallHandled(IncomingCallActivity.this, callId);
+          }
           Intent launch = getPackageManager().getLaunchIntentForPackage(getPackageName());
           if (launch == null) {
             launch = new Intent(IncomingCallActivity.this, MainActivity.class);
@@ -110,9 +157,12 @@ public class IncomingCallActivity extends Activity {
             launch.setData(Uri.parse("https://getnaluno.com/?call=" + Uri.encode(callId)));
           }
           startActivity(launch);
-
-          NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-          if (nm != null) nm.cancel(noticeId);
+          if (callId != null && !callId.isEmpty()) {
+            CallMessagingService.dismissIncoming(IncomingCallActivity.this, callId);
+          } else {
+            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null) nm.cancel(noticeId);
+          }
           finish();
         }
       });
@@ -122,8 +172,12 @@ public class IncomingCallActivity extends Activity {
       decline.setOnClickListener(new View.OnClickListener() {
         @Override
         public void onClick(View v) {
-          NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-          if (nm != null) nm.cancel(noticeId);
+          if (callId != null && !callId.isEmpty()) {
+            CallMessagingService.dismissIncoming(IncomingCallActivity.this, callId);
+          } else {
+            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null) nm.cancel(noticeId);
+          }
           finish();
         }
       });
