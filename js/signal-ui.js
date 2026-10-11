@@ -250,7 +250,7 @@ function renderScheduledDock(){
         : '';
       const kind = (b.visibility === 'private') ? 'Private' : 'Scheduled';
       const local = b.publishAt ? toDatetimeLocal(Number(b.publishAt)) : '';
-      return '<div class="bcast-private-row dl-row"' + ' sched-row" data-sched="'+esc(b.id)+'">'
+      return '<div class="bcast-private-row dl-row sched-row" data-sched="'+esc(b.id)+'">'
         + privateThumb(b)
         + '<div class="sched-main"><div class="sched-title">'+esc(b.title || 'Broadcast')+'</div>'
         + '<div class="sched-meta"><span class="bcast-badge '+(kind === 'Private' ? 'private' : 'scheduled')+'">'+kind+'</span>'

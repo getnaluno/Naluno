@@ -70,7 +70,7 @@ assert.ok(Number.isInteger(ctx.pick('calm', t0)), 'survives a damaged book');
 
 /* Private broadcasts: preview rows, owner only. */
 const ui = read('signal-ui.js');
-assert.ok(ui.includes('class="bcast-private-row dl-row"') && ui.includes('bcast-private-tile'), 'private rows have a preview');
+assert.ok(ui.includes('class="bcast-private-row dl-row sched-row"') && ui.includes('bcast-private-tile'), 'private rows have a preview');
 assert.ok(/const mine = \(typeof myBroadcasts !== 'undefined' && myBroadcasts\) \? myBroadcasts : \[\];\s*const rows = mine\.filter/.test(ui), 'built only from your own Broadcasts');
 
 /* Why this + menu fit. */

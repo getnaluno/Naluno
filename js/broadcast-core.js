@@ -524,7 +524,9 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
   myBroadcasts = [full, ...myBroadcasts.filter(x => x.id !== ref.id)];
   // Optimistic plate update — don't wait for onSnapshot (avoids "must refresh")
   if(broadcastIsPublic(full)){
-    feedBroadcasts = [full, ...feedBroadcasts.filter(x => x.id !== ref.id)].slice(0, 80);
+    feedTailById[full.id] = Object.assign({}, feedTailById[full.id] || {}, full);
+    caughtUpIds[full.id] = 1;
+    try{ publishPublicCatalogue(); }catch(_){}
   }
   if((full.visibility === 'private') || (typeof broadcastIsScheduled === 'function' && broadcastIsScheduled(full))){
     try{
@@ -638,9 +640,138 @@ function broadcastStableMediaId(b){
    next scheduled one is due. */
 let __feedLastDocs = null;
 let __feedDueTimer = null;
+/* The live listener owns the newest page and stays attached. Rebuilding it
+   on a timer would bill those documents again. Older pages are read once,
+   then again only while this phone is on screen and 15 minutes have passed.
+   A catalogue that fits on the first page is not read a second time.
+   PUBLIC_MAX_PAGES is a ceiling, not a quota: the walk stops when a page
+   comes back short. Firestore bills the documents returned, not the limit. */
+const PUBLIC_PAGE = 80;
+const PUBLIC_MAX_PAGES = 50;
+const CATALOGUE_RECONCILE_MS = 15 * 60 * 1000;
+const NEW_PUBLIC_CATCHUP_MS = 30 * 1000;
+let feedTailById = {};
+let caughtUpIds = {};
+let catalogueWalkTimer = null;
+let catalogueWalkGen = 0;
+let catalogueWalkPromise = null;
+let catalogueWalkedAt = 0;
+let catalogueWalkFailAt = 0;
+let catalogueHeadFull = false;
+let __feedCursorDoc = null;
+let feedBoundAt = 0;
+let newPublicTimer = null;
+let newPublicArmed = false;
+let caughtRecheckAt = Date.now();
+let catchUpBusy = false;
+let removedConfirm = {};
 function feedActivityAt(b){
   return Math.max(Number(b.updatedAt) || 0, Number(b.createdAt) || 0, Number(b.publishAt) || 0);
 }
+function publicBroadcastQuery(){
+  return fbDb.collection('broadcasts')
+    .where('listed', '==', true)
+    .where('hidden', '==', false)
+    .where('held', '==', false)
+    .where('visibility', '==', 'public')
+    .where('publishAt', '<=', Date.now())
+    .orderBy('publishAt', 'desc');
+}
+function rowFromBroadcastDoc(d, prev){
+  const data = (d && typeof d.data === 'function') ? (d.data() || {}) : (d || {});
+  if(data.deleted || !broadcastIsPublic(data)) return null;
+  const id = (d && d.id) || data.id;
+  if(!id) return null;
+  const row = Object.assign({}, prev || {}, data, { id: id });
+  row.mediaId = broadcastStableMediaId(row) || row.mediaId || null;
+  return row;
+}
+function publishPublicCatalogue(){
+  const list = [];
+  Object.keys(feedTailById).forEach(function(id){
+    const b = feedTailById[id];
+    if(b && b.id && broadcastIsPublic(b)) list.push(b);
+  });
+  list.sort(function(a,b){
+    return (b.live ? 1 : 0) - (a.live ? 1 : 0) || feedActivityAt(b) - feedActivityAt(a);
+  });
+  feedBroadcasts = list;
+  try{ nalunoCacheWrite('feedBroadcasts', feedBroadcasts.map(nalunoSlimMedia)); }catch(_){}
+  if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
+}
+function scheduleCataloguePages(){
+  if(catalogueWalkTimer || catalogueWalkPromise) return;
+  if(catalogueWalkedAt && Date.now() - catalogueWalkedAt < CATALOGUE_RECONCILE_MS) return;
+  catalogueWalkTimer = setTimeout(function(){
+    catalogueWalkTimer = null;
+    if(!catalogueHeadFull || !__feedCursorDoc) return;
+    walkPublicCatalogue({ afterHead: true });
+  }, 400);
+}
+async function walkPublicCatalogue(opts){
+  opts = opts || {};
+  if(!fbDb || !currentUser) return;
+  if(catalogueWalkPromise) return catalogueWalkPromise;
+  const afterHead = !!(opts.afterHead && __feedCursorDoc);
+  if(afterHead && catalogueWalkedAt && !opts.force && Date.now() - catalogueWalkedAt < CATALOGUE_RECONCILE_MS) return;
+  if(catalogueWalkFailAt && !opts.force && Date.now() - catalogueWalkFailAt < 120000) return;
+  const gen = ++catalogueWalkGen;
+  catalogueWalkPromise = walkCatalogueBody(gen, afterHead).finally(function(){
+    catalogueWalkPromise = null;
+  });
+  return catalogueWalkPromise;
+}
+async function walkCatalogueBody(gen, afterHead){
+  const headIds = {};
+  (__feedLastDocs || []).forEach(function(d){ if(d && d.id) headIds[d.id] = 1; });
+  const seen = {};
+  let pageQuery = null;
+  try{
+    pageQuery = publicBroadcastQuery().limit(PUBLIC_PAGE);
+    if(afterHead) pageQuery = publicBroadcastQuery().startAfter(__feedCursorDoc).limit(PUBLIC_PAGE);
+  }catch(e){
+    console.warn('[bcast] catalogue query', e && e.message);
+    catalogueWalkFailAt = Date.now();
+    return;
+  }
+  let complete = false;
+  let pages = 0;
+  while(pages < PUBLIC_MAX_PAGES){
+    let snap;
+    try{ snap = await pageQuery.get(); }
+    catch(e){
+      console.warn('[bcast] catalogue page', pages, e && e.message);
+      catalogueWalkFailAt = Date.now();
+      return;
+    }
+    if(gen !== catalogueWalkGen) return;
+    const docs = snap.docs || [];
+    docs.forEach(function(d){
+      const row = rowFromBroadcastDoc(d, feedTailById[d.id]);
+      if(!row) return;
+      seen[row.id] = row;
+    });
+    pages++;
+    if(docs.length < PUBLIC_PAGE){ complete = true; break; }
+    try{ pageQuery = publicBroadcastQuery().startAfter(docs[docs.length - 1]).limit(PUBLIC_PAGE); }
+    catch(e){ console.warn('[bcast] catalogue cursor', e && e.message); catalogueWalkFailAt = Date.now(); return; }
+  }
+  if(gen !== catalogueWalkGen) return;
+  if(complete){
+    catalogueWalkedAt = Date.now();
+    catalogueWalkFailAt = 0;
+    Object.keys(feedTailById).forEach(function(id){
+      if(seen[id]) return;
+      if(afterHead && (headIds[id] || caughtUpIds[id])) return;
+      delete feedTailById[id];
+    });
+  } else {
+    console.warn('[bcast] public catalogue stopped after', pages, 'pages');
+  }
+  Object.keys(seen).forEach(function(id){ feedTailById[id] = seen[id]; });
+  publishPublicCatalogue();
+}
+window.walkPublicCatalogue = walkPublicCatalogue;
 function armScheduledFeedTimer(docs){
   try{
     if(__feedDueTimer){ clearTimeout(__feedDueTimer); __feedDueTimer = null; }
@@ -659,29 +790,68 @@ function armScheduledFeedTimer(docs){
     }, wait);
   }catch(_){}
 }
-function applyBroadcastDocsToFeed(docs){
+function confirmStillOnCatalogue(id){
+  if(!id || !fbDb || removedConfirm[id]) return;
+  removedConfirm[id] = 1;
+  fbDb.collection('broadcasts').doc(id).get().then(function(snap){
+    delete removedConfirm[id];
+    if(!snap || !snap.exists){
+      delete feedTailById[id];
+      delete caughtUpIds[id];
+      publishPublicCatalogue();
+      return;
+    }
+    const row = rowFromBroadcastDoc(snap, feedTailById[id]);
+    if(!row){
+      delete feedTailById[id];
+      delete caughtUpIds[id];
+      publishPublicCatalogue();
+      return;
+    }
+    feedTailById[id] = row;
+  }).catch(function(err){
+    delete removedConfirm[id];
+    const code = String((err && (err.code || err.message)) || '');
+    if(code.indexOf('permission') >= 0){
+      delete feedTailById[id];
+      delete caughtUpIds[id];
+      publishPublicCatalogue();
+    }
+  });
+}
+function applyBroadcastDocsToFeed(docs, removedIds){
   __feedLastDocs = docs;
   armScheduledFeedTimer(docs);
-  // Merge by stable Firestore doc id — never replace identity from array order.
-  // Strand folders still rebuild from the merged list (plates are thumbs, not players).
-  const prevById = {};
-  (feedBroadcasts || []).forEach(function(b){ if(b && b.id) prevById[b.id] = b; });
-  const list = [];
-  docs.forEach(function(d){
-    const data = d.data() || {};
-    if(data.deleted) return;
-    if(!broadcastIsPublic(data)) return;
-    const row = Object.assign({}, prevById[d.id] || {}, data, { id: d.id });
-    row.mediaId = broadcastStableMediaId(row) || row.mediaId || null;
-    list.push(row);
+  const inSnap = {};
+  (docs || []).forEach(function(d){
+    const id = d && d.id;
+    if(!id) return;
+    inSnap[id] = 1;
+    const row = rowFromBroadcastDoc(d, feedTailById[id]);
+    if(!row){
+      delete feedTailById[id];
+      delete caughtUpIds[id];
+      return;
+    }
+    feedTailById[id] = row;
   });
-  list.sort(function(a,b){
-    return (b.live ? 1 : 0) - (a.live ? 1 : 0) || feedActivityAt(b) - feedActivityAt(a);
+  const n = (docs || []).length;
+  const fellBack = !!(startFeedBroadcastsListener && startFeedBroadcastsListener._fellBack);
+  if(!fellBack && n < PUBLIC_PAGE){
+    catalogueHeadFull = false;
+    __feedCursorDoc = null;
+  } else if(n >= PUBLIC_PAGE){
+    catalogueHeadFull = true;
+    __feedCursorDoc = docs[n - 1];
+    if(!catalogueWalkedAt) scheduleCataloguePages();
+  }
+  /* Removed from a limited page is not the same as gone. One document read
+     tells them apart. Falling off the page stays. Unpublished or deleted goes. */
+  (removedIds || []).forEach(function(id){
+    if(!id || inSnap[id]) return;
+    confirmStillOnCatalogue(id);
   });
-  feedBroadcasts = list.slice(0, 80);
-  try{ nalunoCacheWrite('feedBroadcasts', feedBroadcasts.map(nalunoSlimMedia)); }catch(_){}
-  // Always go through renderBroadcastTab so Strand folders stay grouped.
-  if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
+  publishPublicCatalogue();
 }
 window.broadcastStableMediaId = broadcastStableMediaId;
 window.broadcastIsPublic = broadcastIsPublic;
@@ -786,6 +956,30 @@ function nalunoMergeOwnerBroadcasts(serverRows, pins, now, deletedIds, uid){
     .sort(function(a, b){ return (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0); });
   return { list: list, pins: nextPins };
 }
+function nalunoRepairOwnPublicFields(rows){
+  if(!fbDb || !currentUser) return;
+  if(!nalunoRepairOwnPublicFields._done) nalunoRepairOwnPublicFields._done = {};
+  (rows || []).forEach(function(b){
+    if(!b || !b.id || b.deleted || b.hidden === true || b.held === true || b.listed === false) return;
+    if(b.visibility === 'private') return;
+    const patch = {};
+    if(!b.visibility) patch.visibility = 'public';
+    if(!(Number(b.publishAt) > 0)){
+      const at = Number(b.createdAt) || Number(b.updatedAt) || 0;
+      if(at > 0 && at <= Date.now()) patch.publishAt = at;
+    }
+    if(!Object.keys(patch).length) return;
+    if(nalunoRepairOwnPublicFields._done[b.id]) return;
+    nalunoRepairOwnPublicFields._done[b.id] = 1;
+    /* listed / hidden / held stay with the desk. Only the fields a creator
+       is allowed to fill, and only when they were never set. */
+    fbDb.collection('broadcasts').doc(b.id).set(patch, { merge: true }).catch(function(e){
+      console.warn('[bcast] restore public fields', b.id, e && e.message);
+      delete nalunoRepairOwnPublicFields._done[b.id];
+    });
+  });
+}
+window.nalunoRepairOwnPublicFields = nalunoRepairOwnPublicFields;
 window.nalunoPrivatePinRead = nalunoPrivatePinRead;
 window.nalunoPrivatePinWrite = nalunoPrivatePinWrite;
 window.nalunoMergeOwnerBroadcasts = nalunoMergeOwnerBroadcasts;
@@ -796,7 +990,15 @@ function startFeedBroadcastsListener(){
   if(feedBroadcastsUnsub) return;
   function attach(query){
     return query.onSnapshot(
-      snap => { applyBroadcastDocsToFeed(snap.docs); },
+      snap => {
+        const removed = [];
+        try{
+          snap.docChanges().forEach(function(ch){
+            if(ch && ch.type === 'removed' && ch.doc) removed.push(ch.doc.id);
+          });
+        }catch(_){}
+        applyBroadcastDocsToFeed(snap.docs, removed);
+      },
       err => {
         console.warn('[bcast] feed listener', err && err.message);
         // Missing index or rules — fall back once
@@ -821,6 +1023,8 @@ function startFeedBroadcastsListener(){
       }
     );
   }
+  const bound = Date.now();
+  feedBoundAt = bound;
   try{
     feedBroadcastsUnsub = attach(
       fbDb.collection('broadcasts')
@@ -828,9 +1032,9 @@ function startFeedBroadcastsListener(){
         .where('hidden', '==', false)
         .where('held', '==', false)
         .where('visibility', '==', 'public')
-        .where('publishAt', '<=', Date.now())
+        .where('publishAt', '<=', bound)
         .orderBy('publishAt', 'desc')
-        .limit(80)
+        .limit(PUBLIC_PAGE)
     );
   }catch(e){
     console.warn('[bcast] start feed listener', e);
@@ -842,10 +1046,85 @@ function startFeedBroadcastsListener(){
           .where('hidden', '==', false)
           .where('held', '==', false)
           .where('visibility', '==', 'public')
-          .where('publishAt', '<=', Date.now())
-          .limit(80)
+          .where('publishAt', '<=', bound)
+          .limit(PUBLIC_PAGE)
       );
     }catch(_){}
+  }
+  armNewPublicCatchUp();
+}
+
+function recheckCaughtUp(){
+  Object.keys(caughtUpIds).forEach(confirmStillOnCatalogue);
+}
+function onFeedVisible(){
+  if(typeof document !== 'undefined' && document.hidden) return;
+  catchUpNewlyPublic();
+  if(Date.now() - caughtRecheckAt < CATALOGUE_RECONCILE_MS) return;
+  caughtRecheckAt = Date.now();
+  recheckCaughtUp();
+  if(catalogueHeadFull) walkPublicCatalogue({ afterHead: true });
+}
+function armNewPublicCatchUp(){
+  if(newPublicArmed) return;
+  newPublicArmed = true;
+  try{
+    newPublicTimer = setInterval(function(){
+      if(typeof document !== 'undefined' && document.hidden) return;
+      onFeedVisible();
+    }, NEW_PUBLIC_CATCHUP_MS);
+  }catch(_){}
+  try{
+    if(typeof document !== 'undefined' && document.addEventListener){
+      document.addEventListener('visibilitychange', onFeedVisible);
+    }
+  }catch(_){}
+}
+/* Posts made after the listener attached have a later publishAt, so they
+   miss a bound that was frozen at subscribe time. This reads only that
+   gap. An empty gap is one read, not another copy of the catalogue. */
+async function catchUpNewlyPublic(){
+  if(catchUpBusy || !fbDb || !currentUser || !feedBoundAt) return;
+  if(typeof document !== 'undefined' && document.hidden) return;
+  const now = Date.now();
+  if(now <= feedBoundAt) return;
+  catchUpBusy = true;
+  const bound = feedBoundAt;
+  try{
+    let cursor = null;
+    let pages = 0;
+    let found = 0;
+    while(pages < 3){
+      let q = fbDb.collection('broadcasts')
+        .where('listed', '==', true)
+        .where('hidden', '==', false)
+        .where('held', '==', false)
+        .where('visibility', '==', 'public')
+        .where('publishAt', '>', bound)
+        .where('publishAt', '<=', now)
+        .orderBy('publishAt', 'desc')
+        .limit(PUBLIC_PAGE);
+      if(cursor) q = q.startAfter(cursor);
+      const snap = await q.get();
+      const docs = snap.docs || [];
+      docs.forEach(function(d){
+        const row = rowFromBroadcastDoc(d, feedTailById[d.id]);
+        if(!row) return;
+        feedTailById[row.id] = row;
+        caughtUpIds[row.id] = 1;
+        found++;
+      });
+      pages++;
+      if(docs.length < PUBLIC_PAGE) break;
+      cursor = docs[docs.length - 1];
+      if(!cursor) break;
+    }
+    feedBoundAt = now;
+    if(found) publishPublicCatalogue();
+  }catch(e){
+    console.warn('[bcast] new public', e && e.message);
+  }finally{
+    catchUpBusy = false;
   }
 }
 
@@ -863,6 +1142,7 @@ function startMyBroadcastsListener(){
         const merged = nalunoMergeOwnerBroadcasts(incoming, nalunoPrivatePinRead(), Date.now(), deletedIds, uid);
         myBroadcasts = merged.list;
         nalunoPrivatePinWrite(merged.pins);
+        try{ nalunoRepairOwnPublicFields(myBroadcasts); }catch(_){}
         try{ nalunoCacheWrite('myBroadcasts', (myBroadcasts || []).map(nalunoSlimMedia)); }catch(_){}
         try{ if(typeof nalunoListenOk === 'function') nalunoListenOk('myBroadcasts'); }catch(_){}
         if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
@@ -894,18 +1174,12 @@ async function loadFeedBroadcasts(){
         const data = d.data();
         if(!data.deleted && broadcastIsPublic(data)) list.push({ id: d.id, ...data });
       });
-    }catch(_){}
+    }catch(e){ console.warn('[bcast] contact catalogue', e && e.message); }
   }
-  list.sort((a,b) => (b.live ? 1 : 0) - (a.live ? 1 : 0) || (b.updatedAt||b.createdAt||0) - (a.updatedAt||a.createdAt||0));
-  // Union with anything the realtime listener already delivered
-  const byId = {};
-  (feedBroadcasts || []).forEach(b => { byId[b.id] = b; });
-  list.forEach(b => { byId[b.id] = b; });
-  feedBroadcasts = Object.keys(byId).map(k => byId[k])
-    .filter(function(b){ return typeof broadcastIsPublic !== 'function' || broadcastIsPublic(b); })
-    .sort((a,b) => (b.live ? 1 : 0) - (a.live ? 1 : 0) || (b.updatedAt||b.createdAt||0) - (a.updatedAt||a.createdAt||0))
-    .slice(0, 80);
-  if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
+  list.forEach(function(b){
+    if(b && b.id && broadcastIsPublic(b)) feedTailById[b.id] = Object.assign({}, feedTailById[b.id] || {}, b);
+  });
+  publishPublicCatalogue();
 }
 
 async function searchBroadcasts(query){

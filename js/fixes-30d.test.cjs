@@ -98,7 +98,7 @@ const flush = () => new Promise((r) => setImmediate(r));
   {
     const start = calls.indexOf('async function startRealCall') >= 0 ? calls.indexOf('async function startRealCall') : calls.indexOf('const dial = nalunoDialing = nalunoLastDial');
     const body = calls.slice(start, calls.indexOf('armRingTimeout(currentCallContactId);', start));
-    const wait = body.indexOf('const turnReady = nalunoWaitForTurn(1000);');
+    const wait = body.indexOf('const turnReady = nalunoWaitForTurn(7000);');
     const mic = body.indexOf('await nalunoOpenMic()');
     assert.ok(wait > 0 && mic > wait, 'TURN is waited for while the mic/camera opens, not after');
     assert.ok(body.indexOf('await turnReady') > mic && body.indexOf('await turnReady') < body.indexOf('createPeerConnection()'), 'and before the offer is built');

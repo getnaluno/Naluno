@@ -11,7 +11,7 @@ const prepAt = calls.indexOf('async function nalunoPrepareAnswer');
 const prepBody = calls.slice(prepAt, calls.indexOf('function nalunoPreparedFor'));
 assert.ok(prepAt > 0 && prepBody.length > 50, 'prepare function found');
 assert.ok(!prepBody.includes('getIceServersPatient'), 'preparing an answer does not use the 3.7s live-ICE wait');
-assert.ok(prepBody.includes('nalunoWaitForTurn(800)'), 'TURN and the camera run together while the phone is still ringing');
+assert.ok(prepBody.includes('nalunoWaitForTurn(7000)'), 'TURN and the camera run together while the phone is still ringing');
 assert.ok(calls.includes('if(pc._nalunoIceFrozen || pc.localDescription) return;'), 'TURN that arrives after the SDP is built does not restart ICE');
 assert.ok(calls.includes('const hadTurn = nalunoCfgHasTurn(ice);'), 'an array of stun+turn urls still counts as TURN');
 const iceStart = calls.indexOf('getIceServers().then(function(fresh)');
@@ -20,7 +20,7 @@ assert.ok(iceUpgrade.length > 40 && !iceUpgrade.includes('pc.restartIce'), 'the 
 assert.ok((calls.match(/_nalunoIceFrozen = true/g) || []).length >= 3, 'offer and both answer paths freeze ICE before SDP');
 assert.ok(calls.includes('if(!still()){ nalunoDropPrepared(); return; }'), 'a prepare that gives up does not make Answer wait on it');
 assert.ok(calls.includes('const deadline = Date.now() + 1000;'), 'Answer waits for an in-flight prepare instead of throwing it away');
-assert.ok(calls.includes('const turnReady = nalunoWaitForTurn(1000);') && calls.includes('await turnReady;'), 'the offer waits briefly for TURN before the other phone rings (30d: while the mic/camera opens)');
+assert.ok(calls.includes('const turnReady = nalunoWaitForTurn(7000);') && calls.includes('await turnReady;'), 'the offer waits for TURN before the other phone rings (30d: while the mic/camera opens)');
 assert.ok(!/setTimeout\(climb,/.test(camera), 'the 4K climb does not run during a call at all (29d)');
 assert.ok(!camera.includes('setTimeout(climb, 400);'), 'the old 400ms climb is gone');
 

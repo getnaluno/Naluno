@@ -87,7 +87,23 @@ async function fetchTurnServers(force){
 
   inflightIce = (async function(){
     try{
-      const idToken = await currentUser.getIdToken();
+      let idToken;
+      try{
+        if(typeof AbortController !== 'undefined'){
+          idToken = await Promise.race([
+            currentUser.getIdToken(),
+            new Promise(function(_, reject){
+              setTimeout(function(){ reject(new Error('token-timeout')); }, 4000);
+            }),
+          ]);
+        }else{
+          idToken = await currentUser.getIdToken();
+        }
+      }catch(e){
+        console.log('[ice] TURN token failed — STUN only', e && e.message);
+        lastIceFailAt = Date.now();
+        return RTC_CONFIG;
+      }
       const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
       // Abort starts AFTER the token so a slow getIdToken cannot kill the fetch.
       const kill = ctrl ? setTimeout(function(){ try{ ctrl.abort(); }catch(_){ } }, 2500) : null;
@@ -208,6 +224,24 @@ function prewarmIceServers(){
   fetchTurnServers().catch(function(){});
 }
 
+/* Wait for the credential attempt itself, not a clock that can run out
+   while the token or the fetch is still going. A warm cache returns
+   immediately. A failed fetch returns as soon as it fails. The cap only
+   cuts off a hang, and it is longer than the token limit plus the fetch
+   abort, so a slow TURN is not frozen out as STUN-only. */
+function awaitIceServers(maxMs){
+  const hit = iceFromCache();
+  if(hit) return Promise.resolve(hit);
+  const cap = (typeof maxMs === 'number' && maxMs > 0) ? maxMs : 7000;
+  const turn = fetchTurnServers().catch(function(){ return iceNow(); });
+  return Promise.race([
+    turn,
+    new Promise(function(resolve){
+      setTimeout(function(){ resolve(iceNow()); }, cap);
+    }),
+  ]);
+}
+
 /* Fetch again before the credentials run out, while Naluno is open. */
 function iceKeepWarm(){
   try{
@@ -233,6 +267,7 @@ const IceCore = {
   get: getIceServers,
   getPatient: getIceServersPatient,
   now: iceNow,
+  awaitServers: awaitIceServers,
   prewarm: prewarmIceServers,
   stunOnly: function(){ return RTC_CONFIG; },
   cached: iceFromCache,

@@ -89,6 +89,8 @@
       const v = viewer || {};
       rows.forEach(function (b) {
         if (!b || !b.id || have[b.id]) return;
+        if (b.deleted || b.hidden || b.held || b.listed === false || b.visibility === 'private') return;
+        if (Number(b.publishAt) > Date.now()) return;
         const uid = b.creatorUid || '';
         if (uid && ((v.blocked && v.blocked[uid]) || (v.hiddenCreators && v.hiddenCreators[uid]))) return;
         if (v.notInterested && v.notInterested[b.id]) return;

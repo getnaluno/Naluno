@@ -13,8 +13,8 @@ const space = read('js/broadcast-space.js');
 const preview = read('js/live-preview.js');
 const sw = read('sw.js');
 
-assert.strictEqual((sw.match(/^const APP_BUILD = '(\d{8}[a-z])'/m) || [])[1], '20261011a');
-assert.ok(sw.includes("CACHE_NAME = 'naluno-shell-v311'"));
+assert.strictEqual((sw.match(/^const APP_BUILD = '(\d{8}[a-z])'/m) || [])[1], '20261011c');
+assert.ok(sw.includes("CACHE_NAME = 'naluno-shell-v313'"));
 assert.ok(!live.includes('getPatient'), 'live join does not wait out the long TURN budget');
 const hostStart = live.slice(live.indexOf('async function bLiveStartHost'), live.indexOf('function bLiveFlashJoinName'));
 assert.ok(!/await sfuPublishLive|await sfuJoinLive/.test(hostStart), 'a missing larger room does not sit in front of the mesh');

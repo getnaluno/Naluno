@@ -200,8 +200,15 @@ function stopIncomingKeepAlive(){
   incomingCallKeepAlive = false;
   try{ if(typeof nalunoKeepAliveStop === 'function') nalunoKeepAliveStop(); }catch(_){}
 }
+function nalunoTellNativeCallDone(callId){
+  try{
+    const n = window.NalunoNative;
+    if(n && typeof n.dismissIncomingCall === 'function') n.dismissIncomingCall(String(callId || ''));
+  }catch(_){}
+}
 function nalunoDismissCallNotifications(callId){
   try{ nalunoTellSwCallHandled(callId); }catch(_){}
+  try{ nalunoTellNativeCallDone(callId); }catch(_){}
   try{
     if(!navigator.serviceWorker || !navigator.serviceWorker.ready) return;
     navigator.serviceWorker.ready.then(function(reg){
@@ -209,9 +216,13 @@ function nalunoDismissCallNotifications(callId){
     }).then(function(list){
       (list || []).forEach(function(n){
         const d = n.data || {};
-        if(d.type === 'incoming_call' && (!callId || !d.callId || d.callId === callId)){
-          try{ n.close(); }catch(_){}
-        }
+        const tag = String(n.tag || '');
+        const id = d.callId || '';
+        const callish = d.type === 'incoming_call' || tag.indexOf('naluno-call') === 0;
+        if(!callish) return;
+        if(callId && id && id !== callId && tag !== ('naluno-call:' + callId)) return;
+        if(callId && !id && tag && tag !== ('naluno-call:' + callId) && tag !== 'naluno-call') return;
+        try{ n.close(); }catch(_){}
       });
     }).catch(function(){});
   }catch(_){}
@@ -951,17 +962,50 @@ function nalunoBoostRemoteAudio(){
   window.__nalunoRemoteBoosted = false;
   return false;
 }
+function nalunoRemoteAudioEl(){
+  let a = document.getElementById('remoteAudio');
+  if(a) return a;
+  a = document.createElement('audio');
+  a.id = 'remoteAudio';
+  a.autoplay = true;
+  a.setAttribute('playsinline', 'true');
+  a.setAttribute('webkit-playsinline', 'true');
+  a.preload = 'auto';
+  a.style.cssText = 'position:fixed;width:0;height:0;opacity:0;pointer-events:none';
+  try{ (document.body || document.documentElement).appendChild(a); }catch(_){}
+  return a;
+}
+function nalunoStopRemoteAudio(){
+  try{
+    const a = document.getElementById('remoteAudio');
+    if(!a) return;
+    a.pause();
+    a.srcObject = null;
+  }catch(_){}
+}
 function nalunoHearRemote(videoEl){
-  if(!videoEl) return;
-  try{ nalunoDropRemoteBoost(); }catch(_){}
-  try{ videoEl.volume = 1; }catch(_){}
-  const unmute = function(){ try{ videoEl.muted = false; }catch(_){} };
-  if(!videoEl.paused){ unmute(); return; }
-  try{ videoEl.muted = true; }catch(_){}
+  /* The picture element stays muted. A second copy of the same voice
+     through it is the doubled audio people heard, and a video tag with no
+     frames (a voice call) often stays silent on Android. The voice plays
+     once, on its own audio element. */
+  try{ if(videoEl) videoEl.muted = true; }catch(_){}
+  const stream = (videoEl && videoEl.srcObject) || remoteCombinedStream;
+  if(!stream || !stream.getAudioTracks) return;
+  const tracks = stream.getAudioTracks().filter(function(t){ return t && t.readyState !== 'ended'; });
+  if(!tracks.length) return;
+  const a = nalunoRemoteAudioEl();
+  if(!a) return;
+  let current = null;
+  try{ current = a.srcObject; }catch(_){}
+  const same = current && current.getAudioTracks && tracks.length === current.getAudioTracks().length
+    && tracks.every(function(t){ return current.getAudioTracks().indexOf(t) !== -1; });
+  if(!same){
+    try{ a.srcObject = new MediaStream(tracks); }catch(_){}
+  }
+  try{ a.muted = false; a.volume = 1; }catch(_){}
   let p = null;
-  try{ p = videoEl.play(); }catch(_){}
-  if(p && p.then) p.then(unmute).catch(function(){});
-  else unmute();
+  try{ p = a.play(); }catch(_){}
+  if(p && p.catch) p.catch(function(){});
 }
 function bindRemoteVideoElement(stream, forceRebind){
   const videoEl = document.getElementById('remoteVideo');
@@ -1342,7 +1386,12 @@ function nalunoCfgHasTurn(cfg){
    phone is not ringing yet). The answer is built during the ring. */
 function nalunoWaitForTurn(maxMs){
   try{ if(typeof prewarmIceServers === 'function') prewarmIceServers(); }catch(_){}
-  const cap = (typeof maxMs === 'number' && maxMs >= 0) ? maxMs : 600;
+  const cap = (typeof maxMs === 'number' && maxMs >= 0) ? maxMs : 7000;
+  try{
+    if(typeof IceCore !== 'undefined' && typeof IceCore.awaitServers === 'function'){
+      return IceCore.awaitServers(cap);
+    }
+  }catch(_){}
   return new Promise(function(resolve){
     const t0 = Date.now();
     const tick = function(){
@@ -1791,6 +1840,7 @@ function teardownCallConnection(){
   try{
     const rv = $('remoteVideo');
     if(rv){ rv.srcObject = null; rv.style.display = 'none'; rv.muted = true; }
+    try{ nalunoStopRemoteAudio(); }catch(_){}
     nalunoDropRemoteBoost();
     const rp = $('remotePlaceholder');
     if(rp) rp.style.display = 'flex';
@@ -2796,7 +2846,7 @@ async function startRealCallInner(c){
   const voice = nalunoIsVoiceCall();
   /* 30d: TURN is waited for while the microphone/camera opens, not after it.
      With TURN already kept ready this is instant. */
-  const turnReady = nalunoWaitForTurn(1000);
+  const turnReady = nalunoWaitForTurn(7000);
   if(voice){
     try{ await nalunoOpenMic(); }catch(e){
       if(gone()) return false;
@@ -3200,7 +3250,7 @@ async function nalunoPrepareAnswer(callId, offer, camReady){
     // was thrown away and built again from nothing.
     await Promise.all([
       Promise.resolve(camReady).catch(function(){}),
-      nalunoWaitForTurn(800),
+      nalunoWaitForTurn(7000),
     ]);
     if(!still()){ nalunoDropPrepared(); return; }
     if(!mediaStreamIsLive(stream)){ nalunoDropPrepared(); return; } // no camera/mic yet: Answer takes the normal path
@@ -3283,6 +3333,9 @@ $('acceptIncoming').onclick = async (ev)=>{
   callActionInProgress = true;
   const acceptingId = activeCallId;
   nalunoAnsweredId = acceptingId;
+  /* The shade must go the moment Answer is tapped, before the round trip.
+     A push already in flight is ignored once this call is marked handled. */
+  try{ nalunoDismissCallNotifications(acceptingId); }catch(_){}
   const callRef = fbDb.collection('calls').doc(acceptingId);
   /* The ring on screen can be replaced while this runs (the same person
      called again). The rest of this answer then belongs to a call that is
@@ -3371,7 +3424,7 @@ $('acceptIncoming').onclick = async (ev)=>{
     // Parallel: media ready and a short TURN wait. iceNow() is 0ms once
     // that wait lands, so the answer is not built STUN-only on a cold cache.
     if(typeof prewarmIceServers === 'function') prewarmIceServers();
-    const turnWait = nalunoWaitForTurn(800);
+    const turnWait = nalunoWaitForTurn(7000);
     let mediaOk;
     if(nalunoIsVoiceCall()){
       try{ await nalunoOpenMic(); }catch(_){}
@@ -3499,6 +3552,7 @@ $('acceptIncoming').onclick = async (ev)=>{
 
 let callSeconds = 0, callInterval = null;
 function startInCall(){
+  try{ nalunoDismissCallNotifications(activeCallId); }catch(_){}
   stopCallerTone();
   stopRingtone();
   showCallScreen('incall');
