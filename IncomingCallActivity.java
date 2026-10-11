@@ -154,7 +154,11 @@ public class IncomingCallActivity extends Activity {
           );
           if (callId != null && !callId.isEmpty()) {
             launch.putExtra("callId", callId);
+            /* Answer here means answer. The app used to open its own ring
+               and wait for a second tap while the caller kept ringing. */
+            launch.putExtra("callAction", "answer");
             launch.setData(Uri.parse("https://getnaluno.com/?call=" + Uri.encode(callId)));
+            MainActivity.rememberCallAction(callId, "answer");
           }
           startActivity(launch);
           if (callId != null && !callId.isEmpty()) {
@@ -174,6 +178,9 @@ public class IncomingCallActivity extends Activity {
         public void onClick(View v) {
           if (callId != null && !callId.isEmpty()) {
             CallMessagingService.dismissIncoming(IncomingCallActivity.this, callId);
+            /* Tell the caller. Declining here used to only close this
+               screen, and the other phone rang on until it gave up. */
+            MainActivity.relayDecline(callId);
           } else {
             NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
             if (nm != null) nm.cancel(noticeId);

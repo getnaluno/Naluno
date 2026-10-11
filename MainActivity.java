@@ -457,6 +457,12 @@ public class MainActivity extends BridgeActivity {
       });
     }
 
+    /** The incoming-call screen's last press, as {"callId","action"}; "" when none. */
+    @JavascriptInterface
+    public String takePendingCall() {
+      return takePendingCallJson();
+    }
+
     @JavascriptInterface
     public void dismissIncomingCall(String callId) {
       final String id = callId != null ? callId : "";
@@ -585,6 +591,49 @@ public class MainActivity extends BridgeActivity {
     }, 900);
   }
 
+  /* A press on the incoming-call screen (answer / decline) that the page
+     has not picked up yet. The page asks for it with takePendingCall()
+     once it is signed in: a call answered from a closed app used to be
+     handed over 0.8 s after launch, before the page existed, and was lost. */
+  private static volatile String pendingCallId = null;
+  private static volatile String pendingCallAction = null;
+  private static volatile long pendingCallAt = 0L;
+
+  static void rememberCallAction(String callId, String action) {
+    if (callId == null || callId.trim().isEmpty()) return;
+    pendingCallId = callId.trim();
+    pendingCallAction = action == null ? "" : action;
+    pendingCallAt = System.currentTimeMillis();
+  }
+
+  static String takePendingCallJson() {
+    String id = pendingCallId;
+    String act = pendingCallAction;
+    long at = pendingCallAt;
+    pendingCallId = null;
+    pendingCallAction = null;
+    pendingCallAt = 0L;
+    if (id == null || id.isEmpty()) return "";
+    if (System.currentTimeMillis() - at > 90_000L) return "";
+    String safeId = id.replaceAll("[^A-Za-z0-9_-]", "");
+    String safeAct = act == null ? "" : act.replaceAll("[^a-z]", "");
+    return "{\"callId\":\"" + safeId + "\",\"action\":\"" + safeAct + "\"}";
+  }
+
+  /** Decline on the incoming-call screen: the page tells the caller. If
+   *  Naluno is not running, the decline waits for the page. */
+  static void relayDecline(String callId) {
+    if (callId == null || callId.trim().isEmpty()) return;
+    rememberCallAction(callId, "decline");
+    MainActivity a = live != null ? live.get() : null;
+    if (a == null) return;
+    String safe = callId.replaceAll("[^A-Za-z0-9_-]", "");
+    /* The press also stays pending: a page paused in the background may
+       not finish this, and asks again when it comes back. A second decline
+       of the same call changes nothing. */
+    a.evalJs("window.handleIncomingCallFromPush&&window.handleIncomingCallFromPush('" + safe + "',{action:'decline'})");
+  }
+
   private void handleCallIntent(Intent intent) {
     if (intent == null) return;
 
@@ -594,14 +643,18 @@ public class MainActivity extends BridgeActivity {
     }
     if (callId == null || callId.isEmpty()) return;
 
-    final String safe = callId.replace("'", "").replace("\\", "");
+    final String safe = callId.replaceAll("[^A-Za-z0-9_-]", "");
+    String act = intent.getStringExtra("callAction");
+    final String action = "answer".equals(act) ? "answer" : ("decline".equals(act) ? "decline" : "");
+    rememberCallAction(safe, action);
 
     getWindow().getDecorView().postDelayed(new Runnable() {
       @Override
       public void run() {
         if (getBridge() == null || getBridge().getWebView() == null) return;
+        /* The page drops a repeat of the same press, so asking twice is safe. */
         getBridge().getWebView().evaluateJavascript(
-          "window.handleIncomingCallFromPush && window.handleIncomingCallFromPush('" + safe + "')",
+          "window.nalunoTakeNativeCall ? window.nalunoTakeNativeCall() : (window.handleIncomingCallFromPush && window.handleIncomingCallFromPush('" + safe + "',{action:'" + action + "'}))",
           null
         );
       }
