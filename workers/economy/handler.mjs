@@ -1465,6 +1465,12 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
     patch.held = false;
     patch.hidden = true;
   }
+  /* A private Broadcast is never placed on the public catalogue. Listing
+     it used to mark a trusted creator's private post as listed, which is
+     not what Private means. Visibility itself is left as the creator set it. */
+  if (row.visibility === "private") {
+    patch.listed = false;
+  }
   const writeTok = saToken || ((patch.hidden || judged.decision === "block") ? userToken : "");
   let wrote = false;
   if (writeTok) {
@@ -1763,6 +1769,55 @@ async function persistPasswordRecord(env, uid, rec, saToken, userToken) {
   return "memory";
 }
 
+export function legacyCataloguePatch(row, now) {
+  if (!row || row.deleted) return null;
+  if (row.visibility === "private") return null;
+  if (row.hidden === true || row.held === true || row.listed === false) return null;
+  const patch = {};
+  const clock = now || Date.now();
+  if (row.visibility == null || row.visibility === "") patch.visibility = "public";
+  if (row.listed == null) patch.listed = true;
+  if (row.hidden == null) patch.hidden = false;
+  if (row.held == null) patch.held = false;
+  if (!(Number(row.publishAt) > 0)) {
+    const at = Number(row.createdAt) || Number(row.updatedAt) || 0;
+    if (at > 0 && at <= clock) patch.publishAt = at;
+  }
+  return Object.keys(patch).length ? patch : null;
+}
+
+async function repairPublicCatalogue(env, saToken, body) {
+  if (!saToken) return json({ ok: false, error: "service account required" }, 503);
+  const apply = !!(body && body.apply === true);
+  const seen = { scanned: 0, patched: 0, skipped: 0, pages: 0 };
+  const samples = [];
+  let pageToken = "";
+  for (let i = 0; i < 40; i++) {
+    const q = "?pageSize=300" + (pageToken ? "&pageToken=" + encodeURIComponent(pageToken) : "");
+    const r = await fsFetch(env, saToken, "GET", "/broadcasts" + q);
+    if (!r.ok || !r.data) {
+      return json({ ok: false, error: "could not read broadcasts", scanned: seen.scanned }, 502);
+    }
+    const docs = r.data.documents || [];
+    seen.pages++;
+    for (const doc of docs) {
+      const row = fromFsDoc(doc);
+      seen.scanned++;
+      const patch = legacyCataloguePatch(row);
+      if (!patch || !row.id) { seen.skipped++; continue; }
+      seen.patched++;
+      if (samples.length < 12) samples.push({ id: row.id, patch });
+      if (apply) {
+        const put = await fsPutDoc(env, saToken, "/broadcasts/" + encodeURIComponent(row.id), patch);
+        if (!put || !put.ok) return json({ ok: false, error: "write stopped", id: row.id, scanned: seen.scanned, patched: seen.patched }, 502);
+      }
+    }
+    pageToken = r.data.nextPageToken || "";
+    if (!pageToken) break;
+  }
+  return json({ ok: true, apply, dry_run: !apply, ...seen, samples });
+}
+
 async function handleAdmin(env, request, path, url, user, userToken, saToken) {
   if (!isOperatorUser(env, user)) return json({ ok: false, error: "not an operator" }, 403);
   const adminPass = request.headers.get("X-Naluno-Admin") || "";
@@ -1801,6 +1856,11 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
       version: VERSION,
       claim: stamped ? "operator" : "",
     });
+  }
+
+  if (path === "/v1/admin/broadcast-catalogue-repair" && request.method === "POST") {
+    const body = await request.json().catch(() => ({}));
+    return repairPublicCatalogue(env, saToken, body || {});
   }
 
   if (path === "/v1/admin/billing" && request.method === "GET") {
