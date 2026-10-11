@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261011c';
+  const BUILD = '20261012a';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -2236,6 +2236,113 @@
     }
   }
 
+  /* Older public Broadcasts the 10 Oct feed rules cannot list (the same
+     test as the economy worker's legacyCataloguePatch). Only fields that
+     are missing are added; a set field is never changed. Private, held,
+     taken-down, unlisted and deleted Broadcasts are left alone. */
+  function legacyCatMs(v) {
+    if (v == null) return 0;
+    if (typeof v === 'number') return v;
+    try { if (typeof v.toMillis === 'function') return v.toMillis(); } catch (_) {}
+    if (v && typeof v.seconds === 'number') return v.seconds * 1000;
+    const n = Number(v);
+    return isFinite(n) ? n : (Date.parse(v) || 0);
+  }
+  function legacyCatPatch(row, now) {
+    if (!row || row.deleted) return null;
+    if (row.visibility === 'private') return null;
+    if (row.hidden === true || row.held === true || row.listed === false) return null;
+    const patch = {};
+    if (row.visibility == null || row.visibility === '') patch.visibility = 'public';
+    if (row.listed == null) patch.listed = true;
+    if (row.hidden == null) patch.hidden = false;
+    if (row.held == null) patch.held = false;
+    if (!(typeof row.publishAt === 'number' && row.publishAt > 0)) {
+      /* A publishAt stored as a date (not a number) keeps the same moment,
+         written as the number the feed compares. Missing: when it was made. */
+      const at = legacyCatMs(row.publishAt) || legacyCatMs(row.createdAt) || legacyCatMs(row.updatedAt);
+      if (at > 0 && at <= (now || Date.now())) patch.publishAt = at;
+      else return null; // no time it went out, or a future one: leave it for a person
+    }
+    return Object.keys(patch).length ? patch : null;
+  }
+  async function legacyCatScan() {
+    const db = adminDb();
+    if (!db) throw new Error('Database is not ready');
+    const FP = firebase.firestore.FieldPath.documentId();
+    const found = [];
+    let scanned = 0;
+    let last = null;
+    for (let page = 0; page < 200; page++) {
+      let q = db.collection('broadcasts').orderBy(FP).limit(400);
+      if (last) q = q.startAfter(last);
+      const snap = await q.get();
+      if (!snap || snap.empty) break;
+      snap.docs.forEach(function (d) {
+        scanned++;
+        const patch = legacyCatPatch(d.data() || {}, Date.now());
+        if (patch) found.push({ id: d.id, title: String((d.data() || {}).title || ''), patch: patch });
+      });
+      last = snap.docs[snap.docs.length - 1];
+      if (snap.docs.length < 400) break;
+    }
+    return { scanned: scanned, found: found };
+  }
+  function wireLegacyCatalogue(root) {
+    const check = root.querySelector('#legacyCatCheck');
+    const apply = root.querySelector('#legacyCatApply');
+    const out = root.querySelector('#legacyCatOut');
+    if (!check || !apply || !out) return;
+    let last = null;
+    check.onclick = async function () {
+      check.disabled = true; apply.disabled = true;
+      out.textContent = 'Reading every Broadcast…';
+      try {
+        last = await legacyCatScan();
+        const n = last.found.length;
+        out.innerHTML = escapeHtml('Read ' + last.scanned + ' Broadcasts. ' + n + ' public '
+          + (n === 1 ? 'one is' : 'ones are') + ' missing from the feed.')
+          + (n ? '<br>' + last.found.slice(0, 12).map(function (r) {
+            return escapeHtml((r.title || '(untitled)').slice(0, 60) + ' — adds ' + Object.keys(r.patch).join(', '));
+          }).join('<br>') + (n > 12 ? '<br>…' : '') : '');
+        apply.disabled = !n;
+      } catch (e) {
+        out.textContent = 'Could not read: ' + ((e && e.message) || e);
+      } finally { check.disabled = false; }
+    };
+    apply.onclick = async function () {
+      if (!last || !last.found.length) return;
+      const n = last.found.length;
+      if (!window.confirm('Put ' + n + ' older public Broadcast' + (n === 1 ? '' : 's') + ' back on the public feed? Only missing fields are added.')) return;
+      const db = adminDb();
+      if (!db) { out.textContent = 'Database is not ready'; return; }
+      apply.disabled = true; check.disabled = true;
+      try {
+        /* What this adds is written down first, so it can be taken back. */
+        const runId = 'catalogue-restore-' + Date.now();
+        for (let i = 0; i < last.found.length; i += 300) {
+          const part = last.found.slice(i, i + 300).map(function (r) { return { id: r.id, added: Object.keys(r.patch) }; });
+          const ok = await writeAudit('broadcast-catalogue-restore', runId, 'older public Broadcasts missing feed fields', { part: i / 300, items: part });
+          if (!ok) throw new Error('The audit record could not be saved, so nothing was changed.');
+        }
+        let done = 0;
+        for (let i = 0; i < last.found.length; i += 400) {
+          const batch = db.batch();
+          last.found.slice(i, i + 400).forEach(function (r) {
+            batch.set(db.collection('broadcasts').doc(r.id), r.patch, { merge: true });
+          });
+          await batch.commit();
+          done += Math.min(400, last.found.length - i);
+          out.textContent = 'Restored ' + done + ' of ' + n + '…';
+        }
+        out.textContent = 'Restored ' + done + ' Broadcast' + (done === 1 ? '' : 's') + '. Saved in the audit as ' + runId + '.';
+        last = null;
+      } catch (e) {
+        out.textContent = 'Stopped: ' + ((e && e.message) || e);
+      } finally { check.disabled = false; }
+    };
+  }
+
   /* The repair is a dry run first, always. Applying asks for confirmation,
      because it writes people's totals. */
   async function adminFetch(path, opts) {
@@ -3989,8 +4096,18 @@
               bcastActHtml(b),
             ];
           })))
-        + '<p class="sub">Hold takes a public Broadcast off the feed until you let it out. Take down removes it. The reason is saved on the Broadcast and in the audit.</p>';
+        + '<p class="sub">Hold takes a public Broadcast off the feed until you let it out. Take down removes it. The reason is saved on the Broadcast and in the audit.</p>'
+        + card('Older Broadcasts missing from the public feed',
+          '<p class="sub">Since 10 Oct the feed only lists a Broadcast that carries listed, hidden, held, visibility and publishAt. '
+          + 'Public Broadcasts made before those fields existed are still stored, but nobody else can see them. '
+          + 'Check counts them and changes nothing. Restore adds only the missing fields; it never changes a field that is set, '
+          + 'and never touches a private, held, taken-down or deleted Broadcast (a publishAt stored as a date is rewritten as the same moment in numbers). The list of what it added is saved in the audit first.</p>'
+          + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;">'
+          + '<button type="button" class="btn" id="legacyCatCheck">Check</button>'
+          + '<button type="button" class="btn" id="legacyCatApply" disabled>Restore</button></div>'
+          + '<div class="sub" id="legacyCatOut"></div>');
       wireDeskJumps(el);
+      wireLegacyCatalogue(el);
       return;
     }
 
