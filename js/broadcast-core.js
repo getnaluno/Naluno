@@ -333,7 +333,7 @@ async function broadcastWritingCredit(text){
         .where('hidden', '==', false)
         .where('held', '==', false)
         .where('visibility', '==', 'public')
-        .where('publishAt', '<=', Date.now())
+        .where('publishAt', '<=', nalunoCatalogueNow())
         .orderBy('publishAt', 'desc')
         .limit(80).get();
       snap.docs.forEach(function(d){ add(Object.assign({ id: d.id }, d.data() || {})); });
@@ -594,30 +594,28 @@ async function deletePermanentBroadcast(id){
   }catch(_){}
 }
 
+/* "Private Broadcasts appear, then disappear."
+   This used to read the newest 40 of your Broadcasts (ordered by createdAt)
+   and REPLACE the whole list with them. It runs at sign-in a moment after
+   the live listener below has already filled the list with every Broadcast
+   of yours and the private pins, so anything older than your newest 40 (or
+   whose createdAt was missing or stored as a timestamp) vanished from
+   Private until some unrelated change made the listener fire again.
+   The live listener is the one source of this list. This only makes sure
+   it is running, and paints the saved copy, merged with the pins, while
+   the first snapshot is on its way. */
 async function loadMyBroadcasts(){
   if(!currentUser || !fbDb) return;
-  try{
-    const snap = await fbDb.collection('broadcasts')
-      .where('creatorUid', '==', currentUser.uid)
-      .orderBy('createdAt', 'desc')
-      .limit(40)
-      .get();
-    myBroadcasts = snap.docs
-      .map(d => ({ id: d.id, ...d.data() }))
-      .filter(b => !b.deleted);
-  }catch(e){
-    // Fallback without composite index
+  if(!myBroadcastsUnsub && (!myBroadcasts || !myBroadcasts.length)){
     try{
-      const snap = await fbDb.collection('broadcasts').where('creatorUid', '==', currentUser.uid).limit(40).get();
-      myBroadcasts = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-        .filter(b => !b.deleted)
-        .sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
-    }catch(_){
       const cached = nalunoCacheRead('myBroadcasts');
-      if(cached && cached.length) myBroadcasts = cached;
-    }
+      const uid = currentUser.uid;
+      const merged = nalunoMergeOwnerBroadcasts((cached || []).filter(function(b){ return b && (!b.creatorUid || b.creatorUid === uid); }),
+        nalunoPrivatePinRead(), Date.now(), [], uid);
+      if(merged.list.length) myBroadcasts = merged.list;
+    }catch(_){}
   }
-  try{ nalunoCacheWrite('myBroadcasts', (myBroadcasts||[]).map(nalunoSlimMedia)); }catch(_){}
+  startMyBroadcastsListener();
 }
 
 let feedBroadcastsUnsub = null;
@@ -668,13 +666,27 @@ let removedConfirm = {};
 function feedActivityAt(b){
   return Math.max(Number(b.updatedAt) || 0, Number(b.createdAt) || 0, Number(b.publishAt) || 0);
 }
+/* Anyone may list a Broadcast whose publishAt has passed by the SERVER's
+   clock (firestore.rules). A query bounded by this phone's clock is refused
+   as a whole when the phone runs fast: the rules cannot prove every result
+   is already due, and the public feed came back empty for that phone.
+   Every public query is bounded by the server's clock, a little in the
+   past. Posts newer than that margin are picked up by the catch-up read
+   a moment later. */
+function nalunoCatalogueNow(){
+  let skew = null;
+  try{ if(typeof nalunoServerSkew === 'number' && isFinite(nalunoServerSkew)) skew = nalunoServerSkew; }catch(_){}
+  const margin = skew === null ? 5 * 60 * 1000 : 60 * 1000;
+  return Date.now() + (skew || 0) - margin;
+}
+window.nalunoCatalogueNow = nalunoCatalogueNow;
 function publicBroadcastQuery(){
   return fbDb.collection('broadcasts')
     .where('listed', '==', true)
     .where('hidden', '==', false)
     .where('held', '==', false)
     .where('visibility', '==', 'public')
-    .where('publishAt', '<=', Date.now())
+    .where('publishAt', '<=', nalunoCatalogueNow())
     .orderBy('publishAt', 'desc');
 }
 function rowFromBroadcastDoc(d, prev){
@@ -890,6 +902,27 @@ async function saveBroadcastEdits(id, patch){
       feedBroadcasts = feedBroadcasts.filter(function(b){ return !b || b.id !== id || (typeof broadcastIsPublic === 'function' && broadcastIsPublic(b)); });
     }
   }catch(_){}
+  /* Private → public ("Publish now", or unticking Private). A Broadcast is
+     created held, and a private one is never listed, so changing only its
+     visibility left it on nobody's feed: gone from Private, missing from
+     the public catalogue. Only the worker can list it, after the same
+     check a new post gets. */
+  try{
+    const row = (typeof myBroadcasts !== 'undefined' && myBroadcasts) ? myBroadcasts.find(function(b){ return b && b.id === id; }) : null;
+    const nowPublic = next.visibility === 'public' || (!next.visibility && row && row.visibility !== 'private');
+    if(nowPublic && row && row.listed !== true && row.hidden !== true){
+      const placed = await nalunoPlaceBroadcast(id, null);
+      if(placed && placed.ok !== false){
+        next.placed = { listed: !!placed.listed, held: !!placed.held, hidden: !!placed.hidden, heldReason: placed.heldReason || '' };
+        if(placed.wrote){
+          Object.assign(row, { listed: !!placed.listed, held: !!placed.held, hidden: !!placed.hidden, heldReason: placed.heldReason || '' });
+        }
+      }
+      /* Not listed (held for a look, or the worker could not be reached):
+         say so instead of "it's on the public feed". */
+      next.waiting = !(next.placed && next.placed.listed);
+    }
+  }catch(e){ console.warn('[bcast] place after edit', e && e.message); }
   return next;
 }
 window.saveBroadcastEdits = saveBroadcastEdits;
@@ -1015,7 +1048,7 @@ function startFeedBroadcastsListener(){
                 .where('hidden', '==', false)
                 .where('held', '==', false)
                 .where('visibility', '==', 'public')
-                .where('publishAt', '<=', Date.now())
+                .where('publishAt', '<=', nalunoCatalogueNow())
                 .limit(80)
             );
           }catch(e2){ console.warn('[bcast] feed fallback failed', e2); }
@@ -1023,7 +1056,7 @@ function startFeedBroadcastsListener(){
       }
     );
   }
-  const bound = Date.now();
+  const bound = nalunoCatalogueNow();
   feedBoundAt = bound;
   try{
     feedBroadcastsUnsub = attach(
@@ -1086,7 +1119,7 @@ function armNewPublicCatchUp(){
 async function catchUpNewlyPublic(){
   if(catchUpBusy || !fbDb || !currentUser || !feedBoundAt) return;
   if(typeof document !== 'undefined' && document.hidden) return;
-  const now = Date.now();
+  const now = nalunoCatalogueNow();
   if(now <= feedBoundAt) return;
   catchUpBusy = true;
   const bound = feedBoundAt;
@@ -1162,8 +1195,11 @@ async function loadFeedBroadcasts(){
   // Prefer live listener; still do one get for instant first paint
   startFeedBroadcastsListener();
   startMyBroadcastsListener();
+  /* Only your own. A read of someone else's Broadcasts by creator alone is
+     refused by the rules (it could include their private ones), so every
+     chunk with a connection in it failed on every start. Their public
+     Broadcasts come in with the public catalogue, which walks every page. */
   const uids = new Set([currentUser.uid]);
-  (contacts || []).forEach(c => { if(c.isReal && c.firebaseUid) uids.add(c.firebaseUid); });
   const list = [];
   const arr = Array.from(uids);
   for(let i = 0; i < arr.length; i += 10){
@@ -1199,7 +1235,7 @@ async function searchBroadcasts(query){
         .where('hidden', '==', false)
         .where('held', '==', false)
         .where('visibility', '==', 'public')
-        .where('publishAt', '<=', Date.now())
+        .where('publishAt', '<=', nalunoCatalogueNow())
         .orderBy('publishAt', 'desc')
         .limit(80).get();
       snap.docs.forEach(d => {
@@ -1533,7 +1569,27 @@ async function openBroadcastChannel(key){
     if(share) share.onclick = function(){ airShare(handle, name + ' on Naluno'); };
     window.__airChannelUid = uid;
     try{
-      const snap = await fbDb.collection('broadcasts').where('creatorUid', '==', uid).limit(40).get();
+      /* Someone else's channel: only their public Broadcasts can be listed
+         (the rules refuse a read by creator alone, which used to leave this
+         page empty). Without the index for this read yet, the public
+         catalogue already holds their Broadcasts: walk it. */
+      const own = !!(currentUser && uid === currentUser.uid);
+      let q = fbDb.collection('broadcasts').where('creatorUid', '==', uid);
+      if(!own){
+        q = q.where('listed', '==', true)
+          .where('hidden', '==', false)
+          .where('held', '==', false)
+          .where('visibility', '==', 'public')
+          .where('publishAt', '<=', nalunoCatalogueNow())
+          .orderBy('publishAt', 'desc');
+      }
+      let snap;
+      try{ snap = await q.limit(60).get(); }
+      catch(e){
+        console.warn('[bcast] channel', e && e.message);
+        try{ if(typeof walkPublicCatalogue === 'function') await walkPublicCatalogue({ force: true }); }catch(_){}
+        snap = { docs: [] };
+      }
       snap.docs.forEach(function(doc){
         const row = Object.assign({ id: doc.id }, doc.data());
         if(row.deleted) return;

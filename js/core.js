@@ -19,7 +19,11 @@ function nalunoFriendlyError(msg){
   if(/missing or insufficient permissions|permission-denied|FirebaseError: Missing/i.test(s)){
     return '';
   }
-  if(/failed to fetch|networkerror|network request failed|unavailable/i.test(s)){
+  /* Network failures only. A bare "unavailable" also matched the app's own
+     words ("Microphone unavailable — allow access, then try answering
+     again"), so a person whose microphone was blocked was told there was
+     no connection. Firestore's own wording is matched instead. */
+  if(/failed to fetch|networkerror|network request failed|service is currently unavailable|client is offline|^\s*unavailable\s*$|\bcode[=:]\s*"?unavailable\b/i.test(s)){
     return 'No connection right now — try again in a moment.';
   }
   return s;

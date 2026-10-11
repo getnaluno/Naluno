@@ -295,12 +295,13 @@ function renderScheduledDock(){
         if(isFinite(t)) publishAt = t;
       }
       try{
-        await saveBroadcastEdits(id, {
+        const saved = await saveBroadcastEdits(id, {
           title: title.trim() || 'Broadcast',
           visibility: priv ? 'private' : 'public',
           publishAt: publishAt,
         });
-        toast(publishAt > Date.now() ? 'Schedule updated' : (priv ? 'Kept private' : 'It can go out now'));
+        const held = !priv && !!(saved && saved.waiting);
+        toast(publishAt > Date.now() ? 'Schedule updated' : (priv ? 'Kept private' : (held ? 'It goes out after a first look' : 'It can go out now')));
         renderBroadcastTab();
       }catch(err){
         toast((err && err.message) || 'Couldn’t save that');
@@ -311,8 +312,9 @@ function renderScheduledDock(){
       nowBtn.onclick = async function(e){
         if(e) e.stopPropagation();
         try{
-          await saveBroadcastEdits(id, { visibility: 'public', publishAt: Date.now() });
-          toast('It’s on the public feed');
+          const saved = await saveBroadcastEdits(id, { visibility: 'public', publishAt: Date.now() });
+          const held = !!(saved && saved.waiting);
+          toast(held ? 'It goes out after a first look' : 'It’s on the public feed');
           renderBroadcastTab();
         }catch(err){
           toast((err && err.message) || 'Couldn’t publish that');

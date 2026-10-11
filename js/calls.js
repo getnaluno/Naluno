@@ -206,26 +206,52 @@ function nalunoTellNativeCallDone(callId){
     if(n && typeof n.dismissIncomingCall === 'function') n.dismissIncomingCall(String(callId || ''));
   }catch(_){}
 }
-function nalunoDismissCallNotifications(callId){
-  try{ nalunoTellSwCallHandled(callId); }catch(_){}
-  try{ nalunoTellNativeCallDone(callId); }catch(_){}
+/* Which call a shade entry belongs to. Three shapes reach the shade:
+   - the service worker's own ring: tag "naluno-call:<id>", data.callId;
+   - a web push the browser drew by itself (Firebase): the call's fields
+     sit under data.FCM_MSG.data, and the tag is "naluno-call:<id>";
+   - older pushes drawn by the browser with the Wireline tag
+     "naluno-wire::" and the call only inside FCM_MSG (no id in the tag).
+   The last two used to be invisible to this check, which is why an
+   answered call kept its alerts until each one was swiped away. */
+function nalunoCallNoteInfo(n){
+  const d = (n && n.data) || {};
+  const tag = String((n && n.tag) || '');
+  let fcm = {};
+  try{
+    const raw = d.FCM_MSG || d.fcm_msg || null;
+    fcm = (raw && (raw.data || (raw.notification && raw.notification.data))) || {};
+  }catch(_){ fcm = {}; }
+  let id = String(d.callId || fcm.callId || '');
+  if(!id && tag.indexOf('naluno-call:') === 0) id = tag.slice('naluno-call:'.length);
+  const callish = d.type === 'incoming_call' || fcm.type === 'incoming_call' || tag.indexOf('naluno-call') === 0;
+  return { callish: callish, id: id, tag: tag };
+}
+window.nalunoCallNoteInfo = nalunoCallNoteInfo;
+function nalunoCloseCallNotesNow(callId){
   try{
     if(!navigator.serviceWorker || !navigator.serviceWorker.ready) return;
     navigator.serviceWorker.ready.then(function(reg){
       return reg.getNotifications();
     }).then(function(list){
       (list || []).forEach(function(n){
-        const d = n.data || {};
-        const tag = String(n.tag || '');
-        const id = d.callId || '';
-        const callish = d.type === 'incoming_call' || tag.indexOf('naluno-call') === 0;
-        if(!callish) return;
-        if(callId && id && id !== callId && tag !== ('naluno-call:' + callId)) return;
-        if(callId && !id && tag && tag !== ('naluno-call:' + callId) && tag !== 'naluno-call') return;
+        const info = nalunoCallNoteInfo(n);
+        if(!info.callish) return;
+        /* Another call's alert stays. An alert that names no call at all
+           can only be this ring or an older one, so it goes. */
+        if(callId && info.id && info.id !== callId) return;
         try{ n.close(); }catch(_){}
       });
     }).catch(function(){});
   }catch(_){}
+}
+function nalunoDismissCallNotifications(callId){
+  try{ nalunoTellSwCallHandled(callId); }catch(_){}
+  try{ nalunoTellNativeCallDone(callId); }catch(_){}
+  nalunoCloseCallNotesNow(callId);
+  /* A push that was already on its way is drawn by the browser a moment
+     after it lands. Look once more after that. */
+  try{ setTimeout(function(){ nalunoCloseCallNotesNow(callId); }, 2500); }catch(_){}
 }
 function closeCallOverlay(opts){
   const keepHistory = !!(opts && opts.keepHistory);
@@ -976,6 +1002,7 @@ function nalunoRemoteAudioEl(){
   return a;
 }
 function nalunoStopRemoteAudio(){
+  try{ nalunoVoiceUnblockOff(); }catch(_){}
   try{
     const a = document.getElementById('remoteAudio');
     if(!a) return;
@@ -1005,7 +1032,50 @@ function nalunoHearRemote(videoEl){
   try{ a.muted = false; a.volume = 1; }catch(_){}
   let p = null;
   try{ p = a.play(); }catch(_){}
-  if(p && p.catch) p.catch(function(){});
+  if(p && p.catch) p.catch(function(err){ nalunoVoiceBlocked(a, err); });
+}
+/* The browser can refuse to start the other person's voice when this page
+   has not been touched yet (a call answered from a notification, or after
+   the app was reopened). The refusal used to be swallowed: the call showed
+   Connected and nobody heard anything. Now the next touch starts it, and
+   the person is told to touch the screen. */
+let nalunoVoiceWait = null;
+function nalunoVoiceUnblockOff(){
+  if(!nalunoVoiceWait) return;
+  const w = nalunoVoiceWait;
+  nalunoVoiceWait = null;
+  ['pointerdown', 'touchend', 'click', 'keydown'].forEach(function(t){
+    try{ document.removeEventListener(t, w.fn, true); }catch(_){}
+  });
+}
+function nalunoVoiceBlocked(a, err){
+  const name = (err && err.name) || '';
+  if(name === 'AbortError'){
+    /* A new stream replaced the old one mid-start. Try once more. */
+    setTimeout(function(){
+      try{
+        if(!a.srcObject || !a.paused) return;
+        const again = a.play();
+        if(again && again.catch) again.catch(function(e2){ if(e2 && e2.name !== 'AbortError') nalunoVoiceBlocked(a, e2); });
+      }catch(_){}
+    }, 300);
+    return;
+  }
+  if(nalunoVoiceWait) return;
+  console.warn('[call] the other voice is waiting for a touch', name);
+  const fn = function(){
+    try{
+      if(!a.srcObject){ nalunoVoiceUnblockOff(); return; }
+      const go = a.play();
+      if(go && go.then) go.then(nalunoVoiceUnblockOff).catch(function(){});
+      else nalunoVoiceUnblockOff();
+    }catch(_){}
+  };
+  nalunoVoiceWait = { fn: fn };
+  ['pointerdown', 'touchend', 'click', 'keydown'].forEach(function(t){
+    try{ document.addEventListener(t, fn, true); }catch(_){}
+  });
+  try{ if(typeof toast === 'function') toast('Tap the screen to hear the call'); }catch(_){}
 }
 function bindRemoteVideoElement(stream, forceRebind){
   const videoEl = document.getElementById('remoteVideo');
@@ -3016,7 +3086,7 @@ async function startRealCallInner(c){
       stopCameraStream();
       currentCallContactId = null;
       callActionInProgress = false;
-      toast('Call ended');
+      toast(d.endReason === 'callee-media' ? 'They could not turn on their microphone' : 'Call ended');
       try{ restoreUiAfterCall(); }catch(_){}
     }
   };
@@ -3175,7 +3245,8 @@ $('declineIncoming').onclick = ()=>{
 function declineIncomingCall(callId){
   stopRingtone();
   const id = callId || activeCallId;
-  try{ nalunoTellSwCallHandled(id); }catch(_){}
+  /* The shade, the Android ring screen and any late push for this call. */
+  try{ nalunoDismissCallNotifications(id); }catch(_){ try{ nalunoTellSwCallHandled(id); }catch(__){} }
   if(id && typeof fbDb !== 'undefined' && fbDb){
     nalunoCallMove(id, 'declined');
   }
@@ -3429,12 +3500,12 @@ $('acceptIncoming').onclick = async (ev)=>{
     if(nalunoIsVoiceCall()){
       try{ await nalunoOpenMic(); }catch(_){}
       mediaOk = !!(stream && stream.getAudioTracks().some(function(t){ return t.readyState === 'live'; }));
-      if(!mediaOk){ guard(); throw new Error('Microphone unavailable — allow access, then try answering again'); }
+      if(!mediaOk){ guard(); throw Object.assign(new Error('Microphone unavailable — allow access, then try answering again'), { nalunoMedia: true }); }
     } else {
       mediaOk = await ensureCallMediaReady();
     }
     guard();
-    if(!mediaOk) throw new Error('Camera/mic unavailable — allow access, then try answering again');
+    if(!mediaOk) throw Object.assign(new Error('Camera/mic unavailable — allow access, then try answering again'), { nalunoMedia: true });
     try{ await turnWait; }catch(_){}
     guard();
 
@@ -3506,8 +3577,9 @@ $('acceptIncoming').onclick = async (ev)=>{
       return;
     }
     toast(e.message || 'Couldn\u2019t answer the call');
-    // Mark ended so the caller does not hang in a half-connected state.
-    try{ await callRef.update({ status: 'ended' }); }catch(_){}
+    // Mark ended so the caller does not hang in a half-connected state,
+    // and say why, so the caller is not left guessing.
+    try{ await callRef.update({ status: 'ended', endReason: (e && e.nalunoMedia) ? 'callee-media' : 'answer-failed' }); }catch(_){}
     teardownCallConnection();
     closeCallOverlay();
     stopCameraStream();
@@ -3549,6 +3621,26 @@ $('acceptIncoming').onclick = async (ev)=>{
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire);
   wire();
 })();
+
+/* Answer pressed somewhere other than this screen: the phone's own
+   incoming-call screen (Android) or the Answer button on a notification.
+   That press used to only open this ring, so the person had to answer a
+   second time and the caller kept ringing. It now finishes the answer. */
+function nalunoAnswerIncoming(callId){
+  try{
+    if(!callId || activeCallId !== callId) return false;
+    if(!incomingCallStillRinging()) return false;
+    if(callActionInProgress || nalunoAnsweredId === callId) return true;
+    const btn = $('acceptIncoming');
+    if(!btn || typeof btn.onclick !== 'function') return false;
+    btn.onclick({ type: 'answer-elsewhere' });
+    return true;
+  }catch(e){
+    console.warn('[call] answer from outside the app', e && e.message);
+    return false;
+  }
+}
+window.nalunoAnswerIncoming = nalunoAnswerIncoming;
 
 let callSeconds = 0, callInterval = null;
 function startInCall(){

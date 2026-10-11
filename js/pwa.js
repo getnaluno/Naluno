@@ -6,7 +6,7 @@
    ============================================================ */
 /* ---------------- PWA INSTALL + CALL NOTIFICATION DEEP-LINK ---------------- */
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js?v=20261011c', { scope: '/', updateViaCache: 'none' })
+  navigator.serviceWorker.register('/sw.js?v=20261012a', { scope: '/', updateViaCache: 'none' })
     .then(function(reg){ try{ reg.update(); }catch(_){} })
     .catch(function(e){ console.warn('[sw]', e); });
   // One automatic reload when a new SW takes control (clears stuck "sign-in not ready"
@@ -78,11 +78,7 @@ if('serviceWorker' in navigator){
     }
     if(msg.type === 'naluno-incoming-call'){
       const id = msg.callId || null;
-      const kick = ()=>{
-        if(currentUser && fbDb) handleIncomingCallFromPush(id);
-        else setTimeout(kick, 400);
-      };
-      kick();
+      if(id) handleIncomingCallFromPush(id, { action: msg.answer ? 'answer' : '' });
     }
     if(msg.type === 'naluno-decline-call'){
       const id = msg.callId || null;
@@ -108,20 +104,14 @@ if('serviceWorker' in navigator){
     const params = new URLSearchParams(location.search);
     const callId = params.get('call');
     if(!callId) return;
+    const answer = params.get('answer') === '1';
     // Strip the query so a refresh does not re-open the same call forever.
     if(history.replaceState){
       const clean = location.pathname + (location.hash || '');
       history.replaceState(null, '', clean);
     }
-    // Wait until auth + Firestore are ready enough to attach.
-    const tryOpen = ()=>{
-      if(currentUser && fbDb){
-        handleIncomingCallFromPush(callId);
-        return;
-      }
-      setTimeout(tryOpen, 400);
-    };
-    setTimeout(tryOpen, 600);
+    // handleIncomingCallFromPush waits for sign-in itself.
+    setTimeout(function(){ handleIncomingCallFromPush(callId, { action: answer ? 'answer' : '' }); }, 600);
   }catch(e){}
 })();
 
@@ -150,12 +140,47 @@ if('serviceWorker' in navigator){
 /* Opens / resumes an incoming call that arrived via push while the app was closed.
    Loads the call doc so we still show the right caller even if the live
    onSnapshot "ringing" listener has not fired yet. */
-async function handleIncomingCallFromPush(callId){
-  if(!callId || !fbDb || !currentUser) return;
-  if($('callOverlay').classList.contains('active') && activeCallId === callId) return;
+/* opts.action: 'answer' (Answer was pressed on the phone's call screen or
+   on the notification), 'decline', or nothing (the alert was opened).
+   A call opened from a notification often starts a fresh app: sign-in has
+   not come back yet. The request used to be dropped silently at that
+   moment ("if no user, return"); it now waits for sign-in. */
+const nalunoPushCallSeen = {};
+function nalunoCallReady(maxMs){
+  return new Promise(function(resolve){
+    const t0 = Date.now();
+    const tick = function(){
+      try{
+        if(typeof fbDb !== 'undefined' && fbDb && typeof currentUser !== 'undefined' && currentUser && typeof handleIncomingCall === 'function'){ resolve(true); return; }
+      }catch(_){}
+      if(Date.now() - t0 > (maxMs || 25000)){ resolve(false); return; }
+      setTimeout(tick, 300);
+    };
+    tick();
+  });
+}
+async function handleIncomingCallFromPush(callId, opts){
+  opts = opts || {};
+  const action = opts.action === 'answer' || opts.answer === true ? 'answer' : (opts.action === 'decline' ? 'decline' : '');
+  if(!callId) return;
+  const key = callId + ':' + action;
+  if(nalunoPushCallSeen[key] && Date.now() - nalunoPushCallSeen[key] < 4000) return;
+  nalunoPushCallSeen[key] = Date.now();
+  if(!(await nalunoCallReady(25000))){
+    console.warn('[call] opened from a notification, but sign-in did not come back');
+    return;
+  }
+  if(action === 'decline'){
+    try{ declineIncomingCall(callId); }catch(e){ console.warn('[call] decline from outside the app', e && e.message); }
+    return;
+  }
+  if($('callOverlay').classList.contains('active') && activeCallId === callId){
+    if(action === 'answer' && typeof nalunoAnswerIncoming === 'function') nalunoAnswerIncoming(callId);
+    return;
+  }
   try{
     const hidden = (typeof document !== 'undefined' && (document.hidden || document.visibilityState !== 'visible'));
-    if(hidden && typeof nalunoStartBackgroundRing === 'function'){
+    if(hidden && action !== 'answer' && typeof nalunoStartBackgroundRing === 'function'){
       nalunoStartBackgroundRing(callId, 'Someone');
     }
     const snap = await fbDb.collection('calls').doc(callId).get();
@@ -163,16 +188,41 @@ async function handleIncomingCallFromPush(callId){
     const data = snap.data() || {};
     if(data.calleeUid !== currentUser.uid) return;
     if(data.status !== 'ringing'){
-      if(data.status === 'missed' || data.status === 'ended') toast('That call already ended');
+      try{ if(typeof nalunoDismissCallNotifications === 'function') nalunoDismissCallNotifications(callId); }catch(_){}
+      if(data.status === 'missed' || data.status === 'ended' || data.status === 'cancelled') toast('That call already ended');
       return;
     }
-    handleIncomingCall(callId, data);
+    /* The live ring listener may have shown this call while the read was out. */
+    if(!($('callOverlay').classList.contains('active') && activeCallId === callId)){
+      handleIncomingCall(callId, data);
+    }
+    if(action === 'answer' && typeof nalunoAnswerIncoming === 'function'){
+      if(!nalunoAnswerIncoming(callId)) console.warn('[call] could not answer from outside the app');
+    }
   }catch(e){
     console.warn('[call] push deep-link failed', e);
   }
 }
 // Native IncomingCallActivity / MainActivity call this via evaluateJavascript.
 window.handleIncomingCallFromPush = handleIncomingCallFromPush;
+
+/* Android: the call screen may have been answered or declined before this
+   page existed. MainActivity keeps that press until the page asks for it. */
+function nalunoTakeNativeCall(){
+  try{
+    const n = window.NalunoNative;
+    if(!n || typeof n.takePendingCall !== 'function') return;
+    const raw = n.takePendingCall();
+    if(!raw) return;
+    const p = JSON.parse(String(raw));
+    if(p && p.callId) handleIncomingCallFromPush(String(p.callId), { action: String(p.action || '') });
+  }catch(_){}
+}
+window.nalunoTakeNativeCall = nalunoTakeNativeCall;
+try{
+  setTimeout(nalunoTakeNativeCall, 1500);
+  document.addEventListener('visibilitychange', function(){ if(!document.hidden) setTimeout(nalunoTakeNativeCall, 300); });
+}catch(_){}
 
 function nalunoRequestPersistentStorage(){
   try{
