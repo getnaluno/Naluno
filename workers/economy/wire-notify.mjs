@@ -128,6 +128,47 @@ function tokensOf() {
   return tokens;
 }
 
+/* The visible part of a web push. The browser draws it by itself, so the
+   page and the service worker can only take it down again if they can
+   recognise it.
+   A call is tagged with its own id ("naluno-call:<id>", the tag the service
+   worker's own ring uses) and carries type + callId. It used to go out with
+   the Wireline tag "naluno-wire::" and no call id: answering could not find
+   it, every repeat sounded again, and each one had to be swiped away.
+   A call alert is also short-lived (TTL 60 s): a ring that arrives a minute
+   late is not a call anyone can still answer. */
+export function webPushFor(data) {
+  const d = data || {};
+  if (String(d.type || "") === "incoming_call" && d.callId) {
+    const callId = String(d.callId).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 120);
+    return {
+      headers: { Urgency: "high", TTL: "60" },
+      notification: {
+        title: String(d.title || "Incoming call").slice(0, 80),
+        body: String(d.body || "Tap to answer on Naluno").slice(0, 140),
+        icon: "https://getnaluno.com/icon-192.png",
+        tag: "naluno-call:" + callId,
+        renotify: true,
+        requireInteraction: true,
+        silent: false,
+        data: { type: "incoming_call", callId: callId, url: "/app/?call=" + callId },
+      },
+      fcm_options: { link: "https://getnaluno.com/app/?call=" + encodeURIComponent(callId) },
+    };
+  }
+  return {
+    headers: { Urgency: "high", TTL: "86400" },
+    notification: {
+      title: String(d.title || "Wireline").slice(0, 80),
+      body: String(d.body || "New message").slice(0, 140),
+      icon: "https://getnaluno.com/icon-192.png",
+      tag: "naluno-wire:" + String(d.fromUid || "msg").slice(0, 40) + ":" + String(d.clientMsgId || "").slice(0, 48),
+      renotify: true,
+      silent: false,
+    },
+  };
+}
+
 async function sendAll(tokens, data, link, deps, now) {
   let bearer = fcmToken.value && fcmToken.until > now ? fcmToken.value : "";
   if (!bearer) {
@@ -171,17 +212,7 @@ async function sendAll(tokens, data, link, deps, now) {
                Android stays a data message plus the wireline channel, so
                the app can still build the tray item itself. */
             webpush: kind === "web"
-              ? {
-                  headers: { Urgency: "high", TTL: "86400" },
-                  notification: {
-                    title: String(data.title || "Wireline").slice(0, 80),
-                    body: String(data.body || "New message").slice(0, 140),
-                    icon: "https://getnaluno.com/icon-192.png",
-                    tag: "naluno-wire:" + String(data.fromUid || "msg").slice(0, 40) + ":" + String(data.clientMsgId || "").slice(0, 48),
-                    renotify: true,
-                    silent: false,
-                  },
-                }
+              ? webPushFor(data)
               : { headers: { Urgency: "high", TTL: "86400" } },
             apns: { headers: { "apns-priority": "10" } },
           },
