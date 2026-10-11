@@ -125,7 +125,7 @@ const reactSrc = live.slice(live.indexOf('function bLiveWatchReactions'), live.i
 assert.ok(reactSrc.includes('if(!primed)'), 'old reactions are not replayed');
 
 assert.ok(html.includes('/js/camera.js?v=20261010a'), 'camera was not republished');
-assert.ok(html.includes('/js/calls.js?v=20261011c'), 'call audio is this build');
+assert.ok(/\/js\/calls\.js\?v=(?:2026101[1-9][a-z]|202610[2-3][0-9][a-z])/.test(html), 'call audio is this build or later');
 assert.ok(!read('js/calls.js').includes('createMediaStreamSource'), 'received voice is still a single path');
 
 (async function(){

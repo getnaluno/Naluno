@@ -52,5 +52,5 @@ assert.ok(/^var BCAST_MAX_OBJECT_BYTES = 8 \* 1024 \* 1024 \* 1024;/m.test(read(
 /* Phones fetch the fixed files, not the cached ones. */
 const app = read('app/index.html');
 assert.ok(app.includes('/js/broadcast-upload.js?v=20261010e') && app.includes('/js/broadcast-composer.js?v=20261010e'), 'new stamps on the fixed files');
-assert.ok(read('sw.js').includes("CACHE_NAME = 'naluno-shell-v313'"), 'shell cache moved on');
+assert.ok(Number((read('sw.js').match(/CACHE_NAME = 'naluno-shell-v(\d+)'/) || [])[1]) >= 313, 'shell cache moved on (this build or later)');
 console.log('fixes-1010e tests passed');
