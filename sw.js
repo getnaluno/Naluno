@@ -74,8 +74,8 @@
 // v248: attention is only kept when a visit, an app open, or a continued session owns it. Join date and Find pin stay on the person.
 // v284: 10.05f Android floats a video call on leaving; Wireline alerts through Naluno's worker; a call answers once per tap.
 // v285: 10.05g voices keep reading (several makers, scheduled, trimmed), Luganda spoken from its own sounds, test alert, stale stamps.
-const CACHE_NAME = 'naluno-shell-v313';
-const APP_BUILD = '20261011c';
+const CACHE_NAME = 'naluno-shell-v314';
+const APP_BUILD = '20261012a';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -535,21 +535,42 @@ function stopRingLoop(callId){
     delete ringLoopTimers[k];
   });
 }
+/* Which call a shade entry belongs to. Firebase draws a web push's
+   notification itself and keeps the message under data.FCM_MSG, so its
+   call id is there, not in data.callId. Older call pushes went out with
+   the Wireline tag and no id at all; those can only be this ring or an
+   older one. */
+function callNoteInfo(n){
+  const d = (n && n.data) || {};
+  const tag = String((n && n.tag) || '');
+  let fcm = {};
+  try{
+    const raw = d.FCM_MSG || d.fcm_msg || null;
+    fcm = (raw && (raw.data || (raw.notification && raw.notification.data))) || {};
+  }catch(_){ fcm = {}; }
+  let id = String(d.callId || fcm.callId || '');
+  if(!id && tag.indexOf('naluno-call:') === 0) id = tag.slice('naluno-call:'.length);
+  const callish = d.type === 'incoming_call' || fcm.type === 'incoming_call' || tag.indexOf('naluno-call') === 0;
+  return { callish: callish, id: id };
+}
 async function closeCallNotifications(callId){
   try{
     const list = await self.registration.getNotifications();
     (list || []).forEach(function(n){
-      const d = n.data || {};
-      const tag = String(n.tag || '');
-      const id = d.callId || '';
-      const callish = d.type === 'incoming_call' || tag.indexOf('naluno-call') === 0;
-      if(!callish) return;
-      if(!callId){ try{ n.close(); }catch(_){} return; }
-      if(id === callId || tag === ('naluno-call:' + callId)){
+      const info = callNoteInfo(n);
+      if(!info.callish) return;
+      if(!callId || !info.id || info.id === callId){
         try{ n.close(); }catch(_){}
       }
     });
   }catch(_){}
+}
+/* A push for a call that was already answered: Firebase may still be
+   drawing its own copy when this runs, so look again a moment later. */
+function closeCallNotificationsSoon(callId){
+  return closeCallNotifications(callId).then(function(){
+    return new Promise(function(r){ setTimeout(r, 1500); });
+  }).then(function(){ return closeCallNotifications(callId); });
 }
 function callNotifyOpts(callId, body, pingId){
   const appUrl = callId
@@ -819,7 +840,7 @@ self.addEventListener('push', event=>{
     const body = data.body || 'Tap to answer';
     event.waitUntil((async ()=>{
       if(await handledBefore(callId)){
-        await closeCallNotifications(callId);
+        await closeCallNotificationsSoon(callId);
         return;
       }
       await startRingLoop(callId, title, body, undefined, data.pingId || '');
@@ -914,12 +935,22 @@ self.addEventListener('notificationclick', event=>{
     })());
     return;
   }
-  const target = callId ? ('/app/?call=' + encodeURIComponent(callId)) : (data.url || '/app/');
+  /* "Answer" on the notification answers. It used to open the ring and
+     wait for a second tap, while the caller kept ringing. */
+  const answer = action === 'answer';
+  if(answer && callId){
+    markCallHandled(callId);
+    stopRingLoop(callId);
+  }
+  const target = callId
+    ? ('/app/?call=' + encodeURIComponent(callId) + (answer ? '&answer=1' : ''))
+    : (data.url || '/app/');
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList=>{
+      if(answer && callId) closeCallNotifications(callId);
       for(const client of clientList){
         if('focus' in client){
-          client.postMessage({ type: 'naluno-incoming-call', callId });
+          client.postMessage({ type: 'naluno-incoming-call', callId, answer: answer });
           return client.focus();
         }
       }
