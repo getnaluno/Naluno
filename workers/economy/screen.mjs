@@ -709,6 +709,27 @@ export function judgeScreenPayload(payload, opts) {
   };
 }
 
+/* 12c: everyone is a trusted publisher until a report is filed about them.
+   From that report until a person on the desk decides, their new
+   Broadcasts wait for a look ("under-review"). The desk's decision is
+   trustedPublisher true (keep trusting) or false (stop trusting).
+   A restriction or suspension still stops trust. Content checks (Screen,
+   safety) are separate and apply to everyone, trusted or not. */
+export function publisherTrusted(p) {
+  const u = p || {};
+  if (u.restricted || u.suspended) return false;
+  if (u.trustedPublisher === false) return false;
+  if (u.publisherReview === "pending") return false;
+  return true;
+}
+export function publisherHoldReason(p) {
+  const u = p || {};
+  if (u.restricted || u.suspended) return "restricted";
+  if (u.trustedPublisher === false) return "not-trusted";
+  if (u.publisherReview === "pending") return "under-review";
+  return "";
+}
+
 export function listingFromScreen(opts) {
   const trusted = !!(opts && opts.trusted);
   const hidden = !!(opts && opts.hidden);
@@ -740,7 +761,7 @@ export function listingFromScreen(opts) {
   if (hasScreen && decision === "allow") {
     return { listed: true, held: false, hidden: false, heldReason: "" };
   }
-  return { listed: false, held: true, hidden: false, heldReason: "new-publisher" };
+  return { listed: false, held: true, hidden: false, heldReason: (opts && opts.holdReason) || "new-publisher" };
 }
 
 export function fillRgb(w, h, fn) {

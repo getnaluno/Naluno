@@ -1,4 +1,4 @@
-import { handleRequest, runBandSweep } from "./handler.mjs";
+import { handleRequest, runBandSweep, runLiveSweep, runLaunchGuard } from "./handler.mjs";
 
 export default {
   async fetch(request, env, ctx) {
@@ -7,7 +7,14 @@ export default {
   /* THE RULE OF BANDS: every 10 minutes, delete the conversation of every
      Band whose two hours after the last person left have run out. */
   async scheduled(event, env, ctx) {
-    const job = runBandSweep(env).catch(() => null);
+    /* 12c: and every 10 minutes, lives whose host is gone: the creator gets a
+       limelight to carry on, and after it runs out the live is stopped. */
+    const job = Promise.all([
+      runBandSweep(env).catch(() => null),
+      runLiveSweep(env).catch(() => null),
+      /* 13a: measure usage against the launch budgets and publish the guard. */
+      runLaunchGuard(env).catch(() => null),
+    ]);
     if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(job);
     else await job;
   },

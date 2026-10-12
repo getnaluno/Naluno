@@ -1001,8 +1001,7 @@ test("an ordinary report does NOT remove anything", async () => {
   setFetchImpl(null);
 });
 
-test("broadcast place holds a new publisher", async () => {
-  resetMemory();
+function placeWithProfile(fields) {
   setFetchImpl(async (url) => {
     const u = String(url);
     if (u.includes("accounts:lookup")) {
@@ -1015,13 +1014,11 @@ test("broadcast place holds a new publisher", async () => {
       }), { status: 200 });
     }
     if (u.includes("/users/user_a")) {
-      return new Response(JSON.stringify({
-        fields: { name: { stringValue: "A" } },
-      }), { status: 200 });
+      return new Response(JSON.stringify({ fields }), { status: 200 });
     }
     return new Response("{}", { status: 200 });
   });
-  const res = await handleRequest(
+  return handleRequest(
     req("/v1/broadcast/place", {
       method: "POST",
       headers: { Authorization: "Bearer tok", "Content-Type": "application/json" },
@@ -1029,11 +1026,47 @@ test("broadcast place holds a new publisher", async () => {
     }),
     ENV,
   );
+}
+
+/* 12c: everyone is a trusted publisher until a report is filed about them. */
+test("broadcast place lists a new publisher nobody has reported", async () => {
+  resetMemory();
+  const res = await placeWithProfile({ name: { stringValue: "A" } });
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.listed, true);
+  assert.equal(body.held, false);
+  setFetchImpl(null);
+});
+
+test("broadcast place holds a reported publisher until the desk decides", async () => {
+  resetMemory();
+  const res = await placeWithProfile({ name: { stringValue: "A" }, publisherReview: { stringValue: "pending" } });
   const body = await res.json();
   assert.equal(res.status, 200);
   assert.equal(body.ok, true);
   assert.equal(body.held, true);
   assert.equal(body.listed, false);
+  assert.equal(body.heldReason, "under-review");
+  setFetchImpl(null);
+});
+
+test("broadcast place holds a publisher the desk stopped trusting", async () => {
+  resetMemory();
+  const res = await placeWithProfile({ name: { stringValue: "A" }, trustedPublisher: { booleanValue: false } });
+  const body = await res.json();
+  assert.equal(body.held, true);
+  assert.equal(body.heldReason, "not-trusted");
+  setFetchImpl(null);
+});
+
+test("broadcast place lists a reported publisher the desk kept trusting", async () => {
+  resetMemory();
+  const res = await placeWithProfile({ name: { stringValue: "A" }, trustedPublisher: { booleanValue: true }, publisherReview: { stringValue: "cleared" } });
+  const body = await res.json();
+  assert.equal(body.listed, true);
+  assert.equal(body.held, false);
   setFetchImpl(null);
 });
 

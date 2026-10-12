@@ -21,9 +21,14 @@
  */
 
 import { sweepBand, sweepAllBands } from "./band-sweep.mjs";
+import { sweepLives } from "./live-sweep.mjs";
+import { makeLaunch, launchEnvOf } from "./launch-routes.mjs";
+import { FEATURES } from "./launch.mjs";
 import {
   judgeScreenPayload,
   listingFromScreen,
+  publisherTrusted,
+  publisherHoldReason,
 } from "./screen.mjs";
 import { reachTier, reachLimits, reachDayKey } from "./reach.mjs";
 import {
@@ -90,7 +95,7 @@ import {
   cleanBroadcastId,
 } from "./views.mjs";
 import { pbkdf2Sha256Js, WORKER_PBKDF2_MAX } from "./pbkdf2.mjs";
-import { handleWireNotify, handlePushTest, handleLockPush } from "./wire-notify.mjs";
+import { handleWireNotify, handlePushTest, handleLockPush, sendLiveDropped } from "./wire-notify.mjs";
 import { handleLgVoice } from "./lg-voice.mjs";
 import {
   callsReady,
@@ -447,20 +452,29 @@ function toFsFields(obj) {
    happened to be in that isolate's memory.
    An increment transform has no read step and no memory, so it cannot lose
    what it never held. */
+/* A Firestore field path segment that is not a plain identifier must be
+   quoted in backticks. Toga's month counters ("mc_2026-10", "me_2026-10")
+   were sent bare; Firestore refused the whole commit, so Circle joins and
+   talk messages never reached Toga (views, sent quoted from views.mjs, did). */
+export function fsFieldPath(k) {
+  const key = String(k);
+  if (/^[A-Za-z_][A-Za-z_0-9]*$/.test(key)) return key;
+  return "`" + key.replace(/\\/g, "\\\\").replace(/`/g, "\\`") + "`";
+}
 async function fsIncrement(env, token, docPath, fields, setFields) {
   if (!token) return { ok: false };
   // Firestore's commit API wants the RESOURCE name
   // ("projects/x/databases/(default)/documents/..."), not the URL.
   const name = fsRoot(env).replace("https://firestore.googleapis.com/v1/", "") + docPath;
   const transforms = Object.keys(fields).map((k) => ({
-    fieldPath: k,
+    fieldPath: fsFieldPath(k),
     increment: { integerValue: String(Math.round(Number(fields[k]) || 0)) },
   }));
   const writes = [];
   if (setFields && Object.keys(setFields).length) {
     writes.push({
       update: { name, fields: toFsFields(setFields).fields },
-      updateMask: { fieldPaths: Object.keys(setFields) },
+      updateMask: { fieldPaths: Object.keys(setFields).map(fsFieldPath) },
     });
   }
   writes.push({ transform: { document: name, fieldTransforms: transforms } });
@@ -1400,9 +1414,9 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
     return json({ ok: false, error: "not yours" }, 403);
   }
   const profile = await fsGetDoc(env, token, "/users/" + encodeURIComponent(row.creatorUid || user.uid));
-  const trusted = !!(profile && profile.trustedPublisher)
-    && !(profile && profile.restricted)
-    && !(profile && profile.suspended);
+  /* 12c: trusted unless reported and waiting for the desk, or the desk
+     decided not to trust (see publisherTrusted in screen.mjs). */
+  const trusted = publisherTrusted(profile);
   let judged = judgeScreenPayload(body && body.screen, { title: row.title || "" });
   /* 29h: a Broadcast with a picture (photo, video, or a Writing photo) and
      no readable Screen verdict is HELD for a person, trusted or not. Writing
@@ -1425,6 +1439,7 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
   );
   const listing = listingFromScreen({
     trusted,
+    holdReason: publisherHoldReason(profile) || "new-publisher",
     hidden: !!row.hidden,
     hasScreen: judged.hasScreen,
     decision: judged.decision,
@@ -1856,6 +1871,86 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
       version: VERSION,
       claim: stamped ? "operator" : "",
     });
+  }
+
+  /* ---- 13a: Launch & Capacity (operator + console password, above) ---- */
+  if (path.startsWith("/v1/admin/launch")) {
+    if (!saToken) return json({ ok: false, error: "The worker has no service account, so launch settings cannot be saved." }, 503);
+    const L = launchApi(env, saToken);
+    const which = launchEnvOf(env, url.searchParams.get("env"));
+    const actor = { uid: user.uid, email: user.email || "" };
+    if (path === "/v1/admin/launch" && request.method === "GET") {
+      const got = await L.load(which);
+      const c = await L.counter(which);
+      const hist = await L.listCol("/launchHistory?orderBy=version%20desc", 25);
+      const aud = await L.listCol("/launchAudit?orderBy=at%20desc", 40);
+      const pub = await fsGetDoc(env, saToken, "/launchConfig/" + encodeURIComponent(which));
+      return json({
+        ok: true, env: which, exists: got.exists, config: got.cfg, features: FEATURES,
+        counter: { registered: c.registered, refused: Number(c.data && c.data.refused) || 0, recountedAt: c.data && c.data.recountedAt || null },
+        guardState: (pub && pub.guardState) || null,
+        history: hist.filter(function (h) { return h.env === which; }).map(function (h) { return { version: h.version, at: h.at, by: h.by, action: h.action, reason: h.reason }; }),
+        audit: aud.filter(function (a) { return a.env === which; }).slice(0, 40),
+      });
+    }
+    if (path === "/v1/admin/launch/metrics" && request.method === "GET") {
+      const billing = await loadBilling(env, saToken).catch(function () { return null; });
+      const m = await L.metrics(which, billing);
+      const got = await L.load(which);
+      const { evaluateGuard } = await import("./launch.mjs");
+      return json({ ok: true, env: which, metrics: m, guard: evaluateGuard(got.cfg.guard, L.guardMetrics(m)) });
+    }
+    const body = request.method === "POST" ? await request.json().catch(() => ({})) : {};
+    const reason = String(body.reason || "").slice(0, 300);
+    if (path === "/v1/admin/launch/save" && request.method === "POST") {
+      const prev = await L.load(which);
+      if (body.expectVersion != null && Number(body.expectVersion) !== Number(prev.cfg.version || 0)) {
+        return json({ ok: false, errors: ["The settings changed since you opened them. Reload and try again."] }, 409);
+      }
+      const next = Object.assign({}, body.config || {}, { env: which, version: prev.cfg.version });
+      const out = await L.persist(which, prev, next, actor, "save", reason);
+      _launchStatusCache.clear();
+      return json(out, out.ok ? 200 : (out.status || 400));
+    }
+    if (path === "/v1/admin/launch/activate" && request.method === "POST") {
+      const prev = await L.load(which);
+      if (body.expectVersion != null && Number(body.expectVersion) !== Number(prev.cfg.version || 0)) {
+        return json({ ok: false, errors: ["The settings changed since you opened them. Reload and try again."] }, 409);
+      }
+      const out = await L.activate(which, String(body.phase || ""), actor, reason);
+      _launchStatusCache.clear();
+      return json(out, out.ok ? 200 : (out.status || 400));
+    }
+    if (path === "/v1/admin/launch/pause" && request.method === "POST") {
+      const prev = await L.load(which);
+      const next = JSON.parse(JSON.stringify(prev.cfg));
+      next.registration.emergencyPause = body.on === true;
+      const out = await L.persist(which, prev, next, actor, body.on === true ? "emergency-pause-on" : "emergency-pause-off", reason);
+      _launchStatusCache.clear();
+      return json(out, out.ok ? 200 : (out.status || 400));
+    }
+    if (path === "/v1/admin/launch/rollback" && request.method === "POST") {
+      const out = await L.rollback(which, body.version, actor, reason);
+      _launchStatusCache.clear();
+      return json(out, out.ok ? 200 : (out.status || 400));
+    }
+    if (path === "/v1/admin/launch/recount" && request.method === "POST") {
+      const out = await L.recount(which, actor, reason);
+      _launchStatusCache.clear();
+      return json(out, out.ok ? 200 : 502);
+    }
+    if (path === "/v1/admin/launch/waitlist" && request.method === "GET") {
+      const rows = await L.listCol("/waitlist?orderBy=at", 500);
+      return json({ ok: true, rows: rows.filter(function (r) { return r.env === which; }).map(function (r) { return { id: r.id, email: r.email, at: r.at, phase: r.phase, reason: r.reason }; }) });
+    }
+    if (path === "/v1/admin/launch/waitlist/remove" && request.method === "POST") {
+      const id = String(body.id || "");
+      if (!/^[a-f0-9]{32}$/.test(id)) return json({ ok: false, error: "bad id" }, 400);
+      await fsFetch(env, saToken, "DELETE", "/waitlist/" + id);
+      await L.audit({ env: which, action: "waitlist-remove", actorUid: user.uid, actorEmail: user.email || "", reason: reason, changes: [{ setting: "waitlist." + id, from: "on the list", to: null }], result: "ok" });
+      return json({ ok: true });
+    }
+    return json({ ok: false, error: "unknown launch route" }, 404);
   }
 
   if (path === "/v1/admin/broadcast-catalogue-repair" && request.method === "POST") {
@@ -3464,6 +3559,100 @@ function bandSweepIo(env, token) {
     },
   };
 }
+/* 13a: Launch & Capacity (launch.mjs, launch-routes.mjs). */
+function launchApi(env, token) {
+  return makeLaunch({
+    env: env, token: token, fsFetch: fsFetch, fsGetDoc: fsGetDoc, fsPutDoc: fsPutDoc,
+    fsIncrement: fsIncrement, fromFsDoc: fromFsDoc, toFsFields: toFsFields, root: fsRoot(env), json: json,
+  });
+}
+const _launchStatusCache = new Map();
+const _claimHits = new Map();
+function claimRate(uid) {
+  const minute = Math.floor(Date.now() / 60000);
+  const k = uid + "|" + minute;
+  const n = (_claimHits.get(k) || 0) + 1;
+  if (_claimHits.size > 4000) _claimHits.clear();
+  _claimHits.set(k, n);
+  return n <= 10;
+}
+function sameSecret(given, want) {
+  if (!want || !given || given.length !== want.length) return false;
+  let diff = 0;
+  for (let i = 0; i < want.length; i++) diff |= want.charCodeAt(i) ^ given.charCodeAt(i);
+  return diff === 0;
+}
+/* The cron: guardrails for this worker's environment. */
+export async function runLaunchGuard(env) {
+  if (!hasSaConfigured(env)) return { ok: false, error: "no-service-account" };
+  const token = await saAccessToken(env);
+  if (!token) return { ok: false, error: "no-token" };
+  const billing = await loadBilling(env, token).catch(function () { return null; });
+  const out = await launchApi(env, token).runGuard(launchEnvOf(env), billing);
+  return { ok: true, level: out.guard.level };
+}
+
+/* 12c: lives whose host is gone (live-sweep.mjs). Runs on the cron. */
+export async function runLiveSweep(env, nowMs) {
+  if (!hasSaConfigured(env)) return { ok: false, error: "no-service-account" };
+  const token = await saAccessToken(env);
+  if (!token) return { ok: false, error: "no-token" };
+  const now = Number(nowMs) || Date.now();
+  const io = {
+    liveBroadcasts: async function () {
+      const r = await fsFetch(env, token, "POST", ":runQuery", { structuredQuery: {
+        from: [{ collectionId: "broadcasts" }],
+        where: { fieldFilter: { field: { fieldPath: "live" }, op: "EQUAL", value: { booleanValue: true } } },
+        limit: 200 } });
+      return (Array.isArray(r.data) ? r.data : []).filter((x) => x && x.document)
+        .map((x) => ({ id: fromFsDoc(x.document).id, data: fromFsDoc(x.document), updateTime: x.document.updateTime || "" }));
+    },
+    frame: async function (id) {
+      const r = await fsFetch(env, token, "GET", "/broadcasts/" + encodeURIComponent(id) + "/livePreview/frame");
+      if (r.status === 404) return null;
+      if (!r.ok) throw new Error("frame " + r.status);
+      const d = fromFsDoc(r.data);
+      return { from: d.from || "", at: Number(d.at) || 0, serverAt: Date.parse((r.data && r.data.updateTime) || "") || 0 };
+    },
+    patch: async function (id, fields, updateTime) {
+      const pre = updateTime ? "?currentDocument.updateTime=" + encodeURIComponent(updateTime) : "";
+      const r = await fsPutDoc(env, token, "/broadcasts/" + encodeURIComponent(id) + pre, fields);
+      return !!(r && r.ok);
+    },
+    clearFrame: async function (id) {
+      await fsFetch(env, token, "DELETE", "/broadcasts/" + encodeURIComponent(id) + "/livePreview/frame");
+    },
+    clearSessions: async function (id) {
+      const r = await fsFetch(env, token, "GET", "/broadcasts/" + encodeURIComponent(id) + "/liveSessions?pageSize=100");
+      const docs = (r.ok && r.data && r.data.documents) || [];
+      for (const d of docs) {
+        const sid = fromFsDoc(d).id;
+        if (sid) await fsFetch(env, token, "DELETE", "/broadcasts/" + encodeURIComponent(id) + "/liveSessions/" + encodeURIComponent(sid));
+      }
+    },
+    say: async function (id, msg) {
+      await fsFetch(env, token, "POST", "/broadcasts/" + encodeURIComponent(id) + "/conversation", toFsFields(msg));
+    },
+    name: async function (uid) {
+      if (!uid) return "";
+      const u = await fsGetDoc(env, token, "/users/" + encodeURIComponent(uid));
+      return String((u && u.name) || "").slice(0, 60);
+    },
+    push: async function (uid, data) {
+      return sendLiveDropped(uid, data, {
+        getDoc: (p) => fsGetDoc(env, token, p),
+        accessToken: (scope) => saAccessTokenScoped(env, scope),
+        fetch: (u, o) => _fetch(u, o),
+        projectId: projectId(env),
+      });
+    },
+  };
+  let limits = null;
+  try { limits = (await launchApi(env, token).load(launchEnvOf(env))).cfg.media.live; } catch (_) {}
+  const result = await sweepLives(io, now, limits);
+  return Object.assign({ ok: true }, result);
+}
+
 export async function runBandSweep(env, bandId) {
   if (!hasSaConfigured(env)) return { ok: false, error: "no-service-account" };
   const token = await saAccessToken(env);
@@ -3495,6 +3684,8 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         payments: paymentsReady(env) && !!saToken,
         liveRooms: callsReady(env) && !!saToken,
         bandSweep: true,
+        liveSweep: true,
+        launch: true,
         mediaSweep: !!env.SWEEP_KEY,
       });
     }
@@ -3695,12 +3886,59 @@ export async function handleRequest(request, env = {}, ctx = {}) {
       return handleCheck(env, url, saToken);
     }
 
+    /* ---- 13a: registration, waiting list (no sign-in needed) ---- */
+    if (path === "/v1/launch/status" && request.method === "GET") {
+      if (!saToken) return json({ ok: false, error: "registration service is not configured" }, 503);
+      const which = launchEnvOf(env);
+      const hit = _launchStatusCache.get(which);
+      if (hit && Date.now() - hit.at < 10000) return json(hit.body);
+      const st = await launchApi(env, saToken).status(which);
+      const body = { ok: true, env: which, accepting: st.state.accepting, reason: st.state.reason, waitlist: st.state.waitlist, message: st.message, phase: st.cfg.activePhase };
+      _launchStatusCache.set(which, { at: Date.now(), body: body });
+      return json(body);
+    }
+    if (path === "/v1/waitlist/join" && request.method === "POST") {
+      if (!saToken) return json({ ok: false, error: "waiting list is not configured" }, 503);
+      const ip = request.headers.get("CF-Connecting-IP") || "?";
+      if (!lifelineRate("wl|" + ip, 5)) return json({ ok: false, error: "Please wait a minute and try again." }, 429);
+      const body = await request.json().catch(() => ({}));
+      const out = await launchApi(env, saToken).waitJoin(launchEnvOf(env), body.email);
+      return json(out, out.ok ? 200 : (out.status || 400));
+    }
+    if (path === "/v1/waitlist/leave" && request.method === "POST") {
+      if (!saToken) return json({ ok: false, error: "waiting list is not configured" }, 503);
+      const ip = request.headers.get("CF-Connecting-IP") || "?";
+      if (!lifelineRate("wlx|" + ip, 10)) return json({ ok: false, error: "Please wait a minute and try again." }, 429);
+      const body = await request.json().catch(() => ({}));
+      const out = await launchApi(env, saToken).waitLeave(body.id, body.key);
+      return json(out, out.ok ? 200 : (out.status || 400));
+    }
+    /* The upload workers report each upload, server to server. */
+    if (path === "/v1/launch/event" && request.method === "POST") {
+      if (!sameSecret(request.headers.get("X-Naluno-Sweep") || "", env.SWEEP_KEY || "")) return json({ ok: false, error: "Forbidden" }, 403);
+      if (!saToken) return json({ ok: false }, 503);
+      const body = await request.json().catch(() => ({}));
+      await launchApi(env, saToken).reportUpload(launchEnvOf(env), {
+        ok: body.ok === true, bytes: body.bytes, reason: body.reason, worker: String(body.worker || ""),
+      });
+      return json({ ok: true });
+    }
+
     const auth = await requireUser(env, request);
     if (auth.error) {
       if (path === "/" || path.startsWith("/v1/")) return auth.error;
       return auth.error;
     }
     const { user, token: userToken } = auth;
+
+    /* 13a: a registration seat, before the Callsign profile is created. */
+    if (path === "/v1/register/claim" && request.method === "POST") {
+      if (!saToken) return json({ ok: false, error: "Registration is not available right now. Try again later." }, 503);
+      if (!claimRate(user.uid)) return json({ ok: false, error: "Please wait a minute and try again." }, 429);
+      const out = await launchApi(env, saToken).claim(launchEnvOf(env), user.uid);
+      if (out.ok) _launchStatusCache.clear();
+      return json(out, out.ok ? 200 : (out.status || 403));
+    }
 
     if (path === "/v1/events" && request.method === "POST") {
       const body = await request.json().catch(() => ({}));
@@ -4151,6 +4389,28 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         toFsFields(doc),
       );
       if (!wrote.ok && existing) memory.reports.set(id, existing);
+
+      /* 12c: a report about a creator puts their trust on hold until a person
+         decides (console: Keep trusting / Stop trusting). Only their NEXT
+         Broadcasts wait; what is already up stays up unless the report's own
+         category takes it down below. */
+      if (wrote.ok && saToken) {
+        try {
+          let about = String(body.target_user_id || "").slice(0, 128);
+          const bid = String(body.broadcast_id || (body.target_type === "broadcast" ? body.target_id : "") || "").slice(0, 80);
+          if (!about && bid) {
+            const b = await fsGetDoc(env, saToken, "/broadcasts/" + encodeURIComponent(bid));
+            about = String((b && b.creatorUid) || "");
+          }
+          if (about && about !== user.uid && /^[A-Za-z0-9_-]{1,128}$/.test(about)) {
+            await fsPutDoc(env, saToken, "/users/" + encodeURIComponent(about), {
+              publisherReview: "pending",
+              publisherReviewAt: Date.now(),
+              publisherReviewReport: id,
+            });
+          }
+        } catch (_) { /* the report itself is saved; the desk still sees it */ }
+      }
 
       /* TAKE IT OUT OF PUBLIC VIEW FIRST.
          This used to happen at the very END of the report handler, after

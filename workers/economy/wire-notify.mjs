@@ -156,6 +156,26 @@ export function webPushFor(data) {
       fcm_options: { link: "https://getnaluno.com/app/?call=" + encodeURIComponent(callId) },
     };
   }
+  /* 12c: the limelight for a creator whose live dropped. Same tag as the
+     service worker's own live alert, so the two never double up; a tap opens
+     that Broadcast, where the app offers Resume live / End live. */
+  if (String(d.type || "") === "live_dropped" && d.broadcastId) {
+    const bid = String(d.broadcastId).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 80);
+    return {
+      headers: { Urgency: "high", TTL: "900" },
+      notification: {
+        title: String(d.title || "Your live dropped").slice(0, 80),
+        body: String(d.body || "Open Naluno to carry on.").slice(0, 160),
+        icon: "https://getnaluno.com/icon-192.png",
+        tag: "naluno-live:" + bid,
+        renotify: true,
+        requireInteraction: true,
+        silent: false,
+        data: { type: "live_dropped", broadcastId: bid, url: "/app/?broadcast=" + bid },
+      },
+      fcm_options: { link: "https://getnaluno.com/app/?broadcast=" + encodeURIComponent(bid) },
+    };
+  }
   return {
     headers: { Urgency: "high", TTL: "86400" },
     notification: {
@@ -199,7 +219,9 @@ async function sendAll(tokens, data, link, deps, now) {
                     body: String(data.body || "New message").slice(0, 140),
                     channel_id: "naluno_wireline",
                     sound: "default",
-                    tag: "naluno-wire:" + String(data.fromUid || "").slice(0, 40),
+                    tag: data.type === "live_dropped"
+                      ? "naluno-live:" + String(data.broadcastId || "").slice(0, 80)
+                      : "naluno-wire:" + String(data.fromUid || "").slice(0, 40),
                     notification_priority: "PRIORITY_HIGH",
                     visibility: "PUBLIC",
                   },
@@ -328,4 +350,20 @@ export async function handleLockPush(body, user, deps) {
   tokens.kinds = kinds;
   if (!tokens.length) return { status: 200, body: { ok: true, sent: 0, reason: "no_web_token" } };
   return sendAll(tokens, data, data.url, deps, now);
+}
+
+/* 12c: the limelight push to a creator whose live dropped (live-sweep.mjs).
+   Server-made only (the cron); nothing a phone sends reaches this. */
+export async function sendLiveDropped(uid, data, deps) {
+  const now = deps.now ? deps.now() : Date.now();
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(String(uid || ""))) return { status: 400, body: { ok: false, error: "bad recipient" } };
+  const [them, vault] = await Promise.all([
+    deps.getDoc("/users/" + uid),
+    deps.getDoc("/users/" + uid + "/vault/main"),
+  ]);
+  const tokens = tokensOf(vault, them);
+  if (!tokens.length) return { status: 200, body: { ok: true, sent: 0, reason: "no_token" } };
+  const clean = {};
+  Object.keys(data || {}).forEach(function (k) { if (data[k] != null) clean[k] = String(data[k]); });
+  return sendAll(tokens, clean, clean.url || "/app/", deps, now);
 }
