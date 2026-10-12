@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.10.12a" />
+  <meta name="naluno-build" content="2026.10.13a" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.10.12a">
+<meta name="app-version" content="2026.10.13a">
 <meta name="description" content="Naluno brings private communication, communities and creator-led content into one place. A Callsign instead of a phone number.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="Private communication, communities and creator-led content. A Callsign — not a phone number.">
@@ -137,6 +137,33 @@
 </head>
 <body class="naluno-gated">
 <script>
+/* Opened from a call notification: say so at once. The app's scripts take
+   a few seconds to load on a slow phone, and a blank screen there made
+   people think the call had failed and ring back. This makes no claim
+   about the call itself; the real ring (or "That call already ended")
+   replaces it. */
+(function(){
+  try{
+    var q = location.search || '';
+    var nativeCall = false;
+    try{ nativeCall = !!(window.NalunoNative && typeof NalunoNative.hasPendingCall === 'function' && NalunoNative.hasPendingCall()); }catch(_){}
+    if(!/[?&]call=[A-Za-z0-9_-]+/.test(q) && !nativeCall) return;
+    /* The Android call screen hands over only an Answer press. */
+    var answering = /[?&]answer=1/.test(q) || nativeCall;
+    var d = document.createElement('div');
+    d.id = 'nalunoCallBoot';
+    d.setAttribute('role', 'status');
+    d.setAttribute('aria-live', 'polite');
+    d.style.cssText = 'position:fixed;inset:0;z-index:2147483000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;background:#0D0F17;color:#EDEFF7;font:600 18px system-ui,-apple-system,sans-serif;text-align:center';
+    d.innerHTML = '<style>@keyframes nalunoBootSpin{to{transform:rotate(360deg)}}</style>'
+      + '<div style="width:46px;height:46px;border-radius:50%;border:3px solid rgba(124,255,178,.25);border-top-color:#7CFFB2;animation:nalunoBootSpin .9s linear infinite"></div>'
+      + '<div>' + (answering ? 'Answering the call\u2026' : 'Opening the call\u2026') + '</div>'
+      + '<div style="font:400 13px system-ui,-apple-system,sans-serif;color:#8B90A8">Keep Naluno open</div>';
+    document.body.appendChild(d);
+    window.nalunoCallBootDone = function(){ try{ var e = document.getElementById('nalunoCallBoot'); if(e && e.parentNode) e.parentNode.removeChild(e); }catch(_){} };
+    setTimeout(window.nalunoCallBootDone, 25000);
+  }catch(_){}
+})();
 window.__nalunoEntryT0 = Date.now();
 (function(){
   function hideSplash(){
@@ -611,13 +638,6 @@ window.__nalunoEntryT0 = Date.now();
         <div class="greenroom-setting-sub" style="margin-top:10px;">To see the map, unlock Compass and tap the radar.</div>
       </div>
 
-      <div class="greenroom-setting" data-dial="calls" data-dial-name="Call notification">
-        <div class="greenroom-setting-sub" id="callNotifStatus">Get notified of an incoming call even when Naluno isn't open. Needs your permission once.</div>
-        <button class="save-btn" id="enableCallNotifsBtn" style="margin:14px 0 0; background:var(--surface-2); color:var(--text); border:1px solid var(--line);">Enable call notifications</button>
-        <a class="save-btn" id="downloadAndroidAppBtn" href="#" style="display:none; margin:10px 0 0; background:var(--mint); color:#0D0F17; border:none; text-align:center; text-decoration:none;">Download Android app</a>
-        <div class="greenroom-setting-sub" id="androidAppHint" style="display:none; margin-top:8px;">Android: the full app for calls when Naluno is closed. Home Screen install is the browser app.</div>
-      </div>
-
       <div class="greenroom-setting" data-dial="tone" data-dial-name="Ringtone">
         <div class="greenroom-setting-sub" id="ringtoneStatus">Using the built-in tone. Any music file on this phone — this device only.</div>
         <div style="display:flex; gap:10px; margin-top:14px;">
@@ -650,6 +670,16 @@ window.__nalunoEntryT0 = Date.now();
           </div>
         </div>
       </div>
+      </div>
+
+      <!-- Call notifications: on the page under the dial, just before Sign out
+           (it used to be one of the dial's stations). -->
+      <div class="greenroom-setting" id="callNotifSection" aria-labelledby="callNotifTitle">
+        <div class="greenroom-setting-head"><span class="dot" aria-hidden="true"></span><span class="greenroom-setting-title" id="callNotifTitle">Call notifications</span></div>
+        <div class="greenroom-setting-sub" id="callNotifStatus">Get notified of an incoming call even when Naluno isn't open. Needs your permission once.</div>
+        <button class="save-btn" id="enableCallNotifsBtn" style="margin:14px 0 0; background:var(--surface-2); color:var(--text); border:1px solid var(--line);">Enable call notifications</button>
+        <a class="save-btn" id="downloadAndroidAppBtn" href="#" style="display:none; margin:10px 0 0; background:var(--mint); color:#0D0F17; border:none; text-align:center; text-decoration:none;">Download Android app</a>
+        <div class="greenroom-setting-sub" id="androidAppHint" style="display:none; margin-top:8px;">Android: the full app for calls when Naluno is closed. Home Screen install is the browser app.</div>
       </div>
 
       <button class="save-btn" id="signOutBtn" style="margin:14px 20px 0; background:none; color:var(--red); border:1px solid var(--line);">Sign out</button>
@@ -1867,19 +1897,19 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/chat-store.js?v=20260928d"></script>
 <script src="/js/wire-mailbox.js?v=20261004c"></script>
 <script src="/js/atmosphere.js?v=20260908d"></script>
-<script src="/js/band-list.js?v=20261010a"></script>
+<script src="/js/band-list.js?v=20261013a"></script>
 <script type="module" src="/workers/economy/safety-boot.mjs?v=20260923c"></script>
-<script src="/js/signal-core.js?v=20261010d"></script>
-<script src="/js/broadcast-core.js?v=20261012a"></script>
-<script src="/js/broadcast-upload.js?v=20261010e"></script>
-<script src="/js/broadcast-composer.js?v=20261010e"></script>
+<script src="/js/signal-core.js?v=20261013a"></script>
+<script src="/js/broadcast-core.js?v=20261013a"></script>
+<script src="/js/broadcast-upload.js?v=20261013a"></script>
+<script src="/js/broadcast-composer.js?v=20261013a"></script>
 <script src="/js/screen.js?v=20261006b"></script>
 <!-- nudenet.js MUST load after screen.js: it upgrades runNalunoScreen() in place
      and keeps the heuristic as a hold-only fallback. Replaces nsfw-model.js. -->
 <script src="/js/nudenet.js?v=20261005h"></script>
 <script src="/js/origin.js?v=20261002b"></script>
 <script src="/js/strand.js?v=20261007b"></script>
-<script src="/js/circle.js?v=20261010a"></script>
+<script src="/js/circle.js?v=20261012b"></script>
 <!-- Community Economy: reports actions only; all economic value is computed
      server-side by the naluno-economy Worker. Loaded AFTER circle.js so
      currentUser exists, and deliberately non-blocking — if this file failed
@@ -1898,7 +1928,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/compass.js?v=20261010d"></script>
 <script src="/js/pass-on.js?v=20261003b"></script>
 <script src="/js/room-threads.js?v=20260925g"></script>
-<script src="/js/discover-engine.js?v=20260928d"></script>
+<script src="/js/discover-engine.js?v=20261012b"></script>
 <script src="/js/discover.js?v=20261011c"></script>
 <script src="/js/signal-ui.js?v=20261012a"></script>
 <script src="/js/compat-lock.js?v=20260908d"></script>
@@ -1907,10 +1937,10 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/lg-voice.js?v=20261005i"></script>
 <script src="/js/naluno-voice-master.js?v=20261007a"></script>
 <script src="/js/lg-ear.js?v=20261010a"></script>
-<script src="/js/naluno-voices.js?v=20261010a"></script>
+<script src="/js/naluno-voices.js?v=20261012b"></script>
 <script src="/js/broadcast-glance.js?v=20261010d"></script>
 <script src="/js/signal-public.js?v=20261007d"></script>
-<script src="/js/broadcast-space.js?v=20261011b"></script>
+<script src="/js/broadcast-space.js?v=20261013a"></script>
 <script src="/js/linkify.js?v=20260930a"></script>
 <script src="/js/ads.js?v=20261010a"></script>
 <script src="/js/media-vault.js?v=20260908d"></script>
@@ -1925,25 +1955,26 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/lifeline-wire.js?v=20260930b"></script>
 <!-- Wireline translation reuses Spark's engine and language list. -->
 <script src="/js/wireline-translate.js?v=20260928d"></script>
-<script src="/js/profile.js?v=20261005d"></script>
+<script src="/js/profile.js?v=20261012b"></script>
 <script src="/js/onboard.js?v=20261007d"></script>
 <script src="/js/handle-guard.js?v=20261006b"></script>
-<script src="/js/auth.js?v=20261007c"></script>
-<script src="/js/trust-legal.js?v=20261002e"></script>
+<script src="/js/launch.js?v=20261013a"></script>
+<script src="/js/auth.js?v=20261013a"></script>
+<script src="/js/trust-legal.js?v=20261012c"></script>
 <script src="/js/security-events.js?v=20261002e"></script>
 <script src="/js/notifications.js?v=20260928d"></script>
-<script src="/js/ice-core.js?v=20261011c"></script>
+<script src="/js/ice-core.js?v=20261012b"></script>
 <script src="/js/camera.js?v=20261010a"></script>
 <script src="/js/call-filters.js?v=20261002d"></script>
 <script src="/js/push-receipt.js?v=20260927d"></script>
-<script src="/js/calls.js?v=20261012a"></script>
+<script src="/js/calls.js?v=20261012b"></script>
 <script src="/js/call-pip.js?v=20261005g"></script>
 <script src="/js/sfu-live.js?v=20261010i"></script>
-<script src="/js/broadcast-live.js?v=20261010i"></script>
-<script src="/js/live-preview.js?v=20261010g"></script>
+<script src="/js/broadcast-live.js?v=20261012c"></script>
+<script src="/js/live-preview.js?v=20261012c"></script>
 <script src="/js/band-room.js?v=20261010a"></script>
 <script src="/js/traffic.js?v=20261003e"></script>
-<script src="/js/pwa.js?v=20261012a"></script>
+<script src="/js/pwa.js?v=20261013a"></script>
 <script src="/js/gestures.js?v=20261007c"></script>
 <script src="/js/spark-engine.js?v=20261005g"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>
