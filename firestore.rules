@@ -15,6 +15,29 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/deskOperators/$(request.auth.uid))
         && get(/databases/$(database)/documents/deskOperators/$(request.auth.uid)).data.revoked != true;
     }
+    /* 13a: Launch & Capacity. launchConfig/production is written only by the
+       economy worker after the desk decides. A feature that is off stops NEW
+       activity only; nothing already made is touched. A missing config means
+       everything stays on, as before. */
+    function launchCfgPath() {
+      return /databases/$(database)/documents/launchConfig/production;
+    }
+    function featureOn(name) {
+      return !exists(launchCfgPath())
+        || get(launchCfgPath()).data.get('features', {}).get(name, true) != false;
+    }
+    function guardStops(what) {
+      return exists(launchCfgPath())
+        && get(launchCfgPath()).data.get('guardState', {}).get('restricting', {}).get(what, false) == true;
+    }
+    /* A registered account: a Callsign profile exists. Since 13 Oct a profile
+       can only be created with a seat from the economy worker. */
+    function isRegistered() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+    function hasSeat(uid) {
+      return exists(/databases/$(database)/documents/registrations/$(uid));
+    }
     function isOperator() {
       return isSignedIn() && (
         request.auth.token.operator == true
@@ -185,7 +208,8 @@ service cloud.firestore {
        suspension or restriction the desk put on them. */
     function ownerKeepsModeration() {
       return !request.resource.data.diff(resource.data).affectedKeys()
-        .hasAny(['suspended', 'suspendedReason', 'suspendedAt', 'restricted', 'restrictedReason', 'restrictedAt', 'trustedPublisher', 'sexualReports', 'known', 'knownUntil', 'grant', 'rightsStrikes', 'reach', 'reachPlaced']);
+        .hasAny(['suspended', 'suspendedReason', 'suspendedAt', 'restricted', 'restrictedReason', 'restrictedAt', 'trustedPublisher', 'sexualReports', 'known', 'knownUntil', 'grant', 'rightsStrikes', 'reach', 'reachPlaced',
+                 'publisherReview', 'publisherReviewAt', 'publisherReviewReport', 'publisherReviewedAt', 'publisherReviewedBy']);
     }
     /* The day the account was created stays. A later profile save may
        not move it. The first write, when the field is still absent, may set it. */
@@ -231,7 +255,9 @@ service cloud.firestore {
     function isTrustedPublisher() {
       return isSignedIn()
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.trustedPublisher == true
+        // 12c: trusted until reported; then the desk decides.
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('trustedPublisher', true) != false
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('publisherReview', '') != 'pending'
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.restricted != true
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.suspended != true;
     }
@@ -261,7 +287,11 @@ service cloud.firestore {
          tokens. */
       allow get: if isSignedIn();
       allow list: if isOperator();
+      // 13a: a new profile needs a registration seat (the cap and the pause
+      // are applied by the economy worker when it gives one). Every profile
+      // made before 13 Oct already exists and is never re-created.
       allow create: if isOwner(uid)
+        && hasSeat(uid)
         && (!('known' in request.resource.data) || request.resource.data.known == false);
       allow delete: if isSuper();
       // Owner may update while the Callsign is open, including closing it.
@@ -308,6 +338,7 @@ service cloud.firestore {
       allow list: if isOperator();
       allow create: if isSignedIn()
         && request.resource.data.uid == request.auth.uid
+        && (isRegistered() || hasSeat(request.auth.uid))
         && handle.matches('^[a-z0-9_]{3,24}$')
         && (
           !exists(/databases/$(database)/documents/reservedHandles/$(handle))
@@ -591,6 +622,7 @@ service cloud.firestore {
         || resource.data.createdBy == request.auth.uid
       );
       allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.uid
+        && isRegistered() && featureOn('bands')
         && (!('aliveAt' in request.resource.data) || request.resource.data.aliveAt == request.time);
       // FIX (20260826): was allow update: if isSignedIn() — any signed-in user could
       // rewrite name/vibe/createdBy on someone else's Band. Scoped to the creator, or
@@ -824,6 +856,7 @@ service cloud.firestore {
       /* A public copy must be unheld, not taken down, and live at most 25
          hours. */
       allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid
+        && isRegistered() && featureOn('signals')
         && (request.resource.data.get('public', false) != true || (
              request.resource.data.get('held', false) == false
              && request.resource.data.get('hidden', false) == false
@@ -879,6 +912,7 @@ service cloud.firestore {
       );
       allow create: if isSignedIn()
         && request.resource.data.creatorUid == request.auth.uid
+        && isRegistered() && featureOn('broadcasts')
         && request.resource.data.listed is bool
         && request.resource.data.listed == false
         && request.resource.data.held == true
@@ -886,7 +920,16 @@ service cloud.firestore {
         && reachPassOk(id);
       // Creator may rewrite; others may only touch engagement/live/membership fields.
       // listed / hidden / held are desk + worker. Creator may only tighten to hidden.
-      allow update: if isOperator()
+      /* 13a: going live (live false -> true) needs Live on, and no guard
+         restriction on new lives. A live already running is not stopped by
+         this; ending a live is always allowed. */
+      function startsLive() {
+        return request.resource.data.get('live', false) == true && resource.data.get('live', false) != true;
+      }
+      function liveStartAllowed() {
+        return !startsLive() || (featureOn('live') && !guardStops('newLives'));
+      }
+      allow update: if liveStartAllowed() && (isOperator()
         || (isSignedIn()
             && resource.data.creatorUid == request.auth.uid
             && keepsBroadcastListing()
@@ -897,12 +940,22 @@ service cloud.firestore {
         || (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['updatedAt', 'live', 'liveAt', 'liveBy', 'memberUids',
                       'comments', 'replies', 'shares', 'commentCount', 'replyCount', 'shareCount'])
-            && engagementBumpsHonest());
+            && engagementBumpsHonest()));
       match /{col}/{docId} {
+        /* 13a: Comments and replies (conversation) and Questions and
+           community contributions (questions, results, resources) can be
+           switched off for new posts. The creator's own system lines (went
+           live, was live) are not comments and always go through. */
+        function contributionOn() {
+          return (col == 'conversation' && (request.resource.data.get('type', '') == 'system' || featureOn('comments')))
+            || ((col == 'questions' || col == 'results' || col == 'resources') && featureOn('questions'))
+            || !(col in ['conversation', 'questions', 'results', 'resources']);
+        }
         allow read: if isSignedIn() && parentBroadcastVisible(id);
         allow create: if isSignedIn()
           && request.resource.data.keys().size() < 40
-          && stampedAsSelf();
+          && stampedAsSelf()
+          && contributionOn();
         // Author or broadcast creator may edit/delete subdocs (journey, conversation, etc.).
         allow update: if isSignedIn() && (
           resource.data.from == request.auth.uid
@@ -1805,6 +1858,46 @@ service cloud.firestore {
     match /users/{uid}/circle/{memberUid} {
       allow read: if isSignedIn();
       allow write: if isSignedIn() && (isOwner(uid) || memberUid == request.auth.uid);
+    }
+
+    /* 13a: Launch & Capacity. Written only by the economy worker (service
+       account) after the desk, with its console password, decides. The
+       public part says which features are on and the media limits; it holds
+       no counts, budgets or people. */
+    match /launchConfig/{env} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /launchPrivate/{env} {
+      allow read: if isOperator();
+      allow write: if false;
+    }
+    match /launchState/{env} {
+      allow read: if isOperator();
+      allow write: if false;
+    }
+    match /launchHistory/{id} {
+      allow read: if isOperator();
+      allow write: if false;
+    }
+    /* Nobody can change or delete the launch audit, the desk included. */
+    match /launchAudit/{id} {
+      allow read: if isOperator();
+      allow write: if false;
+    }
+    match /launchUsage/{id} {
+      allow read: if isOperator();
+      allow write: if false;
+    }
+    match /registrations/{uid} {
+      allow read: if isOwner(uid) || isOperator();
+      allow write: if false;
+    }
+    /* Waiting list: an email and when, nothing else. Joined and left through
+       the worker; the desk reads it. */
+    match /waitlist/{id} {
+      allow read: if isOperator();
+      allow write: if false;
     }
 
     /* Collection-group read of vaults is desk-only (search by recovery email).
