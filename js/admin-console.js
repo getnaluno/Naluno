@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261013a';
+  const BUILD = '20261013b';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -1262,8 +1262,51 @@
       } catch (_) {}
       return;
     }
+    /* 13b: Launch & Capacity keeps itself up to date (admin-launch.js);
+       redrawing it from here blanked it and fetched everything again. */
+    if (__activeTab === 'launch') return;
+    renderTabInPlace(__activeTab, snap);
+  }
+  /* 13b: a background refresh draws the tab off-screen and swaps in only the
+     cards whose content changed. Before, the whole tab was replaced on every
+     live update (and every 20 s), so the page flashed and jumped while being
+     read. Unchanged parts are not touched: their scroll, open rows, playing
+     media and typed text stay exactly as they are. */
+  function morphChildren(live, fresh) {
+    const a = Array.prototype.slice.call(live.children);
+    const b = Array.prototype.slice.call(fresh.children);
+    if (a.length !== b.length) {
+      while (live.firstChild) live.removeChild(live.firstChild);
+      b.forEach(function (n) { live.appendChild(n); });
+      return b.length;
+    }
+    let changed = 0;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i].outerHTML === b[i].outerHTML) continue;
+      // one level deeper first: a card whose rows changed keeps its frame
+      if (a[i].tagName === b[i].tagName && a[i].className === b[i].className && a[i].children.length && a[i].children.length === b[i].children.length
+        && a[i].getAttribute('id') === b[i].getAttribute('id')) {
+        changed += morphChildren(a[i], b[i]);
+        continue;
+      }
+      live.replaceChild(b[i], a[i]);
+      changed++;
+    }
+    return changed;
+  }
+  function renderTabInPlace(tab, snap) {
+    const live = document.getElementById('adminBody');
+    if (!live || !live.parentNode) { try { renderTab(tab, snap); } catch (_) {} return; }
     const kept = captureDeskState();
-    try { renderTab(__activeTab, snap); } catch (_) {}
+    const fresh = live.cloneNode(false);
+    // Swap synchronously: the browser never paints the empty stand-in.
+    live.parentNode.replaceChild(fresh, live);
+    try { renderTab(tab, snap); } catch (_) {}
+    fresh.parentNode.replaceChild(live, fresh);
+    try { morphChildren(live, fresh); } catch (_) {
+      while (live.firstChild) live.removeChild(live.firstChild);
+      while (fresh.firstChild) live.appendChild(fresh.firstChild);
+    }
     restoreDeskState(kept);
   }
   function scheduleLive() {
@@ -2229,9 +2272,12 @@
       el.innerHTML = '<p class="sub">Loading…</p>';
     }
     try {
+      const hadContent = !!(__snap && !force);
       const d = await loadSnapshot(!!force);
       renderStrip(d);
-      renderTab(tab, d);
+      // 13b: the tab is already on screen from the last snapshot: refresh it in place.
+      if (hadContent && tab !== 'launch' && __activeTab === tab) renderTabInPlace(tab, d);
+      else renderTab(tab, d);
     } catch (e) {
       if (!__snap) el.innerHTML = '<p class="sub">Could not load this section. ' + escapeHtml((e && e.message) || '') + '</p>';
     }
@@ -6101,7 +6147,10 @@
         + '<button type="button" class="ghost rec-span" data-span="week">Week</button>'
         + '<button type="button" class="ghost rec-span" data-span="month">Month</button>'
         + '<button type="button" class="ghost rec-span" data-span="year">Year</button>'
-        + '</div><div id="recOut"><p class="sub">Loading…</p></div>');
+        + '</div><div id="recOut"><p class="sub">Loading…</p></div>')
+        + card('Call speed',
+          '<p class="sub">How long real phones take at each step of a call, from the last calls made with this version of the app. Times only: nothing about what was said.</p>'
+          + '<div id="recSpeed"><p class="sub">Loading…</p></div>');
       let span = window.__recSpan || 'day';
       function paint(rows) {
         const out = $('recOut');
@@ -6150,6 +6199,45 @@
           return row;
         });
       }
+      /* 13 Oct b: the stage times each phone keeps on its call (timing.caller /
+         timing.callee, milliseconds on that phone's own clock, so only
+         differences on the same phone are used). */
+      function paintCallSpeed(calls) {
+        const out = $('recSpeed');
+        if (!out) return;
+        const rows = (calls || []).filter(function (c) { return c && c.timing && (c.timing.callee || c.timing.caller); });
+        if (!rows.length) { out.innerHTML = '<p class="sub">No timed calls yet. Calls made after this version is live show up here.</p>'; return; }
+        const gap = function (t, a, b) { return (t && typeof t[a] === 'number' && typeof t[b] === 'number' && t[b] >= t[a]) ? t[b] - t[a] : null; };
+        const med = function (xs) { xs = xs.filter(function (x) { return x != null; }).sort(function (a, b) { return a - b; }); if (!xs.length) return null; const m = Math.floor(xs.length / 2); return xs.length % 2 ? xs[m] : (xs[m - 1] + xs[m]) / 2; };
+        const sec = function (ms) { return ms == null ? '—' : (ms / 1000).toFixed(1) + ' s'; };
+        const open = [], answer = [], heard = [], alert = [], wait = [];
+        let early = 0, answered = 0;
+        rows.forEach(function (c) {
+          const e = c.timing.callee || {}, r = c.timing.caller || {};
+          open.push(gap(e, 'opened', 'ring'));
+          wait.push(gap(e, 'ring', 'answerTap'));
+          answer.push(gap(e, 'answerTap', 'connected'));
+          heard.push(gap(e, 'answerTap', 'heard'));
+          alert.push(gap(r, 'dial', 'alert'));
+          if (e.answerTap != null) { answered++; if (e.earlyAnswer != null && e.earlyAnswer <= e.answerTap) early++; }
+        });
+        const list = rows.slice(0, 12).map(function (c) {
+          const e = c.timing.callee || {}, r = c.timing.caller || {};
+          const when = c.createdAt && c.createdAt.toDate ? c.createdAt.toDate().toLocaleString() : '';
+          return '<div class="flag-row"><span>' + escapeHtml(when) + ' · ' + escapeHtml(c.kind || '') + '</span><span>'
+            + 'alert ' + sec(gap(r, 'dial', 'alert')) + ' · open ' + sec(gap(e, 'opened', 'ring'))
+            + ' · answer→connected ' + sec(gap(e, 'answerTap', 'connected')) + ' · heard ' + sec(gap(e, 'answerTap', 'heard'))
+            + '</span></div>';
+        }).join('');
+        out.innerHTML = kpis([
+          ['Calls timed', rows.length],
+          ['Alert sent after dialling', sec(med(alert))],
+          ['Opening from the notification', sec(med(open))],
+          ['Answer to connected', sec(med(answer))],
+          ['Answer to hearing them', sec(med(heard))],
+          ['Connected before Answer', answered ? Math.round(100 * early / answered) + '%' : '—'],
+        ]) + '<p class="sub">Typical (middle) values. "Opening" counts only calls opened from a notification. Ring time before Answer: ' + sec(med(wait)) + '.</p>' + list;
+      }
       function loadRec() {
         if (!db) { const o = $('recOut'); if (o) o.innerHTML = '<p class="sub">Database is not ready.</p>'; return; }
         const trafficP = db.collection('traffic').orderBy('at', 'desc').limit(800).get();
@@ -6169,6 +6257,7 @@
             ? NalunoTraffic.mergeCalls(traffic, callRowsFrom(calls))
             : traffic;
           paint(cached);
+          try { paintCallSpeed(calls); } catch (_) {}
           if (callsUnreadable) {
             const o = $('recOut');
             if (o) o.insertAdjacentHTML('beforeend', '<p class="sub">This desk cannot read the call documents yet. Publish firestore.rules. Until then, a call is missing here if the other person hung up.</p>');

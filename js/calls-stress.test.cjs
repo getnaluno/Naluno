@@ -131,8 +131,9 @@ const ORDER = { ringing: 0, accepted: 1, declined: 2, missed: 2, busy: 2, ended:
   assert.ok(src.includes("const finished = d.status === 'ended' || d.status === 'missed' || d.status === 'declined' || d.status === 'busy';") && src.includes('if(!finished && (d.status === \'accepted\' || d.answer))') && src.includes('if(!finished && d.answer && !remoteDescriptionSet'), 'an answer on a finished call is not a live answer');
   assert.ok(src.includes('function nalunoWatchCandidates(') && (src.match(/nalunoWatchCandidates\(/g) || []).length >= 4, 'candidate listeners subscribe again');
   assert.ok(src.includes("nalunoRelisten('missedCalls', startMissedCallListener)"), 'missed-call badge subscribes again');
-  assert.ok(src.includes('nalunoPrepareAnswer(callId, data.offer, camReady)') && src.includes("answer: prep.answer"), 'the answer is prepared while ringing and sent with "accepted"');
-  assert.ok(src.includes('if(!prep.used){ prep.remoteHeld.push(cand); return; }'), 'no connectivity checks while still ringing');
+  assert.ok(src.includes('nalunoPrepareAnswer(callId, data.offer, camReady') && src.includes("answer: prep.answer"), 'the answer is prepared while ringing and sent with "accepted"');
+  // 13b: unless both phones connect early (sound and picture held until Answer).
+  assert.ok(src.includes('if(!prep.used && !prep.early){ prep.remoteHeld.push(cand); return; }'), 'no connectivity checks while still ringing');
   assert.ok(src.includes('if(peerConnection !== pc) return;') || (src.includes('peerConnection === pc && pc.signalingState !== \'closed\'') && (src.match(/if\(!nalunoCallStillThis\(pc\)/g) || []).length >= 2), 'watchdogs only act on the live connection');
   // 29d: the picture is decided before connecting and never switched automatically
   assert.ok(src.includes("const got = getCallOutboundVideoTrackSync();") && src.includes("window.__nalunoFxDraw = true; }"), 'the call starts on the picture it keeps');

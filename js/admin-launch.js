@@ -114,8 +114,76 @@
       root.innerHTML = H.card('Launch & Capacity', '<p class="sub">Could not read the launch settings: ' + esc(e.message) + '</p>');
       return;
     }
+    S.loadedAt = Date.now();
     paint();
-    call('/v1/admin/launch/metrics').then(function (m) { S.metrics = m; S.metricsErr = ''; paintMetrics(); }, function (e) { S.metricsErr = e.message; paintMetrics(); });
+    call('/v1/admin/launch/metrics').then(function (m) { S.metrics = m; S.metricsErr = ''; S.metricsAt = Date.now(); paintMetrics(); }, function (e) { S.metricsErr = e.message; paintMetrics(); });
+    startQuietRefresh();
+  }
+
+  /* 13b: background refresh. New figures come in without the page going
+     blank: the tab is drawn off-screen and only the parts that changed are
+     swapped in, so the reading position stays. Nothing refreshes while you
+     are typing, editing a phase or have unsaved changes on the page. */
+  function busy() {
+    if (!root || !root.isConnected || document.hidden) return true;
+    if (S.editing) return true;
+    const a = document.activeElement;
+    if (a && root.contains(a) && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)) return true;
+    const fields = root.querySelectorAll('input, select, textarea');
+    for (let i = 0; i < fields.length; i++) {
+      const f = fields[i];
+      if (f.type === 'checkbox' || f.type === 'radio') { if (f.checked !== f.defaultChecked) return true; continue; }
+      if (f.tagName === 'SELECT') { if (f.id !== 'lcEnv' && f.options[f.selectedIndex] && !f.options[f.selectedIndex].defaultSelected) return true; continue; }
+      if (String(f.value) !== String(f.defaultValue)) return true;
+    }
+    return false;
+  }
+  function morph(live, fresh) {
+    const a = Array.prototype.slice.call(live.children), b = Array.prototype.slice.call(fresh.children);
+    if (a.length !== b.length) { while (live.firstChild) live.removeChild(live.firstChild); b.forEach(function (n) { live.appendChild(n); }); return; }
+    for (let i = 0; i < a.length; i++) {
+      if (a[i].outerHTML === b[i].outerHTML) continue;
+      if (a[i].tagName === b[i].tagName && a[i].className === b[i].className && a[i].children.length && a[i].children.length === b[i].children.length && a[i].id === b[i].id) { morph(a[i], b[i]); continue; }
+      live.replaceChild(b[i], a[i]);
+    }
+  }
+  function repaintQuietly() {
+    const live = root;
+    const fresh = live.cloneNode(false);
+    root = fresh;
+    try { paint(); if (S.metrics || S.metricsErr) paintMetrics(); } finally { root = live; }
+    morph(live, fresh);
+  }
+  /* After a save or action: fetch and swap in, without blanking the page. */
+  async function refreshNow() {
+    try {
+      S.data = await call('/v1/admin/launch');
+      S.loadedAt = Date.now();
+      repaintQuietly();
+      call('/v1/admin/launch/metrics').then(function (m) { S.metrics = m; S.metricsAt = Date.now(); S.metricsErr = ''; paintMetrics(); }, function () {});
+    } catch (e) { load(); }
+  }
+  let timer = null;
+  function startQuietRefresh() {
+    if (timer) clearInterval(timer);
+    timer = setInterval(async function () {
+      if (!root || !root.isConnected) { clearInterval(timer); timer = null; return; }
+      if (busy()) return;
+      try {
+        const next = await call('/v1/admin/launch');
+        let metrics = null;
+        if (!S.metricsAt || Date.now() - S.metricsAt > 120000) {
+          metrics = await call('/v1/admin/launch/metrics').catch(function () { return null; });
+        }
+        if (busy()) return;
+        const same = JSON.stringify(next) === JSON.stringify(S.data);
+        if (metrics) { S.metrics = metrics; S.metricsAt = Date.now(); S.metricsErr = ''; }
+        if (same && !metrics) return;
+        S.data = next;
+        S.loadedAt = Date.now();
+        repaintQuietly();
+      } catch (_) { /* try again next time; what is on screen stays */ }
+    }, 45000);
   }
 
   function regState() {
@@ -258,14 +326,14 @@
     try {
       const out = await call('/v1/admin/launch/save', { config: next, reason: reason || '', expectVersion: S.data.config.version || 0 });
       msg(what + ' saved as version ' + out.version + '.');
-      await load();
+      await refreshNow();
     } catch (e) { msg('Not saved: ' + e.message); }
   }
 
   function wire() {
     const $ = function (id) { return root.querySelector('#' + id); };
     $('lcEnv').onchange = function () { S.env = this.value; S.metrics = null; S.wl = null; S.editing = ''; load(); };
-    $('lcReload').onclick = load;
+    $('lcReload').onclick = refreshNow;
     $('lcRegSave').onclick = function () {
       const next = clone();
       next.registration.open = $('lcOpen').checked;
@@ -282,14 +350,14 @@
     $('lcRecount').onclick = async function () {
       const why = ask('Count every Callsign profile again and set the account count to it?');
       if (why === null) return;
-      try { const r = await call('/v1/admin/launch/recount', { reason: why }); msg('Counted ' + r.registered + ' accounts (was ' + r.before + ').'); load(); } catch (e) { msg('Could not recount: ' + e.message); }
+      try { const r = await call('/v1/admin/launch/recount', { reason: why }); msg('Counted ' + r.registered + ' accounts (was ' + r.before + ').'); refreshNow(); } catch (e) { msg('Could not recount: ' + e.message); }
     };
     $('lcPause').onclick = async function () {
       const on = !S.data.config.registration.emergencyPause;
       if (!window.confirm(on ? 'Pause all new registrations now? Existing accounts are not affected.' : 'Lift the emergency pause? Registration then follows the switch and the cap again.')) return;
       const why = ask(on ? 'Why are new registrations paused?' : 'Why is the pause lifted?');
       if (why === null) return;
-      try { await call('/v1/admin/launch/pause', { on: on, reason: why }); msg(on ? 'New registrations are paused.' : 'The pause is lifted.'); load(); } catch (e) { msg('Not changed: ' + e.message); }
+      try { await call('/v1/admin/launch/pause', { on: on, reason: why }); msg(on ? 'New registrations are paused.' : 'The pause is lifted.'); refreshNow(); } catch (e) { msg('Not changed: ' + e.message); }
     };
     root.querySelectorAll('.lcActivate').forEach(function (btn) {
       btn.onclick = async function () {
@@ -308,7 +376,7 @@
         try {
           const out = await call('/v1/admin/launch/activate', { phase: id, reason: why, expectVersion: c.version || 0 });
           msg('"' + p.name + '" is active (version ' + out.version + ').');
-          load();
+          refreshNow();
         } catch (e) { msg('Not activated: ' + e.message); }
       };
     });
@@ -343,7 +411,7 @@
         if (!window.confirm('Roll back to version ' + v + '? It is checked again and saved as a new version.')) return;
         const why = ask('Why roll back?');
         if (why === null) return;
-        try { const out = await call('/v1/admin/launch/rollback', { version: Number(v), reason: why }); msg('Rolled back: now version ' + out.version + '.'); load(); } catch (e) { msg('Not rolled back: ' + e.message); }
+        try { const out = await call('/v1/admin/launch/rollback', { version: Number(v), reason: why }); msg('Rolled back: now version ' + out.version + '.'); refreshNow(); } catch (e) { msg('Not rolled back: ' + e.message); }
       };
     });
   }
@@ -477,7 +545,14 @@
   }
 
   window.NalunoLaunchDesk = {
-    render: function (el, helpers) { H = helpers; root = el; load(); },
-    _lowered: lowered, _read: read, _show: show,
+    /* Opening the tab loads it; the console asking again while it is already
+       on screen (live updates elsewhere) changes nothing. */
+    render: function (el, helpers) {
+      H = helpers;
+      if (root === el && el.isConnected && S.data && el.querySelector('#lcEnv')) return;
+      root = el;
+      load();
+    },
+    _lowered: lowered, _read: read, _show: show, _refreshNow: function () { return refreshNow(); },
   };
 })();

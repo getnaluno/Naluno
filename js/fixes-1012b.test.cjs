@@ -29,7 +29,7 @@ function fnSource(src, name) {
   const tapAt = calls.indexOf("nalunoCallMove(acceptingId, 'accepted'");
   const waitAt = calls.indexOf('!nalunoPrepared.ready', tapAt - 2000);
   assert.ok(tapAt > 0 && waitAt > tapAt, 'accepted is written before waiting for the prepared answer');
-  assert.ok(/function nalunoCallMark\(callId, stage\)/.test(calls), 'call stages are timed');
+  assert.ok(/function nalunoCallMark\(callId, stage(, at)?\)/.test(calls), 'call stages are timed');
   ['ring', 'answerTap', 'accepted', 'connected'].forEach((st) => assert.ok(calls.includes("'" + st + "'"), 'stage ' + st + ' is marked'));
   const boot = html.indexOf("d.id = 'nalunoCallBoot'");
   assert.ok(boot > 0 && boot < html.indexOf('id="authGate"'), 'the call cover is drawn before anything else on the page');

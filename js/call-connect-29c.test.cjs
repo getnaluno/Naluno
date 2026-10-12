@@ -11,7 +11,8 @@ const prepAt = calls.indexOf('async function nalunoPrepareAnswer');
 const prepBody = calls.slice(prepAt, calls.indexOf('function nalunoPreparedFor'));
 assert.ok(prepAt > 0 && prepBody.length > 50, 'prepare function found');
 assert.ok(!prepBody.includes('getIceServersPatient'), 'preparing an answer does not use the 3.7s live-ICE wait');
-assert.ok(prepBody.includes('nalunoWaitForTurn(7000)'), 'TURN and the camera run together while the phone is still ringing');
+// 13b: the wait is shorter when the caller already has a relay route; still alongside the camera.
+assert.ok(/Promise\.all\(\[[\s\S]{0,120}camReady[\s\S]{0,260}nalunoWaitForTurn\(callerRelay \? 1200 : 7000\)/.test(prepBody), 'TURN and the camera run together while the phone is still ringing');
 assert.ok(calls.includes('if(pc._nalunoIceFrozen || pc.localDescription) return;'), 'TURN that arrives after the SDP is built does not restart ICE');
 assert.ok(calls.includes('const hadTurn = nalunoCfgHasTurn(ice);'), 'an array of stun+turn urls still counts as TURN');
 const iceStart = calls.indexOf('getIceServers().then(function(fresh)');

@@ -191,10 +191,13 @@ function bspaceListenVoice(){
     return v === 'male' ? 'male' : 'female';
   }catch(_){ return 'female'; }
 }
-async function bspaceSpeakWriting(text, lang, btn){
-  /* 30d: paragraph breaks are kept, so the voice pauses a little longer there. */
-  const src = String(text || '').replace(/\bSee more\b|\bSee less\b/g, '')
+/* 30d: paragraph breaks are kept, so the voice pauses a little longer there. */
+function bspaceListenSrc(text){
+  return String(text || '').replace(/\bSee more\b|\bSee less\b/g, '')
     .replace(/\r/g, '').replace(/[ \t\f\v]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+async function bspaceSpeakWriting(text, lang, btn){
+  const src = bspaceListenSrc(text);
   if(!src){ toast('Nothing to read'); return; }
   if(btn && btn.getAttribute('data-on') === '1'){
     btn.removeAttribute('data-on');
@@ -439,6 +442,7 @@ function bspacePaintWriting(seg){
   if(typeof bspaceFillHear === 'function') bspaceFillHear();
   const hear = $('bspaceHear');
   if(hear && hear.value) bspaceApplyLanguage(hear.value);
+  try{ bspaceReadAhead(); }catch(_){}
 }
 (function wireWritingClicks(){
   const box = $('bspaceWriting');
@@ -468,6 +472,64 @@ function bspacePaintWriting(seg){
     });
   });
 })();
+/* What Listen reads: the chapter on screen, its title first. */
+function bspaceListenText(shown){
+  if(!shown){
+    const box = $('bspaceWriting');
+    if(box){
+      box.querySelectorAll('[data-write-body]').forEach(function(el){
+        if(!shown && el.style.display !== 'none') shown = el;
+      });
+    }
+  }
+  return shown ? (function(){
+    const head = shown.querySelector('[data-write-title]');
+    const clamp = shown.querySelector('.bspace-read-clamp');
+    const title = (head && head.textContent) ? head.textContent.trim() : '';
+    return (title ? title + (/[.!?…]$/.test(title) ? '' : '.') + '\n\n' : '') + ((clamp && clamp.textContent) || '');
+  })() : ((activeBroadcastMeta && (activeBroadcastMeta.body || (activeBroadcastMeta.segment && activeBroadcastMeta.segment.text))) || '');
+}
+/* 13 Oct b: Medium, Pocket and the news apps have the audio ready before
+   Play is pressed. Naluno makes its voice on the phone, so it now makes
+   the first sentences while the piece is open (only once the voice is on
+   the phone, only for writing read as written in English, and only after
+   the piece has stayed open a moment). Listen then starts at once. The
+   voice, speed and words are exactly those Listen uses; Luganda pieces are
+   left to their own path, untouched. */
+let bspaceReadAheadTimer = null;
+function bspaceReadAhead(){
+  try{ clearTimeout(bspaceReadAheadTimer); }catch(_){}
+  const token = bspaceSpeakToken;
+  bspaceReadAheadTimer = setTimeout(function(){
+    try{
+      if(token !== bspaceSpeakToken || document.hidden) return;
+      if(!window.NalunoVoices || typeof NalunoVoices.prepare !== 'function' || !NalunoVoices.warm) return;
+      const btn = $('bspaceListenBtn');
+      const hear = $('bspaceHear');
+      const box = $('bspaceWriting');
+      if(!btn || !box || box.hidden || btn.getAttribute('data-on') === '1') return;
+      if(hear && hear.value) return;                                   // read in another language: not ahead
+      if(activeBroadcastMeta && activeBroadcastMeta.lang === 'lg') return;
+      const src = bspaceListenSrc(bspaceListenText(null));
+      if(!src) return;
+      const LV = window.NalunoLgVoice || null;
+      const Lg = window.NalunoLgSpeak || null;
+      if((LV && typeof LV.looksLuganda === 'function' && LV.looksLuganda(src))
+        || (Lg && typeof Lg.looksLuganda === 'function' && Lg.looksLuganda(src))) return;
+      Promise.resolve(NalunoVoices.warm(false)).then(function(ok){
+        if(!ok || token !== bspaceSpeakToken || btn.getAttribute('data-on') === '1') return;
+        const voice = bspaceListenVoice();
+        const plan = (LV && typeof LV.planner === 'function')
+          ? LV.planner(src, { lang: '', voice: voice, decode: NalunoVoices.decode })
+          : undefined;
+        /* Four pieces: the opening, and enough after it that a slower phone
+           does not pause early in the reading. Made one after another on the
+           one voice already loaded, and stopped the moment the piece closes. */
+        NalunoVoices.prepare(src, { voice: voice, plan: plan, pieces: 4, alive: function(){ return token === bspaceSpeakToken; } }).catch(function(){});
+      }).catch(function(){});
+    }catch(_){}
+  }, 1200);
+}
 function bspaceClearWriting(){
   const box = $('bspaceWriting');
   const listen = $('bspaceListenWrap');
@@ -527,12 +589,7 @@ function bspaceClearWriting(){
         if(!shown && el.style.display !== 'none') shown = el;
       });
     }
-    const text = shown ? (function(){
-      const head = shown.querySelector('[data-write-title]');
-      const clamp = shown.querySelector('.bspace-read-clamp');
-      const title = (head && head.textContent) ? head.textContent.trim() : '';
-      return (title ? title + (/[.!?…]$/.test(title) ? '' : '.') + '\n\n' : '') + ((clamp && clamp.textContent) || '');
-    })() : ((activeBroadcastMeta && (activeBroadcastMeta.body || (activeBroadcastMeta.segment && activeBroadcastMeta.segment.text))) || '');
+    const text = bspaceListenText(shown);
     /* 07c: a piece marked Luganda by its writer is read as Luganda when
        "As written" is chosen. */
     const marked = (activeBroadcastMeta && activeBroadcastMeta.lang === 'lg') ? 'lg' : '';

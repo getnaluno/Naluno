@@ -6,7 +6,7 @@
    ============================================================ */
 /* ---------------- PWA INSTALL + CALL NOTIFICATION DEEP-LINK ---------------- */
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js?v=20261013a', { scope: '/', updateViaCache: 'none' })
+  navigator.serviceWorker.register('/sw.js?v=20261013b', { scope: '/', updateViaCache: 'none' })
     .then(function(reg){ try{ reg.update(); }catch(_){} })
     .catch(function(e){ console.warn('[sw]', e); });
   // One automatic reload when a new SW takes control (clears stuck "sign-in not ready"
@@ -185,6 +185,9 @@ async function nalunoOpenCallFromPush(callId, opts){
     return;
   }
   try{ nalunoCallMark(callId, 'signedIn'); }catch(_){}
+  /* 13 Oct b: the relay route is fetched alongside the call record, not
+     after it: the ring and the early connection both need it. */
+  if(action !== 'decline'){ try{ if(typeof prewarmIceServers === 'function') prewarmIceServers(); }catch(_){} }
   if(action === 'decline'){
     try{ declineIncomingCall(callId); }catch(e){ console.warn('[call] decline from outside the app', e && e.message); }
     return;

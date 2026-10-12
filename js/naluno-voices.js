@@ -108,6 +108,22 @@
   /* 'unknown' until the first try; 'missing' when its files cannot be had
      (then Luganda uses the other voice for the rest of the visit). */
   var own = { state: 'unknown' };
+  /* Pieces already made in this visit (newest last, at most MADE_MAX). */
+  var made = new Map();
+  var MADE_MAX = 24;
+  function madeKey(text, voice, sp, pl) {
+    if (!pl || typeof pl.native === 'function') return '';   // a fetched voice is not kept here
+    try {
+      return JSON.stringify([text, voice, Math.round(sp * 1000), pl.phonemes || '', pl.af ? [pl.af.phones, !!pl.af.female, pl.af.speed || 0] : 0]);
+    } catch (_) { return ''; }
+  }
+  function remember(key, pr) {
+    if (!key) return;
+    made.set(key, pr);
+    while (made.size > MADE_MAX) made.delete(made.keys().next().value);
+    pr.then(function (a) { if (!a || !a.samples || !a.samples.length) { if (made.get(key) === pr) made.delete(key); } },
+      function () { if (made.get(key) === pr) made.delete(key); });
+  }
   function maker(i) {
     if (!makers[i]) makers[i] = new Maker();
     return makers[i];
@@ -221,7 +237,7 @@
     var toPhones = typeof opts.phonemes === 'function' ? opts.phonemes : null;
     var list = pieces(text);
     if (!list.length) return Promise.resolve(false);
-    prime();
+    if (!opts.prepare) prime();   // reading ahead needs no sound yet
     var started = job;
     var first = maker(0);
     return first.boot().then(function () {
@@ -247,10 +263,27 @@
         }
         return { phonemes: phonesFor(p) };
       }
+      /* 13 Oct b: a piece already made (read ahead while the Broadcast was
+         open, or heard earlier in this visit) is used again as it is: the
+         same words, voice, speed and sounds give the same audio. */
       function sayOn(m, p) {
-        var t0 = Date.now();
         var pl = planFor(p);
         var sp = speed * ((typeof pl.speed === 'number' && pl.speed > 0.5 && pl.speed < 1.5) ? pl.speed : 1);
+        var key = madeKey(p.text, voice, sp, pl);
+        var hit = key ? made.get(key) : null;
+        if (hit) return hit.then(function (a) { return a || sayFresh(m, p, pl, sp); });
+        var pr = sayFresh(m, p, pl, sp);
+        remember(key, pr);
+        return pr;
+      }
+      function isMade(p) {
+        var pl = planFor(p);
+        var sp = speed * ((typeof pl.speed === 'number' && pl.speed > 0.5 && pl.speed < 1.5) ? pl.speed : 1);
+        var key = madeKey(p.text, voice, sp, pl);
+        return !!(key && made.has(key));
+      }
+      function sayFresh(m, p, pl, sp) {
+        var t0 = Date.now();
         var run = function (mm) {
           return mm.boot().then(function () { mm.job(myJob); return mm.say(p.text, voice, sp, myJob, pl.phonemes || ''); });
         };
@@ -283,6 +316,16 @@
         });
       }
 
+      /* 13 Oct b: read ahead only (nothing plays): the first pieces are made
+         while the Broadcast is open, so Listen starts at once. */
+      if (opts.prepare) {
+        var ahead = Math.min(list.length, Math.max(1, opts.prepare | 0));
+        var chainP = Promise.resolve();
+        for (var a0 = 0; a0 < ahead; a0++) {
+          (function (k) { chainP = chainP.then(function () { return live() ? sayOn(first, list[k]) : null; }); })(a0);
+        }
+        return chainP.then(function () { return true; }, function () { return false; });
+      }
       /* 09 Oct: until the first sound is out, everything goes to the voice
          that is already loaded. Starting the other makers at the same
          moment (each loads its own copy of the voice) slowed the first
@@ -298,6 +341,10 @@
       var heard = false;
       var limit = -1;
       var slots = list.map(function () { var d = {}; d.p = new Promise(function (res) { d.res = res; }); return d; });
+      /* Seconds of each piece once it is made (read ahead pieces count as
+         sound already in hand, so the start does not wait for them). */
+      var readyDur = [];
+      slots.forEach(function (d, k) { d.p.then(function (a) { if (a && a.samples && a.samples.length) readyDur[k] = a.samples.length / (a.rate || 24000); }); });
       for (var q = 0; q < slots.length; q++) results[q] = slots[q].p;
       var state = team.map(function (_, k) { return k === 0 ? 'idle' : 'cold'; });
       function pump() {
@@ -328,7 +375,11 @@
         pump();
       }
       if (typeof opts.onready === 'function') opts.onready();
-      feed(1);
+      /* Pieces read ahead are taken at once (they cost nothing now), so the
+         start can count them as sound already in hand. */
+      var pre = 1;
+      while (pre + 1 < list.length && isMade(list[pre + 1])) pre += 1;
+      feed(pre);
       var context = ac();
       var nextAt = 0;
       var sources = [];
@@ -398,6 +449,9 @@
                   for (var r = idx + 1; r < Math.min(list.length, idx + 5); r++) restChars += list[r].text.length;
                   var secPerChar = buf.duration / Math.max(10, list[idx].text.length);
                   var deficit = slow > 1.05 ? (slow - 1) * restChars * secPerChar : 0;
+                  var inHand = 0;
+                  for (var h = idx + 1; h < list.length && readyDur[h] != null; h++) inHand += readyDur[h];
+                  deficit = Math.max(0, deficit - inHand);
                   /* At most 1.5 s, and only on a phone measured as slower
                      than the reading. 12 Oct b: a short title used to skip
                      this lead entirely, and on a slow phone the reading
@@ -464,8 +518,14 @@
     } catch (_) { return Promise.resolve(false); }
   }
 
+  /* Read the first pieces ahead, without playing (see speak's prepare). */
+  function prepare(text, opts) {
+    return speak(text, Object.assign({}, opts || {}, { prepare: (opts && opts.pieces) || 2 }));
+  }
+
   root.NalunoVoices = {
     speak: speak,
+    prepare: prepare,
     warm: warm,
     decode: decode,
     stop: stop,
@@ -481,6 +541,7 @@
     _teamSize: teamSize,
     _makers: function () { return makers.length; },
     _own: own,
+    _made: function () { return made.size; },
   };
   if (typeof module === 'object' && module.exports) module.exports = root.NalunoVoices;
 })(typeof window !== 'undefined' ? window : globalThis);
