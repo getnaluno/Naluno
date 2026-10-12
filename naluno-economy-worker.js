@@ -1,3 +1,465 @@
+var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+
+// workers/economy/launch.mjs
+var launch_exports = {};
+__export(launch_exports, {
+  FEATURES: () => FEATURES,
+  GIB: () => GIB,
+  HARD: () => HARD,
+  LAUNCH_ENVS: () => LAUNCH_ENVS,
+  MIB: () => MIB,
+  activatePhase: () => activatePhase,
+  claimDecision: () => claimDecision,
+  cleanEmail: () => cleanEmail,
+  compareLimits: () => compareLimits,
+  defaultConfig: () => defaultConfig,
+  defaultPhases: () => defaultPhases,
+  diffSettings: () => diffSettings,
+  evaluateGuard: () => evaluateGuard,
+  levelFor: () => levelFor,
+  publicView: () => publicView,
+  registrationMessage: () => registrationMessage,
+  registrationState: () => registrationState,
+  validateConfig: () => validateConfig,
+  validateMedia: () => validateMedia,
+  withDefaults: () => withDefaults
+});
+function media(o) {
+  return {
+    broadcast: {
+      maxVideoBytes: o.bVideoBytes,
+      maxVideoSec: o.bVideoSec,
+      maxImageBytes: o.imageBytes,
+      maxImageSide: o.imageSide,
+      uploadsPerDay: o.bPerDay,
+      bytesPerDay: o.bBytesDay,
+      maxResolution: o.resolution
+    },
+    signal: {
+      maxVideoBytes: o.sVideoBytes,
+      maxVideoSec: o.sVideoSec,
+      maxImageBytes: o.imageBytes,
+      maxImageSide: o.imageSide,
+      uploadsPerDay: o.sPerDay,
+      bytesPerDay: o.sBytesDay
+    },
+    account: {
+      maxStorageBytes: o.storagePerAccount,
+      concurrentUploads: o.concurrent
+    },
+    live: {
+      maxLiveSec: o.liveSec,
+      maxSimultaneous: 1
+    },
+    formats: {
+      video: ["video/mp4", "video/webm", "video/quicktime", "video/3gpp", "video/x-m4v"],
+      image: ["image/jpeg", "image/png", "image/webp", "image/gif"],
+      audio: ["audio/webm", "audio/mp4", "audio/mpeg", "audio/ogg", "audio/wav", "audio/aac"]
+    },
+    incompleteUploadHours: 24,
+    // A video whose length cannot be read from its file (WebM from the
+    // in-app recorder has none) is checked by size only, or refused.
+    unreadableDuration: "size-only"
+  };
+}
+function defaultPhases() {
+  const today = {
+    bVideoBytes: 8 * GIB,
+    bVideoSec: 3 * 60 * 60,
+    imageBytes: 25 * MIB,
+    imageSide: 8192,
+    bPerDay: 40,
+    bBytesDay: 20 * GIB,
+    resolution: "1080p",
+    sVideoBytes: 95 * MIB,
+    sVideoSec: 4 * 60,
+    sPerDay: 100,
+    sBytesDay: 2 * GIB,
+    storagePerAccount: 0,
+    concurrent: 3,
+    liveSec: 0
+  };
+  return {
+    founding: {
+      name: "Founding Circle",
+      order: 1,
+      purpose: "Where Naluno is now: the 29 founding accounts and room for the 12+ Google Play closed-test testers.",
+      maxAccounts: 50,
+      registrationOpen: true,
+      waitlist: true,
+      storageAllowanceBytes: 50 * GIB,
+      // today: no limit on live length; one creator rarely runs two lives
+      media: Object.assign(media(today), { live: { maxLiveSec: 0, maxSimultaneous: 2 } })
+    },
+    closed: {
+      name: "Play Closed Test",
+      order: 2,
+      purpose: "Google Play closed testing: at least 12 testers opted in for 14 days in a row before production access.",
+      maxAccounts: 100,
+      registrationOpen: true,
+      waitlist: true,
+      storageAllowanceBytes: 100 * GIB,
+      media: media(Object.assign({}, today, { storagePerAccount: 25 * GIB, liveSec: 3 * 60 * 60 }))
+    },
+    beta: {
+      name: "Play Open Beta",
+      order: 3,
+      purpose: "Open testing on Google Play: anyone can join from the listing. Per-account allowances keep one person from using the shared budget.",
+      maxAccounts: 500,
+      registrationOpen: true,
+      waitlist: true,
+      storageAllowanceBytes: 250 * GIB,
+      media: media(Object.assign({}, today, { bBytesDay: 10 * GIB, storagePerAccount: 20 * GIB, liveSec: 3 * 60 * 60, concurrent: 2 }))
+    },
+    launch: {
+      name: "Public Launch",
+      order: 4,
+      purpose: "Production on Google Play. Start at 2,000 and raise as the guardrails allow.",
+      maxAccounts: 2e3,
+      registrationOpen: true,
+      waitlist: true,
+      storageAllowanceBytes: 1e3 * GIB,
+      media: media(Object.assign({}, today, { bBytesDay: 10 * GIB, storagePerAccount: 20 * GIB, liveSec: 3 * 60 * 60, concurrent: 2 }))
+    }
+  };
+}
+function defaultConfig() {
+  const phases = defaultPhases();
+  return {
+    schema: 1,
+    version: 0,
+    activePhase: "founding",
+    registration: {
+      open: phases.founding.registrationOpen,
+      emergencyPause: false,
+      maxAccounts: phases.founding.maxAccounts,
+      waitlist: phases.founding.waitlist
+    },
+    features: { signals: true, broadcasts: true, live: true, uploads: true, comments: true, questions: true, bands: true },
+    phases,
+    media: phases.founding.media,
+    guard: {
+      thresholds: { watch: 60, warning: 80, critical: 95 },
+      budgets: {
+        monthlyUsd: 0,
+        // empty until the desk enters it
+        storageBytes: phases.founding.storageAllowanceBytes,
+        dailyUploadBytes: 0,
+        dailyFirestoreReads: 0,
+        dailyR2ClassA: 0
+      },
+      autoRestrict: { largeUploads: true, largeUploadBytes: 500 * MIB, newLives: true }
+    }
+  };
+}
+function isInt(n) {
+  return typeof n === "number" && isFinite(n) && Math.floor(n) === n;
+}
+function nonNeg(n) {
+  return isInt(n) && n >= 0;
+}
+function validateMedia(m, where, errors) {
+  const e = function(msg) {
+    errors.push(where + ": " + msg);
+  };
+  if (!m || typeof m !== "object") {
+    e("media limits missing");
+    return;
+  }
+  const b = m.broadcast || {}, s = m.signal || {}, a = m.account || {}, l = m.live || {};
+  [["broadcast", b], ["signal", s]].forEach(function(pair) {
+    const n = pair[0], x = pair[1];
+    ["maxVideoBytes", "maxVideoSec", "maxImageBytes", "maxImageSide", "uploadsPerDay", "bytesPerDay"].forEach(function(k) {
+      if (!nonNeg(x[k])) e(n + "." + k + " must be a whole number, 0 or more");
+    });
+  });
+  if (b.maxVideoBytes > HARD.broadcastObjectBytes) e("broadcast.maxVideoBytes is above the 8 GB the upload pipeline can join");
+  if (b.maxVideoBytes === 0) e("broadcast.maxVideoBytes cannot be 0 (use the 8 GB ceiling for no extra limit)");
+  if (s.maxVideoBytes > HARD.singlePostBytes) e("signal.maxVideoBytes is above the 95 MiB a Signal upload can carry");
+  if (s.maxVideoBytes === 0) e("signal.maxVideoBytes cannot be 0");
+  if (b.maxVideoSec > HARD.maxVideoSec) e("broadcast.maxVideoSec is above 3 hours");
+  if (s.maxVideoSec > HARD.maxVideoSec) e("signal.maxVideoSec is above 3 hours");
+  if (b.maxImageBytes > HARD.singlePostBytes || s.maxImageBytes > HARD.singlePostBytes) e("an image limit is above 95 MiB");
+  if (!nonNeg(a.maxStorageBytes)) e("account.maxStorageBytes must be 0 or more");
+  if (!isInt(a.concurrentUploads) || a.concurrentUploads < 1 || a.concurrentUploads > 20) e("account.concurrentUploads must be 1\u201320");
+  if (!nonNeg(l.maxLiveSec) || l.maxLiveSec > HARD.maxLiveSec) e("live.maxLiveSec must be 0 (no limit) to 12 hours");
+  if (!isInt(l.maxSimultaneous) || l.maxSimultaneous < 1 || l.maxSimultaneous > 5) e("live.maxSimultaneous must be 1\u20135");
+  if (!isInt(m.incompleteUploadHours) || m.incompleteUploadHours < 1 || m.incompleteUploadHours > 168) e("incompleteUploadHours must be 1\u2013168");
+  if (m.unreadableDuration !== "size-only" && m.unreadableDuration !== "reject") e("unreadableDuration must be size-only or reject");
+  const f = m.formats || {};
+  ["video", "image", "audio"].forEach(function(k) {
+    if (!Array.isArray(f[k]) || f[k].some(function(t) {
+      return typeof t !== "string" || !/^(video|image|audio)\/[a-z0-9.+-]{1,40}$/.test(t);
+    })) e("formats." + k + " must be a list of media types");
+  });
+  if (Array.isArray(f.image) && f.image.indexOf("image/svg+xml") >= 0) e("SVG images are never allowed");
+}
+function validateConfig(c) {
+  const errors = [];
+  if (!c || typeof c !== "object") return { ok: false, errors: ["configuration missing"] };
+  const phases = c.phases || {};
+  const ids = Object.keys(phases);
+  if (!ids.length) errors.push("at least one phase is needed");
+  ids.forEach(function(id) {
+    const p = phases[id] || {};
+    if (!/^[a-z][a-z0-9_-]{1,23}$/.test(id)) errors.push("phase id " + id + " is not a short lowercase name");
+    if (typeof p.name !== "string" || !p.name.trim() || p.name.length > 60) errors.push(id + ": name 1\u201360 characters");
+    if (!nonNeg(p.maxAccounts) || p.maxAccounts > HARD.maxAccounts) errors.push(id + ": maxAccounts must be 0\u2013" + HARD.maxAccounts);
+    if (typeof p.registrationOpen !== "boolean") errors.push(id + ": registrationOpen must be on or off");
+    if (typeof p.waitlist !== "boolean") errors.push(id + ": waitlist must be on or off");
+    if (!nonNeg(p.storageAllowanceBytes)) errors.push(id + ": storageAllowanceBytes must be 0 or more");
+    validateMedia(p.media, id, errors);
+  });
+  if (!phases[c.activePhase]) errors.push("the active phase " + c.activePhase + " does not exist");
+  const r = c.registration || {};
+  if (typeof r.open !== "boolean") errors.push("registration.open must be on or off");
+  if (typeof r.emergencyPause !== "boolean") errors.push("registration.emergencyPause must be on or off");
+  if (typeof r.waitlist !== "boolean") errors.push("registration.waitlist must be on or off");
+  if (!nonNeg(r.maxAccounts) || r.maxAccounts > HARD.maxAccounts) errors.push("registration.maxAccounts must be 0\u2013" + HARD.maxAccounts);
+  const f = c.features || {};
+  Object.keys(FEATURES).forEach(function(k) {
+    if (typeof f[k] !== "boolean") errors.push("features." + k + " must be on or off");
+  });
+  Object.keys(f).forEach(function(k) {
+    if (!FEATURES[k]) errors.push("features." + k + " is not a feature Naluno has");
+  });
+  validateMedia(c.media, "active limits", errors);
+  const g = c.guard || {}, t = g.thresholds || {}, b = g.budgets || {}, a = g.autoRestrict || {};
+  if (!(isInt(t.watch) && isInt(t.warning) && isInt(t.critical) && t.watch > 0 && t.watch < t.warning && t.warning < t.critical && t.critical <= 100)) {
+    errors.push("thresholds must rise: 0 < watch < warning < critical \u2264 100");
+  }
+  ["storageBytes", "dailyUploadBytes", "dailyFirestoreReads", "dailyR2ClassA"].forEach(function(k) {
+    if (!nonNeg(b[k])) errors.push("budgets." + k + " must be a whole number, 0 = not set");
+  });
+  if (!(typeof b.monthlyUsd === "number" && isFinite(b.monthlyUsd) && b.monthlyUsd >= 0 && b.monthlyUsd < 1e7)) errors.push("budgets.monthlyUsd must be 0 (not set) or more");
+  if (typeof a.largeUploads !== "boolean" || typeof a.newLives !== "boolean") errors.push("autoRestrict switches must be on or off");
+  if (!isInt(a.largeUploadBytes) || a.largeUploadBytes < MIB) errors.push("autoRestrict.largeUploadBytes must be at least 1 MiB");
+  return { ok: errors.length === 0, errors };
+}
+function pick(m, path) {
+  return path.split(".").reduce(function(o, k) {
+    return o && o[k];
+  }, m);
+}
+function compareLimits(from, to) {
+  const lowered = [], raised = [];
+  LIMIT_LABELS.forEach(function(pair) {
+    const a = Number(pick(from, pair[0])) || 0, b = Number(pick(to, pair[0])) || 0;
+    if (a === b) return;
+    const tighter = a === 0 && b > 0 || b > 0 && b < a;
+    (tighter ? lowered : raised).push({ key: pair[0], label: pair[1], from: a, to: b });
+  });
+  return { lowered, raised };
+}
+function activatePhase(cfg, phaseId) {
+  const p = cfg.phases && cfg.phases[phaseId];
+  if (!p) throw new Error("unknown phase " + phaseId);
+  const next = JSON.parse(JSON.stringify(cfg));
+  next.activePhase = phaseId;
+  next.media = JSON.parse(JSON.stringify(p.media));
+  next.registration = Object.assign({}, next.registration, {
+    open: p.registrationOpen,
+    maxAccounts: p.maxAccounts,
+    waitlist: p.waitlist
+  });
+  next.guard = Object.assign({}, next.guard, {
+    budgets: Object.assign({}, (next.guard || {}).budgets, { storageBytes: p.storageAllowanceBytes })
+  });
+  return next;
+}
+function registrationState(cfg, registered) {
+  const r = cfg && cfg.registration || {};
+  const n = Math.max(0, Number(registered) || 0);
+  const max = Math.max(0, Number(r.maxAccounts) || 0);
+  const paused = r.emergencyPause === true;
+  const open = r.open === true;
+  const full = n >= max;
+  const accepting = open && !paused && !full;
+  let reason = "";
+  if (paused) reason = "paused";
+  else if (!open) reason = "closed";
+  else if (full) reason = "full";
+  return {
+    accepting,
+    reason,
+    waitlist: !accepting && r.waitlist === true,
+    registered: n,
+    maxAccounts: max,
+    remaining: Math.max(0, max - n)
+  };
+}
+function registrationMessage(state) {
+  if (state.accepting) return "";
+  const base = state.reason === "full" ? "Naluno is full for now. New accounts open again as places are added." : state.reason === "paused" ? "New accounts are paused for a moment. If you already have an account, sign in as usual." : "New accounts are closed for now. If you already have an account, sign in as usual.";
+  return state.waitlist ? base + " You can join the waiting list." : base;
+}
+function claimDecision(cfg, registered, who) {
+  if (who && who.hasSeat) return { ok: true, already: "seat" };
+  if (who && who.hasProfile) return { ok: true, already: "profile" };
+  const st = registrationState(cfg, registered);
+  if (!st.accepting) return { ok: false, reason: st.reason, waitlist: st.waitlist, message: registrationMessage(st) };
+  return { ok: true, take: true };
+}
+function cleanEmail(raw) {
+  const e = String(raw || "").trim().toLowerCase();
+  if (e.length < 6 || e.length > 254) return "";
+  if (!/^[^\s@<>"']{1,64}@[a-z0-9.-]{1,253}\.[a-z]{2,24}$/.test(e)) return "";
+  return e;
+}
+function levelFor(pct, t) {
+  if (!(pct >= 0)) return "unknown";
+  if (pct >= t.critical) return "critical";
+  if (pct >= t.warning) return "warning";
+  if (pct >= t.watch) return "watch";
+  return "normal";
+}
+function evaluateGuard(guard, metrics) {
+  const g = guard || {}, b = g.budgets || {}, t = g.thresholds || { watch: 60, warning: 80, critical: 95 };
+  const m = metrics || {};
+  const items = [];
+  function add(key, label, used, limit, source) {
+    if (!(limit > 0)) {
+      items.push({ key, label, used: used == null ? null : used, limit: 0, pct: null, level: "not set", source: source || "" });
+      return;
+    }
+    if (used == null || !(used >= 0)) {
+      items.push({ key, label, used: null, limit, pct: null, level: "unknown", source: "not measured" });
+      return;
+    }
+    const pct = Math.round(used / limit * 1e3) / 10;
+    items.push({ key, label, used, limit, pct, level: levelFor(pct, t), source: source || "" });
+  }
+  add("storage", "Media storage", m.storageBytes, b.storageBytes, m.storageSource);
+  add("monthCost", "Infrastructure cost this month (USD)", m.monthCostUsd, b.monthlyUsd, m.monthCostSource);
+  add("uploadToday", "Uploaded today", m.todayUploadBytes, b.dailyUploadBytes, m.uploadSource);
+  add("firestoreReads", "Database reads today", m.todayFirestoreReads, b.dailyFirestoreReads, m.firestoreSource);
+  add("r2ClassA", "Storage writes today (R2 class A)", m.todayR2ClassA, b.dailyR2ClassA, m.r2Source);
+  let level = "normal";
+  items.forEach(function(it) {
+    if ((RANK[it.level] || -1) > RANK[level]) level = it.level;
+  });
+  const ar = g.autoRestrict || {};
+  const critical = level === "critical";
+  return {
+    level,
+    items,
+    restricting: {
+      largeUploads: critical && ar.largeUploads === true,
+      largeUploadBytes: Number(ar.largeUploadBytes) || 0,
+      newLives: critical && ar.newLives === true
+    }
+  };
+}
+function diffSettings(a, b, prefix, out) {
+  out = out || [];
+  prefix = prefix || "";
+  const keys = {};
+  Object.keys(a || {}).forEach(function(k) {
+    keys[k] = 1;
+  });
+  Object.keys(b || {}).forEach(function(k) {
+    keys[k] = 1;
+  });
+  Object.keys(keys).sort().forEach(function(k) {
+    if (k === "version" || k === "updatedAt" || k === "updatedBy" || k === "guardState") return;
+    const x = a ? a[k] : void 0, y = b ? b[k] : void 0;
+    const path = prefix ? prefix + "." + k : k;
+    const bothObj = x && y && typeof x === "object" && typeof y === "object" && !Array.isArray(x) && !Array.isArray(y);
+    if (bothObj) diffSettings(x, y, path, out);
+    else if (JSON.stringify(x) !== JSON.stringify(y)) out.push({ setting: path, from: x === void 0 ? null : x, to: y === void 0 ? null : y });
+  });
+  return out;
+}
+function withDefaults(stored) {
+  const d = defaultConfig();
+  if (!stored || typeof stored !== "object") return d;
+  function fill(base, have) {
+    if (have === void 0 || have === null) return base;
+    if (typeof base !== "object" || Array.isArray(base) || typeof have !== "object" || Array.isArray(have)) return have;
+    const out = {};
+    Object.keys(base).forEach(function(k) {
+      out[k] = fill(base[k], have[k]);
+    });
+    Object.keys(have).forEach(function(k) {
+      if (!(k in out)) out[k] = have[k];
+    });
+    return out;
+  }
+  const merged = fill(d, stored);
+  if (stored.phases && typeof stored.phases === "object" && Object.keys(stored.phases).length) {
+    merged.phases = {};
+    Object.keys(stored.phases).forEach(function(id) {
+      merged.phases[id] = fill(d.phases[id] || d.phases.founding, stored.phases[id]);
+    });
+  }
+  return merged;
+}
+function publicView(cfg) {
+  return {
+    env: cfg.env || "production",
+    version: cfg.version || 0,
+    activePhase: cfg.activePhase,
+    phaseName: cfg.phases && cfg.phases[cfg.activePhase] && cfg.phases[cfg.activePhase].name || "",
+    features: cfg.features,
+    media: cfg.media,
+    registration: {
+      open: !!(cfg.registration && cfg.registration.open),
+      emergencyPause: !!(cfg.registration && cfg.registration.emergencyPause),
+      waitlist: !!(cfg.registration && cfg.registration.waitlist)
+    }
+  };
+}
+var LAUNCH_ENVS, MIB, GIB, HARD, FEATURES, LIMIT_LABELS, RANK;
+var init_launch = __esm({
+  "workers/economy/launch.mjs"() {
+    LAUNCH_ENVS = ["production", "staging"];
+    MIB = 1024 * 1024;
+    GIB = 1024 * MIB;
+    HARD = {
+      broadcastObjectBytes: 8 * GIB,
+      singlePostBytes: 95 * MIB,
+      maxAccounts: 1e7,
+      maxVideoSec: 3 * 60 * 60,
+      maxLiveSec: 12 * 60 * 60
+    };
+    FEATURES = {
+      signals: "Signal publishing",
+      broadcasts: "Broadcast publishing",
+      live: "Live Broadcast",
+      uploads: "Media uploads",
+      comments: "Comments and replies",
+      questions: "Questions and community contributions",
+      bands: "Band creation"
+    };
+    LIMIT_LABELS = [
+      ["broadcast.maxVideoBytes", "Broadcast video size"],
+      ["broadcast.maxVideoSec", "Broadcast video length"],
+      ["broadcast.maxImageBytes", "Broadcast image size"],
+      ["broadcast.maxImageSide", "Broadcast image side"],
+      ["broadcast.uploadsPerDay", "Broadcast uploads a day"],
+      ["broadcast.bytesPerDay", "Broadcast data a day"],
+      ["signal.maxVideoBytes", "Signal video size"],
+      ["signal.maxVideoSec", "Signal video length"],
+      ["signal.maxImageBytes", "Signal/photo image size"],
+      ["signal.uploadsPerDay", "Signal uploads a day"],
+      ["signal.bytesPerDay", "Signal data a day"],
+      ["account.maxStorageBytes", "Storage per account"],
+      ["account.concurrentUploads", "Uploads at once"],
+      ["live.maxLiveSec", "Live length"],
+      ["live.maxSimultaneous", "Lives at once"]
+    ];
+    RANK = { unknown: -1, normal: 0, watch: 1, warning: 2, critical: 3 };
+  }
+});
+
 // workers/economy/band-sweep.mjs
 var BAND_SETTLE_MS = 2 * 60 * 60 * 1e3;
 var PRESENCE_FRESH_MS = 90 * 1e3;
@@ -212,6 +674,544 @@ async function sweepAllBands(io, now, opts = {}) {
   }
   return { ok: true, bands: bands.length, looked, dead, deleted, files };
 }
+
+// workers/economy/live-sweep.mjs
+var LIVE_QUIET_MS = 2 * 60 * 1e3;
+var LIVE_LIMELIGHT_MS = 15 * 60 * 1e3;
+function num2(v) {
+  const n = Number(v);
+  return isFinite(n) && n > 0 ? n : 0;
+}
+function liveDropState(b, frame, now) {
+  const row = b || {};
+  const creator = String(row.creatorUid || "");
+  const f = frame && (!creator || String(frame.from || "") === creator) ? frame : null;
+  const fromFrame = f ? num2(f.serverAt) || num2(f.at) : 0;
+  const lastAt = Math.max(fromFrame, num2(row.liveAt), num2(row.liveResumedAt));
+  if (!lastAt) return { state: "expired", lastAt: 0, endsAt: 0 };
+  const quiet = now - lastAt;
+  const endsAt = lastAt + LIVE_LIMELIGHT_MS;
+  if (quiet < LIVE_QUIET_MS) return { state: "running", lastAt, endsAt };
+  if (quiet < LIVE_LIMELIGHT_MS) return { state: "dropped", lastAt, endsAt };
+  return { state: "expired", lastAt, endsAt };
+}
+function formatLiveFor(ms) {
+  const m = Math.max(0, Math.round((Number(ms) || 0) / 6e4));
+  if (m < 1) return "under a minute";
+  if (m < 60) return m + (m === 1 ? " minute" : " minutes");
+  const h = Math.floor(m / 60), r = m % 60;
+  return h + (h === 1 ? " hour" : " hours") + (r ? " " + r + " min" : "");
+}
+function endedLivePatch(b, lastAt, now) {
+  const started = num2((b || {}).liveAt) || null;
+  const ended = num2(lastAt) || now;
+  return {
+    live: false,
+    liveAt: null,
+    liveBy: null,
+    lastLiveStartedAt: started,
+    lastLiveEndedAt: ended,
+    lastLiveDurationMs: started ? Math.max(0, ended - started) : null,
+    liveEndReason: "host-gone",
+    liveDroppedAt: null,
+    liveDroppedNotifiedAt: null,
+    liveLimelightUntil: null,
+    updatedAt: now
+  };
+}
+function overLimit(rows, limits, now) {
+  const out = {};
+  const L = limits || {};
+  const maxSec = Number(L.maxLiveSec) || 0;
+  const maxAt = Number(L.maxSimultaneous) || 0;
+  const byCreator = {};
+  (rows || []).forEach(function(r) {
+    const b = r.data || {};
+    if (b.live !== true) return;
+    if (maxSec > 0 && num2(b.liveAt) && now - num2(b.liveAt) > maxSec * 1e3) out[r.id] = "time-limit";
+    const c = String(b.creatorUid || "");
+    (byCreator[c] = byCreator[c] || []).push(r);
+  });
+  if (maxAt > 0) {
+    Object.keys(byCreator).forEach(function(c) {
+      const list = byCreator[c].filter(function(r) {
+        return !out[r.id];
+      }).sort(function(a, b) {
+        return num2(a.data.liveAt) - num2(b.data.liveAt);
+      });
+      list.slice(maxAt).forEach(function(r) {
+        out[r.id] = "too-many-lives";
+      });
+    });
+  }
+  return out;
+}
+async function sweepLives(io, now, limits) {
+  const out = { checked: 0, running: 0, dropped: 0, notified: 0, ended: 0, skipped: 0, limited: 0 };
+  const rows = await io.liveBroadcasts() || [];
+  const over = overLimit(rows, limits, now);
+  for (const row of rows) {
+    const b = row.data || {};
+    if (b.live !== true) continue;
+    out.checked++;
+    if (over[row.id]) {
+      const patch2 = endedLivePatch(b, now, now);
+      patch2.liveEndReason = over[row.id];
+      const ok2 = await io.patch(row.id, patch2, row.updateTime);
+      if (!ok2) {
+        out.skipped++;
+        continue;
+      }
+      out.limited++;
+      try {
+        await io.clearFrame(row.id);
+      } catch (_) {
+      }
+      try {
+        await io.clearSessions(row.id);
+      } catch (_) {
+      }
+      try {
+        const who = await io.name(String(b.creatorUid || "")) || "The creator";
+        await io.say(row.id, {
+          type: "system",
+          kind: "was_live",
+          durationMs: patch2.lastLiveDurationMs,
+          text: who + " was live" + (patch2.lastLiveDurationMs != null ? " for " + formatLiveFor(patch2.lastLiveDurationMs) : "") + (over[row.id] === "time-limit" ? " (the live time limit)." : "."),
+          from: String(b.creatorUid || ""),
+          ts: now
+        });
+      } catch (_) {
+      }
+      continue;
+    }
+    let frame = null;
+    try {
+      frame = await io.frame(row.id);
+    } catch (_) {
+      out.skipped++;
+      continue;
+    }
+    const st = liveDropState(b, frame, now);
+    if (st.state === "running") {
+      out.running++;
+      if (b.liveDroppedAt) await io.patch(row.id, { liveDroppedAt: null, liveDroppedNotifiedAt: null, liveLimelightUntil: null }, row.updateTime);
+      continue;
+    }
+    if (st.state === "dropped") {
+      out.dropped++;
+      if (num2(b.liveDroppedNotifiedAt) >= st.lastAt) continue;
+      const ok2 = await io.patch(row.id, { liveDroppedAt: st.lastAt, liveDroppedNotifiedAt: now, liveLimelightUntil: st.endsAt }, row.updateTime);
+      if (!ok2) {
+        out.skipped++;
+        continue;
+      }
+      const mins = Math.max(1, Math.round((st.endsAt - now) / 6e4));
+      try {
+        await io.push(String(b.creatorUid || ""), {
+          type: "live_dropped",
+          broadcastId: row.id,
+          title: "Your live dropped",
+          body: "\u201C" + String(b.title || "Your live").slice(0, 60) + "\u201D stopped sending. Open Naluno within " + mins + " min to carry on, or it ends.",
+          url: "/app/?broadcast=" + encodeURIComponent(row.id)
+        });
+        out.notified++;
+      } catch (_) {
+      }
+      continue;
+    }
+    const patch = endedLivePatch(b, st.lastAt, now);
+    const ok = await io.patch(row.id, patch, row.updateTime);
+    if (!ok) {
+      out.skipped++;
+      continue;
+    }
+    out.ended++;
+    try {
+      await io.clearFrame(row.id);
+    } catch (_) {
+    }
+    try {
+      await io.clearSessions(row.id);
+    } catch (_) {
+    }
+    try {
+      const who = await io.name(String(b.creatorUid || "")) || "The creator";
+      const dur = patch.lastLiveDurationMs != null ? " for " + formatLiveFor(patch.lastLiveDurationMs) : "";
+      await io.say(row.id, {
+        type: "system",
+        kind: "was_live",
+        durationMs: patch.lastLiveDurationMs,
+        text: who + " was live" + dur + ".",
+        from: String(b.creatorUid || ""),
+        ts: now
+      });
+    } catch (_) {
+    }
+  }
+  return out;
+}
+
+// workers/economy/launch-routes.mjs
+init_launch();
+function launchEnvOf(env, asked) {
+  const want = String(asked || "").toLowerCase();
+  if (LAUNCH_ENVS.indexOf(want) >= 0) return want;
+  return String(env && env.LAUNCH_ENV || "").toLowerCase() === "staging" ? "staging" : "production";
+}
+async function sha256hex(s) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(s)));
+  return Array.from(new Uint8Array(buf)).map(function(b) {
+    return b.toString(16).padStart(2, "0");
+  }).join("");
+}
+function randomKey() {
+  const a = new Uint8Array(18);
+  crypto.getRandomValues(a);
+  return Array.from(a).map(function(b) {
+    return b.toString(16).padStart(2, "0");
+  }).join("");
+}
+function dayKey(now) {
+  return new Date(now).toISOString().slice(0, 10);
+}
+function makeLaunch(d) {
+  const now = function() {
+    return d.now ? d.now() : Date.now();
+  };
+  const enc = encodeURIComponent;
+  async function getRaw(path) {
+    const r = await d.fsFetch(d.env, d.token, "GET", path);
+    if (r.status === 404) return { exists: false, data: null, updateTime: "" };
+    if (!r.ok) throw new Error("read " + path + " " + r.status);
+    return { exists: true, data: d.fromFsDoc(r.data), updateTime: r.data && r.data.updateTime || "" };
+  }
+  async function load(which) {
+    const got = await getRaw("/launchPrivate/" + enc(which));
+    const cfg = got.exists ? withDefaults(got.data) : defaultConfig();
+    delete cfg.id;
+    cfg.env = which;
+    return { cfg, exists: got.exists, updateTime: got.updateTime };
+  }
+  async function counter(which) {
+    const got = await getRaw("/launchState/" + enc(which));
+    return { exists: got.exists, registered: got.exists ? Math.max(0, Number(got.data.registered) || 0) : null, data: got.data || {}, updateTime: got.updateTime };
+  }
+  async function countWhere(collectionId, filters) {
+    const where = (filters || []).length ? filters.length === 1 ? { fieldFilter: filters[0] } : { compositeFilter: { op: "AND", filters: filters.map(function(f) {
+      return { fieldFilter: f };
+    }) } } : void 0;
+    const q = { from: [{ collectionId }] };
+    if (where) q.where = where;
+    const r = await d.fsFetch(d.env, d.token, "POST", ":runAggregationQuery", {
+      structuredAggregationQuery: { structuredQuery: q, aggregations: [{ alias: "n", count: {} }] }
+    });
+    if (!r.ok) return null;
+    const row = Array.isArray(r.data) ? r.data[0] : null;
+    const v = row && row.result && row.result.aggregateFields && row.result.aggregateFields.n;
+    return v ? Number(v.integerValue) : null;
+  }
+  const eq = function(field, value) {
+    const v = typeof value === "boolean" ? { booleanValue: value } : typeof value === "number" ? { integerValue: String(value) } : { stringValue: String(value) };
+    return { field: { fieldPath: field }, op: "EQUAL", value: v };
+  };
+  const gte = function(field, n) {
+    return { field: { fieldPath: field }, op: "GREATER_THAN_OR_EQUAL", value: { integerValue: String(Math.floor(n)) } };
+  };
+  async function audit(row) {
+    const body = Object.assign({ at: now() }, row);
+    if (Array.isArray(body.changes)) body.changes = body.changes.slice(0, 120).map(function(c) {
+      return { setting: c.setting, from: JSON.stringify(c.from === void 0 ? null : c.from).slice(0, 400), to: JSON.stringify(c.to === void 0 ? null : c.to).slice(0, 400) };
+    });
+    const r = await d.fsFetch(d.env, d.token, "POST", "/launchAudit", d.toFsFields(body));
+    return !!r.ok;
+  }
+  async function persist(which, prev, next, actor, action, reason) {
+    const changes = diffSettings(prev.cfg, next);
+    const check = validateConfig(next);
+    if (!check.ok) {
+      await audit({ env: which, action, actorUid: actor.uid, actorEmail: actor.email || "", reason: reason || "", changes, result: "refused: " + check.errors.slice(0, 5).join("; ") });
+      return { ok: false, status: 400, errors: check.errors };
+    }
+    const version = (Number(prev.cfg.version) || 0) + 1;
+    const stamp = now();
+    const full = JSON.parse(JSON.stringify(next));
+    delete full.env;
+    delete full.guardState;
+    full.version = version;
+    full.updatedAt = stamp;
+    full.updatedBy = actor.uid;
+    const pre = prev.exists && prev.updateTime ? "?currentDocument.updateTime=" + enc(prev.updateTime) : "?currentDocument.exists=false";
+    const w = await d.fsPutDoc(d.env, d.token, "/launchPrivate/" + enc(which) + pre, full);
+    if (!w || !w.ok) {
+      const conflict = w && (w.status === 400 || w.status === 409 || w.status === 412);
+      await audit({ env: which, action, actorUid: actor.uid, actorEmail: actor.email || "", reason: reason || "", changes, result: conflict ? "refused: changed by someone else, reload" : "failed: write " + (w && w.status) });
+      return { ok: false, status: conflict ? 409 : 502, errors: [conflict ? "The settings changed since you opened them. Reload and try again." : "Could not save the settings."] };
+    }
+    await d.fsPutDoc(d.env, d.token, "/launchHistory/" + enc(which + "-" + version), { env: which, version, at: stamp, by: actor.uid, action, reason: reason || "", config: JSON.stringify(full) });
+    const pub = publicView(Object.assign({}, full, { env: which }));
+    pub.updatedAt = stamp;
+    await d.fsPutDoc(d.env, d.token, "/launchConfig/" + enc(which), pub);
+    await audit({ env: which, action, actorUid: actor.uid, actorEmail: actor.email || "", reason: reason || "", changes, result: "ok", version });
+    return { ok: true, version, changes, config: Object.assign(full, { env: which }) };
+  }
+  async function recount(which, actor, reason) {
+    const n = await countWhere("users");
+    if (n == null) return { ok: false, error: "Could not count accounts" };
+    const before = await counter(which);
+    await d.fsPutDoc(d.env, d.token, "/launchState/" + enc(which), { registered: n, recountedAt: now() });
+    if (actor) await audit({ env: which, action: "recount", actorUid: actor.uid, actorEmail: actor.email || "", reason: reason || "", changes: [{ setting: "registered", from: before.registered, to: n }], result: "ok" });
+    return { ok: true, registered: n, before: before.registered };
+  }
+  async function status(which) {
+    const L = await load(which);
+    let c = await counter(which);
+    if (!c.exists) {
+      const r = await recount(which, null, "");
+      c = { registered: r.ok ? r.registered : 0 };
+    }
+    const st = registrationState(L.cfg, c.registered);
+    return { cfg: L.cfg, state: st, message: registrationMessage(st) };
+  }
+  async function claim(which, uid) {
+    if (!/^[A-Za-z0-9_-]{6,128}$/.test(String(uid || ""))) return { ok: false, status: 400, error: "bad account" };
+    const seat = await getRaw("/registrations/" + enc(uid));
+    if (seat.exists) return { ok: true, already: "seat" };
+    const prof = await getRaw("/users/" + enc(uid));
+    if (prof.exists) return { ok: true, already: "profile" };
+    const L = await load(which);
+    for (let attempt = 0; attempt < 8; attempt++) {
+      let c = await counter(which);
+      if (!c.exists) {
+        await recount(which, null, "");
+        c = await counter(which);
+      }
+      const decision = claimDecision(L.cfg, c.registered, { hasSeat: false, hasProfile: false });
+      if (!decision.ok) {
+        try {
+          await d.fsIncrement(d.env, d.token, "/launchState/" + enc(which), { refused: 1 }, {});
+        } catch (_) {
+        }
+        return { ok: false, status: 403, reason: decision.reason, waitlist: decision.waitlist, error: decision.message };
+      }
+      const name = d.root.replace("https://firestore.googleapis.com/v1/", "");
+      const writes = [
+        {
+          update: { name: name + "/launchState/" + which, fields: d.toFsFields({ registered: c.registered + 1, lastSeatAt: now() }).fields },
+          updateMask: { fieldPaths: ["registered", "lastSeatAt"] },
+          currentDocument: { updateTime: c.updateTime }
+        },
+        {
+          update: { name: name + "/registrations/" + uid, fields: d.toFsFields({ uid, at: now(), env: which, phase: L.cfg.activePhase, number: c.registered + 1 }).fields },
+          currentDocument: { exists: false }
+        }
+      ];
+      const r = await d.fsFetch(d.env, d.token, "POST", ":commit", { writes });
+      if (r.ok) return { ok: true, taken: true, number: c.registered + 1 };
+      const again = await getRaw("/registrations/" + enc(uid));
+      if (again.exists) return { ok: true, already: "seat" };
+      await new Promise(function(res) {
+        setTimeout(res, 20 + Math.floor(Math.random() * 80));
+      });
+    }
+    return { ok: false, status: 503, error: "Too many people are signing up at once. Try again in a moment." };
+  }
+  async function waitJoin(which, email) {
+    const st = await status(which);
+    if (st.state.accepting) return { ok: false, status: 409, error: "Registration is open. You can create your account now." };
+    if (!st.state.waitlist) return { ok: false, status: 403, error: st.message || "Registration is closed." };
+    const clean2 = cleanEmail(email);
+    if (!clean2) return { ok: false, status: 400, error: "Enter an email address we can write to when places open." };
+    const id = (await sha256hex(which + "|" + clean2)).slice(0, 32);
+    const key = randomKey();
+    const w = await d.fsPutDoc(d.env, d.token, "/waitlist/" + id, {
+      email: clean2,
+      env: which,
+      phase: st.cfg.activePhase,
+      at: now(),
+      keyHash: await sha256hex(key),
+      reason: st.state.reason
+    });
+    if (!w || !w.ok) return { ok: false, status: 502, error: "Could not save that. Try again." };
+    return { ok: true, id, key };
+  }
+  async function waitLeave(id, key) {
+    if (!/^[a-f0-9]{32}$/.test(String(id || "")) || !/^[a-f0-9]{36}$/.test(String(key || ""))) return { ok: false, status: 400, error: "That removal code is not right." };
+    const got = await getRaw("/waitlist/" + id);
+    if (!got.exists) return { ok: true, gone: true };
+    if (got.data.keyHash !== await sha256hex(key)) return { ok: false, status: 403, error: "That removal code is not right." };
+    await d.fsFetch(d.env, d.token, "DELETE", "/waitlist/" + id);
+    return { ok: true, removed: true };
+  }
+  async function listCol(path, size) {
+    const r = await d.fsFetch(d.env, d.token, "GET", path + (path.indexOf("?") >= 0 ? "&" : "?") + "pageSize=" + (size || 100));
+    if (!r.ok) return [];
+    return (r.data.documents || []).map(function(x) {
+      const o = d.fromFsDoc(x);
+      o._updateTime = x.updateTime;
+      return o;
+    });
+  }
+  async function usage(which, day) {
+    const got = await getRaw("/launchUsage/" + enc(which + "_" + day));
+    return got.exists ? got.data : {};
+  }
+  async function reportUpload(which, ev) {
+    const day = dayKey(now());
+    const fields = {};
+    if (ev.ok) {
+      fields.uploadsOk = 1;
+      fields.uploadBytes = Math.max(0, Math.floor(Number(ev.bytes) || 0));
+    } else {
+      fields.uploadsRefused = 1;
+      const why = String(ev.reason || "other").replace(/[^a-z0-9_]/g, "").slice(0, 24) || "other";
+      fields["refused_" + why] = 1;
+    }
+    if (ev.worker === "broadcast" || ev.worker === "signal") fields[ev.worker + (ev.ok ? "Ok" : "Refused")] = 1;
+    return d.fsIncrement(d.env, d.token, "/launchUsage/" + enc(which + "_" + day), fields, { env: which, day });
+  }
+  async function metrics(which, billing) {
+    const t = now();
+    const DAY2 = 864e5;
+    const [users, active1, active7, bTotal, bPublic, sTotal, wl, openReports, pendingReview] = await Promise.all([
+      countWhere("users"),
+      countWhere("users", [gte("lastSeen", t - DAY2)]),
+      countWhere("users", [gte("lastSeen", t - 7 * DAY2)]),
+      countWhere("broadcasts"),
+      countWhere("broadcasts", [eq("listed", true), eq("held", false), eq("hidden", false), eq("visibility", "public")]),
+      countWhere("signals"),
+      countWhere("waitlist", [eq("env", which)]),
+      countWhere("reports", [eq("status", "OPEN")]),
+      countWhere("users", [eq("publisherReview", "pending")])
+    ]);
+    const c = await counter(which);
+    const today = await usage(which, dayKey(t));
+    const yesterday = await usage(which, dayKey(t - DAY2));
+    const lines = billing && billing.usage || {};
+    const cf = lines.cloudflare && lines.cloudflare.lines || [];
+    const fb = lines.firebase && lines.firebase.lines || [];
+    const find = function(arr, key, src) {
+      return arr.find(function(l) {
+        return l.key === key && (!src || l.source === src);
+      });
+    };
+    const storage = find(cf, "r2_storage", "analytics");
+    const classA = find(cf, "r2_class_a", "analytics");
+    const reads = find(fb, "fs_reads");
+    const billed = cf.filter(function(l) {
+      return l.source === "billable-usage";
+    });
+    const monthUsd = billed.length ? Math.round(billed.reduce(function(s, l) {
+      return s + (Number(l.amount_usd) || 0);
+    }, 0) * 100) / 100 : null;
+    return {
+      at: t,
+      accounts: { registered: c.registered, profiles: users, source: "counted now" },
+      active: { day: active1, week: active7, source: "counted now (lastSeen)" },
+      broadcasts: { total: bTotal, public: bPublic, source: "counted now" },
+      signals: { total: sTotal, source: "counted now" },
+      waitlist: { size: wl, source: "counted now" },
+      safety: { openReports, publishersAwaitingReview: pendingReview, refusedSignups: Number(c.data && c.data.refused) || 0, source: "counted now" },
+      uploads: {
+        today: { ok: Number(today.uploadsOk) || 0, refused: Number(today.uploadsRefused) || 0, bytes: Number(today.uploadBytes) || 0 },
+        yesterday: { ok: Number(yesterday.uploadsOk) || 0, refused: Number(yesterday.uploadsRefused) || 0, bytes: Number(yesterday.uploadBytes) || 0 },
+        refusedBy: Object.keys(today).filter(function(k) {
+          return k.indexOf("refused_") === 0;
+        }).reduce(function(o, k) {
+          o[k.slice(8)] = Number(today[k]) || 0;
+          return o;
+        }, {}),
+        source: "reported by the upload workers (live)"
+      },
+      storage: { bytes: storage ? Math.round(Number(storage.qty) * 1e9) : null, source: storage ? "Cloudflare analytics (delayed)" : "not connected" },
+      delivered: { bytes: null, source: "not measured: R2 delivery is not reported per bucket and Cloudflare does not bill it" },
+      processing: { source: "Naluno has no server-side video processing; videos are prepared on the phone" },
+      r2ClassAToday: { n: classA ? Number(classA.qty) : null, source: classA ? "Cloudflare analytics (delayed)" : "not connected" },
+      firestoreReadsToday: { n: reads ? Number(reads.qty) : null, source: reads ? "Google Cloud Monitoring (delayed)" : "not connected" },
+      cost: {
+        cloudflareMonthUsd: monthUsd,
+        source: monthUsd == null ? "Cloudflare billable usage not connected" : "Cloudflare billable usage, month to date (actual usage charges, not an invoice)",
+        firebase: "Firebase/Google charges are not read here: see Google Cloud billing",
+        invoices: (billing && billing.invoices || []).slice(0, 6)
+      }
+    };
+  }
+  function guardMetrics(m) {
+    return {
+      storageBytes: m.storage.bytes,
+      storageSource: m.storage.source,
+      monthCostUsd: m.cost.cloudflareMonthUsd,
+      monthCostSource: m.cost.source,
+      todayUploadBytes: m.uploads.today.bytes,
+      uploadSource: m.uploads.source,
+      todayFirestoreReads: m.firestoreReadsToday.n,
+      firestoreSource: m.firestoreReadsToday.source,
+      todayR2ClassA: m.r2ClassAToday.n,
+      r2Source: m.r2ClassAToday.source
+    };
+  }
+  async function runGuard(which, billing) {
+    const L = await load(which);
+    const m = await metrics(which, billing);
+    const g = evaluateGuard(L.cfg.guard, guardMetrics(m));
+    const pub = await getRaw("/launchConfig/" + enc(which));
+    const before = pub.exists && pub.data.guardState ? pub.data.guardState : null;
+    const state = { level: g.level, at: now(), items: g.items, restricting: g.restricting };
+    await d.fsPutDoc(d.env, d.token, "/launchConfig/" + enc(which), { guardState: state });
+    if (!pub.exists) await d.fsPutDoc(d.env, d.token, "/launchConfig/" + enc(which), Object.assign(publicView(L.cfg), { guardState: state }));
+    if (!before || before.level !== g.level || JSON.stringify(before.restricting) !== JSON.stringify(g.restricting)) {
+      await audit({ env: which, action: "guard", actorUid: "cron", actorEmail: "", reason: "measured", changes: [{ setting: "guard.level", from: before ? before.level : null, to: g.level }, { setting: "guard.restricting", from: before ? before.restricting : null, to: g.restricting }], result: "ok" });
+    }
+    if (m.accounts.profiles != null && (m.accounts.registered == null || m.accounts.profiles > m.accounts.registered)) {
+      await d.fsPutDoc(d.env, d.token, "/launchState/" + enc(which), { registered: m.accounts.profiles, recountedAt: now() });
+    }
+    return { guard: g, metrics: m };
+  }
+  return {
+    load,
+    counter,
+    status,
+    claim,
+    recount,
+    persist,
+    audit,
+    waitJoin,
+    waitLeave,
+    listCol,
+    metrics,
+    runGuard,
+    reportUpload,
+    guardMetrics,
+    activate: async function(which, phase, actor, reason) {
+      const prev = await load(which);
+      if (!prev.cfg.phases[phase]) return { ok: false, status: 400, errors: ["unknown phase"] };
+      const next = activatePhase(prev.cfg, phase);
+      const cmp = compareLimits(prev.cfg.media, next.media);
+      const out = await persist(which, prev, next, actor, "activate-phase:" + phase, reason);
+      out.lowered = cmp.lowered;
+      out.raised = cmp.raised;
+      return out;
+    },
+    rollback: async function(which, version, actor, reason) {
+      const h = await getRaw("/launchHistory/" + enc(which + "-" + Number(version)));
+      if (!h.exists) return { ok: false, status: 404, errors: ["that version is not in the history"] };
+      let old;
+      try {
+        old = JSON.parse(h.data.config);
+      } catch (_) {
+        return { ok: false, status: 400, errors: ["that version cannot be read"] };
+      }
+      const prev = await load(which);
+      const next = withDefaults(old);
+      next.env = which;
+      next.version = prev.cfg.version;
+      return persist(which, prev, next, actor, "rollback-to:" + version, reason);
+    }
+  };
+}
+
+// workers/economy/handler.mjs
+init_launch();
 
 // workers/economy/screen.mjs
 var SCREEN_MAX_FRAMES = 8;
@@ -737,6 +1737,20 @@ function judgeScreenPayload(payload, opts) {
     engine: "heuristic"
   };
 }
+function publisherTrusted(p) {
+  const u = p || {};
+  if (u.restricted || u.suspended) return false;
+  if (u.trustedPublisher === false) return false;
+  if (u.publisherReview === "pending") return false;
+  return true;
+}
+function publisherHoldReason(p) {
+  const u = p || {};
+  if (u.restricted || u.suspended) return "restricted";
+  if (u.trustedPublisher === false) return "not-trusted";
+  if (u.publisherReview === "pending") return "under-review";
+  return "";
+}
 function listingFromScreen(opts) {
   const trusted = !!(opts && opts.trusted);
   const hidden = !!(opts && opts.hidden);
@@ -763,7 +1777,7 @@ function listingFromScreen(opts) {
   if (hasScreen && decision === "allow") {
     return { listed: true, held: false, hidden: false, heldReason: "" };
   }
-  return { listed: false, held: true, hidden: false, heldReason: "new-publisher" };
+  return { listed: false, held: true, hidden: false, heldReason: opts && opts.holdReason || "new-publisher" };
 }
 
 // workers/economy/reach.mjs
@@ -2195,14 +3209,14 @@ function setBookRates(rates) {
 }
 function setVendorPrices(rates) {
   if (!rates || typeof rates !== "object") return;
-  function pick(key) {
+  function pick2(key) {
     const n = Number(rates[key]);
     return isFinite(n) && n >= 0 ? n : null;
   }
-  const read = pick("firestore_read_100k_usd");
-  const write = pick("firestore_write_100k_usd");
-  const del = pick("firestore_delete_100k_usd");
-  const storage = pick("firestore_storage_gb_month_usd");
+  const read = pick2("firestore_read_100k_usd");
+  const write = pick2("firestore_write_100k_usd");
+  const del = pick2("firestore_delete_100k_usd");
+  const storage = pick2("firestore_storage_gb_month_usd");
   if (read != null) READ_USD = read / 1e5;
   if (write != null) WRITE_USD = write / 1e5;
   if (del != null) DELETE_USD = del / 1e5;
@@ -2245,16 +3259,16 @@ var CLASS_B = {
   getbucketlifecycleconfiguration: 1,
   classb: 1
 };
-function num2(v) {
+function num3(v) {
   const n = Number(v);
   return isFinite(n) ? n : 0;
 }
 function round2(n) {
-  return Math.round(num2(n) * 100) / 100;
+  return Math.round(num3(n) * 100) / 100;
 }
 function usdToAed(usd) {
   if (!(USD_AED > 0)) return null;
-  const n = num2(usd);
+  const n = num3(usd);
   if (!isFinite(n)) return null;
   return round2(n * USD_AED);
 }
@@ -2280,8 +3294,8 @@ function mapBillableRows(rows) {
     const name = row.ServiceName || row.serviceName || "";
     const key = classifyCloudflareService(family, name);
     if (!key) return;
-    const qty = num2(row.ConsumedQuantity != null ? row.ConsumedQuantity : row.PricingQuantity);
-    const cost = num2(row.ContractedCost != null ? row.ContractedCost : row.contractedCost);
+    const qty = num3(row.ConsumedQuantity != null ? row.ConsumedQuantity : row.PricingQuantity);
+    const cost = num3(row.ContractedCost != null ? row.ContractedCost : row.contractedCost);
     const unit = String(row.ConsumedUnit || row.consumedUnit || "");
     if (!grouped[key]) grouped[key] = { key, qty: 0, cost: 0, unit, service: String(name || family || key) };
     grouped[key].qty += qty;
@@ -2307,7 +3321,7 @@ function mapR2Ops(groups) {
   (Array.isArray(groups) ? groups : []).forEach(function(g) {
     if (!g) return;
     const action = String(g.dimensions && g.dimensions.actionType || "").toLowerCase();
-    const requests = num2(g.sum && g.sum.requests);
+    const requests = num3(g.sum && g.sum.requests);
     if (CLASS_A[action]) classA += requests;
     else if (CLASS_B[action]) classB += requests;
   });
@@ -2318,7 +3332,7 @@ function sumSeries(seriesList) {
   (Array.isArray(seriesList) ? seriesList : []).forEach(function(s) {
     (s && s.points || []).forEach(function(p) {
       const v = p && p.value || {};
-      const x = v.int64Value != null ? num2(v.int64Value) : num2(v.doubleValue);
+      const x = v.int64Value != null ? num3(v.int64Value) : num3(v.doubleValue);
       n += x;
     });
   });
@@ -2333,7 +3347,7 @@ function latestGauge(seriesList) {
       if (t < bestT) return;
       const v = p.value || {};
       bestT = t;
-      best = v.int64Value != null ? num2(v.int64Value) : num2(v.doubleValue);
+      best = v.int64Value != null ? num3(v.int64Value) : num3(v.doubleValue);
     });
   });
   return best;
@@ -2359,15 +3373,15 @@ function splitSeries(seriesList) {
 }
 function overage(qty, cap, usdEach) {
   if (usdEach == null || !(USD_AED > 0)) return null;
-  const extra = Math.max(0, num2(qty) - cap);
+  const extra = Math.max(0, num3(qty) - cap);
   return usdToAed(extra * usdEach);
 }
 function firebaseLines(counts) {
   counts = counts || {};
-  const reads = num2(counts.reads);
-  const writes = num2(counts.writes);
-  const deletes = num2(counts.deletes);
-  const gb = num2(counts.storageGb);
+  const reads = num3(counts.reads);
+  const writes = num3(counts.writes);
+  const deletes = num3(counts.deletes);
+  const gb = num3(counts.storageGb);
   function line(key, service, qty, unit, cap, amount) {
     const over = qty > cap;
     return {
@@ -2565,7 +3579,7 @@ async function pullAnalytics(ask, token, account, now) {
     const lines = [];
     let requests = 0;
     (box.workersInvocationsAdaptive || []).forEach(function(g) {
-      requests += num2(g.sum && g.sum.requests);
+      requests += num3(g.sum && g.sum.requests);
     });
     if (requests > 0) {
       lines.push({
@@ -2606,7 +3620,7 @@ async function pullAnalytics(ask, token, account, now) {
     }
     let bytes = 0;
     (box.r2StorageAdaptiveGroups || []).forEach(function(g) {
-      bytes = Math.max(bytes, num2(g.max && g.max.payloadSize));
+      bytes = Math.max(bytes, num3(g.max && g.max.payloadSize));
     });
     if (bytes > 0) {
       const gb = Math.round(bytes / 1e9 * 1e3) / 1e3;
@@ -3114,6 +4128,23 @@ function webPushFor(data) {
       fcm_options: { link: "https://getnaluno.com/app/?call=" + encodeURIComponent(callId) }
     };
   }
+  if (String(d.type || "") === "live_dropped" && d.broadcastId) {
+    const bid = String(d.broadcastId).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 80);
+    return {
+      headers: { Urgency: "high", TTL: "900" },
+      notification: {
+        title: String(d.title || "Your live dropped").slice(0, 80),
+        body: String(d.body || "Open Naluno to carry on.").slice(0, 160),
+        icon: "https://getnaluno.com/icon-192.png",
+        tag: "naluno-live:" + bid,
+        renotify: true,
+        requireInteraction: true,
+        silent: false,
+        data: { type: "live_dropped", broadcastId: bid, url: "/app/?broadcast=" + bid }
+      },
+      fcm_options: { link: "https://getnaluno.com/app/?broadcast=" + encodeURIComponent(bid) }
+    };
+  }
   return {
     headers: { Urgency: "high", TTL: "86400" },
     notification: {
@@ -3155,7 +4186,7 @@ async function sendAll(tokens, data, link, deps, now) {
                 body: String(data.body || "New message").slice(0, 140),
                 channel_id: "naluno_wireline",
                 sound: "default",
-                tag: "naluno-wire:" + String(data.fromUid || "").slice(0, 40),
+                tag: data.type === "live_dropped" ? "naluno-live:" + String(data.broadcastId || "").slice(0, 80) : "naluno-wire:" + String(data.fromUid || "").slice(0, 40),
                 notification_priority: "PRIORITY_HIGH",
                 visibility: "PUBLIC"
               }
@@ -3276,6 +4307,21 @@ async function handleLockPush(body, user, deps) {
   tokens.kinds = kinds;
   if (!tokens.length) return { status: 200, body: { ok: true, sent: 0, reason: "no_web_token" } };
   return sendAll(tokens, data, data.url, deps, now);
+}
+async function sendLiveDropped(uid, data, deps) {
+  const now = deps.now ? deps.now() : Date.now();
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(String(uid || ""))) return { status: 400, body: { ok: false, error: "bad recipient" } };
+  const [them, vault] = await Promise.all([
+    deps.getDoc("/users/" + uid),
+    deps.getDoc("/users/" + uid + "/vault/main")
+  ]);
+  const tokens = tokensOf(vault, them);
+  if (!tokens.length) return { status: 200, body: { ok: true, sent: 0, reason: "no_token" } };
+  const clean2 = {};
+  Object.keys(data || {}).forEach(function(k) {
+    if (data[k] != null) clean2[k] = String(data[k]);
+  });
+  return sendAll(tokens, clean2, clean2.url || "/app/", deps, now);
 }
 
 // workers/economy/lg-voice.mjs
@@ -3728,18 +4774,23 @@ function toFsFields(obj) {
   });
   return { fields };
 }
+function fsFieldPath(k) {
+  const key = String(k);
+  if (/^[A-Za-z_][A-Za-z_0-9]*$/.test(key)) return key;
+  return "`" + key.replace(/\\/g, "\\\\").replace(/`/g, "\\`") + "`";
+}
 async function fsIncrement(env, token, docPath, fields, setFields) {
   if (!token) return { ok: false };
   const name = fsRoot(env).replace("https://firestore.googleapis.com/v1/", "") + docPath;
   const transforms = Object.keys(fields).map((k) => ({
-    fieldPath: k,
+    fieldPath: fsFieldPath(k),
     increment: { integerValue: String(Math.round(Number(fields[k]) || 0)) }
   }));
   const writes = [];
   if (setFields && Object.keys(setFields).length) {
     writes.push({
       update: { name, fields: toFsFields(setFields).fields },
-      updateMask: { fieldPaths: Object.keys(setFields) }
+      updateMask: { fieldPaths: Object.keys(setFields).map(fsFieldPath) }
     });
   }
   writes.push({ transform: { document: name, fieldTransforms: transforms } });
@@ -4613,7 +5664,7 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
     return json({ ok: false, error: "not yours" }, 403);
   }
   const profile = await fsGetDoc(env, token, "/users/" + encodeURIComponent(row.creatorUid || user.uid));
-  const trusted = !!(profile && profile.trustedPublisher) && !(profile && profile.restricted) && !(profile && profile.suspended);
+  const trusted = publisherTrusted(profile);
   let judged = judgeScreenPayload(body && body.screen, { title: row.title || "" });
   const hasPicture = !!(row.mediaUrl || row.thumbUrl || Array.isArray(row.chapters) && row.chapters.some((c) => c && c.mediaUrl));
   if (hasPicture && !judged.hasScreen) {
@@ -4630,6 +5681,7 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
   );
   const listing = listingFromScreen({
     trusted,
+    holdReason: publisherHoldReason(profile) || "new-publisher",
     hidden: !!row.hidden,
     hasScreen: judged.hasScreen,
     decision: judged.decision
@@ -5026,6 +6078,100 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
       version: VERSION,
       claim: stamped ? "operator" : ""
     });
+  }
+  if (path.startsWith("/v1/admin/launch")) {
+    if (!saToken) return json({ ok: false, error: "The worker has no service account, so launch settings cannot be saved." }, 503);
+    const L = launchApi(env, saToken);
+    const which = launchEnvOf(env, url.searchParams.get("env"));
+    const actor = { uid: user.uid, email: user.email || "" };
+    if (path === "/v1/admin/launch" && request.method === "GET") {
+      const got = await L.load(which);
+      const c = await L.counter(which);
+      const hist = await L.listCol("/launchHistory?orderBy=version%20desc", 25);
+      const aud = await L.listCol("/launchAudit?orderBy=at%20desc", 40);
+      const pub = await fsGetDoc(env, saToken, "/launchConfig/" + encodeURIComponent(which));
+      return json({
+        ok: true,
+        env: which,
+        exists: got.exists,
+        config: got.cfg,
+        features: FEATURES,
+        counter: { registered: c.registered, refused: Number(c.data && c.data.refused) || 0, recountedAt: c.data && c.data.recountedAt || null },
+        guardState: pub && pub.guardState || null,
+        history: hist.filter(function(h) {
+          return h.env === which;
+        }).map(function(h) {
+          return { version: h.version, at: h.at, by: h.by, action: h.action, reason: h.reason };
+        }),
+        audit: aud.filter(function(a) {
+          return a.env === which;
+        }).slice(0, 40)
+      });
+    }
+    if (path === "/v1/admin/launch/metrics" && request.method === "GET") {
+      const billing = await loadBilling(env, saToken).catch(function() {
+        return null;
+      });
+      const m = await L.metrics(which, billing);
+      const got = await L.load(which);
+      const { evaluateGuard: evaluateGuard2 } = await Promise.resolve().then(() => (init_launch(), launch_exports));
+      return json({ ok: true, env: which, metrics: m, guard: evaluateGuard2(got.cfg.guard, L.guardMetrics(m)) });
+    }
+    const body = request.method === "POST" ? await request.json().catch(() => ({})) : {};
+    const reason = String(body.reason || "").slice(0, 300);
+    if (path === "/v1/admin/launch/save" && request.method === "POST") {
+      const prev = await L.load(which);
+      if (body.expectVersion != null && Number(body.expectVersion) !== Number(prev.cfg.version || 0)) {
+        return json({ ok: false, errors: ["The settings changed since you opened them. Reload and try again."] }, 409);
+      }
+      const next = Object.assign({}, body.config || {}, { env: which, version: prev.cfg.version });
+      const out = await L.persist(which, prev, next, actor, "save", reason);
+      _launchStatusCache.clear();
+      return json(out, out.ok ? 200 : out.status || 400);
+    }
+    if (path === "/v1/admin/launch/activate" && request.method === "POST") {
+      const prev = await L.load(which);
+      if (body.expectVersion != null && Number(body.expectVersion) !== Number(prev.cfg.version || 0)) {
+        return json({ ok: false, errors: ["The settings changed since you opened them. Reload and try again."] }, 409);
+      }
+      const out = await L.activate(which, String(body.phase || ""), actor, reason);
+      _launchStatusCache.clear();
+      return json(out, out.ok ? 200 : out.status || 400);
+    }
+    if (path === "/v1/admin/launch/pause" && request.method === "POST") {
+      const prev = await L.load(which);
+      const next = JSON.parse(JSON.stringify(prev.cfg));
+      next.registration.emergencyPause = body.on === true;
+      const out = await L.persist(which, prev, next, actor, body.on === true ? "emergency-pause-on" : "emergency-pause-off", reason);
+      _launchStatusCache.clear();
+      return json(out, out.ok ? 200 : out.status || 400);
+    }
+    if (path === "/v1/admin/launch/rollback" && request.method === "POST") {
+      const out = await L.rollback(which, body.version, actor, reason);
+      _launchStatusCache.clear();
+      return json(out, out.ok ? 200 : out.status || 400);
+    }
+    if (path === "/v1/admin/launch/recount" && request.method === "POST") {
+      const out = await L.recount(which, actor, reason);
+      _launchStatusCache.clear();
+      return json(out, out.ok ? 200 : 502);
+    }
+    if (path === "/v1/admin/launch/waitlist" && request.method === "GET") {
+      const rows = await L.listCol("/waitlist?orderBy=at", 500);
+      return json({ ok: true, rows: rows.filter(function(r) {
+        return r.env === which;
+      }).map(function(r) {
+        return { id: r.id, email: r.email, at: r.at, phase: r.phase, reason: r.reason };
+      }) });
+    }
+    if (path === "/v1/admin/launch/waitlist/remove" && request.method === "POST") {
+      const id = String(body.id || "");
+      if (!/^[a-f0-9]{32}$/.test(id)) return json({ ok: false, error: "bad id" }, 400);
+      await fsFetch(env, saToken, "DELETE", "/waitlist/" + id);
+      await L.audit({ env: which, action: "waitlist-remove", actorUid: user.uid, actorEmail: user.email || "", reason, changes: [{ setting: "waitlist." + id, from: "on the list", to: null }], result: "ok" });
+      return json({ ok: true });
+    }
+    return json({ ok: false, error: "unknown launch route" }, 404);
   }
   if (path === "/v1/admin/broadcast-catalogue-repair" && request.method === "POST") {
     const body = await request.json().catch(() => ({}));
@@ -6576,6 +7722,108 @@ function bandSweepIo(env, token) {
     }
   };
 }
+function launchApi(env, token) {
+  return makeLaunch({
+    env,
+    token,
+    fsFetch,
+    fsGetDoc,
+    fsPutDoc,
+    fsIncrement,
+    fromFsDoc,
+    toFsFields,
+    root: fsRoot(env),
+    json
+  });
+}
+var _launchStatusCache = /* @__PURE__ */ new Map();
+var _claimHits = /* @__PURE__ */ new Map();
+function claimRate(uid) {
+  const minute = Math.floor(Date.now() / 6e4);
+  const k = uid + "|" + minute;
+  const n = (_claimHits.get(k) || 0) + 1;
+  if (_claimHits.size > 4e3) _claimHits.clear();
+  _claimHits.set(k, n);
+  return n <= 10;
+}
+function sameSecret(given, want) {
+  if (!want || !given || given.length !== want.length) return false;
+  let diff = 0;
+  for (let i = 0; i < want.length; i++) diff |= want.charCodeAt(i) ^ given.charCodeAt(i);
+  return diff === 0;
+}
+async function runLaunchGuard(env) {
+  if (!hasSaConfigured(env)) return { ok: false, error: "no-service-account" };
+  const token = await saAccessToken(env);
+  if (!token) return { ok: false, error: "no-token" };
+  const billing = await loadBilling(env, token).catch(function() {
+    return null;
+  });
+  const out = await launchApi(env, token).runGuard(launchEnvOf(env), billing);
+  return { ok: true, level: out.guard.level };
+}
+async function runLiveSweep(env, nowMs) {
+  if (!hasSaConfigured(env)) return { ok: false, error: "no-service-account" };
+  const token = await saAccessToken(env);
+  if (!token) return { ok: false, error: "no-token" };
+  const now = Number(nowMs) || Date.now();
+  const io = {
+    liveBroadcasts: async function() {
+      const r = await fsFetch(env, token, "POST", ":runQuery", { structuredQuery: {
+        from: [{ collectionId: "broadcasts" }],
+        where: { fieldFilter: { field: { fieldPath: "live" }, op: "EQUAL", value: { booleanValue: true } } },
+        limit: 200
+      } });
+      return (Array.isArray(r.data) ? r.data : []).filter((x) => x && x.document).map((x) => ({ id: fromFsDoc(x.document).id, data: fromFsDoc(x.document), updateTime: x.document.updateTime || "" }));
+    },
+    frame: async function(id) {
+      const r = await fsFetch(env, token, "GET", "/broadcasts/" + encodeURIComponent(id) + "/livePreview/frame");
+      if (r.status === 404) return null;
+      if (!r.ok) throw new Error("frame " + r.status);
+      const d = fromFsDoc(r.data);
+      return { from: d.from || "", at: Number(d.at) || 0, serverAt: Date.parse(r.data && r.data.updateTime || "") || 0 };
+    },
+    patch: async function(id, fields, updateTime) {
+      const pre = updateTime ? "?currentDocument.updateTime=" + encodeURIComponent(updateTime) : "";
+      const r = await fsPutDoc(env, token, "/broadcasts/" + encodeURIComponent(id) + pre, fields);
+      return !!(r && r.ok);
+    },
+    clearFrame: async function(id) {
+      await fsFetch(env, token, "DELETE", "/broadcasts/" + encodeURIComponent(id) + "/livePreview/frame");
+    },
+    clearSessions: async function(id) {
+      const r = await fsFetch(env, token, "GET", "/broadcasts/" + encodeURIComponent(id) + "/liveSessions?pageSize=100");
+      const docs = r.ok && r.data && r.data.documents || [];
+      for (const d of docs) {
+        const sid = fromFsDoc(d).id;
+        if (sid) await fsFetch(env, token, "DELETE", "/broadcasts/" + encodeURIComponent(id) + "/liveSessions/" + encodeURIComponent(sid));
+      }
+    },
+    say: async function(id, msg) {
+      await fsFetch(env, token, "POST", "/broadcasts/" + encodeURIComponent(id) + "/conversation", toFsFields(msg));
+    },
+    name: async function(uid) {
+      if (!uid) return "";
+      const u = await fsGetDoc(env, token, "/users/" + encodeURIComponent(uid));
+      return String(u && u.name || "").slice(0, 60);
+    },
+    push: async function(uid, data) {
+      return sendLiveDropped(uid, data, {
+        getDoc: (p) => fsGetDoc(env, token, p),
+        accessToken: (scope) => saAccessTokenScoped(env, scope),
+        fetch: (u, o) => _fetch(u, o),
+        projectId: projectId(env)
+      });
+    }
+  };
+  let limits = null;
+  try {
+    limits = (await launchApi(env, token).load(launchEnvOf(env))).cfg.media.live;
+  } catch (_) {
+  }
+  const result = await sweepLives(io, now, limits);
+  return Object.assign({ ok: true }, result);
+}
 async function runBandSweep(env, bandId) {
   if (!hasSaConfigured(env)) return { ok: false, error: "no-service-account" };
   const token = await saAccessToken(env);
@@ -6605,6 +7853,8 @@ async function handleRequest(request, env = {}, ctx = {}) {
         payments: paymentsReady(env) && !!saToken2,
         liveRooms: callsReady(env) && !!saToken2,
         bandSweep: true,
+        liveSweep: true,
+        launch: true,
         mediaSweep: !!env.SWEEP_KEY
       });
     }
@@ -6756,12 +8006,57 @@ async function handleRequest(request, env = {}, ctx = {}) {
     if (path === "/v1/handle/check" && request.method === "GET") {
       return handleCheck(env, url, saToken);
     }
+    if (path === "/v1/launch/status" && request.method === "GET") {
+      if (!saToken) return json({ ok: false, error: "registration service is not configured" }, 503);
+      const which = launchEnvOf(env);
+      const hit = _launchStatusCache.get(which);
+      if (hit && Date.now() - hit.at < 1e4) return json(hit.body);
+      const st = await launchApi(env, saToken).status(which);
+      const body = { ok: true, env: which, accepting: st.state.accepting, reason: st.state.reason, waitlist: st.state.waitlist, message: st.message, phase: st.cfg.activePhase };
+      _launchStatusCache.set(which, { at: Date.now(), body });
+      return json(body);
+    }
+    if (path === "/v1/waitlist/join" && request.method === "POST") {
+      if (!saToken) return json({ ok: false, error: "waiting list is not configured" }, 503);
+      const ip = request.headers.get("CF-Connecting-IP") || "?";
+      if (!lifelineRate("wl|" + ip, 5)) return json({ ok: false, error: "Please wait a minute and try again." }, 429);
+      const body = await request.json().catch(() => ({}));
+      const out = await launchApi(env, saToken).waitJoin(launchEnvOf(env), body.email);
+      return json(out, out.ok ? 200 : out.status || 400);
+    }
+    if (path === "/v1/waitlist/leave" && request.method === "POST") {
+      if (!saToken) return json({ ok: false, error: "waiting list is not configured" }, 503);
+      const ip = request.headers.get("CF-Connecting-IP") || "?";
+      if (!lifelineRate("wlx|" + ip, 10)) return json({ ok: false, error: "Please wait a minute and try again." }, 429);
+      const body = await request.json().catch(() => ({}));
+      const out = await launchApi(env, saToken).waitLeave(body.id, body.key);
+      return json(out, out.ok ? 200 : out.status || 400);
+    }
+    if (path === "/v1/launch/event" && request.method === "POST") {
+      if (!sameSecret(request.headers.get("X-Naluno-Sweep") || "", env.SWEEP_KEY || "")) return json({ ok: false, error: "Forbidden" }, 403);
+      if (!saToken) return json({ ok: false }, 503);
+      const body = await request.json().catch(() => ({}));
+      await launchApi(env, saToken).reportUpload(launchEnvOf(env), {
+        ok: body.ok === true,
+        bytes: body.bytes,
+        reason: body.reason,
+        worker: String(body.worker || "")
+      });
+      return json({ ok: true });
+    }
     const auth = await requireUser(env, request);
     if (auth.error) {
       if (path === "/" || path.startsWith("/v1/")) return auth.error;
       return auth.error;
     }
     const { user, token: userToken } = auth;
+    if (path === "/v1/register/claim" && request.method === "POST") {
+      if (!saToken) return json({ ok: false, error: "Registration is not available right now. Try again later." }, 503);
+      if (!claimRate(user.uid)) return json({ ok: false, error: "Please wait a minute and try again." }, 429);
+      const out = await launchApi(env, saToken).claim(launchEnvOf(env), user.uid);
+      if (out.ok) _launchStatusCache.clear();
+      return json(out, out.ok ? 200 : out.status || 403);
+    }
     if (path === "/v1/events" && request.method === "POST") {
       const body = await request.json().catch(() => ({}));
       const eventType = String(body.event_type || "");
@@ -7213,6 +8508,24 @@ async function handleRequest(request, env = {}, ctx = {}) {
         toFsFields(doc)
       );
       if (!wrote.ok && existing) memory.reports.set(id, existing);
+      if (wrote.ok && saToken) {
+        try {
+          let about = String(body.target_user_id || "").slice(0, 128);
+          const bid = String(body.broadcast_id || (body.target_type === "broadcast" ? body.target_id : "") || "").slice(0, 80);
+          if (!about && bid) {
+            const b = await fsGetDoc(env, saToken, "/broadcasts/" + encodeURIComponent(bid));
+            about = String(b && b.creatorUid || "");
+          }
+          if (about && about !== user.uid && /^[A-Za-z0-9_-]{1,128}$/.test(about)) {
+            await fsPutDoc(env, saToken, "/users/" + encodeURIComponent(about), {
+              publisherReview: "pending",
+              publisherReviewAt: Date.now(),
+              publisherReviewReport: id
+            });
+          }
+        } catch (_) {
+        }
+      }
       const hideNow = String(body.broadcast_id || (body.target_type === "broadcast" ? body.target_id : "") || "");
       const URGENT_HOLD = { terrorism: 1, recruitment: 1, child_exploitation: 1, sexual_exploitation: 1, violence: 1 };
       let autoHidden = false, autoHeld = false, autoError = "";
@@ -7423,7 +8736,12 @@ var index_default = {
   /* THE RULE OF BANDS: every 10 minutes, delete the conversation of every
      Band whose two hours after the last person left have run out. */
   async scheduled(event, env, ctx) {
-    const job = runBandSweep(env).catch(() => null);
+    const job = Promise.all([
+      runBandSweep(env).catch(() => null),
+      runLiveSweep(env).catch(() => null),
+      /* 13a: measure usage against the launch budgets and publish the guard. */
+      runLaunchGuard(env).catch(() => null)
+    ]);
     if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(job);
     else await job;
   }

@@ -74,14 +74,14 @@
 // v248: attention is only kept when a visit, an app open, or a continued session owns it. Join date and Find pin stay on the person.
 // v284: 10.05f Android floats a video call on leaving; Wireline alerts through Naluno's worker; a call answers once per tap.
 // v285: 10.05g voices keep reading (several makers, scheduled, trimmed), Luganda spoken from its own sounds, test alert, stale stamps.
-const CACHE_NAME = 'naluno-shell-v314';
-const APP_BUILD = '20261012a';
+const CACHE_NAME = 'naluno-shell-v317';
+const APP_BUILD = '20261013a';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
   '/js/ads.js',
   '/js/core.js', '/js/vault.js', '/js/metrics.js', '/js/data.js', '/js/crypto.js', '/js/atmosphere.js',
-  '/js/pwa.js', '/js/gestures.js', '/js/mood-notes.json', '/js/auth.js', '/js/qrcode.js', '/js/spark.js', '/js/camera.js', '/js/call-filters.js', '/js/calls.js', '/js/call-pip.js', '/js/media-vault.js', '/js/chat-store.js', '/js/wire-mailbox.js', '/js/wireline.js',
+  '/js/pwa.js', '/js/gestures.js', '/js/mood-notes.json', '/js/launch.js', '/js/auth.js', '/js/qrcode.js', '/js/spark.js', '/js/camera.js', '/js/call-filters.js', '/js/calls.js', '/js/call-pip.js', '/js/media-vault.js', '/js/chat-store.js', '/js/wire-mailbox.js', '/js/wireline.js',
   '/js/lifeline.js', '/js/lifeline-wire.js',
   '/js/band-room.js', '/js/band-list.js', '/js/broadcast-core.js', '/js/broadcast-space.js',
   '/js/broadcast-live.js', '/js/live-preview.js', '/js/broadcast-composer.js', '/js/broadcast-upload.js',

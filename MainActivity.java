@@ -457,6 +457,14 @@ public class MainActivity extends BridgeActivity {
       });
     }
 
+    /** True while a press on the incoming-call screen waits for the page
+     *  (does not take it). Lets the page say "Answering the call" at once. */
+    @JavascriptInterface
+    public boolean hasPendingCall() {
+      String id = pendingCallId;
+      return id != null && !id.isEmpty() && System.currentTimeMillis() - pendingCallAt <= 90_000L;
+    }
+
     /** The incoming-call screen's last press, as {"callId","action"}; "" when none. */
     @JavascriptInterface
     public String takePendingCall() {
@@ -580,6 +588,20 @@ public class MainActivity extends BridgeActivity {
   private void handleWireIntent(Intent intent) {
     if (intent == null) return;
     String type = intent.getStringExtra("type");
+    /* 12c: "Your live dropped" — the tray item opens that Broadcast, where the
+       page shows Resume live / End live. */
+    if ("live_dropped".equals(type)) {
+      String bid = intent.getStringExtra("broadcastId");
+      if (bid == null || !bid.matches("[A-Za-z0-9_-]{1,80}")) return;
+      final String safeBid = bid;
+      getWindow().getDecorView().postDelayed(new Runnable() {
+        @Override
+        public void run() {
+          evalJs("window.openBroadcastById&&window.openBroadcastById('" + safeBid + "')");
+        }
+      }, 1200);
+      return;
+    }
     String fromUid = intent.getStringExtra("fromUid");
     if (!"wireline".equals(type) || fromUid == null || fromUid.trim().isEmpty()) return;
     final String safe = fromUid.replace("\\", "").replace("'", "").replace("\"", "");
