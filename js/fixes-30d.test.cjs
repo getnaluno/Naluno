@@ -52,18 +52,19 @@ const flush = () => new Promise((r) => setImmediate(r));
     assert.strictEqual(again.fetches, 0);
     const other = iceBox({ saved, user: { uid: 'someone-else', getIdToken: async () => 't' } });
     assert.strictEqual(other.IceCore.cached(), null, 'another person never uses these credentials');
-    const old = iceBox({ saved: Object.assign({}, saved, { at: Date.now() - 21 * 60 * 1000 }) });
-    assert.strictEqual(old.IceCore.cached(), null, 'saved credentials older than 20 minutes are not used');
+    /* 12 Oct b: kept 90 minutes (the TURN worker issues them for 2 hours). */
+    const old = iceBox({ saved: Object.assign({}, saved, { at: Date.now() - 91 * 60 * 1000 }) });
+    assert.strictEqual(old.IceCore.cached(), null, 'saved credentials older than 90 minutes are not used');
     assert.ok(!('nalunoIceCache' in old.store), 'and are removed');
     const bad = iceBox({ saved: { uid: 'me', at: 'x', cfg: 1 } });
     assert.strictEqual(bad.IceCore.cached(), null, 'a damaged saved copy is ignored');
   }
   {
     /* Refreshed before they run out; a failed refresh keeps the old ones. */
-    const saved = { uid: 'me', at: Date.now() - 19 * 60 * 1000, cfg: { iceServers: [{ urls: 'turn:old:3478' }] } };
+    const saved = { uid: 'me', at: Date.now() - 76 * 60 * 1000, cfg: { iceServers: [{ urls: 'turn:old:3478' }] } };
     const b = iceBox({ saved });
     b.IceCore.keepWarm(); await flush(); await flush();
-    assert.strictEqual(b.fetches, 1, 'an 18+ minute old copy is fetched again');
+    assert.strictEqual(b.fetches, 1, 'a 75+ minute old copy is fetched again');
     assert.notStrictEqual(JSON.parse(b.store.nalunoIceCache).at, saved.at, 'and the new one saved');
     const f = iceBox({ saved, fail: true });
     f.IceCore.keepWarm(); await flush(); await flush();

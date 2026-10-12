@@ -1237,6 +1237,7 @@ function bcompStartWriting(){
 async function bcompStartGoLive(opts){
   opts = opts || {};
   if(!currentUser || !fbDb){ toast('Sign in to go live'); return; }
+  try{ const no = window.NalunoLaunch && (NalunoLaunch.blocked('live') || NalunoLaunch.blocked('broadcasts')); if(no){ toast(no); return; } }catch(_){}
   const title = String(opts.title || '').trim();
   if(!title){ toast('Add a title'); return; }
   const tags = Array.isArray(opts.tags) ? opts.tags : [];
@@ -1251,6 +1252,12 @@ async function bcompStartGoLive(opts){
       thumbUrl: null,
       chapters: [],
       breathers: [],
+      // 12b: everyone else's feed asks only for posts published a little
+      // before its own clock (the database rule needs publishAt <= server
+      // time). A live dated "now" therefore stayed out of other people's
+      // feeds for its first 15 s to 2 min. A live is on air at once, so its
+      // shell is dated by that same margin.
+      publishAt: Date.now() - 2 * 60 * 1000,
     });
     const id = created && created.id;
     if(!id) throw new Error('Broadcast shell missing id');
@@ -1273,6 +1280,7 @@ function bliveClose(){
 }
 function bliveOpen(){
   if(!currentUser || !fbDb){ toast('Sign in to go live'); return; }
+  try{ const no = window.NalunoLaunch && (NalunoLaunch.blocked('live') || NalunoLaunch.blocked('broadcasts')); if(no){ toast(no); return; } }catch(_){}
   const sheet = $('bliveSetup');
   if(!sheet){ return; }
   sheet.classList.add('active');

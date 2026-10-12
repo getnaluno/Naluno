@@ -439,6 +439,7 @@ $('createBandBtn').onclick = ()=>{
   toast('Started ' + name);
 };
 async function createRealBand(name, vibe, memberContacts){
+  { const no = window.NalunoLaunch && NalunoLaunch.blocked('bands'); if(no){ toast(no); return null; } }
   try{
     const memberUids = memberContacts.map(c=>c.firebaseUid);
     const allUids = [...memberUids, currentUser.uid];

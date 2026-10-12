@@ -111,7 +111,8 @@
       name: text(u.name || '', 80),
       createdAt: num(u.createdAt || u.created_at),
       status: u.accountState === 'closed' || u.deleted ? 'closed' : (u.suspended ? 'suspended' : (u.restricted ? 'restricted' : 'active')),
-      verification: u.trustedPublisher ? 'trusted publisher' : 'not verified',
+      // 12c: trusted until reported; then the desk decides.
+      verification: (u.restricted || u.suspended) ? 'not trusted (restricted)' : (u.trustedPublisher === false ? 'not trusted (desk decision)' : (u.publisherReview === 'pending' ? 'reported, waiting for desk review' : (u.trustedPublisher === true ? 'trusted publisher (desk confirmed)' : 'trusted publisher'))),
       country: country || blank('Not collected'),
       recoveryEvents: accounts.filter(function (a) { return a && (a.action === 'close' || a.action === 'restore'); }),
       logins: events.filter(function (e) { return e && e.kind === 'login'; }),

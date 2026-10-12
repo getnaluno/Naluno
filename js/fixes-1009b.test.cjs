@@ -24,9 +24,9 @@ assert.strictEqual(short[0].text, 'The first café said no.', 'a short first sen
 
 /* 3. Until the first sound, only the loaded voice works; waits are short. */
 const src = read('js/naluno-voices.js');
-assert.ok(src.includes('var m = heard ? team[sent % team.length] : first;'), 'the other makers start after the first sound');
+assert.ok(src.includes("if (state[k] !== 'idle' || (k > 0 && !heard)) continue;") && src.includes('if (heard) bootTeam();'), 'the other makers start after the first sound');
 assert.ok(src.includes('if (secs >= 1.6) return a0;') && src.includes('setTimeout(function () { r(a0); }, 2500);'), 'only a very short title waits, at most 2.5 s');
-assert.ok(src.includes('Math.min(gated ? 0.02 : 1.5, Math.max(0.02, deficit))'), 'a slow phone waits at most 1.5 s at the start');
+assert.ok(src.includes('Math.min(1.5, Math.max(0.02, deficit))'), 'a slow phone waits at most 1.5 s at the start');
 assert.strictEqual(typeof NV.warm, 'function', 'the voice can be readied ahead');
 const room = read('js/broadcast-space.js');
 assert.ok(room.includes("btn.addEventListener('pointerdown', function(){ try{ if(window.NalunoVoices && NalunoVoices.warm) NalunoVoices.warm(true); }catch(_){} }"), 'a finger on Listen loads the voice');
@@ -59,8 +59,9 @@ assert.ok(fs.existsSync(path.join(root, 'voices/lg/male.mp3')) && fs.existsSync(
 
   /* 5. Stamps */
   const html = read('app/index.html');
-  ['lg-ear.js', 'naluno-voices.js', 'camera.js'].forEach((f) => assert.ok(html.includes('/js/' + f + '?v=20261010a'), f + ' stamp'));
-  assert.ok(html.includes('/js/broadcast-space.js?v=20261011b'), 'broadcast-space stamp');
+  ['lg-ear.js', 'camera.js'].forEach((f) => assert.ok(html.includes('/js/' + f + '?v=20261010a'), f + ' stamp'));
+  assert.ok(/\/js\/naluno-voices\.js\?v=(?:2026101[0-9][a-z]|202610[2-3][0-9][a-z])/.test(html), 'naluno-voices.js stamp (this build or later)');
+  assert.ok(/\/js\/broadcast-space\.js\?v=(?:2026101[1-9][a-z]|202610[2-3][0-9][a-z])/.test(html), 'broadcast-space stamp (this build or later)');
   assert.ok(html.includes('/js/broadcast-glance.js?v=20261010d'), 'glance stamp');
   assert.ok(/\/js\/pwa\.js\?v=(?:2026101[1-9][a-z]|202610[2-3][0-9][a-z])/.test(html), 'pwa.js stamp (this build or later)');
   assert.ok(/APP_BUILD = '(?:2026101[1-9][a-z]|202610[2-3][0-9][a-z])'/.test(read('sw.js')) && /\/sw\.js\?v=(?:2026101[1-9][a-z]|202610[2-3][0-9][a-z])/.test(read('js/pwa.js')));

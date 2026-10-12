@@ -86,8 +86,58 @@
     };
   }
 
+  /* ranker_v3 (12b). Same weights as ranker_v2; three changes, each one
+     measured in js/discover-eval.cjs:
+     - Small samples are pulled toward the catalogue's own average before they
+       count (an add-k / Bayesian average). Before, a Broadcast with one view
+       and one like had a perfect engagement rate and beat ones that hundreds
+       of people finished. The pull is pseudoImpressions views at the average
+       rate of the Broadcasts being ranked, so no fixed rate is assumed.
+     - Likes and dislikes are averaged the same way (pseudoVotes at even).
+     - Freshness counts from when a Broadcast was published (publishAt), not
+       when its draft was made, so a scheduled one is not born old. */
+  function modelV3() {
+    const m = modelV2();
+    m.id = 'ranker_v3';
+    m.smoothing = { pseudoImpressions: 40, pseudoVotes: 6 };
+    return m;
+  }
+
   function models() {
-    return { ranker_v1: modelV1(), ranker_v2: modelV2() };
+    return { ranker_v1: modelV1(), ranker_v2: modelV2(), ranker_v3: modelV3() };
+  }
+
+  function evidenceOf(b) {
+    const f = (b && b.features) || {};
+    return (Number(f.meaningfulWatches) || 0)
+      + (Number(f.completions) || 0) * 1.2
+      + (Number(f.shares) || 0) * 3
+      + (Number(f.saves) || 0) * 2.5
+      + (Number(f.follows) || 0) * 4
+      + (Number(f.returns) || 0) * 2
+      + (Number(f.likes) || 0) * 2
+      + (Number(f.keptLines) || 0) * 4;
+  }
+
+  // The average engagement rate of the Broadcasts being ranked, from those
+  // with enough views to say anything (falls back to all of them).
+  function catalogueRate(list) {
+    let ev = 0, imp = 0, evAll = 0, impAll = 0;
+    (list || []).forEach(function (b) {
+      const i = Math.max(0, Number(((b && b.features) || {}).impressions) || 0);
+      if (!i) return;
+      const e = evidenceOf(b);
+      evAll += e; impAll += i;
+      if (i >= 20) { ev += e; imp += i; }
+    });
+    if (imp) return ev / imp;
+    return impAll ? evAll / impAll : 0;
+  }
+
+  function msOf(t) {
+    if (t && typeof t.toMillis === 'function') return t.toMillis();
+    const n = Number(t);
+    return isFinite(n) ? n : 0;
   }
 
   function blankViewer() {
@@ -267,6 +317,12 @@
   function scoreOne(b, viewer, model, now) {
     const w = model.weights;
     const fit = fitOf(b);
+    const smooth = model.smoothing || null;
+    if (smooth) {
+      const k = Number(smooth.pseudoImpressions) || 0;
+      const prior = Number(model.priorRate) || 0;
+      fit.rate = (fit.impressions + k) > 0 ? (evidenceOf(b) + prior * k) / (fit.impressions + k) : 0;
+    }
     const rel = personal(b, viewer);
     const quality = watchQuality(b);
     const sat = Math.min(1, quality * 0.72 + Math.min(1, fit.rate) * 0.28);
@@ -277,7 +333,8 @@
       + (Number(f.commentReacts) || 0);
     const fromPoints = Math.min(0.2, (Number(f.contributionPoints) || 0) / 500);
     const community = Math.min(1, talk / 24 + fromPoints);
-    const ageH = Math.max(0, (now - Number(b.createdAt || now)) / 3600000);
+    const bornAt = smooth ? (msOf(b.publishAt) || msOf(b.createdAt) || now) : Number(b.createdAt || now);
+    const ageH = Math.max(0, (now - bornAt) / 3600000);
     const fresh = Math.exp(-ageH / 72);
     const explore = fit.impressions < 120 ? 0.32 : 0;
     const parts = {
@@ -304,7 +361,11 @@
     const likes = Number(f.likes) || 0;
     const dislikes = Number(f.dislikes) || 0;
     const votes = likes + dislikes;
-    if (votes) score += ((likes / votes) - 0.5) * 0.9;
+    if (smooth) {
+      const pv = Number(smooth.pseudoVotes) || 0;
+      if (votes) score += (((likes + pv / 2) / (votes + pv)) - 0.5) * 0.9;
+    } else if (votes) score += ((likes / votes) - 0.5) * 0.9;
+    if (!isFinite(score)) score = -1e6; // a broken row sinks instead of scrambling the sort
     const kept = Number(f.keptLines) || 0;
     if (kept) score += Math.min(0.35, kept / 12);
     const sources = sourcesFor(b, viewer, fit, rel, now);
@@ -404,6 +465,7 @@
       weights: Object.assign({}, m.weights),
       assembly: Object.assign({}, defaultAssembly(), m.assembly || {}),
     };
+    if (m.smoothing) next.smoothing = Object.assign({}, m.smoothing);
     if (!config) return next;
     if (config.discoveryShare != null) next.assembly.discoveryShare = Number(config.discoveryShare);
     if (config.maxCreatorShare != null) next.assembly.maxCreatorShare = Number(config.maxCreatorShare);
@@ -413,6 +475,7 @@
 
   function run(broadcasts, viewer, model, now) {
     const m = withConfig(model || modelV1(), null);
+    if (m.smoothing) m.priorRate = catalogueRate(broadcasts);
     const clock = now || Date.now();
     const v = viewer || blankViewer();
     const dropped = [];
@@ -647,6 +710,8 @@
     models: models,
     modelV1: modelV1,
     modelV2: modelV2,
+    modelV3: modelV3,
+    catalogueRate: catalogueRate,
     blankViewer: blankViewer,
     withConfig: withConfig,
     eligible: eligible,

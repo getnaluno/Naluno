@@ -19,7 +19,9 @@ const iceUpgrade = calls.slice(iceStart, calls.indexOf('remoteCombinedStream = n
 assert.ok(iceUpgrade.length > 40 && !iceUpgrade.includes('pc.restartIce'), 'the TURN-arrival path does not restart ICE');
 assert.ok((calls.match(/_nalunoIceFrozen = true/g) || []).length >= 3, 'offer and both answer paths freeze ICE before SDP');
 assert.ok(calls.includes('if(!still()){ nalunoDropPrepared(); return; }'), 'a prepare that gives up does not make Answer wait on it');
-assert.ok(calls.includes('const deadline = Date.now() + 1000;'), 'Answer waits for an in-flight prepare instead of throwing it away');
+// 12b: the call is marked accepted at the tap, in parallel, so Answer can wait
+// for an in-flight prepare up to its own TURN cap instead of starting over.
+assert.ok(/const deadline = Date\.now\(\) \+ \d+;/.test(calls) && calls.indexOf("nalunoCallMove(acceptingId, 'accepted'") < calls.indexOf('const deadline = Date.now() +'), 'Answer waits for an in-flight prepare instead of throwing it away');
 assert.ok(calls.includes('const turnReady = nalunoWaitForTurn(7000);') && calls.includes('await turnReady;'), 'the offer waits for TURN before the other phone rings (30d: while the mic/camera opens)');
 assert.ok(!/setTimeout\(climb,/.test(camera), 'the 4K climb does not run during a call at all (29d)');
 assert.ok(!camera.includes('setTimeout(climb, 400);'), 'the old 400ms climb is gone');

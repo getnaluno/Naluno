@@ -129,6 +129,17 @@ function broadcastThumbHtml(b){
   const schedMark = (!privMark && typeof broadcastIsScheduled === 'function' && broadcastIsScheduled(b))
     ? '<span class="bcast-plate-priv" style="position:absolute;top:8px;right:8px;z-index:3;font-family:var(--font-mono);font-size:9px;letter-spacing:.06em;background:rgba(255,194,102,.2);color:#ffc266;padding:3px 8px;border-radius:999px;">Scheduled</span>'
     : '';
+  /* Your own Broadcast that the public feed does not list. The app used to
+     show it to you as public (an older post missing the listing fields, or
+     one waiting for a first look), while nobody else could see it. */
+  let waitMark = '';
+  try{
+    const mine = typeof currentUser !== 'undefined' && currentUser && b.creatorUid === currentUser.uid;
+    if(mine && !privMark && !schedMark && !b.live && typeof nalunoPublicListable === 'function' && !nalunoPublicListable(b)){
+      const why = b.hidden ? 'Taken down' : (b.held ? 'Waiting for a first look' : 'Not on the public feed');
+      waitMark = '<span class="bcast-plate-priv bcast-plate-wait" title="' + escapeHtml(why) + '" style="position:absolute;top:8px;right:8px;z-index:3;font-family:var(--font-mono);font-size:9px;letter-spacing:.06em;background:rgba(139,144,168,.22);color:#c9cde0;padding:3px 8px;border-radius:999px;">' + escapeHtml(why) + '</span>';
+    }
+  }catch(_){}
   const writeMark = writing && cover && !b.live && typeof nalunoPlateGlance !== 'function' ? `<span class="bcast-plate-live" style="background:rgba(124,255,178,.16);color:var(--mint);border-color:rgba(124,255,178,.4);">Writing</span>` : '';
   const hold = (!b.live && b.held) ? `<span class="bcast-plate-live" style="background:rgba(255,194,102,.2);color:#ffc266;border-color:rgba(255,194,102,.4);">Waiting</span>` : '';
   const down = (!b.live && b.hidden) ? `<span class="bcast-plate-live" style="background:rgba(255,84,112,.18);color:#ff8a9a;border-color:rgba(255,84,112,.4);">Taken down</span>` : '';
@@ -157,7 +168,7 @@ function broadcastThumbHtml(b){
     <div class="bcast-plate-frame">
       ${inner}
       ${live}
-      ${privMark}
+      ${privMark}${waitMark}
       ${schedMark}
       ${writeMark}
       ${hold}
@@ -179,11 +190,16 @@ function broadcastThumbHtml(b){
   </article>`;
 }
 
+/* 12c: everyone is a trusted publisher until a report is filed about them;
+   then a person on the desk decides (trustedPublisher true or false).
+   Same rule as the economy worker's publisherTrusted (screen.mjs). */
 function nalunoPublisherTrusted(){
   try{
     const p = (typeof currentProfile !== 'undefined' && currentProfile) || {};
     if(p.restricted || p.suspended) return false;
-    return !!p.trustedPublisher;
+    if(p.trustedPublisher === false) return false;
+    if(p.publisherReview === 'pending') return false;
+    return true;
   }catch(_){ return false; }
 }
 
@@ -256,7 +272,12 @@ function nalunoBroadcastListingFields(screen, opts){
   if(decision === 'allow'){
     return { listed: true, held: false, heldReason: '', hidden: false };
   }
-  return { listed: false, held: true, heldReason: 'new-publisher', hidden: false };
+  let why = 'new-publisher';
+  try{
+    const p = (typeof currentProfile !== 'undefined' && currentProfile) || {};
+    why = (p.restricted || p.suspended) ? 'restricted' : (p.trustedPublisher === false ? 'not-trusted' : (p.publisherReview === 'pending' ? 'under-review' : 'new-publisher'));
+  }catch(_){}
+  return { listed: false, held: true, heldReason: why, hidden: false };
 }
 /** On the public feed. Legacy docs without listed stay visible until hidden/held. */
 /* Scheduled: not public until its moment arrives.
@@ -278,6 +299,19 @@ function broadcastIsPublic(b){
   if(broadcastIsScheduled(b)) return false;
   return true;
 }
+/* Exactly what firestore.rules let anyone list (and the public queries ask
+   for): the five listing fields set, and a numeric publishAt that has
+   passed. broadcastIsPublic() above is more lenient (an older post with no
+   listing fields counts), which is right for reading one you already have,
+   but not for saying it is on the public feed. */
+function nalunoPublicListable(b, now){
+  if(!b || b.deleted) return false;
+  if(b.listed !== true || b.hidden !== false || b.held !== false) return false;
+  if(b.visibility !== 'public') return false;
+  const at = b.publishAt;
+  return typeof at === 'number' && at > 0 && at <= (now || Date.now());
+}
+window.nalunoPublicListable = nalunoPublicListable;
 function broadcastVisibleTo(b, uid){
   if(!b || b.deleted) return false;
   if(uid && b.creatorUid === uid) return true;
@@ -365,6 +399,7 @@ function broadcastCreditFromOrigin(origin){
 
 async function createPermanentBroadcast({ title, description, tags, mediaType, mediaUrl, thumbUrl, filterCss, chapters, breathers, strandId, strandName, origin, screen, publishAt, visibility, body, words, durationSec, originCredit, repostOf, lang, reachPass }){
   if(!currentUser || !fbDb) throw new Error('Sign in required');
+  { const no = window.NalunoLaunch && NalunoLaunch.blocked('broadcasts'); if(no) throw new Error(no); }
   const now = Date.now();
   const ref = fbDb.collection('broadcasts').doc();
   // chapters: [{ index, mediaUrl, duration, title?, bytes? }]
@@ -523,7 +558,7 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
   const full = { id: ref.id, ...doc };
   myBroadcasts = [full, ...myBroadcasts.filter(x => x.id !== ref.id)];
   // Optimistic plate update — don't wait for onSnapshot (avoids "must refresh")
-  if(broadcastIsPublic(full)){
+  if(nalunoPublicListable(full)){
     feedTailById[full.id] = Object.assign({}, feedTailById[full.id] || {}, full);
     caughtUpIds[full.id] = 1;
     try{ publishPublicCatalogue(); }catch(_){}
@@ -676,7 +711,11 @@ function feedActivityAt(b){
 function nalunoCatalogueNow(){
   let skew = null;
   try{ if(typeof nalunoServerSkew === 'number' && isFinite(nalunoServerSkew)) skew = nalunoServerSkew; }catch(_){}
-  const margin = skew === null ? 5 * 60 * 1000 : 60 * 1000;
+  /* 12 Oct b: a minute (five without a measured clock) kept every new post,
+     a live one too, off other people's feeds for that long. The server's
+     clock is known to about a second from its Date header; 15 s covers
+     that. Without it, two minutes. */
+  const margin = skew === null ? 2 * 60 * 1000 : 15 * 1000;
   return Date.now() + (skew || 0) - margin;
 }
 window.nalunoCatalogueNow = nalunoCatalogueNow;
@@ -1021,6 +1060,16 @@ window.nalunoMergeOwnerBroadcasts = nalunoMergeOwnerBroadcasts;
 function startFeedBroadcastsListener(){
   if(!fbDb || !currentUser) return;
   if(feedBroadcastsUnsub) return;
+  /* Let the server-clock measurement land first (it is one small request
+     made at start-up), so the feed is not bounded two minutes back. */
+  try{
+    if((typeof nalunoServerSkew === 'undefined' || nalunoServerSkew === null) && window.__nalunoSkewReady && !startFeedBroadcastsListener._waited){
+      startFeedBroadcastsListener._waited = true;
+      Promise.race([window.__nalunoSkewReady, new Promise(function(r){ setTimeout(r, 1500); })])
+        .then(function(){ startFeedBroadcastsListener(); }, function(){ startFeedBroadcastsListener(); });
+      return;
+    }
+  }catch(_){}
   function attach(query){
     return query.onSnapshot(
       snap => {
@@ -1208,12 +1257,13 @@ async function loadFeedBroadcasts(){
       const snap = await fbDb.collection('broadcasts').where('creatorUid', 'in', chunk).limit(30).get();
       snap.docs.forEach(d => {
         const data = d.data();
-        if(!data.deleted && broadcastIsPublic(data)) list.push({ id: d.id, ...data });
+        /* Your own posts join For You only if everyone else can see them too. */
+        if(!data.deleted && nalunoPublicListable(data)) list.push({ id: d.id, ...data });
       });
     }catch(e){ console.warn('[bcast] contact catalogue', e && e.message); }
   }
   list.forEach(function(b){
-    if(b && b.id && broadcastIsPublic(b)) feedTailById[b.id] = Object.assign({}, feedTailById[b.id] || {}, b);
+    if(b && b.id && nalunoPublicListable(b)) feedTailById[b.id] = Object.assign({}, feedTailById[b.id] || {}, b);
   });
   publishPublicCatalogue();
 }

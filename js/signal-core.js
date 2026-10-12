@@ -1325,6 +1325,7 @@ function pruneExpiredSignal(){
 }
 
 async function saveSignalSegment(segment){
+  { const no = window.NalunoLaunch && NalunoLaunch.blocked('signals'); if(no){ if(typeof toast === 'function') toast(no); throw new Error(no); } }
   if(!currentUser || !fbDb) return null;
   try{
     const clean = {};

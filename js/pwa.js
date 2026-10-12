@@ -6,7 +6,7 @@
    ============================================================ */
 /* ---------------- PWA INSTALL + CALL NOTIFICATION DEEP-LINK ---------------- */
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js?v=20261012a', { scope: '/', updateViaCache: 'none' })
+  navigator.serviceWorker.register('/sw.js?v=20261013a', { scope: '/', updateViaCache: 'none' })
     .then(function(reg){ try{ reg.update(); }catch(_){} })
     .catch(function(e){ console.warn('[sw]', e); });
   // One automatic reload when a new SW takes control (clears stuck "sign-in not ready"
@@ -111,7 +111,9 @@ if('serviceWorker' in navigator){
       history.replaceState(null, '', clean);
     }
     // handleIncomingCallFromPush waits for sign-in itself.
-    setTimeout(function(){ handleIncomingCallFromPush(callId, { action: answer ? 'answer' : '' }); }, 600);
+    /* No fixed delay: the handler waits for sign-in itself. A 0.6 s pause
+       here was added on top of every call opened from a notification. */
+    setTimeout(function(){ handleIncomingCallFromPush(callId, { action: answer ? 'answer' : '' }); }, 0);
   }catch(e){}
 })();
 
@@ -154,15 +156,27 @@ function nalunoCallReady(maxMs){
         if(typeof fbDb !== 'undefined' && fbDb && typeof currentUser !== 'undefined' && currentUser && typeof handleIncomingCall === 'function'){ resolve(true); return; }
       }catch(_){}
       if(Date.now() - t0 > (maxMs || 25000)){ resolve(false); return; }
-      setTimeout(tick, 300);
+      setTimeout(tick, 100);
     };
     tick();
   });
 }
+/* Whatever the outcome (the ring, "That call already ended", not this
+   person's call, no sign-in), the opening-the-call screen goes. */
+let nalunoPushOpening = 0;
 async function handleIncomingCallFromPush(callId, opts){
+  nalunoPushOpening++;
+  try{ return await nalunoOpenCallFromPush(callId, opts); }
+  finally{
+    nalunoPushOpening--;
+    if(nalunoPushOpening <= 0){ try{ if(typeof window.nalunoCallBootDone === 'function') window.nalunoCallBootDone(); }catch(_){} }
+  }
+}
+async function nalunoOpenCallFromPush(callId, opts){
   opts = opts || {};
   const action = opts.action === 'answer' || opts.answer === true ? 'answer' : (opts.action === 'decline' ? 'decline' : '');
   if(!callId) return;
+  try{ if(typeof nalunoCallMark === 'function') nalunoCallMark(callId, 'opened'); }catch(_){}
   const key = callId + ':' + action;
   if(nalunoPushCallSeen[key] && Date.now() - nalunoPushCallSeen[key] < 4000) return;
   nalunoPushCallSeen[key] = Date.now();
@@ -170,6 +184,7 @@ async function handleIncomingCallFromPush(callId, opts){
     console.warn('[call] opened from a notification, but sign-in did not come back');
     return;
   }
+  try{ nalunoCallMark(callId, 'signedIn'); }catch(_){}
   if(action === 'decline'){
     try{ declineIncomingCall(callId); }catch(e){ console.warn('[call] decline from outside the app', e && e.message); }
     return;
@@ -220,7 +235,7 @@ function nalunoTakeNativeCall(){
 }
 window.nalunoTakeNativeCall = nalunoTakeNativeCall;
 try{
-  setTimeout(nalunoTakeNativeCall, 1500);
+  setTimeout(nalunoTakeNativeCall, 0); // the handler waits for sign-in itself
   document.addEventListener('visibilitychange', function(){ if(!document.hidden) setTimeout(nalunoTakeNativeCall, 300); });
 }catch(_){}
 

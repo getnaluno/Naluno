@@ -37,6 +37,12 @@ let bLiveFeedGen = 0;
 let bLiveFeedTimer = null;
 let bLiveFeedAwayAt = 0;
 let bLiveFeedStarting = null;
+/* 12b: true once the feed's own offer is sent and its answer/ICE listeners
+   are attached. Before that, the feed's start-up is still driving the
+   connection: adopting it then made the start-up see bLiveViewerPc set and
+   close the very connection the viewer had just adopted (picture never came,
+   about 1 join in 3 in the two-browser harness). */
+let bLiveFeedReady = false;
 let bLiveFeedRoom = null;
 let bLiveRoomOff = false;
 
@@ -71,6 +77,7 @@ function bLiveCleanupViewer(){
   bLiveViewerUnsubs.forEach(u=>{ try{ u(); }catch(_){} });
   bLiveViewerUnsubs = [];
   if(bLiveViewerPc){ try{ bLiveViewerPc.close(); }catch(_){} bLiveViewerPc = null; }
+  bLiveShowQuietCover('');
   const v = $('bspaceViewerLiveVideo');
   if(v){
     try{ v.srcObject = null; }catch(_){}
@@ -540,6 +547,81 @@ function bLiveAdoptFeedRoom(){
   return true;
 }
 
+/* 12b: a line over a frozen live picture (host gone, or connection lost).
+   Empty text removes it. Only the viewer's screen changes. */
+function bLiveShowQuietCover(text){
+  try{
+    let el = document.getElementById('bspaceLiveQuiet');
+    if(!text){ if(el) el.remove(); return; }
+    const host = $('bspaceMedia');
+    if(!host) return;
+    if(!el){
+      el = document.createElement('div');
+      el.id = 'bspaceLiveQuiet';
+      el.setAttribute('role', 'status');
+      el.style.cssText = 'position:absolute;left:0;right:0;bottom:0;padding:14px 16px;background:linear-gradient(transparent,rgba(0,0,0,.75));color:#fff;font-family:var(--font-mono,monospace);font-size:13px;letter-spacing:.02em;text-align:center;pointer-events:none;z-index:3;';
+      try{ if(getComputedStyle(host).position === 'static') host.style.position = 'relative'; }catch(_){}
+      host.appendChild(el);
+    }
+    el.textContent = text;
+  }catch(_){}
+}
+
+/* 12b: a live whose host's phone died is never ended by anyone, so a viewer
+   sat on "Connecting to live…", or on a frozen last picture, for ever. The
+   host sends a camera still every 2 s while it is really on air
+   (live-preview.js); while none arrives the viewer is told so, and the line
+   goes away if the host comes back. Whatever path joined the live (direct,
+   adopted from the feed, or the room), this watches from the moment the live
+   Broadcast is open until it is closed. Only the screen changes. */
+let bLiveHostBeatStop = null;
+function bLiveStopHostBeat(){
+  if(bLiveHostBeatStop){ try{ bLiveHostBeatStop(); }catch(_){} bLiveHostBeatStop = null; }
+  bLiveShowQuietCover('');
+}
+function bLiveWatchHostBeat(){
+  bLiveStopHostBeat();
+  if(typeof window.nalunoLiveHeartbeat !== 'function' || !activeBroadcastId) return;
+  const bidHere = activeBroadcastId;
+  const creatorHere = (activeBroadcastMeta && activeBroadcastMeta.creatorUid) || '';
+  let wasQuiet = false;
+  bLiveHostBeatStop = window.nalunoLiveHeartbeat(bidHere, creatorHere, function(state){
+    if(activeBroadcastId !== bidHere){ bLiveStopHostBeat(); return; }
+    /* 12c: the host came back (Resume live from the limelight). A viewer
+       whose connection died with the old session joins the new one by
+       itself, after a moment for the host to start listening. */
+    /* The watch restarts whenever the open Broadcast re-renders (a resume
+       writes to it), so a dead connection is judged by its own state rather
+       than only by having seen the quiet spell in this same watch. */
+    const stNow = bLiveViewerPc ? bLiveViewerPc.connectionState : 'none';
+    const deadPc = stNow === 'failed' || stNow === 'closed' || (wasQuiet && stNow === 'disconnected');
+    if(state === 'fresh' && !bLiveHost && !window.__nalunoSfuLiveHandle && (deadPc || (wasQuiet && stNow === 'none'))){
+      {
+        if(deadPc) bLiveCleanupViewer();
+        setTimeout(function(){
+          try{
+            if(activeBroadcastId === bidHere && !bLiveViewerPc && !window.__nalunoSfuLiveHandle && !bLiveHost) bLiveJoinAsViewer();
+          }catch(_){}
+        }, 2500);
+      }
+    }
+    wasQuiet = state === 'quiet';
+    const el = document.getElementById('bspaceLiveConnecting');
+    if(el){
+      el.textContent = state === 'quiet'
+        ? 'The host isn\u2019t sending video \u2014 this live may have ended. Still waiting\u2026'
+        : 'Connecting to live\u2026';
+      el.dataset.liveQuiet = state === 'quiet' ? '1' : '0';
+      bLiveShowQuietCover('');
+      return;
+    }
+    // Only over a live picture: once the live has ended and the replay shows,
+    // there is nothing to say.
+    const liveNow = !!document.getElementById('bspaceViewerLiveVideo') && !(activeBroadcastMeta && activeBroadcastMeta.live === false);
+    bLiveShowQuietCover(state === 'quiet' && liveNow ? 'The host\u2019s video stopped \u2014 this live may have ended.' : '');
+  });
+}
+
 /* ---------------- VIEWER: offer and receive tracks ---------------- */
 async function bLiveJoinAsViewer(){
   if(!fbDb || !currentUser || !activeBroadcastId){ toast('Open a live Broadcast first'); return; }
@@ -550,10 +632,7 @@ async function bLiveJoinAsViewer(){
   }
   if(bLiveFeedPc && bLiveFeedBid === activeBroadcastId){
     const st = bLiveFeedPc.connectionState;
-    if(st !== 'failed' && st !== 'closed'){
-      bLiveAdoptFeed();
-      return;
-    }
+    if(st !== 'failed' && st !== 'closed' && bLiveAdoptFeed()) return;
   }
   if(bLiveFeedPc || bLiveFeedBid || bLiveFeedStarting) bLiveStopFeed();
   if(bLiveViewerPc || window.__nalunoSfuLiveHandle) return;
@@ -661,6 +740,7 @@ async function bLiveJoinAsViewer(){
       try{
         const connecting = document.getElementById('bspaceLiveConnecting');
         if(connecting) connecting.textContent = 'Couldn\u2019t connect — check your connection and try again';
+        else if(bLiveViewerPc === pc) bLiveShowQuietCover('The connection to this live was lost.');
       }catch(_){}
     }
   };
@@ -672,7 +752,7 @@ async function bLiveJoinAsViewer(){
     if(remote.getTracks().length) return; // already working
     try{
       const connecting = document.getElementById('bspaceLiveConnecting');
-      if(connecting) connecting.textContent = 'Still connecting — this is taking longer than usual';
+      if(connecting && connecting.dataset.liveQuiet !== '1') connecting.textContent = 'Still connecting — this is taking longer than usual';
     }catch(_){}
   }, 12000);
 
@@ -862,6 +942,7 @@ function bLiveFeedMount(plate){
 }
 function bLiveStopFeed(){
   bLiveFeedGen++;
+  bLiveFeedReady = false;
   bLiveFeedStarting = null;
   bLiveFeedUnsubs.forEach(function(u){ try{ u(); }catch(_){} });
   bLiveFeedUnsubs = [];
@@ -879,6 +960,7 @@ function bLiveStopFeed(){
 }
 function bLiveAdoptFeed(){
   if(!bLiveFeedPc || !activeBroadcastId || bLiveFeedBid !== activeBroadcastId) return false;
+  if(!bLiveFeedReady) return false;
   const pc = bLiveFeedPc;
   const remote = bLiveFeedStream || new MediaStream();
   bLiveViewerPc = pc;
@@ -888,6 +970,7 @@ function bLiveAdoptFeed(){
   bLiveFeedBid = '';
   bLiveFeedStream = null;
   bLiveFeedStarting = null;
+  bLiveFeedReady = false;
   const host = $('bspaceMedia');
   if(host){
     host.innerHTML = '';
@@ -1050,6 +1133,7 @@ function bLiveStartFeed(bid, plate){
       });
     });
     bLiveFeedUnsubs.push(unsub, iceUnsub);
+    if(gen === bLiveFeedGen) bLiveFeedReady = true;
   })();
   bLiveFeedStarting = run.catch(function(){
     if(gen === bLiveFeedGen) bLiveStopFeed();
@@ -1265,11 +1349,12 @@ function bLiveOnSpaceOpened(isLive, isCreator){
   if(isLive && !isCreator){
     bLiveShowJoinUi(true);
     if(activeBroadcastId) bLiveWatchViewerCount(activeBroadcastId);
+    bLiveWatchHostBeat();
     const badge = $('bspaceLiveBadge');
     const watching = !!(bLiveViewerPc || window.__nalunoSfuLiveHandle);
     if(badge){ badge.style.display = 'block'; badge.textContent = watching ? 'Live now' : 'Live now — joining'; }
-    if(bLiveFeedPc && bLiveFeedBid === activeBroadcastId){
-      bLiveAdoptFeed();
+    if(bLiveFeedPc && bLiveFeedBid === activeBroadcastId && bLiveAdoptFeed()){
+      // took over the feed's finished connection
     } else if(!bLiveViewerPc && !window.__nalunoSfuLiveHandle){
       setTimeout(function(){
         try{
@@ -1289,6 +1374,7 @@ function bLiveOnSpaceOpened(isLive, isCreator){
 }
 
 function bLiveOnSpaceClosed(){
+  bLiveStopHostBeat();
   if(bLiveHost) bLiveStopHost();
   bLiveLeaveViewer();
   bLiveFlashed = {};

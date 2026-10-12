@@ -90,6 +90,7 @@ async function uploadBroadcastFileInner(blob, onProgress, contentTypeOverride){
     }catch(e){
       lastErr = e;
       console.warn('[bcast-upload] attempt ' + attempt + ' failed', e && e.message);
+      if(e && e.limit) break; // 13a: a limit is an answer, not a hiccup: no second try
       if(attempt < 2) await new Promise(r => setTimeout(r, 1200));
     }
   }
@@ -99,6 +100,7 @@ async function uploadBroadcastFileInner(blob, onProgress, contentTypeOverride){
 async function uploadBroadcastFileTo(base, blob, contentType, onProgress){
   const size = blob.size;
   if(size > BCAST_MAX_OBJECT_BYTES) throw new Error('That file is larger than 8 GB');
+  { const no = window.NalunoLaunch && NalunoLaunch.blocked('uploads'); if(no){ const e = new Error(no); e.limit = 'uploads-off'; throw e; } }
   const auth = await bcastAuthHeader(false);
   const initRes = await (typeof nalunoFetch === 'function' ? nalunoFetch : fetch)(base + '/b/init', {
     method: 'POST',
@@ -111,85 +113,108 @@ async function uploadBroadcastFileTo(base, blob, contentType, onProgress){
   if(!initRes.ok){
     const err = new Error(initBody.error || ('Init failed (' + initRes.status + ')'));
     err.status = initRes.status;
+    err.limit = initBody.limit || '';
     throw err;
   }
   const key = initBody.key;
   const uploadId = initBody.uploadId;
   if(!key || !uploadId) throw new Error('Upload session missing');
+  /* 13a: an upload that fails partway is given up on the worker too, so its
+     parts do not stay in storage. (A file refused at the end by a limit is
+     already deleted there.) */
+  const abortUpload = function(){
+    try{
+      (typeof nalunoFetch === 'function' ? nalunoFetch : fetch)(base + '/b/abort', {
+        method: 'POST', mode: 'cors', credentials: 'omit',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, auth),
+        body: JSON.stringify({ key, uploadId }),
+      }).catch(function(){});
+    }catch(_){}
+  };
+  try{
 
-  const parts = [];
-  const totalParts = Math.max(1, Math.ceil(size / BCAST_CHUNK_BYTES));
-  let sent = 0;
-  for(let i = 0; i < totalParts; i++){
-    const start = i * BCAST_CHUNK_BYTES;
-    const end = Math.min(size, start + BCAST_CHUNK_BYTES);
-    const chunk = blob.slice(start, end);
-    if(onProgress){
-      onProgress(sent / size, 'Uploading… ' + Math.round((sent / size) * 100) + '% (' + (i+1) + '/' + totalParts + ')');
-    }
-    const partNum = i + 1;
-    const partUrl = base + '/b/part?key=' + encodeURIComponent(key)
-      + '&uploadId=' + encodeURIComponent(uploadId)
-      + '&part=' + partNum;
-    let partRes = null;
-    let partBody = {};
-    let attempt = 0;
-    while(attempt < 6){
-      attempt++;
-      try{
-        partRes = await (typeof nalunoFetch === 'function' ? nalunoFetch : fetch)(partUrl, {
-          method: 'PUT',
-          mode: 'cors',
-          credentials: 'omit',
-          headers: Object.assign({ 'Content-Type': 'application/octet-stream' }, auth),
-          body: chunk,
-        });
-        if(partRes.status === 401 || partRes.status === 403){
-          const auth2 = await bcastAuthHeader(true);
+    const parts = [];
+    const totalParts = Math.max(1, Math.ceil(size / BCAST_CHUNK_BYTES));
+    let sent = 0;
+    for(let i = 0; i < totalParts; i++){
+      const start = i * BCAST_CHUNK_BYTES;
+      const end = Math.min(size, start + BCAST_CHUNK_BYTES);
+      const chunk = blob.slice(start, end);
+      if(onProgress){
+        onProgress(sent / size, 'Uploading… ' + Math.round((sent / size) * 100) + '% (' + (i+1) + '/' + totalParts + ')');
+      }
+      const partNum = i + 1;
+      const partUrl = base + '/b/part?key=' + encodeURIComponent(key)
+        + '&uploadId=' + encodeURIComponent(uploadId)
+        + '&part=' + partNum;
+      let partRes = null;
+      let partBody = {};
+      let attempt = 0;
+      while(attempt < 6){
+        attempt++;
+        try{
           partRes = await (typeof nalunoFetch === 'function' ? nalunoFetch : fetch)(partUrl, {
             method: 'PUT',
             mode: 'cors',
             credentials: 'omit',
-            headers: Object.assign({ 'Content-Type': 'application/octet-stream' }, auth2),
+            headers: Object.assign({ 'Content-Type': 'application/octet-stream' }, auth),
             body: chunk,
           });
+          if(partRes.status === 401 || partRes.status === 403){
+            const auth2 = await bcastAuthHeader(true);
+            partRes = await (typeof nalunoFetch === 'function' ? nalunoFetch : fetch)(partUrl, {
+              method: 'PUT',
+              mode: 'cors',
+              credentials: 'omit',
+              headers: Object.assign({ 'Content-Type': 'application/octet-stream' }, auth2),
+              body: chunk,
+            });
+          }
+          partBody = await partRes.json().catch(()=>({}));
+          if(partRes.ok) break;
+          if(partRes.status >= 400 && partRes.status < 500 && partRes.status !== 408 && partRes.status !== 429){
+            throw new Error(partBody.error || ('Part ' + partNum + ' failed'));
+          }
+        }catch(e){
+          if(attempt >= 6) throw e;
+          if(onProgress) onProgress(sent / size, 'Retrying part ' + partNum + '…');
+          await new Promise(r => setTimeout(r, 800 * attempt));
+          continue;
         }
-        partBody = await partRes.json().catch(()=>({}));
-        if(partRes.ok) break;
-        if(partRes.status >= 400 && partRes.status < 500 && partRes.status !== 408 && partRes.status !== 429){
-          throw new Error(partBody.error || ('Part ' + partNum + ' failed'));
-        }
-      }catch(e){
-        if(attempt >= 6) throw e;
         if(onProgress) onProgress(sent / size, 'Retrying part ' + partNum + '…');
         await new Promise(r => setTimeout(r, 800 * attempt));
-        continue;
       }
-      if(onProgress) onProgress(sent / size, 'Retrying part ' + partNum + '…');
-      await new Promise(r => setTimeout(r, 800 * attempt));
+      if(!partRes || !partRes.ok) throw new Error(partBody.error || ('Part ' + partNum + ' failed'));
+      parts.push({ part: partNum, etag: partBody.etag });
+      sent = end;
     }
-    if(!partRes || !partRes.ok) throw new Error(partBody.error || ('Part ' + partNum + ' failed'));
-    parts.push({ part: partNum, etag: partBody.etag });
-    sent = end;
+    if(onProgress) onProgress(0.97, 'Finishing upload…');
+    const doneRes = await (typeof nalunoFetch === 'function' ? nalunoFetch : fetch)(base + '/b/complete', {
+      method: 'POST',
+      mode: 'cors',
+      credentials: 'omit',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, await bcastAuthHeader(false)),
+      body: JSON.stringify({ key, uploadId, parts, bytes: size }),
+    });
+    const doneBody = await doneRes.json().catch(()=>({}));
+    if(!doneRes.ok){
+      const err = new Error(doneBody.error || 'Could not finish upload');
+      err.status = doneRes.status;
+      err.limit = doneBody.limit || '';
+      throw err;
+    }
+    // The worker always returns a full, correct-bucket playback URL. If it's
+    // ever missing, build it against THIS SAME broadcast endpoint (`base`) —
+    // never the Signal worker, which would point at the wrong bucket entirely.
+    let url = doneBody.url || (doneBody.key ? (base + '/o/' + doneBody.key) : '');
+    if(!url) throw new Error('Upload succeeded but no URL returned');
+    if(typeof resolveMediaUrl === 'function') url = resolveMediaUrl(url);
+    if(onProgress) onProgress(1, 'Uploaded');
+    return url;
+  }catch(e){
+    if(!(e && e.limit)) abortUpload();
+    throw e;
   }
-  if(onProgress) onProgress(0.97, 'Finishing upload…');
-  const doneRes = await (typeof nalunoFetch === 'function' ? nalunoFetch : fetch)(base + '/b/complete', {
-    method: 'POST',
-    mode: 'cors',
-    credentials: 'omit',
-    headers: Object.assign({ 'Content-Type': 'application/json' }, await bcastAuthHeader(false)),
-    body: JSON.stringify({ key, uploadId, parts, bytes: size }),
-  });
-  const doneBody = await doneRes.json().catch(()=>({}));
-  if(!doneRes.ok) throw new Error(doneBody.error || 'Could not finish upload');
-  // The worker always returns a full, correct-bucket playback URL. If it's
-  // ever missing, build it against THIS SAME broadcast endpoint (`base`) —
-  // never the Signal worker, which would point at the wrong bucket entirely.
-  let url = doneBody.url || (doneBody.key ? (base + '/o/' + doneBody.key) : '');
-  if(!url) throw new Error('Upload succeeded but no URL returned');
-  if(typeof resolveMediaUrl === 'function') url = resolveMediaUrl(url);
-  if(onProgress) onProgress(1, 'Uploaded');
-  return url;
 }
 
 /** Chapter plan for playback only — never split/re-encode the file. */

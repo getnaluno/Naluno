@@ -286,16 +286,48 @@
       /* 09 Oct: until the first sound is out, everything goes to the voice
          that is already loaded. Starting the other makers at the same
          moment (each loads its own copy of the voice) slowed the first
-         sound; they start once it is playing. */
-      function feed(upto) {
-        while (sent < list.length && sent <= upto) {
-          var m = heard ? team[sent % team.length] : first;
-          results[sent] = sayOn(m, list[sent]);
+         sound; they start once it is playing.
+         12 Oct b: pieces used to be handed out in turn (piece 2 to maker 2,
+         piece 3 to maker 3...), so the next sentence could wait on a maker
+         that was still loading its voice while the loaded one sat idle:
+         on a slow phone that was a 2-3 s silence early in the reading.
+         Now each piece, in reading order, goes to the first maker that is
+         free and loaded. The others load once the first sound plays and
+         join when ready. What each piece says, its voice, speed and pauses
+         are unchanged. */
+      var heard = false;
+      var limit = -1;
+      var slots = list.map(function () { var d = {}; d.p = new Promise(function (res) { d.res = res; }); return d; });
+      for (var q = 0; q < slots.length; q++) results[q] = slots[q].p;
+      var state = team.map(function (_, k) { return k === 0 ? 'idle' : 'cold'; });
+      function pump() {
+        for (var k = 0; k < team.length; k++) {
+          if (sent >= list.length || sent > limit) return;
+          if (state[k] !== 'idle' || (k > 0 && !heard)) continue;
+          var idx = sent;
           sent += 1;
+          state[k] = 'busy';
+          (function (k, idx) {
+            var free = function () { if (state[k] === 'busy') state[k] = 'idle'; };
+            sayOn(team[k], list[idx]).then(function (a) { free(); slots[idx].res(a); pump(); },
+              function () { free(); slots[idx].res(null); pump(); });
+          })(k, idx);
         }
       }
+      function bootTeam() {
+        team.forEach(function (m, k) {
+          if (state[k] !== 'cold') return;
+          state[k] = 'booting';
+          m.boot().then(function () { if (state[k] === 'booting') state[k] = 'idle'; pump(); },
+            function () { state[k] = 'dead'; });
+        });
+      }
+      function feed(upto) {
+        if (upto > limit) limit = upto;
+        if (heard) bootTeam();
+        pump();
+      }
       if (typeof opts.onready === 'function') opts.onready();
-      var heard = false;
       feed(1);
       var context = ac();
       var nextAt = 0;
@@ -366,9 +398,12 @@
                   for (var r = idx + 1; r < Math.min(list.length, idx + 5); r++) restChars += list[r].text.length;
                   var secPerChar = buf.duration / Math.max(10, list[idx].text.length);
                   var deficit = slow > 1.05 ? (slow - 1) * restChars * secPerChar : 0;
-                  /* At most a few seconds; less when the next sentence is
-                     already waiting (a short title waited for it). */
-                  startAt = context.currentTime + Math.min(gated ? 0.02 : 1.5, Math.max(0.02, deficit));
+                  /* At most 1.5 s, and only on a phone measured as slower
+                     than the reading. 12 Oct b: a short title used to skip
+                     this lead entirely, and on a slow phone the reading
+                     then stopped for 2-3 s two sentences in. A fast phone
+                     still starts at once (no deficit). */
+                  startAt = context.currentTime + Math.min(1.5, Math.max(0.02, deficit));
                 }
                 var src = context.createBufferSource();
                 src.buffer = buf;

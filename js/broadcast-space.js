@@ -1983,6 +1983,12 @@ async function bspaceRequireMember(){
 
 async function bspacePost(col, payload){
   if(!(await bspaceRequireMember())) return false;
+  /* 13a: Comments / Questions switched off for new posts (system lines go through). */
+  try{
+    const feat = col === 'conversation' ? 'comments' : ((col === 'questions' || col === 'results' || col === 'resources') ? 'questions' : '');
+    const no = feat && !(payload && payload.type === 'system') && window.NalunoLaunch && NalunoLaunch.blocked(feat);
+    if(no){ toast(no); return false; }
+  }catch(_){}
   /* 30a: links are welcome and become tappable; adult and gambling sites are not shared. */
   if(payload && payload.text && window.NalunoLinks && NalunoLinks.hasBlockedLink(payload.text)){
     toast('That link cannot be shared on Naluno.');
@@ -2665,6 +2671,9 @@ async function bspaceStartLive(){
   const isCreator = !!(activeBroadcastMeta && (activeBroadcastMeta.isMine || (currentUser && activeBroadcastMeta.creatorUid === currentUser.uid)));
   if(!isCreator){ toast('Only the creator can go live'); return; }
   if(bspaceLiveStream){ await bspaceStopLive(); toast('Live ended'); return; }
+  /* 13a: Live switched off, or new lives paused by the guard (the rules
+     refuse it too; this says why). */
+  try{ const no = window.NalunoLaunch && NalunoLaunch.blocked('live'); if(no){ toast(no); return; } }catch(_){}
   // FIX (found by stress-testing a double tap): the guard above checks
   // bspaceLiveStream, but that isn't assigned until AFTER getUserMedia()
   // resolves — and opening a camera on Android routinely takes 300ms-2s
@@ -2710,12 +2719,17 @@ async function bspaceStartLive(){
   const btn = $('bspaceGoLive');
   if(btn){ btn.textContent = 'End live'; btn.style.background = 'var(--red)'; btn.style.color = '#fff'; }
 
-  await fbDb.collection('broadcasts').doc(activeBroadcastId).set({
+  /* 12c: Resume live from the limelight (live-preview.js) carries on the
+     same live: its start time stays, the drop marks clear, and the people
+     already told about it are not told again. */
+  const resuming = (window.__nalunoResumeLive && window.__nalunoResumeLive.bid === activeBroadcastId) ? window.__nalunoResumeLive : null;
+  window.__nalunoResumeLive = null;
+  await fbDb.collection('broadcasts').doc(activeBroadcastId).set(Object.assign({
     live: true,
-    liveAt: Date.now(),
+    liveAt: resuming ? (Number(resuming.liveAt) || Date.now()) : Date.now(),
     liveBy: currentUser.uid,
     updatedAt: Date.now(),
-  }, { merge:true });
+  }, resuming ? { liveResumedAt: Date.now(), liveDroppedAt: null, liveDroppedNotifiedAt: null, liveLimelightUntil: null, liveEndReason: null } : {}), { merge:true });
   if(typeof bLiveOnHostStarted === 'function'){
     try{ await bLiveOnHostStarted(bspaceLiveStream); }catch(e){ console.warn('[live]', e); }
     // Record live for permanent chapter when live ends
@@ -2743,6 +2757,28 @@ async function bspaceStartLive(){
   // the renderer can say "You're live now" to the creator specifically,
   // while text keeps the old, name-baked wording as a fallback for anything
   // that just reads text directly (older clients, notifications, search).
+  /* 13a: the phase's live length (0 = no limit). A warning two minutes
+     before, then the live ends the normal way. The server sweep ends it too
+     if this phone is gone. */
+  try{
+    const lim = window.NalunoLaunch && NalunoLaunch.media() && NalunoLaunch.media().live;
+    const maxSec = lim ? Number(lim.maxLiveSec) || 0 : 0;
+    if(maxSec > 0){
+      const startedAt = resuming ? (Number(resuming.liveAt) || Date.now()) : Date.now();
+      const left = startedAt + maxSec * 1000 - Date.now();
+      const bid = activeBroadcastId;
+      if(window.__nalunoLiveLimitTimers) window.__nalunoLiveLimitTimers.forEach(clearTimeout);
+      window.__nalunoLiveLimitTimers = [
+        setTimeout(function(){ if(bspaceLiveStream && activeBroadcastId === bid) toast('Your live ends in 2 minutes (the live time limit is ' + NalunoLaunch.fmtSec(maxSec) + ').'); }, Math.max(0, left - 120000)),
+        setTimeout(function(){ if(bspaceLiveStream && activeBroadcastId === bid){ bspaceStopLive(); toast('Live ended at the ' + NalunoLaunch.fmtSec(maxSec) + ' limit'); } }, Math.max(1000, left)),
+      ];
+    }
+  }catch(_){}
+  if(resuming){
+    await bspacePost('conversation', { type:'system', kind:'went_live', text: ((currentProfile && currentProfile.name) || 'Creator') + ' is back live — tap Join live to watch.' });
+    toast('You’re back live');
+    return;
+  }
   await bspacePost('conversation', { type:'system', kind:'went_live', text: ((currentProfile && currentProfile.name) || 'Creator') + ' is live now — tap Join live to watch.' });
   await bspacePost('journey', { type:'live', text: 'Live session started' });
   if(typeof notifyFrequenciesLive === 'function'){

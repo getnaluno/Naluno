@@ -16,7 +16,12 @@ const RTC_CONFIG = {
 };
 
 const TURN_CREDENTIALS_WORKER_URL = 'https://naluno-turn-credentials.naluno.workers.dev';
-const ICE_CACHE_TTL_MS = 25 * 60 * 1000;
+/* The TURN worker (index.js) asks Cloudflare for credentials that last 2
+   hours (ttl 7200). They were kept for only 20-25 minutes here, so a phone
+   opened from a call notification after half an hour had to fetch them
+   again (an id-token refresh plus a request) while the caller waited.
+   Kept for 90 minutes now, well inside their 2 hours. */
+const ICE_CACHE_TTL_MS = 90 * 60 * 1000;
 const CALL_ICE_BUDGET_MS = 250;
 
 let cachedIceServers = null;
@@ -28,14 +33,14 @@ let cachedIceUid = '';
    without it.
    - The credentials are kept for this signed-in person across an app
      restart (a call answered from a notification starts a fresh app), for
-     20 minutes, inside the 25 minutes they are trusted for.
+     90 minutes, inside the 2 hours the TURN worker issues them for.
    - They are fetched again before they run out while Naluno is open, and
      when Naluno comes back to the screen or back online.
    A call on a phone without TURN could not connect on most mobile
    networks, and waited up to 0.6-0.8 s for it before ringing or answering. */
 const ICE_STORE_KEY = 'nalunoIceCache';
-const ICE_STORE_TTL_MS = 20 * 60 * 1000;
-const ICE_REFRESH_AFTER_MS = 18 * 60 * 1000;
+const ICE_STORE_TTL_MS = 90 * 60 * 1000;
+const ICE_REFRESH_AFTER_MS = 75 * 60 * 1000;
 function iceUid(){
   try{ return (typeof currentUser !== 'undefined' && currentUser && currentUser.uid) || ''; }catch(_){ return ''; }
 }
@@ -232,6 +237,13 @@ function prewarmIceServers(){
 function awaitIceServers(maxMs){
   const hit = iceFromCache();
   if(hit) return Promise.resolve(hit);
+  /* A TURN fetch that just failed (or came back empty) is not waited for a
+     second time: every later wait used to fetch again, one after another,
+     and the answer sat behind each of them. Try again in the background. */
+  if(!inflightIce && lastIceFailAt && Date.now() - lastIceFailAt < 30000){
+    fetchTurnServers().catch(function(){});
+    return Promise.resolve(iceNow());
+  }
   const cap = (typeof maxMs === 'number' && maxMs > 0) ? maxMs : 7000;
   const turn = fetchTurnServers().catch(function(){ return iceNow(); });
   return Promise.race([

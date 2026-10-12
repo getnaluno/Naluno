@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261012a';
+  const BUILD = '20261013a';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -64,7 +64,7 @@
      checkboxes and the Export tab both read it, so a new section
      is added here and nowhere else. */
   const DESK_TAB_ROLES = [
-    ['overview', 'Overview'], ['health', 'Health'], ['alerts', 'Alerts'], ['mail', 'Mail'],
+    ['overview', 'Overview'], ['launch', 'Launch & Capacity'], ['health', 'Health'], ['alerts', 'Alerts'], ['mail', 'Mail'],
     ['ads', 'Ads'], ['users', 'Users'], ['identity', 'Identity'], ['broadcast', 'Broadcast'],
     ['signals', 'Signals'], ['journey', 'Journey'], ['creators', 'Creators'], ['toga', 'Toga'],
     ['community', 'Community'], ['trust', 'Trust'], ['safety', 'Safety'], ['legal', 'Legal'], ['economy', 'Economy'],
@@ -2079,7 +2079,8 @@
       ? '<button type="button" class="ghost admBmod" data-id="' + id + '" data-a="restore">Restore</button>'
       : ('<button type="button" class="primary admBmod" data-id="' + id + '" data-a="let-out">Let out</button> '
         + '<button type="button" class="ghost admBmod" data-id="' + id + '" data-a="take-down">Take down</button> '
-        + '<button type="button" class="ghost admBmod" data-id="' + id + '" data-uid="' + uid + '" data-a="trust-publisher">Trust publisher</button> '
+        + '<button type="button" class="ghost admBmod" data-id="' + id + '" data-uid="' + uid + '" data-a="trust-publisher">Keep trusting</button> '
+        + '<button type="button" class="ghost admBmod" data-id="' + id + '" data-uid="' + uid + '" data-a="untrust-publisher">Stop trusting</button> '
         + '<button type="button" class="ghost admBmod" data-id="' + id + '" data-uid="' + uid + '" data-a="reach-full">Full Reach</button> '
         + '<button type="button" class="ghost admBmod" data-id="' + id + '" data-uid="' + uid + '" data-a="reach-open">Short Reach</button>');
     const jump = (uid ? ' <button type="button" class="ghost admGoUser" data-uid="' + uid + '">Person</button>' : '')
@@ -2271,6 +2272,8 @@
     if (!db) throw new Error('Database is not ready');
     const FP = firebase.firestore.FieldPath.documentId();
     const found = [];
+    const tally = {};
+    const others = [];
     let scanned = 0;
     let last = null;
     for (let page = 0; page < 200; page++) {
@@ -2280,14 +2283,137 @@
       if (!snap || snap.empty) break;
       snap.docs.forEach(function (d) {
         scanned++;
-        const patch = legacyCatPatch(d.data() || {}, Date.now());
-        if (patch) found.push({ id: d.id, title: String((d.data() || {}).title || ''), patch: patch });
+        const row = d.data() || {};
+        const patch = legacyCatPatch(row, Date.now());
+        if (patch) found.push({ id: d.id, title: String(row.title || ''), patch: patch });
+        const why = legacyCatWhy(row, patch, Date.now());
+        tally[why] = (tally[why] || 0) + 1;
+        if (why === 'other' && others.length < 20) others.push({ id: d.id, title: String(row.title || ''), creator: String(row.creatorUid || '').slice(0, 10) });
       });
       last = snap.docs[snap.docs.length - 1];
       if (snap.docs.length < 400) break;
     }
-    return { scanned: scanned, found: found };
+    return { scanned: scanned, found: found, tally: tally, others: others };
   }
+  /* Why one Broadcast is or is not on the public feed, in the feed's own
+     terms (firestore.rules: listed, hidden, held, visibility, publishAt). */
+  function legacyCatWhy(row, patch, now) {
+    if (row.deleted) return 'deleted';
+    if (row.visibility === 'private') return 'private';
+    if (row.hidden === true) return 'taken down';
+    if (row.held === true) return 'waiting for a first look (' + String(row.heldReason || 'review') + ')';
+    if (row.listed === false) return 'unlisted';
+    if (row.listed === true && row.hidden === false && row.held === false && row.visibility === 'public'
+      && typeof row.publishAt === 'number' && row.publishAt > 0) {
+      return row.publishAt > now ? 'scheduled' : 'public';
+    }
+    if (patch) return 'restorable (missing fields)';
+    return 'other';
+  }
+  /* 12c: Broadcasts held only as "new publisher" under the old rule. */
+  function newPubTrusted(u) {
+    const p = u || {};
+    if (p.restricted || p.suspended) return false;
+    if (p.trustedPublisher === false) return false;
+    if (p.publisherReview === 'pending') return false;
+    return true;
+  }
+  function newPubPatch(row, creator, now) {
+    if (!row || row.deleted || row.hidden === true || row.held !== true) return null;
+    if (String(row.heldReason || '') !== 'new-publisher') return null;
+    if (row.visibility === 'private') return null;
+    if (row.screenDecision === 'hold' || row.screenDecision === 'block') return null;
+    // Same holds as the worker's safetyHold(): those stay for a person.
+    if (['REVIEW', 'REMOVE', 'ESCALATE', 'AGE_RESTRICT', 'REGION_RESTRICT'].indexOf(String(row.safetyDecision || '')) >= 0) return null;
+    if (!newPubTrusted(creator)) return null;
+    const patch = { listed: true, held: false, heldReason: '', releasedAt: now, releasedWhy: 'trusted-until-reported' };
+    if (row.visibility == null || row.visibility === '') patch.visibility = 'public';
+    if (row.hidden == null) patch.hidden = false;
+    if (!(typeof row.publishAt === 'number' && row.publishAt > 0)) {
+      const at = legacyCatMs(row.publishAt) || legacyCatMs(row.createdAt) || legacyCatMs(row.updatedAt);
+      if (!(at > 0 && at <= now)) return null;
+      patch.publishAt = at;
+    }
+    return patch;
+  }
+  async function newPubScan() {
+    const db = adminDb();
+    if (!db) throw new Error('Database is not ready');
+    const snap = await db.collection('broadcasts').where('held', '==', true).limit(2000).get();
+    const people = {};
+    const found = [];
+    const skipped = {};
+    for (const d of (snap.docs || [])) {
+      const row = d.data() || {};
+      if (String(row.heldReason || '') !== 'new-publisher') continue;
+      const uid = String(row.creatorUid || '');
+      if (uid && !(uid in people)) {
+        const u = await db.collection('users').doc(uid).get().catch(function () { return null; });
+        people[uid] = u && u.exists ? (u.data() || {}) : {};
+      }
+      const patch = newPubPatch(row, people[uid] || {}, Date.now());
+      if (patch) found.push({ id: d.id, title: String(row.title || ''), live: row.live === true, patch: patch });
+      else {
+        const why = !newPubTrusted(people[uid]) ? 'publisher reported or not trusted' : (row.visibility === 'private' ? 'private' : 'a content check holds it');
+        skipped[why] = (skipped[why] || 0) + 1;
+      }
+    }
+    return { found: found, skipped: skipped };
+  }
+  function wireNewPublisherRelease(root) {
+    const check = root.querySelector('#newPubCheck');
+    const apply = root.querySelector('#newPubApply');
+    const out = root.querySelector('#newPubOut');
+    if (!check || !apply || !out) return;
+    let last = null;
+    check.onclick = async function () {
+      check.disabled = true; apply.disabled = true;
+      out.textContent = 'Reading held Broadcasts…';
+      try {
+        last = await newPubScan();
+        const n = last.found.length;
+        const lives = last.found.filter(function (r) { return r.live; }).length;
+        const sk = Object.keys(last.skipped).map(function (k) { return k + ': ' + last.skipped[k]; }).join(' · ');
+        out.innerHTML = escapeHtml(n + ' held only as "new publisher" can go out' + (lives ? ' (' + lives + ' live now)' : '') + '.')
+          + (sk ? '<br>' + escapeHtml('Staying held: ' + sk) : '')
+          + (n ? '<br>' + last.found.slice(0, 12).map(function (r) { return escapeHtml((r.title || '(untitled)').slice(0, 60) + (r.live ? ' (live)' : '')); }).join('<br>') + (n > 12 ? '<br>…' : '') : '');
+        apply.disabled = !n;
+      } catch (e) {
+        out.textContent = 'Could not read: ' + ((e && e.message) || e);
+      } finally { check.disabled = false; }
+    };
+    apply.onclick = async function () {
+      if (!last || !last.found.length) return;
+      const n = last.found.length;
+      if (!window.confirm('Release ' + n + ' Broadcast' + (n === 1 ? '' : 's') + ' held only because the publisher was new?')) return;
+      const db = adminDb();
+      if (!db) { out.textContent = 'Database is not ready'; return; }
+      apply.disabled = true; check.disabled = true;
+      try {
+        const runId = 'new-publisher-release-' + Date.now();
+        for (let i = 0; i < last.found.length; i += 300) {
+          const part = last.found.slice(i, i + 300).map(function (r) { return { id: r.id, set: Object.keys(r.patch) }; });
+          const ok = await writeAudit('broadcast-new-publisher-release', runId, 'held only as new publisher; trusted until reported', { part: i / 300, items: part });
+          if (!ok) throw new Error('The audit record could not be saved, so nothing was changed.');
+        }
+        let done = 0;
+        for (let i = 0; i < last.found.length; i += 400) {
+          const batch = db.batch();
+          last.found.slice(i, i + 400).forEach(function (r) {
+            batch.set(db.collection('broadcasts').doc(r.id), Object.assign({}, r.patch, { releasedBy: (currentUser && currentUser.uid) || '' }), { merge: true });
+          });
+          await batch.commit();
+          done += Math.min(400, last.found.length - i);
+          out.textContent = 'Released ' + done + ' of ' + n + '…';
+        }
+        out.textContent = 'Released ' + done + ' Broadcast' + (done === 1 ? '' : 's') + '. Saved in the audit as ' + runId + '.';
+        last = null;
+      } catch (e) {
+        out.textContent = 'Stopped: ' + ((e && e.message) || e);
+      } finally { check.disabled = false; }
+    };
+  }
+
   function wireLegacyCatalogue(root) {
     const check = root.querySelector('#legacyCatCheck');
     const apply = root.querySelector('#legacyCatApply');
@@ -2300,8 +2426,12 @@
       try {
         last = await legacyCatScan();
         const n = last.found.length;
+        const tallyHtml = Object.keys(last.tally || {}).sort(function (a, b) { return (last.tally[b] || 0) - (last.tally[a] || 0); })
+          .map(function (k) { return escapeHtml(k + ': ' + last.tally[k]); }).join(' · ');
         out.innerHTML = escapeHtml('Read ' + last.scanned + ' Broadcasts. ' + n + ' public '
           + (n === 1 ? 'one is' : 'ones are') + ' missing from the feed.')
+          + (tallyHtml ? '<br>' + tallyHtml : '')
+          + ((last.others && last.others.length) ? '<br>Not public for another reason (look at these by hand): ' + last.others.map(function (r) { return escapeHtml((r.title || '(untitled)').slice(0, 40) + ' [' + r.id + ']'); }).join(', ') : '')
           + (n ? '<br>' + last.found.slice(0, 12).map(function (r) {
             return escapeHtml((r.title || '(untitled)').slice(0, 60) + ' — adds ' + Object.keys(r.patch).join(', '));
           }).join('<br>') + (n > 12 ? '<br>…' : '') : '');
@@ -3408,6 +3538,13 @@
       el.innerHTML = '<p class="sub">This login cannot open that section.</p>';
       return;
     }
+    /* 13a: Launch & Capacity lives in js/admin-launch.js. */
+    if (tab === 'launch') {
+      if (window.NalunoLaunchDesk && typeof window.NalunoLaunchDesk.render === 'function') {
+        window.NalunoLaunchDesk.render(el, { adminWorker: adminWorker, card: card, kpis: kpis, escapeHtml: escapeHtml, toast: toast });
+      } else el.innerHTML = '<p class="sub">The Launch & Capacity page did not load. Reload the console.</p>';
+      return;
+    }
     d = d || __snap || {};
     const u = d.users || {};
     const c = d.content || {};
@@ -4105,9 +4242,18 @@
           + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;">'
           + '<button type="button" class="btn" id="legacyCatCheck">Check</button>'
           + '<button type="button" class="btn" id="legacyCatApply" disabled>Restore</button></div>'
-          + '<div class="sub" id="legacyCatOut"></div>');
+          + '<div class="sub" id="legacyCatOut"></div>')
+        + card('Held only because the publisher was new',
+          '<p class="sub">Since 12 Oct everyone is a trusted publisher until a report is filed about them. Before that, a Callsign that was not yet trusted had its Broadcasts (lives too) held as "new publisher". '
+          + 'Check counts them and changes nothing. Release lists only those whose publisher is trusted under the new rule (no report waiting, not stopped, not restricted or suspended), '
+          + 'and never one held by Screen or a safety check, taken down, private or deleted. What it releases is saved in the audit first.</p>'
+          + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;">'
+          + '<button type="button" class="btn" id="newPubCheck">Check</button>'
+          + '<button type="button" class="btn" id="newPubApply" disabled>Release</button></div>'
+          + '<div class="sub" id="newPubOut"></div>');
       wireDeskJumps(el);
       wireLegacyCatalogue(el);
+      wireNewPublisherRelease(el);
       return;
     }
 
@@ -4476,10 +4622,11 @@
           ? '<p class="sub">Watch it here \u2014 no need to open the app. Urgent reports (sexual, terrorism and the rest) are already off the feed; these buttons decide what happens next.</p>'
             + '<div class="review-list">' + (sf.open || []).map(reportReviewCard).join('') + '</div>'
           : '<p class="sub">No open reports.</p>')
+        + card('Publishers waiting for a decision', '<div id="pubReviewList"><p class="sub">Reading…</p></div>')
         + card('Waiting to go out', held.length
           ? '<p class="sub">Watch here, then Let out or Take down. It stays on their list until you decide.</p>'
             + '<div class="review-list">' + held.map(function (b) { return trustReviewCard(b, 'held'); }).join('') + '</div>'
-          : '<p class="sub">No Broadcasts waiting. Unsure Screen reads wait here. A new Callsign without a clear read still waits.</p>')
+          : '<p class="sub">No Broadcasts waiting. Unsure Screen reads wait here, and new Broadcasts of a publisher who was reported, until you decide.</p>')
         + card('Taken down', hidden.length
           ? '<p class="sub">Already decided. Restore only if that was a mistake.</p>'
             + '<div class="review-list">' + hidden.map(function (b) { return trustReviewCard(b, 'hidden'); }).join('') + '</div>'
@@ -4491,6 +4638,7 @@
       el.querySelectorAll('.admRpt').forEach(function (btn) {
         btn.onclick = function () { actReport(btn.getAttribute('data-id'), btn.getAttribute('data-d')); };
       });
+      loadPublisherReviews(el);
       el.querySelectorAll('.admBmod').forEach(function (btn) {
         btn.onclick = function () {
           modBroadcast(btn.getAttribute('data-id'), btn.getAttribute('data-a'), btn.getAttribute('data-uid') || '');
@@ -5307,9 +5455,11 @@
           + '<input id="discCreator" type="number" min="0.1" max="0.8" step="0.01" value="0.34" />'
           + '<label for="discStreak">Same topic in a row, at most</label>'
           + '<input id="discStreak" type="number" min="1" max="6" step="1" value="2" />'
+          + '<label for="discModelB">Second model</label>'
+          + '<select id="discModelB"><option value="ranker_v2">ranker_v2</option><option value="ranker_v3">ranker_v3 (small samples averaged, publish time)</option></select>'
           + '<label for="discPct">Percent of people on the second model</label>'
           + '<input id="discPct" type="number" min="0" max="50" step="1" value="0" />'
-          + '<p class="sub">Zero means everyone stays on ranker_v1. The second model is ranker_v2. This is a trial, not a permanent formula.</p>'
+          + '<p class="sub">Zero means everyone stays on ranker_v1. This is a trial, not a permanent formula.</p>'
           + '<div class="row"><button type="button" class="primary" id="discSave">Save the live model</button></div>'
           + '<p class="msg" id="discMsg"></p>')
         + card('Compile features',
@@ -5323,6 +5473,7 @@
         if ($('discCreator') && data.maxCreatorShare != null) $('discCreator').value = data.maxCreatorShare;
         if ($('discStreak') && data.maxTopicStreak != null) $('discStreak').value = data.maxTopicStreak;
         if ($('discPct') && data.experimentPercent != null) $('discPct').value = data.experimentPercent;
+        if ($('discModelB') && (data.modelB === 'ranker_v2' || data.modelB === 'ranker_v3')) $('discModelB').value = data.modelB;
       }
       if (db) {
         db.collection('discoveryConfig').doc('live').get().then(function (snap) {
@@ -5335,7 +5486,7 @@
         if (!db) { if (msg) msg.textContent = 'Database is not ready'; return; }
         const body = {
           modelA: 'ranker_v1',
-          modelB: 'ranker_v2',
+          modelB: ($('discModelB') && $('discModelB').value === 'ranker_v3') ? 'ranker_v3' : 'ranker_v2',
           discoveryShare: Math.min(0.6, Math.max(0, Number($('discShare').value) || 0)),
           maxCreatorShare: Math.min(0.8, Math.max(0.1, Number($('discCreator').value) || 0.34)),
           maxTopicStreak: Math.min(6, Math.max(1, Math.round(Number($('discStreak').value) || 2))),
@@ -7487,6 +7638,62 @@
     }
   }
 
+  /* 12c: everyone is a trusted publisher until a report is filed about
+     them. A report puts them on "pending"; this is the person's decision.
+     Keep trusting: their next Broadcasts go out as before. Stop trusting:
+     every new Broadcast of theirs waits here for a look. Either can be
+     changed later; a new report puts them back on pending. */
+  async function decidePublisher(who, keep) {
+    const db = adminDb();
+    if (!db || !who) return false;
+    if (!keep && !window.confirm('Stop trusting this publisher? Their new Broadcasts will wait here for a look until you trust them again.')) return false;
+    const now = Date.now();
+    await db.collection('users').doc(who).set({
+      trustedPublisher: !!keep,
+      publisherReview: keep ? 'cleared' : 'not-trusted',
+      publisherReviewedAt: now,
+      publisherReviewedBy: (currentUser && currentUser.uid) || '',
+      updatedAt: now,
+    }, { merge: true });
+    await writeAudit(keep ? 'publisher-keep-trusting' : 'publisher-stop-trusting', who, keep ? 'reviewed: keep trusting' : 'reviewed: stop trusting');
+    toast(keep ? 'Their next Broadcasts go out as before' : 'Their new Broadcasts will wait for a look');
+    return true;
+  }
+  async function loadPublisherReviews(root) {
+    const box = root && root.querySelector('#pubReviewList');
+    const db = adminDb();
+    if (!box || !db) return;
+    try {
+      const snap = await db.collection('users').where('publisherReview', '==', 'pending').limit(60).get();
+      const rows = (snap && snap.docs) || [];
+      if (!rows.length) { box.innerHTML = '<p class="sub">Nobody is waiting. Everyone publishes straight to the feed until a report is filed about them.</p>'; return; }
+      box.innerHTML = '<p class="sub">A report was filed about each of these people. Until you decide, their new Broadcasts wait in "Waiting to go out"; what was already up stays up.</p>'
+        + rows.map(function (d) {
+          const u = d.data() || {};
+          const who = escapeHtml(d.id);
+          return '<div class="row" style="align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0;">'
+            + '<span>' + escapeHtml(String(u.name || u.handle || d.id).slice(0, 40)) + (u.handle ? ' <span class="sub">@' + escapeHtml(String(u.handle).slice(0, 30)) + '</span>' : '') + '</span>'
+            + '<span class="sub">since ' + escapeHtml(u.publisherReviewAt ? new Date(Number(u.publisherReviewAt)).toLocaleString() : '?') + (u.publisherReviewReport ? ' · report ' + escapeHtml(String(u.publisherReviewReport).slice(0, 40)) : '') + '</span>'
+            + '<button type="button" class="primary admPubDecide" data-uid="' + who + '" data-keep="1">Keep trusting</button>'
+            + '<button type="button" class="ghost admPubDecide" data-uid="' + who + '" data-keep="0">Stop trusting</button>'
+            + '<button type="button" class="ghost admGoUser" data-uid="' + who + '">Person</button>'
+            + '</div>';
+        }).join('');
+      box.querySelectorAll('.admPubDecide').forEach(function (btn) {
+        btn.onclick = async function () {
+          btn.disabled = true;
+          try {
+            if (await decidePublisher(btn.getAttribute('data-uid'), btn.getAttribute('data-keep') === '1')) await loadPublisherReviews(root);
+          } catch (e) { toast((e && e.message) || 'Could not save that'); }
+          finally { btn.disabled = false; }
+        };
+      });
+      try { if (typeof wireDeskJumps === 'function') wireDeskJumps(box); } catch (_) {}
+    } catch (e) {
+      box.innerHTML = '<p class="sub">Could not read publishers waiting: ' + escapeHtml((e && e.message) || String(e)) + '</p>';
+    }
+  }
+
   async function modBroadcast(id, action, uid) {
     if (!id || !action) return;
     const db = adminDb();
@@ -7522,11 +7729,10 @@
           listed: true, held: false, hidden: false, hiddenReason: '', updatedAt: now,
         }, { merge: true });
         toast('Restored to the public feed');
-      } else if (action === 'trust-publisher') {
+      } else if (action === 'trust-publisher' || action === 'untrust-publisher') {
         const who = uid || '';
         if (!who) { toast('Missing account'); return; }
-        await db.collection('users').doc(who).set({ trustedPublisher: true, updatedAt: now }, { merge: true });
-        toast('Their next Broadcasts go out live');
+        if (!(await decidePublisher(who, action === 'trust-publisher'))) return;
       } else if (action === 'reach-full' || action === 'reach-open') {
         const who = uid || '';
         if (!who) { toast('Missing account'); return; }

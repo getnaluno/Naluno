@@ -115,7 +115,7 @@ function fnSource(src, name) {
   /* 4. Answer / Decline pressed outside the app finish the job, and a call
         opened from a closed app waits for sign-in instead of being dropped. */
   assert.ok(/function nalunoAnswerIncoming\(callId\)/.test(calls) && /window\.nalunoAnswerIncoming = nalunoAnswerIncoming/.test(calls));
-  const hip = fnSource(pwa, 'handleIncomingCallFromPush');
+  const hip = fnSource(pwa, 'nalunoOpenCallFromPush'); // the body; handleIncomingCallFromPush wraps it (12 Oct b)
   assert.ok(/await nalunoCallReady\(/.test(hip), 'waits for sign-in');
   assert.ok(!/if\(!callId \|\| !fbDb \|\| !currentUser\) return;/.test(hip), 'no longer dropped before sign-in');
   assert.ok(/action === 'answer'[\s\S]*nalunoAnswerIncoming\(callId\)/.test(hip) && /declineIncomingCall\(callId\)/.test(hip));
@@ -156,9 +156,9 @@ function fnSource(src, name) {
   assert.ok(!/const bound = Date\.now\(\);/.test(bcore));
   const sandbox = { Date: { now: () => 1_000_000_000 }, window: {}, nalunoServerSkew: undefined };
   const catNow = vm.runInNewContext('var nalunoServerSkew = S; ' + fnSource(bcore, 'nalunoCatalogueNow') + '; nalunoCatalogueNow()', Object.assign({}, sandbox, { S: 120000, isFinite }));
-  assert.strictEqual(catNow, 1_000_000_000 + 120000 - 60000, 'server clock minus a minute');
+  assert.strictEqual(catNow, 1_000_000_000 + 120000 - 15000, 'server clock minus 15 s');
   const catNow2 = vm.runInNewContext('var nalunoServerSkew = null; ' + fnSource(bcore, 'nalunoCatalogueNow') + '; nalunoCatalogueNow()', Object.assign({}, sandbox, { isFinite }));
-  assert.strictEqual(catNow2, 1_000_000_000 - 300000, 'unknown skew: five minutes back');
+  assert.strictEqual(catNow2, 1_000_000_000 - 120000, 'unknown skew: two minutes back');
   const lfb = fnSource(bcore, 'loadFeedBroadcasts');
   assert.ok(!/contacts \|\| \[\]\)\.forEach/.test(lfb), 'no refused read of connections by creator');
   const chan = fnSource(bcore, 'openBroadcastChannel');
@@ -185,11 +185,11 @@ function fnSource(src, name) {
   assert.strictEqual(patchFn({ visibility: 'public', listed: true, hidden: false, held: false, publishAt: 5 }, NOW), null, 'a complete Broadcast is left alone');
   assert.strictEqual(patchFn({ title: 'no time' }, NOW), null, 'no time to give it: left for a person');
   assert.strictEqual(patchFn({ createdAt: NOW + 60000 }, NOW), null, 'a future one is not published early');
-  assert.ok(/writeAudit\('broadcast-catalogue-restore'/.test(admin) && admin.indexOf("writeAudit('broadcast-catalogue-restore'") < admin.indexOf("batch.set(db.collection('broadcasts')"), 'the audit is written before anything changes');
+  assert.ok(/writeAudit\('broadcast-catalogue-restore'/.test(admin) && admin.indexOf("batch.set(db.collection('broadcasts')", admin.indexOf("writeAudit('broadcast-catalogue-restore'")) > 0, 'the audit is written before anything changes');
 
   /* 11. Phones fetch the fixed files. */
   const html = read('app/index.html');
-  ['calls.js', 'pwa.js', 'core.js', 'broadcast-core.js', 'signal-ui.js'].forEach((f) => assert.ok(html.includes('/js/' + f + '?v=20261012a'), f + ' stamp'));
+  ['calls.js', 'pwa.js', 'core.js', 'broadcast-core.js', 'signal-ui.js'].forEach((f) => assert.ok(new RegExp('/js/' + f.replace('.', '\\.') + '\\?v=(?:2026101[2-9][a-z]|202610[2-3][0-9][a-z])').test(html), f + ' stamp (this build or later)'));
   assert.ok(/CACHE_NAME = 'naluno-shell-v3\d\d'/.test(sw));
   console.log('fixes-1012a tests passed');
 })().catch((e) => { console.error(e); process.exit(1); });

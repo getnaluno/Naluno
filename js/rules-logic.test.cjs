@@ -7,7 +7,7 @@ const rules = fs.readFileSync(__dirname + '/../firestore.rules', 'utf8');
 ['upByAtMostOne', 'ownerTogaHonest', 'ownerTogaCreateHonest', 'memberChangeIsSelf', 'engagementBumpsHonest',
  'parentBroadcastVisible', 'connectionEntryClean', 'togaKeyNow', 'togaKeyPrev', 'togaKeyNext']
   .forEach((f) => assert.ok(rules.includes('function ' + f + '('), 'rules define ' + f));
-assert.ok(rules.includes('&& engagementBumpsHonest());'));
+assert.ok(rules.includes('&& engagementBumpsHonest())'));
 assert.ok(rules.includes('allow read: if isSignedIn() && parentBroadcastVisible(id);'));
 assert.ok(rules.includes('(request.auth.uid == uid && ownerTogaHonest())'));
 assert.ok(rules.includes("match /{path=**}/signal/{segId}"));

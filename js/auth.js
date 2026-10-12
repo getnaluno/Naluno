@@ -683,6 +683,17 @@ async function nalunoHandleSignUp(){
     return;
   }
   authStatus('Creating your account…');
+  /* 13a: is Naluno taking new accounts? (Registration on, not full, not
+     paused.) Asked before the sign-in account is made, so a closed door
+     never leaves an empty account behind. */
+  if(window.NalunoLaunch){
+    const st = await NalunoLaunch.status();
+    if(st && st.ok && !st.accepting){
+      authStatus(st.message || 'New accounts are closed for now.', true);
+      NalunoLaunch.showClosed(st);
+      return;
+    }
+  }
   nalunoJustSignedIn = true;
   try{
     // Pre-check handle availability when signing up with handle
@@ -708,6 +719,21 @@ async function nalunoHandleSignUp(){
     const createEmail = email;
     const cred = await fbAuth.createUserWithEmailAndPassword(createEmail, password);
     const user = cred.user;
+    /* 13a: a registration seat, taken atomically against the cap. Without it
+       the Callsign profile cannot be written (firestore.rules). */
+    if(window.NalunoLaunch){
+      const seat = await NalunoLaunch.claim(user);
+      if(!seat.ok && seat.reason && seat.reason !== 'network'){
+        authStatus(seat.error || 'New accounts are closed for now.', true);
+        await NalunoLaunch.refuseNewUser(user, seat);
+        return;
+      }
+      if(!seat.ok){
+        authStatus('Could not reach Naluno to finish creating your account. Check your connection and try again.', true);
+        try{ await user.delete(); }catch(_){ try{ await fbAuth.signOut(); }catch(_2){} }
+        return;
+      }
+    }
     if(!usingEmail && handle && typeof claimHandle === 'function'){
       // FIX: write a safe fallback profile IMMEDIATELY, before attempting the
       // handle claim. This used to only write the profile doc *after* a
@@ -819,13 +845,30 @@ async function nalunoForgotPassword(){
 (function wireHandleAuthButtons(){
   const si = $('emailSignInBtn');
   const su = $('emailSignUpBtn');
+  /* 13a: each button has a listener AND an onclick (kept, so either alone
+     still works), and one tap fired both: sign-up ran twice at once, and the
+     second run could report "already has an account" over a good sign-up.
+     One run at a time per button. */
+  function oneAtATime(fn){
+    let busy = false;
+    return function(e){
+      if(e) e.preventDefault();
+      if(busy) return;
+      busy = true;
+      let out;
+      try{ out = fn(); }catch(err){ busy = false; throw err; }
+      Promise.resolve(out).then(function(){ busy = false; }, function(){ busy = false; });
+    };
+  }
   if(si){
-    si.addEventListener('click', function(e){ if(e) e.preventDefault(); nalunoHandleSignIn(); });
-    si.onclick = function(e){ if(e) e.preventDefault(); nalunoHandleSignIn(); };
+    const goIn = oneAtATime(function(){ return nalunoHandleSignIn(); });
+    si.addEventListener('click', goIn);
+    si.onclick = goIn;
   }
   if(su){
-    su.addEventListener('click', function(e){ if(e) e.preventDefault(); nalunoHandleSignUp(); });
-    su.onclick = function(e){ if(e) e.preventDefault(); nalunoHandleSignUp(); };
+    const goUp = oneAtATime(function(){ return nalunoHandleSignUp(); });
+    su.addEventListener('click', goUp);
+    su.onclick = goUp;
   }
   const fg = $('authForgotBtn');
   if(fg){
@@ -1826,7 +1869,18 @@ function loadRealProfile(user){
           if(!gotFirstSnapshot) showCallsignView();
         }
       } else if(!gotFirstSnapshot){
-        nalunoEnsureJoined(user, null);
+        /* 13a: no Callsign profile yet (a new Google sign-in, or a sign-up
+           finishing). Take a registration seat first; the worker lets any
+           account that already has a profile straight through. */
+        if(window.NalunoLaunch){
+          NalunoLaunch.claim(user).then(function(seat){
+            if(seat && seat.ok){ nalunoEnsureJoined(user, null); return; }
+            if(seat && seat.reason && seat.reason !== 'network'){
+              try{ authStatus(seat.error || 'New accounts are closed for now.', true); }catch(_){}
+              NalunoLaunch.refuseNewUser(user, seat);
+            }
+          });
+        } else nalunoEnsureJoined(user, null);
         const cached = nalunoReadCachedProfile(user.uid);
         if(nalunoProfileHasIdentity(cached) || (cached && (cached.name || cached.number))){
           currentProfile = nalunoMergeUserDoc(cached, {});

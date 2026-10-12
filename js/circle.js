@@ -417,15 +417,27 @@
       });
     }catch(_){ togaLiveUnsub = null; }
   }
+  /* Toga numbers came and went. The board is redrawn from many places (the
+     live listener, every Broadcast-tab render, gestures, sign-in), and each
+     redraw waits for reads (the collection, then photos of names it has not
+     seen). A redraw that started earlier but waited longer finished last
+     and painted its older numbers over newer ones: values stepped back, and
+     a name that had just entered the ten vanished and came back. Only the
+     newest redraw paints now, and a failed read keeps the last good board
+     instead of replacing it with a message. */
+  let togaRenderGen = 0;
+  let togaPainted = false;
   async function renderTogaBoard(){
     const el = $('togaBoard');
     if(!el || !fbDb) return;
+    const gen = ++togaRenderGen;
     watchTogaLive();
     const monthKey = nalunoMonthKey();
     const monthEl = $('togaMonthLabel');
     if(monthEl) monthEl.textContent = nalunoMonthLabel();
     try{
       const snap = togaLiveSnap || await fbDb.collection('toga').limit(80).get();
+      if(gen !== togaRenderGen) return;
       const byId = {};
       snap.docs.forEach(function(d){
         byId[d.id] = Object.assign({ id: d.id }, d.data() || {});
@@ -487,7 +499,9 @@
         .sort(function(a,b){ return (b._score||0) - (a._score||0); })
         .slice(0, 10);
       await attachTogaPhotos(rows);
+      if(gen !== togaRenderGen) return;   // a newer redraw owns the board
       paintTogaFaceStack(rows);
+      togaPainted = true;
       if(!rows.length){
         el.innerHTML = '<div class="lobby-sub" style="text-align:left;max-width:none;">This month’s Wall of Fame is empty. Share your views, then watch time, Circle joins, and conversation write the ten names. Views must be public to qualify. The list lives 30 days.</div>';
         return;
@@ -528,7 +542,9 @@
         };
       });
     }catch(e){
-      el.innerHTML = '<div class="lobby-sub">Toga loads after sign-in.</div>';
+      if(gen !== togaRenderGen) return;
+      /* A read that failed is not an empty Wall of Fame: keep what is shown. */
+      if(!togaPainted) el.innerHTML = '<div class="lobby-sub">Toga loads after sign-in.</div>';
     }
   }
 

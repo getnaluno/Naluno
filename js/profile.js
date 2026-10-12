@@ -741,13 +741,14 @@ const storageAvailable = typeof window.storage !== 'undefined' && window.storage
   const dock = document.getElementById('callsignDialDock');
   if(!dial || !rotor || !hub || dial.dataset.wired === '1') return;
   dial.dataset.wired = '1';
+  /* Call notifications left the dial (12 Oct b): it sits on the page under
+     the dial, just before Sign out. The five stations stay evenly spaced. */
   const stations = [
     { id:'greenroom', short:'Room', angle:0 },
-    { id:'find', short:'Find', angle:60 },
-    { id:'calls', short:'Calls', angle:120 },
-    { id:'tone', short:'Tone', angle:180 },
-    { id:'mine', short:'Mine', angle:240 },
-    { id:'close', short:'Close', angle:300 },
+    { id:'find', short:'Find', angle:72 },
+    { id:'tone', short:'Tone', angle:144 },
+    { id:'mine', short:'Mine', angle:216 },
+    { id:'close', short:'Close', angle:288 },
   ];
   let rot = 0;
   let drag = null;

@@ -97,6 +97,7 @@ function showCallScreen(id){
   document.querySelectorAll('.callscreen').forEach(s=>s.classList.remove('active'));
   const screen = $(id);
   if(screen) screen.classList.add('active');
+  try{ if(typeof window.nalunoCallBootDone === 'function') window.nalunoCallBootDone(); }catch(_){}
   /* 06c: the other person's name at the top of the call, as on WhatsApp. */
   if(id === 'incall'){
     try{ nalunoSetIncallHeadName(); }catch(_){}
@@ -138,6 +139,26 @@ function showCallScreen(id){
     }
   }catch(_){}
 }
+/* Call timing, per call: when the push opened the app, when the ring
+   showed, when Answer was tapped, when the answer was written, when the
+   phones connected and when the other voice started. Kept in memory for
+   the last few calls (window.__nalunoCallTimes) and written to the
+   console as "[mark]" lines, so slow stages can be found on a real phone. */
+function nalunoCallMark(callId, stage){
+  try{
+    if(!callId || !stage) return;
+    const all = window.__nalunoCallTimes || (window.__nalunoCallTimes = {});
+    const row = all[callId] || (all[callId] = {});
+    if(row[stage] != null) return;
+    /* Milliseconds since this page started: on a cold start that is the
+       moment the notification opened Naluno. */
+    row[stage] = Math.round(performance.now());
+    const ids = Object.keys(all);
+    if(ids.length > 6) delete all[ids[0]];
+    console.log('[mark] call ' + String(callId).slice(0, 8) + ' ' + stage + ' @' + row[stage] + 'ms');
+  }catch(_){}
+}
+window.nalunoCallMark = nalunoCallMark;
 function nalunoTellSw(msg){
   try{
     if(navigator.serviceWorker && navigator.serviceWorker.controller){
@@ -360,7 +381,9 @@ window.nalunoCallMove = nalunoCallMove;
 let nalunoServerSkew = null;
 function nalunoMeasureSkew(){
   try{
-    fetch('/manifest.json?skew=' + Date.now(), { method: 'HEAD', cache: 'no-store' }).then(function(r){
+    /* The public feed waits for this (briefly) to bound its query by the
+       server's clock: see nalunoCatalogueNow in broadcast-core.js. */
+    window.__nalunoSkewReady = fetch('/manifest.json?skew=' + Date.now(), { method: 'HEAD', cache: 'no-store' }).then(function(r){
       const d = r && r.headers && r.headers.get('Date');
       const t = d ? Date.parse(d) : NaN;
       if(isFinite(t)) nalunoServerSkew = t - Date.now();
@@ -866,6 +889,7 @@ let nalunoCallLive = false;
 function nalunoMarkCallLive(){
   if(nalunoCallLive) return;
   nalunoCallLive = true;
+  try{ nalunoCallMark(activeCallId, 'connected'); }catch(_){}
   try{
     if(typeof nalunoSessionHold === 'function') nalunoSessionHold(nalunoIsVoiceCall() ? 'voice' : 'video');
   }catch(_){}
@@ -2423,6 +2447,7 @@ function handleIncomingCall(callId, data){
   $('incomingSelfTag').textContent = 'prepping…';
   if(!replacingCallScreen) snapshotUiBeforeCall();
   showCallScreen('incoming');
+  nalunoCallMark(callId, 'ring');
   startRingtone();
   try{ startIncomingKeepAlive(); }catch(_){}
   try{
@@ -3404,6 +3429,7 @@ $('acceptIncoming').onclick = async (ev)=>{
   callActionInProgress = true;
   const acceptingId = activeCallId;
   nalunoAnsweredId = acceptingId;
+  nalunoCallMark(acceptingId, 'answerTap');
   /* The shade must go the moment Answer is tapped, before the round trip.
      A push already in flight is ignored once this call is marked handled. */
   try{ nalunoDismissCallNotifications(acceptingId); }catch(_){}
@@ -3415,11 +3441,20 @@ $('acceptIncoming').onclick = async (ev)=>{
   const guard = function(){ if(activeCallId !== acceptingId) throw NOT_MINE; };
 
   let prep = nalunoPreparedFor(acceptingId);
-  /* Answer tapped while the answer is still being built (camera or TURN
-     not finished). Waiting out the rest is faster than dropping it and
-     starting over, and it is capped so a stuck prepare cannot hold the tap. */
+  /* 12 Oct b: the caller's ring stops the moment Answer is tapped. It used
+     to wait first for the answer built during the ring (up to 1 s), then
+     for the database round trip, and on a phone that had just been opened
+     from the notification that was 1.5–2.5 s of the caller still hearing
+     it ring. "accepted" now goes out at once; the answer that was being
+     built is waited for alongside it (it already holds the camera, mic and
+     TURN wait, so finishing it is faster than starting again). */
+  const acceptOut = nalunoCallMove(acceptingId, 'accepted', { acceptedAt: firebase.firestore.FieldValue.serverTimestamp() })
+    .then(function(ok){ nalunoCallMark(acceptingId, 'accepted'); return ok; }, function(){ return false; });
+  /* The build already holds the mic/camera and the TURN wait; starting
+     again would repeat both. It is waited for as long as it is still going
+     (it drops itself the moment it fails), up to its own TURN cap. */
   if(!prep && nalunoPrepared && nalunoPrepared.callId === acceptingId && !nalunoPrepared.ready){
-    const deadline = Date.now() + 1000;
+    const deadline = Date.now() + 9000;
     while(activeCallId === acceptingId && Date.now() < deadline){
       await new Promise(function(r){ setTimeout(r, 40); });
       prep = nalunoPreparedFor(acceptingId);
@@ -3427,18 +3462,33 @@ $('acceptIncoming').onclick = async (ev)=>{
       if(!nalunoPrepared || nalunoPrepared.callId !== acceptingId) break;
     }
   }
+  /* Only a ringing call can be answered: if the caller already hung up,
+     or another device answered, this fails instead of reviving it. */
+  const moved = await acceptOut;
+  if(activeCallId !== acceptingId){
+    if(moved){ try{ callRef.update({ status: 'ended', endReason: 'recalled' }).catch(function(){}); }catch(_){} }
+    if(prep){ nalunoPrepared = prep; } nalunoDropPrepared();
+    return;
+  }
+  if(!moved){
+    if(prep){ nalunoPrepared = prep; } nalunoDropPrepared();
+    toast('That call is no longer available');
+    closeCallOverlayAndStopCamera();
+    callActionInProgress = false;
+    return;
+  }
   if(prep){
     prep.used = true;   // from here the held candidates go straight out
     try{
-      const moved = await nalunoCallMove(acceptingId, 'accepted', { acceptedAt: firebase.firestore.FieldValue.serverTimestamp(), answer: prep.answer });
-      if(activeCallId !== acceptingId){
-        if(moved){ try{ callRef.update({ status: 'ended', endReason: 'recalled' }).catch(function(){}); }catch(_){} }
-        return;
-      }
-      if(!moved) throw new Error('gone');
+      await callRef.update({ answer: prep.answer });
+      nalunoCallMark(acceptingId, 'answerSdp');
+      if(activeCallId !== acceptingId) return;
     }catch(e){
+      /* The answer could not be written (offline at that instant): end it
+         cleanly instead of leaving the caller on "connecting". */
       nalunoPrepared = prep; prep.used = false; nalunoDropPrepared();
-      toast('That call is no longer available');
+      try{ callRef.update({ status: 'ended', endReason: 'answer-failed' }).catch(function(){}); }catch(_){}
+      toast('Couldn\u2019t answer the call');
       closeCallOverlayAndStopCamera();
       callActionInProgress = false;
       return;
@@ -3468,25 +3518,6 @@ $('acceptIncoming').onclick = async (ev)=>{
   }
   nalunoDropPrepared();
 
-  // CRITICAL: signal "accepted" to the caller IMMEDIATELY so their ring stops
-  // before any camera / WebRTC / TURN work. Previously the caller kept ringing
-  // for 10–20s while the receiver was still preparing media.
-  try{
-    /* Only a ringing call can be answered: if the caller already hung up,
-       or another device answered, this fails instead of reviving it. */
-    const moved = await nalunoCallMove(acceptingId, 'accepted', { acceptedAt: firebase.firestore.FieldValue.serverTimestamp() });
-    if(activeCallId !== acceptingId){
-      if(moved){ try{ callRef.update({ status: 'ended', endReason: 'recalled' }).catch(function(){}); }catch(_){} }
-      return;
-    }
-    if(!moved) throw new Error('gone');
-  }catch(e){
-    toast('That call is no longer available');
-    closeCallOverlayAndStopCamera();
-    callActionInProgress = false;
-    return;
-  }
-
   // Show in-call UI right away (remote video will appear when tracks arrive).
   startInCall();
   if($('incomingSelfTag')) $('incomingSelfTag').textContent = 'connecting…';
@@ -3507,6 +3538,7 @@ $('acceptIncoming').onclick = async (ev)=>{
     guard();
     if(!mediaOk) throw Object.assign(new Error('Camera/mic unavailable — allow access, then try answering again'), { nalunoMedia: true });
     try{ await turnWait; }catch(_){}
+    nalunoCallMark(acceptingId, 'mediaAndTurn');
     guard();
 
     if(peerConnection){
@@ -3559,6 +3591,7 @@ $('acceptIncoming').onclick = async (ev)=>{
     const answerSdp = await nalunoSdpReady(answerPc, 450) || { type: answer.type, sdp: answer.sdp };
     guard();
     await callRef.update({ answer: answerSdp });
+    nalunoCallMark(acceptingId, 'answerSdp');
     guard();
     pendingIncomingOffer = null;
     // Nudge remote media as soon as ICE may complete
