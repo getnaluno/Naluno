@@ -81,6 +81,7 @@ function fsEnc(v) {
   const f = {}; Object.keys(v).forEach((k) => { f[k] = fsEnc(v[k]); }); return { mapValue: { fields: f } };
 }
 let launchDoc = null; // the published public config
+const reachPasses = {}; // "uid/passId" -> pass
 const registered = new Set(["alice", "bob"]);
 const events = [];
 globalThis.fetch = async (url, opts) => {
@@ -89,6 +90,13 @@ globalThis.fetch = async (url, opts) => {
   if (u.includes("/launchConfig/")) {
     if (!launchDoc) return new Response("{}", { status: 404 });
     const f = {}; Object.keys(launchDoc).forEach((k) => { f[k] = fsEnc(launchDoc[k]); });
+    return new Response(JSON.stringify({ fields: f }), { status: 200 });
+  }
+  const rp = /\/users\/([^?/]+)\/reachPasses\/([^?/]+)/.exec(u);
+  if (rp) {
+    const pass = reachPasses[rp[1] + "/" + decodeURIComponent(rp[2])];
+    if (!pass) return new Response("{}", { status: 404 });
+    const f = {}; Object.keys(pass).forEach((k) => { f[k] = fsEnc(pass[k]); });
     return new Response(JSON.stringify({ fields: f }), { status: 200 });
   }
   const m = /\/users\/([^?/]+)/.exec(u);
@@ -224,6 +232,36 @@ BC.BROADCAST_BUCKET.objs.get("p/alice/old1").uploaded = new Date(realNow() - 48 
 a = await init("alice", 5000);
 assert.equal(a.status, 200, "the abandoned upload does not count");
 assert.ok(!BC.BROADCAST_BUCKET.objs.has("p/alice/old1"));
+
+/* 14 Oct: an original Broadcast video names its Reach pass; the stored
+   file is measured against the pass (length and bytes). */
+async function upWithPass(file, pass) {
+  const a2 = await init("alice", file.length);
+  const p2 = await send(BC, "/b/part?key=" + encodeURIComponent(a2.body.key) + "&uploadId=" + a2.body.uploadId + "&part=1", "alice", file, "application/octet-stream", "PUT");
+  const body = { key: a2.body.key, uploadId: a2.body.uploadId, parts: [{ part: 1, etag: p2.body.etag }], bytes: file.length };
+  if (pass) body.reachPass = pass;
+  const res = await send(BC, "/b/complete", "alice", JSON.stringify(body), "application/json");
+  return { res, key: a2.body.key };
+}
+await send(BC, "/b/abort", "alice", JSON.stringify({ key: a.body.key, uploadId: a.body.uploadId }), "application/json"); // the open one above
+reachPasses["alice/20261014-aaaa1111"] = { seconds: 20, used: false, maxBytes: 1000000 };
+reachPasses["alice/20261014-bbbb2222"] = { seconds: 50, used: false, maxBytes: 100 };
+reachPasses["alice/20261014-cccc3333"] = { seconds: 50, used: true, maxBytes: 1000000 };
+let w = await upWithPass(mp4(45, 4000), "20261014-aaaa1111");
+assert.equal(w.res.status, 413, "a 45 s file on a 20 s pass is refused");
+assert.equal(w.res.body.limit, "reach");
+assert.ok(!BC.BROADCAST_BUCKET.objs.has(w.key), "and deleted");
+w = await upWithPass(mp4(45, 4000), "20261014-bbbb2222");
+assert.equal(w.res.status, 413, "more bytes than the pass allows is refused");
+w = await upWithPass(mp4(45, 4000), "20261014-cccc3333");
+assert.equal(w.res.status, 403, "a used pass is refused");
+w = await upWithPass(mp4(45, 4000), "20261014-nope0000");
+assert.equal(w.res.status, 403, "a pass that does not exist is refused");
+reachPasses["alice/20261014-dddd4444"] = { seconds: 50, used: false, maxBytes: 1000000 };
+w = await upWithPass(mp4(45, 4000), "20261014-dddd4444");
+assert.equal(w.res.status, 200, "a file within its pass goes through");
+w = await upWithPass(mp4(45, 4000));
+assert.equal(w.res.status, 200, "uploads without a pass (Band clips, live recordings, older apps) are unchanged");
 
 /* 9. Every outcome is reported to the economy worker, server to server. */
 assert.ok(events.some((e) => e.ok === true && e.bytes > 0));

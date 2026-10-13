@@ -219,7 +219,7 @@ async function sendAll(tokens, data, link, deps, now) {
                     body: String(data.body || "New message").slice(0, 140),
                     channel_id: "naluno_wireline",
                     sound: "default",
-                    tag: data.type === "live_dropped"
+                    tag: (data.type === "live_dropped" || data.type === "broadcast_live")
                       ? "naluno-live:" + String(data.broadcastId || "").slice(0, 80)
                       : "naluno-wire:" + String(data.fromUid || "").slice(0, 40),
                     notification_priority: "PRIORITY_HIGH",

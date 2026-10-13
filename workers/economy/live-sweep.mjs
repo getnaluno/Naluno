@@ -132,6 +132,10 @@ export async function sweepLives(io, now, limits) {
     if (st.state === "running") {
       out.running++;
       if (b.liveDroppedAt) await io.patch(row.id, { liveDroppedAt: null, liveDroppedNotifiedAt: null, liveLimelightUntil: null }, row.updateTime);
+      /* 14 Oct: finish the live alerts the creator's phone did not. */
+      if (io.alert && !(b.liveAlert && b.liveAlert.done && String(b.liveAlert.for || "") === String(Math.round(Number(b.liveAt) || 0)))) {
+        try { const a = await io.alert(row); if (a && a.sent) out.alerted = (out.alerted || 0) + a.sent; } catch (_) {}
+      }
       continue;
     }
     if (st.state === "dropped") {

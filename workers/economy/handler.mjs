@@ -22,6 +22,10 @@
 
 import { sweepBand, sweepAllBands } from "./band-sweep.mjs";
 import { sweepLives } from "./live-sweep.mjs";
+import { alertLiveBatch, LIVE_ALERT_BATCH } from "./live-alert.mjs";
+import { compileDiscoverPage } from "./discover-compile.mjs";
+import { countAdEvent } from "./ad-events.mjs";
+import { movePushPage } from "./push-move.mjs";
 import { makeLaunch, launchEnvOf } from "./launch-routes.mjs";
 import { FEATURES } from "./launch.mjs";
 import {
@@ -1555,8 +1559,12 @@ async function claimReach(env, user, saToken, body) {
     return json({ ok: false, tier, error }, 403);
   }
   const passId = day.replace(/-/g, "") + "-" + crypto.randomUUID().slice(0, 8);
+  /* 14 Oct: the most bytes a video of this length can honestly be (a phone
+     records 2-6 MB a second, 4K included; this allows 10 MB a second, plus room
+     for a short clip). The media worker compares the stored file to it. */
+  const maxBytes = seconds * 10 * 1024 * 1024 + 24 * 1024 * 1024;
   const put = await fsPutDoc(env, saToken, "/users/" + encodeURIComponent(user.uid) + "/reachPasses/" + passId, {
-    day, seconds, n, tier, at: now, used: false,
+    day, seconds, n, tier, at: now, used: false, maxBytes,
   });
   if (!put.ok) return json({ ok: false, error: "Could not check Reach. Try again." }, 503);
   return json({ ok: true, tier, maxSec: lim.maxSec, perDay: lim.perDay, used: n, passId });
@@ -1951,6 +1959,12 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
       return json({ ok: true });
     }
     return json({ ok: false, error: "unknown launch route" }, 404);
+  }
+
+  /* 14 Oct: the desk's Compile button runs the cron's job once (more pages). */
+  if (path === "/v1/admin/discover/compile" && request.method === "POST") {
+    const out = await runDiscoverCompile(env, Date.now(), 10);
+    return json(out, out.ok ? 200 : 502);
   }
 
   if (path === "/v1/admin/broadcast-catalogue-repair" && request.method === "POST") {
@@ -3593,12 +3607,181 @@ export async function runLaunchGuard(env) {
 }
 
 /* 12c: lives whose host is gone (live-sweep.mjs). Runs on the cron. */
+/* 14 Oct: the worker side of live alerts (live-alert.mjs). */
+function liveAlertIo(env, token) {
+  return {
+    listPage: async function (kind, creator, after, size) {
+      const col = kind === "circle" ? "circle" : "connections";
+      const q = "/users/" + encodeURIComponent(creator) + "/" + col + "?pageSize=" + Math.max(1, Math.min(100, size | 0))
+        + (after ? "&pageToken=" + encodeURIComponent(after) : "");
+      const r = await fsFetch(env, token, "GET", q);
+      const docs = (r.ok && r.data && r.data.documents) || [];
+      return { ids: docs.map((d) => String(d.name || "").split("/").pop()).filter(Boolean), next: (r.ok && r.data && r.data.nextPageToken) || "" };
+    },
+    notifyOnce: async function (uid, docId, payload) {
+      const r = await fsFetch(env, token, "PATCH",
+        "/users/" + encodeURIComponent(uid) + "/notifications/" + encodeURIComponent(docId) + "?currentDocument.exists=false",
+        toFsFields(payload));
+      return !!(r && r.ok);
+    },
+    push: async function (uid, data) {
+      return sendLiveDropped(uid, data, {
+        getDoc: (p) => fsGetDoc(env, token, p),
+        accessToken: (scope) => saAccessTokenScoped(env, scope),
+        fetch: (u, o) => _fetch(u, o),
+        projectId: projectId(env),
+      });
+    },
+    patch: async function (id, fields) {
+      const r = await fsPutDoc(env, token, "/broadcasts/" + encodeURIComponent(id), fields);
+      return !!(r && r.ok);
+    },
+  };
+}
+function liveAlertSize(env) {
+  const n = Number(env && env.LIVE_ALERT_BATCH);
+  return isFinite(n) && n >= 1 ? Math.min(100, Math.floor(n)) : LIVE_ALERT_BATCH;
+}
+
+/* 14 Oct: the Luganda voice's daily characters, one document per person
+   per day. Reserve only if the total stays under the limit (a write with a
+   precondition on what was read, tried again if two arrive together). */
+function lgUsageStore(env, token) {
+  const pathOf = (uid, day) => "/lgUsage/" + encodeURIComponent(uid + "_" + day);
+  return {
+    reserve: async function (uid, day, n, limit) {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const r = await fsFetch(env, token, "GET", pathOf(uid, day));
+        if (!r.ok && r.status !== 404) throw new Error("usage read " + r.status);
+        const have = r.ok ? fromFsDoc(r.data) : null;
+        const used = Number(have && have.chars) || 0;
+        if (used + n > limit) return false;
+        const pre = r.ok ? "currentDocument.updateTime=" + encodeURIComponent(r.data.updateTime || "") : "currentDocument.exists=false";
+        const w = await fsFetch(env, token, "PATCH", pathOf(uid, day) + "?" + pre, toFsFields({ uid, day, chars: used + n, at: Date.now() }));
+        if (w.ok) return true;
+        if (w.status !== 400 && w.status !== 409 && w.status !== 412) throw new Error("usage write " + w.status);
+      }
+      return false;
+    },
+    release: async function (uid, day, n) {
+      const name = fsRoot(env).replace("https://firestore.googleapis.com/v1/", "") + pathOf(uid, day);
+      await fsFetch(env, token, "POST", ":commit", { writes: [{ transform: { document: name, fieldTransforms: [{ fieldPath: "chars", increment: { integerValue: String(-Math.abs(n)) } }] } }] });
+    },
+  };
+}
+
+/* 14 Oct: Discover's record, compiled on the cron (discover-compile.mjs). */
+function discoverIo(env, token) {
+  const name = fsRoot(env).replace("https://firestore.googleapis.com/v1/", "");
+  return {
+    mark: async function () {
+      const r = await fsFetch(env, token, "GET", "/discoveryConfig/compile");
+      if (r.status === 404) return { lastEventAt: 0, updateTime: "" };
+      if (!r.ok) throw new Error("mark " + r.status);
+      return { lastEventAt: Number(fromFsDoc(r.data).lastEventAt) || 0, updateTime: r.data.updateTime || "" };
+    },
+    events: async function (after, limit) {
+      const r = await fsFetch(env, token, "POST", ":runQuery", { structuredQuery: {
+        from: [{ collectionId: "recommendationEvents" }],
+        where: { fieldFilter: { field: { fieldPath: "at" }, op: "GREATER_THAN", value: { integerValue: String(Math.floor(after)) } } },
+        orderBy: [{ field: { fieldPath: "at" }, direction: "ASCENDING" }],
+        limit: limit } });
+      if (!r.ok) throw new Error("events " + r.status);
+      return (Array.isArray(r.data) ? r.data : []).filter((x) => x && x.document).map((x) => fromFsDoc(x.document));
+    },
+    features: async function (ids) {
+      const out = {};
+      for (let i = 0; i < ids.length; i += 300) {
+        const part = ids.slice(i, i + 300);
+        const r = await fsFetch(env, token, "POST", ":batchGet", { documents: part.map((id) => name + "/broadcastFeatures/" + id) });
+        if (!r.ok) throw new Error("features " + r.status);
+        (Array.isArray(r.data) ? r.data : []).forEach((x) => { if (x && x.found) out[String(x.found.name).split("/").pop()] = fromFsDoc(x.found); });
+      }
+      return out;
+    },
+    commit: async function (featureMap, lastAt, markTime) {
+      const ids = Object.keys(featureMap);
+      for (let i = 0; i < ids.length; i += 400) {
+        const part = ids.slice(i, i + 400);
+        const writes = part.map((id) => ({
+          update: { name: name + "/broadcastFeatures/" + id, fields: toFsFields(featureMap[id]).fields },
+          updateMask: { fieldPaths: Object.keys(featureMap[id]) },
+        }));
+        // The mark moves with the last part, on the same commit.
+        if (i + 400 >= ids.length) {
+          writes.push({
+            update: { name: name + "/discoveryConfig/compile", fields: toFsFields({ lastEventAt: lastAt, updatedAt: Date.now(), compiledBy: "worker" }).fields },
+            updateMask: { fieldPaths: ["lastEventAt", "updatedAt", "compiledBy"] },
+            currentDocument: markTime ? { updateTime: markTime } : { exists: false },
+          });
+        }
+        const r = await fsFetch(env, token, "POST", ":commit", { writes });
+        if (!r.ok) return false;
+      }
+      if (!ids.length) {
+        const r = await fsFetch(env, token, "POST", ":commit", { writes: [{
+          update: { name: name + "/discoveryConfig/compile", fields: toFsFields({ lastEventAt: lastAt, updatedAt: Date.now(), compiledBy: "worker" }).fields },
+          updateMask: { fieldPaths: ["lastEventAt", "updatedAt", "compiledBy"] },
+          currentDocument: markTime ? { updateTime: markTime } : { exists: false },
+        }] });
+        return !!r.ok;
+      }
+      return true;
+    },
+  };
+}
+export async function runDiscoverCompile(env, nowMs, pages) {
+  if (!hasSaConfigured(env)) return { ok: false, error: "no-service-account" };
+  const token = await saAccessToken(env);
+  if (!token) return { ok: false, error: "no-token" };
+  const io = discoverIo(env, token);
+  const total = { ok: true, events: 0, broadcasts: 0, pages: 0, more: false };
+  for (let p = 0; p < Math.max(1, Math.min(10, pages || 3)); p++) {
+    const r = await compileDiscoverPage(io, Number(nowMs) || Date.now(), 400);
+    total.pages++;
+    total.events += r.events; total.broadcasts += r.broadcasts; total.more = !!r.more;
+    if (!r.ok) { total.ok = false; break; }
+    if (!r.more) break;
+  }
+  return total;
+}
+
+/* 14 Oct: push addresses from public profiles into each vault (push-move.mjs). */
+export async function runPushMove(env) {
+  if (!hasSaConfigured(env)) return { ok: false, error: "no-service-account" };
+  const token = await saAccessToken(env);
+  if (!token) return { ok: false, error: "no-token" };
+  const name = fsRoot(env).replace("https://firestore.googleapis.com/v1/", "");
+  const out = await movePushPage({
+    state: async () => { const r = await fsFetch(env, token, "GET", "/pushMove/state"); return r.ok ? fromFsDoc(r.data) : {}; },
+    page: async (pageToken, size) => {
+      const r = await fsFetch(env, token, "GET", "/users?pageSize=" + size + (pageToken ? "&pageToken=" + encodeURIComponent(pageToken) : ""));
+      if (!r.ok) throw new Error("users " + r.status);
+      return { users: (r.data.documents || []).map((doc) => ({ id: String(doc.name).split("/").pop(), data: fromFsDoc(doc) })), next: r.data.nextPageToken || "" };
+    },
+    vault: async (uid) => { const r = await fsFetch(env, token, "GET", "/users/" + encodeURIComponent(uid) + "/vault/main"); return r.ok ? fromFsDoc(r.data) : null; },
+    commit: async (uid, patch, remove) => {
+      const writes = [];
+      if (Object.keys(patch).length) writes.push({ update: { name: name + "/users/" + uid + "/vault/main", fields: toFsFields(patch).fields }, updateMask: { fieldPaths: Object.keys(patch) } });
+      if (remove.length) writes.push({ update: { name: name + "/users/" + uid, fields: {} }, updateMask: { fieldPaths: remove }, currentDocument: { exists: true } });
+      if (!writes.length) return true;
+      const r = await fsFetch(env, token, "POST", ":commit", { writes });
+      return !!(r && r.ok);
+    },
+    save: async (st) => { await fsPutDoc(env, token, "/pushMove/state", st); },
+  }, 100);
+  return Object.assign({ ok: true }, out);
+}
+
 export async function runLiveSweep(env, nowMs) {
   if (!hasSaConfigured(env)) return { ok: false, error: "no-service-account" };
   const token = await saAccessToken(env);
   if (!token) return { ok: false, error: "no-token" };
   const now = Number(nowMs) || Date.now();
   const io = {
+    alert: async function (row) {
+      try { return await alertLiveBatch(liveAlertIo(env, token), row, now, liveAlertSize(env)); } catch (_) { return null; }
+    },
     liveBroadcasts: async function () {
       const r = await fsFetch(env, token, "POST", ":runQuery", { structuredQuery: {
         from: [{ collectionId: "broadcasts" }],
@@ -4020,13 +4203,50 @@ export async function handleRequest(request, env = {}, ctx = {}) {
       const body = await request.json().catch(() => ({}));
       let cache = null;
       try { if (typeof caches !== "undefined" && caches.default) cache = caches.default; } catch (_) {}
-      const out = await handleLgVoice(body, user, { env, fetch: (u, o) => _fetch(u, o), cache });
+      const out = await handleLgVoice(body, user, { env, fetch: (u, o) => _fetch(u, o), cache, usage: saToken ? lgUsageStore(env, saToken) : null });
       if (!out.bytes) return json(out.json, out.status);
       return new Response(out.bytes, { status: 200, headers: {
         ...corsHeaders(), "Content-Type": out.type, "Cache-Control": "private, max-age=86400",
         "X-Naluno-Voice": out.speaker + (out.cached ? "; cached" : ""),
         "Access-Control-Expose-Headers": "X-Naluno-Voice",
       } });
+    }
+
+    /* 14 Oct: an ad's counters move here only, once per person, ad and kind
+       in a window (ad-events.mjs). */
+    if (path === "/v1/ads/event" && request.method === "POST") {
+      if (!saToken) return json({ ok: false, error: "not configured" }, 503);
+      const body = await request.json().catch(() => ({}));
+      const name = fsRoot(env).replace("https://firestore.googleapis.com/v1/", "");
+      const out = await countAdEvent({
+        getAd: async (id) => { const r = await fsFetch(env, saToken, "GET", "/deskAds/" + encodeURIComponent(id)); return r.ok ? fromFsDoc(r.data) : null; },
+        countOnce: async (marker, adId, field, row) => {
+          const r = await fsFetch(env, saToken, "POST", ":commit", { writes: [
+            { update: { name: name + "/adEvents/" + marker, fields: toFsFields(row).fields }, currentDocument: { exists: false } },
+            { transform: { document: name + "/deskAds/" + adId, fieldTransforms: [
+              { fieldPath: field, increment: { integerValue: "1" } },
+            ] } },
+          ] });
+          return !!(r && r.ok);
+        },
+      }, user.uid, body, Date.now());
+      return json(out.body, out.status);
+    }
+
+    /* 14 Oct: the creator's phone asks once per batch; the worker tells the
+       audience (members, connections, Circle) without a cap. */
+    if (path === "/v1/live/alert" && request.method === "POST") {
+      if (!saToken) return json({ ok: false, error: "not configured" }, 503);
+      const body = await request.json().catch(() => ({}));
+      const bid = String(body.broadcastId || "");
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(bid)) return json({ ok: false, error: "bad broadcast" }, 400);
+      const r = await fsFetch(env, saToken, "GET", "/broadcasts/" + encodeURIComponent(bid));
+      if (!r.ok || !r.data) return json({ ok: false, error: "not found" }, 404);
+      const data = fromFsDoc(r.data);
+      if (String(data.creatorUid || "") !== user.uid) return json({ ok: false, error: "Forbidden" }, 403);
+      if (data.live !== true) return json({ ok: true, sent: 0, done: true });
+      const out = await alertLiveBatch(liveAlertIo(env, saToken), { id: bid, data, updateTime: r.data.updateTime || "" }, Date.now(), liveAlertSize(env));
+      return json({ ok: true, sent: out.sent, done: out.done });
     }
 
     if (path === "/v1/push/lock" && request.method === "POST") {

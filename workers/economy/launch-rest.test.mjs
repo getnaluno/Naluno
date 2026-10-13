@@ -344,9 +344,12 @@ assert.equal(r.body.config.registration.maxAccounts, 60);
 assert.equal(r.body.config.registration.open, true);
 assert.ok(r.body.history.length >= 5);
 
-// recount: 29 profiles (seats without profiles are not profiles yet)
+// recount: 29 profiles counted beside the 35 places given out. 14 Oct: it
+// no longer lowers the place count (a seat whose Callsign is not made yet
+// still holds its place; the cap would otherwise be passed).
 r = await call("/v1/admin/launch/recount", { uid: "operator1", admin: true, body: { reason: "check" } });
-assert.equal(r.body.registered, 29);
+assert.equal(r.body.profiles, 29);
+assert.equal(r.body.registered, 35);
 assert.equal(r.body.before, 35);
 
 // upload reports: only with the shared key

@@ -121,14 +121,59 @@ export function makeLaunch(d) {
     return { ok: true, version: version, changes: changes, config: Object.assign(full, { env: which }) };
   }
 
-  /* Count every Callsign profile. Used to start the counter, and by Recount. */
+  /* Count every Callsign profile. It starts the counter when there is none.
+     14 Oct: after that, "registered" means places given out, and only a seat
+     (claim) or a seat handed back (expireSeats) moves it. Recount used to
+     replace it with the number of profiles, so a seat whose Callsign was
+     not made yet vanished from the count and the cap could be passed. The
+     profile count is kept beside it (profileCount) for the desk. */
   async function recount(which, actor, reason) {
     const n = await countWhere("users");
     if (n == null) return { ok: false, error: "Could not count accounts" };
     const before = await counter(which);
-    await d.fsPutDoc(d.env, d.token, "/launchState/" + enc(which), { registered: n, recountedAt: now() });
-    if (actor) await audit({ env: which, action: "recount", actorUid: actor.uid, actorEmail: actor.email || "", reason: reason || "", changes: [{ setting: "registered", from: before.registered, to: n }], result: "ok" });
-    return { ok: true, registered: n, before: before.registered };
+    const fields = before.exists ? { profileCount: n, recountedAt: now() } : { registered: n, profileCount: n, recountedAt: now() };
+    await d.fsPutDoc(d.env, d.token, "/launchState/" + enc(which), fields);
+    if (actor) await audit({ env: which, action: "recount", actorUid: actor.uid, actorEmail: actor.email || "", reason: reason || "", changes: [{ setting: "profileCount", from: before.data && before.data.profileCount != null ? before.data.profileCount : null, to: n }], result: "ok" });
+    return { ok: true, registered: before.exists ? before.registered : n, profiles: n, before: before.registered };
+  }
+
+  /* 14 Oct: a seat that is a day old and still has no Callsign is handed
+     back, 50 at a time (the cron). The seat and one place on the counter go
+     in the same commit. A seat whose Callsign exists is marked, so it is
+     not looked at again. */
+  async function expireSeats(which, max) {
+    const cutoff = now() - 24 * 3600 * 1000;
+    const r = await d.fsFetch(d.env, d.token, "POST", ":runQuery", { structuredQuery: {
+      from: [{ collectionId: "registrations" }],
+      // One equality filter only: it needs no extra index. Seats without a
+      // Callsign are few (sign-ups in progress, or given up).
+      where: { fieldFilter: { field: { fieldPath: "profiled" }, op: "EQUAL", value: { booleanValue: false } } },
+      limit: 200 } });
+    const rows = (Array.isArray(r.data) ? r.data : []).filter(function (x) {
+      if (!x || !x.document) return false;
+      const f = d.fromFsDoc(x.document);
+      return String(f.env || "") === which && Number(f.at) > 0 && Number(f.at) < cutoff;
+    }).slice(0, Math.max(1, Math.min(50, max || 50)));
+    const out = { checked: 0, returned: 0, kept: 0 };
+    const name = d.root.replace("https://firestore.googleapis.com/v1/", "");
+    for (const x of rows) {
+      const seat = d.fromFsDoc(x.document);
+      const uid = String(seat.uid || seat.id || "");
+      if (!/^[A-Za-z0-9_-]{6,128}$/.test(uid)) continue;
+      out.checked++;
+      const prof = await getRaw("/users/" + enc(uid));
+      if (prof.exists) {
+        await d.fsPutDoc(d.env, d.token, "/registrations/" + enc(uid), { profiled: true });
+        out.kept++;
+        continue;
+      }
+      const c = await d.fsFetch(d.env, d.token, "POST", ":commit", { writes: [
+        { delete: name + "/registrations/" + uid, currentDocument: { updateTime: x.document.updateTime } },
+        { transform: { document: name + "/launchState/" + which, fieldTransforms: [{ fieldPath: "registered", increment: { integerValue: "-1" } }] } },
+      ] });
+      if (c.ok) out.returned++;
+    }
+    return out;
   }
 
   async function status(which) {
@@ -163,7 +208,7 @@ export function makeLaunch(d) {
           currentDocument: { updateTime: c.updateTime },
         },
         {
-          update: { name: name + "/registrations/" + uid, fields: d.toFsFields({ uid: uid, at: now(), env: which, phase: L.cfg.activePhase, number: c.registered + 1 }).fields },
+          update: { name: name + "/registrations/" + uid, fields: d.toFsFields({ uid: uid, at: now(), env: which, phase: L.cfg.activePhase, number: c.registered + 1, profiled: false }).fields },
           currentDocument: { exists: false },
         },
       ];
@@ -304,16 +349,17 @@ export function makeLaunch(d) {
     if (!before || before.level !== g.level || JSON.stringify(before.restricting) !== JSON.stringify(g.restricting)) {
       await audit({ env: which, action: "guard", actorUid: "cron", actorEmail: "", reason: "measured", changes: [{ setting: "guard.level", from: before ? before.level : null, to: g.level }, { setting: "guard.restricting", from: before ? before.restricting : null, to: g.restricting }], result: "ok" });
     }
-    // The counter only ever moves up here (a seat whose profile is still
-    // being written is counted already); Recount on the desk can lower it.
+    // The counter only ever moves up here (accounts made before seats
+    // existed); seats a day old with no Callsign are handed back.
     if (m.accounts.profiles != null && (m.accounts.registered == null || m.accounts.profiles > m.accounts.registered)) {
       await d.fsPutDoc(d.env, d.token, "/launchState/" + enc(which), { registered: m.accounts.profiles, recountedAt: now() });
     }
+    try { await expireSeats(which, 50); } catch (_) {}
     return { guard: g, metrics: m };
   }
 
   return {
-    load, counter, status, claim, recount, persist, audit, waitJoin, waitLeave, listCol, metrics, runGuard, reportUpload, guardMetrics,
+    load, counter, status, claim, recount, expireSeats, persist, audit, waitJoin, waitLeave, listCol, metrics, runGuard, reportUpload, guardMetrics,
     activate: async function (which, phase, actor, reason) {
       const prev = await load(which);
       if (!prev.cfg.phases[phase]) return { ok: false, status: 400, errors: ["unknown phase"] };

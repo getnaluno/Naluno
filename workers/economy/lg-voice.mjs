@@ -17,7 +17,17 @@
                        Luganda voice above (correct Luganda comes before the
                        voice's sex).
      LG_DAILY_CHARS    optional, characters per person per day (default 30000).
-     SUNBIRD_TTS_URL   optional, default below. */
+     SUNBIRD_TTS_URL   optional, default below.
+     LG_AUDIO_HOSTS    optional, where a returned audio link may point
+                       (default: Sunbird and Google Cloud Storage, where
+                       Sunbird keeps its audio).
+
+   14 Oct: the daily allowance is kept in the database, one document per
+   person per day (lgUsage/{uid}_{day}), not in one worker process's memory
+   (a second process started at zero). The characters are reserved before
+   Sunbird is asked and handed back if no audio comes, so failures do not
+   use up the day. A returned audio link is fetched only from the hosts
+   above, and only audio is passed on. */
 
 export const LG_TTS_URL = "https://api.sunbird.ai/tasks/audio/speech";
 const PER_MINUTE = 40;
@@ -51,6 +61,13 @@ async function sha256Hex(s) {
   return Array.from(new Uint8Array(d)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 function isAudio(type) { return /^audio\//i.test(type || "") || /octet-stream/i.test(type || ""); }
+export function lgAudioHostOk(url, env) {
+  let host = "";
+  try { const u = new URL(String(url)); if (u.protocol !== "https:") return false; host = u.hostname.toLowerCase(); } catch (_) { return false; }
+  const list = String((env && env.LG_AUDIO_HOSTS) || "sunbird.ai,storage.googleapis.com").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+  return list.some((h) => host === h || host.endsWith("." + h));
+}
+export function lgDayKey(now) { return new Date(now).toISOString().slice(0, 10); }
 
 /* deps: { env, fetch, cache: { match(key) -> Response|undefined, put(key, Response) } | null, now } */
 export async function handleLgVoice(body, user, deps) {
@@ -80,8 +97,22 @@ export async function handleLgVoice(body, user, deps) {
     } catch (_) {}
   }
   const limit = Math.max(1000, Number(env.LG_DAILY_CHARS) || 30000);
-  if (!charsOk(user.uid, now, text.length, limit)) return { status: 429, json: { ok: false, error: "daily limit" } };
+  const day = lgDayKey(now);
+  if (deps.usage) {
+    let ok = false;
+    try { ok = await deps.usage.reserve(user.uid, day, text.length, limit); } catch (_) { ok = false; }
+    if (!ok) return { status: 429, json: { ok: false, error: "daily limit" } };
+  } else if (!charsOk(user.uid, now, text.length, limit)) return { status: 429, json: { ok: false, error: "daily limit" } };
+  const giveBack = async function () {
+    if (deps.usage) { try { await deps.usage.release(user.uid, day, text.length); } catch (_) {} }
+    else { const k = user.uid + "|" + Math.floor(now / 86400000); daily.set(k, Math.max(0, (daily.get(k) || 0) - text.length)); }
+  };
+  const out = await speakPaid(text, speaker, key, env, deps, cacheKey);
+  if (out.status !== 200) await giveBack();
+  return out;
+}
 
+async function speakPaid(text, speaker, key, env, deps, cacheKey) {
   let res;
   try {
     res = await deps.fetch(String(env.SUNBIRD_TTS_URL || LG_TTS_URL), {
@@ -103,10 +134,12 @@ export async function handleLgVoice(body, user, deps) {
     const j = await res.json().catch(() => null);
     const url = j && (j.audio_url || (j.output && j.output.audio_url));
     if (!url || !/^https:\/\//.test(String(url))) return { status: 502, json: { ok: false, error: "luganda voice gave no audio" } };
+    if (!lgAudioHostOk(url, env)) return { status: 502, json: { ok: false, error: "luganda audio from an unknown place" } };
     let a;
     try { a = await deps.fetch(String(url)); } catch (_) { a = null; }
     if (!a || !a.ok) return { status: 502, json: { ok: false, error: "luganda audio unreachable" } };
     type = a.headers.get("Content-Type") || "audio/wav";
+    if (!isAudio(type)) return { status: 502, json: { ok: false, error: "luganda link was not audio" } };
     bytes = await a.arrayBuffer();
   }
   if (!bytes || !bytes.byteLength || bytes.byteLength > MAX_BYTES) return { status: 502, json: { ok: false, error: "luganda audio size" } };
