@@ -10,8 +10,9 @@ function mustNot(re, msg) {
   assert.ok(!re.test(rules), msg);
 }
 
-must(/bumpedAtMost\('impressions', 1\)/, 'deskAds member writes may bump impressions by at most 1');
-must(/bumpedAtMost\('clicks', 1\)/, 'deskAds member writes may bump clicks by at most 1');
+// 14 Oct: a member no longer writes an ad's counters at all; the worker counts once per person.
+must(/match \/deskAds\/\{id\}[\s\S]*?allow update: if isOperator\(\);\s*allow delete: if isOperator\(\);/, 'deskAds counters are not member-writable');
+must(/match \/adEvents\/\{id\} \{\s*allow read, write: if false;/, 'the worker\'s once-only ad markers are closed to clients');
 must(/ownerKeepsModeration/, 'owners cannot lift a suspension from their own profile');
 must(/stampedAsSelf/, 'notifications and broadcast subdocs must stamp the signed-in uid');
 must(/sparkRooms\/\{roomId\}[\s\S]*participants/, 'Spark room messages are participant-only');

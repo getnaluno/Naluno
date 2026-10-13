@@ -75,7 +75,7 @@ function watchSparkGuest(code){
     if(sparkHostUnsub){ try{ sparkHostUnsub(); }catch(_){} sparkHostUnsub = null; }
     closeSparkSheet();
     if(typeof connectWithUser === 'function' && d.guestUid){
-      connectWithUser(d.guestUid, { name: d.guestName || 'Them', color: d.guestColor }, d.guestHandle).catch(function(){});
+      connectWithUser(d.guestUid, { name: d.guestName || 'Them', color: d.guestColor }, d.guestHandle, code).catch(function(){});
     }
     if(typeof openSparkPage === 'function'){
       openSparkPage(d.guestUid, d.guestName || 'Them');
@@ -104,7 +104,7 @@ async function joinSparkCode(raw){
     const host = await fbDb.collection('users').doc(d.hostUid).get();
     const data = host.exists ? host.data() : { name: d.hostName, number: '@' + d.hostHandle, color: d.hostColor };
     if(typeof connectWithUser === 'function'){
-      await connectWithUser(d.hostUid, data, d.hostHandle);
+      await connectWithUser(d.hostUid, data, d.hostHandle, code);
     }
     const guestName = (currentProfile && currentProfile.name) || 'Someone';
     // FIX: this used to swallow a failed claim silently — with the rules gap

@@ -1934,15 +1934,28 @@ async function maybeRefreshCallNotifToken(){
       const snap = await userRef.get();
       const existing = snap.exists ? snap.data() : {};
       const payload = { fcmTokenWeb: token, fcmTokenPlatform: 'web' };
-      if(!existing.fcmTokenAndroid){
+      const hasAndroid = existing.fcmTokenAndroid || (typeof nalunoVault !== 'undefined' && nalunoVault.get && nalunoVault.get('fcmTokenAndroid'));
+      if(!hasAndroid){
         payload.fcmToken = token;
       }
-      await userRef.set(payload, { merge:true });
-      try{ if(typeof nalunoVault !== 'undefined' && nalunoVault.writePush) nalunoVault.writePush(payload); }catch(_){}
+      // 14 Oct: into the private vault only (the push workers read it there).
+      await nalunoPushSave(userRef, payload);
       $('callNotifStatus').textContent = 'Call notifications are on — you\u2019ll be notified even with the app closed.';
     }
   }catch(e){ /* best-effort — worst case they tap the button again this once */ }
 }
+
+/* 14 Oct: push addresses go to the private vault; the public copy is
+   removed once the vault has them. Without the vault (an older page) the
+   public profile is used as before. */
+async function nalunoPushSave(userRef, payload){
+  if(typeof nalunoVault !== 'undefined' && nalunoVault.movePush){
+    if(await nalunoVault.movePush(payload)) return true;
+  }
+  await userRef.set(payload, { merge:true });
+  return true;
+}
+window.nalunoPushSave = nalunoPushSave;
 
 async function loadProfile(){
   // Local-only fallback path (no Firebase configured) — same behavior as before.
@@ -2059,6 +2072,9 @@ $('saveProfileBtn').onclick = async ()=>{
       if(typeof nalunoVault !== 'undefined' && nalunoVault.stripPublic){
         Object.assign(cloudProfile, nalunoVault.stripPublic());
       }
+      /* 14 Oct: push addresses are kept in the vault only; the profile in
+         memory carries a copy, which must never be written back here. */
+      ['fcmToken', 'fcmTokenWeb', 'fcmTokenAndroid', 'fcmTokenPlatform', 'fcmTokenUpdatedAt'].forEach(function(k){ delete cloudProfile[k]; });
       // Persist in background — snapshot will confirm; we ignore mid-edit overwrites.
       fbDb.collection('users').doc(currentUser.uid).set(cloudProfile, { merge:true }).catch(e=>{
         const m = String((e && e.message) || '');

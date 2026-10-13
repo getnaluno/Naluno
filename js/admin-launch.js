@@ -350,7 +350,7 @@
     $('lcRecount').onclick = async function () {
       const why = ask('Count every Callsign profile again and set the account count to it?');
       if (why === null) return;
-      try { const r = await call('/v1/admin/launch/recount', { reason: why }); msg('Counted ' + r.registered + ' accounts (was ' + r.before + ').'); refreshNow(); } catch (e) { msg('Could not recount: ' + e.message); }
+      try { const r = await call('/v1/admin/launch/recount', { reason: why }); msg('Callsigns counted: ' + r.profiles + '. Places given out: ' + r.registered + ' (only a sign-up, or a place handed back after a day unused, changes that).'); refreshNow(); } catch (e) { msg('Could not recount: ' + e.message); }
     };
     $('lcPause').onclick = async function () {
       const on = !S.data.config.registration.emergencyPause;

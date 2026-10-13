@@ -620,7 +620,8 @@
       }
       if (type === 'kept_line') f.keptLines += 1;
       if (type === 'comment_react') f.commentReacts += 1;
-      if (type === 'comment_down') f.commentReacts += 1;
+      // 14 Oct: a downvote on a comment is a negative, not a reaction that raises the community score.
+      if (type === 'comment_down') f.negativeEvents += 1;
       if (type === 'not_interested' || type === 'hide_creator' || type === 'skip_fast' || type === 'report') {
         f.negativeEvents += 1;
       }

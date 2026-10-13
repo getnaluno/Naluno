@@ -1498,7 +1498,7 @@ async function ensureCallMediaReady(){
   if(!okA){
     try{
       const a = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount: 1, latency: { ideal: 0 } },
+        audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true },
         video: false
       });
       if(late(a)) return false;
@@ -2225,6 +2225,17 @@ function nalunoReleaseSenders(pc){
 function nalunoEarlyCand(json){
   return !!(json && typeof json.candidate === 'string' && / typ (relay|srflx)( |$)/.test(json.candidate));
 }
+/* 14 Oct: a public route's "related address" (raddr/rport) is the phone's
+   address inside its own network. ICE never checks it, so before Answer it
+   is sent blanked, as browsers themselves do for hidden addresses. */
+function nalunoBlankRelated(line){
+  return String(line || '').replace(/ raddr \S+ rport \d+/, ' raddr 0.0.0.0 rport 0');
+}
+function nalunoEarlyCandOut(json){
+  const out = Object.assign({}, json);
+  out.candidate = nalunoBlankRelated(json.candidate);
+  return out;
+}
 /* The early answer carries no network address: candidate lines other than
    relay ones are removed and the connection line is blanked. */
 function nalunoEarlySdp(desc){
@@ -2232,6 +2243,8 @@ function nalunoEarlySdp(desc){
   const lines = sdp.split(/\r\n/).filter(function(l){
     if(/^a=candidate:/.test(l)) return / typ (relay|srflx)( |$)/.test(l);
     return true;
+  }).map(function(l){
+    return /^a=candidate:/.test(l) ? nalunoBlankRelated(l) : l;
   }).map(function(l){
     if(/^c=IN IP4 /.test(l)) return 'c=IN IP4 0.0.0.0';
     if(/^c=IN IP6 /.test(l)) return 'c=IN IP6 ::';
@@ -2816,7 +2829,7 @@ async function nalunoOpenMic(){
   const gen = (typeof nalunoCamGen !== 'undefined') ? nalunoCamGen : 0;
   if(stream){ try{ stream.getTracks().forEach(function(t){ t.stop(); }); }catch(_){} stream = null; }
   const got = await navigator.mediaDevices.getUserMedia({
-    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1, latency: { ideal: 0 } },
+    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: { ideal: 1 }, latency: { ideal: 0 } },
     video: false,
   });
   if(typeof nalunoCamGen !== 'undefined' && nalunoCamGen !== gen){
@@ -3151,7 +3164,7 @@ async function startRealCallInner(c){
   // If mic was denied or missing, try a quick audio-only reopen so remote isn't silent
   if(!stream.getAudioTracks().some(t => t.readyState === 'live')){
     try{
-      const a = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount: 1, latency: { ideal: 0 } }, video: false });
+      const a = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount: { ideal: 1 }, latency: { ideal: 0 } }, video: false });
       if(gone() || !stream){ try{ a.getTracks().forEach(t => t.stop()); }catch(_){} return false; }
       a.getAudioTracks().forEach(t => stream.addTrack(t));
     }catch(e){ console.warn('[call] could not add audio track', e); }
@@ -3323,7 +3336,18 @@ async function startRealCallInner(c){
           nalunoCallMark(myCallId, 'final');
           if(nalunoHeld(fpc)) nalunoReleaseSenders(fpc).catch(function(){});
         });
-      }).catch(function(err){ console.log('[call] setRemoteDescription(final answer) failed:', err && err.message); });
+      }).catch(function(err){
+        console.log('[call] setRemoteDescription(final answer) failed:', err && err.message);
+        fpc._nalunoFinalPending = false;
+        /* 14 Oct: this phone's browser could not switch to the answering
+           phone's connection. End the call plainly (both phones close, a
+           redial connects) instead of leaving it on a silent screen. */
+        if(peerConnection === fpc && activeCallId === myCallId){
+          try{ callRef.update({ status: 'ended', endReason: 'answer-switch' }).catch(function(){}); }catch(_){}
+          try{ toast('The call could not connect. Call again.'); }catch(_){}
+          try{ endActiveCall('local'); }catch(_){}
+        }
+      });
     }
     if(!finished && d.answer && !remoteDescriptionSet && peerConnection){
       remoteDescriptionSet = true;
@@ -3630,7 +3654,8 @@ async function nalunoPrepareAnswer(callId, offer, camReady, earlyOk, callerRelay
       if(!e.candidate) return;
       const json = e.candidate.toJSON();
       // Before Answer only the relay route goes out, and only once the early answer has.
-      if(prep.used || (prep.early && nalunoEarlyCand(json))) fbDb.collection('calls').doc(callId).collection('calleeCandidates').add(json).catch(function(){});
+      if(prep.used) fbDb.collection('calls').doc(callId).collection('calleeCandidates').add(json).catch(function(){});
+      else if(prep.early && nalunoEarlyCand(json)) fbDb.collection('calls').doc(callId).collection('calleeCandidates').add(nalunoEarlyCandOut(json)).catch(function(){});
       else prep.held.push(json);
     };
     pc._nalunoIceFrozen = true;
@@ -3659,11 +3684,22 @@ async function nalunoPrepareAnswer(callId, offer, camReady, earlyOk, callerRelay
       if(!still() || prep.used || prep.taken){ if(!prep.used && !prep.taken) nalunoDropPrepared(); return; }
       const ref = fbDb.collection('calls').doc(callId);
       const early = Object.assign(nalunoEarlySdp(answer), { dev: NALUNO_DEV });
-      /* One write, no read first. If two phones of the same person both
-         write one, the caller keeps the first it saw and knows which phone
-         it was (dev): answering on the other phone still works, it just
-         connects after Answer instead of before. */
-      await ref.update({ earlyAnswer: early });
+      /* 14 Oct: one phone per call connects early (the first to write).
+         A second phone of the same person keeps its answer for Answer; if
+         it is answered there, the caller replaces the provisional answer
+         with that phone's final one (what "pranswer" is for). */
+      let mine = false;
+      try{
+        mine = await fbDb.runTransaction(function(tx){
+          return tx.get(ref).then(function(snap){
+            const d = (snap && snap.exists && snap.data()) || {};
+            if(d.status !== 'ringing' || (d.earlyAnswer && d.earlyAnswer.dev && d.earlyAnswer.dev !== NALUNO_DEV)) return false;
+            tx.update(ref, { earlyAnswer: early });
+            return true;
+          });
+        });
+      }catch(_){ mine = false; }
+      if(!mine){ prep.earlyOk = false; return; }   // held senders are let go on Answer
       if(prep.used || prep.taken) return;   // Answer has it now and sends everything itself
       if(!still()){ nalunoDropPrepared(); return; }
       prep.early = true;
@@ -3672,7 +3708,7 @@ async function nalunoPrepareAnswer(callId, offer, camReady, earlyOk, callerRelay
       if(!prep.used){
         const keep = [];
         prep.held.splice(0).forEach(function(json){
-          if(nalunoEarlyCand(json)) ref.collection('calleeCandidates').add(json).catch(function(){});
+          if(nalunoEarlyCand(json)) ref.collection('calleeCandidates').add(nalunoEarlyCandOut(json)).catch(function(){});
           else keep.push(json);
         });
         prep.held.push.apply(prep.held, keep);

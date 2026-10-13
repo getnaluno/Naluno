@@ -100,6 +100,25 @@
     current = null;
   }
 
+  /* 14 Oct: a line saved since today keeps its sound in its own document
+     (lgVoiceAudio/{id}), fetched once, just before it is spoken, and kept
+     for this visit. The list every phone listens to carries only words. */
+  const sounds = Object.create(null);
+  function soundOf(src) {
+    const s = String(src || '');
+    if (s.indexOf('lgref:') !== 0) return Promise.resolve(s);
+    const id = s.slice(6);
+    if (sounds[id]) return sounds[id];
+    const db = (typeof fbDb !== 'undefined' && fbDb) || ((typeof window !== 'undefined' && window.fbDb) || null);
+    if (!db || !db.collection) return Promise.resolve('');
+    sounds[id] = db.collection('lgVoiceAudio').doc(id).get().then(function (d) {
+      const a = d && d.exists ? String((d.data() || {}).audio || '') : '';
+      if (!a) delete sounds[id];
+      return a;
+    }, function () { delete sounds[id]; return ''; });
+    return sounds[id];
+  }
+
   /* The same player the console uses. Do not decode and rebuild the
      clip — that is a different sound from the one that was saved. */
   function play(readyPlan, alive) {
@@ -113,9 +132,17 @@
       function next() {
         if (alive && !alive()) { stop(); resolve(true); return; }
         if (i >= clips.length) { current = null; resolve(true); return; }
-        const audio = new Audio(clips[i]);
-        current = audio;
+        const at = i;
         i += 1;
+        soundOf(clips[at]).then(function (src) {
+          if (alive && !alive()) { stop(); resolve(true); return; }
+          if (!src) { stop(); resolve(false); return; }
+          start(src);
+        });
+      }
+      function start(src) {
+        const audio = new Audio(src);
+        current = audio;
         audio.onended = function () {
           if (current === audio) current = null;
           next();
@@ -126,6 +153,7 @@
           started.catch(function () { stop(); resolve(false); });
         }
       }
+      clips.forEach(function (c) { soundOf(c); });   // every line's sound on its way at once
       next();
     });
   }
@@ -145,7 +173,7 @@
           const rows = [];
           snap.forEach(function (doc) {
             const d = doc.data() || {};
-            rows.push({ text: d.text, norm: d.norm, audio: d.audio });
+            rows.push({ text: d.text, norm: d.norm, audio: d.audio || (d.hasAudio ? 'lgref:' + doc.id : '') });
           });
           ingest(rows);
           markLoaded();

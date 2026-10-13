@@ -55,11 +55,11 @@ async function bcastAuthHeader(force){
   return { 'Authorization': 'Bearer ' + token };
 }
 
-async function uploadBroadcastFile(blob, onProgress, contentTypeOverride){
+async function uploadBroadcastFile(blob, onProgress, contentTypeOverride, opts){
   try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Broadcast upload start', (blob && blob.size) ? Math.round(blob.size/1024)+'KB' : ''); }catch(_){}
   try{ if(typeof nalunoKeepAliveStart === 'function') await nalunoKeepAliveStart('broadcast'); }catch(_){}
   try{
-    const url = await uploadBroadcastFileInner(blob, onProgress, contentTypeOverride);
+    const url = await uploadBroadcastFileInner(blob, onProgress, contentTypeOverride, opts);
     try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Broadcast upload ok', url); }catch(_){}
     return url;
   }catch(e){
@@ -69,7 +69,7 @@ async function uploadBroadcastFile(blob, onProgress, contentTypeOverride){
     try{ if(typeof nalunoKeepAliveStop === 'function') nalunoKeepAliveStop(); }catch(_){}
   }
 }
-async function uploadBroadcastFileInner(blob, onProgress, contentTypeOverride){
+async function uploadBroadcastFileInner(blob, onProgress, contentTypeOverride, opts){
   if(!(blob instanceof Blob) && !(blob instanceof File)) throw new Error('Invalid media');
   const size = blob.size || 0;
   if(size < 1) throw new Error('Empty file');
@@ -86,7 +86,7 @@ async function uploadBroadcastFileInner(blob, onProgress, contentTypeOverride){
   let lastErr = null;
   for(let attempt = 1; attempt <= 2; attempt++){
     try{
-      return await uploadBroadcastFileTo(base, blob, contentType, onProgress);
+      return await uploadBroadcastFileTo(base, blob, contentType, onProgress, opts);
     }catch(e){
       lastErr = e;
       console.warn('[bcast-upload] attempt ' + attempt + ' failed', e && e.message);
@@ -97,7 +97,7 @@ async function uploadBroadcastFileInner(blob, onProgress, contentTypeOverride){
   throw lastErr || new Error('Upload failed');
 }
 
-async function uploadBroadcastFileTo(base, blob, contentType, onProgress){
+async function uploadBroadcastFileTo(base, blob, contentType, onProgress, opts){
   const size = blob.size;
   if(size > BCAST_MAX_OBJECT_BYTES) throw new Error('That file is larger than 8 GB');
   { const no = window.NalunoLaunch && NalunoLaunch.blocked('uploads'); if(no){ const e = new Error(no); e.limit = 'uploads-off'; throw e; } }
@@ -194,7 +194,9 @@ async function uploadBroadcastFileTo(base, blob, contentType, onProgress){
       mode: 'cors',
       credentials: 'omit',
       headers: Object.assign({ 'Content-Type': 'application/json' }, await bcastAuthHeader(false)),
-      body: JSON.stringify({ key, uploadId, parts, bytes: size }),
+      // 14 Oct: an original Broadcast video names its Reach pass; the media
+      // worker checks the real file's length against it.
+      body: JSON.stringify(Object.assign({ key, uploadId, parts, bytes: size }, (opts && opts.reachPass) ? { reachPass: String(opts.reachPass) } : {})),
     });
     const doneBody = await doneRes.json().catch(()=>({}));
     if(!doneRes.ok){

@@ -63,7 +63,7 @@ const calls = read('js/calls.js');
 
   /* 2. The early answer carries no local-network address. */
   const sb2 = {}; vm.createContext(sb2);
-  vm.runInContext([fn(calls, 'nalunoEarlySdp'), fn(calls, 'nalunoEarlyCand')].join('\n'), sb2);
+  vm.runInContext([fn(calls, 'nalunoBlankRelated'), fn(calls, 'nalunoEarlySdp'), fn(calls, 'nalunoEarlyCand')].join('\n'), sb2);
   const sdp = ['v=0', 'm=audio 9 UDP/TLS/RTP/SAVPF 111', 'c=IN IP4 192.168.1.20',
     'a=candidate:1 1 udp 2122260223 192.168.1.20 53000 typ host generation 0',
     'a=candidate:2 1 udp 1686052607 41.210.1.2 53000 typ srflx raddr 192.168.1.20 rport 53000',
@@ -88,7 +88,7 @@ const calls = read('js/calls.js');
   assert.ok(/if\(answerWithAccept\) acceptExtra\.answer = prep\.answer;/.test(calls));
   assert.ok(/answerDev: freshAfterEarly \? NALUNO_DEV \+ '-new' : NALUNO_DEV/.test(calls) && /d\.answerDev === epcNow\._nalunoEarlyDev/.test(calls), 'the caller knows which answer is in use');
   assert.ok(/st === 'failed' \|\| ice === 'failed'/.test(fn(calls, 'nalunoPreparedFor')), 'a route lost while ringing is rebuilt on Answer');
-  assert.ok(/await nalunoHoldSenders\(pc\);[\s\S]{0,600}ref\.update\(\{ earlyAnswer: early \}\)/.test(calls), 'held before the early answer is written');
+  assert.ok(/await nalunoHoldSenders\(pc\);[\s\S]{0,1400}tx\.update\(ref, \{ earlyAnswer: early \}\)/.test(calls), 'held before the early answer is written (first phone wins)');
   assert.ok(/nalunoHoldSenders\(epc\)\.then\(function\(\)\{[\s\S]{0,200}setRemoteDescription/.test(calls), 'caller held before it connects');
   assert.ok(/function nalunoWatchEarlyMedia\(pc, callId\)/.test(calls) && /nalunoCallMark\(callId, 'mediaAccept'\)/.test(calls));
   /* Old phones: the callee only connects early when the caller asked for it. */

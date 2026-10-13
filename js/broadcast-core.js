@@ -229,22 +229,27 @@ async function nalunoReachClaim(seconds){
   const base = (typeof nalunoEconomyUrlBroadcast === 'function')
     ? nalunoEconomyUrlBroadcast()
     : 'https://naluno-economy.naluno.workers.dev';
-  let r;
-  try{
-    r = await fetch(base + '/v1/reach/claim', {
-      method: 'POST',
-      headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ seconds: Math.max(1, Math.round(Number(seconds) || 0)) }),
-    });
-  }catch(_){
-    return { blocked: true, error: 'Could not check Reach. Try again when you have a connection.' };
+  /* 14 Oct: a video goes out only with a pass. Any failure other than "too
+     long" used to return an empty pass and the video went out unchecked.
+     A busy worker (503) or a dropped connection gets one more try. */
+  let r = null, data = {};
+  for(let attempt = 0; attempt < 2; attempt++){
+    try{
+      r = await fetch(base + '/v1/reach/claim', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seconds: Math.max(1, Math.round(Number(seconds) || 0)) }),
+      });
+      data = await r.json().catch(function(){ return {}; });
+    }catch(_){ r = null; data = {}; }
+    if(r && (r.ok || r.status === 403 || r.status < 500)) break;
+    if(attempt === 0) await new Promise(function(res){ setTimeout(res, 1500); });
   }
-  const data = await r.json().catch(function(){ return {}; });
-  if(r.status === 403){
+  if(r && r.status === 403){
     return { blocked: true, limit: true, error: (data && data.error) || 'This video is past your Reach.' };
   }
-  if(!r.ok || !data.ok || !data.passId){
-    return { blocked: false, passId: '' };
+  if(!r || !r.ok || !data.ok || !data.passId){
+    return { blocked: true, error: 'Could not check this video\u2019s Reach just now. Nothing was posted. Try again in a minute.' };
   }
   return { blocked: false, passId: data.passId, tier: data.tier };
 }
@@ -1336,12 +1341,9 @@ async function sendPushToContact(contactOrUid, msg){
         tokens.platform = d.fcmTokenPlatform || null;
       }
     }catch(_){}
-    if(!tokens.android && !tokens.web && !tokens.primary){
-      if(typeof nalunoLockPush === 'function' && msg && msg.broadcastId){
-        nalunoLockPush({ to: uid, type: 'broadcast_live', broadcastId: msg.broadcastId });
-      }
-      return;
-    }
+    /* 14 Oct: push addresses now live in each person's private vault, which
+       the worker reads itself; an empty public profile no longer means
+       "nobody to tell". */
     const idToken = await currentUser.getIdToken(false);
     const pingId = (typeof nalunoPushId === 'function') ? nalunoPushId() : '';
     const webTok = tokens.web || ((tokens.platform === 'web') ? tokens.primary : null);
@@ -1349,7 +1351,6 @@ async function sendPushToContact(contactOrUid, msg){
     if(typeof nalunoLockPush === 'function' && msg && msg.broadcastId){
       nalunoLockPush({ to: uid, type: 'broadcast_live', broadcastId: msg.broadcastId });
     }
-    if(!tokens.android && !primaryTok) return;
     const body = {
       calleeUid: uid,
       callerName: (msg && msg.fromName) || (currentProfile && currentProfile.name) || 'Someone',
@@ -1386,38 +1387,36 @@ window.sendPushToContact = sendPushToContact;
 /** Drop a real Wireline message (not just a notification/push) into every
  *  community member's thread with the creator when they go live — so people
  *  who follow via Wireline see it as a normal message, not just a badge. */
-async function wirelineNotifyLive(uids, fromName, liveTitle, broadcastId){
-  if(!fbDb || !currentUser || !uids || !uids.length) return;
-  const text = fromName + ' is live now: ' + liveTitle + ' — open Broadcast to join.';
-  await Promise.all(uids.map(async function(uid){
-    try{
-      const tid = [currentUser.uid, uid].sort().join('_');
-      const threadRef = fbDb.collection('threads').doc(tid);
-      await threadRef.set({
-        participants: [currentUser.uid, uid].sort(),
-        lastMessageAt: firebase.firestore.FieldValue.serverTimestamp(),
-        lastMessageText: text,
-        lastMessageFrom: currentUser.uid,
-        readBy: [currentUser.uid],
-      }, { merge: true });
-      await threadRef.collection('messages').add({
-        from: currentUser.uid,
-        ts: firebase.firestore.FieldValue.serverTimestamp(),
-        status: 'sent',
-        type: 'text',
-        text: text,
-        encrypted: false,
-        liveBroadcastId: broadcastId || null,
-      });
-    }catch(_){ /* best-effort — a missed Wireline nudge isn't worth surfacing an error for */ }
-  }));
-}
+/* 14 Oct: going live no longer writes "X is live now: <title>" into
+   Wireline as an open message. Chat is sealed; that line was not, and any
+   participant could read it. The push and the in-app notice already say who
+   is live and open the Broadcast. */
 
+/* 14 Oct: the worker tells the audience (members, connections, the whole
+   Circle, no cap of 120), a batch per request, with one notification per
+   person per live. The phone only asks. If the worker cannot do it (not
+   deployed yet, offline), the phone falls back to the old list, with the
+   same fixed notification id, so nobody is told twice either way. */
+async function nalunoAlertLiveViaWorker(broadcastId){
+  const tok = await currentUser.getIdToken();
+  for(let i = 0; i < 60; i++){
+    const r = await fetch(nalunoEconomyUrlBroadcast() + '/v1/live/alert', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ broadcastId: broadcastId }),
+    });
+    if(!r.ok) return i > 0;   // the first batch failing means: do it here
+    const b = await r.json().catch(function(){ return {}; });
+    if(!b || b.ok !== true) return i > 0;
+    if(b.done) return true;
+  }
+  return true;   // the cron finishes the rest
+}
 async function notifyFrequenciesLive(broadcastId, title){
-  if(!currentUser || !fbDb) return;
+  if(!currentUser || !fbDb || !broadcastId) return;
+  try{ if(await nalunoAlertLiveViaWorker(broadcastId)) return; }catch(_){}
   const fromName = (currentProfile && currentProfile.name) || 'Someone';
   const liveTitle = title || 'Broadcast';
-  // Present tense while live is ongoing
   const pushBody = fromName + ' is live: ' + liveTitle;
   const payload = {
     type: 'broadcast_live',
@@ -1428,30 +1427,28 @@ async function notifyFrequenciesLive(broadcastId, title){
     createdAt: Date.now(),
     read: false,
   };
-  // Frequencies (real contacts)
   const real = (contacts || []).filter(c => c.isReal && c.firebaseUid);
   const uids = new Set(real.map(c => c.firebaseUid));
-  // Community = Circle members of this creator
   try{
     const circleSnap = await fbDb.collection('users').doc(currentUser.uid).collection('circle').limit(80).get();
     circleSnap.docs.forEach(function(d){ if(d.id) uids.add(d.id); });
   }catch(_){}
-  // Broadcast members
+  let liveKey = '';
   try{
-    if(broadcastId){
-      const bsnap = await fbDb.collection('broadcasts').doc(broadcastId).get();
-      if(bsnap.exists){
-        const members = (bsnap.data() || {}).memberUids || [];
-        members.forEach(function(uid){ if(uid) uids.add(uid); });
-      }
+    const bsnap = await fbDb.collection('broadcasts').doc(broadcastId).get();
+    if(bsnap.exists){
+      const bd = bsnap.data() || {};
+      (bd.memberUids || []).forEach(function(uid){ if(uid) uids.add(uid); });
+      liveKey = String(Math.round(Number(bd.liveAt) || 0) || '');
     }
   }catch(_){}
   uids.delete(currentUser.uid);
   const list = Array.from(uids).slice(0, 120);
+  const nid = liveKey ? ('live_' + broadcastId + '_' + liveKey) : '';
   await Promise.all(list.map(function(uid){
-    return fbDb.collection('users').doc(uid).collection('notifications').add(payload).catch(function(){});
+    const col = fbDb.collection('users').doc(uid).collection('notifications');
+    return (nid ? col.doc(nid).set(payload) : col.add(payload)).catch(function(){});
   }));
-  // Device push even when Naluno is closed
   list.forEach(function(uid){
     sendPushToContact(uid, {
       title: 'Live on Naluno',
@@ -1460,9 +1457,6 @@ async function notifyFrequenciesLive(broadcastId, title){
       broadcastId: broadcastId,
     });
   });
-  // A real Wireline message too, not just a notification badge/push — this is
-  // what "for those in the community" actually see in their conversation.
-  try{ await wirelineNotifyLive(list, fromName, liveTitle, broadcastId); }catch(_){}
 }
 window.notifyFrequenciesLive = notifyFrequenciesLive;
 

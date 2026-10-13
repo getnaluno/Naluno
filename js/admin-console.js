@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261013b';
+  const BUILD = '20261014a';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -5215,8 +5215,9 @@
     if (tab === 'notifications') {
       el.innerHTML =
         card('Notifications',
-          kpis([['People with a push token',
-            (u.list || []).filter(function (row) { return !!(row.fcmToken || row.fcmTokenAndroid); }).length]])
+          kpis([['People with a push token (seen on profiles)',
+            (u.list || []).filter(function (row) { return !!(row.fcmToken || row.fcmTokenAndroid || row.fcmTokenPlatform); }).length]])
+          + '<p class="sub">Since 14 Oct push addresses are kept in each person\'s private vault, so this count only sees the ones still marked on a profile. Delivery is checked per message by the push workers.</p>'
           + gap(g.notifications || ''));
       return;
     }
@@ -5549,58 +5550,21 @@
       const compile = $('discCompile');
       if (compile) compile.onclick = async function () {
         const out = $('discOut');
-        if (!db || !Engine) { if (out) out.textContent = 'Not ready.'; return; }
-        if (out) out.textContent = 'Reading events…';
+        if (out) out.textContent = 'Compiling…';
+        compile.disabled = true;
         try {
-          /* Each compile reads only the events since the last one and adds
-             them on. It used to rebuild every Broadcast from the latest 800
-             events, so older watching fell out of the record. */
-          const markRef = db.collection('discoveryConfig').doc('compile');
-          let since = 0;
-          try { const m = await markRef.get(); since = (m.exists && Number((m.data() || {}).lastEventAt)) || 0; } catch (_) {}
-          /* First run under this scheme (no mark yet): rebuild from every
-             event, so nothing is counted twice. After that: only new ones.
-             Read in pages of 800, up to 24 pages per press. */
-          const firstRun = since === 0;
-          let events = [];
-          try {
-            let cursor = since;
-            for (let page = 0; page < 24; page++) {
-              const snap = await db.collection('recommendationEvents').where('at', '>', cursor).orderBy('at', 'asc').limit(800).get();
-              const rows = (snap.docs || []).map(function (d) { return d.data() || {}; });
-              events = events.concat(rows);
-              if (rows.length < 800) break;
-              cursor = Number(rows[rows.length - 1].at) || cursor;
-              if (out) out.textContent = 'Reading events… ' + events.length;
-            }
-          } catch (_) {
-            const snap = await db.collection('recommendationEvents').orderBy('at', 'desc').limit(800).get();
-            events = (snap.docs || []).map(function (d) { return d.data() || {}; });
-            since = -1;
-          }
-          const rolled = Engine.rollup(events);
-          const ids = Object.keys(rolled.features || {});
-          for (let i = 0; i < ids.length; i++) {
-            const ref = db.collection('broadcastFeatures').doc(ids[i]);
-            let prev = null;
-            try { const ps = await ref.get(); prev = ps.exists ? ps.data() : null; } catch (_) {}
-            /* A fallback read (no time filter) cannot tell old from new, so it
-               replaces rather than adds, as before. */
-            const feat = (since > 0 && !firstRun && Engine.mergeFeatures) ? Engine.mergeFeatures(prev, rolled.features[ids[i]]) : rolled.features[ids[i]];
-            feat.updatedAt = Date.now();
-            feat.compiledBy = 'desk';
-            await ref.set(feat, { merge: true });
-          }
-          const lastAt = events.reduce(function (m, e) { return Math.max(m, Number(e.at) || 0); }, since > 0 ? since : 0);
-          if (since >= 0 && lastAt > 0) {
-            try { await markRef.set({ lastEventAt: lastAt, updatedAt: Date.now() }, { merge: true }); } catch (_) {}
-          }
-          if (out) out.textContent = ids.length
-            ? ('Wrote features for ' + ids.length + ' Broadcast' + (ids.length === 1 ? '' : 's') + ' from ' + events.length + ' events.')
-            : 'No events yet. Features stay empty until people watch.';
+          /* 14 Oct: the worker compiles on its cron (every 10 minutes) from
+             the events since its last mark; this runs the same job once,
+             now. Two compilers on one mark could count a page twice. */
+          const res = await adminFetch('discover/compile', { method: 'POST', body: '{}' });
+          const b = await res.json().catch(function () { return {}; });
+          if (!res.ok || !b.ok) throw new Error(b.error || 'The worker could not compile just now.');
+          if (out) out.textContent = b.events
+            ? ('Added ' + b.events + ' events to ' + b.broadcasts + ' Broadcast' + (b.broadcasts === 1 ? '' : 's') + '.' + (b.more ? ' More are waiting; the cron carries on.' : ''))
+            : 'Nothing new since the last compile.';
         } catch (e) {
           if (out) out.textContent = (e && e.message) || 'Could not compile.';
-        }
+        } finally { compile.disabled = false; }
       };
       return;
     }
@@ -6066,7 +6030,10 @@
           list.innerHTML = '<p class="sub">No Luganda yet. The first recording you save is the one Listen will prefer.</p>';
           return;
         }
+        const inline = rows.filter(function (r) { return r.inline; }).length;
         list.innerHTML = '<p class="sub">' + rows.length + ' recording' + (rows.length === 1 ? '' : 's') + ' wired into Listen.</p>'
+          + (inline ? '<p class="sub">' + inline + ' older recording' + (inline === 1 ? ' still keeps its' : 's still keep their') + ' sound inside the list every phone downloads. '
+            + '<button type="button" class="ghost" id="lgVoiceMove">Move the sound out</button> (copies each sound to its own record first, then removes it from the list; the words and the sound stay the same).</p>' : '')
           + rows.map(function (row) {
             return '<div class="flag-row" style="align-items:center;">'
               + '<span style="flex:1;">' + escapeHtml(row.text) + '</span>'
@@ -6075,10 +6042,15 @@
               + '</div>';
           }).join('');
         list.querySelectorAll('.lg-voice-play').forEach(function (btn) {
-          btn.onclick = function () {
+          btn.onclick = async function () {
             const row = rows.filter(function (r) { return r.id === btn.getAttribute('data-id'); })[0];
-            if (!row || !row.audio) return;
-            const audio = new Audio(row.audio);
+            if (!row) return;
+            let src = row.audio;
+            if (!src && row.hasAudio && db) {
+              try { const a = await db.collection('lgVoiceAudio').doc(row.id).get(); src = a.exists ? String((a.data() || {}).audio || '') : ''; } catch (_) { src = ''; }
+            }
+            if (!src) { setVoiceMsg('That clip has no sound saved.'); return; }
+            const audio = new Audio(src);
             audio.play().catch(function () { setVoiceMsg('Could not play that clip.'); });
           };
         });
@@ -6087,6 +6059,7 @@
             if (!db) return;
             try {
               await db.collection('lgVoice').doc(btn.getAttribute('data-id')).delete();
+              try { await db.collection('lgVoiceAudio').doc(btn.getAttribute('data-id')).delete(); } catch (_) {}
               toast('Removed');
               load();
             } catch (e) { setVoiceMsg((e && e.message) || 'Could not remove it'); }
@@ -6100,10 +6073,25 @@
           const rows = [];
           snap.forEach(function (doc) {
             const d = doc.data() || {};
-            rows.push({ id: doc.id, text: d.text || '', audio: d.audio || '' });
+            rows.push({ id: doc.id, text: d.text || '', audio: d.audio || '', hasAudio: !!d.hasAudio, inline: !!d.audio });
           });
           rows.sort(function (a, b) { return String(a.text).localeCompare(String(b.text)); });
           paint(rows);
+          const move = $('lgVoiceMove');
+          if (move) move.onclick = async function () {
+            move.disabled = true;
+            let done = 0, failed = 0;
+            for (const r of rows.filter(function (x) { return x.inline; })) {
+              try {
+                await db.collection('lgVoiceAudio').doc(r.id).set({ audio: r.audio, at: Date.now(), by: currentUser.uid });
+                await db.collection('lgVoice').doc(r.id).update({ audio: firebase.firestore.FieldValue.delete(), hasAudio: true });
+                done++;
+              } catch (_) { failed++; }
+              setVoiceMsg('Moved ' + done + (failed ? ' (' + failed + ' could not be moved; their sound is unchanged)' : '') + '…', true);
+            }
+            setVoiceMsg('Moved ' + done + ' recording' + (done === 1 ? '' : 's') + '.' + (failed ? ' ' + failed + ' stayed as they were.' : ''), true);
+            load();
+          };
         } catch (e) {
           const list = $('lgVoiceList');
           if (list) list.innerHTML = '<p class="sub">Could not read the recordings. Publish firestore.rules so this desk can store Luganda.</p>';
@@ -6117,10 +6105,14 @@
         if (!db || !currentUser) { setVoiceMsg('Sign in on this desk first.'); return; }
         const norm = text.toLowerCase().replace(/[^a-z'\s]/g, ' ').replace(/\s+/g, ' ').trim();
         try {
-          await db.collection('lgVoice').add({
+          /* 14 Oct: the sound in its own record first, then the line (the
+             rules check that the sound is there). */
+          const ref = db.collection('lgVoice').doc();
+          await db.collection('lgVoiceAudio').doc(ref.id).set({ audio: pending, at: Date.now(), by: currentUser.uid });
+          await ref.set({
             text: text,
             norm: norm,
-            audio: pending,
+            hasAudio: true,
             at: Date.now(),
             by: currentUser.uid,
           });

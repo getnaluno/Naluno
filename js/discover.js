@@ -201,10 +201,14 @@
         at: Date.now(),
         model: (WHY[ev.broadcastId] && WHY[ev.broadcastId].model) || modelForViewer().id,
       };
-      if (ev.watchSec) body.watchSec = Math.round(ev.watchSec);
-      if (ev.durationSec) body.durationSec = Math.round(ev.durationSec);
+      if (ev.durationSec) body.durationSec = Math.min(10800, Math.round(ev.durationSec));
+      if (ev.watchSec) body.watchSec = Math.min(body.durationSec || 10800, Math.round(ev.watchSec));
       if (ev.topic) body.topic = String(ev.topic).slice(0, 40);
-      fbDb.collection('recommendationEvents').add(body).catch(function () {});
+      /* 14 Oct: one signal per person, Broadcast, kind and day (the id says
+         so, and the database refuses a second one). */
+      const day = Math.floor(body.at / 86400000);
+      const id = currentUser.uid + '_' + String(body.broadcastId).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80) + '_' + String(ev.type).replace(/[^a-z0-9_]/g, '').slice(0, 40) + '_' + day;
+      fbDb.collection('recommendationEvents').doc(id).set(body).catch(function () {});
     } catch (_) {}
   }
 

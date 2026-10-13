@@ -34,8 +34,10 @@ assert.ok(rules.includes('function reachPassOk(broadcastId)') && rules.includes(
 assert.ok(read('workers/economy/handler.mjs').includes('"/v1/reach/claim"'), 'the economy worker issues the pass');
 const composer = read('js/broadcast-composer.js');
 assert.ok(composer.includes('bcompRightsRow') && composer.includes('bcompShowRights(true)'), 'the rights box is on the video sheet, not only after Origin');
-assert.ok(composer.includes('claim.blocked && claim.limit'), 'Reach blocks a video only when the desk or the daily cap says no');
+// 14 Oct: any failure to get a pass stops the video (it used to go out unchecked).
+assert.ok(composer.includes('if(claim && claim.blocked){'), 'no Reach pass, no video');
 const core = read('js/broadcast-core.js');
-assert.ok(core.includes('if(r.status === 403)') && core.includes("return { blocked: false, passId: '' }"), 'a missed Reach check does not stop the upload');
+// 14 Oct (audit S1): a missed Reach check now stops the video, after one retry on a busy worker.
+assert.ok(core.includes('if(r && r.status === 403)') && !core.includes("return { blocked: false, passId: '' }") && core.includes('attempt < 2'), 'a missed Reach check stops the video, after one retry');
 assert.ok(read('app/index.html').includes('id="bcompRightsRow"') && read('app/index.html').includes('id="bcompPrivate"'), 'rights and private are both on the sheet');
 console.log('fixes-1010a tests passed');

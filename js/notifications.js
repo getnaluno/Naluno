@@ -47,11 +47,11 @@ $('enableCallNotifsBtn').onclick = async ()=>{
     if(!snap.exists) return;
     const existing = snap.data() || {};
     const payload = { fcmTokenWeb: token, fcmTokenPlatform: 'web' };
-    if(!existing.fcmTokenAndroid){
+    if(!existing.fcmTokenAndroid && !(typeof nalunoVault !== 'undefined' && nalunoVault.get && nalunoVault.get('fcmTokenAndroid'))){
       payload.fcmToken = token;
     }
-    await userRef.set(payload, { merge:true });
-    try{ if(typeof nalunoVault !== 'undefined' && nalunoVault.writePush) nalunoVault.writePush(payload); }catch(_){}
+    if(typeof nalunoPushSave === 'function') await nalunoPushSave(userRef, payload);
+    else await userRef.set(payload, { merge:true });
     $('callNotifStatus').textContent = 'Call notifications are on — you\u2019ll be notified even with the app closed.';
     toast('Call notifications enabled');
   }catch(e){
@@ -102,12 +102,13 @@ async function registerWebPushToken(){
     if(!snap.exists) return null;
     const existing = snap.data() || {};
     const payload = { fcmTokenWeb: token, fcmTokenPlatform: 'web', fcmTokenUpdatedAt: Date.now() };
-    if(!existing.fcmTokenAndroid) payload.fcmToken = token;
-    await userRef.set(payload, { merge:true });
-    try{ if(typeof nalunoVault !== 'undefined' && nalunoVault.writePush) nalunoVault.writePush(payload); }catch(_){}
+    if(!existing.fcmTokenAndroid && !(typeof nalunoVault !== 'undefined' && nalunoVault.get && nalunoVault.get('fcmTokenAndroid'))) payload.fcmToken = token;
+    if(typeof nalunoPushSave === 'function') await nalunoPushSave(userRef, payload);
+    else await userRef.set(payload, { merge:true });
     try{ localStorage.setItem('nalunoPushTokenAt', String(Date.now())); }catch(_){}
     try{ localStorage.setItem('nalunoPushToken', token); }catch(_){}
-    if(existing.fcmTokenWeb && existing.fcmTokenWeb !== token){
+    const before = existing.fcmTokenWeb || (typeof nalunoVault !== 'undefined' && nalunoVault.get ? nalunoVault.get('fcmTokenWeb') : '');
+    if(before && before !== token){
       console.log('[push] web token ROTATED — stored token was stale, now updated');
       try{ if(typeof nalunoDiag === 'function') nalunoDiag('push-token-rotated', 'stale token replaced'); }catch(_){}
     } else {

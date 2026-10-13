@@ -343,29 +343,23 @@
       }
     }, 400);
   }
+  /* 14 Oct: the worker counts it (once per person, ad and kind in a short
+     window); the phone no longer writes the ad's counters, which any
+     account could raise as often as it liked. */
   function track(ad, kind) {
     if (!ad || !ad.id) return;
     const field = fieldForKind(kind);
     try {
-      const db = (typeof fbDb !== 'undefined' && fbDb) ? fbDb : null;
-      if (!db) return;
-      const ref = db.collection(COL).doc(ad.id);
-      const inc = (typeof firebase !== 'undefined' && firebase.firestore && firebase.firestore.FieldValue)
-        ? firebase.firestore.FieldValue.increment(1)
-        : null;
-      const patch = { updatedAt: Date.now() };
-      if (inc) patch[field] = inc;
-      else {
-        /* No atomic increment available: write NOTHING for the counter.
-           The old fallback wrote (local copy + 1) as an absolute value, which
-           overwrites every impression or click recorded by other devices
-           since this one loaded the ad — turning a shared counter into
-           whatever this phone last saw. A missed count is a small error; a
-           counter reset to one phone's view is a wrong number. */
-        return;
-      }
+      const user = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : null;
+      if (!user || !user.getIdToken) return;
       ad[field] = (Number(ad[field]) || 0) + 1;
-      ref.set(patch, { merge: true }).catch(function (e) {
+      user.getIdToken().then(function (tok) {
+        return fetch('https://naluno-economy.naluno.workers.dev/v1/ads/event', {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ adId: String(ad.id), kind: kind === 'click' || kind === 'skip' || kind === 'view' ? kind : 'impression' }),
+        });
+      }).catch(function (e) {
         try { console.warn('[ads] track', field, e && (e.code || e.message)); } catch (_) {}
       });
       if (isSpent(ad)) {

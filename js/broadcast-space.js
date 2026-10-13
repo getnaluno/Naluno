@@ -2479,7 +2479,8 @@ function renderBspaceImpact(){
     fbDb.collection('broadcasts').doc(activeBroadcastId).collection('results').get(),
     fbDb.collection('broadcasts').doc(activeBroadcastId).collection('resources').get(),
     fbDb.collection('broadcasts').doc(activeBroadcastId).get(),
-    creatorUid ? fbDb.collection('users').doc(creatorUid).collection('circle').limit(200).get() : Promise.resolve(null),
+    // 14 Oct: only the creator can list their Circle; visitors count the Broadcast's own members.
+    (creatorUid && currentUser && creatorUid === currentUser.uid) ? fbDb.collection('users').doc(creatorUid).collection('circle').limit(200).get().catch(function(){ return null; }) : Promise.resolve(null),
   ]).then(([conv, qs, res, resources, doc, circleSnap])=>{
     const members = (doc.exists && doc.data().memberUids) || [];
     const circleRows = [];

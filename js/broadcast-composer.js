@@ -686,7 +686,7 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
   if(snapKind === 'video'){
     snapReachSeconds = Math.max(1, Math.round(snapDuration || 0));
     const claim = (typeof nalunoReachClaim === 'function') ? await nalunoReachClaim(snapReachSeconds) : { blocked: false, passId: '' };
-    if(claim && claim.blocked && claim.limit){
+    if(claim && claim.blocked){
       bcompPublishing = false;
       toast((claim && claim.error) || 'This video is past your Reach.');
       return;
@@ -785,7 +785,7 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
         }
         mediaUrl = await uploadBroadcastFile(uploadFile, (frac, msg)=>{
           if(progress) progress(msg || ('Uploading… ' + Math.round((frac||0)*100) + '%'));
-        });
+        }, undefined, snapKind === 'video' ? { reachPass: snapReachPass } : undefined);
         const seek = (typeof planSeekChapters === 'function')
           ? planSeekChapters(duration)
           : { showChapterUI: duration > 240, parts: [{ index:0, start:0, end: duration }] };

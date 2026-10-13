@@ -263,6 +263,9 @@ async function bLiveStartHost(stream){
       const uid = change.doc.id;
       if(uid === currentUser.uid) return;
       const data = change.doc.data() || {};
+      /* 14 Oct: a session is the viewer's own (the rules now require its id
+         to be their uid). One written in someone else's name is ignored. */
+      if(data.from && data.from !== uid) return;
       if(data.preview) bLiveHostPreview[uid] = 1;
       else delete bLiveHostPreview[uid];
       const entering = !data.preview && !bLiveFlashed[uid] && (data.offer || data.room);

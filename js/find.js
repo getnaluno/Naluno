@@ -742,7 +742,7 @@ async function searchHandle(){
 $('findHandleBtn').onclick = searchHandle;
 $('findHandleInput').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); searchHandle(); } });
 
-async function connectWithUser(theirUid, theirData, handle){
+async function connectWithUser(theirUid, theirData, handle, sparkCode){
   /* Spark, in person. Both people already chose to stand together, so this
      still connects at once. A search on Frequencies sends a request instead. */
   try{
@@ -757,7 +757,11 @@ async function connectWithUser(theirUid, theirData, handle){
     /* Yours first. Their mirror is allowed only once yours exists, so the
        two writes are not one batch. */
     await myConnRef.set({ name: theirData.name||'Unknown', handle: theirData.number || ('@'+handle), color: theirData.color||'#7CFFB2', photo: theirPhoto.photo, photoUrl: theirPhoto.photoUrl, connectedAt: firebase.firestore.FieldValue.serverTimestamp() });
-    await theirConnRef.set({ name: currentProfile.name, handle: currentProfile.number, color: currentProfile.color, photo: myPhoto.photo, photoUrl: myPhoto.photoUrl, connectedAt: firebase.firestore.FieldValue.serverTimestamp() });
+    /* 14 Oct: the pulse code is the proof that they agreed (the rules check
+       it against the Spark), so nobody can add themselves to a list. */
+    const mirror = { name: currentProfile.name, handle: currentProfile.number, color: currentProfile.color, photo: myPhoto.photo, photoUrl: myPhoto.photoUrl, connectedAt: firebase.firestore.FieldValue.serverTimestamp() };
+    if(sparkCode) mirror.spark = String(sparkCode).slice(0, 12);
+    await theirConnRef.set(mirror);
     addRealContactToLocalList(theirUid, theirData.name||'Unknown', theirData.color, theirData.number||('@'+handle), theirData.photo);
     const row = contacts.find(x=>x.firebaseUid===theirUid);
     if(row && theirData.photoUrl) mergeContactPhoto(row, theirData.photoUrl);

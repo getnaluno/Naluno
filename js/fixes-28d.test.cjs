@@ -15,7 +15,9 @@ assert.strictEqual(m.watchSamples, 2);
 assert.strictEqual(m.avgWatchSec, 20);
 assert.ok(Math.abs(m.completionRate - 1 / 3) < 1e-9);
 const adm = read('admin-console.js');
-assert.ok(adm.includes("markRef = db.collection('discoveryConfig').doc('compile')"));
+// 14 Oct: the worker compiles from the same mark (discoveryConfig/compile.lastEventAt); the desk button runs it once.
+assert.ok(adm.includes("adminFetch('discover/compile'"));
+assert.ok(fs.readFileSync(path.join(__dirname, '../workers/economy/handler.mjs'), 'utf8').includes('"/discoveryConfig/compile"'));
 
 /* Signals. */
 const core = read('signal-core.js');

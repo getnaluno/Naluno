@@ -503,7 +503,8 @@
       broadcastId: id.slice(0, 120),
     };
     if (sig) body.signalId = sig;
-    store.collection('recommendationEvents').add(body).catch(function () {});
+    const day = Math.floor(body.at / 86400000);
+    store.collection('recommendationEvents').doc(uid + '_' + body.broadcastId.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80) + '_signal_broadcast_' + day).set(body).catch(function () {});
   }
   function releaseSignalPlayer() {
     /* Hold history. The story entry stays underneath so the system back

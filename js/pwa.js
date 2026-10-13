@@ -6,7 +6,7 @@
    ============================================================ */
 /* ---------------- PWA INSTALL + CALL NOTIFICATION DEEP-LINK ---------------- */
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js?v=20261013b', { scope: '/', updateViaCache: 'none' })
+  navigator.serviceWorker.register('/sw.js?v=20261014a', { scope: '/', updateViaCache: 'none' })
     .then(function(reg){ try{ reg.update(); }catch(_){} })
     .catch(function(e){ console.warn('[sw]', e); });
   // One automatic reload when a new SW takes control (clears stuck "sign-in not ready"
@@ -285,22 +285,15 @@ async function saveNativeFcmToken(token){
     const ref = fbDb.collection('users').doc(currentUser.uid);
     const snap = await ref.get();
     if(!snap.exists) return false;
-    await ref.set({
+    // 14 Oct: into the private vault only (the push workers read it there).
+    const androidPayload = {
       fcmToken: token,
       fcmTokenAndroid: token,
       fcmTokenPlatform: 'android',
       fcmTokenUpdatedAt: Date.now(),
-    }, { merge: true });
-    try{
-      if(typeof nalunoVault !== 'undefined' && nalunoVault.writePush){
-        nalunoVault.writePush({
-          fcmToken: token,
-          fcmTokenAndroid: token,
-          fcmTokenPlatform: 'android',
-          fcmTokenUpdatedAt: Date.now(),
-        });
-      }
-    }catch(_){}
+    };
+    if(typeof nalunoPushSave === 'function') await nalunoPushSave(ref, androidPayload);
+    else await ref.set(androidPayload, { merge: true });
     window.__nalunoNativeFcmToken = token;
     try{
       if($('callNotifStatus')){

@@ -1,6 +1,6 @@
 /* Private fields that used to live on the public users/{uid} doc
-   (readable by every signed-in member). Call wake tokens stay public
-   so existing call-notify keeps ringing. */
+   (readable by every signed-in member). 14 Oct: push addresses too, now
+   that both push workers read the vault (movePush). */
 (function (root) {
   const KEYS = ['recoveryEmail', 'compassPasswordHash', 'e2eKeyBackup', '_consoleGate'];
   const PUSH_KEYS = ['fcmToken', 'fcmTokenWeb', 'fcmTokenAndroid', 'fcmTokenPlatform', 'fcmTokenUpdatedAt'];
@@ -79,6 +79,21 @@
       return true;
     } catch (_) { return false; }
   }
+  /* 14 Oct: push addresses are kept only in the vault (owner + desk), which
+     both push workers read. They used to sit on the public profile, which
+     every signed-in member can read. Written to the vault first; only once
+     that is saved are the public copies removed, so a phone never loses its
+     wake-up. */
+  async function movePush(fields, uid) {
+    const ok = await writePush(fields, uid);
+    if (!ok) return false;
+    const u = uidOf(uid);
+    if (u && root.fbDb && typeof firebase !== 'undefined') {
+      const del = firebase.firestore.FieldValue.delete();
+      try { await root.fbDb.collection('users').doc(u).set({ fcmToken: del, fcmTokenWeb: del, fcmTokenAndroid: del }, { merge: true }); } catch (_) {}
+    }
+    return true;
+  }
   async function write(fields, uid) {
     const r = ref(uid);
     if (!r) return false;
@@ -115,6 +130,7 @@
     ref: ref,
     write: write,
     writePush: writePush,
+    movePush: movePush,
     load: load,
     migrateFromPublic: migrateFromPublic,
     mergeInto: mergeInto,

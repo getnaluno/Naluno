@@ -84,6 +84,20 @@ function nalunoPushHold(){
     const title = kind === 'video' ? 'Video call' : kind === 'voice' ? 'Voice call' : kind === 'listen' ? 'Reading' : 'Uploading…';
     if(window.NalunoNative && typeof window.NalunoNative.startSessionKeepAlive === 'function'){
       window.NalunoNative.startSessionKeepAlive(kind);
+      /* 14 Oct: Android may refuse a call's microphone keep-alive. Say so
+         once, so a person knows a locked screen may drop this call. */
+      if((kind === 'video' || kind === 'voice') && typeof window.NalunoNative.keepAliveFailed === 'function'){
+        setTimeout(function(){
+          try{
+            if(nalunoHoldKind() !== kind) return;
+            const failed = String(window.NalunoNative.keepAliveFailed() || '');
+            if(failed && failed === kind && typeof toast === 'function' && !window.__nalunoKeepWarned){
+              window.__nalunoKeepWarned = true;
+              toast('This phone would not keep the call running in the background. Keep Naluno open, or the call may drop when the screen locks.');
+            }
+          }catch(_){}
+        }, 1500);
+      }
     } else if(window.NalunoNative && typeof window.NalunoNative.startUploadKeepAlive === 'function'){
       window.NalunoNative.startUploadKeepAlive(title);
     }

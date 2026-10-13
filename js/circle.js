@@ -686,7 +686,8 @@
     if(!list.querySelector('.circle-member-row')) list.innerHTML = '<div class="lobby-sub">Loading\u2026</div>';
     let rows = [];
     try{
-      if(fbDb && creatorUid){
+      // 14 Oct: only the creator can list their Circle (rules); others see the Broadcast's members.
+      if(fbDb && creatorUid && typeof currentUser !== 'undefined' && currentUser && currentUser.uid === creatorUid){
         const snap = await fbDb.collection('users').doc(creatorUid).collection('circle').limit(200).get();
         snap.forEach(function(d){
           const x = d.data() || {};
@@ -766,7 +767,7 @@
         }, 220);
       };
     });
-    if(fbDb && creatorUid && !circleMembersUnsub){
+    if(fbDb && creatorUid && !circleMembersUnsub && typeof currentUser !== 'undefined' && currentUser && currentUser.uid === creatorUid){
       let skipFirst = true;
       try{
         circleMembersUnsub = fbDb.collection('users').doc(creatorUid).collection('circle').limit(200).onSnapshot(function(){
