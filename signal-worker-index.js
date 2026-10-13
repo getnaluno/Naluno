@@ -276,6 +276,32 @@ async function launchConfig(env) {
 const registeredSeen = new Map();
 /* A registered account has a Callsign profile. Read with the person's own
    sign-in (the rules let a signed-in person read a profile). */
+/* 14 Oct: an original Broadcast video names the Reach pass it was given.
+   The pass says how long the video may be (seconds) and, from 14 Oct, how
+   many bytes at most (maxBytes). The real file is measured here against it.
+   Read with the person's own sign-in (the pass is theirs to read). */
+async function reachPassCheck(env, uid, idToken, passId, ct, size, readAt) {
+  if (!/^[A-Za-z0-9-]{8,48}$/.test(String(passId || ''))) return refuse('reach', 'That video has no valid Reach pass. Try posting it again.', 403);
+  let pass = null;
+  try {
+    const res = await fetch(fsBase(env) + '/users/' + encodeURIComponent(uid) + '/reachPasses/' + encodeURIComponent(passId), { headers: { Authorization: 'Bearer ' + idToken } });
+    if (res.status === 404) return refuse('reach', 'That video has no valid Reach pass. Try posting it again.', 403);
+    if (!res.ok) return { ok: true, unchecked: true };   // Google unreachable: the database rule still checks the pass
+    const doc = await res.json();
+    const f = (doc && doc.fields) || {};
+    const num = (v) => v ? Number(v.integerValue != null ? v.integerValue : v.doubleValue) || 0 : 0;
+    pass = { seconds: num(f.seconds), maxBytes: num(f.maxBytes), used: !!(f.used && f.used.booleanValue) };
+  } catch (_) { return { ok: true, unchecked: true }; }
+  if (pass.used) return refuse('reach', 'That Reach pass was already used. Try posting it again.', 403);
+  if (pass.maxBytes && size > pass.maxBytes) return refuse('reach', 'That file is larger than its Reach pass allows.', 413);
+  if (kindOf(ct) === 'video' && pass.seconds) {
+    let sec = null;
+    try { sec = ct === 'video/webm' ? webmSeconds(await readAt(0, 64 * 1024)) : await mp4Seconds(readAt, size); } catch (_) { sec = null; }
+    if (sec != null && sec > pass.seconds + 2) return refuse('reach', 'That video is ' + mins(Math.round(sec)) + ' long; its Reach pass was for ' + mins(pass.seconds) + '.', 413);
+  }
+  return { ok: true };
+}
+
 async function isRegistered(env, uid, idToken) {
   const hit = registeredSeen.get(uid);
   if (hit && Date.now() - hit < 10 * 60 * 1000) return true;
@@ -688,6 +714,16 @@ export default {
         if (!verdict.ok) {
           try { await env.SIGNAL_BUCKET.delete(key); } catch (_) {}
           return refused(env, ctx, verdict, origin);
+        }
+        if (body.reachPass && env._nalunoBroadcast) {
+          const rp = await reachPassCheck(env, uid, idToken, body.reachPass, ctStored, size, async function (off, n) {
+            const o = await env.SIGNAL_BUCKET.get(key, { range: { offset: off, length: Math.max(1, Math.min(n, size - off)) } });
+            return o ? new Uint8Array(await o.arrayBuffer()) : new Uint8Array(0);
+          });
+          if (!rp.ok) {
+            try { await env.SIGNAL_BUCKET.delete(key); } catch (_) {}
+            return refused(env, ctx, rp, origin);
+          }
         }
         report(env, ctx, true, size, '');
         return json({ url: `${url.origin}/o/${key}`, key, bytes: size || body.bytes || null }, 200, origin);

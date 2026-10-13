@@ -21,6 +21,9 @@ public class UploadKeepAliveService extends Service {
   public static final String CHANNEL_ID = "naluno_uploads";
   public static final int NOTIFICATION_ID = 44012;
   public static volatile boolean running = false;
+  /** 14 Oct: the call kind ("video"/"voice") whose microphone keep-alive
+   *  Android refused, or "" (read by the page through keepAliveFailed). */
+  public static volatile String lastFailedKind = "";
 
   private PowerManager.WakeLock wakeLock;
 
@@ -61,7 +64,24 @@ public class UploadKeepAliveService extends Service {
       } else {
         startForeground(NOTIFICATION_ID, n);
       }
+      lastFailedKind = "";
     } catch (Exception first) {
+      boolean call = "video".equals(kind) || "voice".equals(kind);
+      if (call) {
+        /* 14 Oct: a call keeps only a microphone service. If Android refuses
+           it, the call is NOT re-labelled as an upload (data sync): the page
+           is told (keepAliveFailed) so it can warn that a locked screen may
+           drop the call. */
+        boolean ok = false;
+        if (Build.VERSION.SDK_INT >= 30) {
+          try { startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE); ok = true; } catch (Exception ignored) {}
+        }
+        if (ok) { lastFailedKind = ""; return START_STICKY; }
+        lastFailedKind = kind;
+        /* The service must still come to the foreground once it was started
+           as one (Android ends the app otherwise); it no longer counts as a
+           call keep-alive, and the page says so. */
+      }
       try {
         if (Build.VERSION.SDK_INT >= 29) {
           startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);

@@ -188,7 +188,8 @@ service cloud.firestore {
     /* A connection entry someone writes into another person's list. */
     function connectionEntryClean() {
       let d = request.resource.data;
-      return d.keys().hasOnly(['name', 'handle', 'color', 'photo', 'photoUrl', 'connectedAt'])
+      return d.keys().hasOnly(['name', 'handle', 'color', 'photo', 'photoUrl', 'connectedAt', 'spark'])
+        && (!('spark' in d) || (d.spark is string && d.spark.size() <= 12))
         && (!('name' in d) || d.name == null || (d.name is string && d.name.size() <= 80))
         && (!('handle' in d) || d.handle == null || (d.handle is string && d.handle.size() <= 40))
         && (!('color' in d) || d.color == null || (d.color is string && d.color.matches('^#[0-9A-Fa-f]{3,8}$')))
@@ -252,6 +253,19 @@ service cloud.firestore {
           && get(/databases/$(database)/documents/users/$(request.auth.uid)/reachPasses/$(request.resource.data.reachPass)).data.seconds >= request.resource.data.durationSec
         );
     }
+    /* 14 Oct: an original video needs a Reach pass (a missing pass used to
+       count as fine). A live's shell (no file yet), a Pass-on of an existing
+       Broadcast, and a Signal made into a Broadcast (its file is on the
+       Signal media worker, under that worker's own limits) do not. */
+    function videoHasPass() {
+      let d = request.resource.data;
+      return d.get('mediaType', '') != 'video'
+        || !(d.get('mediaUrl', null) is string)
+        || d.get('repostOf', null) is string
+        || (d.get('source', '') in ['signal_self', 'signal_contact']
+            && d.mediaUrl.matches('^(https://naluno-signal-upload[.]|data:).*'))
+        || (d.get('reachPass', '') is string && d.get('reachPass', '').size() >= 8);
+    }
     function isTrustedPublisher() {
       return isSignedIn()
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
@@ -290,9 +304,18 @@ service cloud.firestore {
       // 13a: a new profile needs a registration seat (the cap and the pause
       // are applied by the economy worker when it gives one). Every profile
       // made before 13 Oct already exists and is never re-created.
+      /* 14 Oct: push addresses live in the private vault (both push workers
+         read it there). On the public profile they can only be removed. */
+      function pushTokensOnlyRemoved() {
+        let changed = request.resource.data.diff(resource.data).affectedKeys();
+        return (!('fcmToken' in changed) || !('fcmToken' in request.resource.data))
+          && (!('fcmTokenWeb' in changed) || !('fcmTokenWeb' in request.resource.data))
+          && (!('fcmTokenAndroid' in changed) || !('fcmTokenAndroid' in request.resource.data));
+      }
       allow create: if isOwner(uid)
         && hasSeat(uid)
-        && (!('known' in request.resource.data) || request.resource.data.known == false);
+        && (!('known' in request.resource.data) || request.resource.data.known == false)
+        && !request.resource.data.keys().hasAny(['fcmToken', 'fcmTokenWeb', 'fcmTokenAndroid']);
       allow delete: if isSuper();
       // Owner may update while the Callsign is open, including closing it.
       // Once closed, only the Control Centre operator may write (restore).
@@ -301,11 +324,10 @@ service cloud.firestore {
       ) || (
         isOwner(uid) && (
           !('accountState' in resource.data) || resource.data.accountState != 'closed'
-        ) && ownerKeepsModeration() && keepsJoinedAt()
+        ) && ownerKeepsModeration() && keepsJoinedAt() && pushTokensOnlyRemoved()
       );
       /* Private vault: recovery email, Compass lock, E2E backup, desk
-         password hash. Owner + operator. Call wake tokens stay on the
-         public profile so existing call-notify keeps working. */
+         password hash, and (14 Oct) push addresses. Owner + operator. */
       match /vault/{id} {
         allow read: if isOwner(uid) || isOperator();
         allow write: if isOwner(uid) || isSuper();
@@ -442,9 +464,26 @@ service cloud.firestore {
     match /users/{uid}/connections/{otherUid} {
       allow read: if isOwner(uid);
       allow delete: if isSignedIn() && (isOwner(uid) || otherUid == request.auth.uid);
+      /* 14 Oct: the entry in the other person's list needs their consent,
+         not only your own entry: they asked you (you are accepting their
+         request), or the two of you are completing a Spark in person. Any
+         account could write itself into anyone's list in two steps and then
+         read their Signals. */
+      function sparkProves() {
+        let code = request.resource.data.get('spark', '');
+        return code is string && code.size() >= 4 && code.size() <= 12
+          && (
+            (get(/databases/$(database)/documents/sparks/$(code)).data.hostUid == uid
+              && get(/databases/$(database)/documents/sparks/$(code)).data.get('expiresAt', 0) > request.time.toMillis())
+            || (get(/databases/$(database)/documents/sparks/$(code)).data.hostUid == request.auth.uid
+              && get(/databases/$(database)/documents/sparks/$(code)).data.get('guestUid', '') == uid)
+          );
+      }
       allow create, update: if isOwner(uid)
         || (isSignedIn() && otherUid == request.auth.uid && connectionEntryClean()
-            && exists(/databases/$(database)/documents/users/$(request.auth.uid)/connections/$(uid)));
+            && exists(/databases/$(database)/documents/users/$(request.auth.uid)/connections/$(uid))
+            && (exists(/databases/$(database)/documents/users/$(request.auth.uid)/connectionRequests/$(uid))
+                || sparkProves()));
     }
     /* A Connect request. The sender creates it on the other person's list.
        Either person may remove it (accept already copied it, or it was declined). */
@@ -463,15 +502,40 @@ service cloud.firestore {
     // History lives on the phone. This doc is a routing stub (who, when, kind),
     // not the transcript. Encrypted drops sit in /wireDrop until taken.
     match /threads/{threadId} {
-      allow read, update: if isSignedIn() && request.auth.uid in resource.data.participants;
-      allow create: if isSignedIn() && request.auth.uid in request.resource.data.participants;
+      /* 14 Oct: the thread document is only the preview line. Words never
+         go here (chat is sealed in the mailbox): the preview is a kind
+         label, the people in a thread never change, and the id is the two
+         uids. A participant could rewrite the preview or add a third
+         person, who could then read the thread. */
+      // Only the fields being written are judged (an old thread may still
+      // carry an old preview; it is replaced on the next message).
+      function threadPreviewOk(changed) {
+        let d = request.resource.data;
+        return (!('lastMessageText' in changed) || d.lastMessageText in ['Message', 'Voice note', 'Photo', 'Video', 'Document', 'A feeling', 'Missed call', 'Notice', 'Live'])
+          && (!('lastMessageFrom' in changed) || d.lastMessageFrom == request.auth.uid || d.lastMessageFrom == 'system')
+          && (!('readBy' in changed) || (d.readBy is list && d.readBy.hasOnly(d.participants)));
+      }
+      allow read: if isSignedIn() && request.auth.uid in resource.data.participants;
+      allow update: if isSignedIn() && request.auth.uid in resource.data.participants
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['lastMessageAt', 'lastKind', 'lastMessageText', 'lastMessageFrom', 'readBy'])
+        && threadPreviewOk(request.resource.data.diff(resource.data).affectedKeys());
+      allow create: if isSignedIn() && request.auth.uid in request.resource.data.participants
+        && request.resource.data.participants is list
+        && request.resource.data.participants.size() == 2
+        && threadId == request.resource.data.participants[0] + '_' + request.resource.data.participants[1]
+        && threadPreviewOk(request.resource.data.keys().toSet());
 
       match /messages/{messageId} {
         allow read: if isSignedIn()
           && request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants;
+        /* Older threads kept messages here. A new one follows the mailbox
+           rule: a text message is sealed and carries no words. */
         allow create: if isSignedIn()
           && request.resource.data.from == request.auth.uid
-          && request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants;
+          && request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants
+          && (request.resource.data.get('type', 'text') != 'text'
+              || (request.resource.data.get('encrypted', false) == true && !('text' in request.resource.data)));
         allow update: if isSignedIn()
           && request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants
           && (
@@ -707,7 +771,11 @@ service cloud.firestore {
             !('ts' in request.resource.data)
             || (request.resource.data.ts is timestamp && request.resource.data.ts <= request.time + duration.value(10, 'm'))
             || (request.resource.data.ts is number && request.resource.data.ts <= request.time.toMillis() + 600000)
-          );
+          )
+          // 14 Oct: a line of Band chat is at most 4000 characters (a member
+          // could write up to the 1 MB document limit, again and again).
+          && (!('text' in request.resource.data) || request.resource.data.text == null
+              || (request.resource.data.text is string && request.resource.data.text.size() <= 4000));
         // Author may fill in mediaUrl after the bubble is already in the square
         // (live chat posts the row first, then the file). Nobody else can edit.
         allow update: if isSignedIn()
@@ -807,10 +875,26 @@ service cloud.firestore {
     }
 
     match /users/{uid}/notifications/{nid} {
+      /* 14 Oct: a notice can only come from someone the person already has
+         a tie with: a connection of theirs (Signals, Band invites, lives),
+         someone whose Circle they are in, or the creator of a Broadcast they
+         are a member of. Any account could write into anyone's inbox. The
+         worker (live alerts) writes as the service account. */
+      function notifyRelated() {
+        return isOwner(uid) || isOperator()
+          || exists(/databases/$(database)/documents/users/$(uid)/connections/$(request.auth.uid))
+          || exists(/databases/$(database)/documents/users/$(request.auth.uid)/circle/$(uid))
+          || (request.resource.data.get('broadcastId', '') is string
+              && request.resource.data.get('broadcastId', '').size() > 0
+              && request.resource.data.get('broadcastId', '').size() < 200
+              && get(/databases/$(database)/documents/broadcasts/$(request.resource.data.broadcastId)).data.get('creatorUid', '') == request.auth.uid
+              && uid in get(/databases/$(database)/documents/broadcasts/$(request.resource.data.broadcastId)).data.get('memberUids', []));
+      }
       allow read: if isOwner(uid);
       allow create: if isSignedIn()
         && request.resource.data.keys().size() < 24
-        && stampedAsSelf();
+        && stampedAsSelf()
+        && notifyRelated();
       allow update, delete: if isOwner(uid);
     }
 
@@ -917,7 +1001,8 @@ service cloud.firestore {
         && request.resource.data.listed == false
         && request.resource.data.held == true
         && request.resource.data.hidden == false
-        && reachPassOk(id);
+        && reachPassOk(id)
+        && videoHasPass();
       // Creator may rewrite; others may only touch engagement/live/membership fields.
       // listed / hidden / held are desk + worker. Creator may only tighten to hidden.
       /* 13a: going live (live false -> true) needs Live on, and no guard
@@ -952,10 +1037,17 @@ service cloud.firestore {
             || !(col in ['conversation', 'questions', 'results', 'resources']);
         }
         allow read: if isSignedIn() && parentBroadcastVisible(id);
+        /* 14 Oct: writing needs what reading needs (a private, held or
+           hidden Broadcast takes no comments, questions or viewers from
+           someone who cannot see it), and a live viewer's session is their
+           own: its id is their uid. A forged session can no longer take
+           one of the host phone's 12 places. */
         allow create: if isSignedIn()
           && request.resource.data.keys().size() < 40
           && stampedAsSelf()
-          && contributionOn();
+          && contributionOn()
+          && parentBroadcastVisible(id)
+          && (col != 'liveSessions' || docId == request.auth.uid);
         // Author or broadcast creator may edit/delete subdocs (journey, conversation, etc.).
         allow update: if isSignedIn() && (
           resource.data.from == request.auth.uid
@@ -1250,12 +1342,27 @@ service cloud.firestore {
        Follower count is not a field the ranker reads. */
     match /recommendationEvents/{eventId} {
       allow read: if isOperator() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      /* 14 Oct: one event per person, Broadcast, kind and day: the id is
+         {uid}_{broadcastId}_{type}_{day} (day = days since 1970, the server's
+         day or the one either side of it), and an event is never rewritten.
+         Watched seconds cannot pass the video's length or three hours. */
+      function eventDayOk(d) {
+        let today = int(request.time.toMillis() / 86400000);
+        return eventId == request.auth.uid + '_' + d.get('broadcastId', '') + '_' + d.type + '_' + string(today)
+          || eventId == request.auth.uid + '_' + d.get('broadcastId', '') + '_' + d.type + '_' + string(today - 1)
+          || eventId == request.auth.uid + '_' + d.get('broadcastId', '') + '_' + d.type + '_' + string(today + 1);
+      }
       allow create: if isSignedIn()
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.type is string
-        && request.resource.data.type.size() < 40
-        && request.resource.data.keys().size() < 16
-        && !request.resource.data.keys().hasAny(['body', 'text', 'message', 'ciphertext', 'plaintext']);
+        && request.resource.data.type.matches('^[a-z0-9_]{2,40}$')
+        && request.resource.data.get('broadcastId', '') is string
+        && request.resource.data.get('broadcastId', '').matches('^[A-Za-z0-9_-]{0,80}$')
+        && request.resource.data.keys().hasOnly(['uid', 'broadcastId', 'creatorUid', 'type', 'at', 'model', 'watchSec', 'durationSec', 'topic', 'signalId'])
+        && (!('durationSec' in request.resource.data) || (request.resource.data.durationSec is number && request.resource.data.durationSec >= 0 && request.resource.data.durationSec <= 10800))
+        && (!('watchSec' in request.resource.data) || (request.resource.data.watchSec is number && request.resource.data.watchSec >= 0
+              && request.resource.data.watchSec <= request.resource.data.get('durationSec', 10800)))
+        && eventDayOk(request.resource.data);
       allow update, delete: if false;
     }
     match /userInterestProfile/{uid} {
@@ -1432,17 +1539,15 @@ service cloud.firestore {
             && request.resource.data.paidAed is number
             && request.resource.data.paidAed >= 0
             && request.resource.data.paidAed <= 1000000);
-      allow update: if isOperator()
-        || (isSignedIn()
-            && request.resource.data.diff(resource.data).affectedKeys()
-                 .hasOnly(['impressions', 'clicks', 'skips', 'viewCompletes', 'updatedAt'])
-            && request.resource.data.status == resource.data.status
-            && request.resource.data.mediaUrl == resource.data.mediaUrl
-            && bumpedAtMost('impressions', 1)
-            && bumpedAtMost('clicks', 1)
-            && bumpedAtMost('skips', 1)
-            && bumpedAtMost('viewCompletes', 1));
+      /* 14 Oct: the counters (impressions, clicks, skips, completed views)
+         are moved only by the economy worker (/v1/ads/event), once per
+         person, ad and kind in a window. A member could raise them by one
+         per write, as often as they liked, and booked money follows them. */
+      allow update: if isOperator();
       allow delete: if isOperator();
+    }
+    match /adEvents/{id} {
+      allow read, write: if false;   // the worker's once-only markers
     }
 
     match /adminCredentials/{uid} {
@@ -1663,6 +1768,10 @@ service cloud.firestore {
     /* Luganda recordings the operator feeds. Listen uses these
        instead of the English phone voice when the line is covered.
        The clip is short. The text is the words that were spoken. */
+    /* 14 Oct: every phone listens to this list, so it carries the words
+       only; the sound is in lgVoiceAudio/{id} and is fetched when that line
+       is about to be spoken. Older lines that still hold their sound keep
+       working, and the desk can move it out (update below). */
     match /lgVoice/{id} {
       allow read: if isSignedIn();
       allow create: if isOperator()
@@ -1671,14 +1780,35 @@ service cloud.firestore {
         && request.resource.data.text.size() < 400
         && request.resource.data.norm is string
         && request.resource.data.norm.size() < 400
+        && request.resource.data.at is number
+        && request.resource.data.by == request.auth.uid
+        && (
+          (request.resource.data.keys().hasOnly(['text', 'norm', 'audio', 'at', 'by'])
+            && request.resource.data.audio is string
+            && request.resource.data.audio.size() > 32
+            && request.resource.data.audio.size() < 700000)
+          || (request.resource.data.keys().hasOnly(['text', 'norm', 'hasAudio', 'at', 'by'])
+            && request.resource.data.hasAudio == true
+            && exists(/databases/$(database)/documents/lgVoiceAudio/$(id)))
+        );
+      allow update: if isOperator()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['audio', 'hasAudio'])
+        && !('audio' in request.resource.data)
+        && request.resource.data.hasAudio == true
+        && exists(/databases/$(database)/documents/lgVoiceAudio/$(id));
+      allow delete: if isOperator();
+    }
+    match /lgVoiceAudio/{id} {
+      allow get: if isSignedIn();
+      allow list: if isOperator();
+      allow create: if isOperator()
+        && request.resource.data.keys().hasOnly(['audio', 'at', 'by'])
         && request.resource.data.audio is string
         && request.resource.data.audio.size() > 32
         && request.resource.data.audio.size() < 700000
-        && request.resource.data.at is number
-        && request.resource.data.by == request.auth.uid
-        && request.resource.data.keys().hasOnly(['text', 'norm', 'audio', 'at', 'by']);
-      allow delete: if isOperator();
+        && request.resource.data.by == request.auth.uid;
       allow update: if false;
+      allow delete: if isOperator();
     }
 
     /* Sign-in history written by the signed-in person about themselves.
@@ -1856,7 +1986,11 @@ service cloud.firestore {
     }
 
     match /users/{uid}/circle/{memberUid} {
-      allow read: if isSignedIn();
+      /* 14 Oct: one membership can be checked (the owner, or the member
+         asking "am I in?"); only the owner and the desk can list the whole
+         Circle. Anyone could page a creator's entire audience before. */
+      allow get: if isSignedIn() && (isOwner(uid) || memberUid == request.auth.uid || isOperator());
+      allow list: if isOwner(uid) || isOperator();
       allow write: if isSignedIn() && (isOwner(uid) || memberUid == request.auth.uid);
     }
 

@@ -1,12 +1,737 @@
+var __create = Object.create;
 var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __commonJS = (cb, mod) => function __require() {
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
 var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, { get: all[name], enumerable: true });
 };
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+
+// js/discover-engine.js
+var require_discover_engine = __commonJS({
+  "js/discover-engine.js"(exports, module) {
+    (function(root, factory) {
+      const api = factory();
+      if (typeof module === "object" && module.exports) module.exports = api;
+      else root.NalunoDiscoverEngine = api;
+    })(typeof globalThis !== "undefined" ? globalThis : exports, function() {
+      const VALUE = {
+        like: 1,
+        kept_line: 6,
+        share: 4,
+        save: 5,
+        returned_later: 6,
+        watch_completed: 5,
+        meaningful_comment: 6,
+        question: 6,
+        answer: 6,
+        join_strand: 8,
+        follow_creator: 8,
+        join_band: 8
+      };
+      const NEGATIVE = {
+        not_interested: 12,
+        dislike: 8,
+        hide_topic: 10,
+        hide_creator: 20,
+        block_creator: 40,
+        report: 30,
+        skip_fast: 3
+      };
+      function defaultAssembly() {
+        return {
+          discoveryShare: 0.22,
+          maxConsecutiveCreator: 1,
+          maxCreatorShare: 0.34,
+          maxTopicStreak: 2
+        };
+      }
+      function modelV1() {
+        return {
+          id: "ranker_v1",
+          candidate: "candidate_v1",
+          safety: "safety_v1",
+          weights: {
+            relevance: 1,
+            satisfaction: 1.35,
+            community: 0.7,
+            discovery: 0.85,
+            freshness: 0.45,
+            relationship: 0.9,
+            quality: 0.8,
+            negative: 1.7,
+            manipulation: 1.4
+          },
+          assembly: defaultAssembly()
+        };
+      }
+      function modelV2() {
+        return {
+          id: "ranker_v2",
+          candidate: "candidate_v1",
+          safety: "safety_v1",
+          weights: {
+            relevance: 0.85,
+            satisfaction: 1.7,
+            community: 0.95,
+            discovery: 0.55,
+            freshness: 0.25,
+            relationship: 0.7,
+            quality: 1.05,
+            negative: 1.9,
+            manipulation: 1.6
+          },
+          assembly: defaultAssembly()
+        };
+      }
+      function modelV3() {
+        const m = modelV2();
+        m.id = "ranker_v3";
+        m.smoothing = { pseudoImpressions: 40, pseudoVotes: 6 };
+        return m;
+      }
+      function models() {
+        return { ranker_v1: modelV1(), ranker_v2: modelV2(), ranker_v3: modelV3() };
+      }
+      function evidenceOf(b) {
+        const f = b && b.features || {};
+        return (Number(f.meaningfulWatches) || 0) + (Number(f.completions) || 0) * 1.2 + (Number(f.shares) || 0) * 3 + (Number(f.saves) || 0) * 2.5 + (Number(f.follows) || 0) * 4 + (Number(f.returns) || 0) * 2 + (Number(f.likes) || 0) * 2 + (Number(f.keptLines) || 0) * 4;
+      }
+      function catalogueRate(list) {
+        let ev = 0, imp = 0, evAll = 0, impAll = 0;
+        (list || []).forEach(function(b) {
+          const i = Math.max(0, Number((b && b.features || {}).impressions) || 0);
+          if (!i) return;
+          const e = evidenceOf(b);
+          evAll += e;
+          impAll += i;
+          if (i >= 20) {
+            ev += e;
+            imp += i;
+          }
+        });
+        if (imp) return ev / imp;
+        return impAll ? evAll / impAll : 0;
+      }
+      function msOf(t) {
+        if (t && typeof t.toMillis === "function") return t.toMillis();
+        const n = Number(t);
+        return isFinite(n) ? n : 0;
+      }
+      function blankViewer() {
+        return {
+          topics: {},
+          creators: {},
+          followed: {},
+          hiddenCreators: {},
+          notInterested: {},
+          blocked: {},
+          strands: {},
+          bands: {},
+          connected: {},
+          region: ""
+        };
+      }
+      function topicsOf(b) {
+        const out = [];
+        if (!b) return out;
+        if (b.strandId) out.push("strand:" + b.strandId);
+        if (b.strandName) out.push("topic:" + String(b.strandName).toLowerCase().slice(0, 40));
+        const tags = Array.isArray(b.tags) ? b.tags : [];
+        for (let i = 0; i < tags.length && i < 6; i++) {
+          if (tags[i]) out.push("topic:" + String(tags[i]).toLowerCase().slice(0, 40));
+        }
+        if (b.live) out.push("live");
+        return out;
+      }
+      function safetyOf(b) {
+        const f = b && b.features || {};
+        return String(f.safetyStatus || b.safetyStatus || b.safetyDecision || "clear");
+      }
+      function eligible(b, viewer) {
+        const v = viewer || {};
+        if (!b || !b.id || b.deleted) return false;
+        if (b.hidden || b.held) return false;
+        if (b.listed === false) return false;
+        if (b.visibility === "private") return false;
+        if (Number(b.publishAt) > Date.now()) return false;
+        const safety = safetyOf(b);
+        if (safety === "blocked" || safety === "block" || safety === "held") return false;
+        const uid = b.creatorUid || "";
+        if (uid && v.blocked && v.blocked[uid]) return false;
+        if (uid && v.hiddenCreators && v.hiddenCreators[uid]) return false;
+        if (v.notInterested && v.notInterested[b.id]) return false;
+        const topics = topicsOf(b);
+        const hiddenTopic = v.hiddenTopics || {};
+        for (let i = 0; i < topics.length; i++) {
+          if (hiddenTopic[topics[i]]) return false;
+        }
+        return true;
+      }
+      function fitOf(b) {
+        const f = b && b.features || {};
+        const imp = Math.max(0, Number(f.impressions) || 0);
+        const evidence = (Number(f.meaningfulWatches) || 0) + (Number(f.completions) || 0) * 1.2 + (Number(f.shares) || 0) * 3 + (Number(f.saves) || 0) * 2.5 + (Number(f.follows) || 0) * 4 + (Number(f.returns) || 0) * 2 + (Number(f.likes) || 0) * 2 + (Number(f.keptLines) || 0) * 4;
+        return {
+          impressions: imp,
+          rate: imp ? evidence / imp : 0,
+          confidence: Math.min(1, imp / 80)
+        };
+      }
+      function watchQuality(b) {
+        const f = b && b.features || {};
+        const duration = Number(f.durationSec || b.durationSec || 0);
+        const avg = Number(f.avgWatchSec || 0);
+        const depth = duration > 0 ? Math.min(1, avg / duration) : Number(f.completionRate || 0);
+        const minutes = Math.min(1, avg / 720);
+        const completion = Math.min(1, Number(f.completionRate || 0));
+        const returns = Math.min(1, Number(f.returnRate || 0));
+        return depth * 0.45 + minutes * 0.25 + completion * 0.2 + returns * 0.1;
+      }
+      function manipulation(b) {
+        const f = b && b.features || {};
+        const comments = Number(f.comments != null ? f.comments : b.commentCount) || 0;
+        const meaningful = Number(f.meaningfulComments) || 0;
+        if (comments < 8) return 0;
+        const thin = Math.max(0, comments - meaningful);
+        if (thin / comments < 0.85) return 0;
+        return Math.min(1, thin / 40);
+      }
+      function personal(b, viewer) {
+        const v = viewer || {};
+        const topics = topicsOf(b);
+        let rel = 0;
+        for (let i = 0; i < topics.length; i++) rel += Number((v.topics || {})[topics[i]] || 0);
+        let relationship = 0;
+        const uid = b.creatorUid || "";
+        if (uid && v.followed && v.followed[uid]) relationship += 1;
+        if (uid && v.connected && v.connected[uid]) relationship += 0.55;
+        if (b.bandId && v.bands && v.bands[b.bandId]) relationship += 0.45;
+        if (b.strandId && v.strands && v.strands[b.strandId]) relationship += 0.35;
+        return {
+          relevance: Math.max(0, Math.tanh(rel / 6)),
+          relationship: Math.min(1, relationship),
+          negativeTaste: rel < 0 ? Math.min(1, -rel / 6) : 0
+        };
+      }
+      function pocket(b, viewer) {
+        const pockets = b.features && b.features.pockets || {};
+        const topics = viewer && viewer.topics || {};
+        let best = 0;
+        Object.keys(topics).forEach(function(k) {
+          if (Number(topics[k]) <= 0) return;
+          const p = Number(pockets[k] || 0);
+          if (p > best) best = p;
+        });
+        return Math.min(1, best);
+      }
+      function negativePressure(b, viewer, fit) {
+        const taste = personal(b, viewer);
+        let n = taste.negativeTaste;
+        const uid = b.creatorUid || "";
+        const c = Number((viewer && viewer.creators || {})[uid] || 0);
+        if (c < 0) n += Math.min(1, -c / 6);
+        const f = b.features || {};
+        const imp = Math.max(1, fit.impressions || 1);
+        n += Math.min(1, (Number(f.negativeEvents) || 0) / imp * 4);
+        n += Math.min(1, (Number(f.dislikes) || 0) / imp * 4);
+        n += Math.min(1, (Number(f.reports) || 0) / 3);
+        return Math.min(1, n);
+      }
+      function sourcesFor(b, viewer, fit, rel, now) {
+        const sources = [];
+        if (rel.relevance > 0.15) sources.push("interest");
+        if (rel.relationship > 0) sources.push("creator");
+        if (b.strandId && ((viewer.strands || {})[b.strandId] || (viewer.topics || {})["strand:" + b.strandId] > 0)) {
+          sources.push("strand");
+        }
+        if (b.bandId && viewer.bands && viewer.bands[b.bandId]) sources.push("community");
+        if (pocket(b, viewer) > 0.35) sources.push("similar");
+        if (fit.impressions > 0 && fit.impressions < 800 && fit.rate > 0.12 && fit.confidence > 0.2) {
+          sources.push("emerging");
+        }
+        const ageH = Math.max(0, ((now || Date.now()) - Number(b.createdAt || now || Date.now())) / 36e5);
+        if (ageH < 48 && fit.impressions < 400) sources.push("new");
+        if (viewer.region && b.region && viewer.region === b.region && rel.relevance < 0.2 && rel.relationship === 0) {
+          sources.push("regional");
+        }
+        if (fit.confidence > 0.45 && fit.rate > 0.2) sources.push("trend");
+        if (rel.relevance < 0.08 && rel.relationship === 0) sources.push("discovery");
+        if (!sources.length) sources.push("open");
+        return sources;
+      }
+      function whyText(sources) {
+        if (sources.indexOf("creator") >= 0) return "You are already with this creator.";
+        if (sources.indexOf("strand") >= 0) return "This sits on a Strand you have opened.";
+        if (sources.indexOf("community") >= 0) return "A Band you are in has this on.";
+        if (sources.indexOf("similar") >= 0) return "People who stay with Broadcasts like yours have stayed with this one.";
+        if (sources.indexOf("emerging") >= 0) return "A smaller creator. The people who have seen it have stayed.";
+        if (sources.indexOf("new") >= 0) return "New, and still being tried with a small audience.";
+        if (sources.indexOf("regional") >= 0) return "From the place you set, outside what you usually open.";
+        if (sources.indexOf("interest") >= 0) return "Close to Broadcasts you have stayed with.";
+        if (sources.indexOf("trend") >= 0) return "People who watch the way you do have been staying with this.";
+        if (sources.indexOf("discovery") >= 0) return "Outside what you usually open. Part of this feed is kept for that.";
+        return "Eligible, and still being learned.";
+      }
+      function scoreOne(b, viewer, model, now) {
+        const w = model.weights;
+        const fit = fitOf(b);
+        const smooth = model.smoothing || null;
+        if (smooth) {
+          const k = Number(smooth.pseudoImpressions) || 0;
+          const prior = Number(model.priorRate) || 0;
+          fit.rate = fit.impressions + k > 0 ? (evidenceOf(b) + prior * k) / (fit.impressions + k) : 0;
+        }
+        const rel = personal(b, viewer);
+        const quality = watchQuality(b);
+        const sat = Math.min(1, quality * 0.72 + Math.min(1, fit.rate) * 0.28);
+        const f = b.features || {};
+        const talk = (Number(f.meaningfulComments) || 0) * 2 + (Number(f.questions) || 0) * 2 + (Number(f.answers) || 0) + (Number(f.commentReacts) || 0);
+        const fromPoints = Math.min(0.2, (Number(f.contributionPoints) || 0) / 500);
+        const community = Math.min(1, talk / 24 + fromPoints);
+        const bornAt = smooth ? msOf(b.publishAt) || msOf(b.createdAt) || now : Number(b.createdAt || now);
+        const ageH = Math.max(0, (now - bornAt) / 36e5);
+        const fresh = Math.exp(-ageH / 72);
+        const explore = fit.impressions < 120 ? 0.32 : 0;
+        const parts = {
+          relevance: rel.relevance,
+          satisfaction: sat,
+          community,
+          discovery: Math.max(explore, pocket(b, viewer) * 0.45),
+          freshness: fresh,
+          relationship: rel.relationship,
+          quality,
+          negative: negativePressure(b, viewer, fit),
+          manipulation: manipulation(b)
+        };
+        let score = 0;
+        score += w.relevance * parts.relevance;
+        score += w.satisfaction * parts.satisfaction;
+        score += w.community * parts.community;
+        score += w.discovery * parts.discovery;
+        score += w.freshness * parts.freshness;
+        score += w.relationship * parts.relationship;
+        score += w.quality * parts.quality;
+        score -= w.negative * parts.negative;
+        score -= w.manipulation * parts.manipulation;
+        const likes = Number(f.likes) || 0;
+        const dislikes = Number(f.dislikes) || 0;
+        const votes = likes + dislikes;
+        if (smooth) {
+          const pv = Number(smooth.pseudoVotes) || 0;
+          if (votes) score += ((likes + pv / 2) / (votes + pv) - 0.5) * 0.9;
+        } else if (votes) score += (likes / votes - 0.5) * 0.9;
+        if (!isFinite(score)) score = -1e6;
+        const kept = Number(f.keptLines) || 0;
+        if (kept) score += Math.min(0.35, kept / 12);
+        const sources = sourcesFor(b, viewer, fit, rel, now);
+        return {
+          id: b.id,
+          score,
+          parts,
+          sources,
+          why: whyText(sources),
+          fit
+        };
+      }
+      function isExploreSource(item) {
+        const src = item && item.sources || [];
+        const personal2 = src.indexOf("interest") >= 0 || src.indexOf("creator") >= 0 || src.indexOf("strand") >= 0 || src.indexOf("community") >= 0 || src.indexOf("similar") >= 0;
+        if (personal2) return false;
+        return src.indexOf("discovery") >= 0 || src.indexOf("new") >= 0 || src.indexOf("emerging") >= 0 || src.indexOf("regional") >= 0;
+      }
+      function assemble(ranked, model) {
+        const base = defaultAssembly();
+        const a = Object.assign({}, base, model && model.assembly || {});
+        const n = ranked.length;
+        const exploreCut = n ? Math.max(1, Math.round(n * Number(a.discoveryShare))) : 0;
+        const explore = [];
+        const familiar = [];
+        ranked.forEach(function(item) {
+          (isExploreSource(item) ? explore : familiar).push(item);
+        });
+        const out = [];
+        const used = {};
+        const creatorCount = {};
+        let lastCreator = "";
+        let lastTopic = "";
+        let topicStreak = 0;
+        function topicOf(item) {
+          return item.topics && item.topics[0] || "";
+        }
+        function allowed(item) {
+          const c = item.creatorUid || "";
+          if (c && lastCreator && c === lastCreator && Number(a.maxConsecutiveCreator) <= 1) return false;
+          const cap = Math.max(2, Math.ceil(n * Number(a.maxCreatorShare)));
+          if (c && (creatorCount[c] || 0) >= cap) return false;
+          const t = topicOf(item);
+          if (t && t === lastTopic && topicStreak >= Number(a.maxTopicStreak)) return false;
+          return true;
+        }
+        function mark(item) {
+          used[item.id] = 1;
+          out.push(item);
+          const c = item.creatorUid || "";
+          if (c) creatorCount[c] = (creatorCount[c] || 0) + 1;
+          const t = topicOf(item);
+          if (t && t === lastTopic) topicStreak += 1;
+          else {
+            lastTopic = t;
+            topicStreak = t ? 1 : 0;
+          }
+          lastCreator = c;
+        }
+        function nextFrom(list, loose) {
+          let fallback = null;
+          for (let i = 0; i < list.length; i++) {
+            const item = list[i];
+            if (used[item.id]) continue;
+            if (!fallback) fallback = item;
+            if (loose) {
+              if ((item.creatorUid || "") !== lastCreator) return item;
+            } else if (allowed(item)) return item;
+          }
+          return loose ? fallback : null;
+        }
+        let exploreLeft = Math.min(explore.length, exploreCut || explore.length);
+        let guard = 0;
+        while (out.length < n && guard < n * 5) {
+          guard += 1;
+          const period = Math.max(2, Math.round(1 / Math.max(0.05, Number(a.discoveryShare) || 0.22)));
+          const wantExplore = exploreLeft > 0 && (out.length + 1) % period === 0;
+          let item = null;
+          if (wantExplore) item = nextFrom(explore, false);
+          if (!item) item = nextFrom(familiar, false);
+          if (!item) item = nextFrom(explore, false);
+          if (!item) item = nextFrom(familiar, true) || nextFrom(explore, true);
+          if (!item) break;
+          if (isExploreSource(item) && exploreLeft > 0) exploreLeft -= 1;
+          mark(item);
+        }
+        return out;
+      }
+      function withConfig(model, config) {
+        const m = model || modelV1();
+        const next = {
+          id: m.id,
+          candidate: m.candidate,
+          safety: m.safety,
+          weights: Object.assign({}, m.weights),
+          assembly: Object.assign({}, defaultAssembly(), m.assembly || {})
+        };
+        if (m.smoothing) next.smoothing = Object.assign({}, m.smoothing);
+        if (!config) return next;
+        if (config.discoveryShare != null) next.assembly.discoveryShare = Number(config.discoveryShare);
+        if (config.maxCreatorShare != null) next.assembly.maxCreatorShare = Number(config.maxCreatorShare);
+        if (config.maxTopicStreak != null) next.assembly.maxTopicStreak = Number(config.maxTopicStreak);
+        return next;
+      }
+      function run(broadcasts, viewer, model, now) {
+        const m = withConfig(model || modelV1(), null);
+        if (m.smoothing) m.priorRate = catalogueRate(broadcasts);
+        const clock = now || Date.now();
+        const v = viewer || blankViewer();
+        const dropped = [];
+        const ranked = [];
+        (broadcasts || []).forEach(function(b) {
+          if (!eligible(b, v)) {
+            if (b && b.id) dropped.push(b.id);
+            return;
+          }
+          const row = scoreOne(b, v, m, clock);
+          row.creatorUid = b.creatorUid || "";
+          row.topics = topicsOf(b);
+          row.broadcast = b;
+          ranked.push(row);
+        });
+        ranked.sort(function(a, b) {
+          return b.score - a.score;
+        });
+        const feed = assemble(ranked, m);
+        feed.forEach(function(item, i) {
+          item.place = i;
+        });
+        return {
+          model: m.id,
+          candidateModel: m.candidate,
+          safetyModel: m.safety,
+          feed,
+          dropped
+        };
+      }
+      function bump(map, key, delta) {
+        if (!key) return;
+        const next = (Number(map[key]) || 0) + delta;
+        map[key] = Math.max(-8, Math.min(8, Math.round(next * 100) / 100));
+      }
+      function applyTaste(viewer, event) {
+        const v = Object.assign(blankViewer(), viewer || {});
+        v.topics = Object.assign({}, viewer && viewer.topics || {});
+        v.creators = Object.assign({}, viewer && viewer.creators || {});
+        v.followed = Object.assign({}, viewer && viewer.followed || {});
+        v.hiddenCreators = Object.assign({}, viewer && viewer.hiddenCreators || {});
+        v.notInterested = Object.assign({}, viewer && viewer.notInterested || {});
+        v.blocked = Object.assign({}, viewer && viewer.blocked || {});
+        v.strands = Object.assign({}, viewer && viewer.strands || {});
+        v.bands = Object.assign({}, viewer && viewer.bands || {});
+        v.connected = Object.assign({}, viewer && viewer.connected || {});
+        v.hiddenTopics = Object.assign({}, viewer && viewer.hiddenTopics || {});
+        const ev = event || {};
+        const type = ev.type || "";
+        const topics = Array.isArray(ev.topics) ? ev.topics : [];
+        const uid = ev.creatorUid || "";
+        function lift(n) {
+          topics.forEach(function(t) {
+            bump(v.topics, t, n);
+          });
+          if (uid) bump(v.creators, uid, n);
+        }
+        if (type === "open") lift(0.8);
+        if (type === "watch_50_percent" || type === "watch_75_percent" || type === "watch_90_percent" || type === "watch_completed") lift(1);
+        if (type === "save" || type === "share" || type === "returned_later") lift(1.5);
+        if (type === "meaningful_comment" || type === "question" || type === "answer") lift(1.2);
+        if (type === "like") lift(1.4);
+        if (type === "unlike") lift(-1.4);
+        if (type === "kept_line") lift(2);
+        if (type === "comment_react") lift(0.4);
+        if (type === "dislike") lift(-2);
+        if (type === "undislike") lift(2);
+        if (type === "comment_down") lift(-0.3);
+        if (type === "more") lift(2);
+        if (type === "less" || type === "skip_fast") lift(-1.5);
+        if (type === "not_interested") {
+          if (ev.broadcastId) v.notInterested[ev.broadcastId] = 1;
+          lift(-2);
+        }
+        if (type === "hide_topic") {
+          topics.forEach(function(t) {
+            v.hiddenTopics[t] = 1;
+            bump(v.topics, t, -4);
+          });
+        }
+        if (type === "hide_creator" || type === "block_creator") {
+          if (uid) v.hiddenCreators[uid] = 1;
+          if (type === "block_creator" && uid) v.blocked[uid] = 1;
+        }
+        if (type === "follow_creator" && uid) {
+          v.followed[uid] = 1;
+          bump(v.creators, uid, 2);
+        }
+        if (type === "join_strand" && ev.strandId) v.strands[ev.strandId] = 1;
+        if (type === "join_band" && ev.bandId) v.bands[ev.bandId] = 1;
+        if (type === "reset") return blankViewer();
+        return v;
+      }
+      function blankFeature(id) {
+        return {
+          broadcastId: id,
+          impressions: 0,
+          meaningfulWatches: 0,
+          completions: 0,
+          shares: 0,
+          saves: 0,
+          returns: 0,
+          follows: 0,
+          meaningfulComments: 0,
+          questions: 0,
+          answers: 0,
+          comments: 0,
+          likes: 0,
+          dislikes: 0,
+          keptLines: 0,
+          commentReacts: 0,
+          negativeEvents: 0,
+          reports: 0,
+          watchSecSum: 0,
+          watchSamples: 0,
+          durationSec: 0,
+          pockets: {},
+          contributionPoints: 0
+        };
+      }
+      function rollup(events) {
+        const by = {};
+        (events || []).forEach(function(ev) {
+          if (!ev || !ev.broadcastId) return;
+          const id = String(ev.broadcastId);
+          const f = by[id] || (by[id] = blankFeature(id));
+          const type = ev.type || "";
+          if (type === "broadcast_impression") f.impressions += 1;
+          if (type === "watch_50_percent" || type === "watch_75_percent" || type === "watch_90_percent" || type === "watch_completed") {
+            f.meaningfulWatches += 1;
+          }
+          if (type === "watch_completed") f.completions += 1;
+          if (type === "share") f.shares += 1;
+          if (type === "save") f.saves += 1;
+          if (type === "returned_later") f.returns += 1;
+          if (type === "follow_creator") f.follows += 1;
+          if (type === "meaningful_comment") f.meaningfulComments += 1;
+          if (type === "comment") f.comments += 1;
+          if (type === "question") {
+            f.questions += 1;
+            f.meaningfulComments += 1;
+          }
+          if (type === "answer") {
+            f.answers += 1;
+            f.meaningfulComments += 1;
+          }
+          if (type === "like") f.likes += 1;
+          if (type === "unlike") f.likes = Math.max(0, f.likes - 1);
+          if (type === "dislike") {
+            f.dislikes += 1;
+            f.negativeEvents += 1;
+          }
+          if (type === "undislike") {
+            f.dislikes = Math.max(0, f.dislikes - 1);
+            f.negativeEvents = Math.max(0, f.negativeEvents - 1);
+          }
+          if (type === "kept_line") f.keptLines += 1;
+          if (type === "comment_react") f.commentReacts += 1;
+          if (type === "comment_down") f.negativeEvents += 1;
+          if (type === "not_interested" || type === "hide_creator" || type === "skip_fast" || type === "report") {
+            f.negativeEvents += 1;
+          }
+          if (type === "report") f.reports += 1;
+          if (ev.watchSec) {
+            f.watchSecSum += Number(ev.watchSec) || 0;
+            f.watchSamples += 1;
+          }
+          if (ev.durationSec) f.durationSec = Math.max(f.durationSec, Number(ev.durationSec) || 0);
+          if (ev.topic) f.pockets[ev.topic] = (f.pockets[ev.topic] || 0) + 1;
+          if (ev.contributionPoints) f.contributionPoints += Number(ev.contributionPoints) || 0;
+        });
+        const features = {};
+        Object.keys(by).forEach(function(id) {
+          const f = by[id];
+          const pockets = {};
+          let peak = 0;
+          Object.keys(f.pockets).forEach(function(k) {
+            if (f.pockets[k] > peak) peak = f.pockets[k];
+          });
+          Object.keys(f.pockets).forEach(function(k) {
+            pockets[k] = peak ? Math.round(f.pockets[k] / peak * 100) / 100 : 0;
+          });
+          features[id] = {
+            broadcastId: id,
+            impressions: f.impressions,
+            meaningfulWatches: f.meaningfulWatches,
+            completions: f.completions,
+            shares: f.shares,
+            saves: f.saves,
+            returns: f.returns,
+            follows: f.follows,
+            meaningfulComments: f.meaningfulComments,
+            questions: f.questions,
+            answers: f.answers,
+            comments: f.comments,
+            likes: f.likes,
+            dislikes: f.dislikes,
+            keptLines: f.keptLines,
+            commentReacts: f.commentReacts,
+            negativeEvents: f.negativeEvents,
+            reports: f.reports,
+            avgWatchSec: f.watchSamples ? Math.round(f.watchSecSum / f.watchSamples) : 0,
+            watchSecSum: f.watchSecSum,
+            watchSamples: f.watchSamples,
+            durationSec: f.durationSec,
+            completionRate: f.impressions ? Math.min(1, f.completions / f.impressions) : 0,
+            returnRate: f.impressions ? Math.min(1, f.returns / f.impressions) : 0,
+            pockets,
+            contributionPoints: f.contributionPoints,
+            safetyStatus: "clear"
+          };
+        });
+        return { features };
+      }
+      const SUMMED = [
+        "impressions",
+        "meaningfulWatches",
+        "completions",
+        "shares",
+        "saves",
+        "returns",
+        "follows",
+        "meaningfulComments",
+        "questions",
+        "answers",
+        "comments",
+        "likes",
+        "dislikes",
+        "keptLines",
+        "commentReacts",
+        "negativeEvents",
+        "reports",
+        "contributionPoints",
+        "watchSecSum",
+        "watchSamples"
+      ];
+      function mergeFeatures(prev, add) {
+        const a = prev || {};
+        const b = add || {};
+        const out = Object.assign({}, a, b);
+        SUMMED.forEach(function(k) {
+          out[k] = Math.max(0, (Number(a[k]) || 0) + (Number(b[k]) || 0));
+        });
+        out.durationSec = Math.max(Number(a.durationSec) || 0, Number(b.durationSec) || 0);
+        if (!out.watchSamples && (Number(a.avgWatchSec) || Number(b.avgWatchSec))) {
+          out.avgWatchSec = Number(b.avgWatchSec) || Number(a.avgWatchSec) || 0;
+        } else {
+          out.avgWatchSec = out.watchSamples ? Math.round(out.watchSecSum / out.watchSamples) : 0;
+        }
+        out.completionRate = out.impressions ? Math.min(1, out.completions / out.impressions) : 0;
+        out.returnRate = out.impressions ? Math.min(1, out.returns / out.impressions) : 0;
+        const pockets = Object.assign({}, a.pockets || {});
+        Object.keys(b.pockets || {}).forEach(function(t) {
+          pockets[t] = Math.max(Number(pockets[t]) || 0, Number(b.pockets[t]) || 0);
+        });
+        out.pockets = pockets;
+        return out;
+      }
+      return {
+        VALUE,
+        NEGATIVE,
+        models,
+        modelV1,
+        modelV2,
+        modelV3,
+        catalogueRate,
+        blankViewer,
+        withConfig,
+        eligible,
+        topicsOf,
+        run,
+        applyTaste,
+        rollup,
+        mergeFeatures,
+        scoreOne
+      };
+    });
+  }
+});
 
 // workers/economy/launch.mjs
 var launch_exports = {};
@@ -796,6 +1521,13 @@ async function sweepLives(io, now, limits) {
     if (st.state === "running") {
       out.running++;
       if (b.liveDroppedAt) await io.patch(row.id, { liveDroppedAt: null, liveDroppedNotifiedAt: null, liveLimelightUntil: null }, row.updateTime);
+      if (io.alert && !(b.liveAlert && b.liveAlert.done && String(b.liveAlert.for || "") === String(Math.round(Number(b.liveAt) || 0)))) {
+        try {
+          const a = await io.alert(row);
+          if (a && a.sent) out.alerted = (out.alerted || 0) + a.sent;
+        } catch (_) {
+        }
+      }
       continue;
     }
     if (st.state === "dropped") {
@@ -850,6 +1582,184 @@ async function sweepLives(io, now, limits) {
     }
   }
   return out;
+}
+
+// workers/economy/live-alert.mjs
+var LIVE_ALERT_BATCH = 20;
+var PHASES = ["members", "connections", "circle"];
+function okId(s) {
+  return /^[A-Za-z0-9_-]{1,128}$/.test(String(s || ""));
+}
+function liveAlertKey(b) {
+  const at = Number(b && b.liveAt);
+  return isFinite(at) && at > 0 ? String(Math.round(at)) : "";
+}
+async function alertLiveBatch(io, row, now, size) {
+  const b = row && row.data || {};
+  const bid = String(row && row.id || "");
+  const creator = String(b.creatorUid || "");
+  const key = liveAlertKey(b);
+  if (b.live !== true || !okId(bid) || !okId(creator) || !key) return { sent: 0, done: true, reason: "not-live" };
+  const prev = b.liveAlert && typeof b.liveAlert === "object" ? b.liveAlert : {};
+  let st = prev.for === key ? { for: key, phase: String(prev.phase || "members"), after: String(prev.after || ""), done: !!prev.done, sent: Number(prev.sent) || 0 } : { for: key, phase: "members", after: "", done: false, sent: 0 };
+  if (st.done) return { sent: 0, done: true, state: st };
+  const want = Math.max(1, Math.min(100, Number(size) || LIVE_ALERT_BATCH));
+  const title = String(b.title || "Broadcast").slice(0, 80);
+  const fromName = String(b.creatorName || "Someone").slice(0, 60);
+  const payload = {
+    type: "broadcast_live",
+    fromUid: creator,
+    fromName,
+    broadcastId: bid,
+    title,
+    createdAt: now,
+    read: false,
+    by: "worker"
+  };
+  const data = {
+    type: "broadcast_live",
+    broadcastId: bid,
+    fromUid: creator,
+    fromName,
+    title: "Live on Naluno",
+    body: (fromName + " is live: " + title).slice(0, 140),
+    url: "/app/?broadcast=" + encodeURIComponent(bid)
+  };
+  const docId = "live_" + bid + "_" + key;
+  let sent = 0;
+  let handled = 0;
+  let turns = 0;
+  while (handled < want && !st.done && turns++ < 12) {
+    let ids = [];
+    let next = "";
+    if (st.phase === "members") {
+      const all = Array.isArray(b.memberUids) ? b.memberUids.map(String) : [];
+      const from = Number(st.after) || 0;
+      ids = all.slice(from, from + (want - handled));
+      next = from + ids.length < all.length ? String(from + ids.length) : "";
+    } else {
+      const page = await io.listPage(st.phase, creator, st.after, want - handled);
+      ids = page && page.ids || [];
+      next = page && page.next || "";
+    }
+    for (const uid of ids) {
+      handled++;
+      if (!okId(uid) || uid === creator) continue;
+      let fresh = false;
+      try {
+        fresh = await io.notifyOnce(uid, docId, payload);
+      } catch (_) {
+        fresh = false;
+      }
+      if (!fresh) continue;
+      sent++;
+      try {
+        await io.push(uid, data);
+      } catch (_) {
+      }
+    }
+    if (next) {
+      st.after = next;
+      continue;
+    }
+    const at = PHASES.indexOf(st.phase);
+    if (at < 0 || at === PHASES.length - 1) {
+      st.done = true;
+      st.after = "";
+    } else {
+      st.phase = PHASES[at + 1];
+      st.after = "";
+    }
+    if (!ids.length && handled >= want) break;
+  }
+  st.sent = (st.sent || 0) + sent;
+  st.at = now;
+  try {
+    await io.patch(bid, { liveAlert: st });
+  } catch (_) {
+  }
+  return { sent, done: st.done, state: st };
+}
+
+// workers/economy/discover-compile.mjs
+var import_discover_engine = __toESM(require_discover_engine(), 1);
+var DISCOVER_PAGE = 400;
+async function compileDiscoverPage(io, now, limit) {
+  const m = await io.mark() || {};
+  const since = Number(m.lastEventAt) || 0;
+  const size = Math.max(1, Math.min(500, Number(limit) || DISCOVER_PAGE));
+  const events = await io.events(since, size) || [];
+  if (!events.length) return { ok: true, events: 0, broadcasts: 0, more: false };
+  let use = events;
+  if (events.length === size) {
+    const lastAt2 = Number(events[events.length - 1].at) || 0;
+    const head = events.filter((e) => (Number(e.at) || 0) < lastAt2);
+    if (head.length) use = head;
+  }
+  const rolled = import_discover_engine.default.rollup(use);
+  const ids = Object.keys(rolled.features || {});
+  const prev = ids.length ? await io.features(ids) || {} : {};
+  const out = {};
+  ids.forEach((id) => {
+    const feat = import_discover_engine.default.mergeFeatures(prev[id] || null, rolled.features[id]);
+    feat.updatedAt = now;
+    feat.compiledBy = "worker";
+    out[id] = feat;
+  });
+  const lastAt = use.reduce((x, e) => Math.max(x, Number(e.at) || 0), since);
+  const ok = await io.commit(out, lastAt, m.updateTime || "");
+  return { ok: !!ok, events: use.length, broadcasts: ids.length, more: events.length === size, lastEventAt: lastAt };
+}
+
+// workers/economy/ad-events.mjs
+var AD_WINDOWS = {
+  impression: 30 * 60 * 1e3,
+  // one impression per person per ad per half hour
+  view: 30 * 60 * 1e3,
+  // a completed view, likewise
+  skip: 30 * 60 * 1e3,
+  click: 24 * 3600 * 1e3
+  // one click per person per ad per day
+};
+var FIELD = { impression: "impressions", view: "viewCompletes", skip: "skips", click: "clicks" };
+async function countAdEvent(io, uid, body, now) {
+  const adId = String(body && body.adId || "");
+  const kind = String(body && body.kind || "");
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(adId)) return { status: 400, body: { ok: false, error: "bad ad" } };
+  if (!FIELD[kind]) return { status: 400, body: { ok: false, error: "bad kind" } };
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(String(uid || ""))) return { status: 401, body: { ok: false, error: "sign in" } };
+  const ad = await io.getAd(adId);
+  if (!ad || ad.status !== "live") return { status: 200, body: { ok: true, counted: false, reason: "not live" } };
+  if (String(ad.creatorUid || "") === uid) return { status: 200, body: { ok: true, counted: false, reason: "own ad" } };
+  const window = Math.floor(now / AD_WINDOWS[kind]);
+  const marker = uid + "_" + adId + "_" + kind + "_" + window;
+  const counted = await io.countOnce(marker, adId, FIELD[kind], { uid, adId, kind, at: now });
+  return { status: 200, body: { ok: true, counted: !!counted } };
+}
+
+// workers/economy/push-move.mjs
+var PUSH_KEYS = ["fcmToken", "fcmTokenWeb", "fcmTokenAndroid", "fcmTokenPlatform", "fcmTokenUpdatedAt"];
+var SECRET = ["fcmToken", "fcmTokenWeb", "fcmTokenAndroid"];
+async function movePushPage(io, size) {
+  const st = await io.state() || {};
+  if (st.done) return { done: true, moved: 0, checked: 0 };
+  const page = await io.page(st.pageToken || "", Math.max(1, Math.min(100, size || 100)));
+  let moved = 0, checked = 0;
+  for (const u of page.users || []) {
+    const d = u.data || {};
+    if (!SECRET.some((k) => typeof d[k] === "string" && d[k])) continue;
+    checked++;
+    const v = await io.vault(u.id) || {};
+    const patch = {};
+    PUSH_KEYS.forEach((k) => {
+      if (d[k] != null && d[k] !== "" && (v[k] == null || v[k] === "")) patch[k] = d[k];
+    });
+    const ok = await io.commit(u.id, patch, SECRET.filter((k) => k in d));
+    if (ok) moved++;
+  }
+  const next = page.next || "";
+  await io.save({ pageToken: next, done: !next, at: Date.now() });
+  return { done: !next, moved, checked };
 }
 
 // workers/economy/launch-routes.mjs
@@ -959,9 +1869,45 @@ function makeLaunch(d) {
     const n = await countWhere("users");
     if (n == null) return { ok: false, error: "Could not count accounts" };
     const before = await counter(which);
-    await d.fsPutDoc(d.env, d.token, "/launchState/" + enc(which), { registered: n, recountedAt: now() });
-    if (actor) await audit({ env: which, action: "recount", actorUid: actor.uid, actorEmail: actor.email || "", reason: reason || "", changes: [{ setting: "registered", from: before.registered, to: n }], result: "ok" });
-    return { ok: true, registered: n, before: before.registered };
+    const fields = before.exists ? { profileCount: n, recountedAt: now() } : { registered: n, profileCount: n, recountedAt: now() };
+    await d.fsPutDoc(d.env, d.token, "/launchState/" + enc(which), fields);
+    if (actor) await audit({ env: which, action: "recount", actorUid: actor.uid, actorEmail: actor.email || "", reason: reason || "", changes: [{ setting: "profileCount", from: before.data && before.data.profileCount != null ? before.data.profileCount : null, to: n }], result: "ok" });
+    return { ok: true, registered: before.exists ? before.registered : n, profiles: n, before: before.registered };
+  }
+  async function expireSeats(which, max) {
+    const cutoff = now() - 24 * 3600 * 1e3;
+    const r = await d.fsFetch(d.env, d.token, "POST", ":runQuery", { structuredQuery: {
+      from: [{ collectionId: "registrations" }],
+      // One equality filter only: it needs no extra index. Seats without a
+      // Callsign are few (sign-ups in progress, or given up).
+      where: { fieldFilter: { field: { fieldPath: "profiled" }, op: "EQUAL", value: { booleanValue: false } } },
+      limit: 200
+    } });
+    const rows = (Array.isArray(r.data) ? r.data : []).filter(function(x) {
+      if (!x || !x.document) return false;
+      const f = d.fromFsDoc(x.document);
+      return String(f.env || "") === which && Number(f.at) > 0 && Number(f.at) < cutoff;
+    }).slice(0, Math.max(1, Math.min(50, max || 50)));
+    const out = { checked: 0, returned: 0, kept: 0 };
+    const name = d.root.replace("https://firestore.googleapis.com/v1/", "");
+    for (const x of rows) {
+      const seat = d.fromFsDoc(x.document);
+      const uid = String(seat.uid || seat.id || "");
+      if (!/^[A-Za-z0-9_-]{6,128}$/.test(uid)) continue;
+      out.checked++;
+      const prof = await getRaw("/users/" + enc(uid));
+      if (prof.exists) {
+        await d.fsPutDoc(d.env, d.token, "/registrations/" + enc(uid), { profiled: true });
+        out.kept++;
+        continue;
+      }
+      const c = await d.fsFetch(d.env, d.token, "POST", ":commit", { writes: [
+        { delete: name + "/registrations/" + uid, currentDocument: { updateTime: x.document.updateTime } },
+        { transform: { document: name + "/launchState/" + which, fieldTransforms: [{ fieldPath: "registered", increment: { integerValue: "-1" } }] } }
+      ] });
+      if (c.ok) out.returned++;
+    }
+    return out;
   }
   async function status(which) {
     const L = await load(which);
@@ -1002,7 +1948,7 @@ function makeLaunch(d) {
           currentDocument: { updateTime: c.updateTime }
         },
         {
-          update: { name: name + "/registrations/" + uid, fields: d.toFsFields({ uid, at: now(), env: which, phase: L.cfg.activePhase, number: c.registered + 1 }).fields },
+          update: { name: name + "/registrations/" + uid, fields: d.toFsFields({ uid, at: now(), env: which, phase: L.cfg.activePhase, number: c.registered + 1, profiled: false }).fields },
           currentDocument: { exists: false }
         }
       ];
@@ -1165,6 +2111,10 @@ function makeLaunch(d) {
     if (m.accounts.profiles != null && (m.accounts.registered == null || m.accounts.profiles > m.accounts.registered)) {
       await d.fsPutDoc(d.env, d.token, "/launchState/" + enc(which), { registered: m.accounts.profiles, recountedAt: now() });
     }
+    try {
+      await expireSeats(which, 50);
+    } catch (_) {
+    }
     return { guard: g, metrics: m };
   }
   return {
@@ -1173,6 +2123,7 @@ function makeLaunch(d) {
     status,
     claim,
     recount,
+    expireSeats,
     persist,
     audit,
     waitJoin,
@@ -4186,7 +5137,7 @@ async function sendAll(tokens, data, link, deps, now) {
                 body: String(data.body || "New message").slice(0, 140),
                 channel_id: "naluno_wireline",
                 sound: "default",
-                tag: data.type === "live_dropped" ? "naluno-live:" + String(data.broadcastId || "").slice(0, 80) : "naluno-wire:" + String(data.fromUid || "").slice(0, 40),
+                tag: data.type === "live_dropped" || data.type === "broadcast_live" ? "naluno-live:" + String(data.broadcastId || "").slice(0, 80) : "naluno-wire:" + String(data.fromUid || "").slice(0, 40),
                 notification_priority: "PRIORITY_HIGH",
                 visibility: "PUBLIC"
               }
@@ -4360,6 +5311,21 @@ async function sha256Hex(s) {
 function isAudio(type) {
   return /^audio\//i.test(type || "") || /octet-stream/i.test(type || "");
 }
+function lgAudioHostOk(url, env) {
+  let host = "";
+  try {
+    const u = new URL(String(url));
+    if (u.protocol !== "https:") return false;
+    host = u.hostname.toLowerCase();
+  } catch (_) {
+    return false;
+  }
+  const list = String(env && env.LG_AUDIO_HOSTS || "sunbird.ai,storage.googleapis.com").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+  return list.some((h) => host === h || host.endsWith("." + h));
+}
+function lgDayKey(now) {
+  return new Date(now).toISOString().slice(0, 10);
+}
 async function handleLgVoice(body, user, deps) {
   const env = deps.env || {};
   const now = deps.now ? deps.now() : Date.now();
@@ -4378,14 +5344,39 @@ async function handleLgVoice(body, user, deps) {
     try {
       const hit = await deps.cache.match(cacheKey);
       if (hit && hit.ok) {
-        const bytes2 = await hit.arrayBuffer();
-        if (bytes2.byteLength) return { status: 200, bytes: bytes2, type: hit.headers.get("Content-Type") || "audio/wav", cached: true, speaker };
+        const bytes = await hit.arrayBuffer();
+        if (bytes.byteLength) return { status: 200, bytes, type: hit.headers.get("Content-Type") || "audio/wav", cached: true, speaker };
       }
     } catch (_) {
     }
   }
   const limit = Math.max(1e3, Number(env.LG_DAILY_CHARS) || 3e4);
-  if (!charsOk(user.uid, now, text.length, limit)) return { status: 429, json: { ok: false, error: "daily limit" } };
+  const day = lgDayKey(now);
+  if (deps.usage) {
+    let ok = false;
+    try {
+      ok = await deps.usage.reserve(user.uid, day, text.length, limit);
+    } catch (_) {
+      ok = false;
+    }
+    if (!ok) return { status: 429, json: { ok: false, error: "daily limit" } };
+  } else if (!charsOk(user.uid, now, text.length, limit)) return { status: 429, json: { ok: false, error: "daily limit" } };
+  const giveBack = async function() {
+    if (deps.usage) {
+      try {
+        await deps.usage.release(user.uid, day, text.length);
+      } catch (_) {
+      }
+    } else {
+      const k = user.uid + "|" + Math.floor(now / 864e5);
+      daily.set(k, Math.max(0, (daily.get(k) || 0) - text.length));
+    }
+  };
+  const out = await speakPaid(text, speaker, key, env, deps, cacheKey);
+  if (out.status !== 200) await giveBack();
+  return out;
+}
+async function speakPaid(text, speaker, key, env, deps, cacheKey) {
   let res;
   try {
     res = await deps.fetch(String(env.SUNBIRD_TTS_URL || LG_TTS_URL), {
@@ -4406,6 +5397,7 @@ async function handleLgVoice(body, user, deps) {
     const j = await res.json().catch(() => null);
     const url = j && (j.audio_url || j.output && j.output.audio_url);
     if (!url || !/^https:\/\//.test(String(url))) return { status: 502, json: { ok: false, error: "luganda voice gave no audio" } };
+    if (!lgAudioHostOk(url, env)) return { status: 502, json: { ok: false, error: "luganda audio from an unknown place" } };
     let a;
     try {
       a = await deps.fetch(String(url));
@@ -4414,6 +5406,7 @@ async function handleLgVoice(body, user, deps) {
     }
     if (!a || !a.ok) return { status: 502, json: { ok: false, error: "luganda audio unreachable" } };
     type = a.headers.get("Content-Type") || "audio/wav";
+    if (!isAudio(type)) return { status: 502, json: { ok: false, error: "luganda link was not audio" } };
     bytes = await a.arrayBuffer();
   }
   if (!bytes || !bytes.byteLength || bytes.byteLength > MAX_BYTES) return { status: 502, json: { ok: false, error: "luganda audio size" } };
@@ -5786,13 +6779,15 @@ async function claimReach(env, user, saToken, body) {
     return json({ ok: false, tier, error }, 403);
   }
   const passId = day.replace(/-/g, "") + "-" + crypto.randomUUID().slice(0, 8);
+  const maxBytes = seconds * 10 * 1024 * 1024 + 24 * 1024 * 1024;
   const put = await fsPutDoc(env, saToken, "/users/" + encodeURIComponent(user.uid) + "/reachPasses/" + passId, {
     day,
     seconds,
     n,
     tier,
     at: now,
-    used: false
+    used: false,
+    maxBytes
   });
   if (!put.ok) return json({ ok: false, error: "Could not check Reach. Try again." }, 503);
   return json({ ok: true, tier, maxSec: lim.maxSec, perDay: lim.perDay, used: n, passId });
@@ -6172,6 +7167,10 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
       return json({ ok: true });
     }
     return json({ ok: false, error: "unknown launch route" }, 404);
+  }
+  if (path === "/v1/admin/discover/compile" && request.method === "POST") {
+    const out = await runDiscoverCompile(env, Date.now(), 10);
+    return json(out, out.ok ? 200 : 502);
   }
   if (path === "/v1/admin/broadcast-catalogue-repair" && request.method === "POST") {
     const body = await request.json().catch(() => ({}));
@@ -7762,12 +8761,193 @@ async function runLaunchGuard(env) {
   const out = await launchApi(env, token).runGuard(launchEnvOf(env), billing);
   return { ok: true, level: out.guard.level };
 }
+function liveAlertIo(env, token) {
+  return {
+    listPage: async function(kind, creator, after, size) {
+      const col = kind === "circle" ? "circle" : "connections";
+      const q = "/users/" + encodeURIComponent(creator) + "/" + col + "?pageSize=" + Math.max(1, Math.min(100, size | 0)) + (after ? "&pageToken=" + encodeURIComponent(after) : "");
+      const r = await fsFetch(env, token, "GET", q);
+      const docs = r.ok && r.data && r.data.documents || [];
+      return { ids: docs.map((d) => String(d.name || "").split("/").pop()).filter(Boolean), next: r.ok && r.data && r.data.nextPageToken || "" };
+    },
+    notifyOnce: async function(uid, docId, payload) {
+      const r = await fsFetch(
+        env,
+        token,
+        "PATCH",
+        "/users/" + encodeURIComponent(uid) + "/notifications/" + encodeURIComponent(docId) + "?currentDocument.exists=false",
+        toFsFields(payload)
+      );
+      return !!(r && r.ok);
+    },
+    push: async function(uid, data) {
+      return sendLiveDropped(uid, data, {
+        getDoc: (p) => fsGetDoc(env, token, p),
+        accessToken: (scope) => saAccessTokenScoped(env, scope),
+        fetch: (u, o) => _fetch(u, o),
+        projectId: projectId(env)
+      });
+    },
+    patch: async function(id, fields) {
+      const r = await fsPutDoc(env, token, "/broadcasts/" + encodeURIComponent(id), fields);
+      return !!(r && r.ok);
+    }
+  };
+}
+function liveAlertSize(env) {
+  const n = Number(env && env.LIVE_ALERT_BATCH);
+  return isFinite(n) && n >= 1 ? Math.min(100, Math.floor(n)) : LIVE_ALERT_BATCH;
+}
+function lgUsageStore(env, token) {
+  const pathOf = (uid, day) => "/lgUsage/" + encodeURIComponent(uid + "_" + day);
+  return {
+    reserve: async function(uid, day, n, limit) {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const r = await fsFetch(env, token, "GET", pathOf(uid, day));
+        if (!r.ok && r.status !== 404) throw new Error("usage read " + r.status);
+        const have = r.ok ? fromFsDoc(r.data) : null;
+        const used = Number(have && have.chars) || 0;
+        if (used + n > limit) return false;
+        const pre = r.ok ? "currentDocument.updateTime=" + encodeURIComponent(r.data.updateTime || "") : "currentDocument.exists=false";
+        const w = await fsFetch(env, token, "PATCH", pathOf(uid, day) + "?" + pre, toFsFields({ uid, day, chars: used + n, at: Date.now() }));
+        if (w.ok) return true;
+        if (w.status !== 400 && w.status !== 409 && w.status !== 412) throw new Error("usage write " + w.status);
+      }
+      return false;
+    },
+    release: async function(uid, day, n) {
+      const name = fsRoot(env).replace("https://firestore.googleapis.com/v1/", "") + pathOf(uid, day);
+      await fsFetch(env, token, "POST", ":commit", { writes: [{ transform: { document: name, fieldTransforms: [{ fieldPath: "chars", increment: { integerValue: String(-Math.abs(n)) } }] } }] });
+    }
+  };
+}
+function discoverIo(env, token) {
+  const name = fsRoot(env).replace("https://firestore.googleapis.com/v1/", "");
+  return {
+    mark: async function() {
+      const r = await fsFetch(env, token, "GET", "/discoveryConfig/compile");
+      if (r.status === 404) return { lastEventAt: 0, updateTime: "" };
+      if (!r.ok) throw new Error("mark " + r.status);
+      return { lastEventAt: Number(fromFsDoc(r.data).lastEventAt) || 0, updateTime: r.data.updateTime || "" };
+    },
+    events: async function(after, limit) {
+      const r = await fsFetch(env, token, "POST", ":runQuery", { structuredQuery: {
+        from: [{ collectionId: "recommendationEvents" }],
+        where: { fieldFilter: { field: { fieldPath: "at" }, op: "GREATER_THAN", value: { integerValue: String(Math.floor(after)) } } },
+        orderBy: [{ field: { fieldPath: "at" }, direction: "ASCENDING" }],
+        limit
+      } });
+      if (!r.ok) throw new Error("events " + r.status);
+      return (Array.isArray(r.data) ? r.data : []).filter((x) => x && x.document).map((x) => fromFsDoc(x.document));
+    },
+    features: async function(ids) {
+      const out = {};
+      for (let i = 0; i < ids.length; i += 300) {
+        const part = ids.slice(i, i + 300);
+        const r = await fsFetch(env, token, "POST", ":batchGet", { documents: part.map((id) => name + "/broadcastFeatures/" + id) });
+        if (!r.ok) throw new Error("features " + r.status);
+        (Array.isArray(r.data) ? r.data : []).forEach((x) => {
+          if (x && x.found) out[String(x.found.name).split("/").pop()] = fromFsDoc(x.found);
+        });
+      }
+      return out;
+    },
+    commit: async function(featureMap, lastAt, markTime) {
+      const ids = Object.keys(featureMap);
+      for (let i = 0; i < ids.length; i += 400) {
+        const part = ids.slice(i, i + 400);
+        const writes = part.map((id) => ({
+          update: { name: name + "/broadcastFeatures/" + id, fields: toFsFields(featureMap[id]).fields },
+          updateMask: { fieldPaths: Object.keys(featureMap[id]) }
+        }));
+        if (i + 400 >= ids.length) {
+          writes.push({
+            update: { name: name + "/discoveryConfig/compile", fields: toFsFields({ lastEventAt: lastAt, updatedAt: Date.now(), compiledBy: "worker" }).fields },
+            updateMask: { fieldPaths: ["lastEventAt", "updatedAt", "compiledBy"] },
+            currentDocument: markTime ? { updateTime: markTime } : { exists: false }
+          });
+        }
+        const r = await fsFetch(env, token, "POST", ":commit", { writes });
+        if (!r.ok) return false;
+      }
+      if (!ids.length) {
+        const r = await fsFetch(env, token, "POST", ":commit", { writes: [{
+          update: { name: name + "/discoveryConfig/compile", fields: toFsFields({ lastEventAt: lastAt, updatedAt: Date.now(), compiledBy: "worker" }).fields },
+          updateMask: { fieldPaths: ["lastEventAt", "updatedAt", "compiledBy"] },
+          currentDocument: markTime ? { updateTime: markTime } : { exists: false }
+        }] });
+        return !!r.ok;
+      }
+      return true;
+    }
+  };
+}
+async function runDiscoverCompile(env, nowMs, pages) {
+  if (!hasSaConfigured(env)) return { ok: false, error: "no-service-account" };
+  const token = await saAccessToken(env);
+  if (!token) return { ok: false, error: "no-token" };
+  const io = discoverIo(env, token);
+  const total = { ok: true, events: 0, broadcasts: 0, pages: 0, more: false };
+  for (let p = 0; p < Math.max(1, Math.min(10, pages || 3)); p++) {
+    const r = await compileDiscoverPage(io, Number(nowMs) || Date.now(), 400);
+    total.pages++;
+    total.events += r.events;
+    total.broadcasts += r.broadcasts;
+    total.more = !!r.more;
+    if (!r.ok) {
+      total.ok = false;
+      break;
+    }
+    if (!r.more) break;
+  }
+  return total;
+}
+async function runPushMove(env) {
+  if (!hasSaConfigured(env)) return { ok: false, error: "no-service-account" };
+  const token = await saAccessToken(env);
+  if (!token) return { ok: false, error: "no-token" };
+  const name = fsRoot(env).replace("https://firestore.googleapis.com/v1/", "");
+  const out = await movePushPage({
+    state: async () => {
+      const r = await fsFetch(env, token, "GET", "/pushMove/state");
+      return r.ok ? fromFsDoc(r.data) : {};
+    },
+    page: async (pageToken, size) => {
+      const r = await fsFetch(env, token, "GET", "/users?pageSize=" + size + (pageToken ? "&pageToken=" + encodeURIComponent(pageToken) : ""));
+      if (!r.ok) throw new Error("users " + r.status);
+      return { users: (r.data.documents || []).map((doc) => ({ id: String(doc.name).split("/").pop(), data: fromFsDoc(doc) })), next: r.data.nextPageToken || "" };
+    },
+    vault: async (uid) => {
+      const r = await fsFetch(env, token, "GET", "/users/" + encodeURIComponent(uid) + "/vault/main");
+      return r.ok ? fromFsDoc(r.data) : null;
+    },
+    commit: async (uid, patch, remove) => {
+      const writes = [];
+      if (Object.keys(patch).length) writes.push({ update: { name: name + "/users/" + uid + "/vault/main", fields: toFsFields(patch).fields }, updateMask: { fieldPaths: Object.keys(patch) } });
+      if (remove.length) writes.push({ update: { name: name + "/users/" + uid, fields: {} }, updateMask: { fieldPaths: remove }, currentDocument: { exists: true } });
+      if (!writes.length) return true;
+      const r = await fsFetch(env, token, "POST", ":commit", { writes });
+      return !!(r && r.ok);
+    },
+    save: async (st) => {
+      await fsPutDoc(env, token, "/pushMove/state", st);
+    }
+  }, 100);
+  return Object.assign({ ok: true }, out);
+}
 async function runLiveSweep(env, nowMs) {
   if (!hasSaConfigured(env)) return { ok: false, error: "no-service-account" };
   const token = await saAccessToken(env);
   if (!token) return { ok: false, error: "no-token" };
   const now = Number(nowMs) || Date.now();
   const io = {
+    alert: async function(row) {
+      try {
+        return await alertLiveBatch(liveAlertIo(env, token), row, now, liveAlertSize(env));
+      } catch (_) {
+        return null;
+      }
+    },
     liveBroadcasts: async function() {
       const r = await fsFetch(env, token, "POST", ":runQuery", { structuredQuery: {
         from: [{ collectionId: "broadcasts" }],
@@ -8136,7 +9316,7 @@ async function handleRequest(request, env = {}, ctx = {}) {
         if (typeof caches !== "undefined" && caches.default) cache2 = caches.default;
       } catch (_) {
       }
-      const out = await handleLgVoice(body, user, { env, fetch: (u, o) => _fetch(u, o), cache: cache2 });
+      const out = await handleLgVoice(body, user, { env, fetch: (u, o) => _fetch(u, o), cache: cache2, usage: saToken ? lgUsageStore(env, saToken) : null });
       if (!out.bytes) return json(out.json, out.status);
       return new Response(out.bytes, { status: 200, headers: {
         ...corsHeaders(),
@@ -8145,6 +9325,40 @@ async function handleRequest(request, env = {}, ctx = {}) {
         "X-Naluno-Voice": out.speaker + (out.cached ? "; cached" : ""),
         "Access-Control-Expose-Headers": "X-Naluno-Voice"
       } });
+    }
+    if (path === "/v1/ads/event" && request.method === "POST") {
+      if (!saToken) return json({ ok: false, error: "not configured" }, 503);
+      const body = await request.json().catch(() => ({}));
+      const name = fsRoot(env).replace("https://firestore.googleapis.com/v1/", "");
+      const out = await countAdEvent({
+        getAd: async (id) => {
+          const r = await fsFetch(env, saToken, "GET", "/deskAds/" + encodeURIComponent(id));
+          return r.ok ? fromFsDoc(r.data) : null;
+        },
+        countOnce: async (marker, adId, field, row) => {
+          const r = await fsFetch(env, saToken, "POST", ":commit", { writes: [
+            { update: { name: name + "/adEvents/" + marker, fields: toFsFields(row).fields }, currentDocument: { exists: false } },
+            { transform: { document: name + "/deskAds/" + adId, fieldTransforms: [
+              { fieldPath: field, increment: { integerValue: "1" } }
+            ] } }
+          ] });
+          return !!(r && r.ok);
+        }
+      }, user.uid, body, Date.now());
+      return json(out.body, out.status);
+    }
+    if (path === "/v1/live/alert" && request.method === "POST") {
+      if (!saToken) return json({ ok: false, error: "not configured" }, 503);
+      const body = await request.json().catch(() => ({}));
+      const bid = String(body.broadcastId || "");
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(bid)) return json({ ok: false, error: "bad broadcast" }, 400);
+      const r = await fsFetch(env, saToken, "GET", "/broadcasts/" + encodeURIComponent(bid));
+      if (!r.ok || !r.data) return json({ ok: false, error: "not found" }, 404);
+      const data = fromFsDoc(r.data);
+      if (String(data.creatorUid || "") !== user.uid) return json({ ok: false, error: "Forbidden" }, 403);
+      if (data.live !== true) return json({ ok: true, sent: 0, done: true });
+      const out = await alertLiveBatch(liveAlertIo(env, saToken), { id: bid, data, updateTime: r.data.updateTime || "" }, Date.now(), liveAlertSize(env));
+      return json({ ok: true, sent: out.sent, done: out.done });
     }
     if (path === "/v1/push/lock" && request.method === "POST") {
       if (!saToken) return json({ ok: false, sent: 0, error: "push not configured" }, 503);
@@ -8740,7 +9954,11 @@ var index_default = {
       runBandSweep(env).catch(() => null),
       runLiveSweep(env).catch(() => null),
       /* 13a: measure usage against the launch budgets and publish the guard. */
-      runLaunchGuard(env).catch(() => null)
+      runLaunchGuard(env).catch(() => null),
+      /* 14 Oct: Discover's shared record, from the events since the last run. */
+      runDiscoverCompile(env, Date.now(), 3).catch(() => null),
+      /* 14 Oct: push addresses from public profiles into each vault, then done. */
+      runPushMove(env).catch(() => null)
     ]);
     if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(job);
     else await job;

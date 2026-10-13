@@ -371,6 +371,13 @@ public class MainActivity extends BridgeActivity {
       }
     }
 
+    /** 14 Oct: "" when the call's keep-alive holds; otherwise the call kind
+     *  Android refused it for (the page warns about a locked screen). */
+    @JavascriptInterface
+    public String keepAliveFailed() {
+      try { return UploadKeepAliveService.lastFailedKind != null ? UploadKeepAliveService.lastFailedKind : ""; } catch (Exception e) { return ""; }
+    }
+
     @JavascriptInterface
     public void stopSessionKeepAlive() {
       stopUploadKeepAlive();
@@ -532,6 +539,11 @@ public class MainActivity extends BridgeActivity {
       if (Build.VERSION.SDK_INT < 23) return;
       PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
       if (pm == null || pm.isIgnoringBatteryOptimizations(getPackageName())) return;
+      /* 14 Oct: asked once (when Find is first turned on), not on every
+         Find ping. The person can change it later in the phone's settings. */
+      android.content.SharedPreferences asked = getSharedPreferences("naluno_shell", MODE_PRIVATE);
+      if (asked.getBoolean("batteryAsked", false)) return;
+      asked.edit().putBoolean("batteryAsked", true).apply();
       Intent i = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
       i.setData(Uri.parse("package:" + getPackageName()));
       startActivity(i);

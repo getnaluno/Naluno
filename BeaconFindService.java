@@ -131,10 +131,19 @@ public class BeaconFindService extends Service implements LocationListener {
 
   public static void persistAuth(Context ctx, String uid, String refreshToken,
                                  String apiKey, String projectId, String deviceId, String label) {
-    SharedPreferences.Editor e = securePrefs(ctx).edit();
+    SharedPreferences sp = securePrefs(ctx);
+    /* 14 Oct: a long-lived sign-in token is kept only in the encrypted
+       store. If this phone cannot build it, Find skips its background
+       pings (the last known place stays) rather than keep the token in
+       plain preferences. */
+    boolean encrypted = sp instanceof androidx.security.crypto.EncryptedSharedPreferences;
+    SharedPreferences.Editor e = sp.edit();
     e.putBoolean("on", true);
     if (uid != null) e.putString("uid", uid);
-    if (refreshToken != null) e.putString("refresh", refreshToken);
+    if (refreshToken != null) {
+      if (encrypted) e.putString("refresh", refreshToken);
+      else e.remove("refresh");
+    }
     if (apiKey != null) e.putString("apiKey", apiKey);
     if (projectId != null) e.putString("projectId", projectId);
     if (deviceId != null) e.putString("deviceId", deviceId);
