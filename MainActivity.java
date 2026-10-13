@@ -682,17 +682,19 @@ public class MainActivity extends BridgeActivity {
     final String action = "answer".equals(act) ? "answer" : ("decline".equals(act) ? "decline" : "");
     rememberCallAction(safe, action);
 
-    getWindow().getDecorView().postDelayed(new Runnable() {
+    getWindow().getDecorView().post(new Runnable() {
       @Override
       public void run() {
         if (getBridge() == null || getBridge().getWebView() == null) return;
-        /* The page drops a repeat of the same press, so asking twice is safe. */
+        /* The page drops a repeat of the same press, so asking twice is safe.
+           No fixed pause: the page waits for sign-in itself. 800ms here was
+           added on top of every answer from a closed app. */
         getBridge().getWebView().evaluateJavascript(
           "window.nalunoTakeNativeCall ? window.nalunoTakeNativeCall() : (window.handleIncomingCallFromPush && window.handleIncomingCallFromPush('" + safe + "',{action:'" + action + "'}))",
           null
         );
       }
-    }, 800);
+    });
   }
 
   private boolean inPip() {
