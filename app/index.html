@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.10.13b" />
+  <meta name="naluno-build" content="2026.10.14a" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.10.13b">
+<meta name="app-version" content="2026.10.14a">
 <meta name="description" content="Naluno brings private communication, communities and creator-led content into one place. A Callsign instead of a phone number.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="Private communication, communities and creator-led content. A Callsign — not a phone number.">
@@ -1393,7 +1393,7 @@ window.__nalunoEntryT0 = Date.now();
       <div id="bandMessages" style="flex:1; overflow-y:auto; padding:10px 16px; display:flex; flex-direction:column; gap:10px; min-height:100px;"></div>
       <div style="padding:10px 12px calc(env(safe-area-inset-bottom,0px) + 12px); display:flex; flex-direction:column; gap:8px; border-top:1px solid rgba(255,255,255,.08); background:rgba(13,15,23,.6); backdrop-filter:blur(12px);">
         <div style="display:flex; gap:8px; align-items:center;">
-          <input id="bandInput" placeholder="Say something in the moment…" style="flex:1; background:rgba(23,26,38,.8); border:1px solid var(--line); border-radius:20px; padding:11px 16px; color:var(--text); font-size:14px; outline:none; font-family:inherit;" />
+          <input id="bandInput" maxlength="4000" placeholder="Say something in the moment…" style="flex:1; background:rgba(23,26,38,.8); border:1px solid var(--line); border-radius:20px; padding:11px 16px; color:var(--text); font-size:14px; outline:none; font-family:inherit;" />
           <div class="ghost-btn" id="bandSendBtn" role="button" aria-label="Send" style="background:var(--mint); border-color:var(--mint); color:#0D0F17; flex-shrink:0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" stroke="#0D0F17" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
         </div>
         <div style="display:flex; gap:8px; justify-content:center;">
@@ -1880,7 +1880,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/site-pulse.js?v=20261001a"></script>
 <!-- NALUNO_MODULES -->
 <script src="/js/core.js?v=20261012a"></script>
-<script src="/js/vault.js?v=20260928d"></script>
+<script src="/js/vault.js?v=20261014a"></script>
 <!-- Loaded right after core.js so its global error handlers are installed
      before the rest of the app runs and can capture anything they throw. -->
 <script src="/js/diagnostics.js?v=20260908d"></script>
@@ -1888,9 +1888,9 @@ window.__nalunoEntryT0 = Date.now();
      band-room, wireline and signal-ui. auth.js calls loadBands() at top level,
      which ran BEFORE find.js had executed — a ReferenceError that aborted boot
      entirely. It must load before any consumer. -->
-<script src="/js/find.js?v=20261004k"></script>
+<script src="/js/find.js?v=20261014a"></script>
 <script src="/js/media-contain.js?v=20261005e"></script>
-<script src="/js/keep-alive.js?v=20261002a"></script>
+<script src="/js/keep-alive.js?v=20261014a"></script>
 <script src="/js/metrics.js?v=20260908d"></script>
 <script src="/js/data.js?v=20260908d"></script>
 <script src="/js/crypto.js?v=20261010a"></script>
@@ -1900,16 +1900,16 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/band-list.js?v=20261013a"></script>
 <script type="module" src="/workers/economy/safety-boot.mjs?v=20260923c"></script>
 <script src="/js/signal-core.js?v=20261013a"></script>
-<script src="/js/broadcast-core.js?v=20261013a"></script>
-<script src="/js/broadcast-upload.js?v=20261013a"></script>
-<script src="/js/broadcast-composer.js?v=20261013a"></script>
+<script src="/js/broadcast-core.js?v=20261014a"></script>
+<script src="/js/broadcast-upload.js?v=20261014a"></script>
+<script src="/js/broadcast-composer.js?v=20261014a"></script>
 <script src="/js/screen.js?v=20261006b"></script>
 <!-- nudenet.js MUST load after screen.js: it upgrades runNalunoScreen() in place
      and keeps the heuristic as a hold-only fallback. Replaces nsfw-model.js. -->
 <script src="/js/nudenet.js?v=20261005h"></script>
 <script src="/js/origin.js?v=20261002b"></script>
 <script src="/js/strand.js?v=20261007b"></script>
-<script src="/js/circle.js?v=20261012b"></script>
+<script src="/js/circle.js?v=20261014a"></script>
 <!-- Community Economy: reports actions only; all economic value is computed
      server-side by the naluno-economy Worker. Loaded AFTER circle.js so
      currentUser exists, and deliberately non-blocking — if this file failed
@@ -1925,31 +1925,31 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/find-history.js?v=20261007d"></script>
 <script src="/js/lg-books.js?v=20261001b"></script>
 <script src="/js/compass-brain.js?v=20261010d"></script>
-<script src="/js/compass.js?v=20261010d"></script>
+<script src="/js/compass.js?v=20261014a"></script>
 <script src="/js/pass-on.js?v=20261003b"></script>
 <script src="/js/room-threads.js?v=20260925g"></script>
-<script src="/js/discover-engine.js?v=20261012b"></script>
-<script src="/js/discover.js?v=20261011c"></script>
+<script src="/js/discover-engine.js?v=20261014a"></script>
+<script src="/js/discover.js?v=20261014a"></script>
 <script src="/js/signal-ui.js?v=20261012a"></script>
 <script src="/js/compat-lock.js?v=20260908d"></script>
 <script src="/js/known.js?v=20261005g"></script>
 <script src="/js/lg-speak.js?v=20261005h"></script>
 <script src="/js/lg-voice.js?v=20261005i"></script>
 <script src="/js/naluno-voice-master.js?v=20261007a"></script>
-<script src="/js/lg-ear.js?v=20261010a"></script>
+<script src="/js/lg-ear.js?v=20261014a"></script>
 <script src="/js/naluno-voices.js?v=20261013b"></script>
 <script src="/js/broadcast-glance.js?v=20261010d"></script>
 <script src="/js/signal-public.js?v=20261007d"></script>
-<script src="/js/broadcast-space.js?v=20261013b"></script>
+<script src="/js/broadcast-space.js?v=20261014a"></script>
 <script src="/js/linkify.js?v=20260930a"></script>
-<script src="/js/ads.js?v=20261010a"></script>
+<script src="/js/ads.js?v=20261014a"></script>
 <script src="/js/media-vault.js?v=20260908d"></script>
 <script src="/js/wireline.js?v=20261010a"></script>
 <!-- Lifeline: Wireline when the internet is blocked or cut. Loads after
      crypto.js (keys) and wireline.js (thread insertion). -->
 <script src="/js/notices.js?v=20261004c"></script>
 <script src="/js/broadcast-offline.js?v=20261003b"></script>
-<script src="/js/signal-social.js?v=20261002f"></script>
+<script src="/js/signal-social.js?v=20261014a"></script>
 <script src="/js/live-sync.js?v=20260928d"></script>
 <script src="/js/lifeline.js?v=20260928d"></script>
 <script src="/js/lifeline-wire.js?v=20260930b"></script>
@@ -1959,29 +1959,29 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/onboard.js?v=20261007d"></script>
 <script src="/js/handle-guard.js?v=20261006b"></script>
 <script src="/js/launch.js?v=20261013a"></script>
-<script src="/js/auth.js?v=20261013a"></script>
+<script src="/js/auth.js?v=20261014a"></script>
 <script src="/js/trust-legal.js?v=20261012c"></script>
 <script src="/js/security-events.js?v=20261002e"></script>
-<script src="/js/notifications.js?v=20260928d"></script>
+<script src="/js/notifications.js?v=20261014a"></script>
 <script src="/js/ice-core.js?v=20261012b"></script>
 <script src="/js/camera.js?v=20261010a"></script>
 <script src="/js/call-filters.js?v=20261002d"></script>
 <script src="/js/push-receipt.js?v=20260927d"></script>
-<script src="/js/calls.js?v=20261013b"></script>
+<script src="/js/calls.js?v=20261014a"></script>
 <script src="/js/call-pip.js?v=20261005g"></script>
 <script src="/js/sfu-live.js?v=20261010i"></script>
-<script src="/js/broadcast-live.js?v=20261012c"></script>
+<script src="/js/broadcast-live.js?v=20261014a"></script>
 <script src="/js/live-preview.js?v=20261012c"></script>
 <script src="/js/band-room.js?v=20261010a"></script>
 <script src="/js/traffic.js?v=20261003e"></script>
-<script src="/js/pwa.js?v=20261013b"></script>
+<script src="/js/pwa.js?v=20261014a"></script>
 <script src="/js/gestures.js?v=20261007c"></script>
 <script src="/js/spark-engine.js?v=20261005g"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>
 <script src="/js/spark-lg.js?v=20261001b"></script>
 <script src="/js/spark-page.js?v=20261005h"></script>
 <script src="/js/qrcode.js?v=20260928d"></script>
-<script src="/js/spark.js?v=20260928d"></script>
+<script src="/js/spark.js?v=20261014a"></script>
 <!-- /NALUNO_MODULES -->
 </body>
 </html>
