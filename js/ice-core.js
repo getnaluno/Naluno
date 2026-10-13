@@ -244,7 +244,7 @@ function awaitIceServers(maxMs){
     fetchTurnServers().catch(function(){});
     return Promise.resolve(iceNow());
   }
-  const cap = (typeof maxMs === 'number' && maxMs > 0) ? maxMs : 7000;
+  const cap = (typeof maxMs === 'number' && maxMs >= 0) ? maxMs : 7000;
   const turn = fetchTurnServers().catch(function(){ return iceNow(); });
   return Promise.race([
     turn,

@@ -3147,9 +3147,10 @@ async function startRealCallInner(c){
     ? getIceServers().catch(()=> (typeof RTC_CONFIG !== 'undefined' ? RTC_CONFIG : { iceServers:[{urls:'stun:stun.l.google.com:19302'}] }))
     : Promise.resolve(null);
   const voice = nalunoIsVoiceCall();
-  /* 30d: TURN is waited for while the microphone/camera opens, not after it.
-     With TURN already kept ready this is instant. */
-  const turnReady = nalunoWaitForTurn(7000);
+  /* The other phone is not ringing yet, so this does not sit on the
+     answer. A warm cache returns at once; a cold one must not hold the
+     offer for the whole credential fetch. */
+  const turnReady = nalunoWaitForTurn(900);
   if(voice){
     try{ await nalunoOpenMic(); }catch(e){
       if(gone()) return false;
@@ -3218,7 +3219,7 @@ async function startRealCallInner(c){
   if(gone()){ dropPc(); return false; }
   await pc.setLocalDescription(offer);
   if(gone()){ dropPc(); return false; }
-  const offerSdp = await nalunoSdpReady(pc, 450) || { type: offer.type, sdp: offer.sdp };
+  const offerSdp = await nalunoSdpReady(pc, 180) || { type: offer.type, sdp: offer.sdp };
   if(gone()){ dropPc(); return false; }
 
   await callRef.set({
@@ -3626,7 +3627,10 @@ async function nalunoPrepareAnswer(callId, offer, camReady, earlyOk, callerRelay
     await Promise.all([
       Promise.resolve(camReady).catch(function(){}),
       Promise.resolve(camReady).catch(function(){}).then(function(){ nalunoCallMark(callId, 'prepMedia'); }),
-      nalunoWaitForTurn(callerRelay ? 1200 : 7000).then(function(c){ nalunoCallMark(callId, 'prepTurn'); return c; }),
+      /* The caller's relay is enough to connect. Waiting out our own TURN
+         (up to 7s) before the answer existed is what left a closed app on
+         "connecting" after the person had already tapped Answer. */
+      nalunoWaitForTurn(callerRelay ? 0 : 900).then(function(c){ nalunoCallMark(callId, 'prepTurn'); return c; }),
     ]);
     if(!still()){ nalunoDropPrepared(); return; }
     if(!mediaStreamIsLive(stream)){ nalunoDropPrepared(); return; } // no camera/mic yet: Answer takes the normal path
@@ -3716,7 +3720,7 @@ async function nalunoPrepareAnswer(callId, offer, camReady, earlyOk, callerRelay
       }
     }
     if(!prep.used && !prep.taken){
-      const fuller = await nalunoSdpReady(pc, 450);
+      const fuller = await nalunoSdpReady(pc, 180);
       if(fuller && !prep.used && !prep.taken && nalunoPrepared === prep) prep.answer = fuller;
     }
   }catch(e){
@@ -3845,7 +3849,11 @@ $('acceptIncoming').onclick = async (ev)=>{
      the longest wait people saw. The build gives up on its own when it
      cannot finish; 20 s is only a backstop. */
   if(!prep && nalunoPrepared && nalunoPrepared.callId === acceptingId && !nalunoPrepared.ready){
-    const deadline = Date.now() + 20000;
+    /* A closed app has nothing prepared yet. Waiting the full TURN cap
+       (20s) before starting the answer is the long "connecting". If it is
+       not ready almost at once, build it now — TURN still lands on the
+       connection if it arrives before the answer is written. */
+    const deadline = Date.now() + 400;
     while(activeCallId === acceptingId && Date.now() < deadline){
       await new Promise(function(r){ setTimeout(r, 40); });
       prep = nalunoPreparedFor(acceptingId);
@@ -3946,7 +3954,7 @@ $('acceptIncoming').onclick = async (ev)=>{
     // Parallel: media ready and a short TURN wait. iceNow() is 0ms once
     // that wait lands, so the answer is not built STUN-only on a cold cache.
     if(typeof prewarmIceServers === 'function') prewarmIceServers();
-    const turnWait = nalunoWaitForTurn((nalunoIncomingFrom && nalunoIncomingFrom.id === acceptingId && nalunoIncomingFrom.relay) ? 1200 : 7000);
+    const turnWait = nalunoWaitForTurn((nalunoIncomingFrom && nalunoIncomingFrom.id === acceptingId && nalunoIncomingFrom.relay) ? 0 : 900);
     let mediaOk;
     if(nalunoIsVoiceCall()){
       try{ await nalunoOpenMic(); }catch(_){}
@@ -4008,7 +4016,7 @@ $('acceptIncoming').onclick = async (ev)=>{
     // setLocalDescription without waiting for full ICE gather — trickle candidates via onicecandidate
     await answerPc.setLocalDescription(answer);
     guard();
-    const answerSdp = await nalunoSdpReady(answerPc, 450) || { type: answer.type, sdp: answer.sdp };
+    const answerSdp = await nalunoSdpReady(answerPc, 180) || { type: answer.type, sdp: answer.sdp };
     guard();
     await callRef.update({ answer: answerSdp });
     nalunoCallMark(acceptingId, 'answerSdp');

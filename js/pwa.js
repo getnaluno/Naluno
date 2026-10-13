@@ -6,7 +6,7 @@
    ============================================================ */
 /* ---------------- PWA INSTALL + CALL NOTIFICATION DEEP-LINK ---------------- */
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js?v=20261014a', { scope: '/', updateViaCache: 'none' })
+  navigator.serviceWorker.register('/sw.js?v=20261014b', { scope: '/', updateViaCache: 'none' })
     .then(function(reg){ try{ reg.update(); }catch(_){} })
     .catch(function(e){ console.warn('[sw]', e); });
   // One automatic reload when a new SW takes control (clears stuck "sign-in not ready"
@@ -156,7 +156,9 @@ function nalunoCallReady(maxMs){
         if(typeof fbDb !== 'undefined' && fbDb && typeof currentUser !== 'undefined' && currentUser && typeof handleIncomingCall === 'function'){ resolve(true); return; }
       }catch(_){}
       if(Date.now() - t0 > (maxMs || 25000)){ resolve(false); return; }
-      setTimeout(tick, 100);
+      /* Sign-in on a cached session is usually already there. Polling
+         every 100ms added that much to every closed-app answer. */
+      setTimeout(tick, 16);
     };
     tick();
   });
@@ -180,14 +182,30 @@ async function nalunoOpenCallFromPush(callId, opts){
   const key = callId + ':' + action;
   if(nalunoPushCallSeen[key] && Date.now() - nalunoPushCallSeen[key] < 4000) return;
   nalunoPushCallSeen[key] = Date.now();
+  /* Relay credentials and the call document start now, next to the wait
+     for sign-in, instead of after it. */
+  if(action !== 'decline'){ try{ if(typeof prewarmIceServers === 'function') prewarmIceServers(); }catch(_){} }
+  /* The call document and sign-in are independent. Waiting for sign-in
+     first, then reading the call, put two round trips in a row on every
+     answer from a closed app. */
+  const callSnapP = (action === 'decline') ? null : (async function(){
+    const readyDb = await new Promise(function(resolve){
+      const t0 = Date.now();
+      const tick = function(){
+        if(typeof fbDb !== 'undefined' && fbDb){ resolve(true); return; }
+        if(Date.now() - t0 > 8000){ resolve(false); return; }
+        setTimeout(tick, 16);
+      };
+      tick();
+    });
+    if(!readyDb) return null;
+    try{ return await fbDb.collection('calls').doc(callId).get(); }catch(_){ return null; }
+  })();
   if(!(await nalunoCallReady(25000))){
     console.warn('[call] opened from a notification, but sign-in did not come back');
     return;
   }
   try{ nalunoCallMark(callId, 'signedIn'); }catch(_){}
-  /* 13 Oct b: the relay route is fetched alongside the call record, not
-     after it: the ring and the early connection both need it. */
-  if(action !== 'decline'){ try{ if(typeof prewarmIceServers === 'function') prewarmIceServers(); }catch(_){} }
   if(action === 'decline'){
     try{ declineIncomingCall(callId); }catch(e){ console.warn('[call] decline from outside the app', e && e.message); }
     return;
@@ -201,8 +219,8 @@ async function nalunoOpenCallFromPush(callId, opts){
     if(hidden && action !== 'answer' && typeof nalunoStartBackgroundRing === 'function'){
       nalunoStartBackgroundRing(callId, 'Someone');
     }
-    const snap = await fbDb.collection('calls').doc(callId).get();
-    if(!snap.exists) return;
+    const snap = callSnapP ? await callSnapP : await fbDb.collection('calls').doc(callId).get();
+    if(!snap || !snap.exists) return;
     const data = snap.data() || {};
     if(data.calleeUid !== currentUser.uid) return;
     if(data.status !== 'ringing'){
@@ -238,8 +256,14 @@ function nalunoTakeNativeCall(){
 }
 window.nalunoTakeNativeCall = nalunoTakeNativeCall;
 try{
-  setTimeout(nalunoTakeNativeCall, 0); // the handler waits for sign-in itself
-  document.addEventListener('visibilitychange', function(){ if(!document.hidden) setTimeout(nalunoTakeNativeCall, 300); });
+  const askNative = function(){ setTimeout(nalunoTakeNativeCall, 0); };
+  askNative();
+  /* Sign-in is the moment the pending Answer can actually run. Waiting
+     for a later visibility event left a closed-app answer sitting. */
+  document.addEventListener('visibilitychange', function(){ if(!document.hidden) askNative(); });
+  if(typeof fbAuth !== 'undefined' && fbAuth && fbAuth.onAuthStateChanged){
+    fbAuth.onAuthStateChanged(function(u){ if(u) askNative(); });
+  }
 }catch(_){}
 
 function nalunoRequestPersistentStorage(){
