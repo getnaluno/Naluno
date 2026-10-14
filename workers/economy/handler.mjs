@@ -1422,6 +1422,22 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
      decided not to trust (see publisherTrusted in screen.mjs). */
   const trusted = publisherTrusted(profile);
   let judged = judgeScreenPayload(body && body.screen, { title: row.title || "" });
+  /* 14 Oct e: placed again with no pictures to read (a private or scheduled
+     video switched to public). The verdict this worker wrote when the video
+     was first placed still stands; without it every such video was held as
+     "unscreened" for good. Only a verdict the worker wrote counts: the rules
+     stop a creator writing screen fields (14 Oct e, create and edit). */
+  if (!judged.hasScreen && !(body && body.screen) && Number(row.screenVersion) >= 1
+      && (row.screenDecision === "allow" || row.screenDecision === "hold")) {
+    judged = {
+      decision: row.screenDecision,
+      score: Number(row.screenScore) || 0,
+      hasScreen: true,
+      reason: String(row.screenReason || "") || (row.screenDecision === "allow" ? "" : "screen"),
+      frames: Number(row.screenFrames) || 0,
+      reused: true,
+    };
+  }
   /* 29h: a Broadcast with a picture (photo, video, or a Writing photo) and
      no readable Screen verdict is HELD for a person, trusted or not. Writing
      photos used to arrive with no verdict at all, and a trusted account was

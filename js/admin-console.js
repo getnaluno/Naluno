@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261014c';
+  const BUILD = '20261015b';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -237,6 +237,64 @@
       });
     if (navigator.serviceWorker.controller) pingSw();
   }
+  /* 15 Oct: a console left open learns that a newer version is out, like
+     the app. It checks the console page on the server every few minutes
+     and when it comes back to the screen, and only a NEWER build counts.
+     It does not reload by itself: each opening of the console asks for the
+     console password, and the desk must never drop you at that gate in the
+     middle of work. A bar offers the reload; you press it when it suits. */
+  function consoleStampKey(v) {
+    const s = String(v || '').trim();
+    const d = s.match(/^(\d{4})\.(\d{2})\.(\d{2})([a-z])$/);
+    if (d) return d[1] + d[2] + d[3] + d[4];
+    return /^\d{8}[a-z]$/.test(s) ? s : '';
+  }
+  function showConsoleUpdateBar(live) {
+    try {
+      let bar = document.getElementById('consoleUpdateBar');
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'consoleUpdateBar';
+        bar.setAttribute('role', 'status');
+        bar.style.cssText = 'position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9999;'
+          + 'background:#11141D;border:1px solid rgba(124,255,178,.45);color:#EEF1F7;border-radius:999px;'
+          + 'padding:8px 8px 8px 16px;display:flex;gap:12px;align-items:center;font:14px/1.3 system-ui,sans-serif;'
+          + 'box-shadow:0 10px 30px rgba(0,0,0,.5);max-width:calc(100vw - 32px);';
+        const txt = document.createElement('span');
+        txt.id = 'consoleUpdateText';
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = 'Reload';
+        btn.style.cssText = 'background:#7CFFB2;color:#06120B;border:0;border-radius:999px;padding:8px 14px;font-weight:600;cursor:pointer;';
+        btn.onclick = async function () {
+          btn.disabled = true; btn.textContent = 'Reloading…';
+          try { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(function (r) { return r.update().catch(function () {}); })); } catch (_) {}
+          location.reload();
+        };
+        bar.appendChild(txt);
+        bar.appendChild(btn);
+        document.body.appendChild(bar);
+      }
+      const t = document.getElementById('consoleUpdateText');
+      if (t) t.textContent = 'A newer Control Centre is ready (' + live + '). You will unlock again after reloading.';
+    } catch (_) {}
+  }
+  async function checkConsoleUpdate() {
+    try {
+      const res = await fetch('/admin/index.html?_=' + Date.now(), { cache: 'no-store' });
+      if (!res || !res.ok) return;
+      const m = String(await res.text()).match(/<meta name="naluno-build" content="([^"]+)"/);
+      const live = consoleStampKey(m && m[1]);
+      const have = consoleStampKey(BUILD);
+      if (!live || !have || live <= have) return;
+      showConsoleUpdateBar(live);
+    } catch (_) {}
+  }
+  try {
+    setInterval(checkConsoleUpdate, 3 * 60 * 1000);
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) checkConsoleUpdate(); });
+    setTimeout(checkConsoleUpdate, 8000);
+  } catch (_) {}
   function pingSw() {
     try {
       const ctl = navigator.serviceWorker && navigator.serviceWorker.controller;

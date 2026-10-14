@@ -307,9 +307,79 @@ async function checkForUpdate(){
       const res = await fetch('/sw.js?_=' + Date.now(), { cache:'no-store' });
       if(res && res.ok) liveBuild = nalunoReadBuild(await res.text());
     }catch(_){}
-    if(nalunoUpdateDue(running, { app: liveApp, build: liveBuild })) nalunoShowUpdateBanner();
+    if(nalunoUpdateDue(running, { app: liveApp, build: liveBuild })){
+      /* 15 Oct: newest wins, on its own. Only a NEWER version is taken (a
+         server still handing out an older copy must not pull a phone back),
+         and it is taken at the first good moment instead of waiting for a
+         tap on the banner. */
+      const target = nalunoNewerTarget(running, { app: liveApp, build: liveBuild });
+      if(target) nalunoAutoUpdate(target);
+    }
   }catch(e){ /* offline or blocked — just try again on the next interval */ }
 }
+/* The newest stamp on the server that is newer than this page, or ''.
+   Stamps are YYYYMMDD + a letter, so newer sorts later. */
+function nalunoNewerTarget(running, live){
+  running = running || {}; live = live || {};
+  let best = '';
+  [[running.app, live.app], [running.build, live.build]].forEach(function(pair){
+    const have = nalunoStampKey(pair[0]);
+    const got = nalunoStampKey(pair[1]);
+    if(!/^\d{8}[a-z]$/.test(got)) return;
+    if(/^\d{8}[a-z]$/.test(have) && got <= have) return;
+    if(got > best) best = got;
+  });
+  return best;
+}
+/* 15 Oct: when an update may run without getting in the way.
+   Never during a call, an upload, a post being written, a live, typing,
+   or a video playing with sound (pwa.js: nalunoUpdateBusy). Otherwise at a
+   moment the person will not notice: the app has just opened, has just come
+   back to the screen, is in the background, or has not been touched for a
+   minute. Until then the banner shows, and a tap updates at once. */
+let nalunoLastTouchAt = 0;
+let nalunoShownAt = Date.now();
+const NALUNO_PAGE_START = Date.now();
+try{
+  ['pointerdown', 'keydown', 'touchstart', 'wheel'].forEach(function(t){
+    document.addEventListener(t, function(){ nalunoLastTouchAt = Date.now(); }, { passive: true, capture: true });
+  });
+  document.addEventListener('visibilitychange', function(){ if(!document.hidden) nalunoShownAt = Date.now(); });
+}catch(_){}
+function nalunoUpdateQuietMoment(){
+  const now = Date.now();
+  if(typeof document !== 'undefined' && document.hidden) return true;
+  if(now - NALUNO_PAGE_START < 30000 && now - nalunoLastTouchAt > 1500) return true;
+  if(now - nalunoShownAt < 8000 && (nalunoLastTouchAt < nalunoShownAt)) return true;
+  return now - nalunoLastTouchAt > 60000;
+}
+let nalunoAutoTimer = null;
+function nalunoAutoUpdate(target){
+  try{
+    const key = 'nalunoAutoUpdate';
+    let tried = null;
+    try{ tried = JSON.parse(localStorage.getItem(key) || 'null'); }catch(_){ tried = null; }
+    /* A version that was already taken once and is still not running (an
+       upload half done on the server) is not reloaded for again for 10
+       minutes: the banner offers it instead of a reload loop. */
+    if(tried && tried.target === target && Date.now() - Number(tried.at || 0) < 10 * 60 * 1000){
+      nalunoShowUpdateBanner();
+      return;
+    }
+    const busy = (typeof window.nalunoUpdateBusy === 'function') && window.nalunoUpdateBusy();
+    if(busy || !nalunoUpdateQuietMoment()){
+      nalunoShowUpdateBanner();
+      if(!nalunoAutoTimer){
+        nalunoAutoTimer = setTimeout(function(){ nalunoAutoTimer = null; nalunoAutoUpdate(target); }, 5000);
+      }
+      return;
+    }
+    try{ localStorage.setItem(key, JSON.stringify({ target: target, at: Date.now() })); }catch(_){}
+    nalunoUpdateNow();
+  }catch(_){ nalunoShowUpdateBanner(); }
+}
+window.nalunoAutoUpdate = nalunoAutoUpdate;
+window.nalunoNewerTarget = nalunoNewerTarget;
 /* 29h — one reload per update. The banner reloaded straight away, before
    the new version had taken over; when it did take over a moment later,
    pwa.js reloaded a second time. And a reload that came before the new
@@ -336,6 +406,12 @@ async function nalunoFreshShell(){
     if(!names.length) return;
     const res = await fetch('/app/index.html', { cache: 'reload' });
     if(!res || !res.ok) return;
+    /* 15 Oct: never keep a page older than the one running. */
+    try{
+      const got = nalunoStampKey(nalunoReadAppVersion(await res.clone().text()));
+      const have = nalunoStampKey(APP_VERSION);
+      if(/^\d{8}[a-z]$/.test(got) && /^\d{8}[a-z]$/.test(have) && got < have) return;
+    }catch(_){}
     for(const n of names){
       const c = await caches.open(n);
       await c.put(new Request(location.origin + '/app/index.html'), res.clone());
@@ -371,7 +447,8 @@ window.nalunoUpdateDue = nalunoUpdateDue;
 $('updateBannerBtn').onclick = function(){ nalunoUpdateNow(); };
 setInterval(checkForUpdate, 3*60*1000);
 document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) checkForUpdate(); });
-setTimeout(checkForUpdate, 4000); // small delay so this isn't competing with the initial page load
+window.addEventListener('online', function(){ setTimeout(checkForUpdate, 1500); });
+setTimeout(checkForUpdate, 2500); // soon after opening, so an old copy is replaced before it is used
 
 
 

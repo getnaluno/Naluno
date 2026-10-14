@@ -1,0 +1,11 @@
+name = "naluno-call-notify"
+main = "index.js"
+compatibility_date = "2026-01-01"
+
+# Same GOOGLE_SERVICE_ACCOUNT secret as the economy worker.
+# npx wrangler secret put GOOGLE_SERVICE_ACCOUNT
+# Never commit the JSON.
+
+[vars]
+FIREBASE_PROJECT_ID = "naluno-28a00"
+FIREBASE_WEB_API_KEY = "AIzaSyD0j1W7-gFJqbMd6rz4kMhQd5AiB8B2ox0"

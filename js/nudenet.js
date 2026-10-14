@@ -558,20 +558,30 @@
      the server in packed.nudenet, so the SERVER decides from them rather than
      re-running the old skin heuristic and overruling a correct verdict. */
   var heuristicRun = root.runNalunoScreen;
+  /* 14 Oct e: on a phone the detector never finished. It ran only after the
+     heuristic, and its 15 s included downloading the runtime and the model
+     (about 14 MB) and reading eight frames on a slow CPU. Every video then
+     fell back to the heuristic, which holds almost any video for a person
+     (a street at night included), so new videos stayed off the public feed.
+     Now the detector starts with the heuristic, the composer warms it up
+     when it opens (nalunoModPreload), and it has the time a phone needs,
+     inside the 60 s Publish already waits for a verdict. */
+  var DETECTOR_MS = 55000;
   root.runNalunoScreen = async function (file, title, durationHint) {
     // The heuristic still runs: it produces the pixel stills the server's
     // payload contract expects, and it is the fallback below.
-    var base = null;
-    try { base = heuristicRun ? await heuristicRun(file, title, durationHint) : null; } catch (_) {}
-    var m = null;
-    try {
-      m = await Promise.race([
-        moderateFile(file, durationHint),
-        new Promise(function (ok) { setTimeout(function () { ok(null); }, 15000); }),
-      ]);
-    } catch (e) {
+    var baseP = Promise.resolve(null);
+    try { if (heuristicRun) baseP = Promise.resolve(heuristicRun(file, title, durationHint)).catch(function () { return null; }); } catch (_) {}
+    var mP = Promise.race([
+      moderateFile(file, durationHint),
+      new Promise(function (ok) { setTimeout(function () { ok(null); }, DETECTOR_MS); }),
+    ]).catch(function (e) {
       console.warn('[moderation] detector unavailable — falling back', e && e.message);
-    }
+      return null;
+    });
+    var both = await Promise.all([baseP, mP]);
+    var base = both[0];
+    var m = both[1];
     if (!m || m.result.decision === 'unread') {
       /* Fallback when the detector cannot run. The heuristic cannot tell a
          bikini from nudity, so it is NOT allowed to reject anything on its

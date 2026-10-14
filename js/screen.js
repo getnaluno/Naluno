@@ -392,7 +392,13 @@
   }
   function packPayload(report) {
     if (!report) return null;
-    if (report.packed && report.packed.frames && report.packed.frames.length) return report.packed;
+    const pk = report.packed;
+    if (!pk) return null;
+    if (pk.frames && pk.frames.length) return pk;
+    /* 14 Oct e: the detector's findings go to the server even when no pixel
+       stills were taken (a video the still sampler could not seek). They
+       used to be dropped here, so the server saw no verdict and held it. */
+    if (pk.nudenet && Array.isArray(pk.nudenet.frames) && pk.nudenet.frames.length) return pk;
     return null;
   }
   function stillFromCanvasEl(canvas) {

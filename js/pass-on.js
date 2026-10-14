@@ -75,24 +75,20 @@
   /* A resemblance (close title, a similar still, nearby sound) is not a copy.
      The line "Original Broadcast by …" is only for the same file, a
      frame-for-frame paste, a word-for-word paste, or an explicit pass-on. */
+  /* 15 Oct: a photo or video is never marked "Original Broadcast by"
+     another creator from a file match: OriginID marked a creator's own film
+     as someone else's. The line is kept for the two cases that are certain:
+     a Pass-on (the person pressed Pass on) and a piece of writing pasted
+     word for word. */
   function originCreditAllowed(origin) {
-    if (!origin) return false;
-    const ch = origin.channels || {};
-    const file = Number(ch.file) || 0;
-    const picture = Number(ch.picture) || 0;
-    const motion = Number(ch.motion) || 0;
-    if (file >= 99) return true;
-    if (picture >= 94 && motion >= 94) return true;
     return false;
   }
 
   function creditBasis(b, credit) {
     const basis = String((credit && credit.basis) || '');
-    if (basis === 'file' || basis === 'paste' || basis === 'repost') return basis;
     if (b && b.repostOf) return 'repost';
-    if (b && Number(b.originScore) === 100) return 'file';
     const kind = String((b && (b.mediaType || b.kind)) || '');
-    if (kind === 'writing' || (b && b.body)) return 'paste';
+    if (kind === 'writing' || (b && b.body)) return (basis === 'paste' || !basis) ? 'paste' : '';
     return '';
   }
 

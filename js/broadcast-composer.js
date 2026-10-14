@@ -41,6 +41,9 @@ function bcompOpen(){
   try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('open Broadcast composer'); }catch(_){}
   if(!currentUser){ toast('Sign in to publish a Broadcast'); return; }
   bcompReset();
+  /* 14 Oct e: start fetching the content detector now, while the person
+     picks a file and writes a title, so it is ready to read the video. */
+  try{ if(typeof window.nalunoModPreload === 'function') window.nalunoModPreload(); }catch(_){}
   const el = $('bcomposer');
   if(el) el.classList.add('active');
   try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
@@ -817,14 +820,28 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
       if(snapKind === 'video' && (!chapters || !chapters.length) && mediaUrl){
         chapters = [{ index: 0, mediaUrl, duration: snapDuration || null, title: 'Video', sharedSource: true, start: 0, end: snapDuration || null }];
       }
+      /* 14 Oct e: when the detector could not finish before Publish (a
+         first post on a slow phone), the verdict is the heuristic's, which
+         holds almost every video for a person. The detector kept loading in
+         the background while the file uploaded, so it is asked once more
+         here; its reading replaces the heuristic's. A "block" stays a block. */
+      let finalScreen = snapScreen;
+      if(snapFile && (snapKind === 'video' || snapKind === 'photo') && (!finalScreen || finalScreen.engine !== 'nudenet')
+         && !(finalScreen && finalScreen.decision === 'block') && typeof runNalunoScreen === 'function'){
+        try{
+          if(progress) progress('Checking the video…');
+          const again = await nalunoStrictVerdict(runNalunoScreen(snapFile, snapTitle, snapDuration || 0), null);
+          if(again && again.engine === 'nudenet') finalScreen = again;
+        }catch(_){}
+      }
       const b = await createPermanentBroadcast({
         title: snapTitle, description: snapDesc, tags: snapTags,
         publishAt: snapPublishAt, visibility: snapVisibility,
         mediaType, mediaUrl, thumbUrl, filterCss: '',
         chapters, breathers,
         strandId: snapStrandId, strandName: snapStrandName, origin: snapOrigin,
-        originCredit: (typeof broadcastCreditFromOrigin === 'function') ? broadcastCreditFromOrigin(snapOrigin) : null,
-        screen: snapScreen,
+        originCredit: null,   // 15 Oct: a photo or video is never marked as another creator's
+        screen: finalScreen,
         durationSec: snapKind === 'video' ? snapReachSeconds : undefined,
         reachPass: snapKind === 'video' ? snapReachPass : '',
       });

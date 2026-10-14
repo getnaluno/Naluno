@@ -17,7 +17,8 @@ const strand = read('js/strand.js');
 
 /* 0. The website and the app are each in their own place (07a went up with
    the app page at the top of the site). */
-assert.ok(/<title>Naluno — communication, creators and communities<\/title>/.test(read('index.html')), 'getnaluno.com is the website');
+/* 14 Oct d: the website was rewritten in plain words; it is still the website, not the app. */
+assert.ok(/<title>Naluno — private calls, messages and a home for your work<\/title>/.test(read('index.html')), 'getnaluno.com is the website');
 assert.ok(/<meta name="naluno-build"/.test(html) && !/<meta name="naluno-build"/.test(read('index.html')), 'the app page is in app/, not at the top');
 
 /* 1. The module, run with a stand-in page. */

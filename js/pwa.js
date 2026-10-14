@@ -6,7 +6,7 @@
    ============================================================ */
 /* ---------------- PWA INSTALL + CALL NOTIFICATION DEEP-LINK ---------------- */
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js?v=20261014c', { scope: '/', updateViaCache: 'none' })
+  navigator.serviceWorker.register('/sw.js?v=20261015b', { scope: '/', updateViaCache: 'none' })
     .then(function(reg){ try{ reg.update(); }catch(_){} })
     .catch(function(e){ console.warn('[sw]', e); });
   // One automatic reload when a new SW takes control (clears stuck "sign-in not ready"
@@ -32,6 +32,22 @@ if('serviceWorker' in navigator){
       }catch(_){}
       return false;
     };
+    /* 15 Oct: core.js asks this before updating on its own. Also busy: a
+       Broadcast, Band or live open, or a video or sound playing aloud. */
+    window.nalunoUpdateBusy = function(){
+      if(busyNow()) return true;
+      try{
+        if(document.body && (document.body.classList.contains('naluno-bspace-open'))) return true;
+        const on = function(id){ const el = document.getElementById(id); return !!(el && el.classList.contains('active')); };
+        if(on('bandRoom') || on('bspace') || on('liveRoom')) return true;
+        const media = document.querySelectorAll('video, audio');
+        for(let i = 0; i < media.length; i++){
+          const m = media[i];
+          if(!m.paused && !m.ended && !m.muted && m.volume > 0) return true;
+        }
+      }catch(_){}
+      return false;
+    };
     const reloadWhenFree = function(){
       if(reloaded) return;
       if(busyNow()){ setTimeout(reloadWhenFree, 4000); return; }
@@ -47,6 +63,10 @@ if('serviceWorker' in navigator){
       if(!hadController) return;
       /* The banner handles its own update (it waits for this takeover). */
       try{ const b = document.getElementById('updateBannerBtn'); if(b && b.disabled) return; }catch(_){}
+      /* 15 Oct: a newer version has taken over this phone. The page on
+         screen is now the old one: swap it at the first good moment (the
+         same rules core.js uses), not only when someone taps the banner. */
+      try{ if(typeof checkForUpdate === 'function'){ checkForUpdate(); return; } }catch(_){}
       try{
         if(typeof nalunoShowUpdateBanner === 'function'){ nalunoShowUpdateBanner(); return; }
         const el = document.getElementById('updateBanner');

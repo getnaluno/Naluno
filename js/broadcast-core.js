@@ -473,10 +473,11 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
     if(key) doc.textKey = key;
   }
   if(originCredit && originCredit.creatorUid && originCredit.creatorUid !== currentUser.uid && originCredit.creatorName){
-    let basis = String(originCredit.basis || '');
-    if(basis !== 'file' && basis !== 'paste' && basis !== 'repost'){
-      basis = repostOf ? 'repost' : '';
-    }
+    /* 15 Oct: only a Pass-on, or writing pasted word for word. A photo or
+       video is never marked as someone else's from a file match. */
+    let basis = '';
+    if(repostOf) basis = 'repost';
+    else if(mediaType === 'writing' && String(originCredit.basis || 'paste') === 'paste') basis = 'paste';
     if(basis){
       doc.originCredit = {
         broadcastId: String(originCredit.broadcastId || ''),

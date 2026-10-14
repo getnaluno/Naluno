@@ -30,14 +30,23 @@ assert.strictEqual(Pass.isWordCopy(piece, piece.replace('neighbour', 'friend')),
 
 const credit = Pass.findCredit(piece, [magambo], 'aster');
 assert.strictEqual(Pass.byline(credit), 'Original Broadcast by Magambo');
-assert.strictEqual(Pass.lockedCredit({ creatorUid: 'aster', originCredit: credit }).creatorName, 'Magambo');
-assert.strictEqual(Pass.lockedCredit({ creatorUid: 'uid-magambo', originCredit: credit }), null);
+assert.strictEqual(Pass.lockedCredit({ creatorUid: 'aster', mediaType: 'writing', originCredit: credit }).creatorName, 'Magambo');
+assert.strictEqual(Pass.lockedCredit({ creatorUid: 'uid-magambo', mediaType: 'writing', originCredit: credit }), null);
+/* 15 Oct: a photo or video is never "Original Broadcast by" someone else
+   from a file match; only a Pass-on (or pasted writing) carries the line. */
+const fileMark = { broadcastId: 'b-x', creatorUid: 'other', creatorName: 'Another creator', basis: 'file', locked: true };
+assert.strictEqual(Pass.lockedCredit({ creatorUid: 'me', mediaType: 'video', originCredit: fileMark, originScore: 100 }), null, 'a video marked from a file match shows no line');
+assert.strictEqual(Pass.lockedCredit({ creatorUid: 'me', mediaType: 'photo', originCredit: fileMark }), null, 'nor a photo');
+assert.strictEqual(Pass.lockedCredit({ creatorUid: 'me', mediaType: 'video', repostOf: 'b-x', originCredit: Object.assign({}, fileMark, { basis: 'repost' }) }).creatorName, 'Another creator', 'a Pass-on keeps the line');
+assert.strictEqual(Pass.lockedCredit({ creatorUid: 'me', mediaType: 'writing', originCredit: fileMark }), null, 'writing with a file-match mark shows no line');
+assert.strictEqual(Pass.originCreditAllowed({ channels: { file: 100, picture: 100, motion: 100 } }), false, 'OriginID never stamps a file');
 
 const passed = Pass.creditForShare({
   id: 'aster-copy',
   creatorUid: 'aster',
   creatorName: 'Aster',
   title: 'The kettle',
+  mediaType: 'writing',
   originCredit: credit,
 });
 assert.strictEqual(passed.creatorName, 'Magambo');
