@@ -21,7 +21,8 @@ const moveAt = calls.indexOf("nalunoCallMove(acceptingId, 'accepted'", acceptAt)
 assert.ok(acceptAt > 0 && dismissAt > acceptAt && moveAt > dismissAt, 'Answer dismisses the incoming alert before the status write');
 assert.ok(calls.indexOf('function startInCall(){') > 0 && calls.indexOf('nalunoDismissCallNotifications(activeCallId)') > 0, 'an open call clears the alert too');
 assert.ok(calls.includes('function nalunoTellNativeCallDone'), 'the Android shade is cancelled from the answer');
-assert.ok(calls.includes("nalunoWaitForTurn(7000)"), 'the offer waits for the TURN attempt, not a short clock');
+// 14c: the offer waits for the TURN attempt itself (2.5 s cap); the answering phone covers a slower one.
+assert.ok(calls.includes("nalunoWaitForTurn(NALUNO_CALLER_TURN_MS)") && /const NALUNO_CALLER_TURN_MS = 2500;/.test(calls), 'the offer waits for the TURN attempt, not a short clock');
 assert.ok(calls.includes('IceCore.awaitServers'), 'the wait follows the credential fetch instead of guessing');
 assert.ok(calls.includes('id = \'remoteAudio\''), 'remote voice has its own audio element');
 assert.ok(calls.includes('videoEl.muted = true'), 'the picture element does not play a second copy of the voice');

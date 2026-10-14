@@ -12,7 +12,8 @@ const prepBody = calls.slice(prepAt, calls.indexOf('function nalunoPreparedFor')
 assert.ok(prepAt > 0 && prepBody.length > 50, 'prepare function found');
 assert.ok(!prepBody.includes('getIceServersPatient'), 'preparing an answer does not use the 3.7s live-ICE wait');
 // 13b: the wait is shorter when the caller already has a relay route; still alongside the camera.
-assert.ok(/Promise\.all\(\[[\s\S]{0,120}camReady[\s\S]{0,260}nalunoWaitForTurn\(callerRelay \? 1200 : 7000\)/.test(prepBody), 'TURN and the camera run together while the phone is still ringing');
+// 14c: its own relay is fetched for the whole ring; Answer cuts the wait only when the caller has one.
+assert.ok(/Promise\.all\(\[[\s\S]{0,120}camReady[\s\S]{0,900}nalunoWaitForTurn\(NALUNO_ANSWER_TURN_MS\),\s*callerRelay \? new Promise\(function\(r\)\{ prep\.wake = r; \}\)/.test(prepBody), 'TURN and the camera run together while the phone is still ringing');
 assert.ok(calls.includes('if(pc._nalunoIceFrozen || pc.localDescription) return;'), 'TURN that arrives after the SDP is built does not restart ICE');
 assert.ok(calls.includes('const hadTurn = nalunoCfgHasTurn(ice);'), 'an array of stun+turn urls still counts as TURN');
 const iceStart = calls.indexOf('getIceServers().then(function(fresh)');
@@ -22,8 +23,8 @@ assert.ok((calls.match(/_nalunoIceFrozen = true/g) || []).length >= 3, 'offer an
 assert.ok(calls.includes('if(!still()){ nalunoDropPrepared(); return; }'), 'a prepare that gives up does not make Answer wait on it');
 // 12b: the call is marked accepted at the tap, in parallel, so Answer can wait
 // for an in-flight prepare up to its own TURN cap instead of starting over.
-assert.ok(/const deadline = Date\.now\(\) \+ \d+;/.test(calls) && calls.indexOf("nalunoCallMove(acceptingId, 'accepted'") < calls.indexOf('const deadline = Date.now() +'), 'Answer waits for an in-flight prepare instead of throwing it away');
-assert.ok(calls.includes('const turnReady = nalunoWaitForTurn(7000);') && calls.includes('await turnReady;'), 'the offer waits for TURN before the other phone rings (30d: while the mic/camera opens)');
+assert.ok(/const deadline = Date\.now\(\) \+ NALUNO_ANSWER_TURN_MS \+ 1500;/.test(calls) && calls.indexOf("nalunoCallMove(acceptingId, 'accepted'") < calls.indexOf('const deadline = Date.now() +'), 'Answer waits for an in-flight prepare instead of throwing it away');
+assert.ok(calls.includes('const turnReady = nalunoWaitForTurn(NALUNO_CALLER_TURN_MS);') && calls.includes('await turnReady;'), 'the offer waits for TURN before the other phone rings (30d: while the mic/camera opens)');
 assert.ok(!/setTimeout\(climb,/.test(camera), 'the 4K climb does not run during a call at all (29d)');
 assert.ok(!camera.includes('setTimeout(climb, 400);'), 'the old 400ms climb is gone');
 

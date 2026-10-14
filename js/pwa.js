@@ -6,7 +6,7 @@
    ============================================================ */
 /* ---------------- PWA INSTALL + CALL NOTIFICATION DEEP-LINK ---------------- */
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js?v=20261014b', { scope: '/', updateViaCache: 'none' })
+  navigator.serviceWorker.register('/sw.js?v=20261014c', { scope: '/', updateViaCache: 'none' })
     .then(function(reg){ try{ reg.update(); }catch(_){} })
     .catch(function(e){ console.warn('[sw]', e); });
   // One automatic reload when a new SW takes control (clears stuck "sign-in not ready"
@@ -219,7 +219,13 @@ async function nalunoOpenCallFromPush(callId, opts){
     if(hidden && action !== 'answer' && typeof nalunoStartBackgroundRing === 'function'){
       nalunoStartBackgroundRing(callId, 'Someone');
     }
-    const snap = callSnapP ? await callSnapP : await fbDb.collection('calls').doc(callId).get();
+    let snap = callSnapP ? await callSnapP : null;
+    /* 14 Oct c: the early read can run before sign-in is back and be
+       refused (or find nothing). That used to drop the answer silently, and
+       a repeat press is ignored for 4 s. Read again, now signed in. */
+    if(!snap || !snap.exists){
+      try{ snap = await fbDb.collection('calls').doc(callId).get(); }catch(_){ snap = null; }
+    }
     if(!snap || !snap.exists) return;
     const data = snap.data() || {};
     if(data.calleeUid !== currentUser.uid) return;

@@ -1574,6 +1574,22 @@ function nalunoWaitForTurn(maxMs){
 }
 window.nalunoCfgHasTurn = nalunoCfgHasTurn;
 window.nalunoWaitForTurn = nalunoWaitForTurn;
+/* 14 Oct c: who waits for the relay (TURN), and for how long.
+   One relay on either phone is enough to get through a mobile network;
+   none at all and the call can never connect, because a connection cannot
+   gain a relay after its offer or answer is written. So:
+   - the caller waits for the credential fetch itself, up to 2.5 s (a warm
+     cache, the usual case, is instant);
+   - the answering phone does not wait at all when the caller has a relay
+     (14b's speed-up, kept), and when the caller has none it waits for its
+     own fetch to come back: the time a cold fetch takes, never a fixed
+     clock. 7 s only cuts off a fetch that hangs. */
+const NALUNO_CALLER_TURN_MS = 2500;
+const NALUNO_ANSWER_TURN_MS = 7000;
+function nalunoAnswerTurnCap(callerRelay){
+  return callerRelay ? 0 : NALUNO_ANSWER_TURN_MS;
+}
+window.nalunoAnswerTurnCap = nalunoAnswerTurnCap;
 
 /* The offer used to be written the instant setLocalDescription returned,
    which is often only the phone's own address. The other phone then sat
@@ -3148,9 +3164,16 @@ async function startRealCallInner(c){
     : Promise.resolve(null);
   const voice = nalunoIsVoiceCall();
   /* The other phone is not ringing yet, so this does not sit on the
-     answer. A warm cache returns at once; a cold one must not hold the
-     offer for the whole credential fetch. */
-  const turnReady = nalunoWaitForTurn(900);
+     answer. A warm cache returns at once (the usual case: TURN is kept
+     ready while Naluno is open).
+     14 Oct c: 14b cut this to 0.9 s. A cold fetch (an id-token refresh
+     plus the credential request) often takes longer on mobile data, so
+     the offer went out with no relay. When the other phone also had none
+     ready, the call could never connect: a connection cannot gain a relay
+     once its offer or answer is written. It waits for the fetch itself
+     again (it ends as soon as the credentials come back or fail), with a
+     cap well short of 14a's 7 s; the answering phone covers the rest. */
+  const turnReady = nalunoWaitForTurn(NALUNO_CALLER_TURN_MS);
   if(voice){
     try{ await nalunoOpenMic(); }catch(e){
       if(gone()) return false;
@@ -3627,10 +3650,18 @@ async function nalunoPrepareAnswer(callId, offer, camReady, earlyOk, callerRelay
     await Promise.all([
       Promise.resolve(camReady).catch(function(){}),
       Promise.resolve(camReady).catch(function(){}).then(function(){ nalunoCallMark(callId, 'prepMedia'); }),
-      /* The caller's relay is enough to connect. Waiting out our own TURN
-         (up to 7s) before the answer existed is what left a closed app on
-         "connecting" after the person had already tapped Answer. */
-      nalunoWaitForTurn(callerRelay ? 0 : 900).then(function(c){ nalunoCallMark(callId, 'prepTurn'); return c; }),
+      /* 14 Oct c: while it rings, this phone fetches its own relay too
+         (the ring hides the wait, and a relay on both sides gets through
+         networks that block direct traffic, and lets the call connect
+         while it rings). When the caller already has a relay, Answer cuts
+         this wait short (prep.wake): an answer from a closed app does not
+         wait for it, as in 14b. Without the caller's relay, this phone's
+         own must be in the answer, so Answer waits for the fetch (see
+         nalunoAnswerTurnCap); 14b's 0.9 s cap left both phones without. */
+      Promise.race([
+        nalunoWaitForTurn(NALUNO_ANSWER_TURN_MS),
+        callerRelay ? new Promise(function(r){ prep.wake = r; }) : new Promise(function(){}),
+      ]).then(function(c){ nalunoCallMark(callId, 'prepTurn'); return c; }),
     ]);
     if(!still()){ nalunoDropPrepared(); return; }
     if(!mediaStreamIsLive(stream)){ nalunoDropPrepared(); return; } // no camera/mic yet: Answer takes the normal path
@@ -3784,6 +3815,9 @@ $('acceptIncoming').onclick = async (ev)=>{
 
   let prep = nalunoPreparedFor(acceptingId);
   if(prep) prep.taken = true;
+  /* Still fetching its own relay while the caller already has one: stop
+     waiting for it; the caller's relay gets the call through. */
+  try{ if(!prep && nalunoPrepared && nalunoPrepared.callId === acceptingId && typeof nalunoPrepared.wake === 'function') nalunoPrepared.wake(); }catch(_){}
   /* 12 Oct b: the caller's ring stops the moment Answer is tapped. It used
      to wait first for the answer built during the ring (up to 1 s), then
      for the database round trip, and on a phone that had just been opened
@@ -3849,11 +3883,15 @@ $('acceptIncoming').onclick = async (ev)=>{
      the longest wait people saw. The build gives up on its own when it
      cannot finish; 20 s is only a backstop. */
   if(!prep && nalunoPrepared && nalunoPrepared.callId === acceptingId && !nalunoPrepared.ready){
-    /* A closed app has nothing prepared yet. Waiting the full TURN cap
-       (20s) before starting the answer is the long "connecting". If it is
-       not ready almost at once, build it now — TURN still lands on the
-       connection if it arrives before the answer is written. */
-    const deadline = Date.now() + 400;
+    /* 14 Oct c: 14b gave the build 0.4 s and then started again from
+       nothing. A build that was 0.1 s from done was thrown away and the
+       new one waited for the same camera and the same relay, so Answer
+       took about a second longer, never shorter. The build is waited for
+       while it is still going (it drops itself the moment it cannot
+       finish); the relay wait is now only as long as the fetch itself, so
+       this is the time the answer needs anyway. The cap only cuts off a
+       hang. */
+    const deadline = Date.now() + NALUNO_ANSWER_TURN_MS + 1500;
     while(activeCallId === acceptingId && Date.now() < deadline){
       await new Promise(function(r){ setTimeout(r, 40); });
       prep = nalunoPreparedFor(acceptingId);
@@ -3954,7 +3992,7 @@ $('acceptIncoming').onclick = async (ev)=>{
     // Parallel: media ready and a short TURN wait. iceNow() is 0ms once
     // that wait lands, so the answer is not built STUN-only on a cold cache.
     if(typeof prewarmIceServers === 'function') prewarmIceServers();
-    const turnWait = nalunoWaitForTurn((nalunoIncomingFrom && nalunoIncomingFrom.id === acceptingId && nalunoIncomingFrom.relay) ? 0 : 900);
+    const turnWait = nalunoWaitForTurn(nalunoAnswerTurnCap(!!(nalunoIncomingFrom && nalunoIncomingFrom.id === acceptingId && nalunoIncomingFrom.relay)));
     let mediaOk;
     if(nalunoIsVoiceCall()){
       try{ await nalunoOpenMic(); }catch(_){}
