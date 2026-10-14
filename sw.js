@@ -74,8 +74,8 @@
 // v248: attention is only kept when a visit, an app open, or a continued session owns it. Join date and Find pin stay on the person.
 // v284: 10.05f Android floats a video call on leaving; Wireline alerts through Naluno's worker; a call answers once per tap.
 // v285: 10.05g voices keep reading (several makers, scheduled, trimmed), Luganda spoken from its own sounds, test alert, stale stamps.
-const CACHE_NAME = 'naluno-shell-v321';
-const APP_BUILD = '20261014c';
+const CACHE_NAME = 'naluno-shell-v324';
+const APP_BUILD = '20261015b';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -94,16 +94,38 @@ const CORE_ASSETS = [
   '/js/trust-legal.js', '/js/security-events.js',
 ];
 
+/* 15 Oct: the version an app page carries (meta app-version), as
+   YYYYMMDD + letter so newer sorts later; '' when it cannot be read. */
+async function nalunoShellStamp(res){
+  try{
+    if(!res) return '';
+    const t = await res.clone().text();
+    const m = /<meta name="app-version" content="(\d{4})\.(\d{2})\.(\d{2})([a-z])"/.exec(t);
+    return m ? (m[1] + m[2] + m[3] + m[4]) : '';
+  }catch(_){ return ''; }
+}
 self.addEventListener('install', event=>{
-  self.skipWaiting();
-  event.waitUntil(
-    caches.open(CACHE_NAME).then(cache =>
-      /* 29h: fetch past the browser's own cache, so a new version never
-         stores an old copy of the app page (which brought the old page, and
-         the update banner, back after the update). */
-      Promise.all(CORE_ASSETS.map(u => cache.add(new Request(u, { cache: 'reload' })).catch(()=>{})))
-    )
-  );
+  event.waitUntil((async ()=>{
+    /* 15 Oct: newest wins. A server that briefly hands out an OLDER sw.js
+       (a slow copy somewhere) must not pull a phone back: the browser
+       installs any worker that differs. A worker older than the newest one
+       this phone has had refuses to install, and the newer one stays. */
+    const mine = Number((String(CACHE_NAME).match(/v(\d+)$/) || [])[1] || 0);
+    let newest = 0;
+    try{
+      (await caches.keys()).forEach(function(n){
+        const m = /^naluno-shell-v(\d+)$/.exec(n);
+        if(m) newest = Math.max(newest, Number(m[1]));
+      });
+    }catch(_){}
+    if(mine && newest > mine) throw new Error('naluno: an older worker (' + mine + ') does not replace ' + newest);
+    self.skipWaiting();
+    const cache = await caches.open(CACHE_NAME);
+    /* 29h: fetch past the browser's own cache, so a new version never
+       stores an old copy of the app page (which brought the old page, and
+       the update banner, back after the update). */
+    await Promise.all(CORE_ASSETS.map(u => cache.add(new Request(u, { cache: 'reload' })).catch(()=>{})));
+  })());
 });
 
 self.addEventListener('activate', event=>{
@@ -471,7 +493,16 @@ self.addEventListener('fetch', event=>{
     if(cached && isSameOrigin && (isAppCode || isAppNav || isStaticAsset)){
       event.waitUntil((async ()=>{
         try{
-          const fresh = await netTimeout(event.request, 12000);
+          /* 15 Oct: the app page is checked with the server ("no-cache"), so
+             the copy kept for the next opening is the newest one, never an
+             older copy the browser had cached for a few minutes. */
+          const fresh = await netTimeout(isAppNav ? new Request(bare, { cache: 'no-cache', credentials: 'same-origin' }) : event.request, 12000);
+          /* Never keep an older app page over a newer one (a server briefly
+             handing out an old copy). */
+          if(fresh && fresh.ok && isAppNav){
+            const got = await nalunoShellStamp(fresh), have = await nalunoShellStamp(cached);
+            if(got && have && got < have) return;
+          }
           if(fresh && fresh.ok) putBare(fresh);
         }catch(_){ /* offline: keep what we have */ }
       })());

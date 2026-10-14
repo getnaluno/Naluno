@@ -1001,6 +1001,8 @@ service cloud.firestore {
         && request.resource.data.listed == false
         && request.resource.data.held == true
         && request.resource.data.hidden == false
+        // 14 Oct e: Screen's verdict is written by the worker, never by the phone.
+        && !request.resource.data.keys().hasAny(['screenDecision', 'screenScore', 'screenReason', 'screenVersion', 'screenFrames'])
         && reachPassOk(id)
         && videoHasPass();
       // Creator may rewrite; others may only touch engagement/live/membership fields.

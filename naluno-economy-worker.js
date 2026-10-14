@@ -6659,6 +6659,16 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
   const profile = await fsGetDoc(env, token, "/users/" + encodeURIComponent(row.creatorUid || user.uid));
   const trusted = publisherTrusted(profile);
   let judged = judgeScreenPayload(body && body.screen, { title: row.title || "" });
+  if (!judged.hasScreen && !(body && body.screen) && Number(row.screenVersion) >= 1 && (row.screenDecision === "allow" || row.screenDecision === "hold")) {
+    judged = {
+      decision: row.screenDecision,
+      score: Number(row.screenScore) || 0,
+      hasScreen: true,
+      reason: String(row.screenReason || "") || (row.screenDecision === "allow" ? "" : "screen"),
+      frames: Number(row.screenFrames) || 0,
+      reused: true
+    };
+  }
   const hasPicture = !!(row.mediaUrl || row.thumbUrl || Array.isArray(row.chapters) && row.chapters.some((c) => c && c.mediaUrl));
   if (hasPicture && !judged.hasScreen) {
     let inherited = false;
