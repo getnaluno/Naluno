@@ -1571,12 +1571,12 @@ async function saveSignalSegment(segment){
       try{ localStorage.setItem('nalunoLastSignalError', JSON.stringify(nalunoLastSignalError)); }catch(_){}
     }catch(_){}
     // Say something specific where we can, rather than a generic failure.
-    if(code === 'permission-denied'){
-      toast('Signal blocked by server rules — not saved');
-    } else if(/longer than|exceeds|too large|invalid-argument/i.test(msg)){
-      toast('Signal too large to save — not saved');
+    /* 15 Oct g: the reason goes to Naluno (Diagnostics, above via
+       nalunoDiag); the person gets a sentence they can act on. */
+    if(/longer than|exceeds|too large|invalid-argument/i.test(msg)){
+      toast('That Signal is too large to post. Try a shorter clip or a smaller photo.');
     } else {
-      toast('Couldn\u2019t save Signal: ' + (code || msg).slice(0, 60));
+      toast('Couldn\u2019t post that Signal. Please try again.');
     }
     return null;
   }

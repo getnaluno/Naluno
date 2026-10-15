@@ -77,9 +77,9 @@ check('releasing a held Signal puts it back for everyone only when that was the 
   const f = new Function(grab(adm, 'signalReleasePatch') + 'return signalReleasePatch;')();
   const now = 1.8e12;
   let r = f({ audience: 'public', expiresAt: now + 3600e3 }, { audience: 'public', expiresAt: now + 3600e3, hidden: false }, now, 'op');
-  assert.strictEqual(r.pub.public, true); assert.strictEqual(r.user.public, true); assert.strictEqual(r.pub.held, false); assert.strictEqual(r.goesPublic, true);
+  /* 15 Oct f: the person's own copy only takes held/hidden from the desk (rules); public lives on the Everyone copy. */ assert.strictEqual(r.pub.public, true); assert.ok(!('public' in r.user)); assert.strictEqual(r.pub.held, false); assert.strictEqual(r.goesPublic, true);
   r = f({ audience: 'connections', expiresAt: now + 3600e3 }, { expiresAt: now + 3600e3 }, now, 'op');
-  assert.strictEqual(r.pub.public, false); assert.strictEqual(r.user.public, false);
+  assert.strictEqual(r.pub.public, false); assert.ok(!('public' in r.user));
   r = f({ audience: 'public', expiresAt: now - 1 }, { expiresAt: now - 1 }, now, 'op');
   assert.strictEqual(r.pub.public, false, 'its 24 hours are over');
   r = f({ expiresAt: now + 3600e3 }, { expiresAt: now + 3600e3 }, now, 'op');
@@ -168,7 +168,8 @@ check('public Signals: no 30-person cap; pages of 120 up to 480; server-clock bo
   const rows = P._group(list);
   assert.strictEqual(rows.length, 80);
   assert.ok(!rows.some((r) => ['h', 'x', 'n'].includes(r.uid)), 'held, taken-down and connections-only stay out');
-  assert.ok(/var PAGE = 120, MAX_PAGES = 4;/.test(src));
+  /* 15 Oct f reworked the paging (first pages, then follow-ups); still pages of 120. */
+  assert.ok(/var PAGE = 120, FIRST_PAGES = 4,/.test(src));
   assert.ok(/if \(k && k\.measured\) return Date\.now\(\) \+ k\.skew \+ 60000 \+ aheadExtra;/.test(src));
 });
 

@@ -933,6 +933,15 @@ function nalunoMarkCallLive(){
   if(nalunoAnyHeld()) return;   // connected early while ringing: not a call yet
   nalunoCallLive = true;
   try{ nalunoCallMark(activeCallId, 'connected'); }catch(_){}
+  try{
+    const rec = nalunoCD(activeCallId);
+    if(rec){
+      rec.connected = true;
+      if(rec.restarts > 0) rec.recovered = true;
+      const cid = activeCallId, pcNow = peerConnection;
+      setTimeout(function(){ nalunoCDPath(pcNow, cid); }, 1200);
+    }
+  }catch(_){}
   try{ nalunoWatchHeard(activeCallId, peerConnection); }catch(_){}
   try{
     if(typeof nalunoSessionHold === 'function') nalunoSessionHold(nalunoIsVoiceCall() ? 'voice' : 'video');
@@ -1601,12 +1610,308 @@ window.nalunoWaitForTurn = nalunoWaitForTurn;
      (14b's speed-up, kept), and when the caller has none it waits for its
      own fetch to come back: the time a cold fetch takes, never a fixed
      clock. 7 s only cuts off a fetch that hangs. */
-const NALUNO_CALLER_TURN_MS = 2500;
+/* 15 Oct g: the caller no longer starts on a clock. A cold credential
+   fetch is an id-token refresh (up to 4 s) plus the request (up to 2.5 s);
+   2.5 s cut it off, and the offer went out with no relay. The caller now
+   waits for the fetch's own result (it ends the moment the credentials
+   arrive or fail; a warm cache is instant). 7 s only cuts off a hang. If
+   the relay still arrives late, the call is moved onto it with a
+   coordinated restart (nalunoRecoverCall). */
+const NALUNO_CALLER_TURN_MS = 7000;
 const NALUNO_ANSWER_TURN_MS = 7000;
 function nalunoAnswerTurnCap(callerRelay){
   return callerRelay ? 0 : NALUNO_ANSWER_TURN_MS;
 }
 window.nalunoAnswerTurnCap = nalunoAnswerTurnCap;
+
+/* ---- 15 Oct g: the relay decision, made before any offer or answer ----
+   Resolves with the configuration to use and what was decided:
+   turn-ready (cached), turn-fetched, no-turn-failed (the fetch came back
+   without a relay), no-turn-timeout (the fetch hung past the cap). */
+async function nalunoIceDecide(cap){
+  const t0 = Date.now();
+  let cached = null;
+  try{ if(typeof IceCore !== 'undefined' && IceCore.cached) cached = IceCore.cached(); }catch(_){}
+  if(nalunoCfgHasTurn(cached)) return { cfg: cached, decision: 'turn-ready', ms: 0 };
+  if(!(cap > 0)){
+    try{ if(typeof prewarmIceServers === 'function') prewarmIceServers(); }catch(_){}
+    return { cfg: null, decision: 'not-waited', ms: 0 };
+  }
+  let cfg = null, timedOut = false, timer = null;
+  try{
+    const wait = (typeof IceCore !== 'undefined' && IceCore.awaitServers) ? IceCore.awaitServers(cap + 500) : nalunoWaitForTurn(cap + 500);
+    cfg = await Promise.race([
+      Promise.resolve(wait).catch(function(){ return null; }),
+      new Promise(function(r){ timer = setTimeout(function(){ timedOut = true; r(null); }, cap); }),
+    ]);
+  }catch(_){}
+  if(timer) clearTimeout(timer);
+  const ms = Date.now() - t0;
+  if(nalunoCfgHasTurn(cfg)) return { cfg: cfg, decision: 'turn-fetched', ms: ms };
+  return { cfg: null, decision: timedOut ? 'no-turn-timeout' : 'no-turn-failed', ms: ms };
+}
+window.nalunoIceDecide = nalunoIceDecide;
+/* Fresh credentials for a restart (the old ones may be what failed). */
+async function nalunoFreshIce(cap){
+  try{
+    if(typeof IceCore !== 'undefined' && IceCore.fresh) return await IceCore.fresh(cap || 4500);
+  }catch(_){}
+  try{ if(typeof IceCore !== 'undefined' && IceCore.cached) return IceCore.cached(); }catch(_){}
+  return null;
+}
+
+/* ---- 15 Oct g: what happened on each call, for Naluno (Diagnostics) ----
+   Stages reached and their times (this phone's clock), the relay decision,
+   connection states, the route the call used (direct or relay: candidate
+   types only, never addresses), restarts, and how it ended. Sent once per
+   call attempt, connected or not, by NalunoTech (diagnostics.js). */
+const nalunoCallDiag = {};
+function nalunoCDStart(role, kind){
+  return { v: 1, role: role, kind: kind || 'video', t0: Date.now(), ice: {}, states: [], restarts: 0, restartWhy: [],
+    recovered: false, bg: false, path: null, media: {}, recordCreated: false, offer: false, answer: false,
+    connected: false, endReason: '', error: '' };
+}
+function nalunoCDBind(rec, callId){
+  if(!rec || !callId) return rec;
+  rec.callId = String(callId).slice(0, 40);
+  nalunoCallDiag[callId] = rec;
+  return rec;
+}
+function nalunoCD(callId){ return callId ? (nalunoCallDiag[callId] || null) : null; }
+function nalunoCDSet(callId, patch){
+  const r = nalunoCD(callId);
+  if(r && patch) Object.keys(patch).forEach(function(k){ if(patch[k] !== undefined) r[k] = patch[k]; });
+  return r;
+}
+function nalunoCDState(which, state){
+  try{
+    const r = nalunoCD(activeCallId);
+    if(!r) return;
+    if(r.states.length < 40) r.states.push(which + ':' + state + '@' + (Date.now() - r.t0));
+    if(typeof document !== 'undefined' && document.hidden) r.bg = true;
+  }catch(_){}
+}
+/* The route the connected call uses: candidate TYPES only (host / srflx /
+   relay) and the transport, never an address. */
+async function nalunoCDPath(pc, callId){
+  try{
+    const r = nalunoCD(callId);
+    if(!r || !pc || typeof pc.getStats !== 'function') return;
+    const stats = await pc.getStats();
+    let pair = null;
+    const byId = {};
+    stats.forEach(function(x){ byId[x.id] = x; });
+    stats.forEach(function(x){
+      if(x.type === 'transport' && x.selectedCandidatePairId && byId[x.selectedCandidatePairId]) pair = byId[x.selectedCandidatePairId];
+    });
+    if(!pair) stats.forEach(function(x){ if(!pair && x.type === 'candidate-pair' && (x.selected || (x.nominated && x.state === 'succeeded'))) pair = x; });
+    if(!pair) return;
+    const l = byId[pair.localCandidateId] || {}, rm = byId[pair.remoteCandidateId] || {};
+    r.path = { local: l.candidateType || '', remote: rm.candidateType || '', proto: l.protocol || '', relayProto: l.relayProtocol || '' };
+  }catch(_){}
+}
+const NALUNO_STAGE_ORDER = ['dial', 'ring', 'record', 'alert', 'prepared', 'earlyAnswer', 'answerTap', 'accepted', 'answerSdp', 'final', 'released', 'connected', 'heard', 'end'];
+function nalunoCDFinish(callId, why){
+  try{
+    const r = nalunoCD(callId);
+    if(!r || r.sent) return null;
+    r.sent = true;
+    delete nalunoCallDiag[callId];
+    const marks = ((window.__nalunoCallTimes || {})[callId]) || {};
+    const keys = Object.keys(marks).filter(function(k){ return typeof marks[k] === 'number'; });
+    const first = keys.length ? Math.min.apply(null, keys.map(function(k){ return marks[k]; })) : 0;
+    const stages = {};
+    keys.forEach(function(k){ stages[k] = Math.round(marks[k] - first); });
+    let reached = '';
+    NALUNO_STAGE_ORDER.forEach(function(k){ if(k !== 'end' && stages[k] != null) reached = k; });
+    if(r.connected && !reached) reached = 'connected';
+    const outcome = r.connected ? 'connected' : (r.endReason || why || 'ended-before-connect');
+    const out = {
+      v: r.v, role: r.role, kind: r.kind, callId: r.callId || '',
+      outcome: String(outcome).slice(0, 40), endReason: String(r.endReason || why || '').slice(0, 40),
+      stageReached: reached, stages: stages,
+      recordCreated: !!r.recordCreated, offer: !!r.offer, answer: !!r.answer,
+      ice: r.ice || {}, states: (r.states || []).slice(0, 40), path: r.path || null,
+      restarts: r.restarts || 0, restartWhy: (r.restartWhy || []).slice(0, 6),
+      recovered: !!r.recovered || ((r.restarts || 0) > 0 && (r.finalIce === 'connected' || r.finalIce === 'completed')),
+      media: r.media || {}, bg: !!r.bg || (typeof document !== 'undefined' && !!document.hidden),
+      error: String(r.error || '').slice(0, 200), durationMs: Date.now() - r.t0,
+    };
+    try{ if(window.NalunoTech) NalunoTech.call(out); }catch(_){}
+    return out;
+  }catch(_){ return null; }
+}
+window.nalunoCDFinish = nalunoCDFinish;
+window.nalunoCD = nalunoCD;
+
+/* ---- 15 Oct g: coordinated recovery (ICE restart with signalling) ----
+   restartIce() alone changed nothing the other phone knew about. Now:
+   - only the caller makes restart offers (no glare); the answering phone
+     asks for one (iceRestartAsk);
+   - the restart fetches fresh relay credentials first and applies them;
+   - the offer and the answer travel on the call (iceRestart /
+     iceRestartAnswer), candidates on the usual lists;
+   - candidates for a new round that arrive before its description are
+     kept and added once it is set;
+   - at most NALUNO_MAX_ICE_RESTARTS per call, then the call ends with a
+     plain reason. A phone without this version ignores the request and
+     the call ends as it did before. */
+const NALUNO_MAX_ICE_RESTARTS = 2;
+function nalunoRs(pc){ return pc._nalunoRs || (pc._nalunoRs = { n: 0, waiting: 0, busy: false, handledAsk: 0, applied: 0, asked: 0 }); }
+function nalunoRemoteUfrags(pc){
+  const out = {};
+  try{
+    const sdp = (pc.remoteDescription && pc.remoteDescription.sdp) || '';
+    sdp.replace(/a=ice-ufrag:(\S+)/g, function(_, u){ out[u] = 1; return ''; });
+  }catch(_){}
+  return out;
+}
+function nalunoAddRemoteCand(pc, cand){
+  if(!pc || pc.signalingState === 'closed' || !cand) return;
+  const uf = cand.usernameFragment;
+  if(uf){
+    const have = nalunoRemoteUfrags(pc);
+    if(Object.keys(have).length && !have[uf]){
+      const w = pc._nalunoCandWait || (pc._nalunoCandWait = []);
+      w.push(cand);
+      if(w.length > 200) w.shift();
+      return;
+    }
+  }
+  try{ pc.addIceCandidate(new RTCIceCandidate(cand)).catch(function(){}); }catch(_){}
+}
+function nalunoFlushCandWait(pc){
+  if(!pc || !pc._nalunoCandWait) return;
+  const w = pc._nalunoCandWait;
+  pc._nalunoCandWait = [];
+  w.forEach(function(c){ nalunoAddRemoteCand(pc, c); });
+}
+window.nalunoAddRemoteCand = nalunoAddRemoteCand;
+async function nalunoCallerRestart(pc, callRef, why){
+  const rs = nalunoRs(pc);
+  if(rs.busy || rs.n >= NALUNO_MAX_ICE_RESTARTS) return false;
+  if(!nalunoCallStillThis(pc) || nalunoHeld(pc) || pc.signalingState !== 'stable') return false;
+  rs.busy = true;
+  const callId = activeCallId;
+  try{
+    rs.n++;
+    const r = nalunoCD(callId);
+    if(r){ r.restarts = rs.n; r.restartWhy.push(String(why || '').slice(0, 24)); }
+    const fresh = await nalunoFreshIce(4500);
+    if(!nalunoCallStillThis(pc) || pc.signalingState !== 'stable') return false;
+    if(fresh && nalunoCfgHasTurn(fresh) && typeof pc.setConfiguration === 'function'){
+      try{ pc.setConfiguration(fresh); }catch(_){}
+    }
+    const offer = await pc.createOffer({ iceRestart: true });
+    if(!nalunoCallStillThis(pc) || pc.signalingState !== 'stable') return false;
+    await pc.setLocalDescription(offer);
+    const sdp = await nalunoSdpReady(pc, 300) || { type: offer.type, sdp: offer.sdp };
+    rs.waiting = rs.n;
+    let relay = false;
+    try{ relay = nalunoCfgHasTurn(pc.getConfiguration()); }catch(_){}
+    await callRef.update({ iceRestart: { n: rs.n, offer: sdp, why: String(why || '').slice(0, 24), relay: relay } });
+    console.log('[call] ICE restart ' + rs.n + ' sent (' + why + ')');
+    return true;
+  }catch(e){
+    try{ if(typeof nalunoDiag === 'function') nalunoDiag('call-restart', (e && e.message) || String(e), why); }catch(_){}
+    return false;
+  }finally{
+    rs.busy = false;
+  }
+}
+function nalunoCallerOnRestartDoc(pc, callRef, d){
+  if(!pc || !d) return;
+  const rs = nalunoRs(pc);
+  const a = d.iceRestartAnswer;
+  if(a && a.answer && a.n === rs.waiting && pc.signalingState === 'have-local-offer'){
+    rs.waiting = 0;
+    pc.setRemoteDescription(new RTCSessionDescription(a.answer)).then(function(){
+      nalunoFlushCandWait(pc);
+      console.log('[call] ICE restart ' + a.n + ' answered');
+    }).catch(function(e){
+      try{ if(typeof nalunoDiag === 'function') nalunoDiag('call-restart', 'answer not applied: ' + ((e && e.message) || e)); }catch(_){}
+    });
+  }
+  const ask = d.iceRestartAsk;
+  if(ask && ask.n > rs.handledAsk){
+    rs.handledAsk = ask.n;
+    nalunoCallerRestart(pc, callRef, 'peer-' + String(ask.why || 'ask').slice(0, 18));
+  }
+}
+async function nalunoCalleeOnRestartDoc(pc, callRef, d){
+  if(!pc || !d) return;
+  const r = d.iceRestart;
+  const rs = nalunoRs(pc);
+  if(!r || !r.offer || !(r.n > rs.applied)) return;
+  if(!nalunoCallStillThis(pc)) return;
+  rs.applied = r.n;
+  try{
+    /* This phone's own relay too, when it has one now. */
+    let mine = null;
+    try{ if(typeof IceCore !== 'undefined' && IceCore.cached) mine = IceCore.cached(); }catch(_){}
+    if(!nalunoCfgHasTurn(mine)) mine = await nalunoFreshIce(2500);
+    if(nalunoCfgHasTurn(mine) && typeof pc.setConfiguration === 'function'){
+      try{ pc.setConfiguration(mine); }catch(_){}
+    }
+    if(pc.signalingState !== 'stable') return;
+    await pc.setRemoteDescription(new RTCSessionDescription(r.offer));
+    nalunoFlushCandWait(pc);
+    const ans = await pc.createAnswer();
+    await pc.setLocalDescription(ans);
+    const sdp = await nalunoSdpReady(pc, 300) || { type: ans.type, sdp: ans.sdp };
+    await callRef.update({ iceRestartAnswer: { n: r.n, answer: sdp } });
+    const rec = nalunoCD(activeCallId);
+    if(rec){ rec.restarts = r.n; rec.restartWhy.push(String(r.why || 'caller').slice(0, 24)); }
+    console.log('[call] ICE restart ' + r.n + ' answered here');
+  }catch(e){
+    try{ if(typeof nalunoDiag === 'function') nalunoDiag('call-restart', 'could not answer restart: ' + ((e && e.message) || e)); }catch(_){}
+  }
+}
+function nalunoCalleeAskRestart(pc, callRef, why){
+  const rs = nalunoRs(pc);
+  if(rs.asked >= NALUNO_MAX_ICE_RESTARTS) return false;
+  rs.asked++;
+  const r = nalunoCD(activeCallId);
+  if(r) r.restartWhy.push('asked-' + String(why || '').slice(0, 18));
+  callRef.update({ iceRestartAsk: { n: rs.asked, why: String(why || '').slice(0, 24) } }).catch(function(){});
+  return true;
+}
+/* One recovery attempt for this phone's side of the call. */
+function nalunoRecoverCall(pc, why){
+  try{
+    if(!nalunoCallStillThis(pc) || nalunoCallMediaUp(pc)) return false;
+    const callRef = (activeCallId && typeof fbDb !== 'undefined' && fbDb) ? fbDb.collection('calls').doc(activeCallId) : null;
+    if(!callRef){ nalunoTryRelay(pc); return true; }
+    if(iAmCaller) nalunoCallerRestart(pc, callRef, why);
+    else nalunoCalleeAskRestart(pc, callRef, why);
+    return true;
+  }catch(_){ return false; }
+}
+window.nalunoRecoverCall = nalunoRecoverCall;
+/* The call started without a relay: when one arrives and the call is not
+   up yet, move onto it. */
+function nalunoWatchLateTurn(pc){
+  if(!pc || pc._nalunoLateTurn) return;
+  pc._nalunoLateTurn = true;
+  let n = 0;
+  try{ if(typeof prewarmIceServers === 'function') prewarmIceServers(); }catch(_){}
+  const tick = function(){
+    if(!nalunoCallStillThis(pc) || nalunoCallMediaUp(pc) || ++n > 40) return;
+    let cfg = null;
+    try{ if(typeof IceCore !== 'undefined' && IceCore.cached) cfg = IceCore.cached(); }catch(_){}
+    let has = false;
+    try{ has = nalunoCfgHasTurn(pc.getConfiguration()); }catch(_){}
+    const settled = pc.signalingState === 'stable' && !nalunoHeld(pc) && pc.remoteDescription;
+    if(nalunoCfgHasTurn(cfg) && !has && settled && (pc._nalunoSettledAt || (pc._nalunoSettledAt = Date.now())) && Date.now() - pc._nalunoSettledAt > 2500){
+      nalunoRecoverCall(pc, 'late-turn');
+      return;
+    }
+    setTimeout(tick, 1000);
+  };
+  setTimeout(tick, 1000);
+}
+window.nalunoWatchLateTurn = nalunoWatchLateTurn;
+const NALUNO_NET_FAIL_MSG = 'Couldn’t connect. The network between your phones blocked the call. Try again, or switch between Wi-Fi and mobile data.';
 
 /* The offer used to be written the instant setLocalDescription returned,
    which is often only the phone's own address. The other phone then sat
@@ -1656,7 +1961,7 @@ function nalunoTuneCallAudio(pc){
 window.nalunoSdpReady = nalunoSdpReady;
 window.nalunoTuneCallAudio = nalunoTuneCallAudio;
 
-async function createPeerConnection(){
+async function createPeerConnection(iceCfg){
   try{
     if(typeof metricStart === 'function') window._callMediaMetric = metricStart('call_time_to_media');
   }catch(_){}
@@ -1664,9 +1969,11 @@ async function createPeerConnection(){
   try{ stopRemotePlayWatch(); }catch(_){}
   // Never stall the offer on TURN. Cached TURN if warm; STUN otherwise.
   // Auth already prewarms, so the second call (and most first calls) have TURN.
-  let ice = null;
+  /* 15 Oct g: the relay decision made just before (nalunoIceDecide) is
+     used as it is, so what was decided is what the connection gets. */
+  let ice = (iceCfg && nalunoCfgHasTurn(iceCfg)) ? iceCfg : null;
   try{
-    if(typeof IceCore !== 'undefined' && IceCore.now) ice = IceCore.now();
+    if(!ice && typeof IceCore !== 'undefined' && IceCore.now) ice = IceCore.now();
   }catch(_){}
   if(!ice){
     ice = { iceServers: [{ urls:'stun:stun.l.google.com:19302' }, { urls:'stun:stun1.l.google.com:19302' }], iceCandidatePoolSize: 4, bundlePolicy: 'max-bundle', rtcpMuxPolicy: 'require' };
@@ -1737,6 +2044,13 @@ async function createPeerConnection(){
     }catch(_){}
     ingestRemoteTrack(e.track, e.streams);
     if(e.track && e.track.kind === 'audio'){ try{ nalunoTuneCallAudio(pc); }catch(_){} }
+    try{
+      const rec = nalunoCD(activeCallId);
+      if(rec && e.track){
+        const k = e.track.kind === 'audio' ? 'remoteAudioMs' : 'remoteVideoMs';
+        if(rec.media[k] == null) rec.media[k] = Date.now() - rec.t0;
+      }
+    }catch(_){}
   };
 
   pc.onicegatheringstatechange = function(){
@@ -1745,6 +2059,14 @@ async function createPeerConnection(){
 
   attachConnectionWatchdogs(pc);
 
+  try{
+    const rec = nalunoCD(activeCallId);
+    if(rec){
+      rec.media.localAudio = !!(stream && stream.getAudioTracks().some(function(t){ return t.readyState === 'live'; }));
+      rec.media.localVideo = !!(stream && stream.getVideoTracks().some(function(t){ return t.readyState === 'live'; }));
+      try{ rec.ice.relayOnPc = nalunoCfgHasTurn(pc.getConfiguration()); }catch(_){}
+    }
+  }catch(_){}
   // Local tracks: addTrack only (sendrecv). No duplicate transceivers.
   if(stream){
     await attachLocalTracksToPc(pc);
@@ -2011,6 +2333,17 @@ function teardownCallConnection(){
      armed and later floated an empty Naluno whenever you left it. */
   try{ if(window.nalunoPip && nalunoPip.disarm) nalunoPip.disarm(); }catch(_){}
   try{ if(activeCallId){ nalunoCallMark(activeCallId, 'end'); nalunoCallTimingSave(activeCallId); } }catch(_){}
+  /* 15 Oct g: how this call went, to Naluno (Diagnostics). */
+  try{
+    if(activeCallId){
+      const rec = nalunoCD(activeCallId);
+      if(rec && peerConnection){
+        try{ rec.finalIce = peerConnection.iceConnectionState; rec.finalConn = peerConnection.connectionState; rec.finalGather = peerConnection.iceGatheringState; }catch(_){}
+        if(rec.finalIce) rec.states.push('final:' + rec.finalIce + '/' + rec.finalConn + '/' + rec.finalGather);
+      }
+      nalunoCDFinish(activeCallId);
+    }
+  }catch(_){}
   try{ nalunoCancelDial(); }catch(_){}
   try{ window.__nalunoConnectedAt = 0; window.__nalunoFxDraw = false; }catch(_){}
   try{ if(typeof nalunoDropPrepared === 'function') nalunoDropPrepared(); }catch(_){}
@@ -2117,6 +2450,7 @@ function endActiveCall(reason){
     return; // nothing to end
   }
   try{ if(window.nalunoPip && nalunoPip.disarm) nalunoPip.disarm(); }catch(_){}
+  try{ const rec = nalunoCD(callId); if(rec && !rec.endReason) rec.endReason = 'local-' + String(reason || 'hangup').slice(0, 24); }catch(_){}
   clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
   if(notifyRepeatInterval){ try{ clearInterval(notifyRepeatInterval); }catch(_){} try{ clearTimeout(notifyRepeatInterval); }catch(_){} notifyRepeatInterval = null; }
   stopCallerTone();
@@ -2149,7 +2483,7 @@ function endActiveCall(reason){
     if($('localPip')) $('localPip').classList.remove('large');
   }catch(e){}
   if(wasInCall || wasRinging || wasIncoming){
-    toast(reason === 'remote' ? 'Call ended' : 'Call ended');
+    toast(reason === 'network' ? NALUNO_NET_FAIL_MSG : 'Call ended');
   }
   // Full return-to-normal: media toggles + PC leftovers so the next call is clean
   try{
@@ -2308,33 +2642,34 @@ function nalunoTryRelay(pc){
     }
   }catch(_){}
 }
-function nalunoScheduleCallFail(pc){
+/* 15 Oct g: a failing connection gets up to NALUNO_MAX_ICE_RESTARTS
+   coordinated restarts (fresh relay credentials, a new offer and answer
+   over the call), each given time to work (longer while Naluno is in the
+   background). After that the call ends with a plain reason on both
+   phones, instead of a silent "connecting" screen. A ring never fails. */
+function nalunoScheduleCallFail(pc, why){
   if(!pc || pc._nalunoFailTimer) return;
   if(nalunoHeld(pc)) return;   // still ringing: Answer decides; a ring never fails the call
   const awayNow = function(){
     try{ return !!(window.nalunoPip && nalunoPip.backgrounded && nalunoPip.backgrounded()); }catch(_){ return false; }
   };
-  const wait = pc._nalunoRelayTried ? (awayNow() ? 20000 : 8000) : 3200;
+  const tries = pc._nalunoRecoveries || 0;
+  const wait = tries === 0 ? 2500 : (awayNow() ? 20000 : 9000);
   pc._nalunoFailTimer = setTimeout(function(){
     pc._nalunoFailTimer = null;
     if(!nalunoCallStillThis(pc) || nalunoCallMediaUp(pc)) return;
-    if(!pc._nalunoRelayTried){
-      pc._nalunoRelayTried = true;
-      nalunoTryRelay(pc);
-      nalunoScheduleCallFail(pc);
+    if((pc._nalunoRecoveries || 0) < NALUNO_MAX_ICE_RESTARTS){
+      pc._nalunoRecoveries = (pc._nalunoRecoveries || 0) + 1;
+      nalunoRecoverCall(pc, why || 'failed');
+      nalunoScheduleCallFail(pc, why);
       return;
     }
     const ice = pc.iceConnectionState;
     const st = pc.connectionState;
-    if(ice === 'failed' || st === 'failed'){
-      if(awayNow() && !pc._nalunoBgRetry){
-        pc._nalunoBgRetry = true;
-        nalunoTryRelay(pc);
-        nalunoScheduleCallFail(pc);
-        return;
-      }
+    if(ice === 'failed' || st === 'failed' || ice === 'disconnected' || st === 'disconnected' || ice === 'checking' || ice === 'new'){
+      try{ const rec = nalunoCD(activeCallId); if(rec) rec.endReason = 'network'; }catch(_){}
       if($('callOverlay') && $('callOverlay').classList.contains('active')){
-        endActiveCall('remote');
+        endActiveCall('network');
       }
     }
   }, wait);
@@ -2354,6 +2689,7 @@ function attachConnectionWatchdogs(pc){
   pc.onconnectionstatechange = ()=>{
     const s = pc.connectionState;
     console.log('[call] connection state:', s);
+    try{ nalunoCDState('c', s); }catch(_){}
     /* Connected while it still rings: nothing counts yet (no timer, no
        "Connected", no connected time on the record). Answer replays this. */
     if(nalunoHeld(pc)){ if(s === 'connected') try{ nalunoCallMark(activeCallId, 'earlyUp'); }catch(_){} return; }
@@ -2373,13 +2709,24 @@ function attachConnectionWatchdogs(pc){
       try{ scheduleFilteredUpgrade(pc); }catch(_){}
     }
     if(s === 'failed'){
-      nalunoScheduleCallFail(pc);
+      nalunoScheduleCallFail(pc, 'failed');
     }
   };
   pc.oniceconnectionstatechange = ()=>{
     const s = pc.iceConnectionState;
     console.log('[call] ICE connection state:', s);
+    try{ nalunoCDState('i', s); }catch(_){}
     if(nalunoHeld(pc)) return;
+    /* 15 Oct g: a route that drops (network switch, a tunnel) and does not
+       come back within 6 s is restarted, not left frozen. */
+    if(s === 'disconnected'){
+      clearTimeout(pc._nalunoDiscTimer);
+      pc._nalunoDiscTimer = setTimeout(function(){
+        if(!nalunoCallStillThis(pc)) return;
+        const now = pc.iceConnectionState;
+        if(now === 'disconnected' || now === 'failed') nalunoScheduleCallFail(pc, 'disconnected');
+      }, 6000);
+    }
     if(s === 'connected' || s === 'completed'){
       try{ window.__nalunoConnectedCall = activeCallId; }catch(_){}
       try{ if(peerConnection === pc && !window.__nalunoConnectedAt) window.__nalunoConnectedAt = Date.now(); }catch(_){}
@@ -2389,8 +2736,12 @@ function attachConnectionWatchdogs(pc){
       try{ scheduleFilteredUpgrade(pc); }catch(_){}
     }
     if(s === 'failed'){
-      nalunoScheduleCallFail(pc);
+      nalunoScheduleCallFail(pc, 'failed');
     }
+  };
+  pc.onicegatheringstatechange = function(){
+    console.log('[call] ICE gathering:', pc.iceGatheringState);
+    try{ nalunoCDState('g', pc.iceGatheringState); }catch(_){}
   };
 }
 /* Whatever happened while the senders were held (connected, or failed)
@@ -2606,7 +2957,7 @@ function handleIncomingCall(callId, data){
       if(currentUser.uid > data.callerUid) return;
       const mine = activeCallId;
       try{ nalunoCancelDial('crossed'); }catch(_){}
-      if(mine){ try{ fbDb.collection('calls').doc(mine).update({ status: 'ended', endReason: 'crossed' }).catch(function(){}); }catch(_){} }
+      if(mine){ try{ nalunoCDSet(mine, { endReason: 'crossed' }); fbDb.collection('calls').doc(mine).update({ status: 'ended', endReason: 'crossed' }).catch(function(){}); }catch(_){} }
       try{ clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null; }catch(_){}
       try{ stopCallerTone(); }catch(_){}
       teardownCallConnection();
@@ -2672,6 +3023,7 @@ function handleIncomingCall(callId, data){
   if(!replacingCallScreen) snapshotUiBeforeCall();
   showCallScreen('incoming');
   nalunoCallMark(callId, 'ring');
+  try{ if(!nalunoCD(callId)) nalunoCDBind(nalunoCDStart('callee', data.kind === 'audio' ? 'audio' : 'video'), callId); nalunoCDSet(callId, { recordCreated: true, offer: !!data.offer, callerRelay: data.callerRelay === true }); }catch(_){}
   startRingtone();
   try{ startIncomingKeepAlive(); }catch(_){}
   try{
@@ -2711,6 +3063,7 @@ function handleIncomingCall(callId, data){
     if(!d) return;
     const otherDeviceAnswered = d.status === 'accepted' && !callActionInProgress && $('incoming') && $('incoming').classList.contains('active');
     if(otherDeviceAnswered || ((d.status === 'ended' || d.status === 'missed' || d.status === 'declined' || d.status === 'busy') && $('callOverlay').classList.contains('active') && !$('incall').classList.contains('active'))){
+      try{ nalunoCDSet(callId, { endReason: otherDeviceAnswered ? 'answered-elsewhere' : (d.status === 'ended' ? 'caller-' + String(d.endReason || 'ended').slice(0, 20) : d.status) }); }catch(_){}
       if(otherDeviceAnswered){ toast('Answered on another device'); }
       else
       toast(d.status === 'missed' ? ('Missed call from ' + name) : 'Call ended');
@@ -3137,9 +3490,25 @@ function nalunoEndMyOldRings(keepId){
     });
   }).catch(function(){});
 }
+let nalunoDialDiag = null;
 async function startRealCall(c){
+  nalunoDialDiag = nalunoCDStart('caller', nalunoIsVoiceCall() ? 'audio' : 'video');
   try{ return await startRealCallInner(c); }
-  catch(e){ if(nalunoLastDial && nalunoLastDial.cancelled) return false; throw e; }
+  catch(e){
+    /* 15 Oct g: a call that never got going is reported too, with why. */
+    try{
+      const rec = nalunoDialDiag;
+      if(rec && !rec.sent){
+        const m = String((e && (e.name || '') + ' ' + (e.message || '')) || '');
+        rec.endReason = /denied|NotAllowed/i.test(m) ? (/camera/i.test(m) ? 'camera-denied' : 'mic-denied')
+          : (/Camera\/mic unavailable|Microphone unavailable|NotFound|NotReadable/i.test(m) ? 'media-unavailable' : 'setup-error');
+        rec.error = String((e && e.message) || e || '').slice(0, 200);
+        if(rec.callId) nalunoCDFinish(rec.callId); else { nalunoCDBind(rec, 'pre-' + Date.now().toString(36)); nalunoCDFinish(rec.callId); }
+      }
+    }catch(_){}
+    if(nalunoLastDial && nalunoLastDial.cancelled) return false;
+    throw e;
+  }
 }
 async function startRealCallInner(c){
   const dialAt = performance.now();
@@ -3190,7 +3559,7 @@ async function startRealCallInner(c){
      once its offer or answer is written. It waits for the fetch itself
      again (it ends as soon as the credentials come back or fail), with a
      cap well short of 14a's 7 s; the answering phone covers the rest. */
-  const turnReady = nalunoWaitForTurn(NALUNO_CALLER_TURN_MS);
+  const turnReady = nalunoIceDecide(NALUNO_CALLER_TURN_MS);
   if(voice){
     try{ await nalunoOpenMic(); }catch(e){
       if(gone()) return false;
@@ -3229,14 +3598,17 @@ async function startRealCallInner(c){
   // "connecting" (signaling completed) while carrying no audio or video (ICE never did).
   const callRef = fbDb.collection('calls').doc();
   activeCallId = callRef.id;
+  try{ nalunoCDBind(nalunoDialDiag, callRef.id); }catch(_){}
 
   // Do NOT await a 900ms canvas prime. Draw one frame if the lobby already has video.
   try{ if(typeof drawSendCanvas === 'function') drawSendCanvas(); }catch(_){}
   // TURN into the offer when it is already on the way. The other phone is
   // not ringing yet, so this does not come out of the 2 seconds after Answer.
-  try{ await turnReady; }catch(_){}
-  if(gone()) return false;
-  const pc = await createPeerConnection();
+  let iceChoice = null;
+  try{ iceChoice = await turnReady; }catch(_){}
+  try{ const rec = nalunoCD(callRef.id); if(rec && iceChoice) rec.ice = { decision: iceChoice.decision, waitMs: iceChoice.ms }; }catch(_){}
+  if(gone()){ try{ nalunoCDSet(callRef.id, { endReason: 'cancel' }); nalunoCDFinish(callRef.id); }catch(_){} return false; }
+  const pc = await createPeerConnection(iceChoice && iceChoice.cfg);
   const dropPc = () => { try{ pc.ontrack = null; pc.onicecandidate = null; pc.onconnectionstatechange = null; pc.oniceconnectionstatechange = null; pc.close(); }catch(_){} };
   if(gone()){ dropPc(); return false; }
   peerConnection = pc;
@@ -3297,6 +3669,9 @@ async function startRealCallInner(c){
   }
   recordIn = true;
   try{ nalunoCallMark(callRef.id, 'dial', dialAt); nalunoCallMark(callRef.id, 'record'); }catch(_){}
+  try{ nalunoCDSet(callRef.id, { recordCreated: true, offer: true }); }catch(_){}
+  /* No relay in the offer: move onto one if it arrives while connecting. */
+  try{ if(!nalunoCfgHasTurn(pc.getConfiguration())) nalunoWatchLateTurn(pc); }catch(_){}
   heldCands.splice(0).forEach(sendCand);
   nalunoDialing = null;
   nalunoIncomingFrom = null;
@@ -3308,6 +3683,13 @@ async function startRealCallInner(c){
     if(activeCallId !== myCallId) return;
     const d = snap && snap.data && snap.data();
     if(!d) return;
+    /* 15 Oct g: a restart answered by the other phone, or asked for by it. */
+    try{ if(peerConnection && (d.iceRestartAnswer || d.iceRestartAsk)) nalunoCallerOnRestartDoc(peerConnection, callRef, d); }catch(_){}
+    try{
+      if(d.status === 'declined' || d.status === 'busy') nalunoCDSet(myCallId, { endReason: d.status });
+      else if(d.status === 'missed') nalunoCDSet(myCallId, { endReason: 'no-answer' });
+      else if(d.status === 'ended') { const rec = nalunoCD(myCallId); if(rec && !rec.endReason) rec.endReason = 'remote-' + String(d.endReason || 'hangup').slice(0, 24); }
+    }catch(_){}
 
     // Stop ringing the instant the other side taps Answer (status becomes
     // 'accepted'), even if their SDP answer is still being prepared.
@@ -3372,8 +3754,10 @@ async function startRealCallInner(c){
         if(peerConnection !== fpc || fpc.signalingState === 'closed') return;
         return fpc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: finalAnswer.sdp })).then(function(){
           fpc._nalunoFinalPending = false;
-          if(peerConnection === fpc) pendingRemoteCandidates.forEach(cand => { try{ fpc.addIceCandidate(new RTCIceCandidate(cand)).catch(()=>{}); }catch(_){} });
+          try{ nalunoCDSet(myCallId, { answer: true }); }catch(_){}
+          if(peerConnection === fpc) pendingRemoteCandidates.forEach(cand => { nalunoAddRemoteCand(fpc, cand); });
           pendingRemoteCandidates = [];
+          nalunoFlushCandWait(fpc);
           nalunoCallMark(myCallId, 'final');
           if(nalunoHeld(fpc)) nalunoReleaseSenders(fpc).catch(function(){});
         });
@@ -3384,6 +3768,7 @@ async function startRealCallInner(c){
            phone's connection. End the call plainly (both phones close, a
            redial connects) instead of leaving it on a silent screen. */
         if(peerConnection === fpc && activeCallId === myCallId){
+          try{ nalunoCDSet(myCallId, { endReason: 'answer-switch', error: String((err && err.message) || '').slice(0, 200) }); }catch(_){}
           try{ callRef.update({ status: 'ended', endReason: 'answer-switch' }).catch(function(){}); }catch(_){}
           try{ toast('The call could not connect. Call again.'); }catch(_){}
           try{ endActiveCall('local'); }catch(_){}
@@ -3393,9 +3778,13 @@ async function startRealCallInner(c){
     if(!finished && d.answer && !remoteDescriptionSet && peerConnection){
       remoteDescriptionSet = true;
       peerConnection.setRemoteDescription(new RTCSessionDescription(d.answer)).then(()=>{
-        if(peerConnection) pendingRemoteCandidates.forEach(cand => { try{ peerConnection.addIceCandidate(new RTCIceCandidate(cand)).catch(()=>{}); }catch(_){} });
+        try{ nalunoCDSet(myCallId, { answer: true }); }catch(_){}
+        if(peerConnection) pendingRemoteCandidates.forEach(cand => { nalunoAddRemoteCand(peerConnection, cand); });
         pendingRemoteCandidates = [];
-      }).catch(err => console.log('[call] setRemoteDescription(answer) failed:', err));
+      }).catch(err => {
+        console.log('[call] setRemoteDescription(answer) failed:', err);
+        try{ nalunoCDSet(myCallId, { error: 'answer not applied: ' + String((err && err.message) || '').slice(0, 160) }); }catch(_){}
+      });
     }
 
     if(d.status === 'busy' || d.status === 'declined'){
@@ -3428,7 +3817,7 @@ async function startRealCallInner(c){
       stopCameraStream();
       currentCallContactId = null;
       callActionInProgress = false;
-      toast(d.endReason === 'callee-media' ? 'They could not turn on their microphone' : 'Call ended');
+      toast(d.endReason === 'callee-media' ? 'They could not turn on their microphone' : (d.endReason === 'network' ? NALUNO_NET_FAIL_MSG : 'Call ended'));
       try{ restoreUiAfterCall(); }catch(_){}
     }
   };
@@ -3445,7 +3834,7 @@ async function startRealCallInner(c){
       if(peerConnection && peerConnection._nalunoFinalPending){
         pendingRemoteCandidates.push(cand);
       } else if(peerConnection && (remoteDescriptionSet || peerConnection._nalunoEarlyOn)){
-        try{ peerConnection.addIceCandidate(new RTCIceCandidate(cand)).catch(()=>{}); }catch(_){}
+        nalunoAddRemoteCand(peerConnection, cand);
       } else if(!remoteDescriptionSet){
         pendingRemoteCandidates.push(cand);
       }
@@ -3470,6 +3859,7 @@ function armRingTimeout(contactId){
 }
 
 function showAsyncFallback(contactId, reason){
+  try{ const rec = nalunoCD(activeCallId); if(rec && !rec.endReason) rec.endReason = reason === 'timeout' ? 'no-answer' : String(reason || 'no-answer').slice(0, 24); }catch(_){}
   const c = contacts.find(x=>x.id===contactId); if(!c) return;
   clearTimeout(ringTimeoutHandle);
   if(notifyRepeatInterval){ try{ clearInterval(notifyRepeatInterval); }catch(_){} try{ clearTimeout(notifyRepeatInterval); }catch(_){} notifyRepeatInterval = null; }
@@ -3594,6 +3984,7 @@ function declineIncomingCall(callId){
   if(id && typeof fbDb !== 'undefined' && fbDb){
     nalunoCallMove(id, 'declined');
   }
+  try{ nalunoCDSet(id, { endReason: 'declined-here' }); }catch(_){}
   if(id && activeCallId && id !== activeCallId) return;
   const overlayOpen = $('callOverlay') && $('callOverlay').classList.contains('active');
   if(!overlayOpen && !activeCallId) return;
@@ -3614,6 +4005,9 @@ function nalunoWatchAnsweredCall(callRef, callId){
   activeCallDocUnsub = callRef.onSnapshot(snap=>{
     if(activeCallId !== callId) return;
     const d = snap.data();
+    /* 15 Oct g: the caller restarted the connection: answer it here. */
+    try{ if(d && d.iceRestart && peerConnection) nalunoCalleeOnRestartDoc(peerConnection, callRef, d); }catch(_){}
+    try{ if(d && d.status === 'ended'){ const rec = nalunoCD(callId); if(rec && !rec.endReason) rec.endReason = 'remote-' + String(d.endReason || 'hangup').slice(0, 24); } }catch(_){}
     if(d && d.status === 'ended' && $('callOverlay').classList.contains('active')){
       try{ nalunoRememberCall('remote'); }catch(_){}
       clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
@@ -3625,7 +4019,7 @@ function nalunoWatchAnsweredCall(callRef, callId){
       stopCameraStream();
       currentCallContactId = null;
       callActionInProgress = false;
-      toast('Call ended');
+      toast(d.endReason === 'network' ? NALUNO_NET_FAIL_MSG : 'Call ended');
       try{ restoreUiAfterCall(); }catch(_){}
     }
   }, function(err){ console.warn('[call] answered-call watch', err && err.message); });
@@ -3676,9 +4070,14 @@ async function nalunoPrepareAnswer(callId, offer, camReady, earlyOk, callerRelay
          own must be in the answer, so Answer waits for the fetch (see
          nalunoAnswerTurnCap); 14b's 0.9 s cap left both phones without. */
       Promise.race([
-        nalunoWaitForTurn(NALUNO_ANSWER_TURN_MS),
-        callerRelay ? new Promise(function(r){ prep.wake = r; }) : new Promise(function(){}),
-      ]).then(function(c){ nalunoCallMark(callId, 'prepTurn'); return c; }),
+        nalunoIceDecide(NALUNO_ANSWER_TURN_MS),
+        callerRelay ? new Promise(function(r){ prep.wake = function(){ r({ cfg: null, decision: 'cut-short-caller-has-relay', ms: 0 }); }; }) : new Promise(function(){}),
+      ]).then(function(c){
+        nalunoCallMark(callId, 'prepTurn');
+        prep.ice = c || null;
+        try{ const rec = nalunoCD(callId); if(rec && c) rec.ice = { decision: c.decision, waitMs: c.ms, at: 'ring' }; }catch(_){}
+        return c;
+      }),
     ]);
     if(!still()){ nalunoDropPrepared(); return; }
     if(!mediaStreamIsLive(stream)){ nalunoDropPrepared(); return; } // no camera/mic yet: Answer takes the normal path
@@ -3698,7 +4097,7 @@ async function nalunoPrepareAnswer(callId, offer, camReady, earlyOk, callerRelay
       }
     }catch(_){}
     if(!still()){ nalunoDropPrepared(); return; }
-    const pc = await createPeerConnection();
+    const pc = await createPeerConnection(prep.ice && prep.ice.cfg);
     prep.pc = pc;
     nalunoCallMark(callId, 'prepPc');
     if(!still()){ nalunoDropPrepared(); return; }
@@ -3718,7 +4117,7 @@ async function nalunoPrepareAnswer(callId, offer, camReady, earlyOk, callerRelay
     // not start (or fail) while the phone is still ringing.
     nalunoWatchCandidates(fbDb.collection('calls').doc(callId), 'callerCandidates', callId, function(cand){
       if(!prep.used && !prep.early){ prep.remoteHeld.push(cand); return; }
-      if(prep.pc && prep.pc.signalingState !== 'closed'){ try{ prep.pc.addIceCandidate(new RTCIceCandidate(cand)).catch(function(){}); }catch(_){} }
+      if(prep.pc && prep.pc.signalingState !== 'closed') nalunoAddRemoteCand(prep.pc, cand);
     }, function(u){ prep.candUnsub = u; if(prep.used) callerCandidatesUnsub = u; });
     const answer = await pc.createAnswer();
     if(!still()){ nalunoDropPrepared(); return; }
@@ -3888,6 +4287,8 @@ $('acceptIncoming').onclick = async (ev)=>{
       return;
     }
     nalunoCallMark(acceptingId, 'answerSdp');
+    try{ nalunoCDSet(acceptingId, { answer: true }); }catch(_){}
+    try{ if(!nalunoCfgHasTurn(prep.pc.getConfiguration())) nalunoWatchLateTurn(prep.pc); }catch(_){}
     nalunoWatchAnsweredCall(callRef, acceptingId);
     callActionInProgress = false;
     return;
@@ -3933,6 +4334,8 @@ $('acceptIncoming').onclick = async (ev)=>{
   }
   if(prep){
     prep.used = true;   // from here the held candidates go straight out
+    try{ nalunoCDSet(acceptingId, { answer: true }); }catch(_){}
+    try{ if(!nalunoCfgHasTurn(prep.pc.getConfiguration())) nalunoWatchLateTurn(prep.pc); }catch(_){}
     /* Connected while it rang: the call screen, sound and picture start
        now. The caller's side starts when it sees "accepted" (already sent).
        The answer is written as well, for a caller that has not used the
@@ -4009,7 +4412,7 @@ $('acceptIncoming').onclick = async (ev)=>{
     // Parallel: media ready and a short TURN wait. iceNow() is 0ms once
     // that wait lands, so the answer is not built STUN-only on a cold cache.
     if(typeof prewarmIceServers === 'function') prewarmIceServers();
-    const turnWait = nalunoWaitForTurn(nalunoAnswerTurnCap(!!(nalunoIncomingFrom && nalunoIncomingFrom.id === acceptingId && nalunoIncomingFrom.relay)));
+    const turnWait = nalunoIceDecide(nalunoAnswerTurnCap(!!(nalunoIncomingFrom && nalunoIncomingFrom.id === acceptingId && nalunoIncomingFrom.relay)));
     let mediaOk;
     if(nalunoIsVoiceCall()){
       try{ await nalunoOpenMic(); }catch(_){}
@@ -4020,7 +4423,9 @@ $('acceptIncoming').onclick = async (ev)=>{
     }
     guard();
     if(!mediaOk) throw Object.assign(new Error('Camera/mic unavailable — allow access, then try answering again'), { nalunoMedia: true });
-    try{ await turnWait; }catch(_){}
+    let iceChoice = null;
+    try{ iceChoice = await turnWait; }catch(_){}
+    try{ const rec = nalunoCD(acceptingId); if(rec && iceChoice) rec.ice = { decision: iceChoice.decision, waitMs: iceChoice.ms, at: 'answer' }; }catch(_){}
     nalunoCallMark(acceptingId, 'mediaAndTurn');
     guard();
 
@@ -4045,7 +4450,7 @@ $('acceptIncoming').onclick = async (ev)=>{
       toast('That call is no longer available'); closeCallOverlayAndStopCamera(); return;
     }
 
-    const answerPc = await createPeerConnection();
+    const answerPc = await createPeerConnection(iceChoice && iceChoice.cfg);
     if(activeCallId !== acceptingId){ try{ answerPc.close(); }catch(_){} throw NOT_MINE; }
     peerConnection = answerPc;
     peerConnection.onicecandidate = e=>{
@@ -4056,14 +4461,14 @@ $('acceptIncoming').onclick = async (ev)=>{
     await answerPc.setRemoteDescription(new RTCSessionDescription(offer));
     guard();
     remoteDescriptionSet = true;
-    if(peerConnection) pendingRemoteCandidates.forEach(cand => { try{ peerConnection.addIceCandidate(new RTCIceCandidate(cand)).catch(()=>{}); }catch(_){} });
+    if(peerConnection) pendingRemoteCandidates.forEach(cand => { nalunoAddRemoteCand(peerConnection, cand); });
     pendingRemoteCandidates = [];
     /* The caller's candidates, from the moment their offer is set (not after
        our answer is written, a round trip later), and subscribed again if
        the listener drops mid-call. */
     if(callerCandidatesUnsub){ try{ callerCandidatesUnsub(); }catch(_){} callerCandidatesUnsub = null; }
     nalunoWatchCandidates(callRef, 'callerCandidates', acceptingId, function(cand){
-      if(peerConnection === answerPc){ try{ answerPc.addIceCandidate(new RTCIceCandidate(cand)).catch(()=>{}); }catch(_){} }
+      if(peerConnection === answerPc) nalunoAddRemoteCand(answerPc, cand);
     }, function(u){ callerCandidatesUnsub = u; });
 
     const answer = await answerPc.createAnswer();
@@ -4075,6 +4480,8 @@ $('acceptIncoming').onclick = async (ev)=>{
     guard();
     await callRef.update({ answer: answerSdp });
     nalunoCallMark(acceptingId, 'answerSdp');
+    try{ nalunoCDSet(acceptingId, { answer: true }); }catch(_){}
+    try{ if(!nalunoCfgHasTurn(answerPc.getConfiguration())) nalunoWatchLateTurn(answerPc); }catch(_){}
     guard();
     pendingIncomingOffer = null;
     // Nudge remote media as soon as ICE may complete
@@ -4092,6 +4499,7 @@ $('acceptIncoming').onclick = async (ev)=>{
       try{ callRef.update({ status: 'ended', endReason: 'recalled' }).catch(function(){}); }catch(_){}
       return;
     }
+    try{ nalunoCDSet(acceptingId, { endReason: (e && e.nalunoMedia) ? 'callee-media' : 'answer-failed', error: String((e && e.message) || e || '').slice(0, 200) }); }catch(_){}
     toast(e.message || 'Couldn\u2019t answer the call');
     // Mark ended so the caller does not hang in a half-connected state,
     // and say why, so the caller is not left guessing.

@@ -326,7 +326,8 @@
       state.device = 'all';
       paintResult();
     }catch(e){
-      out.innerHTML = '<div class="lobby-sub">Could not load your history right now. ' + esc((e && e.message) || '') + '</div>';
+      try{ if(typeof nalunoDiag === 'function') nalunoDiag('find-history', (e && e.code ? e.code + ' ' : '') + ((e && e.message) || '')); }catch(_){}
+      out.innerHTML = '<div class="lobby-sub">Could not load your history right now. Please try again.</div>';
     }finally{ state.busy = false; }
   }
 

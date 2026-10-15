@@ -809,12 +809,10 @@ function nalunoNoteFeedProblem(err){
 function nalunoFeedProblemText(){
   const p = nalunoFeedProblem;
   if(!p) return '';
-  if(p.code === 'failed-precondition'){
-    return 'The public feed could not load: the database index it needs is missing or still being built.';
-  }
-  if(p.code === 'permission-denied') return 'The public feed was refused by the database. Trying again…';
-  if(p.code === 'unavailable') return 'No connection. The public feed loads when it is back.';
-  return 'The public feed could not load (' + p.code + '). Trying again…';
+  /* 15 Oct g: the person sees a plain line; the database's own words (and
+     its index link, when it gives one) go to Naluno's Diagnostics. */
+  if(p.code === 'unavailable') return 'No connection. Broadcasts load when it is back.';
+  return 'Broadcasts couldn\u2019t load right now. Trying again…';
 }
 window.nalunoFeedProblemText = nalunoFeedProblemText;
 window.nalunoFeedProblemRaw = function(){ return nalunoFeedProblem; };

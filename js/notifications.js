@@ -28,7 +28,8 @@ $('enableCallNotifsBtn').onclick = async ()=>{
     return;
   }
   if(typeof VAPID_KEY === 'undefined' || !VAPID_KEY || VAPID_KEY === 'YOUR_VAPID_KEY'){
-    toast('Add your VAPID key to firebase-config.js first — see README');
+    try{ if(typeof nalunoDiag === 'function') nalunoDiag('push-setup', 'VAPID key missing in firebase-config.js'); }catch(_){}
+    toast('Call notifications are not available here yet.');
     return;
   }
   try{
@@ -55,7 +56,9 @@ $('enableCallNotifsBtn').onclick = async ()=>{
     $('callNotifStatus').textContent = 'Call notifications are on — you\u2019ll be notified even with the app closed.';
     toast('Call notifications enabled');
   }catch(e){
-    toast('Couldn\u2019t enable notifications');
+    /* 15 Oct g: why it failed goes to Naluno, not to the person. */
+    try{ if(typeof nalunoDiag === 'function') nalunoDiag('push-enable-failed', (e && e.code ? e.code + ' ' : '') + ((e && e.message) || String(e)), 'web'); }catch(_){}
+    toast('Couldn\u2019t enable notifications. Please try again.');
   }
 };
 $('autoTintToggle').onclick = function(){ this.classList.toggle('on'); };

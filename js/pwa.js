@@ -6,7 +6,7 @@
    ============================================================ */
 /* ---------------- PWA INSTALL + CALL NOTIFICATION DEEP-LINK ---------------- */
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js?v=20261015f', { scope: '/', updateViaCache: 'none' })
+  navigator.serviceWorker.register('/sw.js?v=20261015g', { scope: '/', updateViaCache: 'none' })
     .then(function(reg){ try{ reg.update(); }catch(_){} })
     .catch(function(e){ console.warn('[sw]', e); });
   // One automatic reload when a new SW takes control (clears stuck "sign-in not ready"
@@ -354,6 +354,7 @@ async function saveNativeFcmToken(token){
     return true;
   }catch(e){
     console.warn('[push] saveNativeFcmToken', e);
+    try{ if(typeof nalunoDiag === 'function') nalunoDiag('push-save-failed', (e && e.code ? e.code + ' ' : '') + ((e && e.message) || String(e)), 'android'); }catch(_){}
     return false;
   }
 }
@@ -368,6 +369,7 @@ async function setupCapacitorPush(){
   const Push = getCapacitorPush();
   if(!Push){
     console.warn('[push] PushNotifications plugin missing — rebuild Android shell with @capacitor/push-notifications');
+    try{ if(typeof nalunoDiag === 'function') nalunoDiag('push-setup', 'Android PushNotifications plugin missing'); }catch(_){}
     return false;
   }
   if(!currentUser || !fbDb) return false;
@@ -377,6 +379,7 @@ async function setupCapacitorPush(){
       perm = await Push.requestPermissions();
     }
     if(perm && perm.receive !== 'granted'){
+      try{ if(typeof nalunoDiag === 'function') nalunoDiag('push-permission', 'Android notification permission: ' + perm.receive); }catch(_){}
       try{ $('callNotifStatus').textContent = 'Notifications blocked — enable them in Android Settings → Apps → Naluno.'; }catch(_){}
       return false;
     }
@@ -391,6 +394,7 @@ async function setupCapacitorPush(){
       });
       await Push.addListener('registrationError', err=>{
         console.warn('[push] registrationError', err);
+        try{ if(typeof nalunoDiag === 'function') nalunoDiag('push-registration', String((err && (err.error || err.message)) || err)); }catch(_){}
       });
       await Push.addListener('pushNotificationActionPerformed', (action)=>{
         try{

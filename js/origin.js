@@ -1217,7 +1217,7 @@
           if(typeof toast === 'function') toast('Rights claim received. Case ' + ref.id);
           setTimeout(function(){ try{ sheet.remove(); }catch(_){} }, 900);
         }catch(err){
-          if(msg) msg.textContent = (err && err.message) || 'Could not send that.';
+          if(msg) msg.textContent = (typeof nalunoFriendlyError === 'function' ? nalunoFriendlyError((err && err.message) || '') : '') || 'Could not send that.';
         }
       };
     }

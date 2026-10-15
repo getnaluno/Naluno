@@ -14,8 +14,9 @@ const calls = fs.readFileSync(path.join(root, 'js/calls.js'), 'utf8');
 const pwa = fs.readFileSync(path.join(root, 'js/pwa.js'), 'utf8');
 
 /* Who waits for the relay */
-assert.ok(/const NALUNO_CALLER_TURN_MS = 2500;/.test(calls), 'the caller waits for its relay fetch, up to 2.5 s');
-assert.ok(calls.includes('const turnReady = nalunoWaitForTurn(NALUNO_CALLER_TURN_MS);'), 'the offer uses that wait');
+/* CHANGED 15 Oct g: 2.5 s cut off a cold fetch (token up to 4 s + request up to 2.5 s); the caller waits for the fetch's own result, 7 s only cuts a hang. */
+assert.ok(/const NALUNO_CALLER_TURN_MS = 7000;/.test(calls), 'the caller waits for its relay fetch to finish');
+assert.ok(calls.includes('const turnReady = nalunoIceDecide(NALUNO_CALLER_TURN_MS);'), 'the offer uses that wait');
 {
   const a = calls.indexOf('const NALUNO_CALLER_TURN_MS');
   const b = calls.indexOf('window.nalunoAnswerTurnCap');
@@ -27,11 +28,12 @@ assert.ok(calls.includes('const turnReady = nalunoWaitForTurn(NALUNO_CALLER_TURN
 }
 const prepAt = calls.indexOf('async function nalunoPrepareAnswer(');
 const prep = calls.slice(prepAt, calls.indexOf('function nalunoPreparedFor', prepAt));
-assert.ok(/nalunoWaitForTurn\(NALUNO_ANSWER_TURN_MS\),\s*callerRelay \? new Promise\(function\(r\)\{ prep\.wake = r; \}\) : new Promise\(function\(\)\{\}\)/.test(prep), 'while ringing, this phone fetches its own relay; only a caller relay lets Answer cut it short');
+/* 15 Oct g: through nalunoIceDecide (the decision is recorded); Answer's wake resolves it as "cut short". */
+assert.ok(/nalunoIceDecide\(NALUNO_ANSWER_TURN_MS\),\s*callerRelay \? new Promise\(function\(r\)\{ prep\.wake = function\(\)\{ r\(\{ cfg: null, decision: 'cut-short-caller-has-relay', ms: 0 \}\); \}; \}\) : new Promise\(function\(\)\{\}\)/.test(prep), 'while ringing, this phone fetches its own relay; only a caller relay lets Answer cut it short');
 const tap = calls.slice(calls.indexOf("$('acceptIncoming').onclick"), calls.indexOf('(function nalunoWireAnswer'));
 assert.ok(/nalunoPrepared\.wake\(\)/.test(tap), 'Answer cuts the ring-time relay wait short');
 assert.ok(tap.indexOf('nalunoPrepared.wake()') < tap.indexOf('const deadline'), '... before it waits for the build');
-assert.ok(/nalunoWaitForTurn\(nalunoAnswerTurnCap\(/.test(tap), 'a fresh answer follows the same rule');
+assert.ok(/nalunoIceDecide\(nalunoAnswerTurnCap\(/.test(tap), "a fresh answer follows the same rule (15 Oct g: through nalunoIceDecide)");
 assert.ok(!/nalunoWaitForTurn\(\(?[^)]*\? 0 : 900\)/.test(calls) && !calls.includes('nalunoWaitForTurn(900)'), 'no 0.9 s relay clock anywhere');
 
 /* Answer does not throw away a nearly finished build */

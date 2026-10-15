@@ -99,10 +99,10 @@ const flush = () => new Promise((r) => setImmediate(r));
   {
     const start = calls.indexOf('async function startRealCall') >= 0 ? calls.indexOf('async function startRealCall') : calls.indexOf('const dial = nalunoDialing = nalunoLastDial');
     const body = calls.slice(start, calls.indexOf('armRingTimeout(currentCallContactId);', start));
-    const wait = body.indexOf('const turnReady = nalunoWaitForTurn(NALUNO_CALLER_TURN_MS);');
+    const wait = body.indexOf('const turnReady = nalunoIceDecide(NALUNO_CALLER_TURN_MS);');   // 15 Oct g
     const mic = body.indexOf('await nalunoOpenMic()');
     assert.ok(wait > 0 && mic > wait, 'TURN is waited for while the mic/camera opens, not after');
-    assert.ok(body.indexOf('await turnReady') > mic && body.indexOf('await turnReady') < body.indexOf('createPeerConnection()'), 'and before the offer is built');
+    assert.ok(body.indexOf('await turnReady') > mic && body.indexOf('await turnReady') < body.indexOf('createPeerConnection(iceChoice'), 'and before the offer is built');
     assert.ok(!body.includes('await nalunoWaitForTurn(600)'), 'no second wait after the camera');
     const wd = calls.slice(calls.indexOf('function attachConnectionWatchdogs'), calls.indexOf('pc.oniceconnectionstatechange'));
     /* 10.02: "Connected" now follows the media itself (nalunoMarkIfMediaUp), voice included. */

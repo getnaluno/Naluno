@@ -135,7 +135,8 @@ function fnSource(src, name) {
 
   /* 6. A blocked microphone is not reported as "no connection", and the
         caller is told why the call ended. */
-  const friendly = new Function(fnSource(core, 'nalunoFriendlyError') + '; return nalunoFriendlyError;')();
+  /* 15 Oct g: the technical-word lists and the report hook come along. */
+  const friendly = new Function(core.match(/const NALUNO_TECH_WORDS = .*;/)[0] + core.match(/const NALUNO_TECH_WORDS_CS = .*;/)[0] + fnSource(core, 'nalunoTellTeam') + fnSource(core, 'nalunoFriendlyError') + '; return nalunoFriendlyError;')();
   assert.strictEqual(friendly('Microphone unavailable — allow access, then try answering again'), 'Microphone unavailable — allow access, then try answering again');
   assert.strictEqual(friendly('Failed to fetch'), 'No connection right now — try again in a moment.');
   assert.strictEqual(friendly('FirebaseError: [code=unavailable]: The service is currently unavailable.'), 'No connection right now — try again in a moment.');

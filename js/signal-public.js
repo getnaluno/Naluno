@@ -164,16 +164,17 @@
       at: Date.now(),
     };
     try { console.warn('[signals] public', problem.code, problem.msg); } catch (_) {}
+    /* 15 Oct g: the database's words (and its index link) go to Naluno. */
+    try { if (typeof nalunoDiag === 'function') nalunoDiag('public-signals', problem.code + ' ' + problem.msg.slice(0, 380)); } catch (_) {}
     try { if (typeof renderBroadcastTab === 'function') renderBroadcastTab(); } catch (_) {}
     return problem;
   }
   function problemText() {
     if (!problem) return '';
-    if (problem.code === 'failed-precondition') return 'Signals for everyone could not load: the database index they need is missing or still being built.';
-    if (problem.code === 'permission-denied') return 'Signals for everyone were refused by the database. Trying again…';
     if (problem.code === 'unavailable' || problem.code === 'deadline-exceeded') return 'No connection. Signals for everyone load when it is back.';
-    return 'Signals for everyone could not load (' + problem.code + ').';
+    return 'Signals for everyone couldn\u2019t load right now. Trying again…';
   }
+  /* For Naluno's team (Diagnostics), never painted on a phone. */
   function indexLink() {
     if (!problem || problem.code !== 'failed-precondition') return '';
     var m = String(problem.msg || '').match(/https:\/\/console\.firebase\.google\.com\/[^\s"'<>]+/);

@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261015f';
+  const BUILD = '20261015g';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -73,6 +73,7 @@
     ['search', 'Search'], ['flags', 'Flags'], ['audit', 'Audit'], ['books', 'Books'],
     ['discovery', 'Discovery'], ['known', 'Known'], ['rights', 'Rights'],
     ['luganda', 'Luganda'],
+    ['diagnostics', 'Diagnostics'],
     ['export', 'Export'],
   ];
   let __needsSetup = false;
@@ -1323,6 +1324,9 @@
     /* 13b: Launch & Capacity keeps itself up to date (admin-launch.js);
        redrawing it from here blanked it and fetched everything again. */
     if (__activeTab === 'launch') return;
+    /* 15 Oct g: Diagnostics reads its own reports (Reload button); a live
+       repaint would draw it off-screen and lose its answer. */
+    if (__activeTab === 'diagnostics') return;
     renderTabInPlace(__activeTab, snap);
   }
   /* 13b: a background refresh draws the tab off-screen and swaps in only the
@@ -2334,7 +2338,7 @@
       const d = await loadSnapshot(!!force);
       renderStrip(d);
       // 13b: the tab is already on screen from the last snapshot: refresh it in place.
-      if (hadContent && tab !== 'launch' && __activeTab === tab) renderTabInPlace(tab, d);
+      if (hadContent && tab !== 'launch' && __activeTab === tab) { if (tab !== 'diagnostics') renderTabInPlace(tab, d); }
       else renderTab(tab, d);
     } catch (e) {
       if (!__snap) el.innerHTML = '<p class="sub">Could not load this section. ' + escapeHtml((e && e.message) || '') + '</p>';
@@ -5831,6 +5835,15 @@
         const ok = await writeAudit('export-download', 'Books JSON', pack.stamp);
         if (!ok) toast('Downloaded. Audit did not save.');
       };
+      return;
+    }
+
+    if (tab === 'diagnostics') {
+      if (window.NalunoDiagDesk) {
+        window.NalunoDiagDesk.render(el, { escapeHtml: escapeHtml, card: card, kpis: kpis, adminDb: adminDb, toast: toast });
+      } else {
+        el.innerHTML = card('Diagnostics', '<p class="sub">This section did not load. Reload the console.</p>');
+      }
       return;
     }
 

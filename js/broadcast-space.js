@@ -3475,7 +3475,8 @@ function bspaceShareNow(){
     ? broadcastShareUrl(activeBroadcastId, title)
     : ('https://getnaluno.com/app/?broadcast=' + encodeURIComponent(activeBroadcastId));
   if(/workers\.dev/i.test(link)){
-    toast('Share link was refused — it pointed at a worker');
+    try{ if(typeof nalunoDiag === 'function') nalunoDiag('share-link', 'share link pointed at a workers.dev address', link); }catch(_){}
+    toast('Couldn\u2019t make a link for this Broadcast.');
     return;
   }
   const text = title + (creator ? (' — ' + creator) : '') + '\n' + link;

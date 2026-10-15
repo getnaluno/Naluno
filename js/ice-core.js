@@ -111,7 +111,11 @@ async function fetchTurnServers(force){
       }
       const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
       // Abort starts AFTER the token so a slow getIdToken cannot kill the fetch.
-      const kill = ctrl ? setTimeout(function(){ try{ ctrl.abort(); }catch(_){ } }, 2500) : null;
+      /* 15 Oct g: 2.5 s cut off the credential request on a slow mobile
+         network, so a call there had no relay at all. 4.5 s now; a call that
+         stops waiting before it lands is moved onto the relay when it does
+         (calls.js nalunoWatchLateTurn). */
+      const kill = ctrl ? setTimeout(function(){ try{ ctrl.abort(); }catch(_){ } }, 4500) : null;
       const res = await fetch(TURN_CREDENTIALS_WORKER_URL, {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + idToken },
@@ -284,6 +288,12 @@ const IceCore = {
   stunOnly: function(){ return RTC_CONFIG; },
   cached: iceFromCache,
   invalidate: function(){ cachedIceServers = null; cachedIceServersAt = 0; try{ localStorage.removeItem(ICE_STORE_KEY); }catch(_){} },
+  /* 15 Oct g: new credentials for a call restart (the old ones may be what
+     failed), within cap ms; what is cached when the fetch does not finish. */
+  fresh: function(cap){
+    const f = fetchTurnServers(true).catch(function(){ return iceNow(); });
+    return Promise.race([f, new Promise(function(r){ setTimeout(function(){ r(iceNow()); }, cap || 4500); })]);
+  },
   /* True while a TURN fetch is still on its way. */
   pending: function(){ return !!inflightIce; },
   keepWarm: iceKeepWarm,

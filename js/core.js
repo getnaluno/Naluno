@@ -10,6 +10,14 @@ const $ = id => document.getElementById(id);
  *  it was leaking onto the toast from Callsign save, Band start, Wireline,
  *  and handle search whenever a rule blocked a write (or the auth token
  *  had not attached yet). */
+/* 15 Oct g: words meant for Naluno's team, never for the person. Anything
+   matching is sent to the Control Centre (Diagnostics) and replaced on
+   screen by a plain sentence. */
+const NALUNO_TECH_WORDS = /FirebaseError|firestore|failed-precondition|invalid-argument|deadline-exceeded|resource-exhausted|already-exists|out-of-range|unimplemented|data-loss|unauthenticated|requires an index|create_composite|server rules|VAPID|README|firebase-config|RTCPeerConnection|setRemoteDescription|setLocalDescription|addIceCandidate|TypeError|ReferenceError|SyntaxError|RangeError|is not a function|is not defined|Cannot read propert|\bundefined\b|\bnull\b|auth\/[a-z-]+|storage\/[a-z-]+|messaging\/[a-z-]+|\bquota\b|\bcode[=:]|pointed at a worker/i;
+const NALUNO_TECH_WORDS_CS = /\bR2\b|\bSDP\b|\bICE\b|\bTURN\b|\bSTUN\b|\bHTTP\s?\d{3}\b|\bstatus\s\d{3}\b/;
+function nalunoTellTeam(kind, raw){
+  try{ if(typeof nalunoDiag === 'function') nalunoDiag(kind || 'shown-error', raw); }catch(_){}
+}
 function nalunoFriendlyError(msg){
   const s = String(msg == null ? '' : msg);
   if(!s) return s;
@@ -17,6 +25,7 @@ function nalunoFriendlyError(msg){
   // person can act on, and it was popping on Callsign from a background
   // write (token not attached yet, or a collection the phone cannot see).
   if(/missing or insufficient permissions|permission-denied|FirebaseError: Missing/i.test(s)){
+    nalunoTellTeam('refused', s);
     return '';
   }
   /* Network failures only. A bare "unavailable" also matched the app's own
@@ -25,6 +34,10 @@ function nalunoFriendlyError(msg){
      no connection. Firestore's own wording is matched instead. */
   if(/failed to fetch|networkerror|network request failed|service is currently unavailable|client is offline|^\s*unavailable\s*$|\bcode[=:]\s*"?unavailable\b/i.test(s)){
     return 'No connection right now — try again in a moment.';
+  }
+  if(NALUNO_TECH_WORDS.test(s) || NALUNO_TECH_WORDS_CS.test(s)){
+    nalunoTellTeam('shown-error', s);
+    return 'Something went wrong. Please try again.';
   }
   return s;
 }
@@ -65,6 +78,12 @@ function emptyStateHtml(title, copy, hint){
 /** Console only. Never paint a diagnostic chip on the phone. */
 function nalunoUploadLog(msg, detail){
   try{ console.warn('[naluno-upload]', msg, detail || ''); }catch(_){}
+  /* 15 Oct g: failures are told to Naluno (Diagnostics). */
+  try{
+    if(/fail|error|refused|denied|could not|couldn/i.test(String(msg) + ' ' + String(detail || '')) && typeof nalunoDiag === 'function'){
+      nalunoDiag('upload', String(msg), detail == null ? '' : String(detail));
+    }
+  }catch(_){}
 }
 try{ window.nalunoUploadLog = nalunoUploadLog; }catch(_){}
 

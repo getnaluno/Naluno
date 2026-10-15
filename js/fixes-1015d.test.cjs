@@ -73,12 +73,13 @@ const read = (f) => fs.readFileSync(path.join(root, f), 'utf8');
     + core.slice(core.indexOf('function nalunoFeedIndexLink'), core.indexOf('window.nalunoFeedIndexLink'))
     + 'return { note: nalunoNoteFeedProblem, text: nalunoFeedProblemText, link: nalunoFeedIndexLink };')();
   f.note({ code: 'failed-precondition', message: 'The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/x/firestore/indexes?create_composite=abc' });
-  assert.ok(/index it needs is missing/.test(f.text()));
+  /* 15 Oct g: plain words on the phone; the database's own (and its link) go to Naluno. */
+  assert.ok(/Broadcasts couldn.t load right now/.test(f.text()) && !/index|database/i.test(f.text()));
   assert.strictEqual(f.link(), 'https://console.firebase.google.com/v1/r/project/x/firestore/indexes?create_composite=abc');
   f.note({ code: 'permission-denied', message: 'x' });
-  assert.ok(/refused/.test(f.text())); assert.strictEqual(f.link(), '');
+  assert.ok(!/refused|database/i.test(f.text())); assert.strictEqual(f.link(), '');
   const ui = read('js/signal-ui.js');
-  assert.ok(/else if\(feedNote\)\{/.test(ui) && /copy\.innerHTML = escapeHtml\(feedNote\)/.test(ui), 'the empty feed says why');
+  assert.ok(/else if\(feedNote\) copy\.textContent = feedNote;/.test(ui) && !/Open the database page/.test(ui), 'the empty feed says so plainly, no database link on a phone');
   /* with the server clock known, a refusal no longer steps the feed back */
   assert.ok(/if\(nalunoMeasuredSkew\(\) !== null && !nalunoBackoffWithSkew && nalunoClockBackoff === 0\) return true;/.test(core));
   console.log('fixes-1015d: all checks passed');

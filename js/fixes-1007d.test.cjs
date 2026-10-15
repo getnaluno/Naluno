@@ -149,7 +149,7 @@ assert.ok(rules.includes('match /users/{uid}/beaconTrail/{id}'), 'trail rules');
 const trailBlock = rules.slice(rules.indexOf('match /users/{uid}/beaconTrail/{id}'), rules.indexOf('match /users/{uid}/beaconTrail/{id}') + 900);
 assert.ok(trailBlock.includes('allow read, delete: if isOwner(uid);') && !trailBlock.includes('isOperator'), 'only you can read your trail, not the desk');
 assert.ok(trailBlock.includes('allow update: if false;'), 'points are never edited');
-assert.ok(html.includes('<script src="/js/find-history.js?v=20261007d"></script>'), 'loaded');
+assert.ok(/<script src="\/js\/find-history\.js\?v=\w+"><\/script>/.test(html), "loaded (15 Oct g: any version stamp)");
 assert.ok(read('sw.js').includes("'/js/find-history.js'"), 'works offline');
 assert.ok(read('js/beacon.js').includes("nalunoTrailNote(payload)") && read('js/beacon.js').includes('nalunoTrailNote(mine)'), 'pings feed the trail');
 assert.ok(read('BeaconFindService.java').includes('/beaconTrail/') && read('BeaconFindService.java').includes('currentDocument.exists=false'), 'the Android service keeps the trail too');

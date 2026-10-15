@@ -342,25 +342,14 @@ function nalunoPaintPublicSignalNote(){
     strip.parentNode.insertBefore(note, strip.nextSibling);
   }
   let text = '';
-  let link = '';
   try{
     if(window.NalunoPublicSignals && NalunoPublicSignals.problemText) text = NalunoPublicSignals.problemText() || '';
-    if(window.NalunoPublicSignals && NalunoPublicSignals.indexLink) link = NalunoPublicSignals.indexLink() || '';
+    /* 15 Oct g: the index link is for Naluno's team (Diagnostics), not a phone. */
   }catch(_){}
   if(!text){ note.style.display = 'none'; note.textContent = ''; return; }
   note.style.display = 'block';
   note.textContent = '';
   note.appendChild(document.createTextNode(text));
-  if(link){
-    const a = document.createElement('a');
-    a.href = link;
-    a.target = '_blank';
-    a.rel = 'noopener';
-    a.style.color = 'var(--mint,#7CFFB2)';
-    a.style.display = 'block';
-    a.textContent = 'Open the database page that builds it';
-    note.appendChild(a);
-  }
 }
 function signalClockMs(){
   try{ if(typeof nalunoSignalNow === 'function') return nalunoSignalNow(); }catch(_){}
@@ -576,12 +565,7 @@ function renderBroadcastTab(){
         let feedNote = '';
         try{ if(bcastActiveView !== 'mine' && !list.length && typeof window.nalunoFeedProblemText === 'function') feedNote = window.nalunoFeedProblemText(); }catch(_){}
         if(kindNote) copy.textContent = kindNote;
-        else if(feedNote){
-          let link = '';
-          try{ link = typeof window.nalunoFeedIndexLink === 'function' ? window.nalunoFeedIndexLink() : ''; }catch(_){}
-          copy.innerHTML = escapeHtml(feedNote)
-            + (link ? '<br><a href="' + escapeHtml(link) + '" target="_blank" rel="noopener" style="color:var(--mint);">Open the database page that builds it</a>' : '');
-        }
+        else if(feedNote) copy.textContent = feedNote;   // plain words; the database's own go to Naluno (Diagnostics)
         else copy.innerHTML = copy.__nalunoDefault;
       }
     }
