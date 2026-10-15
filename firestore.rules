@@ -943,31 +943,53 @@ service cloud.firestore {
     /* Slim mirror of users/{uid}/signal so the Control Centre can list
        Signals without a collection-group index. Owner writes; operator reads. */
     match /signals/{id} {
-      /* 07c: Signals for everyone. A Signal its creator made public is
-         readable by anyone signed in only while it is public, not held for
-         review, not taken down (the desk sets hidden) and not past its 24
-         hours. The app's query asks for exactly that. */
-      allow read: if isOperator()
+      /* A live public Signal: not held, not taken down, still inside its
+         day. feedUntil is that expiry, and only then — so the list needs
+         one field and the automatic index, not a composite the project
+         may not have. The old public/hidden/held/expiresAt list could not
+         be proven (the type check, and a missing index) and the whole
+         query was refused, so Signals for everyone came back empty. */
+      function signalPublicShape() {
+        return request.resource.data.get('public', false) == true
+          && request.resource.data.get('held', false) == false
+          && request.resource.data.get('hidden', false) == false
+          && request.resource.data.expiresAt is number
+          && request.resource.data.expiresAt <= request.time.toMillis() + 90000000
+          && request.resource.data.feedUntil == request.resource.data.expiresAt;
+      }
+      allow get: if isOperator()
         || (isSignedIn() && resource.data.uid == request.auth.uid)
         || (isSignedIn() && resource.data.public == true
             && resource.data.hidden == false && resource.data.held == false
-            && resource.data.expiresAt is number
             && resource.data.expiresAt > request.time.toMillis());
-      /* A public copy must be unheld, not taken down, and live at most 25
-         hours. */
+      allow list: if isOperator()
+        || (isSignedIn() && resource.data.feedUntil > request.time.toMillis());
       allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid
         && isRegistered() && featureOn('signals')
-        && (request.resource.data.get('public', false) != true || (
-             request.resource.data.get('held', false) == false
-             && request.resource.data.get('hidden', false) == false
-             && request.resource.data.expiresAt is number
-             && request.resource.data.expiresAt <= request.time.toMillis() + 90000000));
-      /* The desk changes anything. The creator may only take their own
-         Signal out of the public list (never back in, never undo the desk). */
+        && (request.resource.data.get('public', false) != true
+            ? request.resource.data.get('feedUntil', 0) == 0
+            : signalPublicShape());
+      /* The desk changes anything. The creator may take theirs out of the
+         public list, and may put it back only when they chose Everyone and
+         the desk has not taken it down (hidden stays false). A clock refusal
+         used to save public:false, and the old rule then forbade the fix. */
       allow update: if isOperator()
         || (isSignedIn() && resource.data.uid == request.auth.uid
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['public'])
-            && request.resource.data.public == false);
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['public', 'feedUntil'])
+            && request.resource.data.public == false
+            && request.resource.data.get('feedUntil', 0) == 0)
+        || (isSignedIn() && resource.data.uid == request.auth.uid
+            && resource.data.hidden != true
+            && resource.data.held != true
+            && resource.data.audience == 'public'
+            && request.resource.data.public == true
+            && request.resource.data.hidden == false
+            && request.resource.data.held == false
+            && request.resource.data.expiresAt is number
+            && request.resource.data.expiresAt > request.time.toMillis()
+            && request.resource.data.expiresAt <= request.time.toMillis() + 90000000
+            && request.resource.data.feedUntil == request.resource.data.expiresAt
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['public', 'expiresAt', 'feedUntil']));
       allow delete: if isSignedIn() && (
         isOperator() || resource.data.uid == request.auth.uid
       );

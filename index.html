@@ -3,366 +3,233 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Naluno</title>
-<meta name="robots" content="noindex, nofollow, noarchive" />
-<meta name="googlebot" content="noindex, nofollow, noarchive" />
+<title>Naluno — private calls, messages and a home for your work</title>
+<meta name="description" content="Call, message and share what you make, without giving out your phone number. People reach you by a name you choose, called a Callsign. Naluno is in early access." />
 <meta name="theme-color" content="#07080D" />
-<meta name="naluno-build" content="2026.10.15g" />
-<meta name="app-version" content="2026.10.15g" />
+<link rel="canonical" href="https://getnaluno.com/" />
+<meta property="og:title" content="Naluno — private calls, messages and a home for your work" />
+<meta property="og:description" content="Call, message and share what you make, without giving out your phone number." />
+<meta property="og:url" content="https://getnaluno.com/" />
+<meta property="og:type" content="website" />
+<meta property="og:image" content="https://getnaluno.com/og.jpg" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Naluno" />
+<meta name="twitter:description" content="Call, message and share what you make, without giving out your phone number." />
+<meta name="twitter:image" content="https://getnaluno.com/og.jpg" />
 <link rel="icon" href="/icon-192.png" />
-<link rel="canonical" href="https://getnaluno.com/admin/" />
+<link rel="apple-touch-icon" href="/icon-192.png" />
+<link rel="manifest" href="/manifest.json" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Space+Grotesk:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<style>
-:root{
-  --void:#07080D; --panel:#12151F; --line:#232838;
-  --ink:#E8ECF5; --ink-dim:#7C8497; --mint:#7CFFB2; --cyan:#00E5FF;
-  --red:#FF5470; --warn:#FFC266;
-  --display:'Orbitron', sans-serif;
-  --body:'Space Grotesk', system-ui, sans-serif;
-  --dial:'IBM Plex Mono', monospace;
-}
-*{box-sizing:border-box;}
-html,body{margin:0;background:var(--void);color:var(--ink);font-family:var(--body);min-height:100%;}
-body{overflow-x:hidden;}
-.field{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;}
-.blob{position:absolute;border-radius:50%;filter:blur(80px);mix-blend-mode:screen;opacity:.35;}
-.blob.a{width:48vw;height:48vw;left:-10vw;top:-8vh;background:radial-gradient(circle,rgba(124,255,178,.35),transparent 70%);animation:dA 20s ease-in-out infinite;}
-.blob.b{width:42vw;height:42vw;right:-12vw;bottom:-10vh;background:radial-gradient(circle,rgba(0,229,255,.22),transparent 70%);animation:dB 24s ease-in-out infinite;}
-@keyframes dA{50%{transform:translate(6vw,5vh) scale(1.1);}}
-@keyframes dB{50%{transform:translate(-5vw,-6vh) scale(1.12);}}
-.wrap{position:relative;z-index:1;max-width:1080px;margin:0 auto;padding:18px 16px 80px;}
-.top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0 22px;}
-.brand{display:flex;align-items:center;gap:10px;}
-.mark-live{position:relative;width:30px;height:30px;}
-.mark-live svg{width:30px;height:30px;overflow:visible;filter:drop-shadow(0 0 8px rgba(124,255,178,.7));}
-.ping{position:absolute;inset:-5px;border-radius:50%;border:1px solid rgba(124,255,178,.4);animation:ping 2.4s ease-out infinite;}
-@keyframes ping{to{transform:scale(1.7);opacity:0;}}
-.word{font-family:var(--display);font-weight:700;letter-spacing:.16em;font-size:15px;
-  background:linear-gradient(90deg,#7CFFB2,#00E5FF,#7CFFB2);background-size:280% 100%;
-  -webkit-background-clip:text;background-clip:text;color:transparent;animation:shimmer 8s linear infinite;}
-@keyframes shimmer{to{background-position:280% 50%;}}
-.clock-block{text-align:right;}
-.clock{font-family:var(--dial);font-size:12px;color:var(--mint);letter-spacing:.04em;font-weight:500;}
-.clock-sub{font-family:var(--dial);font-size:10px;color:var(--ink-dim);margin-top:2px;}
-.sw-badge{display:inline-block;margin-left:8px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);
-  font-family:var(--dial);font-size:10px;color:var(--ink-dim);letter-spacing:.04em;}
-.sw-badge.on{color:var(--mint);border-color:rgba(124,255,178,.4);}
-.panel{
-  background:rgba(18,21,31,.78);border:1px solid rgba(124,255,178,.18);
-  border-radius:14px;padding:22px 22px 20px;
-  box-shadow:0 0 40px rgba(0,229,255,.06) inset, 0 24px 60px rgba(0,0,0,.35);
-  backdrop-filter:blur(14px);
-}
-h1{font-family:var(--display);font-weight:500;font-size:22px;letter-spacing:.04em;margin:0 0 6px;}
-.sub{color:var(--ink-dim);font-size:14px;margin:0 0 20px;line-height:1.5;}
-label{display:block;font-family:var(--dial);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-dim);margin:12px 0 6px;}
-input{
-  width:100%;background:#0D1018;border:1px solid var(--line);border-radius:10px;
-  padding:12px 14px;color:var(--ink);font-family:var(--body);font-size:15px;
-}
-input:focus{outline:2px solid var(--cyan);outline-offset:2px;}
-textarea,select{
-  width:100%;background:#0D1018;border:1px solid var(--line);border-radius:10px;
-  padding:12px 14px;color:var(--ink);font-family:var(--body);font-size:15px;
-}
-textarea{min-height:72px;resize:vertical;}
-select:focus,textarea:focus{outline:2px solid var(--cyan);outline-offset:2px;}
-.ad-preview{width:72px;height:128px;object-fit:cover;border-radius:8px;background:#000;display:block;}
-.ad-row{display:flex;gap:12px;align-items:flex-start;}
-.ad-row .ad-body{flex:1;min-width:0;}
-.row{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;}
-button{
-  font-family:var(--dial);font-size:12px;letter-spacing:.06em;border:none;cursor:pointer;
-  padding:12px 18px;border-radius:8px;
-}
-.primary{background:var(--mint);color:var(--void);}
-.ghost{background:transparent;color:var(--ink-dim);border:1px solid var(--line);}
-.danger{background:transparent;color:var(--red);border:1px solid var(--line);}
-.msg{min-height:18px;font-size:13px;margin-top:12px;color:var(--red);}
-.msg.ok{color:var(--mint);}
-.card{border:1px solid var(--line);background:rgba(10,12,18,.55);border-radius:12px;padding:14px 16px;margin:0 0 12px;}
-.card .who{font-family:var(--dial);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--mint);margin-bottom:8px;}
-.hidden{display:none !important;}
-#consoleView{margin-top:18px;}
-.flag-row{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px;}
-.flag-row button{padding:6px 10px;font-size:10.5px;}
-#toast{
-  position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(20px);
-  background:#12151F;border:1px solid var(--mint);color:var(--mint);
-  font-family:var(--dial);font-size:12px;padding:10px 16px;border-radius:8px;
-  opacity:0;pointer-events:none;transition:opacity .2s, transform .2s;z-index:50;
-}
-#toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
-.admin-tabs{
-  display:flex; gap:2px; flex-wrap:nowrap; margin-bottom:14px;
-  border-bottom:1px solid var(--line);
-  overflow-x:auto; -webkit-overflow-scrolling:touch;
-  scrollbar-width:none;
-}
-.admin-tabs::-webkit-scrollbar{display:none;}
-.atab{
-  background:none; border:none; border-bottom:2px solid transparent;
-  color:var(--ink-dim); font-family:inherit; font-size:12.5px;
-  padding:10px 14px; cursor:pointer; white-space:nowrap;
-}
-.atab:hover{ color:var(--ink); }
-.atab.on{ color:var(--mint); border-bottom-color:var(--mint); }
-.atab:focus-visible{ outline:2px solid var(--cyan); outline-offset:-2px; }
-.kpi-row{ display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
-.kpi{
-  flex:1 1 140px; background:var(--panel);
-  border:1px solid var(--line); border-radius:12px; padding:12px 14px;
-}
-.kpi b{ display:block; font-size:22px; color:var(--mint); font-weight:600; font-variant-numeric:tabular-nums; }
-.kpi span{ font-size:11px; color:var(--ink-dim); }
-.inactive-note{
-  border:1px solid rgba(255,180,80,.35); background:rgba(255,180,80,.07);
-  border-radius:12px; padding:12px 14px; margin-bottom:12px; font-size:13px; line-height:1.5;
-}
-.tbl{ width:100%; border-collapse:collapse; font-size:12px; }
-.tbl th{ text-align:left; color:var(--ink-dim); font-weight:500; padding:7px 8px; border-bottom:1px solid var(--line); }
-.tbl td{ padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
-.cc-strip{
-  display:flex; flex-wrap:wrap; gap:14px; align-items:center;
-  padding:10px 12px; margin-bottom:12px; border-radius:12px;
-  background:var(--panel); border:1px solid var(--line);
-  font-size:12px;
-}
-.cc-strip .h{ font-weight:600; letter-spacing:.04em; }
-.cc-strip .m{ color:var(--ink-dim); }
-.cc-strip select{
-  width:auto; min-width:160px; max-width:42vw; padding:6px 8px; font-size:12px;
-}
-.alert{ display:flex; gap:9px; align-items:flex-start; padding:9px 11px; border-radius:9px; margin-bottom:7px; font-size:12.5px; }
-.alert.critical{ background:rgba(255,84,112,.10); border:1px solid rgba(255,84,112,.35); }
-.alert.warning{ background:rgba(255,180,80,.08); border:1px solid rgba(255,180,80,.30); }
-.alert.ok{ background:rgba(124,255,178,.07); border:1px solid rgba(124,255,178,.28); }
-.alert button{ margin-left:auto; }
-.review-list{ display:flex; flex-direction:column; gap:12px; margin-top:8px; }
-.review-card{
-  display:flex; gap:12px; align-items:flex-start; flex-wrap:wrap;
-  border:1px solid var(--line); border-radius:12px; padding:12px;
-  background:rgba(7,8,13,.45);
-}
-.review-frame{
-  width:160px; max-width:42vw; aspect-ratio:9/16; background:#000;
-  border-radius:10px; overflow:hidden; flex:0 0 auto;
-}
-.review-media{ width:100%; height:100%; object-fit:contain; display:block; background:#000; }
-.review-missing{
-  width:100%; height:100%; display:flex; align-items:center; justify-content:center;
-  color:var(--ink-dim); font-size:12px; text-align:center; padding:10px;
-}
-.review-meta{ flex:1 1 180px; min-width:0; }
-.review-title{ font-weight:600; font-size:14px; margin:0 0 4px; }
-@media (max-width: 640px){
-  .review-frame{ width:100%; max-width:none; max-height:62vh; }
-}
-.gap-note{ color:var(--ink-dim); font-size:11.5px; line-height:1.6; }
-.terms{margin:0;}
-.term-row{display:grid;grid-template-columns:88px 1fr;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px;line-height:1.45;}
-.term-row dt{font-family:var(--dial);color:var(--mint);letter-spacing:.04em;font-size:11px;}
-.term-row dd{margin:0;color:var(--ink-dim);}
-.term-row dd strong{color:var(--ink);font-weight:500;}
-@media (max-width: 640px){
-  .term-row{grid-template-columns:1fr;}
-}
-@media (prefers-reduced-motion: reduce){
-  .blob,.word,.ping{animation:none !important;}
-}
-@media (max-width: 640px){
-  .wrap{padding:12px 12px 72px;}
-  .kpi b{font-size:18px;}
-  h1{font-size:18px;}
-}
-
-    .rulebook{ border:1px solid var(--line,#232838); border-radius:10px; padding:10px 14px; margin:0 0 14px;
-      background:var(--panel,#12151F); font-size:12.5px; line-height:1.55; }
-    .rulebook summary{ cursor:pointer; }
-    .rulebook ul{ margin:6px 0 10px; padding-left:18px; }
-    .rulebook p{ margin:8px 0 4px; }
-
-    /* Offered instead of yanking the page away while you are reading. */
-    .admin-refresh-pill{
-      position:fixed; left:50%; transform:translateX(-50%); bottom:18px; z-index:60;
-      display:none; padding:9px 16px; border-radius:999px; cursor:pointer;
-      background:var(--mint,#7CFFB2); color:#0D0F17; border:none;
-      font-family:inherit; font-size:12.5px; font-weight:600;
-      box-shadow:0 6px 20px rgba(0,0,0,.45);
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Space+Grotesk:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css?v=20261015h">
+<script>
+(function(){
+  try{
+    var q = window.location.search || '';
+    var hash = window.location.hash || '';
+    var params = {};
+    try{ new URLSearchParams(q).forEach(function(v,k){ params[k]=v; }); }catch(e){}
+    // `ll` is a Lifeline message tapped from an SMS — it must reach the app too.
+    var isDeepLink = !!(params.broadcast || params.strand || params.spark || params.call || params.band || params.origin || params.signal || params.ll);
+    var host = (window.location.hostname || '').toLowerCase();
+    if(host === 'admin.getnaluno.com' || host === 'admin.naluno.com'){
+      window.location.replace('/admin/' + q + hash);
+      return;
     }
-
-    /* An urgent report (sexual, terrorism and the rest) stands out. */
-    .desk-list{ display:flex; flex-direction:column; gap:6px; margin-top:8px; }
-    .desk-row{
-      border:1px solid var(--line); border-radius:12px; background:rgba(7,8,13,.35);
-      overflow:hidden;
+    var isInstalled = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+    var isIosInstalled = window.navigator.standalone === true;
+    if(isDeepLink || isInstalled || isIosInstalled){
+      window.location.replace('/app/' + q + hash);
     }
-    .desk-row summary{
-      list-style:none; cursor:pointer; display:flex; align-items:center; gap:10px;
-      padding:10px 12px; min-height:44px;
-    }
-    .desk-row summary::-webkit-details-marker{ display:none; }
-    .desk-row-title{
-      font-weight:600; font-size:14px; min-width:0; overflow:hidden;
-      text-overflow:ellipsis; white-space:nowrap; flex:1 1 auto;
-    }
-    .desk-row-sub{
-      color:var(--ink-dim); font-size:12px; min-width:0; overflow:hidden;
-      text-overflow:ellipsis; white-space:nowrap; flex:0 1 42%;
-    }
-    .desk-row summary .ghost, .desk-row summary .primary{ flex:0 0 auto; padding:8px 12px; }
-    .desk-row-body{ padding:0 12px 12px; border-top:1px solid var(--line); }
-    .desk-kv{ display:grid; grid-template-columns:140px 1fr; gap:8px; padding:7px 0; border-bottom:1px solid var(--line); font-size:13px; }
-    .desk-kv span{ color:var(--ink-dim); font-family:var(--dial); font-size:11px; letter-spacing:.04em; }
-    .review-card.review-urgent{ border-color:rgba(255,84,112,.55); box-shadow:0 0 0 1px rgba(255,84,112,.25) inset; }
-    .ad-player{
-      position:fixed; inset:0; z-index:80; background:rgba(0,0,0,.72);
-      display:flex; align-items:center; justify-content:center; padding:18px;
-    }
-    .ad-player[hidden]{ display:none !important; }
-    .ad-player-card{
-      width:min(420px, 100%); max-height:92vh; overflow:auto;
-      background:#0D1018; border:1px solid var(--line); border-radius:16px; padding:14px;
-    }
-    .ad-player-card video, .ad-player-card img{
-      width:100%; max-height:72vh; object-fit:contain; background:#000; border-radius:10px; display:block;
-    }
-    @media (max-width: 640px){
-      .desk-row summary{ flex-wrap:wrap; }
-      .desk-row-sub{ flex:1 1 100%; }
-      .desk-kv{ grid-template-columns:1fr; gap:2px; }
-    }
-</style>
+  }catch(e){}
+})();
+</script>
 </head>
 <body>
-<div class="field" aria-hidden="true"><div class="blob a"></div><div class="blob b"></div></div>
 <div class="wrap">
   <header class="top">
-    <div class="brand">
-      <div class="mark-live">
-        <span class="ping"></span>
-        <svg viewBox="0 0 68 68" fill="none">
-          <circle cx="34" cy="38" r="11" stroke="#7CFFB2" stroke-width="3"/>
-          <path d="M34 27V21" stroke="#7CFFB2" stroke-width="3" stroke-linecap="round"/>
-          <path d="M22 20c6-8 18-8 24 0" stroke="#00E5FF" stroke-width="2.2" stroke-linecap="round"/>
-        </svg>
-      </div>
-      <div class="word">NALUNO</div>
-    </div>
-    <div class="clock-block">
-      <div class="clock" id="liveClock">--:--:--</div>
-      <div class="clock-sub"><span id="liveClockZone"></span> · private <span id="swBadge" class="sw-badge">worker…</span></div>
-    </div>
-  </header>
-
-  <div class="panel" id="signPanel">
-    <h1>Sign in</h1>
-    <p class="sub">This console is not part of the public app. An allowed account is required.</p>
-    <label for="adminHandle">Handle or email</label>
-    <input id="adminHandle" autocomplete="username" placeholder="handle or email" />
-    <label for="adminPassword">Password</label>
-    <input id="adminPassword" type="password" autocomplete="current-password" placeholder="password" />
-    <div class="row">
-      <button type="button" class="primary" id="adminSignInBtn">Sign in</button>
-      <button type="button" class="ghost" id="adminGoogleBtn">Google</button>
-    </div>
-    <div class="msg" id="signMsg"></div>
-  </div>
-
-  <div class="panel hidden" id="gatePanel">
-    <h1 id="adminGateTitle">Unlock</h1>
-    <p class="sub" id="gateWho"></p>
-    <p class="sub" id="adminGateHint"></p>
-    <p class="sub" id="workerPing" style="font-family:var(--dial);font-size:11px;letter-spacing:.02em;color:var(--cyan);"></p>
-    <label for="adminPassInput">Password</label>
-    <input id="adminPassInput" type="password" autocomplete="current-password" placeholder="password" />
-    <div id="adminPassConfirmRow" style="display:none;">
-      <label for="adminPassConfirm">Confirm password</label>
-      <input id="adminPassConfirm" type="password" autocomplete="new-password" placeholder="type it again" />
-    </div>
-    <div class="row">
-      <button type="button" class="primary" id="adminUnlockBtn">Unlock</button>
-      <button type="button" class="danger" id="adminSignOutBtn">Sign out</button>
-    </div>
-    <div class="msg" id="adminGateMsg"></div>
-  </div>
-
-  <div id="consoleView" class="hidden">
-    <div class="panel" style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
-      <div>
-        <h1 style="margin:0;">Control Centre</h1>
-        <p class="sub" style="margin:4px 0 0;" id="consoleWho">Every change is logged.</p>
-      </div>
-      <div class="row" style="margin:0;">
-        <button type="button" class="ghost" id="adminChangePwBtn">Change password</button>
-        <button type="button" class="ghost" id="adminLockBtn">Lock</button>
-        <button type="button" class="danger" id="adminSignOutBtn2">Sign out</button>
-      </div>
-    </div>
-    <div id="ccStrip" class="cc-strip"></div>
-    <nav class="admin-tabs" id="adminTabs" role="tablist">
-      <button type="button" class="atab on" data-tab="overview" role="tab">Overview</button>
-      <button type="button" class="atab" data-tab="launch" role="tab">Launch &amp; Capacity</button>
-      <button type="button" class="atab" data-tab="health" role="tab">Health</button>
-      <button type="button" class="atab" data-tab="alerts" role="tab">Alerts</button>
-      <button type="button" class="atab" data-tab="diagnostics" role="tab">Diagnostics</button>
-      <button type="button" class="atab" data-tab="mail" role="tab">Mail</button>
-      <button type="button" class="atab" data-tab="ads" role="tab">Ads</button>
-      <button type="button" class="atab" data-tab="users" role="tab">Users</button>
-      <button type="button" class="atab" data-tab="identity" role="tab">Identity</button>
-      <button type="button" class="atab" data-tab="broadcast" role="tab">Broadcast</button>
-      <button type="button" class="atab" data-tab="signals" role="tab">Signals</button>
-      <button type="button" class="atab" data-tab="journey" role="tab">Journey</button>
-      <button type="button" class="atab" data-tab="creators" role="tab">Creators</button>
-      <button type="button" class="atab" data-tab="toga" role="tab">Toga</button>
-      <button type="button" class="atab" data-tab="community" role="tab">Community</button>
-      <button type="button" class="atab" data-tab="trust" role="tab">Trust</button>
-      <button type="button" class="atab" data-tab="safety" role="tab">Safety</button>
-      <button type="button" class="atab" data-tab="legal" role="tab">Legal</button>
-      <button type="button" class="atab" data-tab="economy" role="tab">Economy</button>
-      <button type="button" class="atab" data-tab="support" role="tab">Support</button>
-      <button type="button" class="atab" data-tab="monetisation" role="tab">Monetisation</button>
-      <button type="button" class="atab" data-tab="money" role="tab">Money</button>
-      <button type="button" class="atab" data-tab="content" role="tab">Content Hub</button>
-      <button type="button" class="atab" data-tab="visitors" role="tab">Visitors</button>
-      <button type="button" class="atab" data-tab="reach" role="tab">Reach</button>
-      <button type="button" class="atab" data-tab="quality" role="tab">Quality</button>
-      <button type="button" class="atab" data-tab="analytics" role="tab">Analytics</button>
-      <button type="button" class="atab" data-tab="records" role="tab">Records</button>
-      <button type="button" class="atab" data-tab="luganda" role="tab">Luganda</button>
-      <button type="button" class="atab" data-tab="export" role="tab">Export</button>
-      <button type="button" class="atab" data-tab="notifications" role="tab">Notify</button>
-      <button type="button" class="atab" data-tab="search" role="tab">Search</button>
-      <button type="button" class="atab" data-tab="flags" role="tab">Flags</button>
-      <button type="button" class="atab" data-tab="audit" role="tab">Audit</button>
-      <button type="button" class="atab" data-tab="books" role="tab">Books</button>
-      <button type="button" class="atab" data-tab="known" role="tab">Known</button>
-      <button type="button" class="atab" data-tab="rights" role="tab">Rights</button>
-      <button type="button" class="atab" data-tab="discovery" role="tab">Discovery</button>
-      <button type="button" class="atab" data-tab="admins" role="tab">Admins</button>
+    <a class="brand" href="/" aria-label="Naluno home">
+      <svg viewBox="0 0 68 68" fill="none" aria-hidden="true">
+        <circle cx="34" cy="38" r="11" stroke="#7CFFB2" stroke-width="3"/>
+        <path d="M34 27V21" stroke="#7CFFB2" stroke-width="3" stroke-linecap="round"/>
+        <path d="M22 20c6-8 18-8 24 0" stroke="#00E5FF" stroke-width="2.2" stroke-linecap="round" opacity=".9"/>
+        <path d="M16 14c9-12 27-12 36 0" stroke="#7C4DFF" stroke-width="2" stroke-linecap="round" opacity=".75"/>
+      </svg>
+      <b>NALUNO</b>
+    </a>
+    <nav class="nav" aria-label="Main">
+      <a class="hide-sm" href="#what">What it does</a>
+      <a class="hide-sm" href="#founder">Founder</a>
+      <a class="hide-sm" href="/invest/">Investors</a>
+      <a class="btn primary small" href="/app/">Open Naluno</a>
     </nav>
-    <div id="adminBody"></div>
-  </div>
+  </header>
 </div>
-<div id="toast"></div>
+
+<main>
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="tag"><i></i> Early access</span>
+      <h1>Call, chat and share your work, <em>without giving out your phone number.</em></h1>
+      <p class="lede">Naluno is one app for private calls and messages, rooms for your people, and a channel for what you create. People find you by a name you choose, called a Callsign.</p>
+      <div class="btns" id="getRow">
+        <a class="btn primary" href="/app/">Claim your Callsign</a>
+        <a class="btn ghost" href="#what">See what it does</a>
+      </div>
+      <p class="note" id="androidNote">Free to join. Opens in your phone's browser, nothing to install.</p>
+    </div>
+    <div>
+      <div class="phone"><img src="/img/screens/chat.jpg" width="600" height="1300" alt="A Naluno chat: two people arranging to meet at a reading." fetchpriority="high"></div>
+      <p class="caption">A real Naluno screen, shown with demo accounts.</p>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="what">
+  <div class="wrap">
+    <p class="kicker">What it does</p>
+    <h2>Everything you do with your people, in one place.</h2>
+    <p class="intro">Most of us use one app to message, another to call, another to post, and a fourth for groups. Naluno puts them together, and asks for a name instead of your number.</p>
+    <p class="swipe-hint" aria-hidden="true">Swipe to see more →</p>
+    <div class="feats">
+      <div class="feat">
+        <div class="phone"><img src="/img/screens/chat.jpg" width="600" height="1300" loading="lazy" alt="A private chat in Naluno."></div>
+        <h3>Talk privately</h3>
+        <p>Send messages, voice notes and photos to people who know your Callsign. Written messages are end-to-end encrypted.</p>
+      </div>
+      <div class="feat">
+        <div class="phone"><img src="/img/screens/call.jpg" width="600" height="1300" loading="lazy" alt="An incoming Naluno voice call."></div>
+        <h3>Call by name</h3>
+        <p>Voice and video calls to a Callsign. No phone number and no SIM card needed.</p>
+      </div>
+      <div class="feat">
+        <div class="phone"><img src="/img/screens/broadcast.jpg" width="600" height="1300" loading="lazy" alt="The Naluno Broadcast feed showing a photo post."></div>
+        <h3>Share what you make</h3>
+        <p>Your Broadcast holds your videos, photos and writing. It stays until you delete it.</p>
+      </div>
+      <div class="feat">
+        <div class="phone"><img src="/img/screens/create.jpg" width="600" height="1300" loading="lazy" alt="Naluno's menu for making a video, writing, going live or posting a short clip."></div>
+        <h3>Post in one tap</h3>
+        <p>Video, writing, going live, or a short clip that disappears after 24 hours.</p>
+      </div>
+    </div>
+    <p class="caption">Real Naluno screens, shown with demo accounts. We never show members' messages or calls.</p>
+    <div class="also">
+      <div><b>Bands</b><span>Rooms for your connections. Nobody owns them, and two hours after the last person leaves, the conversation is deleted for good.</span></div>
+      <div><b>Compass</b><span>A built-in AI guide for a plan, a decision or a conversation you want to think through.</span></div>
+      <div><b>Luganda</b><span>Write and read in Luganda, and have writing read aloud in Luganda.</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="privacy">
+  <div class="wrap">
+    <p class="kicker">Privacy, in plain words</p>
+    <h2>Your number stays yours.</h2>
+    <ul class="promises">
+      <li><b>No phone number needed</b>People reach you by your Callsign, a name you choose, not by your number.</li>
+      <li><b>Private messages stay private</b>Written messages are end-to-end encrypted, so only you and the person you're writing to can read them.</li>
+      <li><b>Rooms that clean up</b>A Band is deleted for good two hours after the last person leaves.</li>
+      <li><b>No outside ad networks</b>Naluno does not use outside ad networks to follow you around.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="band" id="founder">
+  <div class="wrap founder">
+    <div>
+      <p class="kicker">Who makes Naluno</p>
+      <h2>Built by a writer.</h2>
+      <p>Naluno is made by E J Magambo, a novelist with four books published on Amazon.</p>
+      <p>It started from a writer's problem: having somewhere to share your work and talk with the people around it, without handing over a phone number or getting lost in a crowd.</p>
+      <div class="btns"><a class="btn ghost" href="https://www.amazon.com/author/ejmagambo" rel="noopener" target="_blank">See the books on Amazon</a></div>
+    </div>
+    <div>
+      <ul class="books" aria-label="Books by E J Magambo">
+        <li><a href="https://www.amazon.com/dp/B0H8FWPSZT" rel="noopener" target="_blank">Chief of Thieves <span>Kindle · paperback</span></a></li>
+        <li><a href="https://www.amazon.com/dp/B0H8FQC1JX" rel="noopener" target="_blank">Mukenuzi: The Slave Trader <span>Kindle · paperback</span></a></li>
+        <li><a href="https://www.amazon.com/dp/B0DK3R43VC" rel="noopener" target="_blank">Bridget <span>Kindle · paperback</span></a></li>
+        <li><a href="https://www.amazon.com/dp/B08CXMNF4M" rel="noopener" target="_blank">The Arabian Girl <span>Kindle · paperback</span></a></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="new">
+  <div class="wrap cols">
+    <div>
+      <p class="kicker">What's new</p>
+      <h2>Getting better every week.</h2>
+      <p>Naluno is in early access. Here is some of what has changed recently.</p>
+    </div>
+    <ol class="log">
+      <li><time datetime="2026-10">October 2026</time><span>Calls connect faster and more reliably on mobile data.</span></li>
+      <li><time datetime="2026-10">October 2026</time><span>On Android, a video call keeps going in a small window when you leave the app.</span></li>
+      <li><time datetime="2026-10">October 2026</time><span>Writing can be read aloud in Luganda.</span></li>
+      <li><time datetime="2026-09">September 2026</time><span>Written messages became end-to-end encrypted.</span></li>
+      <li><time datetime="2026-09">September 2026</time><span>Bands now delete themselves two hours after the last person leaves.</span></li>
+    </ol>
+  </div>
+</section>
+
+<section class="band close">
+  <div class="wrap">
+    <h2>Be one of the first.</h2>
+    <p>Naluno is new and growing. Claim your Callsign now and help shape what it becomes.</p>
+    <div class="btns" id="getRowClose">
+      <a class="btn primary" href="/app/">Claim your Callsign</a>
+    </div>
+    <p class="note" id="androidNoteClose">Free to join. Opens in your phone's browser, nothing to install.</p>
+  </div>
+</section>
+
+<section class="band" id="contact">
+  <div class="wrap">
+    <div class="strip">
+      <p><b>Interested in backing Naluno?</b>Naluno is looking for investors, partners and advisers for its next stage.</p>
+      <div class="btns"><a class="btn ghost" href="/invest/">For investors</a><a class="btn ghost" href="/contact/">Write to us</a></div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div>Naluno · getnaluno.com</div>
+    <div><a href="/app/">Open Naluno</a><a href="/invest/">Investors</a><a href="/contact/">Contact</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a></div>
+  </div>
+</footer>
 
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 <script src="/firebase-config.js?v=20260914c"></script>
-<script src="/js/currency.js?v=20260929h"></script>
-<script src="/js/handle-guard.js?v=20261006b"></script>
-<script src="/js/admin-data.js?v=20261010a"></script>
-<script src="/js/discover-engine.js?v=20261015c"></script>
-<script src="/js/known.js?v=20261006b"></script>
-<script src="/js/traffic.js?v=20261003e"></script>
-<script src="/js/admin-export.js?v=20261004h"></script>
-<script src="/js/trust-legal.js?v=20261012c"></script>
-<script src="/js/trust-desk.js?v=20261002e"></script>
-<script src="/js/admin-launch.js?v=20261014a"></script>
-<script src="/js/admin-diagnostics.js?v=20261015g"></script>
-<script src="/js/admin-console.js?v=20261015g"></script>
+<script>
+/* The Android app, when its download address is set in firebase-config.js
+   (ANDROID_APK_URL). Until then the page offers the browser version only. */
+(function(){
+  var url = '';
+  try{ if(typeof ANDROID_APK_URL === 'string') url = ANDROID_APK_URL.trim(); }catch(_){}
+  if(!url) return;
+  ['getRow','getRowClose'].forEach(function(id){
+    var row = document.getElementById(id);
+    if(!row) return;
+    var a = document.createElement('a');
+    a.className = 'btn ghost';
+    a.href = url;
+    a.setAttribute('download', 'naluno.apk');
+    a.textContent = 'Get the Android app';
+    row.insertBefore(a, row.children[1] || null);
+  });
+  ['androidNote','androidNoteClose'].forEach(function(id){
+    var el = document.getElementById(id);
+    if(el) el.textContent = 'Free to join. Use it in your browser, or get the Android app so calls ring even when Naluno is closed.';
+  });
+})();
+</script>
+<script src="/js/site-pulse.js?v=20261006b"></script>
 </body>
 </html>

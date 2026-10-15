@@ -74,14 +74,14 @@
 // v248: attention is only kept when a visit, an app open, or a continued session owns it. Join date and Find pin stay on the person.
 // v284: 10.05f Android floats a video call on leaving; Wireline alerts through Naluno's worker; a call answers once per tap.
 // v285: 10.05g voices keep reading (several makers, scheduled, trimmed), Luganda spoken from its own sounds, test alert, stale stamps.
-const CACHE_NAME = 'naluno-shell-v329';
-const APP_BUILD = '20261015g';
+const CACHE_NAME = 'naluno-shell-v331';
+const APP_BUILD = '20261015h';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
   '/js/ads.js',
   '/js/core.js', '/js/vault.js', '/js/metrics.js', '/js/data.js', '/js/crypto.js', '/js/atmosphere.js',
-  '/js/pwa.js', '/js/gestures.js', '/js/mood-notes.json', '/js/launch.js', '/js/auth.js', '/js/qrcode.js', '/js/spark.js', '/js/camera.js', '/js/call-filters.js', '/js/calls.js', '/js/call-pip.js', '/js/media-vault.js', '/js/chat-store.js', '/js/wire-mailbox.js', '/js/wireline.js',
+  '/js/pwa.js', '/js/gestures.js', '/js/mood-notes.json', '/js/launch.js', '/js/auth.js', '/js/qrcode.js', '/js/spark.js', '/js/camera.js', '/js/call-filters.js', '/js/calls.js', '/js/call-pip.js', '/js/media-vault.js', '/js/chat-store.js', '/js/wire-mailbox.js', '/js/wireline-media.js', '/js/wireline.js',
   '/js/lifeline.js', '/js/lifeline-wire.js',
   '/js/band-room.js', '/js/band-list.js', '/js/broadcast-core.js', '/js/broadcast-space.js',
   '/js/broadcast-live.js', '/js/live-preview.js', '/js/broadcast-composer.js', '/js/broadcast-upload.js',
@@ -323,6 +323,23 @@ self.addEventListener('fetch', event=>{
     event.respondWith(handleEconomyFetch(event.request));
     return;
   }
+  /* The clock check is HEAD /manifest.json?skew=. The shell keeps
+     /manifest.json, and a match that ignored the query handed back an old
+     Date. The difference looked like days, the Everyone list asked from
+     before the server's clock, and the rules refused the whole list.
+     This probe is the network's Date, or a 504. Never the cached file. */
+  try{
+    const skewUrl = new URL(event.request.url);
+    if((event.request.method === 'GET' || event.request.method === 'HEAD')
+      && skewUrl.origin === self.location.origin
+      && skewUrl.pathname === '/manifest.json'
+      && skewUrl.search.indexOf('skew=') !== -1){
+      event.respondWith(fetch(skewUrl.href, { method: event.request.method, cache: 'no-store' }).catch(function(){
+        return new Response('', { status: 504, headers: { 'Cache-Control': 'no-store' } });
+      }));
+      return;
+    }
+  }catch(_){}
   if(event.request.method !== 'GET') return;
   // Version checks and hard reloads must hit the network, not the SW cache.
   if(event.request.cache === 'no-store' || event.request.cache === 'reload') return;

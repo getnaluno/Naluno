@@ -45,7 +45,7 @@ function extFor(ct) {
   return sub || 'bin';
 }
 function ownsKey(key, uid) {
-  return key.startsWith('u/' + uid + '/') || key.startsWith('b/' + uid + '/');
+  return key.startsWith('u/' + uid + '/') || key.startsWith('b/' + uid + '/') || key.startsWith('w/' + uid + '/');
 }
 function looksActive(buf) {
   const u = new Uint8Array(buf.slice(0, Math.min(64, buf.byteLength)));
@@ -519,6 +519,205 @@ function refused(env, ctx, r, origin) {
   return json({ error: r.message, limit: r.reason }, r.status, origin);
 }
 
+/* Wireline media. Separate from Broadcast: no Reach pass, no Broadcast
+   length cap, no creator publishing quota. Files live under w/<uid>/ so a
+   conversation upload is not counted as a Broadcast. */
+const WIRE_MAX = {
+  photo: 25 * 1024 * 1024,
+  video: 256 * 1024 * 1024,
+  audio: 64 * 1024 * 1024,
+  voice: 16 * 1024 * 1024,
+  document: 100 * 1024 * 1024,
+};
+const WIRE_PER_DAY = 80;
+const WIRE_BYTES_DAY = 1024 * 1024 * 1024;
+const WIRE_AT_ONCE = 3;
+const WIRE_DOC = {
+  'application/pdf': 'pdf',
+  'application/msword': 'doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.ms-excel': 'xls',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/vnd.ms-powerpoint': 'ppt',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+  'text/plain': 'txt',
+  'text/csv': 'csv',
+  'application/rtf': 'rtf',
+  'application/zip': 'zip',
+  'application/x-zip-compressed': 'zip',
+};
+function wireExtName(name) {
+  const n = String(name || '').toLowerCase();
+  const i = n.lastIndexOf('.');
+  return i >= 0 ? n.slice(i + 1).replace(/[^a-z0-9]/g, '') : '';
+}
+function wireKindOf(ct, name, hint) {
+  const t = cleanType(ct);
+  const ext = wireExtName(name);
+  if (hint === 'voice' && (t.indexOf('audio/') === 0 || ext === 'webm' || ext === 'm4a' || ext === 'mp3')) return 'voice';
+  if (t.indexOf('image/') === 0) return 'photo';
+  if (t.indexOf('video/') === 0) return 'video';
+  if (t.indexOf('audio/') === 0) return hint === 'voice' ? 'voice' : 'audio';
+  if (WIRE_DOC[t]) return 'document';
+  if (ext === 'pdf' || ext === 'doc' || ext === 'docx' || ext === 'xls' || ext === 'xlsx' || ext === 'ppt' || ext === 'pptx' || ext === 'txt' || ext === 'csv' || ext === 'rtf' || ext === 'zip') return 'document';
+  if (ext === 'jpg' || ext === 'jpeg' || ext === 'png' || ext === 'webp' || ext === 'gif') return 'photo';
+  if (ext === 'mp4' || ext === 'mov' || ext === 'webm' || ext === 'm4v' || ext === '3gp' || ext === 'mkv') return 'video';
+  if (ext === 'mp3' || ext === 'm4a' || ext === 'wav' || ext === 'ogg' || ext === 'aac') return 'audio';
+  return '';
+}
+function wireType(ct, name, kind) {
+  const t = cleanType(ct);
+  if (t === 'image/svg+xml' || t === 'text/html' || t.indexOf('javascript') >= 0 || t === 'application/xhtml+xml') return '';
+  if (kind === 'document') {
+    if (WIRE_DOC[t]) return t;
+    const ext = wireExtName(name);
+    if (ext === 'pdf') return 'application/pdf';
+    if (ext === 'txt') return 'text/plain';
+    if (ext === 'csv') return 'text/csv';
+    if (ext === 'zip') return 'application/zip';
+    if (ext === 'doc') return 'application/msword';
+    if (ext === 'docx') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    return '';
+  }
+  if (kind === 'photo' || kind === 'video' || kind === 'audio' || kind === 'voice') {
+    const ok = allowedType(t);
+    if (ok && ok !== 'application/octet-stream' && ok !== 'application/pdf') return ok;
+    if (kind === 'photo') return 'image/jpeg';
+    if (kind === 'video') return 'video/mp4';
+    return 'audio/webm';
+  }
+  return '';
+}
+async function wireUsage(env, uid) {
+  const midnight = new Date(); midnight.setUTCHours(0, 0, 0, 0);
+  const out = { todayCount: 0, todayBytes: 0 };
+  let cursor; let pages = 0;
+  while (pages < 8) {
+    pages++;
+    const listed = await env.SIGNAL_BUCKET.list({ prefix: 'w/' + uid + '/', cursor: cursor, limit: 1000 });
+    (listed.objects || []).forEach(function (o) {
+      const at = o.uploaded ? new Date(o.uploaded).getTime() : 0;
+      if (at >= midnight.getTime()) { out.todayCount++; out.todayBytes += Number(o.size) || 0; }
+    });
+    if (!listed.truncated) break;
+    cursor = listed.cursor;
+  }
+  return out;
+}
+async function wireOpen(env, uid) {
+  const listed = await env.SIGNAL_BUCKET.list({ prefix: 'pw/' + uid + '/', limit: 50, include: ['customMetadata'] });
+  const live = [];
+  const stale = Date.now() - 24 * 3600 * 1000;
+  for (const o of (listed.objects || [])) {
+    const at = o.uploaded ? new Date(o.uploaded).getTime() : 0;
+    const meta = o.customMetadata || {};
+    if (at && at < stale) {
+      try { if (meta.key && meta.uploadId) await env.SIGNAL_BUCKET.resumeMultipartUpload(meta.key, meta.uploadId).abort(); } catch (_) {}
+      try { await env.SIGNAL_BUCKET.delete(o.key); } catch (_) {}
+    } else live.push(o);
+  }
+  return live.length;
+}
+function wireMarker(uid, uploadId) { return 'pw/' + uid + '/' + String(uploadId).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 120); }
+
+async function handleWire(request, env, ctx, url, uid, origin, cfg) {
+  const path = url.pathname;
+  if (path === '/w/init' && request.method === 'POST') {
+    let body = {};
+    try { body = await request.json(); } catch (_) {}
+    if (cfg && cfg.features && cfg.features.uploads === false) {
+      return json({ error: 'Uploads are paused on Naluno for now. Nothing you sent before is affected.', limit: 'uploads-off' }, 403, origin);
+    }
+    const kind = wireKindOf(body.contentType, body.name, body.kind);
+    if (!kind) return json({ error: 'That file type is not accepted in a conversation', limit: 'type' }, 415, origin);
+    const ct = wireType(body.contentType, body.name, kind);
+    if (!ct) return json({ error: 'That file type is not accepted in a conversation', limit: 'type' }, 415, origin);
+    const bytes = Math.max(0, Number(body.bytes) || 0);
+    const max = WIRE_MAX[kind] || 0;
+    if (!bytes) return json({ error: 'That file is empty', limit: 'empty' }, 400, origin);
+    if (bytes > max) return json({ error: 'That file is ' + mb(bytes) + '. The Wireline limit is ' + mb(max) + '.', limit: 'size' }, 413, origin);
+    const open = await wireOpen(env, uid);
+    if (open >= WIRE_AT_ONCE) return json({ error: 'Three Wireline uploads are already going. Let one finish first.', limit: 'at-once' }, 429, origin);
+    const use = await wireUsage(env, uid);
+    if (use.todayCount >= WIRE_PER_DAY) return json({ error: 'Wireline has taken ' + WIRE_PER_DAY + ' files from this account today. It opens again at midnight (UTC).', limit: 'per-day' }, 429, origin);
+    if (use.todayBytes + bytes > WIRE_BYTES_DAY) return json({ error: 'That file would pass the Wireline daily amount. It opens again at midnight (UTC).', limit: 'bytes-day' }, 429, origin);
+    const ext = (WIRE_DOC[ct] || extFor(ct) || 'bin');
+    const key = 'w/' + uid + '/' + Date.now() + '-' + crypto.randomUUID().slice(0, 8) + '.' + ext;
+    try {
+      const mpu = await env.SIGNAL_BUCKET.createMultipartUpload(key, {
+        httpMetadata: { contentType: ct },
+        customMetadata: { uid, purpose: 'wireline', kind, uploadedAt: String(Date.now()) },
+      });
+      try { await env.SIGNAL_BUCKET.put(wireMarker(uid, mpu.uploadId), '', { customMetadata: { key: key, uploadId: mpu.uploadId } }); } catch (_) {}
+      return json({ key, uploadId: mpu.uploadId, kind, contentType: ct }, 200, origin);
+    } catch (e) {
+      return json({ error: e.message || 'Could not start upload' }, 500, origin);
+    }
+  }
+  if (path === '/w/part' && (request.method === 'PUT' || request.method === 'POST')) {
+    const key = url.searchParams.get('key') || '';
+    const uploadId = url.searchParams.get('uploadId') || '';
+    const part = parseInt(url.searchParams.get('part') || '0', 10);
+    if (!ownsKey(key, uid) || key.indexOf('w/' + uid + '/') !== 0) return json({ error: 'Forbidden' }, 403, origin);
+    if (!uploadId || part < 1) return json({ error: 'Missing uploadId or part' }, 400, origin);
+    const buf = await request.arrayBuffer();
+    if (buf.byteLength < 1) return json({ error: 'Empty part' }, 400, origin);
+    if (buf.byteLength > MAX_BYTES) return json({ error: 'Part too large' }, 413, origin);
+    try {
+      const uploaded = await env.SIGNAL_BUCKET.resumeMultipartUpload(key, uploadId).uploadPart(part, buf);
+      return json({ etag: uploaded.etag, part }, 200, origin);
+    } catch (e) {
+      return json({ error: e.message || 'Part upload failed' }, 500, origin);
+    }
+  }
+  if (path === '/w/complete' && request.method === 'POST') {
+    let body = {};
+    try { body = await request.json(); } catch (_) {}
+    const key = String(body.key || '');
+    const uploadId = String(body.uploadId || '');
+    const parts = Array.isArray(body.parts) ? body.parts : [];
+    if (!ownsKey(key, uid) || key.indexOf('w/' + uid + '/') !== 0) return json({ error: 'Forbidden' }, 403, origin);
+    if (!uploadId || !parts.length) return json({ error: 'Missing parts' }, 400, origin);
+    try {
+      const mpu = env.SIGNAL_BUCKET.resumeMultipartUpload(key, uploadId);
+      await mpu.complete(parts.map(function (p) { return { partNumber: p.part || p.partNumber, etag: p.etag }; }));
+      const head = await env.SIGNAL_BUCKET.head(key);
+      const size = head && head.size != null ? head.size : 0;
+      try { await env.SIGNAL_BUCKET.delete(wireMarker(uid, uploadId)); } catch (_) {}
+      const ct = cleanType((head && head.httpMetadata && head.httpMetadata.contentType) || '');
+      const metaKind = (head && head.customMetadata && head.customMetadata.kind) || wireKindOf(ct, key, '');
+      const max = WIRE_MAX[metaKind] || 0;
+      if (!size || (max && size > max)) {
+        try { await env.SIGNAL_BUCKET.delete(key); } catch (_) {}
+        return json({ error: 'That file is over the Wireline limit', limit: 'size' }, 413, origin);
+      }
+      const sniff = await env.SIGNAL_BUCKET.get(key, { range: { offset: 0, length: Math.min(64, size) } });
+      const headBytes = sniff ? await sniff.arrayBuffer() : new ArrayBuffer(0);
+      if (looksActive(headBytes)) {
+        try { await env.SIGNAL_BUCKET.delete(key); } catch (_) {}
+        return json({ error: 'That file is not allowed', limit: 'type' }, 415, origin);
+      }
+      /* A Reach pass on a conversation file is ignored. Broadcast length
+         rules are not applied. The stored type is the one written at init. */
+      report(env, ctx, true, size, '');
+      return json({ url: url.origin + '/o/' + key, key, bytes: size, purpose: 'wireline' }, 200, origin);
+    } catch (e) {
+      return json({ error: e.message || 'Complete failed' }, 500, origin);
+    }
+  }
+  if (path === '/w/abort' && request.method === 'POST') {
+    let body = {};
+    try { body = await request.json(); } catch (_) {}
+    const key = String(body.key || '');
+    const uploadId = String(body.uploadId || '');
+    if (!ownsKey(key, uid) || key.indexOf('w/' + uid + '/') !== 0) return json({ error: 'Forbidden' }, 403, origin);
+    try { await env.SIGNAL_BUCKET.resumeMultipartUpload(key, uploadId).abort(); } catch (_) {}
+    try { await env.SIGNAL_BUCKET.delete(wireMarker(uid, uploadId)); } catch (_) {}
+    return json({ ok: true }, 200, origin);
+  }
+  return json({ error: 'Not a Wireline upload' }, 404, origin);
+}
+
 export default {
   async fetch(request, env, ctx) {
     const broadcastWorker = !!(env && env.BROADCAST_BUCKET && !env.SIGNAL_BUCKET);
@@ -533,7 +732,7 @@ export default {
     }
 
     if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
-      return json({ ok: true, service: 'naluno-signal-upload', launchLimits: true, routes: ['POST /', 'POST /b/init', 'PUT /b/part', 'POST /b/complete', 'POST /b/abort', 'POST /b/purge', 'POST /b/drop', 'GET /o/**'] }, 200, origin);
+      return json({ ok: true, service: 'naluno-signal-upload', launchLimits: true, routes: ['POST /', 'POST /b/init', 'PUT /b/part', 'POST /b/complete', 'POST /b/abort', 'POST /w/init', 'PUT /w/part', 'POST /w/complete', 'POST /w/abort', 'GET /o/**'] }, 200, origin);
     }
 
     if ((request.method === 'GET' || request.method === 'HEAD') && url.pathname.startsWith('/o/')) {
@@ -547,8 +746,9 @@ export default {
       }
     }
 
-    const isChunkRoute = url.pathname === '/b/init' || url.pathname === '/b/part' || url.pathname === '/b/complete' || url.pathname === '/b/abort';
-    if (request.method !== 'POST' && !(request.method === 'PUT' && url.pathname === '/b/part')) {
+    const isWire = url.pathname === '/w/init' || url.pathname === '/w/part' || url.pathname === '/w/complete' || url.pathname === '/w/abort';
+    const isChunkRoute = url.pathname === '/b/init' || url.pathname === '/b/part' || url.pathname === '/b/complete' || url.pathname === '/b/abort' || isWire;
+    if (request.method !== 'POST' && !(request.method === 'PUT' && (url.pathname === '/b/part' || url.pathname === '/w/part'))) {
       return json({ error: 'Method not allowed' }, 405, origin);
     }
     if (!isChunkRoute && request.method !== 'POST') {
@@ -599,11 +799,12 @@ export default {
 
     /* 13a: who may start an upload, and with what. Parts and the finish of an
        upload already started are let through, so nothing is left half-sent. */
-    const startsUpload = (url.pathname === '/b/init') || (request.method === 'POST' && url.pathname === '/');
+    const startsUpload = (url.pathname === '/b/init') || (url.pathname === '/w/init') || (request.method === 'POST' && url.pathname === '/');
     const cfg = startsUpload || url.pathname === '/b/complete' ? await launchConfig(env) : null;
     if (startsUpload && cfg && !cfg.none && !(await isRegistered(env, uid, idToken))) {
       return refused(env, ctx, refuse('not-registered', 'Finish creating your Naluno account first.', 403), origin);
     }
+    if (isWire) return handleWire(request, env, ctx, url, uid, origin, cfg);
 
     /* Delete only this person's own files. The prefix is the signed-in uid. */
     if (url.pathname === '/b/purge' && request.method === 'POST') {
