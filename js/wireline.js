@@ -1567,13 +1567,22 @@ $('threadSendBtn').onclick = sendThreadMessage;
   const sheet = $('wireAttachSheet');
   if(sheet && !sheet.dataset.ready){
     sheet.dataset.ready = '1';
+    const icon = {
+      gallery: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" stroke-width="1.7"/><circle cx="9" cy="10" r="1.6" fill="currentColor"/><path d="M3 16l5-4 4 3 3-2 6 5" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>',
+      camera: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 8h3l2-2h6l2 2h3v11H4V8z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="13" r="3.2" stroke="currentColor" stroke-width="1.7"/></svg>',
+      document: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7 3h7l5 5v13a1 1 0 01-1 1H7a1 1 0 01-1-1V4a1 1 0 011-1z" stroke="currentColor" stroke-width="1.7"/><path d="M14 3v5h5M8 13h8M8 17h6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
+      audio: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 9v6M12 7v10M15 10v4M18 8v8M6 11v2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>'
+    };
     sheet.innerHTML = [
       ['gallery', 'Gallery'],
       ['camera', 'Camera'],
-      ['document', 'Documents'],
+      ['document', 'Document'],
       ['audio', 'Audio'],
     ].map(function(row){
-      return '<button type="button" class="ghost-btn" data-wire-act="' + row[0] + '" style="height:auto;padding:8px 12px;font-size:12px;">' + row[1] + '</button>';
+      return '<button type="button" class="wire-attach-act" data-wire-act="' + row[0] + '">'
+        + '<span class="wire-attach-ico">' + icon[row[0]] + '</span>'
+        + '<span class="wire-attach-lab">' + row[1] + '</span>'
+        + '</button>';
     }).join('');
     sheet.onclick = function(e){
       const btn = e.target.closest('[data-wire-act]');
@@ -1593,7 +1602,7 @@ let wireDraft = [];
 function toggleWireAttachSheet(){
   const sheet = $('wireAttachSheet');
   if(!sheet) return;
-  const open = sheet.style.display === 'none' || sheet.hidden;
+  const open = sheet.hidden || sheet.style.display === 'none';
   sheet.hidden = !open;
   sheet.style.display = open ? 'flex' : 'none';
 }

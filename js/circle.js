@@ -269,47 +269,58 @@
     return Math.max(1, lastDay - now.getUTCDate());
   }
 
-  /** Visual-refresh only: remembers each creator's rank position from the
-   *  last time this rendered, purely to show ↑ / ↓ / NEW / — next to their
-   *  name — the ranking itself is entirely unchanged, this only diffs
-   *  against what was already computed. Stored client-side (same pattern
-   *  used throughout the app for instant-paint caches), keyed by month so
-   *  it naturally resets when a new Toga period begins, exactly like the
-   *  real ranking does. Never read by anything that decides who's actually
-   *  in the list or in what order. */
-  /* The board redraws on every live change. The comparison baseline is the
-     ranks frozen at the start of this visit (or the last visit, if that
-     freeze is still inside six hours). Writing the ranks we just painted
-     and then reading them back on the next redraw turned every NEW into
-     "same" before anyone could see it. A person who was not in that
-     freeze stays NEW for this visit. */
-  const __togaRankSession = { key: '', base: null };
+  function nalunoTogaRankDay(){
+    const d = new Date();
+    return d.getUTCFullYear() + '-' + d.getUTCMonth() + '-' + d.getUTCDate();
+  }
+
+  /** What changed since the board we froze.
+   *  The mark used to vanish: the ranks just painted were saved, and the
+   *  next draw (a live update, or the next time the app opened) compared
+   *  a name to itself, so New / Up / Down collapsed into a dash. The
+   *  comparison board is frozen for the rest of the UTC day. A move that
+   *  happens today stays on the card until tomorrow. */
   function nalunoTogaRankDelta(monthKey, currentRanksByUid){
     const key = 'togaRanks:' + monthKey;
-    if (__togaRankSession.key !== key || __togaRankSession.base == null) {
-      let stored = null;
-      let keptAt = 0;
-      try {
-        const raw = (typeof nalunoCacheRead === 'function') ? nalunoCacheRead(key) : null;
-        if (raw && raw.__ranks && typeof raw.__ranks === 'object') {
-          stored = raw.__ranks;
-          keptAt = Number(raw.__at) || 0;
-        }
-      } catch (_) {}
-      const fresh = !!(stored && keptAt && (Date.now() - keptAt) < 6 * 60 * 60 * 1000);
-      __togaRankSession.key = key;
-      __togaRankSession.base = fresh ? stored : {};
-      try {
-        if (!fresh && typeof nalunoCacheWrite === 'function') {
-          nalunoCacheWrite(key, { __at: Date.now(), __ranks: currentRanksByUid });
-        }
-      } catch (_) {}
+    const today = nalunoTogaRankDay();
+    const current = currentRanksByUid || {};
+    let stored = null;
+    try {
+      const raw = (typeof nalunoCacheRead === 'function') ? nalunoCacheRead(key) : null;
+      if (raw && typeof raw === 'object') stored = raw;
+    } catch (_) {}
+    let base = {};
+    const write = function (row) {
+      try { if (typeof nalunoCacheWrite === 'function') nalunoCacheWrite(key, row); } catch (_) {}
+    };
+    const ranksMoved = function (prev) {
+      prev = prev || {};
+      const keys = Object.keys(current);
+      if (keys.length !== Object.keys(prev).length) return true;
+      for (let i = 0; i < keys.length; i++) { if (prev[keys[i]] !== current[keys[i]]) return true; }
+      return false;
+    };
+    if (stored && stored.__day === today && stored.__base && typeof stored.__base === 'object') {
+      base = stored.__base;
+      if (ranksMoved(stored.__ranks)) write({ __at: Date.now(), __day: today, __ranks: current, __base: base });
+    } else if (stored && stored.__day && stored.__day !== today && stored.__ranks && typeof stored.__ranks === 'object') {
+      base = stored.__ranks;
+      write({ __at: Date.now(), __day: today, __ranks: current, __base: base });
+    } else if (stored && stored.__ranks && typeof stored.__ranks === 'object') {
+      /* Older saves stored the board that had just been painted, with no
+         day. That board is still a real "last time", so use it — and do
+         not replace it with this draw, which is what turned every mark
+         into a dash. */
+      base = stored.__ranks;
+      write({ __at: Date.now(), __day: today, __ranks: current, __base: base });
+    } else {
+      base = {};
+      write({ __at: Date.now(), __day: today, __ranks: current, __base: base });
     }
-    const prev = __togaRankSession.base || {};
     const deltas = {};
-    Object.keys(currentRanksByUid || {}).forEach(function (uid) {
-      const nowRank = currentRanksByUid[uid];
-      const before = prev[uid];
+    Object.keys(current).forEach(function (uid) {
+      const nowRank = current[uid];
+      const before = base[uid];
       if (before == null) deltas[uid] = { kind: 'new' };
       else if (before === nowRank) deltas[uid] = { kind: 'same' };
       else if (before > nowRank) deltas[uid] = { kind: 'up', by: before - nowRank };
@@ -508,7 +519,7 @@
       }
       // Visual refresh only — see nalunoTogaRankDelta() above. Ranking order
       // and who qualifies are entirely unchanged above this line; this just
-      // decides what badge (↑ / ↓ / NEW / —) shows next to each name.
+      // decides the mark (New / Up / Down / Holding) beside each name.
       const ranksByUid = {};
       rows.forEach(function(r, i){ ranksByUid[r.id] = i + 1; });
       const deltas = nalunoTogaRankDelta(monthKey, ranksByUid);
@@ -518,20 +529,22 @@
         const rank = i + 1;
         const d = deltas[r.id] || { kind: 'same' };
         let badge = '';
-        if(d.kind === 'new') badge = '<span class="toga-delta toga-delta-new">NEW</span>';
-        else if(d.kind === 'up') badge = '<span class="toga-delta toga-delta-up">▲' + d.by + '</span>';
-        else if(d.kind === 'down') badge = '<span class="toga-delta toga-delta-down">▼' + d.by + '</span>';
-        else badge = '<span class="toga-delta toga-delta-same">—</span>';
+        let badgeText = 'Holding';
+        if(d.kind === 'new'){ badgeText = 'New'; badge = '<span class="toga-delta toga-delta-new">New</span>'; }
+        else if(d.kind === 'up'){ badgeText = 'Up ' + d.by; badge = '<span class="toga-delta toga-delta-up">Up ' + d.by + '</span>'; }
+        else if(d.kind === 'down'){ badgeText = 'Down ' + d.by; badge = '<span class="toga-delta toga-delta-down">Down ' + d.by + '</span>'; }
+        else badge = '<span class="toga-delta toga-delta-same">Holding</span>';
         return '<li><button type="button" class="toga-name-row toga-rank-' + Math.min(rank,4) + '" data-toga-uid="'+escapeHtml(r.id)+'" data-bcast="'+(openId ? escapeHtml(openId) : '')+'">'
           + togaFaceHtml(r, rank)
           + '<span class="toga-rank">#' + rank + '</span>'
           + '<span class="toga-name-block">'
-          +   '<span class="toga-card-name"><span data-known-uid="' + escapeHtml(r.id || '') + '">' + escapeHtml(r.name || 'Creator') + '</span>' + badge + '</span>'
+          +   '<span class="toga-card-name"><span data-known-uid="' + escapeHtml(r.id || '') + '">' + escapeHtml(r.name || 'Creator') + '</span></span>'
           +   '<span class="toga-card-v">' + formatNalunoViews(r._score || 0) + ' <em class="toga-card-unit">Toga points</em></span>'
           +   '<span class="toga-card-h">This month: ' + formatNalunoViews(r._viewsM) + (r._viewsM === 1 ? ' view' : ' views') + ' · '
           +     formatNalunoViews(r._circleM || 0) + ' Circle ' + ((r._circleM || 0) === 1 ? 'join' : 'joins') + ' · '
           +     formatNalunoViews(r._engageM || 0) + ' talk</span>'
           + '</span>'
+          + badge.replace('>', ' title="' + escapeHtml(badgeText) + '">')
           + '</button></li>';
       }).join('') + '</ol>'
       + '<div class="toga-period-note">' + nalunoMonthLabel() + ' · ' + (function(n){ return n + (n === 1 ? ' day' : ' days'); })(nalunoDaysRemainingInPeriod()) + ' remaining in this Wall of Fame</div>';
