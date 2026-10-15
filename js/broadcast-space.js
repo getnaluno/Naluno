@@ -3391,9 +3391,12 @@ function bspaceOpenSignalPlate(){
         if(typeof renderBroadcasts === 'function') renderBroadcasts();
       }catch(_){}
       bspaceBackMenu();
-      toast(aud === 'public' && !bcastPublic
-        ? 'On your Signal, for your connections (this Broadcast is not public, so it is not shown to everyone)'
-        : 'On your Signal');
+      const deniedPublic = seg.publicState === 'retry' || (aud === 'public' && bcastPublic && seg.publicListed === false);
+      toast(deniedPublic
+        ? 'On your Signal, for your connections. It could not be added to Signals for everyone.'
+        : (aud === 'public' && !bcastPublic
+          ? 'On your Signal, for your connections (this Broadcast is not public, so it is not shown to everyone)'
+          : 'On your Signal'));
     }catch(err){
       toast((err && err.message) || 'Could not send that Signal');
     }finally{

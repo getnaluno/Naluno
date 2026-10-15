@@ -58,13 +58,19 @@
     ['duration', 'trimStart', 'trimEnd'].forEach(function (k) { if (isFinite(Number(d[k]))) seg[k] = Number(d[k]); });
     return seg;
   }
+  function signalNow() {
+    try { if (typeof nalunoSignalNow === 'function') return nalunoSignalNow(); } catch (_) {}
+    var k = serverSkew();
+    return Date.now() + (k ? k.skew : 0);
+  }
   function group(list) {
     var mine = me();
     var conn = connectedUids();
-    var now = Date.now();
+    var now = signalNow();
     var by = {};
     list.forEach(function (d) {
-      if (!d || !d.uid || d.uid === mine || conn[d.uid]) return; /* yours and your connections' are already shown */
+      if (!d || typeof d.uid !== 'string' || !d.uid || d.uid === '__proto__' || d.uid === 'constructor' || d.uid === 'prototype') return;
+      if (d.uid === mine || conn[d.uid]) return; /* yours and your connections' are already shown */
       if (!(Number(d.expiresAt) > now)) return;
       if (d.held || d.hidden || d.public !== true) return;
       if (!by[d.uid]) by[d.uid] = { uid: d.uid, name: String(d.name || 'Someone'), segs: [] };
@@ -73,11 +79,13 @@
     var out = Object.keys(by).map(function (k) {
       var r = by[k];
       r.segs.sort(function (a, b) { return a.createdAt - b.createdAt; });
+      /* The row needs the newest clip. Keep a few older ones so opening
+         still plays the recent set, without one loud creator filling memory. */
+      if (r.segs.length > 8) r.segs = r.segs.slice(-8);
       r.latest = r.segs[r.segs.length - 1];
       return r;
     });
-    /* Newest first. 15 Oct: no 30-person cap: a quiet Signal is not pushed
-       out by busier ones. */
+    /* Newest first. No person-cap: a quiet Signal is not pushed out by busier ones. */
     out.sort(function (a, b) { return b.latest.createdAt - a.latest.createdAt; });
     return out;
   }
@@ -87,9 +95,16 @@
      The bound is the server's clock (measured, or the last one this phone
      measured) plus a minute. Without either, five minutes. A refusal
      measures again and asks further ahead (10 min, 1 h, 6 h). */
-  var PAGE = 120, MAX_PAGES = 4;
+  /* The first read is four pages (the old 480). A full last page is NOT the
+     end: the cursor is kept and another page is read while few creators have
+     appeared, and again when the row is scrolled. A failed read does not
+     count as a fresh empty catalogue and does not hide the last good row. */
+  var PAGE = 120, FIRST_PAGES = 4, FOLLOW_CAP = 12, MIN_CREATORS = 24;
   var aheadExtra = 0, refusals = 0;
+  var scanCursor = null, scanComplete = true, pagesRead = 0;
+  var problem = null;
   var LADDER = [10 * 60000, 60 * 60000, 6 * 60 * 60000];
+  var TRANSIENT = { unavailable: 1, 'deadline-exceeded': 1, aborted: 1, internal: 1, 'resource-exhausted': 1 };
   function serverSkew() {
     try { if (typeof nalunoServerSkew === 'number' && isFinite(nalunoServerSkew)) return { skew: nalunoServerSkew, measured: true }; } catch (_) {}
     try { if (typeof window.nalunoStoredSkew === 'number' && isFinite(window.nalunoStoredSkew)) return { skew: window.nalunoStoredSkew, measured: false }; } catch (_) {}
@@ -108,20 +123,81 @@
       .where('expiresAt', '>', bound)
       .orderBy('expiresAt', 'desc');
   }
-  function readAll() {
+  function readPages(startCursor, maxPages) {
     var bound = lowerBound();
     var list = [];
-    function page(n, cursor) {
+    var last = startCursor || null;
+    var n = 0;
+    function page() {
       var q = baseQuery(bound).limit(PAGE);
-      if (cursor) q = q.startAfter(cursor);
+      if (last) q = q.startAfter(last);
       return q.get().then(function (snap) {
         var docs = [];
-        snap.forEach(function (doc) { docs.push(doc); var d = doc.data() || {}; d.id = doc.id; list.push(d); });
-        if (docs.length === PAGE && n + 1 < MAX_PAGES) return page(n + 1, docs[docs.length - 1]);
-        return list;
+        snap.forEach(function (doc) {
+          docs.push(doc);
+          var d = (doc && typeof doc.data === 'function' ? doc.data() : null) || {};
+          d.id = doc.id;
+          list.push(d);
+        });
+        n++;
+        var full = docs.length === PAGE;
+        if (full && n < maxPages) {
+          last = docs[docs.length - 1];
+          return page();
+        }
+        return { list: list, cursor: docs.length ? docs[docs.length - 1] : last, complete: !full, pages: n };
       });
     }
-    return page(0, null);
+    return page();
+  }
+  function mergeRaw(extra) {
+    var byId = {};
+    raw.forEach(function (d) { if (d && d.id) byId[d.id] = d; });
+    (extra || []).forEach(function (d) { if (d && d.id) byId[d.id] = d; });
+    raw = Object.keys(byId).map(function (k) { return byId[k]; });
+    rows = group(raw);
+  }
+  function noteProblem(e) {
+    problem = {
+      code: String((e && e.code) || 'error'),
+      msg: String((e && e.message) || e || ''),
+      at: Date.now(),
+    };
+    try { console.warn('[signals] public', problem.code, problem.msg); } catch (_) {}
+    try { if (typeof renderBroadcastTab === 'function') renderBroadcastTab(); } catch (_) {}
+    return problem;
+  }
+  function problemText() {
+    if (!problem) return '';
+    if (problem.code === 'failed-precondition') return 'Signals for everyone could not load: the database index they need is missing or still being built.';
+    if (problem.code === 'permission-denied') return 'Signals for everyone were refused by the database. Trying again…';
+    if (problem.code === 'unavailable' || problem.code === 'deadline-exceeded') return 'No connection. Signals for everyone load when it is back.';
+    return 'Signals for everyone could not load (' + problem.code + ').';
+  }
+  function indexLink() {
+    if (!problem || problem.code !== 'failed-precondition') return '';
+    var m = String(problem.msg || '').match(/https:\/\/console\.firebase\.google\.com\/[^\s"'<>]+/);
+    return m ? m[0] : '';
+  }
+  function applyPack(pack) {
+    mergeRaw(pack.list);
+    pagesRead += pack.pages || 0;
+    scanComplete = !!pack.complete;
+    scanCursor = scanComplete ? null : pack.cursor;
+    problem = null;
+    loadedAt = Date.now();
+    try { if (typeof renderBroadcastTab === 'function') renderBroadcastTab(); } catch (_) {}
+    return rows;
+  }
+  function followIfThin(pack) {
+    applyPack(pack);
+    if (!scanComplete && rows.length < MIN_CREATORS && pagesRead < FOLLOW_CAP && scanCursor) {
+      return readPages(scanCursor, 1).then(followIfThin, function (e) {
+        noteProblem(e);
+        return rows;
+      });
+    }
+    return rows;
   }
   function afterRefusal() {
     if (refusals >= LADDER.length + 1) return Promise.resolve(false);
@@ -138,35 +214,54 @@
   }
   function load(force) {
     if (loading) return loading;
-    if (!force && Date.now() - loadedAt < 120000) return Promise.resolve(rows);
+    if (!force && loadedAt && Date.now() - loadedAt < 120000) return Promise.resolve(rows);
     if (typeof fbDb === 'undefined' || !fbDb || !me()) return Promise.resolve(rows);
-    /* Still live, newest first, bounded by the server's clock (lowerBound),
-       read in pages of 120 (up to 480). */
+    var transientTries = 0;
+    function fail(e) {
+      noteProblem(e);
+      var code = e && e.code;
+      if (TRANSIENT[code] && transientTries < 3) {
+        transientTries++;
+        var wait = 400 * Math.pow(2, transientTries - 1);
+        return new Promise(function (r) { setTimeout(r, wait); }).then(attempt);
+      }
+      return rows;
+    }
+    function begin(pack) {
+      raw = [];
+      pagesRead = 0;
+      return followIfThin(pack);
+    }
     function attempt() {
-      return readAll().catch(function (e) {
+      return readPages(null, FIRST_PAGES).then(begin, function (e) {
         if (e && e.code === 'permission-denied') {
-          return afterRefusal().then(function (again) { if (again) return attempt(); throw e; });
+          return afterRefusal().then(function (again) { if (again) return attempt(); return fail(e); });
         }
-        throw e;
+        return fail(e);
       });
     }
-    loading = attempt()
-      .then(function (list) {
-        var before = JSON.stringify(rows.map(function (r) { return r.uid + ':' + r.segs.length; }));
-        raw = list;
-        rows = group(list);
-        loadedAt = Date.now();
-        var after = JSON.stringify(rows.map(function (r) { return r.uid + ':' + r.segs.length; }));
-        if (before !== after) { try { if (typeof renderBroadcastTab === 'function') renderBroadcastTab(); } catch (_) {} }
-        return rows;
-      }, function (e) {
-        /* Rules not published yet, or offline: no public Signals, nothing breaks. */
-        try { console.warn('[signals] public', e && (e.code || e.message)); } catch (_) {}
-        loadedAt = Date.now();
-        return rows;
-      })
-      .then(function (r) { loading = null; return r; }, function () { loading = null; return rows; });
+    loading = attempt().then(function (r) { loading = null; return r; }, function () { loading = null; return rows; });
     return loading;
+  }
+  function loadMore(fromUser) {
+    if (loading || scanComplete || !scanCursor) return Promise.resolve(rows);
+    if (!fromUser && pagesRead >= FOLLOW_CAP) return Promise.resolve(rows);
+    if (typeof fbDb === 'undefined' || !fbDb || !me()) return Promise.resolve(rows);
+    loading = readPages(scanCursor, 1).then(function (pack) {
+      return applyPack(pack);
+    }, function (e) {
+      noteProblem(e);
+      return rows;
+    }).then(function (r) { loading = null; return r; }, function () { loading = null; return rows; });
+    return loading;
+  }
+  function armStrip(strip) {
+    if (!strip || strip.__pubMore) return;
+    strip.__pubMore = true;
+    strip.addEventListener('scroll', function () {
+      if (scanComplete || !scanCursor) return;
+      if (strip.scrollLeft + strip.clientWidth > strip.scrollWidth - 80) loadMore(true);
+    }, { passive: true });
   }
 
   /* Tiles for the Signals row (signal-ui.js renders them after your
@@ -216,7 +311,7 @@
   function open(i) {
     var r = rows[i];
     if (!r) return;
-    var segs = r.segs.filter(function (x) { return x && x.expiresAt > Date.now(); });
+    var segs = r.segs.filter(function (x) { return x && x.expiresAt > signalNow(); });
     if (!segs.length) { try { toast('Signal expired'); } catch (_) {} return; }
     try {
       viewingMine = false;
@@ -245,8 +340,11 @@
   }
 
   window.NalunoPublicSignals = {
-    load: load, tilesHtml: tilesHtml, bind: bind, open: open,
-    rows: function () { return rows; }, _group: group, _segFrom: segFrom, _days: days, _safeColour: safeColour,
+    load: load, loadMore: loadMore, tilesHtml: tilesHtml, bind: bind, open: open, armStrip: armStrip,
+    problemText: problemText, indexLink: indexLink,
+    rows: function () { return rows; },
+    status: function () { return { complete: scanComplete, pages: pagesRead, problem: problem }; },
+    _group: group, _segFrom: segFrom, _days: days, _safeColour: safeColour, _now: signalNow,
   };
   window.nalunoPublicSignalTilesHtml = tilesHtml;
 

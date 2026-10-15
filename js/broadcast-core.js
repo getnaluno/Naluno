@@ -695,10 +695,12 @@ let __feedDueTimer = null;
    on a timer would bill those documents again. Older pages are read once,
    then again only while this phone is on screen and 15 minutes have passed.
    A catalogue that fits on the first page is not read a second time.
-   PUBLIC_MAX_PAGES is a ceiling, not a quota: the walk stops when a page
-   comes back short. Firestore bills the documents returned, not the limit. */
+   PUBLIC_MAX_PAGES is one batch, not the end of the catalogue. A full batch
+   remembers its cursor and the next batch starts there. The walk stops only
+   when a page comes back short. Firestore bills the documents returned, not
+   the limit. The live listener keeps the newest page the whole time. */
 const PUBLIC_PAGE = 80;
-const PUBLIC_MAX_PAGES = 50;
+const PUBLIC_MAX_PAGES = 4;
 const CATALOGUE_RECONCILE_MS = 15 * 60 * 1000;
 const NEW_PUBLIC_CATCHUP_MS = 30 * 1000;
 let feedTailById = {};
@@ -710,6 +712,11 @@ let catalogueWalkedAt = 0;
 let catalogueWalkFailAt = 0;
 let catalogueHeadFull = false;
 let __feedCursorDoc = null;
+let catalogueDeepCursor = null;
+let catalogueKept = null;
+let catalogueComplete = false;
+let catalogueResumeTimer = null;
+let catalogueBatches = 0;
 let feedBoundAt = 0;
 let newPublicTimer = null;
 let newPublicArmed = false;
@@ -870,6 +877,47 @@ function publishPublicCatalogue(){
   try{ nalunoCacheWrite('feedBroadcasts', feedBroadcasts.map(nalunoSlimMedia)); }catch(_){}
   if(typeof renderBroadcastTab === 'function') renderBroadcastTab();
 }
+function nalunoCatalogueAdvance(pages, pageLen){
+  const full = pageLen >= PUBLIC_PAGE;
+  if(!full) return { complete: true, resume: false, stop: true };
+  if(pages >= PUBLIC_MAX_PAGES) return { complete: false, resume: true, stop: true };
+  return { complete: false, resume: false, stop: false };
+}
+window.nalunoCatalogueAdvance = nalunoCatalogueAdvance;
+/* A listener that attaches again (a new server-clock bound) must not keep
+   a cursor from the previous question. In-flight walks see the generation
+   change and do not write that old cursor back. */
+function nalunoResetCataloguePass(){
+  catalogueWalkGen++;
+  catalogueDeepCursor = null;
+  catalogueKept = null;
+  catalogueComplete = false;
+  catalogueBatches = 0;
+  if(catalogueResumeTimer){ clearTimeout(catalogueResumeTimer); catalogueResumeTimer = null; }
+}
+function scheduleCatalogueResume(){
+  if(catalogueResumeTimer || catalogueComplete) return;
+  const wait = catalogueBatches < 2 ? 800 : 8000;
+  catalogueResumeTimer = setTimeout(function(){
+    catalogueResumeTimer = null;
+    if(catalogueComplete || !catalogueHeadFull || !currentUser) return;
+    if(typeof document !== 'undefined' && document.hidden) return;
+    walkPublicCatalogue({ afterHead: true });
+  }, wait);
+}
+function nalunoCatalogueMore(){
+  if(catalogueComplete || !catalogueHeadFull || !fbDb || !currentUser) return;
+  if(catalogueWalkPromise) return;
+  if(catalogueResumeTimer){ clearTimeout(catalogueResumeTimer); catalogueResumeTimer = null; }
+  walkPublicCatalogue({ afterHead: true });
+}
+window.nalunoCatalogueMore = nalunoCatalogueMore;
+window.nalunoCatalogueStatus = function(){
+  return {
+    complete: !!catalogueComplete,
+    held: catalogueKept ? Object.keys(catalogueKept).length : 0,
+  };
+};
 function scheduleCataloguePages(){
   if(catalogueWalkTimer || catalogueWalkPromise) return;
   if(catalogueWalkedAt && Date.now() - catalogueWalkedAt < CATALOGUE_RECONCILE_MS) return;
@@ -883,8 +931,8 @@ async function walkPublicCatalogue(opts){
   opts = opts || {};
   if(!fbDb || !currentUser) return;
   if(catalogueWalkPromise) return catalogueWalkPromise;
-  const afterHead = !!(opts.afterHead && __feedCursorDoc);
-  if(afterHead && catalogueWalkedAt && !opts.force && Date.now() - catalogueWalkedAt < CATALOGUE_RECONCILE_MS) return;
+  const afterHead = !!(opts.afterHead && (__feedCursorDoc || catalogueDeepCursor));
+  if(afterHead && catalogueComplete && catalogueWalkedAt && !opts.force && Date.now() - catalogueWalkedAt < CATALOGUE_RECONCILE_MS) return;
   if(catalogueWalkFailAt && !opts.force && Date.now() - catalogueWalkFailAt < 120000) return;
   const gen = ++catalogueWalkGen;
   catalogueWalkPromise = walkCatalogueBody(gen, afterHead).finally(function(){
@@ -895,19 +943,26 @@ async function walkPublicCatalogue(opts){
 async function walkCatalogueBody(gen, afterHead){
   const headIds = {};
   (__feedLastDocs || []).forEach(function(d){ if(d && d.id) headIds[d.id] = 1; });
+  const resuming = !!(afterHead && catalogueDeepCursor);
+  if(!resuming) catalogueKept = {};
   const seen = {};
   let pageQuery = null;
+  const cursor = resuming ? catalogueDeepCursor : __feedCursorDoc;
   try{
     pageQuery = publicBroadcastQuery().limit(PUBLIC_PAGE);
-    if(afterHead) pageQuery = publicBroadcastQuery().startAfter(__feedCursorDoc).limit(PUBLIC_PAGE);
+    if(afterHead){
+      if(!cursor) return;
+      pageQuery = publicBroadcastQuery().startAfter(cursor).limit(PUBLIC_PAGE);
+    }
   }catch(e){
     console.warn('[bcast] catalogue query', e && e.message);
     catalogueWalkFailAt = Date.now();
     return;
   }
-  let complete = false;
+  let ended = null;
   let pages = 0;
-  while(pages < PUBLIC_MAX_PAGES){
+  let lastDoc = null;
+  while(!ended){
     let snap;
     try{ snap = await pageQuery.get(); }
     catch(e){
@@ -923,23 +978,36 @@ async function walkCatalogueBody(gen, afterHead){
       seen[row.id] = row;
     });
     pages++;
-    if(docs.length < PUBLIC_PAGE){ complete = true; break; }
+    if(docs.length) lastDoc = docs[docs.length - 1];
+    const step = nalunoCatalogueAdvance(pages, docs.length);
+    if(step.stop){ ended = step; break; }
     try{ pageQuery = publicBroadcastQuery().startAfter(docs[docs.length - 1]).limit(PUBLIC_PAGE); }
     catch(e){ console.warn('[bcast] catalogue cursor', e && e.message); catalogueWalkFailAt = Date.now(); return; }
   }
   if(gen !== catalogueWalkGen) return;
-  if(complete){
+  if(!catalogueKept) catalogueKept = {};
+  Object.keys(seen).forEach(function(id){
+    feedTailById[id] = seen[id];
+    catalogueKept[id] = 1;
+  });
+  if(lastDoc) catalogueDeepCursor = lastDoc;
+  catalogueBatches++;
+  if(ended && ended.complete){
+    catalogueComplete = true;
     catalogueWalkedAt = Date.now();
     catalogueWalkFailAt = 0;
     Object.keys(feedTailById).forEach(function(id){
-      if(seen[id]) return;
+      if(catalogueKept[id]) return;
       if(afterHead && (headIds[id] || caughtUpIds[id])) return;
       delete feedTailById[id];
     });
+    catalogueDeepCursor = null;
+    catalogueKept = null;
+    catalogueBatches = 0;
   } else {
-    console.warn('[bcast] public catalogue stopped after', pages, 'pages');
+    catalogueComplete = false;
+    if(ended && ended.resume) scheduleCatalogueResume();
   }
-  Object.keys(seen).forEach(function(id){ feedTailById[id] = seen[id]; });
   publishPublicCatalogue();
 }
 window.walkPublicCatalogue = walkPublicCatalogue;
@@ -1011,6 +1079,8 @@ function applyBroadcastDocsToFeed(docs, removedIds){
   if(!fellBack && n < PUBLIC_PAGE){
     catalogueHeadFull = false;
     __feedCursorDoc = null;
+    catalogueComplete = true;
+    catalogueDeepCursor = null;
   } else if(n >= PUBLIC_PAGE){
     catalogueHeadFull = true;
     __feedCursorDoc = docs[n - 1];
@@ -1191,6 +1261,7 @@ function startFeedBroadcastsListener(){
     }
   }catch(_){}
   const gen = ++nalunoFeedGen;
+  nalunoResetCataloguePass();
   function attach(query){
     return query.onSnapshot(
       snap => {
@@ -1261,6 +1332,9 @@ function onFeedVisible(){
       .then(function(){ catchUpNewlyPublic(); });
   }else{
     catchUpNewlyPublic();
+  }
+  if(!catalogueComplete && catalogueHeadFull && !catalogueResumeTimer && !catalogueWalkPromise){
+    scheduleCatalogueResume();
   }
   if(Date.now() - caughtRecheckAt < CATALOGUE_RECONCILE_MS) return;
   caughtRecheckAt = Date.now();

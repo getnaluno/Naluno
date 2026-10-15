@@ -1931,6 +1931,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
 else nalunoPaintSignalAudience(false);
 
 async function postSegmentsNow(newSegments){
+  let reach = '';
   try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('postSegmentsNow', (newSegments && newSegments.length) || 0); }catch(_){}
   const wantPublic = nalunoSignalAudience() === 'public';
   /* No picture check on this phone: pictures stay with connections. */
@@ -2045,6 +2046,9 @@ async function postSegmentsNow(newSegments){
       const id = await saveSignalSegment(segToSave);
       if(id) mySignal.push(Object.assign({}, segToSave, { id: id }));
       else saveFailed++;
+      if(segToSave && segToSave.publicState === 'retry') reach = 'retry';
+      else if(reach !== 'retry' && segToSave && segToSave.publicState === 'connections') reach = 'connections';
+      else if(!reach && segToSave && segToSave.publicState === 'public') reach = 'public';
     }
     if(newSegments.length>failed) bumpTodayActivity();
     if(failed>0) toast(failed===1 ? `Video upload failed: ${lastErrorMessage}` : `${failed} videos failed to upload: ${lastErrorMessage}`);
@@ -2133,6 +2137,7 @@ async function postSegmentsNow(newSegments){
   }
   mySignalSeen = false;
   renderBroadcasts();
+  return { publicState: reach };
 }
 
 $('postBroadcastBtn').onclick = async ()=>{
@@ -2270,7 +2275,9 @@ $('postBroadcastBtn').onclick = async ()=>{
       doneMsg: postedCount>1 ? ('Posted ' + postedCount + ' Signals') : 'Posted Signal',
       run: async (progress)=>{
         if(progress) progress(postedCount>1 ? ('Uploading Signals…') : 'Uploading Signal…');
-        await postSegmentsNow(newSegments);
+        const reach = await postSegmentsNow(newSegments);
+        if(reach && reach.publicState === 'retry') job.doneMsg = 'Posted for your connections. Signals for everyone did not accept it.';
+        else if(reach && reach.publicState === 'connections') job.doneMsg = 'Posted for your connections. It could not be added to Signals for everyone.';
         nalunoNoteHeldSignals(newSegments);
       },
     });

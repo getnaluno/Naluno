@@ -331,6 +331,41 @@ function toDatetimeLocal(ms){
   return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
 }
 
+function nalunoPaintPublicSignalNote(){
+  const strip = document.getElementById('myBcastStrip');
+  if(!strip || !strip.parentNode) return;
+  let note = document.getElementById('publicSignalNote');
+  if(!note){
+    note = document.createElement('p');
+    note.id = 'publicSignalNote';
+    note.style.cssText = 'display:none;margin:6px 2px 0;font-size:12px;line-height:1.35;color:var(--text-dim,#9aa);';
+    strip.parentNode.insertBefore(note, strip.nextSibling);
+  }
+  let text = '';
+  let link = '';
+  try{
+    if(window.NalunoPublicSignals && NalunoPublicSignals.problemText) text = NalunoPublicSignals.problemText() || '';
+    if(window.NalunoPublicSignals && NalunoPublicSignals.indexLink) link = NalunoPublicSignals.indexLink() || '';
+  }catch(_){}
+  if(!text){ note.style.display = 'none'; note.textContent = ''; return; }
+  note.style.display = 'block';
+  note.textContent = '';
+  note.appendChild(document.createTextNode(text));
+  if(link){
+    const a = document.createElement('a');
+    a.href = link;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.style.color = 'var(--mint,#7CFFB2)';
+    a.style.display = 'block';
+    a.textContent = 'Open the database page that builds it';
+    note.appendChild(a);
+  }
+}
+function signalClockMs(){
+  try{ if(typeof nalunoSignalNow === 'function') return nalunoSignalNow(); }catch(_){}
+  return Date.now();
+}
 function renderBroadcastTab(){
   try{ if(typeof pruneExpiredSignal === 'function') pruneExpiredSignal(); }catch(_){}
   nalunoPaintBcastChrome(bcastActiveView);
@@ -382,7 +417,7 @@ function renderBroadcastTab(){
     }
     /* An expired Signal leaves the strip as soon as it expires, not at the
        next reload. */
-    const nowTs = Date.now();
+    const nowTs = signalClockMs();
     const conn = ((typeof connectionsSignals !== 'undefined' && connectionsSignals) ? connectionsSignals : [])
       .filter(function(row){ return row && row.latest && !(Number(row.latest.expiresAt) <= nowTs) && !row.latest.held && !row.latest.hidden; });
     let others = '';
@@ -449,6 +484,8 @@ function renderBroadcastTab(){
       const publicTiles = (window.NalunoPublicSignals && typeof NalunoPublicSignals.tilesHtml === 'function') ? NalunoPublicSignals.tilesHtml() : '';
       stripEl.innerHTML = signalCreateTileHtml() + myTile + others + publicTiles;
       try{ if(publicTiles) NalunoPublicSignals.bind(stripEl); }catch(_){}
+      try{ if(window.NalunoPublicSignals && NalunoPublicSignals.armStrip) NalunoPublicSignals.armStrip(stripEl); }catch(_){}
+      try{ nalunoPaintPublicSignalNote(); }catch(_){}
       const createTile = document.getElementById('newSignalItem');
       if(createTile){
         createTile.onclick = function(e){
@@ -600,6 +637,9 @@ function nalunoArmFlipFeed(grid){
       requestAnimationFrame(function(){
         ticking = false;
         if(typeof window.__nalunoFlipPaint === 'function') window.__nalunoFlipPaint();
+        try{
+          if(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 480 && typeof nalunoCatalogueMore === 'function') nalunoCatalogueMore();
+        }catch(_){}
       });
     }
     scroller.addEventListener('scroll', onScroll, { passive: true });
@@ -1557,6 +1597,12 @@ function signalEnsurePlayableSrc(videoEl, remoteUrl){
 }
 
 function playSegment(idx, direction=1){
+  /* A phone clock running ahead must not start a Signal the server still
+     calls live, and must not keep playing one the server has already ended. */
+  if(currentSegments && currentSegments[idx] && Number(currentSegments[idx].expiresAt) > 0 && typeof nalunoSignalLive === 'function' && !nalunoSignalLive(currentSegments[idx])){
+    goToSegment(idx + 1);
+    return;
+  }
   /* Repaint the social row for THIS segment: reactions belong to the clip on
      screen, not to the whole Signal, so moving between clips changes them. */
   try{
@@ -1917,7 +1963,7 @@ async function openBroadcast(contactId){
   const c = contacts.find(x=>x.id===contactId); if(!c || !c.isReal || !c.firebaseUid || !fbDb) return;
   try{
     const snap = await fbDb.collection('users').doc(c.firebaseUid).collection('signal').orderBy('createdAt','asc').get();
-    const segments = sortSignalSegments(snap.docs.map(function(d){ return (typeof signalRowFromDoc === 'function') ? signalRowFromDoc(d) : ({ id:d.id, ...d.data() }); }).filter(s => Date.now() < s.expiresAt && !s.held && !s.hidden));
+    const segments = sortSignalSegments(snap.docs.map(function(d){ return (typeof signalRowFromDoc === 'function') ? signalRowFromDoc(d) : ({ id:d.id, ...d.data() }); }).filter(s => signalClockMs() < s.expiresAt && !s.held && !s.hidden));
     if(segments.length===0){ toast(c.name.split(' ')[0] + '\u2019s signal has faded'); return; }
     viewingMine = false;
     currentSegments = segments;
@@ -2145,10 +2191,10 @@ async function openContactSignalStory(contactId){
   let segments = entry.latest ? [entry.latest] : [];
   const cached = nalunoCacheRead('signalView:' + (entry.contact.firebaseUid || contactId));
   if(cached && cached.length){
-    const fromCache = cached.filter(function(x){ return x && !x.held && !x.hidden && !(Number(x.expiresAt) <= Date.now()); });
+    const fromCache = cached.filter(function(x){ return x && !x.held && !x.hidden && !(Number(x.expiresAt) <= signalClockMs()); });
     if(fromCache.length) segments = fromCache;
   }
-  segments = segments.filter(function(x){ return x && !(Number(x.expiresAt) <= Date.now()); });
+  segments = segments.filter(function(x){ return x && !(Number(x.expiresAt) <= signalClockMs()); });
   if(!segments.length){ toast('Signal expired'); return; }
   function show(list){
     currentSegments = list;
@@ -2177,7 +2223,7 @@ async function openContactSignalStory(contactId){
       if(currentStoryOwnerUid !== owner) return;
       const full = sortSignalSegments(snap.docs.map(function(d){
         return (typeof signalRowFromDoc === 'function') ? signalRowFromDoc(d) : ({ id:d.id, ...d.data() });
-      }).filter(function(s){ return Date.now() < s.expiresAt && !s.held && !s.hidden; }));
+      }).filter(function(s){ return signalClockMs() < s.expiresAt && !s.held && !s.hidden; }));
       const same = full.length === currentSegments.length && full.every(function(x, i){ return currentSegments[i] && String(currentSegments[i].id) === String(x.id); });
       if(!full.length || same) return;
       /* Keep the segment that is playing where it is in the new list. */

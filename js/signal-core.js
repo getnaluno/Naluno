@@ -11,7 +11,30 @@
    Real accounts store this in Firestore now — it used to be window.storage, which
    doesn't exist at all once this is hosted for real, so broadcasts silently never
    survived a sign-in. That was the actual cause of "my broadcast disappeared." */
-const SIGNAL_TTL_MS = 24 * 60 * 60 * 1000; // default 24h; composer can choose 24h / 3d / 7d via signalTtlMs()
+const SIGNAL_TTL_MS = 24 * 60 * 60 * 1000; // 24h. 3-day and 7-day stay capped: the file bucket deletes at ~25h, and a public copy may not live longer than that.
+/* One clock for "is this Signal still up". The database uses its own clock.
+   A phone running ahead used to drop a Signal that was still live, because
+   grouping and playback compared expiresAt to Date.now() after the query
+   had already trusted the server. With no measured clock, every check uses
+   this phone's clock — never a mix inside one pass. */
+function nalunoSignalNow(){
+  try{
+    if(typeof nalunoServerNow === 'function') return nalunoServerNow();
+  }catch(_){}
+  let skew = 0;
+  try{
+    if(typeof nalunoServerSkew === 'number' && isFinite(nalunoServerSkew)) skew = nalunoServerSkew;
+    else if(typeof window !== 'undefined' && typeof window.nalunoStoredSkew === 'number' && isFinite(window.nalunoStoredSkew)) skew = window.nalunoStoredSkew;
+  }catch(_){}
+  return Date.now() + skew;
+}
+function nalunoSignalLive(s){
+  if(!s || s.held || s.hidden) return false;
+  const exp = Number(s.expiresAt);
+  if(!isFinite(exp) || exp <= 0) return false;
+  return exp > nalunoSignalNow();
+}
+try{ window.nalunoSignalNow = nalunoSignalNow; window.nalunoSignalLive = nalunoSignalLive; }catch(_){}
 let mySignal = []; // { id, type:'photo'|'video'|'text', dataUrl, videoUrl, filterCss, crop, caption, text, bg, createdAt, expiresAt, transitionIn, duration }
 let mySignalSeen = true;
 let connectionsSignals = []; // [{ contactId, contact, latest }] — real connections' most recent segment
@@ -1321,7 +1344,8 @@ function signalRowFromDoc(d){
 window.signalRowFromDoc = signalRowFromDoc;
 
 function pruneExpiredSignal(){
-  mySignal = mySignal.filter(s => Date.now() < s.expiresAt);
+  const now = (typeof nalunoSignalNow === 'function') ? nalunoSignalNow() : Date.now();
+  mySignal = mySignal.filter(s => now < s.expiresAt);
 }
 
 /* 15 Oct: the copy in signals/{id} is what Signals for everyone reads (and
@@ -1478,7 +1502,16 @@ async function saveSignalSegment(segment){
           if(mirror.expiresAt > cap) mirror.expiresAt = cap;
         }
       }catch(_){}
-      await nalunoWriteSignalMirror(ref.id, mirror);
+      const wrote = await nalunoWriteSignalMirror(ref.id, mirror);
+      /* The personal copy cannot be patched afterwards (the rules let the
+         desk change it, not the creator). The phone's own row is what the
+         maker is looking at, so the public-write result lands there: actually
+         public, connections-only, or waiting for another try. A later
+         "Posted Signal" must not claim everyone when the public copy was refused. */
+      if(segment && typeof segment === 'object' && mirror.public){
+        segment.publicListed = !!(wrote && wrote.public);
+        segment.publicState = segment.publicListed ? 'public' : ((wrote && wrote.fallback) ? 'connections' : 'retry');
+      }
     }catch(_){}
     if(held){
       try{
@@ -1623,7 +1656,7 @@ async function loadConnectionsSignalsNow(){
          clip does not hide everything that person posted before it. */
       const snap = await fbDb.collection('users').doc(c.firebaseUid).collection('signal').orderBy('createdAt','desc').limit(6).get();
       if(snap.empty) return null;
-      const now = Date.now();
+      const now = (typeof nalunoSignalNow === 'function') ? nalunoSignalNow() : Date.now();
       const visible = snap.docs.map(signalRowFromDoc)
         .filter(function(x){ return x && !x.held && !x.hidden && now < x.expiresAt; });
       if(!visible.length) return null;
@@ -1633,7 +1666,7 @@ async function loadConnectionsSignalsNow(){
       /* A failed read is not "no Signal". Keep what was on screen for this
          person (if it has not expired) instead of blanking the strip. */
       const prev = (connectionsSignals || []).find(function(x){ return x && x.contact && x.contact.firebaseUid === c.firebaseUid; });
-      if(prev && prev.latest && Date.now() < prev.latest.expiresAt) return Object.assign({}, prev, { contactId: c.id, contact: c });
+      if(prev && prev.latest && ((typeof nalunoSignalNow === 'function') ? nalunoSignalNow() : Date.now()) < prev.latest.expiresAt) return Object.assign({}, prev, { contactId: c.id, contact: c });
       return null;
     }
   }));
