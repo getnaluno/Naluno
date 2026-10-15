@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261015d';
+  const BUILD = '20261015e';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -3618,11 +3618,15 @@
     const u = userRow || {}, p = pubRow || {};
     const aud = String(u.audience || p.audience || '');
     const exp = Number(p.expiresAt || u.expiresAt) || 0;
-    const base = { held: false, heldReason: '', reviewedAt: now, reviewedBy: by || '' };
+    /* The person's own Signal only lets the desk change held, hidden and the
+       review note (firestore.rules). Writing `public` there is refused, and
+       that refusal used to stop the Everyone copy from being updated at all.
+       Who the public can see is the copy in signals/{id}, which the desk can change. */
+    const user = { held: false, heldReason: '', reviewedAt: now, reviewedBy: by || '' };
     const goesPublic = aud === 'public' && exp > now && p.hidden !== true && u.hidden !== true;
     return {
-      user: Object.assign({}, base, aud ? { public: goesPublic } : {}),
-      pub: Object.assign({}, base, { public: goesPublic }),
+      user: user,
+      pub: Object.assign({}, user, { public: goesPublic }),
       goesPublic: goesPublic,
     };
   }
@@ -3649,9 +3653,10 @@
       if (rp.goesPublic) toast('Released. It is back in Signals for everyone.');
       else if (String(userRow.audience || (pubRow && pubRow.audience) || '') === 'public') toast('Released for connections. Its 24 hours are over, so it is not shown to everyone.');
     } else {
-      const patch = { hidden: true, held: false, public: false, reviewedAt: now, reviewedBy: by };
-      await userRef.set(patch, { merge: true });
-      try { await pubRef.set(patch, { merge: true }); } catch (_) {}
+      const userPatch = { hidden: true, held: false, heldReason: '', reviewedAt: now, reviewedBy: by };
+      const pubPatch = Object.assign({}, userPatch, { public: false });
+      await userRef.set(userPatch, { merge: true });
+      try { await pubRef.set(pubPatch, { merge: true }); } catch (_) {}
     }
     try {
       await writeAudit(release ? 'signal-release' : 'signal-remove', uid + '/' + id, release ? 'Released after a check' : 'Removed after a check');
