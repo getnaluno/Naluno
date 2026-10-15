@@ -3289,25 +3289,50 @@ function bspaceOpenSend(){
     };
   });
 }
-function bspaceShotUrl(){
-  const v = $('bspaceVideoEl');
-  try{
-    if(v && v.videoWidth){
-      const c = document.createElement('canvas');
-      const w = 640, h = Math.max(360, Math.round(640 * v.videoHeight / v.videoWidth));
-      c.width = w; c.height = h;
-      c.getContext('2d').drawImage(v, 0, 0, w, h);
-      return c.toDataURL('image/jpeg', 0.72);
-    }
-  }catch(_){}
+function bspacePosterUrl(){
   const meta = activeBroadcastMeta || {};
   const seg = meta.segment || {};
-  return meta.thumbUrl || seg.thumbUrl || seg.thumbDataUrl || seg.photoUrl || '';
+  const u = meta.thumbUrl || seg.thumbUrl || seg.photoUrl || '';
+  return (/^https?:/i.test(String(u))) ? String(u) : '';
+}
+/* A frame of the playing Broadcast, taken when they send. toBlob encodes
+   off the main thread. toDataURL on open used to freeze Callsign. */
+function bspaceFrameBlob(){
+  return new Promise(function(resolve){
+    let done = false;
+    const finish = function(blob){
+      if(done) return;
+      done = true;
+      resolve(blob && blob.size ? blob : null);
+    };
+    setTimeout(function(){ finish(null); }, 2500);
+    setTimeout(function(){
+      const v = $('bspaceVideoEl');
+      try{
+        if(v && v.videoWidth && v.videoHeight){
+          const c = document.createElement('canvas');
+          const w = 480;
+          const h = Math.max(270, Math.round(w * v.videoHeight / v.videoWidth));
+          c.width = w;
+          c.height = h;
+          const ctx = c.getContext('2d');
+          if(ctx){
+            ctx.drawImage(v, 0, 0, w, h);
+            if(typeof c.toBlob === 'function'){
+              c.toBlob(function(blob){ finish(blob); }, 'image/jpeg', 0.72);
+              return;
+            }
+          }
+        }
+      }catch(_){}
+      finish(null);
+    }, 0);
+  });
 }
 function bspaceOpenSignalPlate(){
   if(!activeBroadcastId) return;
-  const shot = bspaceShotUrl();
-  const img = shot ? ('<img alt="" src="' + bspaceEscape(shot) + '" style="width:100%;max-height:220px;object-fit:cover;border-radius:14px;margin:0 0 10px;background:#000;" />') : '';
+  const poster = bspacePosterUrl();
+  const img = poster ? ('<img alt="" src="' + bspaceEscape(poster) + '" style="width:100%;max-height:220px;object-fit:cover;border-radius:14px;margin:0 0 10px;background:#000;" />') : '';
   /* 15 Oct: the same "Who sees it" choice as the Signal maker (and the
      same remembered setting). It used to be missing, and these Signals
      never went to everyone. */
@@ -3345,15 +3370,17 @@ function bspaceOpenSignalPlate(){
     if(typeof saveSignalSegment !== 'function'){ toast('Signals are not available right now'); return; }
     const caption = ((body.querySelector('#bspaceSignalCaption') || {}).value || '').trim();
     go.disabled = true;
+    const sendLabel = go.textContent;
+    go.textContent = 'Sending…';
     try{
       let photoUrl = '';
-      if(shot && String(shot).indexOf('data:') === 0){
-        const blob = await (await fetch(shot)).blob();
-        if(!blob || !blob.size) throw new Error('Could not take a picture of this Broadcast');
+      let blob = null;
+      try{ blob = await bspaceFrameBlob(); }catch(_){ blob = null; }
+      if(blob && blob.size){
         if(typeof uploadPhotoToR2 !== 'function') throw new Error('Could not send that Signal');
         photoUrl = await uploadPhotoToR2(blob);
-      } else if(shot && /^https?:/i.test(shot)){
-        photoUrl = shot;
+      } else if(poster){
+        photoUrl = poster;
       }
       if(!photoUrl || String(photoUrl).indexOf('data:') === 0) throw new Error('Could not send that Signal');
       /* The picture is a frame of this Broadcast, so it goes to everyone
@@ -3401,6 +3428,7 @@ function bspaceOpenSignalPlate(){
       toast((err && err.message) || 'Could not send that Signal');
     }finally{
       go.disabled = false;
+      go.textContent = sendLabel;
     }
   };
 }

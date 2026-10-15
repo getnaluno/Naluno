@@ -55,6 +55,35 @@ async function bcastAuthHeader(force){
   return { 'Authorization': 'Bearer ' + token };
 }
 
+/* A 401 from this worker is "Invalid or expired sign-in". Refresh once.
+   Do not leave that sentence for the Signal worker to repeat: its lookup
+   rejects the same token, and a second forced refresh freezes Callsign. */
+async function bcastAuthFresh(){
+  try{
+    return await bcastAuthHeader(true);
+  }catch(e){
+    const msg = (e && e.message) || '';
+    if(/network|fetch|timeout|abort/i.test(msg)) throw e;
+    const err = new Error('Sign in again, then try sending that once more.');
+    err.status = 401;
+    err.auth = true;
+    throw err;
+  }
+}
+function bcastReject(status, body){
+  const raw = (body && body.error) ? String(body.error) : '';
+  if(status === 401 || /invalid or expired sign-in/i.test(raw)){
+    const err = new Error('Sign in again, then try sending that once more.');
+    err.status = status || 401;
+    err.auth = true;
+    return err;
+  }
+  const err = new Error(raw || ('Upload failed (' + status + ')'));
+  err.status = status;
+  err.limit = (body && body.limit) || '';
+  return err;
+}
+
 async function uploadBroadcastFile(blob, onProgress, contentTypeOverride, opts){
   try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('Broadcast upload start', (blob && blob.size) ? Math.round(blob.size/1024)+'KB' : ''); }catch(_){}
   try{ if(typeof nalunoKeepAliveStart === 'function') await nalunoKeepAliveStart('broadcast'); }catch(_){}
@@ -90,7 +119,7 @@ async function uploadBroadcastFileInner(blob, onProgress, contentTypeOverride, o
     }catch(e){
       lastErr = e;
       console.warn('[bcast-upload] attempt ' + attempt + ' failed', e && e.message);
-      if(e && e.limit) break; // 13a: a limit is an answer, not a hiccup: no second try
+      if(e && (e.limit || e.auth)) break; // a limit, or a sign-in the refresh already retried, is an answer
       if(attempt < 2) await new Promise(r => setTimeout(r, 1200));
     }
   }
@@ -101,21 +130,33 @@ async function uploadBroadcastFileTo(base, blob, contentType, onProgress, opts){
   const size = blob.size;
   if(size > BCAST_MAX_OBJECT_BYTES) throw new Error('That file is larger than 8 GB');
   { const no = window.NalunoLaunch && NalunoLaunch.blocked('uploads'); if(no){ const e = new Error(no); e.limit = 'uploads-off'; throw e; } }
-  const auth = await bcastAuthHeader(false);
-  const initRes = await (typeof nalunoFetch === 'function' ? nalunoFetch : fetch)(base + '/b/init', {
-    method: 'POST',
-    mode: 'cors',
-    credentials: 'omit',
-    headers: Object.assign({ 'Content-Type': 'application/json' }, auth),
-    body: JSON.stringify({ contentType, bytes: size }),
-  });
-  const initBody = await initRes.json().catch(()=>({}));
-  if(!initRes.ok){
-    const err = new Error(initBody.error || ('Init failed (' + initRes.status + ')'));
-    err.status = initRes.status;
-    err.limit = initBody.limit || '';
+  let auth;
+  try{ auth = await bcastAuthHeader(false); }
+  catch(e){
+    const msg = (e && e.message) || '';
+    if(/network|fetch|timeout|abort/i.test(msg)) throw e;
+    const err = new Error('Sign in again, then try sending that once more.');
+    err.status = 401;
+    err.auth = true;
     throw err;
   }
+  const postJson = function(path, body, authHeader){
+    return (typeof nalunoFetch === 'function' ? nalunoFetch : fetch)(base + path, {
+      method: 'POST',
+      mode: 'cors',
+      credentials: 'omit',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, authHeader),
+      body: JSON.stringify(body),
+    });
+  };
+  let initRes = await postJson('/b/init', { contentType, bytes: size }, auth);
+  let initBody = await initRes.json().catch(()=>({}));
+  if(initRes.status === 401 || initRes.status === 403){
+    auth = await bcastAuthFresh();
+    initRes = await postJson('/b/init', { contentType, bytes: size }, auth);
+    initBody = await initRes.json().catch(()=>({}));
+  }
+  if(!initRes.ok) throw bcastReject(initRes.status, initBody);
   const key = initBody.key;
   const uploadId = initBody.uploadId;
   if(!key || !uploadId) throw new Error('Upload session missing');
@@ -161,14 +202,17 @@ async function uploadBroadcastFileTo(base, blob, contentType, onProgress, opts){
             body: chunk,
           });
           if(partRes.status === 401 || partRes.status === 403){
-            const auth2 = await bcastAuthHeader(true);
+            auth = await bcastAuthFresh();
             partRes = await (typeof nalunoFetch === 'function' ? nalunoFetch : fetch)(partUrl, {
               method: 'PUT',
               mode: 'cors',
               credentials: 'omit',
-              headers: Object.assign({ 'Content-Type': 'application/octet-stream' }, auth2),
+              headers: Object.assign({ 'Content-Type': 'application/octet-stream' }, auth),
               body: chunk,
             });
+            partBody = await partRes.json().catch(()=>({}));
+            if(!partRes.ok) throw bcastReject(partRes.status, partBody);
+            break;
           }
           partBody = await partRes.json().catch(()=>({}));
           if(partRes.ok) break;
@@ -176,6 +220,7 @@ async function uploadBroadcastFileTo(base, blob, contentType, onProgress, opts){
             throw new Error(partBody.error || ('Part ' + partNum + ' failed'));
           }
         }catch(e){
+          if(e && e.auth) throw e;
           if(attempt >= 6) throw e;
           if(onProgress) onProgress(sent / size, 'Retrying part ' + partNum + '…');
           await new Promise(r => setTimeout(r, 800 * attempt));
@@ -189,22 +234,14 @@ async function uploadBroadcastFileTo(base, blob, contentType, onProgress, opts){
       sent = end;
     }
     if(onProgress) onProgress(0.97, 'Finishing upload…');
-    const doneRes = await (typeof nalunoFetch === 'function' ? nalunoFetch : fetch)(base + '/b/complete', {
-      method: 'POST',
-      mode: 'cors',
-      credentials: 'omit',
-      headers: Object.assign({ 'Content-Type': 'application/json' }, await bcastAuthHeader(false)),
-      // 14 Oct: an original Broadcast video names its Reach pass; the media
-      // worker checks the real file's length against it.
-      body: JSON.stringify(Object.assign({ key, uploadId, parts, bytes: size }, (opts && opts.reachPass) ? { reachPass: String(opts.reachPass) } : {})),
-    });
-    const doneBody = await doneRes.json().catch(()=>({}));
-    if(!doneRes.ok){
-      const err = new Error(doneBody.error || 'Could not finish upload');
-      err.status = doneRes.status;
-      err.limit = doneBody.limit || '';
-      throw err;
+    let doneRes = await postJson('/b/complete', Object.assign({ key, uploadId, parts, bytes: size }, (opts && opts.reachPass) ? { reachPass: String(opts.reachPass) } : {}), auth);
+    let doneBody = await doneRes.json().catch(()=>({}));
+    if(doneRes.status === 401 || doneRes.status === 403){
+      auth = await bcastAuthFresh();
+      doneRes = await postJson('/b/complete', Object.assign({ key, uploadId, parts, bytes: size }, (opts && opts.reachPass) ? { reachPass: String(opts.reachPass) } : {}), auth);
+      doneBody = await doneRes.json().catch(()=>({}));
     }
+    if(!doneRes.ok) throw bcastReject(doneRes.status, doneBody);
     // The worker always returns a full, correct-bucket playback URL. If it's
     // ever missing, build it against THIS SAME broadcast endpoint (`base`) —
     // never the Signal worker, which would point at the wrong bucket entirely.

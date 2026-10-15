@@ -1114,7 +1114,15 @@ async function uploadPhotoToR2(file){
      genuinely unavailable, so this can never be worse than before. */
   if(typeof uploadBroadcastFile === 'function'){
     try{ return await uploadBroadcastFile(file, null, ct); }
-    catch(e){ console.warn('[upload] photo via Broadcast path failed, falling back to Signal worker', e && e.message); }
+    catch(e){
+      /* The Signal worker answers "Invalid or expired sign-in" even when the
+         Broadcast pipe accepts the token, then force-refreshes and Callsign
+         freezes. A sign-in failure stays on the Broadcast pipe. */
+      if(e && (e.auth || e.status === 401 || e.status === 403 || /invalid or expired sign-in|sign in again|auth\/|user-token-expired/i.test(e.message || ''))){
+        throw e;
+      }
+      console.warn('[upload] photo via Broadcast path failed, falling back to Signal worker', e && e.message);
+    }
   }
   return nalunoUploadFileToR2(file, ct, PHOTO_MAX_BYTES, 'Photo');
 }
