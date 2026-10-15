@@ -117,7 +117,8 @@ check('feed bound: measured clock, else the stored one, else 2 minutes; refusal 
   wYes.nalunoMeasureSkew = () => { c.set(-3600000); return Promise.resolve(); };
   assert.strictEqual(await c.refuse(), true);
   assert.ok(near(c.now(), Date.now() - 3600000 - 15000));
-  assert.ok(/if\(err && err\.code === 'permission-denied'\)\{\s*nalunoAfterFeedRefusal\(\)\.then/.test(core), 'the feed listener retries a refusal');
+  /* 15 Oct d: the retry moved into nalunoFeedRetry (fixes-1015d.test.cjs). */
+  assert.ok(/if\(err && err\.code === 'permission-denied'\)\{[\s\S]{0,200}nalunoAfterFeedRefusal\(\)\.then/.test(core), 'the feed listener retries a refusal');
 });
 check('"scheduled" is judged by the server clock (a slow phone hid its last hour)', () => {
   const f = new Function('window', 'let nalunoServerSkew = 3600000;' + grab(core, 'broadcastIsScheduled') + grab(core, 'nalunoServerNow') + 'return broadcastIsScheduled;')({});

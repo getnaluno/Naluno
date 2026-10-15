@@ -5,14 +5,35 @@
   const KEYS = ['recoveryEmail', 'compassPasswordHash', 'e2eKeyBackup', '_consoleGate'];
   const PUSH_KEYS = ['fcmToken', 'fcmTokenWeb', 'fcmTokenAndroid', 'fcmTokenPlatform', 'fcmTokenUpdatedAt'];
   let cache = {};
+  let loaded = false;
+  let loadedFor = '';
 
+  /* 15 Oct d: the app keeps fbDb, currentUser and currentProfile as script
+     globals (let), which are NOT properties of window. Reading root.fbDb
+     was always empty in the app, so nothing was ever written to the vault:
+     since 14 Oct (push addresses vault-only) no phone could save its push
+     address, and "enable notifications" failed. Read the globals first. */
+  function dbNow() {
+    try { if (typeof fbDb !== 'undefined' && fbDb) return fbDb; } catch (_) {}
+    return root.fbDb || null;
+  }
+  function userNow() {
+    try { if (typeof currentUser !== 'undefined' && currentUser) return currentUser; } catch (_) {}
+    return root.currentUser || null;
+  }
+  function profileNow() {
+    try { if (typeof currentProfile !== 'undefined' && currentProfile) return currentProfile; } catch (_) {}
+    return root.currentProfile || null;
+  }
   function uidOf(uid) {
-    return uid || (root.currentUser && root.currentUser.uid) || '';
+    const u = userNow();
+    return uid || (u && u.uid) || '';
   }
   function ref(uid) {
     const u = uidOf(uid);
-    if (!root.fbDb || !u) return null;
-    return root.fbDb.collection('users').doc(u).collection('vault').doc('main');
+    const db = dbNow();
+    if (!db || !u) return null;
+    return db.collection('users').doc(u).collection('vault').doc('main');
   }
   function isDeleteSentinel(v) {
     return !!(v && typeof v === 'object' && typeof v.isEqual === 'function');
@@ -36,7 +57,7 @@
       if (isDeleteSentinel(fields[k]) || fields[k] == null) delete cache[k];
       else cache[k] = fields[k];
     });
-    if (root.currentProfile) mergeInto(root.currentProfile, cache);
+    if (profileNow()) mergeInto(profileNow(), cache);
   }
   function mergeInto(profile, vault) {
     if (!profile || !vault) return profile;
@@ -57,12 +78,15 @@
   }
   function get(key) {
     if (cache[key] != null) return cache[key];
-    if (root.currentProfile && root.currentProfile[key] != null) return root.currentProfile[key];
+    const prof = profileNow();
+    if (prof && prof[key] != null) return prof[key];
     return null;
   }
   function acceptSnapshot(data) {
     cache = data && typeof data === 'object' ? Object.assign({}, data) : {};
-    if (root.currentProfile) mergeInto(root.currentProfile, cache);
+    loaded = true;
+    loadedFor = uidOf();
+    if (profileNow()) mergeInto(profileNow(), cache);
     return cache;
   }
   async function writePush(fields, uid) {
@@ -88,9 +112,9 @@
     const ok = await writePush(fields, uid);
     if (!ok) return false;
     const u = uidOf(uid);
-    if (u && root.fbDb && typeof firebase !== 'undefined') {
+    if (u && dbNow() && typeof firebase !== 'undefined') {
       const del = firebase.firestore.FieldValue.delete();
-      try { await root.fbDb.collection('users').doc(u).set({ fcmToken: del, fcmTokenWeb: del, fcmTokenAndroid: del }, { merge: true }); } catch (_) {}
+      try { await dbNow().collection('users').doc(u).set({ fcmToken: del, fcmTokenWeb: del, fcmTokenAndroid: del }, { merge: true }); } catch (_) {}
     }
     return true;
   }
@@ -113,14 +137,21 @@
       return data;
     } catch (_) { return cache; }
   }
+  /* 15 Oct d: this never ran in the app (see dbNow). Now that it can, it
+     only COPIES private fields from the public profile into the vault, if
+     the vault does not already have them. It does not delete anything from
+     the public profile: removing data is a decision for you, not something
+     a phone does silently on first open. */
   async function migrateFromPublic(data, uid) {
+    /* Only once the vault itself has been read (so nothing in it is ever
+       overwritten by an older public copy), and never the console's gate. */
+    if (!loaded || !loadedFor || loadedFor !== uidOf(uid)) return false;
     const move = pick(data);
+    delete move._consoleGate;
+    Object.keys(move).forEach(function (k) { if (cache[k] != null) delete move[k]; });
     if (!Object.keys(move).length) return false;
     try {
-      await write(move, uid);
-      const u = uidOf(uid);
-      if (u && root.fbDb) await root.fbDb.collection('users').doc(u).set(stripPublic(), { merge: true });
-      return true;
+      return !!(await write(move, uid));
     } catch (_) { return false; }
   }
 

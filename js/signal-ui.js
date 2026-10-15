@@ -534,7 +534,17 @@ function renderBroadcastTab(){
       const copy = empty.querySelector('.empty-state-copy');
       if(copy){
         if(!copy.__nalunoDefault) copy.__nalunoDefault = copy.innerHTML;
+        /* 15 Oct d: when the public feed itself failed, say so (and why)
+           instead of "No permanent Broadcasts yet". */
+        let feedNote = '';
+        try{ if(bcastActiveView !== 'mine' && !list.length && typeof window.nalunoFeedProblemText === 'function') feedNote = window.nalunoFeedProblemText(); }catch(_){}
         if(kindNote) copy.textContent = kindNote;
+        else if(feedNote){
+          let link = '';
+          try{ link = typeof window.nalunoFeedIndexLink === 'function' ? window.nalunoFeedIndexLink() : ''; }catch(_){}
+          copy.innerHTML = escapeHtml(feedNote)
+            + (link ? '<br><a href="' + escapeHtml(link) + '" target="_blank" rel="noopener" style="color:var(--mint);">Open the database page that builds it</a>' : '');
+        }
         else copy.innerHTML = copy.__nalunoDefault;
       }
     }

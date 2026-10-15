@@ -759,6 +759,10 @@ window.nalunoCatalogueNow = nalunoCatalogueNow;
    Returns false when there is nothing more to try. */
 const NALUNO_REFUSAL_LADDER = [10 * 60000, 60 * 60000, 24 * 3600000, 7 * 24 * 3600000];
 async function nalunoAfterFeedRefusal(){
+  /* 15 Oct d: with the server clock already known, a refusal is not a
+     clock problem (a sign-in still settling, a token refresh): ask the
+     same question again later, without stepping back. */
+  if(nalunoMeasuredSkew() !== null && !nalunoBackoffWithSkew && nalunoClockBackoff === 0) return true;
   if(nalunoFeedRefusals >= NALUNO_REFUSAL_LADDER.length + 1) return false;
   nalunoFeedRefusals++;
   const before = nalunoMeasuredSkew();
@@ -778,6 +782,63 @@ async function nalunoAfterFeedRefusal(){
   return true;
 }
 window.nalunoAfterFeedRefusal = nalunoAfterFeedRefusal;
+/* 15 Oct d: the public feed's listener. Every error is kept (and written to
+   Diagnostics with the database's own words), shown in place of "No
+   permanent Broadcasts yet", and the feed is asked again: 2 s, 4 s, 8 s …
+   then every minute, for as long as the person is signed in. It used to
+   try one fallback (which needs an index that does not exist) and then
+   stay empty for the rest of the session. */
+let nalunoFeedGen = 0;
+let nalunoFeedProblem = null;
+let nalunoFeedRetries = 0;
+let nalunoFeedRetryTimer = null;
+function nalunoNoteFeedProblem(err){
+  const code = String((err && err.code) || 'error');
+  const msg = String((err && err.message) || err || '');
+  nalunoFeedProblem = { code: code, msg: msg, at: Date.now() };
+  try{ if(typeof nalunoDiag === 'function') nalunoDiag('feed-listener', code + ' ' + msg.slice(0, 380)); }catch(_){}
+  try{ if(typeof renderBroadcastTab === 'function') renderBroadcastTab(); }catch(_){}
+}
+function nalunoFeedProblemText(){
+  const p = nalunoFeedProblem;
+  if(!p) return '';
+  if(p.code === 'failed-precondition'){
+    return 'The public feed could not load: the database index it needs is missing or still being built.';
+  }
+  if(p.code === 'permission-denied') return 'The public feed was refused by the database. Trying again…';
+  if(p.code === 'unavailable') return 'No connection. The public feed loads when it is back.';
+  return 'The public feed could not load (' + p.code + '). Trying again…';
+}
+window.nalunoFeedProblemText = nalunoFeedProblemText;
+window.nalunoFeedProblemRaw = function(){ return nalunoFeedProblem; };
+/* The database's own link to build the missing index, when it gave one. */
+function nalunoFeedIndexLink(){
+  const p = nalunoFeedProblem;
+  if(!p || p.code !== 'failed-precondition') return '';
+  const m = String(p.msg || '').match(/https:\/\/console\.firebase\.google\.com\/[^\s"'<>]+/);
+  return m ? m[0] : '';
+}
+window.nalunoFeedIndexLink = nalunoFeedIndexLink;
+function nalunoFeedRetry(err){
+  if(nalunoFeedRetryTimer) return;
+  const n = nalunoFeedRetries++;
+  const wait = Math.min(60000, 2000 * Math.pow(2, n));
+  const go = function(delay){
+    nalunoFeedRetryTimer = setTimeout(function(){
+      nalunoFeedRetryTimer = null;
+      if(currentUser && !feedBroadcastsUnsub) startFeedBroadcastsListener();
+    }, delay);
+  };
+  if(err && err.code === 'permission-denied'){
+    /* Asked again at once with the clock adjusted when that could be the
+       reason; otherwise after the wait. */
+    nalunoAfterFeedRefusal().then(function(stepped){
+      go(stepped && nalunoMeasuredSkew() === null ? 0 : wait);
+    }, function(){ go(wait); });
+    return;
+  }
+  go(wait);
+}
 function publicBroadcastQuery(){
   return fbDb.collection('broadcasts')
     .where('listed', '==', true)
@@ -1129,9 +1190,13 @@ function startFeedBroadcastsListener(){
       return;
     }
   }catch(_){}
+  const gen = ++nalunoFeedGen;
   function attach(query){
     return query.onSnapshot(
       snap => {
+        if(gen !== nalunoFeedGen) return;
+        nalunoFeedProblem = null;
+        nalunoFeedRetries = 0;
         const removed = [];
         try{
           snap.docChanges().forEach(function(ch){
@@ -1141,34 +1206,19 @@ function startFeedBroadcastsListener(){
         applyBroadcastDocsToFeed(snap.docs, removed);
       },
       err => {
-        console.warn('[bcast] feed listener', err && err.message);
-        // Missing index or rules — fall back once
+        console.warn('[bcast] feed listener', err && err.code, err && err.message);
+        /* An error from a listener that was already replaced is ignored:
+           it used to stop the new one too. */
+        if(gen !== nalunoFeedGen) return;
         if(feedBroadcastsUnsub){
           try{ feedBroadcastsUnsub(); }catch(_){}
           feedBroadcastsUnsub = null;
         }
-        /* 15 Oct: a refusal is almost always a fast phone clock. Ask again
-           by the server's clock (or further back), not the same question. */
-        if(err && err.code === 'permission-denied'){
-          nalunoAfterFeedRefusal().then(function(again){
-            if(again && !feedBroadcastsUnsub) startFeedBroadcastsListener();
-          });
-          return;
-        }
-        if(!startFeedBroadcastsListener._fellBack){
-          startFeedBroadcastsListener._fellBack = true;
-          try{
-            feedBroadcastsUnsub = attach(
-              fbDb.collection('broadcasts')
-                .where('listed', '==', true)
-                .where('hidden', '==', false)
-                .where('held', '==', false)
-                .where('visibility', '==', 'public')
-                .where('publishAt', '<=', nalunoCatalogueNow())
-                .limit(80)
-            );
-          }catch(e2){ console.warn('[bcast] feed fallback failed', e2); }
-        }
+        nalunoNoteFeedProblem(err);
+        /* 15 Oct d: signed out (or signing out): stop here. Signing in
+           starts the feed again (loadFeedBroadcasts). Nothing is counted. */
+        if(!currentUser) return;
+        nalunoFeedRetry(err);
       }
     );
   }
@@ -1187,18 +1237,9 @@ function startFeedBroadcastsListener(){
     );
   }catch(e){
     console.warn('[bcast] start feed listener', e);
-    try{
-      startFeedBroadcastsListener._fellBack = true;
-      feedBroadcastsUnsub = attach(
-        fbDb.collection('broadcasts')
-          .where('listed', '==', true)
-          .where('hidden', '==', false)
-          .where('held', '==', false)
-          .where('visibility', '==', 'public')
-          .where('publishAt', '<=', bound)
-          .limit(PUBLIC_PAGE)
-      );
-    }catch(_){}
+    feedBroadcastsUnsub = null;
+    nalunoNoteFeedProblem(e);
+    nalunoFeedRetry(e);
   }
   armNewPublicCatchUp();
 }
