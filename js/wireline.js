@@ -337,6 +337,7 @@ function renderWirelineList(){
     const last = msgs[msgs.length-1];
     const lastText = last ? (
       last.type==='voice' ? '🎙 Voice note · '+formatDuration(last.duration||0) :
+      last.type==='audio' ? ('Audio · ' + (last.fileName || 'file')) :
       last.type==='mood' ? '◐ '+((MOODS.find(x=>x.key===last.mood)||{}).label || 'A feeling') :
       last.type==='photo' ? 'Slip · photo' :
       last.type==='video' ? 'Slip · video' :
@@ -1040,7 +1041,7 @@ if($('threadVideoBtn')){
 }
 
 function receiptTickHtml(status){
-  if(status==='queued'){
+  if(status==='queued' || status==='sending'){
     return `<svg class="receipt-tick" width="12" height="12" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" opacity=".6"/><path d="M12 7v5l3.5 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity=".6"/></svg>`;
   }
   if(status==='read'){
@@ -1063,6 +1064,18 @@ const MOODS = [
   { key:'longing',     label:'Missing you',    vibe:'desert' },
   { key:'overwhelmed', label:'Overwhelmed',    vibe:'waterfall' },
 ];
+function audioFileBubbleHtml(m){
+  const name = m.fileName || 'Audio';
+  const playing = String(currentPlayingVoiceId) === String(m.id);
+  const icon = playing
+    ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="4" width="5" height="16" rx="1"/><rect x="14" y="4" width="5" height="16" rx="1"/></svg>`
+    : `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4z"/></svg>`;
+  const size = m.fileSize ? nalunoFormatBytes(m.fileSize) : 'Audio';
+  return `<div class="voice-bubble">
+      <div class="voice-play-btn" data-voice="${escapeHtml(String(m.id))}">${icon}</div>
+      <div class="doc-meta"><span class="doc-name">${escapeHtml(name)}</span><span class="doc-sub">${escapeHtml(size)}</span></div>
+    </div>`;
+}
 function voiceBubbleHtml(m){
   const waveform = m.waveform && m.waveform.length ? m.waveform : Array(24).fill(0.4);
   const bars = waveform.map(v=>`<span style="height:${Math.round(4+v*18)}px;"></span>`).join('');
@@ -1339,7 +1352,7 @@ function renderThreadMessages(){
       </div>`;
     }
     let bubbleInner, bubbleClass = 'msg-bubble';
-    if(m.type==='voice'){ bubbleInner = voiceBubbleHtml(m); bubbleClass = 'msg-bubble voice-bubble-wrap'; }
+    if(m.type==='voice' || m.type==='audio'){ bubbleInner = m.type==='audio' ? audioFileBubbleHtml(m) : voiceBubbleHtml(m); bubbleClass = 'msg-bubble voice-bubble-wrap'; }
     else if(m.type==='mood'){ bubbleInner = moodBubbleHtml(m); bubbleClass = 'msg-bubble mood-bubble-wrap'; }
     else if(m.type==='photo' || m.type==='video'){ bubbleInner = slipBubbleHtml(m); bubbleClass = 'msg-bubble slip-bubble'; }
     else if(m.type==='document'){ bubbleInner = documentBubbleHtml(m); bubbleClass = 'msg-bubble doc-bubble'; }
@@ -1351,7 +1364,9 @@ function renderThreadMessages(){
     }
     const receipt = m.from==='me' ? receiptTickHtml(m.status || 'sent') : '';
     const waitNote = (m.from==='me' && m.status==='queued')
-      ? '<div class="msg-wait">Waiting in Naluno</div>' : '';
+      ? '<div class="msg-wait">Waiting to send</div>'
+      : (m.from==='me' && m.status==='sending')
+      ? '<div class="msg-wait">Sending</div>' : '';
     const deleteBtn = m.from==='me' ? `<span class="msg-delete-btn" data-delmsg="${escapeHtml(String(m.id))}" title="Delete" aria-label="Delete message"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2m2 0v13a2 2 0 01-2 2H9a2 2 0 01-2-2V7h10z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>` : '';
     return dayHtml + `<div class="msg-row ${m.from === 'me' ? 'me' : (m.from === 'system' ? 'system' : 'them')}" data-msgid="${escapeHtml(String(m.id))}">
       <div class="${bubbleClass}">${bubbleInner}</div>
@@ -1533,33 +1548,358 @@ $('threadInput').addEventListener('keydown', e=>{
   if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendThreadMessage(); }
 });
 $('threadSendBtn').onclick = sendThreadMessage;
-(function wireSlipPicker(){
-  const input = $('threadSlipInput');
-  if(!input) return;
-  input.addEventListener('change', function(){
-    const file = input.files && input.files[0];
+(function wireAttachPickers(){
+  function take(input, hint){
+    const files = input && input.files ? Array.prototype.slice.call(input.files) : [];
     try{ input.value = ''; }catch(_){}
-    if(!file) return;
+    if(!files.length) return;
     if(!activeThreadContactId){ toast('Open a conversation first'); return; }
-    sendSlipFile(file).catch(err=> toast((err && err.message) || 'Could not send slip'));
-  });
+    stageWireFiles(files, hint);
+  }
+  const slip = $('threadSlipInput');
+  const doc = $('threadDocInput');
+  const audio = $('threadAudioInput');
+  if(slip) slip.addEventListener('change', function(){ take(slip, ''); });
+  if(doc) doc.addEventListener('change', function(){ take(doc, 'document'); });
+  if(audio) audio.addEventListener('change', function(){ take(audio, 'audio'); });
+  const attach = $('threadAttachBtn');
+  if(attach) attach.onclick = function(){ toggleWireAttachSheet(); };
+  const sheet = $('wireAttachSheet');
+  if(sheet && !sheet.dataset.ready){
+    sheet.dataset.ready = '1';
+    sheet.innerHTML = [
+      ['gallery', 'Gallery'],
+      ['camera', 'Camera'],
+      ['document', 'Documents'],
+      ['audio', 'Audio'],
+    ].map(function(row){
+      return '<button type="button" class="ghost-btn" data-wire-act="' + row[0] + '" style="height:auto;padding:8px 12px;font-size:12px;">' + row[1] + '</button>';
+    }).join('');
+    sheet.onclick = function(e){
+      const btn = e.target.closest('[data-wire-act]');
+      if(!btn) return;
+      const act = btn.getAttribute('data-wire-act');
+      if(act === 'gallery' && slip) slip.click();
+      else if(act === 'document' && doc) doc.click();
+      else if(act === 'audio' && audio) audio.click();
+      else if(act === 'camera') openWireCamera();
+      sheet.hidden = true;
+      sheet.style.display = 'none';
+    };
+  }
 })();
 
-/* Document picker — deliberately its own button and its own hidden input,
-   not a mode on the photo picker. A combined accept list makes Android's
-   picker default to the gallery, which is exactly the wrong place to look
-   for a PDF. */
-(function wireDocPicker(){
-  const input = $('threadDocInput');
-  if(!input) return;
-  input.addEventListener('change', function(){
-    const file = input.files && input.files[0];
-    try{ input.value = ''; }catch(_){}
-    if(!file) return;
-    if(!activeThreadContactId){ toast('Open a conversation first'); return; }
-    sendDocumentFile(file).catch(err=> toast((err && err.message) || 'Could not send document'));
+let wireDraft = [];
+function toggleWireAttachSheet(){
+  const sheet = $('wireAttachSheet');
+  if(!sheet) return;
+  const open = sheet.style.display === 'none' || sheet.hidden;
+  sheet.hidden = !open;
+  sheet.style.display = open ? 'flex' : 'none';
+}
+function stageWireFiles(files, hint){
+  const Media = window.NalunoWireMedia;
+  if(!Media){ toast('Attachment tools are not loaded'); return; }
+  const planned = Media.planBatch(files, hint === 'document' ? '' : hint);
+  planned.rejected.forEach(function(r){ toast(r.error || 'That file was not added'); });
+  planned.accepted.forEach(function(row){
+    wireDraft.push({
+      id: 'd' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+      file: row.file,
+      plan: row.plan,
+      status: 'selected',
+      mediaUrl: '',
+      error: '',
+      attempts: 0,
+    });
   });
-})();
+  paintWireDraft();
+}
+function paintWireDraft(){
+  const box = $('wireAttachDraft');
+  if(!box) return;
+  if(!wireDraft.length){
+    box.hidden = true;
+    box.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
+  box.hidden = false;
+  box.style.display = 'flex';
+  box.innerHTML = wireDraft.map(function(item){
+    const name = (item.plan && item.plan.name) || 'File';
+    const state = item.status === 'failed' ? (item.error || 'Failed') : (item.status === 'delivered' ? 'Sent' : (item.status === 'uploaded' ? 'Waiting to send' : name));
+    return '<span class="wire-draft-chip" data-draft="' + escapeHtml(item.id) + '">'
+      + escapeHtml(state === name ? name : (name + ' · ' + state))
+      + (item.status === 'delivered' ? '' : ' <button type="button" data-draft-drop="' + escapeHtml(item.id) + '" aria-label="Remove">×</button>')
+      + '</span>';
+  }).join('') + '<button type="button" class="ghost-btn" id="wireDraftSend" style="height:auto;padding:8px 12px;background:var(--mint);color:#0D0F17;">Send</button>';
+  box.querySelectorAll('[data-draft-drop]').forEach(function(btn){
+    btn.onclick = function(){
+      wireDraft = wireDraft.filter(function(item){ return item.id !== btn.getAttribute('data-draft-drop'); });
+      paintWireDraft();
+    };
+  });
+  const send = $('wireDraftSend');
+  if(send) send.onclick = function(){ sendWireDraft().catch(function(e){ toast((e && e.message) || 'Could not send'); }); };
+}
+function wireProgress(text){
+  const el = $('wireSendProgress');
+  if(!el) return;
+  if(!text){ el.style.display = 'none'; el.textContent = ''; return; }
+  el.style.display = 'block';
+  el.textContent = text;
+}
+async function sendWireDraft(){
+  const Media = window.NalunoWireMedia;
+  if(!Media || !wireDraft.length) return;
+  if(sendWireDraft._busy) return;
+  sendWireDraft._busy = true;
+  let anyDelivered = false;
+  let anyQueued = false;
+  try{
+  const c = contacts.find(function(x){ return x.id === activeThreadContactId; });
+  if(!c){ toast('Open a conversation first'); return; }
+  if(c.naluno){ toast('This note is from Naluno. It isn’t a conversation you reply to.'); return; }
+  for(let i = 0; i < wireDraft.length; i++){
+    let item = wireDraft[i];
+    if(item.status === 'delivered' || item.status === 'queued') continue;
+    item = Media.stepItem(item, 'retry');
+    wireDraft[i] = item;
+    const preview = item.plan.kind === 'video' ? 'Slip · video'
+      : item.plan.kind === 'photo' ? 'Slip · photo'
+      : item.plan.kind === 'document' ? ('Document · ' + item.plan.name)
+      : item.plan.kind === 'voice' ? '🎙 Voice note'
+      : ('Audio · ' + item.plan.name);
+    const cmid = item.clientMsgId || ('c' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
+    item.clientMsgId = cmid;
+    let url = item.mediaUrl || '';
+    if(Media.shouldUpload(item)){
+      const online = (typeof nalunoIsOnline === 'function') ? nalunoIsOnline() : navigator.onLine;
+      const vaultKey = item.vaultKey || ('wire-' + cmid);
+      item.vaultKey = vaultKey;
+      if(typeof vaultIngestFile === 'function'){
+        try{ await vaultIngestFile(item.file, vaultKey); }catch(_){}
+      }
+      if(!online && c.isReal && c.firebaseUid){
+        queueMessageForLater(c.id, c.firebaseUid, {
+          type: item.plan.kind === 'voice' ? 'voice' : item.plan.kind,
+          pendingUpload: true, mediaUrl: '', mime: item.plan.contentType,
+          fileName: item.plan.name, fileSize: item.plan.size, vaultKey: vaultKey,
+        }, preview, cmid);
+        item.status = 'queued';
+        item.error = '';
+        wireDraft[i] = item;
+        anyQueued = true;
+        wireProgress('Waiting to send · ' + item.plan.name);
+        continue;
+      }
+      wireProgress('Uploading ' + (i + 1) + ' of ' + wireDraft.length + '…');
+      try{
+        url = await Media.uploadOne(item.file, item.plan, function(frac){
+          wireProgress(item.plan.name + ' · ' + Math.round(frac * 100) + '%');
+        });
+        item = Media.stepItem(Object.assign({}, item, { mediaUrl: url }), 'upload-ok');
+        item.mediaUrl = url;
+      }catch(e){
+        item = Media.stepItem(item, 'upload-fail');
+        item.error = (e && e.message) || 'Could not upload';
+        wireDraft[i] = item;
+        toast(item.plan.name + ': ' + item.error);
+        continue;
+      }
+    }
+    const payload = {
+      type: item.plan.kind === 'voice' ? 'voice' : item.plan.kind,
+      mediaUrl: url,
+      mime: item.plan.contentType,
+      fileName: item.plan.name,
+      fileSize: item.plan.size,
+      text: '',
+      vaultKey: item.vaultKey || '',
+    };
+    try{
+      let result;
+      if(c.isReal && c.firebaseUid){
+        result = await sendRealMessage(c, payload, preview, undefined, cmid);
+      } else {
+        if(!wirelineThreads[c.id]) wirelineThreads[c.id] = [];
+        wirelineThreads[c.id].push(Object.assign({ id: Date.now() + Math.random(), from: 'me', ts: Date.now(), status: 'sent' }, payload));
+        saveWireline();
+        renderThreadMessages();
+        renderWirelineList();
+        result = { ok: true };
+      }
+      item = Media.settleSend(Object.assign({}, item, { mediaUrl: url }), {
+        ok: !!(result && result.ok),
+        url: url,
+        timedOut: !!(result && result.timedOut),
+        queued: !!(result && result.queued),
+        error: (result && result.error) || '',
+      });
+      wireDraft[i] = item;
+      if(item.status === 'delivered') anyDelivered = true;
+      if(item.status === 'queued') anyQueued = true;
+      if(item.status !== 'delivered' && item.status !== 'queued'){
+        toast(item.plan.name + ': ' + (item.error || 'Could not send'));
+      }
+    }catch(e){
+      item = Media.settleSend(Object.assign({}, item, { mediaUrl: url }), { ok: false, url: url, error: (e && e.message) || 'Could not send' });
+      wireDraft[i] = item;
+      toast(item.plan.name + ': ' + item.error);
+    }
+  }
+  wireProgress('');
+  wireDraft = wireDraft.filter(function(item){ return item.status !== 'delivered' && item.status !== 'queued'; });
+  paintWireDraft();
+  renderThreadMessages();
+  if(!wireDraft.length && anyDelivered) toast('Sent');
+  else if(!wireDraft.length && anyQueued) toast('Waiting to send');
+  } finally {
+    sendWireDraft._busy = false;
+  }
+}
+window.stageWireFiles = stageWireFiles;
+window.sendWireDraft = sendWireDraft;
+
+async function sendSlipFile(file){
+  stageWireFiles([file], '');
+  return sendWireDraft();
+}
+async function sendDocumentFile(file){
+  stageWireFiles([file], 'document');
+  return sendWireDraft();
+}
+
+/* Wireline camera. Its own preview. js/camera.js is not used and not changed. */
+function closeWireCamera(){
+  const sheet = document.getElementById('wireCamSheet');
+  if(sheet && sheet._stream){
+    try{ sheet._stream.getTracks().forEach(function(t){ t.stop(); }); }catch(_){}
+  }
+  if(sheet && sheet._stillUrl){
+    try{ URL.revokeObjectURL(sheet._stillUrl); }catch(_){}
+  }
+  if(sheet) sheet.remove();
+}
+function wireCamShowReview(sheet, kind){
+  const shot = document.getElementById('wireCamShot');
+  const rec = document.getElementById('wireCamRec');
+  const use = document.getElementById('wireCamUse');
+  const retake = document.getElementById('wireCamRetake');
+  if(shot) shot.hidden = true;
+  if(rec) rec.hidden = true;
+  if(use) use.hidden = false;
+  if(retake) retake.hidden = false;
+  sheet._kind = kind;
+}
+async function openWireCamera(){
+  if(!activeThreadContactId){ toast('Open a conversation first'); return; }
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    toast('Camera is not available in this browser');
+    return;
+  }
+  closeWireCamera();
+  const sheet = document.createElement('div');
+  sheet.id = 'wireCamSheet';
+  sheet.innerHTML = '<video id="wireCamPreview" playsinline autoplay muted></video>'
+    + '<img id="wireCamStill" alt="" hidden />'
+    + '<div class="wire-cam-bar">'
+    + '<button type="button" id="wireCamClose">Close</button>'
+    + '<button type="button" id="wireCamShot">Photo</button>'
+    + '<button type="button" id="wireCamRec">Video</button>'
+    + '<button type="button" id="wireCamRetake" hidden>Retake</button>'
+    + '<button type="button" class="mint" id="wireCamUse" hidden>Send</button>'
+    + '</div>';
+  document.body.appendChild(sheet);
+  let stream = null;
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: true });
+  }catch(_){
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+    }catch(e){
+      closeWireCamera();
+      toast('Camera permission is off');
+      return;
+    }
+  }
+  sheet._stream = stream;
+  const video = document.getElementById('wireCamPreview');
+  video.srcObject = stream;
+  try{ await video.play(); }catch(_){}
+  document.getElementById('wireCamClose').onclick = closeWireCamera;
+  document.getElementById('wireCamShot').onclick = function(){
+    const v = document.getElementById('wireCamPreview');
+    const canvas = document.createElement('canvas');
+    canvas.width = v.videoWidth || 720;
+    canvas.height = v.videoHeight || 1280;
+    const ctx = canvas.getContext('2d');
+    if(!ctx){ toast('Could not take the photo'); return; }
+    ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(function(blob){
+      if(!blob){ toast('Could not take the photo'); return; }
+      sheet._blob = blob;
+      const img = document.getElementById('wireCamStill');
+      if(sheet._stillUrl){ try{ URL.revokeObjectURL(sheet._stillUrl); }catch(_){} }
+      sheet._stillUrl = URL.createObjectURL(blob);
+      img.src = sheet._stillUrl;
+      img.hidden = false;
+      v.style.display = 'none';
+      try{ stream.getTracks().forEach(function(t){ t.stop(); }); }catch(_){}
+      wireCamShowReview(sheet, 'photo');
+    }, 'image/jpeg', 0.92);
+  };
+  document.getElementById('wireCamRec').onclick = function(){
+    if(!window.MediaRecorder){ toast('This phone cannot record video here'); return; }
+    if(sheet._recorder && sheet._recorder.state === 'recording'){
+      sheet._recorder.stop();
+      return;
+    }
+    sheet._chunks = [];
+    let rec;
+    try{
+      const mime = (window.MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus'))
+        ? 'video/webm;codecs=vp8,opus'
+        : (window.MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported('video/webm') ? 'video/webm' : '');
+      rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+    }catch(_){
+      toast('This phone cannot record video here');
+      return;
+    }
+    sheet._recorder = rec;
+    rec.ondataavailable = function(ev){ if(ev.data && ev.data.size) sheet._chunks.push(ev.data); };
+    rec.onstop = function(){
+      const type = (sheet._chunks[0] && sheet._chunks[0].type) || 'video/webm';
+      const blob = new Blob(sheet._chunks, { type: type });
+      sheet._blob = blob;
+      const v = document.getElementById('wireCamPreview');
+      if(sheet._stillUrl){ try{ URL.revokeObjectURL(sheet._stillUrl); }catch(_){} }
+      sheet._stillUrl = URL.createObjectURL(blob);
+      v.srcObject = null;
+      v.src = sheet._stillUrl;
+      v.muted = false;
+      v.controls = true;
+      v.play().catch(function(){});
+      try{ stream.getTracks().forEach(function(t){ t.stop(); }); }catch(_){}
+      wireCamShowReview(sheet, 'video');
+    };
+    rec.start();
+    const btn = document.getElementById('wireCamRec');
+    if(btn) btn.textContent = 'Stop';
+  };
+  document.getElementById('wireCamRetake').onclick = function(){ openWireCamera(); };
+  document.getElementById('wireCamUse').onclick = function(){
+    if(!sheet._blob){ toast('Take a photo or video first'); return; }
+    const photo = sheet._kind !== 'video';
+    const type = sheet._blob.type || (photo ? 'image/jpeg' : 'video/webm');
+    const file = new File([sheet._blob], photo ? 'camera.jpg' : 'camera.webm', { type: type });
+    closeWireCamera();
+    stageWireFiles([file], '');
+    sendWireDraft().catch(function(e){ toast((e && e.message) || 'Could not send'); });
+  };
+}
+try{ window.openWireCamera = openWireCamera; }catch(_){}
 
 let slipKeepIndex = {};
 function slipSrc(m){
@@ -1646,136 +1986,6 @@ function slipBubbleHtml(m){
   </div>`;
 }
 
-async function sendSlipFile(file){
-  const c = contacts.find(x=>x.id===activeThreadContactId);
-  if(!c || !file) return;
-  if(c.naluno){ toast('This note is from Naluno. It isn’t a conversation you reply to.'); return; }
-  const isVideo = (file.type || '').indexOf('video') === 0 || /\.(mp4|webm|mov|m4v)$/i.test(file.name || '');
-  const kind = isVideo ? 'video' : 'photo';
-  const vaultKey = 'slip-' + Date.now() + '-' + Math.random().toString(36).slice(2);
-  if(typeof vaultIngestFile === 'function'){
-    try{ await vaultIngestFile(file, vaultKey); }catch(_){}
-  }
-  const online = (typeof nalunoIsOnline === 'function') ? nalunoIsOnline() : navigator.onLine;
-  const preview = kind === 'video' ? 'Slip · video' : 'Slip · photo';
-  const basePayload = {
-    type: kind,
-    mime: file.type || '',
-    fileName: (file.name || '').slice(0, 80),
-    text: '',
-    vaultKey: vaultKey,
-  };
-  if(!online && c.isReal && c.firebaseUid){
-    queueMessageForLater(c.id, c.firebaseUid, Object.assign({ pendingUpload:true, mediaUrl:'' }, basePayload), preview);
-    renderThreadMessages();
-    renderWirelineList();
-    toast('No connection — slip saved here, will send when you are back');
-    return;
-  }
-  toast(isVideo ? 'Sending slip…' : 'Placing slip…');
-  try{ if(typeof nalunoKeepAliveStart === 'function') await nalunoKeepAliveStart('slip'); }catch(_){}
-  let url = '';
-  try{
-    if(isVideo && typeof uploadBroadcastFile === 'function'){
-      url = await uploadBroadcastFile(file, null);
-    } else if(!isVideo && typeof uploadPhotoToR2 === 'function'){
-      // Photos go through their own uploader now, not the video one. Every
-      // content-type fallback in the video path lands on video/mp4, so a
-      // photo with an empty or unrecognised MIME (common from Android
-      // pickers) was being stored as video and could never render in an
-      // <img> afterwards — while videos were unaffected, which is exactly
-      // why video worked and photos didn't.
-      url = await uploadPhotoToR2(file);
-    } else if(typeof uploadVideoToR2 === 'function'){
-      url = await uploadVideoToR2(file);
-    } else {
-      throw new Error('Upload is not available');
-    }
-  }finally{
-    try{ if(typeof nalunoKeepAliveStop === 'function') nalunoKeepAliveStop(); }catch(_){}
-    try{ if(typeof hidePublishChip === 'function') hidePublishChip(); }catch(_){}
-  }
-  if(!url) throw new Error('Slip did not land');
-  if(typeof vaultPut === 'function'){
-    try{ await vaultPut(typeof vaultKeyForUrl === 'function' ? vaultKeyForUrl(url) : ('url:'+url), file, { name: file.name }); }catch(_){}
-  }
-  const payload = Object.assign({}, basePayload, { mediaUrl: url });
-  if(c.isReal && c.firebaseUid){
-    await sendRealMessage(c, payload, preview);
-  } else {
-    if(!wirelineThreads[c.id]) wirelineThreads[c.id] = [];
-    wirelineThreads[c.id].push({
-      id: Date.now()+Math.random(), from:'me', ts: Date.now(), status:'sent',
-      ...payload,
-    });
-    saveWireline();
-    renderThreadMessages();
-    renderWirelineList();
-  }
-  toast('Slip sent');
-}
-
-/* Documents are their own path end to end — own picker, own uploader, own
-   message type, own bubble. A document is not media: it should never be
-   put in an <img> or <video>, never be judged by whether it "plays", and
-   its original filename matters (it's how someone recognises it later),
-   so that's carried through rather than being regenerated at the worker. */
-async function sendDocumentFile(file){
-  const c = contacts.find(x=>x.id===activeThreadContactId);
-  if(!c || !file) return;
-  if(c.naluno){ toast('This note is from Naluno. It isn’t a conversation you reply to.'); return; }
-  const name = (file.name || 'document').slice(0, 120);
-  const vaultKey = 'doc-' + Date.now() + '-' + Math.random().toString(36).slice(2);
-  if(typeof vaultIngestFile === 'function'){
-    try{ await vaultIngestFile(file, vaultKey); }catch(_){}
-  }
-  const online = (typeof nalunoIsOnline === 'function') ? nalunoIsOnline() : navigator.onLine;
-  const preview = 'Document · ' + name;
-  const basePayload = {
-    type: 'document',
-    mime: file.type || '',
-    fileName: name,
-    fileSize: file.size || 0,
-    text: '',
-    vaultKey: vaultKey,
-  };
-  if(!online && c.isReal && c.firebaseUid){
-    queueMessageForLater(c.id, c.firebaseUid, Object.assign({ pendingUpload:true, mediaUrl:'' }, basePayload), preview);
-    renderThreadMessages();
-    renderWirelineList();
-    toast('No connection — document saved here, will send when you are back');
-    return;
-  }
-  toast('Sending document…');
-  try{ if(typeof nalunoKeepAliveStart === 'function') await nalunoKeepAliveStart('document'); }catch(_){}
-  let url = '';
-  try{
-    if(typeof uploadDocumentToR2 !== 'function') throw new Error('Document upload is not available');
-    url = await uploadDocumentToR2(file);
-  }finally{
-    try{ if(typeof nalunoKeepAliveStop === 'function') nalunoKeepAliveStop(); }catch(_){}
-    try{ if(typeof hidePublishChip === 'function') hidePublishChip(); }catch(_){}
-  }
-  if(!url) throw new Error('Document did not land');
-  if(typeof vaultPut === 'function'){
-    try{ await vaultPut(typeof vaultKeyForUrl === 'function' ? vaultKeyForUrl(url) : ('url:'+url), file, { name: name }); }catch(_){}
-  }
-  const payload = Object.assign({}, basePayload, { mediaUrl: url });
-  if(c.isReal && c.firebaseUid){
-    await sendRealMessage(c, payload, preview);
-  } else {
-    if(!wirelineThreads[c.id]) wirelineThreads[c.id] = [];
-    wirelineThreads[c.id].push({
-      id: Date.now()+Math.random(), from:'me', ts: Date.now(), status:'sent',
-      ...payload,
-    });
-    saveWireline();
-    renderThreadMessages();
-    renderWirelineList();
-  }
-  toast('Document sent');
-}
-
 function nalunoFormatBytes(n){
   const b = Number(n) || 0;
   if(b < 1024) return b + ' B';
@@ -1791,7 +2001,9 @@ function documentBubbleHtml(m){
     ? ((typeof resolveMediaUrl === 'function') ? resolveMediaUrl(m.mediaUrl) : m.mediaUrl)
     : '';
   slipKeepIndex[String(m.id)] = { url: remote, name: name, vaultKey: vKey };
-  const pending = m.pendingUpload ? '<span class="doc-pending">On this phone · will send</span>' : '';
+  const pending = m.pendingUpload
+    ? '<span class="doc-pending">Waiting to send</span>'
+    : (m.status === 'sending' ? '<span class="doc-pending">Sending</span>' : '');
   return `<div class="doc-frame" data-doc-id="${escapeHtml(String(m.id))}">
     <span class="doc-icon">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M14 2v6h6" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
@@ -1901,32 +2113,26 @@ async function flushMessageQueue(){
   for(const item of queue){
     try{
       let payload = Object.assign({}, item.payload);
-      const needsUpload = (payload.type === 'photo' || payload.type === 'video' || payload.type === 'document' || payload.type === 'voice');
-      if(needsUpload && !payload.mediaUrl && payload.vaultKey){
+      const needsUpload = (payload.type === 'photo' || payload.type === 'video' || payload.type === 'document' || payload.type === 'voice' || payload.type === 'audio');
+      if(needsUpload && payload.mediaUrl){
+        delete payload.pendingUpload;
+      } else if(needsUpload && !payload.mediaUrl && payload.vaultKey){
         const rec = (typeof vaultGet === 'function') ? await vaultGet(payload.vaultKey) : null;
         if(!rec || !rec.blob) throw new Error('file still on this phone only');
-        // FIX: a queued PHOTO used to be re-uploaded through the video path
-        // here too (uploadBroadcastFile / uploadVideoToR2), so even after the
-        // direct-send path was corrected, anything that went out via the
-        // offline queue would still be stored as video/mp4 and never render.
-        // Each type now uses its own uploader on this path as well — the
-        // blob loses its original File name once it comes back out of the
-        // vault, so the recorded fileName is reattached for the content-type
-        // guess to work from.
+        /* A file that already has an address is not uploaded again (the
+           branch above). This branch is only for a copy that never left
+           the phone. It uses the Wireline uploader, not Broadcast. */
         const named = rec.blob;
         try{ if(payload.fileName && !named.name) Object.defineProperty(named, 'name', { value: payload.fileName, configurable: true }); }catch(_){}
+        const Media = window.NalunoWireMedia;
+        if(!Media) throw new Error('upload waiting');
+        const hint = payload.type === 'voice' ? 'voice' : (payload.type === 'audio' ? 'audio' : (payload.type === 'document' ? 'document' : ''));
+        const plan = Media.classify(named, hint);
+        if(!plan.ok) throw new Error(plan.error || 'That file was not accepted');
+        payload.mediaUrl = await Media.uploadOne(named, plan, function(){});
         if(payload.type === 'voice'){
-          payload.mediaUrl = await nalunoUploadVoiceBlob(named);
           try{ if(payload.mediaUrl && typeof vaultPut === 'function' && typeof vaultKeyForUrl === 'function') await vaultPut(vaultKeyForUrl(payload.mediaUrl), named, { name: 'voice.webm' }); }catch(_){}
           try{ if(payload.mediaUrl && voiceAudioCache[item.queueId]) voiceAudioCache[payload.mediaUrl] = voiceAudioCache[item.queueId]; }catch(_){}
-        } else if(payload.type === 'document' && typeof uploadDocumentToR2 === 'function'){
-          payload.mediaUrl = await uploadDocumentToR2(named);
-        } else if(payload.type === 'photo' && typeof uploadPhotoToR2 === 'function'){
-          payload.mediaUrl = await uploadPhotoToR2(named);
-        } else if(typeof uploadBroadcastFile === 'function'){
-          payload.mediaUrl = await uploadBroadcastFile(named, function(){});
-        } else if(typeof uploadVideoToR2 === 'function'){
-          payload.mediaUrl = await uploadVideoToR2(named);
         }
         if(!payload.mediaUrl) throw new Error('upload waiting');
         delete payload.pendingUpload;
@@ -1934,7 +2140,14 @@ async function flushMessageQueue(){
       const clean = Object.assign({}, payload);
       delete clean.pendingUpload;
       await sendRealMessage({ firebaseUid: item.firebaseUid }, clean, item.previewText, item.queueId, item.clientMsgId);
-    }catch(e){ /* still couldn't send — stays in the queue for the next trigger */ }
+    }catch(e){
+      const msg = String((e && e.message) || '');
+      if(/not accepted|Wireline limit|That file is empty|over the Wireline/i.test(msg)){
+        removeFromMessageQueue(item.queueId);
+        try{ toast(msg); }catch(_){}
+      }
+      /* anything else stays queued for the next trigger */
+    }
   }
   if(activeThreadContactId) renderThreadMessages();
   renderWirelineList();
@@ -2066,7 +2279,7 @@ function nalunoOpenWireFromPush(uid){
 try{ window.nalunoOpenWireFromPush = nalunoOpenWireFromPush; }catch(_){}
 
 async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
-  if(!fbDb || !currentUser) return;
+  if(!fbDb || !currentUser) return { ok: false, error: 'Sign in again to send this' };
   // Checked BEFORE ever touching Firestore, not after waiting for a failure that was
   // never actually coming: with offline persistence enabled (needed to fix the
   // Frequencies/Callsign lag), a write made while genuinely offline doesn't reject —
@@ -2090,7 +2303,7 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
       updateComposerButtons();
       if(activeThreadContactId===c2.id) renderThreadMessages();
       toast('No connection — queued, will send automatically');
-      return;
+      return { ok: false, queued: true };
     }
   }
   const tid = realThreadId(c.firebaseUid);
@@ -2107,6 +2320,8 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
   // seconds, and if the original write does eventually land in the
   // background, the id lets a retry recognize that and skip re-sending.
   const cmid = clientMsgId || ('c' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
+  const attachSend = payload && (payload.type === 'photo' || payload.type === 'video' || payload.type === 'document' || payload.type === 'voice' || payload.type === 'audio');
+  const showStatus = attachSend ? 'sending' : 'sent';
   if(payload && payload.text){
     try{ wirelineDecryptCache['cmid:' + cmid] = payload.text; persistWirelineDecryptCache(); }catch(_){}
   }
@@ -2123,10 +2338,13 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
             type: payload.type || 'text',
             text: payload.text || previewText || '',
             ts: Date.now(),
-            status: 'sent',
+            status: showStatus,
             clientMsgId: cmid,
             pending: true,
             mediaUrl: payload.mediaUrl || null,
+            mime: payload.mime || null,
+            fileName: payload.fileName || null,
+            fileSize: payload.fileSize || null,
             duration: payload.duration || null,
             waveform: payload.waveform || null,
             mood: payload.mood || null,
@@ -2163,8 +2381,9 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
         if(c2){
           queueMessageForLater(c2.id, c.firebaseUid, payload, previewText, cmid);
           toast('Waiting for their key — this stays on your phone');
+          return { ok: false, queued: true };
         }
-        return;
+        return { ok: false, error: 'Waiting for their key' };
       }
       finalPreview = previewText;
     }
@@ -2180,10 +2399,16 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
         const dupe = await threadRef.collection('messages').where('clientMsgId','==',cmid).limit(1).get();
         if(!dupe.empty){
           // Already sent during the earlier attempt — do not send it again.
-          removeFromMessageQueue(queueId);
+          if(queueId) removeFromMessageQueue(queueId);
+          try{
+            const localC = contacts.find(function(x){ return x.firebaseUid===c.firebaseUid; });
+            const cid = localC ? localC.id : activeThreadContactId;
+            const row = cid != null && wirelineThreads[cid] && wirelineThreads[cid].find(function(m){ return m && m.clientMsgId === cmid; });
+            if(row){ row.status = 'sent'; row.pending = false; }
+          }catch(_){}
           if(activeThreadContactId && c && contacts.find(x=>x.firebaseUid===c.firebaseUid && x.id===activeThreadContactId)) renderThreadMessages();
           renderWirelineList();
-          return;
+          return { ok: true, duplicate: true };
         }
       }catch(_){ /* dedupe check failed — fall through and send; worst case is a rare duplicate, not a lost message */ }
     }
@@ -2197,9 +2422,12 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
           type: payload.type || 'text',
           text: payload.text || previewText || '',
           ts: Date.now(),
-          status: 'sent',
+          status: showStatus,
           clientMsgId: cmid,
           mediaUrl: payload.mediaUrl || null,
+          mime: payload.mime || null,
+          fileName: payload.fileName || null,
+          fileSize: payload.fileSize || null,
           duration: payload.duration || null,
           waveform: payload.waveform || null,
           mood: payload.mood || null,
@@ -2253,7 +2481,7 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
       updateComposerButtons();
       if(activeThreadContactId===c.id || (c2 && activeThreadContactId===c2.id)) renderThreadMessages();
       toast('Still sending — will confirm once delivered');
-      return;
+      return { ok: false, timedOut: true };
     }
     if(!raced.ok) throw raced.error;
     if(queueId) removeFromMessageQueue(queueId);
@@ -2277,6 +2505,21 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
       }
     }catch(_){}
     try{ notifyWirelinePush(c, payload, previewText, cmid); }catch(_){}
+    if(attachSend){
+      try{
+        const localC = contacts.find(function(x){ return x.firebaseUid===c.firebaseUid; });
+        const cid = localC ? localC.id : activeThreadContactId;
+        const row = cid != null && wirelineThreads[cid] && wirelineThreads[cid].find(function(m){ return m && m.clientMsgId === cmid; });
+        if(row){
+          row.status = 'sent';
+          row.pending = false;
+          persistWireRow(cid, row, c.firebaseUid);
+        }
+        if(activeThreadContactId === cid) renderThreadMessages();
+        renderWirelineList();
+      }catch(_){}
+    }
+    return { ok: true };
   }catch(e){
     if(!queueId){
       // Not already queued — this is a fresh send that failed for some OTHER reason
@@ -2292,7 +2535,7 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
         updateComposerButtons();
         if(activeThreadContactId===c2.id) renderThreadMessages();
         toast('No connection — queued, will send automatically');
-        return;
+        return { ok: false, queued: true };
       }
     }
     toast(e.message || 'Couldn\u2019t send — try again');
@@ -2390,6 +2633,12 @@ async function saveVoiceAudio(msgId, dataUrl){
   try{ await window.storage.set('wireline:voice:'+msgId, dataUrl); }
   catch(e){ toast('That voice note is too long to keep after a refresh, but is fine for now'); }
 }
+function resolveVoiceSrc(u){
+  if(!u) return u;
+  const s = String(u);
+  if(s.indexOf('blob:') === 0 || s.indexOf('data:') === 0) return s;
+  return (typeof resolveMediaUrl === 'function') ? resolveMediaUrl(s) : s;
+}
 async function getVoiceAudio(msgId){
   if(voiceAudioCache[msgId]) return voiceAudioCache[msgId];
   /* Until the file is up (or while it uploads), play the copy on this phone. */
@@ -2405,14 +2654,14 @@ async function getVoiceAudio(msgId){
       const rec = await vaultGet(q.payload.vaultKey);
       if(rec && rec.blob){ const u = URL.createObjectURL(rec.blob); voiceAudioCache[msgId] = u; return u; }
     }
-    if(q && q.payload && q.payload.mediaUrl) return q.payload.mediaUrl;
+    if(q && q.payload && q.payload.mediaUrl) return resolveVoiceSrc(q.payload.mediaUrl);
   }catch(_){}
   // Real messages already carry dataUrl straight from Firestore (no separate storage
   // hop needed) — check the currently loaded thread before falling back to local cache.
   const liveMsgs = wirelineThreads[activeThreadContactId] || [];
   const liveMsg = liveMsgs.find(m=>String(m.id)===String(msgId));
   if(liveMsg && (liveMsg.mediaUrl || liveMsg.audioUrl || liveMsg.dataUrl)){
-    const u = liveMsg.mediaUrl || liveMsg.audioUrl || liveMsg.dataUrl;
+    const u = resolveVoiceSrc(liveMsg.mediaUrl || liveMsg.audioUrl || liveMsg.dataUrl);
     voiceAudioCache[msgId] = u;
     return u;
   }
@@ -2589,8 +2838,17 @@ function pushVoiceMessage(contactId, dataUrl, durationSecs, waveform){
       try{ blob = await (await fetch(dataUrl)).blob(); }catch(_){}
       try{ if(blob && typeof vaultPut === 'function') await vaultPut(vaultKey, blob, { name: 'voice.webm' }); }catch(_){}
       voiceAudioCache['local-' + cmid] = dataUrl;
-      const keepForLater = function(){
-        const qid = queueMessageForLater(c.id, c.firebaseUid, { type:'voice', pendingUpload:true, mediaUrl:'', duration: durationSecs, waveform, vaultKey }, '🎙 Voice note', cmid);
+      const keepForLater = function(alreadyUrl){
+        const qid = queueMessageForLater(c.id, c.firebaseUid, {
+          type:'voice',
+          pendingUpload: !alreadyUrl,
+          mediaUrl: alreadyUrl || '',
+          mime: (blob && blob.type) || 'audio/webm',
+          fileName: 'voice.webm',
+          duration: durationSecs,
+          waveform: waveform,
+          vaultKey: vaultKey,
+        }, '🎙 Voice note', cmid);
         saveVoiceAudio(qid, dataUrl);
         if(activeThreadContactId === c.id) renderThreadMessages();
         renderWirelineList();
@@ -2604,7 +2862,14 @@ function pushVoiceMessage(contactId, dataUrl, durationSecs, waveform){
       let url = '';
       try{
         url = await nalunoUploadVoiceBlob(blob);
-      }catch(_){ url = ''; }
+      }catch(e){
+        const msg = (e && e.message) || '';
+        if(/not accepted|Wireline limit|empty|Sign in/i.test(msg)){
+          toast(msg);
+          return;
+        }
+        url = '';
+      }
       if(!url){
         keepForLater();
         toast('Voice note saved here — it will send once the connection is steady');
@@ -2613,8 +2878,11 @@ function pushVoiceMessage(contactId, dataUrl, durationSecs, waveform){
       try{ if(typeof vaultPut === 'function' && typeof vaultKeyForUrl === 'function') await vaultPut(vaultKeyForUrl(url), blob, { name: 'voice.webm' }); }catch(_){}
       voiceAudioCache[url] = dataUrl;
       try{
-        await sendRealMessage(c, { type:'voice', mediaUrl: url, duration: durationSecs, waveform }, '🎙 Voice note', undefined, cmid);
-      }catch(_){ /* sendRealMessage already queued it with the uploaded file */ }
+        const sent = await sendRealMessage(c, { type:'voice', mediaUrl: url, duration: durationSecs, waveform, mime: blob.type || 'audio/webm', fileName: 'voice.webm' }, '🎙 Voice note', undefined, cmid);
+        if(sent && (sent.ok || sent.queued || sent.timedOut)) return;
+        keepForLater(url);
+        toast('Voice note saved here — it will send once the connection is steady');
+      }catch(_){ /* sendRealMessage already queued it when it could */ }
     })();
     return;
   }
@@ -2630,10 +2898,15 @@ function pushVoiceMessage(contactId, dataUrl, durationSecs, waveform){
 }
 
 async function nalunoUploadVoiceBlob(blob){
-  const ct = (blob && blob.type) || 'audio/webm';
-  if(typeof uploadBroadcastFile === 'function') return await uploadBroadcastFile(blob, null, ct);
-  if(typeof uploadVideoToR2 === 'function') return await uploadVideoToR2(blob);
-  throw new Error('Upload is not available');
+  const Media = window.NalunoWireMedia;
+  if(!Media) throw new Error('Upload is not available');
+  const file = blob;
+  try{
+    if(!file.name) Object.defineProperty(file, 'name', { value: 'voice.webm', configurable: true });
+  }catch(_){}
+  const plan = Media.classify(file, 'voice');
+  if(!plan.ok) throw new Error(plan.error || 'Voice note was not accepted');
+  return Media.uploadOne(file, plan, function(){});
 }
 
 async function toggleVoicePlay(msgId){

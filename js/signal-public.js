@@ -5,10 +5,11 @@
    Signals of your own connections, for its 24 hours. Your connections see
    your Signals as before.
 
-   Read from the desk's slim copy (signals/{id}): the database rules let
-   anyone signed in read one only while it is public, not held for review
-   and not taken down. The query asks for exactly that (public, not hidden,
-   not held, posted today or yesterday), so no extra index is needed.
+   Read from the desk's slim copy (signals/{id}). The list asks for
+   feedUntil after the server's clock. That field equals the expiry only
+   while the Signal is public, not held and not taken down, so the rules
+   can allow the query. The older public/hidden/held query remains as a
+   fallback for a project that has not taken the new rules yet.
    Played in the existing Signal viewer. */
 (function () {
   'use strict';
@@ -110,12 +111,51 @@
     try { if (typeof window.nalunoStoredSkew === 'number' && isFinite(window.nalunoStoredSkew)) return { skew: window.nalunoStoredSkew, measured: false }; } catch (_) {}
     return null;
   }
+  /* A stored clock difference bigger than half an hour is not trusted.
+     The service worker used to answer the clock check with a cached
+     manifest, so the difference looked like days and every public query
+     was refused. A difference measured this session is trusted. */
+  function freshSkew(measured, stored) {
+    if (typeof measured === 'number' && isFinite(measured) && Math.abs(measured) < 36 * 3600000) return { skew: measured, fresh: true };
+    if (typeof stored === 'number' && isFinite(stored) && Math.abs(stored) < 30 * 60 * 1000) return { skew: stored, fresh: false };
+    return null;
+  }
+  /* Expiry the rules will accept. A phone running fast writes "24 hours"
+     past the server's 25-hour ceiling and the public copy is refused.
+     With no fresh clock, 20 hours still fits a phone up to five hours fast. */
+  function publicExpiry(wanted, now, measured, stored) {
+    var k = freshSkew(measured, stored);
+    var day = 24 * 60 * 60 * 1000;
+    var cap = k ? (now + k.skew + day) : (now + 20 * 60 * 60 * 1000);
+    var exp = (typeof wanted === 'number' && isFinite(wanted) && wanted > 0) ? wanted : cap;
+    if (exp > cap) exp = cap;
+    var floor = now + (k ? k.skew : 0) + 60000;
+    if (exp < floor) exp = Math.min(cap, floor + 23 * 60 * 60 * 1000);
+    return Math.round(exp);
+  }
   function lowerBound() {
     var k = serverSkew();
-    if (k && k.measured) return Date.now() + k.skew + 60000 + aheadExtra;
-    return Date.now() + (k ? k.skew : 0) + 300000 + aheadExtra;
+    var measured = (k && k.measured) ? k.skew : null;
+    var stored = null;
+    try { if (typeof window.nalunoStoredSkew === 'number') stored = window.nalunoStoredSkew; } catch (_) {}
+    if (k && !k.measured && typeof k.skew === 'number') stored = k.skew;
+    var trusted = freshSkew(measured, measured != null ? null : stored);
+    if (trusted && trusted.fresh) {
+      k = { skew: trusted.skew, measured: true };
+      if (k && k.measured) return Date.now() + k.skew + 60000 + aheadExtra;
+    }
+    var mild = freshSkew(null, stored);
+    return Date.now() + (mild ? mild.skew : 0) + 300000 + aheadExtra;
   }
   function baseQuery(bound) {
+    return fbDb.collection('signals')
+      .where('feedUntil', '>', bound)
+      .orderBy('feedUntil', 'desc');
+  }
+  /* The previous list. Kept so a project that already has its composite
+     index still shows Signals posted before feedUntil existed. A missing
+     index or a rules refusal does not hide the feedUntil list. */
+  function legacyQuery(bound) {
     return fbDb.collection('signals')
       .where('public', '==', true)
       .where('hidden', '==', false)
@@ -149,6 +189,18 @@
       });
     }
     return page();
+  }
+  function readLegacyOnce() {
+    if (typeof fbDb === 'undefined' || !fbDb || !fbDb.collection) return Promise.resolve([]);
+    return legacyQuery(lowerBound()).limit(PAGE).get().then(function (snap) {
+      var list = [];
+      snap.forEach(function (doc) {
+        var d = (doc && typeof doc.data === 'function' ? doc.data() : null) || {};
+        d.id = doc.id;
+        list.push(d);
+      });
+      return list;
+    }, function () { return []; });
   }
   function mergeRaw(extra) {
     var byId = {};
@@ -234,9 +286,31 @@
       return followIfThin(pack);
     }
     function attempt() {
-      return readPages(null, FIRST_PAGES).then(begin, function (e) {
-        if (e && e.code === 'permission-denied') {
-          return afterRefusal().then(function (again) { if (again) return attempt(); return fail(e); });
+      function withLegacy(pack) {
+        return readLegacyOnce().then(function (extra) {
+          pack.list = (pack.list || []).concat(extra || []);
+          return begin(pack);
+        });
+      }
+      return readPages(null, FIRST_PAGES).then(withLegacy, function (e) {
+        var code = e && e.code;
+        /* feedUntil is the list the rules can prove. If this project has not
+           taken the new rules yet, the older composite query still works. */
+        if (code === 'permission-denied' || code === 'failed-precondition') {
+          return legacyQuery(lowerBound()).limit(PAGE).get().then(function (snap) {
+            var list = [];
+            snap.forEach(function (doc) {
+              var d = (doc && typeof doc.data === 'function' ? doc.data() : null) || {};
+              d.id = doc.id;
+              list.push(d);
+            });
+            return begin({ list: list, cursor: null, complete: true, pages: 1 });
+          }, function (e2) {
+            if (e2 && e2.code === 'permission-denied') {
+              return afterRefusal().then(function (again) { if (again) return attempt(); return fail(e2); });
+            }
+            return fail(e2 || e);
+          });
         }
         return fail(e);
       });
@@ -346,6 +420,8 @@
     rows: function () { return rows; },
     status: function () { return { complete: scanComplete, pages: pagesRead, problem: problem }; },
     _group: group, _segFrom: segFrom, _days: days, _safeColour: safeColour, _now: signalNow,
+    _lowerBound: lowerBound,
+    freshSkew: freshSkew, publicExpiry: publicExpiry,
   };
   window.nalunoPublicSignalTilesHtml = tilesHtml;
 

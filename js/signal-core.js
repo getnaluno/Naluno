@@ -1370,9 +1370,16 @@ async function nalunoWriteSignalMirror(id, mirror){
       try{
         await Promise.race([Promise.resolve(window.nalunoMeasureSkew()).catch(function(){}), new Promise(function(r){ setTimeout(r, 3000); })]);
         if(typeof nalunoServerSkew === 'number' && isFinite(nalunoServerSkew) && typeof mirror.expiresAt === 'number'){
-          const cap = Date.now() + nalunoServerSkew + 24 * 60 * 60 * 1000;
-          if(mirror.expiresAt > cap){
-            const again = Object.assign({}, mirror, { expiresAt: cap });
+          let exp = mirror.expiresAt;
+          const stored = (typeof window.nalunoStoredSkew === 'number' && isFinite(window.nalunoStoredSkew)) ? window.nalunoStoredSkew : null;
+          if(window.NalunoPublicSignals && typeof window.NalunoPublicSignals.publicExpiry === 'function'){
+            exp = window.NalunoPublicSignals.publicExpiry(mirror.expiresAt, Date.now(), nalunoServerSkew, stored);
+          }else{
+            const cap = Date.now() + nalunoServerSkew + 24 * 60 * 60 * 1000;
+            if(mirror.expiresAt > cap) exp = cap;
+          }
+          if(exp !== mirror.expiresAt || mirror.feedUntil !== exp){
+            const again = Object.assign({}, mirror, { expiresAt: exp, feedUntil: exp });
             await col.doc(id).set(again, { merge: true });
             return { ok: true, public: true, retried: true };
           }
@@ -1381,7 +1388,7 @@ async function nalunoWriteSignalMirror(id, mirror){
     }
     if(mirror.public){
       try{
-        await col.doc(id).set(Object.assign({}, mirror, { public: false }), { merge: true });
+        await col.doc(id).set(Object.assign({}, mirror, { public: false, feedUntil: 0 }), { merge: true });
         saved = true;
       }catch(_){}
     }
@@ -1488,20 +1495,27 @@ async function saveSignalSegment(segment){
       ['filterCss'].forEach(function(k){ if(clean[k]) mirror[k] = String(clean[k]).slice(0, 300); });
       ['duration', 'trimStart', 'trimEnd'].forEach(function(k){ if(isFinite(Number(clean[k]))) mirror[k] = Number(clean[k]); });
       if(clean.thumbDataUrl && String(clean.thumbDataUrl).length <= 90000) mirror.thumbDataUrl = String(clean.thumbDataUrl);
-      /* 15 Oct: a public copy may live at most 25 hours by the SERVER's
-         clock (firestore.rules). A phone running fast wrote an expiry the
-         rules refuse, and the refusal was swallowed: the Signal looked
-         posted for everyone and was not. The expiry is kept within 24 hours
-         of the server's clock, and a refusal is reported. */
+      /* 15 Oct h: a public copy may live at most 25 hours by the SERVER's
+         clock. A phone running fast wrote an expiry the rules refuse, the
+         refusal was saved as public:false, and the old rule then forbade
+         putting it back. The expiry is capped first (20 hours when the
+         clock is not known, which still fits a phone five hours fast).
+         feedUntil equals that expiry only while it is actually for
+         everyone; the list reads that one field. */
       try{
-        let skew = null;
-        if(typeof nalunoServerSkew === 'number' && isFinite(nalunoServerSkew)) skew = nalunoServerSkew;
-        else if(typeof window.nalunoStoredSkew === 'number' && isFinite(window.nalunoStoredSkew)) skew = window.nalunoStoredSkew;
-        if(skew !== null && typeof mirror.expiresAt === 'number'){
-          const cap = Date.now() + skew + 24 * 60 * 60 * 1000;
+        const wanted = (typeof mirror.expiresAt === 'number' && isFinite(mirror.expiresAt)) ? mirror.expiresAt : (Date.now() + 24 * 60 * 60 * 1000);
+        let measured = null, stored = null;
+        if(typeof nalunoServerSkew === 'number' && isFinite(nalunoServerSkew)) measured = nalunoServerSkew;
+        if(typeof window.nalunoStoredSkew === 'number' && isFinite(window.nalunoStoredSkew)) stored = window.nalunoStoredSkew;
+        if(window.NalunoPublicSignals && typeof window.NalunoPublicSignals.publicExpiry === 'function'){
+          mirror.expiresAt = window.NalunoPublicSignals.publicExpiry(wanted, Date.now(), measured, stored);
+        }else if(typeof mirror.expiresAt === 'number'){
+          const skew = (measured !== null) ? measured : ((stored !== null && Math.abs(stored) < 30 * 60 * 1000) ? stored : null);
+          const cap = skew !== null ? (Date.now() + skew + 24 * 60 * 60 * 1000) : (Date.now() + 20 * 60 * 60 * 1000);
           if(mirror.expiresAt > cap) mirror.expiresAt = cap;
         }
       }catch(_){}
+      mirror.feedUntil = (mirror.public && typeof mirror.expiresAt === 'number') ? mirror.expiresAt : 0;
       const wrote = await nalunoWriteSignalMirror(ref.id, mirror);
       /* The personal copy cannot be patched afterwards (the rules let the
          desk change it, not the creator). The phone's own row is what the
@@ -1615,6 +1629,54 @@ function prefetchSignalsForOffline(segments){
 }
 window.prefetchSignalsForOffline = prefetchSignalsForOffline;
 
+/* A fast phone used to save the Everyone copy as public:false, and the
+   old rule would not let the owner set public back to true. Once, after
+   this phone reads its own Signals, put a live Everyone copy back.
+   Hidden or held stays hidden or held. A copy with no audience is not
+   treated as Everyone. uid is written only when the copy is missing. */
+let __publicMirrorRepairDone = false;
+async function nalunoRepairPublicMirrors(){
+  if(__publicMirrorRepairDone || !currentUser || !fbDb) return;
+  __publicMirrorRepairDone = true;
+  const now = Date.now();
+  const mine = (mySignal || []).filter(function(s){
+    return s && s.id && s.audience === 'public' && !s.held && !s.hidden && now < Number(s.expiresAt);
+  }).slice(0, 12);
+  for(let i = 0; i < mine.length; i++){
+    const seg = mine[i];
+    try{
+      const ref = fbDb.collection('signals').doc(String(seg.id));
+      const snap = await ref.get();
+      const exists = !!(snap && snap.exists);
+      const d = (exists && typeof snap.data === 'function') ? (snap.data() || {}) : null;
+      if(d && (d.hidden === true || d.held === true || d.audience !== 'public')) continue;
+      let measured = null, stored = null;
+      if(typeof nalunoServerSkew === 'number' && isFinite(nalunoServerSkew)) measured = nalunoServerSkew;
+      if(typeof window.nalunoStoredSkew === 'number' && isFinite(window.nalunoStoredSkew)) stored = window.nalunoStoredSkew;
+      const serverNow = now + (measured || 0);
+      const wanted = Number(seg.expiresAt) || (now + 24 * 60 * 60 * 1000);
+      let exp = wanted;
+      if(window.NalunoPublicSignals && typeof window.NalunoPublicSignals.publicExpiry === 'function'){
+        exp = window.NalunoPublicSignals.publicExpiry(wanted, Date.now(), measured, stored);
+      }
+      if(d && d.public === true && Number(d.feedUntil) > serverNow && Number(d.expiresAt) > serverNow) continue;
+      if(exists){
+        await ref.set({ public: true, expiresAt: exp, feedUntil: exp }, { merge: true });
+      }else{
+        await ref.set({
+          uid: currentUser.uid,
+          audience: 'public',
+          public: true,
+          hidden: false,
+          held: false,
+          expiresAt: exp,
+          feedUntil: exp,
+        });
+      }
+    }catch(_){}
+  }
+}
+try{ window.nalunoRepairPublicMirrors = nalunoRepairPublicMirrors; }catch(_){}
 async function loadMySignal(){
   if(!currentUser || !fbDb) return;
   try{
@@ -1634,6 +1696,7 @@ async function loadMySignal(){
     mySignal = snap.docs.map(signalRowFromDoc);
     pruneExpiredSignal();
     try{ nalunoCacheWrite('mySignal', mySignal.map(nalunoSlimMedia)); }catch(_){}
+    try{ nalunoRepairPublicMirrors(); }catch(_){}
   }catch(e){ /* nothing posted yet, or offline */ }
   renderBroadcasts();
   try{ prefetchSignalsForOffline(mySignal); }catch(_){}
