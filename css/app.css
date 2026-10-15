@@ -1832,6 +1832,35 @@ body.naluno-os-pip #pipStageCanvas{ display:none !important; }
 
 .slip-frame.playing .slip-play{ display:none; }
 
+#wireAttachDraft{ align-items:center; }
+.wire-draft-chip{
+  display:inline-flex; align-items:center; gap:6px; max-width:240px;
+  padding:6px 8px 6px 10px; border-radius:999px;
+  background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1);
+  font-size:12px; color:var(--text); white-space:nowrap;
+}
+.wire-draft-chip button{
+  border:none; background:transparent; color:var(--text-dim);
+  font-size:16px; line-height:1; padding:0 2px; cursor:pointer;
+}
+#wireCamSheet{
+  position:fixed; inset:0; z-index:360; background:#0D0F17;
+  display:flex; flex-direction:column;
+}
+#wireCamSheet video, #wireCamSheet img{
+  flex:1; width:100%; min-height:0; object-fit:contain; background:#000;
+}
+.wire-cam-bar{
+  display:flex; gap:8px; justify-content:center; flex-wrap:wrap;
+  padding:14px 12px calc(14px + env(safe-area-inset-bottom, 0px));
+}
+.wire-cam-bar button{
+  height:auto; padding:10px 14px; border-radius:999px;
+  border:1px solid rgba(255,255,255,.16); background:rgba(255,255,255,.06);
+  color:#fff; font:inherit;
+}
+.wire-cam-bar button.mint{ background:var(--mint); color:#0D0F17; border-color:var(--mint); }
+
 
 #threadSlipBtn, #threadDocBtn{ position:relative; z-index:1; overflow:hidden; }
 

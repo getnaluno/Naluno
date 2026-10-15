@@ -160,3 +160,24 @@ footer .wrap{display:flex; flex-wrap:wrap; gap:16px; justify-content:space-betwe
 footer .wrap > div:last-child{display:flex; flex-wrap:wrap; gap:8px 18px;}
 footer a{color:var(--ink-2); text-decoration:none; white-space:nowrap;}
 footer a:hover{color:var(--ink);}
+
+/* Motion on marks that were already here. Nothing else on the page moves. */
+@keyframes naluno-live{
+  0%, 100%{ opacity:1; transform:scale(1); }
+  50%{ opacity:.4; transform:scale(.7); }
+}
+@keyframes naluno-arc{
+  0%, 100%{ opacity:.4; }
+  50%{ opacity:1; }
+}
+@keyframes naluno-night{
+  0%, 100%{ background-position:50% 0; }
+  50%{ background-position:56% 3%; }
+}
+.tag i{ animation:naluno-live 2.6s ease-in-out infinite; }
+.brand svg path{ animation:naluno-arc 6s ease-in-out infinite; }
+.brand svg path:nth-of-type(2){ animation-delay:.7s; }
+.hero::before{ animation:naluno-night 46s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce){
+  .tag i, .brand svg path, .hero::before{ animation:none; }
+}
