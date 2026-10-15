@@ -1808,7 +1808,7 @@ async function persistPasswordRecord(env, uid, rec, saToken, userToken) {
   return "memory";
 }
 
-export function legacyCataloguePatch(row, now) {
+export function legacyCataloguePatch(row, now, docCreated) {
   if (!row || row.deleted) return null;
   if (row.visibility === "private") return null;
   if (row.hidden === true || row.held === true || row.listed === false) return null;
@@ -1819,10 +1819,30 @@ export function legacyCataloguePatch(row, now) {
   if (row.hidden == null) patch.hidden = false;
   if (row.held == null) patch.held = false;
   if (!(Number(row.publishAt) > 0)) {
-    const at = Number(row.createdAt) || Number(row.updatedAt) || 0;
+    /* 15 Oct: a post with no createdAt/updatedAt of its own falls back to
+       the time Firestore made the document, so it is not left unlisted. */
+    const at = Number(row.createdAt) || Number(row.updatedAt) || Number(docCreated) || 0;
     if (at > 0 && at <= clock) patch.publishAt = at;
   }
   return Object.keys(patch).length ? patch : null;
+}
+
+/* 15 Oct: what "Let out" / "Restore" must also write for the public feed
+   to accept the post: visibility 'public' when it is missing, and a
+   publishAt in the past when it is missing. Private stays private; a
+   scheduled time is kept. */
+export function feedFillPatch(row, now) {
+  const r = row || {};
+  const clock = now || Date.now();
+  const patch = {};
+  if (r.visibility == null || r.visibility === "") patch.visibility = "public";
+  const pa = Number(r.publishAt);
+  if (!(Number.isFinite(pa) && pa > 0)) {
+    let at = Number(r.createdAt) || Number(r.updatedAt) || 0;
+    if (!(at > 0) || at > clock) at = clock - 1000;
+    patch.publishAt = at;
+  }
+  return patch;
 }
 
 async function repairPublicCatalogue(env, saToken, body) {
@@ -1842,7 +1862,7 @@ async function repairPublicCatalogue(env, saToken, body) {
     for (const doc of docs) {
       const row = fromFsDoc(doc);
       seen.scanned++;
-      const patch = legacyCataloguePatch(row);
+      const patch = legacyCataloguePatch(row, Date.now(), Date.parse(doc.createTime || "") || 0);
       if (!patch || !row.id) { seen.skipped++; continue; }
       seen.patched++;
       if (samples.length < 12) samples.push({ id: row.id, patch });
@@ -2444,6 +2464,12 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
       return json({ ok: true, trustedPublisher: uid });
     } else {
       return json({ ok: false, error: "unknown action" }, 400);
+    }
+    if (action === "let-out" || action === "restore") {
+      const row = await fsGetDoc(env, token, "/broadcasts/" + encodeURIComponent(id)).catch(() => null);
+      /* Only fill from a post we could actually read: a failed read must
+         never turn a private post public. */
+      if (row) Object.assign(patch, feedFillPatch(row, now));
     }
     await fsPutDoc(env, token, "/broadcasts/" + encodeURIComponent(id), patch);
     await writeAdminAudit(env, token, {

@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261015b';
+  const BUILD = '20261015c';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -2518,6 +2518,93 @@
     };
   }
 
+  /* 15 Oct: Broadcasts held only by the old skin check's middle band
+     (Screen reason "screen", decision "hold"). From 15 Oct that band goes
+     out; these were held before the change. A nudity verdict (any other
+     Screen reason), a sexual title, a safety hold, a private or taken-down
+     Broadcast is never released here. */
+  const SKIN_SEX_WORDS = /\b(porn|porno|xxx|nsfw|onlyfans|nudes?|naked|hentai|cumshot|sex\s*tape)\b/i;
+  function skinBandPatch(row, now) {
+    const r = row || {};
+    if (r.deleted || r.hidden === true || r.held !== true) return null;
+    if (String(r.heldReason || '') !== 'screen') return null;
+    if (String(r.screenDecision || '') !== 'hold' || String(r.screenReason || '') !== 'screen') return null;
+    if (r.visibility === 'private') return null;
+    if (SKIN_SEX_WORDS.test(String(r.title || '') + ' ' + String(r.caption || ''))) return null;
+    if (['REVIEW', 'REMOVE', 'ESCALATE', 'AGE_RESTRICT', 'REGION_RESTRICT'].indexOf(String(r.safetyDecision || '')) >= 0) return null;
+    const patch = { listed: true, held: false, heldReason: '', releasedAt: now, releasedWhy: 'skin-check-middle-band' };
+    if (r.visibility == null || r.visibility === '') patch.visibility = 'public';
+    if (r.hidden == null) patch.hidden = false;
+    if (!(typeof r.publishAt === 'number' && r.publishAt > 0)) {
+      let at = legacyCatMs(r.publishAt) || legacyCatMs(r.createdAt) || legacyCatMs(r.updatedAt);
+      if (!(at > 0) || at > now) at = now - 1000;
+      patch.publishAt = at;
+    }
+    return patch;
+  }
+  window.nalunoSkinBandPatch = skinBandPatch;
+  function wireSkinBandRelease(root) {
+    const check = root.querySelector('#skinBandCheck');
+    const apply = root.querySelector('#skinBandApply');
+    const out = root.querySelector('#skinBandOut');
+    if (!check || !apply || !out) return;
+    let last = null;
+    check.onclick = async function () {
+      check.disabled = true; apply.disabled = true;
+      out.textContent = 'Reading held Broadcasts…';
+      try {
+        const db = adminDb();
+        if (!db) throw new Error('Database is not ready');
+        const snap = await db.collection('broadcasts').where('held', '==', true).limit(2000).get();
+        const found = []; let staying = 0;
+        (snap.docs || []).forEach(function (d) {
+          const row = d.data() || {};
+          if (String(row.heldReason || '') !== 'screen') return;
+          const patch = skinBandPatch(row, Date.now());
+          if (patch) found.push({ id: d.id, title: String(row.title || ''), patch: patch });
+          else staying++;
+        });
+        last = { found: found };
+        const n = found.length;
+        out.innerHTML = escapeHtml(n + ' held only by the old skin check can go out.' + (staying ? ' ' + staying + ' held by Screen for another reason stay for you to look at.' : ''))
+          + (n ? '<br>' + found.slice(0, 12).map(function (r) { return escapeHtml((r.title || '(untitled)').slice(0, 60)); }).join('<br>') + (n > 12 ? '<br>…' : '') : '');
+        apply.disabled = !n;
+      } catch (e) {
+        out.textContent = 'Could not read: ' + ((e && e.message) || e);
+      } finally { check.disabled = false; }
+    };
+    apply.onclick = async function () {
+      if (!last || !last.found.length) return;
+      const n = last.found.length;
+      if (!window.confirm('Release ' + n + ' Broadcast' + (n === 1 ? '' : 's') + ' held only by the old skin check?')) return;
+      const db = adminDb();
+      if (!db) { out.textContent = 'Database is not ready'; return; }
+      apply.disabled = true; check.disabled = true;
+      try {
+        const runId = 'skin-band-release-' + Date.now();
+        for (let i = 0; i < last.found.length; i += 300) {
+          const part = last.found.slice(i, i + 300).map(function (r) { return { id: r.id, set: Object.keys(r.patch) }; });
+          const ok = await writeAudit('broadcast-skin-band-release', runId, 'held only by the old skin check middle band', { part: i / 300, items: part });
+          if (!ok) throw new Error('The audit record could not be saved, so nothing was changed.');
+        }
+        let done = 0;
+        for (let i = 0; i < last.found.length; i += 400) {
+          const batch = db.batch();
+          last.found.slice(i, i + 400).forEach(function (r) {
+            batch.set(db.collection('broadcasts').doc(r.id), Object.assign({}, r.patch, { releasedBy: (currentUser && currentUser.uid) || '' }), { merge: true });
+          });
+          await batch.commit();
+          done += Math.min(400, last.found.length - i);
+          out.textContent = 'Released ' + done + ' of ' + n + '…';
+        }
+        out.textContent = 'Released ' + done + ' Broadcast' + (done === 1 ? '' : 's') + '. Saved in the audit as ' + runId + '.';
+        last = null;
+      } catch (e) {
+        out.textContent = 'Stopped: ' + ((e && e.message) || e);
+      } finally { check.disabled = false; }
+    };
+  }
+
   function wireLegacyCatalogue(root) {
     const check = root.querySelector('#legacyCatCheck');
     const apply = root.querySelector('#legacyCatApply');
@@ -3522,14 +3609,50 @@
       };
     });
   }
+  /* 15 Oct: releasing a held Signal puts it back where its maker sent it.
+     A Signal made for Everyone (audience 'public', stored even while held)
+     goes back into Signals for everyone while its 24 hours last; one made
+     for connections, or an older one with no audience stored, stays with
+     connections. Removing it takes it out of both. */
+  function signalReleasePatch(userRow, pubRow, now, by) {
+    const u = userRow || {}, p = pubRow || {};
+    const aud = String(u.audience || p.audience || '');
+    const exp = Number(p.expiresAt || u.expiresAt) || 0;
+    const base = { held: false, heldReason: '', reviewedAt: now, reviewedBy: by || '' };
+    const goesPublic = aud === 'public' && exp > now && p.hidden !== true && u.hidden !== true;
+    return {
+      user: Object.assign({}, base, aud ? { public: goesPublic } : {}),
+      pub: Object.assign({}, base, { public: goesPublic }),
+      goesPublic: goesPublic,
+    };
+  }
+  window.nalunoSignalReleasePatch = signalReleasePatch;
   async function actSignal(uid, id, release) {
     const db = adminDb();
     if (!db || !uid || !id) throw new Error('Database is not ready');
-    const patch = release
-      ? { held: false, heldReason: '', reviewedAt: Date.now(), reviewedBy: (currentUser && currentUser.uid) || '' }
-      : { hidden: true, held: false, reviewedAt: Date.now(), reviewedBy: (currentUser && currentUser.uid) || '' };
-    await db.collection('users').doc(uid).collection('signal').doc(id).set(patch, { merge: true });
-    try { await db.collection('signals').doc(id).set(patch, { merge: true }); } catch (_) {}
+    const by = (currentUser && currentUser.uid) || '';
+    const now = Date.now();
+    const userRef = db.collection('users').doc(uid).collection('signal').doc(id);
+    const pubRef = db.collection('signals').doc(id);
+    if (release) {
+      let userRow = {}, pubRow = null;
+      try { const a = await userRef.get(); userRow = a.exists ? (a.data() || {}) : {}; } catch (_) {}
+      try { const b = await pubRef.get(); pubRow = b.exists ? (b.data() || {}) : null; } catch (_) {}
+      const rp = signalReleasePatch(userRow, pubRow || {}, now, by);
+      await userRef.set(rp.user, { merge: true });
+      /* The public copy is only changed when it exists: a set on a missing
+         one would be a create, which only its maker may do. */
+      if (pubRow) {
+        try { await pubRef.set(rp.pub, { merge: true }); }
+        catch (e) { toast('Released for connections; the Everyone copy could not be changed: ' + ((e && e.code) || (e && e.message) || 'error')); }
+      }
+      if (rp.goesPublic) toast('Released. It is back in Signals for everyone.');
+      else if (String(userRow.audience || (pubRow && pubRow.audience) || '') === 'public') toast('Released for connections. Its 24 hours are over, so it is not shown to everyone.');
+    } else {
+      const patch = { hidden: true, held: false, public: false, reviewedAt: now, reviewedBy: by };
+      await userRef.set(patch, { merge: true });
+      try { await pubRef.set(patch, { merge: true }); } catch (_) {}
+    }
     try {
       await writeAudit(release ? 'signal-release' : 'signal-remove', uid + '/' + id, release ? 'Released after a check' : 'Removed after a check');
     } catch (_) {}
@@ -4354,10 +4477,19 @@
           + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;">'
           + '<button type="button" class="btn" id="newPubCheck">Check</button>'
           + '<button type="button" class="btn" id="newPubApply" disabled>Release</button></div>'
-          + '<div class="sub" id="newPubOut"></div>');
+          + '<div class="sub" id="newPubOut"></div>')
+        + card('Held only by the old skin check',
+          '<p class="sub">Until 15 Oct, when the on-phone detector did not finish, a weaker skin check decided, and anything in its middle band (a face, warm light, a street at night) was held. '
+          + 'From 15 Oct that band goes out. Check counts the ones held that way before and changes nothing. Release never touches one Screen held for nudity, one with a sexual title, '
+          + 'one held by a safety check, a private, taken-down or deleted Broadcast. What it releases is saved in the audit first.</p>'
+          + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;">'
+          + '<button type="button" class="btn" id="skinBandCheck">Check</button>'
+          + '<button type="button" class="btn" id="skinBandApply" disabled>Release</button></div>'
+          + '<div class="sub" id="skinBandOut"></div>');
       wireDeskJumps(el);
       wireLegacyCatalogue(el);
       wireNewPublisherRelease(el);
+      wireSkinBandRelease(el);
       return;
     }
 
@@ -7833,17 +7965,54 @@
     }
   }
 
+  /* 15 Oct: the public feed needs visibility 'public' and a publishAt in
+     the past as well as listed. An older post can be missing both, so
+     "Let out" and "Restore" fill them when (and only when) they are
+     missing. A post its maker set to private stays private, and a post
+     scheduled for later keeps its time. */
+  function nalunoMs(v) {
+    if (v == null) return 0;
+    if (typeof v === 'number') return isFinite(v) && v > 0 ? v : 0;
+    if (typeof v.toMillis === 'function') { try { return v.toMillis() || 0; } catch (_) { return 0; } }
+    if (typeof v.seconds === 'number') return v.seconds * 1000;
+    const n = Number(v); if (isFinite(n) && n > 0) return n;
+    const d = Date.parse(String(v)); return isFinite(d) && d > 0 ? d : 0;
+  }
+  function publicFeedFill(row, now) {
+    const r = row || {};
+    const out = { patch: {}, note: '' };
+    if (r.visibility == null || r.visibility === '') out.patch.visibility = 'public';
+    else if (r.visibility !== 'public') out.note = 'Its maker set it to private, so it stays off the public feed.';
+    const pa = Number(r.publishAt);
+    if (!(isFinite(pa) && pa > 0)) {
+      let at = nalunoMs(r.createdAt) || nalunoMs(r.updatedAt) || 0;
+      if (!(at > 0) || at > now) at = now - 1000;
+      out.patch.publishAt = at;
+    } else if (pa > now && !out.note) {
+      out.note = 'It is scheduled, so it appears at its set time.';
+    }
+    return out;
+  }
+  window.nalunoPublicFeedFill = publicFeedFill;
+
   async function modBroadcast(id, action, uid) {
     if (!id || !action) return;
     const db = adminDb();
     if (!db) return;
     const now = Date.now();
     try {
+      let fill = { patch: {}, note: '' };
+      if (action === 'let-out' || action === 'restore') {
+        /* A failed read throws and stops here: never fill from a post we
+           could not read (it could be private). */
+        const snap = await db.collection('broadcasts').doc(id).get();
+        if (snap && snap.exists) fill = publicFeedFill(snap.data() || {}, now);
+      }
       if (action === 'let-out') {
-        await db.collection('broadcasts').doc(id).set({
+        await db.collection('broadcasts').doc(id).set(Object.assign({
           listed: true, held: false, heldReason: '', hidden: false, updatedAt: now,
-        }, { merge: true });
-        toast('That Broadcast is on the public feed');
+        }, fill.patch), { merge: true });
+        toast(fill.note ? ('Let out. ' + fill.note) : 'That Broadcast is on the public feed');
       } else if (action === 'hold') {
         const why = window.prompt('Why is this held off the feed?', 'review');
         if (why === null) return;
@@ -7864,10 +8033,10 @@
         try { await closeReportsForBroadcast(id, 'ACTIONED', 'Broadcast taken down'); } catch (_) {}
         toast('Taken down');
       } else if (action === 'restore') {
-        await db.collection('broadcasts').doc(id).set({
+        await db.collection('broadcasts').doc(id).set(Object.assign({
           listed: true, held: false, hidden: false, hiddenReason: '', updatedAt: now,
-        }, { merge: true });
-        toast('Restored to the public feed');
+        }, fill.patch), { merge: true });
+        toast(fill.note ? ('Restored. ' + fill.note) : 'Restored to the public feed');
       } else if (action === 'trust-publisher' || action === 'untrust-publisher') {
         const who = uid || '';
         if (!who) { toast('Missing account'); return; }

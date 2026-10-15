@@ -1041,6 +1041,10 @@ function openComposer(mode){
   resetComposer();
   /* 07c: the Signal maker shows who will see it. */
   if(composerMode === 'signal'){ try{ nalunoPaintSignalAudience(true); }catch(_){} }
+  /* 15 Oct: start loading the picture detector now (as the Broadcast maker
+     does), so it has finished by the time the Signal is posted and the
+     weaker fallback check does not decide. */
+  try{ if(typeof window.nalunoModPreload === 'function') window.nalunoModPreload(); }catch(_){}
   const label = $('composerModeLabel');
   const hint = $('composerModeHint');
   const ttlRow = $('signalTtlRow');
@@ -1887,13 +1891,14 @@ function nalunoNoteHeldSignals(segs){
    Signals for everyone as well as in front of your connections; "My
    connections" keeps it to them. Remembered on this phone. */
 function nalunoSignalAudience(){
-  /* Public only once the person has seen the choice (the Signal maker
-     shows it, with Everyone selected). A Signal posted from a screen that
-     does not show it, on a phone that never has, stays with connections. */
+  /* 15 Oct: Everyone is the default, as the maker says. It used to be
+     connections until the maker had been opened once on this phone, so a
+     first Signal (or one sent from a Broadcast) never reached everyone.
+     "My connections", once chosen, is remembered. */
   try{
     const v = localStorage.getItem('nalunoSignalAudience');
-    return v === 'public' ? 'public' : 'connections';
-  }catch(_){ return 'connections'; }
+    return v === 'connections' ? 'connections' : 'public';
+  }catch(_){ return 'public'; }
 }
 window.nalunoSignalAudience = nalunoSignalAudience;
 function nalunoPaintSignalAudience(seen){
@@ -2032,7 +2037,11 @@ async function postSegmentsNow(newSegments){
       }
       /* Public only when chosen and Screen passed it (a held part stays
          with you until it is checked). */
-      if(segToSave) segToSave = Object.assign({}, segToSave, { public: !!(wantPublic && !segToSave.held && (segToSave.type === 'text' || canScreen)) });
+      if(segToSave) segToSave = Object.assign({}, segToSave, {
+        public: !!(wantPublic && !segToSave.held && (segToSave.type === 'text' || canScreen)),
+        /* 15 Oct: kept even while held, so a release puts it back for everyone. */
+        audience: wantPublic ? 'public' : 'connections',
+      });
       const id = await saveSignalSegment(segToSave);
       if(id) mySignal.push(Object.assign({}, segToSave, { id: id }));
       else saveFailed++;

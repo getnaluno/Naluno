@@ -179,7 +179,7 @@
     if (b.hidden || b.held) return false;
     if (b.listed === false) return false;
     if (b.visibility === 'private') return false;
-    if (Number(b.publishAt) > Date.now()) return false;
+    if (Number(b.publishAt) > (typeof window !== 'undefined' && typeof window.nalunoServerNow === 'function' ? window.nalunoServerNow() : Date.now())) return false;  // 15 Oct: the server's clock, not a slow phone's
     const safety = safetyOf(b);
     if (safety === 'blocked' || safety === 'block' || safety === 'held') return false;
     const uid = b.creatorUid || '';

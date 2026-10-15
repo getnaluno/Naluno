@@ -90,7 +90,7 @@
       rows.forEach(function (b) {
         if (!b || !b.id || have[b.id]) return;
         if (b.deleted || b.hidden || b.held || b.listed === false || b.visibility === 'private') return;
-        if (Number(b.publishAt) > Date.now()) return;
+        if (Number(b.publishAt) > (typeof window !== 'undefined' && typeof window.nalunoServerNow === 'function' ? window.nalunoServerNow() : Date.now())) return;  // 15 Oct: the server's clock, not a slow phone's
         const uid = b.creatorUid || '';
         if (uid && ((v.blocked && v.blocked[uid]) || (v.hiddenCreators && v.hiddenCreators[uid]))) return;
         if (v.notInterested && v.notInterested[b.id]) return;

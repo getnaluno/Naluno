@@ -404,6 +404,17 @@ window.nalunoCallMove = nalunoCallMove;
 /* Server time, from the web server's own Date header (one tiny request), so
    a phone whose clock is wrong can still tell an old ring from a new one. */
 let nalunoServerSkew = null;
+/* 15 Oct: the last clock difference this phone measured is kept, so a
+   phone that runs fast and cannot reach the server clock right now (slow
+   start, weak signal) still asks the public feed a question the database
+   can answer, instead of being refused the whole list. */
+window.nalunoStoredSkew = (function(){
+  try{
+    const o = JSON.parse(localStorage.getItem('nalunoServerSkew') || 'null');
+    if(o && typeof o.skew === 'number' && isFinite(o.skew) && Math.abs(o.skew) < 400 * 86400000) return o.skew;
+  }catch(_){}
+  return null;
+})();
 function nalunoMeasureSkew(){
   try{
     /* The public feed waits for this (briefly) to bound its query by the
@@ -411,10 +422,16 @@ function nalunoMeasureSkew(){
     window.__nalunoSkewReady = fetch('/manifest.json?skew=' + Date.now(), { method: 'HEAD', cache: 'no-store' }).then(function(r){
       const d = r && r.headers && r.headers.get('Date');
       const t = d ? Date.parse(d) : NaN;
-      if(isFinite(t)) nalunoServerSkew = t - Date.now();
+      if(isFinite(t)){
+        nalunoServerSkew = t - Date.now();
+        window.nalunoStoredSkew = nalunoServerSkew;
+        try{ localStorage.setItem('nalunoServerSkew', JSON.stringify({ skew: nalunoServerSkew, at: t })); }catch(_){}
+      }
     }).catch(function(){});
   }catch(_){}
+  return window.__nalunoSkewReady;
 }
+window.nalunoMeasureSkew = nalunoMeasureSkew;
 try{ nalunoMeasureSkew(); }catch(_){}
 /* A ring whose caller's phone died is left 'ringing' in the database. The
    incoming-call listener delivers every ringing call when it (re)attaches,

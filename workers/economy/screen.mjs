@@ -696,12 +696,18 @@ export function judgeScreenPayload(payload, opts) {
      is never allowed to REJECT by itself: its "block" becomes "hold", and a
      person decides. Auto-rejecting genuine content on weak evidence is the
      exact failure this rebuild fixes. */
-  const decision = d.decision === "block" ? "hold" : d.decision;
+  /* 15 Oct: the skin check alone holds only what looks like nudity (its
+     "block" band) or a sexual title. Its middle band, where a face, warm light
+     or a street at night lands, is no longer held: that kept ordinary videos
+     off the feed whenever the detector had not run. Its "block" is still not
+     a rejection by itself: a person decides. */
+  const strong = d.decision === "block" || (d.decision === "hold" && d.reason === "screen" && SEX_WORDS.test(String(title)));
+  const decision = strong ? "hold" : (d.decision === "unread" ? "unread" : "allow");
   return {
     decision,
     score: d.score,
     hasScreen: true,
-    reason: d.decision === "block" ? "heuristic-only" : d.reason,
+    reason: d.decision === "block" ? "heuristic-only" : (strong ? "screen" : ""),
     frames: hints.length,
     max: d.max,
     mean: d.mean,

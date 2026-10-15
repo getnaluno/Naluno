@@ -178,7 +178,7 @@ var require_discover_engine = __commonJS({
         if (b.hidden || b.held) return false;
         if (b.listed === false) return false;
         if (b.visibility === "private") return false;
-        if (Number(b.publishAt) > Date.now()) return false;
+        if (Number(b.publishAt) > (typeof window !== "undefined" && typeof window.nalunoServerNow === "function" ? window.nalunoServerNow() : Date.now())) return false;
         const safety = safetyOf(b);
         if (safety === "blocked" || safety === "block" || safety === "held") return false;
         const uid = b.creatorUid || "";
@@ -1731,8 +1731,8 @@ async function countAdEvent(io, uid, body, now) {
   const ad = await io.getAd(adId);
   if (!ad || ad.status !== "live") return { status: 200, body: { ok: true, counted: false, reason: "not live" } };
   if (String(ad.creatorUid || "") === uid) return { status: 200, body: { ok: true, counted: false, reason: "own ad" } };
-  const window = Math.floor(now / AD_WINDOWS[kind]);
-  const marker = uid + "_" + adId + "_" + kind + "_" + window;
+  const window2 = Math.floor(now / AD_WINDOWS[kind]);
+  const marker = uid + "_" + adId + "_" + kind + "_" + window2;
   const counted = await io.countOnce(marker, adId, FIELD[kind], { uid, adId, kind, at: now });
   return { status: 200, body: { ok: true, counted: !!counted } };
 }
@@ -2676,12 +2676,13 @@ function judgeScreenPayload(payload, opts) {
     return { decision: "unread", score: 0, hasScreen: false, reason: "unread", frames: 0 };
   }
   const d = decideFromHints(hints, { title });
-  const decision = d.decision === "block" ? "hold" : d.decision;
+  const strong = d.decision === "block" || d.decision === "hold" && d.reason === "screen" && SEX_WORDS.test(String(title));
+  const decision = strong ? "hold" : d.decision === "unread" ? "unread" : "allow";
   return {
     decision,
     score: d.score,
     hasScreen: true,
-    reason: d.decision === "block" ? "heuristic-only" : d.reason,
+    reason: d.decision === "block" ? "heuristic-only" : strong ? "screen" : "",
     frames: hints.length,
     max: d.max,
     mean: d.mean,
@@ -7001,7 +7002,7 @@ async function persistPasswordRecord(env, uid, rec, saToken, userToken) {
   }
   return "memory";
 }
-function legacyCataloguePatch(row, now) {
+function legacyCataloguePatch(row, now, docCreated) {
   if (!row || row.deleted) return null;
   if (row.visibility === "private") return null;
   if (row.hidden === true || row.held === true || row.listed === false) return null;
@@ -7012,10 +7013,23 @@ function legacyCataloguePatch(row, now) {
   if (row.hidden == null) patch.hidden = false;
   if (row.held == null) patch.held = false;
   if (!(Number(row.publishAt) > 0)) {
-    const at = Number(row.createdAt) || Number(row.updatedAt) || 0;
+    const at = Number(row.createdAt) || Number(row.updatedAt) || Number(docCreated) || 0;
     if (at > 0 && at <= clock) patch.publishAt = at;
   }
   return Object.keys(patch).length ? patch : null;
+}
+function feedFillPatch(row, now) {
+  const r = row || {};
+  const clock = now || Date.now();
+  const patch = {};
+  if (r.visibility == null || r.visibility === "") patch.visibility = "public";
+  const pa = Number(r.publishAt);
+  if (!(Number.isFinite(pa) && pa > 0)) {
+    let at = Number(r.createdAt) || Number(r.updatedAt) || 0;
+    if (!(at > 0) || at > clock) at = clock - 1e3;
+    patch.publishAt = at;
+  }
+  return patch;
 }
 async function repairPublicCatalogue(env, saToken, body) {
   if (!saToken) return json({ ok: false, error: "service account required" }, 503);
@@ -7034,7 +7048,7 @@ async function repairPublicCatalogue(env, saToken, body) {
     for (const doc of docs) {
       const row = fromFsDoc(doc);
       seen.scanned++;
-      const patch = legacyCataloguePatch(row);
+      const patch = legacyCataloguePatch(row, Date.now(), Date.parse(doc.createTime || "") || 0);
       if (!patch || !row.id) {
         seen.skipped++;
         continue;
@@ -7653,6 +7667,10 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
       return json({ ok: true, trustedPublisher: uid });
     } else {
       return json({ ok: false, error: "unknown action" }, 400);
+    }
+    if (action === "let-out" || action === "restore") {
+      const row = await fsGetDoc(env, token, "/broadcasts/" + encodeURIComponent(id)).catch(() => null);
+      if (row) Object.assign(patch, feedFillPatch(row, now));
     }
     await fsPutDoc(env, token, "/broadcasts/" + encodeURIComponent(id), patch);
     await writeAdminAudit(env, token, {

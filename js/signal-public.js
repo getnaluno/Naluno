@@ -76,27 +76,82 @@
       r.latest = r.segs[r.segs.length - 1];
       return r;
     });
-    /* Newest first. */
+    /* Newest first. 15 Oct: no 30-person cap: a quiet Signal is not pushed
+       out by busier ones. */
     out.sort(function (a, b) { return b.latest.createdAt - a.latest.createdAt; });
-    return out.slice(0, 30);
+    return out;
+  }
+  /* 15 Oct: the rules let anyone read a public Signal only while its
+     expiresAt is after the SERVER's clock, and refuse the whole query when
+     the phone asks from an earlier moment (a phone clock running slow).
+     The bound is the server's clock (measured, or the last one this phone
+     measured) plus a minute. Without either, five minutes. A refusal
+     measures again and asks further ahead (10 min, 1 h, 6 h). */
+  var PAGE = 120, MAX_PAGES = 4;
+  var aheadExtra = 0, refusals = 0;
+  var LADDER = [10 * 60000, 60 * 60000, 6 * 60 * 60000];
+  function serverSkew() {
+    try { if (typeof nalunoServerSkew === 'number' && isFinite(nalunoServerSkew)) return { skew: nalunoServerSkew, measured: true }; } catch (_) {}
+    try { if (typeof window.nalunoStoredSkew === 'number' && isFinite(window.nalunoStoredSkew)) return { skew: window.nalunoStoredSkew, measured: false }; } catch (_) {}
+    return null;
+  }
+  function lowerBound() {
+    var k = serverSkew();
+    if (k && k.measured) return Date.now() + k.skew + 60000 + aheadExtra;
+    return Date.now() + (k ? k.skew : 0) + 300000 + aheadExtra;
+  }
+  function baseQuery(bound) {
+    return fbDb.collection('signals')
+      .where('public', '==', true)
+      .where('hidden', '==', false)
+      .where('held', '==', false)
+      .where('expiresAt', '>', bound)
+      .orderBy('expiresAt', 'desc');
+  }
+  function readAll() {
+    var bound = lowerBound();
+    var list = [];
+    function page(n, cursor) {
+      var q = baseQuery(bound).limit(PAGE);
+      if (cursor) q = q.startAfter(cursor);
+      return q.get().then(function (snap) {
+        var docs = [];
+        snap.forEach(function (doc) { docs.push(doc); var d = doc.data() || {}; d.id = doc.id; list.push(d); });
+        if (docs.length === PAGE && n + 1 < MAX_PAGES) return page(n + 1, docs[docs.length - 1]);
+        return list;
+      });
+    }
+    return page(0, null);
+  }
+  function afterRefusal() {
+    if (refusals >= LADDER.length + 1) return Promise.resolve(false);
+    refusals++;
+    var before = serverSkew();
+    var m = null;
+    try { if (typeof window.nalunoMeasureSkew === 'function') m = window.nalunoMeasureSkew(); } catch (_) {}
+    return Promise.race([Promise.resolve(m).catch(function () {}), new Promise(function (r) { setTimeout(r, 3000); })]).then(function () {
+      var after = serverSkew();
+      if (refusals === 1 && after && after.measured && !(before && before.measured)) aheadExtra = 0;
+      else aheadExtra = LADDER[Math.min(refusals - 1, LADDER.length - 1)];
+      return true;
+    });
   }
   function load(force) {
     if (loading) return loading;
     if (!force && Date.now() - loadedAt < 120000) return Promise.resolve(rows);
     if (typeof fbDb === 'undefined' || !fbDb || !me()) return Promise.resolve(rows);
-    /* Still live, newest first. Asked from five minutes ahead so a phone
-       clock a little behind never asks for something the rules refuse. */
-    loading = fbDb.collection('signals')
-      .where('public', '==', true)
-      .where('hidden', '==', false)
-      .where('held', '==', false)
-      .where('expiresAt', '>', Date.now() + 300000)
-      .orderBy('expiresAt', 'desc')
-      .limit(120)
-      .get()
-      .then(function (snap) {
-        var list = [];
-        snap.forEach(function (doc) { var d = doc.data() || {}; d.id = doc.id; list.push(d); });
+    /* Still live, newest first, bounded by the server's clock (lowerBound),
+       read in pages of 120 (up to 480). */
+    function attempt() {
+      return readAll().catch(function (e) {
+        if (e && e.code === 'permission-denied') {
+          return afterRefusal().then(function (again) { if (again) return attempt(); throw e; });
+        }
+        throw e;
+      });
+    }
+    loading = attempt()
+      .then(function (list) {
         var before = JSON.stringify(rows.map(function (r) { return r.uid + ':' + r.segs.length; }));
         raw = list;
         rows = group(list);

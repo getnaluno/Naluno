@@ -3308,11 +3308,38 @@ function bspaceOpenSignalPlate(){
   if(!activeBroadcastId) return;
   const shot = bspaceShotUrl();
   const img = shot ? ('<img alt="" src="' + bspaceEscape(shot) + '" style="width:100%;max-height:220px;object-fit:cover;border-radius:14px;margin:0 0 10px;background:#000;" />') : '';
+  /* 15 Oct: the same "Who sees it" choice as the Signal maker (and the
+     same remembered setting). It used to be missing, and these Signals
+     never went to everyone. */
+  let aud = 'public';
+  try{ if(typeof nalunoSignalAudience === 'function') aud = nalunoSignalAudience(); }catch(_){}
   const body = bspaceShowAction('To Signal', img
     + '<textarea id="bspaceSignalCaption" maxlength="280" rows="3" placeholder="Caption" style="width:100%;margin:0 0 10px;padding:12px;border-radius:12px;border:1px solid var(--line);background:transparent;color:var(--text);font:inherit;"></textarea>'
+    + '<div class="signal-aud-row" id="bspaceSignalAud" role="radiogroup" aria-label="Who sees this Signal" style="margin:0 0 10px;">'
+    + '<button type="button" class="ttl-chip" data-aud="public" role="radio">Everyone on Naluno</button>'
+    + '<button type="button" class="ttl-chip" data-aud="connections" role="radio">My connections</button></div>'
     + '<button type="button" class="bspace-mini primary" id="bspaceSignalSend">Send to Signal</button>');
   const go = body && body.querySelector('#bspaceSignalSend');
   if(!go) return;
+  const audRow = body.querySelector('#bspaceSignalAud');
+  function paintAud(){
+    if(!audRow) return;
+    audRow.querySelectorAll('[data-aud]').forEach(function(b){
+      const on = b.getAttribute('data-aud') === aud;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+  }
+  paintAud();
+  if(audRow) audRow.onclick = function(ev){
+    if(ev) ev.stopPropagation();
+    const b = ev && ev.target && ev.target.closest ? ev.target.closest('[data-aud]') : null;
+    if(!b) return;
+    aud = b.getAttribute('data-aud') === 'connections' ? 'connections' : 'public';
+    try{ localStorage.setItem('nalunoSignalAudience', aud); }catch(_){}
+    try{ if(typeof nalunoPaintSignalAudience === 'function') nalunoPaintSignalAudience(); }catch(_){}
+    paintAud();
+  };
   go.onclick = async function(e){
     if(e) e.stopPropagation();
     if(typeof saveSignalSegment !== 'function'){ toast('Signals are not available right now'); return; }
@@ -3329,6 +3356,17 @@ function bspaceOpenSignalPlate(){
         photoUrl = shot;
       }
       if(!photoUrl || String(photoUrl).indexOf('data:') === 0) throw new Error('Could not send that Signal');
+      /* The picture is a frame of this Broadcast, so it goes to everyone
+         only when the Broadcast itself is public (it passed its own check,
+         as a Pass-on does). A private, held or scheduled one: connections. */
+      let bcastPublic = false;
+      if(aud === 'public'){
+        try{
+          const snap = await fbDb.collection('broadcasts').doc(String(activeBroadcastId)).get();
+          const row = snap && snap.exists ? (snap.data() || {}) : null;
+          bcastPublic = !!(row && (typeof nalunoPublicListable === 'function' ? nalunoPublicListable(row, Date.now() + 60000) : broadcastIsPublic(row)));
+        }catch(_){ bcastPublic = false; }
+      }
       const now = Date.now();
       const seg = {
         type: 'photo',
@@ -3341,6 +3379,8 @@ function bspaceOpenSignalPlate(){
         linkedBroadcastId: activeBroadcastId,
         groupId: 'bcast-' + activeBroadcastId + '-' + now,
         order: 0,
+        audience: aud,
+        public: aud === 'public' && bcastPublic,
       };
       const id = await saveSignalSegment(seg);
       if(!id){ toast('Could not send that Signal'); return; }
@@ -3351,7 +3391,9 @@ function bspaceOpenSignalPlate(){
         if(typeof renderBroadcasts === 'function') renderBroadcasts();
       }catch(_){}
       bspaceBackMenu();
-      toast('On your Signal');
+      toast(aud === 'public' && !bcastPublic
+        ? 'On your Signal, for your connections (this Broadcast is not public, so it is not shown to everyone)'
+        : 'On your Signal');
     }catch(err){
       toast((err && err.message) || 'Could not send that Signal');
     }finally{

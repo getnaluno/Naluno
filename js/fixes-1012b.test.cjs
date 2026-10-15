@@ -53,7 +53,8 @@ function fnSource(src, name) {
   for (const [k, v] of [['listed', undefined], ['hidden', undefined], ['held', true], ['visibility', 'private'], ['publishAt', now + 60000], ['publishAt', undefined], ['deleted', true]]) {
     assert.strictEqual(listable(Object.assign({}, ok, { [k]: v }), now), false, k + '=' + v + ' is not public');
   }
-  assert.ok(/const margin = skew === null \? 2 \* 60 \* 1000 : 15 \* 1000;/.test(bcore), 'the feed hides others\' new posts for seconds, not minutes');
+  /* 15 Oct c: same margins, written per branch (measured 15 s; otherwise 2 min, with the last measured clock when kept). */
+  assert.ok(/if\(skew !== null\) return Date\.now\(\) \+ skew - 15 \* 1000/.test(bcore) && /- 2 \* 60 \* 1000 - nalunoClockBackoff;/.test(bcore), 'the feed hides others\' new posts for seconds, not minutes');
 
   /* 4. Toga: an older redraw that finishes late can no longer paint over a
         newer one (values going backwards, rows vanishing). */

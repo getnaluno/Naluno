@@ -590,6 +590,12 @@
          to fix. */
       var fb = Object.assign({}, base || { decision: 'unread', score: 0, reason: 'unread', packed: null });
       if (fb.decision === 'block') { fb.decision = 'hold'; fb.reason = 'heuristic-only'; }
+      /* 15 Oct: same rule as the server (screen.mjs): the skin check alone
+         holds only what looks like nudity or a sexual title. Its middle band
+         (a face, warm light, a street at night) goes out. */
+      else if (fb.decision === 'hold' && !/\b(porn|porno|xxx|nsfw|onlyfans|nudes?|naked|hentai|cumshot|sex\s*tape)\b/i.test(String(title || ''))) {
+        fb.decision = 'allow'; fb.reason = '';
+      }
       fb.engine = 'heuristic';
       return fb;
     }

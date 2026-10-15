@@ -1324,6 +1324,54 @@ function pruneExpiredSignal(){
   mySignal = mySignal.filter(s => Date.now() < s.expiresAt);
 }
 
+/* 15 Oct: the copy in signals/{id} is what Signals for everyone reads (and
+   the desk's list). Its write used to ignore its own failure. Now a refused
+   public copy is tried once more as a connections-only copy (so the desk
+   still lists it), and the person is told it did not go to everyone. The
+   Signal itself (the user copy) is already saved and stays saved. */
+async function nalunoWriteSignalMirror(id, mirror){
+  const col = fbDb.collection('signals');
+  try{
+    await col.doc(id).set(mirror, { merge: true });
+    return { ok: true, public: !!mirror.public };
+  }catch(e){
+    const code = (e && e.code) || '';
+    try{ console.warn('[signal] public copy refused', code, e && e.message); }catch(_){}
+    try{ if(typeof nalunoDiag === 'function') nalunoDiag('signal-public-copy-failed', code + ' ' + ((e && e.message) || ''), id); }catch(_){}
+    let saved = false;
+    /* A fast phone clock is the usual reason (an expiry the rules see as
+       more than 25 hours away). Read the server clock and try once more
+       with the expiry inside its 24 hours. */
+    if(mirror.public && code === 'permission-denied' && typeof window.nalunoMeasureSkew === 'function'){
+      try{
+        await Promise.race([Promise.resolve(window.nalunoMeasureSkew()).catch(function(){}), new Promise(function(r){ setTimeout(r, 3000); })]);
+        if(typeof nalunoServerSkew === 'number' && isFinite(nalunoServerSkew) && typeof mirror.expiresAt === 'number'){
+          const cap = Date.now() + nalunoServerSkew + 24 * 60 * 60 * 1000;
+          if(mirror.expiresAt > cap){
+            const again = Object.assign({}, mirror, { expiresAt: cap });
+            await col.doc(id).set(again, { merge: true });
+            return { ok: true, public: true, retried: true };
+          }
+        }
+      }catch(_){}
+    }
+    if(mirror.public){
+      try{
+        await col.doc(id).set(Object.assign({}, mirror, { public: false }), { merge: true });
+        saved = true;
+      }catch(_){}
+    }
+    try{
+      if(mirror.public && typeof toast === 'function'){
+        toast(saved
+          ? 'Posted for your connections. It could not be added to Signals for everyone' + (code ? ' (' + code + ')' : '') + '.'
+          : 'Posted for your connections. Signals for everyone did not accept it' + (code ? ' (' + code + ')' : '') + '.');
+      }
+    }catch(_){}
+    return { ok: false, public: false, code: code, fallback: saved };
+  }
+}
+window.nalunoWriteSignalMirror = nalunoWriteSignalMirror;
 async function saveSignalSegment(segment){
   { const no = window.NalunoLaunch && NalunoLaunch.blocked('signals'); if(no){ if(typeof toast === 'function') toast(no); throw new Error(no); } }
   if(!currentUser || !fbDb) return null;
@@ -1373,6 +1421,17 @@ async function saveSignalSegment(segment){
       clean.held = true;
       clean.heldReason = hashMatched ? 'known-file' : 'text-safety';
     }
+    /* 15 Oct: who it is for is stored on both copies, held or not, so a
+       release by the desk can put it back in Signals for everyone when that
+       was the choice. A caller that does not say (Send to Signal, a post
+       from a screen without the choice) uses the maker's choice, whose
+       default is Everyone. A caller that set public false keeps it. */
+    if(clean.audience !== 'public' && clean.audience !== 'connections'){
+      let aud = 'public';
+      try{ if(typeof nalunoSignalAudience === 'function') aud = nalunoSignalAudience(); }catch(_){}
+      clean.audience = aud === 'connections' ? 'connections' : 'public';
+    }
+    if(clean.public == null) clean.public = clean.audience === 'public';
     await ref.set(clean);
     /* The desk's list of Signals. Held ones are listed too, marked, so the
        Control Centre can release or remove them. */
@@ -1394,6 +1453,7 @@ async function saveSignalSegment(segment){
          rules let anyone signed in read it only while public, not held and
          not taken down), so it carries what the viewer needs to play it. */
       mirror.public = !!(clean.public && !clean.held);
+      mirror.audience = clean.audience;
       mirror.hidden = false;
       mirror.publicDay = new Date(Number(mirror.createdAt) || Date.now()).toISOString().slice(0, 10);
       mirror.type = String(clean.type || clean.mediaType || 'photo').slice(0, 20);
@@ -1404,7 +1464,21 @@ async function saveSignalSegment(segment){
       ['filterCss'].forEach(function(k){ if(clean[k]) mirror[k] = String(clean[k]).slice(0, 300); });
       ['duration', 'trimStart', 'trimEnd'].forEach(function(k){ if(isFinite(Number(clean[k]))) mirror[k] = Number(clean[k]); });
       if(clean.thumbDataUrl && String(clean.thumbDataUrl).length <= 90000) mirror.thumbDataUrl = String(clean.thumbDataUrl);
-      fbDb.collection('signals').doc(ref.id).set(mirror, { merge: true }).catch(function(){});
+      /* 15 Oct: a public copy may live at most 25 hours by the SERVER's
+         clock (firestore.rules). A phone running fast wrote an expiry the
+         rules refuse, and the refusal was swallowed: the Signal looked
+         posted for everyone and was not. The expiry is kept within 24 hours
+         of the server's clock, and a refusal is reported. */
+      try{
+        let skew = null;
+        if(typeof nalunoServerSkew === 'number' && isFinite(nalunoServerSkew)) skew = nalunoServerSkew;
+        else if(typeof window.nalunoStoredSkew === 'number' && isFinite(window.nalunoStoredSkew)) skew = window.nalunoStoredSkew;
+        if(skew !== null && typeof mirror.expiresAt === 'number'){
+          const cap = Date.now() + skew + 24 * 60 * 60 * 1000;
+          if(mirror.expiresAt > cap) mirror.expiresAt = cap;
+        }
+      }catch(_){}
+      await nalunoWriteSignalMirror(ref.id, mirror);
     }catch(_){}
     if(held){
       try{

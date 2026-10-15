@@ -290,8 +290,20 @@ function nalunoBroadcastListingFields(screen, opts){
    Both are also enforced in firestore.rules; this is what the app shows. */
 function broadcastIsScheduled(b){
   const at = Number(b && b.publishAt) || 0;
-  return at > Date.now();
+  /* 15 Oct: "not yet due" by the server's clock, not this phone's. A phone
+     running slow treated every post made in its last hour (by its clock,
+     still "in the future") as scheduled and left it off the feed. */
+  return at > nalunoServerNow();
 }
+function nalunoServerNow(){
+  let skew = 0;
+  try{
+    if(typeof nalunoServerSkew === 'number' && isFinite(nalunoServerSkew)) skew = nalunoServerSkew;
+    else if(typeof window !== 'undefined' && typeof window.nalunoStoredSkew === 'number' && isFinite(window.nalunoStoredSkew)) skew = window.nalunoStoredSkew;
+  }catch(_){}
+  return Date.now() + skew;
+}
+try{ window.nalunoServerNow = nalunoServerNow; }catch(_){}
 function broadcastIsPrivate(b){
   return !!(b && b.visibility === 'private');
 }
@@ -714,17 +726,58 @@ function feedActivityAt(b){
    Every public query is bounded by the server's clock, a little in the
    past. Posts newer than that margin are picked up by the catch-up read
    a moment later. */
+/* 15 Oct: set after the database refuses the public list (see
+   nalunoAfterFeedRefusal): how much further back to ask. */
+let nalunoClockBackoff = 0;
+let nalunoFeedRefusals = 0;
+let nalunoBackoffWithSkew = false;
+function nalunoMeasuredSkew(){
+  try{ if(typeof nalunoServerSkew === 'number' && isFinite(nalunoServerSkew)) return nalunoServerSkew; }catch(_){}
+  return null;
+}
 function nalunoCatalogueNow(){
-  let skew = null;
-  try{ if(typeof nalunoServerSkew === 'number' && isFinite(nalunoServerSkew)) skew = nalunoServerSkew; }catch(_){}
+  const skew = nalunoMeasuredSkew();
   /* 12 Oct b: a minute (five without a measured clock) kept every new post,
      a live one too, off other people's feeds for that long. The server's
      clock is known to about a second from its Date header; 15 s covers
-     that. Without it, two minutes. */
-  const margin = skew === null ? 2 * 60 * 1000 : 15 * 1000;
-  return Date.now() + (skew || 0) - margin;
+     that. Without it, two minutes.
+     15 Oct: without it, the last difference this phone measured (kept on
+     the phone) is used, so a fast phone is not refused the whole list. */
+  /* A step back taken while the server clock was unknown is dropped once
+     it is known: the catch-up read then fills the gap. */
+  if(skew !== null) return Date.now() + skew - 15 * 1000 - (nalunoBackoffWithSkew ? Math.min(nalunoClockBackoff, 10 * 60 * 1000) : 0);
+  let known = null;
+  try{ if(typeof window.nalunoStoredSkew === 'number' && isFinite(window.nalunoStoredSkew)) known = window.nalunoStoredSkew; }catch(_){}
+  return Date.now() + (known || 0) - 2 * 60 * 1000 - nalunoClockBackoff;
 }
 window.nalunoCatalogueNow = nalunoCatalogueNow;
+/* The database refused the public list. The usual cause is a phone clock
+   ahead of the server's, so the question asks about posts "not yet due".
+   Measure the server clock again; if that works, ask with it. If not, ask
+   further back each time (10 min, 1 h, 1 day, 1 week). Posts newer than
+   that are picked up by the catch-up read once the clock is known.
+   Returns false when there is nothing more to try. */
+const NALUNO_REFUSAL_LADDER = [10 * 60000, 60 * 60000, 24 * 3600000, 7 * 24 * 3600000];
+async function nalunoAfterFeedRefusal(){
+  if(nalunoFeedRefusals >= NALUNO_REFUSAL_LADDER.length + 1) return false;
+  nalunoFeedRefusals++;
+  const before = nalunoMeasuredSkew();
+  try{
+    if(typeof window.nalunoMeasureSkew === 'function'){
+      await Promise.race([window.nalunoMeasureSkew(), new Promise(function(r){ setTimeout(r, 3000); })]);
+    }
+  }catch(_){}
+  const after = nalunoMeasuredSkew();
+  nalunoBackoffWithSkew = after !== null;
+  if(after !== null && (before === null || Math.abs(after - before) > 5000) && nalunoFeedRefusals === 1){
+    nalunoClockBackoff = 0;
+  }else{
+    nalunoClockBackoff = NALUNO_REFUSAL_LADDER[Math.min(nalunoFeedRefusals - 1, NALUNO_REFUSAL_LADDER.length - 1)];
+  }
+  try{ console.warn('[bcast] public list refused; asking again ' + Math.round(nalunoClockBackoff / 60000) + ' min further back'); }catch(_){}
+  return true;
+}
+window.nalunoAfterFeedRefusal = nalunoAfterFeedRefusal;
 function publicBroadcastQuery(){
   return fbDb.collection('broadcasts')
     .where('listed', '==', true)
@@ -1094,6 +1147,14 @@ function startFeedBroadcastsListener(){
           try{ feedBroadcastsUnsub(); }catch(_){}
           feedBroadcastsUnsub = null;
         }
+        /* 15 Oct: a refusal is almost always a fast phone clock. Ask again
+           by the server's clock (or further back), not the same question. */
+        if(err && err.code === 'permission-denied'){
+          nalunoAfterFeedRefusal().then(function(again){
+            if(again && !feedBroadcastsUnsub) startFeedBroadcastsListener();
+          });
+          return;
+        }
         if(!startFeedBroadcastsListener._fellBack){
           startFeedBroadcastsListener._fellBack = true;
           try{
@@ -1145,9 +1206,21 @@ function startFeedBroadcastsListener(){
 function recheckCaughtUp(){
   Object.keys(caughtUpIds).forEach(confirmStillOnCatalogue);
 }
+let nalunoSkewRetryAt = 0;
 function onFeedVisible(){
   if(typeof document !== 'undefined' && document.hidden) return;
-  catchUpNewlyPublic();
+  /* 15 Oct: the server clock could not be read at start (weak signal).
+     Try again now and then; once it is known, the catch-up read below
+     fills in the posts the cautious bound left out. */
+  if(nalunoMeasuredSkew() === null && typeof window.nalunoMeasureSkew === 'function' && Date.now() - nalunoSkewRetryAt > 60000){
+    nalunoSkewRetryAt = Date.now();
+    let m = null;
+    try{ m = window.nalunoMeasureSkew(); }catch(_){}
+    Promise.race([Promise.resolve(m).catch(function(){}), new Promise(function(r){ setTimeout(r, 4000); })])
+      .then(function(){ catchUpNewlyPublic(); });
+  }else{
+    catchUpNewlyPublic();
+  }
   if(Date.now() - caughtRecheckAt < CATALOGUE_RECONCILE_MS) return;
   caughtRecheckAt = Date.now();
   recheckCaughtUp();

@@ -126,7 +126,7 @@ const html = read('app/index.html');
   assert.strictEqual(P._safeColour('url(https://evil/x)'), false);
   assert.strictEqual(P._safeColour('linear-gradient(165deg,#141a16,#0d1018)'), true);
   assert.ok(!('bg' in P._segFrom({ id: 'x', type: 'text', text: 'hi', bg: 'red;background:url(x)' })), 'a stranger\'s card colour cannot load anything');
-  assert.ok(src.includes(".where('public', '==', true)") && src.includes(".where('hidden', '==', false)") && src.includes(".where('held', '==', false)") && src.includes(".where('expiresAt', '>', Date.now() + 300000)") && src.includes(".orderBy('expiresAt', 'desc')"), 'the query matches the rule, newest first');
+  assert.ok(src.includes(".where('public', '==', true)") && src.includes(".where('hidden', '==', false)") && src.includes(".where('held', '==', false)") && /* 15 Oct c: bounded by the server clock (lowerBound), not Date.now() + 5 min */ src.includes(".where('expiresAt', '>', bound)") && src.includes("if (k && k.measured) return Date.now() + k.skew + 60000 + aheadExtra;") && src.includes(".orderBy('expiresAt', 'desc')"), 'the query matches the rule, newest first');
   const idx = JSON.parse(read('firestore.indexes.json')).indexes.find((i) => i.collectionGroup === 'signals');
   assert.ok(idx && idx.fields.map((f) => f.fieldPath).join(',') === 'public,hidden,held,expiresAt', 'its index');
   const rules = read('firestore.rules');
@@ -138,7 +138,10 @@ const html = read('app/index.html');
   assert.ok(core.includes('mirror.public = !!(clean.public && !clean.held);') && core.includes('mirror.hidden = false;'), 'the copy says so');
   const comp = read('js/compass.js');
   assert.ok(comp.includes("public: !!(wantPublic && !segToSave.held && (segToSave.type === 'text' || canScreen))"), 'public only when chosen and Screen passed it (and Screen is there)');
-  assert.ok(comp.includes("return v === 'public' ? 'public' : 'connections';") && comp.includes("if(composerMode === 'signal'){ try{ nalunoPaintSignalAudience(true); }catch(_){} }"), 'public only once the choice has been seen');
+  /* CHANGED 15 Oct c (the report): Everyone is the default, as the maker
+     says, not only once the maker has been opened on this phone. "My
+     connections", once chosen, is remembered. */
+  assert.ok(comp.includes("return v === 'connections' ? 'connections' : 'public';") && comp.includes("if(composerMode === 'signal'){ try{ nalunoPaintSignalAudience(true); }catch(_){} }"), 'Everyone by default; connections when chosen');
   assert.ok(core.includes("currentProfile.name) ? String(currentProfile.name).slice(0, 80)"), 'the Naluno name, not the Google name');
   assert.ok(html.includes('data-aud="public"') && html.includes('data-aud="connections"'), 'the choice in the Signal maker');
   assert.ok(read('js/signal-ui.js').includes('NalunoPublicSignals.tilesHtml()'), 'shown after your connections');

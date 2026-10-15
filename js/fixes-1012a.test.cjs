@@ -155,9 +155,11 @@ function fnSource(src, name) {
   assert.ok(!/where\('publishAt', '<=', Date\.now\(\)\)/.test(bcore), 'no query bounded by the phone clock');
   assert.ok(!/const bound = Date\.now\(\);/.test(bcore));
   const sandbox = { Date: { now: () => 1_000_000_000 }, window: {}, nalunoServerSkew: undefined };
-  const catNow = vm.runInNewContext('var nalunoServerSkew = S; ' + fnSource(bcore, 'nalunoCatalogueNow') + '; nalunoCatalogueNow()', Object.assign({}, sandbox, { S: 120000, isFinite }));
+  /* 15 Oct c: nalunoCatalogueNow now reads the skew through nalunoMeasuredSkew and may step back after a refusal (none here). */
+  const helpers = 'var nalunoClockBackoff = 0; var nalunoBackoffWithSkew = false; ' + fnSource(bcore, 'nalunoMeasuredSkew') + '; ';
+  const catNow = vm.runInNewContext('var nalunoServerSkew = S; ' + helpers + fnSource(bcore, 'nalunoCatalogueNow') + '; nalunoCatalogueNow()', Object.assign({}, sandbox, { S: 120000, isFinite }));
   assert.strictEqual(catNow, 1_000_000_000 + 120000 - 15000, 'server clock minus 15 s');
-  const catNow2 = vm.runInNewContext('var nalunoServerSkew = null; ' + fnSource(bcore, 'nalunoCatalogueNow') + '; nalunoCatalogueNow()', Object.assign({}, sandbox, { isFinite }));
+  const catNow2 = vm.runInNewContext('var nalunoServerSkew = null; ' + helpers + fnSource(bcore, 'nalunoCatalogueNow') + '; nalunoCatalogueNow()', Object.assign({}, sandbox, { isFinite }));
   assert.strictEqual(catNow2, 1_000_000_000 - 120000, 'unknown skew: two minutes back');
   const lfb = fnSource(bcore, 'loadFeedBroadcasts');
   assert.ok(!/contacts \|\| \[\]\)\.forEach/.test(lfb), 'no refused read of connections by creator');
