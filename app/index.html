@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.10.15g" />
+  <meta name="naluno-build" content="2026.10.15h" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.10.15g">
+<meta name="app-version" content="2026.10.15h">
 <meta name="description" content="Naluno brings private communication, communities and creator-led content into one place. A Callsign instead of a phone number.">
 <meta property="og:title" content="Naluno">
 <meta property="og:description" content="Private communication, communities and creator-led content. A Callsign — not a phone number.">
@@ -131,9 +131,9 @@
 })();
 </script>
 <link rel="apple-touch-startup-image" href="/splash-empty.png">
-<link rel="stylesheet" href="/css/app.css?v=20261011b" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/css/app.css?v=20261015h" media="print" onload="this.media='all'">
 <script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="/css/app.css?v=20261011b"></noscript>
+<noscript><link rel="stylesheet" href="/css/app.css?v=20261015h"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -1302,15 +1302,16 @@ window.__nalunoEntryT0 = Date.now();
       <!-- Shown only when this chat has messages waiting for the internet. -->
       <div id="lifelineBar" style="display:none;"></div>
       <div id="translateBar" style="display:none;"></div>
+      <div id="wireAttachSheet" hidden style="display:none; gap:8px; padding:0 0 10px; flex-wrap:wrap;"></div>
+      <div id="wireAttachDraft" hidden style="display:none; gap:8px; padding:0 0 8px; overflow-x:auto;"></div>
+      <div id="wireSendProgress" style="display:none; font-family:var(--font-mono); font-size:11px; color:var(--text-dim); padding:0 0 8px;"></div>
       <div id="threadComposerNormal" style="display:flex; gap:9px; align-items:flex-end;">
-        <span class="naluno-pick-wrap ghost-btn" id="threadSlipBtn" aria-label="Send a photo or video" title="Photo or video" style="flex-shrink:0;position:relative;overflow:hidden;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="pointer-events:none;"><rect x="4" y="5" width="16" height="14" rx="3" stroke="currentColor" stroke-width="1.8"/><circle cx="9" cy="10" r="1.6" fill="currentColor"/><path d="M7 16l3.2-3.4 2.3 2.2L16.5 11 20 16" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
-          <input type="file" id="threadSlipInput" accept="image/jpeg,image/png,image/webp,image/*,video/*,video/mp4,video/quicktime,video/webm,.jpg,.jpeg,.png,.webp,.mp4,.mov,.webm,.mkv,.avi,.3gp" style="position:absolute;inset:0;width:100%;height:100%;opacity:0.01;font-size:16px;cursor:pointer;z-index:2;" />
-        </span>
-        <span class="naluno-pick-wrap ghost-btn" id="threadDocBtn" aria-label="Send a document" title="Document" style="flex-shrink:0;position:relative;overflow:hidden;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="pointer-events:none;"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8l-5-5z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M14 3v5h5" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
-          <input type="file" id="threadDocInput" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.rtf,.zip,application/pdf" style="position:absolute;inset:0;width:100%;height:100%;opacity:0.01;font-size:16px;cursor:pointer;z-index:2;" />
-        </span>
+        <div class="ghost-btn" id="threadAttachBtn" role="button" aria-label="Add a photo, video, file or recording" title="Add" style="flex-shrink:0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></div>
+        <input type="file" id="threadSlipInput" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,.jpg,.jpeg,.png,.webp,.gif,.mp4,.mov,.webm,.m4v,.3gp" multiple style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;" />
+        <input type="file" id="threadDocInput" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.rtf,.zip,application/pdf,text/plain" multiple style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;" />
+        <input type="file" id="threadAudioInput" accept="audio/*,.mp3,.m4a,.wav,.ogg,.aac" multiple style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;" />
+        <div class="ghost-btn" id="threadSlipBtn" role="button" aria-label="Photos and videos" title="Photos and videos" style="display:none;"></div>
+        <div class="ghost-btn" id="threadDocBtn" role="button" aria-label="Documents" title="Documents" style="display:none;"></div>
         <div class="ghost-btn" id="threadMoodBtn" role="button" aria-label="Send a feeling instead of words" style="flex-shrink:0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="12" cy="12" r="4.5" stroke="currentColor" stroke-width="1.6"/></svg></div>
         <textarea id="threadInput" rows="1" placeholder="Send a signal…" style="flex:1; resize:none; background:var(--surface); border:1px solid var(--line); border-radius:20px; padding:11px 16px; color:var(--text); font-size:14px; outline:none; max-height:120px; font-family:inherit;"></textarea>
         <div class="ghost-btn" id="threadMicBtn" role="button" aria-label="Record a voice note" style="flex-shrink:0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 15a3 3 0 003-3V6a3 3 0 10-6 0v6a3 3 0 003 3z" stroke="currentColor" stroke-width="2"/><path d="M19 11a7 7 0 01-14 0M12 19v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
@@ -1940,12 +1941,13 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/lg-ear.js?v=20261014a"></script>
 <script src="/js/naluno-voices.js?v=20261013b"></script>
 <script src="/js/broadcast-glance.js?v=20261010d"></script>
-<script src="/js/signal-public.js?v=20261015g"></script>
+<script src="/js/signal-public.js?v=20261015h"></script>
 <script src="/js/broadcast-space.js?v=20261015g"></script>
 <script src="/js/linkify.js?v=20260930a"></script>
 <script src="/js/ads.js?v=20261014a"></script>
 <script src="/js/media-vault.js?v=20260908d"></script>
-<script src="/js/wireline.js?v=20261010a"></script>
+<script src="/js/wireline-media.js?v=20261015h"></script>
+<script src="/js/wireline.js?v=20261015h"></script>
 <!-- Lifeline: Wireline when the internet is blocked or cut. Loads after
      crypto.js (keys) and wireline.js (thread insertion). -->
 <script src="/js/notices.js?v=20261004c"></script>
@@ -1975,7 +1977,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/live-preview.js?v=20261012c"></script>
 <script src="/js/band-room.js?v=20261010a"></script>
 <script src="/js/traffic.js?v=20261003e"></script>
-<script src="/js/pwa.js?v=20261015g"></script>
+<script src="/js/pwa.js?v=20261015h"></script>
 <script src="/js/gestures.js?v=20261007c"></script>
 <script src="/js/spark-engine.js?v=20261005g"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>
