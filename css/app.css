@@ -1833,6 +1833,89 @@ body.naluno-os-pip #pipStageCanvas{ display:none !important; }
 .slip-frame.playing .slip-play{ display:none; }
 
 #wireAttachDraft{ align-items:center; }
+#wireAttachSheet{
+  position:static;
+  width:100%;
+  box-sizing:border-box;
+  display:none;
+  flex-wrap:nowrap;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:8px;
+  margin:0 0 12px;
+  padding:2px 2px 0;
+  z-index:1;
+}
+#wireAttachSheet[hidden]{ display:none !important; }
+.wire-attach-act{
+  flex:1 1 0;
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:6px;
+  margin:0;
+  padding:0;
+  border:none;
+  background:transparent;
+  color:var(--text-dim);
+  cursor:pointer;
+  width:auto;
+  height:auto;
+  border-radius:0;
+}
+.wire-attach-ico{
+  width:52px;
+  height:52px;
+  border-radius:50%;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:var(--surface);
+  border:1px solid var(--line);
+  color:var(--text);
+  flex-shrink:0;
+}
+.wire-attach-act:active .wire-attach-ico{
+  border-color:var(--mint);
+  color:var(--mint);
+}
+.wire-attach-lab{
+  font-family:var(--font-mono);
+  font-size:11px;
+  line-height:1.2;
+  letter-spacing:.01em;
+  white-space:nowrap;
+  max-width:100%;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.wire-file-input{
+  position:fixed !important;
+  left:-120px !important;
+  top:0 !important;
+  width:1px !important;
+  height:1px !important;
+  opacity:0 !important;
+  pointer-events:none !important;
+  overflow:hidden !important;
+}
+#wirelineThread.call-overlay{
+  animation:none;
+  background:var(--bg);
+}
+.toga-name-row > .toga-delta{
+  flex:0 0 auto;
+  margin-left:auto;
+  align-self:flex-start;
+  white-space:nowrap;
+  font-family:var(--font-mono), ui-sans-serif, system-ui, sans-serif;
+}
+.toga-name-row > .toga-delta-same{
+  background:rgba(255,255,255,.06);
+  color:var(--text-dim);
+  padding:2px 8px;
+}
 .wire-draft-chip{
   display:inline-flex; align-items:center; gap:6px; max-width:240px;
   padding:6px 8px 6px 10px; border-radius:999px;
