@@ -119,6 +119,44 @@
     })());
   }
 
+  function grantKnownUnasked(person, now, months, price) {
+    if (!person || typeof person !== 'object') return null;
+    const uid = String(person.uid || person.id || '');
+    if (!uid || uid === '__proto__' || uid === 'constructor' || uid === 'prototype') return null;
+    const span = Number(months);
+    if (span !== 6 && span !== 12) return null;
+    const at = Number(now) || Date.now();
+    if (!(at > 0)) return null;
+    if (person.paidAt && isKnown(person, at)) return null;
+    if (person.grant && isKnown(person, at)) return null;
+    const name = String(person.name || person.handle || 'Member').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Member';
+    const prior = cleanNote(person.note);
+    const note = prior.length >= 12 ? prior : 'Granted by the superadmin. No application was on file.';
+    const row = {
+      uid: uid,
+      name: name,
+      note: note,
+      status: 'known',
+      grant: true,
+      unasked: !person.status,
+      grantMonths: span,
+      grantedAt: at,
+      paidUntil: at + span * MONTH_MS,
+      amount_minor: 0,
+      payRef: '',
+      createdAt: Number(person.createdAt) > 0 ? Number(person.createdAt) : at,
+      updatedAt: at,
+    };
+    const p = price || currentPrice();
+    if (p && Number(p.amount) > 0) {
+      const cur = String(p.currency || '').toUpperCase();
+      row.list_amount = Number(p.amount);
+      row.list_currency = cur;
+      row.list_minor = isoMinor(p.amount, cur);
+    }
+    return row;
+  }
+
   function voidGrant(app, now) {
     if (!app || !app.uid || !app.grant || app.paidAt) return null;
     const at = Number(now) || Date.now();
@@ -735,6 +773,7 @@
     review: review,
     recordPayment: recordPayment,
     grantKnown: grantKnown,
+    grantKnownUnasked: grantKnownUnasked,
     voidGrant: voidGrant,
     voidPayment: voidPayment,
     isKnown: isKnown,

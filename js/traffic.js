@@ -67,6 +67,68 @@
     out.talkHours = Math.round((out.talkSeconds / 3600) * 100) / 100;
     return out;
   }
+  /* A short reason the desk can store. The rules allow `status` and nothing
+     else, and they do not allow the words of a message, so this never
+     copies an error sentence — only a token. */
+  function failStatus(code, message) {
+    var c = String(code || '').toLowerCase();
+    var m = String(message || '').toLowerCase();
+    var token = 'error';
+    if (c.indexOf('permission-denied') >= 0) token = 'denied';
+    else if (c.indexOf('unauthenticated') >= 0) token = 'signed-out';
+    else if (c.indexOf('unavailable') >= 0) token = 'unavailable';
+    else if (c.indexOf('deadline') >= 0 || c.indexOf('timeout') >= 0 || m.indexOf('timeout') >= 0) token = 'timeout';
+    else if (c.indexOf('resource-exhausted') >= 0 || m.indexOf('limit') >= 0 || m.indexOf('not accepted') >= 0) token = 'rejected';
+    else if (c.indexOf('failed-precondition') >= 0) token = 'precondition';
+    else if (c.indexOf('invalid-argument') >= 0) token = 'invalid';
+    else if (c.indexOf('not-found') >= 0) token = 'missing';
+    else if (m.indexOf('offline') >= 0 || m.indexOf('network') >= 0) token = 'offline';
+    else if (m.indexOf('key') >= 0) token = 'nokey';
+    return clip(token, 24);
+  }
+  /* The phone used to write a new "failed" row on every automatic retry
+     (about every 12 seconds, and again whenever the app came forward).
+     Five or more failures between the same two people, with a typical gap
+     of 20 seconds or less, is that loop — one stuck send, not many. */
+  function messageFacts(rows, from, to) {
+    var ok = 0, fail = 0, byStatus = {}, pairMap = {};
+    (rows || []).forEach(function (raw) {
+      if (!raw || raw.kind !== 'message' || !inRange(raw, from, to)) return;
+      if (raw.ok) ok++; else fail++;
+      var st = clip(raw.status || (raw.ok ? 'sent' : 'failed'), 24) || (raw.ok ? 'sent' : 'failed');
+      byStatus[st] = (byStatus[st] || 0) + 1;
+      var key = String(raw.actorUid || '') + '\n' + String(raw.peerUid || '');
+      if (!pairMap[key]) {
+        pairMap[key] = {
+          who: (raw.actorName || raw.actorUid || 'Someone') + ' → ' + (raw.peerName || raw.peerUid || 'Someone'),
+          ok: 0, fail: 0, times: [],
+        };
+      }
+      if (raw.ok) pairMap[key].ok++; else pairMap[key].fail++;
+      if (!raw.ok && typeof raw.at === 'number') pairMap[key].times.push(raw.at);
+    });
+    var loopFails = 0, loops = 0;
+    var pairs = Object.keys(pairMap).map(function (k) {
+      var p = pairMap[k];
+      p.times.sort(function (a, b) { return a - b; });
+      var gaps = [];
+      for (var i = 1; i < p.times.length; i++) gaps.push(p.times[i] - p.times[i - 1]);
+      gaps.sort(function (a, b) { return a - b; });
+      var med = gaps.length ? gaps[Math.floor((gaps.length - 1) / 2)] : null;
+      var retryLoop = p.fail >= 5 && med != null && med <= 20000;
+      if (retryLoop) { loopFails += p.fail; loops++; }
+      return {
+        who: p.who, ok: p.ok, fail: p.fail,
+        first: p.times[0] || 0, last: p.times[p.times.length - 1] || 0,
+        medianGapMs: med, retryLoop: retryLoop,
+      };
+    }).sort(function (a, b) { return (b.fail - a.fail) || (b.ok - a.ok); });
+    return {
+      sent: ok, failed: fail, byStatus: byStatus, pairs: pairs,
+      retryLoopFailures: loopFails,
+      likelyDistinctFailures: fail - loopFails + loops,
+    };
+  }
   function rangeFor(mode, anchor) {
     var d = new Date(anchor || Date.now());
     var start = new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -165,5 +227,6 @@
   return {
     record: record, summarize: summarize, rangeFor: rangeFor, note: note, inRange: inRange,
     msOf: msOf, rowFromCall: rowFromCall, mergeCalls: mergeCalls,
+    failStatus: failStatus, messageFacts: messageFacts,
   };
 });

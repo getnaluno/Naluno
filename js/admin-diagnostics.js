@@ -127,6 +127,49 @@
     return out;
   }
 
+  /* One file the operator can hand over. Names and short ids only.
+     No message text: traffic rows never had any, and this does not add it. */
+  function bundle(reports, trafficRows, opts) {
+    opts = opts || {};
+    const since = Number(opts.since) || 0;
+    const summary = summarize(reports, opts);
+    const facts = (root.NalunoTraffic && typeof root.NalunoTraffic.messageFacts === 'function')
+      ? root.NalunoTraffic.messageFacts(trafficRows || [], since, Date.now() + 86400000)
+      : null;
+    const messageRows = (trafficRows || []).filter(function (r) {
+      return r && r.kind === 'message' && (Number(r.at) || 0) >= since;
+    }).slice(0, 800).map(function (r) {
+      return {
+        at: r.at || 0,
+        ok: !!r.ok,
+        status: String(r.status || '').slice(0, 24),
+        from: String(r.actorName || '').slice(0, 60),
+        to: String(r.peerName || '').slice(0, 60),
+        fromUid: String(r.actorUid || '').slice(0, 8),
+        toUid: String(r.peerUid || '').slice(0, 8),
+      };
+    });
+    let reading = 'Message records were not included.';
+    if (facts) {
+      reading = facts.failed + ' failed message rows, ' + facts.sent + ' sent.';
+      if (facts.retryLoopFailures > 0) {
+        reading += ' ' + facts.retryLoopFailures + ' of the failed rows are one send retried automatically (about every 12 seconds), not separate messages. Distinct failures in this range: about ' + facts.likelyDistinctFailures + '.';
+      } else {
+        reading += ' No 12-second retry loop in this range.';
+      }
+    }
+    return {
+      what: 'Naluno diagnostics. No message text, no addresses, no credentials.',
+      exportedAt: new Date().toISOString(),
+      rangeDays: opts.days || null,
+      buildFilter: opts.build || '',
+      reading: reading,
+      diagnostics: summary,
+      messages: facts,
+      messageRows: messageRows,
+    };
+  }
+
   /* ---- the tab ---- */
   function render(el, H) {
     const esc = H.escapeHtml;
@@ -137,6 +180,7 @@
       + [1, 7, 30].map(function (d) { return '<button type="button" class="ghost diag-days" data-days="' + d + '"' + (st.days === d ? ' style="border-color:var(--mint);color:var(--mint);"' : '') + '>' + (d === 1 ? 'Last 24 h' : 'Last ' + d + ' days') + '</button>'; }).join('')
       + '<select id="diagBuild" style="width:auto;background:#12141c;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 10px;"><option value="">All builds</option></select>'
       + '<button type="button" class="ghost" id="diagReload">Reload</button>'
+      + '<button type="button" class="primary" id="diagDownload">Download findings</button>'
       + '</div><div id="diagOut"><p class="sub">Loading…</p></div>');
     el.querySelectorAll('.diag-days').forEach(function (b) {
       b.onclick = function () { st.days = Number(b.getAttribute('data-days')) || 7; render(el, H); };
@@ -145,6 +189,34 @@
     if (sel) sel.onchange = function () { st.build = sel.value; paint(); };
     const rl = el.querySelector('#diagReload');
     if (rl) rl.onclick = function () { st.cache = null; render(el, H); };
+    const dl = el.querySelector('#diagDownload');
+    if (dl) dl.onclick = function () {
+      dl.disabled = true;
+      if (reports == null) { dl.disabled = false; return; }
+      const since = Date.now() - st.days * DAY;
+      const finish = function (trafficRows) {
+        dl.disabled = false;
+        let pack;
+        try {
+          pack = bundle(reports || [], trafficRows || [], { since: since, build: st.build, days: st.days });
+        } catch (e) {
+          pack = { what: 'Naluno diagnostics', error: String((e && e.message) || e), exportedAt: new Date().toISOString() };
+        }
+        const blob = new Blob([JSON.stringify(pack, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'naluno-diagnostics-' + new Date().toISOString().slice(0, 10) + '.json';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { try { URL.revokeObjectURL(a.href); } catch (_) {} }, 2500);
+      };
+      const db = H.adminDb && H.adminDb();
+      if (!db) { finish([]); return; }
+      db.collection('traffic').orderBy('at', 'desc').limit(800).get().then(function (snap) {
+        finish((snap.docs || []).map(function (d) { return d.data() || {}; }));
+      }).catch(function () { finish([]); });
+    };
     let reports = null;
     function paint() {
       const out = el.querySelector('#diagOut');
@@ -215,7 +287,7 @@
     });
   }
 
-  const api = { summarize: summarize, render: render, _failed: failed };
+  const api = { summarize: summarize, bundle: bundle, render: render, _failed: failed };
   root.NalunoDiagDesk = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

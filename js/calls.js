@@ -486,6 +486,24 @@ function snapshotUiBeforeCall(){
     _callUiSnapshot = null;
   }
 }
+/* The chat that was open before the call wins over the id the in-call
+   sheet temporarily points at. Otherwise hangup opens the person you
+   were calling, and the next send goes to them. */
+function wirelineRestoreContactId(snapshot, activeId, callContactId){
+  if(snapshot && snapshot.wireline && snapshot.threadContactId != null && snapshot.threadContactId !== '') return snapshot.threadContactId;
+  if(activeId != null && activeId !== '') return activeId;
+  return callContactId != null ? callContactId : null;
+}
+function wirelineHoldThread(state, activeId, callContactId){
+  const s = state && state.held ? state : null;
+  if(!s) return { held: true, prev: activeId, active: callContactId };
+  return { held: true, prev: s.prev, active: callContactId };
+}
+function wirelineReleaseThread(state){
+  const s = state || { held: false, prev: null };
+  if(!s.held) return { held: false, prev: null, active: null, restore: false };
+  return { held: false, prev: null, active: s.prev, restore: true };
+}
 function restoreUiAfterCall(){
   try{
     try{ resumeBackgroundMediaAfterCall(); }catch(_){}
@@ -527,9 +545,7 @@ function restoreUiAfterCall(){
       $('bspace').style.zIndex = '';
       $('bspace').style.display = '';
     } else if(s.wireline && typeof openThread === 'function'){
-      const id = (typeof activeThreadContactId !== 'undefined' && activeThreadContactId)
-        || s.threadContactId
-        || currentCallContactId;
+      const id = wirelineRestoreContactId(s, (typeof activeThreadContactId !== 'undefined' ? activeThreadContactId : null), currentCallContactId);
       if(id){
         try{ openThread(id); }catch(_){}
       } else {
@@ -4766,6 +4782,9 @@ function closeIncallWire(){
     const inp = $('incallWireInput');
     if(inp && document.activeElement === inp) inp.blur();
   }catch(_){}
+  const rel = wirelineReleaseThread(openIncallWire._state);
+  openIncallWire._state = { held: false, prev: null };
+  if(rel.restore && typeof activeThreadContactId !== 'undefined') activeThreadContactId = rel.active;
 }
 function openIncallWire(){
   if(!incallIsLive()) return;
@@ -4781,7 +4800,9 @@ function openIncallWire(){
     }
   }catch(_){}
   try{
-    if(typeof activeThreadContactId !== 'undefined') activeThreadContactId = c.id;
+    const held = wirelineHoldThread(openIncallWire._state, (typeof activeThreadContactId !== 'undefined' ? activeThreadContactId : null), c.id);
+    openIncallWire._state = { held: held.held, prev: held.prev };
+    if(typeof activeThreadContactId !== 'undefined') activeThreadContactId = held.active;
   }catch(_){}
   incall.classList.add('wire-open');
   panel.setAttribute('aria-hidden', 'false');
@@ -4813,11 +4834,20 @@ function sendIncallWire(){
   if(!text) return;
   const c = incallWireContact();
   if(!c){ try{ toast('No one on this call'); }catch(_){ } return; }
-  try{ if(typeof activeThreadContactId !== 'undefined') activeThreadContactId = c.id; }catch(_){}
   if(inp) inp.value = '';
   try{
-    if($('threadInput')) $('threadInput').value = text;
-    if(typeof sendThreadMessage === 'function') sendThreadMessage();
+    if(c.isReal && c.firebaseUid && typeof sendRealMessage === 'function'){
+      sendRealMessage(c, { type:'text', text: text }, text);
+    } else if(typeof sendThreadMessage === 'function'){
+      const box = $('threadInput');
+      const saved = box ? box.value : '';
+      const prev = (typeof activeThreadContactId !== 'undefined') ? activeThreadContactId : null;
+      if(typeof activeThreadContactId !== 'undefined') activeThreadContactId = c.id;
+      if(box) box.value = text;
+      sendThreadMessage();
+      if(typeof activeThreadContactId !== 'undefined') activeThreadContactId = prev;
+      if(box && saved && String(prev) !== String(c.id)) box.value = saved;
+    }
   }catch(_){}
   renderIncallWire();
 }

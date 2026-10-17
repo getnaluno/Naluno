@@ -112,6 +112,76 @@ function applyLocalReaction(otherUid, cmid, reaction){
   }catch(_){}
   try{ renderThreadMessages(); }catch(_){}
 }
+/* The local contact number is reissued from 1000000 on every launch, and
+   after someone is dropped that number can belong to a different person.
+   A stored row names the other person by uid. The uid wins. The number is
+   only for a note that never had a uid. */
+function wirelineRowContactId(row, list){
+  const people = list || (typeof contacts !== 'undefined' ? contacts : []);
+  if(!row || typeof row !== 'object') return null;
+  function safeId(id){
+    if(id == null) return null;
+    const s = String(id);
+    if(s === '__proto__' || s === 'constructor' || s === 'prototype') return null;
+    return id;
+  }
+  const uid = String(row.otherUid || row.firebaseUid || '');
+  if(uid){
+    if(uid === '__proto__' || uid === 'constructor' || uid === 'prototype') return null;
+    const byUid = people.find(function(c){ return c && c.firebaseUid === uid; });
+    return byUid ? safeId(byUid.id) : null;
+  }
+  if(row.contactId == null) return null;
+  const sid = String(row.contactId);
+  if(sid === '__proto__' || sid === 'constructor' || sid === 'prototype') return null;
+  const byId = people.find(function(c){ return c && String(c.id) === sid; });
+  if(byId && byId.firebaseUid) return null;
+  return byId ? safeId(byId.id) : null;
+}
+/* A staged file belongs to the person it was picked for, not whichever
+   chat is on screen when Send is tapped. */
+function wireDraftBelongsTo(item, openContact){
+  if(!item || !openContact) return false;
+  const uid = String(item.firebaseUid || '');
+  if(uid){
+    if(uid === '__proto__' || uid === 'constructor' || uid === 'prototype') return false;
+    return !!openContact.firebaseUid && uid === String(openContact.firebaseUid);
+  }
+  if(item.contactId != null){
+    return !openContact.firebaseUid && String(item.contactId) === String(openContact.id);
+  }
+  return false;
+}
+/* Clearing the composer is safe only when it still holds the text just
+   sent, or it is empty. A draft for someone else must stay. */
+function composerClearIsSafe(currentValue, sentText){
+  const cur = String(currentValue == null ? '' : currentValue).trim();
+  if(!cur) return true;
+  return cur === String(sentText == null ? '' : sentText).trim();
+}
+function clearComposerIfMatches(sentText){
+  try{
+    const box = $('threadInput');
+    if(!box) return;
+    if(!composerClearIsSafe(box.value, sentText)) return;
+    box.value = '';
+    autoSizeThreadInput();
+    updateComposerButtons();
+  }catch(_){}
+}
+function voiceNoteContactId(startedId, activeId){
+  return startedId != null ? startedId : (activeId != null ? activeId : null);
+}
+function scheduleWirelineRebind(){
+  clearTimeout(scheduleWirelineRebind._t);
+  scheduleWirelineRebind._t = setTimeout(function(){
+    try{ rebuildLocalQueuedMessagesIndex(); }catch(_){}
+    try{ hydrateWirelineFromStore(); }catch(_){}
+    try{ if(activeThreadContactId) renderThreadMessages(); }catch(_){}
+    try{ renderWirelineList(); }catch(_){}
+  }, 350);
+}
+try{ window.scheduleWirelineRebind = scheduleWirelineRebind; }catch(_){}
 async function hydrateWirelineFromStore(){
   try{
     if(typeof NalunoChatStore === 'undefined') return;
@@ -120,11 +190,7 @@ async function hydrateWirelineFromStore(){
       try{ ensureNalunoWireContact(); }catch(_){}
     }
     msgs.forEach(function(m){
-      let cid = m.contactId;
-      if(cid == null && m.otherUid){
-        const c = contacts.find(function(x){ return x.firebaseUid === m.otherUid; });
-        cid = c ? c.id : null;
-      }
+      const cid = wirelineRowContactId(m);
       if(cid == null) return;
       if(!wirelineThreads[cid]) wirelineThreads[cid] = [];
       const exists = wirelineThreads[cid].some(function(x){
@@ -133,6 +199,13 @@ async function hydrateWirelineFromStore(){
           || (m.type === 'missed_call' && x.type === 'missed_call' && m.callId && x.callId && String(x.callId)===String(m.callId));
       });
       if(!exists && !isWireMessageHidden(m)) wirelineThreads[cid].push(m);
+      if(m.otherUid && String(m.contactId) !== String(cid)){
+        try{
+          if(typeof NalunoChatStore !== 'undefined' && NalunoChatStore.putMessage){
+            NalunoChatStore.putMessage(Object.assign({}, m, { contactId: cid }));
+          }
+        }catch(_){}
+      }
     });
     Object.keys(wirelineThreads).forEach(function(k){
       wirelineThreads[k].sort(function(a,b){ return (a.ts||0)-(b.ts||0); });
@@ -936,6 +1009,8 @@ function openThread(contactId){
   updateComposerButtons();
   try{ if(typeof nalunoHideProgressChrome === 'function') nalunoHideProgressChrome(); }catch(_){}
   $('wirelineThread').classList.add('active');
+  try{ $('wirelineThread').style.pointerEvents = ''; }catch(_){}
+  try{ paintWireDraft(); }catch(_){}
   try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
   try{ bindThreadChrome(); }catch(_){}
 
@@ -1609,6 +1684,12 @@ function toggleWireAttachSheet(){
 function stageWireFiles(files, hint){
   const Media = window.NalunoWireMedia;
   if(!Media){ toast('Attachment tools are not loaded'); return; }
+  const peer = (typeof contacts !== 'undefined' && contacts)
+    ? contacts.find(function(x){ return x && String(x.id) === String(activeThreadContactId); })
+    : null;
+  if(!peer && activeThreadContactId == null){ toast('Open a conversation first'); return; }
+  const peerId = peer ? peer.id : activeThreadContactId;
+  const peerUid = peer && peer.firebaseUid ? peer.firebaseUid : '';
   const planned = Media.planBatch(files, hint === 'document' ? '' : hint);
   planned.rejected.forEach(function(r){ toast(r.error || 'That file was not added'); });
   planned.accepted.forEach(function(row){
@@ -1620,6 +1701,8 @@ function stageWireFiles(files, hint){
       mediaUrl: '',
       error: '',
       attempts: 0,
+      contactId: peerId,
+      firebaseUid: peerUid,
     });
   });
   paintWireDraft();
@@ -1627,7 +1710,11 @@ function stageWireFiles(files, hint){
 function paintWireDraft(){
   const box = $('wireAttachDraft');
   if(!box) return;
-  if(!wireDraft.length){
+  const open = (typeof contacts !== 'undefined' && contacts)
+    ? contacts.find(function(x){ return x && String(x.id) === String(activeThreadContactId); })
+    : null;
+  const visible = wireDraft.filter(function(item){ return wireDraftBelongsTo(item, open); });
+  if(!visible.length){
     box.hidden = true;
     box.style.display = 'none';
     box.innerHTML = '';
@@ -1635,7 +1722,7 @@ function paintWireDraft(){
   }
   box.hidden = false;
   box.style.display = 'flex';
-  box.innerHTML = wireDraft.map(function(item){
+  box.innerHTML = visible.map(function(item){
     const name = (item.plan && item.plan.name) || 'File';
     const state = item.status === 'failed' ? (item.error || 'Failed') : (item.status === 'delivered' ? 'Sent' : (item.status === 'uploaded' ? 'Waiting to send' : name));
     return '<span class="wire-draft-chip" data-draft="' + escapeHtml(item.id) + '">'
@@ -1667,12 +1754,19 @@ async function sendWireDraft(){
   let anyDelivered = false;
   let anyQueued = false;
   try{
-  const c = contacts.find(function(x){ return x.id === activeThreadContactId; });
-  if(!c){ toast('Open a conversation first'); return; }
-  if(c.naluno){ toast('This note is from Naluno. It isn’t a conversation you reply to.'); return; }
+  const open = contacts.find(function(x){ return x.id === activeThreadContactId; });
+  if(!open){ toast('Open a conversation first'); return; }
+  if(open.naluno){ toast('This note is from Naluno. It isn’t a conversation you reply to.'); return; }
   for(let i = 0; i < wireDraft.length; i++){
     let item = wireDraft[i];
     if(item.status === 'delivered' || item.status === 'queued') continue;
+    if(!wireDraftBelongsTo(item, open)) continue;
+    let c = open;
+    if(item.firebaseUid){
+      const peer = contacts.find(function(x){ return x && x.firebaseUid === item.firebaseUid; });
+      if(!peer || peer.firebaseUid !== item.firebaseUid) continue;
+      c = peer;
+    }
     item = Media.stepItem(item, 'retry');
     wireDraft[i] = item;
     const preview = item.plan.kind === 'video' ? 'Slip · video'
@@ -2084,10 +2178,19 @@ function saveMessageQueueToStorage(queue){
 }
 function rebuildLocalQueuedMessagesIndex(){
   localQueuedMessages = {};
-  getMessageQueue().forEach(item=>{
-    if(!localQueuedMessages[item.contactId]) localQueuedMessages[item.contactId] = [];
-    localQueuedMessages[item.contactId].push(item);
+  const queue = getMessageQueue();
+  let changed = false;
+  queue.forEach(function(item){
+    const cid = wirelineRowContactId({ otherUid: item.firebaseUid, firebaseUid: item.firebaseUid, contactId: item.contactId });
+    if(cid == null) return;
+    if(String(item.contactId) !== String(cid)){
+      item.contactId = cid;
+      changed = true;
+    }
+    if(!localQueuedMessages[cid]) localQueuedMessages[cid] = [];
+    localQueuedMessages[cid].push(item);
   });
+  if(changed) saveMessageQueueToStorage(queue);
 }
 /* clientMsgId is now carried on the queued copy. It was only set on the
    timeout path before, so a message queued while offline went out under a
@@ -2111,6 +2214,37 @@ function removeFromMessageQueue(queueId){
    'online' event), and once more right after sign-in in case connectivity was already
    restored before the tab reopened. Every attempt that still fails just stays queued
    for the next trigger — nothing is ever silently dropped. */
+/* One failed row per message. A retry every 12 seconds used to add another
+   "failed" each time, so one stuck send looked like dozens. */
+function noteWireFailOnce(c, id, e){
+  const key = String(id || '');
+  if(!key || key === '__proto__' || key === 'constructor' || key === 'prototype') return;
+  if(typeof nalunoNoteTraffic !== 'function' || typeof currentUser === 'undefined' || !currentUser) return;
+  let seen = {};
+  try{ seen = JSON.parse(localStorage.getItem('naluno:wireFailOnce') || '{}'); }catch(_){ seen = {}; }
+  if(!seen || typeof seen !== 'object' || Array.isArray(seen)) seen = {};
+  if(seen[key]) return;
+  seen[key] = Date.now();
+  const keys = Object.keys(seen);
+  if(keys.length > 180){
+    keys.sort(function(a, b){ return (seen[a] || 0) - (seen[b] || 0); }).slice(0, keys.length - 120).forEach(function(k){ delete seen[k]; });
+  }
+  try{ localStorage.setItem('naluno:wireFailOnce', JSON.stringify(seen)); }catch(_){}
+  const status = (typeof NalunoTraffic !== 'undefined' && NalunoTraffic.failStatus)
+    ? NalunoTraffic.failStatus(e && (e.code || e.name), e && e.message)
+    : 'error';
+  try{
+    nalunoNoteTraffic({
+      kind: 'message', ok: false,
+      actorUid: currentUser.uid,
+      peerUid: (c && c.firebaseUid) || '',
+      actorName: (typeof currentProfile !== 'undefined' && currentProfile && currentProfile.name) || '',
+      peerName: (c && c.name) || '',
+      status: status,
+    });
+  }catch(_){}
+  try{ if(typeof nalunoDiag === 'function') nalunoDiag('wire-send', status, (e && e.code) ? String(e.code) : ''); }catch(_){}
+}
 let __flushingQueue = false;
 async function flushMessageQueue(){
   if(__flushingQueue) return;
@@ -2153,6 +2287,7 @@ async function flushMessageQueue(){
       const msg = String((e && e.message) || '');
       if(/not accepted|Wireline limit|That file is empty|over the Wireline/i.test(msg)){
         removeFromMessageQueue(item.queueId);
+        try{ noteWireFailOnce({ firebaseUid: item.firebaseUid }, item.clientMsgId || item.queueId, e); }catch(_){}
         try{ toast(msg); }catch(_){}
       }
       /* anything else stays queued for the next trigger */
@@ -2307,9 +2442,7 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
       // Still queued for the internet AND handed to Lifeline, which can move
       // it by relay, by mesh, or by SMS. Same id, so it arrives once.
       try{ if(typeof nalunoLifelineHandoff === 'function') nalunoLifelineHandoff(c2, payload, offId); }catch(_){}
-      $('threadInput').value = '';
-      autoSizeThreadInput();
-      updateComposerButtons();
+      clearComposerIfMatches(payload && payload.text != null ? payload.text : previewText);
       if(activeThreadContactId===c2.id) renderThreadMessages();
       toast('No connection — queued, will send automatically');
       return { ok: false, queued: true };
@@ -2387,6 +2520,9 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
         };
       } else {
         const c2 = contacts.find(x=>x.firebaseUid===c.firebaseUid);
+        /* Already queued. Waiting for a key must not add a second copy,
+           or the queue doubles on every retry and each copy sends. */
+        if(queueId) return { ok: false, queued: true, waitingKey: true };
         if(c2){
           queueMessageForLater(c2.id, c.firebaseUid, payload, previewText, cmid);
           toast('Waiting for their key — this stays on your phone');
@@ -2485,19 +2621,15 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
         // exactly for this.
         try{ if(typeof nalunoLifelineHandoff === 'function') nalunoLifelineHandoff(c2, payload, cmid); }catch(_){}
       }
-      $('threadInput').value = '';
-      autoSizeThreadInput();
-      updateComposerButtons();
+      clearComposerIfMatches(payload && payload.text != null ? payload.text : previewText);
       if(activeThreadContactId===c.id || (c2 && activeThreadContactId===c2.id)) renderThreadMessages();
       toast('Still sending — will confirm once delivered');
       return { ok: false, timedOut: true };
     }
     if(!raced.ok) throw raced.error;
     if(queueId) removeFromMessageQueue(queueId);
-    if(!queueId && payload && payload.type === 'text' && $('threadInput')){
-      $('threadInput').value = '';
-      autoSizeThreadInput();
-      updateComposerButtons();
+    if(!queueId && payload && payload.type === 'text'){
+      clearComposerIfMatches(payload.text != null ? payload.text : previewText);
     }
     markMyActivity();
     bumpTodayActivity();
@@ -2539,27 +2671,14 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
       if(c2){
         queueMessageForLater(c2.id, c.firebaseUid, payload, previewText, cmid);
         try{ if(typeof nalunoLifelineHandoff === 'function') nalunoLifelineHandoff(c2, payload, cmid); }catch(_){}
-        $('threadInput').value = '';
-        autoSizeThreadInput();
-        updateComposerButtons();
+        clearComposerIfMatches(payload && payload.text != null ? payload.text : previewText);
         if(activeThreadContactId===c2.id) renderThreadMessages();
         toast('No connection — queued, will send automatically');
         return { ok: false, queued: true };
       }
     }
     toast(e.message || 'Couldn\u2019t send — try again');
-    try{
-      if(typeof nalunoNoteTraffic === 'function' && currentUser){
-        nalunoNoteTraffic({
-          kind: 'message', ok: false,
-          actorUid: currentUser.uid,
-          peerUid: (c && c.firebaseUid) || '',
-          actorName: (currentProfile && currentProfile.name) || '',
-          peerName: (c && c.name) || '',
-          status: 'failed',
-        });
-      }
-    }catch(_){}
+    try{ noteWireFailOnce(c, cmid, e); }catch(_){}
     throw e; // let flushMessageQueue know this retry attempt still failed
   }
 }
@@ -2689,6 +2808,7 @@ const VOICE_MAX_SECONDS = 120;
 let voiceStream = null, voiceRecorder = null, voiceChunks = [], voiceStartTime = 0;
 let voiceTimerInterval = null, voiceAudioCtx = null, voiceSampleInterval = null, voiceSamples = [];
 let currentPlayingVoiceId = null;
+let voiceRecordContactId = null;
 
 function formatDuration(secs){
   const s = Math.max(0, Math.round(secs));
@@ -2732,10 +2852,12 @@ async function requestVoiceRecordingStream(){
 
 async function startVoiceRecording(){
   if(!activeThreadContactId) return;
-  if(!window.MediaRecorder || !navigator.mediaDevices){ toast('Voice notes aren\u2019t supported in this browser'); return; }
+  voiceRecordContactId = activeThreadContactId;
+  if(!window.MediaRecorder || !navigator.mediaDevices){ voiceRecordContactId = null; toast('Voice notes aren\u2019t supported in this browser'); return; }
   try{
     voiceStream = await requestVoiceRecordingStream();
   }catch(e){
+    voiceRecordContactId = null;
     toast('Microphone unavailable — check your browser permissions');
     return;
   }
@@ -2778,6 +2900,7 @@ async function startVoiceRecording(){
   try{
     voiceRecorder = new MediaRecorder(recordingStream);
   }catch(e){
+    voiceRecordContactId = null;
     toast('Voice notes aren\u2019t supported in this browser');
     voiceStream.getTracks().forEach(t=>t.stop()); voiceStream = null;
     return;
@@ -2801,6 +2924,7 @@ function cleanupVoiceRecording(){
   voiceRecorder = null;
 }
 function cancelVoiceRecording(){
+  voiceRecordContactId = null;
   if(voiceRecorder && voiceRecorder.state !== 'inactive') voiceRecorder.stop();
   cleanupVoiceRecording();
   hideRecordingUI();
@@ -2809,7 +2933,8 @@ function confirmVoiceRecording(){
   if(!voiceRecorder || voiceRecorder.state === 'inactive') return;
   const durationSecs = (Date.now()-voiceStartTime)/1000;
   const samplesSnapshot = voiceSamples.slice();
-  const contactId = activeThreadContactId;
+  const contactId = voiceNoteContactId(voiceRecordContactId, activeThreadContactId);
+  voiceRecordContactId = null;
   voiceRecorder.onstop = async ()=>{
     const blob = new Blob(voiceChunks, { type: (voiceChunks[0] && voiceChunks[0].type) || 'audio/webm' });
     cleanupVoiceRecording();

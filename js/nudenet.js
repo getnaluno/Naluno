@@ -106,15 +106,13 @@
      people. What decides is what is exposed, not how much skin shows.
 
      How the code applies it: the detector finds exposed genitals, anus and female
-     breasts (rules 1–4). For what it cannot see directly it is deliberately KEEN and
-     sends the picture to a person rather than letting it out:
-       - a weak sign of genitals or anus (from 0.25) is held;
-       - an exposed bottom together with another weak intimate sign is held (a naked body);
-       - two or more people with a clearly exposed bottom (from 0.60) is held
-         (a possible sexual act). A faint breast score under the topless-hold
-         bar, or a weak bottom on a clothed group, is not a sexual act;
-       - a video-player screenshot is held.
-     A picture Screen could not read at all is also held, never published unseen.
+     breasts (rules 1–4). A post is stopped only when that finding is clear:
+       - genitals or anus at 0.50 or above, or a female breast at 0.55 or above;
+       - two intimate parts, each at 0.40 or above;
+       - a photo whose only frame reaches that stop level;
+       - a video where one frame is near-certain (0.80) or two frames reach the stop level.
+     A weak sign, one doubtful video frame, a video-player bar, or a picture
+     Screen could not read is not a clear sign. It goes out. It is not held.
 
      ------------------------------------------------------------------------------------
      WHAT A CLOTHED PICTURE LOOKS LIKE — how the machine is kept from misreading it (05h)
@@ -137,8 +135,9 @@
      If less than a fifth of an "exposed" box is skin, that finding is fabric misread
      as a body part. Its score is halved:
        - a breast or a bottom on fabric falls below the hold bars (a shirt, a dress);
-       - genitals or anus on fabric are never let out on this alone: the finding is
-         still held for a person (never below the 0.25 hold bar), only not rejected;
+       - genitals or anus on fabric are not a clear stop on this alone (the score
+         stays at least at the old 0.25 mark, and a near-certain finding at 0.80
+         is never reduced). Only a clear stop keeps the post off the feed;
        - a near-certain finding (0.80 and above) is never reduced.
      Everything else is unchanged: real skin is judged exactly as before, whatever its
      colour. One rule on the phone and on the server; a phone too old to report skin
@@ -149,28 +148,25 @@
      ------------------------------------------------------------------------------------
      The detector (NudeNet) reports body parts with a confidence 0-1. It reliably sees
      rules 1-4. It CANNOT see rule 5 when the anatomy is hidden: an act with no exposed
-     part has nothing to detect. Those are caught by reports and human review, and a
-     screenshot of a video player (the usual disguise for reposted porn) is held.
+     part has nothing to detect. Those are caught by reports and human review. A
+     screenshot of a video player is not, by itself, a clear sign, so it does not hold.
 
-     Confidence bands — chosen so that a wrong guess goes to a PERSON, not straight to
-     rejection. The breast threshold is higher than the genital one because cleavage
-     and bikini tops are its most common misread.
+     Confidence bands. The breast threshold is higher than the genital one because
+     cleavage and bikini tops are its most common misread. Only a clear finding
+     stops a post. Anything weaker goes out. It is not held for a person.
 
-                                  REJECT      HOLD (a person looks)
-       genitals / anus            >= 0.50     0.25 - 0.50
-       exposed bottom + a weak intimate sign (>= 0.25)          hold
-       2+ people + a clear exposed bottom (>= 0.60)           hold
-       female breast (topless)    >= 0.55     0.35 - 0.55
+                                  STOP (clear)     GOES OUT
+       genitals / anus            >= 0.50          below 0.50
+       female breast (topless)    >= 0.55          below 0.55
        two intimate parts         each >= 0.40
-       video-player screenshot                >= 0.85
+       one video frame            >= 0.80, or two frames at the stop level
 
      VIDEOS are judged across all sampled frames (3, 5 or 8 depending on length):
-       - REJECT if any single frame is near-certain (>= 0.80), or if TWO OR MORE frames
-         reach the reject level. Real explicit video shows it repeatedly.
-       - HOLD if only ONE frame reaches the reject level. One frame out of eight is how
-         a dancer's turn or a lighting flash gets misread — that goes to a person, it
-         does not reject a genuine video.
-     Nothing explicit becomes public under these rules: anything uncertain is held.
+       - STOP if any single frame is near-certain (>= 0.80), or if TWO OR MORE frames
+         reach the stop level. Real explicit video shows it repeatedly.
+       - One frame at the stop level, and nothing near-certain, goes out. One frame
+         out of eight is how a dancer's turn or a lighting flash gets misread.
+     A picture that is not a clear stop goes out, including one Screen could not read.
      ===================================================================================== */
   var MOD_LABELS = ["FEMALE_GENITALIA_COVERED","FACE_FEMALE","BUTTOCKS_EXPOSED","FEMALE_BREAST_EXPOSED",
     "FEMALE_GENITALIA_EXPOSED","MALE_BREAST_EXPOSED","ANUS_EXPOSED","FEET_EXPOSED","BELLY_COVERED",
@@ -281,13 +277,9 @@
       rejects.sort(byScore);
       return { decision: "block", reason: rejects[0].reason, score: rejects[0].score, frame: rejects[0].frame, frames: rejects.length };
     }
-    if (rejects.length === 1) {
-      return { decision: "hold", reason: "single-frame", score: rejects[0].score, frame: rejects[0].frame, detail: rejects[0].reason };
-    }
-    if (holds.length) {
-      holds.sort(byScore);
-      return { decision: "hold", reason: holds[0].reason, score: holds[0].score, frame: holds[0].frame };
-    }
+    /* A weak sign, a video-player bar, or one doubtful frame is not a clear
+       sign of nudity. The post goes out. A photo whose only frame is at the
+       reject level was already stopped above. */
     var allowed = a.slice().sort(byScore)[0];
     var revealing = a.some(function (x) { return x.reason === "revealing-allowed"; });
     return { decision: "allow", reason: revealing ? "revealing-allowed" : "", score: allowed.score, frame: -1 };

@@ -3739,13 +3739,178 @@ function wireBspaceSeekAndAutoplay(v){
  *  else a nearby Broadcast from someone else, else back to the titles list —
  *  never loop/restart the same clip, and never leave a "LIVE"-style badge or
  *  a frozen last frame with nothing for the person to do. */
+/** After a Broadcast finishes: the next episode in this Strand (upload order),
+ *  then a nearby Broadcast that has not already played, else the titles list.
+ *  A finished Strand is not started again. The same clip is not replayed. */
+function nalunoPickNextBroadcast(cur, pool, memory, now, feedOrder){
+  cur = cur || {};
+  const nowMs = Number(now) || 0;
+  const curId = String(cur.id || '');
+  const sid = String(cur.strandId || '');
+  const memIds = (memory && memory.ids) || {};
+  const memStrands = (memory && memory.strands) || {};
+  function badKey(key){
+    return !key || key === '__proto__' || key === 'constructor' || key === 'prototype';
+  }
+  function marked(map, key){
+    if(badKey(key) || !map) return false;
+    return Object.prototype.hasOwnProperty.call(map, key) && !!map[key];
+  }
+  function scheduled(x){
+    const at = Number(x && x.publishAt) || 0;
+    return at > nowMs;
+  }
+  function nearbyOk(x){
+    if(!x || badKey(String(x.id || '')) || x.deleted || x.hidden || x.held || x.listed === false) return false;
+    if(x.visibility === 'private') return false;
+    if(scheduled(x)) return false;
+    const id = String(x.id);
+    if(id === curId || marked(memIds, id)) return false;
+    const xs = String(x.strandId || '');
+    if(xs && (xs === sid || marked(memStrands, xs) || badKey(xs))) return false;
+    return true;
+  }
+  const rows = [];
+  const seen = Object.create(null);
+  (pool || []).forEach(function(x){
+    if(!x || !x.id || seen[String(x.id)]) return;
+    seen[String(x.id)] = 1;
+    rows.push(x);
+  });
+  if(sid && !badKey(sid) && !marked(memStrands, sid)){
+    const sibs = rows.filter(function(x){
+      return x && String(x.strandId || '') === sid && !x.deleted && !x.hidden && !x.held && x.listed !== false && !scheduled(x);
+    }).sort(function(a, b){ return (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0); });
+    let idx = -1;
+    for(let i = 0; i < sibs.length; i++){
+      if(String(sibs[i].id) === curId){ idx = i; break; }
+    }
+    if(idx >= 0){
+      for(let j = idx + 1; j < sibs.length; j++){
+        const id = String(sibs[j].id);
+        if(!marked(memIds, id)) return { id: sibs[j].id, kind: 'strand' };
+      }
+    }
+  }
+  function firstUnplayed(x){
+    if(!x || !x.strandId) return nearbyOk(x) ? x : null;
+    const xs = String(x.strandId);
+    const sibs = rows.filter(function(y){ return y && String(y.strandId || '') === xs && nearbyOk(y); })
+      .sort(function(a, b){ return (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0); });
+    return sibs[0] || null;
+  }
+  const tags = (cur.tags || []).map(function(t){ return String(t).toLowerCase(); });
+  function score(x){
+    let s = 0;
+    if(x && x.live) s += 20;
+    if(cur.creatorUid && x && x.creatorUid && x.creatorUid !== cur.creatorUid) s += 6;
+    const overlap = ((x && x.tags) || []).filter(function(t){ return tags.indexOf(String(t).toLowerCase()) >= 0; }).length;
+    return s + overlap * 4;
+  }
+  if(feedOrder && feedOrder.length){
+    let at = -1;
+    for(let i = 0; i < feedOrder.length; i++){
+      const card = feedOrder[i] || {};
+      if(String(card.id || '') === curId || (sid && card.strand && String(card.strand) === sid)) at = i;
+    }
+    for(let j = at + 1; j < feedOrder.length; j++){
+      const card = feedOrder[j] || {};
+      const row = rows.find(function(x){ return String(x.id) === String(card.id || ''); });
+      const start = firstUnplayed(row);
+      if(start) return { id: start.id, kind: 'nearby' };
+    }
+  }
+  const near = [];
+  const nearSeen = Object.create(null);
+  rows.forEach(function(x){
+    const start = firstUnplayed(x);
+    if(!start || nearSeen[String(start.id)]) return;
+    nearSeen[String(start.id)] = 1;
+    near.push(start);
+  });
+  if(!near.length) return { id: '', kind: '' };
+  near.sort(function(a, b){
+    const d = score(b) - score(a);
+    if(d) return d;
+    return (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0);
+  });
+  return { id: near[0].id, kind: 'nearby' };
+}
+function nalunoPlayMemory(){
+  try{
+    if(!window.__nalunoPlayMemory) window.__nalunoPlayMemory = { ids: Object.create(null), strands: Object.create(null) };
+    return window.__nalunoPlayMemory;
+  }catch(_){
+    return { ids: Object.create(null), strands: Object.create(null) };
+  }
+}
+function nalunoRememberPlayed(mem, id, strandId, strandDone){
+  if(!mem) return;
+  const key = String(id || '');
+  const sid = String(strandId || '');
+  if(key && key !== '__proto__' && key !== 'constructor' && key !== 'prototype') mem.ids[key] = 1;
+  if(strandDone && sid && sid !== '__proto__' && sid !== 'constructor' && sid !== 'prototype') mem.strands[sid] = 1;
+}
+function nalunoDescribePlayback(curId){
+  const pool = [];
+  const seen = Object.create(null);
+  function add(list){
+    (list || []).forEach(function(b){
+      if(!b || !b.id || seen[String(b.id)]) return;
+      seen[String(b.id)] = 1;
+      pool.push(b);
+    });
+  }
+  try{ if(typeof feedBroadcasts !== 'undefined' && feedBroadcasts) add(feedBroadcasts); }catch(_){}
+  try{ if(typeof myBroadcasts !== 'undefined' && myBroadcasts) add(myBroadcasts); }catch(_){}
+  let cur = null;
+  for(let i = 0; i < pool.length; i++){
+    if(String(pool[i].id) === String(curId || '')){ cur = pool[i]; break; }
+  }
+  const meta = (typeof activeBroadcastMeta !== 'undefined' && activeBroadcastMeta) || {};
+  if(!cur){
+    cur = {
+      id: curId || '',
+      strandId: meta.strandId || '',
+      strandName: meta.strandName || '',
+      creatorUid: meta.creatorUid || '',
+      tags: meta.tags || [],
+    };
+  } else if(!cur.strandId && meta.strandId && String(meta.broadcastId || meta.id || '') === String(curId || '')){
+    cur = Object.assign({}, cur, { strandId: meta.strandId, tags: cur.tags || meta.tags || [] });
+  }
+  const order = [];
+  try{
+    const grid = document.getElementById('bcastPlateGrid');
+    if(grid){
+      Array.prototype.forEach.call(grid.children, function(el){
+        const bid = el.getAttribute('data-broadcast-id');
+        const strand = el.getAttribute('data-strand-id');
+        if(bid) order.push({ id: bid });
+        else if(strand){
+          const parts = pool.filter(function(b){ return b && String(b.strandId || '') === String(strand) && !b.deleted; })
+            .sort(function(a, b){ return (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0); });
+          if(parts[0]) order.push({ id: parts[0].id, strand: strand });
+        }
+      });
+    }
+  }catch(_){}
+  return { cur: cur, pool: pool, order: order };
+}
+function nalunoTakeNextId(curId){
+  const pack = nalunoDescribePlayback(curId);
+  const mem = nalunoPlayMemory();
+  const pick = nalunoPickNextBroadcast(pack.cur, pack.pool, mem, Date.now(), pack.order);
+  const sid = pack.cur && pack.cur.strandId;
+  nalunoRememberPlayed(mem, curId, sid, !pick || pick.kind !== 'strand');
+  return pick && pick.id ? pick.id : '';
+}
 function bspaceOnPlaybackEnded(){
   try{
     if(bspaceOnPlaybackEnded._lock && (Date.now() - bspaceOnPlaybackEnded._lock) < 700) return;
     bspaceOnPlaybackEnded._lock = Date.now();
   }catch(_){}
   try{ if(window.__bspaceNextTimer){ clearTimeout(window.__bspaceNextTimer); window.__bspaceNextTimer = null; } }catch(_){}
-  const meta = activeBroadcastMeta || {};
   const curId = activeBroadcastId;
   function backToTitles(){
     // FIX: idle end-of-content used to restart/loop the same clip. The person
@@ -3762,59 +3927,8 @@ function bspaceOnPlaybackEnded(){
     }, delayMs == null ? 180 : delayMs);
     return true;
   }
-  // 1) Next episode in this Strand, in upload order.
-  // 1) Next episode in this Strand, in upload order.
-  // FIX: relatedBroadcasts() deliberately EXCLUDES the current item from its
-  // results (correct for its original job — an "other items in this Strand"
-  // display list) — which means searching that list for curId's index could
-  // never find it, so this could never actually advance to the next episode
-  // at all. Sequencing needs curId present in the list to find its position,
-  // so this builds that list directly instead of reusing relatedBroadcasts().
-  const tryStrand = function(){
-    if(!meta.strandId) return false;
-    const pool = [];
-    try{
-      if(typeof feedBroadcasts !== 'undefined' && feedBroadcasts) pool.push.apply(pool, feedBroadcasts);
-      if(typeof myBroadcasts !== 'undefined' && myBroadcasts) pool.push.apply(pool, myBroadcasts);
-    }catch(_){}
-    const seen = {};
-    const siblings = pool.filter(function(x){
-      if(!x || x.deleted || x.strandId !== meta.strandId || seen[x.id]) return false;
-      seen[x.id] = true;
-      return true;
-    }).sort(function(a,b){ return (Number(a.createdAt)||0) - (Number(b.createdAt)||0); });
-    let idx = -1;
-    for(let i = 0; i < siblings.length; i++){
-      if(siblings[i].id === curId){ idx = i; break; }
-    }
-    // Only ever move FORWARD in upload order. If this was already the last
-    // episode (or curId isn't found), there is no "next" — fall to nearby.
-    if(idx < 0 || idx + 1 >= siblings.length) return false;
-    const next = siblings[idx + 1];
-    return scheduleOpen(next.id, '', 180);
-  };
-  // 2) Strand finished (or no Strand) → a nearby Broadcast from someone else.
-  const tryNearby = function(){
-    const pool = (typeof feedBroadcasts !== 'undefined' && feedBroadcasts) ? feedBroadcasts : [];
-    const candidates = pool.filter(function(x){
-      return x && !x.deleted && x.id !== curId && (!meta.strandId || x.strandId !== meta.strandId);
-    });
-    if(!candidates.length) return false;
-    // Prefer something live right now, then most recent.
-    candidates.sort(function(a,b){
-      if(!!b.live !== !!a.live) return (b.live?1:0) - (a.live?1:0);
-      return (Number(b.createdAt)||0) - (Number(a.createdAt)||0);
-    });
-    const next = candidates[0];
-    return scheduleOpen(next.id, '', 180);
-  };
-  const did = tryStrand();
-  if(!did){
-    if(!tryNearby()){
-      // 3) Nothing left to suggest → the titles list, not a restart/loop.
-      backToTitles();
-    }
-  }
+  const nextId = nalunoTakeNextId(curId);
+  if(!nextId || !scheduleOpen(nextId, '', 180)) backToTitles();
 }
 window.bspaceOnPlaybackEnded = bspaceOnPlaybackEnded;
 
@@ -4480,7 +4594,9 @@ function nalunoBspaceStep(dir){
   }
   if(pack.index >= 0 && pack.index < pack.items.length - 1 && typeof openBroadcastById === 'function'){
     openBroadcastById(pack.items[pack.index + 1].id);
+    return;
   }
+  nalunoBspaceNext();
 }
 window.nalunoBspaceStep = nalunoBspaceStep;
 
@@ -4508,54 +4624,19 @@ window.nalunoBspaceStep = nalunoBspaceStep;
 })();
 
 /* 07c: the next Broadcast in the feed, in the order the feed shows them
-   (the next part of a Strand first). Past Nearby Broadcasts, a swipe up
-   goes straight there, without going back up to the tab. */
+   (the next part of a Strand first). When that Strand is finished, a nearby
+   Broadcast that has not already played — never the same Strand again. */
 function nalunoFeedNextId(curId){
   try{
-    const pack = (typeof nalunoStrandSiblingsFor === 'function') ? nalunoStrandSiblingsFor(curId) : null;
-    if(pack && pack.index >= 0 && pack.index < pack.items.length - 1 && pack.items[pack.index + 1]) return pack.items[pack.index + 1].id;
-  }catch(_){}
-  const pool = [];
-  try{
-    if(typeof feedBroadcasts !== 'undefined' && feedBroadcasts) pool.push.apply(pool, feedBroadcasts);
-    if(typeof myBroadcasts !== 'undefined' && myBroadcasts) pool.push.apply(pool, myBroadcasts);
-  }catch(_){}
-  const byId = {};
-  pool.forEach(function(b){ if(b && b.id) byId[b.id] = b; });
-  const cur = byId[curId] || null;
-  /* The feed's own order: each card is a Broadcast or a Strand. */
-  const order = [];
-  const grid = document.getElementById('bcastPlateGrid');
-  if(grid){
-    Array.prototype.forEach.call(grid.children, function(el){
-      const bid = el.getAttribute('data-broadcast-id');
-      const sid = el.getAttribute('data-strand-id');
-      if(bid) order.push({ id: bid });
-      else if(sid){
-        const parts = pool.filter(function(b){ return b && b.strandId === sid && !b.deleted; })
-          .sort(function(a, b){ return (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0); });
-        if(parts[0]) order.push({ id: parts[0].id, strand: sid });
-      }
-    });
-  }
-  let at = -1;
-  for(let i = 0; i < order.length; i++){
-    if(order[i].id === curId || (cur && cur.strandId && order[i].strand === cur.strandId)){ at = i; break; }
-  }
-  /* After this one; or, if it is not in the feed, the feed from the top. */
-  for(let j = at + 1; j < order.length; j++){
-    if(order[j].id !== curId && !(cur && cur.strandId && order[j].strand === cur.strandId)) return order[j].id;
-  }
-  /* Not in the feed (opened from a link or search): the newest other one. */
-  const other = pool.filter(function(b){ return b && b.id !== curId && !b.deleted && (!cur || !cur.strandId || b.strandId !== cur.strandId); })
-    .filter(function(b){ return !(typeof broadcastIsPrivate === 'function' && broadcastIsPrivate(b)) && !(typeof broadcastIsScheduled === 'function' && broadcastIsScheduled(b)); })
-    .sort(function(a, b){ return (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0); });
-  return other[0] ? other[0].id : '';
+    const pack = nalunoDescribePlayback(curId);
+    const pick = nalunoPickNextBroadcast(pack.cur, pack.pool, nalunoPlayMemory(), Date.now(), pack.order);
+    return pick && pick.id ? pick.id : '';
+  }catch(_){ return ''; }
 }
 window.nalunoFeedNextId = nalunoFeedNextId;
 function nalunoBspaceNext(){
   const id = (typeof activeBroadcastId !== 'undefined') ? activeBroadcastId : null;
-  const next = id ? nalunoFeedNextId(id) : '';
+  const next = id ? nalunoTakeNextId(id) : '';
   if(!next){
     try{ toast('That’s the last one — back to Broadcasts'); }catch(_){}
     try{ closeBroadcastSpace(); }catch(_){}
@@ -4699,7 +4780,7 @@ window.nalunoPaintNextCue = nalunoPaintNextCue;
     const wasX = axis === 'x' || (axis === '' && Math.abs(dx) > Math.abs(dy) * 1.2);
     axis = '';
     if(!wasX || Math.abs(dx) < 56) return;
-    if(dx < 0) nalunoBspaceStep(1);
+    if(dx < 0) nalunoBspaceNext();
     else nalunoBspaceStep(-1);
   }
   root.addEventListener('touchstart', down, { passive: true });

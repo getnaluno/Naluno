@@ -906,13 +906,14 @@ function bindAuthListeners(){
       const cachedContacts = nalunoCacheRead('contacts');
       if(cachedContacts && cachedContacts.length && typeof addRealContactToLocalList === 'function'){
         cachedContacts.forEach(function(row){
-          const added = addRealContactToLocalList(row.firebaseUid, row.name, row.color, row.handle, row.photo);
+          const added = addRealContactToLocalList(row.firebaseUid, row.name, row.color, row.handle, row.photo, row.id);
           if(added){
             if(row.photoUrl){ added.photoUrl = row.photoUrl; if(typeof mergeContactPhoto==='function') mergeContactPhoto(added, row.photoUrl); }
             if(row.lastActivityTs) added.lastActivityTs = row.lastActivityTs;
           }
         });
         try{ renderContacts(); }catch(_){}
+        try{ if(typeof scheduleWirelineRebind === 'function') scheduleWirelineRebind(); }catch(_){}
       }
       const cachedPrev = nalunoCacheRead('threadPreviews');
       if(cachedPrev && typeof realThreadPreviews !== 'undefined'){

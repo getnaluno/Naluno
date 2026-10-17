@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261015h';
+  const BUILD = '20261017d';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -2066,9 +2066,10 @@
       + '<li>Dancing, twerking, pole and stage shows, suggestive poses, modelling, fitness, beach, pool, bedroom</li>'
       + '<li>Kissing and affection between clothed people</li></ul>'
       + '<p><strong>The test is what is exposed</strong> — never how much skin shows or how provocative it looks. '
-      + 'When a video is held for one frame, check that moment: a turn, a shadow or a flash is often what the detector misread.</p>'
-      + '<p>The detector cannot see a sexual act when nothing is exposed. That is why screenshots of video players are held — '
-      + 'look at what the video is before approving it.</p></details>';
+      + 'A weak sign, one doubtful frame, or a picture the detector could not read is not a clear sign and is not held. '
+      + 'Only a clear finding stops a post: genitals or anus at 0.50, a female breast at 0.55, two intimate parts at 0.40, a near-certain frame at 0.80, or the same clear sign on two frames.</p>'
+      + '<p>The detector cannot see a sexual act when nothing is exposed. A video-player screenshot is not, by itself, a clear sign, so it is not held. '
+      + 'Reports and this desk still catch a real act the detector cannot see.</p></details>';
   }
 
   /* A reported Broadcast, watchable in the console.
@@ -3307,6 +3308,74 @@
     });
   }
 
+  async function grantKnownDirect(uid, months) {
+    if (!isSuperAdmin(currentUser)) { toast('Only the superadmin can do that'); return; }
+    uid = String(uid || '');
+    if (!uid || uid === '__proto__' || uid === 'constructor' || uid === 'prototype') return;
+    const span = Number(months);
+    if (span !== 6 && span !== 12) { toast('A grant is 6 or 12 months'); return; }
+    const db = adminDb();
+    const K = (typeof NalunoKnown !== 'undefined') ? NalunoKnown : null;
+    if (!db || !K || !K.grantKnownUnasked) { toast('Known is not loaded'); return; }
+    const ref = db.collection('knownApps').doc(uid);
+    let prev = null;
+    let existed = false;
+    let prevUser = { known: false, knownUntil: 0, grant: false };
+    try {
+      const snap = await ref.get();
+      existed = !!(snap && snap.exists);
+      prev = existed ? (snap.data() || {}) : null;
+      const userSnap = await db.collection('users').doc(uid).get();
+      const user = userSnap && userSnap.exists ? (userSnap.data() || {}) : {};
+      prevUser = {
+        known: user.known === true,
+        knownUntil: Number(user.knownUntil) || 0,
+        grant: user.grant === true,
+      };
+      const person = Object.assign({ uid: uid }, user, prev || {});
+      if (!person.name) person.name = person.displayName || person.handle || person.number || '';
+      const now = Date.now();
+      if (K.isKnown && K.isKnown(Object.assign({ status: person.status || (person.known ? 'known' : '') }, person), now)) {
+        toast('They are already Known.');
+        return;
+      }
+      const next = K.grantKnownUnasked(person, now, span, (Ccy() && Ccy().knownPrice) ? Ccy().knownPrice() : null);
+      if (!next || next.uid !== uid || next.grant !== true || next.amount_minor !== 0 || next.paidAt) {
+        toast('That grant does not apply');
+        return;
+      }
+      if (existed) {
+        const del = firebase.firestore.FieldValue.delete();
+        await ref.set(Object.assign({}, next, { paidAt: del, voidedAt: del }), { merge: true });
+      } else {
+        await ref.set(next);
+      }
+      await db.collection('users').doc(uid).set({ known: true, knownUntil: next.paidUntil, grant: true }, { merge: true });
+      await publishKnownCard(db, uid, next, true);
+      const noted = await writeAudit('known-grant-unasked', uid, span + ' months. No application required. Cash 0. ' + (next.name || ''));
+      if (noted !== true) {
+        try {
+          if (!existed) await ref.delete();
+          else if (prev) await ref.set(prev);
+          await db.collection('users').doc(uid).set(prevUser, { merge: true });
+          await publishKnownCard(db, uid, prev || next, false);
+        } catch (_) {}
+        toast('The audit line did not save, so the mark was not kept.');
+        return;
+      }
+      toast('Granted for ' + span + ' months. No cash. Written to the audit.');
+      loadKnownDesk();
+    } catch (err) {
+      try {
+        if (!existed) await ref.delete();
+        else if (prev) await ref.set(prev);
+        await db.collection('users').doc(uid).set(prevUser, { merge: true });
+        await publishKnownCard(db, uid, prev || {}, false);
+      } catch (_) {}
+      toast((err && err.message) || 'Could not grant that. Nothing was kept.');
+    }
+  }
+
   async function loadKnownDesk() {
     const host = $('knownDesk');
     const db = adminDb();
@@ -3323,11 +3392,16 @@
       return;
     }
     rows.sort(function (a, b) { return (b.updatedAt || 0) - (a.updatedAt || 0); });
-    if (!rows.length) {
-      host.innerHTML = '<p class="sub">No applications yet.</p>';
-      return;
-    }
-    host.innerHTML = rows.map(function (row) {
+    const superOn = isSuperAdmin(currentUser);
+    const searchHtml = superOn
+      ? '<div class="card" id="knownGrantCard">'
+        + '<div class="who">Grant without an application</div>'
+        + '<p class="sub">Superadmin only. Search a name, @handle, or email, including someone who has not asked to be Known. 6 or 12 months, no cash. The audit records it. If the audit line does not save, the mark is taken back.</p>'
+        + '<div class="row"><input id="knownGrantQ" placeholder="Name, @handle, or email" style="flex:1;min-width:0;" />'
+        + '<button type="button" class="primary" id="knownGrantGo">Search</button></div>'
+        + '<div id="knownGrantHits"></div></div>'
+      : '';
+    const listHtml = rows.length ? rows.map(function (row) {
       const until = row.paidUntil ? new Date(row.paidUntil).toLocaleDateString() : '—';
       const activeGrant = !!(row.grant && !row.paidAt);
       const months = Number(row.grantMonths) || 0;
@@ -3350,7 +3424,8 @@
         + (activeGrant ? '<button type="button" class="danger known-act" data-uid="' + escapeHtml(row.uid) + '" data-a="void-grant">Void this grant</button>' : '')
         + '<button type="button" class="danger known-act" data-uid="' + escapeHtml(row.uid) + '" data-a="revoke">Revoke</button>'
         + '</div></div>';
-    }).join('');
+    }).join('') : '<p class="sub">No applications yet.</p>';
+    host.innerHTML = searchHtml + listHtml;
     host.querySelectorAll('.known-act').forEach(function (btn) {
       btn.onclick = async function () {
         const uid = btn.getAttribute('data-uid');
@@ -3427,6 +3502,60 @@
           toast((err && err.message) || 'Could not save');
         }
       };
+    });
+    const go = $('knownGrantGo');
+    const q = $('knownGrantQ');
+    const hits = $('knownGrantHits');
+    async function runKnownGrantSearch() {
+      if (!isSuperAdmin(currentUser)) { toast('Only the superadmin can do that'); return; }
+      const text = String((q && q.value) || '').trim();
+      if (text.length < 2) { toast('Type at least two characters'); return; }
+      if (hits) hits.innerHTML = '<p class="sub">Searching…</p>';
+      let people = [];
+      try { people = await findPeople(text); } catch (err) {
+        if (hits) hits.innerHTML = '<p class="sub">' + escapeHtml((err && err.message) || 'Search failed') + '</p>';
+        return;
+      }
+      people = (people || []).filter(function (p) {
+        const id = p && (p.id || p.uid);
+        return id && id !== '__proto__' && id !== 'constructor' && id !== 'prototype';
+      }).slice(0, 8);
+      if (!people.length) {
+        if (hits) hits.innerHTML = '<p class="sub">No one by that name.</p>';
+        return;
+      }
+      const cards = await Promise.all(people.map(async function (p) {
+        const uid = p.id || p.uid;
+        let app = null;
+        try {
+          const snap = await db.collection('knownApps').doc(uid).get();
+          if (snap && snap.exists) app = snap.data() || {};
+        } catch (_) {}
+        const name = p.name || p.displayName || (app && app.name) || p.handle || p.number || uid;
+        const handle = p.handle || p.number || '';
+        const knownNow = !!(K && K.isKnown && K.isKnown(Object.assign({ status: (app && app.status) || '' }, app || {}, { known: p.known, knownUntil: p.knownUntil, paidUntil: app && app.paidUntil }), Date.now()));
+        return '<div class="card" data-grant-uid="' + escapeHtml(uid) + '">'
+          + '<div class="who">' + escapeHtml(name) + (handle ? ' · @' + escapeHtml(String(handle).replace(/^@/, '')) : '') + '</div>'
+          + '<p class="sub">' + escapeHtml(p.email || '') + (app && app.status ? (' · application ' + app.status) : ' · no application') + '</p>'
+          + (knownNow
+            ? '<p class="sub">Already Known.</p>'
+            : '<div class="row">'
+              + '<button type="button" class="primary known-direct" data-uid="' + escapeHtml(uid) + '" data-m="6">Grant 6 months</button>'
+              + '<button type="button" class="primary known-direct" data-uid="' + escapeHtml(uid) + '" data-m="12">Grant 12 months</button>'
+              + '</div>')
+          + '</div>';
+      }));
+      if (hits) hits.innerHTML = cards.join('');
+      if (!hits) return;
+      hits.querySelectorAll('.known-direct').forEach(function (btn) {
+        btn.onclick = function () {
+          grantKnownDirect(btn.getAttribute('data-uid'), Number(btn.getAttribute('data-m')));
+        };
+      });
+    }
+    if (go) go.onclick = runKnownGrantSearch;
+    if (q) q.addEventListener('keydown', function (e) {
+      if (e && e.key === 'Enter') { e.preventDefault(); runKnownGrantSearch(); }
     });
   }
 
@@ -5857,7 +5986,7 @@
 
     if (tab === 'known') {
       el.innerHTML = card('Known',
-        '<p class="sub">Accept an application first. Grant 6 or 12 months if you are giving the mark. That writes no cash. Record a month as paid only when money actually arrives. A Known name is what Compass can answer.</p>'
+        '<p class="sub">Accept an application first. Grant 6 or 12 months if you are giving the mark. That writes no cash. Record a month as paid only when money actually arrives. A Known name is what Compass can answer. The superadmin can also search someone who has not applied, and grant the mark. That decision is written to the audit.</p>'
         + '<div class="row"><button type="button" class="primary" id="knownPublishCompass">Send Known names to Compass</button></div>'
         + '<div id="knownDesk"><p class="sub">Loading…</p></div>');
       loadKnownDesk();
@@ -6365,6 +6494,15 @@
           const mins = Math.round((p.seconds || 0) / 60);
           return '<div class="flag-row"><span>' + escapeHtml(p.who) + '</span><span>' + p.ok + '/' + p.n + ' connected · ' + mins + ' min</span></div>';
         }).join('') || '<p class="sub">No calls in this range.</p>';
+        let failNote = '';
+        if (NalunoTraffic.messageFacts) {
+          const mf = NalunoTraffic.messageFacts(rows, range.from, range.to);
+          if (mf.retryLoopFailures > 0) {
+            failNote = '<p class="sub">' + mf.failed + ' failed rows are stored. ' + mf.retryLoopFailures
+              + ' of them are the same send retried automatically, about every 12 seconds, not separate messages. Distinct failures in this range: about '
+              + mf.likelyDistinctFailures + '.</p>';
+          }
+        }
         out.innerHTML = kpis([
           ['Calls', sum.calls],
           ['Connected', sum.callsOk],
@@ -6374,7 +6512,7 @@
           ['Videos failed', sum.videosFail],
           ['Messages sent', sum.messagesOk],
           ['Messages failed', sum.messagesFail],
-        ]) + '<h3 style="margin:14px 0 6px;font-size:14px;">Who called whom</h3>' + who
+        ]) + failNote + '<h3 style="margin:14px 0 6px;font-size:14px;">Who called whom</h3>' + who
           + '<p class="sub">Records only. The words of a message are not stored here.</p>';
       }
       window.__nalunoPaintRecords = function (rows) {

@@ -471,7 +471,7 @@ async function bcompKickOriginScan(){
   const screenBox = $('bcompScreen');
   if(screenBox){
     screenBox.style.display = 'block';
-    screenBox.innerHTML = '<div style="font-family:var(--font-futuristic);font-size:13px;">Naluno Screen reading stills…</div><div style="font-size:12.5px;color:var(--text-dim);margin-top:4px;">Clear goes out. Unsure waits. Sexual is stopped.</div>';
+    screenBox.innerHTML = '<div style="font-family:var(--font-futuristic);font-size:13px;">Naluno Screen reading stills…</div><div style="font-size:12.5px;color:var(--text-dim);margin-top:4px;">Clear goes out. Only clear nudity is stopped.</div>';
   }
   const title = (($('bcompTitle') && $('bcompTitle').value) || '').trim();
   const desc = (($('bcompDesc') && $('bcompDesc').value) || '').trim();
@@ -987,8 +987,8 @@ function bwriteFitPhoto(){
    explicit photo in a Writing post passed while the same picture as a video
    was stopped. Now:
    - Publish waits for the verdict (up to NALUNO_SCREEN_WAIT_MS).
-   - No verdict at all ("unread"): the post is HELD for a person, never
-     published unseen.
+   - No verdict at all ("unread"): that is not a clear sign of nudity, so the
+     post is not held. A clear detector finding still stops it.
    - The verdict, with the detector's findings, goes to the server with the
      post, so the server judges the Writing photo exactly like a video. */
 const NALUNO_SCREEN_WAIT_MS = 60000;
@@ -1003,8 +1003,8 @@ async function nalunoStrictVerdict(p, say){
     ]);
   }catch(_){ v = null; }
   if(waiting) clearTimeout(waiting);
-  if(!v || !v.decision || v.decision === 'unread'){
-    return Object.assign({}, v || {}, { decision: 'hold', reason: 'unread', reasonText: 'a picture Screen could not read', engine: (v && v.engine) || 'none' });
+  if(!v || !v.decision || v.decision === 'unread' || v.decision === 'hold'){
+    return Object.assign({}, v || {}, { decision: 'allow', reason: '', reasonText: '', engine: (v && v.engine) || 'none' });
   }
   return v;
 }
@@ -1040,10 +1040,8 @@ function bwriteScanCover(file){
     if(row) row.style.display = (origin && (origin.hold || origin.status === 'match') && origin.rightsStatus !== 'RESTRICTED') ? 'flex' : 'none';
     bwritePaintChecks(screen && screen.decision === 'block'
       ? 'Screen stopped this photo.'
-      : (!screen || screen.decision === 'unread')
-        ? 'Screen could not read this photo. It waits for a person before anyone else sees it.'
-      : screen.decision === 'hold'
-        ? 'A person will look at this photo before it goes out' + (screen.reasonText ? ' (Screen saw ' + screen.reasonText + ')' : '') + '.'
+      : (!screen || screen.decision === 'unread' || screen.decision === 'hold')
+        ? 'Could not read stills. That is not treated as nudity, so this can go out.'
       : (origin && origin.rightsStatus === 'RESTRICTED'
         ? 'This photo is restricted.'
         : (held ? 'Origin held this photo. Confirm it below if it is yours.' : 'Photo checked. It keeps its own shape.')));
@@ -1326,18 +1324,16 @@ function bcompPaintScreen(report){
   box.style.display = 'block';
   const d = (report && report.decision) || 'unread';
   let title = 'Naluno Screen';
-  let body = 'Could not read stills. This waits for a look if you publish.';
+  let body = 'Could not read stills. That is not treated as nudity, so this can go out.';
   let color = 'var(--text-dim)';
   if(d === 'allow'){
     title = 'Naluno Screen · clear';
     body = 'Stills from this file can go out.';
     color = 'var(--mint)';
   } else if(d === 'hold'){
-    title = 'Naluno Screen · a person will check';
-    body = 'This waits for a quick look before it goes out'
-      + (report && report.reasonText ? ' (we saw ' + report.reasonText + ')' : '')
-      + '. It stays on your list until it is cleared.';
-    color = '#ffc266';
+    title = 'Naluno Screen · clear';
+    body = 'Nothing clear was found, so this can go out.';
+    color = 'var(--mint)';
   } else if(d === 'block'){
     title = 'Naluno Screen · stopped';
     /* Say WHAT was found and what IS allowed. Someone posting a legitimate

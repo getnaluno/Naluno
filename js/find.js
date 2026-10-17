@@ -10,7 +10,28 @@
    ids 1-6; real ones start far above that, so there's no collision risk. Each real entry
    also carries firebaseUid, which is what future real-Wireline/real-calls work will use. */
 let nextRealContactId = 1000000;
-function addRealContactToLocalList(firebaseUid, name, color, handle, photo){
+/* A saved id is kept only when it is still this person's and not already
+   someone else's. Otherwise the next free number is used. 900000001 is the
+   Naluno note, never a person. */
+function wireContactIdForNew(savedId, usedIds, nextId){
+  const used = Object.create(null);
+  (usedIds || []).forEach(function(id){
+    if(id == null) return;
+    used[String(id)] = 1;
+  });
+  let next = Number(nextId);
+  if(!isFinite(next) || next < 1000000) next = 1000000;
+  const sid = savedId == null ? '' : String(savedId);
+  const n = Number(savedId);
+  const blocked = sid === '__proto__' || sid === 'constructor' || sid === 'prototype'
+    || sid === '' || !isFinite(n) || n <= 0 || n !== Math.floor(n) || n === 900000001;
+  if(!blocked && !used[String(n)]){
+    return { id: n, next: Math.max(next, n + 1) };
+  }
+  while(used[String(next)] || next === 900000001) next++;
+  return { id: next, next: next + 1 };
+}
+function addRealContactToLocalList(firebaseUid, name, color, handle, photo, savedId){
   const existing = contacts.find(c=>c.firebaseUid===firebaseUid);
   if(existing){
     existing.name = name;
@@ -23,8 +44,10 @@ function addRealContactToLocalList(firebaseUid, name, color, handle, photo){
     mergeContactPhoto(existing, photo);
     return existing;
   }
+  const chosen = wireContactIdForNew(savedId, contacts.map(function(c){ return c && c.id; }), nextRealContactId);
+  nextRealContactId = chosen.next;
   const row = {
-    id: nextRealContactId++,
+    id: chosen.id,
     firebaseUid,
     name,
     initials: initialsFor(name),
@@ -552,6 +575,7 @@ function loadRealConnections(uid){
     applyAtmosphere();
     try{ paintFreqRequests(); }catch(_){}
     try{ if(window.NalunoWireMailbox && window.NalunoWireMailbox.retryPendingDrops) window.NalunoWireMailbox.retryPendingDrops(); }catch(_){}
+    try{ if(typeof scheduleWirelineRebind === 'function') scheduleWirelineRebind(); }catch(_){}
     try{
       nalunoCacheWrite('contacts', contacts.filter(function(c){ return c.isReal; }).map(function(c){
         const src = (typeof contactPhotoSrc === 'function') ? contactPhotoSrc(c) : '';
@@ -562,6 +586,7 @@ function loadRealConnections(uid){
           photo = c.photo;
         }
         return {
+          id: c.id,
           firebaseUid:c.firebaseUid,
           name:c.name,
           color:c.color,

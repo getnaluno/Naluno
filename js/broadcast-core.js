@@ -258,31 +258,22 @@ window.nalunoReachMaxSec = nalunoReachMaxSec;
 window.nalunoReachClaim = nalunoReachClaim;
 function nalunoBroadcastListingFields(screen, opts){
   opts = opts || {};
-  let decision = (screen && screen.decision) || '';
-  /* 29h: a picture that was never read by Screen is not published unseen,
-     whoever posts it. (A Pass-on of a public Broadcast inherits its check.) */
-  if(opts.hasPicture && !opts.inherited && (!decision || decision === 'unread')) decision = 'hold';
+  const decision = (screen && screen.decision) || '';
+  /* Clear nudity is a block. A missing or uncertain reading is not a hold. */
   if(decision === 'block'){
     return { listed: false, held: true, heldReason: 'screen', hidden: false };
   }
-  /* A content HOLD applies to everyone, trusted or not. Trust used to be
-     checked first, so a trusted publisher's held upload went public anyway
-     ("held but accepted"). Trust only skips the new-publisher hold below. */
-  if(decision === 'hold'){
-    return { listed: false, held: true, heldReason: 'screen', hidden: false };
+  if(!nalunoPublisherTrusted()){
+    let why = '';
+    try{
+      const p = (typeof currentProfile !== 'undefined' && currentProfile) || {};
+      why = (p.restricted || p.suspended) ? 'restricted' : (p.trustedPublisher === false ? 'not-trusted' : (p.publisherReview === 'pending' ? 'under-review' : ''));
+    }catch(_){}
+    if(why === 'restricted' || why === 'not-trusted' || why === 'under-review'){
+      return { listed: false, held: true, heldReason: why, hidden: false };
+    }
   }
-  if(nalunoPublisherTrusted()){
-    return { listed: true, held: false, heldReason: '', hidden: false };
-  }
-  if(decision === 'allow'){
-    return { listed: true, held: false, heldReason: '', hidden: false };
-  }
-  let why = 'new-publisher';
-  try{
-    const p = (typeof currentProfile !== 'undefined' && currentProfile) || {};
-    why = (p.restricted || p.suspended) ? 'restricted' : (p.trustedPublisher === false ? 'not-trusted' : (p.publisherReview === 'pending' ? 'under-review' : 'new-publisher'));
-  }catch(_){}
-  return { listed: false, held: true, heldReason: why, hidden: false };
+  return { listed: true, held: false, heldReason: '', hidden: false };
 }
 /** On the public feed. Legacy docs without listed stay visible until hidden/held. */
 /* Scheduled: not public until its moment arrives.
@@ -423,8 +414,8 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
   // breathers: [{ afterChapterIndex, durationMs, adSlot: { enabled, inventoryId, status } }]
   const chapterList = Array.isArray(chapters) ? chapters : null;
   const primaryUrl = mediaUrl || (chapterList && chapterList[0] && chapterList[0].mediaUrl) || null;
-  /* 29h: only this post's own verdict counts. A post with a picture and no
-     verdict waits for a person (see nalunoBroadcastListingFields). */
+  /* 29h: only this post's own verdict counts. A missing or uncertain
+     reading is not a hold (see nalunoBroadcastListingFields). */
   const screenReport = screen || null;
   const hasPicture = !!(mediaUrl || thumbUrl || (chapterList && chapterList.some(function(c){ return c && c.mediaUrl; })));
   const doc = {
