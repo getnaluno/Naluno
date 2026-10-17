@@ -75,7 +75,7 @@
 // v284: 10.05f Android floats a video call on leaving; Wireline alerts through Naluno's worker; a call answers once per tap.
 // v285: 10.05g voices keep reading (several makers, scheduled, trimmed), Luganda spoken from its own sounds, test alert, stale stamps.
 // v338: 10.17e the update banner leaves once this shell is the one running. One older label on the page is not "still out of date".
-const CACHE_NAME = 'naluno-shell-v338';
+const CACHE_NAME = 'naluno-shell-v339';
 const APP_BUILD = '20261017e';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
