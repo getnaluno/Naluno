@@ -87,6 +87,14 @@ function sparkRecLang(id){
 }
 
 async function sparkTranslate(text, from, to){
+  /* Prefer Sunbird when available (Luganda and 60+ languages). */
+  if(typeof sunbird !== 'undefined' && sunbird.translate){
+    try{
+      const out = await sunbird.translate(text, from === 'lg' ? 'lug' : from, to === 'lg' ? 'lug' : to);
+      const t = out && out.output && out.output.translated_text;
+      if(t) return t;
+    }catch(_){}
+  }
   if(typeof sparkEngineTranslate === 'function'){
     return sparkEngineTranslate(text, from, to);
   }
