@@ -5119,7 +5119,7 @@ async function sendAll(tokens, data, link, deps, now) {
           message: {
             token,
             data,
-            android: kind === "android" ? {
+            android: kind === "android" ? (String(data.type || "") === "incoming_call" && data.callId ? { priority: "HIGH", ttl: "45s", collapse_key: "naluno-call:" + String(data.callId).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 120) } : {
               priority: "HIGH",
               ttl: "86400s",
               notification: {
@@ -5131,7 +5131,7 @@ async function sendAll(tokens, data, link, deps, now) {
                 notification_priority: "PRIORITY_HIGH",
                 visibility: "PUBLIC"
               }
-            } : { priority: "HIGH", ttl: "86400s" },
+            }) : { priority: "HIGH", ttl: "86400s" },
             /* Web: a notification payload is what the lock screen shows when
                Chrome will not start the service worker (screen off). No
                fcm_options.link — a link that is not https is refused, and

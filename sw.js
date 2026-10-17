@@ -74,9 +74,9 @@
 // v248: attention is only kept when a visit, an app open, or a continued session owns it. Join date and Find pin stay on the person.
 // v284: 10.05f Android floats a video call on leaving; Wireline alerts through Naluno's worker; a call answers once per tap.
 // v285: 10.05g voices keep reading (several makers, scheduled, trimmed), Luganda spoken from its own sounds, test alert, stale stamps.
-// v338: 10.17e the update banner leaves once this shell is the one running. One older label on the page is not "still out of date".
-const CACHE_NAME = 'naluno-shell-v339';
-const APP_BUILD = '20261017e';
+// v340: 10.17f a call on screen does not also ring the lock screen; Luganda asks Sunbird first; the console asks to reload once, and runway is a sentence.
+const CACHE_NAME = 'naluno-shell-v340';
+const APP_BUILD = '20261017f';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -648,10 +648,22 @@ function callNotifyOpts(callId, body, pingId){
 function startRingLoop(callId, title, body, loop, pingId){
   /* Every entry (push, lock screen, in-app) consults the durable handled
      set first. A service worker that just woke up has an empty memory map,
-     and a late push would otherwise ring a call that was already answered. */
+     and a late push would otherwise ring a call that was already answered.
+     If someone is looking at Naluno, the page rings. The lock-screen loop
+     is only for a phone that is not showing the app — otherwise the same
+     call sounds twice. A locked screen is not "looking". */
   return handledBefore(callId || '').then(function(done){
     if(done) return closeCallNotifications(callId);
-    return beginRingLoop(callId, title, body, loop, pingId);
+    return self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(list){
+      const looking = (list || []).some(function(c){ return c.visibilityState === 'visible' && c.focused; });
+      if(looking){
+        (list || []).forEach(function(client){
+          try{ client.postMessage({ type: 'naluno-incoming-call', callId: callId || '' }); }catch(_){}
+        });
+        return closeCallNotifications(callId);
+      }
+      return beginRingLoop(callId, title, body, loop, pingId);
+    }).catch(function(){ return beginRingLoop(callId, title, body, loop, pingId); });
   });
 }
 function beginRingLoop(callId, title, body, loop, pingId){
