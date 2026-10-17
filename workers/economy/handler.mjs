@@ -1422,13 +1422,11 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
      decided not to trust (see publisherTrusted in screen.mjs). */
   const trusted = publisherTrusted(profile);
   let judged = judgeScreenPayload(body && body.screen, { title: row.title || "" });
-  /* 14 Oct e: placed again with no pictures to read (a private or scheduled
-     video switched to public). The verdict this worker wrote when the video
-     was first placed still stands; without it every such video was held as
-     "unscreened" for good. Only a verdict the worker wrote counts: the rules
-     stop a creator writing screen fields (14 Oct e, create and edit). */
+  /* A stored "block" still stops the post (clear nudity, already decided).
+     A stored "hold" is not a clear sign, so making that post public lists it.
+     No stored verdict is not a clear sign either. */
   if (!judged.hasScreen && !(body && body.screen) && Number(row.screenVersion) >= 1
-      && (row.screenDecision === "allow" || row.screenDecision === "hold")) {
+      && (row.screenDecision === "allow" || row.screenDecision === "hold" || row.screenDecision === "block")) {
     judged = {
       decision: row.screenDecision,
       score: Number(row.screenScore) || 0,
@@ -1438,20 +1436,16 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
       reused: true,
     };
   }
-  /* 29h: a Broadcast with a picture (photo, video, or a Writing photo) and
-     no readable Screen verdict is HELD for a person, trusted or not. Writing
-     photos used to arrive with no verdict at all, and a trusted account was
-     then listed unseen. A Pass-on of a public Broadcast inherits that
-     Broadcast's check. */
+  /* A picture with no reading is not a clear sign of nudity, so it is not
+     held. A Pass-on of something already hidden, or already blocked for
+     nudity, stays stopped. Being merely held is not clear nudity. */
   const hasPicture = !!(row.mediaUrl || row.thumbUrl
     || (Array.isArray(row.chapters) && row.chapters.some((c) => c && c.mediaUrl)));
-  if (hasPicture && !judged.hasScreen) {
-    let inherited = false;
-    if (row.repostOf) {
-      const orig = await fsGetDoc(env, token, "/broadcasts/" + encodeURIComponent(String(row.repostOf).slice(0, 80)));
-      inherited = !!(orig && orig.listed !== false && !orig.held && !orig.hidden && orig.screenDecision !== "block" && orig.screenDecision !== "hold");
+  if (hasPicture && !judged.hasScreen && row.repostOf) {
+    const orig = await fsGetDoc(env, token, "/broadcasts/" + encodeURIComponent(String(row.repostOf).slice(0, 80)));
+    if (orig && (orig.hidden || orig.screenDecision === "block")) {
+      judged = { decision: "block", score: 0, hasScreen: true, reason: "screen", frames: 0 };
     }
-    if (!inherited) judged = { decision: "hold", score: 0, hasScreen: true, reason: "unscreened", frames: 0 };
   }
   const safety = scorePublicText(
     [row.title, row.caption, body && body.caption, body && body.title].filter(Boolean).join(" \n "),
