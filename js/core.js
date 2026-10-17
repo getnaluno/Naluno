@@ -286,6 +286,17 @@ function nalunoStampKey(v){
   const compact = s.match(/^(\d{8}[a-z])$/);
   return compact ? compact[1] : s;
 }
+/* The newest real stamp among the ones given. A second, older label on the
+   same page must not count as "this phone is behind". */
+function nalunoBestStamp(){
+  let best = '';
+  for(let i = 0; i < arguments.length; i++){
+    const s = nalunoStampKey(arguments[i]);
+    if(!/^\d{8}[a-z]$/.test(s)) continue;
+    if(s > best) best = s;
+  }
+  return best;
+}
 function nalunoReadAppVersion(html){
   const clean = String(html || '').replace(/<!--[\s\S]*?-->/g, '');
   const m = clean.match(/<meta name="app-version" content="([^"]+)">/);
@@ -298,14 +309,19 @@ function nalunoReadBuild(swText){
 function nalunoUpdateDue(running, live){
   running = running || {};
   live = live || {};
-  const app = nalunoStampKey(running.app);
-  const build = nalunoStampKey(running.build);
-  const liveApp = nalunoStampKey(live.app);
-  const liveBuild = nalunoStampKey(live.build);
-  if(liveApp && app && liveApp !== app) return true;
-  if(liveBuild && build && liveBuild !== build) return true;
-  if(liveBuild && !build) return true;
-  return false;
+  const have = nalunoBestStamp(running.app, running.build);
+  const got = nalunoBestStamp(live.app, live.build);
+  if(!got) return false;
+  if(!have) return true;
+  return got > have;
+}
+function nalunoHideUpdateBanner(){
+  try{
+    const el = document.getElementById('updateBanner');
+    if(el) el.style.display = 'none';
+    const btn = document.getElementById('updateBannerBtn');
+    if(btn && btn.disabled){ btn.disabled = false; btn.textContent = 'Update'; }
+  }catch(_){}
 }
 function nalunoShowUpdateBanner(){
   try{
@@ -333,6 +349,14 @@ async function checkForUpdate(){
          tap on the banner. */
       const target = nalunoNewerTarget(running, { app: liveApp, build: liveBuild });
       if(target) nalunoAutoUpdate(target);
+      else nalunoHideUpdateBanner();
+    } else {
+      nalunoHideUpdateBanner();
+      try{
+        const have = nalunoBestStamp(running.app, running.build);
+        const tried = JSON.parse(localStorage.getItem('nalunoAutoUpdate') || 'null');
+        if(tried && have && tried.target && String(tried.target) <= have) localStorage.removeItem('nalunoAutoUpdate');
+      }catch(_){}
     }
   }catch(e){ /* offline or blocked — just try again on the next interval */ }
 }
@@ -340,15 +364,10 @@ async function checkForUpdate(){
    Stamps are YYYYMMDD + a letter, so newer sorts later. */
 function nalunoNewerTarget(running, live){
   running = running || {}; live = live || {};
-  let best = '';
-  [[running.app, live.app], [running.build, live.build]].forEach(function(pair){
-    const have = nalunoStampKey(pair[0]);
-    const got = nalunoStampKey(pair[1]);
-    if(!/^\d{8}[a-z]$/.test(got)) return;
-    if(/^\d{8}[a-z]$/.test(have) && got <= have) return;
-    if(got > best) best = got;
-  });
-  return best;
+  const have = nalunoBestStamp(running.app, running.build);
+  const got = nalunoBestStamp(live.app, live.build);
+  if(!got || (have && got <= have)) return '';
+  return got;
 }
 /* 15 Oct: when an update may run without getting in the way.
    Never during a call, an upload, a post being written, a live, typing,

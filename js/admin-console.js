@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261017d';
+  const BUILD = '20261017e';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -287,7 +287,11 @@
       const m = String(await res.text()).match(/<meta name="naluno-build" content="([^"]+)"/);
       const live = consoleStampKey(m && m[1]);
       const have = consoleStampKey(BUILD);
-      if (!live || !have || live <= have) return;
+      if (!live || !have || live <= have) {
+        const bar = document.getElementById('consoleUpdateBar');
+        if (bar && bar.parentNode) bar.parentNode.removeChild(bar);
+        return;
+      }
       showConsoleUpdateBar(live);
     } catch (_) {}
   }
