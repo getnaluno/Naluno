@@ -4235,7 +4235,61 @@ export async function handleRequest(request, env = {}, ctx = {}) {
       return json(out.body, out.status);
     }
 
-    if (path === "/v1/voice/lg" && request.method === "POST") {
+    
+    /* Sunbird AI proxy (translate / STT / chat). Key stays in env.SUNBIRD_API_KEY. */
+    if (path === "/v1/sunbird/translate" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      const key = String(env.SUNBIRD_API_KEY || "").trim();
+      if (!key) return json({ ok: false, error: "sunbird not configured" }, 503);
+      const r = await _fetch("https://api.sunbird.ai/tasks/translate", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: String(body.text || ""),
+          source_language: body.source_language || "eng",
+          target_language: body.target_language || "lug"
+        })
+      });
+      const data = await r.json().catch(() => ({}));
+      return json(data, r.ok ? 200 : r.status);
+    }
+
+    if (path === "/v1/sunbird/transcribe" && request.method === "POST") {
+      const key = String(env.SUNBIRD_API_KEY || "").trim();
+      if (!key) return json({ ok: false, error: "sunbird not configured" }, 503);
+      const form = await request.formData();
+      const audio = form.get("audio");
+      const language = form.get("language") || "lug";
+      if (!audio) return json({ ok: false, error: "no audio" }, 400);
+      const fd = new FormData();
+      fd.append("audio", audio);
+      fd.append("language", language);
+      const r = await _fetch("https://api.sunbird.ai/tasks/audio/transcriptions", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + key },
+        body: fd
+      });
+      const data = await r.json().catch(() => ({}));
+      return json(data, r.ok ? 200 : r.status);
+    }
+
+    if (path === "/v1/sunbird/chat" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      const key = String(env.SUNBIRD_API_KEY || "").trim();
+      if (!key) return json({ ok: false, error: "sunbird not configured" }, 503);
+      const r = await _fetch("https://api.sunbird.ai/tasks/chat/completions", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "sunflower-14b",
+          messages: [{ role: "user", content: String(body.prompt || "") }]
+        })
+      });
+      const data = await r.json().catch(() => ({}));
+      return json(data, r.ok ? 200 : r.status);
+    }
+
+if (path === "/v1/voice/lg" && request.method === "POST") {
       const body = await request.json().catch(() => ({}));
       let cache = null;
       try { if (typeof caches !== "undefined" && caches.default) cache = caches.default; } catch (_) {}
