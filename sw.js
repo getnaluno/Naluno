@@ -74,9 +74,9 @@
 // v248: attention is only kept when a visit, an app open, or a continued session owns it. Join date and Find pin stay on the person.
 // v284: 10.05f Android floats a video call on leaving; Wireline alerts through Naluno's worker; a call answers once per tap.
 // v285: 10.05g voices keep reading (several makers, scheduled, trimmed), Luganda spoken from its own sounds, test alert, stale stamps.
-// v333: 10.16b Send to Signal stays on the Broadcast upload; a stale sign-in is refreshed once.
-const CACHE_NAME = 'naluno-shell-v333';
-const APP_BUILD = '20261016b';
+// v337: 10.17d a finished Strand plays a nearby Broadcast instead of the same clips; the superadmin can grant Known with no application, and the audit records it.
+const CACHE_NAME = 'naluno-shell-v337';
+const APP_BUILD = '20261017d';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',

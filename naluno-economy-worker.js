@@ -2600,13 +2600,6 @@ function modDecide(frames) {
     rejects.sort(byScore);
     return { decision: "block", reason: rejects[0].reason, score: rejects[0].score, frame: rejects[0].frame, frames: rejects.length };
   }
-  if (rejects.length === 1) {
-    return { decision: "hold", reason: "single-frame", score: rejects[0].score, frame: rejects[0].frame, detail: rejects[0].reason };
-  }
-  if (holds.length) {
-    holds.sort(byScore);
-    return { decision: "hold", reason: holds[0].reason, score: holds[0].score, frame: holds[0].frame };
-  }
   var allowed = a.slice().sort(byScore)[0];
   var revealing = a.some(function(x) {
     return x.reason === "revealing-allowed";
@@ -2676,13 +2669,12 @@ function judgeScreenPayload(payload, opts) {
     return { decision: "unread", score: 0, hasScreen: false, reason: "unread", frames: 0 };
   }
   const d = decideFromHints(hints, { title });
-  const strong = d.decision === "block" || d.decision === "hold" && d.reason === "screen" && SEX_WORDS.test(String(title));
-  const decision = strong ? "hold" : d.decision === "unread" ? "unread" : "allow";
+  const decision = d.decision === "unread" ? "unread" : "allow";
   return {
     decision,
     score: d.score,
     hasScreen: true,
-    reason: d.decision === "block" ? "heuristic-only" : strong ? "screen" : "",
+    reason: "",
     frames: hints.length,
     max: d.max,
     mean: d.mean,
@@ -2720,16 +2712,13 @@ function listingFromScreen(opts) {
       heldReason: ""
     };
   }
-  if (hasScreen && decision === "hold") {
-    return { listed: false, held: true, hidden: false, heldReason: "screen" };
+  if (!trusted) {
+    const why = opts && opts.holdReason || "";
+    if (why === "restricted" || why === "not-trusted" || why === "under-review") {
+      return { listed: false, held: true, hidden: false, heldReason: why };
+    }
   }
-  if (trusted) {
-    return { listed: true, held: false, hidden: false, heldReason: "" };
-  }
-  if (hasScreen && decision === "allow") {
-    return { listed: true, held: false, hidden: false, heldReason: "" };
-  }
-  return { listed: false, held: true, hidden: false, heldReason: opts && opts.holdReason || "new-publisher" };
+  return { listed: true, held: false, hidden: false, heldReason: "" };
 }
 
 // workers/economy/reach.mjs
@@ -6660,7 +6649,7 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
   const profile = await fsGetDoc(env, token, "/users/" + encodeURIComponent(row.creatorUid || user.uid));
   const trusted = publisherTrusted(profile);
   let judged = judgeScreenPayload(body && body.screen, { title: row.title || "" });
-  if (!judged.hasScreen && !(body && body.screen) && Number(row.screenVersion) >= 1 && (row.screenDecision === "allow" || row.screenDecision === "hold")) {
+  if (!judged.hasScreen && !(body && body.screen) && Number(row.screenVersion) >= 1 && (row.screenDecision === "allow" || row.screenDecision === "hold" || row.screenDecision === "block")) {
     judged = {
       decision: row.screenDecision,
       score: Number(row.screenScore) || 0,
@@ -6671,13 +6660,11 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
     };
   }
   const hasPicture = !!(row.mediaUrl || row.thumbUrl || Array.isArray(row.chapters) && row.chapters.some((c) => c && c.mediaUrl));
-  if (hasPicture && !judged.hasScreen) {
-    let inherited = false;
-    if (row.repostOf) {
-      const orig = await fsGetDoc(env, token, "/broadcasts/" + encodeURIComponent(String(row.repostOf).slice(0, 80)));
-      inherited = !!(orig && orig.listed !== false && !orig.held && !orig.hidden && orig.screenDecision !== "block" && orig.screenDecision !== "hold");
+  if (hasPicture && !judged.hasScreen && row.repostOf) {
+    const orig = await fsGetDoc(env, token, "/broadcasts/" + encodeURIComponent(String(row.repostOf).slice(0, 80)));
+    if (orig && (orig.hidden || orig.screenDecision === "block")) {
+      judged = { decision: "block", score: 0, hasScreen: true, reason: "screen", frames: 0 };
     }
-    if (!inherited) judged = { decision: "hold", score: 0, hasScreen: true, reason: "unscreened", frames: 0 };
   }
   const safety = scorePublicText(
     [row.title, row.caption, body && body.caption, body && body.title].filter(Boolean).join(" \n "),

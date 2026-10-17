@@ -1136,14 +1136,35 @@ service cloud.firestore {
     match /knownApps/{uid} {
       allow read: if isOwner(uid) || isOperator()
         || (isSignedIn() && resource.data.status == 'known');
-      allow create: if isOwner(uid)
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.status == 'applied'
-        && request.resource.data.note is string
-        && request.resource.data.note.size() >= 12
-        && request.resource.data.note.size() <= 500
-        && !('paidAt' in request.resource.data)
-        && !('paidUntil' in request.resource.data);
+      allow create: if (
+          isOwner(uid)
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.status == 'applied'
+          && request.resource.data.note is string
+          && request.resource.data.note.size() >= 12
+          && request.resource.data.note.size() <= 500
+          && !('paidAt' in request.resource.data)
+          && !('paidUntil' in request.resource.data)
+        ) || (
+          isSuper()
+          && request.resource.data.uid == uid
+          && request.resource.data.status == 'known'
+          && request.resource.data.grant == true
+          && request.resource.data.unasked == true
+          && request.resource.data.grantMonths in [6, 12]
+          && request.resource.data.grantedAt is int
+          && request.resource.data.grantedAt > 0
+          && request.resource.data.paidUntil is int
+          && request.resource.data.paidUntil > request.resource.data.grantedAt
+          && request.resource.data.amount_minor == 0
+          && !('paidAt' in request.resource.data)
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.name.size() < 81
+          && request.resource.data.note is string
+          && request.resource.data.note.size() > 0
+          && request.resource.data.note.size() <= 500
+        );
       allow update: if isOperator() && (
           request.resource.data.status != 'known'
           || (
