@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261017e';
+  const BUILD = '20261017f';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -250,6 +250,14 @@
     if (d) return d[1] + d[2] + d[3] + d[4];
     return /^\d{8}[a-z]$/.test(s) ? s : '';
   }
+  function consoleBestStamp() {
+    let best = '';
+    for (let i = 0; i < arguments.length; i++) {
+      const s = consoleStampKey(arguments[i]);
+      if (s && s > best) best = s;
+    }
+    return best;
+  }
   function showConsoleUpdateBar(live) {
     try {
       let bar = document.getElementById('consoleUpdateBar');
@@ -257,18 +265,20 @@
         bar = document.createElement('div');
         bar.id = 'consoleUpdateBar';
         bar.setAttribute('role', 'status');
-        bar.style.cssText = 'position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9999;'
-          + 'background:#11141D;border:1px solid rgba(124,255,178,.45);color:#EEF1F7;border-radius:999px;'
-          + 'padding:8px 8px 8px 16px;display:flex;gap:12px;align-items:center;font:14px/1.3 system-ui,sans-serif;'
-          + 'box-shadow:0 10px 30px rgba(0,0,0,.5);max-width:calc(100vw - 32px);';
+        bar.style.cssText = 'position:fixed;left:12px;right:12px;bottom:16px;z-index:9999;'
+          + 'background:#11141D;border:1px solid rgba(124,255,178,.45);color:#EEF1F7;border-radius:16px;'
+          + 'padding:12px 14px;display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;'
+          + 'font:14px/1.35 system-ui,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,.5);';
         const txt = document.createElement('span');
         txt.id = 'consoleUpdateText';
+        txt.style.cssText = 'flex:1 1 180px;min-width:0;';
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.textContent = 'Reload';
-        btn.style.cssText = 'background:#7CFFB2;color:#06120B;border:0;border-radius:999px;padding:8px 14px;font-weight:600;cursor:pointer;';
+        btn.style.cssText = 'background:#7CFFB2;color:#06120B;border:0;border-radius:999px;padding:8px 14px;font-weight:600;cursor:pointer;margin-left:auto;';
         btn.onclick = async function () {
           btn.disabled = true; btn.textContent = 'Reloading…';
+          try { sessionStorage.setItem('nalunoConsoleReloadFor', String(live)); } catch (_) {}
           try { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(function (r) { return r.update().catch(function () {}); })); } catch (_) {}
           location.reload();
         };
@@ -277,17 +287,30 @@
         document.body.appendChild(bar);
       }
       const t = document.getElementById('consoleUpdateText');
-      if (t) t.textContent = 'A newer Control Centre is ready (' + live + '). You will unlock again after reloading.';
+      if (t) t.textContent = 'Control Centre ' + live + ' is ready. Reload when you can. The password is asked again.';
     } catch (_) {}
   }
   async function checkConsoleUpdate() {
     try {
       const res = await fetch('/admin/index.html?_=' + Date.now(), { cache: 'no-store' });
       if (!res || !res.ok) return;
-      const m = String(await res.text()).match(/<meta name="naluno-build" content="([^"]+)"/);
-      const live = consoleStampKey(m && m[1]);
-      const have = consoleStampKey(BUILD);
+      const html = String(await res.text());
+      const meta = function (name) {
+        const m = html.match(new RegExp('<meta name="' + name + '" content="([^"]+)"'));
+        return m ? m[1] : '';
+      };
+      const openBuild = (document.querySelector('meta[name="naluno-build"]') || {}).content || '';
+      const openApp = (document.querySelector('meta[name="app-version"]') || {}).content || '';
+      const have = consoleBestStamp(BUILD, openBuild, openApp);
+      const live = consoleBestStamp(meta('naluno-build'), meta('app-version'));
       if (!live || !have || live <= have) {
+        const bar = document.getElementById('consoleUpdateBar');
+        if (bar && bar.parentNode) bar.parentNode.removeChild(bar);
+        return;
+      }
+      let already = '';
+      try { already = sessionStorage.getItem('nalunoConsoleReloadFor') || ''; } catch (_) {}
+      if (already === live) {
         const bar = document.getElementById('consoleUpdateBar');
         if (bar && bar.parentNode) bar.parentNode.removeChild(bar);
         return;
@@ -1830,6 +1853,50 @@
   }
   function moneyLabel() {
     return opCode() + ' · ' + opName();
+  }
+  /* Cash and monthly burn, in the currency typed, as one readable line.
+     A burn of zero is refused. A long runway is years, a short one is days. */
+  function nalunoRunwayLine(cash, burn, code, now) {
+    cash = Number(cash);
+    burn = Number(burn);
+    code = String(code || 'AED');
+    if (!(burn > 0) || !isFinite(burn) || !isFinite(cash)) return 'Burn has to be more than zero.';
+    const months = cash / burn;
+    const money = function (n) {
+      const abs = Math.abs(Number(n) || 0);
+      const digits = abs >= 100 ? 0 : 2;
+      let body = '0';
+      try {
+        body = Number(n).toLocaleString('en-GB', { maximumFractionDigits: digits, minimumFractionDigits: digits });
+      } catch (_) {
+        body = digits ? Number(n).toFixed(2) : String(Math.round(Number(n)));
+      }
+      return code + ' ' + body;
+    };
+    let span = '';
+    if (!isFinite(months) || months >= 1200) span = 'more than 100 years';
+    else if (months >= 24) span = (Math.round(months / 1.2) / 10) + ' years';
+    else if (months >= 1) span = (Math.round(months * 10) / 10) + ' months';
+    else span = Math.max(0, Math.round(months * 30)) + ' days';
+    let until = '';
+    if (now && isFinite(months) && months > 0 && months < 1200) {
+      try {
+        const d = new Date(Number(now) + months * 30.437 * 86400000);
+        until = ' · until ' + d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+      } catch (_) {}
+    }
+    return span + until + '. ' + money(cash) + ' on hand, ' + money(burn) + ' a month.';
+  }
+  function opMoneyField(n) {
+    const x = Number(n);
+    if (!isFinite(x) || x === 0) return '';
+    const C = Ccy();
+    if (C && C.prettyMajor) {
+      const p = C.prettyMajor(x, opCode());
+      return p ? String(p) : '';
+    }
+    if (Math.abs(x) >= 100) return String(Math.round(x));
+    return String(Math.round(x * 100) / 100);
   }
   async function saveOperatingCurrency(code) {
     const C = Ccy();
@@ -5331,10 +5398,10 @@
             }))
           + gap('Same model, scaled up. Not a forecast and not a bill.'))
         + card('Runway',
-          '<label>Cash on hand (' + escapeHtml(moneyLabel()) + ')</label><input id="runCash" inputmode="decimal" placeholder="e.g. 80000" />'
-          + '<label>Monthly burn (' + escapeHtml(opCode()) + ')</label><input id="runBurn" inputmode="decimal" placeholder="e.g. 12000" />'
+          '<label>Cash on hand (' + escapeHtml(opCode()) + ')</label><input id="runCash" inputmode="decimal" placeholder="e.g. 80,000" />'
+          + '<label>Monthly burn (' + escapeHtml(opCode()) + ')</label><input id="runBurn" inputmode="decimal" placeholder="e.g. 12,000" />'
           + '<div class="row"><button type="button" class="primary" id="runBtn">Estimate runway</button></div>'
-          + '<div id="runOut" class="sub"></div>');
+          + '<p id="runOut" class="sub" style="font-variant-numeric:tabular-nums;line-height:1.45;margin-top:8px;"></p>');
       try {
         if ($('costInvoice')) $('costInvoice').value = String(fromAedField(inputs.invoiceAed) || '');
         if ($('costFixed')) $('costFixed').value = String(fromAedField(inputs.fixedAed) || '');
@@ -5342,8 +5409,8 @@
         if ($('costCompass')) $('costCompass').value = String(fromAedField(inputs.compassAed) || '');
         const runCashAed = Number(localStorage.getItem('nalunoRunwayCash') || 0) || 0;
         const runBurnAed = Number(localStorage.getItem('nalunoRunwayBurn') || 0) || 0;
-        $('runCash').value = runCashAed ? String(fromAedField(runCashAed)) : '';
-        $('runBurn').value = runBurnAed ? String(fromAedField(runBurnAed)) : '';
+        $('runCash').value = opMoneyField(fromAedField(runCashAed));
+        $('runBurn').value = opMoneyField(fromAedField(runBurnAed));
       } catch (_) {}
       wireCurrencySelect('opCurrency');
       wirePricesCard();
@@ -5406,16 +5473,16 @@
         };
       });
       if ($('runBtn')) $('runBtn').onclick = function () {
-        const cash = toAedField(($('runCash') && $('runCash').value) || 0);
-        const burn = toAedField(($('runBurn') && $('runBurn').value) || 0);
+        const cashTyped = Number(String(($('runCash') && $('runCash').value) || '').replace(/,/g, '')) || 0;
+        const burnTyped = Number(String(($('runBurn') && $('runBurn').value) || '').replace(/,/g, '')) || 0;
+        const cash = toAedField(cashTyped);
+        const burn = toAedField(burnTyped);
         try {
           localStorage.setItem('nalunoRunwayCash', String(cash));
           localStorage.setItem('nalunoRunwayBurn', String(burn));
         } catch (_) {}
         const out = $('runOut');
-        if (!burn) { if (out) out.textContent = 'Burn has to be more than zero.'; return; }
-        const months = cash / burn;
-        if (out) out.textContent = 'Estimated runway: ' + months.toFixed(1) + ' months · ' + aed(cash) + ' on hand.';
+        if (out) out.textContent = nalunoRunwayLine(cashTyped, burnTyped, opCode(), Date.now());
       };
       goButtons();
       return;

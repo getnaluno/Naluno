@@ -9,13 +9,18 @@
 
   var WORKER = 'https://naluno-economy.naluno.workers.dev';
 
-  function authHeaders(json) {
-    var token = null;
+  function idToken() {
     try {
-      token = (root.currentUser && root.currentUser.accessToken) ||
-              (root.fbAuth && root.fbAuth.currentUser && root.fbAuth.currentUser.accessToken) ||
-              (typeof getIdToken === 'function' && getIdToken());
+      var u = (root.firebase && root.firebase.auth && root.firebase.auth().currentUser)
+        || (root.fbAuth && root.fbAuth.currentUser)
+        || root.currentUser
+        || null;
+      if (u && typeof u.getIdToken === 'function') return Promise.resolve(u.getIdToken());
     } catch (_) {}
+    return Promise.resolve('');
+  }
+
+  function authHeaders(json, token) {
     var h = {};
     if (json !== false) h['Content-Type'] = 'application/json';
     if (token) h.Authorization = 'Bearer ' + token;
@@ -23,9 +28,10 @@
   }
 
   async function postJson(path, body) {
+    var token = await idToken();
     var res = await fetch(WORKER + path, {
       method: 'POST',
-      headers: authHeaders(true),
+      headers: authHeaders(true, token),
       body: JSON.stringify(body || {})
     });
     var data = await res.json().catch(function () { return {}; });
@@ -47,12 +53,13 @@
        Returns { audio_transcription, language, ... } */
     transcribe: async function (audioBlob, language) {
       if (!audioBlob) throw new Error('no audio');
+      var token = await idToken();
       var fd = new FormData();
       fd.append('audio', audioBlob, 'clip.webm');
       fd.append('language', language || 'lug');
       var res = await fetch(WORKER + '/v1/sunbird/transcribe', {
         method: 'POST',
-        headers: authHeaders(false),
+        headers: authHeaders(false, token),
         body: fd
       });
       var data = await res.json().catch(function () { return {}; });
@@ -70,9 +77,10 @@
 
     /* Text-to-speech. Returns a Blob (audio/wav). Uses existing voice path. */
     speak: async function (text) {
+      var token = await idToken();
       var res = await fetch(WORKER + '/v1/voice/lg', {
         method: 'POST',
-        headers: authHeaders(true),
+        headers: authHeaders(true, token),
         body: JSON.stringify({ text: String(text || '') })
       });
       if (!res.ok) {

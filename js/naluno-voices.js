@@ -291,29 +291,29 @@
           return run(m).catch(function () { return m === first ? null : run(first); })
             .then(function (a) { if (a) a.took = Date.now() - t0; return a; });
         };
-        var viaNative = function () {
-          if (typeof pl.native !== 'function') return onDevice();
-          return Promise.resolve().then(pl.native).then(function (a) {
+        /* Luganda: the trained Sunbird voice first, when it answers.
+           The phone's own African voice is the fallback, then these sounds. */
+        var viaAf = function () {
+          if (!pl.af || own.state === 'missing') return onDevice();
+          var afSpeed = (typeof pl.af.speed === 'number' && pl.af.speed > 0) ? pl.af.speed : (AF_PACE[pl.af.female ? 'female' : 'male'] * mult);
+          return m.boot().then(function () { m.job(myJob); return m.sayAf(pl.af.phones, pl.af.female, afSpeed, myJob); }).then(function (a) {
             if (!a || !a.samples || !a.samples.length) return onDevice();
+            own.state = 'ok';
             a.native = true;
             a.took = Date.now() - t0;
             return a;
-          }, onDevice);
+          }, function (e) {
+            if (e && /af-missing/.test(String(e.message || ''))) own.state = 'missing';
+            return onDevice();
+          });
         };
-        /* Luganda: Naluno's African voice first (free, on the phone), then
-           the optional Sunbird voice, then this voice from Luganda sounds. */
-        if (!pl.af || own.state === 'missing') return viaNative();
-        var afSpeed = (typeof pl.af.speed === 'number' && pl.af.speed > 0) ? pl.af.speed : (AF_PACE[pl.af.female ? 'female' : 'male'] * mult);
-        return m.boot().then(function () { m.job(myJob); return m.sayAf(pl.af.phones, pl.af.female, afSpeed, myJob); }).then(function (a) {
-          if (!a || !a.samples || !a.samples.length) return viaNative();
-          own.state = 'ok';
+        if (typeof pl.native !== 'function') return viaAf();
+        return Promise.resolve().then(pl.native).then(function (a) {
+          if (!a || !a.samples || !a.samples.length) return viaAf();
           a.native = true;
           a.took = Date.now() - t0;
           return a;
-        }, function (e) {
-          if (e && /af-missing/.test(String(e.message || ''))) own.state = 'missing';
-          return viaNative();
-        });
+        }, viaAf);
       }
 
       /* 13 Oct b: read ahead only (nothing plays): the first pieces are made
