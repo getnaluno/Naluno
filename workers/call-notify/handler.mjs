@@ -353,17 +353,21 @@ async function sendFcm(env, deviceToken, payload) {
     data,
     android: { priority: "HIGH", ttl: isCall ? "45s" : "86400s" },
     webpush: {
-      headers: { Urgency: "high" },
+      headers: { Urgency: "high", TTL: isCall ? "60" : "86400" },
       notification: {
         title,
         body,
         icon: "https://getnaluno.com/icon-192.png",
         tag: callTag || wireTag || (data.type ? "naluno-" + data.type : "naluno"),
         renotify: true,
+        requireInteraction: isCall ? true : undefined,
         silent: false,
         vibrate: isWire ? [180, 80, 180] : undefined,
+        data: isCall
+          ? { type: "incoming_call", callId, url }
+          : (isWire ? { type: "wireline", fromUid, url, clientMsgId } : undefined),
       },
-      fcmOptions: { link: "https://getnaluno.com" + data.url },
+      fcm_options: { link: "https://getnaluno.com" + data.url },
     },
   };
   if (callTag) message.android.collapse_key = callTag;
