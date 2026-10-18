@@ -74,9 +74,9 @@
 // v248: attention is only kept when a visit, an app open, or a continued session owns it. Join date and Find pin stay on the person.
 // v284: 10.05f Android floats a video call on leaving; Wireline alerts through Naluno's worker; a call answers once per tap.
 // v285: 10.05g voices keep reading (several makers, scheduled, trimmed), Luganda spoken from its own sounds, test alert, stale stamps.
-// v343: 10.19c a hangup ends the other phone at once; a call alert stays, and a new build saves a live push address.
-const CACHE_NAME = 'naluno-shell-v343';
-const APP_BUILD = '20261019c';
+// v344: 10.19d the answering phone does not open its own hangup channel (that refused the answer); the hangup word leaves before the socket closes; a call alert is drawn and kept; a new build does not wipe the push address.
+const CACHE_NAME = 'naluno-shell-v344';
+const APP_BUILD = '20261019d';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -660,10 +660,12 @@ function startRingLoop(callId, title, body, loop, pingId){
         (list || []).forEach(function(client){
           try{ client.postMessage({ type: 'naluno-incoming-call', callId: callId || '' }); }catch(_){}
         });
-        /* The page is already ringing, so the shade does not sound again.
-           The alert stays. Taking it down here is why a call left nothing
-           to answer from once the app was no longer on screen. */
-        return;
+        /* The page is already ringing, so the shade does not sound again
+           and again. The alert stays: one sticky entry, so leaving the app
+           still has something to answer. Taking it down here, or never
+           drawing it, is why a call left nothing once the app was no longer
+           on screen. */
+        return beginRingLoop(callId, title, body, false, pingId);
       }
       return beginRingLoop(callId, title, body, loop, pingId);
     }).catch(function(){ return beginRingLoop(callId, title, body, loop, pingId); });
