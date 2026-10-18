@@ -74,9 +74,9 @@
 // v248: attention is only kept when a visit, an app open, or a continued session owns it. Join date and Find pin stay on the person.
 // v284: 10.05f Android floats a video call on leaving; Wireline alerts through Naluno's worker; a call answers once per tap.
 // v285: 10.05g voices keep reading (several makers, scheduled, trimmed), Luganda spoken from its own sounds, test alert, stale stamps.
-// v342: 10.19b a share is a picture, a description and one link; ordinary updates stay quiet and do not loop.
-const CACHE_NAME = 'naluno-shell-v342';
-const APP_BUILD = '20261019b';
+// v343: 10.19c a hangup ends the other phone at once; a call alert stays, and a new build saves a live push address.
+const CACHE_NAME = 'naluno-shell-v343';
+const APP_BUILD = '20261019c';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -660,7 +660,10 @@ function startRingLoop(callId, title, body, loop, pingId){
         (list || []).forEach(function(client){
           try{ client.postMessage({ type: 'naluno-incoming-call', callId: callId || '' }); }catch(_){}
         });
-        return closeCallNotifications(callId);
+        /* The page is already ringing, so the shade does not sound again.
+           The alert stays. Taking it down here is why a call left nothing
+           to answer from once the app was no longer on screen. */
+        return;
       }
       return beginRingLoop(callId, title, body, loop, pingId);
     }).catch(function(){ return beginRingLoop(callId, title, body, loop, pingId); });
@@ -680,7 +683,7 @@ function beginRingLoop(callId, title, body, loop, pingId){
   if(loop === false) return shown;
   if(already) return shown;
   let n = 1;
-  const max = 16;
+  const max = 34;
   function tick(){
     if((callId && isCallHandled(callId)) || n >= max){
       stopRingLoop(callId);
