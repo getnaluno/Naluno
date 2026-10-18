@@ -315,6 +315,21 @@ function nalunoUpdateDue(running, live){
   if(!have) return true;
   return got > have;
 }
+function nalunoNoticeFromHtml(html){
+  const tag = String(html || '').match(/<meta[^>]*name=["']naluno-update-notice["'][^>]*>/i);
+  if(!tag) return false;
+  const c = tag[0].match(/content=["']([^"']*)["']/i);
+  return !!(c && String(c[1]).toLowerCase() === 'on');
+}
+/* Ordinary ships update by themselves, once, and stay quiet. The banner
+   is only for a massive update: set <meta name="naluno-update-notice" content="on">
+   on that ship. Anything else hides it. */
+function nalunoNoticeOn(){
+  try{
+    const m = document.querySelector('meta[name="naluno-update-notice"]');
+    return !!(m && String(m.getAttribute('content') || '').toLowerCase() === 'on');
+  }catch(_){ return false; }
+}
 function nalunoHideUpdateBanner(){
   try{
     const el = document.getElementById('updateBanner');
@@ -323,7 +338,8 @@ function nalunoHideUpdateBanner(){
     if(btn && btn.disabled){ btn.disabled = false; btn.textContent = 'Update'; }
   }catch(_){}
 }
-function nalunoShowUpdateBanner(){
+function nalunoShowUpdateBanner(force){
+  if(!force && !nalunoNoticeOn()){ nalunoHideUpdateBanner(); return; }
   try{
     const el = document.getElementById('updateBanner');
     if(el) el.style.display = 'flex';
@@ -334,21 +350,24 @@ async function checkForUpdate(){
     const running = { app: APP_VERSION, build: NALUNO_BUILD };
     let liveApp = '';
     let liveBuild = '';
+    let liveHtml = '';
     try{
       const res = await fetch('./index.html?_=' + Date.now(), { cache:'no-store' });
-      if(res && res.ok) liveApp = nalunoReadAppVersion(await res.text());
+      if(res && res.ok) liveHtml = await res.text();
+      if(liveHtml) liveApp = nalunoReadAppVersion(liveHtml);
     }catch(_){}
     try{
       const res = await fetch('/sw.js?_=' + Date.now(), { cache:'no-store' });
       if(res && res.ok) liveBuild = nalunoReadBuild(await res.text());
     }catch(_){}
+    const incomingNotice = nalunoNoticeFromHtml(liveHtml);
     if(nalunoUpdateDue(running, { app: liveApp, build: liveBuild })){
       /* 15 Oct: newest wins, on its own. Only a NEWER version is taken (a
          server still handing out an older copy must not pull a phone back),
          and it is taken at the first good moment instead of waiting for a
          tap on the banner. */
       const target = nalunoNewerTarget(running, { app: liveApp, build: liveBuild });
-      if(target) nalunoAutoUpdate(target);
+      if(target) nalunoAutoUpdate(target, incomingNotice);
       else nalunoHideUpdateBanner();
     } else {
       nalunoHideUpdateBanner();
@@ -392,29 +411,51 @@ function nalunoUpdateQuietMoment(){
   return now - nalunoLastTouchAt > 60000;
 }
 let nalunoAutoTimer = null;
-function nalunoAutoUpdate(target){
+function nalunoAutoUpdate(target, incomingNotice){
   try{
+    const have = nalunoBestStamp(APP_VERSION, NALUNO_BUILD);
+    if(have && target && have >= target){
+      try{ sessionStorage.removeItem('nalunoUpdateSettled'); }catch(_){}
+      try{ localStorage.removeItem('nalunoAutoUpdate'); }catch(_){}
+      nalunoHideUpdateBanner();
+      return;
+    }
+    /* This page already reloaded for this exact update. If the new files
+       have not taken over, reloading again is the loop. Stop. */
+    let settled = '';
+    try{ settled = sessionStorage.getItem('nalunoUpdateSettled') || ''; }catch(_){}
+    if(settled && settled === target){
+      nalunoHideUpdateBanner();
+      return;
+    }
+    const massive = incomingNotice === true;
     const key = 'nalunoAutoUpdate';
     let tried = null;
     try{ tried = JSON.parse(localStorage.getItem(key) || 'null'); }catch(_){ tried = null; }
-    /* A version that was already taken once and is still not running (an
-       upload half done on the server) is not reloaded for again for 10
-       minutes: the banner offers it instead of a reload loop. */
     if(tried && tried.target === target && Date.now() - Number(tried.at || 0) < 10 * 60 * 1000){
-      nalunoShowUpdateBanner();
+      if(massive) nalunoShowUpdateBanner(true);
+      else nalunoHideUpdateBanner();
+      return;
+    }
+    /* A massive ship is the only time the banner is allowed. It waits
+       for a tap. Every other ship reloads once, with the banner hidden. */
+    if(massive){
+      nalunoShowUpdateBanner(true);
       return;
     }
     const busy = (typeof window.nalunoUpdateBusy === 'function') && window.nalunoUpdateBusy();
     if(busy || !nalunoUpdateQuietMoment()){
-      nalunoShowUpdateBanner();
+      nalunoHideUpdateBanner();
       if(!nalunoAutoTimer){
-        nalunoAutoTimer = setTimeout(function(){ nalunoAutoTimer = null; nalunoAutoUpdate(target); }, 5000);
+        nalunoAutoTimer = setTimeout(function(){ nalunoAutoTimer = null; nalunoAutoUpdate(target, false); }, 8000);
       }
       return;
     }
+    try{ sessionStorage.setItem('nalunoUpdateSettled', target); }catch(_){}
     try{ localStorage.setItem(key, JSON.stringify({ target: target, at: Date.now() })); }catch(_){}
+    nalunoHideUpdateBanner();
     nalunoUpdateNow();
-  }catch(_){ nalunoShowUpdateBanner(); }
+  }catch(_){ nalunoHideUpdateBanner(); }
 }
 window.nalunoAutoUpdate = nalunoAutoUpdate;
 window.nalunoNewerTarget = nalunoNewerTarget;

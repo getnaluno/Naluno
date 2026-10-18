@@ -1874,7 +1874,38 @@ async function sendDocumentFile(file){
   return sendWireDraft();
 }
 
-/* Wireline camera. Its own preview. js/camera.js is not used and not changed. */
+/* Wireline camera uses the same lens as a call (camera.js), so the
+   picture is the sensor's own 4:3 and not a zoomed slice. It does not
+   keep the call's preferred camera afterwards. */
+let wireCamFacing = 'environment';
+let wireCamGen = 0;
+async function openWireLens(facing){
+  const want = facing === 'user' ? 'user' : 'environment';
+  const saved = (typeof preferredVideoDeviceId === 'undefined') ? null : preferredVideoDeviceId;
+  let videoStream = null;
+  try{
+    if(typeof nalunoOpenLensVideoOnly === 'function'){
+      videoStream = await nalunoOpenLensVideoOnly(want);
+    } else if(typeof nalunoLensConstraint === 'function'){
+      videoStream = await navigator.mediaDevices.getUserMedia({ video: nalunoLensConstraint(want), audio: false });
+    } else {
+      videoStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: want }, width: { ideal: 1440 }, height: { ideal: 1080 }, aspectRatio: { ideal: 4/3 }, resizeMode: 'none' },
+        audio: false
+      });
+    }
+  } finally {
+    if(typeof preferredVideoDeviceId !== 'undefined') preferredVideoDeviceId = saved;
+  }
+  try{
+    const audio = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: { ideal: 1 } },
+      video: false
+    });
+    audio.getAudioTracks().forEach(function(t){ videoStream.addTrack(t); });
+  }catch(_){}
+  return videoStream;
+}
 function closeWireCamera(){
   const sheet = document.getElementById('wireCamSheet');
   if(sheet && sheet._stream){
@@ -1896,12 +1927,15 @@ function wireCamShowReview(sheet, kind){
   if(retake) retake.hidden = false;
   sheet._kind = kind;
 }
-async function openWireCamera(){
+async function openWireCamera(facing){
   if(!activeThreadContactId){ toast('Open a conversation first'); return; }
   if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
     toast('Camera is not available in this browser');
     return;
   }
+  const want = (facing === 'user' || facing === 'environment') ? facing : wireCamFacing;
+  wireCamFacing = want;
+  const gen = ++wireCamGen;
   closeWireCamera();
   const sheet = document.createElement('div');
   sheet.id = 'wireCamSheet';
@@ -1909,6 +1943,7 @@ async function openWireCamera(){
     + '<img id="wireCamStill" alt="" hidden />'
     + '<div class="wire-cam-bar">'
     + '<button type="button" id="wireCamClose">Close</button>'
+    + '<button type="button" id="wireCamFlip">Flip</button>'
     + '<button type="button" id="wireCamShot">Photo</button>'
     + '<button type="button" id="wireCamRec">Video</button>'
     + '<button type="button" id="wireCamRetake" hidden>Retake</button>'
@@ -1917,28 +1952,39 @@ async function openWireCamera(){
   document.body.appendChild(sheet);
   let stream = null;
   try{
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: true });
-  }catch(_){
-    try{
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
-    }catch(e){
+    stream = await openWireLens(want);
+  }catch(e){
+    if(gen === wireCamGen){
       closeWireCamera();
       toast('Camera permission is off');
-      return;
     }
+    return;
+  }
+  if(gen !== wireCamGen){
+    try{ stream && stream.getTracks().forEach(function(t){ t.stop(); }); }catch(_){}
+    return;
   }
   sheet._stream = stream;
+  sheet._facing = want;
   const video = document.getElementById('wireCamPreview');
   video.srcObject = stream;
+  video.style.transform = want === 'user' ? 'scaleX(-1)' : '';
   try{ await video.play(); }catch(_){}
   document.getElementById('wireCamClose').onclick = closeWireCamera;
+  document.getElementById('wireCamFlip').onclick = function(){
+    openWireCamera(want === 'user' ? 'environment' : 'user');
+  };
   document.getElementById('wireCamShot').onclick = function(){
     const v = document.getElementById('wireCamPreview');
     const canvas = document.createElement('canvas');
-    canvas.width = v.videoWidth || 720;
-    canvas.height = v.videoHeight || 1280;
+    canvas.width = v.videoWidth || 1440;
+    canvas.height = v.videoHeight || 1080;
     const ctx = canvas.getContext('2d');
     if(!ctx){ toast('Could not take the photo'); return; }
+    if(sheet._facing === 'user'){
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+    }
     ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
     canvas.toBlob(function(blob){
       if(!blob){ toast('Could not take the photo'); return; }

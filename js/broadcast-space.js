@@ -96,7 +96,7 @@ function bspaceToggleWhoDrop(){
   const share = $('bspaceWhoShare');
   if(share) share.onclick = function(e){
     try{ if(e) e.stopPropagation(); }catch(_){}
-    bspaceShareNow();
+    bspaceShareNow('creator');
   };
   const uid = meta.creatorUid || '';
   const aboutP = drop.querySelector('[data-channel-about]');
@@ -3276,11 +3276,13 @@ function bspaceOpenSend(){
       const person = people.find(function(c){ return c.firebaseUid === uid; });
       if(!person || typeof sendRealMessage !== 'function'){ toast('Could not send'); return; }
       const title = (activeBroadcastMeta && activeBroadcastMeta.title) || 'Broadcast';
+      const about = (typeof bspaceAboutText === 'function') ? bspaceAboutText(activeBroadcastMeta) : '';
       const link = (typeof broadcastShareUrl === 'function')
         ? broadcastShareUrl(activeBroadcastId, title)
         : ('https://getnaluno.com/app/?broadcast=' + encodeURIComponent(activeBroadcastId));
+      const line = (about || title) + '\n' + link;
       try{
-        await sendRealMessage(person, { type: 'text', text: title + '\n' + link }, title);
+        await sendRealMessage(person, { type: 'text', text: line }, title);
         bspaceBackMenu();
         toast('Sent in Naluno');
       }catch(err){
@@ -3448,57 +3450,97 @@ if($('bspaceReportBtn')){
   };
 }
 
-/** A picture of this Broadcast for the share sheet. Chats unfurl whatever
- *  URL they are given; getnaluno.com is one page for every Broadcast, so the
- *  preview has to travel as the image itself. Drawn here — no worker URL. */
-async function bspaceShareCard(title, creator, thumbUrl){
+/** A picture of this Broadcast for the share sheet: the creator's face,
+ *  the description, and the film behind them. Chats on getnaluno.com cannot
+ *  each grow their own preview, so the picture travels with the one link. */
+function bspaceLoadShareImage(url){
+  return new Promise(function(resolve){
+    if(!url || !/^https?:/i.test(String(url))){ resolve(null); return; }
+    const el = new Image();
+    el.crossOrigin = 'anonymous';
+    el.onload = function(){ resolve(el); };
+    el.onerror = function(){ resolve(null); };
+    el.src = url;
+  });
+}
+async function bspaceShareCard(opts){
+  opts = opts || {};
   const canvas = document.createElement('canvas');
   canvas.width = 1200; canvas.height = 630;
   const ctx = canvas.getContext('2d');
   if(!ctx) return null;
   ctx.fillStyle = '#0D0F17';
   ctx.fillRect(0, 0, 1200, 630);
+  const thumb = await bspaceLoadShareImage(opts.thumbUrl);
+  if(thumb){
+    const scale = Math.max(1200 / thumb.width, 630 / thumb.height);
+    const w = thumb.width * scale, h = thumb.height * scale;
+    ctx.globalAlpha = opts.mode === 'creator' ? 0.35 : 0.62;
+    ctx.drawImage(thumb, (1200 - w) / 2, (630 - h) / 2, w, h);
+    ctx.globalAlpha = 1;
+  }
+  const fade = ctx.createLinearGradient(0, 180, 0, 630);
+  fade.addColorStop(0, 'rgba(13,15,23,0.05)');
+  fade.addColorStop(1, 'rgba(13,15,23,0.94)');
+  ctx.fillStyle = fade;
+  ctx.fillRect(0, 0, 1200, 630);
   ctx.fillStyle = '#7CFFB2';
   ctx.fillRect(0, 0, 10, 630);
-  if(thumbUrl && /^https?:/i.test(thumbUrl)){
-    try{
-      const img = await new Promise(function(resolve, reject){
-        const el = new Image();
-        el.crossOrigin = 'anonymous';
-        el.onload = function(){ resolve(el); };
-        el.onerror = function(){ reject(new Error('thumb')); };
-        el.src = thumbUrl;
-      });
-      const scale = Math.max(1200 / img.width, 630 / img.height);
-      const w = img.width * scale, h = img.height * scale;
-      ctx.globalAlpha = 0.55;
-      ctx.drawImage(img, (1200 - w) / 2, (630 - h) / 2, w, h);
-      ctx.globalAlpha = 1;
-      const fade = ctx.createLinearGradient(0, 280, 0, 630);
-      fade.addColorStop(0, 'rgba(13,15,23,0)');
-      fade.addColorStop(1, 'rgba(13,15,23,0.92)');
-      ctx.fillStyle = fade;
-      ctx.fillRect(0, 0, 1200, 630);
-    }catch(_){}
+  const photo = await bspaceLoadShareImage(opts.photoUrl);
+  const cx = 150, cy = opts.mode === 'creator' ? 250 : 430, r = opts.mode === 'creator' ? 108 : 72;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.closePath();
+  ctx.clip();
+  if(photo){
+    const side = Math.min(photo.width, photo.height);
+    const sx = (photo.width - side) / 2, sy = (photo.height - side) / 2;
+    ctx.drawImage(photo, sx, sy, side, side, cx - r, cy - r, r * 2, r * 2);
+  } else {
+    ctx.fillStyle = '#1B2230';
+    ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+    ctx.fillStyle = '#7CFFB2';
+    ctx.font = '700 ' + Math.round(r) + 'px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(opts.creator || 'N').slice(0, 1).toUpperCase(), cx, cy + 6);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
   }
+  ctx.restore();
+  ctx.strokeStyle = '#7CFFB2';
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.stroke();
+  const name = String(opts.creator || '').slice(0, 40);
+  const headline = String(opts.title || 'Broadcast').slice(0, 52);
+  const about = String(opts.description || '').slice(0, 140);
   ctx.fillStyle = '#7CFFB2';
-  ctx.font = '600 28px sans-serif';
-  ctx.fillText('NALUNO', 56, 80);
+  ctx.font = '600 26px sans-serif';
+  ctx.fillText('NALUNO', 280, opts.mode === 'creator' ? 150 : 360);
   ctx.fillStyle = '#E8ECF5';
-  ctx.font = '700 64px sans-serif';
-  const line = String(title || 'Broadcast').slice(0, 48);
-  ctx.fillText(line, 56, 460);
-  ctx.fillStyle = '#8A92A6';
-  ctx.font = '400 32px sans-serif';
-  ctx.fillText(creator ? ('by ' + String(creator).slice(0, 40)) : 'A Broadcast', 56, 520);
+  ctx.font = '700 54px sans-serif';
+  ctx.fillText(opts.mode === 'creator' ? (name || headline) : headline, 280, opts.mode === 'creator' ? 230 : 450);
+  ctx.fillStyle = '#C5CAD6';
+  ctx.font = '400 30px sans-serif';
+  const sub = opts.mode === 'creator' ? about : (about || (name ? ('by ' + name) : ''));
+  ctx.fillText(sub.slice(0, 70), 280, opts.mode === 'creator' ? 290 : 520);
+  if(sub.length > 70) ctx.fillText(sub.slice(70, 140), 280, opts.mode === 'creator' ? 336 : 566);
   const blob = await new Promise(function(resolve){ canvas.toBlob(resolve, 'image/jpeg', 0.86); });
   return blob && blob.size ? blob : null;
 }
 
-function bspaceShareNow(){
+async function bspaceShareNow(kind){
   if(!activeBroadcastId) return;
-  const title = (activeBroadcastMeta && activeBroadcastMeta.title) || 'Naluno Broadcast';
-  const creator = (activeBroadcastMeta && activeBroadcastMeta.creatorName) || '';
+  const meta = activeBroadcastMeta || {};
+  const creatorMode = kind === 'creator';
+  const title = meta.title || 'Naluno';
+  const creator = meta.creatorName || '';
+  const about = creatorMode
+    ? String(meta.channelAbout || meta.broadcastAbout || (typeof bspaceAboutText === 'function' ? bspaceAboutText(meta) : '') || '').trim()
+    : String((typeof bspaceAboutText === 'function' ? bspaceAboutText(meta) : '') || meta.description || '').trim();
   const link = typeof broadcastShareUrl === 'function'
     ? broadcastShareUrl(activeBroadcastId, title)
     : ('https://getnaluno.com/app/?broadcast=' + encodeURIComponent(activeBroadcastId));
@@ -3507,49 +3549,50 @@ function bspaceShareNow(){
     toast('Couldn\u2019t make a link for this Broadcast.');
     return;
   }
-  const text = title + (creator ? (' — ' + creator) : '') + '\n' + link;
+  let file = null;
+  try{
+    const blob = await bspaceShareCard({
+      mode: creatorMode ? 'creator' : 'broadcast',
+      title: title,
+      creator: creator,
+      description: about,
+      thumbUrl: (typeof bspacePosterUrl === 'function') ? bspacePosterUrl() : '',
+      photoUrl: meta.creatorPhoto || ''
+    });
+    if(blob) file = new File([blob], 'naluno-broadcast.jpg', { type: 'image/jpeg' });
+  }catch(_){}
   const finish = function(){
-    const go = function(){
-      try{
-        if(typeof nalunoTrack === 'function'){
-          nalunoTrack('BROADCAST_SHARE', {
-            target_type: 'broadcast',
-            target_id: activeBroadcastId,
-            broadcast_id: activeBroadcastId,
-            creator_uid: (activeBroadcastMeta && activeBroadcastMeta.creatorUid) || '',
-          });
-        }
-      }catch(_){}
-    };
+    try{
+      if(typeof nalunoTrack === 'function'){
+        nalunoTrack('BROADCAST_SHARE', {
+          target_type: creatorMode ? 'creator' : 'broadcast',
+          target_id: activeBroadcastId,
+          broadcast_id: activeBroadcastId,
+          creator_uid: meta.creatorUid || '',
+        });
+      }
+    }catch(_){}
     try{
       if(fbDb && currentUser && activeBroadcastId){
         fbDb.collection('broadcasts').doc(activeBroadcastId).collection('shares').doc(currentUser.uid).set({
           from: currentUser.uid,
           ts: Date.now(),
-        }, { merge: true }).then(go).catch(go);
-        return;
+        }, { merge: true }).catch(function(){});
       }
     }catch(_){}
-    go();
   };
   try{
-    if(navigator.share){
-      navigator.share({ title: title, text: text, url: link }).then(finish).catch(function(e){
-        if(e && e.name === 'AbortError') return;
-        if(navigator.clipboard && navigator.clipboard.writeText){
-          navigator.clipboard.writeText(text).then(function(){ toast('Link copied'); }).catch(function(){ toast(link); });
-          return;
-        }
-        toast(link);
-      });
-      return;
-    }
-    if(navigator.clipboard && navigator.clipboard.writeText){
-      navigator.clipboard.writeText(text).then(function(){ toast('Link copied'); finish(); }).catch(function(){ toast(link); });
-      return;
-    }
-    toast(link);
-  }catch(_){
+    const shared = (typeof nalunoShareOut === 'function')
+      ? await nalunoShareOut({
+          link: link,
+          title: creatorMode ? (creator || title) : title,
+          description: about,
+          file: file
+        })
+      : false;
+    if(shared) finish();
+  }catch(e){
+    if(e && e.name === 'AbortError') return;
     toast(link);
   }
 }

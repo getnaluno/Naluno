@@ -568,7 +568,10 @@
       const name = (titleEl && titleEl.textContent) || 'Strand';
       try{
         if(navigator.share){
-          await navigator.share({ title: name, url: link });
+          const payload = (typeof nalunoSharePayload === 'function')
+            ? nalunoSharePayload({ link: link, title: name, description: '' })
+            : { title: name, url: link };
+          await navigator.share({ title: payload.title, url: payload.url });
         } else if(navigator.clipboard && navigator.clipboard.writeText){
           await navigator.clipboard.writeText(link);
           if(typeof toast === 'function') toast('Link copied');

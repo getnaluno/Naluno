@@ -74,6 +74,16 @@ function bandCardFaces(b){
   }
   return faces;
 }
+/* A list or a room that is redrawn with the same picture used to flash:
+   innerHTML throws the nodes away and the browser paints them again.
+   Same text means leave the nodes alone. */
+function nalunoSamePaint(el, html){
+  if(!el) return true;
+  if(el._nalunoPaint === html) return true;
+  el._nalunoPaint = html;
+  return false;
+}
+window.nalunoSamePaint = nalunoSamePaint;
 function renderBandList(){
   /* Rows restored from the phone's cache keep their old ids; if two Bands
      ever share one, give the later one a free id before drawing the cards. */
@@ -93,13 +103,17 @@ function renderBandList(){
   const label = $('bandSectionLabel');
   if(!bands.length){
     if(label) label.hidden = true;
-    $('bandList').innerHTML = (typeof emptyStateHtml === 'function')
+    const list = $('bandList');
+    const html = (typeof emptyStateHtml === 'function')
       ? emptyStateHtml('No squares yet', 'Start a Band with your connections. No one owns it. Two hours after the last person leaves, the conversation is deleted for good.', 'rooms')
       : '<div class="empty-state"><p class="empty-state-copy">No squares yet.</p></div>';
+    if(nalunoSamePaint(list, html)) return;
+    list.innerHTML = html;
     return;
   }
   if(label) label.hidden = false;
-  $('bandList').innerHTML = bands.map(b=>{
+  const list = $('bandList');
+  const html = bands.map(b=>{
     const grad = bandVibeGradient(b.vibe);
     if(b.isReal){
       const avatars = bandCardFaces(b).slice(0,4).map(m=> (typeof contactAvatarHtml==='function' ? contactAvatarHtml(m, 28) : `<div class="avatar" style="width:28px;height:28px;font-size:10px;background:${m.color||'#7CFFB2'};">${m.initials||''}</div>`)).join('');
@@ -128,6 +142,8 @@ function renderBandList(){
       </div>
     </div>`;
   }).join('');
+  if(nalunoSamePaint(list, html)) return;
+  list.innerHTML = html;
   document.querySelectorAll('[data-band]').forEach(el=>{
     el.onclick = ()=> openBandRoom(parseInt(el.dataset.band));
   });

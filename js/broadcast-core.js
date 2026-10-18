@@ -57,6 +57,58 @@ function broadcastShareUrl(id, title){
   const base = 'https://getnaluno.com/app/?broadcast=' + encodeURIComponent(id || '');
   return slug ? (base + '&t=' + encodeURIComponent(slug)) : base;
 }
+/* What a chat receives. The link is the url once. Putting it in the text
+   as well is what showed the address twice, with no picture and no
+   description. The picture travels as a file beside this. */
+function nalunoSharePayload(opts){
+  opts = opts || {};
+  const link = String(opts.link || '').trim();
+  const title = String(opts.title || '').replace(/\s+/g, ' ').trim() || 'Naluno';
+  let desc = String(opts.description || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+  if(desc && desc.toLowerCase() === title.toLowerCase()) desc = '';
+  if(link && desc.indexOf(link) >= 0) desc = desc.split(link).join(' ').replace(/\s+/g, ' ').trim();
+  return { title: title, text: desc, url: link };
+}
+window.nalunoSharePayload = nalunoSharePayload;
+async function nalunoShareOut(opts){
+  const payload = nalunoSharePayload(opts || {});
+  if(!payload.url || /workers\.dev/i.test(payload.url)){
+    if(typeof toast === 'function') toast('Couldn\u2019t make a link for this.');
+    return false;
+  }
+  const file = opts && opts.file;
+  /* A picture rides with one caption: description, then the link once.
+     Passing url as well makes Android print the address a second time. */
+  const caption = (payload.text ? payload.text + '\n' : '') + payload.url;
+  try{
+    if(file && navigator.canShare && navigator.canShare({ files: [file] })){
+      await navigator.share({ files: [file], title: payload.title, text: caption });
+      return true;
+    }
+  }catch(e){
+    if(e && e.name === 'AbortError') return false;
+  }
+  try{
+    if(navigator.share){
+      const base = { title: payload.title, url: payload.url };
+      if(payload.text) base.text = payload.text;
+      await navigator.share(base);
+      return true;
+    }
+  }catch(e){
+    if(e && e.name === 'AbortError') return false;
+  }
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      await navigator.clipboard.writeText(caption);
+      if(typeof toast === 'function') toast('Link copied');
+      return true;
+    }
+  }catch(_){}
+  if(typeof toast === 'function') toast(payload.url);
+  return false;
+}
+window.nalunoShareOut = nalunoShareOut;
 
 /** Share a whole Strand (a creator's ordered set of Broadcasts), not just one item in it. */
 function strandShareUrl(id){
@@ -1719,15 +1771,21 @@ function airHandle(){
   const n = (typeof currentProfile !== 'undefined' && currentProfile && currentProfile.number) || '';
   return String(n).replace(/^@+/, '').trim();
 }
-async function airShare(handle, title){
+async function airShare(handle, title, description){
   const link = broadcastChannelUrl(handle);
-  const text = (title || 'Naluno Broadcast') + '\n' + link;
+  const payload = (typeof nalunoSharePayload === 'function')
+    ? nalunoSharePayload({ link: link, title: title || 'Naluno', description: description || '' })
+    : { title: title || 'Naluno', text: '', url: link };
   try{
-    if(navigator.share) await navigator.share({ title: title || 'Naluno Broadcast', text: text, url: link });
+    if(typeof nalunoShareOut === 'function'){
+      await nalunoShareOut({ link: payload.url, title: payload.title, description: payload.text });
+      return;
+    }
+    if(navigator.share) await navigator.share({ title: payload.title, url: payload.url });
     else if(navigator.clipboard && navigator.clipboard.writeText){
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(payload.url);
       if(typeof toast === 'function') toast('Broadcast link copied');
-    } else if(typeof toast === 'function') toast(link);
+    } else if(typeof toast === 'function') toast(payload.url);
   }catch(e){
     if(e && e.name === 'AbortError') return;
     try{

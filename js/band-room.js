@@ -553,8 +553,11 @@ function renderBandMessages(preserveScroll){
      that conversation is shown, even from this phone's memory. */
   if(b && b.isReal && bandDead(b)) msgs = msgs.filter(m => bandMsgTs(m) > bandAliveMs(b) + BAND_SETTLE_MS);
   const el = $('bandMessages');
-  if(msgs.length===0){
-    el.innerHTML = `<div class="msg-empty"><span style="font-family:var(--font-futuristic); font-size:14px; color:#fff;">Quiet on this Band</span><span style="font-size:12.5px; color:rgba(255,255,255,.6);">Tune in and say something. It is deleted for good 2h after the last person leaves.</span></div>`;
+  if(!el) return;
+  const nextHtml = (msgs.length===0)
+    ? `<div class="msg-empty"><span style="font-family:var(--font-futuristic); font-size:14px; color:#fff;">Quiet on this Band</span><span style="font-size:12.5px; color:rgba(255,255,255,.6);">Tune in and say something. It is deleted for good 2h after the last person leaves.</span></div>`
+    : msgs.map(bandMessageHtml).join('');
+  if(typeof nalunoSamePaint === 'function' && nalunoSamePaint(el, nextHtml)){
     updateBandSettleNote();
     return;
   }
@@ -562,7 +565,7 @@ function renderBandMessages(preserveScroll){
   // instead of the normal jump-to-bottom-on-new-message behavior.
   const prevHeight = preserveScroll ? el.scrollHeight : 0;
   const prevTop = preserveScroll ? el.scrollTop : 0;
-  el.innerHTML = msgs.map(bandMessageHtml).join('');
+  el.innerHTML = nextHtml;
   if(preserveScroll){
     el.scrollTop = prevTop + (el.scrollHeight - prevHeight);
   } else {
@@ -587,9 +590,13 @@ function renderBandRoster(){
       <span style="font-size:10.5px; color:var(--mint); font-family:var(--font-mono);">You</span>
     </div>`;
   }
-  $('bandRoster').innerHTML = html || `<span style="color:rgba(255,255,255,.6); font-size:12.5px; padding:6px 2px;">No one's tuned in right now.</span>`;
+  const roster = $('bandRoster');
   const liveCount = live.length + (amTunedIn ? 1 : 0);
-  $('bandRoomLiveCount').textContent = liveCount===0 ? 'Quiet right now' : liveCount + (liveCount===1 ? ' tuned in' : ' tuned in');
+  const countText = liveCount===0 ? 'Quiet right now' : liveCount + (liveCount===1 ? ' tuned in' : ' tuned in');
+  const painted = (html || `<span style="color:rgba(255,255,255,.6); font-size:12.5px; padding:6px 2px;">No one's tuned in right now.</span>`) + '\n' + countText;
+  if(roster && typeof nalunoSamePaint === 'function' && nalunoSamePaint(roster, painted)) return;
+  if(roster) roster.innerHTML = html || `<span style="color:rgba(255,255,255,.6); font-size:12.5px; padding:6px 2px;">No one's tuned in right now.</span>`;
+  $('bandRoomLiveCount').textContent = countText;
 }
 function refreshBandRoom(){
   if(!activeBandId) return;
@@ -603,11 +610,33 @@ function startBandAmbientAnim(vibeKey){
   bandAnimStart = performance.now();
   const preset = backgroundPresets[vibeKey];
   const painter = (preset && preset.type==='canvas') ? preset.painter : paintAurora;
+  /* A 1px wobble in the room's height (the bar, the keyboard) used to
+     reset the canvas every half second. Resetting clears it, so the
+     room flashed for as long as you stayed. A small change is ignored. */
+  function bandHoldCanvas(c){
+    if(!c || !c.getBoundingClientRect) return;
+    const now = performance.now();
+    if(c._bandHold && now - c._bandHold < 800) return;
+    c._bandHold = now;
+    const r = c.getBoundingClientRect();
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    let w = Math.max(1, Math.round(r.width * dpr));
+    let h = Math.max(1, Math.round(r.height * dpr));
+    const long = Math.max(w, h);
+    if(long > 1280){
+      const s = 1280 / long;
+      w = Math.max(1, Math.round(w * s));
+      h = Math.max(1, Math.round(h * s));
+    }
+    if(c.width && Math.abs(c.width - w) < 12 && Math.abs(c.height - h) < 12) return;
+    c.width = w;
+    c.height = h;
+  }
   function tick(now){
     if(!$('bandRoom').classList.contains('active')){ bandAnimFrame = null; return; }
     const c = $('bandBgCanvas');
-    ensureCanvasSize(c);
-    painter(c.getContext('2d'), c.width, c.height, (now-bandAnimStart)/1000);
+    bandHoldCanvas(c);
+    if(c && c.getContext) painter(c.getContext('2d'), c.width, c.height, (now-bandAnimStart)/1000);
     bandAnimFrame = requestAnimationFrame(tick);
   }
   if(bandAnimFrame) cancelAnimationFrame(bandAnimFrame);
