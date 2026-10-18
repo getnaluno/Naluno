@@ -74,9 +74,9 @@
 // v248: attention is only kept when a visit, an app open, or a continued session owns it. Join date and Find pin stay on the person.
 // v284: 10.05f Android floats a video call on leaving; Wireline alerts through Naluno's worker; a call answers once per tap.
 // v285: 10.05g voices keep reading (several makers, scheduled, trimmed), Luganda spoken from its own sounds, test alert, stale stamps.
-// v340: 10.17f a call on screen does not also ring the lock screen; Luganda asks Sunbird first; the console asks to reload once, and runway is a sentence.
-const CACHE_NAME = 'naluno-shell-v340';
-const APP_BUILD = '20261017f';
+// v342: 10.19b a share is a picture, a description and one link; ordinary updates stay quiet and do not loop.
+const CACHE_NAME = 'naluno-shell-v342';
+const APP_BUILD = '20261019b';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -91,7 +91,7 @@ const CORE_ASSETS = [
   '/js/signal-core.js', '/js/signal-ui.js', '/js/broadcast-glance.js', '/js/signal-public.js', '/js/signal-social.js', '/js/live-sync.js', '/js/broadcast-offline.js',
   '/js/sfu-live.js', '/js/compass-brain.js', '/js/compass.js', '/js/linkify.js', '/js/weather.js', '/js/beacon.js', '/js/find-history.js', '/js/find.js', '/js/profile.js', '/js/notifications.js',
   '/js/ice-core.js', '/js/compat-lock.js', '/js/keep-alive.js', '/js/media-contain.js',
-  '/js/diagnostics.js', '/js/currency.js', '/js/economy.js', '/js/economy-ui.js', '/js/onboard.js', '/js/presence.js', '/js/session-log.js', '/js/push-receipt.js', '/js/handle-guard.js',
+  '/js/diagnostics.js', '/js/currency.js', '/js/economy.js', '/js/economy-ui.js', '/js/legal-privacy.js', '/js/onboard.js', '/js/presence.js', '/js/session-log.js', '/js/push-receipt.js', '/js/handle-guard.js',
   '/js/trust-legal.js', '/js/security-events.js',
 ];
 

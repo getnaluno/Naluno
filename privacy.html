@@ -32,7 +32,8 @@ footer{max-width:720px;margin:48px auto 0;padding-top:22px;border-top:1px solid 
 </header>
 <main>
   <h1>Privacy Policy</h1>
-  <p class="kicker">Effective 10 October 2026 · getnaluno.com</p>
+  <div id="privacyPolicy">
+  <p class="kicker legal-kicker">Effective 10 October 2026 · getnaluno.com</p>
   <p>This Privacy Policy explains what Naluno collects, why, who can see it, and how long it stays. It is written in ordinary language on purpose. If a sentence here does not match what the app actually does, the app is wrong — not this page — and we will correct the app.</p>
   <h3>1. Who we are</h3>
   <p>Naluno is the service at <strong>getnaluno.com</strong>. It is a place to be reachable without handing over a phone number. This policy applies to the website, the installable web app, and the Android shell of the same app.</p>
@@ -80,8 +81,16 @@ footer{max-width:720px;margin:48px auto 0;padding-top:22px;border-top:1px solid 
   <p>If this policy changes in a way that matters, we will update the date at the top and, when the change is large, show a notice in the app.</p>
   <h3>18. How to reach us</h3>
   <p>Use the contact form on getnaluno.com, or Compass after you sign in (Write to Naluno). Say that your message is about privacy so it is treated as one. The mailbox itself is not published on the website.</p>
+  </div>
 </main>
 <footer><a href="/">Home</a> · <a href="/terms">Terms</a> · <a href="/app/">App</a></footer>
+<script src="/js/legal-privacy.js?v=20261019a"></script>
+<script>
+  (function(){
+    var box = document.getElementById('privacyPolicy');
+    if(box && window.NALUNO_PRIVACY_HTML) box.innerHTML = window.NALUNO_PRIVACY_HTML;
+  })();
+</script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 <script src="/firebase-config.js?v=20260914c"></script>
