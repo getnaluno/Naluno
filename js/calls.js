@@ -1977,6 +1977,60 @@ function nalunoTuneCallAudio(pc){
 window.nalunoSdpReady = nalunoSdpReady;
 window.nalunoTuneCallAudio = nalunoTuneCallAudio;
 
+/* Hangup used to wait for the network to notice the other phone had gone,
+   which is about 30 seconds. A one-word message on the call itself ends it
+   at once, and a short read of the call record covers a message that never
+   left. */
+function nalunoWireBye(pc){
+  if(!pc || pc._nalunoByeWired) return;
+  pc._nalunoByeWired = true;
+  const take = function(ch){
+    if(!ch) return;
+    pc._nalunoBye = ch;
+    ch.onmessage = function(ev){
+      if(String((ev && ev.data) || '') === 'bye') nalunoRemoteHungUp();
+    };
+  };
+  try{ take(pc.createDataChannel('naluno')); }catch(_){}
+  pc.ondatachannel = function(ev){ try{ take(ev && ev.channel); }catch(_){} };
+}
+function nalunoSendBye(pc){
+  try{
+    const ch = pc && pc._nalunoBye;
+    if(ch && ch.readyState === 'open') ch.send('bye');
+  }catch(_){}
+}
+function nalunoRemoteHungUp(){
+  if(window.__nalunoEndingCall) return;
+  if(!activeCallId) return;
+  if(!$('callOverlay') || !$('callOverlay').classList.contains('active')) return;
+  endActiveCall('remote');
+}
+function nalunoPullCallEnd(pc){
+  const id = activeCallId;
+  if(!id || typeof fbDb === 'undefined' || !fbDb) return;
+  fbDb.collection('calls').doc(id).get().then(function(snap){
+    if(activeCallId !== id || (pc && peerConnection !== pc)) return;
+    const d = snap && snap.data && snap.data();
+    if(!d) return;
+    if(d.status === 'ended' || d.status === 'declined' || d.status === 'missed' || d.status === 'busy') nalunoRemoteHungUp();
+  }).catch(function(){});
+}
+function nalunoWatchLiveEnd(callId){
+  try{ clearInterval(window.__nalunoLiveEnd); }catch(_){}
+  if(!callId) return;
+  window.__nalunoLiveEnd = setInterval(function(){
+    try{
+      if(activeCallId !== callId){
+        clearInterval(window.__nalunoLiveEnd); window.__nalunoLiveEnd = null; return;
+      }
+      const on = $('callOverlay') && $('callOverlay').classList.contains('active') && $('incall') && $('incall').classList.contains('active');
+      if(!on){ clearInterval(window.__nalunoLiveEnd); window.__nalunoLiveEnd = null; return; }
+      nalunoPullCallEnd(peerConnection);
+    }catch(_){}
+  }, 2000);
+}
+
 async function createPeerConnection(iceCfg){
   try{
     if(typeof metricStart === 'function') window._callMediaMetric = metricStart('call_time_to_media');
@@ -1996,6 +2050,7 @@ async function createPeerConnection(iceCfg){
   }
   try{ if(typeof prewarmIceServers === 'function') prewarmIceServers(); }catch(_){}
   const pc = new RTCPeerConnection(ice);
+  nalunoWireBye(pc);
 
   /* FIX — "calls sometimes don't go through / take long to connect".
      The connection above is deliberately built with IceCore.now(), which is
@@ -2364,12 +2419,14 @@ function teardownCallConnection(){
   try{ window.__nalunoConnectedAt = 0; window.__nalunoFxDraw = false; }catch(_){}
   try{ if(typeof nalunoDropPrepared === 'function') nalunoDropPrepared(); }catch(_){}
   try{ clearInterval(window.__nalunoWatchBackup); window.__nalunoWatchBackup = null; }catch(_){}
+  try{ clearInterval(window.__nalunoLiveEnd); window.__nalunoLiveEnd = null; }catch(_){}
   try{ stopRemotePlayWatch(); }catch(_){}
   try{ resetCallFilterState(); }catch(_){}
   if(activeCallDocUnsub){ activeCallDocUnsub(); activeCallDocUnsub = null; }
   if(callerCandidatesUnsub){ callerCandidatesUnsub(); callerCandidatesUnsub = null; }
   if(calleeCandidatesUnsub){ calleeCandidatesUnsub(); calleeCandidatesUnsub = null; }
   if(peerConnection){
+    try{ nalunoSendBye(peerConnection); }catch(_){}
     try{
       peerConnection.ontrack = null;
       peerConnection.onicecandidate = null;
@@ -2465,22 +2522,26 @@ function endActiveCall(reason){
   if(!callId && !wasInCall && !wasRinging && !wasIncoming && !$('callOverlay').classList.contains('active')){
     return; // nothing to end
   }
+  if(window.__nalunoEndingCall) return;
+  window.__nalunoEndingCall = true;
+  try{
   try{ if(window.nalunoPip && nalunoPip.disarm) nalunoPip.disarm(); }catch(_){}
-  try{ const rec = nalunoCD(callId); if(rec && !rec.endReason) rec.endReason = 'local-' + String(reason || 'hangup').slice(0, 24); }catch(_){}
+  try{ const rec = nalunoCD(callId); if(rec && !rec.endReason) rec.endReason = (reason === 'remote' ? 'remote-hangup' : ('local-' + String(reason || 'hangup').slice(0, 24))); }catch(_){}
   clearTimeout(ringTimeoutHandle); ringTimeoutHandle = null;
   if(notifyRepeatInterval){ try{ clearInterval(notifyRepeatInterval); }catch(_){} try{ clearTimeout(notifyRepeatInterval); }catch(_){} notifyRepeatInterval = null; }
   stopCallerTone();
   stopRingtone();
-  if(callId && fbDb){
+  if(callId && fbDb && reason !== 'remote'){
     const talk = nalunoTalkSeconds();
-    fbDb.collection('calls').doc(callId).update({
-      status: 'ended',
-      endedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      endedBy: currentUser ? currentUser.uid : null,
-      endReason: reason || 'hangup',
-      durationSec: talk,
-      connectedAt: (window.__nalunoConnectedAt || (talk ? Date.now() - talk * 1000 : 0)) || 0,
-    }).catch(()=>{});
+    try{
+      nalunoCallMove(callId, 'ended', {
+        endedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        endedBy: (typeof currentUser !== 'undefined' && currentUser) ? currentUser.uid : null,
+        endReason: reason || 'hangup',
+        durationSec: talk,
+        connectedAt: (window.__nalunoConnectedAt || (talk ? Date.now() - talk * 1000 : 0)) || 0,
+      });
+    }catch(_){}
   }
   try{ nalunoRememberCall(reason || 'hangup'); }catch(_){}
   try{ window.__nalunoConnectedAt = 0; }catch(_){}
@@ -2519,6 +2580,7 @@ function endActiveCall(reason){
       showPublishChip('Still publishing…');
     }
   }catch(_){}
+  } finally { window.__nalunoEndingCall = false; }
 }
 
 /* A far call (another city, another country) often needs the relay.
@@ -2736,6 +2798,7 @@ function attachConnectionWatchdogs(pc){
     /* 15 Oct g: a route that drops (network switch, a tunnel) and does not
        come back within 6 s is restarted, not left frozen. */
     if(s === 'disconnected'){
+      nalunoPullCallEnd(pc);
       clearTimeout(pc._nalunoDiscTimer);
       pc._nalunoDiscTimer = setTimeout(function(){
         if(!nalunoCallStillThis(pc)) return;
@@ -4626,6 +4689,7 @@ function startInCall(){
   setTimeout(function(){ try{ renderRemoteMediaStage(); }catch(_){} }, 50);
   setTimeout(function(){ try{ renderRemoteMediaStage(); }catch(_){} }, 300);
   setTimeout(function(){ try{ renderRemoteMediaStage(); }catch(_){} }, 900);
+  try{ nalunoWatchLiveEnd(activeCallId); }catch(_){}
   /* A call answered on one side whose other side never arrives (its phone
      died, or it hung up in the same instant) used to sit on "connecting"
      until someone gave up. If it has never connected after 40s, end it. */

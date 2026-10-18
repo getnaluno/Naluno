@@ -110,6 +110,10 @@ async function registerWebPushToken(){
     else await userRef.set(payload, { merge:true });
     try{ localStorage.setItem('nalunoPushTokenAt', String(Date.now())); }catch(_){}
     try{ localStorage.setItem('nalunoPushToken', token); }catch(_){}
+    try{
+      const build = (document.querySelector('meta[name="app-version"]') || {}).content || '';
+      if(build) localStorage.setItem('nalunoPushBuild', build);
+    }catch(_){}
     const before = existing.fcmTokenWeb || (typeof nalunoVault !== 'undefined' && nalunoVault.get ? nalunoVault.get('fcmTokenWeb') : '');
     if(before && before !== token){
       console.log('[push] web token ROTATED — stored token was stale, now updated');
@@ -151,23 +155,33 @@ async function keepPushTokenFresh(force){
     if(typeof isNativeShell === 'function' && isNativeShell()) return; // native has its own path
     if(typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
 
-    let lastAt = 0, lastToken = '';
+    let lastAt = 0, lastToken = '', savedBuild = '';
+    let build = '';
     try{
       lastAt = parseInt(localStorage.getItem('nalunoPushTokenAt') || '0', 10) || 0;
       lastToken = localStorage.getItem('nalunoPushToken') || '';
+      savedBuild = localStorage.getItem('nalunoPushBuild') || '';
+      build = (document.querySelector('meta[name="app-version"]') || {}).content || '';
     }catch(_){}
 
-    const due = force || !lastAt || (Date.now() - lastAt) > NALUNO_PUSH_REFRESH_MS;
+    /* A new app build replaces the service worker. The old push address
+       keeps being accepted by the sender and never arrives. A build change
+       throws that address away and saves the live one. */
+    const buildChanged = !!(build && savedBuild !== build);
+    const due = force || buildChanged || !lastAt || (Date.now() - lastAt) > NALUNO_PUSH_REFRESH_MS;
 
-    // Cheap check first: ask for the current token and compare. If it has
-    // rotated, re-register immediately regardless of the throttle — a stale
-    // token means the phone cannot ring, which is worth a write straight away.
     if(!due){
       try{
         const registration = await navigator.serviceWorker.ready;
         const current = await firebase.messaging().getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
-        if(current && lastToken && current === lastToken) return; // still valid, nothing to do
-      }catch(_){ return; }
+        if(current && lastToken && current === lastToken) return;
+      }catch(_){}
+    }
+    if(buildChanged){
+      try{
+        const messaging = firebase.messaging();
+        if(messaging && typeof messaging.deleteToken === 'function') await messaging.deleteToken();
+      }catch(_){}
     }
     await registerWebPushToken();
   }catch(e){

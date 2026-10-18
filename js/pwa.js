@@ -6,7 +6,7 @@
    ============================================================ */
 /* ---------------- PWA INSTALL + CALL NOTIFICATION DEEP-LINK ---------------- */
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js?v=20261019b', { scope: '/', updateViaCache: 'none' })
+  navigator.serviceWorker.register('/sw.js?v=20261019c', { scope: '/', updateViaCache: 'none' })
     .then(function(reg){ try{ reg.update(); }catch(_){} })
     .catch(function(e){ console.warn('[sw]', e); });
   // One automatic reload when a new SW takes control (clears stuck "sign-in not ready"
@@ -66,6 +66,7 @@ if('serviceWorker' in navigator){
       /* 15 Oct: a newer version has taken over this phone. The page on
          screen is now the old one: swap it at the first good moment (the
          same rules core.js uses), not only when someone taps the banner. */
+      try{ if(typeof keepPushTokenFresh === 'function') keepPushTokenFresh(true); }catch(_){}
       try{ if(typeof checkForUpdate === 'function'){ checkForUpdate(); return; } }catch(_){}
       reloadWhenFree();
     });
