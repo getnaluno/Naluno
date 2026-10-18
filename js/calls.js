@@ -1980,30 +1980,48 @@ window.nalunoTuneCallAudio = nalunoTuneCallAudio;
 /* Hangup used to wait for the network to notice the other phone had gone,
    which is about 30 seconds. A one-word message on the call itself ends it
    at once, and a short read of the call record covers a message that never
-   left. */
-function nalunoWireBye(pc){
+   left. Only the phone that places the call creates that channel, and it
+   does so before the offer. The answering phone creating one as well makes
+   the two offers disagree, and the answer is refused. */
+function nalunoWireBye(pc, asOfferer){
   if(!pc || pc._nalunoByeWired) return;
   pc._nalunoByeWired = true;
+  pc._nalunoByes = [];
   const take = function(ch){
-    if(!ch) return;
-    pc._nalunoBye = ch;
+    if(!ch || ch._nalunoTook) return;
+    ch._nalunoTook = true;
+    const mine = activeCallId;
+    ch._nalunoFor = mine;
+    pc._nalunoByes.push(ch);
     ch.onmessage = function(ev){
+      if(ch._nalunoFor && activeCallId !== ch._nalunoFor) return;
       if(String((ev && ev.data) || '') === 'bye') nalunoRemoteHungUp();
     };
   };
-  try{ take(pc.createDataChannel('naluno')); }catch(_){}
-  pc.ondatachannel = function(ev){ try{ take(ev && ev.channel); }catch(_){} };
+  if(asOfferer){
+    try{ take(pc.createDataChannel('naluno')); }catch(_){}
+  }
+  const prev = pc.ondatachannel;
+  pc.ondatachannel = function(ev){
+    try{ if(typeof prev === 'function') prev(ev); }catch(_){}
+    try{ take(ev && ev.channel); }catch(_){}
+  };
 }
 function nalunoSendBye(pc){
-  try{
-    const ch = pc && pc._nalunoBye;
-    if(ch && ch.readyState === 'open') ch.send('bye');
-  }catch(_){}
+  const list = (pc && pc._nalunoByes) || [];
+  list.forEach(function(ch){
+    try{ if(ch && ch.readyState === 'open') ch.send('bye'); }catch(_){}
+    try{ if(ch) ch.onmessage = null; }catch(_){}
+  });
 }
 function nalunoRemoteHungUp(){
   if(window.__nalunoEndingCall) return;
   if(!activeCallId) return;
-  if(!$('callOverlay') || !$('callOverlay').classList.contains('active')) return;
+  const on = ($('callOverlay') && $('callOverlay').classList.contains('active'))
+    || ($('incall') && $('incall').classList.contains('active'))
+    || ($('ringing') && $('ringing').classList.contains('active'))
+    || ($('incoming') && $('incoming').classList.contains('active'));
+  if(!on) return;
   endActiveCall('remote');
 }
 function nalunoPullCallEnd(pc){
@@ -2024,14 +2042,15 @@ function nalunoWatchLiveEnd(callId){
       if(activeCallId !== callId){
         clearInterval(window.__nalunoLiveEnd); window.__nalunoLiveEnd = null; return;
       }
-      const on = $('callOverlay') && $('callOverlay').classList.contains('active') && $('incall') && $('incall').classList.contains('active');
+      const on = ($('callOverlay') && $('callOverlay').classList.contains('active'))
+        || ($('incall') && $('incall').classList.contains('active'));
       if(!on){ clearInterval(window.__nalunoLiveEnd); window.__nalunoLiveEnd = null; return; }
       nalunoPullCallEnd(peerConnection);
     }catch(_){}
   }, 2000);
 }
 
-async function createPeerConnection(iceCfg){
+async function createPeerConnection(iceCfg, asOfferer){
   try{
     if(typeof metricStart === 'function') window._callMediaMetric = metricStart('call_time_to_media');
   }catch(_){}
@@ -2050,7 +2069,7 @@ async function createPeerConnection(iceCfg){
   }
   try{ if(typeof prewarmIceServers === 'function') prewarmIceServers(); }catch(_){}
   const pc = new RTCPeerConnection(ice);
-  nalunoWireBye(pc);
+  nalunoWireBye(pc, !!asOfferer);
 
   /* FIX — "calls sometimes don't go through / take long to connect".
      The connection above is deliberately built with IceCore.now(), which is
@@ -2426,15 +2445,20 @@ function teardownCallConnection(){
   if(callerCandidatesUnsub){ callerCandidatesUnsub(); callerCandidatesUnsub = null; }
   if(calleeCandidatesUnsub){ calleeCandidatesUnsub(); calleeCandidatesUnsub = null; }
   if(peerConnection){
-    try{ nalunoSendBye(peerConnection); }catch(_){}
+    const dying = peerConnection;
+    try{ nalunoSendBye(dying); }catch(_){}
     try{
-      peerConnection.ontrack = null;
-      peerConnection.onicecandidate = null;
-      peerConnection.onconnectionstatechange = null;
-      peerConnection.oniceconnectionstatechange = null;
-      peerConnection.close();
+      dying.ontrack = null;
+      dying.onicecandidate = null;
+      dying.onconnectionstatechange = null;
+      dying.oniceconnectionstatechange = null;
+      dying.ondatachannel = null;
     }catch(e){}
     peerConnection = null;
+    /* close() in this same turn discards the hangup word still in the
+       socket, so the other phone waits on the network (about 30s). The
+       handlers are already off; the socket gets a moment to send. */
+    setTimeout(function(){ try{ dying.close(); }catch(_){} }, 200);
   }
   activeCallId = null;
   pendingIncomingOffer = null;
@@ -3687,7 +3711,7 @@ async function startRealCallInner(c){
   try{ iceChoice = await turnReady; }catch(_){}
   try{ const rec = nalunoCD(callRef.id); if(rec && iceChoice) rec.ice = { decision: iceChoice.decision, waitMs: iceChoice.ms }; }catch(_){}
   if(gone()){ try{ nalunoCDSet(callRef.id, { endReason: 'cancel' }); nalunoCDFinish(callRef.id); }catch(_){} return false; }
-  const pc = await createPeerConnection(iceChoice && iceChoice.cfg);
+  const pc = await createPeerConnection(iceChoice && iceChoice.cfg, true);
   const dropPc = () => { try{ pc.ontrack = null; pc.onicecandidate = null; pc.onconnectionstatechange = null; pc.oniceconnectionstatechange = null; pc.close(); }catch(_){} };
   if(gone()){ dropPc(); return false; }
   peerConnection = pc;

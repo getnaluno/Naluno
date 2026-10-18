@@ -164,9 +164,10 @@ async function keepPushTokenFresh(force){
       build = (document.querySelector('meta[name="app-version"]') || {}).content || '';
     }catch(_){}
 
-    /* A new app build replaces the service worker. The old push address
-       keeps being accepted by the sender and never arrives. A build change
-       throws that address away and saves the live one. */
+    /* A new app build replaces the service worker. getToken() returns the
+       address that belongs to the worker now running. Deleting the old one
+       first left the phone with no address at all when the new one could
+       not be saved yet, and then no call alert arrived. */
     const buildChanged = !!(build && savedBuild !== build);
     const due = force || buildChanged || !lastAt || (Date.now() - lastAt) > NALUNO_PUSH_REFRESH_MS;
 
@@ -175,12 +176,6 @@ async function keepPushTokenFresh(force){
         const registration = await navigator.serviceWorker.ready;
         const current = await firebase.messaging().getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
         if(current && lastToken && current === lastToken) return;
-      }catch(_){}
-    }
-    if(buildChanged){
-      try{
-        const messaging = firebase.messaging();
-        if(messaging && typeof messaging.deleteToken === 'function') await messaging.deleteToken();
       }catch(_){}
     }
     await registerWebPushToken();
