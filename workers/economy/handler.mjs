@@ -3954,9 +3954,12 @@ export async function handleRequest(request, env = {}, ctx = {}) {
           if (publicOk) {
             if (b.title) title = String(b.title).slice(0, 110);
             const who = b.creatorName ? ("by " + String(b.creatorName).slice(0, 40)) : "";
-            desc = (who ? who + " \u00b7 " : "") + "Watch on Naluno";
+            const about = String(b.description || "").replace(/\s+/g, " ").trim().slice(0, 180);
+            desc = about ? (who ? who + " \u00b7 " + about : about) : ((who ? who + " \u00b7 " : "") + "Watch on Naluno");
             const thumb = String(b.thumbUrl || b.thumb || "");
+            const face = String(b.creatorPhoto || b.photoUrl || "");
             if (/^https:\/\//.test(thumb)) image = thumb;
+            if (!image && /^https:\/\//.test(face)) image = face;
             if (!image && /^https:\/\//.test(String(b.mediaUrl || "")) && /\.(jpe?g|png|webp|gif)(\?|$)/i.test(String(b.mediaUrl))) image = String(b.mediaUrl);
           } else if (b) {
             title = "This Broadcast isn\u2019t available";
