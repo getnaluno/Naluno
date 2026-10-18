@@ -429,6 +429,12 @@
     pointer-events: none;
   }
   #bandRoom.active{ z-index: 100 !important; }
+  /* The call screen's moving scan lines are on every .call-overlay.
+     On a Band they shimmer through the room for the whole visit. */
+  #bandRoom.call-overlay{
+    animation: none;
+    background: #07080D;
+  }
   .callscreen{ position:absolute; inset:0; display:flex; flex-direction:column; opacity:0; pointer-events:none; transition:opacity .3s ease; }
   .callscreen.active{ opacity:1; pointer-events:auto; }
 
@@ -1931,7 +1937,7 @@ body.naluno-os-pip #pipStageCanvas{ display:none !important; }
   display:flex; flex-direction:column;
 }
 #wireCamSheet video, #wireCamSheet img{
-  flex:1; width:100%; min-height:0; object-fit:contain; background:#000;
+  flex:1; width:100%; min-height:0; object-fit:cover; background:#000;
 }
 .wire-cam-bar{
   display:flex; gap:8px; justify-content:center; flex-wrap:wrap;
