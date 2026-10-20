@@ -930,6 +930,21 @@ service cloud.firestore {
        each call attempt went. A signed-in person can only add reports about
        themselves, of a known kind; nobody can change one; only the desk can
        read or delete them. Nothing here is readable by other members. */
+    /* 20 Oct c: counts and times (measure.mjs). Only the economy worker
+       writes them (service account); only the desk reads them. */
+    /* 20 Oct d: accounts whose call and message records the desk keeps
+       past 12 months for an open report, investigation or legal request. */
+    match /legalHolds/{uid} {
+      allow read, write: if isOperator();
+    }
+    match /measureDays/{day} {
+      allow read: if isOperator();
+      allow write: if false;
+    }
+    match /measureBatches/{id} {
+      allow read: if isOperator();
+      allow write: if false;
+    }
     match /diagReports/{id} {
       allow create: if isSignedIn()
         && request.resource.data.uid == request.auth.uid
