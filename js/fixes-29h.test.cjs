@@ -19,15 +19,20 @@ function extractFn(src, name){
 }
 
 (async function(){
-  /* 1. Screen: a picture is never published on a missing verdict. */
+  /* 1. Screen (19 Oct e): only a clear detector finding stops or holds a picture.
+     No verdict, an unread one, or a reader still going at the limit is not a
+     sign of nudity: it goes out (the worker marks it unread for the desk). */
   const comp = read('broadcast-composer.js');
   {
     const ctx = { setTimeout, clearTimeout, Promise, Object };
     vm.createContext(ctx);
     vm.runInContext('const NALUNO_SCREEN_WAIT_MS = 50;\nasync ' + extractFn(comp, 'nalunoStrictVerdict') + '\nthis.v = nalunoStrictVerdict;', ctx);
-    assert.strictEqual((await ctx.v(null)).decision, 'hold', 'no verdict -> held');
-    assert.strictEqual((await ctx.v(Promise.resolve({ decision: 'unread' }))).decision, 'hold', 'unread -> held');
-    assert.strictEqual((await ctx.v(new Promise(() => {}))).decision, 'hold', 'still reading at the limit -> held, not published');
+    assert.strictEqual((await ctx.v(null)).decision, 'allow', 'no verdict -> not held');
+    assert.strictEqual((await ctx.v(Promise.resolve({ decision: 'unread' }))).decision, 'allow', 'unread -> not held');
+    assert.strictEqual((await ctx.v(new Promise(() => {}))).decision, 'allow', 'still reading at the limit -> not held');
+    assert.strictEqual((await ctx.v(Promise.resolve({ decision: 'hold', engine: 'heuristic', reason: 'heuristic-only' }))).decision, 'allow', 'the skin check never holds');
+    assert.strictEqual((await ctx.v(Promise.resolve({ decision: 'hold', engine: 'nudenet', reason: 'possible-topless' }))).decision, 'allow', 'a weak sign never holds');
+    assert.strictEqual((await ctx.v(Promise.resolve({ decision: 'hold', engine: 'nudenet', reason: 'single-frame' }))).decision, 'hold', 'nudity found in one still waits for a person');
     assert.strictEqual((await ctx.v(Promise.resolve({ decision: 'block', packed: { nudenet: {} } }))).decision, 'block');
     assert.ok((await ctx.v(Promise.resolve({ decision: 'allow', packed: { nudenet: 1 } }))).packed, 'the detector findings travel with the verdict');
   }
@@ -40,18 +45,19 @@ function extractFn(src, name){
     const ctx = { currentProfile: { trustedPublisher: true } };
     vm.createContext(ctx);
     vm.runInContext(extractFn(core, 'nalunoPublisherTrusted') + extractFn(core, 'nalunoBroadcastListingFields') + '\nthis.f = nalunoBroadcastListingFields;', ctx);
-    assert.strictEqual(ctx.f(null, { hasPicture: true }).held, true, 'trusted account, picture, no verdict -> held');
+    assert.strictEqual(ctx.f(null, { hasPicture: true }).listed, true, 'trusted account, picture, no verdict -> not held (19 Oct e)');
+    assert.strictEqual(ctx.f({ decision: 'block' }, { hasPicture: true }).listed, false, 'a block stays off');
     assert.strictEqual(ctx.f({ decision: 'allow' }, { hasPicture: true }).listed, true);
     assert.strictEqual(ctx.f({ decision: 'allow' }, { hasPicture: true, inherited: true }).listed, true, 'a Pass-on inherits');
     assert.strictEqual(ctx.f(null, { hasPicture: false }).listed, true, 'text needs no picture check');
   }
   const compass = read('compass.js');
   assert.ok(compass.includes("screenRep = await nalunoStrictVerdict("), 'the Compass Broadcast route is screened');
-  assert.ok(compass.includes("seg.heldReason = 'unread';"), 'an unread Signal picture stays private');
+  assert.ok(!compass.includes("seg.heldReason = 'unread';"), 'an unread Signal picture is not held (19 Oct e)');
+  assert.ok(compass.includes("verdict.engine === 'nudenet' && (verdict.reason === 'single-frame' || verdict.reason === 'found-on-fabric')"), 'a Signal part waits only on a detector finding');
   const nn = read('nudenet.js');
   assert.ok(nn.includes('WHAT AN EXPLICIT PICTURE LOOKS LIKE'), 'the rulebook describes an explicit picture in words');
-  assert.ok(nn.includes('anatomyHold: 0.25'), 'weak genital signs are held');
-  assert.ok(nn.includes('"possible-sexual-act"') && nn.includes('"possible-nudity"'));
+  assert.ok(nn.includes('decision: "hold", reason: "single-frame"'), 'the only hold: nudity found in one still of a video');
 
   /* 2. The call picture is not blown up. */
   const calls = read('calls.js');

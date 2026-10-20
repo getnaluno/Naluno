@@ -34,17 +34,25 @@ assert.equal(b.screen, "allow");
 // Switched from Private to public: no pictures sent; the worker's earlier verdict stands.
 b = await place({ visibility: "public", listed: false, held: true, screenDecision: "allow", screenVersion: 1, screenScore: 3 }, null);
 assert.equal(b.listed, true, "a checked video made public is listed, not held as unscreened");
-// ... a held one stays held.
-b = await place({ visibility: "public", listed: false, held: true, screenDecision: "hold", screenVersion: 1, screenReason: "possible-nudity" }, null);
+// ... one the detector held (nudity in one still) stays held.
+b = await place({ visibility: "public", listed: false, held: true, screenDecision: "hold", screenVersion: 1, screenReason: "single-frame" }, null);
 assert.equal(b.listed, false);
-assert.equal(b.held, true, "a video held by Screen stays held when made public");
-// ... with no verdict of the worker's on it, it is held as before.
+assert.equal(b.held, true, "a video the detector held stays held when made public");
+// ... one held by an older rule (a weak sign, the skin check) was never a clear finding: listed (19 Oct e).
+for (const why of ["possible-nudity", "possible-topless", "video-player-screenshot", "heuristic-only", "screen"]) {
+  b = await place({ visibility: "public", listed: false, held: true, screenDecision: "hold", screenVersion: 1, screenReason: why }, null);
+  assert.equal(b.listed, true, why + ": not a clear finding, goes out");
+  assert.equal(b.screen, "allow");
+}
+// ... a stored block stays stopped.
+b = await place({ visibility: "public", listed: false, held: true, screenDecision: "block", screenVersion: 1, screenReason: "genitals" }, null);
+assert.equal(b.listed, false); assert.equal(b.hidden, true);
+// ... with no verdict of the worker's on it: no reading is not nudity, it goes out marked unread.
 b = await place({ visibility: "public", listed: false, held: true }, null);
-assert.equal(b.listed, false, "no earlier verdict: still held for a person");
-b = await place({ visibility: "public", listed: false, held: true, screenDecision: "allow" }, null);
-assert.equal(b.listed, false, "a verdict without the worker's version stamp is not trusted");
-b = await place({ visibility: "public", listed: false, held: true, screenDecision: "unread", screenVersion: 1 }, null);
-assert.equal(b.listed, false, "only allow or hold is reused");
+assert.equal(b.listed, true, "no earlier verdict: listed, marked unread");
+assert.equal(b.screen, "unread");
+b = await place({ visibility: "public", listed: false, held: true, screenDecision: "block" }, null);
+assert.equal(b.screen, "unread", "a verdict without the worker's version stamp is not trusted (re-read)");
 // A fresh reading always wins over the stored one: explicit is stopped.
 b = await place({ screenDecision: "allow", screenVersion: 1 }, { v: 1, nudenet: { v: 1, frames: [{ d: [[14, 0.9]], p: 0 }] } });
 assert.equal(b.hidden, true, "a new explicit reading takes it down despite an old allow");

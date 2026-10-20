@@ -210,8 +210,16 @@ async function sendAll(tokens, data, link, deps, now) {
           message: {
             token: token,
             data: data,
+            /* An incoming call on Android is a data-only message: the app
+               rings itself. It lives 45 s (a ring that old is over) and one
+               call's pushes collapse into one. This was in the deployed
+               worker but not in its source; it is kept as deployed. */
             android: kind === "android"
-              ? {
+              ? (String(data.type || "") === "incoming_call" && data.callId ? {
+                  priority: "HIGH",
+                  ttl: "45s",
+                  collapse_key: "naluno-call:" + String(data.callId).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 120),
+                } : {
                   priority: "HIGH",
                   ttl: "86400s",
                   notification: {
@@ -225,7 +233,7 @@ async function sendAll(tokens, data, link, deps, now) {
                     notification_priority: "PRIORITY_HIGH",
                     visibility: "PUBLIC",
                   },
-                }
+                })
               : { priority: "HIGH", ttl: "86400s" },
             /* Web: a notification payload is what the lock screen shows when
                Chrome will not start the service worker (screen off). No

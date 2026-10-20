@@ -1575,20 +1575,23 @@ async function eraseOwnFiles(){
         broadcasts++;
       }
     }catch(_){}
-    try{
-      const top = await fbDb.collection('signals').where('uid', '==', uid).limit(200).get();
-      for(let i = 0; i < top.docs.length; i++){
-        await top.docs[i].ref.delete();
-        signals++;
-      }
-    }catch(_){}
+    /* 19 Oct e: the Everyone copy (signals/{id}) has the same id as the
+       person's own Signal. Searching signals by uid is refused by the list
+       rule (it lists only copies still on the feed), and that refusal was
+       swallowed, so public copies outlived a deleted account. Each copy is
+       now deleted by id (its owner may delete it), then the person's own. */
     try{
       const mine = await fbDb.collection('users').doc(uid).collection('signal').limit(200).get();
       for(let i = 0; i < mine.docs.length; i++){
+        try{
+          const pub = await fbDb.collection('signals').doc(mine.docs[i].id).get();
+          if(pub && pub.exists && (pub.data() || {}).uid === uid) await pub.ref.delete();
+        }catch(_){}
         await mine.docs[i].ref.delete();
         signals++;
       }
     }catch(_){}
+
   }
   const bases = [];
   try{ if(typeof SIGNAL_UPLOAD_WORKER_URL === 'string') bases.push(SIGNAL_UPLOAD_WORKER_URL); }catch(_){}

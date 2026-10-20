@@ -165,14 +165,17 @@ assert.strictEqual(LV.sentenceLang('He said thank you for the food and the water
   /* A. Naluno's African voice: Luganda goes to it as Luganda sounds in its
      symbols (numbers as Luganda words), nothing is paid for, English stays
      English. */
-  let w = world(() => audio, true);
+  /* 19 Oct d (kept as shipped): Luganda asks the trained Sunbird voice first
+     when it is set up; here it is not (503), so the phone's African voice speaks. */
+  const notSetUp = () => ({ ok: false, status: 503, arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)) });
+  let w = world(notSetUp, true);
   let ok = await w.g.NalunoVoices.speak(text, { voice: 'male', alive: () => true, plan: plan(w, 'male') });
   w.stop();
   assert.strictEqual(ok, true);
   const lgs = w.posted.filter((m) => m.type === 'af-say');
   assert.deepStrictEqual(lgs.map((m) => m.phones), ['weebale ɲɲˈo, ssˈebo.', 'abaantu ssˈatu baaɡeenda mu tʃibuɡa.'], 'Luganda sounds to the African voice');
   assert.ok(lgs.every((m) => m.female === false), 'the male setting');
-  assert.strictEqual(w.fetched.length, 0, 'the paid voice is not asked');
+  assert.ok(w.fetched.length <= 1, 'after "not set up" the paid voice is left alone');
   let says = w.posted.filter((m) => m.type === 'say');
   assert.strictEqual(says.length, 1, 'only the English sentence goes to the English-trained voice');
   assert.ok(Array.isArray(says[0].phonemes) && says[0].phonemes.some((s) => s.lg === 'kaːmpala'));
@@ -180,12 +183,20 @@ assert.strictEqual(LV.sentenceLang('He said thank you for the food and the water
   assert.strictEqual(w.g.NalunoVoices._own.state, 'ok');
   assert.strictEqual(w.rates.filter((r) => r === 22050).length, 2, 'two Luganda sentences from the African voice');
 
+  /* A2. Both there: the trained Sunbird voice speaks the Luganda. */
+  w = world(() => audio, true);
+  ok = await w.g.NalunoVoices.speak(text, { voice: 'male', alive: () => true, plan: plan(w, 'male') });
+  w.stop();
+  assert.strictEqual(ok, true);
+  assert.deepStrictEqual(w.fetched.map((f) => f.body.text).sort(), ['Abantu ssatu baagenda mu kibuga.', 'Weebale nnyo, ssebo.']);
+  assert.strictEqual(w.posted.filter((m) => m.type === 'af-say').length, 0);
+
   /* B. African voice files cannot be had, Sunbird key set: Sunbird. */
   w = world(() => audio, false);
   ok = await w.g.NalunoVoices.speak(text, { voice: 'male', alive: () => true, plan: plan(w, 'male') });
   w.stop();
   assert.strictEqual(ok, true);
-  assert.strictEqual(w.g.NalunoVoices._own.state, 'missing');
+  assert.notStrictEqual(w.g.NalunoVoices._own.state, 'ok', 'Sunbird answered first; the missing African voice was not used');
   assert.deepStrictEqual(w.fetched.map((f) => f.body.text).sort(), ['Abantu ssatu baagenda mu kibuga.', 'Weebale nnyo, ssebo.']);
   assert.strictEqual(w.posted.filter((m) => m.type === 'say').length, 1);
   assert.strictEqual(w.starts.length, 3);

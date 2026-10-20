@@ -21,7 +21,7 @@ const checks = [];
 function check(name, fn) { checks.push([name, fn]); }
 
 /* ---------- the phone's fallback when the detector does not finish ---------- */
-check('phone fallback: middle band out, nudity band and sexual title held, unread kept', async () => {
+check('phone fallback (19 Oct e): the skin check never holds or stops anything; unread kept', async () => {
   const src = read('js/nudenet.js');
   async function run(base, title) {
     const g = { console: { warn() {}, log() {} }, setTimeout, clearTimeout, Promise, Math, Date, JSON, Object, Array, Uint8Array, Float32Array, Number, String, RegExp, Error };
@@ -32,8 +32,8 @@ check('phone fallback: middle band out, nudity band and sexual title held, unrea
   }
   assert.strictEqual((await run({ decision: 'hold', reason: 'screen', score: 55, packed: {} }, 'Night walk')).decision, 'allow');
   const b = await run({ decision: 'block', reason: 'screen', score: 92, packed: {} }, 'Night walk');
-  assert.strictEqual(b.decision, 'hold'); assert.strictEqual(b.reason, 'heuristic-only');
-  assert.strictEqual((await run({ decision: 'hold', reason: 'screen', score: 20, packed: {} }, 'xxx tape')).decision, 'hold');
+  assert.strictEqual(b.decision, 'allow'); assert.strictEqual(b.engine, 'heuristic'); assert.strictEqual(b.unchecked, true);
+  assert.strictEqual((await run({ decision: 'hold', reason: 'screen', score: 20, packed: {} }, 'xxx tape')).decision, 'allow', 'words are the safety check\'s job, not skin');
   assert.strictEqual((await run({ decision: 'unread', reason: 'unread', score: 0, packed: null }, '')).decision, 'unread');
   assert.strictEqual((await run(null, '')).decision, 'unread');
   assert.strictEqual((await run({ decision: 'allow', reason: '', score: 5, packed: {} }, '')).decision, 'allow');
@@ -58,15 +58,23 @@ check('Let out / Restore fill visibility and publishAt only when missing', () =>
   assert.ok(/listed: true, held: false, heldReason: '', hidden: false, updatedAt: now,\n\s*\}, fill\.patch\)/.test(adm));
   assert.ok(/listed: true, held: false, hidden: false, hiddenReason: '', updatedAt: now,\n\s*\}, fill\.patch\)/.test(adm));
 });
-check('old skin-check holds: only the middle band of the skin check is released', () => {
-  const f = new Function('const SKIN_SEX_WORDS = /\\b(porn|porno|xxx|nsfw|onlyfans|nudes?|naked|hentai|cumshot|sex\\s*tape)\\b/i;' + grab(adm, 'legacyCatMs') + grab(adm, 'skinBandPatch') + 'return skinBandPatch;')();
+check('holds without a clear nudity finding are released by the desk; detector findings are not', () => {
+  const f = new Function('const SKIN_SEX_WORDS = /\\b(porn|porno|xxx|nsfw|onlyfans|nudes?|naked|hentai|cumshot|sex\\s*tape)\\b/i; const NO_FINDING_HELD = { screen: 1, review: 1, unscreened: 1 };' + grab(adm, 'legacyCatMs') + grab(adm, 'skinBandPatch') + 'return skinBandPatch;')();
   const now = 1.8e12;
   const base = { held: true, heldReason: 'screen', screenDecision: 'hold', screenReason: 'screen', visibility: 'public', publishAt: now - 9, title: 'Street at night' };
   const p = f(base, now);
   assert.strictEqual(p.listed, true); assert.strictEqual(p.held, false); assert.ok(!('visibility' in p));
   assert.strictEqual(f(Object.assign({}, base, { visibility: undefined, publishAt: undefined, createdAt: now - 77 }), now).publishAt, now - 77);
+  /* 19 Oct e: weak signs, the skin check, and posts never placed are released too. */
+  for (const okRow of [{ screenReason: 'possible-topless' }, { screenReason: 'heuristic-only' }, { screenReason: 'video-player-screenshot' },
+    { heldReason: 'unscreened', screenDecision: 'hold', screenReason: 'unread' },
+    { heldReason: 'review', screenDecision: undefined, screenReason: undefined, createdAt: now - 3600e3 }]) {
+    const q = f(Object.assign({}, base, okRow), now);
+    assert.ok(q && q.listed === true, JSON.stringify(okRow));
+  }
+  assert.strictEqual(f(Object.assign({}, base, { heldReason: 'review', screenDecision: undefined, screenReason: undefined, createdAt: now - 3600e3 }), now).screenDecision, 'unread', 'never read: marked for the after-the-fact look');
   for (const bad of [
-    { screenReason: 'possible-topless' }, { screenReason: 'heuristic-only' }, { screenReason: 'unscreened' }, { screenDecision: 'block' },
+    { screenReason: 'single-frame' }, { screenReason: 'found-on-fabric' }, { heldReason: 'review', screenDecision: undefined, createdAt: now - 60e3 }, { screenDecision: 'block' },
     { heldReason: 'safety-review' }, { heldReason: 'new-publisher' }, { safetyDecision: 'REVIEW' }, { visibility: 'private' },
     { hidden: true }, { deleted: true }, { held: false }, { title: 'xxx night' }, { caption: 'my nudes' },
   ]) assert.strictEqual(f(Object.assign({}, base, bad), now), null, JSON.stringify(bad));

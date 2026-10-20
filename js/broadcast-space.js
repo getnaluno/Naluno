@@ -2660,6 +2660,17 @@ async function bspaceStopLive(){
           }
         }
       }catch(_){}
+        /* 20 Oct b: the recording is checked like any new video before it
+           becomes a chapter anyone can watch. Clear nudity: not saved. */
+        let liveScreen = null;
+        if(typeof nalunoScreenReplacement === 'function'){
+          if(progress) progress('Screen is reading the recording…');
+          try{ liveScreen = await nalunoScreenReplacement(liveBlob, 'Live', liveDur || 0); }
+          catch(se){
+            if(se && se.screenBlocked){ try{ toast('The live recording was not saved. ' + se.message); }catch(_){} return; }
+            throw se;
+          }
+        }
 if(progress) progress('Uploading live recording…');
         const url = (typeof uploadBroadcastFile === 'function')
           ? await uploadBroadcastFile(liveBlob, progress)
@@ -2690,6 +2701,7 @@ if(progress) progress('Uploading live recording…');
           thumbUrl: d.thumbUrl || liveThumb || null,
           updatedAt: Date.now(),
         }, { merge:true });
+        if(typeof nalunoRecheckAfterReplace === 'function') nalunoRecheckAfterReplace(bcastId, liveScreen).catch(function(){});
         try{
           await ref.collection('journey').add({
             type: 'live_recording',
@@ -4895,8 +4907,14 @@ function replaceBroadcastChapter(index){
 async function replaceBroadcastChapterWithFile(index, file){
   if(!activeBroadcastMeta || !activeBroadcastMeta.isMine) return;
   if(!bspaceChapterList || !bspaceChapterList[index] || !file) return;
-  toast('Uploading replacement…');
   try{
+    /* 20 Oct b: the replacement is checked before it is uploaded. */
+    let repScreen = null;
+    if(typeof nalunoScreenReplacement === 'function'){
+      toast('Screen is reading the replacement…');
+      repScreen = await nalunoScreenReplacement(file, (activeBroadcastMeta && activeBroadcastMeta.title) || '', 0);
+    }
+    toast('Uploading replacement…');
     let url = '';
     if(typeof uploadBroadcastFile === 'function') url = await uploadBroadcastFile(file);
     else if(typeof uploadVideoToR2 === 'function') url = await uploadVideoToR2(file);
@@ -4906,6 +4924,7 @@ async function replaceBroadcastChapterWithFile(index, file){
     ch.replacementUrl = url;
     ch.replacedAt = Date.now();
     await persistBroadcastChapters();
+    if(typeof nalunoRecheckAfterReplace === 'function') nalunoRecheckAfterReplace(activeBroadcastId, repScreen).catch(function(){});
     toast('Chapter replaced');
     playBroadcastChapter(index, true);
     wireBroadcastChapterPlayer(bspaceChapterList, bspaceBreatherList, { showChips: true });
@@ -5171,7 +5190,13 @@ async function bspaceSaveEdit(){
   const btn = inline ? $('bspaceInlineSave') : $('bspaceEditSave');
   if(btn) btn.disabled = true;
   try{
+    let coverScreen = null;
     if(inline && bspacePendingCover){
+      /* 20 Oct b: the new photo is checked before it is uploaded. */
+      if(typeof nalunoScreenReplacement === 'function'){
+        toast('Screen is reading the new photo…');
+        coverScreen = await nalunoScreenReplacement(bspacePendingCover, title, 0);
+      }
       toast('Uploading photo…');
       let coverUrl = '';
       if(typeof uploadPhotoToR2 === 'function') coverUrl = await uploadPhotoToR2(bspacePendingCover);
@@ -5181,6 +5206,9 @@ async function bspaceSaveEdit(){
       patch.mediaUrl = coverUrl;
     }
     await fbDb.collection('broadcasts').doc(activeBroadcastId).update(patch);
+    if(patch.mediaUrl && typeof nalunoRecheckAfterReplace === 'function'){
+      nalunoRecheckAfterReplace(activeBroadcastId, coverScreen).catch(function(){});
+    }
     activeBroadcastMeta.title = patch.title;
     activeBroadcastMeta.description = description;
     if(patch.thumbUrl){

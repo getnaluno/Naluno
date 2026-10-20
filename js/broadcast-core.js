@@ -380,26 +380,147 @@ function broadcastVisibleTo(b, uid){
 function nalunoEconomyUrlBroadcast(){
   return 'https://naluno-economy.naluno.workers.dev';
 }
-async function nalunoPlaceBroadcast(id, screen){
+async function nalunoPlaceBroadcast(id, screen, packedAgain, opts){
   if(!id) return null;
   try{
     const user = (typeof currentUser !== 'undefined') ? currentUser : null;
     const tok = user && user.getIdToken ? await user.getIdToken() : '';
     if(!tok) return null;
-    let packed = null;
+    let packed = packedAgain || null;
     try{
-      if(screen && typeof nalunoScreenPack === 'function') packed = nalunoScreenPack(screen);
+      if(packed){}
+      else if(screen && typeof nalunoScreenPack === 'function') packed = nalunoScreenPack(screen);
       else if(screen && screen.packed) packed = screen.packed;
     }catch(_){}
     const r = await fetch(nalunoEconomyUrlBroadcast() + '/v1/broadcast/place', {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ broadcast_id: id, screen: packed }),
+      body: JSON.stringify(Object.assign({ broadcast_id: id, screen: packed }, (opts && opts.recheck) ? { recheck: true } : {})),
       cache: 'no-store',
     });
     return await r.json().catch(function(){ return null; });
   }catch(_){ return null; }
 }
+
+/* 19 Oct e: a new Broadcast is saved "waiting" and only the economy worker
+   can put it on the feed. If that call failed (no signal, the worker busy),
+   the post used to wait for ever, and the maker saw every new post held.
+   The phone now keeps the post's id and the detector's findings, and asks
+   again: at the next start, when the phone comes back online, and a minute
+   later. The worker judges it exactly as at first (the findings, not the
+   phone's word). Kept per account, at most 30, for 7 days. */
+function nalunoPlaceQueueKey(){
+  try{ const u = (typeof currentUser !== 'undefined' && currentUser) ? currentUser.uid : ''; return u ? ('nalunoPlaceQueue:' + u) : ''; }catch(_){ return ''; }
+}
+function nalunoPlaceQueueRead(){
+  const k = nalunoPlaceQueueKey();
+  if(!k) return [];
+  try{ const a = JSON.parse(localStorage.getItem(k) || '[]'); return Array.isArray(a) ? a.filter(function(x){ return x && typeof x.id === 'string'; }) : []; }catch(_){ return []; }
+}
+function nalunoPlaceQueueWrite(list){
+  const k = nalunoPlaceQueueKey();
+  if(!k) return;
+  try{
+    if(!list.length) localStorage.removeItem(k);
+    else localStorage.setItem(k, JSON.stringify(list.slice(0, 30)));
+  }catch(_){}
+}
+function nalunoPlaceQueueAdd(id, screen, recheck){
+  if(!id) return;
+  let nudenet = null;
+  try{ if(screen && screen.packed && screen.packed.nudenet) nudenet = screen.packed.nudenet; }catch(_){}
+  const list = nalunoPlaceQueueRead().filter(function(x){ return x.id !== id; });
+  list.unshift({ id: String(id), at: Date.now(), n: 0, nudenet: nudenet, recheck: !!recheck });
+  nalunoPlaceQueueWrite(list);
+}
+let nalunoPlaceRetryBusy = false;
+async function nalunoPlaceRetry(){
+  if(nalunoPlaceRetryBusy) return 0;
+  if(typeof navigator !== 'undefined' && navigator.onLine === false) return 0;
+  const list = nalunoPlaceQueueRead();
+  if(!list.length) return 0;
+  nalunoPlaceRetryBusy = true;
+  let placedCount = 0;
+  const keep = [];
+  try{
+    for(const item of list){
+      if(Date.now() - (Number(item.at) || 0) > 7 * 24 * 3600 * 1000){ continue; }
+      let r = null;
+      try{ r = await nalunoPlaceBroadcast(item.id, null, item.nudenet ? { w: 0, h: 0, frames: [], nudenet: item.nudenet } : null, { recheck: !!item.recheck }); }catch(_){ r = null; }
+      if(r && r.ok && r.wrote){
+        placedCount++;
+        try{
+          const row = (typeof myBroadcasts !== 'undefined' && myBroadcasts) ? myBroadcasts.find(function(b){ return b && b.id === item.id; }) : null;
+          if(row) Object.assign(row, { listed: !!r.listed, held: !!r.held, hidden: !!r.hidden, heldReason: r.heldReason || '' });
+        }catch(_){}
+        continue;
+      }
+      /* Gone, or not this account's: nothing to place. */
+      if(r && r.ok === false && (r.error === 'missing' || r.error === 'not yours')) continue;
+      keep.push(Object.assign({}, item, { n: (Number(item.n) || 0) + 1 }));
+    }
+  }finally{
+    nalunoPlaceQueueWrite(keep);
+    nalunoPlaceRetryBusy = false;
+  }
+  if(placedCount){
+    try{ if(typeof renderBroadcastTab === 'function') renderBroadcastTab(); }catch(_){}
+  }
+  return placedCount;
+}
+function nalunoPlaceRetrySoon(ms){
+  setTimeout(function(){ nalunoPlaceRetry().catch(function(){}); }, typeof ms === 'number' ? ms : 4000);
+}
+try{ window.addEventListener('online', function(){ nalunoPlaceRetrySoon(1500); }); }catch(_){}
+window.nalunoPlaceRetry = nalunoPlaceRetry;
+
+/* 20 Oct b: a creator may replace the photo or video of a post that is
+   already out (a Writing cover, a chapter, a live saved as a chapter). The
+   new file is checked like a new post: Screen reads it first, clear nudity
+   is refused before anything is uploaded, and after the post is saved the
+   worker judges the new file's findings (it only ever tightens: a detector
+   finding holds the post for a person; nothing else changes its place). */
+async function nalunoScreenReplacement(file, title, durationHint){
+  let v = null;
+  if(file && typeof runNalunoScreen === 'function'){
+    const p = runNalunoScreen(file, title || '', durationHint || 0).catch(function(){ return null; });
+    v = (typeof nalunoStrictVerdict === 'function') ? await nalunoStrictVerdict(p) : await p;
+  }
+  v = v || { decision: 'unread', engine: 'none' };
+  if(v.decision === 'block'){
+    const err = new Error('This cannot go out' + (v.reasonText ? ': it shows ' + v.reasonText : '') + '. Swimwear, lingerie and shirtless photos are fine — exposed genitals, exposed female breasts and sexual acts are not.');
+    err.screenBlocked = true;
+    err.screen = v;
+    throw err;
+  }
+  return v;
+}
+async function nalunoRecheckAfterReplace(id, screen){
+  if(!id) return null;
+  let r = null;
+  try{ r = await nalunoPlaceBroadcast(id, screen, null, { recheck: true }); }catch(_){ r = null; }
+  if(!r || r.ok === false || !r.wrote){
+    if(!(r && r.ok === false && (r.error === 'missing' || r.error === 'not yours'))){
+      nalunoPlaceQueueAdd(id, screen, true);
+      nalunoPlaceRetrySoon(60000);
+    }
+    return r;
+  }
+  try{
+    const apply = function(list){
+      const row = (list || []).find(function(b){ return b && b.id === id; });
+      if(row) Object.assign(row, { listed: !!r.listed, held: !!r.held, hidden: !!r.hidden, heldReason: r.heldReason || '' });
+    };
+    if(typeof myBroadcasts !== 'undefined') apply(myBroadcasts);
+    if(typeof feedBroadcasts !== 'undefined') apply(feedBroadcasts);
+  }catch(_){}
+  if(r.hidden && r.screen === 'block'){ try{ toast('The new file cannot go out. The post is off the feed.'); }catch(_){} }
+  else if(r.held && r.screen === 'hold'){ try{ toast('Saved. A person at Naluno looks at the new file before the post goes back on the feed.'); }catch(_){} }
+  return r;
+}
+window.nalunoScreenReplacement = nalunoScreenReplacement;
+window.nalunoRecheckAfterReplace = nalunoRecheckAfterReplace;
+window.nalunoPlaceQueueRead = nalunoPlaceQueueRead;
 
 async function broadcastWritingCredit(text){
   if(!text || !window.NalunoPass || typeof NalunoPass.findCredit !== 'function') return null;
@@ -597,6 +718,14 @@ async function createPermanentBroadcast({ title, description, tags, mediaType, m
   }catch(_){}
   let placed = null;
   try{ placed = await nalunoPlaceBroadcast(ref.id, screenReport); }catch(_){ placed = null; }
+  /* Not placed (no answer, or the worker could not write): ask again later
+     instead of leaving it waiting for ever. */
+  if(!placed || placed.ok === false || !placed.wrote){
+    if(!(placed && placed.ok === false && (placed.error === 'missing' || placed.error === 'not yours'))){
+      nalunoPlaceQueueAdd(ref.id, screenReport);
+      nalunoPlaceRetrySoon(60000);
+    }
+  }
   if(placed && placed.wrote){
     doc.listed = !!placed.listed;
     doc.held = !!placed.held;
@@ -1291,6 +1420,10 @@ window.nalunoMergeOwnerBroadcasts = nalunoMergeOwnerBroadcasts;
 function startFeedBroadcastsListener(){
   if(!fbDb || !currentUser) return;
   if(feedBroadcastsUnsub) return;
+  if(!startFeedBroadcastsListener._placeRetried){
+    startFeedBroadcastsListener._placeRetried = true;
+    try{ nalunoPlaceRetrySoon(5000); }catch(_){}
+  }
   /* Let the server-clock measurement land first (it is one small request
      made at start-up), so the feed is not bounded two minutes back. */
   try{

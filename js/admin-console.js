@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261017f';
+  const BUILD = '20261020b';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -2091,6 +2091,7 @@
   /* Same wording as MOD_REASON_TEXT in js/nudenet.js — a test checks they match,
      so a reviewer never reads a different reason than the uploader was shown. */
   const MOD_REASON_TEXT = {
+    'found-on-fabric': 'exposed genitals (the detector), on what may be clothing',
     'genitals': 'exposed genitals',
     'anus': 'exposed anus',
     'topless': 'an exposed female breast',
@@ -2110,6 +2111,7 @@
     const r = String((b && b.screenReason) || '');
     if (r === 'heuristic-only') return 'Old skin check only (detector did not run) — judge it yourself';
     let t = MOD_REASON_TEXT[r] || r;
+    if (r === 'found-on-fabric' && b.screenDetail) return 'the detector found ' + (MOD_REASON_TEXT[b.screenDetail] || b.screenDetail) + ' on what may be clothing — look at it';
     if (r === 'single-frame' && b.screenDetail) {
       t = 'one frame may show ' + (MOD_REASON_TEXT[b.screenDetail] || b.screenDetail);
     }
@@ -2137,7 +2139,7 @@
       + '<li>Dancing, twerking, pole and stage shows, suggestive poses, modelling, fitness, beach, pool, bedroom</li>'
       + '<li>Kissing and affection between clothed people</li></ul>'
       + '<p><strong>The test is what is exposed</strong> — never how much skin shows or how provocative it looks. '
-      + 'A weak sign, one doubtful frame, or a picture the detector could not read is not a clear sign and is not held. '
+      + 'Skin colour is never a reason. A weak sign, or a picture the detector could not read, is not a clear sign and is not held (an unread one is listed under "Published without a check" in Trust). What is held for you: a video where the detector found an exposed part in ONE still (two or more stills, or a photo, is stopped), and exposed genitals the detector found on what may be clothing. '
       + 'Only a clear finding stops a post: genitals or anus at 0.50, a female breast at 0.55, two intimate parts at 0.40, a near-certain frame at 0.80, or the same clear sign on two frames.</p>'
       + '<p>The detector cannot see a sexual act when nothing is exposed. A video-player screenshot is not, by itself, a clear sign, so it is not held. '
       + 'Reports and this desk still catch a real act the detector cannot see.</p></details>';
@@ -2234,7 +2236,10 @@
     const photo = bcastIsPhoto(b);
     const why = mode === 'hidden'
       ? (b.hiddenReason === 'screen' ? 'Naluno Screen' : (b.hiddenReason || 'taken down'))
-      : (b.heldReason === 'screen' ? 'Screen unsure' : (b.heldReason || 'new publisher'));
+      : (b.heldReason === 'screen'
+        ? (b.screenReason === 'single-frame' ? 'Screen found nudity in one still'
+          : (b.screenReason === 'found-on-fabric' ? 'Screen found exposed genitals, maybe on clothing' : 'Screen (older rule, no clear finding)'))
+        : (b.heldReason || 'new publisher'));
     const screenBit = b.screenDecision
       ? ('Screen ' + b.screenDecision + (b.screenReason ? (' — ' + screenWhy(b)) : '')
          + (b.screenScore != null ? (' · ' + b.screenScore) : ''))
@@ -2594,21 +2599,34 @@
     };
   }
 
-  /* 15 Oct: Broadcasts held only by the old skin check's middle band
-     (Screen reason "screen", decision "hold"). From 15 Oct that band goes
-     out; these were held before the change. A nudity verdict (any other
-     Screen reason), a sexual title, a safety hold, a private or taken-down
-     Broadcast is never released here. */
+  /* 15 Oct, widened 19 Oct e: Broadcasts held without a clear finding of
+     nudity. Screen now holds only when the detector found nudity in a still
+     of a video ("single-frame") and stops a clear photo ("block"). Before,
+     the skin check, weak signs (possible-topless, possible-nudity, a video
+     player bar) and a post the worker never placed ("review") were held too,
+     and those wait here for nothing. Release never touches a detector
+     finding, a block, a sexual title, a safety hold, a private, taken-down
+     or deleted Broadcast, or one created in the last 10 minutes (it may
+     still be being placed). */
   const SKIN_SEX_WORDS = /\b(porn|porno|xxx|nsfw|onlyfans|nudes?|naked|hentai|cumshot|sex\s*tape)\b/i;
+  const NO_FINDING_HELD = { screen: 1, review: 1, unscreened: 1 };
   function skinBandPatch(row, now) {
     const r = row || {};
     if (r.deleted || r.hidden === true || r.held !== true) return null;
-    if (String(r.heldReason || '') !== 'screen') return null;
-    if (String(r.screenDecision || '') !== 'hold' || String(r.screenReason || '') !== 'screen') return null;
+    const why = String(r.heldReason || '');
+    if (!NO_FINDING_HELD[why]) return null;
+    if (String(r.screenDecision || '') === 'block') return null;
+    if (String(r.screenReason || '') === 'single-frame' || String(r.screenReason || '') === 'found-on-fabric') return null;
     if (r.visibility === 'private') return null;
     if (SKIN_SEX_WORDS.test(String(r.title || '') + ' ' + String(r.caption || ''))) return null;
     if (['REVIEW', 'REMOVE', 'ESCALATE', 'AGE_RESTRICT', 'REGION_RESTRICT'].indexOf(String(r.safetyDecision || '')) >= 0) return null;
-    const patch = { listed: true, held: false, heldReason: '', releasedAt: now, releasedWhy: 'skin-check-middle-band' };
+    if (why === 'review') {
+      const made = legacyCatMs(r.createdAt) || legacyCatMs(r.updatedAt);
+      if (!(made > 0) || now - made < 10 * 60 * 1000) return null;
+    }
+    const patch = { listed: true, held: false, heldReason: '', releasedAt: now, releasedWhy: 'no-clear-nudity-finding' };
+    /* Never read by the worker: say so, so it shows in "Published without a check". */
+    if (!r.screenDecision) patch.screenDecision = 'unread';
     if (r.visibility == null || r.visibility === '') patch.visibility = 'public';
     if (r.hidden == null) patch.hidden = false;
     if (!(typeof r.publishAt === 'number' && r.publishAt > 0)) {
@@ -2635,14 +2653,14 @@
         const found = []; let staying = 0;
         (snap.docs || []).forEach(function (d) {
           const row = d.data() || {};
-          if (String(row.heldReason || '') !== 'screen') return;
+          if (!NO_FINDING_HELD[String(row.heldReason || '')]) return;
           const patch = skinBandPatch(row, Date.now());
           if (patch) found.push({ id: d.id, title: String(row.title || ''), patch: patch });
           else staying++;
         });
         last = { found: found };
         const n = found.length;
-        out.innerHTML = escapeHtml(n + ' held only by the old skin check can go out.' + (staying ? ' ' + staying + ' held by Screen for another reason stay for you to look at.' : ''))
+        out.innerHTML = escapeHtml(n + ' held without a clear nudity finding can go out.' + (staying ? ' ' + staying + ' stay for you to look at (a detector finding, a sexual title, a safety check, private, or made in the last 10 minutes).' : ''))
           + (n ? '<br>' + found.slice(0, 12).map(function (r) { return escapeHtml((r.title || '(untitled)').slice(0, 60)); }).join('<br>') + (n > 12 ? '<br>…' : '') : '');
         apply.disabled = !n;
       } catch (e) {
@@ -2652,7 +2670,7 @@
     apply.onclick = async function () {
       if (!last || !last.found.length) return;
       const n = last.found.length;
-      if (!window.confirm('Release ' + n + ' Broadcast' + (n === 1 ? '' : 's') + ' held only by the old skin check?')) return;
+      if (!window.confirm('Release ' + n + ' Broadcast' + (n === 1 ? '' : 's') + ' held without a clear nudity finding?')) return;
       const db = adminDb();
       if (!db) { out.textContent = 'Database is not ready'; return; }
       apply.disabled = true; check.disabled = true;
@@ -2660,7 +2678,7 @@
         const runId = 'skin-band-release-' + Date.now();
         for (let i = 0; i < last.found.length; i += 300) {
           const part = last.found.slice(i, i + 300).map(function (r) { return { id: r.id, set: Object.keys(r.patch) }; });
-          const ok = await writeAudit('broadcast-skin-band-release', runId, 'held only by the old skin check middle band', { part: i / 300, items: part });
+          const ok = await writeAudit('broadcast-skin-band-release', runId, 'held without a clear nudity finding (skin check, weak sign, never placed)', { part: i / 300, items: part });
           if (!ok) throw new Error('The audit record could not be saved, so nothing was changed.');
         }
         let done = 0;
@@ -3830,7 +3848,10 @@
     const goesPublic = aud === 'public' && exp > now && p.hidden !== true && u.hidden !== true;
     return {
       user: user,
-      pub: Object.assign({}, user, { public: goesPublic }),
+      /* 19 Oct e: the Signals list shows a copy while feedUntil is ahead
+         (firestore.rules), so a release must set it too, or the released
+         Signal stays off the list; one that does not go public gets 0. */
+      pub: Object.assign({}, user, { public: goesPublic, feedUntil: goesPublic ? exp : 0 }),
       goesPublic: goesPublic,
     };
   }
@@ -3858,7 +3879,7 @@
       else if (String(userRow.audience || (pubRow && pubRow.audience) || '') === 'public') toast('Released for connections. Its 24 hours are over, so it is not shown to everyone.');
     } else {
       const userPatch = { hidden: true, held: false, heldReason: '', reviewedAt: now, reviewedBy: by };
-      const pubPatch = Object.assign({}, userPatch, { public: false });
+      const pubPatch = Object.assign({}, userPatch, { public: false, feedUntil: 0 });
       await userRef.set(userPatch, { merge: true });
       try { await pubRef.set(pubPatch, { merge: true }); } catch (_) {}
     }
@@ -4687,10 +4708,10 @@
           + '<button type="button" class="btn" id="newPubCheck">Check</button>'
           + '<button type="button" class="btn" id="newPubApply" disabled>Release</button></div>'
           + '<div class="sub" id="newPubOut"></div>')
-        + card('Held only by the old skin check',
-          '<p class="sub">Until 15 Oct, when the on-phone detector did not finish, a weaker skin check decided, and anything in its middle band (a face, warm light, a street at night) was held. '
-          + 'From 15 Oct that band goes out. Check counts the ones held that way before and changes nothing. Release never touches one Screen held for nudity, one with a sexual title, '
-          + 'one held by a safety check, a private, taken-down or deleted Broadcast. What it releases is saved in the audit first.</p>'
+        + card('Held without a clear nudity finding',
+          '<p class="sub">Screen now holds a Broadcast only when the detector finds nudity in a still of a video, and stops a photo that clearly shows it. Skin colour is never a reason. '
+          + 'Before 19 Oct the skin check, weak signs (a possible breast, a video-player bar) and posts the worker never placed were held as well. Check counts those and changes nothing. '
+          + 'Release never touches a detector finding, a block, a sexual title, a safety hold, a private, taken-down or deleted Broadcast, or one made in the last 10 minutes. What it releases is saved in the audit first.</p>'
           + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;">'
           + '<button type="button" class="btn" id="skinBandCheck">Check</button>'
           + '<button type="button" class="btn" id="skinBandApply" disabled>Release</button></div>'
@@ -5068,6 +5089,7 @@
             + '<div class="review-list">' + (sf.open || []).map(reportReviewCard).join('') + '</div>'
           : '<p class="sub">No open reports.</p>')
         + card('Publishers waiting for a decision', '<div id="pubReviewList"><p class="sub">Reading…</p></div>')
+        + card('Published without a check', '<div id="uncheckedList"><p class="sub">Reading…</p></div>')
         + card('Waiting to go out', held.length
           ? '<p class="sub">Watch here, then Let out or Take down. It stays on their list until you decide.</p>'
             + '<div class="review-list">' + held.map(function (b) { return trustReviewCard(b, 'held'); }).join('') + '</div>'
@@ -5084,6 +5106,7 @@
         btn.onclick = function () { actReport(btn.getAttribute('data-id'), btn.getAttribute('data-d')); };
       });
       loadPublisherReviews(el);
+      loadUncheckedBroadcasts(el);
       el.querySelectorAll('.admBmod').forEach(function (btn) {
         btn.onclick = function () {
           modBroadcast(btn.getAttribute('data-id'), btn.getAttribute('data-a'), btn.getAttribute('data-uid') || '');
@@ -8156,6 +8179,79 @@
     await writeAudit(keep ? 'publisher-keep-trusting' : 'publisher-stop-trusting', who, keep ? 'reviewed: keep trusting' : 'reviewed: stop trusting');
     toast(keep ? 'Their next Broadcasts go out as before' : 'Their new Broadcasts will wait for a look');
     return true;
+  }
+  /* 19 Oct e: a Broadcast the detector could not read (an old phone, no
+     signal while the model loaded) is not a sign of nudity, so it goes out.
+     It is listed here so a person can look afterwards: Looked marks it
+     seen, Take down removes it. */
+  /* 20 Oct b: the same as screenMediaKey in workers/economy/screen.mjs. */
+  function mediaKeyOf(row) {
+    const r = row || {};
+    const urls = [];
+    const add = function (u) { const s = String(u || '').trim(); if (/^https?:/i.test(s) && urls.indexOf(s) < 0) urls.push(s); };
+    add(r.mediaUrl);
+    (Array.isArray(r.chapters) ? r.chapters : []).forEach(function (c) { if (c) { add(c.mediaUrl); add(c.replacementUrl); } });
+    return urls.sort().join('\n').slice(0, 4000);
+  }
+  window.nalunoMediaKeyOf = mediaKeyOf;
+  /* A file changed after its check: the worker's record of what it judged no
+     longer matches the post (an older app, or a re-check that never arrived). */
+  function changedAfterCheck(b) {
+    return !!(b && typeof b.screenMedia === 'string' && b.screenMedia !== mediaKeyOf(b));
+  }
+  function uncheckedRows(docs) {
+    return (docs || []).map(function (d) { return Object.assign({ id: d.id }, d.data() || {}); })
+      .filter(function (b) {
+        if (!b || b.deleted || b.hidden === true || b.listed !== true) return false;
+        if (changedAfterCheck(b)) return !(b.screenLookedAt && b.screenLookedMedia === mediaKeyOf(b));
+        return !b.screenLookedAt && b.screenDecision === 'unread';
+      })
+      .filter(function (b, i, all) { return all.findIndex(function (x) { return x.id === b.id; }) === i; })
+      .sort(function (x, y) { return (Number(y.createdAt) || 0) - (Number(x.createdAt) || 0); })
+      .slice(0, 30);
+  }
+  window.nalunoUncheckedRows = uncheckedRows;
+  async function loadUncheckedBroadcasts(root) {
+    const box = root && root.querySelector('#uncheckedList');
+    const db = adminDb();
+    if (!box || !db) return;
+    try {
+      const snap = await db.collection('broadcasts').where('screenDecision', '==', 'unread').limit(120).get();
+      let recent = null;
+      try { recent = await db.collection('broadcasts').orderBy('updatedAt', 'desc').limit(300).get(); } catch (_) { recent = null; }
+      const rows = uncheckedRows([].concat((snap && snap.docs) || [], (recent && recent.docs) || []));
+      if (!rows.length) { box.innerHTML = '<p class="sub">Nothing to look at. Every public Broadcast was read by Screen, or you have looked at it.</p>'; return; }
+      box.innerHTML = '<p class="sub">Screen could not read these on the phone, so they went out (no reading is not nudity), or the photo or video was replaced after its check and the new file was not read. Look, then mark Looked or Take down.</p>'
+        + '<div class="review-list">' + rows.map(function (b) {
+          const card = trustReviewCard(b, 'hidden');
+          const id = escapeHtml(b.id || '');
+          return card.replace(/<button type="button" class="ghost admBmod" data-id="[^"]*" data-a="restore">Restore<\/button>/,
+            '<button type="button" class="primary admLooked" data-id="' + id + '">Looked</button> '
+            + '<button type="button" class="ghost admBmod" data-id="' + id + '" data-a="take-down">Take down</button>')
+            .replace(/Naluno Screen|taken down/, changedAfterCheck(b) ? 'file changed after its check' : 'not read by Screen');
+        }).join('') + '</div>';
+      box.querySelectorAll('.admLooked').forEach(function (btn) {
+        btn.onclick = async function () {
+          btn.disabled = true;
+          const id = btn.getAttribute('data-id');
+          try {
+            const ok = await writeAudit('broadcast-unchecked-looked', id, 'Looked at after it went out without a Screen reading');
+            if (!ok) throw new Error('The audit record could not be saved, so nothing was changed.');
+            const row = rows.find(function (r) { return r.id === id; }) || {};
+            await db.collection('broadcasts').doc(id).set({ screenLookedAt: Date.now(), screenLookedBy: (currentUser && currentUser.uid) || '', screenLookedMedia: mediaKeyOf(row) }, { merge: true });
+            toast('Marked as looked at.');
+            await loadUncheckedBroadcasts(root);
+          } catch (e) { btn.disabled = false; toast((e && e.message) || 'Could not save that'); }
+        };
+      });
+      box.querySelectorAll('.admBmod').forEach(function (btn) {
+        btn.onclick = function () { modBroadcast(btn.getAttribute('data-id'), btn.getAttribute('data-a'), btn.getAttribute('data-uid') || ''); };
+      });
+      wireTrustMedia(box);
+      try { if (typeof wireDeskJumps === 'function') wireDeskJumps(box); } catch (_) {}
+    } catch (e) {
+      box.innerHTML = '<p class="sub">Could not read: ' + escapeHtml((e && e.message) || String(e)) + '</p>';
+    }
   }
   async function loadPublisherReviews(root) {
     const box = root && root.querySelector('#pubReviewList');

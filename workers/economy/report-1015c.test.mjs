@@ -22,27 +22,30 @@ test("skin check alone: middle band goes out (was held)", () => {
   /* not trusted (reported, waiting for the desk) still goes out on an allow, as before */
   assert.equal(listingFromScreen({ trusted: false, hasScreen: true, decision: j.decision }).listed, true);
 });
-test("skin check alone: its nudity band is still held, never rejected by itself", () => {
+test("skin check alone never holds (19 Oct e): its old nudity band goes out", () => {
   const j = judgeScreenPayload(pay(skinAll), { title: "hello" });
-  assert.equal(j.decision, "hold");
-  assert.equal(j.reason, "heuristic-only");
-  assert.equal(listingFromScreen({ trusted: true, hasScreen: true, decision: j.decision }).held, true);
+  assert.equal(j.decision, "allow");
+  assert.equal(j.engine, "heuristic");
+  assert.equal(listingFromScreen({ trusted: true, hasScreen: true, decision: j.decision }).listed, true);
 });
-test("skin check alone: a sexual title keeps the middle band held", () => {
+test("skin check alone: a sexual title does not make skin a reason to hold", () => {
+  /* Words are judged by the safety check (scorePublicText), not by skin. */
   const j = judgeScreenPayload(pay(face), { title: "my nudes" });
-  assert.equal(j.decision, "hold");
-  assert.equal(listingFromScreen({ trusted: true, hasScreen: true, decision: j.decision }).held, true);
+  assert.equal(j.decision, "allow");
 });
 test("clear picture still allowed; no picture still unread", () => {
   assert.equal(judgeScreenPayload(pay(clear), { title: "" }).decision, "allow");
   assert.equal(judgeScreenPayload(null).decision, "unread");
   assert.equal(judgeScreenPayload({ v: 3, w: W, h: H, frames: [] }).decision, "unread");
 });
-test("the detector's verdict still decides when it ran (a hold is kept)", () => {
+test("the detector's verdict decides when it ran: a clear finding stops, a weak one does not", () => {
   /* class 3 = FEMALE_BREAST_EXPOSED in NudeNet's label order */
-  const j = judgeScreenPayload({ v: 3, w: W, h: H, frames: [{ rgb: rgbToB64(clear) }], nudenet: { v: 1, frames: [{ d: [[3, 0.5]], p: 0 }] } });
+  let j = judgeScreenPayload({ v: 3, w: W, h: H, frames: [{ rgb: rgbToB64(clear) }], nudenet: { v: 1, frames: [{ d: [[3, 0.7]], p: 0 }] } });
   assert.equal(j.engine, "nudenet");
-  assert.notEqual(j.decision, "allow");
+  assert.equal(j.decision, "block");
+  j = judgeScreenPayload({ v: 3, w: W, h: H, frames: [{ rgb: rgbToB64(skinAll) }], nudenet: { v: 1, frames: [{ d: [[3, 0.4]], p: 0 }] } });
+  assert.equal(j.engine, "nudenet");
+  assert.equal(j.decision, "allow", "a weak sign over skin-coloured stills is not a finding");
 });
 
 test("Let out / Restore fill only what the feed needs and is missing", () => {

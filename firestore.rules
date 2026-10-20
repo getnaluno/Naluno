@@ -227,7 +227,8 @@ service cloud.firestore {
     function keepsBroadcastListing() {
       return !request.resource.data.diff(resource.data).affectedKeys()
         .hasAny(['listed', 'hidden', 'held', 'hiddenReason', 'hiddenAt', 'hiddenBy', 'heldReason',
-                 'screenDecision', 'screenScore', 'screenReason', 'screenVersion', 'screenFrames']);
+                 'screenDecision', 'screenScore', 'screenReason', 'screenVersion', 'screenFrames',
+                 'screenDetail', 'screenFrame', 'screenLookedAt', 'screenLookedBy', 'screenEngine', 'screenMedia', 'screenLookedMedia']);
     }
     /* A stored video file needs a Reach pass the worker just issued.
        A live room has no file. A pass-on is not a new upload. */
@@ -1040,7 +1041,8 @@ service cloud.firestore {
         && request.resource.data.held == true
         && request.resource.data.hidden == false
         // 14 Oct e: Screen's verdict is written by the worker, never by the phone.
-        && !request.resource.data.keys().hasAny(['screenDecision', 'screenScore', 'screenReason', 'screenVersion', 'screenFrames'])
+        && !request.resource.data.keys().hasAny(['screenDecision', 'screenScore', 'screenReason', 'screenVersion', 'screenFrames',
+                                                  'screenDetail', 'screenFrame', 'screenLookedAt', 'screenLookedBy', 'screenEngine', 'screenMedia', 'screenLookedMedia'])
         && reachPassOk(id)
         && videoHasPass();
       // Creator may rewrite; others may only touch engagement/live/membership fields.

@@ -113,23 +113,40 @@ test("worker re-scores rgb and ignores client allow", () => {
     frames: [{ rgb: rgbToB64(rgb) }],
   });
   assert.equal(j.hasScreen, true);
-  /* CHANGED DELIBERATELY. A flat patch of skin colour is exactly what the old
-     skin heuristic could not tell apart from a bare arm, a face or a
-     shirtless torso — which is why it rejected genuine uploads. Under the
-     moderation rulebook the heuristic may no longer REJECT on its own; weak
-     evidence goes to a person. What this test protects is unchanged: the
-     client's "allow" is ignored and the upload does not go out. */
-  assert.equal(j.decision, "hold");
-  assert.equal(listingFromScreen({ trusted: true, hasScreen: true, decision: j.decision }).listed, false);
+  /* CHANGED DELIBERATELY (19 Oct e). A flat patch of skin colour is not
+     nudity. The skin check never holds and never rejects; only the
+     detector's clear findings do. The worker still reads the stills itself
+     (the client's word is not what decides) and it says so: engine heuristic. */
+  assert.equal(j.engine, "heuristic");
+  assert.equal(j.decision, "allow");
+  assert.equal(listingFromScreen({ trusted: true, hasScreen: true, decision: j.decision }).listed, true);
 });
 
-test("listing: new publisher allow goes out, unread holds, block hides even trusted", () => {
+test("skin colour never holds: light, brown and dark skin, every shade, goes out", () => {
+  for (const c of [[240, 205, 180], [210, 155, 125], [150, 95, 60], [105, 65, 40], [70, 42, 28], [45, 28, 20], [30, 20, 14]]) {
+    for (const frames of [1, 4]) {
+      const fr = [];
+      for (let i = 0; i < frames; i++) fr.push({ rgb: rgbToB64(fillRgb(W, H, () => c)) });
+      for (const title of ["Family day", "Kampala at night", "Dance"]) {
+        const j = judgeScreenPayload({ v: 1, w: W, h: H, frames: fr }, { title });
+        assert.equal(j.decision, "allow", JSON.stringify(c) + " x" + frames + " " + title);
+        assert.equal(listingFromScreen({ trusted: true, hasScreen: true, decision: j.decision }).listed, true);
+      }
+    }
+  }
+});
+
+test("listing: allow goes out, unread goes out, a detector hold waits, block hides even trusted", () => {
   assert.equal(listingFromScreen({ trusted: false, hasScreen: true, decision: "allow" }).listed, true);
-  assert.equal(listingFromScreen({ trusted: false, hasScreen: false, decision: "unread" }).held, true);
-  assert.equal(listingFromScreen({ trusted: false, hasScreen: false, decision: "unread" }).heldReason, "new-publisher");
-  assert.equal(listingFromScreen({ trusted: false, hasScreen: true, decision: "hold" }).heldReason, "screen");
+  /* 19 Oct e: no reading is not a sign of nudity. */
+  assert.equal(listingFromScreen({ trusted: false, hasScreen: false, decision: "unread" }).listed, true);
+  assert.equal(listingFromScreen({ trusted: true, hasScreen: false, decision: "unread" }).listed, true);
+  /* The only Screen hold: the detector found nudity in one still. */
+  const h = listingFromScreen({ trusted: true, hasScreen: true, decision: "hold" });
+  assert.equal(h.held, true); assert.equal(h.listed, false); assert.equal(h.heldReason, "screen");
+  /* An account the desk stopped still waits — about the account, not the picture. */
+  assert.equal(listingFromScreen({ trusted: false, holdReason: "not-trusted", hasScreen: true, decision: "allow" }).held, true);
   const blocked = listingFromScreen({ trusted: true, hasScreen: true, decision: "block" });
   assert.equal(blocked.hidden, true);
   assert.equal(blocked.listed, false);
-  assert.equal(listingFromScreen({ trusted: true, hasScreen: false, decision: "unread" }).listed, true);
 });

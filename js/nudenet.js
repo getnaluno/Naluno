@@ -111,8 +111,13 @@
        - two intimate parts, each at 0.40 or above;
        - a photo whose only frame reaches that stop level;
        - a video where one frame is near-certain (0.80) or two frames reach the stop level.
-     A weak sign, one doubtful video frame, a video-player bar, or a picture
-     Screen could not read is not a clear sign. It goes out. It is not held.
+     A post is HELD for a person (20 Oct a) only on a detector finding short of a stop:
+       - a video where exactly one still reaches the stop level ("single-frame");
+       - genitals or anus found at the stop level on what may be clothing
+         ("found-on-fabric": coloured light can make skin look like cloth).
+     Skin colour is never a reason, in either direction. A weak sign, a
+     video-player bar, a face, bare arms or a chest, or a picture Screen could
+     not read is not a clear sign. It goes out. It is not held.
 
      ------------------------------------------------------------------------------------
      WHAT A CLOTHED PICTURE LOOKS LIKE — how the machine is kept from misreading it (05h)
@@ -135,9 +140,8 @@
      If less than a fifth of an "exposed" box is skin, that finding is fabric misread
      as a body part. Its score is halved:
        - a breast or a bottom on fabric falls below the hold bars (a shirt, a dress);
-       - genitals or anus on fabric are not a clear stop on this alone (the score
-         stays at least at the old 0.25 mark, and a near-certain finding at 0.80
-         is never reduced). Only a clear stop keeps the post off the feed;
+       - genitals or anus on fabric are not a clear stop on this alone; when the
+         detector's own score was at the stop level, a person looks ("found-on-fabric");
        - a near-certain finding (0.80 and above) is never reduced.
      Everything else is unchanged: real skin is judged exactly as before, whatever its
      colour. One rule on the phone and on the server; a phone too old to report skin
@@ -153,7 +157,7 @@
 
      Confidence bands. The breast threshold is higher than the genital one because
      cleavage and bikini tops are its most common misread. Only a clear finding
-     stops a post. Anything weaker goes out. It is not held for a person.
+     stops a post (or, as above, holds it for a person). Anything weaker goes out.
 
                                   STOP (clear)     GOES OUT
        genitals / anus            >= 0.50          below 0.50
@@ -204,6 +208,7 @@
     "possible-nudity": "a possibly naked body",
     "possible-sexual-act": "a possible sexual act",
     "single-frame": "one frame that may be explicit",
+    "found-on-fabric": "what the detector read as exposed genitals, on something that may be clothing",
     "video-player-screenshot": "a screenshot of a video player",
     "revealing-allowed": "revealing but allowed",
   };
@@ -212,14 +217,16 @@
     return possible ? "possible-" + base : base;
   }
 
-  /* One frame -> { level: "certain"|"reject"|"hold"|"allow", reason, score }.
+  /* One frame -> { level: "certain"|"reject"|"found"|"hold"|"allow", reason, score }.
      frame: { d: [[classIndex, score, skinShare?], ...], p: playerScore } */
   function modAssessFrame(frame) {
-    var best = {}, i, cls, sc;
+    var best = {}, i, cls, sc, raw = 0, rawCls = "";
     var d = (frame && frame.d) || [];
     for (i = 0; i < d.length; i++) {
       cls = MOD_LABELS[d[i][0]]; sc = modScore(d[i]);
       if (cls && (!(cls in best) || sc > best[cls])) best[cls] = sc;
+      /* The detector's own score, before the clothing allowance. */
+      if (MOD_ANATOMY[cls] && (Number(d[i][1]) || 0) > raw) { raw = Number(d[i][1]) || 0; rawCls = cls; }
     }
     var anatomy = 0, anatomyCls = "", intimate = 0, revealing = 0;
     for (cls in best) {
@@ -244,6 +251,12 @@
     if (anatomy >= MOD_T.anatomyReject) return { level: "reject", reason: modAnatomyReason(anatomyCls), score: anatomy };
     if (breast  >= MOD_T.breastReject)  return { level: "reject", reason: "topless", score: breast };
     if (intimate >= 2)                  return { level: "reject", reason: "nudity", score: top };
+    /* 19 Oct e: the detector found exposed genitals (or an anus) at the
+       reject level, but on colours that may be clothing. Coloured stage or
+       phone light can make real skin look like fabric, so this is a
+       detector finding a person looks at. It is never decided by skin
+       colour: the allowance only ever lowers a score. */
+    if (raw >= MOD_T.anatomyReject)     return { level: "found", reason: "found-on-fabric", detail: modAnatomyReason(rawCls), score: raw };
     if (anatomy >= MOD_T.anatomyHold)   return { level: "hold", reason: modAnatomyReason(anatomyCls, true), score: anatomy };
     if (breast  >= MOD_T.breastHold)    return { level: "hold", reason: "possible-topless", score: breast };
     if (bottom && weak >= 1)            return { level: "hold", reason: "possible-nudity", score: Math.max(top, best.BUTTOCKS_EXPOSED || 0) };
@@ -261,12 +274,13 @@
   /* A photo is one frame. A video is several, judged together (see rulebook). */
   function modDecide(frames) {
     if (!frames || !frames.length) return { decision: "unread", reason: "unread", score: 0, frame: -1 };
-    var a = [], k, certain = null, rejects = [], holds = [];
+    var a = [], k, certain = null, rejects = [], holds = [], found = [];
     for (k = 0; k < frames.length; k++) {
       var r = modAssessFrame(frames[k]); r.frame = k; a.push(r);
       if (r.level === "certain" && (!certain || r.score > certain.score)) certain = r;
       if (r.level === "reject") rejects.push(r);
       if (r.level === "hold") holds.push(r);
+      if (r.level === "found") found.push(r);
     }
     var byScore = function (x, y) { return y.score - x.score; };
     if (certain) return { decision: "block", reason: certain.reason, score: certain.score, frame: certain.frame };
@@ -277,9 +291,22 @@
       rejects.sort(byScore);
       return { decision: "block", reason: rejects[0].reason, score: rejects[0].score, frame: rejects[0].frame, frames: rejects.length };
     }
-    /* A weak sign, a video-player bar, or one doubtful frame is not a clear
-       sign of nudity. The post goes out. A photo whose only frame is at the
-       reject level was already stopped above. */
+    /* 19 Oct e: the detector found nudity in ONE still of a video (exposed
+       genitals or an exposed female breast at the reject level). That is a
+       clear finding, not a guess, but one still can be a passing frame, so a
+       person looks before the video goes on the public feed. This is the
+       only hold Screen makes. */
+    if (rejects.length === 1) {
+      return { decision: "hold", reason: "single-frame", score: rejects[0].score, frame: rejects[0].frame,
+        detail: rejects[0].reason };
+    }
+    if (found.length) {
+      found.sort(byScore);
+      return { decision: "hold", reason: "found-on-fabric", score: found[0].score, frame: found[0].frame,
+        detail: found[0].detail };
+    }
+    /* A weak sign, a video-player bar, skin, colour or light is not a clear
+       sign of nudity. The post goes out. */
     var allowed = a.slice().sort(byScore)[0];
     var revealing = a.some(function (x) { return x.reason === "revealing-allowed"; });
     return { decision: "allow", reason: revealing ? "revealing-allowed" : "", score: allowed.score, frame: -1 };
@@ -575,19 +602,14 @@
     var base = both[0];
     var m = both[1];
     if (!m || m.result.decision === 'unread') {
-      /* Fallback when the detector cannot run. The heuristic cannot tell a
-         bikini from nudity, so it is NOT allowed to reject anything on its
-         own: its "block" becomes "hold", and a person decides. Stopping
-         genuine content on weak evidence is the failure this rebuild exists
-         to fix. */
+      /* Fallback when the detector cannot run. The skin check cannot tell
+         a bikini, a face, dark or African skin, warm light or a street at
+         night from nudity, so it never stops and never holds anything
+         (19 Oct e, same rule as the server, screen.mjs). Its stills still
+         travel with the post; the verdict is "not read by the detector". */
       var fb = Object.assign({}, base || { decision: 'unread', score: 0, reason: 'unread', packed: null });
-      if (fb.decision === 'block') { fb.decision = 'hold'; fb.reason = 'heuristic-only'; }
-      /* 15 Oct: same rule as the server (screen.mjs): the skin check alone
-         holds only what looks like nudity or a sexual title. Its middle band
-         (a face, warm light, a street at night) goes out. */
-      else if (fb.decision === 'hold' && !/\b(porn|porno|xxx|nsfw|onlyfans|nudes?|naked|hentai|cumshot|sex\s*tape)\b/i.test(String(title || ''))) {
-        fb.decision = 'allow'; fb.reason = '';
-      }
+      if (fb.decision === 'block' || fb.decision === 'hold') { fb.decision = 'allow'; fb.reason = ''; }
+      fb.unchecked = true;
       fb.engine = 'heuristic';
       return fb;
     }

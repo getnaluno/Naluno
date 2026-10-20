@@ -1118,7 +1118,7 @@ test("broadcast place lists a new publisher when Screen is clear", async () => {
    own; weak evidence goes to a person. What this test protects is unchanged: the
    server does not take the client's "allow" at face value, and the upload is NOT
    published. It is held for review instead of silently hidden. */
-test("broadcast place does not publish on the client's word — weak evidence is held for a person", async () => {
+test("broadcast place re-reads the stills itself — and skin colour alone is never held (19 Oct e)", async () => {
   resetMemory();
   const rgb = fillRgb(96, 96, () => [210, 155, 125]);
   setFetchImpl(async (url) => {
@@ -1153,9 +1153,11 @@ test("broadcast place does not publish on the client's word — weak evidence is
   const body = await res.json();
   assert.equal(res.status, 200);
   assert.equal(body.ok, true);
-  assert.equal(body.listed, false);   // the protection: not published on the client's word
-  assert.equal(body.held, true);      // a person decides
-  assert.equal(body.screen, "hold");  // the skin heuristic may not reject by itself
+  /* The worker judged the stills (not the client's word): a flat patch of
+     skin colour is not nudity, so it is published. */
+  assert.equal(body.screen, "allow");
+  assert.equal(body.listed, true);
+  assert.equal(body.held, false);
   setFetchImpl(null);
 });
 
@@ -1188,13 +1190,25 @@ test("explicit anatomy is hidden even when the client claims allow — and even 
   setFetchImpl(null);
 });
 
-test("a content HOLD applies to a trusted publisher (was: 'held but accepted')", async () => {
+test("a video-player bar is not nudity: it goes out (19 Oct e)", async () => {
   resetMemory();
   const res = await placeWith({ v: 1, decision: "allow", nudenet: { v: 1, frames: [{ d: [], p: 0.95 }] } }, true);
+  const body = await res.json();
+  assert.equal(body.listed, true);
+  assert.equal(body.held, false);
+  assert.equal(body.screen, "allow");
+  setFetchImpl(null);
+});
+
+test("a detector HOLD (nudity found in one still) applies to a trusted publisher", async () => {
+  resetMemory();
+  const clear = { d: [[2, 0.8]], p: 0 };
+  const res = await placeWith({ v: 1, nudenet: { v: 1, frames: [clear, clear, { d: [[4, 0.62]], p: 0 }, clear] } }, true);
   const body = await res.json();
   assert.equal(body.listed, false);
   assert.equal(body.held, true);
   assert.equal(body.screen, "hold");
+  assert.equal(body.heldReason, "screen");
   setFetchImpl(null);
 });
 
@@ -1212,7 +1226,7 @@ test("a stage-show video with ONE misread frame is held for a person, not reject
   resetMemory();
   const dance = { d: [[2, 0.8], [13, 0.7], [16, 0.8]], p: 0 };
   const frames = [dance, dance, dance, dance, { d: [[3, 0.62]], p: 0 }, dance, dance, dance];
-  const res = await placeWith({ v: 1, nudenet: { v: 1, frames } }, false);
+  const res = await placeWith({ v: 1, nudenet: { v: 1, frames } }, true);
   const body = await res.json();
   assert.equal(body.listed, false);
   assert.equal(body.held, true);
@@ -1226,7 +1240,8 @@ test("genuine content is published: a shirtless man, and lingerie from behind", 
     { d: [[5, 0.87], [13, 0.81], [5, 0.71], [11, 0.56]], p: 0 },   // shirtless man (real detections)
     { d: [[2, 0.83], [11, 0.66], [11, 0.66]], p: 0 },              // lingerie from behind (real detections)
   ]) {
-    const res = await placeWith({ v: 1, nudenet: { v: 1, frames: [frame] } }, false);
+    /* A trusted publisher (everyone until reported, 12c). */
+    const res = await placeWith({ v: 1, nudenet: { v: 1, frames: [frame] } }, true);
     const body = await res.json();
     assert.equal(body.listed, true);
     assert.equal(body.screen, "allow");
@@ -1241,7 +1256,7 @@ test("broadcast place PATCH uses updateMask so listing does not wipe media", asy
   const sa = await genSa();
   setFetchImpl(async (url, opts) => {
     const u = String(url);
-    calls.push({ u, method: (opts && opts.method) || "GET" });
+    calls.push({ u, method: (opts && opts.method) || "GET", body: String((opts && opts.body) || "") });
     if (u.includes("oauth2.googleapis.com/token")) {
       return new Response(JSON.stringify({ access_token: "sa", expires_in: 3600 }), { status: 200 });
     }
@@ -1291,6 +1306,11 @@ test("broadcast place PATCH uses updateMask so listing does not wipe media", asy
   assert.ok(patch, "place writes a listing patch");
   assert.ok(patch.u.includes("updateMask.fieldPaths=listed"), "mask keeps mediaUrl");
   assert.ok(patch.u.includes("updateMask.fieldPaths=held"));
+  /* 20 Oct a: only the skin check's stills came, so the detector did not read
+     it: it is listed, and stored as "unread" for the desk's after-the-fact look. */
+  assert.equal(body.listed, true);
+  assert.ok(/"screenDecision":\{"stringValue":"unread"\}/.test(patch.body), "stored as unread");
+  assert.ok(/"screenEngine":\{"stringValue":"heuristic"\}/.test(patch.body));
   setFetchImpl(null);
 });
 

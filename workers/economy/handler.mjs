@@ -33,6 +33,7 @@ import {
   listingFromScreen,
   publisherTrusted,
   publisherHoldReason,
+  screenMediaKey,
 } from "./screen.mjs";
 import { reachTier, reachLimits, reachDayKey } from "./reach.mjs";
 import {
@@ -101,6 +102,7 @@ import {
 import { pbkdf2Sha256Js, WORKER_PBKDF2_MAX } from "./pbkdf2.mjs";
 import { handleWireNotify, handlePushTest, handleLockPush, sendLiveDropped } from "./wire-notify.mjs";
 import { handleLgVoice } from "./lg-voice.mjs";
+import { handleSunbird } from "./sunbird.mjs";
 import {
   callsReady,
   rememberRoom,
@@ -1342,7 +1344,10 @@ async function hideSignalReported(env, saToken, uid, signalId, mode, code) {
     : { held: true, heldReason: ("reported-" + String(code || "urgent")).slice(0, 80), hidden: false, reviewedAt: now, reviewedBy: "report" };
   const wrote = await fsPutDoc(env, saToken, "/users/" + encodeURIComponent(who) + "/signal/" + encodeURIComponent(id), patch);
   if (!wrote || !wrote.ok) throw new Error("signal not updated");
-  await fsPutDoc(env, saToken, "/signals/" + encodeURIComponent(id), patch);
+  /* 19 Oct e: the public copy also leaves the Signals list. The list rule
+     shows any copy whose feedUntil is still ahead, so hidden/held alone left
+     a reported Signal listable until it expired. */
+  await fsPutDoc(env, saToken, "/signals/" + encodeURIComponent(id), Object.assign({}, patch, { public: false, feedUntil: 0 }));
   if (mode === "hidden") {
     const profile = await fsGetDoc(env, saToken, "/users/" + encodeURIComponent(who));
     const n = Number((profile && profile.sexualReports) || 0) + 1;
@@ -1408,6 +1413,9 @@ function safetyQueue() {
     });
 }
 
+/* 19 Oct e: the only Screen holds — the detector found nudity in one still
+   of a video, or found exposed genitals on what may be clothing. */
+const DETECTOR_HOLDS = { "single-frame": 1, "found-on-fabric": 1 };
 async function placeBroadcast(env, user, userToken, saToken, body) {
   const id = String((body && body.broadcast_id) || "").slice(0, 80);
   if (!id) return json({ ok: false, error: "broadcast_id required" }, 400);
@@ -1423,15 +1431,19 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
   const trusted = publisherTrusted(profile);
   let judged = judgeScreenPayload(body && body.screen, { title: row.title || "" });
   /* A stored "block" still stops the post (clear nudity, already decided).
-     A stored "hold" is not a clear sign, so making that post public lists it.
-     No stored verdict is not a clear sign either. */
+     A stored "hold" stays held only when the detector found nudity in a
+     still ("single-frame"). An older hold (skin check, a weak sign, a
+     video-player bar) was never a clear finding, so making that post public
+     lists it. No stored verdict is not a clear sign either. */
   if (!judged.hasScreen && !(body && body.screen) && Number(row.screenVersion) >= 1
       && (row.screenDecision === "allow" || row.screenDecision === "hold" || row.screenDecision === "block")) {
+    const keepHold = row.screenDecision === "hold" && DETECTOR_HOLDS[String(row.screenReason || "")] === 1;
+    const reusedDecision = row.screenDecision === "hold" && !keepHold ? "allow" : row.screenDecision;
     judged = {
-      decision: row.screenDecision,
+      decision: reusedDecision,
       score: Number(row.screenScore) || 0,
       hasScreen: true,
-      reason: String(row.screenReason || "") || (row.screenDecision === "allow" ? "" : "screen"),
+      reason: reusedDecision === "allow" ? "" : (String(row.screenReason || "") || "screen"),
       frames: Number(row.screenFrames) || 0,
       reused: true,
     };
@@ -1445,6 +1457,11 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
     const orig = await fsGetDoc(env, token, "/broadcasts/" + encodeURIComponent(String(row.repostOf).slice(0, 80)));
     if (orig && (orig.hidden || orig.screenDecision === "block")) {
       judged = { decision: "block", score: 0, hasScreen: true, reason: "screen", frames: 0 };
+    } else if (orig && orig.held === true && orig.screenDecision === "hold" && DETECTOR_HOLDS[String(orig.screenReason || "")] === 1) {
+      /* The original waits for a person because the detector found nudity
+         in a still; the same picture passed on waits too. */
+      judged = { decision: "hold", score: Number(orig.screenScore) || 0, hasScreen: true, reason: String(orig.screenReason), frames: 0,
+        detail: String(orig.screenDetail || "") };
     }
   }
   const safety = scorePublicText(
@@ -1458,19 +1475,39 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
     hasScreen: judged.hasScreen,
     decision: judged.decision,
   });
+  /* The detector did not read it (only the skin check's stills came, or
+     nothing): it goes out, stored as "unread" so the desk sees it under
+     "Published without a check". A client cannot dodge that list by
+     sending skin-check stills instead of the detector's findings. */
+  const storedDecision = (judged.decision === "allow" && judged.engine === "heuristic") ? "unread" : judged.decision;
   const patch = Object.assign({}, listing, {
-    screenDecision: judged.decision,
+    screenDecision: storedDecision,
+    screenEngine: String(judged.engine || (judged.reused ? "stored" : "none")),
     screenScore: judged.score || 0,
     screenReason: judged.reason || "",
     screenVersion: 1,
     screenFrames: judged.frames || 0,
+    /* What the detector found and in which still, for the desk. */
+    screenDetail: judged.detail || "",
+    screenFrame: typeof judged.frameIndex === "number" ? judged.frameIndex : -1,
     safetyScore: safety.score,
     safetyDecision: safety.decision,
     safetyUrgent: !!safety.urgent,
+    screenMedia: screenMediaKey(row),
     updatedAt: Date.now(),
   });
+  /* 20 Oct b: a re-check after the creator replaced a photo or a video.
+     It only ever tightens: clear nudity in the new file takes the post down,
+     a detector finding holds it for a person, and anything else leaves its
+     place as it is (a post the desk is holding stays held). */
+  const recheck = !!(body && body.recheck === true);
+  if (recheck) {
+    for (const k of ["listed", "held", "hidden", "heldReason", "hiddenReason"]) delete patch[k];
+    if (judged.decision === "block") Object.assign(patch, { listed: false, held: false, hidden: true, hiddenReason: "screen", heldReason: "" });
+    else if (judged.decision === "hold" && !row.hidden) Object.assign(patch, { listed: false, held: true, heldReason: "screen" });
+  }
   let safetyCase = "";
-  if (safetyHold(safety.decision)) {
+  if (safetyHold(safety.decision) && !recheck) {
     patch.listed = false;
     patch.held = true;
     patch.heldReason = safety.decision === "AGE_RESTRICT"
@@ -1497,7 +1534,7 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
   /* A private Broadcast is never placed on the public catalogue. Listing
      it used to mark a trusted creator's private post as listed, which is
      not what Private means. Visibility itself is left as the creator set it. */
-  if (row.visibility === "private") {
+  if (row.visibility === "private" && "listed" in patch) {
     patch.listed = false;
   }
   const writeTok = saToken || ((patch.hidden || judged.decision === "block") ? userToken : "");
@@ -1515,10 +1552,11 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
   return json({
     ok: true,
     wrote: wrote,
-    listed: !!patch.listed,
-    held: !!patch.held,
-    hidden: !!patch.hidden,
-    heldReason: patch.heldReason || "",
+    recheck: recheck,
+    listed: !!("listed" in patch ? patch.listed : row.listed),
+    held: !!("held" in patch ? patch.held : row.held),
+    hidden: !!("hidden" in patch ? patch.hidden : row.hidden),
+    heldReason: ("heldReason" in patch ? patch.heldReason : row.heldReason) || "",
     screen: judged.decision,
     screenScore: judged.score || 0,
     safety: safety.decision,
@@ -3682,8 +3720,9 @@ function liveAlertSize(env) {
 /* 14 Oct: the Luganda voice's daily characters, one document per person
    per day. Reserve only if the total stays under the limit (a write with a
    precondition on what was read, tried again if two arrive together). */
-function lgUsageStore(env, token) {
-  const pathOf = (uid, day) => "/lgUsage/" + encodeURIComponent(uid + "_" + day);
+function lgUsageStore(env, token, coll) {
+  const base = "/" + (coll || "lgUsage") + "/";
+  const pathOf = (uid, day) => base + encodeURIComponent(uid + "_" + day);
   return {
     reserve: async function (uid, day, n, limit) {
       for (let attempt = 0; attempt < 5; attempt++) {
@@ -4239,60 +4278,18 @@ export async function handleRequest(request, env = {}, ctx = {}) {
     }
 
     
-    /* Sunbird AI proxy (translate / STT / chat). Key stays in env.SUNBIRD_API_KEY. */
-    if (path === "/v1/sunbird/translate" && request.method === "POST") {
-      const body = await request.json().catch(() => ({}));
-      const key = String(env.SUNBIRD_API_KEY || "").trim();
-      if (!key) return json({ ok: false, error: "sunbird not configured" }, 503);
-      const r = await _fetch("https://api.sunbird.ai/tasks/translate", {
-        method: "POST",
-        headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text: String(body.text || ""),
-          source_language: body.source_language || "eng",
-          target_language: body.target_language || "lug"
-        })
+    /* Sunbird AI proxy (translate / STT / chat). Key stays in env.SUNBIRD_API_KEY.
+       19 Oct e: size caps, a per-minute pace and a daily allowance per
+       person (sunbird.mjs); the same usage store as the Luganda voice. */
+    if (path.indexOf("/v1/sunbird/") === 0) {
+      const out = await handleSunbird(path, request, user, {
+        env, fetch: (u, o) => _fetch(u, o),
+        usage: saToken ? lgUsageStore(env, saToken, "sunbirdUsage") : null,
       });
-      const data = await r.json().catch(() => ({}));
-      return json(data, r.ok ? 200 : r.status);
+      if (out) return json(out.body, out.status);
     }
 
-    if (path === "/v1/sunbird/transcribe" && request.method === "POST") {
-      const key = String(env.SUNBIRD_API_KEY || "").trim();
-      if (!key) return json({ ok: false, error: "sunbird not configured" }, 503);
-      const form = await request.formData();
-      const audio = form.get("audio");
-      const language = form.get("language") || "lug";
-      if (!audio) return json({ ok: false, error: "no audio" }, 400);
-      const fd = new FormData();
-      fd.append("audio", audio);
-      fd.append("language", language);
-      const r = await _fetch("https://api.sunbird.ai/tasks/audio/transcriptions", {
-        method: "POST",
-        headers: { Authorization: "Bearer " + key },
-        body: fd
-      });
-      const data = await r.json().catch(() => ({}));
-      return json(data, r.ok ? 200 : r.status);
-    }
-
-    if (path === "/v1/sunbird/chat" && request.method === "POST") {
-      const body = await request.json().catch(() => ({}));
-      const key = String(env.SUNBIRD_API_KEY || "").trim();
-      if (!key) return json({ ok: false, error: "sunbird not configured" }, 503);
-      const r = await _fetch("https://api.sunbird.ai/tasks/chat/completions", {
-        method: "POST",
-        headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "sunflower-14b",
-          messages: [{ role: "user", content: String(body.prompt || "") }]
-        })
-      });
-      const data = await r.json().catch(() => ({}));
-      return json(data, r.ok ? 200 : r.status);
-    }
-
-if (path === "/v1/voice/lg" && request.method === "POST") {
+    if (path === "/v1/voice/lg" && request.method === "POST") {
       const body = await request.json().catch(() => ({}));
       let cache = null;
       try { if (typeof caches !== "undefined" && caches.default) cache = caches.default; } catch (_) {}

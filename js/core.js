@@ -367,7 +367,7 @@ async function checkForUpdate(){
          and it is taken at the first good moment instead of waiting for a
          tap on the banner. */
       const target = nalunoNewerTarget(running, { app: liveApp, build: liveBuild });
-      if(target) nalunoAutoUpdate(target, incomingNotice);
+      if(target) nalunoAutoUpdate(target, incomingNotice, nalunoStampKey(liveApp) + '|' + nalunoStampKey(liveBuild));
       else nalunoHideUpdateBanner();
     } else {
       nalunoHideUpdateBanner();
@@ -411,7 +411,12 @@ function nalunoUpdateQuietMoment(){
   return now - nalunoLastTouchAt > 60000;
 }
 let nalunoAutoTimer = null;
-function nalunoAutoUpdate(target, incomingNotice){
+/* 19 Oct e: what the server offered is part of the guard. A half-done
+   upload (sw.js new, index.html still old) reloads once and stops; when the
+   rest of the upload lands, the offer is different, so it updates then.
+   The guard used to be the target alone, so the phone stayed on the old
+   page for the rest of the session (and 10 minutes after). */
+function nalunoAutoUpdate(target, incomingNotice, liveKey){
   try{
     const have = nalunoBestStamp(APP_VERSION, NALUNO_BUILD);
     if(have && target && have >= target){
@@ -422,9 +427,16 @@ function nalunoAutoUpdate(target, incomingNotice){
     }
     /* This page already reloaded for this exact update. If the new files
        have not taken over, reloading again is the loop. Stop. */
-    let settled = '';
-    try{ settled = sessionStorage.getItem('nalunoUpdateSettled') || ''; }catch(_){}
-    if(settled && settled === target){
+    /* Every offer already tried this session is remembered (a few), so two
+       servers handing out different halves cannot make it reload back and forth. */
+    let settled = [];
+    try{
+      const raw = sessionStorage.getItem('nalunoUpdateSettled') || '';
+      settled = raw.charAt(0) === '[' ? JSON.parse(raw) : (raw ? [raw] : []);
+      if(!Array.isArray(settled)) settled = [];
+    }catch(_){ settled = []; }
+    const guard = target + '|' + String(liveKey || '');
+    if(settled.indexOf(guard) >= 0){
       nalunoHideUpdateBanner();
       return;
     }
@@ -432,7 +444,7 @@ function nalunoAutoUpdate(target, incomingNotice){
     const key = 'nalunoAutoUpdate';
     let tried = null;
     try{ tried = JSON.parse(localStorage.getItem(key) || 'null'); }catch(_){ tried = null; }
-    if(tried && tried.target === target && Date.now() - Number(tried.at || 0) < 10 * 60 * 1000){
+    if(tried && tried.target === target && String(tried.offer || '') === String(liveKey || '') && Date.now() - Number(tried.at || 0) < 10 * 60 * 1000){
       if(massive) nalunoShowUpdateBanner(true);
       else nalunoHideUpdateBanner();
       return;
@@ -447,12 +459,12 @@ function nalunoAutoUpdate(target, incomingNotice){
     if(busy || !nalunoUpdateQuietMoment()){
       nalunoHideUpdateBanner();
       if(!nalunoAutoTimer){
-        nalunoAutoTimer = setTimeout(function(){ nalunoAutoTimer = null; nalunoAutoUpdate(target, false); }, 8000);
+        nalunoAutoTimer = setTimeout(function(){ nalunoAutoTimer = null; nalunoAutoUpdate(target, false, liveKey); }, 8000);
       }
       return;
     }
-    try{ sessionStorage.setItem('nalunoUpdateSettled', target); }catch(_){}
-    try{ localStorage.setItem(key, JSON.stringify({ target: target, at: Date.now() })); }catch(_){}
+    try{ sessionStorage.setItem('nalunoUpdateSettled', JSON.stringify(settled.concat([guard]).slice(-6))); }catch(_){}
+    try{ localStorage.setItem(key, JSON.stringify({ target: target, offer: String(liveKey || ''), at: Date.now() })); }catch(_){}
     nalunoHideUpdateBanner();
     nalunoUpdateNow();
   }catch(_){ nalunoHideUpdateBanner(); }

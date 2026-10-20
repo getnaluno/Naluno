@@ -1,6 +1,8 @@
-/* 29h: explicit pictures. The rulebook is keener where the detector cannot
-   see directly (a naked body, a sexual act), and a picture that reaches the
-   server with no Screen verdict is held for a person — trusted or not. */
+/* 29h: explicit pictures. 19 Oct e: only a clear detector finding stops
+   or holds a picture. Weak signs (a faint genital score, a bottom with a
+   faint breast, two faces and a bottom) are not a clear finding and go out,
+   and a picture with no Screen reading goes out marked "unread" for the
+   desk to look at afterwards. */
 import assert from "node:assert/strict";
 import { handleRequest, resetMemory, setFetchImpl } from "./handler.mjs";
 import { judgeScreenPayload } from "./screen.mjs";
@@ -11,17 +13,24 @@ const judge = (frames) => judgeScreenPayload({ v: 1, nudenet: { v: 1, frames } }
 
 // Exposed genitals: rejected, as before.
 assert.equal(judge([{ d: [[L.M_GEN, 0.7]], p: 0 }]).decision, "block");
-// A faint sign of genitals is now held (0.25–0.50), not let through.
+// A faint sign of genitals (0.25–0.50) is not a clear finding: it goes out.
 let r = judge([{ d: [[L.F_GEN, 0.27]], p: 0 }]);
-assert.equal(r.decision, "hold");
-// An exposed bottom with a weak breast sign: a possibly naked body -> held.
+assert.equal(r.decision, "allow");
+// An exposed bottom with a weak breast sign: not a clear finding.
 r = judge([{ d: [[L.BUTT, 0.7], [L.BREAST, 0.3]], p: 0 }]);
-assert.equal(r.decision, "hold");
-assert.equal(r.reason, "possible-nudity");
-// Two people with an exposed bottom: a possible sexual act -> held.
+assert.equal(r.decision, "allow");
+// Two people with an exposed bottom: not a clear finding.
 r = judge([{ d: [[L.FACE_F, 0.8], [L.FACE_M, 0.7], [L.BUTT, 0.6]], p: 0 }]);
-assert.equal(r.decision, "hold");
-assert.equal(r.reason, "possible-sexual-act");
+assert.equal(r.decision, "allow");
+// Clear findings still stop: two exposed body parts at the pair level.
+r = judge([{ d: [[L.F_GEN, 0.45], [L.BREAST, 0.45]], p: 0 }]);
+assert.equal(r.decision, "block");
+// A video: one still with exposed genitals is held for a person; two are stopped.
+const ok = { d: [[L.FACE_F, 0.8]], p: 0 };
+r = judge([ok, ok, { d: [[L.F_GEN, 0.6]], p: 0 }, ok]);
+assert.equal(r.decision, "hold"); assert.equal(r.reason, "single-frame"); assert.equal(r.detail, "genitals");
+r = judge([ok, { d: [[L.F_GEN, 0.6]], p: 0 }, { d: [[L.M_GEN, 0.6]], p: 0 }, ok]);
+assert.equal(r.decision, "block");
 // Still allowed: a thong from behind (bottom only), two shirtless friends, a couple clothed.
 assert.equal(judge([{ d: [[L.BUTT, 0.83], [11, 0.66]], p: 0 }]).decision, "allow");
 assert.equal(judge([{ d: [[L.FACE_M, 0.8], [L.FACE_M, 0.8], [L.M_CHEST, 0.9], [L.M_CHEST, 0.85], [L.BELLY, 0.8]], p: 0 }]).decision, "allow");
@@ -51,11 +60,11 @@ function placeRow(row, screen, trusted, orig) {
   }), ENV).then((res) => res.json());
 }
 resetMemory();
-// The hole: a Writing post with a photo and no verdict, from a trusted account, was listed.
+// A Writing post with a photo and no reading: no reading is not nudity, so it
+// goes out, marked unread for the desk ("Published without a check").
 let body = await placeRow({ mediaType: "writing", mediaUrl: "https://media.test/p.jpg", thumbUrl: "https://media.test/p.jpg" }, null, true);
-assert.equal(body.listed, false, "an unscreened photo is not published");
-assert.equal(body.held, true);
-assert.equal(body.heldReason, "screen");
+assert.equal(body.listed, true, "an unread photo is published");
+assert.equal(body.screen, "unread");
 // The same Writing photo WITH the detector's findings is judged like a video: explicit -> stopped.
 body = await placeRow({ mediaType: "writing", mediaUrl: "https://media.test/p.jpg" }, { v: 1, nudenet: { v: 1, frames: [{ d: [[L.F_GEN, 0.9]], p: 0 }] } }, true);
 assert.equal(body.hidden, true);
@@ -66,8 +75,13 @@ assert.equal(body.listed, true);
 // A Pass-on of a public, checked Broadcast inherits its check.
 body = await placeRow({ mediaType: "video", mediaUrl: "https://media.test/v.mp4", repostOf: "orig1" }, null, true, { listed: true, screenDecision: "allow", creatorUid: "x" });
 assert.equal(body.listed, true);
-// A Pass-on of something that is held does not.
-body = await placeRow({ mediaType: "video", mediaUrl: "https://media.test/v.mp4", repostOf: "orig1" }, null, true, { listed: false, held: true, creatorUid: "x" });
+// A Pass-on of something the detector held (nudity in one still) waits too.
+body = await placeRow({ mediaType: "video", mediaUrl: "https://media.test/v.mp4", repostOf: "orig1" }, null, true, { listed: false, held: true, screenDecision: "hold", screenReason: "single-frame", creatorUid: "x" });
 assert.equal(body.listed, false);
+assert.equal(body.held, true);
+// A Pass-on of something taken down stays down.
+body = await placeRow({ mediaType: "video", mediaUrl: "https://media.test/v.mp4", repostOf: "orig1" }, null, true, { listed: false, hidden: true, creatorUid: "x" });
+assert.equal(body.listed, false);
+assert.equal(body.hidden, true);
 setFetchImpl(null);
 console.log("screen 29h tests passed");

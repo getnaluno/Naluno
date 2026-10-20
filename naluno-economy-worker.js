@@ -2536,12 +2536,16 @@ function modAnatomyReason(cls, possible) {
   return possible ? "possible-" + base : base;
 }
 function modAssessFrame(frame) {
-  var best = {}, i, cls, sc;
+  var best = {}, i, cls, sc, raw = 0, rawCls = "";
   var d = frame && frame.d || [];
   for (i = 0; i < d.length; i++) {
     cls = MOD_LABELS[d[i][0]];
     sc = modScore(d[i]);
     if (cls && (!(cls in best) || sc > best[cls])) best[cls] = sc;
+    if (MOD_ANATOMY[cls] && (Number(d[i][1]) || 0) > raw) {
+      raw = Number(d[i][1]) || 0;
+      rawCls = cls;
+    }
   }
   var anatomy = 0, anatomyCls = "", intimate = 0, revealing = 0;
   for (cls in best) {
@@ -2570,6 +2574,7 @@ function modAssessFrame(frame) {
   if (anatomy >= MOD_T.anatomyReject) return { level: "reject", reason: modAnatomyReason(anatomyCls), score: anatomy };
   if (breast >= MOD_T.breastReject) return { level: "reject", reason: "topless", score: breast };
   if (intimate >= 2) return { level: "reject", reason: "nudity", score: top };
+  if (raw >= MOD_T.anatomyReject) return { level: "found", reason: "found-on-fabric", detail: modAnatomyReason(rawCls), score: raw };
   if (anatomy >= MOD_T.anatomyHold) return { level: "hold", reason: modAnatomyReason(anatomyCls, true), score: anatomy };
   if (breast >= MOD_T.breastHold) return { level: "hold", reason: "possible-topless", score: breast };
   if (bottom && weak >= 1) return { level: "hold", reason: "possible-nudity", score: Math.max(top, best.BUTTOCKS_EXPOSED || 0) };
@@ -2580,7 +2585,7 @@ function modAssessFrame(frame) {
 }
 function modDecide(frames) {
   if (!frames || !frames.length) return { decision: "unread", reason: "unread", score: 0, frame: -1 };
-  var a = [], k, certain = null, rejects = [], holds = [];
+  var a = [], k, certain = null, rejects = [], holds = [], found = [];
   for (k = 0; k < frames.length; k++) {
     var r = modAssessFrame(frames[k]);
     r.frame = k;
@@ -2588,6 +2593,7 @@ function modDecide(frames) {
     if (r.level === "certain" && (!certain || r.score > certain.score)) certain = r;
     if (r.level === "reject") rejects.push(r);
     if (r.level === "hold") holds.push(r);
+    if (r.level === "found") found.push(r);
   }
   var byScore = function(x, y) {
     return y.score - x.score;
@@ -2599,6 +2605,25 @@ function modDecide(frames) {
   if (rejects.length >= 2) {
     rejects.sort(byScore);
     return { decision: "block", reason: rejects[0].reason, score: rejects[0].score, frame: rejects[0].frame, frames: rejects.length };
+  }
+  if (rejects.length === 1) {
+    return {
+      decision: "hold",
+      reason: "single-frame",
+      score: rejects[0].score,
+      frame: rejects[0].frame,
+      detail: rejects[0].reason
+    };
+  }
+  if (found.length) {
+    found.sort(byScore);
+    return {
+      decision: "hold",
+      reason: "found-on-fabric",
+      score: found[0].score,
+      frame: found[0].frame,
+      detail: found[0].detail
+    };
   }
   var allowed = a.slice().sort(byScore)[0];
   var revealing = a.some(function(x) {
@@ -2695,6 +2720,22 @@ function publisherHoldReason(p) {
   if (u.publisherReview === "pending") return "under-review";
   return "";
 }
+function screenMediaKey(row) {
+  const r = row || {};
+  const urls = [];
+  const add = (u) => {
+    const s = String(u || "").trim();
+    if (/^https?:/i.test(s) && urls.indexOf(s) < 0) urls.push(s);
+  };
+  add(r.mediaUrl);
+  (Array.isArray(r.chapters) ? r.chapters : []).forEach((c) => {
+    if (c) {
+      add(c.mediaUrl);
+      add(c.replacementUrl);
+    }
+  });
+  return urls.sort().join("\n").slice(0, 4e3);
+}
 function listingFromScreen(opts) {
   const trusted = !!(opts && opts.trusted);
   const hidden = !!(opts && opts.hidden);
@@ -2711,6 +2752,9 @@ function listingFromScreen(opts) {
       hiddenReason: "screen",
       heldReason: ""
     };
+  }
+  if (decision === "hold") {
+    return { listed: false, held: true, hidden: false, heldReason: "screen" };
   }
   if (!trusted) {
     const why = opts && opts.holdReason || "";
@@ -4974,12 +5018,12 @@ function wireKindLabel(type) {
   return "New message";
 }
 function rateOk(uid, now, limit) {
-  const minute = Math.floor(now / 6e4);
-  const k = uid + "|" + minute;
+  const minute2 = Math.floor(now / 6e4);
+  const k = uid + "|" + minute2;
   const n = (hits.get(k) || 0) + 1;
   if (hits.size > 5e3) {
     for (const key of hits.keys()) {
-      if (!(Number(String(key).split("|").pop()) >= minute - 1)) hits.delete(key);
+      if (!(Number(String(key).split("|").pop()) >= minute2 - 1)) hits.delete(key);
     }
   }
   hits.set(k, n);
@@ -5119,7 +5163,15 @@ async function sendAll(tokens, data, link, deps, now) {
           message: {
             token,
             data,
-            android: kind === "android" ? (String(data.type || "") === "incoming_call" && data.callId ? { priority: "HIGH", ttl: "45s", collapse_key: "naluno-call:" + String(data.callId).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 120) } : {
+            /* An incoming call on Android is a data-only message: the app
+               rings itself. It lives 45 s (a ring that old is over) and one
+               call's pushes collapse into one. This was in the deployed
+               worker but not in its source; it is kept as deployed. */
+            android: kind === "android" ? String(data.type || "") === "incoming_call" && data.callId ? {
+              priority: "HIGH",
+              ttl: "45s",
+              collapse_key: "naluno-call:" + String(data.callId).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 120)
+            } : {
               priority: "HIGH",
               ttl: "86400s",
               notification: {
@@ -5131,7 +5183,7 @@ async function sendAll(tokens, data, link, deps, now) {
                 notification_priority: "PRIORITY_HIGH",
                 visibility: "PUBLIC"
               }
-            }) : { priority: "HIGH", ttl: "86400s" },
+            } : { priority: "HIGH", ttl: "86400s" },
             /* Web: a notification payload is what the lock screen shows when
                Chrome will not start the service worker (screen off). No
                fcm_options.link — a link that is not https is refused, and
@@ -5274,11 +5326,11 @@ var SPEAKER = /^[a-z]{2,12}_lug_\d{4}$/;
 var hits2 = /* @__PURE__ */ new Map();
 var daily = /* @__PURE__ */ new Map();
 function rateOk2(uid, now) {
-  const minute = Math.floor(now / 6e4);
-  const k = uid + "|" + minute;
+  const minute2 = Math.floor(now / 6e4);
+  const k = uid + "|" + minute2;
   const n = (hits2.get(k) || 0) + 1;
   if (hits2.size > 5e3) for (const key of hits2.keys()) {
-    if (!(Number(String(key).split("|").pop()) >= minute - 1)) hits2.delete(key);
+    if (!(Number(String(key).split("|").pop()) >= minute2 - 1)) hits2.delete(key);
   }
   hits2.set(k, n);
   return n <= PER_MINUTE2;
@@ -5351,7 +5403,7 @@ async function handleLgVoice(body, user, deps) {
     }
     if (!ok) return { status: 429, json: { ok: false, error: "daily limit" } };
   } else if (!charsOk(user.uid, now, text.length, limit)) return { status: 429, json: { ok: false, error: "daily limit" } };
-  const giveBack = async function() {
+  const giveBack2 = async function() {
     if (deps.usage) {
       try {
         await deps.usage.release(user.uid, day, text.length);
@@ -5363,7 +5415,7 @@ async function handleLgVoice(body, user, deps) {
     }
   };
   const out = await speakPaid(text, speaker, key, env, deps, cacheKey);
-  if (out.status !== 200) await giveBack();
+  if (out.status !== 200) await giveBack2();
   return out;
 }
 async function speakPaid(text, speaker, key, env, deps, cacheKey) {
@@ -5408,6 +5460,138 @@ async function speakPaid(text, speaker, key, env, deps, cacheKey) {
     }
   }
   return { status: 200, bytes, type, cached: false, speaker };
+}
+
+// workers/economy/sunbird.mjs
+var SUNBIRD_MAX_TEXT = 2e3;
+var SUNBIRD_MAX_PROMPT = 2e3;
+var SUNBIRD_MAX_AUDIO = 5 * 1024 * 1024;
+var SUNBIRD_AUDIO_UNITS = 1e3;
+var LANG = /^[a-z]{2,3}$/;
+var SUNBIRD_PER_MINUTE = 10;
+var minute = /* @__PURE__ */ new Map();
+var dailyMem = /* @__PURE__ */ new Map();
+function rateOk3(uid, now, perMinute) {
+  const k = uid + "|" + Math.floor(now / 6e4);
+  const n = (minute.get(k) || 0) + 1;
+  minute.set(k, n);
+  if (minute.size > 5e3) {
+    for (const key of minute.keys()) {
+      if (!key.endsWith("|" + Math.floor(now / 6e4))) minute.delete(key);
+    }
+  }
+  return n <= perMinute;
+}
+function sunbirdDayKey(now) {
+  return new Date(now).toISOString().slice(0, 10);
+}
+function sunbirdDailyLimit(env) {
+  return Math.max(1e3, Number(env && env.SUNBIRD_DAILY_UNITS) || 2e4);
+}
+async function reserve(deps, uid, day, n, limit, now) {
+  if (deps.usage) {
+    try {
+      return await deps.usage.reserve(uid, day, n, limit);
+    } catch (_) {
+      return false;
+    }
+  }
+  const k = uid + "|" + day;
+  const used = dailyMem.get(k) || 0;
+  if (used + n > limit) return false;
+  dailyMem.set(k, used + n);
+  return true;
+}
+async function giveBack(deps, uid, day, n) {
+  if (deps.usage) {
+    try {
+      await deps.usage.release(uid, day, n);
+    } catch (_) {
+    }
+    return;
+  }
+  const k = uid + "|" + day;
+  dailyMem.set(k, Math.max(0, (dailyMem.get(k) || 0) - n));
+}
+async function handleSunbird(path, request, user, deps) {
+  const routes = { "/v1/sunbird/translate": 1, "/v1/sunbird/transcribe": 1, "/v1/sunbird/chat": 1 };
+  if (!routes[path] || request.method !== "POST") return null;
+  const env = deps.env || {};
+  const key = String(env.SUNBIRD_API_KEY || "").trim();
+  if (!key) return { status: 503, body: { ok: false, error: "sunbird not configured" } };
+  if (!user || !user.uid) return { status: 401, body: { ok: false, error: "sign in" } };
+  const now = deps.now ? deps.now() : Date.now();
+  const perMinute = Math.max(1, Math.min(50, Number(env.SUNBIRD_PER_MINUTE) || SUNBIRD_PER_MINUTE));
+  if (!rateOk3(user.uid, now, perMinute)) return { status: 429, body: { ok: false, error: "slow down" } };
+  const day = sunbirdDayKey(now);
+  const limit = sunbirdDailyLimit(env);
+  let upstream, init, units;
+  if (path === "/v1/sunbird/transcribe") {
+    const len = Number(request.headers.get("Content-Length") || 0);
+    if (len > SUNBIRD_MAX_AUDIO + 64 * 1024) return { status: 413, body: { ok: false, error: "audio too large" } };
+    let form;
+    try {
+      form = await request.formData();
+    } catch (_) {
+      return { status: 400, body: { ok: false, error: "form" } };
+    }
+    const audio = form.get("audio");
+    const language = String(form.get("language") || "lug");
+    if (!audio || typeof audio === "string") return { status: 400, body: { ok: false, error: "no audio" } };
+    if (!(audio.size > 0) || audio.size > SUNBIRD_MAX_AUDIO) return { status: 413, body: { ok: false, error: "audio too large" } };
+    if (!LANG.test(language)) return { status: 400, body: { ok: false, error: "language" } };
+    const fd = new FormData();
+    fd.append("audio", audio);
+    fd.append("language", language);
+    upstream = "https://api.sunbird.ai/tasks/audio/transcriptions";
+    init = { method: "POST", headers: { Authorization: "Bearer " + key }, body: fd };
+    units = SUNBIRD_AUDIO_UNITS;
+  } else {
+    const len = Number(request.headers.get("Content-Length") || 0);
+    if (len > 64 * 1024) return { status: 413, body: { ok: false, error: "too large" } };
+    const body = await request.json().catch(() => ({}));
+    if (path === "/v1/sunbird/translate") {
+      const text = String(body && body.text || "");
+      const src = String(body && body.source_language || "eng");
+      const dst = String(body && body.target_language || "lug");
+      if (!text.trim()) return { status: 400, body: { ok: false, error: "text" } };
+      if (text.length > SUNBIRD_MAX_TEXT) return { status: 413, body: { ok: false, error: "text too long" } };
+      if (!LANG.test(src) || !LANG.test(dst)) return { status: 400, body: { ok: false, error: "language" } };
+      upstream = "https://api.sunbird.ai/tasks/translate";
+      init = {
+        method: "POST",
+        headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
+        body: JSON.stringify({ text, source_language: src, target_language: dst })
+      };
+      units = text.length;
+    } else {
+      const prompt = String(body && body.prompt || "");
+      if (!prompt.trim()) return { status: 400, body: { ok: false, error: "prompt" } };
+      if (prompt.length > SUNBIRD_MAX_PROMPT) return { status: 413, body: { ok: false, error: "prompt too long" } };
+      upstream = "https://api.sunbird.ai/tasks/chat/completions";
+      init = {
+        method: "POST",
+        headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "sunflower-14b", messages: [{ role: "user", content: prompt }] })
+      };
+      units = prompt.length;
+    }
+  }
+  if (!await reserve(deps, user.uid, day, units, limit, now)) {
+    return { status: 429, body: { ok: false, error: "daily limit" } };
+  }
+  let r;
+  try {
+    r = await deps.fetch(upstream, init);
+  } catch (_) {
+    r = null;
+  }
+  if (!r || !r.ok) {
+    await giveBack(deps, user.uid, day, units);
+    return { status: r ? r.status >= 500 ? 502 : r.status : 502, body: { ok: false, error: "sunbird unavailable" } };
+  }
+  const data = await r.json().catch(() => ({}));
+  return { status: 200, body: data };
 }
 
 // workers/economy/live.mjs
@@ -6574,7 +6758,7 @@ async function hideSignalReported(env, saToken, uid, signalId, mode, code) {
   const patch = mode === "hidden" ? { hidden: true, held: false, reviewedAt: now, reviewedBy: "report" } : { held: true, heldReason: ("reported-" + String(code || "urgent")).slice(0, 80), hidden: false, reviewedAt: now, reviewedBy: "report" };
   const wrote = await fsPutDoc(env, saToken, "/users/" + encodeURIComponent(who) + "/signal/" + encodeURIComponent(id), patch);
   if (!wrote || !wrote.ok) throw new Error("signal not updated");
-  await fsPutDoc(env, saToken, "/signals/" + encodeURIComponent(id), patch);
+  await fsPutDoc(env, saToken, "/signals/" + encodeURIComponent(id), Object.assign({}, patch, { public: false, feedUntil: 0 }));
   if (mode === "hidden") {
     const profile = await fsGetDoc(env, saToken, "/users/" + encodeURIComponent(who));
     const n = Number(profile && profile.sexualReports || 0) + 1;
@@ -6637,6 +6821,7 @@ function safetyQueue() {
     return (rank[a.priority] ?? 4) - (rank[b.priority] ?? 4) || (b.created_at || 0) - (a.created_at || 0);
   });
 }
+var DETECTOR_HOLDS = { "single-frame": 1, "found-on-fabric": 1 };
 async function placeBroadcast(env, user, userToken, saToken, body) {
   const id = String(body && body.broadcast_id || "").slice(0, 80);
   if (!id) return json({ ok: false, error: "broadcast_id required" }, 400);
@@ -6650,11 +6835,13 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
   const trusted = publisherTrusted(profile);
   let judged = judgeScreenPayload(body && body.screen, { title: row.title || "" });
   if (!judged.hasScreen && !(body && body.screen) && Number(row.screenVersion) >= 1 && (row.screenDecision === "allow" || row.screenDecision === "hold" || row.screenDecision === "block")) {
+    const keepHold = row.screenDecision === "hold" && DETECTOR_HOLDS[String(row.screenReason || "")] === 1;
+    const reusedDecision = row.screenDecision === "hold" && !keepHold ? "allow" : row.screenDecision;
     judged = {
-      decision: row.screenDecision,
+      decision: reusedDecision,
       score: Number(row.screenScore) || 0,
       hasScreen: true,
-      reason: String(row.screenReason || "") || (row.screenDecision === "allow" ? "" : "screen"),
+      reason: reusedDecision === "allow" ? "" : String(row.screenReason || "") || "screen",
       frames: Number(row.screenFrames) || 0,
       reused: true
     };
@@ -6664,6 +6851,15 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
     const orig = await fsGetDoc(env, token, "/broadcasts/" + encodeURIComponent(String(row.repostOf).slice(0, 80)));
     if (orig && (orig.hidden || orig.screenDecision === "block")) {
       judged = { decision: "block", score: 0, hasScreen: true, reason: "screen", frames: 0 };
+    } else if (orig && orig.held === true && orig.screenDecision === "hold" && DETECTOR_HOLDS[String(orig.screenReason || "")] === 1) {
+      judged = {
+        decision: "hold",
+        score: Number(orig.screenScore) || 0,
+        hasScreen: true,
+        reason: String(orig.screenReason),
+        frames: 0,
+        detail: String(orig.screenDetail || "")
+      };
     }
   }
   const safety = scorePublicText(
@@ -6677,19 +6873,31 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
     hasScreen: judged.hasScreen,
     decision: judged.decision
   });
+  const storedDecision = judged.decision === "allow" && judged.engine === "heuristic" ? "unread" : judged.decision;
   const patch = Object.assign({}, listing, {
-    screenDecision: judged.decision,
+    screenDecision: storedDecision,
+    screenEngine: String(judged.engine || (judged.reused ? "stored" : "none")),
     screenScore: judged.score || 0,
     screenReason: judged.reason || "",
     screenVersion: 1,
     screenFrames: judged.frames || 0,
+    /* What the detector found and in which still, for the desk. */
+    screenDetail: judged.detail || "",
+    screenFrame: typeof judged.frameIndex === "number" ? judged.frameIndex : -1,
     safetyScore: safety.score,
     safetyDecision: safety.decision,
     safetyUrgent: !!safety.urgent,
+    screenMedia: screenMediaKey(row),
     updatedAt: Date.now()
   });
+  const recheck = !!(body && body.recheck === true);
+  if (recheck) {
+    for (const k of ["listed", "held", "hidden", "heldReason", "hiddenReason"]) delete patch[k];
+    if (judged.decision === "block") Object.assign(patch, { listed: false, held: false, hidden: true, hiddenReason: "screen", heldReason: "" });
+    else if (judged.decision === "hold" && !row.hidden) Object.assign(patch, { listed: false, held: true, heldReason: "screen" });
+  }
   let safetyCase = "";
-  if (safetyHold(safety.decision)) {
+  if (safetyHold(safety.decision) && !recheck) {
     patch.listed = false;
     patch.held = true;
     patch.heldReason = safety.decision === "AGE_RESTRICT" ? "age-review" : safety.urgent ? "safety-urgent" : "safety-review";
@@ -6711,7 +6919,7 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
     patch.held = false;
     patch.hidden = true;
   }
-  if (row.visibility === "private") {
+  if (row.visibility === "private" && "listed" in patch) {
     patch.listed = false;
   }
   const writeTok = saToken || (patch.hidden || judged.decision === "block" ? userToken : "");
@@ -6730,10 +6938,11 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
   return json({
     ok: true,
     wrote,
-    listed: !!patch.listed,
-    held: !!patch.held,
-    hidden: !!patch.hidden,
-    heldReason: patch.heldReason || "",
+    recheck,
+    listed: !!("listed" in patch ? patch.listed : row.listed),
+    held: !!("held" in patch ? patch.held : row.held),
+    hidden: !!("hidden" in patch ? patch.hidden : row.hidden),
+    heldReason: ("heldReason" in patch ? patch.heldReason : row.heldReason) || "",
     screen: judged.decision,
     screenScore: judged.score || 0,
     safety: safety.decision,
@@ -8090,13 +8299,13 @@ async function handleMail(request, env, saToken) {
 var _lifelineHits = /* @__PURE__ */ new Map();
 function lifelineRate(ip, perMinute) {
   const now = Date.now();
-  const minute = Math.floor(now / 6e4);
-  const k = ip + "|" + minute;
+  const minute2 = Math.floor(now / 6e4);
+  const k = ip + "|" + minute2;
   const n = (_lifelineHits.get(k) || 0) + 1;
   if (_lifelineHits.size > 4e3) {
     for (const key of _lifelineHits.keys()) {
       const slot = Number(String(key).split("|").pop());
-      if (!(slot >= minute - 1)) _lifelineHits.delete(key);
+      if (!(slot >= minute2 - 1)) _lifelineHits.delete(key);
     }
   }
   if (_lifelineHits.size > 8e3) return false;
@@ -8753,8 +8962,8 @@ function launchApi(env, token) {
 var _launchStatusCache = /* @__PURE__ */ new Map();
 var _claimHits = /* @__PURE__ */ new Map();
 function claimRate(uid) {
-  const minute = Math.floor(Date.now() / 6e4);
-  const k = uid + "|" + minute;
+  const minute2 = Math.floor(Date.now() / 6e4);
+  const k = uid + "|" + minute2;
   const n = (_claimHits.get(k) || 0) + 1;
   if (_claimHits.size > 4e3) _claimHits.clear();
   _claimHits.set(k, n);
@@ -8813,8 +9022,9 @@ function liveAlertSize(env) {
   const n = Number(env && env.LIVE_ALERT_BATCH);
   return isFinite(n) && n >= 1 ? Math.min(100, Math.floor(n)) : LIVE_ALERT_BATCH;
 }
-function lgUsageStore(env, token) {
-  const pathOf = (uid, day) => "/lgUsage/" + encodeURIComponent(uid + "_" + day);
+function lgUsageStore(env, token, coll) {
+  const base = "/" + (coll || "lgUsage") + "/";
+  const pathOf = (uid, day) => base + encodeURIComponent(uid + "_" + day);
   return {
     reserve: async function(uid, day, n, limit) {
       for (let attempt = 0; attempt < 5; attempt++) {
@@ -9070,7 +9280,7 @@ async function handleRequest(request, env = {}, ctx = {}) {
             if (b.title) title = String(b.title).slice(0, 110);
             const who = b.creatorName ? "by " + String(b.creatorName).slice(0, 40) : "";
             const about = String(b.description || "").replace(/\s+/g, " ").trim().slice(0, 180);
-            desc = about ? (who ? who + " \xB7 " + about : about) : ((who ? who + " \xB7 " : "") + "Watch on Naluno");
+            desc = about ? who ? who + " \xB7 " + about : about : (who ? who + " \xB7 " : "") + "Watch on Naluno";
             const thumb = String(b.thumbUrl || b.thumb || "");
             const face = String(b.creatorPhoto || b.photoUrl || "");
             if (/^https:\/\//.test(thumb)) image = thumb;
@@ -9083,7 +9293,7 @@ async function handleRequest(request, env = {}, ctx = {}) {
         }
       } catch {
       }
-      const html = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + esc(title) + '</title><meta property="og:type" content="video.other"><meta property="og:site_name" content="Naluno"><meta property="og:title" content="' + esc(title) + '"><meta property="og:description" content="' + esc(desc) + '"><meta property="og:url" content="' + esc(selfUrl) + '">' + (image ? '<meta property="og:image" content="' + esc(image) + '">' : "") + (image ? '<meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">' : "") + '<meta name="twitter:card" content="' + (image ? "summary_large_image" : "summary") + '"><meta name="twitter:title" content="' + esc(title) + '"><meta name="twitter:description" content="' + esc(desc) + '">' + (image ? '<meta name="twitter:image" content="' + esc(image) + '">' : "") + '<link rel="canonical" href="' + esc(appUrl) + '"><meta http-equiv="refresh" content="0;url=' + esc(appUrl) + '"></head><body style="background:#0D0F17;color:#E8ECF5;font-family:system-ui;text-align:center;padding:48px 20px;"><p>Opening Naluno\u2026</p><p><a style="color:#7CFFB2" href="' + esc(appUrl) + '">Open this Broadcast</a></p><script>location.replace(' + JSON.stringify(appUrl) + ");<\/script></body></html>";
+      const html = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + esc(title) + '</title><meta property="og:type" content="video.other"><meta property="og:site_name" content="Naluno"><meta property="og:title" content="' + esc(title) + '"><meta property="og:description" content="' + esc(desc) + '"><meta property="og:url" content="' + esc(selfUrl) + '">' + (image ? '<meta property="og:image" content="' + esc(image) + '">' : "") + (image ? '<meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">' : "") + '<meta name="twitter:card" content="' + (image ? "summary_large_image" : "summary") + '"><meta name="twitter:title" content="' + esc(title) + '"><meta name="twitter:description" content="' + esc(desc) + '">' + (image ? '<meta name="twitter:image" content="' + esc(image) + '">' : "") + '<link rel="canonical" href="' + esc(appUrl) + '"><meta http-equiv="refresh" content="0;url=' + esc(appUrl) + '"></head><body style="background:#0D0F17;color:#E8ECF5;font-family:system-ui;text-align:center;padding:48px 20px;"><p>Opening Naluno\u2026</p><p><a style="color:#7CFFB2" href="' + esc(appUrl) + '">Open this Broadcast</a></p><script>location.replace(' + JSON.stringify(appUrl) + ");</script></body></html>";
       return new Response(html, { status: 200, headers: {
         "Content-Type": "text/html; charset=utf-8",
         // Crawlers re-fetch often; a short cache keeps a taken-down Broadcast
@@ -9326,6 +9536,14 @@ async function handleRequest(request, env = {}, ctx = {}) {
         projectId: projectId(env)
       });
       return json(out.body, out.status);
+    }
+    if (path.indexOf("/v1/sunbird/") === 0) {
+      const out = await handleSunbird(path, request, user, {
+        env,
+        fetch: (u, o) => _fetch(u, o),
+        usage: saToken ? lgUsageStore(env, saToken, "sunbirdUsage") : null
+      });
+      if (out) return json(out.body, out.status);
     }
     if (path === "/v1/voice/lg" && request.method === "POST") {
       const body = await request.json().catch(() => ({}));

@@ -499,8 +499,10 @@ async function bcompKickOriginScan(){
         const o = (window._bcompOrigin && window._bcompOrigin.screen) || null;
         if(o){
           screen = Object.assign({}, o);
-          if(screen.decision === 'block'){ screen.decision = 'hold'; screen.reason = 'heuristic-only'; }
+          /* The skin check never stops or holds anything (19 Oct e). */
+          if(screen.decision === 'block' || screen.decision === 'hold'){ screen.decision = 'allow'; screen.reason = ''; }
           screen.engine = 'heuristic';
+          screen.unchecked = true;
         }
       }
       window._bcompScreen = screen;
@@ -1003,6 +1005,11 @@ async function nalunoStrictVerdict(p, say){
     ]);
   }catch(_){ v = null; }
   if(waiting) clearTimeout(waiting);
+  /* 19 Oct e: the one hold kept is the detector's own finding of nudity in
+     one still of a video; a person looks before it goes on the public feed.
+     Any other "hold" (from an older engine or the skin check) is not a
+     clear finding and goes out. */
+  if(v && v.decision === 'hold' && v.engine === 'nudenet' && (v.reason === 'single-frame' || v.reason === 'found-on-fabric')) return v;
   if(!v || !v.decision || v.decision === 'unread' || v.decision === 'hold'){
     return Object.assign({}, v || {}, { decision: 'allow', reason: '', reasonText: '', engine: (v && v.engine) || 'none' });
   }
@@ -1330,6 +1337,13 @@ function bcompPaintScreen(report){
     title = 'Naluno Screen · clear';
     body = 'Stills from this file can go out.';
     color = 'var(--mint)';
+  } else if(d === 'hold' && report && report.engine === 'nudenet' && (report.reason === 'single-frame' || report.reason === 'found-on-fabric')){
+    /* The detector found nudity. Say so plainly. */
+    title = 'Naluno Screen · a person looks first';
+    body = (report.reason === 'single-frame' ? 'One still from this video' : 'This')
+      + (report.reasonText ? ' shows ' + report.reasonText : ' may show nudity')
+      + '. It is saved on your list, and a person at Naluno looks at it before it goes on the public feed.';
+    color = '#ffcf6a';
   } else if(d === 'hold'){
     title = 'Naluno Screen · clear';
     body = 'Nothing clear was found, so this can go out.';

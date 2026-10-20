@@ -25,9 +25,11 @@ const core = read('js/core.js');
   assert.strictEqual(t({ app: '2026.10.15i', build: '' }, { app: '', build: 'garbage' }), '', 'a page that cannot be read is ignored');
 }
 /* It runs by itself, at a good moment, once per version. */
-assert.ok(/if\(target\) nalunoAutoUpdate\(target\);/.test(core), 'a newer version is applied without waiting for a tap');
+assert.ok(/if\(target\) nalunoAutoUpdate\(target, incomingNotice, [^;]+\);/.test(core), 'a newer version is applied without waiting for a tap');
 assert.ok(/window\.nalunoUpdateBusy\(\)/.test(core) && /nalunoUpdateQuietMoment\(\)/.test(core), 'never while busy, only at a quiet moment');
-assert.ok(/tried\.target === target && Date\.now\(\) - Number\(tried\.at \|\| 0\) < 10 \* 60 \* 1000/.test(core), 'no reload loop while an upload is half done');
+assert.ok(/tried\.target === target && String\(tried\.offer \|\| ''\) === String\(liveKey \|\| ''\) && Date\.now\(\) - Number\(tried\.at \|\| 0\) < 10 \* 60 \* 1000/.test(core), 'no reload loop while an upload is half done');
+/* 19 Oct e: ... and when the rest of the upload lands (a different offer), it updates. */
+assert.ok(/const guard = target \+ '\|' \+ String\(liveKey \|\| ''\);\s*if\(settled\.indexOf\(guard\) >= 0\)/.test(core), 'the once-per-session guard is per offer, not per target');
 assert.ok(/setTimeout\(checkForUpdate, 2500\)/.test(core) && /addEventListener\('online'/.test(core), 'checked soon after opening and when back online');
 const pwa = read('js/pwa.js');
 assert.ok(/window\.nalunoUpdateBusy = function\(\)\{\s*if\(busyNow\(\)\) return true;/.test(pwa), 'busy covers calls, uploads, composing and typing');
@@ -42,7 +44,7 @@ assert.ok(/got < have\) return;/.test(core.slice(core.indexOf('async function na
 /* The console is told, and never reloads itself (each opening asks for its password). */
 const con = read('js/admin-console.js');
 const seg = con.slice(con.indexOf('function showConsoleUpdateBar('), con.indexOf('function pingSw()'));
-assert.ok(/live <= have\) return;/.test(seg) && /showConsoleUpdateBar\(live\)/.test(seg), 'the console learns of a newer build');
+assert.ok(/live <= have\)( return;| \{)/.test(seg) && /showConsoleUpdateBar\(live\)/.test(seg), 'the console learns of a newer build');
 assert.strictEqual((seg.match(/location\.reload\(\)/g) || []).length, 1, 'the only reload is the button');
 assert.ok(/btn\.onclick = async function/.test(seg), '... pressed by the operator');
 console.log('fixes-1015a: all checks passed');

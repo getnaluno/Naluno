@@ -79,18 +79,44 @@ const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
   assert.strictEqual(judge([{ d: [[L.M_GEN, 0.55, 0.95]], p: 0 }]).decision, 'block');
   assert.strictEqual(judge([{ d: [[L.BREAST, 0.6, 0.7]], p: 0 }]).decision, 'block', 'topless');
   assert.strictEqual(judge([{ d: [[L.BREAST, 0.45, 0.3], [L.F_GEN, 0.45, 0.4]], p: 0 }]).decision, 'block', 'nudity: two parts');
-  assert.strictEqual(judge([{ d: [[L.FACE_F, 0.8], [L.FACE_M, 0.8], [L.BUTT, 0.7, 0.6]], p: 0 }]).reason, 'possible-sexual-act');
+  /* 19 Oct e: two faces and a bottom is not a clear finding of nudity. */
+  assert.strictEqual(judge([{ d: [[L.FACE_F, 0.8], [L.FACE_M, 0.8], [L.BUTT, 0.7, 0.6]], p: 0 }]).decision, 'allow');
   assert.strictEqual(judge([{ d: [[L.F_GEN, 0.92, 0.0]], p: 0 }]).decision, 'block', 'near-certain is never reduced');
-  /* Genitals on "fabric" are never let out on that alone: a person looks. */
+  /* Genitals the detector found at the reject level, on "fabric": a detector
+     finding, so a person looks (coloured light can make skin look like cloth). */
   r = judge([{ d: [[L.F_GEN, 0.7, 0.05]], p: 0 }]);
   assert.strictEqual(r.decision, 'hold');
+  assert.strictEqual(r.reason, 'found-on-fabric');
+  /* A faint sign (below the reject level) is not a finding: it goes out. */
   r = judge([{ d: [[L.ANUS, 0.3, 0.0]], p: 0 }]);
-  assert.strictEqual(r.decision, 'hold');
-  /* Old phones (no skin share): exactly the rule as it was on the phone. */
-  assert.strictEqual(judge([{ d: [[L.BREAST, 0.45]], p: 0 }]).decision, 'hold');
+  assert.strictEqual(r.decision, 'allow');
+  assert.strictEqual(judge([{ d: [[L.BREAST, 0.45]], p: 0 }]).decision, 'allow', 'a weak breast sign is not a finding');
+  assert.strictEqual(judge([{ d: [[L.F_GEN, 0.4]], p: 0 }]).decision, 'allow', 'a weak genital sign is not a finding');
   assert.strictEqual(judge([{ d: [[L.FACE_F, 0.8], [L.FACE_M, 0.8], [L.BREAST, 0.3]], p: 0 }]).decision, 'allow', 'two faces and a flicker: not a sexual act (was held by the server)');
   /* Videos: two frames of real exposure still block. */
   assert.strictEqual(judge([{ d: [[L.F_GEN, 0.6, 0.8]], p: 0 }, { d: [], p: 0 }, { d: [[L.F_GEN, 0.65, 0.7]], p: 0 }]).decision, 'block');
+
+  /* ---------- 4b. Skin colour never makes a decision (19 Oct e) ----------
+     A picture of a person with dark or African skin, a face, arms, a
+     shirtless chest, a dancer: whatever the skin share, nothing is held or
+     stopped unless the detector finds an exposed part at the reject level. */
+  for (const share of [undefined, 0, 0.3, 0.6, 0.9, 1]) {
+    const row = (c, sc) => (share === undefined ? [c, sc] : [c, sc, share]);
+    for (const frame of [
+      { d: [row(L.FACE_F, 0.9)], p: 0 },
+      { d: [row(L.FACE_M, 0.9), row(5, 0.9), row(13, 0.85), row(11, 0.7)], p: 0 },    // shirtless man
+      { d: [row(L.FACE_F, 0.85), row(L.FACE_M, 0.85), row(13, 0.8), row(5, 0.8)], p: 0 }, // two people, bare arms and bellies
+      { d: [row(L.BUTT, 0.44), row(16, 0.8), row(0, 0.7)], p: 0 },                     // dancer, covered
+      { d: [row(L.BREAST, 0.3), row(L.F_GEN, 0.2), row(L.FACE_F, 0.8)], p: 0 },          // faint signs
+    ]) {
+      for (const n of [1, 4]) {
+        const fr = Array.from({ length: n }, () => frame);
+        const phone = box.nalunoModDecide(fr), srv = server.modDecide(fr);
+        assert.strictEqual(srv.decision, 'allow', 'skin share ' + share + ': ' + JSON.stringify(frame));
+        assert.strictEqual(phone.decision, 'allow');
+      }
+    }
+  }
 
   /* ---------- 5. The server only takes a well-formed skin share ---------- */
   ['0.1', -0.1, 1.2, NaN, true].forEach((bad) => {

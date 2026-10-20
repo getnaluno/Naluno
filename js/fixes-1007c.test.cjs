@@ -51,7 +51,10 @@ const html = read('app/index.html');
 /* 4. Past Nearby Broadcasts: the next one */
 {
   const sp = read('js/broadcast-space.js');
-  const fn = sp.slice(sp.indexOf('function nalunoFeedNextId'), sp.indexOf('window.nalunoFeedNextId'));
+  /* The next pick moved into nalunoPickNextBroadcast (feed order first, then a
+     nearby one not yet played); nalunoFeedNextId asks it. Load all four. */
+  const piece = (name) => { const i = sp.indexOf('function ' + name + '('); const j = sp.indexOf('\nfunction ', i + 10); return sp.slice(i, j); };
+  const fn = ['nalunoPickNextBroadcast', 'nalunoPlayMemory', 'nalunoDescribePlayback', 'nalunoFeedNextId'].map(piece).join('\n').replace(/window\.nalunoFeedNextId = nalunoFeedNextId;/, '');
   const grid = { children: [
     { getAttribute: (k) => (k === 'data-broadcast-id' ? 'a' : null) },
     { getAttribute: (k) => (k === 'data-strand-id' ? 's1' : null) },
@@ -62,8 +65,9 @@ const html = read('app/index.html');
     feedBroadcasts: [{ id: 'a', createdAt: 1 }, { id: 's1a', strandId: 's1', createdAt: 2 }, { id: 's1b', strandId: 's1', createdAt: 3 }, { id: 'c', createdAt: 4 }, { id: 'z', createdAt: 9 }],
     myBroadcasts: [],
     nalunoStrandSiblingsFor: (id) => (id === 's1a' ? { index: 0, items: [{ id: 's1a' }, { id: 's1b' }] } : (id === 's1b' ? { index: 1, items: [{ id: 's1a' }, { id: 's1b' }] } : { index: -1, items: [] })),
-    Array, Number,
+    Array, Number, Object, String, Date,
   };
+  box.window = box;
   vm.createContext(box);
   vm.runInContext(fn + '\nthis.next = nalunoFeedNextId;', box);
   assert.strictEqual(box.next('a'), 's1a', 'the feed order: a Strand opens at its first part');

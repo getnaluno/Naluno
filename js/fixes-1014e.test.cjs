@@ -27,6 +27,6 @@ assert.ok(/nalunoModPreload\(\)/.test(open), 'the composer warms the detector wh
 assert.ok(/finalScreen\.engine !== 'nudenet'/.test(comp) && /screen: finalScreen,/.test(comp), 'a heuristic verdict is read again by the detector before saving');
 assert.ok(/!\(finalScreen && finalScreen\.decision === 'block'\)/.test(comp), '... and a block is never re-read into an allow');
 const rules = read('firestore.rules');
-assert.ok(/!request\.resource\.data\.keys\(\)\.hasAny\(\['screenDecision', 'screenScore', 'screenReason', 'screenVersion', 'screenFrames'\]\)/.test(rules), 'a phone cannot write a Screen verdict when it creates a Broadcast');
+assert.ok(/!request\.resource\.data\.keys\(\)\.hasAny\(\['screenDecision', 'screenScore', 'screenReason', 'screenVersion', 'screenFrames'[^\]]*\]\)/.test(rules), 'a phone cannot write a Screen verdict when it creates a Broadcast');
 assert.ok(/row\.screenDecision === "allow" \|\| row\.screenDecision === "hold"/.test(read('workers/economy/handler.mjs')), 'the worker reuses only its own allow or hold');
 console.log('fixes-1014e: all checks passed');

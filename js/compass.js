@@ -1859,16 +1859,15 @@ async function nalunoScreenSignalSegments(segs){
       seen.set(file, verdict || { decision: 'unread' });
       verdict = seen.get(file);
     }
-    /* 29h: a picture Screen could not read stays private until checked. */
-    if(!verdict.decision || verdict.decision === 'unread'){
-      seg.held = true;
-      seg.heldReason = 'unread';
-      continue;
-    }
+    /* 19 Oct e: a picture Screen could not read is not a sign of nudity,
+       so it is not held (29h held it). Only the detector's own finding of
+       nudity holds a part: in one still of a video ("single-frame"). Skin,
+       colour and light never hold anything. */
+    if(!verdict.decision || verdict.decision === 'unread') continue;
     if(verdict.decision === 'block') return { blocked: verdict };
-    if(verdict.decision === 'hold'){
+    if(verdict.decision === 'hold' && verdict.engine === 'nudenet' && (verdict.reason === 'single-frame' || verdict.reason === 'found-on-fabric')){
       seg.held = true;
-      seg.heldReason = verdict.reason || 'screen';
+      seg.heldReason = verdict.reason;
     }
   }
   return { blocked: null };
