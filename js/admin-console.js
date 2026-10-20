@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261020b';
+  const BUILD = '20261020d';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -74,6 +74,7 @@
     ['discovery', 'Discovery'], ['known', 'Known'], ['rights', 'Rights'],
     ['luganda', 'Luganda'],
     ['diagnostics', 'Diagnostics'],
+    ['measures', 'Measures'],
     ['export', 'Export'],
   ];
   let __needsSetup = false;
@@ -1340,7 +1341,7 @@
     __pendingSnap = null;
     /* Records keeps its date and the Day/Week button. New rows only
        replace the numbers, as soon as the app writes them. */
-    if (__activeTab === 'records') {
+    if (__activeTab === 'records' || (__activeTab === 'legal' && document.getElementById('recOut'))) {
       try {
         if (typeof window.__nalunoPaintRecords === 'function') {
           window.__nalunoPaintRecords((__livePack && __livePack.traffic) || []);
@@ -1354,6 +1355,8 @@
     /* 15 Oct g: Diagnostics reads its own reports (Reload button); a live
        repaint would draw it off-screen and lose its answer. */
     if (__activeTab === 'diagnostics') return;
+    /* 20 Oct c: Measures reads its own day totals; a live repaint would lose them. */
+    if (__activeTab === 'measures') return;
     renderTabInPlace(__activeTab, snap);
   }
   /* 13b: a background refresh draws the tab off-screen and swaps in only the
@@ -2042,6 +2045,112 @@
   function kpis(pairs) {
     return '<div class="kpi-row">' + pairs.map(function (p) { return kpi(p[0], p[1]); }).join('') + '</div>';
   }
+  /* 20 Oct c: every list in the console is closed until it is tapped.
+     A list (rows, review cards, a table, or several rows in a row) is put
+     inside a fold that shows its name and how many it holds. Tap to open,
+     tap again to close. What is open stays open through live updates and
+     re-draws (remembered for this tab session). Works for lists drawn
+     later too (lists that load on their own), through one watcher. */
+  const __foldOpen = (function () { try { return JSON.parse(sessionStorage.getItem('nalunoDeskFolds') || '{}') || {}; } catch (_) { return {}; } })();
+  function foldSave() { try { sessionStorage.setItem('nalunoDeskFolds', JSON.stringify(__foldOpen)); } catch (_) {} }
+  function foldTitleFor(node) {
+    const named = node.getAttribute && (node.getAttribute('data-fold-title') || (node.parentNode && node.parentNode.getAttribute && node.parentNode.getAttribute('data-fold-title')));
+    if (named) return named;
+    const c = node.closest ? node.closest('.card') : null;
+    const who = c && c.querySelector(':scope > .who');
+    let t = who ? who.textContent.trim() : '';
+    /* a heading just before the list names it better */
+    let p = node.previousElementSibling;
+    while (p && p.tagName === 'P') p = p.previousElementSibling;
+    /* rows that start their box: the heading is just before the box */
+    if (!p && node.parentNode && node.parentNode !== c) {
+      p = node.parentNode.previousElementSibling;
+      while (p && p.tagName === 'P') p = p.previousElementSibling;
+    }
+    if (p && /^H[1-6]$/.test(p.tagName)) t = p.textContent.trim();
+    return t || 'List';
+  }
+  function foldCount(node) {
+    if (node.classList.contains('desk-list') || node.classList.contains('review-list')) return node.children.length;
+    if (node.tagName === 'TABLE') return node.querySelectorAll('tbody tr').length || Math.max(0, node.querySelectorAll('tr').length - 1);
+    return node.querySelectorAll(':scope > .flag-row').length;
+  }
+  function foldWrap(nodes, title, count) {
+    const first = nodes[0];
+    const box = document.createElement('details');
+    box.className = 'desk-fold';
+    const key = String(__activeTab || '') + '|' + title;
+    box.setAttribute('data-fold', key);
+    if (__foldOpen[key]) box.open = true;
+    /* A list that answers a search is shown open: that is what was asked for. */
+    try {
+      const body = document.getElementById('adminBody');
+      const searching = body && Array.prototype.some.call(body.querySelectorAll('input[type="search"], input[data-keep], input[placeholder]'), function (i) {
+        return i.type !== 'password' && i.type !== 'date' && String(i.value || '').trim() && /search|find|handle|uid|name|case|q$/i.test((i.id || '') + ' ' + (i.placeholder || ''));
+      });
+      if (searching) box.open = true;
+    } catch (_) {}
+    const sum = document.createElement('summary');
+    sum.innerHTML = '<span>' + escapeHtml(title) + '</span> <span class="desk-fold-n">' + count + '</span>';
+    const body = document.createElement('div');
+    body.className = 'desk-fold-body';
+    first.parentNode.insertBefore(box, first);
+    box.appendChild(sum);
+    box.appendChild(body);
+    nodes.forEach(function (n) { body.appendChild(n); });
+    box.addEventListener('toggle', function () {
+      if (box.open) __foldOpen[key] = 1; else delete __foldOpen[key];
+      foldSave();
+    });
+  }
+  function foldLists(root) {
+    if (!root || !root.querySelectorAll) return 0;
+    let n = 0;
+    root.querySelectorAll('.desk-list, .review-list, table').forEach(function (node) {
+      if (node.closest('.desk-fold') || node.closest('[data-nofold]')) return;
+      if (node.parentNode && node.parentNode.closest && node.parentNode.closest('.desk-list, .review-list')) return;
+      const count = foldCount(node);
+      if (count < 1) return;
+      foldWrap([node], foldTitleFor(node), count);
+      n++;
+    });
+    /* Two or more plain rows side by side. */
+    const groups = [];
+    root.querySelectorAll('.flag-row').forEach(function (row) {
+      if (row.closest('.desk-fold') || row.closest('[data-nofold]')) return;
+      const parent = row.parentNode;
+      if (!parent || parent.__foldSeen) return;
+      parent.__foldSeen = true;
+      const rows = Array.prototype.filter.call(parent.children, function (c) { return c.classList && c.classList.contains('flag-row'); });
+      if (rows.length >= 2) groups.push({ parent: parent, rows: rows });
+    });
+    groups.forEach(function (g) {
+      /* Rows with buttons or fields that act on the page stay visible when few (settings switches). */
+      if (g.rows.some(function (r) { return r.querySelector('input, select, textarea'); })) return;
+      foldWrap(g.rows, foldTitleFor(g.rows[0]), g.rows.length);
+      n++;
+    });
+    root.querySelectorAll('.flag-row').forEach(function (r) { if (r.parentNode) r.parentNode.__foldSeen = false; });
+    return n;
+  }
+  window.nalunoFoldLists = foldLists;
+  let __foldWatch = null;
+  function watchFolds() {
+    const body = document.getElementById('adminBody');
+    if (!body || typeof MutationObserver === 'undefined') return;
+    if (__foldWatch && __foldWatch.body === body) return;
+    if (__foldWatch) { try { __foldWatch.obs.disconnect(); } catch (_) {} }
+    let queued = false;
+    const obs = new MutationObserver(function () {
+      if (queued) return;
+      queued = true;
+      Promise.resolve().then(function () { queued = false; try { foldLists(document.getElementById('adminBody')); } catch (_) {} });
+    });
+    obs.observe(body, { childList: true, subtree: true });
+    __foldWatch = { body: body, obs: obs };
+    try { foldLists(body); } catch (_) {}
+  }
+  setInterval(watchFolds, 1500);
   function card(title, inner) {
     return '<div class="card"><div class="who">' + escapeHtml(title) + '</div>' + inner + '</div>';
   }
@@ -2415,7 +2524,9 @@
       const d = await loadSnapshot(!!force);
       renderStrip(d);
       // 13b: the tab is already on screen from the last snapshot: refresh it in place.
-      if (hadContent && tab !== 'launch' && __activeTab === tab) { if (tab !== 'diagnostics') renderTabInPlace(tab, d); }
+      /* 20 Oct d: Measures reads its own totals and batches after the first
+         paint; redrawing it off-screen here left "Latest batches" empty. */
+      if (hadContent && tab !== 'launch' && __activeTab === tab) { if (tab !== 'diagnostics' && tab !== 'measures') renderTabInPlace(tab, d); }
       else renderTab(tab, d);
     } catch (e) {
       if (!__snap) el.innerHTML = '<p class="sub">Could not load this section. ' + escapeHtml((e && e.message) || '') + '</p>';
@@ -4997,6 +5108,14 @@
       } else {
         el.innerHTML = '<p class="sub">The legal desk did not load.</p>';
       }
+      if (el && !el.querySelector('#legalRecordsHost')) {
+        el.insertAdjacentHTML('beforeend', '<div id="legalRecordsHost"></div>');
+        try { paintRecordsInto(el.querySelector('#legalRecordsHost')); } catch (e) { console.warn('[records]', e && e.message); }
+      }
+      if (el && !el.querySelector('#legalHoldsHost')) {
+        el.insertAdjacentHTML('beforeend', '<div id="legalHoldsHost"></div>');
+        try { paintLegalHolds(el.querySelector('#legalHoldsHost')); } catch (e) { console.warn('[holds]', e && e.message); }
+      }
       if (superOn && el && !el.querySelector('#legalPassCard')) {
         el.insertAdjacentHTML('afterbegin', card('Tab password',
           '<div id="legalPassCard"></div>'
@@ -6061,6 +6180,16 @@
       return;
     }
 
+    if (tab === 'measures') {
+      if (window.NalunoMeasureDesk) {
+        window.NalunoMeasureDesk.render(el, { escapeHtml: escapeHtml, card: card, kpis: kpis, adminDb: adminDb, toast: toast,
+          users: function () { try { return ((__snap && __snap._raw && __snap._raw.users) || (__livePack && __livePack.users) || []); } catch (_) { return []; } },
+          still7: function () { try { const u = (__snap && __snap.users) || {}; return { pct: u.still_7_pct, n: u.still_7 || 0, of: u.still_7_of || 0 }; } catch (_) { return null; } } });
+      } else {
+        el.innerHTML = card('Measures', '<p class="sub">This section did not load. Reload the console.</p>');
+      }
+      return;
+    }
     if (tab === 'diagnostics') {
       if (window.NalunoDiagDesk) {
         window.NalunoDiagDesk.render(el, { escapeHtml: escapeHtml, card: card, kpis: kpis, adminDb: adminDb, toast: toast });
@@ -6558,7 +6687,86 @@
       return;
     }
 
-    if (tab === 'records') {
+    /* 20 Oct c: call records (who called whom) live inside Legal, behind
+       its password: they are kept for security reports, and not everyone
+       with the console should read them. */
+    /* 20 Oct d: call and message records are deleted after 12 months.
+       "Keep" marks an account whose records are needed for an open report,
+       investigation or legal request; its records are not deleted until
+       the mark is lifted. Each mark and each lift is written to the audit. */
+    function paintLegalHolds(host) {
+      const db = adminDb();
+      if (!host || !db) return;
+      host.innerHTML = card('Keep records past 12 months',
+        '<p class="sub">Call and message records are deleted 12 months after they were made. Keep an account\u2019s records only while an open report, investigation or legal request needs them, and lift the mark when it is closed.</p>'
+        + '<label for="holdUid">Account (uid or @handle)</label><input id="holdUid" data-keep="holdUid" autocomplete="off" />'
+        + '<label for="holdWhy">Why (report, case or request reference)</label><input id="holdWhy" data-keep="holdWhy" autocomplete="off" />'
+        + '<div class="row"><button type="button" class="primary" id="holdAdd">Keep this account\u2019s records</button></div>'
+        + '<p class="msg" id="holdMsg"></p><div id="holdList"><p class="sub">Reading…</p></div>');
+      const msg = host.querySelector('#holdMsg');
+      async function resolveUid(raw) {
+        const v = String(raw || '').trim();
+        if (!v) return '';
+        if (v.charAt(0) !== '@') return v.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 128);
+        try {
+          const snap = await db.collection('handles').doc(v.slice(1).toLowerCase()).get();
+          const d = snap && snap.exists ? (snap.data() || {}) : {};
+          return String(d.uid || '');
+        } catch (_) { return ''; }
+      }
+      async function list() {
+        /* the card may have been redrawn in place since; write where it is on screen */
+        const live = host.isConnected ? host : (document.getElementById('legalHoldsHost') || host);
+        const box = live.querySelector('#holdList') || host.querySelector('#holdList');
+        if (!box) return;
+        try {
+          const snap = await db.collection('legalHolds').limit(200).get();
+          const rows = (snap.docs || []).map(function (d) { return Object.assign({ uid: d.id }, d.data() || {}); });
+          box.innerHTML = rows.length ? '<div>' + rows.map(function (r) {
+            return '<div class="flag-row" style="align-items:center;"><span style="flex:1;">' + escapeHtml(r.uid) + ' · ' + escapeHtml(String(r.why || '')) + ' · since ' + escapeHtml(new Date(Number(r.at) || 0).toLocaleDateString()) + '</span>'
+              + '<button type="button" class="ghost holdLift" data-uid="' + escapeHtml(r.uid) + '">Lift</button></div>';
+          }).join('') + '</div>' : '<p class="sub">No records are being kept past 12 months.</p>';
+          box.querySelectorAll('.holdLift').forEach(function (b) {
+            b.onclick = async function () {
+              const uid = b.getAttribute('data-uid');
+              if (!window.confirm('Lift the mark? This account\u2019s records older than 12 months will be deleted at the next run.')) return;
+              try {
+                const ok = await writeAudit('legal-hold-lift', uid, 'Records no longer kept past 12 months');
+                if (!ok) throw new Error('The audit record could not be saved, so nothing was changed.');
+                await db.collection('legalHolds').doc(uid).delete();
+                if (msg) msg.textContent = 'Lifted.';
+                list();
+              } catch (e) { if (msg) msg.textContent = (e && e.message) || 'Could not lift it.'; }
+            };
+          });
+        } catch (e) { box.innerHTML = '<p class="sub">Could not read: ' + escapeHtml((e && e.message) || String(e)) + '. Publish firestore.rules.</p>'; }
+      }
+      const add = host.querySelector('#holdAdd');
+      if (add) add.onclick = async function () {
+        const uid = await resolveUid(host.querySelector('#holdUid').value);
+        const why = String(host.querySelector('#holdWhy').value || '').trim().slice(0, 200);
+        if (!uid) { if (msg) msg.textContent = 'That account was not found.'; return; }
+        if (!why) { if (msg) msg.textContent = 'Say which report, case or request needs the records.'; return; }
+        try {
+          const ok = await writeAudit('legal-hold-add', uid, why);
+          if (!ok) throw new Error('The audit record could not be saved, so nothing was changed.');
+          await db.collection('legalHolds').doc(uid).set({ uid: uid, why: why, at: Date.now(), by: (currentUser && currentUser.uid) || '' });
+          if (msg) msg.textContent = 'Kept. These records are not deleted until you lift the mark.';
+          host.querySelector('#holdUid').value = ''; host.querySelector('#holdWhy').value = '';
+          list();
+        } catch (e) { if (msg) msg.textContent = (e && e.message) || 'Could not keep them.'; }
+      };
+      list();
+    }
+    function paintRecordsInto(el) {
+      /* 20 Oct d: every opening of the call records is written to the audit
+         (once per opening of Legal, not on each refresh). */
+      try {
+        if (!window.__nalunoRecordsAuditAt || Date.now() - window.__nalunoRecordsAuditAt > 10 * 60 * 1000) {
+          window.__nalunoRecordsAuditAt = Date.now();
+          writeAudit('legal-records-open', 'call-records', 'Call and message records opened in Legal');
+        }
+      } catch (_) {}
       const today = new Date();
       const isoDefault = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
       const iso = window.__recDate || isoDefault;
@@ -6719,6 +6927,12 @@
         paint(cached);
       }
       loadRec();
+    }
+    if (tab === 'records') {
+      el.innerHTML = card('Records', '<p class="sub">Call records (who called whom) are now inside Legal, behind its password.</p>'
+        + '<div class="row"><button type="button" class="primary" id="recGoLegal">Open Legal</button></div>');
+      const go = $('recGoLegal');
+      if (go) go.onclick = function () { const t = document.querySelector('[data-tab="legal"]'); if (t) t.click(); };
       return;
     }
 
@@ -8318,12 +8532,30 @@
   }
   window.nalunoPublicFeedFill = publicFeedFill;
 
+  /* 20 Oct c: the desk's own look at a Screen hold, counted for the
+     console's Measures (was Screen right?). Fire and forget. */
+  async function deskMeasure(name, props) {
+    try {
+      const tok = currentUser && currentUser.getIdToken ? await currentUser.getIdToken() : '';
+      await fetch(WORKER + '/v1/measure', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, tok ? { Authorization: 'Bearer ' + tok } : {}),
+        body: JSON.stringify({ d: 'desk', events: [{ n: name, p: props || {} }] }) });
+    } catch (_) {}
+  }
   async function modBroadcast(id, action, uid) {
     if (!id || !action) return;
     const db = adminDb();
     if (!db) return;
     const now = Date.now();
     try {
+      if (action === 'let-out' || action === 'take-down') {
+        try {
+          const row = (findBroadcast(id) || {});
+          if (row.heldReason === 'screen' && row.screenDecision === 'hold') {
+            const r = String(row.screenReason || '');
+            deskMeasure('desk_screen_review', { result: action, reason: r === 'single-frame' || r === 'found-on-fabric' ? r : 'other' });
+          }
+        } catch (_) {}
+      }
       let fill = { patch: {}, note: '' };
       if (action === 'let-out' || action === 'restore') {
         /* A failed read throws and stops here: never fill from a post we

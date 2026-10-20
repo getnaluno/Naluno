@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.10.20b" />
+  <meta name="naluno-build" content="2026.10.20d" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.10.20b">
+<meta name="app-version" content="2026.10.20d">
 <meta name="naluno-update-notice" content="off">
 <meta name="description" content="Naluno brings private communication, communities and creator-led content into one place. A Callsign instead of a phone number.">
 <meta property="og:title" content="Naluno">
@@ -132,9 +132,9 @@
 })();
 </script>
 <link rel="apple-touch-startup-image" href="/splash-empty.png">
-<link rel="stylesheet" href="/css/app.css?v=20261019a" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/css/app.css?v=20261020c" media="print" onload="this.media='all'">
 <script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="/css/app.css?v=20261019a"></noscript>
+<noscript><link rel="stylesheet" href="/css/app.css?v=20261020c"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -245,6 +245,18 @@ window.__nalunoEntryT0 = Date.now();
     </div>
     </div>
 
+    <!-- 20 Oct c: a short welcome first, before any agreement is asked for. -->
+    <div id="nalunoHello" class="naluno-onboard" hidden aria-label="Welcome to Naluno">
+      <div class="onboard-stage">
+        <div id="helloHero" class="onboard-hero" aria-hidden="true"></div>
+        <h1 id="helloTitle" class="onboard-title">Welcome to Naluno</h1>
+        <p id="helloBody" class="onboard-legal">Stay reachable with the people you know. A name instead of a phone number, private messages, calls, rooms that forget, and videos you choose to share.</p>
+      </div>
+      <div class="onboard-foot">
+        <button type="button" id="helloNextBtn" class="join-btn onboard-agree">Continue</button>
+      </div>
+    </div>
+
     <div id="nalunoWelcome" class="naluno-onboard" hidden aria-label="Welcome to Naluno">
       <div class="onboard-stage">
         <div id="welcomeHero" class="onboard-hero" aria-hidden="true"></div>
@@ -264,6 +276,20 @@ window.__nalunoEntryT0 = Date.now();
       </div>
       <div class="onboard-foot">
         <button type="button" id="welcomeAgreeBtn" class="join-btn onboard-agree">Agree and continue</button>
+      </div>
+    </div>
+
+    <!-- 20 Oct c: where the person is, chosen by them (a country, never a place). -->
+    <div id="nalunoCountry" class="naluno-onboard" hidden aria-label="Your country">
+      <div class="onboard-stage">
+        <h1 id="countryTitle" class="onboard-title">Where are you?</h1>
+        <p id="countryBody" class="onboard-legal">Pick your country. It helps Naluno know where people use it. Only the country is kept, never where you are in it. You can change it later under Callsign.</p>
+        <label for="countryPick" class="sr-only">Country</label>
+        <select id="countryPick" class="onboard-country"></select>
+      </div>
+      <div class="onboard-foot">
+        <button type="button" id="countryNextBtn" class="join-btn onboard-agree">Continue</button>
+        <button type="button" id="countrySkipBtn" class="tour-text-btn" style="margin-top:10px;">Prefer not to say</button>
       </div>
     </div>
 
@@ -671,6 +697,13 @@ window.__nalunoEntryT0 = Date.now();
           </div>
         </div>
       </div>
+      </div>
+
+      <!-- 20 Oct c: the country this person chose (never a place). -->
+      <div class="greenroom-setting" id="countrySection" aria-labelledby="countrySettingTitle">
+        <div class="greenroom-setting-head"><span class="dot" aria-hidden="true"></span><span class="greenroom-setting-title" id="countrySettingTitle">Country</span></div>
+        <div class="greenroom-setting-sub">Only the country is kept, never where you are in it.</div>
+        <select id="countrySetting" class="onboard-country" style="margin:12px 0 0;"></select>
       </div>
 
       <!-- Call notifications: on the page under the dial, just before Sign out
@@ -1883,6 +1916,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/site-pulse.js?v=20261001a"></script>
 <!-- NALUNO_MODULES -->
 <script src="/js/core.js?v=20261020b"></script>
+<script src="/js/measure.js?v=20261020c"></script>
 <script src="/js/sunbird.js?v=20261017f"></script>
 <script src="/js/vault.js?v=20261015d"></script>
 <!-- Loaded right after core.js so its global error handlers are installed
@@ -1892,28 +1926,28 @@ window.__nalunoEntryT0 = Date.now();
      band-room, wireline and signal-ui. auth.js calls loadBands() at top level,
      which ran BEFORE find.js had executed — a ReferenceError that aborted boot
      entirely. It must load before any consumer. -->
-<script src="/js/find.js?v=20261017a"></script>
+<script src="/js/find.js?v=20261020c"></script>
 <script src="/js/media-contain.js?v=20261005e"></script>
 <script src="/js/keep-alive.js?v=20261014a"></script>
 <script src="/js/metrics.js?v=20260908d"></script>
 <script src="/js/data.js?v=20260908d"></script>
 <script src="/js/crypto.js?v=20261010a"></script>
 <script src="/js/chat-store.js?v=20260928d"></script>
-<script src="/js/wire-mailbox.js?v=20261004c"></script>
+<script src="/js/wire-mailbox.js?v=20261020c"></script>
 <script src="/js/atmosphere.js?v=20260908d"></script>
 <script src="/js/band-list.js?v=20261019a"></script>
 <script type="module" src="/workers/economy/safety-boot.mjs?v=20260923c"></script>
 <script src="/js/signal-core.js?v=20261016b"></script>
 <script src="/js/broadcast-core.js?v=20261020b"></script>
 <script src="/js/broadcast-upload.js?v=20261016b"></script>
-<script src="/js/broadcast-composer.js?v=20261020b"></script>
+<script src="/js/broadcast-composer.js?v=20261020c"></script>
 <script src="/js/screen.js?v=20261014e"></script>
 <!-- nudenet.js MUST load after screen.js: it upgrades runNalunoScreen() in place
      and keeps the heuristic as a hold-only fallback. Replaces nsfw-model.js. -->
 <script src="/js/nudenet.js?v=20261020b"></script>
 <script src="/js/origin.js?v=20261015g"></script>
-<script src="/js/strand.js?v=20261019b"></script>
-<script src="/js/circle.js?v=20261016a"></script>
+<script src="/js/strand.js?v=20261020c"></script>
+<script src="/js/circle.js?v=20261020c"></script>
 <!-- Community Economy: reports actions only; all economic value is computed
      server-side by the naluno-economy Worker. Loaded AFTER circle.js so
      currentUser exists, and deliberately non-blocking — if this file failed
@@ -1925,47 +1959,47 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/economy.js?v=20261004c"></script>
 <script src="/js/economy-ui.js?v=20261004k"></script>
 <script src="/js/weather.js?v=20260928d"></script>
-<script src="/js/beacon.js?v=20261010a"></script>
+<script src="/js/beacon.js?v=20261020c"></script>
 <script src="/js/find-history.js?v=20261015g"></script>
 <script src="/js/lg-books.js?v=20261001b"></script>
 <script src="/js/compass-brain.js?v=20261020b"></script>
-<script src="/js/compass.js?v=20261020b"></script>
+<script src="/js/compass.js?v=20261020c"></script>
 <script src="/js/pass-on.js?v=20261015b"></script>
 <script src="/js/room-threads.js?v=20260925g"></script>
 <script src="/js/discover-engine.js?v=20261015c"></script>
 <script src="/js/discover.js?v=20261015c"></script>
-<script src="/js/signal-ui.js?v=20261015g"></script>
+<script src="/js/signal-ui.js?v=20261020c"></script>
 <script src="/js/compat-lock.js?v=20260908d"></script>
 <script src="/js/known.js?v=20261020b"></script>
 <script src="/js/lg-speak.js?v=20261005h"></script>
 <script src="/js/lg-voice.js?v=20261005i"></script>
 <script src="/js/naluno-voice-master.js?v=20261007a"></script>
 <script src="/js/lg-ear.js?v=20261014a"></script>
-<script src="/js/naluno-voices.js?v=20261017f"></script>
+<script src="/js/naluno-voices.js?v=20261020c"></script>
 <script src="/js/broadcast-glance.js?v=20261010d"></script>
 <script src="/js/signal-public.js?v=20261015h"></script>
-<script src="/js/broadcast-space.js?v=20261020b"></script>
+<script src="/js/broadcast-space.js?v=20261020c"></script>
 <script src="/js/linkify.js?v=20260930a"></script>
 <script src="/js/ads.js?v=20261014a"></script>
 <script src="/js/media-vault.js?v=20260908d"></script>
 <script src="/js/wireline-media.js?v=20261015h"></script>
-<script src="/js/wireline.js?v=20261019a"></script>
+<script src="/js/wireline.js?v=20261020c"></script>
 <!-- Lifeline: Wireline when the internet is blocked or cut. Loads after
      crypto.js (keys) and wireline.js (thread insertion). -->
 <script src="/js/notices.js?v=20261004c"></script>
-<script src="/js/broadcast-offline.js?v=20261003b"></script>
+<script src="/js/broadcast-offline.js?v=20261020c"></script>
 <script src="/js/signal-social.js?v=20261014a"></script>
 <script src="/js/live-sync.js?v=20260928d"></script>
 <script src="/js/lifeline.js?v=20260928d"></script>
-<script src="/js/lifeline-wire.js?v=20260930b"></script>
+<script src="/js/lifeline-wire.js?v=20261020c"></script>
 <!-- Wireline translation reuses Spark's engine and language list. -->
-<script src="/js/wireline-translate.js?v=20260928d"></script>
+<script src="/js/wireline-translate.js?v=20261020c"></script>
 <script src="/js/profile.js?v=20261012b"></script>
-<script src="/js/legal-privacy.js?v=20261019a"></script>
-<script src="/js/onboard.js?v=20261019a"></script>
+<script src="/js/legal-privacy.js?v=20261020d"></script>
+<script src="/js/onboard.js?v=20261020c"></script>
 <script src="/js/handle-guard.js?v=20261006b"></script>
 <script src="/js/launch.js?v=20261013a"></script>
-<script src="/js/auth.js?v=20261020b"></script>
+<script src="/js/auth.js?v=20261020c"></script>
 <script src="/js/trust-legal.js?v=20261012c"></script>
 <script src="/js/security-events.js?v=20261002e"></script>
 <script src="/js/notifications.js?v=20261019d"></script>
@@ -1973,21 +2007,21 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/camera.js?v=20261010a"></script>
 <script src="/js/call-filters.js?v=20261002d"></script>
 <script src="/js/push-receipt.js?v=20260927d"></script>
-<script src="/js/calls.js?v=20261019d"></script>
+<script src="/js/calls.js?v=20261020c"></script>
 <script src="/js/call-pip.js?v=20261005g"></script>
 <script src="/js/sfu-live.js?v=20261010i"></script>
-<script src="/js/broadcast-live.js?v=20261014a"></script>
+<script src="/js/broadcast-live.js?v=20261020c"></script>
 <script src="/js/live-preview.js?v=20261012c"></script>
-<script src="/js/band-room.js?v=20261019a"></script>
+<script src="/js/band-room.js?v=20261020c"></script>
 <script src="/js/traffic.js?v=20261020b"></script>
-<script src="/js/pwa.js?v=20261020b"></script>
+<script src="/js/pwa.js?v=20261020c"></script>
 <script src="/js/gestures.js?v=20261007c"></script>
 <script src="/js/spark-engine.js?v=20261005g"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>
 <script src="/js/spark-lg.js?v=20261001b"></script>
-<script src="/js/spark-page.js?v=20261020b"></script>
+<script src="/js/spark-page.js?v=20261020c"></script>
 <script src="/js/qrcode.js?v=20260928d"></script>
-<script src="/js/spark.js?v=20261014a"></script>
+<script src="/js/spark.js?v=20261020c"></script>
 <!-- /NALUNO_MODULES -->
 </body>
 </html>

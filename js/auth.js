@@ -719,6 +719,7 @@ async function nalunoHandleSignUp(){
     const createEmail = email;
     const cred = await fbAuth.createUserWithEmailAndPassword(createEmail, password);
     const user = cred.user;
+    try{ if(typeof nalunoMeasureOnce === 'function') nalunoMeasureOnce('onboard', { step: 'signup' }); }catch(_){}
     /* 13a: a registration seat, taken atomically against the cap. Without it
        the Callsign profile cannot be written (firestore.rules). */
     if(window.NalunoLaunch){
@@ -761,6 +762,8 @@ async function nalunoHandleSignUp(){
           name: handle,
           number: claimed,
         }, { merge: true });
+        try{ if(typeof nalunoMeasureOnce === 'function') nalunoMeasureOnce('onboard', { step: 'callsign' }); }catch(_){}
+        try{ if(typeof nalunoSaveCountry === 'function') nalunoSaveCountry(); }catch(_){}
         authStatus('Account created — welcome.');
       }catch(he){
         console.warn('[auth] claim handle', he);
@@ -790,6 +793,7 @@ async function nalunoHandleSignUp(){
       }catch(_){}
     }
     authStatus('Account created — welcome.');
+    try{ if(typeof nalunoMeasureOnce === 'function') nalunoMeasureOnce('onboard', { step: 'callsign' }); }catch(_){}
     // Generate this identity's E2E key pair now, while the password is still
     // in hand, and back it up (password-wrapped) so it can be recovered if
     // this device's storage is ever lost — see crypto.js for why that backup

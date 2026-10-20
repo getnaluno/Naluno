@@ -905,7 +905,13 @@ async function sendCompassMessage(){
   const Brain = window.NalunoCompassBrain || null;
   const bookLine = (window.NalunoLgBooks && typeof NalunoLgBooks.answer === 'function')
     ? NalunoLgBooks.answer(text) : '';
+  /* 20 Oct c: what Compass is asked about (a topic name from its own guide,
+     never the question) and whether it could answer. */
+  const compassMeasure = function(topic, answered){
+    try{ if(typeof nalunoMeasure === 'function') nalunoMeasure('compass_q', { topic: String(topic || 'other').toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 24), answered: answered ? 1 : 0 }); }catch(_){}
+  };
   if(bookLine){
+    compassMeasure('luganda-books', true);
     compassMessages = compassMessages.filter(m => m !== thinkingMsg);
     compassMessages.push({ from:'compass', text: bookLine, ts: Date.now() });
     renderCompassMessages();
@@ -922,6 +928,7 @@ async function sendCompassMessage(){
   })();
   const guide = Brain ? Brain.kbMatch(text, prevUser) : [];
   const onNaluno = Brain ? Brain.aboutNaluno(text, guide) : false;
+  const compassTopic = (guide && guide[0] && guide[0].id) ? guide[0].id : (onNaluno ? 'naluno-other' : 'world');
   let brief = { personLine: '', wiki: '', wikiUrl: '', snippets: [], links: [] };
   if(!onNaluno){
     try{ brief = await compassGather(text, Brain ? Brain.searchQuery(text, prevUser) : ''); }catch(_){}
@@ -987,6 +994,7 @@ async function sendCompassMessage(){
     if(!res.ok || !data.reply){
       const grounded = (onNaluno && Brain && guide.length) ? compassDecorate(text, Brain.kbAnswer(guide), guide, onNaluno, brief) : compassFromBrief(text, brief);
       if(grounded){
+        compassMeasure(compassTopic, true);
         compassMessages.push({ from:'compass', text: grounded, ts: Date.now() });
         renderCompassMessages();
         fbDb.collection('users').doc(currentUser.uid).collection('compassMessages').add({
@@ -994,12 +1002,14 @@ async function sendCompassMessage(){
         }).catch(function(){});
         return;
       }
+      compassMeasure(compassTopic, false);
       toast('Compass couldn\u2019t respond \u2014 try again');
       console.error('Compass request failed:', data);
       renderCompassMessages();
       return;
     }
     const reply = compassDecorate(text, compassFinishReply(text, data.reply, brief), guide, onNaluno, brief);
+    compassMeasure(compassTopic, !/\b(i (do not|don't|dont) know|i'?m not sure|i could not find|i couldn'?t find|no information)\b/i.test(String(reply || '')));
     compassMessages.push({ from:'compass', text: reply, ts: Date.now() });
     renderCompassMessages();
     fbDb.collection('users').doc(currentUser.uid).collection('compassMessages').add({
@@ -1010,10 +1020,12 @@ async function sendCompassMessage(){
     renderCompassMessages();
     const grounded = (onNaluno && Brain && guide.length) ? compassDecorate(text, Brain.kbAnswer(guide), guide, onNaluno, brief) : compassFromBrief(text, brief);
     if(grounded){
+      compassMeasure(compassTopic, true);
       compassMessages.push({ from:'compass', text: grounded, ts: Date.now() });
       renderCompassMessages();
       return;
     }
+    compassMeasure(compassTopic, false);
     toast('Compass couldn\u2019t respond \u2014 check your connection');
   }
 }
@@ -2043,6 +2055,7 @@ async function postSegmentsNow(newSegments){
         audience: wantPublic ? 'public' : 'connections',
       });
       const id = await saveSignalSegment(segToSave);
+      try{ if(id && typeof nalunoMeasure === 'function') nalunoMeasure('signal_post', { aud: (segToSave && segToSave.audience === 'public') ? 'public' : 'connections', type: segToSave && segToSave.type === 'video' ? 'video' : (segToSave && segToSave.type === 'photo' ? 'photo' : 'text') }); }catch(_){}
       if(id) mySignal.push(Object.assign({}, segToSave, { id: id }));
       else saveFailed++;
       if(segToSave && segToSave.publicState === 'retry') reach = 'retry';

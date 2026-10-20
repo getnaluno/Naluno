@@ -41,6 +41,7 @@ function bcompOpen(){
   try{ if(typeof nalunoUploadLog === 'function') nalunoUploadLog('open Broadcast composer'); }catch(_){}
   if(!currentUser){ toast('Sign in to publish a Broadcast'); return; }
   bcompReset();
+  window.__bcompMeasure = { open: true, sent: false };
   /* 14 Oct e: start fetching the content detector now, while the person
      picks a file and writes a title, so it is ready to read the video. */
   try{ if(typeof window.nalunoModPreload === 'function') window.nalunoModPreload(); }catch(_){}
@@ -65,6 +66,16 @@ function bcompOpen(){
 
 function bcompClose(opts){
   if(bcompPublishing) return;
+  /* 20 Oct c: a composer closed without publishing, and how far it got. */
+  try{
+    const mm = window.__bcompMeasure;
+    if(mm && mm.open && !mm.sent && typeof nalunoMeasure === 'function'){
+      const titled = !!((($('bcompTitle') && $('bcompTitle').value) || '').trim());
+      const kind = bcompKind === 'video' || bcompKind === 'photo' || bcompKind === 'writing' ? bcompKind : 'none';
+      nalunoMeasure('composer_abandon', { kind: kind, stage: titled ? 'titled' : (bcompKind ? 'picked' : 'opened') });
+    }
+    if(mm) mm.open = false;
+  }catch(_){}
   bcompReset(opts);
   const el = $('bcomposer');
   if(el) el.classList.remove('active');
@@ -601,6 +612,7 @@ async function bcompPublish(){
     bcompPublishing = false;
     bcompPaintScreen(screen);
     toast('This cannot go out. Naluno Screen stopped it.');
+    try{ if(typeof nalunoMeasure === 'function') nalunoMeasure('publish_fail', { kind: bcompKind === 'writing' ? 'writing' : (bcompKind === 'photo' ? 'photo' : 'video'), reason: 'screen' }); }catch(_){}
     const pubBtn = $('bcompPublishBtn');
     if(pubBtn) pubBtn.textContent = 'Cannot publish';
     return;
@@ -694,12 +706,16 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
     if(claim && claim.blocked){
       bcompPublishing = false;
       toast((claim && claim.error) || 'This video is past your Reach.');
+      try{ if(typeof nalunoMeasure === 'function') nalunoMeasure('publish_fail', { kind: 'video', reason: 'reach' }); }catch(_){}
       return;
     }
     snapReachPass = claim.passId;
   }
   bcompPublishing = false;
+  try{ if(window.__bcompMeasure) window.__bcompMeasure.sent = true; }catch(_){}
   bcompClose(snapKeptPicker ? { keepPicker: true } : undefined);
+  const pubT0 = Date.now();
+  const pubKind = snapKind === 'writing' ? 'writing' : (snapKind === 'photo' ? 'photo' : 'video');
 
   const job = {
     label: snapPublishAt ? 'Scheduling Broadcast…' : 'Publishing Broadcast…',
@@ -851,6 +867,7 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
       if(typeof notifyPublishResult === 'function') notifyPublishResult(true, snapTitle);
       else if(typeof toast === 'function') toast('Broadcast published');
       try{ if(typeof trackMetric === 'function') trackMetric('upload_publish_ok', { kind: 'broadcast' }); }catch(_){}
+      try{ if(typeof nalunoMeasure === 'function') nalunoMeasure('publish', { kind: pubKind, ms: nalunoMeasureBands.pub(Date.now() - pubT0) }); }catch(_){}
       if(typeof openBroadcastById === 'function') openBroadcastById(b.id);
       try{
         if(typeof nalunoNoteTraffic === 'function' && currentUser){
@@ -864,6 +881,23 @@ const snapPrivate = !!($('bcompPrivate') && $('bcompPrivate').checked);
       }catch(_){}
     },
   };
+  {
+    /* 20 Oct c: a publish that failed, and roughly why (no file, no title). */
+    const runMeasured = job.run;
+    job.run = async function(progress){
+      try{ return await runMeasured(progress); }
+      catch(e){
+        try{
+          if(typeof nalunoMeasure === 'function'){
+            const msg = String((e && e.message) || '');
+            const reason = /reach/i.test(msg) ? 'reach' : (/screen|cannot go out/i.test(msg) ? 'screen' : (/network|offline|fetch|timeout/i.test(msg) ? 'network' : (/upload|limit|large|size/i.test(msg) ? 'upload' : 'other')));
+            nalunoMeasure('publish_fail', { kind: pubKind, reason: reason });
+          }
+        }catch(_){}
+        throw e;
+      }
+    };
+  }
   if(snapKeptPicker){
     const runOwned = job.run;
     job.run = async function(progress){

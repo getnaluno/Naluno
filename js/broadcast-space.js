@@ -2566,6 +2566,20 @@ async function bspaceStopLive(){
     return;
   }
   const bcastId = activeBroadcastId;
+  /* 20 Oct c: how the live went, in bands (viewers, length, resumes, large-room relay). */
+  try{
+    if(typeof nalunoMeasure === 'function'){
+      const st = window.__nalunoLiveStats || { peak: 0, sum: 0, samples: 0 };
+      const started = Number(bspaceLiveRecStartedAt) || (activeBroadcastMeta && Number(activeBroadcastMeta.liveAt)) || Date.now();
+      const B = nalunoMeasureBands;
+      nalunoMeasure('live_end', {
+        peak: B.people(st.peak), avg: B.people(st.samples ? Math.round(st.sum / st.samples) : 0),
+        len: B.live(Date.now() - started), drops: B.count(Number(window.__nalunoLiveResumes) || 0),
+        sfu: window.__nalunoSfuLiveHandle ? 1 : 0,
+      });
+    }
+    window.__nalunoLiveStats = null; window.__nalunoLiveResumes = 0;
+  }catch(_){}
   // Stop recorder first and keep chunks for permanent "Live recording" chapter
   let liveBlob = null;
   let liveDur = 0;
@@ -2702,6 +2716,7 @@ if(progress) progress('Uploading live recording…');
           updatedAt: Date.now(),
         }, { merge:true });
         if(typeof nalunoRecheckAfterReplace === 'function') nalunoRecheckAfterReplace(bcastId, liveScreen).catch(function(){});
+        try{ if(typeof nalunoMeasure === 'function') nalunoMeasure('replace_media', { kind: 'live' }); }catch(_){}
         try{
           await ref.collection('journey').add({
             type: 'live_recording',
@@ -2793,6 +2808,7 @@ async function bspaceStartLive(){
      same live: its start time stays, the drop marks clear, and the people
      already told about it are not told again. */
   const resuming = (window.__nalunoResumeLive && window.__nalunoResumeLive.bid === activeBroadcastId) ? window.__nalunoResumeLive : null;
+  try{ if(resuming) window.__nalunoLiveResumes = (Number(window.__nalunoLiveResumes) || 0) + 1; else { window.__nalunoLiveResumes = 0; window.__nalunoLiveStats = null; } }catch(_){}
   window.__nalunoResumeLive = null;
   await fbDb.collection('broadcasts').doc(activeBroadcastId).set(Object.assign({
     live: true,
@@ -3248,6 +3264,7 @@ async function bspacePassOn(){
       repostOf: (credit && credit.broadcastId) || activeBroadcastId,
       screen: { decision: 'allow' },
     });
+    try{ if(typeof nalunoMeasure === 'function') nalunoMeasure('pass_on', {}); }catch(_){}
     toast('Passed on');
     if(typeof loadFeedBroadcasts === 'function') loadFeedBroadcasts();
   }catch(e){
@@ -3743,6 +3760,23 @@ function wireBspaceSeekAndAutoplay(v){
   }
 
   v.addEventListener('timeupdate', syncTimes);
+  /* 20 Oct c: how far into a Broadcast people watch (25/50/75/100%), once
+     each per opening. No title or id leaves the phone with it. */
+  try{
+    const seen = {};
+    v.addEventListener('timeupdate', function(){
+      try{
+        const d = (typeof nalunoTrueDuration === 'function') ? nalunoTrueDuration(v) : v.duration;
+        if(!isFinite(d) || d <= 3) return;
+        const pct = (v.currentTime / d) * 100;
+        [25, 50, 75, 100].forEach(function(q){
+          const hit = q === 100 ? pct >= 97 : pct >= q;
+          if(hit && !seen[q]){ seen[q] = 1; if(typeof nalunoMeasure === 'function') nalunoMeasure('watch_depth', { q: String(q) }); }
+        });
+      }catch(_){}
+    });
+    v.addEventListener('emptied', function(){ Object.keys(seen).forEach(function(k){ delete seen[k]; }); });
+  }catch(_){}
   v.addEventListener('loadedmetadata', syncTimes);
   v.addEventListener('durationchange', syncTimes);
   v.addEventListener('play', syncPlayBtn);
@@ -4925,6 +4959,7 @@ async function replaceBroadcastChapterWithFile(index, file){
     ch.replacedAt = Date.now();
     await persistBroadcastChapters();
     if(typeof nalunoRecheckAfterReplace === 'function') nalunoRecheckAfterReplace(activeBroadcastId, repScreen).catch(function(){});
+    try{ if(typeof nalunoMeasure === 'function') nalunoMeasure('replace_media', { kind: 'chapter' }); }catch(_){}
     toast('Chapter replaced');
     playBroadcastChapter(index, true);
     wireBroadcastChapterPlayer(bspaceChapterList, bspaceBreatherList, { showChips: true });
@@ -5208,6 +5243,7 @@ async function bspaceSaveEdit(){
     await fbDb.collection('broadcasts').doc(activeBroadcastId).update(patch);
     if(patch.mediaUrl && typeof nalunoRecheckAfterReplace === 'function'){
       nalunoRecheckAfterReplace(activeBroadcastId, coverScreen).catch(function(){});
+      try{ if(typeof nalunoMeasure === 'function') nalunoMeasure('replace_media', { kind: 'cover' }); }catch(_){}
     }
     activeBroadcastMeta.title = patch.title;
     activeBroadcastMeta.description = description;

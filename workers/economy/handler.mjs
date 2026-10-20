@@ -103,6 +103,8 @@ import { pbkdf2Sha256Js, WORKER_PBKDF2_MAX } from "./pbkdf2.mjs";
 import { handleWireNotify, handlePushTest, handleLockPush, sendLiveDropped } from "./wire-notify.mjs";
 import { handleLgVoice } from "./lg-voice.mjs";
 import { handleSunbird } from "./sunbird.mjs";
+import { takeMeasureBatch, MEASURE_KEEP_DAYS } from "./measure.mjs";
+import { sweepRecords } from "./records-sweep.mjs";
 import {
   callsReady,
   rememberRoom,
@@ -1536,6 +1538,19 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
      not what Private means. Visibility itself is left as the creator set it. */
   if (row.visibility === "private" && "listed" in patch) {
     patch.listed = false;
+  }
+  /* 20 Oct c: Screen's outcomes per day, for the console (counts only). */
+  if (saToken) {
+    try {
+      const seg = (x) => String(x || "none").replace(/[^A-Za-z0-9]/g, "_").slice(0, 32);
+      const c = { n__screen_outcome: 1 };
+      c["p__screen_outcome__decision__" + seg(judged.decision)] = 1;
+      c["p__screen_outcome__engine__" + seg(judged.engine || (judged.reused ? "stored" : "none"))] = 1;
+      c["p__screen_outcome__recheck__" + (recheck ? "1" : "0")] = 1;
+      if (judged.decision === "hold") c["p__screen_outcome__reason__" + seg(judged.reason)] = 1;
+      const day = new Date().toISOString().slice(0, 10);
+      await fsIncrement(env, saToken, "/measureDays/" + day, c, { day, updatedAt: Date.now() });
+    } catch (_) {}
   }
   const writeTok = saToken || ((patch.hidden || judged.decision === "block") ? userToken : "");
   let wrote = false;
@@ -3645,6 +3660,11 @@ function bandSweepIo(env, token) {
       }
       return n;
     },
+    /* 20 Oct c: a gathering's counts (band-sweep.mjs bandRoomCounters). */
+    measure: async (counters) => {
+      const day = new Date().toISOString().slice(0, 10);
+      await fsIncrement(env, token, "/measureDays/" + day, counters, { day, updatedAt: Date.now() });
+    },
   };
 }
 /* 13a: Launch & Capacity (launch.mjs, launch-routes.mjs). */
@@ -3822,6 +3842,79 @@ export async function runDiscoverCompile(env, nowMs, pages) {
 }
 
 /* 14 Oct: push addresses from public profiles into each vault (push-move.mjs). */
+/* 20 Oct c: a batch of counts from a phone is kept 180 days, then deleted.
+   The day totals stay. */
+/* 20 Oct d: call and message records older than 12 months are deleted,
+   unless the desk keeps them for an open matter (records-sweep.mjs). */
+export async function runRecordsSweep(env, now) {
+  if (!hasSaConfigured(env)) return { ok: false, error: "no-service-account" };
+  const token = await saAccessToken(env);
+  if (!token) return { ok: false, error: "no-token" };
+  const name = fsRoot(env).replace("https://firestore.googleapis.com/v1/", "");
+  return sweepRecords({
+    held: async () => {
+      /* Every page of keep marks is read; if any page cannot be read the
+         run stops before deleting anything. */
+      const set = new Set();
+      let pageToken = "";
+      for (let page = 0; page < 50; page++) {
+        const r = await fsFetch(env, token, "GET", "/legalHolds?pageSize=1000" + (pageToken ? "&pageToken=" + encodeURIComponent(pageToken) : ""));
+        if (!r.ok && r.status !== 404) throw new Error("holds " + r.status);
+        if (r.ok && r.data && Array.isArray(r.data.documents)) r.data.documents.forEach((d) => set.add(String(d.name).split("/").pop()));
+        pageToken = (r.ok && r.data && r.data.nextPageToken) || "";
+        if (!pageToken) return set;
+      }
+      throw new Error("holds: too many pages");
+    },
+    older: async (kind, cutoff, limit, after) => {
+      const val = (ms) => kind.type === "timestamp" ? { timestampValue: new Date(ms).toISOString() } : { integerValue: String(Math.floor(ms)) };
+      const filters = [{ fieldFilter: { field: { fieldPath: kind.time }, op: "LESS_THAN", value: val(cutoff) } }];
+      if (after != null) filters.push({ fieldFilter: { field: { fieldPath: kind.time }, op: "GREATER_THAN", value: val(after) } });
+      const q = { structuredQuery: {
+        from: [{ collectionId: kind.col }],
+        where: filters.length > 1 ? { compositeFilter: { op: "AND", filters } } : filters[0],
+        orderBy: [{ field: { fieldPath: kind.time }, direction: "ASCENDING" }],
+        limit } };
+      const r = await fsFetch(env, token, "POST", ":runQuery", q);
+      if (!r.ok) throw new Error(kind.col + " " + r.status);
+      return (Array.isArray(r.data) ? r.data : []).filter((x) => x && x.document).map((x) => {
+        const data = fromFsDoc(x.document);
+        const t = data[kind.time];
+        const at = typeof t === "number" ? t : (t ? Date.parse(t) : 0);
+        return { name: x.document.name, data, at };
+      });
+    },
+    remove: async (names) => {
+      const c = await fsFetch(env, token, "POST", ":commit", { writes: names.map((d) => ({ delete: d.indexOf("projects/") === 0 ? d : name + "/" + d })) });
+      return !!(c && c.ok);
+    },
+  }, now);
+}
+
+export async function runMeasureSweep(env, now) {
+  if (!hasSaConfigured(env)) return { ok: false, error: "no-service-account" };
+  const token = await saAccessToken(env);
+  if (!token) return { ok: false, error: "no-token" };
+  const cutoff = (now || Date.now()) - MEASURE_KEEP_DAYS * 86400000;
+  const name = fsRoot(env).replace("https://firestore.googleapis.com/v1/", "");
+  let deleted = 0;
+  for (let round = 0; round < 5; round++) {
+    const r = await fsFetch(env, token, "POST", ":runQuery", { structuredQuery: {
+      from: [{ collectionId: "measureBatches" }],
+      where: { fieldFilter: { field: { fieldPath: "at" }, op: "LESS_THAN", value: { integerValue: String(Math.floor(cutoff)) } } },
+      orderBy: [{ field: { fieldPath: "at" }, direction: "ASCENDING" }],
+      limit: 300 } });
+    if (!r.ok) return { ok: false, error: "query " + r.status, deleted };
+    const docs = (Array.isArray(r.data) ? r.data : []).filter((x) => x && x.document).map((x) => x.document.name);
+    if (!docs.length) break;
+    const c = await fsFetch(env, token, "POST", ":commit", { writes: docs.map((d) => ({ delete: d.indexOf("projects/") === 0 ? d : name + "/" + d })) });
+    if (!c.ok) return { ok: false, error: "delete " + c.status, deleted };
+    deleted += docs.length;
+    if (docs.length < 300) break;
+  }
+  return { ok: true, deleted };
+}
+
 export async function runPushMove(env) {
   if (!hasSaConfigured(env)) return { ok: false, error: "no-service-account" };
   const token = await saAccessToken(env);
@@ -4183,6 +4276,24 @@ export async function handleRequest(request, env = {}, ctx = {}) {
         ok: body.ok === true, bytes: body.bytes, reason: body.reason, worker: String(body.worker || ""),
       });
       return json({ ok: true });
+    }
+
+    /* 20 Oct c: counts and times from phones (measure.mjs). A Callsign is
+       optional: the welcome and agreement come before one exists. */
+    if (path === "/v1/measure" && request.method === "POST") {
+      const ip = request.headers.get("CF-Connecting-IP") || "?";
+      if (!lifelineRate("ms|" + ip, 60)) return json({ ok: false, error: "slow down" }, 429);
+      if (Number(request.headers.get("Content-Length") || 0) > 64 * 1024) return json({ ok: false, error: "too large" }, 413);
+      if (!saToken) return json({ ok: false, error: "not configured" }, 503);
+      const who = { uid: "", country: (request.cf && request.cf.country) || "" };
+      const tok = bearer(request);
+      if (tok) { try { const u = await verifyIdToken(env, tok); if (u && u.uid) who.uid = u.uid; } catch (_) {} }
+      const body = await request.json().catch(() => ({}));
+      const out = await takeMeasureBatch(body, who, {
+        write: (day, counters) => fsIncrement(env, saToken, "/measureDays/" + day, counters, { day, updatedAt: Date.now() }),
+        keep: (batch) => fsFetch(env, saToken, "POST", "/measureBatches", toFsFields(batch)),
+      });
+      return json(out.body, out.status);
     }
 
     const auth = await requireUser(env, request);
