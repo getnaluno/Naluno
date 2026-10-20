@@ -24,6 +24,15 @@
   function store(k, v) { try { root.localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} }
   function load(k, d) { try { var x = JSON.parse(root.localStorage.getItem(k) || 'null'); return x == null ? d : x; } catch (_) { return d; } }
   function T(s) { try { if (typeof root.toast === 'function') root.toast(s); } catch (_) {} }
+  /* 20 Oct c: which route a Lifeline message took, and how long it waited (no content). */
+  function M(route, ok, waitMs) {
+    try {
+      if (typeof root.nalunoMeasure !== 'function') return;
+      var p = { route: route, ok: ok ? 1 : 0 };
+      if (waitMs != null && root.nalunoMeasureBands) p.wait = root.nalunoMeasureBands.slow(Math.max(0, waitMs));
+      root.nalunoMeasure('lifeline', p);
+    } catch (_) {}
+  }
 
   /* ---------------- 1. keep every contact's key ----------------
      Wrap fetchUserPublicKey so each key Naluno learns while online is kept
@@ -72,7 +81,7 @@
     var changed = false;
     for (var i = 0; i < list.length; i++) {
       if (list[i].routes && list[i].routes.relay) continue;
-      if (await pushRelay(list[i])) changed = true;
+      if (await pushRelay(list[i])) { changed = true; M('relay', true, Date.now() - (Number(list[i].at) || Date.now())); }
     }
     if (changed) saveOutbox(list);
     try { pollRelay(); } catch (_) {}
@@ -100,6 +109,7 @@
     await pushRelay(entry);
     if (mesh.router) { mesh.router.accept(s.bytes, 8); entry.routes.mesh = Date.now(); meshKick(); }
     list = outbox(); list.push(entry); saveOutbox(list);
+    M(entry.routes.relay ? 'relay' : (entry.routes.mesh ? 'mesh' : 'queued'), !!(entry.routes.relay || entry.routes.mesh), 0);
     T(entry.routes.relay ? 'Sent inside Naluno' : 'Held in Naluno — it sends when you are back online');
   }
 
@@ -175,6 +185,7 @@
       if (typeof root.renderWirelineList === 'function') root.renderWirelineList();
       if (root.activeThreadContactId === c.id && typeof root.renderThreadMessages === 'function') root.renderThreadMessages();
     } catch (_) {}
+    M(via === 'sms' ? 'sms' : (via === 'mesh' ? 'mesh' : 'relay'), true, o.sentAt ? Date.now() - o.sentAt : null);
     T('Message from ' + (c.name || 'a frequency') + ' arrived by ' + (via === 'sms' ? 'SMS' : via));
     return true;
   }

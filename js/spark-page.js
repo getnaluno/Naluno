@@ -291,6 +291,8 @@ async function sendSparkText(raw, extra){
         translations[sparkTheirLang] = out;
       }
     }catch(_){}
+    /* 20 Oct c: a translation that was used, or not (no words leave the phone). */
+    try{ if(typeof nalunoMeasure === 'function') nalunoMeasure('spark_translate', { stage: translations[sparkTheirLang] ? 'used' : 'abandoned' }); }catch(_){}
   }
   const payload = Object.assign({
     from: currentUser.uid,

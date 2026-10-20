@@ -86,7 +86,11 @@
       for (var i = 0; i < todo.length; i++) {
         var out = null;
         try { out = await root.sparkEngineTranslate(todo[i].text, p.from, p.to); } catch (_) { out = null; }
-        if (out && out !== todo[i].text) { cachePut(todo[i], p.to, out); changed = true; }
+        if (out && out !== todo[i].text) {
+          cachePut(todo[i], p.to, out); changed = true;
+          /* 20 Oct c: which languages Wireline crosses (codes only, no words). */
+          try { if (typeof root.nalunoMeasure === 'function') root.nalunoMeasure('translate_shown', { from: String(p.from).toLowerCase(), to: String(p.to).toLowerCase() }); } catch (_) {}
+        }
       }
     } finally { busy = false; }
     if (changed && typeof root.renderThreadMessages === 'function') root.renderThreadMessages();

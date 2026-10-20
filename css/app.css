@@ -2789,6 +2789,12 @@ html[data-atmosphere="buzzing"] .naluno-aurora{
 }
 .naluno-onboard[hidden]{ display: none !important; }
 .naluno-onboard.on{ display: flex; }
+.onboard-country{
+  width: min(360px, 100%); margin: 18px auto 0; display: block; padding: 12px 14px;
+  border-radius: 12px; border: 1px solid rgba(124,255,178,.35); background: #11141D;
+  color: var(--text, #EEF1F7); font: inherit; font-size: 16px;
+}
+.sr-only{ position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
 .onboard-stage{
   flex: 1;
   display: flex;

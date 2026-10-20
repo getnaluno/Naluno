@@ -1040,6 +1040,8 @@ function openThread(contactId){
         m.read = true;
         if(m.status !== 'read'){
           m.status = 'read';
+          /* 20 Oct c: how long a message waited to be read (a band, no content). */
+          try{ if(typeof nalunoMeasure === 'function' && m.ts) nalunoMeasure('msg_read', { lag: nalunoMeasureBands.slow(Date.now() - Number(m.ts)) }); }catch(_){}
           try{
             if(typeof NalunoWireMailbox !== 'undefined' && m.clientMsgId){
               NalunoWireMailbox.writeReceipt(c.firebaseUid, m.clientMsgId, 'read');
@@ -2679,6 +2681,17 @@ async function sendRealMessage(c, payload, previewText, queueId, clientMsgId){
     }
     markMyActivity();
     bumpTodayActivity();
+    /* 20 Oct c: the kind of message and whether it waited in the queue (no content). */
+    try{
+      if(typeof nalunoMeasure === 'function'){
+        const t = String((payload && payload.type) || 'text');
+        const type = t === 'document' ? 'file' : (t === 'audio' ? 'voice' : (['text', 'voice', 'photo', 'video', 'file'].indexOf(t) >= 0 ? t : 'text'));
+        let waited = null;
+        if(queueId){ const it = getMessageQueue().find(function(x){ return x && x.queueId === queueId; }); if(it && it.queuedAt) waited = Date.now() - it.queuedAt; }
+        nalunoMeasure('msg_sent', { type: type, route: queueId ? 'queued' : 'online', wait: waited == null ? undefined : nalunoMeasureBands.slow(waited) });
+        if(typeof nalunoMeasureOnce === 'function') nalunoMeasureOnce('onboard', { step: 'first-message' });
+      }
+    }catch(_){}
     try{
       if(typeof nalunoNoteTraffic === 'function' && currentUser){
         nalunoNoteTraffic({
@@ -2986,6 +2999,7 @@ function confirmVoiceRecording(){
     cleanupVoiceRecording();
     hideRecordingUI();
     if(durationSecs < 0.5){ toast('Too short — hold the mic a bit longer'); return; }
+    try{ if(typeof nalunoMeasure === 'function') nalunoMeasure('voice_note', { len: nalunoMeasureBands.vlen(durationSecs * 1000), cap: durationSecs >= VOICE_MAX_SECONDS - 0.5 ? 1 : 0 }); }catch(_){}
     try{
       const dataUrl = await blobToDataUrl(blob);
       const waveform = downsampleWaveform(samplesSnapshot, 26);

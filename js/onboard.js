@@ -51,7 +51,7 @@ function markNalunoOnboardComplete(){
 
 const ONBOARD_I18N = {
   en: {
-    welcomeTitle: 'Welcome to Naluno',
+    welcomeTitle: 'Before you start',
     welcomeBefore: 'Read our ',
     welcomeMid: '. Tap “Agree and continue” to accept our ',
     welcomeAfter: '.',
@@ -265,6 +265,145 @@ function nalunoTermsHtml(){
     + '<p>Questions about these terms: Compass after you sign in, or <strong>getnaluno.com</strong>.</p>';
 }
 
+
+/* ---------------- 20 Oct c: welcome first, then the agreement, then the country ----------------
+   The app used to open on the agreement: a person was asked to accept terms
+   before being told what Naluno is. Now a short welcome comes first, the
+   agreement second, and a country choice third (a country only — never a
+   place). The country is kept on this phone until there is a Callsign, then
+   saved on the profile (users/{uid}.country), and it can be changed under
+   Callsign. */
+const NALUNO_COUNTRY_KEY = 'nalunoCountry';
+const NALUNO_COUNTRY_SAVED_KEY = 'nalunoCountrySaved';
+const NALUNO_COUNTRY_CODES = ('AF AX AL DZ AS AD AO AI AQ AG AR AM AW AU AT AZ BS BH BD BB BY BE BZ BJ BM BT BO BQ BA BW BV BR IO BN BG BF BI CV KH CM CA KY CF TD CL CN CX CC CO KM CG CD CK CR CI HR CU CW CY CZ DK DJ DM DO EC EG SV GQ ER EE SZ ET FK FO FJ FI FR GF PF TF GA GM GE DE GH GI GR GL GD GP GU GT GG GN GW GY HT HM VA HN HK HU IS IN ID IR IQ IE IM IL IT JM JP JE JO KZ KE KI KP KR KW KG LA LV LB LS LR LY LI LT LU MO MG MW MY MV ML MT MH MQ MR MU YT MX FM MD MC MN ME MS MA MZ MM NA NR NP NL NC NZ NI NE NG NU NF MK MP NO OM PK PW PS PA PG PY PE PH PN PL PT PR QA RE RO RU RW BL SH KN LC MF PM VC WS SM ST SA SN RS SC SL SG SX SK SI SB SO ZA GS SS ES LK SD SR SJ SE CH SY TW TJ TZ TH TL TG TK TO TT TN TR TM TC TV UG UA AE GB US UM UY UZ VU VE VN VG VI WF EH YE ZM ZW').split(' ');
+const NALUNO_COUNTRY_FIRST = ['UG', 'KE', 'TZ', 'RW', 'SS', 'BI', 'CD', 'ET', 'NG', 'ZA', 'AE', 'GB', 'US'];
+const NALUNO_TZ_COUNTRY = { 'Africa/Kampala': 'UG', 'Africa/Nairobi': 'KE', 'Africa/Dar_es_Salaam': 'TZ', 'Africa/Kigali': 'RW', 'Africa/Juba': 'SS', 'Africa/Bujumbura': 'BI', 'Africa/Lubumbashi': 'CD', 'Africa/Kinshasa': 'CD', 'Africa/Addis_Ababa': 'ET', 'Africa/Lagos': 'NG', 'Africa/Johannesburg': 'ZA', 'Asia/Dubai': 'AE', 'Europe/London': 'GB' };
+function nalunoCountryName(code){
+  try{
+    if(typeof Intl !== 'undefined' && Intl.DisplayNames){
+      const n = new Intl.DisplayNames([nalunoOnboardLang() === 'lg' ? 'en' : 'en'], { type: 'region' }).of(code);
+      if(n && n !== code) return n;
+    }
+  }catch(_){}
+  return code;
+}
+function nalunoCountryGuess(){
+  try{
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    if(NALUNO_TZ_COUNTRY[tz]) return NALUNO_TZ_COUNTRY[tz];
+  }catch(_){}
+  try{
+    const m = String(navigator.language || '').match(/-([A-Z]{2})$/i);
+    if(m && NALUNO_COUNTRY_CODES.indexOf(m[1].toUpperCase()) >= 0) return m[1].toUpperCase();
+  }catch(_){}
+  return '';
+}
+function nalunoValidCountry(code){
+  const c = String(code || '').toUpperCase();
+  return NALUNO_COUNTRY_CODES.indexOf(c) >= 0 ? c : '';
+}
+function nalunoChosenCountry(){
+  try{ return nalunoValidCountry(localStorage.getItem(NALUNO_COUNTRY_KEY)); }catch(_){ return ''; }
+}
+function fillCountrySelect(sel, current){
+  if(!sel) return;
+  const pick = nalunoValidCountry(current) || '';
+  const first = NALUNO_COUNTRY_FIRST.map(function(c){ return [c, nalunoCountryName(c)]; });
+  const rest = NALUNO_COUNTRY_CODES.filter(function(c){ return NALUNO_COUNTRY_FIRST.indexOf(c) < 0; })
+    .map(function(c){ return [c, nalunoCountryName(c)]; })
+    .sort(function(a, b){ return a[1].localeCompare(b[1]); });
+  const opt = function(p){ return '<option value="' + p[0] + '"' + (p[0] === pick ? ' selected' : '') + '>' + String(p[1]).replace(/[<&"]/g, '') + '</option>'; };
+  sel.innerHTML = '<option value=""' + (pick ? '' : ' selected') + '>Choose your country</option>'
+    + first.map(opt).join('') + '<option disabled>──────────</option>' + rest.map(opt).join('');
+}
+function setNalunoCountry(code){
+  const c = nalunoValidCountry(code);
+  try{
+    if(c) localStorage.setItem(NALUNO_COUNTRY_KEY, c);
+    else localStorage.removeItem(NALUNO_COUNTRY_KEY);
+    localStorage.removeItem(NALUNO_COUNTRY_SAVED_KEY);
+  }catch(_){}
+  nalunoSaveCountry();
+}
+/* Saves the chosen country on the profile once there is a Callsign. */
+async function nalunoSaveCountry(){
+  try{
+    if(typeof fbDb === 'undefined' || !fbDb || typeof currentUser === 'undefined' || !currentUser) return false;
+    const c = nalunoChosenCountry();
+    if(!c) return false;
+    if(localStorage.getItem(NALUNO_COUNTRY_SAVED_KEY) === currentUser.uid + ':' + c) return true;
+    await fbDb.collection('users').doc(currentUser.uid).set({ country: c, countryAt: Date.now() }, { merge: true });
+    localStorage.setItem(NALUNO_COUNTRY_SAVED_KEY, currentUser.uid + ':' + c);
+    return true;
+  }catch(_){ return false; }
+}
+setInterval(function(){ nalunoSaveCountry(); }, 20000);
+function showOnly(id){
+  ['nalunoHello', 'nalunoWelcome', 'nalunoCountry', 'nalunoTour'].forEach(function(k){
+    const el = $(k);
+    if(!el) return;
+    if(k === id){ el.removeAttribute('hidden'); el.classList.add('on'); }
+    else { el.classList.remove('on'); el.setAttribute('hidden', ''); }
+  });
+  const e = onboardEls();
+  window.__nalunoOnboardActive = true;
+  if(e.loading) e.loading.style.display = 'none';
+  if(e.form) e.form.style.display = 'none';
+  if(e.gate){ e.gate.classList.add('active'); e.gate.classList.add('naluno-onboard-on'); }
+  document.body.classList.add('naluno-gated');
+}
+function showHello(){
+  showOnly('nalunoHello');
+  const hero = $('helloHero');
+  if(hero && !hero.getAttribute('data-drawn')){ hero.innerHTML = onboardIcon('welcome'); hero.setAttribute('data-drawn', '1'); }
+  try{ if(typeof nalunoMeasureOnce === 'function') nalunoMeasureOnce('onboard', { step: 'welcome' }); }catch(_){}
+}
+function showCountry(){
+  showOnly('nalunoCountry');
+  const sel = $('countryPick');
+  if(sel && !sel.options.length) fillCountrySelect(sel, nalunoChosenCountry() || nalunoCountryGuess());
+  try{ if(typeof nalunoMeasureOnce === 'function') nalunoMeasureOnce('onboard', { step: 'country-shown' }); }catch(_){}
+}
+function wireCountryAndHello(){
+  const hello = $('helloNextBtn');
+  if(hello) hello.onclick = function(){ showWelcome(); };
+  const next = $('countryNextBtn');
+  if(next) next.onclick = function(){
+    const sel = $('countryPick');
+    const c = nalunoValidCountry(sel && sel.value);
+    if(!c){ if(sel) sel.focus(); return; }
+    setNalunoCountry(c);
+    try{ if(typeof nalunoMeasureOnce === 'function') nalunoMeasureOnce('onboard', { step: 'country-chosen' }); }catch(_){}
+    showTour(0);
+  };
+  const skip = $('countrySkipBtn');
+  if(skip) skip.onclick = function(){
+    try{ if(typeof nalunoMeasureOnce === 'function') nalunoMeasureOnce('onboard', { step: 'country-skipped' }); }catch(_){}
+    showTour(0);
+  };
+  const setting = $('countrySetting');
+  if(setting){
+    fillCountrySelect(setting, nalunoChosenCountry());
+    setting.onchange = function(){ setNalunoCountry(setting.value); };
+    /* A profile that already has a country fills the setting (another phone). */
+    const syncFromProfile = function(){
+      try{
+        const p = (typeof currentProfile !== 'undefined' && currentProfile) || null;
+        const c = p && nalunoValidCountry(p.country);
+        if(c && !nalunoChosenCountry()){
+          localStorage.setItem(NALUNO_COUNTRY_KEY, c);
+          localStorage.setItem(NALUNO_COUNTRY_SAVED_KEY, (currentUser && currentUser.uid) + ':' + c);
+          fillCountrySelect(setting, c);
+        }
+      }catch(_){}
+    };
+    setInterval(syncFromProfile, 15000);
+  }
+}
+window.nalunoChosenCountry = nalunoChosenCountry;
+window.nalunoSaveCountry = nalunoSaveCountry;
+window.nalunoCountryCodes = NALUNO_COUNTRY_CODES;
+
 /* ---------------- Show / hide helpers ---------------- */
 
 let onboardTourIndex = 0;
@@ -282,6 +421,7 @@ function onboardEls(){
 }
 
 function hideOnboardSurfaces(){
+  ['nalunoHello', 'nalunoCountry'].forEach(function(k){ const x = $(k); if(x){ x.classList.remove('on'); x.setAttribute('hidden', ''); } });
   const e = onboardEls();
   if(e.welcome){
     e.welcome.classList.remove('on');
@@ -334,6 +474,7 @@ function paintWelcome(){
 }
 
 function showWelcome(){
+  ['nalunoHello', 'nalunoCountry'].forEach(function(k){ const x = $(k); if(x){ x.classList.remove('on'); x.setAttribute('hidden', ''); } });
   const e = onboardEls();
   window.__nalunoOnboardActive = true;
   if(e.loading) e.loading.style.display = 'none';
@@ -384,6 +525,7 @@ function paintTour(){
 }
 
 function showTour(startAt){
+  ['nalunoHello', 'nalunoCountry'].forEach(function(k){ const x = $(k); if(x){ x.classList.remove('on'); x.setAttribute('hidden', ''); } });
   const e = onboardEls();
   window.__nalunoOnboardActive = true;
   onboardTourIndex = typeof startAt === 'number' ? startAt : 0;
@@ -406,6 +548,7 @@ function showTour(startAt){
 }
 
 function finishTour(){
+  try{ if(typeof nalunoMeasureOnce === 'function') nalunoMeasureOnce('onboard', { step: onboardTourIndex >= ((onboardT().tour || []).length - 1) ? 'tour-finished' : 'tour-skipped' }); }catch(_){}
   stampNalunoTour();
   showAuthForm();
 }
@@ -454,7 +597,7 @@ function nalunoMaybeOnboard(){
     }
   }catch(_){}
   if(!nalunoWelcomeDone()){
-    showWelcome();
+    showHello();
     return true;
   }
   if(!nalunoTourDone()){
@@ -465,6 +608,7 @@ function nalunoMaybeOnboard(){
 }
 
 function wireOnboard(){
+  wireCountryAndHello();
   const hero = $('welcomeHero');
   if(hero && !hero.getAttribute('data-drawn')){
     hero.innerHTML = onboardIcon('welcome');
@@ -474,7 +618,8 @@ function wireOnboard(){
   if(agree){
     agree.onclick = function(){
       stampNalunoWelcome();
-      showTour(0);
+      try{ if(typeof nalunoMeasureOnce === 'function') nalunoMeasureOnce('onboard', { step: 'agreed' }); }catch(_){}
+      showCountry();
     };
   }
   const langBtn = $('welcomeLangBtn');

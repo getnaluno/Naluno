@@ -235,6 +235,14 @@
         try { await persistRow(contactId, row, fromUid); }
         catch (err) { return; }
       }
+      /* 20 Oct c: how long it took to arrive (a band; the sender's clock). */
+      try {
+        if (!isSys && typeof nalunoMeasure === 'function') {
+          const t = String(row.type || 'text');
+          const type = t === 'document' ? 'file' : (t === 'audio' ? 'voice' : (['text', 'voice', 'photo', 'video', 'file'].indexOf(t) >= 0 ? t : 'text'));
+          nalunoMeasure('msg_delivered', { type: type, lag: nalunoMeasureBands.lag(Math.max(0, Date.now() - ts)) });
+        }
+      } catch (_) {}
       if (fromUid && typeof realThreadPreviews !== 'undefined') {
         realThreadPreviews[fromUid] = {
           text: row.text ? String(row.text).slice(0, 80) : kindLabel(row.type),

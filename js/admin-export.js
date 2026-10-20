@@ -253,7 +253,10 @@
       })));
     }
     if (tab === 'records') {
-      out.push(table('Records', ['Note'], [['Open Records in the console for calls, videos and messages in a period. This file does not copy message text.']]));
+      out.push(table('Records', ['Note'], [['Call records are inside Legal, behind its password. This file does not copy message text.']]));
+    }
+    if (tab === 'measures') {
+      out.push(table('Measures', ['Note'], [['Open Measures in the console: counts, times in bands and outcomes per day. Nothing personal is in them.']]));
     }
     if (tab === 'legal') {
       const legalAudits = audits.filter(function (row) {

@@ -208,6 +208,7 @@
       };
       save(idx);
       if (onProgress) onProgress(1);
+      try { if (typeof root.nalunoMeasure === 'function') root.nalunoMeasure('offline_save', {}); } catch (_) {}
       return { ok: true, bytes: bytes };
     } catch (e) {
       const msg = (e && e.message) || 'save failed';

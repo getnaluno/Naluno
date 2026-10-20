@@ -431,6 +431,18 @@ window.paintFreqRequests = paintFreqRequests;
 
 let __freqSending = false;
 let __freqPick = null;
+/* 20 Oct c: the first connection on this account, and how long after the
+   Callsign was made (a band). Counted once. */
+function nalunoMeasureFirstConnection(){
+  try{
+    if(typeof nalunoMeasureOnce !== 'function') return;
+    const real = (typeof contacts !== 'undefined' && contacts) ? contacts.filter(function(c){ return c && c.isReal; }).length : 0;
+    if(real > 0) return;
+    const p = (typeof currentProfile !== 'undefined' && currentProfile) || {};
+    const made = Number(p.joinedAt) || Number(p.createdAt) || (p.createdAt && p.createdAt.toMillis ? p.createdAt.toMillis() : 0);
+    nalunoMeasureOnce('first_connection', { since: made ? nalunoMeasureBands.wait(Date.now() - made) : '7dplus' });
+  }catch(_){}
+}
 async function requestFrequency(theirUid, theirData, handle){
   if(__freqSending) return;
   if(!currentUser || !fbDb || !theirUid){ toast('Sign in first'); return; }
@@ -443,6 +455,7 @@ async function requestFrequency(theirUid, theirData, handle){
     await fbDb.collection('users').doc(theirUid).collection('connectionRequests').doc(currentUser.uid).set(body);
     const them = freqFace(theirData || {}, handle);
     rememberOutgoing(theirUid, { name: them.name, handle: them.handle, color: them.color, at: body.at });
+    try{ if(typeof nalunoMeasure === 'function') nalunoMeasure('connect_request', { stage: 'sent' }); }catch(_){}
     if(btn){ btn.disabled = true; btn.textContent = 'Request sent'; }
     let note = document.getElementById(noteId);
     if(!note && $('findPeopleResult')){
@@ -494,6 +507,13 @@ async function acceptFrequency(theirUid){
     return;
   }
   forgetOutgoing(theirUid);
+  try{
+    if(typeof nalunoMeasure === 'function'){
+      const at = Number(row && row.at) || 0;
+      nalunoMeasure('connect_request', { stage: 'accepted', wait: at ? nalunoMeasureBands.wait(Date.now() - at) : undefined });
+    }
+  }catch(_){}
+  nalunoMeasureFirstConnection();
   addRealContactToLocalList(theirUid, theirs.name, theirs.color, theirs.handle, theirs.photo);
   const added = contacts.find(function(x){ return x.firebaseUid === theirUid; });
   if(added && theirs.photoUrl) mergeContactPhoto(added, theirs.photoUrl);
@@ -511,6 +531,7 @@ async function declineFrequency(theirUid){
     return;
   }
   freqIncoming = freqIncoming.filter(function(r){ return r.uid !== theirUid; });
+  try{ if(typeof nalunoMeasure === 'function') nalunoMeasure('connect_request', { stage: 'declined' }); }catch(_){}
   paintFreqRequests();
   toast('Not now');
 }
@@ -764,7 +785,7 @@ async function searchHandle(){
     $('findPeopleResult').innerHTML = `<div style="color:var(--red); font-size:13px;">${escapeHtml((typeof nalunoFriendlyError === 'function' ? nalunoFriendlyError(e.message) : e.message)||'Search failed')}</div>`;
   }
 }
-$('findHandleBtn').onclick = searchHandle;
+$('findHandleBtn').onclick = function(){ return searchHandle(); };
 $('findHandleInput').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); searchHandle(); } });
 
 async function connectWithUser(theirUid, theirData, handle, sparkCode){
@@ -787,6 +808,7 @@ async function connectWithUser(theirUid, theirData, handle, sparkCode){
     const mirror = { name: currentProfile.name, handle: currentProfile.number, color: currentProfile.color, photo: myPhoto.photo, photoUrl: myPhoto.photoUrl, connectedAt: firebase.firestore.FieldValue.serverTimestamp() };
     if(sparkCode) mirror.spark = String(sparkCode).slice(0, 12);
     await theirConnRef.set(mirror);
+    nalunoMeasureFirstConnection();
     addRealContactToLocalList(theirUid, theirData.name||'Unknown', theirData.color, theirData.number||('@'+handle), theirData.photo);
     const row = contacts.find(x=>x.firebaseUid===theirUid);
     if(row && theirData.photoUrl) mergeContactPhoto(row, theirData.photoUrl);
@@ -797,3 +819,18 @@ async function connectWithUser(theirUid, theirData, handle, sparkCode){
     toast(e.message || 'Couldn\u2019t connect right now');
   }
 }
+
+/* 20 Oct c: did a search find someone (no search words leave the phone). */
+(function(){
+  if(typeof searchHandle !== 'function') return;
+  const run = searchHandle;
+  searchHandle = async function(){
+    const out = await run.apply(this, arguments);
+    try{
+      const box = $('findPeopleResult');
+      const found = !!(box && box.querySelector('button, [data-act]'));
+      if(typeof nalunoMeasure === 'function') nalunoMeasure('find_search', { found: found ? 1 : 0 });
+    }catch(_){}
+    return out;
+  };
+})();

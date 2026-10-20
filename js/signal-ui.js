@@ -1940,7 +1940,23 @@ function goToSegment(idx){
   const direction = idx > currentSegmentIndex ? 1 : -1;
   playSegment(idx, direction);
 }
-$('bviewerNextZone').onclick = ()=>{ if(viewingMine || currentSegments.length) goToSegment(currentSegmentIndex+1); };
+/* 20 Oct c: a Signal watched to its end, or skipped (counts only). */
+function nalunoMeasureSignalLeave(tapped){
+  try{
+    if(viewingMine || typeof nalunoMeasure !== 'function') return;
+    nalunoMeasure('signal_view', { done: tapped ? 0 : 1 });
+    if(tapped) nalunoMeasure('signal_swipe', {});
+  }catch(_){}
+}
+(function(){
+  const go = goToSegment;
+  goToSegment = function(idx){
+    try{ if(idx === currentSegmentIndex + 1) nalunoMeasureSignalLeave(!!window.__nalunoSigTap); }catch(_){}
+    window.__nalunoSigTap = false;
+    return go(idx);
+  };
+})();
+$('bviewerNextZone').onclick = ()=>{ window.__nalunoSigTap = true; if(viewingMine || currentSegments.length) goToSegment(currentSegmentIndex+1); };
 $('bviewerPrevZone').onclick = ()=>{ if(viewingMine || currentSegments.length) goToSegment(currentSegmentIndex-1); };
 
 async function openBroadcast(contactId){

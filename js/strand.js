@@ -92,6 +92,7 @@
       strandName: strand.name,
       updatedAt: Date.now(),
     }, { merge: true });
+    try{ if(typeof nalunoMeasure === 'function') nalunoMeasure('strand_add', {}); }catch(_){}
     try{
       await fbDb.collection('strands').doc(strand.id).set({
         broadcastIds: firebase.firestore.FieldValue.arrayUnion(broadcastId),

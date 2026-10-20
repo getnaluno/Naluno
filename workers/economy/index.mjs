@@ -1,4 +1,4 @@
-import { handleRequest, runBandSweep, runLiveSweep, runLaunchGuard, runDiscoverCompile, runPushMove } from "./handler.mjs";
+import { handleRequest, runBandSweep, runLiveSweep, runLaunchGuard, runDiscoverCompile, runPushMove, runMeasureSweep, runRecordsSweep } from "./handler.mjs";
 
 export default {
   async fetch(request, env, ctx) {
@@ -18,6 +18,10 @@ export default {
       runDiscoverCompile(env, Date.now(), 3).catch(() => null),
       /* 14 Oct: push addresses from public profiles into each vault, then done. */
       runPushMove(env).catch(() => null),
+      /* 20 Oct c: measurement batches older than 180 days are deleted. */
+      runMeasureSweep(env).catch(() => null),
+      /* 20 Oct d: call and message records older than 12 months (unless kept for an open matter). */
+      runRecordsSweep(env).catch(() => null),
     ]);
     if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(job);
     else await job;

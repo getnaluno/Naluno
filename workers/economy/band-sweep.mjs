@@ -188,6 +188,13 @@ export async function sweepBand(io, bandId, now, opts = {}) {
     const r = await io.commit(writes.slice(i, i + 450));
     if (!r) ok = false;
   }
+  /* 20 Oct c: how the room went, as counts only, once per gathering:
+     people who spoke (a band, never who), how long it lasted, and whether
+     anything was said at all. Counted before the record is marked swept. */
+  const firstSweepOfThisLife = !num(band.sweptAt) || (aliveAt && num(band.sweptAt) <= aliveAt + BAND_SETTLE_MS);
+  if (plan.dead && ok && complete && firstSweepOfThisLife && io.measure) {
+    try { await io.measure(bandRoomCounters(messages.filter((m) => gone.indexOf(m.id) >= 0).map((m) => m.data || {}))); } catch { /* counts are not worth failing for */ }
+  }
   /* Only a finished deletion is recorded; otherwise the next round tries again. */
   if (plan.dead && ok && complete) {
     bandFields.sweptAt = { timestampValue: new Date(t).toISOString() };
@@ -204,6 +211,29 @@ export async function sweepBand(io, bandId, now, opts = {}) {
     try { dropped = await io.dropMedia(keys); } catch { dropped = 0; }
   }
   return { ok, dead: plan.dead, revived: !!plan.revive, complete, deleted: gone.length, files: dropped };
+}
+
+/** 20 Oct c: one gathering's counts, for the console (pure). */
+export function bandRoomCounters(msgs) {
+  const list = Array.isArray(msgs) ? msgs : [];
+  const who = new Set();
+  let first = 0, last = 0;
+  list.forEach((m) => {
+    if (m && m.from) who.add(String(m.from));
+    const ts = num(m && m.ts);
+    if (ts) { if (!first || ts < first) first = ts; if (ts > last) last = ts; }
+  });
+  const n = who.size;
+  const people = n <= 1 ? "1" : (n === 2 ? "2" : (n <= 5 ? "3to5" : (n <= 12 ? "6to12" : (n <= 50 ? "13to50" : "51plus"))));
+  const life = last - first;
+  const lifeBand = life < 5 * 60000 ? "lt5m" : (life < 15 * 60000 ? "5to15m" : (life < 3600000 ? "15to60m" : "1hplus"));
+  const c = { n__band_room_end: 1 };
+  c["p__band_room_end__said__" + (list.length ? "1" : "0")] = 1;
+  if (list.length) {
+    c["p__band_room_end__people__" + people] = 1;
+    c["p__band_room_end__life__" + lifeBand] = 1;
+  }
+  return c;
 }
 
 /** Bands worth looking at on a scheduled run. Pure. */

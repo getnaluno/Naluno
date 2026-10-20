@@ -293,27 +293,34 @@
         };
         /* Luganda: the trained Sunbird voice first, when it answers.
            The phone's own African voice is the fallback, then these sounds. */
+        /* 20 Oct c: which voice spoke, and when one fell back (counts only;
+           the order and the sounds are unchanged). */
+        var meas = function (n, p) { try { if (typeof root.nalunoMeasure === 'function') root.nalunoMeasure(n, p); } catch (_) {} };
+        var phone = function (from) { meas('listen_fallback', { from: from, to: 'phone' }); return onDevice().then(function (a) { if (a) meas('listen', { voice: 'phone', ok: 1 }); return a; }); };
         var viaAf = function () {
-          if (!pl.af || own.state === 'missing') return onDevice();
+          if (!pl.af) return onDevice().then(function (a) { if (a) meas('listen', { voice: 'phone', ok: 1 }); return a; });
+          if (own.state === 'missing') return phone('african');
           var afSpeed = (typeof pl.af.speed === 'number' && pl.af.speed > 0) ? pl.af.speed : (AF_PACE[pl.af.female ? 'female' : 'male'] * mult);
           return m.boot().then(function () { m.job(myJob); return m.sayAf(pl.af.phones, pl.af.female, afSpeed, myJob); }).then(function (a) {
-            if (!a || !a.samples || !a.samples.length) return onDevice();
+            if (!a || !a.samples || !a.samples.length) return phone('african');
             own.state = 'ok';
             a.native = true;
             a.took = Date.now() - t0;
+            meas('listen', { voice: 'african', ok: 1 });
             return a;
           }, function (e) {
             if (e && /af-missing/.test(String(e.message || ''))) own.state = 'missing';
-            return onDevice();
+            return phone('african');
           });
         };
         if (typeof pl.native !== 'function') return viaAf();
         return Promise.resolve().then(pl.native).then(function (a) {
-          if (!a || !a.samples || !a.samples.length) return viaAf();
+          if (!a || !a.samples || !a.samples.length) { meas('listen_fallback', { from: 'sunbird', to: 'african' }); return viaAf(); }
           a.native = true;
           a.took = Date.now() - t0;
+          meas('listen', { voice: 'sunbird', ok: 1 });
           return a;
-        }, viaAf);
+        }, function () { meas('listen_fallback', { from: 'sunbird', to: 'african' }); return viaAf(); });
       }
 
       /* 13 Oct b: read ahead only (nothing plays): the first pieces are made

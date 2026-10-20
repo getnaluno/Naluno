@@ -41,6 +41,7 @@
       name: name,
     }, { merge: true });
     joinedCreators[creatorUid] = true;
+    try{ if(typeof nalunoMeasure === 'function') nalunoMeasure('circle_join', {}); }catch(_){}
     try{ await bumpTogaMonth(creatorUid, { circleMonthDelta: 1 }); }catch(_){}
     // Community Economy (spec §5) — action reported, value decided server-side.
     try{

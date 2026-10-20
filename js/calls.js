@@ -959,6 +959,7 @@ function nalunoMarkCallLive(){
     }
   }catch(_){}
   try{ nalunoWatchHeard(activeCallId, peerConnection); }catch(_){}
+  try{ nalunoQualitySampler(activeCallId); }catch(_){}
   try{
     if(typeof nalunoSessionHold === 'function') nalunoSessionHold(nalunoIsVoiceCall() ? 'voice' : 'video');
   }catch(_){}
@@ -1726,6 +1727,75 @@ async function nalunoCDPath(pc, callId){
     r.path = { local: l.candidateType || '', remote: rm.candidateType || '', proto: l.protocol || '', relayProto: l.relayProtocol || '' };
   }catch(_){}
 }
+/* 20 Oct c: how the call went, as counts only (measure.js): the camera
+   switched off, the lens flipped, the floating window used, video freezes,
+   network drop-outs. Read, never changed: the camera code is untouched. */
+function nalunoQualitySampler(callId){
+  const r = nalunoCD(callId);
+  if(!r || r.qualTimer) return;
+  r.qual = { videoOff: false, flip: false, pip: false, freezes: 0 };
+  let facing = (typeof cameraFacingMode !== 'undefined') ? cameraFacingMode : '';
+  const tick = async function(){
+    const rec = nalunoCD(callId);
+    if(!rec || rec.sent){ clearInterval(r.qualTimer); return; }
+    try{
+      if(rec.kind === 'video' && typeof camOn !== 'undefined' && camOn === false) rec.qual.videoOff = true;
+      const f = (typeof cameraFacingMode !== 'undefined') ? cameraFacingMode : '';
+      if(facing && f && f !== facing) rec.qual.flip = true;
+      facing = f || facing;
+      if(document.pictureInPictureElement || (window.documentPictureInPicture && window.documentPictureInPicture.window)) rec.qual.pip = true;
+      const pc = peerConnection;
+      if(pc && typeof pc.getStats === 'function'){
+        const stats = await pc.getStats();
+        let fz = 0;
+        stats.forEach(function(x){ if(x.type === 'inbound-rtp' && (x.kind === 'video' || x.mediaType === 'video') && typeof x.freezeCount === 'number') fz += x.freezeCount; });
+        rec.qual.freezes = Math.max(rec.qual.freezes, fz);
+      }
+    }catch(_){}
+  };
+  r.qualTimer = setInterval(tick, 5000);
+  setTimeout(tick, 1500);
+}
+function nalunoMeasureCall(out, r){
+  try{
+    if(typeof nalunoMeasure !== 'function' || !out) return;
+    const B = window.nalunoMeasureBands;
+    const why = String(out.endReason || '').toLowerCase();
+    let outcome = 'failed';
+    if(out.outcome === 'connected') outcome = 'connected';
+    else if(/declin/.test(why)) outcome = 'declined';
+    else if(/busy/.test(why)) outcome = 'busy';
+    else if(/no-answer|missed/.test(why)) outcome = 'missed';
+    else if(/cancel/.test(why)) outcome = 'cancelled';
+    const st = out.stages || {};
+    const talk = (outcome === 'connected' && typeof st.connected === 'number') ? Math.max(0, (out.durationMs || 0) - st.connected) : 0;
+    let ring = null;
+    if(typeof st.answerTap === 'number' && typeof st.ring === 'number') ring = st.answerTap - st.ring;
+    else if(out.role === 'caller' && typeof st.connected === 'number' && typeof st.alert === 'number') ring = st.connected - st.alert;
+    let end = 'other';
+    if(outcome === 'connected'){
+      if(/ice|network|fail|lost|restart/.test(why)) end = 'network';
+      else if(out.bg && /closed|unload|page/.test(why)) end = 'closed';
+      else end = 'hangup';
+    }
+    const p = out.path || null;
+    const path = p ? ((p.local === 'relay' || p.remote === 'relay') ? 'relay' : 'direct') : 'unknown';
+    let net = 'unknown';
+    try{ const c = navigator.connection; const t = c && (c.type || ''); net = /wifi|ethernet/.test(t) ? 'wifi' : (/cell/.test(t) ? 'cell' : 'unknown'); }catch(_){}
+    const q = (r && r.qual) || {};
+    const drops = (out.states || []).filter(function(x){ return /disconnected/.test(String(x)); }).length;
+    if(outcome === 'connected' && typeof nalunoMeasureOnce === 'function') nalunoMeasureOnce('onboard', { step: 'first-call' });
+    nalunoMeasure('call_end', {
+      role: out.role === 'caller' ? 'caller' : 'callee', kind: out.kind === 'audio' ? 'audio' : 'video',
+      outcome: outcome, len: outcome === 'connected' ? B.len(talk) : undefined,
+      ring: B.ring(ring == null ? null : Math.max(0, ring)), end: outcome === 'connected' ? end : undefined,
+      path: outcome === 'connected' ? path : undefined, net: net,
+      videooff: q.videoOff ? 1 : 0, flip: q.flip ? 1 : 0, pip: q.pip ? 1 : 0,
+      freezes: B.count(q.freezes || 0), drops: B.count(drops),
+      switched: (out.restarts || 0) > 0 ? (out.recovered ? 'recovered' : 'lost') : 'none',
+    });
+  }catch(_){}
+}
 const NALUNO_STAGE_ORDER = ['dial', 'ring', 'record', 'alert', 'prepared', 'earlyAnswer', 'answerTap', 'accepted', 'answerSdp', 'final', 'released', 'connected', 'heard', 'end'];
 function nalunoCDFinish(callId, why){
   try{
@@ -1754,6 +1824,8 @@ function nalunoCDFinish(callId, why){
       error: String(r.error || '').slice(0, 200), durationMs: Date.now() - r.t0,
     };
     try{ if(window.NalunoTech) NalunoTech.call(out); }catch(_){}
+    try{ if(r.qualTimer) clearInterval(r.qualTimer); }catch(_){}
+    try{ if(typeof nalunoMeasureCall === 'function') nalunoMeasureCall(out, r); }catch(_){}
     return out;
   }catch(_){ return null; }
 }

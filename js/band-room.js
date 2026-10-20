@@ -1221,6 +1221,7 @@ window.addEventListener('pagehide', ()=>{
 
 $('bandTuneBtn').onclick = ()=>{
   amTunedIn = !amTunedIn;
+  try{ if(amTunedIn && typeof nalunoMeasure === 'function') nalunoMeasure('band_join', {}); }catch(_){}
   markMyActivity();
   if(typeof unlockBandAudio === 'function') unlockBandAudio();
   $('bandTuneBtn').textContent = amTunedIn ? 'Step out' : 'Tune in';
@@ -1755,6 +1756,14 @@ async function finishBandRecordingAndSend(){
         const ct = blob.type || (mode === 'video' ? 'video/webm' : 'audio/webm');
         const thumbP = (mode === 'video') ? bandQuickThumb(blob) : Promise.resolve(null);
         const url = await bandUploadClip(blob, ct);
+        /* 20 Oct c: clip length (a band) and whether it ran to the limit. */
+        try{
+          if(typeof nalunoMeasure === 'function'){
+            const capMs = mode === 'video' ? BAND_REC_MAX_VIDEO_MS : BAND_REC_MAX_AUDIO_MS;
+            nalunoMeasure('band_clip', { kind: mode === 'video' ? 'video' : 'audio', len: nalunoMeasureBands.vlen(durationSecs * 1000), cap: (durationSecs * 1000) >= capMs - 600 ? 1 : 0 });
+            nalunoMeasure('band_send', { kind: mode === 'video' ? 'video' : 'audio' });
+          }
+        }catch(_){}
         let thumb = null;
         try{ thumb = await thumbP; }catch(_){}
         const patch = { mediaUrl: url, pending: false };
@@ -1781,6 +1790,12 @@ async function finishBandRecordingAndSend(){
         }
       }catch(e){
         console.warn('[band] upload failed', e);
+        try{
+          if(typeof nalunoMeasure === 'function'){
+            const msg = String((e && e.message) || '');
+            nalunoMeasure('band_clip_fail', { kind: mode === 'video' ? 'video' : 'audio', reason: /limit|large|size|413/i.test(msg) ? 'size' : (/network|fetch|offline|timeout/i.test(msg) ? 'network' : 'other') });
+          }
+        }catch(_){}
         toast(e.message || 'Upload failed');
         try{ await col.doc(docId).delete(); }catch(_){}
         forgetBandLocalRow(docId, true);
@@ -2048,6 +2063,7 @@ async function sendBandMessage(){
       text: envelopes ? null : text, // plaintext omitted once truly sealed for everyone
     };
     bandMarkAlive(fbDb.collection('bands').doc(b.firestoreId), b, false);
+    try{ if(typeof nalunoMeasure === 'function') nalunoMeasure('band_send', { kind: 'text' }); }catch(_){}
     col.doc(docId).set(payload)
       .catch(function(){
         queueBandMessage(b.firestoreId, payload, text, docId);

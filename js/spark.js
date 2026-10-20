@@ -23,6 +23,7 @@ async function openSparkSheet(){
   if(!currentUser || !fbDb){ toast('Sign in first'); return; }
   sheet.style.display = 'flex';
   sparkStatus('Lighting a pulse…');
+  try{ if(typeof nalunoMeasure === 'function') nalunoMeasure('spark', { stage: 'start' }); }catch(_){}
   const code = sparkAlphabetCode();
   const handle = ((currentProfile && currentProfile.number) || '').replace(/^@/, '') || currentUser.uid.slice(0, 8);
   try{
@@ -105,6 +106,7 @@ async function joinSparkCode(raw){
     const data = host.exists ? host.data() : { name: d.hostName, number: '@' + d.hostHandle, color: d.hostColor };
     if(typeof connectWithUser === 'function'){
       await connectWithUser(d.hostUid, data, d.hostHandle, code);
+      try{ if(typeof nalunoMeasure === 'function') nalunoMeasure('spark', { stage: 'done' }); }catch(_){}
     }
     const guestName = (currentProfile && currentProfile.name) || 'Someone';
     // FIX: this used to swallow a failed claim silently — with the rules gap

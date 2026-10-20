@@ -494,6 +494,7 @@ async function enableFindNaluno(){
   startNativeFindNaluno();
   syncFindNalunoToggle();
   toast('Find Naluno is on for this phone');
+  try{ if(typeof nalunoMeasure === 'function') nalunoMeasure('find_on', { state: 'on' }); }catch(_){}
   return true;
 }
 
@@ -518,6 +519,7 @@ async function disableFindNaluno(){
   }
   stopFindNalunoWatch();
   stopNativeFindNaluno();
+  try{ if(typeof nalunoMeasure === 'function') nalunoMeasure('find_on', { state: 'off' }); }catch(_){}
   setFindNalunoEnabledLocal(false);
   const ref = beaconRef();
   if(ref){
@@ -696,6 +698,7 @@ let findNalunoOpenAfterAuth = false;
 let findListenRetry = 0;
 let findListenRetryTimer = null;
 function openFindNaluno(){
+  try{ if(typeof nalunoMeasure === 'function') nalunoMeasure('find_map_open', {}); }catch(_){}
   goToCompassTab();
   if(typeof compassIsLocked === 'function' && compassIsLocked()){
     findNalunoOpenAfterUnlock = true;

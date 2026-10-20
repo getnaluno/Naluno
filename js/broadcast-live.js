@@ -86,6 +86,15 @@ function bLiveCleanupViewer(){
 }
 
 function bLiveUpdateViewerChrome(n){
+  /* 20 Oct c: the host's own count of viewers, for live_end (measure.js). */
+  try{
+    if(bLiveHost){
+      const st = window.__nalunoLiveStats || (window.__nalunoLiveStats = { peak: 0, sum: 0, samples: 0, at: Date.now() });
+      const k = Number(n) || 0;
+      if(k > st.peak) st.peak = k;
+      st.sum += k; st.samples++;
+    }
+  }catch(_){}
   let el = $('bspaceLiveViewers');
   if(!el){
     const badge = $('bspaceLiveBadge');
