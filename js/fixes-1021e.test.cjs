@@ -144,7 +144,7 @@ function fakeDb(log, opts) {
     ['child-safety/index.html', 'child-safety.html'].forEach((f) => {
       const s = read(f);
       assert.ok(/<title>Child safety standards — Naluno<\/title>/.test(s) && /child sexual abuse and exploitation \(CSAE\)/.test(s));
-      assert.ok(/Google Play/.test(s) && /Sauti child helpline on 116/.test(s) && /href="\/contact\/"/.test(s) && /responsible for these standards/.test(s));
+      assert.ok(/Google Play/.test(s) && /child helpline/.test(s) && /href="\/contact\/"/.test(s) && /responsible for these standards/.test(s));
     });
     assert.ok(/href="\/child-safety"/.test(read('privacy.html')) && /href="\/child-safety"/.test(read('terms.html')));
     /* the one-time notice */

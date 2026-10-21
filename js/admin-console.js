@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261021f';
+  const BUILD = '20261021h';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -1401,15 +1401,33 @@
     }
     restoreDeskState(kept);
   }
+  /* 21 Oct g: while the app is busy (visits, people opening Naluno), a
+     change arrived every second or so and each one re-added up everything
+     and redrew the tab: on a phone the console was busy half the time and
+     taps felt slow. Changes are now gathered and applied at most once every
+     4 seconds, and not at all while the console is in the background. */
+  let __lastLiveApply = 0;
+  let __firstLoadDone = false;
   function scheduleLive() {
+    if (!__firstLoadDone) return;
     if (__liveTimer) {
       try { clearTimeout(__liveTimer); } catch (_) {}
     }
+    const since = Date.now() - __lastLiveApply;
+    const wait = Math.max(280, 4000 - since);
     __liveTimer = setTimeout(function () {
       __liveTimer = null;
+      if (typeof document !== 'undefined' && document.hidden) { __liveHiddenPending = true; return; }
+      __lastLiveApply = Date.now();
       applyLivePack();
-    }, 280);
+    }, wait);
   }
+  let __liveHiddenPending = false;
+  try {
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden && __liveHiddenPending) { __liveHiddenPending = false; scheduleLive(); }
+    });
+  } catch (_) {}
   function dropLiveListeners() {
     __liveUnsubs.forEach(function (u) {
       try { if (typeof u === 'function') u(); } catch (_) {}
@@ -1446,6 +1464,19 @@
     }, Math.min(30000, 1000 * Math.pow(2, n)));
   }
   function relistenOk(key) { __relistenTries[key] = 0; }
+  /* 21 Oct g: the first answer of each live list is also the console's
+     first load. Before, every list was read once to open the console and
+     then read again in full by its live listener: about twice the
+     documents (Firebase's free plan allows 50,000 reads a day for the
+     whole of Naluno). */
+  const __firstHooks = {};
+  function firstOf(key, ms) {
+    return new Promise(function (resolve) {
+      const t = setTimeout(function () { if (__firstHooks[key] === done) delete __firstHooks[key]; resolve(false); }, ms);
+      function done(v) { clearTimeout(t); resolve(!!v); }
+      __firstHooks[key] = done;
+    });
+  }
   function listenCol(name, limit, key, orderField) {
     const db = adminDb();
     if (!db) return;
@@ -1457,8 +1488,13 @@
         relistenOk('col:' + key);
         if (!__livePack) return;
         __livePack[key] = snapRows(s);
+        const hook = __firstHooks[key];
+        if (hook) { delete __firstHooks[key]; try { hook(true); } catch (_) {} }
         scheduleLive();
       }, function () {
+        /* refused or failed: the first load reads it directly at once */
+        const hook = __firstHooks[key];
+        if (hook) { delete __firstHooks[key]; try { hook(false); } catch (_) {} }
         if (orderField) listenCol(name, limit, key);
         else relistenAdmin('col:' + key, function () { listenCol(name, limit, key); });
       });
@@ -1669,6 +1705,13 @@
 
   async function loadSnapshot(force) {
     try { await loadLiveAppMeta(); } catch (_) {}
+    /* 21 Oct g: after an action (a report decided, a setting saved) the
+       live lists already carry the change: add them up again instead of
+       reading every list again. Only the Refresh button reads everything. */
+    if (force && force !== 'hard' && __liveArmed && __livePack && __snap) {
+      await new Promise(function (r) { setTimeout(r, 400); });
+      return commitPack(__livePack);
+    }
     if (!force && __snap && (__liveArmed || (Date.now() - (__snap._at || 0) < 90000))) return __snap;
     const db = adminDb();
     const pack = {
@@ -1684,22 +1727,36 @@
       currency: {},
       costInputs: readCostInputs(),
     };
-    const core = [
-      colDocs('users', 500).then(function (r) { pack.users = r; }),
-      colDocs('broadcasts', 400).then(function (r) { pack.broadcasts = r; }),
-      colDocs('reports', 80).then(function (r) { pack.reports = r; }),
-      colDocs('deskMail', 80).then(function (r) { pack.deskMail = r; }),
-      colDocs('deskAds', 400).then(function (r) { pack.deskAds = r; }),
-      colDocsOrder('siteSessions', 'startedAt', 800).then(function (r) { pack.siteSessions = r; }),
-      colDocsOrder('siteDays', 'updatedAt', 180).then(function (r) { pack.siteDays = r; }),
-      colDocs('presenceDays', 2000).then(function (r) { pack.presenceDays = r; }),
-      colDocs('pushPings', 200).then(function (r) { pack.pushPings = r; }),
-      colDocs('pushReceipts', 200).then(function (r) { pack.pushReceipts = r; }),
-      colDocs('payments', 200).then(function (r) { pack.payments = r; }),
-      colDocs('knownApps', 80).then(function (r) { pack.knownApps = r; }),
-      colDocs('reservedHandles', 400).then(function (r) { pack.reservedHandles = r; }),
-      colDocs('handleFlags', 200).then(function (r) { pack.handleFlags = r; }),
+    /* The live lists, when they are not running yet, are started now and
+       their first answers are the load (one read of each, not two). A list
+       that has not answered in 8 seconds is read once directly instead. */
+    const CORE = [
+      ['users', function () { return colDocs('users', 500); }],
+      ['broadcasts', function () { return colDocs('broadcasts', 400); }],
+      ['reports', function () { return colDocs('reports', 80); }],
+      ['deskMail', function () { return colDocs('deskMail', 80); }],
+      ['deskAds', function () { return colDocs('deskAds', 400); }],
+      ['siteSessions', function () { return colDocsOrder('siteSessions', 'startedAt', 800); }],
+      ['siteDays', function () { return colDocsOrder('siteDays', 'updatedAt', 180); }],
+      ['presenceDays', function () { return colDocs('presenceDays', 2000); }],
+      ['pushPings', function () { return colDocs('pushPings', 200); }],
+      ['pushReceipts', function () { return colDocs('pushReceipts', 200); }],
+      ['payments', function () { return colDocs('payments', 200); }],
+      ['knownApps', function () { return colDocs('knownApps', 80); }],
+      ['reservedHandles', function () { return colDocs('reservedHandles', 400); }],
+      ['handleFlags', function () { return colDocs('handleFlags', 200); }],
     ];
+    const viaListeners = !!db && !__liveArmed;
+    let core;
+    if (viaListeners) {
+      __firstLoadDone = false;
+      __livePack = pack;
+      const waits = CORE.map(function (c) { return firstOf(c[0], 8000).then(function (ok) { return ok ? null : c[1]().then(function (r) { pack[c[0]] = r; }); }); });
+      try { armLiveListeners(); } catch (_) {}
+      core = waits;
+    } else {
+      core = CORE.map(function (c) { return c[1]().then(function (r) { pack[c[0]] = r; }); });
+    }
     if (db) {
       core.push(db.collection('economyConfig').doc('flags').get().then(function (s) {
         if (s && s.exists) pack.flags = s.data() || {};
@@ -1735,28 +1792,41 @@
       return commitPack(p);
     }
     const first = finish(pack);
+    __firstLoadDone = true;
     try { armLiveListeners(); } catch (_) {}
     try { maybeTidySiteDaily(); } catch (_) {}
-    Promise.all([
-      colDocs('toga', 80).then(function (r) { pack.toga = r; }),
-      colDocs('strands', 200).then(function (r) { pack.strands = r; }),
-      colDocs('bands', 80).then(function (r) { pack.bands = r; }),
-      colDocs('contributionLedger', 2000).then(function (r) { pack.ledger = r; }),
-      colDocs('economyInbox', 200).then(function (r) { pack._inbox = r; }),
-      colDocs('creatorSupport', 80).then(function (r) { pack.creatorSupport = r; }),
-      colDocs('payoutAccounts', 80).then(function (r) { pack.payoutAccounts = r; }),
-      colDocs('creatorMonetisation', 200).then(function (r) { pack.creatorMonetisation = r; }),
-      colDocs('creatorPayoutMethods', 200).then(function (r) { pack.creatorPayoutMethods = r; }),
-      colDocs('deskSpend', 200).then(function (r) { pack.deskSpend = r; }),
-      colDocs('metrics', 80).then(function (r) { pack.metrics = r; }),
-      colDocsOrder('adminAudit', 'created_at', 200).then(function (r) {
-        pack.audit = r.sort(function (a, b) { return (b.created_at || 0) - (a.created_at || 0); });
-      }),
+    /* The rest: from the live lists' first answers when they are running
+       (the same rule: read directly only if one has not answered in 8 s). */
+    const REST = [
+      ['toga', function () { return colDocs('toga', 80); }],
+      ['strands', function () { return colDocs('strands', 200); }],
+      ['bands', function () { return colDocs('bands', 80); }],
+      ['ledger', function () { return colDocs('contributionLedger', 2000); }],
+      ['_inbox', function () { return colDocs('economyInbox', 200); }],
+      ['creatorSupport', function () { return colDocs('creatorSupport', 80); }],
+      ['payoutAccounts', function () { return colDocs('payoutAccounts', 80); }],
+      ['creatorMonetisation', function () { return colDocs('creatorMonetisation', 200); }],
+      ['creatorPayoutMethods', function () { return colDocs('creatorPayoutMethods', 200); }],
+      ['deskSpend', function () { return colDocs('deskSpend', 200); }],
+      ['metrics', function () { return colDocs('metrics', 80); }],
+      ['audit', function () { return colDocsOrder('adminAudit', 'created_at', 200); }],
+      ['originMarks', function () { return colDocs('originMarks', 200); }],
+    ];
+    const restLive = viaListeners;
+    Promise.all(REST.map(function (c) {
+      if (restLive && Array.isArray(pack[c[0]]) && pack[c[0]].length) return null;
+      const w = restLive ? firstOf(c[0], 8000) : Promise.resolve(false);
+      return w.then(function (ok) {
+        if (ok) return null;
+        return c[1]().then(function (r) {
+          pack[c[0]] = c[0] === 'audit' ? r.sort(function (a, b) { return (b.created_at || 0) - (a.created_at || 0); }) : r;
+        });
+      });
+    }).concat([
       pingWorker().then(function (w) { pack.worker = w; }),
       loadSignals(pack.users).then(function (r) { pack.signals = r; }),
       loadBeacons(pack.users).then(function (r) { pack.beacons = r; }),
-      colDocs('originMarks', 200).then(function (r) { pack.originMarks = r; }),
-    ]).then(function () {
+    ])).then(function () {
       if (!pack.ledger.length) {
         const inbox = pack._inbox || [];
         if (inbox.length) {
@@ -2514,7 +2584,7 @@
       + (Ccy() ? Ccy().selectHtml('ccStripCurrency', opCode()) : ('<span class="m"><b>' + escapeHtml(opCode()) + '</b></span>'))
       + '<button type="button" class="ghost" id="ccRefresh" style="margin-left:auto;padding:6px 10px;">Refresh</button>';
     const btn = $('ccRefresh');
-    if (btn) btn.onclick = function () { loadTab(__activeTab, true); };
+    if (btn) btn.onclick = function () { loadTab(__activeTab, 'hard'); };
     wireCurrencySelect('ccStripCurrency');
   }
 
@@ -2543,7 +2613,7 @@
     }
     try {
       const hadContent = !!(__snap && !force);
-      const d = await loadSnapshot(!!force);
+      const d = await loadSnapshot(force === 'hard' ? 'hard' : !!force);
       renderStrip(d);
       // 13b: the tab is already on screen from the last snapshot: refresh it in place.
       /* 20 Oct d: Measures reads its own totals and batches after the first
@@ -4291,7 +4361,7 @@
         if (window.NalunoCompassCheck) window.NalunoCompassCheck.bind(function () {
           const host = document.getElementById('compassCheckHost');
           if (host) host.innerHTML = window.NalunoCompassCheck.html({ card: card, escapeHtml: escapeHtml });
-        });
+        }, function () { return currentUser ? currentUser.getIdToken() : ''; });
       } catch (_) {}
       try {
         if (window.NalunoDeployCheck) window.NalunoDeployCheck.bind(function () {

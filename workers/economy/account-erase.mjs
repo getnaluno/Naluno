@@ -4,7 +4,7 @@
    deletes the login straight away. What stayed was the account record and
    everything under it: the profile (name, photo, country), Compass notes,
    Find Naluno history, push addresses, Frequencies lists, the Wireline
-   mailbox. Google Play (and Uganda's data law) expect a deleted account's
+   mailbox. Google Play (and data-protection law) expect a deleted account's
    data to go.
 
    30 days after a person closes their own Callsign, the worker's scheduled
