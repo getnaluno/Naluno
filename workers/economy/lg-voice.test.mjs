@@ -100,6 +100,6 @@ test("through the worker: signed in only, audio back with CORS", async () => {
   assert.equal(res.headers.get("Access-Control-Allow-Origin"), "*");
   assert.equal((await res.arrayBuffer()).byteLength, WAV.byteLength);
   const health = await handleRequest(new Request("https://economy.example/health"), ENV);
-  assert.match(JSON.stringify(await health.json()), /"version":"2\.1[1-9]\.\d+-[a-z]+"/);
+  assert.match(JSON.stringify(await health.json()), /"version":"2\.1[1-9]\.\d+-[a-z0-9]+"/);
   setFetchImpl(null);
 });

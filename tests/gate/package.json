@@ -1,0 +1,10 @@
+{
+  "name": "naluno-release-gate",
+  "private": true,
+  "description": "Run before every release: node tests/gate/run.cjs",
+  "scripts": { "gate": "node run.cjs" },
+  "dependencies": {
+    "node-turn": "0.0.6",
+    "playwright": "^1.47.0"
+  }
+}

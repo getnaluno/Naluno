@@ -1,4 +1,4 @@
-import { handleRequest, runBandSweep, runLiveSweep, runLaunchGuard, runDiscoverCompile, runPushMove, runMeasureSweep, runRecordsSweep } from "./handler.mjs";
+import { handleRequest, runBandSweep, runLiveSweep, runLaunchGuard, runDiscoverCompile, runPushMove, runMeasureSweep, runRecordsSweep, runAccountErase } from "./handler.mjs";
 
 export default {
   async fetch(request, env, ctx) {
@@ -22,6 +22,7 @@ export default {
       runMeasureSweep(env).catch(() => null),
       /* 20 Oct d: call and message records older than 12 months (unless kept for an open matter). */
       runRecordsSweep(env).catch(() => null),
+      runAccountErase(env).catch(() => null),
     ]);
     if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(job);
     else await job;

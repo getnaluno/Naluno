@@ -105,6 +105,7 @@ import { handleLgVoice } from "./lg-voice.mjs";
 import { handleSunbird } from "./sunbird.mjs";
 import { takeMeasureBatch, MEASURE_KEEP_DAYS } from "./measure.mjs";
 import { sweepRecords } from "./records-sweep.mjs";
+import { eraseClosedAccounts } from "./account-erase.mjs";
 import {
   callsReady,
   rememberRoom,
@@ -114,7 +115,9 @@ import {
   cfCalls,
 } from "./live.mjs";
 
-export const VERSION = "2.15.0-reach";
+/* 21 Oct e: the version names the build, so the console can tell which
+   worker is deployed (it stayed "2.15.0-reach" through several builds). */
+export const VERSION = "2.16.0-20261021e";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -125,6 +128,9 @@ export const DEFAULT_FLAGS = {
   contribution_enabled: true,
   community_value_enabled: true,
   creator_support_enabled: false,
+  /* 21 Oct e: Support inside the Android app (Google Play). Off until
+     Naluno is sure Play accepts it. The website is not affected. */
+  support_in_android_app: false,
   community_rewards_enabled: false,
   real_payouts_enabled: false,
   monetisation_phase_enabled: false,
@@ -3846,6 +3852,58 @@ export async function runDiscoverCompile(env, nowMs, pages) {
    The day totals stay. */
 /* 20 Oct d: call and message records older than 12 months are deleted,
    unless the desk keeps them for an open matter (records-sweep.mjs). */
+/* 21 Oct e: closed Callsigns are erased 30 days after closing
+   (account-erase.mjs). */
+export async function runAccountErase(env, now) {
+  if (!hasSaConfigured(env)) return { ok: false, error: "no-service-account" };
+  const token = await saAccessToken(env);
+  if (!token) return { ok: false, error: "no-token" };
+  const name = fsRoot(env).replace("https://firestore.googleapis.com/v1/", "");
+  return eraseClosedAccounts({
+    held: async () => {
+      const set = new Set();
+      let pageToken = "";
+      for (let page = 0; page < 50; page++) {
+        const r = await fsFetch(env, token, "GET", "/legalHolds?pageSize=1000" + (pageToken ? "&pageToken=" + encodeURIComponent(pageToken) : ""));
+        if (!r.ok && r.status !== 404) throw new Error("holds " + r.status);
+        if (r.ok && r.data && Array.isArray(r.data.documents)) r.data.documents.forEach((d) => set.add(String(d.name).split("/").pop()));
+        pageToken = (r.ok && r.data && r.data.nextPageToken) || "";
+        if (!pageToken) return set;
+      }
+      throw new Error("holds: too many pages");
+    },
+    closedBefore: async (cutoff, limit, after) => {
+      const filters = [{ fieldFilter: { field: { fieldPath: "closedAt" }, op: "LESS_THAN", value: { integerValue: String(Math.floor(cutoff)) } } }];
+      if (after != null) filters.push({ fieldFilter: { field: { fieldPath: "closedAt" }, op: "GREATER_THAN", value: { integerValue: String(Math.floor(after)) } } });
+      const r = await fsFetch(env, token, "POST", ":runQuery", { structuredQuery: {
+        from: [{ collectionId: "users" }],
+        where: filters.length > 1 ? { compositeFilter: { op: "AND", filters } } : filters[0],
+        orderBy: [{ field: { fieldPath: "closedAt" }, direction: "ASCENDING" }],
+        limit } });
+      if (!r.ok) throw new Error("users " + r.status);
+      return (Array.isArray(r.data) ? r.data : []).filter((x) => x && x.document)
+        .map((x) => ({ uid: String(x.document.name).split("/").pop(), data: fromFsDoc(x.document) }));
+    },
+    descendants: async (parent, limit) => {
+      const r = await fsFetch(env, token, "POST", parent + ":runQuery", { structuredQuery: {
+        from: [{ allDescendants: true }],
+        orderBy: [{ field: { fieldPath: "__name__" }, direction: "ASCENDING" }],
+        limit } });
+      if (!r.ok) throw new Error("descendants " + r.status);
+      return (Array.isArray(r.data) ? r.data : []).filter((x) => x && x.document).map((x) => x.document.name);
+    },
+    remove: async (names) => {
+      const c = await fsFetch(env, token, "POST", ":commit", { writes: names.map((d) => ({ delete: d.indexOf("projects/") === 0 ? d : name + "/" + d })) });
+      return !!(c && c.ok);
+    },
+    tombstone: async (uid, at) => {
+      /* No update mask: the whole record is replaced by the marker. */
+      const r = await fsFetch(env, token, "PATCH", "/users/" + encodeURIComponent(uid), toFsFields({ accountState: "erased", deleted: true, erasedAt: at, closedKind: "self" }));
+      return !!(r && r.ok);
+    },
+  }, now);
+}
+
 export async function runRecordsSweep(env, now) {
   if (!hasSaConfigured(env)) return { ok: false, error: "no-service-account" };
   const token = await saAccessToken(env);
@@ -4815,7 +4873,10 @@ export async function handleRequest(request, env = {}, ctx = {}) {
          decides (console: Keep trusting / Stop trusting). Only their NEXT
          Broadcasts wait; what is already up stays up unless the report's own
          category takes it down below. */
-      if (wrote.ok && saToken) {
+      /* 21 Oct e: a report about a person from a chat, call or Band does not
+         hold their Broadcasts: it goes to the queue for a person to read. */
+      const personReport = String(body.target_type || "") === "person" || String(body.target_type || "") === "compass";
+      if (wrote.ok && saToken && !personReport) {
         try {
           let about = String(body.target_user_id || "").slice(0, 128);
           const bid = String(body.broadcast_id || (body.target_type === "broadcast" ? body.target_id : "") || "").slice(0, 80);

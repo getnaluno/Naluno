@@ -96,6 +96,10 @@ export const CATALOGUE = {
   compass_q: { topic: (v) => TOPIC.test(v), answered: one(B.bit) },
   find_map_open: {},
   find_on: { state: one(["on", "off"]) },
+  /* 21 Oct e: safety (no names, no who) */
+  person_drop: { block: one(B.bit) },
+  person_block: { state: one(["on", "off"]) },
+  compass_flag: { reason: one(["harmful", "hateful", "sexual", "misleading", "other"]) },
   /* the desk's look at a Screen hold (sent by the console) */
   desk_screen_review: { result: one(["let-out", "take-down"]), reason: one(["single-frame", "found-on-fabric", "other"]) },
 };

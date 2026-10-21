@@ -99,7 +99,8 @@ export async function handleWireNotify(body, sender, deps) {
   const tokens = tokensOf(vault, them);
   if (!tokens.length) return { status: 200, body: { ok: true, sent: 0, reason: "no_token" } };
   const link = "/app/?wire=" + encodeURIComponent(sender.uid);
-  const out = await sendAll(tokens, {
+  const pingId = /^p[a-z0-9]{4,30}$/.test(String((body && body.pingId) || "")) ? String(body.pingId) : "";
+  const data = {
     type: "wireline",
     fromUid: sender.uid,
     senderName: name,
@@ -107,7 +108,9 @@ export async function handleWireNotify(body, sender, deps) {
     body: wireKindLabel(type),
     clientMsgId: mid,
     url: link,
-  }, link, deps, now);
+  };
+  if (pingId) data.pingId = pingId;
+  const out = await sendAll(tokens, data, link, deps, now);
   return out;
 }
 
@@ -124,8 +127,25 @@ function tokensOf() {
       }
     });
   });
+  /* 21 Oct e: every browser / home-screen app keeps its own address
+     (vault.webPush.<device>), so a second device no longer silences the
+     first. Newest first, at most 4, none older than 60 days. */
+  Array.prototype.slice.call(arguments).forEach(function (d) {
+    webPushOf(d).forEach(function (v) {
+      if (tokens.indexOf(v) < 0) { tokens.push(v); kinds.push("web"); }
+    });
+  });
   tokens.kinds = kinds;
   return tokens;
+}
+
+export function webPushOf(d) {
+  const map = d && d.webPush;
+  if (!map || typeof map !== "object") return [];
+  const now = Date.now();
+  return Object.keys(map).map(function (k) { return map[k]; }).filter(function (x) {
+    return x && typeof x.t === "string" && x.t.length > 20 && x.t.length < 4096 && (!x.at || now - Number(x.at) < 60 * 86400000);
+  }).sort(function (a, b) { return Number(b.at || 0) - Number(a.at || 0); }).slice(0, 4).map(function (x) { return x.t; });
 }
 
 /* The visible part of a web push. The browser draws it by itself, so the

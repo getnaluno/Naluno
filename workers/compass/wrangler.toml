@@ -1,0 +1,13 @@
+name = "naluno-compass"
+main = "index.js"
+compatibility_date = "2026-01-01"
+
+# Cloudflare Workers AI (free allowance: 10,000 neurons a day on Naluno's
+# own Cloudflare account; no outside AI company, no key).
+[ai]
+binding = "AI"
+
+[vars]
+FIREBASE_WEB_API_KEY = "AIzaSyD0j1W7-gFJqbMd6rz4kMhQd5AiB8B2ox0"
+# Optional: the models to try, in order, separated by commas.
+# COMPASS_MODELS = "@cf/meta/llama-3.3-70b-instruct-fp8-fast,@cf/meta/llama-3.1-8b-instruct-fast"

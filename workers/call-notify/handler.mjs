@@ -7,14 +7,20 @@
  * account. Client-supplied tokens are used only when the lookup fails,
  * so an unpublished worker swap does not silence existing calls.
  */
-export const VERSION = "1.1.0-20261014a";
+export const VERSION = "1.2.0-20261021e";
 export const PROJECT_ID = "naluno-28a00";
 
 const ALLOWED = { incoming_call: 1, band_invite: 1, broadcast_live: 1, wireline: 1 };
 
 const memory = { hits: new Map() };
 let _fetch = globalThis.fetch.bind(globalThis);
+/* 21 Oct e: one access token per scope. A single slot meant every call
+   alert fetched two new Google tokens (the database one, then the push one,
+   each pushing the other out): two extra round trips to Google, about half
+   a second to two seconds, on every ring. */
 let saCache = { token: "", exp: 0, scope: "", err: "" };
+const saByScope = new Map();
+
 let testSa = "";
 
 export function setFetchImpl(fn) {
@@ -26,6 +32,8 @@ export function setSaToken(t) {
 export function resetMemory() {
   memory.hits.clear();
   saCache = { token: "", exp: 0, scope: "", err: "" };
+  saByScope.clear();
+  saPending.clear();
   testSa = "";
 }
 
@@ -113,10 +121,23 @@ async function signRs256Jwt(sa, scope) {
   const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(unsigned));
   return unsigned + "." + b64url(sig);
 }
-async function saAccessToken(env, scope) {
-  if (testSa) return testSa;
+/* Several reads and sends ask for the same token at once: one request to
+   Google, shared. */
+const saPending = new Map();
+function saAccessToken(env, scope) {
+  if (testSa) return Promise.resolve(testSa);
   const now = Math.floor(Date.now() / 1000);
-  if (saCache.token && saCache.scope === scope && saCache.exp - 60 > now) return saCache.token;
+  const held = saByScope.get(scope);
+  if (held && held.token && held.exp - 60 > now) return Promise.resolve(held.token);
+  if (saPending.has(scope)) return saPending.get(scope);
+  const p = saAccessTokenFetch(env, scope).finally(() => saPending.delete(scope));
+  saPending.set(scope, p);
+  return p;
+}
+async function saAccessTokenFetch(env, scope) {
+  const now = Math.floor(Date.now() / 1000);
+  const held = saByScope.get(scope);
+  if (held && held.token && held.exp - 60 > now) return held.token;
   const sa = parseServiceAccount(env.GOOGLE_SERVICE_ACCOUNT || env.FIREBASE_SERVICE_ACCOUNT || env.SERVICE_ACCOUNT_JSON || "");
   if (!sa) { saCache.err = "no-service-account"; return ""; }
   try {
@@ -129,6 +150,7 @@ async function saAccessToken(env, scope) {
     const body = await res.json().catch(() => ({}));
     if (!res.ok || !body.access_token) { saCache.err = String(body.error || ("http-" + res.status)); return ""; }
     saCache = { token: body.access_token, exp: now + Number(body.expires_in || 3600), scope, err: "" };
+    saByScope.set(scope, { token: saCache.token, exp: saCache.exp });
     return saCache.token;
   } catch (e) {
     saCache.err = (e && e.message) || "jwt-failed";
@@ -193,6 +215,7 @@ async function tied(env, token, from, to) {
 
 export async function verifyIdToken(env, idToken) {
   if (!idToken) return null;
+
   const res = await _fetch(
     "https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=" + encodeURIComponent(apiKey(env)),
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idToken }) },
@@ -240,14 +263,29 @@ function pickTokens(d) {
     const v = String(d[k] || "").trim();
     if (v && out.indexOf(v) < 0) out.push(v);
   });
+  webPushTokens(d).forEach((v) => { if (out.indexOf(v) < 0) out.push(v); });
   return out;
+}
+/* 21 Oct e: each browser or home-screen app keeps its own push address
+   (vault.webPush.<device>). One shared field meant the last device to open
+   Naluno took the alerts and every other one went quiet. Newest first,
+   at most 4, none older than 60 days. */
+export function webPushTokens(d) {
+  const map = d && d.webPush;
+  if (!map || typeof map !== "object") return [];
+  const now = Date.now();
+  return Object.keys(map).map((k) => map[k]).filter((x) => x && typeof x.t === "string" && x.t.length > 20 && x.t.length < 4096
+    && (!x.at || now - Number(x.at) < 60 * 86400000))
+    .sort((a, b) => Number(b.at || 0) - Number(a.at || 0)).slice(0, 4).map((x) => x.t);
 }
 
 async function loadServerTokens(env, calleeUid) {
   const token = await saAccessToken(env, "https://www.googleapis.com/auth/datastore");
   if (!token) return { tokens: [], source: "none" };
-  const pub = await fsGet(env, token, "/users/" + encodeURIComponent(calleeUid));
-  const vault = await fsGet(env, token, "/users/" + encodeURIComponent(calleeUid) + "/vault/main");
+  const [pub, vault] = await Promise.all([
+    fsGet(env, token, "/users/" + encodeURIComponent(calleeUid)),
+    fsGet(env, token, "/users/" + encodeURIComponent(calleeUid) + "/vault/main"),
+  ]);
   const tokens = pickTokens(Object.assign({}, pub || {}, vault || {}));
   return { tokens, source: tokens.length ? "firestore" : "empty" };
 }
@@ -456,6 +494,10 @@ function fcmWhy(detail) {
 
 export async function handleRequest(request, env = {}) {
   if (request.method === "OPTIONS") return corsPreflight();
+  /* 21 Oct e: which version is deployed (the console's deploy check). */
+  if (request.method === "GET" && new URL(request.url).pathname === "/health") {
+    return json({ ok: true, service: "naluno-call-notify", version: VERSION, hasServiceAccount: !!(env.GOOGLE_SERVICE_ACCOUNT || env.FIREBASE_SERVICE_ACCOUNT || env.SERVICE_ACCOUNT_JSON) });
+  }
   if (request.method !== "POST") return json({ ok: false, error: "POST only" }, 405);
 
   const idToken = bearer(request);
@@ -481,10 +523,14 @@ export async function handleRequest(request, env = {}) {
   if (calleeUid === user.uid) return json({ ok: false, error: "cannot notify yourself" }, 400);
   if (!ALLOWED[type]) return json({ ok: false, error: "unknown type" }, 400);
 
-  const allowed = await assertAllowed(env, user, Object.assign({}, body, { calleeUid, type }));
+  /* The check and the push addresses are read together; nothing is sent
+     unless the check passes. */
+  const [allowed, looked] = await Promise.all([
+    assertAllowed(env, user, Object.assign({}, body, { calleeUid, type })),
+    loadServerTokens(env, calleeUid).catch(() => ({ tokens: [], source: "none" })),
+  ]);
   if (!allowed.ok) return json({ ok: false, error: allowed.error }, 403);
 
-  const looked = await loadServerTokens(env, calleeUid);
   let tokens = looked.tokens;
   let tokenSource = looked.source;
   if (!tokens.length) {
@@ -493,9 +539,8 @@ export async function handleRequest(request, env = {}) {
   }
   if (!tokens.length) return json({ ok: true, sent: false, reason: "no_token", tokenSource });
 
-  const results = [];
-  for (const t of tokens.slice(0, 3)) {
-    results.push(await sendFcm(env, t, {
+  /* Every phone at once, not one after another. */
+  const results = await Promise.all(tokens.slice(0, 5).map((t) => sendFcm(env, t, {
       type,
       title: String(body.title || "").slice(0, 80) || (type === "incoming_call" ? "Incoming call" : "Naluno"),
       body: String(body.body || "").slice(0, type === "wireline" ? 140 : 120) || "Open Naluno",
@@ -504,8 +549,7 @@ export async function handleRequest(request, env = {}) {
       broadcastId: String(body.broadcastId || ""),
       fromUid: String(body.fromUid || ""),
       clientMsgId: String(body.clientMsgId || ""),
-    }));
-  }
+    }).catch(() => ({ ok: false, error: "network" }))));
   const sent = results.some((r) => r.ok);
   const allFailed = results.length && results.every((r) => !r.ok);
   const why = results.map((r) => (r.ok ? "" : (r.error || fcmWhy(r.detail)))).filter(Boolean)[0] || "";
