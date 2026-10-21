@@ -543,6 +543,8 @@ function renderBandMessages(preserveScroll){
   }
   // Drop empty text bubbles (failed decrypt / pruned payload shells)
   msgs = msgs.filter(m => !bandMessageIsEmpty(m));
+  /* 21 Oct e: someone you stopped from reaching you is not shown here either. */
+  if(typeof nalunoIsBlocked === 'function') msgs = msgs.filter(m => m.fromMe || !m.fromUid || !nalunoIsBlocked(m.fromUid));
   /* 29g: nobody here and the last message is over 2 h old: the clock has
      run out even if no phone stamped the leave yet. Opening such a Band
      used to show the old conversation for about 15 s, until the settle

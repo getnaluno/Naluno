@@ -2115,7 +2115,7 @@ function renderContacts(){
       ? `<div style="font-family:var(--font-mono); font-size:10.5px; color:var(--mint); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(c.publicBands.slice(0,3).map(b=>b.name).join(' · '))}${c.publicBands.length>3?'…':''}</div>`
       : '';
     const dropBtn = (c.isReal && c.firebaseUid)
-      ? `<button type="button" data-drop-freq="${c.id}" aria-label="Drop ${escapeHtml(c.name)}" style="border:none;background:transparent;color:var(--text-dim);font-size:11px;padding:8px 2px;">Drop</button>`
+      ? `<button type="button" class="nl-dots" data-drop-freq="${c.id}" aria-label="More for ${escapeHtml(c.name)}" title="More">⋮</button>`
       : '';
     return `<div class="contact-row" data-id="${c.id}">
       ${typeof contactAvatarHtml === 'function' ? contactAvatarHtml(c, 46, signalBarsHtml(c)) : ('<div class="avatar" style="width:46px;height:46px;background:'+(c.color||'#7CFFB2')+';">'+c.initials+'</div>')}
@@ -2132,7 +2132,15 @@ function renderContacts(){
     el.onclick = (e)=>{ e.stopPropagation(); startOutgoingCall(parseInt(el.dataset.videoCall)); };
   });
   document.querySelectorAll('#strongList [data-drop-freq], #fadingList [data-drop-freq], #offList [data-drop-freq]').forEach(el=>{
-    el.onclick = (e)=>{ e.stopPropagation(); if(typeof dropFrequency === 'function') dropFrequency(parseInt(el.getAttribute('data-drop-freq'), 10)); };
+    el.onclick = (e)=>{
+      e.stopPropagation();
+      const raw = el.getAttribute('data-drop-freq');
+      const c = contacts.find(x => x && String(x.id) === raw);
+      const id = c ? c.id : parseInt(raw, 10);
+      /* 21 Oct e: ⋮ → Drop / Report (people-safety.js). */
+      if(c && window.NalunoPeople) window.NalunoPeople.personMenu(el, { uid: c.firebaseUid, name: c.name, localId: c.id }, 'frequencies');
+      else if(typeof dropFrequency === 'function') dropFrequency(id);
+    };
   });
   document.querySelectorAll('#strongList .contact-row, #fadingList .contact-row, #offList .contact-row').forEach(el=>{
     el.onclick = ()=> openWirelineFromFrequencies(parseInt(el.dataset.id));

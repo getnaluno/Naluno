@@ -7,7 +7,7 @@
 const NALUNO_WELCOME_KEY = 'nalunoWelcomeOk';
 const NALUNO_TOUR_KEY = 'nalunoTourOk';
 const NALUNO_LANG_KEY = 'nalunoLang';
-const NALUNO_LEGAL_EFFECTIVE = '18 September 2026';
+const NALUNO_LEGAL_EFFECTIVE = '21 October 2026';
 
 function nalunoOnboardLang(){
   try{
@@ -29,6 +29,57 @@ function nalunoTourDone(){
 function stampNalunoWelcome(){
   try{ localStorage.setItem(NALUNO_WELCOME_KEY, '1'); }catch(_){}
 }
+
+/* 21 Oct e: when the Terms or Privacy Policy change in a way that matters,
+   people who agreed to an older version see one short notice, once
+   (Terms 16: continued use after a notice is acceptance). Never over a
+   call, never before the welcome. */
+const NALUNO_LEGAL_SEEN_KEY = 'nalunoLegalSeen';
+const NALUNO_LEGAL_VERSION = '2026-10-21';
+function nalunoLegalNoticeDue(){
+  try{
+    if(localStorage.getItem(NALUNO_WELCOME_KEY) !== '1') return false;
+    return localStorage.getItem(NALUNO_LEGAL_SEEN_KEY) !== NALUNO_LEGAL_VERSION;
+  }catch(_){ return false; }
+}
+function nalunoLegalNoticeBusy(){
+  try{
+    if(document.hidden) return true;
+    if(document.body && document.body.classList.contains('naluno-gated')) return true;
+    const busy = document.querySelector('.callscreen.active, #callOverlay.active, #incoming.active, #incall.active, .nl-sheet-wrap, #nalunoWelcome.active, #nalunoHello.active, #nalunoCountry.active');
+    return !!busy;
+  }catch(_){ return true; }
+}
+function showNalunoLegalNotice(){
+  if(!nalunoLegalNoticeDue()) return true;
+  if(nalunoLegalNoticeBusy()) return false;
+  const wrap = document.createElement('div');
+  wrap.className = 'nl-sheet-wrap';
+  wrap.id = 'nalunoLegalNotice';
+  wrap.innerHTML = '<div class="nl-sheet" role="dialog" aria-modal="true" aria-labelledby="nlLegalTitle">'
+    + '<div class="nl-sheet-title" id="nlLegalTitle">We\u2019ve updated our Terms and Privacy Policy</div>'
+    + '<p class="nl-sheet-sub">From 21 October 2026: you can stop someone reaching you and report a person or a Compass answer; deleted accounts are erased 30 days later; call and message records are kept 12 months; and the Terms now say plainly what is not allowed. Read the <a href="/terms" target="_blank" rel="noopener">Terms</a>, the <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a> and our <a href="/child-safety" target="_blank" rel="noopener">Child safety standards</a>.</p>'
+    + '<p class="nl-sheet-sub">By carrying on using Naluno you accept them.</p>'
+    + '<div class="nl-sheet-row"><button type="button" class="nl-btn" id="nlLegalOk" style="border-color:var(--mint);color:var(--mint);">OK</button></div>'
+    + '</div>';
+  document.body.appendChild(wrap);
+  const done = function(){
+    try{ localStorage.setItem(NALUNO_LEGAL_SEEN_KEY, NALUNO_LEGAL_VERSION); }catch(_){}
+    try{ wrap.remove(); }catch(_){}
+  };
+  wrap.querySelector('#nlLegalOk').onclick = done;
+  return true;
+}
+(function scheduleLegalNotice(){
+  let tries = 0;
+  const tick = function(){
+    tries++;
+    let shown = false;
+    try{ shown = showNalunoLegalNotice(); }catch(_){ shown = true; }
+    if(!shown && tries < 30) setTimeout(tick, 20000);
+  };
+  setTimeout(tick, 9000);
+})();
 function stampNalunoTour(){
   try{ localStorage.setItem(NALUNO_TOUR_KEY, '1'); }catch(_){}
 }
@@ -236,7 +287,13 @@ function nalunoTermsHtml(){
     + '<li>Try to break encryption, scrape other people’s private data, or probe the service for holes in order to abuse them.</li>'
     + '<li>Pretend contribution points are money, or pretend a payment went through when it did not. Contribution points are not currency.</li>'
     + '<li>Upload video or photos you do not have the right to share.</li>'
+    + '<li>Post or send any sexual content involving someone under 18, or anything that sexualises or grooms a child. We remove it, close the account, keep the evidence and report it to the authorities.</li>'
+    + '<li>Post nudity or sexual content where others did not choose to see it: a Broadcast, a Signal, a profile or a live.</li>'
+    + '<li>Attack people for who they are — their ethnicity, tribe, nationality, religion, sex or disability — or stir up hatred against them.</li>'
+    + '<li>Threaten or encourage violence, praise or support terrorism, or recruit for a violent group.</li>'
+    + '<li>Encourage someone to harm or kill themselves.</li>'
     + '</ul>'
+    + '<h3>4b. Reporting and blocking</h3><p>You can stop anyone from reaching you (⋮ → Drop, and tick “Also stop them reaching me”) and report a person, a Broadcast, a Signal or a Compass answer. A person at Naluno reads every report and may remove content, limit an account or close it. The person you report is not told who reported them.</p>'
     + '<h3>5. Your content</h3>'
     + '<p>You keep the rights in what you create. Origin exists so that mark can travel with the work. When you publish a Signal, a Broadcast, a profile photo, or a message, you give Naluno a licence to host it, deliver it, and show it inside the product for as long as that item exists under the retention rules in the Privacy Policy. You can delete what the product still holds; Band after the 2-hour wipe and Signal after expiry are already gone.</p>'
     + '<h3>6. Other people’s content</h3>'
@@ -250,7 +307,7 @@ function nalunoTermsHtml(){
     + '<h3>10. Availability</h3>'
     + '<p>We aim to keep Naluno up. We do not promise it will always work, that a call will always connect, or that a file will last forever. Phones, networks, and app stores fail. A force-close and reopen after an update is sometimes required.</p>'
     + '<h3>11. Ending the account</h3>'
-    + '<p>You may sign out at any time. You may close the Callsign from Callsign. We may suspend or close an account that breaks these terms, harms others, or puts the service at risk. A closed Callsign can be restored. Band wipes, Signal expiry, and encryption still apply — we cannot hand you a Band that has already been deleted.</p>'
+    + '<p>You may sign out at any time. You may close the Callsign from Callsign. We may suspend or close an account that breaks these terms, harms others, or puts the service at risk. Deleting your account removes your Broadcasts, Signals, files and login at once, and the rest of the account 30 days later; after that it cannot be restored. An account we close for breaking these terms is kept as the record of why. Band wipes, Signal expiry, and encryption still apply — we cannot hand you a Band that has already been deleted.</p>'
     + '<h3>12. The app is not a bank, a lawyer, or emergency services</h3>'
     + '<p>Compass can be wrong. Weather is a forecast, not a guarantee. Find Naluno is last-known, not a live spy feed. If you need police, medical help, or a bank, use those services directly.</p>'
     + '<h3>13. Disclaimer</h3>'
@@ -262,7 +319,7 @@ function nalunoTermsHtml(){
     + '<h3>16. Changes</h3>'
     + '<p>We may update these terms. The date at the top will change. Continued use after a notice of a material change is acceptance of the new terms. If you do not agree, stop using Naluno and ask for the account to be closed.</p>'
     + '<h3>17. Contact</h3>'
-    + '<p>Questions about these terms: Compass after you sign in, or <strong>getnaluno.com</strong>.</p>';
+    + '<p>Questions about these terms: <strong>naluno@getnaluno.com</strong>, the contact form on getnaluno.com, or Write to Naluno inside Compass after you sign in.</p>';
 }
 
 
@@ -618,6 +675,8 @@ function wireOnboard(){
   if(agree){
     agree.onclick = function(){
       stampNalunoWelcome();
+      /* Agreeing now is agreeing to the current version: no "updated" notice. */
+      try{ localStorage.setItem(NALUNO_LEGAL_SEEN_KEY, NALUNO_LEGAL_VERSION); }catch(_){}
       try{ if(typeof nalunoMeasureOnce === 'function') nalunoMeasureOnce('onboard', { step: 'agreed' }); }catch(_){}
       showCountry();
     };

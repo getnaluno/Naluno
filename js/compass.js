@@ -411,11 +411,24 @@ function renderCompassMessages(){
     container.innerHTML = `<div class="msg-empty"><span style="font-family:var(--font-futuristic); font-size:14px;">Your companion, growing with you</span><span style="font-size:12.5px;">Ask for a plan, think through a decision, or just talk something through. Compass remembers this conversation as you go.</span></div>`;
     return;
   }
-  container.innerHTML = compassMessages.map(m=>{
+  container.innerHTML = compassMessages.map((m, i)=>{
     const isMe = m.from === 'user';
     const body = isMe ? escapeHtml(m.text) : formatCompassText(m.text);
-    return `<div class="msg-row ${isMe?'me':'them'}" style="display:flex; ${isMe?'justify-content:flex-end;':''}"><div class="msg-bubble">${body}</div></div>`;
+    /* 21 Oct e: a tiny ⚑ at the end of each answer (never on a "thinking"
+       placeholder) to report it. */
+    const flag = (!isMe && !m.thinking && String(m.text || '').trim() && String(m.text) !== '…')
+      ? `<button type="button" class="compass-flag" data-compass-flag="${i}" aria-label="Report this answer" title="Report this answer">⚑</button>`
+      : '';
+    return `<div class="msg-row ${isMe?'me':'them'}" style="display:flex; ${isMe?'justify-content:flex-end;':''}"><div class="msg-bubble">${body}${flag}</div></div>`;
   }).join('');
+  container.querySelectorAll('[data-compass-flag]').forEach(function(b){
+    b.onclick = function(e){
+      e.stopPropagation();
+      const m = compassMessages[Number(b.getAttribute('data-compass-flag'))];
+      if(!m || typeof openReportSheet !== 'function') return;
+      openReportSheet({ target_type: 'compass', target_id: String(m.id || m.ts || ''), name: 'a Compass answer', answer: String(m.text || '') });
+    };
+  });
   container.scrollTop = container.scrollHeight;
 }
 function loadCompassMessages(){
@@ -681,7 +694,12 @@ function compassFinishReply(text, reply, brief){
   (brief && brief.links || []).forEach(function(h){ if(h && h.url) allowed.push(h.url); });
   if(brief && brief.wikiUrl) allowed.push(brief.wikiUrl);
   let out = compassStripForeign(reply, allowed);
-  if(!out || compassReplyWeak(out)){
+  /* 21 Oct f: only a real refusal is replaced. The old test caught any
+     "not able to" or "I cannot" anywhere ("if you are not able to sign
+     in…"), and threw away good answers for a pasted web snippet. */
+  const Bw = window.NalunoCompassBrain;
+  const weak = (Bw && typeof Bw.isRefusal === 'function') ? Bw.isRefusal(out) : compassReplyWeak(out);
+  if(!out || weak){
     const grounded = compassFromBrief(text, brief);
     if(grounded) return grounded;
     return out;
@@ -930,66 +948,61 @@ async function sendCompassMessage(){
   const onNaluno = Brain ? Brain.aboutNaluno(text, guide) : false;
   const compassTopic = (guide && guide[0] && guide[0].id) ? guide[0].id : (onNaluno ? 'naluno-other' : 'world');
   let brief = { personLine: '', wiki: '', wikiUrl: '', snippets: [], links: [] };
-  if(!onNaluno){
+  if(!onNaluno && !(Brain && typeof Brain.needsLookup === 'function' && !Brain.needsLookup(text))){
     try{ brief = await compassGather(text, Brain ? Brain.searchQuery(text, prevUser) : ''); }catch(_){}
   }
   const facts = compassBriefText(brief);
 
   try{
     const idToken = await currentUser.getIdToken();
+    /* 21 Oct f: the phone's place and the weather go with a question only
+       when it is about them (they used to go with every question: noise for
+       the model, and a place sent when it was not needed). */
     let findHint = '';
-    try{
-      if(typeof findNalunoContextText === 'function') findHint = await findNalunoContextText();
-    }catch(_){}
-    const messages = recentHistory.slice();
+    if(/\b(phone|phones|where|locat\w*|lost|find|device|stolen)\b/i.test(text)){
+      try{
+        if(typeof findNalunoContextText === 'function') findHint = await findNalunoContextText();
+      }catch(_){}
+    }
     let weatherHint = '';
-    try{
-      if(typeof weatherSystemHint === 'function') weatherHint = await weatherSystemHint();
-      else if(typeof formatWeatherReply === 'function') weatherHint = await formatWeatherReply(text);
-    }catch(_){}
-    if(guide.length && Brain){
-      messages.unshift({
-        role: 'system',
-        content: (onNaluno ? 'The question is about Naluno. ' : 'If the question is about Naluno, use this. ') + 'Naluno guide:\n' + Brain.kbNotes(guide),
-      });
+    if(/\b(weather|rain\w*|sun\w*|hot|cold|warm|temperature|umbrella|forecast|storm|wind\w*|outside|wear|jacket|tonight|tomorrow)\b/i.test(text)){
+      try{
+        if(typeof weatherSystemHint === 'function') weatherHint = await weatherSystemHint();
+        else if(typeof formatWeatherReply === 'function') weatherHint = await formatWeatherReply(text);
+      }catch(_){}
     }
-    messages.unshift({
-      role: 'system',
-      content: Brain ? Brain.systemPrompt({
-        name: (function(){ try{ return String((currentProfile && currentProfile.name) || '').split(' ')[0]; }catch(_){ return ''; } })(),
-        today: new Date().toDateString(),
-      }) : 'You are Compass inside Naluno. Answer any question as well as you can, in a few plain sentences. Use the notes when they are present. Include a link only when it helps, and only if that exact link is in the notes. Never invent a URL. Never say you cannot search, cannot share a link, or lack a capability. Words such as again, that, they, and him refer to what was just said.',
-    });
-    if(findHint){
-      messages.unshift({
-        role: 'system',
-        content: 'You can report the owner Find Naluno last ping. Never say you cannot locate their phone. Never send them to another screen. Last ping: ' + findHint,
+    /* 21 Oct f: one clear brief, the conversation without earlier refusals,
+       and what the app found attached to the question (compass-brain.js). */
+    const firstName = (function(){ try{ return String((currentProfile && currentProfile.name) || '').split(' ')[0]; }catch(_){ return ''; } })();
+    const luganda = (window.NalunoLgBooks && /luganda|pronounc|affix/i.test(text)) ? String(NalunoLgBooks.pron || '').slice(0, 700) : '';
+    const messages = (Brain && typeof Brain.buildRequest === 'function')
+      ? Brain.buildRequest({
+          name: firstName, today: new Date().toDateString(),
+          guide: guide.length ? Brain.kbNotes(guide) : '', onNaluno: onNaluno,
+          facts: facts, weather: weatherHint, find: findHint, luganda: luganda,
+          history: compassMessages.filter(function(m){ return m !== thinkingMsg; }), question: text,
+        })
+      : recentHistory.slice();
+    const ask = async function(msgs){
+      const r = await fetch(COMPASS_WORKER_URL, {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: msgs }),
       });
+      const d = await r.json().catch(function(){ return {}; });
+      return { res: r, data: d };
+    };
+    let first = await ask(messages);
+    /* A refusal of something Compass can do is asked again once, the way a
+       person would press: "you can do this, answer directly". */
+    if(first.res.ok && first.data && first.data.reply && Brain && typeof Brain.isRefusal === 'function' && Brain.isRefusal(first.data.reply)){
+      try{
+        const second = await ask(Brain.retryMessages(messages, first.data.reply));
+        if(second.res.ok && second.data && second.data.reply && !Brain.isRefusal(second.data.reply)) first = second;
+      }catch(_){}
     }
-    if(weatherHint){
-      messages.unshift({
-        role: 'system',
-        content: 'Live weather + short forecast (Open-Meteo, free). Use this for any rain/tonight/tomorrow question. Never say you only have current conditions. Data: ' + weatherHint,
-      });
-    }
-    if(facts){
-      messages.unshift({
-        role: 'system',
-        content: 'Notes you may use. A link below is real. Do not add any other link.\n' + facts,
-      });
-    }
-    if(window.NalunoLgBooks && /luganda|pronounc|affix/i.test(text)){
-      messages.unshift({
-        role: 'system',
-        content: 'Luganda you may quote, from Pilkington (public domain) and Kiingi. Do not invent a Luganda word that is not here.\n' + String(NalunoLgBooks.pron || '').slice(0, 700),
-      });
-    }
-    const res = await fetch(COMPASS_WORKER_URL, {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: messages }),
-    });
-    const data = await res.json();
+    const res = first.res;
+    const data = first.data;
     compassMessages = compassMessages.filter(m => m !== thinkingMsg);
     if(!res.ok || !data.reply){
       const grounded = (onNaluno && Brain && guide.length) ? compassDecorate(text, Brain.kbAnswer(guide), guide, onNaluno, brief) : compassFromBrief(text, brief);

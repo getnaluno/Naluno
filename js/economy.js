@@ -32,6 +32,7 @@ let nalunoEconomyFlags = {
   contribution_enabled: true,
   community_value_enabled: true,
   creator_support_enabled: false,
+  support_in_android_app: false,
   community_rewards_enabled: false,
   real_payouts_enabled: false,
   content_hub_enabled: false,
@@ -45,7 +46,19 @@ function nalunoEconomyFlag(name){
   return !!nalunoEconomyFlags[name];
 }
 
+/* 21 Oct e: inside the Android app, Support shows only when the desk turns
+   on "Support in the Android app" (Google Play's payment rules). */
+function nalunoSupportAllowedHere(){
+  let native = false;
+  try{
+    const C = window.Capacitor;
+    native = !!(C && ((typeof C.isNativePlatform === 'function' && C.isNativePlatform()) || C.platform === 'android' || C.platform === 'ios'));
+  }catch(_){}
+  return !native || nalunoEconomyFlag('support_in_android_app');
+}
+try{ document.body.classList.toggle('naluno-support-hidden', !nalunoSupportAllowedHere()); }catch(_){}
 function applyEconomyFlagsToUi(){
+  try{ document.body.classList.toggle('naluno-support-hidden', !nalunoSupportAllowedHere()); }catch(_){}
   const supportOn = nalunoEconomyFlag('creator_support_enabled');
   try{ document.body.classList.toggle('naluno-support-on', supportOn); }catch(_){}
   try{ document.body.classList.toggle('naluno-support-off', !supportOn); }catch(_){}

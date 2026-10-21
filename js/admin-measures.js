@@ -118,8 +118,10 @@
       ['app_open', 'platform', 'Android app, installed web app or browser'], ['app_open', 'build', 'Version (how fast an update reaches phones)'],
       ['app_open', 'cold', 'Fresh start'], ['app_ready', 'ms', 'Time until the first screen shows'], ['app_ready', 'first', 'First screen']],
       countries: 'app_open' },
-    { title: 'Compass and Find Naluno', counts: [['compass_q', 'Compass questions'], ['find_map_open', 'Find Naluno opened'], ['find_on', 'Find Naluno switched']], lists: [
-      ['compass_q', 'topic', 'Topics asked about'], ['compass_q', 'answered', 'Answered'], ['find_on', 'state', 'Switched on or off']] },
+    { title: 'Compass and Find Naluno', counts: [['compass_q', 'Compass questions'], ['find_map_open', 'Find Naluno opened'], ['find_on', 'Find Naluno switched'], ['compass_flag', 'Compass answers reported']], lists: [
+      ['compass_q', 'topic', 'Topics asked about'], ['compass_q', 'answered', 'Answered'], ['find_on', 'state', 'Switched on or off'], ['compass_flag', 'reason', 'Why answers were reported']] },
+    { title: 'Drop and block', counts: [['person_drop', 'People dropped'], ['person_block', 'Blocks changed']], lists: [
+      ['person_drop', 'block', 'Dropped and also blocked'], ['person_block', 'state', 'Blocked or undone']] },
   ];
 
   function listHtml(h, total, ev, key, title) {

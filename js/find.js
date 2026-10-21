@@ -544,22 +544,32 @@ async function cancelFrequency(theirUid){
     await fbDb.collection('users').doc(theirUid).collection('connectionRequests').doc(currentUser.uid).delete();
   }catch(_){}
 }
-async function dropFrequency(localId){
+async function dropFrequency(localId, opts){
+  const o = opts || {};
   const c = contacts.find(function(x){ return x && x.id === localId; });
   if(!c || !c.firebaseUid || !currentUser || !fbDb) return;
   const name = c.name || 'them';
-  if(!window.confirm('Drop ' + name + ' from your frequencies?')) return;
+  /* 21 Oct e: the Drop sheet (people-safety.js) asks first, with the
+     "also stop them reaching me" choice. */
+  if(!o.skipConfirm){
+    if(window.NalunoPeople && typeof window.NalunoPeople.dropPerson === 'function'){
+      window.NalunoPeople.dropPerson({ uid: c.firebaseUid, name: name, localId: c.id });
+      return;
+    }
+    if(!window.confirm('Drop ' + name + ' from your frequencies?')) return;
+  }
   try{
     await fbDb.collection('users').doc(currentUser.uid).collection('connections').doc(c.firebaseUid).delete();
     try{ await fbDb.collection('users').doc(c.firebaseUid).collection('connections').doc(currentUser.uid).delete(); }catch(_){}
   }catch(e){
+    if(o.skipConfirm) throw e;
     toast('Could not drop them just now');
     return;
   }
   for(let i = contacts.length - 1; i >= 0; i--){
     if(contacts[i] && contacts[i].firebaseUid === c.firebaseUid) contacts.splice(i, 1);
   }
-  toast('Dropped ' + name);
+  if(!o.quiet) toast('Dropped ' + name);
   try{ renderContacts(); }catch(_){}
   try{ if(typeof renderWirelineList === 'function') renderWirelineList(); }catch(_){}
 }

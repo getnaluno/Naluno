@@ -13,6 +13,7 @@
     contribution_enabled: true,
     community_value_enabled: true,
     creator_support_enabled: false,
+    support_in_android_app: false,
     community_rewards_enabled: false,
     real_payouts_enabled: false,
     monetisation_phase_enabled: false,
@@ -28,6 +29,7 @@
     contribution_enabled: { label: 'Contribution tracking', group: 'Community', note: 'Count comments, replies, shares.' },
     community_value_enabled: { label: 'Community value', group: 'Community', note: 'A measurement, never money.' },
     creator_support_enabled: { label: 'Creator Support', group: 'Money', note: 'Donate to a creator. Lives inside Broadcast, below Circle — not as a nav tab. Off = the payment step is hidden. On = a person can be taken to pay. Nothing is marked paid until the payment is confirmed. Contribution points stay separate from this.' },
+    support_in_android_app: { label: 'Support in the Android app', group: 'Money', note: 'Off: the Support button is hidden in the Android app from Google Play. The website and the installed web app are not affected. Turn on only when you are sure Google Play accepts it (for example after joining Play\u2019s alternative billing, or written confirmation that creator support counts as a payment between people) — otherwise the app can be suspended. Needs Creator Support on as well.' },
     community_rewards_enabled: { label: 'Community Rewards', group: 'Money', note: 'Pool split. Off until switched on.' },
     real_payouts_enabled: { label: 'Real payouts', group: 'Money', note: 'Creator Support only. Off: Support is collected by Naluno and held for the creator. On: a new Support payment goes to a creator whose Stripe account is ready, less Naluno’s share. Nothing already collected is moved. This does not pay the monetisation list.' },
     monetisation_phase_enabled: { label: 'Monetisation phase', group: 'Money', note: 'Separate from Creator Support and from Real payouts. Off: Naluno can still spot creators who clear the partner bar and tell them. On: those creators are who Naluno will pay. Turning it on does not move money. The bar is 400 Circle joins, 8,000 Broadcast views and 200 talks over 12 months, 12 original Broadcasts, and 120 days on Naluno. Not a Toga score and not Creator Support.' },
@@ -2210,7 +2212,26 @@
           const k = kindWord(p.type) + ' · ' + plainWhy(p.reason);
           bag[k] = (bag[k] || 0) + 1;
         });
+        /* 21 Oct e: how long an alert took, from leaving the sender's phone
+           to showing on the other one (the two phones' clocks). */
+        const sentBy = {};
+        pings.forEach(function (p) { if (p && p.pingId && p.status === 'handed') sentBy[String(p.pingId)] = p; });
+        const lag = {};
+        receipts.forEach(function (r) {
+          const p = r && r.pingId ? sentBy[String(r.pingId)] : null;
+          if (!p || !(Number(r.arrivedAt) > 0)) return;
+          const ms = Number(r.arrivedAt) - pingAt(p);
+          if (!(ms > -5000 && ms < 7 * 86400000)) return;
+          const k = kindWord(p.type || r.type);
+          (lag[k] = lag[k] || []).push(Math.max(0, ms));
+        });
+        const delivery = Object.keys(lag).map(function (k) {
+          const xs = lag[k].slice().sort(function (a, b) { return a - b; });
+          const at = function (q) { return xs[Math.min(xs.length - 1, Math.floor(q * (xs.length - 1) + 0.5))]; };
+          return { kind: k, n: xs.length, median: at(0.5), p90: at(0.9), slowest: xs[xs.length - 1], over1m: xs.filter(function (x) { return x > 60000; }).length };
+        });
         return {
+          delivery: delivery,
           handed: pings.filter(function (p) { return p.status === 'handed'; }).length,
           failed: failedAll.length,
           failed_today: failedToday.length,

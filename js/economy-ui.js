@@ -401,6 +401,7 @@ function closeSupportSheet(){
 }
 
 function openSupportSheet(creatorUid, creatorName, broadcastId){
+  if(typeof nalunoSupportAllowedHere === 'function' && !nalunoSupportAllowedHere()) return;
   if(!supportIsOn()){
     toast('Creator Support is off.');
     return;

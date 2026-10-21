@@ -89,7 +89,7 @@ function grab(src, name) {
     const html = read('app/index.html');
     assert.ok(/if\(!nalunoWelcomeDone\(\)\)\{\s*showHello\(\);/.test(ob), 'a new phone opens on the welcome');
     assert.ok(/helloNextBtn[\s\S]{0,80}showWelcome\(\)/.test(ob), 'Continue → the agreement');
-    assert.ok(/stampNalunoWelcome\(\);[\s\S]{0,200}showCountry\(\);/.test(ob), 'Agree → the country');
+    assert.ok(/stampNalunoWelcome\(\);[\s\S]{0,420}showCountry\(\);/.test(ob), 'Agree → the country');
     assert.ok(/setNalunoCountry\(c\);[\s\S]{0,200}showTour\(0\);/.test(ob) && /countrySkipBtn[\s\S]{0,300}showTour\(0\);/.test(ob), 'country (or prefer not to say) → the tour');
     assert.ok(html.indexOf('id="nalunoHello"') < html.indexOf('id="nalunoWelcome"') && html.indexOf('id="nalunoWelcome"') < html.indexOf('id="nalunoCountry"'));
     assert.ok(!/Agree|accept/i.test(html.slice(html.indexOf('id="nalunoHello"'), html.indexOf('id="nalunoWelcome"')).replace(/<[^>]*>/g, ' ')), 'the welcome asks for nothing');

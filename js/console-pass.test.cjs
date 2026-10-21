@@ -35,7 +35,7 @@ assert.ok(adminSrc.includes('if (!(await cloudOk(uid, typed)))'),
 /* Pinned to one version string, so it failed as soon as the worker moved on
    (it is 2.6.9 now). What must hold is that the worker is versioned AND still
    has the multi-copy password logic, which the next two lines check. */
-assert.ok(/export const VERSION = "\d+\.\d+\.\d+[-a-z]*"/.test(workerSrc), 'worker is versioned');
+assert.ok(/export const VERSION = "\d+\.\d+\.\d+[-a-z0-9]*"/.test(workerSrc), 'worker is versioned');
 assert.ok(workerSrc.includes('async function collectPasswordRecords'), 'worker gathers every copy');
 assert.ok(workerSrc.includes('async function matchPasswordRecord'), 'worker accepts any matching copy');
 assert.ok(workerSrc.includes('memory.passwords.set(user.uid, matched)'), 'unlock refreshes worker memory to the copy that worked');

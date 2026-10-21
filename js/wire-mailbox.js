@@ -82,8 +82,26 @@
       lastMessageFrom: body.system ? 'system' : currentUser.uid,
       readBy: [currentUser.uid],
     };
-    await fbDb.collection('threads').doc(tid).set(threadPatch, { merge: true });
-    await fbDb.collection('wireDrop').doc(otherUid).collection('inbox').doc(String(cmid)).set(body);
+    const threadRef = fbDb.collection('threads').doc(tid);
+    const dropRef = fbDb.collection('wireDrop').doc(otherUid).collection('inbox').doc(String(cmid));
+    /* 21 Oct e: the conversation line and the message go in one write, one
+       trip to the database instead of two. The alert to the other phone
+       leaves only after the message is in, so on mobile data it went out
+       a round trip (often a second or more) late. If the single write is
+       refused, the two separate writes are tried as before. */
+    if (typeof fbDb.batch === 'function') {
+      try {
+        const b = fbDb.batch();
+        b.set(threadRef, threadPatch, { merge: true });
+        b.set(dropRef, body);
+        await b.commit();
+        return;
+      } catch (e) {
+        if (!(e && /permission|insufficient/i.test(String(e.code || '') + ' ' + String(e.message || '')))) throw e;
+      }
+    }
+    await threadRef.set(threadPatch, { merge: true });
+    await dropRef.set(body);
   }
 
   function writeReceipt(senderUid, cmid, status) {

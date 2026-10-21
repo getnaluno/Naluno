@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261020d';
+  const BUILD = '20261021f';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -2268,6 +2268,28 @@
   }
   function reportReviewCard(r) {
     const urgent = URGENT_REPORT_CODES[r.reason_code] ? true : false;
+    /* 21 Oct e: a report about a person (from a chat, a call, Band or
+       Frequencies) or about a Compass answer. Nothing private comes with
+       it: only what the reporter wrote (and, for Compass, the answer). */
+    const tt = String(r.target_type || '');
+    if (tt === 'person' || tt === 'compass') {
+      const where = { wireline: 'from a Wireline chat', call: 'from a call', band: 'from a Band', frequencies: 'from Frequencies', person: '' }[String(r.target_id || '')] || '';
+      const uid = String(r.target_user_id || '');
+      const id = escapeHtml(r.id || r.report_id || '');
+      const actions = '<button type="button" class="ghost admRpt" data-id="' + id + '" data-d="ACTIONED">Action</button> '
+        + '<button type="button" class="ghost admRpt" data-id="' + id + '" data-d="DISMISSED">Dismiss</button>'
+        + (uid ? ' <button type="button" class="ghost admGoUser" data-uid="' + escapeHtml(uid) + '">Person</button>' : '')
+        + ' <button type="button" class="ghost admGoLegal" data-q="' + escapeHtml(uid || r.id || r.report_id || '') + '">Legal</button>';
+      return '<div class="review-card' + (urgent ? ' review-urgent' : '') + '">'
+        + '<div class="review-frame"><div class="review-missing">' + (tt === 'compass' ? 'A Compass answer' : 'A person ' + escapeHtml(where)) + '</div></div>'
+        + '<div class="review-meta">'
+        + '<div class="review-title">' + (tt === 'compass' ? 'Compass answer' : 'Person · ' + escapeHtml(uid.slice(0, 12))) + '</div>'
+        + '<div class="sub">' + (urgent ? '<strong>URGENT</strong> \u00b7 ' : '') + escapeHtml(r.reason_code || '')
+        + ' \u00b7 reported by ' + escapeHtml(String(r.reporter_uid || '').slice(0, 10)) + '\u2026</div>'
+        + (r.reason ? '<div class="sub" style="margin-top:4px;white-space:pre-wrap;">\u201c' + escapeHtml(String(r.reason).slice(0, tt === 'compass' ? 900 : 400)) + '\u201d</div>' : '')
+        + '<div class="row" style="margin-top:10px;">' + actions + '</div>'
+        + '</div></div>';
+    }
     if (String(r.target_type || '') === 'signal' && !r.broadcast_id) {
       const sid = String(r.target_id || '');
       const sig = sid ? findSignalRow(sid) : null;
@@ -4173,6 +4195,16 @@
           + ((d.proof && (d.proof.failed || 0) > (d.proof.failed_today || 0))
             ? '<p class="sub">' + ((d.proof.failed || 0) - (d.proof.failed_today || 0))
               + ' older failures are still in the loaded history. They are not this call.</p>' : '')
+          + (function () {
+              const dl = (d.proof && d.proof.delivery) || [];
+              const sec = function (ms) { ms = Number(ms) || 0; return ms < 1000 ? '<1 s' : (ms < 60000 ? Math.round(ms / 1000) + ' s' : (ms < 3600000 ? Math.round(ms / 60000) + ' min' : Math.round(ms / 3600000) + ' h')); };
+              return '<h4 style="margin:12px 0 4px;">How long alerts took to show</h4>'
+                + (dl.length ? '<div class="desk-list" data-fold-title="Alert time by kind">' + dl.map(function (x) {
+                    return '<div class="flag-row"><span>' + escapeHtml(x.kind) + ' · ' + x.n + '</span><span>usually ' + sec(x.median) + ' · 9 in 10 within ' + sec(x.p90) + ' · slowest ' + sec(x.slowest) + (x.over1m ? ' · ' + x.over1m + ' over a minute' : '') + '</span></div>';
+                  }).join('') + '</div>'
+                  + '<p class="sub">From the moment the alert left the sender\u2019s phone to the moment the other phone showed it, by the two phones\u2019 own clocks. Counted for the web and home-screen app; the Android app does not report arrival yet.</p>'
+                  : '<p class="sub">No timed alerts yet. Calls and, from 21 Oct e, Wireline messages are timed.</p>');
+            })()
           + gap(g.notifications || ''))
         + card('Payments confirmed',
           kpis([['Paid notices', (d.proof && d.proof.paid) || 0],
@@ -4251,7 +4283,22 @@
           plainRows(['Name', 'When', 'User'],
             ((d.metrics && d.metrics.list) || []).slice(0, 20).map(function (m) {
               return [m.name || '', when(m.createdAt && m.createdAt.toMillis ? m.createdAt.toMillis() : m.createdAt), String(m.uid || '').slice(0, 10)];
-            })));
+            })))
+        /* 21 Oct e: is every file of this build on the site? (admin-deploy.js) */
+        + '<div id="deployCheckHost">' + ((window.NalunoDeployCheck && window.NalunoDeployCheck.html) ? window.NalunoDeployCheck.html({ card: card, escapeHtml: escapeHtml }) : '') + '</div>'
+        + '<div id="compassCheckHost">' + ((window.NalunoCompassCheck && window.NalunoCompassCheck.html) ? window.NalunoCompassCheck.html({ card: card, escapeHtml: escapeHtml }) : '') + '</div>';
+      try {
+        if (window.NalunoCompassCheck) window.NalunoCompassCheck.bind(function () {
+          const host = document.getElementById('compassCheckHost');
+          if (host) host.innerHTML = window.NalunoCompassCheck.html({ card: card, escapeHtml: escapeHtml });
+        });
+      } catch (_) {}
+      try {
+        if (window.NalunoDeployCheck) window.NalunoDeployCheck.bind(function () {
+          const host = document.getElementById('deployCheckHost');
+          if (host) host.innerHTML = window.NalunoDeployCheck.html({ card: card, escapeHtml: escapeHtml });
+        });
+      } catch (_) {}
       return;
     }
 

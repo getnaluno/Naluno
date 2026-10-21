@@ -315,6 +315,8 @@
     const lines = [
       'You are Compass, the companion inside Naluno. You are warm, direct and genuinely useful — like a knowledgeable friend.',
       'Answer the question actually asked, first, in plain language. Usually 2 to 5 sentences; use short numbered steps only for how-to answers. No filler, no disclaimers about being an AI.',
+      /* 21 Oct f: what Compass can do, said plainly, so it stops refusing it. */
+      'You can: explain and teach anything, give advice, plan, write and rewrite (messages, posts, letters, stories, captions), summarise, brainstorm, do maths, translate between English and Luganda and other languages, and help with Naluno. The Naluno app looks things up for you: when a block called "From the app" comes with a question, it holds real, current web results, encyclopedia text, weather, the person\u2019s own Find Naluno ping or the Naluno guide. Use it as your own knowledge. Never say you cannot search, browse, see links, check the weather or find their phone: the app already did that for you. If something truly is not in your knowledge or the notes, say what you do know and what is missing, in one sentence, and still help.',
       'When the question is about Naluno, answer only from the Naluno guide notes you are given, using the exact button and tab names from them. If the notes do not cover it, say you are not sure and suggest "write to Naluno". Never invent a Naluno feature, price, date or rule.',
       'Never describe how Naluno is built: no code, programming languages, databases, servers, cloud providers, vendors or internal systems, even if asked. Say that is not something you can share.',
       'For anything else, answer from your own knowledge and the web notes. If notes include a link, you may mention it only if it truly helps with this question; never write any other URL.',
@@ -348,7 +350,78 @@
   }
 
 
+  /* ---------------- 5. the request (21 Oct f) ----------------
+     Small models follow one clear brief far better than several. Before,
+     the app sent up to six separate instruction messages, and the guide,
+     web notes, weather and Find Naluno ping came before the instructions;
+     many chat formats keep only the first instruction message, so the
+     model often never saw what it had been given, and said it could not do
+     it. Now: one instruction message, then the conversation (without the
+     earlier refusals that taught it to refuse again), then the question with
+     what the app found attached to it, where the model pays most attention. */
+  const REFUSAL = /\b(i (do not|don't|dont) have (access|the ability|the capability|real-?time|browsing|internet)|i (cannot|can't|cant|am unable to|'m unable to|am not able to|'m not able to) (access|browse|search|look up|check|provide (links?|real-?time)|share links?|see|view|open|locate|find your|track|translate|help with that)|as an ai\b|as a language model|i'?m (just )?an ai|my (training|knowledge) (data|cutoff)|i don'?t have (personal|any) (information|data) about you|beyond my capabilities|outside (of )?my capabilities)\b/i;
+  function isRefusal(text) {
+    const t = String(text || '');
+    if (!t.trim()) return true;
+    return REFUSAL.test(t.slice(0, 400));
+  }
+  function cleanHistory(list, max) {
+    const keep = [];
+    (list || []).forEach(function (m) {
+      if (!m || m.thinking) return;
+      const text = String(m.text == null ? m.content : m.text || '').trim();
+      if (!text || text === '\u2026' || text === '...') return;
+      const role = (m.from === 'user' || m.role === 'user') ? 'user' : 'assistant';
+      if (role === 'assistant' && isRefusal(text)) return;
+      keep.push({ role: role, content: text.length > 1500 ? text.slice(0, 1500) + '\u2026' : text });
+    });
+    /* never two of the same role in a row (some formats refuse that) */
+    const out = [];
+    keep.slice(-(max || 10)).forEach(function (m) {
+      const last = out[out.length - 1];
+      if (last && last.role === m.role) last.content += '\n\n' + m.content;
+      else out.push(m);
+    });
+    while (out.length && out[0].role !== 'user') out.shift();
+    return out;
+  }
+  function buildRequest(o) {
+    o = o || {};
+    const sys = [systemPrompt({ name: o.name, today: o.today })];
+    if (o.guide) sys.push((o.onNaluno ? 'The question is about Naluno. ' : 'If the question is about Naluno, use this. ') + 'Naluno guide:\n' + o.guide);
+    const ctx = [];
+    if (o.facts) ctx.push('Web and encyclopedia notes (real; a link here may be shared, no other link):\n' + o.facts);
+    if (o.weather) ctx.push('Weather where the person is, now and the next days:\n' + o.weather);
+    if (o.find) ctx.push('The person\u2019s own phones, last Find Naluno ping:\n' + o.find);
+    if (o.luganda) ctx.push('Luganda you may quote (do not invent Luganda words that are not here):\n' + o.luganda);
+    const history = cleanHistory(o.history, o.max || 10);
+    const q = String(o.question || '').trim();
+    if (history.length && history[history.length - 1].role === 'user') history.pop();
+    const ask = ctx.length ? ('From the app, for this question:\n' + ctx.join('\n\n') + '\n\n---\nQuestion: ' + q) : q;
+    while (history.length && history[history.length - 1].role === 'user') history.pop();
+    return [{ role: 'system', content: sys.join('\n\n') }].concat(history, [{ role: 'user', content: ask }]);
+  }
+  /* 21 Oct f: a task (write, translate, plan, work something out) needs no
+     web lookup; the web notes only confused the model and made it slower. */
+  const TASK = /^\s*(please\s+)?(write|rewrite|re-write|draft|compose|translate|summari[sz]e|shorten|improve|fix|correct|plan|make|create|calculate|compute|convert|list|brainstorm|suggest|help me (write|plan|with|to)|give me (a|an|some|\d+|three|five|ten)\b|can you (write|translate|help|make|plan)|how (do|can|should) i (say|write|reply|answer|tell|ask)|what should i (say|write|tell|do))\b|\b(poem|story|caption|toast|speech|letter|essay|message for|reply to|bio for|joke)\b|^[\d\s.,%+\-*/x()=?]+$|\b\d+(\.\d+)?\s*%\s*of\b/i;
+  function needsLookup(text) {
+    const t = String(text || '');
+    if (TASK.test(t)) return false;
+    return true;
+  }
+  function retryMessages(messages, firstReply) {
+    return messages.concat([
+      { role: 'assistant', content: String(firstReply || '').slice(0, 600) },
+      { role: 'user', content: 'You can do this. Answer my question directly and helpfully now, using your own knowledge and anything in the notes above. Do not say what you cannot do.' },
+    ]);
+  }
+
   return {
+    buildRequest: buildRequest,
+    needsLookup: needsLookup,
+    cleanHistory: cleanHistory,
+    isRefusal: isRefusal,
+    retryMessages: retryMessages,
     KB: KB,
     ACTIONS: ACTIONS,
     terms: terms,

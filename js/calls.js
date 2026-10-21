@@ -3541,7 +3541,10 @@ async function notifyCalleeOfIncomingCall(calleeUid, callerName, callId){
 
   const sendOnce = async ()=>{
     try{
-      const idToken = await currentUser.getIdToken(firstAttempt ? false : true);
+      /* 21 Oct e: the repeats no longer force a new sign-in token each time
+         (a trip to Google before every repeat). The saved one is used, and
+         the SDK renews it by itself when it is near its end. */
+      const idToken = await currentUser.getIdToken(false);
       const tokens = await loadCalleePushTokens();
       const pingId = (typeof nalunoPushId === 'function') ? nalunoPushId() : '';
       const webTok = tokens.web || ((tokens.platform === 'web') ? tokens.primary : null);

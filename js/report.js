@@ -33,6 +33,16 @@ const NALUNO_REPORT_REASONS = [
   { code: 'other',        label: 'Something else' },
 ];
 
+/* 21 Oct e: reporting a Compass answer. A short list, and the words are
+   optional: the answer itself is what is being reported, and it goes with
+   the report so a person can read it. */
+const NALUNO_COMPASS_REASONS = [
+  { code: 'dangerous', key: 'harmful',    label: 'Harmful or dangerous' },
+  { code: 'hate',      key: 'hateful',    label: 'Hateful or offensive' },
+  { code: 'sexual',    key: 'sexual',     label: 'Sexual' },
+  { code: 'other',     key: 'misleading', label: 'Wrong or misleading' },
+  { code: 'other',     key: 'other',      label: 'Something else' },
+];
 function nalunoReportId(){
   try{ if(crypto && crypto.randomUUID) return 'rep_' + crypto.randomUUID(); }catch(_){}
   return 'rep_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
@@ -74,6 +84,9 @@ function openReportSheet(detail){
   sheet.dataset.targetUser = d.target_user_id || '';
   sheet.dataset.broadcastId = d.broadcast_id || '';
   sheet.dataset.reportId = nalunoReportId();   // stable per open, so a double tap files one
+  const quick = d.target_type === 'compass';
+  sheet.dataset.quick = quick ? '1' : '';
+  sheet.dataset.answer = quick ? String(d.answer || '').slice(0, 3000) : '';
 
   const who = document.getElementById('reportWho');
   if(who) who.textContent = d.name ? ('Reporting ' + d.name) : 'Report this';
@@ -93,18 +106,29 @@ function openReportSheet(detail){
   const sel = document.getElementById('reportReasonCode');
   if(sel){
     sel.innerHTML = '';
-    NALUNO_REPORT_REASONS.forEach(function(r){
+    (quick ? NALUNO_COMPASS_REASONS : NALUNO_REPORT_REASONS).forEach(function(r, i){
       const o = document.createElement('option');
-      o.value = r.code; o.textContent = r.label;
+      o.value = quick ? String(i) : r.code; o.textContent = r.label;
       sel.appendChild(o);
     });
   }
   const txt = document.getElementById('reportReason');
-  if(txt) txt.value = '';
+  if(txt){
+    txt.value = '';
+    txt.placeholder = quick ? 'Anything to add? (optional)' : 'What did you see? Without this we can\u2019t act on the report.';
+    txt.rows = quick ? 2 : 5;
+  }
+  try{
+    const note = txt && txt.nextElementSibling;
+    if(note && (note.dataset.nlNote || /required/i.test(note.textContent || ''))){
+      note.dataset.nlNote = '1';
+      note.textContent = quick ? 'The answer is sent with your report, so a person can read it. Your question is not.' : 'A reason is required \u2014 reports without one can\u2019t be acted on, so they aren\u2019t accepted.';
+    }
+  }catch(_){}
   const msg = document.getElementById('reportMsg');
   if(msg) msg.textContent = '';
   const btn = document.getElementById('reportSendBtn');
-  if(btn) btn.disabled = true;      // stays disabled until a real reason is typed
+  if(btn) btn.disabled = !quick;      // stays disabled until a real reason is typed (a Compass answer is its own reason)
   try{ if(window.nalunoBack) window.nalunoBack.push(); }catch(_){}
 }
 
@@ -120,7 +144,14 @@ async function submitReport(){
   const sel = document.getElementById('reportReasonCode');
   const msg = document.getElementById('reportMsg');
   if(!sheet || !txt) return;
-  const reason = (txt.value || '').trim();
+  let reason = (txt.value || '').trim();
+  let code = (sel && sel.value) || 'other';
+  if(sheet.dataset.quick === '1'){
+    const pick = NALUNO_COMPASS_REASONS[Number(code)] || NALUNO_COMPASS_REASONS[4];
+    code = pick.code;
+    reason = ('Compass answer reported: ' + pick.label + (reason ? ' \u2014 ' + reason : '') + '\n\nThe answer:\n' + (sheet.dataset.answer || '(empty)')).slice(0, 3990);
+    try{ if(typeof nalunoMeasure === 'function') nalunoMeasure('compass_flag', { reason: pick.key }); }catch(_){}
+  }
   if(reason.length < 10){
     if(msg) msg.textContent = 'Please say a little more — at least a sentence.';
     return;
@@ -137,7 +168,7 @@ async function submitReport(){
         target_id: sheet.dataset.targetId,
         target_user_id: sheet.dataset.targetUser,
         broadcast_id: sheet.dataset.broadcastId,
-        reason_code: (sel && sel.value) || 'other',
+        reason_code: code,
         reason: reason,
         reporter_age_hours: nalunoAccountAgeHours(),
       }),
@@ -147,8 +178,9 @@ async function submitReport(){
       if(msg) msg.textContent = b.error || 'Could not send that report.';
       return;
     }
+    const wasQuick = sheet.dataset.quick === '1';
     closeReportSheet();
-    const code = (sel && sel.value) || '';
+    if(wasQuick){ toast('Thanks. Someone will look at this answer.'); return; }
     toast(code === 'sexual'
       ? 'Reported. This comes off the public feed while someone looks.'
       : (code === 'terrorism' || code === 'recruitment' || code === 'child_exploitation' || code === 'violence')
@@ -284,7 +316,8 @@ async function submitSafetyAppeal(caseId, note){
     if(txt) txt.addEventListener('input', function(){
       // The send button only enables once there is something to act on.
       const btn = document.getElementById('reportSendBtn');
-      if(btn) btn.disabled = (txt.value || '').trim().length < 10;
+      const sh = document.getElementById('reportSheet');
+      if(btn) btn.disabled = !(sh && sh.dataset.quick === '1') && (txt.value || '').trim().length < 10;
       const msg = document.getElementById('reportMsg');
       if(msg) msg.textContent = '';
     });

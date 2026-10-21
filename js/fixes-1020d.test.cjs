@@ -52,9 +52,9 @@ const read = (f) => fs.readFileSync(path.join(root, f), 'utf8');
     want.forEach((re) => assert.ok(re.test(s), f + ' ' + re));
     assert.ok(!/It is kept for safety and legal requests, and only people Naluno authorises can open it\./.test(s), f + ': the old sentence is gone');
     if (f !== 'js/legal-privacy.js') assert.ok(s.replace(/\s+/g, ' ').indexOf(body.replace(/\s+/g, ' ')) >= 0, f + ' matches the app word for word');
-    if (f !== 'js/legal-privacy.js') assert.ok(/legal-privacy\.js\?v=20261020d/.test(s));
+    if (f !== 'js/legal-privacy.js') assert.ok(Number((s.match(/legal-privacy\.js\?v=(\d{8})/) || [])[1]) >= 20261020, 'bumped since 20 Oct');
   }
-  assert.ok(/legal-privacy\.js\?v=20261020d/.test(read('app/index.html')));
+  assert.ok(/legal-privacy\.js\?v=2026102\d[a-z]/.test(read('app/index.html')));
 }
 /* 4. The worker bundle carries the sweep. */
 {

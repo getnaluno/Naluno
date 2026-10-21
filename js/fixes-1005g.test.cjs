@@ -130,7 +130,7 @@ const flush = () => new Promise((r) => setImmediate(r));
     assert.ok(!html.includes('id="testPushBtn"'), 'no test button in Callsign');
     assert.ok(!/\/v1\/push\/test/.test(read('js/notifications.js')), 'and no code for it');
     const h = read('workers/economy/handler.mjs');
-    assert.ok(/export const VERSION = "2\.1\d\.\d-[a-z]+"/.test(h), '/health shows whether the new worker is live');
+    assert.ok(/export const VERSION = "2\.1\d\.\d-[a-z0-9]+"/.test(h), '/health shows whether the new worker is live');
   }
 
   /* ---------- 5. Scripts that changed are fetched again ---------- */

@@ -106,10 +106,19 @@
     return out;
   }
 
+  /* 21 Oct e: an answer without the launch figures (an older or half-
+     deployed worker) is an error to show, not a crash. */
+  async function launchData() {
+    const j = await call('/v1/admin/launch');
+    if (!j || !j.config || !j.counter || !j.config.registration || !j.config.phases) {
+      throw new Error('the worker did not send the launch settings. Deploy the latest economy worker');
+    }
+    return j;
+  }
   async function load() {
     root.innerHTML = '<p class="sub">Reading launch settings…</p>';
     try {
-      S.data = await call('/v1/admin/launch');
+      S.data = await launchData();
     } catch (e) {
       root.innerHTML = H.card('Launch & Capacity', '<p class="sub">Could not read the launch settings: ' + esc(e.message) + '</p>');
       return;
@@ -157,7 +166,7 @@
   /* After a save or action: fetch and swap in, without blanking the page. */
   async function refreshNow() {
     try {
-      S.data = await call('/v1/admin/launch');
+      S.data = await launchData();
       S.loadedAt = Date.now();
       repaintQuietly();
       call('/v1/admin/launch/metrics').then(function (m) { S.metrics = m; S.metricsAt = Date.now(); S.metricsErr = ''; paintMetrics(); }, function () {});
@@ -170,7 +179,7 @@
       if (!root || !root.isConnected) { clearInterval(timer); timer = null; return; }
       if (busy()) return;
       try {
-        const next = await call('/v1/admin/launch');
+        const next = await launchData();
         let metrics = null;
         if (!S.metricsAt || Date.now() - S.metricsAt > 120000) {
           metrics = await call('/v1/admin/launch/metrics').catch(function () { return null; });

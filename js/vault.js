@@ -89,6 +89,16 @@
     if (profileNow()) mergeInto(profileNow(), cache);
     return cache;
   }
+  function pushDeviceKey() {
+    try {
+      let k = localStorage.getItem('nalunoPushDevice');
+      if (!k || !/^[a-z0-9]{6,24}$/.test(k)) {
+        k = 'w' + Math.random().toString(36).slice(2, 12) + Date.now().toString(36).slice(-4);
+        localStorage.setItem('nalunoPushDevice', k);
+      }
+      return k;
+    } catch (_) { return ''; }
+  }
   async function writePush(fields, uid) {
     const r = ref(uid);
     if (!r) return false;
@@ -98,8 +108,18 @@
     });
     if (!Object.keys(patch).length) return true;
     rememberLocal(patch);
+    /* 21 Oct e: this browser's own slot as well, so each device keeps its
+       alerts (the single fcmTokenWeb went to whichever opened last). */
+    const write = Object.assign({}, patch);
+    if (typeof patch.fcmTokenWeb === 'string' && patch.fcmTokenWeb) {
+      const dev = pushDeviceKey();
+      if (dev) {
+        write.webPush = {};
+        write.webPush[dev] = { t: patch.fcmTokenWeb, at: Date.now() };
+      }
+    }
     try {
-      await r.set(patch, { merge: true });
+      await r.set(write, { merge: true });
       return true;
     } catch (_) { return false; }
   }

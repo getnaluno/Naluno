@@ -753,6 +753,23 @@ function bindThreadChrome(){
   if(clear){
     clear.onclick = fireThreadClear;
   }
+  /* 21 Oct e: the chat's ⋮ — Clear chat, Drop, Report (as WhatsApp keeps
+     these in its menu, not on the screen). */
+  const more = $('threadMoreBtn');
+  if(more){
+    more.onclick = function(e){
+      if(e){ e.preventDefault(); e.stopPropagation(); }
+      const c = (typeof contacts !== 'undefined' && contacts || []).find(function(x){ return x && x.id === activeThreadContactId; });
+      const clearItem = { label: 'Clear chat on my side', onClick: function(){ fireThreadClear(); } };
+      if(c && c.firebaseUid && window.NalunoPeople){
+        window.NalunoPeople.personMenu(more, { uid: c.firebaseUid, name: c.name, localId: c.id, after: function(){ try{ if(typeof closeThread === 'function') closeThread(); }catch(_){} } }, 'wireline', [clearItem]);
+      } else if(window.NalunoPeople){
+        window.NalunoPeople.menu(more, [clearItem]);
+      } else {
+        fireThreadClear();
+      }
+    };
+  }
 }
 bindThreadChrome();
 function closeWireSetScreens(){
@@ -2397,14 +2414,22 @@ function notifyWirelinePush(c, payload, previewText, clientMsgId){
     (async function(){
       let idToken = '';
       try{ idToken = await currentUser.getIdToken(); }catch(_){ return; }
+      /* 21 Oct e: an id the other phone reports back, so the desk can see
+         how long Wireline alerts take (calls had this already). */
+      const pingId = (typeof nalunoPushId === 'function') ? nalunoPushId() : '';
       try{
         const res = await fetch(WIRE_NOTIFY_URL, {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + idToken, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ to: calleeUid, clientMsgId: String(clientMsgId || '') }),
+          body: JSON.stringify(pingId ? { to: calleeUid, clientMsgId: String(clientMsgId || ''), pingId: pingId } : { to: calleeUid, clientMsgId: String(clientMsgId || '') }),
         });
         const data = await res.json().catch(function(){ return {}; });
         note('naluno', { status: res.status, sent: data.sent, reason: data.reason || data.error || '', failures: data.failures || [] });
+        try{
+          if(pingId && typeof nalunoNotePush === 'function' && data.reason !== 'silent'){
+            nalunoNotePush({ pingId: pingId, toUid: calleeUid, type: 'wireline', httpStatus: res.status, sent: Number(data.sent) > 0, reason: data.reason || data.error || '' });
+          }
+        }catch(_){}
         /* Sent, or nothing to send to: done. Anything else falls back. */
         if(res.ok && (data.sent > 0 || data.reason === 'no_token' || data.reason === 'silent')) return;
         if(res.status === 403 || res.status === 429) return;
