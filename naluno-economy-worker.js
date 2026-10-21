@@ -1341,6 +1341,13 @@ async function sweepBand(io, bandId, now, opts = {}) {
     const r = await io.commit(writes.slice(i, i + 450));
     if (!r) ok = false;
   }
+  const firstSweepOfThisLife = !num(band.sweptAt) || aliveAt && num(band.sweptAt) <= aliveAt + BAND_SETTLE_MS;
+  if (plan.dead && ok && complete && firstSweepOfThisLife && io.measure) {
+    try {
+      await io.measure(bandRoomCounters(messages.filter((m) => gone.indexOf(m.id) >= 0).map((m) => m.data || {})));
+    } catch {
+    }
+  }
   if (plan.dead && ok && complete) {
     bandFields.sweptAt = { timestampValue: new Date(t).toISOString() };
     if (bandWrite) {
@@ -1368,6 +1375,30 @@ async function sweepBand(io, bandId, now, opts = {}) {
     }
   }
   return { ok, dead: plan.dead, revived: !!plan.revive, complete, deleted: gone.length, files: dropped };
+}
+function bandRoomCounters(msgs) {
+  const list = Array.isArray(msgs) ? msgs : [];
+  const who = /* @__PURE__ */ new Set();
+  let first = 0, last = 0;
+  list.forEach((m) => {
+    if (m && m.from) who.add(String(m.from));
+    const ts = num(m && m.ts);
+    if (ts) {
+      if (!first || ts < first) first = ts;
+      if (ts > last) last = ts;
+    }
+  });
+  const n = who.size;
+  const people = n <= 1 ? "1" : n === 2 ? "2" : n <= 5 ? "3to5" : n <= 12 ? "6to12" : n <= 50 ? "13to50" : "51plus";
+  const life = last - first;
+  const lifeBand = life < 5 * 6e4 ? "lt5m" : life < 15 * 6e4 ? "5to15m" : life < 36e5 ? "15to60m" : "1hplus";
+  const c = { n__band_room_end: 1 };
+  c["p__band_room_end__said__" + (list.length ? "1" : "0")] = 1;
+  if (list.length) {
+    c["p__band_room_end__people__" + people] = 1;
+    c["p__band_room_end__life__" + lifeBand] = 1;
+  }
+  return c;
 }
 function bandNeedsSweep(band, now) {
   const b = band || {};
@@ -5067,7 +5098,8 @@ async function handleWireNotify(body, sender, deps) {
   const tokens = tokensOf(vault, them);
   if (!tokens.length) return { status: 200, body: { ok: true, sent: 0, reason: "no_token" } };
   const link = "/app/?wire=" + encodeURIComponent(sender.uid);
-  const out = await sendAll(tokens, {
+  const pingId = /^p[a-z0-9]{4,30}$/.test(String(body && body.pingId || "")) ? String(body.pingId) : "";
+  const data = {
     type: "wireline",
     fromUid: sender.uid,
     senderName: name,
@@ -5075,7 +5107,9 @@ async function handleWireNotify(body, sender, deps) {
     body: wireKindLabel(type),
     clientMsgId: mid,
     url: link
-  }, link, deps, now);
+  };
+  if (pingId) data.pingId = pingId;
+  const out = await sendAll(tokens, data, link, deps, now);
   return out;
 }
 function tokensOf() {
@@ -5091,8 +5125,30 @@ function tokensOf() {
       }
     });
   });
+  Array.prototype.slice.call(arguments).forEach(function(d) {
+    webPushOf(d).forEach(function(v) {
+      if (tokens.indexOf(v) < 0) {
+        tokens.push(v);
+        kinds.push("web");
+      }
+    });
+  });
   tokens.kinds = kinds;
   return tokens;
+}
+function webPushOf(d) {
+  const map = d && d.webPush;
+  if (!map || typeof map !== "object") return [];
+  const now = Date.now();
+  return Object.keys(map).map(function(k) {
+    return map[k];
+  }).filter(function(x) {
+    return x && typeof x.t === "string" && x.t.length > 20 && x.t.length < 4096 && (!x.at || now - Number(x.at) < 60 * 864e5);
+  }).sort(function(a, b) {
+    return Number(b.at || 0) - Number(a.at || 0);
+  }).slice(0, 4).map(function(x) {
+    return x.t;
+  });
 }
 function webPushFor(data) {
   const d = data || {};
@@ -5594,6 +5650,279 @@ async function handleSunbird(path, request, user, deps) {
   return { status: 200, body: data };
 }
 
+// workers/economy/measure.mjs
+var MEASURE_KEEP_DAYS = 180;
+var MEASURE_MAX_EVENTS = 100;
+var B = {
+  len: ["lt1m", "1to5m", "5to20m", "20mplus"],
+  ring: ["lt5s", "5to15s", "15to30s", "30splus", "none"],
+  lag: ["lt2s", "2to10s", "10to60s", "1to10m", "10mplus"],
+  slow: ["lt1m", "1to10m", "10to60m", "1hplus"],
+  wait: ["lt1h", "1to24h", "1to7d", "7dplus"],
+  vlen: ["lt10s", "10to30s", "30to60s", "1to2m", "2mplus"],
+  count: ["0", "1to2", "3to9", "10plus"],
+  people: ["1", "2", "3to5", "6to12", "13to50", "51plus"],
+  ms: ["lt1s", "1to2s", "2to4s", "4to8s", "8splus"],
+  pub: ["lt10s", "10to30s", "30to120s", "2mplus"],
+  live: ["lt5m", "5to15m", "15to60m", "1hplus"],
+  bit: ["0", "1"]
+};
+var LANG2 = /^[a-z]{2,3}(-[a-z]{2,3})?$/;
+var BUILD = /^\d{8}[a-z]$/;
+var TOPIC = /^[a-z0-9-]{1,24}$/;
+var one = (list) => (v) => list.indexOf(v) >= 0;
+var CATALOGUE = {
+  /* calls */
+  call_end: {
+    role: one(["caller", "callee"]),
+    kind: one(["audio", "video"]),
+    outcome: one(["connected", "missed", "declined", "cancelled", "failed", "busy"]),
+    len: one(B.len),
+    ring: one(B.ring),
+    end: one(["hangup", "network", "closed", "other"]),
+    path: one(["direct", "relay", "unknown"]),
+    net: one(["wifi", "cell", "unknown"]),
+    videooff: one(B.bit),
+    flip: one(B.bit),
+    pip: one(B.bit),
+    freezes: one(B.count),
+    drops: one(B.count),
+    switched: one(["recovered", "lost", "none"])
+  },
+  /* Wireline */
+  msg_sent: { type: one(["text", "voice", "photo", "video", "file"]), route: one(["online", "queued"]), wait: one(B.slow) },
+  msg_delivered: { type: one(["text", "voice", "photo", "video", "file"]), lag: one(B.lag) },
+  msg_read: { lag: one(B.slow) },
+  voice_note: { len: one(B.vlen), cap: one(B.bit) },
+  translate_shown: { from: (v) => LANG2.test(v), to: (v) => LANG2.test(v) },
+  /* Band */
+  band_join: {},
+  band_send: { kind: one(["text", "audio", "video"]) },
+  band_clip: { kind: one(["audio", "video"]), len: one(B.vlen), cap: one(B.bit) },
+  band_clip_fail: { kind: one(["audio", "video"]), reason: one(["size", "network", "other"]) },
+  /* Broadcast */
+  watch_depth: { q: one(["25", "50", "75", "100"]) },
+  publish: { kind: one(["video", "photo", "writing", "live"]), ms: one(B.pub) },
+  publish_fail: { kind: one(["video", "photo", "writing", "live"]), reason: one(["upload", "reach", "screen", "network", "other"]) },
+  composer_abandon: { kind: one(["video", "photo", "writing", "none"]), stage: one(["opened", "picked", "titled"]) },
+  live_end: { peak: one(B.people), avg: one(B.people), len: one(B.live), drops: one(B.count), sfu: one(B.bit) },
+  strand_add: {},
+  pass_on: {},
+  circle_join: {},
+  offline_save: {},
+  replace_media: { kind: one(["cover", "chapter", "live"]) },
+  /* Signals */
+  signal_post: { aud: one(["public", "connections"]), type: one(["photo", "video", "text"]) },
+  signal_view: { done: one(B.bit) },
+  signal_swipe: {},
+  /* getting connected */
+  spark: { stage: one(["start", "done"]) },
+  find_search: { found: one(B.bit) },
+  connect_request: { stage: one(["sent", "accepted", "declined"]), wait: one(B.wait) },
+  first_connection: { since: one(B.wait) },
+  /* Lifeline */
+  lifeline: { route: one(["relay", "mesh", "sms", "queued"]), ok: one(B.bit), wait: one(B.slow) },
+  offline: { len: one(B.slow) },
+  /* language */
+  listen: { voice: one(["sunbird", "african", "phone", "recording"]), ok: one(B.bit) },
+  listen_fallback: { from: one(["sunbird", "african"]), to: one(["african", "phone"]) },
+  spark_translate: { stage: one(["used", "abandoned"]) },
+  /* onboarding */
+  onboard: { step: one(["welcome", "agreed", "country-shown", "country-chosen", "country-skipped", "tour-finished", "tour-skipped", "signup", "callsign", "first-message", "first-call"]) },
+  notif_permission: { result: one(["granted", "denied", "default"]) },
+  /* app health */
+  app_open: { platform: one(["android", "pwa", "browser"]), build: (v) => BUILD.test(v), lang: one(["en", "lg"]), cold: one(B.bit) },
+  app_ready: { ms: one(B.ms), first: one(["feed", "frequencies", "other"]) },
+  crash_reload: {},
+  storage_full: {},
+  /* Compass and Find Naluno */
+  compass_q: { topic: (v) => TOPIC.test(v), answered: one(B.bit) },
+  find_map_open: {},
+  find_on: { state: one(["on", "off"]) },
+  /* 21 Oct e: safety (no names, no who) */
+  person_drop: { block: one(B.bit) },
+  person_block: { state: one(["on", "off"]) },
+  compass_flag: { reason: one(["harmful", "hateful", "sexual", "misleading", "other"]) },
+  /* the desk's look at a Screen hold (sent by the console) */
+  desk_screen_review: { result: one(["let-out", "take-down"]), reason: one(["single-frame", "found-on-fabric", "other"]) }
+};
+var ANONYMOUS_OK = { onboard: 1, app_open: 1, app_ready: 1, crash_reload: 1, storage_full: 1, notif_permission: 1 };
+var BY_COUNTRY = { app_open: 1, msg_sent: 1, call_end: 1, lifeline: 1, offline: 1, publish: 1, signal_post: 1 };
+function cleanEvent(ev, signedIn) {
+  if (!ev || typeof ev !== "object") return null;
+  const n = String(ev.n || "");
+  const spec = Object.prototype.hasOwnProperty.call(CATALOGUE, n) ? CATALOGUE[n] : null;
+  if (!spec) return null;
+  if (!signedIn && !ANONYMOUS_OK[n]) return null;
+  const p = {};
+  const src = ev.p && typeof ev.p === "object" ? ev.p : {};
+  for (const k of Object.keys(spec)) {
+    if (!Object.prototype.hasOwnProperty.call(src, k)) continue;
+    const v = String(src[k]);
+    if (v.length > 24) continue;
+    if (spec[k](v)) p[k] = v;
+  }
+  return { n, p };
+}
+function seg(s) {
+  return String(s).replace(/[^A-Za-z0-9]/g, "_").slice(0, 32);
+}
+function dayCounters(events, country) {
+  const out = {};
+  const add = (k) => {
+    out[k] = (out[k] || 0) + 1;
+  };
+  const cc = /^[A-Z]{2}$/.test(String(country || "")) ? String(country) : "";
+  for (const e of events) {
+    add("n__" + seg(e.n));
+    for (const k of Object.keys(e.p)) add("p__" + seg(e.n) + "__" + seg(k) + "__" + seg(e.p[k]));
+    if (cc && BY_COUNTRY[e.n]) add("c__" + seg(e.n) + "__" + cc);
+  }
+  return out;
+}
+function measureDayKey(ms) {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+async function takeMeasureBatch(body, who, deps) {
+  const list = Array.isArray(body && body.events) ? body.events.slice(0, MEASURE_MAX_EVENTS) : [];
+  const signedIn = !!(who && who.uid);
+  const events = [];
+  for (const ev of list) {
+    const c = cleanEvent(ev, signedIn);
+    if (c) events.push(c);
+  }
+  if (!events.length) return { status: 200, body: { ok: true, kept: 0 } };
+  const now = deps.now ? deps.now() : Date.now();
+  const country = String(who && who.country || "").toUpperCase();
+  const counters = dayCounters(events, country);
+  await deps.write(measureDayKey(now), counters);
+  const device = String(body && body.d || "").replace(/[^A-Za-z0-9-]/g, "").slice(0, 40);
+  await deps.keep({
+    at: now,
+    expireAt: now + MEASURE_KEEP_DAYS * 864e5,
+    uid: signedIn ? String(who.uid).slice(0, 128) : "",
+    device,
+    country: /^[A-Z]{2}$/.test(country) ? country : "",
+    events: events.map((e) => ({ n: e.n, p: e.p }))
+  });
+  return { status: 200, body: { ok: true, kept: events.length } };
+}
+
+// workers/economy/records-sweep.mjs
+var RECORDS_KEEP_DAYS = 365;
+var RECORD_KINDS = [
+  { col: "traffic", time: "at", type: "integer", who: ["actorUid", "peerUid"] },
+  { col: "calls", time: "createdAt", type: "timestamp", who: ["callerUid", "calleeUid"] },
+  { col: "pushPings", time: "sentAt", type: "integer", who: ["fromUid", "toUid"] },
+  { col: "pushReceipts", time: "arrivedAt", type: "integer", who: ["uid"] }
+];
+function recordMayGo(row, held) {
+  const r = row || {};
+  if (r.legalHold === true) return false;
+  for (const kind of RECORD_KINDS) {
+    for (const f of kind.who) {
+      const uid = r[f];
+      if (uid && held && held.has(String(uid))) return false;
+    }
+  }
+  return true;
+}
+function recordsCutoff(now) {
+  return (now || Date.now()) - RECORDS_KEEP_DAYS * 864e5;
+}
+async function sweepRecords(io, now, opts = {}) {
+  const cutoff = recordsCutoff(now);
+  const held = await io.held();
+  const out = { ok: true, deleted: 0, kept: 0, byKind: {} };
+  const rounds = opts.rounds || 6;
+  for (const kind of RECORD_KINDS) {
+    let deleted = 0, kept = 0, after = null;
+    for (let round = 0; round < rounds; round++) {
+      const rows = await io.older(kind, cutoff, 300, after);
+      if (!rows.length) break;
+      const go = [];
+      rows.forEach((r) => {
+        if (recordMayGo(r.data, held)) go.push(r.name);
+        else kept++;
+      });
+      if (go.length) {
+        const ok = await io.remove(go);
+        if (!ok) {
+          out.ok = false;
+          break;
+        }
+        deleted += go.length;
+      }
+      if (rows.length < 300) break;
+      after = rows[rows.length - 1].at;
+    }
+    out.byKind[kind.col] = { deleted, kept };
+    out.deleted += deleted;
+    out.kept += kept;
+  }
+  return out;
+}
+
+// workers/economy/account-erase.mjs
+var ERASE_AFTER_DAYS = 30;
+function eraseCutoff(now) {
+  return (now || Date.now()) - ERASE_AFTER_DAYS * 864e5;
+}
+function dueForErase(row, now, held) {
+  const r = row || {};
+  if (r.accountState !== "closed") return false;
+  if (String(r.closedKind || "") !== "self") return false;
+  if (r.erasedAt) return false;
+  const at = Number(r.closedAt || r.deletedAt || 0);
+  if (!(at > 0) || at > eraseCutoff(now)) return false;
+  if (held && held.has(String(r.uid || ""))) return false;
+  return true;
+}
+async function eraseClosedAccounts(io, now, opts = {}) {
+  const t = now || Date.now();
+  const held = await io.held();
+  const out = { ok: true, erased: [], skipped: 0 };
+  const rows = [];
+  let after = null;
+  for (let page = 0; page < (opts.pages || 5); page++) {
+    const got = await io.closedBefore(eraseCutoff(t), 100, after);
+    got.forEach((r) => {
+      if (dueForErase(Object.assign({ uid: r.uid }, r.data || {}), t, held)) rows.push(r);
+      else out.skipped++;
+    });
+    if (got.length < 100 || rows.length >= (opts.limit || 20)) break;
+    after = Number((got[got.length - 1].data || {}).closedAt || 0) || null;
+    if (!after) break;
+  }
+  for (const row of rows.slice(0, opts.limit || 20)) {
+    const data = Object.assign({ uid: row.uid }, row.data || {});
+    if (!dueForErase(data, t, held)) {
+      out.skipped++;
+      continue;
+    }
+    let clean2 = true;
+    for (const parent of ["/users/" + row.uid, "/wireDrop/" + row.uid]) {
+      for (let round = 0; round < (opts.rounds || 10); round++) {
+        const names = await io.descendants(parent, 300);
+        if (!names.length) break;
+        if (!await io.remove(names)) {
+          clean2 = false;
+          break;
+        }
+        if (names.length < 300) break;
+      }
+      if (!clean2) break;
+    }
+    if (!clean2) {
+      out.ok = false;
+      continue;
+    }
+    if (await io.tombstone(row.uid, t)) out.erased.push(row.uid);
+    else out.ok = false;
+  }
+  return out;
+}
+
 // workers/economy/live.mjs
 var rooms = /* @__PURE__ */ new Map();
 function callsReady(env) {
@@ -5649,7 +5978,7 @@ async function cfCalls(env, fetchImpl, path, method, body) {
 }
 
 // workers/economy/handler.mjs
-var VERSION = "2.15.0-reach";
+var VERSION = "2.16.0-20261021e";
 var PROJECT_ID = "naluno-28a00";
 var OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 var DEFAULT_FLAGS = {
@@ -5659,6 +5988,9 @@ var DEFAULT_FLAGS = {
   contribution_enabled: true,
   community_value_enabled: true,
   creator_support_enabled: false,
+  /* 21 Oct e: Support inside the Android app (Google Play). Off until
+     Naluno is sure Play accepts it. The website is not affected. */
+  support_in_android_app: false,
   community_rewards_enabled: false,
   real_payouts_enabled: false,
   monetisation_phase_enabled: false,
@@ -6921,6 +7253,19 @@ async function placeBroadcast(env, user, userToken, saToken, body) {
   }
   if (row.visibility === "private" && "listed" in patch) {
     patch.listed = false;
+  }
+  if (saToken) {
+    try {
+      const seg2 = (x) => String(x || "none").replace(/[^A-Za-z0-9]/g, "_").slice(0, 32);
+      const c = { n__screen_outcome: 1 };
+      c["p__screen_outcome__decision__" + seg2(judged.decision)] = 1;
+      c["p__screen_outcome__engine__" + seg2(judged.engine || (judged.reused ? "stored" : "none"))] = 1;
+      c["p__screen_outcome__recheck__" + (recheck ? "1" : "0")] = 1;
+      if (judged.decision === "hold") c["p__screen_outcome__reason__" + seg2(judged.reason)] = 1;
+      const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      await fsIncrement(env, saToken, "/measureDays/" + day, c, { day, updatedAt: Date.now() });
+    } catch (_) {
+    }
   }
   const writeTok = saToken || (patch.hidden || judged.decision === "block" ? userToken : "");
   let wrote = false;
@@ -8942,6 +9287,11 @@ function bandSweepIo(env, token) {
         }
       }
       return n;
+    },
+    /* 20 Oct c: a gathering's counts (band-sweep.mjs bandRoomCounters). */
+    measure: async (counters) => {
+      const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      await fsIncrement(env, token, "/measureDays/" + day, counters, { day, updatedAt: Date.now() });
     }
   };
 }
@@ -9126,6 +9476,122 @@ async function runDiscoverCompile(env, nowMs, pages) {
     if (!r.more) break;
   }
   return total;
+}
+async function runAccountErase(env, now) {
+  if (!hasSaConfigured(env)) return { ok: false, error: "no-service-account" };
+  const token = await saAccessToken(env);
+  if (!token) return { ok: false, error: "no-token" };
+  const name = fsRoot(env).replace("https://firestore.googleapis.com/v1/", "");
+  return eraseClosedAccounts({
+    held: async () => {
+      const set = /* @__PURE__ */ new Set();
+      let pageToken = "";
+      for (let page = 0; page < 50; page++) {
+        const r = await fsFetch(env, token, "GET", "/legalHolds?pageSize=1000" + (pageToken ? "&pageToken=" + encodeURIComponent(pageToken) : ""));
+        if (!r.ok && r.status !== 404) throw new Error("holds " + r.status);
+        if (r.ok && r.data && Array.isArray(r.data.documents)) r.data.documents.forEach((d) => set.add(String(d.name).split("/").pop()));
+        pageToken = r.ok && r.data && r.data.nextPageToken || "";
+        if (!pageToken) return set;
+      }
+      throw new Error("holds: too many pages");
+    },
+    closedBefore: async (cutoff, limit, after) => {
+      const filters = [{ fieldFilter: { field: { fieldPath: "closedAt" }, op: "LESS_THAN", value: { integerValue: String(Math.floor(cutoff)) } } }];
+      if (after != null) filters.push({ fieldFilter: { field: { fieldPath: "closedAt" }, op: "GREATER_THAN", value: { integerValue: String(Math.floor(after)) } } });
+      const r = await fsFetch(env, token, "POST", ":runQuery", { structuredQuery: {
+        from: [{ collectionId: "users" }],
+        where: filters.length > 1 ? { compositeFilter: { op: "AND", filters } } : filters[0],
+        orderBy: [{ field: { fieldPath: "closedAt" }, direction: "ASCENDING" }],
+        limit
+      } });
+      if (!r.ok) throw new Error("users " + r.status);
+      return (Array.isArray(r.data) ? r.data : []).filter((x) => x && x.document).map((x) => ({ uid: String(x.document.name).split("/").pop(), data: fromFsDoc(x.document) }));
+    },
+    descendants: async (parent, limit) => {
+      const r = await fsFetch(env, token, "POST", parent + ":runQuery", { structuredQuery: {
+        from: [{ allDescendants: true }],
+        orderBy: [{ field: { fieldPath: "__name__" }, direction: "ASCENDING" }],
+        limit
+      } });
+      if (!r.ok) throw new Error("descendants " + r.status);
+      return (Array.isArray(r.data) ? r.data : []).filter((x) => x && x.document).map((x) => x.document.name);
+    },
+    remove: async (names) => {
+      const c = await fsFetch(env, token, "POST", ":commit", { writes: names.map((d) => ({ delete: d.indexOf("projects/") === 0 ? d : name + "/" + d })) });
+      return !!(c && c.ok);
+    },
+    tombstone: async (uid, at) => {
+      const r = await fsFetch(env, token, "PATCH", "/users/" + encodeURIComponent(uid), toFsFields({ accountState: "erased", deleted: true, erasedAt: at, closedKind: "self" }));
+      return !!(r && r.ok);
+    }
+  }, now);
+}
+async function runRecordsSweep(env, now) {
+  if (!hasSaConfigured(env)) return { ok: false, error: "no-service-account" };
+  const token = await saAccessToken(env);
+  if (!token) return { ok: false, error: "no-token" };
+  const name = fsRoot(env).replace("https://firestore.googleapis.com/v1/", "");
+  return sweepRecords({
+    held: async () => {
+      const set = /* @__PURE__ */ new Set();
+      let pageToken = "";
+      for (let page = 0; page < 50; page++) {
+        const r = await fsFetch(env, token, "GET", "/legalHolds?pageSize=1000" + (pageToken ? "&pageToken=" + encodeURIComponent(pageToken) : ""));
+        if (!r.ok && r.status !== 404) throw new Error("holds " + r.status);
+        if (r.ok && r.data && Array.isArray(r.data.documents)) r.data.documents.forEach((d) => set.add(String(d.name).split("/").pop()));
+        pageToken = r.ok && r.data && r.data.nextPageToken || "";
+        if (!pageToken) return set;
+      }
+      throw new Error("holds: too many pages");
+    },
+    older: async (kind, cutoff, limit, after) => {
+      const val = (ms) => kind.type === "timestamp" ? { timestampValue: new Date(ms).toISOString() } : { integerValue: String(Math.floor(ms)) };
+      const filters = [{ fieldFilter: { field: { fieldPath: kind.time }, op: "LESS_THAN", value: val(cutoff) } }];
+      if (after != null) filters.push({ fieldFilter: { field: { fieldPath: kind.time }, op: "GREATER_THAN", value: val(after) } });
+      const q = { structuredQuery: {
+        from: [{ collectionId: kind.col }],
+        where: filters.length > 1 ? { compositeFilter: { op: "AND", filters } } : filters[0],
+        orderBy: [{ field: { fieldPath: kind.time }, direction: "ASCENDING" }],
+        limit
+      } };
+      const r = await fsFetch(env, token, "POST", ":runQuery", q);
+      if (!r.ok) throw new Error(kind.col + " " + r.status);
+      return (Array.isArray(r.data) ? r.data : []).filter((x) => x && x.document).map((x) => {
+        const data = fromFsDoc(x.document);
+        const t = data[kind.time];
+        const at = typeof t === "number" ? t : t ? Date.parse(t) : 0;
+        return { name: x.document.name, data, at };
+      });
+    },
+    remove: async (names) => {
+      const c = await fsFetch(env, token, "POST", ":commit", { writes: names.map((d) => ({ delete: d.indexOf("projects/") === 0 ? d : name + "/" + d })) });
+      return !!(c && c.ok);
+    }
+  }, now);
+}
+async function runMeasureSweep(env, now) {
+  if (!hasSaConfigured(env)) return { ok: false, error: "no-service-account" };
+  const token = await saAccessToken(env);
+  if (!token) return { ok: false, error: "no-token" };
+  const cutoff = (now || Date.now()) - MEASURE_KEEP_DAYS * 864e5;
+  const name = fsRoot(env).replace("https://firestore.googleapis.com/v1/", "");
+  let deleted = 0;
+  for (let round = 0; round < 5; round++) {
+    const r = await fsFetch(env, token, "POST", ":runQuery", { structuredQuery: {
+      from: [{ collectionId: "measureBatches" }],
+      where: { fieldFilter: { field: { fieldPath: "at" }, op: "LESS_THAN", value: { integerValue: String(Math.floor(cutoff)) } } },
+      orderBy: [{ field: { fieldPath: "at" }, direction: "ASCENDING" }],
+      limit: 300
+    } });
+    if (!r.ok) return { ok: false, error: "query " + r.status, deleted };
+    const docs = (Array.isArray(r.data) ? r.data : []).filter((x) => x && x.document).map((x) => x.document.name);
+    if (!docs.length) break;
+    const c = await fsFetch(env, token, "POST", ":commit", { writes: docs.map((d) => ({ delete: d.indexOf("projects/") === 0 ? d : name + "/" + d })) });
+    if (!c.ok) return { ok: false, error: "delete " + c.status, deleted };
+    deleted += docs.length;
+    if (docs.length < 300) break;
+  }
+  return { ok: true, deleted };
 }
 async function runPushMove(env) {
   if (!hasSaConfigured(env)) return { ok: false, error: "no-service-account" };
@@ -9451,6 +9917,27 @@ async function handleRequest(request, env = {}, ctx = {}) {
         worker: String(body.worker || "")
       });
       return json({ ok: true });
+    }
+    if (path === "/v1/measure" && request.method === "POST") {
+      const ip = request.headers.get("CF-Connecting-IP") || "?";
+      if (!lifelineRate("ms|" + ip, 60)) return json({ ok: false, error: "slow down" }, 429);
+      if (Number(request.headers.get("Content-Length") || 0) > 64 * 1024) return json({ ok: false, error: "too large" }, 413);
+      if (!saToken) return json({ ok: false, error: "not configured" }, 503);
+      const who = { uid: "", country: request.cf && request.cf.country || "" };
+      const tok = bearer(request);
+      if (tok) {
+        try {
+          const u = await verifyIdToken(env, tok);
+          if (u && u.uid) who.uid = u.uid;
+        } catch (_) {
+        }
+      }
+      const body = await request.json().catch(() => ({}));
+      const out = await takeMeasureBatch(body, who, {
+        write: (day, counters) => fsIncrement(env, saToken, "/measureDays/" + day, counters, { day, updatedAt: Date.now() }),
+        keep: (batch) => fsFetch(env, saToken, "POST", "/measureBatches", toFsFields(batch))
+      });
+      return json(out.body, out.status);
     }
     const auth = await requireUser(env, request);
     if (auth.error) {
@@ -9958,7 +10445,8 @@ async function handleRequest(request, env = {}, ctx = {}) {
         toFsFields(doc)
       );
       if (!wrote.ok && existing) memory.reports.set(id, existing);
-      if (wrote.ok && saToken) {
+      const personReport = String(body.target_type || "") === "person" || String(body.target_type || "") === "compass";
+      if (wrote.ok && saToken && !personReport) {
         try {
           let about = String(body.target_user_id || "").slice(0, 128);
           const bid = String(body.broadcast_id || (body.target_type === "broadcast" ? body.target_id : "") || "").slice(0, 80);
@@ -10194,7 +10682,12 @@ var index_default = {
       /* 14 Oct: Discover's shared record, from the events since the last run. */
       runDiscoverCompile(env, Date.now(), 3).catch(() => null),
       /* 14 Oct: push addresses from public profiles into each vault, then done. */
-      runPushMove(env).catch(() => null)
+      runPushMove(env).catch(() => null),
+      /* 20 Oct c: measurement batches older than 180 days are deleted. */
+      runMeasureSweep(env).catch(() => null),
+      /* 20 Oct d: call and message records older than 12 months (unless kept for an open matter). */
+      runRecordsSweep(env).catch(() => null),
+      runAccountErase(env).catch(() => null)
     ]);
     if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(job);
     else await job;

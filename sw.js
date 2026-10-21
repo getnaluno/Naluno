@@ -75,8 +75,8 @@
 // v284: 10.05f Android floats a video call on leaving; Wireline alerts through Naluno's worker; a call answers once per tap.
 // v285: 10.05g voices keep reading (several makers, scheduled, trimmed), Luganda spoken from its own sounds, test alert, stale stamps.
 // v344: 10.19d the answering phone does not open its own hangup channel (that refused the answer); the hangup word leaves before the socket closes; a call alert is drawn and kept; a new build does not wipe the push address.
-const CACHE_NAME = 'naluno-shell-v348';
-const APP_BUILD = '20261020d';
+const CACHE_NAME = 'naluno-shell-v350';
+const APP_BUILD = '20261021f';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',

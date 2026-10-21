@@ -4,6 +4,11 @@ service cloud.firestore {
 
     function isSignedIn() { return request.auth != null; }
     function isOwner(uid) { return isSignedIn() && request.auth.uid == uid; }
+    /* 21 Oct e: the signed-in person is on owner's "stopped from reaching
+       me" list (users/<owner>/blocked/<them>). */
+    function blockedBy(owner) {
+      return exists(/databases/$(database)/documents/users/$(owner)/blocked/$(request.auth.uid));
+    }
     /* The Control Centre operator. Used so the desk can read platform
        collections even while the economy Worker's service account is
        rejected by Google — the signed-in operator is the authority. */
@@ -488,12 +493,23 @@ service cloud.firestore {
     }
     /* A Connect request. The sender creates it on the other person's list.
        Either person may remove it (accept already copied it, or it was declined). */
+    /* 21 Oct e: who this person stopped from reaching them. Only they can
+       read or change it; the desk can read it when a report is looked at. */
+    match /users/{uid}/blocked/{otherUid} {
+      allow read: if isOwner(uid) || isOperator();
+      allow create, update: if isOwner(uid) && otherUid != uid
+        && request.resource.data.keys().hasOnly(['at', 'name'])
+        && request.resource.data.at is number
+        && (!('name' in request.resource.data) || (request.resource.data.name is string && request.resource.data.name.size() <= 80));
+      allow delete: if isOwner(uid);
+    }
     match /users/{uid}/connectionRequests/{fromUid} {
       allow get: if isOwner(uid) || (isSignedIn() && fromUid == request.auth.uid);
       allow list: if isOwner(uid);
       allow create, update: if isSignedIn()
         && fromUid == request.auth.uid
         && uid != request.auth.uid
+        && !blockedBy(uid)
         && connectionRequestClean();
       allow delete: if isOwner(uid) || (isSignedIn() && fromUid == request.auth.uid);
     }
@@ -518,12 +534,14 @@ service cloud.firestore {
       }
       allow read: if isSignedIn() && request.auth.uid in resource.data.participants;
       allow update: if isSignedIn() && request.auth.uid in resource.data.participants
+        && !blockedBy(resource.data.participants[0]) && !blockedBy(resource.data.participants[1])
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['lastMessageAt', 'lastKind', 'lastMessageText', 'lastMessageFrom', 'readBy'])
         && threadPreviewOk(request.resource.data.diff(resource.data).affectedKeys());
       allow create: if isSignedIn() && request.auth.uid in request.resource.data.participants
         && request.resource.data.participants is list
         && request.resource.data.participants.size() == 2
+        && !blockedBy(request.resource.data.participants[0]) && !blockedBy(request.resource.data.participants[1])
         && threadId == request.resource.data.participants[0] + '_' + request.resource.data.participants[1]
         && threadPreviewOk(request.resource.data.keys().toSet());
 
@@ -560,6 +578,7 @@ service cloud.firestore {
         allow create: if isSignedIn()
           && request.resource.data.from == request.auth.uid
           && request.resource.data.to == uid
+          && !blockedBy(uid)
           && id.matches('^[A-Za-z0-9_.:-]{1,200}$')
           && request.resource.data.keys().size() < 24
           && (!('naluno' in request.resource.data) || request.resource.data.naluno == false || isSuper())
@@ -588,7 +607,9 @@ service cloud.firestore {
           request.auth.uid == resource.data.callerUid
           || request.auth.uid == resource.data.calleeUid
         ));
-      allow create: if isSignedIn() && request.auth.uid == request.resource.data.callerUid;
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.callerUid
+        && request.resource.data.calleeUid is string
+        && !blockedBy(request.resource.data.calleeUid);
       // A call's status only moves forward: ringing -> accepted / declined /
       // missed / busy / ended, and accepted -> ended. Other fields (the SDP
       // answer, timestamps) may change while the status stays. Blind writes
