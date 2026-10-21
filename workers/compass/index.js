@@ -20,9 +20,15 @@
 
    POST /           { messages: [{ role, content }] }  → { reply, model }
    GET  /health     → { ok, version, models }
-   Sign-in: the Firebase ID token of the person (Authorization: Bearer). */
+   Sign-in: the Firebase ID token of the person (Authorization: Bearer).
 
-export const VERSION = "2.0.0-20261021f";
+   22 Oct a: a model that went round in circles ("X" no. I have it: "Y"
+   no. …) for a whole screen. Now a penalty on repeating words, the reply
+   cut at its first repeated sentence, and a looping reply asked again
+   once, calmer. A sign-in already checked is remembered for a few
+   minutes, so a conversation does not wait on Google for every message. */
+
+export const VERSION = "2.1.0-20261022a";
 const DEFAULT_MODELS = [
   "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
   "@cf/meta/llama-3.1-8b-instruct-fast",
@@ -36,6 +42,8 @@ export const SYSTEM = [
   "You can explain and teach, advise, plan, write and rewrite, summarise, brainstorm, do maths, and translate. When the app attaches notes (web results, encyclopedia text, weather, the person's own Find Naluno ping, the Naluno guide), they are real and current: use them as your own knowledge. Never say you cannot browse, search, see links, check weather or find a phone.",
   "Never invent a link; share only links that appear in the notes. Never invent a Naluno feature, price or rule; if the guide does not cover it, say so and suggest Write to Naluno.",
   "Never describe how Naluno is built (code, servers, vendors, databases).",
+  "Your own memory stops around the end of 2023 and today is later. For anything that changes (new releases, who holds a job, prices, results, news), trust the notes over your memory; with no notes, give what you last knew and say there may be something newer. Never make up a title, name, number or date.",
+  "Say each thing once. Never correct yourself over and over, and never repeat a sentence.",
   "Refuse only what is harmful: instructions for weapons or serious crime, sexual content involving minors, or content that targets a real private person. For anything else, help.",
 ].join(" ");
 
@@ -57,7 +65,7 @@ function json(body, status = 200) {
 let _fetch = (u, o) => fetch(u, o);
 export function setFetchImpl(fn) { _fetch = fn || ((u, o) => fetch(u, o)); }
 const hits = new Map();
-export function resetMemory() { hits.clear(); }
+export function resetMemory() { hits.clear(); seenTokens.clear(); }
 function rateOk(uid, now) {
   const k = uid + "|" + Math.floor(now / 60000);
   const n = (hits.get(k) || 0) + 1;
@@ -66,8 +74,20 @@ function rateOk(uid, now) {
   return n <= 20;
 }
 
+const seenTokens = new Map();
 async function whoIs(env, token) {
   if (!token) return null;
+  const now = Date.now();
+  const known = seenTokens.get(token);
+  if (known && known.until > now) return { uid: known.uid };
+  const u = await lookupToken(env, token);
+  if (u) {
+    if (seenTokens.size > 2000) seenTokens.clear();
+    seenTokens.set(token, { uid: u.uid, until: now + 5 * 60000 });
+  }
+  return u;
+}
+async function lookupToken(env, token) {
   const key = env.FIREBASE_WEB_API_KEY || env.FIREBASE_API_KEY || "";
   const res = await _fetch("https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=" + encodeURIComponent(key), {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idToken: token }),
@@ -116,21 +136,49 @@ export function modelsFor(env, lastUser) {
   return models;
 }
 
+export function cutLoops(text) {
+  const src = String(text || "");
+  const parts = src.match(/[^.!?\n]+[.!?]*["\u201d']?\s*|\n+/g) || [src];
+  const seen = {};
+  let repeats = 0, cutAt = -1, len = 0;
+  parts.forEach((p, i) => {
+    const k = p.toLowerCase().replace(/[^a-z0-9\u00c0-\u024f]+/g, " ").trim();
+    if (k.length >= 12) {
+      if (seen[k]) { repeats++; if (cutAt < 0) cutAt = i; }
+      seen[k] = 1;
+    }
+    if (cutAt < 0) len += p.length;
+  });
+  if (!repeats) return { text: src, broken: false, repeats: 0 };
+  return { text: src.slice(0, len).trim(), broken: repeats >= 3, repeats };
+}
+const OPTS = { max_tokens: 800, temperature: 0.4, frequency_penalty: 0.4 };
+const CALM = { max_tokens: 600, temperature: 0.2, frequency_penalty: 0.6 };
+
 export async function answer(env, messages) {
   const shaped = shapeMessages(messages);
   const lastUser = (shaped.filter((m) => m.role === "user").pop() || {}).content || "";
   const errors = [];
   for (const model of modelsFor(env, lastUser)) {
     try {
-      let r = await env.AI.run(model, { messages: shaped, max_tokens: 900, temperature: 0.4 });
+      let r = await env.AI.run(model, Object.assign({ messages: shaped }, OPTS));
       let text = replyOf(r);
+      let loop = cutLoops(text);
+      if (loop.broken) {
+        const r3 = await env.AI.run(model, Object.assign({ messages: shaped }, CALM)).catch(() => null);
+        const l3 = cutLoops(replyOf(r3));
+        if (l3.text && !l3.broken) loop = l3;
+        else { errors.push(model + ": went round in circles"); continue; }
+      }
+      text = loop.text;
       if (text && isRefusal(text)) {
         const again = shaped.concat([
           { role: "assistant", content: text.slice(0, 600) },
           { role: "user", content: "You can do this. Answer my question directly and helpfully now, using your own knowledge and anything in the notes above. Do not say what you cannot do." },
         ]);
-        const r2 = await env.AI.run(model, { messages: again, max_tokens: 900, temperature: 0.4 }).catch(() => null);
-        const t2 = replyOf(r2);
+        const r2 = await env.AI.run(model, Object.assign({ messages: again }, OPTS)).catch(() => null);
+        const l2 = cutLoops(replyOf(r2));
+        const t2 = l2.broken ? "" : l2.text;
         if (t2 && !isRefusal(t2)) text = t2;
       }
       if (text) return { reply: text, model };

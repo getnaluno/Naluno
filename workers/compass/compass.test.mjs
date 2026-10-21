@@ -86,3 +86,55 @@ test("refusals are told apart from good answers", () => {
   assert.equal(isRefusal("I cannot stress enough how good this is."), false);
   assert.equal(isRefusal(""), true);
 });
+
+/* 22 Oct a: the looping answer the founder saw, and the sign-in cache. */
+import { cutLoops } from "./index.js";
+const LOOP = 'As of 2026, I found that "Avatar: The Way of Water" was followed by a new release. ' + Array(8).fill('The newest movie is "Avatar 3" no. I have the correct title: The newest movie is "Avatar: The Last Shadow" no.').join(" ");
+
+test("a reply that goes round in circles is asked again, calmer, and never shown looping", async () => {
+  resetMemory();
+  setFetchImpl(signedIn);
+  const seen = [];
+  const env = { AI: { run: async (model, input) => {
+    seen.push({ model, t: input.temperature, fp: input.frequency_penalty });
+    if (input.temperature >= 0.4) return { response: LOOP };
+    return { response: "The newest Avatar film is Avatar: Fire and Ash (2025)." };
+  } } };
+  const r = await handleRequest(req({ messages: [{ role: "user", content: "newest avatar film?" }] }), env);
+  const d = await r.json();
+  assert.equal(r.status, 200);
+  assert.match(d.reply, /Fire and Ash/);
+  assert.ok(!/no\. I have/.test(d.reply));
+  assert.ok(seen[0].fp > 0, "a penalty on repeating");
+  assert.ok(seen[1].t < seen[0].t, "asked again, calmer");
+});
+
+test("a reply that still loops after asking again goes to the next model", async () => {
+  resetMemory();
+  setFetchImpl(signedIn);
+  const models = [];
+  const env = { AI: { run: async (model) => { models.push(model); return { response: /70b/.test(model) ? LOOP : "Here is a calm answer." }; } } };
+  const d = await (await handleRequest(req({ messages: [{ role: "user", content: "newest avatar film please tell me" }] }), env)).json();
+  assert.equal(d.reply, "Here is a calm answer.");
+  assert.ok(models.length >= 3 && /8b/.test(models[models.length - 1]));
+});
+
+test("cutLoops keeps a normal answer whole and cuts at the first repeat", () => {
+  assert.equal(cutLoops("Paris is the capital of France. It has about 2 million people.").repeats, 0);
+  const c = cutLoops("The first sentence is here. The second sentence is here. The first sentence is here.");
+  assert.equal(c.text, "The first sentence is here. The second sentence is here.");
+  assert.equal(c.broken, false);
+  assert.equal(cutLoops(LOOP).broken, true);
+});
+
+test("a checked sign-in is remembered: a second message does not ask Google again", async () => {
+  resetMemory();
+  let lookups = 0;
+  setFetchImpl(async (u) => { lookups++; return signedIn(u); });
+  const env = { AI: { run: async () => ({ response: "Fine." }) } };
+  await handleRequest(req({ messages: [{ role: "user", content: "one question here" }] }, "tokA"), env);
+  await handleRequest(req({ messages: [{ role: "user", content: "two question here" }] }, "tokA"), env);
+  assert.equal(lookups, 1);
+  const bad = await handleRequest(req({ messages: [{ role: "user", content: "x" }] }, ""), env);
+  assert.equal(bad.status, 401, "no token is still refused");
+});

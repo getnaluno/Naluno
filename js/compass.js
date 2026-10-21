@@ -787,7 +787,7 @@ async function compassGather(text, query){
     const Bw = window.NalunoCompassBrain;
     if(Bw && Bw.relevance(text + ' ' + (query || ''), { title: page.title, url: page.url, snippet: page.summary }) < 0.5) return;
     /* 21 Oct g: and only when it covers every main word of the question. */
-    if(Bw && typeof Bw.covers === 'function' && !Bw.covers(text, (page.title || '') + ' ' + (page.summary || ''))) return;
+    if(Bw && typeof Bw.covers === 'function' && !Bw.covers(text, (page.title || '') + ' ' + (page.summary || '')) && !(query && Bw.covers(query, (page.title || '') + ' ' + (page.summary || '')))) return;
     brief.wiki = page.summary || '';
     brief.wikiUrl = page.url || '';
     if(page.url && brief.links.length < 4) brief.links.push({ title: page.title || 'Wikipedia', url: page.url });
@@ -798,11 +798,13 @@ async function compassGather(text, query){
         if(!h || !h.url || !/^https:\/\//.test(h.url)) return;
         if(brief.links.some(function(x){ return x.url === h.url; })) return;
         if(brief.links.length < 4) brief.links.push({ title: h.title || '', url: h.url });
-        if(h.snippet && brief.snippets.length < 4 && !(window.NalunoCompassBrain && typeof NalunoCompassBrain.covers === 'function' && !NalunoCompassBrain.covers(text, (h.title || '') + ' ' + h.snippet))) brief.snippets.push(String(h.snippet).replace(/\s+/g, ' ').trim());
+        if(h.snippet && brief.snippets.length < 4 && !(window.NalunoCompassBrain && typeof NalunoCompassBrain.covers === 'function' && !NalunoCompassBrain.covers(text, (h.title || '') + ' ' + h.snippet) && !(query && NalunoCompassBrain.covers(query, (h.title || '') + ' ' + h.snippet)))) brief.snippets.push(String(h.snippet).replace(/\s+/g, ' ').trim());
       });
     }).catch(function(){}));
   }
-  await Promise.all(jobs);
+  /* 22 Oct i: a slow page never holds the answer up for more than 3.5 s;
+     whatever arrived by then is used. */
+  await Promise.race([Promise.all(jobs), new Promise(function(r){ setTimeout(r, 3500); })]);
   /* 30a: every link is judged against the question; loosely related pages
      (a different person with the same surname, an unrelated product) are
      dropped, and so are the snippets that came with them. */
@@ -961,29 +963,25 @@ async function sendCompassMessage(){
   const onNaluno = Brain ? Brain.aboutNaluno(text, guide) : false;
   const compassTopic = (guide && guide[0] && guide[0].id) ? guide[0].id : (onNaluno ? 'naluno-other' : 'world');
   let brief = { personLine: '', wiki: '', wikiUrl: '', snippets: [], links: [] };
+  /* 22 Oct i: the sign-in, the place and the weather are fetched while the
+     web is searched, not one after the other. */
+  const tokenP = currentUser.getIdToken().catch(function(){ return ''; });
+  const findP = (/\b(phone|phones|where|locat\w*|lost|find|device|stolen)\b/i.test(text) && typeof findNalunoContextText === 'function') ? Promise.resolve().then(findNalunoContextText).catch(function(){ return ''; }) : Promise.resolve('');
+  const weatherP = /\b(weather|rain\w*|sun\w*|hot|cold|warm|temperature|umbrella|forecast|storm|wind\w*|outside|wear|jacket|tonight|tomorrow)\b/i.test(text)
+    ? Promise.resolve().then(function(){ if(typeof weatherSystemHint === 'function') return weatherSystemHint(); if(typeof formatWeatherReply === 'function') return formatWeatherReply(text); return ''; }).catch(function(){ return ''; })
+    : Promise.resolve('');
   if(!onNaluno && !(Brain && typeof Brain.needsLookup === 'function' && !Brain.needsLookup(text))){
     try{ brief = await compassGather(text, Brain ? Brain.searchQuery(text, prevUser) : ''); }catch(_){}
   }
   const facts = compassBriefText(brief);
 
   try{
-    const idToken = await currentUser.getIdToken();
+    const idToken = await tokenP;
     /* 21 Oct f: the phone's place and the weather go with a question only
        when it is about them (they used to go with every question: noise for
        the model, and a place sent when it was not needed). */
-    let findHint = '';
-    if(/\b(phone|phones|where|locat\w*|lost|find|device|stolen)\b/i.test(text)){
-      try{
-        if(typeof findNalunoContextText === 'function') findHint = await findNalunoContextText();
-      }catch(_){}
-    }
-    let weatherHint = '';
-    if(/\b(weather|rain\w*|sun\w*|hot|cold|warm|temperature|umbrella|forecast|storm|wind\w*|outside|wear|jacket|tonight|tomorrow)\b/i.test(text)){
-      try{
-        if(typeof weatherSystemHint === 'function') weatherHint = await weatherSystemHint();
-        else if(typeof formatWeatherReply === 'function') weatherHint = await formatWeatherReply(text);
-      }catch(_){}
-    }
+    const findHint = (await findP) || '';
+    const weatherHint = (await weatherP) || '';
     /* 21 Oct f: one clear brief, the conversation without earlier refusals,
        and what the app found attached to the question (compass-brain.js). */
     const firstName = (function(){ try{ return String((currentProfile && currentProfile.name) || '').split(' ')[0]; }catch(_){ return ''; } })();
@@ -1034,7 +1032,16 @@ async function sendCompassMessage(){
       renderCompassMessages();
       return;
     }
-    const reply = compassDecorate(text, compassFinishReply(text, data.reply, brief), guide, onNaluno, brief);
+    /* 22 Oct i: a reply that went round in circles is cut at the first
+       repeat; one that repeated itself again and again is not shown. */
+    let raw = data.reply;
+    const looped = (Brain && typeof Brain.cutLoops === 'function') ? Brain.cutLoops(raw) : { text: raw, broken: false };
+    if(looped.broken){
+      raw = compassFromBrief(text, brief) || ((Brain && Brain.isRecent && Brain.isRecent(text))
+        ? 'I\u2019m not sure of the newest one, and I don\u2019t want to guess a name. Ask me again in a moment and I\u2019ll look it up again.'
+        : 'Sorry, that answer came out jumbled. Please ask me again.');
+    } else raw = looped.text;
+    const reply = compassDecorate(text, compassFinishReply(text, raw, brief), guide, onNaluno, brief);
     compassMeasure(compassTopic, !/\b(i (do not|don't|dont) know|i'?m not sure|i could not find|i couldn'?t find|no information)\b/i.test(String(reply || '')));
     compassMessages.push({ from:'compass', text: reply, ts: Date.now() });
     renderCompassMessages();

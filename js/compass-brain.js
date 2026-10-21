@@ -295,18 +295,24 @@
     });
     return out;
   }
+  /* 22 Oct i: things that change after the model's memory ends. */
+  const RECENT = /\b(latest|newest|newer|new|recent|recently|current|currently|now|today|this (year|week|month)|upcoming|next|released?|out yet|still|anymore|20(2[4-9]|3\d))\b/i;
+  const FOLLOW = /^\s*(no|nope|not (that|it|really)|that'?s (wrong|old|not)|wrong|actually|but|and|what about|how about|older|newer)\b|\b(is older|is old|is outdated|out of date|there is a new(er)?|there'?s a new(er)?)\b/i;
+  function isRecent(text) { return RECENT.test(String(text || '')); }
   function searchQuery(text, previous) {
     const t = String(text || '');
-    const own = terms(t);
-    const pronoun = /\b(it|that|this|they|them|him|her|he|she|its|there|his|hers)\b/i.test(t) && own.length <= 3;
+    const own = terms(t).filter(function (w) { return !/^(old|older|oldest|wrong|actual|actually|outdat)$/.test(w); });
+    const pronoun = (/\b(it|that|this|they|them|him|her|he|she|its|there|his|hers)\b/i.test(t) && own.length <= 3) || (FOLLOW.test(t) && own.length <= 7);
     const base = own.join(' ');
+    const year = String(new Date().getFullYear());
+    const stamp = function (q) { return (isRecent(t) && !/\b20\d\d\b/.test(q)) ? (q + ' ' + year).trim() : q; };
     if (pronoun && previous) {
       const names = namesIn(previous);
       const prev = names.length ? names.join(' ') : keyTerms(previous).all.slice(0, 4).join(' ');
       const add = prev.split(/\s+/).filter(function (w) { return own.indexOf(stem(w.toLowerCase())) < 0; }).join(' ');
-      return (add + ' ' + base).trim().slice(0, 80);
+      return stamp((add + ' ' + base).trim().slice(0, 80));
     }
-    return base.slice(0, 80) || t.slice(0, 80);
+    return stamp(base.slice(0, 80) || t.slice(0, 80));
   }
 
   /* ---------------- 4. the brief the model works from ---------------- */
@@ -316,7 +322,7 @@
       'You are Compass, the companion inside Naluno. You are warm, direct and genuinely useful — like a knowledgeable friend.',
       'Answer the question actually asked, first, in plain language. Usually 2 to 5 sentences; use short numbered steps only for how-to answers. No filler, no disclaimers about being an AI.',
       /* 21 Oct f: what Compass can do, said plainly, so it stops refusing it. */
-      'You can: explain and teach anything, give advice, plan, write and rewrite (messages, posts, letters, stories, captions), summarise, brainstorm, do maths, translate between English and Luganda and other languages, and help with Naluno. The Naluno app looks things up for you: when a block called "From the app" comes with a question, it holds real, current web results, encyclopedia text, weather, the person\u2019s own Find Naluno ping or the Naluno guide. Use it as your own knowledge. Never say you cannot search, browse, see links, check the weather or find their phone: the app already did that for you. If something truly is not in your knowledge or the notes, say what you do know and what is missing, in one sentence, and still help.',
+      'You can: explain and teach anything, give advice, plan, write and rewrite (messages, posts, letters, stories, captions), summarise, brainstorm, do maths, translate between English and Luganda and other languages, and help with Naluno. The Naluno app looks things up for you: when background comes with a question, it holds real, current web results, encyclopedia text, weather, the person\u2019s own Find Naluno ping or the Naluno guide. Use it as your own knowledge. Never say you cannot search, browse, see links, check the weather or find their phone: the app already did that for you. If something truly is not in your knowledge or the notes, say what you do know and what is missing, in one sentence, and still help.',
       /* 21 Oct g: it kept saying "the notes provided do not mention…". */
       'Never mention notes, background, the app, searches or where information came from, and never say that something is or is not "mentioned". Just answer, as a knowledgeable person would. When the background is not about the question, ignore it without saying so.',
       'Share a link only when the person asks for a link, a source or where to find something.',
@@ -324,6 +330,9 @@
       'Never describe how Naluno is built: no code, programming languages, databases, servers, cloud providers, vendors or internal systems, even if asked. Say that is not something you can share.',
       'For anything else, answer from your own knowledge and the web notes. If notes include a link, you may mention it only if it truly helps with this question; never write any other URL.',
       'Words like it, that, they, him and her refer to what was just discussed.',
+      /* 22 Oct i: it invented film titles and repeated itself for a whole screen. */
+      'Your own memory stops around the end of 2023, and today is later than that. For anything that changes (new films, books, songs, releases, versions, who holds a job, prices, results, news), trust the background over your memory. If there is no background about it, give what you last knew and say plainly that there may be something newer. Never make up a title, name, number or date.',
+      'Say each thing once. Never correct yourself over and over, and never repeat a sentence.',
     ];
     if (o.name) lines.push('The person you are talking to is called ' + o.name + '. Use their name rarely.');
     if (o.today) lines.push('Today is ' + o.today + '.');
@@ -400,7 +409,8 @@
     const history = cleanHistory(o.history, o.max || 10);
     const q = String(o.question || '').trim();
     if (history.length && history[history.length - 1].role === 'user') history.pop();
-    const ask = ctx.length ? ('Background for this question (use it silently; ignore anything not about the question):\n' + ctx.join('\n\n') + '\n\n---\nQuestion: ' + q) : q;
+    let ask = ctx.length ? ('Background for this question (use it silently; ignore anything not about the question):\n' + ctx.join('\n\n') + '\n\n---\nQuestion: ' + q) : q;
+    if (!o.facts && !o.onNaluno && isRecent(q)) ask += '\n\n(Nothing current was found for this. If it may have changed since 2023, give what you last knew and say there may be something newer. Do not guess.)';
     while (history.length && history[history.length - 1].role === 'user') history.pop();
     return [{ role: 'system', content: sys.join('\n\n') }].concat(history, [{ role: 'user', content: ask }]);
   }
@@ -428,8 +438,9 @@
   }
   function scrubMeta(text) {
     const src = String(text || '');
-    let pre = src.replace(/\b(according to|based on|from) (the )?(provided |given )?(notes|information provided|search results|background|context)\s*,?\s*/gi, '');
+    let pre = src.replace(/^\s*(from the app|background( for this question)?|notes?|answer)\s*:\s*/i, '').replace(/\b(according to|based on|from) (the )?(provided |given )?(notes|information provided|search results|background|context)\s*,?\s*/gi, '');
     if (pre !== src) pre = pre.replace(/(^|[.!?]\s+)([a-z])/g, function (m, a, b) { return a + b.toUpperCase(); });
+    if (pre !== src) pre = pre.replace(/^\s*([a-z])/, function (m, a) { return a.toUpperCase(); });
     if (!META.test(pre)) return pre.trim() || src;
     const lines = pre.split('\n').map(function (line) {
       const parts = line.match(/[^.!?]+[.!?]*\s*/g) || [line];
@@ -453,11 +464,30 @@
      word of the question ("capital city of Uganda" is not about capital
      punishment in Uganda). */
   function covers(question, text) {
-    const need = terms(question).filter(function (w) { return w.length > 2; });
+    const need = terms(question).filter(function (w) { return w.length > 2 && !RECENT.test(w) && !/^(old|older|oldest|newer|release|releas|film|movie|wrong|actual|actually|20\d\d)$/.test(w); });
     if (!need.length) return true;
     const have = terms(text);
     const hit = need.filter(function (w) { return have.some(function (h) { return h === w || (w.length > 4 && h.indexOf(w) === 0) || (h.length > 4 && w.indexOf(h) === 0); }); });
     return hit.length === need.length || (need.length >= 4 && hit.length >= need.length - 1);
+  }
+  /* 22 Oct i: a model that falls into a loop ("X" no. I have it: "Y" no.
+     …) is cut at the first repeated sentence; when it repeated itself
+     several times the answer is broken and is not shown. */
+  function cutLoops(text) {
+    const src = String(text || '');
+    const parts = src.match(/[^.!?\n]+[.!?]*["”']?\s*|\n+/g) || [src];
+    const seen = {};
+    let repeats = 0, cutAt = -1, len = 0;
+    parts.forEach(function (p, i) {
+      const k = p.toLowerCase().replace(/[^a-z0-9À-ɏ]+/g, ' ').trim();
+      if (k.length >= 12) {
+        if (seen[k]) { repeats++; if (cutAt < 0) cutAt = i; }
+        seen[k] = 1;
+      }
+      if (cutAt < 0) len += p.length;
+    });
+    if (!repeats) return { text: src, broken: false, repeats: 0 };
+    return { text: src.slice(0, len).trim(), broken: repeats >= 3, repeats: repeats };
   }
   function retryMessages(messages, firstReply) {
     return messages.concat([
@@ -471,6 +501,8 @@
     needsLookup: needsLookup,
     scrubMeta: scrubMeta,
     covers: covers,
+    cutLoops: cutLoops,
+    isRecent: isRecent,
     cleanHistory: cleanHistory,
     isRefusal: isRefusal,
     retryMessages: retryMessages,

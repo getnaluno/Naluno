@@ -25,7 +25,7 @@ const B = require('./compass-brain.js');
   assert.ok(/Never say you cannot search, browse/.test(msgs[0].content) && /Naluno guide:/.test(msgs[0].content) && /Wed Oct 21 2026/.test(msgs[0].content));
   const last = msgs[msgs.length - 1];
   assert.strictEqual(last.role, 'user');
-  assert.ok(/^From the app, for this question:/.test(last.content) && /6,650 km/.test(last.content) && /Question: How long is the Nile\?$/.test(last.content));
+  assert.ok(/^Background for this question/.test(last.content) && /6,650 km/.test(last.content) && /Question: How long is the Nile\?$/.test(last.content));
   assert.ok(!msgs.some((m) => /don't have access/.test(m.content)), 'the old refusal is not taught back');
   assert.ok(!msgs.some((m) => m.content === '…'));
   for (let i = 1; i < msgs.length; i++) assert.notStrictEqual(msgs[i].role, msgs[i - 1].role, 'turns alternate');
@@ -49,7 +49,8 @@ const B = require('./compass-brain.js');
   const c = read('js/compass.js');
   assert.ok(/Brain\.buildRequest\(\{/.test(c) && /Brain\.isRefusal\(first\.data\.reply\)/.test(c) && /Brain\.retryMessages\(messages, first\.data\.reply\)/.test(c));
   assert.ok(!/messages\.unshift\(/.test(c), 'no separate instruction messages any more');
-  assert.ok(/if\(\/\\b\(phone\|phones\|where/.test(c) && /if\(\/\\b\(weather\|rain/.test(c), 'place and weather only when the question is about them');
+  /* 22 Oct a: fetched alongside the web search now, still only when asked. */
+  assert.ok(/\(\/\\b\(phone\|phones\|where[^\n]*\? Promise\.resolve\(\)\.then\(findNalunoContextText\)[^\n]*: Promise\.resolve\(''\)/.test(c) && /\/\\b\(weather\|rain[^\n]*\n\s*\? Promise\.resolve\(\)[^\n]*\n\s*: Promise\.resolve\(''\)/.test(c), 'place and weather only when the question is about them');
   assert.ok(/const weak = \(Bw && typeof Bw\.isRefusal === 'function'\) \? Bw\.isRefusal\(out\)/.test(c), 'good answers are no longer thrown away over a phrase');
   assert.ok(/Brain\.needsLookup\(text\)/.test(c));
 }

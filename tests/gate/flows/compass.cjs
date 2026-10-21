@@ -11,6 +11,7 @@ module.exports = {
       if (!/naluno-compass/.test(u)) return null;
       const msgs = (body && body.messages) || [];
       const last = (msgs[msgs.length - 1] || {}).content || '';
+      if (/newest Avatar/.test(last)) return { reply: 'From the app: ' + Array(8).fill('The newest movie is "Avatar 3" no. I have the correct title: The newest movie is "Avatar: The Last Shadow" no.').join(' '), model: 'test-model' };
       if (/You can do this/.test(last)) return { reply: 'The Nile is about 6,650 km long.', model: 'test-model' };
       return { reply: "I'm sorry, but I don't have access to real-time information or the internet.", model: 'test-model' };
     };
@@ -55,6 +56,11 @@ module.exports = {
       out.push({ check: 'the earlier refusal is not sent back as history', ok: !firstReq.some((m) => m.role === 'assistant' && /don't have access/.test(m.content)), detail: '' });
       out.push({ check: 'a refusal is asked again once, and the real answer shown', ok: calls.length === 2 && (await P.p.evaluate(() => /6,650 km/.test(document.getElementById('compassMessages').innerText))), detail: calls.length + ' requests' });
       out.push({ check: 'no place sent with a question that is not about the phone', ok: !JSON.stringify(firstReq).includes('own phones, last Find Naluno ping'), detail: '' });
+      /* 22 Oct a: an answer that goes round in circles is never shown */
+      await P.p.evaluate(() => { document.getElementById('compassInput').value = 'What is the newest Avatar film?'; sendCompassMessage(); });
+      await sleep(7000);
+      const lastMsg = await P.p.evaluate(() => { const b = document.querySelectorAll('#compassMessages .msg-row:not(.me) .msg-bubble'); return b.length ? b[b.length - 1].innerText : ''; });
+      out.push({ check: 'a looping answer is not shown, and no "From the app:"', ok: !!lastMsg && !/no\. I have the correct title/.test(lastMsg) && !/From the app/.test(lastMsg) && !/Last Shadow/.test(lastMsg), detail: lastMsg.slice(0, 120) });
       const errs = P.log.filter((l) => /PAGEERROR/.test(l));
       out.push({ check: 'no page errors', ok: !errs.length, detail: errs.slice(0, 2).join(' / ') });
     } finally { await S.close(); }

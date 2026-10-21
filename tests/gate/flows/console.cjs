@@ -17,6 +17,9 @@ module.exports = {
     const now = Date.now();
     for (let i = 0; i < 6; i++) store.seed('users/u' + i, { name: 'Person ' + i, handle: 'p' + i, country: 'UG', createdAt: now - i * 86400000 });
     store.seed('handles/p1', { uid: 'u1' });
+    /* volume, so the read count means something */
+    for (let i = 0; i < 400; i++) store.seed('presenceDays/pd' + i, { uid: 'u' + (i % 6), day: new Date(now - (i % 30) * 86400000).toISOString().slice(0, 10), at: now - (i % 30) * 86400000 });
+    for (let i = 0; i < 300; i++) store.seed('siteSessions/ss' + i, { vid: 'v' + i, startedAt: now - i * 600000, path: '/' });
     store.seed('traffic/t1', { kind: 'call', ok: true, actorUid: 'u1', peerUid: 'u2', actorName: 'Person 1', peerName: 'Person 2', seconds: 300, at: now - 3600e3, status: 'ended' });
     store.seed('reports/rep_p1', { report_id: 'rep_p1', reporter_uid: 'u2', target_type: 'person', target_id: 'wireline', target_user_id: 'u1', reason_code: 'harassment', reason: 'Keeps sending threats after I asked them to stop.', status: 'OPEN', ts: now - 60000 });
     const day = new Date(now).toISOString().slice(0, 10);
@@ -26,9 +29,14 @@ module.exports = {
     const ctx = await b.newContext({ viewport: { width: 1280, height: 1000 }, serviceWorkers: 'block' });
     await store.attach(ctx, 'op');
     await ctx.addInitScript(() => { window.__AUDIT_EMAIL = 'magjoed@gmail.com'; });
+    const compassAsks = [];
     await ctx.route(/^https?:\/\/(?!localhost|127\.0\.0\.1)/, (r) => {
       const u = r.request().url();
       if (/firebase-app-compat/.test(u)) return r.fulfill({ status: 200, contentType: 'application/javascript', body: fake });
+      if (/naluno-compass/.test(u) && r.request().method() === 'POST') {
+        compassAsks.push(r.request().headers()['authorization'] || '');
+        return r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{"reply":"Kampala is the capital of Uganda.","model":"test-model"}' });
+      }
       if (/workers\.dev/.test(u)) return r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{"ok":true,"operator":true,"hasPassword":true}' });
       return r.fulfill({ status: 200, contentType: 'application/javascript', body: '' });
     });
@@ -39,8 +47,13 @@ module.exports = {
     try {
       await p.goto(G.base + '/admin/', { waitUntil: 'load' });
       await sleep(4000);
+      const docsHere = store.docs.size;
+      const readsBefore = store.reads ? store.reads.n : 0;
       await p.evaluate(() => { document.getElementById('adminPassInput').value = 'password123'; document.getElementById('adminUnlockBtn').click(); });
       await sleep(4500);
+      await sleep(6000);
+      const readsOpen = (store.reads ? store.reads.n : 0) - readsBefore;
+      out.push({ check: 'opening the console reads each document about once (not twice)', ok: readsOpen <= docsHere * 1.25 + 120, detail: readsOpen + ' reads for ' + docsHere + ' documents' });
       const inside = await p.evaluate(() => { const b = document.getElementById('adminBody'); return !!(b && b.innerText.trim().length > 50) && !!document.querySelector('[data-tab]'); });
       out.push({ check: 'operator gets in with the password', ok: inside, detail: '' });
       const tabs = await p.evaluate(() => Array.from(document.querySelectorAll('#adminTabs [data-tab], [data-tab]')).map((x) => x.getAttribute('data-tab')).filter((v, i, a) => v && a.indexOf(v) === i));
@@ -75,6 +88,13 @@ module.exports = {
       await p.evaluate(() => { document.querySelectorAll('#adminBody details').forEach((d) => { d.open = true; }); });
       const batches = await p.evaluate(() => { const b = document.getElementById('msBatches'); return !!(b && /Latest batches from phones/i.test(b.innerText)); });
       out.push({ check: 'Measures shows the latest batches', ok: batches, detail: '' });
+      /* the Compass check signs in as the operator */
+      await p.evaluate(() => { const x = document.querySelector('[data-tab="health"]'); x && x.click(); });
+      await sleep(2500);
+      await p.evaluate(() => { const b = document.getElementById('compassCheckBtn'); b && b.click(); });
+      await sleep(4000);
+      const answered = await p.evaluate(() => { const h = document.getElementById('compassCheckHost'); return h ? h.innerText.replace(/\s+/g, ' ') : ''; });
+      out.push({ check: 'the Compass check asks as the signed-in operator', ok: compassAsks.length === 9 && compassAsks.every((a) => /^Bearer \S+/.test(a)) && /9 of 9 answered properly/.test(answered), detail: compassAsks.length + ' asks · ' + answered.slice(0, 80) });
       out.push({ check: 'no page errors in the console', ok: !errs.length, detail: errs.slice(0, 3).join(' / ') });
     } finally { await b.close(); }
     return out;
