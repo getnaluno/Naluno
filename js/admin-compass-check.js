@@ -25,7 +25,12 @@
   let rows = null;
   let running = false;
 
+  /* 21 Oct g: the console signs in on its own Firebase app, not the
+     default one, so asking the default one gave no token and Compass
+     answered "Sign in to use Compass". The console hands its own over. */
+  let tokenFrom = null;
   async function token() {
+    try { if (typeof tokenFrom === 'function') { const t = await tokenFrom(); if (t) return t; } } catch (_) {}
     try {
       const u = root.firebase && root.firebase.auth && root.firebase.auth().currentUser;
       return u ? await u.getIdToken() : '';
@@ -72,7 +77,8 @@
     }
     return h.card('How good is Compass?', body + '<div class="row"><button type="button" class="ghost" id="compassCheckBtn"' + (running ? ' disabled' : '') + '>' + (rows ? 'Ask again' : 'Ask Compass') + '</button></div>');
   }
-  function bind(repaint) {
+  function bind(repaint, getToken) {
+    if (typeof getToken === 'function') tokenFrom = getToken;
     if (root.__nalunoCompassCheckBound) return;
     root.__nalunoCompassCheckBound = true;
     document.addEventListener('click', function (e) {

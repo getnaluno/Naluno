@@ -698,6 +698,8 @@ function compassFinishReply(text, reply, brief){
      "not able to" or "I cannot" anywhere ("if you are not able to sign
      in…"), and threw away good answers for a pasted web snippet. */
   const Bw = window.NalunoCompassBrain;
+  /* 21 Oct g: no talk about "the notes provided". */
+  if(out && Bw && typeof Bw.scrubMeta === 'function') out = Bw.scrubMeta(out);
   const weak = (Bw && typeof Bw.isRefusal === 'function') ? Bw.isRefusal(out) : compassReplyWeak(out);
   if(!out || weak){
     const grounded = compassFromBrief(text, brief);
@@ -707,6 +709,15 @@ function compassFinishReply(text, reply, brief){
   const Bf = window.NalunoCompassBrain;
   const named = /\b(who is|who was|who's|what is|what's)\b/i.test(text) && /[A-Z][a-z]/.test(String(text).replace(/^\s*\S+/, ''));
   const want = Bf ? (Bf.wantsLinks(text) || named) : compassWantsSource(text);
+  /* 21 Oct g: a link nobody asked for is left out (a sentence that is only
+     there to point at a page goes with it). */
+  if(!want && /https?:\/\//.test(out) && !(Bf && Bf.wantsLinks(text))){
+    const kept = out.split('\n').map(function(line){
+      const parts = line.match(/[^.!?]+[.!?]*\s*/g) || [line];
+      return parts.filter(function(p){ return !/https?:\/\//.test(p) && !/^\s*(you can (also )?(check|see|read|visit|find)|for more( information)?|see also)\b/i.test(p); }).join('');
+    }).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    if(kept.length > 20) out = kept;
+  }
   if(want && !/https?:\/\//.test(out)){
     const links = (brief && brief.links || []).filter(function(h){ return !Bf || h.score == null || h.score >= (Bf.wantsLinks(text) ? 0.5 : 0.75); }).slice(0, Bf && Bf.wantsLinks(text) ? 2 : 1);
     if(links.length){
@@ -775,6 +786,8 @@ async function compassGather(text, query){
     /* 30a: the top encyclopedia hit is only used when it is about what was asked. */
     const Bw = window.NalunoCompassBrain;
     if(Bw && Bw.relevance(text + ' ' + (query || ''), { title: page.title, url: page.url, snippet: page.summary }) < 0.5) return;
+    /* 21 Oct g: and only when it covers every main word of the question. */
+    if(Bw && typeof Bw.covers === 'function' && !Bw.covers(text, (page.title || '') + ' ' + (page.summary || ''))) return;
     brief.wiki = page.summary || '';
     brief.wikiUrl = page.url || '';
     if(page.url && brief.links.length < 4) brief.links.push({ title: page.title || 'Wikipedia', url: page.url });
@@ -785,7 +798,7 @@ async function compassGather(text, query){
         if(!h || !h.url || !/^https:\/\//.test(h.url)) return;
         if(brief.links.some(function(x){ return x.url === h.url; })) return;
         if(brief.links.length < 4) brief.links.push({ title: h.title || '', url: h.url });
-        if(h.snippet && brief.snippets.length < 4) brief.snippets.push(String(h.snippet).replace(/\s+/g, ' ').trim());
+        if(h.snippet && brief.snippets.length < 4 && !(window.NalunoCompassBrain && typeof NalunoCompassBrain.covers === 'function' && !NalunoCompassBrain.covers(text, (h.title || '') + ' ' + h.snippet))) brief.snippets.push(String(h.snippet).replace(/\s+/g, ' ').trim());
       });
     }).catch(function(){}));
   }

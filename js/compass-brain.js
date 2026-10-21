@@ -317,6 +317,9 @@
       'Answer the question actually asked, first, in plain language. Usually 2 to 5 sentences; use short numbered steps only for how-to answers. No filler, no disclaimers about being an AI.',
       /* 21 Oct f: what Compass can do, said plainly, so it stops refusing it. */
       'You can: explain and teach anything, give advice, plan, write and rewrite (messages, posts, letters, stories, captions), summarise, brainstorm, do maths, translate between English and Luganda and other languages, and help with Naluno. The Naluno app looks things up for you: when a block called "From the app" comes with a question, it holds real, current web results, encyclopedia text, weather, the person\u2019s own Find Naluno ping or the Naluno guide. Use it as your own knowledge. Never say you cannot search, browse, see links, check the weather or find their phone: the app already did that for you. If something truly is not in your knowledge or the notes, say what you do know and what is missing, in one sentence, and still help.',
+      /* 21 Oct g: it kept saying "the notes provided do not mention…". */
+      'Never mention notes, background, the app, searches or where information came from, and never say that something is or is not "mentioned". Just answer, as a knowledgeable person would. When the background is not about the question, ignore it without saying so.',
+      'Share a link only when the person asks for a link, a source or where to find something.',
       'When the question is about Naluno, answer only from the Naluno guide notes you are given, using the exact button and tab names from them. If the notes do not cover it, say you are not sure and suggest "write to Naluno". Never invent a Naluno feature, price, date or rule.',
       'Never describe how Naluno is built: no code, programming languages, databases, servers, cloud providers, vendors or internal systems, even if asked. Say that is not something you can share.',
       'For anything else, answer from your own knowledge and the web notes. If notes include a link, you may mention it only if it truly helps with this question; never write any other URL.',
@@ -397,7 +400,7 @@
     const history = cleanHistory(o.history, o.max || 10);
     const q = String(o.question || '').trim();
     if (history.length && history[history.length - 1].role === 'user') history.pop();
-    const ask = ctx.length ? ('From the app, for this question:\n' + ctx.join('\n\n') + '\n\n---\nQuestion: ' + q) : q;
+    const ask = ctx.length ? ('Background for this question (use it silently; ignore anything not about the question):\n' + ctx.join('\n\n') + '\n\n---\nQuestion: ' + q) : q;
     while (history.length && history[history.length - 1].role === 'user') history.pop();
     return [{ role: 'system', content: sys.join('\n\n') }].concat(history, [{ role: 'user', content: ask }]);
   }
@@ -409,6 +412,53 @@
     if (TASK.test(t)) return false;
     return true;
   }
+  /* 21 Oct g: what a small model still says about its sources is taken out
+     of the answer: a sentence about "the notes provided" goes, and "the
+     notes don't mention X, but according to general knowledge, Y" keeps Y. */
+  const META = /\b((the|these|those|your|my) )?(provided |given |attached |above |supplied )?(notes?|search results?|web results?|background( information)?|context|sources?|information (provided|given|above|supplied))\b[^.?!]*\b(provided|given|supplied|mention(s|ed)?|say(s)?|state(s|d)?|contain(s)?|include(s|d)?|cover(s|ed)?|(are|is) about|explicitly|according|don'?t|do not|does not|doesn'?t)\b|\b(provided|given|supplied) (notes|information|context|background)\b|\baccording to (the )?(notes|information provided|search results|background|context)\b/i;
+  const LEAD = /^\s*(however|but|that said|still|anyway|nevertheless)\s*,?\s*/i;
+  const KNOW = /^\s*(according to|based on|from) (my |general |common )*(own )?(knowledge|information)\s*,?\s*/i;
+  const TELLYOU = /^\s*i can (still )?(tell|let) you (know )?that\s+/i;
+  function cap(t) { return t ? t.charAt(0).toUpperCase() + t.slice(1) : t; }
+  const MENTION = /\b(mention(s|ed)?|say(s)?|state(s|d)?|cover(s|ed)?|contain(s)?|include(s|d)?)\b/i;
+  function tidy(p) {
+    let t = p;
+    for (let i = 0; i < 3; i++) t = t.replace(LEAD, '').replace(KNOW, '').replace(TELLYOU, '');
+    return cap(t);
+  }
+  function scrubMeta(text) {
+    const src = String(text || '');
+    let pre = src.replace(/\b(according to|based on|from) (the )?(provided |given )?(notes|information provided|search results|background|context)\s*,?\s*/gi, '');
+    if (pre !== src) pre = pre.replace(/(^|[.!?]\s+)([a-z])/g, function (m, a, b) { return a + b.toUpperCase(); });
+    if (!META.test(pre)) return pre.trim() || src;
+    const lines = pre.split('\n').map(function (line) {
+      const parts = line.match(/[^.!?]+[.!?]*\s*/g) || [line];
+      const kept = [];
+      let dropped = false;
+      parts.forEach(function (p) {
+        if (!META.test(p) && !(dropped && MENTION.test(p) && /\b(they|it|them|those|these)\b/i.test(p))) { kept.push(dropped ? tidy(p) : p); dropped = false; return; }
+        dropped = true;
+        const m = p.split(/,?\s+(?:but|however|yet)\s*,?\s+/i);
+        if (m.length > 1) {
+          const rest = m.slice(1).join(' ').trim();
+          if (rest && !META.test(rest) && !MENTION.test(rest)) { kept.push(tidy(rest) + ' '); dropped = false; }
+        }
+      });
+      return kept.join('');
+    });
+    const out = tidy(lines.join('\n').trim()).replace(/\n{3,}/g, '\n\n');
+    return out.length >= 2 ? out : src;
+  }
+  /* A found page or snippet is only background when it covers every main
+     word of the question ("capital city of Uganda" is not about capital
+     punishment in Uganda). */
+  function covers(question, text) {
+    const need = terms(question).filter(function (w) { return w.length > 2; });
+    if (!need.length) return true;
+    const have = terms(text);
+    const hit = need.filter(function (w) { return have.some(function (h) { return h === w || (w.length > 4 && h.indexOf(w) === 0) || (h.length > 4 && w.indexOf(h) === 0); }); });
+    return hit.length === need.length || (need.length >= 4 && hit.length >= need.length - 1);
+  }
   function retryMessages(messages, firstReply) {
     return messages.concat([
       { role: 'assistant', content: String(firstReply || '').slice(0, 600) },
@@ -419,6 +469,8 @@
   return {
     buildRequest: buildRequest,
     needsLookup: needsLookup,
+    scrubMeta: scrubMeta,
+    covers: covers,
     cleanHistory: cleanHistory,
     isRefusal: isRefusal,
     retryMessages: retryMessages,

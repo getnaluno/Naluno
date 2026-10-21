@@ -128,6 +128,7 @@
     return String(z).replace(/_/g, ' ');
   }
 
+  const __clockFmt = {};
   function formatAdminClock(date, zone) {
     const d = date instanceof Date ? date : new Date(date || Date.now());
     const tz = zone || adminZone();
@@ -135,26 +136,19 @@
     let tzName = '';
     let day = '';
     try {
-      const tf = new Intl.DateTimeFormat('en-GB', {
-        timeZone: tz,
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false,
-      });
-      time = tf.format(d);
-      const df = new Intl.DateTimeFormat('en-GB', {
-        timeZone: tz,
-        weekday: 'short',
-        day: 'numeric',
-        month: 'short',
-      });
-      day = df.format(d);
-      const parts = new Intl.DateTimeFormat('en-GB', {
-        timeZone: tz,
-        timeZoneName: 'short',
-        hour: '2-digit',
-      }).formatToParts(d);
+      /* 21 Oct g: three formatters per time zone, made once (they were made
+         three times for every date shown, the slowest part of opening a tab). */
+      let F = __clockFmt[tz];
+      if (!F) {
+        F = __clockFmt[tz] = {
+          tf: new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
+          df: new Intl.DateTimeFormat('en-GB', { timeZone: tz, weekday: 'short', day: 'numeric', month: 'short' }),
+          nf: new Intl.DateTimeFormat('en-GB', { timeZone: tz, timeZoneName: 'short', hour: '2-digit' }),
+        };
+      }
+      time = F.tf.format(d);
+      day = F.df.format(d);
+      const parts = F.nf.formatToParts(d);
       const p = parts.filter(function (x) { return x.type === 'timeZoneName'; })[0];
       tzName = (p && p.value) || tz;
     } catch (_) {
@@ -174,29 +168,45 @@
     };
   }
 
-  function localYmd(ms, zone) {
-    try {
-      return new Intl.DateTimeFormat('en-CA', {
-        timeZone: zone || adminZone(),
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-      }).format(new Date(ms));
-    } catch (_) {
-      return new Date(ms).toISOString().slice(0, 10);
+  /* 21 Oct g: making a date formatter is slow, and the console asked for a
+     new one for every row on every refresh (thousands a time): most of the
+     console's work on a phone. One formatter per time zone, and each
+     quarter-hour's answer kept (every time zone's offset is a whole number
+     of quarter-hours, so the day and hour cannot change inside one). */
+  const __fmtYmd = {};
+  const __fmtHour = {};
+  const __memoYmd = new Map();
+  const __memoHour = new Map();
+  function memoGet(map, key, make) {
+    let v = map.get(key);
+    if (v === undefined) {
+      if (map.size > 20000) map.clear();
+      v = make();
+      map.set(key, v);
     }
+    return v;
+  }
+  function localYmd(ms, zone) {
+    const tz = zone || adminZone();
+    const t = Number(ms);
+    if (!isFinite(t)) return new Date(ms).toISOString().slice(0, 10);
+    return memoGet(__memoYmd, tz + '|' + Math.floor(t / 900000), function () {
+      try {
+        let f = __fmtYmd[tz];
+        if (!f) f = __fmtYmd[tz] = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
+        return f.format(new Date(t));
+      } catch (_) {
+        return new Date(t).toISOString().slice(0, 10);
+      }
+    });
   }
 
   function startOfLocalDay(ms, zone) {
     const tz = zone || adminZone();
     const ymd = localYmd(ms || Date.now(), tz);
     try {
-      const fmt = new Intl.DateTimeFormat('en-CA', {
-        timeZone: tz,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-      });
+      let fmt = __fmtYmd[tz];
+      if (!fmt) fmt = __fmtYmd[tz] = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
       let lo = Date.parse(ymd + 'T00:00:00Z') - 36 * 3600000;
       let hi = Date.parse(ymd + 'T00:00:00Z') + 36 * 3600000;
       while (hi - lo > 1000) {
@@ -1007,13 +1017,20 @@
     return a.length % 2 ? a[mid] : Math.round((a[mid - 1] + a[mid]) / 2);
   }
   function hourInZone(ts, zone) {
-    try {
-      const parts = new Intl.DateTimeFormat('en-GB', { timeZone: zone || 'UTC', hour: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(ts));
-      const h = parts.filter(function (p) { return p.type === 'hour'; })[0];
-      return h ? Number(h.value) : new Date(ts).getHours();
-    } catch (_) {
-      return new Date(ts).getHours();
-    }
+    const tz = zone || 'UTC';
+    const t = Number(ts);
+    if (!isFinite(t)) return new Date(ts).getHours();
+    return memoGet(__memoHour, tz + '|' + Math.floor(t / 900000), function () {
+      try {
+        let f = __fmtHour[tz];
+        if (!f) f = __fmtHour[tz] = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', hourCycle: 'h23' });
+        const parts = f.formatToParts(new Date(t));
+        const h = parts.filter(function (p) { return p.type === 'hour'; })[0];
+        return h ? Number(h.value) : new Date(t).getHours();
+      } catch (_) {
+        return new Date(t).getHours();
+      }
+    });
   }
   function pageLabel(p) {
     p = String(p || '/');
