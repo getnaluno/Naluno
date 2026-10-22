@@ -56,3 +56,4 @@ The rule now, the same on every phone:
 - 08 Oct 2026 (08b): lock created, owner's request.
 - 08 Oct 2026 (08c): callee's camera made the same as the caller's, owner's request; the callee's answer path added to the lock.
 - 09 Oct 2026 (09a): the uniform rule above, owner's request ("uniform and permanent across all devices").
+- 23 Oct 2026 (23b): owner's go-ahead ("Fix the photo in camera, don't change anything else about the camera and lock it again after"). In the video-call lobby the clear top bar lay over the photo button and took its taps. Two CSS rules: the lobby top bar takes no taps, its Back button does. Only the CSS fingerprint changed (3abe95f60d635d27 → f95078b25fdfbd17); camera size, lens, picture and fitting are untouched.

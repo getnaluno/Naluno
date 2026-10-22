@@ -75,8 +75,8 @@
 // v284: 10.05f Android floats a video call on leaving; Wireline alerts through Naluno's worker; a call answers once per tap.
 // v285: 10.05g voices keep reading (several makers, scheduled, trimmed), Luganda spoken from its own sounds, test alert, stale stamps.
 // v344: 10.19d the answering phone does not open its own hangup channel (that refused the answer); the hangup word leaves before the socket closes; a call alert is drawn and kept; a new build does not wipe the push address.
-const CACHE_NAME = 'naluno-shell-v353';
-const APP_BUILD = '20261022a';
+const CACHE_NAME = 'naluno-shell-v355';
+const APP_BUILD = '20261023b';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -89,7 +89,7 @@ const CORE_ASSETS = [
   '/js/screen.js', '/js/origin.js', '/js/strand.js', '/js/circle.js',
   '/js/discover-engine.js', '/js/discover.js', '/js/room-threads.js', '/js/pass-on.js', '/js/lg-books.js', '/js/lg-speak.js', '/js/lg-voice.js', '/js/traffic.js', '/js/naluno-voices.js', '/js/naluno-voice-worker.js', '/js/naluno-voice-engine.js', '/js/naluno-af-engine.js', '/js/known.js',
   '/js/signal-core.js', '/js/signal-ui.js', '/js/broadcast-glance.js', '/js/signal-public.js', '/js/signal-social.js', '/js/live-sync.js', '/js/broadcast-offline.js',
-  '/js/sfu-live.js', '/js/compass-brain.js', '/js/compass.js', '/js/linkify.js', '/js/weather.js', '/js/beacon.js', '/js/find-history.js', '/js/find.js', '/js/profile.js', '/js/notifications.js',
+  '/js/sfu-live.js', '/js/compass-brain.js', '/js/compass.js', '/js/linkify.js', '/js/weather.js', '/js/beacon.js', '/js/find-history.js', '/js/find.js', '/js/avatar-picker.js', '/js/profile.js', '/js/notifications.js',
   '/js/ice-core.js', '/js/compat-lock.js', '/js/keep-alive.js', '/js/media-contain.js',
   '/js/diagnostics.js', '/js/currency.js', '/js/economy.js', '/js/economy-ui.js', '/js/legal-privacy.js', '/js/onboard.js', '/js/presence.js', '/js/session-log.js', '/js/push-receipt.js', '/js/handle-guard.js',
   '/js/trust-legal.js', '/js/security-events.js',
@@ -476,7 +476,11 @@ self.addEventListener('fetch', event=>{
       if(/[?&]v=/.test(url.search)){
         const have = await caches.match(event.request);
         if(have && isShellResponse(have, path)){
-          event.waitUntil(netTimeout(event.request, path.indexOf('naluno-voice-engine.js') >= 0 ? 120000 : 12000).then(function(fresh){
+          /* 23 Oct: refreshed with the server ("no-cache"), not from the
+             browser's own few-minute copy, so a file uploaded a little after
+             its page (an older copy kept under the new ?v=) heals on the
+             next opening instead of staying old. */
+          event.waitUntil(netTimeout(new Request(event.request.url, { cache: 'no-cache', credentials: 'same-origin' }), path.indexOf('naluno-voice-engine.js') >= 0 ? 120000 : 12000).then(function(fresh){
             if(fresh && fresh.ok && isShellResponse(fresh, path)) putBare(fresh);
           }).catch(function(){}));
           return have;

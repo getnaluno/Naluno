@@ -441,7 +441,11 @@
   let togaPainted = false;
   async function renderTogaBoard(){
     const el = $('togaBoard');
-    if(!el || !fbDb) return;
+    /* 23 Oct: asked to redraw before sign-in had set up (the tap test saw
+       "fbDb is not defined" thrown from here): it simply waits for the next redraw. */
+    let ready = false;
+    try{ ready = !!fbDb; }catch(_){ ready = false; }
+    if(!el || !ready) return;
     const gen = ++togaRenderGen;
     watchTogaLive();
     const monthKey = nalunoMonthKey();

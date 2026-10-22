@@ -3,6 +3,8 @@ function makeStore(opts = {}) {
   const docs = new Map(); // path -> data (encoded: timestamps as {__ts})
   const listeners = new Map(); // key -> { page, id, spec, last }
   const log = [];
+  /* documents read, the way Firestore bills them (for the speed and cost checks) */
+  const reads = { n: 0 };
   const deny = opts.deny || (() => null); // (uid, kind, pathOrSpec) -> error string | null
   const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
   const tsMs = (v) => (v && typeof v === 'object' && typeof v.__ts === 'number' ? v.__ts : v);
@@ -93,7 +95,7 @@ function makeStore(opts = {}) {
     return out;
   }
   function snapFor(L) {
-    if (L.spec.doc) { const d = docs.get(L.spec.doc); const s = JSON.stringify(d === undefined ? null : d); if (s === L.last) return null; L.last = s; return { data: d === undefined ? null : d }; }
+    if (L.spec.doc) { const d = docs.get(L.spec.doc); const s = JSON.stringify(d === undefined ? null : d); if (s === L.last) return null; L.last = s; reads.n++; return { data: d === undefined ? null : d }; }
     const res = run(L.spec);
     const prev = L.last ? JSON.parse(L.last) : null;
     const now = res.map((d) => [d.path, JSON.stringify(d.data)]);
@@ -105,6 +107,7 @@ function makeStore(opts = {}) {
     const nowSet = new Set(now.map((x) => x[0]));
     (prev || []).forEach((x, i) => { if (!nowSet.has(x[0])) changes.push({ type: 'removed', path: x[0], data: JSON.parse(x[1]), oldIndex: i, newIndex: -1 }); });
     L.last = s;
+    reads.n += prev ? Math.max(1, changes.filter((c) => c.type !== 'removed').length) : Math.max(1, res.length);
     return { docs: res, changes };
   }
   function fire(L) {
@@ -131,8 +134,8 @@ function makeStore(opts = {}) {
     if (opts.jitterMs && m.op === 'get') await new Promise((r) => setTimeout(r, Math.random() * opts.jitterMs));
     if (opts.offline && opts.offline(uid)) { await new Promise(() => {}); }
     switch (m.op) {
-      case 'get': { const e = deny(uid, 'get', m.path); if (e) return JSON.stringify({ __err: e }); const d = docs.get(m.path); return JSON.stringify(d === undefined ? null : d); }
-      case 'query': { const e = deny(uid, 'list', m.spec.path, m.spec); if (e) return JSON.stringify({ error: e }); return JSON.stringify({ docs: run(m.spec), changes: [] }); }
+      case 'get': { const e = deny(uid, 'get', m.path); if (e) return JSON.stringify({ __err: e }); reads.n++; const d = docs.get(m.path); return JSON.stringify(d === undefined ? null : d); }
+      case 'query': { const e = deny(uid, 'list', m.spec.path, m.spec); if (e) return JSON.stringify({ error: e }); const got = run(m.spec); reads.n += Math.max(1, got.length); return JSON.stringify({ docs: got, changes: [] }); }
       case 'set': case 'update': case 'delete': { const r = write(uid, { kind: m.op, path: m.path, data: m.data, merge: m.merge }); notifyAll(); return JSON.stringify(r.error ? r : null); }
       case 'batch': {
         /* All or nothing, and judged by the same rules as single writes. */
@@ -154,7 +157,7 @@ function makeStore(opts = {}) {
     return 'null';
   }
   return {
-    docs, log, listeners,
+    docs, log, listeners, reads,
     seed(path, data) { docs.set(path, data); },
     get: (p) => docs.get(p),
     query: run,

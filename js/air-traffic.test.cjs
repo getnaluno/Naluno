@@ -69,7 +69,7 @@ assert.ok(html.indexOf('id="bwriteToLg"') < 0);
 assert.ok(html.indexOf('id="bwriteSpeak"') < 0);
 assert.ok(html.indexOf('air-word') > 0);
 assert.ok(html.indexOf('Swipe up') > 0);
-assert.ok(html.indexOf('avatarFileInput" accept="image/*') > 0);
+assert.ok(/id="avatarFileInput"[^>]*accept="image\/\*/.test(html));
 assert.ok(html.indexOf('lg-books.js') > 0);
 
 assert.ok(html.indexOf('id="airHomeLeave"') > 0);

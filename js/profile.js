@@ -692,31 +692,54 @@ $('nameInput').addEventListener('input', e=>{
   if(!draftPhoto) $('profileAvatarBig').textContent = initialsFor(e.target.value);
 });
 
-/* --- avatar photo upload + crop/pan/zoom (reuses the Adjust overlay) --- */
-if($('avatarEditBtn')) $('avatarEditBtn').onclick = function(){ /* overlay input is the tap target */ };
-$('avatarFileInput').onchange = async (e)=>{
-  const file = e.target.files[0];
-  e.target.value = '';
-  if(!file) return;
+/* --- avatar photo: the photo itself is the picker (23 Oct) ---
+   Tap the photo (on the Callsign page or while editing), choose a
+   picture, pinch and drag it into the circle (avatar-picker.js), Use
+   photo. On the Callsign page it is saved straight away; while editing it
+   is saved with the rest when you press Save callsign. */
+async function nalunoPickAvatar(input){
+  const file = input.files && input.files[0];
+  input.value = '';
+  if(!file) return null;
   const named = String(file.name || '').toLowerCase();
   const typed = String(file.type || '').toLowerCase();
   const imageLike = typed.indexOf('image/') === 0 || /\.(jpe?g|png|webp|gif|bmp|heic|heif|avif|tiff?|jfif|ico)$/.test(named);
   if(!imageLike){
     if(typeof toast === 'function') toast('Choose a picture');
-    return;
+    return null;
   }
   const dataUrl = await readFileAsDataUrl(file);
   if(!dataUrl || String(dataUrl).indexOf('data:image') !== 0 && String(dataUrl).indexOf('data:application') !== 0){
     if(typeof toast === 'function') toast('That picture could not be read');
-    return;
+    return null;
   }
-  const startingCrop = draftPhoto ? (draftPhoto.crop || { scale:1, xPct:0, yPct:0 }) : { scale:1, xPct:0, yPct:0 };
-  openAvatarAdjust(dataUrl, startingCrop, (result)=>{
-    draftPhoto = Object.assign({}, result, { file: file });
-    const selectedSwatch = document.querySelector('#swatchRow .swatch.selected');
-    applyAvatarVisual($('profileAvatarBig'), { name:$('nameInput').value, color: selectedSwatch ? selectedSwatch.dataset.c : swatches[0], photo: draftPhoto });
-    $('avatarRemoveLink').style.display = 'block';
+  if(window.NalunoAvatarPicker && typeof NalunoAvatarPicker.open === 'function'){
+    const out = await NalunoAvatarPicker.open(dataUrl);
+    if(!out) return null;
+    return { dataUrl: out.dataUrl, crop: out.crop, file: out.file || file };
+  }
+  /* the older Adjust screen, if the picker file is missing */
+  return await new Promise(function(resolve){
+    openAvatarAdjust(dataUrl, { scale:1, xPct:0, yPct:0 }, function(result){ resolve(Object.assign({}, result, { file: file })); });
   });
+}
+$('avatarFileInput').onchange = async (e)=>{
+  const picked = await nalunoPickAvatar(e.target);
+  if(!picked) return;
+  draftPhoto = picked;
+  const selectedSwatch = document.querySelector('#swatchRow .swatch.selected');
+  applyAvatarVisual($('profileAvatarBig'), { name:$('nameInput').value, color: selectedSwatch ? selectedSwatch.dataset.c : swatches[0], photo: draftPhoto });
+  $('avatarRemoveLink').style.display = 'block';
+};
+if($('viewAvatarFileInput')) $('viewAvatarFileInput').onchange = async (e)=>{
+  const picked = await nalunoPickAvatar(e.target);
+  if(!picked) return;
+  /* saved like "Edit callsign → Save callsign" with only the photo changed */
+  applyProfileToUI(currentProfile);
+  draftPhoto = picked;
+  applyAvatarVisual($('viewAvatar'), Object.assign({}, currentProfile, { photo: picked, photoUrl: null }));
+  const save = $('saveProfileBtn');
+  if(save) save.click();
 };
 $('avatarRemoveLink').onclick = ()=>{
   draftPhoto = null;

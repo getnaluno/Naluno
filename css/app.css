@@ -354,6 +354,10 @@
   .profile-hero{ display:flex; flex-direction:column; align-items:center; gap:14px; padding:6px 20px 26px; }
   .profile-avatar-wrap{ position:relative; }
   .profile-avatar{ width:96px; height:96px; font-size:32px; }
+  /* 23 Oct: the profile photo is its own picker; nothing sits on top of it. */
+  .avatar-pick{ display:inline-block; width:fit-content; border-radius:50%; }
+  .avatar-pick-input{ position:absolute; inset:0; width:100%; height:100%; opacity:0.01; font-size:16px; cursor:pointer; z-index:2; border-radius:50%; color:transparent; }
+  .avatar-pick:active .profile-avatar{ transform:scale(.97); transition:transform .12s; }
   .avatar-edit{ position:absolute; right:-2px; bottom:-2px; width:30px; height:30px; border-radius:50%; background:var(--mint); color:#0D0F17; display:flex; align-items:center; justify-content:center; border:3px solid var(--bg); cursor:pointer; }
   .field{ padding: 0 20px 16px; }
   .field label{ display:block; font-family:var(--font-mono); font-size:11px; color:var(--text-dim); letter-spacing:.08em; text-transform:uppercase; margin-bottom:7px; }
@@ -4253,6 +4257,11 @@ body:not(.naluno-os-pip) #callOverlay #incall .ctrl.end{ width:56px; background:
 /* ---------- Lobby: your camera fills the screen ---------- */
 body:not(.naluno-os-pip) #callOverlay[data-cam="1"]:not(.voice-call) #lobby .topbar{ position:absolute; top:0; left:0; right:0; padding:var(--wa-top) 14px 0; z-index:8; }
 body:not(.naluno-os-pip) #callOverlay[data-cam="1"]:not(.voice-call) #lobby .topbar .eyebrow{ visibility:hidden; }
+/* 23 Oct (owner's go-ahead, CAMERA-LOCK.md): the clear top bar no longer
+   takes the taps meant for the photo button under it; only Back in the bar
+   takes taps. Nothing about the camera's size or picture changes. */
+body:not(.naluno-os-pip) #callOverlay[data-cam="1"]:not(.voice-call) #lobby .topbar{ pointer-events:none; }
+body:not(.naluno-os-pip) #callOverlay.active[data-cam="1"]:not(.voice-call) #lobby .topbar .back-btn{ pointer-events:auto; }
 body:not(.naluno-os-pip) #callOverlay[data-cam="1"]:not(.voice-call) #lobby .back-btn{ width:52px; height:52px; background:rgba(17,19,26,.82); border:none; color:#fff; }
 body:not(.naluno-os-pip) #callOverlay[data-cam="1"]:not(.voice-call) #lobby .lobby-body{ justify-content:flex-end; padding:0 14px 10px; gap:12px; }
 body:not(.naluno-os-pip) #callOverlay[data-cam="1"]:not(.voice-call) #lobby .cam-stage{

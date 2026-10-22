@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261022a';
+  const BUILD = '20261023b';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -259,36 +259,71 @@
     }
     return best;
   }
-  function showConsoleUpdateBar(live) {
+  /* 23 Oct: no floating "is ready" bar any more. It came back on every
+     opening when the page or one of its files on the phone was an older
+     copy, and it covered the desk.
+     - Before the password (nothing to lose) a newer build simply loads.
+     - A console script older than its own page (an upload caught half way,
+       or a file the phone kept) is fetched fresh and the page reloads once.
+     - While unlocked, a newer build waits: a small "update" chip by the
+       clock (tap it to load now), and it loads by itself the next time
+       the password is asked anyway (Lock). */
+  let __pendingBuild = '';
+  function consoleUnlocked() { return !!__adminPass; }
+  function reloadOnceFor(live, why) {
+    /* once per build per tab; with no way to remember that (storage
+       blocked), never reload by itself, so it can never loop */
     try {
-      let bar = document.getElementById('consoleUpdateBar');
-      if (!bar) {
-        bar = document.createElement('div');
-        bar.id = 'consoleUpdateBar';
-        bar.setAttribute('role', 'status');
-        bar.style.cssText = 'position:fixed;left:12px;right:12px;bottom:16px;z-index:9999;'
-          + 'background:#11141D;border:1px solid rgba(124,255,178,.45);color:#EEF1F7;border-radius:16px;'
-          + 'padding:12px 14px;display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;'
-          + 'font:14px/1.35 system-ui,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,.5);';
-        const txt = document.createElement('span');
-        txt.id = 'consoleUpdateText';
-        txt.style.cssText = 'flex:1 1 180px;min-width:0;';
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.textContent = 'Reload';
-        btn.style.cssText = 'background:#7CFFB2;color:#06120B;border:0;border-radius:999px;padding:8px 14px;font-weight:600;cursor:pointer;margin-left:auto;';
-        btn.onclick = async function () {
-          btn.disabled = true; btn.textContent = 'Reloading…';
-          try { sessionStorage.setItem('nalunoConsoleReloadFor', String(live)); } catch (_) {}
-          try { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(function (r) { return r.update().catch(function () {}); })); } catch (_) {}
-          location.reload();
+      if ((sessionStorage.getItem('nalunoConsoleReloadFor') || '') === live) return false;
+      sessionStorage.setItem('nalunoConsoleReloadFor', String(live));
+      if (sessionStorage.getItem('nalunoConsoleReloadFor') !== String(live)) return false;
+    } catch (_) { return false; }
+    try { console.info('[naluno-admin] loading ' + live + ' (' + why + ')'); } catch (_) {}
+    (async function () {
+      try {
+        /* the page's own scripts are asked from the server again, so a kept
+           older copy cannot come back after the reload */
+        const urls = Array.from(document.scripts).map(function (x) { return x.src; }).filter(function (u) { return u && u.indexOf(location.origin + '/js/') === 0; });
+        const names = await caches.keys();
+        await Promise.all(names.map(async function (n) {
+          const c = await caches.open(n);
+          await Promise.all(urls.map(function (u) { return c.delete(u).catch(function () {}); }));
+        }));
+        await Promise.all(urls.map(function (u) { return fetch(u, { cache: 'reload' }).catch(function () {}); }));
+      } catch (_) {}
+      try { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(function (r) { return r.update().catch(function () {}); })); } catch (_) {}
+      location.reload();
+    })();
+    return true;
+  }
+  function paintUpdateChip() {
+    try {
+      const old = document.getElementById('consoleUpdateBar');
+      if (old && old.parentNode) old.parentNode.removeChild(old);
+      let chip = document.getElementById('consoleUpdateChip');
+      if (!__pendingBuild) { if (chip && chip.parentNode) chip.parentNode.removeChild(chip); return; }
+      if (!chip) {
+        chip = document.createElement('button');
+        chip.type = 'button';
+        chip.id = 'consoleUpdateChip';
+        chip.className = 'sw-badge';
+        chip.style.cssText = 'cursor:pointer;background:transparent;font:inherit;';
+        chip.onclick = function () {
+          try { sessionStorage.removeItem('nalunoConsoleReloadFor'); } catch (_) {}
+          reloadOnceFor(__pendingBuild, 'tapped');
         };
-        bar.appendChild(txt);
-        bar.appendChild(btn);
-        document.body.appendChild(bar);
+        const host = document.getElementById('swBadge');
+        if (host && host.parentNode) host.parentNode.insertBefore(chip, host.nextSibling);
+        else return;
       }
-      const t = document.getElementById('consoleUpdateText');
-      if (t) t.textContent = 'Control Centre ' + live + ' is ready. Reload when you can. The password is asked again.';
+      chip.textContent = 'update ' + __pendingBuild;
+      chip.title = 'A newer Control Centre is out. Tap to load it now (the password is asked), or it loads the next time you lock.';
+    } catch (_) {}
+  }
+  function staleScriptCheck() {
+    try {
+      const page = consoleStampKey((document.querySelector('meta[name="naluno-build"]') || {}).content || '');
+      if (page && BUILD && page > BUILD && !consoleUnlocked()) reloadOnceFor(page, 'console script older than its page');
     } catch (_) {}
   }
   async function checkConsoleUpdate() {
@@ -304,25 +339,17 @@
       const openApp = (document.querySelector('meta[name="app-version"]') || {}).content || '';
       const have = consoleBestStamp(BUILD, openBuild, openApp);
       const live = consoleBestStamp(meta('naluno-build'), meta('app-version'));
-      if (!live || !have || live <= have) {
-        const bar = document.getElementById('consoleUpdateBar');
-        if (bar && bar.parentNode) bar.parentNode.removeChild(bar);
-        return;
-      }
-      let already = '';
-      try { already = sessionStorage.getItem('nalunoConsoleReloadFor') || ''; } catch (_) {}
-      if (already === live) {
-        const bar = document.getElementById('consoleUpdateBar');
-        if (bar && bar.parentNode) bar.parentNode.removeChild(bar);
-        return;
-      }
-      showConsoleUpdateBar(live);
+      if (!live || !have || live <= have) { __pendingBuild = ''; paintUpdateChip(); return; }
+      if (!consoleUnlocked() && reloadOnceFor(live, 'newer build, before the password')) return;
+      __pendingBuild = live;
+      paintUpdateChip();
     } catch (_) {}
   }
   try {
     setInterval(checkConsoleUpdate, 3 * 60 * 1000);
     document.addEventListener('visibilitychange', function () { if (!document.hidden) checkConsoleUpdate(); });
-    setTimeout(checkConsoleUpdate, 8000);
+    setTimeout(staleScriptCheck, 0);
+    setTimeout(checkConsoleUpdate, 2500);
   } catch (_) {}
   function pingSw() {
     try {
@@ -9014,6 +9041,8 @@
   }
   function lockConsole() {
     __adminPass = '';
+    /* 23 Oct: the password is asked now anyway, so a waiting update loads. */
+    if (__pendingBuild) { try { sessionStorage.removeItem('nalunoConsoleReloadFor'); } catch (_) {} if (reloadOnceFor(__pendingBuild, 'locked')) return; }
     dropLiveListeners();
     __snap = null;
     __livePack = null;

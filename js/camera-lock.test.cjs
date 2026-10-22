@@ -85,7 +85,7 @@ const APPROVED = {
   'calls: the callee\'s camera when answering': '3292560e2d07fe76',
   'calls: the other person full screen': '36dd629ead2d348f',
   'call-filters: which picture is sent': '1810339c30833026',
-  'css: the call screens\' video boxes': '3abe95f60d635d27',
+  'css: the call screens\' video boxes': 'f95078b25fdfbd17',
 };
 
 if (process.env.CAMERA_LOCK_PRINT) {

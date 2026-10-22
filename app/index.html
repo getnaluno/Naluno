@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.10.22a" />
+  <meta name="naluno-build" content="2026.10.23b" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.10.22a">
+<meta name="app-version" content="2026.10.23b">
 <meta name="naluno-update-notice" content="off">
 <meta name="description" content="Naluno brings private communication, communities and creator-led content into one place. A Callsign instead of a phone number.">
 <meta property="og:title" content="Naluno">
@@ -132,9 +132,9 @@
 })();
 </script>
 <link rel="apple-touch-startup-image" href="/splash-empty.png">
-<link rel="stylesheet" href="/css/app.css?v=20261021e" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/css/app.css?v=20261023b" media="print" onload="this.media='all'">
 <script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="/css/app.css?v=20261021e"></noscript>
+<noscript><link rel="stylesheet" href="/css/app.css?v=20261023b"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -599,7 +599,11 @@ window.__nalunoEntryT0 = Date.now();
       <!-- VIEW MODE: read-only display of the saved callsign -->
       <div id="callsignView">
         <div class="profile-hero">
-          <div class="avatar profile-avatar" id="viewAvatar" style="background:#7CFFB2; position:relative;">YO</div>
+          <!-- 23 Oct: the photo itself is the picker: tap it, choose, pinch and drag to frame it -->
+          <div class="profile-avatar-wrap avatar-pick">
+            <div class="avatar profile-avatar" id="viewAvatar" style="background:#7CFFB2; position:relative;">YO</div>
+            <input type="file" id="viewAvatarFileInput" class="avatar-pick-input" aria-label="Change profile photo" accept="image/*,.heic,.heif,.jpg,.jpeg,.png,.webp,.gif,.bmp,.tif,.tiff,.avif,.jfif,.ico" />
+          </div>
         </div>
         <div style="text-align:center; padding:0 24px 22px;">
           <div style="font-family:var(--font-futuristic); font-weight:700; font-size:18px; letter-spacing:.03em;" id="viewName">You</div>
@@ -623,12 +627,9 @@ window.__nalunoEntryT0 = Date.now();
       <!-- EDIT MODE: the editable form -->
       <div id="callsignEdit" style="display:none;">
         <div class="profile-hero">
-          <div class="profile-avatar-wrap">
+          <div class="profile-avatar-wrap avatar-pick">
             <div class="avatar profile-avatar" id="profileAvatarBig" style="background:#7CFFB2;">YO</div>
-            <div class="avatar-edit naluno-pick-wrap" id="avatarEditBtn" role="button" aria-label="Edit profile photo" style="position:relative;overflow:hidden;">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="pointer-events:none;"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z" stroke="#0D0F17" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              <input type="file" id="avatarFileInput" accept="image/*,.heic,.heif,.jpg,.jpeg,.png,.webp,.gif,.bmp,.tif,.tiff,.avif,.jfif,.ico" style="position:absolute;inset:0;width:100%;height:100%;opacity:0.01;font-size:16px;cursor:pointer;z-index:2;" />
-            </div>
+            <input type="file" id="avatarFileInput" class="avatar-pick-input" aria-label="Change profile photo" accept="image/*,.heic,.heif,.jpg,.jpeg,.png,.webp,.gif,.bmp,.tif,.tiff,.avif,.jfif,.ico" />
           </div>
           <div id="avatarRemoveLink" style="display:none; font-family:var(--font-mono); font-size:11px; color:var(--text-dim); cursor:pointer; text-decoration:underline;">Remove photo</div>
           <div id="swatchRow" class="swatch-row"></div>
@@ -1954,7 +1955,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/nudenet.js?v=20261020b"></script>
 <script src="/js/origin.js?v=20261015g"></script>
 <script src="/js/strand.js?v=20261020c"></script>
-<script src="/js/circle.js?v=20261020c"></script>
+<script src="/js/circle.js?v=20261023a"></script>
 <!-- Community Economy: reports actions only; all economic value is computed
      server-side by the naluno-economy Worker. Loaded AFTER circle.js so
      currentUser exists, and deliberately non-blocking — if this file failed
@@ -2002,7 +2003,8 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/lifeline-wire.js?v=20261020c"></script>
 <!-- Wireline translation reuses Spark's engine and language list. -->
 <script src="/js/wireline-translate.js?v=20261020c"></script>
-<script src="/js/profile.js?v=20261012b"></script>
+<script src="/js/avatar-picker.js?v=20261023a"></script>
+<script src="/js/profile.js?v=20261023a"></script>
 <script src="/js/legal-privacy.js?v=20261021h"></script>
 <script src="/js/onboard.js?v=20261021f"></script>
 <script src="/js/handle-guard.js?v=20261006b"></script>
@@ -2010,7 +2012,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/auth.js?v=20261020c"></script>
 <script src="/js/trust-legal.js?v=20261012c"></script>
 <script src="/js/security-events.js?v=20261002e"></script>
-<script src="/js/notifications.js?v=20261019d"></script>
+<script src="/js/notifications.js?v=20261023a"></script>
 <script src="/js/ice-core.js?v=20261015g"></script>
 <script src="/js/camera.js?v=20261010a"></script>
 <script src="/js/call-filters.js?v=20261002d"></script>
@@ -2022,7 +2024,7 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/live-preview.js?v=20261012c"></script>
 <script src="/js/band-room.js?v=20261021e"></script>
 <script src="/js/traffic.js?v=20261020b"></script>
-<script src="/js/pwa.js?v=20261022a"></script>
+<script src="/js/pwa.js?v=20261023b"></script>
 <script src="/js/gestures.js?v=20261007c"></script>
 <script src="/js/spark-engine.js?v=20261005g"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>

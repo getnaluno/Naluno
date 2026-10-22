@@ -41,10 +41,13 @@ assert.ok(/self\.skipWaiting\(\)/.test(sw) && /self\.clients\.claim\(\)/.test(sw
 assert.ok(/if\(mine && newest > mine\) throw new Error/.test(sw), 'an older worker refuses to install over a newer one');
 assert.ok(/if\(got && have && got < have\) return;/.test(sw) && /async function nalunoShellStamp\(res\)/.test(sw), 'an older app page is never kept over a newer one');
 assert.ok(/got < have\) return;/.test(core.slice(core.indexOf('async function nalunoFreshShell('))), 'the page never saves an older copy of itself before reloading');
-/* The console is told, and never reloads itself (each opening asks for its password). */
+/* The console is told, and never reloads itself while you are working
+   (each opening asks for its password). 23 Oct: the floating bar became a
+   small "update" chip; a reload happens only before the password is typed,
+   on Lock, or when the chip is tapped (fixes-1023a, flow console-update). */
 const con = read('js/admin-console.js');
-const seg = con.slice(con.indexOf('function showConsoleUpdateBar('), con.indexOf('function pingSw()'));
-assert.ok(/live <= have\)( return;| \{)/.test(seg) && /showConsoleUpdateBar\(live\)/.test(seg), 'the console learns of a newer build');
-assert.strictEqual((seg.match(/location\.reload\(\)/g) || []).length, 1, 'the only reload is the button');
-assert.ok(/btn\.onclick = async function/.test(seg), '... pressed by the operator');
+const seg = con.slice(con.indexOf('let __pendingBuild'), con.indexOf('function pingSw()'));
+assert.ok(/live <= have\) \{ __pendingBuild = ''/.test(seg) && /__pendingBuild = live;/.test(seg), 'the console learns of a newer build');
+assert.strictEqual((seg.match(/location\.reload\(\)/g) || []).length, 1, 'one place reloads');
+assert.ok(/if \(!consoleUnlocked\(\) && reloadOnceFor\(live/.test(seg), '... never while unlocked, except when asked');
 console.log('fixes-1015a: all checks passed');

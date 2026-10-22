@@ -36,6 +36,8 @@ $('enableCallNotifsBtn').onclick = async ()=>{
     const permission = await Notification.requestPermission();
     if(permission !== 'granted'){
       $('callNotifStatus').textContent = 'Notifications blocked — enable them in your browser\u2019s site settings to use this.';
+      /* 23 Oct: a second tap used to look dead (the line was already there) */
+      toast('Notifications are blocked on this browser. Allow them in its site settings, then tap again.');
       return;
     }
     const registration = await navigator.serviceWorker.ready;
