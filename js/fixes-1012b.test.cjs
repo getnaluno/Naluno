@@ -71,19 +71,24 @@ function fnSource(src, name) {
   assert.strictEqual(fsFieldPath('a-b'), '`a-b`');
   assert.strictEqual(fsFieldPath('a`b'), '`a\\`b`');
 
-  /* 6. Callsign: Call notifications sits below the dial, right before Sign out,
-        and the dial keeps five evenly spaced stations. */
-  const dock = html.indexOf('id="callsignDialDock"');
-  const notif = html.indexOf('id="callNotifSection"');
+  /* 6. Callsign (23 Oct e): call notifications, country and "stopped from
+        reaching you" are dial stations again; under the dial only Sign out
+        and Privacy/Terms remain. Eight evenly spaced stations. */
+  const dockAt = html.indexOf('id="callsignDialDock"');
   const signOut = html.indexOf('id="signOutBtn"');
-  assert.ok(dock > 0 && notif > dock && signOut > notif, 'order: dial, call notifications, sign out');
-  const between = html.slice(notif, signOut);
-  assert.ok(!/<section|id="callsignDialDock"/.test(between.replace(/<div class="greenroom-setting" id="callNotifSection"[^>]*>/, '')), 'nothing else sits between them');
+  const dockHtml = html.slice(dockAt, signOut);
+  ['callNotifSection', 'countrySection', 'blockedPeopleSection'].forEach((id) => {
+    assert.ok(new RegExp('id="' + id + '"[^>]*data-dial="').test(dockHtml), id + ' is a dial station');
+  });
+  const tail = html.slice(signOut, html.indexOf('</section>', signOut));
+  assert.ok(!/greenroom-setting/.test(tail), 'nothing but Sign out and Privacy/Terms under the dial');
+  assert.ok(/callsignPrivacyBtn/.test(tail) && /callsignTermsBtn/.test(tail));
+  assert.ok(/class="cdial-guide"/.test(html.slice(html.indexOf('id="callsignView"'), html.indexOf('id="callsignDial"'))), 'a guide line above the dial');
   const profile = read('js/profile.js');
   const st = profile.slice(profile.indexOf('const stations = ['), profile.indexOf('];', profile.indexOf('const stations = [')));
   const angles = [...st.matchAll(/angle:(\d+)/g)].map((m) => +m[1]);
-  assert.deepStrictEqual(angles, [0, 72, 144, 216, 288]);
-  assert.ok(!/id:'calls'/.test(st));
+  assert.deepStrictEqual(angles, [0, 45, 90, 135, 180, 225, 270, 315]);
+  ['alerts', 'country', 'stopped'].forEach((id) => assert.ok(st.includes("id:'" + id + "'"), id));
 
   /* 7. Listen: a second voice maker only starts once the first sentence is
         heard, so the first sentence never shares the CPU. */

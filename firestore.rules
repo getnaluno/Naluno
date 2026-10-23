@@ -223,6 +223,31 @@ service cloud.firestore {
       return !('createdAt' in resource.data)
         || request.resource.data.createdAt == resource.data.createdAt;
     }
+    /* 23 Oct c (security): the avatar crop is drawn into a style attribute, so
+       a crop value may only be a number (or empty). The app itself saves
+       photo: { crop: null } for large photos, and older profiles may hold any
+       shape, so: nulls are allowed, and the check runs ONLY when the photo is
+       being changed — any other save (presence, Known, push cleanup…) is
+       never refused because of a photo already stored. */
+    function photoShapeOk(p) {
+      return p == null || p is string || (
+        p is map
+        && (!('crop' in p) || p.crop == null || (
+          p.crop is map
+          && (!('scale' in p.crop) || p.crop.scale == null || p.crop.scale is number)
+          && (!('xPct' in p.crop) || p.crop.xPct == null || p.crop.xPct is number)
+          && (!('yPct' in p.crop) || p.crop.yPct == null || p.crop.yPct is number)
+        ))
+        && (!('dataUrl' in p) || p.dataUrl == null || p.dataUrl is string)
+      );
+    }
+    function photoCropOkOnCreate() {
+      return photoShapeOk(request.resource.data.get('photo', null));
+    }
+    function photoCropOk() {
+      return !('photo' in request.resource.data.diff(resource.data).affectedKeys())
+        || photoShapeOk(request.resource.data.get('photo', null));
+    }
     /* Creators may edit their Broadcast. They may not list, unhide, or
        clear a hold the desk put on it. */
     function keepsOriginCredit() {
@@ -320,6 +345,7 @@ service cloud.firestore {
       }
       allow create: if isOwner(uid)
         && hasSeat(uid)
+        && photoCropOkOnCreate()
         && (!('known' in request.resource.data) || request.resource.data.known == false)
         && !request.resource.data.keys().hasAny(['fcmToken', 'fcmTokenWeb', 'fcmTokenAndroid']);
       allow delete: if isSuper();
@@ -330,7 +356,7 @@ service cloud.firestore {
       ) || (
         isOwner(uid) && (
           !('accountState' in resource.data) || resource.data.accountState != 'closed'
-        ) && ownerKeepsModeration() && keepsJoinedAt() && pushTokensOnlyRemoved()
+        ) && ownerKeepsModeration() && keepsJoinedAt() && pushTokensOnlyRemoved() && photoCropOk()
       );
       /* Private vault: recovery email, Compass lock, E2E backup, desk
          password hash, and (14 Oct) push addresses. Owner + operator. */

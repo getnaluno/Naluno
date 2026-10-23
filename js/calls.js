@@ -2122,7 +2122,7 @@ function nalunoWatchLiveEnd(callId){
   }, 2000);
 }
 
-async function createPeerConnection(iceCfg, asOfferer){
+async function createPeerConnection(iceCfg, asOfferer, opts){
   try{
     if(typeof metricStart === 'function') window._callMediaMetric = metricStart('call_time_to_media');
   }catch(_){}
@@ -2229,8 +2229,14 @@ async function createPeerConnection(iceCfg, asOfferer){
       try{ rec.ice.relayOnPc = nalunoCfgHasTurn(pc.getConfiguration()); }catch(_){}
     }
   }catch(_){}
-  // Local tracks: addTrack only (sendrecv). No duplicate transceivers.
-  if(stream){
+  /* 23 Oct d: "slots" — the answering phone builds its connection while it
+     rings without waiting for its camera. The offer's audio/video sections
+     become this phone's slots when the offer is applied; the camera and mic
+     go into them later (nalunoFillSlots), with no new offer or answer. */
+  if(opts && opts.slots){
+    pc._nalunoSlots = true;
+  } else if(stream){
+    // Local tracks: addTrack only (sendrecv). No duplicate transceivers.
     await attachLocalTracksToPc(pc);
   } else {
     console.warn('[call] createPeerConnection with no local stream — recvonly fallback');
@@ -2322,6 +2328,100 @@ function callWantsOutboundFilter(){
   }catch(_){ return false; }
 }
 
+/* What a transceiver carries, even before it has a track. */
+function nalunoTransceiverKind(tr){
+  try{
+    if(!tr) return null;
+    if(tr.sender && tr.sender.track) return tr.sender.track.kind;
+    if(tr.receiver && tr.receiver.track) return tr.receiver.track.kind;
+  }catch(_){}
+  return null;
+}
+function nalunoSenderKind(pc, sender){
+  try{
+    if(sender && sender.track) return sender.track.kind;
+    const tr = pc.getTransceivers().find(function(x){ return x.sender === sender; });
+    return nalunoTransceiverKind(tr);
+  }catch(_){ return null; }
+}
+/* The live track this phone should send for a kind: the filtered picture
+   when it is ready, otherwise the camera; the microphone for audio. */
+function nalunoLiveTrackFor(kind){
+  try{
+    if(kind === 'audio' && stream) return stream.getAudioTracks().find(function(x){ return x.readyState === 'live'; }) || null;
+    if(kind === 'video'){
+      const fx = (typeof getCallOutboundVideoTrackSync === 'function') ? getCallOutboundVideoTrackSync() : null;
+      if(fx && fx.readyState === 'live') return fx;
+      return stream ? (stream.getVideoTracks().find(function(x){ return x.readyState === 'live'; }) || null) : null;
+    }
+  }catch(_){}
+  return null;
+}
+/* Put the camera and mic into a slots connection once they are open: at
+   Answer, or later if Answer came before the camera finished opening. Each
+   slot is filled once; nothing is renegotiated. */
+function nalunoFillSlots(pc, why){
+  if(!pc || !pc._nalunoSlots || pc.signalingState === 'closed') return Promise.resolve(0);
+  if(nalunoHeld(pc)) return Promise.resolve(0);   // still ringing: released on Answer
+  const jobs = [];
+  pc.getTransceivers().forEach(function(tr){
+    try{
+      if(!tr || !tr.sender || tr.stopped) return;
+      const kind = nalunoTransceiverKind(tr);
+      const cur = tr.sender.track;
+      if(cur && cur.readyState === 'live') return;
+      const t = nalunoLiveTrackFor(kind);
+      if(!t) return;
+      if(kind === 'video'){
+        /* as attachLocalTracksToPc did: remember the raw camera for the
+           filter and background switches, and note when the filtered
+           picture is what is being sent */
+        try{
+          const raw = stream ? stream.getVideoTracks().find(function(x){ return x.readyState === 'live'; }) : null;
+          if(raw) _callRawVideoTrack = raw;
+          if(raw && t !== raw) window.__nalunoFxDraw = true;
+          t.contentHint = 'motion';
+        }catch(_){}
+      }
+      try{ t.enabled = (kind === 'video') ? (typeof camOn === 'undefined' ? true : camOn !== false) : t.enabled; }catch(_){}
+      jobs.push(tr.sender.replaceTrack(t).then(function(){
+        if(kind === 'video'){ try{ tuneVideoSender(tr.sender); }catch(_){} }
+        else { try{ nalunoTuneCallAudio(pc); }catch(_){} }
+        return 1;
+      }).catch(function(){ return 0; }));
+    }catch(_){}
+  });
+  return Promise.all(jobs).then(function(r){
+    const n = r.reduce(function(a, b){ return a + b; }, 0);
+    if(n){ try{ nalunoCallMark(activeCallId, 'slotsFilled'); }catch(_){} try{ console.log('[call] slots filled', n, why || ''); }catch(_){} }
+    return n;
+  });
+}
+/* After Answer: fill now, and again as the camera/mic come up, until both
+   slots carry live tracks (or the call ends). */
+function nalunoFillSlotsUntilLive(pc, camReady){
+  if(!pc || !pc._nalunoSlots) return;
+  if(pc._nalunoFilling) return;
+  pc._nalunoFilling = true;
+  const done = function(){
+    try{
+      return pc.getTransceivers().every(function(tr){
+        if(!tr || !tr.sender || tr.stopped) return true;
+        const k = nalunoTransceiverKind(tr);
+        if(k === 'video' && nalunoIsVoiceCall()) return true;
+        return !!(tr.sender.track && tr.sender.track.readyState === 'live');
+      });
+    }catch(_){ return true; }
+  };
+  nalunoFillSlots(pc, 'answer');
+  try{ Promise.resolve(camReady).then(function(){ return nalunoFillSlots(pc, 'camera-ready'); }).catch(function(){}); }catch(_){}
+  let n = 0;
+  const tick = function(){
+    if(pc.signalingState === 'closed' || peerConnection !== pc || done() || ++n > 75) return;
+    nalunoFillSlots(pc, 'retry').then(function(){ setTimeout(tick, 200); });
+  };
+  setTimeout(tick, 200);
+}
 function preferFastVideoCodecs(pc){
   if(!pc || typeof RTCRtpSender === 'undefined' || !RTCRtpSender.getCapabilities) return;
   const caps = RTCRtpSender.getCapabilities('video');
@@ -2330,7 +2430,7 @@ function preferFastVideoCodecs(pc){
   const rest = caps.codecs.filter(function(c){ return !/vp8|h264/i.test(c.mimeType); });
   if(!prefer.length) return;
   pc.getTransceivers().forEach(function(tr){
-    if(!tr || !tr.sender || !tr.sender.track || tr.sender.track.kind !== 'video') return;
+    if(nalunoTransceiverKind(tr) !== 'video') return;
     if(typeof tr.setCodecPreferences === 'function'){
       try{ tr.setCodecPreferences(prefer.concat(rest)); }catch(_){}
     }
@@ -2723,7 +2823,7 @@ function nalunoHoldSenders(pc){
   pc.getSenders().forEach(function(s){
     const orig = s.replaceTrack;            // the browser's own (from the prototype)
     let want = s.track || null;
-    const kind = (want && want.kind) || null;
+    const kind = (want && want.kind) || nalunoSenderKind(pc, s);
     hold.senders.push({ s: s, orig: orig, kind: kind, want: function(){ return want; } });
     try{
       Object.defineProperty(s, 'track', { configurable: true, get: function(){ return want; } });
@@ -2743,19 +2843,16 @@ function nalunoReleaseSenders(pc){
       let t = h.want();
       try{ delete h.s.track; delete h.s.replaceTrack; }catch(_){}
       if(!t || t.readyState !== 'live'){
-        try{
-          if(h.kind === 'audio' && stream) t = stream.getAudioTracks().find(function(x){ return x.readyState === 'live'; }) || null;
-          if(h.kind === 'video'){
-            const fx = (typeof getCallOutboundVideoTrackSync === 'function') ? getCallOutboundVideoTrackSync() : null;
-            t = (fx && fx.readyState === 'live') ? fx : (stream ? (stream.getVideoTracks().find(function(x){ return x.readyState === 'live'; }) || null) : null);
-          }
-        }catch(_){}
+        try{ t = nalunoLiveTrackFor(h.kind); }catch(_){}
       }
       return h.orig.call(h.s, t || null).catch(function(){});
     }));
   }).then(function(){
     nalunoReplayPcState(pc);
     try{ if(nalunoFrameDue && !nalunoAnyHeld()){ nalunoFrameDue = false; nalunoRemoteFrameArrived(); } }catch(_){}
+    /* 23 Oct d: a slots connection whose camera/mic were not open yet gets
+       them the moment they are (both phones). */
+    try{ if(pc._nalunoSlots) nalunoFillSlotsUntilLive(pc, pc._nalunoCamReady); }catch(_){}
     return true;
   });
 }
@@ -3669,6 +3766,23 @@ function nalunoEndMyOldRings(keepId){
   }).catch(function(){});
 }
 let nalunoDialDiag = null;
+/* Both permissions this call needs are already granted (no question will
+   appear), so opening them can run alongside the ring. Unknown = no. */
+async function nalunoMediaPreGranted(voice){
+  try{
+    if(!navigator.permissions || typeof navigator.permissions.query !== 'function') return false;
+    const q = function(name){
+      return Promise.race([
+        navigator.permissions.query({ name: name }).then(function(r){ return !!(r && r.state === 'granted'); }),
+        new Promise(function(r){ setTimeout(function(){ r(false); }, 300); }),
+      ]).catch(function(){ return false; });
+    };
+    if(!(await q('microphone'))) return false;
+    if(voice) return true;
+    return await q('camera');
+  }catch(_){ return false; }
+}
+window.nalunoMediaPreGranted = nalunoMediaPreGranted;
 async function startRealCall(c){
   nalunoDialDiag = nalunoCDStart('caller', nalunoIsVoiceCall() ? 'audio' : 'video');
   try{ return await startRealCallInner(c); }
@@ -3738,35 +3852,57 @@ async function startRealCallInner(c){
      again (it ends as soon as the credentials come back or fail), with a
      cap well short of 14a's 7 s; the answering phone covers the rest. */
   const turnReady = nalunoIceDecide(NALUNO_CALLER_TURN_MS);
-  if(voice){
-    try{ await nalunoOpenMic(); }catch(e){
-      if(gone()) return false;
-      throw new Error((e && e.name === 'NotAllowedError') ? 'Microphone access was denied \u2014 allow it, then try again' : 'Microphone unavailable \u2014 fix that first, then try calling again');
+  /* 23 Oct d: the other phone rings without waiting for this phone's camera
+     or mic when both are already allowed. They open alongside the ring and
+     go into the call's slots the moment they are ready (until the other
+     person answers, nothing is sent anyway). If they then fail, the ring is
+     ended and the same message is shown as before. When a permission is
+     not granted yet, the old order is kept so the other phone does not ring
+     while the permission question is on screen. */
+  /* While dialing, "gone" means the dial was cancelled. Once the ring record
+     is in, the dial is over by design, and the media step asks instead
+     whether this is still the current call. */
+  let mediaGone = gone;
+  const openCallerMedia = async function(){
+    if(voice){
+      try{ await nalunoOpenMic(); }catch(e){
+        if(mediaGone()) return false;
+        throw new Error((e && e.name === 'NotAllowedError') ? 'Microphone access was denied \u2014 allow it, then try again' : 'Microphone unavailable \u2014 fix that first, then try calling again');
+      }
+    } else if(typeof enableCameraForCall === 'function') await enableCameraForCall();
+    else await enableCamera();
+    if(mediaGone()) return false;
+    if(!mediaStreamIsLive(stream)){
+      throw new Error('Camera/mic unavailable \u2014 fix that first, then try calling again');
     }
-  } else if(typeof enableCameraForCall === 'function') await enableCameraForCall();
-  else await enableCamera();
-  if(gone()) return false;
-  if(!mediaStreamIsLive(stream)){
-    throw new Error('Camera/mic unavailable \u2014 fix that first, then try calling again');
-  }
-  // If mic was denied or missing, try a quick audio-only reopen so remote isn't silent
-  if(!stream.getAudioTracks().some(t => t.readyState === 'live')){
+    // If mic was denied or missing, try a quick audio-only reopen so remote isn't silent
+    if(!stream.getAudioTracks().some(t => t.readyState === 'live')){
+      try{
+        const a = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount: { ideal: 1 }, latency: { ideal: 0 } }, video: false });
+        if(mediaGone() || !stream){ try{ a.getTracks().forEach(t => t.stop()); }catch(_){} return false; }
+        a.getAudioTracks().forEach(t => stream.addTrack(t));
+      }catch(e){ console.warn('[call] could not add audio track', e); }
+      if(mediaGone()) return false;
+    }
+    // Re-enable tracks in case a previous call muted them.
     try{
-      const a = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount: { ideal: 1 }, latency: { ideal: 0 } }, video: false });
-      if(gone() || !stream){ try{ a.getTracks().forEach(t => t.stop()); }catch(_){} return false; }
-      a.getAudioTracks().forEach(t => stream.addTrack(t));
-    }catch(e){ console.warn('[call] could not add audio track', e); }
-    if(gone()) return false;
+      stream.getAudioTracks().forEach(t => { t.enabled = true; });
+      // Always send video on a fresh call; in-call cam button can disable later
+      stream.getVideoTracks().forEach(t => { t.enabled = true; });
+      if(typeof camOn !== 'undefined') camOn = true;
+    }catch(e){}
+    return true;
+  };
+  const parallel = await nalunoMediaPreGranted(voice);
+  let mediaP = null;
+  if(parallel){
+    mediaP = openCallerMedia();
+    mediaP.catch(function(){});
+  } else {
+    if((await openCallerMedia()) === false) return false;
   }
   // Do not await icePromise — createPeerConnection uses iceNow() (0ms).
   icePromise.catch(function(){});
-  // Re-enable tracks in case a previous call muted them.
-  try{
-    stream.getAudioTracks().forEach(t => { t.enabled = true; });
-    // Always send video on a fresh call; in-call cam button can disable later
-    stream.getVideoTracks().forEach(t => { t.enabled = true; });
-    if(typeof camOn !== 'undefined') camOn = true;
-  }catch(e){}
   remoteDescriptionSet = false;
   pendingRemoteCandidates = [];
 
@@ -3786,7 +3922,16 @@ async function startRealCallInner(c){
   try{ iceChoice = await turnReady; }catch(_){}
   try{ const rec = nalunoCD(callRef.id); if(rec && iceChoice) rec.ice = { decision: iceChoice.decision, waitMs: iceChoice.ms }; }catch(_){}
   if(gone()){ try{ nalunoCDSet(callRef.id, { endReason: 'cancel' }); nalunoCDFinish(callRef.id); }catch(_){} return false; }
-  const pc = await createPeerConnection(iceChoice && iceChoice.cfg, true);
+  const pc = await createPeerConnection(iceChoice && iceChoice.cfg, true, parallel ? { slots: true } : null);
+  if(parallel){
+    /* The call's slots: audio, and video for a video call. */
+    pc._nalunoCamReady = mediaP;
+    try{
+      pc.addTransceiver('audio', { direction: 'sendrecv' });
+      if(!voice) pc.addTransceiver('video', { direction: 'sendrecv' });
+    }catch(_){}
+    try{ preferFastVideoCodecs(pc); }catch(_){}
+  }
   const dropPc = () => { try{ pc.ontrack = null; pc.onicecandidate = null; pc.onconnectionstatechange = null; pc.oniceconnectionstatechange = null; pc.close(); }catch(_){} };
   if(gone()){ dropPc(); return false; }
   peerConnection = pc;
@@ -3809,7 +3954,11 @@ async function startRealCallInner(c){
   if(gone()){ dropPc(); return false; }
   await pc.setLocalDescription(offer);
   if(gone()){ dropPc(); return false; }
-  const offerSdp = await nalunoSdpReady(pc, 180) || { type: offer.type, sdp: offer.sdp };
+  /* With the slots path the ring is not held back for candidates to land in
+     the offer: they follow on their own (trickle), while it rings. */
+  const offerSdp = parallel
+    ? { type: offer.type, sdp: (pc.localDescription && pc.localDescription.sdp) || offer.sdp }
+    : (await nalunoSdpReady(pc, 180) || { type: offer.type, sdp: offer.sdp });
   if(gone()){ dropPc(); return false; }
 
   await callRef.set({
@@ -3846,6 +3995,7 @@ async function startRealCallInner(c){
     return false;
   }
   recordIn = true;
+  mediaGone = function(){ return activeCallId !== callRef.id; };
   try{ nalunoCallMark(callRef.id, 'dial', dialAt); nalunoCallMark(callRef.id, 'record'); }catch(_){}
   try{ nalunoCDSet(callRef.id, { recordCreated: true, offer: true }); }catch(_){}
   /* No relay in the offer: move onto one if it arrives while connecting. */
@@ -3855,6 +4005,26 @@ async function startRealCallInner(c){
   nalunoIncomingFrom = null;
   try{ nalunoEndMyOldRings(callRef.id); }catch(_){}
   notifyCalleeOfIncomingCall(c.firebaseUid, currentProfile ? currentProfile.name : null, callRef.id);
+  if(parallel){
+    mediaP.then(function(ok){
+      if(ok === false || peerConnection !== pc) return;
+      nalunoCallMark(callRef.id, 'callerMedia');
+      /* Not held (nothing answered yet, or an older answering app): put
+         them in now. Held: they go in when the other person answers. */
+      nalunoFillSlots(pc, 'caller-media');
+    }, function(e){
+      if(activeCallId !== callRef.id) return;
+      try{ callRef.update({ status: 'ended', endedAt: firebase.firestore.FieldValue.serverTimestamp(), endReason: 'media-failed' }).catch(function(){}); }catch(_){}
+      try{
+        const rec = nalunoCD(callRef.id);
+        if(rec){ rec.endReason = 'media-failed'; rec.error = String((e && e.message) || e || '').slice(0, 200); nalunoCDFinish(callRef.id); }
+      }catch(_){}
+      try{ teardownCallConnection(); }catch(_){}
+      toast((e && e.message) || 'Couldn\u2019t start the call');
+      try{ closeCallOverlayAndStopCamera(); }catch(_){}
+      callActionInProgress = false;
+    });
+  }
 
   const myCallId = callRef.id;
   const onMyCallDoc = snap=>{
@@ -4229,16 +4399,20 @@ async function nalunoPrepareAnswer(callId, offer, camReady, earlyOk, callerRelay
   if(!offer || !fbDb) return;
   if(nalunoPrepared && nalunoPrepared.callId === callId) return;
   nalunoDropPrepared();
-  const prep = { callId, pc: null, answer: null, held: [], remoteHeld: [], ready: false, used: false, candUnsub: null, early: false, earlyOk: !!earlyOk };
+  const prep = { callId, pc: null, answer: null, held: [], remoteHeld: [], ready: false, used: false, candUnsub: null, early: false, earlyOk: !!earlyOk, camReady: camReady };
   nalunoPrepared = prep;
   const still = function(){ return nalunoPrepared === prep && activeCallId === callId && $('incoming') && $('incoming').classList.contains('active'); };
   try{
     // Camera and TURN at the same time. Patient ICE waits up to 3.7s and
     // was still running when people tapped Answer, so the prepared answer
     // was thrown away and built again from nothing.
+    /* 23 Oct d: the camera is no longer waited for. On a phone it takes a
+       second or more to open, so the early connection was usually not
+       ready when Answer was tapped and video calls connected only after
+       Answer (2-3 s of silence). The connection is built from the offer
+       with empty slots; the camera and mic go in at Answer. */
+    Promise.resolve(camReady).catch(function(){}).then(function(){ nalunoCallMark(callId, 'prepMedia'); });
     await Promise.all([
-      Promise.resolve(camReady).catch(function(){}),
-      Promise.resolve(camReady).catch(function(){}).then(function(){ nalunoCallMark(callId, 'prepMedia'); }),
       /* 14 Oct c: while it rings, this phone fetches its own relay too
          (the ring hides the wait, and a relay on both sides gets through
          networks that block direct traffic, and lets the call connect
@@ -4258,24 +4432,12 @@ async function nalunoPrepareAnswer(callId, offer, camReady, earlyOk, callerRelay
       }),
     ]);
     if(!still()){ nalunoDropPrepared(); return; }
-    if(!mediaStreamIsLive(stream)){ nalunoDropPrepared(); return; } // no camera/mic yet: Answer takes the normal path
-    // With a filter on, give the filtered picture a moment to be ready so the
-    // call starts on it (switching to it after connecting made the video jump).
-    try{
-      if(!nalunoIsVoiceCall() && typeof primeSendPreview === 'function'
-         && ((typeof callOutboundWantsFilter === 'function' && callOutboundWantsFilter())
-          || (typeof nalunoOutboundPortrait === 'function' && nalunoOutboundPortrait()))
-         && (typeof nalunoSendCanvasAffordable !== 'function' || nalunoSendCanvasAffordable()
-          || (typeof nalunoOutboundPortrait === 'function' && nalunoOutboundPortrait()))){
-        const until = Date.now() + 600;
-        while(!callCanvasReady() && Date.now() < until && still()){
-          try{ if(typeof primeSendPreview === 'function') await primeSendPreview(); }catch(_){}
-          if(!callCanvasReady()) await new Promise(function(r){ setTimeout(r, 40); });
-        }
-      }
-    }catch(_){}
-    if(!still()){ nalunoDropPrepared(); return; }
-    const pc = await createPeerConnection(prep.ice && prep.ice.cfg);
+    /* The filtered picture is picked at Answer if it is ready by then
+       (nalunoLiveTrackFor), and switched to as soon as it is
+       (scheduleFilteredUpgrade); the ring no longer waits for it. */
+    try{ if(!nalunoIsVoiceCall() && typeof primeSendPreview === 'function') primeSendPreview().catch(function(){}); }catch(_){}
+    const pc = await createPeerConnection(prep.ice && prep.ice.cfg, false, { slots: true });
+    pc._nalunoCamReady = camReady;
     prep.pc = pc;
     nalunoCallMark(callId, 'prepPc');
     if(!still()){ nalunoDropPrepared(); return; }
@@ -4289,6 +4451,17 @@ async function nalunoPrepareAnswer(callId, offer, camReady, earlyOk, callerRelay
     };
     pc._nalunoIceFrozen = true;
     await pc.setRemoteDescription(new RTCSessionDescription(offer));
+    if(!still()){ nalunoDropPrepared(); return; }
+    /* The offer's sections are now this phone's slots: open them both ways
+       (the answer says so), prefer the fast video codecs, and hold them
+       empty until Answer — nothing is sent while it rings. */
+    try{
+      pc.getTransceivers().forEach(function(tr){
+        if(tr && !tr.stopped && tr.mid != null && tr.direction !== 'sendrecv'){ try{ tr.direction = 'sendrecv'; }catch(_){} }
+      });
+    }catch(_){}
+    try{ preferFastVideoCodecs(pc); }catch(_){}
+    await nalunoHoldSenders(pc);
     if(!still()){ nalunoDropPrepared(); return; }
     // The caller's candidates, so the connection can be checked the moment Answer is tapped.
     // Collected now, used only once Answer is tapped: connectivity checks must
@@ -4365,10 +4538,14 @@ function nalunoPreparedFor(callId){
        new connection, and says so (answerDev), so the caller takes the new
        answer in place of the early one. */
     const st = p.pc.connectionState, ice = p.pc.iceConnectionState;
-    if(p.pc.signalingState === 'closed' || st === 'closed' || st === 'failed' || ice === 'failed' || !mediaStreamIsLive(stream)) return null;
+    if(p.pc.signalingState === 'closed' || st === 'closed' || st === 'failed' || ice === 'failed') return null;
+    /* A slots build does not need the camera to be open yet: it goes in at
+       Answer, or as soon as it opens. */
+    if(!p.pc._nalunoSlots && !mediaStreamIsLive(stream)) return null;
     return p;
   }
   if(p.pc.signalingState !== 'stable' || p.pc.connectionState === 'closed' || p.pc.connectionState === 'failed') return null;
+  if(p.pc._nalunoSlots) return p;
   // The tracks it was built with must still be the live camera and mic.
   const live = p.pc.getSenders().filter(function(sn){ return sn.track && sn.track.readyState === 'live'; });
   if(live.length < 1 || !mediaStreamIsLive(stream)) return null;
@@ -4447,7 +4624,7 @@ $('acceptIncoming').onclick = async (ev)=>{
       prep.held.splice(0).forEach(function(json){ callRef.collection('calleeCandidates').add(json).catch(function(){}); });
       prep.remoteHeld.splice(0).forEach(function(cand){ try{ prep.pc.addIceCandidate(new RTCIceCandidate(cand)).catch(function(){}); }catch(_){} });
       startInCall();
-      nalunoReleaseSenders(prep.pc).then(function(){ nalunoCallMark(acceptingId, 'released'); }).catch(function(){});
+      nalunoReleaseSenders(prep.pc).then(function(){ nalunoCallMark(acceptingId, 'released'); try{ scheduleFilteredUpgrade(prep.pc); }catch(_){} }).catch(function(){});
       try{ if(typeof startCamView === 'function') startCamView('pip'); }catch(_){}
       try{ ensureRemoteVideoPlaying(); }catch(_){}
       setTimeout(()=> ensureRemoteVideoPlaying(), 300);
@@ -4531,7 +4708,7 @@ $('acceptIncoming').onclick = async (ev)=>{
         prep.remoteHeld.splice(0).forEach(function(cand){ try{ prep.pc.addIceCandidate(new RTCIceCandidate(cand)).catch(function(){}); }catch(_){} });
         startInCall();
         nalunoWatchAnsweredCall(callRef, acceptingId);
-        nalunoReleaseSenders(prep.pc).then(function(){ nalunoCallMark(acceptingId, 'released'); }).catch(function(){});
+        nalunoReleaseSenders(prep.pc).then(function(){ nalunoCallMark(acceptingId, 'released'); try{ scheduleFilteredUpgrade(prep.pc); }catch(_){} }).catch(function(){});
         if(!answerWithAccept) callRef.update({ answer: prep.answer }).then(function(){ nalunoCallMark(acceptingId, 'answerSdp'); }).catch(function(){});
         try{ if(typeof startCamView === 'function') startCamView('pip'); }catch(_){}
         try{ ensureRemoteVideoPlaying(); }catch(_){}

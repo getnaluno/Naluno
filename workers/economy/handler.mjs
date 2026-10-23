@@ -117,7 +117,7 @@ import {
 
 /* 21 Oct e: the version names the build, so the console can tell which
    worker is deployed (it stayed "2.15.0-reach" through several builds). */
-export const VERSION = "2.16.0-20261021e";
+export const VERSION = "2.17.1-20261023d";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -164,6 +164,7 @@ const memory = {
   presence: new Map(),
   audit: [],
   passwords: new Map(),
+  gate: new Map(),
   pools: new Map(),
   mail: new Map(),
   mailHits: new Map(),
@@ -195,6 +196,7 @@ export function resetMemory() {
   memory.presence.clear();
   memory.audit = [];
   memory.passwords.clear();
+  memory.gate.clear();
   memory.pools.clear();
   memory.mail.clear();
   memory.mailHits.clear();
@@ -1739,6 +1741,13 @@ async function hashPasswordV2(password) {
     updated_at: Date.now(),
   };
 }
+/* Same as hashPasswordV2 but the label is mixed into the material, so a
+   stored recovery-code hash is only ever checked as a recovery code. */
+async function hashPasswordV2Salted(secret, label) {
+  const rec = await hashPasswordV2(String(label || "") + "\u0000" + String(secret || ""));
+  rec.labelled = true;
+  return rec;
+}
 /* cheapOnly: skip the checks that need the slow JS PBKDF2, so a copy that
    can be checked quickly always gets its chance first. */
 async function passwordMatches(stored, uid, password, cheapOnly) {
@@ -1753,7 +1762,8 @@ async function passwordMatches(stored, uid, password, cheapOnly) {
   if (stored && stored.v === 2 && stored.salt && stored.hash) {
     const iters = Number(stored.iters) || 150000;
     if (cheapOnly && iters > WORKER_PBKDF2_MAX) return false;
-    const got = await pbkdf2Bytes(password, b64ToBytes(stored.salt), iters);
+    const material = stored.labelled ? (String(uid || "") + "\u0000" + String(password)) : String(password);
+    const got = await pbkdf2Bytes(material, b64ToBytes(stored.salt), iters);
     return timingEq(bytesToHex(got), stored.hash);
   }
   if (stored && stored.hash) return passwordMatches(stored.hash, uid, password, cheapOnly);
@@ -1794,6 +1804,9 @@ async function collectPasswordRecords(env, uid, saToken, userToken) {
     attempts.push([userToken, "/users/" + encodeURIComponent(uid) + "/vault/main"]);
     attempts.push([userToken, "/adminConsole/" + encodeURIComponent(uid)]);
     attempts.push([userToken, "/users/" + encodeURIComponent(uid) + "/consoleGate/main"]);
+    /* 23 Oct c: the console's last-resort copy; without it the worker said
+       "wrong" to a password the console itself accepts. */
+    attempts.push([userToken, "/users/" + encodeURIComponent(uid) + "/wirelineHidden/__nalunoConsoleGate"]);
   }
   for (let i = 0; i < attempts.length; i++) {
     try {
@@ -1859,6 +1872,102 @@ async function persistPasswordRecord(env, uid, rec, saToken, userToken) {
     if (a && a.ok) return "user-token";
   }
   return "memory";
+}
+
+/* ---- Console lock-out + 6-digit recovery code (23 Oct c) ----
+   After 3 wrong console passwords the password alone stops working and a
+   6-digit code is required. The code comes from a worker secret
+   (CONSOLE_RECOVERY_CODE) or a hash saved from the console, whichever is
+   set. The fail counter and the saved code live in adminCredentials/{uid},
+   which no browser can write (rules: read,write:if false) — so a session
+   signed in as the owner still cannot clear the counter.
+   The owner is never bricked: with no code set anywhere, three wrong tries
+   impose a short cooldown instead of a permanent block. */
+const CONSOLE_LOCK_AT = 3;
+const CONSOLE_COOLDOWN_MS = 15 * 60 * 1000;
+function sixDigit(code) { return /^[0-9]{6}$/.test(String(code || "")); }
+function envRecoveryCode(env) {
+  const c = String((env && env.CONSOLE_RECOVERY_CODE) || "").trim();
+  return sixDigit(c) ? c : "";
+}
+const CODE_MAX_FAILS = 5;
+async function loadGateState(env, uid, saToken) {
+  const mem = memory.gate.get(uid) || {};
+  /* every admin call checks the gate; a state read in the last few seconds
+     is used again instead of another database read */
+  if (mem.at && Date.now() - mem.at < 5000 && mem.loaded) return Object.assign({}, mem.loaded);
+  let doc = null;
+  if (saToken) {
+    try { doc = await fsGetDoc(env, saToken, "/adminCredentials/" + encodeURIComponent(uid)); } catch { doc = null; }
+  }
+  const num = (k, alt) => (doc && Number.isFinite(Number(doc[k])) ? Number(doc[k]) : (alt || 0));
+  const out = {
+    fails: num("gateFails", mem.fails),
+    lockUntil: num("gateLockUntil", mem.lockUntil),
+    codeFails: num("gateCodeFails", mem.codeFails),
+    codeWaitUntil: num("gateCodeWaitUntil", mem.codeWaitUntil),
+    lastWrong: (doc && typeof doc.gateLastWrong === "string") ? doc.gateLastWrong : (mem.lastWrong || ""),
+    savedCode: doc && doc.recoveryCode && typeof doc.recoveryCode === "object" ? doc.recoveryCode : (mem.savedCode || null),
+    persisted: !!(doc && saToken),
+  };
+  memory.gate.set(uid, Object.assign({}, mem, { at: Date.now(), loaded: out }));
+  return Object.assign({}, out);
+}
+async function saveGateState(env, uid, patch, saToken) {
+  const cur = memory.gate.get(uid) || {};
+  const loaded = Object.assign({}, cur.loaded || {}, patch);
+  memory.gate.set(uid, Object.assign({}, cur, patch, { at: Date.now(), loaded: loaded }));
+  if (saToken) {
+    const fields = {};
+    const n0 = (v) => Math.max(0, Math.round(Number(v) || 0));
+    if ("fails" in patch) fields.gateFails = n0(patch.fails);
+    if ("lockUntil" in patch) fields.gateLockUntil = n0(patch.lockUntil);
+    if ("codeFails" in patch) fields.gateCodeFails = n0(patch.codeFails);
+    if ("codeWaitUntil" in patch) fields.gateCodeWaitUntil = n0(patch.codeWaitUntil);
+    if ("lastWrong" in patch) fields.gateLastWrong = String(patch.lastWrong || "");
+    if ("savedCode" in patch) fields.recoveryCode = patch.savedCode;
+    if (Object.keys(fields).length) {
+      try { await fsPutDoc(env, saToken, "/adminCredentials/" + encodeURIComponent(uid), fields); } catch { /* best effort */ }
+    }
+  }
+}
+/* The lock as it stands, for any route that takes the console password. */
+function gateBlock(env, gate, now) {
+  const codeSet = recoveryCodeIsSet(env, gate);
+  if (gate.fails >= CONSOLE_LOCK_AT && codeSet) {
+    return { status: 401, body: { ok: false, code_required: true, error: "Too many tries. Enter your 6-digit code." } };
+  }
+  if (gate.fails >= CONSOLE_LOCK_AT && !codeSet && now < gate.lockUntil) {
+    return { status: 429, body: { ok: false, cooldown_s: Math.ceil((gate.lockUntil - now) / 1000), error: "Too many tries. Wait a few minutes, then try again." } };
+  }
+  return null;
+}
+/* A wrong console password. At Unlock every try counts. Anywhere else the
+   same wrong password counts once — a console still sending an old copy on
+   each of its calls must not lock its owner out; a guesser trying different
+   passwords is counted every time. */
+async function gateWrongPassword(env, uid, saToken, gate, typed, everyTry) {
+  let h = "";
+  try { h = await sha256Hex("wrong:" + uid + ":" + String(typed || "")); } catch { h = ""; }
+  if (!everyTry && h && gate.lastWrong === h) return gate.fails;
+  const fails = gate.fails + 1;
+  const patch = { fails: fails, lastWrong: h };
+  if (fails >= CONSOLE_LOCK_AT && !recoveryCodeIsSet(env, gate)) patch.lockUntil = Date.now() + CONSOLE_COOLDOWN_MS;
+  await saveGateState(env, uid, patch, saToken);
+  return fails;
+}
+function recoveryCodeIsSet(env, gate) {
+  return !!envRecoveryCode(env) || !!(gate && gate.savedCode && gate.savedCode.hash && gate.savedCode.salt);
+}
+async function recoveryCodeMatches(env, gate, uid, code) {
+  const c = String(code || "").trim();
+  if (!sixDigit(c)) return false;
+  const envCode = envRecoveryCode(env);
+  if (envCode && timingEq(c, envCode)) return true;
+  if (gate && gate.savedCode && gate.savedCode.hash && gate.savedCode.salt) {
+    try { if (await passwordMatches(gate.savedCode, "console-recovery:" + uid, c, false)) return true; } catch { /* fall through */ }
+  }
+  return false;
 }
 
 export function legacyCataloguePatch(row, now, docCreated) {
@@ -1938,7 +2047,12 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
   const openPath = path === "/v1/admin/status" || path === "/v1/admin/password" || path === "/v1/admin/unlock";
   if (!openPath && stored) {
     if (!adminPass) return json({ ok: false, error: "console password required" }, 401);
+    /* 23 Oct c: the 3-try lock holds on every route, not only Unlock. */
+    const gateA = await loadGateState(env, user.uid, saToken);
+    const blockA = gateBlock(env, gateA, Date.now());
+    if (blockA) return json(blockA.body, blockA.status);
     if (!(await matchPasswordRecord(recs, user.uid, adminPass))) {
+      await gateWrongPassword(env, user.uid, saToken, gateA, adminPass, false);
       return json({ ok: false, error: "console password not accepted" }, 401);
     }
   }
@@ -1956,9 +2070,16 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
        operator with no password typed is not given the claim, and an existing
        claim is never cleared here. */
     let stamped = false;
-    if (adminPass && (await matchPasswordRecord(recs, user.uid, adminPass))) {
-      stamped = await stampOperatorClaim(env, user.uid);
+    if (adminPass) {
+      const gateP = await loadGateState(env, user.uid, saToken);
+      if (!gateBlock(env, gateP, Date.now())) {
+        if (await matchPasswordRecord(recs, user.uid, adminPass)) stamped = await stampOperatorClaim(env, user.uid);
+        else if (recs.length) await gateWrongPassword(env, user.uid, saToken, gateP, adminPass, false);
+      }
     }
+    const gateS = await loadGateState(env, user.uid, saToken);
+    const codeSetS = recoveryCodeIsSet(env, gateS);
+    const nowS = Date.now();
     return json({
       ok: true,
       operator: true,
@@ -1967,6 +2088,15 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
       persist: saToken ? "firestore-sa" : "user-token",
       version: VERSION,
       claim: stamped ? "operator" : "",
+      gate: {
+        fails: gateS.fails,
+        tries_left: Math.max(0, CONSOLE_LOCK_AT - gateS.fails),
+        code_set: codeSetS,
+        code_required: gateS.fails >= CONSOLE_LOCK_AT && codeSetS,
+        cooldown_s: (gateS.fails >= CONSOLE_LOCK_AT && !codeSetS && nowS < gateS.lockUntil) ? Math.ceil((gateS.lockUntil - nowS) / 1000) : 0,
+        code_source: envRecoveryCode(env) ? "worker-secret" : (codeSetS ? "console" : "none"),
+        tamper_proof: gateS.persisted,
+      },
     });
   }
 
@@ -2181,12 +2311,63 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
     const body = await request.json().catch(() => ({}));
     const pass = String(body.password || adminPass || "").trim();
     if (!recs.length) return json({ ok: true, setup: true, hasPassword: false });
-    const matched = await matchPasswordRecord(recs, user.uid, pass);
-    if (!matched) {
-      return json({ ok: false, error: "console password not accepted" }, 401);
+    const gate = await loadGateState(env, user.uid, saToken);
+    const codeSet = recoveryCodeIsSet(env, gate);
+    const now = Date.now();
+
+    /* The 6-digit code is the way back in after 3 wrong tries. */
+    const code = String(body.recovery_code || "").trim();
+    if (code) {
+      /* 5 wrong codes → a 15-minute wait for codes (a 6-digit code must not
+         be guessable by trying them all). Never permanent. */
+      if (now < gate.codeWaitUntil) {
+        return json({ ok: false, code_required: true, cooldown_s: Math.ceil((gate.codeWaitUntil - now) / 1000), error: "Too many wrong codes. Wait a few minutes." }, 429);
+      }
+      if (await recoveryCodeMatches(env, gate, user.uid, code)) {
+        await saveGateState(env, user.uid, { fails: 0, lockUntil: 0, codeFails: 0, codeWaitUntil: 0, lastWrong: "" }, saToken);
+        memory.audit.unshift({ action: "console-code-used", actor: user.uid, ts: now });
+        return json({ ok: true, hasPassword: true, code_used: true, must_reset: true });
+      }
+      const cf = gate.codeFails + 1;
+      const cpatch = { codeFails: cf };
+      if (cf >= CODE_MAX_FAILS) { cpatch.codeFails = 0; cpatch.codeWaitUntil = now + CONSOLE_COOLDOWN_MS; }
+      await saveGateState(env, user.uid, cpatch, saToken);
+      return json({ ok: false, error: "That code was not accepted.", code_required: true }, 401);
     }
-    memory.passwords.set(user.uid, matched);
-    return json({ ok: true, hasPassword: true });
+
+    const blockU = gateBlock(env, gate, now);
+    if (blockU) return json(blockU.body, blockU.status);
+
+    const matched = await matchPasswordRecord(recs, user.uid, pass);
+    if (matched) {
+      await saveGateState(env, user.uid, { fails: 0, lockUntil: 0, lastWrong: "" }, saToken);
+      memory.passwords.set(user.uid, matched);
+      return json({ ok: true, hasPassword: true });
+    }
+    const fails = await gateWrongPassword(env, user.uid, saToken, gate, pass, true);
+    return json({
+      ok: false,
+      error: "console password not accepted",
+      tries_left: Math.max(0, CONSOLE_LOCK_AT - fails),
+      code_required: fails >= CONSOLE_LOCK_AT && codeSet,
+      cooldown_s: (fails >= CONSOLE_LOCK_AT && !codeSet) ? Math.ceil(CONSOLE_COOLDOWN_MS / 1000) : 0,
+      code_set: codeSet,
+    }, 401);
+  }
+
+  if (path === "/v1/admin/recovery-code" && request.method === "POST") {
+    const body = await request.json().catch(() => ({}));
+    if (body.clear === true) {
+      await saveGateState(env, user.uid, { savedCode: null }, saToken);
+      memory.audit.unshift({ action: "console-code-cleared", actor: user.uid, ts: Date.now() });
+      return json({ ok: true, cleared: true });
+    }
+    const code = String(body.code || "").trim();
+    if (!sixDigit(code)) return json({ ok: false, error: "The code must be exactly 6 digits." }, 400);
+    const rec = await hashPasswordV2Salted(code, "console-recovery:" + user.uid);
+    await saveGateState(env, user.uid, { savedCode: rec }, saToken);
+    memory.audit.unshift({ action: "console-code-set", actor: user.uid, ts: Date.now() });
+    return json({ ok: true, saved: saToken ? "firestore-sa" : "memory" });
   }
 
   if (path === "/v1/admin/password" && request.method === "POST") {
@@ -2194,8 +2375,12 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
     const next = String(body.next_password || "").trim();
     if (next.length < 8) return json({ ok: false, error: "Use at least 8 characters" }, 400);
     if (recs.length) {
+      const gateW = await loadGateState(env, user.uid, saToken);
+      const blockW = gateBlock(env, gateW, Date.now());
+      if (blockW) return json(blockW.body, blockW.status);
       const current = String(body.current_password || adminPass || "").trim();
       if (!current || !(await matchPasswordRecord(recs, user.uid, current))) {
+        if (current) await gateWrongPassword(env, user.uid, saToken, gateW, current, false);
         return json({ ok: false, error: "current password is wrong" }, 401);
       }
     }
@@ -3690,6 +3875,31 @@ function claimRate(uid) {
   _claimHits.set(k, n);
   return n <= 10;
 }
+/* 23 Oct c: a cap on new accounts from one network address per hour, so a
+   script cannot farm accounts from one machine. Mobile networks (MTN,
+   Airtel) put thousands of phones behind a few shared addresses, so the
+   default is generous (300/hour) and can be changed without a code change:
+   set the worker variable CLAIM_IP_PER_HOUR. 0 turns the cap off. */
+const _claimIpHits = new Map();
+function claimIpRate(ip, perHour) {
+  if (!ip || ip === "?") return true;
+  const hour = Math.floor(Date.now() / 3600000);
+  const k = ip + "|" + hour;
+  const n = (_claimIpHits.get(k) || 0) + 1;
+  if (_claimIpHits.size > 4000) {
+    for (const key of _claimIpHits.keys()) {
+      if (Number(String(key).split("|").pop()) < hour) _claimIpHits.delete(key);
+    }
+  }
+  _claimIpHits.set(k, n);
+  return n <= perHour;
+}
+function claimIpCap(env) {
+  const raw = env && env.CLAIM_IP_PER_HOUR;
+  if (raw === undefined || raw === null || raw === "") return 300;
+  const n = Math.round(Number(raw));
+  return Number.isFinite(n) && n >= 0 ? n : 300;
+}
 function sameSecret(given, want) {
   if (!want || !given || given.length !== want.length) return false;
   let diff = 0;
@@ -4365,6 +4575,7 @@ export async function handleRequest(request, env = {}, ctx = {}) {
     if (path === "/v1/register/claim" && request.method === "POST") {
       if (!saToken) return json({ ok: false, error: "Registration is not available right now. Try again later." }, 503);
       if (!claimRate(user.uid)) return json({ ok: false, error: "Please wait a minute and try again." }, 429);
+      { const cap = claimIpCap(env); if (cap > 0 && !claimIpRate(request.headers.get("CF-Connecting-IP") || "?", cap)) return json({ ok: false, error: "Too many new accounts from here. Try again later." }, 429); }
       const out = await launchApi(env, saToken).claim(launchEnvOf(env), user.uid);
       if (out.ok) _launchStatusCache.clear();
       return json(out, out.ok ? 200 : (out.status || 403));

@@ -74,9 +74,10 @@
 // v248: attention is only kept when a visit, an app open, or a continued session owns it. Join date and Find pin stay on the person.
 // v284: 10.05f Android floats a video call on leaving; Wireline alerts through Naluno's worker; a call answers once per tap.
 // v285: 10.05g voices keep reading (several makers, scheduled, trimmed), Luganda spoken from its own sounds, test alert, stale stamps.
+// v358: 10.23e calls fill empty slots (no camera wait while ringing); newest wins for every kept file — a slow server copy never pulls a phone or the console back.
 // v344: 10.19d the answering phone does not open its own hangup channel (that refused the answer); the hangup word leaves before the socket closes; a call alert is drawn and kept; a new build does not wipe the push address.
-const CACHE_NAME = 'naluno-shell-v355';
-const APP_BUILD = '20261023b';
+const CACHE_NAME = 'naluno-shell-v358';
+const APP_BUILD = '20261023e';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -101,9 +102,52 @@ async function nalunoShellStamp(res){
   try{
     if(!res) return '';
     const t = await res.clone().text();
-    const m = /<meta name="app-version" content="(\d{4})\.(\d{2})\.(\d{2})([a-z])"/.exec(t);
+    const m = /<meta name="app-version" content="(\d{4})\.(\d{2})\.(\d{2})([a-z])"/.exec(t)
+      || /<meta name="naluno-build" content="(\d{4})\.(\d{2})\.(\d{2})([a-z])"/.exec(t);
     return m ? (m[1] + m[2] + m[3] + m[4]) : '';
   }catch(_){ return ''; }
+}
+/* 23 Oct e: newest wins for every kept file, not only the app page. A
+   fresh copy may replace the kept one unless it is plainly OLDER: a page
+   with an older build stamp, or any file whose server date (Last-Modified)
+   is older than the kept copy's. That is a slow server copy somewhere (a
+   CDN edge that has not caught up, a half-finished upload), and it must
+   never pull a phone back to an older version once a newer one landed.
+   When neither side can be dated, the fresh copy wins, as before. */
+function nalunoServerDate(res){
+  try{
+    const v = res && res.headers && res.headers.get('last-modified');
+    const t = v ? Date.parse(v) : NaN;
+    return isFinite(t) ? t : 0;
+  }catch(_){ return 0; }
+}
+async function nalunoFreshIsOlder(fresh, kept){
+  try{
+    if(!fresh || !kept) return false;
+    const ct = String(fresh.headers.get('content-type') || '').toLowerCase();
+    if(ct.indexOf('html') >= 0){
+      const got = await nalunoShellStamp(fresh), have = await nalunoShellStamp(kept);
+      if(got && have) return got < have;
+    }
+    const a = nalunoServerDate(fresh), b = nalunoServerDate(kept);
+    return !!(a && b && a < b);
+  }catch(_){ return false; }
+}
+/* The newest app page this phone has kept, in any Naluno shell cache. */
+async function nalunoNewestKeptPage(keys){
+  let best = null, bestStamp = '';
+  try{
+    const names = (await caches.keys()).filter(function(n){ return /^naluno-shell-v\d+$/.test(n); });
+    for(const n of names){
+      const c = await caches.open(n);
+      for(const k of keys){
+        const r = await c.match(k);
+        const st = r ? await nalunoShellStamp(r) : '';
+        if(st && st > bestStamp){ best = r; bestStamp = st; }
+      }
+    }
+  }catch(_){}
+  return { res: best, stamp: bestStamp };
 }
 self.addEventListener('install', event=>{
   event.waitUntil((async ()=>{
@@ -125,7 +169,29 @@ self.addEventListener('install', event=>{
     /* 29h: fetch past the browser's own cache, so a new version never
        stores an old copy of the app page (which brought the old page, and
        the update banner, back after the update). */
+    /* 23 Oct e: the pages are fetched first and checked, so a slow server
+       copy of an OLDER page can never become this version's kept page
+       (the old caches are deleted on activate, so it would have been the
+       only copy left). Before precaching, find the newest page kept so far. */
+    const PAGE_KEYS = ['/app/', '/app/index.html'];
+    const kept = await nalunoNewestKeptPage(PAGE_KEYS);
     await Promise.all(CORE_ASSETS.map(u => cache.add(new Request(u, { cache: 'reload' })).catch(()=>{})));
+    try{
+      const want = kept.stamp > APP_BUILD ? kept.stamp : APP_BUILD;
+      for(const k of PAGE_KEYS){
+        const got = await cache.match(k);
+        const st = got ? await nalunoShellStamp(got) : '';
+        if(st && st >= want) continue;
+        /* ask past every copy in between (a new address the CDN has not kept) */
+        let fixed = false;
+        try{
+          const r = await fetch(new Request(k + (k.indexOf('?') >= 0 ? '&' : '?') + 'nalunoInstall=' + APP_BUILD + '-' + Date.now(), { cache: 'reload' }));
+          const rs = (r && r.ok) ? await nalunoShellStamp(r) : '';
+          if(rs && rs >= want && (!st || rs > st)){ await cache.put(k, r); fixed = true; }
+        }catch(_){}
+        if(!fixed && kept.res && (!st || kept.stamp > st)) await cache.put(k, kept.res.clone());
+      }
+    }catch(_){}
   })());
 });
 
@@ -342,8 +408,13 @@ self.addEventListener('fetch', event=>{
     }
   }catch(_){}
   if(event.request.method !== 'GET') return;
-  // Version checks and hard reloads must hit the network, not the SW cache.
-  if(event.request.cache === 'no-store' || event.request.cache === 'reload') return;
+  // Version checks must hit the network, not the SW cache.
+  if(event.request.cache === 'no-store') return;
+  /* Reloads ("reload" requests) still go to the network. 23 Oct e: for the
+     app's and the console's own pages and code they are answered through
+     the newest-wins check below (a slow server copy cannot come back on a
+     reload either); anything else is passed straight through, as before. */
+  const reloadMode = event.request.cache === 'reload';
   const url = new URL(event.request.url);
   const isSameOrigin = url.origin === self.location.origin;
   // NEVER intercept Firebase CDN (gstatic). A 2.5s timeout on large SDK scripts
@@ -384,6 +455,24 @@ self.addEventListener('fetch', event=>{
      from, or written to, the shell cache. Everything under /app/ keeps the
      existing cache-first behaviour untouched, which is what makes the app
      open instantly and work offline. */
+  if(reloadMode){
+    const isAdminPage = path === '/admin' || path === '/admin/' || path === '/admin/index.html';
+    const isAppPage = isNav && (path === '/app' || path === '/app/' || path.indexOf('/app/') === 0);
+    if(!(isAppCode || isAdminPage || isAppPage) || url.search.indexOf('nalunoInstall=') >= 0){ return; }
+    event.respondWith((async ()=>{
+      const fresh = await fetch(event.request);
+      try{
+        if(fresh && fresh.ok){
+          const kept = await caches.match(event.request)
+            || (isAppPage ? await caches.match(new Request(self.location.origin + '/app/index.html')) : null)
+            || (isAdminPage ? await caches.match(new Request(self.location.origin + '/admin/')) : null);
+          if(kept && await nalunoFreshIsOlder(fresh, kept)) return kept;
+        }
+      }catch(_){}
+      return fresh;
+    })());
+    return;
+  }
   const isSiteRoot = url.origin === self.location.origin &&
     (path === '/' || path === '/index.html');
   const isAdminNav = url.origin === self.location.origin &&
@@ -397,6 +486,12 @@ self.addEventListener('fetch', event=>{
       try{
         const fresh = await fetch(event.request, { cache: 'no-store' });
         if(fresh && fresh.ok){
+          /* 23 Oct e: an older console page than the one this device already
+             had (a slow server copy) is not shown and not kept. */
+          try{
+            const keptAdmin = await caches.match(event.request) || await caches.match(new Request(self.location.origin + '/admin/'));
+            if(keptAdmin && await nalunoFreshIsOlder(fresh, keptAdmin)) return keptAdmin;
+          }catch(_){}
           try{
             const copy = fresh.clone();
             const cache = await caches.open(CACHE_NAME);
@@ -481,7 +576,9 @@ self.addEventListener('fetch', event=>{
              its page (an older copy kept under the new ?v=) heals on the
              next opening instead of staying old. */
           event.waitUntil(netTimeout(new Request(event.request.url, { cache: 'no-cache', credentials: 'same-origin' }), path.indexOf('naluno-voice-engine.js') >= 0 ? 120000 : 12000).then(function(fresh){
-            if(fresh && fresh.ok && isShellResponse(fresh, path)) putBare(fresh);
+            if(fresh && fresh.ok && isShellResponse(fresh, path)){
+              return nalunoFreshIsOlder(fresh, have).then(function(older){ if(!older) putBare(fresh); });
+            }
           }).catch(function(){}));
           return have;
         }
@@ -489,6 +586,9 @@ self.addEventListener('fetch', event=>{
       try{
         const response = await netTimeout(event.request, path.indexOf('naluno-voice-engine.js') >= 0 ? 120000 : 8000);
         if(response && response.ok && isShellResponse(response, path)){
+          /* never an older copy over the one this phone already has */
+          const keptCode = await caches.match(event.request);
+          if(keptCode && isShellResponse(keptCode, path) && await nalunoFreshIsOlder(response, keptCode)) return keptCode;
           putBare(response);
           return response;
         }
@@ -521,10 +621,7 @@ self.addEventListener('fetch', event=>{
           const fresh = await netTimeout(isAppNav ? new Request(bare, { cache: 'no-cache', credentials: 'same-origin' }) : event.request, 12000);
           /* Never keep an older app page over a newer one (a server briefly
              handing out an old copy). */
-          if(fresh && fresh.ok && isAppNav){
-            const got = await nalunoShellStamp(fresh), have = await nalunoShellStamp(cached);
-            if(got && have && got < have) return;
-          }
+          if(fresh && fresh.ok && await nalunoFreshIsOlder(fresh, cached)) return;
           if(fresh && fresh.ok) putBare(fresh);
         }catch(_){ /* offline: keep what we have */ }
       })());
@@ -533,6 +630,12 @@ self.addEventListener('fetch', event=>{
     try{
       const response = await netTimeout(event.request, isAppNav ? 8000 : 2500);
       if(response && response.ok){
+        if(isAppNav){
+          /* no kept page under this address: still never show an app page
+             older than the newest one this phone has */
+          const best = await caches.match(appShellReq);
+          if(best && await nalunoFreshIsOlder(response, best)) return best;
+        }
         if(isSameOrigin) putBare(response);
         return response;
       }

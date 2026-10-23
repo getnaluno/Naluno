@@ -42,6 +42,8 @@ async function phone(G, store, uid, peers, o) {
     if (/turn-credentials/.test(u)) {
       const mode = o.turn || 'ok';
       if (mode === 'hang') return;
+      /* a slow mobile network: the credential request takes this long */
+      if (o.turnMs) await new Promise((res) => setTimeout(res, o.turnMs));
       return r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: mode === 'down' ? '{}' : JSON.stringify(RELAY(turnPort)) });
     }
     if (/workers\.dev/.test(u)) {
@@ -55,6 +57,23 @@ async function phone(G, store, uid, peers, o) {
   });
   await ctx.addInitScript(() => { try { localStorage.setItem('nalunoWelcomeOk', String(Date.now())); } catch (_) {} });
   if (o.net === 'mobile') await ctx.addInitScript({ path: path.join(LIB, 'natsim.js') });
+  /* an older app version on this phone: its calls.js is served instead */
+  if (o.callsJs) { const body = fs.readFileSync(o.callsJs, 'utf8'); await ctx.route(/\/js\/calls\.js(\?|$)/, (r) => r.fulfill({ status: 200, contentType: 'application/javascript', body })); }
+  /* the microphone/camera fails to start (after a moment) */
+  if (o.gumFailMs) await ctx.addInitScript((ms) => {
+    try { const md = navigator.mediaDevices; md.getUserMedia = function () { return new Promise((_, rej) => setTimeout(() => rej(new DOMException('Could not start audio source', 'NotReadableError')), ms)); }; } catch (_) {}
+  }, o.gumFailMs);
+  /* camera/mic permission not granted yet (the question would appear) */
+  if (o.permsPrompt) await ctx.addInitScript(() => {
+    try { const q = navigator.permissions.query.bind(navigator.permissions); navigator.permissions.query = function (d) { if (d && (d.name === 'camera' || d.name === 'microphone')) return Promise.resolve({ state: 'prompt' }); return q(d); }; } catch (_) {}
+  });
+  /* a real phone's camera/microphone takes a moment to start */
+  if (o.camMs || o.micMs) await ctx.addInitScript(([cam, mic]) => {
+    try {
+      const md = navigator.mediaDevices; const g = md.getUserMedia.bind(md);
+      md.getUserMedia = async function (c) { const wantsVideo = !!(c && c.video); await new Promise((r) => setTimeout(r, wantsVideo ? cam : mic)); return g(c); };
+    } catch (_) {}
+  }, [o.camMs || 0, o.micMs || 0]);
   if (o.cached) await ctx.addInitScript(([u, cfg]) => { try { localStorage.setItem('nalunoIceCache', JSON.stringify({ uid: u, at: Date.now() - 10 * 60000, cfg: Object.assign({ bundlePolicy: 'max-bundle', rtcpMuxPolicy: 'require' }, cfg) })); } catch (_) {} }, [uid, RELAY(turnPort)]);
   const p = await ctx.newPage();
   const log = [];

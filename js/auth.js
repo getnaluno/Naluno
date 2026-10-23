@@ -165,6 +165,25 @@ function nalunoAuthConfig(){
   if(nalunoOwnAuthOn()) cfg.authDomain = NALUNO_OWN_AUTH_HOST;
   return cfg;
 }
+/* Turn on App Check only when a reCAPTCHA site key is configured and the
+   App Check SDK is present. No key → this returns quietly and nothing
+   changes. The token is attached to Firestore/Storage/Functions calls so
+   the backend (once enforcement is on) can tell the real app from a script. */
+function nalunoActivateAppCheck(){
+  try{
+    const key = (typeof RECAPTCHA_SITE_KEY === 'string') ? RECAPTCHA_SITE_KEY.trim() : '';
+    if(!key) return false;
+    if(!firebase || !firebase.appCheck || window.__nalunoAppCheckOn) return false;
+    const provider = new firebase.appCheck.ReCaptchaV3Provider(key);
+    firebase.appCheck().activate(provider, true /* auto-refresh tokens */);
+    window.__nalunoAppCheckOn = true;
+    try{ if(typeof nalunoDiag === 'function') nalunoDiag('appcheck', 'activated'); }catch(_){}
+    return true;
+  }catch(e){
+    try{ if(typeof nalunoDiag === 'function') nalunoDiag('appcheck-failed', (e && e.message) || String(e)); }catch(_){}
+    return false;
+  }
+}
 function nalunoProbeOwnAuth(){
   try{
     if(location.hostname !== NALUNO_OWN_AUTH_HOST || typeof fetch !== 'function') return;
@@ -202,6 +221,13 @@ function initFirebaseApp(){
     } else {
       fbApp = firebase.initializeApp(nalunoAuthConfig());
     }
+    /* 23 Oct c: App Check (stops scripts that are not the real app from
+       hammering the database). INERT until a reCAPTCHA site key is set in
+       firebase-config.js AND registered in the Firebase console — with no
+       key it does nothing, so no real user is ever affected. Roll out in
+       "monitor" mode first; only switch the console to "enforce" once the
+       monitor page looks clean. See UPLOAD note. */
+    try{ nalunoActivateAppCheck(); }catch(_){}
     fbAuth = firebase.auth();
     try{ setTimeout(nalunoProbeOwnAuth, 4000); }catch(_){}
     // Explicitly request durable local persistence so a successful sign-in survives

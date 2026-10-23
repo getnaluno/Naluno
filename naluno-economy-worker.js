@@ -5978,7 +5978,7 @@ async function cfCalls(env, fetchImpl, path, method, body) {
 }
 
 // workers/economy/handler.mjs
-var VERSION = "2.16.0-20261021e";
+var VERSION = "2.17.1-20261023d";
 var PROJECT_ID = "naluno-28a00";
 var OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 var DEFAULT_FLAGS = {
@@ -6033,6 +6033,7 @@ var memory = {
   presence: /* @__PURE__ */ new Map(),
   audit: [],
   passwords: /* @__PURE__ */ new Map(),
+  gate: /* @__PURE__ */ new Map(),
   pools: /* @__PURE__ */ new Map(),
   mail: /* @__PURE__ */ new Map(),
   mailHits: /* @__PURE__ */ new Map(),
@@ -7436,6 +7437,11 @@ async function hashPasswordV2(password) {
     updated_at: Date.now()
   };
 }
+async function hashPasswordV2Salted(secret, label) {
+  const rec = await hashPasswordV2(String(label || "") + "\0" + String(secret || ""));
+  rec.labelled = true;
+  return rec;
+}
 async function passwordMatches(stored, uid, password, cheapOnly) {
   if (!stored || !password) return false;
   if (typeof stored === "string") {
@@ -7448,7 +7454,8 @@ async function passwordMatches(stored, uid, password, cheapOnly) {
   if (stored && stored.v === 2 && stored.salt && stored.hash) {
     const iters = Number(stored.iters) || 15e4;
     if (cheapOnly && iters > WORKER_PBKDF2_MAX) return false;
-    const got = await pbkdf2Bytes(password, b64ToBytes(stored.salt), iters);
+    const material = stored.labelled ? String(uid || "") + "\0" + String(password) : String(password);
+    const got = await pbkdf2Bytes(material, b64ToBytes(stored.salt), iters);
     return timingEq(bytesToHex(got), stored.hash);
   }
   if (stored && stored.hash) return passwordMatches(stored.hash, uid, password, cheapOnly);
@@ -7487,6 +7494,7 @@ async function collectPasswordRecords(env, uid, saToken, userToken) {
     attempts.push([userToken, "/users/" + encodeURIComponent(uid) + "/vault/main"]);
     attempts.push([userToken, "/adminConsole/" + encodeURIComponent(uid)]);
     attempts.push([userToken, "/users/" + encodeURIComponent(uid) + "/consoleGate/main"]);
+    attempts.push([userToken, "/users/" + encodeURIComponent(uid) + "/wirelineHidden/__nalunoConsoleGate"]);
   }
   for (let i = 0; i < attempts.length; i++) {
     try {
@@ -7542,6 +7550,101 @@ async function persistPasswordRecord(env, uid, rec, saToken, userToken) {
     if (a && a.ok) return "user-token";
   }
   return "memory";
+}
+var CONSOLE_LOCK_AT = 3;
+var CONSOLE_COOLDOWN_MS = 15 * 60 * 1e3;
+function sixDigit(code) {
+  return /^[0-9]{6}$/.test(String(code || ""));
+}
+function envRecoveryCode(env) {
+  const c = String(env && env.CONSOLE_RECOVERY_CODE || "").trim();
+  return sixDigit(c) ? c : "";
+}
+var CODE_MAX_FAILS = 5;
+async function loadGateState(env, uid, saToken) {
+  const mem = memory.gate.get(uid) || {};
+  if (mem.at && Date.now() - mem.at < 5e3 && mem.loaded) return Object.assign({}, mem.loaded);
+  let doc = null;
+  if (saToken) {
+    try {
+      doc = await fsGetDoc(env, saToken, "/adminCredentials/" + encodeURIComponent(uid));
+    } catch {
+      doc = null;
+    }
+  }
+  const num4 = (k, alt) => doc && Number.isFinite(Number(doc[k])) ? Number(doc[k]) : alt || 0;
+  const out = {
+    fails: num4("gateFails", mem.fails),
+    lockUntil: num4("gateLockUntil", mem.lockUntil),
+    codeFails: num4("gateCodeFails", mem.codeFails),
+    codeWaitUntil: num4("gateCodeWaitUntil", mem.codeWaitUntil),
+    lastWrong: doc && typeof doc.gateLastWrong === "string" ? doc.gateLastWrong : mem.lastWrong || "",
+    savedCode: doc && doc.recoveryCode && typeof doc.recoveryCode === "object" ? doc.recoveryCode : mem.savedCode || null,
+    persisted: !!(doc && saToken)
+  };
+  memory.gate.set(uid, Object.assign({}, mem, { at: Date.now(), loaded: out }));
+  return Object.assign({}, out);
+}
+async function saveGateState(env, uid, patch, saToken) {
+  const cur = memory.gate.get(uid) || {};
+  const loaded = Object.assign({}, cur.loaded || {}, patch);
+  memory.gate.set(uid, Object.assign({}, cur, patch, { at: Date.now(), loaded }));
+  if (saToken) {
+    const fields = {};
+    const n0 = (v) => Math.max(0, Math.round(Number(v) || 0));
+    if ("fails" in patch) fields.gateFails = n0(patch.fails);
+    if ("lockUntil" in patch) fields.gateLockUntil = n0(patch.lockUntil);
+    if ("codeFails" in patch) fields.gateCodeFails = n0(patch.codeFails);
+    if ("codeWaitUntil" in patch) fields.gateCodeWaitUntil = n0(patch.codeWaitUntil);
+    if ("lastWrong" in patch) fields.gateLastWrong = String(patch.lastWrong || "");
+    if ("savedCode" in patch) fields.recoveryCode = patch.savedCode;
+    if (Object.keys(fields).length) {
+      try {
+        await fsPutDoc(env, saToken, "/adminCredentials/" + encodeURIComponent(uid), fields);
+      } catch {
+      }
+    }
+  }
+}
+function gateBlock(env, gate, now) {
+  const codeSet = recoveryCodeIsSet(env, gate);
+  if (gate.fails >= CONSOLE_LOCK_AT && codeSet) {
+    return { status: 401, body: { ok: false, code_required: true, error: "Too many tries. Enter your 6-digit code." } };
+  }
+  if (gate.fails >= CONSOLE_LOCK_AT && !codeSet && now < gate.lockUntil) {
+    return { status: 429, body: { ok: false, cooldown_s: Math.ceil((gate.lockUntil - now) / 1e3), error: "Too many tries. Wait a few minutes, then try again." } };
+  }
+  return null;
+}
+async function gateWrongPassword(env, uid, saToken, gate, typed, everyTry) {
+  let h = "";
+  try {
+    h = await sha256Hex2("wrong:" + uid + ":" + String(typed || ""));
+  } catch {
+    h = "";
+  }
+  if (!everyTry && h && gate.lastWrong === h) return gate.fails;
+  const fails = gate.fails + 1;
+  const patch = { fails, lastWrong: h };
+  if (fails >= CONSOLE_LOCK_AT && !recoveryCodeIsSet(env, gate)) patch.lockUntil = Date.now() + CONSOLE_COOLDOWN_MS;
+  await saveGateState(env, uid, patch, saToken);
+  return fails;
+}
+function recoveryCodeIsSet(env, gate) {
+  return !!envRecoveryCode(env) || !!(gate && gate.savedCode && gate.savedCode.hash && gate.savedCode.salt);
+}
+async function recoveryCodeMatches(env, gate, uid, code) {
+  const c = String(code || "").trim();
+  if (!sixDigit(c)) return false;
+  const envCode = envRecoveryCode(env);
+  if (envCode && timingEq(c, envCode)) return true;
+  if (gate && gate.savedCode && gate.savedCode.hash && gate.savedCode.salt) {
+    try {
+      if (await passwordMatches(gate.savedCode, "console-recovery:" + uid, c, false)) return true;
+    } catch {
+    }
+  }
+  return false;
 }
 function legacyCataloguePatch(row, now, docCreated) {
   if (!row || row.deleted) return null;
@@ -7614,7 +7717,11 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
   const openPath = path === "/v1/admin/status" || path === "/v1/admin/password" || path === "/v1/admin/unlock";
   if (!openPath && stored) {
     if (!adminPass) return json({ ok: false, error: "console password required" }, 401);
+    const gateA = await loadGateState(env, user.uid, saToken);
+    const blockA = gateBlock(env, gateA, Date.now());
+    if (blockA) return json(blockA.body, blockA.status);
     if (!await matchPasswordRecord(recs, user.uid, adminPass)) {
+      await gateWrongPassword(env, user.uid, saToken, gateA, adminPass, false);
       return json({ ok: false, error: "console password not accepted" }, 401);
     }
   }
@@ -7626,9 +7733,16 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
   };
   if (path === "/v1/admin/status" && request.method === "GET") {
     let stamped = false;
-    if (adminPass && await matchPasswordRecord(recs, user.uid, adminPass)) {
-      stamped = await stampOperatorClaim(env, user.uid);
+    if (adminPass) {
+      const gateP = await loadGateState(env, user.uid, saToken);
+      if (!gateBlock(env, gateP, Date.now())) {
+        if (await matchPasswordRecord(recs, user.uid, adminPass)) stamped = await stampOperatorClaim(env, user.uid);
+        else if (recs.length) await gateWrongPassword(env, user.uid, saToken, gateP, adminPass, false);
+      }
     }
+    const gateS = await loadGateState(env, user.uid, saToken);
+    const codeSetS = recoveryCodeIsSet(env, gateS);
+    const nowS = Date.now();
     return json({
       ok: true,
       operator: true,
@@ -7636,7 +7750,16 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
       hasPassword: recs.length > 0,
       persist: saToken ? "firestore-sa" : "user-token",
       version: VERSION,
-      claim: stamped ? "operator" : ""
+      claim: stamped ? "operator" : "",
+      gate: {
+        fails: gateS.fails,
+        tries_left: Math.max(0, CONSOLE_LOCK_AT - gateS.fails),
+        code_set: codeSetS,
+        code_required: gateS.fails >= CONSOLE_LOCK_AT && codeSetS,
+        cooldown_s: gateS.fails >= CONSOLE_LOCK_AT && !codeSetS && nowS < gateS.lockUntil ? Math.ceil((gateS.lockUntil - nowS) / 1e3) : 0,
+        code_source: envRecoveryCode(env) ? "worker-secret" : codeSetS ? "console" : "none",
+        tamper_proof: gateS.persisted
+      }
     });
   }
   if (path.startsWith("/v1/admin/launch")) {
@@ -7878,20 +8001,71 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
     const body = await request.json().catch(() => ({}));
     const pass = String(body.password || adminPass || "").trim();
     if (!recs.length) return json({ ok: true, setup: true, hasPassword: false });
-    const matched = await matchPasswordRecord(recs, user.uid, pass);
-    if (!matched) {
-      return json({ ok: false, error: "console password not accepted" }, 401);
+    const gate = await loadGateState(env, user.uid, saToken);
+    const codeSet = recoveryCodeIsSet(env, gate);
+    const now = Date.now();
+    const code = String(body.recovery_code || "").trim();
+    if (code) {
+      if (now < gate.codeWaitUntil) {
+        return json({ ok: false, code_required: true, cooldown_s: Math.ceil((gate.codeWaitUntil - now) / 1e3), error: "Too many wrong codes. Wait a few minutes." }, 429);
+      }
+      if (await recoveryCodeMatches(env, gate, user.uid, code)) {
+        await saveGateState(env, user.uid, { fails: 0, lockUntil: 0, codeFails: 0, codeWaitUntil: 0, lastWrong: "" }, saToken);
+        memory.audit.unshift({ action: "console-code-used", actor: user.uid, ts: now });
+        return json({ ok: true, hasPassword: true, code_used: true, must_reset: true });
+      }
+      const cf = gate.codeFails + 1;
+      const cpatch = { codeFails: cf };
+      if (cf >= CODE_MAX_FAILS) {
+        cpatch.codeFails = 0;
+        cpatch.codeWaitUntil = now + CONSOLE_COOLDOWN_MS;
+      }
+      await saveGateState(env, user.uid, cpatch, saToken);
+      return json({ ok: false, error: "That code was not accepted.", code_required: true }, 401);
     }
-    memory.passwords.set(user.uid, matched);
-    return json({ ok: true, hasPassword: true });
+    const blockU = gateBlock(env, gate, now);
+    if (blockU) return json(blockU.body, blockU.status);
+    const matched = await matchPasswordRecord(recs, user.uid, pass);
+    if (matched) {
+      await saveGateState(env, user.uid, { fails: 0, lockUntil: 0, lastWrong: "" }, saToken);
+      memory.passwords.set(user.uid, matched);
+      return json({ ok: true, hasPassword: true });
+    }
+    const fails = await gateWrongPassword(env, user.uid, saToken, gate, pass, true);
+    return json({
+      ok: false,
+      error: "console password not accepted",
+      tries_left: Math.max(0, CONSOLE_LOCK_AT - fails),
+      code_required: fails >= CONSOLE_LOCK_AT && codeSet,
+      cooldown_s: fails >= CONSOLE_LOCK_AT && !codeSet ? Math.ceil(CONSOLE_COOLDOWN_MS / 1e3) : 0,
+      code_set: codeSet
+    }, 401);
+  }
+  if (path === "/v1/admin/recovery-code" && request.method === "POST") {
+    const body = await request.json().catch(() => ({}));
+    if (body.clear === true) {
+      await saveGateState(env, user.uid, { savedCode: null }, saToken);
+      memory.audit.unshift({ action: "console-code-cleared", actor: user.uid, ts: Date.now() });
+      return json({ ok: true, cleared: true });
+    }
+    const code = String(body.code || "").trim();
+    if (!sixDigit(code)) return json({ ok: false, error: "The code must be exactly 6 digits." }, 400);
+    const rec = await hashPasswordV2Salted(code, "console-recovery:" + user.uid);
+    await saveGateState(env, user.uid, { savedCode: rec }, saToken);
+    memory.audit.unshift({ action: "console-code-set", actor: user.uid, ts: Date.now() });
+    return json({ ok: true, saved: saToken ? "firestore-sa" : "memory" });
   }
   if (path === "/v1/admin/password" && request.method === "POST") {
     const body = await request.json().catch(() => ({}));
     const next = String(body.next_password || "").trim();
     if (next.length < 8) return json({ ok: false, error: "Use at least 8 characters" }, 400);
     if (recs.length) {
+      const gateW = await loadGateState(env, user.uid, saToken);
+      const blockW = gateBlock(env, gateW, Date.now());
+      if (blockW) return json(blockW.body, blockW.status);
       const current = String(body.current_password || adminPass || "").trim();
       if (!current || !await matchPasswordRecord(recs, user.uid, current)) {
+        if (current) await gateWrongPassword(env, user.uid, saToken, gateW, current, false);
         return json({ ok: false, error: "current password is wrong" }, 401);
       }
     }
@@ -9319,6 +9493,26 @@ function claimRate(uid) {
   _claimHits.set(k, n);
   return n <= 10;
 }
+var _claimIpHits = /* @__PURE__ */ new Map();
+function claimIpRate(ip, perHour) {
+  if (!ip || ip === "?") return true;
+  const hour = Math.floor(Date.now() / 36e5);
+  const k = ip + "|" + hour;
+  const n = (_claimIpHits.get(k) || 0) + 1;
+  if (_claimIpHits.size > 4e3) {
+    for (const key of _claimIpHits.keys()) {
+      if (Number(String(key).split("|").pop()) < hour) _claimIpHits.delete(key);
+    }
+  }
+  _claimIpHits.set(k, n);
+  return n <= perHour;
+}
+function claimIpCap(env) {
+  const raw = env && env.CLAIM_IP_PER_HOUR;
+  if (raw === void 0 || raw === null || raw === "") return 300;
+  const n = Math.round(Number(raw));
+  return Number.isFinite(n) && n >= 0 ? n : 300;
+}
 function sameSecret(given, want) {
   if (!want || !given || given.length !== want.length) return false;
   let diff = 0;
@@ -9948,6 +10142,10 @@ async function handleRequest(request, env = {}, ctx = {}) {
     if (path === "/v1/register/claim" && request.method === "POST") {
       if (!saToken) return json({ ok: false, error: "Registration is not available right now. Try again later." }, 503);
       if (!claimRate(user.uid)) return json({ ok: false, error: "Please wait a minute and try again." }, 429);
+      {
+        const cap = claimIpCap(env);
+        if (cap > 0 && !claimIpRate(request.headers.get("CF-Connecting-IP") || "?", cap)) return json({ ok: false, error: "Too many new accounts from here. Try again later." }, 429);
+      }
       const out = await launchApi(env, saToken).claim(launchEnvOf(env), user.uid);
       if (out.ok) _launchStatusCache.clear();
       return json(out, out.ok ? 200 : out.status || 403);

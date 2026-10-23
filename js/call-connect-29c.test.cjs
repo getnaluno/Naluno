@@ -14,7 +14,11 @@ assert.ok(!prepBody.includes('getIceServersPatient'), 'preparing an answer does 
 // 13b: the wait is shorter when the caller already has a relay route; still alongside the camera.
 // 14c: its own relay is fetched for the whole ring; Answer cuts the wait only when the caller has one.
 /* 15 Oct g: the same wait, through nalunoIceDecide so the decision is recorded. */
-assert.ok(/Promise\.all\(\[[\s\S]{0,120}camReady[\s\S]{0,900}nalunoIceDecide\(NALUNO_ANSWER_TURN_MS\),\s*callerRelay \? new Promise\(function\(r\)\{ prep\.wake = /.test(prepBody), 'TURN and the camera run together while the phone is still ringing');
+/* 23 Oct e: the TURN wait still runs during the ring, but the camera is no
+   longer waited for at all: the connection is built with empty slots and
+   the camera/mic go in at Answer (call-speed gate flow measures this). */
+assert.ok(/Promise\.all\(\[[\s\S]{0,900}nalunoIceDecide\(NALUNO_ANSWER_TURN_MS\),\s*callerRelay \? new Promise\(function\(r\)\{ prep\.wake = /.test(prepBody), 'TURN is fetched while the phone is still ringing');
+assert.ok(!/await camReady|await Promise\.all\(\[\s*camReady/.test(prepBody) && /createPeerConnection\([^)]*\{ slots: true \}\)/.test(prepBody), 'the ring does not wait for the camera: slots are filled at Answer');
 assert.ok(calls.includes('if(pc._nalunoIceFrozen || pc.localDescription) return;'), 'TURN that arrives after the SDP is built does not restart ICE');
 assert.ok(calls.includes('const hadTurn = nalunoCfgHasTurn(ice);'), 'an array of stun+turn urls still counts as TURN');
 const iceStart = calls.indexOf('getIceServers().then(function(fresh)');

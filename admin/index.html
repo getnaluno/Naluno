@@ -7,8 +7,8 @@
 <meta name="robots" content="noindex, nofollow, noarchive" />
 <meta name="googlebot" content="noindex, nofollow, noarchive" />
 <meta name="theme-color" content="#07080D" />
-<meta name="naluno-build" content="2026.10.23b" />
-<meta name="app-version" content="2026.10.23b" />
+<meta name="naluno-build" content="2026.10.23e" />
+<meta name="app-version" content="2026.10.23e" />
 <link rel="icon" href="/icon-192.png" />
 <link rel="canonical" href="https://getnaluno.com/admin/" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -290,6 +290,10 @@ button{
       <label for="adminPassConfirm">Confirm password</label>
       <input id="adminPassConfirm" type="password" autocomplete="new-password" placeholder="type it again" />
     </div>
+    <div id="adminCodeRow" style="display:none;">
+      <label for="adminCodeInput">6-digit code</label>
+      <input id="adminCodeInput" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]*" placeholder="● ● ● ● ● ●" />
+    </div>
     <div class="row">
       <button type="button" class="primary" id="adminUnlockBtn">Unlock</button>
       <button type="button" class="danger" id="adminSignOutBtn">Sign out</button>
@@ -305,6 +309,7 @@ button{
       </div>
       <div class="row" style="margin:0;">
         <button type="button" class="ghost" id="adminChangePwBtn">Change password</button>
+        <button type="button" class="ghost" id="adminCodeBtn">Secret code</button>
         <button type="button" class="ghost" id="adminLockBtn">Lock</button>
         <button type="button" class="danger" id="adminSignOutBtn2">Sign out</button>
       </div>
@@ -359,7 +364,7 @@ button{
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
-<script src="/firebase-config.js?v=20260914c"></script>
+<script src="/firebase-config.js?v=20261023c"></script>
 <script src="/js/currency.js?v=20260929h"></script>
 <script src="/js/handle-guard.js?v=20261006b"></script>
 <script src="/js/admin-data.js?v=20261022a"></script>
@@ -374,6 +379,6 @@ button{
 <script src="/js/admin-measures.js?v=20261021e"></script>
 <script src="/js/admin-deploy.js?v=20261021f"></script>
 <script src="/js/admin-compass-check.js?v=20261022a"></script>
-<script src="/js/admin-console.js?v=20261023b"></script>
+<script src="/js/admin-console.js?v=20261023e"></script>
 </body>
 </html>

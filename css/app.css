@@ -3822,6 +3822,10 @@ html[data-atmosphere="buzzing"] .naluno-aurora{
 .bspace-sheet-card .known-note{ width:100%; margin-left:0; margin-right:0; }
 .bspace-sheet-card .save-btn{ margin-left:0; margin-right:0; width:100%; }
 
+.cdial-guide{
+  margin:18px 28px 0; text-align:center; color:var(--text-dim);
+  font-size:12.5px; line-height:1.45;
+}
 .cdial{
   position:relative; width:280px; height:280px; margin:22px auto 8px;
   border-radius:50%;

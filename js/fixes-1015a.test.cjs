@@ -39,7 +39,7 @@ const sw = read('sw.js');
 assert.ok(/isAppNav \? new Request\(bare, \{ cache: 'no-cache', credentials: 'same-origin' \}\)/.test(sw), 'the kept app page is checked with the server');
 assert.ok(/self\.skipWaiting\(\)/.test(sw) && /self\.clients\.claim\(\)/.test(sw) && /caches\.delete\(n\)/.test(sw), 'a new worker takes over at once and clears old copies');
 assert.ok(/if\(mine && newest > mine\) throw new Error/.test(sw), 'an older worker refuses to install over a newer one');
-assert.ok(/if\(got && have && got < have\) return;/.test(sw) && /async function nalunoShellStamp\(res\)/.test(sw), 'an older app page is never kept over a newer one');
+assert.ok(/if\(fresh && fresh\.ok && await nalunoFreshIsOlder\(fresh, cached\)\) return;/.test(sw) && /if\(got && have\) return got < have;/.test(sw) && /async function nalunoShellStamp\(res\)/.test(sw), 'an older app page is never kept over a newer one (23 Oct e: nalunoFreshIsOlder)');
 assert.ok(/got < have\) return;/.test(core.slice(core.indexOf('async function nalunoFreshShell('))), 'the page never saves an older copy of itself before reloading');
 /* The console is told, and never reloads itself while you are working
    (each opening asks for its password). 23 Oct: the floating bar became a

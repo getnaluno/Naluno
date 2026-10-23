@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="naluno-build" content="2026.10.23b" />
+  <meta name="naluno-build" content="2026.10.23e" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NALUNO</title>
@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Naluno">
-<meta name="app-version" content="2026.10.23b">
+<meta name="app-version" content="2026.10.23e">
 <meta name="naluno-update-notice" content="off">
 <meta name="description" content="Naluno brings private communication, communities and creator-led content into one place. A Callsign instead of a phone number.">
 <meta property="og:title" content="Naluno">
@@ -132,9 +132,9 @@
 })();
 </script>
 <link rel="apple-touch-startup-image" href="/splash-empty.png">
-<link rel="stylesheet" href="/css/app.css?v=20261023b" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="/css/app.css?v=20261023e" media="print" onload="this.media='all'">
 <script>setTimeout(function(){ var s=document.querySelector('link[href*="css/app.css"]'); if(s && s.media==='print') s.media='all'; }, 1500);</script>
-<noscript><link rel="stylesheet" href="/css/app.css?v=20261023b"></noscript>
+<noscript><link rel="stylesheet" href="/css/app.css?v=20261023e"></noscript>
 </head>
 <body class="naluno-gated">
 <script>
@@ -613,6 +613,7 @@ window.__nalunoEntryT0 = Date.now();
         </div>
         <button class="save-btn" id="editCallsignBtn" style="background:var(--surface-2); color:var(--text); border:1px solid var(--line);">Edit callsign</button>
         <div id="knownBlock" class="known-block" hidden></div>
+        <p class="cdial-guide" id="callsignDialGuide">Turn the dial or tap a name to pick a setting, then tap the centre to open it.</p>
         <div class="cdial" id="callsignDial">
           <div class="cdial-rotor" id="callsignRotor"></div>
           <div class="cdial-needle" aria-hidden="true"></div>
@@ -678,6 +679,25 @@ window.__nalunoEntryT0 = Date.now();
         </div>
       </div>
 
+      <!-- Call notifications: a dial station again (23 Oct e). -->
+      <div class="greenroom-setting" id="callNotifSection" data-dial="alerts" data-dial-name="Call notifications" aria-label="Call notifications">
+        <div class="greenroom-setting-sub" id="callNotifStatus">Get notified of an incoming call even when Naluno isn't open. Needs your permission once.</div>
+        <button class="save-btn" id="enableCallNotifsBtn" style="margin:14px 0 0; background:var(--surface-2); color:var(--text); border:1px solid var(--line);">Enable call notifications</button>
+        <a class="save-btn" id="downloadAndroidAppBtn" href="#" style="display:none; margin:10px 0 0; background:var(--mint); color:#0D0F17; border:none; text-align:center; text-decoration:none;">Download Android app</a>
+        <div class="greenroom-setting-sub" id="androidAppHint" style="display:none; margin-top:8px;">Android: the full app for calls when Naluno is closed. Home Screen install is the browser app.</div>
+      </div>
+
+      <!-- 20 Oct c: the country this person chose (never a place). 23 Oct e: back on the dial. -->
+      <div class="greenroom-setting" id="countrySection" data-dial="country" data-dial-name="Country" aria-label="Country">
+        <div class="greenroom-setting-sub">Only the country is kept, never where you are in it.</div>
+        <select id="countrySetting" class="onboard-country" aria-label="Country" style="margin:12px 0 0;"></select>
+      </div>
+
+      <div class="greenroom-setting" id="blockedPeopleSection" data-dial="stopped" data-dial-name="Stopped from reaching you" aria-label="Stopped from reaching you">
+        <div class="greenroom-setting-sub" id="blockedPeopleSub">No one.</div>
+        <div id="blockedPeopleList" style="margin-top:8px;"></div>
+      </div>
+
       <div class="greenroom-setting" data-dial="mine" data-dial-name="My Contribution">
         <div class="greenroom-setting-sub">What you have added to the community.</div>
         <button class="save-btn" id="myContributionBtn" style="margin:14px 0 0; background:none; color:var(--mint); border:1px solid rgba(124,255,178,.35);">Open</button>
@@ -699,29 +719,6 @@ window.__nalunoEntryT0 = Date.now();
           </div>
         </div>
       </div>
-      </div>
-
-      <!-- 20 Oct c: the country this person chose (never a place). -->
-      <div class="greenroom-setting" id="countrySection" aria-labelledby="countrySettingTitle">
-        <div class="greenroom-setting-head"><span class="dot" aria-hidden="true"></span><span class="greenroom-setting-title" id="countrySettingTitle">Country</span></div>
-        <div class="greenroom-setting-sub">Only the country is kept, never where you are in it.</div>
-        <select id="countrySetting" class="onboard-country" style="margin:12px 0 0;"></select>
-      </div>
-
-      <div class="greenroom-setting" id="blockedPeopleSection" aria-labelledby="blockedPeopleTitle">
-        <div class="greenroom-setting-head"><span class="dot" aria-hidden="true"></span><span class="greenroom-setting-title" id="blockedPeopleTitle">Stopped from reaching you</span></div>
-        <div class="greenroom-setting-sub" id="blockedPeopleSub">No one.</div>
-        <div id="blockedPeopleList" style="margin-top:8px;"></div>
-      </div>
-
-      <!-- Call notifications: on the page under the dial, just before Sign out
-           (it used to be one of the dial's stations). -->
-      <div class="greenroom-setting" id="callNotifSection" aria-labelledby="callNotifTitle">
-        <div class="greenroom-setting-head"><span class="dot" aria-hidden="true"></span><span class="greenroom-setting-title" id="callNotifTitle">Call notifications</span></div>
-        <div class="greenroom-setting-sub" id="callNotifStatus">Get notified of an incoming call even when Naluno isn't open. Needs your permission once.</div>
-        <button class="save-btn" id="enableCallNotifsBtn" style="margin:14px 0 0; background:var(--surface-2); color:var(--text); border:1px solid var(--line);">Enable call notifications</button>
-        <a class="save-btn" id="downloadAndroidAppBtn" href="#" style="display:none; margin:10px 0 0; background:var(--mint); color:#0D0F17; border:none; text-align:center; text-decoration:none;">Download Android app</a>
-        <div class="greenroom-setting-sub" id="androidAppHint" style="display:none; margin-top:8px;">Android: the full app for calls when Naluno is closed. Home Screen install is the browser app.</div>
       </div>
 
       <button class="save-btn" id="signOutBtn" style="margin:14px 20px 0; background:none; color:var(--red); border:1px solid var(--line);">Sign out</button>
@@ -1918,9 +1915,10 @@ window.__nalunoEntryT0 = Date.now();
 
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js"></script>
-<script src="/firebase-config.js?v=20260908d"></script>
+<script src="/firebase-config.js?v=20261023c"></script>
 <script src="/js/site-pulse.js?v=20261001a"></script>
 <!-- NALUNO_MODULES -->
 <script src="/js/core.js?v=20261020b"></script>
@@ -2004,12 +2002,12 @@ window.__nalunoEntryT0 = Date.now();
 <!-- Wireline translation reuses Spark's engine and language list. -->
 <script src="/js/wireline-translate.js?v=20261020c"></script>
 <script src="/js/avatar-picker.js?v=20261023a"></script>
-<script src="/js/profile.js?v=20261023a"></script>
+<script src="/js/profile.js?v=20261023e"></script>
 <script src="/js/legal-privacy.js?v=20261021h"></script>
 <script src="/js/onboard.js?v=20261021f"></script>
 <script src="/js/handle-guard.js?v=20261006b"></script>
 <script src="/js/launch.js?v=20261013a"></script>
-<script src="/js/auth.js?v=20261020c"></script>
+<script src="/js/auth.js?v=20261023c"></script>
 <script src="/js/trust-legal.js?v=20261012c"></script>
 <script src="/js/security-events.js?v=20261002e"></script>
 <script src="/js/notifications.js?v=20261023a"></script>
@@ -2017,14 +2015,14 @@ window.__nalunoEntryT0 = Date.now();
 <script src="/js/camera.js?v=20261010a"></script>
 <script src="/js/call-filters.js?v=20261002d"></script>
 <script src="/js/push-receipt.js?v=20260927d"></script>
-<script src="/js/calls.js?v=20261021e"></script>
+<script src="/js/calls.js?v=20261023e"></script>
 <script src="/js/call-pip.js?v=20261005g"></script>
 <script src="/js/sfu-live.js?v=20261010i"></script>
 <script src="/js/broadcast-live.js?v=20261020c"></script>
 <script src="/js/live-preview.js?v=20261012c"></script>
 <script src="/js/band-room.js?v=20261021e"></script>
 <script src="/js/traffic.js?v=20261020b"></script>
-<script src="/js/pwa.js?v=20261023b"></script>
+<script src="/js/pwa.js?v=20261023e"></script>
 <script src="/js/gestures.js?v=20261007c"></script>
 <script src="/js/spark-engine.js?v=20261005g"></script>
 <script src="/js/spark-lg-wikt.js?v=20260908d"></script>

@@ -566,6 +566,14 @@ function normalizeHandle(raw, fallbackName){
 }
 
 /* Renders either the uploaded+cropped photo or the color+initials fallback into an avatar element */
+/* A photo URL safe to drop into src="...": only http(s), blob, or an image
+   data URL, with quotes/brackets escaped. Anything else becomes ''. */
+function nalunoSafeImgSrc(u){
+  const s = String(u || '').trim();
+  if(!s) return '';
+  if(!/^(https?:|blob:|data:image\/)/i.test(s)) return '';
+  return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 function applyAvatarVisual(el, profile){
   if(!el || !profile) return;
   const src = (typeof contactPhotoSrc === 'function')
@@ -583,14 +591,23 @@ function applyAvatarVisual(el, profile){
     // Baked avatars need no extra transform. Live drafts still pan/zoom
     // around center — never translate(-50%,-50%) on an inset:0 image.
     const crop = profile.photo && profile.photo.crop;
-    const baked = !crop || (crop.scale === 1 && !crop.xPct && !crop.yPct);
+    /* 23 Oct c (security): crop numbers come from a profile doc the owner
+       controls, and the rules do not validate them, so a crafted string
+       could break out of the style attribute. Every value here is forced to
+       a finite number, the URL goes through a scheme allow-list, and the
+       whole style is stripped of "<> before it is placed. */
+    const num = function(v, def){ const n = Number(v); return isFinite(n) ? n : (def || 0); };
+    const baked = !crop || (num(crop.scale, 1) === 1 && !num(crop.xPct) && !num(crop.yPct));
     let extra = 'object-fit:cover;';
     if(!baked && crop){
       const s = (typeof crop.scale === 'number' && crop.scale > 0) ? crop.scale : 1;
-      const x = crop.xPct || 0, y = crop.yPct || 0;
-      extra += 'transform-origin:center center;transform:translate('+x+'%,'+y+'%) scale('+s+');';
+      const x = Math.max(-500, Math.min(500, num(crop.xPct)));
+      const y = Math.max(-500, Math.min(500, num(crop.yPct)));
+      extra += 'transform-origin:center center;transform:translate('+x+'%,'+y+'%) scale('+Math.max(0.1, Math.min(10, s))+');';
     }
-    const safe = String(src).replace(/"/g, '');
+    extra = extra.replace(/["<>]/g, '');
+    const safe = nalunoSafeImgSrc(src);
+    if(!safe){ el.innerHTML = ''; el.textContent = init; return; }
     el.innerHTML = init + '<img class="avatar-pic" alt="" referrerpolicy="no-referrer" src="'+safe+'" style="'+extra+'" onerror="this.onerror=null;this.remove();" draggable="false" />';
   } else {
     el.innerHTML = '';
@@ -764,14 +781,18 @@ const storageAvailable = typeof window.storage !== 'undefined' && window.storage
   const dock = document.getElementById('callsignDialDock');
   if(!dial || !rotor || !hub || dial.dataset.wired === '1') return;
   dial.dataset.wired = '1';
-  /* Call notifications left the dial (12 Oct b): it sits on the page under
-     the dial, just before Sign out. The five stations stay evenly spaced. */
+  /* 23 Oct e: call notifications, country and "stopped from reaching you"
+     are back on the dial; only Sign out and Privacy/Terms sit under it.
+     Eight stations, evenly spaced. */
   const stations = [
     { id:'greenroom', short:'Room', angle:0 },
-    { id:'find', short:'Find', angle:72 },
-    { id:'tone', short:'Tone', angle:144 },
-    { id:'mine', short:'Mine', angle:216 },
-    { id:'close', short:'Close', angle:288 },
+    { id:'find', short:'Find', angle:45 },
+    { id:'tone', short:'Tone', angle:90 },
+    { id:'alerts', short:'Alerts', angle:135 },
+    { id:'country', short:'Country', angle:180 },
+    { id:'stopped', short:'Stopped', angle:225 },
+    { id:'mine', short:'Mine', angle:270 },
+    { id:'close', short:'Close', angle:315 },
   ];
   let rot = 0;
   let drag = null;

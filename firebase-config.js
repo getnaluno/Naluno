@@ -14,6 +14,14 @@ const firebaseConfig = {
 // Web Push VAPID key (from Firebase Console → Project settings → Cloud Messaging →
 // Web configuration → Web Push certificates). Required for call notifications
 // when the app is closed.
+/* App Check (abuse protection). EMPTY = off, and the app behaves exactly as
+   before. To turn it on: create a reCAPTCHA v3 key for getnaluno.com, add it
+   in the Firebase console under App Check (start in "monitor", not enforce),
+   paste the SITE key here, upload, watch the App Check monitor page for a few
+   days, then switch App Check to "enforce" in the console. Never paste the
+   SECRET key here — only the site key. */
+const RECAPTCHA_SITE_KEY = "";
+
 const VAPID_KEY = "BAU9gGiDeFF9GcX42d0D7mjatsjJlCqs5jq8p02p-ObC9z2G5ELg49bTnObj7B1DOhGaKoaj7Iha3MUVsBIF7Ts";
 
 // Google Sign-In for the Android shell (native plugin).

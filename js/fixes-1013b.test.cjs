@@ -29,7 +29,7 @@ const calls = read('js/calls.js');
   sb.nalunoRemoteFrameArrived = () => {};
   sb.getCallOutboundVideoTrackSync = () => null;
   vm.createContext(sb);
-  vm.runInContext([fn(calls, 'nalunoHeld'), fn(calls, 'nalunoHoldSenders'), fn(calls, 'nalunoReleaseSenders')].join('\n'), sb);
+  vm.runInContext([fn(calls, 'nalunoHeld'), fn(calls, 'nalunoTransceiverKind'), fn(calls, 'nalunoSenderKind'), fn(calls, 'nalunoLiveTrackFor'), fn(calls, 'nalunoHoldSenders'), fn(calls, 'nalunoReleaseSenders')].join('\n'), sb);
   function Sender(track) { this._t = track; this.sent = []; }
   Object.defineProperty(Sender.prototype, 'track', { get() { return this._t; }, configurable: true });
   Sender.prototype.replaceTrack = function (t) { this._t = t; this.sent.push(t ? t.id : null); return Promise.resolve(); };

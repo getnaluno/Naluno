@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261023b';
+  const BUILD = '20261023e';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -476,7 +476,21 @@
       try {
         const res = await fetch(bases[i] + path, Object.assign({}, opts, { headers: headers, cache: 'no-store' }));
         last = res;
-        if (res.ok || res.status === 401 || res.status === 403) return res;
+        /* 23 Oct c: the 3-try lock tripped while the desk was open — go back
+           to the gate and ask for the 6-digit code (or say to wait). */
+        if ((res.status === 401 || res.status === 429) && __adminPass && path !== '/v1/admin/unlock') {
+          try {
+            const peek = await res.clone().json().catch(function () { return {}; });
+            if (peek && (peek.code_required || peek.cooldown_s)) {
+              setTimeout(function () {
+                try { if (__adminPass) lockConsole(); } catch (_) {}
+                try { if (peek.code_required && $('adminCodeRow')) $('adminCodeRow').style.display = 'block'; } catch (_) {}
+                try { setMsg('adminGateMsg', peek.code_required ? 'Too many wrong passwords. Enter your password and your 6-digit code.' : 'Too many wrong passwords. Wait a few minutes, then unlock again.'); } catch (_) {}
+              }, 0);
+            }
+          } catch (_) {}
+        }
+        if (res.ok || res.status === 401 || res.status === 403 || res.status === 429) return res;
       } catch (_) {}
     }
     return last;
@@ -8851,10 +8865,23 @@
     try { cloudHash = await cloudGetHash(uid); } catch (_) {}
     const hasLocal = !!localGet(uid);
     let hasWorker = false;
+    let gateNote = '';
     try {
       const st = await adminWorker('/v1/admin/status', { method: 'GET' });
       const body = st ? await st.json().catch(function () { return {}; }) : {};
       hasWorker = !!(st && st.ok && body.hasPassword);
+      /* 23 Oct c: a lock-out already in force on the account — show the code
+         box up front, or the cooldown note. */
+      try {
+        const g = (st && st.ok && body.gate) || null;
+        if (g && g.code_required && $('adminCodeRow')) $('adminCodeRow').style.display = 'block';
+        else if ($('adminCodeRow')) $('adminCodeRow').style.display = 'none';
+        if (g && g.code_required) gateNote = 'Too many wrong passwords. Enter your password and your 6-digit code.';
+        if (g && g.cooldown_s > 0) {
+          const mins = Math.max(1, Math.ceil(g.cooldown_s / 60));
+          gateNote = 'Too many tries. Wait about ' + mins + ' minute' + (mins === 1 ? '' : 's') + ', then try again.';
+        }
+      } catch (_) {}
       if (st && st.ok && body.operator === false) {
         setMsg('adminGateMsg', 'This account is not an operator on the worker.');
       }
@@ -8864,7 +8891,7 @@
     if (ping) ping.textContent = hasWorker
       ? 'password on the console'
       : (cloudHash ? 'password on this account' : (hasLocal ? 'password on this phone' : ''));
-    setMsg('adminGateMsg', '');
+    setMsg('adminGateMsg', gateNote);
     stampOperatorClaim();
   }
 
@@ -8909,16 +8936,55 @@
       if ($('adminPassConfirm')) $('adminPassConfirm').value = '';
     } else {
       let workerVerdict = null;
+      let workerTriesLeft = null;
+      /* 23 Oct c: after 3 wrong tries the worker demands the 6-digit code.
+         When it does, we honour it and never fall back to the phone/account
+         copy — that fallback would defeat the lock-out. */
+      const codeTyped = (($('adminCodeInput') && $('adminCodeInput').value) || '').replace(/\D/g, '').slice(0, 6);
       try {
+        const payload = { password: typed };
+        if (codeTyped) payload.recovery_code = codeTyped;
         const res = await adminWorker('/v1/admin/unlock', {
           method: 'POST',
-          body: JSON.stringify({ password: typed }),
+          body: JSON.stringify(payload),
         });
         const body = res ? await res.json().catch(function () { return {}; }) : {};
-        if (res && res.ok && body.ok && !body.setup) workerVerdict = true;
-        if (res && res.ok && body.setup) workerVerdict = 'setup';
-        /* 401 is not final — this phone or the account copy may still match. */
+        if (res && res.ok && body.ok && !body.setup) {
+          workerVerdict = body.code_used ? 'code' : true;
+        } else if (res && res.ok && body.setup) {
+          workerVerdict = 'setup';
+        } else if (res && res.status === 401 && body.code_required) {
+          if ($('adminCodeRow')) $('adminCodeRow').style.display = 'block';
+          if ($('adminCodeInput')) { $('adminCodeInput').value = ''; try { $('adminCodeInput').focus(); } catch (_) {} }
+          setMsg('adminGateMsg', codeTyped ? 'That code was not accepted.' : 'Too many tries. Enter your 6-digit code.');
+          return;
+        } else if (res && res.status === 429 && body.cooldown_s) {
+          const mins = Math.max(1, Math.ceil(body.cooldown_s / 60));
+          setMsg('adminGateMsg', 'Too many tries. Wait about ' + mins + ' minute' + (mins === 1 ? '' : 's') + ', then try again.');
+          return;
+        } else if (res && res.status === 401 && typeof body.tries_left === 'number') {
+          /* The worker did not match, but the phone or account copy still may
+             (that is how the console has always let its owner in when the
+             worker's copy is out of date). Check those first; the tries-left
+             note is only shown if they say no too. */
+          workerTriesLeft = body.tries_left;
+          if (body.code_set === false && body.cooldown_s > 0) workerTriesLeft = 0;
+        }
+        /* a non-lock-out 401 is not final (e.g. the worker holds no copy):
+           this phone or the account copy may still match. */
       } catch (_) {}
+      if (workerVerdict === 'code') {
+        /* came in with the recovery code: force a fresh password now. */
+        try { localSet(uid, await hashLocal(uid, typed)); } catch (_) {}
+        setMsg('adminGateMsg', 'Code accepted. Set a new password now.', true);
+        __adminPass = typed;
+        try { localStorage.setItem('naluno:pulse:staff', '1'); } catch (_) {}
+        stampOperatorClaim();
+        openConsole();
+        try { if ($('adminCodeRow')) $('adminCodeRow').style.display = 'none'; if ($('adminCodeInput')) $('adminCodeInput').value = ''; } catch (_) {}
+        setTimeout(function () { try { changeAdminPassword(); } catch (_) {} }, 400);
+        return;
+      }
       if (workerVerdict === true) {
         try { localSet(uid, await hashLocal(uid, typed)); } catch (_) {}
         try {
@@ -8929,7 +8995,17 @@
         const okCloud = await cloudOk(uid, typed);
         const okLocal = await localOk(uid, typed);
         const okDesk = !!(__deskOperator && __deskOperator.gateHash && __deskOperator.gateHash === typedHash);
-        if (!okCloud && !okLocal && !okDesk) { setMsg('adminGateMsg', 'Password not accepted.'); return; }
+        if (!okCloud && !okLocal && !okDesk) {
+          if (typeof workerTriesLeft === 'number' && workerTriesLeft > 0) {
+            setMsg('adminGateMsg', 'Password not accepted. ' + workerTriesLeft + ' ' + (workerTriesLeft === 1 ? 'try' : 'tries') + ' left before the 6-digit code is needed.');
+          } else if (typeof workerTriesLeft === 'number') {
+            setMsg('adminGateMsg', 'Password not accepted. Too many tries — enter your 6-digit code, or wait a few minutes.');
+            if ($('adminCodeRow')) $('adminCodeRow').style.display = 'block';
+          } else {
+            setMsg('adminGateMsg', 'Password not accepted.');
+          }
+          return;
+        }
         try {
           await adminWorker('/v1/admin/password', {
             method: 'POST',
@@ -8945,6 +9021,41 @@
     setMsg('adminGateMsg', 'Opening…', true);
     stampOperatorClaim();
     openConsole();
+  }
+
+  /* 23 Oct c: the 6-digit code that lets the operator back in after 3 wrong
+     password tries. Saved hashed on the worker (adminCredentials, which no
+     browser can write). A worker secret (CONSOLE_RECOVERY_CODE) set with
+     wrangler works too and takes precedence; this window is the no-wrangler
+     way. Clearing it falls back to the worker secret, or to a short cooldown
+     if neither is set — the operator is never permanently locked out. */
+  async function setRecoveryCode() {
+    if (!currentUser) return;
+    const code = window.prompt('Set a 6-digit recovery code.\nKeep it somewhere safe and separate from your password.\n\nLeave blank and press OK to remove a saved code.');
+    if (code === null) return;
+    const digits = String(code).replace(/\D/g, '');
+    if (code.trim() === '') {
+      try {
+        const res = await adminWorker('/v1/admin/recovery-code', { method: 'POST', body: JSON.stringify({ clear: true }) });
+        toast(res && res.ok ? 'Saved code removed' : 'Could not remove the code');
+        await writeAudit('console-code-cleared', currentUser.uid, 'operator removed the recovery code');
+      } catch (_) { toast('Could not reach the worker'); }
+      return;
+    }
+    if (digits.length !== 6) { toast('The code must be exactly 6 digits'); return; }
+    const again = window.prompt('Type the 6-digit code again to confirm.');
+    if (again === null) return;
+    if (String(again).replace(/\D/g, '') !== digits) { toast('The two codes do not match'); return; }
+    try {
+      const res = await adminWorker('/v1/admin/recovery-code', { method: 'POST', body: JSON.stringify({ code: digits }) });
+      const body = res ? await res.json().catch(function () { return {}; }) : {};
+      if (res && res.ok && body.ok) {
+        toast('Recovery code saved');
+        await writeAudit('console-code-set', currentUser.uid, 'operator set a recovery code');
+      } else {
+        toast((body && body.error) || 'Could not save the code');
+      }
+    } catch (_) { toast('Could not reach the worker'); }
   }
 
   async function changeAdminPassword() {
@@ -9074,6 +9185,7 @@
     const so2 = $('adminSignOutBtn2'); if (so2) so2.onclick = signOut;
     const lk = $('adminLockBtn'); if (lk) lk.onclick = lockConsole;
     const chg = $('adminChangePwBtn'); if (chg) chg.onclick = changeAdminPassword;
+    const codeBtn = $('adminCodeBtn'); if (codeBtn) codeBtn.onclick = setRecoveryCode;
     ['adminPassInput', 'adminPassConfirm'].forEach(function (id) {
       const el = $(id);
       if (el) el.addEventListener('keydown', function (e) { if (e.key === 'Enter') adminUnlock(); });
