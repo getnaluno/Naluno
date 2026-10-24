@@ -45,6 +45,7 @@ export const CATALOGUE = {
     path: one(["direct", "relay", "unknown"]), net: one(["wifi", "cell", "unknown"]),
     videooff: one(B.bit), flip: one(B.bit), pip: one(B.bit),
     freezes: one(B.count), drops: one(B.count), switched: one(["recovered", "lost", "none"]),
+    camlost: one(["none", "recovered", "lost"]), miclost: one(["none", "recovered", "lost"]),
   },
   /* Wireline */
   msg_sent: { type: one(["text", "voice", "photo", "video", "file"]), route: one(["online", "queued"]), wait: one(B.slow) },

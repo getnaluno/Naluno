@@ -1470,8 +1470,31 @@ function nalunoTrackDeviceId(track){
    agrees and CAMERA-LOCK.md is updated. Do not "tidy" it.
    ============================================================ */
 async function flipCamera(){
+  /* 24 Oct b: a tap while a lens is still opening (the flip before it, or
+     the automatic reopen just after a flip) is kept and done as soon as
+     that finishes. It used to be dropped without a word. Two taps while
+     busy cancel out, like two flips. */
+  if(window.__flipBusy){ nalunoQueueFlip(); return; }
   const next = (cameraFacingMode === 'user') ? 'environment' : 'user';
   return nalunoSwitchLens(next, { toast: true });
+}
+let nalunoFlipQueued = false;
+let nalunoFlipQueueTimer = null;
+function nalunoQueueFlip(){
+  nalunoFlipQueued = !nalunoFlipQueued;
+  if(nalunoFlipQueueTimer) return;
+  const gen = nalunoCamGen;
+  const t0 = Date.now();
+  const wait = function(){
+    nalunoFlipQueueTimer = null;
+    if(gen !== nalunoCamGen || Date.now() - t0 > 10000){ nalunoFlipQueued = false; return; }
+    if(window.__flipBusy){ nalunoFlipQueueTimer = setTimeout(wait, 120); return; }
+    if(!nalunoFlipQueued) return;
+    nalunoFlipQueued = false;
+    const live = stream && stream.getVideoTracks && stream.getVideoTracks().some(function(t){ return t.readyState === 'live'; });
+    if(live) flipCamera();
+  };
+  nalunoFlipQueueTimer = setTimeout(wait, 120);
 }
 /* The lenses to try, best first: the named lens on its full sensor, then
    the facing alone. The flip and the first open use this same list. */
@@ -1510,13 +1533,18 @@ async function nalunoSwitchLens(next, opts){
 
   try{
     const oldStream = stream;
+    /* 24 Oct b: the mic that is already open stays open. A flip used to
+       close it and open it again with the new lens: one more hand-over of
+       the phone's hardware in the middle of a call, for nothing. */
+    let keepMic = null;
+    try{ keepMic = oldStream ? (oldStream.getAudioTracks().find(function(t){ return t.readyState === 'live'; }) || null) : null; }catch(_){ keepMic = null; }
     // Release video hardware before requesting the other lens
     if(oldStream){
       oldStream.getVideoTracks().forEach(t=>{ try{ t.stop(); }catch(_){} });
     }
 
     let newStream = null;
-    const audioConstraint = { echoCancellation:true, noiseSuppression:true, autoGainControl:true };
+    const audioConstraint = keepMic ? false : { echoCancellation:true, noiseSuppression:true, autoGainControl:true };
     const deviceId = await resolveCameraDeviceId(next).catch(()=>null);
     const videoAttempts = nalunoLensAttempts(next, deviceId);
     /* 08d: reopening because the picture came out cut down: ask first for
@@ -1554,12 +1582,15 @@ async function nalunoSwitchLens(next, opts){
       }catch(e){
         say('Couldn\u2019t switch camera on this device');
       }
+      /* 24 Oct b: in a call, the camera and mic that just opened go to the
+         other person at once (they used to stay on this phone only). */
+      try{ if(typeof peerConnection !== 'undefined' && peerConnection && typeof nalunoRepointSenders === 'function') nalunoRepointSenders(peerConnection); }catch(_){}
       return;
     }
 
-    // Stop leftover audio from old stream after new one is live
+    // Stop leftover tracks of the old stream after the new one is live (not the kept mic)
     if(oldStream){
-      oldStream.getTracks().forEach(t=>{ try{ t.stop(); }catch(_){} });
+      oldStream.getTracks().forEach(t=>{ if(t === keepMic) return; try{ t.stop(); }catch(_){} });
     }
 
     /* The call ended (or the camera was handed back) while the lens was
@@ -1567,6 +1598,9 @@ async function nalunoSwitchLens(next, opts){
     if(switchGen !== nalunoCamGen){
       try{ newStream.getTracks().forEach(function(t){ t.stop(); }); }catch(_){}
       return;
+    }
+    if(keepMic && keepMic.readyState === 'live' && !newStream.getAudioTracks().length){
+      try{ newStream.addTrack(keepMic); }catch(_){}
     }
     stream = newStream;
     /* Keep the mic and camera buttons true: a muted mic stays muted. */
@@ -1668,6 +1702,7 @@ async function nalunoSwitchLens(next, opts){
       await enableCamera();
       try{ await nalunoUnzoom(stream && stream.getVideoTracks()[0]); }catch(_){}
     }catch(_){}
+    try{ if(typeof peerConnection !== 'undefined' && peerConnection && typeof nalunoRepointSenders === 'function') nalunoRepointSenders(peerConnection); }catch(_){}
   }finally{
     window.__flipBusy = false;
   }

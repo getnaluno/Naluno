@@ -23,7 +23,7 @@
   }
   const HANDLE_DOMAIN = 'users.getnaluno.com';
   const LOCAL_KEY = 'nalunoAdminLocal.';
-  const BUILD = '20261023e';
+  const BUILD = '20261024b';
   let __appMeta = { label: '', shell: '' };
   function liveAppLabel() {
     return __appMeta.label || BUILD;
@@ -470,7 +470,15 @@
     }, opts.headers || {});
     if (__adminPass) headers['X-Naluno-Admin'] = __adminPass;
     const bases = [WORKER];
-    try { if (location && location.origin) bases.unshift(location.origin + '/__naluno-economy'); } catch (_) {}
+    /* 24 Oct a: the same-site address only answers when Naluno's service
+       worker is in charge of this page (it relays to the worker). Without it
+       (a first visit, cleared site data) every request first got a 404 from
+       the website and only then went to the worker: a wasted round trip on
+       each one. */
+    try {
+      const relayed = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
+      if (relayed && location && location.origin) bases.unshift(location.origin + '/__naluno-economy');
+    } catch (_) {}
     let last = null;
     for (let i = 0; i < bases.length; i++) {
       try {
@@ -8861,13 +8869,16 @@
       return;
     }
 
+    /* 24 Oct a: the account copy and the worker are asked at the same time */
+    const cloudP = cloudGetHash(uid).catch(function () { return ''; });
+    const statusP = adminWorker('/v1/admin/status', { method: 'GET' }).catch(function () { return null; });
     let cloudHash = '';
-    try { cloudHash = await cloudGetHash(uid); } catch (_) {}
+    try { cloudHash = await cloudP; } catch (_) {}
     const hasLocal = !!localGet(uid);
     let hasWorker = false;
     let gateNote = '';
     try {
-      const st = await adminWorker('/v1/admin/status', { method: 'GET' });
+      const st = await statusP;
       const body = st ? await st.json().catch(function () { return {}; }) : {};
       hasWorker = !!(st && st.ok && body.hasPassword);
       /* 23 Oct c: a lock-out already in force on the account — show the code
@@ -8986,10 +8997,16 @@
         return;
       }
       if (workerVerdict === true) {
-        try { localSet(uid, await hashLocal(uid, typed)); } catch (_) {}
-        try {
-          if (!(await cloudOk(uid, typed))) await cloudSetHash(uid, await hashLocal(uid, typed));
-        } catch (_) {}
+        /* 24 Oct a: the worker has checked the password, so the console opens
+           now. Keeping this phone's and the account's copies in step (two or
+           three slow password hashes and a database read and write) used to
+           happen first, in front of the console; it now happens behind it. */
+        (async function () {
+          try { localSet(uid, await hashLocal(uid, typed)); } catch (_) {}
+          try {
+            if (!(await cloudOk(uid, typed))) await cloudSetHash(uid, await hashLocal(uid, typed));
+          } catch (_) {}
+        })();
       } else {
         const typedHash = await hashLocal(uid, typed);
         const okCloud = await cloudOk(uid, typed);

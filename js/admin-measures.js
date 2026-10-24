@@ -77,7 +77,7 @@
       ['call_end', 'ring', 'Time to answer'], ['call_end', 'end', 'How a connected call ended'], ['call_end', 'kind', 'Audio or video'],
       ['call_end', 'path', 'Route (direct or through the relay)'], ['call_end', 'net', 'Network'], ['call_end', 'freezes', 'Video freezes'],
       ['call_end', 'drops', 'Network drop-outs'], ['call_end', 'switched', 'Network switches'], ['call_end', 'videooff', 'Camera switched off'],
-      ['call_end', 'flip', 'Lens flipped'], ['call_end', 'pip', 'Floating window used'], ['call_end', 'role', 'Reported by caller or callee']],
+      ['call_end', 'flip', 'Lens flipped'], ['call_end', 'camlost', 'Camera lost mid-call (brought back or not)'], ['call_end', 'miclost', 'Mic lost mid-call (brought back or not)'], ['call_end', 'pip', 'Floating window used'], ['call_end', 'role', 'Reported by caller or callee']],
       countries: 'call_end' },
     { title: 'Wireline messages', counts: [['msg_sent', 'Messages sent'], ['msg_delivered', 'Messages arrived'], ['msg_read', 'Messages read'], ['voice_note', 'Voice notes'], ['translate_shown', 'Messages shown translated']], lists: [
       ['msg_sent', 'type', 'Kind of message'], ['msg_sent', 'route', 'Sent at once or from the queue'], ['msg_sent', 'wait', 'Time waiting in the queue'],

@@ -82,7 +82,7 @@ function unitTests() {
     console.log('unit: ' + (u.files - u.failed) + '/' + u.files + ' files pass');
   }
   const flowsDir = path.join(__dirname, 'flows');
-  const ORDER = ['smoke', 'buttons', 'photo', 'wireline', 'calls', 'call-speed', 'call-mixed', 'block', 'compass', 'console', 'console-speed', 'console-update', 'console-lock', 'opening', 'update', 'no-fallback', 'dial'];
+  const ORDER = ['smoke', 'buttons', 'photo', 'wireline', 'calls', 'call-speed', 'call-mixed', 'call-camera', 'block', 'compass', 'console', 'console-speed', 'console-open', 'console-update', 'console-lock', 'opening', 'update', 'no-fallback', 'dial', 'signals-strip'];
   const flows = ORDER.filter((n) => fs.existsSync(path.join(flowsDir, n + '.cjs'))).filter((n) => !only || only.includes(n));
   if (flows.length) {
     let pwOk = true;

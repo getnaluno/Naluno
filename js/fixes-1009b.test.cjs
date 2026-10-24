@@ -59,7 +59,8 @@ assert.ok(fs.existsSync(path.join(root, 'voices/lg/male.mp3')) && fs.existsSync(
 
   /* 5. Stamps */
   const html = read('app/index.html');
-  assert.ok(html.includes('/js/camera.js?v=20261010a'), 'camera.js stamp (locked, unchanged)');
+  /* 24 Oct b: republished once, with the owner's go-ahead (CAMERA-LOCK.md, 24b) */
+  assert.ok(html.includes('/js/camera.js?v=20261024b'), 'camera.js stamp (locked; only the approved 24b change)');
   assert.ok(/\/js\/lg-ear\.js\?v=(?:2026101[0-9][a-z]|202610[2-3][0-9][a-z])/.test(html), 'lg-ear.js stamp (this build or later)');
   assert.ok(/\/js\/naluno-voices\.js\?v=(?:2026101[0-9][a-z]|202610[2-3][0-9][a-z])/.test(html), 'naluno-voices.js stamp (this build or later)');
   assert.ok(/\/js\/broadcast-space\.js\?v=(?:2026101[1-9][a-z]|202610[2-3][0-9][a-z])/.test(html), 'broadcast-space stamp (this build or later)');

@@ -5687,7 +5687,9 @@ var CATALOGUE = {
     pip: one(B.bit),
     freezes: one(B.count),
     drops: one(B.count),
-    switched: one(["recovered", "lost", "none"])
+    switched: one(["recovered", "lost", "none"]),
+    camlost: one(["none", "recovered", "lost"]),
+    miclost: one(["none", "recovered", "lost"])
   },
   /* Wireline */
   msg_sent: { type: one(["text", "voice", "photo", "video", "file"]), route: one(["online", "queued"]), wait: one(B.slow) },
@@ -5978,7 +5980,7 @@ async function cfCalls(env, fetchImpl, path, method, body) {
 }
 
 // workers/economy/handler.mjs
-var VERSION = "2.17.1-20261023d";
+var VERSION = "2.17.2-20261024a";
 var PROJECT_ID = "naluno-28a00";
 var OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 var DEFAULT_FLAGS = {
@@ -7496,14 +7498,14 @@ async function collectPasswordRecords(env, uid, saToken, userToken) {
     attempts.push([userToken, "/users/" + encodeURIComponent(uid) + "/consoleGate/main"]);
     attempts.push([userToken, "/users/" + encodeURIComponent(uid) + "/wirelineHidden/__nalunoConsoleGate"]);
   }
-  for (let i = 0; i < attempts.length; i++) {
-    try {
-      const r = await fsFetch(env, attempts[i][0], "GET", attempts[i][1]);
-      if (!r.ok) continue;
-      add(recordFromDoc(fromFsDoc(r.data)));
-    } catch {
-    }
-  }
+  const got = await Promise.all(attempts.map(function(a) {
+    return fsFetch(env, a[0], "GET", a[1]).then(function(r) {
+      return r && r.ok ? recordFromDoc(fromFsDoc(r.data)) : null;
+    }).catch(function() {
+      return null;
+    });
+  }));
+  for (let i = 0; i < got.length; i++) add(got[i]);
   return out;
 }
 var passwordMatchCache = /* @__PURE__ */ new Map();
@@ -7712,7 +7714,12 @@ async function repairPublicCatalogue(env, saToken, body) {
 async function handleAdmin(env, request, path, url, user, userToken, saToken) {
   if (!isOperatorUser(env, user)) return json({ ok: false, error: "not an operator" }, 403);
   const adminPass = request.headers.get("X-Naluno-Admin") || "";
-  const recs = await collectPasswordRecords(env, user.uid, saToken, userToken);
+  const [recs] = await Promise.all([
+    collectPasswordRecords(env, user.uid, saToken, userToken),
+    saToken ? loadGateState(env, user.uid, saToken).catch(function() {
+      return null;
+    }) : null
+  ]);
   const stored = recs[0] || null;
   const openPath = path === "/v1/admin/status" || path === "/v1/admin/password" || path === "/v1/admin/unlock";
   if (!openPath && stored) {
@@ -8027,7 +8034,9 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
     if (blockU) return json(blockU.body, blockU.status);
     const matched = await matchPasswordRecord(recs, user.uid, pass);
     if (matched) {
-      await saveGateState(env, user.uid, { fails: 0, lockUntil: 0, lastWrong: "" }, saToken);
+      if (gate.fails || gate.lockUntil || gate.lastWrong) {
+        await saveGateState(env, user.uid, { fails: 0, lockUntil: 0, lastWrong: "" }, saToken);
+      }
       memory.passwords.set(user.uid, matched);
       return json({ ok: true, hasPassword: true });
     }

@@ -960,6 +960,7 @@ function nalunoMarkCallLive(){
   }catch(_){}
   try{ nalunoWatchHeard(activeCallId, peerConnection); }catch(_){}
   try{ nalunoQualitySampler(activeCallId); }catch(_){}
+  try{ nalunoMediaGuard(activeCallId); }catch(_){}
   try{
     if(typeof nalunoSessionHold === 'function') nalunoSessionHold(nalunoIsVoiceCall() ? 'voice' : 'video');
   }catch(_){}
@@ -1791,6 +1792,8 @@ function nalunoMeasureCall(out, r){
       ring: B.ring(ring == null ? null : Math.max(0, ring)), end: outcome === 'connected' ? end : undefined,
       path: outcome === 'connected' ? path : undefined, net: net,
       videooff: q.videoOff ? 1 : 0, flip: q.flip ? 1 : 0, pip: q.pip ? 1 : 0,
+      camlost: (out.kind !== 'audio' && outcome === 'connected') ? (q.cam || 'none') : undefined,
+      miclost: outcome === 'connected' ? (q.mic || 'none') : undefined,
       freezes: B.count(q.freezes || 0), drops: B.count(drops),
       switched: (out.restarts || 0) > 0 ? (out.recovered ? 'recovered' : 'lost') : 'none',
     });
@@ -2421,6 +2424,149 @@ function nalunoFillSlotsUntilLive(pc, camReady){
     nalunoFillSlots(pc, 'retry').then(function(){ setTimeout(tick, 200); });
   };
   setTimeout(tick, 200);
+}
+/* 24 Oct a: the call keeps its own camera and mic alive.
+   A phone can end the camera by itself, most often just after the lens is
+   flipped (Android hands the camera from one lens to the other and
+   sometimes takes the new one away again). Nothing noticed: the other
+   person's picture went black and stayed black while the sound went on.
+   And when a flip could not open the other lens at all, the fallback
+   opened a new camera and mic on this phone only, so this phone looked
+   fine while the other person lost the picture AND the sound.
+   While a call is up, this checks every 0.7 s:
+   - a sender left on an ended camera or mic is moved to the live one;
+   - when the camera itself has gone, it is opened again (the same lens,
+     the same way the answer path does), a few times with growing gaps;
+   - the same for the mic.
+   A camera switched off with the button is never switched on: that only
+   disables the track, which stays live. Nothing is reopened while Naluno
+   is in the background (a phone refuses the camera there). camera.js is
+   not changed. */
+const NALUNO_GUARD_MS = 700;
+const NALUNO_GUARD_TRIES = 6;
+let nalunoGuardTimer = null;
+function nalunoGuardNote(callId, kind, what){
+  try{
+    const rec = nalunoCD(callId);
+    if(!rec) return;
+    rec.qual = rec.qual || {};
+    const key = kind === 'audio' ? 'mic' : 'cam';
+    if(what === 'lost' && rec.qual[key] !== 'lost') rec.qual[key] = 'lost';
+    if(what === 'back') rec.qual[key] = 'recovered';
+    nalunoCallMark(callId, key + (what === 'lost' ? 'Lost' : 'Back'));
+    console.log('[call] guard', kind, what);
+  }catch(_){}
+}
+/* Every sender whose track ended (or never came) gets the live one. */
+function nalunoRepointSenders(pc){
+  if(!pc || pc.signalingState === 'closed' || nalunoHeld(pc)) return Promise.resolve(0);
+  const jobs = [];
+  try{
+    pc.getTransceivers().forEach(function(tr){
+      try{
+        if(!tr || !tr.sender || tr.stopped) return;
+        if(tr.direction === 'recvonly' || tr.direction === 'inactive') return;
+        const kind = nalunoTransceiverKind(tr);
+        if(kind !== 'audio' && kind !== 'video') return;
+        if(kind === 'video' && nalunoIsVoiceCall()) return;
+        const cur = tr.sender.track;
+        if(cur && cur.readyState === 'live') return;
+        const t = nalunoLiveTrackFor(kind);
+        if(!t || t === cur) return;
+        try{
+          if(kind === 'video') t.enabled = (typeof camOn === 'undefined') ? true : camOn !== false;
+          else t.enabled = (typeof micOn === 'undefined') ? true : micOn !== false;
+        }catch(_){}
+        jobs.push(tr.sender.replaceTrack(t).then(function(){
+          if(kind === 'video'){
+            try{ const raw = stream && stream.getVideoTracks().find(function(x){ return x.readyState === 'live'; }); if(raw) _callRawVideoTrack = raw; if(raw && t !== raw) window.__nalunoFxDraw = true; }catch(_){}
+            try{ t.contentHint = 'motion'; }catch(_){}
+            try{ tuneVideoSender(tr.sender); }catch(_){}
+          } else { try{ nalunoTuneCallAudio(pc); }catch(_){} }
+          return 1;
+        }).catch(function(){ return 0; }));
+      }catch(_){}
+    });
+  }catch(_){}
+  return Promise.all(jobs).then(function(r){ return r.reduce(function(a, b){ return a + b; }, 0); });
+}
+/* The call's camera opened again: the same lens, added to the call's
+   stream, every preview pointed at it, settled like a fresh camera. */
+async function nalunoReopenCallCamera(callId){
+  if(typeof nalunoOpenLensVideoOnly !== 'function') return false;
+  const facing = (typeof cameraFacingMode !== 'undefined' && cameraFacingMode) || 'user';
+  const v = await nalunoOpenLensVideoOnly(facing);
+  if(activeCallId !== callId || !peerConnection || window.__flipBusy){
+    try{ v.getTracks().forEach(function(t){ t.stop(); }); }catch(_){}
+    return false;
+  }
+  if(stream && stream.getVideoTracks().some(function(t){ return t.readyState === 'live'; })){
+    /* something else (a flip) brought a camera back meanwhile */
+    try{ v.getTracks().forEach(function(t){ t.stop(); }); }catch(_){}
+    return true;
+  }
+  if(!stream) stream = v;
+  else {
+    stream.getVideoTracks().forEach(function(t){ if(t.readyState !== 'live'){ try{ stream.removeTrack(t); }catch(_){} } });
+    v.getVideoTracks().forEach(function(t){ stream.addTrack(t); });
+  }
+  try{ stream.getVideoTracks().forEach(function(t){ t.enabled = (typeof camOn === 'undefined') ? true : camOn !== false; }); }catch(_){}
+  ['camRawVideo','pipRawVideo','sendRawVideo','incomingSelfVideo'].forEach(function(id){
+    const el = $(id);
+    if(el && stream){ try{ el.srcObject = stream; if(el.play) el.play().catch(function(){}); }catch(_){} }
+  });
+  try{ if(typeof nalunoSettleCallCamera === 'function') nalunoSettleCallCamera(); }catch(_){}
+  return true;
+}
+async function nalunoReopenCallMic(callId){
+  const a = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount: { ideal: 1 }, latency: { ideal: 0 } }, video: false });
+  if(activeCallId !== callId || !peerConnection){ try{ a.getTracks().forEach(function(t){ t.stop(); }); }catch(_){} return false; }
+  if(stream && stream.getAudioTracks().some(function(t){ return t.readyState === 'live'; })){ try{ a.getTracks().forEach(function(t){ t.stop(); }); }catch(_){} return true; }
+  if(!stream) stream = a;
+  else {
+    stream.getAudioTracks().forEach(function(t){ if(t.readyState !== 'live'){ try{ stream.removeTrack(t); }catch(_){} } });
+    a.getAudioTracks().forEach(function(t){ stream.addTrack(t); });
+  }
+  try{ stream.getAudioTracks().forEach(function(t){ t.enabled = (typeof micOn === 'undefined') ? true : micOn !== false; }); }catch(_){}
+  return true;
+}
+function nalunoMediaGuard(callId){
+  if(!callId) return;
+  if(nalunoGuardTimer){ clearInterval(nalunoGuardTimer); nalunoGuardTimer = null; }
+  const g = { busy: false, cam: { lostAt: 0, tries: 0, nextAt: 0 }, mic: { lostAt: 0, tries: 0, nextAt: 0 } };
+  const live = function(kind){
+    try{
+      const list = kind === 'audio' ? stream.getAudioTracks() : stream.getVideoTracks();
+      return list.some(function(t){ return t.readyState === 'live'; });
+    }catch(_){ return false; }
+  };
+  const step = async function(kind, s, reopen){
+    if(live(kind) || window.__flipBusy){
+      if(s.lostAt && live(kind)){ nalunoGuardNote(callId, kind, 'back'); s.tries = 0; }
+      s.lostAt = 0; s.nextAt = 0;
+      return;
+    }
+    const now = Date.now();
+    if(!s.lostAt){ s.lostAt = now; s.nextAt = now + 600; nalunoGuardNote(callId, kind, 'lost'); return; }
+    if(document.hidden || now < s.nextAt || s.tries >= NALUNO_GUARD_TRIES || s.total >= NALUNO_GUARD_TRIES * 3) return;
+    s.tries++; s.total = (s.total || 0) + 1;
+    s.nextAt = now + 1200 * s.tries;
+    try{ await reopen(callId); }catch(e){ console.warn('[call] guard reopen ' + kind, e && e.name); }
+  };
+  const tick = async function(){
+    if(activeCallId !== callId){ clearInterval(nalunoGuardTimer); nalunoGuardTimer = null; return; }
+    const pc = peerConnection;
+    if(g.busy || !pc || pc.signalingState === 'closed' || nalunoHeld(pc)) return;
+    g.busy = true;
+    try{
+      await nalunoRepointSenders(pc);
+      if(!nalunoIsVoiceCall()) await step('video', g.cam, nalunoReopenCallCamera);
+      await step('audio', g.mic, nalunoReopenCallMic);
+      if(activeCallId === callId && peerConnection === pc) await nalunoRepointSenders(pc);
+    }catch(_){}
+    g.busy = false;
+  };
+  nalunoGuardTimer = setInterval(tick, NALUNO_GUARD_MS);
 }
 function preferFastVideoCodecs(pc){
   if(!pc || typeof RTCRtpSender === 'undefined' || !RTCRtpSender.getCapabilities) return;

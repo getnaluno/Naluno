@@ -117,7 +117,7 @@ import {
 
 /* 21 Oct e: the version names the build, so the console can tell which
    worker is deployed (it stayed "2.15.0-reach" through several builds). */
-export const VERSION = "2.17.1-20261023d";
+export const VERSION = "2.17.2-20261024a";
 export const PROJECT_ID = "naluno-28a00";
 export const OPERATOR_UID = "ibMOMY6Q3sVTCxIrwO2FGk43zw93";
 
@@ -1808,15 +1808,15 @@ async function collectPasswordRecords(env, uid, saToken, userToken) {
        "wrong" to a password the console itself accepts. */
     attempts.push([userToken, "/users/" + encodeURIComponent(uid) + "/wirelineHidden/__nalunoConsoleGate"]);
   }
-  for (let i = 0; i < attempts.length; i++) {
-    try {
-      const r = await fsFetch(env, attempts[i][0], "GET", attempts[i][1]);
-      if (!r.ok) continue;
-      add(recordFromDoc(fromFsDoc(r.data)));
-    } catch {
-      /* try next */
-    }
-  }
+  /* 24 Oct a: every place a copy can live is read at the same time (they
+     were read one after another: six database round trips before each
+     console request could start). The order of the copies is kept. */
+  const got = await Promise.all(attempts.map(function (a) {
+    return fsFetch(env, a[0], "GET", a[1]).then(function (r) {
+      return r && r.ok ? recordFromDoc(fromFsDoc(r.data)) : null;
+    }).catch(function () { return null; });
+  }));
+  for (let i = 0; i < got.length; i++) add(got[i]);
   return out;
 }
 /* A match is remembered for this isolate, keyed by the record and a hash
@@ -2042,7 +2042,12 @@ async function repairPublicCatalogue(env, saToken, body) {
 async function handleAdmin(env, request, path, url, user, userToken, saToken) {
   if (!isOperatorUser(env, user)) return json({ ok: false, error: "not an operator" }, 403);
   const adminPass = request.headers.get("X-Naluno-Admin") || "";
-  const recs = await collectPasswordRecords(env, user.uid, saToken, userToken);
+  /* 24 Oct a: the lock-out state is read alongside the password copies
+     (it is kept for 5 s, so the checks below use it without another read). */
+  const [recs] = await Promise.all([
+    collectPasswordRecords(env, user.uid, saToken, userToken),
+    saToken ? loadGateState(env, user.uid, saToken).catch(function () { return null; }) : null,
+  ]);
   const stored = recs[0] || null;
   const openPath = path === "/v1/admin/status" || path === "/v1/admin/password" || path === "/v1/admin/unlock";
   if (!openPath && stored) {
@@ -2340,7 +2345,11 @@ async function handleAdmin(env, request, path, url, user, userToken, saToken) {
 
     const matched = await matchPasswordRecord(recs, user.uid, pass);
     if (matched) {
-      await saveGateState(env, user.uid, { fails: 0, lockUntil: 0, lastWrong: "" }, saToken);
+      /* only written when there is something to clear (it was written on
+         every unlock: one more database round trip before the console opened) */
+      if (gate.fails || gate.lockUntil || gate.lastWrong) {
+        await saveGateState(env, user.uid, { fails: 0, lockUntil: 0, lastWrong: "" }, saToken);
+      }
       memory.passwords.set(user.uid, matched);
       return json({ ok: true, hasPassword: true });
     }

@@ -74,10 +74,12 @@
 // v248: attention is only kept when a visit, an app open, or a continued session owns it. Join date and Find pin stay on the person.
 // v284: 10.05f Android floats a video call on leaving; Wireline alerts through Naluno's worker; a call answers once per tap.
 // v285: 10.05g voices keep reading (several makers, scheduled, trimmed), Luganda spoken from its own sounds, test alert, stale stamps.
+// v360: 10.24b Signals are reels (tall cards); a flip keeps the mic and every tap.
+// v359: 10.24a a call keeps its camera and mic (lost after a flip: brought back); the console opens without the password-copy chores in front; every app script precached.
 // v358: 10.23e calls fill empty slots (no camera wait while ringing); newest wins for every kept file — a slow server copy never pulls a phone or the console back.
 // v344: 10.19d the answering phone does not open its own hangup channel (that refused the answer); the hangup word leaves before the socket closes; a call alert is drawn and kept; a new build does not wipe the push address.
-const CACHE_NAME = 'naluno-shell-v358';
-const APP_BUILD = '20261023e';
+const CACHE_NAME = 'naluno-shell-v360';
+const APP_BUILD = '20261024b';
 const CORE_ASSETS = [
   '/app/', '/app/index.html', '/manifest.json', '/splash-empty.png', '/icon-maskable-512.png', '/icon-192.png', '/icon-512.png',
   '/firebase-config.js', '/css/app.css',
@@ -94,6 +96,10 @@ const CORE_ASSETS = [
   '/js/ice-core.js', '/js/compat-lock.js', '/js/keep-alive.js', '/js/media-contain.js',
   '/js/diagnostics.js', '/js/currency.js', '/js/economy.js', '/js/economy-ui.js', '/js/legal-privacy.js', '/js/onboard.js', '/js/presence.js', '/js/session-log.js', '/js/push-receipt.js', '/js/handle-guard.js',
   '/js/trust-legal.js', '/js/security-events.js',
+  /* 24 Oct a: the rest of the scripts of the app, so a phone that opens
+     offline right after an update still has every one (about 200 KB). */
+  '/js/site-pulse.js', '/js/sunbird.js', '/js/nudenet.js', '/js/report.js', '/js/people-safety.js', '/js/naluno-voice-master.js',
+  '/js/lg-ear.js', '/js/notices.js', '/js/wireline-translate.js', '/js/spark-engine.js', '/js/spark-lg-wikt.js', '/js/spark-lg.js', '/js/spark-page.js',
 ];
 
 /* 15 Oct: the version an app page carries (meta app-version), as

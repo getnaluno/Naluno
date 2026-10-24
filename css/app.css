@@ -4898,3 +4898,114 @@ html.naluno-reduce-motion #myBcastStrip .signal-tile .signal-edge{ animation:non
 body.naluno-support-hidden #bspaceSupportSlot,
 body.naluno-support-hidden .support-row,
 body.naluno-support-hidden [data-support-entry]{display:none !important;}
+
+/* ==== 24 Oct b: Signals are Naluno's reels, in our diamond ====
+   Each Signal is a tall diamond (a reel standing up), the clip filling the
+   whole diamond, our colours turning around its rim, the name under it,
+   and the thread of light with its knots still joining them. Big enough to
+   see what is in a Signal; the first Broadcast stays on screen. Overrides
+   the small diamonds above (07 Oct d); tiles, taps and data unchanged. */
+html body #myBcastStrip.bcast-strip{ gap:16px; padding:8px 14px 12px; scroll-padding-left:14px; }
+html body #myBcastStrip.bcast-strip .bcast-item.signal-tile{
+  --rw:120px; --rh:178px;
+  position:relative; width:var(--rw); flex:0 0 var(--rw); gap:0; align-items:center;
+}
+/* the diamond: rim and plate */
+html body #myBcastStrip.bcast-strip .signal-tile .signal-window{
+  width:var(--rw); height:var(--rh); padding:0; border-radius:0;
+  position:relative; overflow:visible; background:transparent; box-shadow:none; animation:none;
+}
+html body #myBcastStrip.bcast-strip .signal-tile .signal-window::before,
+html body #myBcastStrip.bcast-strip .signal-tile .signal-window::after{ content:none; display:none; }
+html body #myBcastStrip.bcast-strip .signal-tile .signal-edge{
+  position:absolute; inset:0; z-index:0; border:0; border-radius:0;
+  clip-path:polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+  -webkit-clip-path:polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+  background:conic-gradient(from var(--sigA), #7CFFB2, #00E5FF, #7C4DFF, #FF3DA6, #7CFFB2);
+  box-shadow:none; animation:sigRimTurn 7s linear infinite;
+}
+html body #myBcastStrip.bcast-strip .signal-tile .signal-window.seen .signal-edge{ filter:saturate(.25) brightness(.6); animation-duration:14s; }
+html body #myBcastStrip.bcast-strip .signal-tile .signal-window.signal-new .signal-edge{ animation-duration:4.2s; }
+html body #myBcastStrip.bcast-strip .signal-tile .signal-window > .signal-window-in{
+  position:absolute; inset:4px; width:auto; height:auto; z-index:1; border-radius:0;
+  display:block; overflow:visible; background:none; clip-path:none; -webkit-clip-path:none;
+}
+html body #myBcastStrip.bcast-strip .signal-tile .signal-window > .signal-window-in::before{
+  content:''; position:absolute; inset:0; z-index:0;
+  clip-path:polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+  -webkit-clip-path:polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+  background:radial-gradient(circle at 50% 50%, #1A1E30 0 45%, #0E1019 72%);
+}
+/* the clip fills the whole diamond */
+html body #myBcastStrip.bcast-strip .signal-tile .signal-window > .signal-window-in img,
+html body #myBcastStrip.bcast-strip .signal-tile .signal-window > .signal-window-in video,
+html body #myBcastStrip.bcast-strip .signal-tile .signal-window > .signal-window-in .avatar,
+html body #myBcastStrip.bcast-strip .signal-tile .signal-window > .signal-window-in .mysignal-thumb{
+  position:absolute; inset:0; left:0; top:0; width:100% !important; height:100% !important;
+  border-radius:0 !important; object-fit:cover; z-index:1;
+  clip-path:polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+  -webkit-clip-path:polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+}
+/* a written Signal: the words in the wide middle of the diamond */
+html body #myBcastStrip.bcast-strip .signal-tile .signal-window > .signal-window-in .avatar{
+  display:flex; align-items:center; justify-content:center; overflow:hidden; text-align:center;
+  font-size:12px !important; line-height:1.22 !important; padding:24% 22% 40% !important; box-sizing:border-box;
+}
+/* play: a small badge low in the diamond */
+html body #myBcastStrip.bcast-strip .signal-tile .signal-play{
+  left:50%; top:72%; right:auto; bottom:auto; transform:translate(-50%,-50%);
+  width:24px; height:24px; font-size:9px; z-index:4;
+  background:rgba(7,8,12,.5); color:#fff; border:1px solid rgba(255,255,255,.35);
+  backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px);
+}
+/* chips sit on the tips */
+html body #myBcastStrip.bcast-strip .signal-tile .signal-age,
+html body #myBcastStrip.bcast-strip .signal-tile .signal-public-tag,
+html body #myBcastStrip.bcast-strip .signal-tile .signal-held-chip{
+  position:absolute; left:50%; right:auto; transform:translateX(-50%); z-index:6; white-space:nowrap;
+}
+html body #myBcastStrip.bcast-strip .signal-tile .signal-age{ top:auto; bottom:-6px; font-size:9px; padding:2px 7px; }
+html body #myBcastStrip.bcast-strip .signal-tile .signal-public-tag,
+html body #myBcastStrip.bcast-strip .signal-tile .signal-held-chip{ top:-6px; }
+/* the name under the diamond */
+html body #myBcastStrip.bcast-strip .signal-tile > .signal-tile-cap{
+  position:relative; background:none; padding:9px 0 0; width:calc(var(--rw) + 12px); margin:0 -6px;
+  text-align:center; align-items:center; pointer-events:none;
+}
+html body #myBcastStrip.bcast-strip .signal-tile > .signal-tile-cap strong{ font-size:13px; font-weight:700; max-width:100%; }
+html body #myBcastStrip.bcast-strip .signal-tile > .signal-tile-cap em{ font-size:10px; white-space:nowrap; }
+/* New Signal: the breathing + in the middle of its diamond */
+html body #myBcastStrip.bcast-strip .signal-tile-create .signal-create-mark{
+  position:absolute; inset:0; z-index:2; transform:none;
+  display:flex; align-items:center; justify-content:center;
+}
+html body #myBcastStrip.bcast-strip .signal-tile-create .signal-create-mark span{
+  width:48px; height:48px; font-size:24px; line-height:normal;
+  display:flex; align-items:center; justify-content:center; box-sizing:border-box;
+}
+html body #myBcastStrip.bcast-strip .signal-tile-create .signal-edge{ animation-duration:3.2s; }
+/* the thread, tip to tip through the middle, with its knot */
+html body #myBcastStrip.bcast-strip .signal-tile + .signal-tile::before{
+  content:''; display:block; position:absolute; z-index:0; pointer-events:none;
+  top:calc(var(--rh) / 2 - 1px); left:-28px; width:44px; height:2px; border-radius:2px;
+  background:linear-gradient(90deg, rgba(124,255,178,.25), #00E5FF, #FF3DA6, rgba(124,255,178,.25));
+  background-size:200% 100%; animation:sigThread 2.6s linear infinite;
+}
+html body #myBcastStrip.bcast-strip .signal-tile + .signal-tile::after{
+  content:''; display:block; position:absolute; z-index:2; pointer-events:none;
+  top:calc(var(--rh) / 2 - 4px); left:-12px; width:8px; height:8px;
+  transform:rotate(45deg); border-radius:2px;
+  background:linear-gradient(135deg, #7CFFB2, #00E5FF);
+  box-shadow:0 0 8px rgba(0,229,255,.7);
+  animation:sigKnot 2.6s ease-in-out infinite;
+}
+html body #myBcastStrip.bcast-strip .signal-tile:active .signal-window{ transform:scale(.97); transition:transform .12s ease; }
+/* small phones: a little smaller */
+@media (max-width: 360px){
+  html body #myBcastStrip.bcast-strip .bcast-item.signal-tile{ --rw:108px; --rh:160px; }
+}
+@media (prefers-reduced-motion: reduce){
+  html body #myBcastStrip.bcast-strip .signal-tile .signal-edge,
+  html body #myBcastStrip.bcast-strip .signal-tile + .signal-tile::before,
+  html body #myBcastStrip.bcast-strip .signal-tile + .signal-tile::after{ animation:none; }
+}

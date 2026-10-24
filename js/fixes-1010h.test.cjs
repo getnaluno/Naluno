@@ -124,7 +124,8 @@ assert.ok(!/await sfuPublishLive/.test(live), 'the one upload does not block the
 const reactSrc = live.slice(live.indexOf('function bLiveWatchReactions'), live.indexOf('function bLiveSpawnReaction'));
 assert.ok(reactSrc.includes('if(!primed)'), 'old reactions are not replayed');
 
-assert.ok(html.includes('/js/camera.js?v=20261010a'), 'camera was not republished');
+/* 24 Oct b: republished once, with the owner's go-ahead (CAMERA-LOCK.md, 24b) */
+assert.ok(html.includes('/js/camera.js?v=20261024b'), 'camera republished only for the approved 24b change');
 assert.ok(/\/js\/calls\.js\?v=(?:2026101[1-9][a-z]|202610[2-3][0-9][a-z])/.test(html), 'call audio is this build or later');
 assert.ok(!read('js/calls.js').includes('createMediaStreamSource'), 'received voice is still a single path');
 

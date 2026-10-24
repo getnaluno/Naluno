@@ -80,7 +80,7 @@ const LOCKED = {
    (see CAMERA-LOCK.md). */
 const APPROVED = {
   'camera: what is asked of the camera': '8d001c6f9432afbf',
-  'camera: how a lens is opened and settled': 'f192ae09b5414b78',
+  'camera: how a lens is opened and settled': 'a7b6d19ede29cd31',
   'camera: how your own picture is drawn and sent': 'e4da395a687a323f',
   'calls: the callee\'s camera when answering': '3292560e2d07fe76',
   'calls: the other person full screen': '36dd629ead2d348f',

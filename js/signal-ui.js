@@ -377,7 +377,7 @@ function renderBroadcastTab(){
       try{
         if(latest.type==='text'){
           const st = (typeof signalTextCardStyle === 'function') ? signalTextCardStyle(latest) : ('background:'+(latest.bg||'#333')+';');
-          thumb = '<div class="avatar" style="width:100%;height:100%;'+signalSafeStyle(st)+'font-size:9px;padding:4px;text-align:center;line-height:1.15;">'+escapeHtml(String(latest.text||'').slice(0,26))+'</div>';
+          thumb = '<div class="avatar" style="width:100%;height:100%;'+signalSafeStyle(st)+'font-size:9px;padding:4px;text-align:center;line-height:1.15;">'+escapeHtml(String(latest.text||'').slice(0,90))+'</div>';
         } else if(latest.type==='video'){
           const src = signalSafeSrc(latest.thumbDataUrl);
           thumb = src
@@ -424,7 +424,7 @@ function renderBroadcastTab(){
       try{
         if(latest && latest.type === 'text'){
           const st = (typeof signalTextCardStyle === 'function') ? signalTextCardStyle(latest) : ('background:'+signalSafeColor(c.color,'#333')+';color:#fff;');
-          thumbInner = '<div class="avatar" style="width:100%;height:100%;'+signalSafeStyle(st)+'font-size:9px;padding:4px;text-align:center;line-height:1.15;">'+escapeHtml(String(latest.text||'').slice(0,26))+'</div>';
+          thumbInner = '<div class="avatar" style="width:100%;height:100%;'+signalSafeStyle(st)+'font-size:9px;padding:4px;text-align:center;line-height:1.15;">'+escapeHtml(String(latest.text||'').slice(0,90))+'</div>';
         } else if(latest && latest.type === 'video'){
           const src = signalSafeSrc(latest.thumbDataUrl);
           thumbInner = src
